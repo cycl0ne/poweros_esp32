@@ -91,7 +91,7 @@ fn programMsix(entry: *Entry) void {
         if (i < device.vectors) {
             slot[0] = @truncate(host.msi_address);
             slot[1] = @truncate(host.msi_address >> 32);
-            slot[2] = entry.vector_base + i;
+            slot[2] = host.msi_data + entry.vector_base + i;
         }
         slot[3] = slot[3] | pci.PCI_MSIX_ENTRY_CTRL_MASKBIT;
     }
@@ -113,7 +113,7 @@ fn programMsi(entry: *Entry) void {
     write(entry, cap + pci.PCI_MSI_FLAGS, 2, flags & ~@as(u32, pci.PCI_MSI_FLAGS_ENABLE));
     write(entry, cap + pci.PCI_MSI_ADDRESS_LO, 4, @as(u32, @truncate(host.msi_address)) & 0xFFFF_FFFC);
     if (wide) write(entry, cap + pci.PCI_MSI_ADDRESS_HI, 4, @truncate(host.msi_address >> 32));
-    write(entry, cap + (if (wide) pci.PCI_MSI_DATA_64 else pci.PCI_MSI_DATA_32), 2, entry.vector_base);
+    write(entry, cap + (if (wide) pci.PCI_MSI_DATA_64 else pci.PCI_MSI_DATA_32), 2, host.msi_data + entry.vector_base);
     var i: u32 = 0;
     while (i < device.vectors) : (i += 1) mask(entry, i, !hasServer(entry, i));
     const given: u32 = @ctz(@as(u32, device.vectors));

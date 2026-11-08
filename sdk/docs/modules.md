@@ -30,6 +30,7 @@ classes violet. Grey is a ROM module in a chart about the disk.
 ```mermaid
 flowchart TB
     m_Shell["Shell"]
+    m_amdgpu_resource["amdgpu.resource"]
     m_audio_device["audio.device"]
     m_battclock_resource["battclock.resource"]
     m_battery_resource["battery.resource"]
@@ -54,6 +55,8 @@ flowchart TB
     m_mouse_device["mouse.device"]
     m_nil_handler["nil-handler"]
     m_pipe_handler["pipe-handler"]
+    m_platform_resource["platform.resource"]
+    m_power_resource["power.resource"]
     m_ram_handler["ram-handler"]
     m_ramlib_library["ramlib.library"]
     m_rta_library["rta.library"]
@@ -66,8 +69,10 @@ flowchart TB
     m_usbport_resource["usbport.resource"]
     m_usbserial_device["usbserial.device"]
     m_videodec_resource["videodec.resource"]
+    m_watchdog_resource["watchdog.resource"]
 
     m_Shell --> m_dos_library
+    m_amdgpu_resource --> m_platform_resource
     m_audio_device --> m_rta_library
     m_battclock_resource --> m_i2c_device
     m_battclock_resource --> m_timer_device
@@ -85,6 +90,7 @@ flowchart TB
     m_console_device --> m_intuition_library
     m_console_device --> m_keymap_library
     m_console_device --> m_layers_library
+    m_display_drivers --> m_amdgpu_resource
     m_display_drivers --> m_dma_resource
     m_display_drivers --> m_expander_resource
     m_display_drivers --> m_gpio_resource
@@ -112,8 +118,10 @@ flowchart TB
     m_intuition_library --> m_motion_library
     m_intuition_library --> m_rtg_library
     m_intuition_library --> m_timer_device
+    m_jpeg_resource --> m_amdgpu_resource
     m_jpeg_resource --> m_dma_resource
     m_jpeg_resource --> m_timer_device
+    m_jpeg_resource --> m_watchdog_resource
     m_keyboard_device --> m_timer_device
     m_layers_library --> m_graphics_library
     m_layers_library --> m_rtg_library
@@ -121,6 +129,7 @@ flowchart TB
     m_mouse_device --> m_timer_device
     m_nil_handler --> m_dos_library
     m_pipe_handler --> m_dos_library
+    m_power_resource --> m_dos_library
     m_ram_handler --> m_dos_library
     m_ram_handler -.-> m_timer_device
     m_ramlib_library --> m_dos_library
@@ -138,14 +147,17 @@ flowchart TB
     m_touch_device --> m_i2c_device
     m_touch_device --> m_timer_device
     m_usbserial_device --> m_usbport_resource
+    m_videodec_resource --> m_amdgpu_resource
     m_videodec_resource --> m_dos_library
+    m_videodec_resource --> m_timer_device
+    m_videodec_resource --> m_watchdog_resource
 
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
     class m_display_drivers,m_dos_library,m_graphics_library,m_intuition_library,m_keymap_library,m_layers_library,m_motion_library,m_ramlib_library,m_rta_library,m_rtg_library,m_sound_drivers lib
     classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
     class m_audio_device,m_console_device,m_flash_device,m_i2c_device,m_input_device,m_keyboard_device,m_mouse_device,m_serial_device,m_timer_device,m_touch_device,m_usbserial_device dev
     classDef res fill:#fef3c7,stroke:#d97706,color:#111827
-    class m_battclock_resource,m_battery_resource,m_dma_resource,m_expander_resource,m_gpio_resource,m_jpeg_resource,m_thermal_resource,m_usbport_resource,m_videodec_resource res
+    class m_amdgpu_resource,m_battclock_resource,m_battery_resource,m_dma_resource,m_expander_resource,m_gpio_resource,m_jpeg_resource,m_platform_resource,m_power_resource,m_thermal_resource,m_usbport_resource,m_videodec_resource,m_watchdog_resource res
     classDef hand fill:#fce7f3,stroke:#db2777,color:#111827
     class m_Shell,m_con_handler,m_flashfs_handler,m_nil_handler,m_pipe_handler,m_ram_handler hand
 ```
@@ -185,6 +197,7 @@ flowchart TB
     m_anvil_library["anvil.library"]
     m_asl_library["asl.library"]
     m_audiocodec_library["audiocodec.library"]
+    m_av1_vcodec["av1.vcodec"]
     m_battery_docklet["battery.docklet"]
     m_battery_resource["battery.resource"]
     m_battmem_resource["battmem.resource"]
@@ -216,11 +229,14 @@ flowchart TB
     m_gadget_classes["gadget classes"]
     m_gpio_resource["gpio.resource"]
     m_graphics_library["graphics.library"]
+    m_h264_vcodec["h264.vcodec"]
+    m_hevc_vcodec["hevc.vcodec"]
     m_hid_device["hid.device"]
     m_http_library["http.library"]
     m_icon_library["icon.library"]
     m_iffparse_library["iffparse.library"]
     m_input_device["input.device"]
+    m_intelnet_device["intelnet.device"]
     m_intuition_library["intuition.library"]
     m_keyboard_device["keyboard.device"]
     m_keymap_library["keymap.library"]
@@ -239,6 +255,7 @@ flowchart TB
     m_platform_resource["platform.resource"]
     m_posfs_handler["posfs-handler"]
     m_rdb_library["rdb.library"]
+    m_realnet_device["realnet.device"]
     m_rs485_device["rs485.device"]
     m_rta_library["rta.library"]
     m_rtg_library["rtg.library"]
@@ -259,7 +276,9 @@ flowchart TB
     m_v3d_fdriver["v3d.fdriver"]
     m_videocodec_library["videocodec.library"]
     m_videodec_resource["videodec.resource"]
+    m_videoparse_library["videoparse.library"]
     m_vorbis_acodec["vorbis.acodec"]
+    m_vp9_vcodec["vp9.vcodec"]
     m_wav_acodec["wav.acodec"]
     m_wpa_library["wpa.library"]
     m_xhci_device["xhci.device"]
@@ -291,6 +310,7 @@ flowchart TB
     m_asl_library --> m_intuition_library
     m_audiocodec_library --> m_dos_library
     m_audiocodec_library --> m_media_library
+    m_av1_vcodec --> m_videoparse_library
     m_battery_docklet --> m_battery_resource
     m_bsdsocket_library -.-> m_aic8800_device
     m_bsdsocket_library --> m_crypto_library
@@ -346,6 +366,8 @@ flowchart TB
     m_flac_acodec --> m_media_library
     m_ftdi_device --> m_timer_device
     m_ftdi_device --> m_usb_library
+    m_h264_vcodec --> m_videoparse_library
+    m_hevc_vcodec --> m_videoparse_library
     m_hid_device --> m_keyboard_device
     m_hid_device --> m_mouse_device
     m_hid_device --> m_usb_library
@@ -356,6 +378,8 @@ flowchart TB
     m_icon_library --> m_dos_library
     m_iffparse_library --> m_clipboard_device
     m_iffparse_library --> m_dos_library
+    m_intelnet_device --> m_pci_library
+    m_intelnet_device --> m_timer_device
     m_locale_library --> m_dos_library
     m_media_library --> m_compression_library
     m_media_library --> m_dos_library
@@ -381,6 +405,8 @@ flowchart TB
     m_rdb_library --> m_dos_library
     m_rdb_library -.-> m_flash_device
     m_rdb_library -.-> m_sdcard_device
+    m_realnet_device --> m_pci_library
+    m_realnet_device --> m_timer_device
     m_rs485_device --> m_gpio_resource
     m_rs485_device --> m_timer_device
     m_sdcard_device --> m_dma_resource
@@ -423,15 +449,16 @@ flowchart TB
     m_videocodec_library --> m_dos_library
     m_videocodec_library --> m_media_library
     m_vorbis_acodec --> m_media_library
+    m_vp9_vcodec --> m_videoparse_library
     m_wav_acodec --> m_media_library
     m_wpa_library --> m_crypto_library
     m_xhci_device --> m_pci_library
     m_xhci_device --> m_timer_device
 
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
-    class m_aac_acodec,m_ac3_acodec,m_anvil_library,m_asl_library,m_audiocodec_library,m_battery_docklet,m_bsdsocket_library,m_chip_vcodec,m_clock_docklet,m_commodities_library,m_compression_library,m_crypto_library,m_datatypes_library,m_diskfont_library,m_dts_acodec,m_facet_library,m_filter_library,m_flac_acodec,m_http_library,m_icon_library,m_iffparse_library,m_locale_library,m_media_library,m_mkv_container,m_modbus_library,m_mp3_acodec,m_network_docklet,m_opus_acodec,m_pci_library,m_rdb_library,m_tls_library,m_truetype_library,m_usb_library,m_v3d_fdriver,m_videocodec_library,m_vorbis_acodec,m_wav_acodec,m_wpa_library lib
+    class m_aac_acodec,m_ac3_acodec,m_anvil_library,m_asl_library,m_audiocodec_library,m_av1_vcodec,m_battery_docklet,m_bsdsocket_library,m_chip_vcodec,m_clock_docklet,m_commodities_library,m_compression_library,m_crypto_library,m_datatypes_library,m_diskfont_library,m_dts_acodec,m_facet_library,m_filter_library,m_flac_acodec,m_h264_vcodec,m_hevc_vcodec,m_http_library,m_icon_library,m_iffparse_library,m_locale_library,m_media_library,m_mkv_container,m_modbus_library,m_mp3_acodec,m_network_docklet,m_opus_acodec,m_pci_library,m_rdb_library,m_tls_library,m_truetype_library,m_usb_library,m_v3d_fdriver,m_videocodec_library,m_videoparse_library,m_vorbis_acodec,m_vp9_vcodec,m_wav_acodec,m_wpa_library lib
     classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
-    class m_acm_device,m_aic8800_device,m_clipboard_device,m_cyw43455_device,m_disk_device,m_ecm_device,m_emac_device,m_esp32s3wifi_device,m_ftdi_device,m_hid_device,m_nvme_device,m_openeth_device,m_rs485_device,m_sdcard_device,m_slip_device,m_ssh_device,m_telnet_device,m_uac_device,m_usbotg_device,m_xhci_device dev
+    class m_acm_device,m_aic8800_device,m_clipboard_device,m_cyw43455_device,m_disk_device,m_ecm_device,m_emac_device,m_esp32s3wifi_device,m_ftdi_device,m_hid_device,m_intelnet_device,m_nvme_device,m_openeth_device,m_realnet_device,m_rs485_device,m_sdcard_device,m_slip_device,m_ssh_device,m_telnet_device,m_uac_device,m_usbotg_device,m_xhci_device dev
     classDef hand fill:#fce7f3,stroke:#db2777,color:#111827
     class m_fat_handler,m_posfs_handler,m_smb_handler hand
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827

@@ -746,12 +746,16 @@ usb.library/StopUSB
    INPUTS
 	- `bus` - which bus, from 0: the board's USB sockets that may be a
 	  host (`PARTKIND_USB`, `USBROLE_HOST`), in the order its parts list
-	  them.
+	  them, and after them the xHCI controllers on PCI, in the order
+	  xhci.device numbers them.
 
    RESULT
-	0 when the bus runs (or already did); `USBERR_NOBUS` if the board has
-	no such bus, `USBERR_CONTROLLER` if its controller could not be
-	opened, `USBERR_NOMEM` without memory or a process.
+	0 when the bus runs (or already did); `USBERR_NOBUS` if there is no
+	such bus, `USBERR_CONTROLLER` if its controller could not be opened,
+	`USBERR_NOMEM` without memory or a process.
+
+	There is no highest bus number: a machine has as many buses as it has
+	controllers. `USBERR_NOBUS` is what a walk from 0 up stops on.
 
    BEHAVIOR
 	A process of the bus's own opens the controller and sets up its root
@@ -771,9 +775,15 @@ usb.library/StopUSB
 	The bus is the library's until StopUSB.
 
    NOTES
-	The buses are the board's `PARTKIND_USB` parts that may be hosts,
-	each on the device that drives its chip (`CHIP_DWC2`:
-	usbotg.device; `CHIP_XHCI`, `CHIP_DWC3`: xhci.device).
+	A bus is a controller. The board's `PARTKIND_USB` parts that may be
+	hosts are the first of them, each on the device that drives its chip
+	(`CHIP_DWC2`: usbotg.device; `CHIP_XHCI`, `CHIP_DWC3`: xhci.device) -
+	those are described because nothing can find a controller that is
+	part of a chip. Every number past them is an xHCI controller on PCI,
+	which is found instead: the sockets of a machine of that kind are in
+	groups with a controller each, and how many there are is the
+	machine's answer. A bus that is not started leaves its sockets dark,
+	since a hub's ports are given their power when their bus starts.
 
    BUGS
 	None known.
@@ -795,8 +805,8 @@ usb.library/StopUSB
 	1.0. LVO -24.
 
    INPUTS
-	- `bus` - which bus, as StartUSB took it. One that does not run is
-	  left as it is.
+	- `bus` - which bus, as StartUSB numbered it. One that does not run
+	  is left as it is.
 
    RESULT
 	Nothing.

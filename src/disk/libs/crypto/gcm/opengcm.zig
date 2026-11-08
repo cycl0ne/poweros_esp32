@@ -46,7 +46,8 @@ const _gcm = @import("_gcm.zig");
 /// Nothing is allocated; the message stays the caller's.
 ///
 /// NOTES:
-/// None.
+/// As in SealGcm: an x86-64 core with AES-NI and PCLMULQDQ does the work
+/// on its own instructions.
 ///
 /// BUGS:
 /// As in SealGcm: on the S3 GHASH runs in software.

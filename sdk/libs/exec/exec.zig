@@ -33,12 +33,15 @@ pub const ExecBase = @import("../../interface/exec.zig").ExecBase;
 /// above the kernel's stack, on the ESP32-P4 at the top of the low part of
 /// L2MEM; on a machine under SBI firmware in the page right below the
 /// kernel, which every one of them links at 0x8020_0000, and the same on
-/// an AArch64 machine under PSCI firmware, whose kernel is at 0x4020_0000.
+/// an AArch64 machine under PSCI firmware, whose kernel is at 0x4020_0000,
+/// and on an x86-64 machine started by UEFI, whose kernel is 2 MiB into
+/// the address space.
 pub const AbsExecBase: *const *ExecBase = @ptrFromInt(switch (@import("../../hardware/hardware.zig").chip) {
     .esp32s3 => 0x3FCE_9700,
     .esp32p4 => 0x4FF3_ABC0,
     .rv64sbi => 0x801F_F000,
     .a64psci => 0x401F_F000,
+    .x64uefi => 0x001F_F000,
 });
 
 pub const NodeType = nodes.NodeType;
@@ -129,6 +132,9 @@ pub const EXECLIST_DEVICES: u32 = 2;
 pub const EXECLIST_RESOURCES: u32 = 3;
 pub const EXECLIST_PORTS: u32 = 4;
 pub const EXECLIST_SEMAPHORES: u32 = 5;
+/// The two task numbers are refused: a task is on the lists of the core
+/// that owns it, which `LockCoreTasks` answers. The numbers stay where
+/// they are so that the ones after them keep their values.
 pub const EXECLIST_TASK_READY: u32 = 6;
 pub const EXECLIST_TASK_WAIT: u32 = 7;
 pub const EXECLIST_MEM_HANDLERS: u32 = 8;
@@ -137,6 +143,7 @@ pub const IntServerFn = interrupts.IntServerFn;
 pub const SoftIntFn = interrupts.SoftIntFn;
 
 pub const Task = tasks.Task;
+pub const CoreTasks = tasks.CoreTasks;
 pub const TaskState = tasks.TaskState;
 pub const TaskFn = tasks.TaskFn;
 pub const TaskEndFn = tasks.TaskEndFn;
@@ -152,16 +159,7 @@ pub const TF_SWITCH = tasks.TF_SWITCH;
 pub const TF_LAUNCH = tasks.TF_LAUNCH;
 pub const TF_GUARDED = tasks.TF_GUARDED;
 pub const TF_WIDEGUARD = tasks.TF_WIDEGUARD;
-pub const TB_CORE0 = tasks.TB_CORE0;
-pub const TB_CORE1 = tasks.TB_CORE1;
-pub const TB_CORE2 = tasks.TB_CORE2;
-pub const TB_CORE3 = tasks.TB_CORE3;
-pub const TF_CORE0 = tasks.TF_CORE0;
-pub const TF_CORE1 = tasks.TF_CORE1;
-pub const TF_CORE2 = tasks.TF_CORE2;
-pub const TF_CORE3 = tasks.TF_CORE3;
-pub const TF_CORES = tasks.TF_CORES;
-pub const coreFlag = tasks.coreFlag;
+pub const ANY_CORE = tasks.ANY_CORE;
 pub const CoreTimes = tasks.CoreTimes;
 pub const SIGF_ABORT = tasks.SIGF_ABORT;
 pub const SIGF_CHILD = tasks.SIGF_CHILD;

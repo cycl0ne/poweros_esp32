@@ -35,7 +35,7 @@ const uart = sdk.hardware.uart;
 /// input.
 const usbjtag = switch (sdk.hardware.chip) {
     .esp32s3, .esp32p4 => @import("usbjtag.zig"),
-    .rv64sbi, .a64psci => no_usbjtag,
+    .rv64sbi, .a64psci, .x64uefi => no_usbjtag,
 };
 const no_usbjtag = struct {
     pub const source: u32 = 0;
@@ -43,6 +43,9 @@ const no_usbjtag = struct {
     pub fn flush() void {}
     pub fn read() ?u8 {
         return null;
+    }
+    pub fn present() bool {
+        return false;
     }
     pub fn enableRx() void {}
     pub fn disableRx() void {}
@@ -109,6 +112,12 @@ pub const Port = enum(u32) {
 
     fn read(port: Port) ?u8 {
         return if (port.uartPort()) |p| uart.read(p) else usbjtag.read();
+    }
+
+    /// Whether anything answers at the port. A board's list says where a
+    /// UART is, not that the machine has one.
+    fn present(port: Port) bool {
+        return if (port.uartPort()) |p| uart.present(p) else usbjtag.present();
     }
 
     /// What the port's receive interrupt raised (cleared), or null.
@@ -212,6 +221,9 @@ pub const SerialBase = extern struct {
     /// SysBase, to call exec through its jump table.
     sys_base: *ExecBase,
     unit_count: u32,
+    /// The units whose UART does not answer, by number: a machine whose
+    /// tables name a port it has not got has one, and it is not opened.
+    absent: u32 = 0,
 };
 
 const units_offset = std.mem.alignForward(usize, @sizeOf(SerialBase), @alignOf(PortUnit));
@@ -237,8 +249,17 @@ pub fn initDevice(dev: *exec.Device, sys_base: *ExecBase, ports: []const Port) v
     const sb = serialBase(dev);
     sb.sys_base = sys_base;
     sb.unit_count = @intCast(ports.len);
-    for (unitsOf(sb), ports) |*pu, port| {
+    sb.absent = 0;
+    for (unitsOf(sb), ports, 0..) |*pu, port, number| {
         pu.serial.init(sys_base, dev.node.name.?, .{ .port = port }, serialunit.defaultParams(uart.default_baud));
+        // A port the machine has not got is left alone and cannot be
+        // opened: what is read from it is all ones, which is a byte
+        // waiting that never runs out.
+        if (!port.present()) {
+            sb.absent |= @as(u32, 1) << @intCast(number);
+            sdk.exec.kprintf(sys_base, "%s: unit %ld: nothing answers at its port\n", .{ dev.node.name.?, @as(i64, @intCast(number)) });
+            continue;
+        }
         // Inside Disable: the bus clock and reset are SYSTEM's registers,
         // shared with the other core's drivers.
         sys_base.Disable();
@@ -248,7 +269,12 @@ pub fn initDevice(dev: *exec.Device, sys_base: *ExecBase, ports: []const Port) v
         // The receive interrupt stays off until its server is in place: one
         // raised before its source is routed is lost.
         port.disableRx();
-        while (port.read()) |_| {}
+        // A FIFO is sixteen deep: more than this and what is read is not
+        // the port's.
+        var left: u32 = 64;
+        while (left > 0) : (left -= 1) {
+            if (port.read() == null) break;
+        }
         pu.int = .{
             .node = .{ .type = .interrupt, .name = dev.node.name },
             .data = pu,
@@ -335,6 +361,7 @@ fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) ca
     _ = flags;
     const sb = serialBase(dev);
     if (unit_number >= sb.unit_count) return exec.IOERR_OPENFAIL;
+    if (sb.absent & (@as(u32, 1) << @intCast(unit_number)) != 0) return exec.IOERR_OPENFAIL;
     const pu = &unitsOf(sb)[unit_number];
     const first = pu.serial.unit.open_cnt == 0;
     if (first and !takePads(sb, &pu.serial.line)) return types.SerErr_DevBusy;

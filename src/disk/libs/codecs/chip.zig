@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
-//! chip.vcodec: a codec module in LIBS:codecs/ - H.264 and H.265 decoded
-//! by the board's chip, through videodec.resource. On a board without one
-//! it opens no decoder (VCERR_NOCODEC), and videocodec.library tries the
-//! next module.
+//! chip.vcodec: a codec module in LIBS:codecs/ - H.264, H.265 and VP9
+//! decoded by the board's chip, through videodec.resource. On a board
+//! without one, or whose chip has not the codec, it opens no decoder
+//! (VCERR_NOCODEC), and videocodec.library tries the next module.
 //!
 //! The ROM tag is chip/chip_init.zig, the decoder chip/_chip.zig (the
 //! container's packets turned into Annex B by chip/annexb.zig), the base,

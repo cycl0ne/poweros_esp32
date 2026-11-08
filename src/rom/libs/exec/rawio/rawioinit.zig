@@ -53,7 +53,8 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// ```zig
 /// sys.RawIOInit();
 /// ```
-pub fn RawIOInit(_: *ExecBase) void {
+pub fn RawIOInit(base: *ExecBase) void {
+    _rawio.owner = base;
     _rawio.raw_io_hardware.init();
     _rawio.raw_ready = true;
 }

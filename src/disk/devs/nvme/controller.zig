@@ -61,6 +61,11 @@ pub fn findAll(base: *NvmeBase) void {
     while (it) |function| : (it = pb.FindPCIClass(function, pci.PCI_CLASS_STORAGE_NVME, pci.PCI_CLASS_MASK)) {
         if (base.controller_count == _nvme.max_controllers) break;
         const number: u8 = @intCast(base.controller_count);
+        exec.klog(sys, exec.LOG_DEBUG, "%s: controller %ld: %04lx:%04lx at %ld.%ld.%ld\n", .{
+            _nvme.DEVICE_NAME,                 @as(i64, number),           @as(i64, function.vendor_id),
+            @as(i64, function.device_id),      @as(i64, function.bus),     @as(i64, function.device),
+            @as(i64, function.function),
+        });
         if (pb.ClaimPCIDevice(function, _nvme.DEVICE_NAME)) |holder| {
             sdk.exec.kprintf(sys, "%s: controller %ld: its PCI function is %s's\n", .{ _nvme.DEVICE_NAME, @as(i64, number), holder });
             continue;
@@ -139,6 +144,7 @@ pub fn start(c: *Controller, first: bool) bool {
         return false;
     }
     c.regs = @intCast(bar.address);
+    exec.klog(sys, exec.LOG_DEBUG, "%s: controller %ld: registers at 0x%lx\n", .{ _nvme.DEVICE_NAME, @as(i64, c.number), bar.address });
     const cap = _nvme.read64(c, regs.CAP);
     if (cap == std.math.maxInt(u64)) return false;
     if (!regs.speaksNvm(cap) or regs.minPageShift(cap) != 0) {
@@ -150,15 +156,22 @@ pub fn start(c: *Controller, first: bool) bool {
     const most = regs.maxEntries(cap);
 
     if (!stop(c)) return false;
+    exec.klog(sys, exec.LOG_DEBUG, "%s: controller %ld: stopped; %d ms allowed\n", .{ _nvme.DEVICE_NAME, @as(i64, c.number), c.ready_ms });
     reset(c, &c.admin, 0, _nvme.admin_entries);
     _nvme.reg(c, regs.AQA).* = (@as(u32, _nvme.admin_entries - 1) << 16) | (_nvme.admin_entries - 1);
     _nvme.write64(c, regs.ASQ, @intFromPtr(c.admin.commands));
     _nvme.write64(c, regs.ACQ, @intFromPtr(c.admin.completions));
     _nvme.reg(c, regs.CC).* = regs.CC_EN | regs.CC_IOSQES | regs.CC_IOCQES;
     if (!waitStatus(c, regs.CSTS_RDY, regs.CSTS_RDY)) return false;
+    exec.klog(sys, exec.LOG_DEBUG, "%s: controller %ld: ready, its admin queues taken\n", .{ _nvme.DEVICE_NAME, @as(i64, c.number) });
 
     if (first) hook(c);
     if (c.signalling == .polled) _nvme.reg(c, regs.INTMS).* = 0xFFFF_FFFF;
+    exec.klog(sys, exec.LOG_DEBUG, "%s: controller %ld: signals %s\n", .{ _nvme.DEVICE_NAME, @as(i64, c.number), @as([*:0]const u8, switch (c.signalling) {
+        .vector => "on a vector of its own",
+        .intx => "on its INTx line",
+        .polled => "not at all: polled",
+    }) });
 
     if (!identify(c, regs.CNS_CONTROLLER, 0)) return false;
     const info = regs.ControllerInfo.of(c.identify[0..4096]);
@@ -197,6 +210,7 @@ pub fn start(c: *Controller, first: bool) bool {
         .cdw11 = (1 << 16) | regs.QUEUE_CONTIGUOUS,
     }) == null) return false;
     for (&c.slots) |*slot| slot.busy = false;
+    exec.klog(sys, exec.LOG_DEBUG, "%s: controller %ld: its I/O queues are made\n", .{ _nvme.DEVICE_NAME, @as(i64, c.number) });
     return true;
 }
 
@@ -428,6 +442,7 @@ pub fn pause(base: *NvmeBase, us: u32) void {
 /// IDs, where the controller lists them, and the first eight IDs where it
 /// cannot.
 fn findNamespaces(base: *NvmeBase, c: *Controller) void {
+    exec.klog(base.sys_base, exec.LOG_DEBUG, "%s: controller %ld: its namespaces\n", .{ _nvme.DEVICE_NAME, @as(i64, c.number) });
     var ids: [_nvme.max_units]u32 = @splat(0);
     var count: usize = 0;
     if (identify(c, regs.CNS_ACTIVE_NAMESPACES, 0)) {

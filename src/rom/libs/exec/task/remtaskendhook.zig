@@ -2,6 +2,8 @@
 //! RemTaskEndHook: a hook taken off its task before it runs.
 
 const sdk = @import("sdk");
+const _task = @import("_task.zig");
+
 const ExecBase = @import("../exec.zig").ExecBase;
 const TaskEndHook = sdk.exec.TaskEndHook;
 
@@ -29,7 +31,7 @@ const TaskEndHook = sdk.exec.TaskEndHook;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Locks: takes Disable, which the hooks are kept under.
+/// - Locks: takes the task lists' lock, which the hooks are kept under.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -52,8 +54,8 @@ const TaskEndHook = sdk.exec.TaskEndHook;
 /// ```
 pub fn RemTaskEndHook(base: *ExecBase, hook: *TaskEndHook) void {
     const sys = base.iface();
-    sys.Disable();
-    defer sys.Enable();
+    _task.lockTaskLists(base);
+    defer _task.unlockTaskLists(base);
     if (hook.task == null) return;
     sys.Remove(@ptrCast(&hook.node));
     hook.task = null;

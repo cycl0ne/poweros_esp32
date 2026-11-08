@@ -24,9 +24,9 @@ const ExecBase = @import("../exec.zig").ExecBase;
 ///
 /// BEHAVIOR:
 /// The lock is the list's own (`LockExecList` lists them): its semaphore is
-/// released, its spinlock let go - and a switch that came due meanwhile
-/// taken - or the Disable ended. A number exec has no list for does
-/// nothing, as `LockExecList` took nothing for it.
+/// released, or its spinlock let go, and a switch that came due meanwhile
+/// taken. A number exec has no list for
+/// does nothing, as `LockExecList` took nothing for it.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -62,6 +62,5 @@ pub fn UnlockExecList(base: *ExecBase, which: u32) void {
         .memory => sys.ReleaseLock(&base.lock_memory),
         .ports => sys.ReleaseLock(&base.lock_ports),
         .semaphores => sys.ReleaseLock(&base.lock_semaphores),
-        .tasks => sys.Enable(),
     }
 }

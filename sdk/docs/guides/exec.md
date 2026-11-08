@@ -328,7 +328,8 @@ priorities take turns, four ticks each. A program normally runs at 0, and
 the system's own tasks above it - input at 20, motion.library's clock at
 10 - so a program that never waits starves everything below it and
 nothing above it. `SetTaskPri` changes a priority and answers the old
-one. Every core takes tasks from one ready list, so tasks do run at
+one. Each core has ready and waiting lists of its own and takes work
+from another core's when it has none worth running, so tasks do run at
 once; [Several cores](programs.md#several-cores) has what that changes.
 
 **Starting one.** `CreateTask(name, pri, code, stack_size)` allocates the
@@ -681,7 +682,7 @@ the rules exec checks and the lock order are in
 | `ReadLog`, `SetLogSignal`, `LogControl` | the system log: [The system log](programs.md#the-system-log) |
 | `Alert`, `AlertAt`, `Debug`, `MemDebug` | a Guru, the ROM debugger and memory debugging: [Debugging](debugging.md), [When a check fails](programs.md#when-a-check-fails), [When it stops](programs.md#when-it-stops) |
 | `LockExecList`, `UnlockExecList` | exec's own lists, read under their lock |
-| `SetTaskAffinity`, `CoreTask`, `ReadCoreTimes` | tasks and cores: [Several cores](programs.md#several-cores) |
+| `SetTaskAffinity`, `CoreTask`, `ReadCoreTimes`, `CoreCount` | tasks and cores: [Several cores](programs.md#several-cores) |
 | `ShareWork`, `PostWork` | a job in parts on every core, a job beside its poster: [Work on more cores](cores.md) |
 | `SetTaskEndMsg`, `AddTaskEndHook`, `RemTaskEndHook` | told when a task has ended; a library letting go of what it holds for a task - run before the task's private memory is freed, after its semaphores are let go |
 | `NewStackRun` | a function run on a bigger stack of its own, and back |

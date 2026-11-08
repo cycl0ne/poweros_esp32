@@ -778,9 +778,11 @@ would otherwise tell the program that one of its writes came back.
 
 The device plays through an **output** of rta.library, the ROM's list of
 the machine's sound outputs and ways in, and the drivers behind them. A driver makes
-its outputs - sinks - at its own cold start, from the parts the board's
-system list names (expansion.library's `FindBoardPart`): one for each
-part it can drive. audio.device takes the first sink on the list when it
+its outputs - sinks - at its own cold start, one for each part it can
+drive: from the parts the board's system list names
+(expansion.library's `FindBoardPart`), or, for a part on a bus that says
+what is on it, from the bus - `hda` finds its controllers on PCI by their
+class and reads each codec for the ways out it has. audio.device takes the first sink on the list when it
 is first opened and starts it; it reads only the sink's mode - its rate,
 whether one side or two is heard, which half of a frame is which - and
 its ring of buffers. No name of a part or a chip is in the device.
@@ -791,6 +793,7 @@ its ring of buffers. No name of a part or a chip is in the device.
 | `es8311` | sink, source | the ES8311 codec, set up over i2c.device, on a line of its own; its amplifier's enable pad; where the board wires its data out, its microphone input as a source on the same line |
 | `i2samp` | sink | an amplifier that takes I2S itself - the CrowPanel's pair, one part with two sides - on a line of its own |
 | `hdmi` | sink | the VisionFive 2's HDMI port: the JH7110's I2STX0 into the HDMI transmitter, a line inside the chip that the sink drives itself, fed by a channel of the DesignWare DMA controller that dma.resource hands out; 48000 Hz stereo, once the display driver has the picture up |
+| `hda` | sink | a machine's high definition audio controllers, found on PCI by their class: each codec read for its converters, its pins and what is between them, and a sink for every pin that leaves the chip - named and ordered by what the pin is for, so the speakers come before a jack and a jack before a display link. The stream is the controller's own ring of buffers with an interrupt at the end of each; the volume is the output's own amplifier, as far as its steps reach. A display link is asked what is at the far end of it - the monitor's name, the channels and rates it takes - and told what is coming: its converter switched on as a digital one, which passes nothing until it is, which channel each of the link's slots carries, and the packet a link carries that in. The codec in front of an AMD display engine is told the same through that vendor's own verbs - every slot that carries a channel switched on, one at a time on the codecs that take them so, and the speakers the packet names - and the engine builds the packet itself. A socket with nothing in it says there is no output, so the machine plays through the next one instead. What such a pin answers is not the codec's to say but the display engine's: on a machine running on the picture its firmware lit, nothing has switched that link's audio side on, and the pin rightly answers that there is nothing at the far end. The display driver is what switches it on - `rtg_driver/fbboard/dcn.zig` does it for the engine it finds behind a firmware's framebuffer |
 | `null` | sink, source | a stream into nothing, kept in time by timer.device's E-clock: the emulators' output, at the bottom of the list; and a source that hears what it played, two buffers late |
 | `file` | sink | a WAV file, written in time as a speaker would play it; none until a program makes one (below) |
 | `uac` | sink | a USB speaker, headset or sound adapter of the audio class, made as it is plugged in and deleted as it goes (`DEVS:usb/uac.device`) |

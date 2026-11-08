@@ -46,7 +46,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Status";
-const VERSION_STRING = "\x00$VER: Status 1.0 (27.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Status 1.1 (04.11.2026)\r\n";
 
 const template = "PROCESS/N,FULL/S,TCB/S,CLI=ALL/S,COM=COMMAND/K";
 const arg_process = 0;
@@ -153,9 +153,14 @@ fn runs(ub: *UtilityBase, dl: *DosBase, command: [*:0]const u8, name: [*:0]const
 /// if it is still there. False when it has ended.
 fn readIfThere(sys: *ExecBase, proc: *dos.Process, seen: *Seen) bool {
     seen.command[0] = 0;
-    sys.Disable();
-    defer sys.Enable();
-    if (!isThere(sys, &proc.task)) return false;
+    // Each core's tasks under that core's lock, one core at a time:
+    // what is read is read while the core the task was found on is held.
+    var core: u32 = 0;
+    const found = while (sys.LockCoreTasks(core)) |tasks| : (core += 1) {
+        defer sys.UnlockCoreTasks(core);
+        if (onCore(sys, tasks, core, &proc.task)) break true;
+    } else false;
+    if (!found) return false;
     seen.pri = proc.task.node.pri;
     const cli = proc.cli orelse return true;
     seen.stack = cli.default_stack;
@@ -166,16 +171,11 @@ fn readIfThere(sys: *ExecBase, proc: *dos.Process, seen: *Seen) bool {
     return true;
 }
 
-/// Whether `task` is there, asked under Disable: running on a core or on
-/// one of exec's task queues.
-fn isThere(sys: *ExecBase, task: *exec.Task) bool {
-    var core: u32 = 0;
-    while (sys.CoreTask(core)) |running| : (core += 1) {
-        if (running == task) return true;
-    }
-    for ([_]u32{ exec.EXECLIST_TASK_READY, exec.EXECLIST_TASK_WAIT }) |which| {
-        const list = sys.LockExecList(which) orelse continue;
-        defer sys.UnlockExecList(which);
+/// Whether `task` is core `core`'s, asked with that core's lock held:
+/// running there, ready there or waiting there.
+fn onCore(sys: *ExecBase, tasks: *exec.CoreTasks, core: u32, task: *exec.Task) bool {
+    if (sys.CoreTask(core) == task) return true;
+    for ([_]*exec.List{ &tasks.ready, &tasks.wait }) |list| {
         var it = list.iterator();
         while (it.next()) |node| {
             if (node == &task.node) return true;

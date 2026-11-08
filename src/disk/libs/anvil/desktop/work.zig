@@ -64,7 +64,7 @@ const chunk = 32768;
 /// up to 1 MiB where memory is plenty, so a big file costs a read a MiB -
 /// a network share answers a read in one round trip, and a disk writes
 /// it in one go.
-const chunk_most: u32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 1 << 20 else chunk;
+const chunk_most: u32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci or sdk.hardware.chip == .x64uefi) 1 << 20 else chunk;
 /// What one CopyFH asks a file's handler for: as much as a share's
 /// server copies at once, so the window moves and Stop is seen between.
 const handler_piece: i64 = 16 << 20;

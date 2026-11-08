@@ -15,3 +15,5 @@ pub const battclock = @import("battclock.zig");
 pub const battmem = @import("battmem.zig");
 pub const battmembits = @import("battmembits.zig");
 pub const thermal = @import("thermal.zig");
+pub const power = @import("power.zig");
+pub const amdgpu = @import("amdgpu.zig");

@@ -1,25 +1,30 @@
 // SPDX-License-Identifier: MIT
-//! hevc.vcodec's decoder: H.265 decoded in software by the decoder built
-//! in as `hevccore` (core.zig here), which takes the stream unit by unit
-//! and gives its pictures out in the order they are shown.
+//! hevc.vcodec's decoder: H.265 read by videoparse.library and decoded in
+//! software by the decoder built in as `hevccore` (core.zig here), which
+//! takes the library's events and gives its pictures out in the order the
+//! library says they are shown.
 //!
 //! **The setup** - an MP4's hvcC, which a Matroska track's CodecPrivate
-//! is as well - says how many bytes each unit's length takes in the
-//! packets, and holds the parameter sets, which the decoder is given when
-//! it opens. A track without a setup has its packets in Annex B form, the
-//! parameter sets among them.
+//! is as well - goes to the library's parser when the decoder opens: it
+//! says how many bytes each unit's length takes in the packets, and holds
+//! the parameter sets. A track without a setup has its packets in Annex B
+//! form, the parameter sets among them.
 //!
-//! **A packet sent** is decoded at once, each of its units in turn; the
-//! pictures it finishes wait in the decoder until they are asked for, and
-//! while one waits another packet is refused (VCERR_FULL). A packet of
-//! units after their lengths - an MP4's, a Matroska track's - is an
-//! access unit, whose picture is whole at its end. A unit that is not
-//! right is passed over: the decoder makes up what it lacked. The end of
-//! the track hands out the pictures held back. Of a stream in layers the
-//! base layer is decoded. A picture handed out takes the earliest time of
-//! those decoded and not yet shown, as the chip's decoder gives them: the
-//! times rise even where the container wrote each packet's decoding time
-//! (an MP4 without composition offsets).
+//! **A packet sent** is copied and handed to the parser, and its events
+//! are decoded at once; the pictures it finishes wait in the decoder until
+//! they are asked for, and while one waits another packet is refused
+//! (VCERR_FULL). A packet of units after their lengths - an MP4's, a
+//! Matroska track's - is an access unit, whose picture is whole at its
+//! end. A unit that is not right is passed over: the decoder makes up
+//! what it lacked. Where the parser has no slot left for a picture - the
+//! pictures waiting to be shown hold them - the rest of the packet is
+//! read once a frame was taken. The end of the track hands out the
+//! pictures held back. Of a stream in layers the base layer is decoded.
+//! Pictures as large as level 6.2 allows are taken. A picture handed out
+//! takes the earliest time of those decoded and not yet shown, as the
+//! chip's decoder gives them: the times rise even where the container
+//! wrote each packet's decoding time (an MP4 without composition
+//! offsets).
 //!
 //! **The cores**: with more than one, the decoder has a worker task on
 //! each, a step below the caller's priority - which gets a core at once
@@ -51,7 +56,10 @@ const exec = sdk.exec;
 const rtg = sdk.rtg;
 const vc = sdk.videocodec;
 const vcodec = sdk.vcodec;
+const vp = sdk.videoparse;
+const utility = sdk.utility;
 const ExecBase = sdk.interface.exec.ExecBase;
+const VideoParseBase = sdk.interface.videoparse.VideoParseBase;
 const hevc = @import("hevccore");
 const module = @import("../module.zig");
 const Base = module.Base;
@@ -66,6 +74,9 @@ const plane_alignment = 16;
 /// What a frame's `private[1]` holds, so a frame that is not one of this
 /// decoder's is passed by: "H265".
 const frame_mark: u32 = 0x4832_3635;
+
+/// The largest picture taken, across and down: level 6.2's.
+const max_size = 16888;
 
 /// The workers, on every core.
 const Team = module.Team(hevc.Cores);
@@ -116,9 +127,16 @@ const Planes = struct {
 const Decoder = struct {
     sys: *ExecBase,
     core: *hevc.Decoder,
-    /// How many bytes each unit's length takes in the packets; 0 for
-    /// Annex B.
-    length_size: u8 = 4,
+    vpb: *VideoParseBase,
+    parser: *vp.VideoParser,
+    /// The packets have their units after their lengths (an hvcC came):
+    /// each is an access unit.
+    sized: bool = false,
+    /// The packet being read, copied: the parser reads it on once a frame
+    /// was taken where it ran out of slots (`reading`).
+    packet: ?[*]u8 = null,
+    packet_room: usize = 0,
+    reading: bool = false,
     /// The frames lent out, by slot, and their planes.
     held: u32,
     lent: [vcodec.VCODEC_MOST_HELD]bool = @splat(false),
@@ -185,21 +203,38 @@ pub fn OpenVCodec(base: *Base, params: *const vcodec.VCodecParams, err: ?*i32) ?
 fn open(sys: *ExecBase, params: *const vcodec.VCodecParams, code: *i32) ?*vcodec.VCodecDecoder {
     if (params.codec != vc.VCODEC_H265) return failed(code, vc.VCERR_NOCODEC);
     if (params.held == 0 or params.held > vcodec.VCODEC_MOST_HELD) return failed(code, vc.VCERR_UNSUPPORTED);
-    const memory = sys.AllocVec(@sizeOf(Decoder), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return failed(code, vc.VCERR_NOMEMORY);
-    const m: *Decoder = @ptrCast(@alignCast(memory));
-    const env: hevc.Env = .{ .ctx = @ptrCast(sys), .alloc = Memory.alloc, .free = Memory.free };
-    const core = hevc.Decoder.create(env, .{}) orelse {
-        sys.FreeVec(m);
+    const lib = sys.OpenLibrary(vp.VIDEOPARSENAME, 1) orelse return failed(code, vc.VCERR_NOCODEC);
+    const vpb: *VideoParseBase = @ptrCast(lib);
+    const config = if (params.config_size != 0) params.config else null;
+    const tags = [_]utility.TagItem{
+        .{ .tag = vp.VPA_Slots, .data = hevc.own_slots },
+        .{ .tag = vp.VPA_MaxWidth, .data = max_size },
+        .{ .tag = vp.VPA_MaxHeight, .data = max_size },
+        .{},
+    };
+    var why: i32 = vp.VPERR_OK;
+    const parser = vpb.OpenVideoParser(vp.VPCODEC_HEVC, config, params.config_size, &tags, &why) orelse {
+        sys.CloseLibrary(lib);
+        return failed(code, switch (why) {
+            vp.VPERR_NOMEMORY => vc.VCERR_NOMEMORY,
+            vp.VPERR_UNSUPPORTED => vc.VCERR_UNSUPPORTED,
+            else => vc.VCERR_CORRUPT,
+        });
+    };
+    const memory = sys.AllocVec(@sizeOf(Decoder), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+        vpb.CloseVideoParser(parser);
+        sys.CloseLibrary(lib);
         return failed(code, vc.VCERR_NOMEMORY);
     };
-    m.* = .{ .sys = sys, .core = core, .held = params.held };
-    if (params.config != null and params.config_size != 0) {
-        m.length_size = setup(m, params.config.?[0..params.config_size]) orelse {
-            core.destroy();
-            sys.FreeVec(m);
-            return failed(code, vc.VCERR_CORRUPT);
-        };
-    } else m.length_size = 0;
+    const m: *Decoder = @ptrCast(@alignCast(memory));
+    const env: hevc.Env = .{ .ctx = @ptrCast(sys), .alloc = Memory.alloc, .free = Memory.free };
+    const core = hevc.Decoder.create(env) orelse {
+        sys.FreeVec(m);
+        vpb.CloseVideoParser(parser);
+        sys.CloseLibrary(lib);
+        return failed(code, vc.VCERR_NOMEMORY);
+    };
+    m.* = .{ .sys = sys, .core = core, .vpb = vpb, .parser = parser, .sized = config != null, .held = params.held };
     m.team.start(sys, "hevc.vcodec worker");
     if (m.team.count != 0) core.useCores(&m.team.cores);
     return @ptrCast(m);
@@ -210,19 +245,6 @@ fn failed(code: *i32, why: i32) ?*vcodec.VCodecDecoder {
     return null;
 }
 
-/// An hvcC record (ISO 14496-15 8.3.3) read: its parameter sets and SEI
-/// given to the decoder, and how many bytes each unit's length takes.
-/// Null for a record that is not one.
-fn setup(m: *Decoder, config: []const u8) ?u8 {
-    const record = hevc.nal.HevcConfig.parse(config) catch return null;
-    var units = record.units();
-    while (units.next() catch return null) |unit| {
-        // One the decoder cannot read leaves it to the stream's own.
-        m.core.decodeUnit(unit, 0) catch {};
-    }
-    return record.length_size;
-}
-
 /// The decoder freed, the planes of the frames still lent too.
 pub fn CloseVCodec(_: *Base, decoder: ?*vcodec.VCodecDecoder) void {
     const m = of(decoder orelse return);
@@ -230,57 +252,72 @@ pub fn CloseVCodec(_: *Base, decoder: ?*vcodec.VCodecDecoder) void {
     // The workers finish what they decode before they end.
     m.core.destroy();
     m.team.stop();
+    m.vpb.CloseVideoParser(m.parser);
+    sys.CloseLibrary(m.vpb.lib());
     for (&m.planes) |*planes| sys.FreeVec(planes.memory);
+    sys.FreeVec(m.packet);
     sys.FreeVec(m);
 }
 
-/// A packet's units decoded; the end of the track hands out the pictures
-/// held back.
+/// A packet copied, handed to the parser and its events decoded; the
+/// end of the track hands out the pictures held back.
 pub fn SendVCodecPacket(_: *Base, decoder: *vcodec.VCodecDecoder, packet: *const vcodec.VCodecPacket) i32 {
     const m = of(decoder);
-    if (m.core.next() != null) return vc.VCERR_FULL;
+    if (m.reading or m.core.next() != null) return vc.VCERR_FULL;
+    var given: vp.VideoPacket = .{ .time = packet.time };
     if (packet.flags & vcodec.VCPKT_END != 0) {
-        m.core.flush();
+        given.flags = vp.VPPKT_END;
         m.ended = true;
-        return vc.VCERR_OK;
-    }
-    const data = packet.data orelse return vc.VCERR_CORRUPT;
-    const bytes = data[0..packet.size];
-    if (m.length_size == 0) {
-        var units = hevc.nal.AnnexB{ .data = bytes };
-        while (units.next()) |unit| {
-            const fed = feed(m, unit, packet.time);
-            if (fed != vc.VCERR_OK) return fed;
+    } else {
+        const data = packet.data orelse return vc.VCERR_CORRUPT;
+        if (m.packet_room < packet.size) {
+            m.sys.FreeVec(m.packet);
+            m.packet = null;
+            m.packet_room = 0;
+            m.packet = @ptrCast(m.sys.AllocVec(packet.size, exec.MEMF_ANY) orelse return vc.VCERR_NOMEMORY);
+            m.packet_room = packet.size;
         }
-        return vc.VCERR_OK;
+        m.sys.CopyMem(data, m.packet.?, packet.size);
+        given.data = m.packet;
+        given.bytes = packet.size;
+        // A packet with lengths is an access unit: its picture is whole.
+        if (m.sized) given.flags = vp.VPPKT_ACCESS_UNIT;
     }
-    const size = m.length_size;
-    var at: usize = 0;
-    while (at < bytes.len) {
-        if (size > bytes.len - at) return vc.VCERR_CORRUPT;
-        var length: usize = 0;
-        for (bytes[at..][0..size]) |byte| length = (length << 8) | byte;
-        at += size;
-        if (length > bytes.len - at) return vc.VCERR_CORRUPT;
-        const fed = feed(m, bytes[at..][0..length], packet.time);
-        if (fed != vc.VCERR_OK) return fed;
-        at += length;
-    }
-    // A packet with lengths is an access unit: its picture is whole.
-    m.core.endPicture();
-    return vc.VCERR_OK;
+    if (m.vpb.ParseVideoPacket(m.parser, &given) != vp.VPERR_OK) return vc.VCERR_FULL;
+    m.reading = true;
+    return read(m);
 }
 
-/// One unit decoded. One that is not right is passed over; one the
-/// decoder cannot decode refuses the track before its first frame, so
-/// that another module may take it.
-fn feed(m: *Decoder, unit: []const u8, time: i64) i32 {
-    m.core.decodeUnit(unit, time) catch |failure| return switch (failure) {
-        error.NoMemory => vc.VCERR_NOMEMORY,
-        error.Unsupported => if (m.started) vc.VCERR_OK else vc.VCERR_UNSUPPORTED,
-        else => vc.VCERR_OK,
-    };
-    return vc.VCERR_OK;
+/// The packet's events decoded, until it is read through or the parser
+/// waits for a slot the pictures waiting to be shown hold. A unit that is
+/// not right is passed over; one the decoder cannot decode refuses the
+/// track before its first frame, so that another module may take it.
+fn read(m: *Decoder) i32 {
+    var event: vp.VideoEvent = .{};
+    while (true) {
+        while (m.core.giveBack()) |slot| m.vpb.ReleaseVideoSlot(m.parser, slot);
+        switch (m.vpb.NextVideoEvent(m.parser, &event)) {
+            vp.VPERR_OK => m.core.event(&event) catch |failure| switch (failure) {
+                error.NoMemory => return vc.VCERR_NOMEMORY,
+                error.Unsupported => if (!m.started) return vc.VCERR_UNSUPPORTED,
+                else => {},
+            },
+            vp.VPERR_NEED_DATA => {
+                m.reading = false;
+                return vc.VCERR_OK;
+            },
+            vp.VPERR_END => {
+                m.reading = false;
+                m.core.endOfStream();
+                return vc.VCERR_OK;
+            },
+            // The workers' stores first; then the pictures waiting.
+            vp.VPERR_FULL => if (!m.core.makeRoom()) return vc.VCERR_OK,
+            vp.VPERR_UNSUPPORTED => if (!m.started) return vc.VCERR_UNSUPPORTED,
+            vp.VPERR_NOMEMORY => return vc.VCERR_NOMEMORY,
+            else => {},
+        }
+    }
 }
 
 /// The next picture to be shown copied into a free slot's planes and
@@ -288,8 +325,15 @@ fn feed(m: *Decoder, unit: []const u8, time: i64) i32 {
 pub fn ReceiveVCodecFrame(_: *Base, decoder: *vcodec.VCodecDecoder, frame: *vc.VideoFrame) i32 {
     const m = of(decoder);
     const slot = module.freeSlot(&m.lent, m.held) orelse return vc.VCERR_BUSY;
-    const picture = m.core.next() orelse return if (m.ended) vc.VCERR_END else vc.VCERR_NEED_DATA;
-    const made = copyOut(m, picture, frame, slot);
+    var picture = m.core.next();
+    if (picture == null and m.reading) {
+        // The rest of the packet, now that a frame was taken.
+        const got = read(m);
+        if (got != vc.VCERR_OK) return got;
+        picture = m.core.next();
+    }
+    const shown = picture orelse return if (m.ended and !m.reading) vc.VCERR_END else vc.VCERR_NEED_DATA;
+    const made = copyOut(m, shown, frame, slot);
     m.core.release();
     if (made != vc.VCERR_OK) return made;
     m.lent[slot] = true;
@@ -310,7 +354,10 @@ pub fn ReleaseVCodecFrame(_: *Base, decoder: *vcodec.VCodecDecoder, frame: *vc.V
 /// starts again at the next random access picture.
 pub fn FlushVCodec(_: *Base, decoder: *vcodec.VCodecDecoder) void {
     const m = of(decoder);
+    m.vpb.ResetVideoParser(m.parser);
     m.core.reset();
+    while (m.core.giveBack()) |slot| m.vpb.ReleaseVideoSlot(m.parser, slot);
+    m.reading = false;
     m.ended = false;
 }
 

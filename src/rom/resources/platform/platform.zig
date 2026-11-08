@@ -9,10 +9,12 @@
 //! or open count, and the functions start in the first slot of the jump
 //! table (sdk/fd/platform_lib.fd).
 //!
-//! It owns no hardware and sets nothing up, so it only reads: every answer
-//! is taken when it is asked for, not at init. That matters, because the
-//! tag is RTF_SINGLETASK and runs before `timer.init` has measured
-//! anything.
+//! It owns no hardware and sets nothing up at init: every answer is taken
+//! when it is asked for. That matters, because the tag is RTF_SINGLETASK
+//! and runs before `timer.init` has measured anything. The one thing it
+//! changes is on request: SetMemoryType, a range of memory made uncached,
+//! write-combining or cached in the kernel's map, for a driver of a device
+//! that keeps memory of its own.
 //!
 //! GetPlatformInfo takes the size of the caller's structure and answers
 //! with how many bytes it wrote. A program on the flash disk outlives the
@@ -37,8 +39,8 @@ const PlatformInfo = types.PlatformInfo;
 
 pub const RESOURCE_NAME = types.PLATFORMNAME;
 const RESOURCE_VERSION = 1;
-const RESOURCE_REVISION = 1;
-const BUILD_DATE = "22.9.2026";
+const RESOURCE_REVISION = 2;
+const BUILD_DATE = "07.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
@@ -51,12 +53,14 @@ const CHIP_NAME = switch (sdk.hardware.chip) {
     .esp32p4 => "ESP32-P4",
     .rv64sbi => "RISC-V 64 under SBI",
     .a64psci => "AArch64 under PSCI",
+    .x64uefi => "x86-64 under UEFI",
 };
 const CORE_NAME = switch (sdk.hardware.chip) {
     .esp32s3 => "Xtensa LX7",
     .esp32p4 => "RISC-V RV32IMAFC",
     .rv64sbi => "RISC-V RV64GC",
     .a64psci => "ARMv8.2-A Cortex-A76",
+    .x64uefi => "x86-64-v2",
 };
 /// What the kernel was built with, as `Version` and `Platform` print it.
 const BUILT_WITH = "zig " ++ builtin.zig_version_string ++ ", " ++ @tagName(builtin.mode);
@@ -149,6 +153,103 @@ fn lvoTickRate(_: *PlatformBase) callconv(.c) u32 {
     return timer.tick_hz;
 }
 
+/// The kernel's map and the cores' hold, on the one chip whose map kinds
+/// are changed at run time.
+const x64 = struct {
+    const mmu = @import("../../../arch/x64uefi/mmu.zig");
+    const rendezvous = @import("../../../arch/x64uefi/rendezvous.zig");
+    const core = @import("../../../arch/x64uefi/cpu.zig");
+};
+
+/// A range of memory made uncached, write-combining or cached to the
+/// cores.
+///
+/// SYNOPSIS:
+/// ```zig
+/// fn SetMemoryType(pb: *PlatformBase, start: usize, length: usize,
+///     kind: u32) bool
+/// ```
+///
+/// SINCE: 1.2. LVO -20.
+///
+/// INPUTS:
+/// - `start` - where the range starts, as the CPU addresses it.
+/// - `length` - how many bytes.
+/// - `kind` - MEMTYPE_UNCACHED, every access reaching the machine on its
+///   own; MEMTYPE_GATHERED, writes gathered into bursts and reads as
+///   uncached; MEMTYPE_CACHED, as memory is.
+///
+/// RESULT:
+/// True once every core reaches the range as `kind`. False, and nothing
+/// changed, where `kind` is none of the three, the range is not mapped in
+/// blocks the kernel's map can mark - it lies across two gibibytes, or in
+/// the bottom 2 MiB or the kernel's code, or every gibibyte the map keeps
+/// for splitting is split already - and on a chip whose memory kinds are
+/// fixed, which every chip but x86-64 is.
+///
+/// BEHAVIOR:
+/// The range is taken out to whole 2 MiB blocks, so what shares a block
+/// with it changes too. The other cores are held while the map changes and
+/// each reloads its map as it is let go. A range that was cached and is
+/// not any more has its lines written back and dropped from every core's
+/// caches, so nothing of it is written over the memory later.
+///
+/// CONTEXT:
+/// - Waits: no; the other cores are held for a few microseconds.
+/// - Interrupts: no - this core's are masked meanwhile.
+/// - Locks: none.
+/// - Process: a Task will do.
+///
+/// OWNERSHIP:
+/// The range is the caller's to know: the kernel takes the kind it is
+/// asked for and checks nothing about what the memory holds. Nothing is
+/// allocated.
+///
+/// NOTES:
+/// For a device that keeps its own memory outside the cores' coherent
+/// view: gathered for the CPU writing it, cached for the CPU reading it -
+/// the caller then drops the lines around the device's use itself, since
+/// CachePreDMA and CachePostDMA do nothing on a machine whose devices
+/// otherwise see memory as the cores do. Memory the system hands out is
+/// cached already and stays so.
+///
+/// BUGS:
+/// A gibibyte once split stays split, and there are four tables to split
+/// with: the screen takes one.
+///
+/// SEE ALSO:
+/// `GetPlatformInfo`
+///
+/// EXAMPLES:
+/// ```zig
+/// if (!pb.SetMemoryType(piece, 2 * 1024 * 1024, platform.MEMTYPE_GATHERED)) {
+///     // stays uncached
+/// }
+/// ```
+pub fn SetMemoryType(_: *PlatformBase, start: usize, length: usize, kind: u32) bool {
+    if (comptime sdk.hardware.chip != .x64uefi) return false;
+    const wanted: x64.mmu.Kind = switch (kind) {
+        types.MEMTYPE_UNCACHED => .uncached,
+        types.MEMTYPE_GATHERED => .gathered,
+        types.MEMTYPE_CACHED => .cached,
+        else => return false,
+    };
+    if (length == 0 or start +% length < start) return false;
+    const range: x64.mmu.Range = .{ .start = start, .end = start + length };
+    const state = x64.core.disableInterrupts();
+    x64.rendezvous.holdOther();
+    const was_cached = x64.mmu.mark(range, wanted);
+    x64.rendezvous.releaseOther();
+    x64.core.restoreInterrupts(state);
+    const cached_before = was_cached orelse return false;
+    if (cached_before and wanted != .cached) x64.mmu.dropLines(range);
+    return true;
+}
+
+fn lvoSetMemoryType(pb: *PlatformBase, start: usize, length: usize, kind: u32) callconv(.c) bool {
+    return SetMemoryType(pb, start, length, kind);
+}
+
 /// exec has copied the tag's name, version and ID string into the base.
 fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Library {
     _ = seg_list;
@@ -163,6 +264,7 @@ const vectors = [_]*const anyopaque{
     vec(lvoPlatformName),
     vec(lvoCpuClock),
     vec(lvoTickRate),
+    vec(lvoSetMemoryType),
 };
 
 const init_table = exec.InitTable{

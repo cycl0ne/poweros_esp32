@@ -28,12 +28,16 @@ const process_pri = 5;
 /// INPUTS:
 /// - `bus` - which bus, from 0: the board's USB sockets that may be a
 ///   host (`PARTKIND_USB`, `USBROLE_HOST`), in the order its parts list
-///   them.
+///   them, and after them the xHCI controllers on PCI, in the order
+///   xhci.device numbers them.
 ///
 /// RESULT:
-/// 0 when the bus runs (or already did); `USBERR_NOBUS` if the board has
-/// no such bus, `USBERR_CONTROLLER` if its controller could not be
-/// opened, `USBERR_NOMEM` without memory or a process.
+/// 0 when the bus runs (or already did); `USBERR_NOBUS` if there is no
+/// such bus, `USBERR_CONTROLLER` if its controller could not be opened,
+/// `USBERR_NOMEM` without memory or a process.
+///
+/// There is no highest bus number: a machine has as many buses as it has
+/// controllers. `USBERR_NOBUS` is what a walk from 0 up stops on.
 ///
 /// BEHAVIOR:
 /// A process of the bus's own opens the controller and sets up its root
@@ -53,9 +57,15 @@ const process_pri = 5;
 /// The bus is the library's until StopUSB.
 ///
 /// NOTES:
-/// The buses are the board's `PARTKIND_USB` parts that may be hosts,
-/// each on the device that drives its chip (`CHIP_DWC2`:
-/// usbotg.device; `CHIP_XHCI`, `CHIP_DWC3`: xhci.device).
+/// A bus is a controller. The board's `PARTKIND_USB` parts that may be
+/// hosts are the first of them, each on the device that drives its chip
+/// (`CHIP_DWC2`: usbotg.device; `CHIP_XHCI`, `CHIP_DWC3`: xhci.device) -
+/// those are described because nothing can find a controller that is
+/// part of a chip. Every number past them is an xHCI controller on PCI,
+/// which is found instead: the sockets of a machine of that kind are in
+/// groups with a controller each, and how many there are is the
+/// machine's answer. A bus that is not started leaves its sockets dark,
+/// since a hub's ports are given their power when their bus starts.
 ///
 /// BUGS:
 /// None known.
@@ -69,10 +79,9 @@ const process_pri = 5;
 /// ```
 pub fn StartUSB(base: *UsbBase, bus: u32) i32 {
     const sys = base.sys_base;
-    if (bus >= usb.USB_MAX_BUSES) return usb.USBERR_NOBUS;
     sys.ObtainSemaphore(&base.bus_lock);
     defer sys.ReleaseSemaphore(&base.bus_lock);
-    if (base.buses[bus] != null) return 0;
+    if (_bus.busOf(base, bus) != null) return 0;
     if (!openHelpers(base)) return usb.USBERR_NOMEM;
     const controller = findController(base, bus) orelse return usb.USBERR_NOBUS;
 
@@ -108,9 +117,16 @@ pub fn StartUSB(base: *UsbBase, bus: u32) i32 {
     if (record.result != 0) {
         const result = record.result;
         sys.FreeMem(memory, @sizeOf(Bus));
+        // A controller that is not there is not a bus. The board's own
+        // parts are counted, so a number past them is a controller the
+        // bus was looked for on PCI and did not find: the answer that
+        // says there are no more buses, which is what a walk from 0 up
+        // stops on.
+        if (controller.found and result == usb.USBERR_CONTROLLER) return usb.USBERR_NOBUS;
         return result;
     }
-    base.buses[bus] = record;
+    record.next = @ptrCast(@alignCast(base.bus_list));
+    base.bus_list = record;
     return 0;
 }
 
@@ -132,11 +148,25 @@ fn openHelpers(base: *UsbBase) bool {
     return true;
 }
 
-const Controller = struct { name: [*:0]const u8, unit: u32 };
+const Controller = struct {
+    name: [*:0]const u8,
+    unit: u32,
+    /// Whether it was found rather than described: a controller on PCI,
+    /// which may simply not be there.
+    found: bool = false,
+};
 
 /// Bus `bus`'s controller: the board's `bus`th USB part that may be a
 /// host, on the device that drives its chip; none for a chip no device
 /// here drives, though it keeps its number.
+///
+/// **Past the board's parts the buses are the xHCI controllers on PCI**,
+/// in the order xhci.device numbers them - which is the order
+/// pci.library found them, after any controller the board described. A
+/// machine of that kind says nothing about them: the sockets of a PC are
+/// in groups with a controller each, and how many there are is the
+/// machine's to answer, not a list's. Whether bus `bus` is one of them
+/// is answered by opening it.
 fn findController(base: *UsbBase, bus: u32) ?Controller {
     const sys = base.sys_base;
     const ub = base.utility.?;
@@ -157,5 +187,5 @@ fn findController(base: *UsbBase, bus: u32) ?Controller {
         }
         count += 1;
     }
-    return null;
+    return .{ .name = "xhci.device", .unit = bus - count, .found = true };
 }

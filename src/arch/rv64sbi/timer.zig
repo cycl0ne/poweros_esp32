@@ -21,7 +21,7 @@ const hardware = @import("sdk").hardware;
 const sbi = hardware.sbi;
 const systimer = hardware.systimer;
 const intbits = hardware.intbits;
-const max_cores = @import("../../rom/libs/exec/exec_base.zig").max_cores;
+const max_cores = @import("cpu.zig").max_cores;
 
 /// The tick's interrupt, each core's.
 pub const tick_irq = trap.tick_line;

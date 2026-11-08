@@ -38,8 +38,6 @@ pub const IOUsbHC = usbhc.IOUsbHC;
 
 /// How many interfaces of a device the library keeps a driver for.
 pub const USB_MAX_INTERFACES = 8;
-/// How many buses there can be.
-pub const USB_MAX_BUSES = 4;
 
 /// A device on a bus. The library's; a program reads it while it holds
 /// the list (ObtainUSBDeviceList) and changes nothing in it.

@@ -8,6 +8,10 @@
 //! driver finds its function, claims it, reads and writes its
 //! configuration space, finds its capabilities, hooks its INTx line or
 //! its message-signalled interrupts, and resets it through the library.
+//! A board whose firmware placed everything and routed the lines itself
+//! says so (PART_PciPlaced), and then nothing is moved: what is there is
+//! read back and switched on, and each function's line is the one the
+//! firmware wrote into it.
 //!
 //! The jump table is pci_lvo.zig, the ROM tag, the init and the expunge
 //! pci_init.zig, the base pci_base.zig, the timer waits delay.zig. The

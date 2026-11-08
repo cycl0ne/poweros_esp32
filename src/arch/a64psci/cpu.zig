@@ -32,8 +32,16 @@ pub const ESR_EC_MASK: u64 = 0x3F;
 /// PSCI takes them.
 pub const MPIDR_AFFINITY: u64 = 0xFF_00FF_FFFF;
 
+/// How many cores this kernel keeps tables of its own for - the words a
+/// core leaves behind, its trap state, its timer. The machines are
+/// four-core ones: the BCM2712's A76s, and QEMU's virt as the build starts
+/// it. exec keeps state for as many cores as the kernel finds, so this is
+/// what the figure is capped at, and the boot's line says what the machine
+/// had.
+pub const max_cores = 4;
+
 /// Each core's MPIDR affinity; start.S's for core 0.
-pub var mpidrs: [exec_base.max_cores]u64 = @splat(0);
+pub var mpidrs: [max_cores]u64 = @splat(0);
 
 /// The core this runs on: 0 up.
 pub inline fn coreId() u32 {

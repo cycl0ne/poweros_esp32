@@ -8,7 +8,9 @@
 //! RTC (`source/jh7110rtc.zig`), which a reset stops but keeps the date
 //! in, and a power cut loses it; or the Raspberry Pi's
 //! (`source/rpirtc.zig`), which its firmware keeps for the ARM, counting
-//! through a reset and - on a cell - a power cut. Otherwise it is the
+//! through a reset and - on a cell - a power cut; or the clock an x86-64
+//! machine has in its I/O port space (`source/cmos.zig`), which a cell
+//! keeps while the machine is off. Otherwise it is the
 //! ESP32s' RTC timer (`source/rtctimer.zig`), which counts through a
 //! reset but not through a power cut. At its start the resource sets the
 //! system time from the clock; `C:SetClock` loads, saves and resets it.
@@ -43,6 +45,7 @@ const rtctimer = @import("source/rtctimer.zig");
 const pcf8563 = @import("source/pcf8563.zig");
 const jh7110rtc = @import("source/jh7110rtc.zig");
 const rpirtc = @import("source/rpirtc.zig");
+const cmos = @import("source/cmos.zig");
 
 test {
     _ = @import("battclock_lvo.zig");
@@ -190,4 +193,51 @@ test "the Raspberry Pi's RTC: its buffer on a cache line of its own, below 4 GiB
     try testing.expectEqual(@as(usize, 0x3000_0040), @intFromPtr(rpirtc.bufferIn(@ptrFromInt(0x3000_0010)).?));
     try testing.expectEqual(@as(usize, 0x3000_0040), @intFromPtr(rpirtc.bufferIn(@ptrFromInt(0x3000_0040)).?));
     try testing.expect(rpirtc.bufferIn(@ptrFromInt(0x1_0000_0000)) == null);
+}
+
+test "an x86-64 machine's clock: two digits to a byte, and the century register" {
+    // How the firmware leaves it: hours round the clock once, figures two
+    // digits to a byte.
+    const packed_hours: u8 = 1 << 1;
+    const date = cmos.dateOf(.{
+        .second = 0x07,
+        .minute = 0x45,
+        .hour = 0x23,
+        .day = 0x04,
+        .month = 0x11,
+        .year = 0x26,
+        .century = 0x20,
+    }, packed_hours).?;
+    try testing.expectEqual(@as(u16, 7), date.sec);
+    try testing.expectEqual(@as(u16, 45), date.min);
+    try testing.expectEqual(@as(u16, 23), date.hour);
+    try testing.expectEqual(@as(u16, 4), date.mday);
+    try testing.expectEqual(@as(u16, 11), date.month);
+    try testing.expectEqual(@as(u16, 2026), date.year);
+    // No century register: the two digits are this century's.
+    const taken = cmos.dateOf(.{ .second = 0x07, .minute = 0x45, .hour = 0x23, .day = 0x04, .month = 0x11, .year = 0x26 }, packed_hours).?;
+    try testing.expectEqual(@as(u16, 2026), taken.year);
+}
+
+test "an x86-64 machine's clock: plain numbers, and hours twice twelve" {
+    // Plain numbers, hours twice twelve: noon, and midnight.
+    const plain: u8 = 1 << 2;
+    const noon = cmos.dateOf(.{ .second = 0, .minute = 30, .hour = 12 | (1 << 7), .day = 1, .month = 1, .year = 26, .century = 20 }, plain).?;
+    try testing.expectEqual(@as(u16, 12), noon.hour);
+    try testing.expectEqual(@as(u16, 30), noon.min);
+    const midnight = cmos.dateOf(.{ .second = 0, .minute = 0, .hour = 12, .day = 1, .month = 1, .year = 26, .century = 20 }, plain).?;
+    try testing.expectEqual(@as(u16, 0), midnight.hour);
+    const evening = cmos.dateOf(.{ .second = 0, .minute = 0, .hour = 9 | (1 << 7), .day = 1, .month = 1, .year = 26, .century = 20 }, plain).?;
+    try testing.expectEqual(@as(u16, 21), evening.hour);
+}
+
+test "an x86-64 machine's clock: registers that hold no date" {
+    const packed_hours: u8 = 1 << 1;
+    // A clock with no cell behind it: every register 0, so no day and no
+    // month.
+    try testing.expect(cmos.dateOf(.{}, packed_hours) == null);
+    // Figures that are no two digits, and an hour past the day.
+    try testing.expect(cmos.dateOf(.{ .second = 0x9A, .minute = 0, .hour = 0, .day = 1, .month = 1, .year = 0x26 }, packed_hours) == null);
+    try testing.expect(cmos.dateOf(.{ .second = 0, .minute = 0, .hour = 0x25, .day = 1, .month = 1, .year = 0x26 }, packed_hours) == null);
+    try testing.expect(cmos.dateOf(.{ .second = 0, .minute = 0, .hour = 0, .day = 1, .month = 0x13, .year = 0x26 }, packed_hours) == null);
 }

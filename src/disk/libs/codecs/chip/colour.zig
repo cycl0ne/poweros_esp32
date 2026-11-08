@@ -9,7 +9,7 @@
 //! dynamic range, which comes out flat and grey.
 //!
 //! So the setup record's SPS is read here, once, when the stream is
-//! opened - with the very parsers the software modules use
+//! opened - with the very readers videoparse.library uses
 //! (`h264/params.zig`, `hevc/params.zig`), because the fields are at the
 //! end of a sequence parameter set and everything before them has to be
 //! walked exactly: a short-term reference picture set predicted from
@@ -35,17 +35,17 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const rtg = sdk.rtg;
 const ExecBase = sdk.interface.exec.ExecBase;
-// The decoders' own parsers, as their modules hand them out: a file
-// belongs to one module, and these are built and tested as the software
-// codecs' cores.
-const h264core = @import("h264core");
-const hevccore = @import("hevccore");
-const h264_params = h264core.params;
-const h264_nal = h264core.nal;
-const h264_bits = h264core.bits;
-const hevc_params = hevccore.params;
-const hevc_nal = hevccore.nal;
-const hevc_bits = hevccore.bits;
+// videoparse.library's readers of the sets, as their own modules hand
+// them out (`h264/sets.zig`, `hevc/sets.zig`): a file belongs to one
+// module, and these are the very files the library reads a stream with.
+const h264sets = @import("h264sets");
+const hevcsets = @import("hevcsets");
+const h264_params = h264sets.params;
+const h264_nal = h264sets.nal;
+const h264_bits = h264sets.bits;
+const hevc_params = hevcsets.params;
+const hevc_nal = hevcsets.nal;
+const hevc_bits = hevcsets.bits;
 
 /// What a picture's numbers mean, as `RtgYuv` says it.
 pub const Colour = struct {
@@ -96,7 +96,7 @@ pub fn of(sys: *ExecBase, hevc: bool, config: []const u8, height: u32) Colour {
     const unit = (if (hevc) hevcSps(config) else avcSps(config)) orelse return .{};
     // The unit without its header, unescaped: a parameter set is small,
     // and this happens once a stream.
-    const payload = unit[if (hevc) 2 else 1 ..];
+    const payload = unit[if (hevc) 2 else 1..];
     if (payload.len == 0) return .{};
     const room: [*]u8 = @ptrCast(sys.AllocVec(@intCast(payload.len), exec.MEMF_ANY) orelse return .{});
     defer sys.FreeVec(room);

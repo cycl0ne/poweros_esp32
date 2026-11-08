@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! videodec.resource: the chip's video decoder - the JH7110's WAVE511
-//! (the VisionFive 2's) - a stream fed a picture at a time and its frames
-//! handed out in the order they are shown.
+//! (the VisionFive 2's), or an AMD graphics device's on x86-64 - a stream
+//! fed a picture at a time and its frames handed out in the order they
+//! are shown.
 //!
 //! OpenVideoDecoder makes an instance on the chip, waking it and starting
 //! its firmware for the first; FeedVideoDecoder copies a picture into the
@@ -13,7 +14,9 @@
 //! whose server signals the instance's waitable.
 //!
 //! The chip is `codec/_wave511.zig`; a decoder's ring, times, frames and
-//! waits `decoder/_decoder.zig`; each call is a file of its own under
+//! waits `decoder/_decoder.zig`. An AMD graphics device's decoder is
+//! `codec/_vcn.zig`, a stream on it `decoder/_session.zig`; each call
+//! hands such a decoder to its own path. Each call is a file of its own under
 //! `decoder/`. The jump table is videodec_lvo.zig, the ROM tag and init
 //! videodec_init.zig, the base videodec_base.zig. This file holds the
 //! names the rest of the kernel reaches the resource by, and the tests of
@@ -53,7 +56,9 @@ test {
     _ = videodec_init;
     _ = @import("videodec_lvo.zig");
     _ = @import("codec/_wave511.zig");
+    _ = @import("codec/_vcn.zig");
     _ = @import("decoder/_decoder.zig");
+    _ = @import("decoder/_session.zig");
 }
 
 fn setUp() !*VideoDecBase {

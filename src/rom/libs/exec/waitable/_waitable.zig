@@ -15,6 +15,7 @@
 //! it: a time limit is kept to within a tick (`tickWaitables`).
 
 const sdk = @import("sdk");
+const _interrupt = @import("../interrupt/_interrupt.zig");
 const systimer = sdk.hardware.systimer;
 const Task = sdk.exec.Task;
 const Waitable = sdk.exec.Waitable;
@@ -105,10 +106,16 @@ pub fn expire(base: *ExecBase, now: u64) void {
 /// From the tick, on core 0 only: the waiters whose time has run out
 /// woken. Nothing is read with nobody waiting.
 ///
+/// The list is under the system's interrupt lock (`WaitForAny` takes it
+/// with Disable), which the tick takes here: the kernel's tick calls this
+/// of its own, not through an interrupt chain that would hold it already.
+///
 /// INPUTS:
-/// - `base` - exec: the list.
+/// - `base` - exec: the list and the lock.
 pub fn tickWaitables(base: *ExecBase) void {
     if (base.waiting == null) return;
+    _interrupt.takeSystemInterrupts(base, @returnAddress());
+    defer _interrupt.dropSystemInterrupts(base);
     expire(base, systimer.uptimeUs());
 }
 

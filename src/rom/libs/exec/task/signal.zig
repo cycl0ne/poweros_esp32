@@ -47,8 +47,8 @@ const Task = sdk.exec.Task;
 /// - Interrupts: **safe, and this is the main way out of one.** An
 ///   interrupt cannot wait, allocate or reach a handler; what it can do is
 ///   signal the task that can.
-/// - Locks: takes Disable. With a spinlock held the switch is postponed to the
-///   `ReleaseLock`.
+/// - Locks: takes the task lists' lock. With a spinlock held the switch is
+///   postponed to the `ReleaseLock`.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -71,14 +71,18 @@ const Task = sdk.exec.Task;
 /// ```
 pub fn Signal(base: *ExecBase, task: *Task, signals: u32) void {
     const sys = base.iface();
-    sys.Disable();
-    defer sys.Enable();
+    // The lists of the core that owns this task: another core's signal
+    // waits only for that core, and for no core the task has nothing to
+    // do with.
+    const owner = _task.lockOwner(base, task);
+    defer _task.unlockTaskLists(base);
     task.sig_recvd |= signals;
     const except = _task.exceptionPending(task);
     if (task.state == .wait and (task.sig_recvd & task.sig_wait != 0 or except)) {
         sys.Remove(&task.node);
         task.state = .ready;
-        sys.Enqueue(&base.task_ready, &task.node);
+        sys.Enqueue(&base.cpus_at[owner].tasks.ready, &task.node);
+        _task.noteReady(&base.cpus_at[owner]);
         _task.wakeFor(base, task);
     } else if (task.state == .run and except) {
         _task.askCoreOf(base, task); // raised at its core's next exception exit

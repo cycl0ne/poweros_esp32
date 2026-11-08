@@ -5,6 +5,8 @@ const sdk = @import("sdk");
 const types = sdk.resources.videodec;
 const VideoDecBase = @import("../videodec_base.zig").VideoDecBase;
 const Decoder = @import("_decoder.zig").Decoder;
+const Session = @import("_session.zig").Session;
+const engine = @import("../videodec_init.zig").engine;
 
 /// Hands out a decoder's next frame, decoding as many pictures as that
 /// takes.
@@ -46,6 +48,14 @@ const Decoder = @import("_decoder.zig").Decoder;
 /// The frame's bytes are dropped from the caches before it is handed
 /// out; they are the chip's, written by it - read them, do not write.
 ///
+/// On an AMD graphics device the pictures were decoded as they were
+/// fed: each call hands out the next frame due, and reads on in what was
+/// fed where the stream waited for a frame back. Its frames are in the
+/// system's memory, the rows shown alone, read back from the device as
+/// each picture was decoded. A VP9 frame that is shown again - its
+/// stream says so of a reference - is handed out again, the same planes
+/// lent once more: each is released.
+///
 /// CONTEXT:
 /// - Waits: yes, for the chip. - Interrupts: no.
 /// - Locks: the resource's, around the chip: decoders on other tasks wait
@@ -58,7 +68,9 @@ const Decoder = @import("_decoder.zig").Decoder;
 ///
 /// NOTES:
 /// A frame's time is the time of the picture it shows as it was fed: of
-/// the pictures decoded and not yet shown, the earliest.
+/// the pictures decoded and not yet shown, the earliest. A VP9 frame's
+/// is that of the packet that shows it, its frames shown in the order
+/// they come.
 ///
 /// BUGS:
 /// None known.
@@ -78,5 +90,6 @@ pub fn DecodeVideoFrame(vb: *VideoDecBase, decoder: *types.VideoDecoder, frame: 
     const sys = vb.sys_base;
     sys.ObtainSemaphore(&vb.lock);
     defer sys.ReleaseSemaphore(&vb.lock);
+    if (comptime engine == .vcn) return Session.of(decoder).next(frame);
     return Decoder.of(decoder).nextFrame(frame);
 }

@@ -59,7 +59,9 @@ pub const SYSTAG_LogSize = SYSTAG_Dummy + 11;
 pub const SYSTAG_LogMirror = SYSTAG_Dummy + 12;
 /// How many cores the kernel runs tasks on: 1 or 2 on the ESP32s, up to 4
 /// on a RISC-V 64 machine, which uses as many as its device tree has harts
-/// for. Absent, 1. The build's `-Dcores` has the last word.
+/// for. 0 says every core the machine has, which is what a board whose
+/// machines differ says - a PC names no number, since each one answers for
+/// itself. Absent, 1. The build's `-Dcores` has the last word.
 pub const SYSTAG_Cores = SYSTAG_Dummy + 13;
 /// The PSRAM's bus clock in MHz: as fast as the board's wiring holds it
 /// without errors. The ESP32-P4 runs it at 200 or 80; absent, 80.
@@ -305,6 +307,54 @@ pub const PART_PinAntennaExternal = PART_Dummy + 0x46;
 /// Where the power manager a part's reset is in lies (BUS_MEMORY): its
 /// registers, where they are not the part's own.
 pub const PART_PowerManager = PART_Dummy + 0x47;
+/// Where a clock keeps the century, where it keeps it apart from the
+/// year: the index of that register among the clock's own. Absent where
+/// the clock holds no such register, and the two digits of its year are
+/// then all it says.
+pub const PART_Century = PART_Dummy + 0x48;
+/// A PCI host bridge whose functions the firmware has already placed and
+/// whose windows are therefore nobody's to name: every BAR stays where
+/// the firmware put it. This is what a machine started by UEFI firmware
+/// is - its windows are in the tables' own language and not in anything
+/// read here, and its screen is already being read from the address the
+/// firmware gave it.
+pub const PART_PciPlaced = PART_Dummy + 0x49;
+/// Where a PCI function's messages go on the bus, what the first of this
+/// bridge's vectors must carry to be told from the others, which
+/// interrupt source that first vector arrives on, and how many vectors
+/// there are. A bridge that takes no messages says none of it.
+///
+/// A machine whose messages reach the cores' interrupt controllers
+/// directly - every x86-64 machine - gives each vector a source of its
+/// own, from PART_PciMsiSource up, and what a vector carries is the
+/// number its source's interrupt comes in on. One whose bridge gathers
+/// them raises one interrupt for all of them and tells them apart by what
+/// they carry.
+pub const PART_PciMsiAddress = PART_Dummy + 0x4A;
+pub const PART_PciMsiData = PART_Dummy + 0x4B;
+pub const PART_PciMsiSource = PART_Dummy + 0x4C;
+pub const PART_PciMsiCount = PART_Dummy + 0x4D;
+/// The machine's power management, where it is reached through two
+/// register blocks: PART_Address is the first block, in which what has
+/// happened is reported and what may be reported is set, and these are
+/// the rest of it - a second such block on a machine that has two, the
+/// control block of each, and how many bytes a whole event block is, both
+/// its halves together. Absent means the machine has none of it.
+pub const PART_PowerEvent2 = PART_Dummy + 0x4E;
+pub const PART_PowerControl = PART_Dummy + 0x4F;
+pub const PART_PowerControl2 = PART_Dummy + 0x50;
+pub const PART_PowerEventBytes = PART_Dummy + 0x51;
+/// Where a machine that has not been put into the mode its power
+/// management works in is told to enter it, and what is written there.
+/// Absent on a machine that is in it already, which is one the firmware
+/// put there.
+pub const PART_PowerMode = PART_Dummy + 0x52;
+pub const PART_PowerModeValue = PART_Dummy + 0x53;
+/// Whether the power button is one of this hardware's own features, and
+/// so is reported in the event block above. A machine whose button is
+/// described some other way says nothing here, and nothing reads that
+/// description.
+pub const PART_PowerButton = PART_Dummy + 0x54;
 
 /// A line's role, short, for a listing: "RESET", "SCL", "D0". Null for a
 /// tag that is not a line.
@@ -433,6 +483,11 @@ pub const PARTKIND_FAN: u32 = 27;
 /// (BUS_MEMORY), PART_Irq its interrupt, PART_PowerManager where its reset
 /// is.
 pub const PARTKIND_GPU: u32 = 28;
+/// The machine's power management - what turns it off and what says its
+/// power button was pressed: PART_Chip which hardware it is,
+/// PART_Address and the PART_Power* tags where its registers are, and
+/// PART_Irq the line it raises. power.resource's.
+pub const PARTKIND_POWER: u32 = 29;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -620,6 +675,29 @@ pub const CHIP_BCM54210: u32 = 48;
 /// core's interrupt, with the hub's the next. Its clock is the VideoCore
 /// firmware's, asked through the mailbox the RTC is read through.
 pub const CHIP_BCM2712_V3D: u32 = 49;
+/// The framebuffer a UEFI firmware has already lit (PARTKIND_PANEL on
+/// BUS_MEMORY): PART_Address where the pixels are, RTGA_Width,
+/// RTGA_Height, RTGA_Pitch and RTGA_PixelFormat as the firmware set them
+/// up. It is no chip of its own - which chip lit it is not said and does
+/// not matter - and there is nothing to drive: the picture is copied into
+/// the one buffer it reads. A kernel whose firmware lit none writes no
+/// such part.
+pub const CHIP_UEFI_FB: u32 = 50;
+/// The battery-backed clock an x86-64 machine has always had
+/// (PARTKIND_RTC on BUS_PORT): PART_Address the first of its two ports,
+/// PART_Century the index of the register that holds the century where
+/// the firmware's tables name one. A cell keeps it while the machine is
+/// off.
+pub const CHIP_MC146818: u32 = 51;
+/// The power management an x86-64 machine's chipset has (PARTKIND_POWER
+/// on BUS_PORT): PART_Address its event block and PART_PowerControl its
+/// control block, with PART_PowerEvent2 and PART_PowerControl2 the second
+/// pair where the machine has one, PART_PowerEventBytes how long a block
+/// is, PART_PowerMode where to ask for the mode it works in,
+/// PART_PowerButton whether the power button is reported in the event
+/// block, and PART_Irq the line it all comes in on. The firmware's tables
+/// are where these are written down, and the kernel puts them here.
+pub const CHIP_ACPI_PM: u32 = 52;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
@@ -646,6 +724,10 @@ pub const BUS_PCI: u32 = 13;
 /// One of the chip's Ethernet MACs, to a PHY over RGMII: PART_BusUnit
 /// which MAC.
 pub const BUS_RGMII: u32 = 14;
+/// The I/O port space, a second set of addresses reached with their own
+/// instructions, which only the x86 machines have: PART_Address is a
+/// port there and not an address in memory.
+pub const BUS_PORT: u32 = 15;
 
 // A network link's speeds (PART_TxClockInverted).
 pub const LINKSPEED_10: u32 = 1 << 0;

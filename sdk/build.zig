@@ -27,7 +27,7 @@ pub const target_query: std.Target.Query = .{
 };
 
 /// The chips code is built for.
-pub const Chip = enum { esp32s3, esp32p4, rv64sbi, a64psci };
+pub const Chip = enum { esp32s3, esp32p4, rv64sbi, a64psci, x64uefi };
 
 /// The ESP32-P4's HP cores: RV32IMAFC with the CSR and fence.i
 /// instructions, and none of the chip's own extensions (PIE, hardware
@@ -66,6 +66,26 @@ pub const a64_target_query: std.Target.Query = .{
     .cpu_model = .{ .explicit = &std.Target.aarch64.cpu.cortex_a76 },
 };
 
+/// An x86-64 machine started by UEFI firmware: QEMU's q35, and a PC. The
+/// baseline of the architecture's second generation (x86-64-v2: SSE up to
+/// 4.2, CMPXCHG16B, POPCNT), which every machine made since 2009 has and
+/// the emulator's default core does - not v3, whose AVX would put another
+/// 512 bytes of vector state in every task's frame for no gain here. A
+/// task carries the SSE registers.
+///
+/// **Without the red zone.** The ABI lets a leaf function use the 128
+/// bytes below the stack pointer without moving it, and an interrupt on
+/// this architecture pushes its frame at that same stack pointer: the two
+/// cannot both hold. Every piece of the system is built with it off - the
+/// kernel (`build.zig`), the programs (`programTargetQuery`) - so that
+/// nothing in the system keeps anything below its stack pointer.
+pub const x64_target_query: std.Target.Query = .{
+    .cpu_arch = .x86_64,
+    .os_tag = .freestanding,
+    .abi = .none,
+    .cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v2 },
+};
+
 /// What a program for `chip` is built for. On the P4 without the linker's
 /// relaxation: it may turn a PC-relative sequence into one that holds an
 /// address, which would not survive the move to where the loader puts it.
@@ -83,11 +103,12 @@ pub fn programTargetQuery(chip: Chip) std.Target.Query {
             break :blk query;
         },
         .a64psci => a64_target_query,
+        .x64uefi => x64_target_query,
     };
 }
 
 /// The libraries with an `.fd` file, each made into `interface/<name>.zig`.
-const interfaces = [_][]const u8{ "exec", "utility", "timer", "watchdog", "dma", "platform", "expander", "expansion", "gpio", "jpeg", "videodec", "dos", "rtg", "rta", "graphics", "layers", "intuition", "input", "keymap", "console", "colorwheel", "bsdsocket", "crypto", "diskfont", "truetype", "asl", "iffparse", "commodities", "datatypes", "motion", "rdb", "tls", "modbus", "filter", "icon", "anvil", "usb", "usbclass", "battery", "usbport", "battclock", "battmem", "thermal", "audiocodec", "media", "videocodec", "vcodec", "acodec", "mcontainer", "ramlib", "wpa", "pci", "facet", "compression", "http", "locale" };
+const interfaces = [_][]const u8{ "exec", "utility", "timer", "watchdog", "dma", "platform", "expander", "expansion", "gpio", "jpeg", "videodec", "dos", "rtg", "rta", "graphics", "layers", "intuition", "input", "keymap", "console", "colorwheel", "bsdsocket", "crypto", "diskfont", "truetype", "asl", "iffparse", "commodities", "datatypes", "motion", "rdb", "tls", "modbus", "filter", "icon", "anvil", "usb", "usbclass", "battery", "usbport", "battclock", "battmem", "thermal", "power", "amdgpu", "audiocodec", "media", "videoparse", "videocodec", "vcodec", "acodec", "mcontainer", "ramlib", "wpa", "pci", "facet", "compression", "http", "locale" };
 
 pub fn build(b: *std.Build) void {
     const sdk = b.addModule("sdk", .{ .root_source_file = b.path("sdk.zig") });
@@ -160,14 +181,25 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(romld_tests).step);
     test_step.dependOn(&b.addRunArtifact(catcomp_tests).step);
 
-    // elf2seg refuses what a loaded RISC-V or AArch64 program could not
-    // survive: absolute addresses in its code, and a direct call to a fixed
-    // address.
-    const refused = [_]struct { name: []const u8, root: []const u8, chip: Chip, code_model: std.builtin.CodeModel, says: []const u8 }{
+    // elf2seg refuses what a loaded RISC-V, AArch64 or x86-64 program
+    // could not survive: absolute addresses in its code, and a direct call
+    // to a fixed address.
+    const refused = [_]struct {
+        name: []const u8,
+        root: []const u8,
+        chip: Chip,
+        code_model: std.builtin.CodeModel,
+        /// Whether the code is built to be placed anywhere, which is what
+        /// an x86-64 program wants; null where the code model settles it.
+        pic: ?bool = null,
+        says: []const u8,
+    }{
         .{ .name = "absolute", .root = "tools/elf2seg/tests/absolute.zig", .chip = .esp32p4, .code_model = .medlow, .says = "an absolute address in the code" },
         .{ .name = "romcall", .root = "tools/elf2seg/tests/romcall.zig", .chip = .esp32p4, .code_model = .medany, .says = "a fixed address, PC-relatively" },
         .{ .name = "absolute_a64", .root = "tools/elf2seg/tests/absolute.zig", .chip = .a64psci, .code_model = .large, .says = "an absolute address in the code" },
         .{ .name = "romcall_a64", .root = "tools/elf2seg/tests/romcall.zig", .chip = .a64psci, .code_model = .small, .says = "a fixed address, PC-relatively" },
+        .{ .name = "absolute_x64", .root = "tools/elf2seg/tests/absolute.zig", .chip = .x64uefi, .code_model = .small, .pic = false, .says = "an absolute address in the code" },
+        .{ .name = "romcall_x64", .root = "tools/elf2seg/tests/romcall.zig", .chip = .x64uefi, .code_model = .small, .pic = true, .says = "a fixed address, PC-relatively" },
     };
     for (refused) |case| {
         const exe = b.addExecutable(.{ .name = case.name, .root_module = b.createModule(.{
@@ -178,10 +210,15 @@ pub fn build(b: *std.Build) void {
             .single_threaded = true,
             .unwind_tables = .none,
             .code_model = case.code_model,
+            .pic = case.pic,
         }) });
         exe.entry = .{ .symbol_name = "_program_entry" };
         exe.link_emit_relocs = true;
-        exe.setLinkerScript(b.path(if (case.chip == .a64psci) "program_a64psci.ld" else "program_esp32p4.ld"));
+        exe.setLinkerScript(b.path(switch (case.chip) {
+            .a64psci => "program_a64psci.ld",
+            .x64uefi => "program_x64uefi.ld",
+            else => "program_esp32p4.ld",
+        }));
         const convert = b.addRunArtifact(elf2seg);
         convert.addArtifactArg(exe);
         _ = convert.addOutputFileArg(b.fmt("{s}.seg", .{case.name}));
@@ -265,7 +302,8 @@ pub const Program = struct {
 /// P4 and `program_rv64sbi.ld` on RV64, where the code is PC-relative,
 /// -mcmodel=medany; `program_a64psci.ld` on AArch64, where it is too, by
 /// ADRP pairs - the small code model - and the loader keeps its 4 KiB
-/// pages where they were) and with the
+/// pages where they were; `program_x64uefi.ld` on x86-64, where every
+/// instruction is RIP-relative) and with the
 /// linker's relocations kept (`--emit-relocs`); `elf2seg` keeps the ones
 /// that hold an address and makes the load file from them. The entry is
 /// `_program_entry`, which a command exports; a module's ROM tag is what
@@ -275,8 +313,16 @@ pub fn addProgram(b: *std.Build, dep: *std.Build.Dependency, program: Program) s
     const code_model: std.builtin.CodeModel = switch (program.chip) {
         .esp32s3 => .default,
         .esp32p4, .rv64sbi => .medany,
-        .a64psci => .small,
+        .a64psci, .x64uefi => .small,
     };
+    // The 128 bytes an x86-64 leaf function may keep below its stack
+    // pointer, where an interrupt pushes its frame: see `x64_target_query`.
+    const red_zone: ?bool = if (program.chip == .x64uefi) false else null;
+    // x86-64 reaches its data absolutely unless the code is built to be
+    // placed anywhere: a loaded program is, so every reach is made
+    // relative to the instruction pointer. The other chips' code models
+    // (medany, small) are PC-relative already.
+    const pic: ?bool = if (program.chip == .x64uefi) true else null;
     const own = b.createModule(.{
         .root_source_file = program.root,
         .target = target,
@@ -284,6 +330,8 @@ pub fn addProgram(b: *std.Build, dep: *std.Build.Dependency, program: Program) s
         .single_threaded = true,
         .unwind_tables = .none,
         .code_model = code_model,
+        .red_zone = red_zone,
+        .pic = pic,
     });
     own.addImport("sdk", dep.module("sdk"));
     for (program.imports) |import| own.addImport(import.name, import.module);
@@ -296,6 +344,8 @@ pub fn addProgram(b: *std.Build, dep: *std.Build.Dependency, program: Program) s
         .single_threaded = true,
         .unwind_tables = .none,
         .code_model = code_model,
+        .red_zone = red_zone,
+        .pic = pic,
     });
     module.addImport("sdk", dep.module("sdk"));
     module.addImport("program", own);
@@ -309,6 +359,7 @@ pub fn addProgram(b: *std.Build, dep: *std.Build.Dependency, program: Program) s
         .esp32p4 => "program_esp32p4.ld",
         .rv64sbi => "program_rv64sbi.ld",
         .a64psci => "program_a64psci.ld",
+        .x64uefi => "program_x64uefi.ld",
     };
     if (program.rom_scripts.len == 0) {
         exe.setLinkerScript(dep.path(script_name));

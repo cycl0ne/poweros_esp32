@@ -3,8 +3,12 @@
 //! QEMU virt's ramfb (`ramfb.zig`), the JH7110's display controller
 //! behind its HDMI port (`jh7110.zig`) and the BCM2712's video scaler
 //! behind its first one (`bcm2712.zig`), which read it out of RAM by
-//! themselves, and QEMU's virtio GPU (`virtio.zig`), which is told what
-//! changed.
+//! themselves, QEMU's virtio GPU (`virtio.zig`), which is told what
+//! changed, and the framebuffer a UEFI firmware has already lit
+//! (`uefi.zig`), which reads the one buffer it was given - behind which
+//! the engine doing the reading is looked at where it is one this knows
+//! (`dcn.zig`, through amdgpu.resource, which holds the device), to say
+//! what it is and to switch on the sound the link it lit can carry.
 //!
 //! A module of its own, on the same footing as the other drivers: it
 //! opens rtg.library at cold start and hands in a driver called "fb",
@@ -167,6 +171,8 @@ const ramfb = @import("ramfb.zig");
 const jh7110 = @import("jh7110.zig");
 const bcm2712 = @import("bcm2712.zig");
 const virtio = @import("virtio.zig");
+const uefi = @import("uefi.zig");
+const dcn = @import("dcn.zig");
 const monitor = @import("monitor.zig");
 const edid = @import("../edid.zig");
 const engine = @import("engine.zig");
@@ -177,15 +183,15 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 21;
-const BUILD_DATE = "30.10.2026";
+const REVISION = 28;
+const BUILD_DATE = "08.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
 /// The chips this drives, as the board's panel part names them.
-const chips = [_]u32{ st.CHIP_QEMU_RAMFB, st.CHIP_JH7110_DC8200, st.CHIP_VIRTIO_GPU, st.CHIP_BCM2712_HVS };
+const chips = [_]u32{ st.CHIP_QEMU_RAMFB, st.CHIP_JH7110_DC8200, st.CHIP_VIRTIO_GPU, st.CHIP_BCM2712_HVS, st.CHIP_UEFI_FB };
 
 /// What every row and every buffer starts on: whole cache lines, so a
 /// refresh writes back exactly the rows it names, and as wide as any
@@ -211,12 +217,20 @@ const Scanout = union(enum) {
     jh7110,
     virtio: virtio.Gpu,
     bcm2712,
+    uefi: uefi.Framebuffer,
 };
 
 /// Whether the display is behind an HDMI port, whose monitor names its
 /// modes, and which reads past the caches with a cursor plane of its own.
 fn isHdmi(scanout: Scanout) bool {
     return scanout == .jh7110 or scanout == .bcm2712;
+}
+
+/// Whether the display lays the pointer over the picture itself, in a
+/// plane of its own: the HDMI ports' controllers do, and the virtio GPU.
+/// On the others the pointer is laid into the composed frame.
+fn hasCursorPlane(scanout: Scanout) bool {
+    return scanout != .ramfb and scanout != .uefi;
 }
 
 /// Everything one board of this driver has. The library allocates it
@@ -240,6 +254,12 @@ const Screen = struct {
     mode_count: u32 = 0,
     current: u32 = 0,
     frame_us: u32 = 16_667,
+    /// Behind the firmware's framebuffer, the display engine reading it
+    /// where that engine is one this driver knows: what it says of itself,
+    /// read when the board is made, with nothing written to it
+    /// (`dcn.zig`). Null on every other display, and on a machine whose
+    /// engine this is not.
+    dcn: ?dcn.Engine = null,
     /// Behind an HDMI port: what the monitor says of itself - HDMI or DVI,
     /// sound, range, its fastest clock - from its EDID; whether it was on
     /// the port when last looked at, how many looks in a row have seen
@@ -511,7 +531,29 @@ fn handOn(screen: *Screen, picture: *const rtg.RtgBitMap, box: Box) void {
             .width = box.right - box.left,
             .height = box.end - box.top,
         }, Waiter{ .screen = screen }),
+        // The firmware's framebuffer holds what the display reads, so
+        // what was written in the picture it is reading goes into it.
+        // Another picture is not the display's to see until it is shown,
+        // and showing it copies the whole of it (`scanFrom`).
+        .uefi => |fb| if (screen.scanning == @intFromPtr(pixels)) copyOut(screen, fb, @intFromPtr(pixels), box),
         else => {},
+    }
+}
+
+/// `box` of the picture at `from` - the display's size, rows and format -
+/// into the framebuffer the firmware lit, a row at a time: its rows are
+/// as far apart as the firmware set them, which is not the display's own
+/// pitch. The memory is write-combining, so the rows are gathered into
+/// bursts as they are written and nothing is written back afterwards.
+fn copyOut(screen: *Screen, fb: uefi.Framebuffer, from: usize, box: Box) void {
+    if (box.isEmpty()) return;
+    const pixels: [*]const u8 = @ptrFromInt(from);
+    const at = box.left * screen.bytes;
+    const length = (box.right - box.left) * screen.bytes;
+    var y = box.top;
+    const end = @min(box.end, fb.height);
+    while (y < end) : (y += 1) {
+        screen.sys.CopyMem(pixels + y * screen.pitch + at, fb.row(y) + at, length);
     }
 }
 
@@ -545,6 +587,12 @@ fn scanFrom(screen: *Screen, address: usize) void {
             .pitch = screen.pitch,
             .height = screen.height,
         }, screen.width, screen.height, Waiter{ .screen = screen }),
+        // Nothing can tell this display to read elsewhere: the picture is
+        // copied into the one buffer the firmware gave it, whole.
+        .uefi => |fb| done: {
+            copyOut(screen, fb, address, whole(screen));
+            break :done true;
+        },
     };
     if (shown) screen.scanning = address;
 }
@@ -1784,7 +1832,7 @@ fn overlayMoved(screen: *Screen, left: i32, top: i32) void {
 // --- the board -------------------------------------------------------------------
 
 /// The display the part describes, if it is there.
-fn findScanout(rb: *RtgBase, chip: u32, tag_list: ?[*]const TagItem) ?Scanout {
+fn findScanout(rb: *RtgBase, sys: *ExecBase, chip: u32, tag_list: ?[*]const TagItem) ?Scanout {
     const address = rb.GetRtgTagData(st.PART_Address, 0, tag_list);
     return switch (chip) {
         st.CHIP_QEMU_RAMFB => .{ .ramfb = ramfb.find(address) orelse return null },
@@ -1793,11 +1841,29 @@ fn findScanout(rb: *RtgBase, chip: u32, tag_list: ?[*]const TagItem) ?Scanout {
         st.CHIP_JH7110_DC8200 => .jh7110,
         // Nor of the BCM2712's before the firmware has its clocks running.
         st.CHIP_BCM2712_HVS => .bcm2712,
-        st.CHIP_VIRTIO_GPU => .{ .virtio = virtio.find(
-            address,
-            @truncate(rb.GetRtgTagData(st.PART_Windows, 1, tag_list)),
-            rb.GetRtgTagData(st.PART_WindowSize, 0, tag_list),
-        ) orelse return null },
+        // On PCI the driver finds the function itself and the part says
+        // nothing about where it lies; on a memory-mapped transport the
+        // board names the block, or the first of a row of them.
+        st.CHIP_VIRTIO_GPU => if (rb.GetRtgTagData(st.PART_Bus, st.BUS_NONE, tag_list) == st.BUS_PCI)
+            .{ .virtio = virtio.findOnPci(sys) orelse return null }
+        else
+            .{ .virtio = virtio.find(
+                address,
+                @truncate(rb.GetRtgTagData(st.PART_Windows, 1, tag_list)),
+                rb.GetRtgTagData(st.PART_WindowSize, 0, tag_list),
+            ) orelse return null },
+        // Nothing to probe: the firmware set this one up, and the board
+        // says what it set up.
+        st.CHIP_UEFI_FB => found: {
+            const format: rtg.PixelFormat = @enumFromInt(@as(u8, @truncate(rb.GetRtgTagData(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32), tag_list))));
+            break :found .{ .uefi = uefi.find(
+                address,
+                @truncate(rb.GetRtgTagData(tags.RTGA_Pitch, 0, tag_list)),
+                @truncate(rb.GetRtgTagData(tags.RTGA_Width, 0, tag_list)),
+                @truncate(rb.GetRtgTagData(tags.RTGA_Height, 0, tag_list)),
+                rtg.formatBytes(format),
+            ) orelse return null };
+        },
         else => null,
     };
 }
@@ -1809,7 +1875,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     const sys = state.sys;
 
     const chip: u32 = @truncate(rb.GetRtgTagData(st.PART_Chip, st.CHIP_NONE, tag_list));
-    const scanout = findScanout(rb, chip, tag_list) orelse return err.RTGERR_NO_DISPLAY;
+    const scanout = findScanout(rb, sys, chip, tag_list) orelse return err.RTGERR_NO_DISPLAY;
     const format: rtg.PixelFormat = @enumFromInt(@as(u8, @truncate(rb.GetRtgTagData(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32), tag_list))));
     const bytes: u32 = switch (format) {
         .bgra32 => 4,
@@ -1841,6 +1907,19 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
             }
         }
     }
+    if (scanout == .uefi) {
+        // The engine reading the firmware's framebuffer, where it is one
+        // this driver knows. What it says of itself goes in the boot's
+        // lines, and the picture is copied into the framebuffer as before
+        // either way: nothing of the picture is written.
+        screen.dcn = dcn.find(sys, screen.scanout.uefi);
+        // The sound the link it lit can carry, which the firmware leaves
+        // switched off and which no other driver can reach. The machine's
+        // audio driver has its sinks already and asks the codec what is
+        // at the far end of a link when a sink is started, so switching
+        // this on here is all that is wanted of this side.
+        if (screen.dcn) |found| _ = dcn.soundUp(found);
+    }
     if (isHdmi(scanout)) {
         // The modes the monitor takes, the part's size at 60 Hz without
         // one, and the display's frame interrupt.
@@ -1870,7 +1949,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     for (screen.modes[0..screen.mode_count]) |*mode| frame = @max(frame, @as(usize, mode.pitch) * mode.height);
     screen.frame_bytes = frame;
     const frames: u32 = @max(@as(u32, @truncate(rb.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list))), 1);
-    if (scanout != .ramfb) {
+    if (hasCursorPlane(scanout)) {
         const own = takeOwn(screen, 2 * cursor_bytes) orelse {
             if (scanout == .virtio) virtio.stop(&screen.scanout.virtio);
             return err.RTGERR_NO_MEMORY;
@@ -1918,6 +1997,8 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     const screen = screenOf(board);
     // The GPU lets go of the buffers before they are given back.
     if (screen.scanout == .virtio) virtio.stop(&screen.scanout.virtio);
+    // The device is amdgpu.resource's, which is never given back.
+    screen.dcn = null;
     stopFlipping(screen);
     if (screen.frame_hooked) screen.sys.RemIntServer(screen.frame_irq, &screen.frame_int);
     screen.frame_hooked = false;
@@ -2072,7 +2153,7 @@ const Waiter = struct {
 /// said on the raw port, when it did not come up.
 fn begin(screen: *Screen, address: usize) bool {
     switch (screen.scanout) {
-        .ramfb, .virtio => scanFrom(screen, address),
+        .ramfb, .virtio, .uefi => scanFrom(screen, address),
         .jh7110 => startPort(jh7110, screen, address),
         .bcm2712 => startPort(bcm2712, screen, address),
     }

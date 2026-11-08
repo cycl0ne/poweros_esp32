@@ -3,13 +3,17 @@
 //! timed and checked. Built against the SDK only.
 //!
 //!   VideoDec FILE/A,H265/S,FRAME/K/N,TO/K,RGB/S,SHOW/S,SMOOTH/S,WIDTH/K/N,PACE/S,
-//!            PQ/S,HLG/S,BT2020/S,PEAK/K/N
+//!            PQ/S,HLG/S,BT2020/S,PEAK/K/N,WATCHDOG/K/N
 //!
 //! The file - H.264, or H.265 with H265 or a name ending in .h265, .265
 //! or .hevc, in Annex B form as `ffmpeg -c:v copy -bsf:v
 //! h264_mp4toannexb out.h264` writes it - is read into memory and cut into
 //! pictures at their access units; each is fed to videodec.resource with
-//! a time of 40 ms a picture, and the frames are taken as they come. The
+//! a time of 40 ms a picture, and the frames are taken as they come. A
+//! name ending in .ivf is an IVF file, as `ffmpeg -c:v copy out.ivf`
+//! writes it, of VP9 or AV1 as its header says: each of its packets - a
+//! VP9 frame or superframe with hidden ones, an AV1 temporal unit - is
+//! fed as it is. The
 //! stream's size, profile and frame rate are printed, then how many
 //! frames came out and how fast, and whether they came in order: their
 //! numbers one after another, their times rising.
@@ -45,6 +49,11 @@
 //! pixel; PACE shows the frames at the stream's own rate instead of as
 //! fast as they come. How long putting a frame down took, on average and
 //! at most, is printed at the end. The close gadget or Ctrl-C stops it.
+//!
+//! WATCHDOG arms the watchdog for that many milliseconds before the
+//! decoder is opened, feeds it with each picture, and disarms it at the
+//! end: a decoder that stops the machine has it reset. An AMD graphics
+//! device's decoder is only started while the watchdog is armed.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -63,13 +72,15 @@ const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const VideoDecBase = videodec.VideoDecBase;
 const TimerBase = timer.TimerBase;
+const watchdog = sdk.resources.watchdog;
+const WatchdogBase = sdk.interface.watchdog.WatchdogBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "VideoDec";
-const VERSION_STRING = "\x00$VER: VideoDec 1.1 (29.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: VideoDec 1.5 (08.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "FILE/A,H265/S,FRAME/K/N,TO/K,RGB/S,SHOW/S,SMOOTH/S,WIDTH/K/N,PACE/S,PQ/S,HLG/S,BT2020/S,PEAK/K/N";
+const template = "FILE/A,H265/S,FRAME/K/N,TO/K,RGB/S,SHOW/S,SMOOTH/S,WIDTH/K/N,PACE/S,PQ/S,HLG/S,BT2020/S,PEAK/K/N,WATCHDOG/K/N";
 const arg_file = 0;
 const arg_h265 = 1;
 const arg_frame = 2;
@@ -83,6 +94,7 @@ const arg_pq = 9;
 const arg_hlg = 10;
 const arg_bt2020 = 11;
 const arg_peak = 12;
+const arg_watchdog = 13;
 
 /// What the stream's numbers mean, as the switches say: a picture is
 /// BT.709's at the ordinary range unless it is told otherwise.
@@ -102,15 +114,35 @@ fn now(tb: *TimerBase) u64 {
 }
 
 /// An elementary stream cut into access units: each from the start code
-/// of its first unit to the start code of the next access unit's.
+/// of its first unit to the start code of the next access unit's. An IVF
+/// file (VP9, AV1) cut into its packets.
 const Splitter = struct {
     bytes: []const u8,
     h265: bool,
-    /// The next unit's start code.
+    ivf: bool,
+    /// The next unit's start code; the next packet's header.
     at: usize,
 
-    fn init(bytes: []const u8, h265: bool) Splitter {
-        return .{ .bytes = bytes, .h265 = h265, .at = startCode(bytes, 0) };
+    fn init(bytes: []const u8, codec: u32) Splitter {
+        if (codec == videodec.VDCODEC_VP9 or codec == videodec.VDCODEC_AV1) {
+            // After the file's header, as long as it says.
+            const header: usize = if (bytes.len >= 8) @as(usize, bytes[6]) | @as(usize, bytes[7]) << 8 else bytes.len;
+            return .{ .bytes = bytes, .h265 = false, .ivf = true, .at = header };
+        }
+        const h265 = codec == videodec.VDCODEC_H265;
+        return .{ .bytes = bytes, .h265 = h265, .ivf = false, .at = startCode(bytes, 0) };
+    }
+
+    /// The IVF file's next packet: after its 12 bytes - its size, then
+    /// its time - as many as its size says.
+    fn packet(s: *Splitter) ?[]const u8 {
+        const b = s.bytes;
+        if (s.at + 12 > b.len) return null;
+        const size: usize = @as(usize, b[s.at]) | @as(usize, b[s.at + 1]) << 8 | @as(usize, b[s.at + 2]) << 16 | @as(usize, b[s.at + 3]) << 24;
+        const start = s.at + 12;
+        if (size > b.len - start) return null;
+        s.at = start + size;
+        return b[start..][0..size];
     }
 
     /// Where the start code at or after `from` begins - its leading zero
@@ -156,6 +188,7 @@ const Splitter = struct {
     }
 
     fn next(s: *Splitter) ?[]const u8 {
+        if (s.ivf) return s.packet();
         const b = s.bytes;
         if (s.at >= b.len) return null;
         const start = s.at;
@@ -186,6 +219,8 @@ const Tally = struct {
     show: ?*Show = null,
     /// What the pictures' numbers mean (PQ, HLG, BT2020, PEAK).
     look: Look = .{},
+    /// WATCHDOG: the watchdog, fed with each picture.
+    watchdog: ?*WatchdogBase = null,
     /// The window was closed, or Ctrl-C came: no more is fed.
     stopped: bool = false,
 };
@@ -426,11 +461,20 @@ fn errorName(code: u32) [*:0]const u8 {
         videodec.VDERR_END => "ended",
         videodec.VDERR_FULL => "full",
         videodec.VDERR_CORRUPT => "corrupt, or the chip stopped",
-        videodec.VDERR_NO_ENGINE => "no decoder (or no DEVS:firmware/wave511_dec_fw.bin)",
+        videodec.VDERR_NO_ENGINE => "no decoder (or no firmware in DEVS:firmware/, or an AMD decoder without WATCHDOG)",
         videodec.VDERR_UNSUPPORTED => "not supported",
         videodec.VDERR_NO_MEMORY => "no memory",
         videodec.VDERR_BUSY => "every decoder in use",
         else => "?",
+    };
+}
+
+fn codecName(codec: u32) [*:0]const u8 {
+    return switch (codec) {
+        videodec.VDCODEC_H265 => "H.265",
+        videodec.VDCODEC_VP9 => "VP9",
+        videodec.VDCODEC_AV1 => "AV1",
+        else => "H.264",
     };
 }
 
@@ -445,9 +489,8 @@ fn endsWith(name: [*:0]const u8, tail: []const u8) bool {
     return true;
 }
 
-fn run(dl: *DosBase, vb: *VideoDecBase, tb: *TimerBase, file: []const u8, h265: bool, t: *Tally) i32 {
+fn run(dl: *DosBase, vb: *VideoDecBase, tb: *TimerBase, file: []const u8, codec: u32, t: *Tally) i32 {
     var err: u32 = 0;
-    const codec = if (h265) videodec.VDCODEC_H265 else videodec.VDCODEC_H264;
     const opened = now(tb);
     const decoder = vb.OpenVideoDecoder(codec, null, &err) orelse {
         _ = Printf(dl, "OpenVideoDecoder: %s\n", .{errorName(err)});
@@ -456,7 +499,7 @@ fn run(dl: *DosBase, vb: *VideoDecBase, tb: *TimerBase, file: []const u8, h265: 
     defer vb.CloseVideoDecoder(decoder);
     _ = Printf(dl, "opened in %lu us\n", .{now(tb) - opened});
 
-    var splitter = Splitter.init(file, h265);
+    var splitter = Splitter.init(file, codec);
     var pictures: u32 = 0;
     var frame: videodec.VideoDecFrame = .{};
     var told = false;
@@ -464,6 +507,7 @@ fn run(dl: *DosBase, vb: *VideoDecBase, tb: *TimerBase, file: []const u8, h265: 
     var failure: u32 = videodec.VDERR_OK;
     feeding: while (splitter.next()) |picture| {
         if (t.stopped) break;
+        if (t.watchdog) |wb| wb.FeedWatchdog();
         while (true) {
             const fed = vb.FeedVideoDecoder(decoder, picture.ptr, @intCast(picture.len), pictures * picture_us, 0);
             if (fed == videodec.VDERR_OK) break;
@@ -525,7 +569,9 @@ fn run(dl: *DosBase, vb: *VideoDecBase, tb: *TimerBase, file: []const u8, h265: 
             }
         }
     }
-    const took = now(tb) - started;
+    // Timed from the first picture the decoder read; nothing where it
+    // read none.
+    const took = if (started != 0) now(tb) - started else 0;
     _ = Printf(dl, "%u pictures fed, %u frames out in %lu ms", .{ pictures, t.frames, took / 1000 });
     if (took > 0 and t.frames > 0) {
         const per_100s = @as(u64, t.frames) * 100_000_000 / took;
@@ -551,7 +597,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [13]usize = @splat(0);
+    var argv: [14]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
@@ -559,6 +605,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer dl.FreeArgs(rda);
     const name: [*:0]const u8 = @ptrFromInt(argv[arg_file]);
     const h265 = argv[arg_h265] != 0 or endsWith(name, ".h265") or endsWith(name, ".265") or endsWith(name, ".hevc");
+    const ivf = endsWith(name, ".ivf");
+    var codec = if (ivf) videodec.VDCODEC_VP9 else if (h265) videodec.VDCODEC_H265 else videodec.VDCODEC_H264;
     var tally: Tally = .{};
     if (argv[arg_frame] != 0) tally.wanted = @intCast(@max(0, @as(*const i32, @ptrFromInt(argv[arg_frame])).*));
     if (argv[arg_to] != 0) tally.to = @ptrFromInt(argv[arg_to]);
@@ -573,10 +621,6 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_WARN;
     };
     const vb: *VideoDecBase = @ptrCast(found);
-    if (vb.VideoDecCodecs() & (if (h265) videodec.VDCODEC_H265 else videodec.VDCODEC_H264) == 0) {
-        _ = Printf(dl, "The decoder does not take %s\n", .{if (h265) "H.265" else "H.264"});
-        return dos.RETURN_WARN;
-    }
 
     var timer_req: timer.TimeRequest = .{};
     if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &timer_req.node, 0) != 0) return dos.RETURN_FAIL;
@@ -644,6 +688,26 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     dl.UnLock(lock);
     defer sys.FreeVec(file.ptr);
-    _ = Printf(dl, "%s: %lu bytes of %s\n", .{ name, file.len, if (h265) "H.265" else "H.264" });
-    return run(dl, vb, tb, file, h265, &tally);
+    // An IVF file names its codec at bytes 8 to 11.
+    if (ivf and file.len >= 12 and file[8] == 'A' and file[9] == 'V' and file[10] == '0' and file[11] == '1') codec = videodec.VDCODEC_AV1;
+    if (vb.VideoDecCodecs() & codec == 0) {
+        _ = Printf(dl, "The decoder does not take %s\n", .{codecName(codec)});
+        return dos.RETURN_WARN;
+    }
+    _ = Printf(dl, "%s: %lu bytes of %s\n", .{ name, file.len, codecName(codec) });
+    if (argv[arg_watchdog] != 0) {
+        const millis: u32 = @intCast(@max(1, @as(*const i32, @ptrFromInt(argv[arg_watchdog])).*));
+        const wb: *WatchdogBase = @ptrCast(sys.OpenResource(watchdog.WATCHDOGNAME) orelse {
+            _ = Printf(dl, "No %s\n", .{watchdog.WATCHDOGNAME});
+            return dos.RETURN_FAIL;
+        });
+        if (!wb.ArmWatchdog(millis, watchdog.WATCHDOG_RESET_SYSTEM)) {
+            _ = Printf(dl, "The watchdog refuses %u ms\n", .{millis});
+            return dos.RETURN_FAIL;
+        }
+        _ = Printf(dl, "Watchdog armed: %u ms\n", .{millis});
+        tally.watchdog = wb;
+    }
+    defer if (tally.watchdog) |wb| wb.DisarmWatchdog();
+    return run(dl, vb, tb, file, codec, &tally);
 }

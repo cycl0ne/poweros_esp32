@@ -47,6 +47,7 @@ Generated from the source by `./zig build autodoc`.
 - [ColdReboot](#coldreboot) - Resets the machine.
 - [CopyMem](#copymem) - Copies bytes, whatever their alignment and however they overlap.
 - [CopyMemQuick](#copymemquick) - Copies whole words between word-aligned addresses.
+- [CoreCount](#corecount) - Tells how many cores the machine runs on.
 - [CoreTask](#coretask) - The task core `core` is running now.
 - [CreateIORequest](#createiorequest) - Allocates a cleared I/O request for a reply port.
 - [CreateLibrary](#createlibrary) - Makes a library from one description and adds it, name and all.
@@ -82,6 +83,7 @@ Generated from the source by `./zig build autodoc`.
 - [InitSemaphore](#initsemaphore) - Prepares a semaphore for use.
 - [Insert](#insert) - Puts a node on a list after a given node.
 - [IntVector](#intvector) - Hands back one interrupt number's vector.
+- [LockCoreTasks](#lockcoretasks) - Core `core`'s tasks, with that core's lock taken.
 - [LockExecList](#lockexeclist) - Hands back one of exec's own lists, its lock taken.
 - [LogControl](#logcontrol) - Changes one of the system log's settings, or asks what it is.
 - [MakeLibrary](#makelibrary) - Builds a library in memory and runs its init routine, without putting it on the library list.
@@ -135,13 +137,14 @@ Generated from the source by `./zig build autodoc`.
 - [SetMemOwner](#setmemowner) - Gives a block to another task, or to the system.
 - [SetRamLib](#setramlib) - Tells exec where the module loader's base is.
 - [SetSignal](#setsignal) - Reads or changes the calling task's signals without waiting.
-- [SetTaskAffinity](#settaskaffinity) - Sets the cores a task may run on.
+- [SetTaskAffinity](#settaskaffinity) - Sets the core a task keeps to.
 - [SetTaskEndMsg](#settaskendmsg) - Has `msg` replied to its reply port once `task` is gone.
 - [SetTaskPri](#settaskpri) - Changes a task's priority, and reschedules if that changed who should run.
 - [SetTrapCode](#settrapcode) - Sets the running task's trap code, which takes its CPU exceptions.
 - [ShareWork](#sharework) - Does a job in parts, at once on several cores.
 - [Signal](#signal) - Sends signals to a task, waking it if it was waiting for one of them.
 - [SignalWaitable](#signalwaitable) - Signals a waitable: it stays signalled until it is reset, and every task waiting on it in WaitForAny is woken.
+- [UnlockCoreTasks](#unlockcoretasks) - Gives back the lock `LockCoreTasks` took on core `core`.
 - [UnlockExecList](#unlockexeclist) - Gives back the lock `LockExecList` took on list `which`.
 - [Vacate](#vacate) - Withdraws a bid, or gives back the semaphore it won.
 - [Wait](#wait) - Sleeps until one of a set of signals arrives.
@@ -971,9 +974,10 @@ that a frame larger than four words still lands in it.
 
 - Waits: no, but it may switch, so the caller may lose the processor
   here.
-- Interrupts: no. It takes Disable and touches the scheduler's lists.
-- Locks: takes Disable. Tasks that must not start before one another are
-  made to wait for a signal before they start their work.
+- Interrupts: no. It takes the task lists' lock.
+- Locks: takes the task lists' lock. Tasks that must not start before
+  one another are made to wait for a signal before they start their
+  work.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1041,7 +1045,7 @@ A hook runs once; `hook.task` is null again before it runs.
 
 - Waits: no.
 - Interrupts: no.
-- Locks: takes Disable, which the hooks are kept under.
+- Locks: takes the task lists' lock, which the hooks are kept under.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2692,6 +2696,84 @@ None known.
 sys.CopyMemQuick(src, dst, words * 4);
 ```
 
+## CoreCount
+
+Tells how many cores the machine runs on.
+
+**SYNOPSIS**
+
+```zig
+fn CoreCount(base: *ExecBase) u32
+```
+
+**SINCE**
+
+1.33. LVO -592.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+How many cores the system runs on: their numbers are 0 to one less
+than this. Never 0 - a machine runs on at least the core it started
+on - and 1 on a machine with one core.
+
+**BEHAVIOR**
+
+It is the number the kernel started the machine on, which the kernel
+learned from the machine itself: the firmware's own tables on a
+machine that has them, the device tree on one that is described by
+one, the chip's own count on a chip whose cores are fixed. So a
+program that asks it is right on every machine without knowing any of
+them.
+
+The number every other call about a core answers for is this one:
+`ReadCoreTimes`, `CoreTask` and `LockCoreTasks` all answer for 0 to
+one less than it and refuse anything above. A program that wants one
+figure per core asks this first and makes room for that many, rather
+than counting until one of them refuses - which stops at a number of
+its own choosing, and shows a machine with sixteen cores as having
+four.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: yes.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing.
+
+**NOTES**
+
+It does not change while the machine runs: the cores are started as
+the system comes up and none is taken away afterwards.
+
+How busy each of them is comes from `ReadCoreTimes`; which task each
+is running from `CoreTask`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReadCoreTimes`, `CoreTask`, `LockCoreTasks`, `SetTaskAffinity`,
+`ShareWork`
+
+**EXAMPLES**
+
+```zig
+const cores = sys.CoreCount();
+const room = sys.AllocVec(cores * @sizeOf(sdk.exec.CoreTimes), exec.MEMF_CLEAR) orelse return;
+const times: [*]sdk.exec.CoreTimes = @ptrCast(@alignCast(room));
+for (0..cores) |core| _ = sys.ReadCoreTimes(@intCast(core), &times[core]);
+```
+
 ## CoreTask
 
 The task core `core` is running now.
@@ -2718,19 +2800,19 @@ first null on.
 
 **BEHAVIOR**
 
-A running task is on neither of exec's queues (`EXECLIST_TASK_READY`,
-`EXECLIST_TASK_WAIT`): it is each core's own. This is how a listing of
-every task finds the ones running - asking from core 0 up until the
-answer is null - and the caller's own core answers what `FindTask(null)`
-does.
+A running task is on neither of its core's lists: it is the core's
+own. This is how a listing of every task finds the ones running -
+asking from core 0 up until the answer is null - and the caller's own
+core answers what `FindTask(null)` does.
 
 **CONTEXT**
 
 - Waits: no.
 - Interrupts: safe.
-- Locks: Disable, not a lock: the other core switches on its own, so the
-  answer holds only inside `Disable`: ask there, and copy what is wanted of
-  the task before the `Enable` - the task may end once it is let go.
+- Locks: none taken, and the answer holds only while that core's lists
+  are locked: the cores switch on their own. Ask inside
+  `LockCoreTasks(core)`, and copy what is wanted of the task before the
+  `UnlockCoreTasks` - the task may end once it is let go.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2739,8 +2821,8 @@ The task is its own; nothing is handed over.
 
 **NOTES**
 
-A task's `TF_CORE0` and `TF_CORE1` flags say which cores it may run
-on (`SetTaskAffinity`); this says where it runs.
+A task's `core` says which core it keeps to (`SetTaskAffinity`); this
+says where it runs.
 
 **BUGS**
 
@@ -2748,16 +2830,15 @@ None known.
 
 **SEE ALSO**
 
-`FindTask`, `SetTaskAffinity`, `LockExecList`, `Disable`
+`FindTask`, `SetTaskAffinity`, `LockCoreTasks`
 
 **EXAMPLES**
 
 ```zig
 var core: u32 = 0;
-while (true) : (core += 1) {
-    sys.Disable();
+while (sys.LockCoreTasks(core) != null) : (core += 1) {
     const pri = if (sys.CoreTask(core)) |task| task.node.pri else null;
-    sys.Enable();
+    sys.UnlockCoreTasks(core);
     const running = pri orelse break;
     // ... print core and running ...
 }
@@ -3599,17 +3680,24 @@ the outermost Enable puts back - so a Disable/Enable pair inside an
 interrupt leaves interrupts masked, which is what they already were.
 
 It guards what interrupts themselves touch: the interrupt vectors, the
-server chains, the software interrupt queues and the task lists. What
-only tasks touch has locks of its own - exec's lists each theirs - and
-Disable is heavier than any of them because it stops the machine
-responding to its hardware.
+server chains and the software interrupt queues. What only tasks touch
+has locks of its own - exec's lists each theirs - and Disable is
+heavier than any of them because it stops the machine responding to
+its hardware.
 
-**Both cores.** The outermost Disable also takes the system's
-interrupt lock, which every exception on either core takes as well. So
-while a task is inside Disable no interrupt runs on either core and no
-task on the other core gets into Disable: a core that wants the lock
-waits for it with its own interrupts masked. The device interrupts are
-all core 0's; core 1 has its tick and the cross-core interrupt.
+**The task lists are not among them.** Each core's ready and wait
+lists, the state and signals of the tasks on them, and its running
+task are under that core's own lock, which `LockCoreTasks` takes and
+the calls that move a task take for themselves: a `Signal` waits for
+no interrupt handler, and a core choosing what to run next waits for
+no Disable.
+
+**Every core.** The outermost Disable takes the system's interrupt
+lock, which the dispatch of an interrupt number and of the software
+interrupts takes as well. So while a task is inside Disable no
+interrupt runs on any core and no task on another core gets into
+Disable: a core that wants the lock waits for it with its own
+interrupts masked.
 
 **CONTEXT**
 
@@ -3759,9 +3847,11 @@ Nothing.
 
 Only the outermost Enable unmasks, and it restores the state from before
 the outermost Disable rather than simply enabling - so this never turns
-interrupts on in a context that had them off. At task level it lets the
-system's interrupt lock go first, so the other core's interrupts and
-Disables come in again.
+interrupts on in a context that had them off. It lets the system's
+interrupt lock go first, so the other cores' interrupts and Disables
+come in again - unless what holds it is the handler this runs inside,
+which keeps it until its chain is done, or the task lost it across a
+wait, in which case there is nothing to let go.
 
 A switch asked for while interrupts were masked - by a `Signal` or an
 `AddTask` from inside one - is taken here, so like `ReleaseLock` this is
@@ -4203,17 +4293,16 @@ core too.
 
 - Waits: no.
 - Interrupts: the null case only, and even then the answer is whichever
-  task was interrupted. A named search takes Disable.
-- Locks: takes Disable, since the task lists are what an interrupt's switch
-  touches.
+  task was interrupted. A named search takes the task lists' lock.
+- Locks: takes the task lists' lock, since a search walks them.
 - Process: a Task will do. `FindTask(null)` is also how code finds out
   whether it is a task or a process, from the node's type.
 
 **OWNERSHIP**
 
 Nothing is allocated. The pointer is only good while the task exists,
-and nothing here stops it ending the moment Disable is let go - which is
-why a task is usually found in order to `Signal` it immediately.
+and nothing here stops it ending the moment the lock is let go - which
+is why a task is usually found in order to `Signal` it immediately.
 
 **NOTES**
 
@@ -5030,6 +5119,80 @@ const count = if (sys.IntVector(n)) |v| v.count else 0;
 sys.Enable();
 ```
 
+## LockCoreTasks
+
+Core `core`'s tasks, with that core's lock taken.
+
+**SYNOPSIS**
+
+```zig
+fn LockCoreTasks(base: *ExecBase, core: u32) ?*CoreTasks
+```
+
+**SINCE**
+
+1.31. LVO -584.
+
+**INPUTS**
+
+- `core` - the core, counted from 0.
+
+**RESULT**
+
+That core's `CoreTasks` - its `ready` list, by priority, and its
+`wait` list - with the core's lock held, or null past the last core
+the machine runs, and then nothing is held.
+
+**BEHAVIOR**
+
+Each core has its own ready and waiting tasks: a task is on the lists
+of the core that owns it, and a core with nothing ready takes work
+from another's. So there is no one list of the machine's tasks, and a
+program that wants them all walks the cores from 0 until this answers
+null, locking and unlocking each in turn.
+
+The lock is a spinlock, held with the caller's interrupts masked: what
+is done under it must be short and must not wait. Only one core's
+lists are held at a time - the next core's are taken after this one's
+are given back.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe.
+- Locks: takes the core's task lists; no waiting and no allocation
+  while they are held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The lists and their nodes are exec's. No node may be read after
+`UnlockCoreTasks`: a task may end as soon as the lock is let go.
+
+**NOTES**
+
+`ThisTask` is on neither list while it runs: a core's running task is
+read with `CoreTask`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`UnlockCoreTasks`, `CoreTask`, `LockExecList`
+
+**EXAMPLES**
+
+```zig
+var core: u32 = 0;
+while (sys.LockCoreTasks(core)) |tasks| : (core += 1) {
+    defer sys.UnlockCoreTasks(core);
+    var it = tasks.ready.iterator();
+    while (it.next()) |node| count += 1;
+}
+```
+
 ## LockExecList
 
 Hands back one of exec's own lists, its lock taken.
@@ -5047,8 +5210,7 @@ fn LockExecList(base: *ExecBase, which: u32) ?*List
 **INPUTS**
 
 - `which` - `EXECLIST_MEMORY`, `_LIBRARIES`, `_DEVICES`, `_RESOURCES`,
-  `_PORTS`, `_SEMAPHORES`, `_TASK_READY`, `_TASK_WAIT` or
-  `_MEM_HANDLERS`.
+  `_PORTS`, `_SEMAPHORES` or `_MEM_HANDLERS`.
 
 **RESULT**
 
@@ -5067,8 +5229,11 @@ It is the live list, held still by the lock exec keeps it under:
 - the memory regions, the public ports and the public semaphores: a
   spinlock each (exec's memory, port and semaphore locks). This core
   switches no task while it is held, and the port lock masks its
-  interrupts;
-- the two task queues: Disable.
+  interrupts.
+
+There are no task numbers to ask for: a task is on the ready or wait
+list of the core that owns it, and `LockCoreTasks` hands those two
+back with that core's lock taken.
 
 **The caller's side of the bargain**: write nothing, and keep no node
 past `UnlockExecList` - copy out the fields wanted and give the list back
@@ -5102,7 +5267,8 @@ None known.
 
 **SEE ALSO**
 
-`UnlockExecList`, `FindName`, `IntVector`, `ResModules`
+`UnlockExecList`, `FindName`, `IntVector`, `ResModules`,
+`LockCoreTasks`
 
 **EXAMPLES**
 
@@ -6555,7 +6721,9 @@ of its last exception, which is at most one of its ticks ago.
 
 - Waits: no.
 - Interrupts: yes.
-- Locks: takes Disable to read a core's figures whole.
+- Locks: takes the core's own task lists' lock, which keeps its task
+  where it is; the figures themselves are the core's own, counted at
+  its exceptions and read here as they stand.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6568,9 +6736,9 @@ The cycles are 64 bits wide, and run for longer than any machine
 stays on.
 
 Each task's share of the time in tasks is its own `timeRun()`,
-counted at the same moments; a listing reads it under the task lists'
-lock (`LockExecList(EXECLIST_TASK_READY)`, `CoreTask` for the running
-ones), and `C:Top` does.
+counted at the same moments; a listing reads it under the owning
+core's lock (`LockCoreTasks`, `CoreTask` for the running ones), and
+`C:Top` does.
 
 **BUGS**
 
@@ -6578,7 +6746,7 @@ None known.
 
 **SEE ALSO**
 
-`CoreTask`, `SetTaskAffinity`, `LockExecList`
+`CoreTask`, `SetTaskAffinity`, `LockCoreTasks`
 
 **EXAMPLES**
 
@@ -7494,7 +7662,7 @@ or a request may still name it.
 - Waits: for a task running on the other core, until that core has
   switched it out (its `SIGF_SINGLE`); in end hooks that wait. For null
   it never returns, which is not the same thing.
-- Interrupts: no. It takes Disable, may free memory, and runs the
+- Interrupts: no. It takes the task lists' lock, may free memory, and runs the
   task's end hooks.
 - Locks: none needed.
 - Process: a Task will do.
@@ -7561,7 +7729,7 @@ is left as it is, so a library may call this whatever has happened.
 
 - Waits: no.
 - Interrupts: no.
-- Locks: takes Disable, which the hooks are kept under.
+- Locks: takes the task lists' lock, which the hooks are kept under.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -8146,8 +8314,8 @@ straight away.
 
 - Waits: no.
 - Interrupts: no - it is the running task's.
-- Locks: takes Disable. With a spinlock held the exception is postponed to
-  the `ReleaseLock`.
+- Locks: takes the task lists' lock. With a spinlock held the exception
+  is postponed to the `ReleaseLock`.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -8637,7 +8805,7 @@ how one is consumed.
 - Waits: no. It is the call for when waiting is what you do not want.
 - Interrupts: no - it reads the running task, and an interrupt has none
   of its own.
-- Locks: takes Disable.
+- Locks: takes the task lists' lock.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -8662,12 +8830,12 @@ if (sys.SetSignal(0, 0) & exec.SIGBREAKF_CTRL_C != 0) {
 
 ## SetTaskAffinity
 
-Sets the cores a task may run on.
+Sets the core a task keeps to.
 
 **SYNOPSIS**
 
 ```zig
-fn SetTaskAffinity(base: *ExecBase, task: ?*Task, cores: u32) u32
+fn SetTaskAffinity(base: *ExecBase, task: ?*Task, core: u32) u32
 ```
 
 **SINCE**
@@ -8677,35 +8845,35 @@ fn SetTaskAffinity(base: *ExecBase, task: ?*Task, cores: u32) u32
 **INPUTS**
 
 - `task` - the task; null for the caller.
-- `cores` - the cores' flags, `TF_CORE0` to `TF_CORE3`: `TF_CORE0` to
-  keep it on core 0, `TF_CORE1 | TF_CORE2` on those two; 0 (or every
-  core) for whichever core is free. Other bits are ignored.
+- `core` - the core's own number, counted from 0, to keep it there;
+  `ANY_CORE` for whichever core is free.
 
 **RESULT**
 
-The cores it was set to before, as `cores`.
+The core it kept to before, as `core`.
 
 **BEHAVIOR**
 
-The cores are the task's `TF_CORE0` to `TF_CORE3` flags. Every
-dispatcher looks at them each time it picks a task, so the change holds
-from the next pick on: a ready task is offered to a core it may run on
-now, and a running one on a core it may no longer use is switched out
-at that core's next switch point and taken up by another.
+The core is the task's `core` field. Every dispatcher reads it each
+time it picks a task, so the change holds from the next pick on: a
+ready task is offered to the core it belongs on now, and a running one
+on a core it may no longer use is switched out at that core's next
+switch point and taken up by the right one.
 
-The idle tasks are pinned, one to each core, and so is the code that
-must keep to one core - the Wi-Fi vendor code to core 0.
+The idle tasks keep to a core each, and so does the code that must -
+the Wi-Fi vendor code to core 0.
 
-A task pinned only to cores that are not running never runs; one
-pinned only to cores the machine does not have counts as not pinned.
+A task kept to a core that is not running never runs, and so does one
+kept to a core the machine does not have: `CoreTask` answers null past
+the last core there is, which is how many there are.
 
 **CONTEXT**
 
 - Waits: no, but the caller may switch - to the other core, when it
   pinned itself away from this one.
-- Interrupts: no. It takes Disable.
-- Locks: takes Disable. With a spinlock held the move waits for the
-  `ReleaseLock`, as every switch does.
+- Interrupts: no. It takes the task lists' lock.
+- Locks: takes the task lists' lock. With a spinlock held the move
+  waits for the `ReleaseLock`, as every switch does.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -8714,9 +8882,9 @@ Nothing is allocated.
 
 **NOTES**
 
-A task that is to be pinned from its first instruction has its
-core flags set in the `Task` handed to `AddTask`; dos's
-`NP_Affinity` does it for a process.
+A task that is to keep to a core from its first instruction has that
+core in the `Task` handed to `AddTask`; dos's `NP_Affinity` does it for
+a process.
 
 **BUGS**
 
@@ -8730,12 +8898,15 @@ None known.
 
 ```zig
 // A task made already, moved to core 0.
-_ = sys.SetTaskAffinity(task, sdk.exec.TF_CORE0);
+_ = sys.SetTaskAffinity(task, 0);
 
-// One pinned from its first instruction: its flags are set before
-// AddTask.
-radio.task = .{ .node = .{ .name = "radio", .pri = 5 }, .flags = sdk.exec.TF_CORE0, .sp_lower = lower, .sp_upper = upper };
+// One that keeps to a core from its first instruction: it is in the
+// Task before AddTask.
+radio.task = .{ .node = .{ .name = "radio", .pri = 5 }, .core = 0, .sp_lower = lower, .sp_upper = upper };
 _ = sys.AddTask(&radio.task, &radioCode, null);
+
+// Back to whichever core is free.
+_ = sys.SetTaskAffinity(task, sdk.exec.ANY_CORE);
 ```
 
 ## SetTaskEndMsg
@@ -8784,7 +8955,7 @@ core brings that exit at once with its own cross-core interrupt (SINCE
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: no. It takes Disable.
+- Interrupts: no. It takes the task lists' lock.
 - Locks: none needed.
 - Process: a Task will do.
 
@@ -8853,7 +9024,7 @@ one. It is taken at the `Enable` here, or postponed by a spinlock held.
 **CONTEXT**
 
 - Waits: no, but it may switch.
-- Interrupts: no. It takes Disable.
+- Interrupts: no. It takes the task lists' lock.
 - Locks: none needed.
 - Process: a Task will do.
 
@@ -9079,8 +9250,8 @@ that was already set.
 - Interrupts: **safe, and this is the main way out of one.** An
   interrupt cannot wait, allocate or reach a handler; what it can do is
   signal the task that can.
-- Locks: takes Disable. With a spinlock held the switch is postponed to the
-  `ReleaseLock`.
+- Locks: takes the task lists' lock. With a spinlock held the switch is
+  postponed to the `ReleaseLock`.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -9163,6 +9334,68 @@ None known.
 sys.SignalWaitable(&job.done);
 ```
 
+## UnlockCoreTasks
+
+Gives back the lock `LockCoreTasks` took on core `core`.
+
+**SYNOPSIS**
+
+```zig
+fn UnlockCoreTasks(base: *ExecBase, core: u32) void
+```
+
+**SINCE**
+
+1.31. LVO -588.
+
+**INPUTS**
+
+- `core` - the core `LockCoreTasks` was given.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The core's lists are let go, the caller's interrupts are put back as
+they were, and a switch that came due meanwhile is taken - so this is
+a point at which the caller may lose the processor. A core past the
+last one the machine runs does nothing, as `LockCoreTasks` took
+nothing for it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe.
+- Locks: gives back what `LockCoreTasks` took.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+No node of the lists may be read after this.
+
+**NOTES**
+
+One `UnlockCoreTasks` for every `LockCoreTasks` that answered a core,
+with the same number.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`LockCoreTasks`
+
+**EXAMPLES**
+
+```zig
+const tasks = sys.LockCoreTasks(0) orelse return;
+const first = tasks.ready.first();
+sys.UnlockCoreTasks(0);
+```
+
 ## UnlockExecList
 
 Gives back the lock `LockExecList` took on list `which`.
@@ -9188,9 +9421,9 @@ Nothing.
 **BEHAVIOR**
 
 The lock is the list's own (`LockExecList` lists them): its semaphore is
-released, its spinlock let go - and a switch that came due meanwhile
-taken - or the Disable ended. A number exec has no list for does
-nothing, as `LockExecList` took nothing for it.
+released, or its spinlock let go, and a switch that came due meanwhile
+taken. A number exec has no list for
+does nothing, as `LockExecList` took nothing for it.
 
 **CONTEXT**
 

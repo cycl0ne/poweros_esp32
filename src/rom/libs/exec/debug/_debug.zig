@@ -372,7 +372,7 @@ noinline fn spillWindows(depth: u32) u32 {
 /// the rest.
 fn backtrace() void {
     const chip = debug_hardware orelse return;
-    if (builtin.cpu.arch.isRISCV() or builtin.cpu.arch == .aarch64) return backtraceByFramePointers(chip);
+    if (builtin.cpu.arch.isRISCV() or builtin.cpu.arch == .aarch64 or builtin.cpu.arch == .x86_64) return backtraceByFramePointers(chip);
     if (!moved and reason == .asked) @as(*volatile u32, &spill_sink).* = spillWindows(18);
     var pc: usize = 0;
     var sp: usize = 0;
@@ -426,13 +426,13 @@ fn backtrace() void {
 
 /// The call chain by frame pointers, as RISC-V code keeps them: each
 /// frame's return address one word below fp and the frame before it two
-/// words below - 4 and 8 bytes on RV32, 8 and 16 on RV64. AArch64 code
-/// keeps its frame record at fp: the frame before it there, the return
-/// address a word above. From a trap the chain starts at the stopped
+/// words below - 4 and 8 bytes on RV32, 8 and 16 on RV64. AArch64 and
+/// x86-64 code keep the frame record at fp: the frame before it there, the
+/// return address a word above. From a trap the chain starts at the stopped
 /// code's frame pointer; from a call, at `enter`'s own, on the stack it
 /// was entered on.
 fn backtraceByFramePointers(chip: *const DebugHardware) void {
-    const record_up = builtin.cpu.arch == .aarch64;
+    const record_up = builtin.cpu.arch == .aarch64 or builtin.cpu.arch == .x86_64;
     var fp: usize = entered_at;
     var depth: u32 = 1;
     if (frame) |f| {

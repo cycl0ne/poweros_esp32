@@ -113,6 +113,9 @@ pub const kprintf = _rawio.kprintf;
 pub const klog = _rawio.klog;
 pub const PutChProc = sdk.exec.PutChProc;
 pub const RawIOHardware = _rawio.RawIOHardware;
+/// A second place the kernel sends the raw output to, where the machine
+/// has one: the screen a firmware lit, on a machine with no serial port.
+pub const setBoardMirror = _rawio.setBoardMirror;
 /// The raw port's hardware: exec's own UART0 driver (rawio/_rawio.zig). Host
 /// tests put their stub here.
 pub const raw_io_hardware = &_rawio.raw_io_hardware;
@@ -164,6 +167,9 @@ pub const ResetWaitable = @import("waitable/resetwaitable.zig").ResetWaitable;
 pub const WaitForAny = @import("waitable/waitforany.zig").WaitForAny;
 pub const ShareWork = @import("task/sharework.zig").ShareWork;
 pub const PostWork = @import("task/postwork.zig").PostWork;
+pub const CoreCount = @import("task/corecount.zig").CoreCount;
+pub const LockCoreTasks = @import("task/lockcoretasks.zig").LockCoreTasks;
+pub const UnlockCoreTasks = @import("task/unlockcoretasks.zig").UnlockCoreTasks;
 pub const CreateTask = @import("task/createtask.zig").CreateTask;
 pub const NewStackRun = @import("task/newstackrun.zig").NewStackRun;
 pub const startMultitasking = _task.startMultitasking;
@@ -407,6 +413,9 @@ pub const LIBRARY_REVISION = exec_init.LIBRARY_REVISION;
 
 /// struct ExecBase (exec_base.zig).
 pub const ExecBase = exec_base.ExecBase;
+pub const CpuState = exec_base.CpuState;
+pub const coresStateSize = exec_base.coresStateSize;
+pub const coresStateAt = exec_base.coresStateAt;
 
 /// Where exec routes interrupt numbers and masks interrupts; the kernel
 /// sets it before the bootstrap (the default does nothing, for host tests).
@@ -450,6 +459,12 @@ pub const BootInfo = extern struct {
 /// -Dmemdebug=true.
 pub const BOOTF_MEMDEBUG: u32 = 1 << 0;
 
+/// In BootInfo.flags: the log keeps the debug lines from exec's start -
+/// the kernel built with -Dlogdebug=true. What a boot that stops before
+/// there is a shell to ask with says for itself, above all which module
+/// it was in the hands of.
+pub const BOOTF_LOGDEBUG: u32 = 1 << 1;
+
 /// exec.library's own block, cut by the bootstrap from the first region
 /// with room, before there is an exec to allocate with: a block like any
 /// other, with the system's MemBlock in front, so that the region can be
@@ -457,7 +472,8 @@ pub const BOOTF_MEMDEBUG: u32 = 1 << 0;
 ///
 /// INPUTS:
 /// - `mh` - the region.
-/// - `bytes` - the library's jump table and base together.
+/// - `bytes` - the library's jump table and base together, or the cores'
+///   state beside it.
 pub fn allocateExecBlock(mh: *MemHeader, bytes: usize) ?*anyopaque {
     const whole = _memory.wholeSize(bytes, false) orelse return null;
     const no_base: *ExecBase = undefined; // Allocate never reads it
@@ -479,6 +495,12 @@ pub fn deinit() void {
     while (it.next()) |node| {
         const mh: *MemHeader = @fieldParentPtr("node", node);
         if (start >= @intFromPtr(mh.lower) and start < @intFromPtr(mh.upper)) {
+            // The cores' state first, while the base is still there to
+            // say where it is and how much of it there is.
+            const cpus_header = sdk.exec.MemBlock.of(sys.cpus_block.?);
+            const cpus_whole = _memory.alignUp(exec_base.coresStateSize(sys.cores_state), MEM_BLOCKSIZE) + MEM_BLOCKSIZE;
+            cpus_header.size = 0;
+            SysBase.iface().Deallocate(mh, cpus_header, cpus_whole);
             // Through the table like everything else: the vector is read
             // before the call, and what it frees is the memory holding
             // both the table and SysBase, so nothing may use either after.
@@ -718,9 +740,14 @@ fn testBoot(regions: []const MemRegion, boot: ?*const BootInfo) error{OutOfMemor
     var pending: List = .{};
     pending.init(.memory);
     var block: ?*anyopaque = null;
+    // The tests run on one core, so there is one core's state.
+    var cpus: ?*anyopaque = null;
     for (regions) |r| {
         const mh = CreateMemHeader(no_base, r.size, r.attributes, r.pri, r.base, r.name) orelse continue;
-        if (block == null) block = allocateExecBlock(mh, sizes.neg + sizes.pos);
+        if (block == null) {
+            block = allocateExecBlock(mh, sizes.neg + sizes.pos);
+            if (block != null) cpus = allocateExecBlock(mh, exec_base.coresStateSize(1));
+        }
         Enqueue(no_base, &pending, &mh.node);
     }
     const lib = _library.buildLibrary(@ptrCast(block orelse return error.OutOfMemory), vectors, sizes);
@@ -729,6 +756,10 @@ fn testBoot(regions: []const MemRegion, boot: ?*const BootInfo) error{OutOfMemor
     lib.version = exec_init.exec_tag.version;
     lib.id_string = exec_init.exec_tag.id_string;
     const sys: *ExecBase = @fieldParentPtr("lib", lib);
+    const cpus_block = cpus orelse return error.OutOfMemory;
+    sys.cpus_block = cpus_block;
+    sys.cpus_at = exec_base.coresStateAt(cpus_block);
+    sys.cores_state = 1;
     sys.mem_list.init(.memory);
     while (RemHead(sys, &pending)) |node| Enqueue(sys, &sys.mem_list, node);
     _ = table.init.?(lib, @constCast(boot), @ptrCast(sys)) orelse return error.OutOfMemory;
@@ -1071,10 +1102,12 @@ test "LockExecList takes each list's own lock, and UnlockExecList gives it back"
     UnlockExecList(SysBase, sdk.exec.EXECLIST_MEMORY);
     try testing.expectEqual(@as(u32, 0), SysBase.lock_memory.state);
 
-    _ = LockExecList(SysBase, sdk.exec.EXECLIST_TASK_READY).?;
-    try testing.expect(SysBase.cpu().id_nest_cnt >= 0);
-    UnlockExecList(SysBase, sdk.exec.EXECLIST_TASK_READY);
-    try testing.expect(SysBase.cpu().id_nest_cnt < 0);
+    // The tasks are each core's own, under that core's lock.
+    try testing.expect(LockExecList(SysBase, sdk.exec.EXECLIST_TASK_READY) == null);
+    _ = LockCoreTasks(SysBase, 0).?;
+    try testing.expect(SysBase.cpus_at[0].tasks_lock != 0);
+    UnlockCoreTasks(SysBase, 0);
+    try testing.expectEqual(@as(u32, 0), SysBase.cpus_at[0].tasks_lock);
 
     // No list, nothing taken - and nothing to give back.
     try testing.expect(LockExecList(SysBase, 9999) == null);
@@ -3003,20 +3036,20 @@ test "tasks: SetTaskAffinity - a task pinned to another core is passed over, and
 
     // On core 1 alone, and core 1 not running: core 0 never takes it,
     // however high it is raised.
-    try testing.expectEqual(@as(u32, 0), SetTaskAffinity(SysBase, task, sdk.exec.TF_CORE1));
+    try testing.expectEqual(sdk.exec.ANY_CORE, SetTaskAffinity(SysBase, task, 1));
     _ = SetTaskPri(SysBase, task, 10);
     try testing.expectEqual(boot_ctx, exceptionExit(boot_ctx));
     try testing.expectEqual(boot, SysBase.cpu().this_task);
 
     // Let go: it outranks the running task, and runs.
-    try testing.expectEqual(@as(u32, sdk.exec.TF_CORE1), SetTaskAffinity(SysBase, task, 0));
+    try testing.expectEqual(@as(u32, 1), SetTaskAffinity(SysBase, task, sdk.exec.ANY_CORE));
     try testing.expectEqual(ctx(task), exceptionExit(boot_ctx));
     try testing.expectEqual(task, SysBase.cpu().this_task);
 
-    // Pinned away from this core by itself: switched out at once, and the
-    // boot task - pinned to core 0 - goes on.
-    try testing.expectEqual(@as(u32, 0), SetTaskAffinity(SysBase, null, sdk.exec.TF_CORE1 | 0x80));
-    try testing.expectEqual(sdk.exec.TF_CORE1, task.flags & (sdk.exec.TF_CORE0 | sdk.exec.TF_CORE1));
+    // Kept to another core by itself: switched out at once, and the boot
+    // task - which keeps to core 0 - goes on.
+    try testing.expectEqual(sdk.exec.ANY_CORE, SetTaskAffinity(SysBase, null, 1));
+    try testing.expectEqual(@as(u32, 1), task.core);
     try testing.expectEqual(boot_ctx, exceptionExit(ctx(task)));
     try testing.expectEqual(boot, SysBase.cpu().this_task);
     try testing.expectEqual(TaskState.ready, task.state);
@@ -3178,8 +3211,13 @@ test "PostWork: run at once and replied with one core; with workers queued by th
     // the poster's priority first, the order posted among the same.
     const pool = &SysBase.workers;
     _workers.initQueue(SysBase);
-    pool.workers[0] = .{ .core = 0, .state = .part };
-    pool.workers[1] = .{ .core = 1, .state = .part };
+    // The pool's own block is the exec task's to allocate; these two are
+    // this test's, which is what the pool points at while it runs.
+    var two_workers = [_]_workers.Worker{
+        .{ .core = 0, .state = .part },
+        .{ .core = 1, .state = .part },
+    };
+    pool.workers_at = &two_workers;
     pool.count = 2;
     defer pool.count = 0;
     const me = FindTask(SysBase, null).?;
@@ -3196,7 +3234,7 @@ test "PostWork: run at once and replied with one core; with workers queued by th
     try testing.expectEqual(@as(i8, 5), jobs[2].message.node.pri);
 
     // A worker claimed for a part takes none; an idle one takes them all.
-    const worker = &pool.workers[1];
+    const worker = &two_workers[1];
     try testing.expect(_workers.take(SysBase.iface(), pool, worker) == null);
     worker.state = .idle;
     const first = _workers.take(SysBase.iface(), pool, worker).?;
@@ -3208,7 +3246,7 @@ test "PostWork: run at once and replied with one core; with workers queued by th
         fn work(_: ?*anyopaque, _: u32, _: u32) callconv(.c) void {}
     };
     InitSemaphore(SysBase, &pool.lock);
-    pool.workers[0].state = .jobs;
+    two_workers[0].state = .jobs;
     try testing.expectEqual(@as(u32, 1), ShareWork(SysBase, &Nothing.work, null, 4));
 
     // A job that posts a job: the new one queued behind its equals.

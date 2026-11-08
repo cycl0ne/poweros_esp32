@@ -4044,7 +4044,7 @@ test "CreateNewProc: streams, dirs, arguments, variables, exit hook, CLI number,
         .{ .tag = dos.NP_ExitCode, .data = @intFromPtr(&ExitHook.hook) },
         .{ .tag = dos.NP_ExitData, .data = 42 },
         .{ .tag = dos.NP_UserData, .data = 0x1234 },
-        .{ .tag = dos.NP_Affinity, .data = sdk.exec.TF_CORE0 },
+        .{ .tag = dos.NP_Affinity, .data = 0 },
         .{ .tag = dos.NP_EndMsg, .data = @intFromPtr(&end_msg) },
         .{ .tag = dos.NP_Cli, .data = 1 },
         .{ .tag = dos.NP_Path, .data = @intFromPtr(&path) },
@@ -4059,7 +4059,7 @@ test "CreateNewProc: streams, dirs, arguments, variables, exit hook, CLI number,
     try testing.expectEqual(dos.LOCK_SAME, dl.SameLock(proc.current_dir, tp.proc.current_dir));
     try testing.expectEqualStrings("some args", std.mem.span(proc.arguments.?));
     try testing.expectEqual(@as(usize, 0x1234), @intFromPtr(proc.task.user_data)); // NP_UserData
-    try testing.expectEqual(sdk.exec.TF_CORE0, proc.task.flags & (sdk.exec.TF_CORE0 | sdk.exec.TF_CORE1)); // NP_Affinity
+    try testing.expectEqual(@as(u32, 0), proc.task.core); // NP_Affinity
     try testing.expectEqual(@as(?*sdk.exec.Message, &end_msg), proc.task.end_msg); // NP_EndMsg
     const copied_var: *dos.LocalVar = @ptrCast(proc.local_vars.head.?);
     try testing.expectEqualStrings("v", std.mem.span(copied_var.name));

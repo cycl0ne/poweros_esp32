@@ -132,9 +132,13 @@ fn fail(req: *net.IOSana2Req, err: i8, wire_error: u32) void {
 
 /// A unit on `Link`, which provides:
 ///
-///   bps: u64                       the link's speed
+///   bps: u64                       the link's speed, or bps(link) u64
+///                                  where only a link that has come up
+///                                  gives it
 ///   setStation(link, *Address)     the address the hardware answers to
-///   setRunning(link, bool)         frames in and out, or neither
+///   setRunning(link, bool)         frames in and out, or neither; it
+///                                  must not call `setCarrier`, which
+///                                  the unit may be inside already
 ///   setFilter(link, []Group, bool) the groups to take, and whether all
 ///   startWrites(link)              send what `nextWrite` hands out
 ///   now(link) TimeVal              the system time
@@ -427,7 +431,7 @@ pub fn Unit(comptime Link: type) type {
                 .size_supplied = supplied,
                 .addr_field_size = if (point) 0 else ethernet.address_bits,
                 .mtu = mtu,
-                .bps = Link.bps,
+                .bps = linkBps(unit),
                 .hardware_type = if (point) Link.wire_type else net.S2WireType_Ethernet,
                 .raw_mtu = frame_max,
                 .offload = if (@hasDecl(Link, "offload")) Link.offload(unit.link) else 0,
@@ -435,6 +439,14 @@ pub fn Unit(comptime Link: type) type {
             const from: [*]const u8 = @ptrCast(&full);
             const to: [*]u8 = @ptrCast(into);
             @memcpy(to[0..supplied], from[0..supplied]);
+        }
+
+        /// The link's speed: the number the hardware has, where one speed
+        /// is all it does, or what the link answers, where it has
+        /// negotiated its own and a driver of several parts has no one
+        /// number to name.
+        fn linkBps(unit: *Self) u64 {
+            return if (@typeInfo(@TypeOf(Link.bps)) == .@"fn") Link.bps(unit.link) else Link.bps;
         }
 
         /// S2_GETSTATIONADDRESS: the address the unit runs with, and the
@@ -465,17 +477,23 @@ pub fn Unit(comptime Link: type) type {
             if (!up and unit.online != 0) unit.goOffline();
         }
 
+        /// On the link. The unit is online before the link is told to
+        /// run, not after: a link must not call `setCarrier` from inside
+        /// `setRunning`, and this is what keeps one that does from being
+        /// started again from inside its own start.
         fn goOnline(unit: *Self) void {
-            Link.setRunning(unit.link, true);
             unit.online = 1;
+            Link.setRunning(unit.link, true);
             unit.stats.last_start = Link.now(unit.link);
             unit.event(net.S2EVENT_ONLINE);
         }
 
         /// Off the link: every read and write still waiting is answered.
+        /// Offline before the link is stopped, for the reason `goOnline`
+        /// gives.
         fn goOffline(unit: *Self) void {
-            Link.setRunning(unit.link, false);
             unit.online = 0;
+            Link.setRunning(unit.link, false);
             const sys = unit.sys;
             var taken: exec.List = .{};
             taken.init(.message);

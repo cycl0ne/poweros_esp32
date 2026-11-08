@@ -175,6 +175,11 @@ pub fn tail(into: []u8) []u8 {
 pub fn tickLog(base: *ExecBase) void {
     base.log_ticks +%= 1;
     if (base.log_ticks % signal_ticks != 0) return;
+    // The followers are under the system's interrupt lock
+    // (`SetLogSignal` takes it with Disable); the kernel's tick calls
+    // this of its own, so it takes the lock here.
+    _interrupt.takeSystemInterrupts(base, @returnAddress());
+    defer _interrupt.dropSystemInterrupts(base);
     const now = end();
     if (now == base.log_told) return;
     base.log_told = now;

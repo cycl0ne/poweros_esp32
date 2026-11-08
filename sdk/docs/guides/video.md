@@ -7,17 +7,21 @@ are shown and with the time each is due, the sound as 16-bit samples for
 audio.device. Underneath, media.library reads the container (MP4,
 QuickTime's MOV and Matroska's MKV) and hands out each track's packets,
 a codec module in `LIBS:codecs/` decodes the pictures - chip.vcodec
-H.264 and H.265 on the chip's decoder (videodec.resource, the WAVE511
-on the VisionFive 2), h264.vcodec H.264 in software, hevc.vcodec H.265,
+H.264 and H.265 on the chip's decoder (videodec.resource: the WAVE511
+on the VisionFive 2, and an AMD graphics device's video decoder, which
+takes VP9 and AV1 too),
+h264.vcodec H.264 in software, hevc.vcodec H.265,
 vp8.vcodec VP8, vp9.vcodec VP9 and av1.vcodec AV1 in software,
 mjpeg.vcodec Motion JPEG in software - and
-audiocodec.library decodes the sound. A display's video layer (rtg's `ShowVideoFrame`)
+audiocodec.library decodes the sound. videoparse.library reads an H.264,
+H.265, VP9 or AV1 stream for the decoders that decode its samples. A display's video layer (rtg's `ShowVideoFrame`)
 shows a frame as it comes out; graphics' `WriteYUVPixelArray` and
 `ScaleYUVPixelArray` put one into a window where there is none.
 
 This guide is opening a film, its pictures, showing them on a video
 layer, its sound, keeping them together, moving in it, its tracks and
-subtitles, what decodes what, and writing a codec module.
+subtitles, what decodes what, writing a codec module, and reading a
+stream for a decoder.
 
 ## Opening a film
 
@@ -68,9 +72,10 @@ range for Motion JPEG - so graphics takes it as it is. Its `matrix`,
 `transfer`, `primaries`, `range`, `depth` and `peak` are the stream's
 own: a film of high dynamic range comes out in PQ or HLG, in BT.2020's
 red, green and blue, often ten bits a sample, and graphics maps it into
-the screen's range as it puts it down. The chip's frames say it too - the
-hardware reports none of it, so the setup record's parameter set is read
-when the stream is opened. `time` is in
+the screen's range as it puts it down. The chip's frames of H.264 and
+H.265 say it too - the hardware reports none of it, so the setup
+record's parameter set is read when the stream is opened; its VP9 and
+AV1 frames are taken to be what their height suggests. `time` is in
 microseconds from the start of what the film presents; `number` counts
 the frames handed out. `VCERR_CORRUPT` is one picture the decoder
 stopped on: calling again goes on with the next. `VCERR_END` follows the
@@ -213,18 +218,18 @@ colour, a pixel half covered or more is the subtitle's.
 
 | Pictures | Decoded by | On the VisionFive 2 |
 |---|---|---|
-| H.264 (baseline, main, high), 8-bit; H.265 (main, and main 10 shown in 8 bits) | chip.vcodec: the chip, videodec.resource | 1080p about 145 frames a second, 720p about 300 |
+| H.264 (baseline, main, high), 8-bit; H.265 (main, and main 10 shown in 8 bits); on an AMD graphics device VP9 too (profile 0, and profile 2's 10 bits shown in 8) and AV1 (main: 8 bits, and 10 shown in 8, film grain) | chip.vcodec: the chip, videodec.resource | 1080p about 145 frames a second, 720p about 300; on a Radeon 780M 1080p about 600 (H.264, H.265 and AV1), 720p H.264 about 900, 4K H.265 in 10 bits about 160, 4K AV1 in 10 bits 130 to 165, 1080p VP9 about 550, in 10 bits about 340 |
 | H.264, every profile but SVC's and MVC's: up to 4:4:4 and 14 bits, fields, shown in 8 bits; what the chip refuses, and every H.264 where there is no chip | h264.vcodec: software, a worker task on each core, a picture each | 720p High 10 about 32 frames a second, 10 on one core; 1080p High about 20, 720p about 52 |
 | H.265: Main, Main 10, Main Still Picture and the range extensions' profiles - grey to 4:4:4, up to 16 bits - shown in 8 bits; the base layer of a stream in layers; what the chip refuses, and every H.265 where there is no chip | hevc.vcodec: software, a worker task on each core, a picture each | 1080p about 25 frames a second, 720p about 55, 1080p 4:2:2 in 10 bits about 17 |
 | VP8, every version (WebM, Matroska) | vp8.vcodec: software, a worker task on each core, a frame each | 720p about 84 frames a second, 1080p about 34; 27 and 11 on one core |
-| VP9, every profile: 8, 10 and 12 bits, 4:2:0, 4:2:2, 4:4:0, 4:4:4 (WebM, Matroska), shown in 8 bits | vp9.vcodec: software, a worker task on each core, a frame each | 720p about 53 frames a second, 1080p about 30, 720p in 10 bits about 38; 18, 9 and 12 on one core |
-| AV1, every profile: 8, 10 and 12 bits, grey, 4:2:0, 4:2:2, 4:4:4, film grain (MP4, WebM, Matroska), shown in 8 bits | av1.vcodec: software, a worker task on each core, a frame each | 1080p about 15 frames a second, 720p about 27, 720p in 10 bits with film grain about 18 |
+| VP9, every profile: 8, 10 and 12 bits, 4:2:0, 4:2:2, 4:4:0, 4:4:4 (WebM, Matroska), shown in 8 bits; what the chip refuses, and every VP9 where there is no chip | vp9.vcodec: software, a worker task on each core, a frame each | 720p about 53 frames a second, 1080p about 30, 720p in 10 bits about 38; 18, 9 and 12 on one core |
+| AV1, every profile: 8, 10 and 12 bits, grey, 4:2:0, 4:2:2, 4:4:4, film grain (MP4, WebM, Matroska), shown in 8 bits; what the chip refuses, and every AV1 where there is no chip | av1.vcodec: software, a worker task on each core, a frame each | 1080p about 15 frames a second, 720p about 27, 720p in 10 bits with film grain about 18 |
 | Motion JPEG, baseline: grey, 4:2:0, 4:2:2, 4:4:4 | mjpeg.vcodec: software, on the calling task | about a second for a 1080p picture: small pictures only |
 | MPEG-4 Part 2 | nothing | - |
 
-The software modules but mjpeg.vcodec are on the RISC-V 64 and AArch64
-machines' disks alone: the ESP32s have neither the room on their flash
-disks nor the speed.
+The software modules but mjpeg.vcodec are on the 64-bit machines' disks
+alone: the ESP32s have neither the room on their flash disks nor the
+speed.
 
 The sound is audiocodec.library's: AAC-LC
 ([AAC and MP4](audio.md#aac-and-mp4)), AC-3 and E-AC-3 mixed into
@@ -291,11 +296,118 @@ they share, `sdk.mcontainer`; the kind names the file, and without its
 module a file is refused, `MERR_UNSUPPORTED`. audiocodec.library's kinds
 are `.acodec` modules there ([Sound](audio.md)).
 
+## Reading a stream
+
+**videoparse.library** (`sdk.interface.videoparse`,
+[md](../autodocs/videoparse.md)) reads an H.264, H.265, VP9 or AV1
+stream for a decoder: the parameter sets, each picture's slice headers,
+its order counts, the reference pictures it holds and the two lists
+each slice decodes from, the references the stream lacks, and when each
+picture is shown - for VP9 and AV1 each frame's uncompressed header and
+its eight reference slots - and the light the film was mastered for, as
+its SEI or metadata OBUs said it, with each picture (`peak_nits`). The
+decoder decodes the samples - in software, as h264.vcodec, hevc.vcodec,
+vp9.vcodec and av1.vcodec do, or on a chip that takes the parsed
+slices. Its structures are in
+`sdk.videoparse`, every field of the codecs' syntax in
+`sdk.videoparse.h264`, `sdk.videoparse.hevc`, `sdk.videoparse.vp9` and
+`sdk.videoparse.av1`.
+
+```zig
+const vpb: *VideoParseBase = @ptrCast(sys.OpenLibrary(vp.VIDEOPARSENAME, 1) orelse return);
+defer sys.CloseLibrary(vpb.lib());
+var why: i32 = 0;
+// The track's avcC, hvcC or av1C, or null for Annex B; four slots of the
+// caller's beyond the stream's, for pictures it still shows.
+const parser = vpb.OpenVideoParser(vp.VPCODEC_HEVC, setup, setup_size, &[_]utility.TagItem{
+    .{ .tag = vp.VPA_Slots, .data = 4 },
+    .{},
+}, &why) orelse return;
+defer vpb.CloseVideoParser(parser);
+
+var packet: vp.VideoPacket = .{ .data = bytes.ptr, .bytes = @intCast(bytes.len), .time = time, .flags = vp.VPPKT_ACCESS_UNIT };
+_ = vpb.ParseVideoPacket(parser, &packet);
+var event: vp.VideoEvent = .{};
+while (true) {
+    switch (vpb.NextVideoEvent(parser, &event)) {
+        vp.VPERR_OK => {},
+        vp.VPERR_NEED_DATA, vp.VPERR_END => break, // the next packet
+        vp.VPERR_FULL => { // no slot free: a picture shown and given back
+            showOldest(vpb, parser);
+            continue;
+        },
+        else => continue, // a unit passed over
+    }
+    switch (event.kind) {
+        vp.VPEV_SEQUENCE => makePictures(event.sequence.?),
+        vp.VPEV_MISSING => fillGrey(event.picture.?.slot),
+        vp.VPEV_PICTURE => beginPicture(event.picture.?),
+        vp.VPEV_SLICE => decodeSlice(event.slice.?),
+        vp.VPEV_DECODE => endPicture(),
+        vp.VPEV_SHOW => queueToShow(event.slot, event.time),
+        vp.VPEV_FREE => forget(event.slot), // ReleaseVideoSlot once it is not shown or read
+        else => {},
+    }
+}
+```
+
+**A slot** names a picture, 0 up, handed out lowest first by
+`VPEV_PICTURE` and `VPEV_MISSING`: a decoder keeps a picture's samples,
+or a chip's reference surface, by its slot. A slot is the picture's
+until the parser said `VPEV_FREE` of it and the decoder gave it back
+with `ReleaseVideoSlot` - a picture may still wait to be shown, or be
+read by another core, after the stream let go of it. `VPA_Slots` is
+how many the decoder keeps beyond the stream's own: the frames it holds
+to be shown and those its other cores still read. Where none is free
+the next picture waits, `VPERR_FULL`, until one comes back.
+
+**A packet** is the caller's until `NextVideoEvent` answers
+`VPERR_NEED_DATA`: the parser reads a unit at a time as the events are
+asked for. `VPPKT_ACCESS_UNIT` says the packet is a whole picture - an
+MP4's or a Matroska track's is - so its `VPEV_DECODE` comes at its end
+rather than with the next picture's first unit; `VPPKT_END` shows every
+picture held and lets go of every slot. `ResetVideoParser` drops the
+pictures for a seek and keeps the parameter sets: the next packet is
+read as a stream's first, `VPEV_SEQUENCE` and all. An H.264 parser
+takes some 265 KiB, an H.265 one some 330 KiB, most of it the parameter
+sets.
+
+**A VP9 stream** (`VPCODEC_VP9`, no setup) has no slices, parameter sets
+or reordering: a packet is a frame, or a superframe of several - most
+often a hidden one, a reference for the frames after it, and one shown.
+Each frame is a `VPEV_PICTURE` with its header (`vp9`, the uncompressed
+header with what stays from frame to frame applied) and the eight
+reference slots as its references, in their order; one `VPEV_SLICE`
+with the frame's bytes whole, the compressed header starting at
+`data_bit`; `VPEV_DECODE`; and `VPEV_SHOW` when it is shown. A frame
+that only shows a reference is a `VPEV_SHOW` of that slot alone, so a
+slot can be shown more than once. `VPEV_SEQUENCE` comes before the first
+frame and before one of another size or format; a frame may still be
+predicted from references of other sizes. The stream takes nine slots
+beyond `VPA_Slots`, and a VP9 parser some 26 KiB.
+
+**An AV1 stream** (`VPCODEC_AV1`, the track's av1C as its setup, or
+none) is OBUs: a packet is a temporal unit - the frames of one moment,
+most often hidden ones and one shown - and is marked
+`VPPKT_ACCESS_UNIT`. Each frame is a `VPEV_PICTURE` with its header
+(`av1`, with what it takes from its primary reference and its
+references applied), the sequence header (`av1_sequence`) and the eight
+reference slots as its references, in their order; a `VPEV_SLICE` for
+each tile, its bytes and its number (`tile`); and `VPEV_DECODE` after
+the last. The frame a temporal unit shows - the last it shows, of a
+stream in layers - is a `VPEV_SHOW` at the unit's end, whose `picture`
+holds the header it is shown with: the frame's own, or for a frame
+shown again that one's, with the film grain the frame was stored with.
+`VPEV_SEQUENCE` comes before the first frame and before one of another
+size or format. The OBUs of operating point 0 are read. The stream
+takes ten slots beyond `VPA_Slots` - one more for the frame shown,
+held until its unit ends - and an AV1 parser some 11 KiB.
+
 ## From the shell
 
 `C:test/Film FILE` decodes a film as fast as it goes, shows nothing and
 plays nothing, and says how fast: `FRAME n TO file` writes a frame's
-planes to compare with ffmpeg's, `SEEK s` moves to a second at the end,
-`TOGETHER` decodes the sound on a process of its own while the pictures
+planes to compare with ffmpeg's, `SEEK s` moves to a second at the end
+(with `TO` and no `FRAME`, the frame it lands on is written), `TOGETHER` decodes the sound on a process of its own while the pictures
 are decoded. `C:test/VideoDec` feeds the chip's decoder an elementary
-stream (Annex B) without a container.
+stream (Annex B) without a container, or VP9 or AV1 in an IVF file.

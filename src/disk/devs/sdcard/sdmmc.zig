@@ -35,6 +35,7 @@ const chip_host = switch (hardware.chip) {
     .esp32p4 => @import("esp32p4/sdhost.zig"),
     .rv64sbi => @import("jh7110/sdhost.zig"),
     .a64psci => @compileError("sdcard.device: the AArch64 machines' SD host is not driven yet"),
+    .x64uefi => @compileError("sdcard.device: a card reader on an x86-64 machine is behind PCI, not this host"),
 };
 
 const base = chip_host.base;

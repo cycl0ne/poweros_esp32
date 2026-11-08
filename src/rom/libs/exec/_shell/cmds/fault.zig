@@ -22,10 +22,11 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
     const kind = args.next() orelse "load";
     if (_shell.same(kind, "ill")) {
         // Each core's own: Xtensa's ILL, RISC-V's all-zero instruction,
-        // AArch64's permanently undefined one.
+        // AArch64's permanently undefined one, x86-64's.
         switch (builtin.cpu.arch) {
             .riscv32, .riscv64 => asm volatile ("unimp"),
             .aarch64 => asm volatile ("udf #0"),
+            .x86_64 => asm volatile ("ud2"),
             else => asm volatile ("ill"),
         }
     } else if (_shell.same(kind, "load")) {

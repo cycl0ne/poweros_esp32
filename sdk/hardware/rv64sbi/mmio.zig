@@ -9,3 +9,7 @@ pub inline fn reg(addr: usize) *volatile u32 {
 pub inline fn reg8(addr: usize) *volatile u8 {
     return @ptrFromInt(addr);
 }
+
+pub inline fn reg16(addr: usize) *volatile u16 {
+    return @ptrFromInt(addr);
+}

@@ -22,7 +22,9 @@
 //!
 //!     block 0      a protective MBR
 //!     block 1      the GPT
-//!     BOOT         FAT32, 256 MB - what the firmware reads
+//!     BOOT         FAT32, 256 MB - what the firmware reads, marked
+//!                  EFI System where the firmware is UEFI and Basic
+//!                  data where it reads a partition by its place
 //!     BOOTB        the second one, where the firmware starts from either
 //!     container    the PowerOS container, the rest of the disk
 //!       DH0        posfs, "System", bootable, BootPri 5
@@ -83,7 +85,7 @@ const files = @import("files.zig");
 const Run = shared.Run;
 
 pub const COMMAND_NAME = shared.COMMAND_NAME;
-const VERSION_STRING = "\x00$VER: Install 1.2 (02.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Install 1.3 (05.11.2026)\r\n";
 
 /// rdb.library is opened at version 1 and its revision asked after: the
 /// GPT calls came with 1.4 and a FAT partition of a GPT, which the boot

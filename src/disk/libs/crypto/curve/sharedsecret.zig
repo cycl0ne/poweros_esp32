@@ -54,7 +54,9 @@ const _signature = @import("../signature/_signature.zig");
 /// The secret is the caller's: feed it to HkdfExtract, then overwrite it.
 ///
 /// NOTES:
-/// The work takes the same steps whatever the private key.
+/// The work takes the same steps whatever the private key. A 64-bit chip
+/// works the field's numbers in 64-bit limbs: on a Ryzen 7 7840HS an
+/// X25519 secret takes about 62 us, P-256 154 us, P-384 533 us.
 ///
 /// BUGS:
 /// None known.

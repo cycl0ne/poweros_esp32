@@ -119,6 +119,61 @@ const io_floor: u64 = 0x1000;
 /// What a bridge's windows count in: 4 KiB of I/O, 1 MiB of memory.
 const granularity = [3]u64{ 0x1000, 1 << 20, 1 << 20 };
 
+/// Everything the walk found left exactly where whoever ran before this
+/// put it: the firmware of a machine that places its own functions, which
+/// is what a machine started by UEFI is. No BAR is written, no bridge
+/// window is rewritten, and what the firmware decided is simply read back
+/// - `scan.zig` kept each BAR's address as it sized it - and switched on.
+///
+/// It is the only way on such a machine. Where the windows a host bridge
+/// may place things in are written down in the firmware's tables, they
+/// are written in a language this does not read; and the screen the
+/// kernel is already drawing on is at an address the firmware chose, so
+/// moving anything would be moving that.
+///
+/// The payload is still set: it is a property of the links and not of
+/// where anything was put.
+pub fn keep(space: anytype, nodes: []Node) void {
+    for (nodes) |*node| {
+        node.kind = @splat(null);
+        node.bus = @splat(0);
+        for (node.info.bars, 0..) |bar, s| {
+            if (bar.size == 0 or bar.address == 0) continue;
+            node.kind[s] = if (bar.flags & pci.PCIBAR_IO != 0)
+                .io
+            else if (bar.flags & pci.PCIBAR_PREFETCH != 0)
+                .pref
+            else
+                .mem;
+            node.bus[s] = bar.address;
+        }
+    }
+    for (nodes) |*node| switchOn(space, node);
+    payload(space, nodes);
+}
+
+/// What `keep` writes: the decoding a function's BARs want, and a bridge
+/// forwarding and mastering, added to what the firmware left in the
+/// command register. Nothing is taken away - a function the firmware left
+/// switched on stays on.
+fn switchOn(space: anytype, node: *const Node) void {
+    var has_io = false;
+    var has_mem = false;
+    for (node.info.bars, 0..) |bar, s| {
+        if (bar.size == 0) continue;
+        if (node.kind[s] == null) continue;
+        if (bar.flags & pci.PCIBAR_IO != 0) has_io = true else has_mem = true;
+    }
+    var command: u16 = @truncate(space.read(node.at, pci.PCI_COMMAND, 2));
+    if (node.bridge) {
+        command |= pci.PCI_COMMAND_IO | pci.PCI_COMMAND_MEMORY | pci.PCI_COMMAND_MASTER;
+    } else {
+        if (has_io) command |= pci.PCI_COMMAND_IO;
+        if (has_mem) command |= pci.PCI_COMMAND_MEMORY;
+    }
+    space.write(node.at, pci.PCI_COMMAND, 2, command);
+}
+
 /// Everything the walk found placed, the functions and bridges told, and
 /// the payload set. `windows` are filled to where the placing left them.
 pub fn place(space: anytype, nodes: []Node, windows: *Windows) void {

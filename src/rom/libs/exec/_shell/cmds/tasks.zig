@@ -9,6 +9,7 @@
 
 const _shell = @import("../shell.zig");
 const _lists = @import("../../debug/_lists.zig");
+const _task = @import("../../task/_task.zig");
 const Shell = _shell.Shell;
 const Args = _shell.Args;
 
@@ -23,12 +24,14 @@ pub const help =
 const max_shown = 40;
 
 pub fn run(shell: *Shell, _: *Args) anyerror!void {
-    const sys = shell.base.iface();
     var rows: _lists.Copied(_lists.tasks, max_shown) = .{};
-    sys.Disable();
+    // Walked without a lock: each core has its own lists under its own
+    // lock and a core holds one at a time, so a listing of the machine
+    // is a sweep, not one moment. A task that moves between cores while
+    // it is made may be seen twice or not at all, and a list changed
+    // under the walk is cut off where it stops making sense.
     _lists.tasks.each(.trusted, shell.base, &rows);
     const totals = _lists.tasks.totals(shell.base);
-    sys.Enable();
     rows.print(shell);
     _lists.tasks.printTotals(shell, totals);
 }

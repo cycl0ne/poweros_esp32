@@ -143,12 +143,18 @@ pub const Motion = struct {
     field: bool = false,
 };
 
-pub const RefKind = enum(u8) { none, short, long };
-
-/// A frame store of the decoded picture buffer (C.4): a frame, a
-/// complementary field pair, or one field, with its samples and marking.
+/// A picture's store (C.4's frame store): a frame, a complementary field
+/// pair, or one field, with its samples and its motion, by the slot
+/// videoparse.library names the picture by.
 pub const Store = struct {
-    in_use: bool = false,
+    /// The decoder's: its slot handed out and not yet given back.
+    held: bool = false,
+    /// The stream let go of it (VPEV_FREE).
+    freed: bool = false,
+    /// Waiting to be shown, or taken out and not yet done with.
+    queued: bool = false,
+    /// The picture's number, never given twice: what a motion vector's
+    /// reference is told by when its slot is reused.
     uid: u32 = 0,
     /// The samples: luma, Cb, Cr, each `stride` samples apart, of the
     /// whole frame; the bytes of one sample are the store's depth's.
@@ -165,16 +171,12 @@ pub const Store = struct {
     /// as fields.
     frame_coded: bool = false,
     mbaff: bool = false,
-    ref: [2]RefKind = .{ .none, .none },
-    frame_num: u32 = 0,
-    frame_num_wrap: i32 = 0,
-    long_term_idx: u32 = 0,
+    /// TopFieldOrderCnt and BottomFieldOrderCnt, as the library last said
+    /// them.
     poc: [2]i32 = .{ 0, 0 },
-    output_needed: bool = false,
+    /// It stands for a frame a gap in frame_num skipped.
     non_existing: bool = false,
-    idr: bool = false,
-    mmco5: bool = false,
-    /// When it is shown, as its packet said.
+    /// When it is shown, as the library said it.
     time: i64 = 0,
     /// Each macroblock's motion: a frame's in frame order, or each field's
     /// in its own half (top first).
@@ -184,24 +186,8 @@ pub const Store = struct {
     /// The macroblock rows of the frame that are final, filtered and all:
     /// a picture decoded on a worker counts them up as it goes.
     progress: u32 = 0,
-    /// The jobs that read it: it is not used again before they are done.
+    /// The jobs that read it: it is not given back before they are done.
     pinned: u8 = 0,
-
-    pub fn isRef(s: *const Store) bool {
-        return s.ref[0] != .none or s.ref[1] != .none;
-    }
-    pub fn isShortFrame(s: *const Store) bool {
-        return s.ref[0] == .short and s.ref[1] == .short;
-    }
-    pub fn isLongFrame(s: *const Store) bool {
-        return s.ref[0] == .long and s.ref[1] == .long;
-    }
-    /// PicOrderCnt of the frame or pair: the lower of its fields'.
-    pub fn framePoc(s: *const Store) i32 {
-        if (s.fields == 1) return s.poc[0];
-        if (s.fields == 2) return s.poc[1];
-        return @min(s.poc[0], s.poc[1]);
-    }
 };
 
 /// A reference picture: a frame (structure 3) or a field (1 top, 2

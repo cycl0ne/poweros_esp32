@@ -26,7 +26,8 @@
 //! by slot, with the decoder's `private`, for ReleaseVCodecFrame.
 //!
 //! **A decoder that refuses the stream** - VCERR_UNSUPPORTED before the
-//! first frame is handed out, as the WAVE511 does 10-bit H.264 - is closed,
+//! first frame is handed out, as a packet is sent or a frame asked for,
+//! as the WAVE511 does 10-bit H.264 - is closed,
 //! the next module that takes the track opened, and the track moved back
 //! to its key packet at or before the first frame to show; a film read
 //! through a function cannot be moved back, and keeps the refusal.
@@ -167,6 +168,7 @@ pub fn decode(s: *Stream, frame: *vc.VideoFrame, slot: u32) i32 {
             },
             vc.VCERR_NEED_DATA => {
                 const fed = feed(s);
+                if (fed == vc.VCERR_UNSUPPORTED and s.number == 0 and another(s)) continue;
                 if (fed != vc.VCERR_OK) return fed;
             },
             vc.VCERR_UNSUPPORTED => {

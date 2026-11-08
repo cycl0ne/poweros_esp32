@@ -2,14 +2,17 @@
 //! Top: what each task takes of the machine, looked at again and again
 //! until Ctrl-C. Built against the SDK only.
 //!
-//!   Top INTERVAL/K/N,COUNT/K/N
+//!   Top INTERVAL/K/N,COUNT/K/N,CORES/S
 //!
 //! INTERVAL is the time between looks, in seconds (2); COUNT how many
 //! looks it shows before it ends - with none, it goes on until Ctrl-C, or
-//! on a console until q.
+//! on a console until q. CORES gives each core a line of its own.
 //!
-//! Each look has a line per core - how much of the interval it spent in
-//! tasks, in interrupts and idle (`ReadCoreTimes`) - the free memory and
+//! Each look begins with one line for the machine - how much of the
+//! interval its cores spent in tasks, in interrupts and idle
+//! (`ReadCoreTimes`), the cores added together - or, with CORES, a line
+//! for each of them, which is a listing as tall as the machine has
+//! cores. Then the free memory and
 //! what the system and the tasks that have ended hold, and then every
 //! task: those running first, then those ready to run, then those
 //! waiting, and in each the busiest first. A task's line has its share of
@@ -46,18 +49,17 @@ const FileHandle = dos.FileHandle;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Top";
-const VERSION_STRING = "\x00$VER: Top 1.3 (17.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Top 1.5 (06.11.2026)\r\n";
 
-const template = "INTERVAL/K/N,COUNT/K/N";
+const template = "INTERVAL/K/N,COUNT/K/N,CORES/S";
 const arg_interval = 0;
 const arg_count = 1;
+const arg_cores = 2;
 
 const default_interval = 2;
 const longest_interval = 3600;
 /// How many tasks one look copies out; the rest are counted, not shown.
 const max_tasks = 96;
-/// How many cores one look reads.
-const max_cores = 4;
 /// A console that does not say its size.
 const default_rows = 24;
 const default_cols = 80;
@@ -79,6 +81,9 @@ const csi_ask_size = "\x1b[18t";
 
 var sys: *ExecBase = undefined;
 var dl: *DosBase = undefined;
+/// Whether each core gets a line of its own, rather than one line for
+/// the machine with its cores added together: the CORES switch.
+var per_core: bool = false;
 /// Who holds the memory, at the last look: walked under exec's memory lock,
 /// which allows no allocating, into this program's own memory.
 var holders: exec.memowners.Tally(max_tasks + 8) = .{};
@@ -110,7 +115,9 @@ const Look = struct {
     seen: []Seen,
     count: usize = 0,
     missed: u32 = 0,
-    cores: [max_cores]exec.CoreTimes = @splat(.{}),
+    /// A core's times, as many as the machine runs - allocated, since
+    /// how many cores there are is the machine's to say.
+    cores: []exec.CoreTimes,
     core_count: u32 = 0,
 };
 
@@ -227,7 +234,7 @@ export fn _program_entry(base: *ExecBase, args: [*]const u8, len: usize) callcon
     defer sys.CloseLibrary(dos_lib);
     dl = @ptrCast(dos_lib);
 
-    var argv: [2]usize = @splat(0);
+    var argv: [3]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -240,6 +247,7 @@ export fn _program_entry(base: *ExecBase, args: [*]const u8, len: usize) callcon
         return dos.RETURN_ERROR;
     }
     const looks: u32 = if (argv[arg_count] != 0) @as(*const u32, @ptrFromInt(argv[arg_count])).* else 0;
+    per_core = argv[arg_cores] != 0;
 
     const port = sys.CreateMsgPort() orelse return dos.RETURN_FAIL;
     defer sys.DeleteMsgPort(port);
@@ -258,7 +266,19 @@ export fn _program_entry(base: *ExecBase, args: [*]const u8, len: usize) callcon
     };
     defer sys.FreeVec(block);
     const all: [*]Seen = @ptrCast(@alignCast(block));
-    var looked = [2]Look{ .{ .seen = all[0..max_tasks] }, .{ .seen = all[max_tasks .. 2 * max_tasks] } };
+    // The cores the machine says it runs, and room for each one's times
+    // in both looks.
+    const core_count: usize = sys.CoreCount();
+    const times_block = sys.AllocVec(2 * core_count * @sizeOf(exec.CoreTimes), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+        _ = Printf(dl, MSG_NOMEMORY, .{COMMAND_NAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.FreeVec(times_block);
+    const times: [*]exec.CoreTimes = @ptrCast(@alignCast(times_block));
+    var looked = [2]Look{
+        .{ .seen = all[0..max_tasks], .cores = times[0..core_count] },
+        .{ .seen = all[max_tasks .. 2 * max_tasks], .cores = times[core_count .. 2 * core_count] },
+    };
 
     // On a console each look is written over the one before, at the
     // console's size; its keys, in raw mode, answer the question for it.
@@ -332,28 +352,30 @@ fn stopClock(clock: *timer.TimeRequest) bool {
     return false;
 }
 
-/// The cores' times and every task, copied out under one Disable: what
-/// each core runs (CoreTask, from core 0 up until one is not running),
-/// then the two queues, whose own lock is Disable too and nests.
+/// The cores' times and every task, copied out a core at a time: its
+/// times, what it runs (CoreTask), and its own ready and waiting tasks,
+/// each core under its own lock. A task that moves between cores while
+/// this walks them may be seen twice or not at all, which is a line in a
+/// listing that refreshes every second.
 fn look(into: *Look) void {
     into.count = 0;
     into.missed = 0;
-    sys.Disable();
     var core: u32 = 0;
-    while (core < max_cores and sys.ReadCoreTimes(core, &into.cores[core])) core += 1;
+    while (core < into.cores.len and sys.ReadCoreTimes(core, &into.cores[core])) core += 1;
     into.core_count = core;
     core = 0;
-    while (sys.CoreTask(core)) |task| : (core += 1) take(into, task, .run, core);
-    for ([_]struct { state: State, which: u32 }{
-        .{ .state = .ready, .which = exec.EXECLIST_TASK_READY },
-        .{ .state = .wait, .which = exec.EXECLIST_TASK_WAIT },
-    }) |queue| {
-        const list = sys.LockExecList(queue.which).?;
-        var it = list.iterator();
-        while (it.next()) |node| take(into, @fieldParentPtr("node", node), queue.state, null);
-        sys.UnlockExecList(queue.which);
+    while (core < into.cores.len) : (core += 1) {
+        const tasks = sys.LockCoreTasks(core) orelse break;
+        defer sys.UnlockCoreTasks(core);
+        if (sys.CoreTask(core)) |task| take(into, task, .run, core);
+        for ([_]struct { state: State, list: *exec.List }{
+            .{ .state = .ready, .list = &tasks.ready },
+            .{ .state = .wait, .list = &tasks.wait },
+        }) |queue| {
+            var it = queue.list.iterator();
+            while (it.next()) |node| take(into, @fieldParentPtr("node", node), queue.state, core);
+        }
     }
-    sys.Enable();
     holders.take(sys);
     for (into.seen[0..into.count]) |*task| {
         task.memory = if (holders.of(task.id)) |owner| owner.bytes else 0;
@@ -365,7 +387,6 @@ fn take(into: *Look, task: *const exec.Task, state: State, core: ?u32) void {
         into.missed += 1;
         return;
     }
-    const pins = task.flags & exec.TF_CORES;
     const seen = &into.seen[into.count];
     into.count += 1;
     seen.* = .{
@@ -374,7 +395,7 @@ fn take(into: *Look, task: *const exec.Task, state: State, core: ?u32) void {
         .pri = task.node.pri,
         .state = state,
         .core = core,
-        .idle = task.node.pri == -128 and @popCount(pins) == 1,
+        .idle = task.node.pri == -128 and task.core != exec.ANY_CORE,
         .id = task.id,
     };
     copyName(&seen.name, task.node.name);
@@ -406,7 +427,13 @@ fn show(screen: *Screen, now: *const Look, before: *const Look, interval: u32) v
     // A task's share is of one core over the interval: the most cycles
     // any core counted in it. The cores run on one clock, but an emulator
     // may count each core's on its own.
+    //
+    // The cores added together are the machine's own line, which is one
+    // line whether it has two cores or sixteen; CORES opens them out.
     var span: u64 = 0;
+    var machine_tasks: u64 = 0;
+    var machine_idle: u64 = 0;
+    var machine_interrupts: u64 = 0;
     for (0..now.core_count) |core| {
         const t = now.cores[core];
         const b = before.cores[core];
@@ -415,6 +442,10 @@ fn show(screen: *Screen, now: *const Look, before: *const Look, interval: u32) v
         const interrupts = t.interrupts -% b.interrupts;
         const all = tasks + idle + interrupts;
         span = @max(span, all);
+        machine_tasks += tasks;
+        machine_idle += idle;
+        machine_interrupts += interrupts;
+        if (!per_core) continue;
         screen.line("core %u  tasks%4u.%u%%  interrupts%4u.%u%%  idle%4u.%u%%", .{
             @as(u32, @intCast(core)),
             whole(tasks, all),
@@ -423,6 +454,18 @@ fn show(screen: *Screen, now: *const Look, before: *const Look, interval: u32) v
             tenth(interrupts, all),
             whole(idle, all),
             tenth(idle, all),
+        });
+    }
+    if (!per_core) {
+        const machine_all = machine_tasks + machine_idle + machine_interrupts;
+        screen.line("%u core(s)  tasks%4u.%u%%  interrupts%4u.%u%%  idle%4u.%u%%", .{
+            now.core_count,
+            whole(machine_tasks, machine_all),
+            tenth(machine_tasks, machine_all),
+            whole(machine_interrupts, machine_all),
+            tenth(machine_interrupts, machine_all),
+            whole(machine_idle, machine_all),
+            tenth(machine_idle, machine_all),
         });
     }
     screen.line("memory   %zu KiB free internal, %zu KiB external", .{

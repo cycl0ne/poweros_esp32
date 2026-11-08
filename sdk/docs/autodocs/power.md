@@ -1,0 +1,272 @@
+# power.resource
+
+power.resource's functions: what the machine can do about its own
+power, turning it off, and who is told when its power button is
+pressed. A resource: no Open or Close, its first function in the first
+slot. The base comes from OpenResource("power.resource").
+
+Generated from the source by `./zig build autodoc`.
+
+## Index
+
+- [AddPowerNotify](#addpowernotify) - `signals` sent to `task` when the machine's power button is pressed.
+- [PowerAbilities](#powerabilities) - What this machine can do about its own power (POWERF_*).
+- [PowerOff](#poweroff) - The machine turned off.
+- [RemPowerNotify](#rempowernotify) - A request of AddPowerNotify's given back.
+
+## AddPowerNotify
+
+`signals` sent to `task` when the machine's power button is pressed.
+
+**SYNOPSIS**
+
+```zig
+fn AddPowerNotify(pb: *PowerBase, task: *exec.Task, signals: u32) ?*power.PowerNotify
+```
+
+**SINCE**
+
+1.0. LVO -12.
+
+**INPUTS**
+
+- `task` - the task to tell: usually the caller, `FindTask(null)`.
+- `signals` - the signal bits to send it, from its own AllocSignal.
+
+**RESULT**
+
+The request, to be given back with RemPowerNotify; null on a machine
+whose button says nothing (PowerAbilities without POWERF_BUTTON), and
+without memory for the request.
+
+**BEHAVIOR**
+
+From now on `signals` reaches `task` whenever the button is pressed.
+The signal says that it was pressed and nothing else; two presses
+before the task looks are one.
+
+**It takes the press over.** While anything is asking, the resource
+does no more than tell: whether the machine is then turned off, and
+what is asked of whoever is in front of it first, is the program's.
+The resource's own answer - the drives stopped and the machine turned
+off - is for a machine where nobody is asking, and comes back as soon
+as the last request is given back.
+
+**CONTEXT**
+
+- Waits: for memory, and the resource's semaphore.
+- Interrupts: no.
+- Locks: takes the resource's semaphore.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The request is the resource's. The signals stay the task's: it frees
+them after RemPowerNotify, not before. A task that ends without
+giving its request back leaves the resource signalling a task that is
+gone, so it gives it back first.
+
+**NOTES**
+
+What reaches the task is a request, not a machine already going down:
+it has as long as it likes to answer it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RemPowerNotify`, `PowerOff`, `PowerAbilities`
+
+**EXAMPLES**
+
+```zig
+const bit = sys.AllocSignal(-1);
+const notify = pb.AddPowerNotify(sys.FindTask(null).?, @as(u32, 1) << @intCast(bit));
+```
+
+## PowerAbilities
+
+What this machine can do about its own power (POWERF_*).
+
+**SYNOPSIS**
+
+```zig
+fn PowerAbilities(pb: *PowerBase) u32
+```
+
+**SINCE**
+
+1.0. LVO -4.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+POWERF_OFF where the machine can turn itself off, POWERF_BUTTON where
+it has a power button that says when it is pressed; 0 where it can
+do neither, which is an honest answer and not a failure.
+
+**BEHAVIOR**
+
+The answer was worked out once, as the resource started: what the
+machine can do does not change while it runs. Asking costs nothing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: it may be called from one.
+- Locks: none.
+- Process: any.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+A program that offers to turn the machine off asks this first, so
+that it offers nothing the machine cannot do.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`PowerOff`, `AddPowerNotify`
+
+**EXAMPLES**
+
+```zig
+if (pb.PowerAbilities() & power.POWERF_OFF != 0) pb.PowerOff();
+```
+
+## PowerOff
+
+The machine turned off.
+
+**SYNOPSIS**
+
+```zig
+fn PowerOff(pb: *PowerBase) void
+```
+
+**SINCE**
+
+1.0. LVO -8.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+None. It does not return on a machine that goes off.
+
+**BEHAVIOR**
+
+The machine is turned off, through its firmware, which is what knows
+how this machine is to be put into that state. Nothing is written out
+first and nothing is asked: the caller has already done whatever is to
+be done - stopping the drives, so that what a file system holds is
+written - because once this is called there is no afterwards.
+
+It returns where the machine did not go off: one that cannot do it at
+all (PowerAbilities answers without POWERF_OFF), and one that was
+asked and went on running. The caller then still has a working
+machine, and says so rather than leaving it looking hung.
+
+**CONTEXT**
+
+- Waits: no, but the firmware's call may take as long as it takes.
+- Interrupts: no - it is called with interrupts on, from a task.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+Restarting the machine is exec's ColdReboot, not this: the two go
+different ways and a restart wants no firmware that can turn a machine
+off.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`PowerAbilities`, exec's `ColdReboot`
+
+**EXAMPLES**
+
+```zig
+pb.PowerOff();
+_ = Printf(dl, "this machine does not turn itself off\n", .{});
+```
+
+## RemPowerNotify
+
+A request of AddPowerNotify's given back.
+
+**SYNOPSIS**
+
+```zig
+fn RemPowerNotify(pb: *PowerBase, notify: ?*power.PowerNotify) void
+```
+
+**SINCE**
+
+1.0. LVO -16.
+
+**INPUTS**
+
+- `notify` - what AddPowerNotify answered; null does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The request leaves the list and is freed. Once this returns no signal
+of it is sent; one sent just before may still be pending in the task's
+signals. Where it was the last request, the press is the resource's
+again: the next one stops the drives and turns the machine off.
+
+**CONTEXT**
+
+- Waits: for the resource's semaphore.
+- Interrupts: no.
+- Locks: takes the resource's semaphore.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The request is gone; its signals are the task's again.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddPowerNotify`
+
+**EXAMPLES**
+
+```zig
+pb.RemPowerNotify(notify);
+sys.FreeSignal(bit);
+```

@@ -69,5 +69,7 @@ pub const CHART_Count = CHART_Dummy + 0x0C;
 pub const CHART_LINES: u32 = 0;
 pub const CHART_BARS: u32 = 1;
 
-/// The most series a chart holds.
-pub const CHART_MAX_SERIES = 8;
+/// The most series a chart holds. Enough for a figure and a second
+/// figure beside it for each core of a machine with sixteen, which is
+/// what the busiest chart in the system draws.
+pub const CHART_MAX_SERIES = 32;

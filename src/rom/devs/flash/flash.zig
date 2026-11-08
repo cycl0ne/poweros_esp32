@@ -60,7 +60,7 @@ const st = expansion.systemtags;
 const spiflash = switch (sdk.hardware.chip) {
     .esp32s3 => @import("esp32s3/spiflash.zig"),
     .esp32p4 => @import("esp32p4/spiflash.zig"),
-    .rv64sbi, .a64psci => @import("ramdisk/ramflash.zig"),
+    .rv64sbi, .a64psci, .x64uefi => @import("ramdisk/ramflash.zig"),
 };
 const mount = @import("mount.zig");
 

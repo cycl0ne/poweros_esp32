@@ -164,8 +164,9 @@ draws, scrolls, reads back or saves it works in; `PDTA_SourceWidth` and
 `PDTA_SourceHeight` say what the file held and `PDTA_ShrunkBy` by how
 much the two differ, so a program that must know can ask.
 
-**A JPEG on a machine with a codec** (the ESP32-P4's, as
-jpeg.resource) is decoded by the codec when it takes the file - a
+**A JPEG on a machine with a codec** (the ESP32-P4's, the JH7110's,
+an AMD graphics device's - as jpeg.resource) is decoded by the codec
+when it takes the file - a
 baseline file, grey or in three components at 4:4:4, 4:2:2 or 4:2:0 -
 and its decoded picture fits beside the one the object keeps; anything
 else is decoded in software, as on a machine without one. The two
@@ -175,8 +176,10 @@ colour's halved samples to full size each its own way. `JDTA_Decoder` (`datatype
 `JDEC_CODEC` and no object when the codec cannot - and asked with
 `GetDTAttrsA` says which one read the file. `C:test/Jpeg <file>` times
 the codec alone and the class both ways, and compares the two pictures
-(the ESP32-P4's disk has `SYS:Tests/datatypes/Desktop.jpg`, 1024 x 600,
-for it):
+(the ESP32-P4's and the x86-64 machines' disks have
+`SYS:Tests/datatypes/Desktop.jpg`, 1024 x 600, for it; an AMD device's
+decoder is started only while the watchdog is armed, which `WATCHDOG
+15000` does):
 
 ```
 Codec alone: 9839 us a decode

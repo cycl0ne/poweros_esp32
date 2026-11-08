@@ -39,7 +39,7 @@ const Task = exec.Task;
 const Printf = dos.stdio.Printf;
 
 const NAME = "SemTest";
-const VERSION_STRING = "\x00$VER: SemTest 1.0 (26.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SemTest 1.1 (06.11.2026)\r\n";
 const TEMPLATE = "SECONDS/N,TASKS/N,PIN/S";
 
 const default_seconds = 10;
@@ -283,7 +283,7 @@ fn batch(sys: *ExecBase, dl: *DosBase, mode: Mode, wanted: u32, seconds: u32, pi
         const task = sys.CreateTask(@ptrCast(name), -1, &workerCode, worker_stack) orelse break;
         worker.ended = .{ .reply_port = ended };
         sys.SetTaskEndMsg(task, &worker.ended);
-        if (pin) _ = sys.SetTaskAffinity(task, exec.coreFlag(@intCast(number % cores)));
+        if (pin) _ = sys.SetTaskAffinity(task, @intCast(number % cores));
         worker.task = task;
         run.count += 1;
     }
@@ -352,10 +352,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     run.go_signal = @as(u32, 1) << 30;
     sys.InitSemaphore(&run.sem);
     sys.InitSemaphore(&run.second);
-    var cores: u32 = 0;
-    var times: exec.CoreTimes = .{};
-    while (cores < 4 and sys.ReadCoreTimes(cores, &times)) cores += 1;
-    cores = @max(cores, 1);
+    // How many cores the pinned tasks are spread over: what the machine
+    // says it runs.
+    const cores = @max(sys.CoreCount(), 1);
 
     // Each pair alone.
     _ = Printf(dl, "A pair, alone (%u times):\n", .{@as(u32, timed_rounds)});

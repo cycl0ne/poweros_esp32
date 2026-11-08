@@ -22,7 +22,7 @@ const cpu = @import("cpu.zig");
 const cpu1 = @import("cpu1.zig");
 const plic = @import("plic.zig");
 const exec = @import("../../rom/libs/exec/exec.zig");
-const max_cores = @import("../../rom/libs/exec/exec_base.zig").max_cores;
+const max_cores = @import("cpu.zig").max_cores;
 
 /// The hold asked for - its count above the low byte, the asking core
 /// and one in it - or 0; the last hold let go; and how many cores are

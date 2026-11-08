@@ -68,7 +68,9 @@ const games_drawer_icon: DiskIcon = .{ .path = games_drawer ++ ".info", .picture
 /// `qemu_virt_a64` is upstream QEMU's AArch64 `virt` machine with
 /// Cortex-A76 cores and a GICv2, which the `virt64` steps run;
 /// `rpi_cm5` is the Raspberry Pi Compute Module 5, booted from its eMMC.
-const Board = enum { waveshare_7b, es3c35p, qemu, esp32p4_emu, olimex_p4pc, crowpanel_p4, qemu_virt, visionfive2, qemu_virt_a64, rpi_cm5 };
+/// `qemu_q35` is upstream QEMU's x86-64 q35 machine started by UEFI
+/// firmware, which the `q35` step runs.
+const Board = enum { waveshare_7b, es3c35p, qemu, esp32p4_emu, olimex_p4pc, crowpanel_p4, qemu_virt, visionfive2, qemu_virt_a64, rpi_cm5, qemu_q35 };
 
 /// The chip a board is built on, which picks the kernel's target, its
 /// root, start code and linker script, and how its image is made.
@@ -80,6 +82,7 @@ fn chipOf(board: Board) Chip {
         .esp32p4_emu, .olimex_p4pc, .crowpanel_p4 => .esp32p4,
         .qemu_virt, .visionfive2 => .rv64sbi,
         .qemu_virt_a64, .rpi_cm5 => .a64psci,
+        .qemu_q35 => .x64uefi,
     };
 }
 
@@ -331,6 +334,16 @@ const disk_icons = [_]DiskIcon{
 /// the flash its kernel is written with and has no use for either.
 const ram_disk_dirs = [_][]const u8{ "Storage", "Storage/Boot" };
 
+/// The drawers under `Storage/Boot` a machine's firmware wants its files
+/// in. A UEFI firmware reads one name and no other: `EFI/BOOT/BOOTX64.EFI`
+/// on the partition it starts from, so the loader is kept under those two
+/// drawers here as well - that way `C:Install` copies the whole of
+/// `Storage/Boot` and the result is a partition that machine starts from.
+const uefi_boot_dirs = [_][]const u8{ "Storage/Boot/EFI", "Storage/Boot/EFI/BOOT" };
+/// Where that firmware looks for the loader, under `Storage/Boot` and in
+/// a package's `boot/`.
+const uefi_loader_path = "EFI/BOOT/BOOTX64.EFI";
+
 /// Whether the directory `dir` is made on `chip`'s image. LIBS:facet
 /// holds the drivers of the GPUs facet.library draws with, and the
 /// ESP32-S3's disk has neither it nor the library (`no_3d` there).
@@ -350,7 +363,7 @@ fn iconSize(board: Board) u32 {
         // 480x320
         .es3c35p => 40,
         // No screen yet.
-        .esp32p4_emu, .olimex_p4pc, .crowpanel_p4, .qemu_virt, .visionfive2, .qemu_virt_a64, .rpi_cm5 => 48,
+        .esp32p4_emu, .olimex_p4pc, .crowpanel_p4, .qemu_virt, .visionfive2, .qemu_virt_a64, .rpi_cm5, .qemu_q35 => 48,
     };
 }
 
@@ -367,7 +380,7 @@ pub fn build(b: *std.Build) void {
     const dh0_size_kib = b.option(u32, "dh0-size", "DH0:'s size in KiB, a multiple of 4; the rest of the flash disk is left for partitions made later with C:RDB ADD (default: all of it)") orelse 0;
     const disk_offset_kib = b.option(u32, "disk-offset", "Where the flash disk starts, in KiB: a multiple of 64 (default: 2048)") orelse default_disk_offset_kib;
     const rdb_size_kib = b.option(u32, "rdb-size", "The flash disk's partition table area before DH0:, in KiB, a multiple of 4 and 64 at least: room for more partitions and for file systems kept in the table (default: 64)") orelse default_rdb_size_kib;
-    const cores = b.option(u32, "cores", "How many cores the kernel runs on, 1 or 2 - up to 4 on a RISC-V 64 or AArch64 board (default: what the board's SYSTAG_Cores says)") orelse 0;
+    const cores = b.option(u32, "cores", "How many cores the kernel runs on, 1 or 2 - up to 4 on a RISC-V 64 or AArch64 machine, and as many as an x86-64 machine has (default: what the board's SYSTAG_Cores says, which on a PC is every core it has)") orelse 0;
     const selftest = b.option(bool, "selftest", "ESP32-P4: the boot task checks the chip and runs test tasks instead of the shell (default: false)") orelse false;
     // Whether the `disk/` tree goes on the images. It is the builder's own
     // files, and a package to hand out is built without them
@@ -375,29 +388,38 @@ pub fn build(b: *std.Build) void {
     // null when nothing was said about it.
     const disk_tree_option = b.option(bool, "disk-tree", "Put the disk/ tree on the disk images (default: yes, when there is one)");
     const memdebug = b.option(bool, "memdebug", "Memory debugging on from exec's start: walls behind blocks, patterns in new and freed memory, wide stack guards (default: false; s3> memdebug and C:MemDebug switch it at run time)") orelse false;
+    const logdebug = b.option(bool, "logdebug", "The log keeps the debug lines from exec's start, among them every module's name as it is started: what a boot that stops before there is a shell says for itself (default: false; C:Log LEVEL switches it at run time)") orelse false;
     const posfs_soak = b.option(u32, "posfs-soak", "`zig build test`: run posfs's power-cut test on this many more seeds, each on flash, a card and a stick (default: 0)") orelse 0;
     const most_cores: u32 = switch (chipOf(board)) {
+        // The machine's own tables say how many cores it has, so there is
+        // no figure here to hold -Dcores against.
+        .x64uefi => 0,
         .rv64sbi, .a64psci => 4,
         .esp32s3, .esp32p4 => 2,
     };
-    if (cores > most_cores) std.debug.panic("-Dcores={d}: this chip has {d} cores", .{ cores, most_cores });
-    const net = b.option([]const u8, "net", "The network of the qemu steps and the virt display steps: none, or a QEMU network backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)");
-    const net_dump = b.option([]const u8, "net-dump", "Write every frame of the qemu and virt display steps' network to this pcap file");
+    if (most_cores != 0 and cores > most_cores) std.debug.panic("-Dcores={d}: this chip has {d} cores", .{ cores, most_cores });
+    const net = b.option([]const u8, "net", "The network of the qemu, virt, virt64 and q35 steps: none, or a QEMU network backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)");
+    const net_dump = b.option([]const u8, "net-dump", "Write every frame of the qemu, virt, virt64 and q35 steps' network to this pcap file");
     const wifi = wifiDir(b, b.option([]const u8, "wifi", "The radio's vendor libraries for esp32s3wifi.device (default: toolchain/espressif-wifi, which scripts/fetch-wifi.sh fills)"));
-    const telnet = b.option(u16, "telnet", "Forward this host port to the machine's port 23 (C:net/ShellServer) on the qemu and virt display steps' user network; qemu-display forwards 2323 unless given, and 0 forwards none");
-    const ssh_port = b.option(u16, "ssh", "Forward this host port to the machine's port 22 (C:net/ShellServer SSH) on the qemu and virt display steps' user network; qemu-display forwards 2222 unless given, and 0 forwards none");
+    const telnet = b.option(u16, "telnet", "Forward this host port to the machine's port 23 (C:net/ShellServer) on the qemu, virt, virt64 and q35 display steps' user network; qemu-display forwards 2323 unless given, and 0 forwards none");
+    const ssh_port = b.option(u16, "ssh", "Forward this host port to the machine's port 22 (C:net/ShellServer SSH) on the qemu, virt, virt64 and q35 display steps' user network; qemu-display forwards 2222 unless given, and 0 forwards none");
     const network = qemuNetwork(b, net, net_dump, telnet, ssh_port);
     const virt_network = virtNetwork(b, net, net_dump, telnet, ssh_port);
+    const q35_network = q35Network(b, net, net_dump, telnet, ssh_port);
     const rs485 = b.option([]const u8, "rs485", "Give the qemu steps' RS-485 port (UART1, rs485.device) to this QEMU serial backend, such as tcp::5020,server,nowait or a pty");
     const slip_line = b.option([]const u8, "slip", "Give the qemu steps' UART1 (serial.device unit 1, a SLIP line) to this QEMU serial backend, such as tcp::5021,server,nowait; not with -Drs485");
     if (rs485 != null and slip_line != null) std.debug.panic("-Drs485 and -Dslip: both are UART1", .{});
     // UART1's backend: the RS-485 port's or a SLIP line's.
     const uart1 = rs485 orelse slip_line;
     const usb_devices = b.option([]const u8, "usb", "Plug these QEMU USB devices into the qemu steps' USB port, comma-separated (usb-hub,usb-kbd,usb-mouse); an item with '=' is a property of the device before it (usb-kbd,port=1,id=kbd)");
-    const virt_speaker = virtSpeaker(b, b.option([]const u8, "audio", "The virt and virt64 steps' USB speaker on this QEMU audio backend - an -audiodev's driver and options: pa, pipewire, alsa, sdl, none, wav,path=out.wav (default: QEMU's own choice among the backends it has)"));
-    const virt_ui = b.option([]const u8, "virt-ui", "QEMU's -display for the virt and virt64 display steps (default: gtk,show-cursor=off,zoom-to-fit=off - GTK's window at the picture's size, 1:1; default,show-cursor=off takes SDL, or VNC, where there is no GTK)") orelse "gtk,show-cursor=off,zoom-to-fit=off";
-    const virt_monitor = virtMonitor(b, b.option([]const u8, "virt-qmp", "Open a QMP monitor on this Unix socket in the virt and virt64 display steps, which scripts/qemu-shot.py takes the running machine's picture through (such as /tmp/poweros.qmp)"));
+    const audio_backend = b.option([]const u8, "audio", "The sound of the virt, virt64 and q35 steps on this QEMU audio backend - an -audiodev's driver and options: pa, pipewire, alsa, sdl, none, wav,path=out.wav (default: QEMU's own choice among the backends it has)");
+    const virt_speaker = virtSpeaker(b, audio_backend);
+    const q35_speaker = q35Speaker(b, audio_backend);
+    const virt_ui = b.option([]const u8, "virt-ui", "QEMU's -display for the virt, virt64 and q35 display steps (default: gtk,show-cursor=off,zoom-to-fit=off - GTK's window at the picture's size, 1:1; default,show-cursor=off takes SDL, or VNC, where there is no GTK)") orelse "gtk,show-cursor=off,zoom-to-fit=off";
+    const virt_monitor = virtMonitor(b, b.option([]const u8, "virt-qmp", "Open a QMP monitor on this Unix socket in the virt, virt64 and q35 display steps, which scripts/qemu-shot.py takes the running machine's picture through (such as /tmp/poweros.qmp)"));
     const usb_disk = b.option([]const u8, "usb-disk", "Plug a USB stick into the qemu steps' USB port whose blocks are this raw image file (-snapshot runs keep it unchanged)");
+    const ovmf_code = b.option([]const u8, "ovmf-code", "The x64 UEFI firmware the q35 steps start (default: /usr/share/edk2/x64/OVMF_CODE.4m.fd)") orelse "/usr/share/edk2/x64/OVMF_CODE.4m.fd";
+    const ovmf_vars = b.option([]const u8, "ovmf-vars", "The firmware's variable store the q35 steps start from, copied into work/ on its first run (default: /usr/share/edk2/x64/OVMF_VARS.4m.fd)") orelse "/usr/share/edk2/x64/OVMF_VARS.4m.fd";
     const usb = qemuUsb(b, usb_devices, usb_disk);
     // The display is the one a person sits at: `telnet localhost 2323`
     // and `ssh -p 2222 localhost` reach a ShellServer in it without asking
@@ -425,11 +447,13 @@ pub fn build(b: *std.Build) void {
     const p4_target = b.resolveTargetQuery(poweros_sdk.p4_target_query);
     const rv64_target = b.resolveTargetQuery(poweros_sdk.rv64_target_query);
     const a64_target = b.resolveTargetQuery(poweros_sdk.a64_target_query);
+    const x64_target = b.resolveTargetQuery(poweros_sdk.x64_target_query);
     const kernel_target = switch (chipOf(board)) {
         .esp32s3 => target,
         .esp32p4 => p4_target,
         .rv64sbi => rv64_target,
         .a64psci => a64_target,
+        .x64uefi => x64_target,
     };
 
     // The SDK (sdk/, a package of its own): the system's types and the
@@ -437,7 +461,7 @@ pub fn build(b: *std.Build) void {
     // against it like any program does.
     const sdk_dep = b.dependency("poweros_sdk", .{});
     const sdk = sdk_dep.module("sdk");
-    const kernel = addKernel(b, kernel_target, optimize, sdk, board, disk_offset, cores, selftest, memdebug);
+    const kernel = addKernel(b, kernel_target, optimize, sdk, board, disk_offset, cores, selftest, memdebug, logdebug);
 
     // What goes on the disk (src/disk, a package of its own): the
     // commands, the test programs, the modules loaded from LIBS:, DEVS:
@@ -508,6 +532,28 @@ pub fn build(b: *std.Build) void {
         run_posfsck.addArgs(given);
         posfsck_step.dependOn(&run_posfsck.step);
     } else posfsck_step.dependOn(&b.addInstallArtifact(posfsck, .{}).step);
+
+    // tools/mkstick makes the medium a machine whose firmware is UEFI
+    // starts from. The FAT32 volume on it is laid down by the file
+    // system's own format, through the door that handler keeps for a tool
+    // on the host, so there is one implementation of the format and what
+    // the tool writes is what the handler mounts.
+    const fat32_mod = b.createModule(.{
+        .root_source_file = b.path("src/disk/devs/handlers/fat/host.zig"),
+        .target = b.graph.host,
+        .optimize = .ReleaseSafe,
+    });
+    fat32_mod.addImport("sdk", sdk);
+    const mkstick = b.addExecutable(.{
+        .name = "mkstick",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/mkstick/mkstick.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    mkstick.root_module.addImport("sdk", sdk);
+    mkstick.root_module.addImport("fat32", fat32_mod);
 
     // audio.device's mixer on the host: `audio-golden` writes the golden
     // mix's reference file again (src/rom/devs/audio/golden.zig, whose
@@ -582,9 +628,9 @@ pub fn build(b: *std.Build) void {
     const extras = extraFiles(b, &made);
     const games = gamesTree(b, &made);
 
-    // Four images from one recipe: the ESP32-S3's, the ESP32-P4's, the
-    // RISC-V 64 machines' and the AArch64 machines', which differ only in
-    // their programs' load files.
+    // Five images from one recipe: the ESP32-S3's, the ESP32-P4's, the
+    // RISC-V 64 machines', the AArch64 machines' and the x86-64 machines',
+    // which differ only in their programs' load files.
     const make_disk = b.addRunArtifact(mkfs);
     const disk_bin = make_disk.addOutputFileArg("disk.bin");
     const make_p4_disk = b.addRunArtifact(mkfs);
@@ -607,16 +653,25 @@ pub fn build(b: *std.Build) void {
     const a64_disk_made = make_a64_disk.addOutputFileArg("disk-a64-made.bin");
     const a64_system_disk = make_a64_disk.addPrefixedOutputFileArg("--gpt=", "system-a64.bin");
     make_a64_disk.addArg(b.fmt("--gpt-bytes={d}", .{virt_system_bytes}));
-    const disks: DiskImages = .{ .runs = .{ make_disk, make_p4_disk, make_rv64_disk, make_a64_disk } };
+    const make_x64_disk = b.addRunArtifact(mkfs);
+    // The x86-64 disk's files as a tree and a list as well, as the other
+    // 64-bit disks' (zig-out/disk-x64/, zig-out/bin/disk-x64.manifest).
+    const x64_tree = make_x64_disk.addPrefixedOutputDirectoryArg("--tree=", "disk-x64");
+    const x64_manifest = make_x64_disk.addPrefixedOutputFileArg("--manifest=", "disk-x64.manifest");
+    const x64_disk_made = make_x64_disk.addOutputFileArg("disk-x64-made.bin");
+    const x64_system_disk = make_x64_disk.addPrefixedOutputFileArg("--gpt=", "system-x64.bin");
+    make_x64_disk.addArg(b.fmt("--gpt-bytes={d}", .{virt_system_bytes}));
+    const disks: DiskImages = .{ .runs = .{ make_disk, make_p4_disk, make_rv64_disk, make_a64_disk, make_x64_disk } };
     const p4_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.esp32p4 });
     const rv64_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.rv64sbi });
     const a64_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.a64psci });
+    const x64_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.x64uefi });
     // The ESP32s' disk is the flash past the kernel, the 64-bit machines'
     // a RAM disk of its own size.
     for (disks.runs, DiskImages.chips) |run, chip| {
         const size: u32 = switch (chip) {
             .esp32s3, .esp32p4 => disk_size,
-            .rv64sbi, .a64psci => ram_disk_size,
+            .rv64sbi, .a64psci, .x64uefi => ram_disk_size,
         };
         run.addArgs(&.{
             "System",
@@ -635,6 +690,10 @@ pub fn build(b: *std.Build) void {
         switch (chip) {
             .esp32s3, .esp32p4 => {},
             .rv64sbi, .a64psci => run.addArgs(&ram_disk_dirs),
+            .x64uefi => {
+                run.addArgs(&ram_disk_dirs);
+                run.addArgs(&uefi_boot_dirs);
+            },
         }
     }
     // The directories those files need, made before anything goes in
@@ -653,6 +712,9 @@ pub fn build(b: *std.Build) void {
         }
         if (poweros_userland.builtFor(program, .a64psci)) {
             make_a64_disk.addPrefixedFileArg(b.fmt("{s}=", .{program.disk}), a64_disk_dep.namedLazyPath(program.disk));
+        }
+        if (poweros_userland.builtFor(program, .x64uefi)) {
+            make_x64_disk.addPrefixedFileArg(b.fmt("{s}=", .{program.disk}), x64_disk_dep.namedLazyPath(program.disk));
         }
     }
     for (poweros_userland.files) |file| {
@@ -680,6 +742,9 @@ pub fn build(b: *std.Build) void {
     }
     for (poweros_userland.a64_files) |file| {
         make_a64_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), a64_disk_dep.namedLazyPath(file.source));
+    }
+    for (poweros_userland.x64_files) |file| {
+        make_x64_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), x64_disk_dep.namedLazyPath(file.source));
     }
     if (wifi != null) {
         const wifi_device = poweros_userland.wifi_device;
@@ -760,6 +825,18 @@ pub fn build(b: *std.Build) void {
         make_rv64_disk.addPrefixedFileArg("devs/firmware/wave511_dec_fw.bin=", .{ .cwd_relative = b.pathJoin(&.{ dir, "wave511_dec_fw.bin" }) });
         make_rv64_disk.addPrefixedFileArg("devs/firmware/wave511.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "LICENSE.txt" }) });
     }
+    // DEVS:firmware/amdgpu/ - what an AMD graphics device's video decoder
+    // runs and the table of contents its security processor is given
+    // first, which amdgpu.resource loads, as scripts/fetch-amdgpu.sh
+    // fetched them - and AMD's licence for them beside them. On the x86-64
+    // disk alone.
+    if (amdgpuDir(b)) |dir| {
+        make_x64_disk.addArgs(&.{ "devs/firmware", "devs/firmware/amdgpu" });
+        for ([_][]const u8{ "vcn_4_0_2.bin", "psp_13_0_4_toc.bin" }) |name| {
+            make_x64_disk.addPrefixedFileArg(b.fmt("devs/firmware/amdgpu/{s}=", .{name}), .{ .cwd_relative = b.pathJoin(&.{ dir, name }) });
+        }
+        make_x64_disk.addPrefixedFileArg("devs/firmware/amdgpu.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "LICENSE.amdgpu" }) });
+    }
     // DEVS:networks/firmware/cyw43455/ - what the Raspberry Pi CM5's radio
     // runs, as scripts/fetch-cyw43455.sh fetched it. On the AArch64 disk
     // alone, whose networks/cyw43455.device loads it.
@@ -775,6 +852,7 @@ pub fn build(b: *std.Build) void {
     if (pciIdsFile(b)) |list| {
         make_rv64_disk.addPrefixedFileArg("devs/pci.ids=", .{ .cwd_relative = list });
         make_a64_disk.addPrefixedFileArg("devs/pci.ids=", .{ .cwd_relative = list });
+        make_x64_disk.addPrefixedFileArg("devs/pci.ids=", .{ .cwd_relative = list });
     }
     // The icons, from the pictures scripts/fetch-icons.sh drew at the
     // board's size, when they are there. An icon whose picture is
@@ -900,6 +978,20 @@ pub fn build(b: *std.Build) void {
             .install_subdir = "disk-a64",
         }).step);
     }
+    const pad_x64_disk = b.addRunArtifact(padimage);
+    pad_x64_disk.addFileArg(x64_disk_made);
+    const x64_disk_bin = pad_x64_disk.addOutputFileArg("disk-x64.bin");
+    pad_x64_disk.addArg(b.fmt("{d}", .{ram_disk_size}));
+    if (board == .qemu_q35) b.getInstallStep().dependOn(&b.addInstallBinFile(x64_system_disk, "system-x64.bin").step);
+    if (chipOf(board) == .x64uefi) {
+        b.getInstallStep().dependOn(&b.addInstallBinFile(x64_disk_bin, "disk-x64.bin").step);
+        b.getInstallStep().dependOn(&b.addInstallBinFile(x64_manifest, "disk-x64.manifest").step);
+        b.getInstallStep().dependOn(&b.addInstallDirectory(.{
+            .source_dir = x64_tree,
+            .install_dir = .prefix,
+            .install_subdir = "disk-x64",
+        }).step);
+    }
 
     // After linking: every ROM tag's module size into the kernel's
     // resident_sizes table (the shell's `residents` shows them).
@@ -926,6 +1018,7 @@ pub fn build(b: *std.Build) void {
         .esp32p4 => addP4Image(b, esptool, ramimage, kernel, p4_disk_bin, disk_offset),
         .rv64sbi => addRv64Image(b, kernel),
         .a64psci => addA64Image(b, kernel),
+        .x64uefi => addX64Image(b, kernel),
     };
     const image = built.image;
     b.getInstallStep().dependOn(&b.addInstallBinFile(built.kernel_elf, "kernel").step);
@@ -965,22 +1058,38 @@ pub fn build(b: *std.Build) void {
     });
     serve.root_module.addImport("sdk", sdk);
     const serve_port = b.option(u16, "serve-port", "The port `serve` hands a release package out on (default: 8080)") orelse 8080;
+    // The x86-64 machine's loader: a PE32+ of its own that the firmware
+    // starts, and which then reads the kernel (src/boot/uefi/stub.zig).
+    // It is made here because everything that writes a boot partition
+    // has to carry it - the package below, the image further down and
+    // the stick - and it is one of that board's build products
+    // (`zig-out/bin/BOOTX64.EFI`), because it is a file that has to be
+    // on the partition the firmware reads, as much as the kernel is.
+    const uefi_stub = addUefiStub(b, optimize);
     const package_step = b.step("package", "Gather a release package for -Dboard= into release/package-<board>/");
     const serve_step = b.step("serve", "Gather the release package and hand it out over HTTP (quit with Ctrl-C)");
     switch (chipOf(board)) {
         .esp32s3, .esp32p4 => {
             const no_package = b.addFail(
-                "package: this board's disk is the flash its kernel is written with - `flash-disk` writes it, and `esp-package` packs it to be written elsewhere. A package is for a machine whose disk is in RAM: -Dboard=visionfive2, rpi_cm5, qemu_virt or qemu_virt_a64.",
+                "package: this board's disk is the flash its kernel is written with - `flash-disk` writes it, and `esp-package` packs it to be written elsewhere. A package is for a machine whose disk is in RAM: -Dboard=visionfive2, rpi_cm5, qemu_virt, qemu_virt_a64 or qemu_q35.",
             );
             package_step.dependOn(&no_package.step);
             serve_step.dependOn(&no_package.step);
         },
-        .rv64sbi, .a64psci => {
-            const rv64 = chipOf(board) == .rv64sbi;
+        .rv64sbi, .a64psci, .x64uefi => {
             const gathered = addPackage(b, package_step, mkpackage, board, image, .{
-                .tree = if (rv64) rv64_tree else a64_tree,
-                .ram_disk = if (rv64) rv64_disk_bin else a64_disk_bin,
+                .tree = switch (chipOf(board)) {
+                    .rv64sbi => rv64_tree,
+                    .a64psci => a64_tree,
+                    else => x64_tree,
+                },
+                .ram_disk = switch (chipOf(board)) {
+                    .rv64sbi => rv64_disk_bin,
+                    .a64psci => a64_disk_bin,
+                    else => x64_disk_bin,
+                },
                 .boot_files = boot_files,
+                .boot_loader = if (chipOf(board) == .x64uefi) uefi_stub.getEmittedBin() else null,
             });
             // `serve` hands out the package it has just gathered, so one
             // command is the whole of the host's side.
@@ -994,6 +1103,11 @@ pub fn build(b: *std.Build) void {
         },
     }
 
+    // The loader beside the kernel in this board's build products.
+    if (board == .qemu_q35) {
+        b.getInstallStep().dependOn(&b.addInstallBinFile(uefi_stub.getEmittedBin(), "BOOTX64.EFI").step);
+    }
+
     // SYS:Storage/Boot on the image of the machine this build is for: the
     // files its firmware loads, so it installs itself from what it is
     // running - no network, no second machine - and SYS:Storage/manifest
@@ -1003,8 +1117,12 @@ pub fn build(b: *std.Build) void {
     // board's, and a build is for one board.
     switch (chipOf(board)) {
         .esp32s3, .esp32p4 => {},
-        .rv64sbi, .a64psci => {
-            const run = if (chipOf(board) == .rv64sbi) make_rv64_disk else make_a64_disk;
+        .rv64sbi, .a64psci, .x64uefi => {
+            const run = switch (chipOf(board)) {
+                .rv64sbi => make_rv64_disk,
+                .a64psci => make_a64_disk,
+                else => make_x64_disk,
+            };
             const list = b.addRunArtifact(mkpackage);
             const boot_list = list.addPrefixedOutputDirectoryArg("--into=", b.fmt("boot-{s}", .{@tagName(board)}));
             list.addArg(b.fmt("--chip={s}", .{@tagName(chipOf(board))}));
@@ -1013,6 +1131,15 @@ pub fn build(b: *std.Build) void {
             // from, and the list that says what it is.
             list.addPrefixedFileArg("boot/kernel.bin=", image);
             run.addPrefixedFileArg("Storage/Boot/kernel.bin=", image);
+            // The loader beside it on a machine whose firmware starts one:
+            // without it in both, a machine that installs itself - or one
+            // installed from a package - would write a boot partition its
+            // firmware finds nothing in.
+            if (chipOf(board) == .x64uefi) {
+                const loader = uefi_stub.getEmittedBin();
+                list.addPrefixedFileArg("boot/" ++ uefi_loader_path ++ "=", loader);
+                run.addPrefixedFileArg("Storage/Boot/" ++ uefi_loader_path ++ "=", loader);
+            }
             if (board == .rpi_cm5) {
                 const config = b.path("src/boards/rpi_cm5/config.txt");
                 list.addPrefixedFileArg("boot/config.txt=", config);
@@ -1029,7 +1156,7 @@ pub fn build(b: *std.Build) void {
 
     // The emulator is a board of its own: the `qemu*` steps run its image,
     // with the same disk.
-    const emulated = if (board == .qemu) built else addImage(b, esptool, ressize, addKernel(b, target, optimize, sdk, .qemu, disk_offset, cores, false, memdebug), disk_bin, disk_offset);
+    const emulated = if (board == .qemu) built else addImage(b, esptool, ressize, addKernel(b, target, optimize, sdk, .qemu, disk_offset, cores, false, memdebug, logdebug), disk_bin, disk_offset);
     const flash_image = emulated.flash_image;
 
     const run_qemu = qemuRun(b, qemu, flash_image, network, usb, qemuConsole(b, &.{"-nographic"}, uart1));
@@ -1061,7 +1188,7 @@ pub fn build(b: *std.Build) void {
 
     // The ESP32-P4 in esp-emulator (scripts/fetch-esp-emu.sh), a board of
     // its own: the `emu` step runs its image on the boards' v1.x ROM.
-    const p4_emulated = if (board == .esp32p4_emu) built else addP4Image(b, esptool, ramimage, addKernel(b, p4_target, optimize, sdk, .esp32p4_emu, disk_offset, cores, selftest, memdebug), p4_disk_bin, disk_offset);
+    const p4_emulated = if (board == .esp32p4_emu) built else addP4Image(b, esptool, ramimage, addKernel(b, p4_target, optimize, sdk, .esp32p4_emu, disk_offset, cores, selftest, memdebug, logdebug), p4_disk_bin, disk_offset);
     const run_emu = b.addSystemCommand(&.{
         b.pathFromRoot("toolchain/esp-emu/esp-emu"), "--chip",                                                 "esp32p4",
         "--rom",                                     b.pathFromRoot("toolchain/esp-emu/esp32p4_rev0_rom.elf"), "--psram-size",
@@ -1085,7 +1212,7 @@ pub fn build(b: *std.Build) void {
     // which enters it in supervisor mode at 0x80200000, and it starts
     // from its system disk, an NVMe SSD (`virtDisks`). A USB speaker
     // (`virtSpeaker`) is on its xHCI controller, as on every virt step.
-    const virt_kernel = if (board == .qemu_virt) kernel else addKernel(b, rv64_target, optimize, sdk, .qemu_virt, disk_offset, cores, selftest, memdebug);
+    const virt_kernel = if (board == .qemu_virt) kernel else addKernel(b, rv64_target, optimize, sdk, .qemu_virt, disk_offset, cores, selftest, memdebug, logdebug);
     const virt_disks: VirtDisks = .{ .system = rv64_system_disk, .work = keepWorkDisk(b, blank_work_disk, "virt.bin") };
     const run_virt = b.addSystemCommand(&.{
         "qemu-system-riscv64", "-M", "virt",       "-m",    "512M",
@@ -1135,7 +1262,7 @@ pub fn build(b: *std.Build) void {
     // device tree in x0, PSCI by HVC - with Cortex-A76 cores and a GICv2
     // as the Pi's BCM2712 has them, everything below 4 GiB, and the same
     // two NVMe SSDs, its own system disk and work disk.
-    const virt64_kernel = if (board == .qemu_virt_a64) built else addA64Image(b, addKernel(b, a64_target, optimize, sdk, .qemu_virt_a64, disk_offset, cores, selftest, memdebug));
+    const virt64_kernel = if (board == .qemu_virt_a64) built else addA64Image(b, addKernel(b, a64_target, optimize, sdk, .qemu_virt_a64, disk_offset, cores, selftest, memdebug, logdebug));
     const virt64_machine = [_][]const u8{
         "qemu-system-aarch64", "-M",         "virt,gic-version=2,highmem=off",
         "-cpu",                "cortex-a76", "-m",
@@ -1192,6 +1319,139 @@ pub fn build(b: *std.Build) void {
     run_virt64_el2.stdio = .inherit;
     run_virt64_el2.has_side_effects = true;
     b.step("virt64-el2", "Boot the AArch64 kernel in QEMU's virt machine entered at EL2, PSCI by SMC").dependOn(&run_virt64_el2.step);
+
+    // QEMU's q35 machine, the x86-64 board: its UEFI firmware starts
+    // src/boot/uefi/stub.zig as BOOTX64.EFI off a boot partition the
+    // emulator makes out of a directory, and the stub reads the kernel
+    // from beside itself there. Only the kernel: the machine's system is
+    // on its NVMe disk, and a disk image on the boot partition would be a
+    // second system beside it - the stub reads one where there is one, for
+    // a machine that has no disk of its own. The console is the machine's
+    // first serial port, which the stub writes by hand and exec's raw port
+    // drives afterwards, so the stub's lines and the kernel's first lines
+    // come out of the same place.
+    const q35_kernel = if (board == .qemu_q35) built else addX64Image(b, addKernel(b, x64_target, optimize, sdk, .qemu_q35, disk_offset, cores, selftest, memdebug, logdebug));
+    const q35_boot = b.addWriteFiles();
+    _ = q35_boot.addCopyFile(uefi_stub.getEmittedBin(), "EFI/BOOT/BOOTX64.EFI");
+    _ = q35_boot.addCopyFile(q35_kernel.image, "kernel.bin");
+    const q35_vars = keepFirmwareVars(b, ovmf_vars, "q35-vars.fd");
+    // `-cpu max` is everything the emulator can do, which is what the
+    // kernel is built against: the emulator's default core is older than
+    // the architecture's second generation and has neither the instructions
+    // the compiler emits for it nor 1 GiB pages.
+    const q35_machine = [_][]const u8{ "qemu-system-x86_64", "-machine", "q35", "-cpu", "max", "-m", "512", "-smp", "8" };
+    // The system disk and a work disk beside it, as the other two
+    // emulated 64-bit machines have them: the firmware starts the kernel
+    // off the boot partition, and dos starts from the system disk's DH0:.
+    const q35_disks: VirtDisks = .{ .system = x64_system_disk, .work = keepWorkDisk(b, blank_work_disk, "q35.bin") };
+    const run_q35 = b.addSystemCommand(&q35_machine);
+    run_q35.addArgs(&.{ "-nographic", "-device", "qemu-xhci" });
+    run_q35.addArgs(q35_network);
+    run_q35.addArgs(q35_speaker);
+    q35_disks.addTo(run_q35);
+    run_q35.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,readonly=on,file={s}", .{ovmf_code}) });
+    run_q35.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,file={s}", .{q35_vars.path}) });
+    // The boot partition last, and `file=` after `format=raw` so that the
+    // directory's path is the end of the argument.
+    run_q35.addArg("-drive");
+    run_q35.addPrefixedDirectoryArg("format=raw,file=fat:rw:", q35_boot.getDirectory());
+    run_q35.step.dependOn(q35_vars.step);
+    run_q35.stdio = .inherit;
+    run_q35.has_side_effects = true;
+    b.step("q35", "Boot the x86-64 kernel in QEMU's q35 machine under UEFI firmware (quit with Ctrl-A X)").dependOn(&run_q35.step);
+
+    // `stick` - the medium a machine whose firmware is UEFI starts from,
+    // into release/stick-<board>.img, to be written to a USB stick with
+    // one `dd`. It holds what the firmware reads and what the loader
+    // reads beside it: the loader under the one name a firmware looks
+    // for, the kernel, and the disk image the machine runs on until
+    // `C:Install` puts a system on a disk of its own. So one stick
+    // carries a whole machine, and nothing has to be installed to try
+    // one.
+    const stick_step = b.step("stick", "Make the boot medium for -Dboard= (UEFI machines): release/stick-<board>.img");
+    const stick_size = b.option(u64, "stick-size", "How many mebibytes the `stick` step's medium is (default: 320, the least a FAT32 volume of 4 KiB clusters can be with room over)");
+    if (chipOf(board) != .x64uefi) {
+        stick_step.dependOn(&b.addFail(
+            "stick: this board's firmware does not read a partition. It is for a machine started by UEFI: -Dboard=qemu_q35.",
+        ).step);
+    } else {
+        const make_stick = b.addRunArtifact(mkstick);
+        const stick_name = b.fmt("stick-{s}.img", .{@tagName(board)});
+        const stick_image = make_stick.addPrefixedOutputFileArg("--into=", stick_name);
+        // The medium is written into the build's cache and put in
+        // release/ afterwards, so the report is told where it will be
+        // found: a line that writes a stick is one that can be run.
+        make_stick.addArg(b.fmt("--as=release/{s}", .{stick_name}));
+        if (stick_size) |mib| make_stick.addArg(b.fmt("--size={d}", .{mib}));
+        // The one name a UEFI firmware reads off a boot partition, and
+        // the two the loader then reads from beside itself.
+        make_stick.addPrefixedFileArg("EFI/BOOT/BOOTX64.EFI=", uefi_stub.getEmittedBin());
+        make_stick.addPrefixedFileArg("kernel.bin=", built.image);
+        make_stick.addPrefixedFileArg(b.fmt("{s}=", .{ramDiskName(.x64uefi)}), x64_disk_bin);
+        // What the tool says of the medium it made. A run the build
+        // caches has its standard output sent nowhere, so the report is
+        // captured and read back out by a step of its own, after the
+        // medium is in release/ - whether the run happened this time or
+        // the cache answered for it.
+        const stick_report = make_stick.captureStdOut(.{ .basename = "report.txt" });
+        const stick_put = b.addInstallFileWithDir(stick_image, release_dir, stick_name);
+        // Which kernel is on it, which the image itself cannot be looked
+        // at for: a medium written from a quiet build says nothing on a
+        // machine whose boot stops, and looks like a machine that stops
+        // earlier than it does.
+        const stick_tail = if (logdebug)
+            "\nThe kernel on it names every module as the cold start starts it, and\nsays so on the screen: `(-Dlogdebug)` in the lines before the cores.\n"
+        else
+            "\nThe kernel on it is a quiet one. Build it with -Dlogdebug to have it\nname every module as the cold start starts it, which is how a boot that\nstops somewhere is read.\n";
+        stick_step.dependOn(&addReport(b, stick_report, stick_tail, &stick_put.step).step);
+    }
+
+    // The same with the machine's window and what the board has around
+    // it, as `virt-display` and `virt64-display`: USB with a keyboard, a
+    // tablet, whose pointer stays where the host's is; the console stays
+    // on the terminal. Its Ethernet is the card both q35 steps have
+    // (`q35Network`), and its sound the controller they both have
+    // (`q35Speaker`).
+    //
+    // `q35-display` draws on the framebuffer the firmware lights, which
+    // on this machine is its emulated VGA; `q35-virtio` gives it QEMU's
+    // virtio GPU on PCI instead, which the board lists before the
+    // firmware's framebuffer, and the same driver draws on that over
+    // virtio's PCI transport. Both at 1920x1080, as the other emulated
+    // machines' windows are. Both have the machine's own audio controller,
+    // which rta-hda drives (`q35Speaker`).
+    for ([_][3][]const u8{
+        .{ "VGA,xres=1920,yres=1080", "q35-display", "the firmware's framebuffer" },
+        .{ "virtio-gpu-pci,xres=1920,yres=1080", "q35-virtio", "virtio GPU" },
+    }) |display| {
+        const run_q35_display = b.addSystemCommand(&q35_machine);
+        run_q35_display.addArgs(&.{
+            "-display", virt_ui,      "-serial", "mon:stdio",
+            "-device",  "qemu-xhci",  "-device", "usb-kbd",
+            "-device",  "usb-tablet",
+        });
+        // The machine's own display goes and the one named here takes its
+        // place. Even for the VGA that is what gives it a size: the
+        // display a machine brings with it takes none, and `-global
+        // VGA.xres=` does not reach it ("not used"), so the firmware
+        // would light the 1280x800 its EDID offers by default - smaller
+        // than every other machine's window here. Named as a device it
+        // takes the size, and the firmware lights that.
+        run_q35_display.addArgs(&.{ "-vga", "none", "-device", display[0] });
+        run_q35_display.addArgs(q35_network);
+        run_q35_display.addArgs(q35_speaker);
+        run_q35_display.addArgs(virt_monitor);
+        q35_disks.addTo(run_q35_display);
+        run_q35_display.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,readonly=on,file={s}", .{ovmf_code}) });
+        run_q35_display.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,file={s}", .{q35_vars.path}) });
+        run_q35_display.addArg("-drive");
+        run_q35_display.addPrefixedDirectoryArg("format=raw,file=fat:rw:", q35_boot.getDirectory());
+        run_q35_display.step.dependOn(q35_vars.step);
+        run_q35_display.stdio = .inherit;
+        run_q35_display.has_side_effects = true;
+        b.step(display[1], b.fmt("Boot QEMU's q35 machine with its display ({s}), keyboard, tablet and network", .{display[2]})).dependOn(&run_q35_display.step);
+    }
+
     // `archive` - what a board is handed over in, for the board this
     // build is for: QEMU's machines get the kernel, the two disks and a
     // `run.sh` that starts them (`tools/qemupackage`); an ESP32 board the
@@ -1199,10 +1459,11 @@ pub fn build(b: *std.Build) void {
     // (`tools/espackage`); a 64-bit board the files its firmware loads
     // and a `write.sh` that copies them (`tools/bootpackage`).
     const archive_parts: ArchiveParts = .{
-        .disks = .{ disk_bin, p4_disk_bin, rv64_disk_bin, a64_disk_bin },
+        .disks = .{ disk_bin, p4_disk_bin, rv64_disk_bin, a64_disk_bin, x64_disk_bin },
         .rv64_system = rv64_system_disk,
         .a64_system = a64_system_disk,
         .work_disk = blank_work_disk,
+        .uefi_stub = uefi_stub.getEmittedBin(),
         .boot_files = boot_files,
         .disk_offset = disk_offset,
         .disk_size = disk_size,
@@ -1219,8 +1480,8 @@ pub fn build(b: *std.Build) void {
     const release_step = b.step("release", "Build every board's release artifact into release/");
     refusePrivateTree(b, release_step, disk_tree_option, tree, "release");
     const board_build: BoardBuild = .{
-        .targets = .{ target, p4_target, rv64_target, a64_target },
-        .disks = .{ disk_bin, p4_disk_bin, rv64_disk_bin, a64_disk_bin },
+        .targets = .{ target, p4_target, rv64_target, a64_target, x64_target },
+        .disks = .{ disk_bin, p4_disk_bin, rv64_disk_bin, a64_disk_bin, x64_disk_bin },
         .optimize = optimize,
         .sdk = sdk,
         .esptool = esptool,
@@ -1229,6 +1490,7 @@ pub fn build(b: *std.Build) void {
         .disk_offset = disk_offset,
         .cores = cores,
         .memdebug = memdebug,
+        .logdebug = logdebug,
     };
     for (release_boards) |one| {
         // The board this build is for is already built; the rest are
@@ -1240,12 +1502,20 @@ pub fn build(b: *std.Build) void {
         // written with, so it has none.
         switch (chipOf(one)) {
             .esp32s3, .esp32p4 => {},
-            .rv64sbi, .a64psci => {
-                const rv64 = chipOf(one) == .rv64sbi;
+            .rv64sbi, .a64psci, .x64uefi => {
                 _ = addPackage(b, release_step, mkpackage, one, one_image.image, .{
-                    .tree = if (rv64) rv64_tree else a64_tree,
-                    .ram_disk = if (rv64) rv64_disk_bin else a64_disk_bin,
+                    .tree = switch (chipOf(one)) {
+                        .rv64sbi => rv64_tree,
+                        .a64psci => a64_tree,
+                        else => x64_tree,
+                    },
+                    .ram_disk = switch (chipOf(one)) {
+                        .rv64sbi => rv64_disk_bin,
+                        .a64psci => a64_disk_bin,
+                        else => x64_disk_bin,
+                    },
                     .boot_files = boot_files,
+                    .boot_loader = if (chipOf(one) == .x64uefi) uefi_stub.getEmittedBin() else null,
                 });
             },
         }
@@ -1320,6 +1590,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = jpegdecode_mod })).step);
     // The H.264 decoder, h264.vcodec's, likewise.
     const h264core_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/h264/core.zig"), .target = b.graph.host });
+    h264core_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("h264core", h264core_mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = h264core_mod })).step);
     // The VP8 decoder, vp8.vcodec's, likewise.
@@ -1327,15 +1598,29 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = vp8core_mod })).step);
     // The VP9 decoder, vp9.vcodec's, likewise.
     const vp9core_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/vp9/core.zig"), .target = b.graph.host });
+    vp9core_mod.addImport("sdk", sdk);
+    disk_test_mod.addImport("vp9core", vp9core_mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = vp9core_mod })).step);
     // The AV1 decoder, av1.vcodec's, likewise.
     const av1core_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/av1/core.zig"), .target = b.graph.host });
+    av1core_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("av1core", av1core_mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = av1core_mod })).step);
     // The H.265 decoder, hevc.vcodec's, likewise.
     const hevccore_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/hevc/core.zig"), .target = b.graph.host });
+    hevccore_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("hevccore", hevccore_mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = hevccore_mod })).step);
+    // The readers of H.264's and H.265's parameter sets, which
+    // videoparse.library and chip.vcodec build in.
+    const h264sets_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/videoparse/h264/sets.zig"), .target = b.graph.host });
+    h264sets_mod.addImport("sdk", sdk);
+    disk_test_mod.addImport("h264sets", h264sets_mod);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = h264sets_mod })).step);
+    const hevcsets_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/videoparse/hevc/sets.zig"), .target = b.graph.host });
+    hevcsets_mod.addImport("sdk", sdk);
+    disk_test_mod.addImport("hevcsets", hevcsets_mod);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = hevcsets_mod })).step);
     // The SMB client - the protocol and the share files - which the
     // handler, MountShare and the Shares tool are each built with.
     const smbclient_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/smb/smbclient.zig"), .target = b.graph.host });
@@ -1476,7 +1761,9 @@ pub fn build(b: *std.Build) void {
     // made from all of them. And for the ESP32-P4 too, into load files.
     test_step.dependOn(&make_disk.step);
     test_step.dependOn(&make_p4_disk.step);
+    test_step.dependOn(&make_rv64_disk.step);
     test_step.dependOn(&make_a64_disk.step);
+    test_step.dependOn(&make_x64_disk.step);
     // Every board's kernel compiles, not only the one being flashed.
     for (std.enums.values(Board)) |other| {
         const other_target = switch (chipOf(other)) {
@@ -1484,8 +1771,9 @@ pub fn build(b: *std.Build) void {
             .esp32p4 => p4_target,
             .rv64sbi => rv64_target,
             .a64psci => a64_target,
+            .x64uefi => x64_target,
         };
-        if (other != board) test_step.dependOn(&addKernel(b, other_target, optimize, sdk, other, disk_offset, cores, false, false).step);
+        if (other != board) test_step.dependOn(&addKernel(b, other_target, optimize, sdk, other, disk_offset, cores, false, false, false).step);
     }
 
     // The SDK's interfaces (sdk/interface) come from its .fd files
@@ -1504,6 +1792,7 @@ pub fn build(b: *std.Build) void {
         .esp32p4 => p4_disk_bin,
         .rv64sbi => rv64_disk_bin,
         .a64psci => a64_disk_bin,
+        .x64uefi => x64_disk_bin,
     };
     const flash = b.addSystemCommand(&.{ esptool, "--chip", chip_name, "--port", port, "--baud", baud, "write-flash" });
     built.addTo(b, flash);
@@ -1671,12 +1960,57 @@ fn bootFiles(b: *std.Build) []const BootFile {
 const release_boards = [_]Board{
     .waveshare_7b, .es3c35p,   .olimex_p4pc, .crowpanel_p4,
     .visionfive2,  .qemu_virt, .rpi_cm5,     .qemu_virt_a64,
+    .qemu_q35,
 };
 
 /// A package to hand out must not carry the `disk/` tree unasked: those
 /// are the builder's own files, and the network settings among them hold
 /// a passphrase. Nothing is refused when that tree is empty, or when
 /// `-Ddisk-tree` has said what to do with it either way.
+/// A tool's report, read back out of the file the build captured it in
+/// and written to the terminal.
+///
+/// A run whose output file the build caches has its standard output sent
+/// nowhere, and what it writes to the error stream is printed under a
+/// banner that says a command failed. So a tool that has something to say
+/// to whoever asked for its output says it on the standard output, the
+/// run captures it, and this step prints it once the output is in place.
+const Report = struct {
+    step: std.Build.Step,
+    text: std.Build.LazyPath,
+    /// Printed after the tool's own report: what the kernel on the medium
+    /// will say about itself, which is the one thing the medium cannot be
+    /// looked at for.
+    tail: []const u8,
+
+    fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) anyerror!void {
+        const one: *Report = @fieldParentPtr("step", step);
+        const b = step.owner;
+        const at = one.text.getPath3(b, step);
+        const said = try at.root_dir.handle.readFileAlloc(b.graph.io, at.sub_path, options.gpa, .limited(64 * 1024));
+        defer options.gpa.free(said);
+        std.debug.print("{s}{s}", .{ said, one.tail });
+    }
+};
+
+/// The step that prints `text`, and `tail` after it, once `after` has run.
+fn addReport(b: *std.Build, text: std.Build.LazyPath, tail: []const u8, after: *std.Build.Step) *Report {
+    const one = b.allocator.create(Report) catch @panic("OOM");
+    one.* = .{
+        .step = .init(.{
+            .id = .custom,
+            .name = "report",
+            .owner = b,
+            .makeFn = Report.make,
+        }),
+        .text = text,
+        .tail = tail,
+    };
+    text.addStepDependencies(&one.step);
+    one.step.dependOn(after);
+    return one;
+}
+
 fn refusePrivateTree(b: *std.Build, step: *std.Build.Step, said: ?bool, tree: Tree, what: []const u8) void {
     if (said != null or tree.files.len == 0) return;
     step.dependOn(&b.addFail(b.fmt(
@@ -1689,8 +2023,8 @@ fn refusePrivateTree(b: *std.Build, step: *std.Build.Step, said: ?bool, tree: Tr
 /// build every board's in one go: each chip's target and its disk image,
 /// in `Chip`'s order, and what an image is made with.
 const BoardBuild = struct {
-    targets: [4]std.Build.ResolvedTarget,
-    disks: [4]std.Build.LazyPath,
+    targets: [5]std.Build.ResolvedTarget,
+    disks: [5]std.Build.LazyPath,
     optimize: std.builtin.OptimizeMode,
     sdk: *std.Build.Module,
     esptool: []const u8,
@@ -1699,18 +2033,20 @@ const BoardBuild = struct {
     disk_offset: u32,
     cores: u32,
     memdebug: bool,
+    logdebug: bool,
 };
 
 /// `board`'s kernel, and the image of it that board is started from.
 fn addBoardImage(b: *std.Build, with: BoardBuild, board: Board) Image {
     const chip = chipOf(board);
     const slot = @intFromEnum(chip);
-    const kernel = addKernel(b, with.targets[slot], with.optimize, with.sdk, board, with.disk_offset, with.cores, false, with.memdebug);
+    const kernel = addKernel(b, with.targets[slot], with.optimize, with.sdk, board, with.disk_offset, with.cores, false, with.memdebug, with.logdebug);
     return switch (chip) {
         .esp32s3 => addImage(b, with.esptool, with.ressize, kernel, with.disks[slot], with.disk_offset),
         .esp32p4 => addP4Image(b, with.esptool, with.ramimage, kernel, with.disks[slot], with.disk_offset),
         .rv64sbi => addRv64Image(b, kernel),
         .a64psci => addA64Image(b, kernel),
+        .x64uefi => addX64Image(b, kernel),
     };
 }
 
@@ -1720,6 +2056,7 @@ fn ramDiskName(chip: Chip) []const u8 {
     return switch (chip) {
         .rv64sbi => "disk-rv64.bin",
         .a64psci => "disk-a64.bin",
+        .x64uefi => "disk-x64.bin",
         .esp32s3 => "disk.bin",
         .esp32p4 => "disk-esp32p4.bin",
     };
@@ -1732,6 +2069,13 @@ const PackageParts = struct {
     tree: std.Build.LazyPath,
     ram_disk: std.Build.LazyPath,
     boot_files: []const BootFile,
+    /// The loader a machine whose firmware is UEFI starts, where there
+    /// is one. It belongs in the package's `boot/` as much as in the
+    /// image's `SYS:Storage/Boot`: a machine installed or brought up to
+    /// date from a package writes the boot partition from this drawer,
+    /// and one written without the loader is one the firmware finds
+    /// nothing in.
+    boot_loader: ?std.Build.LazyPath = null,
 };
 
 /// A release package for `board` - `system/` the volume, `boot/` what the
@@ -1759,6 +2103,7 @@ fn addPackage(
     gather.addPrefixedDirectoryArg("--system=", parts.tree);
     gather.addPrefixedFileArg("boot/kernel.bin=", kernel_image);
     gather.addPrefixedFileArg(b.fmt("boot/{s}=", .{ramDiskName(chip)}), parts.ram_disk);
+    if (parts.boot_loader) |loader| gather.addPrefixedFileArg("boot/" ++ uefi_loader_path ++ "=", loader);
     // What the firmware of this board reads beside them.
     if (board == .rpi_cm5) gather.addPrefixedFileArg("boot/config.txt=", b.path("src/boards/rpi_cm5/config.txt"));
     for (parts.boot_files) |file| {
@@ -1888,6 +2233,11 @@ fn addEspPackage(b: *std.Build, step: *std.Build.Step, board: Board, image: Imag
 /// its loader puts in RAM beside it, and what `-Dboot=` added.
 const BootParts = struct {
     ram_disk: std.Build.LazyPath,
+    /// A loader the firmware starts instead of the kernel, where the
+    /// machine has one, and where on the partition it goes. A board
+    /// whose firmware loads the kernel itself passes none.
+    loader: ?std.Build.LazyPath = null,
+    loader_path: []const u8 = "",
     boot_files: []const BootFile,
 };
 
@@ -1905,8 +2255,14 @@ fn addBootPackage(b: *std.Build, step: *std.Build.Step, board: Board, kernel_ima
     _ = bundle.addCopyFile(parts.ram_disk, b.fmt("{s}/{s}", .{ name, disk_name }));
     _ = bundle.addCopyFile(b.path("tools/bootpackage/write.sh"), b.fmt("{s}/write.sh", .{name}));
     _ = bundle.addCopyFile(b.path("tools/bootpackage/bundle.md"), b.fmt("{s}/README.md", .{name}));
-    // What the firmware reads, in the order write.sh copies them.
+    // What the firmware reads, in the order write.sh copies them - the
+    // loader first on a machine that has one, since it is what the
+    // firmware starts.
     var files = b.fmt("kernel.bin {s}", .{disk_name});
+    if (parts.loader) |loader| {
+        _ = bundle.addCopyFile(loader, b.fmt("{s}/{s}", .{ name, parts.loader_path }));
+        files = b.fmt("{s} {s}", .{ parts.loader_path, files });
+    }
     if (board == .rpi_cm5) {
         _ = bundle.addCopyFile(b.path("src/boards/rpi_cm5/config.txt"), b.fmt("{s}/config.txt", .{name}));
         files = b.fmt("{s} config.txt", .{files});
@@ -1932,10 +2288,13 @@ fn addBootPackage(b: *std.Build, step: *std.Build.Step, board: Board, kernel_ima
 /// blank work disk they share, what `-Dboot=` added, where an ESP32
 /// board's flash disk is, and the cores a machine is started with.
 const ArchiveParts = struct {
-    disks: [4]std.Build.LazyPath,
+    disks: [5]std.Build.LazyPath,
     rv64_system: std.Build.LazyPath,
     a64_system: std.Build.LazyPath,
     work_disk: std.Build.LazyPath,
+    /// The x86-64 machine's loader, which its firmware starts instead of
+    /// the kernel; no other board has one.
+    uefi_stub: std.Build.LazyPath,
     boot_files: []const BootFile,
     disk_offset: u32,
     disk_size: u32,
@@ -1964,6 +2323,14 @@ fn addBoardArchive(b: *std.Build, step: *std.Build.Step, board: Board, image: Im
             .work_disk = parts.work_disk,
             .cores = parts.cores,
         }),
+        // The x86-64 machine is started by its firmware off a boot
+        // partition, as a PC is: the files it reads are copied there.
+        .qemu_q35 => addBootPackage(b, step, board, image.image, .{
+            .ram_disk = disk,
+            .loader = parts.uefi_stub,
+            .loader_path = "EFI/BOOT/BOOTX64.EFI",
+            .boot_files = parts.boot_files,
+        }),
         .visionfive2, .rpi_cm5 => addBootPackage(b, step, board, image.image, .{
             .ram_disk = disk,
             .boot_files = parts.boot_files,
@@ -1980,7 +2347,7 @@ fn boardConsole(board: Board) []const u8 {
         .crowpanel_p4 => "UART0 through the board's CH340K at 115200 8N1",
         .visionfive2 => "the debug UART on pins 8 and 10 of the 40-pin header at 115200 8N1, through a 3.3 V serial adapter",
         .rpi_cm5 => "the RP1's UART0 on pins 8 and 10 of the 40-pin header at 115200 8N1",
-        .qemu_virt, .qemu_virt_a64 => "the terminal QEMU is started in",
+        .qemu_virt, .qemu_virt_a64, .qemu_q35 => "the terminal QEMU is started in",
     };
 }
 
@@ -2153,6 +2520,18 @@ fn vpuDir(b: *std.Build) ?[]const u8 {
     return path;
 }
 
+/// Where scripts/fetch-amdgpu.sh put an AMD graphics device's firmware,
+/// or null without it.
+fn amdgpuDir(b: *std.Build) ?[]const u8 {
+    const io = b.graph.io;
+    const path = b.pathFromRoot("toolchain/amdgpu");
+    std.Io.Dir.cwd().access(io, b.pathJoin(&.{ path, "vcn_4_0_2.bin" }), .{}) catch {
+        std.log.info("no AMD graphics firmware (scripts/fetch-amdgpu.sh): the x86-64 disk has no DEVS:firmware/amdgpu/", .{});
+        return null;
+    };
+    return path;
+}
+
 /// The list scripts/fetch-pciids.sh fetched, or null without it.
 fn pciIdsFile(b: *std.Build) ?[]const u8 {
     const io = b.graph.io;
@@ -2235,13 +2614,15 @@ const Tree = struct {
 
 /// `games/` in the root of the tree, with -Dgames: what is in it goes in
 /// the `Games` drawer of the virt machines' system disks
-/// (`system-rv64.bin`, `system-a64.bin`) - games and their data, too
+/// (`system-rv64.bin`, `system-a64.bin`, `system-x64.bin`) - games and
+/// their data, too
 /// large for the boards' flash disks, on the SSDs that have room for
 /// them. A program is built once per chip, so `<name>.<chip>.seg` goes
 /// on that chip's disk alone, as `<name>`:
 /// `games/Millennium/Millennium.a64psci.seg` is
 /// `SYS:Games/Millennium/Millennium` on the AArch64 machine's. Another
-/// `.seg` loses the suffix on both, and any other file keeps its name.
+/// `.seg` loses the suffix on all of them, and any other file keeps its
+/// name.
 /// The drawers are made on those disks alone (mkfs's `--gpt-file` with
 /// no file), outermost first, and `Games` gets its icon there
 /// (`games_drawer_icon`): the volume's window shows only what has one.
@@ -2389,15 +2770,16 @@ const p4_flash_part_offset = 0x40000;
 
 /// Disk images made from one recipe: what is given goes into each.
 const DiskImages = struct {
-    runs: [4]*std.Build.Step.Run,
+    runs: [5]*std.Build.Step.Run,
 
     /// How long a pointer is on each run's chip, in the order of `runs`:
-    /// the ESP32-S3's and the ESP32-P4's, then RISC-V 64's and AArch64's.
-    const pointer_bytes = [4]u32{ 4, 4, 8, 8 };
+    /// the ESP32-S3's and the ESP32-P4's, then RISC-V 64's, AArch64's and
+    /// x86-64's.
+    const pointer_bytes = [5]u32{ 4, 4, 8, 8, 8 };
     /// Each run's chip, and whether it writes a virt machine's system
     /// disk as well (`--gpt`), in the same order.
-    const chips = [4]Chip{ .esp32s3, .esp32p4, .rv64sbi, .a64psci };
-    const virt_disks = [4]bool{ false, false, true, true };
+    const chips = [5]Chip{ .esp32s3, .esp32p4, .rv64sbi, .a64psci, .x64uefi };
+    const virt_disks = [5]bool{ false, false, true, true, true };
 
     fn addArg(images: DiskImages, arg: []const u8) void {
         for (images.runs) |run| run.addArg(arg);
@@ -2437,6 +2819,40 @@ const VirtDisks = struct {
     }
 };
 
+/// The stub the x86-64 machine's firmware starts, as its own artifact: a
+/// PE32+ image for `x86_64-uefi`, which is the firmware's own target and
+/// nothing else in the tree is built for - it is the only code the firmware
+/// itself runs. The kernel beside it is an ELF for the machine's own target
+/// like every other board's.
+fn addUefiStub(b: *std.Build, optimize: std.builtin.OptimizeMode) *std.Build.Step.Compile {
+    const stub = b.createModule(.{
+        .root_source_file = b.path("src/boot/uefi/stub.zig"),
+        .target = b.resolveTargetQuery(.{ .cpu_arch = .x86_64, .os_tag = .uefi, .abi = .msvc }),
+        .optimize = optimize,
+        .single_threaded = true,
+        .unwind_tables = .none,
+    });
+    return b.addExecutable(.{ .name = "BOOTX64", .root_module = stub });
+}
+
+/// A machine's firmware variable store, `name` in `virt_work_dir`: the
+/// system's own copied there when there is none yet, so that what the
+/// firmware remembers survives between runs and the file it was copied from
+/// is never written.
+fn keepFirmwareVars(b: *std.Build, blank: []const u8, name: []const u8) WorkDisk {
+    const path = b.pathFromRoot(b.pathJoin(&.{ virt_work_dir, name }));
+    const keep = b.addSystemCommand(&.{
+        "sh",
+        "-c",
+        \\[ -f "$0" ] || { mkdir -p "$(dirname "$0")" && cp "$1" "$0"; }
+        ,
+        path,
+        blank,
+    });
+    keep.has_side_effects = true;
+    return .{ .path = path, .step = &keep.step };
+}
+
 const WorkDisk = struct { path: []const u8, step: *std.Build.Step };
 
 /// A machine's work disk, `name` in `virt_work_dir`: the blank one copied
@@ -2473,6 +2889,18 @@ fn addRv64Image(b: *std.Build, kernel: *std.Build.Step.Compile) Image {
 /// the device tree in x0, the initrd in /chosen - which it does for an
 /// Image and not for an ELF. Nothing to flash.
 fn addA64Image(b: *std.Build, kernel: *std.Build.Step.Compile) Image {
+    const kernel_elf = kernel.getEmittedBin();
+    const image = b.addObjCopy(kernel_elf, .{ .format = .bin }).getOutput();
+    return .{ .kernel_elf = kernel_elf, .image = image, .flash_image = image };
+}
+
+/// An x86-64 kernel made into what is read off the boot partition: the
+/// ELF, for a debugger, and a raw binary of it from its first address
+/// (0x00200000), which starts with the header the stub reads to learn
+/// where the image goes and how much room it needs there
+/// (src/arch/x64uefi/start.S). Nothing to flash: the firmware reads it
+/// from a file.
+fn addX64Image(b: *std.Build, kernel: *std.Build.Step.Compile) Image {
     const kernel_elf = kernel.getEmittedBin();
     const image = b.addObjCopy(kernel_elf, .{ .format = .bin }).getOutput();
     return .{ .kernel_elf = kernel_elf, .image = image, .flash_image = image };
@@ -2539,7 +2967,7 @@ fn addP4Image(b: *std.Build, esptool: []const u8, ramimage: *std.Build.Step.Comp
 /// leaves the number of cores to the board; `selftest` makes an ESP32-P4's
 /// boot task the chip's checks rather than the shell; `memdebug` has exec
 /// switch memory debugging on as it starts.
-fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sdk: *std.Build.Module, board: Board, disk_offset: u32, cores: u32, selftest: bool, memdebug: bool) *std.Build.Step.Compile {
+fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sdk: *std.Build.Module, board: Board, disk_offset: u32, cores: u32, selftest: bool, memdebug: bool, logdebug: bool) *std.Build.Step.Compile {
     const chip = chipOf(board);
     const kernel_mod = b.createModule(.{
         .root_source_file = b.path(switch (chip) {
@@ -2547,19 +2975,24 @@ fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
             .esp32p4 => "src/main_esp32p4.zig",
             .rv64sbi => "src/main_rv64sbi.zig",
             .a64psci => "src/main_a64psci.zig",
+            .x64uefi => "src/main_x64uefi.zig",
         }),
         .target = target,
         .optimize = optimize,
         .single_threaded = true,
         .unwind_tables = .none,
-        // RISC-V's and AArch64's backtraces walk the frame-pointer chain.
+        // Every backtrace but the ESP32-S3's walks the frame-pointer chain.
         .omit_frame_pointer = if (chip == .esp32s3) null else false,
+        // x86-64's ABI lets a leaf function keep 128 bytes below the stack
+        // pointer, which is exactly where an interrupt pushes its frame:
+        // see `x64_target_query` in the SDK's build.
+        .red_zone = if (chip == .x64uefi) false else null,
         // RV64's kernel is at 0x80200000, which the default code model
         // (medlow, addresses within 2 GiB of 0) cannot reach. AArch64's
         // small model reaches 4 GiB around the code, PC-relatively.
         .code_model = switch (chip) {
             .rv64sbi => .medany,
-            .a64psci => .small,
+            .a64psci, .x64uefi => .small,
             .esp32s3, .esp32p4 => .default,
         },
     });
@@ -2570,6 +3003,7 @@ fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     options.addOption(u32, "cores", cores);
     options.addOption(bool, "selftest", selftest);
     options.addOption(bool, "memdebug", memdebug);
+    options.addOption(bool, "logdebug", logdebug);
     kernel_mod.addOptions("build_options", options);
     switch (chip) {
         .esp32s3 => {
@@ -2580,6 +3014,7 @@ fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
         .esp32p4 => kernel_mod.addAssemblyFile(b.path("src/arch/esp32p4/start.S")),
         .rv64sbi => kernel_mod.addAssemblyFile(b.path("src/arch/rv64sbi/start.S")),
         .a64psci => kernel_mod.addAssemblyFile(b.path("src/arch/a64psci/start.S")),
+        .x64uefi => kernel_mod.addAssemblyFile(b.path("src/arch/x64uefi/start.S")),
     }
 
     const kernel = b.addExecutable(.{
@@ -2591,6 +3026,7 @@ fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
         .esp32p4 => "src/arch/esp32p4/kernel.ld",
         .rv64sbi => "src/arch/rv64sbi/kernel.ld",
         .a64psci => "src/arch/a64psci/kernel.ld",
+        .x64uefi => "src/arch/x64uefi/kernel.ld",
     }));
     kernel.entry = .{ .symbol_name = "_start" };
     // A section per function, so each function's literals (.literal.<fn>)
@@ -2683,14 +3119,15 @@ fn qemuNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16,
     return b.dupeStrings(&.{ "-nic", nic, "-object", b.fmt("filter-dump,id=dump0,netdev=net0,file={s}", .{file}) });
 }
 
-/// The virt machines' network, as QEMU's arguments: a USB Ethernet adapter
-/// (`usb-net`, a CDC-ECM function usb/ecm.device drives) on the machine's
-/// xHCI controller, on QEMU's user network as `qemuNetwork` has it -
-/// 10.0.2.15 by DHCP, the gateway 10.0.2.2, DNS at 10.0.2.3. It is the
-/// only network the machines have a driver for. `net`, `dump`, `telnet`
-/// and `ssh_port` are `qemuNetwork`'s; nothing is forwarded unless asked,
-/// so a virt machine starts beside a qemu-display, which holds 2323 and
-/// 2222.
+/// The virt machines' network, as QEMU's arguments: a USB Ethernet
+/// adapter (`usb-net`, a CDC-ECM function usb/ecm.device drives) on the
+/// machine's xHCI controller, on QEMU's user network as `qemuNetwork`
+/// has it - 10.0.2.15 by DHCP, the gateway 10.0.2.2, DNS at 10.0.2.3.
+/// It is the only network those two machines have a driver for; the
+/// x86-64 machine has a card of its own (`q35Network`).
+/// `net`, `dump`, `telnet` and `ssh_port` are `qemuNetwork`'s; nothing is
+/// forwarded unless asked, so one of them starts beside a qemu-display,
+/// which holds 2323 and 2222.
 fn virtNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16, ssh_port: ?u16) []const []const u8 {
     if (net) |backend| {
         if (std.mem.eql(u8, backend, "none")) return b.dupeStrings(&.{ "-nic", "none" });
@@ -2699,6 +3136,23 @@ fn virtNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16,
     const adapter = [_][]const u8{ "-netdev", netdev, "-device", "usb-net,netdev=net0" };
     const file = dump orelse return b.dupeStrings(&adapter);
     return b.dupeStrings(&(adapter ++ [_][]const u8{ "-object", b.fmt("filter-dump,id=dump0,netdev=net0,file={s}", .{file}) }));
+}
+
+/// The x86-64 machine's network, as QEMU's arguments: an Intel 82576
+/// (`igb`), which intelnet.device drives as the machine's Ethernet port,
+/// on QEMU's user network as `qemuNetwork` has it. A PC's Ethernet is a
+/// card on PCI, not a USB adapter, so this machine is given the card;
+/// `-Dusb=usb-net` still plugs an adapter in beside it, on a user
+/// network of its own. `net`, `dump`, `telnet` and `ssh_port` are
+/// `qemuNetwork`'s.
+fn q35Network(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16, ssh_port: ?u16) []const []const u8 {
+    if (net) |backend| {
+        if (std.mem.eql(u8, backend, "none")) return b.dupeStrings(&.{ "-nic", "none" });
+    }
+    const netdev = b.fmt("{s},id=net0{s}", .{ net orelse "user", if (net == null) hostForwards(b, telnet, ssh_port) else "" });
+    const card = [_][]const u8{ "-netdev", netdev, "-device", "igb,netdev=net0" };
+    const file = dump orelse return b.dupeStrings(&card);
+    return b.dupeStrings(&(card ++ [_][]const u8{ "-object", b.fmt("filter-dump,id=dump0,netdev=net0,file={s}", .{file}) }));
 }
 
 /// The virt machines' USB speaker, as QEMU's arguments: QEMU's
@@ -2712,6 +3166,21 @@ fn virtNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16,
 fn virtSpeaker(b: *std.Build, backend: ?[]const u8) []const []const u8 {
     const named = backend orelse return b.dupeStrings(&.{ "-device", "usb-audio,id=speaker" });
     return b.dupeStrings(&.{ "-audiodev", b.fmt("{s},id=sound", .{named}), "-device", "usb-audio,id=speaker,audiodev=sound" });
+}
+
+/// The q35 machine's own sound, as QEMU's arguments: its ICH9 high
+/// definition audio controller with an output codec behind it, which
+/// rta-hda finds on PCI by its class and plays through - the same part a
+/// machine of this kind really has, rather than something plugged into
+/// it. `backend` is an `-audiodev`'s driver and its options, as the virt
+/// machines' speaker takes it.
+fn q35Speaker(b: *std.Build, backend: ?[]const u8) []const []const u8 {
+    const card = [_][]const u8{ "-device", "ich9-intel-hda,id=sound" };
+    const named = backend orelse return b.dupeStrings(&(card ++ [_][]const u8{ "-device", "hda-output,bus=sound.0,id=speaker" }));
+    return b.dupeStrings(&(card ++ [_][]const u8{
+        "-audiodev", b.fmt("{s},id=played", .{named}),
+        "-device",   "hda-output,bus=sound.0,id=speaker,audiodev=played",
+    }));
 }
 
 /// QEMU's QMP monitor on a Unix socket, which a program connects to while

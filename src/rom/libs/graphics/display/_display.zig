@@ -131,6 +131,12 @@ fn createBoard(rb: *RtgBase, machine: *const Machine) ?Found {
         st.BUS_MEMORY => if (rb.CreateBoardTagList(if (machine.emulated) "qemu" else "fb", &named)) |which| {
             return .{ .which = which, .emulated = machine.emulated };
         },
+        // A display on PCI: the same driver, which finds the function
+        // itself - the part says which chip it is and nothing about
+        // where it lies, because where it lies is the bus's to say.
+        st.BUS_PCI => if (rb.CreateBoardTagList("fb", &named)) |which| {
+            return .{ .which = which, .emulated = false };
+        },
         else => {},
     }
     return null;

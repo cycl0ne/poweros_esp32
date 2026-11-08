@@ -1,0 +1,538 @@
+# amdgpu.resource
+
+amdgpu.resource's functions: the machine's AMD graphics device, where
+its register window is and where each of its blocks' registers are,
+its blocks powered up and down, its own memory handed out, and the
+firmware its blocks run loaded through its security processor.
+A resource: no Open or Close, its first function in the first slot.
+The base comes from OpenResource("amdgpu.resource").
+
+Generated from the source by `./zig build autodoc`.
+
+## Index
+
+- [AllocGPUMemory](#allocgpumemory) - A piece of the device's own memory, for its blocks to read and write.
+- [FindGPUBlock](#findgpublock) - One of the device's blocks: its version and where its registers are.
+- [FreeGPUMemory](#freegpumemory) - A piece of the device's memory given back.
+- [GetGPUInfo](#getgpuinfo) - What the device is and where the machine reaches it.
+- [LoadGPUFirmware](#loadgpufirmware) - A block's firmware loaded by the security processor into its protected region, or a list of a block's register writes applied by it.
+- [SetGPUPower](#setgpupower) - A block of the device powered up or down by its power manager.
+- [StartGPUSecurity](#startgpusecurity) - The security processor made ready to load firmware: its ring made, its table of contents loaded, and the protected region it asks for set up.
+
+## AllocGPUMemory
+
+A piece of the device's own memory, for its blocks to read and write.
+
+**SYNOPSIS**
+
+```zig
+fn AllocGPUMemory(ab: *AMDGPUBase, bytes: u32, alignment: u32,
+    memory: *GPUMemory) bool
+```
+
+**SINCE**
+
+1.1. LVO -16.
+
+**INPUTS**
+
+- `bytes` - how many.
+- `alignment` - a power of two the piece starts on a multiple of, in
+  the device's addresses and the CPU's alike; less than a page is a
+  page.
+- `memory` - filled in.
+
+**RESULT**
+
+True with `memory` holding the piece: `cpu`, where the CPU reaches it,
+`device`, where the device's blocks do, and `bytes`. False where no
+gap holds it, the resource holds as many pieces as it keeps, the
+alignment is no power of two, `bytes` is 0, or the device's memory is
+not placed where the resource knows to read it - and on a machine
+without the device; `memory` is then left alone.
+
+**BEHAVIOR**
+
+The piece is the first gap of the part of the device's memory the
+resource hands out that holds it, in whole pages. That part leaves the
+bottom and the top 64 MiB of the device's memory alone: the screen the
+firmware lit is at the bottom, the firmware's own region at the top.
+The piece is not cleared.
+
+**CONTEXT**
+
+- Waits: for another task handing out or giving back.
+- Interrupts: no.
+- Locks: takes the resource's memory lock.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The piece is the caller's until it gives it to FreeGPUMemory; the
+resource gives nothing back on a task's behalf.
+
+**NOTES**
+
+The device does not look into the CPU's caches, and the CPU reaches
+the pieces write-combining - uncached where the machine's map would
+not mark them, which the resource says at start. A write is gathered
+with the ones beside it and sent on by a fence (`mfence`), which a
+driver puts before it tells a block to read; a read is uncached and
+sees what a block wrote. Plain loads fetch a word at a time, so a
+driver copies out once, by streaming loads (`movntdqa`), which fetch a
+line, rather than reading in place.
+
+**BUGS**
+
+The firmware's region at the top is sized in the video firmware's
+tables, which are not read: 64 MiB is kept clear of it on trust.
+
+**SEE ALSO**
+
+`FreeGPUMemory`, `SetGPUPower`
+
+**EXAMPLES**
+
+```zig
+var ring: amdgpu.GPUMemory = .{};
+if (!ab.AllocGPUMemory(4096, 4096, &ring)) return error.NoMemory;
+defer ab.FreeGPUMemory(&ring);
+```
+
+## FindGPUBlock
+
+One of the device's blocks: its version and where its registers are.
+
+**SYNOPSIS**
+
+```zig
+fn FindGPUBlock(ab: *AMDGPUBase, id: u32, instance: u32, block: *GPUBlock) bool
+```
+
+**SINCE**
+
+1.0. LVO -8.
+
+**INPUTS**
+
+- `id` - the kind of block, a GPUBLOCK_* or any other number the
+  device's table gives a kind.
+- `instance` - which of them, from 0.
+- `block` - filled in.
+
+**RESULT**
+
+True with `block` filled in: its kind and instance, its version, and
+`count` addresses its registers are counted from, in 32-bit words into
+the register window. False where the device has no such block, or
+there is no device; `block` is then left alone.
+
+**BEHAVIOR**
+
+The answer is read out of the table of blocks the device's firmware
+left, which the resource kept as it started; the table is not changed
+by anything that runs, so the answer is the same each time. A block
+with more addresses than GPUBLOCK_ADDRESSES is answered with its first
+ones.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: it may be called from one.
+- Locks: none.
+- Process: any.
+
+**OWNERSHIP**
+
+`block` is the caller's.
+
+**NOTES**
+
+Which of a block's addresses a register is counted from is the
+block's own fact: its registers come in segments, each from its own
+address. A driver checks the version it is answered with against the
+versions it knows, and leaves a block of another version alone.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetGPUInfo`
+
+**EXAMPLES**
+
+```zig
+var block: amdgpu.GPUBlock = .{};
+if (!ab.FindGPUBlock(amdgpu.GPUBLOCK_VIDEO, 0, &block)) return;
+const status = info.registers + (block.addresses[1] + 0x143) * 4;
+```
+
+## FreeGPUMemory
+
+A piece of the device's memory given back.
+
+**SYNOPSIS**
+
+```zig
+fn FreeGPUMemory(ab: *AMDGPUBase, memory: *GPUMemory) void
+```
+
+**SINCE**
+
+1.1. LVO -20.
+
+**INPUTS**
+
+- `memory` - a piece from AllocGPUMemory, or one all zero.
+
+**RESULT**
+
+None. `memory` is all zero after.
+
+**BEHAVIOR**
+
+The piece's place is free for the next AllocGPUMemory. A zero piece,
+or one the resource did not hand out, is cleared and nothing else.
+
+**CONTEXT**
+
+- Waits: for another task handing out or giving back.
+- Interrupts: no.
+- Locks: takes the resource's memory lock.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The piece is the resource's again; no block of the device may still
+be reading or writing it.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AllocGPUMemory`
+
+**EXAMPLES**
+
+```zig
+ab.FreeGPUMemory(&ring);
+```
+
+## GetGPUInfo
+
+What the device is and where the machine reaches it.
+
+**SYNOPSIS**
+
+```zig
+fn GetGPUInfo(ab: *AMDGPUBase, info: *GPUInfo) bool
+```
+
+**SINCE**
+
+1.0. LVO -4.
+
+**INPUTS**
+
+- `info` - filled in.
+
+**RESULT**
+
+True with `info` filled in: the device's PCI vendor and device ids,
+its register window and its memory window as the machine reaches them,
+each with its length, and how much memory of its own it has. False on
+a machine without the device, with `info` left alone.
+
+**BEHAVIOR**
+
+The device was found, claimed and read once, as the resource started;
+what is answered is what was read then. `memory_bytes` is the device's
+own answer for its memory - the part of the machine's memory set aside
+for it - of which the memory window shows the first `window_bytes`.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: it may be called from one.
+- Locks: none.
+- Process: any.
+
+**OWNERSHIP**
+
+`info` is the caller's. The windows are the device's: a driver reads
+and writes the registers of the block it drives, and only those.
+
+**NOTES**
+
+A register's place is `registers + (block.addresses[n] + offset) * 4`,
+with the block from FindGPUBlock.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FindGPUBlock`
+
+**EXAMPLES**
+
+```zig
+var info: amdgpu.GPUInfo = .{};
+if (!ab.GetGPUInfo(&info)) return; // no such device here
+```
+
+## LoadGPUFirmware
+
+A block's firmware loaded by the security processor into its protected region, or a list of a block's register writes applied by it.
+
+**SYNOPSIS**
+
+```zig
+fn LoadGPUFirmware(ab: *AMDGPUBase, kind: u32, image: [*]const u8,
+    length: u32, address: *u64) bool
+```
+
+**SINCE**
+
+1.2. LVO -28.
+
+**INPUTS**
+
+- `kind` - what it is: GPUFIRMWARE_VIDEO, the video decoder's
+  firmware; GPUFIRMWARE_VIDEO_REGISTERS (since 1.3), the writes that
+  start the video decoder.
+- `image` - for firmware the file, whole, as it is on the disk
+  (DEVS:firmware/amdgpu/vcn_<version>.bin), its vendor's header
+  included; for the writes the list itself, pairs of 32-bit words -
+  a register's offset as the block itself numbers it, then its value -
+  at most 512 pairs.
+- `length` - its length in bytes.
+- `address` - filled in.
+
+**RESULT**
+
+True with `address` holding where the firmware is in the protected
+region, as the device's blocks reach it - what the block's driver
+points the block at - or, for the writes, what the processor answered
+as an address, 0 where it named none. False where `kind` is not one
+there is; StartGPUSecurity has not made the processor ready; the
+file's header does not fit the file, or the list is empty, longer
+than 512 pairs or not of whole pairs; the processor does not answer
+within five seconds, or answers no address for firmware; the device's
+memory has no room for the copy it reads from; and on a machine
+without the device. `address` is then left alone.
+
+**BEHAVIOR**
+
+Under the security processor's lock: the part of the file its header
+names, or the list whole, is copied into a piece of its own, which the
+processor reads - firmware it checks and puts into the region, writes
+it applies to the block in their order. The piece is given back once
+it answers. The status it answers is put on the
+system's lines; one that is not 0 stops nothing where an address came
+with firmware.
+
+**CONTEXT**
+
+- Waits: yes, for the processor - a few milliseconds, at most five
+  seconds.
+- Interrupts: no.
+- Locks: takes the security processor's lock, and the memory lock
+  inside it.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The file or list stays the caller's. What the processor put into the
+region stays there; loading the same kind again puts it there again.
+
+**NOTES**
+
+The address is the firmware's start; how large a window onto it the
+block is given is the block's driver's to work out from the file's
+part. The writes are the block's start as its driver puts it together;
+the processor checks the firmware, not them.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`StartGPUSecurity`, `SetGPUPower`
+
+**EXAMPLES**
+
+```zig
+var at: u64 = 0;
+if (!ab.LoadGPUFirmware(amdgpu.GPUFIRMWARE_VIDEO, vcn.ptr, @intCast(vcn.len), &at))
+    return error.NoFirmware;
+// The decoder's processor out of reset: its control register, 0xd6
+// inside the block.
+const writes = [_]u32{ 0xd6, 0x0ff00200 };
+_ = ab.LoadGPUFirmware(amdgpu.GPUFIRMWARE_VIDEO_REGISTERS, @ptrCast(&writes), 8, &at);
+```
+
+## SetGPUPower
+
+A block of the device powered up or down by its power manager.
+
+**SYNOPSIS**
+
+```zig
+fn SetGPUPower(ab: *AMDGPUBase, part: u32, instance: u32, on: bool) bool
+```
+
+**SINCE**
+
+1.1. LVO -12.
+
+**INPUTS**
+
+- `part` - GPUPOWER_VIDEO, the video decoder, or GPUPOWER_JPEG, the
+  JPEG decoder beside it.
+- `instance` - which of them: the video block's instance for the video
+  decoder; 0 for the JPEG decoder, of which there is one.
+- `on` - true to power it up, false to power it down.
+
+**RESULT**
+
+True once the power manager says done. False where it refused - what
+it answered is put on the system's lines - or did not answer within a
+second; where `part` or `instance` is not one there is; where the
+manager is one whose messages the resource does not know; and on a
+machine without the device.
+
+**BEHAVIOR**
+
+One message through the manager's mailbox, under the mailbox's lock.
+Powering up what is up, or down what is down, is done again and says
+done. The block's clocks are the manager's to run once it is up.
+
+**CONTEXT**
+
+- Waits: yes, for the mailbox and for the manager's answer - a
+  millisecond or so, at most a second.
+- Interrupts: no.
+- Locks: takes the mailbox's lock.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The block is its driver's: the resource powers it, and touches none of
+its registers.
+
+**NOTES**
+
+A powered-up block still has its own gating to let go of, through its
+registers, before it runs; that is its driver's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FindGPUBlock`, `AllocGPUMemory`
+
+**EXAMPLES**
+
+```zig
+if (!ab.SetGPUPower(amdgpu.GPUPOWER_JPEG, 0, true)) return error.NoEngine;
+defer _ = ab.SetGPUPower(amdgpu.GPUPOWER_JPEG, 0, false);
+```
+
+## StartGPUSecurity
+
+The security processor made ready to load firmware: its ring made, its table of contents loaded, and the protected region it asks for set up.
+
+**SYNOPSIS**
+
+```zig
+fn StartGPUSecurity(ab: *AMDGPUBase, toc: [*]const u8, length: u32) bool
+```
+
+**SINCE**
+
+1.2. LVO -24.
+
+**INPUTS**
+
+- `toc` - the processor's table of contents, the whole file as it is
+  on the disk (DEVS:firmware/amdgpu/psp_<version>_toc.bin), its
+  vendor's header included.
+- `length` - the file's length in bytes.
+
+**RESULT**
+
+True once the processor is ready for LoadGPUFirmware, and at once
+where it already is. False where the file's header does not say the
+file's own length or where its part lies in it; where the processor
+does not take the ring, does not answer a command within five seconds,
+or answers the table of contents without the region's size; where the
+device's memory has no room for the ring or the region; where the
+processor is one whose ring the resource does not know; and on a
+machine without the device.
+
+**BEHAVIOR**
+
+Under the security processor's lock. The first call makes the ring: a
+piece of the device's memory with the ring, the page a command is
+written to and the fence the processor answers on. Then the table of
+contents - the part of the file its header names - is copied into a
+piece of its own and loaded, the processor answering with the size of
+the protected region its firmware needs; that region is taken from the
+device's memory, on a mebibyte, and set up, at its address to the
+device and in the machine. Every status the processor answers is put
+on the system's lines; one that is not 0 stops nothing where the
+processor still answered what was asked of it.
+
+**CONTEXT**
+
+- Waits: yes, for the processor - 20 ms for the ring, a few for each
+  command, at most five seconds for one.
+- Interrupts: no.
+- Locks: takes the security processor's lock, and the memory lock
+  inside it.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The file stays the caller's; what the processor needs of it is copied.
+The ring and the protected region are the resource's, and kept: the
+firmware loaded into the region runs from it.
+
+**NOTES**
+
+The protected region is the processor's alone once it is set up:
+nothing on the CPU reads or writes it. Its size is the table of
+contents' to say, and the region is as large as that, whichever of the
+firmware it names is loaded.
+
+A processor that did not answer in time is taken as gone: every later
+call answers false, and the pieces it may still read are kept.
+
+**BUGS**
+
+The region is not given back, nor the ring taken down, before the
+machine restarts.
+
+**SEE ALSO**
+
+`LoadGPUFirmware`, `SetGPUPower`
+
+**EXAMPLES**
+
+```zig
+const toc = try readWhole(dos, "DEVS:firmware/amdgpu/psp_13_0_4_toc.bin");
+if (!ab.StartGPUSecurity(toc.ptr, @intCast(toc.len))) return error.NoSecurity;
+```

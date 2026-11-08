@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! The CDFs AV1 frames start with (the specification's Default_*_Cdf
 //! tables): each a symbol's cumulative probabilities times 32768,
-//! ending in 32768 and the adaptation counter's 0. Written by a script
-//! from the specification's text.
+//! ending in 32768 and the adaptation counter's 0; the coefficients'
+//! by the quantiser's class first. Written by a script from the
+//! specification's text. `sdk.videoparse.av1.cdfs`.
 
 pub const default_intra_frame_y_mode_cdf: [5][5][14]u16 = .{
     .{

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Disable: masks interrupts, nesting. Only the outermost Disable saves
 //! the state the matching `Enable` puts back, and takes the system's
-//! interrupt lock, which keeps the other core's interrupts and Disables
-//! out as well.
+//! interrupt lock, which keeps every other core's interrupts and
+//! Disables out as well.
 
 const _interrupt = @import("_interrupt.zig");
+const _task = @import("../task/_task.zig");
 
 const ExecBase = @import("../exec.zig").ExecBase;
 
@@ -29,17 +30,24 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// interrupt leaves interrupts masked, which is what they already were.
 ///
 /// It guards what interrupts themselves touch: the interrupt vectors, the
-/// server chains, the software interrupt queues and the task lists. What
-/// only tasks touch has locks of its own - exec's lists each theirs - and
-/// Disable is heavier than any of them because it stops the machine
-/// responding to its hardware.
+/// server chains and the software interrupt queues. What only tasks touch
+/// has locks of its own - exec's lists each theirs - and Disable is
+/// heavier than any of them because it stops the machine responding to
+/// its hardware.
 ///
-/// **Both cores.** The outermost Disable also takes the system's
-/// interrupt lock, which every exception on either core takes as well. So
-/// while a task is inside Disable no interrupt runs on either core and no
-/// task on the other core gets into Disable: a core that wants the lock
-/// waits for it with its own interrupts masked. The device interrupts are
-/// all core 0's; core 1 has its tick and the cross-core interrupt.
+/// **The task lists are not among them.** Each core's ready and wait
+/// lists, the state and signals of the tasks on them, and its running
+/// task are under that core's own lock, which `LockCoreTasks` takes and
+/// the calls that move a task take for themselves: a `Signal` waits for
+/// no interrupt handler, and a core choosing what to run next waits for
+/// no Disable.
+///
+/// **Every core.** The outermost Disable takes the system's interrupt
+/// lock, which the dispatch of an interrupt number and of the software
+/// interrupts takes as well. So while a task is inside Disable no
+/// interrupt runs on any core and no task on another core gets into
+/// Disable: a core that wants the lock waits for it with its own
+/// interrupts masked.
 ///
 /// CONTEXT:
 /// - Waits: no. Never `Wait` while holding it: what it guards is not
@@ -80,6 +88,9 @@ pub fn Disable(base: *ExecBase) void {
     cpu.id_nest_cnt += 1;
     if (cpu.id_nest_cnt != 0) return;
     cpu.id_saved = state;
-    // An exception holds the lock already.
-    if (cpu.int_depth == 0) _interrupt.takeSystemInterrupts(base, @returnAddress());
+    // Inside the dispatcher the core holds the task lists, which come
+    // after this lock: taking it there would be the lock order the wrong
+    // way round. Its interrupts are masked all the same.
+    if (_task.taskListsHeld(base)) return;
+    _interrupt.takeSystemInterrupts(base, @returnAddress());
 }

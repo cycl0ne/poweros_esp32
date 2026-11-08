@@ -11,17 +11,21 @@ const Store = _base.Store;
 
 const magic: u32 = 0x424D_454D; // "BMEM"
 
+/// Whether the chip keeps the bits in the base itself, for want of a
+/// memory that outlives a reset.
+const in_base = switch (hardware.chip) {
+    .rv64sbi, .a64psci, .x64uefi => true,
+    else => false,
+};
+
 comptime {
-    if (hardware.chip != .rv64sbi and hardware.chip != .a64psci and @sizeOf(Store) > hardware.rtc_timer.batt_memory_size) @compileError("the bits do not fit their memory");
+    if (!in_base and @sizeOf(Store) > hardware.rtc_timer.batt_memory_size) @compileError("the bits do not fit their memory");
 }
 
 /// Where a chip keeps the bits: the RTC memory past the clock's on the
 /// ESP32s, the base itself on a chip with none.
 pub fn storeOf(mb: *BattMemBase) *Store {
-    return switch (hardware.chip) {
-        .rv64sbi, .a64psci => &mb.own,
-        else => @ptrFromInt(hardware.rtc_timer.batt_memory),
-    };
+    return if (in_base) &mb.own else @ptrFromInt(hardware.rtc_timer.batt_memory);
 }
 
 /// FNV-1a over the magic number and the bits.

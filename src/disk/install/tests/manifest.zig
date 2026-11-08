@@ -80,7 +80,7 @@ test "a manifest written and read back, with what it says of itself" {
 test "a length past 4 GiB, and the chips' names" {
     var buffer: [512]u8 = undefined;
     const big = [_]manifest.Entry{.{ .kind = .file, .path = "system/Work/film.mp4", .crc = 0xFFFF_FFFF, .size = 6_000_000_000 }};
-    for ([_]sdk.hardware.Chip{ .esp32s3, .esp32p4, .rv64sbi, .a64psci }) |chip| {
+    for ([_]sdk.hardware.Chip{ .esp32s3, .esp32p4, .rv64sbi, .a64psci, .x64uefi }) |chip| {
         const text = try write(&big, chip, &buffer);
         var read: [2]manifest.Entry = undefined;
         const got = try readAll(text, &read);

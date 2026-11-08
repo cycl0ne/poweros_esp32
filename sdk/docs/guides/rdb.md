@@ -630,10 +630,11 @@ highest boot priority is where the system starts from. So what
 once by `MountPartition`; until then the nodes on the list are the ones
 from before.
 
-**On a RISC-V 64 or AArch64 machine** the flash disk is the disk image
+**On a 64-bit machine** the flash disk is the disk image
 the loader put in RAM beside the kernel - `disk-rv64.bin` through
 U-Boot's `booti` with a ramdisk, or QEMU's `-initrd` given by hand,
-found in the device tree's `/chosen`. flash.device serves it as a flash
+found in the device tree's `/chosen`; on an x86-64 machine `disk-x64.bin`,
+which the UEFI stub reads off the boot partition. flash.device serves it as a flash
 chip, erased to 0xFF a sector at a time, and reads its table the same
 way. What is written to it is gone at power off. A machine started
 without one has no flash disk: QEMU's virt machines start from an SSD

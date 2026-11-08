@@ -11,6 +11,14 @@
 //! exec gives one away per source until they run out, after which
 //! server-only sources share.
 //!
+//! **The system's interrupt lock** (`disable_lock`) is what keeps the two
+//! sides apart across the cores: `Disable` takes it, and so does the
+//! dispatch of an interrupt number and of the software interrupts. So a
+//! task inside Disable runs with no handler running anywhere, and two
+//! cores never run a chain at once - while what a core does on its way
+//! into and out of an exception takes nothing, since the entry, the
+//! times it counts and the dispatcher are its own.
+//!
 //! exec touches no hardware itself. Routing a number to the CPU and masking
 //! interrupts go through `interrupt_hardware`, which the kernel fills in
 //! (src/arch/esp32s3/intmatrix.zig), and the kernel calls `dispatchInterrupt`
@@ -83,18 +91,36 @@ pub const InterruptHardware = struct {
 fn noOthers() void {}
 fn noPoke(_: u32) void {}
 
-/// The system's interrupt lock (`disable_lock`) taken by this core, as
-/// Disable and the exception entry take it: spun for while the other core
-/// has it, answering a hold as it goes round. This core's interrupts are
-/// masked already, so nothing here can want it again. The longest wait
-/// for it and the code that waited are kept in the core's state.
+/// Whether this core holds the system's interrupt lock.
 ///
 /// INPUTS:
 /// - `base` - exec: the lock.
-/// - `where` - the code taking it, or 1 for an exception: what the
-///   longest wait and hold are put down to.
+pub inline fn systemInterruptsHeld(base: *ExecBase) bool {
+    return @atomicLoad(u32, &base.disable_lock, .monotonic) == exec_base.coreId() + 1;
+}
+
+/// The system's interrupt lock (`disable_lock`) taken by this core, as
+/// Disable and the interrupt dispatch take it: spun for while another
+/// core has it, answering a hold as it goes round. This core's interrupts
+/// are masked already. The longest wait for it and the code that waited
+/// are kept in the core's state.
+///
+/// **It nests.** A handler holds it and the code it runs may take it
+/// again - a Disable of its own - so a take by the core that holds it
+/// counts one deeper and the matching drop counts back. The count is the
+/// core's, since the lock is.
+///
+/// INPUTS:
+/// - `base` - exec: the lock.
+/// - `where` - the code taking it, or 1 for an interrupt number's chain,
+///   2 for the software interrupts, 3 for what a switch left behind: what
+///   the longest wait and hold are put down to.
 pub fn takeSystemInterrupts(base: *ExecBase, where: usize) void {
     const cpu = base.cpu();
+    if (systemInterruptsHeld(base)) {
+        cpu.sys_nest += 1;
+        return;
+    }
     const me = exec_base.coreId() + 1;
     const before = exec_base.cycles();
     while (@cmpxchgWeak(u32, &base.disable_lock, 0, me, .acquire, .monotonic) != null) {
@@ -108,16 +134,27 @@ pub fn takeSystemInterrupts(base: *ExecBase, where: usize) void {
     }
     cpu.lock_taken_at = now;
     cpu.lock_taker = where;
+    cpu.sys_nest = 0;
 }
 
 /// The system's interrupt lock let go, everything written under it seen
 /// first; the longest hold and the code that took it kept in the core's
-/// state.
+/// state. A nested take is counted back instead.
+///
+/// **Nothing happens when this core does not hold it.** A task switched
+/// out inside Disable loses it there - what Disable guards is not guarded
+/// across a wait, which is what its own notes say - so the Enable it
+/// comes back to has nothing to let go.
 ///
 /// INPUTS:
 /// - `base` - exec: the lock.
 pub fn dropSystemInterrupts(base: *ExecBase) void {
+    if (!systemInterruptsHeld(base)) return;
     const cpu = base.cpu();
+    if (cpu.sys_nest > 0) {
+        cpu.sys_nest -= 1;
+        return;
+    }
     const held = exec_base.cycles() -% cpu.lock_taken_at;
     if (held > cpu.lock_held_max) {
         cpu.lock_held_max = held;
@@ -157,6 +194,16 @@ pub inline fn mask() u32 {
             : [r] "=r" (-> u64),
             :
             : .{ .memory = true })),
+        // RFLAGS read and the interrupts cleared in one go, so nothing
+        // comes between the two. A host build goes through the table: this
+        // is also the host's architecture.
+        .x86_64 => if (builtin.os.tag != .freestanding) interrupt_hardware.disable() else @truncate(asm volatile (
+            \\pushfq
+            \\popq %[r]
+            \\cli
+            : [r] "=r" (-> u64),
+            :
+            : .{ .memory = true })),
         else => interrupt_hardware.disable(),
     };
 }
@@ -176,6 +223,10 @@ pub inline fn unmask(state: u32) void {
         .riscv32 => if (state & 8 != 0) asm volatile ("csrsi mstatus, 8" ::: .{ .memory = true }),
         .riscv64 => if (state & 2 != 0) asm volatile ("csrsi sstatus, 2" ::: .{ .memory = true }),
         .aarch64 => if (state & (1 << 7) == 0) asm volatile ("msr daifclr, #2" ::: .{ .memory = true }),
+        // RFLAGS.IF: on again only if it was on.
+        .x86_64 => if (builtin.os.tag != .freestanding)
+            interrupt_hardware.restore(state)
+        else if (state & (1 << 9) != 0) asm volatile ("sti" ::: .{ .memory = true }),
         else => interrupt_hardware.restore(state),
     }
 }
@@ -270,10 +321,18 @@ pub fn route(int_vector: *IntVector, int_number: u32, was_in_use: bool, was_shar
 /// whether or not anything is listening - which is what makes `s3> ints`
 /// worth reading when a driver is not being woken.
 ///
+/// **It holds the system's interrupt lock** for the chain, which is what
+/// keeps a handler out of a Disable region on any core, and the chains on
+/// the cores out of each other. The exception around it holds nothing:
+/// what a core does on its way in and out of one, the dispatcher
+/// included, is nobody else's business.
+///
 /// INPUTS:
-/// - `base` - exec: its vectors.
+/// - `base` - exec: its vectors and the lock.
 /// - `int_number` - the source that fired.
 pub fn dispatchInterrupt(base: *ExecBase, int_number: u32) void {
+    takeSystemInterrupts(base, 1);
+    defer dropSystemInterrupts(base);
     const int_vector = vector(base, int_number);
     int_vector.count +%= 1;
     if (int_vector.handler) |handler| {
@@ -302,10 +361,17 @@ pub const softint_priorities = [_]i8{ -32, -16, 0, 16, 32 };
 /// so a software interrupt may cause itself again from inside its own run -
 /// which is what lets one drain a queue a piece at a time.
 ///
+/// It holds the system's interrupt lock while it runs, as an interrupt
+/// handler's chain does: a software interrupt is what a handler puts off
+/// to the moment the chains are done, and what it touches is a handler's.
+/// The Disable around the queue nests inside that.
+///
 /// INPUTS:
-/// - `base` - exec: its queues, and the jump table Disable and Enable go
-///   through.
+/// - `base` - exec: its queues, the lock, and the jump table Disable and
+///   Enable go through.
 pub fn dispatchSoftInts(base: *ExecBase) void {
+    takeSystemInterrupts(base, 2);
+    defer dropSystemInterrupts(base);
     const sys = base.iface();
     while (true) {
         sys.Disable();

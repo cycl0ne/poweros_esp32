@@ -17,6 +17,14 @@
 //!
 //! The ESP32-S3's Xtensa has `memw` for all of them; a host build (the
 //! tests) has only the compiler to hold back.
+//!
+//! On x86-64 the first three are the compiler alone. The architecture does
+//! not reorder a store after a store, a load after a load, or a store after
+//! a load, and a register access in the I/O port space is ordered against
+//! memory by the instruction itself - so what is left to stop is the
+//! compiler moving the memory access across the register one. Only `full`
+//! needs an instruction (`mfence`), because a load may be answered out of
+//! the store buffer before an earlier store has reached memory.
 
 const builtin = @import("builtin");
 
@@ -52,6 +60,7 @@ pub inline fn full() void {
         .riscv32, .riscv64 => asm volatile ("fence iorw, iorw" ::: .{ .memory = true }),
         .aarch64 => asm volatile ("dsb sy" ::: .{ .memory = true }),
         .xtensa => asm volatile ("memw" ::: .{ .memory = true }),
+        .x86_64 => asm volatile ("mfence" ::: .{ .memory = true }),
         else => asm volatile ("" ::: .{ .memory = true }),
     }
 }

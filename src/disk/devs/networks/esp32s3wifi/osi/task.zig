@@ -116,7 +116,7 @@ pub fn taskCreate(entry: ?*anyopaque, name: ?[*:0]const u8, stack_bytes: u32, pa
     // for one core, and its interrupts are core 0's.
     made.task = .{
         .node = .{ .type = .task, .pri = priority(prio), .name = &made.name },
-        .flags = exec.TF_CORE0,
+        .core = 0,
         .sp_lower = @intFromPtr(stack),
         .sp_upper = @intFromPtr(stack) + size,
     };

@@ -5,9 +5,14 @@
 //! A number is an array of 32-bit words, least significant first, kept
 //! in Montgomery form - aR mod m for a, R being 2 to the bits of the
 //! array - so that a product is reduced without a division (CIOS: one
-//! word of the multiplier at a time, the reduction folded in). The chip
-//! multiplies 32 by 32 into 64 bits in two instructions, which is what
-//! this is built on.
+//! limb of the multiplier at a time, the reduction folded in).
+//!
+//! The arithmetic works in limbs, the widest number the chip multiplies
+//! in one go: on a 32-bit chip a limb is a word, multiplied 32 by 32 into
+//! 64 bits; on a 64-bit one it is two words, multiplied 64 by 64 into
+//! 128 bits, a quarter of the multiplications. The words are the same
+//! memory either way (the chips keep the least significant byte first),
+//! and so is R, so a number does not change with the limb.
 //!
 //! Every operation takes the same steps whatever the values: a carry or
 //! a borrow is kept or dropped by a mask, never by a branch, and a
@@ -20,16 +25,38 @@
 //! and their sums are worked in 64 bits where they cannot overflow - the
 //! tests hold them to big-integer arithmetic.
 //!
-//! The constants - the modulus's words, -m^-1 mod 2^32, R mod m and
-//! R^2 mod m - are worked out at compile time from the modulus.
+//! The constants - the modulus's limbs, -m^-1 mod 2 to a limb's bits,
+//! R mod m and R^2 mod m - are worked out at compile time from the
+//! modulus.
 
-/// The field of numbers modulo `modulus`, in `words` 32-bit words.
+const builtin = @import("builtin");
+
+/// The limb this chip multiplies: 64 bits on a 64-bit chip that keeps
+/// the least significant byte first, else 32.
+pub const native_limb = if (@bitSizeOf(usize) == 64 and builtin.cpu.arch.endian() == .little) u64 else u32;
+
+/// The field of numbers modulo `modulus`, in `words` 32-bit words,
+/// worked in the chip's own limbs.
 pub fn Field(comptime words: comptime_int, comptime modulus: comptime_int) type {
+    return FieldIn(if (words % 2 == 0) native_limb else u32, words, modulus);
+}
+
+/// The same, worked in `Limb`s - u32, or u64 for an even number of
+/// words.
+pub fn FieldIn(comptime Limb: type, comptime words: comptime_int, comptime modulus: comptime_int) type {
     if (modulus % 2 == 0) @compileError("Montgomery form needs an odd modulus");
     if (modulus >= 1 << (32 * words)) @compileError("the modulus does not fit its words");
+    if (Limb != u32 and Limb != u64) @compileError("a limb is 32 or 64 bits");
+    if (Limb == u64 and words % 2 != 0) @compileError("64-bit limbs need an even number of words");
 
     return struct {
         const Self = @This();
+
+        /// A limb and the product of two.
+        const limb_bits = @bitSizeOf(Limb);
+        const Double = if (Limb == u64) u128 else u64;
+        const limbs = words * 32 / limb_bits;
+        const Limbs = [limbs]Limb;
 
         /// A number of the field, as words; in Montgomery form unless a
         /// function says otherwise.
@@ -41,11 +68,12 @@ pub fn Field(comptime words: comptime_int, comptime modulus: comptime_int) type 
         pub const bit_count = bitLength(modulus);
 
         pub const m: Number = wordsOf(modulus, words);
-        /// -m^-1 mod 2^32.
-        const m_prime: u32 = blk: {
-            const low: u32 = @intCast(modulus & 0xFFFF_FFFF);
-            var inverse: u32 = low;
-            for (0..5) |_| inverse *%= 2 -% low *% inverse;
+        const m_limbs: Limbs = @bitCast(m);
+        /// -m^-1 mod 2 to a limb's bits.
+        const m_prime: Limb = blk: {
+            const low: Limb = @intCast(modulus & ((1 << limb_bits) - 1));
+            var inverse: Limb = low;
+            for (0..6) |_| inverse *%= 2 -% low *% inverse;
             break :blk 0 -% inverse;
         };
         const r2: Number = wordsOf((1 << (64 * words)) % modulus, words);
@@ -62,31 +90,33 @@ pub fn Field(comptime words: comptime_int, comptime modulus: comptime_int) type 
         /// a * b, both in Montgomery form.
         pub fn mul(a: *const Number, b: *const Number) Number {
             @setRuntimeSafety(false);
-            var t: [words + 2]u32 = @splat(0);
-            for (0..words) |i| {
-                var carry: u64 = 0;
-                for (0..words) |j| {
-                    const sum = @as(u64, t[j]) + @as(u64, a[j]) * b[i] + carry;
+            const x: Limbs = @bitCast(a.*);
+            const y: Limbs = @bitCast(b.*);
+            var t: [limbs + 2]Limb = @splat(0);
+            for (0..limbs) |i| {
+                var carry: Limb = 0;
+                for (0..limbs) |j| {
+                    const sum = @as(Double, t[j]) + @as(Double, x[j]) * y[i] + carry;
                     t[j] = @truncate(sum);
-                    carry = sum >> 32;
+                    carry = @truncate(sum >> limb_bits);
                 }
-                var sum = @as(u64, t[words]) + carry;
-                t[words] = @truncate(sum);
-                t[words + 1] = @truncate(sum >> 32);
+                var sum = @as(Double, t[limbs]) + carry;
+                t[limbs] = @truncate(sum);
+                t[limbs + 1] = @truncate(sum >> limb_bits);
 
-                const factor: u32 = t[0] *% m_prime;
-                sum = @as(u64, t[0]) + @as(u64, factor) * m[0];
-                carry = sum >> 32;
-                for (1..words) |j| {
-                    sum = @as(u64, t[j]) + @as(u64, factor) * m[j] + carry;
+                const factor: Limb = t[0] *% m_prime;
+                sum = @as(Double, t[0]) + @as(Double, factor) * m_limbs[0];
+                carry = @truncate(sum >> limb_bits);
+                for (1..limbs) |j| {
+                    sum = @as(Double, t[j]) + @as(Double, factor) * m_limbs[j] + carry;
                     t[j - 1] = @truncate(sum);
-                    carry = sum >> 32;
+                    carry = @truncate(sum >> limb_bits);
                 }
-                sum = @as(u64, t[words]) + carry;
-                t[words - 1] = @truncate(sum);
-                t[words] = t[words + 1] + @as(u32, @truncate(sum >> 32));
+                sum = @as(Double, t[limbs]) + carry;
+                t[limbs - 1] = @truncate(sum);
+                t[limbs] = t[limbs + 1] + @as(Limb, @truncate(sum >> limb_bits));
             }
-            return subtractOnce(t[0..words].*, t[words]);
+            return @bitCast(subtractOnce(t[0..limbs].*, t[limbs]));
         }
 
         pub fn square(a: *const Number) Number {
@@ -95,55 +125,59 @@ pub fn Field(comptime words: comptime_int, comptime modulus: comptime_int) type 
 
         pub fn add(a: *const Number, b: *const Number) Number {
             @setRuntimeSafety(false);
-            var sum: Number = undefined;
-            var carry: u32 = 0;
-            for (0..words) |j| {
-                const total = @as(u64, a[j]) + b[j] + carry;
+            const x: Limbs = @bitCast(a.*);
+            const y: Limbs = @bitCast(b.*);
+            var sum: Limbs = undefined;
+            var carry: Limb = 0;
+            for (0..limbs) |j| {
+                const total = @as(Double, x[j]) + y[j] + carry;
                 sum[j] = @truncate(total);
-                carry = @truncate(total >> 32);
+                carry = @truncate(total >> limb_bits);
             }
-            return subtractOnce(sum, carry);
+            return @bitCast(subtractOnce(sum, carry));
         }
 
         pub fn sub(a: *const Number, b: *const Number) Number {
             @setRuntimeSafety(false);
-            var difference: Number = undefined;
-            var borrow: u32 = 0;
-            for (0..words) |j| {
-                const total = @as(u64, a[j]) -% b[j] -% borrow;
+            const x: Limbs = @bitCast(a.*);
+            const y: Limbs = @bitCast(b.*);
+            var difference: Limbs = undefined;
+            var borrow: Limb = 0;
+            for (0..limbs) |j| {
+                const total = @as(Double, x[j]) -% y[j] -% borrow;
                 difference[j] = @truncate(total);
-                borrow = @truncate((total >> 32) & 1);
+                borrow = @truncate((total >> limb_bits) & 1);
             }
             // Below zero: the modulus added back.
             const mask = 0 -% borrow;
-            var carry: u32 = 0;
-            for (0..words) |j| {
-                const total = @as(u64, difference[j]) + (m[j] & mask) + carry;
+            var carry: Limb = 0;
+            for (0..limbs) |j| {
+                const total = @as(Double, difference[j]) + (m_limbs[j] & mask) + carry;
                 difference[j] = @truncate(total);
-                carry = @truncate(total >> 32);
+                carry = @truncate(total >> limb_bits);
             }
-            return difference;
+            return @bitCast(difference);
         }
 
         pub fn negate(a: *const Number) Number {
             return sub(&zero, a);
         }
 
-        /// `value` (and `high`, a word above it) less the modulus if it
+        /// `value` (and `high`, a limb above it) less the modulus if it
         /// came to the modulus or more; `value` is below twice it.
-        fn subtractOnce(value: Number, high: u32) Number {
+        fn subtractOnce(value: Limbs, high: Limb) Limbs {
             @setRuntimeSafety(false);
-            var less: Number = undefined;
-            var borrow: u32 = 0;
-            for (0..words) |j| {
-                const total = @as(u64, value[j]) -% m[j] -% borrow;
+            var less: Limbs = undefined;
+            var borrow: Limb = 0;
+            for (0..limbs) |j| {
+                const total = @as(Double, value[j]) -% m_limbs[j] -% borrow;
                 less[j] = @truncate(total);
-                borrow = @truncate((total >> 32) & 1);
+                borrow = @truncate((total >> limb_bits) & 1);
             }
-            // At least the modulus: a word above, or no borrow.
+            // At least the modulus: a limb above, or no borrow.
             const mask = 0 -% ((high | (borrow ^ 1)) & 1);
-            var out: Number = undefined;
-            for (0..words) |j| out[j] = (less[j] & mask) | (value[j] & ~mask);
+            var out: Limbs = undefined;
+            for (0..limbs) |j| out[j] = (less[j] & mask) | (value[j] & ~mask);
             return out;
         }
 
@@ -312,7 +346,12 @@ fn valueOf(comptime F: type, number: *const F.Number) u512 {
 }
 
 fn checkField(comptime words: comptime_int, comptime modulus: comptime_int) !void {
-    const F = Field(words, modulus);
+    try checkFieldIn(u32, words, modulus);
+    try checkFieldIn(u64, words, modulus);
+}
+
+fn checkFieldIn(comptime Limb: type, comptime words: comptime_int, comptime modulus: comptime_int) !void {
+    const F = FieldIn(Limb, words, modulus);
     var random = std.Random.DefaultPrng.init(0x5EED_0000 + words);
     const p: u512 = modulus;
     for (0..300) |_| {
@@ -336,7 +375,7 @@ fn checkField(comptime words: comptime_int, comptime modulus: comptime_int) !voi
     }
 }
 
-test "the field arithmetic against big integers" {
+test "the field arithmetic against big integers, in 32-bit and in 64-bit limbs" {
     try checkField(8, (1 << 255) - 19);
     try checkField(8, (1 << 256) - (1 << 224) + (1 << 192) + (1 << 96) - 1);
     try checkField(12, (1 << 384) - (1 << 128) - (1 << 96) + (1 << 32) - 1);

@@ -13,8 +13,8 @@ const calls = @import("_vp9.zig");
 
 pub const LIBRARY_NAME = "vp9.vcodec";
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 1;
-const BUILD_DATE = "31.10.2026";
+pub const LIBRARY_REVISION = 3;
+const BUILD_DATE = "08.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

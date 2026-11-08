@@ -1277,8 +1277,8 @@ fn CreateNewProc(db: *DosBase, tags: ?[*]const TagItem) ?*Process
   started with: copied, each lock duplicated), NP_ExitCode and
   NP_ExitData,
   NP_UserData (tc_UserData, there before the process first runs),
-  NP_Affinity (the cores it runs on, TF_CORE0 or TF_CORE1; default 0,
-  any),
+  NP_Affinity (the core it keeps to, counted from 0; default
+  exec.ANY_CORE, whichever is free),
   NP_EndMsg (a message replied to its reply port once the process is
   gone and nothing runs on its stack; default none),
   NP_HoldLibrary (a library whose code it runs, its open count handed

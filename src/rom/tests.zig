@@ -16,6 +16,8 @@ test {
     _ = @import("resources/battclock/battclock.zig");
     _ = @import("resources/battmem/battmem.zig");
     _ = @import("resources/thermal/thermal.zig");
+    _ = @import("resources/power/power.zig");
+    _ = @import("resources/amdgpu/amdgpu.zig");
     _ = @import("libs/rtg/rtg.zig");
     _ = @import("libs/rta/rta.zig");
     _ = @import("libs/graphics/graphics.zig");
@@ -33,6 +35,8 @@ test {
     _ = @import("libs/rta_driver/i2s/divider.zig");
     _ = @import("libs/rta_driver/hdmi/bcm2712.zig");
     _ = @import("libs/rta_driver/hdmi/dma40.zig");
+    _ = @import("libs/rta_driver/hda/codec.zig");
+    _ = @import("libs/rta_driver/hda/stream.zig");
     _ = @import("devs/audio/golden.zig");
     _ = @import("devs/audio/audio.zig");
     _ = @import("libs/utility/date/datesplit.zig");

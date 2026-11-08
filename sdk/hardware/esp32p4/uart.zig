@@ -279,6 +279,11 @@ fn setSclkDivider(port: Port, divider: u32) void {
     }
 }
 
+/// Whether a UART answers at `port`. The chip's own are always there.
+pub fn present(_: Port) bool {
+    return true;
+}
+
 /// Set the UART up: its clocks on, through a reset, the crystal as its
 /// clock, the boot-up line (115200 8N1, no flow control). A UART whose
 /// clocks are on already is left as it is: the ROM leaves UART0 running

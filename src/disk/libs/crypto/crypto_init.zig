@@ -11,18 +11,20 @@ const _base = @import("crypto_base.zig");
 const CryptoBase = _base.CryptoBase;
 const _engine = @import("engine/_engine.zig");
 const jh7110 = @import("engine/jh7110.zig");
+const x64 = @import("engine/x64.zig");
 const crypto_lvo = @import("crypto_lvo.zig");
 
 pub const LIBRARY_NAME = crypto.CRYPTONAME;
 pub const LIBRARY_VERSION = 2;
-pub const LIBRARY_REVISION = 8;
-const BUILD_DATE = "29.10.2026";
+pub const LIBRARY_REVISION = 11;
+const BUILD_DATE = "08.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
-/// The base filled in, the engines' locks made, and the engines started.
+/// The base filled in, the engines' locks made, the engines started, and
+/// an x86-64 core asked which of its crypto instructions it has.
 fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Library {
     const cb = _base.cryptoBase(lib);
     const header = lib.*;
@@ -36,6 +38,12 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     sys_base.Disable();
     _engine.start();
     sys_base.Enable();
+    if (x64.built) {
+        const has = x64.features();
+        cb.core_aes = has.aes;
+        cb.core_clmul = has.clmul;
+        cb.core_sha = has.sha;
+    }
     return lib;
 }
 

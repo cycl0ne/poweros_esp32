@@ -12,8 +12,10 @@ board this package is for.
 write.sh        copies the files onto a partition you have mounted
 machine.conf    which board it is, which files it loads, and what its console is
 kernel.bin      the system: everything up to the file systems
-disk-rv64.bin   the disk it starts with, 32 MB (disk-a64.bin on an AArch64 board)
+disk-rv64.bin   the disk it starts with, 32 MB (disk-a64.bin on an AArch64
+                board, disk-x64.bin on an x86-64 one)
 config.txt      on the Compute Module 5: what its bootloader reads
+EFI/BOOT/BOOTX64.EFI   on an x86-64 machine: what its firmware starts
 README.md       this
 ```
 
@@ -93,6 +95,25 @@ The settings are plain text in the image, so that prints them as they
 are - a read of the chip rather than of a file that is meant to be on
 it.
 
+## An x86-64 machine
+
+Its firmware starts a file and not a kernel: `EFI/BOOT/BOOTX64.EFI` on a
+FAT partition, which is where every UEFI firmware looks for something to
+start when it is given no other name. That file is this system's own
+loader - it asks the firmware for the machine's memory, for the screen it
+has already lit and for its tables, reads `kernel.bin` and
+`disk-x64.bin` from beside itself, leaves the firmware and calls the
+kernel with all of it. `./write.sh` puts the three where they belong,
+the loader in its directory.
+
+The partition wants to be a FAT one the firmware will start from, and
+writable: a firmware that cannot write its own variables there goes to
+its boot menu instead. Which medium the machine tries, and in what
+order, is the firmware's own settings, as on any PC.
+
+The console is the machine's first serial port at 115200 8N1, and with a
+monitor the desktop comes up on the screen the firmware lit.
+
 ## The first start
 
 The console says what the kernel finds and ends at `s3>`, the ROM's own
@@ -125,7 +146,7 @@ medium is not.
 ## Where this comes from
 
 PowerOS is a kernel and a system written in Zig for ESP32-S3 and ESP32-P4
-boards, for 64-bit RISC-V machines under SBI firmware and for AArch64
-machines under PSCI. The source, the boards and the guides are at
+boards, for 64-bit RISC-V machines under SBI firmware, for AArch64
+machines under PSCI and for x86-64 machines under UEFI firmware. The source, the boards and the guides are at
 <https://github.com/cycl0ne/poweros_esp32>, and the same system runs in
 QEMU from an archive of its own.

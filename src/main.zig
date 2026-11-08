@@ -141,7 +141,7 @@ export fn kmain() callconv(.c) noreturn {
     // rest, scans the ROM tags, creates the exec task and starts the
     // RTF_SINGLETASK residents. Task switching stays off until
     // startMultitasking below.
-    _ = bootstrap.bootStrap(ram.regions(&regions)) catch |err| @panic(@errorName(err));
+    _ = bootstrap.bootStrap(ram.regions(&regions), boards.cores) catch |err| @panic(@errorName(err));
 
     exec.kprintf("PowerOS kernel for ESP32-S3, built with Zig %s (%s)\n", .{ builtin.zig_version_string, @tagName(builtin.mode) });
     if (lastwords.restored) note("the boot before ended in an alert: its last words are at the head of the log (C:Log)", .{});

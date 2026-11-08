@@ -57,6 +57,9 @@ const _hash = @import("_hash.zig");
 /// hand - a file read whole, a packet in its headers and body - is
 /// hashed with this call.
 ///
+/// On an x86-64 core with the SHA extensions SHA-1, SHA-224 and SHA-256
+/// run on the core's own rounds, here as in `UpdateHash`.
+///
 /// BUGS:
 /// None known.
 ///

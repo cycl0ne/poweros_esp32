@@ -62,5 +62,12 @@ pub const PlatformInfo = extern struct {
     psram_vendor: u32 = 0,
 };
 
+/// SetMemoryType's kinds: every access reaching the machine on its own;
+/// writes gathered into bursts, reads as uncached (write-combining); or
+/// cached, as memory is.
+pub const MEMTYPE_UNCACHED: u32 = 0;
+pub const MEMTYPE_GATHERED: u32 = 1;
+pub const MEMTYPE_CACHED: u32 = 2;
+
 /// The resource's base, with its functions.
 pub const PlatformBase = @import("../interface/platform.zig").PlatformBase;

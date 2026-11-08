@@ -76,7 +76,7 @@ pub const backlog_max: u32 = 8;
 /// window scaling is tested.
 pub const ring_default: u32 = 8 * 1024;
 pub const ring_min: u32 = 1024;
-pub const ring_max: u32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci or builtin.is_test) 1 << 20 else 64 * 1024;
+pub const ring_max: u32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci or sdk.hardware.chip == .x64uefi or builtin.is_test) 1 << 20 else 64 * 1024;
 /// The shift our windows go out with when the peer scales too: enough
 /// for the largest ring (65535 << 4 is 16 bytes short of 1 MiB). 0 where
 /// a ring is no larger than a window unscaled, and then no window scale

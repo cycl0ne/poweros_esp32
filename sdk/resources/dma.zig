@@ -43,24 +43,24 @@ pub const DMANAME = "dma.resource";
 pub const DMA_CHANNELS: u32 = switch (hardware.chip) {
     .esp32s3 => 5,
     .esp32p4 => 6,
-    .rv64sbi, .a64psci => 0,
+    .rv64sbi, .a64psci, .x64uefi => 0,
 };
 /// The 2D-DMA's channels, numbered from DMA2D_CHANNEL0.
 pub const DMA2D_CHANNELS: u32 = switch (hardware.chip) {
     .esp32s3 => 0,
     .esp32p4 => 3,
-    .rv64sbi, .a64psci => 0,
+    .rv64sbi, .a64psci, .x64uefi => 0,
 };
 pub const DMA2D_CHANNEL0: u32 = DMA_CHANNELS;
 /// The DesignWare AXI DMA's channels, numbered from DWDMA_CHANNEL0.
 pub const DWDMA_CHANNELS: u32 = switch (hardware.chip) {
-    .esp32s3, .esp32p4, .a64psci => 0,
+    .esp32s3, .esp32p4, .a64psci, .x64uefi => 0,
     .rv64sbi => hardware.dwdma.channels,
 };
 pub const DWDMA_CHANNEL0: u32 = DMA2D_CHANNEL0 + DMA2D_CHANNELS;
 /// The PL080's channels, numbered from PL080_CHANNEL0.
 pub const PL080_CHANNELS: u32 = switch (hardware.chip) {
-    .esp32s3, .esp32p4, .a64psci => 0,
+    .esp32s3, .esp32p4, .a64psci, .x64uefi => 0,
     .rv64sbi => hardware.pl080.channels,
 };
 pub const PL080_CHANNEL0: u32 = DWDMA_CHANNEL0 + DWDMA_CHANNELS;
@@ -107,7 +107,7 @@ const peripherals = switch (hardware.chip) {
         pub const DMAPERI_SHA: u32 = DMAPERI_AXI | 5;
     },
     // No general DMA engine of this kind.
-    .rv64sbi, .a64psci => struct {},
+    .rv64sbi, .a64psci, .x64uefi => struct {},
 };
 /// On the ESP32-P4: the peripheral is the AXI engine's (channels 3-5).
 pub const DMAPERI_AXI: u32 = 1 << 8;
@@ -190,7 +190,7 @@ pub const DMADF_OWNER: u32 = 1 << 31;
 /// dma_descriptor_align8_t), and one is 16 bytes long.
 const descriptor_align = switch (hardware.chip) {
     .esp32s3 => 4,
-    .esp32p4, .rv64sbi, .a64psci => 8,
+    .esp32p4, .rv64sbi, .a64psci, .x64uefi => 8,
 };
 
 /// One link of a DMA chain, in memory a DMA engine addresses (MEMF_DMA),
@@ -247,7 +247,7 @@ pub fn dmaIntNumber(channel: u32, side: u32) u32 {
             const controller = hardware.dwdma.find() orelse return DMA_NOINT;
             return controller.irq;
         },
-        .a64psci => return DMA_NOINT,
+        .a64psci, .x64uefi => return DMA_NOINT,
     }
 }
 
