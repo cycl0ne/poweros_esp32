@@ -59,6 +59,9 @@ pub const WADDR_TMUS: u64 = 33;
 pub const WADDR_TMUT: u64 = 34;
 pub const WADDR_TMUR: u64 = 35;
 pub const WADDR_TMUI: u64 = 36;
+/// The reference a shadow sample compares with (Mesa's v3d_tex.c:155-157;
+/// since 1.142).
+pub const WADDR_TMUDREF: u64 = 38;
 pub const WADDR_TMUSCM: u64 = 40;
 
 const add_nop: u64 = MA | WADDR_NOP << WADDR_A_SHIFT | OP_ADD_NOP << OP_ADD_SHIFT;
@@ -364,6 +367,21 @@ const volume_code = varying(4) ++ varying(5) ++ varying(6) ++ [_]u64{
 
 pub const volume_fragment = Fragment{ .code = &volume_code, .varyings = 3, .uniforms = 2 };
 
+/// A shadow sample: varyings s, t and the reference, which goes to
+/// TMUDREF before S starts the lookup, as handle_tex_src writes a
+/// comparator (Mesa's v3d_tex.c:155-157; since 1.142). The TMU compares
+/// with the sampler's function, and what passed comes back where the
+/// depth would, in red (`tiling.Texels.d16`).
+const shadow_code = varying(4) ++ varying(5) ++ varying(6) ++ [_]u64{
+    movMagic(WADDR_TMUT, 5),
+    movMagic(WADDR_TMUDREF, 6),
+    wrtmuc,
+    wrtmuc,
+    movMagic(WADDR_TMUS, 4),
+} ++ sample_end;
+
+pub const shadow_fragment = Fragment{ .code = &shadow_code, .varyings = 3, .uniforms = 2 };
+
 /// A cube map: varyings x, y and z. The TMU takes a direction whose largest
 /// part is 1 (Mesa's nir_normalize_cubemap_coords), so it is divided by that.
 const cube_code = varying(4) ++ varying(5) ++ varying(6) ++ [_]u64{
@@ -430,7 +448,7 @@ test "fmul and fadd read and write where qpu_pack.c puts them" {
 }
 
 test "a program keeps to the registers a thread has, on both sides and in its signals" {
-    const programs = [_]Fragment{ flat_fragment, color_fragment, texture_fragment, texture_color_fragment, array_fragment, cube_fragment, volume_fragment };
+    const programs = [_]Fragment{ flat_fragment, color_fragment, texture_fragment, texture_color_fragment, array_fragment, cube_fragment, volume_fragment, shadow_fragment };
     for (programs) |fragment| {
         var waits: u32 = 0;
         for (fragment.code, 0..) |instruction, at| {

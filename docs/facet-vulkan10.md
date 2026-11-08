@@ -1860,7 +1860,7 @@ On the board:
 
 - `texture_sampled`, `texture_array_sampled`, `texture_cube_sampled` and `texture_3d_sampled` run on the V3D (`samplesHere`, driver/v3d/driver.zig).
 - A cube is read over its seams, and its wraps say nothing of it, as Vulkan has it and the cores since 1.60. v3dv packs the wraps as they are (v3dvx_device.c:255-257), and so does this.
-- `texture_shadow` stays refused. The TMU compares only where the program writes TMUDREF (v3d_tex.c:155-157): item 58.
+- `texture_shadow` stayed refused. The TMU compares only where the program writes TMUDREF (v3d_tex.c:155-157): item 58, done for this form in 1.142.
 - `texture_cube_array_sampled` stays refused, with `texture_cube_array`: neither has a program for the fourth coordinate.
 
 `samplers` stays false, because those two are still drawn on the cores.
@@ -1924,6 +1924,17 @@ sampled_depth is false on the V3D: an image of d16_unorm with IMAGE_USAGE_SAMPLE
 > Verified: driver/v3d/driver.zig:178 `.sampled_depth = false` with the comment "Its texture unit keeps a texture its own way, and knows no depth format"; enforcement at driver/_format.zig:73 and image/_image.zig:433 `if (!physical.features.sampled_depth) return null;`.
 
 Found independently by: features, formats.
+
+**Done for the fixed forms, 1.142: the V3D samples a D16_UNORM where the pass stored it, and compares.** This is v3dv's way, ported:
+
+- **The texture.** D16_UNORM is `DEPTH_COMP16` with `SWIZ_X001`, unfiltered (v3dvx_formats.c:204). `tiling.Texels.d16` is texture type 21 and reads (D, 0, 0, 1), which is what the cores' depth view gives since 1.121.
+- **The image.** A sampled depth lies as a texture does on the V3D (`_image.deviceLaid`). Its memory is `Ops.texture_memory`'s, and the pass stores the depth into the level's own tiling, as v3dv stores into a slice's (v3dvx_cmd_buffer.c:396-406). The store and load packets take the memory format and the UIF height (`cl.store`, `cl.load`; v3dv_image.c:247-248). The library's clears, copies and texel reads go through the driver's places for it, as for a texture since 1.141.
+- **The comparison.** The program writes the reference to TMUDREF, waddr 38, before TMUS (v3d_tex.c:155-157), and the sampler's function goes into the configuration parameter as v3dv packs it (v3dvx_device.c:262-264): NEVER where compare is off. That is `qpu.shadow_code`, and `texture_shadow` runs on the V3D since 1.142.
+- **What stays out.** No FILTER_LINEAR for a depth (`Capabilities.filtered_depth`; v3dv_formats.c:273-276), and no sampled `d16_unorm_s8_uint` (`Capabilities.sampled_stencil`). v3dv's only format of both is D24_UNORM_S8_UINT (v3dvx_formats.c:209), which is not here.
+
+What is left of the item is the generated program: compile.zig and to_vir.zig take no OpImageSampleDref* yet, so a SPIR-V shader that compares is still refused on the V3D.
+
+On the board: FacetProbe 1.46 passes its 888 checks, 386 of them on the V3D (362 at 1.141). The V3D runs the whole of the sampled-depth part now: 16 bits compared, layers and levels. FacetBoth 1.14's three shadow-map cases are 3, 3 and 5 pixels of 230,400 from the cores, all at triangle edges, as its plain depth cases are.
 
 ### 59. Grow the compiler's profile: integers, branches, uniform buffers, push constants, arrays, cubes and 3D, and a register allocator **[critical path]**
 

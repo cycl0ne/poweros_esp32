@@ -124,8 +124,11 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // image's rows as each tile is drawn, as the depth is.
         .stored_stencil = true,
         // A depth image's rows are sampled where they lie: the one texel
-        // decoder reads a depth as well (`texture.Format.d16`).
+        // decoder reads a depth as well (`texture.Format.d16`), and a
+        // stencil, and filters either.
         .sampled_depth = true,
+        .sampled_stencil = true,
+        .filtered_depth = true,
         // A compressed image is sampled out of its blocks: the one texel
         // decoder reads a BC block as well (`texture.Format.blockOf`).
         .kept_compressed = true,

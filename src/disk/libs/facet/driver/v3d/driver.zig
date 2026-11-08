@@ -76,6 +76,7 @@ pub const Programs = struct {
     array: u32,
     cube: u32,
     volume: u32,
+    shadow: u32,
 };
 
 /// What the V3D has while anything uses it. Its job, and its table, are
@@ -145,13 +146,12 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             said.max_fragment_combined_output_resources = 1;
             said.max_descriptor_set_input_attachments = 0;
             // What this device will sample from, by what the image holds: a
-            // colour, and nothing else. No depth through the TMU
-            // (`can.sampled_depth`), no whole-number format
-            // (`can.whole_textures`), no storage image. A mask of no bits
-            // says the device samples no image of that kind at all, which
-            // is what Vulkan means by it.
+            // colour, and a depth since 1.142 (`can.sampled_depth`), each
+            // of one sample as `narrowSampleCounts` leaves them. No
+            // whole-number format (`can.whole_textures`), no stencil, no
+            // storage image. A mask of no bits says the device samples no
+            // image of that kind at all, which is what Vulkan means by it.
             said.sampled_image_integer_sample_counts = 0;
-            said.sampled_image_depth_sample_counts = 0;
             said.sampled_image_stencil_sample_counts = 0;
             said.storage_image_sample_counts = 0;
             // The rasterizer places an edge in 1/64 of a pixel, not 1/256,
@@ -241,10 +241,10 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // Not every fixed form that wants a sampler: the 2D, array, cube
         // and 3D ones run here since 1.141, their programs the ones of
         // the forms without a sampler and the TMU told the bound sampler
-        // whole (`samplesHere` beside makePipeline), but the shadow one
-        // and the cube of an array are refused and drawn on the cores. A
-        // generated program's sampler is the TMU's whole since 1.140
-        // (`tiling.samplerOf`).
+        // whole (`samplesHere` beside makePipeline), and the shadow one
+        // since 1.142, but the cube of an array is refused and drawn on
+        // the cores. A generated program's sampler is the TMU's whole
+        // since 1.140 (`tiling.samplerOf`).
         .samplers = false,
         // The TMU's own, 2 to 16 samples, as v3dv has it
         // (v3dv_device.c:349; `tiling.anisotropyOf`). Until 1.140 this was
@@ -271,12 +271,18 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .stored_depth = true,
         .stored_stencil = true,
         .stored_both = false,
-        // Its texture unit keeps a texture its own way, and knows no
-        // depth format: a sampled depth image is refused. Since 1.80
-        // GetPhysicalDeviceFormatProperties agrees with that refusal,
-        // leaving the sampled bits out of D16_UNORM here rather than
-        // promising a shadow map CreateImage turns down.
-        .sampled_depth = false,
+        // A sampled D16_UNORM lies as a texture does here, the pass
+        // storing its depth in the level's tiling, and the TMU reads it as
+        // DEPTH_COMP16, as v3dv does (v3dvx_formats.c:204,
+        // v3dvx_cmd_buffer.c:396-406; `_image.deviceLaid`). Refused until
+        // 1.142, the format query leaving the sampled bits out since 1.80.
+        // Unfiltered, as v3dv has D16_UNORM here (v3dvx_formats.c:204, its
+        // filtering false, so v3dv_formats.c:273-276 gives no
+        // FILTER_LINEAR), and no stencil: v3dv's one format of both is
+        // D24_UNORM_S8_UINT (v3dvx_formats.c:209), which is not here.
+        .sampled_depth = true,
+        .sampled_stencil = false,
+        .filtered_depth = false,
         // Its TMU is fed texels the library unpacked, so a compressed or a
         // float image is unpacked on the copy here as before.
         .kept_compressed = false,
@@ -443,7 +449,7 @@ fn bringUp(sys: *ExecBase, hardware: *Hardware) bool {
 
 /// Every program in one block of the V3D's.
 fn loadPrograms(hardware: *Hardware) bool {
-    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.volume_fragment };
+    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.volume_fragment, &qpu.shadow_fragment };
     var words: usize = qpu.coordinate_program.len;
     for (0..qpu.most_varyings + 1) |varyings| words += qpu.vertexProgram(@intCast(varyings)).len;
     for (fragments) |fragment| words += fragment.code.len;
@@ -471,6 +477,7 @@ fn loadPrograms(hardware: *Hardware) bool {
     hardware.programs.array = put(block, &used, qpu.array_fragment.code);
     hardware.programs.cube = put(block, &used, qpu.cube_fragment.code);
     hardware.programs.volume = put(block, &used, qpu.volume_fragment.code);
+    hardware.programs.shadow = put(block, &used, qpu.shadow_fragment.code);
     hardware.space.toGpu(&block);
     hardware.programs_block = block;
     return true;
@@ -609,14 +616,16 @@ fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
 /// with the sampler's wraps saying nothing of it, as Vulkan has it (the
 /// spec's "Wrapping Operation") and as the cores read it since 1.60
 /// (`texture.sampleCubeBy`); v3dv packs the wraps as they are whatever
-/// the view (v3dvx_device.c:255-257), and so does this. Two it refuses:
-/// - `texture_shadow` compares, and the TMU compares only where the
-///   program writes the reference to TMUDREF (v3d_tex.c:155-157), which
-///   none of the hand-written programs does.
-/// - `texture_cube_array_sampled`: no program reads a cube of an array.
+/// the view (v3dvx_device.c:255-257), and so does this.
+///
+/// `texture_shadow` since 1.142: its program writes the reference to
+/// TMUDREF, where the TMU compares (v3d_tex.c:155-157; `qpu.shadow_code`),
+/// and the depth it reads is a D16_UNORM laid out as a texture. One it
+/// refuses: `texture_cube_array_sampled`, as no program reads a cube of an
+/// array.
 fn samplesHere(fixed: facet.shader.Fixed) bool {
     return switch (fixed.kind) {
-        .texture_sampled, .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled => true,
+        .texture_sampled, .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled, .texture_shadow => true,
         else => false,
     };
 }

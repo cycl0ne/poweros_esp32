@@ -741,6 +741,9 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
             if (!physical.can.sampled_depth) return null;
             if (info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT != 0) return null;
         }
+        // A stencil sampled where the device samples one (since 1.142):
+        // the V3D samples a depth of its own alone.
+        if (sampled and hasStencil(info.format) and !physical.can.sampled_stencil) return null;
         var allowed = depth_usage;
         if (sampled) allowed |= facet.IMAGE_USAGE_SAMPLED;
         if (read_back) allowed |= facet.IMAGE_USAGE_INPUT_ATTACHMENT;
@@ -763,6 +766,16 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
         image.layer_bytes = 0;
         for (0..info.mip_levels) |lod| image.layer_bytes += levelBytes(&image, @intCast(lod));
         image.bytes = image.layer_bytes * layers;
+        // A sampled one on a device of a layout of its own lies as that
+        // device's textures do, each layer a texture of its own, so the
+        // pass stores it where the TMU reads it, as v3dv keeps every image
+        // (since 1.142, `deviceLaid`).
+        if (sampled) if (physical.ops.texture_memory) |own| {
+            const memory = own(info.format, extent.width, extent.height, 1, info.mip_levels);
+            image.layer_bytes = std.mem.alignForward(u64, memory.bytes, memory.alignment);
+            image.bytes = image.layer_bytes * layers;
+            image.alignment = memory.alignment;
+        };
         return withPlanes(image, info.samples);
     }
     if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT != 0) return null;
@@ -1383,6 +1396,12 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
             if (at + width * pixel > from.len) return;
             const source = from[at..][0 .. width * pixel];
             const y = top + @as(u32, @intCast(row));
+            if (deviceLaid(image)) {
+                // Where the device keeps each texel (since 1.142: a
+                // sampled depth image there).
+                for (0..width) |column| writeTexel(image, level, layer, left + @as(u32, @intCast(column)), y, source[column * pixel ..]);
+                continue;
+            }
             switch (image.kind) {
                 .rows, .depth => {
                     // A depth image may have layers since 1.58 and levels
@@ -1421,12 +1440,24 @@ fn texelOf(format: facet.Format, bytes: []const u8) u32 {
     };
 }
 
+/// Whether an image lies as its device's own textures do
+/// (`Ops.texture_offset`): every texture on such a device, and since 1.142
+/// a depth image sampled there, which v3dv keeps as it keeps the rest.
+pub fn deviceLaid(image: *const Image) bool {
+    if (image.device.physical.ops.texture_offset == null) return false;
+    return switch (image.kind) {
+        .texture => true,
+        .depth => image.usage & facet.IMAGE_USAGE_SAMPLED != 0,
+        .rows => false,
+    };
+}
+
 /// Where a level's texels are on a device with a layout of its own, in bytes
 /// from the image's memory: the layer, or a 3D image's slice, placed by
 /// the device too (since 1.141).
 fn deviceOffset(image: *const Image, level: u32, layer: u32, x: u32, y: u32) ?usize {
-    const offset = image.device.physical.ops.texture_offset orelse return null;
-    return offset(image, level, layer, x, y);
+    if (!deviceLaid(image)) return null;
+    return image.device.physical.ops.texture_offset.?(image, level, layer, x, y);
 }
 
 /// Whether an image's texels can be read and written: it has memory, and they
@@ -1442,6 +1473,11 @@ pub fn levelSize(image: *const Image, level: u32) [2]u32 {
 
 /// Texel (x, y) of a level of a layer as a buffer would hold it, in `into`.
 pub fn readTexel(image: *const Image, level: u32, layer: u32, x: u32, y: u32, into: []u8) void {
+    // A depth image its device lays out (since 1.142), as a texture there.
+    if (image.kind == .depth) if (deviceOffset(image, level, layer, x, y)) |offset| {
+        const pixel = bytesOf(image.format);
+        return @memcpy(into[0..pixel], (image.data.? + offset)[0..pixel]);
+    };
     switch (image.kind) {
         // A depth image is rows as well, of the level and the layer
         // asked for: what a pass that stores its depth wrote.
@@ -1466,6 +1502,10 @@ pub fn readTexel(image: *const Image, level: u32, layer: u32, x: u32, y: u32, in
 
 /// Texel (x, y) of a level of a layer set from what a buffer would hold.
 pub fn writeTexel(image: *Image, level: u32, layer: u32, x: u32, y: u32, from: []const u8) void {
+    if (image.kind == .depth) if (deviceOffset(image, level, layer, x, y)) |offset| {
+        const pixel = bytesOf(image.format);
+        return @memcpy((image.data.? + offset)[0..pixel], from[0..pixel]);
+    };
     switch (image.kind) {
         .rows, .depth => {
             const pixel = bytesOf(image.format);

@@ -208,10 +208,21 @@ pub const Capabilities = extern struct {
     /// (`combined_image_sampler`, `sampled_image`), and compared with a
     /// reference at all 16 bits where the sampler asks for it
     /// (`CompareOp`). So a shadow map is drawn into an image and sampled
-    /// out of it with nothing copied. The cores have it since 1.39; the
-    /// V3D's texture unit keeps a texture its own way and knows no depth
-    /// format, so there it is refused.
+    /// out of it with nothing copied. The cores have it since 1.39, and the
+    /// V3D since 1.142: there the image lies as a texture does, the pass
+    /// storing its depth in the TMU's tiling, as v3dv keeps it
+    /// (`_image.deviceLaid`).
     sampled_depth: bool = false,
+    /// And the stencil of `s8_uint` and `d16_unorm_s8_uint` likewise, each
+    /// plane through a view of its aspect: the cores (since 1.58). The V3D
+    /// samples a depth of its own alone (since 1.142).
+    sampled_stencil: bool = false,
+    /// A sampled depth is filtered as well: FORMAT_FEATURE_SAMPLED_IMAGE_
+    /// FILTER_LINEAR on it, a shadow sample mixing the four texels round
+    /// the point. The cores; v3dv leaves it off D16_UNORM on this GPU
+    /// (v3dvx_formats.c:204, v3dv_formats.c:273-276), and the V3D here
+    /// with it (since 1.142).
+    filtered_depth: bool = false,
     /// `storage_image` descriptors, and the texel buffer kinds.
     storage_images: bool = false,
     texel_buffers: bool = false,

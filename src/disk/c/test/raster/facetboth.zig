@@ -34,7 +34,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.13 (08.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.14 (08.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -267,6 +267,33 @@ fn volumeVertex(vertices: *const shader.Vertices) callconv(.c) void {
     }
 }
 
+/// The vertices' colour, their depth leaning from left to right and a
+/// little from top to bottom: a fan drawn with it leaves a depth that
+/// slopes, from about 0.3 to about 0.8, in a shadow map (since 1.14).
+fn tiltedVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = place(vertices, k);
+        const c = vertices.input(@intCast(k), 1);
+        const z = 0.5 + 0.35 * p[0] - 0.1 * p[1];
+        vertices.output(@intCast(k))[0..8].* = .{ p[0], p[1], z, p[3], shader.channel(c[0]), shader.channel(c[1]), shader.channel(c[2]), shader.channel(c[3]) };
+    }
+}
+
+/// The whole picture from `quad_at`'s texture coordinates, each pixel's
+/// centre on the centre of the shadow map's texel under it, and
+/// `reference` the same at every pixel: what is compared at a pixel is
+/// the depth drawn there, and no texel is read at an edge (since 1.14).
+fn shadowVertex(comptime reference: f32) shader.VertexFn {
+    return &struct {
+        fn run(vertices: *const shader.Vertices) callconv(.c) void {
+            for (0..vertices.count) |k| {
+                const uv = vertices.input(@intCast(k), 2);
+                vertices.output(@intCast(k))[0..7].* = .{ uv[0] * 2 - 1, uv[1] * 2 - 1, 0.5, 1, uv[0], uv[1], reference };
+            }
+        }
+    }.run;
+}
+
 /// A triangle a group makes of the far, near and laid over ones in the
 /// geometry, moved along by the push constants.
 fn computeVertices(groups: *const shader.Groups) callconv(.c) void {
@@ -431,6 +458,9 @@ const plain_entries = [_]shader.Entry{
     shader.vertex("small array", &smallArrayVertex, 3),
     shader.vertex("cube", &cubeVertex, 3),
     shader.vertex("volume", &volumeVertex, 3),
+    shader.vertex("tilted", &tiltedVertex, 4),
+    shader.vertex("whole at a half", shadowVertex(0.5), 3),
+    shader.vertex("whole at 0.6", shadowVertex(0.6), 3),
     shader.fixedFragment("array", .{ .kind = .texture_array, .sampling = .{ .filter = .nearest } }),
     shader.fixedFragment("array bilinear", .{ .kind = .texture_array, .sampling = .{ .filter = .bilinear } }),
     shader.fixedFragment("cube", .{ .kind = .texture_cube, .sampling = .{ .filter = .nearest } }),
@@ -441,6 +471,7 @@ const plain_entries = [_]shader.Entry{
     shader.fixedFragment("array sampled", .{ .kind = .texture_array_sampled }),
     shader.fixedFragment("cube sampled", .{ .kind = .texture_cube_sampled }),
     shader.fixedFragment("volume sampled", .{ .kind = .texture_3d_sampled }),
+    shader.fixedFragment("shadow", .{ .kind = .texture_shadow }),
     shader.fixedFragment("color", .{ .kind = .color }),
     shader.fixedFragment("texture", .{ .kind = .texture, .sampling = .{ .filter = .bilinear } }),
     shader.fixedFragment("nearest", .{ .kind = .texture, .sampling = .{ .filter = .nearest } }),
@@ -627,6 +658,10 @@ const layered_throughs = [_]Through{
 };
 
 const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs;
+
+/// What the shadow-map cases compare with (`Cases.shadowed`): the
+/// reference less than the depth, and greater (since 1.14).
+const shadow_ops = [_]facet.CompareOp{ .less, .greater };
 
 const layer_side: u32 = 32;
 const array_layers = 4;
@@ -881,6 +916,15 @@ const Side = struct {
     through: [throughs.len]?*facet.Sampler = @splat(null),
     through_sets: [throughs.len]?*facet.DescriptorSet = @splat(null),
     first_level: ?*facet.ImageView = null,
+    /// A depth as large as the picture that is sampled too, a shadow map,
+    /// the pass that draws it and keeps it, and the samplers that compare
+    /// with it, `shadow_ops`, each in a set of its own (since 1.14).
+    shadow: ?*facet.Image = null,
+    shadow_view: ?*facet.ImageView = null,
+    shadow_pass: ?*facet.RenderPass = null,
+    shadow_frame: ?*facet.Framebuffer = null,
+    shadow_samplers: [shadow_ops.len]?*facet.Sampler = @splat(null),
+    shadow_sets: [shadow_ops.len]?*facet.DescriptorSet = @splat(null),
     /// What a shipped shader that reads the push constants is made with:
     /// no set, and the fragment stage's 20 bytes of them.
     push_layout: ?*facet.PipelineLayout = null,
@@ -974,7 +1018,7 @@ const Side = struct {
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 2 + layered_count + throughs.len }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 2 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -1037,6 +1081,43 @@ const Side = struct {
         try side.upLayered();
         try side.upThroughs();
         try side.upPasses();
+        try side.upShadow();
+    }
+
+    /// The shadow map, its pass over the first picture and it, and a set
+    /// for each of `shadow_ops`: a sampler that reads the nearest texel,
+    /// held to the edges, and compares.
+    fn upShadow(side: *Side) Failure!void {
+        const fb = side.fb;
+        const device = side.device.?;
+        const extent = facet.Extent3D{ .width = side.width, .height = side.height };
+        try side.image(.{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED }, 0, &side.shadow);
+        side.shadow_view = try side.view(side.shadow.?, .d16_unorm, facet.IMAGE_ASPECT_DEPTH, 1);
+        const attachments = [2]facet.AttachmentDescription{
+            .{ .format = formats[0], .load_op = .clear, .store_op = .store, .final_layout = .general },
+            .{ .format = .d16_unorm, .load_op = .clear, .store_op = .store, .final_layout = .shader_read_only_optimal },
+        };
+        const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+        const depth = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .depth_stencil_attachment = &depth };
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &side.shadow_pass), error.Refused);
+        const views = [2]*facet.ImageView{ side.picture_views[0].?, side.shadow_view.? };
+        try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.shadow_pass.?, .attachment_count = 2, .attachments = &views, .width = side.width, .height = side.height }, &side.shadow_frame), error.Refused);
+        const layouts: [shadow_ops.len]?*facet.DescriptorSetLayout = @splat(side.sampler_set_layout);
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = shadow_ops.len, .set_layouts = @ptrCast(&layouts) }, &side.shadow_sets), error.Refused);
+        for (shadow_ops, &side.shadow_samplers, side.shadow_sets) |op, *made, set| {
+            try expect(fb.CreateSampler(device, &.{
+                .mag_filter = .nearest,
+                .min_filter = .nearest,
+                .address_mode_u = .clamp_to_edge,
+                .address_mode_v = .clamp_to_edge,
+                .compare_enable = true,
+                .compare_op = op,
+            }, made), error.Refused);
+            const info = facet.DescriptorImageInfo{ .sampler = made.*, .image_view = side.shadow_view, .image_layout = .shader_read_only_optimal };
+            const write = facet.WriteDescriptorSet{ .dst_set = set.?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&info) };
+            fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+        }
     }
 
     /// `throughs`' samplers, each in a set of its own with its texture:
@@ -1295,6 +1376,11 @@ const Side = struct {
         fb.DestroySampler(device, side.sampler);
         for (side.through) |each| fb.DestroySampler(device, each);
         fb.DestroyImageView(device, side.first_level);
+        for (side.shadow_samplers) |each| fb.DestroySampler(device, each);
+        fb.DestroyFramebuffer(device, side.shadow_frame);
+        fb.DestroyRenderPass(device, side.shadow_pass);
+        fb.DestroyImageView(device, side.shadow_view);
+        fb.DestroyImage(device, side.shadow);
         for (&side.framebuffers) |*pair| for (pair) |each| fb.DestroyFramebuffer(device, each);
         for (side.stencil_framebuffers) |each| fb.DestroyFramebuffer(device, each);
         for (side.stencil_passes) |each| fb.DestroyRenderPass(device, each);
@@ -2156,6 +2242,48 @@ const Cases = struct {
             }
         }.run;
     }
+    /// A shadow map drawn and then compared with, over the whole picture,
+    /// through `texture_shadow` and the sampler of `shadow_ops[which]`:
+    /// red where the comparison passed and black where it did not, since a
+    /// view of a depth reads (D, 0, 0, 1). The map is the far and the near
+    /// triangle at 0.75 and 0.25 in the clear's 1, or, `tilted`, a fan
+    /// whose depth slopes past the reference; `vertex` sets the reference.
+    /// The pass leaves the map for the shader to read, and the barrier
+    /// says the sample comes after the depth was written, as Vulkan asks.
+    fn shadowed(comptime tilted: bool, comptime which: usize, comptime vertex: [*:0]const u8) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                const fb = side.fb;
+                const commands = side.commands.?;
+                const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } }, .{ .depth_stencil = .{ .depth = 1 } } };
+                fb.CmdBeginRenderPass(commands, &.{ .render_pass = side.shadow_pass.?, .framebuffer = side.shadow_frame.?, .render_area = .{ .extent = .{ .width = side.width, .height = side.height } }, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+                side.state();
+                if (tilted) {
+                    try side.use(.{ .vertex = "tilted", .topology = .triangle_fan, .test_depth = true, .write_depth = true, .pass = side.shadow_pass.? });
+                    side.draw(fan_at, 5);
+                } else {
+                    try side.use(.{ .test_depth = true, .write_depth = true, .pass = side.shadow_pass.? });
+                    side.draw(far_at, 3);
+                    side.draw(near_at, 3);
+                }
+                side.end();
+                const written = facet.ImageMemoryBarrier{
+                    .src_access_mask = facet.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE,
+                    .dst_access_mask = facet.ACCESS_SHADER_READ,
+                    .old_layout = .shader_read_only_optimal,
+                    .new_layout = .shader_read_only_optimal,
+                    .image = side.shadow.?,
+                    .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH },
+                };
+                fb.CmdPipelineBarrier(commands, facet.PIPELINE_STAGE_LATE_FRAGMENT_TESTS, facet.PIPELINE_STAGE_FRAGMENT_SHADER, 0, 0, null, 0, null, 1, @ptrCast(&written));
+                side.begin(.{});
+                fb.CmdBindDescriptorSets(commands, .graphics, side.sampler_layout.?, 0, 1, @ptrCast(&side.shadow_sets[which]), 0, null);
+                try side.use(.{ .vertex = vertex, .fragment = "shadow", .layout = side.sampler_layout.? });
+                side.draw(quad_at, 6);
+                side.end();
+            }
+        }.run;
+    }
     /// A texture through `throughs[k]`.
     fn through(comptime k: usize) *const fn (side: *Side) Failure!void {
         return &struct {
@@ -2397,6 +2525,9 @@ const cases = [_]Case{
     .{ .name = "subpasses, second picture", .target = .rgba, .run = &Cases.subpasses },
     .{ .name = "two attachments, first", .run = &Cases.twoColors },
     .{ .name = "two attachments, second", .target = .rgba, .run = &Cases.twoColors },
+    .{ .name = "shadow map, less than a half", .run = Cases.shadowed(false, 0, "whole at a half") },
+    .{ .name = "shadow map, greater than 0.6", .run = Cases.shadowed(false, 1, "whole at 0.6") },
+    .{ .name = "shadow map, a slope less than a half", .run = Cases.shadowed(true, 0, "whole at a half") },
 };
 
 /// A case for each of `throughs`, after the shipped ones.

@@ -133,18 +133,31 @@ pub fn supertileCoordinates(list: *List, column: u32, row: u32) void {
     list.byte(@truncate(row));
 }
 
-/// A store to an image in rows of pixels, or to none at all.
-pub fn store(list: *List, buffer: u64, format: u64, swap_rb: bool, address: u32, stride: u32) void {
+/// How the image a store or a load reaches lies: rows of pixels, or a
+/// level of a texture in the tiling its size gives it (`tiling.Kind`),
+/// as v3dv stores into a slice of an image (v3dvx_cmd_buffer.c:396-406;
+/// v3d_packet.xml:108-115). The tilings since 1.142.
+pub const MEMORY_RASTER: u64 = 0;
+pub const MEMORY_LINEARTILE: u64 = 1;
+pub const MEMORY_UBLINEAR_1: u64 = 2;
+pub const MEMORY_UBLINEAR_2: u64 = 3;
+pub const MEMORY_UIF: u64 = 4;
+pub const MEMORY_UIF_XOR: u64 = 5;
+
+/// A store to an image, or to none at all. `stride` is "Height in UB or
+/// Stride": the bytes of a row in rows, a UIF level's height in UIF
+/// blocks, and nothing for the other tilings.
+pub fn store(list: *List, buffer: u64, format: u64, swap_rb: bool, address: u32, stride: u32, memory: u64) void {
     list.byte(29);
-    list.double(buffer | format << 12 | @as(u64, @intFromBool(swap_rb)) << 20 | @as(u64, stride) << 28);
+    list.double(buffer | memory << 4 | format << 12 | @as(u64, @intFromBool(swap_rb)) << 20 | @as(u64, stride) << 28);
     list.word(address);
 }
 
-/// A buffer of the tiles loaded from an image in rows of pixels: the
-/// render target, or the depth or the stencil.
-pub fn load(list: *List, buffer: u64, format: u64, swap_rb: bool, address: u32, stride: u32) void {
+/// A buffer of the tiles loaded from an image, as `store` reaches one:
+/// the render target, or the depth or the stencil.
+pub fn load(list: *List, buffer: u64, format: u64, swap_rb: bool, address: u32, stride: u32, memory: u64) void {
     list.byte(30);
-    list.double(buffer | format << 12 | @as(u64, @intFromBool(swap_rb)) << 20 | @as(u64, stride) << 28);
+    list.double(buffer | memory << 4 | format << 12 | @as(u64, @intFromBool(swap_rb)) << 20 | @as(u64, stride) << 28);
     list.word(address);
 }
 
@@ -529,13 +542,25 @@ test "the packets have Mesa's lengths and its fields" {
     try std.testing.expectEqual(@as(u64, 3), common >> 55 & 7);
 
     list.used = 0;
-    store(&list, STORE_RENDER_TARGET_0, OUTPUT_RGBA8, true, 0x12345000, 5120);
+    store(&list, STORE_RENDER_TARGET_0, OUTPUT_RGBA8, true, 0x12345000, 5120, MEMORY_RASTER);
     try std.testing.expectEqual(@as(u32, 13), list.used);
     const fields = std.mem.readInt(u64, memory[1..9], .little);
     try std.testing.expectEqual(OUTPUT_RGBA8, fields >> 12 & 0x3F);
     try std.testing.expectEqual(@as(u64, 1), fields >> 20 & 1);
     try std.testing.expectEqual(@as(u64, 5120), fields >> 28 & 0xFFFFF);
+    try std.testing.expectEqual(MEMORY_RASTER, fields >> 4 & 7);
     try std.testing.expectEqual(@as(u32, 0x12345000), std.mem.readInt(u32, memory[9..13], .little));
+
+    // A depth into a UIF level, as v3dv stores into a slice of its image
+    // (v3dvx_cmd_buffer.c:396-406): the tiling at bit 4, the height in
+    // UIF blocks where a raster store has its stride.
+    list.used = 0;
+    store(&list, STORE_Z, OUTPUT_D16, false, 0x2000_0000, 12, MEMORY_UIF_XOR);
+    const tiled = std.mem.readInt(u64, memory[1..9], .little);
+    try std.testing.expectEqual(STORE_Z, tiled & 0xF);
+    try std.testing.expectEqual(MEMORY_UIF_XOR, tiled >> 4 & 7);
+    try std.testing.expectEqual(OUTPUT_D16, tiled >> 12 & 0x3F);
+    try std.testing.expectEqual(@as(u64, 12), tiled >> 28 & 0xFFFFF);
 
     list.used = 0;
     tileCoordinates(&list, 0x123, 0x456);

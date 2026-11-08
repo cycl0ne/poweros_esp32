@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.45 (08.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.46 (08.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -88,6 +88,10 @@ const Can = struct {
     depth_bounds: bool,
     depth_clamp: bool,
     stored_both: bool,
+    /// Whether a depth that holds a stencil may be sampled: the cores'
+    /// since 1.94, the V3D's not, as v3dv's D24S8 is the only such format
+    /// it samples and this one is not there (since 1.46).
+    sampled_stencil: bool,
     etc2_textures: bool,
     /// Whether a generated shader may sample at a constant texel offset:
     /// SPIR-V's `ConstOffset`. Read off `max_texel_offset`, which Vulkan
@@ -155,6 +159,8 @@ const Can = struct {
             // pass that drew it.
             .stored_both = formatOf(fb, physical, .d16_unorm_s8_uint).optimal_tiling_features &
                 facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT != 0,
+            .sampled_stencil = formatOf(fb, physical, .d16_unorm_s8_uint).optimal_tiling_features &
+                facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0,
             // `texture_compression_etc2` is false on both devices, Vulkan
             // asking for the whole ten-format family behind that bit where
             // five are here, so what a device really does with ETC2 is
@@ -2606,7 +2612,10 @@ fn stencilChecks(probe: *Probe) void {
 
 /// A shadow sample of a depth texture: s, t and the reference are the
 /// vertices' second three floats, and what it draws is how much of the
-/// sample passed - white for all of it, black for none.
+/// sample passed, where a depth view reads its depth - red for all of it,
+/// black for none (since 1.121). The fragments are the fixed form's,
+/// `shader.FixedKind.texture_shadow`, so a device that runs no fragment
+/// function of the program draws it too (since 1.46).
 const Shadowed = struct {
     fn vertex(vertices: *const facet.shader.Vertices) callconv(.c) void {
         for (0..vertices.count) |k| {
@@ -2616,19 +2625,9 @@ const Shadowed = struct {
         }
     }
 
-    fn fragment(fragments: *const facet.shader.Fragments) callconv(.c) void {
-        facet.shader.texturedBy(
-            true,
-            .{ .format = .d16, .filter = .nearest, .address = .clamp },
-            fragments,
-            fragments.resources.sampled(0, 0, 0),
-            fragments.resources.samplerOf(0, 0, 0),
-        );
-    }
-
     const entries = [_]facet.shader.Entry{
         facet.shader.vertex("main", &vertex, 3),
-        facet.shader.fragment("main", &fragment, 3),
+        facet.shader.fixedFragment("main", .{ .kind = .texture_shadow }),
     };
     const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
@@ -2664,10 +2663,12 @@ fn sampledDepthChecks(probe: *Probe) void {
     const shown_memory = probe.memories[2].?;
 
     // The first pass draws the left half at 0.25 and stores the depth.
+    // Its colour is the fixed form's white (`Smooth`), every device drawing
+    // that, and its push constant is read by nothing (since 1.46).
     const storing = passKeeping(probe, .clear, .clear, .store) orelse return probe.check(false, "a pass that stores its depth");
     const frame = probe.framebuffer(storing, &.{ color[1], depth[1] }) orelse return probe.check(false, "a framebuffer over the two");
     var flat: ?*facet.ShaderModule = null;
-    if (fb.CreateShaderModule(device, &.{ .code = &Flat.code }, &flat) != .success) return probe.check(false, "the first shader module");
+    if (fb.CreateShaderModule(device, &.{ .code = &Smooth.code }, &flat) != .success) return probe.check(false, "the first shader module");
     _ = Probe.keep(&probe.modules, flat);
     const range = facet.PushConstantRange{ .size = 4 };
     var flat_layout: ?*facet.PipelineLayout = null;
@@ -2777,9 +2778,10 @@ fn sampledDepthChecks(probe: *Probe) void {
 
     // --- 1.58: the planes a view names, and layers ---
     // A format that holds a stencil is sampled as well: a view takes one
-    // of its planes, or both at once, its depth (since 1.94).
+    // of its planes, or both at once, its depth (since 1.94). A device
+    // that does not sample one refuses the image (since 1.46).
     const with_stencil = probe.bound(.{ .format = .d16_unorm_s8_uint, .extent = extent, .usage = usage | facet.IMAGE_USAGE_TRANSFER_DST }, 0);
-    probe.check(with_stencil != null, "a sampled depth image of a format that holds a stencil");
+    probe.check((with_stencil != null) == probe.can.sampled_stencil, if (probe.can.sampled_stencil) "a sampled depth image of a format that holds a stencil" else "a sampled depth image that holds a stencil refused where none is sampled");
     if (with_stencil) |held| {
         const depth_plane = probe.viewed(.{ .image = held, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } });
         const stencil_plane = probe.viewed(.{ .image = held, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL } });
@@ -2854,16 +2856,24 @@ fn sampledDepthChecks(probe: *Probe) void {
     probe.check(mipped != null, "a sampled depth image of two levels");
     if (mipped) |held| {
         // Its memory is the pyramid: the first level's rows, 2 bytes a
-        // pixel, and the second's, half as wide and half as high.
+        // pixel, and the second's, half as wide and half as high. A
+        // device that lays out what it samples itself answers the level
+        // as it does a texture's, `row_pitch` 0 (since 1.46): the second
+        // level is then somewhere in the memory, as big as it is at least.
         const first_bytes = @as(u64, side) * 2 * side;
         const second_bytes = @as(u64, side / 2) * 2 * (side / 2);
         var needs: facet.MemoryRequirements = undefined;
         fb.GetImageMemoryRequirements(device, held, &needs);
-        probe.checkEqual(first_bytes + second_bytes, needs.size, "its memory is both levels' rows");
         var level_layout: facet.SubresourceLayout = undefined;
         fb.GetImageSubresourceLayout(device, held, &.{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .mip_level = 1 }, &level_layout);
-        probe.checkEqual(first_bytes, level_layout.offset, "the second level begins after the first level's rows");
-        probe.checkEqual(@as(u64, side / 2) * 2, level_layout.row_pitch, "and its rows are as wide as that level is");
+        if (level_layout.row_pitch != 0) {
+            probe.checkEqual(first_bytes + second_bytes, needs.size, "its memory is both levels' rows");
+            probe.checkEqual(first_bytes, level_layout.offset, "the second level begins after the first level's rows");
+            probe.checkEqual(@as(u64, side / 2) * 2, level_layout.row_pitch, "and its rows are as wide as that level is");
+        } else {
+            probe.check(needs.size >= first_bytes + second_bytes, "its memory holds both levels");
+            probe.check(level_layout.size >= second_bytes and level_layout.offset + level_layout.size <= needs.size, "and the second level lies in it, as big as it is");
+        }
 
         const first_view = probe.viewed(.{ .image = held, .format = .d16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .level_count = 1 } });
         const deeper_view = probe.viewed(.{ .image = held, .format = .d16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } });

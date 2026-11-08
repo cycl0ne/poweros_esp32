@@ -159,6 +159,17 @@ pub fn layoutOf(pixel: u32, width: u32, height: u32, depth: u32, count: u32) Lay
     return layout;
 }
 
+/// A level's height in UIF blocks: what a store or a load into it is told
+/// where it is `uif` (v3dv's padded_height_of_output_image_in_uif_blocks,
+/// v3dv_image.c:247-248), and 0 for the other tilings, which need none.
+pub fn blocksDown(layout: *const Layout, level: u32) u32 {
+    const made = &layout.levels[level];
+    return switch (made.kind) {
+        .uif, .uif_xor => made.padded_height / (2 * microtileHeight(layout.pixel)),
+        .lineartile, .ublinear_1, .ublinear_2 => 0,
+    };
+}
+
 /// Where slice `slice` of level `level` of a 3D texture begins, from where
 /// the level does: the slices one after another (v3dv_image.c:384-385,
 /// v3dv_layer_offset). 0 for any other texture's level, which has one.
@@ -213,6 +224,9 @@ pub const sampler_state_alignment = 32;
 const TEXTURE_R8: u64 = 0;
 const TEXTURE_RGBA8: u64 = 4;
 const TEXTURE_RGB565: u64 = 6;
+/// D16_UNORM's, as v3dv samples it (v3dvx_formats.c:204;
+/// v3d_packet.xml:354).
+const TEXTURE_DEPTH_COMP16: u64 = 21;
 
 const SWIZZLE_ZERO: u64 = 0;
 const SWIZZLE_ONE: u64 = 1;
@@ -232,11 +246,16 @@ pub const Texels = enum {
     /// One byte of red, read as (red, 0, 0, 1) - the swizzles say the
     /// rest (since 1.48).
     r8,
+    /// 16 bits of depth, read as (depth, 0, 0, 1): v3dv's DEPTH_COMP16 and
+    /// SWIZ_X001 for D16_UNORM (v3dvx_formats.c:204; since 1.142). Where
+    /// the program writes a reference, what passed stands in the depth's
+    /// place, as the cores give it (since 1.121).
+    d16,
 
     pub fn bytes(texels: Texels) u32 {
         return switch (texels) {
             .rgba, .bgra => 4,
-            .rgb565 => 2,
+            .rgb565, .d16 => 2,
             .r8 => 1,
         };
     }
@@ -261,15 +280,17 @@ pub fn writeTextureState(into: []u8, layout: *const Layout, texels: Texels, pick
         .rgba, .bgra => TEXTURE_RGBA8,
         .rgb565 => TEXTURE_RGB565,
         .r8 => TEXTURE_R8,
+        .d16 => TEXTURE_DEPTH_COMP16,
     };
     // Which channel of the texel each of the four comes out of: a 565
     // texel has no alpha and an R8 one has red alone, so those read 1 and
-    // 0, as Vulkan reads a format that is short of a channel.
+    // 0, as Vulkan reads a format that is short of a channel. A depth is
+    // red alone too.
     const red: u64 = if (texels == .bgra) SWIZZLE_BLUE else SWIZZLE_RED;
-    const green: u64 = if (texels == .r8) SWIZZLE_ZERO else SWIZZLE_GREEN;
+    const green: u64 = if (texels == .r8 or texels == .d16) SWIZZLE_ZERO else SWIZZLE_GREEN;
     const blue: u64 = switch (texels) {
         .bgra => SWIZZLE_RED,
-        .r8 => SWIZZLE_ZERO,
+        .r8, .d16 => SWIZZLE_ZERO,
         .rgba, .rgb565 => SWIZZLE_BLUE,
     };
     const alpha: u64 = if (texels == .rgba or texels == .bgra) SWIZZLE_ALPHA else SWIZZLE_ONE;
@@ -444,14 +465,18 @@ pub const Sampled = struct {
 /// (v3dv_uniforms.c:213-218). Null where it asks for what no program here
 /// can carry.
 ///
-/// That is a comparison, and nothing else. The TMU compares only where the
-/// program writes the reference to TMUDREF (Mesa's v3d_tex.c:155-157), and
-/// compile.zig takes no Dref sample, so a comparing sampler would be read
-/// for its colour here while the cores compare it with 0 (`ir.zig`).
-/// Vulkan has a comparing sampler read only by a Dref sample, so neither
-/// answer is wrong, but the two would differ quietly; the draw paints
-/// `shader.missing` instead, as it did for every sampler but the plainest
-/// until 1.140. Item 58 of docs/facet-vulkan10.md is the Dref sample.
+/// That is a comparison where the program writes no reference. The TMU
+/// compares only where the program writes it to TMUDREF (Mesa's
+/// v3d_tex.c:155-157), which the shadow form's does since 1.142 (`dref`)
+/// and compile.zig's do not yet. A comparing sampler would be read for its
+/// colour there, while the cores compare it with 0 (`ir.zig`). Vulkan has
+/// a comparing sampler read only by a Dref sample, so neither answer is
+/// wrong, but the two would differ quietly; the draw paints
+/// `shader.missing` instead. Item 58 of docs/facet-vulkan10.md is the
+/// Dref sample of a generated program.
+///
+/// The compare function is Vulkan's, NEVER where the sampler compares
+/// nothing, as v3dv packs it (v3dvx_device.c:262-264).
 ///
 /// Two places differ from v3dv by what facet keeps rather than by what
 /// the TMU is told:
@@ -463,8 +488,8 @@ pub const Sampled = struct {
 /// - The border, a colour here (`texture.Sampler.border`) rather than
 ///   Vulkan's enum: it is one of the three CreateSampler makes from
 ///   Vulkan's six (`_sampler.borderOf`), and those are the TMU's three.
-pub fn samplerOf(sampler: *const texture.Sampler) ?Sampled {
-    if (sampler.compare != .none) return null;
+pub fn samplerOf(sampler: *const texture.Sampler, dref: bool) ?Sampled {
+    if (sampler.compare != .none and !dref) return null;
     var wrap: [3]Wrap = undefined;
     for (&wrap, sampler.wrap) |*into, each| into.* = switch (each) {
         .repeat => .repeat,
@@ -489,6 +514,16 @@ pub fn samplerOf(sampler: *const texture.Sampler) ?Sampled {
             .min_lod = sampler.min_lod,
             .max_lod = sampler.max_lod,
             .anisotropy = anisotropyOf(sampler.anisotropy),
+            .compare = switch (sampler.compare) {
+                .none, .never => .never,
+                .less => .less,
+                .equal => .equal,
+                .less_or_equal => .less_or_equal,
+                .greater => .greater,
+                .not_equal => .not_equal,
+                .greater_or_equal => .greater_or_equal,
+                .always => .always,
+            },
         },
         .unnormalized = sampler.unnormalized,
     };
@@ -696,7 +731,7 @@ test "every field of v3dv's pack_sampler_state lands where v3d_packet.xml has it
         .max_lod = texture.lod_unclamped,
         .anisotropy = 6,
     };
-    const made = samplerOf(&sampler).?;
+    const made = samplerOf(&sampler, false).?;
     try std.testing.expect(!made.unnormalized);
     const word = samplerWord(made.state);
     try std.testing.expectEqual(@as(u64, 0), word & 1); // Mag filter Nearest
@@ -721,7 +756,7 @@ test "anisotropy, the borders and the unnormalized bit as v3dv has them" {
     const asked = [_]f32{ 1, 1.5, 2, 2.5, 4, 4.5, 8, 9, 16 };
     const codes = [_]?u2{ null, 0, 0, 1, 1, 2, 2, 3, 3 };
     for (asked, codes) |taps, code| {
-        const made = samplerOf(&.{ .anisotropy = taps }).?;
+        const made = samplerOf(&.{ .anisotropy = taps }, false).?;
         try std.testing.expectEqual(code, made.state.anisotropy);
         const word = samplerWord(made.state);
         try std.testing.expectEqual(@as(u64, @intFromBool(code != null)), word >> 3 & 1);
@@ -729,21 +764,25 @@ test "anisotropy, the borders and the unnormalized bit as v3dv has them" {
     }
     // The three borders CreateSampler makes, the TMU's 0000, 0001, 1111.
     for ([_]u32{ 0, 0xFF00_0000, 0xFFFF_FFFF }, [_]u64{ 0, 1, 2 }) |border, mode| {
-        const made = samplerOf(&.{ .wrap = @splat(.clamp_to_border), .border = border }).?;
+        const made = samplerOf(&.{ .wrap = @splat(.clamp_to_border), .border = border }, false).?;
         try std.testing.expectEqual(mode, samplerWord(made.state) >> 58 & 7);
     }
-    try std.testing.expectEqual(@as(?Sampled, null), samplerOf(&.{ .wrap = @splat(.clamp_to_border), .border = 0x8040_2010 }));
+    try std.testing.expectEqual(@as(?Sampled, null), samplerOf(&.{ .wrap = @splat(.clamp_to_border), .border = 0x8040_2010 }, false));
     // In texels: bit 1 of parameter 1, beside the address (v3dv_uniforms.c:213-218).
-    const table = samplerOf(&.{ .mag_filter = .nearest, .min_filter = .nearest, .max_lod = 0, .wrap = @splat(.clamp_to_edge), .unnormalized = true }).?;
+    const table = samplerOf(&.{ .mag_filter = .nearest, .min_filter = .nearest, .max_lod = 0, .wrap = @splat(.clamp_to_edge), .unnormalized = true }, false).?;
     try std.testing.expect(table.unnormalized);
     try std.testing.expectEqual(@as(u64, 0), samplerWord(table.state) >> 20 & 0xFFF);
     try std.testing.expectEqual(@as(u32, 0x1000_0042), parameter1(0x1000_0040, true));
     try std.testing.expectEqual(@as(u32, 0x1000_0040), parameter1(0x1000_0040, false));
 }
 
-test "a comparing sampler is not taken, and a wild bias or a NaN stays in its field" {
-    try std.testing.expectEqual(@as(?Sampled, null), samplerOf(&.{ .compare = .less }));
-    try std.testing.expectEqual(@as(?Sampled, null), samplerOf(&.{ .compare = .never }));
+test "a comparing sampler is taken only where the program writes the reference, and a wild bias or a NaN stays in its field" {
+    try std.testing.expectEqual(@as(?Sampled, null), samplerOf(&.{ .compare = .less }, false));
+    try std.testing.expectEqual(@as(?Sampled, null), samplerOf(&.{ .compare = .never }, false));
+    // Bits 4-6, Vulkan's function as v3dv packs it (v3dvx_device.c:262-264).
+    try std.testing.expectEqual(@as(u64, 1), samplerWord(samplerOf(&.{ .compare = .less }, true).?.state) >> 4 & 7);
+    try std.testing.expectEqual(@as(u64, 6), samplerWord(samplerOf(&.{ .compare = .greater_or_equal }, true).?.state) >> 4 & 7);
+    try std.testing.expectEqual(@as(u64, 0), samplerWord(samplerOf(&.{}, true).?.state) >> 4 & 7);
     const wild = samplerWord(.{ .bias = 1e9, .min_lod = std.math.nan(f32), .max_lod = -3 });
     try std.testing.expectEqual(@as(u64, 0x7FFF), wild >> 32 & 0xFFFF);
     try std.testing.expectEqual(@as(u64, 0), wild >> 8 & 0xFFF);

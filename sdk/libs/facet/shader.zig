@@ -284,8 +284,10 @@ pub const FixedKind = enum(u8) {
     texture_sampled = 8,
     /// The same compared with a reference rather than read as a colour: a
     /// shadow sample (`texture.Sampler.compare`). Varyings s, t and the
-    /// reference, and what it writes is how much of the sample passed -
-    /// white for all of it, black for none.
+    /// reference, and what it writes is how much of the sample passed,
+    /// where a view of a depth reads the depth: (1, 0, 0, 1) for all of it,
+    /// black for none, as a depth view reads (D, 0, 0, 1) (since 1.121).
+    /// The V3D draws it since 1.142, as the TMU compares (TMUDREF).
     texture_shadow = 9,
     /// One cube of an array of them: varyings x, y and z, the direction,
     /// and then which cube, the nearest there is - a view of `cube_array`,

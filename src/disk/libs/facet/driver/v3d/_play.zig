@@ -140,6 +140,8 @@ pub const Player = struct {
     /// The same for the kept plane: the level and the layer its view
     /// names (since 1.91).
     kept_first: usize = 0,
+    /// And how many bytes of it the frame reaches.
+    kept_bytes: usize = 0,
     /// The occlusion query being counted into, or null for none: what
     /// CmdBeginQuery begins and CmdEndQuery ends (since 1.47).
     counting: ?_queries.Counting = null,
@@ -211,6 +213,17 @@ pub fn layoutOf(format: facet.Format, width: u32, height: u32, depth: u32, level
     return tiling.layoutOf(_image.bytesOf(format), width, height, depth, @min(levels, tiling.most_levels));
 }
 
+/// The store's and the load's name for a level's tiling.
+fn memoryOf(kind: tiling.Kind) u64 {
+    return switch (kind) {
+        .lineartile => cl.MEMORY_LINEARTILE,
+        .ublinear_1 => cl.MEMORY_UBLINEAR_1,
+        .ublinear_2 => cl.MEMORY_UBLINEAR_2,
+        .uif => cl.MEMORY_UIF,
+        .uif_xor => cl.MEMORY_UIF_XOR,
+    };
+}
+
 /// A texture image's layout: of a 3D image, its slices in each level
 /// (since 1.141).
 pub fn imageLayout(image: *const _image.Image) tiling.Layout {
@@ -254,8 +267,19 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
         .copy_buffer => _vertices.copyBuffer(_stream.as(_command.CopyBuffer, head)),
         .fill_buffer => if (!_vertices.fillBuffer(_stream.as(_command.FillBuffer, head))) noRoom(queue, "a fill of bytes that are not the buffer's"),
         .update_buffer => if (!_vertices.updateBuffer(_stream.as(_command.UpdateBuffer, head))) noRoom(queue, "an update of bytes that are not the buffer's"),
-        .clear_color_image => if (!_transfer.clearColorImage(_stream.as(_command.ClearColorImage, head))) noRoom(queue, "a clear of an image whose format it cannot write"),
-        .clear_depth_stencil_image => if (!_transfer.clearDepthImage(_stream.as(_command.ClearDepthStencilImage, head))) noRoom(queue, "a clear of a depth image whose pixels it cannot write"),
+        // The CPU clears, so what it wrote goes out before the TMU reads
+        // it, as after a copy (since 1.142; until then a cleared texture
+        // could be sampled from what the caches had not yet written).
+        .clear_color_image => {
+            const command = _stream.as(_command.ClearColorImage, head);
+            if (!_transfer.clearColorImage(command)) noRoom(queue, "a clear of an image whose format it cannot write");
+            texturesToGpu(queue, command.image);
+        },
+        .clear_depth_stencil_image => {
+            const command = _stream.as(_command.ClearDepthStencilImage, head);
+            if (!_transfer.clearDepthImage(command)) noRoom(queue, "a clear of a depth image whose pixels it cannot write");
+            texturesToGpu(queue, command.image);
+        },
         .copy_image => {
             const command = _stream.as(_command.CopyImage, head);
             _transfer.copyImage(command);
@@ -599,12 +623,33 @@ fn keptOf(queue: *Queue, part: *const _render.Part, framebuffer: *const _render.
         exec.kprintf(queue.device.sys, "v3d: a depth image at %lx is out of its reach\n", .{@intFromPtr(image.data)});
         return null;
     }
+    // A depth image sampled as well lies as a texture (since 1.142,
+    // `_image.deviceLaid`): the level and the layer the view names, stored
+    // in that level's own tiling, as v3dv stores into a slice of its image
+    // (v3dvx_cmd_buffer.c:396-406), so the TMU reads it where it lies.
+    if (_image.deviceLaid(image)) {
+        const layout = imageLayout(image);
+        const level = &layout.levels[view.base_level];
+        const at = layerAt(image, &layout, view.base_level, view.base_layer) + level.offset;
+        playerOf(queue).kept_first = at;
+        playerOf(queue).kept_bytes = level.slice_bytes;
+        return .{
+            .buffer = if (keeps_depth) cl.STORE_Z else cl.STORE_STENCIL,
+            .format = if (keeps_depth) cl.OUTPUT_D16 else cl.OUTPUT_S8,
+            .image = address + @as(u32, @intCast(at)),
+            .stride = tiling.blocksDown(&layout, view.base_level),
+            .memory = memoryOf(level.kind),
+            .load = if (keeps_depth) part.loads_depth else part.loads_stencil,
+            .store = if (keeps_depth) part.stores_depth else part.stores_stencil,
+        };
+    }
     // The level and the layer the view names, in that level's own rows, as
     // the cores' `planeOf` has drawn into since 1.58 and 1.63: until 1.91
     // this device stored a kept plane at the image's first byte, with the
     // first level's pitch, whatever the view said.
     const rows = _image.rowsAt(image, view.base_level, view.base_layer);
     playerOf(queue).kept_first = rows.at;
+    playerOf(queue).kept_bytes = @as(usize, rows.pitch) * framebuffer.height;
     return .{
         .buffer = if (keeps_depth) cl.STORE_Z else cl.STORE_STENCIL,
         .format = if (keeps_depth) cl.OUTPUT_D16 else cl.OUTPUT_S8,
@@ -689,9 +734,10 @@ fn clearRectangle(queue: *Queue, clip: frames.Area, color: u32, channels: u32, d
     player.binned = true;
 }
 
-/// What was written into a texture on the cores seen by the V3D.
+/// What was written into a texture on the cores seen by the V3D, or into a
+/// depth image laid out as one (since 1.142).
 fn texturesToGpu(queue: *Queue, image: *Image) void {
-    if (image.kind == .texture) if (image.data) |data| {
+    if (_image.deviceLaid(image)) if (image.data) |data| {
         playerOf(queue).hardware.space.rangeToGpu(data, @intCast(image.bytes));
     };
 }
@@ -742,7 +788,7 @@ fn endRenderPass(queue: *Queue) void {
     // write-back first (exec's CachePostDMA, `dc civac`), so one the CPU
     // left dirty - a CmdClearDepthStencilImage, which the CPU writes -
     // landed over what the V3D stored, where only a load sent it out.
-    const kept_bytes: usize = if (player.frame.kept) |kept| @as(usize, kept.stride) * player.frame.height else 0;
+    const kept_bytes: usize = if (player.frame.kept != null) player.kept_bytes else 0;
     if (player.frame.kept != null) space.rangeToGpu(player.kept_image.?.data.? + player.kept_first, kept_bytes);
 
     sys.ObtainSemaphore(&device.base.v3d_lock);
@@ -916,22 +962,28 @@ fn pickOf(source: facet.texture.Swizzle.Source) tiling.Pick {
 }
 
 /// The TMU's two words for the texture bound at `set`, `binding`, read
-/// as `how` says. Null without a texture bound, with one of a format the
-/// TMU does not read, or with no memory.
-fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, how: tiling.Sampled) ?Configuration {
+/// as `how` says, `compared` with the reference the program writes.
+/// Null without a texture bound, with one of a format the TMU does not
+/// read, a comparison of anything but a depth, or with no memory.
+fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, how: tiling.Sampled, compared: bool) ?Configuration {
     const player = playerOf(queue);
     const sampled = player.resources.sampled(set, binding, 0) orelse return null;
     const view: *const _image.ImageView = @fieldParentPtr("texels", sampled);
     const image = view.image;
-    if (image.kind != .texture or image.data == null) return null;
+    // A texture, or since 1.142 a depth image laid out as one, which the
+    // pass stored where the TMU reads it (`_image.deviceLaid`).
+    if (image.data == null or !_image.deviceLaid(image)) return null;
     const texels: tiling.Texels = switch (image.format) {
         .b8g8r8a8_unorm => .bgra,
         .r8g8b8a8_unorm => .rgba,
         .r5g6b5_unorm_pack16 => .rgb565,
         // One byte of red a texel, the TMU's own R8 (since 1.48).
         .r8_unorm => .r8,
+        // As v3dv samples D16_UNORM (v3dvx_formats.c:204; since 1.142).
+        .d16_unorm => .d16,
         else => return null,
     };
+    if (compared and texels != .d16) return null;
     const layout = imageLayout(image);
     const state = carve(queue, tiling.texture_state_bytes, tiling.texture_state_alignment) orelse return null;
     // The view's swizzle, which the TMU applies over the format's own
@@ -955,10 +1007,15 @@ fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, how: tiling.Sampled) 
 /// (`Fixed.needsSampler`) takes that sampler, at set 0, binding 0 as the
 /// cores read it (`shader.zig`'s `texturedBy` and `layeredBy`), whole
 /// (`tiling.samplerOf`, since 1.141); null where none is bound there.
+///
+/// The shadow form's program writes the reference (`qpu.shadow_code`), so
+/// its sampler's comparison is carried and its depth read as compared
+/// (since 1.142).
 fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
+    const dref = fixed.kind == .texture_shadow;
     const how: tiling.Sampled = if (fixed.needsSampler()) bound: {
         const sampler = playerOf(queue).resources.samplerOf(0, 0, 0) orelse return null;
-        break :bound tiling.samplerOf(sampler) orelse return null;
+        break :bound tiling.samplerOf(sampler, dref) orelse return null;
     } else own: {
         const filter: tiling.Filter = switch (fixed.sampling.filter) {
             .nearest => .nearest,
@@ -970,7 +1027,7 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
         };
         break :own .{ .state = .{ .mag = filter, .min = filter, .wrap = @splat(wrap) } };
     };
-    const made = tmuConfiguration(queue, 0, 0, how) orelse return null;
+    const made = tmuConfiguration(queue, 0, 0, how, dref) orelse return null;
     const place = carve(queue, 8, 4) orelse return null;
     const words: [*]u32 = @ptrCast(@alignCast(place.cpu));
     words[0] = made.texture;
@@ -995,8 +1052,8 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
 fn sampledBy(queue: *Queue, which: compile.Sampler) ?Configuration {
     const player = playerOf(queue);
     const sampler = player.resources.samplerOf(which.set, which.binding, 0) orelse return null;
-    const how = tiling.samplerOf(sampler) orelse return null;
-    return tmuConfiguration(queue, which.set, which.binding, how);
+    const how = tiling.samplerOf(sampler, false) orelse return null;
+    return tmuConfiguration(queue, which.set, which.binding, how, false);
 }
 
 /// A stencil operation as the hardware numbers them: keep and zero the other
@@ -1224,13 +1281,16 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         // The forms that sample through the bound sampler run the
         // programs of the forms they are otherwise, the TMU told the
         // sampler (`textureUniforms`, since 1.141).
-        .texture, .texture_color, .texture_array, .texture_cube, .texture_3d, .texture_sampled, .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled => {
+        // And the shadow one, whose program writes the reference (since
+        // 1.142).
+        .texture, .texture_color, .texture_array, .texture_cube, .texture_3d, .texture_sampled, .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled, .texture_shadow => {
             if (fixed.kind == .texture_color) carried = .{ .colors_from = 2 };
             fragment = switch (fixed.kind) {
                 .texture, .texture_sampled => programs.texture,
                 .texture_color => programs.texture_color,
                 .texture_array, .texture_array_sampled => programs.array,
                 .texture_cube, .texture_cube_sampled => programs.cube,
+                .texture_shadow => programs.shadow,
                 else => programs.volume,
             };
             uniforms = textureUniforms(queue, fixed) orelse missing: {
@@ -1290,9 +1350,9 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             }
         },
         // Refused when the pipeline was made (driver.zig): no fixed form's
-        // program drops pixels, compares or reads a cube of an array
+        // program drops pixels or reads a cube of an array
         // (`samplesHere`), so none of these reaches a frame here.
-        .texture_cutout, .texture_shadow, .texture_cube_array, .texture_cube_array_sampled => return,
+        .texture_cutout, .texture_cube_array, .texture_cube_array_sampled => return,
     }
 
     const scale = ViewportScale{
@@ -1398,9 +1458,7 @@ fn copyBufferToImage(queue: *Queue, command: *const _command.CopyBufferToImage) 
             _image.copyFromBuffer(image, from, region);
         }
     }
-    if (image.kind == .texture) if (image.data) |data| {
-        playerOf(queue).hardware.space.rangeToGpu(data, @intCast(image.bytes));
-    };
+    texturesToGpu(queue, image);
 }
 
 /// A rectangle of texels into a level of a texture, as they are in the

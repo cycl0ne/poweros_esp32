@@ -62,7 +62,13 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
     const storage = facet.FORMAT_FEATURE_STORAGE_IMAGE;
     // What a depth image adds on a device that samples one where its rows
     // lie (`Capabilities.sampled_depth`).
-    const depth_sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR;
+    // Filtered where the device filters a depth (`Capabilities.filtered_depth`,
+    // since 1.142): v3dv leaves it off D16_UNORM on the V3D.
+    const depth_sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | if (can.filtered_depth) facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR else 0;
+    // A stencil is sampled where a depth is and the device samples one
+    // too (`Capabilities.sampled_stencil`, since 1.142): the V3D samples a
+    // depth and no stencil, and a device that samples no depth neither.
+    const stencil_sampled = can.sampled_depth and can.sampled_stencil;
     // A BufferView of these reads a buffer's bytes as texels, and a
     // storage one is written through as well (CreateBufferView).
     const texels = facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER | facet.FORMAT_FEATURE_STORAGE_TEXEL_BUFFER;
@@ -153,14 +159,14 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
             .linear_tiling_features = 0,
             .optimal_tiling_features = transfer |
                 (if (can.stored_stencil) facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT else 0) |
-                (if (can.sampled_depth) facet.FORMAT_FEATURE_SAMPLED_IMAGE else 0),
+                (if (stencil_sampled) facet.FORMAT_FEATURE_SAMPLED_IMAGE else 0),
             .buffer_features = 0,
         },
         .d16_unorm_s8_uint => .{
             .linear_tiling_features = 0,
             .optimal_tiling_features = transfer |
                 (if (can.stored_both) facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT else 0) |
-                (if (can.sampled_depth) depth_sampled else 0),
+                (if (stencil_sampled) depth_sampled else 0),
             .buffer_features = 0,
         },
         // Compressed: sampled and written, and read back as well where the
@@ -328,8 +334,22 @@ const keeping = _instance.Capabilities{
     .wide_channels = true,
     .whole_textures = true,
     .sampled_depth = true,
+    .sampled_stencil = true,
+    .filtered_depth = true,
     .stored_stencil = true,
     .stored_both = true,
+};
+
+/// The V3D since 1.142: a depth of its own sampled, unfiltered, and no
+/// stencil.
+const depth_alone = _instance.Capabilities{
+    .kept_compressed = false,
+    .kept_floats = false,
+    .wide_channels = false,
+    .whole_textures = false,
+    .sampled_depth = true,
+    .stored_stencil = true,
+    .stored_both = false,
 };
 
 test "a depth format says it is sampled only where the device samples one" {
@@ -353,6 +373,14 @@ test "a depth format says it is sampled only where the device samples one" {
     // Nothing is in linear tiling or in a buffer for a depth format.
     try testing.expectEqual(@as(u32, 0), on_v3d.linear_tiling_features);
     try testing.expectEqual(@as(u32, 0), on_v3d.buffer_features);
+
+    // The V3D since 1.142: D16_UNORM sampled and not filtered, as v3dv
+    // has it (v3dvx_formats.c:204), and neither format with a stencil
+    // sampled at all.
+    const d16 = describe(&depth_alone, .d16_unorm).optimal_tiling_features;
+    try testing.expectEqual(facet.FORMAT_FEATURE_SAMPLED_IMAGE, d16 & sampled);
+    try testing.expectEqual(@as(u32, 0), describe(&depth_alone, .s8_uint).optimal_tiling_features & sampled);
+    try testing.expectEqual(@as(u32, 0), describe(&depth_alone, .d16_unorm_s8_uint).optimal_tiling_features & sampled);
 }
 
 test "a stencil format says it is an attachment only where the device stores that plane" {

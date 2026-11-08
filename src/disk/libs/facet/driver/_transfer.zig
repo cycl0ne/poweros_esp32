@@ -411,7 +411,18 @@ pub fn clearDepthImage(command: *const _command.ClearDepthStencilImage) bool {
         // Every sample's plane, as a colour clear does (since 1.99).
         for (0..image.samples) |sample| for (0..layers) |one| for (0..levels) |step| {
             const level = range.base_mip_level + @as(u32, @intCast(step));
-            const rows = _image.rowsAt(image, level, range.base_array_layer + @as(u32, @intCast(one)));
+            const layer = range.base_array_layer + @as(u32, @intCast(one));
+            // Laid out by its device (since 1.142): the level where the
+            // device keeps it, all of it the one value, as a depth or a
+            // stencil alone is in rows.
+            if (_image.deviceLaid(image)) {
+                const span = image.device.physical.ops.texture_level.?(image, level, layer);
+                const into: [*]u8 = data + @as(usize, @intCast(span.at));
+                if (clears_depth and stride == 2) fill(into, @intCast(span.bytes), .{ .two = command.depth });
+                if (clears_stencil and stride == 1) fill(into, @intCast(span.bytes), .{ .one = command.stencil });
+                continue;
+            }
+            const rows = _image.rowsAt(image, level, layer);
             const size = _image.levelSize(image, level);
             const into_level = data + sample * @as(usize, @intCast(image.sample_bytes)) + rows.at;
             // A format of depth alone or stencil alone, both aspects

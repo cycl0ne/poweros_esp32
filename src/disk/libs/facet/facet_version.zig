@@ -4049,4 +4049,68 @@ pub const LIBRARY_VERSION = 1;
 ///   read back whole. All four failed on the V3D, alpha 0, until the
 ///   clear wrote its texels. FacetProbe passes its
 ///   864 checks, 362 of them on the V3D (337 at 1.140).
-pub const LIBRARY_REVISION = 141;
+///
+/// 142: **The V3D samples a depth where the pass stored it, and compares
+/// (docs/facet-vulkan10.md item 58, for the fixed forms).** Until now it
+/// refused a D16_UNORM image with SAMPLED, and Vulkan requires
+/// SAMPLED_IMAGE of that format on every device. It is v3dv's way, ported:
+///
+/// - **The image lies as a texture does.** A sampled depth takes its
+///   memory from `Ops.texture_memory` (`_image.deviceLaid`, now true of
+///   one as of a texture), and the pass stores the depth into the level's
+///   tiling, as v3dv stores into a slice's (v3dvx_cmd_buffer.c:396-406).
+///   `cl.store` and `cl.load` take the memory format at bit 4 and the UIF
+///   height in UB-blocks (v3dv_image.c:247-248), and `frame.Kept` carries
+///   them. The library's clears, copies in and texel reads of it go
+///   through the driver's places, as a texture's have since 1.141, and
+///   GetImageSubresourceLayout answers a level there as for a texture:
+///   where the driver puts it, its rows the TMU's (`row_pitch` 0).
+/// - **The TMU reads it as DEPTH_COMP16.** That is texture type 21 with
+///   `SWIZ_X001`, unfiltered (v3dvx_formats.c:204): `tiling.Texels.d16`,
+///   which reads (D, 0, 0, 1), as the cores' depth view has since 1.121.
+///   A comparison's result stands where the depth would.
+/// - **The comparison.** `qpu.shadow_code` writes the reference to
+///   TMUDREF, waddr 38, before TMUS (v3d_tex.c:155-157).
+///   `tiling.samplerOf` packs the sampler's function as v3dv does, or
+///   NEVER where compare is off (v3dvx_device.c:262-264), and refused
+///   compare until now. `texture_shadow` runs on the V3D, so five of the
+///   six fixed forms that read a sampler do, all but
+///   `texture_cube_array_sampled`.
+/// - **What stays out, said by two new `Capabilities`.**
+///   - `filtered_depth`: no FILTER_LINEAR for a depth on the V3D, since
+///     v3dv's D16_UNORM does not filter (v3dv_formats.c:273-276).
+///   - `sampled_stencil`: no sampled `d16_unorm_s8_uint` or `s8_uint`
+///     there, v3dv's one format of both being D24_UNORM_S8_UINT
+///     (v3dvx_formats.c:209). CreateImage refuses one.
+///   The cores keep both. `sampled_image_depth_sample_counts` is 1 on the
+///   V3D now, where it was 0.
+///
+/// A generated program that compares, OpImageSampleDref*, is still
+/// refused on the V3D: that is the rest of item 58.
+///
+/// Tests:
+///
+/// - The host tests, and the V3D's 137: the compare bits of the sampler
+///   state, `.d16`'s swizzle, and a Z store in UIF_XOR.
+/// - On the board, C:test/FacetProbe 1.46 passes its 888 checks, 386 of
+///   them on the V3D (362 at 1.141). Its sampled-depth part drew with a
+///   CPU function and ran on the cores alone; it draws with the fixed
+///   forms `color` and `texture_shadow` now, and the V3D runs all of it.
+///   Every check passed on the board the first time: 16 bits compared,
+///   the layer a view names and the level a sampler holds it to.
+///   - A sampled depth image that holds a stencil is expected where a
+///     device samples one, and refused elsewhere (`Can.sampled_stencil`).
+///   - A depth image of levels is held to the cores' pyramid only where
+///     the device answers its rows, and elsewhere to its levels lying in
+///     its memory.
+/// - C:test/FacetBoth 1.14 has three cases more, each a shadow map as
+///   big as the picture, drawn and then compared with over the whole of
+///   it, a texel a pixel:
+///   - the far and the near triangle, reference a half, `less`: 3 of
+///     230,400 apart;
+///   - the same at 0.6, `greater`: 3 apart;
+///   - a fan whose depth slopes across the reference: 5 apart.
+///   All are at triangle edges, as its plain depth cases are (4 to 9).
+///   The other 185 cases are as they were at 1.141, and all 188 within
+///   one pixel in a thousand.
+pub const LIBRARY_REVISION = 142;

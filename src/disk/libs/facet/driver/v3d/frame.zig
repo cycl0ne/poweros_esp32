@@ -43,7 +43,12 @@ pub const Kept = struct {
     /// How the image holds it: `cl.OUTPUT_D16` or `cl.OUTPUT_S8`.
     format: u64,
     image: u32,
+    /// Its rows' bytes, or for a UIF level its height in UIF blocks.
     stride: u32,
+    /// How it lies: rows, or a texture's level in its tiling, which a
+    /// depth image sampled as well is (`cl.MEMORY_RASTER` and the rest,
+    /// since 1.142).
+    memory: u64 = cl.MEMORY_RASTER,
     load: bool = false,
     store: bool = false,
 };
@@ -182,10 +187,10 @@ pub fn writeBin(list: *List, frame: *const Frame, record: u32, attributes: u32, 
 /// cleared area covers whole.
 pub fn writeTileList(list: *List, frame: *const Frame, load: bool) void {
     list.byte(cl.TILE_COORDINATES_IMPLICIT);
-    if (load) cl.load(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride);
+    if (load) cl.load(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride, cl.MEMORY_RASTER);
     // The depth or the stencil read in after the colour, as Mesa orders
     // them, whether or not this list's tiles read the colour.
-    if (frame.kept) |kept| if (kept.load) cl.load(list, kept.buffer, kept.format, false, kept.image, kept.stride);
+    if (frame.kept) |kept| if (kept.load) cl.load(list, kept.buffer, kept.format, false, kept.image, kept.stride, kept.memory);
     list.byte(cl.END_OF_LOADS);
     // The binner starts each tile's list assuming triangles.
     cl.primListFormat(list, cl.LIST_TRIANGLES);
@@ -195,8 +200,8 @@ pub fn writeTileList(list: *List, frame: *const Frame, load: bool) void {
     }
     // And written out before it: the hardware clears the tiles' depth and
     // stencil between tiles by itself, so neither store asks for a clear.
-    if (frame.kept) |kept| if (kept.store) cl.store(list, kept.buffer, kept.format, false, kept.image, kept.stride);
-    cl.store(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride);
+    if (frame.kept) |kept| if (kept.store) cl.store(list, kept.buffer, kept.format, false, kept.image, kept.stride, kept.memory);
+    cl.store(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride, cl.MEMORY_RASTER);
     list.byte(cl.CLEAR_RENDER_TARGETS);
     list.byte(cl.END_OF_TILE_MARKER);
     list.byte(cl.RETURN_FROM_SUB_LIST);
@@ -234,7 +239,7 @@ pub fn writeRender(list: *List, frame: *const Frame, tiles: TileList, inside: ?T
     while (round < 2) : (round += 1) {
         cl.tileCoordinates(list, 0, 0);
         list.byte(cl.END_OF_LOADS);
-        cl.store(list, cl.STORE_NONE, frame.format, false, 0, 0);
+        cl.store(list, cl.STORE_NONE, frame.format, false, 0, 0, cl.MEMORY_RASTER);
         if (round == 0) list.byte(cl.CLEAR_RENDER_TARGETS);
         list.byte(cl.END_OF_TILE_MARKER);
     }

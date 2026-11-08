@@ -9665,7 +9665,7 @@ test "a device that keeps no format of both planes, as the V3D keeps none: such 
     }
 }
 
-test "a device that samples no depth, as the V3D samples none: the format query says so too, and every kept feature answers for its own formats" {
+test "a device that samples no depth, as the V3D sampled none until 1.142: the format query says so too, and every kept feature answers for its own formats" {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
@@ -9678,8 +9678,8 @@ test "a device that samples no depth, as the V3D samples none: the format query 
     fb.GetPhysicalDeviceFormatProperties(bench.physical, .d16_unorm, &properties);
     try testing.expectEqual(sampled, properties.optimal_tiling_features & sampled);
 
-    // The physical device as the V3D describes itself: its texture unit
-    // knows no depth format, so CreateImage refuses a sampled depth image
+    // A physical device that samples no depth, as the V3D described
+    // itself until 1.142: CreateImage refuses a sampled depth image
     // there. The format query has to agree with that refusal rather than
     // promise a shadow map the create call turns down (since 1.80, where
     // this arm said sampled and filtered on every device).
@@ -9696,8 +9696,9 @@ test "a device that samples no depth, as the V3D samples none: the format query 
     try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &.{ .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = depth_usage }, &refused));
     try testing.expect(refused == null);
     // S8_UINT and D16_UNORM_S8_UINT say SAMPLED_IMAGE only where a depth
-    // is sampled (since 1.135): neither says it here, and CreateImage
-    // refuses either sampled, as it refuses D16_UNORM.
+    // is sampled (since 1.135), and a stencil too (since 1.142): neither
+    // says it here, and CreateImage refuses either sampled, as it refuses
+    // D16_UNORM.
     for ([2]facet.Format{ .s8_uint, .d16_unorm_s8_uint }) |format| {
         fb.GetPhysicalDeviceFormatProperties(bench.physical, format, &properties);
         try testing.expectEqual(@as(u32, 0), properties.optimal_tiling_features & sampled);
