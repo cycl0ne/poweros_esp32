@@ -207,6 +207,30 @@ test "a high-speed interrupt endpoint with three transactions a microframe" {
     }));
 }
 
+test "a mouse that reports every microframe: added at its interval, and its first transfer finds it so" {
+    // 3151:5007, an 8000-report-a-second mouse: 64 bytes, bInterval 1 at
+    // high speed.
+    const config = [_]u8{ 9, d.USB_DT_CONFIG, 25, 0, 1, 1, 0, 0x80, 50 } ++
+        [_]u8{ 9, d.USB_DT_INTERFACE, 0, 0, 1, 3, 1, 2, 0 } ++
+        [_]u8{ 7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_INT, 64, 0, 1 };
+    var specs: [32]slots.Spec = @splat(.{});
+    try testing.expectEqual(regs.addFlag(3), slots.endpointsOf(&config, 1, regs.SPEED_HIGH, &specs));
+    try testing.expectEqual(@as(u32, 0), specs[3].interval);
+    try testing.expectEqual(@as(u32, 0), specs[3].burst);
+    // One transaction a microframe: a packet's bytes, 0 as a request
+    // without a burst has them.
+    try testing.expectEqual(@as(u32, 0), specs[3].esit);
+    // The request's bInterval, where it has one: a microframe, not the
+    // millisecond its `interval` rounds up to.
+    try testing.expectEqual(@as(u32, 0), slots.intervalOfRequest(regs.SPEED_HIGH, regs.EP_INTERRUPT_IN, 1, 1));
+    try testing.expectEqual(@as(u32, 2), slots.intervalOfRequest(regs.SPEED_SUPER, regs.EP_INTERRUPT_IN, 1, 3));
+    try testing.expectEqual(@as(u32, 3), slots.intervalOfRequest(regs.SPEED_HIGH, regs.EP_INTERRUPT_IN, 1, 0));
+    // Full speed counts frames either way; an isochronous endpoint goes by
+    // its milliseconds.
+    try testing.expectEqual(@as(u32, 3), slots.intervalOfRequest(regs.SPEED_FULL, regs.EP_INTERRUPT_IN, 1, 1));
+    try testing.expectEqual(@as(u32, 3), slots.intervalOfRequest(regs.SPEED_HIGH, regs.EP_ISOCH_IN, 1, 4));
+}
+
 test "an isochronous TD's bursts" {
     // SuperSpeed, bursts of 4 (bMaxBurst 3), 1024-byte packets: 10 packets
     // are three bursts, the last of two.

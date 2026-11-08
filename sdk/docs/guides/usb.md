@@ -245,8 +245,11 @@ are set, and what the endpoint moves besides a packet at a time:
 `burst` (wire packets a burst less one - a SuperSpeed endpoint's from
 its companion descriptor, a high-speed interrupt or isochronous one's
 more transactions a microframe from wMaxPacketSize), `mult` (a
-SuperSpeed isochronous endpoint's bursts an interval less one) and
-`interval_bytes` (a periodic endpoint's bytes an interval). The program
+SuperSpeed isochronous endpoint's bursts an interval less one),
+`interval_bytes` (a periodic endpoint's bytes an interval) and
+`binterval` (a periodic endpoint's bInterval as it stands, which at
+high speed and SuperSpeed can be shorter than the millisecond
+`interval` rounds it up to; usb.library 1.16). The program
 sets the data and sends it, as often as it likes; the endpoint's data
 toggle stays in the pipe.
 
@@ -286,6 +289,10 @@ a controller without streams answers the first transfer
   every 8 ms until the device answers, so an idle keyboard or mouse
   costs little, and the first report after a pause is at most 8 ms
   late. Read one packet at a time: a device sends a report a packet.
+  A high-speed or SuperSpeed endpoint may ask to be read more often -
+  every microframe for a mouse that reports 8000 times a second -
+  and xhci.device (1.14) asks it as its `binterval` says; asked only
+  once a millisecond, such a mouse drops off the bus.
 - An **isochronous** transfer is a run of packets, one each
   `interval`, at most `UHC_ISO_PACKETS` of them, nothing resent:
   `std.length` bytes cut into packets of `iso_packet` (the endpoint's

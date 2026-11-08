@@ -199,6 +199,46 @@ test "a pipe says what its endpoint moves besides a packet: bursts at SuperSpeed
     try kexec.expectNoLeaks();
 }
 
+/// An 8000-report-a-second mouse (3151:5007): its interrupt IN at high
+/// speed every microframe, bInterval 1 at offset 24.
+const fast_mouse_bytes = [_]u8{ 9, d.USB_DT_CONFIG, 25, 0, 1, 1, 0, 0xA0, 50 } ++
+    [_]u8{ 9, d.USB_DT_INTERFACE, 0, 0, 1, 3, 1, 2, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_INT, 64, 0, 1 };
+
+test "an interrupt pipe carries its endpoint's bInterval, which the milliseconds cannot say under one" {
+    try kexec.setUp();
+    defer kexec.deinit();
+    var base: UsbBase = undefined;
+    base.sys_base = kexec.SysBase.iface();
+    var bus: _bus.Bus = undefined;
+    bus.hc_io = .{};
+    var port: sdk.exec.MsgPort = .{};
+    var bytes = fast_mouse_bytes;
+    var device = _bus.Device{ .bus = &bus };
+    device.public.config = &bytes;
+    device.public.config_length = bytes.len;
+    device.public.speed = usbhc.USB_SPEED_HIGH;
+
+    // A microframe: a millisecond as `interval` has it, the microframe in
+    // `binterval`.
+    const mouse = OpenUSBPipe(&base, &device.public, 0x81, &port).?;
+    try testing.expectEqual(usbhc.UHCMD_INTXFER, mouse.io.std.req.command);
+    try testing.expectEqual(@as(u16, 1), mouse.io.interval);
+    try testing.expectEqual(@as(u8, 1), mouse.io.binterval);
+    CloseUSBPipe(&base, mouse);
+    // At full speed the same byte is frames, and both say a millisecond.
+    device.public.speed = usbhc.USB_SPEED_FULL;
+    const slow = OpenUSBPipe(&base, &device.public, 0x81, &port).?;
+    try testing.expectEqual(@as(u16, 1), slow.io.interval);
+    try testing.expectEqual(@as(u8, 1), slow.io.binterval);
+    CloseUSBPipe(&base, slow);
+    // The control pipe has no interval.
+    const control = OpenUSBPipe(&base, &device.public, 0, &port).?;
+    try testing.expectEqual(@as(u8, 0), control.io.binterval);
+    CloseUSBPipe(&base, control);
+    try kexec.expectNoLeaks();
+}
+
 /// A SuperSpeed disk's interface: its Bulk-Only first setting, a bulk IN
 /// at 0x82 in bursts of 4 without streams; and its UAS setting, a
 /// command OUT without streams, a status IN and a data IN with 2^4

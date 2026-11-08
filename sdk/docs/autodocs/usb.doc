@@ -511,6 +511,14 @@ usb.library/StopUSB
 	(`iso_lost`, the list's `status`), the frame it started in and its
 	gap behind the one before (sdk/devices/usbhc.zig).
 
+	An interrupt or isochronous pipe carries the endpoint's bInterval
+	as well (`binterval`, Since 1.16). At high speed and SuperSpeed an
+	interrupt endpoint may want asking every microframe, or every second
+	or fourth, which the interval in milliseconds rounds up to one: a
+	mouse that reports 8000 times a second, asked once a millisecond,
+	drops off the bus. xhci.device asks such an endpoint by `binterval`
+	(Since its 1.14).
+
 	An isochronous endpoint's interval is 2^(bInterval - 1) frames or, at
 	high speed, microframes; it is taken only at a millisecond or more,
 	which every endpoint of a full-speed device is. Its packets are the
