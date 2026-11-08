@@ -2780,7 +2780,7 @@ fn expectText(code: Code, expected: []const []const u8) !void {
     }
 }
 
-test "through Mesa's back end, the interpolated colour: the last thread switch among the varyings" {
+test "through Mesa's back end, the interpolated colour is nine instructions, the last thread switch among the varyings" {
     var work: Work = .{};
     const code = try throughMesa(&work, Smooth.words);
     try testing.expectEqual(@as(u32, 4), code.varyings);
@@ -2790,45 +2790,51 @@ test "through Mesa's back end, the interpolated colour: the last thread switch a
     // thread switch, as the hand-written programs have it.
     try testing.expect(code.center_w);
     try testing.expect(!code.lock_scoreboard_on_first_thrsw);
+    // Within the 16 registers `qpu.registers` keeps the hand-written
+    // programs in.
+    try testing.expectEqual(@as(u32, 16), code.registers);
     try expectText(code, &.{
         // W is read where it comes, rf3: its temporary was given the
         // register it was moved out of, and the move left out. The
-        // centroid's W and Z were moved likewise and nothing reads them,
-        // nor the msf: Mesa's dead code elimination (vir_optimize) takes
-        // them out, and is not ported yet.
-        text("msf rf4", "nop", "ldvary.rf5"),
-        text("nop", "fmul rf6, rf5, rf3", "ldvary.rf8"),
+        // msf and the moves of the centroid's W and Z are dead code.
+        text("nop", "nop", "ldvary.rf4"),
+        text("nop", "fmul rf5, rf4, rf3", "ldvary.rf7"),
         // The last thread switch, a pair, moved up among the ldvarys,
         // which 7.1 lets sit in the first two delay slots of one.
-        text("fadd rf7, rf0, rf6", "fmul rf9, rf8, rf3", "thrsw; ldvary.rf11"),
-        text("fadd rf10, rf0, rf9", "fmul rf12, rf11, rf3", "thrsw; ldvary.rf14"),
-        text("fadd rf13, rf0, rf12", "fmul rf15, rf14, rf3", ""),
-        // The colour moved out of the sums (ntq_emit_color_write) and
-        // packed: the moves are copy propagation's to take out.
-        text("mov rf18, rf10", "mov rf17, rf7", ""),
-        text("fadd rf16, rf0, rf15", "mov rf19, rf13", ""),
-        text("vfpack tlb, rf17, rf18", "mov rf20, rf16", ""),
-        // The program's end.
-        text("vfpack tlb, rf19, rf20", "nop", "thrsw"),
-        text("nop", "nop", ""),
+        text("fadd rf6, rf0, rf5", "fmul rf8, rf7, rf3", "thrsw; ldvary.rf10"),
+        text("fadd rf9, rf0, rf8", "fmul rf11, rf10, rf3", "thrsw; ldvary.rf13"),
+        text("fadd rf12, rf0, rf11", "fmul rf14, rf13, rf3", ""),
+        text("fadd rf15, rf0, rf14", "nop", ""),
+        // The sums packed where they were made, copy propagation having
+        // taken the colour's moves out; the second pack in the delay slot
+        // of the thread end.
+        text("vfpack tlb, rf6, rf9", "nop", "thrsw"),
+        text("vfpack tlb, rf12, rf15", "nop", ""),
         text("nop", "nop", ""),
     });
+    // Where the hand-written program is twenty-one.
+    try testing.expectEqual(@as(usize, 21), qpu.color_fragment.code.len);
 }
 
-test "through Mesa's back end, a colour of its own: a uniform a float, the 1 read once for red and alpha" {
+test "through Mesa's back end, a colour of its own is two words to the tile buffer, one of them a uniform" {
     var work: Work = .{};
     const code = try throughMesa(&work, Plain.words);
     try testing.expectEqual(@as(u32, 0), code.varyings);
-    try testing.expectEqualSlices(Word, &[_]Word{ .{ .float = 1 }, .{ .float = 0.5 }, .{ .float = 0 } }, code.stream());
+    // 0.5 and 1 as half-floats, 0x3800 high and 0x3c00 low.
+    try testing.expectEqualSlices(Word, &[_]Word{.{ .float = @bitCast(@as(u32, 0x3800_3c00)) }}, code.stream());
     // No varying, so nothing reads W.
     try testing.expect(!code.center_w);
     try expectText(code, &.{
-        text("msf rf4", "nop", "thrsw; ldunifrf.rf5"),
-        text("mov rf10, rf5", "mov rf7, rf5", "thrsw; ldunifrf.rf6"),
-        text("nop", "mov rf8, rf6", "ldunif"),
-        text("vfpack tlb, rf7, rf8", "mov rf9, rf0", ""),
-        text("vfpack tlb, rf9, rf10", "nop", "thrsw"),
-        text("nop", "nop", ""),
+        // The last section first: nothing has to come before it.
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", "ldunifrf.rf4"),
+        // Each vfpack of two constants is a uniform of the two
+        // half-floats (vir_opt_constant_alu), moved to the tile buffer;
+        // the second, 0 and 1, is 0x3c000000, which is 2^-7 as a float
+        // and so a small immediate.
+        text("nop", "mov tlb, rf4", "thrsw"),
+        text("nop", "mov tlb, 0x3c000000", ""),
         text("nop", "nop", ""),
     });
 }
@@ -2840,37 +2846,29 @@ test "through Mesa's back end, a texture: the lookup started in the delay slots 
     try testing.expectEqual(Sampler{ .set = 0, .binding = 0 }, code.sampler.?);
     // The draw's two words, as the hand-written program reads them.
     try testing.expectEqualSlices(Word, &[_]Word{ .texture, .sampler }, code.stream());
+    try testing.expectEqual(@as(u32, 12), code.registers);
     try expectText(code, &.{
         // The configuration first: the scheduler lets the two wrtmuc go
         // ahead of T, as long as S, which starts the lookup, comes last.
-        text("msf rf4", "nop", "ldvary.rf5; wrtmuc"),
-        text("nop", "fmul rf6, rf5, rf3", "ldvary.rf8; wrtmuc"),
-        text("fadd rf7, rf0, rf6", "fmul rf9, rf8, rf3", ""),
+        text("nop", "nop", "ldvary.rf4; wrtmuc"),
+        text("nop", "fmul rf5, rf4, rf3", "ldvary.rf7; wrtmuc"),
+        text("fadd rf6, rf0, rf5", "fmul rf8, rf7, rf3", ""),
         // The last thread switch is the one the sample waits at: the
         // lookup is started in its delay slots, and both words are read
         // after it. vir_emit_last_thrsw added a pair of its own, taken
         // out again when nothing spilled.
-        text("fadd rf10, rf0, rf9", "nop", "thrsw"),
-        text("nop", "mov tmut, rf10", "thrsw"),
-        text("nop", "mov tmus, rf7", ""),
-        text("nop", "nop", "ldtmu.rf11"),
-        text("nop", "mov rf12, rf11", "ldtmu.rf13"),
-        // Each half read out as a float, and packed back for the tile
-        // buffer: where the hand-written program moves the two words out
-        // as they are, this is what nir_to_vir makes of a texel drawn
-        // as it comes.
-        text("fmov rf16, rf12.h", "fmov rf15, rf12.l", ""),
-        text("mov rf19, rf15", "mov rf14, rf13", ""),
-        text("fmov rf17, rf14.l", "mov rf20, rf16", ""),
-        text("mov rf21, rf17", "fmov rf18, rf14.h", ""),
-        text("vfpack tlb, rf19, rf20", "mov rf22, rf18", ""),
-        text("vfpack tlb, rf21, rf22", "nop", "thrsw"),
-        text("nop", "nop", ""),
-        text("nop", "nop", ""),
+        text("fadd rf9, rf0, rf8", "nop", "thrsw"),
+        text("nop", "mov tmut, rf9", "thrsw"),
+        text("nop", "mov tmus, rf6", ""),
+        // The thread end's signal goes into the first ldtmu, and the
+        // halves are packed back for the tile buffer in its delay slots.
+        text("nop", "nop", "thrsw; ldtmu.rf10"),
+        text("vfpack tlb, rf10.l, rf10.h", "nop", "ldtmu.rf11"),
+        text("vfpack tlb, rf11.l, rf11.h", "nop", ""),
     });
 }
 
-test "through Mesa's back end, a texel times the colour takes 32 registers, a 4-threaded program's under Mesa" {
+test "through Mesa's back end, a texel times the colour reads the texel's halves in its products" {
     var work: Work = .{};
     const code = try throughMesa(&work, Modulated.words);
     try testing.expectEqual(@as(u32, 6), code.varyings);
@@ -2879,9 +2877,29 @@ test "through Mesa's back end, a texel times the colour takes 32 registers, a 4-
     // Mesa's allocator gives 7.1's four threads 32 registers each and
     // goes round them from rf4, where `qpu.registers` keeps the
     // hand-written programs in 16: which of the two the board's threads
-    // have is for the first board run of these programs to settle.
-    try testing.expectEqual(@as(u32, 32), code.registers);
+    // have is for a board run of these programs to settle.
+    try testing.expectEqual(@as(u32, 28), code.registers);
     try testing.expect(code.registers > qpu.registers);
+    try expectText(code, &.{
+        text("nop", "nop", "ldvary.rf4; wrtmuc"),
+        text("nop", "fmul rf5, rf4, rf3", "ldvary.rf7; wrtmuc"),
+        text("fadd rf6, rf0, rf5", "fmul rf8, rf7, rf3", "ldvary.rf10"),
+        text("fadd rf9, rf0, rf8", "fmul rf11, rf10, rf3", "ldvary.rf13"),
+        text("fadd rf12, rf0, rf11", "fmul rf14, rf13, rf3", "ldvary.rf16"),
+        text("fadd rf15, rf0, rf14", "mov tmut, rf9", "thrsw"),
+        text("mov tmus, rf6", "fmul rf17, rf16, rf3", "thrsw; ldvary.rf19"),
+        text("fadd rf18, rf0, rf17", "fmul rf20, rf19, rf3", ""),
+        text("fadd rf21, rf0, rf20", "nop", "ldtmu.rf22"),
+        // Each half read straight out of the texel's word by the
+        // product, as the hand-written fmulLow and fmulHigh read it.
+        text("nop", "fmul rf24, rf22.l, rf12", "ldtmu.rf23"),
+        text("nop", "fmul rf25, rf22.h, rf15", ""),
+        text("vfpack tlb, rf24, rf25", "fmul rf26, rf23.l, rf18", ""),
+        text("nop", "fmul rf27, rf23.h, rf21", ""),
+        text("vfpack tlb, rf26, rf27", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
 }
 
 test "through Mesa's back end, a texel added to: the floats of its own read around the thread switch" {
@@ -2890,30 +2908,26 @@ test "through Mesa's back end, a texel added to: the floats of its own read arou
     try testing.expectEqualSlices(Word, &[_]Word{
         .texture,          .sampler,
         .{ .float = 0.1 }, .{ .float = 0.2 },
-        .{ .float = 0.3 }, .{ .float = 0 },
+        .{ .float = 0.3 },
     }, code.stream());
     try expectText(code, &.{
-        text("msf rf4", "nop", "ldvary.rf5; wrtmuc"),
-        text("nop", "fmul rf6, rf5, rf3", "ldvary.rf8; wrtmuc"),
+        text("nop", "nop", "ldvary.rf4; wrtmuc"),
+        text("nop", "fmul rf5, rf4, rf3", "ldvary.rf7; wrtmuc"),
         // The floats of its own, read around the thread switch: Mesa
         // reads the uniform stream in the last section as anywhere else.
-        // The last, the 0, is an ldunif to rf0, which the alpha's sum
-        // reads eight instructions on.
-        text("fadd rf7, rf0, rf6", "fmul rf9, rf8, rf3", "ldunifrf.rf19"),
-        text("fadd rf10, rf0, rf9", "nop", "thrsw; ldunifrf.rf20"),
-        text("nop", "mov tmut, rf10", "thrsw; ldunifrf.rf21"),
-        text("nop", "mov tmus, rf7", "ldunif"),
-        text("nop", "nop", "ldtmu.rf11"),
-        text("nop", "mov rf12, rf11", "ldtmu.rf13"),
-        text("fmov rf16, rf12.h", "fmov rf15, rf12.l", ""),
-        text("fadd rf22, rf15, rf19", "mov rf14, rf13", ""),
-        text("fadd rf23, rf16, rf20", "fmov rf17, rf14.l", ""),
-        text("mov rf26, rf22", "fmov rf18, rf14.h", ""),
-        text("fadd rf24, rf17, rf21", "mov rf27, rf23", ""),
-        text("fadd rf25, rf0, rf18", "mov rf28, rf24", ""),
-        text("vfpack tlb, rf26, rf27", "mov rf29, rf25", ""),
-        text("vfpack tlb, rf28, rf29", "nop", "thrsw"),
-        text("nop", "nop", ""),
+        // The third, 0.3, is an ldunif to rf0, which its sum reads five
+        // instructions on, and the fourth, 0, a small immediate.
+        text("fadd rf6, rf0, rf5", "fmul rf8, rf7, rf3", "ldunifrf.rf12"),
+        text("fadd rf9, rf0, rf8", "nop", "thrsw; ldunifrf.rf13"),
+        text("nop", "mov tmut, rf9", "thrsw; ldunif"),
+        text("nop", "mov tmus, rf6", ""),
+        text("nop", "nop", "ldtmu.rf10"),
+        text("fadd rf14, rf12, rf10.l", "nop", "ldtmu.rf11"),
+        text("fadd rf15, rf13, rf10.h", "nop", ""),
+        text("fadd rf16, rf0, rf11.l", "nop", ""),
+        text("fadd rf17, rf11.h, 0", "nop", ""),
+        text("vfpack tlb, rf14, rf15", "nop", "thrsw"),
+        text("vfpack tlb, rf16, rf17", "nop", ""),
         text("nop", "nop", ""),
     });
 }
@@ -2929,11 +2943,10 @@ test "through Mesa's back end, what does not fit 4 threads is compiled at 2, whe
     try testing.expectEqual(@as(u32, 64), code.registers);
     try testing.expectEqual(@as(u32, 8), code.varyings);
     try testing.expectEqual(@as(usize, 0), code.stream().len);
-    // It ends as every program does: the last tile buffer write with the
-    // thread end's signal, and its two delay slots.
+    // It ends as every program does: the thread end's signal, and its
+    // two delay slots.
     var buffer: [disasm.most_text]u8 = undefined;
-    try testing.expect(std.mem.endsWith(u8, disasm.disasm(code.words[code.words.len - 3], &buffer).?, "; thrsw"));
-    try testing.expectEqualSlices(u64, &.{ qpu.nop, qpu.nop }, code.words[code.words.len - 2 ..]);
+    try testing.expect(std.mem.endsWith(u8, disasm.disasm(code.words[code.words.len - 3], &buffer).?, "thrsw"));
 }
 
 test "through Mesa's back end, a module is refused for what the reading refuses, by the same name" {

@@ -35,6 +35,7 @@ test {
     _ = @import("compiler/list.zig");
     _ = @import("compiler/dag.zig");
     _ = @import("compiler/schedule.zig");
+    _ = @import("compiler/opt.zig");
     _ = @import("compiler/ra.zig");
     _ = @import("compiler/allocate.zig");
     _ = @import("compiler/tests.zig");

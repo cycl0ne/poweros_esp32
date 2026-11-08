@@ -14,15 +14,11 @@
 //! a construct names floats rather than moving them, as nir_copy_prop
 //! leaves them for the ops that read them. A texel's half-floats are read
 //! out as floats right after the sample, where nir_lower_tex's packing_16
-//! puts the unpacking; the unpacking is the VIR Mesa makes of a pair of
-//! half-floats it reads from the tile buffer (vir_emit_tlb_color_read,
-//! nir_to_vir.c:2731), an fmov of each half.
-//!
-//! What Mesa does to the VIR before it allocates registers is not done
-//! yet: vir_optimize (vir.c:2907), its copy propagation and its dead code
-//! elimination above all, is not ported, so every step costs what
-//! nir_to_vir emits for it, its movs too, and the payload's moves stay
-//! where nothing reads them.
+//! puts the unpacking; the unpacking is an fmov of each half, which is the
+//! VIR Mesa makes of a pair of half-floats it reads from the tile buffer
+//! (vir_emit_tlb_color_read, nir_to_vir.c:2731) and what vir_opt_alu
+//! leaves of NIR's f2f32 of a texel's half (vir_opt_alu.c:51). Then the
+//! VIR is optimized as Mesa's is (opt.zig), before it is given registers.
 //!
 //! Where it is not Mesa's:
 //! - Every varying the draw carries is read, in order: the vertex record
@@ -49,6 +45,7 @@ const instr = @import("../qpu/instr.zig");
 const vir = @import("vir.zig");
 const allocate = @import("allocate.zig");
 const to_qpu = @import("to_qpu.zig");
+const opt = @import("opt.zig");
 const compile = @import("../compile.zig");
 const Compile = vir.Compile;
 const Inst = vir.Inst;
@@ -198,7 +195,8 @@ fn attemptCompile(e: *Emit, strategy: Strategy) Error!u32 {
     // The last thread switch before the tile buffer writes.
     const restore = try emitLastThrsw(c);
     try emitFragEnd(e);
-    // vir_optimize and sched_flags: not ported, and there are no flags.
+    try opt.optimize(c);
+    // sched_flags: there are no flags here to schedule.
     checkPayloadW(e);
     return nirToVirFinish(c, strategy, restore);
 }
