@@ -148,8 +148,9 @@ pub const Capabilities = extern struct {
     /// optional features of their own and not part of it, and neither are
     /// two, eight or sixteen samples, nor four in a storage image; an
     /// input attachment of four is read a sample at a time since 1.111.
-    /// The cores have it since 1.112, the V3D not yet
-    /// (docs/facet-vulkan10.md item 61, V5).
+    /// The cores have it since 1.112, the V3D since 1.148
+    /// (docs/facet-vulkan10.md item 61, V5), which samples no image of
+    /// four yet and says so in its own masks.
     multisampling: bool = false,
     /// `PipelineColorBlendStateCreateInfo.logic_op_enable`.
     logic_ops: bool = false,
@@ -718,7 +719,8 @@ pub const limits: facet.PhysicalDeviceLimits = .{
     //
     // **What a device reports is narrower** (`narrowSampleCounts`): one
     // sample in each of the seven until it has `can.multisampling`, which
-    // the cores have since 1.112 and the V3D not yet (item 61's V5); and
+    // the cores have since 1.112 and the V3D since 1.148 (item 61's V5),
+    // its sampled colour and depth held at one by its own describe; and
     // one sample for a subpass with no attachments on a device that makes
     // no such subpass (`can.colorless_subpasses`): the V3D, until item
     // 43's half of it. The cores meet all seven since 1.114, when a

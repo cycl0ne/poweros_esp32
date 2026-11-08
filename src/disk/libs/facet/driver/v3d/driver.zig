@@ -147,10 +147,15 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             said.max_descriptor_set_input_attachments = 0;
             // What this device will sample from, by what the image holds: a
             // colour, and a depth since 1.142 (`can.sampled_depth`), each
-            // of one sample as `narrowSampleCounts` leaves them. No
+            // of one sample: one of four it draws into since 1.148 but
+            // samples none, its TMU yet to fetch a sample where the frame
+            // stored it (item 61's V7), so these two say the 1 bit alone
+            // as `narrowSampleCounts` said it for them before. No
             // whole-number format (`can.whole_textures`), no stencil, no
             // storage image. A mask of no bits says the device samples no
             // image of that kind at all, which is what Vulkan means by it.
+            said.sampled_image_color_sample_counts = facet.SAMPLE_COUNT_1;
+            said.sampled_image_depth_sample_counts = facet.SAMPLE_COUNT_1;
             said.sampled_image_integer_sample_counts = 0;
             said.sampled_image_stencil_sample_counts = 0;
             said.storage_image_sample_counts = 0;
@@ -357,6 +362,15 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .textures_3d = true,
         .compressed_textures = true,
         .float_textures = true,
+        // Four samples a pixel, in tiles of four (since 1.148,
+        // docs/facet-vulkan10.md item 61): the frame takes its coverage at
+        // four places, stores its colour and its depth all four together
+        // where their images keep them (`_image.Image.quads`), and averages
+        // the colour into a resolve attachment as each tile ends, or on the
+        // CPU where the render area is not of whole supertiles
+        // (`frame.resolvesInTiles`). Sampling such an image is item 59's
+        // and step V7's, and refused until then (`_image.multisampled`).
+        .multisampling = true,
     };
     physical.queue_family = .{
         .queue_flags = facet.QUEUE_GRAPHICS | facet.QUEUE_COMPUTE | facet.QUEUE_TRANSFER,

@@ -209,8 +209,6 @@ pub fn resolveImage(command: *const _command.ResolveImage) void {
     if (!_image.readable(source) or !_image.readable(destination)) return;
     const pixel = _image.bytesOf(source.format);
     if (pixel != 4 and source.format != .r5g6b5_unorm_pack16) return;
-    var planes: [4]Image = undefined;
-    for (&planes, 0..) |*plane, sample| plane.* = _image.sampleOf(source, @intCast(sample));
     for (_stream.items(_command.ResolveImage, facet.ImageResolve, command, command.count)) |*region| {
         const to_level = region.dst_subresource.mip_level;
         if (region.src_subresource.mip_level != 0 or to_level >= destination.levels) continue;
@@ -228,21 +226,35 @@ pub fn resolveImage(command: *const _command.ResolveImage) void {
         const to_layers = _image.layersOf(destination, region.dst_subresource, region.dst_offset.z, region.extent.depth) orelse continue;
         for (0..@min(from_layers.count, to_layers.count)) |layer_number| {
             const layer: u32 = @intCast(layer_number);
-            for (0..height) |row| for (0..width) |column| {
-                const x: u32 = @intCast(column);
-                const y: u32 = @intCast(row);
-                var words: [4]u32 = undefined;
-                for (&planes, &words) |*plane, *word| {
-                    var bytes: [4]u8 = @splat(0);
-                    _image.readTexel(plane, 0, from_layers.first + layer, from_x + x, from_y + y, &bytes);
-                    word.* = std.mem.readInt(u32, &bytes, .little);
-                }
-                var bytes: [4]u8 = undefined;
-                std.mem.writeInt(u32, &bytes, if (pixel == 4) raster.average8888(words) else raster.average565(words), .little);
-                _image.writeTexel(destination, to_level, to_layers.first + layer, to_x + x, to_y + y, bytes[0..pixel]);
-            };
+            resolveRectangle(source, from_layers.first + layer, .{ from_x, from_y }, destination, to_level, to_layers.first + layer, .{ to_x, to_y }, width, height);
         }
     }
+}
+
+/// Each pixel of a `width` by `height` rectangle of `source`'s layer
+/// `from_layer`, from `from`, the average of its four samples, written into
+/// `destination`'s level and layer at `to`: what CmdResolveImage does for a
+/// region, every sample read where its image keeps it (`_image.sampleOf`),
+/// and what the V3D does after a pass whose resolve it cannot do in its
+/// tiles (since 1.148). Both of one format of 8888 or 565, the source of
+/// four samples, and the rectangle inside both.
+pub fn resolveRectangle(source: *const Image, from_layer: u32, from: [2]u32, destination: *Image, to_level: u32, to_layer: u32, to: [2]u32, width: u32, height: u32) void {
+    const pixel = _image.bytesOf(source.format);
+    var planes: [4]Image = undefined;
+    for (&planes, 0..) |*plane, sample| plane.* = _image.sampleOf(source, @intCast(sample));
+    for (0..height) |row| for (0..width) |column| {
+        const x: u32 = @intCast(column);
+        const y: u32 = @intCast(row);
+        var words: [4]u32 = undefined;
+        for (&planes, &words) |*plane, *word| {
+            var bytes: [4]u8 = @splat(0);
+            _image.readTexel(plane, 0, from_layer, from[0] + x, from[1] + y, &bytes);
+            word.* = std.mem.readInt(u32, &bytes, .little);
+        }
+        var bytes: [4]u8 = undefined;
+        std.mem.writeInt(u32, &bytes, if (pixel == 4) raster.average8888(words) else raster.average565(words), .little);
+        _image.writeTexel(destination, to_level, to_layer, to[0] + x, to[1] + y, bytes[0..pixel]);
+    };
 }
 
 /// CmdCopyImageToBuffer's regions: the part of each inside the image, as far

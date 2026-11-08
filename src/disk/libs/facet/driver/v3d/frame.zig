@@ -137,6 +137,11 @@ pub const Frame = struct {
     four: bool = false,
     /// The tile's size, `chooseTile`'s for the frame's colour and samples.
     tile: cl.Tile = .{ .width = tile_pixels, .height = tile_pixels },
+    /// In a frame of four, the rows the colour's samples are averaged into
+    /// as each tile ends, or null where it has no resolve attachment or
+    /// one the tiles cannot write (`resolvesInTiles`; since 1.148,
+    /// docs/facet-vulkan10.md item 61, step V5).
+    resolve: ?Resolve = null,
 
     pub fn tilesX(frame: *const Frame) u32 {
         return (frame.width + frame.tile.width - 1) / frame.tile.width;
@@ -146,6 +151,56 @@ pub const Frame = struct {
         return (frame.height + frame.tile.height - 1) / frame.tile.height;
     }
 };
+
+/// Where a frame of four resolves its colour: rows of one sample a pixel,
+/// of the colour's format, as Vulkan has a resolve attachment
+/// (VUID-VkSubpassDescription-pResolveAttachments-00850).
+pub const Resolve = struct {
+    image: u32,
+    /// Its rows' bytes.
+    stride: u32,
+};
+
+/// The supertiles a frame is rendered by: each `width` by `height` tiles,
+/// `across` by `down` of them over the frame, no more than the 256 the
+/// hardware's frame holds, grown a tile at a time across and down in turn
+/// until they fit, as v3dv grows its own (`job_compute_frame_tiling`,
+/// v3dv_cmd_buffer.c:421-446, which has the same bound).
+pub const Supertiles = struct { width: u32, height: u32, across: u32, down: u32 };
+
+pub fn supertilesOf(frame: *const Frame) Supertiles {
+    const tiles_x = frame.tilesX();
+    const tiles_y = frame.tilesY();
+    var at = Supertiles{ .width = 1, .height = 1, .across = tiles_x, .down = tiles_y };
+    while (at.across >= most_supertiles or at.down >= most_supertiles or at.across * at.down > most_supertiles) {
+        if (at.width < at.height) at.width += 1 else at.height += 1;
+        at.across = (tiles_x + at.width - 1) / at.width;
+        at.down = (tiles_y + at.height - 1) / at.height;
+    }
+    return at;
+}
+
+/// Whether the tiles can resolve the frame's colour into its resolve
+/// attachment: every tile they render lies inside its area, or over the
+/// frame's edge, as v3dv takes a render area "tile aligned" before it
+/// resolves in the TLB (`v3dv_subpass_area_is_tile_aligned`,
+/// v3dv_pass.c:663-683, its framebuffer padded at the edge,
+/// v3dv_device.c:3178). Aligned to the supertile rather than the tile:
+/// the renderer renders every supertile the area touches, whole
+/// (`writeRender`, as v3dv's `cmd_buffer_emit_render_pass_rcl` does,
+/// v3dvx_cmd_buffer.c:771-795), and a tile's resolve writes all its
+/// pixels, so one sticking out of the area would average into the
+/// attachment where Vulkan has a resolve leave it alone. A frame of all
+/// of its tiles always can.
+pub fn resolvesInTiles(frame: *const Frame) bool {
+    const area = frame.area orelse return true;
+    const at = supertilesOf(frame);
+    const across = at.width * frame.tile.width;
+    const down = at.height * frame.tile.height;
+    return area.left % across == 0 and area.top % down == 0 and
+        ((area.right - area.left) % across == 0 or area.right >= frame.width) and
+        ((area.bottom - area.top) % down == 0 or area.bottom >= frame.height);
+}
 
 /// What a draw of a frame is drawn with.
 pub const DrawState = struct {
@@ -249,6 +304,9 @@ pub fn writeBin(list: *List, frame: *const Frame, record: u32, attributes: u32, 
 /// cleared area covers whole. In a frame of four samples each load and
 /// store moves all of them, as v3dv's do for an image of more than one
 /// (v3dvx_cmd_buffer.c:206-209, 408-413), the images being of four too.
+/// Where it resolves, the colour's average is stored into the resolve
+/// attachment first, as v3dv stores a resolve before the colour it is of,
+/// neither asking for a clear (v3dvx_cmd_buffer.c:640-686).
 pub fn writeTileList(list: *List, frame: *const Frame, load: bool) void {
     const samples: cl.Decimate = if (frame.four) .all_samples else .sample_0;
     list.byte(cl.TILE_COORDINATES_IMPLICIT);
@@ -266,6 +324,7 @@ pub fn writeTileList(list: *List, frame: *const Frame, load: bool) void {
     // And written out before it: the hardware clears the tiles' depth and
     // stencil between tiles by itself, so neither store asks for a clear.
     if (frame.kept) |kept| if (kept.store) cl.store(list, kept.buffer, kept.format, false, kept.image, kept.stride, kept.memory, samples);
+    if (frame.resolve) |into| cl.store(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, into.image, into.stride, cl.MEMORY_RASTER, .four);
     cl.store(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride, frame.memory, samples);
     list.byte(cl.CLEAR_RENDER_TARGETS);
     list.byte(cl.END_OF_TILE_MARKER);
@@ -286,15 +345,11 @@ pub fn writeRender(list: *List, frame: *const Frame, tiles: TileList, inside: ?T
     cl.tileListInitialBlock(list);
     cl.tileListBase(list, frame.tile_lists);
 
-    var supertile_w: u32 = 1;
-    var supertile_h: u32 = 1;
-    var frame_w = tiles_x;
-    var frame_h = tiles_y;
-    while (frame_w >= most_supertiles or frame_h >= most_supertiles or frame_w * frame_h > most_supertiles) {
-        if (supertile_w < supertile_h) supertile_w += 1 else supertile_h += 1;
-        frame_w = (tiles_x + supertile_w - 1) / supertile_w;
-        frame_h = (tiles_y + supertile_h - 1) / supertile_h;
-    }
+    const supertiles = supertilesOf(frame);
+    const supertile_w = supertiles.width;
+    const supertile_h = supertiles.height;
+    const frame_w = supertiles.across;
+    const frame_h = supertiles.down;
     cl.supertileCfg(list, supertile_w, supertile_h, frame_w, frame_h, tiles_x, tiles_y);
 
     // Clearing happens at a tile's end, so the first tile's own is done
@@ -477,4 +532,77 @@ test "a frame of four samples loads and stores all of them, the colour where its
     try std.testing.expectEqual(cl.MEMORY_RASTER, rows.fields >> 4 & 7);
     try std.testing.expectEqual(@as(u64, 0), rows.fields >> 10 & 3);
     try std.testing.expectEqual(@as(u64, 256), rows.fields >> 28 & 0xFFFFF);
+}
+
+test "a frame of four that resolves stores the average into the resolve's rows before the colour, and only over supertiles inside its area" {
+    var memory: [128]u8 = undefined;
+    var list = List{ .at = &memory, .address = 0x1000 };
+    var frame = Frame{
+        .width = 100,
+        .height = 70,
+        .image = 0x10_0000,
+        .stride = 7,
+        .memory = cl.MEMORY_UIF_XOR,
+        .swap_rb = true,
+        .clear = 0,
+        .tile_lists = 0x20_0000,
+        .binned = false,
+        .four = true,
+        .tile = chooseTile(4, true),
+        .kept = .{ .buffer = cl.STORE_Z, .format = cl.OUTPUT_D16, .image = 0x30_0000, .stride = 3, .memory = cl.MEMORY_UIF, .load = false, .store = true },
+        .resolve = .{ .image = 0x40_0000, .stride = 400 },
+    };
+    writeTileList(&list, &frame, false);
+    const Seen = struct { code: u8, fields: u64, address: u32 };
+    const seen = struct {
+        fn at(bytes: []const u8, place: usize) Seen {
+            return .{ .code = bytes[place], .fields = std.mem.readInt(u64, bytes[place + 1 ..][0..8], .little), .address = std.mem.readInt(u32, bytes[place + 9 ..][0..4], .little) };
+        }
+    }.at;
+    // No load: END_OF_LOADS at once, the list's format, then the depth's
+    // store, the resolve's, the colour's.
+    try std.testing.expectEqual(cl.END_OF_LOADS, memory[1]);
+    const depth_store = seen(&memory, 4);
+    const resolve_store = seen(&memory, 17);
+    const color_store = seen(&memory, 30);
+    for ([_]Seen{ depth_store, resolve_store, color_store }) |store| try std.testing.expectEqual(@as(u8, 29), store.code);
+    try std.testing.expectEqual(cl.STORE_Z, depth_store.fields & 0xF);
+    // The average of the four, into rows, red and blue swapped as the
+    // colour's are, at the resolve's own stride.
+    try std.testing.expectEqual(cl.STORE_RENDER_TARGET_0, resolve_store.fields & 0xF);
+    try std.testing.expectEqual(cl.MEMORY_RASTER, resolve_store.fields >> 4 & 7);
+    try std.testing.expectEqual(@as(u64, 1), resolve_store.fields >> 10 & 3);
+    try std.testing.expectEqual(@as(u64, 1), resolve_store.fields >> 20 & 1);
+    try std.testing.expectEqual(@as(u64, 400), resolve_store.fields >> 28 & 0xFFFFF);
+    try std.testing.expectEqual(@as(u32, 0x40_0000), resolve_store.address);
+    // The colour all four, where its level lies.
+    try std.testing.expectEqual(cl.STORE_RENDER_TARGET_0, color_store.fields & 0xF);
+    try std.testing.expectEqual(@as(u64, 3), color_store.fields >> 10 & 3);
+    try std.testing.expectEqual(@as(u32, 0x10_0000), color_store.address);
+    try std.testing.expectEqual(cl.CLEAR_RENDER_TARGETS, memory[43]);
+
+    // 100 by 70 in tiles of 32 is 4 by 3 of them, a supertile each.
+    try std.testing.expectEqual(Supertiles{ .width = 1, .height = 1, .across = 4, .down = 3 }, supertilesOf(&frame));
+    try std.testing.expect(resolvesInTiles(&frame));
+    const Case = struct { area: Area, aligned: bool };
+    for ([_]Case{
+        .{ .area = .{ .left = 32, .top = 32, .right = 96, .bottom = 64 }, .aligned = true },
+        // To the frame's edge, which the tiles pass.
+        .{ .area = .{ .left = 32, .top = 0, .right = 100, .bottom = 70 }, .aligned = true },
+        .{ .area = .{ .left = 16, .top = 0, .right = 100, .bottom = 70 }, .aligned = false },
+        .{ .area = .{ .left = 0, .top = 0, .right = 48, .bottom = 32 }, .aligned = false },
+        .{ .area = .{ .left = 0, .top = 0, .right = 32, .bottom = 40 }, .aligned = false },
+    }) |case| {
+        frame.area = case.area;
+        try std.testing.expectEqual(case.aligned, resolvesInTiles(&frame));
+    }
+    // 2560 by 1440, 80 by 45 tiles: grown to supertiles of 4 by 4, 20 by
+    // 12 of them, so a tile's alignment is no longer enough.
+    frame.width = 2560;
+    frame.height = 1440;
+    try std.testing.expectEqual(Supertiles{ .width = 4, .height = 4, .across = 20, .down = 12 }, supertilesOf(&frame));
+    frame.area = .{ .left = 128, .top = 128, .right = 256, .bottom = 256 };
+    try std.testing.expect(resolvesInTiles(&frame));
+    frame.area = .{ .left = 32, .top = 32, .right = 64, .bottom = 64 };
+    try std.testing.expect(!resolvesInTiles(&frame));
 }

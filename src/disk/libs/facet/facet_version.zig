@@ -4290,4 +4290,40 @@ pub const LIBRARY_VERSION = 1;
 /// Tests: the V3D's 144, one new: a frame of four's tile list loads and
 /// stores all four samples, the colour in its level's tiling and the
 /// depth where it is kept, and a frame of one the first, in rows.
-pub const LIBRARY_REVISION = 147;
+///
+/// 148: **The V3D draws four samples a pixel and resolves them in its
+/// tiles (docs/facet-vulkan10.md item 61, step V5).** `can.multisampling`
+/// is on there, so its framebuffer masks say four with one; it samples no
+/// image of four yet (step V7), and its own describe holds the sampled
+/// colour and depth masks to one, which `narrowSampleCounts` did for it
+/// before.
+///
+/// - A subpass of four whose colour has a resolve attachment has the tiles
+///   store the colour's average into it as each ends, before the colour
+///   itself, as v3dv stores a resolve (v3dvx_cmd_buffer.c:640-686): a
+///   store at "Decimate" four into the attachment's rows (`Frame.resolve`).
+/// - Only where every tile the renderer renders lies inside the render
+///   area or over the framebuffer's edge (`frame.resolvesInTiles`). v3dv
+///   asks that of its tiles (`v3dv_subpass_area_is_tile_aligned`,
+///   v3dv_pass.c:663-683); facet asks it of its supertiles, which the
+///   renderer renders whole wherever the area touches them, as v3dv's
+///   does (v3dvx_cmd_buffer.c:771-795), so that no tile averages into the
+///   attachment outside the area. `frame.supertilesOf` is the sizing the
+///   renderer's list had, as v3dv's (v3dv_cmd_buffer.c:421-446).
+/// - Elsewhere the CPU resolves the area after the frame, from the four
+///   samples it stored, as v3dv falls back to CmdResolveImage's path after
+///   the job (`cmd_buffer_subpass_handle_pending_resolves`,
+///   v3dv_cmd_buffer.c:957-1005): `_transfer.resolveRectangle`, the body
+///   of CmdResolveImage's region, which stays on the CPU here too.
+/// - What is shown is the resolve attachment where there is one, as on
+///   the cores: a swapchain's image is of one sample.
+/// - `standardSampleLocations` stays true on both devices: v3d's compiler
+///   places the four at Vulkan's standard places (nir_to_vir.c:3111-3134)
+///   though v3dv says false (v3dv_device.c:1202), and FacetBoth 1.16
+///   compares the V3D's edges with the cores', which take those places.
+///
+/// Tests: the V3D's 145, one new: a frame that resolves stores the
+/// average into rows at the resolve's stride, after the depth and before
+/// the colour, and resolves in its tiles only over whole supertiles, the
+/// 4 x 4 tiles of one at 2560 x 1440 among them.
+pub const LIBRARY_REVISION = 148;

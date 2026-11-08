@@ -145,6 +145,18 @@ pub const Player = struct {
     kept_first: usize = 0,
     /// And how many bytes of it the frame reaches.
     kept_bytes: usize = 0,
+    /// The layer of its colour's image the frame draws into, the one its
+    /// view begins at (since 1.148).
+    color_layer: u32 = 0,
+    /// The colour's resolve attachment in a frame of four, or null for
+    /// none: averaged into by the tiles as they end where the frame has a
+    /// `Frame.resolve`, and by the CPU after the frame where it has not
+    /// (since 1.148).
+    resolve_view: ?*const _image.ImageView = null,
+    /// The first byte of its rows the tiles store into, and how many, for
+    /// the caches either side of the job.
+    resolve_first: usize = 0,
+    resolve_bytes: usize = 0,
     /// The occlusion query being counted into, or null for none: what
     /// CmdBeginQuery begins and CmdEndQuery ends (since 1.47).
     counting: ?_queries.Counting = null,
@@ -293,9 +305,11 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
             _transfer.blitImage(command);
             texturesToGpu(queue, command.destination);
         },
-        // On the cores' body until the V3D resolves in its tile buffer
-        // (docs/facet-vulkan10.md item 61, step V5). It makes no image of
-        // four samples before step V3, so until then this resolves nothing.
+        // On the cores' body, which reads each sample where this device
+        // keeps it (`_image.sampleOf`, since 1.146). A pass's resolve is in
+        // the tiles since 1.148; v3dv does this command in them too, with a
+        // job of its own (`resolve_image_tlb`, v3dv_meta_copy.c:5109),
+        // which is yet to be ported.
         .resolve_image => {
             const command = _stream.as(_command.ResolveImage, head);
             _transfer.resolveImage(command);
@@ -616,6 +630,30 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
         .four = four,
         .tile = tile,
     };
+    player.color_layer = framebuffer.colors[0].base_layer;
+    // The colour's resolve attachment, in a frame of four. The tiles
+    // average its samples into it as each ends where every tile they
+    // render lies inside the area, and the CPU does after the frame where
+    // one does not, as v3dv resolves in the TLB only over a render area
+    // aligned to its tiles and with a job of its own after the frame
+    // otherwise (`use_tlb_resolve`, v3dv_cmd_buffer.c:1184-1203). A
+    // resolve attachment is of the colour's format and of one sample
+    // (VUID-VkSubpassDescription-pResolveAttachments-00849, -00850), and
+    // here in rows, an image drawn into being kept in rows on this device
+    // (`_image.create`); one of any other shape is not resolved into.
+    player.resolve_view = null;
+    if (four) if (framebuffer.resolves[0]) |view| resolve: {
+        const into = view.image;
+        if (into.samples != 1 or into.format != image.format or into.kind != .rows or !_image.readable(into)) break :resolve;
+        player.resolve_view = view;
+        if (!frames.resolvesInTiles(&player.frame)) break :resolve;
+        const at = addressOf(queue, into);
+        if (at == 0) break :resolve;
+        const rows = _image.rowsAt(into, view.base_level, view.base_layer);
+        player.resolve_first = rows.at;
+        player.resolve_bytes = @as(usize, rows.pitch) * framebuffer.height;
+        player.frame.resolve = .{ .image = at + @as(u32, @intCast(rows.at)), .stride = rows.pitch };
+    };
     player.bin = .{ .at = list.cpu, .address = list.address };
     player.binned = false;
     frames.beginBin(&player.bin, &player.frame);
@@ -826,6 +864,8 @@ fn endRenderPass(queue: *Queue) void {
     // landed over what the V3D stored, where only a load sent it out.
     const kept_bytes: usize = if (player.frame.kept != null) player.kept_bytes else 0;
     if (player.frame.kept != null) space.rangeToGpu(player.kept_image.?.data.? + player.kept_first, kept_bytes);
+    // And the rows the tiles resolve into, for the same reason.
+    if (player.frame.resolve != null) space.rangeToGpu(player.resolve_view.?.image.data.? + player.resolve_first, player.resolve_bytes);
 
     sys.ObtainSemaphore(&device.base.v3d_lock);
     defer sys.ReleaseSemaphore(&device.base.v3d_lock);
@@ -845,10 +885,23 @@ fn endRenderPass(queue: *Queue) void {
     const rendered = engine.render(render.address, render.here());
     space.rangeFromGpu(image.data.? + player.image_first, image_bytes);
     if (player.frame.kept) |kept| if (kept.store) space.rangeFromGpu(player.kept_image.?.data.? + player.kept_first, kept_bytes);
+    if (player.frame.resolve != null) space.rangeFromGpu(player.resolve_view.?.image.data.? + player.resolve_first, player.resolve_bytes);
     addTallies(player, space);
     if (rendered != .done) return lost(player, sys, rendered, "rendering");
-    if (image.display) |display| {
-        const area = player.area;
+    // A resolve the tiles could not do, over the render area, from the
+    // samples the frame stored, as v3dv finishes the job and then resolves
+    // what its tiles did not by CmdResolveImage's own path
+    // (`cmd_buffer_subpass_handle_pending_resolves`,
+    // v3dv_cmd_buffer.c:957-1005): here that path's body on the CPU
+    // (`_transfer.resolveRectangle`).
+    const area = player.area;
+    if (player.resolve_view) |view| if (player.frame.resolve == null) {
+        _transfer.resolveRectangle(image, player.color_layer, .{ area.left, area.top }, view.image, view.base_level, view.base_layer, .{ area.left, area.top }, area.right - area.left, area.bottom - area.top);
+    };
+    // What is shown is the resolve where there is one, as the cores show
+    // it (`cpu/_play.zig`), a swapchain's image being of one sample.
+    const shown = if (player.resolve_view) |view| view.image else image;
+    if (shown.display) |display| {
         display.handOn(area.left, area.top, area.right - area.left, area.bottom - area.top);
     }
 }
