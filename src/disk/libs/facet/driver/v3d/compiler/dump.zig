@@ -6,9 +6,7 @@
 //! tmud for a magic address), its signals, and the uniform it reads.
 //!
 //! Mesa prints a float with C's "%f", which `float` does here, and a
-//! string it has no name for as glibc does, "(null)". The pressure
-//! columns vir_dump prints beside each instruction once the live ranges
-//! are known come with the port of vir_live_variables.c.
+//! string it has no name for as glibc does, "(null)".
 
 const std = @import("std");
 const instr = @import("../qpu/instr.zig");
@@ -203,16 +201,56 @@ pub fn inst(w: *Writer, c: *const Compile, each: *const Inst) Writer.Error!void 
     }
 }
 
+/// A number as C's "%4d" prints it: Zig gives a signed one a sign of its
+/// own when a width is asked for, "+1", where C prints "   1".
+fn cInt(w: *Writer, value: i32) Writer.Error!void {
+    if (value >= 0) {
+        try w.print("{d:>4}", .{@as(u32, @intCast(value))});
+    } else {
+        try w.print("{d:>4}", .{value});
+    }
+}
+
 /// Every block, its instructions a line each and the blocks it goes on
-/// to (vir_dump, vir_dump.c:378).
+/// to (vir_dump, vir_dump.c:378). Where the live ranges hold, each line
+/// starts with the registers live there (P), the temporaries whose range
+/// starts there, each one that may be spilled (S) or not (U), and those
+/// whose range ends there (E).
 pub fn program(w: *Writer, c: *Compile) Writer.Error!void {
+    var ip: i32 = 0;
+    var pressure: i32 = 0;
     var blocks = c.eachBlock();
     while (blocks.next()) |block| {
         try w.print("BLOCK {d}:\n", .{block.index});
         var insts = vir.eachInst(block);
         while (insts.next()) |each| {
+            if (c.live_intervals_valid) {
+                for (c.temp_start[0..c.num_temps]) |start| {
+                    if (start == ip) pressure += 1;
+                }
+                try w.writeAll("P");
+                try cInt(w, pressure);
+                try w.writeAll(" ");
+                var first = true;
+                for (c.temp_start[0..c.num_temps], 0..) |start, i| {
+                    if (start != ip) continue;
+                    if (first) first = false else try w.writeAll(", ");
+                    try w.print("{c}{d:>4}", .{ @as(u8, if (vir.bitsetTest(c.spillable, i)) 'S' else 'U'), i });
+                }
+                try w.writeAll(if (first) "      " else " ");
+
+                first = true;
+                for (c.temp_end[0..c.num_temps], 0..) |end, i| {
+                    if (end != ip) continue;
+                    if (first) first = false else try w.writeAll(", ");
+                    try w.print("E{d:>4}", .{i});
+                    pressure -= 1;
+                }
+                try w.writeAll(if (first) "      " else " ");
+            }
             try inst(w, c, each);
             try w.writeAll("\n");
+            ip += 1;
         }
         if (block.successors[1]) |second| {
             try w.print("-> BLOCK {d}, {d}\n", .{ block.successors[0].?.index, second.index });

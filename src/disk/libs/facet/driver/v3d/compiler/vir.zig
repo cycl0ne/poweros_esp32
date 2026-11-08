@@ -171,8 +171,6 @@ pub fn unitDataGetOffset(data: u32) u32 {
 }
 
 /// A basic block of VIR instructions (struct qblock, v3d_compiler.h:463).
-/// What the liveness analysis keeps in it comes with the port of
-/// vir_live_variables.c.
 pub const Block = struct {
     /// Its place in the compile's `blocks`.
     link: Link = .{},
@@ -193,6 +191,20 @@ pub const Block = struct {
     /// The branch that ends it was emitted already, by a break or a
     /// continue.
     branch_emitted: bool = false,
+    /// What the liveness analysis (live.zig) keeps, a bit for each
+    /// temporary: those the block defines whole before reading them, those
+    /// it or a block before it defines in part, those it reads before
+    /// defining them, and those live where it starts and where it ends.
+    def: []u32 = &.{},
+    defin: []u32 = &.{},
+    defout: []u32 = &.{},
+    use: []u32 = &.{},
+    live_in: []u32 = &.{},
+    live_out: []u32 = &.{},
+    /// Its instructions' places in the program: the first, and the one
+    /// after the last.
+    start_ip: i32 = 0,
+    end_ip: i32 = 0,
     /// The block made before it, so that `destroy` finds every block made,
     /// as ralloc has them as the compile's children.
     made_before: ?*Block = null,
@@ -271,7 +283,13 @@ pub const Compile = struct {
     /// and dropped by anything else that sets them (-1 for none).
     flags_temp: i32 = -1,
     flags_cond: instr.Cond = .none,
+    /// Each temporary's live range, the first and the last instruction it
+    /// is live at (live.zig); `live_intervals_valid` says they hold.
+    temp_start: []i32 = &.{},
+    temp_end: []i32 = &.{},
     live_intervals_valid: bool = false,
+    /// The address each spill and fill is made from, where one is.
+    spill_base: Reg = .{},
 
     /// The thread switch that starts the program's last thread section,
     /// where it has one.
@@ -314,12 +332,15 @@ pub const Compile = struct {
         while (made) |block| {
             made = block.made_before;
             block.predecessors.deinit(allocator);
+            freeLiveness(allocator, block);
             allocator.destroy(block);
         }
         allocator.free(c.defs);
         allocator.free(c.spillable);
         allocator.free(c.uniform_data);
         allocator.free(c.uniform_contents);
+        allocator.free(c.temp_start);
+        allocator.free(c.temp_end);
         allocator.free(c.qpu_insts);
         allocator.destroy(c);
     }
@@ -733,6 +754,14 @@ pub const Compile = struct {
         return .{ .blocks = c.eachBlock() };
     }
 };
+
+/// What the liveness analysis keeps in a block, given back.
+pub fn freeLiveness(allocator: std.mem.Allocator, block: *Block) void {
+    inline for (.{ "def", "defin", "defout", "use", "live_in", "live_out" }) |field| {
+        allocator.free(@field(block, field));
+        @field(block, field) = &.{};
+    }
+}
 
 /// vir_has_uniform (v3d_compiler.h:1102).
 pub fn hasUniform(inst: *const Inst) bool {

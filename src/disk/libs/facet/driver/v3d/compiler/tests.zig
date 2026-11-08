@@ -13,6 +13,7 @@ const disasm = @import("../qpu/disasm.zig");
 const vir = @import("vir.zig");
 const dump = @import("dump.zig");
 const to_qpu = @import("to_qpu.zig");
+const live = @import("live.zig");
 const Compile = vir.Compile;
 const Inst = vir.Inst;
 const Reg = vir.Reg;
@@ -448,4 +449,210 @@ test "a program that breaks a rule, or an instruction that does not pack, fails 
         try testing.expectEqual(@as(usize, 8), failure.ip);
         try testing.expectEqual(vir.Result.failed, c.compilation_result);
     }
+}
+
+fn expectRange(c: *const Compile, t: Reg, start: i32, end: i32) !void {
+    try testing.expectEqual(start, c.temp_start[t.index]);
+    try testing.expectEqual(end, c.temp_end[t.index]);
+}
+
+test "a block's ranges run from each definition to its last read, and print with the pressure" {
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    const one = try c.uniformF(1.0);
+    const two = try c.uniformF(2.0);
+    const sum = try c.add(.fadd, .{ one, two });
+    _ = try c.mulDest(.mov, vir.magicReg(.tlb), .{sum});
+    try live.calculateLiveIntervals(c);
+
+    try expectRange(c, one, 0, 2);
+    try expectRange(c, two, 1, 2);
+    try expectRange(c, sum, 2, 3);
+    const block = c.cur_block.?;
+    try testing.expectEqual(@as(u32, 0b111), block.def[0]);
+    try testing.expectEqual(@as(u32, 0), block.use[0] | block.live_in[0] | block.live_out[0]);
+    try testing.expectEqual(@as(i32, 0), block.start_ip);
+    try testing.expectEqual(@as(i32, 4), block.end_ip);
+
+    var buffer: [1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buffer);
+    try dump.program(&w, c);
+    try testing.expectEqualStrings(
+        \\BLOCK 0:
+        \\P   1 S   0       nop t0; ldunif (0x3f800000 / 1.000000)
+        \\P   2 S   1       nop t1; ldunif (0x40000000 / 2.000000)
+        \\P   3 S   2 E   0, E   1 fadd t2, t0, t1
+        \\P   1       E   2 mov tlb, t2
+        \\
+        \\
+    , w.buffered());
+}
+
+test "a value read around a loop is live to the loop's end, as Mesa's two fixed points have it" {
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    const entry = c.cur_block.?;
+    const x = try c.uniformF(1.0);
+    const y = try c.uniformF(2.0);
+    const loop = try c.newBlock();
+    c.setEmitBlock(loop);
+    const sum = try c.add(.fadd, .{ x, y });
+    _ = try c.mulDest(.mov, x, .{sum});
+    const after = try c.newBlock();
+    c.setEmitBlock(after);
+    _ = try c.mulDest(.mov, vir.magicReg(.tlb), .{x});
+    try c.linkBlocks(entry, loop);
+    try c.linkBlocks(loop, loop);
+    try c.linkBlocks(loop, after);
+    try live.calculateLiveIntervals(c);
+
+    // x is read before the loop writes it again, so the loop uses it; y
+    // is only read. Both are live all around the loop.
+    try testing.expectEqual(@as(u32, 0b011), entry.def[0]);
+    try testing.expectEqual(@as(u32, 0b100), loop.def[0]);
+    try testing.expectEqual(@as(u32, 0b011), loop.use[0]);
+    try testing.expectEqual(@as(u32, 0b001), after.use[0]);
+    try testing.expectEqual(@as(u32, 0b000), entry.live_in[0]);
+    try testing.expectEqual(@as(u32, 0b011), entry.live_out[0]);
+    try testing.expectEqual(@as(u32, 0b011), loop.live_in[0]);
+    try testing.expectEqual(@as(u32, 0b011), loop.live_out[0]);
+    try testing.expectEqual(@as(u32, 0b001), after.live_in[0]);
+    try testing.expectEqual(@as(u32, 0b000), after.live_out[0]);
+    // What reaches each block, a definition in part included.
+    try testing.expectEqual(@as(u32, 0b000), entry.defin[0]);
+    try testing.expectEqual(@as(u32, 0b011), entry.defout[0]);
+    try testing.expectEqual(@as(u32, 0b111), loop.defin[0]);
+    try testing.expectEqual(@as(u32, 0b111), loop.defout[0]);
+    try testing.expectEqual(@as(u32, 0b111), after.defin[0]);
+
+    try expectRange(c, x, 0, 4);
+    // y's last read is at 2, but it is live out of the loop's end, at 4.
+    try expectRange(c, y, 1, 4);
+    try expectRange(c, sum, 2, 3);
+}
+
+test "a conditional first write is not live back to the program's start" {
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    const entry = c.cur_block.?;
+    const x = try c.uniformF(1.0);
+    c.setPf(try c.addDest(.fcmp, vir.nopReg(), .{ x, x }), .pushz);
+    const next = try c.newBlock();
+    c.setEmitBlock(next);
+    const t = try c.getTemp();
+    _ = try c.movCond(.ifa, t, x);
+    _ = try c.mulDest(.mov, vir.magicReg(.tlb), .{t});
+    try c.linkBlocks(entry, next);
+    try live.calculateLiveIntervals(c);
+
+    // Read whole after a write under a condition, t is used in the block
+    // and so live into the program; but no definition of it reaches the
+    // block's start, and its range stays its own.
+    try testing.expect(vir.bitsetTest(next.use, t.index));
+    try testing.expect(vir.bitsetTest(entry.live_in, t.index));
+    try testing.expect(!vir.bitsetTest(next.defin, t.index));
+    try expectRange(c, t, 2, 3);
+    try expectRange(c, x, 0, 2);
+}
+
+test "a read under the condition and flags a write was made under is no use of it" {
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    const block = c.cur_block.?;
+    const x = try c.uniformF(1.0);
+    c.setPf(try c.addDest(.fcmp, vir.nopReg(), .{ x, x }), .pushz);
+    const t = try c.getTemp();
+    const u = try c.getTemp();
+    _ = try c.movCond(.ifa, t, x);
+    _ = try c.movCond(.ifa, u, t);
+    try live.calculateLiveIntervals(c);
+    try testing.expect(!vir.bitsetTest(block.use, t.index));
+    try testing.expect(vir.bitsetTest(block.defout, t.index));
+
+    // New flags, and the same condition reads other flags: a use.
+    const v = try c.getTemp();
+    c.setPf(try c.addDest(.fcmp, vir.nopReg(), .{ x, x }), .pushn);
+    _ = try c.movCond(.ifa, v, t);
+    try live.calculateLiveIntervals(c);
+    try testing.expect(vir.bitsetTest(block.use, t.index));
+}
+
+test "a half written is a definition where both halves are, or where the other is never read" {
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    const block = c.cur_block.?;
+    const x = try c.uniformF(1.0);
+
+    // Both halves.
+    const both = try c.getTemp();
+    vir.setPack(try c.addDest(.fadd, both, .{ x, x }), .l);
+    vir.setPack(try c.addDest(.fadd, both, .{ x, x }), .h);
+    _ = try c.mulDest(.mov, vir.magicReg(.tlb), .{both});
+    // The low half, and only the low half read.
+    const low = try c.getTemp();
+    vir.setPack(try c.addDest(.fadd, low, .{ x, x }), .l);
+    vir.setUnpack(try c.mulDest(.fmul, vir.magicReg(.tlb), .{ low, x }), 0, .l);
+    // The low half, and the whole read.
+    const whole = try c.getTemp();
+    vir.setPack(try c.addDest(.fadd, whole, .{ x, x }), .l);
+    _ = try c.mulDest(.mov, vir.magicReg(.tlb), .{whole});
+    try live.calculateLiveIntervals(c);
+
+    try testing.expect(vir.bitsetTest(block.def, both.index));
+    try testing.expect(vir.bitsetTest(block.def, low.index));
+    try testing.expect(!vir.bitsetTest(block.def, whole.index));
+    try testing.expect(vir.bitsetTest(block.use, whole.index));
+    try testing.expect(!vir.bitsetTest(block.use, both.index));
+}
+
+test "a payload register moved into a temporary is live from the start" {
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    _ = try c.uniformF(1.0);
+    _ = try c.nop();
+    const w = try c.mul(.mov, .{vir.reg(.reg, 3)});
+    const r0 = try c.mul(.mov, .{vir.reg(.reg, 0)});
+    _ = try c.add(.fadd, .{ w, r0 });
+    try live.calculateLiveIntervals(c);
+    try expectRange(c, w, 0, 4);
+    try expectRange(c, r0, 3, 4);
+}
+
+test "after a spill the ranges are found again, spill_base's over the loop it is read in" {
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    const entry = c.cur_block.?;
+    const value = try c.uniformF(1.0);
+    const loop = try c.newBlock();
+    c.setEmitBlock(loop);
+    const sum = try c.add(.fadd, .{ value, value });
+    _ = try c.nop();
+    _ = try c.nop();
+    const after = try c.newBlock();
+    c.setEmitBlock(after);
+    _ = try c.nop();
+    try c.linkBlocks(entry, loop);
+    try c.linkBlocks(loop, loop);
+    try c.linkBlocks(loop, after);
+    try live.calculateLiveIntervals(c);
+    const before = c.num_temps;
+
+    // As a spill makes them: the base, loaded at the end of the entry
+    // block, and read at the loop's start.
+    c.cursor = vir.afterBlock(entry);
+    const base = try c.uniform(.spill_offset, 0);
+    c.spill_base = base;
+    c.cursor = vir.beforeInst(defOf(c, sum));
+    const address = try c.add(.add, .{ base, base });
+    try live.updateLiveIntervalsAfterSpill(c, before);
+
+    try testing.expectEqual(@as(i32, 3), defOf(c, sum).ip);
+    try testing.expectEqual(@as(i32, 2), loop.start_ip);
+    try testing.expectEqual(@as(i32, 6), loop.end_ip);
+    try expectRange(c, value, 0, 6);
+    try expectRange(c, sum, 3, 3);
+    // Only its reads would give it 1 to 2; it is live from the start, and
+    // to the loop's end, which goes back to where it is read.
+    try expectRange(c, base, 0, 6);
+    try expectRange(c, address, 2, 2);
 }
