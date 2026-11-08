@@ -191,6 +191,17 @@ pub fn setUpContext(db: *DosBase, proc: *Process, parent: ?*Process, tags: ?[*]c
     else if (parent) |p| (if (p.current_dir) |d| (dos_lib.DupLock(d) orelse return false) else null) else null;
     proc.current_dir = current_dir;
     if (current_dir != null) proc.flags |= x.PRF_FREECURRDIR;
+    // A CLI started in a directory given to it is named after that one,
+    // not after the caller's: empty when the lock has no name to give.
+    if (proc.cli) |c| {
+        if (ub.FindTagItem(dos.NP_CurrentDir, tags) != null) {
+            const name = c.set_name.?;
+            name[0] = 0;
+            if (current_dir) |lock| {
+                if (!dos_lib.NameFromLock(lock, name, @intCast(dos.CLI_MAX_SET_NAME))) name[0] = 0;
+            }
+        }
+    }
     proc.home_dir = if (ub.FindTagItem(dos.NP_HomeDir, tags)) |t|
         @ptrFromInt(t.data)
     else if (parent) |p| (if (p.home_dir) |d| (dos_lib.DupLock(d) orelse return false) else null) else null;

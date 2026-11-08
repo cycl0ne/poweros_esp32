@@ -2321,6 +2321,41 @@ test "CreateNewProc with NP_Cli: a CLI from the parent's, in the process's block
     try tearDown(db);
 }
 
+test "CreateNewProc with NP_Cli and NP_CurrentDir: the CLI named after the directory given, not the caller's" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try RamFs.mount(db, &tp);
+    dl.UnLock(dl.CreateDir("RAMT:d").?);
+    const mine: *dos.CommandLineInterface = @ptrCast(@alignCast(dl.AllocDosObject(dos.DOS_CLI, null).?));
+    tp.proc.cli = mine;
+    try testing.expect(dl.SetCurrentDirName("SYS:"));
+
+    // The lock is the process's from here; its end gives it back.
+    const drawer = dl.Lock("RAMT:d", dos.SHARED_LOCK).?;
+    const tags = [_]TagItem{
+        .{ .tag = dos.NP_Entry, .data = @intFromPtr(&ProcEntry.run) },
+        .{ .tag = dos.NP_Cli, .data = 1 },
+        .{ .tag = dos.NP_CurrentDir, .data = @intFromPtr(drawer) },
+        .{},
+    };
+    const proc = dl.CreateNewProc(&tags).?;
+    try testing.expectEqualStrings("Ram Disk:d", std.mem.span(proc.cli.?.set_name.?));
+    try testing.expectEqual(drawer, proc.current_dir.?);
+    proc.pkt_wait = tp.proc.pkt_wait;
+    runAs(proc);
+    kexec.RemTask(kexec.SysBase, &proc.task);
+
+    tp.proc.cli = null;
+    dl.FreeDosObject(dos.DOS_CLI, mine);
+    try testing.expect(dl.DeleteFile("RAMT:d"));
+    RamFs.disk.deinit();
+    try tearDown(db);
+}
+
 test "AssignLock: a name for a directory; replaced, removed; what it refuses" {
     const db = try setUp();
     defer kexec.deinit();

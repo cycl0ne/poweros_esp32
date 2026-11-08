@@ -1300,7 +1300,9 @@ The Process, its name, its CLI and its stack are one block, which exec
 frees when the process is gone. From a calling process it takes
 pr_ConsoleTask, pr_FileSystemTask and a pr_WindowPtr of 0 or -1. With
 NP_Cli the process gets a CLI with the caller's prompt (or
-CLI_DEFAULT_PROMPT), command name, directory name and fail level, its
+CLI_DEFAULT_PROMPT), command name, directory name - with NP_CurrentDir
+the name of the directory given, empty when it has none - and fail
+level, its
 stack size, the command path of NP_Path or of the caller's CLI (each
 node's lock copied), and the lowest free CLI number in pr_TaskNum -
 which is also put after its name, as " [n]", so that two shells can be
@@ -1314,7 +1316,8 @@ the block freed.
 
 **CONTEXT**
 
-- Waits: yes: DupLock sends packets, and the CLI table is a semaphore.
+- Waits: yes: DupLock and NameFromLock send packets, and the CLI table
+  is a semaphore.
 - Interrupts: no.
 - Locks: no spinlock may be held.
 - Process: a Task will do; it then passes nothing on and there is
