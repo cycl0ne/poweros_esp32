@@ -23,8 +23,30 @@ const _image = @import("_image.zig");
 /// - `image` - where the image is written; null when it fails.
 ///
 /// RESULT:
-/// `success`; `error_format_not_supported` for an image facet.library
-/// does not make; `error_out_of_host_memory`.
+/// `success`; `error_validation_failed` for an image that breaks one of
+/// VkImageCreateInfo's rules (since 1.135; `error_format_not_supported`
+/// until then): one GetPhysicalDeviceImageFormatProperties declines, or
+/// one past the extent, the levels, the layers or the samples it answers
+/// (VUID-VkImageCreateInfo-imageCreateMaxMipLevels-02251, -extent-02252,
+/// -extent-02253, -extent-02254, -mipLevels-02255, -arrayLayers-02256,
+/// -samples-02258), that query asking the rules this call keeps - but a
+/// 3D image one slice deep, neither SAMPLED nor STORAGE or a colour or
+/// input attachment written through as a storage image, which the query
+/// declines for the 256 slices it asks and this call makes (-02251
+/// allowing that, creating it being invalid usage; docs/facet-vulkan10.md
+/// item 94); and
+/// whatever it answers, a side, levels or layers of 0 (-extent-00944 to
+/// -extent-00946, -mipLevels-00947, -arrayLayers-00948), a cube that is
+/// not square or has fewer than six layers (-flags-08865, -flags-08866),
+/// more levels than its own extent's chain has (-mipLevels-00958), more
+/// than one sample with more than one level (-samples-02257), or
+/// TRANSIENT_ATTACHMENT beside a usage other than the attachments', or
+/// with none of those (-usage-00963, -usage-00966; made until 1.135).
+/// `error_feature_not_present` for the one kind of image refused that
+/// Vulkan allows: of type `3d`, deeper than it is wide and high, with more
+/// levels than its width and height halve to and no more than its depth
+/// does, which -mipLevels-00958 allows (docs/facet-vulkan10.md item 93;
+/// `error_format_not_supported` until 1.135). `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
 /// What it is for decides how it lies in its memory:
@@ -87,8 +109,8 @@ const _image = @import("_image.zig");
 /// Images are up to 8192 wide and high. One both SAMPLED and
 /// COLOR_ATTACHMENT, or SAMPLED and INPUT_ATTACHMENT, is made on a device
 /// that keeps its images in this library's layout; the V3D's lie in its
-/// own (`Ops.texture_memory`), and there it is
-/// `error_format_not_supported`, as an image of levels kept in rows is.
+/// own (`Ops.texture_memory`), and there it is refused, as an image of
+/// levels kept in rows is.
 ///
 /// **An image may have four samples a pixel** on a device that draws them
 /// (`Capabilities.multisampling`, since 1.98): 2D, optimal, one level and
@@ -112,7 +134,7 @@ const _image = @import("_image.zig");
 /// So a function may seed the rows before a pass draws into them, or write
 /// over them after it, and writing them while the pass that draws into them
 /// is open has no order against that store - as it has none in Vulkan
-/// without a barrier. R8G8B8A8 is `error_format_not_supported` for this: a
+/// without a barrier. R8G8B8A8 is refused for this: a
 /// texture of 8888 is 0xAARRGGBB, as B8G8R8A8's rows are, and the texture
 /// that reads a word with red in its low byte (`texture.Format.rgba8`,
 /// since 1.110) is fetched from, not written through.
@@ -122,9 +144,13 @@ const _image = @import("_image.zig");
 /// A SAMPLED image may have up to 256 layers, or be 3D, of type `3d`, of any
 /// depth up to 256 and with levels of its own (since 1.46): a level is half
 /// as deep as the one before it, and no less than one slice deep, each slice
-/// carrying the whole of its own pyramid. IMAGE_CREATE_CUBE_COMPATIBLE says a
-/// view of type cube, or of cube_array, will be made: of a square image of 6
-/// layers or more, a multiple of six of them for an array of cubes.
+/// carrying the whole of its own pyramid: as many levels as halving its
+/// width and height gives, so one deeper than it is wide and high is
+/// refused the levels past those that its depth gives (docs/facet-vulkan10.md
+/// item 93). IMAGE_CREATE_CUBE_COMPATIBLE says a view of type cube, or of
+/// cube_array, will be made: of a square image of 6 layers or more, six of
+/// them for a cube and a multiple of six for an array of cubes, from any
+/// layer.
 ///
 /// A STORAGE image may have layers and levels the same way, and since
 /// 1.55 needs no SAMPLED beside it to have them: a function writing one
@@ -198,7 +224,7 @@ const _image = @import("_image.zig");
 ///   for `rgba8888` draws it through the run-time sampler as it does any
 ///   other format it was not built for.
 ///
-/// Both are `error_format_not_supported` where the device has not got
+/// Both are refused where the device has not got
 /// them, and so is the flag on an image that is neither sampled nor a
 /// storage image, or whose format has no 8888 word to keep.
 ///
@@ -209,7 +235,7 @@ const _image = @import("_image.zig");
 /// (CreateImageView). Its texels are kept as they lie - B8G8R8A8's as the
 /// word PACKED_TEXELS keeps, R8G8B8A8's as its four bytes - so that each
 /// such view reads and writes the same bytes its own way, and copies move
-/// them as they are. It is `error_format_not_supported` where a compatible
+/// them as they are. It is refused where a compatible
 /// format whose features take the image's usage could not be read where
 /// the texels lie: an R5G6B5 image to sample, B4G4R4A4 being sampled and
 /// kept unpacked, while one only drawn into is made. So it is on a format
@@ -249,7 +275,19 @@ const _image = @import("_image.zig");
 /// ```
 pub fn CreateImage(base: *FacetBase, device: *facet.Device, info: *const facet.ImageCreateInfo, image: *?*facet.Image) facet.Result {
     image.* = null;
-    const shape = _image.shapeOf(_objects.of(Device, device), info) orelse return .error_format_not_supported;
+    const owner = _objects.of(Device, device);
+    // TRANSIENT_ATTACHMENT with none of the attachments' usage
+    // (VUID-VkImageCreateInfo-usage-00966), refused here rather than by
+    // `_image.shapeOf`: the format query asks those rules, and Vulkan has
+    // it answer no more strictly for TRANSIENT alone than for TRANSIENT
+    // beside an attachment ("Additional Image Capabilities"). Since 1.135.
+    const attachments = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT;
+    if (info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT != 0 and info.usage & attachments == 0) return .error_validation_failed;
+    // Every image refused breaks one of VkImageCreateInfo's rules, the
+    // format query's limits among them, but a 3D image's levels past its
+    // sides, which Vulkan allows (item 93).
+    const shape = _image.shapeOf(owner, info) orelse
+        return if (_image.levelsPastSides(owner.physical, info)) .error_feature_not_present else .error_validation_failed;
     const made = _objects.create(base.sys_base, _image.Image) orelse return .error_out_of_host_memory;
     made.* = shape;
     image.* = _objects.handle(facet.Image, made);

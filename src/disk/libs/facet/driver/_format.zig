@@ -138,16 +138,29 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         // and this promised an attachment of both there that a pass then
         // refused. A copy stands either way: a transfer reads and writes
         // the rows whatever a pass can do with them.
+        //
+        // Sampled where the device samples a depth, since 1.135, as
+        // CreateImage has made an image of either sampled since 1.58: each
+        // plane through a view of its aspect (CreateImageView), the stencil
+        // read as the whole number it is and never filtered, a depth's
+        // FILTER_LINEAR being its depth plane's alone. Until then neither
+        // said SAMPLED_IMAGE, which Vulkan has a sampled image's format
+        // hold (Table 102, "Format Feature Dependent Image Usage Flags");
+        // lavapipe says it of every depth/stencil format
+        // (`lvp_physical_device_get_format_properties`,
+        // src/gallium/frontends/lavapipe/lvp_formats.c:93-104).
         .s8_uint => .{
             .linear_tiling_features = 0,
             .optimal_tiling_features = transfer |
-                if (can.stored_stencil) facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT else 0,
+                (if (can.stored_stencil) facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT else 0) |
+                (if (can.sampled_depth) facet.FORMAT_FEATURE_SAMPLED_IMAGE else 0),
             .buffer_features = 0,
         },
         .d16_unorm_s8_uint => .{
             .linear_tiling_features = 0,
             .optimal_tiling_features = transfer |
-                if (can.stored_both) facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT else 0,
+                (if (can.stored_both) facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT else 0) |
+                (if (can.sampled_depth) depth_sampled else 0),
             .buffer_features = 0,
         },
         // Compressed: sampled and written, and read back as well where the

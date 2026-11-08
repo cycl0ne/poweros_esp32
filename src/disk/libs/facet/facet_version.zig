@@ -3639,4 +3639,127 @@ pub const LIBRARY_VERSION = 1;
 /// opens a screen or runs the V3D, so the screen's records not had and the
 /// V3D's pipeline that draws nothing are not among them. C:test/FacetProbe
 /// expects the new code for five refusals.
-pub const LIBRARY_REVISION = 134;
+///
+/// 135: **What breaks Vulkan's rules and answered
+/// `error_format_not_supported` is `error_validation_failed`.** The second
+/// half of item 91 of docs/facet-vulkan10.md. Core Vulkan lists
+/// `VK_ERROR_FORMAT_NOT_SUPPORTED` for the format queries alone, and facet
+/// answered it at 23 places besides GetPhysicalDeviceImageFormatProperties,
+/// which alone answers it now, for a shape there is no image of.
+///
+/// Moved, 22 places: CreateImageView's 16 - a format the image takes no
+/// view of, a swizzle none of Vulkan's, levels or layers the image has not
+/// got or none of them, a type that is none of Vulkan's or that the image
+/// or the layers asked for do not take, an image not bound, and a plane
+/// its format has not got; CreateRenderPass's 3, an attachment whose
+/// format's features have not got what its use asks; CreateBufferView's
+/// format no view takes; CreateGraphicsPipelines's attribute format; and
+/// CreateSwapchain's format that is not the surface's, which is fixed as
+/// the surface is made, so that nothing outside the program changes it.
+///
+/// Split, 1: CreateImage's. GetPhysicalDeviceImageFormatProperties asks
+/// the rules CreateImage keeps (`_image.shapeFor`), so an image CreateImage
+/// refuses is one that query declines
+/// (VUID-VkImageCreateInfo-imageCreateMaxMipLevels-02251), one past the
+/// extent, levels, layers or samples it answers (-extent-02252 to
+/// -extent-02254, -mipLevels-02255, -arrayLayers-02256, -samples-02258),
+/// or one VkImageCreateInfo's own rules forbid whatever it answers: a
+/// side, levels or layers of 0 (-extent-00944 to -extent-00946,
+/// -mipLevels-00947, -arrayLayers-00948), a cube that is not square or of
+/// fewer than six layers (-flags-08865, -flags-08866), more levels than
+/// its own extent's chain (-mipLevels-00958), more than one sample with
+/// more than one level (-samples-02257), or TRANSIENT_ATTACHMENT beside
+/// other usage or with no attachment usage (-usage-00963, -usage-00966).
+/// All are `error_validation_failed` but one kind, which Vulkan allows: a
+/// 3D image deeper than it is wide and high, of more levels than its width
+/// and height halve to and no more than its depth does (-mipLevels-00958
+/// counts the depth), which the layout here, halving the width and height
+/// alone, has no levels for. It is `error_feature_not_present`, until
+/// item 93 (`_image.levelsPastSides`).
+///
+/// Two of CreateImageView's refused what Vulkan allows, and take it now:
+/// - A 3D view of one layer. A 3D image has one layer to Vulkan
+///   (VUID-VkImageCreateInfo-imageType-00961), and a view's range was held
+///   to the image's depth, which this library keeps as its layers: a
+///   `layer_count` of 1 was refused for an image deeper than a slice, and
+///   one of the whole depth, which Vulkan forbids (-imageViewType-04973),
+///   taken. The range is held to the one layer, as Mesa's is
+///   (`vk_image_view_init`, src/vulkan/runtime/vk_image.c:671), and the
+///   view holds every slice, as v3dv's texture state is given the depth
+///   of the image's first level and the view's first level apart from it
+///   (src/broadcom/vulkan/v3dvx_image.c:68, :79-80).
+/// - A cube array from any layer. Vulkan counts a cube array's faces from
+///   `baseArrayLayer` and asks a multiple of six of the count alone, and
+///   the first layer had to be one as well. The view's texture begins at
+///   its first layer already, as lavapipe's does
+///   (`lvp_create_samplerview`, src/gallium/frontends/lavapipe/lvp_image.c:372-375).
+///
+/// Found while reading the VUIDs:
+/// - A 3D view from a level past the first had the whole depth's slices
+///   at it, so a sample spread `r` over slices that level has not got,
+///   which no copy wrote. It has the slices of its first level now, as
+///   Mesa's view has the extent of its first level and is as deep as that
+///   (vk_image.c:648-649, :695).
+/// - TRANSIENT_ATTACHMENT was taken beside usage Vulkan does not allow
+///   with it - a depth attachment's beside the transfers, a colour image's
+///   beside them, SAMPLED or STORAGE - and on an image of no attachment
+///   usage (VUID-VkImageCreateInfo-usage-00963, -usage-00966). CreateImage
+///   refuses both. The format query declines the first; the second it
+///   answers as it answers the transfers alone, which is no more strictly
+///   than TRANSIENT beside a colour attachment, as Vulkan has a usage
+///   within another be answered ("Additional Image Capabilities"), so
+///   CreateImage asks that rule itself, and a
+///   mutable image's views are asked by its attachment's feature, TRANSIENT
+///   being no view's usage of its own (`_image.viewable`).
+/// - CreateImageView looked at a depth image's binding and aspect only
+///   where the view reads it, though its RESULT named the binding rule
+///   for every image, and at a colour image's aspect not at all: a view
+///   of a depth attachment never bound, of a plane its format has not
+///   got, or of a depth or a stencil of a colour image was made. Each is
+///   `error_validation_failed` (VUID-VkImageViewCreateInfo-image-01020,
+///   -subresourceRange-09594).
+///   BindImageMemory sets `memory` for the lazily allocated type too, so
+///   a transient depth attachment bound there is bound, and its view made.
+/// - On a device that keeps no format of both planes (`stored_both`, the
+///   V3D), CreateRenderPass answered `error_feature_not_present` for a
+///   d16_unorm_s8_uint depth attachment loaded, stored or kept for another
+///   subpass. That device's format query gives the format no
+///   DEPTH_STENCIL_ATTACHMENT, so each breaks
+///   VUID-VkSubpassDescription-pDepthStencilAttachment-02650:
+///   `error_validation_failed`. One that keeps neither plane is drawn in
+///   the tiles, as before (docs/facet-vulkan10.md item 94). One read as an
+///   input attachment after the subpass that drew it breaks
+///   -pInputAttachments-02647 there and is `error_validation_failed` too,
+///   on such a device that reads a depth as an input attachment; none
+///   does, the V3D answering `error_feature_not_present` for any input
+///   attachment, as before.
+/// - S8_UINT and D16_UNORM_S8_UINT did not say SAMPLED_IMAGE, although
+///   CreateImage has made either sampled since 1.58 and Vulkan has a
+///   sampled image's format say it (Table 102). On a device that samples
+///   a depth they say it now, and the second its depth plane's
+///   FILTER_LINEAR, as lavapipe's do
+///   (`lvp_physical_device_get_format_properties`,
+///   src/gallium/frontends/lavapipe/lvp_formats.c:93-104).
+///
+/// Tests: the 57 expectations that answered error_format_not_supported here
+/// expect error_validation_failed, and so do FacetProbe's five. New ones
+/// ask what no test asked before - views of levels, layers, types and cube
+/// arrays an image does not take, of an image not bound, of an aspect its
+/// format has not got and of a format its kind does not read;
+/// TRANSIENT_ATTACHMENT beside the transfers, SAMPLED or STORAGE, at four
+/// samples and alone, with the format query's answer for each; a 3D image
+/// of more levels than its sides give; a swapchain on a display of no
+/// format facet draws in, asked for the display's own; and a kept
+/// D16_UNORM_S8_UINT attachment on a device without stored_both - and check
+/// the fixes: a 3D view of one layer holding every slice, and one from the
+/// second level sampling that level's two slices; a cube array from the
+/// third layer; S8_UINT and D16_UNORM_S8_UINT saying SAMPLED_IMAGE where a
+/// depth is sampled and nowhere else. Each of 47 changes put back alone
+/// fails them but two, the refusals of a sampled depth's plane and of an
+/// input attachment's rows, which the binding and aspect checks before them
+/// leave nothing to refuse: those are asserted now. No host test runs the
+/// V3D, so its kept D16_UNORM_S8_UINT is asked of a host device without
+/// stored_both. C:test/FacetProbe has not run on the board yet: the board
+/// runs main's kernel, whose Task this branch's programs do not match until
+/// main is merged in.
+pub const LIBRARY_REVISION = 135;

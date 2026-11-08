@@ -206,7 +206,11 @@ test "a surface: its size, one format, fifo, and as many images as it has room f
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceSurfaceSupport(bench.physical, 0, bench.surface, &supported));
     try testing.expect(!supported);
     const result, _ = bench.swapchain(2, null);
-    try testing.expectEqual(facet.Result.error_format_not_supported, result);
+    try testing.expectEqual(facet.Result.error_validation_failed, result);
+    // Asked for the format the display is, still no format the surface
+    // gives (VUID-VkSwapchainCreateInfoKHR-surface-01270).
+    const same, _ = bench.swapchainOf(2, null, .undefined);
+    try testing.expectEqual(facet.Result.error_validation_failed, same);
 }
 
 test "a display of 565: its format, a swapchain of it, what is drawn dithered into its pixels" {
@@ -219,7 +223,7 @@ test "a display of 565: its format, a swapchain of it, what is drawn dithered in
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceSurfaceFormats(bench.physical, bench.surface, &count, &format));
     try testing.expectEqual(facet.Format.r5g6b5_unorm_pack16, format[0].format);
     var made, var swapchain = bench.swapchainOf(2, null, .b8g8r8a8_unorm);
-    try testing.expectEqual(facet.Result.error_format_not_supported, made);
+    try testing.expectEqual(facet.Result.error_validation_failed, made);
     made, swapchain = bench.swapchainOf(2, null, .r5g6b5_unorm_pack16);
     try testing.expectEqual(facet.Result.success, made);
     defer fb.DestroySwapchain(bench.device, swapchain);

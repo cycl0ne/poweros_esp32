@@ -953,7 +953,7 @@ across. CreateImage and the format query alike panicked there. A
 compressed level's gap is now none, since only the walk over uncompressed
 texels reads it, and a compressed 1D image is refused, as both Mesa
 drivers refuse one (`lvp_get_image_format_properties`, lvp_formats.c:347-349;
-`v3dv_get_image_format_properties`, v3dv_formats.c:598-602). Vulkan's
+`get_image_format_properties`, v3dv_formats.c:598-602). Vulkan's
 compressed format tables are the ones scoped away from 1D, so no
 requirement is lost. Item 61's sweep of the format query found it.
 
@@ -1312,9 +1312,11 @@ forms, R16_SFLOAT, R16G16_SFLOAT and R32G32_SFLOAT (37).
 
 *formats / vertex input* &mdash; conformance-blocking, medium
 
-Vulkan mandates VERTEX_BUFFER for 45 formats; facet reports and implements 6. This is the best value in the formats strand: pure CPU work with no hardware in the way, since the vertex stage runs on the cores for both devices. One decode arm per format family — _unorm, _snorm, _uint, _sint, _sfloat at 8/16/32 bits, one to four channels, plus the packed 32-bit words. Note the narrowness is currently asserted by two tests, so they have to move with it.
+Vulkan mandates VERTEX_BUFFER for 45 formats; facet reports and implements 6. This is the best value in the formats strand: pure CPU work with no hardware in the way, since the vertex stage runs on the cores for both devices. One decode arm per format family — _unorm, _snorm, _uint, _sint, _sfloat at 8/16/32 bits, one to four channels, plus the packed 32-bit words. Note the narrowness is currently asserted by tests, so they have to move with it.
 
 > Verified verbatim: pipeline/_pipeline.zig:219-224 `attributeFormat` returns true for exactly `.r32_sfloat, .r32g32_sfloat, .r32g32b32_sfloat, .r32g32b32a32_sfloat, .r8g8b8a8_unorm, .b8g8r8a8_unorm`; :228-250 `decode` has arms for only those six and silently returns (0,0,0,1) otherwise; creategraphicspipelines.zig:315 refuses the rest. Tests assert the narrowness at tests/draw.zig:3256-3261 and src/disk/c/test/raster/facetprobe.zig:1278.
+>
+> Again on 08.11.2026, the lines having moved: `attributeFormat` is pipeline/_pipeline.zig:260-265 and `decode` :269-291, the six alike; creategraphicspipelines.zig:410 refuses the rest, with `error_validation_failed` since 1.135 (VUID-VkVertexInputAttributeDescription-format-00623: the six are the formats whose features say VERTEX_BUFFER). The tests that assert it have moved but are still there: draw.zig:3256-3261 is tests/draw.zig:3827-3831 (no format of the texel-buffer grid, most of them among the 45, says VERTEX_BUFFER), and facetprobe.zig:1278 is src/disk/c/test/raster/facetprobe.zig:1416, checked at :1436 ("and none of them a vertex format"); tests/draw.zig:16310 expects R8_UNORM's buffer features to be the two texel bits alone. tests/draw.zig:1419-1420 refuses an attribute of r5g6b5_unorm_pack16, which is not among the 45 and stays refused.
 
 ### 34. Make the sRGB, A8B8G8R8_PACK32 and 2-10-10-10 formats real images, not only texel buffers
 
@@ -2797,7 +2799,7 @@ than their format, and a block image and a texel one a region counted in blocks 
 the one side and in texels on the other, as Vulkan size-adjusts the
 destination's offset and extent (26.3).
 
-> Verified: driver/_transfer.zig:39-40 `if (_image.blocked(source) or _image.blocked(destination)) { if (source.format == destination.format) copyBlocks(command, source, destination);`, :47 `if (_image.keptTexels(source) != _image.keptTexels(destination)) return;`, :48 `if (_image.keptTexels(source) and source.format != destination.format) return;`; image/_image.zig:1180-1182, `keptTexels` is a float format, one of wide channels or one of whole numbers.
+> Verified: driver/_transfer.zig:39-40 `if (_image.blocked(source) or _image.blocked(destination)) { if (source.format == destination.format) copyBlocks(command, source, destination);`, :47 `if (_image.keptTexels(source) != _image.keptTexels(destination)) return;`, :48 `if (_image.keptTexels(source) and source.format != destination.format) return;`; image/_image.zig:1220-1222, `keptTexels` is a float format, one of wide channels or one of whole numbers.
 
 **Done in 1.132**, in 53 lines of code and 114 of tests, as lavapipe
 copies: every region goes to `resource_copy_region`, which llvmpipe
@@ -2817,7 +2819,7 @@ takes nothing, as two uncompressed images of two sizes already did.
 
 ### 91. error_initialization_failed and error_format_not_supported are answered for invalid usage, from calls Vulkan does not list them for
 
-*result codes* &mdash; conformance-blocking, medium, found while doing item 81 &mdash; **first half done in 1.134**
+*result codes* &mdash; conformance-blocking, medium, found while doing item 81 &mdash; **done in 1.134 and 1.135**; what the reviews found beside it is 1.136's
 
 Item 81 moved the refusals that answered `error_feature_not_present` for
 invalid usage to `error_validation_failed`. Two more codes do the same
@@ -2836,8 +2838,8 @@ vkCreateSwapchainKHR and some calls of extensions, not for most of
 those. `error_format_not_supported` is answered at 23 places besides
 GetPhysicalDeviceImageFormatProperties - CreateImageView 16,
 CreateRenderPass 3, and CreateImage, CreateBufferView, CreateSwapchain
-and CreateGraphicsPipelines one each - and Vulkan lists it for the format
-queries alone.
+and CreateGraphicsPipelines one each - and core Vulkan lists it for the
+format queries alone.
 
 The work is item 81's: each place's VUID read, and
 `error_validation_failed` where one forbids what was asked. Where none
@@ -2997,24 +2999,177 @@ Reading the VUIDs found more than the 66:
   holds every view to Vulkan's rules before it answers a level it cannot
   draw into.
 
-The second half, `error_format_not_supported`, is still to do, and
-1.135's. A review of the first half found more that answers a code
-Vulkan's rules do not give it, left for the second half or their own
-items, each to be read as the 66 were:
+**The second half, `error_format_not_supported`, done in 1.135**, in
+57 lines of code, 257 of tests and 12 of FacetProbe, comments aside. The
+count of 23 was right, and GetPhysicalDeviceImageFormatProperties alone
+answers the code now, for a shape there is no image of. Of the 23:
+
+- **22 answer `error_validation_failed`**, each with the rule it breaks
+  named beside it or in its call's RESULT. CreateImageView's 16: a format
+  the image takes no view of (VUID-VkImageViewCreateInfo-image-12397,
+  -image-04441 for an image made for no view, -image-01761, and
+  -None-02273 with the -usage- rules of the format's features), a swizzle none of Vulkan's (VUID-VkComponentMapping-r-parameter),
+  levels or layers the image has not got, or none of them, a view type
+  none of Vulkan's or one the image or the layers asked for do not take,
+  an image not bound (-image-01020), and a plane its format has not got
+  (-subresourceRange-09594). CreateRenderPass's three, an attachment
+  whose format's features have not got what its use asks
+  (VUID-VkSubpassDescription-pColorAttachments-02648,
+  -pDepthStencilAttachment-02650, -pInputAttachments-02647).
+  CreateBufferView's format no view takes
+  (VUID-VkBufferViewCreateInfo-format-08778, -format-08779),
+  CreateGraphicsPipelines's attribute format
+  (VUID-VkVertexInputAttributeDescription-format-00623), and
+  CreateSwapchain's format that is not the surface's
+  (VUID-VkSwapchainCreateInfoKHR-imageFormat-01273, -surface-01270):
+  a surface's format is fixed as the surface is made, so that refusal is
+  no cause outside the program, as the size's may be.
+- **CreateImage's one is split.** GetPhysicalDeviceImageFormatProperties
+  asks the rules CreateImage keeps (`_image.shapeFor`, since 1.36) - at
+  the largest extent, one level, the fewest layers and one sample, then
+  each of the levels, the layers and four samples in turn - so an image
+  CreateImage refuses is one the query declines
+  (VUID-VkImageCreateInfo-imageCreateMaxMipLevels-02251), one past the
+  extent, levels, layers or samples it answers (-extent-02252 to
+  -extent-02254, -mipLevels-02255, -arrayLayers-02256, -samples-02258),
+  or one that VkImageCreateInfo's own rules forbid whatever the query
+  answers: a side, levels or layers of 0 (-extent-00944 to -extent-00946,
+  -mipLevels-00947, -arrayLayers-00948); a cube that is not square or has
+  fewer than six layers (-flags-08865, -flags-08866); more levels than its
+  own extent's chain has (-mipLevels-00958, tests/facet.zig:791); more
+  than one sample with more than one level (-samples-02257); or
+  TRANSIENT_ATTACHMENT beside other usage or with no attachment usage
+  (-usage-00963, -usage-00966). All of these are
+  `error_validation_failed` but one kind, which Vulkan allows: a 3D image
+  deeper than it is wide and high, of more levels than its width and
+  height halve to and no more than its depth does. Vulkan counts the depth in
+  the chain (-mipLevels-00958), the query's levels are those of its
+  largest extent, whose three sides are alike, and the layout here halves
+  the width and the height alone. It is `error_feature_not_present` until
+  item 93; `_image.levelsPastSides` tells it apart by asking `shapeFor`
+  for the same image of the levels its sides give.
+
+Two of CreateImageView's refused what Vulkan allows, and take it now:
+
+- **A 3D view of one layer.** A 3D image has one layer to Vulkan
+  (VUID-VkImageCreateInfo-imageType-00961), and this library keeps its
+  slices as its layers (`Image.layers`), so a view's range was held to
+  the depth: a `layer_count` of 1, the one count Vulkan has besides
+  REMAINING (VUID-VkImageViewCreateInfo-imageViewType-04973), was refused
+  for an image deeper than a slice, and one of the whole depth, which
+  -04973 and -subresourceRange-06725 forbid, was taken. The range is held
+  to the one layer, as Mesa's is (`vk_image_view_init`,
+  src/vulkan/runtime/vk_image.c:671), and the view holds every slice, as
+  v3dv gives the TMU the depth of the image's first level and the view's
+  first level apart from it (src/broadcom/vulkan/v3dvx_image.c:68,
+  :79-80).
+- **A cube array from any layer.** Vulkan counts a cube array's faces
+  from `baseArrayLayer` and asks that the count alone be a multiple of
+  six; the first layer had to be one as well. A view's texture begins at
+  its first layer (`_image.levelsFrom`) and an array's cube is counted
+  from there (`texture.Texture.cubeNear`), so it is taken as the code
+  stood, as lavapipe's view begins wherever the range does
+  (`lvp_create_samplerview`, src/gallium/frontends/lavapipe/lvp_image.c:372-375).
+
+Reading the VUIDs found more:
+
+- **A 3D view from a level past the first read slices its level has not
+  got.** Its texture had the whole depth's slices whatever level it began
+  at, so `slicesAt` halved from there and a sample spread `r` over slices
+  no copy had written - the fault 1.59 mended for the image's own
+  texture, back for such a view. It has the slices of its first level now
+  (`texture.Texture.slicesAt` of the image's texture), as Mesa's view
+  takes the extent of its first level and is as deep as that
+  (vk_image.c:648-649, :695).
+- **TRANSIENT_ATTACHMENT was taken beside usage Vulkan does not allow
+  with it**: a depth attachment's beside the transfers, a colour image's
+  beside them, SAMPLED or STORAGE, and on an image of no attachment
+  usage at all. VUID-VkImageCreateInfo-usage-00963 has it beside the
+  attachments' usage alone, and -usage-00966 with one of them; CreateImage
+  answers `error_validation_failed` for both. `_image.laidOut` refuses the
+  first, so the query declines it too. The second CreateImage refuses
+  itself, before the image is laid out, and the query answers TRANSIENT
+  alone as it answers the transfers alone - as TRANSIENT beside a colour
+  attachment for the three formats drawn into, and `success` on the cores
+  for a float or a BC format, which is no colour attachment - and so never
+  more strictly: Vulkan has the limits of a usage within another be "no
+  more strict" (vkGetPhysicalDeviceImageFormatProperties), and neither
+  lavapipe nor v3dv reads a TRANSIENT bit there
+  (`lvp_get_image_format_properties`,
+  src/gallium/frontends/lavapipe/lvp_formats.c; v3dv_formats.c). Nor does
+  `_image.viewable` count it as a view's usage any more, so a mutable
+  image's views are asked by its attachment's feature alone.
+- **CreateImageView looked at a depth image's binding and aspect only
+  where the view reads it**, sampled or as an input attachment, though
+  its RESULT named the binding rule for every image, and at a colour
+  image's aspect not at all. A view of a depth attachment never bound, of
+  a plane its format has not got, or of a depth or a stencil of a colour
+  image was made. Each is `error_validation_failed` now
+  (VUID-VkImageViewCreateInfo-image-01020, -subresourceRange-09594).
+  BindImageMemory sets `memory` for the lazily allocated type too, which
+  gives an image no bytes, so a transient depth attachment bound there is
+  bound, and its view made.
+- **On a device that keeps no format of both planes** (`stored_both`,
+  the V3D), CreateRenderPass answered `error_feature_not_present` for a
+  d16_unorm_s8_uint depth attachment loaded, stored or kept for another
+  subpass. That device's format query gives the format no
+  DEPTH_STENCIL_ATTACHMENT (`_format.describe`), so each breaks
+  VUID-VkSubpassDescription-pDepthStencilAttachment-02650:
+  `error_validation_failed`. One that keeps neither plane is still drawn,
+  in the tiles alone (item 94). Read as an input attachment after the
+  subpass that drew it, such an attachment breaks -pInputAttachments-02647
+  as well, and is `error_validation_failed` for it
+  (render/createrenderpass.zig:390) on a device without `stored_both`
+  that reads a depth as an input attachment. No device is one: the V3D
+  reads no input attachment and answers `error_feature_not_present` for
+  any, as before (:347).
+- **S8_UINT and D16_UNORM_S8_UINT did not say SAMPLED_IMAGE**, although
+  CreateImage has made either sampled since 1.58 and Vulkan has a sampled
+  image's format say it (Table 102, "Format Feature Dependent Image Usage
+  Flags"). On a device that samples a depth (`sampled_depth`, the cores)
+  they say it now, and D16_UNORM_S8_UINT its depth plane's FILTER_LINEAR
+  too (`_format.describe`), as lavapipe says both of every depth/stencil
+  format (`lvp_physical_device_get_format_properties`,
+  src/gallium/frontends/lavapipe/lvp_formats.c:93-104).
+- FacetProbe asked three things it could not: a 1D view of an image it
+  had never bound, which CreateImageView refused for that once the view's
+  own rules had passed; a view of both planes of a depth and stencil
+  refused, which has been the depth since 1.94; and a stencil op on a
+  D16_UNORM attachment refused, which keeps nothing since 1.106. All
+  three ask what they meant to now.
+
+Left for 1.136, each to be read as the 23 were - what the review of the
+first half found, and the review of this half beside it:
 
 - QueuePresent answers `error_out_of_date` for an image the program does
   not hold (VUID-VkPresentInfoKHR-pImageIndices-01430). A swapchain named
   twice (-pSwapchain-09231) is answered `error_out_of_date` where both
   name one image, the first naming having handed it on, and is presented
   twice, answering `success`, where they name two images the program
-  holds. Both are `error_validation_failed` in 1.135, the second looked
-  for over the whole list. Out of date asks the program to make its
-  swapchain again, which hides its mistake.
+  holds. Both are `error_validation_failed`, the second looked for over
+  the whole list. Out of date asks the program to make its swapchain
+  again, which hides its mistake. Both are to be looked for before
+  anything is handed on: a present that runs out of memory gives back
+  what it took (`_swapchain.unhand`), but an image of a swapchain out of
+  date it has given back already (queuepresent.zig:91), where Vulkan has
+  a failed call leave everything as it was.
 - QueuePresent answers `error_out_of_date` for each swapchain it meets
   once eight images of one present have been taken
   (`_swapchain.max_presents`; those it refused do not count), and Vulkan
   sets no such limit: a program makes that swapchain again and is refused
-  again. The presents go in a list as long as the count, 1.135.
+  again. The presents go in a list as long as the count, as the
+  submission they are copied into already is (`_queue.makeSubmission`).
+  It reads a null `wait_semaphores` beside a count as no waits, which
+  VUID-VkPresentInfoKHR-pWaitSemaphores-parameter forbids. And it answers
+  the last of its swapchains' failures, where Vulkan orders them - the
+  device lost, then a surface lost, then out of date (vkQueuePresentKHR's
+  body) - so a surface lost before another swapchain out of date answers
+  `error_out_of_date`.
+- AcquireNextImage answers `error_out_of_date` from a retired swapchain
+  (swapchain/_swapchain.zig:118), which
+  VUID-vkAcquireNextImageKHR-swapchain-01285 forbids ("Images cannot be
+  acquired from a retired swapchain"): `error_validation_failed`, on the
+  same reasoning as QueuePresent's.
 - CreateSwapchain's size, `error_validation_failed` since 1.134
   (-pNext-07781), cannot tell a program that asked for the wrong size from
   one whose window changed size between its
@@ -3022,7 +3177,7 @@ items, each to be read as the 66 were:
   asked, the swapchain's presents and AcquireNextImage would answer
   `error_out_of_date`, which `_swapchain.fit` does already; Mesa's WSI
   (src/vulkan/wsi, not in the tree read for this) is to be read for it
-  before 1.135 settles it.
+  first.
 - CreateSwapchain looks at the surface's newest swapchain alone
   (`surface.swapchain`, cleared when that one is destroyed), not at
   `old_swapchain`'s surface or whether it is retired: it answers
@@ -3030,35 +3185,95 @@ items, each to be read as the 66 were:
   while the newest lives - one retired on this surface among them - and
   takes any where there is no newest, one retired after the newest was
   destroyed and one of another surface, which it retires, among them.
-  Another surface's newest, retired so, stays that surface's newest: that
-  surface takes it back, retired, as its `old_swapchain`.
-  VUID-VkSwapchainCreateInfoKHR-oldSwapchain-01933 has it be the
-  surface's own and not retired: `error_validation_failed`, 1.135, from a
-  look at the old swapchain itself, its surface and whether it is
-  retired.
+  VUID-VkSwapchainCreateInfoKHR-oldSwapchain-01933 has it be one of the
+  surface's window and not retired: `error_validation_failed`. Vulkan
+  keeps that rule by the native window, not the surface, and
+  CreateWindowSurface and CreateScreenSurface make a surface each time
+  they are called, so two can lie over one window, and a swapchain of one
+  handed to the other is valid there; the cheapest way is a window's
+  second surface refused with `error_native_window_in_use`, which
+  vkCreateAndroidSurfaceKHR lists, or the rule kept for each window. With
+  no `old_swapchain` where only retired swapchains of the window are left,
+  Vulkan has `error_native_window_in_use` answered too.
+- CreateSwapchain leaves `old_swapchain` as it was where it fails, and
+  Vulkan has it retired "even if creation of the new swapchain fails".
+  FacetGPU, Boing and Cobra try again with the same `old_swapchain` after
+  `error_out_of_device_memory`, which a driver that retires it refuses:
+  they are to destroy it and try again with none, which frees its
+  pictures as well.
 - CreateGraphicsPipelines and CreateComputePipelines answer
-  `error_invalid_shader_nv` where the pipeline's stages break a VUID - an
-  entry point not found, a stage that is not a graphics one, no vertex
-  stage, one tessellation stage without the other, a compute stage that is
-  not COMPUTE. Item 4 kept that code for words that are not SPIR-V, which
-  core Vulkan leaves undefined; a vk.xml list that has the code is no
-  reason to keep it for a VUID, the memory codes having moved although
-  their calls list them. `error_validation_failed`, 1.135, and the code
-  stays for words no device runs.
+  `error_invalid_shader_nv` where the pipeline's stages break a VUID: an
+  entry point not found (VUID-VkPipelineShaderStageCreateInfo-pName-00707),
+  a stage that is not a graphics one
+  (VUID-VkGraphicsPipelineCreateInfo-pStages-06896), no vertex stage
+  (-stage-02096), one tessellation stage without the other (-pStages-00729,
+  -pStages-00730), a compute stage that is not COMPUTE
+  (VUID-VkComputePipelineCreateInfo-stage-00701). A fragment function that
+  reads more varyings than the stage before it writes is refused the same
+  way (VUID-RuntimeSpirv-OpEntryPoint-08743), and so is one that reads
+  fewer, which Vulkan allows: what nothing reads is dropped. Item 4 kept
+  that code for words that are not SPIR-V, which core Vulkan leaves
+  undefined, and a vk.xml list that has the code is no reason to keep it
+  for a VUID, the memory codes having moved although their calls list
+  them. `error_validation_failed`, the second half of the varyings taken,
+  and the code stays for words no device runs: a fixed form's word or a
+  tessellation way that names none (creategraphicspipelines.zig:335,
+  :439).
 - A fragment function that writes as many colours as its subpass has, in a
   subpass without `SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER`, is refused with
   `error_invalid_shader_nv`. Vulkan allows it: `error_feature_not_present`
-  under item 80, which draws such a subpass in parts.
+  under item 80, which draws such a subpass in parts. On the V3D, whose
+  `max_fragment_output_attachments` is 1, a function of more colours
+  breaks VUID-RuntimeSpirv-Location-06272: `error_validation_failed` there.
 - AllocateDescriptorSets past the pool's sets answers
   `error_out_of_pool_memory`, VK_KHR_maintenance1's code, which item 4 kept
   on purpose. On a 1.0 device without that extension
   VUID-VkDescriptorSetAllocateInfo-apiVersion-07895 forbids the call:
-  settled with the second half.
-- CreateImage takes a depth attachment made TRANSIENT_ATTACHMENT beside
-  TRANSFER_SRC or TRANSFER_DST (`depth_usage`, image/_image.zig:710-711),
-  which VUID-VkImageCreateInfo-usage-00963 forbids:
-  `error_validation_failed`, 1.135, with the other usage bits read
-  against it.
+  `error_validation_failed`.
+
+The reviews found more that is not a code answered wrongly, each for an
+item of its own or one there is:
+
+- GetPhysicalDeviceImageFormatProperties answers less than Vulkan has it
+  answer, and in places more, item 94.
+- CreateFramebuffer does not look at a view's type, and
+  VUID-VkFramebufferCreateInfo-flags-04113 forbids one of type `3d`.
+- Rules of Vulkan's no call reads: an image's SPARSE_ flags
+  (VUID-VkImageCreateInfo-flags-00969) and its `initial_layout`
+  (-initialLayout-00993); the swapchain's colour space, and its `pre_transform`
+  and `composite_alpha` (VUID-VkSwapchainCreateInfoKHR-preTransform-01279,
+  -compositeAlpha-01280); a `min_image_count` of 0 or past the surface's
+  most (-presentMode-02839, -minImageCount-01272), held to 1 to 4
+  instead, so a count of 4 on a screen of fewer answers
+  `error_out_of_device_memory`; a stage named twice
+  (VUID-VkGraphicsPipelineCreateInfo-stage-06897), an attribute offset
+  past `max_vertex_input_attribute_offset`
+  (VUID-VkVertexInputAttributeDescription-offset-00622), and a location or
+  binding named twice; a texel buffer view past
+  `max_texel_buffer_elements` (VUID-VkBufferViewCreateInfo-range-00930),
+  which the descriptor holds to it; the descriptors a pool has of each
+  type, `pool_sizes` not being read
+  (VUID-VkDescriptorSetAllocateInfo-apiVersion-07896); and a present of
+  no swapchains (VUID-VkPresentInfoKHR-swapchainCount-arraylength). Each
+  is `error_validation_failed` where it is read, item 81's kind; none was
+  found to reach anything that breaks.
+- GetPhysicalDeviceSurfaceFormats answers a count of 0 for a display it
+  does not draw, where Vulkan has it answer one at least; asking it of
+  such a surface breaks -surface-06525, so no valid program sees it.
+- `_image.compatible` holds two formats to one texel size through
+  `texelSize`, which is 0 for the formats no image is made of
+  (driver/_format.zig:276-303): R16_SFLOAT and R16G16_SFLOAT; R8, R8G8,
+  R8G8B8A8, R16, R16G16 and R16G16B16A16 _SNORM; R8, R8G8, R8G8B8A8 and
+  B8G8R8A8 _SRGB; A8B8G8R8_UNORM, _SNORM and _SRGB_PACK32; the
+  2-10-10-10 words; and R32G32B32_UINT and _SINT. So it calls them
+  compatible with none, where Vulkan's size classes have them compatible. Their
+  image features are none, and a view of one is refused for that
+  (-None-02273); item 34, which makes images of some, is to give
+  `texelSize` their sizes first.
+
+> The 23, and where each went: the 135 note in facet_version.zig;
+> `git show c0b3359a:<file> | grep -n error_format_not_supported` beside
+> the file now, 08.11.2026.
 
 > The 66, and where each went: the 134 note in facet_version.zig;
 > `git show 305d3c74:<file> | grep -n error_initialization_failed` beside
@@ -3112,6 +3327,173 @@ and since 1.134 answer `error_feature_not_present` until this item:
 > (`depth.attachment == reference.attachment`); the spec's
 > VkFramebufferCreateInfo, VkRenderPassBeginInfo::renderArea and
 > VkAttachmentDescription's body; 08.11.2026.
+
+### 93. A 3D image deeper than it is wide and high is refused the levels its depth gives, and a 3D sample's level does not count its depth
+
+*images / 3D* &mdash; conformance-blocking, small, found while doing item 91
+
+Vulkan counts a 3D image's chain of levels from the longest of its three
+sides - `mipLevels` "must be less than or equal to the number of levels
+in the complete mipmap chain based on extent.width, extent.height, and
+extent.depth" (VUID-VkImageCreateInfo-mipLevels-00958) - and each level
+halves all three, never below one. This library keeps a 3D image's slices
+as its layers, each slice a whole texture of the image's levels
+`layer_bytes` from the one before, and a level has half the slices of the
+one before (`texture.Texture.slicesAt`); but a texture's levels are those
+its width and height halve to (`texture.Sizes.of`, where more is
+`error.BadSize`). So a 4x4x16 image is made of up to 3 levels, and its 4th
+and 5th - a texel each of 2 slices and of 1 - are refused. Since 1.135
+CreateImage answers `error_feature_not_present` for them
+(`_image.levelsPastSides`); GetPhysicalDeviceImageFormatProperties, whose
+`max_mip_levels` is that of its largest extent, 256 on every side, says
+the 9 Vulkan has it say.
+
+The port is llvmpipe's layout, the three sides halved alike for each
+level (`u_minify` of each, src/gallium/drivers/llvmpipe/lp_texture.c:220-222,
+in `llvmpipe_texture_layout`), as lavapipe hands it the image's depth and
+levels (`lvp_alloc_plane`, src/gallium/frontends/lavapipe/lvp_image.c:101,
+:103). Each slice here holds its own levels, and those past the sides are
+a texel wide and high, which `Sizes.widthAt` and `heightAt` hold them to
+already; what changes is the count. `Sizes.of`, `Texture.bytes` and the
+texture made over the memory are told the depth and count the levels from
+the longest side; `_image.laidOut` hands them a 3D image's; and
+`levelsPastSides` goes, CreateImage's split with it. About 15 lines, and
+25 of tests: the 4x4x16 image's five levels copied into and sampled at
+each.
+
+The second half is the level a 3D sample takes. Vulkan's scale factor
+counts each coordinate's change times that side of the level - `r`'s
+times its depth beside `s`'s and `t`'s times its width and height
+("Scale Factor Operation": m~wx~ = |∂r/∂x| × d~base~) - and llvmpipe's
+does: `lp_build_rho` multiplies each of the `dims` derivatives by its side
+of the first level (src/gallium/auxiliary/gallivm/lp_bld_sample.c:691-713)
+and takes the largest of the three (:716-732), the implicit derivatives
+counting `r`'s where `dims > 2` (:765-772, :799-809). Here a 3D sample
+takes its level from `s` and `t` alone: `texture.Point` carries no
+derivative of `r`, the fixed form `texture_3d` hands `texture.levelFor`
+those of `s` and `t` (sdk/libs/facet/shader.zig:2041-2045), and
+`texture_3d_sampled` those two in its point (:2198-2212, :2222). A volume whose `r` changes
+faster than its `s` and `t` is read at too fine a level. The port is the
+two derivatives of `r` in the point and the depth in `levelOf` and
+`levelFor`: about 20 lines, and 20 of tests, a quad whose `r` alone
+changes reading the level its depth gives. The V3D's TMU takes its level
+from the three coordinates itself.
+
+Neither half is the V3D's to write, but the board is to show one thing
+first: v3dv keeps a 3D image level after level, each level's slices
+together (`v3d_setup_plane_slices`, src/broadcom/vulkan/v3dv_image.c:160-178,
+:263-264), and this library's V3D keeps each slice's levels together,
+handing the TMU `layer_bytes` as the distance from one slice to the next
+(driver/v3d/_play.zig:913); which of the two its TMU reads at a level past
+the first, no run has asked.
+
+> `texture.Sizes.of` (sdk/libs/facet/texture.zig:1557-1566), `levelOf`
+> (:3199-3206) and `levelFor`; `_image.levelsPastSides`; the spec's
+> VkImageCreateInfo and "Scale Factor Operation"; 08.11.2026.
+
+### 94. GetPhysicalDeviceImageFormatProperties answers less than Vulkan has it answer, and in places more
+
+*formats / queries* &mdash; conformance-blocking, medium, found while doing item 91
+
+The query asks the rules CreateImage keeps (`_image.shapeFor`), so the two
+cannot drift apart, and since 1.135 an image the query declines is
+`error_validation_failed` from CreateImage
+(VUID-VkImageCreateInfo-imageCreateMaxMipLevels-02251), but for 3D
+images one slice deep. The query asks 256 slices, and so declines every
+3D image neither sampled nor written through (image/_image.zig:673) and
+every one written through as a colour or input attachment, which
+`rows_written` takes at one layer alone (:771-775, :818, :827), while
+CreateImage makes the one-slice image of three kinds: of a colour format
+kept in rows, for the transfers or as a colour or input attachment
+(tests/facet.zig:1071, :1081); of B8G8R8A8 or R5G6B5, of one level,
+written through as a colour or input attachment; and on the cores, of
+compressed blocks, which they keep in a texture's layout whatever the
+image is for (`kept_compressed`, image/_image.zig:682, :826-827), for the
+transfers or as an input attachment. -02251 allows that, creating any of
+them being invalid usage. The other way round, the query answers
+TRANSIENT_ATTACHMENT alone as the transfers alone, no more strictly than
+beside a colour attachment, as the subset rule below has it, and
+CreateImage refuses such an image (-usage-00966; since 1.135). Where
+those rules are narrower than Vulkan has a device be, the query's answer
+breaks Vulkan's rules for the query itself:
+
+- **`max_resource_size` below 2^31.** It is the bytes of the largest image
+  the rest of the answer describes (since 1.66): 256 MiB for a linear
+  8192x8192 B8G8R8A8 colour attachment. Vulkan has it "at least 2^31^"
+  (VkImageFormatProperties), and lavapipe answers UINT32_MAX
+  (`lvp_get_image_format_properties`,
+  src/gallium/frontends/lavapipe/lvp_formats.c:447). The bytes or 2^31,
+  whichever is more: 1 line, and tests/facet.zig:1207 and :1286 with it.
+- **One level and one layer for some optimal 2D images.** Vulkan has an
+  optimal 2D image's answer be the whole chain of levels and no fewer
+  layers than `max_image_array_layers`. A colour attachment written
+  through as a storage image is held to one of each (`rows_written`,
+  image/_image.zig:771-775), and on the V3D every image kept in rows to
+  one level (:860-863). The first wants its levels and layers laid out as
+  the rows of an image sampled where it is drawn are since 1.119, about 10
+  lines; the second is item 48's V3D half.
+- **Fewer usage bits are refused where more are taken**, which Vulkan
+  forbids: the limits for usage that is a subset of another "must be no
+  more strict". An image of a small texel, of r8_unorm, of wide channels
+  or of whole numbers (image/_image.zig:643, :648, :654, :660), or a 3D one
+  deeper than a slice (:673), is made where SAMPLED or STORAGE is among
+  its usage and declined where the transfers alone are; a depth or
+  stencil format's is declined without DEPTH_STENCIL_ATTACHMENT - SAMPLED
+  alone, the transfers alone, TRANSIENT_ATTACHMENT alone - and made with
+  it (:744). Kept in a texture's layout, as an image of compressed blocks
+  for the transfers alone is since 1.126, the first takes about 5 lines;
+  a depth image without the attachment's bit kept in rows as a depth
+  attachment is, about 5.
+- **A 3D image a colour attachment is declined**, where Vulkan has a
+  format's features hold "for every VkImageType" (Required Format
+  Support), and lavapipe holds a 3D image's usage to its format's
+  features alone, as any other's (`lvp_get_image_format_properties`,
+  lvp_formats.c:369-374, :394-434). No pass of
+  Vulkan 1.0 draws into one (VUID-VkFramebufferCreateInfo-flags-04113), so
+  it is made and never drawn: about 3 lines.
+And it answers more than Vulkan lets it where a format's features have
+not got the bit a usage wants (Table 102, "Format Feature Dependent Image
+Usage Flags"), to which lavapipe and v3dv hold every usage
+(`lvp_get_image_format_properties`, lvp_formats.c:394-435;
+`get_image_format_properties`, v3dv_formats.c:512-551). The second and
+the third were found in the check of this item:
+
+- **On the V3D, a D16_UNORM_S8_UINT depth attachment is made** while the
+  format's features say no DEPTH_STENCIL_ATTACHMENT there (`stored_both`),
+  and CreateRenderPass takes one that keeps neither plane
+  (VUID-VkSubpassDescription-pDepthStencilAttachment-02650); one that
+  loads, stores or is kept for another subpass is `error_validation_failed`
+  since 1.135 (`error_feature_not_present` before). The query and the
+  features are to say the same, testable on the host by a device without
+  `stored_both`, as tests/draw.zig's "a device that keeps no format of
+  both planes" is.
+- **SAMPLED with STORAGE of a BC, ETC2, EAC, B4G4R4A4 or A1R5G5B5 format,
+  on either device.** Such an image is unpacked into R8G8B8A8, a block
+  having no texel to write (image/_image.zig:682, :687), and made a
+  texture a function writes through (:826), as tests/draw.zig:3262-3274
+  has it, while those formats' features hold no STORAGE_IMAGE
+  (driver/_format.zig:168-192), which Vulkan has STORAGE want. A float
+  format is unpacked on the V3D as well and says STORAGE_IMAGE, being
+  written through as 8888 there, so it is the feature that is to be
+  asked, not the unpacking.
+- **An input attachment of a float or BC format, on the cores.** Such an
+  image is made and answered, kept in rows or, for blocks, in a texture's
+  layout (image/_image.zig:816-819 asks nothing of its format), while the
+  format's features hold neither COLOR_ATTACHMENT nor
+  DEPTH_STENCIL_ATTACHMENT, one of which Vulkan has INPUT_ATTACHMENT
+  want, and CreateRenderPass refuses it as an input attachment
+  (VUID-VkSubpassDescription-pInputAttachments-02647). On the V3D such a
+  format is unpacked, and an image unpacked without SAMPLED is declined
+  already (image/_image.zig:692).
+
+Holding each usage to its feature in `_image.shapeFor`, as both drivers
+do, mends all three: about 8 lines, with tests/draw.zig:3262-3274 turned
+round and the host's device without `stored_both` asked the D16S8 depth
+attachment.
+
+> instance/getphysicaldeviceimageformatproperties.zig; image/_image.zig
+> `laidOut`; the spec's VkImageFormatProperties, the query's body and
+> Required Format Support; 08.11.2026.
 
 ## Deferred by the decision, not out of reach
 

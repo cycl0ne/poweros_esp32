@@ -219,11 +219,13 @@ pass's depth. What is left out:
   holds it at each pixel's only byte and `d16_unorm_s8_uint` after that
   pixel's depth, and the four ops are taken on their own - a pass may keep
   the stencil and leave the depth in the tiles. An op for a plane the
-  format has not is refused. Keeping either plane of a format that holds
-  **both** wants `stored_both` as well (1.47): the cores write a pixel's
-  planes where they lie in its four bytes, while the V3D writes one
-  plane's pixels one after another and so keeps only `d16_unorm` or
-  `s8_uint`.
+  format has not keeps nothing (since 1.106; refused before). Keeping
+  either plane of a format that holds **both** wants `stored_both` as
+  well (1.47): the cores write a pixel's planes where they lie in its four
+  bytes, while the V3D writes one plane's pixels one after another and so
+  keeps only `d16_unorm` or `s8_uint`. There `d16_unorm_s8_uint` says no
+  DEPTH_STENCIL_ATTACHMENT, and one kept is `error_validation_failed`
+  (since 1.135; `error_feature_not_present` before).
 - **A depth image is a texture since 1.39** (`sampled_depth`): a depth
   attachment with `SAMPLED` is sampled out of the very rows the pass
   stored it into, through a sampler, and a shadow sample compares it at
@@ -500,8 +502,10 @@ exist now. What is left out:
   depth two subpasses share is kept, so such a pass wants `stored_depth`,
   a stencil `stored_stencil` and a format of both `stored_both`. A
   colour input attachment is still of b8g8r8a8_unorm, r8g8b8a8_unorm or
-  r5g6b5_unorm_pack16, every other colour format being
-  `error_format_not_supported`.
+  r5g6b5_unorm_pack16, which are the colour formats whose features say
+  COLOR_ATTACHMENT: every other is `error_validation_failed`
+  (VUID-VkSubpassDescription-pInputAttachments-02647; since 1.135,
+  `error_format_not_supported` before).
 - **Nothing is checked against the layout**: `AttachmentReference.layout`
   is taken as it is, as every other layout is, and a program that reads
   an attachment an earlier subpass did not draw gets whatever the load op
@@ -661,17 +665,31 @@ Vulkan allows them, and facet does not do them.
 | A depth bias on a device that takes none: every device takes one since 1.47 (`depth_bias`) | `pipeline/creategraphicspipelines.zig` |
 | An input attachment on a device that reads none: the V3D (`input_attachments`) | `render/createrenderpass.zig` |
 | A subpass that reads its own depth attachment as an input attachment, until docs/facet-vulkan10.md item 92 (`error_initialization_failed` until 1.134) | `render/createrenderpass.zig` |
-| An image both INPUT_ATTACHMENT and TRANSIENT_ATTACHMENT; one both INPUT_ATTACHMENT and STORAGE but as a colour attachment written through is (above); one sampled as well as drawn into or read as an input attachment on a device whose images lie in a layout of its own: the V3D, until docs/facet-vulkan10.md item 48's V3D half (the cores' since 1.119) | `image/createimage.zig` |
-| A depth or stencil op for a plane the format has not, or on a device that keeps neither (`stored_depth`, `stored_stencil`) | `render/createrenderpass.zig` |
+| A 3D image deeper than it is wide and high, of more levels than its width and height halve to, until docs/facet-vulkan10.md item 93 (`error_format_not_supported` until 1.135) | `image/createimage.zig` |
+| A depth or stencil op on a device that keeps neither (`stored_depth`, `stored_stencil`): every device keeps both since 1.47. On a device without `stored_stencil` an `s8_uint` attachment has no DEPTH_STENCIL_ATTACHMENT (`_format.describe`), so one whose stencil is kept breaks VUID-VkSubpassDescription-pDepthStencilAttachment-02650 as well and may be answered either way (`Result.error_validation_failed`), and one left in the tiles is drawn all the same. One for a plane the format has not keeps nothing since 1.106 | `render/createrenderpass.zig` |
 | An `input_attachment` layout on a device that reads none: the V3D (`input_attachments`) | `descriptor/createdescriptorsetlayout.zig` |
 | More dynamic buffer descriptors in one set than `max_descriptor_set_dynamic_buffers` | `descriptor/createdescriptorsetlayout.zig` |
 | A `storage_image` layout on the V3D: its TMU keeps a texture its own way | `descriptor/createdescriptorsetlayout.zig` |
 | A fixed fragment form that drops pixels, on the V3D: the QPUs have no program that discards | `driver/v3d/driver.zig` |
 | A fixed fragment form that samples through a sampler, on the V3D: nor one that reads a sampler | `driver/v3d/driver.zig` |
-| A depth or stencil attachment of `d16_unorm_s8_uint` that loads or stores, on a device that stores a tile buffer whole: the V3D (`stored_both`, 1.47). Either plane of a format that holds it alone is kept on every device | `render/createrenderpass.zig` |
 | A depth attachment kept, whose image has no memory behind it | `render/createframebuffer.zig` |
 | A view of a level smaller than the framebuffer, of an image that is not, until docs/facet-vulkan10.md item 92 (`error_initialization_failed` until 1.134). Both this and the row above are answered once every view has been held to Vulkan's rules | `render/createframebuffer.zig` |
-| A sampled depth image on a device that samples none: the V3D (`sampled_depth`); a transient one, or one written through as a storage image; one of more levels than halving its longer side gives, or of type `3d`. Any of the three depth formats is taken since 1.58 and levels of its own since 1.63, and a view of it names one plane, or both at once since 1.94 for a framebuffer, sampling the depth (`image/createimageview.zig`) | `image/createimage.zig` |
+
+An image facet does not make is another matter. Vulkan has a device
+decline it through GetPhysicalDeviceImageFormatProperties, which answers
+`error_format_not_supported` for it, and CreateImage answers
+`error_validation_failed` for one made all the same (since 1.135,
+`error_format_not_supported` before). The query asks the rules
+CreateImage keeps. It declines each usage, type and format below
+(VUID-VkImageCreateInfo-imageCreateMaxMipLevels-02251), and answers one
+level and one layer for an attachment written through, so more of either
+is past its answer (-mipLevels-02255, -arrayLayers-02256).
+
+| What | Where it is refused |
+|---|---|
+| An image both INPUT_ATTACHMENT and TRANSIENT_ATTACHMENT; one both INPUT_ATTACHMENT and STORAGE but as a colour attachment written through is (above); one sampled as well as drawn into or read as an input attachment on a device whose images lie in a layout of its own: the V3D, until docs/facet-vulkan10.md item 48's V3D half (the cores' since 1.119) | `image/createimage.zig` |
+| A sampled depth image on a device that samples none: the V3D (`sampled_depth`); a transient one, or one written through as a storage image; one of more levels than halving its longer side gives, which VkImageCreateInfo forbids whatever the query says (-mipLevels-00958); or of type `3d`. Any of the three depth formats is taken since 1.58 and levels of its own since 1.63, and a view of it names one plane, or both at once since 1.94 for a framebuffer, sampling the depth (`image/createimageview.zig`) | `image/createimage.zig` |
+| Shapes Vulkan has the query take, until docs/facet-vulkan10.md item 94: an image of the transfers alone in a format that is kept for a function; a depth or stencil format without DEPTH_STENCIL_ATTACHMENT - sampled, or for the transfers or TRANSIENT_ATTACHMENT alone; a 3D image deeper than a slice for the transfers alone or as a colour or input attachment, CreateImage making such an image a slice deep, which the query declines; and an optimal colour attachment written through of more than one level or layer, past the one of each the query answers | `image/createimage.zig` |
 
 And these are answered with `error_validation_failed` (since 1.133;
 `error_feature_not_present` before): Vulkan does not let a program ask
@@ -694,6 +712,7 @@ them of a device that says what this one says of itself
 | A sampler's filter, mipmap mode, address mode or compare operation that is none of Vulkan 1.0's, or such a border colour where an address mode clamps to it; elsewhere the border colour is not read, and is taken since 1.133 | `sampler/createsampler.zig` |
 | A pipeline layout of more than `max_bound_descriptor_sets` sets, or push constants past `max_push_constants_size` | `pipeline/createpipelinelayout.zig` |
 | A render pass of no subpass, a subpass bound to compute, of more than `max_color_attachments` colour attachments, or of a flag that is none of Vulkan's or facet's | `render/createrenderpass.zig` |
+| A depth attachment of `d16_unorm_s8_uint` that loads, stores or is kept for another subpass, on a device that stores a tile buffer whole: the V3D (`stored_both`, 1.47), whose format query gives that format no DEPTH_STENCIL_ATTACHMENT (VUID-VkSubpassDescription-pDepthStencilAttachment-02650; `error_feature_not_present` until 1.135). One that keeps neither plane is drawn in the tiles (docs/facet-vulkan10.md item 94), and either plane of a format that holds it alone is kept on every device. Read as an input attachment after the subpass that drew it, such an attachment breaks -pInputAttachments-02647 too, and is refused for it on a device without `stored_both` that reads a depth as an input attachment; no device is one, the V3D reading no input attachment at all (above) | `render/createrenderpass.zig` |
 
 Since 1.134 `error_validation_failed` is also the answer to what does not
 hold together, which answered `error_initialization_failed` until then -
@@ -868,9 +887,17 @@ Of textures:
   whole depth whatever the level, so a level past the first read the wrong
   slice, or memory no copy had written. Which of the two filters decides
   whether the slices either side of the point are mixed is the one the
-  level asked for, as it is across the slice.
+  level asked for, as it is across the slice. A view of type `3d` names
+  the image's one layer, as Vulkan has a 3D image have one, and holds
+  every slice; from a level past the first it reads the slices of the
+  level it begins at. Both since 1.135: a view of one layer was refused
+  before, and one from a later level read the whole depth's slices at it.
+  A 3D image has no more levels than its width and height halve to, which
+  is fewer than its depth gives where it is deeper than them, and its
+  level comes from `s` and `t` alone, `r` not counted
+  (docs/facet-vulkan10.md item 93).
 - An array of cubes since 1.46: a view of type `cube_array` over a
-  multiple of six layers, read by a form of
+  multiple of six layers, from any layer of the image since 1.135, read by a form of
   `shader.FixedKind.texture_cube_array` at four coordinates - the
   direction and which cube, the nearest there is
   (`PhysicalDeviceFeatures.cube_arrays`, the cores), and since 1.53 by

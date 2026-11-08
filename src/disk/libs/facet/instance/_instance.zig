@@ -300,8 +300,8 @@ pub const Capabilities = extern struct {
     /// out of. The cores have it since 1.45; the V3D's TMU is fed unpacked
     /// texels, so there an image is unpacked as before.
     kept_floats: bool = false,
-    /// Cubes in an array: an image of CUBE_COMPATIBLE whose layers are a
-    /// multiple of six, a view of `ImageViewType.cube_array` over them, and
+    /// Cubes in an array: an image of CUBE_COMPATIBLE, a view of
+    /// `ImageViewType.cube_array` over a multiple of six of its layers, and
     /// the fixed forms that sample one of them
     /// (`shader.FixedKind.texture_cube_array`, varyings x, y, z and which
     /// cube, and since 1.53 `texture_cube_array_sampled`, the same through
@@ -323,9 +323,10 @@ pub const Capabilities = extern struct {
     /// lie in its four bytes, while a device that stores the whole of a
     /// tile buffer writes one plane's pixels one after another and so
     /// keeps only a format of that plane alone - `d16_unorm` or
-    /// `s8_uint`. False on the V3D, where a load or a store op of
-    /// `d16_unorm_s8_uint` is `error_feature_not_present`
-    /// (CreateRenderPass). (Since 1.47.)
+    /// `s8_uint`. False on the V3D, where GetPhysicalDeviceFormatProperties
+    /// gives `d16_unorm_s8_uint` no DEPTH_STENCIL_ATTACHMENT and a load or
+    /// a store op of it is `error_validation_failed` (CreateRenderPass;
+    /// `error_feature_not_present` until 1.135). (Since 1.47.)
     stored_both: bool = false,
     /// A texel may be kept in fewer bytes than the colour it reads as: an
     /// image of `r8_unorm`, one byte a texel, read as (red, 0, 0, 1); and
@@ -333,7 +334,9 @@ pub const Capabilities = extern struct {
     /// B8G8R8A8, whose texel is then the 32 bits of its word rather than
     /// the 64 it is spread over. An eighth and a half of the memory, for
     /// the spread a sample does itself. False where CreateImage refuses
-    /// both the format and the flag with `error_format_not_supported`.
+    /// both the format and the flag with `error_validation_failed`, the
+    /// format query declining them (`error_format_not_supported` until
+    /// 1.135).
     /// Every device has it since 1.48: the cores keep such a texel in
     /// their own layout, the V3D's TMU reads R8 with a swizzle of its own
     /// and has never spread an 8888 texel, so the flag costs it nothing
@@ -361,7 +364,8 @@ pub const Capabilities = extern struct {
     /// of a program's own, or a texture a function writes through at more
     /// than 8 bits a channel. True on the cores; false on the V3D, whose
     /// texture unit is fed what the library unpacked, where CreateImage
-    /// answers `error_format_not_supported` for such an image and
+    /// answers `error_validation_failed` for such an image
+    /// (`error_format_not_supported` until 1.135) and
     /// GetPhysicalDeviceFormatProperties says the format is sampled by
     /// nothing. (Since 1.69.)
     wide_channels: bool = false,
@@ -376,7 +380,8 @@ pub const Capabilities = extern struct {
     /// being no colour. For a counter, an index into a table, an object
     /// id or a bitfield a function reads or writes a texel at a time.
     /// True on the cores; false on the V3D, where CreateImage answers
-    /// `error_format_not_supported` for such an image and
+    /// `error_validation_failed` for such an image
+    /// (`error_format_not_supported` until 1.135) and
     /// GetPhysicalDeviceFormatProperties says the format is sampled by
     /// nothing. No such format is filtered linearly or drawn into, on any
     /// device. (Since 1.70.)

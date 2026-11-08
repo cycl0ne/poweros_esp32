@@ -131,7 +131,16 @@ pub const Result = enum(i32) {
     /// (Since 1.80.)
     error_incompatible_driver = -9,
     error_too_many_objects = -10,
-    /// The format is not one this library does for what it was asked.
+    /// The format is not one this library does for what it was asked:
+    /// GetPhysicalDeviceImageFormatProperties's answer, the format queries
+    /// being the calls core Vulkan lists it for. Since 1.135 no other call
+    /// answers it: CreateImage, CreateImageView, CreateBufferView,
+    /// CreateRenderPass, CreateGraphicsPipelines and CreateSwapchain did
+    /// until then, for what Vulkan's rules forbid - an image the format
+    /// query declines, a view or an attachment of a format whose features
+    /// have not got its use - which is `error_validation_failed`, and for
+    /// a 3D image whose levels its depth allows, which is
+    /// `error_feature_not_present` (docs/facet-vulkan10.md items 91, 93).
     error_format_not_supported = -11,
     /// A descriptor pool has room for the sets, but not in one piece.
     error_fragmented_pool = -12,
@@ -168,7 +177,11 @@ pub const Result = enum(i32) {
     /// `error_out_of_device_memory` from CreateBuffer, AllocateMemory,
     /// BindBufferMemory and BindImageMemory, `error_memory_map_failed` from
     /// MapMemory, `error_out_of_host_memory` from GetQueryPoolResults -
-    /// where no memory had run out.)
+    /// where no memory had run out; and since 1.135 those that answered
+    /// `error_format_not_supported`, and CreateRenderPass's kept
+    /// `d16_unorm_s8_uint` attachment on a device without `stored_both`,
+    /// whose format query says no DEPTH_STENCIL_ATTACHMENT, which answered
+    /// `error_feature_not_present`.)
     error_validation_failed = -1000011001,
     /// A descriptor pool has no room for another set.
     error_out_of_pool_memory = -1000069000,
@@ -1537,13 +1550,17 @@ pub const ImageSubresourceRange = extern struct {
 pub const ImageViewType = enum(u32) {
     @"1d" = 0,
     @"2d" = 1,
+    /// The whole of a 3D image: its one layer, `layer_count` 1 or
+    /// REMAINING, which holds every slice (since 1.135; a `layer_count` of
+    /// 1 was refused before).
     @"3d" = 2,
     cube = 3,
     /// The layers of a 1D image, one row each (since 1.86).
     @"1d_array" = 4,
     @"2d_array" = 5,
     /// Cubes one after another, six layers to each: the view's layers are a
-    /// multiple of six and its first a multiple of six, for
+    /// multiple of six, counted from its first, which may be any layer
+    /// (since 1.135; a multiple of six before), for
     /// `shader.FixedKind.texture_cube_array` and, since 1.53,
     /// `texture_cube_array_sampled`. (Since 1.46.)
     cube_array = 6,

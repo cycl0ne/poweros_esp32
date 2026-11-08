@@ -29,12 +29,30 @@ const texture = facet.texture;
 /// - `view` - where the view is written; null when it fails.
 ///
 /// RESULT:
-/// `success`; `error_format_not_supported` for a view facet.library does
-/// not make - of another format than the image's where the image was not
-/// made IMAGE_CREATE_MUTABLE_FORMAT, or of one Vulkan does not have
-/// compatible with it, of a type the image is not for, with a swizzle that is none of Vulkan's seven values, of
-/// levels or layers the image has not got, or of an image not yet bound
-/// into memory; `error_out_of_host_memory`.
+/// `success`; `error_validation_failed` for a view Vulkan's rules forbid
+/// (since 1.135; `error_format_not_supported` until then): of another
+/// format than the image's where the image was not made
+/// IMAGE_CREATE_MUTABLE_FORMAT (VUID-VkImageViewCreateInfo-image-12397),
+/// of one not compatible with it (-image-01761), or of one whose features
+/// do not do what the image is for (-None-02273, -usage-02274,
+/// -usage-02275, -usage-08931, -usage-02277, -usage-08932), CreateImage
+/// making no image of the flag that a view Vulkan allows would be refused
+/// of; of an image made for no view, which Vulkan has take none
+/// (-image-04441), of another format its texels are not read in where
+/// they lie, its other views being made (`_image.takesView`); with a
+/// swizzle that is none of Vulkan's seven values
+/// (VUID-VkComponentMapping-r-parameter and the other three); of a type
+/// that is none of Vulkan's or that the image does not take, or of layers
+/// that type does not take (-viewType-parameter, -subResourceRange-01021,
+/// -image-01003, -image-06723, -image-06728, -viewType-01004,
+/// -imageViewType-04973, -imageViewType-04974, -viewType-02960 to
+/// -viewType-02963); of levels or layers the image has not got, or of none
+/// (-subresourceRange-01478, -subresourceRange-01718, -image-06724,
+/// -subresourceRange-06725, VUID-VkImageSubresourceRange-levelCount-01720,
+/// -layerCount-01721); of an aspect its format has not got - a plane of a
+/// depth format it has not, or a depth or a stencil of a colour format
+/// (-subresourceRange-09594); or of an image not yet bound into memory
+/// (-image-01020); `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
 /// A view of a texture samples its levels from `base_mip_level` on, as a
@@ -84,20 +102,30 @@ const texture = facet.texture;
 /// Of type `2d` it is one layer, of a texture with any number of them. Of type
 /// `2d_array` it is the layers asked for, for `shader.FixedKind.texture_array`;
 /// `cube` is 6 layers of an image made IMAGE_CREATE_CUBE_COMPATIBLE, for
-/// `texture_cube`, and `3d` the whole of a 3D image, for `texture_3d`.
+/// `texture_cube`, and `3d` the whole of a 3D image, for `texture_3d`: the
+/// one layer Vulkan has such an image have, `layer_count` 1 or REMAINING,
+/// which holds every slice. From `base_mip_level` on it reads the slices
+/// of the levels it begins at, each level half as deep as the one before
+/// (`texture.Texture.slicesAt`). Both since 1.135: a `layer_count` of 1
+/// was refused before and one of the whole depth taken, and a view from a
+/// level past the first read the whole depth's slices at it, which that
+/// level has not got.
 ///
 /// Of type `cube_array` it is as many cubes as its layers divided by six, of
 /// such an image, for `texture_cube_array` and, since 1.53,
-/// `texture_cube_array_sampled`: its layers are a multiple of six
-/// and its first layer begins a cube, so `base_array_layer` is a multiple of
-/// six as well (`Capabilities.cube_arrays`, since 1.46).
+/// `texture_cube_array_sampled`: its layers are a multiple of six, and its
+/// first is the first face of its first cube whatever layer of the image
+/// that is, as Vulkan counts a cube array's faces from `baseArrayLayer`
+/// (since 1.135; a multiple of six before) (`Capabilities.cube_arrays`,
+/// since 1.46).
 ///
 /// **A view of a sampled depth image takes one of its planes** since 1.58
 /// (`Capabilities.sampled_depth`): IMAGE_ASPECT_DEPTH is the
 /// depth, read at all 16 bits by a sampler that compares and as a grey of
 /// its top 8 by one that does not, and IMAGE_ASPECT_STENCIL is the
 /// stencil, read as (red, 0, 0, 1) the way a texel of one byte is. A
-/// plane the format has not got is `error_format_not_supported`; an
+/// plane the format has not got is `error_validation_failed` (since 1.135,
+/// `error_format_not_supported` before); an
 /// aspect naming neither - IMAGE_ASPECT_COLOR, the default, and what every
 /// such view asked for before 1.58 - is the format's own plane, its depth
 /// where it has one and its stencil where it has not. The plane is a
@@ -159,49 +187,119 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     const image = _objects.of(Image, info.image);
     // The image's own format, or since 1.131 another of the same bytes
     // read its own way, where the image was made for that
-    // (`_image.takesView`).
-    if (!_image.takesView(&image.device.physical.can, image, info.format)) return .error_format_not_supported;
-    const swizzle = swizzleOf(info.components) orelse return .error_format_not_supported;
+    // (`_image.takesView`). Any other breaks one of Vulkan's rules (since
+    // 1.135): another format of an image not made
+    // IMAGE_CREATE_MUTABLE_FORMAT (VUID-VkImageViewCreateInfo-image-12397),
+    // or of one made for no view at all - none of SAMPLED, STORAGE or an
+    // attachment's usage, whose formats `_image.shapeFor` does not look at
+    // (-image-04441) - one not compatible with the image's (-image-01761),
+    // or one whose features do not do what the image is for (-None-02273,
+    // -usage-02274, -usage-02275, -usage-08931, -usage-02277,
+    // -usage-08932). No view Vulkan allows is refused here: CreateImage
+    // makes no image of the flag that one would be refused of
+    // (`_image.shapeFor`).
+    if (!_image.takesView(&image.device.physical.can, image, info.format)) return .error_validation_failed;
+    // A value that is none of VkComponentSwizzle's seven
+    // (VUID-VkComponentMapping-r-parameter and the other three); each of
+    // the seven is taken, in any channel, since 1.120.
+    const swizzle = swizzleOf(info.components) orelse return .error_validation_failed;
     const range = info.subresource_range;
-    if (range.base_mip_level >= image.levels or range.base_array_layer >= image.layers) return .error_format_not_supported;
-    const layers = if (range.layer_count == facet.REMAINING) image.layers - range.base_array_layer else range.layer_count;
-    if (layers == 0 or layers > image.layers - range.base_array_layer) return .error_format_not_supported;
+    // The layers Vulkan has the image made with: a 3D image's one
+    // (VUID-VkImageCreateInfo-imageType-00961), its depth being the slices
+    // this library keeps as its layers (`Image.layers`). Until 1.135 the
+    // depth was taken for them, so a 3D view of one layer was refused and
+    // one of as many as the depth taken.
+    const array_layers: u32 = if (image.volume) 1 else image.layers;
+    // A first level or layer the image has not got, no layers, or more of
+    // them than it has from the first on
+    // (VUID-VkImageViewCreateInfo-subresourceRange-01478, -image-06724,
+    // VUID-VkImageSubresourceRange-layerCount-01721,
+    // VUID-VkImageViewCreateInfo-subresourceRange-06725).
+    if (range.base_mip_level >= image.levels or range.base_array_layer >= array_layers) return .error_validation_failed;
+    const layers = if (range.layer_count == facet.REMAINING) array_layers - range.base_array_layer else range.layer_count;
+    if (layers == 0 or layers > array_layers - range.base_array_layer) return .error_validation_failed;
     switch (info.view_type) {
-        // A 1D image takes the 1D view types and no other, and a 2D image
-        // a row high is not one: the two are different kinds of image to
-        // Vulkan however alike their texels lie (since 1.86).
-        .@"1d" => if (layers != 1 or !image.line) return .error_format_not_supported,
-        .@"1d_array" => if (!image.line) return .error_format_not_supported,
-        .@"2d" => if (layers != 1 or image.volume or image.line) return .error_format_not_supported,
-        .@"2d_array" => if (image.volume or image.line) return .error_format_not_supported,
-        .cube => if (!image.cube or layers != 6) return .error_format_not_supported,
-        // Cubes one after another: six layers to each, and the first layer
-        // of the view is the first face of a cube (since 1.46).
-        .cube_array => if (!image.device.physical.can.cube_arrays or !image.cube or layers % 6 != 0 or range.base_array_layer % 6 != 0) return .error_format_not_supported,
-        .@"3d" => if (!image.volume or range.base_array_layer != 0 or layers != image.layers) return .error_format_not_supported,
-        else => return .error_format_not_supported,
+        // A type the image's own takes
+        // (VUID-VkImageViewCreateInfo-subResourceRange-01021): a 1D image
+        // takes the 1D view types and no other, and a 2D image a row high
+        // is not one - the two are different kinds of image to Vulkan
+        // however alike their texels lie (since 1.86). A 1D, a 2D or a 3D
+        // view is of one layer (-imageViewType-04973, -imageViewType-04974).
+        .@"1d" => if (layers != 1 or !image.line) return .error_validation_failed,
+        .@"1d_array" => if (!image.line) return .error_validation_failed,
+        // A 3D image takes neither 2D type on a 1.0 device, which has no
+        // IMAGE_CREATE_2D_ARRAY_COMPATIBLE (-image-06728, -image-06723).
+        .@"2d" => if (layers != 1 or image.volume or image.line) return .error_validation_failed,
+        .@"2d_array" => if (image.volume or image.line) return .error_validation_failed,
+        // Six layers, from any layer, of an image made CUBE_COMPATIBLE
+        // (-image-01003, -viewType-02960, -viewType-02962).
+        .cube => if (!image.cube or layers != 6) return .error_validation_failed,
+        // Cubes one after another, six layers to each (since 1.46), on a
+        // device that has imageCubeArray (-viewType-01004; the V3D has
+        // not): of an image made CUBE_COMPATIBLE, a multiple of six layers
+        // of it (-viewType-02961, -viewType-02963). Its first layer is the
+        // first face of its first cube whatever layer of the image that
+        // is, as Vulkan counts a cube array's faces from `baseArrayLayer`
+        // and the view's texture begins there (`_image.levelsFrom`); until
+        // 1.135 it had to be a multiple of six.
+        .cube_array => if (!image.device.physical.can.cube_arrays or !image.cube or layers % 6 != 0) return .error_validation_failed,
+        // Of a 3D image, its one layer, which the checks above hold it to.
+        .@"3d" => if (!image.volume) return .error_validation_failed,
+        // None of Vulkan's (-viewType-parameter).
+        else => return .error_validation_failed,
     }
+    // Its levels the same way (VUID-VkImageSubresourceRange-levelCount-01720,
+    // VUID-VkImageViewCreateInfo-subresourceRange-01718).
     const count = if (range.level_count == facet.REMAINING) image.levels - range.base_mip_level else range.level_count;
-    if (count == 0 or count > image.levels - range.base_mip_level) return .error_format_not_supported;
-    if (image.kind != .depth and image.data == null) return .error_format_not_supported;
+    if (count == 0 or count > image.levels - range.base_mip_level) return .error_validation_failed;
+    // Not yet bound into memory (VUID-VkImageViewCreateInfo-image-01020):
+    // BindImageMemory sets `memory` for every type, the lazily allocated
+    // one too, whose blocks have no bytes behind them, and a swapchain's
+    // image is the swapchain's, no program's to bind. Until 1.135 a depth
+    // image's binding was looked at only where the view reads it.
+    if (image.memory == null and !image.presentable) return .error_validation_failed;
+    // An aspect the format has not got
+    // (VUID-VkImageViewCreateInfo-subresourceRange-09594): a plane of a
+    // depth format it has not, IMAGE_ASPECT_COLOR being the format's own
+    // plane (BEHAVIOR), and a depth or a stencil of a colour format. Until
+    // 1.135 a depth image's aspect was looked at only where the view reads
+    // it, and a colour image's not at all.
+    if (image.kind == .depth and !_image.hasPlane(image, range.aspect_mask)) return .error_validation_failed;
+    if (image.kind != .depth and range.aspect_mask & (facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL) != 0) return .error_validation_failed;
     // A depth attachment sampled where it lies: the plane the view's
     // aspect names, of the layers it names (since 1.58). Both planes at
-    // once is the depth (since 1.94), one the format has not got is no
-    // texture, and an aspect naming neither is the format's own plane.
+    // once is the depth (since 1.94), and an aspect naming neither is the
+    // format's own plane. Neither this nor the rows below is without a
+    // plane or bytes to be over: an aspect the format has not got is
+    // refused above, and so is an image never bound, while a depth image
+    // sampled or read as an input attachment is offered no lazily
+    // allocated type (`_image.requirements`) and so has bytes behind it
+    // once bound. Until 1.135 each was refused here instead.
     const plane = if (_image.sampledDepth(image))
-        _image.depthPlane(image, range.aspect_mask, range.base_mip_level, count, range.base_array_layer, layers) orelse return .error_format_not_supported
+        _image.depthPlane(image, range.aspect_mask, range.base_mip_level, count, range.base_array_layer, layers).?
     else
         null;
     // The same plane as rows, for a later subpass to read pixel by pixel
     // (since 1.62): the view's first layer, the depth 0 to 1 and the
-    // stencil the whole number it is.
+    // stencil the whole number it is - by the same two rules.
     const read_rows = if (image.kind == .depth and image.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0)
-        _image.depthRows(image, range.aspect_mask, range.base_mip_level, range.base_array_layer) orelse return .error_format_not_supported
+        _image.depthRows(image, range.aspect_mask, range.base_mip_level, range.base_array_layer).?
     else
         null;
+    // What the view holds: of a 3D image every slice, that image's one
+    // layer to Vulkan (`vk_image_view_init`,
+    // src/vulkan/runtime/vk_image.c:671), as v3dv gives the TMU the depth
+    // of the image's first level and the view's first level apart from it
+    // (src/broadcom/vulkan/v3dvx_image.c:68, :79-80).
+    const held = if (image.volume) image.layers else layers;
     const made = _objects.create(base.sys_base, ImageView) orelse return .error_out_of_host_memory;
-    made.* = .{ .image = image, .format = info.format, .base_level = range.base_mip_level, .level_count = count, .base_layer = range.base_array_layer, .layer_count = layers, .swizzle = swizzle };
-    if (image.kind == .texture) made.texels = _image.levelsFrom(image, range.base_mip_level, count, range.base_array_layer, layers);
+    made.* = .{ .image = image, .format = info.format, .base_level = range.base_mip_level, .level_count = count, .base_layer = range.base_array_layer, .layer_count = held, .swizzle = swizzle };
+    // A level of a 3D image has half the slices of the one before
+    // (`texture.Texture.slicesAt`), and the view's texture begins at the
+    // level it names, so it has that level's slices (since 1.135), as
+    // Mesa's view takes the extent of its first level and is as deep as
+    // that (src/vulkan/runtime/vk_image.c:648-649, :695).
+    if (image.kind == .texture) made.texels = _image.levelsFrom(image, range.base_mip_level, count, range.base_array_layer, if (image.volume) image.texels.slicesAt(range.base_mip_level) else layers);
     // A colour attachment written through as a storage image (since
     // 1.56): its rows are the one level, and a view of it takes them as
     // they are.

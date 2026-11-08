@@ -3738,14 +3738,19 @@ fn CreateBufferView(base: *FacetBase, device: *facet.Device, info: *const facet.
   through, and bound to memory.
 - `info.format` - how the bytes are read: `r8g8b8a8_unorm`,
   `b8g8r8a8_unorm`, `r5g6b5_unorm_pack16`, `r32_sfloat`,
-  `r32g32_sfloat`, `r32g32b32_sfloat`, `r32g32b32a32_sfloat`, and
-  since 1.54 one channel, two or four of 8, 16 or 32 bits - a
-  `_unorm` read as 0 to 1, a `_uint` or a `_sint` as the whole number
-  itself, and `r16_sfloat`, `r16g16_sfloat` and
-  `r16g16b16a16_sfloat` as half-floats. Those are the formats whose
-  `buffer_features` say `UNIFORM_TEXEL_BUFFER`, which
-  `GetPhysicalDeviceFormatProperties` tells and is the same on every
-  device.
+  `r32g32_sfloat`, `r32g32b32_sfloat`, `r32g32b32a32_sfloat`; since
+  1.54 one channel, two or four of 8, 16 or 32 bits - a `_unorm` read
+  as 0 to 1, a `_uint` or a `_sint` as the whole number itself, and
+  `r16_sfloat`, `r16g16_sfloat` and `r16g16b16a16_sfloat` as
+  half-floats; and since 1.68 the `_snorm` of the 8- and 16-bit ones,
+  read as -1 to 1, `r8_srgb`, `r8g8_srgb`, `r8g8b8a8_srgb` and
+  `b8g8r8a8_srgb`, read through sRGB's transfer function, the A8B8G8R8
+  words (`_unorm` and `_srgb`, and since 1.127 `_snorm`, `_uint` and
+  `_sint`), the four 2-10-10-10 words, `b10g11r11_ufloat_pack32` and
+  `e5b9g9r9_ufloat_pack32`, and `r32g32b32_uint` and `_sint`. Those
+  are the formats whose `buffer_features` say `UNIFORM_TEXEL_BUFFER`,
+  which `GetPhysicalDeviceFormatProperties` tells and is the same on
+  every device.
 - `info.offset` - the first byte of the texels, a multiple of
   `PhysicalDeviceLimits.min_texel_buffer_offset_alignment`, 16, whatever
   the format's size (since 1.125; a multiple of the format's size
@@ -3756,11 +3761,13 @@ fn CreateBufferView(base: *FacetBase, device: *facet.Device, info: *const facet.
 
 **RESULT**
 
-`success`; `error_format_not_supported` for a format no view takes;
-`error_feature_not_present` where the device has no texel buffers;
-`error_validation_failed` for a buffer not made for them
-(VUID-VkBufferViewCreateInfo-buffer-00932; `error_feature_not_present`
-until 1.133), and for an offset that is not on the limit or is past
+`success`; `error_feature_not_present` where the device has no texel
+buffers; `error_validation_failed` for a format no view takes, whose
+features have neither texel buffer bit
+(VUID-VkBufferViewCreateInfo-format-08778, -format-08779;
+`error_format_not_supported` until 1.135), for a buffer not made for
+them (-buffer-00932; `error_feature_not_present` until 1.133), and for
+an offset that is not on the limit or is past
 the buffer's end, a range that is not a multiple of the format's size,
 is 0, or reaches past the buffer's end, or a buffer with no memory
 (-buffer-02750, -buffer-02751, -offset-00925, -range-00929,
@@ -4523,9 +4530,11 @@ reports false - `depth_clamp`, `depth_bounds`, `independent_blend`,
 a sample count it does not draw, a vertex binding, stride, attribute or
 location past its limits, or a topology, polygon mode, blend factor or
 blend operation that is none of Vulkan 1.0's;
-`error_format_not_supported` for an attribute in a format it does not
-read; `error_validation_failed` as well for state that does not hold
-together - a subpass the pass has not got, an attribute of a binding
+`error_validation_failed` as well for an attribute in a format it
+does not read, whose features have no VERTEX_BUFFER
+(VUID-VkVertexInputAttributeDescription-format-00623;
+`error_format_not_supported` until 1.135), and for state that does not
+hold together - a subpass the pass has not got, an attribute of a binding
 not given, tessellation functions without a patch list and its state
 or a patch list without them, a sample count that is not the
 subpass's, a compare or stencil operation that is none of Vulkan's,
@@ -4751,8 +4760,30 @@ fn CreateImage(base: *FacetBase, device: *facet.Device, info: *const facet.Image
 
 **RESULT**
 
-`success`; `error_format_not_supported` for an image facet.library
-does not make; `error_out_of_host_memory`.
+`success`; `error_validation_failed` for an image that breaks one of
+VkImageCreateInfo's rules (since 1.135; `error_format_not_supported`
+until then): one GetPhysicalDeviceImageFormatProperties declines, or
+one past the extent, the levels, the layers or the samples it answers
+(VUID-VkImageCreateInfo-imageCreateMaxMipLevels-02251, -extent-02252,
+-extent-02253, -extent-02254, -mipLevels-02255, -arrayLayers-02256,
+-samples-02258), that query asking the rules this call keeps - but a
+3D image one slice deep, neither SAMPLED nor STORAGE or a colour or
+input attachment written through as a storage image, which the query
+declines for the 256 slices it asks and this call makes (-02251
+allowing that, creating it being invalid usage; docs/facet-vulkan10.md
+item 94); and
+whatever it answers, a side, levels or layers of 0 (-extent-00944 to
+-extent-00946, -mipLevels-00947, -arrayLayers-00948), a cube that is
+not square or has fewer than six layers (-flags-08865, -flags-08866),
+more levels than its own extent's chain has (-mipLevels-00958), more
+than one sample with more than one level (-samples-02257), or
+TRANSIENT_ATTACHMENT beside a usage other than the attachments', or
+with none of those (-usage-00963, -usage-00966; made until 1.135).
+`error_feature_not_present` for the one kind of image refused that
+Vulkan allows: of type `3d`, deeper than it is wide and high, with more
+levels than its width and height halve to and no more than its depth
+does, which -mipLevels-00958 allows (docs/facet-vulkan10.md item 93;
+`error_format_not_supported` until 1.135). `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -4816,8 +4847,8 @@ What it is for decides how it lies in its memory:
 Images are up to 8192 wide and high. One both SAMPLED and
 COLOR_ATTACHMENT, or SAMPLED and INPUT_ATTACHMENT, is made on a device
 that keeps its images in this library's layout; the V3D's lie in its
-own (`Ops.texture_memory`), and there it is
-`error_format_not_supported`, as an image of levels kept in rows is.
+own (`Ops.texture_memory`), and there it is refused, as an image of
+levels kept in rows is.
 
 **An image may have four samples a pixel** on a device that draws them
 (`Capabilities.multisampling`, since 1.98): 2D, optimal, one level and
@@ -4841,7 +4872,7 @@ what a subpass draws reaches them when it stores, at the end of its part.
 So a function may seed the rows before a pass draws into them, or write
 over them after it, and writing them while the pass that draws into them
 is open has no order against that store - as it has none in Vulkan
-without a barrier. R8G8B8A8 is `error_format_not_supported` for this: a
+without a barrier. R8G8B8A8 is refused for this: a
 texture of 8888 is 0xAARRGGBB, as B8G8R8A8's rows are, and the texture
 that reads a word with red in its low byte (`texture.Format.rgba8`,
 since 1.110) is fetched from, not written through.
@@ -4851,9 +4882,13 @@ rows may be written through.
 A SAMPLED image may have up to 256 layers, or be 3D, of type `3d`, of any
 depth up to 256 and with levels of its own (since 1.46): a level is half
 as deep as the one before it, and no less than one slice deep, each slice
-carrying the whole of its own pyramid. IMAGE_CREATE_CUBE_COMPATIBLE says a
-view of type cube, or of cube_array, will be made: of a square image of 6
-layers or more, a multiple of six of them for an array of cubes.
+carrying the whole of its own pyramid: as many levels as halving its
+width and height gives, so one deeper than it is wide and high is
+refused the levels past those that its depth gives (docs/facet-vulkan10.md
+item 93). IMAGE_CREATE_CUBE_COMPATIBLE says a view of type cube, or of
+cube_array, will be made: of a square image of 6 layers or more, six of
+them for a cube and a multiple of six for an array of cubes, from any
+layer.
 
 A STORAGE image may have layers and levels the same way, and since
 1.55 needs no SAMPLED beside it to have them: a function writing one
@@ -4927,7 +4962,7 @@ costs:
   for `rgba8888` draws it through the run-time sampler as it does any
   other format it was not built for.
 
-Both are `error_format_not_supported` where the device has not got
+Both are refused where the device has not got
 them, and so is the flag on an image that is neither sampled nor a
 storage image, or whose format has no 8888 word to keep.
 
@@ -4938,7 +4973,7 @@ other of its pair for a block format, and none for depth or stencil
 (CreateImageView). Its texels are kept as they lie - B8G8R8A8's as the
 word PACKED_TEXELS keeps, R8G8B8A8's as its four bytes - so that each
 such view reads and writes the same bytes its own way, and copies move
-them as they are. It is `error_format_not_supported` where a compatible
+them as they are. It is refused where a compatible
 format whose features take the image's usage could not be read where
 the texels lie: an R5G6B5 image to sample, B4G4R4A4 being sampled and
 kept unpacked, while one only drawn into is made. So it is on a format
@@ -5008,12 +5043,30 @@ fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const facet.I
 
 **RESULT**
 
-`success`; `error_format_not_supported` for a view facet.library does
-not make - of another format than the image's where the image was not
-made IMAGE_CREATE_MUTABLE_FORMAT, or of one Vulkan does not have
-compatible with it, of a type the image is not for, with a swizzle that is none of Vulkan's seven values, of
-levels or layers the image has not got, or of an image not yet bound
-into memory; `error_out_of_host_memory`.
+`success`; `error_validation_failed` for a view Vulkan's rules forbid
+(since 1.135; `error_format_not_supported` until then): of another
+format than the image's where the image was not made
+IMAGE_CREATE_MUTABLE_FORMAT (VUID-VkImageViewCreateInfo-image-12397),
+of one not compatible with it (-image-01761), or of one whose features
+do not do what the image is for (-None-02273, -usage-02274,
+-usage-02275, -usage-08931, -usage-02277, -usage-08932), CreateImage
+making no image of the flag that a view Vulkan allows would be refused
+of; of an image made for no view, which Vulkan has take none
+(-image-04441), of another format its texels are not read in where
+they lie, its other views being made (`_image.takesView`); with a
+swizzle that is none of Vulkan's seven values
+(VUID-VkComponentMapping-r-parameter and the other three); of a type
+that is none of Vulkan's or that the image does not take, or of layers
+that type does not take (-viewType-parameter, -subResourceRange-01021,
+-image-01003, -image-06723, -image-06728, -viewType-01004,
+-imageViewType-04973, -imageViewType-04974, -viewType-02960 to
+-viewType-02963); of levels or layers the image has not got, or of none
+(-subresourceRange-01478, -subresourceRange-01718, -image-06724,
+-subresourceRange-06725, VUID-VkImageSubresourceRange-levelCount-01720,
+-layerCount-01721); of an aspect its format has not got - a plane of a
+depth format it has not, or a depth or a stencil of a colour format
+(-subresourceRange-09594); or of an image not yet bound into memory
+(-image-01020); `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -5064,20 +5117,30 @@ On the V3D the TMU swizzles, the view's over the format's own.
 Of type `2d` it is one layer, of a texture with any number of them. Of type
 `2d_array` it is the layers asked for, for `shader.FixedKind.texture_array`;
 `cube` is 6 layers of an image made IMAGE_CREATE_CUBE_COMPATIBLE, for
-`texture_cube`, and `3d` the whole of a 3D image, for `texture_3d`.
+`texture_cube`, and `3d` the whole of a 3D image, for `texture_3d`: the
+one layer Vulkan has such an image have, `layer_count` 1 or REMAINING,
+which holds every slice. From `base_mip_level` on it reads the slices
+of the levels it begins at, each level half as deep as the one before
+(`texture.Texture.slicesAt`). Both since 1.135: a `layer_count` of 1
+was refused before and one of the whole depth taken, and a view from a
+level past the first read the whole depth's slices at it, which that
+level has not got.
 
 Of type `cube_array` it is as many cubes as its layers divided by six, of
 such an image, for `texture_cube_array` and, since 1.53,
-`texture_cube_array_sampled`: its layers are a multiple of six
-and its first layer begins a cube, so `base_array_layer` is a multiple of
-six as well (`Capabilities.cube_arrays`, since 1.46).
+`texture_cube_array_sampled`: its layers are a multiple of six, and its
+first is the first face of its first cube whatever layer of the image
+that is, as Vulkan counts a cube array's faces from `baseArrayLayer`
+(since 1.135; a multiple of six before) (`Capabilities.cube_arrays`,
+since 1.46).
 
 **A view of a sampled depth image takes one of its planes** since 1.58
 (`Capabilities.sampled_depth`): IMAGE_ASPECT_DEPTH is the
 depth, read at all 16 bits by a sampler that compares and as a grey of
 its top 8 by one that does not, and IMAGE_ASPECT_STENCIL is the
 stencil, read as (red, 0, 0, 1) the way a texel of one byte is. A
-plane the format has not got is `error_format_not_supported`; an
+plane the format has not got is `error_validation_failed` (since 1.135,
+`error_format_not_supported` before); an
 aspect naming neither - IMAGE_ASPECT_COLOR, the default, and what every
 such view asked for before 1.58 - is the format's own plane, its depth
 where it has one and its stencil where it has not. The plane is a
@@ -5489,9 +5552,20 @@ flag that is none of Vulkan's or facet.library's own
 VUID-VkSubpassDescription-pipelineBindPoint-04952,
 -colorAttachmentCount-00845, -flags-parameter;
 `error_feature_not_present` until 1.133);
-`error_format_not_supported` for an attachment in
-a format it cannot draw into, or read as an input attachment;
-`error_validation_failed` as well for an attachment of a count of
+`error_validation_failed` as well for an attachment whose format's
+features have not got what its use asks: COLOR_ATTACHMENT for a
+colour, DEPTH_STENCIL_ATTACHMENT for a depth, and one of the two for an
+input attachment (VUID-VkSubpassDescription-pColorAttachments-02648,
+-pDepthStencilAttachment-02650, -pInputAttachments-02647;
+`error_format_not_supported` until 1.135, and `error_feature_not_present`
+for a d16_unorm_s8_uint one that keeps a plane on a device without
+`stored_both`) - though a d16_unorm_s8_uint depth attachment that keeps
+neither plane is drawn on such a device, the V3D, whose format query
+gives it no DEPTH_STENCIL_ATTACHMENT (BEHAVIOR; docs/facet-vulkan10.md
+item 94), as an s8_uint one that keeps nothing would be on a device
+without `stored_stencil`, which no device is, one that keeps its
+stencil being `error_feature_not_present` there -
+for an attachment of a count of
 samples that is none of Vulkan's (VUID-VkAttachmentDescription-samples-parameter;
 `error_feature_not_present` until 1.134), and for a subpass that names
 an attachment there is not, or none where it counts some; attachments
@@ -5520,7 +5594,8 @@ SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER asks for (item 80; both
 **BEHAVIOR**
 
 The pass has up to 4 subpasses and up to 8 attachments. A subpass draws
-into 0 to 4 colour attachments - b8g8r8a8_unorm or r8g8b8a8_unorm - 8 in all
+into 0 to 4 colour attachments - b8g8r8a8_unorm, r8g8b8a8_unorm or
+r5g6b5_unorm_pack16 - 8 in all
 the subpasses, and may test against a depth attachment, d16_unorm, s8_uint
 or d16_unorm_s8_uint.
 
@@ -5613,8 +5688,14 @@ Keeping either plane of a format that holds **both** - `d16_unorm_s8_uint`
 planes where they lie in its four bytes, while a device that stores the
 whole of a tile buffer, the V3D, writes one plane's pixels one after
 another and so keeps only a format of that plane alone. There such an
-op is `error_feature_not_present`, and a `d16_unorm` or an `s8_uint`
-attachment keeps what it holds.
+op is `error_validation_failed`, GetPhysicalDeviceFormatProperties
+giving the format no DEPTH_STENCIL_ATTACHMENT on such a device
+(VUID-VkSubpassDescription-pDepthStencilAttachment-02650;
+`error_feature_not_present` until 1.135), and a `d16_unorm` or an
+`s8_uint` attachment keeps what it holds. A `d16_unorm_s8_uint`
+attachment that keeps neither plane is drawn there all the same, in
+the tiles alone, though it breaks the same rule
+(docs/facet-vulkan10.md item 94).
 
 Two subpasses share a depth attachment either way. One right after the
 other and with the same colour attachments too goes on in the tiles of
@@ -5637,8 +5718,9 @@ up to 8 `input_attachments`, each read pixel by pixel at the
 fragment's own place (`shader.Resources.input`, `shader.Attachment`).
 Such an attachment is read out of the image's memory, so its format is
 one whose pixels are kept in rows - b8g8r8a8_unorm, r8g8b8a8_unorm or
-r5g6b5_unorm_pack16, anything else being
-`error_format_not_supported` - and what it holds is what an earlier
+r5g6b5_unorm_pack16, anything else being `error_validation_failed`
+(since 1.135; `error_format_not_supported` before), as no other colour
+format has COLOR_ATTACHMENT - and what it holds is what an earlier
 subpass drew, or what its load op left there.
 
 **A depth attachment is read that way too** since 1.62
@@ -6161,8 +6243,11 @@ fn CreateSwapchain(base: *FacetBase, device: *facet.Device, info: *const facet.S
 `success`; `error_out_of_device_memory` when the display's memory has
 no room for that many pictures; `error_native_window_in_use` when the
 surface has a swapchain that is not `old_swapchain`;
-`error_format_not_supported` for a format that is not its;
-`error_validation_failed` for a use, a present mode or layers the
+`error_validation_failed` for a format other than the one
+GetPhysicalDeviceSurfaceFormats gives, or on a surface it gives none
+for, which GetPhysicalDeviceSurfaceSupport says no queue presents to
+(VUID-VkSwapchainCreateInfoKHR-imageFormat-01273, -surface-01270;
+`error_format_not_supported` until 1.135), for a use, a present mode or layers the
 surface does not have, as GetPhysicalDeviceSurfaceCapabilities and
 GetPhysicalDeviceSurfacePresentModes give them
 (VUID-VkSwapchainCreateInfoKHR-presentMode-01427, -imageArrayLayers-01275,
@@ -8785,14 +8870,25 @@ fn GetPhysicalDeviceImageFormatProperties(base: *FacetBase, physical: *facet.Phy
 **RESULT**
 
 `success`, or `error_format_not_supported` where CreateImage would
-refuse every image of that shape, whatever its extent.
+refuse every image of that shape, whatever its extent - but for two
+kinds of shape. TRANSIENT_ATTACHMENT alone, with no other usage, is
+answered as the transfers alone are: no more strictly than
+TRANSIENT beside a colour attachment, as Vulkan has a usage within
+another be answered ("Additional Image Capabilities"), and the same
+where that one is `success`, while on the cores a float or a BC
+format, which is no colour attachment, is `success` too. CreateImage
+refuses every such image (VUID-VkImageCreateInfo-usage-00966; since
+1.135). And a 3D image neither sampled nor written through, or a
+colour or input attachment written through as a storage image, is
+declined, the question being asked at 256 slices, while CreateImage
+makes many such images a slice deep (docs/facet-vulkan10.md item 94).
 
 **BEHAVIOR**
 
 The question is asked of the same rules CreateImage keeps: the image
 of the largest extent is laid out by the very code CreateImage lays
 an image out with, so an extent inside what is answered here is made
-and one outside it is refused.
+and one outside it is refused, the shapes RESULT names apart.
 
 What is answered, from the device's own limits
 (GetPhysicalDeviceProperties) and from what CreateImage takes of

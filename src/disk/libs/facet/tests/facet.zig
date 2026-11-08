@@ -674,12 +674,16 @@ test "the formats: what each does in each tiling" {
     try testing.expectEqual(0, properties.linear_tiling_features);
     // Since 1.38 one with a stencil keeps it the same way, so it too is
     // transferred: a copy reads or writes each pixel's depth and stencil
-    // at once.
+    // at once. Sampled since 1.135 where the depth is, as CreateImage has
+    // made either sampled since 1.58: the stencil never filtered, and the
+    // depth of a format of both as a depth is.
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .d16_unorm_s8_uint, &properties);
-    try testing.expectEqual(facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST, properties.optimal_tiling_features);
+    try testing.expectEqual(facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST |
+        facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR, properties.optimal_tiling_features);
     try testing.expectEqual(0, properties.linear_tiling_features);
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .s8_uint, &properties);
-    try testing.expectEqual(facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST, properties.optimal_tiling_features);
+    try testing.expectEqual(facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST |
+        facet.FORMAT_FEATURE_SAMPLED_IMAGE, properties.optimal_tiling_features);
     // A vertex format, and texels a BufferView reads as well.
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .r32g32b32_sfloat, &properties);
     try testing.expectEqual(facet.FORMAT_FEATURE_VERTEX_BUFFER | facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER | facet.FORMAT_FEATURE_STORAGE_TEXEL_BUFFER, properties.buffer_features);
@@ -784,7 +788,7 @@ test "an image: a texture, rows or a depth, by what it is for" {
     }
     rig.fb.DestroyImage(device, image);
     // More levels than halving the longer side gives is still refused.
-    try testing.expectEqual(facet.Result.error_format_not_supported, rig.fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 100, .height = 60 }, .mip_levels = 8, .usage = sampled }, &image));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 100, .height = 60 }, .mip_levels = 8, .usage = sampled }, &image));
 
     // Rows: each on a cache line.
     try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 100, .height = 30 }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image));
@@ -834,7 +838,7 @@ test "an image: a texture, rows or a depth, by what it is for" {
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 16384, .height = 64 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
     };
     for (refused) |info| {
-        try testing.expectEqual(facet.Result.error_format_not_supported, rig.fb.CreateImage(device, &info, &image));
+        try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateImage(device, &info, &image));
         try testing.expect(image == null);
     }
 }
@@ -864,12 +868,12 @@ test "a compressed image down to its last level, and no compressed image of one 
         // And no compressed image of one dimension, as neither Mesa driver
         // makes one: the query and CreateImage say so alike.
         try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, format, .@"1d", .optimal, sampled, 0, &properties));
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = format, .image_type = .@"1d", .extent = .{ .width = 16, .height = 1, .depth = 1 }, .usage = sampled }, &image));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = format, .image_type = .@"1d", .extent = .{ .width = 16, .height = 1, .depth = 1 }, .usage = sampled }, &image));
     }
     // ETC2 is unpacked as it is copied in, and is refused as one dimension
     // all the same.
     var image: ?*facet.Image = null;
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = .etc2_r8g8b8_unorm_block, .image_type = .@"1d", .extent = .{ .width = 16, .height = 1, .depth = 1 }, .usage = sampled }, &image));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = .etc2_r8g8b8_unorm_block, .image_type = .@"1d", .extent = .{ .width = 16, .height = 1, .depth = 1 }, .usage = sampled }, &image));
 }
 
 test "a copy into a texture: each texel where the texture layout keeps it, as 0xAARRGGBB; a view from a level on" {
@@ -913,14 +917,14 @@ test "a copy into a texture: each texel where the texture layout keeps it, as 0x
     try testing.expectEqual(@as(u32, 0), texture.gather(kept[made.texels.index(0, 0, 1)]));
 
     var view: ?*facet.ImageView = null;
-    try testing.expectEqual(facet.Result.error_format_not_supported, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .b8g8r8a8_unorm }, &view));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .b8g8r8a8_unorm }, &view));
     // A view that swizzles is made since 1.120, its texels reading red
     // from blue (docs/facet-vulkan10.md item 41).
     var swizzled: ?*facet.ImageView = null;
     try testing.expectEqual(facet.Result.success, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .r8g8b8a8_unorm, .components = .{ .r = .b } }, &swizzled));
     try testing.expectEqual(texture.Swizzle{ .r = .blue }, _objects.of(_image.ImageView, swizzled.?).texels.swizzle);
     rig.fb.DestroyImageView(device, swizzled);
-    try testing.expectEqual(facet.Result.error_format_not_supported, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .r8g8b8a8_unorm, .subresource_range = .{ .base_mip_level = 1, .level_count = 3 } }, &view));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .r8g8b8a8_unorm, .subresource_range = .{ .base_mip_level = 1, .level_count = 3 } }, &view));
     try testing.expectEqual(facet.Result.success, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .r8g8b8a8_unorm, .subresource_range = .{ .base_mip_level = 1 } }, &view));
     defer rig.fb.DestroyImageView(device, view);
     const seen = _objects.of(_image.ImageView, view.?);
@@ -1141,6 +1145,12 @@ test "an image of four samples a pixel is four planes of one sample's bytes, and
                                 try testing.expect(can and attachment and image_type == .@"2d" and tiling == .optimal and flags == 0);
                                 said_four += 1;
                             }
+                            // TRANSIENT_ATTACHMENT alone is no image's
+                            // (VUID-VkImageCreateInfo-usage-00966): CreateImage
+                            // refuses it itself, and the query answers it as
+                            // the transfers alone, no more strictly than
+                            // beside a colour attachment (since 1.135).
+                            if (usage == facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT) continue;
                             const largest = facet.ImageCreateInfo{ .flags = flags, .image_type = image_type, .format = format, .extent = properties.max_extent, .array_layers = properties.max_array_layers, .samples = 4, .tiling = tiling, .usage = usage };
                             try testing.expectEqual(four, imageBytes(&rig, device, largest) != null);
                             var smallest = largest;
@@ -1277,7 +1287,7 @@ test "the three device queries: the largest image of a shape, the render area's 
         // One level more, or one layer more, is refused: the answer is
         // the largest there is.
         var over: ?*facet.Image = null;
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{
             .flags = flags,
             .image_type = kind,
             .format = format,
@@ -1287,7 +1297,7 @@ test "the three device queries: the largest image of a shape, the render area's 
             .tiling = tiling,
             .usage = usage,
         }, &over));
-        if (!volume) try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+        if (!volume) try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{
             .flags = flags,
             .image_type = kind,
             .format = format,
@@ -1331,7 +1341,7 @@ test "the three device queries: the largest image of a shape, the render area's 
     const widest = properties.max_extent.width;
     try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = widest, .height = 1 }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image));
     fb.DestroyImage(device, image);
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = widest + 1, .height = 1 }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = widest + 1, .height = 1 }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image));
     try testing.expect(image == null);
 
     // The render area's granularity is the device's tile, whatever the

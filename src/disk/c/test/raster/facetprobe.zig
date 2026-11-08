@@ -1276,7 +1276,7 @@ fn texelBufferChecks(probe: *Probe) void {
 
     // Refused: a format no view takes, and an offset that is not a texel's.
     var none: ?*facet.BufferView = null;
-    probe.check(fb.CreateBufferView(device, &.{ .buffer = floats, .format = .d16_unorm }, &none) == .error_format_not_supported, "a format no view takes refused");
+    probe.check(fb.CreateBufferView(device, &.{ .buffer = floats, .format = .d16_unorm }, &none) == .error_validation_failed, "a format no view takes refused");
     probe.check(fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r32g32b32a32_sfloat, .offset = 4 }, &none) == .error_validation_failed, "an offset that is not a texel's refused");
     probe.check(none == null, "and nothing given back for either");
 
@@ -2032,16 +2032,16 @@ fn queryChecks(probe: *Probe) void {
     probe.checkEqual(limits.max_image_dimension_1d, shape.max_extent.width, "as wide as the limit says");
     probe.checkEqual(1, shape.max_extent.height, "one row high");
     probe.checkEqual(1, shape.max_extent.depth, "and one deep");
-    var row: ?*facet.Image = null;
-    if (fb.CreateImage(device, &.{ .image_type = .@"1d", .format = .b8g8r8a8_unorm, .extent = .{ .width = 256, .height = 1 }, .usage = sampled }, &row) == .success) {
-        var row_view: ?*facet.ImageView = null;
-        probe.check(fb.CreateImageView(device, &.{ .image = row.?, .view_type = .@"1d", .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } }, &row_view) == .success, "a 1D view of it made");
-        fb.DestroyImageView(device, row_view);
+    // Bound into memory, as a view's image is: until 1.135 the view here
+    // was of an image not bound, which CreateImageView has refused since
+    // 1.0, so the check could not hold wherever it ran.
+    if (probe.bound(.{ .image_type = .@"1d", .format = .b8g8r8a8_unorm, .extent = .{ .width = 256, .height = 1 }, .usage = sampled }, 0)) |line| {
+        probe.check(probe.viewed(.{ .image = line, .view_type = .@"1d", .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } }) != null, "a 1D view of it made");
         var flat_view: ?*facet.ImageView = null;
-        probe.check(fb.CreateImageView(device, &.{ .image = row.?, .view_type = .@"2d", .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } }, &flat_view) == .error_format_not_supported, "and a 2D view of it refused");
-        fb.DestroyImage(device, row);
+        probe.check(fb.CreateImageView(device, &.{ .image = line, .view_type = .@"2d", .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } }, &flat_view) == .error_validation_failed, "and a 2D view of it refused");
     } else probe.check(false, "a 1D image made");
-    probe.check(fb.CreateImage(device, &.{ .image_type = .@"1d", .format = .b8g8r8a8_unorm, .extent = .{ .width = 256, .height = 2 }, .usage = sampled }, &row) == .error_format_not_supported, "a 1D image two rows high refused");
+    var row: ?*facet.Image = null;
+    probe.check(fb.CreateImage(device, &.{ .image_type = .@"1d", .format = .b8g8r8a8_unorm, .extent = .{ .width = 256, .height = 2 }, .usage = sampled }, &row) == .error_validation_failed, "a 1D image two rows high refused");
 
     // A constant texel offset on a sample (item 28, since 1.87). Vulkan
     // asks -8 and 7 of every implementation and no feature gates it, so a
@@ -2081,7 +2081,7 @@ fn queryChecks(probe: *Probe) void {
     fb.DestroyImage(device, image);
     image = null;
     const over = fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = widest + 1, .height = 1 }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image);
-    probe.check(over == .error_format_not_supported and image == null, "one texel wider refused");
+    probe.check(over == .error_validation_failed and image == null, "one texel wider refused");
 
     // The render area's granularity is the device's tile.
     const pass = passKeeping(probe, .clear, .clear, .dont_care) orelse return probe.check(false, "a pass to ask about");
@@ -2447,8 +2447,8 @@ fn stencilChecks(probe: *Probe) void {
         probe.check(passStenciling(probe, .s8_uint, "cdcd") != null, "a stencil that stays in the tiles is still taken");
         return;
     }
-    // An op for a plane the format has not.
-    probe.check(passStenciling(probe, .d16_unorm, "cdcs") == null, "a stencil op refused for a format with no stencil");
+    // An op for a plane the format has not keeps nothing (since 1.106).
+    probe.check(passStenciling(probe, .d16_unorm, "cdcs") != null, "a stencil op for a format with no stencil keeps nothing (since 1.106)");
 
     const extent = facet.Extent3D{ .width = side, .height = side };
     const marked: u8 = 5;
@@ -2487,7 +2487,9 @@ fn stencilChecks(probe: *Probe) void {
     // A format that holds a depth beside the stencil keeps either only
     // where the device writes a pixel's planes where they lie in it
     // (`stored_both`, since 1.47); a device that stores a tile buffer
-    // whole - the V3D - takes the format of a stencil alone.
+    // whole - the V3D - takes the format of a stencil alone, and refuses
+    // the other kept with `error_validation_failed`, its format query
+    // giving it no DEPTH_STENCIL_ATTACHMENT (since 1.135).
     if (!probe.can.stored_both) {
         probe.check(passStenciling(probe, .d16_unorm_s8_uint, "cdcs") == null, "a stored stencil refused for a format that holds a depth too");
         probe.check(passStenciling(probe, .d16_unorm_s8_uint, "cdcd") != null, "one that stays in the tiles is still taken");
@@ -2745,15 +2747,19 @@ fn sampledDepthChecks(probe: *Probe) void {
 
     // --- 1.58: the planes a view names, and layers ---
     // A format that holds a stencil is sampled as well: a view takes one
-    // of its planes, and both at once is no texture.
+    // of its planes, or both at once, its depth (since 1.94).
     const with_stencil = probe.bound(.{ .format = .d16_unorm_s8_uint, .extent = extent, .usage = usage | facet.IMAGE_USAGE_TRANSFER_DST }, 0);
     probe.check(with_stencil != null, "a sampled depth image of a format that holds a stencil");
     if (with_stencil) |held| {
         const depth_plane = probe.viewed(.{ .image = held, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } });
         const stencil_plane = probe.viewed(.{ .image = held, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL } });
         probe.check(depth_plane != null and stencil_plane != null, "a view of each of its planes");
+        // Both at once is a view since 1.94, its texture the depth, which
+        // a framebuffer draws both planes of; until 1.135 this looked for
+        // the refusal that went then.
         var two: ?*facet.ImageView = null;
-        probe.check(fb.CreateImageView(device, &.{ .image = held, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL } }, &two) != .success and two == null, "and both planes at once no view at all");
+        probe.check(fb.CreateImageView(device, &.{ .image = held, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL } }, &two) == .success, "and of both planes at once, its depth");
+        fb.DestroyImageView(device, two);
 
         // Its depth plane cleared and sampled, the stencil beside it left
         // whole: the plane is read two bytes of every four, so a sample
@@ -4039,7 +4045,9 @@ fn shapeChecks(probe: *Probe) void {
     probe.check((stack_view != null) == arrays, if (arrays) "a view of cubes one after another" else "a view of cubes one after another is refused here");
     // Whatever the device, a view of part of a cube is not one of cubes.
     probe.check(probe.viewed(.{ .image = stack, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .layer_count = 4 } }) == null, "layers that are not a multiple of six are refused");
-    probe.check(probe.viewed(.{ .image = stack, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 2, .layer_count = 6 } }) == null, "and a first layer that does not begin a cube");
+    // From any layer, as Vulkan counts a cube array's faces from its first
+    // (since 1.135; from a multiple of six before).
+    probe.check((probe.viewed(.{ .image = stack, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 2, .layer_count = 6 } }) != null) == arrays, if (arrays) "and a view of cubes from any layer" else "nor one from another layer");
 
     const etc = probe.bound(.{ .format = .etc2_r8g8b8a8_unorm_block, .extent = square, .usage = sampled }, 0) orelse
         return probe.check(false, "a texture of 4 by 4 of ETC2 with alpha");
@@ -6340,7 +6348,7 @@ fn mutableChecks(probe: *Probe) void {
     if (said != .success) {
         probe.check(said == .error_format_not_supported, "views of another format of it refused, as the format query says");
         var none: ?*facet.Image = null;
-        probe.check(fb.CreateImage(device, &info, &none) == .error_format_not_supported and none == null, "and CreateImage refuses the image the same way");
+        probe.check(fb.CreateImage(device, &info, &none) == .error_validation_failed and none == null, "and CreateImage refuses the image, which the query declined");
         return;
     }
     probe.check(true, "views of another format of it, as the format query says");

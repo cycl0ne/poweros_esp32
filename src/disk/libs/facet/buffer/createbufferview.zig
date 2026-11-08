@@ -28,14 +28,19 @@ const Device = @import("../device/_device.zig").Device;
 ///   through, and bound to memory.
 /// - `info.format` - how the bytes are read: `r8g8b8a8_unorm`,
 ///   `b8g8r8a8_unorm`, `r5g6b5_unorm_pack16`, `r32_sfloat`,
-///   `r32g32_sfloat`, `r32g32b32_sfloat`, `r32g32b32a32_sfloat`, and
-///   since 1.54 one channel, two or four of 8, 16 or 32 bits - a
-///   `_unorm` read as 0 to 1, a `_uint` or a `_sint` as the whole number
-///   itself, and `r16_sfloat`, `r16g16_sfloat` and
-///   `r16g16b16a16_sfloat` as half-floats. Those are the formats whose
-///   `buffer_features` say `UNIFORM_TEXEL_BUFFER`, which
-///   `GetPhysicalDeviceFormatProperties` tells and is the same on every
-///   device.
+///   `r32g32_sfloat`, `r32g32b32_sfloat`, `r32g32b32a32_sfloat`; since
+///   1.54 one channel, two or four of 8, 16 or 32 bits - a `_unorm` read
+///   as 0 to 1, a `_uint` or a `_sint` as the whole number itself, and
+///   `r16_sfloat`, `r16g16_sfloat` and `r16g16b16a16_sfloat` as
+///   half-floats; and since 1.68 the `_snorm` of the 8- and 16-bit ones,
+///   read as -1 to 1, `r8_srgb`, `r8g8_srgb`, `r8g8b8a8_srgb` and
+///   `b8g8r8a8_srgb`, read through sRGB's transfer function, the A8B8G8R8
+///   words (`_unorm` and `_srgb`, and since 1.127 `_snorm`, `_uint` and
+///   `_sint`), the four 2-10-10-10 words, `b10g11r11_ufloat_pack32` and
+///   `e5b9g9r9_ufloat_pack32`, and `r32g32b32_uint` and `_sint`. Those
+///   are the formats whose `buffer_features` say `UNIFORM_TEXEL_BUFFER`,
+///   which `GetPhysicalDeviceFormatProperties` tells and is the same on
+///   every device.
 /// - `info.offset` - the first byte of the texels, a multiple of
 ///   `PhysicalDeviceLimits.min_texel_buffer_offset_alignment`, 16, whatever
 ///   the format's size (since 1.125; a multiple of the format's size
@@ -45,11 +50,13 @@ const Device = @import("../device/_device.zig").Device;
 /// - `view` - where the view goes.
 ///
 /// RESULT:
-/// `success`; `error_format_not_supported` for a format no view takes;
-/// `error_feature_not_present` where the device has no texel buffers;
-/// `error_validation_failed` for a buffer not made for them
-/// (VUID-VkBufferViewCreateInfo-buffer-00932; `error_feature_not_present`
-/// until 1.133), and for an offset that is not on the limit or is past
+/// `success`; `error_feature_not_present` where the device has no texel
+/// buffers; `error_validation_failed` for a format no view takes, whose
+/// features have neither texel buffer bit
+/// (VUID-VkBufferViewCreateInfo-format-08778, -format-08779;
+/// `error_format_not_supported` until 1.135), for a buffer not made for
+/// them (-buffer-00932; `error_feature_not_present` until 1.133), and for
+/// an offset that is not on the limit or is past
 /// the buffer's end, a range that is not a multiple of the format's size,
 /// is 0, or reaches past the buffer's end, or a buffer with no memory
 /// (-buffer-02750, -buffer-02751, -offset-00925, -range-00929,
@@ -134,7 +141,10 @@ pub fn CreateBufferView(base: *FacetBase, device: *facet.Device, info: *const fa
     const owner = _objects.of(Device, device);
     if (!owner.physical.can.texel_buffers) return .error_feature_not_present;
     const texels = _bufferview.texelsOf(info.format);
-    if (texels == .none) return .error_format_not_supported;
+    // VUID-VkBufferViewCreateInfo-format-08778, -format-08779: the formats
+    // a view takes are those `_format.describe` gives the texel buffer
+    // bits, and no other has either.
+    if (texels == .none) return .error_validation_failed;
     const buffer = _objects.of(Buffer, info.buffer);
     const wanted = facet.BUFFER_USAGE_UNIFORM_TEXEL_BUFFER | facet.BUFFER_USAGE_STORAGE_TEXEL_BUFFER;
     if (buffer.usage & wanted == 0) return .error_validation_failed;

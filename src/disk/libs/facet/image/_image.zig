@@ -31,7 +31,8 @@
 //!
 //! **A texture may have layers**: an array's, a cube's six faces, or a 3D
 //! image's slices. Each lies as a whole texture does, `layer_bytes` from the
-//! one before. A 3D image has one level, so its slices need not halve.
+//! one before, so a 3D image's level is that level of each slice, and has
+//! half the slices of the level before it (`texture.Texture.slicesAt`).
 //!
 //! **An image may have four samples a pixel** (since 1.98), on a device that
 //! draws them: each sample's plane is the whole image at one sample, every
@@ -483,10 +484,12 @@ fn texelSize(format: facet.Format) u32 {
 /// at all (-None-02273), and that format do whatever the image is for -
 /// be sampled, written through, drawn into or read as an input attachment
 /// (VUID-VkImageViewCreateInfo-usage-02274, -02275, -08931, -02277,
-/// -08932). (Since 1.131.)
+/// -08932). (Since 1.131.) TRANSIENT_ATTACHMENT is no view's usage of its
+/// own since 1.135: an image made with it is made with an attachment's
+/// usage too (-usage-00966), whose feature decides.
 fn viewable(features: u32, usage: u32) bool {
     const for_views = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_COLOR_ATTACHMENT |
-        facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
+        facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT;
     if (usage & for_views == 0 or features == 0) return false;
     const drawn = facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT;
     if (usage & facet.IMAGE_USAGE_SAMPLED != 0 and features & facet.FORMAT_FEATURE_SAMPLED_IMAGE == 0) return false;
@@ -598,12 +601,23 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
     // width is.
     const line = info.image_type == .@"1d";
     if (info.image_type != .@"2d" and !volume and !line) return null;
+    // TRANSIENT_ATTACHMENT beside the attachments' usage alone
+    // (VUID-VkImageCreateInfo-usage-00963; since 1.135): until then a
+    // depth attachment was made transient beside the transfers, and a
+    // colour image beside them, SAMPLED or STORAGE. That it comes with one
+    // of them (-usage-00966) CreateImage asks itself, so that the format
+    // query is no stricter for TRANSIENT alone than for TRANSIENT beside
+    // a colour attachment, as Vulkan has it be for a usage within another
+    // ("Additional Image Capabilities").
+    const attachment_usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT;
+    if (info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT != 0 and
+        info.usage & ~(attachment_usage | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT) != 0) return null;
     if (info.samples != 1 and !multisampled(physical, info)) return null;
     if (line and (extent.height != 1 or extent.depth != 1)) return null;
     // A compressed format is no 1D image's, as neither Mesa driver makes
     // one (`lvp_get_image_format_properties`,
     // src/gallium/frontends/lavapipe/lvp_formats.c;
-    // `v3dv_get_image_format_properties`, src/broadcom/vulkan/v3dv_formats.c),
+    // `get_image_format_properties`, src/broadcom/vulkan/v3dv_formats.c),
     // its blocks being four rows high. Until 1.97 one was made, and the
     // layout of a level a block across overflowed (`texture.Level`).
     if (line and _decode.blockBytes(info.format) != 0) return null;
@@ -867,7 +881,7 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
 /// sample count beyond one only of a format that is a colour or a depth
 /// attachment, whatever the image's own usage ("Supported Sample Counts").
 /// That format test is v3dv's on this same GPU and lavapipe's on the
-/// cores (`v3dv_get_image_format_properties`,
+/// cores (`get_image_format_properties`,
 /// src/broadcom/vulkan/v3dv_formats.c; src/gallium/frontends/lavapipe/
 /// lvp_formats.c), and it reads the device's own format table, so this
 /// and GetPhysicalDeviceFormatProperties cannot disagree.
@@ -1003,6 +1017,13 @@ fn levelsOver(image: *const Image, kept: texture.Format, at: u32, stride: u32, f
 /// from `planeOver`, which picked the plane by itself before.)
 const Plane = struct { at: u32, stride: u32, depth: bool };
 
+/// Whether `aspect` names a plane `image`'s depth format has got, as a view's
+/// has to (VUID-VkImageViewCreateInfo-subresourceRange-09594): an aspect
+/// naming neither plane is the format's own (`planeAt`). (Since 1.135.)
+pub fn hasPlane(image: *const Image, aspect: u32) bool {
+    return planeAt(image, aspect) != null;
+}
+
 /// The plane `aspect` names, by the rule `planeOver` describes: null for
 /// an aspect the format has not got.
 /// (Since 1.62.)
@@ -1039,6 +1060,25 @@ fn planeAt(image: *const Image, aspect: u32) ?Plane {
 fn mostLevels(width: u32, height: u32) u32 {
     const longer = @max(width, height);
     return @min(32 - @clz(longer), texture.most_levels);
+}
+
+/// Whether `info` is a 3D image refused for its levels alone: more than
+/// its width and height halve to, and no more than its depth does. Vulkan
+/// counts the depth in an image's chain of levels
+/// (VUID-VkImageCreateInfo-mipLevels-00958), and the layout this library
+/// keeps halves the width and the height alone (`texture.Texture.bytes`),
+/// so it makes a 3D image of as many levels as those give and no more
+/// (docs/facet-vulkan10.md item 93). CreateImage asks it of an image it
+/// has refused. (Since 1.135.)
+pub fn levelsPastSides(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateInfo) bool {
+    if (info.image_type != .@"3d") return false;
+    const extent = info.extent;
+    const sides = mostLevels(extent.width, extent.height);
+    const chain = 32 - @clz(@max(@max(extent.width, extent.height), extent.depth));
+    if (info.mip_levels <= sides or info.mip_levels > chain) return false;
+    var fewer = info.*;
+    fewer.mip_levels = sides;
+    return shapeFor(physical, &fewer) != null;
 }
 
 /// The bytes from one row of a level of an image kept in rows to the

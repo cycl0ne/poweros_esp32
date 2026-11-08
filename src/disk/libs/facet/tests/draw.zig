@@ -590,8 +590,8 @@ test "a render pass: one subpass, a colour attachment and perhaps a depth one; w
     const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .depth_stencil_attachment = &depth };
     const refused = [_]struct { facet.Result, [2]facet.AttachmentDescription }{
         // A colour attachment of a float, a depth one of 32 bits.
-        .{ .error_format_not_supported, .{ .{ .format = .r32_sfloat, .final_layout = .general }, .{ .format = .d16_unorm, .final_layout = .general } } },
-        .{ .error_format_not_supported, .{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .r32_sfloat, .final_layout = .general } } },
+        .{ .error_validation_failed, .{ .{ .format = .r32_sfloat, .final_layout = .general }, .{ .format = .d16_unorm, .final_layout = .general } } },
+        .{ .error_validation_failed, .{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .r32_sfloat, .final_layout = .general } } },
         // Two samples a pixel, which no device draws.
         .{ .error_feature_not_present, .{ .{ .format = .b8g8r8a8_unorm, .samples = 2, .final_layout = .general }, .{ .format = .d16_unorm, .samples = 2, .final_layout = .general } } },
         // Three, which is no count of Vulkan's
@@ -1416,7 +1416,7 @@ test "a pipeline: its functions and its state settled as it is made; what facet.
     changes[3][1].blend = .{ .blend_enable = true, .color_blend_op = @enumFromInt(5) };
     changes[4][0] = .error_validation_failed;
     changes[4][1].raster = .{ .polygon_mode = @enumFromInt(3) };
-    changes[5][0] = .error_format_not_supported;
+    changes[5][0] = .error_validation_failed;
     changes[5][1].attributes = &.{.{ .location = 0, .binding = 0, .format = .r5g6b5_unorm_pack16 }};
     changes[6][0] = .error_validation_failed;
     changes[6][1].attributes = &.{.{ .location = 0, .binding = 1, .format = .r32_sfloat }};
@@ -3018,8 +3018,8 @@ test "a colour attachment written through as a storage image: its rows, before t
     const image = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = usage }, false);
     const view = try bench.viewOf(.{ .image = image, .format = .b8g8r8a8_unorm });
     var refused: ?*facet.Image = null;
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = usage | facet.IMAGE_USAGE_SAMPLED }, &refused));
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = usage }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = usage | facet.IMAGE_USAGE_SAMPLED }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = usage }, &refused));
     try testing.expect(refused == null);
 
     const module_made = try module(&bench, &Both.code);
@@ -3273,7 +3273,7 @@ test "storage images of floats and of channels of their own: a texel written and
     // four BC1 blocks: it was unpacked.
     try testing.expect(requirements.size >= 8 * 8 * 8);
     var denied: ?*facet.Image = null;
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{
         .format = .bc1_rgba_unorm_block,
         .extent = .{ .width = 8, .height = 8 },
         .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSFER_DST,
@@ -3315,14 +3315,14 @@ test "storage images of floats and of channels of their own: a texel written and
 
     // An image of such a format that no function reads or writes is
     // refused: these are kept for a function, as a small texel is.
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{
         .format = .r16g16b16a16_unorm,
         .extent = .{ .width = 8, .height = 8 },
         .usage = facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC,
     }, &denied));
     try testing.expect(denied == null);
     // And one of them is no colour attachment.
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{
         .format = .r16g16_unorm,
         .extent = .{ .width = 8, .height = 8 },
         .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT,
@@ -3490,13 +3490,13 @@ test "storage images of whole numbers: a texel written and read back as the numb
     // An image of whole numbers that no function reads or writes is
     // refused, as a wide one is, and one of them is no colour attachment
     // either: nothing blends a whole number.
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{
         .format = .r32g32b32a32_uint,
         .extent = .{ .width = 8, .height = 8 },
         .usage = facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC,
     }, &denied));
     try testing.expect(denied == null);
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{
         .format = .r8g8b8a8_uint,
         .extent = .{ .width = 8, .height = 8 },
         .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT,
@@ -3564,8 +3564,8 @@ test "a buffer read as texels of a format: a uniform one read, a storage one wri
     // texels, and one past the buffer's end, which until 1.134 was cut to
     // it (VUID-VkBufferViewCreateInfo-offset-00931).
     var none: ?*facet.BufferView = null;
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateBufferView(device, &.{ .buffer = floats, .format = .d16_unorm }, &none));
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateBufferView(device, &.{ .buffer = floats, .format = .bc1_rgb_unorm_block }, &none));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateBufferView(device, &.{ .buffer = floats, .format = .d16_unorm }, &none));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateBufferView(device, &.{ .buffer = floats, .format = .bc1_rgb_unorm_block }, &none));
     const plain, _ = try bench.buffer(64, facet.BUFFER_USAGE_STORAGE_BUFFER);
     try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateBufferView(device, &.{ .buffer = plain, .format = .r32_sfloat }, &none));
     try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r32g32b32a32_sfloat, .offset = 4 }, &none));
@@ -4933,8 +4933,8 @@ test "the five formats Vulkan 1.0 asks for that had no value: four channels in 1
     };
     for (sixteen) |one| {
         const format, const words = one;
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = format, .extent = whole, .tiling = .linear, .usage = sampled }, &refused));
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = format, .extent = whole, .usage = transfers }, &refused));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = format, .extent = whole, .tiling = .linear, .usage = sampled }, &refused));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = format, .extent = whole, .usage = transfers }, &refused));
         try testing.expect(refused == null);
         try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, format, .@"2d", .linear, sampled, 0, &limits));
         try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, format, .@"2d", .optimal, transfers, 0, &limits));
@@ -4969,7 +4969,7 @@ test "the five formats Vulkan 1.0 asks for that had no value: four channels in 1
         physical.can.whole_textures = false;
         const without = fb.CreateImage(device, &info, &refused);
         physical.can.whole_textures = true;
-        try testing.expectEqual(facet.Result.error_format_not_supported, without);
+        try testing.expectEqual(facet.Result.error_validation_failed, without);
         const made = try bench.bareImage(info, false);
         const image = _objects.of(image_zig.Image, made);
         try testing.expectEqual(image_zig.Kind.texture, image.kind);
@@ -4988,7 +4988,7 @@ test "the five formats Vulkan 1.0 asks for that had no value: four channels in 1
     }
     // And `_snorm` is no image's, as R8G8B8A8_SNORM is not.
     for ([2]facet.Format{ .a8b8g8r8_snorm_pack32, .r8g8b8a8_snorm }) |format| {
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = format, .extent = whole, .usage = facet.IMAGE_USAGE_SAMPLED | transfers }, &refused));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = format, .extent = whole, .usage = facet.IMAGE_USAGE_SAMPLED | transfers }, &refused));
     }
 }
 
@@ -8953,7 +8953,7 @@ test "a depth image sampled where it lies: the pass stores it, a shadow sample c
         .{ .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT },
         .{ .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE },
     }) |info| {
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &info, &none));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &info, &none));
         try testing.expect(none == null);
     }
     // One sampled wants memory something is behind: the lazily allocated
@@ -9138,7 +9138,7 @@ test "a sampled depth image of layers: a pass draws into the layer its view name
         .{ .format = .d16_unorm, .extent = side, .mip_levels = 8, .usage = wanted },
     }) |info| {
         var none: ?*facet.Image = null;
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &info, &none));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &info, &none));
         try testing.expect(none == null);
     }
 
@@ -9173,7 +9173,7 @@ test "a sampled depth image of layers: a pass draws into the layer its view name
     // for its layers first, which until 1.94 is all this tested.
     var no_view: ?*facet.ImageView = null;
     for ([2]u32{ facet.IMAGE_ASPECT_STENCIL, facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL }) |aspect| {
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImageView(device, &.{
             .image = layered,
             .format = .d16_unorm,
             .subresource_range = .{ .aspect_mask = aspect, .layer_count = 1 },
@@ -9609,6 +9609,62 @@ test "a device that keeps no depth, as the V3D keeps none: the pass that asks fo
     bench.rig.fb.DestroyRenderPass(bench.device, tiles_only);
 }
 
+test "a device that keeps no format of both planes, as the V3D keeps none: such an attachment kept is error_validation_failed, the format query giving it no DEPTH_STENCIL_ATTACHMENT, and one in the tiles alone is drawn (item 91)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    // The physical device as the V3D describes itself: it stores a tile
+    // buffer whole, a plane's pixels one after another, so it keeps a
+    // depth alone and a stencil alone and no format of both.
+    physical.can.stored_both = false;
+    defer physical.can.stored_both = true;
+    var properties: facet.FormatProperties = undefined;
+    fb.GetPhysicalDeviceFormatProperties(bench.physical, .d16_unorm_s8_uint, &properties);
+    try testing.expectEqual(@as(u32, 0), properties.optimal_tiling_features & facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT);
+    const color = facet.AttachmentReference{ .attachment = 0, .layout = .general };
+    const depth = facet.AttachmentReference{ .attachment = 1, .layout = .general };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .depth_stencil_attachment = &depth };
+    var refused: ?*facet.RenderPass = null;
+    // Either plane loaded or stored breaks
+    // VUID-VkSubpassDescription-pDepthStencilAttachment-02650
+    // (`error_feature_not_present` until 1.135).
+    for ([_]facet.AttachmentDescription{
+        .{ .format = .d16_unorm_s8_uint, .load_op = .load, .final_layout = .general },
+        .{ .format = .d16_unorm_s8_uint, .store_op = .store, .final_layout = .general },
+        .{ .format = .d16_unorm_s8_uint, .stencil_load_op = .load, .final_layout = .general },
+        .{ .format = .d16_unorm_s8_uint, .stencil_store_op = .store, .final_layout = .general },
+    }) |kept| {
+        const attachments = [2]facet.AttachmentDescription{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, kept };
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateRenderPass(bench.device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &refused));
+        try testing.expect(refused == null);
+    }
+    // And read as an input attachment by the subpass after the one that
+    // drew it, which keeps it for that one: neither COLOR_ATTACHMENT nor
+    // DEPTH_STENCIL_ATTACHMENT (-pInputAttachments-02647).
+    const in_tiles = [2]facet.AttachmentDescription{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .d16_unorm_s8_uint, .final_layout = .general } };
+    const read_after = [2]facet.SubpassDescription{
+        subpass,
+        .{ .input_attachment_count = 1, .input_attachments = @ptrCast(&depth), .color_attachment_count = 1, .color_attachments = @ptrCast(&color) },
+    };
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateRenderPass(bench.device, &.{ .attachment_count = 2, .attachments = &in_tiles, .subpass_count = 2, .subpasses = &read_after }, &refused));
+    try testing.expect(refused == null);
+    // One that keeps neither plane is drawn in the tiles alone, as it was
+    // (docs/facet-vulkan10.md item 94), and a format of one plane keeps
+    // what it holds.
+    var made: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(bench.device, &.{ .attachment_count = 2, .attachments = &in_tiles, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &made));
+    fb.DestroyRenderPass(bench.device, made);
+    for ([_]facet.AttachmentDescription{
+        .{ .format = .d16_unorm, .store_op = .store, .final_layout = .general },
+        .{ .format = .s8_uint, .stencil_store_op = .store, .final_layout = .general },
+    }) |kept| {
+        const attachments = [2]facet.AttachmentDescription{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, kept };
+        try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(bench.device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &made));
+        fb.DestroyRenderPass(bench.device, made);
+    }
+}
+
 test "a device that samples no depth, as the V3D samples none: the format query says so too, and every kept feature answers for its own formats" {
     var bench = try Bench.up();
     defer bench.down();
@@ -9637,8 +9693,17 @@ test "a device that samples no depth, as the V3D samples none: the format query 
     try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_TRANSFER_SRC != 0);
     var refused: ?*facet.Image = null;
     const depth_usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(bench.device, &.{ .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = depth_usage }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &.{ .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = depth_usage }, &refused));
     try testing.expect(refused == null);
+    // S8_UINT and D16_UNORM_S8_UINT say SAMPLED_IMAGE only where a depth
+    // is sampled (since 1.135): neither says it here, and CreateImage
+    // refuses either sampled, as it refuses D16_UNORM.
+    for ([2]facet.Format{ .s8_uint, .d16_unorm_s8_uint }) |format| {
+        fb.GetPhysicalDeviceFormatProperties(bench.physical, format, &properties);
+        try testing.expectEqual(@as(u32, 0), properties.optimal_tiling_features & sampled);
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &.{ .format = format, .extent = .{ .width = 8, .height = 8 }, .usage = depth_usage }, &refused));
+        try testing.expect(refused == null);
+    }
 
     // And each of the four features a device keeps what it was given by
     // answers for its own formats, where one bool answered for all four
@@ -11107,8 +11172,8 @@ test "an image drawn into and sampled, and a colour attachment of levels: the fo
         // CreateImage keeps the same rules: more levels than halving
         // gives, or a transient one sampled, are refused.
         var none: ?*facet.Image = null;
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .mip_levels = 7, .usage = both }, &none));
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .usage = both | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, &none));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .mip_levels = 7, .usage = both }, &none));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .usage = both | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, &none));
         try testing.expect(none == null);
         var six: ?*facet.Image = null;
         try testing.expectEqual(facet.Result.success, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .mip_levels = 6, .usage = both }, &six));
@@ -11127,8 +11192,8 @@ test "an image drawn into and sampled, and a colour attachment of levels: the fo
         try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &said));
         try testing.expectEqual(@as(u32, 1), said.max_mip_levels);
         var none: ?*facet.Image = null;
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .usage = both }, &none));
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .mip_levels = 2, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &none));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .usage = both }, &none));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .mip_levels = 2, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &none));
         try testing.expect(none == null);
     }
 }
@@ -11183,7 +11248,7 @@ test "an image view's component swizzle: Vulkan's seven taken and nothing else, 
         }
     }
     var refused: ?*facet.ImageView = null;
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = made, .format = .b8g8r8a8_unorm, .components = .{ .g = @enumFromInt(7) } }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImageView(device, &.{ .image = made, .format = .b8g8r8a8_unorm, .components = .{ .g = @enumFromInt(7) } }, &refused));
     try testing.expect(refused == null);
 
     // Red from blue, green 0, blue 1 and alpha from red: every read of a
@@ -11408,7 +11473,7 @@ test "a depth attachment read as an input attachment: what the subpass before dr
     // A depth read pixel by pixel wants memory behind it, so a transient
     // one is refused.
     var none: ?*facet.Image = null;
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = depth_usage | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, &none));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = depth_usage | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, &none));
     try testing.expect(none == null);
 
     const to_color = [1]facet.AttachmentReference{.{ .attachment = 0, .layout = .general }};
@@ -12123,7 +12188,7 @@ test "an input attachment: what one subpass drew read pixel by pixel by the next
         try testing.expectEqual(_image.Kind.rows, _objects.of(_image.Image, sampled.?).kind);
         fb.DestroyImage(device, sampled);
     }
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_INPUT_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, &none));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_INPUT_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, &none));
     try testing.expect(none == null);
 
     const attachments = [2]facet.AttachmentDescription{
@@ -12157,7 +12222,7 @@ test "an input attachment: what one subpass drew read pixel by pixel by the next
         .{ .format = .r16g16b16a16_sfloat, .final_layout = .general },
         .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
     };
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &odd_formats, .subpass_count = 1, .subpasses = @ptrCast(&reads_depth) }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &odd_formats, .subpass_count = 1, .subpasses = @ptrCast(&reads_depth) }, &refused));
     try testing.expect(refused == null);
 
     const frame = try framebuffer(&bench, pass, &.{ first_view, second.view }, 64, 64);
@@ -14452,7 +14517,7 @@ test "1D images: a texture of one row, written and read back, sampled, and the v
         .{ .image_type = .@"1d", .format = .b8g8r8a8_unorm, .extent = .{ .width = properties.limits.max_image_dimension_1d + 1, .height = 1 }, .usage = facet.IMAGE_USAGE_SAMPLED },
     }) |info| {
         var refused: ?*facet.Image = null;
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &info, &refused));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &info, &refused));
         try testing.expect(refused == null);
     }
 
@@ -14462,7 +14527,7 @@ test "1D images: a texture of one row, written and read back, sampled, and the v
     const view = try bench.viewOf(.{ .image = line, .view_type = .@"1d", .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } });
     for ([_]facet.ImageViewType{ .@"2d", .@"2d_array", .@"3d", .cube }) |kind| {
         var refused: ?*facet.ImageView = null;
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = line, .view_type = kind, .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } }, &refused));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImageView(device, &.{ .image = line, .view_type = kind, .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } }, &refused));
         try testing.expect(refused == null);
     }
     // And the other way about: a 2D image a row high takes no 1D view.
@@ -14474,7 +14539,7 @@ test "1D images: a texture of one row, written and read back, sampled, and the v
     try testing.expect(!_objects.of(_img.Image, flat).line);
     for ([_]facet.ImageViewType{ .@"1d", .@"1d_array" }) |kind| {
         var refused: ?*facet.ImageView = null;
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = flat, .view_type = kind, .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } }, &refused));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImageView(device, &.{ .image = flat, .view_type = kind, .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } }, &refused));
         try testing.expect(refused == null);
     }
 
@@ -14533,12 +14598,15 @@ test "1D images: a texture of one row, written and read back, sampled, and the v
     }, false);
     const rows = try bench.viewOf(.{ .image = stacked, .view_type = .@"1d_array", .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .layer_count = facet.REMAINING } });
     try testing.expectEqual(@as(u32, 3), _objects.of(_img.ImageView, rows).layer_count);
-    // One layer is not an array of them, and a cube is no 1D image.
+    // A 1D view is of one layer, the image's three remaining or two named
+    // (VUID-VkImageViewCreateInfo-imageViewType-04974, -04973), and a
+    // cube is no 1D image.
     var refused: ?*facet.ImageView = null;
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = stacked, .view_type = .@"1d", .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .layer_count = facet.REMAINING } }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImageView(device, &.{ .image = stacked, .view_type = .@"1d", .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .layer_count = facet.REMAINING } }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImageView(device, &.{ .image = stacked, .view_type = .@"1d", .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .layer_count = 2 } }, &refused));
     try testing.expect(refused == null);
     var no_cube: ?*facet.Image = null;
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{
         .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE,
         .image_type = .@"1d",
         .format = .b8g8r8a8_unorm,
@@ -14570,7 +14638,7 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
     };
     for (refused) |info| {
         var none: ?*facet.Image = null;
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &info, &none));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &info, &none));
     }
 
     // A 3D image's depth may be any number since 1.46, and it may have
@@ -14582,6 +14650,31 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
     }) |info| {
         var made: ?*facet.Image = null;
         try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &info, &made));
+        fb.DestroyImage(device, made);
+    }
+    // One deeper than it is wide and high: Vulkan has it take as many
+    // levels as its depth halves to (VUID-VkImageCreateInfo-mipLevels-00958),
+    // the format query's nine among them, and this library makes as many
+    // as its width and height halve to, so those between are what it does
+    // not do (docs/facet-vulkan10.md item 93, since 1.135) and those past
+    // the depth's a rule broken, as none at all is (-mipLevels-00947). A
+    // depth image is no 3D image whatever its levels, so its refusal is
+    // the rule's.
+    var deep: facet.ImageFormatProperties = undefined;
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .r8g8b8a8_unorm, .@"3d", .optimal, usage, 0, &deep));
+    try testing.expect(deep.max_mip_levels >= 5);
+    for ([_]struct { facet.Format, u32, u32, facet.Result }{
+        .{ .r8g8b8a8_unorm, usage, 3, .success },
+        .{ .r8g8b8a8_unorm, usage, 4, .error_feature_not_present },
+        .{ .r8g8b8a8_unorm, usage, 5, .error_feature_not_present },
+        .{ .r8g8b8a8_unorm, usage, 6, .error_validation_failed },
+        .{ .r8g8b8a8_unorm, usage, 0, .error_validation_failed },
+        .{ .d16_unorm, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 4, .error_validation_failed },
+    }) |one| {
+        const format, const with, const levels, const wanted = one;
+        var made: ?*facet.Image = null;
+        try testing.expectEqual(wanted, fb.CreateImage(device, &.{ .format = format, .image_type = .@"3d", .extent = .{ .width = 4, .height = 4, .depth = 16 }, .mip_levels = levels, .usage = with }, &made));
+        try testing.expectEqual(wanted == .success, made != null);
         fb.DestroyImage(device, made);
     }
 
@@ -14602,16 +14695,35 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
         .{ .image = array_image, .format = .r8g8b8a8_unorm, .view_type = .@"3d" },
         .{ .image = cube_image, .format = .r8g8b8a8_unorm, .view_type = .cube, .subresource_range = .{ .layer_count = 5 } },
         .{ .image = volume_image, .format = .r8g8b8a8_unorm },
+        .{ .image = volume_image, .format = .r8g8b8a8_unorm, .view_type = .@"2d_array" },
+        // A 3D image is one layer to Vulkan, whatever its depth (since
+        // 1.135; the one of four layers was made before).
+        .{ .image = volume_image, .format = .r8g8b8a8_unorm, .view_type = .@"3d", .subresource_range = .{ .layer_count = 4 } },
+        .{ .image = volume_image, .format = .r8g8b8a8_unorm, .view_type = .@"3d", .subresource_range = .{ .base_array_layer = 1, .layer_count = 1 } },
         .{ .image = packed_image, .format = .r8g8b8a8_unorm },
-        // An array of cubes wants an image of cubes, a multiple of six
-        // layers of it, and a first layer that begins one.
+        // An array of cubes wants an image of cubes, and a multiple of six
+        // layers of it.
         .{ .image = array_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array },
         .{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .layer_count = 4 } },
-        .{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 2, .layer_count = 6 } },
+        // A type that is none of Vulkan's.
+        .{ .image = array_image, .format = .r8g8b8a8_unorm, .view_type = @enumFromInt(7) },
     };
+    // Each breaks one of Vulkan's rules (since 1.135;
+    // `error_format_not_supported` until then).
     for (not_views) |info| {
         var none: ?*facet.ImageView = null;
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &info, &none));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImageView(device, &info, &none));
+        try testing.expect(none == null);
+    }
+    // And on a device without imageCubeArray, an array of cubes at all
+    // (VUID-VkImageViewCreateInfo-viewType-01004), as on the V3D.
+    {
+        const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+        physical.can.cube_arrays = false;
+        defer physical.can.cube_arrays = true;
+        var none: ?*facet.ImageView = null;
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImageView(device, &.{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array }, &none));
+        try testing.expect(none == null);
     }
     const array_view = try bench.viewOf(.{ .image = array_image, .format = .r8g8b8a8_unorm, .view_type = .@"2d_array" });
     const layer_view = try bench.viewOf(.{ .image = array_image, .format = .r8g8b8a8_unorm, .subresource_range = .{ .base_array_layer = 1, .layer_count = 1 } });
@@ -14620,6 +14732,13 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
     const into_view = try bench.viewOf(.{ .image = into_image, .format = .r8g8b8a8_unorm, .subresource_range = .{ .base_array_layer = 1, .layer_count = 1 } });
     const cubes_view = try bench.viewOf(.{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array });
     const second_view = try bench.viewOf(.{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 6, .layer_count = 6 } });
+    // Since 1.135: a view of cubes that begins at a layer inside the
+    // image's first cube, and a 3D view that names its one layer.
+    const shifted_view = try bench.viewOf(.{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 2, .layer_count = 6 } });
+    const one_layer_volume = try bench.viewOf(.{ .image = volume_image, .format = .r8g8b8a8_unorm, .view_type = .@"3d", .subresource_range = .{ .layer_count = 1 } });
+    // Which holds every slice, as the depth the V3D's texture state is
+    // handed (driver/v3d/_play.zig:913): the image's one layer to Vulkan.
+    try testing.expectEqual(@as(u32, 4), _objects.of(@import("../image/_image.zig").ImageView, one_layer_volume).layer_count);
     const packed_view = try bench.viewOf(.{ .image = packed_image, .format = .bc1_rgba_unorm_block });
     const etc_view = try bench.viewOf(.{ .image = etc_image, .format = .etc2_r8g8b8a8_unorm_block });
     const half_view = try bench.viewOf(.{ .image = half_image, .format = .r16g16b16a16_sfloat });
@@ -14757,6 +14876,12 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
         .{ .run = .{ .view = cubes_view, .name = "cubes", .instance = 12 }, .layer = 5 },
         // A view that begins at the second cube: its cube 0 is that one.
         .{ .run = .{ .view = second_view, .name = "cubes", .instance = 1 }, .layer = 4 },
+        // One that begins at layer 2: its faces are the image's layers 2
+        // to 7, across the image's own cubes, layer 7 holding stack 4.
+        .{ .run = .{ .view = shifted_view, .name = "cubes", .instance = 0 }, .layer = 2 },
+        .{ .run = .{ .view = shifted_view, .name = "cubes", .instance = 5 }, .layer = 4 },
+        // A 3D view of its one layer named: every slice.
+        .{ .run = .{ .view = one_layer_volume, .name = "volume", .instance = 3 }, .layer = 3 },
     };
     for (layered) |each| {
         try draw(&bench, each.run, layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
@@ -14775,6 +14900,133 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
     try draw(&bench, .{ .view = etc_view, .name = "flat", .instance = 0 }, layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
     try testing.expectEqual(@as(u32, 0xFFFF_0202), picture.at(8, 8));
     try testing.expectEqual(@as(u32, 0xFF02_02FF), picture.at(56, 56));
+}
+
+test "a view Vulkan's rules forbid is error_validation_failed: of levels or layers the image has not got, of an image not bound, of an aspect its format has not got (item 91)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
+    const attachment = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT;
+    var none: ?*facet.ImageView = null;
+
+    // Of three levels and three layers.
+    const stack = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 16, .height = 16 }, .mip_levels = 3, .array_layers = 3, .usage = usage }, false);
+    for ([_]facet.ImageSubresourceRange{
+        .{ .base_mip_level = 3 }, // VUID-VkImageViewCreateInfo-subresourceRange-01478
+        .{ .base_array_layer = 3 }, // -image-06724
+        // Past the end, which only the first's own check keeps out of
+        // the counts left from it.
+        .{ .base_mip_level = 4 },
+        .{ .base_array_layer = 4 },
+        .{ .layer_count = 0 }, // VUID-VkImageSubresourceRange-layerCount-01721
+        .{ .base_array_layer = 1, .layer_count = 3 }, // -subresourceRange-06725
+        .{ .level_count = 0 }, // VUID-VkImageSubresourceRange-levelCount-01720
+        .{ .base_mip_level = 1, .level_count = 3 }, // -subresourceRange-01718
+    }) |range| {
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImageView(device, &.{ .image = stack, .view_type = .@"2d_array", .format = .r8g8b8a8_unorm, .subresource_range = range }, &none));
+        try testing.expect(none == null);
+    }
+
+    // Not yet bound (VUID-VkImageViewCreateInfo-image-01020): a texture, a
+    // depth sampled, a depth read as an input attachment, and since 1.135
+    // a depth attachment nothing reads.
+    for ([_]struct { facet.ImageCreateInfo, u32 }{
+        .{ .{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = usage }, facet.IMAGE_ASPECT_COLOR },
+        .{ .{ .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = attachment | facet.IMAGE_USAGE_SAMPLED }, facet.IMAGE_ASPECT_DEPTH },
+        .{ .{ .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = attachment | facet.IMAGE_USAGE_INPUT_ATTACHMENT }, facet.IMAGE_ASPECT_DEPTH },
+        .{ .{ .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = attachment }, facet.IMAGE_ASPECT_DEPTH },
+    }) |one| {
+        const info, const aspect = one;
+        var image: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &info, &image));
+        defer fb.DestroyImage(device, image);
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImageView(device, &.{ .image = image.?, .format = info.format, .subresource_range = .{ .aspect_mask = aspect } }, &none));
+        try testing.expect(none == null);
+    }
+
+    // Bound to the lazily allocated type, which gives it no bytes, a depth
+    // attachment is bound all the same, and its view is taken.
+    const lazy = try bench.bareImage(.{ .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = attachment | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, true);
+    try testing.expect(_objects.of(@import("../image/_image.zig").Image, lazy).data == null);
+    _ = try bench.viewOf(.{ .image = lazy, .format = .d16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } });
+
+    // An aspect the format has not got (-subresourceRange-09594): a plane
+    // of a depth read as an input attachment and not sampled, and since
+    // 1.135 of a depth attachment nothing reads, and a depth or a stencil
+    // of a colour image.
+    const read_back = try bench.bareImage(.{ .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = attachment | facet.IMAGE_USAGE_INPUT_ATTACHMENT }, false);
+    const drawn = try bench.bareImage(.{ .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = attachment }, false);
+    const colour = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = usage }, false);
+    for ([_]struct { *facet.Image, facet.Format, u32 }{
+        .{ read_back, .d16_unorm, facet.IMAGE_ASPECT_STENCIL },
+        .{ drawn, .d16_unorm, facet.IMAGE_ASPECT_STENCIL },
+        .{ drawn, .d16_unorm, facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL },
+        .{ colour, .r8g8b8a8_unorm, facet.IMAGE_ASPECT_DEPTH },
+        .{ colour, .r8g8b8a8_unorm, facet.IMAGE_ASPECT_STENCIL },
+        .{ colour, .r8g8b8a8_unorm, facet.IMAGE_ASPECT_COLOR | facet.IMAGE_ASPECT_DEPTH },
+    }) |one| {
+        const image, const format, const aspect = one;
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImageView(device, &.{ .image = image, .format = format, .subresource_range = .{ .aspect_mask = aspect } }, &none));
+        try testing.expect(none == null);
+    }
+    // Its own plane is taken, and IMAGE_ASPECT_COLOR as the format's own.
+    _ = try bench.viewOf(.{ .image = drawn, .format = .d16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } });
+    _ = try bench.viewOf(.{ .image = drawn, .format = .d16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } });
+    _ = try bench.viewOf(.{ .image = colour, .format = .r8g8b8a8_unorm });
+}
+
+test "TRANSIENT_ATTACHMENT beside a usage other than the attachments', or with none of them, is error_validation_failed; the format query declines the first and answers the second, of the three formats drawn into, as it does TRANSIENT beside a colour attachment (item 91)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const transient = facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
+    const extent = facet.Extent3D{ .width = 8, .height = 8 };
+    // VUID-VkImageCreateInfo-usage-00963. Each was made until 1.135.
+    for ([_]facet.ImageCreateInfo{
+        .{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | transient | facet.IMAGE_USAGE_TRANSFER_SRC },
+        .{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | transient | facet.IMAGE_USAGE_TRANSFER_DST },
+        .{ .format = .b8g8r8a8_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | transient | facet.IMAGE_USAGE_TRANSFER_DST },
+        .{ .format = .b8g8r8a8_unorm, .extent = extent, .usage = transient | facet.IMAGE_USAGE_SAMPLED },
+        .{ .format = .b8g8r8a8_unorm, .extent = extent, .usage = transient | facet.IMAGE_USAGE_TRANSFER_DST },
+        .{ .format = .b8g8r8a8_unorm, .extent = extent, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | transient | facet.IMAGE_USAGE_TRANSFER_SRC },
+    }) |info| {
+        var none: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &info, &none));
+        try testing.expect(none == null);
+        var said: facet.ImageFormatProperties = undefined;
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, info.format, .@"2d", .optimal, info.usage, 0, &said));
+    }
+    // With none of them (-usage-00966; made until 1.135) CreateImage
+    // refuses it itself, and the format query answers TRANSIENT alone, of
+    // the three formats drawn into, as TRANSIENT beside a colour attachment:
+    // Vulkan has a usage within another be answered no more strictly
+    // ("Additional Image Capabilities"). With a view of another format to
+    // be made of it as well, which TRANSIENT alone asks no formats of.
+    for ([_]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 }) |format| {
+        var none: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &.{ .format = format, .extent = extent, .usage = transient }, &none));
+        try testing.expect(none == null);
+        for ([_]facet.ImageType{ .@"1d", .@"2d" }) |image_type| for ([_]facet.ImageTiling{ .optimal, .linear }) |tiling| for ([_]u32{ 0, facet.IMAGE_CREATE_MUTABLE_FORMAT }) |flags| {
+            var beside: facet.ImageFormatProperties = undefined;
+            var alone: facet.ImageFormatProperties = undefined;
+            const answer = fb.GetPhysicalDeviceImageFormatProperties(bench.physical, format, image_type, tiling, facet.IMAGE_USAGE_COLOR_ATTACHMENT | transient, flags, &beside);
+            if (image_type == .@"2d" and tiling == .optimal) try testing.expectEqual(facet.Result.success, answer);
+            if (answer != .success) continue;
+            try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, format, image_type, tiling, transient, flags, &alone));
+            try testing.expect(std.meta.eql(beside, alone));
+        };
+    }
+    // Beside the attachments alone it is made, as before.
+    for ([_]facet.ImageCreateInfo{
+        .{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | transient },
+        .{ .format = .b8g8r8a8_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | transient },
+    }) |info| {
+        var made: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateImage(bench.device, &info, &made));
+        fb.DestroyImage(bench.device, made);
+    }
 }
 
 test "the shapes past 2D read through a sampler, an array of cubes among them, and a sampler the set layout holds" {
@@ -15300,6 +15552,17 @@ test "a 3D texture of levels read through a sampler: the slices of the level it 
     // Past the end either way, as `repeat` has it: the first slice again.
     try sampled(&bench, vertex_bytes, vertex_buffer, samplers[1], view, sets[0].?, pass, frame, layout, pipeline, 1.125);
     try testing.expectEqual(halved[0], picture.at(16, 8));
+
+    // A view of the levels from the second on: its first is the image's
+    // second, two slices deep, and the coordinate falls on those two
+    // (since 1.135). Before, the view's first level was taken as deep as
+    // the whole image, so three quarters of the way through read a slice
+    // that level has not got, which no copy wrote.
+    const upper = try bench.viewOf(.{ .image = volume, .format = .b8g8r8a8_unorm, .view_type = .@"3d", .subresource_range = .{ .base_mip_level = 1 } });
+    for ([4]f32{ 0.125, 0.375, 0.625, 0.875 }, [4]u32{ halved[0], halved[0], halved[1], halved[1] }) |r, wanted| {
+        try sampled(&bench, vertex_bytes, vertex_buffer, samplers[0], upper, sets[0].?, pass, frame, layout, pipeline, r);
+        try testing.expectEqual(wanted, picture.at(16, 8));
+    }
 }
 
 /// A quad over a texture kept in its blocks, drawn through a form for each
@@ -16068,11 +16331,11 @@ test "a texel kept smaller than its colour: 8888 in its word, and one byte of re
     // where nothing samples the image.
     var refused: ?*facet.Image = null;
     const packed565 = facet.ImageCreateInfo{ .flags = facet.IMAGE_CREATE_PACKED_TEXELS, .format = .r5g6b5_unorm_pack16, .extent = side, .usage = usage };
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &packed565, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &packed565, &refused));
     const packed_rows = facet.ImageCreateInfo{ .flags = facet.IMAGE_CREATE_PACKED_TEXELS, .format = .b8g8r8a8_unorm, .extent = side, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT };
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &packed_rows, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &packed_rows, &refused));
     const red_rows = facet.ImageCreateInfo{ .format = .r8_unorm, .extent = side, .usage = facet.IMAGE_USAGE_TRANSFER_DST };
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &red_rows, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &red_rows, &refused));
 
     const spread_view = try bench.viewOf(.{ .image = spread_image, .format = .b8g8r8a8_unorm });
     const word_view = try bench.viewOf(.{ .image = word_image, .format = .b8g8r8a8_unorm });
@@ -16650,7 +16913,7 @@ test "a framebuffer's layers: none, more than the device takes, and more than a 
     // A 3D image is still a function's alone: its slices are not layers a
     // framebuffer reaches in Vulkan 1.0.
     var volume: ?*facet.Image = null;
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .image_type = .@"3d", .format = .b8g8r8a8_unorm, .extent = .{ .width = 16, .height = 16, .depth = 4 }, .usage = usage }, &volume));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .image_type = .@"3d", .format = .b8g8r8a8_unorm, .extent = .{ .width = 16, .height = 16, .depth = 4 }, .usage = usage }, &volume));
     try testing.expect(volume == null);
 }
 
@@ -16906,7 +17169,7 @@ test "an image made for views of another format: its texels kept as they lie, ea
         // is made of.
         var refused: ?*facet.ImageView = null;
         for ([4]facet.Format{ .r16_unorm, .r16g16b16a16_unorm, .d16_unorm_s8_uint, .a8b8g8r8_unorm_pack32 }) |other| {
-            try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = made, .format = other }, &refused));
+            try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImageView(device, &.{ .image = made, .format = other }, &refused));
         }
         try testing.expect(refused == null);
 
@@ -16925,7 +17188,7 @@ test "an image made for views of another format: its texels kept as they lie, ea
         // same colours.
         const plain = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 4, .height = 4 }, .usage = usage }, false);
         try testing.expectEqual(texture_zig.Format.rgba8888, _objects.of(image_zig.Image, plain).texels.format);
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = plain, .format = .r32_uint }, &refused));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImageView(device, &.{ .image = plain, .format = .r32_uint }, &refused));
         const copy = facet.ImageCopy{ .extent = .{ .width = 4, .height = 4 } };
         const moving = try bench.record();
         fb.CmdCopyImage(moving, made, .transfer_src_optimal, plain, .transfer_dst_optimal, 1, @ptrCast(&copy));
@@ -16988,7 +17251,7 @@ test "an image made for views of another format: its texels kept as they lie, ea
         const signed = try bench.viewOf(.{ .image = blocks, .format = .bc6h_sfloat_block });
         try testing.expectEqual(texture_zig.Format.bc6hs, _objects.of(image_zig.ImageView, signed).texels.format);
         try testing.expectEqual(_objects.of(image_zig.Image, blocks).texels.memory, _objects.of(image_zig.ImageView, signed).texels.memory);
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = blocks, .format = .bc7_unorm_block }, &refused));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImageView(device, &.{ .image = blocks, .format = .bc7_unorm_block }, &refused));
 
         // The format query, and CreateImage with it: made where every view
         // Vulkan lets a program make reads the texels where they lie, and
@@ -17018,7 +17281,7 @@ test "an image made for views of another format: its texels kept as they lie, ea
             try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, one[0], .@"2d", .optimal, one[1], 0, &said));
             try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, one[0], .@"2d", .optimal, one[1], mutable, &said));
             var none: ?*facet.Image = null;
-            try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .flags = mutable, .format = one[0], .extent = .{ .width = 8, .height = 8 }, .usage = one[1] }, &none));
+            try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .flags = mutable, .format = one[0], .extent = .{ .width = 8, .height = 8 }, .usage = one[1] }, &none));
             try testing.expect(none == null);
         }
         // A depth image takes a view of its own format alone, and a
@@ -17026,9 +17289,16 @@ test "an image made for views of another format: its texels kept as they lie, ea
         // an R16_UNORM texture written through - which B4G4R4A4, never
         // written through, takes no view of - is not read as D16_UNORM.
         const depth = try bench.bareImage(.{ .flags = mutable, .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | sampled }, false);
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = depth, .format = .r16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } }, &refused));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImageView(device, &.{ .image = depth, .format = .r16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } }, &refused));
         const sixteen = try bench.bareImage(.{ .flags = mutable, .format = .r16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = sampled | facet.IMAGE_USAGE_STORAGE }, false);
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = sixteen, .format = .d16_unorm }, &refused));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImageView(device, &.{ .image = sixteen, .format = .d16_unorm }, &refused));
+        // A format compatible with the image's, by Vulkan's classes and
+        // this library's alike, that the image's kind does not read: an
+        // R5G6B5 image drawn into, in rows, viewed as B4G4R4A4, whose
+        // features have no COLOR_ATTACHMENT
+        // (VUID-VkImageViewCreateInfo-usage-08931).
+        const drawn_565 = try bench.bareImage(.{ .flags = mutable, .format = .r5g6b5_unorm_pack16, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, false);
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImageView(device, &.{ .image = drawn_565, .format = .b4g4r4a4_unorm_pack16 }, &refused));
         try testing.expect(refused == null);
     }
     {
@@ -17041,7 +17311,7 @@ test "an image made for views of another format: its texels kept as they lie, ea
         try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .r8g8b8a8_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_SAMPLED, mutable, &said));
         try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .r8g8b8a8_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_SAMPLED, 0, &said));
         var none: ?*facet.Image = null;
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(bench.device, &.{ .flags = mutable, .format = .r8g8b8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_SAMPLED }, &none));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &.{ .flags = mutable, .format = .r8g8b8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_SAMPLED }, &none));
         try testing.expect(none == null);
     }
 }

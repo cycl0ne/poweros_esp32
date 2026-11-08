@@ -34,9 +34,20 @@ const _surface = @import("../surface/_surface.zig");
 /// VUID-VkSubpassDescription-pipelineBindPoint-04952,
 /// -colorAttachmentCount-00845, -flags-parameter;
 /// `error_feature_not_present` until 1.133);
-/// `error_format_not_supported` for an attachment in
-/// a format it cannot draw into, or read as an input attachment;
-/// `error_validation_failed` as well for an attachment of a count of
+/// `error_validation_failed` as well for an attachment whose format's
+/// features have not got what its use asks: COLOR_ATTACHMENT for a
+/// colour, DEPTH_STENCIL_ATTACHMENT for a depth, and one of the two for an
+/// input attachment (VUID-VkSubpassDescription-pColorAttachments-02648,
+/// -pDepthStencilAttachment-02650, -pInputAttachments-02647;
+/// `error_format_not_supported` until 1.135, and `error_feature_not_present`
+/// for a d16_unorm_s8_uint one that keeps a plane on a device without
+/// `stored_both`) - though a d16_unorm_s8_uint depth attachment that keeps
+/// neither plane is drawn on such a device, the V3D, whose format query
+/// gives it no DEPTH_STENCIL_ATTACHMENT (BEHAVIOR; docs/facet-vulkan10.md
+/// item 94), as an s8_uint one that keeps nothing would be on a device
+/// without `stored_stencil`, which no device is, one that keeps its
+/// stencil being `error_feature_not_present` there -
+/// for an attachment of a count of
 /// samples that is none of Vulkan's (VUID-VkAttachmentDescription-samples-parameter;
 /// `error_feature_not_present` until 1.134), and for a subpass that names
 /// an attachment there is not, or none where it counts some; attachments
@@ -64,7 +75,8 @@ const _surface = @import("../surface/_surface.zig");
 ///
 /// BEHAVIOR:
 /// The pass has up to 4 subpasses and up to 8 attachments. A subpass draws
-/// into 0 to 4 colour attachments - b8g8r8a8_unorm or r8g8b8a8_unorm - 8 in all
+/// into 0 to 4 colour attachments - b8g8r8a8_unorm, r8g8b8a8_unorm or
+/// r5g6b5_unorm_pack16 - 8 in all
 /// the subpasses, and may test against a depth attachment, d16_unorm, s8_uint
 /// or d16_unorm_s8_uint.
 ///
@@ -157,8 +169,14 @@ const _surface = @import("../surface/_surface.zig");
 /// planes where they lie in its four bytes, while a device that stores the
 /// whole of a tile buffer, the V3D, writes one plane's pixels one after
 /// another and so keeps only a format of that plane alone. There such an
-/// op is `error_feature_not_present`, and a `d16_unorm` or an `s8_uint`
-/// attachment keeps what it holds.
+/// op is `error_validation_failed`, GetPhysicalDeviceFormatProperties
+/// giving the format no DEPTH_STENCIL_ATTACHMENT on such a device
+/// (VUID-VkSubpassDescription-pDepthStencilAttachment-02650;
+/// `error_feature_not_present` until 1.135), and a `d16_unorm` or an
+/// `s8_uint` attachment keeps what it holds. A `d16_unorm_s8_uint`
+/// attachment that keeps neither plane is drawn there all the same, in
+/// the tiles alone, though it breaks the same rule
+/// (docs/facet-vulkan10.md item 94).
 ///
 /// Two subpasses share a depth attachment either way. One right after the
 /// other and with the same colour attachments too goes on in the tiles of
@@ -181,8 +199,9 @@ const _surface = @import("../surface/_surface.zig");
 /// fragment's own place (`shader.Resources.input`, `shader.Attachment`).
 /// Such an attachment is read out of the image's memory, so its format is
 /// one whose pixels are kept in rows - b8g8r8a8_unorm, r8g8b8a8_unorm or
-/// r5g6b5_unorm_pack16, anything else being
-/// `error_format_not_supported` - and what it holds is what an earlier
+/// r5g6b5_unorm_pack16, anything else being `error_validation_failed`
+/// (since 1.135; `error_format_not_supported` before), as no other colour
+/// format has COLOR_ATTACHMENT - and what it holds is what an earlier
 /// subpass drew, or what its load op left there.
 ///
 /// **A depth attachment is read that way too** since 1.62
@@ -342,7 +361,10 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 // (`Capabilities.sampled_depth`).
                 const depth_read = _image.hasDepth(read.format) or _image.hasStencil(read.format);
                 if (depth_read and !owner.physical.can.sampled_depth) return .error_feature_not_present;
-                if (!depth_read and _image.rowFormat(read.format) == .none) return .error_format_not_supported;
+                // VUID-VkSubpassDescription-pInputAttachments-02647: the
+                // colour formats kept in rows are those `_format.describe`
+                // gives COLOR_ATTACHMENT.
+                if (!depth_read and _image.rowFormat(read.format) == .none) return .error_validation_failed;
                 // A depth another subpass drew is in that subpass's
                 // tiles, so the part that drew it last writes it into
                 // the image's rows for this one to read, the way 1.52
@@ -358,7 +380,14 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                         if (!owner.physical.can.stored_stencil) return .error_feature_not_present;
                         plan.parts[earlier].stores_stencil = true;
                     }
-                    if (_image.hasDepth(read.format) and _image.hasStencil(read.format) and !owner.physical.can.stored_both) return .error_feature_not_present;
+                    // Where both are not kept, `_format.describe` gives a
+                    // format of both planes neither COLOR_ATTACHMENT nor
+                    // DEPTH_STENCIL_ATTACHMENT
+                    // (VUID-VkSubpassDescription-pInputAttachments-02647;
+                    // `error_feature_not_present` until 1.135). No device
+                    // reaches here today: the V3D reads no input
+                    // attachment.
+                    if (_image.hasDepth(read.format) and _image.hasStencil(read.format) and !owner.physical.can.stored_both) return .error_validation_failed;
                 };
                 // Drawn and read in the same subpass: the pixels being
                 // read are the ones being written, which is the
@@ -428,7 +457,8 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 const depth = attachments[reference.attachment];
                 tests_depth = _image.hasDepth(depth.format);
                 tests_stencil = _image.hasStencil(depth.format);
-                if (!tests_depth and !tests_stencil) return .error_format_not_supported;
+                // VUID-VkSubpassDescription-pDepthStencilAttachment-02650.
+                if (!tests_depth and !tests_stencil) return .error_validation_failed;
                 samples = depth.samples;
                 // Each pair of ops for its own plane, and nothing for a
                 // plane the format has not (since 1.106).
@@ -464,9 +494,16 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 // device writes a pixel's planes where they lie in it
                 // (`stored_both`, since 1.47): one that stores a tile
                 // buffer whole writes a plane's own pixels one after
-                // another, which those rows are not.
+                // another, which those rows are not. Where it does not,
+                // `_format.describe` gives such a format no
+                // DEPTH_STENCIL_ATTACHMENT
+                // (VUID-VkSubpassDescription-pDepthStencilAttachment-02650;
+                // `error_feature_not_present` until 1.135). One that keeps
+                // neither plane is drawn there all the same, in the tiles
+                // alone, though it breaks the same rule
+                // (docs/facet-vulkan10.md item 94).
                 if ((loads_depth or stores_depth or loads_stencil or stores_stencil or shared != null) and
-                    tests_depth and tests_stencil and !owner.physical.can.stored_both) return .error_feature_not_present;
+                    tests_depth and tests_stencil and !owner.physical.can.stored_both) return .error_validation_failed;
                 // The part that drew it last keeps what it left, so that
                 // this subpass can read it in.
                 if (shared) |earlier| {
@@ -539,7 +576,8 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
             // pass chapter, under VkAttachmentDescription).
             for (colors[0..k]) |earlier| if (earlier.attachment == color_index) return .error_validation_failed;
             const color = attachments[color_index];
-            if (!_surface.drawable(color.format)) return .error_format_not_supported;
+            // VUID-VkSubpassDescription-pColorAttachments-02648.
+            if (!_surface.drawable(color.format)) return .error_validation_failed;
             const load: _render.ColorLoad = if (color.load_op == .clear and !drawn[color_index]) .clear else .keep;
             // Its resolve attachment: one sample, of its own format, for a
             // colour of more than one. Vulkan's resolve is at the

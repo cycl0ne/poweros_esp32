@@ -33,13 +33,24 @@ const _image = @import("../image/_image.zig");
 ///
 /// RESULT:
 /// `success`, or `error_format_not_supported` where CreateImage would
-/// refuse every image of that shape, whatever its extent.
+/// refuse every image of that shape, whatever its extent - but for two
+/// kinds of shape. TRANSIENT_ATTACHMENT alone, with no other usage, is
+/// answered as the transfers alone are: no more strictly than
+/// TRANSIENT beside a colour attachment, as Vulkan has a usage within
+/// another be answered ("Additional Image Capabilities"), and the same
+/// where that one is `success`, while on the cores a float or a BC
+/// format, which is no colour attachment, is `success` too. CreateImage
+/// refuses every such image (VUID-VkImageCreateInfo-usage-00966; since
+/// 1.135). And a 3D image neither sampled nor written through, or a
+/// colour or input attachment written through as a storage image, is
+/// declined, the question being asked at 256 slices, while CreateImage
+/// makes many such images a slice deep (docs/facet-vulkan10.md item 94).
 ///
 /// BEHAVIOR:
 /// The question is asked of the same rules CreateImage keeps: the image
 /// of the largest extent is laid out by the very code CreateImage lays
 /// an image out with, so an extent inside what is answered here is made
-/// and one outside it is refused.
+/// and one outside it is refused, the shapes RESULT names apart.
 ///
 /// What is answered, from the device's own limits
 /// (GetPhysicalDeviceProperties) and from what CreateImage takes of

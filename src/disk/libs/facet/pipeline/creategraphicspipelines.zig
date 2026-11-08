@@ -51,9 +51,11 @@ const _instance = @import("../instance/_instance.zig");
 /// a sample count it does not draw, a vertex binding, stride, attribute or
 /// location past its limits, or a topology, polygon mode, blend factor or
 /// blend operation that is none of Vulkan 1.0's;
-/// `error_format_not_supported` for an attribute in a format it does not
-/// read; `error_validation_failed` as well for state that does not hold
-/// together - a subpass the pass has not got, an attribute of a binding
+/// `error_validation_failed` as well for an attribute in a format it
+/// does not read, whose features have no VERTEX_BUFFER
+/// (VUID-VkVertexInputAttributeDescription-format-00623;
+/// `error_format_not_supported` until 1.135), and for state that does not
+/// hold together - a subpass the pass has not got, an attribute of a binding
 /// not given, tessellation functions without a patch list and its state
 /// or a patch list without them, a sample count that is not the
 /// subpass's, a compare or stencil operation that is none of Vulkan's,
@@ -403,7 +405,9 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
             // VUID-VkPipelineVertexInputStateCreateInfo-vertexAttributeDescriptionCount-00614,
             // VUID-VkVertexInputAttributeDescription-location-00620.
             if (made.attribute_count == _instance.max_vertex_input_attributes or attribute.location >= _instance.max_vertex_input_attributes) return .error_validation_failed;
-            if (!_pipeline.attributeFormat(attribute.format)) return .error_format_not_supported;
+            // VUID-VkVertexInputAttributeDescription-format-00623: the
+            // formats read are those `_format.describe` gives VERTEX_BUFFER.
+            if (!_pipeline.attributeFormat(attribute.format)) return .error_validation_failed;
             // VUID-VkVertexInputAttributeDescription-binding-00621,
             // VUID-VkPipelineVertexInputStateCreateInfo-binding-00615.
             if (attribute.binding >= _instance.max_vertex_input_bindings or given_bindings >> @intCast(attribute.binding) & 1 == 0) return .error_validation_failed;
