@@ -47,8 +47,9 @@ pub const catalogs = [_]Catalog{
 /// decoder vp9.vcodec's, the AV1 decoder av1.vcodec's and the H.265
 /// decoder hevc.vcodec's, kept apart from the system so that they are
 /// tested on the host as they are. The readers of H.264's and H.265's
-/// parameter sets are videoparse.library's, and chip.vcodec's for the
-/// colours a stream's sets say. The commodity frame is where the
+/// parameter sets and of VP9's and AV1's headers are videoparse.library's,
+/// and chip.vcodec's for the colours a stream says. The commodity frame is
+/// where the
 /// settings and the broker loop of every commodity in SYS:Commodities are
 /// written once.
 const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
@@ -63,6 +64,8 @@ const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
     .{ .name = "hevccore", .source = "libs/codecs/hevc/core.zig" },
     .{ .name = "h264sets", .source = "libs/videoparse/h264/sets.zig" },
     .{ .name = "hevcsets", .source = "libs/videoparse/hevc/sets.zig" },
+    .{ .name = "vp9header", .source = "libs/videoparse/vp9/header.zig" },
+    .{ .name = "av1header", .source = "libs/videoparse/av1/header.zig" },
     .{ .name = "smbclient", .source = "libs/smb/smbclient.zig" },
     .{ .name = "commodity", .source = "commodities/_frame/frame.zig" },
 };
@@ -188,11 +191,11 @@ const modules = [_]Program{
     .{ .disk = "libs/codecs/opus.acodec", .source = "libs/audiocodec/opus.zig", .name = "opus.acodec" },
     .{ .disk = "libs/codecs/dts.acodec", .source = "libs/audiocodec/dts.zig", .name = "dts.acodec" },
     .{ .disk = "libs/media.library", .source = "libs/media/media.zig", .name = "media.library" },
-    .{ .disk = "libs/videoparse.library", .source = "libs/videoparse/videoparse.zig", .name = "videoparse.library", .imports = &.{ "h264sets", "hevcsets" } },
+    .{ .disk = "libs/videoparse.library", .source = "libs/videoparse/videoparse.zig", .name = "videoparse.library", .imports = &.{ "h264sets", "hevcsets", "vp9header", "av1header" } },
     .{ .disk = "libs/codecs/mp4.container", .source = "libs/media/mp4.zig", .name = "mp4.container" },
     .{ .disk = "libs/codecs/mkv.container", .source = "libs/media/mkv.zig", .name = "mkv.container" },
     .{ .disk = "libs/videocodec.library", .source = "libs/videocodec/videocodec.zig", .name = "videocodec.library" },
-    .{ .disk = "libs/codecs/chip.vcodec", .source = "libs/codecs/chip.zig", .name = "chip.vcodec", .imports = &.{ "h264sets", "hevcsets" } },
+    .{ .disk = "libs/codecs/chip.vcodec", .source = "libs/codecs/chip.zig", .name = "chip.vcodec", .imports = &.{ "h264sets", "hevcsets", "vp9header", "av1header" } },
     .{ .disk = "libs/codecs/mjpeg.vcodec", .source = "libs/codecs/mjpeg.zig", .name = "mjpeg.vcodec", .imports = &.{"jpegdecode"} },
     .{ .disk = "libs/codecs/h264.vcodec", .source = "libs/codecs/h264.zig", .name = "h264.vcodec", .imports = &.{"h264core"} },
     .{ .disk = "libs/codecs/vp8.vcodec", .source = "libs/codecs/vp8.zig", .name = "vp8.vcodec", .imports = &.{"vp8core"} },

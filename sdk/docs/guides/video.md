@@ -72,10 +72,11 @@ range for Motion JPEG - so graphics takes it as it is. Its `matrix`,
 `transfer`, `primaries`, `range`, `depth` and `peak` are the stream's
 own: a film of high dynamic range comes out in PQ or HLG, in BT.2020's
 red, green and blue, often ten bits a sample, and graphics maps it into
-the screen's range as it puts it down. The chip's frames of H.264 and
-H.265 say it too - the hardware reports none of it, so the setup
-record's parameter set is read when the stream is opened; its VP9 and
-AV1 frames are taken to be what their height suggests. `time` is in
+the screen's range as it puts it down. The chip's frames say it too -
+the hardware reports none of it, so chip.vcodec reads it: an H.264 or
+H.265 track's setup record, a VP9 key frame's header, an AV1 sequence
+header in the av1C or the first packets, and the light in the SEI or
+metadata that comes with the first pictures. `time` is in
 microseconds from the start of what the film presents; `number` counts
 the frames handed out. `VCERR_CORRUPT` is one picture the decoder
 stopped on: calling again goes on with the next. `VCERR_END` follows the

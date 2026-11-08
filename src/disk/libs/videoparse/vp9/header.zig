@@ -14,7 +14,9 @@
 
 const sdk = @import("sdk");
 const v9 = sdk.videoparse.vp9;
-const Error = @import("h264sets").bits.Error;
+/// What reading a header can fail with: the stream says something the
+/// standard does not allow, or uses what is left out.
+const Error = error{ Corrupt, Unsupported };
 
 /// Bits read from the most significant on; zeros past the end.
 pub const Bits = struct {

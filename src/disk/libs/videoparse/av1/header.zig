@@ -13,7 +13,9 @@
 //! `Carry`.
 
 const av1 = @import("sdk").videoparse.av1;
-const Error = @import("h264sets").bits.Error;
+/// What reading a header can fail with: the stream says something the
+/// standard does not allow, or uses what is left out.
+const Error = error{ Corrupt, Unsupported };
 
 /// The tiles across or down at most.
 const max_tiles = av1.MAX_TILE_COLS;

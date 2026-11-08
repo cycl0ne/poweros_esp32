@@ -40,9 +40,7 @@ test {
     _ = @import("../hevc/dpb.zig");
     _ = @import("../hevc/slice.zig");
     _ = @import("../hevc/_hevc.zig");
-    _ = @import("../vp9/header.zig");
     _ = @import("../vp9/_vp9.zig");
-    _ = @import("../av1/header.zig");
     _ = @import("../av1/_av1.zig");
 }
 

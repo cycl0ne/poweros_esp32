@@ -1611,8 +1611,8 @@ pub fn build(b: *std.Build) void {
     hevccore_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("hevccore", hevccore_mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = hevccore_mod })).step);
-    // The readers of H.264's and H.265's parameter sets, which
-    // videoparse.library and chip.vcodec build in.
+    // The readers of H.264's and H.265's parameter sets and of VP9's and
+    // AV1's headers, which videoparse.library and chip.vcodec build in.
     const h264sets_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/videoparse/h264/sets.zig"), .target = b.graph.host });
     h264sets_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("h264sets", h264sets_mod);
@@ -1621,6 +1621,14 @@ pub fn build(b: *std.Build) void {
     hevcsets_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("hevcsets", hevcsets_mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = hevcsets_mod })).step);
+    const vp9header_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/videoparse/vp9/header.zig"), .target = b.graph.host });
+    vp9header_mod.addImport("sdk", sdk);
+    disk_test_mod.addImport("vp9header", vp9header_mod);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = vp9header_mod })).step);
+    const av1header_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/videoparse/av1/header.zig"), .target = b.graph.host });
+    av1header_mod.addImport("sdk", sdk);
+    disk_test_mod.addImport("av1header", av1header_mod);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = av1header_mod })).step);
     // The SMB client - the protocol and the share files - which the
     // handler, MountShare and the Shares tool are each built with.
     const smbclient_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/smb/smbclient.zig"), .target = b.graph.host });
