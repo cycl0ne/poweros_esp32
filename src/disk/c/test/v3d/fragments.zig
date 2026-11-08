@@ -492,13 +492,19 @@ fn placeTexel(level: u32, x: u32, y: u32) u32 {
 }
 
 /// The two uniforms of a program that samples: its state and a sampler's,
-/// placed in the frame.
+/// placed in the frame. `filter` both ways, `wrap` on every axis, the rest
+/// as a fixed form has it.
 fn sampling(scene: *Scene, picture: *const Picture, filter: tiling.Filter, wrap: tiling.Wrap) [2]u32 {
+    return samplingBy(scene, picture, .{ .mag = filter, .min = filter, .wrap = @splat(wrap) });
+}
+
+/// The same, through `state`.
+fn samplingBy(scene: *Scene, picture: *const Picture, state: tiling.SamplerState) [2]u32 {
     const texture_cpu, const texture_at = scene.place(tiling.texture_state_bytes, tiling.texture_state_alignment);
     @memcpy(texture_cpu[0..tiling.texture_state_bytes], &picture.state);
     const sampler_cpu, const sampler_at = scene.place(tiling.sampler_state_bytes, tiling.sampler_state_alignment);
-    tiling.writeSamplerState(sampler_cpu[0..tiling.sampler_state_bytes], filter, wrap);
-    return .{ tiling.parameter0(texture_at), tiling.parameter1(sampler_at) };
+    tiling.writeSamplerState(sampler_cpu[0..tiling.sampler_state_bytes], state);
+    return .{ tiling.parameter0(texture_at), tiling.parameter1(sampler_at, false) };
 }
 
 const Across = struct {
@@ -586,15 +592,28 @@ fn sizeLevels(across: u32, down: u32) u32 {
     return levels;
 }
 
-fn wrapped(at_texel: i32, size: i32, wrap: tiling.Wrap) u32 {
+/// The texel `at_texel` reads, as Vulkan's address modes have it (the
+/// spec's "Wrapping Operation"); null for the border.
+fn wrapped(at_texel: i32, size: i32, wrap: tiling.Wrap) ?u32 {
     return @intCast(switch (wrap) {
         .repeat => @mod(at_texel, size),
         .clamp => @min(@max(at_texel, 0), size - 1),
+        // Every other copy turned round: `(size - 1) - mirror((i mod
+        // 2size) - size)`, which is `i mod 2size` folded back at size.
+        .mirror => mirror: {
+            const folded = @mod(at_texel, 2 * size);
+            break :mirror if (folded < size) folded else 2 * size - 1 - folded;
+        },
+        // `clamp(mirror(i), 0, size - 1)`, mirror(i) being i, or -(1 + i)
+        // below 0.
+        .mirror_once => @min(if (at_texel >= 0) at_texel else -(1 + at_texel), size - 1),
+        .border => if (at_texel < 0 or at_texel >= size) return null else at_texel,
     });
 }
 
 /// A small texture past its edges, and between its texels: each filter and
-/// each wrap against the sum done here.
+/// each of the TMU's five wraps against the sum done here, the border
+/// opaque white. Until 1.140 the wraps were repeat and clamp alone.
 pub fn filterTest(scene: *Scene) i32 {
     const side: u32 = 16;
     const scale: u32 = 4;
@@ -605,11 +624,11 @@ pub fn filterTest(scene: *Scene) i32 {
     var result: i32 = dos.RETURN_OK;
     // From -1 to 2: the texture three times across, at 4 pixels a texel.
     const drawn = 3 * side * scale;
-    for ([_]tiling.Filter{ .nearest, .bilinear }) |filter| for ([_]tiling.Wrap{ .repeat, .clamp }) |wrap| {
+    for ([_]tiling.Filter{ .nearest, .bilinear }) |filter| for ([_]tiling.Wrap{ .repeat, .clamp, .mirror, .mirror_once, .border }) |wrap| {
         var corners: [6]Vertex = undefined;
         rectangle(&corners, 0, 0, @floatFromInt(drawn), @floatFromInt(drawn), 0.5, Across{ .from = -1, .to = 2 });
         scene.begin(.{});
-        const uniforms = sampling(scene, &picture, filter, wrap);
+        const uniforms = samplingBy(scene, &picture, .{ .mag = filter, .min = filter, .wrap = @splat(wrap), .border = .opaque_white });
         scene.draw(.{ .fragment = qpu.texture_fragment, .uniforms = &uniforms, .vertices = &corners });
         if (!scene.finish()) return dos.RETURN_FAIL;
         var tally = Tally{};
@@ -623,7 +642,7 @@ pub fn filterTest(scene: *Scene) i32 {
         };
         _ = Printf(scene.dl, "%s, %s: %ld wrong of %ld, %ld at worst\n", .{
             @as([*:0]const u8, if (filter == .nearest) "nearest" else "bilinear"),
-            @as([*:0]const u8, if (wrap == .repeat) "repeat" else "clamp"),
+            @as([*:0]const u8, @tagName(wrap)),
             tally.wrong,
             tally.checked,
             @as(u64, tally.worst),
@@ -640,21 +659,34 @@ pub fn filterTest(scene: *Scene) i32 {
 fn filtered(filter: tiling.Filter, wrap: tiling.Wrap, side: u32, u: f32, v: f32) u32 {
     const size: i32 = @intCast(side);
     if (filter == .nearest) {
-        const x = wrapped(@intFromFloat(@floor(u)), size, wrap);
-        const y = wrapped(@intFromFloat(@floor(v)), size, wrap);
+        const x = wrapped(@intFromFloat(@floor(u)), size, wrap) orelse return 0xFFFF_FFFF;
+        const y = wrapped(@intFromFloat(@floor(v)), size, wrap) orelse return 0xFFFF_FFFF;
         return 0xFF00_0000 | x * 16 | (y * 16) << 8;
     }
     const left = @floor(u - 0.5);
     const top = @floor(v - 0.5);
     const across = u - 0.5 - left;
     const down = v - 0.5 - top;
-    const x0: f32 = @floatFromInt(wrapped(@as(i32, @intFromFloat(left)), size, wrap));
-    const x1: f32 = @floatFromInt(wrapped(@as(i32, @intFromFloat(left)) + 1, size, wrap));
-    const y0: f32 = @floatFromInt(wrapped(@as(i32, @intFromFloat(top)), size, wrap));
-    const y1: f32 = @floatFromInt(wrapped(@as(i32, @intFromFloat(top)) + 1, size, wrap));
-    const red = (x0 * (1 - across) + x1 * across) * 16 / 255;
-    const green = (y0 * (1 - down) + y1 * down) * 16 / 255;
-    return rgba(red, green, 0, 1);
+    const x0 = wrapped(@as(i32, @intFromFloat(left)), size, wrap);
+    const x1 = wrapped(@as(i32, @intFromFloat(left)) + 1, size, wrap);
+    const y0 = wrapped(@as(i32, @intFromFloat(top)), size, wrap);
+    const y1 = wrapped(@as(i32, @intFromFloat(top)) + 1, size, wrap);
+    // The four texels, a border one white, mixed channel by channel.
+    const corners = [4][4]f32{ texelOf(x0, y0), texelOf(x1, y0), texelOf(x0, y1), texelOf(x1, y1) };
+    const weights = [4]f32{ (1 - across) * (1 - down), across * (1 - down), (1 - across) * down, across * down };
+    var mixed: [4]f32 = @splat(0);
+    for (corners, weights) |corner, weight| {
+        for (&mixed, corner) |*into, channel| into.* += channel * weight;
+    }
+    return rgba(mixed[0], mixed[1], mixed[2], mixed[3]);
+}
+
+/// A texel of `filterTest`'s texture as four channels, 0 to 1: red its
+/// column and green its row, or opaque white for the border.
+fn texelOf(x: ?u32, y: ?u32) [4]f32 {
+    const column = x orelse return @splat(1);
+    const row = y orelse return @splat(1);
+    return .{ @as(f32, @floatFromInt(column * 16)) / 255, @as(f32, @floatFromInt(row * 16)) / 255, 0, 1 };
 }
 
 /// A texture times the colour the vertices carry.

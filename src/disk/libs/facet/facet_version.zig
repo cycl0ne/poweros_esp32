@@ -3877,8 +3877,6 @@ pub const LIBRARY_VERSION = 1;
 /// as a float are refused. The plan answers `Error.Discards` for every
 /// discard, by name.
 ///
-/// Tests:
-///
 /// **And the cores' depth waits for a generated function that drops
 /// pixels.** The cores tested and wrote a pipeline's depth before its
 /// fragment function unless its fixed form dropped pixels, and nothing in
@@ -3909,4 +3907,59 @@ pub const LIBRARY_VERSION = 1;
 ///   through a dropped pixel and the cores did not. It is 3 apart with
 ///   the fix, at the triangle's edge. All 165 cases stay within one pixel
 ///   in a thousand, and C:test/FacetProbe passes its 829 checks.
-pub const LIBRARY_REVISION = 139;
+///
+/// 140: **The V3D samples through the whole of a sampler.** Until now its
+/// TMU was told a filter and a wrap, and a generated program bound beside
+/// any other sampler drew `shader.missing`. That covered mixed or held
+/// levels, a bias, a mirrored or bordered edge, wraps apart by axis,
+/// anisotropy and texels. Now the state is packed as v3dv's
+/// pack_sampler_state packs it (v3dvx_device.c:203-271), field for field,
+/// at the places v3d_packet.xml:1712-1737 gives:
+///
+/// - the mag, min and mip filters;
+/// - the S, T and R wraps, from Vulkan's five (:36-42);
+/// - the three borders Vulkan 1.0 has;
+/// - the fixed bias, s8.8;
+/// - the minimum and maximum LOD, u4.8, held to 0-15 (:259-260);
+/// - the compare function;
+/// - anisotropy, 2 to 16 samples (:231-239).
+///
+/// Configuration parameter 1 carries the unnormalized bit, as v3dv sets
+/// it from the sampler (v3dv_uniforms.c:213-218). `tiling.samplerOf`
+/// makes the state from facet's own sampler. A sampler that compares is
+/// the one it turns down: the TMU compares only where the program writes
+/// TMUDREF (v3d_tex.c:155-157), and the walk has no Dref sample.
+///
+/// The V3D now reports `sampler_anisotropy` and
+/// `unnormalized_coordinates` true, `max_sampler_anisotropy` 16,
+/// `max_sampler_lod_bias` 14 and `mipmap_precision_bits` 8, as v3dv
+/// does (v3dv_device.c:349, 1153, 1158-1159). It reports one sampler a
+/// stage, beside its one sampled image. The fixed forms that read a
+/// sampler are still refused there (`samplers`, item 54's other half).
+///
+/// Tests:
+///
+/// - 3036 host tests, the V3D's four new among them.
+/// - V3D tests: 136 (4 new). A fixed form's state packs to the words it
+///   always had. Each field of a sampler of every kind lands where
+///   v3d_packet.xml has it. Anisotropy and the borders map as v3dv maps
+///   them. A comparing sampler is turned down, and a wild bias or a NaN
+///   stays in its field.
+/// - On the board, C:test/V3DTest 0.3 FILTER draws nearest and bilinear
+///   through each of the TMU's five wraps, the border white, against
+///   Vulkan's formulas worked out on the CPU: no pixel wrong in any of
+///   the ten.
+/// - C:test/FacetBoth 1.12 draws a shipped texture through seven samplers
+///   more, against the cores. Levels mixed and shifted: 1 pixel of
+///   230,400 apart. Levels held to 3 and 4: none. Mirrored across and
+///   held down: 16. A white border: 2. Mirrored once: none. In texels:
+///   none. Four samples along an axis: none at five steps, against two
+///   for every other case, because Vulkan leaves those samples to the
+///   implementation (`Case.slack`).
+/// - All 172 cases stay within one pixel in a thousand.
+/// - C:test/FacetProbe 1.44 holds every device to a sampler in texels,
+///   which Vulkan has no feature to turn off. It reads whether fixed
+///   forms read a sampler off the device type, since the V3D's
+///   anisotropy no longer says so. It passes its 834 checks, 337 of them
+///   on the V3D.
+pub const LIBRARY_REVISION = 140;

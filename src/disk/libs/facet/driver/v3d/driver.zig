@@ -113,19 +113,21 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // decide it (`_instance.limits`).
         .limits = said: {
             var said = _instance.limits;
-            // No program of the QPUs reads a sampler: the TMU is given the
-            // state a fixed form's own `sampling` says, so the forms that
-            // want a sampler are refused here and drawn on the cores
-            // (`can.samplers` below). A sampler descriptor is of no use to
-            // this device, and nor is a bias, and the mipmap level is
-            // written as `mip_nearest` whatever the sampler asks
-            // (`tiling.zig`). Vulkan's value for a device without
-            // `sampler_anisotropy` is 1.
-            said.max_per_stage_descriptor_samplers = 0;
-            said.max_descriptor_set_samplers = 0;
-            said.max_sampler_lod_bias = 0;
-            said.max_sampler_anisotropy = 1;
-            said.mipmap_precision_bits = 0;
+            // A generated program samples through the sampler bound beside
+            // its texture, and the TMU is given all of it as v3dv packs it
+            // (`tiling.samplerOf`, since 1.140): one a stage, as there is
+            // one texture a stage below, since the program samples once.
+            // The bias, the anisotropy and the precision are v3dv's for
+            // this GPU (v3dv_device.c:1153, 1158, 1159); the bias is what
+            // Vulkan asks at least 2 of, and the field holds -128 to just under 128
+            // (`tiling.SamplerState.bias`). The fixed forms that want a
+            // sampler are still refused here and drawn on the cores
+            // (`can.samplers` below): no QPU program of theirs reads one.
+            said.max_per_stage_descriptor_samplers = 1;
+            said.max_descriptor_set_samplers = facet.shader.MAX_SETS;
+            said.max_sampler_lod_bias = 14;
+            said.max_sampler_anisotropy = 16;
+            said.mipmap_precision_bits = 8;
             // The texture unit takes one texture a stage.
             said.max_per_stage_descriptor_sampled_images = 1;
             said.max_descriptor_set_sampled_images = facet.shader.MAX_SETS;
@@ -234,16 +236,21 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .tessellation_on_device = false,
         // No QPU program discards yet, so texture_cutout is refused above.
         .discarding_fragment_forms = false,
-        // The TMU's state is written from the form's own `sampling` as a
-        // draw is played: there is no program that reads a sampler, so the
-        // forms that want one are refused and drawn on the cores.
+        // A fixed form's TMU state is written from the form's own
+        // `sampling` as a draw is played, and no fixed form's program
+        // reads a sampler, so the forms that want one are refused and
+        // drawn on the cores. A generated program's sampler is another
+        // matter: it is the TMU's whole since 1.140 (`tiling.samplerOf`).
+        // docs/facet-vulkan10.md item 54 is the fixed forms' half.
         .samplers = false,
-        // And the limit says 1 with it, as Vulkan asks of a device without
-        // the feature (since 1.80).
-        .sampler_anisotropy = false,
-        // Nothing here reads a sampler at all, so a sample in texels is
-        // refused with the rest of what a sampler says (since 1.67).
-        .unnormalized_coordinates = false,
+        // The TMU's own, 2 to 16 samples, as v3dv has it
+        // (v3dv_device.c:349; `tiling.anisotropyOf`). Until 1.140 this was
+        // false and the limit 1, as Vulkan asks of a device without it.
+        .sampler_anisotropy = true,
+        // Bit 1 of the TMU's configuration parameter 1, which v3dv sets
+        // from the sampler (v3dv_uniforms.c:213-218; `tiling.parameter1`).
+        // Refused until 1.140, with the rest of what a sampler says.
+        .unnormalized_coordinates = true,
         // The hardware's own counter, pointed at a word of the frame's by
         // the packet beside a draw and added to the query as the frame is
         // drawn (`cl.occlusionQuery`, since 1.47). What the QPUs were

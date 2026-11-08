@@ -146,11 +146,12 @@ pub const Error = error{
     Refused,
     /// An optional image operand on a sample: a constant texel offset
     /// above all, which the cores apply (`ir.Op.offset`, item 28 of
-    /// docs/facet-vulkan10.md) and this device cannot. The TMU is told a
-    /// filter and a wrap and nothing else (`tiling.writeSamplerState`),
-    /// and an offset would be a third configuration parameter no program
-    /// here has ever written. A bias, a lod and a gradient come back the
-    /// same way, each being a different write again. (Since 1.87.)
+    /// docs/facet-vulkan10.md) and this device cannot. The sampler's
+    /// state is the TMU's whole since 1.140 (`tiling.samplerOf`), but an
+    /// offset is not the sampler's: it would be a third configuration
+    /// parameter no program here has ever written. A bias, a lod and a
+    /// gradient on the sample come back the same way, each being a
+    /// different write again. (Since 1.87.)
     Operands,
     /// Not a fragment program.
     Stage,
@@ -2645,8 +2646,9 @@ test "what this back end has no program for is refused by name, and nothing is m
     // A pixel dropped: no hand-written program does, so the plan says
     // which family it is.
     try testing.expectError(Error.Discards, compile(&work, Cutout.words));
-    // A constant texel offset on the sample: the cores apply one, and the
-    // TMU here is told a filter and a wrap and nothing else. Said by
+    // A constant texel offset on the sample: the cores apply one, and no
+    // program here writes the configuration parameter that carries it,
+    // the sampler's own state being all the TMU is told. Said by
     // name, which is what tells it from a word this walk simply did not
     // know - and this is also the only test in the tree that proves the
     // operand reached the *words* at all: the cores read the offset from

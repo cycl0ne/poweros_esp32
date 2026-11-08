@@ -12,8 +12,10 @@
 //! Pictures are SIZE big, WIDTHxHEIGHT: 640x360 if not given. ONLY runs the
 //! cases with that in their name. A job that never ends stops the V3D until
 //! the program goes, and with it the cases after it. It prints for
-//! each case how many pixels are further apart than two steps of a channel,
-//! and returns WARN if any case has more than one in a thousand, with a map
+//! each case how many pixels are further apart than two steps of a channel
+//! (five for anisotropic filtering, whose samples Vulkan leaves to the
+//! implementation), and returns WARN if any case has more than one in a
+//! thousand, with a map
 //! of where they are. Textures
 //! are drawn no smaller than the level their pixels are on either way: the
 //! two choose a level by different sums, and pictures of a texture turned
@@ -32,7 +34,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.11 (08.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.12 (08.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -145,6 +147,21 @@ fn textureVertex(vertices: *const shader.Vertices) callconv(.c) void {
         const uv = vertices.input(@intCast(k), 2);
         vertices.output(@intCast(k))[0..6].* = .{ p[0], p[1], p[2], p[3], uv[0], uv[1] };
     }
+}
+
+/// `textureVertex`'s, its coordinate scaled by `across` and `down`: the
+/// texture several times over, so that its further levels are read, or
+/// in texels.
+fn scaledVertex(comptime across: f32, comptime down: f32) shader.VertexFn {
+    return &struct {
+        fn run(vertices: *const shader.Vertices) callconv(.c) void {
+            for (0..vertices.count) |k| {
+                const p = place(vertices, k);
+                const uv = vertices.input(@intCast(k), 2);
+                vertices.output(@intCast(k))[0..6].* = .{ p[0], p[1], p[2], p[3], uv[0] * across, uv[1] * down };
+            }
+        }
+    }.run;
 }
 
 fn modulateVertex(vertices: *const shader.Vertices) callconv(.c) void {
@@ -406,6 +423,9 @@ const plain_entries = [_]shader.Entry{
     shader.evaluation("isolines", &quadEvaluation, 4, .{ .domain = .isolines }),
     shader.vertex("color", &colorVertex, 4),
     shader.vertex("texture", &textureVertex, 2),
+    shader.vertex("tiled", scaledVertex(8, 8), 2),
+    shader.vertex("stretched", scaledVertex(32, 1), 2),
+    shader.vertex("in texels", scaledVertex(texture_side, texture_side), 2),
     shader.vertex("modulate", &modulateVertex, 6),
     shader.vertex("array", &arrayVertex, 3),
     shader.vertex("small array", &smallArrayVertex, 3),
@@ -432,6 +452,85 @@ const texture_side: u32 = 64;
 const picture_usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
 const texture_levels = 7;
 const formats = [_]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 };
+
+/// A sampler the shipped texture is drawn through, as a case of its own:
+/// the vertex function and the part of `geometry` it is drawn with, which
+/// say what of the sampler shows. Each is in a set of its own beside
+/// `Side.sampler_set`, with the first texture, or with its first level
+/// alone where `one_level`.
+const Through = struct {
+    name: [*:0]const u8,
+    info: facet.SamplerCreateInfo,
+    vertex: [*:0]const u8,
+    first: u32,
+    one_level: bool = false,
+    /// `Case.slack`.
+    slack: ?u32 = null,
+};
+
+/// What a sampler says beyond one filter, one wrap and every level as it
+/// is: until 1.140 the V3D painted `shader.missing` for each of these, and
+/// they are the TMU's own since (`tiling.samplerOf`). "tiled" reads the
+/// texture eight times over the quad, which is about level 1; the wide
+/// quad reads it from -1.25 to 2.25, at level 0.
+const throughs = [_]Through{
+    .{
+        .name = "shipped texture, levels mixed and shifted",
+        .info = .{ .mipmap_mode = .linear, .mip_lod_bias = 1.5, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "tiled",
+        .first = quad_at,
+    },
+    .{
+        .name = "shipped texture, levels held to 3 and 4",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .min_lod = 3, .max_lod = 4 },
+        .vertex = "tiled",
+        .first = quad_at,
+    },
+    .{
+        .name = "shipped texture, mirrored across and held down",
+        .info = .{ .address_mode_u = .mirrored_repeat, .address_mode_v = .clamp_to_edge, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+        .first = wide_at,
+    },
+    .{
+        .name = "shipped texture, bordered in white",
+        .info = .{ .address_mode_u = .clamp_to_border, .address_mode_v = .clamp_to_border, .border_color = .float_opaque_white, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+        .first = wide_at,
+    },
+    .{
+        .name = "shipped texture, mirrored once",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .address_mode_u = .mirror_clamp_to_edge, .address_mode_v = .mirror_clamp_to_edge, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+        .first = wide_at,
+    },
+    // Vulkan leaves the samples of anisotropic filtering to the
+    // implementation, and the two take theirs differently: the cores
+    // average up to four bilinear samples along the longer axis, each
+    // rounded to 8 bits first (`texture.tapped`), and the TMU its own
+    // way. On the board in 1.140 they agree within two steps over most
+    // of the quad, and within five on about one pixel in a hundred, all
+    // at its left - from x 93 to about 210 - and a few near x 480. The
+    // same pixels differ when the coordinate is moved on by 16 repeats,
+    // which reads the same texels, so it is where the pixel is on the
+    // screen and not where it is in the texture; why is not known. A
+    // TMU that took one sample would read about two levels further, each
+    // a colour of its own, which is far past five steps.
+    .{
+        .name = "shipped texture, four samples along",
+        .info = .{ .mipmap_mode = .linear, .anisotropy_enable = true, .max_anisotropy = 4, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "stretched",
+        .first = quad_at,
+        .slack = 5,
+    },
+    .{
+        .name = "shipped texture in texels",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .address_mode_u = .clamp_to_edge, .address_mode_v = .clamp_to_edge, .unnormalized_coordinates = true },
+        .vertex = "in texels",
+        .first = wide_at,
+        .one_level = true,
+    },
+};
 
 const layer_side: u32 = 32;
 const array_layers = 4;
@@ -681,6 +780,12 @@ const Side = struct {
     sampler_set_layout: ?*facet.DescriptorSetLayout = null,
     sampler_layout: ?*facet.PipelineLayout = null,
     sampler_set: ?*facet.DescriptorSet = null,
+    /// `throughs`, each in a set of its own, and the first texture's first
+    /// level alone, which a sampler in texels is read through: Vulkan
+    /// has such a sampler read a view of one level.
+    through: [throughs.len]?*facet.Sampler = @splat(null),
+    through_sets: [throughs.len]?*facet.DescriptorSet = @splat(null),
+    first_level: ?*facet.ImageView = null,
     /// What a shipped shader that reads the push constants is made with:
     /// no set, and the fragment stage's 20 bytes of them.
     push_layout: ?*facet.PipelineLayout = null,
@@ -774,7 +879,7 @@ const Side = struct {
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 2 + layered_count }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 2 + layered_count + throughs.len }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -797,6 +902,15 @@ const Side = struct {
         const sampled_info = facet.DescriptorImageInfo{ .sampler = side.sampler, .image_view = side.texture_views[0] };
         const sampled_write = facet.WriteDescriptorSet{ .dst_set = side.sampler_set.?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&sampled_info) };
         fb.UpdateDescriptorSets(device, 1, @ptrCast(&sampled_write), 0, null);
+        side.first_level = try side.view(side.textures[0].?, formats[0], facet.IMAGE_ASPECT_COLOR, 1);
+        const through_layouts: [throughs.len]?*facet.DescriptorSetLayout = @splat(side.sampler_set_layout);
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = throughs.len, .set_layouts = @ptrCast(&through_layouts) }, &side.through_sets), error.Refused);
+        for (throughs, &side.through, side.through_sets) |each, *made, set| {
+            try expect(fb.CreateSampler(device, &each.info, made), error.Refused);
+            const info = facet.DescriptorImageInfo{ .sampler = made.*, .image_view = if (each.one_level) side.first_level else side.texture_views[0] };
+            const write = facet.WriteDescriptorSet{ .dst_set = set.?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&info) };
+            fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+        }
         // The module ships the SPIR-V of the shaders above beside the
         // functions: the flag says so, and `code_size` that the program's
         // memory is a `shader.Module` wide.
@@ -1069,6 +1183,8 @@ const Side = struct {
         fb.DestroyDescriptorSetLayout(device, side.set_layout);
         fb.DestroyDescriptorSetLayout(device, side.sampler_set_layout);
         fb.DestroySampler(device, side.sampler);
+        for (side.through) |each| fb.DestroySampler(device, each);
+        fb.DestroyImageView(device, side.first_level);
         for (&side.framebuffers) |*pair| for (pair) |each| fb.DestroyFramebuffer(device, each);
         for (side.stencil_framebuffers) |each| fb.DestroyFramebuffer(device, each);
         for (side.stencil_passes) |each| fb.DestroyRenderPass(device, each);
@@ -1249,6 +1365,10 @@ const Case = struct {
     name: [*:0]const u8,
     target: Target = .bgra,
     run: *const fn (side: *Side) Failure!void,
+    /// How many steps of a channel two pixels may be apart and count as
+    /// the same, where it is not `compare`'s own: only where Vulkan
+    /// leaves the answer to the implementation (since 1.140).
+    slack: ?u32 = null,
 };
 
 const Cases = struct {
@@ -1926,6 +2046,18 @@ const Cases = struct {
             }
         }.run;
     }
+    /// The shipped texture through `throughs[k]`.
+    fn through(comptime k: usize) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                side.begin(.{});
+                side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.sampler_layout.?, 0, 1, @ptrCast(&side.through_sets[k]), 0, null);
+                try side.use(.{ .vertex = throughs[k].vertex, .fragment = "shipped texture", .layout = side.sampler_layout.? });
+                side.draw(throughs[k].first, 6);
+                side.end();
+            }
+        }.run;
+    }
     /// A colour pushed, drawn; then its green alone pushed again, by
     /// four bytes at offset 4, and drawn over another part of the
     /// picture. Each draw reads what was pushed before it, and the bytes
@@ -2099,6 +2231,7 @@ const cases = [_]Case{
     .{ .name = "shipped cutout", .run = Cases.shipped("texture", "shipped cutout", true, quad_at) },
     .{ .name = "shipped cutout the other way", .run = Cases.shipped("texture", "shipped cutout other", true, quad_at) },
     .{ .name = "shipped cutout in front", .run = Cases.cutoutInFront },
+} ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },
     .{ .name = "drawn in 565", .target = .rgb565, .run = Cases.onTarget(.rgb565) },
@@ -2155,6 +2288,13 @@ const cases = [_]Case{
     .{ .name = "two attachments, second", .target = .rgba, .run = &Cases.twoColors },
 };
 
+/// A case for each of `throughs`, after the shipped ones.
+fn throughCases() [throughs.len]Case {
+    var made: [throughs.len]Case = undefined;
+    inline for (&made, throughs, 0..) |*into, each, k| into.* = .{ .name = each.name, .run = Cases.through(k), .slack = each.slack };
+    return made;
+}
+
 /// How far apart two pixels are, in the channel furthest apart: in steps of
 /// a channel of 8 bits, or of 565.
 fn apart(target: Target, one: [*]const u8, other: [*]const u8) u32 {
@@ -2181,7 +2321,7 @@ fn compare(dl: *DosBase, case: *const Case, cores: *const Side, gpu: *const Side
     const t = @intFromEnum(case.target);
     const bytes: usize = if (case.target == .rgb565) 2 else 4;
     // 565 is dithered on the cores: a step either way is no difference.
-    const slack: u32 = if (case.target == .rgb565) 1 else 2;
+    const slack: u32 = case.slack orelse if (case.target == .rgb565) 1 else 2;
     var wrong: u64 = 0;
     var worst: u32 = 0;
     var first_x: usize = 0;

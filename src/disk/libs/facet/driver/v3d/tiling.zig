@@ -13,6 +13,7 @@
 //!     height so that a column does not share the banks of the next.
 
 const std = @import("std");
+const texture = @import("sdk").facet.texture;
 
 /// The most levels a texture here has: 8192 across, down to 1.
 pub const most_levels = 14;
@@ -290,21 +291,198 @@ pub fn writeTextureState(into: []u8, layout: *const Layout, texels: Texels, pick
 }
 
 pub const Filter = enum { nearest, bilinear };
-pub const Wrap = enum(u64) { repeat = 0, clamp = 1 };
 
-/// A sampler's state, into `into`: the level the nearest to what a pixel
-/// covers, as facet's own sampling chooses it.
-pub fn writeSamplerState(into: []u8, filter: Filter, wrap: Wrap) void {
-    const nearest: u64 = @intFromBool(filter == .nearest);
-    const mip_nearest: u64 = 1 << 2;
-    const max_lod: u64 = 15 << 8;
-    const words: u64 = nearest | nearest << 1 | mip_nearest |
-        max_lod << 20 |
-        @intFromEnum(wrap) << 48 |
-        @intFromEnum(wrap) << 51 |
-        @intFromEnum(wrap) << 54;
+/// What the TMU reads past a texture's edge: `Wrap Mode` in Mesa's
+/// v3d_packet.xml:79-85, numbered as the state holds it, and the five
+/// Vulkan has (v3dvx_device.c:36-42).
+pub const Wrap = enum(u64) {
+    repeat = 0,
+    clamp = 1,
+    mirror = 2,
+    border = 3,
+    /// Turned round once below 0 and then held at the edge: Vulkan's
+    /// MIRROR_CLAMP_TO_EDGE.
+    mirror_once = 4,
+};
+
+/// What a border reads: `Border Color Mode`, v3d_packet.xml:72-77. Its
+/// fourth, `Follows` (7), takes a colour from the state's last four words,
+/// which only VK_EXT_custom_border_color asks for (v3dvx_device.c:225-228);
+/// facet has Vulkan 1.0's three borders and no other
+/// (`_sampler.borderOf`), so the words stay 0.
+pub const Border = enum(u64) {
+    transparent_black = 0,
+    opaque_black = 1,
+    opaque_white = 2,
+};
+
+/// How a shadow sample compares: `Compare Function`, v3d_packet.xml:3-12,
+/// in Vulkan's order (v3dvx_device.c:44-54).
+pub const Compare = enum(u64) {
+    never = 0,
+    less = 1,
+    equal = 2,
+    less_or_equal = 3,
+    greater = 4,
+    not_equal = 5,
+    greater_or_equal = 6,
+    always = 7,
+};
+
+/// A sampler as the TMU's state holds it: each field v3dv's
+/// `pack_sampler_state` fills (src/broadcom/vulkan/v3dvx_device.c:203-271),
+/// at the place v3d_packet.xml:1712-1737 gives it. The defaults are the
+/// state a fixed form samples through: its filter both ways, its wrap on
+/// every axis, the nearest level, and every level the texture has.
+pub const SamplerState = struct {
+    /// Where a texel covers more than a pixel, and where it covers less.
+    mag: Filter = .bilinear,
+    min: Filter = .bilinear,
+    /// The nearer level alone, rather than the two a point falls between
+    /// mixed.
+    mip_nearest: bool = true,
+    /// Across, down and through a 3D texture: `Wrap S`, `T` and `R`.
+    wrap: [3]Wrap = @splat(.repeat),
+    border: Border = .transparent_black,
+    /// Added to the level, in levels: `Fixed Bias`, s8.8.
+    bias: f32 = 0,
+    /// The levels a sample is held to, 0 to 15: `Min` and `Max
+    /// Level-of-Detail`, u4.8. 15 is past any texture's last level.
+    min_lod: f32 = 0,
+    max_lod: f32 = 15,
+    /// `Maximum Anisotropy` - 0 for 2 samples, 1 for 4, 2 for 8, 3 for
+    /// 16 - with `Anisotropy Enable`; null for one sample.
+    anisotropy: ?u2 = null,
+    /// What a shadow sample does with the reference. The TMU compares only
+    /// where the program writes one to TMUDREF (Mesa's v3d_tex.c:155-157),
+    /// so for any other sample this says nothing; v3dv writes `never`
+    /// where the sampler has no comparison (v3dvx_device.c:262-264).
+    compare: Compare = .never,
+};
+
+/// A sampler's state, into `into`: v3dv's `pack_sampler_state`
+/// (v3dvx_device.c:230-270), field for field. The two that v3dv sets to 0
+/// whatever it is given are 0 here too: `Wrap I Border` ("Also hardcoded on
+/// v3d", :254) and `sRGB Disable` ("Not even set by v3d", :261).
+pub fn writeSamplerState(into: []u8, state: SamplerState) void {
+    const words: u64 = @as(u64, @intFromBool(state.mag == .nearest)) |
+        @as(u64, @intFromBool(state.min == .nearest)) << 1 |
+        @as(u64, @intFromBool(state.mip_nearest)) << 2 |
+        @as(u64, @intFromBool(state.anisotropy != null)) << 3 |
+        @intFromEnum(state.compare) << 4 |
+        lodBits(state.min_lod) << 8 |
+        lodBits(state.max_lod) << 20 |
+        biasBits(state.bias) << 32 |
+        @intFromEnum(state.wrap[0]) << 48 |
+        @intFromEnum(state.wrap[1]) << 51 |
+        @intFromEnum(state.wrap[2]) << 54 |
+        @intFromEnum(state.border) << 58 |
+        @as(u64, state.anisotropy orelse 0) << 61;
     @memset(into[0..sampler_state_bytes], 0);
     std.mem.writeInt(u64, into[0..8], words, .little);
+}
+
+/// A level as the state holds it, u4.8: held to 0 to 15 as v3dv holds it
+/// (`MIN2(MAX2(0, lod), 15)`, v3dvx_device.c:259-260), to the nearest
+/// 256th. Mesa's packing goes through `util_bitpack_ufixed`
+/// (gen_pack_header.py:323), whose source is outside the parts of Mesa
+/// read for this port; the nearest is what is taken here. A NaN is 0.
+fn lodBits(lod: f32) u64 {
+    const held = if (std.math.isNan(lod)) 0 else std.math.clamp(lod, 0, 15);
+    return @intFromFloat(@round(held * 256));
+}
+
+/// The bias as the state holds it, s8.8. v3dv packs Vulkan's `mipLodBias`
+/// as it is (v3dvx_device.c:258), which Vulkan holds to
+/// `max_sampler_lod_bias`; facet's CreateSampler does not, so this holds
+/// it to what the field can say rather than let a wild bias run into the
+/// wrap fields. A NaN is 0.
+fn biasBits(bias: f32) u64 {
+    const held = if (std.math.isNan(bias)) 0 else std.math.clamp(bias, -128, 32767.0 / 256.0);
+    const fixed: i16 = @intFromFloat(@round(held * 256));
+    return @as(u16, @bitCast(fixed));
+}
+
+/// What a sampler comes to on the TMU: its state, and whether the
+/// coordinates are in texels, which goes in configuration parameter 1
+/// rather than in the state (`parameter1`).
+pub const Sampled = struct {
+    state: SamplerState,
+    unnormalized: bool = false,
+};
+
+/// `sampler` as the TMU samples through it: v3dv's `pack_sampler_state`
+/// (v3dvx_device.c:203-271) from facet's own sampler rather than from a
+/// VkSamplerCreateInfo, and v3dv's unnormalized bit
+/// (v3dv_uniforms.c:213-218). Null where it asks for what no program here
+/// can carry.
+///
+/// That is a comparison, and nothing else. The TMU compares only where the
+/// program writes the reference to TMUDREF (Mesa's v3d_tex.c:155-157), and
+/// compile.zig takes no Dref sample, so a comparing sampler would be read
+/// for its colour here while the cores compare it with 0 (`ir.zig`).
+/// Vulkan has a comparing sampler read only by a Dref sample, so neither
+/// answer is wrong, but the two would differ quietly; the draw paints
+/// `shader.missing` instead, as it did for every sampler but the plainest
+/// until 1.140. Item 58 of docs/facet-vulkan10.md is the Dref sample.
+///
+/// Two places differ from v3dv by what facet keeps rather than by what
+/// the TMU is told:
+/// - Anisotropy. A facet sampler keeps the samples it takes
+///   (`texture.Sampler.anisotropy`, 1 for one) and not Vulkan's
+///   `anisotropyEnable` beside them. v3dv turns anisotropy on wherever it
+///   is enabled, so an enabled sampler of `maxAnisotropy` 1 takes 2
+///   samples there and 1 here, which is what Vulkan says 1 is.
+/// - The border, a colour here (`texture.Sampler.border`) rather than
+///   Vulkan's enum: it is one of the three CreateSampler makes from
+///   Vulkan's six (`_sampler.borderOf`), and those are the TMU's three.
+pub fn samplerOf(sampler: *const texture.Sampler) ?Sampled {
+    if (sampler.compare != .none) return null;
+    var wrap: [3]Wrap = undefined;
+    for (&wrap, sampler.wrap) |*into, each| into.* = switch (each) {
+        .repeat => .repeat,
+        .mirrored_repeat => .mirror,
+        .clamp_to_edge => .clamp,
+        .clamp_to_border => .border,
+        .mirror_clamp_to_edge => .mirror_once,
+    };
+    return .{
+        .state = .{
+            .mag = filterOf(sampler.mag_filter),
+            .min = filterOf(sampler.min_filter),
+            .mip_nearest = sampler.mipmap == .nearest,
+            .wrap = wrap,
+            .border = switch (sampler.border) {
+                0x0000_0000 => .transparent_black,
+                0xFF00_0000 => .opaque_black,
+                0xFFFF_FFFF => .opaque_white,
+                else => return null,
+            },
+            .bias = sampler.lod_bias,
+            .min_lod = sampler.min_lod,
+            .max_lod = sampler.max_lod,
+            .anisotropy = anisotropyOf(sampler.anisotropy),
+        },
+        .unnormalized = sampler.unnormalized,
+    };
+}
+
+fn filterOf(filter: texture.Filter) Filter {
+    return switch (filter) {
+        .nearest => .nearest,
+        .bilinear => .bilinear,
+    };
+}
+
+/// v3dv's `Maximum Anisotropy` for the samples a sampler takes
+/// (v3dvx_device.c:231-239): 16 past 8, 8 past 4, 4 past 2, and 2 for
+/// anything else above one.
+fn anisotropyOf(taps: f32) ?u2 {
+    if (!(taps > 1)) return null;
+    if (taps > 8) return 3;
+    if (taps > 4) return 2;
+    if (taps > 2) return 1;
+    return 0;
 }
 
 /// Configuration parameter 0: the state's address, and the two words of two
@@ -314,9 +492,12 @@ pub fn parameter0(state: u32) u32 {
 }
 
 /// Configuration parameter 1: the sampler's address, with helper pixels
-/// sampling too, so that a quad's level is worked out from all of it.
-pub fn parameter1(sampler: u32) u32 {
-    return sampler;
+/// sampling too, so that a quad's level is worked out from all of it; and
+/// whether the coordinates are in texels (`Unnormalized coordinates`, bit 1
+/// of TMU Config Parameter 1, v3d_packet.xml:1542-1547), which v3dv sets
+/// from the sampler as it writes the uniform (v3dv_uniforms.c:213-218).
+pub fn parameter1(sampler: u32, unnormalized: bool) u32 {
+    return sampler | @as(u32, @intFromBool(unnormalized)) << 1;
 }
 
 test "the levels are in Mesa's layouts, smallest first" {
@@ -425,9 +606,97 @@ test "the states have their fields where the packet file has them" {
     try std.testing.expectEqual(SWIZZLE_RED, second >> (114 - 64) & 7);
     try std.testing.expectEqual(SWIZZLE_ALPHA, second >> (117 - 64) & 7);
     var sampler: [sampler_state_bytes]u8 = undefined;
-    writeSamplerState(&sampler, .nearest, .clamp);
+    writeSamplerState(&sampler, .{ .mag = .nearest, .min = .nearest, .wrap = @splat(.clamp) });
     const bits = std.mem.readInt(u64, sampler[0..8], .little);
     try std.testing.expectEqual(@as(u64, 7), bits & 7);
     try std.testing.expectEqual(@as(u64, 1), bits >> 48 & 7);
     try std.testing.expectEqual(@as(u64, 15 << 8), bits >> 20 & 0xFFF);
+}
+
+/// The first word of the state `state` packs to.
+fn samplerWord(state: SamplerState) u64 {
+    var into: [sampler_state_bytes]u8 = undefined;
+    writeSamplerState(&into, state);
+    for (into[8..]) |byte| std.debug.assert(byte == 0);
+    return std.mem.readInt(u64, into[0..8], .little);
+}
+
+test "a fixed form's sampler state is the words it always had" {
+    // What `writeSamplerState` wrote for every sampler until 1.140: the
+    // filter both ways, the nearest level, every level, one wrap.
+    for ([_]Filter{ .nearest, .bilinear }) |filter| for ([_]Wrap{ .repeat, .clamp }) |wrap| {
+        const nearest: u64 = @intFromBool(filter == .nearest);
+        const before: u64 = nearest | nearest << 1 | 1 << 2 | (15 << 8) << 20 |
+            @intFromEnum(wrap) << 48 | @intFromEnum(wrap) << 51 | @intFromEnum(wrap) << 54;
+        try std.testing.expectEqual(before, samplerWord(.{ .mag = filter, .min = filter, .wrap = @splat(wrap) }));
+    };
+}
+
+test "every field of v3dv's pack_sampler_state lands where v3d_packet.xml has it" {
+    const sampler = texture.Sampler{
+        .mag_filter = .bilinear,
+        .min_filter = .nearest,
+        .mipmap = .linear,
+        .wrap = .{ .mirrored_repeat, .clamp_to_border, .mirror_clamp_to_edge },
+        .border = 0xFFFF_FFFF,
+        .lod_bias = -1.5,
+        .min_lod = 2.25,
+        .max_lod = texture.lod_unclamped,
+        .anisotropy = 6,
+    };
+    const made = samplerOf(&sampler).?;
+    try std.testing.expect(!made.unnormalized);
+    const word = samplerWord(made.state);
+    try std.testing.expectEqual(@as(u64, 0), word & 1); // Mag filter Nearest
+    try std.testing.expectEqual(@as(u64, 1), word >> 1 & 1); // Min filter Nearest
+    try std.testing.expectEqual(@as(u64, 0), word >> 2 & 1); // Mip filter Nearest
+    try std.testing.expectEqual(@as(u64, 1), word >> 3 & 1); // Anisotropy Enable
+    try std.testing.expectEqual(@as(u64, 0), word >> 4 & 7); // Depth Compare Function, NEVER
+    try std.testing.expectEqual(@as(u64, 0), word >> 7 & 1); // sRGB Disable
+    try std.testing.expectEqual(@as(u64, 576), word >> 8 & 0xFFF); // Min Level-of-Detail, 2.25 in u4.8
+    try std.testing.expectEqual(@as(u64, 15 << 8), word >> 20 & 0xFFF); // Max Level-of-Detail, held to 15
+    try std.testing.expectEqual(@as(u64, 0xFE80), word >> 32 & 0xFFFF); // Fixed Bias, -1.5 in s8.8
+    try std.testing.expectEqual(@as(u64, 2), word >> 48 & 7); // Wrap S, MIRROR
+    try std.testing.expectEqual(@as(u64, 3), word >> 51 & 7); // Wrap T, BORDER
+    try std.testing.expectEqual(@as(u64, 4), word >> 54 & 7); // Wrap R, MIRROR_ONCE
+    try std.testing.expectEqual(@as(u64, 0), word >> 57 & 1); // Wrap I Border
+    try std.testing.expectEqual(@as(u64, 2), word >> 58 & 7); // Border Color Mode, 1111
+    try std.testing.expectEqual(@as(u64, 2), word >> 61 & 3); // Maximum Anisotropy, 8 for 6
+}
+
+test "anisotropy, the borders and the unnormalized bit as v3dv has them" {
+    // v3dvx_device.c:231-239: 16 past 8, 8 past 4, 4 past 2, 2 below.
+    const asked = [_]f32{ 1, 1.5, 2, 2.5, 4, 4.5, 8, 9, 16 };
+    const codes = [_]?u2{ null, 0, 0, 1, 1, 2, 2, 3, 3 };
+    for (asked, codes) |taps, code| {
+        const made = samplerOf(&.{ .anisotropy = taps }).?;
+        try std.testing.expectEqual(code, made.state.anisotropy);
+        const word = samplerWord(made.state);
+        try std.testing.expectEqual(@as(u64, @intFromBool(code != null)), word >> 3 & 1);
+        try std.testing.expectEqual(@as(u64, code orelse 0), word >> 61 & 3);
+    }
+    // The three borders CreateSampler makes, the TMU's 0000, 0001, 1111.
+    for ([_]u32{ 0, 0xFF00_0000, 0xFFFF_FFFF }, [_]u64{ 0, 1, 2 }) |border, mode| {
+        const made = samplerOf(&.{ .wrap = @splat(.clamp_to_border), .border = border }).?;
+        try std.testing.expectEqual(mode, samplerWord(made.state) >> 58 & 7);
+    }
+    try std.testing.expectEqual(@as(?Sampled, null), samplerOf(&.{ .wrap = @splat(.clamp_to_border), .border = 0x8040_2010 }));
+    // In texels: bit 1 of parameter 1, beside the address (v3dv_uniforms.c:213-218).
+    const table = samplerOf(&.{ .mag_filter = .nearest, .min_filter = .nearest, .max_lod = 0, .wrap = @splat(.clamp_to_edge), .unnormalized = true }).?;
+    try std.testing.expect(table.unnormalized);
+    try std.testing.expectEqual(@as(u64, 0), samplerWord(table.state) >> 20 & 0xFFF);
+    try std.testing.expectEqual(@as(u32, 0x1000_0042), parameter1(0x1000_0040, true));
+    try std.testing.expectEqual(@as(u32, 0x1000_0040), parameter1(0x1000_0040, false));
+}
+
+test "a comparing sampler is not taken, and a wild bias or a NaN stays in its field" {
+    try std.testing.expectEqual(@as(?Sampled, null), samplerOf(&.{ .compare = .less }));
+    try std.testing.expectEqual(@as(?Sampled, null), samplerOf(&.{ .compare = .never }));
+    const wild = samplerWord(.{ .bias = 1e9, .min_lod = std.math.nan(f32), .max_lod = -3 });
+    try std.testing.expectEqual(@as(u64, 0x7FFF), wild >> 32 & 0xFFFF);
+    try std.testing.expectEqual(@as(u64, 0), wild >> 8 & 0xFFF);
+    try std.testing.expectEqual(@as(u64, 0), wild >> 20 & 0xFFF);
+    try std.testing.expectEqual(@as(u64, 0), wild >> 48 & 0x3FF_FFFF); // the wraps, the border and anisotropy untouched
+    try std.testing.expectEqual(@as(u64, 0x8000), samplerWord(.{ .bias = -1e9 }) >> 32 & 0xFFFF);
+    try std.testing.expectEqual(@as(u64, 0), samplerWord(.{ .bias = std.math.nan(f32) }) >> 32 & 0xFFFF);
 }

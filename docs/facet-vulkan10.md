@@ -1834,6 +1834,28 @@ samplers is false on the V3D, so CreateGraphicsPipelines refuses every fixed for
 
 **Since 1.83 this item also owns the last `shader.missing` in the library.** Item 52 was the pair of this one: a sampler `texture.samplingOf` could not collapse was drawn by neither device and the pixel was painted magenta on purpose, so that the two could not quietly draw different plausible pictures. The cores carry such a sampler whole now and draw it, so the magenta is this device's alone. `samplingBy` returning null is the only place left in facet where a *sampler* makes a draw paint a wrong colour on purpose; the other `shader.missing` paths, on both devices, are for a texture or a sampler that is not bound where the shader reads, which is a resource that is not there rather than one the device cannot express, and Vulkan calls reading it invalid usage.
 
+**Then the sampler state, in 1.140: the generated path's half of this item.** The "software path for what the TMU cannot express" was not needed. The TMU's state holds every field Vulkan 1.0's sampler has; writeSamplerState wrote two of them.
+
+- `tiling.writeSamplerState` packs each field of v3dv's pack_sampler_state (v3dvx_device.c:203-271): the mag, min and mip filters, the S, T and R wraps from Vulkan's five (:36-42), the three borders, the fixed bias, the minimum and maximum LOD held to 0-15 (:259-260), the compare function, and anisotropy with its maximum (:231-239).
+- `tiling.parameter1` sets the unnormalized bit, as v3dv does as it writes the uniform (v3dv_uniforms.c:213-218).
+- `tiling.samplerOf` maps facet's own sampler onto that state. The generated path's `sampledBy` takes it in place of `texture.samplingOf`, which is now the cores' fast path alone.
+
+So the magenta of the paragraph above is gone, except for a sampler that compares. The TMU compares only where the program writes TMUDREF (v3d_tex.c:155-157), and the walk takes no Dref sample; that is item 58's.
+
+The V3D now reports these as v3dv does (v3dv_device.c:349, 1153, 1158-1159):
+
+- `sampler_anisotropy` and `unnormalized_coordinates` true;
+- `max_sampler_anisotropy` 16, `max_sampler_lod_bias` 14 and `mipmap_precision_bits` 8;
+- one sampler a stage, beside its one sampled image.
+
+What is left is the other half: `samplers` stays false. No fixed form that reads a sampler has a QPU program yet, so the cores still draw those forms.
+
+On the board:
+
+- V3DTest FILTER draws each of the five wraps, nearest and bilinear, against Vulkan's formulas worked out on the CPU: no pixel wrong.
+- FacetBoth 1.12's seven sampler cases are levels mixed and shifted, levels held, a wrap of its own an axis, a white border, mirrored once, four samples along an axis, and texels. Against the cores they are 0 to 16 pixels of 230,400 apart.
+- The anisotropic case agrees within five steps a channel, not two. Vulkan leaves anisotropic filtering's samples to the implementation; the case says where the two differ.
+
 > Verified: driver/v3d/driver.zig:154 `.samplers = false` with the comment "there is no program that reads a sampler", :155 `.sampler_anisotropy = false`, :158 `.unnormalized_coordinates = false` ("Nothing here reads a sampler at all"); refusal at driver.zig:460; TMU state is filter+wrap only at driver/v3d/tiling.zig:274 `writeSamplerState(into, filter, wrap)`; what a sampler may ask for at sdk/libs/facet/texture.zig:535-565 against samplingOf at :446-461.
 
 Found independently by: features (3 items: samplers, unnormalized, anisotropy), semantics (2 items) — 5 findings merged.

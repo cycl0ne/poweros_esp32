@@ -37,7 +37,7 @@ const DosBase = sdk.interface.dos.DosBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "V3DTest";
-const VERSION_STRING = "\x00$VER: V3DTest 0.2 (30.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: V3DTest 0.3 (08.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "UP/S,CLEAR/S,TRIANGLE/S,OVERFLOW/S,FAULT/S,CLOCK/S,SMOOTH/S,CLIP/S,TEXTURE/S,MIP/S,FILTER/S,MODULATE/S,DEPTH/S,BLEND/S,AREA/S,INSIDE/S,GENERATED/S,MESA/S";

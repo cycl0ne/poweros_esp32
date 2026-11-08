@@ -765,8 +765,8 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
             // sampler. **Until 1.83 the texture was dropped here and the
             // pixel painted `shader.missing`**, so a generated pipeline
             // reached by a sampler of any depth drew magenta on purpose;
-            // the cores answer for every sampler now, and the V3D's own
-            // half of that is item 54 of docs/facet-vulkan10.md.
+            // the cores answer for every sampler now, and since 1.140 the
+            // V3D does too, its TMU told the sampler whole.
             var pictures: [@max(graph.sampled.len, 1)]?*const texture.Texture = @splat(null);
             var sampled_how: [@max(graph.sampled.len, 1)]?texture.Sampling = @splat(null);
             var sampled_by: [@max(graph.sampled.len, 1)]?*const texture.Sampler = @splat(null);

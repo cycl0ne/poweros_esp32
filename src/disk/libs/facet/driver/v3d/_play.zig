@@ -51,7 +51,6 @@ const regs = v3d.regs;
 const cl = v3d.cl;
 const qpu = v3d.qpu;
 const compile = v3d.compile;
-const texture = facet.texture;
 const tiling = v3d.tiling;
 const frames = v3d.frame;
 const Frame = frames.Frame;
@@ -902,9 +901,9 @@ fn pickOf(source: facet.texture.Swizzle.Source) tiling.Pick {
 }
 
 /// The TMU's two words for the texture bound at `set`, `binding`, read
-/// as `filter` and `wrap` say. Null without a texture bound, with one of
-/// a format the TMU does not read, or with no memory.
-fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, filter: tiling.Filter, wrap: tiling.Wrap) ?Configuration {
+/// as `how` says. Null without a texture bound, with one of a format the
+/// TMU does not read, or with no memory.
+fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, how: tiling.Sampled) ?Configuration {
     const player = playerOf(queue);
     const sampled = player.resources.sampled(set, binding, 0) orelse return null;
     const view: *const _image.ImageView = @fieldParentPtr("texels", sampled);
@@ -925,8 +924,8 @@ fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, filter: tiling.Filter
     const picks = [4]tiling.Pick{ pickOf(view.swizzle.r), pickOf(view.swizzle.g), pickOf(view.swizzle.b), pickOf(view.swizzle.a) };
     tiling.writeTextureState(state.cpu[0..tiling.texture_state_bytes], &layout, texels, picks, @intCast(@intFromPtr(image.data) + view.base_layer * image.layer_bytes), view.base_level, view.base_level + view.level_count - 1, view.layer_count, @intCast(image.layer_bytes));
     const sampler = carve(queue, tiling.sampler_state_bytes, tiling.sampler_state_alignment) orelse return null;
-    tiling.writeSamplerState(sampler.cpu[0..tiling.sampler_state_bytes], filter, wrap);
-    return .{ .texture = tiling.parameter0(state.address), .sampler = tiling.parameter1(sampler.address) };
+    tiling.writeSamplerState(sampler.cpu[0..tiling.sampler_state_bytes], how.state);
+    return .{ .texture = tiling.parameter0(state.address), .sampler = tiling.parameter1(sampler.address, how.unnormalized) };
 }
 
 /// The two uniforms of a fixed form that samples, in a place of their
@@ -941,7 +940,7 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
         .wrap => .repeat,
         .clamp => .clamp,
     };
-    const made = tmuConfiguration(queue, 0, 0, filter, wrap) orelse return null;
+    const made = tmuConfiguration(queue, 0, 0, .{ .state = .{ .mag = filter, .min = filter, .wrap = @splat(wrap) } }) orelse return null;
     const place = carve(queue, 8, 4) orelse return null;
     const words: [*]u32 = @ptrCast(@alignCast(place.cpu));
     words[0] = made.texture;
@@ -949,55 +948,25 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
     return place.address;
 }
 
-/// How the TMU would sample through `sampler`, or null where the sampler
-/// asks for something the TMU's state cannot say. The state holds one
-/// filter for both directions and one wrap for every axis, and two of
-/// facet's five wraps; it says nothing of mipmapping, of a level held or
-/// shifted, of anisotropy, of a comparison or of a border. A sampler past
-/// that is not drawn wrongly here - it is not drawn here at all, and the
-/// draw says so in the colour.
-///
-/// Which samplers those are is `texture.samplingOf`'s to say and not
-/// this driver's: it is the one place that knows what a `Sampling` can
-/// hold, and both devices ask it. This maps its answer onto the tiling's
-/// own two enums and nothing more.
-///
-/// **The cores no longer turn down the same ones.** Since 1.83 they
-/// carry a sampler a `Sampling` cannot say whole and sample through it
-/// (`ir.zig`'s `sampleThrough`), so one pipeline reached by such a
-/// sampler is drawn right there and magenta here. The pairing this
-/// comment used to describe - both devices refusing together - was
-/// guarding against the two quietly drawing different plausible
-/// pictures, and that guard is still good: magenta is not a plausible
-/// picture, so the difference cannot be mistaken for the other device's
-/// answer. Item 54 of docs/facet-vulkan10.md is this half, a QPU
-/// program that reads the bound sampler, and closing it ends the
-/// difference.
-fn samplingBy(sampler: *const texture.Sampler) ?struct { filter: tiling.Filter, wrap: tiling.Wrap } {
-    // The format is not the sampler's, and nothing below reads it.
-    const said = texture.samplingOf(sampler, .rgba8888) orelse return null;
-    return .{
-        .filter = switch (said.filter) {
-            .nearest => .nearest,
-            .bilinear => .bilinear,
-        },
-        .wrap = switch (said.address) {
-            .wrap => .repeat,
-            .clamp => .clamp,
-        },
-    };
-}
-
 /// The TMU's two words for a generated program's sampler: the texture
 /// and the sampler the draw bound where the module named them. The
 /// module carries the set and the binding; the sampler carries how,
 /// which is the difference from a fixed form, whose `Fixed.sampling`
 /// says it instead.
+///
+/// The sampler is the whole of it since 1.140 - its levels mixed, held
+/// and shifted, its five wraps an axis apiece, its border, its anisotropy
+/// and its texels - as v3dv packs it (`tiling.samplerOf`). Null where
+/// nothing is bound, or for a sampler that compares, which is the one
+/// `tiling.samplerOf` turns down: the draw paints `shader.missing` for
+/// it. Until 1.140 this went through `texture.samplingOf`, which is the
+/// cores' fast path, and so painted that colour for every sampler but one
+/// filter, one wrap of two and every level as it is.
 fn sampledBy(queue: *Queue, which: compile.Sampler) ?Configuration {
     const player = playerOf(queue);
     const sampler = player.resources.samplerOf(which.set, which.binding, 0) orelse return null;
-    const how = samplingBy(sampler) orelse return null;
-    return tmuConfiguration(queue, which.set, which.binding, how.filter, how.wrap);
+    const how = tiling.samplerOf(sampler) orelse return null;
+    return tmuConfiguration(queue, which.set, which.binding, how);
 }
 
 /// A stencil operation as the hardware numbers them: keep and zero the other
@@ -1251,7 +1220,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             // the texture and the sampler bound at the set and binding
             // the module named - which a draw knows and a pipeline does
             // not. Null where there is no texture there, or where the
-            // sampler asks for something the TMU's state cannot say.
+            // sampler compares (`sampledBy`).
             const tmu: ?Configuration = if (made.sampler) |each| sampledBy(queue, each) else null;
             if (made.sampler != null and tmu == null) {
                 // As `shader.missing`, and as a fixed form does: the

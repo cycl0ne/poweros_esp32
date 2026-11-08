@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.43 (08.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.44 (08.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -52,12 +52,18 @@ const side = 64;
 /// format properties disagreed with its own refusals would be caught here
 /// instead of agreeing with itself.
 ///
-/// Two have no counterpart on Vulkan's surface at all, `samplers` and
-/// `unnormalized_coordinates`, because Vulkan requires both of every
-/// implementation and so has no feature bit to turn off. They are taken
-/// from `sampler_anisotropy`, which on both of this library's devices is
-/// true exactly where they are; a device that broke that would need a
-/// trial of its own here.
+/// One has no counterpart on Vulkan's surface at all: `samplers`, whether
+/// the fixed forms that read a sampler run on the device, since a fixed
+/// form is the library's own and Vulkan has no word for it. Until 1.140 it
+/// was taken from `sampler_anisotropy` with `unnormalized_coordinates`
+/// beside it, which on both devices were true exactly where it was; the
+/// V3D broke that in 1.140, sampling through a sampler's anisotropy and
+/// its texels from a generated program while its fixed forms still read
+/// none. So it is read off the device's type now: the cores, `cpu`, run
+/// those forms, and the V3D's QPU programs for them are item 54's other
+/// half. A sample in texels is no longer asked at all: Vulkan requires it
+/// of every implementation, both devices take it since 1.140, and the
+/// probe holds each to it.
 const Can = struct {
     stored_depth: bool,
     stored_stencil: bool,
@@ -73,7 +79,6 @@ const Can = struct {
     cube_arrays: bool,
     several_outputs: bool,
     samplers: bool,
-    unnormalized_coordinates: bool,
     kept_compressed: bool,
     kept_floats: bool,
     wide_channels: bool,
@@ -134,8 +139,7 @@ const Can = struct {
             .cube_arrays = features.image_cube_array == facet.TRUE,
             // What one fragment function may write.
             .several_outputs = limits.max_fragment_output_attachments > 1,
-            .samplers = features.sampler_anisotropy == facet.TRUE,
-            .unnormalized_coordinates = features.sampler_anisotropy == facet.TRUE,
+            .samplers = properties.device_type == .cpu,
             // A device that keeps a format's bytes as it was given them can
             // copy them back out, which is the transfer bit on a format it
             // cannot otherwise do anything with.
@@ -395,7 +399,6 @@ const Flat = struct {
     const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
 
-
 /// The colour the vertices carry, which is one of the fixed forms every
 /// device draws (`shader.FixedKind.color`): the vertices are three floats
 /// at location 0 and the colour is white at every one of them, so what a
@@ -430,10 +433,10 @@ const Painted = struct {
             const p = vertices.input(@intCast(k), 0);
             const rgb = vertices.input(@intCast(k), 1);
             vertices.output(@intCast(k))[0..8].* = .{
-                p[0],                           p[1],
-                p[2],                           1,
-                facet.shader.channel(rgb[0]),   facet.shader.channel(rgb[1]),
-                facet.shader.channel(rgb[2]),   full,
+                p[0],                         p[1],
+                p[2],                         1,
+                facet.shader.channel(rgb[0]), facet.shader.channel(rgb[1]),
+                facet.shader.channel(rgb[2]), full,
             };
         }
     }
@@ -4493,12 +4496,10 @@ fn texelChecks(probe: *Probe) void {
         .unnormalized_coordinates = true,
     };
 
+    // Every device: Vulkan has no feature that turns it off. Until 1.140
+    // the V3D refused it with `error_feature_not_present`.
     var by_texel: ?*facet.Sampler = null;
     const asked = fb.CreateSampler(device, &in_texels, &by_texel);
-    if (!probe.can.unnormalized_coordinates) {
-        probe.check(asked == .error_feature_not_present and by_texel == null, "a sampler in texels refused where the device reads none");
-        return;
-    }
     probe.check(asked == .success and by_texel != null, "a sampler whose coordinates are texels");
     if (asked != .success) return;
     defer fb.DestroySampler(device, by_texel);
@@ -4521,6 +4522,13 @@ fn texelChecks(probe: *Probe) void {
     tiled.address_mode_u = .repeat;
     probe.check(fb.CreateSampler(device, &tiled, &refused) == .error_validation_failed, "and an edge that is neither held nor bordered");
     probe.check(refused == null, "and nothing given back for any of them");
+
+    // The draw below is a fixed form's, `texture_sampled`, which a device
+    // that runs no fixed form reading a sampler refuses. Such a device -
+    // the V3D - samples in texels from a generated program instead, and
+    // FacetBoth draws that on both devices and compares them ("shipped
+    // texture in texels").
+    if (!probe.can.samplers) return;
 
     // The texture of the small texels' two colours, its left half and its
     // right, and a picture to draw it into.

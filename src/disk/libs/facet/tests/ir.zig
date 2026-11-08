@@ -605,7 +605,8 @@ test "a sampler no Sampling can say is drawn by the cores, as the fixed form dra
     // cores carry the sampler whole now and take it through
     // `texture.sampleBy` - the same call the fixed form makes - so the
     // two have to paint the same thing, bit for bit, and neither may
-    // paint magenta. The V3D's own half of this is item 54.
+    // paint magenta. The V3D samples each of them through its TMU since
+    // 1.140, and FacetBoth compares the two on the board.
     const u = shader.Plane{ .origin = 0.3125, .dx = 0.07, .dy = 0.11 };
     const v = shader.Plane{ .origin = 0.4375, .dx = 0.13, .dy = 0.03 };
     const beyond = [_]struct { what: []const u8, sampler: texture.Sampler }{
