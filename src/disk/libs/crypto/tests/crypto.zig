@@ -7,10 +7,11 @@
 //! set-up - against the standards' own test vectors, and against Zig's
 //! std.crypto on inputs of every length and split.
 //!
-//! The host is an x86-64 core, whose AES-NI and PCLMULQDQ the library
-//! uses where the core has them (`engine/x64.zig`): the AES and GCM tests
-//! run once with them and once with the software alone
-//! (`Rig.software`), which is what the other chips run.
+//! The host is an x86-64 core, whose AES-NI, PCLMULQDQ and SHA
+//! extensions the library uses where the core has them
+//! (`engine/x64.zig`): the AES, GCM, SHA and HMAC tests run once with
+//! them and once with the software alone (`Rig.software`), which is what
+//! the other chips run.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -44,11 +45,12 @@ const Rig = struct {
     }
 
     /// The library made to use the software alone, as a core without
-    /// AES-NI and PCLMULQDQ does.
+    /// AES-NI, PCLMULQDQ and the SHA extensions does.
     fn software(rig: *Rig) void {
         const base: *crypto_base.CryptoBase = @ptrCast(@alignCast(rig.cb));
         base.core_aes = false;
         base.core_clmul = false;
+        base.core_sha = false;
     }
 
     /// The library closed and expunged, and nothing left behind.
@@ -80,48 +82,54 @@ fn digestOf(cb: *CryptoBase, algorithm: u32, data: []const u8) ![]const u8 {
 }
 
 test "the FIPS 180 digests of \"abc\"" {
-    var rig = try Rig.init();
-    defer rig.deinit() catch unreachable;
-    const cb = rig.cb;
-    try testing.expectEqualSlices(u8, &hex("a9993e364706816aba3e25717850c26c9cd0d89d"), try digestOf(cb, crypto.HASH_SHA1, "abc"));
-    try testing.expectEqualSlices(u8, &hex("23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7"), try digestOf(cb, crypto.HASH_SHA224, "abc"));
-    try testing.expectEqualSlices(u8, &hex("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"), try digestOf(cb, crypto.HASH_SHA256, "abc"));
-    try testing.expectEqualSlices(u8, &hex("cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7"), try digestOf(cb, crypto.HASH_SHA384, "abc"));
-    try testing.expectEqualSlices(u8, &hex("ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"), try digestOf(cb, crypto.HASH_SHA512, "abc"));
-    try testing.expectEqualSlices(u8, &hex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"), try digestOf(cb, crypto.HASH_SHA256, ""));
+    for ([_]bool{ true, false }) |core| {
+        var rig = try Rig.init();
+        defer rig.deinit() catch unreachable;
+        if (!core) rig.software();
+        const cb = rig.cb;
+        try testing.expectEqualSlices(u8, &hex("a9993e364706816aba3e25717850c26c9cd0d89d"), try digestOf(cb, crypto.HASH_SHA1, "abc"));
+        try testing.expectEqualSlices(u8, &hex("23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7"), try digestOf(cb, crypto.HASH_SHA224, "abc"));
+        try testing.expectEqualSlices(u8, &hex("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"), try digestOf(cb, crypto.HASH_SHA256, "abc"));
+        try testing.expectEqualSlices(u8, &hex("cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7"), try digestOf(cb, crypto.HASH_SHA384, "abc"));
+        try testing.expectEqualSlices(u8, &hex("ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"), try digestOf(cb, crypto.HASH_SHA512, "abc"));
+        try testing.expectEqualSlices(u8, &hex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"), try digestOf(cb, crypto.HASH_SHA256, ""));
+    }
 }
 
 test "every length and every split gives std.crypto's digest" {
-    var rig = try Rig.init();
-    defer rig.deinit() catch unreachable;
-    const cb = rig.cb;
-    var data: [300]u8 = undefined;
-    for (&data, 0..) |*byte, index| byte.* = @truncate(index *% 7 +% 3);
-    const Pair = struct { algorithm: u32, reference: type };
-    const pairs = [_]Pair{
-        .{ .algorithm = crypto.HASH_SHA1, .reference = std.crypto.hash.Sha1 },
-        .{ .algorithm = crypto.HASH_SHA224, .reference = std.crypto.hash.sha2.Sha224 },
-        .{ .algorithm = crypto.HASH_SHA256, .reference = std.crypto.hash.sha2.Sha256 },
-        .{ .algorithm = crypto.HASH_SHA384, .reference = std.crypto.hash.sha2.Sha384 },
-        .{ .algorithm = crypto.HASH_SHA512, .reference = std.crypto.hash.sha2.Sha512 },
-        .{ .algorithm = crypto.HASH_MD5, .reference = std.crypto.hash.Md5 },
-    };
-    inline for (pairs) |pair| {
-        var length: usize = 0;
-        while (length <= data.len) : (length += 1) {
-            var expected: [pair.reference.digest_length]u8 = undefined;
-            pair.reference.hash(data[0..length], &expected, .{});
-            // In three pieces, cut at different places.
-            var context: crypto.HashContext = .{};
-            _ = cb.InitHash(&context, pair.algorithm);
-            const first = length / 3;
-            const second = length - length / 5;
-            cb.UpdateHash(&context, data[0..].ptr, @intCast(first));
-            cb.UpdateHash(&context, data[first..].ptr, @intCast(second - first));
-            cb.UpdateHash(&context, data[second..].ptr, @intCast(length - second));
-            var digest: [crypto.DIGEST_MAX]u8 = undefined;
-            try testing.expectEqual(@as(u32, expected.len), cb.FinishHash(&context, &digest));
-            try testing.expectEqualSlices(u8, &expected, digest[0..expected.len]);
+    for ([_]bool{ true, false }) |core| {
+        var rig = try Rig.init();
+        defer rig.deinit() catch unreachable;
+        if (!core) rig.software();
+        const cb = rig.cb;
+        var data: [300]u8 = undefined;
+        for (&data, 0..) |*byte, index| byte.* = @truncate(index *% 7 +% 3);
+        const Pair = struct { algorithm: u32, reference: type };
+        const pairs = [_]Pair{
+            .{ .algorithm = crypto.HASH_SHA1, .reference = std.crypto.hash.Sha1 },
+            .{ .algorithm = crypto.HASH_SHA224, .reference = std.crypto.hash.sha2.Sha224 },
+            .{ .algorithm = crypto.HASH_SHA256, .reference = std.crypto.hash.sha2.Sha256 },
+            .{ .algorithm = crypto.HASH_SHA384, .reference = std.crypto.hash.sha2.Sha384 },
+            .{ .algorithm = crypto.HASH_SHA512, .reference = std.crypto.hash.sha2.Sha512 },
+            .{ .algorithm = crypto.HASH_MD5, .reference = std.crypto.hash.Md5 },
+        };
+        inline for (pairs) |pair| {
+            var length: usize = 0;
+            while (length <= data.len) : (length += 1) {
+                var expected: [pair.reference.digest_length]u8 = undefined;
+                pair.reference.hash(data[0..length], &expected, .{});
+                // In three pieces, cut at different places.
+                var context: crypto.HashContext = .{};
+                _ = cb.InitHash(&context, pair.algorithm);
+                const first = length / 3;
+                const second = length - length / 5;
+                cb.UpdateHash(&context, data[0..].ptr, @intCast(first));
+                cb.UpdateHash(&context, data[first..].ptr, @intCast(second - first));
+                cb.UpdateHash(&context, data[second..].ptr, @intCast(length - second));
+                var digest: [crypto.DIGEST_MAX]u8 = undefined;
+                try testing.expectEqual(@as(u32, expected.len), cb.FinishHash(&context, &digest));
+                try testing.expectEqualSlices(u8, &expected, digest[0..expected.len]);
+            }
         }
     }
 }
@@ -185,114 +193,123 @@ test "a context whose size is too small is refused, and not written" {
 // --- HMAC ---------------------------------------------------------------------
 
 test "RFC 4231's HMAC-SHA-256, and keys of every length as std.crypto has them" {
-    var rig = try Rig.init();
-    defer rig.deinit() catch unreachable;
-    const cb = rig.cb;
-    var context: crypto.HmacContext = .{};
-    var mac: [crypto.DIGEST_MAX]u8 = undefined;
-    const message = "what do ya want for nothing?";
-    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitHmac(&context, crypto.HASH_SHA256, "Jefe", 4));
-    cb.UpdateHmac(&context, message, message.len);
-    try testing.expectEqual(@as(u32, 32), cb.FinishHmac(&context, &mac));
-    try testing.expectEqualSlices(u8, &hex("5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"), mac[0..32]);
+    for ([_]bool{ true, false }) |core| {
+        var rig = try Rig.init();
+        defer rig.deinit() catch unreachable;
+        if (!core) rig.software();
+        const cb = rig.cb;
+        var context: crypto.HmacContext = .{};
+        var mac: [crypto.DIGEST_MAX]u8 = undefined;
+        const message = "what do ya want for nothing?";
+        try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitHmac(&context, crypto.HASH_SHA256, "Jefe", 4));
+        cb.UpdateHmac(&context, message, message.len);
+        try testing.expectEqual(@as(u32, 32), cb.FinishHmac(&context, &mac));
+        try testing.expectEqualSlices(u8, &hex("5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"), mac[0..32]);
 
-    var key: [200]u8 = undefined;
-    for (&key, 0..) |*byte, index| byte.* = @truncate(index *% 13);
-    const HmacSha512 = std.crypto.auth.hmac.sha2.HmacSha512;
-    for ([_]usize{ 0, 1, 64, 127, 128, 129, 200 }) |key_length| {
-        var expected: [HmacSha512.mac_length]u8 = undefined;
-        HmacSha512.create(&expected, message, key[0..key_length]);
-        _ = cb.InitHmac(&context, crypto.HASH_SHA512, &key, @intCast(key_length));
-        cb.UpdateHmac(&context, message[0..10], 10);
-        cb.UpdateHmac(&context, message[10..], message.len - 10);
-        try testing.expectEqual(@as(u32, 64), cb.FinishHmac(&context, &mac));
-        try testing.expectEqualSlices(u8, &expected, &mac);
+        var key: [200]u8 = undefined;
+        for (&key, 0..) |*byte, index| byte.* = @truncate(index *% 13);
+        const HmacSha512 = std.crypto.auth.hmac.sha2.HmacSha512;
+        for ([_]usize{ 0, 1, 64, 127, 128, 129, 200 }) |key_length| {
+            var expected: [HmacSha512.mac_length]u8 = undefined;
+            HmacSha512.create(&expected, message, key[0..key_length]);
+            _ = cb.InitHmac(&context, crypto.HASH_SHA512, &key, @intCast(key_length));
+            cb.UpdateHmac(&context, message[0..10], 10);
+            cb.UpdateHmac(&context, message[10..], message.len - 10);
+            try testing.expectEqual(@as(u32, 64), cb.FinishHmac(&context, &mac));
+            try testing.expectEqualSlices(u8, &expected, &mac);
+        }
     }
 }
 
 test "HashPieces: std.crypto's digest however the message is cut, and nothing for what it cannot read" {
-    var rig = try Rig.init();
-    defer rig.deinit() catch unreachable;
-    const cb = rig.cb;
-    var data: [5000]u8 = undefined;
-    for (&data, 0..) |*byte, index| byte.* = @truncate(index *% 11 +% 5);
-    const Pair = struct { algorithm: u32, reference: type };
-    const pairs = [_]Pair{
-        .{ .algorithm = crypto.HASH_SHA1, .reference = std.crypto.hash.Sha1 },
-        .{ .algorithm = crypto.HASH_SHA224, .reference = std.crypto.hash.sha2.Sha224 },
-        .{ .algorithm = crypto.HASH_SHA256, .reference = std.crypto.hash.sha2.Sha256 },
-        .{ .algorithm = crypto.HASH_SHA384, .reference = std.crypto.hash.sha2.Sha384 },
-        .{ .algorithm = crypto.HASH_SHA512, .reference = std.crypto.hash.sha2.Sha512 },
-        .{ .algorithm = crypto.HASH_MD5, .reference = std.crypto.hash.Md5 },
-    };
-    inline for (pairs) |pair| {
-        for ([_]usize{ 0, 1, 55, 64, 127, 128, 129, 300, 2047, 2048, 5000 }) |length| {
-            var expected: [pair.reference.digest_length]u8 = undefined;
-            pair.reference.hash(data[0..length], &expected, .{});
-            // Three pieces cut at different places, and an empty one
-            // with no bytes among them.
-            const first = length / 3;
-            const second = length - length / 5;
-            const pieces = [_]crypto.Bytes{
-                .of(data[0..first]),
-                .{},
-                .of(data[first..second]),
-                .of(data[second..length]),
-            };
-            var digest: [crypto.DIGEST_MAX]u8 = undefined;
-            try testing.expectEqual(@as(u32, expected.len), cb.HashPieces(pair.algorithm, &pieces, pieces.len, &digest));
-            try testing.expectEqualSlices(u8, &expected, digest[0..expected.len]);
+    for ([_]bool{ true, false }) |core| {
+        var rig = try Rig.init();
+        defer rig.deinit() catch unreachable;
+        if (!core) rig.software();
+        const cb = rig.cb;
+        var data: [5000]u8 = undefined;
+        for (&data, 0..) |*byte, index| byte.* = @truncate(index *% 11 +% 5);
+        const Pair = struct { algorithm: u32, reference: type };
+        const pairs = [_]Pair{
+            .{ .algorithm = crypto.HASH_SHA1, .reference = std.crypto.hash.Sha1 },
+            .{ .algorithm = crypto.HASH_SHA224, .reference = std.crypto.hash.sha2.Sha224 },
+            .{ .algorithm = crypto.HASH_SHA256, .reference = std.crypto.hash.sha2.Sha256 },
+            .{ .algorithm = crypto.HASH_SHA384, .reference = std.crypto.hash.sha2.Sha384 },
+            .{ .algorithm = crypto.HASH_SHA512, .reference = std.crypto.hash.sha2.Sha512 },
+            .{ .algorithm = crypto.HASH_MD5, .reference = std.crypto.hash.Md5 },
+        };
+        inline for (pairs) |pair| {
+            for ([_]usize{ 0, 1, 55, 64, 127, 128, 129, 300, 2047, 2048, 5000 }) |length| {
+                var expected: [pair.reference.digest_length]u8 = undefined;
+                pair.reference.hash(data[0..length], &expected, .{});
+                // Three pieces cut at different places, and an empty one
+                // with no bytes among them.
+                const first = length / 3;
+                const second = length - length / 5;
+                const pieces = [_]crypto.Bytes{
+                    .of(data[0..first]),
+                    .{},
+                    .of(data[first..second]),
+                    .of(data[second..length]),
+                };
+                var digest: [crypto.DIGEST_MAX]u8 = undefined;
+                try testing.expectEqual(@as(u32, expected.len), cb.HashPieces(pair.algorithm, &pieces, pieces.len, &digest));
+                try testing.expectEqualSlices(u8, &expected, digest[0..expected.len]);
+            }
         }
+
+        var digest: [crypto.DIGEST_MAX]u8 = @splat(0xA5);
+        try testing.expectEqual(@as(u32, 32), cb.HashPieces(crypto.HASH_SHA256, null, 0, &digest));
+        try testing.expectEqualSlices(u8, &hex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"), digest[0..32]);
+
+        // Refused, and nothing written: a hash there is not, pieces not
+        // given, and a piece whose bytes are not.
+        @memset(&digest, 0xA5);
+        const missing = [_]crypto.Bytes{ .of(data[0..10]), .{ .length = 5 } };
+        try testing.expectEqual(@as(u32, 0), cb.HashPieces(99, &missing, 1, &digest));
+        try testing.expectEqual(@as(u32, 0), cb.HashPieces(crypto.HASH_SHA256, null, 1, &digest));
+        try testing.expectEqual(@as(u32, 0), cb.HashPieces(crypto.HASH_SHA256, &missing, missing.len, &digest));
+        try testing.expect(std.mem.allEqual(u8, &digest, 0xA5));
     }
-
-    var digest: [crypto.DIGEST_MAX]u8 = @splat(0xA5);
-    try testing.expectEqual(@as(u32, 32), cb.HashPieces(crypto.HASH_SHA256, null, 0, &digest));
-    try testing.expectEqualSlices(u8, &hex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"), digest[0..32]);
-
-    // Refused, and nothing written: a hash there is not, pieces not
-    // given, and a piece whose bytes are not.
-    @memset(&digest, 0xA5);
-    const missing = [_]crypto.Bytes{ .of(data[0..10]), .{ .length = 5 } };
-    try testing.expectEqual(@as(u32, 0), cb.HashPieces(99, &missing, 1, &digest));
-    try testing.expectEqual(@as(u32, 0), cb.HashPieces(crypto.HASH_SHA256, null, 1, &digest));
-    try testing.expectEqual(@as(u32, 0), cb.HashPieces(crypto.HASH_SHA256, &missing, missing.len, &digest));
-    try testing.expect(std.mem.allEqual(u8, &digest, 0xA5));
 }
 
 test "HmacPieces: RFC 4231's HMAC-SHA-256, std.crypto's MAC for keys of every length, and nothing for what it cannot read" {
-    var rig = try Rig.init();
-    defer rig.deinit() catch unreachable;
-    const cb = rig.cb;
-    var mac: [crypto.DIGEST_MAX]u8 = undefined;
-    const said = [_]crypto.Bytes{ .of("what do ya want "), .of("for nothing?") };
-    try testing.expectEqual(@as(u32, 32), cb.HmacPieces(crypto.HASH_SHA256, "Jefe", 4, &said, said.len, &mac));
-    try testing.expectEqualSlices(u8, &hex("5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"), mac[0..32]);
+    for ([_]bool{ true, false }) |core| {
+        var rig = try Rig.init();
+        defer rig.deinit() catch unreachable;
+        if (!core) rig.software();
+        const cb = rig.cb;
+        var mac: [crypto.DIGEST_MAX]u8 = undefined;
+        const said = [_]crypto.Bytes{ .of("what do ya want "), .of("for nothing?") };
+        try testing.expectEqual(@as(u32, 32), cb.HmacPieces(crypto.HASH_SHA256, "Jefe", 4, &said, said.len, &mac));
+        try testing.expectEqualSlices(u8, &hex("5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"), mac[0..32]);
 
-    var key: [200]u8 = undefined;
-    for (&key, 0..) |*byte, index| byte.* = @truncate(index *% 13);
-    var data: [3000]u8 = undefined;
-    for (&data, 0..) |*byte, index| byte.* = @truncate(index *% 7 +% 1);
-    const pieces = [_]crypto.Bytes{ .of(data[0..1000]), .{}, .of(data[1000..2999]), .of(data[2999..]) };
-    const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
-    const HmacSha512 = std.crypto.auth.hmac.sha2.HmacSha512;
-    for ([_]usize{ 0, 1, 13, 64, 65, 127, 128, 129, 200 }) |key_length| {
-        var expected256: [HmacSha256.mac_length]u8 = undefined;
-        HmacSha256.create(&expected256, &data, key[0..key_length]);
-        try testing.expectEqual(@as(u32, 32), cb.HmacPieces(crypto.HASH_SHA256, &key, @intCast(key_length), &pieces, pieces.len, &mac));
-        try testing.expectEqualSlices(u8, &expected256, mac[0..32]);
-        var expected512: [HmacSha512.mac_length]u8 = undefined;
-        HmacSha512.create(&expected512, &data, key[0..key_length]);
-        try testing.expectEqual(@as(u32, 64), cb.HmacPieces(crypto.HASH_SHA512, &key, @intCast(key_length), &pieces, pieces.len, &mac));
-        try testing.expectEqualSlices(u8, &expected512, &mac);
+        var key: [200]u8 = undefined;
+        for (&key, 0..) |*byte, index| byte.* = @truncate(index *% 13);
+        var data: [3000]u8 = undefined;
+        for (&data, 0..) |*byte, index| byte.* = @truncate(index *% 7 +% 1);
+        const pieces = [_]crypto.Bytes{ .of(data[0..1000]), .{}, .of(data[1000..2999]), .of(data[2999..]) };
+        const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
+        const HmacSha512 = std.crypto.auth.hmac.sha2.HmacSha512;
+        for ([_]usize{ 0, 1, 13, 64, 65, 127, 128, 129, 200 }) |key_length| {
+            var expected256: [HmacSha256.mac_length]u8 = undefined;
+            HmacSha256.create(&expected256, &data, key[0..key_length]);
+            try testing.expectEqual(@as(u32, 32), cb.HmacPieces(crypto.HASH_SHA256, &key, @intCast(key_length), &pieces, pieces.len, &mac));
+            try testing.expectEqualSlices(u8, &expected256, mac[0..32]);
+            var expected512: [HmacSha512.mac_length]u8 = undefined;
+            HmacSha512.create(&expected512, &data, key[0..key_length]);
+            try testing.expectEqual(@as(u32, 64), cb.HmacPieces(crypto.HASH_SHA512, &key, @intCast(key_length), &pieces, pieces.len, &mac));
+            try testing.expectEqualSlices(u8, &expected512, &mac);
+        }
+
+        // Refused, and nothing written: a key not given, a hash there is
+        // not, pieces not given.
+        @memset(&mac, 0xA5);
+        try testing.expectEqual(@as(u32, 0), cb.HmacPieces(crypto.HASH_SHA256, null, 4, &pieces, pieces.len, &mac));
+        try testing.expectEqual(@as(u32, 0), cb.HmacPieces(99, &key, 4, &pieces, pieces.len, &mac));
+        try testing.expectEqual(@as(u32, 0), cb.HmacPieces(crypto.HASH_SHA256, &key, 4, null, 2, &mac));
+        try testing.expect(std.mem.allEqual(u8, &mac, 0xA5));
     }
-
-    // Refused, and nothing written: a key not given, a hash there is
-    // not, pieces not given.
-    @memset(&mac, 0xA5);
-    try testing.expectEqual(@as(u32, 0), cb.HmacPieces(crypto.HASH_SHA256, null, 4, &pieces, pieces.len, &mac));
-    try testing.expectEqual(@as(u32, 0), cb.HmacPieces(99, &key, 4, &pieces, pieces.len, &mac));
-    try testing.expectEqual(@as(u32, 0), cb.HmacPieces(crypto.HASH_SHA256, &key, 4, null, 2, &mac));
-    try testing.expect(std.mem.allEqual(u8, &mac, 0xA5));
 }
 
 test "RFC 2202's HMAC-MD5, and keys of every length as std.crypto has them" {

@@ -251,8 +251,9 @@ ClientHello offers both versions:
 
 TLS 1.1 and older, CBC, RC4 and RSA key exchange are never offered. All
 of it runs on crypto.library: the hashes and AES on the chip's engines,
-AES and GCM's hash on an x86-64 core's own instructions (AES-NI and
-PCLMULQDQ), which keep up with a 1 Gbit/s link.
+AES, GCM's hash, SHA-1 and SHA-256 on an x86-64 core's own instructions
+(AES-NI, PCLMULQDQ and the SHA extensions), which keep up with a
+1 Gbit/s link.
 `GetSessionAttr(TLS_Version)` and `TLS_Suite` say what a session came to.
 
 **The server's certificates** are checked as the session opens: a chain

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
-//! The x86-64 core's own instructions for AES and GCM: AES-NI's rounds
-//! and key schedule, and PCLMULQDQ's multiplication without carries.
+//! The x86-64 core's own instructions for AES, GCM and SHA: AES-NI's
+//! rounds and key schedule, PCLMULQDQ's multiplication without carries,
+//! and the SHA extensions' rounds and message schedule.
 //!
 //! The system is built for x86-64-v2, which has neither, so the
 //! instructions are written here in their SSE encoding and used only
@@ -22,6 +23,16 @@
 //! carries, in four of PCLMULQDQ's 64 by 64; the caller sums products and
 //! brings the sum into the field itself, by the same reduction its
 //! software uses.
+//!
+//! SHA: SHA-1's and SHA-256's compression (`sha`), SHA-224 being SHA-256
+//! from its own initial state. The instructions keep the state in two
+//! registers - SHA-1's A to D in one and E in another, SHA-256's A, B, E
+//! and F in one and C, D, G and H in the other - and work out the message
+//! schedule four words at a time. There are none for SHA-384 and SHA-512.
+
+const sdk = @import("sdk");
+const crypto = sdk.crypto;
+const soft_sha = @import("soft_sha.zig");
 
 const builtin = @import("builtin");
 
@@ -35,17 +46,19 @@ pub const Block = @Vector(2, u64);
 const Words = @Vector(4, u32);
 
 /// What the core has of what this file uses.
-pub const Features = struct { aes: bool = false, clmul: bool = false };
+pub const Features = struct { aes: bool = false, clmul: bool = false, sha: bool = false };
 
 /// Leaf 1's ECX: AES-NI (bit 25) and PCLMULQDQ (bit 1).
 const LEAF1_AES: u32 = 1 << 25;
 const LEAF1_PCLMULQDQ: u32 = 1 << 1;
+/// Leaf 7's EBX: the SHA extensions (bit 29).
+const LEAF7_SHA: u32 = 1 << 29;
 
-/// What the core says it has, from `cpuid`.
-pub fn features() Features {
-    var eax: u32 = 1;
+/// `cpuid` for a leaf and its subleaf: EAX, EBX, ECX and EDX.
+fn cpuid(leaf: u32, subleaf: u32) [4]u32 {
+    var eax = leaf;
     var ebx: u32 = undefined;
-    var ecx: u32 = 0;
+    var ecx = subleaf;
     var edx: u32 = undefined;
     asm volatile ("cpuid"
         : [eax] "+{eax}" (eax),
@@ -53,7 +66,20 @@ pub fn features() Features {
           [ecx] "+{ecx}" (ecx),
           [edx] "={edx}" (edx),
     );
-    return .{ .aes = ecx & LEAF1_AES != 0, .clmul = ecx & LEAF1_PCLMULQDQ != 0 };
+    return .{ eax, ebx, ecx, edx };
+}
+
+/// What the core says it has, from `cpuid`. Leaf 7 is asked only of a
+/// core that has it.
+pub fn features() Features {
+    const highest = cpuid(0, 0)[0];
+    const leaf1_ecx = cpuid(1, 0)[2];
+    const leaf7_ebx = if (highest >= 7) cpuid(7, 0)[1] else 0;
+    return .{
+        .aes = leaf1_ecx & LEAF1_AES != 0,
+        .clmul = leaf1_ecx & LEAF1_PCLMULQDQ != 0,
+        .sha = leaf7_ebx & LEAF7_SHA != 0,
+    };
 }
 
 /// 16 bytes from anywhere into a register.
@@ -354,4 +380,168 @@ pub inline fn product(x: u128, y: u128) [2]u128 {
     const high: u128 = @bitCast(clmul(0x11, a, b));
     const middle: u128 = @as(u128, @bitCast(clmul(0x01, a, b))) ^ @as(u128, @bitCast(clmul(0x10, a, b)));
     return .{ high ^ (middle >> 64), low ^ (middle << 64) };
+}
+
+// --- SHA -----------------------------------------------------------------------------
+
+/// Four rounds of SHA-1 with the round function `function` (0 to 3, a
+/// fifth of the rounds each): `abcd` the state, `e` E added to the first
+/// of the four words.
+inline fn sha1rnds4(comptime function: u8, abcd: Words, e: Words) Words {
+    return asm ("sha1rnds4 $" ++ decimal(function) ++ ", %[e], %[out]"
+        : [out] "=x" (-> Words),
+        : [in] "0" (abcd),
+          [e] "x" (e),
+    );
+}
+
+/// The next four rounds' E from the state four rounds before
+/// (`previous`), added to the first of their words.
+inline fn sha1nexte(previous: Words, message: Words) Words {
+    return asm ("sha1nexte %[message], %[out]"
+        : [out] "=x" (-> Words),
+        : [in] "0" (previous),
+          [message] "x" (message),
+    );
+}
+
+inline fn sha1msg1(early: Words, later: Words) Words {
+    return asm ("sha1msg1 %[later], %[out]"
+        : [out] "=x" (-> Words),
+        : [in] "0" (early),
+          [later] "x" (later),
+    );
+}
+
+inline fn sha1msg2(partial: Words, last: Words) Words {
+    return asm ("sha1msg2 %[last], %[out]"
+        : [out] "=x" (-> Words),
+        : [in] "0" (partial),
+          [last] "x" (last),
+    );
+}
+
+/// Two rounds of SHA-256: `cdgh` and `abef` the state, the two words with
+/// their constants in `added`'s lowest lanes. The result is the new A, B,
+/// E and F; the old ones are the new C, D, G and H.
+inline fn sha256rnds2(cdgh: Words, abef: Words, added: Words) Words {
+    return asm ("sha256rnds2 %[abef], %[out]"
+        : [out] "=x" (-> Words),
+        : [in] "0" (cdgh),
+          [abef] "x" (abef),
+          [added] "{xmm0}" (added),
+    );
+}
+
+inline fn sha256msg1(early: Words, later: Words) Words {
+    return asm ("sha256msg1 %[later], %[out]"
+        : [out] "=x" (-> Words),
+        : [in] "0" (early),
+          [later] "x" (later),
+    );
+}
+
+inline fn sha256msg2(partial: Words, last: Words) Words {
+    return asm ("sha256msg2 %[last], %[out]"
+        : [out] "=x" (-> Words),
+        : [in] "0" (partial),
+          [last] "x" (last),
+    );
+}
+
+/// 16 bytes of a message as four big-endian words, the first in the
+/// lowest lane (SHA-256's order) or in the highest (SHA-1's).
+inline fn messageWords(bytes: [*]const u8, comptime highest_first: bool) Words {
+    const raw: @Vector(16, u8) = @as(*align(1) const [16]u8, @ptrCast(bytes)).*;
+    const order: @Vector(16, i32) = if (highest_first)
+        .{ 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0 }
+    else
+        .{ 3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12 };
+    return @bitCast(@shuffle(u8, raw, undefined, order));
+}
+
+/// `blocks` whole blocks of `data` through a SHA-1, SHA-224 or SHA-256
+/// hash whose state is `state`, kept as the SHA engine keeps it (the
+/// digest's own byte order). `first`: the hash has had no block yet, and
+/// starts from the algorithm's initial state.
+pub fn sha(algorithm: u32, state: *[16]u32, first: bool, data: [*]const u8, blocks: u32) void {
+    switch (algorithm) {
+        crypto.HASH_SHA1 => {
+            var h: [5]u32 = soft_sha.sha1_iv;
+            if (!first) {
+                for (&h, 0..) |*word, index| word.* = @byteSwap(state[index]);
+            }
+            sha1Blocks(&h, data, blocks);
+            for (h, 0..) |word, index| state[index] = @byteSwap(word);
+        },
+        else => {
+            var h: [8]u32 = if (algorithm == crypto.HASH_SHA224) soft_sha.sha224_iv else soft_sha.sha256_iv;
+            if (!first) {
+                for (&h, 0..) |*word, index| word.* = @byteSwap(state[index]);
+            }
+            sha256Blocks(&h, data, blocks);
+            for (h, 0..) |word, index| state[index] = @byteSwap(word);
+        },
+    }
+}
+
+fn sha1Blocks(h: *[5]u32, data: [*]const u8, blocks: u32) void {
+    var abcd = Words{ h[3], h[2], h[1], h[0] };
+    var e = h[4];
+    var at = data;
+    for (0..blocks) |_| {
+        const abcd_saved = abcd;
+        const e_saved = Words{ 0, 0, 0, e };
+        // The last four groups of four words, a group's in [group % 4].
+        var message: [4]Words = undefined;
+        message[0] = messageWords(at, true);
+        var previous = abcd;
+        abcd = sha1rnds4(0, abcd, e_saved +% message[0]);
+        inline for (1..20) |group| {
+            const words = if (group < 4)
+                messageWords(at + 16 * group, true)
+            else
+                sha1msg2(sha1msg1(message[(group - 4) % 4], message[(group - 3) % 4]) ^ message[(group - 2) % 4], message[(group - 1) % 4]);
+            message[group % 4] = words;
+            const with_e = sha1nexte(previous, words);
+            previous = abcd;
+            abcd = sha1rnds4(group / 5, abcd, with_e);
+        }
+        e = sha1nexte(previous, e_saved)[3];
+        abcd +%= abcd_saved;
+        at += 64;
+    }
+    h.* = .{ abcd[3], abcd[2], abcd[1], abcd[0], e };
+}
+
+fn sha256Blocks(h: *[8]u32, data: [*]const u8, blocks: u32) void {
+    var abef = Words{ h[5], h[4], h[1], h[0] };
+    var cdgh = Words{ h[7], h[6], h[3], h[2] };
+    var at = data;
+    for (0..blocks) |_| {
+        const abef_saved = abef;
+        const cdgh_saved = cdgh;
+        // The last four groups of four words, a group's in [group % 4].
+        var message: [4]Words = undefined;
+        inline for (0..16) |group| {
+            const words = if (group < 4)
+                messageWords(at + 16 * group, false)
+            else
+                sha256msg2(sha256msg1(message[(group - 4) % 4], message[(group - 3) % 4]) +%
+                    @shuffle(u32, message[(group - 2) % 4], message[(group - 1) % 4], [4]i32{ 1, 2, 3, ~@as(i32, 0) }), message[(group - 1) % 4]);
+            message[group % 4] = words;
+            const added = words +% Words{
+                soft_sha.k256[4 * group],     soft_sha.k256[4 * group + 1],
+                soft_sha.k256[4 * group + 2], soft_sha.k256[4 * group + 3],
+            };
+            const after_two = sha256rnds2(cdgh, abef, added);
+            const after_four = sha256rnds2(abef, after_two, @shuffle(u32, added, undefined, [4]i32{ 2, 3, 2, 3 }));
+            cdgh = after_two;
+            abef = after_four;
+        }
+        abef +%= abef_saved;
+        cdgh +%= cdgh_saved;
+        at += 64;
+    }
+    h.* = .{ abef[3], abef[2], cdgh[3], cdgh[2], abef[1], abef[0], cdgh[1], cdgh[0] };
 }

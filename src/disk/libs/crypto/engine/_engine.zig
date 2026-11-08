@@ -13,10 +13,10 @@
 //! inputs and the same state layout, so everything above the engine is
 //! the code the chip runs.
 //!
-//! An x86-64 core brings instructions of its own for AES and for GCM's
-//! carry-less products (`x64.zig`): the library asks `cpuid` for them
-//! once, when it is made, and a session uses them in place of the
-//! engine and its model when the core has them.
+//! An x86-64 core brings instructions of its own for AES, for GCM's
+//! carry-less products and for SHA-1 and SHA-256 (`x64.zig`): the
+//! library asks `cpuid` for them once, when it is made, and uses them in
+//! place of the engine and its model when the core has them.
 //!
 //! `start` gives the engines their clocks and takes them out of reset
 //! when the library is made; `stop` turns them off at its expunge.

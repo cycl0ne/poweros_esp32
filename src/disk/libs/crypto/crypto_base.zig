@@ -53,6 +53,9 @@ pub const CryptoBase = extern struct {
     core_aes: bool = false,
     /// The x86-64 core's PCLMULQDQ: GCM's multiplications on the core.
     core_clmul: bool = false,
+    /// The x86-64 core's SHA extensions: SHA-1, SHA-224 and SHA-256 on the
+    /// core.
+    core_sha: bool = false,
 };
 
 pub fn cryptoBase(lib: *exec.Library) *CryptoBase {

@@ -720,16 +720,19 @@ which marks a range of the kernel's map uncached, write-combining or
 cached while the system runs), and the samples are read back by
 streaming loads: read word by word, the same picture took 17 ms.
 
-**AES and GCM run on the core's own instructions.** crypto.library asks
-`cpuid` once, when it is made, for AES-NI and PCLMULQDQ, and where the
-core has them a cipher's blocks go through the core's AES rounds - eight
-at a time where the mode allows it - and GCM's hash through its
-carry-less products, four blocks summed before one reduction. They work
-on the 128-bit registers a task switch already saves. On a Ryzen 7
+**AES, GCM and SHA run on the core's own instructions.** crypto.library
+asks `cpuid` once, when it is made, for AES-NI, PCLMULQDQ and the SHA
+extensions, and where the core has them a cipher's blocks go through the
+core's AES rounds - eight at a time where the mode allows it - GCM's hash
+through its carry-less products, four blocks summed before one
+reduction, and SHA-1, SHA-224 and SHA-256 through its SHA rounds. They
+work on the 128-bit registers a task switch already saves. On a Ryzen 7
 7840HS AES-128-GCM seals about 3.5 GB/s, where the software managed
-21 MB/s, and an HTTPS download keeps up with a 1 Gbit/s link
-(`C:net/HTTPGet`: 256 MiB at 115 MB/s, the same as plain HTTP). A core
-without them runs the software, which the other 64-bit machines use.
+22 MB/s, SHA-256 hashes 2.4 GB/s against 137 MB/s, and an HTTPS
+download keeps up with a 1 Gbit/s link (`C:net/HTTPGet`: 256 MiB at
+115 MB/s, the same as plain HTTP). SHA-384 and SHA-512, which the core
+has nothing for, and a core without them run the software, which the
+other 64-bit machines use.
 
 **A virtio GPU is taken where the machine has one.** The display driver
 speaks virtio over two transports now: a block of registers at an address

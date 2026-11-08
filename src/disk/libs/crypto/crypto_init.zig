@@ -16,7 +16,7 @@ const crypto_lvo = @import("crypto_lvo.zig");
 
 pub const LIBRARY_NAME = crypto.CRYPTONAME;
 pub const LIBRARY_VERSION = 2;
-pub const LIBRARY_REVISION = 9;
+pub const LIBRARY_REVISION = 10;
 const BUILD_DATE = "08.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -42,6 +42,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
         const has = x64.features();
         cb.core_aes = has.aes;
         cb.core_clmul = has.clmul;
+        cb.core_sha = has.sha;
     }
     return lib;
 }
