@@ -11203,13 +11203,156 @@ const OwnLayout = struct {
         break :ops made;
     };
 
-    fn memoryOf(format: facet.Format, width: u32, height: u32, depth: u32, levels: u32) callconv(.c) _driver.TextureMemory {
+    fn memoryOf(format: facet.Format, width: u32, height: u32, depth: u32, levels: u32, samples: u32) callconv(.c) _driver.TextureMemory {
         _ = format;
         _ = depth;
         _ = levels;
+        _ = samples;
         return .{ .bytes = @as(u64, width) * height * 8, .alignment = 64 };
     }
 };
+
+/// The cores' driver with the V3D's layout for an image: its three ops as
+/// the V3D's driver has them (driver/v3d/driver.zig `textureMemory`,
+/// `textureOffset`, `textureLevel`), over its tiling, for the images a
+/// transfer reaches. What draws or samples stays the cores', so it is for
+/// the transfers alone.
+const QuadLayout = struct {
+    const tiling = @import("../driver/v3d/tiling.zig");
+    const _image = @import("../image/_image.zig");
+    const ops = ops: {
+        var made = cpu.ops;
+        made.texture_memory = &memoryOf;
+        made.texture_offset = &offsetOf;
+        made.texture_level = &levelOf;
+        break :ops made;
+    };
+
+    fn layoutOf(image: *const _image.Image) tiling.Layout {
+        return tiling.layoutOf(_image.bytesOf(image.format), image.width, image.height, 1, image.levels, image.quads);
+    }
+
+    fn memoryOf(format: facet.Format, width: u32, height: u32, depth: u32, levels: u32, samples: u32) callconv(.c) _driver.TextureMemory {
+        const layout = tiling.layoutOf(_image.bytesOf(format), width, height, depth, levels, samples > 1);
+        return .{ .bytes = layout.bytes, .alignment = tiling.alignment };
+    }
+
+    fn offsetOf(image: *const _image.Image, level: u32, layer: u32, x: u32, y: u32) callconv(.c) usize {
+        const layout = layoutOf(image);
+        const at: [2]u32 = if (image.quads) tiling.sampleTexel(x, y, image.sample) else .{ x, y };
+        return layer * @as(usize, @intCast(image.layer_bytes)) + tiling.texelOffset(&layout, level, at[0], at[1]);
+    }
+
+    fn levelOf(image: *const _image.Image, level: u32, layer: u32) callconv(.c) _driver.Span {
+        const layout = layoutOf(image);
+        return .{ .at = layer * image.layer_bytes + layout.levels[level].offset, .bytes = layout.levels[level].slice_bytes };
+    }
+};
+
+test "a device of a layout of its own keeps an image's four samples together, each pixel a quad of the V3D's image of twice the size, and clears, copies and resolves through them (item 61, step V3)" {
+    var bench = try Bench.on(&QuadLayout.ops);
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const _image = @import("../image/_image.zig");
+    const Image = _image.Image;
+    const tiling = QuadLayout.tiling;
+    const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const info = facet.ImageCreateInfo{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .array_layers = 2, .samples = 4, .usage = usage };
+    const from = try bench.bareImage(info, false);
+    const source = _objects.of(Image, from);
+    // Its memory is the V3D's image of four samples, a layer each, and its
+    // samples are not planes one after another.
+    try testing.expect(source.quads);
+    try testing.expectEqual(@as(u32, 4), source.samples);
+    try testing.expectEqual(@as(u64, 0), source.sample_bytes);
+    const layout = tiling.layoutOf(4, 20, 9, 1, 1, true);
+    try testing.expectEqual(std.mem.alignForward(u64, layout.bytes, tiling.alignment), source.layer_bytes);
+    try testing.expectEqual(source.layer_bytes * 2, source.bytes);
+    try testing.expectEqual(@as(u64, tiling.alignment), source.alignment);
+
+    // Each sample's texel told apart, written through its plane, and
+    // found in the quad of its pixel: sample s at (2x + s % 2, 2y + s / 2).
+    const marked = struct {
+        fn of(sample: u32, layer: u32, x: u32, y: u32) u32 {
+            return (sample * 85) << 24 | ((sample * 37 + x * 11 + layer * 29) & 0xFF) << 16 | (255 - sample * 50 - y * 5) << 8 | (sample * 60 + x * 3 + y);
+        }
+    }.of;
+    for (0..4) |s| {
+        var plane = _image.sampleOf(source, @intCast(s));
+        try testing.expectEqual(@as(u32, 1), plane.samples);
+        try testing.expectEqual(source.data, plane.data);
+        for (0..2) |l| for (0..9) |y| for (0..20) |x| {
+            var bytes: [4]u8 = undefined;
+            std.mem.writeInt(u32, &bytes, marked(@intCast(s), @intCast(l), @intCast(x), @intCast(y)), .little);
+            _image.writeTexel(&plane, 0, @intCast(l), @intCast(x), @intCast(y), &bytes);
+        };
+    }
+    for (0..4) |s| for (0..2) |l| for (0..9) |y| for (0..20) |x| {
+        const at = tiling.sampleTexel(@intCast(x), @intCast(y), @intCast(s));
+        const offset = l * @as(usize, @intCast(source.layer_bytes)) + tiling.texelOffset(&layout, 0, at[0], at[1]);
+        try testing.expectEqual(marked(@intCast(s), @intCast(l), @intCast(x), @intCast(y)), std.mem.readInt(u32, source.data.?[offset..][0..4], .little));
+    };
+
+    // A resolve into rows: each pixel the average of its quad.
+    const into = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .usage = usage }, false);
+    const resolved = _objects.of(Image, into);
+    try testing.expect(!resolved.quads);
+    var commands = try bench.record();
+    const whole = facet.ImageResolve{ .src_subresource = .{ .base_array_layer = 1 }, .extent = .{ .width = 20, .height = 9, .depth = 1 } };
+    fb.CmdResolveImage(commands, from, .transfer_src_optimal, into, .transfer_dst_optimal, 1, @ptrCast(&whole));
+    try bench.submit();
+    for (0..9) |y| for (0..20) |x| {
+        var words: [4]u32 = undefined;
+        for (&words, 0..) |*word, s| word.* = marked(@intCast(s), 1, @intCast(x), @intCast(y));
+        try testing.expectEqual(averagedByChannel(words), sampleTexel(resolved, 0, 0, @intCast(x), @intCast(y)).*);
+    };
+
+    // A clear of a second image of four, every sample of both layers,
+    // then a rectangle of the first's second layer copied into its first:
+    // each sample to the same sample, nothing else touched.
+    const to = try bench.bareImage(info, false);
+    const destination = _objects.of(Image, to);
+    const grey: u32 = 0xFF80_8080;
+    const color = facet.ClearColorValue{ .float32 = .{ 128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1 } };
+    commands = try bench.record();
+    fb.CmdClearColorImage(commands, to, .transfer_dst_optimal, &color, 1, @ptrCast(&facet.ImageSubresourceRange{}));
+    const moved = facet.ImageCopy{
+        .src_subresource = .{ .base_array_layer = 1 },
+        .src_offset = .{ .x = 3, .y = 2 },
+        .dst_offset = .{ .x = 10, .y = 4 },
+        .extent = .{ .width = 6, .height = 4, .depth = 1 },
+    };
+    fb.CmdCopyImage(commands, from, .transfer_src_optimal, to, .transfer_dst_optimal, 1, @ptrCast(&moved));
+    try bench.submit();
+    for (0..4) |s| for (0..2) |l| for (0..9) |y| for (0..20) |x| {
+        const sample: u32 = @intCast(s);
+        const inside = l == 0 and x >= 10 and x < 16 and y >= 4 and y < 8;
+        const want = if (inside) marked(sample, 1, @intCast(x - 10 + 3), @intCast(y - 4 + 2)) else grey;
+        var bytes: [4]u8 = undefined;
+        _image.readTexel(&_image.sampleOf(destination, sample), 0, @intCast(l), @intCast(x), @intCast(y), &bytes);
+        try testing.expectEqual(want, std.mem.readInt(u32, &bytes, .little));
+    };
+
+    // A depth image of four is kept together too. Not sampled until the
+    // V3D fetches a sample through its quad (step V7): a sampled depth is
+    // made at one sample on such a device (since 1.142), and the format
+    // query, asking CreateImage's rules, says one sample for it alone.
+    const depth_usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const depth = try bench.bareImage(.{ .format = .d16_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .samples = 4, .usage = depth_usage }, false);
+    const depth_image = _objects.of(Image, depth);
+    try testing.expect(depth_image.quads);
+    try testing.expectEqual(_image.Kind.depth, depth_image.kind);
+    try testing.expectEqual(std.mem.alignForward(u64, tiling.layoutOf(2, 20, 9, 1, 1, true).bytes, tiling.alignment), depth_image.bytes);
+    var said: facet.ImageFormatProperties = undefined;
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .d16_unorm, .@"2d", .optimal, depth_usage, 0, &said));
+    try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, said.sample_counts);
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .d16_unorm, .@"2d", .optimal, depth_usage | facet.IMAGE_USAGE_SAMPLED, 0, &said));
+    try testing.expectEqual(facet.SAMPLE_COUNT_1, said.sample_counts);
+    var refused: ?*facet.Image = null;
+    try testing.expect(fb.CreateImage(bench.device, &.{ .format = .d16_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .samples = 4, .usage = depth_usage | facet.IMAGE_USAGE_SAMPLED }, &refused) != .success);
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .b8g8r8a8_unorm, .@"2d", .optimal, usage, 0, &said));
+    try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, said.sample_counts);
+}
 
 test "an image drawn into and sampled, and a colour attachment of levels: the format query gives the whole chain of levels an optimal image has on the cores, and a device of a layout of its own refuses both (item 48)" {
     const both = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;

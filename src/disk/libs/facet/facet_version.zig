@@ -4232,4 +4232,36 @@ pub const LIBRARY_VERSION = 1;
 /// - A frame of four's tiles, its binner's and renderer's log2 sizes, its
 ///   multisample bit and its render target's stride, and a draw's
 ///   oversampling and mask, which a frame of one does not write.
-pub const LIBRARY_REVISION = 145;
+///
+/// 146: **An image of four samples on a device of a layout of its own
+/// keeps them together, as the V3D's tile buffer stores them
+/// (docs/facet-vulkan10.md item 61, step V3).** The V3D still makes none:
+/// `can.multisampling` is off there until step V5.
+///
+/// - `tiling.layoutOf` takes `four`. As v3dv lays such an image out, it
+///   is one of twice the width and twice the height, and its level 0 is
+///   UIF however small: the tile buffer stores all four samples only
+///   there (v3dv_image.c:136-140, 180-183, `uif_top`).
+///   `tiling.sampleTexel` places sample s of pixel (x, y) at
+///   (2x + s % 2, 2y + s / 2) of it, as v3d's compiler fetches one
+///   (v3d_nir_lower_txf_ms.c:46-51).
+/// - `Ops.texture_memory` takes the samples. `Image.quads` marks such an
+///   image, colour (`rows`) or depth, its kind still what it is drawn into
+///   as, with no rows and no planes: `sample_bytes` is 0. `sampleOf`
+///   gives a sample as the whole memory with `Image.sample` saying which,
+///   and `Ops.texture_offset` finds that sample's texel in the quad. Copies
+///   and resolves reach each sample so, through `readTexel` and
+///   `writeTexel`, which now ask the device's place first for every kind.
+///   A clear fills the level once (`planesOf`).
+/// - Such an image is not sampled, nor read as an input attachment, until
+///   the V3D fetches a sample through its quad (step V7): CreateImage
+///   refuses it, so the format query says one sample for it.
+///
+/// Tests: the V3D's 143, one new, the layout and the quads. On the host
+/// 3059, fourteen more: the new transfer test, through a device with the
+/// V3D's three ops over its tiling, and that tiling's 13 tests, which now
+/// run in facet's own as well. An image of four is the V3D's memory, each
+/// sample written through its plane lies in its pixel's quad, and a
+/// resolve, a clear and a copy reach every sample. A depth image of four
+/// is kept so too, and a sampled one is refused at four.
+pub const LIBRARY_REVISION = 146;

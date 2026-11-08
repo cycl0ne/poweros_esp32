@@ -209,8 +209,8 @@ pub fn broken(queue: *const Queue) bool {
 }
 
 /// A sampled image's layout in memory.
-pub fn layoutOf(format: facet.Format, width: u32, height: u32, depth: u32, levels: u32) tiling.Layout {
-    return tiling.layoutOf(_image.bytesOf(format), width, height, depth, @min(levels, tiling.most_levels));
+pub fn layoutOf(format: facet.Format, width: u32, height: u32, depth: u32, levels: u32, four: bool) tiling.Layout {
+    return tiling.layoutOf(_image.bytesOf(format), width, height, depth, @min(levels, tiling.most_levels), four);
 }
 
 /// The store's and the load's name for a level's tiling.
@@ -227,7 +227,7 @@ fn memoryOf(kind: tiling.Kind) u64 {
 /// A texture image's layout: of a 3D image, its slices in each level
 /// (since 1.141).
 pub fn imageLayout(image: *const _image.Image) tiling.Layout {
-    return layoutOf(image.format, image.width, image.height, if (image.volume) image.layers else 1, image.levels);
+    return layoutOf(image.format, image.width, image.height, if (image.volume) image.layers else 1, image.levels, image.quads);
 }
 
 /// Where layer `layer` of a texture image begins, or slice `layer` of

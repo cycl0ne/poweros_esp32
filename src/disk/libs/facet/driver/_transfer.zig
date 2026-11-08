@@ -364,8 +364,9 @@ pub fn clearColorImage(command: *const _command.ClearColorImage) bool {
         if (first_layer >= image.layers) continue;
         const layers = if (range.layer_count == facet.REMAINING) image.layers - first_layer else @min(range.layer_count, image.layers - first_layer);
         // Every sample's plane, each the whole image at one sample (since
-        // 1.99).
-        for (0..image.samples) |sample| for (first_level..first_level + levels) |level| {
+        // 1.99), or the one memory of four samples kept together, all of
+        // which a level's span is (`_image.planesOf`, since 1.146).
+        for (0.._image.planesOf(image)) |sample| for (first_level..first_level + levels) |level| {
             const sample_at = @as(usize, @intCast(image.sample_bytes)) * sample;
             // A 3D image's level is every slice it has, fewer at each
             // level, whatever the range: Vulkan's names its one array
@@ -409,7 +410,7 @@ pub fn clearDepthImage(command: *const _command.ClearDepthStencilImage) bool {
         const clears_depth = depth_there and range.aspect_mask & facet.IMAGE_ASPECT_DEPTH != 0;
         const clears_stencil = stencil_there and range.aspect_mask & facet.IMAGE_ASPECT_STENCIL != 0;
         // Every sample's plane, as a colour clear does (since 1.99).
-        for (0..image.samples) |sample| for (0..layers) |one| for (0..levels) |step| {
+        for (0.._image.planesOf(image)) |sample| for (0..layers) |one| for (0..levels) |step| {
             const level = range.base_mip_level + @as(u32, @intCast(step));
             const layer = range.base_array_layer + @as(u32, @intCast(one));
             // Laid out by its device (since 1.142): the level where the
@@ -458,6 +459,12 @@ fn spanOf(image: *const Image, level: u32, layer: u32) ?struct { at: usize, byte
         // row's end is written too, being the image's own memory and read
         // by nothing. An image kept in rows has levels since 1.119.
         .rows => {
+            // Four samples kept together, where its device says: the
+            // whole level, every sample of it (since 1.146).
+            if (image.quads) {
+                const span = image.device.physical.ops.texture_level.?(image, level, layer);
+                return .{ .at = @intCast(span.at), .bytes = @intCast(span.bytes) };
+            }
             const rows = _image.rowsAt(image, level, layer);
             return .{ .at = rows.at, .bytes = @as(usize, rows.pitch) * _image.levelSize(image, level)[1] };
         },

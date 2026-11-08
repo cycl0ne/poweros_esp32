@@ -100,7 +100,14 @@ fn blockPad(pixel: u32, height: u32) u32 {
 /// as the TMU finds it from level 0's place. Until 1.141 each slice was
 /// a texture of its own, as a layer is, and the TMU read a level past
 /// level 0 a slice or more from where it lay.
-pub fn layoutOf(pixel: u32, width: u32, height: u32, depth: u32, count: u32) Layout {
+///
+/// `four` is an image of four samples a pixel, which v3dv lays out as one
+/// of twice the width and twice the height, each pixel's samples a 2 x 2
+/// quad of it (`sampleTexel`), and its level 0 in UIF however small, the
+/// tile buffer storing all four samples only there (v3dv_image.c:136-140,
+/// 180-183, `uif_top`; since 1.146). Vulkan gives such an image the one
+/// level.
+pub fn layoutOf(pixel: u32, width: u32, height: u32, depth: u32, count: u32, four: bool) Layout {
     var layout = Layout{ .pixel = pixel, .depth = depth, .count = count, .levels = undefined, .bytes = 0 };
     const micro_w = microtileWidth(pixel);
     const micro_h = microtileHeight(pixel);
@@ -120,16 +127,21 @@ pub fn layoutOf(pixel: u32, width: u32, height: u32, depth: u32, count: u32) Lay
         made.height = minify(height, level);
         var across = if (level < 2) made.width else minify(pot_width, level);
         var down = if (level < 2) made.height else minify(pot_height, level);
+        if (four) {
+            across *= 2;
+            down *= 2;
+        }
+        const uif_top = four and level == 0;
         made.block_pad = 0;
-        if (across <= micro_w or down <= micro_h) {
+        if (!uif_top and (across <= micro_w or down <= micro_h)) {
             made.kind = .lineartile;
             across = alignUp(across, micro_w);
             down = alignUp(down, micro_h);
-        } else if (across <= block_w) {
+        } else if (!uif_top and across <= block_w) {
             made.kind = .ublinear_1;
             across = alignUp(across, block_w);
             down = alignUp(down, block_h);
-        } else if (across <= 2 * block_w) {
+        } else if (!uif_top and across <= 2 * block_w) {
             made.kind = .ublinear_2;
             across = alignUp(across, 2 * block_w);
             down = alignUp(down, block_h);
@@ -157,6 +169,15 @@ pub fn layoutOf(pixel: u32, width: u32, height: u32, depth: u32, count: u32) Lay
     for (layout.levels[0..count]) |*made| made.offset += start;
     layout.bytes = offset + start;
     return layout;
+}
+
+/// Where sample `sample` of pixel (x, y) of an image of four samples lies,
+/// as a texel of the layout `layoutOf` gives it with `four`: the samples
+/// across its quad and then down, as v3d's compiler fetches one
+/// (`v3d_nir_lower_txf_ms_instr`, v3d_nir_lower_txf_ms.c:46-51; since
+/// 1.146).
+pub fn sampleTexel(x: u32, y: u32, sample: u32) [2]u32 {
+    return .{ 2 * x + (sample & 1), 2 * y + (sample >> 1 & 1) };
 }
 
 /// A level's height in UIF blocks: what a store or a load into it is told
@@ -563,7 +584,7 @@ pub fn parameter1(sampler: u32, unnormalized: bool) u32 {
 }
 
 test "the levels are in Mesa's layouts, smallest first" {
-    const layout = layoutOf(4, 64, 64, 1, 7);
+    const layout = layoutOf(4, 64, 64, 1, 7, false);
     try std.testing.expectEqual(Kind.lineartile, layout.levels[6].kind);
     try std.testing.expectEqual(Kind.lineartile, layout.levels[4].kind);
     try std.testing.expectEqual(Kind.ublinear_1, layout.levels[3].kind);
@@ -578,7 +599,7 @@ test "the levels are in Mesa's layouts, smallest first" {
 test "a 3D texture's level is its slices, as v3d_setup_slices lays them out" {
     // Four slices of 16 x 16 and two levels: level 1 is two slices of
     // 8 x 8, one after the other just before level 0, and level 0 four.
-    const layout = layoutOf(4, 16, 16, 4, 2);
+    const layout = layoutOf(4, 16, 16, 4, 2, false);
     try std.testing.expectEqual(@as(u32, 4), layout.levels[0].slices);
     try std.testing.expectEqual(@as(u32, 2), layout.levels[1].slices);
     try std.testing.expectEqual(@as(u32, 8 * 8 * 4), layout.levels[1].slice_bytes);
@@ -590,12 +611,12 @@ test "a 3D texture's level is its slices, as v3d_setup_slices lays them out" {
     // From level 1 on the slices count from a power of two, as the
     // sizes do: six slices are three at level 1 to Vulkan, and four here
     // (v3dv_image.c:132-134).
-    const six = layoutOf(4, 16, 16, 6, 3);
+    const six = layoutOf(4, 16, 16, 6, 3, false);
     try std.testing.expectEqual(@as(u32, 6), six.levels[0].slices);
     try std.testing.expectEqual(@as(u32, 4), six.levels[1].slices);
     try std.testing.expectEqual(@as(u32, 2), six.levels[2].slices);
     // A texture that is not 3D has one slice a level, and lies as before.
-    const flat = layoutOf(4, 16, 16, 1, 2);
+    const flat = layoutOf(4, 16, 16, 1, 2, false);
     try std.testing.expectEqual(@as(u32, 1), flat.levels[1].slices);
     try std.testing.expectEqual(flat.levels[0].offset, flat.levels[1].offset + flat.levels[1].slice_bytes);
 }
@@ -606,7 +627,7 @@ test "a level's texels each have a place of their own" {
     const sizes = [_][2]u32{ .{ 4, 4 }, .{ 8, 8 }, .{ 16, 16 }, .{ 32, 32 }, .{ 64, 64 }, .{ 256, 64 }, .{ 64, 256 }, .{ 128, 128 } };
     var seen: [256 * 256 * 4]bool = undefined;
     for ([_]u32{ 1, 2, 4 }) |pixel| for (sizes) |size| {
-        const layout = layoutOf(pixel, size[0], size[1], 1, 1);
+        const layout = layoutOf(pixel, size[0], size[1], 1, 1, false);
         @memset(&seen, false);
         for (0..size[1]) |y| for (0..size[0]) |x| {
             const at = texelOffset(&layout, 0, @intCast(x), @intCast(y));
@@ -619,7 +640,7 @@ test "a level's texels each have a place of their own" {
 }
 
 test "the UIF layout is v3d_tiling.c's" {
-    const layout = layoutOf(4, 64, 64, 1, 1);
+    const layout = layoutOf(4, 64, 64, 1, 1, false);
     // A block is 8 x 8 at 4 bytes a texel; the next microtile right is 64
     // bytes on, the next down 128.
     try std.testing.expectEqual(@as(u32, 4), texelOffset(&layout, 0, 1, 0));
@@ -634,13 +655,13 @@ test "one byte a texel: Mesa's 8 x 8 microtile, and the TMU's R8 with the swizzl
     // 8 x 8: the next byte right is 1 on, the next row 8, the next
     // microtile right 64 and the one below 128 (two microtiles of a
     // block, 64 each).
-    const layout = layoutOf(1, 64, 64, 1, 1);
+    const layout = layoutOf(1, 64, 64, 1, 1, false);
     try std.testing.expectEqual(@as(u32, 1), texelOffset(&layout, 0, 1, 0));
     try std.testing.expectEqual(@as(u32, 8), texelOffset(&layout, 0, 0, 1));
     try std.testing.expectEqual(@as(u32, 64), texelOffset(&layout, 0, 8, 0));
     try std.testing.expectEqual(@as(u32, 128), texelOffset(&layout, 0, 0, 8));
     // A level of 64 x 64 bytes takes a quarter of what one of words takes.
-    const words = layoutOf(4, 64, 64, 1, 1);
+    const words = layoutOf(4, 64, 64, 1, 1, false);
     try std.testing.expectEqual(words.bytes - words.levels[0].offset, 4 * (layout.bytes - layout.levels[0].offset));
 
     var state: [texture_state_bytes]u8 = undefined;
@@ -660,7 +681,7 @@ test "a view's swizzle over the format's own: a channel the view takes read from
     // is, and the red from the TMU's blue, which is where the format
     // keeps it (since 1.120).
     var state: [texture_state_bytes]u8 = undefined;
-    writeTextureState(&state, &layoutOf(4, 64, 64, 1, 1), .bgra, .{ .alpha, .zero, .one, .red }, 0x10_0000, 0, 0, 1, 0);
+    writeTextureState(&state, &layoutOf(4, 64, 64, 1, 1, false), .bgra, .{ .alpha, .zero, .one, .red }, 0x10_0000, 0, 0, 1, 0);
     var second = std.mem.readInt(u64, state[8..16], .little);
     try std.testing.expectEqual(SWIZZLE_ALPHA, second >> (108 - 64) & 7);
     try std.testing.expectEqual(SWIZZLE_ZERO, second >> (111 - 64) & 7);
@@ -668,7 +689,7 @@ test "a view's swizzle over the format's own: a channel the view takes read from
     try std.testing.expectEqual(SWIZZLE_BLUE, second >> (117 - 64) & 7);
     // R8 viewed as its alpha, its green and its red twice: the alpha and
     // the green it has not got read 1 and 0, as Vulkan reads them.
-    writeTextureState(&state, &layoutOf(1, 64, 64, 1, 1), .r8, .{ .alpha, .green, .red, .red }, 0x20_0000, 0, 0, 1, 0);
+    writeTextureState(&state, &layoutOf(1, 64, 64, 1, 1, false), .r8, .{ .alpha, .green, .red, .red }, 0x20_0000, 0, 0, 1, 0);
     second = std.mem.readInt(u64, state[8..16], .little);
     try std.testing.expectEqual(SWIZZLE_ONE, second >> (108 - 64) & 7);
     try std.testing.expectEqual(SWIZZLE_ZERO, second >> (111 - 64) & 7);
@@ -677,7 +698,7 @@ test "a view's swizzle over the format's own: a channel the view takes read from
 }
 
 test "the states have their fields where the packet file has them" {
-    const layout = layoutOf(4, 64, 32, 1, 1);
+    const layout = layoutOf(4, 64, 32, 1, 1, false);
     var state: [texture_state_bytes]u8 = undefined;
     writeTextureState(&state, &layout, .bgra, own_picks, 0x10_0000, 0, 0, 1, 0);
     const first = std.mem.readInt(u64, state[0..8], .little);
@@ -790,4 +811,48 @@ test "a comparing sampler is taken only where the program writes the reference, 
     try std.testing.expectEqual(@as(u64, 0), wild >> 48 & 0x3FF_FFFF); // the wraps, the border and anisotropy untouched
     try std.testing.expectEqual(@as(u64, 0x8000), samplerWord(.{ .bias = -1e9 }) >> 32 & 0xFFFF);
     try std.testing.expectEqual(@as(u64, 0), samplerWord(.{ .bias = std.math.nan(f32) }) >> 32 & 0xFFFF);
+}
+
+test "an image of four samples is twice as wide and twice as high, level 0 in UIF however small, and a sample's texel is its place in the quad" {
+    // Two by two RGBA8: four by four at four samples, which at one sample
+    // would be lineartile (no more than a microtile across); here UIF,
+    // aligned to a column of four blocks across and a block down
+    // (v3dv_image.c:136-140, 180-183, 206-211).
+    try std.testing.expectEqual(Kind.lineartile, layoutOf(4, 4, 4, 1, 1, false).levels[0].kind);
+    const small = layoutOf(4, 2, 2, 1, 1, true);
+    try std.testing.expectEqual(Kind.uif, small.levels[0].kind);
+    try std.testing.expectEqual(@as(u32, 2), small.levels[0].width);
+    try std.testing.expectEqual(@as(u32, 2), small.levels[0].height);
+    try std.testing.expectEqual(@as(u32, 8), small.levels[0].padded_height);
+    try std.testing.expectEqual(@as(u32, 32 * 4 * 8), small.bytes);
+    try std.testing.expectEqual(@as(u32, 1), blocksDown(&small, 0));
+
+    // 64 x 64 RGBA8 is the UIF level 128 x 128 is at one sample.
+    const big = layoutOf(4, 64, 64, 1, 1, true);
+    const twice = layoutOf(4, 128, 128, 1, 1, false);
+    try std.testing.expectEqual(twice.levels[0].kind, big.levels[0].kind);
+    try std.testing.expectEqual(twice.levels[0].padded_height, big.levels[0].padded_height);
+    try std.testing.expectEqual(twice.bytes, big.bytes);
+    try std.testing.expectEqual(@as(u32, 128 * 4 * 128), big.bytes);
+
+    // R5G6B5, 30 x 20: 60 x 40, a microtile 8 x 4 at two bytes, so 64
+    // across and 40 down, five rows of blocks and no padding.
+    const narrow = layoutOf(2, 30, 20, 1, 1, true);
+    try std.testing.expectEqual(Kind.uif, narrow.levels[0].kind);
+    try std.testing.expectEqual(@as(u32, 40), narrow.levels[0].padded_height);
+    try std.testing.expectEqual(@as(u32, 64 * 2 * 40), narrow.bytes);
+
+    // The samples across the quad and then down, as v3d's compiler
+    // fetches sample s (v3d_nir_lower_txf_ms.c:46-51).
+    const quads = [_][2]u32{ .{ 6, 10 }, .{ 7, 10 }, .{ 6, 11 }, .{ 7, 11 } };
+    for (quads, 0..) |want, sample| try std.testing.expectEqual(want, sampleTexel(3, 5, @intCast(sample)));
+    // Every sample of every pixel its own four bytes, inside the level.
+    var seen = std.AutoHashMap(u32, void).init(std.testing.allocator);
+    defer seen.deinit();
+    for (0..20) |y| for (0..30) |x| for (0..4) |sample| {
+        const at = sampleTexel(@intCast(x), @intCast(y), @intCast(sample));
+        const offset = texelOffset(&narrow, 0, at[0], at[1]);
+        try std.testing.expect(offset + 2 <= narrow.bytes);
+        try std.testing.expect(!(try seen.getOrPut(offset)).found_existing);
+    };
 }

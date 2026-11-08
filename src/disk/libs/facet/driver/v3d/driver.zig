@@ -713,16 +713,19 @@ fn execute(queue: *Queue, buffer: *CommandBuffer, done: *exec.Waitable) callconv
 /// A layer's memory, or a 3D image's whole: its levels each its slices one
 /// after another, the step from a slice to the next level 0's (since
 /// 1.141, `tiling.layoutOf`).
-fn textureMemory(format: facet.Format, width: u32, height: u32, depth: u32, levels: u32) callconv(.c) _driver.TextureMemory {
-    const layout = _play.layoutOf(format, width, height, depth, levels);
+fn textureMemory(format: facet.Format, width: u32, height: u32, depth: u32, levels: u32, samples: u32) callconv(.c) _driver.TextureMemory {
+    const layout = _play.layoutOf(format, width, height, depth, levels, samples > 1);
     return .{ .bytes = layout.bytes, .alignment = tiling.alignment, .layer_bytes = if (depth > 1) layout.levels[0].slice_bytes else 0 };
 }
 
 /// Where a texel of a layer of a texture is, or of a 3D texture's slice,
-/// in bytes from its memory.
+/// in bytes from its memory. Of one sample's plane of an image of four,
+/// that sample's texel in the pixel's quad (`tiling.sampleTexel`, since
+/// 1.146).
 fn textureOffset(image: *const _image.Image, level: u32, layer: u32, x: u32, y: u32) callconv(.c) usize {
     const layout = _play.imageLayout(image);
-    return _play.layerAt(image, &layout, level, layer) + tiling.texelOffset(&layout, level, x, y);
+    const at: [2]u32 = if (image.quads) tiling.sampleTexel(x, y, image.sample) else .{ x, y };
+    return _play.layerAt(image, &layout, level, layer) + tiling.texelOffset(&layout, level, at[0], at[1]);
 }
 
 /// A level of a layer of a texture, or of a 3D texture's slice: all of

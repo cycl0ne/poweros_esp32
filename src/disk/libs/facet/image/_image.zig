@@ -58,6 +58,7 @@ const texture = facet.texture;
 const shader = facet.shader;
 const Device = @import("../device/_device.zig").Device;
 const _memory = @import("../memory/_memory.zig");
+const _driver = @import("../driver/_driver.zig");
 const DeviceMemory = _memory.DeviceMemory;
 const max_image_dimension = @import("../instance/_instance.zig").max_image_dimension;
 const drawable = @import("../surface/_surface.zig").drawable;
@@ -91,8 +92,21 @@ pub const Image = struct {
     /// src/gallium/drivers/llvmpipe/lp_texture.c).
     samples: u32 = 1,
     /// Given wherever an image is made, a swapchain's as well, since every
-    /// copy and clear steps through the planes by it (since 1.99).
+    /// copy and clear steps through the planes by it (since 1.99). 0 for
+    /// an image whose samples lie together (`quads`).
     sample_bytes: u64,
+    /// An image of four samples whose device lays them out its own way,
+    /// each pixel's four together: the V3D's, as v3dv lays one out, an
+    /// image of twice the width and twice the height, each pixel a 2 x 2
+    /// quad of it, in UIF (v3dv_image.c:136-140, 180-183). Its memory is
+    /// what `Ops.texture_memory` says for four samples, and its texels are
+    /// where `Ops.texture_offset` says, the rows its kind has elsewhere
+    /// being none of it (since 1.146). Its kind is still `rows` or
+    /// `depth`, what it is drawn into as.
+    quads: bool = false,
+    /// Of a plane `sampleOf` made of an image with `quads`: which of its
+    /// samples the plane is, the device finding it in each pixel's quad.
+    sample: u32 = 0,
     /// A 3D image: its slices are reached by z, not by layer.
     volume: bool = false,
     /// A 1D image, which this library keeps as a texture of one row: its
@@ -771,11 +785,14 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
         // pass stores it where the TMU reads it, as v3dv keeps every image
         // (since 1.142, `deviceLaid`).
         if (sampled) if (physical.ops.texture_memory) |own| {
-            const memory = own(info.format, extent.width, extent.height, 1, info.mip_levels);
+            const memory = own(info.format, extent.width, extent.height, 1, info.mip_levels, 1);
             image.layer_bytes = std.mem.alignForward(u64, memory.bytes, memory.alignment);
             image.bytes = image.layer_bytes * layers;
             image.alignment = memory.alignment;
         };
+        // Of four samples there, laid out as its device keeps them, which
+        // is never sampled (`multisampled`; since 1.146).
+        if (info.samples > 1) if (physical.ops.texture_memory) |own| return inQuads(image, own(info.format, extent.width, extent.height, 1, 1, info.samples), info.samples);
         return withPlanes(image, info.samples);
     }
     if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT != 0) return null;
@@ -850,7 +867,7 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
         one_layer = std.mem.alignForward(u64, one_layer, row_alignment);
         var all = one_layer * layers;
         if (physical.ops.texture_memory) |own| {
-            const memory = own(kept_format, extent.width, extent.height, if (volume) layers else 1, info.mip_levels);
+            const memory = own(kept_format, extent.width, extent.height, if (volume) layers else 1, info.mip_levels, 1);
             one_layer = std.mem.alignForward(u64, memory.bytes, memory.alignment);
             all = one_layer * layers;
             image.alignment = memory.alignment;
@@ -886,6 +903,9 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
         if (info.tiling != .optimal or volume or physical.ops.texture_memory != null) return null;
         if (info.mip_levels > mostLevels(extent.width, extent.height)) return null;
     }
+    // Of four samples on a device of a layout of its own: in its own, as
+    // a depth image is (since 1.146).
+    if (info.samples > 1) if (physical.ops.texture_memory) |own| return inQuads(image, own(info.format, extent.width, extent.height, 1, 1, info.samples), info.samples);
     image.pitch = std.mem.alignForward(u32, extent.width * pixel, row_alignment);
     image.layer_bytes = 0;
     for (0..info.mip_levels) |lod| image.layer_bytes += levelBytes(&image, @intCast(lod));
@@ -918,7 +938,13 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
 /// `shader_storage_image_multisample`, which is false, Vulkan's
 /// `storageImageSampleCounts` being 1 without it.
 fn multisampled(physical: *const _instance.PhysicalDevice, info: *const facet.ImageCreateInfo) bool {
-    if (info.samples != 4 or !physical.can.multisampling or physical.ops.texture_memory != null) return false;
+    if (info.samples != 4 or !physical.can.multisampling) return false;
+    // A device of a layout of its own keeps the four samples together
+    // (`Image.quads`, since 1.146), and fetches none of them yet: v3dv's
+    // compiler reads one through its quad (v3d_nir_lower_txf_ms.c:46-51),
+    // facet's for the V3D after item 59 (docs/facet-vulkan10.md item 61,
+    // step V7).
+    if (physical.ops.texture_memory != null and info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_INPUT_ATTACHMENT) != 0) return false;
     if (info.image_type != .@"2d" or info.tiling != .optimal or info.mip_levels != 1) return false;
     if (info.flags & facet.IMAGE_CREATE_CUBE_COMPATIBLE != 0) return false;
     const taken = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT |
@@ -935,10 +961,37 @@ fn multisampled(physical: *const _instance.PhysicalDevice, info: *const facet.Im
 /// writes texels need not know of samples (since 1.99).
 pub fn sampleOf(image: *const Image, sample: u32) Image {
     var plane = image.*;
-    if (image.data) |data| plane.data = data + @as(usize, sample) * @as(usize, @intCast(image.sample_bytes));
     plane.samples = 1;
+    // All of the memory, the device finding the sample in each pixel's
+    // quad (since 1.146).
+    if (image.quads) {
+        plane.sample = sample;
+        return plane;
+    }
+    if (image.data) |data| plane.data = data + @as(usize, sample) * @as(usize, @intCast(image.sample_bytes));
     plane.bytes = image.sample_bytes;
     return plane;
+}
+
+/// The planes a clear steps through: each sample's, or the one memory of
+/// an image whose samples lie together.
+pub fn planesOf(image: *const Image) u32 {
+    return if (image.quads) 1 else image.samples;
+}
+
+/// `image`, of `samples` samples a pixel kept together in `memory`, as a
+/// device of a layout of its own lays them out (`Image.quads`): each
+/// layer the device's image of four, on the device's alignment.
+fn inQuads(image: Image, memory: _driver.TextureMemory, samples: u32) Image {
+    var made = image;
+    made.quads = true;
+    made.samples = samples;
+    made.sample_bytes = 0;
+    made.pitch = 0;
+    made.layer_bytes = std.mem.alignForward(u64, memory.bytes, memory.alignment);
+    made.bytes = made.layer_bytes * image.layers;
+    made.alignment = memory.alignment;
+    return made;
 }
 
 /// `image`, whose `bytes` are what it takes at one sample a pixel, with
@@ -1445,6 +1498,8 @@ fn texelOf(format: facet.Format, bytes: []const u8) u32 {
 /// a depth image sampled there, which v3dv keeps as it keeps the rest.
 pub fn deviceLaid(image: *const Image) bool {
     if (image.device.physical.ops.texture_offset == null) return false;
+    // And an image of four samples there (since 1.146).
+    if (image.quads) return true;
     return switch (image.kind) {
         .texture => true,
         .depth => image.usage & facet.IMAGE_USAGE_SAMPLED != 0,
@@ -1473,11 +1528,12 @@ pub fn levelSize(image: *const Image, level: u32) [2]u32 {
 
 /// Texel (x, y) of a level of a layer as a buffer would hold it, in `into`.
 pub fn readTexel(image: *const Image, level: u32, layer: u32, x: u32, y: u32, into: []u8) void {
-    // A depth image its device lays out (since 1.142), as a texture there.
-    if (image.kind == .depth) if (deviceOffset(image, level, layer, x, y)) |offset| {
+    // Where its device lays it out: a texture there, a depth image since
+    // 1.142, and one of four samples since 1.146, a sample's plane of it.
+    if (deviceOffset(image, level, layer, x, y)) |offset| {
         const pixel = bytesOf(image.format);
         return @memcpy(into[0..pixel], (image.data.? + offset)[0..pixel]);
-    };
+    }
     switch (image.kind) {
         // A depth image is rows as well, of the level and the layer
         // asked for: what a pass that stores its depth wrote.
@@ -1487,10 +1543,7 @@ pub fn readTexel(image: *const Image, level: u32, layer: u32, x: u32, y: u32, in
             const from = image.data.? + rows.at + @as(usize, y) * rows.pitch + @as(usize, x) * pixel;
             @memcpy(into[0..pixel], from[0..pixel]);
         },
-        .texture => if (deviceOffset(image, level, layer, x, y)) |offset| {
-            const pixel = bytesOf(image.format);
-            @memcpy(into[0..pixel], (image.data.? + offset)[0..pixel]);
-        } else if (movedAsTheyLie(image)) {
+        .texture => if (movedAsTheyLie(image)) {
             // The floats, or the channels, as they lie: what went in
             // comes out again.
             image.texels.texelsAt(layer, level, x, y, into);
@@ -1502,10 +1555,10 @@ pub fn readTexel(image: *const Image, level: u32, layer: u32, x: u32, y: u32, in
 
 /// Texel (x, y) of a level of a layer set from what a buffer would hold.
 pub fn writeTexel(image: *Image, level: u32, layer: u32, x: u32, y: u32, from: []const u8) void {
-    if (image.kind == .depth) if (deviceOffset(image, level, layer, x, y)) |offset| {
+    if (deviceOffset(image, level, layer, x, y)) |offset| {
         const pixel = bytesOf(image.format);
         return @memcpy((image.data.? + offset)[0..pixel], from[0..pixel]);
-    };
+    }
     switch (image.kind) {
         .rows, .depth => {
             const pixel = bytesOf(image.format);
@@ -1513,10 +1566,7 @@ pub fn writeTexel(image: *Image, level: u32, layer: u32, x: u32, y: u32, from: [
             const into = image.data.? + rows.at + @as(usize, y) * rows.pitch + @as(usize, x) * pixel;
             @memcpy(into[0..pixel], from[0..pixel]);
         },
-        .texture => if (deviceOffset(image, level, layer, x, y)) |offset| {
-            const pixel = bytesOf(image.format);
-            @memcpy((image.data.? + offset)[0..pixel], from[0..pixel]);
-        } else if (movedAsTheyLie(image)) {
+        .texture => if (movedAsTheyLie(image)) {
             image.texels.putTexels(layer, level, x, y, from);
         } else {
             image.texels.putLayer(layer, level, x, y, texelOf(image.format, from));
