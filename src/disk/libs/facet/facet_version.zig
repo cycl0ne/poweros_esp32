@@ -5247,4 +5247,66 @@ pub const LIBRARY_VERSION = 1;
 /// FacetBoth's other 230 cases are as they were at 1.167, the storage
 /// buffers' among them, now with Z written, and FacetProbe passes its 890
 /// checks.
-pub const LIBRARY_REVISION = 168;
+///
+/// 169: **Storage buffer atomics and barriers (docs/facet-vulkan10.md item
+/// 59).** A fragment program's integer atomic on a storage buffer's
+/// 32-bit word is an `.ssbo_atomic` step (`compile.blockAtomic`), the
+/// ssbo_atomic or ssbo_atomic_swap vtn makes of it (vtn_handle_atomics,
+/// spirv_to_nir.c:4288-4480): its operation translate_atomic_op's, its
+/// operands as fill_common_atomic_sources gives them (:3678-3722) - an
+/// increment an add of 1, a decrement of -1, a subtraction an add of the
+/// ineg, a compare-exchange's comparator first and its value second. An
+/// OpAtomicLoad is a load and an OpAtomicStore a store (:4372-4396).
+/// Each atomic is divergent (nir_divergence_analysis.c:994-1010) and a
+/// write of its buffer, as nir_opt_access counts it. Arrays and runtime
+/// arrays of integers are taken, for such words.
+///
+/// The memory semantics: UniformMemory added for a storage buffer
+/// (:4447-4477), a release a barrier before the atomic and an acquire one
+/// after it (vtn_split_barrier_semantics, :2581-2661), and OpMemoryBarrier
+/// a barrier where vtn_emit_memory_barrier makes one (:2847-2862,
+/// :4814-4818): a `.barrier` step. MakeAvailable and MakeVisible, which
+/// want the Vulkan memory model, are refused.
+///
+/// to_vir writes an atomic through the TMU's general lookup
+/// (`emitTmuGeneral`): its operation v3d_general_tmu_op_for_atomic's
+/// (nir_to_vir.c:189-208), an add of a constant 1 the increment and of -1
+/// the decrement, which write no TMUD (v3d_get_op_for_atomic_add,
+/// :175-187; atomic_add_replaced, :507-519); its operands into TMUD in
+/// order (emit_tmu_general_atomic_writes, :400-420); its configuration
+/// 0xFFFFFF00 | op << 3, a pixel's lookup, a compare-exchange's a pair of
+/// words and the others a 32-bit word (:650-669); and one LDTMU for the
+/// word it returns. tmu_dirty_rcl is set. A barrier flushes the TMU
+/// (:3857-3861).
+///
+/// - Refused: an atomic in an if-arm, which nir_opt_peephole_select
+///   keeps a branch (block_check_for_allowed_instrs,
+///   nir_opt_peephole_select.c:106-236), and facet's programs have none
+///   yet; on a uniform buffer, the push constants or a NonWritable
+///   member; in a vertex program; on a float. fragmentStoresAndAtomics
+///   stays unadvertised: a store of a matrix, an array or a struct is
+///   still refused, and a subpass of several colour attachments is
+///   replayed per part (item 87), which would repeat the stores.
+///
+/// Tests: the V3D's 212, five new. glslc_atomics (410 words) is 43
+/// instructions: ten atomics, an increment among them, ten TMUD writes,
+/// ten TMUAU, ten LDTMUs and no TMUWT, its configurations the ten
+/// operations'; glslc_returned (271 words): the increment and the
+/// decrement with no operand, the compare-exchange's comparator and value
+/// in that order, the barrier a flush; glslc_ordered (180 words): an
+/// acquire-release atomic between two barriers, its word read before the
+/// next goes out; glslc_counted (530 words) through unifa, nothing dirty;
+/// glslc_armed (178 words), glslc_vertex_atomic (176 words) and
+/// glslc_atomics made a uniform buffer refused. Eight mutations of the
+/// port - an operation, the increment, the operands' order either side,
+/// the barrier, its flush, the vertex refusal, the divergence - each fail
+/// them. FacetBoth 1.37: the shipped atomics, a pass whose program
+/// changes ten words through every atomic GLSL has and a second that
+/// packs them into the colour, beside functions of the same on the cores,
+/// whose pixels race through real atomics.
+///
+/// On the CM5 the case is 8 pixels of 230,400 apart, the triangle's edge,
+/// as the stores' case is: the V3D's ten atomics end where the cores'
+/// end, a helper pixel's changing nothing. FacetBoth's other 231 cases
+/// are as they were at 1.168, and FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 169;

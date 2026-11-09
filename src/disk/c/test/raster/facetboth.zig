@@ -87,6 +87,12 @@
 //! the TMU, and of a second pass that reads them back into the colour,
 //! beside functions of the same writes and reads for the cores: a write
 //! that does not reach memory leaves the colour the buffer started with.
+//! The shipped case of atomics (since 1.37) is glslc's words of a pass
+//! that changes a storage buffer's ten words through every atomic GLSL
+//! has, by each pixel, and of a second pass that packs them into the
+//! colour, beside functions of the same for the cores, whose pixels race
+//! through real atomics: a lost update, a helper pixel's, or a signed
+//! operation done unsigned moves the colour.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -101,7 +107,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.36 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.37 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -1028,6 +1034,84 @@ fn readsFragment(fragments: *const shader.Fragments) callconv(.c) void {
     }
 }
 
+/// What `store_atomics` computes, for the cores, and in its order: by each
+/// pixel inside the triangle - a helper pixel changes nothing, as the
+/// V3D's lookup is a pixel's - the counters' ten atomics, i the red times
+/// 1.5 made an integer towards zero; and the colour as it is. The pixels
+/// race, and only the words the exchanges return tell in which order:
+/// the program reads none of them (since 1.37).
+fn atomicsFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    @setRuntimeSafety(false);
+    const counters: *[10]u32 = @constCast(fragments.resources.buffer([10]u32, 0, 1) orelse return);
+    const high: *i32 = @ptrCast(&counters[3]);
+    const low: *i32 = @ptrCast(&counters[4]);
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const planes = rows.at(quad);
+        const over = @as(shader.Pixels, @splat(1)) / planes[0];
+        var v: [4]shader.Pixels = undefined;
+        inline for (&v, 0..) |*each, c| each.* = planes[1 + c] * over;
+        const by_red = v[0] * @as(shader.Pixels, @splat(1.5));
+        inline for (0..4) |p| {
+            if (quad.covered & @as(u8, 1) << p != 0) {
+                const i = towardZero(by_red[p]);
+                const as_word: u32 = @bitCast(i);
+                // The QPU's shift takes the low 5 bits of its count.
+                const bit = @as(u32, 1) << @intCast(as_word & 31);
+                _ = @atomicRmw(u32, &counters[0], .Add, 1, .monotonic);
+                _ = @atomicRmw(u32, &counters[1], .Add, 3, .monotonic);
+                _ = @atomicRmw(u32, &counters[2], .Or, bit, .monotonic);
+                _ = @atomicRmw(i32, high, .Max, i, .monotonic);
+                _ = @atomicRmw(i32, low, .Min, i -% 1, .monotonic);
+                _ = @atomicRmw(u32, &counters[5], .And, ~bit, .monotonic);
+                _ = @atomicRmw(u32, &counters[6], .Xchg, 7, .monotonic);
+                _ = @cmpxchgStrong(u32, &counters[7], 0, 5, .monotonic, .monotonic);
+                _ = @atomicRmw(u32, &counters[8], .Min, as_word, .monotonic);
+                _ = @atomicRmw(u32, &counters[9], .Max, as_word -% 2, .monotonic);
+            }
+        }
+        var bytes: [4]@Vector(4, u32) = undefined;
+        inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(v[c]);
+        out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+    }
+}
+
+/// What `store_counted` computes, for the cores, and in its order: the
+/// words `atomicsFragment` left - the count over 65536, the sum over
+/// 196608, the others packed as integers, wrapping, and over 255, and the
+/// last three over 512, 64 and 32, the first two added first - plus a
+/// sixteenth of the colour (since 1.37).
+fn countedFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    @setRuntimeSafety(false);
+    const counters = fragments.resources.buffer([10]u32, 0, 1) orelse return;
+    const packed_word = counters[2] +% 4 *% counters[3] +% 8 *% counters[4] +% 16 *% counters[8] +% 32 *% (counters[9] +% 2);
+    const float = struct {
+        fn of(word: u32) f32 {
+            return @floatFromInt(word);
+        }
+        fn bits(word: u32) f32 {
+            return @bitCast(word);
+        }
+    };
+    const rest = (float.of(counters[5]) * float.bits(0x3b000000) + float.of(counters[6]) * (1.0 / 64.0)) + float.of(counters[7]) * (1.0 / 32.0);
+    const packed_floats = [4]f32{
+        float.of(counters[0]) * float.bits(0x37800000),
+        float.of(counters[1]) * float.bits(0x36aaaaab),
+        float.of(packed_word) * float.bits(0x3b808081),
+        rest,
+    };
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const planes = rows.at(quad);
+        const over = @as(shader.Pixels, @splat(1)) / planes[0];
+        var v: [4]shader.Pixels = undefined;
+        inline for (&v, 0..) |*each, c| each.* = planes[1 + c] * over;
+        var bytes: [4]@Vector(4, u32) = undefined;
+        inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(@as(shader.Pixels, @splat(packed_floats[c])) + v[c] * @as(shader.Pixels, @splat(0.0625)));
+        out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+    }
+}
+
 /// A float channel of four pixels as the tile buffer holds it, 0 to 255,
 /// as `ir`'s generated functions make it.
 fn channelOf(value: shader.Pixels) @Vector(4, u32) {
@@ -1074,6 +1158,8 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped lanes", &lanesFragment, 4),
     shader.fragment("shipped writes", &writesFragment, 4),
     shader.fragment("shipped reads", &readsFragment, 4),
+    shader.fragment("shipped atomics", &atomicsFragment, 4),
+    shader.fragment("shipped counted", &countedFragment, 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                .{},                               .{},                                  .{},
@@ -1085,7 +1171,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&nested_discard),   Shipped.Uniformed.spirv,           shader.Spirv.of(&uniform_nested),     shader.Spirv.of(&uniform_matrix),
     shader.Spirv.of(&uniform_matrices), shader.Spirv.of(&constant_matrix), shader.Spirv.of(&vertex_as_it_is),    shader.Spirv.of(&storage_buffer),
     shader.Spirv.of(&integers),         shader.Spirv.of(&indexed),         shader.Spirv.of(&lanes),              shader.Spirv.of(&store_writes),
-    shader.Spirv.of(&store_reads),
+    shader.Spirv.of(&store_reads),      shader.Spirv.of(&store_atomics),   shader.Spirv.of(&store_counted),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -1928,6 +2014,211 @@ const store_reads = [_]u32{
     0x0000000A, 0x00000028, 0x00000024, 0x00000027, 0x0003003E, 0x00000016,
     0x00000028, 0x000100FD, 0x00010038,
 };
+
+/// glslc's words of a fragment shader that changes a storage buffer's ten
+/// words through every atomic GLSL has, by each pixel, the red picking
+/// the operands: the V3D's TMU does each in memory, a pixel's lookup that
+/// returns the word it found (since 1.37).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// layout(set = 0, binding = 1) buffer Counters { uint count; uint sum; uint bits; int high; int low; uint gone; uint swapped; uint flipped; uint ulow; uint uhigh; } counters;
+/// void main() {
+///     int i = int(vcolor.x * 1.5);
+///     atomicAdd(counters.count, 1u);
+///     atomicAdd(counters.sum, 3u);
+///     atomicOr(counters.bits, 1u << i);
+///     atomicMax(counters.high, i);
+///     atomicMin(counters.low, i - 1);
+///     atomicAnd(counters.gone, ~(1u << i));
+///     atomicExchange(counters.swapped, 7u);
+///     atomicCompSwap(counters.flipped, 0u, 5u);
+///     atomicMin(counters.ulow, uint(i));
+///     atomicMax(counters.uhigh, uint(i) - 2u);
+///     ocolor = vcolor;
+/// }
+/// ```
+const store_atomics = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000004D, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000C, 0x0000004B, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000C, 0x0000001E, 0x00000000,
+    0x00030047, 0x00000015, 0x00000003, 0x00050048, 0x00000015, 0x00000000,
+    0x00000023, 0x00000000, 0x00050048, 0x00000015, 0x00000001, 0x00000023,
+    0x00000004, 0x00050048, 0x00000015, 0x00000002, 0x00000023, 0x00000008,
+    0x00050048, 0x00000015, 0x00000003, 0x00000023, 0x0000000C, 0x00050048,
+    0x00000015, 0x00000004, 0x00000023, 0x00000010, 0x00050048, 0x00000015,
+    0x00000005, 0x00000023, 0x00000014, 0x00050048, 0x00000015, 0x00000006,
+    0x00000023, 0x00000018, 0x00050048, 0x00000015, 0x00000007, 0x00000023,
+    0x0000001C, 0x00050048, 0x00000015, 0x00000008, 0x00000023, 0x00000020,
+    0x00050048, 0x00000015, 0x00000009, 0x00000023, 0x00000024, 0x00040047,
+    0x00000017, 0x00000021, 0x00000001, 0x00040047, 0x00000017, 0x00000022,
+    0x00000000, 0x00040047, 0x0000004B, 0x0000001E, 0x00000000, 0x00020013,
+    0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006,
+    0x00000020, 0x00000001, 0x00030016, 0x00000009, 0x00000020, 0x00040017,
+    0x0000000A, 0x00000009, 0x00000004, 0x00040020, 0x0000000B, 0x00000001,
+    0x0000000A, 0x0004003B, 0x0000000B, 0x0000000C, 0x00000001, 0x00040015,
+    0x0000000D, 0x00000020, 0x00000000, 0x0004002B, 0x0000000D, 0x0000000E,
+    0x00000000, 0x00040020, 0x0000000F, 0x00000001, 0x00000009, 0x0004002B,
+    0x00000009, 0x00000012, 0x3FC00000, 0x000C001E, 0x00000015, 0x0000000D,
+    0x0000000D, 0x0000000D, 0x00000006, 0x00000006, 0x0000000D, 0x0000000D,
+    0x0000000D, 0x0000000D, 0x0000000D, 0x00040020, 0x00000016, 0x00000002,
+    0x00000015, 0x0004003B, 0x00000016, 0x00000017, 0x00000002, 0x0004002B,
+    0x00000006, 0x00000018, 0x00000000, 0x00040020, 0x00000019, 0x00000002,
+    0x0000000D, 0x0004002B, 0x0000000D, 0x0000001B, 0x00000001, 0x0004002B,
+    0x00000006, 0x0000001D, 0x00000001, 0x0004002B, 0x0000000D, 0x0000001F,
+    0x00000003, 0x0004002B, 0x00000006, 0x00000021, 0x00000002, 0x0004002B,
+    0x00000006, 0x00000026, 0x00000003, 0x00040020, 0x00000027, 0x00000002,
+    0x00000006, 0x0004002B, 0x00000006, 0x0000002B, 0x00000004, 0x0004002B,
+    0x00000006, 0x00000030, 0x00000005, 0x0004002B, 0x00000006, 0x00000036,
+    0x00000006, 0x0004002B, 0x0000000D, 0x00000038, 0x00000007, 0x0004002B,
+    0x00000006, 0x0000003A, 0x00000007, 0x0004002B, 0x0000000D, 0x0000003C,
+    0x00000005, 0x0004002B, 0x00000006, 0x0000003E, 0x00000008, 0x0004002B,
+    0x00000006, 0x00000043, 0x00000009, 0x0004002B, 0x0000000D, 0x00000047,
+    0x00000002, 0x00040020, 0x0000004A, 0x00000003, 0x0000000A, 0x0004003B,
+    0x0000004A, 0x0000004B, 0x00000003, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x00050041, 0x0000000F,
+    0x00000010, 0x0000000C, 0x0000000E, 0x0004003D, 0x00000009, 0x00000011,
+    0x00000010, 0x00050085, 0x00000009, 0x00000013, 0x00000011, 0x00000012,
+    0x0004006E, 0x00000006, 0x00000014, 0x00000013, 0x00050041, 0x00000019,
+    0x0000001A, 0x00000017, 0x00000018, 0x000700EA, 0x0000000D, 0x0000001C,
+    0x0000001A, 0x0000001B, 0x0000000E, 0x0000001B, 0x00050041, 0x00000019,
+    0x0000001E, 0x00000017, 0x0000001D, 0x000700EA, 0x0000000D, 0x00000020,
+    0x0000001E, 0x0000001B, 0x0000000E, 0x0000001F, 0x00050041, 0x00000019,
+    0x00000022, 0x00000017, 0x00000021, 0x000500C4, 0x0000000D, 0x00000024,
+    0x0000001B, 0x00000014, 0x000700F1, 0x0000000D, 0x00000025, 0x00000022,
+    0x0000001B, 0x0000000E, 0x00000024, 0x00050041, 0x00000027, 0x00000028,
+    0x00000017, 0x00000026, 0x000700EE, 0x00000006, 0x0000002A, 0x00000028,
+    0x0000001B, 0x0000000E, 0x00000014, 0x00050041, 0x00000027, 0x0000002C,
+    0x00000017, 0x0000002B, 0x00050082, 0x00000006, 0x0000002E, 0x00000014,
+    0x0000001D, 0x000700EC, 0x00000006, 0x0000002F, 0x0000002C, 0x0000001B,
+    0x0000000E, 0x0000002E, 0x00050041, 0x00000019, 0x00000031, 0x00000017,
+    0x00000030, 0x000400C8, 0x0000000D, 0x00000034, 0x00000024, 0x000700F0,
+    0x0000000D, 0x00000035, 0x00000031, 0x0000001B, 0x0000000E, 0x00000034,
+    0x00050041, 0x00000019, 0x00000037, 0x00000017, 0x00000036, 0x000700E5,
+    0x0000000D, 0x00000039, 0x00000037, 0x0000001B, 0x0000000E, 0x00000038,
+    0x00050041, 0x00000019, 0x0000003B, 0x00000017, 0x0000003A, 0x000900E6,
+    0x0000000D, 0x0000003D, 0x0000003B, 0x0000001B, 0x0000000E, 0x0000000E,
+    0x0000003C, 0x0000000E, 0x00050041, 0x00000019, 0x0000003F, 0x00000017,
+    0x0000003E, 0x0004007C, 0x0000000D, 0x00000041, 0x00000014, 0x000700ED,
+    0x0000000D, 0x00000042, 0x0000003F, 0x0000001B, 0x0000000E, 0x00000041,
+    0x00050041, 0x00000019, 0x00000044, 0x00000017, 0x00000043, 0x00050082,
+    0x0000000D, 0x00000048, 0x00000041, 0x00000047, 0x000700EF, 0x0000000D,
+    0x00000049, 0x00000044, 0x0000001B, 0x0000000E, 0x00000048, 0x0004003D,
+    0x0000000A, 0x0000004C, 0x0000000C, 0x0003003E, 0x0000004B, 0x0000004C,
+    0x000100FD, 0x00010038,
+};
+
+/// glslc's words of a fragment shader that reads back what
+/// `store_atomics` left, readonly: the count and the sum as fractions,
+/// and the other words packed so that one wrong moves the colour, plus a
+/// sixteenth of the colour (since 1.37).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// layout(set = 0, binding = 1) readonly buffer Counters { uint count; uint sum; uint bits; int high; int low; uint gone; uint swapped; uint flipped; uint ulow; uint uhigh; } counters;
+/// void main() {
+///     float code = float(counters.bits + 4u * uint(counters.high) + 8u * uint(counters.low) + 16u * counters.ulow + 32u * (counters.uhigh + 2u));
+///     float rest = float(counters.gone) / 512.0 + float(counters.swapped) / 64.0 + float(counters.flipped) / 32.0;
+///     ocolor = vec4(float(counters.count) / 65536.0, float(counters.sum) / 196608.0, code / 255.0, rest) + vcolor * 0.0625;
+/// }
+/// ```
+const store_counted = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000065, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000047, 0x0000005A, 0x00030010,
+    0x00000004, 0x00000007, 0x00030047, 0x0000000B, 0x00000003, 0x00040048,
+    0x0000000B, 0x00000000, 0x00000018, 0x00050048, 0x0000000B, 0x00000000,
+    0x00000023, 0x00000000, 0x00040048, 0x0000000B, 0x00000001, 0x00000018,
+    0x00050048, 0x0000000B, 0x00000001, 0x00000023, 0x00000004, 0x00040048,
+    0x0000000B, 0x00000002, 0x00000018, 0x00050048, 0x0000000B, 0x00000002,
+    0x00000023, 0x00000008, 0x00040048, 0x0000000B, 0x00000003, 0x00000018,
+    0x00050048, 0x0000000B, 0x00000003, 0x00000023, 0x0000000C, 0x00040048,
+    0x0000000B, 0x00000004, 0x00000018, 0x00050048, 0x0000000B, 0x00000004,
+    0x00000023, 0x00000010, 0x00040048, 0x0000000B, 0x00000005, 0x00000018,
+    0x00050048, 0x0000000B, 0x00000005, 0x00000023, 0x00000014, 0x00040048,
+    0x0000000B, 0x00000006, 0x00000018, 0x00050048, 0x0000000B, 0x00000006,
+    0x00000023, 0x00000018, 0x00040048, 0x0000000B, 0x00000007, 0x00000018,
+    0x00050048, 0x0000000B, 0x00000007, 0x00000023, 0x0000001C, 0x00040048,
+    0x0000000B, 0x00000008, 0x00000018, 0x00050048, 0x0000000B, 0x00000008,
+    0x00000023, 0x00000020, 0x00040048, 0x0000000B, 0x00000009, 0x00000018,
+    0x00050048, 0x0000000B, 0x00000009, 0x00000023, 0x00000024, 0x00030047,
+    0x0000000D, 0x00000018, 0x00040047, 0x0000000D, 0x00000021, 0x00000001,
+    0x00040047, 0x0000000D, 0x00000022, 0x00000000, 0x00040047, 0x00000047,
+    0x0000001E, 0x00000000, 0x00040047, 0x0000005A, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040015, 0x00000009, 0x00000020, 0x00000000,
+    0x00040015, 0x0000000A, 0x00000020, 0x00000001, 0x000C001E, 0x0000000B,
+    0x00000009, 0x00000009, 0x00000009, 0x0000000A, 0x0000000A, 0x00000009,
+    0x00000009, 0x00000009, 0x00000009, 0x00000009, 0x00040020, 0x0000000C,
+    0x00000002, 0x0000000B, 0x0004003B, 0x0000000C, 0x0000000D, 0x00000002,
+    0x0004002B, 0x0000000A, 0x0000000E, 0x00000002, 0x00040020, 0x0000000F,
+    0x00000002, 0x00000009, 0x0004002B, 0x00000009, 0x00000012, 0x00000004,
+    0x0004002B, 0x0000000A, 0x00000013, 0x00000003, 0x00040020, 0x00000014,
+    0x00000002, 0x0000000A, 0x0004002B, 0x00000009, 0x0000001A, 0x00000008,
+    0x0004002B, 0x0000000A, 0x0000001B, 0x00000004, 0x0004002B, 0x00000009,
+    0x00000021, 0x00000010, 0x0004002B, 0x0000000A, 0x00000022, 0x00000008,
+    0x0004002B, 0x00000009, 0x00000027, 0x00000020, 0x0004002B, 0x0000000A,
+    0x00000028, 0x00000009, 0x0004002B, 0x00000009, 0x0000002B, 0x00000002,
+    0x0004002B, 0x0000000A, 0x00000031, 0x00000005, 0x0004002B, 0x0000000A,
+    0x00000037, 0x00000006, 0x0004002B, 0x0000000A, 0x0000003E, 0x00000007,
+    0x00040017, 0x00000045, 0x00000006, 0x00000004, 0x00040020, 0x00000046,
+    0x00000003, 0x00000045, 0x0004003B, 0x00000046, 0x00000047, 0x00000003,
+    0x0004002B, 0x0000000A, 0x00000048, 0x00000000, 0x0004002B, 0x0000000A,
+    0x0000004E, 0x00000001, 0x00040020, 0x00000059, 0x00000001, 0x00000045,
+    0x0004003B, 0x00000059, 0x0000005A, 0x00000001, 0x0004002B, 0x00000006,
+    0x0000005C, 0x3D800000, 0x0004002B, 0x00000006, 0x0000005F, 0x3B000000,
+    0x0004002B, 0x00000006, 0x00000060, 0x3C800000, 0x0004002B, 0x00000006,
+    0x00000061, 0x3D000000, 0x0004002B, 0x00000006, 0x00000062, 0x37800000,
+    0x0004002B, 0x00000006, 0x00000063, 0x36AAAAAB, 0x0004002B, 0x00000006,
+    0x00000064, 0x3B808081, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x00050041, 0x0000000F, 0x00000010,
+    0x0000000D, 0x0000000E, 0x0004003D, 0x00000009, 0x00000011, 0x00000010,
+    0x00050041, 0x00000014, 0x00000015, 0x0000000D, 0x00000013, 0x0004003D,
+    0x0000000A, 0x00000016, 0x00000015, 0x0004007C, 0x00000009, 0x00000017,
+    0x00000016, 0x00050084, 0x00000009, 0x00000018, 0x00000012, 0x00000017,
+    0x00050080, 0x00000009, 0x00000019, 0x00000011, 0x00000018, 0x00050041,
+    0x00000014, 0x0000001C, 0x0000000D, 0x0000001B, 0x0004003D, 0x0000000A,
+    0x0000001D, 0x0000001C, 0x0004007C, 0x00000009, 0x0000001E, 0x0000001D,
+    0x00050084, 0x00000009, 0x0000001F, 0x0000001A, 0x0000001E, 0x00050080,
+    0x00000009, 0x00000020, 0x00000019, 0x0000001F, 0x00050041, 0x0000000F,
+    0x00000023, 0x0000000D, 0x00000022, 0x0004003D, 0x00000009, 0x00000024,
+    0x00000023, 0x00050084, 0x00000009, 0x00000025, 0x00000021, 0x00000024,
+    0x00050080, 0x00000009, 0x00000026, 0x00000020, 0x00000025, 0x00050041,
+    0x0000000F, 0x00000029, 0x0000000D, 0x00000028, 0x0004003D, 0x00000009,
+    0x0000002A, 0x00000029, 0x00050080, 0x00000009, 0x0000002C, 0x0000002A,
+    0x0000002B, 0x00050084, 0x00000009, 0x0000002D, 0x00000027, 0x0000002C,
+    0x00050080, 0x00000009, 0x0000002E, 0x00000026, 0x0000002D, 0x00040070,
+    0x00000006, 0x0000002F, 0x0000002E, 0x00050041, 0x0000000F, 0x00000032,
+    0x0000000D, 0x00000031, 0x0004003D, 0x00000009, 0x00000033, 0x00000032,
+    0x00040070, 0x00000006, 0x00000034, 0x00000033, 0x00050085, 0x00000006,
+    0x00000036, 0x00000034, 0x0000005F, 0x00050041, 0x0000000F, 0x00000038,
+    0x0000000D, 0x00000037, 0x0004003D, 0x00000009, 0x00000039, 0x00000038,
+    0x00040070, 0x00000006, 0x0000003A, 0x00000039, 0x00050085, 0x00000006,
+    0x0000003C, 0x0000003A, 0x00000060, 0x00050081, 0x00000006, 0x0000003D,
+    0x00000036, 0x0000003C, 0x00050041, 0x0000000F, 0x0000003F, 0x0000000D,
+    0x0000003E, 0x0004003D, 0x00000009, 0x00000040, 0x0000003F, 0x00040070,
+    0x00000006, 0x00000041, 0x00000040, 0x00050085, 0x00000006, 0x00000043,
+    0x00000041, 0x00000061, 0x00050081, 0x00000006, 0x00000044, 0x0000003D,
+    0x00000043, 0x00050041, 0x0000000F, 0x00000049, 0x0000000D, 0x00000048,
+    0x0004003D, 0x00000009, 0x0000004A, 0x00000049, 0x00040070, 0x00000006,
+    0x0000004B, 0x0000004A, 0x00050085, 0x00000006, 0x0000004D, 0x0000004B,
+    0x00000062, 0x00050041, 0x0000000F, 0x0000004F, 0x0000000D, 0x0000004E,
+    0x0004003D, 0x00000009, 0x00000050, 0x0000004F, 0x00040070, 0x00000006,
+    0x00000051, 0x00000050, 0x00050085, 0x00000006, 0x00000053, 0x00000051,
+    0x00000063, 0x00050085, 0x00000006, 0x00000056, 0x0000002F, 0x00000064,
+    0x00070050, 0x00000045, 0x00000058, 0x0000004D, 0x00000053, 0x00000056,
+    0x00000044, 0x0004003D, 0x00000045, 0x0000005B, 0x0000005A, 0x0005008E,
+    0x00000045, 0x0000005D, 0x0000005B, 0x0000005C, 0x00050081, 0x00000045,
+    0x0000005E, 0x00000058, 0x0000005D, 0x0003003E, 0x00000047, 0x0000005E,
+    0x000100FD, 0x00010038,
+};
 /// glslc's own output, at -O, for a constant mat3 times a vector,
 /// glslc_constant_matrix: three constant columns, read where the product
 /// first wants them (since 1.30).
@@ -2643,6 +2934,12 @@ const Side = struct {
     written: ?*facet.Buffer = null,
     written_bytes: [*]u8 = undefined,
     written_set: ?*facet.DescriptorSet = null,
+    /// The storage buffer the shipped atomics change and read back, ten
+    /// words in 64 bytes of their own, and `indexed_layout`'s set of the
+    /// uniform arrays' block and it (since 1.37).
+    counters: ?*facet.Buffer = null,
+    counters_bytes: [*]u8 = undefined,
+    counters_set: ?*facet.DescriptorSet = null,
     compute_layout: ?*facet.PipelineLayout = null,
     compute_pipelines: [2]?*facet.Pipeline = @splat(null),
     /// The pipelines of the case being drawn.
@@ -2723,7 +3020,7 @@ const Side = struct {
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 7 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 8 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -3236,6 +3533,15 @@ const Side = struct {
             .{ .dst_set = side.written_set.?, .dst_binding = 1, .descriptor_type = .storage_buffer, .buffer_info = @ptrCast(&written) },
         };
         fb.UpdateDescriptorSets(device, 2, &written_writes, 0, null);
+        side.counters_bytes = try side.buffer(64, facet.BUFFER_USAGE_STORAGE_BUFFER, &side.counters);
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&side.indexed_set_layout) }, &made), error.Refused);
+        side.counters_set = made[0];
+        const counted = facet.DescriptorBufferInfo{ .buffer = side.counters };
+        const counters_writes = [2]facet.WriteDescriptorSet{
+            .{ .dst_set = side.counters_set.?, .dst_binding = 0, .descriptor_type = .uniform_buffer, .buffer_info = @ptrCast(&blocks) },
+            .{ .dst_set = side.counters_set.?, .dst_binding = 1, .descriptor_type = .storage_buffer, .buffer_info = @ptrCast(&counted) },
+        };
+        fb.UpdateDescriptorSets(device, 2, &counters_writes, 0, null);
     }
 
     fn down(side: *Side) void {
@@ -3250,6 +3556,7 @@ const Side = struct {
         fb.DestroyDescriptorSetLayout(device, side.uniform_set_layout);
         fb.DestroyBuffer(device, side.uniforms);
         fb.DestroyBuffer(device, side.written);
+        fb.DestroyBuffer(device, side.counters);
         for (side.compute_pipelines) |each| fb.DestroyPipeline(device, each);
         fb.DestroyPipelineLayout(device, side.compute_layout);
         fb.DestroyDescriptorSetLayout(device, side.compute_set_layout);
@@ -4497,6 +4804,30 @@ const Cases = struct {
         side.draw(clockwise_at, 3);
         side.end();
     }
+    /// The shipped atomics: a pass whose program changes `counters_set`'s
+    /// ten words through every atomic GLSL has, by each pixel over the
+    /// geometry the shipped cases draw; a barrier from the fragment
+    /// shader's writes to its reads; and a pass over the first triangle
+    /// whose program packs the words into the colour. The words start
+    /// where a signed minimum or maximum done unsigned, or the other way
+    /// round, ends elsewhere, and the count is fine enough that a helper
+    /// pixel's atomics would show (since 1.37).
+    fn atomics(side: *Side) Failure!void {
+        const initial: [*]align(1) u32 = @ptrCast(side.counters_bytes);
+        @memcpy(initial[0..10], &[10]u32{ 0, 0, 0, @bitCast(@as(i32, -5)), 9, 0xff, 0, 0, 0xffffffff, 0 });
+        side.begin(.{});
+        try side.use(.{ .vertex = "as it is", .fragment = "shipped atomics", .layout = side.indexed_layout.? });
+        side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.indexed_layout.?, 0, 1, @ptrCast(&side.counters_set), 0, null);
+        side.draw(clockwise_at, 6);
+        side.end();
+        const changed = facet.MemoryBarrier{ .src_access_mask = facet.ACCESS_SHADER_WRITE, .dst_access_mask = facet.ACCESS_SHADER_READ };
+        side.fb.CmdPipelineBarrier(side.commands.?, facet.PIPELINE_STAGE_FRAGMENT_SHADER, facet.PIPELINE_STAGE_FRAGMENT_SHADER, 0, 1, @ptrCast(&changed), 0, null, 0, null);
+        side.begin(.{ .load = true });
+        try side.use(.{ .vertex = "as it is", .fragment = "shipped counted", .layout = side.indexed_layout.?, .load = true });
+        side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.indexed_layout.?, 0, 1, @ptrCast(&side.counters_set), 0, null);
+        side.draw(clockwise_at, 3);
+        side.end();
+    }
     /// The vertices' colour times a pushed float, plus a pushed colour.
     fn tinted(side: *Side) Failure!void {
         side.begin(.{});
@@ -4738,6 +5069,7 @@ const cases = [_]Case{
     .{ .name = "shipped indexed", .run = Cases.indexed },
     .{ .name = "shipped lanes", .run = Cases.lanes },
     .{ .name = "shipped stores", .run = Cases.stores },
+    .{ .name = "shipped atomics", .run = Cases.atomics },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },
