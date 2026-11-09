@@ -195,6 +195,42 @@ test "a device asked for a feature it has not got is refused, which is Vulkan's 
     rig.fb.DestroyDevice(device);
 }
 
+test "fragmentStoresAndAtomics is the device's whose compiled fragment programs store, and vertexPipelineStoresAndAtomics no device's" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const record = _objects.of(_instance.PhysicalDevice, physical);
+    const queue_info = facet.DeviceQueueCreateInfo{};
+    var wanted = facet.PhysicalDeviceFeatures{ .fragment_stores_and_atomics = facet.TRUE };
+    const asking = facet.DeviceCreateInfo{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&queue_info), .enabled_features = &wanted };
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    var device: ?*facet.Device = null;
+
+    // The cores draw with the program's own function and compile no
+    // SPIR-V: neither, and asking for it is refused.
+    try testing.expect(!record.can.fragment_stores);
+    rig.fb.GetPhysicalDeviceFeatures(physical, &features);
+    try testing.expectEqual(facet.FALSE, features.fragment_stores_and_atomics);
+    try testing.expectEqual(facet.FALSE, features.vertex_pipeline_stores_and_atomics);
+    try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.CreateDevice(physical, &asking, &device));
+    try testing.expect(device == null);
+
+    // A device whose fragment programs store, as the V3D's do (since
+    // 1.170): the fragment feature is there to be asked for, the vertex
+    // one still not, a vertex program running twice there.
+    record.can.fragment_stores = true;
+    defer record.can.fragment_stores = false;
+    rig.fb.GetPhysicalDeviceFeatures(physical, &features);
+    try testing.expectEqual(facet.TRUE, features.fragment_stores_and_atomics);
+    try testing.expectEqual(facet.FALSE, features.vertex_pipeline_stores_and_atomics);
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateDevice(physical, &asking, &device));
+    rig.fb.DestroyDevice(device);
+    wanted = .{ .vertex_pipeline_stores_and_atomics = facet.TRUE };
+    device = null;
+    try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.CreateDevice(physical, &asking, &device));
+}
+
 // The shape of the three structures a physical device is described by,
 // held without needing a Vulkan header - which the build cannot count on,
 // and `scripts/vulkan-struct-check.sh` is for. What that script does and

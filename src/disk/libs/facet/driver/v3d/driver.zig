@@ -308,6 +308,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // Nor a texture of whole numbers, for the same reason (since
         // 1.70).
         .whole_textures = false,
+        // Storage buffer stores and atomics in a fragment program,
+        // through the TMU (since 1.170).
+        .fragment_stores = true,
         // No QPU program reads a fourth coordinate, so a cube of an array
         // is refused here: the view as well as the pipeline.
         .cube_arrays = false,
@@ -760,6 +763,13 @@ fn compiled(pipeline: *Pipeline) facet.Result {
     // count, so this is the words disagreeing with the entry that shipped
     // them rather than a pipeline that was put together wrongly.
     if (code.varyings != pipeline.varyings) return .error_feature_not_present;
+    // A program that writes memory in a subpass drawn a part for each
+    // colour attachment would write once for each part: its stores again,
+    // its atomics counted again (docs/facet-vulkan10.md item 87). v3dv
+    // draws such a subpass once, its fragment program writing every
+    // render target (item 55); until a program here writes more than the
+    // one colour, the pipeline is refused (since 1.170).
+    if (code.tmu_dirty_rcl and pipeline.replayed) return .error_feature_not_present;
     // The floats of each location the fragment program reads, which the
     // vertex program is keyed by (used_outputs, from the fragment
     // program's input_slots: pipeline_populate_v3d_vs_key,

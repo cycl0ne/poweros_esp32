@@ -5309,4 +5309,48 @@ pub const LIBRARY_VERSION = 1;
 /// as the stores' case is: the V3D's ten atomics end where the cores'
 /// end, a helper pixel's changing nothing. FacetBoth's other 231 cases
 /// are as they were at 1.168, and FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 169;
+///
+/// 170: **fragmentStoresAndAtomics on the V3D (docs/facet-vulkan10.md
+/// items 59 and 87).** A whole matrix stored into a storage buffer is
+/// its columns, each a store of its own at its MatrixStride, as
+/// _vtn_variable_load_store walks a matrix for a store as for a load
+/// (vtn_variables.c:763-780): a mat3x2 of std430 three stores of two
+/// floats, 8 bytes apart. A whole array or struct stays refused, the walk
+/// holding no value of many kinds.
+///
+/// A subpass of several colour attachments is drawn a part for each, its
+/// commands played again from its begin (items 80 and 87), so a program
+/// that writes memory would write once for each part, and an atomic count
+/// as many times. The pipeline now knows (`Pipeline.replayed`), and the
+/// V3D refuses such a pipeline whose program writes (its tmu_dirty_rcl)
+/// with error_feature_not_present. v3dv draws such a subpass once, its
+/// program writing every render target (item 55), which lifts this.
+///
+/// With that, `Capabilities.fragment_stores` is true on the V3D and
+/// GetPhysicalDeviceFeatures says fragment_stores_and_atomics there: its
+/// programs store and do atomics through the TMU, a pixel's lookup that a
+/// helper pixel and a discarded one take no part in (each discard flushes
+/// the TMU before its SETMSF, nir_to_vir.c:3815-3852, and SETMSF orders
+/// the TMU writes after it, qpu_schedule.c:407-410), early Z is off for
+/// them (1.168), and the caches are cleaned after a job that wrote. False
+/// on the cores, which compile no SPIR-V: their function is the
+/// program's. vertex_pipeline_stores_and_atomics stays false on both. No
+/// shader writes a storage image, nor does atomics on one (item 39).
+///
+/// Tests: the V3D's 213, one new. glslc_placed (272 words) is 57
+/// instructions: the mat4's four columns at 0 to 48, configuration
+/// 0xFFFFFFFC each, the mat3x2's three at 64, 72 and 80, 0xFFFFFFFA,
+/// twenty-two TMUD writes and one TMUWT; a constant 16 in place of the
+/// stride fails it. The library's: a pipeline in a subpass of one colour,
+/// or of two drawn together, is not `replayed`, one of two drawn apart
+/// is; and the feature follows the device's capability, asked for or
+/// refused with it, the vertex one refused either way. FacetBoth 1.38
+/// asks each device, before the cases, for a writing program in a
+/// subpass of two colours: refused where the device compiles, made on
+/// the cores, and a reading one made on both.
+///
+/// On the CM5 the V3D refuses the writing program in a subpass of two
+/// colours and makes the reading one; the cores make both. FacetBoth's
+/// 232 cases are as they were at 1.169, and FacetProbe passes its 890
+/// checks.
+pub const LIBRARY_REVISION = 170;

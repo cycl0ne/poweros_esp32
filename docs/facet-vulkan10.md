@@ -2254,6 +2254,14 @@ Refused: an atomic in an if-arm, which nir_opt_peephole_select leaves a branch (
 
 glslc_atomics is 43 instructions: ten atomics, ten TMUD writes, ten TMUAU, ten LDTMUs and no TMUWT, each configuration its operation's. In glslc_returned, the increment and the decrement write no operand and the compare-exchange writes its comparator before its value. In glslc_ordered, an acquire-release atomic sits between two barriers, and its word is read before the next atomic goes out. Eight mutations of the port each fail the tests. On the CM5, FacetBoth 1.37's case of atomics is 8 pixels of 230,400 apart, the triangle's edge alone. Its first pass changes ten words through every atomic GLSL has, by each pixel, and its second packs them into the colour, beside functions on the cores whose pixels race through real atomics. The words start where a signed minimum or maximum done unsigned, or the other way round, would end elsewhere, and the count is fine enough that a helper pixel's atomics would show. The other 231 cases are unchanged, and FacetProbe is 890 of 890.
 
+**Then fragmentStoresAndAtomics on the V3D**, facet.library 1.170.
+
+- **Matrices stored.** A whole matrix stored into a storage buffer is its columns, each a store of its own at its MatrixStride, as _vtn_variable_load_store walks a matrix for a store as for a load (vtn_variables.c:763-780). A whole array or struct stays refused: the walk holds no value of many kinds.
+- **The replay guarded.** A subpass of several colour attachments is drawn a part for each, its commands played again (items 80 and 87), so a program that writes memory would write once for each part, and an atomic would count as many times. The V3D refuses such a pipeline with error_feature_not_present when its program writes. v3dv draws the subpass once, its program writing every render target (item 55), and that lifts the refusal.
+- **The feature.** GetPhysicalDeviceFeatures says fragment_stores_and_atomics on the V3D. Its programs store and do atomics through the TMU, a pixel's lookup that a helper pixel and a discarded one take no part in: each discard flushes the TMU before its SETMSF (nir_to_vir.c:3815-3852), and SETMSF orders the TMU writes after it (qpu_schedule.c:407-410). Early Z is off for such programs (1.168), and the caches are cleaned after a job that wrote. The cores compile no SPIR-V, so the feature is false there. vertex_pipeline_stores_and_atomics stays false on both, and no shader writes a storage image (item 39).
+
+glslc_placed stores a mat4 and a std430 mat3x2, the latter's columns 8 bytes apart; a constant 16 in place of the stride fails its test. On the CM5, FacetBoth 1.38 asks each device for a writing program in a subpass of two colours: the V3D refuses it and makes a reading one, and the cores make both. The 232 cases are unchanged, and FacetProbe is 890 of 890.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim
@@ -3099,7 +3107,8 @@ Until then it has to be faithful.
   on the board, but this use of it is unchecked there.
 - Neither device writes from a fragment function: `fragment_stores_and_atomics`
   is false on both. If that changes, a replayed part must not repeat a
-  function's stores either.
+  function's stores either. Since 1.170 the V3D says it writes, and refuses a
+  pipeline whose program writes in a subpass drawn a part for each.
 - Found alongside, and item 88: only one query counts at a time on the
   cores.
 

@@ -221,6 +221,12 @@ pub const Pipeline = struct {
     /// subpass with no colour (since 1.150, docs/facet-vulkan10.md item
     /// 43).
     colorless: bool = false,
+    /// Its subpass is drawn in more than one part, a part for each colour
+    /// attachment, its commands played again from its begin for each
+    /// (docs/facet-vulkan10.md items 80 and 87). A driver whose program
+    /// writes memory refuses it: each part would write again, and an
+    /// atomic count twice what the subpass did (since 1.170).
+    replayed: bool = false,
     /// The stages name a fragment one. Where they do not, `fragment` is
     /// the function of no instructions (since 1.115), and a driver that
     /// compiles draws with a program of no colour of its own, as v3dv
