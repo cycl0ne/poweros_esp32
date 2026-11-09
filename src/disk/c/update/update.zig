@@ -75,7 +75,8 @@
 //! to keep it: the two numbers in `autoboot.txt` the other way round, so
 //! that the next start is on this partition with no flag set. A system
 //! that never comes up never runs it, and the start after the tried one
-//! is back on the partition that worked.
+//! is back on the partition that worked. Run on a system the firmware
+//! started from any other partition, it says so and keeps nothing.
 //!
 //! **RESTART** starts the machine again at the end, through `C:Reboot`,
 //! which holds every drive still first; where a partition was written to

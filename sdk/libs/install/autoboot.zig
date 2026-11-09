@@ -19,6 +19,12 @@
 //! writing this file with the two numbers the other way round
 //! (`swapped`), which is what `C:Update CONFIRM` does.
 //!
+//! Only that system may: once the swap is made the file names the other
+//! partition to try, and it names the new one before the restart and
+//! after a try that did not come up as well. So keeping goes by where
+//! the firmware says it started this system from (`keeping`), held
+//! against the partition being tried.
+//!
 //! `tryboot_a_b=1` says the tried partition is read as the other one is -
 //! its own `config.txt`, and the kernel beside it - rather than from
 //! files of another name, which is what makes a pair of partitions
@@ -58,6 +64,32 @@ pub const Settings = struct {
         return .{ .normal = settings.tried, .tried = settings.normal, .a_b = settings.a_b };
     }
 };
+
+/// What keeping the tried partition comes to on this system.
+pub const Keeping = enum {
+    /// No partition is named to try: there is nothing to keep.
+    nothing_tried,
+    /// The firmware did not say where it started this system from, so
+    /// whether it is the one being tried is not known.
+    start_unknown,
+    /// This system was started from another partition than the one being
+    /// tried - before the restart that tries it, after a try that did not
+    /// come up, or after the swap was made: nothing of it is to be kept.
+    not_this_one,
+    /// This system was started from the partition being tried: keeping
+    /// it is the swap.
+    this_one,
+};
+
+/// What keeping comes to where the file says `settings` and the firmware
+/// started this system from the partition `started` (0 where it did not
+/// say).
+pub fn keeping(settings: Settings, started: u32) Keeping {
+    if (settings.tried == 0) return .nothing_tried;
+    if (started == 0) return .start_unknown;
+    if (started != settings.tried) return .not_this_one;
+    return .this_one;
+}
 
 /// The file read. A file that is not there at all is `Settings{}`, which
 /// says the same as one that names no partition.

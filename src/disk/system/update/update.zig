@@ -29,12 +29,11 @@
 //! has written something - with the kernel written to a partition the
 //! firmware is to try, on that partition, for one start.
 //!
-//! **Keep this system** is there while the firmware is told to try a
-//! partition at the next start - a look as the window opens
-//! (`ConfirmUpdate` with `UPD_Check`) says so - and on the system that
-//! came up on it, makes it the partition the firmware starts from. The
-//! look goes by `autoboot.txt`, not by the partition this system started
-//! from, so the note says which system the button is for.
+//! **Keep this system** is there when this system came up on the
+//! partition the firmware was told to try: a look as the window opens
+//! (`ConfirmUpdate` with `UPD_Check`) holds where the firmware says it
+//! started this system from against `autoboot.txt`, and the button makes
+//! that partition the one the firmware starts from.
 //!
 //! The work is done on a process of its own (`worker.zig`), through
 //! update.library, so the window keeps answering while a package is read
@@ -70,8 +69,8 @@ const cb_class = sdk.gadgets.checkbox;
 const fg = sdk.gadgets.fuelgauge;
 
 pub const COMMAND_NAME = "Update";
-const VERSION = "1.1";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (08.11.2026)\r\n";
+const VERSION = "1.2";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
@@ -194,7 +193,8 @@ const App = struct {
     /// the kernel, into a partition the firmware is to try.
     restart_wanted: bool = false,
     tried: bool = false,
-    /// The firmware is told to try a partition, which Keep keeps.
+    /// This system came up on the partition being tried, which Keep
+    /// keeps.
     keep_offered: bool = false,
 
     // --- the gadgets ---------------------------------------------------------------
@@ -445,7 +445,7 @@ const App = struct {
             }
         }
         if (app.keep_offered and app.note.length == 0) {
-            app.note.say(sys, "The firmware is told to try a partition: on the system that came up on it, Keep this system makes it the one it starts from.", .{});
+            app.note.say(sys, "This system came up on the partition the firmware was told to try: Keep this system makes it the one it starts from.", .{});
         }
         app.showStatus();
         app.showButtons();

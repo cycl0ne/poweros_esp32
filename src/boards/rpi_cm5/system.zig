@@ -107,6 +107,11 @@ pub var ethernet_station: [6]u8 = @splat(0);
 /// name for it - into the second.
 pub const stations = .{ .{ 0x0110_0000, &wifi_station }, .{ 0x10_0000, &ethernet_station } };
 
+/// Where the bootloader started this system from: the kernel copies the
+/// device tree's `/chosen/bootloader` `partition` and `tryboot` in before
+/// anything runs. Keeping a tried partition goes by it.
+pub var boot_start: st.BootStart = .{};
+
 /// The IO board's Ethernet socket: the RP1's MAC, its source 6, on RGMII to
 /// the module's BCM54210PE, at address 0 on the MAC's management bus. The
 /// PHY adds both delays (the device tree's rgmii-id), and its reset line is
@@ -291,6 +296,7 @@ pub const root = [_]Tag{
     // new kernel is tried on the second boot partition for one start,
     // with the one that worked still on the first.
     .value(st.SYSTAG_BootSlots, 2),
+    .pointer(st.SYSTAG_BootStart, &boot_start),
     .pointer(st.SYSTAG_Part, &usb0),
     .pointer(st.SYSTAG_Part, &usb1),
     .pointer(st.SYSTAG_Part, &pcie1),

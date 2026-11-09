@@ -12,7 +12,9 @@
 //! (`reg`). And each network port's station address: the
 //! `local-mac-address` of every `ethernet@<address>` node, and of every
 //! radio on an SD host - a `wifi@` node in an `mmc@<address>` one, which
-//! the Pi's firmware writes - by its host's address. Read once in
+//! the Pi's firmware writes - by its host's address. And where the Pi's
+//! bootloader started the kernel from: `/chosen/bootloader`'s `partition`
+//! and `tryboot`, each a 32-bit number. Read once in
 //! kmain, before exec's memory exists: the tree sits in RAM exec is
 //! given, and is gone after.
 //!
@@ -69,6 +71,10 @@ pub const Facts = struct {
     core_count: usize = 0,
     stations: [max_stations]Station = undefined,
     station_count: usize = 0,
+    /// The partition the bootloader read the kernel from, 0 where it did
+    /// not say; and whether that start was a try.
+    boot_partition: u32 = 0,
+    boot_tried: bool = false,
 
     /// The station address the tree gives the port whose registers are at
     /// `address`, or null.
@@ -200,6 +206,8 @@ pub fn read(address: usize) Facts {
     var station_depth: u32 = 0;
     var sd_host: ?usize = null;
     var sd_host_depth: u32 = 0;
+    // Whether /chosen/bootloader is being read.
+    var in_bootloader = false;
     while (at + 4 <= tree.len) {
         const token = be32(tree[at..]);
         at += 4;
@@ -236,6 +244,7 @@ pub fn read(address: usize) Facts {
                     station = sd_host;
                     station_depth = depth;
                 }
+                if (depth == 3 and node == .chosen and std.mem.eql(u8, name, "bootloader")) in_bootloader = true;
                 if (depth == 3 and node == .cpus and std.mem.startsWith(u8, name, "cpu@")) {
                     in_cpu = true;
                     cpu_id = null;
@@ -251,6 +260,7 @@ pub fn read(address: usize) Facts {
                         facts.core_count += 1;
                     }
                 }
+                if (depth == 3) in_bootloader = false;
                 if (station != null and depth == station_depth) station = null;
                 if (sd_host != null and depth == sd_host_depth) sd_host = null;
                 depth -|= 1;
@@ -286,6 +296,9 @@ pub fn read(address: usize) Facts {
                 } else if (depth == 2 and node == .chosen) {
                     if (std.mem.eql(u8, name, "linux,initrd-start")) facts.initrd_start = number(value);
                     if (std.mem.eql(u8, name, "linux,initrd-end")) facts.initrd_end = number(value);
+                } else if (depth == 3 and in_bootloader and len == 4) {
+                    if (std.mem.eql(u8, name, "partition")) facts.boot_partition = be32(value);
+                    if (std.mem.eql(u8, name, "tryboot")) facts.boot_tried = be32(value) != 0;
                 } else if (depth == 2 and node == .cpus) {
                     if (std.mem.eql(u8, name, "#address-cells")) cpus_address_cells = be32(value);
                 } else if (depth == 3 and in_cpu) {

@@ -146,6 +146,23 @@ pub const SYSTAG_PlicSources = SYSTAG_Dummy + 34;
 /// makes that many boot partitions, so that a kernel can be replaced with
 /// a way back to the one that worked.
 pub const SYSTAG_BootSlots = SYSTAG_Dummy + 35;
+/// Where the firmware started this system from: a `*const BootStart`,
+/// filled in by the kernel from what the firmware says before anything
+/// runs (the Pi's bootloader: the device tree's `/chosen/bootloader`).
+/// Absent where the firmware says nothing of it.
+pub const SYSTAG_BootStart = SYSTAG_Dummy + 36;
+
+/// What SYSTAG_BootStart points at.
+pub const BootStart = extern struct {
+    /// The partition the firmware read this system's kernel from,
+    /// numbered from 1 as in the disk's table and in `autoboot.txt`; 0
+    /// where it did not say.
+    partition: u32 = 0,
+    /// 1 where that start was a try: the firmware was reset with its
+    /// flag for one start on the other partition set (`C:Reboot
+    /// TRYBOOT`).
+    tried: u32 = 0,
+};
 
 pub const PSRAM_NONE: usize = 0;
 pub const PSRAM_QUAD: usize = 1;

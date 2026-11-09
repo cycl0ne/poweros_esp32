@@ -5,7 +5,8 @@
 //!   ShowConfig DEVICES/S,SPEAKS/K
 //!
 //! First the board's own facts - its name, its flash and PSRAM, where its
-//! console is - then a line per part: which one of its kind, the kind, the
+//! console is, and where the firmware says it started the system from on
+//! a board whose firmware says - then a line per part: which one of its kind, the kind, the
 //! chip, the bus it is reached over with the bus's unit and the address on
 //! it, and every line the part has, each as the pad or expander pin it is
 //! wired to. What is printed is the board's description, read the way any
@@ -37,7 +38,7 @@ const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ShowConfig";
-const VERSION_STRING = "\x00$VER: ShowConfig 1.8 (12.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShowConfig 1.9 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DEVICES/S,SPEAKS/K";
@@ -91,6 +92,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = dl.PutStr("psram    none\n");
     }
     _ = Printf(dl, "console  %s\n", .{console(ub.GetTagData(st.SYSTAG_Console, st.CONSOLE_UART0, root))});
+    const start: ?*const st.BootStart = @ptrFromInt(ub.GetTagData(st.SYSTAG_BootStart, 0, root));
+    if (start) |from| {
+        if (from.partition != 0) {
+            _ = Printf(dl, "started  from partition %d%s\n", .{ from.partition, @as([*:0]const u8, if (from.tried != 0) ", for a try" else "") });
+        } else {
+            _ = dl.PutStr("started  from a partition the firmware did not name\n");
+        }
+    }
 
     _ = dl.PutStr("\nunit  kind       chip          bus        address     lines\n");
     var part = eb.FindBoardPart(null, st.PARTKIND_ANY, st.CHIP_ANY);

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Host tests of `autoboot.txt` (`sdk.install.autoboot`): the file read,
 //! the file written, the swap that makes a tried partition the one the
-//! machine starts from, and what a file that says nothing comes to.
+//! machine starts from, what a file that says nothing comes to, and which
+//! system may keep the tried partition.
 
 const std = @import("std");
 const testing = std.testing;
@@ -79,4 +80,23 @@ test "the swap makes the tried partition the one it starts from" {
     const again = after.swapped();
     try testing.expectEqual(settings.normal, again.normal);
     try testing.expectEqual(settings.tried, again.tried);
+}
+
+test "only the system started from the tried partition keeps it" {
+    const written: autoboot.Settings = .{ .normal = 2, .tried = 3, .a_b = true };
+    // Before the restart, and after a try that did not come up: started
+    // from the partition that worked.
+    try testing.expectEqual(autoboot.Keeping.not_this_one, autoboot.keeping(written, 2));
+    // The new kernel, come up on its try.
+    try testing.expectEqual(autoboot.Keeping.this_one, autoboot.keeping(written, 3));
+    // After the swap the file names the old partition to try; the system
+    // the firmware now starts from has nothing to keep.
+    const kept = written.swapped();
+    try testing.expectEqual(autoboot.Keeping.not_this_one, autoboot.keeping(kept, 3));
+}
+
+test "keeping with nothing tried, or the start not known" {
+    try testing.expectEqual(autoboot.Keeping.nothing_tried, autoboot.keeping(.{ .normal = 2 }, 2));
+    try testing.expectEqual(autoboot.Keeping.nothing_tried, autoboot.keeping(.{}, 0));
+    try testing.expectEqual(autoboot.Keeping.start_unknown, autoboot.keeping(.{ .normal = 2, .tried = 3 }, 0));
 }

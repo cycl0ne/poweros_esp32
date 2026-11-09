@@ -460,8 +460,8 @@ lines above the list.
 - **Restart**, once an update has written something, is `RESTART`: the
   machine started again through `C:Reboot`, on the partition written for
   a try where there is one.
-- **Keep this system** is `CONFIRM`, there while the firmware is told to
-  try a partition - for the system that came up on it.
+- **Keep this system** is `CONFIRM`, there when this system came up on
+  the partition the firmware was told to try.
 
 The run goes on a process of its own, so the window answers while a
 package is read over the network; closing the window stops the run
@@ -507,6 +507,13 @@ partition. The flag goes away by itself: a kernel that does not come up
 costs one start, and the machine is back on the partition that worked. A
 system that did come up keeps the new one with `Update CONFIRM`, which
 writes the two numbers the other way round.
+
+Only that system can. The firmware says which partition it started the
+system from - `C:ShowConfig` shows it as `started` - and `CONFIRM` keeps
+a partition only where that is the one being tried. Run before the
+restart, after a try that did not come up, or a second time, it says
+which partition the system was started from and writes nothing, so the
+partition that worked is never given up for one that has not.
 
 So the whole of it, on a machine with a pair:
 

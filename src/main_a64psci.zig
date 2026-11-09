@@ -164,6 +164,11 @@ fn takeBoard(tree: device_tree.Facts) void {
             if (tree.stationAt(station[0])) |bytes| station[1].* = bytes;
         }
     }
+    // Where the bootloader started the kernel from, for the board's
+    // system list.
+    if (@hasDecl(boards.system, "boot_start")) {
+        boards.system.boot_start = .{ .partition = tree.boot_partition, .tried = @intFromBool(tree.boot_tried) };
+    }
 }
 
 /// Each other core's stack, which its idle task goes on running on.
@@ -227,6 +232,14 @@ export fn kmain(mpidr: u64, fdt: usize) callconv(.c) noreturn {
     note("MPIDR 0x%lx, device tree at 0x%lx, vectors at 0x%lx", .{ cpu.mpidrs[0], @as(u64, fdt), @as(u64, cpu.vecbase()) });
     const psci_version = hardware.psci.version();
     note("PSCI %d.%d by %s", .{ psci_version >> 16, psci_version & 0xFFFF, @as([*:0]const u8, if (hardware.psci.conduit == .smc) "SMC" else "HVC") });
+    if (@hasDecl(boards.system, "boot_start")) {
+        const start = &boards.system.boot_start;
+        if (start.partition != 0) {
+            note("started from partition %d%s", .{ start.partition, @as([*:0]const u8, if (start.tried != 0) ", for a try" else "") });
+        } else {
+            note("the bootloader did not say which partition it started from", .{});
+        }
+    }
     if (cpu.dcacheLine() != hardware.DCACHE_LINE_SIZE) {
         note("data cache lines of %d bytes, not the %d the kernel was built for", .{ cpu.dcacheLine(), @as(u32, hardware.DCACHE_LINE_SIZE) });
     }

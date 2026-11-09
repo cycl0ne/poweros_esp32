@@ -40,13 +40,16 @@ fn ConfirmUpdate(base: *UpdateBase, tags: ?[*]const TagItem) i32
 **RESULT**
 
 - `RETURN_OK`: kept; or nothing to keep - a firmware that reads one
-  partition, or none being tried.
-- `RETURN_WARN`: with `UPD_Check`, one being tried that would be kept.
+  partition, none being tried, or this system started from another
+  partition than the one being tried.
+- `RETURN_WARN`: with `UPD_Check`, this system started from the
+  partition being tried, which would be kept.
 - `RETURN_FAIL`: the reason said as a failure - `install.prefs` not a
   line of settings, rdb.library 1 not there,
   the disk's table not read, the partitions not found or not mounted,
-  `autoboot.txt` not written. With no memory for the call, nothing is
-  said (`IoErr` ERROR_NO_FREE_STORE).
+  a partition being tried and the firmware not saying which one it
+  started this system from, `autoboot.txt` not written. With no memory
+  for the call, nothing is said (`IoErr` ERROR_NO_FREE_STORE).
 
 **BEHAVIOR**
 
@@ -59,6 +62,15 @@ comes up never calls it, and the start after the tried one is back on
 the partition that worked. The partitions are found through
 rdb.library by the names `install.prefs` gives them, and one mounted
 for the call is taken off the device list again after it.
+
+### Only the system on the tried partition
+`autoboot.txt` names a partition to try before the restart, after a
+try that did not come up, and after the swap - then the old one. So
+the partition being tried is held against the one the firmware says
+it started this system from (expansion.library's `SYSTAG_BootStart`,
+`sdk.install.autoboot.keeping`): only where they are the same is
+there anything to keep. A system started from any other is told so,
+and nothing is written.
 
 **CONTEXT**
 
@@ -73,12 +85,7 @@ Nothing is left allocated.
 
 **BUGS**
 
-Both the check and the keeping go by `autoboot.txt` alone, not by the
-partition this system was started from: a system that wrote a
-partition to try and was not restarted yet, or one the firmware came
-back to after a try that did not come up, is answered the same as the
-system on the tried partition - and keeping there makes the tried
-partition the one the firmware starts from.
+None known.
 
 **SEE ALSO**
 

@@ -8,7 +8,11 @@ const rdb = sdk.rdb;
 const prefs = sdk.prefs;
 const update = sdk.update;
 const utility = sdk.utility;
+const autoboot = sdk.install.autoboot;
+const expansion = sdk.expansion;
+const st = expansion.systemtags;
 const RDBBase = sdk.interface.rdb.RDBBase;
+const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const UpdateBase = @import("../update_base.zig").UpdateBase;
 const _run = @import("../run/_run.zig");
 const Run = _run.Run;
@@ -34,13 +38,16 @@ const _boot = @import("_boot.zig");
 ///
 /// RESULT:
 /// - `RETURN_OK`: kept; or nothing to keep - a firmware that reads one
-///   partition, or none being tried.
-/// - `RETURN_WARN`: with `UPD_Check`, one being tried that would be kept.
+///   partition, none being tried, or this system started from another
+///   partition than the one being tried.
+/// - `RETURN_WARN`: with `UPD_Check`, this system started from the
+///   partition being tried, which would be kept.
 /// - `RETURN_FAIL`: the reason said as a failure - `install.prefs` not a
 ///   line of settings, rdb.library 1 not there,
 ///   the disk's table not read, the partitions not found or not mounted,
-///   `autoboot.txt` not written. With no memory for the call, nothing is
-///   said (`IoErr` ERROR_NO_FREE_STORE).
+///   a partition being tried and the firmware not saying which one it
+///   started this system from, `autoboot.txt` not written. With no memory
+///   for the call, nothing is said (`IoErr` ERROR_NO_FREE_STORE).
 ///
 /// BEHAVIOR:
 /// Where the firmware starts from either of two partitions, DoUpdate with
@@ -53,6 +60,15 @@ const _boot = @import("_boot.zig");
 /// rdb.library by the names `install.prefs` gives them, and one mounted
 /// for the call is taken off the device list again after it.
 ///
+/// ### Only the system on the tried partition
+/// `autoboot.txt` names a partition to try before the restart, after a
+/// try that did not come up, and after the swap - then the old one. So
+/// the partition being tried is held against the one the firmware says
+/// it started this system from (expansion.library's `SYSTAG_BootStart`,
+/// `sdk.install.autoboot.keeping`): only where they are the same is
+/// there anything to keep. A system started from any other is told so,
+/// and nothing is written.
+///
 /// CONTEXT:
 /// - Waits: yes - for the disk and dos's packets.
 /// - Interrupts: no.
@@ -63,12 +79,7 @@ const _boot = @import("_boot.zig");
 /// Nothing is left allocated.
 ///
 /// BUGS:
-/// Both the check and the keeping go by `autoboot.txt` alone, not by the
-/// partition this system was started from: a system that wrote a
-/// partition to try and was not restarted yet, or one the firmware came
-/// back to after a try that did not come up, is answered the same as the
-/// system on the tried partition - and keeping there makes the tried
-/// partition the one the firmware starts from.
+/// None known.
 ///
 /// SEE ALSO:
 /// `DoUpdate`, `GetUpdateInfo`, `sdk.install.autoboot`
@@ -86,6 +97,16 @@ pub fn ConfirmUpdate(base: *UpdateBase, tags: ?[*]const utility.TagItem) i32 {
     defer _run.free(run);
     run.check = base.utility_base.GetTagData(update.UPD_Check, 0, tags) != 0;
     return keep(run);
+}
+
+/// The partition the firmware says it started this system from, through
+/// the board's system list; 0 where it does not say.
+fn startedFrom(run: *Run) u32 {
+    const library = run.sys.OpenLibrary(expansion.EXPANSIONNAME, 1) orelse return 0;
+    defer run.sys.CloseLibrary(library);
+    const eb: *ExpansionBase = @ptrCast(library);
+    const start: ?*const st.BootStart = @ptrFromInt(run.ub.GetTagData(st.SYSTAG_BootStart, 0, eb.SystemTags()));
+    return if (start) |it| it.partition else 0;
 }
 
 /// The two numbers in `autoboot.txt` the other way round, so the next
@@ -128,9 +149,20 @@ fn keep(run: *Run) i32 {
     if (_boot.mount(run, rb, handle, &first)) |code| return code;
 
     const now = _boot.readAutoboot(run, &first);
-    if (now.tried == 0) {
-        _run.say(run, "Nothing is being tried: the firmware starts from partition %d either way.\n", .{if (now.normal != 0) now.normal else first.number});
-        return dos.RETURN_OK;
+    const started = startedFrom(run);
+    switch (autoboot.keeping(now, started)) {
+        .nothing_tried => {
+            _run.say(run, "Nothing is being tried: the firmware starts from partition %d either way.\n", .{if (now.normal != 0) now.normal else first.number});
+            return dos.RETURN_OK;
+        },
+        .start_unknown => {
+            return _run.fail(run, "partition %d is being tried, and the firmware does not say which partition it started this system from: nothing is kept\n", .{now.tried});
+        },
+        .not_this_one => {
+            _run.say(run, "This system was started from partition %d, and the one being tried is %d: there is nothing of it to keep.\n", .{ started, now.tried });
+            return dos.RETURN_OK;
+        },
+        .this_one => {},
     }
     if (run.check) {
         _run.say(run, "Would be: partition %d kept as the one the firmware starts from, %d the one to try.\n", .{ now.tried, now.normal });

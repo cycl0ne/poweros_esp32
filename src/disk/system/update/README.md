@@ -56,13 +56,11 @@ written into the partition not in use, and Restart starts on it for one
 start only: a kernel that does not come up costs one start, and the one
 after it is on the partition that worked.
 
-**Keep this system** is there while the firmware is told to try a
-partition. On the system that came up on that partition it makes the
-partition the one the firmware starts from - the step that says the new
-kernel is good. The window goes by `autoboot.txt` and not by the
-partition this system was started from: after a try that did not come
-up, the machine is back on the partition that worked, and Keep there
-would make the one that failed the one it starts from.
+**Keep this system** is there when this system came up on the partition
+the firmware was told to try, as the firmware itself says, and makes
+that partition the one the firmware starts from - the step that says the
+new kernel is good. Before the restart, after a try that did not come up
+and once it is kept, the button is not there.
 
 The work is done on a process of its own, so the window answers while a
 package is read over the network; closing the window stops the update
