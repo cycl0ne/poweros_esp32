@@ -10,9 +10,9 @@
 //! directory's tree is written - its id going into its parent's - once
 //! the entries leave it. The commit names its author and committer as
 //! `[user]` in `.git/config` or ENVARC:Sys/net/gitconfig names them,
-//! with the time now and the offset of the zone in
-//! ENV:Sys/timezone. The message is MESSAGE, its blank lines at
-//! either end taken off.
+//! with the time now and the offset then of the zone the system clock
+//! keeps (utility.library's ZoneOffset). The message is MESSAGE, its
+//! blank lines at either end taken off.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -115,7 +115,7 @@ pub fn run(git: *Git, argv: []const usize) i32 {
     var stamp: dos.DateStamp = undefined;
     _ = dl.DateStamp(&stamp);
     const seconds = git.unixTime(stamp).seconds;
-    const offset = if (git.zone) |*zone| zone.offsetAt(seconds) else 0;
+    const offset = git.ub.ZoneOffset(seconds);
     var signature_buffer: [2 * identity_most + 64]u8 = undefined;
     const signature = signatureText(&signature_buffer, name, email, seconds, offset);
     var head_lines: [2 * 48 + 2]u8 = undefined;

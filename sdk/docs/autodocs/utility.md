@@ -2,7 +2,8 @@
 
 utility.library's jump table: tag lists, hooks, dates, 32- and 64-bit
 multiplication and division, Latin-1 case, pack tables, named objects,
-unique IDs, pattern matching, strings, alignment and lines of settings.
+unique IDs, pattern matching, strings, alignment, lines of settings
+and the zone the system clock keeps.
 The reserved slots are kept free so that the slots after them stay
 where they are.
 
@@ -25,6 +26,7 @@ Generated from the source by `./zig build autodoc`.
 - [Date2Amiga](#date2amiga) - Turns a date into seconds since 1 January 1978.
 - [DateJoin](#datejoin) - The day number a date falls on.
 - [DateSplit](#datesplit) - A day number as the date it falls on.
+- [DateToUtc](#datetoutc) - A DateStamp, kept in the zone the system clock keeps, as seconds since 1970 in UTC.
 - [FilterTagChanges](#filtertagchanges) - Drops the changes in a change list that change nothing, and can apply the rest.
 - [FilterTagItems](#filtertagitems) - Keeps the items of a list whose tags are, or are not, in an array.
 - [FindNamedObject](#findnamedobject) - Finds the next object of a name space with a given name.
@@ -64,6 +66,8 @@ Generated from the source by `./zig build autodoc`.
 - [UMult32](#umult32) - Multiplies two unsigned 32-bit numbers and keeps the low 32 bits.
 - [UMult64](#umult64) - Multiplies two unsigned 32-bit numbers into their whole 64-bit product.
 - [UnpackStructureTags](#unpackstructuretags) - Copies the fields of a structure out to where the items of a tag list point, as a pack table lays them out.
+- [UtcToDate](#utctodate) - Seconds since 1970 in UTC as a DateStamp in the zone the system clock keeps.
+- [ZoneOffset](#zoneoffset) - The seconds the zone the system clock keeps is east of UTC at a moment.
 
 ## AddNamedObject
 
@@ -977,6 +981,83 @@ None known.
 ```zig
 var cd: ClockData = .{};
 ub.DateSplit(17_790, &cd); // 16 September 2026, a Wednesday
+```
+
+## DateToUtc
+
+A DateStamp, kept in the zone the system clock keeps, as seconds since 1970 in UTC.
+
+**SYNOPSIS**
+
+```zig
+fn DateToUtc(ub: *UtilityBase, date: *const dos.DateStamp, nanoseconds: ?*u32) i64
+```
+
+**SINCE**
+
+1.3. LVO -268.
+
+**INPUTS**
+
+- `date` - the stamp: what `DateStamp` answers, or a file's date from
+  `Examine`. Its days count from 1 January 1978, its minutes from
+  midnight, its ticks (50 a second) from the start of the minute.
+- `nanoseconds` - where the fraction of the second goes, in
+  nanoseconds (a tick is 20 000 000); null when it is not wanted.
+
+**RESULT**
+
+The moment in seconds since 1 January 1970, UTC.
+
+**BEHAVIOR**
+
+The stamp is read as local time in the system's zone (see
+`ZoneOffset`). The offset is the one at the moment in UTC, which is
+what is being found: the offset at the local time read as if it were
+UTC gives a moment near enough to look it up at, but within the hour
+summer time starts or ends. A local time in the hour the clocks skip
+is answered as if the clocks had not changed yet; one in the hour they
+go through twice, as the second time.
+
+The zone is read once for the call, so both offsets are the same rule.
+While nobody wrote the zone, the stamp is UTC already.
+
+**CONTEXT**
+
+- Waits: yes, for battmem.resource's semaphore while another task
+  holds it.
+- Interrupts: no.
+- Locks: none needed; battmem.resource takes its own for the read.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. `date` and `nanoseconds` are the caller's.
+
+**NOTES**
+
+It sends no packet and reads no file, so a file system handler may ask
+it for a date on the volume that holds the zone file.
+
+`UtcToDate` is the inverse, but for the fraction of the second, which
+a count of seconds does not hold.
+
+**BUGS**
+
+A stamp whose fields are out of their ranges carries into the next
+field rather than being refused: 25 hours' worth of minutes is a day
+and an hour.
+
+**SEE ALSO**
+
+`UtcToDate`, `ZoneOffset`, `DateSplit`
+
+**EXAMPLES**
+
+```zig
+var now: dos.DateStamp = .{};
+_ = dl.DateStamp(&now);
+const seconds = ub.DateToUtc(&now, null); // what a server or a certificate counts in
 ```
 
 ## FilterTagChanges
@@ -3336,4 +3417,152 @@ None known.
 var width: u32 = 0;
 const query = [_]TagItem{ .{ .tag = MY_Width, .data = @intFromPtr(&width) }, .{} };
 _ = ub.UnpackStructureTags(&box, &table, &query);
+```
+
+## UtcToDate
+
+Seconds since 1970 in UTC as a DateStamp in the zone the system clock keeps.
+
+**SYNOPSIS**
+
+```zig
+fn UtcToDate(ub: *UtilityBase, utc: i64, date: *dos.DateStamp) void
+```
+
+**SINCE**
+
+1.3. LVO -272.
+
+**INPUTS**
+
+- `utc` - the moment, in seconds since 1 January 1970, UTC: what a
+  time server, a file server or a certificate gives.
+- `date` - filled in with the stamp.
+
+**RESULT**
+
+Nothing. `date` is always written.
+
+**BEHAVIOR**
+
+The moment is moved into the system's zone by the offset it has then
+(see `ZoneOffset`) and written as days since 1 January 1978, minutes
+since midnight and ticks into the minute - whole seconds, the ticks a
+multiple of 50. A moment whose local time is before 1978 is the
+stamp's first moment, all fields 0; one past what its days hold is its
+last.
+
+While nobody wrote the zone, the stamp is UTC.
+
+**CONTEXT**
+
+- Waits: yes, for battmem.resource's semaphore while another task
+  holds it.
+- Interrupts: no.
+- Locks: none needed; battmem.resource takes its own for the read.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. `date` is the caller's.
+
+**NOTES**
+
+It sends no packet and reads no file, so a file system handler may ask
+it for a date on the volume that holds the zone file.
+
+A fraction of a second is the caller's to add to `tick` (a tick is a
+fiftieth): the count of seconds holds none.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DateToUtc`, `ZoneOffset`, `DateSplit`
+
+**EXAMPLES**
+
+```zig
+// A file's date as an SFTP server sends it, made the volume's.
+var date: dos.DateStamp = .{};
+ub.UtcToDate(attributes.mtime, &date);
+_ = dl.SetFileDate(name, &date);
+```
+
+## ZoneOffset
+
+The seconds the zone the system clock keeps is east of UTC at a moment.
+
+**SYNOPSIS**
+
+```zig
+fn ZoneOffset(ub: *UtilityBase, utc: i64) i32
+```
+
+**SINCE**
+
+1.3. LVO -264.
+
+**INPUTS**
+
+- `utc` - the moment, in seconds since 1 January 1970, UTC.
+
+**RESULT**
+
+The seconds to add to `utc` for the local time then: 3600 for Central
+European Time, 7200 for its summer time, -18000 for US Eastern; 0 in
+UTC.
+
+**BEHAVIOR**
+
+The zone is the rule battmem.resource holds (BATTMEM_ZONE), which the
+boot's `C:SetClock ZONE` writes from ENV:Sys/timezone and Prefs writes
+again when the zone is changed there. It is read for each call, so a
+zone changed while a program runs is the one its next call uses. A
+rule with summer time gives the summer offset between the changes the
+rule names, in the year of the moment.
+
+While nobody wrote the zone, and on a system without the resource, the
+clock keeps UTC and the answer is 0.
+
+**CONTEXT**
+
+- Waits: yes, for battmem.resource's semaphore while another task
+  holds it.
+- Interrupts: no.
+- Locks: none needed; battmem.resource takes its own for the read.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated or changes hands.
+
+**NOTES**
+
+It sends no packet and reads no file, so a file system handler may ask
+it about a volume that holds the zone file itself.
+
+The offset is that of the moment, not of now: a date in July answers
+with summer time in December. A file's date written with the offset it
+had (`+0200`) takes the moment the file was written.
+
+**BUGS**
+
+A rule whose offsets or changes are not whole quarter hours is not
+kept by battmem.resource (`C:SetClock ZONE` says so), and the clock
+then keeps UTC. Every zone in use today is whole quarter hours.
+
+**SEE ALSO**
+
+`DateToUtc`, `UtcToDate`, sdk.dos.timezone
+
+**EXAMPLES**
+
+```zig
+// A commit's date as git writes it: `1762686000 +0100`.
+const offset = ub.ZoneOffset(seconds);
+const minutes = @divTrunc(if (offset < 0) -offset else offset, 60);
+_ = dos.stdio.Printf(dl, "%ld %c%02d%02d\n", .{ seconds, @as(u8, if (offset < 0) '-' else '+'), @divTrunc(minutes, 60), @mod(minutes, 60) });
 ```

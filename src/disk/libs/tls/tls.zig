@@ -8,9 +8,9 @@
 //! certificates are checked (`x509/chain.zig`) against the trusted roots
 //! - `SYS:Certificates/Roots`, which the build makes from Mozilla's set,
 //! and the PEM files in `ENVARC:Sys/net/certificates/` - which the base
-//! reads once, with the time zone the clock keeps, and shares between
-//! every opener. The hashes, keys, signatures and AES-GCM are
-//! crypto.library's.
+//! reads once and shares between every opener - at the time now in UTC,
+//! the clock's local time turned by the zone utility.library knows. The
+//! hashes, keys, signatures and AES-GCM are crypto.library's.
 //!
 //! The jump table is tls_lvo.zig, the ROM tag, init and expunge
 //! tls_init.zig, the base tls_base.zig. Each call is a file in

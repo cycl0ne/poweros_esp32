@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! utility.library's jump table: tag lists, hooks, dates, 32- and 64-bit
 //! multiplication and division, Latin-1 case, pack tables, named objects,
-//! unique IDs, pattern matching, strings, alignment and lines of settings.
+//! unique IDs, pattern matching, strings, alignment, lines of settings
+//! and the zone the system clock keeps.
 //! The reserved slots are kept free so that the slots after them stay
 //! where they are.
 //!
@@ -11,6 +12,7 @@
 const libraries = @import("../libs/exec/libraries.zig");
 const exec = @import("../libs/exec/exec.zig");
 const utility = @import("../libs/utility/utility.zig");
+const dos = @import("../libs/dos/dos.zig");
 
 /// The name to open it by (OpenLibrary, OpenDevice).
 pub const NAME = "utility.library";
@@ -71,6 +73,9 @@ pub const LVO = struct {
     pub const DateJoin = libraries.lvo(62);
     pub const CompareMem = libraries.lvo(63);
     pub const NextSetting = libraries.lvo(64);
+    pub const ZoneOffset = libraries.lvo(65);
+    pub const DateToUtc = libraries.lvo(66);
+    pub const UtcToDate = libraries.lvo(67);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -130,6 +135,9 @@ pub const Fn = struct {
     pub const DateJoin = *const fn (*UtilityBase, *const utility.ClockData) callconv(.c) i32;
     pub const CompareMem = *const fn (*UtilityBase, *const anyopaque, *const anyopaque, usize) callconv(.c) i32;
     pub const NextSetting = *const fn (*UtilityBase, *utility.SettingScan) callconv(.c) i32;
+    pub const ZoneOffset = *const fn (*UtilityBase, i64) callconv(.c) i32;
+    pub const DateToUtc = *const fn (*UtilityBase, *const dos.DateStamp, ?*u32) callconv(.c) i64;
+    pub const UtcToDate = *const fn (*UtilityBase, i64, *dos.DateStamp) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -387,5 +395,23 @@ pub const UtilityBase = opaque {
     /// text's end, -1 for a value whose quote is not closed.
     pub fn NextSetting(self: *UtilityBase, scan: *utility.SettingScan) i32 {
         return libraries.call(self, LVO.NextSetting, Fn.NextSetting, .{scan});
+    }
+
+    /// The seconds the system's zone is east of UTC at the moment `utc`
+    /// (seconds since 1970, UTC): the rule battmem.resource holds, 0 while
+    /// nobody wrote one.
+    pub fn ZoneOffset(self: *UtilityBase, utc: i64) i32 {
+        return libraries.call(self, LVO.ZoneOffset, Fn.ZoneOffset, .{utc});
+    }
+
+    /// A DateStamp in the system's zone as seconds since 1970, UTC; the
+    /// fraction of the second into `nanoseconds` unless it is null.
+    pub fn DateToUtc(self: *UtilityBase, date: *const dos.DateStamp, nanoseconds: ?*u32) i64 {
+        return libraries.call(self, LVO.DateToUtc, Fn.DateToUtc, .{ date, nanoseconds });
+    }
+
+    /// Seconds since 1970, UTC, as a DateStamp in the system's zone.
+    pub fn UtcToDate(self: *UtilityBase, utc: i64, date: *dos.DateStamp) void {
+        return libraries.call(self, LVO.UtcToDate, Fn.UtcToDate, .{ utc, date });
     }
 };

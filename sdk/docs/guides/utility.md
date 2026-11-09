@@ -23,9 +23,9 @@ defer sys.CloseLibrary(lib);
 const ub: *UtilityBase = @ptrCast(lib);
 ```
 
-Version 1 has every call here; `CompareMem` came with revision 1 (1.1)
-and `NextSetting` with revision 2 (1.2), which `ub.lib().revision`
-tells. The structures and constants are in `sdk.utility`, a file per
+Version 1 has every call here; `CompareMem` came with revision 1 (1.1),
+`NextSetting` with revision 2 (1.2), and `ZoneOffset`, `DateToUtc` and
+`UtcToDate` with revision 3 (1.3), which `ub.lib().revision` tells. The structures and constants are in `sdk.utility`, a file per
 area (`tagitem`, `hooks`, `date`, `name`, `pack`, `pattern`, `setting`),
 most of them by name in `sdk.utility` itself; the pack-table ones only
 in `sdk.utility.pack`. No call needs a process: a
@@ -290,6 +290,45 @@ is 1 May.
 `DateSplit` and `DateJoin` undo each other for every day up to that
 last one, as `Amiga2Date` and `Date2Amiga` do for every count of
 seconds. A date's weekday is its day number modulo 7.
+
+## The zone the clock keeps
+
+The system clock keeps local time. A server, a certificate, a file on
+another machine or in git counts in UTC: seconds since 1 January 1970.
+Three calls go between the two, by the zone the system keeps - the POSIX
+TZ rule of `ENV:Sys/timezone`, which the boot's `C:SetClock ZONE` hands
+to battmem.resource and Prefs' Region page hands again when it changes:
+
+| Call | |
+|---|---|
+| `ZoneOffset(utc)` | the seconds the zone is east of UTC at that moment: 3600 for Central European Time, 7200 in its summer |
+| `DateToUtc(&date, &nanoseconds)` | a `dos.DateStamp` as seconds since 1970, UTC; the fraction of its second where the second argument points, unless it is null |
+| `UtcToDate(utc, &date)` | back: seconds since 1970, UTC, as a `dos.DateStamp` |
+
+```zig
+var now: dos.DateStamp = .{};
+_ = dl.DateStamp(&now);
+const utc = ub.DateToUtc(&now, null); // what a server counts in
+const offset = ub.ZoneOffset(utc); // +3600 in Berlin in winter
+
+var date: dos.DateStamp = .{};
+ub.UtcToDate(server_mtime, &date); // a file's date from a server
+_ = dl.SetFileDate(name, &date);
+```
+
+**The offset is that of the moment**, not of now: a date in July comes
+with summer time in December. A local time in the hour the clocks skip
+in spring is taken as if they had not changed yet; one in the hour they
+go through twice in autumn, as the second time.
+
+**The zone is read for each call**, from battmem.resource, so a zone
+changed while a program runs is the one its next call uses, and no
+file is read: a file system handler may ask about the volume the zone
+file is on. While nobody set a zone, the clock keeps UTC and the offset
+is 0. A rule whose offsets are not whole quarter hours cannot be kept
+there (`SetClock ZONE` says so), and then the clock keeps UTC too.
+These calls wait for battmem.resource's semaphore, so they need a task,
+not an interrupt.
 
 ## Multiplying, dividing, aligning
 

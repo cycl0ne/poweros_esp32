@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
 //! utility.library's jump table: tag lists, hooks, dates, 32- and 64-bit
 //! multiplication and division, Latin-1 case, pack tables, named objects,
-//! unique IDs, pattern matching, strings, alignment and lines of settings.
+//! unique IDs, pattern matching, strings, alignment, lines of settings
+//! and the zone the system clock keeps.
 //! The reserved slots are kept free so that the slots after them stay
 //! where they are.
 ##include libs/exec/exec as exec
 ##include libs/utility/utility as utility
+##include libs/dos/dos as dos
 ##basetype UtilityBase
 ##name utility.library
 ##bias 4
@@ -119,4 +121,14 @@ i32 CompareMem(*const anyopaque first, *const anyopaque second, usize length)
 /// with `scan.key` and `scan.value` pointing at it in the text, 0 at the
 /// text's end, -1 for a value whose quote is not closed.
 i32 NextSetting(*utility.SettingScan scan)
+// The zone the clock keeps
+/// The seconds the system's zone is east of UTC at the moment `utc`
+/// (seconds since 1970, UTC): the rule battmem.resource holds, 0 while
+/// nobody wrote one.
+i32 ZoneOffset(i64 utc)
+/// A DateStamp in the system's zone as seconds since 1970, UTC; the
+/// fraction of the second into `nanoseconds` unless it is null.
+i64 DateToUtc(*const dos.DateStamp date, ?*u32 nanoseconds)
+/// Seconds since 1970, UTC, as a DateStamp in the system's zone.
+void UtcToDate(i64 utc, *dos.DateStamp date)
 ##end

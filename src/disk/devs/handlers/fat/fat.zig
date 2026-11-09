@@ -139,8 +139,6 @@ const dos = sdk.dos;
 const exec = sdk.exec;
 const trackdisk = sdk.devices.trackdisk;
 const inputevent = sdk.devices.inputevent;
-const battmem = sdk.resources.battmem;
-const battmembits = sdk.resources.battmembits;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
@@ -155,8 +153,8 @@ const cache_area = @import("cache.zig");
 
 pub const HANDLER_NAME = "fat-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 13;
-const BUILD_DATE = "03.11.2026";
+const HANDLER_REVISION = 14;
+const BUILD_DATE = "09.11.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -191,8 +189,8 @@ pub const DeviceMedia = struct {
     dos_type: u32 = dos.ID_MSDOS_DISK,
     /// The most bytes one command may move (de_MaxTransfer).
     max_transfer: u64 = std.math.maxInt(u32),
-    /// battmem.resource, where the time zone is, once it has been found.
-    batt_mem: ?*battmem.BattMemBase = null,
+    /// utility.library, which knows the zone the system clock keeps.
+    ub: *UtilityBase,
 
     pub const Area = struct { first: u64, bytes: u64 };
 
@@ -315,20 +313,13 @@ pub const DeviceMedia = struct {
         media.sys.FreeVec(block.ptr);
     }
 
-    /// The zone the system clock keeps, as battmem.resource holds it
-    /// (BATTMEM_ZONE, which `C:SetClock ZONE` writes from the zone file):
-    /// a call, not a file, since the zone file may be on this very
-    /// volume, and reading it would wait on the handler itself. UTC while
-    /// nobody wrote it.
-    pub fn timeZone(media: *DeviceMedia) dos.timezone.Zone {
-        const mb = media.batt_mem orelse found: {
-            const base: *battmem.BattMemBase = @ptrCast(media.sys.OpenResource(battmem.BATTMEMNAME) orelse return .{});
-            media.batt_mem = base;
-            break :found base;
-        };
-        var bits: u64 = 0;
-        if (mb.ReadBattMem(@ptrCast(&bits), battmembits.BATTMEM_ZONE_ADDR, battmembits.BATTMEM_ZONE_LEN) != 0) return .{};
-        return dos.timezone.unpack(bits) orelse .{};
+    /// The seconds the zone the system clock keeps is east of UTC at the
+    /// moment `utc` (since 1970): utility.library's ZoneOffset, which asks
+    /// battmem.resource and reads no file - the zone file may be on this
+    /// very volume, and reading it would wait on the handler itself. 0
+    /// while nobody set a zone.
+    pub fn zoneOffset(media: *DeviceMedia, utc: i64) i32 {
+        return media.ub.ZoneOffset(utc);
     }
 
     pub fn now(media: *DeviceMedia) dos.DateStamp {
@@ -801,7 +792,7 @@ fn start(sys: *ExecBase, dl: *DosBase, fssm: ?*const dos.FileSysStartupMsg, code
     const st: *State = @ptrCast(@alignCast(block));
     st.ub = @ptrCast(utility);
     st.io = .{ .req = .{ .message = .{ .reply_port = port, .length = @sizeOf(exec.IOStdReq) } } };
-    st.media = .{ .sys = sys, .dl = dl, .io = &st.io };
+    st.media = .{ .sys = sys, .dl = dl, .ub = st.ub, .io = &st.io };
 
     const device = if (fssm) |startup_msg| startup_msg.device orelse "" else "";
     const unit = if (fssm) |startup_msg| startup_msg.unit else 0;

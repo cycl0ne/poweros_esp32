@@ -200,7 +200,6 @@ flowchart TB
     m_av1_vcodec["av1.vcodec"]
     m_battery_docklet["battery.docklet"]
     m_battery_resource["battery.resource"]
-    m_battmem_resource["battmem.resource"]
     m_bsdsocket_library["bsdsocket.library"]
     m_chip_vcodec["chip.vcodec"]
     m_clipboard_device["clipboard.device"]
@@ -359,7 +358,6 @@ flowchart TB
     m_facet_library --> m_layers_library
     m_facet_library --> m_rtg_library
     m_facet_library --> m_timer_device
-    m_fat_handler --> m_battmem_resource
     m_fat_handler --> m_dos_library
     m_fat_handler --> m_input_device
     m_fat_handler -.-> m_sdcard_device
@@ -422,7 +420,6 @@ flowchart TB
     m_slip_device --> m_serial_device
     m_slip_device --> m_timer_device
     m_slip_device -.-> m_usbserial_device
-    m_smb_handler --> m_battmem_resource
     m_smb_handler --> m_bsdsocket_library
     m_smb_handler --> m_crypto_library
     m_smb_handler --> m_dos_library
@@ -471,7 +468,7 @@ flowchart TB
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827
     class m_datatype_classes,m_gadget_classes cls
     classDef rom fill:#f3f4f6,stroke:#9ca3af,color:#374151
-    class m_battery_resource,m_battmem_resource,m_dma_resource,m_dos_library,m_expander_resource,m_flash_device,m_gpio_resource,m_graphics_library,m_input_device,m_intuition_library,m_keyboard_device,m_keymap_library,m_layers_library,m_mouse_device,m_platform_resource,m_rta_library,m_rtg_library,m_serial_device,m_timer_device,m_usbport_resource,m_usbserial_device,m_videodec_resource rom
+    class m_battery_resource,m_dma_resource,m_dos_library,m_expander_resource,m_flash_device,m_gpio_resource,m_graphics_library,m_input_device,m_intuition_library,m_keyboard_device,m_keymap_library,m_layers_library,m_mouse_device,m_platform_resource,m_rta_library,m_rtg_library,m_serial_device,m_timer_device,m_usbport_resource,m_usbserial_device,m_videodec_resource rom
 ```
 <!-- modchart end -->
 

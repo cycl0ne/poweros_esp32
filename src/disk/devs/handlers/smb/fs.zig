@@ -143,6 +143,7 @@ const notify = dos.notify;
 const record = dos.record;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const DosPacket = dos.DosPacket;
 const FileInfoBlock = dos.FileInfoBlock;
 const MsgPort = exec.MsgPort;
@@ -413,8 +414,9 @@ pub const FileSystem = struct {
     volume_name: []const u8 = "",
     volume_date: dos.DateStamp = .{},
     device_name: []const u8 = "",
-    /// The zone the system clock keeps, which dates are shown in.
-    zone: dos.timezone.Zone = .{},
+    /// Dates between UTC and the zone the system clock keeps, which they
+    /// are shown in.
+    ub: *UtilityBase,
     locks: ?*Lock = null,
     keys: ?*Key = null,
     /// The volume's record locks and watchers; none without them.
@@ -954,7 +956,7 @@ pub const FileSystem = struct {
             .protection = protectionOf(entry.attributes),
             .size = size,
             .num_blocks = (size + unit - 1) / unit,
-            .date = dateOf(&fs.zone, entry.written),
+            .date = dateOf(fs.ub, entry.written),
         };
         var buffer: [names.name_max]u8 = undefined;
         const name = names.toDos(entry.name, &buffer);
@@ -2135,7 +2137,7 @@ pub const FileSystem = struct {
                 _ = fs.dl.DateStamp(&today);
                 break :blk &today;
             };
-            setting.basic.written = filetimeOf(&fs.zone, date.*);
+            setting.basic.written = filetimeOf(fs.ub, date.*);
         }
         const status = try fs.changeAt(&fs.path, commands.FILE_WRITE_ATTRIBUTES, setting);
         if (smb.isError(status)) return changeErrorOf(status);
@@ -2556,29 +2558,38 @@ pub fn attributesOf(bits: u32, current: u32) u32 {
     return if (attributes == 0) commands.ATTR_NORMAL else attributes;
 }
 
-/// A FILETIME as a DateStamp in the zone: before 1978 is its start.
-pub fn dateOf(zone: *const dos.timezone.Zone, filetime: u64) dos.DateStamp {
-    const unix: i64 = @as(i64, @intCast(filetime / 10_000_000)) - filetime_epoch;
-    const local = unix + zone.offsetAt(unix) - dos.timezone.datestamp_epoch;
-    if (local < 0) return .{};
-    const ticks: i64 = @intCast(filetime % 10_000_000 / 200_000);
-    return .{
-        .days = @intCast(@divTrunc(local, 86400)),
-        .minute = @intCast(@divTrunc(@mod(local, 86400), 60)),
-        .tick = @intCast(@mod(local, 60) * 50 + ticks),
-    };
+/// A FILETIME as a DateStamp in the zone the system clock keeps: before
+/// 1978 is its start, which keeps no fraction of a second.
+pub fn dateOf(ub: *UtilityBase, filetime: u64) dos.DateStamp {
+    var date: dos.DateStamp = .{};
+    ub.UtcToDate(unixOf(filetime), &date);
+    if (!date.eql(.{})) date.tick += ticksOf(filetime);
+    return date;
 }
 
-/// A DateStamp in the zone as a FILETIME. The zone's offset is the one
-/// at the moment the stamp names, found from a first guess at it.
-pub fn filetimeOf(zone: *const dos.timezone.Zone, stamp: dos.DateStamp) u64 {
-    const tick: i64 = stamp.tick;
-    const local: i64 = @as(i64, stamp.days) * 86400 + @as(i64, stamp.minute) * 60 + @divTrunc(tick, 50) + dos.timezone.datestamp_epoch;
-    const guess = local - zone.offsetAt(local);
-    const unix = local - zone.offsetAt(guess);
+/// A DateStamp in the zone the system clock keeps as a FILETIME.
+pub fn filetimeOf(ub: *UtilityBase, stamp: dos.DateStamp) u64 {
+    var nanoseconds: u32 = 0;
+    const unix = ub.DateToUtc(&stamp, &nanoseconds);
+    return filetimeOfUnix(unix, nanoseconds);
+}
+
+/// A FILETIME - hundreds of nanoseconds since 1601, UTC - as whole
+/// seconds since 1970.
+fn unixOf(filetime: u64) i64 {
+    return @as(i64, @intCast(filetime / 10_000_000)) - filetime_epoch;
+}
+
+/// The fiftieths of a second a FILETIME is into its second.
+fn ticksOf(filetime: u64) i32 {
+    return @intCast(filetime % 10_000_000 / 200_000);
+}
+
+/// Seconds since 1970 and the nanoseconds past them as a FILETIME; before
+/// 1601 is its start.
+fn filetimeOfUnix(unix: i64, nanoseconds: u32) u64 {
     const seconds: u64 = @intCast(@max(unix + filetime_epoch, 0));
-    const fraction: u64 = @intCast(@mod(tick, 50));
-    return seconds * 10_000_000 + fraction * 200_000;
+    return seconds * 10_000_000 + nanoseconds / 100;
 }
 
 const testing = @import("std").testing;
@@ -2604,32 +2615,25 @@ test "attributes from protection, and back" {
     }
 }
 
-test "a FILETIME as a DateStamp, in UTC and in a zone" {
-    const utc: dos.timezone.Zone = .{};
-    // 1 January 1978, 00:00:00 UTC.
-    const start: u64 = @intCast((dos.timezone.datestamp_epoch + filetime_epoch) * 10_000_000);
-    try testing.expect(dateOf(&utc, start).eql(.{ .days = 0, .minute = 0, .tick = 0 }));
-    // A day, an hour, a minute and 1.5 seconds later.
-    const later = start + (86400 + 3600 + 60) * 10_000_000 + 15_000_000;
-    try testing.expect(dateOf(&utc, later).eql(.{ .days = 1, .minute = 61, .tick = 75 }));
-    // One hour east of UTC.
-    const east: dos.timezone.Zone = .{ .standard = 3600 };
-    try testing.expect(dateOf(&east, later).eql(.{ .days = 1, .minute = 121, .tick = 75 }));
-    // Before 1978: the start.
-    try testing.expect(dateOf(&utc, 0).eql(.{}));
+test "a FILETIME as seconds since 1970, and its fiftieths of a second" {
+    // 1 January 1970, 00:00:00 UTC, and 1.5 seconds after it.
+    const epoch: u64 = @intCast(filetime_epoch * 10_000_000);
+    try testing.expectEqual(@as(i64, 0), unixOf(epoch));
+    try testing.expectEqual(@as(i64, 1), unixOf(epoch + 15_000_000));
+    try testing.expectEqual(@as(i32, 25), ticksOf(epoch + 15_000_000));
+    // 1601 itself, long before.
+    try testing.expectEqual(-filetime_epoch, unixOf(0));
 }
 
-test "a DateStamp as a FILETIME, and back" {
-    const utc: dos.timezone.Zone = .{};
-    const east: dos.timezone.Zone = .{ .standard = 3600 };
-    const start: u64 = @intCast((dos.timezone.datestamp_epoch + filetime_epoch) * 10_000_000);
-    try testing.expectEqual(start, filetimeOf(&utc, .{}));
-    try testing.expectEqual(start + 15_000_000, filetimeOf(&utc, .{ .tick = 75 }));
-    // Midnight one hour east of UTC is 23:00 the day before there.
-    try testing.expectEqual(start + 23 * 3600 * 10_000_000, filetimeOf(&east, .{ .days = 1 }));
-    const stamps = [_]dos.DateStamp{ .{ .days = 17_000, .minute = 754, .tick = 1234 }, .{ .days = 3, .minute = 0, .tick = 49 } };
-    for (stamps) |stamp| {
-        try testing.expect(dateOf(&utc, filetimeOf(&utc, stamp)).eql(stamp));
-        try testing.expect(dateOf(&east, filetimeOf(&east, stamp)).eql(stamp));
+test "seconds since 1970 as a FILETIME, and back" {
+    const epoch: u64 = @intCast(filetime_epoch * 10_000_000);
+    try testing.expectEqual(epoch, filetimeOfUnix(0, 0));
+    // A fiftieth of a second is 20 ms: 200 000 hundreds of nanoseconds.
+    try testing.expectEqual(epoch + 15_000_000, filetimeOfUnix(1, 500_000_000));
+    for ([_]i64{ 0, 1_762_686_000, 252_460_800 }) |unix| {
+        try testing.expectEqual(unix, unixOf(filetimeOfUnix(unix, 980_000_000)));
+        try testing.expectEqual(@as(i32, 49), ticksOf(filetimeOfUnix(unix, 980_000_000)));
     }
+    // Before 1601 there is nothing earlier to write.
+    try testing.expectEqual(@as(u64, 0), filetimeOfUnix(-filetime_epoch - 10, 0));
 }

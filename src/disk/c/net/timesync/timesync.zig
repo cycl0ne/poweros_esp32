@@ -31,10 +31,11 @@
 //! the round trip is measured on the E-clock, so the clock being wrong
 //! does not change it.
 //!
-//! **Local time.** The system clock keeps local time. The zone is a POSIX
-//! TZ rule in `ENV:Sys/timezone` (`CET-1CEST,M3.5.0,M10.5.0/3`,
-//! sdk.dos.timezone), its first line that is not a `#` comment; with no rule, the
-//! clock keeps UTC.
+//! **Local time.** The system clock keeps local time, in the zone
+//! utility.library knows (ZoneOffset): the POSIX TZ rule of
+//! `ENV:Sys/timezone` (`CET-1CEST,M3.5.0,M10.5.0/3`, sdk.dos.timezone),
+//! which the boot's `C:SetClock ZONE` hands it; with no rule, the clock
+//! keeps UTC.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -46,11 +47,11 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const TimerBase = sdk.interface.timer.TimerBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const Printf = dos.stdio.Printf;
-const zone = sdk.dos.timezone;
 
 pub const COMMAND_NAME = "TimeSync";
-const VERSION_STRING = "\x00$VER: TimeSync 1.4 (29.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: TimeSync 1.5 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SERVER,PORT/K/N,QUIET/S,TEST/S,REDATE/S";
@@ -60,8 +61,6 @@ const arg_quiet = 2;
 const arg_test = 3;
 const arg_redate = 4;
 
-/// The zone the system clock keeps, as a POSIX TZ rule.
-const TIMEZONE_FILE = zone.zone_file;
 const server_default = "pool.ntp.org";
 const port_default: u16 = 123;
 const tries = 3;
@@ -78,7 +77,6 @@ const MSG_NOLIBRARY = "%s: can't open %s\n";
 const MSG_NOHOST = "%s: %s: no such host\n";
 const MSG_FAILED = "%s: %s failed: %s (errno %d)\n";
 const MSG_NOANSWER = "%s: no answer from %s\n";
-const MSG_BADZONE = "%s: %s is no time zone rule; using UTC\n";
 const MSG_TIME = "%s %s %s, from %s (stratum %u)";
 const MSG_MOVED = ", the clock moved by %s%lu.%03u s\n";
 const MSG_REDATED = "%u files and drawers on SYS: and RAM: moved with it\n";
@@ -125,6 +123,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer sys.CloseLibrary(socket_lib);
     const sb: *SocketBase = @ptrCast(socket_lib);
+    const utility_lib = sys.OpenLibrary(sdk.utility.UTILITYNAME, 1) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{ COMMAND_NAME, sdk.utility.UTILITYNAME });
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(utility_lib);
+    const ub: *UtilityBase = @ptrCast(utility_lib);
 
     var clock: timer.TimeRequest = .{};
     if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &clock.node, 0) != 0) return dos.RETURN_FAIL;
@@ -159,8 +163,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const held = answer.transmitted_us -| answer.received_us;
     const utc_us = answer.transmitted_us - ntp_to_unix * 1_000_000 + (round_trip -| held) / 2 + (eclock(timer_base) - (sent_at + round_trip));
     const utc_secs: i64 = @intCast(utc_us / 1_000_000);
-    const rule = readZone(dl, quiet);
-    const local_secs = utc_secs + rule.offsetAt(utc_secs);
+    const local_secs = utc_secs + ub.ZoneOffset(utc_secs);
     const new_time: timer.TimeVal = .{ .secs = @intCast(local_secs - unix_to_system), .micro = @intCast(utc_us % 1_000_000) };
 
     var old_time: timer.TimeVal = .{};
@@ -326,19 +329,6 @@ fn firstLine(dl: *DosBase, name: [*:0]const u8, text: []u8) bool {
         line_start = next;
     }
     return false;
-}
-
-/// The zone in the timezone file; UTC without one, or with one that is no
-/// rule.
-fn readZone(dl: *DosBase, quiet: bool) zone.Zone {
-    var text: [128]u8 = @splat(0);
-    if (!firstLine(dl, TIMEZONE_FILE, &text)) return .{};
-    var length: usize = 0;
-    while (text[length] != 0) length += 1;
-    return zone.parse(text[0..length]) orelse {
-        if (!quiet) _ = Printf(dl, MSG_BADZONE, .{ COMMAND_NAME, TIMEZONE_FILE });
-        return .{};
-    };
 }
 
 fn get32(bytes: []const u8, at: usize) u32 {

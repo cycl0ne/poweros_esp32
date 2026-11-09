@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! One run of Git: the libraries open for it, where it writes, how it
-//! says what went wrong, and the zone the clock keeps - handed to every
-//! verb - and an arena, memory
+//! says what went wrong, and a file's date as git keeps time - handed to
+//! every verb - and an arena, memory
 //! taken in blocks and given back at once, for what a verb collects as
 //! it goes (a remote's refs, paths).
 
@@ -14,9 +14,9 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
 const CompressionBase = sdk.interface.compression.CompressionBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const HttpBase = sdk.interface.http.HttpBase;
-const timezone = dos.timezone;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Git";
@@ -28,6 +28,8 @@ pub const Git = struct {
     dl: *DosBase,
     cb: *CryptoBase,
     zb: *CompressionBase,
+    /// The zone the clock keeps, and dates in it turned into UTC.
+    ub: *UtilityBase,
     /// Opened by `network`, the first time a verb needs a remote.
     sb: ?*SocketBase = null,
     hb: ?*HttpBase = null,
@@ -37,9 +39,6 @@ pub const Git = struct {
     /// A progress line ended by a carriage return is on the screen: the
     /// next message starts a new line first.
     progress_open: bool = false,
-    /// The zone in ENV:Sys/timezone, read the first time a date is
-    /// turned into git's time.
-    zone: ?timezone.Zone = null,
 
     /// `format` said on the output after the command's name.
     pub fn say(git: *Git, comptime format: [:0]const u8, args: anytype) void {
@@ -103,14 +102,9 @@ pub const Git = struct {
     /// A dos date - the local time - as git keeps time: seconds since
     /// 1970 UTC, and the nanoseconds past them.
     pub fn unixTime(git: *Git, date: dos.DateStamp) struct { seconds: i64, nanoseconds: u32 } {
-        if (git.zone == null) git.zone = readZone(git.dl);
-        const zone = &git.zone.?;
-        const ticks_per_second = 50;
-        const local = @as(i64, date.days) * 86400 + @as(i64, date.minute) * 60 + @divFloor(date.tick, ticks_per_second) + timezone.datestamp_epoch;
-        const guess = local - zone.offsetAt(local);
-        const utc = local - zone.offsetAt(guess);
-        const ticks: u32 = @intCast(@mod(date.tick, ticks_per_second));
-        return .{ .seconds = utc, .nanoseconds = ticks * (1_000_000_000 / ticks_per_second) };
+        var nanoseconds: u32 = 0;
+        const seconds = git.ub.DateToUtc(&date, &nanoseconds);
+        return .{ .seconds = seconds, .nanoseconds = nanoseconds };
     }
 
     /// `size` bytes of memory, cleared; null, said, when there are none.
@@ -132,31 +126,6 @@ pub const Git = struct {
         if (memory) |block| git.sys.FreeVec(@constCast(block));
     }
 };
-
-/// The zone the system clock keeps: the rule on the zone file's first
-/// line that is not a comment, however long the comments before it; UTC
-/// without one.
-fn readZone(dl: *DosBase) timezone.Zone {
-    const file = dl.Open(timezone.zone_file, dos.MODE_OLDFILE) orelse return .{};
-    defer _ = dl.Close(file);
-    var text: [256]u8 = undefined;
-    // A line longer than the buffer comes in pieces; only the first
-    // piece of a line is looked at.
-    var line_start = true;
-    while (dl.FGets(file, &text, text.len) != null) {
-        var length: usize = 0;
-        while (length < text.len and text[length] != 0) length += 1;
-        const starts = line_start;
-        line_start = length > 0 and text[length - 1] == '\n';
-        if (!starts) continue;
-        var line: []const u8 = text[0..length];
-        while (line.len > 0 and (line[line.len - 1] == '\n' or line[line.len - 1] == '\r' or line[line.len - 1] == ' ' or line[line.len - 1] == '\t')) line = line[0 .. line.len - 1];
-        while (line.len > 0 and (line[0] == ' ' or line[0] == '\t')) line = line[1..];
-        if (line.len == 0 or line[0] == '#') continue;
-        return timezone.parse(line) orelse .{};
-    }
-    return .{};
-}
 
 /// Memory handed out from blocks taken as needed, all given back by
 /// `free`.

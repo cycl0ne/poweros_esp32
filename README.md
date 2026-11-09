@@ -208,7 +208,7 @@ from `LIBS:` when first opened. Every module, with its reference, is in
 
 | Area | Libraries |
 |---|---|
-| Kernel | `exec` tasks on every core, ports, memory, libraries and devices; `utility` tag lists, hooks, dates; `expansion` the board's parts |
+| Kernel | `exec` tasks on every core, ports, memory, libraries and devices; `utility` tag lists, hooks, dates and the zone the clock keeps; `expansion` the board's parts |
 | Files | `dos` processes, files, handlers, the shell's `ReadArgs`; `rdb` partitions on any drive; `compression` DEFLATE, zlib and gzip |
 | Languages | `locale` countries' dates, numbers and money, languages' words and order of letters, programs' texts translated in catalogs |
 | Displays | **`rtg`**; `graphics` drawing; `layers`; `intuition` screens, windows, gadgets, styles; `keymap`; `motion` animations and timers |

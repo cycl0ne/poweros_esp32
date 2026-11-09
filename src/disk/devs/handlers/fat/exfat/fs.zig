@@ -47,9 +47,10 @@
 //! - **Names** are `names.zig`'s: a name dos can hold as it is, otherwise
 //!   its stand-in.
 //! - **Moments are local time, in the system's zone** (the medium's
-//!   `timeZone`, the rule the system clock is set by, asked each time a
-//!   moment is turned: battmem.resource's, not a file, so the zone is
-//!   there for a volume that holds the zone file itself). A moment on the
+//!   `zoneOffset`, the offset from UTC of the zone the system clock is
+//!   set by, asked each time a moment is turned: utility.library's, from
+//!   battmem.resource and not a file, so the zone is there for a volume
+//!   that holds the zone file itself). A moment on the
 //!   medium that says which zone it is in - its zone byte - is taken back
 //!   to UTC with that zone and on into the system's; one that does not is
 //!   shown as it is. What this writes is local time with the system's
@@ -1106,12 +1107,11 @@ pub fn FileSystem(comptime Media: type) type {
         /// The zone byte a local moment is written with: the system's
         /// offset from UTC then, in quarter hours, marked as there.
         fn zoneByte(fs: *Fs, moment: u32) u8 {
-            const local = secondsOf(_fat.dateOf(fs.ub, dir_area.stampOf(moment)));
-            // The offset is the zone's at that moment in UTC; the standard
-            // offset is near enough to find which it is.
-            const rule = fs.media.timeZone();
-            const utc = local - rule.standard;
-            const offset = rule.offsetAt(utc + timezone.datestamp_epoch);
+            const local = secondsOf(_fat.dateOf(fs.ub, dir_area.stampOf(moment))) + timezone.datestamp_epoch;
+            // The offset is the zone's at that moment in UTC; the one at
+            // the local time read as UTC is a guess near enough to find it.
+            const guess = local - fs.media.zoneOffset(local);
+            const offset = fs.media.zoneOffset(guess);
             const quarters: i8 = @intCast(@divTrunc(offset, 900));
             return fat.exfat_utc_valid | (@as(u8, @bitCast(quarters)) & 0x7F);
         }
@@ -1124,8 +1124,7 @@ pub fn FileSystem(comptime Media: type) type {
             const raw: i32 = zone & 0x7F;
             const quarters: i32 = if (raw & 0x40 != 0) raw - 128 else raw;
             const utc = secondsOf(stored) - @as(i64, quarters) * 900;
-            const rule = fs.media.timeZone();
-            return dateStampOf(utc + rule.offsetAt(utc + timezone.datestamp_epoch));
+            return dateStampOf(utc + fs.media.zoneOffset(utc + timezone.datestamp_epoch));
         }
 
         /// What a key says - where its data is, how much, its attributes -

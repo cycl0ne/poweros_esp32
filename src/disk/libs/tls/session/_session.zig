@@ -11,17 +11,16 @@
 //!
 //! The base reads what is the same for everybody once, under its lock,
 //! when the first session needs it: crypto, dos and utility opened, the
-//! trusted roots (`SYS:Certificates/Roots`), the program's own
+//! trusted roots (`SYS:Certificates/Roots`) and the program's own
 //! (`ENVARC:Sys/net/certificates/`, PEM files, turned into a store of
-//! the same form) and the clock's time zone (`ENV:Sys/timezone`). A
-//! file that is not there is no failure: no roots trust nothing, no zone
-//! is UTC.
+//! the same form). A file that is not there is no failure: no roots
+//! trust nothing. The clock's local time is turned into UTC by the zone
+//! it keeps, which utility.library knows (DateToUtc), each time.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const dos = sdk.dos;
 const tls = sdk.tls;
-const timezone = dos.timezone;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const _base = @import("../tls_base.zig");
 const TLSBase = _base.TLSBase;
@@ -69,8 +68,8 @@ pub fn handleOf(session: *Session) *tls.Session {
 
 // --- what the base shares -----------------------------------------------------
 
-/// The libraries opened and the stores and zone read, once. An error
-/// code, or OK.
+/// The libraries opened and the stores read, once. An error code, or
+/// OK.
 pub fn ready(base: *TLSBase) i32 {
     const sys = base.sys_base;
     sys.ObtainSemaphore(&base.lock);
@@ -88,7 +87,6 @@ pub fn ready(base: *TLSBase) i32 {
     if (!base.loaded) {
         loadRoots(base);
         loadOwnRoots(base);
-        loadZone(base);
         base.loaded = true;
     }
     return tls.TLSERR_OK;
@@ -178,37 +176,12 @@ fn nameOf(field: []const u8) []const u8 {
     return field[0..length];
 }
 
-/// The time zone rule's first line that is not a comment.
-fn loadZone(base: *TLSBase) void {
-    var length: u32 = 0;
-    const text = readFile(base, timezone.zone_file, 4096, exec.MEMF_ANY, &length) orelse return;
-    defer base.sys_base.FreeVec(text);
-    var start: usize = 0;
-    while (start < length) {
-        var end = start;
-        while (end < length and text[end] != '\n') end += 1;
-        var line = text[start..end];
-        while (line.len > 0 and (line[line.len - 1] == '\r' or line[line.len - 1] == ' ')) line = line[0 .. line.len - 1];
-        if (line.len > 0 and line[0] != '#' and line.len <= base.zone.len) {
-            @memcpy(base.zone[0..line.len], line);
-            base.zone_length = @intCast(line.len);
-            return;
-        }
-        start = end + 1;
-    }
-}
-
-/// Now, in seconds since 1970, UTC: the clock keeps local time by the
-/// zone's rule.
+/// Now, in seconds since 1970, UTC: the clock keeps local time in the
+/// zone utility.library knows.
 pub fn now(base: *TLSBase) i64 {
     var stamp: dos.DateStamp = .{};
     _ = base.dos_base.?.DateStamp(&stamp);
-    const local: i64 = timezone.datestamp_epoch + @as(i64, stamp.days) * 86400 + @as(i64, stamp.minute) * 60 + @divTrunc(@as(i64, stamp.tick), 50);
-    const zone = timezone.parse(base.zone[0..base.zone_length]) orelse return local;
-    // The offset is the one at UTC; a first guess at it is close enough
-    // to find it, but within the hour summer time changes.
-    const guess = local - zone.offsetAt(local);
-    return local - zone.offsetAt(guess);
+    return base.utility_base.?.DateToUtc(&stamp, null);
 }
 
 /// The stores a session's chain may end in.

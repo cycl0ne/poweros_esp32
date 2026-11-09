@@ -59,7 +59,7 @@ const CryptoBase = sdk.interface.crypto.CryptoBase;
 const sftp = @import("sftp.zig");
 
 pub const COMMAND_NAME = "ShellServer";
-const VERSION_STRING = "\x00$VER: ShellServer 1.10 (29.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShellServer 1.11 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "PORT/K/N,QUIET/S,SSH/S";
@@ -391,11 +391,13 @@ fn sessionEntry(sys: *ExecBase) callconv(.c) void {
 fn subsystem(sys: *ExecBase, dl: *DosBase, session: *Session, login: *Login) u32 {
     const name: [*:0]const u8 = @ptrCast(&session.accept.command);
     if (!sameName(name, "sftp")) return 1;
+    const utility_lib = sys.OpenLibrary(sdk.utility.UTILITYNAME, 1) orelse return 1;
+    defer sys.CloseLibrary(utility_lib);
     const memory = sys.AllocVec(@sizeOf(sftp.Server), exec.MEMF_ANY) orelse return 1;
     defer sys.FreeVec(memory);
     const server: *sftp.Server = @ptrCast(@alignCast(memory));
     const user: [*:0]const u8 = @ptrCast(&session.accept.user);
-    server.init(sys, dl, user[0..lengthOf(user)], SFTP_HOME);
+    server.init(sys, dl, @ptrCast(utility_lib), user[0..lengthOf(user)], SFTP_HOME);
     defer server.deinit();
     server.serve(login.io);
     return 0;

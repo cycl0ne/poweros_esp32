@@ -51,6 +51,9 @@ const DateSplit = @import("date/datesplit.zig").DateSplit;
 const DateJoin = @import("date/datejoin.zig").DateJoin;
 const CompareMem = @import("utils/comparemem.zig").CompareMem;
 const NextSetting = @import("strings/nextsetting.zig").NextSetting;
+const ZoneOffset = @import("date/zoneoffset.zig").ZoneOffset;
+const DateToUtc = @import("date/datetoutc.zig").DateToUtc;
+const UtcToDate = @import("date/utctodate.zig").UtcToDate;
 const PackStructureTags = @import("pack/packstructuretags.zig").PackStructureTags;
 const UnpackStructureTags = @import("pack/unpackstructuretags.zig").UnpackStructureTags;
 const AddNamedObject = @import("namedobjects/addnamedobject.zig").AddNamedObject;
@@ -78,6 +81,7 @@ const SDivMod32Result = sdk.utility.SDivMod32Result;
 const UDivMod32Result = sdk.utility.UDivMod32Result;
 const NamedObject = sdk.utility.NamedObject;
 const SettingScan = sdk.utility.SettingScan;
+const DateStamp = sdk.dos.DateStamp;
 
 /// utility.library's interface, as the SDK generates it from
 /// sdk/fd/utility_lib.fd.
@@ -160,6 +164,11 @@ const contract_files = [_][]const u8{
     @embedFile("strings/strlcpy.zig"),
     @embedFile("strings/strchr.zig"),
     @embedFile("strings/strrchr.zig"),
+    @embedFile("date/datesplit.zig"),
+    @embedFile("date/datejoin.zig"),
+    @embedFile("date/zoneoffset.zig"),
+    @embedFile("date/datetoutc.zig"),
+    @embedFile("date/utctodate.zig"),
 };
 
 /// The empty slots of the table: each returns 0.
@@ -330,6 +339,15 @@ fn lvoCompareMem(ub: *UtilityBase, first: *const anyopaque, second: *const anyop
 fn lvoNextSetting(ub: *UtilityBase, scan: *SettingScan) callconv(.c) i32 {
     return NextSetting(ub, scan);
 }
+fn lvoZoneOffset(ub: *UtilityBase, utc: i64) callconv(.c) i32 {
+    return ZoneOffset(ub, utc);
+}
+fn lvoDateToUtc(ub: *UtilityBase, date: *const DateStamp, nanoseconds: ?*u32) callconv(.c) i64 {
+    return DateToUtc(ub, date, nanoseconds);
+}
+fn lvoUtcToDate(ub: *UtilityBase, utc: i64, date: *DateStamp) callconv(.c) void {
+    UtcToDate(ub, utc, date);
+}
 
 fn lvoGetUniqueID(ub: *UtilityBase) callconv(.c) u32 {
     return GetUniqueID(ub);
@@ -404,6 +422,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoDateJoin),
     vec(lvoCompareMem),
     vec(lvoNextSetting),
+    vec(lvoZoneOffset),
+    vec(lvoDateToUtc),
+    vec(lvoUtcToDate),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -411,7 +432,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: every slot, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 65), vectors.len);
+    try testing.expectEqual(@as(usize, 68), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

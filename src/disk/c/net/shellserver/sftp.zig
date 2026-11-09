@@ -20,7 +20,7 @@
 //! that failed is told by a later WRITE or by CLOSE.
 //!
 //! **Attributes.** A file's size, its time - the system clock's local
-//! time turned into UTC by the zone in `ENV:Sys/timezone` - and its
+//! time turned into UTC by the zone the clock keeps - and its
 //! permissions: read, write and execute for the owner from the
 //! protection bits (a set bit forbids), the same without write for the
 //! rest. SETSTAT sets them back - write sets delete with it - and the
@@ -35,6 +35,7 @@ const sftp = sdk.devices.ssh.sftp;
 const timezone = dos.timezone;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 
 /// The most files and directories open at once.
 pub const handles_max = 16;
@@ -70,7 +71,8 @@ const Handle = struct {
 pub const Server = struct {
     sys: *ExecBase,
     dl: *DosBase,
-    zone: timezone.Zone = .{},
+    /// Dates between the clock's zone and UTC.
+    ub: *UtilityBase,
     /// The owner named in a listing, and where a session starts.
     user: [32:0]u8 = @splat(0),
     home: [64:0]u8 = @splat(0),
@@ -90,11 +92,10 @@ pub const Server = struct {
 
     /// A server with no handles open: `user` names the owner in a
     /// listing, and `home` (`/SYS`) is where names are taken from.
-    pub fn init(server: *Server, sys: *ExecBase, dl: *DosBase, user: []const u8, home: []const u8) void {
-        server.* = .{ .sys = sys, .dl = dl };
+    pub fn init(server: *Server, sys: *ExecBase, dl: *DosBase, ub: *UtilityBase, user: []const u8, home: []const u8) void {
+        server.* = .{ .sys = sys, .dl = dl, .ub = ub };
         copyName(&server.user, user);
         copyName(&server.home, home);
-        server.zone = readZone(dl);
     }
 
     /// Every handle the client left open, closed.
@@ -514,20 +515,14 @@ pub const Server = struct {
 
     /// A DateStamp, local time, as seconds since 1970 UTC.
     fn unixFromDate(server: *Server, date: dos.DateStamp) u32 {
-        const local = secondsOf(date) + timezone.datestamp_epoch;
-        const guess = local - server.zone.offsetAt(local);
-        const utc = local - server.zone.offsetAt(guess);
+        const utc = server.ub.DateToUtc(&date, null);
         return if (utc < 0) 0 else @truncate(@as(u64, @intCast(utc)));
     }
 
     fn dateFromUnix(server: *Server, unix: u32) dos.DateStamp {
-        const local = @as(i64, unix) + server.zone.offsetAt(unix) - timezone.datestamp_epoch;
-        if (local < 0) return .{};
-        return .{
-            .days = @intCast(@divFloor(local, 86400)),
-            .minute = @intCast(@divFloor(@mod(local, 86400), 60)),
-            .tick = @intCast(@mod(local, 60) * ticks_per_second),
-        };
+        var date: dos.DateStamp = .{};
+        server.ub.UtcToDate(unix, &date);
+        return date;
     }
 
     // --- Listings --------------------------------------------------------
@@ -690,7 +685,6 @@ fn send(sys: *ExecBase, io: *exec.IOStdReq, bytes: []const u8) bool {
 const max_offset: u64 = 0x7FFF_FFFF_FFFF_FFFF;
 /// A position no offset matches: the next request seeks.
 const unknown_position: u64 = ~@as(u64, 0);
-const ticks_per_second = 50;
 const month_names = [12][]const u8{ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
 
 fn sizeFits(size: u64) bool {
@@ -720,10 +714,6 @@ fn rootAttrs() sftp.Attrs {
     return .{ .flags = sftp.ATTR_PERMISSIONS, .permissions = sftp.S_IFDIR | 0o755 };
 }
 
-fn secondsOf(date: dos.DateStamp) i64 {
-    return @as(i64, date.days) * 86400 + @as(i64, date.minute) * 60 + @divFloor(date.tick, ticks_per_second);
-}
-
 /// Whether a whole name is `/VOLUME` alone.
 fn volumeOnly(whole: [*:0]const u8) bool {
     if (whole[0] != '/' or whole[1] == 0) return false;
@@ -742,31 +732,6 @@ fn isFileSystem(dl: *DosBase, entry: *dos.DosList) bool {
     const action = @intFromEnum(dos.ActionCode.disk_info);
     if (dl.DoPkt(port, action, @bitCast(@intFromPtr(&info)), 0, 0, 0, 0) == dos.DOSFALSE) return false;
     return info.disk_type != dos.ID_CON and info.disk_type != dos.ID_RAWCON;
-}
-
-/// The zone the system clock keeps: the rule on the zone file's first
-/// line that is not a comment, however long the comments before it; UTC
-/// without one.
-fn readZone(dl: *DosBase) timezone.Zone {
-    const file = dl.Open(timezone.zone_file, dos.MODE_OLDFILE) orelse return .{};
-    defer _ = dl.Close(file);
-    var text: [256]u8 = undefined;
-    // A line longer than the buffer comes in pieces; only the first
-    // piece of a line is looked at.
-    var line_start = true;
-    while (dl.FGets(file, &text, text.len) != null) {
-        var length: usize = 0;
-        while (length < text.len and text[length] != 0) length += 1;
-        const starts = line_start;
-        line_start = length > 0 and text[length - 1] == '\n';
-        if (!starts) continue;
-        var line: []const u8 = text[0..length];
-        while (line.len > 0 and (line[line.len - 1] == '\n' or line[line.len - 1] == '\r' or line[line.len - 1] == ' ' or line[line.len - 1] == '\t')) line = line[0 .. line.len - 1];
-        while (line.len > 0 and (line[0] == ' ' or line[0] == '\t')) line = line[1..];
-        if (line.len == 0 or line[0] == '#') continue;
-        return timezone.parse(line) orelse .{};
-    }
-    return .{};
 }
 
 fn copyName(into: anytype, from: []const u8) void {
