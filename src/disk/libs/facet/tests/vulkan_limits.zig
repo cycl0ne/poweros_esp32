@@ -325,15 +325,18 @@ const Rig = @import("facet.zig").Rig;
 /// no-attachments mask, after item 43 made such a subpass in 1.113.
 ///
 /// Items 28, 17, 22, 61 and 43 are split the way item 52 was, so **this
-/// count is the cores' and the V3D still falls short on twelve rows**: 0
+/// count is the cores' and the V3D still falls short on eight rows**: 0
 /// for the two texel offsets, which it reads off its own SPIR-V profile; 8
 /// for the two varyings, which it reads off its compiler's own cap - Mesa's
 /// v3dv carries 64 on this same GPU, so that is this compiler's limit, not
 /// the hardware's; 1 framebuffer layer, until its render list is played
 /// once a layer as v3dv's is (driver/v3d/driver.zig); one sample in the
-/// six masks, until it draws four (item 61's V5); and one in the
-/// no-attachments mask, until it makes a subpass of no attachment (item
-/// 43's V3D half) and draws four in it (item 61's V8).
+/// colour and depth sampled-image masks, until its TMU fetches a sample
+/// where a frame of four stored it (item 61's V7); and none in the stencil
+/// one, which it does not sample. The three framebuffer masks hold the 4
+/// bit since 1.148, when it drew four (V5), and the no-attachments mask
+/// since 1.150, when it made a subpass of no attachment (item 43's V3D
+/// half) and drew four in it (V8).
 const shortfalls_on_the_cores = 0;
 
 test "the check itself: Vulkan's floor passes, and a step below it is caught" {

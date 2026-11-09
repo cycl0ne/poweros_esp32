@@ -4349,4 +4349,51 @@ pub const LIBRARY_VERSION = 1;
 /// the alpha's FTOC and MSF are ANDed into SETMSF before Z, which is
 /// written through before the colour, and the program writes Z with
 /// early Z off; without it, none of that.
-pub const LIBRARY_REVISION = 149;
+///
+/// 150: **The V3D draws a subpass of no colour attachment, a pipeline of
+/// no fragment stage, and a subpass of no attachment at four samples
+/// (docs/facet-vulkan10.md items 43 and 85, the V3D's halves, and item
+/// 61's V8).** `can.colorless_subpasses` is on there, so its
+/// no-attachments mask says four with one.
+///
+/// - A frame of no colour configures one render target all the same,
+///   flagged unused by a stride of 1, as v3dv's at 7.1
+///   (v3dvx_cmd_buffer.c:1189-1197; `cl.unusedRenderTarget`), and its
+///   tiles load, store, resolve and clear no colour: where nothing is
+///   kept either, a tile's one store is of nothing
+///   (v3dvx_cmd_buffer.c:680-685). Its tile is v3d_choose_tile_size's
+///   for no colour, the depth alone (`Frame.color`).
+/// - The key says which render targets the subpass draws, Mesa's cbufs
+///   (v3dv_pipeline.c:2137-2142; `compile.Key.cbufs`), and a program of
+///   none writes no colour to the TLB and has no early fragment tests
+///   promoted, so it writes the rasterizer's Z through as its one TLB
+///   write (nir_to_vir.c:2050-2054, 2073-2081, 2098-2126, 1957).
+/// - v3dv's noop fragment shader (v3dv_pipeline.c:2616-2645), a body of
+///   nothing compiled with no render target, is `qpu.no_color_fragment`,
+///   held to what the ported back end makes of it word for word
+///   (`compile.compileNoColor`). A pipeline of no fragment stage draws
+///   with it, in a subpass of colour too, where it writes none; and in a
+///   subpass of no colour so do the fixed forms, whose programs write a
+///   colour the frame has not and drop no pixel, and the clears.
+/// - A subpass of no attachment draws at its pipelines' count: where the
+///   frame's first draw has four and the frame one, the frame starts
+///   again at four, as v3dv restarts its job
+///   (`cmd_buffer_restart_job_for_msaa_if_needed`,
+///   v3dv_cmd_buffer.c:2655-2735; `_play.zig`'s `restartAtFour`).
+/// - A subpass whose every colour is ATTACHMENT_UNUSED is a subpass of no
+///   colour, refused where `colorless_subpasses` is not: the V3D took one
+///   before and read a colour it had not.
+/// - Found on the way: the binner was started at the last part of its
+///   list, which goes on into another of 64 KiB where it fills one
+///   (`roomOnList`), so a frame of that many draws lost the binning mode
+///   it begins with. It starts at the first, as v3dv starts at its job's
+///   first block (v3dv_queue.c:733-737).
+///
+/// Tests: the V3D's 149, three new: the program of no colour is the back
+/// end's, to the word; a module's colour compiled with no render target
+/// is not written and Z is; and a frame of no colour configures the
+/// unused render target, and its tiles move and clear no colour, a store
+/// of nothing where nothing is kept. The host's: a subpass of unused
+/// colours alone refused without the capability and taken with it, and
+/// the V3D as described meets the no-attachments mask.
+pub const LIBRARY_REVISION = 150;

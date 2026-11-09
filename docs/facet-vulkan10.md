@@ -145,16 +145,18 @@ as of 1.91, draw four samples a pixel as of 1.112 (in a subpass of no
 attachment as of 1.114), a subpass with no colour attachment as of 1.113,
 a pipeline of no fragment stage as of 1.115, an image both drawn into
 and sampled as of 1.119 and a view of another format of an image as of
-1.131, and the V3D does none of the nine - so the
+1.131, and the V3D did none of the nine until it drew four samples a
+pixel in 1.148 and 1.149 (item 61's V1 to V6), and a subpass of no
+colour attachment, a pipeline of no fragment stage and a subpass of no
+attachment at four in 1.150 (items 43 and 85, and V8) - so the
 magenta item 52 is about now belongs to item 54 alone, item 28's
 remainder is a QPU back end that refuses the operand at pipeline
 creation, item 17's is a vertex program that keeps its varyings in
 registers and so stops at eight, item 22's is a render list played once
-a frame rather than once a layer, item 61's is its steps V1 to V8,
-item 43's is a frame whose one render target is flagged unused, item
-85's is a fragment program of no instructions, item 48's is a store
-and a load that name the UIF layout, and a clear through the TLB, and
-item 42's is a texture state and a render target of the view's format.
+a frame rather than once a layer, item 61's is its step V7, item 48's
+is a store and a load that name the UIF layout, and a clear through the
+TLB, and item 42's is a texture state and a render target of the view's
+format.
 
 None of the nine is the hardware's limit. Mesa's v3dv runs Vulkan on this
 same V3D 7.1 with 64 varyings, texel offsets of -8 to 7, 256 framebuffer
@@ -1498,7 +1500,7 @@ through a view of R32_UINT, which the TMU does not read.
 
 ### 43. Accept a subpass with no colour attachment
 
-*render passes* &mdash; **the cores' half done in 1.113**; the V3D's is the port of v3dv's unused render target, about 30 lines and a board check
+*render passes* &mdash; **the cores' half done in 1.113, the V3D's in 1.150**
 
 CreateRenderPass refuses color_attachment_count == 0, so a depth-only subpass — the canonical shadow-map pass, and the depth pre-pass as Vulkan writes it — cannot be described at all. Vulkan allows colorAttachmentCount = 0 with a depth/stencil attachment and no colour. Lifting it means the render-pass plan, the tile layout and both drivers' part code tolerating zero colour planes: the cores' tile always carries a colour buffer per part and the V3D's render-target configuration names a colour format. facet has PIPELINE_CREATE_DEPTH_PREPASS as its own answer to the same need, which is why this went unnoticed; it is in neither document.
 
@@ -1556,6 +1558,50 @@ loads.
 Found while doing it, and added as items 85 and 86: a pipeline with no
 fragment stage, and a colour reference of `ATTACHMENT_UNUSED`. Both are
 valid Vulkan 1.0, and both are refused.
+
+**The V3D's half done in 1.150**, with item 85's and item 61's V8, which
+share its program. It is v3dv's, and the larger part of it is the
+compiler's, which the estimate above left out:
+
+- **The frame.** At 7.1 a frame of no colour still configures one render
+  target, flagged unused by a stride of 1, which packs to 0
+  (v3dvx_cmd_buffer.c:1189-1197; `cl.unusedRenderTarget`). Its tiles
+  load, store, resolve and clear no colour, and where nothing is kept
+  either a tile's one store is of nothing, as v3dv always emits one
+  (v3dvx_cmd_buffer.c:680-685); the depth and the stencil clear between
+  tiles by themselves at 7.1, so no CLEAR_RENDER_TARGETS is emitted
+  (:544-551, :687-699). The tile is v3d_choose_tile_size's for the
+  depth alone, which at one sample and at four is the size it is for
+  one target of 32 bits (`Frame.color`, `frame.chooseTile(0, ...)`).
+- **The program.** Mesa's key says which render targets a subpass draws,
+  `cbufs`, set for each colour attachment that is not unused
+  (v3dv_pipeline.c:2137-2142), and a program with none writes no colour
+  to the TLB (nir_to_vir.c:1957). Nor are its early fragment tests
+  promoted, which needs a colour written (:2073-2081), so it writes the
+  rasterizer's Z through as its one TLB write (:2098-2126).
+  `compile.Key.cbufs` carries it, and a compiled pipeline is keyed on its
+  subpass (`Pipeline.colorless`). The fixed forms and the clears draw
+  with v3dv's noop fragment shader instead (v3dv_pipeline.c:2616-2645):
+  a body of nothing compiled with no render target, six instructions,
+  pinned as `qpu.no_color_fragment` and held to what the ported back end
+  makes of it word for word. A fixed form's program writes a colour the
+  frame has not and drops no pixel, so what it leaves - the depth and the
+  stencil - is what the noop leaves.
+- **A subpass whose every colour is unused is one of none** (item 86),
+  and is now refused where `colorless_subpasses` is not. Before this the
+  V3D took one and read a colour image its part did not have.
+- **The pre-pass as Vulkan writes it** - a subpass of the depth alone, then
+  one of colour tested against what it left - runs on the V3D through the
+  depth two parts share (1.52), as on the cores, the first part storing it
+  and the second loading it. Its depth wants memory behind it: a lazily
+  allocated one cannot be kept between parts on either device.
+
+FacetBoth 1.18 draws it on the board against the cores: a shadow map in a
+pass of it alone, by the fixed form, a compiled shader and no fragment
+stage, sampled by the shadow-map cases' quad (3, 5, 3 and 3 pixels of
+230400 apart, as the same maps drawn beside a colour are); and the
+pre-pass, of no colour attachment and of an unused one, with a depth
+CmdClearAttachments inside it (8 or 9 apart, the edges every case has).
 
 ### 44. Allow a both-aspect view of a sampled depth+stencil image
 
@@ -2114,7 +2160,7 @@ facet reports 1|4 on both devices, with the standard locations on both since 1.1
 | V5 | **Done in 1.148.** Resolve in the TLB, with S5 as the fallback; 4x turned on for the V3D, closing its three framebuffer rows. The tiles store the colour's average into the resolve's rows before the colour, where every tile they render lies inside the render area or over the framebuffer's edge, and the CPU resolves the area after the frame elsewhere. Against the first plan, aligned to the supertile and not the tile: the renderer renders whole every supertile the area touches, v3dv's as well, so a tile-aligned area alone would let a tile average into the attachment outside it. CmdResolveImage stays on the CPU: `resolve_image_tlb` is not ported. Its sampled colour and depth masks stay at one until V7. `standardSampleLocations` stays true, against v3dv: its compiler's four places are Vulkan's, and FacetBoth 1.16's five cases of four on the board are 22 to 54 pixels of 230400 apart from the cores', each by one sample's worth, where wrong places would part most pixels on an edge | v3dvx_cmd_buffer.c:640-686, 771-795; v3dv_pass.c:663-683; v3dv_cmd_buffer.c:421-446, 957-1005, 1184-1203; nir_to_vir.c:3111-3134 | 110 | 40 |
 | V6 | **Done in 1.149.** Alpha to coverage on the QPU: a compiled program of four samples ANDs its alpha's FTOC with MSF into SETMSF before the tile buffer is written, and writes Z through with early Z off, its early tests not promoted. `compile.Key` carries it beside the words, set only at four samples as v3dv's key is, so a pipeline of one draws without it, which until now was refused. Against the first plan, a fixed form of four that asks for it stays refused and on the cores: its hand-written program does not cover, and a fixed form's varyings are carried in another scaling than a compiled program reads, so it cannot take its words' program instead. FacetBoth 1.17's case on the board is 44 pixels of 230400 more than a sample apart from the cores', which dither which samples the alpha covers | nir_to_vir.c:2056-2065, 2073-2108; vir.c:1011-1013; v3dv_pipeline.c:1321-1324; v3dvx_pipeline.c:453, 459 | 110 | 35 |
 | V7 | Multisampled fetch through the TMU, after item 59 | v3d_nir_lower_txf_ms.c:46-51 | 45 | 25 |
-| V8 | No-attachment subpasses at 4x, after item 43's V3D half | `cmd_buffer_restart_job_for_msaa_if_needed`, v3dv_cmd_buffer.c:2676 | 20 | 10 |
+| V8 | **Done in 1.150.** No-attachment subpasses at 4x, with item 43's V3D half: where a frame's first draw has a pipeline of four and the frame one, the frame starts again at four, of its size and in the tile four samples of no colour take, its tile lists, tile state and binner's list made again, nothing having been binned. A frame of any attachment has that attachment's count, which its pipelines are held to, so only one of none restarts. FacetBoth 1.18 counts a no-attachment subpass's draws with an occlusion query: 422266 samples on the V3D at four against the cores' 422322, and 105571 against 105583 at one. Found on the way: the binner was started at the last 64 KiB part of its list, not the first, so a frame of that many draws lost its binning mode; it starts at the first, as v3dv starts at its job's first block (v3dv_queue.c:733-737) | `cmd_buffer_restart_job_for_msaa_if_needed`, v3dv_cmd_buffer.c:2655-2735, called at :2906 | 40 | 40 |
 
 Docs add about 75 lines in K7 and 15 in V5. The V3D's sampled depth and stencil rows wait on item 58 and are not among these commits.
 
@@ -2659,7 +2705,7 @@ one of the widest graph's sixteen inputs and one output.
 
 ### 85. A graphics pipeline with no fragment stage is refused
 
-*pipelines* &mdash; conformance-blocking, small, found while doing item 43 &mdash; **the cores' half done in 1.115**; the V3D's is v3dv's no-op fragment shader
+*pipelines* &mdash; conformance-blocking, small, found while doing item 43 &mdash; **the cores' half done in 1.115, the V3D's in 1.150**
 
 Vulkan 1.0 asks a graphics pipeline for a vertex stage
 (VUID-VkGraphicsPipelineCreateInfo-stage-02096) and nothing of a fragment
@@ -2702,6 +2748,18 @@ half is v3dv's: a fragment
 shader of no instructions built for the pipeline and compiled
 (v3dv_pipeline.c:2616-2642), here a fragment program of the library's own
 handed to the back end, with a board check.
+
+**The V3D's half done in 1.150**, with item 43's, whose program it is:
+v3dv's noop compiled with no render target in the key, which with no
+colour of its own writes no colour in a subpass of colour either, and
+writes the rasterizer's Z through (`qpu.no_color_fragment`, held to the
+back end's output by a test). `Pipeline.fragment_stage` says the stages
+named none; `makePipeline` makes such a pipeline with no program of its
+own, and its draws take the device's. Vulkan leaves the colour
+undefined; here it keeps what it held, as on the cores. FacetBoth 1.18
+draws one in a pass of colour, its depth hiding the glass drawn after
+it, and one that draws a shadow map and a pre-pass: 6, 3 and 8 pixels of
+230400 apart from the cores.
 
 ### 86. A colour reference of ATTACHMENT_UNUSED is refused
 
@@ -2759,7 +2817,8 @@ facet's own.
 - **The V3D draws every subpass apart**, and reads a part's location the
   same way (driver/v3d/_play.zig). This is unchecked on the board. A
   subpass whose every reference is unused is one of none, which the V3D
-  refuses until item 43's V3D half.
+  draws as one since item 43's V3D half in 1.150; it took one before, and
+  read a colour its part did not have, which this note had wrong.
 
 ### 87. A subpass drawn a part for each colour attachment was not played the same way in each part
 
@@ -3036,7 +3095,7 @@ Reading the VUIDs found more than the 66:
   every pipeline of none; a pipeline that draws nothing - its rasterizer
   discarding, or every face culled - is taken now, its draw returning
   before any program is needed, and only one of none that draws is
-  refused, until item 85's V3D half. A
+  refused, until item 85's V3D half (done in 1.150). A
   discarding draw on the cores counted as a target's first, and laid a
   subpass of no attachments out for its samples; it does not now. Where
   the first draw that rasterizes lays the tiles again for its samples, it

@@ -123,12 +123,13 @@ pub const Capabilities = extern struct {
     secondary_command_buffers: bool = false,
     several_subpasses: bool = false,
     several_color_attachments: bool = false,
-    /// A subpass with no colour attachment: a depth attachment alone, or
-    /// no attachment at all, what its fragment function colours going
-    /// nowhere (since 1.113). Vulkan has no feature for it, so a device
-    /// without it falls short of 1.0 there: the V3D, whose frame names a
-    /// colour render target, until v3dv's unused one is ported
-    /// (v3dvx_cmd_buffer.c:1189-1197, docs/facet-vulkan10.md item 43).
+    /// A subpass with no colour attachment, or with unused ones alone: a
+    /// depth attachment alone, or no attachment at all, what its fragment
+    /// function colours going nowhere (since 1.113). Vulkan has no feature
+    /// for it, so a device without it falls short of 1.0 there. Both
+    /// devices have it: the V3D since 1.150, its frame's one render target
+    /// v3dv's unused one (v3dvx_cmd_buffer.c:1189-1197,
+    /// docs/facet-vulkan10.md item 43).
     colorless_subpasses: bool = false,
     texture_arrays: bool = false,
     cube_maps: bool = false,
@@ -722,9 +723,10 @@ pub const limits: facet.PhysicalDeviceLimits = .{
     // the cores have since 1.112 and the V3D since 1.148 (item 61's V5),
     // its sampled colour and depth held at one by its own describe; and
     // one sample for a subpass with no attachments on a device that makes
-    // no such subpass (`can.colorless_subpasses`): the V3D, until item
-    // 43's half of it. The cores meet all seven since 1.114, when a
-    // subpass of no attachment took its pipelines' count (item 61's K8).
+    // no such subpass (`can.colorless_subpasses`), which neither is now.
+    // A subpass of no attachment takes its pipelines' count on the cores
+    // since 1.114 (item 61's K8), and on the V3D since 1.150, its frame
+    // started again at four (V8).
     // Until 1.96 this table said one sample itself.
     .framebuffer_color_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,
     .framebuffer_depth_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,

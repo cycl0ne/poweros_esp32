@@ -48,7 +48,7 @@ pub const TILE_COORDINATES_IMPLICIT: u8 = 125;
 
 // --- rendering --------------------------------------------------------------
 
-const TILE_RENDERING_MODE_CFG: u8 = 121;
+pub const TILE_RENDERING_MODE_CFG: u8 = 121;
 
 pub const OUTPUT_RGBA8: u64 = 27;
 pub const OUTPUT_BGR565: u64 = 7;
@@ -118,6 +118,15 @@ pub fn renderTarget0(list: *List, tile_width: u32, clear: u32) void {
     const type_8: u64 = 8;
     list.byte(TILE_RENDERING_MODE_CFG);
     list.double(2 | (stride - 1) << 18 | type_8 << 27 | @as(u64, clear) << 32);
+}
+
+/// The render target of a frame of no colour: one is still configured,
+/// flagged unused by a stride of 1, which packs to 0 (v3dvx_cmd_buffer.c:
+/// 1189-1197; v3d_packet.xml's Stride is minus_one), its other fields 0
+/// (since 1.150).
+pub fn unusedRenderTarget(list: *List) void {
+    list.byte(TILE_RENDERING_MODE_CFG);
+    list.double(2);
 }
 
 /// The last of the rendering mode's packets: depth and stencil's clear.

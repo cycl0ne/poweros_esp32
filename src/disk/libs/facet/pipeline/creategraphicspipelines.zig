@@ -396,6 +396,8 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .line_width = 1,
         .mixings = @splat(.{}),
         .outputs = outputs,
+        .colorless = pass.parts[subpass.first_part].color_count == 0,
+        .fragment_stage = fragment != null,
         .viewport = null,
         .scissor = null,
     };

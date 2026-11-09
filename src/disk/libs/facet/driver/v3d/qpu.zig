@@ -324,6 +324,25 @@ const color_code = varying(4) ++ varying(5) ++ varying(6) ++ varying(7) ++ last_
 
 pub const color_fragment = Fragment{ .code = &color_code, .varyings = 4, .uniforms = 0 };
 
+/// The program of no colour: v3dv's noop fragment shader
+/// (v3dv_pipeline.c:2616-2645) as Mesa's back end makes it with no render
+/// target in the key (`compile.compileNoColor`, whose test holds these
+/// words to it). The switch to the last section, then its one TLB write
+/// in the program's end: the depth the rasterizer made, written through
+/// ("mov tlbu, rf5", the source a null register packs to, which an
+/// invariant write does not read), with `no_color_specifier` its one
+/// uniform (emit_frag_end, nir_to_vir.c:2098-2126). It writes Z, so early
+/// Z is off for it. A subpass of no colour draws with it, and a pipeline
+/// of no fragment stage (since 1.150).
+const no_color_code = [_]u64{ thrsw, thrsw, nop, 0x3820_3206_BB14_3000, nop, nop };
+
+/// TLB_TYPE_DEPTH, TLB_V42_DEPTH_TYPE_INVARIANT and
+/// TLB_SAMPLE_MODE_PER_PIXEL, over the 0xffffff00 every specifier has
+/// (nir_to_vir.c:2118-2131).
+pub const no_color_specifier: u32 = 0xffff_ff84;
+
+pub const no_color_fragment = Fragment{ .code = &no_color_code, .varyings = 0, .uniforms = 1, .writes_z = true, .disable_ez = true };
+
 /// A texture at the varyings s and t, with two uniforms: the configuration
 /// parameters P0 and P1. It comes back as two words, of two half-floats
 /// each, in the form the tile buffer takes.

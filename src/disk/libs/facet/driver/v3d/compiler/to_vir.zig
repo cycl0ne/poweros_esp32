@@ -33,8 +33,8 @@
 //!   which the steps do not keep: what comes after the store is not
 //!   handed on.
 //! - The key is the one this device's draws have: render target 0, of
-//!   16-bit floats, red and blue not swapped, and of what Mesa's key
-//!   varies, alpha to coverage alone (`Key`). One sample a pixel or four
+//!   16-bit floats, red and blue not swapped, or none (since 1.150), and
+//!   of what Mesa's key varies, alpha to coverage and that alone (`Key`). One sample a pixel or four
 //!   (since 1.148): the colour is written a pixel at a time either way,
 //!   as Mesa writes it without sample shading (msaa_per_sample_output).
 //! - Of the strategies (vir.c:2214), 0 and 2. 1, 3 and 4 turn off what is
@@ -116,6 +116,11 @@ pub const Key = struct {
     /// nir_lower_alpha_to_coverage, which is for a key that blends in the
     /// program (vir.c:1293-1299).
     sample_alpha_to_coverage: bool = false,
+    /// The render targets the subpass draws, a bit each: Mesa's cbufs,
+    /// which v3dv sets for each colour attachment that is not
+    /// ATTACHMENT_UNUSED (v3dv_pipeline.c:2137-2142). A part draws one, as
+    /// render target 0, or none (since 1.150).
+    cbufs: u8 = 1,
 };
 
 /// A program compiled: its instructions in `c.qpu_insts`, the uniforms it
@@ -289,7 +294,8 @@ fn emitSmoothVarying(c: *Compile, vary: Reg, w: Reg, c_reg: Reg) Error!Reg {
 /// it.
 fn emitBlock(e: *Emit) Error!void {
     for (e.work.steps[0..e.work.step_count], 0..) |each, at| try emitStep(e, each, @intCast(at));
-    try emitColorWrite(e);
+    // A program of no colour has no store to emit (since 1.150).
+    if (hasColor(e)) try emitColorWrite(e);
     try flushTmu(e);
 }
 
@@ -421,6 +427,13 @@ fn unpackTexel(e: *Emit, at: u16) Error!void {
 
 /// ntq_emit_color_write (nir_to_vir.c:3020): the colour moved out of what
 /// the body made it in.
+/// The program writes a colour: Mesa's output_color_var[0], which the
+/// steps have where the module stores one. Every module compiled does,
+/// and the program of no colour (`compileNoColor`) does not.
+fn hasColor(e: *const Emit) bool {
+    return e.work.output_count != 0;
+}
+
 fn emitColorWrite(e: *Emit) Error!void {
     for (&e.outputs, 0..) |*output, k| output.* = try e.c.mul(.mov, .{try getSrc(e, e.work.stored, k)});
 }
@@ -580,17 +593,22 @@ fn emitFragEnd(e: *Emit) Error!void {
     // Alpha to coverage where the TLB blends (nir_to_vir.c:2056-2065):
     // the samples FTOC makes of colour 0's alpha, kept of those the pixel
     // has (since 1.149).
-    if (e.key.sample_alpha_to_coverage) {
+    if (e.key.sample_alpha_to_coverage and hasColor(e)) {
         const covered = try c.add(.@"and", .{ try c.add(.msf, .{}), try c.add(.ftoc, .{e.outputs[3]}) });
         _ = try c.addDest(.setmsf, vir.nopReg(), .{covered});
     }
-    // The colour is always written and there is no image, buffer or
-    // sample mask, so early_fragment_tests is promoted where nothing
-    // discards and nothing covers by alpha (nir_to_vir.c:2073-2081;
-    // v3dv has no can_earlyz_with_discard), and where it is not the
-    // program writes Z (nir_to_vir.c:2098). It has no gl_FragDepth, so
-    // that Z is the one the rasterizer made, written through as it is.
-    e.early_fragment_tests = !e.uses_discard and !e.key.sample_alpha_to_coverage;
+    // A colour the TLB takes: render target 0 is among the key's, and
+    // the program writes it (nir_to_vir.c:2050-2054).
+    const has_any_tlb_color_write = e.key.cbufs & 1 != 0 and hasColor(e);
+    // There is no image, buffer or sample mask, so early_fragment_tests
+    // is promoted where a colour is written, nothing discards and nothing
+    // covers by alpha (nir_to_vir.c:2073-2081; v3dv has no
+    // can_earlyz_with_discard), and where it is not the program writes Z
+    // (nir_to_vir.c:2098): a program of no colour always does, its one
+    // TLB write, where Mesa also says it discards (:2125-2126), which
+    // nothing after reads here. It has no gl_FragDepth, so that Z is the
+    // one the rasterizer made, written through as it is.
+    e.early_fragment_tests = has_any_tlb_color_write and !e.uses_discard and !e.key.sample_alpha_to_coverage;
     if (!e.early_fragment_tests) {
         e.writes_z = true;
         const inst = try c.mulDest(.mov, vir.magicReg(.tlbu), .{vir.nopReg()});
@@ -649,6 +667,7 @@ fn readsReg(inst: *const Inst, r: Reg) bool {
 /// register is preloaded with.
 fn emitTlbColorWrite(e: *Emit, rt: u32) Error!void {
     const c = e.c;
+    if (e.key.cbufs & (@as(u8, 1) << @intCast(rt)) == 0 or !hasColor(e)) return;
     const num_components = 4;
     var conf: u32 = 0xffffff00;
     conf |= tlb_sample_mode_per_pixel;

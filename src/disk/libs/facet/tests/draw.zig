@@ -700,7 +700,17 @@ test "a render pass: one subpass, a colour attachment and perhaps a depth one; w
     physical.can.colorless_subpasses = false;
     try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &fine, .subpass_count = 1, .subpasses = @ptrCast(&depth_alone) }, &none));
     try testing.expect(none == null);
+    // And one whose every colour is unused, which is a subpass of no
+    // colour as well (since 1.150).
+    const unused_reference = [1]facet.AttachmentReference{.{ .attachment = facet.ATTACHMENT_UNUSED, .layout = .color_attachment_optimal }};
+    const all_unused = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = &unused_reference, .depth_stencil_attachment = &depth };
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &fine, .subpass_count = 1, .subpasses = @ptrCast(&all_unused) }, &none));
+    try testing.expect(none == null);
     physical.can.colorless_subpasses = true;
+    var unused_pass: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &fine, .subpass_count = 1, .subpasses = @ptrCast(&all_unused) }, &unused_pass));
+    try testing.expectEqual(@as(u32, 0), _objects.of(_render.RenderPass, unused_pass.?).parts[0].color_count);
+    fb.DestroyRenderPass(device, unused_pass);
 
     // A depth of d16_unorm kept, which the cores do: the part says it is
     // read as each tile starts and written back as it is drawn.

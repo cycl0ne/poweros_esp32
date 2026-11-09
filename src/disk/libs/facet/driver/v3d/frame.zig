@@ -142,6 +142,13 @@ pub const Frame = struct {
     /// one the tiles cannot write (`resolvesInTiles`; since 1.148,
     /// docs/facet-vulkan10.md item 61, step V5).
     resolve: ?Resolve = null,
+    /// The frame has a colour: render target 0 is `image`. Without one
+    /// (a subpass of no colour attachment, since 1.150) its one render
+    /// target is the unused one v3dv configures (`cl.unusedRenderTarget`),
+    /// and a tile loads, stores and clears no colour; `image`, `stride`,
+    /// `format`, `clear`, `load`, `clear_inside` and `resolve` say
+    /// nothing.
+    color: bool = true,
 
     pub fn tilesX(frame: *const Frame) u32 {
         return (frame.width + frame.tile.width - 1) / frame.tile.width;
@@ -310,7 +317,7 @@ pub fn writeBin(list: *List, frame: *const Frame, record: u32, attributes: u32, 
 pub fn writeTileList(list: *List, frame: *const Frame, load: bool) void {
     const samples: cl.Decimate = if (frame.four) .all_samples else .sample_0;
     list.byte(cl.TILE_COORDINATES_IMPLICIT);
-    if (load) cl.load(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride, frame.memory, samples);
+    if (load and frame.color) cl.load(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride, frame.memory, samples);
     // The depth or the stencil read in after the colour, as Mesa orders
     // them, whether or not this list's tiles read the colour.
     if (frame.kept) |kept| if (kept.load) cl.load(list, kept.buffer, kept.format, false, kept.image, kept.stride, kept.memory, samples);
@@ -323,10 +330,22 @@ pub fn writeTileList(list: *List, frame: *const Frame, load: bool) void {
     }
     // And written out before it: the hardware clears the tiles' depth and
     // stencil between tiles by itself, so neither store asks for a clear.
-    if (frame.kept) |kept| if (kept.store) cl.store(list, kept.buffer, kept.format, false, kept.image, kept.stride, kept.memory, samples);
-    if (frame.resolve) |into| cl.store(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, into.image, into.stride, cl.MEMORY_RASTER, .four);
-    cl.store(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride, frame.memory, samples);
-    list.byte(cl.CLEAR_RENDER_TARGETS);
+    const stores_kept = if (frame.kept) |kept| kept.store else false;
+    if (stores_kept) {
+        const kept = frame.kept.?;
+        cl.store(list, kept.buffer, kept.format, false, kept.image, kept.stride, kept.memory, samples);
+    }
+    if (frame.color) {
+        if (frame.resolve) |into| cl.store(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, into.image, into.stride, cl.MEMORY_RASTER, .four);
+        cl.store(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride, frame.memory, samples);
+        list.byte(cl.CLEAR_RENDER_TARGETS);
+    } else if (!stores_kept) {
+        // A tile of no colour that keeps nothing still ends in a store,
+        // of nothing, and clears no render target: the depth and stencil
+        // clear between tiles by themselves (v3dvx_cmd_buffer.c:680-685,
+        // 544-551, 687-699).
+        cl.store(list, cl.STORE_NONE, frame.format, false, 0, 0, cl.MEMORY_RASTER, .sample_0);
+    }
     list.byte(cl.END_OF_TILE_MARKER);
     list.byte(cl.RETURN_FROM_SUB_LIST);
 }
@@ -340,7 +359,7 @@ pub fn writeRender(list: *List, frame: *const Frame, tiles: TileList, inside: ?T
     const tiles_x = frame.tilesX();
     const tiles_y = frame.tilesY();
     cl.renderingCommon(list, frame.width, frame.height, frame.tile, frame.depth or frame.stencil, frame.four);
-    cl.renderTarget0(list, frame.tile.width, frame.clear);
+    if (frame.color) cl.renderTarget0(list, frame.tile.width, frame.clear) else cl.unusedRenderTarget(list);
     cl.zsClear(list, frame.clear_depth, frame.clear_stencil);
     cl.tileListInitialBlock(list);
     cl.tileListBase(list, frame.tile_lists);
@@ -532,6 +551,63 @@ test "a frame of four samples loads and stores all of them, the colour where its
     try std.testing.expectEqual(cl.MEMORY_RASTER, rows.fields >> 4 & 7);
     try std.testing.expectEqual(@as(u64, 0), rows.fields >> 10 & 3);
     try std.testing.expectEqual(@as(u64, 256), rows.fields >> 28 & 0xFFFFF);
+}
+
+test "a frame of no colour configures the unused render target, and its tiles move and clear no colour" {
+    var memory: [512]u8 = undefined;
+    var list = List{ .at = &memory, .address = 0x1000 };
+    var frame = Frame{
+        .width = 64,
+        .height = 64,
+        .image = 0,
+        .stride = 0,
+        .swap_rb = false,
+        .clear = 0,
+        .tile_lists = 0x20_0000,
+        .binned = false,
+        .color = false,
+        .depth = true,
+        .tile = chooseTile(0, false),
+        .kept = .{ .buffer = cl.STORE_Z, .format = cl.OUTPUT_D16, .image = 0x30_0000, .stride = 128, .load = true, .store = true },
+    };
+    // The depth kept: its load, END_OF_LOADS, the list's format and its
+    // store, and then the tile's end. No colour asked for, even with
+    // `load`, and no CLEAR_RENDER_TARGETS.
+    writeTileList(&list, &frame, true);
+    try std.testing.expectEqual(cl.TILE_COORDINATES_IMPLICIT, memory[0]);
+    try std.testing.expectEqual(@as(u8, 30), memory[1]);
+    try std.testing.expectEqual(cl.STORE_Z, std.mem.readInt(u64, memory[2..10], .little) & 0xF);
+    try std.testing.expectEqual(cl.END_OF_LOADS, memory[14]);
+    try std.testing.expectEqual(@as(u8, 29), memory[17]);
+    try std.testing.expectEqual(cl.STORE_Z, std.mem.readInt(u64, memory[18..26], .little) & 0xF);
+    try std.testing.expectEqual(cl.END_OF_TILE_MARKER, memory[30]);
+    try std.testing.expectEqual(cl.RETURN_FROM_SUB_LIST, memory[31]);
+    try std.testing.expectEqual(@as(usize, 32), list.used);
+    // Nothing kept: the one store is of nothing (v3dvx_cmd_buffer.c:680-685).
+    frame.kept = null;
+    list.used = 0;
+    writeTileList(&list, &frame, false);
+    try std.testing.expectEqual(cl.END_OF_LOADS, memory[1]);
+    try std.testing.expectEqual(@as(u8, 29), memory[4]);
+    try std.testing.expectEqual(cl.STORE_NONE, std.mem.readInt(u64, memory[5..13], .little) & 0xF);
+    try std.testing.expectEqual(cl.END_OF_TILE_MARKER, memory[17]);
+    try std.testing.expectEqual(@as(usize, 19), list.used);
+    // The rendering mode: the common packet, then the unused render
+    // target, sub-id 2 and every other field 0, then the depth's clear.
+    list.used = 0;
+    writeRender(&list, &frame, .{ .start = 0x2000, .end = 0x2020 }, null);
+    try std.testing.expectEqual(cl.TILE_RENDERING_MODE_CFG, memory[9]);
+    try std.testing.expectEqual(@as(u64, 2), std.mem.readInt(u64, memory[10..18], .little));
+    try std.testing.expectEqual(cl.TILE_RENDERING_MODE_CFG, memory[18]);
+    try std.testing.expectEqual(@as(u64, 1), std.mem.readInt(u64, memory[19..27], .little) & 7);
+    // With a colour, render target 0 as before.
+    frame.color = true;
+    frame.image = 0x10_0000;
+    frame.stride = 256;
+    list.used = 0;
+    writeRender(&list, &frame, .{ .start = 0x2000, .end = 0x2020 }, null);
+    try std.testing.expect(std.mem.readInt(u64, memory[10..18], .little) != 2);
+    try std.testing.expectEqual(@as(u64, 2), std.mem.readInt(u64, memory[10..18], .little) & 7);
 }
 
 test "a frame of four that resolves stores the average into the resolve's rows before the colour, and only over supertiles inside its area" {

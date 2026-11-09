@@ -210,6 +210,19 @@ pub const Pipeline = struct {
     /// for it it refuses (docs/facet-vulkan10.md item 61, V6). (Since
     /// 1.108.)
     alpha_to_coverage: bool = false,
+    /// Its subpass draws no colour: the one part of a subpass of no colour
+    /// attachment, or of none but unused ones. A driver that compiles
+    /// keys its program on it, as v3dv keys cbufs on the subpass's colour
+    /// formats (v3dv_pipeline.c:2137-2142); the V3D's draws in such a
+    /// subpass with no colour (since 1.150, docs/facet-vulkan10.md item
+    /// 43).
+    colorless: bool = false,
+    /// The stages name a fragment one. Where they do not, `fragment` is
+    /// the function of no instructions (since 1.115), and a driver that
+    /// compiles draws with a program of no colour of its own, as v3dv
+    /// draws with its noop fragment shader (v3dv_pipeline.c:2616-2645;
+    /// the V3D since 1.150, docs/facet-vulkan10.md item 85).
+    fragment_stage: bool = true,
     cull: Cull,
     front: facet.FrontFace,
     depth_test: ?facet.CompareOp,

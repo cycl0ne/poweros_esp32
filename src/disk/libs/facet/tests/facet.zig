@@ -1477,7 +1477,7 @@ test "a device's sample counts follow what it draws, and the three optional mult
     try expectSampleCounts(.{ one, one, one, one, one, one, one, one, one }, &plain.properties.limits);
 
     // And as one that draws four but makes no subpass of no attachment,
-    // as the V3D makes none yet: the 1 bit alone in that mask.
+    // as the V3D made none until 1.150: the 1 bit alone in that mask.
     var colorless = record.*;
     try testing.expect(record.ops.describe(rig.sys, &colorless));
     colorless.can.colorless_subpasses = false;
@@ -1495,11 +1495,12 @@ test "a device's sample counts follow what it draws, and the three optional mult
         v3d.properties.limits.sampled_image_stencil_sample_counts = 0;
         v3d.properties.limits.storage_image_sample_counts = 0;
         v3d.can.multisampling = can;
-        // Nor a subpass of no attachment (docs/facet-vulkan10.md item 43).
-        v3d.can.colorless_subpasses = false;
+        // And a subpass of no attachment, at its pipelines' count, since
+        // 1.150 (docs/facet-vulkan10.md items 43 and 61's V8).
+        v3d.can.colorless_subpasses = true;
         _instance.narrowSampleCounts(&v3d);
         const drawn = if (can) four else one;
-        try expectSampleCounts(.{ drawn, drawn, drawn, one, drawn, 0, 0, 0, 0 }, &v3d.properties.limits);
+        try expectSampleCounts(.{ drawn, drawn, drawn, drawn, drawn, 0, 0, 0, 0 }, &v3d.properties.limits);
     }
 
     // Sample rate shading, alpha to one and a variable sample rate are

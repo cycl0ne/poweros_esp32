@@ -77,6 +77,8 @@ pub const Programs = struct {
     cube: u32,
     volume: u32,
     shadow: u32,
+    /// `qpu.no_color_fragment` (since 1.150).
+    no_color: u32,
 };
 
 /// What the V3D has while anything uses it. Its job, and its table, are
@@ -90,6 +92,12 @@ pub const Hardware = struct {
     users: u32,
     programs_block: Block,
     programs: Programs,
+    /// The program of no colour as a draw takes a pipeline's own: what
+    /// draws in a subpass of no colour where the pipeline's program was
+    /// not compiled for one, and for a pipeline of no fragment stage
+    /// (`_play.zig`'s `draw` and `clearRectangle`, since 1.150). Its block
+    /// is `programs_block`, given back with the rest.
+    no_color: Shader,
     /// The table has changed since the MMU last read it.
     stale: bool = false,
     /// A job faulted or never ended. Nothing more is sent: what comes after
@@ -371,6 +379,15 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // (`frame.resolvesInTiles`). Sampling such an image is item 59's
         // and step V7's, and refused until then (`_image.multisampled`).
         .multisampling = true,
+        // A subpass of no colour attachment, or of unused ones alone: the
+        // frame's one render target the unused one v3dv configures
+        // (`cl.unusedRenderTarget`), its tiles moving no colour, its draws
+        // the program of no colour or one compiled for none (since 1.150,
+        // docs/facet-vulkan10.md item 43). A subpass of no attachment at
+        // all draws at its pipelines' count, four as well, the frame
+        // started again at four where its first draw asks for them, as
+        // v3dv's job is (`_play.zig`'s `restartAtFour`, item 61's V8).
+        .colorless_subpasses = true,
     };
     physical.queue_family = .{
         .queue_flags = facet.QUEUE_GRAPHICS | facet.QUEUE_COMPUTE | facet.QUEUE_TRANSFER,
@@ -463,7 +480,7 @@ fn bringUp(sys: *ExecBase, hardware: *Hardware) bool {
 
 /// Every program in one block of the V3D's.
 fn loadPrograms(hardware: *Hardware) bool {
-    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.volume_fragment, &qpu.shadow_fragment };
+    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.volume_fragment, &qpu.shadow_fragment, &qpu.no_color_fragment };
     var words: usize = qpu.coordinate_program.len;
     for (0..qpu.most_varyings + 1) |varyings| words += qpu.vertexProgram(@intCast(varyings)).len;
     for (fragments) |fragment| words += fragment.code.len;
@@ -492,9 +509,33 @@ fn loadPrograms(hardware: *Hardware) bool {
     hardware.programs.cube = put(block, &used, qpu.cube_fragment.code);
     hardware.programs.volume = put(block, &used, qpu.volume_fragment.code);
     hardware.programs.shadow = put(block, &used, qpu.shadow_fragment.code);
+    hardware.programs.no_color = put(block, &used, qpu.no_color_fragment.code);
+    hardware.no_color = noColorShader(block, hardware.programs.no_color);
     hardware.space.toGpu(&block);
     hardware.programs_block = block;
     return true;
+}
+
+/// `qpu.no_color_fragment` at `address` in `block`, as a compiled
+/// program is kept: its one uniform the depth's write specifier, and what
+/// the shader record says of it.
+fn noColorShader(block: Block, address: u32) Shader {
+    const fragment = &qpu.no_color_fragment;
+    var uniforms: [compile.most_uniforms]compile.Word = undefined;
+    uniforms[0] = .{ .float = @bitCast(qpu.no_color_specifier) };
+    return .{
+        .block = block,
+        .address = address,
+        .varyings = fragment.varyings,
+        .uniforms = uniforms,
+        .uniform_count = fragment.uniforms,
+        .sampler = null,
+        .threads = fragment.threads,
+        .center_w = fragment.center_w,
+        .lock_scoreboard_on_first_thrsw = fragment.lock_scoreboard_on_first_thrsw,
+        .writes_z = fragment.writes_z,
+        .disable_ez = fragment.disable_ez,
+    };
 }
 
 /// The V3D let go of once, what it holds given back with the last. The core
@@ -610,10 +651,13 @@ fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
     // draws with where the program shipped the SPIR-V beside the function
     // and the back end can make code of it (since 1.76). Where it cannot,
     // the pipeline is refused and the cores draw it, as before. A pipeline
-    // of no fragment stage ships none: refused until v3dv's no-op
-    // fragment shader is ported (v3dv_pipeline.c:2616-2642,
+    // of no fragment stage ships none, and draws with the program of no
+    // colour, v3dv's noop fragment shader (v3dv_pipeline.c:2616-2645),
+    // which with no colour of its own writes the depth alone in a subpass
+    // of colour as well (`Hardware.no_color`; since 1.150,
     // docs/facet-vulkan10.md item 85).
     if (fixed.kind == .none) {
+        if (!pipeline.fragment_stage) return .success;
         if (pipeline.fragment_words.len == 0) return .error_feature_not_present;
         return compiled(pipeline);
     }
@@ -671,7 +715,10 @@ fn compiled(pipeline: *Pipeline) facet.Result {
     const sys = device.sys;
     const work = _objects.create(sys, compile.Work) orelse return .error_out_of_host_memory;
     defer _objects.destroy(sys, work);
-    const code = compile.compileThroughMesa(work, pipeline.fragment_words, v3d.heap.of(sys), .{ .sample_alpha_to_coverage = coverageOf(pipeline) }) catch |err| return switch (err) {
+    // Keyed as v3dv keys it: alpha to coverage, and render target 0 where
+    // the subpass draws a colour (v3dv_pipeline.c:2137-2142, since 1.150).
+    const key = compile.Key{ .sample_alpha_to_coverage = coverageOf(pipeline), .cbufs = if (pipeline.colorless) 0 else 1 };
+    const code = compile.compileThroughMesa(work, pipeline.fragment_words, v3d.heap.of(sys), key) catch |err| return switch (err) {
         error.OutOfMemory => .error_out_of_host_memory,
         else => .error_feature_not_present,
     };

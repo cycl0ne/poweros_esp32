@@ -21,7 +21,11 @@
 //! two choose a level by different sums, and pictures of a texture turned
 //! in depth are C:test/FacetCube's to look at. The cases of four samples
 //! a pixel (since 1.16) draw into an image of four and resolve it into the
-//! first picture, in the pass or by CmdResolveImage after it.
+//! first picture, in the pass or by CmdResolveImage after it. The cases of
+//! no colour (since 1.18) draw a depth alone, then look at it in a pass of
+//! colour: a shadow map sampled, or a subpass after it tested against it;
+//! and the cases of no attachment at all count what they draw with an
+//! occlusion query, the two counts compared as well.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -36,7 +40,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.17 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.18 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -865,6 +869,8 @@ const Options = struct {
     sample_mask: ?u32 = null,
     /// Colour 0's alpha cuts the samples a pixel covers (since 1.17).
     alpha_to_coverage: bool = false,
+    /// No fragment stage at all: the vertex stage alone (since 1.18).
+    no_fragment: bool = false,
 };
 
 /// What a pass of a case is.
@@ -944,6 +950,25 @@ const Side = struct {
     shadow_frame: ?*facet.Framebuffer = null,
     shadow_samplers: [shadow_ops.len]?*facet.Sampler = @splat(null),
     shadow_sets: [shadow_ops.len]?*facet.DescriptorSet = @splat(null),
+    /// The same shadow map drawn in a pass of it alone, no colour (since
+    /// 1.18).
+    shadow_alone: ?*facet.RenderPass = null,
+    shadow_alone_frame: ?*facet.Framebuffer = null,
+    /// A pass of the first picture and the depth whose first subpass draws
+    /// the depth alone, and one whose first subpass names its colour
+    /// ATTACHMENT_UNUSED; each's second draws the picture tested against
+    /// what the first left. And a pass of no attachment, whose draws an
+    /// occlusion query counts (since 1.18).
+    prepassed: ?*facet.RenderPass = null,
+    unused_first: ?*facet.RenderPass = null,
+    prepassed_frame: ?*facet.Framebuffer = null,
+    /// Their depth, kept from the one subpass to the next, so in memory
+    /// that is there, which `depth` is not.
+    pre_depth: ?*facet.Image = null,
+    pre_depth_view: ?*facet.ImageView = null,
+    empty: ?*facet.RenderPass = null,
+    empty_frame: ?*facet.Framebuffer = null,
+    queries: ?*facet.QueryPool = null,
     /// Four samples a pixel (since 1.16): a colour of them in the first
     /// picture's format and a depth in the tiles alone, a pass that
     /// resolves the colour into the first picture as it ends, and one that
@@ -1171,6 +1196,13 @@ const Side = struct {
         try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &side.shadow_pass), error.Refused);
         const views = [2]*facet.ImageView{ side.picture_views[0].?, side.shadow_view.? };
         try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.shadow_pass.?, .attachment_count = 2, .attachments = &views, .width = side.width, .height = side.height }, &side.shadow_frame), error.Refused);
+        // The depth alone, as a shadow map's pass is (since 1.18).
+        const alone = [1]facet.AttachmentDescription{attachments[1]};
+        const alone_depth = facet.AttachmentReference{ .attachment = 0, .layout = .depth_stencil_attachment_optimal };
+        const alone_subpass = facet.SubpassDescription{ .depth_stencil_attachment = &alone_depth };
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 1, .attachments = &alone, .subpass_count = 1, .subpasses = @ptrCast(&alone_subpass) }, &side.shadow_alone), error.Refused);
+        const alone_views = [1]*facet.ImageView{side.shadow_view.?};
+        try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.shadow_alone.?, .attachment_count = 1, .attachments = &alone_views, .width = side.width, .height = side.height }, &side.shadow_alone_frame), error.Refused);
         const layouts: [shadow_ops.len]?*facet.DescriptorSetLayout = @splat(side.sampler_set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = shadow_ops.len, .set_layouts = @ptrCast(&layouts) }, &side.shadow_sets), error.Refused);
         for (shadow_ops, &side.shadow_samplers, side.shadow_sets) |op, *made, set| {
@@ -1234,6 +1266,37 @@ const Side = struct {
         const views = [3]*facet.ImageView{ side.picture_views[0].?, side.picture_views[1].?, side.depth_view.? };
         try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.subpassed.?, .attachment_count = 3, .attachments = &views, .width = side.width, .height = side.height }, &side.subpassed_frame), error.Refused);
         try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.two_colors.?, .attachment_count = 3, .attachments = &views, .width = side.width, .height = side.height }, &side.two_colors_frame), error.Refused);
+
+        // The depth drawn first in a subpass of its own, and then the
+        // picture tested against it, the depth kept between the two: in a
+        // subpass of no colour attachment, or of one ATTACHMENT_UNUSED.
+        // The two passes are compatible, so the one framebuffer serves
+        // both (since 1.18).
+        const unused = [1]facet.AttachmentReference{.{ .attachment = facet.ATTACHMENT_UNUSED, .layout = .color_attachment_optimal }};
+        const pre = [2]facet.AttachmentDescription{ attachments[0], attachments[2] };
+        const pre_depth = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
+        const prepasses = [2]facet.SubpassDescription{
+            .{ .depth_stencil_attachment = &pre_depth },
+            .{ .color_attachment_count = 1, .color_attachments = &first, .depth_stencil_attachment = &pre_depth },
+        };
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &pre, .subpass_count = 2, .subpasses = &prepasses }, &side.prepassed), error.Refused);
+        const unused_first = [2]facet.SubpassDescription{
+            .{ .color_attachment_count = 1, .color_attachments = &unused, .depth_stencil_attachment = &pre_depth },
+            prepasses[1],
+        };
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &pre, .subpass_count = 2, .subpasses = &unused_first }, &side.unused_first), error.Refused);
+        const extent = facet.Extent3D{ .width = side.width, .height = side.height };
+        try side.image(.{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, 0, &side.pre_depth);
+        side.pre_depth_view = try side.view(side.pre_depth.?, .d16_unorm, facet.IMAGE_ASPECT_DEPTH, 1);
+        const pre_views = [2]*facet.ImageView{ side.picture_views[0].?, side.pre_depth_view.? };
+        try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.prepassed.?, .attachment_count = 2, .attachments = &pre_views, .width = side.width, .height = side.height }, &side.prepassed_frame), error.Refused);
+
+        // No attachment at all: a framebuffer that is a size alone, and a
+        // query that counts the samples drawn in it.
+        const nothing = facet.SubpassDescription{};
+        try expect(fb.CreateRenderPass(device, &.{ .subpass_count = 1, .subpasses = @ptrCast(&nothing) }, &side.empty), error.Refused);
+        try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.empty.?, .attachment_count = 0, .width = side.width, .height = side.height }, &side.empty_frame), error.Refused);
+        try expect(fb.CreateQueryPool(device, &.{ .query_type = .occlusion, .query_count = 1 }, &side.queries), error.Refused);
     }
 
     /// A pass of its own begun, the first picture and the second cleared in
@@ -1437,6 +1500,14 @@ const Side = struct {
         fb.DestroyImageView(device, side.four_depth_view);
         fb.DestroyImage(device, side.four);
         fb.DestroyImage(device, side.four_depth);
+        fb.DestroyQueryPool(device, side.queries);
+        fb.DestroyFramebuffer(device, side.empty_frame);
+        fb.DestroyRenderPass(device, side.empty);
+        fb.DestroyFramebuffer(device, side.prepassed_frame);
+        fb.DestroyRenderPass(device, side.prepassed);
+        fb.DestroyRenderPass(device, side.unused_first);
+        fb.DestroyImageView(device, side.pre_depth_view);
+        fb.DestroyImage(device, side.pre_depth);
         fb.DestroyFramebuffer(device, side.subpassed_frame);
         fb.DestroyFramebuffer(device, side.two_colors_frame);
         fb.DestroyRenderPass(device, side.subpassed);
@@ -1453,6 +1524,8 @@ const Side = struct {
         for (side.through) |each| fb.DestroySampler(device, each);
         fb.DestroyImageView(device, side.first_level);
         for (side.shadow_samplers) |each| fb.DestroySampler(device, each);
+        fb.DestroyFramebuffer(device, side.shadow_alone_frame);
+        fb.DestroyRenderPass(device, side.shadow_alone);
         fb.DestroyFramebuffer(device, side.shadow_frame);
         fb.DestroyRenderPass(device, side.shadow_pass);
         fb.DestroyImageView(device, side.shadow_view);
@@ -1614,7 +1687,7 @@ const Side = struct {
         const mask = [1]u32{options.sample_mask orelse 0xFFFF_FFFF};
         const multisample = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = options.samples, .sample_mask = if (options.sample_mask != null) &mask else null, .alpha_to_coverage_enable = options.alpha_to_coverage };
         const info = facet.GraphicsPipelineCreateInfo{
-            .stage_count = if (options.patch_points != 0) 4 else 2,
+            .stage_count = if (options.patch_points != 0) 4 else if (options.no_fragment) 1 else 2,
             .stages = &stages,
             .vertex_input_state = &input,
             .input_assembly_state = &assembly,
@@ -1667,6 +1740,9 @@ const Case = struct {
     /// the same, where it is not `compare`'s own: only where Vulkan
     /// leaves the answer to the implementation (since 1.140).
     slack: ?u32 = null,
+    /// The case counts what it draws with `Side.queries`, and the two
+    /// counts are compared as well as the pictures (since 1.18).
+    counted: bool = false,
 };
 
 const Cases = struct {
@@ -2357,33 +2433,148 @@ const Cases = struct {
     fn shadowed(comptime tilted: bool, comptime which: usize, comptime vertex: [*:0]const u8, comptime fragment: [*:0]const u8) *const fn (side: *Side) Failure!void {
         return &struct {
             fn run(side: *Side) Failure!void {
+                try shadowMap(side, tilted, .with_color);
+                try lookAtShadow(side, which, vertex, fragment);
+            }
+        }.run;
+    }
+    /// How a shadow map is drawn: in its pass with the first picture, as
+    /// it was until 1.18; or in a pass of it alone, by the fixed form of
+    /// colour, by a shipped shader that the V3D compiles for a subpass of
+    /// no colour, or by no fragment stage at all (since 1.18).
+    const Drawn = enum { with_color, fixed, shipped, stageless };
+    /// The shadow map less than a half, drawn as `drawn` says.
+    fn shadowedAlone(comptime tilted: bool, comptime drawn: Drawn) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                try shadowMap(side, tilted, drawn);
+                try lookAtShadow(side, 0, "whole at a half", "shadow");
+            }
+        }.run;
+    }
+    fn shadowMap(side: *Side, tilted: bool, drawn: Drawn) Failure!void {
+        const fb = side.fb;
+        const commands = side.commands.?;
+        const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } }, .{ .depth_stencil = .{ .depth = 1 } } };
+        const alone = drawn != .with_color;
+        fb.CmdBeginRenderPass(commands, &.{
+            .render_pass = if (alone) side.shadow_alone.? else side.shadow_pass.?,
+            .framebuffer = if (alone) side.shadow_alone_frame.? else side.shadow_frame.?,
+            .render_area = .{ .extent = .{ .width = side.width, .height = side.height } },
+            .clear_value_count = if (alone) 1 else 2,
+            .clear_values = if (alone) clears[1..] else &clears,
+        }, .@"inline");
+        side.state();
+        var options = Options{ .test_depth = true, .write_depth = true, .pass = if (alone) side.shadow_alone.? else side.shadow_pass.?, .colors = if (alone) 0 else 1 };
+        switch (drawn) {
+            .with_color, .fixed => {},
+            .shipped => {
+                options.vertex = "as it is";
+                options.fragment = "shipped smooth";
+            },
+            .stageless => options.no_fragment = true,
+        }
+        if (tilted) {
+            options.vertex = "tilted";
+            options.topology = .triangle_fan;
+            try side.use(options);
+            side.draw(fan_at, 5);
+        } else {
+            try side.use(options);
+            side.draw(far_at, 3);
+            side.draw(near_at, 3);
+        }
+        side.end();
+        const written = facet.ImageMemoryBarrier{
+            .src_access_mask = facet.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE,
+            .dst_access_mask = facet.ACCESS_SHADER_READ,
+            .old_layout = .shader_read_only_optimal,
+            .new_layout = .shader_read_only_optimal,
+            .image = side.shadow.?,
+            .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH },
+        };
+        fb.CmdPipelineBarrier(commands, facet.PIPELINE_STAGE_LATE_FRAGMENT_TESTS, facet.PIPELINE_STAGE_FRAGMENT_SHADER, 0, 0, null, 0, null, 1, @ptrCast(&written));
+    }
+    /// The quad over the first picture, the shadow map compared with as
+    /// `shadow_ops[which]` says.
+    fn lookAtShadow(side: *Side, which: usize, vertex: [*:0]const u8, fragment: [*:0]const u8) Failure!void {
+        side.begin(.{});
+        side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.sampler_layout.?, 0, 1, @ptrCast(&side.shadow_sets[which]), 0, null);
+        try side.use(.{ .vertex = vertex, .fragment = fragment, .layout = side.sampler_layout.? });
+        side.draw(quad_at, 6);
+        side.end();
+    }
+    /// The far and the near triangle's depths drawn in a subpass of no
+    /// colour - none, or one ATTACHMENT_UNUSED - by the fixed form of
+    /// colour or by no fragment stage, cleared back to 1 over two
+    /// rectangles where `cleared`; then the near and the far drawn in
+    /// colour in the next subpass, tested less or equal against what the
+    /// first left and writing none. Where the first kept its depth the far
+    /// is hidden behind the near, and where the clear reached it is not
+    /// (since 1.18).
+    fn prepassed(comptime unused: bool, comptime stageless: bool, comptime cleared: bool) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                const pass = if (unused) side.unused_first.? else side.prepassed.?;
+                const commands = side.commands.?;
+                const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0.06, 0.09, 0.2, 1 } } }, .{ .depth_stencil = .{ .depth = 1 } } };
+                side.fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = side.prepassed_frame.?, .render_area = .{ .extent = .{ .width = side.width, .height = side.height } }, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+                side.state();
+                try side.use(.{ .pass = pass, .test_depth = true, .write_depth = true, .no_fragment = stageless, .colors = if (unused) 1 else 0 });
+                side.draw(far_at, 3);
+                side.draw(near_at, 3);
+                if (cleared) {
+                    const attachment = facet.ClearAttachment{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .clear_value = .{ .depth_stencil = .{ .depth = 1 } } };
+                    const rects = [2]facet.ClearRect{
+                        .{ .rect = .{ .offset = .{ .x = side.partOf(side.width, 0.3), .y = side.partOf(side.height, 0.3) }, .extent = .{ .width = @intCast(side.partOf(side.width, 0.25)), .height = @intCast(side.partOf(side.height, 0.25)) } } },
+                        .{ .rect = .{ .offset = .{ .x = side.partOf(side.width, 0.05), .y = side.partOf(side.height, 0.05) }, .extent = .{ .width = @intCast(side.partOf(side.width, 0.2)), .height = @intCast(side.partOf(side.height, 0.3)) } } },
+                    };
+                    side.fb.CmdClearAttachments(commands, 1, @ptrCast(&attachment), rects.len, &rects);
+                }
+                side.fb.CmdNextSubpass(commands, .@"inline");
+                try side.use(.{ .pass = pass, .subpass = 1, .test_depth = true, .compare = .less_or_equal });
+                side.draw(near_at, 3);
+                side.draw(far_at, 3);
+                side.end();
+            }
+        }.run;
+    }
+    /// The near triangle, then the far one's depth alone by a pipeline of
+    /// no fragment stage in a pass of colour, then the glass over both
+    /// tested against them: the far leaves its colour as it was, which
+    /// the cores keep by writing none and the V3D by a program that writes
+    /// none (since 1.18).
+    fn stagelessInColor(side: *Side) Failure!void {
+        side.begin(.{});
+        try side.use(.{ .test_depth = true, .write_depth = true });
+        side.draw(near_at, 3);
+        try side.use(.{ .test_depth = true, .write_depth = true, .no_fragment = true });
+        side.draw(far_at, 3);
+        try side.use(.{ .test_depth = true, .blend = true });
+        side.draw(glass_at, 3);
+        side.end();
+    }
+    /// The picture cleared, then the far, the near and the glass drawn in
+    /// a pass of no attachment at `samples` a pixel, counted by an
+    /// occlusion query: every sample of them, there being no depth to
+    /// fail. The pass draws at its pipeline's count, the V3D's frame
+    /// started again at four where it has four (since 1.18).
+    fn counted(comptime samples: u32) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
                 const fb = side.fb;
                 const commands = side.commands.?;
-                const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } }, .{ .depth_stencil = .{ .depth = 1 } } };
-                fb.CmdBeginRenderPass(commands, &.{ .render_pass = side.shadow_pass.?, .framebuffer = side.shadow_frame.?, .render_area = .{ .extent = .{ .width = side.width, .height = side.height } }, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
-                side.state();
-                if (tilted) {
-                    try side.use(.{ .vertex = "tilted", .topology = .triangle_fan, .test_depth = true, .write_depth = true, .pass = side.shadow_pass.? });
-                    side.draw(fan_at, 5);
-                } else {
-                    try side.use(.{ .test_depth = true, .write_depth = true, .pass = side.shadow_pass.? });
-                    side.draw(far_at, 3);
-                    side.draw(near_at, 3);
-                }
+                side.begin(.{ .depth = false });
                 side.end();
-                const written = facet.ImageMemoryBarrier{
-                    .src_access_mask = facet.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE,
-                    .dst_access_mask = facet.ACCESS_SHADER_READ,
-                    .old_layout = .shader_read_only_optimal,
-                    .new_layout = .shader_read_only_optimal,
-                    .image = side.shadow.?,
-                    .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH },
-                };
-                fb.CmdPipelineBarrier(commands, facet.PIPELINE_STAGE_LATE_FRAGMENT_TESTS, facet.PIPELINE_STAGE_FRAGMENT_SHADER, 0, 0, null, 0, null, 1, @ptrCast(&written));
-                side.begin(.{});
-                fb.CmdBindDescriptorSets(commands, .graphics, side.sampler_layout.?, 0, 1, @ptrCast(&side.shadow_sets[which]), 0, null);
-                try side.use(.{ .vertex = vertex, .fragment = fragment, .layout = side.sampler_layout.? });
-                side.draw(quad_at, 6);
+                fb.CmdResetQueryPool(commands, side.queries.?, 0, 1);
+                fb.CmdBeginRenderPass(commands, &.{ .render_pass = side.empty.?, .framebuffer = side.empty_frame.?, .render_area = .{ .extent = .{ .width = side.width, .height = side.height } } }, .@"inline");
+                side.state();
+                fb.CmdBeginQuery(commands, side.queries.?, 0, facet.QUERY_CONTROL_PRECISE);
+                try side.use(.{ .pass = side.empty.?, .samples = samples, .colors = 0 });
+                side.draw(far_at, 3);
+                side.draw(near_at, 3);
+                side.draw(glass_at, 3);
+                fb.CmdEndQuery(commands, side.queries.?, 0);
                 side.end();
             }
         }.run;
@@ -2708,6 +2899,21 @@ const cases = [_]Case{
     .{ .name = "four samples, two of them written", .run = Cases.resolved(null, 0x5) },
     .{ .name = "four samples, resolved by CmdResolveImage", .run = &Cases.resolvedAfter },
     .{ .name = "four samples, covered by alpha", .run = &Cases.covered, .slack = 52 },
+    // No colour (since 1.18), which the V3D draws since facet 1.150: a
+    // shadow map drawn in a pass of it alone, and a depth drawn in a
+    // subpass of its own before the colour is, as a pre-pass is.
+    .{ .name = "shadow map alone, less than a half", .run = Cases.shadowedAlone(false, .fixed) },
+    .{ .name = "shadow map alone, a slope less than a half", .run = Cases.shadowedAlone(true, .fixed) },
+    .{ .name = "shadow map alone, generated", .run = Cases.shadowedAlone(false, .shipped) },
+    .{ .name = "shadow map alone, no fragment stage", .run = Cases.shadowedAlone(false, .stageless) },
+    .{ .name = "pre-pass of no colour", .run = Cases.prepassed(false, false, false) },
+    .{ .name = "pre-pass of no colour, no fragment stage", .run = Cases.prepassed(false, true, false) },
+    .{ .name = "pre-pass of no colour, cleared in it", .run = Cases.prepassed(false, false, true) },
+    .{ .name = "pre-pass of an unused colour", .run = Cases.prepassed(true, false, false) },
+    .{ .name = "no fragment stage, in a pass of colour", .run = &Cases.stagelessInColor },
+    // No attachment at all: what is drawn, counted.
+    .{ .name = "no attachment, counted", .run = Cases.counted(1), .counted = true },
+    .{ .name = "no attachment, four samples, counted", .run = Cases.counted(4), .counted = true },
 };
 
 /// A case for each of `throughs`, after the shipped ones.
@@ -2840,8 +3046,27 @@ fn runAll(dl: *DosBase, cores: *Side, gpu: *Side, only: ?[*:0]const u8) Failure!
             side.forgetPipelines();
         }
         if (!compare(dl, case, cores, gpu)) result = dos.RETURN_WARN;
+        if (case.counted and !compareCounts(dl, case, cores, gpu)) result = dos.RETURN_WARN;
     }
     return result;
+}
+
+/// What a case's occlusion query counted on each side: the same within a
+/// sample in 200, or 64, the two rasterizers' edges being their own
+/// (since 1.18).
+fn compareCounts(dl: *DosBase, case: *const Case, cores: *const Side, gpu: *const Side) bool {
+    var tallies: [2]u64 = undefined;
+    for ([2]*const Side{ cores, gpu }, &tallies) |side, *count| {
+        count.* = 0;
+        if (side.fb.GetQueryPoolResults(side.device.?, side.queries.?, 0, 1, @sizeOf(u64), count, @sizeOf(u64), facet.QUERY_RESULT_64 | facet.QUERY_RESULT_WAIT) != .success) {
+            _ = Printf(dl, "%s: no count from a query\n", .{case.name});
+            return false;
+        }
+    }
+    const apart_by = if (tallies[0] > tallies[1]) tallies[0] - tallies[1] else tallies[1] - tallies[0];
+    const like = apart_by <= @max(64, tallies[0] / 200);
+    _ = Printf(dl, "%s: counted %lu on the cores, %lu on the other%s\n", .{ case.name, tallies[0], tallies[1], @as([*:0]const u8, if (like) "" else ", too far apart") });
+    return like;
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {

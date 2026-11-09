@@ -525,6 +525,10 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 used += 1;
             } else if (together) return .error_feature_not_present;
         }
+        // Every one unused is a subpass of no colour all the same, drawn
+        // as one where the device draws one (since 1.150: before, it was
+        // taken on any device, and the V3D read a colour it had not).
+        if (used == 0 and !owner.physical.can.colorless_subpasses) return .error_feature_not_present;
         plan.subpasses[number] = .{
             .first_part = plan.part_count,
             // A subpass of no colour attachment is the one part, which

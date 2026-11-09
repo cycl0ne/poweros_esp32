@@ -677,6 +677,34 @@ pub const Key = to_vir.Key;
 /// for every compile.
 pub fn compileVir(work: *Work, words: []const u32, allocator: std.mem.Allocator, compiler: *const vir.Compiler, key: Key) (Error || std.mem.Allocator.Error)!Code {
     try readModule(work, words);
+    return compileRead(work, allocator, compiler, key);
+}
+
+/// The program a subpass of no colour draws with where the pipeline
+/// brings no fragment shader of its own, or for a clear: v3dv's noop
+/// fragment shader (v3dv_pipeline.c:2616-2645), a body of nothing that
+/// Mesa's back end compiles with no render target in the key. Its one TLB
+/// write is the depth the rasterizer made, written through (emit_frag_end,
+/// nir_to_vir.c:2098-2126), so it writes Z and early Z is off for it. It
+/// reads no varying and one uniform, that write's specifier. Since 1.150.
+pub fn compileNoColor(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.Compiler) (Error || std.mem.Allocator.Error)!Code {
+    work.* = .{};
+    return compileRead(work, allocator, compiler, .{ .cbufs = 0 });
+}
+
+/// `compileNoColor` with working memory of its own, as
+/// `compileThroughMesa`'s.
+pub fn compileNoColorThroughMesa(work: *Work, child: std.mem.Allocator) (Error || std.mem.Allocator.Error)!Code {
+    var arena = std.heap.ArenaAllocator.init(child);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const compiler = allocate.initRegSets(allocator) catch return error.OutOfMemory;
+    return compileNoColor(work, allocator, &compiler);
+}
+
+/// What `work` holds, read from a module or left empty, made VIR, given
+/// registers, scheduled and packed.
+fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.Compiler, key: Key) (Error || std.mem.Allocator.Error)!Code {
     const program = to_vir.compileSteps(allocator, compiler, work, key) catch |err| return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         error.Registers => Error.Registers,
@@ -3634,6 +3662,50 @@ test "through Mesa's back end, alpha to coverage: FTOC of the colour's alpha, ke
         const line = disasm.disasm(word, &buffer).?;
         try testing.expect(std.mem.indexOf(u8, line, "ftoc") == null and std.mem.indexOf(u8, line, "setmsf") == null);
     }
+}
+
+test "through Mesa's back end, the program of no colour is qpu.zig's, to the word" {
+    var work: Work = .{};
+    var compiler = try allocate.initRegSets(testing.allocator);
+    defer compiler.deinit();
+    const code = try compileNoColor(&work, testing.allocator, &compiler);
+    try testing.expectEqualSlices(u64, qpu.no_color_fragment.code, code.words);
+    // No varying, the depth's write specifier its one uniform, and what
+    // the shader record says of it as qpu.zig has it.
+    try testing.expectEqual(qpu.no_color_fragment.varyings, code.varyings);
+    try testing.expectEqual(@as(u32, qpu.no_color_fragment.uniforms), code.uniform_count);
+    try testing.expectEqual(qpu.no_color_specifier, @as(u32, @bitCast(code.stream()[0].float)));
+    try testing.expectEqual(qpu.no_color_fragment.threads, code.threads);
+    try testing.expectEqual(qpu.no_color_fragment.center_w, code.center_w);
+    try testing.expectEqual(qpu.no_color_fragment.lock_scoreboard_on_first_thrsw, code.lock_scoreboard_on_first_thrsw);
+    try testing.expect(code.writes_z and qpu.no_color_fragment.writes_z);
+    try testing.expect(code.disable_ez and qpu.no_color_fragment.disable_ez);
+    try testing.expectEqual(@as(?Sampler, null), code.sampler);
+    // Its one TLB write is the depth, in the program's end.
+    var buffer: [disasm.most_text]u8 = undefined;
+    try testing.expectEqualStrings("nop                           ; mov tlbu, rf5               ; thrsw", disasm.disasm(code.words[3], &buffer).?);
+    // And the same through the arena the library compiles in.
+    var arena_work: Work = .{};
+    const through = try compileNoColorThroughMesa(&arena_work, testing.allocator);
+    try testing.expectEqualSlices(u64, qpu.no_color_fragment.code, through.words);
+}
+
+test "through Mesa's back end, a module's colour in a key of no render target: not written, Z written through" {
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, Smooth.words, .{ .cbufs = 0 });
+    try testing.expect(code.writes_z and code.disable_ez);
+    try testing.expectEqual(@as(usize, 1), code.stream().len);
+    try testing.expectEqual(qpu.no_color_specifier, @as(u32, @bitCast(code.stream()[0].float)));
+    var z: u32 = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        try testing.expect(std.mem.indexOf(u8, line, "vfpack") == null and std.mem.indexOf(u8, line, "tlb,") == null);
+        if (std.mem.indexOf(u8, line, "mov tlbu") != null) z += 1;
+    }
+    try testing.expectEqual(@as(u32, 1), z);
+    // Its varyings are still read, as every program here reads them all.
+    try testing.expectEqual(@as(u32, 4), code.varyings);
 }
 
 test "through Mesa's back end, glslc's discard is facet's, to the word" {
