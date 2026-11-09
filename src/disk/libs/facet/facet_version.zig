@@ -5084,4 +5084,49 @@ pub const LIBRARY_VERSION = 1;
 /// On the CM5 the case is 8 pixels of 230,400 apart, the triangle's edge,
 /// as the other V3D cases are; FacetBoth's other 227 cases are as they
 /// were at 1.164, and FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 165;
+///
+/// 166: **Block reads at offsets computed (docs/facet-vulkan10.md item
+/// 59).** An access chain into a uniform or a storage buffer may index
+/// an array, a matrix's columns or a vector's floats with a value the
+/// shader computes; until now the index had to be a constant. The offset
+/// is nir_lower_explicit_io's: each deref's added to its parent's
+/// (nir_lower_explicit_io.c:1288-1302), an element's the index times its
+/// stride as _nir_mul_imm makes it without amul, a shift of a power of
+/// two and a multiply of any other (nir_builder.h:1160-1182). The
+/// sums of constants are folded, and no add of 0 is made.
+///
+/// v3d's nir_opt_algebraic then reshapes it (`Order.addressRule`): an
+/// imul by a power of two, or by minus one, a shift (nir_opt_algebraic.py:
+/// 183, :188, :190); an iadd of 0 and an imul by 0 (:239, :287); a shift
+/// or a product of an iadd of a constant distributed, the product's iadd
+/// read once (:729-731, :736-740); a shift by 0 (:1800); the constants
+/// gathered into one (:2423, :2438). nir_opt_cse takes two constants of
+/// the same bits as one, as it takes two load_consts.
+///
+/// `.ubo_indirect` and `.ssbo_indirect` steps read at the offset step.
+/// Where it is the same in every lane, as nir_divergence_analysis finds
+/// it (`compile.uniformOffsets`), ntq_emit_load_unifa writes unifa with
+/// the buffer's address plus the offset, a uniform buffer's address at an
+/// offset of 0, and keeps no address for a later load to read on from
+/// (nir_to_vir.c:3348, :3398-3400, :3441-3444).
+///
+/// - Not ported: an offset that differs from lane to lane, which v3d
+///   reads through the TMU (:3315-3317), and an index computed into the
+///   push constants, which v3dv reads from a buffer of them: both refused
+///   (Error.Storage). The other integer rules of nir_opt_algebraic. A
+///   storage buffer's reach counts the loads at a constant offset alone:
+///   a computed one is the program's to keep in its range.
+///
+/// Tests: the V3D's 200, three new. glslc_indexed (483 words): eight
+/// reads, each offset the shape Mesa's rules leave, among them
+/// `iadd(112, imul(p1, 48))`, which :736 makes once :729 has left
+/// other + 1 read once; 8 ADDs into unifa, 19 ldunifas, 76 words. The
+/// rules one by one on steps of their own, their is_used_once among them.
+/// glslc_divergent and glslc_pushed refused. FacetBoth 1.34: the shipped
+/// case of block reads at offsets computed, glslc's words on the V3D
+/// beside a function of the same reads on the cores.
+///
+/// On the CM5 the case is 8 pixels of 230,400 apart, the triangle's edge,
+/// as the other V3D cases are; FacetBoth's other 228 cases are as they
+/// were at 1.165, and FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 166;

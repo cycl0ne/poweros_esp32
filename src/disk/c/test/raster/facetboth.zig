@@ -71,7 +71,12 @@
 //! bit by bit, compared and converted, which the V3D computes with the
 //! QPU's integer operations, beside a function of the same integers for
 //! the cores: each lands in a channel so that one computed wrong moves
-//! it by 4 steps or more.
+//! it by 4 steps or more. The shipped case of block reads at offsets
+//! computed (since 1.34) is glslc's words of a uniform buffer's row and
+//! of a storage buffer's float, triples' members and scale, each at an
+//! index of the push constants', which the V3D reads through unifa at
+//! the buffer's address plus the offset the QPU computes, beside a
+//! function of the same reads for the cores.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -86,7 +91,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.33 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.34 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -875,6 +880,49 @@ fn byteOf(value: i32) u32 {
     return @intCast(std.math.clamp(value, 0, 255));
 }
 
+/// What `indexed` computes, for the cores, and in its order: the colour
+/// times the uniform buffer's row `which` + 3, times the storage
+/// buffer's tint's float `which`, plus its triple `which`'s b times its
+/// scale `other` + 1, plus its triple `other` + 1's c, `which` and
+/// `other` the push constants'. `ir.Build` reads a block at constant
+/// offsets alone, so this is a function of its own; the storage buffer's
+/// slot a uniform buffer's to it as to `Shipped.StorageRead` (since
+/// 1.34).
+fn indexedFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    @setRuntimeSafety(false);
+    const pushed: [2]i32 = @bitCast(fragments.resources.push[0..8].*);
+    const block = fragments.resources.buffer([32]f32, 0, 0) orelse return;
+    const storage = fragments.resources.buffer([32]f32, 0, 1) orelse return;
+    // An index past the buffers' 128 bytes is the program's fault, on
+    // the V3D as on the cores, which read none past them.
+    if (pushed[0] < 0 or pushed[0] > 1 or pushed[1] != 0) return;
+    const which: usize = @intCast(pushed[0]);
+    const other: usize = @intCast(pushed[1]);
+    const row = block[4 * (which + 3) ..][0..4].*;
+    const w = storage[which];
+    const middle = storage[8 + 12 * which + 4 ..][0..4].*;
+    const k = storage[4 + other + 1];
+    const last = storage[8 + 12 * (other + 1) + 8 ..][0..4].*;
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const planes = rows.at(quad);
+        const over = @as(shader.Pixels, @splat(1)) / planes[0];
+        var bytes: [4]@Vector(4, u32) = undefined;
+        inline for (&bytes, 0..) |*channel, c| {
+            const v = planes[1 + c] * over;
+            const value = v * @as(shader.Pixels, @splat(row[c])) * @as(shader.Pixels, @splat(w)) + @as(shader.Pixels, @splat(middle[c] * k)) + @as(shader.Pixels, @splat(last[c]));
+            channel.* = channelOf(value);
+        }
+        out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+    }
+}
+
+/// A float channel of four pixels as the tile buffer holds it, 0 to 255,
+/// as `ir`'s generated functions make it.
+fn channelOf(value: shader.Pixels) @Vector(4, u32) {
+    return @intFromFloat(@min(@max(value * @as(shader.Pixels, @splat(255)) + @as(shader.Pixels, @splat(0.5)), @as(shader.Pixels, @splat(0))), @as(shader.Pixels, @splat(255.5))));
+}
+
 /// The entries that ship words, after all the others, and the words of
 /// each in the same order: `shader.Module.spirv` is index for index.
 const shipped_entries = [_]shader.Entry{
@@ -911,6 +959,7 @@ const shipped_entries = [_]shader.Entry{
     shader.vertex("shipped as it is", &asItIsVertex, 4),
     Shipped.StorageRead.entry("shipped storage"),
     shader.fragment("shipped integers", &integersFragment, 4),
+    shader.fragment("shipped indexed", &indexedFragment, 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                .{},                               .{},                                  .{},
@@ -921,7 +970,7 @@ const shipped_words = [_]shader.Spirv{
     Shipped.Bools.spirv,                Shipped.Nests.spirv,               Shipped.Joined.spirv,                 Shipped.Collapsed.spirv,
     shader.Spirv.of(&nested_discard),   Shipped.Uniformed.spirv,           shader.Spirv.of(&uniform_nested),     shader.Spirv.of(&uniform_matrix),
     shader.Spirv.of(&uniform_matrices), shader.Spirv.of(&constant_matrix), shader.Spirv.of(&vertex_as_it_is),    shader.Spirv.of(&storage_buffer),
-    shader.Spirv.of(&integers),
+    shader.Spirv.of(&integers),         shader.Spirv.of(&indexed),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -1471,6 +1520,93 @@ const integers = [_]u32{
     0x000000BF, 0x000000AC, 0x000000B1, 0x000000B6, 0x000000BE, 0x00050085,
     0x0000000B, 0x000000C1, 0x000000BF, 0x000000C7, 0x0003003E, 0x000000A7,
     0x000000C1, 0x000100FD, 0x00010038,
+};
+/// glslc's own output, at -O, for block reads at offsets computed: a
+/// uniform buffer's row, and a storage buffer's float of a vec4, members
+/// of its runtime array's triples and a float of its scale, each at an
+/// index of the push constants', one + 1 read by two chains (since 1.34).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// struct Triple { vec4 a; vec4 b; vec4 c; };
+/// layout(push_constant) uniform Push { int which; int other; } push;
+/// layout(set = 0, binding = 0) uniform Block { vec4 rows[8]; } block;
+/// layout(set = 0, binding = 1) readonly buffer Storage { vec4 tint; float scale[3]; Triple triples[]; } storage;
+/// void main() {
+///     vec4 row = block.rows[push.which + 3];
+///     float w = storage.tint[push.which];
+///     vec4 middle = storage.triples[push.which].b;
+///     float k = storage.scale[push.other + 1];
+///     vec4 last = storage.triples[push.other + 1].c;
+///     ocolor = vcolor * row * w + middle * k + last;
+/// }
+/// ```
+const indexed = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000004D, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000003F, 0x00000041, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000C, 0x00000006, 0x00000010,
+    0x00030047, 0x0000000D, 0x00000002, 0x00050048, 0x0000000D, 0x00000000,
+    0x00000023, 0x00000000, 0x00040047, 0x0000000F, 0x00000021, 0x00000000,
+    0x00040047, 0x0000000F, 0x00000022, 0x00000000, 0x00030047, 0x00000012,
+    0x00000002, 0x00050048, 0x00000012, 0x00000000, 0x00000023, 0x00000000,
+    0x00050048, 0x00000012, 0x00000001, 0x00000023, 0x00000004, 0x00040047,
+    0x00000020, 0x00000006, 0x00000004, 0x00050048, 0x00000021, 0x00000000,
+    0x00000023, 0x00000000, 0x00050048, 0x00000021, 0x00000001, 0x00000023,
+    0x00000010, 0x00050048, 0x00000021, 0x00000002, 0x00000023, 0x00000020,
+    0x00040047, 0x00000022, 0x00000006, 0x00000030, 0x00030047, 0x00000023,
+    0x00000003, 0x00040048, 0x00000023, 0x00000000, 0x00000018, 0x00050048,
+    0x00000023, 0x00000000, 0x00000023, 0x00000000, 0x00040048, 0x00000023,
+    0x00000001, 0x00000018, 0x00050048, 0x00000023, 0x00000001, 0x00000023,
+    0x00000010, 0x00040048, 0x00000023, 0x00000002, 0x00000018, 0x00050048,
+    0x00000023, 0x00000002, 0x00000023, 0x00000020, 0x00030047, 0x00000025,
+    0x00000018, 0x00040047, 0x00000025, 0x00000021, 0x00000001, 0x00040047,
+    0x00000025, 0x00000022, 0x00000000, 0x00040047, 0x0000003F, 0x0000001E,
+    0x00000000, 0x00040047, 0x00000041, 0x0000001E, 0x00000000, 0x00020013,
+    0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006,
+    0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040015,
+    0x0000000A, 0x00000020, 0x00000000, 0x0004002B, 0x0000000A, 0x0000000B,
+    0x00000008, 0x0004001C, 0x0000000C, 0x00000007, 0x0000000B, 0x0003001E,
+    0x0000000D, 0x0000000C, 0x00040020, 0x0000000E, 0x00000002, 0x0000000D,
+    0x0004003B, 0x0000000E, 0x0000000F, 0x00000002, 0x00040015, 0x00000010,
+    0x00000020, 0x00000001, 0x0004002B, 0x00000010, 0x00000011, 0x00000000,
+    0x0004001E, 0x00000012, 0x00000010, 0x00000010, 0x00040020, 0x00000013,
+    0x00000009, 0x00000012, 0x0004003B, 0x00000013, 0x00000014, 0x00000009,
+    0x00040020, 0x00000015, 0x00000009, 0x00000010, 0x0004002B, 0x00000010,
+    0x00000018, 0x00000003, 0x00040020, 0x0000001A, 0x00000002, 0x00000007,
+    0x0004002B, 0x0000000A, 0x0000001F, 0x00000003, 0x0004001C, 0x00000020,
+    0x00000006, 0x0000001F, 0x0005001E, 0x00000021, 0x00000007, 0x00000007,
+    0x00000007, 0x0003001D, 0x00000022, 0x00000021, 0x0005001E, 0x00000023,
+    0x00000007, 0x00000020, 0x00000022, 0x00040020, 0x00000024, 0x00000002,
+    0x00000023, 0x0004003B, 0x00000024, 0x00000025, 0x00000002, 0x00040020,
+    0x00000028, 0x00000002, 0x00000006, 0x0004002B, 0x00000010, 0x0000002C,
+    0x00000002, 0x0004002B, 0x00000010, 0x0000002F, 0x00000001, 0x00040020,
+    0x0000003E, 0x00000003, 0x00000007, 0x0004003B, 0x0000003E, 0x0000003F,
+    0x00000003, 0x00040020, 0x00000040, 0x00000001, 0x00000007, 0x0004003B,
+    0x00000040, 0x00000041, 0x00000001, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x00050041, 0x00000015,
+    0x00000016, 0x00000014, 0x00000011, 0x0004003D, 0x00000010, 0x00000017,
+    0x00000016, 0x00050080, 0x00000010, 0x00000019, 0x00000017, 0x00000018,
+    0x00060041, 0x0000001A, 0x0000001B, 0x0000000F, 0x00000011, 0x00000019,
+    0x0004003D, 0x00000007, 0x0000001C, 0x0000001B, 0x00060041, 0x00000028,
+    0x00000029, 0x00000025, 0x00000011, 0x00000017, 0x0004003D, 0x00000006,
+    0x0000002A, 0x00000029, 0x00070041, 0x0000001A, 0x00000030, 0x00000025,
+    0x0000002C, 0x00000017, 0x0000002F, 0x0004003D, 0x00000007, 0x00000031,
+    0x00000030, 0x00050041, 0x00000015, 0x00000033, 0x00000014, 0x0000002F,
+    0x0004003D, 0x00000010, 0x00000034, 0x00000033, 0x00050080, 0x00000010,
+    0x00000035, 0x00000034, 0x0000002F, 0x00060041, 0x00000028, 0x00000036,
+    0x00000025, 0x0000002F, 0x00000035, 0x0004003D, 0x00000006, 0x00000037,
+    0x00000036, 0x00070041, 0x0000001A, 0x0000003C, 0x00000025, 0x0000002C,
+    0x00000035, 0x0000002C, 0x0004003D, 0x00000007, 0x0000003D, 0x0000003C,
+    0x0004003D, 0x00000007, 0x00000042, 0x00000041, 0x00050085, 0x00000007,
+    0x00000044, 0x00000042, 0x0000001C, 0x0005008E, 0x00000007, 0x00000046,
+    0x00000044, 0x0000002A, 0x0005008E, 0x00000007, 0x00000049, 0x00000031,
+    0x00000037, 0x00050081, 0x00000007, 0x0000004A, 0x00000046, 0x00000049,
+    0x00050081, 0x00000007, 0x0000004C, 0x0000004A, 0x0000003D, 0x0003003E,
+    0x0000003F, 0x0000004C, 0x000100FD, 0x00010038,
 };
 /// glslc's own output, at -O, for a constant mat3 times a vector,
 /// glslc_constant_matrix: three constant columns, read where the product
@@ -2174,6 +2310,13 @@ const Side = struct {
     storage_set_layout: ?*facet.DescriptorSetLayout = null,
     storage_layout: ?*facet.PipelineLayout = null,
     storage_set: ?*facet.DescriptorSet = null,
+    /// A uniform buffer at binding 0 of set 0, the 128 bytes at 768 the
+    /// uniform arrays read, and a storage buffer at binding 1, the 128 at
+    /// 896, with 8 bytes of push constants: what the shipped block reads
+    /// at offsets computed read (since 1.34).
+    indexed_set_layout: ?*facet.DescriptorSetLayout = null,
+    indexed_layout: ?*facet.PipelineLayout = null,
+    indexed_set: ?*facet.DescriptorSet = null,
     compute_layout: ?*facet.PipelineLayout = null,
     compute_pipelines: [2]?*facet.Pipeline = @splat(null),
     /// The pipelines of the case being drawn.
@@ -2254,7 +2397,7 @@ const Side = struct {
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 5 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 6 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -2703,6 +2846,13 @@ const Side = struct {
         // and 0.875 (since 1.32).
         @memcpy(floats[224..229], &[5]f32{ 1, 0.75, 0.5, 1, 0.75 });
         @memcpy(floats[240..244], &[4]f32{ 0.125, 0.0625, 0.25, 0 });
+        // And the rest of its 128 bytes, which the block reads at offsets
+        // computed read (since 1.34): the scale's other two and the
+        // padding after them, the first triple's a and b, and the second
+        // triple, at 80. Each differs from its neighbours, so that a read
+        // at the wrong offset reads another colour.
+        @memcpy(floats[229..240], &[11]f32{ 0.5, 0.375, 0.875, 0.625, 0.375, 0.75, 0.125, 0.375, 0.125, 0.625, 0.75 });
+        @memcpy(floats[244..256], &[12]f32{ 0.5, 0.75, 0.375, 0.625, 0.25, 0.5, 0.125, 0.25, 0.125, 0.0625, 0.25, 0.25 });
         const bindings = [2]facet.DescriptorSetLayoutBinding{
             .{ .binding = 0, .descriptor_type = .uniform_buffer, .stage_flags = facet.SHADER_STAGE_FRAGMENT },
             .{ .binding = 1, .descriptor_type = .uniform_buffer_dynamic, .stage_flags = facet.SHADER_STAGE_FRAGMENT },
@@ -2737,12 +2887,28 @@ const Side = struct {
         const stored = facet.DescriptorBufferInfo{ .buffer = side.uniforms, .offset = 896, .range = 128 };
         const storage_write = facet.WriteDescriptorSet{ .dst_set = side.storage_set.?, .dst_binding = 0, .descriptor_type = .storage_buffer, .buffer_info = @ptrCast(&stored) };
         fb.UpdateDescriptorSets(device, 1, @ptrCast(&storage_write), 0, null);
+        const indexed_bindings = [2]facet.DescriptorSetLayoutBinding{
+            .{ .binding = 0, .descriptor_type = .uniform_buffer, .stage_flags = facet.SHADER_STAGE_FRAGMENT },
+            .{ .binding = 1, .descriptor_type = .storage_buffer, .stage_flags = facet.SHADER_STAGE_FRAGMENT },
+        };
+        try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &indexed_bindings }, &side.indexed_set_layout), error.Refused);
+        const indexed_push = facet.PushConstantRange{ .stage_flags = facet.SHADER_STAGE_FRAGMENT, .size = 8 };
+        try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&side.indexed_set_layout), .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&indexed_push) }, &side.indexed_layout), error.Refused);
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&side.indexed_set_layout) }, &made), error.Refused);
+        side.indexed_set = made[0];
+        const indexed_writes = [2]facet.WriteDescriptorSet{
+            .{ .dst_set = side.indexed_set.?, .dst_binding = 0, .descriptor_type = .uniform_buffer, .buffer_info = @ptrCast(&blocks) },
+            .{ .dst_set = side.indexed_set.?, .dst_binding = 1, .descriptor_type = .storage_buffer, .buffer_info = @ptrCast(&stored) },
+        };
+        fb.UpdateDescriptorSets(device, 2, &indexed_writes, 0, null);
     }
 
     fn down(side: *Side) void {
         const fb = side.fb;
         const device = side.device orelse return;
         _ = fb.DeviceWaitIdle(device);
+        fb.DestroyPipelineLayout(device, side.indexed_layout);
+        fb.DestroyDescriptorSetLayout(device, side.indexed_set_layout);
         fb.DestroyPipelineLayout(device, side.storage_layout);
         fb.DestroyDescriptorSetLayout(device, side.storage_set_layout);
         fb.DestroyPipelineLayout(device, side.uniform_layout);
@@ -3948,6 +4114,18 @@ const Cases = struct {
         side.draw(clockwise_at, 6);
         side.end();
     }
+    /// The shipped block reads at offsets computed, `indexed_set`'s, over
+    /// the geometry the shipped cases draw, the push constants' indexes 1
+    /// and 0 (since 1.34).
+    fn indexed(side: *Side) Failure!void {
+        side.begin(.{});
+        try side.use(.{ .vertex = "as it is", .fragment = "shipped indexed", .layout = side.indexed_layout.? });
+        side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.indexed_layout.?, 0, 1, @ptrCast(&side.indexed_set), 0, null);
+        const values = [2]i32{ 1, 0 };
+        side.fb.CmdPushConstants(side.commands.?, side.indexed_layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 8, &values);
+        side.draw(clockwise_at, 6);
+        side.end();
+    }
     /// The vertices' colour times a pushed float, plus a pushed colour.
     fn tinted(side: *Side) Failure!void {
         side.begin(.{});
@@ -4186,6 +4364,7 @@ const cases = [_]Case{
     .{ .name = "shipped vertex shader", .run = Cases.shipped("shipped as it is", "shipped smooth", false, clockwise_at) },
     .{ .name = "shipped storage buffer", .run = Cases.stored },
     .{ .name = "shipped integers", .run = Cases.integered },
+    .{ .name = "shipped indexed", .run = Cases.indexed },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },
