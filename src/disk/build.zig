@@ -289,6 +289,7 @@ const modules = [_]Program{
     .{ .disk = "classes/datatypes/text.datatype", .source = "classes/datatypes/text/text.zig", .name = "text.datatype" },
     .{ .disk = "classes/datatypes/ascii.datatype", .source = "classes/datatypes/ascii/ascii.zig", .name = "ascii.datatype" },
     .{ .disk = "classes/datatypes/markdown.datatype", .source = "classes/datatypes/markdown/markdown.zig", .name = "markdown.datatype" },
+    .{ .disk = "classes/datatypes/html.datatype", .source = "classes/datatypes/html/html.zig", .name = "html.datatype" },
     .{ .disk = "classes/datatypes/font.datatype", .source = "classes/datatypes/font/font.zig", .name = "font.datatype" },
     .{ .disk = "devs/sdcard.device", .source = "devs/sdcard/sdcard.zig", .name = "sdcard.device" },
     .{ .disk = "devs/rs485.device", .source = "devs/rs485/rs485.zig", .name = "rs485.device" },
@@ -507,6 +508,7 @@ pub const files = [_]File{
     .{ .disk = "devs/datatypes/Lottie", .source = "devs/datatypes/Lottie" },
     .{ .disk = "devs/datatypes/JPEG", .source = "devs/datatypes/JPEG" },
     .{ .disk = "devs/datatypes/Markdown", .source = "devs/datatypes/Markdown" },
+    .{ .disk = "devs/datatypes/HTML", .source = "devs/datatypes/HTML" },
     .{ .disk = "devs/datatypes/OBJ", .source = "devs/datatypes/OBJ" },
     .{ .disk = "devs/datatypes/Font", .source = "devs/datatypes/Font" },
     .{ .disk = "devs/datatypes/FTXT", .source = "devs/datatypes/FTXT" },
@@ -618,6 +620,7 @@ pub const files = [_]File{
     .{ .disk = "tests/datatypes/Deep.ilbm", .source = "tests/datatypes/Deep.ilbm" },
     .{ .disk = "tests/datatypes/Ham.ilbm", .source = "tests/datatypes/Ham.ilbm" },
     .{ .disk = "tests/datatypes/Reading.md", .source = "tests/datatypes/Reading.md" },
+    .{ .disk = "tests/datatypes/Page.html", .source = "tests/datatypes/Page.html" },
     // SYS:Programs/Docs - what each program is and how it is used.
     .{ .disk = "programs/Docs/Battery.md", .source = "programs/battery/README.md" },
     .{ .disk = "programs/Docs/Dock.md", .source = "programs/dock/README.md" },

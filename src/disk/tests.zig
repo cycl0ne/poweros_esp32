@@ -194,6 +194,10 @@ test {
     _ = @import("classes/datatypes/bmp/decode.zig");
     _ = @import("classes/datatypes/bmp/icon.zig");
     _ = @import("classes/datatypes/markdown/parse.zig");
+    _ = @import("classes/datatypes/html/elements.zig");
+    _ = @import("classes/datatypes/html/tokens.zig");
+    _ = @import("classes/datatypes/html/entities.zig");
+    _ = @import("classes/datatypes/html/tests/html.zig");
     _ = @import("classes/datatypes/font/sheet.zig");
     _ = @import("classes/gadgets/tests/classes.zig");
     _ = @import("classes/docklets/tests/docklets.zig");

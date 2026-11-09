@@ -80,10 +80,10 @@ const ReleaseDataType = @import("../type/releasedatatype.zig").ReleaseDataType;
 /// - The object is a gadget: it is not shown until `AddDTObject` puts it
 ///   in a window, or until a layout it was put in is laid out.
 /// - The classes that read the whole of their source at once read from
-///   memory: JPEG, PNG, GIF, BMP, text, models, Markdown, Lottie. ILBM,
-///   8SVX and the sound of an audio codec read a file as they go, and a
-///   font's sizes are files beside its contents file: they refuse bytes
-///   in memory with `DTERROR_COULDNT_OPEN`.
+///   memory: JPEG, PNG, GIF, BMP, text, models, Markdown, HTML, Lottie.
+///   ILBM, 8SVX and the sound of an audio codec read a file as they go,
+///   and a font's sizes are files beside its contents file: they refuse
+///   bytes in memory with `DTERROR_COULDNT_OPEN`.
 ///
 /// SEE ALSO:
 /// `DisposeDTObject`, `AddDTObject`, `ObtainDataTypeA`

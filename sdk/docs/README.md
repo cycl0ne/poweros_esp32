@@ -398,6 +398,7 @@ object, whatever format it came out of; see the
 | text.datatype | every piece of text: runs in fonts, styles and pens, wrapped, marked and copied | [`textclass.zig`](../libs/datatypes/textclass.zig) |
 | ascii.datatype | plain text and IFF FTXT | [`textclass.zig`](../libs/datatypes/textclass.zig) |
 | markdown.datatype | Markdown | [`textclass.zig`](../libs/datatypes/textclass.zig) |
+| html.datatype | HTML pages, by what their markup says | [`textclass.zig`](../libs/datatypes/textclass.zig) |
 
 What every format's class does the same way is in
 [`subclass.zig`](../libs/datatypes/subclass.zig), and what every data

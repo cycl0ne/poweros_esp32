@@ -56,8 +56,8 @@ The bytes are recognised as a file's are, by what they start with; a
 name handed to `NewDTObjectA` is matched against the descriptors'
 patterns too, and without one the patterns are not asked. The object
 reads the bytes while it is made: when the call returns they are the
-program's again. JPEG, PNG, GIF, BMP, ICO, text, models, Markdown and
-Lottie read from memory; ILBM, 8SVX and a codec's sound read a file as they go,
+program's again. JPEG, PNG, GIF, BMP, ICO, text, models, Markdown, HTML
+and Lottie read from memory; ILBM, 8SVX and a codec's sound read a file as they go,
 a film is read as it is played, and a font's sizes are files beside its
 contents file, so these refuse bytes in memory with
 `DTERROR_COULDNT_OPEN`.
@@ -263,6 +263,28 @@ links, autolinks, entities and the HTML tags that say how text looks -
 and hands over the text, the runs and the blocks. A picture is not
 fetched: what its text says it is stands in its place. `ascii.datatype`
 sets a plain file in `CODE`'s font, one run, no blocks.
+
+`html.datatype` reads a page for what its markup says and hands over the
+same three. Its elements are kept open as a browser keeps them - a `<p>`
+closed by the next block, an `<li>` by the next item, a cell by the next
+cell - and each becomes the block it is: a heading, a paragraph, a
+listing for `<pre>`, a rule, an item behind its disc or number, a quote,
+a `<dd>` set in. A table of rows two cells or more across with no table
+inside is drawn as a table, its `<th>` head row in bold; a cell after
+one with `colspan`, or under one with `rowspan`, is in the column it
+belongs in, though the spanning cell itself is drawn one column wide.
+Any other table lays a page out, and its cells are read one under
+another. Scripts, styles and what is marked `hidden`, `aria-hidden` or
+`display:none` are left out, a picture is its `alt` text in italic, a
+field or a button its label in brackets and a `<select>` its chosen
+option. The page's `<title>` is the object's `DTA_ObjName`, and a link's
+run carries the address it leads to, its spaces and what is past ASCII
+written as `%` and UTF-8's bytes. A style sheet is not read and a script
+is not run, so a page that lays itself out by its style sheet reads top
+to bottom. A page is UTF-8 unless its `<meta charset>` says Latin-1 or
+code page 1252; either way it is made Latin-1, typesetting's quotes,
+dashes, spaces and ellipsis plain ones, and any other character Latin-1
+has not - the euro sign, Greek, Cyrillic, CJK - is a `?`.
 
 ## Animations
 

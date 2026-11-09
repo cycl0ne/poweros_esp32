@@ -1,0 +1,1 @@
+NAME=HTML BASE=html GROUP=text ID=HTML PATTERN=#?.(html|htm|xhtml|shtml) TYPE=ASCII PRI=10 BROWSE=SYS:Programs/MultiView EDIT=SYS:Programs/Notepad
