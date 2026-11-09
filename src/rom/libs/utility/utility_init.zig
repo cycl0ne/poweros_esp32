@@ -22,7 +22,7 @@ pub const LIBRARY_NAME = "utility.library";
 /// The version programs ask `OpenLibrary` for.
 const LIBRARY_VERSION = 1;
 /// The revision within the version, set by `init`.
-const LIBRARY_REVISION = 3;
+const LIBRARY_REVISION = 4;
 const BUILD_DATE = "09.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

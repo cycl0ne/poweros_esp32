@@ -8,12 +8,15 @@
 //! `Strip` takes the blocks out of the pieces as they come, the sound
 //! moved together in place, and keeps the last whole block; `streamTitle`
 //! finds the title in one, `split` the artist and the title in that, and
-//! `latin1` brings UTF-8 to the screen's Latin-1. `streamUrl` finds the
+//! `latin1` brings UTF-8 to the screen's Latin-1 through utility.library. `streamUrl` finds the
 //! address a block names beside its title - some stations name the cover
 //! of the song there, some their own picture, some a page or a number -
 //! and `isPictureAddress` tells a picture's from the rest. `kindOf` reads
 //! a Content-Type. Nothing here touches the network: the host tests hold
 //! all of it.
+
+const utility = @import("../utility/utility.zig");
+const UtilityBase = @import("../../interface/utility.zig").UtilityBase;
 
 /// The longest a block can be: 255 sixteens.
 pub const block_most = 255 * 16;
@@ -162,62 +165,30 @@ pub fn kindOf(content_type: []const u8) Kind {
     return .unknown;
 }
 
-/// `text` into `into` as Latin-1, NUL after it: UTF-8 read as such - a
-/// character past Latin-1 a `?` - and anything that is not UTF-8 taken
-/// as Latin-1 already, as older stations send it. Cut to fit.
-pub fn latin1(text: []const u8, into: []u8) void {
-    latin1As(text, isUtf8(text), into);
+/// `text` into `into` as Latin-1 through utility.library, NUL after it:
+/// UTF-8 read as such when the whole of it is, anything else taken as
+/// Latin-1 already, as older stations send it. Cut to fit.
+pub fn latin1(ub: *UtilityBase, text: []const u8, into: []u8) void {
+    latin1As(ub, text, ub.Utf8Kind(text.ptr, text.len) != utility.UTF8KIND_NONE, into);
 }
 
-/// `text` into `into` as Latin-1, NUL after it, read as UTF-8 when `utf8`
-/// says - a whole file's word for each of its lines - and as Latin-1
-/// already otherwise. Cut to fit.
-pub fn latin1As(text: []const u8, utf8: bool, into: []u8) void {
+/// `text` into `into` as Latin-1 through utility.library, NUL after it,
+/// read as UTF-8 when `utf8` says - a whole file's word for each of its
+/// lines - and as Latin-1 already otherwise. Typesetting's quotes and
+/// dashes become plain ones, another character Latin-1 has not a `?`, a
+/// byte that is no UTF-8 the Latin-1 byte it is. Cut to fit.
+pub fn latin1As(ub: *UtilityBase, text: []const u8, utf8: bool, into: []u8) void {
     if (into.len == 0) return;
-    var out: usize = 0;
-    var at: usize = 0;
-    while (at < text.len and out + 1 < into.len) {
-        const lead = text[at];
-        const length = sequenceLength(lead);
-        // A sequence cut short, or none, is a Latin-1 byte.
-        if (!utf8 or lead < 0x80 or length == 0 or at + length > text.len) {
-            into[out] = lead;
-            at += 1;
-        } else {
-            var code: u32 = lead & (@as(u8, 0x7F) >> @intCast(length));
-            for (text[at + 1 .. at + length]) |byte| code = (code << 6) | (byte & 0x3F);
-            into[out] = if (code <= 0xFF) @intCast(code) else '?';
-            at += length;
-        }
-        out += 1;
+    const room = into.len - 1;
+    var length: usize = 0;
+    if (utf8) {
+        var conversion: utility.Utf8Conversion = .{ .flags = utility.UTF8F_TYPESET | utility.UTF8F_LATIN1 };
+        length = ub.Utf8ToLatin1(&conversion, text.ptr, text.len, into.ptr, room);
+    } else {
+        length = @min(text.len, room);
+        @memcpy(into[0..length], text[0..length]);
     }
-    into[out] = 0;
-}
-
-/// How many bytes a UTF-8 sequence starting with `lead` has; 0 for a
-/// byte that starts none.
-fn sequenceLength(lead: u8) usize {
-    if (lead < 0x80) return 1;
-    if (lead >= 0xC2 and lead < 0xE0) return 2;
-    if (lead >= 0xE0 and lead < 0xF0) return 3;
-    if (lead >= 0xF0 and lead < 0xF5) return 4;
-    return 0;
-}
-
-/// Whether `text` is UTF-8 with at least one character past ASCII.
-pub fn isUtf8(text: []const u8) bool {
-    var wide = false;
-    var at: usize = 0;
-    while (at < text.len) {
-        const length = sequenceLength(text[at]);
-        if (length == 0 or at + length > text.len) return false;
-        for (text[at + 1 .. at + length]) |byte| {
-            if (byte & 0xC0 != 0x80) return false;
-        }
-        if (length > 1) wide = true;
-        at += length;
-    }
-    return wide;
+    into[length] = 0;
 }
 
 fn lower(char: u8) u8 {

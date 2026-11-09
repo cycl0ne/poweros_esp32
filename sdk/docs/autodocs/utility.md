@@ -2,8 +2,8 @@
 
 utility.library's jump table: tag lists, hooks, dates, 32- and 64-bit
 multiplication and division, Latin-1 case, pack tables, named objects,
-unique IDs, pattern matching, strings, alignment, lines of settings
-and the zone the system clock keeps.
+unique IDs, pattern matching, strings, alignment, lines of settings,
+the zone the system clock keeps, and text between UTF-8 and Latin-1.
 The reserved slots are kept free so that the slots after them stay
 where they are.
 
@@ -35,6 +35,7 @@ Generated from the source by `./zig build autodoc`.
 - [FreeTagItems](#freetagitems) - Gives back an array from `AllocateTagItems` or `CloneTagItems`.
 - [GetTagData](#gettagdata) - Returns the data of the first item with a given tag, or a default.
 - [GetUniqueID](#getuniqueid) - Returns a number no earlier call has returned.
+- [Latin1ToUtf8](#latin1toutf8) - Turns Latin-1, the system's characters, into UTF-8.
 - [MapTags](#maptags) - Renames the tags of a list through a map.
 - [MatchPattern](#matchpattern) - Tells whether a string matches a pattern made by `ParsePattern`.
 - [MatchPatternNoCase](#matchpatternnocase) - Tells whether a string matches a pattern made by `ParsePatternNoCase`, without regard to case.
@@ -67,6 +68,8 @@ Generated from the source by `./zig build autodoc`.
 - [UMult64](#umult64) - Multiplies two unsigned 32-bit numbers into their whole 64-bit product.
 - [UnpackStructureTags](#unpackstructuretags) - Copies the fields of a structure out to where the items of a tag list point, as a pack table lays them out.
 - [UtcToDate](#utctodate) - Seconds since 1970 in UTC as a DateStamp in the zone the system clock keeps.
+- [Utf8Kind](#utf8kind) - Says whether a text is UTF-8, and whether every character of it is one Latin-1 has.
+- [Utf8ToLatin1](#utf8tolatin1) - Turns UTF-8 into Latin-1, the system's characters: a whole text, or one piece of it after another.
 - [ZoneOffset](#zoneoffset) - The seconds the zone the system clock keeps is east of UTC at a moment.
 
 ## AddNamedObject
@@ -1537,6 +1540,69 @@ After 2^32 calls the counter wraps to 0 and the numbers repeat.
 
 ```zig
 const id = ub.GetUniqueID();
+```
+
+## Latin1ToUtf8
+
+Turns Latin-1, the system's characters, into UTF-8.
+
+**SYNOPSIS**
+
+```zig
+fn Latin1ToUtf8(ub: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize) usize
+```
+
+**SINCE**
+
+1.4. LVO -280.
+
+**INPUTS**
+
+- `from`, `from_length` - the Latin-1.
+- `into`, `into_length` - where the UTF-8 goes; not `from`.
+
+**RESULT**
+
+The bytes the whole text takes in UTF-8, written or not.
+
+**BEHAVIOR**
+
+An ASCII byte stays as it is; a byte from 0x80 on, the character of
+that number, is its two bytes of UTF-8. As many whole characters are
+written as `into` holds, no NUL after them: the whole is there when the
+answer is no more than `into_length`. A length of 0 for `into` only
+counts.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads its input and writes `into`.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. Everything given is the caller's.
+
+**NOTES**
+
+The text grows by a byte for each character past ASCII: twice its
+length always holds it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Utf8ToLatin1`, `Utf8Kind`
+
+**EXAMPLES**
+
+```zig
+// A dos name as a repository keeps it; refused when it is too long.
+const length = ub.Latin1ToUtf8(name.ptr, name.len, &path, path.len);
+if (length > path.len) return null;
 ```
 
 ## MapTags
@@ -3489,6 +3555,159 @@ None known.
 var date: dos.DateStamp = .{};
 ub.UtcToDate(attributes.mtime, &date);
 _ = dl.SetFileDate(name, &date);
+```
+
+## Utf8Kind
+
+Says whether a text is UTF-8, and whether every character of it is one Latin-1 has.
+
+**SYNOPSIS**
+
+```zig
+fn Utf8Kind(ub: *UtilityBase, bytes: [*]const u8, length: usize) u32
+```
+
+**SINCE**
+
+1.4. LVO -284.
+
+**INPUTS**
+
+- `bytes`, `length` - the text.
+
+**RESULT**
+
+- UTF8KIND_ASCII: ASCII alone, UTF-8 and Latin-1 alike - and an empty
+  text.
+- UTF8KIND_LATIN1: UTF-8 with characters past ASCII, all of them
+  Latin-1's.
+- UTF8KIND_WIDE: UTF-8 with a character Latin-1 has not.
+- UTF8KIND_NONE: bytes that are no UTF-8 - Latin-1, most likely.
+
+**BEHAVIOR**
+
+UTF-8 is read as `Utf8ToLatin1` reads it: an overlong form, a
+surrogate, a character past U+10FFFF, a byte that starts no character
+and a sequence broken off make the text none. A byte order mark at the
+start is passed over.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It only reads its input.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The text is the caller's.
+
+**NOTES**
+
+Latin-1 that is not ASCII is almost never UTF-8 by chance: a letter
+past 0x7F followed by one that is not a continuation byte breaks it.
+A file is told by the whole of it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Utf8ToLatin1`, `Latin1ToUtf8`
+
+**EXAMPLES**
+
+```zig
+// A file another system wrote: UTF-8 when the whole of it is.
+const kind = ub.Utf8Kind(text.ptr, text.len);
+const flags: u32 = if (kind == utility.UTF8KIND_NONE) ... else 0;
+```
+
+## Utf8ToLatin1
+
+Turns UTF-8 into Latin-1, the system's characters: a whole text, or one piece of it after another.
+
+**SYNOPSIS**
+
+```zig
+fn Utf8ToLatin1(ub: *UtilityBase, conversion: ?*utility.Utf8Conversion, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize) usize
+```
+
+**SINCE**
+
+1.4. LVO -276.
+
+**INPUTS**
+
+- `conversion` - what is done with a character Latin-1 has not
+  (`flags`), and with UTF8F_PIECES a character the last piece ended
+  inside; null for no flags.
+- `from`, `from_length` - the UTF-8. With UTF8F_PIECES a length of 0
+  ends the text: what the conversion holds is given as the broken
+  bytes it is.
+- `into`, `into_length` - where the Latin-1 goes. It may be `from`
+  itself when nothing is held from an earlier piece.
+
+**RESULT**
+
+The bytes written into `into`, no NUL after them; UTF8_REFUSED when
+UTF8F_REFUSE refused.
+
+**BEHAVIOR**
+
+Each character up to U+00FF is its one Latin-1 byte. One past it is a
+`?`, or with UTF8F_TYPESET the plain characters a quote, a dash, the
+ellipsis or a space of typesetting stands for, nothing for a mark of
+no width. A byte that is no UTF-8 - one that starts no character, or
+a sequence broken off - is a `?` too, or the Latin-1 byte it is with
+UTF8F_LATIN1. UTF8F_REFUSE refuses instead where a `?` would be: the
+answer is UTF8_REFUSED, at the first such character. A byte order mark
+at the text's start is left out.
+
+With UTF8F_PIECES, a piece that ends inside a character keeps its
+bytes, and the next call goes on with them; without it the text is
+whole, and such bytes are broken. Writing stops where `into` is full,
+before a character that does not fit: `into` as long as `from` holds
+the whole of a whole text, and two bytes more a piece after one that
+ended inside a character.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads its inputs and writes `into` and the
+  conversion.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. Everything given is the caller's.
+
+**NOTES**
+
+Latin-1's characters are Unicode's first 256, so U+0080 to U+009F,
+the C1 controls, come through as the bytes 0x80 to 0x9F.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Latin1ToUtf8`, `Utf8Kind`
+
+**EXAMPLES**
+
+```zig
+// A server's line for the console, a piece at a time as it comes.
+var conversion: utility.Utf8Conversion = .{ .flags = utility.UTF8F_PIECES | utility.UTF8F_LATIN1 };
+const shown = ub.Utf8ToLatin1(&conversion, piece.ptr, piece.len, &line, line.len);
+_ = dl.Write(output, &line, @intCast(shown));
+
+// A name kept as it is unless every character of it is Latin-1's.
+var refuse: utility.Utf8Conversion = .{ .flags = utility.UTF8F_REFUSE };
+const length = ub.Utf8ToLatin1(&refuse, name.ptr, name.len, &local, local.len);
 ```
 
 ## ZoneOffset

@@ -3,8 +3,8 @@
 `utility.library`, in the ROM, holds the small, general calls the other
 modules lean on: tag lists, the way options are handed to almost every
 call in the system; hooks, the way a library calls a program back; dates;
-32- and 64-bit multiplication and division; strings and Latin-1 case; the
-patterns names are matched against; named objects; unique numbers; pack
+32- and 64-bit multiplication and division; strings and Latin-1 case;
+text between UTF-8 and Latin-1; the patterns names are matched against; named objects; unique numbers; pack
 tables; comparing records; and reading the lines of settings files. This guide goes through them by what a
 program wants to do. Every call is in full in the
 [autodocs](../autodocs/utility.md).
@@ -24,8 +24,9 @@ const ub: *UtilityBase = @ptrCast(lib);
 ```
 
 Version 1 has every call here; `CompareMem` came with revision 1 (1.1),
-`NextSetting` with revision 2 (1.2), and `ZoneOffset`, `DateToUtc` and
-`UtcToDate` with revision 3 (1.3), which `ub.lib().revision` tells. The structures and constants are in `sdk.utility`, a file per
+`NextSetting` with revision 2 (1.2), `ZoneOffset`, `DateToUtc` and
+`UtcToDate` with revision 3 (1.3), and `Utf8ToLatin1`, `Latin1ToUtf8`
+and `Utf8Kind` with revision 4 (1.4), which `ub.lib().revision` tells. The structures and constants are in `sdk.utility`, a file per
 area (`tagitem`, `hooks`, `date`, `name`, `pack`, `pattern`, `setting`),
 most of them by name in `sdk.utility` itself; the pack-table ones only
 in `sdk.utility.pack`. No call needs a process: a
@@ -380,6 +381,62 @@ const dot = ub.Strrchr(@ptrCast(&name), '.') orelse return dos.RETURN_WARN; // n
 const extension = dot + 1;
 ```
 
+## Text between UTF-8 and Latin-1
+
+The system's names, its fonts and its console are Latin-1; what comes
+from elsewhere - a server's words, a file another system wrote, a name
+in a repository, a song's tags - is mostly UTF-8. Latin-1's 256
+characters are Unicode's first 256, so a character up to U+00FF is one
+byte either way round; the rest is what a conversion decides.
+
+| Call | |
+|---|---|
+| `Utf8ToLatin1(conversion, from, from_length, into, into_length)` | UTF-8 as Latin-1: the bytes written |
+| `Latin1ToUtf8(from, from_length, into, into_length)` | Latin-1 as UTF-8: the bytes the whole takes, written or not |
+| `Utf8Kind(bytes, length)` | `UTF8KIND_ASCII`, `UTF8KIND_LATIN1` (UTF-8 whose characters Latin-1 all has), `UTF8KIND_WIDE` (one it has not), or `UTF8KIND_NONE` (no UTF-8 at all) |
+
+A `utility.Utf8Conversion` tells `Utf8ToLatin1` what to do with what
+Latin-1 has not; a null one is the plain conversion, every such
+character a `?`:
+
+| Flag | |
+|---|---|
+| `UTF8F_TYPESET` | typesetting's quotes, dashes, ellipsis and spaces become the plain ones; the marks of no width go |
+| `UTF8F_LATIN1` | a byte that is no UTF-8 is the Latin-1 byte it is: for text that may be either |
+| `UTF8F_REFUSE` | the answer is `UTF8_REFUSED` instead of a `?`: for a name that must come back as it went |
+| `UTF8F_PIECES` | the text comes a piece at a time; a character cut between two pieces is held for the next, and a call with no bytes ends the text |
+
+```zig
+// A song's title for the screen.
+var typeset: utility.Utf8Conversion = .{ .flags = utility.UTF8F_TYPESET };
+const shown = ub.Utf8ToLatin1(&typeset, tag.ptr, tag.len, &title, title.len - 1);
+title[shown] = 0;
+
+// A file from another system: UTF-8 when the whole of it is.
+const utf8 = ub.Utf8Kind(text.ptr, text.len) != utility.UTF8KIND_NONE;
+
+// A dos name as UTF-8; twice its length always holds it.
+const length = ub.Latin1ToUtf8(name.ptr, name.len, &out, out.len);
+if (length > out.len) return null; // did not fit
+```
+
+**UTF-8 is read strictly**: an overlong form, a surrogate, a character
+past U+10FFFF, a byte that starts no character and a sequence broken
+off are no UTF-8, both for `Utf8Kind` and for the conversion. A byte
+order mark at the start of a text is passed over.
+
+**In place.** Latin-1 is never longer than the UTF-8 it comes from, so
+`into` may be `from` - but for a piece after one that ended inside a
+character, whose held bytes come first, and with `UTF8F_REFUSE`, whose
+refusal finds `into` already written up to there: ask `Utf8Kind` first.
+`Latin1ToUtf8` never works in place: the text grows.
+
+**A piece at a time**, a server's stream as it comes, keeps one
+conversion with `UTF8F_PIECES` for the whole text, `into` two bytes
+longer than the piece, and ends with a call of no bytes, which gives a
+character the last piece cut as the broken bytes it is. Writing stops
+where `into` is full, before a character that does not fit.
+
 ## Patterns
 
 A pattern describes a set of names: `#?.info` is every name that ends in
@@ -581,7 +638,7 @@ dos.library's `ReadArgs` and `ReadItem` read the shell's form, with its
 
 | Calls | Waits | In an interrupt |
 |---|---|---|
-| tag lists read or changed in place, pack tables, dates, arithmetic, strings and case, `CompareMem`, `NextSetting`, `GetUniqueID`, `SetWildStar`, `NamedObjectName` | no | yes; a list is the caller's to keep others off |
+| tag lists read or changed in place, pack tables, dates, arithmetic, strings and case, text between UTF-8 and Latin-1, `CompareMem`, `NextSetting`, `GetUniqueID`, `SetWildStar`, `NamedObjectName` | no | yes; a list is the caller's to keep others off |
 | `AllocateTagItems`, `CloneTagItems`, `FreeTagItems`, `AllocNamedObjectA`, `ReleaseNamedObject` | no | no: they allocate, free or take a lock |
 | `ParsePattern`, `MatchPattern` and their `NoCase` forms | no | no: they may allocate, and report through IoErr, which only a process has |
 | `AddNamedObject`, `FindNamedObject`, `RemNamedObject`, `AttemptRemNamedObject`, `FreeNamedObject` | for a name space's semaphore | no |

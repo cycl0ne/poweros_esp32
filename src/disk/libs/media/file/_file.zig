@@ -34,6 +34,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const dos = sdk.dos;
 const media = sdk.media;
+const utility = sdk.utility;
 const mcontainer = sdk.mcontainer;
 const MContainerBase = sdk.interface.mcontainer.MContainerBase;
 
@@ -210,33 +211,15 @@ pub fn be64(bytes: []const u8) u64 {
     return @as(u64, be32(bytes[0..4])) << 32 | be32(bytes[4..8]);
 }
 
-/// A NUL-terminated copy of `text` - UTF-8 - into `into`, in Latin-1: a
-/// character past it is a `?`. Cut where it no longer fits.
-pub fn copyUtf8(into: []u8, text: []const u8) void {
-    var out: usize = 0;
-    var at: usize = 0;
-    while (at < text.len and out < into.len - 1) {
-        const lead = text[at];
-        if (lead == 0) break;
-        // A character of two bytes may be Latin-1; longer ones never are,
-        // and a byte that does not begin one is no character.
-        var char: u32 = '?';
-        var length: usize = 1;
-        if (lead < 0x80) {
-            char = lead;
-        } else if (lead >= 0xF0) {
-            length = 4;
-        } else if (lead >= 0xE0) {
-            length = 3;
-        } else if (lead >= 0xC0 and at + 1 < text.len) {
-            length = 2;
-            char = (@as(u32, lead & 0x1F) << 6) | (text[at + 1] & 0x3F);
-        }
-        at += length;
-        into[out] = if (char <= 0xFF) @intCast(char) else '?';
-        out += 1;
-    }
-    into[out] = 0;
+/// A NUL-terminated copy of `text` - UTF-8, up to a NUL in it - into
+/// `into`, in Latin-1 by the file's utility.library: typesetting's quotes
+/// and dashes plain ones, another character past Latin-1 and a byte that
+/// is no UTF-8 a `?`. Cut where it no longer fits.
+pub fn copyUtf8(file: *const File, into: []u8, text: []const u8) void {
+    const whole = upToNul(text);
+    var conversion: utility.Utf8Conversion = .{ .flags = utility.UTF8F_TYPESET };
+    const length = file.base.utility_base.Utf8ToLatin1(&conversion, whole.ptr, whole.len, into.ptr, into.len - 1);
+    into[length] = 0;
 }
 
 /// A string's bytes up to its NUL.

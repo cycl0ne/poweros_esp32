@@ -34,6 +34,7 @@ const gc = intuition.gadgetclass;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const Object = intuition.Object;
 const Window = intuition.Window;
 const TagItem = sdk.utility.TagItem;
@@ -78,6 +79,8 @@ pub const Logo = struct {
 pub const Page = struct {
     sys: *ExecBase,
     dl: *DosBase,
+    /// The lists' text, between UTF-8 and Latin-1.
+    ub: *UtilityBase,
     ib: *IntuitionBase,
     /// The name the finder's requests give.
     agent: [*:0]const u8,
@@ -120,7 +123,7 @@ pub const Page = struct {
         page.found.init();
         const text = prefs.loadWhole(page.sys, page.dl, stations.KEPT_ENV_FILE) orelse return;
         defer page.sys.FreeVec(text.ptr);
-        page.kept.readKept(page.sys, text);
+        page.kept.readKept(page.sys, page.ub, text);
     }
 
     /// The finder let go of and both lists given back: after the window,
@@ -136,7 +139,7 @@ pub const Page = struct {
     /// changed them, their drawers made first where they are not there.
     pub fn keepFiles(page: *Page) void {
         if (!page.kept.changed) return;
-        const text = page.kept.keptText(page.sys) orelse return;
+        const text = page.kept.keptText(page.sys, page.ub) orelse return;
         defer page.sys.FreeVec(text.ptr);
         for ([_][*:0]const u8{ stations.KEPT_ENV_DRAWER, stations.KEPT_ENVARC_DRAWER }) |drawer| {
             if (page.dl.Lock(drawer, dos.SHARED_LOCK)) |lock| {
@@ -305,7 +308,7 @@ pub const Page = struct {
                     page.search_read = page.search_round;
                     page.detach(view_found);
                     page.found.clear(page.sys);
-                    for (finder.answers()) |answer| _ = page.found.readFound(page.sys, answer);
+                    for (finder.answers()) |answer| _ = page.found.readFound(page.sys, page.ub, answer);
                     page.giveBack(view_found, if (page.found.count > 0) 0 else lb.LISTBROWSER_NONE);
                     page.sayCount(page.found.count);
                 },

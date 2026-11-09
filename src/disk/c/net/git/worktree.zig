@@ -277,7 +277,7 @@ pub const Work = struct {
     /// The dos path of the tree's `path`, in the work tree: null when it
     /// is too long.
     pub fn localPath(work: *Work, into: *files.Path, path: []const u8) ?[*:0]const u8 {
-        const name = files.localName(&work.local, path) orelse return null;
+        const name = files.localName(work.git.ub, &work.local, path) orelse return null;
         return work.repo.workPathQuiet(into, name);
     }
 

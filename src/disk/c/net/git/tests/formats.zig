@@ -21,6 +21,8 @@ const pack = @import("../pack.zig");
 const idx = @import("../idx.zig");
 const index = @import("../index.zig");
 const files = @import("../files.zig");
+const host = @import("host_rom");
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const Id = _git.Id;
 
 const testing = std.testing;
@@ -563,28 +565,32 @@ test "the index: git's read, with its extension passed over, and written again" 
 }
 
 test "names: UTF-8 made Latin-1 where it fits, and back; a server's text made Latin-1 in pieces" {
+    const rom_ub = try host.utility.setUp();
+    defer host.exec.deinit();
+    const ub: *UtilityBase = @ptrCast(rom_ub);
     var local: [64]u8 = undefined;
     var back: [64]u8 = undefined;
-    try testing.expectEqualStrings("gr\xFC\xDFe.txt", files.localName(&local, "grüße.txt").?);
-    try testing.expectEqualStrings("grüße.txt", files.gitName(&back, "gr\xFC\xDFe.txt").?);
+    try testing.expectEqualStrings("gr\xFC\xDFe.txt", files.localName(ub, &local, "grüße.txt").?);
+    try testing.expectEqualStrings("grüße.txt", files.gitName(ub, &back, "gr\xFC\xDFe.txt").?);
     // Beyond Latin-1: the bytes kept, both ways.
-    try testing.expectEqualStrings("日本語.txt", files.localName(&local, "日本語.txt").?);
-    try testing.expectEqualStrings("日本語.txt", files.gitName(&back, "日本語.txt").?);
+    try testing.expectEqualStrings("日本語.txt", files.localName(ub, &local, "日本語.txt").?);
+    try testing.expectEqualStrings("日本語.txt", files.gitName(ub, &back, "日本語.txt").?);
+    // Too long for the buffer, either way.
+    var short: [4]u8 = undefined;
+    try testing.expectEqual(@as(?[]u8, null), files.localName(ub, &short, "grüße"));
+    try testing.expectEqual(@as(?[]u8, null), files.gitName(ub, &short, "gr\xFC\xDF"));
 
     const text = "Objekte aufzählen: 3 € 日\n";
     for ([_]usize{ 1, 2, 3, text.len }) |piece| {
-        var latin: files.Latin1 = .{};
+        var conversion = files.serverText();
         var out: [64]u8 = undefined;
         var length: usize = 0;
         var at: usize = 0;
         while (at < text.len) : (at += piece) {
-            for (text[at..@min(at + piece, text.len)]) |byte| {
-                if (latin.take(byte)) |char| {
-                    out[length] = char;
-                    length += 1;
-                }
-            }
+            const bytes = text[at..@min(at + piece, text.len)];
+            length += ub.Utf8ToLatin1(&conversion, bytes.ptr, bytes.len, out[length..].ptr, out.len - length);
         }
         try testing.expectEqualStrings("Objekte aufz\xE4hlen: 3 ? ?\n", out[0..length]);
     }
+    try host.utility.tearDown(rom_ub);
 }

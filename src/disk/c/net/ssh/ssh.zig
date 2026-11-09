@@ -40,6 +40,7 @@ const ssh_keys = sdk.devices.ssh.keys;
 const connect = sdk.devices.ssh.connect;
 const timer = sdk.devices.timer;
 const crypto = sdk.crypto;
+const utility = sdk.utility;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
@@ -49,7 +50,7 @@ const FileHandle = dos.FileHandle;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SSH";
-const VERSION_STRING = "\x00$VER: SSH 1.0 (08.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SSH 1.1 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "HOST,PORT/K/N,USER/K,KEYGEN/S,COMMAND/F";
@@ -156,6 +157,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer sys.CloseLibrary(socket_lib);
     const sb: *SocketBase = @ptrCast(socket_lib);
+    const utility_lib = sys.OpenLibrary(utility.UTILITYNAME, 1) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{ COMMAND_NAME, utility.UTILITYNAME });
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(utility_lib);
 
     if (argv[arg_keygen] != 0) return keygen(dl, sb, cb);
     const given_host = dos.rdargs.string(argv[arg_host]) orelse {
@@ -183,6 +189,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             .dl = dl,
             .sb = sb,
             .cb = cb,
+            .ub = @ptrCast(utility_lib),
             .program = COMMAND_NAME,
             .input = dl.Input().?,
             .output = dl.Output().?,

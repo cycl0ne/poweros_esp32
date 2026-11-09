@@ -113,7 +113,7 @@ pub fn load(lb: *LocaleBase, path: [*:0]const u8, name: []const u8, language: []
     while (walk.next()) |string| : (index += 1) {
         const into = bytes[text_at..][0..string.text.len];
         @memcpy(into, string.text);
-        const kept = if (utf8 and _locale.isUtf8(string.text)) _locale.toLatin1(into) else into.len;
+        const kept = if (utf8 and _locale.isUtf8(lb, string.text)) _locale.toLatin1(lb, into) else into.len;
         bytes[text_at + kept] = 0;
         entries[index] = .{ .id = string.id, .text = @ptrCast(bytes + text_at) };
         text_at += string.text.len + 1;

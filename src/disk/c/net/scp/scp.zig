@@ -32,6 +32,7 @@ const dos = sdk.dos;
 const exec = sdk.exec;
 const bsd = sdk.bsdsocket;
 const crypto = sdk.crypto;
+const utility = sdk.utility;
 const ssh = sdk.devices.ssh;
 const sftp = ssh.sftp;
 const connect = ssh.connect;
@@ -42,7 +43,7 @@ const CryptoBase = sdk.interface.crypto.CryptoBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SCP";
-const VERSION_STRING = "\x00$VER: SCP 1.2 (28.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SCP 1.3 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/A,TO/A,ALL/S,PORT/K/N,USER/K,QUIET/S";
@@ -373,6 +374,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     };
     defer sys.CloseLibrary(socket_lib);
+    const utility_lib = sys.OpenLibrary(utility.UTILITYNAME, 1) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{ COMMAND_NAME, utility.UTILITYNAME });
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(utility_lib);
 
     const memory = sys.AllocVec(@sizeOf(State), exec.MEMF_CLEAR) orelse return dos.RETURN_FAIL;
     defer sys.FreeVec(memory);
@@ -394,6 +400,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             .dl = dl,
             .sb = @ptrCast(socket_lib),
             .cb = @ptrCast(crypto_lib),
+            .ub = @ptrCast(utility_lib),
             .program = COMMAND_NAME,
             .input = dl.Input().?,
             .output = dl.Output().?,

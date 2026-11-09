@@ -313,7 +313,7 @@ const Text = sdk.locale.Strings(strings);
 const Id = strings.Id;
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.29";
+const VERSION = "1.30";
 const DATE = "09.11.2026";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
@@ -701,7 +701,9 @@ const App = struct {
     preset_shown: usize = 0,
     preset_off: bool = true,
     preset_picked: bool = false,
-    ub: ?*UtilityBase = null,
+    /// utility.library: the settings' lines, and the lists' text between
+    /// UTF-8 and Latin-1.
+    ub: *UtilityBase,
 
     /// The picture as drawn, and the canvas it is put into.
     rast_port: ?*graphics.RastPort = null,
@@ -919,7 +921,7 @@ const App = struct {
         app.station_how = how;
         app.station_percent = 0;
         if (how != .stop) {
-            app.station = radio.Radio.start(app.sys, app.dl, entry.path(), USER_AGENT, app.text);
+            app.station = radio.Radio.start(app.sys, app.dl, app.ub, entry.path(), USER_AGENT, app.text);
             if (app.station == null) app.tellWhy(app.text.get(.MSG_NO_MEMORY_STATION));
         }
         app.showStation();
@@ -2262,7 +2264,7 @@ const App = struct {
     fn keepSound(app: *App) void {
         if (!app.preset_picked) return;
         const control = if (app.control) |*opened| opened else return;
-        const ub = app.ub orelse return;
+        const ub = app.ub;
         const memory = app.sys.AllocVec(audio_file.max_file, exec.MEMF_ANY) orelse return;
         defer app.sys.FreeVec(memory);
         const text = @as([*]u8, @ptrCast(memory))[0..audio_file.max_file];
@@ -3443,11 +3445,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer text.close();
 
     // How the last run left it: the settings, and the list read below.
-    const utility_lib = sys.OpenLibrary(sdk.utility.UTILITYNAME, 0);
-    defer if (utility_lib) |lib| sys.CloseLibrary(lib);
-    const ub: ?*UtilityBase = @ptrCast(utility_lib);
+    const utility_lib = sys.OpenLibrary(sdk.utility.UTILITYNAME, 0) orelse {
+        _ = text.printf(dl, .MSG_NOLIBRARY, .{ @as([*:0]const u8, COMMAND_NAME), @as([*:0]const u8, sdk.utility.UTILITYNAME) });
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(utility_lib);
+    const ub: *UtilityBase = @ptrCast(utility_lib);
     var kept = remembered.Settings{};
-    if (ub) |utility_base| readKept(sys, dl, utility_base, &kept);
+    readKept(sys, dl, ub, &kept);
     const kept_volume: i32 = @intCast(kept.volume);
     const percent: u32 = @intCast(@min(@max(rdargs.number(argv[arg_volume]) orelse kept_volume, 0), 200));
 
@@ -3517,7 +3522,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer app.stopStation();
     // The stations kept, read before the list, whose stations go by their
     // names; given back, and the finder let go of, after the window.
-    app.radio = .{ .sys = sys, .dl = dl, .ib = ib, .agent = USER_AGENT, .text = &text };
+    app.radio = .{ .sys = sys, .dl = dl, .ub = ub, .ib = ib, .agent = USER_AGENT, .text = &text };
     app.radio.init();
     defer app.radio.free();
     defer if (app.logo) |bytes| sys.FreeVec(bytes);
@@ -3526,13 +3531,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer if (app.order) |order| sys.FreeVec(@ptrCast(order));
     defer app.kept.free(app.gb);
     // The songs, given back after the gadget that shows them.
-    app.songs.init();
+    app.songs.init(ub);
     defer app.songs.clear(sys);
     // Files named make the list - or, with ADD, go after the one kept.
     var resume_at: ?Resume = null;
     if (given.count == 0 or only_add) {
         if (kept.remember) {
-            if (ub) |utility_base| resume_at = app.readList(utility_base);
+            resume_at = app.readList(ub);
         }
     }
     for (given.slice()) |name| _ = app.songs.addPath(sys, dl, name);

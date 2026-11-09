@@ -84,6 +84,7 @@ pub const SshLink = struct {
             .dl = dl,
             .sb = git.sb.?,
             .cb = git.cb,
+            .ub = git.ub,
             .program = context.COMMAND_NAME,
             .input = input,
             .output = output,
@@ -280,19 +281,22 @@ pub const SshLink = struct {
             while (line.len > 0 and line[line.len - 1] == '\r') line = line[0 .. line.len - 1];
             if (line.len == 0) continue;
             git.put("remote: ");
-            var clean: [128]u8 = undefined;
-            var at: usize = 0;
-            var latin: files.Latin1 = .{};
-            for (line) |byte| {
-                const char = latin.take(byte) orelse continue;
-                clean[at] = if (char < ' ' or (char >= 0x7F and char < 0xA0)) '?' else char;
-                at += 1;
-                if (at == clean.len) {
-                    git.put(&clean);
-                    at = 0;
+            // Latin-1 a piece at a time, two bytes to spare for a
+            // character the last piece ended inside, the empty piece at
+            // the end giving what is held; the control characters as `?`.
+            var conversion = files.serverText();
+            var taken: usize = 0;
+            while (true) {
+                const piece = line[taken..@min(taken + 126, line.len)];
+                taken += piece.len;
+                var clean: [128]u8 = undefined;
+                const length = git.ub.Utf8ToLatin1(&conversion, piece.ptr, piece.len, &clean, clean.len);
+                for (clean[0..length]) |*char| {
+                    if (char.* < ' ' or (char.* >= 0x7F and char.* < 0xA0)) char.* = '?';
                 }
+                git.put(clean[0..length]);
+                if (piece.len == 0) break;
             }
-            git.put(clean[0..at]);
             git.put("\n");
         }
     }

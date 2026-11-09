@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! Host tests of the Radio page's lists (stations.zig), on exec alone: the
+//! Host tests of the Radio page's lists (stations.zig), on exec and utility: the
 //! stations kept read from M3U and written back the same, a search's CSV
 //! answers put in by how often each was listened to - their tabs and
 //! spaces at the ends tidied away - a station found by its address, and
@@ -7,6 +7,8 @@
 
 const std = @import("std");
 const kexec = @import("host_rom").exec;
+const utility_library = @import("host_rom").utility;
+const UtilityBase = @import("sdk").interface.utility.UtilityBase;
 const stations = @import("../stations.zig");
 
 const testing = std.testing;
@@ -16,12 +18,12 @@ fn cell(station: *stations.Station, column: usize) []const u8 {
 }
 
 test "Player's stations: kept ones read from M3U and written back" {
-    try kexec.setUp();
+    const ub: *UtilityBase = @ptrCast(try utility_library.setUp());
     defer kexec.deinit();
     const sys = kexec.SysBase.iface();
     var kept: stations.Stations = undefined;
     kept.init();
-    kept.readKept(sys, "#EXTM3U\n# a comment\n" ++
+    kept.readKept(sys, ub, "#EXTM3U\n# a comment\n" ++
         "#EXTINF:-1 tvg-logo=\"http://a.example/a.png\",Station A\n" ++
         "http://a.example/live\n" ++
         "DH0:Music/song.mp3\n" ++
@@ -39,7 +41,7 @@ test "Player's stations: kept ones read from M3U and written back" {
     try testing.expectEqual(b, kept.find("http://b.example/stream/").?);
     try testing.expect(kept.find("http://c.example/") == null);
 
-    const text = kept.keptText(sys).?;
+    const text = kept.keptText(sys, ub).?;
     try testing.expectEqualStrings(stations.kept_header ++
         "#EXTINF:-1 tvg-logo=\"http://a.example/a.png\",Station A\n" ++
         "http://a.example/live\n" ++
@@ -49,11 +51,12 @@ test "Player's stations: kept ones read from M3U and written back" {
     kept.remove(sys, a);
     try testing.expectEqual(@as(usize, 1), kept.count);
     kept.clear(sys);
+    try utility_library.tearDown(@ptrCast(@alignCast(ub)));
     try kexec.expectNoLeaks();
 }
 
 test "Player's stations: two answers found, the most heard first" {
-    try kexec.setUp();
+    const ub: *UtilityBase = @ptrCast(try utility_library.setUp());
     defer kexec.deinit();
     const sys = kexec.SysBase.iface();
     var found: stations.Stations = undefined;
@@ -66,8 +69,8 @@ test "Player's stations: two answers found, the most heard first" {
         "u-4, \tOgg\tStation\t,http://four.example/ogg,25,96, Austria,jazz\n";
     var first_answer: [mp3.len]u8 = mp3.*;
     var second_answer: [ogg.len]u8 = ogg.*;
-    try testing.expectEqual(@as(usize, 2), found.readFound(sys, &first_answer));
-    try testing.expectEqual(@as(usize, 1), found.readFound(sys, &second_answer));
+    try testing.expectEqual(@as(usize, 2), found.readFound(sys, ub, &first_answer));
+    try testing.expectEqual(@as(usize, 1), found.readFound(sys, ub, &second_answer));
     const one = found.first().?;
     try testing.expectEqualStrings("Jazz One", cell(one, 0));
     try testing.expectEqualStrings("Germany", cell(one, 1));
@@ -84,5 +87,6 @@ test "Player's stations: two answers found, the most heard first" {
     try testing.expect(two.logo() == null);
     try testing.expect(two.next() == null);
     found.clear(sys);
+    try utility_library.tearDown(@ptrCast(@alignCast(ub)));
     try kexec.expectNoLeaks();
 }

@@ -7,8 +7,8 @@
 //! length and the comma it may carry attributes, `key="value"`, of which
 //! `tvg-logo` - a picture of the station, an address - is read. Every
 //! other line that starts with `#` is a comment. The text is UTF-8 when
-//! the whole of it is, Latin-1 otherwise (`utf8`); a mark of UTF-8 at
-//! its start is passed over.
+//! the whole of it is, Latin-1 otherwise (`utf8`, utility.library's
+//! Utf8Kind); a mark of UTF-8 at its start is passed over.
 //!
 //! **PLS** is the form a station's site hands out: a `[playlist]` line,
 //! then numbered keys in any case and any order - `File1=` the address or
@@ -22,12 +22,15 @@
 //! `Reader` hands out each `Item` in turn as slices of the text as it
 //! stands, not yet brought to Latin-1. `locate` joins a location to the
 //! drawer of the list it came from, `relative` is the other way, and
-//! `itemLines` writes an item as M3U, in UTF-8, after `header`.
+//! `itemLines` writes an item as M3U, in UTF-8 (utility.library's
+//! Latin1ToUtf8), after `header`.
 //! `firstAddress` is the station a list a station's address answered with
 //! names, and `namesList` whether an address ends as a list does. Nothing
 //! here opens a file: the host tests hold all of it.
 
-const icy = @import("sdk").http.icy;
+const sdk = @import("sdk");
+const utility = sdk.utility;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 
 /// What every M3U the Player writes starts with.
 pub const header = "#EXTM3U\n";
@@ -67,8 +70,8 @@ pub fn isHls(text: []const u8) bool {
 
 /// The first station's address the list `text` names: what a station's
 /// address that answers with a list stands for. Null when it names none.
-pub fn firstAddress(text: []const u8) ?[]const u8 {
-    var reader = Reader.init(text);
+pub fn firstAddress(ub: *UtilityBase, text: []const u8) ?[]const u8 {
+    var reader = Reader.init(ub, text);
     while (reader.next()) |item| {
         if (isUrl(item.location)) return item.location;
     }
@@ -94,10 +97,10 @@ pub const Reader = struct {
     utf8: bool,
     at: usize = 0,
 
-    pub fn init(whole: []const u8) Reader {
+    pub fn init(ub: *UtilityBase, whole: []const u8) Reader {
         var text = whole;
         if (startsWith(text, "\xEF\xBB\xBF")) text = text[3..];
-        var reader = Reader{ .text = text, .form = .m3u, .utf8 = icy.isUtf8(text) };
+        var reader = Reader{ .text = text, .form = .m3u, .utf8 = ub.Utf8Kind(text.ptr, text.len) != utility.UTF8KIND_NONE };
         var first = reader;
         while (first.nextLine()) |line| {
             const trimmed = trim(line);
@@ -301,21 +304,21 @@ pub fn itemLength(item: Item) usize {
 /// `item` as M3U into `into` (`itemLength` bytes will do), its Latin-1
 /// in UTF-8: an `#EXTINF` line when it has a name, a length or a
 /// picture, then its location. How many bytes.
-pub fn itemLines(item: Item, into: []u8) usize {
+pub fn itemLines(ub: *UtilityBase, item: Item, into: []u8) usize {
     var at: usize = 0;
     if (item.title.len > 0 or item.seconds != null or item.logo.len > 0) {
         at = put(into, at, "#EXTINF:");
         if (item.seconds) |count| at = putNumber(into, at, count) else at = put(into, at, "-1");
         if (item.logo.len > 0) {
             at = put(into, at, " tvg-logo=\"");
-            at = putUtf8(into, at, item.logo);
+            at = putUtf8(ub, into, at, item.logo);
             at = put(into, at, "\"");
         }
         at = put(into, at, ",");
-        at = putUtf8(into, at, item.title);
+        at = putUtf8(ub, into, at, item.title);
         at = put(into, at, "\n");
     }
-    at = putUtf8(into, at, item.location);
+    at = putUtf8(ub, into, at, item.location);
     return put(into, at, "\n");
 }
 
@@ -324,20 +327,10 @@ fn put(into: []u8, at: usize, text: []const u8) usize {
     return at + text.len;
 }
 
-/// Latin-1 `text` as UTF-8: a byte past ASCII as two.
-fn putUtf8(into: []u8, at: usize, text: []const u8) usize {
-    var out = at;
-    for (text) |char| {
-        if (char < 0x80) {
-            into[out] = char;
-            out += 1;
-        } else {
-            into[out] = 0xC0 | (char >> 6);
-            into[out + 1] = 0x80 | (char & 0x3F);
-            out += 2;
-        }
-    }
-    return out;
+/// Latin-1 `text` as UTF-8: a byte past ASCII as two, which
+/// `itemLength` makes room for.
+fn putUtf8(ub: *UtilityBase, into: []u8, at: usize, text: []const u8) usize {
+    return at + ub.Latin1ToUtf8(text.ptr, text.len, into[at..].ptr, into.len - at);
 }
 
 fn putNumber(into: []u8, at: usize, number: u32) usize {

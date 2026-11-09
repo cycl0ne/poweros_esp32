@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! utility.library's jump table: tag lists, hooks, dates, 32- and 64-bit
 //! multiplication and division, Latin-1 case, pack tables, named objects,
-//! unique IDs, pattern matching, strings, alignment, lines of settings
-//! and the zone the system clock keeps.
+//! unique IDs, pattern matching, strings, alignment, lines of settings,
+//! the zone the system clock keeps, and text between UTF-8 and Latin-1.
 //! The reserved slots are kept free so that the slots after them stay
 //! where they are.
 ##include libs/exec/exec as exec
@@ -131,4 +131,15 @@ i32 ZoneOffset(i64 utc)
 i64 DateToUtc(*const dos.DateStamp date, ?*u32 nanoseconds)
 /// Seconds since 1970, UTC, as a DateStamp in the system's zone.
 void UtcToDate(i64 utc, *dos.DateStamp date)
+// Text: UTF-8 and Latin-1
+/// UTF-8 at `from` into `into` as Latin-1, as `conversion` says - null
+/// for a whole text, `?` for what Latin-1 has not: the bytes written, or
+/// UTF8_REFUSED.
+usize Utf8ToLatin1(?*utility.Utf8Conversion conversion, [*]const u8 from, usize from_length, [*]u8 into, usize into_length)
+/// Latin-1 at `from` into `into` as UTF-8: the bytes the whole takes,
+/// written as far as whole characters fit.
+usize Latin1ToUtf8([*]const u8 from, usize from_length, [*]u8 into, usize into_length)
+/// Whether `bytes` are UTF-8, and Latin-1's characters alone:
+/// UTF8KIND_NONE, UTF8KIND_ASCII, UTF8KIND_LATIN1 or UTF8KIND_WIDE.
+u32 Utf8Kind([*]const u8 bytes, usize length)
 ##end

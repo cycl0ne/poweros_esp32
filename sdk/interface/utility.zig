@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! utility.library's jump table: tag lists, hooks, dates, 32- and 64-bit
 //! multiplication and division, Latin-1 case, pack tables, named objects,
-//! unique IDs, pattern matching, strings, alignment, lines of settings
-//! and the zone the system clock keeps.
+//! unique IDs, pattern matching, strings, alignment, lines of settings,
+//! the zone the system clock keeps, and text between UTF-8 and Latin-1.
 //! The reserved slots are kept free so that the slots after them stay
 //! where they are.
 //!
@@ -76,6 +76,9 @@ pub const LVO = struct {
     pub const ZoneOffset = libraries.lvo(65);
     pub const DateToUtc = libraries.lvo(66);
     pub const UtcToDate = libraries.lvo(67);
+    pub const Utf8ToLatin1 = libraries.lvo(68);
+    pub const Latin1ToUtf8 = libraries.lvo(69);
+    pub const Utf8Kind = libraries.lvo(70);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -138,6 +141,9 @@ pub const Fn = struct {
     pub const ZoneOffset = *const fn (*UtilityBase, i64) callconv(.c) i32;
     pub const DateToUtc = *const fn (*UtilityBase, *const dos.DateStamp, ?*u32) callconv(.c) i64;
     pub const UtcToDate = *const fn (*UtilityBase, i64, *dos.DateStamp) callconv(.c) void;
+    pub const Utf8ToLatin1 = *const fn (*UtilityBase, ?*utility.Utf8Conversion, [*]const u8, usize, [*]u8, usize) callconv(.c) usize;
+    pub const Latin1ToUtf8 = *const fn (*UtilityBase, [*]const u8, usize, [*]u8, usize) callconv(.c) usize;
+    pub const Utf8Kind = *const fn (*UtilityBase, [*]const u8, usize) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -413,5 +419,24 @@ pub const UtilityBase = opaque {
     /// Seconds since 1970, UTC, as a DateStamp in the system's zone.
     pub fn UtcToDate(self: *UtilityBase, utc: i64, date: *dos.DateStamp) void {
         return libraries.call(self, LVO.UtcToDate, Fn.UtcToDate, .{ utc, date });
+    }
+
+    /// UTF-8 at `from` into `into` as Latin-1, as `conversion` says - null
+    /// for a whole text, `?` for what Latin-1 has not: the bytes written, or
+    /// UTF8_REFUSED.
+    pub fn Utf8ToLatin1(self: *UtilityBase, conversion: ?*utility.Utf8Conversion, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize) usize {
+        return libraries.call(self, LVO.Utf8ToLatin1, Fn.Utf8ToLatin1, .{ conversion, from, from_length, into, into_length });
+    }
+
+    /// Latin-1 at `from` into `into` as UTF-8: the bytes the whole takes,
+    /// written as far as whole characters fit.
+    pub fn Latin1ToUtf8(self: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize) usize {
+        return libraries.call(self, LVO.Latin1ToUtf8, Fn.Latin1ToUtf8, .{ from, from_length, into, into_length });
+    }
+
+    /// Whether `bytes` are UTF-8, and Latin-1's characters alone:
+    /// UTF8KIND_NONE, UTF8KIND_ASCII, UTF8KIND_LATIN1 or UTF8KIND_WIDE.
+    pub fn Utf8Kind(self: *UtilityBase, bytes: [*]const u8, length: usize) u32 {
+        return libraries.call(self, LVO.Utf8Kind, Fn.Utf8Kind, .{ bytes, length });
     }
 };

@@ -11,6 +11,8 @@
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
+const utility = sdk.utility;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const _git = @import("_git.zig");
 const Git = @import("context.zig").Git;
 
@@ -236,117 +238,38 @@ const RemoveWalk = struct {
 /// The dos name for a git path, in `into`: Latin-1 when every character
 /// of it is one Latin-1 has, else its bytes as they are; null when it is
 /// too long.
-pub fn localName(into: []u8, name: []const u8) ?[]u8 {
+pub fn localName(ub: *UtilityBase, into: []u8, name: []const u8) ?[]u8 {
     if (name.len > into.len) return null;
-    var fits = true;
-    var at: usize = 0;
-    while (at < name.len) : (at += 1) {
-        const char = name[at];
-        if (char < 0x80) continue;
-        if ((char != 0xC2 and char != 0xC3) or at + 1 >= name.len or name[at + 1] & 0xC0 != 0x80) {
-            fits = false;
-            break;
-        }
-        at += 1;
-    }
-    if (!fits) {
-        @memcpy(into[0..name.len], name);
-        return into[0..name.len];
-    }
-    var out: usize = 0;
-    at = 0;
-    while (at < name.len) : (at += 1) {
-        const char = name[at];
-        if (char < 0x80) {
-            into[out] = char;
-        } else {
-            into[out] = (char & 0x03) << 6 | (name[at + 1] & 0x3F);
-            at += 1;
-        }
-        out += 1;
-    }
-    return into[0..out];
+    var refuse: utility.Utf8Conversion = .{ .flags = utility.UTF8F_REFUSE };
+    const length = ub.Utf8ToLatin1(&refuse, name.ptr, name.len, into.ptr, into.len);
+    if (length != utility.UTF8_REFUSED) return into[0..length];
+    @memcpy(into[0..name.len], name);
+    return into[0..name.len];
 }
 
 /// The git path for a dos name, in `into` - what `localName` made
 /// Latin-1 made UTF-8 again: a name that is UTF-8 with a character
 /// Latin-1 has not is taken as it is, any other read as Latin-1. Null
 /// when it is too long.
-pub fn gitName(into: []u8, name: []const u8) ?[]u8 {
-    if (isWideUtf8(name)) {
+pub fn gitName(ub: *UtilityBase, into: []u8, name: []const u8) ?[]u8 {
+    if (ub.Utf8Kind(name.ptr, name.len) == utility.UTF8KIND_WIDE) {
         if (name.len > into.len) return null;
         @memcpy(into[0..name.len], name);
         return into[0..name.len];
     }
-    var out: usize = 0;
-    for (name) |char| {
-        if (char < 0x80) {
-            if (out == into.len) return null;
-            into[out] = char;
-            out += 1;
-        } else {
-            if (out + 2 > into.len) return null;
-            into[out] = 0xC0 | char >> 6;
-            into[out + 1] = 0x80 | (char & 0x3F);
-            out += 2;
-        }
-    }
-    return into[0..out];
+    const length = ub.Latin1ToUtf8(name.ptr, name.len, into.ptr, into.len);
+    if (length > into.len) return null;
+    return into[0..length];
 }
 
-/// Whether `name` is well-formed UTF-8 holding a character beyond
-/// Latin-1.
-fn isWideUtf8(name: []const u8) bool {
-    var wide = false;
-    var at: usize = 0;
-    while (at < name.len) {
-        const char = name[at];
-        const length: usize = if (char < 0x80) 1 else if (char & 0xE0 == 0xC0) 2 else if (char & 0xF0 == 0xE0) 3 else if (char & 0xF8 == 0xF0) 4 else return false;
-        if (at + length > name.len) return false;
-        for (name[at + 1 .. at + length]) |follow| {
-            if (follow & 0xC0 != 0x80) return false;
-        }
-        if (length > 2 or char >= 0xC4) wide = true;
-        at += length;
-    }
-    return wide;
+/// A server's UTF-8 text for the console, as utility.library makes it
+/// Latin-1 a piece at a time: a character Latin-1 has not a `?`, a byte
+/// that starts no UTF-8 character taken as it is. One for each text:
+/// the sideband's messages carry theirs (`connect.zig`), each line an
+/// SSH server writes has its own (`ssh.zig`).
+pub fn serverText() utility.Utf8Conversion {
+    return .{ .flags = utility.UTF8F_PIECES | utility.UTF8F_LATIN1 };
 }
-
-/// A server's UTF-8 text made Latin-1 for the console, a byte at a time
-/// as it comes in pieces: a character Latin-1 has not becomes `?`, and a
-/// byte that starts no UTF-8 character is taken as it is.
-pub const Latin1 = struct {
-    /// The first byte of a two-byte Latin-1 character, held.
-    lead: u8 = 0,
-    /// The bytes still to come of a character Latin-1 has not.
-    skip: u8 = 0,
-
-    /// The character `byte` gives; null while one is incomplete.
-    pub fn take(latin: *Latin1, byte: u8) ?u8 {
-        if (byte & 0xC0 == 0x80) {
-            if (latin.lead != 0) {
-                const char = (latin.lead & 0x03) << 6 | (byte & 0x3F);
-                latin.lead = 0;
-                return char;
-            }
-            if (latin.skip != 0) {
-                latin.skip -= 1;
-                return if (latin.skip == 0) '?' else null;
-            }
-            return byte;
-        }
-        latin.lead = 0;
-        latin.skip = 0;
-        switch (byte) {
-            0xC2, 0xC3 => latin.lead = byte,
-            0xC4...0xDF => latin.skip = 1,
-            0xE0...0xEF => latin.skip = 2,
-            0xF0...0xF4 => latin.skip = 3,
-            else => return byte,
-        }
-        return null;
-    }
-};
 
 /// The length of a NUL-terminated string.
 pub fn span(text: [*:0]const u8) []const u8 {

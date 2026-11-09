@@ -84,6 +84,10 @@ test {
     _ = @import("date/datetoutc.zig");
     _ = @import("date/utctodate.zig");
     _ = @import("date/zoneoffset.zig");
+    _ = @import("text/_text.zig");
+    _ = @import("text/latin1toutf8.zig");
+    _ = @import("text/utf8kind.zig");
+    _ = @import("text/utf8tolatin1.zig");
     _ = @import("math/_math.zig");
     _ = @import("math/sdivmod32.zig");
     _ = @import("math/smult32.zig");
@@ -162,7 +166,7 @@ test "utility.library: made from its ROM tag, opened by name, never expunged" {
     defer kexec.deinit();
     try testing.expectEqual(&ub.lib, kexec.OpenLibrary(kexec.SysBase, LIBRARY_NAME, 1).?);
     try testing.expectEqual(@as(u16, 1), ub.lib.version);
-    try testing.expectEqual(@as(u16, 3), ub.lib.revision);
+    try testing.expectEqual(@as(u16, 4), ub.lib.revision);
     try testing.expect(kexec.OpenLibrary(kexec.SysBase, LIBRARY_NAME, 2) == null);
     kexec.CloseLibrary(kexec.SysBase, &ub.lib);
     _ = kexec.RemLibrary(kexec.SysBase, &ub.lib);
