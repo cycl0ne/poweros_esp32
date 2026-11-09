@@ -4458,4 +4458,48 @@ pub const LIBRARY_VERSION = 1;
 /// the same words; a call left out, and a set by another name, refused.
 /// tests/ir.zig: the modules read back with the set imported once, and
 /// the cores' sums against f64, a half rounded to the even.
-pub const LIBRARY_REVISION = 152;
+///
+/// 153: **The V3D compiles a float chosen by a comparison, and the rest of
+/// GLSL.std.450's float functions (docs/facet-vulkan10.md item 59).** A
+/// ternary of plain values, which glslc writes as OpSelect, and Sin, Cos,
+/// Tan, FSign, Step and SmoothStep were drawn on the cores.
+///
+/// - The walk reads every comparison NIR has of SPIR-V's floats
+///   (vtn_alu.c:369-381): FOrdEqual feq, FUnordNotEqual fneu, and
+///   FOrdLessThanEqual fge with its operands swapped, beside the three
+///   it had. `spirv.facet_opcodes` and the profile take them, and
+///   OpSelect of one float after one: NIR's b32csel. FOrdNotEqual and
+///   the other unordered ones are bools of two comparisons in NIR
+///   (:930-1010) and stay out.
+/// - Sin and Cos are ntq_fsincos's (nir_to_vir.c:990-1003): the angle in
+///   periods of pi, the SFU's SIN of what is left after the nearest whole
+///   one, the sign turned for an odd one; Tan their quotient, the
+///   division lowered (nir_ftan). FSign is ntq_fsign's three
+///   conditional moves (:1005-1016), Step 1.0 less slt (vtn_glsl450.c:
+///   222-243, nir_to_vir.c:1710-1723), SmoothStep nir_smoothstep's
+///   (nir_builtin_builder.c:139-152), its 3 - 2t a product and a sum as
+///   ffma_weak splits for a device of no FMA (nir_opt_algebraic.py:424).
+/// - fmin(fmax(x, 0.0), 1.0) is fsat, as the algebraic pass makes it
+///   (nir_opt_algebraic.py:1095; `lower_fsat` is false at 7.1): an FMOV
+///   with the SAT unpack (nir_to_vir.c:1865-1882). FClamp to 0.0 and 1.0
+///   was FMAX then FMIN in 1.152.
+/// - An operation of constants alone is folded as nir_opt_constant_folding
+///   folds it, in floats as nir_opcodes.py says each one: SmoothStep's
+///   constant edges become one product by 1 / (e1 - e0). The SFU's
+///   functions are left to the device; NIR folds them with the host's
+///   libm.
+/// - `compiler/to_vir.zig` emits the comparisons as ntq_emit_comparison
+///   does (nir_to_vir.c:1173-1232), slt and b32csel as ntq_emit_alu
+///   (:1710-1745), and the rest above.
+/// - `ir.Build` has `equal`, `notEqual`, `lessEqual`, `greaterEqual`,
+///   `select`, `sin`, `cos`, `tan`, `sign`, `step` and `smoothStep`, for
+///   both devices.
+///
+/// Tests: the V3D's 155, three new: glslc's module of the family
+/// (`glslc_chosen`, 318 words) lowered as Mesa lowers it, each operation
+/// where Mesa puts it; facet's emitter's module of the same shader
+/// compiled to the same words; the folding as nir_opcodes.py has it, and
+/// FOrdNotEqual refused. tests/ir.zig: the module read back, and the
+/// cores' choices and functions against f64 down each arm. glslc's
+/// float arithmetic now has one FMAX and no FMIN, its FClamp an fsat.
+pub const LIBRARY_REVISION = 153;

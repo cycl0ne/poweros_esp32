@@ -268,7 +268,10 @@ pub const profile: spirv.Profile = .{
         // which compute nothing (since 1.152).
         .f_sub,
         .f_negate,        .f_div,              .dot,                            .ext_inst,
-        .vector_shuffle,
+        // The shuffle, then the other comparisons glslc writes and a float
+        // chosen by one (since 1.153).
+        .vector_shuffle,  .f_unord_not_equal,  .f_ord_less_than_equal,          .f_ord_greater_than_equal,
+        .select,          .f_ord_equal,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant },
     .image_dims = &.{.dim_2d},
@@ -300,9 +303,16 @@ pub const Tag = enum {
     input,
     /// Floats the draw hands over, one uniform each.
     constant,
-    /// Whether a float is less than (`at` 0) or greater than (`at` 1)
-    /// another: a bool, which only a `discard` reads (since 1.139).
+    /// How a float compares with another, `at` a `Comparison`: a bool,
+    /// which a `discard` reads (since 1.139) and a `select` (since 1.153).
     compare,
+    /// `b` where `a`, a `compare`, holds, and `from[0]` where it does not:
+    /// NIR's b32csel (nir_to_vir.c:1740-1745; since 1.153). One float.
+    select,
+    /// 1.0 where `a` is less than `b` and 0.0 where not: NIR's slt, which
+    /// GLSL.std.450's Step is made of (nir_to_vir.c:1710-1723; since
+    /// 1.153). `b` may be one float, read for each of `a`'s.
+    set_less,
     /// The pixel dropped where `a`, a `compare`, holds: what
     /// nir_opt_peephole_select makes of a selection whose block is a
     /// terminate alone (`discard_ok`, nir_to_vir.c:2293), terminate_if.
@@ -330,6 +340,15 @@ pub const Tag = enum {
     negate,
     /// `a` without its sign: FMOV with the ABS unpack (:1793-1801).
     abs,
+    /// `a` held to 0 to 1: FMOV with the SAT unpack 7.1 has (:1865-1882;
+    /// since 1.153).
+    sat,
+    /// The sine and the cosine of `a`, through the SFU's SIN of a part of
+    /// a period (ntq_fsincos, nir_to_vir.c:990-1003), and its sign
+    /// (ntq_fsign, :1005-1016; since 1.153).
+    sin,
+    cos,
+    sign,
     /// `a` rounded down, up, towards 0 and to the nearest even (FFLOOR,
     /// FCEIL, FTRUNC, FROUND, :1769-1779).
     floor,
@@ -356,6 +375,11 @@ pub const Tag = enum {
     /// alone compiles it (`compileVir`; since 1.143).
     sample_compared,
 };
+
+/// What a `compare` asks, as NIR has SPIR-V's ordered comparisons and its
+/// unordered not-equal (vtn_alu.c:369-381): flt, flt swapped, feq, fneu,
+/// fge and fge swapped. `less` and `greater` are 0 and 1, as they were.
+pub const Comparison = enum(u32) { less, greater, equal, not_equal, greater_equal, less_equal };
 
 /// Which half of a packed pair of half-floats a float is, where it is one
 /// at all. The TMU's two words are the only ones here.
@@ -681,6 +705,7 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
         .sample_compared => return Error.Samplers,
         // Nor does any compute beyond a sum and a product.
         .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot => return Error.Body,
+        .select, .set_less, .sat, .sin, .cos, .sign => return Error.Body,
         else => {},
     };
     try settle(work);
@@ -1390,17 +1415,42 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (floats != kind.parts()) return Error.Body;
             work.step_of[id] = try put(work, made);
         },
-        .f_ord_less_than, .f_ord_greater_than => {
+        .f_ord_less_than, .f_ord_greater_than, .f_ord_equal, .f_unord_not_equal, .f_ord_greater_than_equal, .f_ord_less_than_equal => {
             // Two floats, and a bool: a vector compared would be a vector
-            // of bools, which nothing here reads.
+            // of bools, which nothing here reads. FOrdNotEqual and the
+            // other unordered ones are bools of several comparisons in NIR
+            // (vtn_alu.c:930-1010), and are not here.
             if (operands.len != 4) return Error.Body;
             const type_id = try idOf(operands[0]);
             const id = try idOf(operands[1]);
             if (work.thing[type_id] != .boolean) return Error.Type;
             const a = try operand(work, operands[2], .f32x1);
             const b = try operand(work, operands[3], .f32x1);
-            const which: u32 = if (instruction.op == .f_ord_less_than) 0 else 1;
-            work.step_of[id] = try put(work, .{ .tag = .compare, .kind = .f32x1, .a = a, .b = b, .at = which });
+            const which: Comparison = switch (instruction.op) {
+                .f_ord_less_than => .less,
+                .f_ord_greater_than => .greater,
+                .f_ord_equal => .equal,
+                .f_unord_not_equal => .not_equal,
+                .f_ord_greater_than_equal => .greater_equal,
+                else => .less_equal,
+            };
+            work.step_of[id] = try put(work, .{ .tag = .compare, .kind = .f32x1, .a = a, .b = b, .at = @intFromEnum(which) });
+        },
+        .select => {
+            // ResultType, Result, Condition, Object 1, Object 2: NIR's
+            // bcsel. Of one float, its condition one bool; a vector
+            // chosen wants a vector of bools in SPIR-V 1.0, which nothing
+            // here makes (since 1.153).
+            if (operands.len != 5) return Error.Body;
+            if (try kindOf(work, try idOf(operands[0])) != .f32x1) return Error.Type;
+            const id = try idOf(operands[1]);
+            const condition = work.step_of[try idOf(operands[2])];
+            if (condition == none or work.steps[condition].tag != .compare) return Error.Type;
+            const yes = try operand(work, operands[3], .f32x1);
+            const no = try operand(work, operands[4], .f32x1);
+            var made = Step{ .tag = .select, .kind = .f32x1, .a = condition, .b = yes };
+            made.from[0] = no;
+            work.step_of[id] = try put(work, made);
         },
         .f_add, .f_mul, .f_sub => {
             if (operands.len != 4) return Error.Body;
@@ -1543,20 +1593,22 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
 /// (vtn_glsl450.c:131-180 for one NIR op, :245-277 for the built ones)
 /// and then v3dv's NIR options (v3dv_pipeline.c:177-198): fdiv, fsqrt,
 /// fpow, ffract and flrp lowered, fsat not at 7.1 (:225), fsub kept
-/// (:207). What is left out - the trigonometry, Step and SmoothStep, the
-/// sign, the integers, Cross, the packing and interpolation - is refused
-/// by name, `Error.Body` (since 1.152).
+/// (:207). Sin, Cos, Tan, FSign, Step and SmoothStep are here since
+/// 1.153. What is left out - the inverse and hyperbolic trigonometry, the
+/// integers, Cross, the packing and interpolation - is refused by name,
+/// `Error.Body` (since 1.152).
 fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) Error!u16 {
     const which = std.enums.fromInt(spirv.Glsl, instruction) orelse return Error.Body;
     switch (which) {
         .round, .round_even, .trunc, .f_abs, .floor, .ceil, .fract, .radians, .degrees => {},
         .pow, .exp, .log, .exp2, .log2, .sqrt, .inverse_sqrt => {},
         .f_min, .f_max, .n_min, .n_max, .f_clamp, .n_clamp, .f_mix, .length, .distance, .normalize => {},
+        .sin, .cos, .tan, .f_sign, .step, .smooth_step => {},
         else => return Error.Body,
     }
     const wanted: usize = switch (which) {
-        .f_min, .f_max, .n_min, .n_max, .pow, .distance => 2,
-        .f_clamp, .n_clamp, .f_mix => 3,
+        .f_min, .f_max, .n_min, .n_max, .pow, .distance, .step => 2,
+        .f_clamp, .n_clamp, .f_mix, .smooth_step => 3,
         else => 1,
     };
     if (arguments.len != wanted) return Error.Body;
@@ -1592,10 +1644,40 @@ fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) E
         // frcp(frsq(a)) (`lower_fsqrt`, nir_opt_algebraic.py:1921).
         .sqrt => unary(work, .recip, try unary(work, .rsqrt, x[0])),
         .inverse_sqrt => unary(work, .rsqrt, x[0]),
-        .f_min, .n_min => binary(work, .min, x[0], x[1]),
+        .f_min, .n_min => minOf(work, x[0], x[1]),
         .f_max, .n_max => binary(work, .max, x[0], x[1]),
-        // fmin(fmax(x, lo), hi) (nir_fclamp, nir_builder.h:1411-1415).
-        .f_clamp, .n_clamp => binary(work, .min, try binary(work, .max, x[0], x[1]), x[2]),
+        // fmin(fmax(x, lo), hi) (nir_fclamp, nir_builder.h:1411-1415),
+        // fsat where lo and hi are 0.0 and 1.0.
+        .f_clamp, .n_clamp => if (isSplat(work, x[1], 0.0) and isSplat(work, x[2], 1.0))
+            unary(work, .sat, x[0])
+        else
+            binary(work, .min, try binary(work, .max, x[0], x[1]), x[2]),
+        // fsin and fcos, ntq_fsincos's; ftan their quotient, fdiv lowered
+        // (nir_ftan, nir_builtin_builder.h:254-257).
+        .sin => unary(work, .sin, x[0]),
+        .cos => unary(work, .cos, x[0]),
+        .tan => tan: {
+            const sine = try unary(work, .sin, x[0]);
+            break :tan binary(work, .mul, sine, try unary(work, .recip, try unary(work, .cos, x[0])));
+        },
+        .f_sign => unary(work, .sign, x[0]),
+        // 1.0 - slt(x, edge), the edge the first operand
+        // (vtn_glsl450.c:222-243).
+        .step => binary(work, .sub, try immediateOf(work, 1.0, kind), try binary(work, .set_less, x[1], x[0])),
+        // t = fsat((x - e0) / (e1 - e0)), then t * (t * (3 - 2t)), the
+        // 3 - 2t nir_a_minus_bc's ffma_weak(-2, t, 3) split as a device of
+        // no FMA has it (nir_smoothstep, nir_builtin_builder.c:139-152;
+        // nir_builder.h:1455-1459; nir_opt_algebraic.py:424). Constant
+        // edges fold, as NIR folds them.
+        .smooth_step => smooth: {
+            const two = try immediateOf(work, 2.0, kind);
+            const three = try immediateOf(work, 3.0, kind);
+            const from = try binary(work, .sub, x[2], x[0]);
+            const width = try binary(work, .sub, x[1], x[0]);
+            const t = try unary(work, .sat, try binary(work, .mul, from, try unary(work, .recip, width)));
+            const less = try binary(work, .add, try binary(work, .mul, try unary(work, .negate, two), t), three);
+            break :smooth binary(work, .mul, t, try binary(work, .mul, t, less));
+        },
         .f_mix => mix(work, x[0], x[1], x[2]),
         // fsqrt(fdot(v, v)) (nir_fast_length, nir_builtin_builder.c:63-66),
         // its square root lowered as Sqrt's.
@@ -1646,6 +1728,97 @@ fn lengthOf(work: *Work, v: u16) Error!u16 {
     return unary(work, .recip, try unary(work, .rsqrt, try dotOf(work, v, v)));
 }
 
+/// fmin of `a` and `b`, or fsat where it is fmin(fmax(x, 0.0), 1.0), as
+/// the algebraic pass makes it either way round (nir_opt_algebraic.py:1095,
+/// `lower_fsat` false at 7.1, v3dv_pipeline.c:225). The FMAX is then read
+/// by nothing and goes in vir_optimize (since 1.153).
+fn minOf(work: *Work, a: u16, b: u16) Error!u16 {
+    for ([2][2]u16{ .{ a, b }, .{ b, a } }) |pair| {
+        const of = work.steps[pair[0]];
+        if (of.tag != .max or !isSplat(work, pair[1], 1.0)) continue;
+        if (isSplat(work, of.b, 0.0)) return unary(work, .sat, of.a);
+        if (isSplat(work, of.a, 0.0)) return unary(work, .sat, of.b);
+    }
+    return binary(work, .min, a, b);
+}
+
+/// Whether a step is a constant of `value` in every float.
+fn isSplat(work: *const Work, step_at: u16, value: f32) bool {
+    const of = work.steps[step_at];
+    if (of.tag != .constant) return false;
+    for (0..of.kind.parts()) |k| {
+        if (work.pool[of.at + k] != value) return false;
+    }
+    return true;
+}
+
+/// `value` in each float of `kind`: nir_imm_floatN_t's, which a lowering
+/// of a vector reads swizzled to each float of it.
+fn immediateOf(work: *Work, value: f32, kind: Kind) Error!u16 {
+    const parts = kind.parts();
+    if (work.pool_count + parts > work.pool.len) return Error.Uniforms;
+    const at = work.pool_count;
+    for (0..parts) |k| work.pool[at + k] = value;
+    work.pool_count += parts;
+    return put(work, .{ .tag = .constant, .kind = kind, .at = at });
+}
+
+/// NIR's constant folding (nir_opt_constant_folding, in v3d's
+/// optimization loop, nir_to_vir.c:2281): an operation whose operands are
+/// all constants is the constant it makes, worked out as nir_opcodes.py
+/// has each one in floats, on the host (since 1.153). SmoothStep's
+/// constant edges are its common case. Left to the device are the SFU's
+/// functions - fexp2, flog2, fsin, fcos - which NIR folds with the host's
+/// libm, to no bit the walk could promise.
+fn foldedOf(work: *Work, tag: Tag, a: u16, b: ?u16) Error!?u16 {
+    switch (tag) {
+        .add, .sub, .mul, .min, .max, .set_less, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .sat, .sign => {},
+        else => return null,
+    }
+    const of_a = work.steps[a];
+    if (of_a.tag != .constant) return null;
+    var of_b: Step = of_a;
+    if (b) |at| {
+        of_b = work.steps[at];
+        if (of_b.tag != .constant) return null;
+    }
+    const parts = of_a.kind.parts();
+    if (work.pool_count + parts > work.pool.len) return Error.Uniforms;
+    const out = work.pool_count;
+    for (0..parts) |k| {
+        const x = work.pool[of_a.at + k];
+        const y = work.pool[of_b.at + if (of_b.kind == .f32x1) 0 else k];
+        work.pool[out + k] = switch (tag) {
+            .add => x + y,
+            .sub => x - y,
+            .mul => x * y,
+            // util_min_num and util_max_num: a NaN loses.
+            .min => if (std.math.isNan(x)) y else if (std.math.isNan(y)) x else @min(x, y),
+            .max => if (std.math.isNan(x)) y else if (std.math.isNan(y)) x else @max(x, y),
+            .set_less => if (x < y) 1.0 else 0.0,
+            .negate => -x,
+            .abs => @abs(x),
+            .floor => @floor(x),
+            .ceil => @ceil(x),
+            .trunc => @trunc(x),
+            .round => roundEven(x),
+            .recip => 1.0 / x,
+            .rsqrt => 1.0 / @sqrt(x),
+            .sat => if (std.math.isNan(x)) 0.0 else @min(@max(x, 0.0), 1.0),
+            .sign => if (std.math.isNan(x)) 0.0 else if (x == 0.0) x else if (x > 0.0) 1.0 else -1.0,
+            else => unreachable,
+        };
+    }
+    work.pool_count += parts;
+    return try put(work, .{ .tag = .constant, .kind = of_a.kind, .at = out });
+}
+
+/// _mesa_roundevenf: to the nearest whole float, a half to the even one.
+fn roundEven(x: f32) f32 {
+    if (@abs(x - @trunc(x)) != 0.5) return @round(x);
+    return 2.0 * @round(x / 2.0);
+}
+
 /// The dot of two values of one kind; of one float each, their product,
 /// as nir_fdot builds it for one component.
 fn dotOf(work: *Work, a: u16, b: u16) Error!u16 {
@@ -1653,12 +1826,16 @@ fn dotOf(work: *Work, a: u16, b: u16) Error!u16 {
     return put(work, .{ .tag = .dot, .kind = .f32x1, .a = a, .b = b });
 }
 
+/// `tag` of `a`, or the constant it folds to.
 fn unary(work: *Work, tag: Tag, a: u16) Error!u16 {
+    if (try foldedOf(work, tag, a, null)) |constant| return constant;
     return put(work, .{ .tag = tag, .kind = work.steps[a].kind, .a = a });
 }
 
 /// `tag` of `a` and `b`, of `a`'s kind: `b` is of it too, or one float.
+/// Or the constant it folds to.
 fn binary(work: *Work, tag: Tag, a: u16, b: u16) Error!u16 {
+    if (try foldedOf(work, tag, a, b)) |constant| return constant;
     return put(work, .{ .tag = tag, .kind = work.steps[a].kind, .a = a, .b = b });
 }
 
@@ -1833,6 +2010,7 @@ fn settle(work: *Work) Error!void {
             .compare, .discard => return Error.Discards,
             .sample_compared => return Error.Samplers,
             .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot => return Error.Body,
+            .select, .set_less, .sat, .sin, .cos, .sign => return Error.Body,
             // A float of its own, read where it is first wanted rather
             // than at the top: a uniform is the next one in the stream
             // wherever the instruction sits, and holding them to the end
@@ -4114,39 +4292,44 @@ test "through Mesa's back end, glslc's float arithmetic: GLSL.std.450 lowered as
     try testing.expectEqual(@as(u8, 4), code.threads);
     // The walk's lowering: Normalize a dot and RSQRT, the dot of the
     // constant a second, Length a third, its square root RSQRT and RECIP
-    // as Sqrt's is; Pow LOG then EXP; FClamp FMAX then FMIN, and the
-    // negated x the second FMAX's other operand; Fract FFLOOR and FSUB.
+    // as Sqrt's is; Pow LOG then EXP; FClamp to 0.0 and 1.0 an fsat, as
+    // the algebraic pass makes it (since 1.153), and the negated x the
+    // FMAX's other operand; Fract FFLOOR and FSUB.
     try testing.expectEqual(@as(usize, 3), stepsOf(&work, .dot));
     try testing.expectEqual(@as(usize, 3), stepsOf(&work, .rsqrt));
     try testing.expectEqual(@as(usize, 2), stepsOf(&work, .recip));
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .log2));
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .exp2));
-    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .max));
-    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .min));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .max));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .min));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .sat));
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .floor));
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .abs));
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .negate));
     // The program has each of them where Mesa puts it: the SFU's and the
-    // rounding on the add side, FABS an FMOV's unpack on the mul side,
-    // the negation an XOR of the sign bit.
+    // rounding on the add side, FABS and fsat an FMOV's unpack on the mul
+    // side, the negation an XOR of the sign bit.
     try testing.expectEqual(@as(usize, 3), sideOps(code, "rsqrt", false));
     try testing.expectEqual(@as(usize, 2), sideOps(code, "recip", false));
     try testing.expectEqual(@as(usize, 1), sideOps(code, "log", false));
     try testing.expectEqual(@as(usize, 1), sideOps(code, "exp", false));
     try testing.expectEqual(@as(usize, 1), sideOps(code, "ffloor", false));
-    try testing.expectEqual(@as(usize, 2), sideOps(code, "fmax", false));
-    try testing.expectEqual(@as(usize, 1), sideOps(code, "fmin", false));
+    try testing.expectEqual(@as(usize, 1), sideOps(code, "fmax", false));
+    try testing.expectEqual(@as(usize, 0), sideOps(code, "fmin", false));
     try testing.expectEqual(@as(usize, 1), sideOps(code, "xor", false));
-    // FABS is an FMOV of the mul side in VIR, which the scheduler may move
-    // to the add side at 7.1, as Mesa's qpu_convert_mul_to_add does.
-    try testing.expectEqual(@as(usize, 1), sideOps(code, "fmov", true) + sideOps(code, "fmov", false));
+    // FABS and fsat are FMOVs of the mul side in VIR, which the scheduler
+    // may move to the add side at 7.1, as Mesa's qpu_convert_mul_to_add
+    // does.
+    try testing.expectEqual(@as(usize, 2), sideOps(code, "fmov", true) + sideOps(code, "fmov", false));
     var unpacked = false;
+    var saturated = false;
     for (code.words) |word| {
         var buffer: [disasm.most_text]u8 = undefined;
         const line = disasm.disasm(word, &buffer).?;
         if (std.mem.indexOf(u8, line, "fmov") != null and std.mem.indexOf(u8, line, ".abs") != null) unpacked = true;
+        if (std.mem.indexOf(u8, line, "fmov") != null and std.mem.indexOf(u8, line, ".sat") != null) saturated = true;
     }
-    try testing.expect(unpacked);
+    try testing.expect(unpacked and saturated);
     // FMix's weight is the constant 0.25: x(1 - t) + yt, its 1 - t folded
     // to 0.75, which is a uniform; and the sign bit the XOR reads is one.
     var folded = false;
@@ -4174,15 +4357,156 @@ test "through Mesa's back end, glslc's float arithmetic is facet's, to the word"
     for (glslc.stream(), facet_made.stream()) |a, b| try testing.expectEqual(a, b);
 }
 
+/// glslc_chosen's shader through the IR: the same operations in the
+/// order glslc writes them.
+const Chosen = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const six = b.scalar(6);
+        const quarter = b.scalar(0.25);
+        const x = b.component(v, 0);
+        const sine = b.add(b.mul(b.sin(b.mul(x, six)), half), half);
+        const y = b.component(v, 1);
+        const cosine = b.add(b.mul(b.cos(b.mul(y, six)), half), half);
+        const z = b.component(v, 2);
+        const tangent = b.clamp(b.mul(b.tan(z), quarter), b.scalar(0), b.scalar(1));
+        const green = b.select(b.lessThan(x, y), sine, cosine);
+        const stepped = b.step(b.scalar(0.3), x);
+        const eased = b.smoothStep(b.scalar(0.2), b.scalar(0.8), y);
+        const blue = b.select(b.greaterEqual(z, half), stepped, eased);
+        const signed = b.add(b.mul(b.sign(b.sub(x, half)), quarter), half);
+        const unequal = b.select(b.notEqual(x, y), b.scalar(0.75), b.scalar(1));
+        const equal = b.select(b.equal(y, z), quarter, unequal);
+        const alpha = b.select(b.lessEqual(x, z), signed, equal);
+        b.color(b.vector(&.{ green, blue, tangent, alpha }));
+    }
+});
+
+test "through Mesa's back end, glslc's chosen floats: the comparisons, OpSelect and the rest of the float functions as Mesa lowers them" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_chosen);
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+    // Five comparisons, each read by an OpSelect, in the order glslc
+    // writes them; Step one slt.
+    var asked: [5]Comparison = undefined;
+    var compares: usize = 0;
+    for (work.program()) |each| if (each.tag == .compare) {
+        asked[compares] = @enumFromInt(each.at);
+        compares += 1;
+    };
+    try testing.expectEqual(@as(usize, 5), compares);
+    try testing.expectEqualSlices(Comparison, &.{ .less, .greater_equal, .not_equal, .equal, .less_equal }, &asked);
+    try testing.expectEqual(@as(usize, 5), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .set_less));
+    // Sin, Cos and Tan's two, which is the one quotient left: SmoothStep's
+    // one over its constant edges' width is folded. FClamp to 0.0 and 1.0
+    // and SmoothStep's t are fsat, FSign ntq_fsign's.
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .sin));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .cos));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .recip));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .sat));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .sign));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .min) + stepsOf(&work, .max) + stepsOf(&work, .negate));
+    // ntq_fsincos four times: FROUND, the SFU's SIN, FTOIN, the SHL into
+    // the sign bit and its XOR, each on the add side. Six FCMPs, each with
+    // the flags it pushes after its name: the five, and slt's, each read
+    // by the SEL right after it while the flags still hold it.
+    for ([_][]const u8{ "fround", "sin", "ftoin", "shl", "xor", "fcmp" }, [_]usize{ 4, 4, 4, 4, 4, 6 }) |op, wanted| {
+        var count: usize = 0;
+        for (code.words) |word| {
+            var buffer: [disasm.most_text]u8 = undefined;
+            const line = disasm.disasm(word, &buffer).?;
+            const cut = std.mem.indexOf(u8, line, ";") orelse line.len;
+            if (std.mem.startsWith(u8, line[0..cut], op)) count += 1;
+        }
+        try testing.expectEqual(wanted, count);
+    }
+    try testing.expectEqual(@as(usize, 1), sideOps(code, "recip", false));
+    // The fsat FMOVs and FSign's two, which push the flags.
+    var saturated: usize = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        if (std.mem.indexOf(u8, line, "fmov") != null and std.mem.indexOf(u8, line, ".sat") != null) saturated += 1;
+    }
+    try testing.expectEqual(@as(usize, 2), saturated);
+    // The folded constants are uniforms: 1 / (0.8 - 0.2) in floats, and
+    // -2.0; and 1 / pi, which ntq_fsincos multiplies by.
+    var width = false;
+    var minus_two = false;
+    var over_pi = false;
+    for (code.stream()) |word| switch (word) {
+        .float => |value| {
+            if (value == @as(f32, 1.0) / (@as(f32, 0.8) - @as(f32, 0.2))) width = true;
+            if (value == -2.0) minus_two = true;
+            if (value == @as(f32, @floatCast(@as(f64, 1.0) / std.math.pi))) over_pi = true;
+        },
+        else => {},
+    };
+    try testing.expect(width and minus_two and over_pi);
+    // The plan computes sums and products alone.
+    var plan: Work = .{};
+    try testing.expectError(Error.Body, compile(&plan, &reference.glslc_chosen));
+}
+
+test "through Mesa's back end, glslc's chosen floats are facet's, to the word" {
+    var theirs: Work = .{};
+    const glslc = try throughMesa(&theirs, &reference.glslc_chosen);
+    var ours: Work = .{};
+    const facet_made = try throughMesa(&ours, Chosen.words);
+    try testing.expectEqualSlices(u64, glslc.words, facet_made.words);
+    try testing.expectEqual(glslc.stream().len, facet_made.stream().len);
+    for (glslc.stream(), facet_made.stream()) |a, b| try testing.expectEqual(a, b);
+}
+
+test "a constant operation folds, as NIR folds it, and a vector OpSelect or FOrdNotEqual is refused" {
+    // Each fold as nir_opcodes.py has it in floats.
+    var work: Work = .{};
+    const a = try immediateOf(&work, 0.8, .f32x1);
+    const b = try immediateOf(&work, 0.2, .f32x1);
+    const width = try binary(&work, .sub, a, b);
+    try testing.expectEqual(Tag.constant, work.steps[width].tag);
+    try testing.expectEqual(@as(f32, 0.8) - @as(f32, 0.2), work.pool[work.steps[width].at]);
+    const over = try unary(&work, .recip, width);
+    try testing.expectEqual(@as(f32, 1.0) / (@as(f32, 0.8) - @as(f32, 0.2)), work.pool[work.steps[over].at]);
+    for ([_][2]f32{ .{ 2.5, 2.0 }, .{ 3.5, 4.0 }, .{ -2.5, -2.0 }, .{ 0.4, 0.0 }, .{ 1.6, 2.0 } }) |pair| {
+        const made = try unary(&work, .round, try immediateOf(&work, pair[0], .f32x1));
+        try testing.expectEqual(pair[1], work.pool[work.steps[made].at]);
+    }
+    const saturated = try unary(&work, .sat, try immediateOf(&work, 1.5, .f32x1));
+    try testing.expectEqual(@as(f32, 1.0), work.pool[work.steps[saturated].at]);
+    const signed = try unary(&work, .sign, try immediateOf(&work, -0.25, .f32x1));
+    try testing.expectEqual(@as(f32, -1.0), work.pool[work.steps[signed].at]);
+    // The SFU's functions are the device's, folded or not.
+    const sine = try unary(&work, .sin, a);
+    try testing.expectEqual(Tag.sin, work.steps[sine].tag);
+    // The <= made a != of no order, FOrdNotEqual (182), which NIR makes of
+    // two comparisons: refused, as every opcode the profile leaves out is.
+    var unordered = reference.glslc_chosen;
+    var at: usize = spirv.header_words;
+    var changed: usize = 0;
+    while (at < unordered.len) : (at += unordered[at] >> 16) {
+        if (unordered[at] & 0xFFFF == @intFromEnum(spirv.Op.f_ord_less_than_equal)) {
+            unordered[at] = (unordered[at] & 0xFFFF_0000) | 182;
+            changed += 1;
+        }
+    }
+    try testing.expectEqual(@as(usize, 1), changed);
+    var refused: Work = .{};
+    try testing.expectError(Error.Refused, throughMesa(&refused, &unordered));
+}
+
 test "a call the walk does not lower, or into a set that is not GLSL.std.450, is refused" {
     var work: Work = .{};
-    // FMix (46) made Sin (13), which the walk leaves out.
+    // Fract (10) made Asin (16), which the walk leaves out: one operand
+    // each, so it is the call that is refused and not its operands.
     var sine = reference.glslc_arith;
     var calls: usize = 0;
     var at: usize = spirv.header_words;
     while (at < sine.len) : (at += sine[at] >> 16) {
-        if (sine[at] & 0xFFFF == @intFromEnum(spirv.Op.ext_inst) and sine[at + 4] == @intFromEnum(spirv.Glsl.f_mix)) {
-            sine[at + 4] = @intFromEnum(spirv.Glsl.sin);
+        if (sine[at] & 0xFFFF == @intFromEnum(spirv.Op.ext_inst) and sine[at + 4] == @intFromEnum(spirv.Glsl.fract)) {
+            sine[at + 4] = @intFromEnum(spirv.Glsl.asin);
             calls += 1;
         }
     }

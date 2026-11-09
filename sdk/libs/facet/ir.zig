@@ -138,6 +138,17 @@ pub const Tag = enum(u8) {
     component,
     less_than,
     greater_than,
+    /// The other comparisons glslc writes: OpFOrdEqual for ==,
+    /// OpFUnordNotEqual for !=, which a NaN passes, and OpFOrdLessThanEqual
+    /// and OpFOrdGreaterThanEqual (since 1.153).
+    equal,
+    not_equal,
+    less_equal,
+    greater_equal,
+    /// `b` where the comparison `a` holds and `c` where it does not, one
+    /// float each: OpSelect, as glslc writes a ternary of plain values
+    /// (since 1.153).
+    select,
     /// Drop the pixels a comparison holds.
     discard_if,
     /// The colour, which is where a shader ends.
@@ -461,6 +472,29 @@ pub const Build = struct {
     pub fn normalize(build: *Build, a: u16) u16 {
         return build.call(.normalize, a, 0, 0);
     }
+    /// The sine, cosine and tangent of an angle in radians (since 1.153).
+    pub fn sin(build: *Build, a: u16) u16 {
+        return build.call(.sin, a, 0, 0);
+    }
+    pub fn cos(build: *Build, a: u16) u16 {
+        return build.call(.cos, a, 0, 0);
+    }
+    pub fn tan(build: *Build, a: u16) u16 {
+        return build.call(.tan, a, 0, 0);
+    }
+    /// 1, 0 or -1, as `a` is above 0, 0 or below it: FSign.
+    pub fn sign(build: *Build, a: u16) u16 {
+        return build.call(.f_sign, a, 0, 0);
+    }
+    /// 0 where `x` is below `edge` and 1 where not: GLSL's step.
+    pub fn step(build: *Build, edge: u16, x: u16) u16 {
+        return build.call(.step, edge, x, 0);
+    }
+    /// 0 to 1 as `x` goes from `edge0` to `edge1`, eased at both ends:
+    /// GLSL's smoothstep.
+    pub fn smoothStep(build: *Build, edge0: u16, edge1: u16, x: u16) u16 {
+        return build.call(.smooth_step, edge0, edge1, x);
+    }
 
     fn call(build: *Build, comptime which: spirv.Glsl, a: u16, b: u16, c: u16) u16 {
         const kind = build.ops[a].kind;
@@ -494,6 +528,33 @@ pub const Build = struct {
         return build.put(.{ .tag = .greater_than, .kind = .boolean, .a = a, .b = b });
     }
 
+    pub fn equal(build: *Build, a: u16, b: u16) u16 {
+        return build.compared(.equal, a, b);
+    }
+    /// Unordered, as GLSL's != is: a NaN is not equal to anything.
+    pub fn notEqual(build: *Build, a: u16, b: u16) u16 {
+        return build.compared(.not_equal, a, b);
+    }
+    pub fn lessEqual(build: *Build, a: u16, b: u16) u16 {
+        return build.compared(.less_equal, a, b);
+    }
+    pub fn greaterEqual(build: *Build, a: u16, b: u16) u16 {
+        return build.compared(.greater_equal, a, b);
+    }
+
+    fn compared(build: *Build, comptime tag: Tag, a: u16, b: u16) u16 {
+        if (build.ops[a].kind != .f32x1 or build.ops[b].kind != .f32x1) @compileError("a comparison is of one float each");
+        return build.put(.{ .tag = tag, .kind = .boolean, .a = a, .b = b });
+    }
+
+    /// `yes` where the comparison `held` holds and `no` where it does
+    /// not, one float each: GLSL's `held ? yes : no` of plain values.
+    pub fn select(build: *Build, held: u16, yes: u16, no: u16) u16 {
+        if (build.ops[held].kind != .boolean) @compileError("what is chosen by is a comparison");
+        if (build.ops[yes].kind != .f32x1 or build.ops[no].kind != .f32x1) @compileError("a choice is of one float each");
+        return build.put(.{ .tag = .select, .kind = .f32x1, .a = held, .b = yes, .c = no });
+    }
+
     /// Drop the pixels the comparison holds: neither their colour nor
     /// their depth is kept.
     pub fn discardIf(build: *Build, held: u16) void {
@@ -511,8 +572,8 @@ pub const Build = struct {
 /// How many values a GLSL.std.450 function `Build` names takes.
 fn callArguments(comptime which: spirv.Glsl) u32 {
     return switch (which) {
-        .pow, .f_min, .f_max, .distance => 2,
-        .f_clamp, .f_mix => 3,
+        .pow, .f_min, .f_max, .distance, .step => 2,
+        .f_clamp, .f_mix, .smooth_step => 3,
         else => 1,
     };
 }
@@ -858,11 +919,25 @@ fn wordsOf(comptime graph: Graph) []const u32 {
                     emit.at(.composite_extract, &.{ float_type, made, of, op.at });
                     value_ids[k] = made;
                 },
-                .less_than, .greater_than => {
+                .less_than, .greater_than, .equal, .not_equal, .less_equal, .greater_equal => {
                     const left = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.a);
                     const right = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.b);
                     const made = emit.id();
-                    emit.at(if (op.tag == .less_than) .f_ord_less_than else .f_ord_greater_than, &.{ bool_type, made, left, right });
+                    emit.at(switch (op.tag) {
+                        .less_than => .f_ord_less_than,
+                        .greater_than => .f_ord_greater_than,
+                        .equal => .f_ord_equal,
+                        .not_equal => .f_unord_not_equal,
+                        .less_equal => .f_ord_less_than_equal,
+                        else => .f_ord_greater_than_equal,
+                    }, &.{ bool_type, made, left, right });
+                    value_ids[k] = made;
+                },
+                .select => {
+                    const yes = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.b);
+                    const no = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.c);
+                    const made = emit.id();
+                    emit.at(.select, &.{ float_type, made, value_ids[op.a], yes, no });
                     value_ids[k] = made;
                 },
                 .discard_if => {
@@ -1097,6 +1172,11 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
                     .component => values[i][0] = values[op.a][op.at],
                     .less_than => holds[i] = values[op.a][0] < values[op.b][0],
                     .greater_than => holds[i] = values[op.a][0] > values[op.b][0],
+                    .equal => holds[i] = values[op.a][0] == values[op.b][0],
+                    .not_equal => holds[i] = values[op.a][0] != values[op.b][0],
+                    .less_equal => holds[i] = values[op.a][0] <= values[op.b][0],
+                    .greater_equal => holds[i] = values[op.a][0] >= values[op.b][0],
+                    .select => values[i][0] = @select(f32, holds[op.a], values[op.b][0], values[op.c][0]),
                     .discard_if => inline for (0..4) |pixel| {
                         if (holds[op.a][pixel]) quad.kept &= ~(@as(u8, 1) << @intCast(pixel));
                     },
@@ -1127,6 +1207,7 @@ inline fn dotOf(comptime parts: u32, a: [4]Pixels, b: [4]Pixels) Pixels {
 inline fn called(comptime which: spirv.Glsl, comptime parts: u32, a: [4]Pixels, b: [4]Pixels, c: [4]Pixels) [4]Pixels {
     @setRuntimeSafety(false);
     const one: Pixels = @splat(1);
+    const zero: Pixels = @splat(0);
     var made: [4]Pixels = undefined;
     switch (which) {
         .length, .distance => {
@@ -1166,6 +1247,17 @@ inline fn called(comptime which: spirv.Glsl, comptime parts: u32, a: [4]Pixels, 
                 .f_max => @max(x, b[part]),
                 .f_clamp => @min(@max(x, b[part]), c[part]),
                 .f_mix => x * (one - c[part]) + b[part] * c[part],
+                .sin => @sin(x),
+                .cos => @cos(x),
+                .tan => @tan(x),
+                // 0 for a 0 and for a NaN, as NIR's fsign is.
+                .f_sign => @select(f32, x > zero, one, @select(f32, x < zero, -one, zero)),
+                // The edge is the first operand and x the second.
+                .step => @select(f32, b[part] < x, zero, one),
+                .smooth_step => smooth: {
+                    const t = @min(@max((c[part] - x) / (b[part] - x), zero), one);
+                    break :smooth t * t * (@as(Pixels, @splat(3)) - @as(Pixels, @splat(2)) * t);
+                },
                 else => @compileError("a GLSL.std.450 function Build does not name"),
             };
         },

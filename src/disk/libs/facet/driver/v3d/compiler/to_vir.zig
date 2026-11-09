@@ -56,6 +56,7 @@ const Inst = vir.Inst;
 const Reg = vir.Reg;
 const Work = compile.Work;
 const Step = compile.Step;
+const Comparison = compile.Comparison;
 
 pub const Error = vir.Error || error{
     /// No strategy could give the temporaries registers.
@@ -341,6 +342,21 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
             vir.setUnpack(c.defs[made.index].?, 0, .abs);
             e.defs[at][k] = made;
         },
+        // fsat at 7.1: FMOV with the SAT unpack (nir_to_vir.c:1865-1882;
+        // since 1.153).
+        .sat => for (0..parts) |k| {
+            const made = try c.mul(.fmov, .{try getSrc(e, each.a, k)});
+            vir.setUnpack(c.defs[made.index].?, 0, .sat);
+            e.defs[at][k] = made;
+        },
+        // fsin and fcos (nir_to_vir.c:1782-1787): ntq_fsincos.
+        .sin, .cos => for (0..parts) |k| {
+            e.defs[at][k] = try sinCos(c, try getSrc(e, each.a, k), each.tag == .cos);
+        },
+        // fsign (nir_to_vir.c:1788): ntq_fsign.
+        .sign => for (0..parts) |k| {
+            e.defs[at][k] = try sign(c, try getSrc(e, each.a, k));
+        },
         // One operand each, the add side's: the rounding (:1769-1779) and
         // the SFU's, which at 7.1 are add operations written to any
         // register (VIR_SFU, v3d_compiler.h:1331-1346; :1756-1766).
@@ -390,6 +406,25 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
             const cond = try emitComparison(e, each);
             e.defs[at][0] = try condToBool(c, cond);
         },
+        // slt (nir_to_vir.c:1710-1723): the comparison, and 1.0 or 0.0 of
+        // the flags, which are remembered as holding it (since 1.153).
+        .set_less => {
+            const cond = try emitComparison(e, .{ .tag = .compare, .kind = .f32x1, .a = each.a, .b = each.b, .at = @intFromEnum(Comparison.less) });
+            const result = try c.mul(.mov, .{try c.sel(cond, try c.uniformF(1.0), try c.uniformF(0.0))});
+            c.flags_temp = @intCast(result.index);
+            c.flags_cond = cond;
+            e.defs[at][0] = result;
+        },
+        // b32csel (nir_to_vir.c:1740-1745): the sources, then the bool as
+        // a condition, the flags where they still hold it, and SEL
+        // (since 1.153).
+        .select => {
+            _ = try getSrc(e, each.a, 0);
+            const yes = try getSrc(e, each.b, 0);
+            const no = try getSrc(e, each.from[0], 0);
+            const cond = try boolToCond(e, each.a);
+            e.defs[at][0] = try c.mul(.mov, .{try c.sel(cond, yes, no)});
+        },
         // nir_intrinsic_terminate_if (nir_to_vir.c:3833), outside of any
         // control flow: the pixel's mask cleared where the condition
         // holds.
@@ -408,18 +443,52 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
     e.defined[at] = true;
 }
 
-/// ntq_emit_comparison (nir_to_vir.c:1173), for the two comparisons
-/// there are: a < b is FCMP a, b pushing N, and a > b is b < a.
+/// ntq_emit_comparison (nir_to_vir.c:1173-1232), for the float ones:
+/// FCMP a, b pushing Z for feq, the same inverted for fneu, FCMP b, a
+/// pushing C for fge and FCMP a, b pushing N for flt. NIR has no
+/// greater-than and no less-or-equal: spirv_to_nir reads
+/// OpFOrdGreaterThan as flt and OpFOrdLessThanEqual as fge, each with its
+/// operands swapped (vtn_nir_alu_op_for_spirv_opcode, vtn_alu.c:369-381).
 fn emitComparison(e: *Emit, compare: Step) Error!instr.Cond {
     const c = e.c;
-    const src0 = try getSrc(e, compare.a, 0);
-    const src1 = try getSrc(e, compare.b, 0);
-    const less = compare.at == 0;
-    // NIR has no greater-than: spirv_to_nir reads OpFOrdGreaterThan as
-    // flt with its operands swapped (vtn_nir_alu_op_for_spirv_opcode).
-    const inst = try c.addDest(.fcmp, vir.nopReg(), if (less) .{ src0, src1 } else .{ src1, src0 });
-    c.setPf(inst, .pushn);
-    return .ifa;
+    const a = try getSrc(e, compare.a, 0);
+    const b = try getSrc(e, compare.b, 0);
+    const which: Comparison = @enumFromInt(compare.at);
+    const swapped = which == .greater or which == .less_equal;
+    const src0 = if (swapped) b else a;
+    const src1 = if (swapped) a else b;
+    switch (which) {
+        .equal, .not_equal => c.setPf(try c.addDest(.fcmp, vir.nopReg(), .{ src0, src1 }), .pushz),
+        .greater_equal, .less_equal => c.setPf(try c.addDest(.fcmp, vir.nopReg(), .{ src1, src0 }), .pushc),
+        .less, .greater => c.setPf(try c.addDest(.fcmp, vir.nopReg(), .{ src0, src1 }), .pushn),
+    }
+    return if (which == .not_equal) .ifna else .ifa;
+}
+
+/// ntq_fsincos (nir_to_vir.c:990-1003): the angle in periods of pi, a
+/// half more for the cosine, the SFU's SIN of what is left of it after
+/// the nearest whole one, and the sign turned for an odd one: the whole
+/// number shifted by 31 (the -1 the shift reads five bits of) into the
+/// sign bit.
+fn sinCos(c: *Compile, src: Reg, is_cos: bool) Error!Reg {
+    var input = try c.mul(.fmul, .{ src, try c.uniformF(@floatCast(@as(f64, 1.0) / std.math.pi)) });
+    if (is_cos) input = try c.add(.fadd, .{ input, try c.uniformF(0.5) });
+    const periods = try c.add(.fround, .{input});
+    const sin_output = try c.add(.sin, .{try c.add(.fsub, .{ input, periods })});
+    return c.add(.xor, .{ sin_output, try c.add(.shl, .{ try c.add(.ftoin, .{periods}), try c.uniformUi(@bitCast(@as(i32, -1))) }) });
+}
+
+/// ntq_fsign (nir_to_vir.c:1005-1016): 0.0, then 1.0 where the float is
+/// not zero, then -1.0 where it is negative, each a conditional move
+/// after an FMOV that pushes the flags.
+fn sign(c: *Compile, src: Reg) Error!Reg {
+    const t = try c.getTemp();
+    _ = try c.mulDest(.mov, t, .{try c.uniformF(0.0)});
+    c.setPf(try c.mulDest(.fmov, vir.nopReg(), .{src}), .pushz);
+    _ = try c.movCond(.ifna, t, try c.uniformF(1.0));
+    c.setPf(try c.mulDest(.fmov, vir.nopReg(), .{src}), .pushn);
+    _ = try c.movCond(.ifa, t, try c.uniformF(-1.0));
+    return c.mul(.mov, .{t});
 }
 
 /// ntq_emit_cond_to_bool (nir_to_vir.c:1284): ~0 where the condition

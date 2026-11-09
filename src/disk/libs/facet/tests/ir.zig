@@ -972,8 +972,35 @@ const Called = ir.Fragment(struct {
     }
 });
 
+/// A float chosen by each comparison glslc writes but >, and the rest of
+/// GLSL.std.450's float functions: driver/v3d/glslc_reference.zig's
+/// glslc_chosen, built (since 1.153).
+const Chosen = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const six = b.scalar(6);
+        const quarter = b.scalar(0.25);
+        const x = b.component(v, 0);
+        const sine = b.add(b.mul(b.sin(b.mul(x, six)), half), half);
+        const y = b.component(v, 1);
+        const cosine = b.add(b.mul(b.cos(b.mul(y, six)), half), half);
+        const z = b.component(v, 2);
+        const tangent = b.clamp(b.mul(b.tan(z), quarter), b.scalar(0), b.scalar(1));
+        const green = b.select(b.lessThan(x, y), sine, cosine);
+        const stepped = b.step(b.scalar(0.3), x);
+        const eased = b.smoothStep(b.scalar(0.2), b.scalar(0.8), y);
+        const blue = b.select(b.greaterEqual(z, half), stepped, eased);
+        const signed = b.add(b.mul(b.sign(b.sub(x, half)), quarter), half);
+        const unequal = b.select(b.notEqual(x, y), b.scalar(0.75), b.scalar(1));
+        const equal = b.select(b.equal(y, z), quarter, unequal);
+        const alpha = b.select(b.lessEqual(x, z), signed, equal);
+        b.color(b.vector(&.{ green, blue, tangent, alpha }));
+    }
+});
+
 test "float arithmetic and GLSL.std.450 are a module the reader takes, the set imported once" {
-    inline for (.{ Arithmetic, Called }) |Made| {
+    inline for (.{ Arithmetic, Called, Chosen }) |Made| {
         switch (spirv.look(Made.words, spirv.facet_profile)) {
             .fault => |fault| {
                 std.debug.print("refused: {s}\n", .{@tagName(fault)});
@@ -1042,4 +1069,52 @@ test "the cores round a half to the even whole number, and the rest of GLSL.std.
     try std.testing.expectEqual(byteOf(0.45), colour >> 24);
     // Red: 1 / sqrt(2) times 0.45.
     try std.testing.expectEqual(byteOf(0.45 / @sqrt(2.0)), colour >> 16 & 0xFF);
+}
+
+/// glslc_chosen's shader in f64, as the GLSL says it.
+fn chosenOf(v: [4]f64) u32 {
+    const x = v[0];
+    const y = v[1];
+    const z = v[2];
+    const sine = @sin(x * 6) * 0.5 + 0.5;
+    const cosine = @cos(y * 6) * 0.5 + 0.5;
+    const tangent = std.math.clamp(@tan(z) * 0.25, 0, 1);
+    const green = if (x < y) sine else cosine;
+    const stepped: f64 = if (x < 0.3) 0 else 1;
+    const t = std.math.clamp((y - 0.2) / (0.8 - 0.2), 0, 1);
+    const eased = t * t * (3 - 2 * t);
+    const blue = if (z >= 0.5) stepped else eased;
+    const sign: f64 = if (x > 0.5) 1 else if (x < 0.5) -1 else 0;
+    const signed = sign * 0.25 + 0.5;
+    const unequal: f64 = if (x != y) 0.75 else 1;
+    const equal = if (y == z) 0.25 else unequal;
+    const alpha = if (x <= z) signed else equal;
+    return byteOf(alpha) << 24 | byteOf(green) << 16 | byteOf(blue) << 8 | byteOf(tangent);
+}
+
+test "the cores choose as the comparisons say, and Sin, Tan, Step, SmoothStep and FSign are the shader in f64" {
+    // Each of them taking each arm: x < y one way and the other, z >= 0.5,
+    // x <= z, y == z and x != y.
+    const cases = [_][4]f32{
+        .{ 0.8, 0.3, 0.9, 0.6 },
+        .{ 0.25, 0.5, 0.5, 0 },
+        .{ 0.9, 0.4, 0.4, 0 },
+        .{ 0.9, 0.4, 0.3, 0 },
+    };
+    for (cases) |v| {
+        var batch = Batch.flat(1, &v);
+        const made = batch.fragments(5);
+        Chosen.function(&made);
+        const want = chosenOf(.{ v[0], v[1], v[2], v[3] });
+        const got = batch.colors[0][0];
+        for ([4]u5{ 0, 8, 16, 24 }) |shift| {
+            const a: i32 = @intCast(want >> shift & 0xFF);
+            const b: i32 = @intCast(got >> shift & 0xFF);
+            if (@abs(a - b) > 1) {
+                std.debug.print("at {any}: want 0x{X:0>8}, made 0x{X:0>8}\n", .{ v, want, got });
+                return error.TestExpectedEqual;
+            }
+        }
+        for (batch.colors[0]) |each| try std.testing.expectEqual(got, each);
+    }
 }

@@ -30,7 +30,10 @@
 //! V3D lowers as Mesa does, through an SFU that is not exact, and whose
 //! roundings and Fract jump where a varying crosses a whole number: a
 //! line of pixels a step apart there is the two devices' interpolation,
-//! not a sum gone wrong.
+//! not a sum gone wrong. The shipped case of chosen floats (since 1.21)
+//! is the same where a comparison turns over and Step jumps: Sin, Cos,
+//! Tan, FSign, Step and SmoothStep, and OpSelect after each of the
+//! comparisons glslc writes but >.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -45,7 +48,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.20 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.21 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -472,6 +475,32 @@ const Shipped = struct {
             b.color(b.mix(sums, b.mul(rounded, b.constant(.{ 0.1, 0.1, 0.1, 0.1 })), weight));
         }
     });
+    /// The shader the V3D's host tests hold to glslc's glslc_chosen word
+    /// for word: Sin, Cos, Tan, FClamp to 0 and 1, Step, SmoothStep and
+    /// FSign, and OpSelect after <, >=, !=, == and <= (since 1.21).
+    const Chosen = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const half = b.scalar(0.5);
+            const six = b.scalar(6);
+            const quarter = b.scalar(0.25);
+            const x = b.component(v, 0);
+            const sine = b.add(b.mul(b.sin(b.mul(x, six)), half), half);
+            const y = b.component(v, 1);
+            const cosine = b.add(b.mul(b.cos(b.mul(y, six)), half), half);
+            const z = b.component(v, 2);
+            const tangent = b.clamp(b.mul(b.tan(z), quarter), b.scalar(0), b.scalar(1));
+            const by_less = b.select(b.lessThan(x, y), sine, cosine);
+            const stepped = b.step(b.scalar(0.3), x);
+            const eased = b.smoothStep(b.scalar(0.2), b.scalar(0.8), y);
+            const by_half = b.select(b.greaterEqual(z, half), stepped, eased);
+            const signed = b.add(b.mul(b.sign(b.sub(x, half)), quarter), half);
+            const unequal = b.select(b.notEqual(x, y), b.scalar(0.75), b.scalar(1));
+            const by_equal = b.select(b.equal(y, z), quarter, unequal);
+            const by_order = b.select(b.lessEqual(x, z), signed, by_equal);
+            b.color(b.vector(&.{ by_less, by_half, tangent, by_order }));
+        }
+    });
 };
 
 /// The entries that ship words, after all the others, and the words of
@@ -493,12 +522,14 @@ const shipped_entries = [_]shader.Entry{
     Shipped.Shadowed.entry("shipped shadow"),
     Shipped.Arithmetic.entry("shipped arithmetic"),
     Shipped.Called.entry("shipped called"),
+    Shipped.Chosen.entry("shipped chosen"),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                       .{},                    .{},                      .{},
     Shipped.Smooth.spirv,      Shipped.Flat.spirv,     Shipped.Dimmed.spirv,     Shipped.Textured.spirv,
     Shipped.Modulated.spirv,   Shipped.Pushed.spirv,   Shipped.Tinted.spirv,     Shipped.Cutout.spirv,
     Shipped.CutoutOther.spirv, Shipped.Shadowed.spirv, Shipped.Arithmetic.spirv, Shipped.Called.spirv,
+    Shipped.Chosen.spirv,
 };
 
 const plain_entries = [_]shader.Entry{
@@ -2909,6 +2940,7 @@ const cases = [_]Case{
     .{ .name = "shipped cutout in front", .run = Cases.cutoutInFront },
     .{ .name = "shipped float arithmetic", .run = Cases.shipped("as it is", "shipped arithmetic", false, clockwise_at) },
     .{ .name = "shipped GLSL.std.450 calls", .run = Cases.shipped("as it is", "shipped called", false, clockwise_at) },
+    .{ .name = "shipped chosen floats", .run = Cases.shipped("as it is", "shipped chosen", false, clockwise_at) },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },

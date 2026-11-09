@@ -123,8 +123,11 @@ pub const Op = enum(u16) {
     matrix_times_vector = 145,
     dot = 148,
     select = 169,
+    f_ord_equal = 180,
+    f_unord_not_equal = 183,
     f_ord_less_than = 184,
     f_ord_greater_than = 186,
+    f_ord_less_than_equal = 188,
     f_ord_greater_than_equal = 190,
     dpdx = 207,
     dpdy = 208,
@@ -732,9 +735,10 @@ pub const facet_opcodes: []const Op = &.{
     .branch_conditional,        .kill,                .returns,                  .image_sample_dref_implicit_lod,
     // Declarations and annotations, which say nothing a device runs.
     .ext_inst_import,           .source,              .source_extension,         .name,
-    .member_name,
-    // A call into an imported set (since 1.152).
-                  .ext_inst,
+    // .member_name, then a call into an imported set (since 1.152) and
+    // the comparisons glslc writes for ==, != and <= (since 1.153).
+    .member_name,               .ext_inst,            .f_ord_equal,              .f_unord_not_equal,
+    .f_ord_less_than_equal,
 };
 
 /// The format's own profile, which is what `CreateShaderModule` reads a
