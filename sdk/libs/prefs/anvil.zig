@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! anvil.prefs: the desktop's settings as a file - one line:
 //!
-//!     GROUND=#3A5F8A..#14253A PICTURE="SYS:Prefs/Sea.png" PLACE=SCALED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES
+//!     GROUND=#3A5F8A..#14253A PICTURE="SYS:Prefs/Sea.png" PLACE=SCALED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES ARRANGE=YES
 //!
 //! - GROUND: the desktop's colour, `#RRGGBB`, or two, `#top..#bottom`,
 //!   shaded from the one at the top to the one at the bottom. Left out,
@@ -23,6 +23,10 @@
 //!   window of its own either way.
 //! - RIBBON: YES for a ribbon across the top of each drawer's window, the
 //!   drawer's commands as buttons, NO for none.
+//! - ARRANGE: YES to lay the icons the desktop placed in a drawer's
+//!   window out again in rows as wide as the window, whenever it is
+//!   sized; NO to leave them where they lie. An icon that lies where its
+//!   file says, or that was moved by hand, stays either way.
 //!
 //! One left out keeps the value it has. `parse` reads the line into
 //! `Settings`, `write` writes them as the line, `groundOf` reads the
@@ -30,7 +34,8 @@
 //! tells whether two settings draw the desktop alike, and `header` is the
 //! explanation a program that writes the file puts before it. The desktop
 //! reads the file when it starts and follows it with StartNotify; its
-//! Window menu's Snap to Grid and Ribbon write the file too.
+//! Window menu's Snap to Grid, Ribbon and Arrange on Resize write the
+//! file too.
 
 const graphics = @import("../graphics/graphics.zig");
 const style = @import("style.zig");
@@ -49,7 +54,7 @@ pub const place_names = [3][]const u8{ "TILED", "CENTRED", "SCALED" };
 pub const View = enum(u8) { icon, name, date, size };
 pub const view_names = [4][]const u8{ "ICON", "NAME", "DATE", "SIZE" };
 
-/// SNAP's, NEWWINDOW's and RIBBON's words, for false and true.
+/// SNAP's, NEWWINDOW's, RIBBON's and ARRANGE's words, for false and true.
 pub const snap_names = [2][]const u8{ "NO", "YES" };
 
 /// The longest picture's name, its NUL aside.
@@ -76,6 +81,9 @@ pub const Settings = struct {
     new_window: bool = false,
     /// Whether a drawer's window has a ribbon across its top.
     ribbon: bool = true,
+    /// Whether the icons the desktop placed in a drawer's window are laid
+    /// out again as the window is sized.
+    arrange: bool = true,
 
     /// The picture's name, or null for none.
     pub fn pictureName(settings: *const Settings) ?[]const u8 {
@@ -99,8 +107,8 @@ pub const Settings = struct {
 };
 
 /// Whether `a` and `b` draw the desktop alike: the same in all but SNAP,
-/// NEWWINDOW and RIBBON, which change neither the ground nor the icons -
-/// so a change of them alone needs no new ground, look or icons.
+/// NEWWINDOW, RIBBON and ARRANGE, which change neither the ground nor the
+/// icons - so a change of them alone needs no new ground, look or icons.
 pub fn sameLook(a: *const Settings, b: *const Settings) bool {
     if (a.ground_given != b.ground_given or a.top != b.top or a.bottom != b.bottom) return false;
     if (a.place != b.place or a.icon_size != b.icon_size or a.view != b.view) return false;
@@ -158,7 +166,9 @@ pub fn parse(ub: *UtilityBase, text: []const u8, settings: *Settings) ?[*:0]cons
             settings.new_window = prefs.yesOrNo(value) orelse return "NEWWINDOW is YES or NO";
         } else if (style.same(word, "RIBBON")) {
             settings.ribbon = prefs.yesOrNo(value) orelse return "RIBBON is YES or NO";
-        } else return "not in the form GROUND=#RRGGBB PICTURE=name PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES";
+        } else if (style.same(word, "ARRANGE")) {
+            settings.arrange = prefs.yesOrNo(value) orelse return "ARRANGE is YES or NO";
+        } else return "not in the form GROUND=#RRGGBB PICTURE=name PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES ARRANGE=YES";
     }
     return null;
 }
@@ -174,7 +184,7 @@ fn hex(into: []u8, value: Pen) void {
     }
 }
 
-/// `settings` written as the line, into `into` (240 bytes will do); how
+/// `settings` written as the line, into `into` (256 bytes will do); how
 /// many bytes, no newline. The ground only when it was given; the
 /// picture's name in quotes when it has a space in it.
 pub fn write(settings: *const Settings, into: []u8) usize {
@@ -217,6 +227,8 @@ pub fn write(settings: *const Settings, into: []u8) usize {
     put(into, &n, snap_names[@intFromBool(settings.new_window)]);
     put(into, &n, " RIBBON=");
     put(into, &n, snap_names[@intFromBool(settings.ribbon)]);
+    put(into, &n, " ARRANGE=");
+    put(into, &n, snap_names[@intFromBool(settings.arrange)]);
     return n;
 }
 
@@ -244,9 +256,12 @@ pub const header =
     \\#           window of its own either way.
     \\# RIBBON    YES for a ribbon across the top of each drawer's
     \\#           window, the drawer's commands as buttons; NO for none.
+    \\# ARRANGE   YES to lay the icons the desktop placed in a drawer's
+    \\#           window out again as the window is sized; NO to leave
+    \\#           them where they lie.
     \\#
     \\# One left out keeps the desktop's own. These are its own:
     \\#
-    \\# PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES
+    \\# PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES ARRANGE=YES
     \\
 ;

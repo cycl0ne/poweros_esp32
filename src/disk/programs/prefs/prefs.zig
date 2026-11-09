@@ -35,9 +35,10 @@
 //! - **Desktop**: the desktop's ground - a colour, or two shaded from top
 //!   to bottom, typed or picked on the colour wheel - a picture over it
 //!   and how it is placed, how large icons are shown, whether an icon
-//!   that is moved snaps to the grid, how a drawer with no view of its
-//!   own is shown, and whether a drawer opens in a window of its own or
-//!   in its parent's.
+//!   that is moved snaps to the grid, whether a drawer's icons are laid
+//!   out again as its window is sized, how a drawer with no view of its
+//!   own is shown, whether a drawer opens in a window of its own or in
+//!   its parent's, and whether a drawer's window has a ribbon.
 //! - **System**: the double-click time, the height of a screen's font when
 //!   it is given none, when the keyboard on the screen comes up, whether
 //!   a window may be moved partly past the screen's edges, and whether the
@@ -153,8 +154,8 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.25";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (08.11.2026)\r\n";
+const VERSION = "1.26";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -489,6 +490,7 @@ const Editor = struct {
     snap: *Object = undefined,
     new_window: *Object = undefined,
     ribbon: *Object = undefined,
+    arrange: *Object = undefined,
     view: *Object = undefined,
     /// The sound page: audio.device, when the machine has one; the
     /// outputs as the page has them, and as they were when it opened, for
@@ -1047,6 +1049,8 @@ const Editor = struct {
         p.new_window = value != 0;
         _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.ribbon, &value);
         p.ribbon = value != 0;
+        _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.arrange, &value);
+        p.arrange = value != 0;
         _ = e.ib.GetAttr(ch.CHOOSER_Active, e.view, &value);
         p.view = @enumFromInt(@min(value, anvil_file.view_names.len - 1));
         return p;
@@ -2328,13 +2332,17 @@ noinline fn build(e: *Editor) ?*Object {
         pair(cb.CHECKBOX_Checked, @intFromBool(e.desktop.ribbon)),
         .{},
     }) orelse return null;
+    e.arrange = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+        pair(cb.CHECKBOX_Checked, @intFromBool(e.desktop.arrange)),
+        .{},
+    }) orelse return null;
     const ground_note = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
         pair(tx.TEXT_Wrap, 1),
         pair(tx.TEXT_Text, @intFromPtr("A colour #RRGGBB, or two #top..#bottom shaded down the desktop; empty for the screen's background.")),
         .{},
     }) orelse return null;
     const ground_group = column(ib, "Ground", &.{ ground_row, ground_note, e.picture, e.place }, &.{ "_Ground", null, "P_icture", "Pl_ace" }) orelse return null;
-    const icons_group = column(ib, "Icons", &.{ e.icon_size, e.snap, e.view, e.new_window, e.ribbon }, &.{ "Icon si_ze", "Snap _to grid", "Drawers' _view", "A _window per drawer", "A _ribbon in each drawer" }) orelse return null;
+    const icons_group = column(ib, "Icons", &.{ e.icon_size, e.snap, e.arrange, e.view, e.new_window, e.ribbon }, &.{ "Icon si_ze", "Snap _to grid", "Arrange icons as a _drawer is sized", "Drawers' _view", "A _window per drawer", "A _ribbon in each drawer" }) orelse return null;
     pages[page_desktop] = column(ib, null, &.{ ground_group, icons_group }, &.{}) orelse return null;
 
     // The system page.

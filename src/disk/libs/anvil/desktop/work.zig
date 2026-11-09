@@ -1,28 +1,45 @@
 // SPDX-License-Identifier: MIT
 //! The desktop's work on files - copying, deleting, emptying the trash -
-//! each on a process of its own, so the desktop answers while it goes on.
+//! on a process of its own, so the desktop answers while it goes on, one
+//! job after the other.
 //!
-//! **A job** is the files picked and what to do with them. Its process
-//! first walks them to count what there is - bytes for a copy, files for
-//! a delete - then does it, with a window that says which file it is at
-//! and how far along it is, and a Stop button that ends it between two
-//! pieces. A copy's window says how fast it goes as well: the bytes of
-//! the last second, measured on timer.device's E-clock, which a clock
-//! set meanwhile does not move. A file's bytes go by its handler first
-//! (dos's CopyFH), a piece at a time: on a network share the server
-//! copies them, and they never cross the network; a handler that cannot
-//! leaves them to Read and Write, the next piece read (dos's StartRead)
-//! while this one is written, so the two handlers work at once. A copy asks before it puts a file where one is already
-//! (Replace, Replace All, Skip, Stop); a drawer that is there already is
-//! copied into. A file's icon goes with it, and its protection, date and
-//! comment are kept. A soft link in a drawer is never gone through: a
-//! copy takes the file it names, a delete takes the link itself.
+//! **A job** is the files picked and what to do with them, up to
+//! `sources_max` of them; more picked at once are as many jobs as that
+//! takes. The process first walks a job's files to count what there is -
+//! bytes for a copy, files for a delete - then does it, with a window
+//! that says which file it is at and how far along it is, and a Stop
+//! button that ends it between two pieces. A copy's window says how fast
+//! it goes as well: the bytes of the last second, measured on
+//! timer.device's E-clock, which a clock set meanwhile does not move. A
+//! file's bytes go by its handler first (dos's CopyFH), a piece at a
+//! time: on a network share the server copies them, and they never
+//! cross the network; a handler that cannot leaves them to Read and
+//! Write, the next piece read (dos's StartRead) while this one is
+//! written, so the two handlers work at once. A copy asks before it puts
+//! a file where one is already (Replace, Replace All, Skip, Stop); a
+//! drawer that is there already is copied into. A file's icon goes with
+//! it, and its protection, date and comment are kept. A soft link in a
+//! drawer is never gone through: a copy takes the file it names, a
+//! delete takes the link itself.
+//!
+//! **The jobs queue.** The desktop has one work process at a time
+//! (`Desktop.work`). A job picked while it has one in hand waits on its
+//! list and is done once those before it are, in the same window, which
+//! says how many more wait. Stop ends the job in hand and the next one
+//! starts; the close gadget ends it and drops the ones waiting. The
+//! process ends when it finds its list empty, and a job after that
+//! starts another. The desktop adds to the list and the process takes
+//! from it under the work's lock, and the process marks itself ending
+//! under the same lock - so a job is never put on a list nothing will
+//! look at again.
 //!
 //! **Its life**: StartAnvil's library code runs on it, so it holds the
 //! library open (`NP_HoldLibrary`); the desktop counts it among what it
 //! started, and the message the process is given (`NP_EndMsg`), which
 //! dos replies to the desktop's port when the process is gone, is the
-//! start of the job's own block - so the desktop frees the job with it.
+//! start of the work's own block - so the desktop frees the block with
+//! it, after `ended` has let go of it. A job is the desktop's
+//! allocation, and the process's to free once it is done or dropped.
 //! The drawers it changed see the change through their notification.
 
 const sdk = @import("sdk");
@@ -56,9 +73,9 @@ pub const Kind = enum(u8) { copy, delete, empty };
 
 /// The most files one job is given.
 pub const sources_max = 16;
-/// The buffer in the job's own block, two pieces of half its size: what a
-/// copy reads at a time on the ESP32s, and where memory for a larger one
-/// is short.
+/// The buffer in the work's own block, two pieces of half its size: what
+/// a copy reads at a time on the ESP32s, and where memory for a larger
+/// one is short.
 const chunk = 32768;
 /// The most a copy reads at a time: a piece of the largest file's size,
 /// up to 1 MiB where memory is plenty, so a big file costs a read a MiB -
@@ -75,18 +92,36 @@ const rate_period_us = 1_000_000;
 
 const ID_STOP = 1;
 
-/// A job, in one block: the end message first, which the desktop frees
-/// the block by. Extern, so that it stays first: Zig orders a plain
-/// struct's fields as it likes.
-pub const Job = extern struct {
-    ended: run.Ended = .{},
-    base: *_base.AnvilBase,
+/// A job: the files and what to do with them, on the work's list until
+/// the process comes to it.
+pub const Job = struct {
+    node: exec.Node = .{},
     kind: Kind,
     sources: [sources_max][dos.path_max + 1:0]u8 = undefined,
     count: usize = 0,
     /// Where a copy goes: a drawer; empty to copy each file in its own
     /// drawer, as a copy of itself.
     into: [dos.path_max + 1:0]u8 = @splat(0),
+};
+
+fn jobOf(node: *exec.Node) *Job {
+    return @alignCast(@fieldParentPtr("node", node));
+}
+
+/// The work process's block: the end message first, which the desktop
+/// frees the block by. Extern, so that it stays first: Zig orders a plain
+/// struct's fields as it likes.
+pub const Work = extern struct {
+    ended: run.Ended = .{},
+    base: *_base.AnvilBase,
+    /// The jobs waiting, oldest first, and how many: under `lock`, as is
+    /// `closing` - set once the process found the list empty and ends.
+    lock: exec.SignalSemaphore = .{},
+    waiting: exec.List = .{},
+    waiting_count: u32 = 0,
+    closing: bool = false,
+    /// The job in hand; null between two.
+    job: ?*Job = null,
 
     // The process's own.
     sys: *ExecBase = undefined,
@@ -102,6 +137,10 @@ pub const Job = extern struct {
     /// A copy's rate, under the gauge.
     rate: ?*Object = null,
     rate_text: [24:0]u8 = @splat(0),
+    /// How many jobs wait after this one, under the rate, as shown.
+    queued: ?*Object = null,
+    queued_text: [24:0]u8 = @splat(0),
+    shown_waiting: u32 = 0,
     /// The E-clock the rate is measured on; null without timer.device.
     clock: timer.TimeRequest = .{},
     timer_base: ?*TimerBase = null,
@@ -114,10 +153,13 @@ pub const Job = extern struct {
     /// A copy's largest file, which the copy's buffer is sized by.
     largest: u64 = 0,
     shown_percent: u32 = 101,
+    /// The job in hand stopped - Stop, or a question's Stop - and with
+    /// the close gadget the ones waiting dropped as well.
     stopped: bool = false,
+    stop_all: bool = false,
     replace_all: bool = false,
-    /// The copy's buffer, two pieces - one read while the other is
-    /// written - allocated for the job; null for `buffer`.
+    /// A copy's buffer, two pieces - one read while the other is written
+    /// - allocated for the job; null for `buffer`.
     pieces: ?[*]u8 = null,
     piece_size: u32 = chunk / 2,
     buffer: [chunk]u8 = undefined,
@@ -126,95 +168,267 @@ pub const Job = extern struct {
     ahead: ?*dos.DosRequest = null,
 };
 
-/// A job started on its process: the files `sources`, copied into `into`
-/// (empty: each beside itself) or deleted. Nothing is done when there is
-/// no memory or no process.
+/// The files `sources` copied into `into` (empty: each beside itself),
+/// deleted, or emptied: as many jobs as `sources_max` at a time takes,
+/// each queued for the work process (`queue`). A job there is no memory
+/// for is not done, said in the title.
 pub fn start(d: *Desktop, kind: Kind, sources: []const []const u8, into: []const u8) void {
-    if (sources.len == 0) return;
-    const memory = d.sys.AllocVec(@sizeOf(Job), exec.MEMF_CLEAR) orelse return;
-    const job: *Job = @ptrCast(@alignCast(memory));
-    job.* = .{ .base = d.base, .kind = kind };
-    job.ended.message = .{ .reply_port = d.reply_port, .length = @sizeOf(run.Ended) };
-    for (sources[0..@min(sources.len, sources_max)]) |source| {
-        if (source.len > dos.path_max) continue;
-        @memcpy(job.sources[job.count][0..source.len], source);
-        job.sources[job.count][source.len] = 0;
-        job.count += 1;
+    if (into.len > dos.path_max) return;
+    var from: usize = 0;
+    while (from < sources.len) {
+        const part = sources[from..@min(sources.len, from + sources_max)];
+        from += part.len;
+        const memory = d.sys.AllocVec(@sizeOf(Job), exec.MEMF_CLEAR) orelse return d.say("No memory to start the work");
+        const job: *Job = @ptrCast(@alignCast(memory));
+        job.* = .{ .kind = kind };
+        for (part) |source| {
+            if (source.len > dos.path_max) continue;
+            @memcpy(job.sources[job.count][0..source.len], source);
+            job.sources[job.count][source.len] = 0;
+            job.count += 1;
+        }
+        @memcpy(job.into[0..into.len], into);
+        if (job.count == 0) {
+            d.sys.FreeVec(memory);
+            continue;
+        }
+        queue(d, job);
     }
-    @memcpy(job.into[0..into.len], into);
+}
+
+/// Files gathered for jobs, any number of them: `sources_max` names to a
+/// block - a job's worth - and as many blocks chained as it takes. Made
+/// on the desktop's stack, filled (`add`), handed over (`queue`) and
+/// given back (`free`).
+pub const Files = struct {
+    first: ?*Block = null,
+    last: ?*Block = null,
+    count: usize = 0,
+    /// A name too long, or a block there was no memory for: left out.
+    lost: bool = false,
+
+    const Block = struct {
+        paths: [sources_max][dos.path_max + 1]u8 = undefined,
+        lengths: [sources_max]usize = undefined,
+        count: usize = 0,
+        next: ?*Block = null,
+    };
+
+    /// `path` added, in a new block when the last one is full.
+    pub fn add(files: *Files, sys: *ExecBase, path: []const u8) void {
+        if (path.len > dos.path_max) {
+            files.lost = true;
+            return;
+        }
+        const full = if (files.last) |last| last.count == sources_max else true;
+        if (full) {
+            const memory = sys.AllocVec(@sizeOf(Block), exec.MEMF_ANY) orelse {
+                files.lost = true;
+                return;
+            };
+            const block: *Block = @ptrCast(@alignCast(memory));
+            block.* = .{};
+            if (files.last) |last| last.next = block else files.first = block;
+            files.last = block;
+        }
+        const block = files.last.?;
+        @memcpy(block.paths[block.count][0..path.len], path);
+        block.lengths[block.count] = path.len;
+        block.count += 1;
+        files.count += 1;
+    }
+
+    /// A job of `kind` started for each block, into `into` for a copy
+    /// (`start`).
+    pub fn queue(files: *const Files, d: *Desktop, kind: Kind, into: []const u8) void {
+        var walk = files.first;
+        while (walk) |block| : (walk = block.next) {
+            var slices: [sources_max][]const u8 = undefined;
+            for (0..block.count) |at| slices[at] = block.paths[at][0..block.lengths[at]];
+            start(d, kind, slices[0..block.count], into);
+        }
+    }
+
+    /// Every block given back.
+    pub fn free(files: *Files, sys: *ExecBase) void {
+        while (files.first) |block| {
+            files.first = block.next;
+            sys.FreeVec(block);
+        }
+        files.last = null;
+        files.count = 0;
+    }
+};
+
+/// A job put on the work process's list - or a process started for it
+/// where there is none, or the one there is has found its list empty and
+/// is ending. Without the memory or a process the job is dropped, said
+/// in the title.
+fn queue(d: *Desktop, job: *Job) void {
+    const sys = d.sys;
+    if (d.work) |work| {
+        sys.ObtainSemaphore(&work.lock);
+        const taken = !work.closing;
+        if (taken) {
+            sys.AddTail(&work.waiting, &job.node);
+            work.waiting_count += 1;
+        }
+        sys.ReleaseSemaphore(&work.lock);
+        if (taken) return;
+    }
+    const memory = sys.AllocVec(@sizeOf(Work), exec.MEMF_CLEAR) orelse {
+        sys.FreeVec(job);
+        d.say("No memory to start the work");
+        return;
+    };
+    const work: *Work = @ptrCast(@alignCast(memory));
+    work.* = .{ .base = d.base };
+    work.ended.message = .{ .reply_port = d.reply_port, .length = @sizeOf(run.Ended) };
+    sys.InitSemaphore(&work.lock);
+    work.waiting.init(.unknown);
+    sys.AddTail(&work.waiting, &job.node);
+    work.waiting_count = 1;
     _base.holdLibrary(d.base, 1);
     const tags = [_]TagItem{
         .{ .tag = dos.NP_Entry, .data = @intFromPtr(&workMain) },
-        .{ .tag = dos.NP_Name, .data = @intFromPtr(processName(kind)) },
+        .{ .tag = dos.NP_Name, .data = @intFromPtr("Anvil work") },
         .{ .tag = dos.NP_StackSize, .data = 32768 },
-        .{ .tag = dos.NP_UserData, .data = @intFromPtr(job) },
+        .{ .tag = dos.NP_UserData, .data = @intFromPtr(work) },
         .{ .tag = dos.NP_HoldLibrary, .data = @intFromPtr(&d.base.lib) },
-        .{ .tag = dos.NP_EndMsg, .data = @intFromPtr(&job.ended.message) },
+        .{ .tag = dos.NP_EndMsg, .data = @intFromPtr(&work.ended.message) },
         .{},
     };
     if (d.dl.CreateNewProc(&tags) == null) {
         _base.holdLibrary(d.base, -1);
-        d.sys.FreeVec(memory);
+        sys.FreeVec(job);
+        sys.FreeVec(memory);
         d.say("No memory to start the work");
         return;
     }
     d.running += 1;
+    d.work = work;
 }
 
-fn processName(kind: Kind) [*:0]const u8 {
-    return if (kind == .copy) "Anvil copy" else "Anvil delete";
+/// A process's end message come back to the desktop: the work process
+/// that ended is the desktop's no more. The desktop frees its block
+/// after.
+pub fn ended(d: *Desktop, message: *run.Ended) void {
+    const work = d.work orelse return;
+    if (&work.ended == message) d.work = null;
 }
 
 fn titleOf(kind: Kind) [*:0]const u8 {
-    return if (kind == .copy) "Copying" else "Deleting";
+    return switch (kind) {
+        .copy => "Copying",
+        .delete, .empty => "Deleting",
+    };
 }
 
-/// The job's process: its window up, the files counted, the work done,
-/// everything given back. dos replies the end message once it has
-/// returned.
+/// The work process: its window up, then each job in turn counted and
+/// done, until the list is empty; everything given back. dos replies the
+/// end message once it has returned.
 fn workMain(sys: *ExecBase) callconv(.c) void {
     const me = sys.FindTask(null).?;
-    const job: *Job = @ptrCast(@alignCast(me.user_data orelse return));
-    job.sys = sys;
-    job.dl = @ptrCast(open(job, 0, dos.DOSNAME) orelse return);
-    defer close(job);
-    job.ib = @ptrCast(open(job, 1, intuition.INTUITIONNAME));
-    job.icon_base = @ptrCast(open(job, 2, sdk.icon.ICONNAME));
-    // Its window: without the gadgets' classes it works without one.
-    if (job.kind == .copy and sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &job.clock.node, 0) == 0) {
-        job.timer_base = @ptrCast(@alignCast(job.clock.node.device.?));
+    const work: *Work = @ptrCast(@alignCast(me.user_data orelse return));
+    work.sys = sys;
+    // However it ends, it ends closed, with nothing left waiting.
+    defer finish(work);
+    work.dl = @ptrCast(open(work, 0, dos.DOSNAME) orelse return);
+    defer close(work);
+    // The first job before the window, which is titled for it.
+    var job = takeNext(work) orelse return;
+    work.ib = @ptrCast(open(work, 1, intuition.INTUITIONNAME));
+    work.icon_base = @ptrCast(open(work, 2, sdk.icon.ICONNAME));
+    if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &work.clock.node, 0) == 0) {
+        work.timer_base = @ptrCast(@alignCast(work.clock.node.device.?));
     }
-    defer if (job.timer_base != null) sys.CloseDevice(&job.clock.node);
-    if (open(job, 3, fg.GAUGE_LIBRARY) != null and open(job, 4, tx.TEXT_LIBRARY) != null) openWindow(job);
-    defer closeWindow(job);
+    defer if (work.timer_base != null) sys.CloseDevice(&work.clock.node);
+    // Its window: without the gadgets' classes it works without one.
+    if (open(work, 3, fg.GAUGE_LIBRARY) != null and open(work, 4, tx.TEXT_LIBRARY) != null) openWindow(work);
+    defer closeWindow(work);
+    work.ahead = @ptrCast(@alignCast(work.dl.AllocDosObject(dos.DOS_REQUEST, null)));
+    defer if (work.ahead) |request| work.dl.FreeDosObject(dos.DOS_REQUEST, request);
+    while (true) {
+        doJob(work, job);
+        work.job = null;
+        sys.FreeVec(job);
+        job = takeNext(work) orelse break;
+    }
+}
 
-    for (job.sources[0..job.count]) |*source| measure(job, source, 0);
-    if (job.kind == .copy) allocatePieces(job);
-    defer if (job.pieces) |pieces| sys.FreeVec(pieces);
-    if (job.kind == .copy) job.ahead = @ptrCast(@alignCast(job.dl.AllocDosObject(dos.DOS_REQUEST, null)));
-    defer if (job.ahead) |request| job.dl.FreeDosObject(dos.DOS_REQUEST, request);
-    restartRate(job);
+/// The next job off the list; null when there is none, and the work
+/// closed under the same lock, so a job after it starts another process.
+/// After the close gadget the ones waiting are dropped first.
+fn takeNext(work: *Work) ?*Job {
+    const sys = work.sys;
+    sys.ObtainSemaphore(&work.lock);
+    defer sys.ReleaseSemaphore(&work.lock);
+    if (work.stop_all) drop(work);
+    const node = sys.RemHead(&work.waiting) orelse {
+        work.closing = true;
+        return null;
+    };
+    work.waiting_count -= 1;
+    const job = jobOf(node);
+    work.job = job;
+    return job;
+}
+
+/// The work closed, and whatever still waits dropped: a process that
+/// ends early - no dos.library - leaves no job behind on a list nothing
+/// looks at.
+fn finish(work: *Work) void {
+    const sys = work.sys;
+    sys.ObtainSemaphore(&work.lock);
+    defer sys.ReleaseSemaphore(&work.lock);
+    work.closing = true;
+    drop(work);
+}
+
+/// Every job waiting freed. Under the work's lock.
+fn drop(work: *Work) void {
+    while (work.sys.RemHead(&work.waiting)) |node| work.sys.FreeVec(jobOf(node));
+    work.waiting_count = 0;
+}
+
+/// One job: its files counted, then copied, deleted or emptied, in the
+/// window made ready for it.
+fn doJob(work: *Work, job: *Job) void {
+    work.total = 0;
+    work.done = 0;
+    work.largest = 0;
+    work.stopped = false;
+    work.replace_all = false;
+    readyWindow(work, job);
+    for (job.sources[0..job.count]) |*source| measure(work, source, 0);
+    if (job.kind == .copy) allocatePieces(work);
+    defer {
+        if (work.pieces) |pieces| work.sys.FreeVec(pieces);
+        work.pieces = null;
+        work.piece_size = chunk / 2;
+    }
+    restartRate(work);
     for (job.sources[0..job.count]) |*source| {
-        if (job.stopped) break;
+        if (work.stopped) break;
         switch (job.kind) {
-            .copy => copyOne(job, source),
-            .delete => _ = deleteAll(job, source, 0),
-            .empty => emptyDrawer(job, source, 0),
+            .copy => copyOne(work, source),
+            .delete => _ = deleteAll(work, source, 0),
+            .empty => emptyDrawer(work, source, 0),
         }
     }
 }
 
-fn open(job: *Job, at: usize, name: [*:0]const u8) ?*exec.Library {
-    const lib = job.sys.OpenLibrary(name, 0) orelse return null;
-    job.libraries[at] = lib;
+fn open(work: *Work, at: usize, name: [*:0]const u8) ?*exec.Library {
+    const lib = work.sys.OpenLibrary(name, 0) orelse return null;
+    work.libraries[at] = lib;
     return lib;
 }
 
-fn close(job: *Job) void {
-    var i = job.libraries.len;
+fn close(work: *Work) void {
+    var i = work.libraries.len;
     while (i > 0) {
         i -= 1;
-        if (job.libraries[i]) |lib| job.sys.CloseLibrary(lib);
+        if (work.libraries[i]) |lib| work.sys.CloseLibrary(lib);
     }
 }
 
@@ -224,40 +438,42 @@ fn pair(tag: utility.Tag, data: usize) TagItem {
     return .{ .tag = tag, .data = data };
 }
 
-fn openWindow(job: *Job) void {
-    const ib = job.ib orelse return;
-    job.label = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&job.label_text)), .{} });
-    job.gauge = ib.NewObjectTagList(null, fg.GAUGE_CLASS, &[_]TagItem{
+fn openWindow(work: *Work) void {
+    const ib = work.ib orelse return;
+    work.label = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&work.label_text)), .{} });
+    work.gauge = ib.NewObjectTagList(null, fg.GAUGE_CLASS, &[_]TagItem{
         pair(fg.GAUGE_Level, 0),
         pair(fg.GAUGE_Percent, 1),
         pair(fg.GAUGE_Format, @intFromPtr("%ld%%")),
         .{},
     });
-    if (job.timer_base != null) {
-        job.rate = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&job.rate_text)), .{} });
+    if (work.timer_base != null) {
+        work.rate = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&work.rate_text)), .{} });
     }
+    work.queued = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&work.queued_text)), .{} });
     const stop = ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
         pair(gc.GA_Text, @intFromPtr("_Stop")),
         pair(gc.GA_ID, ID_STOP),
         pair(gc.GA_RelVerify, 1),
         .{},
     });
-    var tags: [12]TagItem = undefined;
+    var tags: [16]TagItem = undefined;
     var n: usize = 0;
     for ([_]TagItem{
         pair(lg.LAYOUTA_Orientation, lg.LORIENT_VERT),
         pair(lg.LAYOUTA_Margin, 6),
         pair(lg.LAYOUTA_Spacing, 6),
-        pair(lg.LAYOUTA_AddChild, @intFromPtr(job.label)),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(work.label)),
         pair(lg.CHILDA_MinWidth, 300),
-        pair(lg.LAYOUTA_AddChild, @intFromPtr(job.gauge)),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(work.gauge)),
         pair(lg.CHILDA_WeightHeight, 0),
     }) |tag| {
         tags[n] = tag;
         n += 1;
     }
-    if (job.rate) |rate| {
-        tags[n] = pair(lg.LAYOUTA_AddChild, @intFromPtr(rate));
+    for ([_]?*Object{ work.rate, work.queued }) |maybe| {
+        const line = maybe orelse continue;
+        tags[n] = pair(lg.LAYOUTA_AddChild, @intFromPtr(line));
         tags[n + 1] = pair(lg.CHILDA_WeightHeight, 0);
         n += 2;
     }
@@ -265,8 +481,9 @@ fn openWindow(job: *Job) void {
     tags[n + 1] = pair(lg.CHILDA_WeightHeight, 0);
     tags[n + 2] = .{};
     const layout = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &tags) orelse return;
-    job.window_object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
-        pair(wn.WA_Title, @intFromPtr(titleOf(job.kind))),
+    const first = if (work.job) |held| held.kind else Kind.copy;
+    work.window_object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+        pair(wn.WA_Title, @intFromPtr(titleOf(first))),
         pair(wn.WA_DragBar, 1),
         pair(wn.WA_DepthGadget, 1),
         pair(wn.WA_CloseGadget, 1),
@@ -278,71 +495,113 @@ fn openWindow(job: *Job) void {
         return;
     };
     var opening = wc.WmOpen{};
-    if (ib.SendMessage(job.window_object, @ptrCast(&opening)) == 0) return;
+    if (ib.SendMessage(work.window_object, @ptrCast(&opening)) == 0) return;
     var window: usize = 0;
-    _ = ib.GetAttr(wc.WINDOWA_Window, job.window_object.?, &window);
-    job.window = @ptrFromInt(window);
+    _ = ib.GetAttr(wc.WINDOWA_Window, work.window_object.?, &window);
+    work.window = @ptrFromInt(window);
 }
 
-fn closeWindow(job: *Job) void {
-    const ib = job.ib orelse return;
+fn closeWindow(work: *Work) void {
+    const ib = work.ib orelse return;
     // The window object disposes of its layout, and the layout of its
     // gadgets.
-    if (job.window_object) |object| ib.DisposeObject(object);
+    if (work.window_object) |object| ib.DisposeObject(object);
 }
 
-/// The window's input taken: Stop, or its close gadget, ends the job.
-fn poll(job: *Job) void {
-    const ib = job.ib orelse return;
-    const object = job.window_object orelse return;
+/// The window made ready for the next job: its title, nothing yet of
+/// which file or how fast, the gauge back at the start, and how many
+/// wait after it.
+fn readyWindow(work: *Work, job: *Job) void {
+    work.shown_percent = 101;
+    @memset(&work.label_text, 0);
+    @memset(&work.rate_text, 0);
+    const ib = work.ib orelse return;
+    const window = work.window orelse return;
+    ib.SetWindowTitles(window, titleOf(job.kind), wn.TITLE_UNCHANGED);
+    if (work.label) |label| _ = ib.SetGadgetAttrsTagList(label, window, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&work.label_text)), .{} });
+    if (work.rate) |rate| _ = ib.SetGadgetAttrsTagList(rate, window, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&work.rate_text)), .{} });
+    work.shown_waiting = ~@as(u32, 0);
+    showWaiting(work);
+}
+
+/// The window's input taken: Stop ends the job in hand, its close gadget
+/// that one and every one waiting.
+fn poll(work: *Work) void {
+    const ib = work.ib orelse return;
+    const object = work.window_object orelse return;
     var code: u32 = 0;
     var handle = wc.WmHandleInput{ .code = &code };
     while (true) {
         const word = ib.SendMessage(object, @ptrCast(&handle));
         if (word == wc.WMHI_LASTMSG) break;
         switch (word & wc.WMHI_CLASSMASK) {
-            wc.WMHI_CLOSEWINDOW => job.stopped = true,
+            wc.WMHI_CLOSEWINDOW => {
+                work.stopped = true;
+                work.stop_all = true;
+            },
             wc.WMHI_GADGETUP => if (word & wc.WMHI_GADGETMASK == ID_STOP) {
-                job.stopped = true;
+                work.stopped = true;
             },
             else => {},
         }
     }
 }
 
-/// The window says which file the job is at, and how far along it is.
-fn show(job: *Job, name: []const u8) void {
-    poll(job);
-    const ib = job.ib orelse return;
-    const window = job.window orelse return;
-    const percent: u32 = if (job.total == 0) 100 else @intCast(@min(100, job.done * 100 / job.total));
-    const shown = name[0..@min(name.len, job.label_text.len)];
-    if (!eqlText(&job.label_text, shown)) {
-        @memset(&job.label_text, 0);
-        @memcpy(job.label_text[0..shown.len], shown);
-        if (job.label) |label| _ = ib.SetGadgetAttrsTagList(label, window, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&job.label_text)), .{} });
+/// "2 more waiting" under the rate, when the count has changed; nothing
+/// there with none. The count is the desktop's to raise, and read here
+/// without the lock: a line shown a moment late is all it costs.
+fn showWaiting(work: *Work) void {
+    const ib = work.ib orelse return;
+    const window = work.window orelse return;
+    const line = work.queued orelse return;
+    const count = @atomicLoad(u32, &work.waiting_count, .monotonic);
+    if (count == work.shown_waiting) return;
+    work.shown_waiting = count;
+    @memset(&work.queued_text, 0);
+    if (count != 0) {
+        var n = digits(&work.queued_text, count);
+        n += put(work.queued_text[n..], " more waiting");
     }
-    if (percent != job.shown_percent) {
-        job.shown_percent = percent;
-        if (job.gauge) |gauge| _ = ib.SetGadgetAttrsTagList(gauge, window, &[_]TagItem{ pair(fg.GAUGE_Level, percent), .{} });
+    _ = ib.SetGadgetAttrsTagList(line, window, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&work.queued_text)), .{} });
+}
+
+/// The window says which file the job is at, how far along it is, and
+/// how many more wait.
+fn show(work: *Work, name: []const u8) void {
+    poll(work);
+    showWaiting(work);
+    const ib = work.ib orelse return;
+    const window = work.window orelse return;
+    const percent: u32 = if (work.total == 0) 100 else @intCast(@min(100, work.done * 100 / work.total));
+    const shown = name[0..@min(name.len, work.label_text.len)];
+    if (!eqlText(&work.label_text, shown)) {
+        @memset(&work.label_text, 0);
+        @memcpy(work.label_text[0..shown.len], shown);
+        if (work.label) |label| _ = ib.SetGadgetAttrsTagList(label, window, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&work.label_text)), .{} });
     }
-    const rate = job.rate orelse return;
-    const now = nowUs(job);
-    if (now - job.rate_since_us < rate_period_us) return;
-    const per_second = (job.done - job.rate_since_done) * 1_000_000 / (now - job.rate_since_us);
-    job.rate_since_us = now;
-    job.rate_since_done = job.done;
+    if (percent != work.shown_percent) {
+        work.shown_percent = percent;
+        if (work.gauge) |gauge| _ = ib.SetGadgetAttrsTagList(gauge, window, &[_]TagItem{ pair(fg.GAUGE_Level, percent), .{} });
+    }
+    const job = work.job orelse return;
+    if (job.kind != .copy) return;
+    const rate = work.rate orelse return;
+    const now = nowUs(work);
+    if (now - work.rate_since_us < rate_period_us) return;
+    const per_second = (work.done - work.rate_since_done) * 1_000_000 / (now - work.rate_since_us);
+    work.rate_since_us = now;
+    work.rate_since_done = work.done;
     var text: [24]u8 = undefined;
     const length = rateText(&text, per_second);
-    if (eqlText(&job.rate_text, text[0..length])) return;
-    @memset(&job.rate_text, 0);
-    @memcpy(job.rate_text[0..length], text[0..length]);
-    _ = ib.SetGadgetAttrsTagList(rate, window, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&job.rate_text)), .{} });
+    if (eqlText(&work.rate_text, text[0..length])) return;
+    @memset(&work.rate_text, 0);
+    @memcpy(work.rate_text[0..length], text[0..length]);
+    _ = ib.SetGadgetAttrsTagList(rate, window, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&work.rate_text)), .{} });
 }
 
 /// The E-clock in microseconds; 0 without timer.device.
-fn nowUs(job: *Job) u64 {
-    const timer_base = job.timer_base orelse return 0;
+fn nowUs(work: *Work) u64 {
+    const timer_base = work.timer_base orelse return 0;
     var value: timer.EClockVal = .{};
     const rate = timer_base.ReadEClock(&value);
     const count = @as(u64, value.hi) << 32 | value.lo;
@@ -351,9 +610,9 @@ fn nowUs(job: *Job) u64 {
 
 /// The rate measured from now on: at the start, and after a question,
 /// whose wait copied nothing.
-fn restartRate(job: *Job) void {
-    job.rate_since_us = nowUs(job);
-    job.rate_since_done = job.done;
+fn restartRate(work: *Work) void {
+    work.rate_since_us = nowUs(work);
+    work.rate_since_done = work.done;
 }
 
 const KiB: u64 = 1024;
@@ -426,79 +685,80 @@ fn textOf(text: [*:0]const u8) []const u8 {
     return text[0..n];
 }
 
-/// A FileInfoBlock of the job's own; null without memory.
-fn newFib(job: *Job) ?*dos.FileInfoBlock {
-    const memory = job.sys.AllocVec(@sizeOf(dos.FileInfoBlock), exec.MEMF_CLEAR) orelse return null;
+/// A FileInfoBlock of the work's own; null without memory.
+fn newFib(work: *Work) ?*dos.FileInfoBlock {
+    const memory = work.sys.AllocVec(@sizeOf(dos.FileInfoBlock), exec.MEMF_CLEAR) orelse return null;
     return @ptrCast(@alignCast(memory));
 }
 
 /// What `path` holds counted into the total: its bytes for a copy, one
 /// for each file for a delete - a drawer and everything in it. A soft
 /// link in a drawer counts as a file: the walk never goes through one.
-fn measure(job: *Job, path: [*:0]const u8, depth: usize) void {
-    const dl = job.dl;
+fn measure(work: *Work, path: [*:0]const u8, depth: usize) void {
+    const dl = work.dl;
     const lock = dl.Lock(path, dos.SHARED_LOCK) orelse return;
     defer dl.UnLock(lock);
-    const fib = newFib(job) orelse return;
-    defer job.sys.FreeVec(fib);
+    const fib = newFib(work) orelse return;
+    defer work.sys.FreeVec(fib);
     if (!dl.Examine(lock, fib)) return;
     if (!dos.isDirectory(fib.dir_entry_type)) {
-        counted(job, fib.size);
+        counted(work, fib.size);
         return;
     }
-    job.total += 1;
+    work.total += 1;
     if (depth == depth_max) return;
     var below: [dos.path_max + 1:0]u8 = @splat(0);
     while (dl.ExNext(lock, fib)) {
         if (!dos.isDirectory(fib.dir_entry_type)) {
-            counted(job, fib.size);
+            counted(work, fib.size);
             continue;
         }
         _ = drawer_path.join(&below, textOf(path), textOf(@ptrCast(&fib.file_name))) orelse continue;
-        measure(job, &below, depth + 1);
+        measure(work, &below, depth + 1);
     }
 }
 
 /// A file counted: its bytes for a copy, which notes the largest, or one
 /// more file.
-fn counted(job: *Job, size: u64) void {
-    if (job.kind != .copy) {
-        job.total += 1;
+fn counted(work: *Work, size: u64) void {
+    if (work.job.?.kind != .copy) {
+        work.total += 1;
         return;
     }
-    job.total += size;
-    job.largest = @max(job.largest, size);
+    work.total += size;
+    work.largest = @max(work.largest, size);
 }
 
 // --- copying --------------------------------------------------------------------------
 
 /// The copy's two pieces: each the largest file's size, between half the
-/// job's own 32 KiB and `chunk_most`. Without the memory the job's own
+/// work's own 32 KiB and `chunk_most`. Without the memory the work's own
 /// will do.
-fn allocatePieces(job: *Job) void {
-    const size: u32 = @intCast(@min(job.largest, chunk_most));
+fn allocatePieces(work: *Work) void {
+    const size: u32 = @intCast(@min(work.largest, chunk_most));
     if (size <= chunk / 2) return;
-    const memory = job.sys.AllocVec(2 * size, exec.MEMF_ANY) orelse return;
-    job.pieces = @ptrCast(memory);
-    job.piece_size = size;
+    const memory = work.sys.AllocVec(2 * size, exec.MEMF_ANY) orelse return;
+    work.pieces = @ptrCast(memory);
+    work.piece_size = size;
 }
 
 /// One picked file copied, with its icon: into the job's drawer, or as a
 /// copy of itself beside it.
-fn copyOne(job: *Job, source: [*:0]const u8) void {
-    const name = textOf(job.dl.FilePart(source));
+fn copyOne(work: *Work, source: [*:0]const u8) void {
+    const name = textOf(work.dl.FilePart(source));
     var target: [dos.path_max + 1:0]u8 = @splat(0);
-    if (job.into[0] != 0) {
-        _ = drawer_path.join(&target, textOf(&job.into), name) orelse return;
-    } else if (!copyName(job, source, &target)) return;
-    copyTree(job, source, &target, 0);
+    if (work.job.?.into[0] != 0) {
+        _ = drawer_path.join(&target, textOf(&work.job.?.into), name) orelse return;
+    } else if (!copyName(work, source, &target)) return;
+    copyTree(work, source, &target, 0);
+    if (work.stopped) return;
     // Its icon, beside it under the new name.
     var from_icon: [dos.path_max + 6:0]u8 = @splat(0);
     var to_icon: [dos.path_max + 6:0]u8 = @splat(0);
     if (!withInfo(&from_icon, textOf(source)) or !withInfo(&to_icon, textOf(&target))) return;
-    const lock = job.dl.Lock(&from_icon, dos.SHARED_LOCK) orelse return;
-    job.dl.UnLock(lock);
-    _ = copyFile(job, &from_icon, &to_icon);
+    const lock = work.dl.Lock(&from_icon, dos.SHARED_LOCK) orelse return;
+    work.dl.UnLock(lock);
+    _ = copyFile(work, &from_icon, &to_icon);
 }
 
 fn withInfo(into: []u8, path: []const u8) bool {
@@ -511,9 +771,9 @@ fn withInfo(into: []u8, path: []const u8) bool {
 
 /// The name of a copy of `source` in its own drawer, the first that is
 /// free: `Copy_of_x`, `Copy_2_of_x`, ...
-fn copyName(job: *Job, source: [*:0]const u8, into: *[dos.path_max + 1:0]u8) bool {
-    const ib = job.icon_base orelse return false;
-    const dl = job.dl;
+fn copyName(work: *Work, source: [*:0]const u8, into: *[dos.path_max + 1:0]u8) bool {
+    const ib = work.icon_base orelse return false;
+    const dl = work.dl;
     const name = dl.FilePart(source);
     const drawer_length = @intFromPtr(name) - @intFromPtr(source);
     var seed: [dos.name_max + 1:0]u8 = @splat(0);
@@ -538,51 +798,55 @@ fn copyName(job: *Job, source: [*:0]const u8, into: *[dos.path_max + 1:0]u8) boo
 /// `source` - a file, or a drawer with all in it - copied as `target`. A
 /// soft link in a drawer is copied as the file it names, never gone
 /// through.
-fn copyTree(job: *Job, source: [*:0]const u8, target: [*:0]const u8, depth: usize) void {
-    if (job.stopped) return;
-    const dl = job.dl;
+fn copyTree(work: *Work, source: [*:0]const u8, target: [*:0]const u8, depth: usize) void {
+    if (work.stopped) return;
+    const dl = work.dl;
     const lock = dl.Lock(source, dos.SHARED_LOCK) orelse return;
     defer dl.UnLock(lock);
-    const fib = newFib(job) orelse return;
-    defer job.sys.FreeVec(fib);
+    const fib = newFib(work) orelse return;
+    defer work.sys.FreeVec(fib);
     if (!dl.Examine(lock, fib)) return;
     if (!dos.isDirectory(fib.dir_entry_type)) {
-        _ = copyFile(job, source, target);
+        _ = copyFile(work, source, target);
         return;
     }
     // A drawer: made, or copied into when it is there already.
     if (dl.CreateDir(target)) |made| dl.UnLock(made) else if (dl.Lock(target, dos.SHARED_LOCK)) |there| {
         dl.UnLock(there);
     } else return;
-    job.done += 1;
+    work.done += 1;
     if (depth == depth_max) return;
     var from: [dos.path_max + 1:0]u8 = @splat(0);
     var to: [dos.path_max + 1:0]u8 = @splat(0);
     while (dl.ExNext(lock, fib)) {
-        if (job.stopped) return;
+        if (work.stopped) return;
         const name = textOf(@ptrCast(&fib.file_name));
         _ = drawer_path.join(&from, textOf(source), name) orelse continue;
         _ = drawer_path.join(&to, textOf(target), name) orelse continue;
-        if (dos.isDirectory(fib.dir_entry_type)) copyTree(job, &from, &to, depth + 1) else _ = copyFile(job, &from, &to);
+        if (dos.isDirectory(fib.dir_entry_type)) copyTree(work, &from, &to, depth + 1) else _ = copyFile(work, &from, &to);
     }
 }
 
 /// One file's bytes copied, its protection, date and comment after them.
 /// One that is there already is asked about first. False when it was
 /// not copied.
-fn copyFile(job: *Job, source: [*:0]const u8, target: [*:0]const u8) bool {
-    const dl = job.dl;
+fn copyFile(work: *Work, source: [*:0]const u8, target: [*:0]const u8) bool {
+    const dl = work.dl;
     if (dl.Lock(target, dos.SHARED_LOCK)) |there| {
         dl.UnLock(there);
-        if (!job.replace_all) {
-            const answer = ask(job, target);
-            restartRate(job);
+        if (!work.replace_all) {
+            // The window says which file the question is about first,
+            // and how many jobs wait behind this one.
+            show(work, textOf(dl.FilePart(source)));
+            if (work.stopped) return false;
+            const answer = ask(work, target);
+            restartRate(work);
             switch (answer) {
                 .replace => {},
-                .replace_all => job.replace_all = true,
+                .replace_all => work.replace_all = true,
                 .skip => return false,
                 .stop => {
-                    job.stopped = true;
+                    work.stopped = true;
                     return false;
                 },
             }
@@ -591,21 +855,21 @@ fn copyFile(job: *Job, source: [*:0]const u8, target: [*:0]const u8) bool {
     const from = dl.Open(source, dos.MODE_OLDFILE) orelse return false;
     defer _ = dl.Close(from);
     const to = dl.Open(target, dos.MODE_NEWFILE) orelse return false;
-    const bytes: [*]u8 = job.pieces orelse &job.buffer;
-    const size: isize = @intCast(job.piece_size);
-    const pieces = [2][*]u8{ bytes, bytes + job.piece_size };
+    const bytes: [*]u8 = work.pieces orelse &work.buffer;
+    const size: isize = @intCast(work.piece_size);
+    const pieces = [2][*]u8{ bytes, bytes + work.piece_size };
     var whole = true;
     // By the handler, until it says it cannot.
     var by_handler = true;
     // The bytes in pieces[at]; null before the first read.
     var got: ?isize = null;
     var at: usize = 0;
-    while (!job.stopped) {
+    while (!work.stopped) {
         if (by_handler) {
             const copied = dl.CopyFH(to, from, handler_piece);
             if (copied > 0) {
-                job.done += @intCast(copied);
-                show(job, textOf(dl.FilePart(source)));
+                work.done += @intCast(copied);
+                show(work, textOf(dl.FilePart(source)));
                 continue;
             }
             if (copied == 0) break;
@@ -622,26 +886,26 @@ fn copyFile(job: *Job, source: [*:0]const u8, target: [*:0]const u8) bool {
         }
         // The next piece into the other half while this one is written:
         // the two handlers at work at once. Without a request, after it.
-        const ahead = if (job.ahead) |request| dl.StartRead(from, pieces[at ^ 1], size, request) else false;
+        const ahead = if (work.ahead) |request| dl.StartRead(from, pieces[at ^ 1], size, request) else false;
         const written = dl.Write(to, pieces[at], have);
-        const next = if (ahead) dl.WaitRequest(job.ahead) else if (written == have) dl.Read(from, pieces[at ^ 1], size) else 0;
+        const next = if (ahead) dl.WaitRequest(work.ahead) else if (written == have) dl.Read(from, pieces[at ^ 1], size) else 0;
         if (written != have) {
             whole = false;
             break;
         }
-        job.done += @intCast(have);
-        show(job, textOf(dl.FilePart(source)));
+        work.done += @intCast(have);
+        show(work, textOf(dl.FilePart(source)));
         got = next;
         at ^= 1;
     }
     _ = dl.Close(to);
-    if (!whole or job.stopped) {
+    if (!whole or work.stopped) {
         _ = dl.DeleteFile(target);
         return false;
     }
     // What the file was, kept.
-    const fib = newFib(job) orelse return true;
-    defer job.sys.FreeVec(fib);
+    const fib = newFib(work) orelse return true;
+    defer work.sys.FreeVec(fib);
     const lock = dl.Lock(source, dos.SHARED_LOCK) orelse return true;
     defer dl.UnLock(lock);
     if (!dl.Examine(lock, fib)) return true;
@@ -653,15 +917,15 @@ fn copyFile(job: *Job, source: [*:0]const u8, target: [*:0]const u8) bool {
 
 const Answer = enum { replace, replace_all, skip, stop };
 
-fn ask(job: *Job, target: [*:0]const u8) Answer {
-    const ib = job.ib orelse return .skip;
+fn ask(work: *Work, target: [*:0]const u8) Answer {
+    const ib = work.ib orelse return .skip;
     const easy = intuition.requesters.EasyStruct{
         .title = "Copying",
         .text_format = "%s is there already.\nReplace it?",
         .gadget_format = "Replace|Replace All|Skip|Stop",
     };
     const args = [_]usize{@intFromPtr(target)};
-    return switch (ib.EasyRequestArgs(job.window, &easy, null, &args)) {
+    return switch (ib.EasyRequestArgs(work.window, &easy, null, &args)) {
         1 => .replace,
         2 => .replace_all,
         3 => .skip,
@@ -672,21 +936,21 @@ fn ask(job: *Job, target: [*:0]const u8) Answer {
 // --- deleting ------------------------------------------------------------------------
 
 /// What is in the drawer `path` deleted, and the drawer kept.
-fn emptyDrawer(job: *Job, path: [*:0]const u8, depth: usize) void {
-    const dl = job.dl;
+fn emptyDrawer(work: *Work, path: [*:0]const u8, depth: usize) void {
+    const dl = work.dl;
     const lock = dl.Lock(path, dos.SHARED_LOCK) orelse return;
     defer dl.UnLock(lock);
-    const fib = newFib(job) orelse return;
-    defer job.sys.FreeVec(fib);
+    const fib = newFib(work) orelse return;
+    defer work.sys.FreeVec(fib);
     var below: [dos.path_max + 1:0]u8 = @splat(0);
     var skipped: usize = 0;
-    outer: while (!job.stopped) {
+    outer: while (!work.stopped) {
         if (!dl.Examine(lock, fib)) return;
         var n: usize = 0;
         while (dl.ExNext(lock, fib)) : (n += 1) {
             if (n < skipped) continue;
             _ = drawer_path.join(&below, textOf(path), textOf(@ptrCast(&fib.file_name))) orelse continue;
-            if (!deleteAll(job, &below, depth + 1)) skipped += 1;
+            if (!deleteAll(work, &below, depth + 1)) skipped += 1;
             continue :outer;
         }
         return;
@@ -697,16 +961,16 @@ fn emptyDrawer(job: *Job, path: [*:0]const u8, depth: usize) void {
 /// when something in it could not be. The name is deleted first, and only
 /// a drawer that is not empty is gone into: so a soft link goes itself,
 /// never what it names.
-fn deleteAll(job: *Job, path: [*:0]const u8, depth: usize) bool {
-    if (job.stopped) return false;
-    const dl = job.dl;
-    show(job, textOf(dl.FilePart(path)));
+fn deleteAll(work: *Work, path: [*:0]const u8, depth: usize) bool {
+    if (work.stopped) return false;
+    const dl = work.dl;
+    show(work, textOf(dl.FilePart(path)));
     if (!dl.DeleteFile(path)) {
         if (dl.IoErr() != dos.ERROR_DIRECTORY_NOT_EMPTY or depth >= depth_max) return false;
-        if (!deleteInside(job, path, depth)) return false;
+        if (!deleteInside(work, path, depth)) return false;
         if (!dl.DeleteFile(path)) return false;
     }
-    job.done += 1;
+    work.done += 1;
     // Its icon goes with it.
     var info: [dos.path_max + 6:0]u8 = @splat(0);
     if (withInfo(&info, textOf(path))) _ = dl.DeleteFile(&info);
@@ -716,22 +980,22 @@ fn deleteAll(job: *Job, path: [*:0]const u8, depth: usize) bool {
 /// Everything in the drawer `path` deleted; false when something could
 /// not be. The walk starts again after each, since a drawer changes under
 /// ExNext as it is emptied.
-fn deleteInside(job: *Job, path: [*:0]const u8, depth: usize) bool {
-    const dl = job.dl;
+fn deleteInside(work: *Work, path: [*:0]const u8, depth: usize) bool {
+    const dl = work.dl;
     const lock = dl.Lock(path, dos.SHARED_LOCK) orelse return false;
     defer dl.UnLock(lock);
-    const fib = newFib(job) orelse return false;
-    defer job.sys.FreeVec(fib);
+    const fib = newFib(work) orelse return false;
+    defer work.sys.FreeVec(fib);
     var below: [dos.path_max + 1:0]u8 = @splat(0);
     var whole = true;
     var skipped: usize = 0;
-    outer: while (!job.stopped) {
+    outer: while (!work.stopped) {
         if (!dl.Examine(lock, fib)) return false;
         var n: usize = 0;
         while (dl.ExNext(lock, fib)) : (n += 1) {
             if (n < skipped) continue;
             _ = drawer_path.join(&below, textOf(path), textOf(@ptrCast(&fib.file_name))) orelse continue;
-            if (!deleteAll(job, &below, depth + 1)) {
+            if (!deleteAll(work, &below, depth + 1)) {
                 skipped += 1;
                 whole = false;
             }
@@ -739,5 +1003,5 @@ fn deleteInside(job: *Job, path: [*:0]const u8, depth: usize) bool {
         }
         break;
     }
-    return whole and !job.stopped;
+    return whole and !work.stopped;
 }

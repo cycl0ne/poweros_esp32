@@ -15,7 +15,8 @@
 //!   was let go;
 //! - on a drawer, a disk or the trash, or into another drawer's window:
 //!   the files go into that drawer - moved, with their icons, when it is
-//!   on the same volume, and copied when it is not;
+//!   on the same volume, and copied when it is not, all of them by one
+//!   job of the desktop's work process (`work.zig`);
 //! - on a program's icon, or over a window a program added: the program
 //!   is told, with the files (`app.zig`);
 //! - anywhere else, or on another window: the picture flies back and
@@ -44,7 +45,7 @@ const Desktop = _desktop.Desktop;
 const Said = _desktop.Said;
 const select = @import("select.zig");
 const run = @import("run.zig");
-const copy = @import("copy.zig");
+const work = @import("work.zig");
 const app = @import("app.zig");
 const volumes = @import("volumes.zig");
 
@@ -247,6 +248,7 @@ fn moveIcons(d: *Desktop, held: *const Held, dx: i32, dy: i32) void {
         ic.x += dx;
         ic.y += dy;
         ic.moved = true;
+        ic.by_hand = true;
     }
     if (d.prefs.snap) {
         it = list.iterator();
@@ -287,13 +289,16 @@ fn intoDrawer(d: *Desktop, held: *const Held, into: []const u8, trash: bool) boo
     const list = if (held.drawer) |dr| &dr.icons else &d.volumes;
     // A disk is not put into a drawer.
     if (held.drawer == null) return false;
+    // What goes to another volume, copied by one job once all are known.
+    var copies: work.Files = .{};
+    defer copies.free(d.sys);
     var any = false;
     var it = list.iterator();
     while (it.next()) |node| {
         const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
         if (!ic.selected) continue;
         var from: [dos.path_max + 1:0]u8 = @splat(0);
-        _ = run.pathOf(held.drawer, ic, &from) orelse continue;
+        const length = run.pathOf(held.drawer, ic, &from) orelse continue;
         // Not into itself, nor where it already is.
         if (isWithin(&target, &from)) continue;
         const from_lock = d.dl.Lock(&from, dos.SHARED_LOCK) orelse continue;
@@ -302,12 +307,13 @@ fn intoDrawer(d: *Desktop, held: *const Held, into: []const u8, trash: bool) boo
         if (same_volume) {
             if (moveFile(d, &from, &target, ic.name())) any = true;
         } else if (!trash) {
-            copy.start(d, &from, &target);
+            copies.add(d.sys, from[0..length]);
             any = true;
         } else {
             d.say("Only a file of the trash's own disk goes into its trash");
         }
     }
+    copies.queue(d, .copy, into);
     return any;
 }
 

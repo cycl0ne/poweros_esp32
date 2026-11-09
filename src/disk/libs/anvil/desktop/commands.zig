@@ -2,8 +2,9 @@
 //! What the Icons menu and the file work of the Window menu do with the
 //! icons picked: open, copy, rename, snapshot, leave out and put away,
 //! delete, format, empty the trash; a new drawer, cleaning up - as the
-//! icons lie or sorted - snapping to the grid, and a window's snapshot;
-//! the Anvil menu's Execute Command and Volume.
+//! icons lie or sorted - snapping to the grid, arranging the icons as a
+//! window is sized, and a window's snapshot;
+//! the Anvil menu's Execute Command, Volume and Reboot.
 //!
 //! The work that takes long - copying, deleting, emptying - goes to a
 //! process of its own (`work.zig`); the rest is done at once. A file's
@@ -36,6 +37,7 @@ const select = @import("select.zig");
 const textview = @import("../drawer/textview.zig");
 const drawer_ribbon = @import("../drawer/ribbon.zig");
 const anvil_prefs = sdk.prefs.anvil;
+const drives = dos.blockdrives;
 
 /// An icon picked, and the ground it lies on (none: the desktop's).
 const Picked = struct { where: ?*Drawer, icon: *Icon };
@@ -78,35 +80,22 @@ fn kindOf(picked: Picked) u32 {
 }
 
 /// The full names of the files picked - not the disks, nor programs'
-/// icons - for a job.
-const Names = struct {
-    paths: [work.sources_max][dos.path_max + 1]u8 = undefined,
-    lengths: [work.sources_max]usize = undefined,
-    count: usize = 0,
-
-    fn add(names: *Names, picked: Picked) void {
-        const kind = kindOf(picked);
-        if (kind == icon.WBDISK or kind == icon.WBAPPICON) return;
-        if (names.count == work.sources_max) return;
-        const length = run.pathOf(picked.where, picked.icon, &names.paths[names.count]) orelse return;
-        names.lengths[names.count] = length;
-        names.count += 1;
-    }
-
-    fn slices(names: *const Names, into: *[work.sources_max][]const u8) []const []const u8 {
-        for (0..names.count) |i| into[i] = names.paths[i][0..names.lengths[i]];
-        return into[0..names.count];
-    }
-};
-
-fn collect(d: *Desktop, names: *Names) void {
+/// icons - gathered for jobs, however many there are. One that could not
+/// be is said in the title.
+fn collect(d: *Desktop, files: *work.Files) void {
     const Add = struct {
-        names: *Names,
+        d: *Desktop,
+        files: *work.Files,
         fn each(add: @This(), picked: Picked) void {
-            add.names.add(picked);
+            const kind = kindOf(picked);
+            if (kind == icon.WBDISK or kind == icon.WBAPPICON) return;
+            var path: [dos.path_max + 1]u8 = undefined;
+            const length = run.pathOf(picked.where, picked.icon, &path) orelse return;
+            add.files.add(add.d.sys, path[0..length]);
         }
     };
-    eachPicked(d, Add{ .names = names }, Add.each);
+    eachPicked(d, Add{ .d = d, .files = files }, Add.each);
+    if (files.lost) d.say("Not every file picked could be taken");
 }
 
 /// An item of the Icons menu.
@@ -127,39 +116,32 @@ pub fn iconsItem(d: *Desktop, number: u32) void {
     }
 }
 
-/// The files picked copied beside themselves (`Copy_of_x`), or deleted,
-/// on a process of their own.
+/// The files picked copied beside themselves (`Copy_of_x`), on the work
+/// process, after whatever it has in hand.
 fn startJob(d: *Desktop, kind: work.Kind) void {
-    const memory = d.sys.AllocVec(@sizeOf(Names), exec.MEMF_ANY) orelse return;
-    defer d.sys.FreeVec(memory);
-    const names: *Names = @ptrCast(@alignCast(memory));
-    names.* = .{};
-    collect(d, names);
-    if (names.count == 0) return;
-    var slices: [work.sources_max][]const u8 = undefined;
-    work.start(d, kind, names.slices(&slices), "");
+    var files: work.Files = .{};
+    defer files.free(d.sys);
+    collect(d, &files);
+    files.queue(d, kind, "");
 }
 
 /// Delete: asked first, naming how many; a left-out file is taken off
 /// the desktop with it.
 fn delete(d: *Desktop) void {
-    const memory = d.sys.AllocVec(@sizeOf(Names), exec.MEMF_ANY) orelse return;
-    defer d.sys.FreeVec(memory);
-    const names: *Names = @ptrCast(@alignCast(memory));
-    names.* = .{};
-    collect(d, names);
-    if (names.count == 0) return;
+    var files: work.Files = .{};
+    defer files.free(d.sys);
+    collect(d, &files);
+    if (files.count == 0) return;
     const easy = intuition.requesters.EasyStruct{
         .title = "Delete",
         .text_format = "Delete what is picked (%lu) for good?\nA drawer goes with all that is in it.",
         .gadget_format = "Delete|Cancel",
     };
-    const args = [_]u64{names.count};
+    const args = [_]u64{files.count};
     if (d.ib.EasyRequestArgs(d.backdrop, &easy, null, &args) != 1) return;
     // Left-out files put away first: their icons go now.
     putAway(d);
-    var slices: [work.sources_max][]const u8 = undefined;
-    work.start(d, .delete, names.slices(&slices), "");
+    files.queue(d, .delete, "");
 }
 
 /// Empty Trash: what is in the trash picked deleted, the trash kept.
@@ -235,6 +217,9 @@ fn snapshotIcon(d: *Desktop, where: ?*Drawer, ic: *Icon, keep: bool) void {
     }
     ic.moved = false;
     ic.placed_by_file = keep;
+    // Kept, it lies where its file says; forgotten, it is the desktop's
+    // to place again.
+    ic.by_hand = false;
 }
 
 /// Leave Out: the files picked in drawers put on the desktop.
@@ -384,6 +369,15 @@ pub fn snapToGrid(d: *Desktop, on: bool) void {
     keepPrefs(d, "Snap to Grid");
 }
 
+/// Arrange on Resize switched `on` or off, and kept in anvil.prefs.
+/// Switched on, every drawer's icons the desktop placed are laid out at
+/// once for the window as wide as it is now (`drawer.arrangeAll`).
+pub fn arrangeOnResize(d: *Desktop, on: bool) void {
+    d.prefs.arrange = on;
+    if (on) drawer.arrangeAll(d);
+    keepPrefs(d, "Arrange on Resize");
+}
+
 /// Ribbon switched `on` or off: every drawer's window given its ribbon or
 /// rid of it at once, the mark and the buttons set, and kept in
 /// anvil.prefs.
@@ -400,7 +394,7 @@ pub fn showRibbons(d: *Desktop, on: bool) void {
 /// file's explanation. The file's notification then finds nothing
 /// changed, so nothing is made anew.
 fn keepPrefs(d: *Desktop, comptime what: []const u8) void {
-    const line_room = 240;
+    const line_room = 256;
     const room = anvil_prefs.header.len + line_room + 1;
     const memory = d.sys.AllocVec(room, exec.MEMF_ANY) orelse return d.say(what ++ " could not be kept");
     defer d.sys.FreeVec(memory);
@@ -456,9 +450,9 @@ pub fn snapshotWindow(d: *Desktop, dr: *Drawer, all: bool) void {
 /// Forward only where the window has been (`history.zig`); Clean Up
 /// and Clean Up By only where icons are shown, and on the desktop's
 /// ground by name alone, since a disk has no date or size of its own.
-/// Snap to Grid's and Ribbon's marks are the prefs', and Ribbon is off
-/// without the ribbon's classes. Every drawer's ribbon is set the same
-/// way, for its own window (`ribbon.show`).
+/// Snap to Grid's, Arrange on Resize's and Ribbon's marks are the
+/// prefs', and Ribbon is off without the ribbon's classes. Every drawer's
+/// ribbon is set the same way, for its own window (`ribbon.show`).
 pub fn rethink(d: *Desktop, active: ?*intuition.Window) void {
     const strip = d.menu_strip orelse return;
     const Tally = struct {
@@ -539,6 +533,7 @@ pub fn rethink(d: *Desktop, active: ?*intuition.Window) void {
     }
     const marks = [_]struct { item: u32, on: bool }{
         .{ .item = menus.ITEM_SNAP_TO_GRID, .on = d.prefs.snap },
+        .{ .item = menus.ITEM_ARRANGE, .on = d.prefs.arrange },
         .{ .item = menus.ITEM_RIBBON, .on = d.prefs.ribbon },
     };
     for (marks) |mark| {
@@ -550,7 +545,7 @@ pub fn rethink(d: *Desktop, active: ?*intuition.Window) void {
     var it = d.drawers.iterator();
     while (it.next()) |node| {
         const each: *Drawer = @alignCast(@fieldParentPtr("node", node));
-        drawer_ribbon.show(d, each, drawer_ribbon.stateOf(each.view, each.show_all, each.is_volume, d.prefs.snap, can, wentFrom(each)));
+        drawer_ribbon.show(d, each, drawer_ribbon.stateOf(each.view, each.show_all, each.is_volume, .{ .snap = d.prefs.snap, .arrange = d.prefs.arrange }, can, wentFrom(each)));
     }
 }
 
@@ -578,4 +573,85 @@ pub fn openVolume(d: *Desktop) void {
     const object = d.icon_base.GetDiskObjectNew(path) orelse return;
     defer d.icon_base.FreeDiskObject(object);
     _ = run.runFile(d, path, object);
+}
+
+/// Reboot: asked first, then every drive a device feeds held still - its
+/// handler writes out what it holds and closes the medium - and the
+/// machine started again. Programs that run are not asked: what one has
+/// not saved is lost, which the question says. A drive that will not
+/// stop, because a program still has something open on it, is named and
+/// asked about again; Cancel then lets every drive held go again, and
+/// the machine runs on as it was.
+pub fn reboot(d: *Desktop) void {
+    const easy = intuition.requesters.EasyStruct{
+        .title = "Reboot",
+        .text_format = "Start the machine again?\nWhat programs have not saved is lost.",
+        .gadget_format = "Reboot|Cancel",
+    };
+    if (d.ib.EasyRequestArgs(d.backdrop, &easy, null, null) != 1) return;
+    // Two lists of every drive's name: too large for the desktop's stack.
+    const memory = d.sys.AllocVec(2 * @sizeOf(drives.List), exec.MEMF_ANY) orelse return d.say("No memory to reboot");
+    defer d.sys.FreeVec(memory);
+    const lists: *[2]drives.List = @ptrCast(@alignCast(memory));
+    const mounted = &lists[0];
+    const refused = &lists[1];
+    mounted.* = .{};
+    refused.* = .{};
+    mounted.gather(d.dl);
+    if (drives.holdAll(d.dl, mounted, refused) != 0 and !rebootAnyway(d, refused)) {
+        for (mounted.all()) |*name| {
+            if (!isAmong(refused, name)) drives.release(d.dl, name);
+        }
+        return;
+    }
+    d.sys.ColdReboot();
+}
+
+/// The drives that would not stop named, the first few, and whether to
+/// reboot all the same.
+fn rebootAnyway(d: *Desktop, refused: *const drives.List) bool {
+    const shown_most = 4;
+    var names: [6 * (dos.MAX_DEVICE_NAME + 3):0]u8 = @splat(0);
+    var length: usize = 0;
+    for (refused.all(), 0..) |*name, at| {
+        if (at == shown_most) {
+            @memcpy(names[length..][0..5], ", ...");
+            break;
+        }
+        if (at > 0) {
+            @memcpy(names[length..][0..2], ", ");
+            length += 2;
+        }
+        const text = sliceOf(drives.path(name));
+        @memcpy(names[length..][0..text.len], text);
+        length += text.len;
+    }
+    const easy = intuition.requesters.EasyStruct{
+        .title = "Reboot",
+        .text_format = "In use, so what they hold may not be written out:\n%s\n\nReboot all the same?",
+        .gadget_format = "Reboot|Cancel",
+    };
+    const args = [_]usize{@intFromPtr(&names)};
+    return d.ib.EasyRequestArgs(d.backdrop, &easy, null, &args) == 1;
+}
+
+fn isAmong(list: *const drives.List, wanted: *const drives.Name) bool {
+    for (list.all()) |*name| {
+        if (sameName(name, wanted)) return true;
+    }
+    return false;
+}
+
+fn sameName(one: *const drives.Name, other: *const drives.Name) bool {
+    for (one, other) |left, right| {
+        if (left != right) return false;
+        if (left == 0) return true;
+    }
+    return true;
+}
+
+fn sliceOf(text: [*:0]const u8) []const u8 {
+    var length: usize = 0;
+    while (text[length] != 0) length += 1;
+    return text[0..length];
 }

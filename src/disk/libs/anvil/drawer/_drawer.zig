@@ -31,7 +31,12 @@
 //! puts that on the window in one copy, so the window never shows the area
 //! cleared. A window sized while icons are shown draws nothing: the icons
 //! stay where they lie, and what the window grows by - and where its
-//! border was - comes as a refresh.
+//! border was - comes as a refresh. With Arrange on Resize (the prefs'
+//! ARRANGE, on unless switched off) a size that holds another number of
+//! columns lays the icons the desktop placed out again across it, in
+//! their order, and draws the view again (`arrange`); an icon that lies
+//! where its file says, or that was moved by hand, stays where it is and
+//! the others go round it.
 //!
 //! **The strip above the view**: the inside's top is given to what is not
 //! the drawer - the ribbon (`ribbon.zig`) and under it the row of
@@ -148,6 +153,10 @@ pub const Drawer = struct {
     buffer: ?[*]u8 = null,
     /// The next free cell's number along the rows.
     next_cell: i32 = 0,
+    /// How many cells across the icons the desktop placed were laid out
+    /// for, which Arrange on Resize lays them out again for when the view
+    /// holds another number.
+    columns: i32 = 0,
     /// Where the inside's (0, 0) is on the drawer's ground.
     origin: icons.Origin = .{},
     bars: [2]?*intuition.Object = .{ null, null },
@@ -617,23 +626,100 @@ fn addEntry(d: *Desktop, dr: *Drawer, name: []const u8, data: *const dos.ExAllDa
 }
 
 /// An icon put in the next free cell along the rows, past the icons that
-/// lie where their files say.
+/// stay where they are (`stays`).
 fn place(d: *Desktop, dr: *Drawer, ic: *Icon) void {
     var taken: [64]Rect = undefined;
     var count: usize = 0;
     var it = dr.icons.iterator();
     while (it.next()) |node| {
         const other: *Icon = @alignCast(@fieldParentPtr("node", node));
-        if (!other.placed_by_file) continue;
+        if (!stays(other)) continue;
         if (count == taken.len) break;
         taken[count] = other.box(&d.drawer_look);
         count += 1;
     }
-    const width = @max(dr.inner_width, d.drawer_look.cell.width + 2 * margin);
-    const area = Rect{ .min_x = margin, .min_y = margin, .max_x = width - margin, .max_y = width };
-    const found = icons.place.nextFree(area, d.drawer_look.cell, taken[0..count], dr.next_cell);
+    const found = icons.place.nextFree(gridArea(d, dr), d.drawer_look.cell, taken[0..count], dr.next_cell);
     dr.next_cell = found.index + 1;
+    dr.columns = columnsOf(d, dr);
     ic.putInCell(&d.drawer_look, found.at.x, found.at.y);
+}
+
+/// Whether an icon stays where it is when the desktop places the others:
+/// it lies where its file says, or it was moved there by hand.
+fn stays(ic: *const Icon) bool {
+    return ic.placed_by_file or ic.by_hand;
+}
+
+/// The area the desktop's grid is laid on: the view's width, or a cell's
+/// with its margins when the view is narrower; as deep as it is wide,
+/// which `nextFree` goes past as it needs.
+fn gridArea(d: *Desktop, dr: *const Drawer) Rect {
+    const width = @max(dr.inner_width, d.drawer_look.cell.width + 2 * margin);
+    return .{ .min_x = margin, .min_y = margin, .max_x = width - margin, .max_y = width };
+}
+
+/// How many cells across `gridArea` holds.
+fn columnsOf(d: *Desktop, dr: *const Drawer) i32 {
+    const area = gridArea(d, dr);
+    return @max(1, @divTrunc(area.max_x - area.min_x, d.drawer_look.cell.width));
+}
+
+/// Arrange on Resize: the icons the desktop placed put in the free cells
+/// along the rows again, in their order, for as many columns as the view
+/// now holds, round the icons that stay (`stays`) - when they were laid
+/// out for another number of columns, and the drawer shows icons.
+/// Whether any of them moved. Without the memory to list the icons that
+/// stay, every icon is left where it is.
+pub fn arrange(d: *Desktop, dr: *Drawer) bool {
+    if (dr.view != .icon) return false;
+    const columns = columnsOf(d, dr);
+    if (columns == dr.columns) return false;
+    const look = &d.drawer_look;
+    var staying: usize = 0;
+    var it = dr.icons.iterator();
+    while (it.next()) |node| {
+        if (stays(@alignCast(@fieldParentPtr("node", node)))) staying += 1;
+    }
+    const memory = d.sys.AllocVec(@max(staying, 1) * @sizeOf(Rect), exec.MEMF_ANY) orelse return false;
+    defer d.sys.FreeVec(memory);
+    const taken: [*]Rect = @ptrCast(@alignCast(memory));
+    var count: usize = 0;
+    it = dr.icons.iterator();
+    while (it.next()) |node| {
+        const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
+        if (!stays(ic)) continue;
+        taken[count] = ic.box(look);
+        count += 1;
+    }
+    dr.columns = columns;
+    const area = gridArea(d, dr);
+    var cell: i32 = 0;
+    var moved = false;
+    it = dr.icons.iterator();
+    while (it.next()) |node| {
+        const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
+        if (stays(ic)) continue;
+        const found = icons.place.nextFree(area, look.cell, taken[0..count], cell);
+        cell = found.index + 1;
+        const was = icons.Origin{ .x = ic.x, .y = ic.y };
+        ic.putInCell(look, found.at.x, found.at.y);
+        if (ic.x != was.x or ic.y != was.y) moved = true;
+    }
+    // A drawer still being read goes on after the last of them.
+    dr.next_cell = cell;
+    return moved;
+}
+
+/// Arrange on Resize switched on: every drawer's icons laid out for the
+/// window as wide as it is now, and drawn where they moved.
+pub fn arrangeAll(d: *Desktop) void {
+    var it = d.drawers.iterator();
+    while (it.next()) |node| {
+        const dr: *Drawer = @alignCast(@fieldParentPtr("node", node));
+        if (!arrange(d, dr)) continue;
+        _ = fit(d, dr);
+        drawInside(d, dr);
+    }
 }
 
 /// An icon moved in the drawer put in the free cell nearest where it was
@@ -999,14 +1085,25 @@ pub fn sortBy(d: *Desktop, dr: *Drawer, view: View) void {
 /// The window resized: the inside measured, the view kept on the ground,
 /// the bars set. Icons stay where they lie, so unless the view had to move
 /// to stay on the ground nothing they show changes - what the window grew
-/// by, and where its border was, comes as a refresh. Rows are laid out
-/// across the width, and are drawn again. A ribbon that folds to its row
-/// of tabs, or opens out again, as the window is sized across
-/// `ribbon.minimize_below` moves the view with it, which is drawn again.
+/// by, and where its border was, comes as a refresh - but with Arrange on
+/// Resize, where the view now holds another number of columns, the icons
+/// the desktop placed are laid out again across it (`arrange`) and drawn.
+/// Rows are laid out across the width, and are drawn again. A ribbon that
+/// folds to its row of tabs, or opens out again, as the window is sized
+/// across `ribbon.minimize_below` moves the view with it, which is drawn
+/// again.
 pub fn resized(d: *Desktop, dr: *Drawer) void {
-    if (ribbon.measureAgain(d, dr)) return;
-    const moved = fit(d, dr);
-    if (dr.view == .icon and !moved) return;
+    if (ribbon.measureAgain(d, dr)) {
+        if (d.prefs.arrange and arrange(d, dr)) {
+            _ = fit(d, dr);
+            drawInside(d, dr);
+        }
+        return;
+    }
+    var moved = fit(d, dr);
+    const arranged = d.prefs.arrange and arrange(d, dr);
+    if (arranged) moved = fit(d, dr) or moved;
+    if (dr.view == .icon and !moved and !arranged) return;
     if (dr.view != .icon) drawStrip(d, dr);
     drawInside(d, dr);
 }
@@ -1193,10 +1290,17 @@ pub fn box(d: *Desktop, dr: *Drawer) Rect {
 pub fn cleanUp(d: *Desktop, dr: *Drawer) void {
     if (dr.view != .icon) return;
     dr.next_cell = 0;
+    // Every place given up first - where a file says and where a hand
+    // left it - so that none is in the way of the rows.
     var it = dr.icons.iterator();
     while (it.next()) |node| {
         const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
         ic.placed_by_file = false;
+        ic.by_hand = false;
+    }
+    it = dr.icons.iterator();
+    while (it.next()) |node| {
+        const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
         place(d, dr, ic);
         ic.moved = true;
     }

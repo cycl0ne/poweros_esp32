@@ -101,6 +101,9 @@ pub const Icon = struct {
     /// and whether it was moved since, a place Snapshot would keep.
     placed_by_file: bool = false,
     moved: bool = false,
+    /// Whether it was moved by hand since the desktop placed it: Arrange
+    /// on Resize leaves it where it was let go.
+    by_hand: bool = false,
     selected: bool = false,
     /// What it stands for, to know it again: a volume's node.
     key: ?*anyopaque = null,

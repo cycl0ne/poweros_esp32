@@ -1,44 +1,110 @@
 // SPDX-License-Identifier: MIT
-//! About: the desktop's version, and what it runs on - the system's
-//! release, the board, the processor, the memory, all of it and how much
-//! is free, and the screen. Each is asked of the running system when the
-//! requester comes up, so it is the machine's now and not what the
-//! desktop was built for; one the system cannot answer is left out.
+//! About: a window of the desktop's name and version over what it runs
+//! on - the system's release and its kernel, the board, the processor,
+//! its cores and its clock, the memory and how much of it is in use, the
+//! screen, the system disk and how long the machine has been up. Each is
+//! asked of the running system when About is picked, so it is the
+//! machine's now and not what the desktop was built for; one the system
+//! cannot answer is left out.
+//!
+//! **The window** is on a process of its own, so the desktop goes on
+//! answering while it is up, and About picked while one is up does
+//! nothing more. Its rows are a label each and what it is, the labels
+//! lined up in a column, in a box under the desktop's name; the memory
+//! in use is a bar as well as a number. OK, its key, or the close gadget
+//! closes it. What it shows is gathered on the desktop's process, which
+//! has the libraries it is asked of, into the window's own block; the
+//! window's process opens only what draws it, and frees the block as it
+//! ends.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
+const dos = sdk.dos;
 const intuition = sdk.intuition;
 const utility = sdk.utility;
 const platform = sdk.resources.platform;
 const sc = intuition.screens;
+const wn = intuition.windows;
+const wc = intuition.windowclass;
+const lg = intuition.layoutgclass;
+const gc = intuition.gadgetclass;
+const classusr = intuition.classusr;
+const tx = sdk.gadgets.text;
+const fg = sdk.gadgets.fuelgauge;
+const timer = sdk.devices.timer;
+const ExecBase = sdk.interface.exec.ExecBase;
+const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const PlatformBase = sdk.interface.platform.PlatformBase;
+const TimerBase = sdk.interface.timer.TimerBase;
+const Object = intuition.Object;
 const TagItem = utility.TagItem;
+const _base = @import("../anvil_base.zig");
+const AnvilBase = _base.AnvilBase;
 const anvil_init = @import("../anvil_init.zig");
 const drawer_path = @import("../drawer/path.zig");
 const _desktop = @import("_desktop.zig");
 const Desktop = _desktop.Desktop;
 
-/// The requester's text as it is put together: NUL after it, since the
-/// buffer starts cleared and is never filled to its end.
-const Text = struct {
-    buffer: [640:0]u8 = @splat(0),
+/// The window's process, by the name it is found by while it runs.
+const process_name = "About Anvil";
+
+/// The most rows: release, kernel, board, processor, cores, clock, the
+/// memory and its two kinds, the screen, the system disk, the time up.
+const rows_max = 12;
+/// The bytes of a row's text, its NUL aside.
+const value_max = 63;
+
+const ID_OK = 1;
+
+/// One window's state, in one block its process frees as it ends.
+const About = struct {
+    base: *AnvilBase,
+    screen: ?*intuition.Screen = null,
+    /// The name and version over the box, as text.gadget's markup.
+    heading: [160:0]u8 = @splat(0),
+    labels: [rows_max][*:0]const u8 = undefined,
+    values: [rows_max][value_max + 1:0]u8 = @splat(@splat(0)),
+    lines: [rows_max]Line = undefined,
+    count: usize = 0,
+    /// The row the memory is on, and how much of it is in use in
+    /// hundredths; null for no bar.
+    memory_row: ?usize = null,
+    in_use: u32 = 0,
+
+    /// A row with its label, its text to be put together; null past
+    /// `rows_max`, and the row is left out.
+    fn row(about: *About, label: [*:0]const u8) ?*Line {
+        if (about.count == rows_max) return null;
+        const at = about.count;
+        about.count += 1;
+        about.labels[at] = label;
+        about.lines[at] = .{ .into = &about.values[at] };
+        return &about.lines[at];
+    }
+};
+
+/// A text as it is put together: cut at the end of `into`, which starts
+/// cleared and has its NUL past its end.
+const Line = struct {
+    into: []u8,
     length: usize = 0,
 
-    fn add(text: *Text, part: []const u8) void {
-        const take = @min(part.len, text.buffer.len - text.length);
-        @memcpy(text.buffer[text.length..][0..take], part[0..take]);
-        text.length += take;
+    fn add(line: *Line, part: []const u8) void {
+        const take = @min(part.len, line.into.len - line.length);
+        @memcpy(line.into[line.length..][0..take], part[0..take]);
+        line.length += take;
     }
 
-    fn addString(text: *Text, part: [*:0]const u8) void {
+    fn addString(line: *Line, part: [*:0]const u8) void {
         var length: usize = 0;
         while (part[length] != 0) length += 1;
-        text.add(part[0..length]);
+        line.add(part[0..length]);
     }
 
-    /// A count or a size in pixels: its digits alone, no commas.
-    fn number(text: *Text, value: u64) void {
+    /// A count, a size in pixels or a version's part: its digits alone,
+    /// no commas.
+    fn number(line: *Line, value: u64) void {
         var digits: [20]u8 = undefined;
         var count: usize = 0;
         var left = value;
@@ -48,127 +114,363 @@ const Text = struct {
             left /= 10;
             if (left == 0) break;
         }
-        text.add(digits[digits.len - count ..]);
+        line.add(digits[digits.len - count ..]);
     }
 
-    fn amount(text: *Text, bytes: u64) void {
+    fn amount(line: *Line, bytes: u64) void {
         var digits: [32]u8 = undefined;
-        text.add(digits[0..drawer_path.amount(&digits, bytes)]);
+        line.add(digits[0..drawer_path.amount(&digits, bytes)]);
     }
 };
 
-/// About's requester, over the desktop's own window.
-pub fn show(d: *Desktop) void {
-    var text: Text = .{};
-    text.add("Anvil ");
-    text.add(anvil_init.VERSION_TEXT);
-    text.add("\nThe PowerOS desktop\n");
-    if (d.sys.FindResident(sdk.release.RELEASE_RESIDENT)) |tag| {
-        if (tag.id_string) |id| {
-            text.add("\n");
-            text.addString(id);
-        }
-    }
-    board(d, &text);
-    processor(d, &text);
-    memory(d, &text);
-    screen(d, &text);
-    const easy = intuition.requesters.EasyStruct{
-        .title = "About Anvil",
-        .text_format = "%s",
-        .gadget_format = "OK",
-    };
-    const args = [_]usize{@intFromPtr(&text.buffer)};
-    _ = d.ib.EasyRequestArgs(d.backdrop, &easy, null, &args);
+fn pair(tag: utility.Tag, data: usize) TagItem {
+    return .{ .tag = tag, .data = data };
 }
 
-/// "Board: <name>", as the board's system tag list names it.
-fn board(d: *Desktop, text: *Text) void {
+/// About's window opened on the desktop's screen, on its process: what
+/// it shows gathered first. Nothing when one is up already, or there is
+/// no memory or no process.
+pub fn show(d: *Desktop) void {
+    if (d.sys.FindTask(process_name) != null) return;
+    const block = d.sys.AllocVec(@sizeOf(About), exec.MEMF_CLEAR) orelse return d.say("No memory for About");
+    const about: *About = @ptrCast(@alignCast(block));
+    about.* = .{ .base = d.base, .screen = d.screen };
+    gather(d, about);
+    _base.holdLibrary(d.base, 1);
+    const tags = [_]TagItem{
+        .{ .tag = dos.NP_Entry, .data = @intFromPtr(&aboutMain) },
+        .{ .tag = dos.NP_Name, .data = @intFromPtr(process_name) },
+        .{ .tag = dos.NP_StackSize, .data = 16384 },
+        .{ .tag = dos.NP_UserData, .data = @intFromPtr(about) },
+        .{ .tag = dos.NP_HoldLibrary, .data = @intFromPtr(&d.base.lib) },
+        .{},
+    };
+    if (d.dl.CreateNewProc(&tags) == null) {
+        _base.holdLibrary(d.base, -1);
+        d.sys.FreeVec(block);
+        d.say("No memory for About");
+    }
+}
+
+// --- what it shows ---------------------------------------------------------------
+
+/// Every row, in the order the window shows them, and the heading at the
+/// screen font's twice height.
+fn gather(d: *Desktop, about: *About) void {
+    heading(d, about);
+    release(d, about);
+    kernel(d, about);
+    board(d, about);
+    processor(d, about);
+    memory(d, about);
+    screen(d, about);
+    systemDisk(d, about);
+    upFor(d, about);
+}
+
+/// "Anvil", large, and under it its version and what it is.
+fn heading(d: *Desktop, about: *About) void {
+    var line = Line{ .into = &about.heading };
+    line.add("<b><s=");
+    line.number(headingSize(d));
+    line.add(">Anvil</></><br>The PowerOS desktop, ");
+    line.add(anvil_init.VERSION_TEXT);
+}
+
+/// Twice the screen font's height, the most a font is opened at for it.
+fn headingSize(d: *Desktop) u32 {
+    const shown = d.screen orelse return 16;
+    const draw_info = d.ib.GetScreenDrawInfo(shown);
+    defer d.ib.FreeScreenDrawInfo(shown, draw_info);
+    const font = draw_info.font orelse return 16;
+    return @max(@as(u32, font.image.height) * 2, 12);
+}
+
+/// "Release  PowerOS 0.2 (13.10.2026)": the system's ROM tag.
+fn release(d: *Desktop, about: *About) void {
+    const tag = d.sys.FindResident(sdk.release.RELEASE_RESIDENT) orelse return;
+    const id = tag.id_string orelse return;
+    const line = about.row("Release") orelse return;
+    line.addString(id);
+}
+
+/// "Kernel  exec.library 1.33".
+fn kernel(d: *Desktop, about: *About) void {
+    const lib = d.sys.lib();
+    const line = about.row("Kernel") orelse return;
+    line.add("exec.library ");
+    line.number(lib.version);
+    line.add(".");
+    line.number(lib.revision);
+}
+
+/// "Board  Waveshare ESP32-S3-Touch-LCD-7B", as the board's system tag
+/// list names it.
+fn board(d: *Desktop, about: *About) void {
     const library = d.sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return;
     defer d.sys.CloseLibrary(library);
     const eb: *ExpansionBase = @ptrCast(library);
     const name = d.ub.GetTagData(sdk.expansion.systemtags.SYSTAG_Name, 0, eb.SystemTags());
     if (name == 0) return;
-    text.add("\nBoard: ");
-    text.addString(@ptrFromInt(name));
+    const line = about.row("Board") orelse return;
+    line.addString(@ptrFromInt(name));
 }
 
-/// "Processor: ESP32-S3, 2 Xtensa LX7 cores at 240 MHz": the chip and its
-/// core as platform.resource names them, how many cores the machine runs
-/// on, and the clock as measured.
-fn processor(d: *Desktop, text: *Text) void {
+/// "Processor  ESP32-S3", "Cores  2 Xtensa LX7", "Clock  240 MHz": the
+/// chip and its core as platform.resource names them, how many cores
+/// the machine runs on, and the clock as measured.
+fn processor(d: *Desktop, about: *About) void {
     const resource = d.sys.OpenResource(platform.PLATFORMNAME) orelse return;
     const pr: *PlatformBase = @ptrCast(@alignCast(resource));
     var info: platform.PlatformInfo = .{};
     _ = pr.GetPlatformInfo(&info, @sizeOf(platform.PlatformInfo));
+    if (about.row("Processor")) |line| line.addString(pr.PlatformName());
     // What the machine says it runs on, not a number counted up to a
     // ceiling of this file's own: a machine with sixteen cores has
     // sixteen.
     const cores = d.sys.CoreCount();
-    text.add("\nProcessor: ");
-    text.addString(pr.PlatformName());
-    if (info.core) |core| {
-        text.add(", ");
-        if (cores > 0) {
-            text.number(cores);
-            text.add(" ");
+    if (cores > 0 or info.core != null) {
+        if (about.row("Cores")) |line| {
+            if (cores > 0) line.number(cores);
+            if (info.core) |core| {
+                if (cores > 0) line.add(" ");
+                line.addString(core);
+            }
         }
-        text.addString(core);
-        text.add(if (cores > 1) " cores" else " core");
     }
-    text.add(" at ");
-    text.number(pr.CpuClock() / 1_000_000);
-    text.add(" MHz");
+    const hz = pr.CpuClock();
+    if (hz == 0) return;
+    const line = about.row("Clock") orelse return;
+    line.number(hz / 1_000_000);
+    line.add(" MHz");
 }
 
-/// "Memory: 8,703K, 5,685K free" - all there is, and how much of it is
-/// free - then the internal memory and the PSRAM apart, the PSRAM only
-/// where the board has some. On a machine whose RAM is one kind
-/// (`Desktop.unified`) every region is both, so the line of all of it is
-/// the whole story.
-fn memory(d: *Desktop, text: *Text) void {
-    if (d.unified) {
-        text.add("\nMemory: ");
-        text.amount(d.sys.AvailMem(exec.MEMF_ANY | exec.MEMF_TOTAL));
-        text.add(", ");
-        text.amount(d.sys.AvailMem(exec.MEMF_ANY));
-        text.add(" free");
-        return;
-    }
-    const internal_total = d.sys.AvailMem(exec.MEMF_INTERNAL | exec.MEMF_TOTAL);
-    const internal_free = d.sys.AvailMem(exec.MEMF_INTERNAL);
-    const external_total = d.sys.AvailMem(exec.MEMF_EXTERNAL | exec.MEMF_TOTAL);
-    const external_free = d.sys.AvailMem(exec.MEMF_EXTERNAL);
-    text.add("\nMemory: ");
-    text.amount(internal_total + external_total);
-    text.add(", ");
-    text.amount(internal_free + external_free);
-    text.add(" free\nInternal ");
-    text.amount(internal_total);
-    text.add(", ");
-    text.amount(internal_free);
-    text.add(" free");
-    if (external_total != 0) {
-        text.add("; PSRAM ");
-        text.amount(external_total);
-        text.add(", ");
-        text.amount(external_free);
-        text.add(" free");
-    }
+/// "Memory  8,703K, 5,685K free" - all there is, and how much of it is
+/// free - with a bar of how much is in use under it; then the internal
+/// memory and the PSRAM apart, the PSRAM only where the board has some.
+/// On a machine whose RAM is one kind (`Desktop.unified`) every region is
+/// both, so the line of all of it is the whole story.
+fn memory(d: *Desktop, about: *About) void {
+    const sys = d.sys;
+    const total = if (d.unified) sys.AvailMem(exec.MEMF_ANY | exec.MEMF_TOTAL) else sys.AvailMem(exec.MEMF_INTERNAL | exec.MEMF_TOTAL) + sys.AvailMem(exec.MEMF_EXTERNAL | exec.MEMF_TOTAL);
+    const free = if (d.unified) sys.AvailMem(exec.MEMF_ANY) else sys.AvailMem(exec.MEMF_INTERNAL) + sys.AvailMem(exec.MEMF_EXTERNAL);
+    if (total == 0) return;
+    const line = about.row("Memory") orelse return;
+    line.amount(total);
+    line.add(", ");
+    line.amount(free);
+    line.add(" free");
+    about.memory_row = about.count - 1;
+    const used = total -| free;
+    about.in_use = @intCast(@min(used * 100 / total, 100));
+    if (d.unified) return;
+    kind(about, "Internal", sys.AvailMem(exec.MEMF_INTERNAL | exec.MEMF_TOTAL), sys.AvailMem(exec.MEMF_INTERNAL));
+    const external = sys.AvailMem(exec.MEMF_EXTERNAL | exec.MEMF_TOTAL);
+    if (external != 0) kind(about, "PSRAM", external, sys.AvailMem(exec.MEMF_EXTERNAL));
 }
 
-/// "Screen: 1024 x 600, 16 bits a pixel": the desktop's screen.
-fn screen(d: *Desktop, text: *Text) void {
+/// A kind of memory's row: how much there is, how much is free.
+fn kind(about: *About, label: [*:0]const u8, total: u64, free: u64) void {
+    const line = about.row(label) orelse return;
+    line.amount(total);
+    line.add(", ");
+    line.amount(free);
+    line.add(" free");
+}
+
+/// "Screen  1024 x 600, 16 bits a pixel": the desktop's screen.
+fn screen(d: *Desktop, about: *About) void {
     const shown = d.screen orelse return;
     var depth: usize = 0;
     d.ib.GetScreenAttrs(shown, &[_]TagItem{ .{ .tag = sc.SA_Depth, .data = @intFromPtr(&depth) }, .{} });
-    text.add("\nScreen: ");
-    text.number(@intCast(d.screen_width));
-    text.add(" x ");
-    text.number(@intCast(d.screen_height));
+    const line = about.row("Screen") orelse return;
+    line.number(@intCast(d.screen_width));
+    line.add(" x ");
+    line.number(@intCast(d.screen_height));
     if (depth != 0) {
-        text.add(", ");
-        text.number(depth);
-        text.add(" bits a pixel");
+        line.add(", ");
+        line.number(depth);
+        line.add(" bits a pixel");
+    }
+}
+
+/// "System disk  System, 1,204M of 3,840M free": the disk SYS: is on,
+/// by its name, and how much of it is free.
+fn systemDisk(d: *Desktop, about: *About) void {
+    const lock = d.dl.Lock("SYS:", dos.SHARED_LOCK) orelse return;
+    defer d.dl.UnLock(lock);
+    var name: [dos.path_max + 1:0]u8 = @splat(0);
+    if (!d.dl.NameFromLock(lock, &name, name.len)) return;
+    var length: usize = 0;
+    while (name[length] != 0) length += 1;
+    const line = about.row("System disk") orelse return;
+    line.add(drawer_path.lastPart(name[0..length]));
+    var info: dos.InfoData = .{};
+    if (!d.dl.Info(lock, &info) or info.bytes_per_block == 0) return;
+    const block: u64 = info.bytes_per_block;
+    line.add(", ");
+    line.amount((info.num_blocks -| info.num_blocks_used) * block);
+    line.add(" of ");
+    line.amount(info.num_blocks * block);
+    line.add(" free");
+}
+
+/// "Up for  2 days 3 h 12 min": the time since the machine started, as
+/// timer.device's E-clock counts it from then.
+fn upFor(d: *Desktop, about: *About) void {
+    if (!d.clock_open) return;
+    const device = d.clock.node.device orelse return;
+    const tb: *TimerBase = @ptrCast(@alignCast(device));
+    var clock: timer.EClockVal = .{};
+    const rate = tb.ReadEClock(&clock);
+    if (rate == 0) return;
+    const minutes = clock.toTicks() / rate / 60;
+    const line = about.row("Up for") orelse return;
+    const days = minutes / (24 * 60);
+    const hours = minutes / 60 % 24;
+    if (days > 0) {
+        line.number(days);
+        line.add(if (days == 1) " day " else " days ");
+    }
+    if (days > 0 or hours > 0) {
+        line.number(hours);
+        line.add(" h ");
+    }
+    line.number(minutes % 60);
+    line.add(" min");
+}
+
+// --- the window --------------------------------------------------------------------
+
+/// The window's process: the window shown and answered, its block freed.
+fn aboutMain(sys: *ExecBase) callconv(.c) void {
+    const me = sys.FindTask(null).?;
+    const about: *About = @ptrCast(@alignCast(me.user_data orelse return));
+    defer sys.FreeVec(about);
+    const intuition_lib = sys.OpenLibrary(intuition.INTUITIONNAME, 0) orelse return;
+    defer sys.CloseLibrary(intuition_lib);
+    const text_lib = sys.OpenLibrary(tx.TEXT_LIBRARY, 0) orelse return;
+    defer sys.CloseLibrary(text_lib);
+    // Without the bar's class the memory is its row alone.
+    const gauge_lib = sys.OpenLibrary(fg.GAUGE_LIBRARY, 0);
+    defer if (gauge_lib) |lib| sys.CloseLibrary(lib);
+    if (gauge_lib == null) about.memory_row = null;
+    window(about, @ptrCast(intuition_lib));
+}
+
+/// Tags put together for a layout, cut at their end.
+const Tags = struct {
+    tags: [3 * rows_max + 16]TagItem = undefined,
+    count: usize = 0,
+
+    fn tag(tags: *Tags, tag_id: utility.Tag, data: usize) void {
+        if (tags.count + 1 >= tags.tags.len) return;
+        tags.tags[tags.count] = pair(tag_id, data);
+        tags.count += 1;
+    }
+
+    fn end(tags: *Tags) []const TagItem {
+        tags.tags[tags.count] = .{};
+        return tags.tags[0 .. tags.count + 1];
+    }
+};
+
+/// The window made and answered until OK or its close gadget; everything
+/// it was made of gone with it.
+fn window(about: *About, ib: *IntuitionBase) void {
+    var box: Tags = .{};
+    box.tag(lg.LAYOUTA_Orientation, lg.LORIENT_VERT);
+    box.tag(lg.LAYOUTA_Frame, 1);
+    box.tag(lg.LAYOUTA_Margin, 8);
+    // The gap between the rows, and between the labels and what they
+    // name.
+    box.tag(lg.LAYOUTA_Spacing, 6);
+    for (0..about.count) |at| {
+        const value = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&about.values[at])), .{} });
+        box.tag(lg.LAYOUTA_AddChild, @intFromPtr(value));
+        box.tag(lg.CHILDA_Label, @intFromPtr(about.labels[at]));
+        box.tag(lg.CHILDA_WeightHeight, 0);
+        if (about.memory_row != at) continue;
+        const bar = ib.NewObjectTagList(null, fg.GAUGE_CLASS, &[_]TagItem{
+            pair(fg.GAUGE_Level, about.in_use),
+            pair(fg.GAUGE_Percent, 1),
+            pair(fg.GAUGE_Format, @intFromPtr("%ld%%")),
+            .{},
+        });
+        box.tag(lg.LAYOUTA_AddChild, @intFromPtr(bar));
+        box.tag(lg.CHILDA_Label, @intFromPtr("In use"));
+        box.tag(lg.CHILDA_WeightHeight, 0);
+    }
+    const machine = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, box.end().ptr);
+
+    const title = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        pair(tx.TEXT_Text, @intFromPtr(&about.heading)),
+        pair(tx.TEXT_Markup, 1),
+        pair(tx.TEXT_Justification, tx.TEXT_JUSTIFY_CENTER),
+        .{},
+    });
+    const ok = ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        pair(gc.GA_Text, @intFromPtr("_OK")),
+        pair(gc.GA_ID, ID_OK),
+        pair(gc.GA_RelVerify, 1),
+        .{},
+    });
+    const buttons = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ),
+        pair(lg.LAYOUTA_AddSpace, 0),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(ok)),
+        pair(lg.CHILDA_MinWidth, 96),
+        pair(lg.LAYOUTA_AddSpace, 0),
+        .{},
+    });
+    const layout = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        pair(lg.LAYOUTA_Orientation, lg.LORIENT_VERT),
+        pair(lg.LAYOUTA_Margin, 8),
+        pair(lg.LAYOUTA_Spacing, 8),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(title)),
+        pair(lg.CHILDA_WeightHeight, 0),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(machine)),
+        pair(lg.CHILDA_WeightHeight, 0),
+        pair(lg.CHILDA_MinWidth, 300),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(buttons)),
+        pair(lg.CHILDA_WeightHeight, 0),
+        .{},
+    }) orelse return;
+    const window_object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+        pair(wn.WA_Title, @intFromPtr(process_name)),
+        pair(wn.WA_DragBar, 1),
+        pair(wn.WA_DepthGadget, 1),
+        pair(wn.WA_CloseGadget, 1),
+        pair(wn.WA_Activate, 1),
+        pair(wn.WA_Position, wn.WPOS_CENTERSCREEN),
+        pair(if (about.screen != null) wn.WA_CustomScreen else utility.TAG_IGNORE, @intFromPtr(about.screen)),
+        pair(wc.WINDOWA_Layout, @intFromPtr(layout)),
+        .{},
+    }) orelse {
+        ib.DisposeObject(layout);
+        return;
+    };
+    // The window object disposes of its layout, and the layout of its
+    // gadgets.
+    defer ib.DisposeObject(window_object);
+    var opening = wc.WmOpen{};
+    if (ib.SendMessage(window_object, @ptrCast(&opening)) == 0) return;
+    var window_ptr: usize = 0;
+    _ = ib.GetAttr(wc.WINDOWA_Window, window_object, &window_ptr);
+    const shown: *intuition.Window = @ptrFromInt(window_ptr);
+
+    var code: u32 = 0;
+    var handle = wc.WmHandleInput{ .code = &code };
+    while (true) {
+        _ = ib.WaitIMsg(shown, 0);
+        while (true) {
+            const word = ib.SendMessage(window_object, @ptrCast(&handle));
+            if (word == wc.WMHI_LASTMSG) break;
+            switch (word & wc.WMHI_CLASSMASK) {
+                wc.WMHI_CLOSEWINDOW => return,
+                wc.WMHI_GADGETUP => if (word & wc.WMHI_GADGETMASK == ID_OK) return,
+                else => {},
+            }
+        }
     }
 }

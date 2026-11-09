@@ -19,7 +19,8 @@
 //! numbers, highlighting, replace and select all. Since 1.6 a file
 //! manager's: the parent, a new drawer, rename, delete, information,
 //! update, the views (icons, a list, by date, by size), all files, clean
-//! up, snap to the grid, snapshot, back and forward, and a shell.
+//! up, snap to the grid, snapshot, back and forward, and a shell. Since
+//! 1.8 icons laid out again as their window is sized.
 //!
 //! `IM_DRAWFRAME` draws the picture in the largest square that fits the
 //! box, in its middle; `IM_DRAW` in the image's own box, 24 by 24 unless
@@ -178,5 +179,8 @@ pub const CMD_FORWARD: u32 = 54;
 /// A console: a dark window, a green prompt and the cursor after it.
 /// Since 1.6.
 pub const CMD_SHELL: u32 = 55;
+/// A window with its icons in rows, and the arrow out of its corner that
+/// sizes it: icons laid out again as the window is sized. Since 1.8.
+pub const CMD_ARRANGE: u32 = 56;
 /// The last picture there is.
-pub const CMD_LAST: u32 = CMD_SHELL;
+pub const CMD_LAST: u32 = CMD_ARRANGE;

@@ -156,7 +156,7 @@ test "anvil.prefs: a line read, its picture quoted, written back" {
     const ub = try utilityUp();
     defer kexec.deinit();
     var settings: prefs.anvil.Settings = .{};
-    try testing.expect(prefs.anvil.parse(ub, "ground=#3A5F8A..#14253A PICTURE=\"SYS:Prefs/Sea Side.png\" place=scaled ICONSIZE=64 VIEW=name snap=yes newwindow=YES ribbon=no", &settings) == null);
+    try testing.expect(prefs.anvil.parse(ub, "ground=#3A5F8A..#14253A PICTURE=\"SYS:Prefs/Sea Side.png\" place=scaled ICONSIZE=64 VIEW=name snap=yes newwindow=YES ribbon=no arrange=no", &settings) == null);
     try testing.expect(settings.ground_given);
     try testing.expect(settings.shaded());
     try testing.expectEqual(@as(u32, 0xFF3A_5F8A), settings.top);
@@ -168,9 +168,10 @@ test "anvil.prefs: a line read, its picture quoted, written back" {
     try testing.expect(settings.snap);
     try testing.expect(settings.new_window);
     try testing.expect(!settings.ribbon);
-    var out: [240]u8 = undefined;
+    try testing.expect(!settings.arrange);
+    var out: [256]u8 = undefined;
     const written = out[0..prefs.anvil.write(&settings, &out)];
-    try testing.expectEqualStrings("GROUND=#3A5F8A..#14253A PICTURE=\"SYS:Prefs/Sea Side.png\" PLACE=SCALED ICONSIZE=64 VIEW=NAME SNAP=YES NEWWINDOW=YES RIBBON=NO", written);
+    try testing.expectEqualStrings("GROUND=#3A5F8A..#14253A PICTURE=\"SYS:Prefs/Sea Side.png\" PLACE=SCALED ICONSIZE=64 VIEW=NAME SNAP=YES NEWWINDOW=YES RIBBON=NO ARRANGE=NO", written);
     var again: prefs.anvil.Settings = .{};
     try testing.expect(prefs.anvil.parse(ub, written, &again) == null);
     try testing.expectEqualSlices(u8, std.mem.asBytes(&settings), std.mem.asBytes(&again));
@@ -180,9 +181,9 @@ test "anvil.prefs: a line read, its picture quoted, written back" {
     try testing.expect(prefs.anvil.parse(ub, "GROUND=#336699 PICTURE=NONE", &plain) == null);
     try testing.expect(!plain.shaded());
     try testing.expect(plain.pictureName() == null);
-    try testing.expectEqualStrings("GROUND=#336699 PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES", out[0..prefs.anvil.write(&plain, &out)]);
+    try testing.expectEqualStrings("GROUND=#336699 PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES ARRANGE=YES", out[0..prefs.anvil.write(&plain, &out)]);
     // Left out entirely, the ground is the screen's pen and is not written.
-    try testing.expectEqualStrings("PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES", out[0..prefs.anvil.write(&prefs.anvil.Settings{}, &out)]);
+    try testing.expectEqualStrings("PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES ARRANGE=YES", out[0..prefs.anvil.write(&prefs.anvil.Settings{}, &out)]);
     try testing.expectEqual(@as(?[2]u32, null), prefs.anvil.groundOf("#33669"));
     try testing.expectEqual(@as(?[2]u32, .{ 0xFF33_6699, 0xFF00_0000 }), prefs.anvil.groundOf("#336699..#000000"));
 
@@ -197,6 +198,14 @@ test "anvil.prefs: a line read, its picture quoted, written back" {
     try testing.expect(prefs.anvil.parse(ub, "WALLPAPER=x", &plain) != null);
     try testing.expect(prefs.anvil.parse(ub, "SNAP=SOMETIMES", &plain) != null);
     try testing.expect(prefs.anvil.parse(ub, "RIBBON=MAYBE", &plain) != null);
+    try testing.expect(prefs.anvil.parse(ub, "ARRANGE=MAYBE", &plain) != null);
+
+    // The longest line there can be fits the room its writers give it.
+    var longest: prefs.anvil.Settings = .{ .top = 0xFF11_2233, .bottom = 0xFF44_5566, .ground_given = true, .place = .centred, .icon_size = 256, .snap = true, .new_window = true };
+    var name: [prefs.anvil.picture_max]u8 = @splat('x');
+    name[3] = ' ';
+    try testing.expect(longest.setPicture(&name));
+    try testing.expect(prefs.anvil.write(&longest, &out) < out.len);
     try utilityDown(ub);
 }
 

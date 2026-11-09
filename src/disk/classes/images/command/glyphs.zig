@@ -73,6 +73,7 @@ pub fn draw(p: *Painter, glyph: u32) void {
         command.CMD_BACK => drawBack(p),
         command.CMD_FORWARD => drawForward(p),
         command.CMD_SHELL => drawShell(p),
+        command.CMD_ARRANGE => drawArrange(p),
         command.CMD_LAUNCHER => drawLauncher(p),
         else => {},
     }
@@ -494,6 +495,24 @@ noinline fn drawShell(p: *Painter) void {
     const prompt = shapes.Paint{ .colour = shapes.tones(.green).light };
     p.fill(p.poly(&.{ .{ 16, 30 }, .{ 28, 30 }, .{ 46, 50 }, .{ 28, 70 }, .{ 16, 70 }, .{ 34, 50 } }), prompt);
     p.fill(p.rr(52, 62, 76, 70, 1), prompt);
+}
+
+noinline fn drawArrange(p: *Painter) void {
+    // The window and its title bar, its icons in two rows, and the arrow
+    // out of its corner that sizes it.
+    p.solid(&.{p.rr(4, 6, 80, 80, 6)}, .metal, .{});
+    p.solid(&.{p.rr(4, 6, 80, 20, 6)}, .blue, .{ .no_shadow = true });
+    var cells: [6]Shape = undefined;
+    for (0..6) |i| {
+        const x = 12 + @as(f32, @floatFromInt(i % 3)) * 19;
+        const y = 28 + @as(f32, @floatFromInt(i / 3)) * 19;
+        cells[i] = p.rr(x, y, x + 13, y + 13, 3);
+    }
+    p.solid(&cells, .yellow, .{ .no_shadow = true, .no_gloss = true });
+    p.ink(&.{
+        p.poly(&shapes.bar(66, 66, 84, 84, 10)),
+        p.poly(&.{ .{ 98, 70 }, .{ 98, 98 }, .{ 70, 98 } }),
+    });
 }
 
 /// The box's top and left edge, and the arrow out of its corner,

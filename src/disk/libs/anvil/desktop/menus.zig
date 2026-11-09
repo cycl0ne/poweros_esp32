@@ -23,6 +23,8 @@ pub const ITEM_LAST_MESSAGE = 4;
 pub const ITEM_VOLUME = 6;
 pub const ITEM_ABOUT = 7;
 pub const ITEM_QUIT = 9;
+/// The machine started again, every drive held still first.
+pub const ITEM_REBOOT = 10;
 
 // Window
 pub const ITEM_NEW_DRAWER = 0;
@@ -37,11 +39,14 @@ pub const ITEM_SELECT_CONTENTS = 8;
 pub const ITEM_CLEAN_UP = 9;
 pub const ITEM_CLEAN_UP_BY = 10;
 pub const ITEM_SNAP_TO_GRID = 11;
-pub const ITEM_SNAPSHOT_WINDOW = 13;
-pub const ITEM_SHOW = 14;
-pub const ITEM_VIEW_BY = 15;
+/// The icons the desktop placed laid out again as a drawer's window is
+/// sized.
+pub const ITEM_ARRANGE = 12;
+pub const ITEM_SNAPSHOT_WINDOW = 14;
+pub const ITEM_SHOW = 15;
+pub const ITEM_VIEW_BY = 16;
 /// Every drawer's window with its ribbon, or none.
-pub const ITEM_RIBBON = 17;
+pub const ITEM_RIBBON = 18;
 /// Clean Up By's subitems.
 pub const SUB_CLEAN_BY_NAME = 0;
 pub const SUB_CLEAN_BY_DATE = 1;
@@ -94,6 +99,7 @@ pub const table = [_]mn.NewMenu{
     item("About...", null, 0),
     bar,
     item("Quit...", "Q", 0),
+    item("Reboot...", null, 0),
 
     .{ .type = mn.NM_TITLE, .label = "Window" },
     item("New Drawer", "N", 0),
@@ -111,6 +117,7 @@ pub const table = [_]mn.NewMenu{
     sub("Date", 0, 0),
     sub("Size", 0, 0),
     item("Snap to Grid", null, mn.CHECKIT | mn.MENUTOGGLE),
+    item("Arrange on Resize", null, mn.CHECKIT | mn.MENUTOGGLE | mn.CHECKED),
     bar,
     item("Snapshot", null, 0),
     sub("Window", 0, 0),

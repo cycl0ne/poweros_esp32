@@ -5,7 +5,8 @@
 //! to the icons picked - Open, Rename,
 //! Delete, Information, Copy (Icons); View has the views (View: icons, or
 //! a list by name, date or size, the one shown checked), all files or
-//! only icons (Show), and Clean Up, Snap to Grid and Snapshot (Arrange).
+//! only icons (Show), and Clean Up, Snap to Grid, Arrange on Resize and
+//! Snapshot (Arrange).
 //!
 //! It is made from `table` with `rb.build` when the window opens: a gadget
 //! of the inside at its top, as wide as the inside, as high as it says it
@@ -77,6 +78,7 @@ pub const Command = enum(u32) {
     back,
     forward,
     shell,
+    arrange,
 };
 
 /// The first command's gadget ID, above the bars'.
@@ -97,7 +99,7 @@ pub fn bit(which: Command) u32 {
 /// Whether `which`'s button is a toggle: checked while what it says is so.
 pub fn isToggle(which: Command) bool {
     return switch (which) {
-        .by_icon, .by_name, .by_date, .by_size, .all_files, .snap => true,
+        .by_icon, .by_name, .by_date, .by_size, .all_files, .snap, .arrange => true,
         else => false,
     };
 }
@@ -140,6 +142,7 @@ pub const table = [_]rb.NewRibbon{
     group("Arrange", command.CMD_CLEAN_UP, 2),
     button(rb.RB_LARGE, .clean_up, "Clean Up", command.CMD_CLEAN_UP),
     button(rb.RB_MEDIUM, .snap, "Snap to Grid", command.CMD_SNAP_GRID),
+    button(rb.RB_MEDIUM, .arrange, "Arrange on Resize", command.CMD_ARRANGE),
     button(rb.RB_MEDIUM, .snapshot, "Snapshot", command.CMD_SNAPSHOT),
     .{ .type = rb.RB_END },
 };
@@ -164,10 +167,18 @@ pub const Went = struct {
     forward: bool = false,
 };
 
+/// The prefs' switches a drawer's toggles show, as the Window menu's
+/// marks do.
+pub const Switches = struct {
+    snap: bool = false,
+    arrange: bool = false,
+};
+
 /// What a drawer's buttons are to show: viewed as `view`, all files shown
-/// or not, a disk's root or a drawer, the grid snapped to or not, what is
-/// picked, and whether the window can go back or forward.
-pub fn stateOf(view: View, show_all: bool, is_volume: bool, snap: bool, picked: Picked, went: Went) State {
+/// or not, a disk's root or a drawer, the grid snapped to or not and the
+/// icons arranged as the window is sized or not, what is picked, and
+/// whether the window can go back or forward.
+pub fn stateOf(view: View, show_all: bool, is_volume: bool, switches: Switches, picked: Picked, went: Went) State {
     var state = State{};
     const offs = [_]struct { which: Command, off: bool }{
         .{ .which = .back, .off = !went.back },
@@ -190,7 +201,8 @@ pub fn stateOf(view: View, show_all: bool, is_volume: bool, snap: bool, picked: 
         .size => .by_size,
     });
     if (show_all) state.on |= bit(.all_files);
-    if (snap) state.on |= bit(.snap);
+    if (switches.snap) state.on |= bit(.snap);
+    if (switches.arrange) state.on |= bit(.arrange);
     return state;
 }
 
@@ -317,6 +329,7 @@ pub fn pressed(d: *Desktop, dr: *Drawer, id: u32, code: u32) void {
         .all_files => _drawer.showAs(d, dr, dr.view, code != 0),
         .clean_up => commands.cleanUp(d, dr),
         .snap => commands.snapToGrid(d, code != 0),
+        .arrange => commands.arrangeOnResize(d, code != 0),
         .snapshot => commands.snapshotWindow(d, dr, false),
     }
 }

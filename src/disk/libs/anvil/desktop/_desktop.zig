@@ -33,6 +33,9 @@
 //! **Once it is up** it starts the programs of its startup drawer
 //! (`startup.zig`), and goes on answering while it waits for them.
 //!
+//! **Reboot**, picked and confirmed, starts the machine again from the
+//! desktop (`commands.reboot`).
+//!
 //! **It ends** when Quit is picked and confirmed, or on CTRL-C: each
 //! program is told that what it added goes (`AMTYPE_QUIT`), what it added
 //! is let go of, and everything goes in the reverse of the order it came.
@@ -86,6 +89,7 @@ const run_area = @import("run.zig");
 const app_area = @import("app.zig");
 const open_area = @import("open.zig");
 const startup_area = @import("startup.zig");
+const work_area = @import("work.zig");
 const about_area = @import("about.zig");
 const scene = @import("scene.zig");
 
@@ -227,6 +231,9 @@ pub const Desktop = struct {
     title: [96:0]u8 = @splat(0),
     /// Programs it started that still run.
     running: u32 = 0,
+    /// The process copying and deleting, whose list a job picked now
+    /// goes on; null while there is none (`work.queue`).
+    work: ?*work_area.Work = null,
     /// What programs add: the signal the desktop is told with, the port
     /// their replies come to and how many are still out, and the Tools
     /// menu's items.
@@ -906,6 +913,7 @@ pub const Desktop = struct {
                     menus.ITEM_VOLUME => commands.openVolume(d),
                     menus.ITEM_ABOUT => about_area.show(d),
                     menus.ITEM_QUIT => d.askQuit(),
+                    menus.ITEM_REBOOT => commands.reboot(d),
                     else => {},
                 },
                 menus.MENU_WINDOW => d.windowItem(window, number),
@@ -929,6 +937,7 @@ pub const Desktop = struct {
                 menus.ITEM_CLEAN_UP => commands.cleanUp(d, null),
                 menus.ITEM_CLEAN_UP_BY => commands.cleanUpBy(d, null, mn.SUBNUM(number)),
                 menus.ITEM_SNAP_TO_GRID => commands.snapToGrid(d, d.isChecked(number)),
+                menus.ITEM_ARRANGE => commands.arrangeOnResize(d, d.isChecked(number)),
                 menus.ITEM_RIBBON => commands.showRibbons(d, d.isChecked(number)),
                 else => {},
             }
@@ -939,6 +948,7 @@ pub const Desktop = struct {
             menus.ITEM_CLEAN_UP => commands.cleanUp(d, dr),
             menus.ITEM_CLEAN_UP_BY => commands.cleanUpBy(d, dr, mn.SUBNUM(number)),
             menus.ITEM_SNAP_TO_GRID => commands.snapToGrid(d, d.isChecked(number)),
+            menus.ITEM_ARRANGE => commands.arrangeOnResize(d, d.isChecked(number)),
             menus.ITEM_RIBBON => commands.showRibbons(d, d.isChecked(number)),
             menus.ITEM_SNAPSHOT_WINDOW => commands.snapshotWindow(d, dr, mn.SUBNUM(number) == menus.SUB_SNAPSHOT_ALL),
             menus.ITEM_SELECT_CONTENTS => select.contents(d, dr),
@@ -1005,6 +1015,7 @@ pub const Desktop = struct {
             const ended: *run_area.Ended = @fieldParentPtr("message", message);
             d.running -|= 1;
             startup_area.ended(d, ended);
+            work_area.ended(d, ended);
             d.sys.FreeVec(ended);
         }
     }
@@ -1048,14 +1059,16 @@ pub const Desktop = struct {
     }
 
     /// anvil.prefs read again after it changed: whether the desktop has
-    /// to be made anew. A change of SNAP or RIBBON - by Prefs; the Window
-    /// menu's own writing finds them as the desktop has them - is taken
-    /// as it is: its mark set, and for RIBBON every drawer's ribbon put in
-    /// or taken out.
+    /// to be made anew. A change of SNAP, RIBBON or ARRANGE - by Prefs;
+    /// the Window menu's own writing finds them as the desktop has them -
+    /// is taken as it is: its mark set, for RIBBON every drawer's ribbon
+    /// put in or taken out, and for ARRANGE switched on every drawer's
+    /// icons laid out for its window.
     fn lookChanged(d: *Desktop) bool {
         const was = d.prefs;
         d.readPrefs();
         if (was.ribbon != d.prefs.ribbon) drawer_ribbon.followAll(d);
+        if (!was.arrange and d.prefs.arrange) drawer.arrangeAll(d);
         commands.rethink(d, d.active_window);
         return !anvil_prefs.sameLook(&was, &d.prefs);
     }
@@ -1133,8 +1146,10 @@ pub const Desktop = struct {
         while (d.running > 0) {
             _ = d.sys.WaitPort(port);
             while (d.sys.GetMsg(port)) |message| {
+                const ended: *run_area.Ended = @fieldParentPtr("message", message);
                 d.running -|= 1;
-                d.sys.FreeVec(@as(*run_area.Ended, @fieldParentPtr("message", message)));
+                work_area.ended(d, ended);
+                d.sys.FreeVec(ended);
             }
         }
     }

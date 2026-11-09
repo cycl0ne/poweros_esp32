@@ -20,7 +20,10 @@
 #           window of its own either way.
 # RIBBON    YES for a ribbon across the top of each drawer's
 #           window, the drawer's commands as buttons; NO for none.
+# ARRANGE   YES to lay the icons the desktop placed in a drawer's
+#           window out again as the window is sized; NO to leave
+#           them where they lie.
 #
 # One left out keeps the desktop's own. These are its own:
 #
-# PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES
+# PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES ARRANGE=YES

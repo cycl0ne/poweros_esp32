@@ -26,6 +26,7 @@ const startup = @import("../desktop/startup.zig");
 const work = @import("../desktop/work.zig");
 const icons = @import("../icons/_icons.zig");
 const kexec = @import("host_rom").exec;
+const anvil_prefs = sdk.prefs.anvil;
 const Rect = graphics.Rect;
 
 const testing = std.testing;
@@ -380,7 +381,7 @@ test "a drawer's ribbon: a button for each command, found by its ID; off and che
     // A disk's root as icons, all files, the grid snapped to, nothing
     // picked: Parent off, the Icons commands off, Icons, All Files and
     // Snap to Grid checked.
-    const root = ribbon.stateOf(.icon, true, true, true, .{}, .{});
+    const root = ribbon.stateOf(.icon, true, true, .{ .snap = true }, .{}, .{});
     for ([_]ribbon.Command{ .back, .forward, .parent, .open, .copy, .rename, .information, .delete }) |which| try testing.expect(root.off & ribbon.bit(which) != 0);
     for ([_]ribbon.Command{ .new_drawer, .update, .shell, .clean_up, .snapshot }) |which| try testing.expect(root.off & ribbon.bit(which) == 0);
     try testing.expectEqual(ribbon.bit(.by_icon) | ribbon.bit(.all_files) | ribbon.bit(.snap), root.on);
@@ -388,7 +389,7 @@ test "a drawer's ribbon: a button for each command, found by its ID; off and che
     // A drawer as a list by date, only icons, a file picked that can be
     // opened and renamed but not deleted, gone back to: Clean Up and Back
     // off, Forward on, Date alone checked.
-    const list = ribbon.stateOf(.date, false, false, false, .{ .open = true, .rename = true, .information = true }, .{ .forward = true });
+    const list = ribbon.stateOf(.date, false, false, .{}, .{ .open = true, .rename = true, .information = true }, .{ .forward = true });
     try testing.expect(list.off & ribbon.bit(.parent) == 0);
     try testing.expect(list.off & ribbon.bit(.back) != 0);
     try testing.expect(list.off & ribbon.bit(.forward) == 0);
@@ -396,6 +397,12 @@ test "a drawer's ribbon: a button for each command, found by its ID; off and che
     try testing.expect(list.off & ribbon.bit(.open) == 0);
     try testing.expect(list.off & ribbon.bit(.delete) != 0);
     try testing.expectEqual(ribbon.bit(.by_date), list.on);
+
+    // Arranged as the window is sized: its toggle checked, and nothing else
+    // changed by it.
+    const arranged = ribbon.stateOf(.icon, true, true, .{ .arrange = true }, .{}, .{});
+    try testing.expectEqual(root.off, arranged.off);
+    try testing.expectEqual(ribbon.bit(.by_icon) | ribbon.bit(.all_files) | ribbon.bit(.arrange), arranged.on);
 }
 
 /// The item `number` of the menu `menu` in the desktop's table.
@@ -419,7 +426,7 @@ fn menuItem(menu: u32, number: u32) ?sdk.intuition.menus.NewMenu {
     return null;
 }
 
-test "the Window menu: each item where its number says, Ribbon a mark that turns over" {
+test "the Window menu: each item where its number says, Ribbon and Arrange on Resize marks that turn over" {
     const mn = sdk.intuition.menus;
     const named = [_]struct { number: u32, label: []const u8 }{
         .{ .number = menus.ITEM_NEW_DRAWER, .label = "New Drawer" },
@@ -433,6 +440,7 @@ test "the Window menu: each item where its number says, Ribbon a mark that turns
         .{ .number = menus.ITEM_CLEAN_UP, .label = "Clean Up" },
         .{ .number = menus.ITEM_CLEAN_UP_BY, .label = "Clean Up By" },
         .{ .number = menus.ITEM_SNAP_TO_GRID, .label = "Snap to Grid" },
+        .{ .number = menus.ITEM_ARRANGE, .label = "Arrange on Resize" },
         .{ .number = menus.ITEM_SNAPSHOT_WINDOW, .label = "Snapshot" },
         .{ .number = menus.ITEM_SHOW, .label = "Show" },
         .{ .number = menus.ITEM_VIEW_BY, .label = "View By" },
@@ -443,6 +451,9 @@ test "the Window menu: each item where its number says, Ribbon a mark that turns
         try testing.expectEqualStrings(each.label, std.mem.span(found.label.?));
     }
     try testing.expectEqual(@as(u32, mn.CHECKIT | mn.MENUTOGGLE), menuItem(menus.MENU_WINDOW, menus.ITEM_RIBBON).?.flags);
+    // Arrange on Resize a mark too, set as the prefs' own is.
+    try testing.expectEqual(@as(u32, mn.CHECKIT | mn.MENUTOGGLE | mn.CHECKED), menuItem(menus.MENU_WINDOW, menus.ITEM_ARRANGE).?.flags);
+    try testing.expect((anvil_prefs.Settings{}).arrange);
 }
 
 test "a window's history: back and on again, a step elsewhere forgetting what was ahead, the oldest let go" {

@@ -41,6 +41,13 @@ until the last program it started has ended - their ends come back to
 it - and only then lets go of the library; another desktop may start
 meanwhile.
 
+Reboot, beside Quit, asks first too, saying that what programs have not
+saved is lost, and then starts the machine again (`ColdReboot`). Before
+it does, every drive is held still, as `C:Reboot` holds them, so what
+their file systems keep is written out; a drive whose file system says
+it is in use is named - up to four, then "..." - and the restart asked
+about once more, Cancel leaving every drive as it was.
+
 ## The startup drawer
 
 Once it is up, the desktop starts the programs whose icons are in
@@ -64,7 +71,7 @@ What lies under the icons is one line in `ENV:Sys/anvil.prefs`
 (`sdk.prefs.anvil`, edited on the Desktop page of `SYS:Programs/Prefs`):
 
 ```
-GROUND=#3A5F8A..#14253A PICTURE="SYS:Prefs/Sea.png" PLACE=SCALED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES
+GROUND=#3A5F8A..#14253A PICTURE="SYS:Prefs/Sea.png" PLACE=SCALED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES ARRANGE=YES
 ```
 
 A colour, or two shaded from the top down - left out, the screen's
@@ -93,9 +100,11 @@ All Files. Where the icons' pictures come from is in the
 
 `anvil.prefs` and `font.prefs` are watched with StartNotify: a line saved
 there is in force at once, and the ground and the icons are made anew -
-but for a change of `SNAP` or `NEWWINDOW` alone, which changes nothing
-drawn: `SNAP` only sets the menu's mark, and `NEWWINDOW` counts from the
-next drawer opened.
+but for a change of `SNAP`, `NEWWINDOW` or `ARRANGE` alone, which
+changes nothing drawn: `SNAP` only sets the menu's mark, `NEWWINDOW`
+counts from the next drawer opened, and `ARRANGE` sets the mark and,
+switched on, lays out the icons of every drawer open for its window as
+it is.
 The screen's pens are followed through `IDCMP_NEWPREFS`, so a ground left
 to the background pen changes with the palette.
 
@@ -139,6 +148,19 @@ without one shows its default; with only icons shown, only files with
 icons of their own. Icons lie where their files say; the rest fill the
 rows from the top left.
 
+**Arrange on Resize**, in the Window menu and on the ribbon's View tab,
+lays the icons out again as a drawer's window is sized: when the window
+holds another number of icons across than they were laid out for, the
+icons the desktop placed fill the rows again for the new width, in the
+order they had, and the view is drawn again. An icon whose file says
+where it lies, or one moved by hand, stays where it is, and the others go
+round it; Clean Up and UnSnapshot give such an icon back to the rows. It
+is on unless switched off, everywhere at once, and kept in `anvil.prefs`
+as `ARRANGE=YES` or `ARRANGE=NO` - YES when the file does not say - in
+`ENV:` and `ENVARC:`; Arrange icons as a drawer is sized on the Desktop
+page of `SYS:Programs/Prefs` sets it too. Off, the icons stay where they
+lie however the window is sized, and what it grows by is ground.
+
 Viewed by name, date or size, the drawer is rows of text - the name, the
 size or "Drawer", the date and the protection bits - drawers first, then
 by the name, the newest or the largest. A row of headings stands over
@@ -168,8 +190,8 @@ commands as buttons on two tabs. Home has Back, Forward and Parent (Go),
 New Drawer, Update and Shell (Drawer), and Open, Rename, Delete,
 Information and Copy for the icons picked (Icons); View has Icons, Name,
 Date and Size - the view shown checked (View) - All Files, checked while
-every file shows (Show), and Clean Up, Snap to Grid and Snapshot
-(Arrange). A button does what its menu item does and is off where the
+every file shows (Show), and Clean Up, Snap to Grid, Arrange on Resize
+and Snapshot (Arrange). A button does what its menu item does and is off where the
 item is: Back and Forward with nowhere to go, Parent at a disk's root,
 the Icons buttons with nothing picked they work on, Clean Up in a list.
 In a narrow window the groups are made smaller, down to a button each
@@ -284,14 +306,23 @@ just to be thrown away.
 
 ## Working with files
 
-Copying, deleting and emptying the trash run in a process of their own,
-with a window saying which file they are at, a gauge of how far along
-they are, and Stop; a copy's window says how fast it goes too, the bytes
-of the last second in B/s, KB/s, MB/s or GB/s. A copy first counts what it will copy. When a file of
-the same name is there already, it asks: Replace, Replace All, Skip,
-Stop. A drawer is copied whole, into one of the same name if there is
-one. A file's icon, protection, date and comment go with it. Such work
-goes on when the desktop quits, and its process waits for it.
+Copying, deleting and emptying the trash run in one process of their
+own, Anvil work, with one window: which file it is at, a gauge of how
+far along the job is, and Stop; a copy's window says how fast it goes
+too, the bytes of the last second in B/s, KB/s, MB/s or GB/s. Work
+started while a job runs waits its turn in the same window, which says
+how many more are waiting ("2 more waiting") and takes each one's title
+(Copying, Deleting) as it begins. Stop ends the job at hand and goes on
+with the next; the window's close gadget ends it and drops all that
+waits. Any number of icons can be picked: the files go into jobs of up
+to 16, one after the other. Icons dragged to another volume are copied
+as one job.
+
+A copy first counts what it will copy. When a file of the same name is
+there already, it asks: Replace, Replace All, Skip, Stop. A drawer is
+copied whole, into one of the same name if there is one. A file's icon,
+protection, date and comment go with it. The work goes on when the
+desktop quits, and its process waits for it.
 
 The Icons menu works on the icons picked:
 
@@ -309,7 +340,7 @@ The Icons menu works on the icons picked:
 
 The Window menu adds New Drawer (asks the name, makes the drawer and its
 icon), Clean Up (the icons laid out in rows again), Clean Up By, Snap to
-Grid and Snapshot: Window writes the window's box, view - a list's order
+Grid, Arrange on Resize ([Drawers](#drawers)) and Snapshot: Window writes the window's box, view - a list's order
 with it - and shown files into the drawer's icon, and All writes every
 icon's place as well.
 
@@ -485,7 +516,7 @@ only for left-out ones; Open Parent, Close, Update, New Drawer, Show, View
 By and Snapshot Window only in a drawer, and Open Parent not at a disk's
 root; Clean Up and Clean Up By only
 where icons are shown, and on the desktop's ground by name alone. Snap to
-Grid is on everywhere, its mark the prefs'.
+Grid and Arrange on Resize are on everywhere, their marks the prefs'.
 
 | Anvil | |
 |---|---|
@@ -494,8 +525,9 @@ Grid is on everywhere, its mark the prefs'.
 | Redraw All, Update All | every window drawn again; the disks looked at and every drawer read again |
 | Last Message | what the desktop last said in the screen's title, said again |
 | Volume | SYS:Programs/Volume: the output played through, how loud it is and its equalizer |
-| About | the desktop's version and what it runs on: the system's release, the board, the processor (the chip, how many cores, the clock), the memory - all of it and how much is free, then the internal memory and the PSRAM apart, or on a machine whose RAM is one kind the first line alone - and the screen's size and depth, each asked of the running system |
-| Quit | |
+| About | a window of the desktop's name and version over a box of what it runs on, a label and its text a row: the system's release, the kernel's version, the board, the processor, how many cores and of what kind, the clock, the memory - all of it and how much is free, with a bar of how much is in use, then the internal memory and the PSRAM apart, or on a machine whose RAM is one kind the first row alone - the screen's size and depth, the system disk with how much of it is free, and how long the machine has been up; each asked of the running system as About is picked, a row the system cannot answer left out. The window is on a process of its own, so the desktop goes on answering; OK or its close gadget closes it |
+| Quit | the desktop ended, asked first ([Starting it](#starting-it)) |
+| Reboot | the machine started again, asked first, its drives held still ([Starting it](#starting-it)) |
 
 ## Trying it
 
