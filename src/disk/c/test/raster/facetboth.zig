@@ -92,7 +92,10 @@
 //! has, by each pixel, and of a second pass that packs them into the
 //! colour, beside functions of the same for the cores, whose pixels race
 //! through real atomics: a lost update, a helper pixel's, or a signed
-//! operation done unsigned moves the colour.
+//! operation done unsigned moves the colour. Before the cases (since
+//! 1.38), each device is asked for a program that writes in a subpass of
+//! two colours, drawn a part for each: the one that compiles refuses it,
+//! as each part would write again.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -107,7 +110,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.37 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.38 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -3722,6 +3725,17 @@ const Side = struct {
 
     /// A pipeline as `options` say, made for this case and bound.
     fn use(side: *Side, options: Options) Failure!void {
+        const slot = &side.made[side.made_count];
+        var made: ?*facet.Pipeline = null;
+        try expect(side.make(options, &made), error.Refused);
+        slot.* = made;
+        side.made_count += 1;
+        side.fb.CmdBindPipeline(side.commands.?, .graphics, made.?);
+    }
+
+    /// What CreateGraphicsPipelines answers for the pipeline `options`
+    /// describe, made into `into` where it is (since 1.38).
+    fn make(side: *Side, options: Options, into: *?*facet.Pipeline) facet.Result {
         const fb = side.fb;
         const stages = [4]facet.PipelineShaderStageCreateInfo{
             .{ .stage = facet.SHADER_STAGE_VERTEX, .module = side.module.?, .name = options.vertex },
@@ -3774,12 +3788,10 @@ const Side = struct {
             .render_pass = options.pass orelse if (options.stencil != .none) side.stencil_passes[@intFromEnum(options.stencil) - 1].? else side.passes[@intFromEnum(options.target)][@intFromBool(options.depth)][@intFromBool(options.load)].?,
             .subpass = options.subpass,
         };
-        const slot = &side.made[side.made_count];
-        var made: [1]?*facet.Pipeline = undefined;
-        try expect(fb.CreateGraphicsPipelines(side.device.?, null, 1, @ptrCast(&info), &made), error.Refused);
-        slot.* = made[0];
-        side.made_count += 1;
-        fb.CmdBindPipeline(side.commands.?, .graphics, made[0].?);
+        var made: [1]?*facet.Pipeline = .{null};
+        const result = fb.CreateGraphicsPipelines(side.device.?, null, 1, @ptrCast(&info), &made);
+        into.* = if (result == .success) made[0] else null;
+        return result;
     }
 
     fn forgetPipelines(side: *Side) void {
@@ -5282,6 +5294,9 @@ fn runAll(dl: *DosBase, cores: *Side, gpu: *Side, only: ?[*:0]const u8) Failure!
     try cores.up();
     try gpu.up();
     var result: i32 = dos.RETURN_OK;
+    if (only == null) for ([2]*Side{ cores, gpu }, [2][*:0]const u8{ "the cores", "the other" }) |side, name| {
+        if (!replayed(dl, side, name)) result = dos.RETURN_WARN;
+    };
     for (&cases) |*case| {
         if (dl.CheckSignal(exec.SIGBREAKF_CTRL_C) != 0) break;
         if (!named(case, only)) continue;
@@ -5295,6 +5310,34 @@ fn runAll(dl: *DosBase, cores: *Side, gpu: *Side, only: ?[*:0]const u8) Failure!
         if (case.counted and !compareCounts(dl, case, cores, gpu)) result = dos.RETURN_WARN;
     }
     return result;
+}
+
+/// A program that writes a storage buffer, in a subpass of two colours,
+/// which is drawn a part for each colour and would write once for each
+/// (docs/facet-vulkan10.md item 87): refused by a device whose compiled
+/// fragment programs store (`fragment_stores_and_atomics`), the V3D, and
+/// made by one that draws the program's own function, the cores. One that
+/// only reads is made by both (since 1.38).
+fn replayed(dl: *DosBase, side: *Side, name: [*:0]const u8) bool {
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    side.fb.GetPhysicalDeviceFeatures(side.physical, &features);
+    const compiles = features.fragment_stores_and_atomics == facet.TRUE;
+    const shape = Options{ .pass = side.two_colors.?, .colors = 2, .vertex = "as it is", .layout = side.indexed_layout.? };
+    var writes = shape;
+    writes.fragment = "shipped writes";
+    var reads = shape;
+    reads.fragment = "shipped reads";
+    var pipeline: ?*facet.Pipeline = null;
+    const wrote = side.make(writes, &pipeline);
+    side.fb.DestroyPipeline(side.device.?, pipeline);
+    pipeline = null;
+    const read = side.make(reads, &pipeline);
+    side.fb.DestroyPipeline(side.device.?, pipeline);
+    const fine = read == .success and wrote == (if (compiles) facet.Result.error_feature_not_present else facet.Result.success);
+    const answer: [*:0]const u8 = if (wrote == .success) "made" else if (wrote == .error_feature_not_present) "refused" else "failed";
+    const reading: [*:0]const u8 = if (read == .success) "made" else "refused";
+    _ = Printf(dl, "a subpass of two colours on %s: a program that writes %s, one that reads %s%s\n", .{ name, answer, reading, @as([*:0]const u8, if (fine) "" else ", which is wrong") });
+    return fine;
 }
 
 /// What a case's occlusion query counted on each side: the same within a

@@ -3589,13 +3589,29 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             }
             if (work.thing[into] == .member_pointer) {
                 // Floats of a storage buffer, written where the chain
-                // came to (since 1.168). A whole matrix would be its
-                // columns, each stored on its own, which is not here.
+                // came to (since 1.168). A whole matrix is its columns,
+                // each stored on its own, MatrixStride apart, as
+                // _vtn_variable_load_store walks a matrix's for a store
+                // as for a load (vtn_variables.c:763-780) and
+                // nir_lower_explicit_io gives each its offset (since
+                // 1.170). A whole array or struct is a value of many
+                // kinds, which the walk holds none of, and is refused.
                 const pointee = work.points[into];
-                if (work.thing[pointee] == .matrix) return Error.Storage;
+                const base = work.chain_base[into];
+                const offset: u32 = work.chain_offset[into];
+                if (work.thing[pointee] == .matrix) {
+                    const column = try kindOf(work, work.points[pointee]);
+                    const whole = work.matrices[try matrixOf(work, operands[1])];
+                    if (whole.count != work.wide[pointee]) return Error.Type;
+                    for (whole.columns[0..whole.count], 0..) |each, c| {
+                        if (work.steps[each].kind != column) return Error.Type;
+                        try blockStore(work, base, work.chain_dynamic[into], offset + @as(u32, @intCast(c)) * work.chain_stride[into], work.non_writable[into], each, column);
+                    }
+                    return;
+                }
                 const kind = try kindOf(work, pointee);
                 const value = try operand(work, operands[1], kind);
-                try blockStore(work, work.chain_base[into], work.chain_dynamic[into], work.chain_offset[into], work.non_writable[into], value, kind);
+                try blockStore(work, base, work.chain_dynamic[into], offset, work.non_writable[into], value, kind);
                 return;
             }
             if (into != work.output) return Error.Body;
@@ -9332,6 +9348,44 @@ test "through Mesa's back end, a readonly buffer is read through unifa where the
     try testing.expectEqual(@as(usize, 2), countOf(written, "add tmuau"));
     try testing.expectEqual(@as(usize, 1), countOf(written, "tmuwt"));
     try testing.expect(written.tmu_dirty_rcl);
+}
+
+test "through Mesa's back end, a whole matrix stored into a storage buffer is its columns, each stored at its MatrixStride" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_placed);
+    // The mat4's four columns 16 bytes apart, the mat3x2's three 8 apart
+    // from 64, as std430 lays them and the decorations say
+    // (_vtn_variable_load_store, vtn_variables.c:763-780).
+    const offsets = [_]u32{ 0, 16, 32, 48, 64, 72, 80 };
+    const kinds = [_]Kind{ .f32x4, .f32x4, .f32x4, .f32x4, .f32x2, .f32x2, .f32x2 };
+    var count: usize = 0;
+    for (work.program()) |each| {
+        if (each.tag != .ssbo_store) continue;
+        try testing.expect(count < offsets.len);
+        try testing.expectEqual(offsets[count], each.at);
+        try testing.expectEqual(kinds[count], each.kind);
+        try testing.expectEqual(@as(u16, none), each.from[0]);
+        count += 1;
+    }
+    try testing.expectEqual(offsets.len, count);
+    const int = struct {
+        fn of(value: u32) Word {
+            return .{ .float = @bitCast(value) };
+        }
+    }.of;
+    const placed: Word = .{ .ssbo = .{ .set = 0, .binding = 1, .reach = 88 } };
+    // A column of four floats 0xfffffffc, of two 0xfffffffa
+    // (nir_to_vir.c:650-670), each through TMUAU at its offset.
+    try expectStream(&.{
+        .{ .ubo = .{ .set = 0, .binding = 0, .offset = 0 } }, placed,          int(0xfffffffc), int(16),         int(0xfffffffc), int(32),
+        int(0xfffffffc),                                      int(48),         int(0xfffffffc), placed,          int(64),         int(0xfffffffa),
+        int(72),                                              int(0xfffffffa), int(80),         int(0xfffffffa), int(0xffffff84),
+    }, code.stream());
+    try testing.expectEqual(@as(usize, 22), countOf(code, "mov tmud"));
+    try testing.expectEqual(@as(usize, 7), countOf(code, "tmuau"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "tmuwt"));
+    try testing.expect(code.tmu_dirty_rcl);
+    try testing.expectEqual(@as(usize, 57), code.words.len);
 }
 
 test "a store into a uniform buffer, or in a vertex program, is refused" {

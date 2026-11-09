@@ -215,10 +215,13 @@ pub fn vulkanOf(can: *const _instance.Capabilities) facet.PhysicalDeviceFeatures
         // is an exact count and not merely a non-zero one.
         .occlusion_query_precise = of(can.occlusion_queries),
         .pipeline_statistics_query = of(can.pipeline_statistics_queries),
-        // No shader writes a storage buffer or image, and there are no
-        // atomics. docs/facet-vulkan10.md item 39.
+        // A vertex program writes nothing: the V3D runs it twice, as the
+        // coordinate shader too. A fragment program on the V3D writes
+        // storage buffers and does their atomics through the TMU
+        // (`can.fragment_stores`, since 1.170); no shader writes a storage
+        // image, nor does atomics on one (docs/facet-vulkan10.md item 39).
         .vertex_pipeline_stores_and_atomics = no,
-        .fragment_stores_and_atomics = no,
+        .fragment_stores_and_atomics = of(can.fragment_stores),
         // No tessellation or geometry function writes PointSize.
         .shader_tessellation_and_geometry_point_size = no,
 

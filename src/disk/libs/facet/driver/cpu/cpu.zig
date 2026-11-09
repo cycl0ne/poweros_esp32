@@ -143,6 +143,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // And whole numbers, read and written as the numbers they are
         // (`texture.Texture.wholesAt`, `setWholes`, since 1.70).
         .whole_textures = true,
+        // The function draws, and no SPIR-V is compiled here: what it
+        // writes is the program's own (since 1.170).
+        .fragment_stores = false,
         // One cube of an array, the fourth coordinate saying which
         // (`texture.Texture.sampleCubeIn`).
         .cube_arrays = true,

@@ -403,6 +403,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .mixings = @splat(.{}),
         .outputs = outputs,
         .colorless = pass.parts[subpass.first_part].color_count == 0,
+        .replayed = subpass.part_count > 1,
         .fragment_stage = fragment != null,
         .viewport = null,
         .scissor = null,

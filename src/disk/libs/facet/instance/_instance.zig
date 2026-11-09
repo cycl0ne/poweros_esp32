@@ -401,6 +401,16 @@ pub const Capabilities = extern struct {
     /// nothing. No such format is filtered linearly or drawn into, on any
     /// device. (Since 1.70.)
     whole_textures: bool = false,
+    /// A fragment shader's SPIR-V may write a storage buffer and change
+    /// its words through atomics (`fragment_stores_and_atomics`). True on
+    /// the V3D, whose compiled programs store and do atomics through the
+    /// TMU, a pixel's lookup that a helper pixel and a discarded one take
+    /// no part in, as v3d's do (docs/facet-vulkan10.md item 59; since
+    /// 1.170). Such a pipeline in a subpass drawn a part for each colour
+    /// attachment is refused there (`Pipeline.replayed`). False on the
+    /// cores, which draw with the program's own function and compile no
+    /// SPIR-V of their own: what that function writes is the program's.
+    fragment_stores: bool = false,
 };
 
 /// The most vertex buffers, attributes and floats a vertex function hands

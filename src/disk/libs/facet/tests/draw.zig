@@ -1359,6 +1359,8 @@ test "a pipeline: its functions and its state settled as it is made; what facet.
     try testing.expectEqual(.greater_or_equal, made.depth_test.?);
     try testing.expect(made.depth_write);
     try testing.expect(!made.prepass);
+    // A subpass of the one colour is drawn once (since 1.170).
+    try testing.expect(!made.replayed);
     try testing.expect(made.mixings[0].enabled);
     try testing.expectEqual(.one_minus_src_alpha, made.mixings[0].dst_color);
     try testing.expectEqual(@as(f32, 64), made.viewport.?.width);
@@ -8636,6 +8638,8 @@ test "a pipeline of no fragment stage over two colour attachments drawn together
     const made, const pipeline = makePipeline(&bench, .{ .module = flat, .fragment = false, .layout = layout, .pass = pass.?, .blend_count = 2 });
     defer fb.DestroyPipeline(device, pipeline);
     try testing.expectEqual(facet.Result.success, made);
+    // Drawn together, once: nothing is played again (since 1.170).
+    try testing.expect(!_objects.of(_pipeline.Pipeline, pipeline.?).replayed);
     const vertices = Eighths.vertices(@splat(0.5));
     const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
     @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
@@ -10506,6 +10510,9 @@ test "a subpass's colour attachments, each blended its own way" {
     const made = _objects.of(_pipeline.Pipeline, pipeline.?);
     try testing.expectEqual(@as(u32, facet.COLOR_COMPONENT_R), made.mixings[0].mask);
     try testing.expect(!made.mixings[0].enabled);
+    // Drawn once for each of its two colours: a program that writes
+    // memory is refused here by a device that compiles (since 1.170).
+    try testing.expect(made.replayed);
     try testing.expectEqual(@as(u32, facet.COLOR_COMPONENT_ALL), made.mixings[1].mask);
     try testing.expect(made.mixings[1].enabled);
     try testing.expectEqual(.zero, made.mixings[1].dst_color);
