@@ -569,7 +569,7 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         // unifa, which its constant offset always allows here. A
         // load_ssbo too (:3638-3643), of a buffer nothing writes, which is
         // every one in the profile (since 1.164).
-        .ubo, .ssbo => try emitLoadUnifa(e, each, at),
+        .ubo, .ssbo, .ubo_indirect, .ssbo_indirect => try emitLoadUnifa(e, each, at),
     }
     e.defined[at] = true;
 }
@@ -583,21 +583,31 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
 /// with ldunifas that read nothing to step over the gap, instead of
 /// writing unifa again (since 1.160). A load_ssbo the same, of a buffer
 /// nothing writes (:3338-3343): its address is QUNIFORM_SSBO_OFFSET,
-/// which the offset is added to in the program (since 1.164).
+/// which the offset is added to in the program (since 1.164). An offset
+/// the program computes is added to either's address, the uniform buffer's
+/// at an offset of 0, and leaves no address to read on from
+/// (:3348, :3398-3400, :3441-3444; since 1.166).
 fn emitLoadUnifa(e: *Emit, each: Step, at: u16) Error!void {
     const c = e.c;
-    const is_ssbo = each.tag == .ssbo;
+    const is_ssbo = each.tag == .ssbo or each.tag == .ssbo_indirect;
     // Every ldunifa moves the address on by 4 bytes, so the current
     // offset is 4 bytes past the last load's.
     const max_unifa_skip_dist: u32 = max_unifa_skip_distance - 4;
-    const const_offset = each.at;
+    // An offset the program computes, the same in every lane
+    // (`compile.uniformOffsets`), is added to the buffer's address
+    // (since 1.166).
+    const dynamic_src = each.tag == .ubo_indirect or each.tag == .ssbo_indirect;
+    const const_offset: u32 = if (dynamic_src) 0 else each.at;
     // QUNIFORM_UBO_ADDR takes the buffer's index shifted up by one, 0
     // being the push constants' in Vulkan; a storage buffer's is its own.
     const index = @as(u32, each.b) + @intFromBool(!is_ssbo);
 
+    // Only a constant offset's address is kept to skip to.
     var skip_unifa = false;
     var ldunifa_skips: u32 = 0;
-    if (c.cur_block == e.current_unifa_block and
+    if (dynamic_src) {
+        e.current_unifa_block = null;
+    } else if (c.cur_block == e.current_unifa_block and
         e.current_unifa_is_ubo == !is_ssbo and
         e.current_unifa_index == index and
         e.current_unifa_offset <= const_offset and
@@ -618,7 +628,9 @@ fn emitLoadUnifa(e: *Emit, each: Step, at: u16) Error!void {
         else
             try c.uniform(.ssbo_offset, index);
         const unifa = vir.magicReg(.unifa);
-        if (!is_ssbo) {
+        if (dynamic_src) {
+            _ = try c.addDest(.add, unifa, .{ base_offset, try getSrc(e, each.a, 0) });
+        } else if (!is_ssbo) {
             // The ldunif made to load into unifa itself, where it is the
             // one just emitted rather than an earlier one reused, which
             // saves the MOV.

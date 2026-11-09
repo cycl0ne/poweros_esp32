@@ -399,6 +399,18 @@ pub const Tag = enum {
     /// 250-293), and v3d reads it through unifa as it reads a uniform
     /// buffer (ntq_emit_load_unifa, nir_to_vir.c:3338-3343; since 1.164).
     ssbo,
+    /// Floats of a uniform buffer at an offset the program computes,
+    /// NIR's load_ubo of an offset no constant: `a` is the step of the
+    /// byte offset, an integer, and `b` the buffer's slot, as a `ubo`'s.
+    /// Where the offset is the same in every lane v3d reads them through
+    /// unifa all the same, the offset added to the buffer's address
+    /// (ntq_emit_load_unifa, nir_to_vir.c:3315-3317, :3348, :3398-3400,
+    /// :3441-3444); where it is not, through the TMU, which is not ported
+    /// (`uniformOffsets`; since 1.166).
+    ubo_indirect,
+    /// Floats of a storage buffer at an offset the program computes, as
+    /// `ubo_indirect` holds them (since 1.166).
+    ssbo_indirect,
     /// 32-bit integers, or floats made integers or integers floats: NIR's
     /// integer ALU, `at` an `Integer`, each word of `a` (and `b`) one VIR
     /// operation as ntq_emit_alu emits it (nir_to_vir.c:1421-1806; since
@@ -896,6 +908,10 @@ pub const Work = struct {
     /// where there are none (since 1.161).
     chain_offset: [most_ids]u16 = @splat(0),
     chain_stride: [most_ids]u16 = @splat(none),
+    /// `member_pointer`: where an index of the chain is no constant, the
+    /// step of the byte offset, which `chain_offset` is then not; `none`
+    /// where every index is one (since 1.166).
+    chain_dynamic: [most_ids]u16 = @splat(none),
     /// `array`: how many elements, and the ArrayStride they are apart,
     /// which an OpDecorate may give before the type is declared
     /// (since 1.161).
@@ -1080,7 +1096,7 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
     // drops a pixel or compares, so the plan has nothing to hold any of
     // them to: only Mesa's back end compiles them.
     for (work.program()) |each| switch (each.tag) {
-        .push, .ubo, .ssbo => return Error.Storage,
+        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect => return Error.Storage,
         .discard => return Error.Discards,
         .sample_compared => return Error.Samplers,
         // Nor does any compute beyond a sum and a product.
@@ -1172,6 +1188,7 @@ pub fn compileNoColorThroughMesa(work: *Work, child: std.mem.Allocator) (Error |
 /// What `work` holds, read from a module or left empty, made VIR, given
 /// registers, scheduled and packed.
 fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.Compiler, key: Key) (Error || std.mem.Allocator.Error)!Code {
+    try uniformOffsets(work);
     const program = to_vir.compileSteps(allocator, compiler, work, key) catch |err| return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         error.Registers => Error.Registers,
@@ -2645,7 +2662,7 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
             // (nir_opt_peephole_select.c:132-141), which none from vtn
             // may: no limit flattens its arm (since 1.160). A load_ssbo
             // is held to the same (since 1.164).
-            .ubo, .ssbo => return std.math.maxInt(u32),
+            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect => return std.math.maxInt(u32),
             // ineg and iabs are move-like, as fneg and fabs are
             // (nir_opt_peephole_select.c:251-264; since 1.165).
             .integer => switch (@as(Integer, @enumFromInt(each.at))) {
@@ -2707,6 +2724,17 @@ fn boolOf(work: *const Work, word: u32) Error!u16 {
 /// The rules, in the list nir_opt_algebraic.py lists them, which is the
 /// list they are tried in (nir_algebraic_instr, nir_search.c:809-838):
 ///
+/// - Of an address's arithmetic, and of the integers it is made of
+///   (`Order.addressRule`; since 1.166): an imul by a power of two a
+///   shift, and by minus one an ineg of a shift (:183, :188, :190);
+///   (('iadd', a, 0), a) (:239) and (('imul', a, 0), 0) (:287); a shift
+///   or a product of an iadd of a constant made the sum of the two
+///   shifted or multiplied, the product's iadd read once (:729-731,
+///   :736-740); (('ishl', a, 0), a) (:1800); and a constant gathered
+///   past an iadd of two that are none (:2423) and into an iadd's own
+///   constant (:2438). A rule's operation of constants is the constant it
+///   folds to, there, a round before nir_opt_constant_folding would make
+///   it.
 /// - (('inot', ('feq(is_used_once)', a, b)), ('fneu', a, b)) and the
 ///   other way about (:747-748), and the same of the integer comparisons,
 ///   ilt and ige, ult and uge, ieq and ine (:749-754; since 1.165), the
@@ -2730,6 +2758,11 @@ fn boolOf(work: *const Work, word: u32) Error!u16 {
 /// comparisons sharing a float (:1157-1190) and of iands and iors
 /// (:1796-1797 and others); the bcsels of two of one operation hoisted
 /// (:3483-3496); and every rule of a bool constant, which is not here.
+/// Of integers: an iadd of two products or shifts sharing an operand
+/// (:248-249), a shift of three iadds (:732-733), a product of a shift
+/// (:597), the products of a negation and of products reassociated
+/// (:2413, :2419, :2435, :3641), and every other rule of an integer
+/// operation the shader computes itself.
 fn algebraic(work: *Work) Error!void {
     var list = Order.start(work);
     while (true) {
@@ -2773,7 +2806,31 @@ const Order = struct {
 
     /// A new step, put in the program before `at`.
     fn before(list: *Order, work: *Work, at: u16, adding: Step) Error!u16 {
-        const new = try put(work, adding);
+        return list.link(at, try put(work, adding));
+    }
+
+    /// `op` of `a` and `b`, which a rule builds, put before `at`: where
+    /// both are constants, the constant nir_opt_constant_folding makes of
+    /// it there, a round before Mesa's would (since 1.166).
+    fn integerBefore(list: *Order, work: *Work, at: u16, op: Integer, a: u16, b: u16) Error!u16 {
+        if (try foldedInteger(work, op, a, b)) |constant| return list.link(at, constant);
+        return list.before(work, at, integerStep(op, work.steps[a].kind, a, b));
+    }
+
+    /// A constant of `f` of each word of the constant `from`, put before
+    /// `at`: the constant a rule's operation of a constant folds to.
+    fn mappedBefore(list: *Order, work: *Work, at: u16, from: u16, comptime f: fn (u32) u32) Error!u16 {
+        const of = work.steps[from];
+        const parts = of.kind.parts();
+        if (work.pool_count + parts > work.pool.len) return Error.Uniforms;
+        const out = work.pool_count;
+        for (0..parts) |k| work.pool[out + k] = @bitCast(f(@bitCast(work.pool[of.at + k])));
+        work.pool_count += parts;
+        return list.before(work, at, .{ .tag = .constant, .kind = of.kind, .at = out });
+    }
+
+    /// A step `put` already, put in the program before `at`.
+    fn link(list: *Order, at: u16, new: u16) u16 {
         const earlier = list.prev[at];
         list.prev[new] = earlier;
         list.next[new] = at;
@@ -2821,14 +2878,16 @@ const Order = struct {
     /// (lower_load_push_constant, v3dv_pipeline.c:571-580), are
     /// CAN_ELIMINATE and CAN_REORDER (nir_intrinsics.py:1365, :1403), and
     /// glslc -O0 loads one through an access chain each time it is read
-    /// (since 1.165). Varyings, constants and samples are each one step
-    /// already, and a discard is no value.
+    /// (since 1.165). Two constants of the same words are one load_const
+    /// (nir_instrs_equal, nir_instr_set.c), which the constants a lowering
+    /// makes are as much as the module's (since 1.166). Varyings and
+    /// samples are each one step already, and a discard is no value.
     fn cse(list: *Order, work: *Work) bool {
         var progress = false;
         var at = list.first;
         while (at != none) : (at = list.next[at]) {
             const tag = work.steps[at].tag;
-            if (!list.present(at) or !(computes(tag) or tag == .push)) continue;
+            if (!list.present(at) or !(computes(tag) or tag == .push or tag == .constant)) continue;
             var earlier = list.first;
             while (earlier != at) : (earlier = list.next[earlier]) {
                 if (!list.present(earlier)) continue;
@@ -2919,6 +2978,7 @@ const Order = struct {
                 },
                 .iand, .ior => if (each.a == each.b) return list.replaced(work, at, each.a),
             },
+            .integer => if (try list.addressRule(work, at)) |left| return left,
             .select => {
                 const condition = each.a;
                 const yes = each.b;
@@ -2974,6 +3034,119 @@ const Order = struct {
         return null;
     }
 
+    /// The rules of an address's arithmetic (since 1.166): `at`, an
+    /// integer operation, rewritten by the first that matches it, and the
+    /// step it leaves in its place, or null. A commutative operation's
+    /// operands are matched either way about (nir_search.c:358-380);
+    /// none of these matches two ways, a constant being where the other
+    /// operand is no constant.
+    fn addressRule(list: *Order, work: *Work, at: u16) Error!?u16 {
+        const each = work.steps[at];
+        const op: Integer = @enumFromInt(each.at);
+        const pairs = [2][2]u16{ .{ each.a, each.b }, .{ each.b, each.a } };
+        switch (op) {
+            .iadd => {
+                // (('iadd', a, 0), a) (:239).
+                for (pairs) |pair| if (isZero(work, pair[1])) return list.replaced(work, at, pair[0]);
+                // (('iadd', ('iadd(is_used_once)', 'a(is_not_const)',
+                // 'b(is_not_const)'), '#c'), ('iadd', ('iadd', a, c), b))
+                // (:2423).
+                for (pairs) |pair| {
+                    const inner = work.steps[pair[0]];
+                    if (!isIntegerOp(inner, .iadd) or !isConstantStep(work, pair[1])) continue;
+                    if (isConstantStep(work, inner.a) or isConstantStep(work, inner.b) or list.usesOf(work, pair[0]) != 1) continue;
+                    const sum = try list.integerBefore(work, at, .iadd, inner.a, pair[1]);
+                    return try list.rebuilt(work, at, integerStep(.iadd, each.kind, sum, inner.b));
+                }
+                // (('iadd', '#a', ('iadd', b, '#c')), ('iadd', ('iadd', a,
+                // c), b)) (:2438).
+                for (pairs) |pair| {
+                    const inner = work.steps[pair[1]];
+                    if (!isConstantStep(work, pair[0]) or !isIntegerOp(inner, .iadd)) continue;
+                    for ([2][2]u16{ .{ inner.a, inner.b }, .{ inner.b, inner.a } }) |in| {
+                        if (!isConstantStep(work, in[1])) continue;
+                        const sum = try list.integerBefore(work, at, .iadd, pair[0], in[1]);
+                        return try list.rebuilt(work, at, integerStep(.iadd, each.kind, sum, in[0]));
+                    }
+                }
+            },
+            // (('ishl', ('iadd', a, '#b'), '#c'), ('iadd', ('ishl', a, c),
+            // ('ishl', b, c))) (:729); (('ishl', ('iadd(is_used_once)',
+            // ('iadd', a, '#b'), c), '#d'), ('iadd', ('ishl', ('iadd', a,
+            // c), d), ('ishl', b, d))) (:730-731), which takes the
+            // ishl twin of :739 (:741-742) as well.
+            // Then (('ishl', a, 0), a) (:1800).
+            .ishl => if (isConstantStep(work, each.b)) {
+                if (try list.distributed(work, at, .ishl, each.a, each.b, false)) |left| return left;
+                if (isZero(work, each.b)) return list.replaced(work, at, each.a);
+            },
+            .imul => for (pairs) |pair| {
+                const by = pair[1];
+                if (!isConstantStep(work, by)) continue;
+                // (('imul', a, '#b(is_pos_power_of_two)'), ('ishl', a,
+                // ('find_lsb', b))) (:183), and of 0x80000000 a shift by
+                // 31 (:188), v3dv's options not lowering bit operations
+                // (v3dv_pipeline_get_nir_options, v3dv_pipeline.c:164-
+                // 222); a one is 1 << 0, and
+                // (('ishl', a, 0), a) takes that out a round on.
+                if (allWords(work, by, isPositivePowerOfTwo) or allWords(work, by, isSignBit)) {
+                    const shift = try list.mappedBefore(work, at, by, lowestBit);
+                    return try list.rebuilt(work, at, integerStep(.ishl, each.kind, pair[0], shift));
+                }
+                // (('imul', a, '#b(is_neg_power_of_two)'), ('ineg',
+                // ('ishl', a, ('find_lsb', ('iabs', b)))))) (:190), which
+                // a minus one is as well.
+                if (allWords(work, by, isNegativePowerOfTwo)) {
+                    const shift = try list.mappedBefore(work, at, by, lowestBit);
+                    const shifted = try list.before(work, at, integerStep(.ishl, each.kind, pair[0], shift));
+                    return try list.rebuilt(work, at, integerStep(.ineg, each.kind, shifted, 0));
+                }
+                // (('imul', a, 0), 0) (:287).
+                if (isZero(work, by)) return list.replaced(work, at, by);
+                // (('imul', ('iadd(is_used_once)', a, '#b'), '#c'),
+                // ('iadd', ('imul', a, c), ('imul', b, c))) (:736);
+                // (('imul', ('iadd(is_used_once)', ('iadd(is_used_once)',
+                // a, '#b'), c), '#d'), ('iadd', ('imul', ('iadd', a, c),
+                // d), ('imul', b, d))) (:739-740).
+                if (try list.distributed(work, at, .imul, pair[0], by, true)) |left| return left;
+            },
+            else => {},
+        }
+        return null;
+    }
+
+    /// `op` of `sum`, an iadd of `a` and a constant `b` or of such and
+    /// `c`, by the constant `by`: `op` of `a` (plus `c`) by it, plus `op`
+    /// of `b` by it. `once` holds the iadd of `a` and `b` to being read
+    /// once, as the imul rule does and the ishl rule does not; the outer
+    /// iadd of the second is held to it in both.
+    fn distributed(list: *Order, work: *Work, at: u16, op: Integer, sum: u16, by: u16, once: bool) Error!?u16 {
+        const kind = work.steps[at].kind;
+        const outer = work.steps[sum];
+        if (!isIntegerOp(outer, .iadd)) return null;
+        const outer_pairs = [2][2]u16{ .{ outer.a, outer.b }, .{ outer.b, outer.a } };
+        if (!once or list.usesOf(work, sum) == 1) for (outer_pairs) |pair| {
+            if (!isConstantStep(work, pair[1])) continue;
+            const left = try list.integerBefore(work, at, op, pair[0], by);
+            const right = try list.integerBefore(work, at, op, pair[1], by);
+            return try list.rebuilt(work, at, integerStep(.iadd, kind, left, right));
+        };
+        if (list.usesOf(work, sum) != 1) return null;
+        for (outer_pairs) |pair| {
+            const inner = work.steps[pair[0]];
+            if (!isIntegerOp(inner, .iadd)) continue;
+            if (once and list.usesOf(work, pair[0]) != 1) continue;
+            for ([2][2]u16{ .{ inner.a, inner.b }, .{ inner.b, inner.a } }) |in| {
+                if (!isConstantStep(work, in[1])) continue;
+                const both = try list.integerBefore(work, at, .iadd, in[0], pair[1]);
+                const left = try list.integerBefore(work, at, op, both, by);
+                const right = try list.integerBefore(work, at, op, in[1], by);
+                return try list.rebuilt(work, at, integerStep(.iadd, kind, left, right));
+            }
+        }
+        return null;
+    }
+
     /// The rule's last new step put before `at`, and `at` out.
     fn rebuilt(list: *Order, work: *Work, at: u16, last: Step) Error!u16 {
         return list.replaced(work, at, try list.before(work, at, last));
@@ -3013,6 +3186,57 @@ const Order = struct {
     }
 };
 
+fn integerStep(op: Integer, kind: Kind, a: u16, b: u16) Step {
+    return .{ .tag = .integer, .kind = kind, .a = a, .b = b, .at = @intFromEnum(op) };
+}
+
+fn isIntegerOp(each: Step, op: Integer) bool {
+    return each.tag == .integer and each.at == @intFromEnum(op);
+}
+
+fn isConstantStep(work: *const Work, at: u16) bool {
+    return work.steps[at].tag == .constant;
+}
+
+/// Whether `f` holds of every word of the constant `at`.
+fn allWords(work: *const Work, at: u16, comptime f: fn (u32) bool) bool {
+    const each = work.steps[at];
+    for (work.pool[each.at..][0..each.kind.parts()]) |word| if (!f(@bitCast(word))) return false;
+    return true;
+}
+
+/// is_pos_power_of_two (nir_search_helpers.h:38-66), of imul's integer
+/// operands: a power of two above nothing.
+fn isPositivePowerOfTwo(word: u32) bool {
+    const value: i32 = @bitCast(word);
+    return value > 0 and std.math.isPowerOfTwo(word);
+}
+
+/// is_neg_power_of_two: minus a power of two, but not the least integer,
+/// whose minus is itself.
+fn isNegativePowerOfTwo(word: u32) bool {
+    const value: i32 = @bitCast(word);
+    return value < 0 and word != 0x8000_0000 and std.math.isPowerOfTwo(0 -% word);
+}
+
+fn isSignBit(word: u32) bool {
+    return word == 0x8000_0000;
+}
+
+/// find_lsb, of a power of two or of minus one: the iabs of a negative
+/// one has its lowest bit where the one itself does.
+fn lowestBit(word: u32) u32 {
+    return @ctz(word);
+}
+
+/// Whether `at` is a constant of zeros.
+fn isZero(work: *const Work, at: u16) bool {
+    const each = work.steps[at];
+    if (each.tag != .constant) return false;
+    for (work.pool[each.at..][0..each.kind.parts()]) |word| if (@as(u32, @bitCast(word)) != 0) return false;
+    return true;
+}
+
 fn selectOf(condition: u16, yes: u16, no: u16) Step {
     var made = Step{ .tag = .select, .kind = .f32x1, .a = condition, .b = yes };
     made.from[0] = no;
@@ -3047,11 +3271,21 @@ fn computes(tag: Tag) bool {
 /// and the same floats, an add's, a mul's, an iand's, an ior's and an
 /// feq's or fneu's in either order (NIR_OP_IS_2SRC_COMMUTATIVE).
 fn equalSteps(work: *const Work, a: Step, b: Step) bool {
+    // A constant's words are in the pool, where `at` says (since 1.166).
+    if (a.tag == .constant and b.tag == .constant) {
+        if (a.kind != b.kind) return false;
+        for (0..a.kind.parts()) |k| {
+            if (@as(u32, @bitCast(work.pool[a.at + k])) != @as(u32, @bitCast(work.pool[b.at + k]))) return false;
+        }
+        return true;
+    }
     if (a.tag != b.tag or a.kind != b.kind or a.at != b.at) return false;
     // A load_ubo's buffer is its `b`, which is no step, and a
     // load_ssbo's, which CAN_REORDER lets nir_opt_cse take as well
     // (nir_instr_set.c; since 1.164).
     if (a.tag == .ubo or a.tag == .ssbo) return a.b == b.b;
+    // Its offset too, which is a step (since 1.166).
+    if (a.tag == .ubo_indirect or a.tag == .ssbo_indirect) return a.b == b.b and sameFloat(work, a.a, b.a);
     const left = readsOf(a);
     const right = readsOf(b);
     var straight = true;
@@ -3088,7 +3322,7 @@ fn readsOf(each: Step) [4]?u16 {
         .select => .{ each.a, each.b, each.from[0], null },
         .logic => .{ each.a, if (each.at != @intFromEnum(Logic.inot)) each.b else null, null, null },
         .integer => .{ each.a, if (!@as(Integer, @enumFromInt(each.at)).unary()) each.b else null, null, null },
-        .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .sample, .output, .round_to_int => .{ each.a, null, null, null },
+        .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .sample, .output, .round_to_int, .ubo_indirect, .ssbo_indirect => .{ each.a, null, null, null },
         .compare, .set_less, .add, .mul, .sub, .min, .max, .dot, .sample_compared => .{ each.a, each.b, null, null },
     };
 }
@@ -3250,16 +3484,17 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 if (try idOf(operands[0]) != pointee) return Error.Type;
                 const base = work.chain_base[from];
                 const offset: u32 = work.chain_offset[from];
+                const dynamic = work.chain_dynamic[from];
                 if (work.thing[pointee] == .matrix) {
                     const column = try kindOf(work, work.points[pointee]);
                     var made = Matrix{ .count = work.wide[pointee] };
                     for (0..made.count) |c| {
-                        made.columns[c] = try blockLoad(work, base, offset + @as(u32, @intCast(c)) * work.chain_stride[from], column);
+                        made.columns[c] = try blockLoad(work, base, dynamic, offset + @as(u32, @intCast(c)) * work.chain_stride[from], column);
                     }
                     try holdMatrix(work, id, made);
                     return;
                 }
-                work.step_of[id] = try blockLoad(work, base, offset, try kindOf(work, pointee));
+                work.step_of[id] = try blockLoad(work, base, dynamic, offset, try kindOf(work, pointee));
                 return;
             }
             if (work.thing[from] == .input_part) {
@@ -3380,48 +3615,99 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             // vtn_variables.c). A member adds its Offset and an element
             // its ArrayStride times the index; a matrix's column adds its
             // MatrixStride, and a vector's float four bytes.
+            //
+            // An index of an element, a column or a float may be no
+            // constant (since 1.166): from it on the offset is a step,
+            // nir_lower_explicit_io's sum of each deref's offset and its
+            // parent's (nir_explicit_io_address_from_deref,
+            // nir_lower_explicit_io.c:1288-1302), the element's the index
+            // times its stride as nir_amul_imm makes it (:1240-1252,
+            // `strideTimes`). Those sums of constants come to the constant
+            // nir_opt_constant_folding makes of them, and an add of none
+            // is not made, as (('iadd', a, 0), a) (nir_opt_algebraic.py:
+            // 239) takes it out. The push constants' words are uniforms,
+            // which an index computed would read from v3dv's buffer of
+            // them, which is not here: refused.
             var variable: u16 = base;
             var offset: u32 = 0;
+            var dynamic: u16 = none;
             var pointee: u16 = none;
             var stride: u16 = none;
             if (work.thing[base] == .member_pointer) {
                 variable = work.chain_base[base];
                 offset = work.chain_offset[base];
+                dynamic = work.chain_dynamic[base];
                 pointee = work.points[base];
                 stride = work.chain_stride[base];
             } else if (base == work.push_variable or (work.thing[base] == .variable and work.class[base] == @intFromEnum(spirv.StorageClass.uniform))) {
                 pointee = blockOfVariable(work, base).type_id;
             } else return Error.Storage;
             for (operands[3..]) |each| {
-                const index: u32 = try indexOf(work, each);
+                // An index no constant: its step, and the bytes the
+                // elements, columns or floats it counts are apart.
+                var computed: u16 = none;
+                var apart: u32 = 0;
+                const index: u32 = if (work.thing[try idOf(each)] == .int_constant) try indexOf(work, each) else at: {
+                    if (variable == work.push_variable) return Error.Storage;
+                    computed = try operand(work, each, .f32x1);
+                    break :at 0;
+                };
+                // What a constant index adds.
+                var adds: u32 = 0;
                 switch (work.thing[pointee]) {
                     .structure => {
+                        if (computed != none) return Error.Body;
                         const block = findBlock(work, pointee) orelse return Error.Body;
                         if (index >= block.member_count) return Error.Body;
-                        offset += block.member_offset[index];
+                        adds = block.member_offset[index];
                         stride = block.member_stride[index];
                         pointee = block.member_type[index];
                     },
                     .array => {
                         // A runtime array's elements are all the draw's
-                        // to have bound (since 1.164).
+                        // to have bound (since 1.164), and an index
+                        // computed is the program's to keep among them.
                         if (!isRuntime(work, pointee) and index >= work.length[pointee]) return Error.Body;
-                        offset += index * work.array_stride[pointee];
+                        apart = work.array_stride[pointee];
+                        if (computed != none and apart == none) return Error.Storage;
+                        adds = index * apart;
                         pointee = work.points[pointee];
                     },
                     .matrix => {
                         if (index >= work.wide[pointee] or stride == none) return Error.Body;
-                        offset += index * stride;
+                        apart = stride;
+                        adds = index * apart;
                         pointee = work.points[pointee];
                         stride = none;
                     },
                     .vector => {
                         if (index >= work.wide[pointee]) return Error.Body;
-                        offset += 4 * index;
+                        apart = 4;
+                        adds = 4 * index;
                         pointee = work.points[pointee];
                     },
                     else => return Error.Body,
                 }
+                if (computed == none and dynamic == none) {
+                    offset = std.math.add(u32, offset, adds) catch return Error.Storage;
+                    continue;
+                }
+                if (offset >= none or adds >= none) return Error.Storage;
+                // A constant of none adds nothing, nor does an index
+                // times a stride of none.
+                const term = if (computed == none)
+                    (if (adds != 0) try integerSplat(work, .f32x1, @intCast(adds)) else continue)
+                else if (apart != 0)
+                    try strideTimes(work, computed, apart)
+                else
+                    continue;
+                dynamic = if (dynamic != none)
+                    try integerOf(work, .iadd, dynamic, term)
+                else if (offset != 0)
+                    try integerOf(work, .iadd, try integerSplat(work, .f32x1, @intCast(offset)), term)
+                else
+                    term;
+                offset = 0;
             }
             if (offset >= none) return Error.Storage;
             // A pointer of the block's class to what it names.
@@ -3433,6 +3719,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             work.chain_base[id] = variable;
             work.chain_offset[id] = @intCast(offset);
             work.chain_stride[id] = stride;
+            work.chain_dynamic[id] = dynamic;
         },
         .composite_extract => {
             if (operands.len < 4) return Error.Body;
@@ -3901,14 +4188,56 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
 /// vir_uniform finds it there already (vir_get_uniform_index,
 /// vir.c:2771). A storage buffer's is a load_ssbo, which the same pass
 /// makes in the same format (v3dv_pipeline.c:418-420; since 1.164).
-fn blockLoad(work: *Work, variable: u16, offset: u32, kind: Kind) Error!u16 {
+fn blockLoad(work: *Work, variable: u16, dynamic: u16, offset: u32, kind: Kind) Error!u16 {
     if (offset >= none) return Error.Storage;
     if (variable != work.push_variable) {
         const slot = work.points[variable];
-        const tag: Tag = if (work.ubos[slot].storage) .ssbo else .ubo;
-        return put(work, .{ .tag = tag, .kind = kind, .b = slot, .at = offset });
+        const storage = work.ubos[slot].storage;
+        if (dynamic != none) {
+            // At an offset computed: a column past a matrix's first adds
+            // its own to it, as the deref of it does (since 1.166).
+            const at = if (offset == 0) dynamic else try integerOf(work, .iadd, dynamic, try integerSplat(work, .f32x1, @intCast(offset)));
+            return put(work, .{ .tag = if (storage) .ssbo_indirect else .ubo_indirect, .kind = kind, .a = at, .b = slot });
+        }
+        return put(work, .{ .tag = if (storage) .ssbo else .ubo, .kind = kind, .b = slot, .at = offset });
     }
+    if (dynamic != none) return Error.Storage;
     return put(work, .{ .tag = .push, .kind = kind, .at = offset / 4 });
+}
+
+/// Whether every block load at an offset computed has that offset the
+/// same in every lane, as ldunifa needs: nir_divergence_analysis's answer
+/// (v3d_attempt_compile runs it, vir.c:2105). A varying differs from
+/// lane to lane, a flat one too where v3dv's options do not say one
+/// primitive fills a subgroup (v3dv_pipeline.c:217-218), and a vertex
+/// program's attribute does (load_interpolated_input, load_input;
+/// nir_divergence_analysis.c:472-489, :932); an ALU
+/// operation (:139-160), a sample (visit_tex, :1185) and a load at an
+/// offset computed (:655-671) where an operand does. A constant, a push
+/// constant (:888-900), the viewport and a load at a constant offset do
+/// not. A load whose offset differs v3d makes a TMU read
+/// (ntq_emit_load_unifa, nir_to_vir.c:3315-3317, then
+/// ntq_emit_tmu_general), which is not ported: refused (since 1.166).
+fn uniformOffsets(work: *const Work) Error!void {
+    var divergent: [most_steps]bool = @splat(false);
+    for (work.program(), 0..) |each, at| {
+        if (each.tag == .input) divergent[at] = true;
+        for (readsOf(each)) |field| if (field) |of| {
+            if (divergent[of]) divergent[at] = true;
+        };
+        if ((each.tag == .ubo_indirect or each.tag == .ssbo_indirect) and divergent[each.a]) return Error.Storage;
+    }
+}
+
+/// `index` times `stride`, as nir_amul_imm builds it (_nir_mul_imm,
+/// nir_builder.h:1160-1182) where the shader has no amul, as v3d's has
+/// not: the index itself of a stride of one, shifted of a power of two,
+/// and multiplied of any other (since 1.166). A stride of 0 makes an
+/// add of nothing, which the access chain does not make.
+fn strideTimes(work: *Work, index: u16, stride: u32) Error!u16 {
+    if (stride == 1) return index;
+    if (std.math.isPowerOfTwo(stride)) return integerOf(work, .ishl, index, try integerSplat(work, .f32x1, std.math.log2_int(u32, stride)));
+    return integerOf(work, .imul, index, try integerSplat(work, .f32x1, @intCast(stride)));
 }
 
 /// How many bytes a value of `type_id` takes in a block, a matrix's
@@ -3946,7 +4275,9 @@ fn sizeOf(work: *Work, type_id: u16, stride: u16) Error!u32 {
 
 /// How many bytes of storage buffer `slot` the program reads from its
 /// start: one past the last float of its last-reaching load (since
-/// 1.164).
+/// 1.164). A load at an offset computed reaches where the program says,
+/// which is its own to keep within the range bound, as Vulkan without
+/// robustBufferAccess has it: it counts for nothing here (since 1.166).
 fn reachOf(work: *const Work, slot: u16) u32 {
     var reach: u32 = 0;
     for (work.program()) |each| {
@@ -4636,7 +4967,7 @@ fn settle(work: *Work) Error!void {
             // are already in registers, so neither costs an instruction.
             .input, .component, .construct => {},
             // Refused by `compile` before the plan is laid out.
-            .push, .ubo, .ssbo => return Error.Storage,
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect => return Error.Storage,
             .compare, .discard => return Error.Discards,
             .sample_compared => return Error.Samplers,
             .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot => return Error.Body,
@@ -8354,6 +8685,221 @@ test "a block without its strides, an index past an array, a row-major matrix an
     // Its ColMajor made RowMajor, whose columns are not a vector's floats
     // side by side.
     try testing.expectError(Error.Refused, throughMesa(&work, &comptime patched(&reference.glslc_uniform_matrix, .member_decorate, 0, 2, @intFromEnum(spirv.Decoration.row_major))));
+}
+
+test "through Mesa's back end, a block read at an offset computed, the same in every lane, writes unifa with the buffer's address plus the offset" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_indexed);
+    // Each load's offset as v3d's nir_opt_algebraic leaves it, in the
+    // order of the loads: the index shifted where its stride is a power
+    // of two and multiplied where it is not, the constant of the deref
+    // chain added before it. other + 1 is read by two chains, so its
+    // shift by 4 is distributed (:729) and its product by 48 a round
+    // after, the shift having left it read once (:736); every constant
+    // then gathered into one (:2438).
+    const expected = [_]struct { tag: Tag, kind: Kind, shape: []const u8 }{
+        // tints[which], at 0 and 16 apart.
+        .{ .tag = .ubo_indirect, .kind = .f32x4, .shape = "ishl(p0, 4)" },
+        // weights[other + 1], at 64 and 16 apart (std140).
+        .{ .tag = .ubo_indirect, .kind = .f32x1, .shape = "iadd(80, ishl(p1, 4))" },
+        // turns[which], at 128 and 32 apart: its columns 16 apart.
+        .{ .tag = .ubo_indirect, .kind = .f32x2, .shape = "iadd(128, ishl(p0, 5))" },
+        .{ .tag = .ubo_indirect, .kind = .f32x2, .shape = "iadd(144, ishl(p0, 5))" },
+        // triples[which].b and triples[other + 1].c, at 32 and 48 apart.
+        .{ .tag = .ssbo_indirect, .kind = .f32x4, .shape = "iadd(48, imul(p0, 48))" },
+        .{ .tag = .ssbo_indirect, .kind = .f32x4, .shape = "iadd(112, imul(p1, 48))" },
+        // scale[other], at 16 and 4 apart (std430), and base[which].
+        .{ .tag = .ssbo_indirect, .kind = .f32x1, .shape = "iadd(16, ishl(p1, 2))" },
+        .{ .tag = .ssbo_indirect, .kind = .f32x1, .shape = "ishl(p0, 2)" },
+    };
+    var found: usize = 0;
+    for (work.program()) |each| {
+        try testing.expect(each.tag != .ubo and each.tag != .ssbo);
+        if (each.tag != .ubo_indirect and each.tag != .ssbo_indirect) continue;
+        try testing.expect(found < expected.len);
+        try testing.expectEqual(expected[found].tag, each.tag);
+        try testing.expectEqual(expected[found].kind, each.kind);
+        var shape = shapeOf(&work, each.a);
+        try testing.expectEqualStrings(expected[found].shape, shape.text());
+        found += 1;
+    }
+    try testing.expectEqual(expected.len, found);
+    // Each an ADD of the address and the offset into unifa
+    // (nir_to_vir.c:3441-3444), the uniform buffer's address of an
+    // offset of 0, and loaded again where the last load of it is past
+    // try_opt_ldunif's reach (vir.c:2811); the constants that are no
+    // small immediates; and a storage buffer's address, which no load at
+    // a constant offset reaches into (`reachOf`).
+    const int = struct {
+        fn of(value: u32) Word {
+            return .{ .float = @bitCast(value) };
+        }
+    }.of;
+    const ubo: Word = .{ .ubo = .{ .set = 0, .binding = 0, .offset = 0 } };
+    const ssbo: Word = .{ .ssbo = .{ .set = 0, .binding = 1, .reach = 0 } };
+    try testing.expectEqualSlices(Word, &.{ .{ .push = 0 }, ubo, .{ .push = 1 }, int(16), int(80), int(128), ubo, int(144), int(48), ssbo, int(112), ssbo }, code.stream());
+    try testing.expectEqual(@as(usize, 8), countOf(code, "add unifa"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "mov unifa"));
+    // 4 + 1 + 2 + 2 + 4 + 4 + 1 + 1 words: no load reads on from the
+    // last one's address, which an offset computed does not keep
+    // (:3398-3400).
+    try testing.expectEqual(@as(usize, 19), countOf(code, "ldunifa"));
+    try testing.expectEqual(@as(usize, 5), countOf(code, "shl "));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "multop"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "umul24"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "tmu"));
+    try testing.expectEqual(@as(usize, 76), code.words.len);
+}
+
+test "a block read at an offset that differs from lane to lane, and an index computed into the push constants, are refused" {
+    // The index the colour's red gives, which the TMU would read
+    // (nir_to_vir.c:3315-3317).
+    var work: Work = .{};
+    try testing.expectError(Error.Storage, throughMesa(&work, &reference.glslc_divergent));
+    // push.colors[push.which], which v3dv reads from its buffer of the
+    // push constants.
+    work = .{};
+    try testing.expectError(Error.Storage, throughMesa(&work, &reference.glslc_pushed));
+    // The plan has no hand-written program to hold a block read to.
+    var plan: Work = .{};
+    try testing.expectError(Error.Storage, compile(&plan, &reference.glslc_indexed));
+}
+
+test "nir_opt_algebraic's rules of an address's arithmetic, each on the integer operations it matches" {
+    const Case = struct {
+        shape: []const u8,
+        build: *const fn (*Work) Error!u16,
+    };
+    const of = struct {
+        fn push(work: *Work, word: u32) Error!u16 {
+            return put(work, .{ .tag = .push, .kind = .f32x1, .at = word });
+        }
+        fn int(work: *Work, value: i32) Error!u16 {
+            return integerSplat(work, .f32x1, value);
+        }
+        fn op(work: *Work, which: Integer, a: u16, b: u16) Error!u16 {
+            return put(work, integerStep(which, .f32x1, a, b));
+        }
+        // :183, :190 and :188: a product by a power of two a shift.
+        fn eight(work: *Work) Error!u16 {
+            return op(work, .imul, try push(work, 0), try int(work, 8));
+        }
+        fn minus_four(work: *Work) Error!u16 {
+            return op(work, .imul, try push(work, 0), try int(work, -4));
+        }
+        fn sign(work: *Work) Error!u16 {
+            return op(work, .imul, try push(work, 0), try int(work, std.math.minInt(i32)));
+        }
+        // :287, and :183 then :1800 of a one before the other operand.
+        fn zero(work: *Work) Error!u16 {
+            return op(work, .imul, try push(work, 0), try int(work, 0));
+        }
+        fn one(work: *Work) Error!u16 {
+            return op(work, .imul, try int(work, 1), try push(work, 0));
+        }
+        // :239.
+        fn none_added(work: *Work) Error!u16 {
+            return op(work, .iadd, try int(work, 0), try push(work, 0));
+        }
+        // :2423 and :2438.
+        fn gathered(work: *Work) Error!u16 {
+            return op(work, .iadd, try op(work, .iadd, try push(work, 0), try push(work, 1)), try int(work, 5));
+        }
+        fn folded(work: *Work) Error!u16 {
+            return op(work, .iadd, try int(work, 3), try op(work, .iadd, try push(work, 0), try int(work, 4)));
+        }
+        // :729, its iadd's constant first, and of an iadd read twice.
+        fn shifted(work: *Work) Error!u16 {
+            return op(work, .ishl, try op(work, .iadd, try int(work, 1), try push(work, 0)), try int(work, 4));
+        }
+        fn shifted_twice(work: *Work) Error!u16 {
+            const sum = try op(work, .iadd, try push(work, 0), try int(work, 1));
+            return op(work, .iadd, try op(work, .ishl, sum, try int(work, 4)), sum);
+        }
+        // :730 and :739.
+        fn shifted_sum(work: *Work) Error!u16 {
+            const inner = try op(work, .iadd, try push(work, 0), try int(work, 1));
+            return op(work, .ishl, try op(work, .iadd, inner, try push(work, 1)), try int(work, 2));
+        }
+        fn multiplied_sum(work: *Work) Error!u16 {
+            const inner = try op(work, .iadd, try push(work, 0), try int(work, 2));
+            return op(work, .imul, try op(work, .iadd, inner, try push(work, 1)), try int(work, 3));
+        }
+        // :736, and not of an iadd read twice.
+        fn multiplied(work: *Work) Error!u16 {
+            return op(work, .imul, try op(work, .iadd, try push(work, 0), try int(work, 1)), try int(work, 3));
+        }
+        fn multiplied_twice(work: *Work) Error!u16 {
+            const sum = try op(work, .iadd, try push(work, 0), try int(work, 1));
+            return op(work, .iadd, try op(work, .imul, sum, try int(work, 3)), sum);
+        }
+    };
+    const cases = [_]Case{
+        .{ .shape = "ishl(p0, 3)", .build = &of.eight },
+        .{ .shape = "ineg(ishl(p0, 2))", .build = &of.minus_four },
+        .{ .shape = "ishl(p0, 31)", .build = &of.sign },
+        .{ .shape = "0", .build = &of.zero },
+        .{ .shape = "p0", .build = &of.one },
+        .{ .shape = "p0", .build = &of.none_added },
+        .{ .shape = "iadd(iadd(p0, 5), p1)", .build = &of.gathered },
+        .{ .shape = "iadd(7, p0)", .build = &of.folded },
+        .{ .shape = "iadd(ishl(p0, 4), 16)", .build = &of.shifted },
+        .{ .shape = "iadd(iadd(ishl(p0, 4), 16), iadd(p0, 1))", .build = &of.shifted_twice },
+        .{ .shape = "iadd(ishl(iadd(p0, p1), 2), 4)", .build = &of.shifted_sum },
+        .{ .shape = "iadd(imul(iadd(p0, p1), 3), 6)", .build = &of.multiplied_sum },
+        .{ .shape = "iadd(imul(p0, 3), 3)", .build = &of.multiplied },
+        .{ .shape = "iadd(imul(iadd(p0, 1), 3), iadd(p0, 1))", .build = &of.multiplied_twice },
+    };
+    for (cases) |case| {
+        var work: Work = .{};
+        work.stored = try case.build(&work);
+        try algebraic(&work);
+        var shape = shapeOf(&work, work.stored);
+        try testing.expectEqualStrings(case.shape, shape.text());
+    }
+}
+
+/// An integer value as the steps make it: a constant's first word, a
+/// push constant's word, and an operation of those.
+const Shape = struct {
+    buffer: [256]u8 = undefined,
+    len: usize = 0,
+
+    fn add(shape: *Shape, text_of: []const u8) void {
+        @memcpy(shape.buffer[shape.len..][0..text_of.len], text_of);
+        shape.len += text_of.len;
+    }
+
+    fn of(shape: *Shape, work: *const Work, at: u16) void {
+        const each = work.steps[at];
+        var digits: [16]u8 = undefined;
+        switch (each.tag) {
+            .constant => shape.add(std.fmt.bufPrint(&digits, "{d}", .{@as(i32, @bitCast(work.pool[each.at]))}) catch unreachable),
+            .push => shape.add(std.fmt.bufPrint(&digits, "p{d}", .{each.at}) catch unreachable),
+            .integer => {
+                const op: Integer = @enumFromInt(each.at);
+                shape.add(@tagName(op));
+                shape.add("(");
+                shape.of(work, each.a);
+                if (!op.unary()) {
+                    shape.add(", ");
+                    shape.of(work, each.b);
+                }
+                shape.add(")");
+            },
+            else => shape.add(@tagName(each.tag)),
+        }
+    }
+
+    fn text(shape: *const Shape) []const u8 {
+        return shape.buffer[0..shape.len];
+    }
+};
+
+fn shapeOf(work: *const Work, at: u16) Shape {
+    var shape: Shape = .{};
+    shape.of(work, at);
+    return shape;
 }
 
 /// The index of a VPM row as the stream holds it, a constant's bits.
