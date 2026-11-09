@@ -2,7 +2,8 @@
 //! utility.library's jump table: tag lists, hooks, dates, 32- and 64-bit
 //! multiplication and division, Latin-1 case, pack tables, named objects,
 //! unique IDs, pattern matching, strings, alignment, lines of settings,
-//! the zone the system clock keeps, and text between UTF-8 and Latin-1.
+//! the zone the system clock keeps, text between UTF-8 and Latin-1, and
+//! URLs.
 //! The reserved slots are kept free so that the slots after them stay
 //! where they are.
 ##include libs/exec/exec as exec
@@ -142,4 +143,15 @@ usize Latin1ToUtf8([*]const u8 from, usize from_length, [*]u8 into, usize into_l
 /// Whether `bytes` are UTF-8, and Latin-1's characters alone:
 /// UTF8KIND_NONE, UTF8KIND_ASCII, UTF8KIND_LATIN1 or UTF8KIND_WIDE.
 u32 Utf8Kind([*]const u8 bytes, usize length)
+// URLs
+/// `text` taken apart into `parts` in place - scheme, user, password,
+/// host, port, path - and with URLF_SCP `[user@]host:path` too: false
+/// when it is no URL.
+bool ParseUrl([*]const u8 text, usize length, *utility.UrlParts parts, u32 flags)
+/// A URL's part with its `%XX` undone into `into`: the bytes the whole
+/// comes to, or URL_BROKEN.
+usize DecodeUrl([*]const u8 from, usize from_length, [*]u8 into, usize into_length)
+/// Bytes as a URL's part, `%XX` for what needs it - URLF_SLASH keeps
+/// `/`, URLF_LATIN1 encodes Latin-1 as UTF-8: the bytes the whole takes.
+usize EncodeUrl([*]const u8 from, usize from_length, [*]u8 into, usize into_length, u32 flags)
 ##end

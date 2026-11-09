@@ -57,6 +57,9 @@ const UtcToDate = @import("date/utctodate.zig").UtcToDate;
 const Utf8ToLatin1 = @import("text/utf8tolatin1.zig").Utf8ToLatin1;
 const Latin1ToUtf8 = @import("text/latin1toutf8.zig").Latin1ToUtf8;
 const Utf8Kind = @import("text/utf8kind.zig").Utf8Kind;
+const ParseUrl = @import("url/parseurl.zig").ParseUrl;
+const DecodeUrl = @import("url/decodeurl.zig").DecodeUrl;
+const EncodeUrl = @import("url/encodeurl.zig").EncodeUrl;
 const PackStructureTags = @import("pack/packstructuretags.zig").PackStructureTags;
 const UnpackStructureTags = @import("pack/unpackstructuretags.zig").UnpackStructureTags;
 const AddNamedObject = @import("namedobjects/addnamedobject.zig").AddNamedObject;
@@ -86,6 +89,7 @@ const NamedObject = sdk.utility.NamedObject;
 const SettingScan = sdk.utility.SettingScan;
 const DateStamp = sdk.dos.DateStamp;
 const Utf8Conversion = sdk.utility.Utf8Conversion;
+const UrlParts = sdk.utility.UrlParts;
 
 /// utility.library's interface, as the SDK generates it from
 /// sdk/fd/utility_lib.fd.
@@ -176,6 +180,9 @@ const contract_files = [_][]const u8{
     @embedFile("text/utf8tolatin1.zig"),
     @embedFile("text/latin1toutf8.zig"),
     @embedFile("text/utf8kind.zig"),
+    @embedFile("url/parseurl.zig"),
+    @embedFile("url/decodeurl.zig"),
+    @embedFile("url/encodeurl.zig"),
 };
 
 /// The empty slots of the table: each returns 0.
@@ -364,6 +371,15 @@ fn lvoLatin1ToUtf8(ub: *UtilityBase, from: [*]const u8, from_length: usize, into
 fn lvoUtf8Kind(ub: *UtilityBase, bytes: [*]const u8, length: usize) callconv(.c) u32 {
     return Utf8Kind(ub, bytes, length);
 }
+fn lvoParseUrl(ub: *UtilityBase, text: [*]const u8, length: usize, parts: *UrlParts, flags: u32) callconv(.c) bool {
+    return ParseUrl(ub, text, length, parts, flags);
+}
+fn lvoDecodeUrl(ub: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize) callconv(.c) usize {
+    return DecodeUrl(ub, from, from_length, into, into_length);
+}
+fn lvoEncodeUrl(ub: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize, flags: u32) callconv(.c) usize {
+    return EncodeUrl(ub, from, from_length, into, into_length, flags);
+}
 
 fn lvoGetUniqueID(ub: *UtilityBase) callconv(.c) u32 {
     return GetUniqueID(ub);
@@ -444,6 +460,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoUtf8ToLatin1),
     vec(lvoLatin1ToUtf8),
     vec(lvoUtf8Kind),
+    vec(lvoParseUrl),
+    vec(lvoDecodeUrl),
+    vec(lvoEncodeUrl),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -451,7 +470,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: every slot, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 71), vectors.len);
+    try testing.expectEqual(@as(usize, 74), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

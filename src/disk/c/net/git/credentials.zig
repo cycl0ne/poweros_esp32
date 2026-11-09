@@ -100,7 +100,7 @@ fn lookUp(git: *Git, remote: *const url.RemoteUrl, credentials: *Credentials) bo
         var line = text[at..end];
         at = end + 1;
         while (line.len > 0 and (line[line.len - 1] == '\r' or line[line.len - 1] == ' ')) line = line[0 .. line.len - 1];
-        if (!url.parse(line, line_url) or !line_url.has_user or !line_url.has_password) continue;
+        if (!url.parse(git.ub, line, line_url) or !line_url.has_user or !line_url.has_password) continue;
         if (!sameOrigin(line_url.origin(), remote.origin())) continue;
         if (credentials.user_length != 0 and !_git.same(line_url.user[0..line_url.user_length], credentials.user[0..credentials.user_length])) continue;
         @memcpy(credentials.user[0..line_url.user_length], line_url.user[0..line_url.user_length]);
@@ -208,9 +208,9 @@ pub fn offer(git: *Git, remote: *const url.RemoteUrl, credentials: *const Creden
     const origin = remote.origin();
     const scheme_end = (indexOf(origin, "://") orelse 0) + 3;
     out.put(origin[0..scheme_end]);
-    url.encode(&out, credentials.user[0..credentials.user_length]);
+    url.encode(git.ub, &out, credentials.user[0..credentials.user_length]);
     out.byte(':');
-    url.encode(&out, credentials.password[0..credentials.password_length]);
+    url.encode(git.ub, &out, credentials.password[0..credentials.password_length]);
     out.byte('@');
     out.put(origin[scheme_end..]);
     out.byte('\n');

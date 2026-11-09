@@ -17,6 +17,8 @@ const _git = @import("../_git.zig");
 const transport = @import("../transport.zig");
 const receive = @import("../receive.zig");
 const url = @import("../url.zig");
+const host = @import("host_rom");
+const UtilityBase = @import("sdk").interface.utility.UtilityBase;
 const Id = _git.Id;
 
 const testing = std.testing;
@@ -550,40 +552,44 @@ test "push: an empty repository, a server without side-band, one that cannot unp
 }
 
 test "URLs: the user and token taken out, the slashes at the end dropped" {
+    const rom_ub = try host.utility.setUp();
+    defer host.exec.deinit();
+    const ub: *UtilityBase = @ptrCast(rom_ub);
     var remote: url.RemoteUrl = undefined;
-    try testing.expect(url.parse("https://github.com/cycl0ne/poweros_esp32/", &remote));
+    try testing.expect(url.parse(ub, "https://github.com/cycl0ne/poweros_esp32/", &remote));
     try testing.expectEqualStrings("https://github.com/cycl0ne/poweros_esp32", remote.text());
     try testing.expectEqualStrings("https://github.com", remote.origin());
     try testing.expect(!remote.has_user);
-    try testing.expect(url.parse("http://claus:t%40k%3An@10.0.2.2:8765/repo", &remote));
+    try testing.expect(url.parse(ub, "http://claus:t%40k%3An@10.0.2.2:8765/repo", &remote));
     try testing.expectEqualStrings("http://10.0.2.2:8765/repo", remote.text());
     try testing.expectEqualStrings("http://10.0.2.2:8765", remote.origin());
     try testing.expectEqualStrings("claus", remote.userText().?);
     try testing.expectEqualStrings("t@k:n", remote.password[0..remote.password_length]);
     try testing.expectEqual(@as(u8, 0), remote.url[remote.url_length]);
-    try testing.expect(url.parse("https://user@host", &remote));
+    try testing.expect(url.parse(ub, "https://user@host", &remote));
     try testing.expect(remote.has_user and !remote.has_password);
     try testing.expectEqualStrings("https://host", remote.text());
-    try testing.expect(url.parse("git@github.com:cycl0ne/poweros_esp32.git", &remote));
+    try testing.expect(url.parse(ub, "git@github.com:cycl0ne/poweros_esp32.git", &remote));
     try testing.expectEqual(url.Kind.ssh, remote.kind);
     try testing.expectEqualStrings("git", remote.userText().?);
     try testing.expectEqualStrings("github.com", remote.hostText());
     try testing.expectEqualStrings("cycl0ne/poweros_esp32.git", remote.pathText());
     try testing.expectEqual(@as(u16, 0), remote.port);
     try testing.expectEqualStrings("git@github.com:cycl0ne/poweros_esp32.git", remote.text());
-    try testing.expect(url.parse("ssh://me@[::1]:2222/srv/git/repo/", &remote));
+    try testing.expect(url.parse(ub, "ssh://me@[::1]:2222/srv/git/repo/", &remote));
     try testing.expectEqualStrings("me", remote.userText().?);
     try testing.expectEqualStrings("::1", remote.hostText());
     try testing.expectEqual(@as(u16, 2222), remote.port);
     try testing.expectEqualStrings("/srv/git/repo", remote.pathText());
-    try testing.expect(url.parse("ssh://host/~me/repo", &remote));
+    try testing.expect(url.parse(ub, "ssh://host/~me/repo", &remote));
     try testing.expect(!remote.has_user);
     try testing.expectEqualStrings("~me/repo", remote.pathText());
     for ([_][]const u8{ "ftp://host/x", "https://", "https:///path", "https://u:%4@host/", "ssh://host", "ssh://host:99999/x", "host:", "ssh://:22/x" }) |bad| {
-        try testing.expect(!url.parse(bad, &remote));
+        try testing.expect(!url.parse(ub, bad, &remote));
     }
     var encoded: [64]u8 = undefined;
     var out: _git.Out = .{ .into = &encoded };
-    url.encode(&out, "a b@c:d/é");
+    url.encode(ub, &out, "a b@c:d/é");
     try testing.expectEqualStrings("a%20b%40c%3Ad%2F%C3%A9", out.written());
+    try host.utility.tearDown(rom_ub);
 }

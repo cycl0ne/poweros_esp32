@@ -313,7 +313,7 @@ const Text = sdk.locale.Strings(strings);
 const Id = strings.Id;
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.30";
+const VERSION = "1.31";
 const DATE = "09.11.2026";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;

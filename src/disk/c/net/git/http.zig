@@ -119,7 +119,7 @@ pub const HttpLink = struct {
             const ending = out.written();
             if (final.len > ending.len and _git.same(final[final.len - ending.len ..], ending)) {
                 const base = final[0 .. final.len - ending.len];
-                if (!_git.same(base, link.remote.text())) _ = url.parse(base, &link.remote);
+                if (!_git.same(base, link.remote.text())) _ = url.parse(link.git.ub, base, &link.remote);
             }
             credentials.offer(git, &link.remote, &link.login);
             return true;

@@ -40,10 +40,11 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SCP";
-const VERSION_STRING = "\x00$VER: SCP 1.3 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SCP 1.4 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/A,TO/A,ALL/S,PORT/K/N,USER/K,QUIET/S";
@@ -356,8 +357,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     };
     defer dl.FreeArgs(rda);
-    const from = place(dl, span(dos.rdargs.string(argv[arg_from]).?));
-    const to = place(dl, span(dos.rdargs.string(argv[arg_to]).?));
+    const utility_lib = sys.OpenLibrary(utility.UTILITYNAME, 1) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{ COMMAND_NAME, utility.UTILITYNAME });
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(utility_lib);
+    const ub: *UtilityBase = @ptrCast(utility_lib);
+    const from = place(dl, ub, span(dos.rdargs.string(argv[arg_from]).?));
+    const to = place(dl, ub, span(dos.rdargs.string(argv[arg_to]).?));
     if (from.remote == to.remote) {
         _ = Printf(dl, MSG_PLACES, .{COMMAND_NAME});
         return dos.RETURN_FAIL;
@@ -374,11 +381,6 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     };
     defer sys.CloseLibrary(socket_lib);
-    const utility_lib = sys.OpenLibrary(utility.UTILITYNAME, 1) orelse {
-        _ = Printf(dl, MSG_NOLIBRARY, .{ COMMAND_NAME, utility.UTILITYNAME });
-        return dos.RETURN_FAIL;
-    };
-    defer sys.CloseLibrary(utility_lib);
 
     const memory = sys.AllocVec(@sizeOf(State), exec.MEMF_CLEAR) orelse return dos.RETURN_FAIL;
     defer sys.FreeVec(memory);
@@ -400,7 +402,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             .dl = dl,
             .sb = @ptrCast(socket_lib),
             .cb = @ptrCast(crypto_lib),
-            .ub = @ptrCast(utility_lib),
+            .ub = ub,
             .program = COMMAND_NAME,
             .input = dl.Input().?,
             .output = dl.Output().?,
@@ -435,30 +437,18 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     return if (st.failures > 0) dos.RETURN_ERROR else dos.RETURN_OK;
 }
 
-/// Where a name is: on the other machine or here.
-fn place(dl: *DosBase, text: []const u8) Place {
-    var result: Place = .{ .path = text };
-    var rest = text;
-    var user: []const u8 = "";
-    const colon = indexOf(text, ':') orelse return result;
-    if (indexOf(text[0..colon], '@')) |at| {
-        if (indexOf(text[0..at], '/') == null) {
-            user = text[0..at];
-            rest = text[at + 1 ..];
-        }
-    }
-    if (rest.len > 0 and rest[0] == '[') {
-        const end = indexOf(rest, ']') orelse return result;
-        if (end + 1 >= rest.len or rest[end + 1] != ':') return result;
-        return .{ .remote = true, .user = user, .host = rest[1..end], .path = rest[end + 2 ..] };
-    }
-    const host_end = indexOf(rest, ':') orelse return result;
-    if (indexOf(rest[0..host_end], '/') != null or host_end == 0) return result;
-    const host = rest[0..host_end];
+/// Where a name is: on the other machine - `[user@]host:path`, as
+/// utility.library's ParseUrl reads it - or here.
+fn place(dl: *DosBase, ub: *UtilityBase, text: []const u8) Place {
+    const here: Place = .{ .path = text };
+    var parts: utility.UrlParts = .{};
+    if (!ub.ParseUrl(text.ptr, text.len, &parts, utility.URLF_SCP)) return here;
+    if (parts.flags & utility.URLF_SCP == 0) return here;
+    const user = if (parts.flags & utility.URLF_USER != 0) parts.user.of(text) else "";
+    const host = parts.host.of(text);
     // `name:path` is a name here when dos knows the name.
-    if (user.len == 0 and knownHere(dl, host)) return result;
-    result = .{ .remote = true, .user = user, .host = host, .path = rest[host_end + 1 ..] };
-    return result;
+    if (user.len == 0 and parts.flags & utility.URLF_BRACKETS == 0 and knownHere(dl, host)) return here;
+    return .{ .remote = true, .user = user, .host = host, .path = parts.path.of(text) };
 }
 
 fn knownHere(dl: *DosBase, name: []const u8) bool {
@@ -825,11 +815,6 @@ fn span(text: [*:0]const u8) []const u8 {
     var length: usize = 0;
     while (text[length] != 0) length += 1;
     return text[0..length];
-}
-
-fn indexOf(text: []const u8, char: u8) ?usize {
-    for (text, 0..) |each, index| if (each == char) return index;
-    return null;
 }
 
 fn same(a: []const u8, b: []const u8) bool {

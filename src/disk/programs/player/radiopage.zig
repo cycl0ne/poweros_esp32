@@ -162,7 +162,7 @@ pub const Page = struct {
     }
 
     fn startFinder(page: *Page) ?*Finder {
-        if (page.finder == null) page.finder = Finder.start(page.sys, page.dl, page.agent, page.text);
+        if (page.finder == null) page.finder = Finder.start(page.sys, page.dl, page.ub, page.agent, page.text);
         return page.finder;
     }
 

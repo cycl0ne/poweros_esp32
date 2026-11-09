@@ -4,7 +4,8 @@
 modules lean on: tag lists, the way options are handed to almost every
 call in the system; hooks, the way a library calls a program back; dates;
 32- and 64-bit multiplication and division; strings and Latin-1 case;
-text between UTF-8 and Latin-1; the patterns names are matched against; named objects; unique numbers; pack
+text between UTF-8 and Latin-1; URLs taken apart and their escapes; the
+patterns names are matched against; named objects; unique numbers; pack
 tables; comparing records; and reading the lines of settings files. This guide goes through them by what a
 program wants to do. Every call is in full in the
 [autodocs](../autodocs/utility.md).
@@ -25,9 +26,12 @@ const ub: *UtilityBase = @ptrCast(lib);
 
 Version 1 has every call here; `CompareMem` came with revision 1 (1.1),
 `NextSetting` with revision 2 (1.2), `ZoneOffset`, `DateToUtc` and
-`UtcToDate` with revision 3 (1.3), and `Utf8ToLatin1`, `Latin1ToUtf8`
-and `Utf8Kind` with revision 4 (1.4), which `ub.lib().revision` tells. The structures and constants are in `sdk.utility`, a file per
-area (`tagitem`, `hooks`, `date`, `name`, `pack`, `pattern`, `setting`),
+`UtcToDate` with revision 3 (1.3), `Utf8ToLatin1`, `Latin1ToUtf8` and
+`Utf8Kind` with revision 4 (1.4), and `ParseUrl`, `DecodeUrl` and
+`EncodeUrl` with revision 5 (1.5), which `ub.lib().revision` tells. The
+structures and constants are in `sdk.utility`, a file per area
+(`tagitem`, `hooks`, `date`, `name`, `pack`, `pattern`, `setting`,
+`text`, `url`),
 most of them by name in `sdk.utility` itself; the pack-table ones only
 in `sdk.utility.pack`. No call needs a process: a
 task will do.
@@ -437,6 +441,78 @@ longer than the piece, and ends with a call of no bytes, which gives a
 character the last piece cut as the broken bytes it is. Writing stops
 where `into` is full, before a character that does not fit.
 
+## URLs
+
+A URL is `scheme://[user[:password]@]host[:port][/path][?query][#fragment]`.
+`ParseUrl` takes one apart where it lies: each part is an offset and a
+length in the text (`UrlPart.of(text)` is its slice), nothing copied
+and nothing decoded, so a part is still written as the URL writes it.
+
+| Call | |
+|---|---|
+| `ParseUrl(text, length, parts, flags)` | the URL's parts into a `utility.UrlParts`: true when it is one |
+| `DecodeUrl(from, from_length, into, into_length)` | a part's `%XX` undone: the bytes the whole comes to, or `URL_BROKEN` for a `%` that is no escape |
+| `EncodeUrl(from, from_length, into, into_length, flags)` | bytes as a part can hold them, `%XX` for the rest: the bytes the whole takes |
+
+`ParseUrl` sets flags in `parts.flags` for what the text had: a user
+(`URLF_USER`) and a password (`URLF_PASSWORD`), either of which may be
+empty, and an IPv6 address in brackets (`URLF_BRACKETS`; the host is
+the address without them). The port is 0 when the URL names none, the
+scheme's own being the caller's to know. The path runs from the
+authority's end to the `#`, its query with it: what a request sends.
+Its offset is where the authority ends even when the path is empty, so
+the text from the host - with its bracket - to `parts.path.offset` is
+the `host:port` a request names. A control character or a space
+anywhere makes a text no URL.
+
+With `URLF_SCP` given, a text without a scheme may be the form a copy
+names its remote end in, `[user@]host:path`: the first colon outside
+brackets ends the host, with no `/` before it and no `//` after it.
+`URLF_SCP` comes back set in `parts.flags` when that form was read. A
+local name such as `RAM:file` reads as that form too - only the caller
+knows its own volumes.
+
+```zig
+var parts: utility.UrlParts = .{};
+if (!ub.ParseUrl(text.ptr, text.len, &parts, 0)) return null;
+const scheme = parts.scheme.of(text);      // "https", in the case it is written
+const host = parts.host.of(text);
+const port: u32 = if (parts.port != 0) parts.port else 443;
+const path = parts.path.of(text);           // "" for none: send "/"
+
+// The user, for a login: decoded, its bytes UTF-8 as a rule.
+if (parts.flags & utility.URLF_USER != 0) {
+    const user = parts.user.of(text);
+    const length = ub.DecodeUrl(user.ptr, user.len, &name, name.len - 1);
+    if (length == utility.URL_BROKEN or length > name.len - 1) return null;
+    name[length] = 0;
+}
+```
+
+`EncodeUrl` leaves the letters, the digits and `-`, `.`, `_`, `~` as
+they are - what no part of a URL needs escaped - and writes every other
+byte as `%` and two upper-case hex digits, which is right for a user, a
+password, a query's value and a path's segment alike:
+
+| Flag | |
+|---|---|
+| `URLF_SLASH` | `/` stays as it is: for a whole path |
+| `URLF_LATIN1` | the bytes are Latin-1, and a character past ASCII is escaped as its two UTF-8 bytes: words typed on the system, for a server |
+
+Both `DecodeUrl` and `EncodeUrl` answer the whole length and write as
+much as `into` holds, no NUL after it: the whole is there when the
+answer is no more than `into_length`, and an `into_length` of 0 only
+counts. `EncodeUrl` writes whole characters, never part of one's
+escapes. A part never grows as it is decoded, so `DecodeUrl` works in
+place; `EncodeUrl` never does.
+
+```zig
+// Words typed for a search, as a query's value.
+const room = address.len - at;
+const length = ub.EncodeUrl(words.ptr, words.len, address[at..].ptr, room, utility.URLF_LATIN1);
+if (length > room) return null; // too long
+```
+
 ## Patterns
 
 A pattern describes a set of names: `#?.info` is every name that ends in
@@ -638,7 +714,7 @@ dos.library's `ReadArgs` and `ReadItem` read the shell's form, with its
 
 | Calls | Waits | In an interrupt |
 |---|---|---|
-| tag lists read or changed in place, pack tables, dates, arithmetic, strings and case, text between UTF-8 and Latin-1, `CompareMem`, `NextSetting`, `GetUniqueID`, `SetWildStar`, `NamedObjectName` | no | yes; a list is the caller's to keep others off |
+| tag lists read or changed in place, pack tables, dates, arithmetic, strings and case, text between UTF-8 and Latin-1, URLs, `CompareMem`, `NextSetting`, `GetUniqueID`, `SetWildStar`, `NamedObjectName` | no | yes; a list is the caller's to keep others off |
 | `AllocateTagItems`, `CloneTagItems`, `FreeTagItems`, `AllocNamedObjectA`, `ReleaseNamedObject` | no | no: they allocate, free or take a lock |
 | `ParsePattern`, `MatchPattern` and their `NoCase` forms | no | no: they may allocate, and report through IoErr, which only a process has |
 | `AddNamedObject`, `FindNamedObject`, `RemNamedObject`, `AttemptRemNamedObject`, `FreeNamedObject` | for a name space's semaphore | no |

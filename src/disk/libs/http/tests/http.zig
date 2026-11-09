@@ -18,6 +18,7 @@ const utility = sdk.utility;
 const compression = sdk.compression;
 const ExecBase = sdk.interface.exec.ExecBase;
 const HttpBase = sdk.interface.http.HttpBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const CompressionBase = sdk.interface.compression.CompressionBase;
 const http_init = @import("../http_init.zig");
 const compression_init = @import("../../compression/compression_init.zig");
@@ -38,29 +39,36 @@ test {
 // --- HTTP's text ----------------------------------------------------------------
 
 test "URLs taken apart" {
-    const plain = _protocol.parseUrl("http://example.org").?;
+    const rom_ub = try host.utility.setUp();
+    defer kexec.deinit();
+    const ub: *UtilityBase = @ptrCast(rom_ub);
+    const plain = _protocol.parseUrl(ub, "http://example.org").?;
     try testing.expectEqualStrings("example.org", plain.host);
     try testing.expectEqual(@as(u16, 80), plain.port);
     try testing.expectEqualStrings("/", plain.path);
-    const full = _protocol.parseUrl("HTTP://10.0.2.2:8000/dir/file.txt?a=1#top").?;
+    const full = _protocol.parseUrl(ub, "HTTP://10.0.2.2:8000/dir/file.txt?a=1#top").?;
     try testing.expectEqualStrings("10.0.2.2", full.host);
     try testing.expectEqual(@as(u16, 8000), full.port);
     try testing.expectEqualStrings("/dir/file.txt?a=1", full.path);
-    try testing.expect(_protocol.parseUrl("https://example.org/").?.secure);
-    try testing.expectEqual(@as(u16, 443), _protocol.parseUrl("https://example.org/").?.port);
-    try testing.expectEqualStrings("?q=1", _protocol.parseUrl("http://h?q=1").?.path);
-    const six = _protocol.parseUrl("http://[fec0::2]:8080/x").?;
+    try testing.expect(_protocol.parseUrl(ub, "https://example.org/").?.secure);
+    try testing.expectEqual(@as(u16, 443), _protocol.parseUrl(ub, "https://example.org/").?.port);
+    try testing.expectEqualStrings("?q=1", _protocol.parseUrl(ub, "http://h?q=1").?.path);
+    const six = _protocol.parseUrl(ub, "http://[fec0::2]:8080/x").?;
     try testing.expectEqualStrings("[fec0::2]", six.host);
     try testing.expectEqualStrings("fec0::2", six.hostName());
     try testing.expectEqual(@as(u16, 8080), six.port);
-    try testing.expectEqual(@as(u16, 80), _protocol.parseUrl("http://[::1]/").?.port);
+    try testing.expectEqual(@as(u16, 80), _protocol.parseUrl(ub, "http://[::1]/").?.port);
     for ([_][]const u8{ "ftp://x/", "http://", "http://:80/", "http://h:0/", "http://h:65536/", "http://h:8a/", "example.org", "http://[::1/", "http://[]/", "http://h/a b", "http://h/a\r\nX: y", "http://user@h/", "http://h\x01/" }) |text| {
-        try testing.expectEqual(@as(?Url, null), _protocol.parseUrl(text));
+        try testing.expectEqual(@as(?Url, null), _protocol.parseUrl(ub, text));
     }
+    try host.utility.tearDown(rom_ub);
 }
 
 test "a redirect's Location made into a URL" {
-    const base = _protocol.parseUrl("http://h:8000/a/b/c.html?q=1").?;
+    const rom_ub = try host.utility.setUp();
+    defer kexec.deinit();
+    const ub: *UtilityBase = @ptrCast(rom_ub);
+    const base = _protocol.parseUrl(ub, "http://h:8000/a/b/c.html?q=1").?;
     var into: [128]u8 = undefined;
     const cases = [_][2][]const u8{
         .{ "http://other/x", "http://other/x" },
@@ -80,12 +88,13 @@ test "a redirect's Location made into a URL" {
         const length = _protocol.resolve(base, case[0], &into).?;
         try testing.expectEqualStrings(case[1], into[0..length]);
     }
-    const secure = _protocol.parseUrl("https://h/").?;
+    const secure = _protocol.parseUrl(ub, "https://h/").?;
     const length = _protocol.resolve(secure, "//other/z", &into).?;
     try testing.expectEqualStrings("https://other/z", into[0..length]);
     var small: [8]u8 = undefined;
     try testing.expectEqual(@as(?usize, null), _protocol.resolve(base, "/a-long-way", &small));
     try testing.expectEqual(@as(?usize, null), _protocol.resolve(base, "", &into));
+    try host.utility.tearDown(rom_ub);
 }
 
 test "the head of an answer, read in place" {

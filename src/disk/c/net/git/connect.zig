@@ -41,7 +41,7 @@ pub const Connection = struct {
         connection.git = git;
         connection.line_start = true;
         connection.latin = files.serverText();
-        if (!url.parse(spanOf(text), &connection.remote_url)) {
+        if (!url.parse(git.ub, spanOf(text), &connection.remote_url)) {
             git.say(MSG_BADURL, .{text});
             git.free(connection);
             return null;

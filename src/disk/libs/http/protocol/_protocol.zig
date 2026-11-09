@@ -14,6 +14,10 @@
 //! off the same way, so the status line and every header's value are
 //! strings in the bytes the head came in, handed out as they are.
 
+const sdk = @import("sdk");
+const utility = sdk.utility;
+const UtilityBase = sdk.interface.utility.UtilityBase;
+
 pub const Url = struct {
     /// As the URL writes it, and the Host header sends it: an IPv6
     /// address in its brackets.
@@ -56,61 +60,23 @@ pub fn same(text: []const u8, other: []const u8) bool {
     return text.len == other.len and startsWith(text, other);
 }
 
-/// `http://host[:port][/path]` or `https://...` taken apart - the host a
-/// name, an IPv4 address or an IPv6 one in brackets (RFC 3986, 3.2.2);
-/// null when it is not one.
-pub fn parseUrl(text: []const u8) ?Url {
-    var rest = text;
-    var secure = false;
-    if (startsWith(rest, "http://")) {
-        rest = rest[7..];
-    } else if (startsWith(rest, "https://")) {
-        rest = rest[8..];
-        secure = true;
-    } else return null;
-    var host_end: usize = 0;
-    while (host_end < rest.len and rest[host_end] != '/' and rest[host_end] != '?' and rest[host_end] != '#') host_end += 1;
-    var host = rest[0..host_end];
-    var path: []const u8 = rest[host_end..];
-    // A fragment is the reader's, never sent.
-    for (path, 0..) |char, index| {
-        if (char == '#') {
-            path = path[0..index];
-            break;
-        }
-    }
-    if (path.len == 0) path = "/";
-    for (path) |char| {
-        if (char <= ' ' or char == 0x7F) return null;
-    }
-    var port: u16 = if (secure) 443 else 80;
-    // The port's colon is the one past an IPv6 address's bracket.
-    var from: usize = 0;
-    if (host.len > 0 and host[0] == '[') {
-        from = (for (host, 0..) |char, index| {
-            if (char == ']') break index;
-        } else return null) + 1;
-        if (from == 2) return null;
-    }
-    for (host[from..], from..) |char, index| {
-        if (char != ':') continue;
-        const digits = host[index + 1 ..];
-        if (digits.len == 0 or digits.len > 5) return null;
-        var value: u32 = 0;
-        for (digits) |digit| {
-            if (digit < '0' or digit > '9') return null;
-            value = value * 10 + (digit - '0');
-        }
-        if (value == 0 or value > 65535) return null;
-        port = @intCast(value);
-        host = host[0..index];
-        break;
-    }
-    if (host.len == 0) return null;
-    for (host) |char| {
-        if (char <= ' ' or char == 0x7F or char == '@') return null;
-    }
-    return .{ .host = host, .port = port, .path = path, .secure = secure };
+/// `http://host[:port][/path]` or `https://...` taken apart by
+/// utility.library's ParseUrl - the host a name, an IPv4 address or an
+/// IPv6 one in brackets, the fragment left out; null when it is not one,
+/// or names a user.
+pub fn parseUrl(ub: *UtilityBase, text: []const u8) ?Url {
+    var parts: utility.UrlParts = .{};
+    if (!ub.ParseUrl(text.ptr, text.len, &parts, 0)) return null;
+    const scheme = parts.scheme.of(text);
+    const secure = same(scheme, "https");
+    if (!secure and !same(scheme, "http")) return null;
+    if (parts.flags & utility.URLF_USER != 0) return null;
+    // The host as the URL writes it: an IPv6 address in its brackets.
+    const bracket: u32 = @intFromBool(parts.flags & utility.URLF_BRACKETS != 0);
+    const host = text[parts.host.offset - bracket .. parts.host.offset + parts.host.length + bracket];
+    const path = parts.path.of(text);
+    const port: u16 = if (parts.port != 0) @intCast(parts.port) else if (secure) 443 else 80;
+    return .{ .host = host, .port = port, .path = if (path.len == 0) "/" else path, .secure = secure };
 }
 
 /// Where a redirect's `location` leads from `base`, written into `into`:

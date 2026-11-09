@@ -2,7 +2,8 @@
 //! utility.library's jump table: tag lists, hooks, dates, 32- and 64-bit
 //! multiplication and division, Latin-1 case, pack tables, named objects,
 //! unique IDs, pattern matching, strings, alignment, lines of settings,
-//! the zone the system clock keeps, and text between UTF-8 and Latin-1.
+//! the zone the system clock keeps, text between UTF-8 and Latin-1, and
+//! URLs.
 //! The reserved slots are kept free so that the slots after them stay
 //! where they are.
 //!
@@ -79,6 +80,9 @@ pub const LVO = struct {
     pub const Utf8ToLatin1 = libraries.lvo(68);
     pub const Latin1ToUtf8 = libraries.lvo(69);
     pub const Utf8Kind = libraries.lvo(70);
+    pub const ParseUrl = libraries.lvo(71);
+    pub const DecodeUrl = libraries.lvo(72);
+    pub const EncodeUrl = libraries.lvo(73);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -144,6 +148,9 @@ pub const Fn = struct {
     pub const Utf8ToLatin1 = *const fn (*UtilityBase, ?*utility.Utf8Conversion, [*]const u8, usize, [*]u8, usize) callconv(.c) usize;
     pub const Latin1ToUtf8 = *const fn (*UtilityBase, [*]const u8, usize, [*]u8, usize) callconv(.c) usize;
     pub const Utf8Kind = *const fn (*UtilityBase, [*]const u8, usize) callconv(.c) u32;
+    pub const ParseUrl = *const fn (*UtilityBase, [*]const u8, usize, *utility.UrlParts, u32) callconv(.c) bool;
+    pub const DecodeUrl = *const fn (*UtilityBase, [*]const u8, usize, [*]u8, usize) callconv(.c) usize;
+    pub const EncodeUrl = *const fn (*UtilityBase, [*]const u8, usize, [*]u8, usize, u32) callconv(.c) usize;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -438,5 +445,24 @@ pub const UtilityBase = opaque {
     /// UTF8KIND_NONE, UTF8KIND_ASCII, UTF8KIND_LATIN1 or UTF8KIND_WIDE.
     pub fn Utf8Kind(self: *UtilityBase, bytes: [*]const u8, length: usize) u32 {
         return libraries.call(self, LVO.Utf8Kind, Fn.Utf8Kind, .{ bytes, length });
+    }
+
+    /// `text` taken apart into `parts` in place - scheme, user, password,
+    /// host, port, path - and with URLF_SCP `[user@]host:path` too: false
+    /// when it is no URL.
+    pub fn ParseUrl(self: *UtilityBase, text: [*]const u8, length: usize, parts: *utility.UrlParts, flags: u32) bool {
+        return libraries.call(self, LVO.ParseUrl, Fn.ParseUrl, .{ text, length, parts, flags });
+    }
+
+    /// A URL's part with its `%XX` undone into `into`: the bytes the whole
+    /// comes to, or URL_BROKEN.
+    pub fn DecodeUrl(self: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize) usize {
+        return libraries.call(self, LVO.DecodeUrl, Fn.DecodeUrl, .{ from, from_length, into, into_length });
+    }
+
+    /// Bytes as a URL's part, `%XX` for what needs it - URLF_SLASH keeps
+    /// `/`, URLF_LATIN1 encodes Latin-1 as UTF-8: the bytes the whole takes.
+    pub fn EncodeUrl(self: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize, flags: u32) usize {
+        return libraries.call(self, LVO.EncodeUrl, Fn.EncodeUrl, .{ from, from_length, into, into_length, flags });
     }
 };

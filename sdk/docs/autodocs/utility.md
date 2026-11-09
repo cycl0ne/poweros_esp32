@@ -3,7 +3,8 @@
 utility.library's jump table: tag lists, hooks, dates, 32- and 64-bit
 multiplication and division, Latin-1 case, pack tables, named objects,
 unique IDs, pattern matching, strings, alignment, lines of settings,
-the zone the system clock keeps, and text between UTF-8 and Latin-1.
+the zone the system clock keeps, text between UTF-8 and Latin-1, and
+URLs.
 The reserved slots are kept free so that the slots after them stay
 where they are.
 
@@ -27,6 +28,8 @@ Generated from the source by `./zig build autodoc`.
 - [DateJoin](#datejoin) - The day number a date falls on.
 - [DateSplit](#datesplit) - A day number as the date it falls on.
 - [DateToUtc](#datetoutc) - A DateStamp, kept in the zone the system clock keeps, as seconds since 1970 in UTC.
+- [DecodeUrl](#decodeurl) - Undoes the `%XX` escapes of a part of a URL: a user, a password, a path's segment, a query's value.
+- [EncodeUrl](#encodeurl) - Writes bytes as a part of a URL can hold them: the characters that need no escape as they are, every other byte as `%XX`.
 - [FilterTagChanges](#filtertagchanges) - Drops the changes in a change list that change nothing, and can apply the rest.
 - [FilterTagItems](#filtertagitems) - Keeps the items of a list whose tags are, or are not, in an array.
 - [FindNamedObject](#findnamedobject) - Finds the next object of a name space with a given name.
@@ -46,6 +49,7 @@ Generated from the source by `./zig build autodoc`.
 - [PackStructureTags](#packstructuretags) - Copies the data of a tag list into the fields of a structure, as a pack table lays them out.
 - [ParsePattern](#parsepattern) - Turns a pattern into the tokens `MatchPattern` works on.
 - [ParsePatternNoCase](#parsepatternnocase) - Turns a pattern into the tokens `MatchPatternNoCase` works on.
+- [ParseUrl](#parseurl) - Takes a URL apart in place: its scheme, user, password, host, port and path, each where it lies in the text.
 - [RefreshTagItemClones](#refreshtagitemclones) - Copies a tag list into an earlier clone of it again.
 - [ReleaseNamedObject](#releasenamedobject) - Gives back one use of an object.
 - [RemNamedObject](#remnamedobject) - Takes an object out of its name space, and reports when its last user has let go.
@@ -1061,6 +1065,144 @@ and an hour.
 var now: dos.DateStamp = .{};
 _ = dl.DateStamp(&now);
 const seconds = ub.DateToUtc(&now, null); // what a server or a certificate counts in
+```
+
+## DecodeUrl
+
+Undoes the `%XX` escapes of a part of a URL: a user, a password, a path's segment, a query's value.
+
+**SYNOPSIS**
+
+```zig
+fn DecodeUrl(ub: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize) usize
+```
+
+**SINCE**
+
+1.5. LVO -292.
+
+**INPUTS**
+
+- `from`, `from_length` - the part as the URL writes it.
+- `into`, `into_length` - where its bytes go; it may be `from`.
+
+**RESULT**
+
+The bytes the whole part comes to, written or not; URL_BROKEN for a
+`%` that is not followed by two hex digits.
+
+**BEHAVIOR**
+
+Each `%` and the two hex digits after it, in either case, are the
+byte they give; every other byte is itself, a `+` too. As many bytes
+are written as `into` holds, no NUL after them: the whole is there
+when the answer is no more than `into_length`. A length of 0 for
+`into` only counts.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads its input and writes `into`.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. Everything given is the caller's.
+
+**NOTES**
+
+A part never grows as it is decoded: `into` as long as `from` holds
+it. What the bytes are - UTF-8, mostly - is the caller's to say;
+`Utf8ToLatin1` makes them the system's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ParseUrl`, `EncodeUrl`, `Utf8ToLatin1`
+
+**EXAMPLES**
+
+```zig
+// The user a URL gives, for a login.
+const user = parts.user.of(text);
+const length = ub.DecodeUrl(user.ptr, user.len, &name, name.len - 1);
+if (length == utility.URL_BROKEN or length > name.len - 1) return false;
+name[length] = 0;
+```
+
+## EncodeUrl
+
+Writes bytes as a part of a URL can hold them: the characters that need no escape as they are, every other byte as `%XX`.
+
+**SYNOPSIS**
+
+```zig
+fn EncodeUrl(ub: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize, flags: u32) usize
+```
+
+**SINCE**
+
+1.5. LVO -296.
+
+**INPUTS**
+
+- `from`, `from_length` - the bytes: a user, a password, a query's
+  value, a path.
+- `into`, `into_length` - where the part goes; not `from`.
+- `flags` - URLF_SLASH keeps `/` as it is, for a whole path;
+  URLF_LATIN1 takes the bytes as Latin-1 and encodes each character
+  past ASCII as its UTF-8.
+
+**RESULT**
+
+The bytes the whole part takes, written or not.
+
+**BEHAVIOR**
+
+A letter, a digit, `-`, `.`, `_` and `~` stay as they are - what no
+part of a URL needs escaped - and with URLF_SLASH a `/`; every other
+byte is `%` and two upper-case hex digits, a space `%20`. As many
+whole characters are written as `into` holds, no NUL after them: the
+whole is there when the answer is no more than `into_length`. A
+length of 0 for `into` only counts.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads its input and writes `into`.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. Everything given is the caller's.
+
+**NOTES**
+
+The part grows to three times its bytes at most - six times a Latin-1
+character's with URLF_LATIN1. What is escaped is what a part's own
+separators would take for theirs (`:` and `@` in a user, `&` and `=`
+in a query, `/` in a segment), and more besides, which a server takes
+the same.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DecodeUrl`, `ParseUrl`, `Latin1ToUtf8`
+
+**EXAMPLES**
+
+```zig
+// Words typed for a search, as a query's value.
+const length = ub.EncodeUrl(words.ptr, words.len, address[at..].ptr, address.len - at, utility.URLF_LATIN1);
+if (length > address.len - at) return null; // too long
 ```
 
 ## FilterTagChanges
@@ -2292,6 +2434,91 @@ None known.
 var tokens: [sdk.utility.parsedSize(64)]u8 = undefined;
 if (ub.ParsePatternNoCase(pattern, &tokens, tokens.len) < 0) return error.BadPattern;
 if (ub.MatchPatternNoCase(@ptrCast(&tokens), name)) list(name);
+```
+
+## ParseUrl
+
+Takes a URL apart in place: its scheme, user, password, host, port and path, each where it lies in the text.
+
+**SYNOPSIS**
+
+```zig
+fn ParseUrl(ub: *UtilityBase, text: [*]const u8, length: usize, parts: *utility.UrlParts, flags: u32) bool
+```
+
+**SINCE**
+
+1.5. LVO -288.
+
+**INPUTS**
+
+- `text`, `length` - the URL; no NUL is looked for.
+- `parts` - filled in: each part's offset in `text` and its length,
+  the port, and what `flags` says of them.
+- `flags` - URLF_SCP takes `[user@]host:path` too.
+
+**RESULT**
+
+True when `text` is a URL - `parts` then holds it - false when it is
+none, and `parts` holds nothing of use.
+
+**BEHAVIOR**
+
+A URL is `scheme://[user[:password]@]host[:port][/path][?query]`
+and a `#fragment` after it. The scheme is a letter and then letters,
+digits, `+`, `-` and `.`; it is taken in any case and handed out as it
+is written. The authority runs to the first `/`, `?` or `#`: what is
+before its last `@` is the user, up to a first `:`, and the password
+after it (URLF_USER, URLF_PASSWORD). The host is a name, an IPv4
+address, or an IPv6 address in brackets (URLF_BRACKETS, the host
+without them); a `:` after it gives the port, 1 to 65535. The path
+runs from the authority's end to a `#` or the end, its query with it.
+
+With URLF_SCP, a text with no scheme is read as `[user@]host:path`:
+the first colon outside brackets ends the host, there is no `/` before
+it and no `//` after it, and all after it is the path, which may be
+empty. URLF_SCP is set in `parts.flags` when this form was read.
+
+A text is none when its host is empty, its brackets are not closed,
+its port is not one, or a byte in it is a control character or a
+space - but for spaces in the scp form's path, which names a file.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads its input and writes `parts`.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated, copied or decoded: the parts are the text's
+bytes as the URL writes them, escapes and all (`DecodeUrl`).
+
+**NOTES**
+
+`UrlPart.of(text)` hands a part out as a slice. An authority the
+caller sends on - a Host header - is the text from the host, with its
+bracket, to `parts.path.offset`.
+
+**BUGS**
+
+A text longer than 4 GiB is no URL.
+
+**SEE ALSO**
+
+`DecodeUrl`, `EncodeUrl`
+
+**EXAMPLES**
+
+```zig
+var parts: utility.UrlParts = .{};
+if (!ub.ParseUrl(text.ptr, text.len, &parts, 0)) return error_url;
+const host = parts.host.of(text);
+const port: u32 = if (parts.port != 0) parts.port else 443;
+
+// A copy's remote end, or a local name: `user@host:path`.
+if (ub.ParseUrl(name.ptr, name.len, &parts, utility.URLF_SCP) and parts.flags & utility.URLF_SCP != 0) ...
 ```
 
 ## RefreshTagItemClones
