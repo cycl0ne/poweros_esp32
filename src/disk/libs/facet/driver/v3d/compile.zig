@@ -516,6 +516,18 @@ pub const Tag = enum {
     /// as a 32-bit integer: NIR's f2i32 of fround_even, which v3d emits
     /// as FTOIN (ntq_emit_alu, nir_to_vir.c:1465-1472; since 1.163).
     round_to_int,
+    /// A selection kept a branch, the nir_if nir_opt_peephole_select did
+    /// not flatten (since 1.171): `a` its condition. The steps after it
+    /// to the `begin_else` are its true arm, those after that to the
+    /// `end_if` its false arm, each a block of its own.
+    begin_if,
+    begin_else,
+    end_if,
+    /// A float the two ways into a kept selection's merge bring, a phi as
+    /// nir_lower_phis_to_scalar leaves it (since 1.171): `a` and
+    /// `part[0]` the true arm's float, `b` and `part[1]` the false arm's,
+    /// `from[0]` the selection's condition.
+    phi,
 };
 
 /// What a `compare` asks, as NIR has SPIR-V's ordered comparisons and its
@@ -593,6 +605,7 @@ pub fn isBool(work: *const Work, at: u16) bool {
     return switch (each.tag) {
         .compare, .logic => true,
         .select => isBool(work, each.b),
+        .phi => isBool(work, each.a),
         else => false,
     };
 }
@@ -629,6 +642,25 @@ pub const Step = struct {
     /// An `ssbo_atomic`'s operation (since 1.169).
     atomic: Atomic = .iadd,
 };
+
+/// Where a step is: in no arm of a kept selection, 0, or in one of its
+/// arms, the true one's odd and the false one's the even after it, the
+/// first kept selection's 1 and 2 (since 1.171).
+pub const Region = u8;
+
+/// A selection kept a branch, as `read` leaves it for the list to lay
+/// out (since 1.171): the steps of its arms, the true arm's first where
+/// the module had it second, and its three marks put down around them.
+pub const Kept = struct {
+    from: u16,
+    split: u16,
+    to: u16,
+    false_first: bool,
+    marks: [3]u16,
+};
+
+/// The most selections a program keeps branches.
+pub const most_kept = 8;
 
 /// A varying the module declares.
 pub const Input = struct {
@@ -1148,6 +1180,13 @@ pub const Work = struct {
     divergent: [most_steps]bool = @splat(false),
     skip_helpers: [most_steps]bool = @splat(false),
 
+    /// Each step's region (`Region`), the one `read` is in, and the
+    /// selections it kept branches (since 1.171).
+    region: [most_steps]Region = @splat(0),
+    current_region: Region = 0,
+    kept: [most_kept]Kept = undefined,
+    kept_count: u8 = 0,
+
     pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value, constant_matrix, position_pointer };
 
     /// `chain_part` of a pointer to a whole member.
@@ -1179,6 +1218,8 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
         // Nor does any compute beyond a sum and a product.
         .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot => return Error.Body,
         .select, .set_less, .sat, .sin, .cos, .sign, .logic, .integer => return Error.Body,
+        // Nor branches.
+        .begin_if, .begin_else, .end_if, .phi => return Error.Branches,
         else => {},
     };
     try settle(work);
@@ -1446,7 +1487,13 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             // One the selection in it collapsed into is an empty
             // selection: nir_opt_collapse_if counted the block before the
             // inner one, and the inner one is flattened on its own arm.
-            if (!inner.collapsed and armCost(work, inner.arms_from, inner.arms_to) > limitOf(inner.control, peephole_limit)) return Error.Branches;
+            // One over the limit is kept a branch, as one whose arm holds
+            // what is not flattened (since 1.171); the arms of one
+            // flattened are in the block it is in.
+            if (inner.kept or (!inner.collapsed and armCost(work, inner.arms_from, inner.arms_to) > limitOf(inner.control, peephole_limit)))
+                try keepSelection(work, &inner, depth)
+            else if (depth == 1)
+                @memset(work.region[inner.arms_from..inner.arms_to], 0);
             flow = inner.outside;
             depth -= 1;
             if (depth > 0) {
@@ -1992,6 +2039,10 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     .arms => if (id == selection.merge) {
                         if (selection.yes != selection.merge and !selection.seen_yes) return Error.Branches;
                         if (selection.no != selection.merge and !selection.seen_no) return Error.Branches;
+                        // The merge block is where the selection was, and
+                        // where an arm read alone ends.
+                        if (depth == 1) work.current_region = 0;
+                        if (!selection.seen_yes or !selection.seen_no) selection.split = @intCast(work.step_count);
                         // A way in that is no arm leaves the variables
                         // as they were before the branch.
                         const level = depth - 1;
@@ -2025,10 +2076,12 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         try merge(work, selection, level);
                         flow = .merging;
                     } else if (id == selection.yes and !selection.seen_yes) {
+                        selection.armed(work, id, depth);
                         selection.seen_yes = true;
                         selection.enter(id);
                         flow = .arm;
                     } else if (id == selection.no and !selection.seen_no) {
+                        selection.armed(work, id, depth);
                         selection.seen_no = true;
                         selection.enter(id);
                         flow = .arm;
@@ -2090,6 +2143,10 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         selection.iand = try put(work, logicOf(.iand, condition, outer.condition));
                 }
                 selection.arms_from = @intCast(work.step_count);
+                // A selection in no other may be kept a branch: its arms
+                // are read into regions of their own until it is known
+                // whether it is (since 1.171).
+                if (depth == 1) selection.region = 2 * work.kept_count + 1;
                 work.before[depth - 1] = work.values;
                 flow = .arms;
             },
@@ -2148,12 +2205,13 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // nir_opt_peephole_select.c:59-326): a sample, which
                     // is a texture instruction, or the colour stored, is
                     // neither, and the selection stays a branch.
+                    // Such a selection is kept a branch (since 1.171).
                     .arm => switch (instruction.op) {
-                        .image_sample_implicit_lod, .image_sample_dref_implicit_lod => return Error.Branches,
+                        .image_sample_implicit_lod, .image_sample_dref_implicit_lod => try selection.keep(work, depth),
                         // An atomic or a barrier is neither either: it
                         // would run where the arm is not taken (since
                         // 1.169).
-                        .atomic_load, .atomic_store, .atomic_exchange, .atomic_compare_exchange, .atomic_compare_exchange_weak, .atomic_i_increment, .atomic_i_decrement, .atomic_i_add, .atomic_i_sub, .atomic_s_min, .atomic_u_min, .atomic_s_max, .atomic_u_max, .atomic_and, .atomic_or, .atomic_xor, .memory_barrier => return Error.Branches,
+                        .atomic_load, .atomic_store, .atomic_exchange, .atomic_compare_exchange, .atomic_compare_exchange_weak, .atomic_i_increment, .atomic_i_decrement, .atomic_i_add, .atomic_i_sub, .atomic_s_min, .atomic_u_min, .atomic_s_max, .atomic_u_max, .atomic_and, .atomic_or, .atomic_xor, .memory_barrier => try selection.keep(work, depth),
                         // A store into a variable of the function's own
                         // is a value the merge chooses, a load and a store
                         // nir_lower_vars_to_ssa leaves none of (since
@@ -2168,6 +2226,8 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                                 selection.constant = true;
                                 if (selection.held.iand != none) selection.held.constant_after = true;
                             }
+                        } else if (storesBuffer(work, operands)) {
+                            try selection.keep(work, depth);
                         } else return Error.Branches,
                         else => {
                             selection.empty = false;
@@ -2392,6 +2452,37 @@ const Selection = struct {
     /// the merge block.
     arms_from: u16 = 0,
     arms_to: u16 = 0,
+    /// Kept a branch (since 1.171): an arm holds what
+    /// nir_opt_peephole_select flattens nothing of. Its arms' regions,
+    /// the true arm's and the one after it; the first step of the arm
+    /// read second; whether the false arm came first in the module; and
+    /// whether a variable came to the merge from one way only.
+    kept: bool = false,
+    region: Region = 0,
+    split: u16 = 0,
+    false_first: bool = false,
+    one_way: bool = false,
+
+    /// An arm holds what is not flattened: the selection is kept a branch,
+    /// where it is in no other (since 1.171). A vertex program's are not
+    /// yet.
+    fn keep(selection: *Selection, work: *const Work, depth: u32) Error!void {
+        if (depth != 1 or work.stage != .fragment) return Error.Branches;
+        selection.kept = true;
+        selection.empty = false;
+        selection.quiet = false;
+        selection.lone = false;
+    }
+
+    /// An arm's first block: the step its steps start at, where it is the
+    /// second arm, and the region they are in.
+    fn armed(selection: *Selection, work: *Work, arm: u32, depth: u32) void {
+        if (selection.seen_yes or selection.seen_no)
+            selection.split = @intCast(work.step_count)
+        else
+            selection.false_first = arm == selection.no;
+        if (depth == 1) work.current_region = selection.region + @intFromBool(arm != selection.yes);
+    }
 
     fn enter(selection: *Selection, arm: u32) void {
         selection.arm = arm;
@@ -2548,6 +2639,13 @@ fn quietOf(work: *const Work, instruction: spirv.Instruction) bool {
     };
 }
 
+/// Whether an OpStore's pointer is into a storage buffer.
+fn storesBuffer(work: *const Work, operands: []const u32) bool {
+    if (operands.len < 1) return false;
+    const id = idOf(operands[0]) catch return false;
+    return work.thing[id] == .member_pointer;
+}
+
 fn pointsLocal(work: *const Work, word: u32) bool {
     const id = idOf(word) catch return false;
     return isLocal(work, id) or work.thing[id] == .local_part;
@@ -2591,6 +2689,8 @@ fn phiOf(work: *Work, selection: *const Selection, operands: []const u32) Error!
         by[side] = if (boolean) try boolOf(work, operands[at]) else try operand(work, operands[at], kind);
     }
     if (boolean) {
+        // A kept selection's phi of bools is not yet (since 1.171).
+        if (selection.kept) return Error.Branches;
         var chosen = Step{ .tag = .select, .kind = .f32x1, .a = selection.condition, .b = by[0] };
         chosen.from[0] = by[1];
         const kept = by[0] == by[1] or dropped(work, selection, .{ .step = by[0], .part = 0 }, .{ .step = by[1], .part = 0 });
@@ -2606,6 +2706,11 @@ fn phiOf(work: *Work, selection: *const Selection, operands: []const u32) Error!
             made.part[k] = yes.part;
             continue;
         }
+        if (selection.kept) {
+            made.from[k] = try put(work, phiStep(selection.condition, yes, no));
+            made.part[k] = 0;
+            continue;
+        }
         var chosen = Step{ .tag = .select, .kind = .f32x1, .a = selection.condition, .b = try floatOf(work, yes) };
         chosen.from[0] = try floatOf(work, no);
         made.from[k] = try put(work, chosen);
@@ -2619,7 +2724,7 @@ fn phiOf(work: *Work, selection: *const Selection, operands: []const u32) Error!
 
 /// A float of a step, named through the components and constructs that
 /// only name it: what copy propagation leaves of them.
-const Float = struct { step: u16, part: u8 };
+pub const Float = struct { step: u16, part: u8 };
 
 fn partOf(work: *const Work, at: u16, k: u8) Float {
     var of: Float = .{ .step = at, .part = k };
@@ -2709,7 +2814,12 @@ fn localOf(work: *Work, local: u16) Error!u16 {
 /// floats in order after
 /// nir_lower_phis_to_scalar, which puts each before the vector's
 /// (nir_lower_phis_to_scalar.c:195-218; since 1.156).
-fn merge(work: *Work, selection: *const Selection, level: u32) Error!void {
+///
+/// A kept selection's merge has a phi of each float instead (since
+/// 1.171), and one way that brings nothing brings nir_lower_undef_to_zero's
+/// 0: the other's float is not there where the phi is
+/// (nir_opt_remove_phis.c:133-140).
+fn merge(work: *Work, selection: *Selection, level: u32) Error!void {
     const condition = selection.condition;
     var at = work.used_count;
     while (at > 0) {
@@ -2718,8 +2828,17 @@ fn merge(work: *Work, selection: *const Selection, level: u32) Error!void {
         for (0..work.local_kind[local].parts()) |k| {
             const yes = work.ends[level][0][local][k];
             const no = work.ends[level][1][local][k];
+            if (yes.step != none and no.step != none and !(yes.step == no.step and yes.part == no.part)) {
+                if (work.local_bool[local] and selection.kept) return Error.Branches;
+            }
+            if ((yes.step == none) != (no.step == none)) {
+                if (work.local_bool[local] and selection.kept) return Error.Branches;
+                selection.one_way = true;
+            }
             work.values[local][k] = if (yes.step == no.step and yes.part == no.part)
                 yes
+            else if (selection.kept)
+                .{ .step = try put(work, phiStep(condition, try heldOf(work, yes), try heldOf(work, no))), .part = 0 }
             else if (yes.step == none)
                 no
             else if (no.step == none)
@@ -2733,6 +2852,49 @@ fn merge(work: *Work, selection: *const Selection, level: u32) Error!void {
             };
         }
     }
+}
+
+/// A kept selection's phi of the float `yes` brings and the float `no`
+/// does (since 1.171).
+fn phiStep(condition: u16, yes: Float, no: Float) Step {
+    var made = Step{ .tag = .phi, .kind = .f32x1, .a = yes.step, .b = no.step };
+    made.part[0] = yes.part;
+    made.part[1] = no.part;
+    made.from[0] = condition;
+    return made;
+}
+
+/// A selection kept a branch, at its merge block's first instruction past
+/// its phis (since 1.171): one an arm of which holds what
+/// nir_opt_peephole_select does not flatten, or whose arms are over its
+/// limit. Its selects are its phis, where it was kept for the limit, and
+/// its marks are put down. Only one in no other selection, of no other
+/// in it, is kept.
+fn keepSelection(work: *Work, selection: *const Selection, depth: u32) Error!void {
+    if (depth != 1 or work.stage != .fragment) return Error.Branches;
+    if (selection.inner != 0 or selection.collapsed or selection.killed) return Error.Branches;
+    if (work.kept_count == most_kept) return Error.Branches;
+    if (!selection.kept) {
+        if (selection.one_way) return Error.Branches;
+        for (work.steps[selection.arms_to..work.step_count]) |*each| {
+            if (each.tag != .select or each.a != selection.condition) continue;
+            if (isBool(work, each.b)) return Error.Branches;
+            each.* = phiStep(selection.condition, partOf(work, each.b, 0), partOf(work, each.from[0], 0));
+        }
+    }
+    const marks: [3]u16 = .{
+        try put(work, .{ .tag = .begin_if, .kind = .f32x1, .a = selection.condition }),
+        try put(work, .{ .tag = .begin_else, .kind = .f32x1 }),
+        try put(work, .{ .tag = .end_if, .kind = .f32x1 }),
+    };
+    work.kept[work.kept_count] = .{
+        .from = selection.arms_from,
+        .split = selection.split,
+        .to = selection.arms_to,
+        .false_first = selection.false_first,
+        .marks = marks,
+    };
+    work.kept_count += 1;
 }
 
 /// The ALU operations of a selection's arms as nir_opt_peephole_select
@@ -2858,6 +3020,7 @@ fn boolOf(work: *const Work, word: u32) Error!u16 {
 /// operation the shader computes itself.
 fn algebraic(work: *Work) Error!void {
     var list = Order.start(work);
+    try list.rematerialize(work);
     while (true) {
         list.dce(work);
         const merged = list.cse(work);
@@ -2882,15 +3045,61 @@ const Order = struct {
     /// until the next, as Mesa's is, and is still counted as a use.
     gone: [most_steps]bool = @splat(false),
 
+    /// The steps in the order they were read, but for a kept
+    /// selection's: its marks around its arms, and the true arm first,
+    /// as vtn builds the nir_if's then_list before its else_list
+    /// whatever the order of the module's blocks (since 1.171).
     fn start(work: *const Work) Order {
         var list: Order = .{};
-        for (0..work.step_count) |at| {
-            const step_at: u16 = @intCast(at);
-            list.prev[step_at] = list.last;
-            if (list.last != none) list.next[list.last] = step_at else list.first = step_at;
-            list.last = step_at;
+        var marked: [most_steps]bool = @splat(false);
+        for (work.kept[0..work.kept_count]) |kept| for (kept.marks) |mark| {
+            marked[mark] = true;
+        };
+        var at: u16 = 0;
+        for (work.kept[0..work.kept_count]) |kept| {
+            while (at < kept.from) : (at += 1) if (!marked[at]) list.append(at);
+            const first: [2]u16 = .{ kept.from, kept.split };
+            const second: [2]u16 = .{ kept.split, kept.to };
+            const yes = if (kept.false_first) second else first;
+            const no = if (kept.false_first) first else second;
+            list.append(kept.marks[0]);
+            for (yes[0]..yes[1]) |each| list.append(@intCast(each));
+            list.append(kept.marks[1]);
+            for (no[0]..no[1]) |each| list.append(@intCast(each));
+            list.append(kept.marks[2]);
+            at = kept.to;
         }
+        while (at < work.step_count) : (at += 1) if (!marked[at]) list.append(at);
         return list;
+    }
+
+    fn append(list: *Order, at: u16) void {
+        list.prev[at] = list.last;
+        if (list.last != none) list.next[list.last] = at else list.first = at;
+        list.last = at;
+    }
+
+    /// A constant or a varying read in an arm of a kept selection, and
+    /// read again where that arm is not: the walk keeps one step of each,
+    /// where vtn makes a load_const and nir_lower_io a load_input at each
+    /// read (vtn_const_ssa_value, spirv_to_nir.c), and nir_opt_cse
+    /// keeps one only where it dominates. Each read that it does not
+    /// dominate is of a step of its own, put before the reader (since
+    /// 1.171).
+    fn rematerialize(list: *Order, work: *Work) Error!void {
+        if (work.kept_count == 0) return;
+        var at = list.first;
+        while (at != none) : (at = list.next[at]) {
+            const each = work.steps[at];
+            if (each.tag == .phi) continue;
+            for (readsOf(each)) |field| if (field) |of| {
+                const tag = work.steps[of].tag;
+                if (tag != .constant and tag != .input) continue;
+                if (dominates(work, of, at) or !readsStep(work.steps[at], of)) continue;
+                const made = list.link(work, at, try put(work, work.steps[of]));
+                rereads(&work.steps[at], of, made);
+            };
+        }
     }
 
     fn present(list: *const Order, at: u16) bool {
@@ -2899,14 +3108,14 @@ const Order = struct {
 
     /// A new step, put in the program before `at`.
     fn before(list: *Order, work: *Work, at: u16, adding: Step) Error!u16 {
-        return list.link(at, try put(work, adding));
+        return list.link(work, at, try put(work, adding));
     }
 
     /// `op` of `a` and `b`, which a rule builds, put before `at`: where
     /// both are constants, the constant nir_opt_constant_folding makes of
     /// it there, a round before Mesa's would (since 1.166).
     fn integerBefore(list: *Order, work: *Work, at: u16, op: Integer, a: u16, b: u16) Error!u16 {
-        if (try foldedInteger(work, op, a, b)) |constant| return list.link(at, constant);
+        if (try foldedInteger(work, op, a, b)) |constant| return list.link(work, at, constant);
         return list.before(work, at, integerStep(op, work.steps[a].kind, a, b));
     }
 
@@ -2922,8 +3131,10 @@ const Order = struct {
         return list.before(work, at, .{ .tag = .constant, .kind = of.kind, .at = out });
     }
 
-    /// A step `put` already, put in the program before `at`.
-    fn link(list: *Order, at: u16, new: u16) u16 {
+    /// A step `put` already, put in the program before `at`, in its
+    /// region.
+    fn link(list: *Order, work: *Work, at: u16, new: u16) u16 {
+        work.region[new] = work.region[at];
         const earlier = list.prev[at];
         list.prev[new] = earlier;
         list.next[new] = at;
@@ -2935,6 +3146,7 @@ const Order = struct {
     /// A new step, put in the program after `at`.
     fn after(list: *Order, work: *Work, at: u16, adding: Step) Error!u16 {
         const new = try put(work, adding);
+        work.region[new] = work.region[at];
         const later = list.next[at];
         list.next[new] = later;
         list.prev[new] = at;
@@ -2955,6 +3167,9 @@ const Order = struct {
             // What writes memory, or orders it, is kept whatever reads it
             // (nir_instr_can_remove, nir_opt_dce.c; since 1.168 and 1.169).
             if (each.tag == .discard or each.tag == .output or each.tag == .ssbo_store or each.tag == .ssbo_atomic or each.tag == .barrier) reached[at] = true;
+            // A kept selection's marks are its nir_if, which no pass but
+            // nir_opt_dead_cf takes out (since 1.171).
+            if (each.tag == .begin_if or each.tag == .begin_else or each.tag == .end_if) reached[at] = true;
             if (!reached[at]) continue;
             for (readsOf(each)) |field| if (field) |operand_at| {
                 reached[operand_at] = true;
@@ -2986,6 +3201,11 @@ const Order = struct {
             var earlier = list.first;
             while (earlier != at) : (earlier = list.next[earlier]) {
                 if (!list.present(earlier)) continue;
+                // nir_instr_set's equal instruction is one that dominates
+                // (nir_instr_set_add_or_rewrite, nir_instr_set.c): not one
+                // in an arm of a kept selection, for a step outside it or
+                // in its other arm (since 1.171).
+                if (!dominates(work, earlier, at)) continue;
                 if (!equalSteps(work, work.steps[earlier], work.steps[at])) continue;
                 replaceUses(work, at, earlier);
                 list.removed[at] = true;
@@ -3366,7 +3586,7 @@ fn sameFloat(work: *const Work, a: u16, b: u16) bool {
 /// component and a construct only name floats.
 fn computes(tag: Tag) bool {
     return switch (tag) {
-        .input, .constant, .push, .component, .construct, .sample, .sample_compared, .discard, .output, .viewport, .ssbo_store, .ssbo_atomic, .barrier => false,
+        .input, .constant, .push, .component, .construct, .sample, .sample_compared, .discard, .output, .viewport, .ssbo_store, .ssbo_atomic, .barrier, .begin_if, .begin_else, .end_if, .phi => false,
         else => true,
     };
 }
@@ -3421,7 +3641,12 @@ fn equalSteps(work: *const Work, a: Step, b: Step) bool {
 /// What a step reads, field by field.
 fn readsOf(each: Step) [4]?u16 {
     return switch (each.tag) {
-        .input, .constant, .push, .ubo, .ssbo, .viewport => .{ null, null, null, null },
+        .input, .constant, .push, .ubo, .ssbo, .viewport, .begin_else, .end_if => .{ null, null, null, null },
+        // A phi reads its two floats where each way ends, which is where
+        // nir_convert_from_ssa copies them (since 1.171); the condition
+        // is the begin_if's.
+        .phi => .{ each.a, each.b, null, null },
+        .begin_if => .{ each.a, null, null, null },
         .construct => .{
             each.from[0],
             if (each.kind.parts() > 1) each.from[1] else null,
@@ -3439,6 +3664,26 @@ fn readsOf(each: Step) [4]?u16 {
     };
 }
 
+/// The steps a step reads, for the back end (since 1.171).
+pub fn readsOfStep(each: Step) [4]?u16 {
+    return readsOf(each);
+}
+
+/// Whether the step `earlier` is there wherever the later step `at` is:
+/// it is in no arm of a kept selection, or in the arm `at` is in (since
+/// 1.171).
+fn dominates(work: *const Work, earlier: u16, at: u16) bool {
+    return work.region[earlier] == 0 or work.region[earlier] == work.region[at];
+}
+
+/// What of `each` read `from` reads `to`.
+fn rereads(each: *Step, from: u16, to: u16) void {
+    var renamed: [most_steps]u16 = undefined;
+    for (&renamed, 0..) |*name, k| name.* = @intCast(k);
+    renamed[from] = to;
+    renameReads(each, &renamed);
+}
+
 /// A step's reads renamed.
 fn renameReads(each: *Step, renamed: *const [most_steps]u16) void {
     const reads = readsOf(each.*);
@@ -3447,6 +3692,11 @@ fn renameReads(each: *Step, renamed: *const [most_steps]u16) void {
             of.* = renamed[of.*];
         },
         .select => {
+            each.a = renamed[each.a];
+            each.b = renamed[each.b];
+            each.from[0] = renamed[each.from[0]];
+        },
+        .phi => {
             each.a = renamed[each.a];
             each.b = renamed[each.b];
             each.from[0] = renamed[each.from[0]];
@@ -4583,6 +4833,10 @@ fn lanes(work: *Work) void {
         for (readsOf(each)) |field| if (field) |of| {
             if (work.divergent[of]) work.divergent[at] = true;
         };
+        // A phi of a selection whose condition differs differs
+        // (visit_if_merge_phi, nir_divergence_analysis.c:1478-1500; since
+        // 1.171).
+        if (each.tag == .phi and work.divergent[each.from[0]]) work.divergent[at] = true;
     }
     if (work.stage != .fragment) return;
     var needs: [most_steps]bool = @splat(false);
@@ -5273,6 +5527,7 @@ fn put(work: *Work, made: Step) Error!u16 {
     if (work.step_count == most_steps) return Error.Steps;
     work.steps[work.step_count] = made;
     const at: u16 = @intCast(work.step_count);
+    work.region[at] = work.current_region;
     work.step_count += 1;
     return at;
 }
@@ -5351,6 +5606,7 @@ fn settle(work: *Work) Error!void {
             .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier => return Error.Storage,
             .compare, .discard => return Error.Discards,
             .sample_compared => return Error.Samplers,
+            .begin_if, .begin_else, .end_if, .phi => return Error.Branches,
             .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot => return Error.Body,
             .select, .set_less, .sat, .sin, .cos, .sign, .logic, .integer => return Error.Body,
             // A vertex program's: `compile` reads a fragment program alone.
@@ -7615,8 +7871,9 @@ fn sideOps(code: Code, comptime op: []const u8, mul_side: bool) usize {
     for (code.words) |word| {
         var buffer: [disasm.most_text]u8 = undefined;
         const line = disasm.disasm(word, &buffer).?;
+        // A branch is the whole line, with no mul side.
         const cut = std.mem.indexOf(u8, line, ";") orelse line.len;
-        const side = if (mul_side) std.mem.trimStart(u8, line[cut + 1 ..], " ") else line[0..cut];
+        const side = if (!mul_side) line[0..cut] else if (cut < line.len) std.mem.trimStart(u8, line[cut + 1 ..], " ") else "";
         if (std.mem.startsWith(u8, side, op ++ " ")) count += 1;
     }
     return count;
@@ -7966,21 +8223,339 @@ test "through Mesa's back end, glslc's if and else is facet's, to the word" {
     for (glslc.stream(), facet_made.stream()) |a, b| try testing.expectEqual(a, b);
 }
 
-test "a selection Mesa leaves a branch is refused: an arm over the limit, a sample in one, a jump elsewhere" {
+test "a selection Mesa leaves a branch is a branch: an arm over the limit, a sample in one; a jump elsewhere is refused" {
     // Twelve sums and sines are 24, nir_opt_peephole_select's limit, and
-    // flattened; thirteen are 26 and stay a branch. With no false arm,
-    // the way past the true one is the selection's own block.
+    // flattened; thirteen are 26 and stay a branch, which ntq_emit_if
+    // emits as one. With no false arm, the way past the true one is the
+    // selection's own block.
     var work: Work = .{};
     _ = try throughMesa(&work, Costly(12).words);
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .select));
-    try testing.expectError(Error.Branches, throughMesa(&work, Costly(13).words));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .begin_if));
+    var costly: Work = .{};
+    const code = try throughMesa(&costly, Costly(13).words);
+    try testing.expectEqual(@as(usize, 0), stepsOf(&costly, .select));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&costly, .begin_if));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&costly, .phi));
+    try testing.expectEqual(@as(usize, 13), stepsOf(&costly, .sin));
+    // The condition the varying's, so the channels part
+    // (ntq_emit_nonuniform_if): `execute` 0 where the true arm runs and
+    // the false way's block where not, and the arm jumped over where no
+    // channel runs it (ALLNA). `x` is read after the merge, so the false
+    // way is a copy of it into the phi's register
+    // (nir_convert_from_ssa): a block of one move, cheap (is_cheap_block),
+    // and no jump past it. The arm's last XOR and the copy write the
+    // phi's register under the mask (ntq_store_def), and the false way's
+    // block takes the channels waiting for it (ntq_activate_execute_for_block).
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu."));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), opsOf(code, "xor.ifa"));
+    try testing.expectEqual(@as(usize, 1), opsOf(code, "mov.ifna"));
+    try testing.expectEqual(@as(usize, 3), opsOf(code, "mov.ifa"));
+    try testing.expectEqual(@as(usize, 1), opsOf(code, "xor.pushz"));
+    try testing.expectEqual(@as(usize, 3), opsOf(code, "mov.pushz"));
+    try testing.expectEqual(@as(usize, 128), code.words.len);
+    // The branch's word of the stream the way past the arm's five
+    // (qpu_set_branch_targets): (6 - (0 + 1)) * 4.
+    const stream = code.stream();
+    try testing.expectEqual(@as(usize, 6), stream.len);
+    try testing.expectEqual(@as(u32, 20), @as(u32, @bitCast(stream[0].float)));
     // A sample is a texture instruction, which the pass leaves in its
-    // arm.
-    try testing.expectError(Error.Branches, throughMesa(&work, &reference.glslc_sampled_arm));
+    // arm. The varying is the phi's other way and read nowhere after the
+    // merge, so it is the phi's register itself: moved into it before the
+    // selection (ntq_emit_load_input's MOV), the false way empty
+    // (empty_else_block) and the true arm's jump to the merge.
+    var sampled: Work = .{};
+    const arm = try throughMesa(&sampled, &reference.glslc_sampled_arm);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&sampled, .sample));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&sampled, .phi));
+    try testing.expectEqual(@as(usize, 1), countOf(arm, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(arm, "bu."));
+    try testing.expectEqual(@as(usize, 0), opsOf(arm, "xor.pushz"));
+    try testing.expectEqual(@as(usize, 1), opsOf(arm, "mov.ifna"));
+    try testing.expectEqual(@as(usize, 4), opsOf(arm, "mov.ifa"));
+    try testing.expectEqual(@as(usize, 27), arm.words.len);
+    try expectStream(&[_]Word{ .{ .float = @bitCast(@as(u32, 8)) }, .texture, .{ .sampler = 4 } }, arm.stream());
     // The first arm's end a jump to the second arm rather than the merge.
     try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_branch, .branch, 0, 0, 41)));
     // A phi naming a block that is neither arm.
     try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_branch, .phi, 0, 3, 5)));
+}
+
+test "through Mesa's back end, glslc's sample in one arm and a constant in the other: the false way's block is the constant's copies" {
+    // nir_opt_peephole_select leaves the sample in its arm, and the
+    // condition is the varying's: ntq_emit_nonuniform_if. The texel's
+    // floats are moved into the phi's registers under the mask where the
+    // true arm ends (nir_lower_phis_to_scalar's MOVs); the constant's are
+    // SSA only and copied where the false way ends (nir_from_ssa.c:419-424),
+    // in a block past a jump to the merge that the true arm's channels
+    // take (ALLA), after ntq_activate_execute_for_block. 0.25, 0.5 and 1
+    // are small immediates and 0.75 a uniform. The stream holds the jumps'
+    // offsets: past the true arm's texture, sampler and second jump, and
+    // past the 0.75.
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_branched);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.alla"));
+    // Four copies each way, and `execute` set to the merge's block where
+    // the true arm ends and to 0 where the false way's channels start.
+    try testing.expectEqual(@as(usize, 8 + 2), opsOf(code, "mov.ifa"));
+    try testing.expectEqual(@as(usize, 2), opsOf(code, "xor.pushz"));
+    try testing.expectEqual(@as(usize, 38), code.words.len);
+    try expectStream(&[_]Word{ .{ .float = @bitCast(@as(u32, 12)) }, .texture, .{ .sampler = 4 }, .{ .float = @bitCast(@as(u32, 4)) }, .{ .float = 0.75 } }, code.stream());
+}
+
+test "through Mesa's back end, glslc's store in an arm on a push constant: a uniform branch, the store unmasked" {
+    // A store is a write nir_opt_peephole_select leaves in its arm, and
+    // the condition is a push constant's, the same in every channel:
+    // ntq_emit_uniform_if, one jump past the arm where any channel the
+    // shader runs for has it false (ANYNA, msfign P), and the arm's TMU
+    // writes unmasked, there being no mask (vir_in_nonuniform_control_flow).
+    // Its TMUWT is in its arm (ntq_emit_block's ntq_flush_tmu).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_stored);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.anynap"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu."));
+    try testing.expectEqual(@as(usize, 0), countOf(code, ".ifa"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "pushz"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "tmuwt"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmua,"));
+    try testing.expect(code.writes_z);
+    try testing.expectEqual(@as(usize, 20), code.words.len);
+    try expectStream(&[_]Word{ .{ .push = 0 }, .{ .float = @bitCast(@as(u32, 4)) }, .{ .ssbo = .{ .set = 0, .binding = 0, .reach = 4 } }, .{ .float = @bitCast(@as(u32, 0xffffff84)) } }, code.stream());
+}
+
+/// A selection over the limit in the arm of another: a branch in a
+/// branch.
+const DeepCostly = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const x = b.component(v, 0);
+        const half = b.scalar(0.5);
+        const outer = b.ifHolds(b.lessThan(b.component(v, 1), half));
+        const inner = b.ifHolds(b.lessThan(x, half));
+        var made = x;
+        inline for (0..13) |_| made = b.sin(b.add(made, half));
+        b.endIf(inner);
+        const chosen = b.merged(inner, made, x);
+        b.endIf(outer);
+        const last = b.merged(outer, chosen, x);
+        b.color(b.vector(&.{ last, x, x, x }));
+    }
+});
+
+/// `count` selections one after another, each a uniform buffer's float
+/// in its arm.
+fn Arms(comptime count: usize) type {
+    return ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            var made = b.component(v, 0);
+            inline for (0..count) |k| {
+                const at = b.ifHolds(b.lessThan(made, b.scalar(0.1 * @as(f32, @floatFromInt(k + 1)))));
+                const loaded = b.uniform(0, 0, 4 * k, .f32x1);
+                b.endIf(at);
+                made = b.merged(at, loaded, made);
+            }
+            b.color(b.vector(&.{ made, made, made, made }));
+        }
+    });
+}
+
+test "a branch in a branch, and a ninth branch, are refused" {
+    // Mesa keeps both (nir_opt_peephole_select flattens no arm that holds
+    // control flow); a kept selection here is one at the top level.
+    var work: Work = .{};
+    try testing.expectError(Error.Branches, throughMesa(&work, DeepCostly.words));
+    // Eight are kept, one after another, each its own blocks. Each phi is
+    // the next one's false way and read nowhere else past it, so
+    // aggressive_coalesce_block merges the webs whole (merge_merge_sets):
+    // one register, each false way empty, and each true arm's load moved
+    // into it under the mask.
+    var eight: Work = .{};
+    const code = try throughMesa(&eight, Arms(8).words);
+    try testing.expectEqual(@as(usize, 8), stepsOf(&eight, .begin_if));
+    try testing.expectEqual(@as(usize, 8), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 8), countOf(code, "bu."));
+    try testing.expectEqual(@as(usize, 0), opsOf(code, "xor.pushz"));
+    try testing.expectEqual(@as(usize, 8), opsOf(code, "mov.ifa"));
+    var nine: Work = .{};
+    try testing.expectError(Error.Branches, throughMesa(&nine, Arms(9).words));
+}
+
+/// A selection kept for its false arm's cost, with the same sine in both
+/// arms, a product made before it that the false arm reads after the
+/// sine its phi takes from there, and 0.3, no small immediate, read
+/// first in the true arm and again past the merge.
+const Shared = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const x = b.component(v, 0);
+        const y = b.component(v, 1);
+        const half = b.scalar(0.5);
+        const odd = b.scalar(0.3);
+        const twice = b.mul(y, b.scalar(2.0));
+        const at = b.ifHolds(b.lessThan(x, half));
+        const yes = b.mul(b.sin(y), odd);
+        b.otherwise(at);
+        const sine = b.sin(y);
+        var made = sine;
+        inline for (0..12) |_| made = b.sin(b.add(made, half));
+        const summed = b.add(twice, made);
+        b.endIf(at);
+        const first = b.merged(at, twice, sine);
+        const second = b.merged(at, yes, summed);
+        b.color(b.vector(&.{ first, second, b.mul(x, odd), x }));
+    }
+});
+
+test "a kept selection's arms share nothing, and a web holds no float while another in it is still read" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, Shared.words);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    // The false arm's sine is its own: the true arm's dominates it not, so
+    // nir_opt_cse leaves it (nir_instr_set.c's dominance check), and the
+    // false arm does not read a register the true arm's jump may skip.
+    try testing.expectEqual(@as(usize, 1 + 1 + 12), opsOf(code, "sin"));
+    // `twice` is the first phi's true way, made before the selection and
+    // read past it by nothing else: that phi's register. The false arm
+    // reads it after the sine the phi takes from there, so the sine is
+    // live where `twice` still is and interferes (nir_def_is_live_at):
+    // it is copied into the register where the false arm ends, after the
+    // sum read it, and not made there. The second phi's ways are made in
+    // its register under the mask. So one copy, and `execute` set where
+    // the true arm ends and where the false way's channels start.
+    try testing.expectEqual(@as(usize, 1 + 2), opsOf(code, "mov.ifa"));
+    try testing.expectEqual(@as(usize, 1), opsOf(code, "fmul.ifa"));
+    try testing.expectEqual(@as(usize, 1), opsOf(code, "fadd.ifa"));
+    // 0.3 is loaded where each block reads it, the true arm's load not
+    // being there where its jump skips the arm (load_consts in blocks
+    // neither dominates, which nir_opt_cse keeps two).
+    var odd: usize = 0;
+    for (code.stream()) |word| {
+        if (word == .float and word.float == 0.3) odd += 1;
+    }
+    try testing.expectEqual(@as(usize, 2), odd);
+}
+
+/// A uniform buffer's float, scaled, in a selection's arm, the varying's
+/// other floats read past the merge, one of them by a product.
+const ScaledInArm = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const x = b.component(v, 0);
+        const chosen = b.ifHolds(b.lessThan(x, b.scalar(0.5)));
+        const scaled = b.mul(b.uniform(0, 0, 0, .f32x1), b.scalar(3.0));
+        b.endIf(chosen);
+        const red = b.merged(chosen, scaled, x);
+        b.color(b.vector(&.{ red, b.mul(b.component(v, 1), b.scalar(2.0)), b.component(v, 2), b.component(v, 3) }));
+    }
+});
+
+test "a phi's way coalesced is a float of its own, and one uniform where the phi is not is copied" {
+    // The varying's red is read past the merge by nothing, its green by a
+    // product: each float is a def of its own (nir_lower_io_to_scalar),
+    // so the red is the phi's register and the false way empty. The
+    // scaled load is uniform where the phi is not, so it is not coalesced
+    // (nir_from_ssa.c:428-430): its product is made unmasked and moved
+    // into the phi's register under the mask.
+    var work: Work = .{};
+    const code = try throughMesa(&work, ScaledInArm.words);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu."));
+    try testing.expectEqual(@as(usize, 0), opsOf(code, "xor.pushz"));
+    try testing.expectEqual(@as(usize, 1), opsOf(code, "mov.ifa"));
+    try testing.expectEqual(@as(usize, 0), opsOf(code, "fmul.ifa"));
+}
+
+/// A selection kept for its true arm's cost, and two floats of the
+/// varying swapped by it: green takes the blue's way where the true arm
+/// is and the green's where not, and blue the other way about.
+const Swapped = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const x = b.component(v, 0);
+        const y = b.component(v, 1);
+        const z = b.component(v, 2);
+        const half = b.scalar(0.5);
+        const at = b.ifHolds(b.lessThan(x, half));
+        var made = x;
+        inline for (0..13) |_| made = b.sin(b.add(made, half));
+        b.endIf(at);
+        const red = b.merged(at, made, x);
+        const green = b.merged(at, z, y);
+        const blue = b.merged(at, y, z);
+        b.color(b.vector(&.{ red, green, blue, b.scalar(1) }));
+    }
+});
+
+test "two floats of one varying, each one way of a phi, are two webs' and not one's" {
+    // Each float is a load of its own (nir_lower_io_to_scalar), so the
+    // green's is made before the blue's and read where the true arm ends,
+    // past where the blue's is made: they interfere (nir_defs_interfere),
+    // and the blue phi's register holds the green alone. Green's phi takes
+    // the blue float where the true arm ends, which the blue phi's false
+    // way reads where it ends, so that is a copy each way. The varying's
+    // red is the red phi's false way, its register.
+    var work: Work = .{};
+    const code = try throughMesa(&work, Swapped.words);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .phi));
+    // Unmasked before the selection: the red and the green moved into
+    // the registers of the phis they are a way of, and `execute` 0.
+    try testing.expectEqual(@as(usize, 2 + 1), opsOf(code, "mov"));
+    // Copied where the true arm ends: the blue float into green's
+    // register; where the false way ends: the green float into green's
+    // and the blue into blue's. And `execute` set at each.
+    try testing.expectEqual(@as(usize, 3 + 2), opsOf(code, "mov.ifa"));
+}
+
+/// A selection kept for its true arm's cost on a push constant's
+/// condition, a product in its false arm, and the varying read past it.
+const PushedCostly = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const x = b.component(v, 0);
+        const half = b.scalar(0.5);
+        const at = b.ifHolds(b.lessThan(b.push(0, .f32x1), half));
+        var made = x;
+        inline for (0..13) |_| made = b.sin(b.add(made, half));
+        b.otherwise(at);
+        const other = b.mul(x, b.scalar(0.75));
+        b.endIf(at);
+        const red = b.merged(at, made, other);
+        b.color(b.vector(&.{ red, x, x, x }));
+    }
+});
+
+test "a kept selection on a push constant is ntq_emit_uniform_if's: a jump each way, nothing masked" {
+    // The condition is the same in every channel, so the program jumps to
+    // the false way's block where any channel it runs for has it false
+    // (ANYNA, msfign P), and the true arm ends in a jump past it, its
+    // delay slots filled from the arm (qpu_schedule.c's emit_branch). Both
+    // ways are made in the phi's register, the varying's red read past it
+    // being no way of it, and no write is masked: there is no `execute`.
+    var work: Work = .{};
+    const code = try throughMesa(&work, PushedCostly.words);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.anynap"));
+    try testing.expectEqual(@as(usize, 1), sideOps(code, "bu", false));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "bu"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, ".if"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "pushz"));
+    // The jumps' words: past the true arm's five uniforms and its own
+    // jump's, (8 - 2) * 4, and past the false way's 0.75, (9 - 8) * 4.
+    const stream = code.stream();
+    try testing.expectEqual(@as(usize, 9), stream.len);
+    try testing.expectEqual(Word{ .push = 0 }, stream[0]);
+    try testing.expectEqual(@as(u32, 24), @as(u32, @bitCast(stream[1].float)));
+    try testing.expectEqual(@as(u32, 4), @as(u32, @bitCast(stream[7].float)));
+    try testing.expectEqual(@as(f32, 0.75), stream[8].float);
 }
 
 test "through Mesa's back end, glslc's if and else without -O: its variables made values, and the optimized module's program to the word" {
@@ -8142,6 +8717,11 @@ fn countOf(code: Code, name: []const u8) usize {
     return count;
 }
 
+/// How many of a program's operations, of either side, are `op`.
+fn opsOf(code: Code, comptime op: []const u8) usize {
+    return sideOps(code, op, false) + sideOps(code, op, true);
+}
+
 /// The live step of the tag `tag`, the first, or none.
 fn liveStepOf(work: *const Work, tag: Tag) u16 {
     const reached = liveMask(work);
@@ -8211,11 +8791,22 @@ test "through Mesa's back end, where nir_opt_collapse_if leaves two selections t
 }
 
 test "a selection is flattened under the limit its SelectionControl sets, and one asking not to be is a branch" {
+    // DontFlatten: a limit of 0, which an arm of a multiply passes not,
+    // and the first selection is ntq_emit_if's: its true arm a sine's and
+    // its false arm a square root's, neither cheap (is_cheap_block), so a
+    // jump over each. The second asks nothing and is flattened still.
     var work: Work = .{};
-    // DontFlatten: a limit of 0, which an arm of a multiply passes not.
-    try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_branch, .selection_merge, 0, 1, dont_flatten)));
+    const branch = try throughMesa(&work, &comptime patched(&reference.glslc_branch, .selection_merge, 0, 1, dont_flatten));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), countOf(branch, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(branch, "bu.alla"));
+    try testing.expectEqual(@as(usize, 2), countOf(branch, "bu."));
+    try testing.expectEqual(@as(usize, 45), branch.words.len);
     // The outer selection of glslc_collapse asking not to be: no collapse
-    // past its comparison, and the outer arm then refused as a branch.
+    // past its comparison, and the outer arm, a selection in it, then
+    // refused as a branch: no selection in a kept one is kept.
     try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_collapse, .selection_merge, 0, 1, dont_flatten)));
     // A control of neither bit, which vtn fails.
     try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_branch, .selection_merge, 0, 1, 4)));
@@ -8834,9 +9425,25 @@ test "through Mesa's back end, two loads of one member are one, and a load in an
     try testing.expectEqual(@as(usize, 4), countOf(code, "ldunifa"));
     try testing.expectEqual(@as(usize, 1), code.stream().len);
     // No load_ubo is speculated (nir_opt_peephole_select.c:132-141), so
-    // its arm is not flattened, and a branch is not here.
+    // its arm is a branch. The varying's float is the phi's other way and
+    // read nowhere past the merge, so it is the phi's register, moved
+    // into before the selection, and the false way is empty
+    // (empty_else_block). The load's float is uniform where the phi is
+    // not, so not coalesced (nir_from_ssa.c:428-430) but moved into the
+    // phi's register under the mask, the ldunifa being a signal's
+    // (ntq_store_def). Its offset is a constant, so unifa is written in
+    // the arm (ntq_emit_load_unifa).
     var armed: Work = .{};
-    try testing.expectError(Error.Branches, throughMesa(&armed, ReadInArm.words));
+    const branch = try throughMesa(&armed, ReadInArm.words);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&armed, .begin_if));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&armed, .phi));
+    try testing.expectEqual(@as(usize, 1), countOf(branch, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(branch, "bu."));
+    try testing.expectEqual(@as(usize, 1), opsOf(branch, "mov.ifa"));
+    try testing.expectEqual(@as(usize, 0), opsOf(branch, "xor.pushz"));
+    try testing.expectEqual(@as(usize, 1), countOf(branch, "ldunifrf.unifa"));
+    try testing.expectEqual(@as(usize, 25), branch.words.len);
+    try expectStream(&[_]Word{ .{ .float = @bitCast(@as(u32, 4)) }, .{ .ubo = .{ .set = 0, .binding = 0, .offset = 0 } } }, branch.stream());
 }
 
 test "through Mesa's back end, a uniform buffer's block made BufferBlock is a storage buffer, and a uniform buffer bound nowhere is refused" {
@@ -9587,11 +10194,23 @@ test "through Mesa's back end, a readonly buffer's words an atomic program wrote
     try testing.expectEqual(@as(usize, 46), code.words.len);
 }
 
-test "an atomic in an arm, on a uniform buffer, or in a vertex program, is refused" {
+test "an atomic in an arm is a branch, and one on a uniform buffer, or in a vertex program, is refused" {
     // An atomic is a write peephole_select cannot make a select of
-    // (block_check_for_allowed_instrs, nir_opt_peephole_select.c:106-236).
+    // (block_check_for_allowed_instrs, nir_opt_peephole_select.c:106-236),
+    // so its arm is a branch. Its address goes to the TMU under the mask
+    // (ntq_emit_tmu_general), so a channel that does not take the arm
+    // adds nothing. Its thread switch is in the arm, so the last one is
+    // another at the top level (vir_emit_last_thrsw): the arm's, the
+    // pair, and the end's.
     var armed: Work = .{};
-    try testing.expectError(Error.Branches, throughMesa(&armed, &reference.glslc_armed));
+    const code = try throughMesa(&armed, &reference.glslc_armed);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&armed, .begin_if));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&armed, .ssbo_atomic));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov.ifa tmuau"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 4), countOf(code, "thrsw"));
+    try testing.expect(code.writes_z);
+    try testing.expectEqual(@as(usize, 23), code.words.len);
     // glslc_atomics's `OpDecorate %21 BufferBlock` made Block.
     var uniform: Work = .{};
     try testing.expectError(Error.Storage, throughMesa(&uniform, &comptime patched(&reference.glslc_atomics, .decorate, 1, 1, @intFromEnum(spirv.Decoration.block))));

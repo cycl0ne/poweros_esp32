@@ -5353,4 +5353,75 @@ pub const LIBRARY_VERSION = 1;
 /// colours and makes the reading one; the cores make both. FacetBoth's
 /// 232 cases are as they were at 1.169, and FacetProbe passes its 890
 /// checks.
-pub const LIBRARY_REVISION = 170;
+///
+/// 171: **Branches where Mesa keeps them (docs/facet-vulkan10.md item
+/// 59).** A selection whose arm samples, loads from a buffer, stores,
+/// does an atomic or waits at a barrier, or whose arms cost more than
+/// nir_opt_peephole_select's limit or ask DontFlatten, is compiled to a
+/// branch, as ntq_emit_if compiles it (nir_to_vir.c:4315-4573), where it
+/// was refused with `Error.Branches`.
+///
+/// compile.zig keeps it: its arms laid out true arm first, the marks
+/// begin_if, begin_else and end_if put down around them, and its phis
+/// steps of their own, a phi a float (nir_lower_phis_to_scalar), the
+/// selects a selection kept for its cost had made phis again. Each arm is
+/// a region of its own. nir_opt_cse takes an earlier step only where it
+/// is in no arm or in the arm the later one is in, and a constant or a
+/// varying read in an arm or past the merge where it was made in another
+/// arm is made again there, as a load_const of each block neither
+/// dominates stays its own.
+///
+/// to_vir.zig emits it. Where the condition is the same in every channel
+/// (nir_divergence_analysis), ntq_emit_uniform_if: a jump to the false
+/// way's block where any channel the shader runs for has it false
+/// (ANYNA or ANYA, msfign P), and one past it at the true arm's end.
+/// Where not, ntq_emit_nonuniform_if: `execute` 0 where the true arm runs
+/// and the false way's block where not, a jump over an arm no channel
+/// runs (ALLNA, ALLA) unless the arm is cheap (is_cheap_block), and
+/// ntq_activate_execute_for_block at the false way's start. A phi's
+/// register is written under the mask (ntq_store_def), with a MOV where
+/// the write is a uniform's or a signal's, and so is the TMU's general
+/// address (ntq_emit_tmu_general); a unifa load in an arm takes an offset
+/// no register gives. Where the last thread switch was in an arm, one
+/// more is put at the top level to be the last (vir_emit_last_thrsw). The
+/// TMU is flushed at each block's end (ntq_emit_block).
+///
+/// The phis' registers are nir_convert_from_ssa's (`fromSsa`): a web of
+/// each phi, and into it each float of its ways, in the blocks' order,
+/// that differs as the phi does and interferes with nothing in it
+/// (merge_sets_interfere, nir_from_ssa.c:231-332), each float a def of
+/// its own, as after nir_lower_io_to_scalar and nir_lower_alu_to_scalar;
+/// a phi of a selection before is merged whole with its web
+/// (merge_merge_sets). What is not coalesced is copied where its way
+/// ends, the copies of a way as one parallel copy, a cycle broken
+/// through a temporary.
+///
+/// Refused still: a selection in a kept one's arm, or a kept one in
+/// another's arm, which Mesa keeps both; more than eight in a program; a
+/// phi of bools; a store of the colour, or a discard, in a kept arm; a
+/// kept selection in a vertex program. Not ported: nir_opt_gcm and
+/// nir_opt_if's rewrites of a kept selection (opt_if_merge,
+/// opt_if_simplification, opt_if_evaluate_condition_use), which change
+/// the instructions and not what they compute.
+///
+/// Tests: the V3D's 220, seven new and four that asserted the refusal now
+/// asserting the branch. glslc_branched (201 words) is 38 instructions:
+/// the sample in the true arm, the constant's four copies in the false
+/// way's block past a jump, 0.75 a uniform there; glslc_stored (210
+/// words) is 20: a uniform branch around an unmasked store and its TMUWT.
+/// Thirteen sines over the limit, a sample, a load, an atomic and
+/// DontFlatten each are a branch of the shape Mesa's is. A varying float
+/// not read past the merge is the phi's own register and the false way
+/// empty; two floats of one varying swapped by a selection are two webs';
+/// the same sine in both arms is two; 0.3, first read in an arm, is
+/// loaded again past it; eight selections one after another are one web,
+/// and a ninth, or a branch in a branch, is refused. Of twenty mutations
+/// of the port, seventeen fail the tests; the three that pass change only
+/// which register a float is copied from, never what is computed.
+/// FacetBoth 1.39: two cases of kept branches.
+///
+/// On the CM5 each case is 8 pixels of 230,400 apart, the triangle's
+/// edge, as the other shipped cases are: the V3D's masked branch and its
+/// uniform one draw what the cores draw. FacetBoth's other 232 cases are
+/// as they were at 1.170, and FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 171;

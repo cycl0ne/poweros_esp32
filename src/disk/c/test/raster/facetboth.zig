@@ -95,7 +95,10 @@
 //! operation done unsigned moves the colour. Before the cases (since
 //! 1.38), each device is asked for a program that writes in a subpass of
 //! two colours, drawn a part for each: the one that compiles refuses it,
-//! as each part would write again.
+//! as each part would write again. The shipped kept branches (since
+//! 1.39) are selections the V3D compiles to branches as Mesa does, one
+//! on a condition that differs from pixel to pixel and one on a pushed
+//! float, drawn taken and not.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -110,7 +113,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.38 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.39 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -838,6 +841,55 @@ const Shipped = struct {
             b.color(b.vector(&.{ b.component(turned, 0), b.component(turned, 1), b.component(turned, 2), b.component(v, 3) }));
         }
     });
+    /// A selection the V3D keeps a branch, as Mesa does (since 1.39): its
+    /// true arm thirteen sums and sines of the green, over
+    /// nir_opt_peephole_select's limit, on the red's own condition, which
+    /// differs from pixel to pixel; its false arm the blue times 0.3, no
+    /// small immediate. Green and blue swap where the true arm is, which
+    /// is a copy each way into each other's register, and 0.3 is read
+    /// again past the merge.
+    const Kept = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const half = b.scalar(0.5);
+            const odd = b.scalar(0.3);
+            const chosen = b.ifHolds(b.lessThan(x, half));
+            var made = y;
+            inline for (0..13) |_| made = b.sin(b.add(made, half));
+            const yes = b.add(b.mul(made, half), half);
+            b.otherwise(chosen);
+            const no = b.mul(z, odd);
+            b.endIf(chosen);
+            const reds = b.merged(chosen, yes, no);
+            const greens = b.merged(chosen, z, y);
+            const blues = b.merged(chosen, y, z);
+            b.color(b.vector(&.{ reds, greens, blues, b.add(b.mul(x, odd), b.scalar(0.6)) }));
+        }
+    });
+    /// The same chain of the red on the pushed float at 16 being under a
+    /// half, which is the same in every pixel of a draw, so a branch the
+    /// V3D jumps whole (ntq_emit_uniform_if); its false arm the green
+    /// times 0.3 (since 1.39).
+    const KeptPushed = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const half = b.scalar(0.5);
+            const chosen = b.ifHolds(b.lessThan(b.push(16, .f32x1), half));
+            var made = x;
+            inline for (0..13) |_| made = b.sin(b.add(made, half));
+            const yes = b.add(b.mul(made, half), half);
+            b.otherwise(chosen);
+            const no = b.mul(y, b.scalar(0.3));
+            b.endIf(chosen);
+            const reds = b.merged(chosen, yes, no);
+            b.color(b.vector(&.{ reds, y, x, b.scalar(1) }));
+        }
+    });
 };
 
 /// What `integers` computes, for the cores, and in its order: the colour
@@ -1163,6 +1215,8 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped reads", &readsFragment, 4),
     shader.fragment("shipped atomics", &atomicsFragment, 4),
     shader.fragment("shipped counted", &countedFragment, 4),
+    Shipped.Kept.entry("shipped kept"),
+    Shipped.KeptPushed.entry("shipped kept pushed"),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                .{},                               .{},                                  .{},
@@ -1174,7 +1228,8 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&nested_discard),   Shipped.Uniformed.spirv,           shader.Spirv.of(&uniform_nested),     shader.Spirv.of(&uniform_matrix),
     shader.Spirv.of(&uniform_matrices), shader.Spirv.of(&constant_matrix), shader.Spirv.of(&vertex_as_it_is),    shader.Spirv.of(&storage_buffer),
     shader.Spirv.of(&integers),         shader.Spirv.of(&indexed),         shader.Spirv.of(&lanes),              shader.Spirv.of(&store_writes),
-    shader.Spirv.of(&store_reads),      shader.Spirv.of(&store_atomics),   shader.Spirv.of(&store_counted),
+    shader.Spirv.of(&store_reads),      shader.Spirv.of(&store_atomics),   shader.Spirv.of(&store_counted),      Shipped.Kept.spirv,
+    Shipped.KeptPushed.spirv,
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -4840,6 +4895,20 @@ const Cases = struct {
         side.draw(clockwise_at, 3);
         side.end();
     }
+    /// The shipped selection on a pushed float: the first triangle drawn
+    /// with it under a half, which takes the true arm in every pixel, and
+    /// the second with it over, which takes none (since 1.39).
+    fn keptPushed(side: *Side) Failure!void {
+        side.begin(.{});
+        try side.use(.{ .vertex = "as it is", .fragment = "shipped kept pushed", .layout = side.push_layout.? });
+        const taken = [1]f32{0.25};
+        side.fb.CmdPushConstants(side.commands.?, side.push_layout.?, facet.SHADER_STAGE_FRAGMENT, 16, 4, &taken);
+        side.draw(clockwise_at, 3);
+        const passed = [1]f32{0.75};
+        side.fb.CmdPushConstants(side.commands.?, side.push_layout.?, facet.SHADER_STAGE_FRAGMENT, 16, 4, &passed);
+        side.draw(counter_at, 3);
+        side.end();
+    }
     /// The vertices' colour times a pushed float, plus a pushed colour.
     fn tinted(side: *Side) Failure!void {
         side.begin(.{});
@@ -5082,6 +5151,8 @@ const cases = [_]Case{
     .{ .name = "shipped lanes", .run = Cases.lanes },
     .{ .name = "shipped stores", .run = Cases.stores },
     .{ .name = "shipped atomics", .run = Cases.atomics },
+    .{ .name = "shipped kept branches", .run = Cases.shipped("as it is", "shipped kept", false, clockwise_at) },
+    .{ .name = "shipped kept uniform branches", .run = Cases.keptPushed },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },
