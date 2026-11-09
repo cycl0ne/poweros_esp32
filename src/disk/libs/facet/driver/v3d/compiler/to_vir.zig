@@ -588,6 +588,11 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         // store_ssbo, through the TMU (:3645-3649; since 1.168). It
         // makes no value.
         .ssbo_store => return emitTmuGeneral(e, each, at),
+        // ssbo_atomic and ssbo_atomic_swap, through the TMU too
+        // (:3645-3649; since 1.169), whose LDTMU defines the word.
+        .ssbo_atomic => return emitTmuGeneral(e, each, at),
+        // A barrier: what the TMU holds flushed (:3857-3861; since 1.169).
+        .barrier => try flushTmu(e),
     }
     e.defined[at] = true;
 }
@@ -882,6 +887,50 @@ const general_tmu_lookup_type_32bit_ui: u32 = 7;
 /// (v3d_general_tmu_op, nir_to_vir.c:213-226).
 const tmu_op_regular: u32 = 15;
 
+/// The TMU's operations an atomic is (v3d_packet.xml:87-100).
+const TmuOp = struct {
+    const write_add_read_prefetch: u32 = 0;
+    const write_xchg_read_flush: u32 = 2;
+    const write_cmpxchg_read_flush: u32 = 3;
+    const write_umin_full_l1_clear: u32 = 4;
+    const write_umax: u32 = 5;
+    const write_smin: u32 = 6;
+    const write_smax: u32 = 7;
+    const write_and_read_inc: u32 = 8;
+    const write_or_read_dec: u32 = 9;
+    const write_xor_read_not: u32 = 10;
+};
+
+/// v3d_general_tmu_op_for_atomic (nir_to_vir.c:189-208): an atomic's TMU
+/// operation, an iadd of a constant 1 or -1 the TMU's own increment or
+/// decrement (v3d_get_op_for_atomic_add, :175-187).
+fn atomicTmuOp(e: *const Emit, each: Step) u32 {
+    return switch (each.atomic) {
+        .iadd => if (constantWord(e, each.a)) |word| switch (word) {
+            1 => TmuOp.write_and_read_inc,
+            0xffffffff => TmuOp.write_or_read_dec,
+            else => TmuOp.write_add_read_prefetch,
+        } else TmuOp.write_add_read_prefetch,
+        .imin => TmuOp.write_smin,
+        .umin => TmuOp.write_umin_full_l1_clear,
+        .imax => TmuOp.write_smax,
+        .umax => TmuOp.write_umax,
+        .iand => TmuOp.write_and_read_inc,
+        .ior => TmuOp.write_or_read_dec,
+        .ixor => TmuOp.write_xor_read_not,
+        .xchg => TmuOp.write_xchg_read_flush,
+        .cmpxchg => TmuOp.write_cmpxchg_read_flush,
+    };
+}
+
+/// A step's word where it is a constant of one, as nir_src_is_const
+/// finds it.
+fn constantWord(e: *const Emit, step: u16) ?u32 {
+    const each = e.work.steps[step];
+    if (each.tag != .constant or each.kind != .f32x1) return null;
+    return @bitCast(e.work.pool[each.at]);
+}
+
 /// A load_ssbo of memory the program may write: one that is not
 /// ACCESS_NON_WRITEABLE, which nir_opt_access makes every load of a
 /// program that writes no buffer (nir_opt_access.c:266-272; since 1.168).
@@ -911,11 +960,17 @@ fn writable(e: *const Emit, each: Step) bool {
 fn emitTmuGeneral(e: *Emit, each: Step, at: u16) Error!void {
     const c = e.c;
     const is_store = each.tag == .ssbo_store;
-    if (is_store) c.tmu_dirty_rcl = true;
+    const is_atomic = each.tag == .ssbo_atomic;
+    const tmu_op = if (is_atomic) atomicTmuOp(e, each) else tmu_op_regular;
+    // An iadd made an increment or a decrement writes no operand
+    // (:507-519).
+    const atomic_add_replaced = is_atomic and each.atomic == .iadd and
+        (tmu_op == TmuOp.write_and_read_inc or tmu_op == TmuOp.write_or_read_dec);
+    if (is_store or is_atomic) c.tmu_dirty_rcl = true;
     // The offset's step where it is computed, and else the constant one.
     const offset_src: u16 = switch (each.tag) {
         .ubo_indirect, .ssbo_indirect => each.a,
-        .ssbo_store => each.from[0],
+        .ssbo_store, .ssbo_atomic => each.from[0],
         else => compile.none,
     };
     const dynamic_src = offset_src != compile.none;
@@ -927,11 +982,23 @@ fn emitTmuGeneral(e: *Emit, each: Step, at: u16) Error!void {
 
     const parts: u32 = @intCast(each.kind.parts());
     const dest_components: u32 = if (is_store) 0 else parts;
+    // An atomic's operands, the second cmpxchg's
+    // (emit_tmu_general_atomic_writes, :400-420).
+    const operands: []const u16 = if (!is_atomic or atomic_add_replaced)
+        &.{}
+    else if (each.atomic == .cmpxchg)
+        &.{ each.a, each.from[1] }
+    else
+        &.{each.a};
     var tmu_writes: u32 = 0;
     if (is_store) for (0..parts) |k| {
         _ = try getSrc(e, each.a, k);
         tmu_writes += 1;
     };
+    for (operands) |operand| {
+        _ = try getSrc(e, operand, 0);
+        tmu_writes += 1;
+    }
     tmu_writes += 1;
     if (dynamic_src) _ = try getSrc(e, offset_src, 0);
     while (tmu_writes > 16 / @as(u32, c.threads)) c.threads /= 2;
@@ -940,13 +1007,18 @@ fn emitTmuGeneral(e: *Emit, each: Step, at: u16) Error!void {
     if (is_store) for (0..parts) |k| {
         _ = try c.mulDest(.mov, vir.magicReg(.tmud), .{try getSrc(e, each.a, k)});
     };
-    const num_components = if (is_store) tmu_writes - 1 else parts;
-    const perquad = if (!is_store and c.stage == .fragment and !e.work.skip_helpers[at])
+    for (operands) |operand| _ = try c.mulDest(.mov, vir.magicReg(.tmud), .{try getSrc(e, operand, 0)});
+    const is_load = !is_store and !is_atomic;
+    const num_components = if (is_load) parts else tmu_writes - 1;
+    const perquad = if (is_load and c.stage == .fragment and !e.work.skip_helpers[at])
         general_tmu_lookup_per_quad
     else
         general_tmu_lookup_per_pixel;
-    var config: u32 = 0xffffff00 | tmu_op_regular << 3 | perquad;
-    config |= if (num_components == 1)
+    var config: u32 = 0xffffff00 | tmu_op << 3 | perquad;
+    // An atomic's word is a 32-bit one, cmpxchg's a pair (:666-669).
+    config |= if (tmu_op == TmuOp.write_cmpxchg_read_flush)
+        general_tmu_lookup_type_vec2
+    else if (is_atomic or num_components == 1)
         general_tmu_lookup_type_32bit_ui
     else
         general_tmu_lookup_type_vec2 + num_components - 2;
@@ -984,7 +1056,7 @@ fn flushTmu(e: *Emit) Error!void {
         if (pending.component_mask > 0) {
             const tag = e.work.steps[pending.step].tag;
             const general = switch (tag) {
-                .ubo, .ubo_indirect, .ssbo, .ssbo_indirect => true,
+                .ubo, .ubo_indirect, .ssbo, .ssbo_indirect, .ssbo_atomic => true,
                 else => false,
             };
             for (0..4) |j| {

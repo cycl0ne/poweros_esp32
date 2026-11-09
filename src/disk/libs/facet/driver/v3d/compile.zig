@@ -329,6 +329,15 @@ pub const profile: spirv.Profile = .{
         .s_less_than_equal,   .s_greater_than,      .s_greater_than_equal,           .u_less_than,
         .u_less_than_equal,   .u_greater_than,      .u_greater_than_equal,           .logical_equal,
         .logical_not_equal,
+        // A storage buffer's atomics, as vtn makes them ssbo_atomic and
+        // ssbo_atomic_swap, a load_ssbo and a store_ssbo, and the barriers
+        // their memory semantics and OpMemoryBarrier ask for
+        // (vtn_handle_atomics, spirv_to_nir.c:4288-4480; since 1.169).
+          .memory_barrier,      .atomic_load,                    .atomic_store,
+        .atomic_exchange,     .atomic_i_increment,  .atomic_compare_exchange,        .atomic_compare_exchange_weak,
+        .atomic_i_decrement,  .atomic_i_add,        .atomic_i_sub,                   .atomic_s_min,
+        .atomic_u_min,        .atomic_s_max,        .atomic_u_max,                   .atomic_and,
+        .atomic_or,           .atomic_xor,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform },
     .image_dims = &.{.dim_2d},
@@ -394,10 +403,12 @@ pub const Tag = enum {
     ubo,
     /// Floats of a storage buffer, NIR's load_ssbo of a constant offset,
     /// as `ubo` holds them: `b` the buffer's slot, `at` the byte offset.
-    /// Nothing in the profile writes a buffer, so nir_opt_access has made
-    /// each load ACCESS_NON_WRITEABLE and CAN_REORDER (nir_opt_access.c:
-    /// 250-293), and v3d reads it through unifa as it reads a uniform
-    /// buffer (ntq_emit_load_unifa, nir_to_vir.c:3338-3343; since 1.164).
+    /// Where the program writes no buffer, or the memory is NonWritable,
+    /// nir_opt_access has made the load ACCESS_NON_WRITEABLE and
+    /// CAN_REORDER (nir_opt_access.c:250-293), `non_writeable`, and v3d
+    /// reads it through unifa as it reads a uniform buffer
+    /// (ntq_emit_load_unifa, nir_to_vir.c:3338-3343; since 1.164); else
+    /// through the TMU (since 1.168).
     ssbo,
     /// Floats of a uniform buffer at an offset the program computes,
     /// NIR's load_ubo of an offset no constant: `a` is the step of the
@@ -418,6 +429,20 @@ pub const Tag = enum {
     /// writes them through the TMU (ntq_emit_tmu_general,
     /// nir_to_vir.c:502-725; since 1.168). It makes no value.
     ssbo_store,
+    /// NIR's ssbo_atomic and ssbo_atomic_swap: `atomic` the operation, on
+    /// the 32-bit word of a storage buffer at `at`, `b` its slot, or at
+    /// the offset `from[0]` computes where it is no `none`; `a` the
+    /// operand, and `from[1]` the second, cmpxchg's, where it is no
+    /// `none`: the first is the comparator then, as vtn orders them
+    /// (fill_common_atomic_sources, spirv_to_nir.c:3698-3702). Its value
+    /// is the word as it was. v3d writes the operands into TMUD and reads
+    /// the word back (ntq_emit_tmu_general, nir_to_vir.c:502-725; since
+    /// 1.169).
+    ssbo_atomic,
+    /// NIR's barrier, of memory: what the TMU has been given is flushed
+    /// before anything after it is (nir_to_vir.c:3857-3861; since 1.169).
+    /// It makes no value.
+    barrier,
     /// 32-bit integers, or floats made integers or integers floats: NIR's
     /// integer ALU, `at` an `Integer`, each word of `a` (and `b`) one VIR
     /// operation as ntq_emit_alu emits it (nir_to_vir.c:1421-1806; since
@@ -576,6 +601,12 @@ pub fn isBool(work: *const Work, at: u16) bool {
 /// at all. The TMU's two words are the only ones here.
 pub const Half = enum { none, low, high };
 
+/// An `ssbo_atomic`'s operation: NIR's nir_atomic_op, of the ones vtn
+/// makes of a storage buffer's integer atomics (translate_atomic_op,
+/// spirv_to_nir.c; since 1.169). ISub is iadd of the operand negated,
+/// and IIncrement and IDecrement iadd of 1 and -1.
+pub const Atomic = enum(u8) { iadd, imin, umin, imax, umax, iand, ior, ixor, xchg, cmpxchg };
+
 pub const Step = struct {
     tag: Tag,
     kind: Kind,
@@ -595,6 +626,8 @@ pub const Step = struct {
     /// vtn gives a load through a member or of a variable decorated
     /// NonWritable (vtn_variables.c:397, :512, :1666-1667; since 1.168).
     non_writeable: bool = false,
+    /// An `ssbo_atomic`'s operation (since 1.169).
+    atomic: Atomic = .iadd,
 };
 
 /// A varying the module declares.
@@ -1140,7 +1173,7 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
     // drops a pixel or compares, so the plan has nothing to hold any of
     // them to: only Mesa's back end compiles them.
     for (work.program()) |each| switch (each.tag) {
-        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store => return Error.Storage,
+        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier => return Error.Storage,
         .discard => return Error.Discards,
         .sample_compared => return Error.Samplers,
         // Nor does any compute beyond a sum and a product.
@@ -1665,8 +1698,9 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (operands.len < 3) return Error.Body;
                 const id = try idOf(operands[0]);
                 const element = try idOf(operands[1]);
+                // An integer's too, a word as a float's (since 1.169).
                 switch (work.thing[element]) {
-                    .float, .vector, .matrix, .array, .structure => {},
+                    .float, .int, .vector, .matrix, .array, .structure => {},
                     else => return Error.Type,
                 }
                 if (isRuntime(work, element)) return Error.Type;
@@ -1685,8 +1719,9 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (operands.len < 2) return Error.Body;
                 const id = try idOf(operands[0]);
                 const element = try idOf(operands[1]);
+                // An integer's too, a word as a float's (since 1.169).
                 switch (work.thing[element]) {
-                    .float, .vector, .matrix, .array, .structure => {},
+                    .float, .int, .vector, .matrix, .array, .structure => {},
                     else => return Error.Type,
                 }
                 if (isRuntime(work, element)) return Error.Type;
@@ -2115,6 +2150,10 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // neither, and the selection stays a branch.
                     .arm => switch (instruction.op) {
                         .image_sample_implicit_lod, .image_sample_dref_implicit_lod => return Error.Branches,
+                        // An atomic or a barrier is neither either: it
+                        // would run where the arm is not taken (since
+                        // 1.169).
+                        .atomic_load, .atomic_store, .atomic_exchange, .atomic_compare_exchange, .atomic_compare_exchange_weak, .atomic_i_increment, .atomic_i_decrement, .atomic_i_add, .atomic_i_sub, .atomic_s_min, .atomic_u_min, .atomic_s_max, .atomic_u_max, .atomic_and, .atomic_or, .atomic_xor, .memory_barrier => return Error.Branches,
                         // A store into a variable of the function's own
                         // is a value the merge chooses, a load and a store
                         // nir_lower_vars_to_ssa leaves none of (since
@@ -2716,7 +2755,7 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
             // (nir_opt_peephole_select.c:132-141), which none from vtn
             // may: no limit flattens its arm (since 1.160). A load_ssbo
             // is held to the same (since 1.164).
-            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store => return std.math.maxInt(u32),
+            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier => return std.math.maxInt(u32),
             // ineg and iabs are move-like, as fneg and fabs are
             // (nir_opt_peephole_select.c:251-264; since 1.165).
             .integer => switch (@as(Integer, @enumFromInt(each.at))) {
@@ -2913,7 +2952,9 @@ const Order = struct {
         while (at != none) : (at = list.prev[at]) {
             if (list.removed[at]) continue;
             const each = work.steps[at];
-            if (each.tag == .discard or each.tag == .output or each.tag == .ssbo_store) reached[at] = true;
+            // What writes memory, or orders it, is kept whatever reads it
+            // (nir_instr_can_remove, nir_opt_dce.c; since 1.168 and 1.169).
+            if (each.tag == .discard or each.tag == .output or each.tag == .ssbo_store or each.tag == .ssbo_atomic or each.tag == .barrier) reached[at] = true;
             if (!reached[at]) continue;
             for (readsOf(each)) |field| if (field) |operand_at| {
                 reached[operand_at] = true;
@@ -3325,7 +3366,7 @@ fn sameFloat(work: *const Work, a: u16, b: u16) bool {
 /// component and a construct only name floats.
 fn computes(tag: Tag) bool {
     return switch (tag) {
-        .input, .constant, .push, .component, .construct, .sample, .sample_compared, .discard, .output, .viewport, .ssbo_store => false,
+        .input, .constant, .push, .component, .construct, .sample, .sample_compared, .discard, .output, .viewport, .ssbo_store, .ssbo_atomic, .barrier => false,
         else => true,
     };
 }
@@ -3393,6 +3434,8 @@ fn readsOf(each: Step) [4]?u16 {
         .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .sample, .output, .round_to_int, .ubo_indirect, .ssbo_indirect => .{ each.a, null, null, null },
         .compare, .set_less, .add, .mul, .sub, .min, .max, .dot, .sample_compared => .{ each.a, each.b, null, null },
         .ssbo_store => .{ each.a, if (each.from[0] != none) each.from[0] else null, null, null },
+        .ssbo_atomic => .{ each.a, if (each.from[0] != none) each.from[0] else null, if (each.from[1] != none) each.from[1] else null, null },
+        .barrier => .{ null, null, null, null },
     };
 }
 
@@ -3408,9 +3451,10 @@ fn renameReads(each: *Step, renamed: *const [most_steps]u16) void {
             each.b = renamed[each.b];
             each.from[0] = renamed[each.from[0]];
         },
-        .ssbo_store => {
+        .ssbo_store, .ssbo_atomic => {
             each.a = renamed[each.a];
             if (each.from[0] != none) each.from[0] = renamed[each.from[0]];
+            if (each.tag == .ssbo_atomic and each.from[1] != none) each.from[1] = renamed[each.from[1]];
         },
         else => {
             if (reads[0] != null) each.a = renamed[each.a];
@@ -3435,7 +3479,7 @@ fn replaceUses(work: *Work, from: u16, to: u16) void {
     if (work.stored == from) work.stored = to;
     for (work.steps[0..work.step_count]) |*user| {
         switch (user.tag) {
-            .input, .constant, .push, .ubo, .ssbo => {},
+            .input, .constant, .push, .ubo, .ssbo, .barrier => {},
             .construct => for (user.from[0..user.kind.parts()]) |*of| {
                 if (of.* == from) of.* = to;
             },
@@ -3444,9 +3488,10 @@ fn replaceUses(work: *Work, from: u16, to: u16) void {
                 if (user.b == from) user.b = to;
                 if (user.from[0] == from) user.from[0] = to;
             },
-            .ssbo_store => {
+            .ssbo_store, .ssbo_atomic => {
                 if (user.a == from) user.a = to;
                 if (user.from[0] == from) user.from[0] = to;
+                if (user.tag == .ssbo_atomic and user.from[1] == from) user.from[1] = to;
             },
             else => {
                 const reads = readsOf(user.*);
@@ -3555,6 +3600,40 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             }
             if (into != work.output) return Error.Body;
             work.stored = try operand(work, operands[1], .f32x4);
+        },
+        // OpAtomicLoad and OpAtomicStore: a load_deref and a store_deref,
+        // ACCESS_ATOMIC and COHERENT, which v3d reads and writes as any
+        // load_ssbo and store_ssbo, between the barriers their semantics
+        // ask for (vtn_handle_atomics, spirv_to_nir.c:4372-4396,
+        // :4435-4477; since 1.169).
+        .atomic_load => {
+            if (operands.len != 5) return Error.Body;
+            const id = try idOf(operands[1]);
+            const from = try idOf(operands[2]);
+            const pointee = try atomicPointee(work, from);
+            if (try idOf(operands[0]) != pointee) return Error.Type;
+            const barriers = try atomicBarriers(try uintOf(work, operands[4]));
+            if (barriers.before) _ = try put(work, .{ .tag = .barrier, .kind = .f32x1 });
+            work.step_of[id] = try blockLoad(work, work.chain_base[from], work.chain_dynamic[from], work.chain_offset[from], .f32x1, work.non_writable[from]);
+            if (barriers.after) _ = try put(work, .{ .tag = .barrier, .kind = .f32x1 });
+        },
+        .atomic_store => {
+            if (operands.len != 4) return Error.Body;
+            const into = try idOf(operands[0]);
+            _ = try atomicPointee(work, into);
+            const barriers = try atomicBarriers(try uintOf(work, operands[2]));
+            const value = try operand(work, operands[3], .f32x1);
+            if (barriers.before) _ = try put(work, .{ .tag = .barrier, .kind = .f32x1 });
+            try blockStore(work, work.chain_base[into], work.chain_dynamic[into], work.chain_offset[into], work.non_writable[into], value, .f32x1);
+            if (barriers.after) _ = try put(work, .{ .tag = .barrier, .kind = .f32x1 });
+        },
+        .atomic_exchange, .atomic_compare_exchange, .atomic_compare_exchange_weak, .atomic_i_increment, .atomic_i_decrement, .atomic_i_add, .atomic_i_sub, .atomic_s_min, .atomic_u_min, .atomic_s_max, .atomic_u_max, .atomic_and, .atomic_or, .atomic_xor => try atomicOf(work, instruction.op, operands),
+        // OpMemoryBarrier: NIR's barrier where vtn_emit_memory_barrier
+        // makes one (spirv_to_nir.c:4814-4818; since 1.169).
+        .memory_barrier => {
+            if (operands.len != 2) return Error.Body;
+            _ = try uintOf(work, operands[0]);
+            if (try memoryBarrier(try uintOf(work, operands[1]))) _ = try put(work, .{ .tag = .barrier, .kind = .f32x1 });
         },
         .load => {
             if (operands.len < 3) return Error.Body;
@@ -4316,6 +4395,142 @@ fn blockStore(work: *Work, variable: u16, dynamic: u16, offset: u32, non_writabl
     _ = try put(work, .{ .tag = .ssbo_store, .kind = kind, .a = value, .b = slot, .at = if (dynamic == none) offset else 0, .from = .{ at, 0, 0, 0 } });
 }
 
+/// The word an atomic's pointer names: a 32-bit integer of a storage
+/// buffer, where an access chain came to (since 1.169).
+fn atomicPointee(work: *const Work, pointer: u16) Error!u16 {
+    if (work.thing[pointer] != .member_pointer) return Error.Storage;
+    const pointee = work.points[pointer];
+    if (work.thing[pointee] != .int) return Error.Type;
+    return pointee;
+}
+
+/// An integer atomic of a storage buffer, as vtn_handle_atomics makes it
+/// (spirv_to_nir.c:4288-4480): the operation translate_atomic_op names,
+/// its operands as fill_common_atomic_sources gives them (:3678-3722) -
+/// IIncrement and IDecrement an immediate 1 and -1, ISub its value
+/// negated, and CompareExchange its Comparator before its Value - and
+/// the barriers its semantics ask for, with the storage buffer's own
+/// UniformMemory added (:4447-4477). Then the ssbo_atomic of the buffer
+/// nir_lower_explicit_io makes of it, at the offset a load's would be
+/// (since 1.169).
+fn atomicOf(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
+    const swap = op == .atomic_compare_exchange or op == .atomic_compare_exchange_weak;
+    const takes: usize = switch (op) {
+        .atomic_i_increment, .atomic_i_decrement => 5,
+        .atomic_compare_exchange, .atomic_compare_exchange_weak => 8,
+        else => 6,
+    };
+    if (operands.len != takes) return Error.Body;
+    const id = try idOf(operands[1]);
+    const into = try idOf(operands[2]);
+    const pointee = try atomicPointee(work, into);
+    if (try idOf(operands[0]) != pointee) return Error.Type;
+    _ = try uintOf(work, operands[3]);
+    // CompareExchange's Unequal semantics are not read (:4318-4321).
+    const barriers = try atomicBarriers(try uintOf(work, operands[4]));
+    const atomic: Atomic = switch (op) {
+        .atomic_i_increment, .atomic_i_decrement, .atomic_i_add, .atomic_i_sub => .iadd,
+        .atomic_s_min => .imin,
+        .atomic_u_min => .umin,
+        .atomic_s_max => .imax,
+        .atomic_u_max => .umax,
+        .atomic_and => .iand,
+        .atomic_or => .ior,
+        .atomic_xor => .ixor,
+        .atomic_exchange => .xchg,
+        else => .cmpxchg,
+    };
+    const first: u16 = switch (op) {
+        .atomic_i_increment => try integerSplat(work, .f32x1, 1),
+        .atomic_i_decrement => try integerSplat(work, .f32x1, -1),
+        .atomic_i_sub => try integerOf(work, .ineg, try operand(work, operands[5], .f32x1), null),
+        .atomic_compare_exchange, .atomic_compare_exchange_weak => try operand(work, operands[7], .f32x1),
+        else => try operand(work, operands[5], .f32x1),
+    };
+    const second: u16 = if (swap) try operand(work, operands[6], .f32x1) else none;
+    if (barriers.before) _ = try put(work, .{ .tag = .barrier, .kind = .f32x1 });
+    work.step_of[id] = try blockAtomic(work, work.chain_base[into], work.chain_dynamic[into], work.chain_offset[into], work.non_writable[into], atomic, first, second);
+    if (barriers.after) _ = try put(work, .{ .tag = .barrier, .kind = .f32x1 });
+}
+
+/// An ssbo_atomic on the word at `offset` of `variable`'s buffer, or at
+/// the offset `dynamic` computes, held to what `blockStore` holds a store
+/// to (since 1.169).
+fn blockAtomic(work: *Work, variable: u16, dynamic: u16, offset: u32, non_writable: bool, atomic: Atomic, first: u16, second: u16) Error!u16 {
+    if (offset >= none or variable == work.push_variable) return Error.Storage;
+    const slot = work.points[variable];
+    if (!work.ubos[slot].storage or non_writable) return Error.Storage;
+    if (work.stage != .fragment) return Error.Storage;
+    const at = if (dynamic == none or offset == 0) dynamic else try integerOf(work, .iadd, dynamic, try integerSplat(work, .f32x1, @intCast(offset)));
+    work.buffers_written = true;
+    return put(work, .{ .tag = .ssbo_atomic, .kind = .f32x1, .a = first, .b = slot, .at = if (dynamic == none) offset else 0, .from = .{ at, second, 0, 0 }, .atomic = atomic });
+}
+
+/// SPIR-V's memory semantics, the bits vtn reads (spirv.h).
+const Semantics = struct {
+    const acquire: u32 = 0x2;
+    const release: u32 = 0x4;
+    const acquire_release: u32 = 0x8;
+    const sequentially_consistent: u32 = 0x10;
+    const uniform_memory: u32 = 0x40;
+    const subgroup_memory: u32 = 0x80;
+    const workgroup_memory: u32 = 0x100;
+    const cross_workgroup_memory: u32 = 0x200;
+    const atomic_counter_memory: u32 = 0x400;
+    const image_memory: u32 = 0x800;
+    const output_memory: u32 = 0x1000;
+    const make_available: u32 = 0x2000;
+    const make_visible: u32 = 0x4000;
+    /// The orders: acquire, release, acquire_release and
+    /// sequentially_consistent.
+    const orders: u32 = 0x1e;
+    /// The storage classes: uniform_memory up to output_memory.
+    const storage: u32 = 0x1fc0;
+};
+
+/// Where an atomic of a storage buffer has a barrier: before it, of its
+/// release, and after it, of its acquire, as vtn_split_barrier_semantics
+/// splits its semantics with the buffer's UniformMemory added
+/// (spirv_to_nir.c:2581-2661, :4447-4477), and vtn_emit_memory_barrier
+/// makes one of each part that is any (:2847-2862). More than one order
+/// is AcquireRelease (:2604-2613); SequentiallyConsistent is too
+/// (:2635). MakeAvailable and MakeVisible want the VulkanMemoryModel
+/// capability (:2710-2720), which the profile does not take.
+fn atomicBarriers(given: u32) Error!struct { before: bool, after: bool } {
+    const semantics = given | Semantics.uniform_memory;
+    if (semantics & (Semantics.make_available | Semantics.make_visible) != 0) return Error.Body;
+    var ordered = semantics & Semantics.orders;
+    if (@popCount(ordered) > 1) ordered = Semantics.acquire_release;
+    const storage = semantics & Semantics.storage;
+    const before: u32 = if (ordered & (Semantics.release | Semantics.acquire_release | Semantics.sequentially_consistent) != 0) Semantics.release | storage else 0;
+    const after: u32 = if (ordered & (Semantics.acquire | Semantics.acquire_release | Semantics.sequentially_consistent) != 0) Semantics.acquire | storage else 0;
+    return .{ .before = before != 0 and try memoryBarrier(before), .after = after != 0 and try memoryBarrier(after) };
+}
+
+/// Whether vtn_emit_memory_barrier makes a barrier of `semantics`
+/// (spirv_to_nir.c:2847-2862): its NIR semantics, of its order
+/// (:2664-2700), and its modes, of its storage, Vulkan's ignoring
+/// SubgroupMemory, CrossWorkgroupMemory and AtomicCounterMemory
+/// (:2727-2768), both any after optimize_barrier (:2801-2811). v3d
+/// flushes the TMU at each, whatever its modes (nir_to_vir.c:3857-3861).
+fn memoryBarrier(semantics: u32) Error!bool {
+    if (semantics & (Semantics.make_available | Semantics.make_visible) != 0) return Error.Body;
+    const ordered = semantics & Semantics.orders != 0;
+    const kept = semantics & ~(Semantics.subgroup_memory | Semantics.cross_workgroup_memory | Semantics.atomic_counter_memory);
+    // No mode is shared alone with an order, which optimize_barrier
+    // leaves as it is: only MakeAvailable and MakeVisible go.
+    const modes = kept & (Semantics.uniform_memory | Semantics.image_memory | Semantics.workgroup_memory | Semantics.output_memory);
+    return ordered and modes != 0;
+}
+
+/// A constant's 32-bit word, an integer's: a scope or memory semantics
+/// (vtn_constant_uint; since 1.169).
+fn uintOf(work: *const Work, word: u32) Error!u32 {
+    const id = try idOf(word);
+    if (work.thing[id] != .int_constant) return Error.Body;
+    return @bitCast(work.pool[work.points[id]]);
+}
+
 /// Which steps differ from lane to lane, nir_divergence_analysis's
 /// answer (v3d_attempt_compile runs it, vir.c:2105), and of a fragment
 /// program's samples and loads that do, which helper pixels may skip,
@@ -4346,7 +4561,9 @@ fn lanes(work: *Work) void {
     work.divergent = @splat(false);
     work.skip_helpers = @splat(false);
     for (steps, 0..) |each, at| {
-        if (each.tag == .input) work.divergent[at] = true;
+        // An atomic's word differs too, whatever its operands
+        // (nir_divergence_analysis.c:994-1010; since 1.169).
+        if (each.tag == .input or each.tag == .ssbo_atomic) work.divergent[at] = true;
         for (readsOf(each)) |field| if (field) |of| {
             if (work.divergent[of]) work.divergent[at] = true;
         };
@@ -4421,13 +4638,14 @@ fn sizeOf(work: *Work, type_id: u16, stride: u16) Error!u32 {
 
 /// How many bytes of storage buffer `slot` the program reads from its
 /// start: one past the last float of its last-reaching load (since
-/// 1.164), or store (since 1.168). A load or store at an offset computed reaches where the program says,
-/// which is its own to keep within the range bound, as Vulkan without
-/// robustBufferAccess has it: it counts for nothing here (since 1.166).
+/// 1.164), store (since 1.168) or atomic (since 1.169). One at an offset
+/// computed reaches where the program says, which is its own to keep
+/// within the range bound, as Vulkan without robustBufferAccess has it:
+/// it counts for nothing here (since 1.166).
 fn reachOf(work: *const Work, slot: u16) u32 {
     var reach: u32 = 0;
     for (work.program()) |each| {
-        const constant = each.tag == .ssbo or (each.tag == .ssbo_store and each.from[0] == none);
+        const constant = each.tag == .ssbo or ((each.tag == .ssbo_store or each.tag == .ssbo_atomic) and each.from[0] == none);
         if (constant and each.b == slot) reach = @max(reach, each.at + 4 * @as(u32, each.kind.parts()));
     }
     return reach;
@@ -5114,7 +5332,7 @@ fn settle(work: *Work) Error!void {
             // are already in registers, so neither costs an instruction.
             .input, .component, .construct => {},
             // Refused by `compile` before the plan is laid out.
-            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store => return Error.Storage,
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier => return Error.Storage,
             .compare, .discard => return Error.Discards,
             .sample_compared => return Error.Samplers,
             .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot => return Error.Body,
@@ -9125,6 +9343,207 @@ test "a store into a uniform buffer, or in a vertex program, is refused" {
     // write twice.
     var vertex: Work = .{};
     try testing.expectError(Error.Storage, vertexThroughMesa(&vertex, &reference.glslc_vertex_store, .{}));
+}
+
+test "through Mesa's back end, a storage buffer's atomics are the TMU's own operations, an add of 1 its increment, each a pixel's and each read back" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_atomics);
+    // The ten in their order: translate_atomic_op's operations
+    // (spirv_to_nir.c), each at its member's offset, each divergent
+    // (nir_divergence_analysis.c:994-1010), the compare-exchange's value
+    // its second operand (fill_common_atomic_sources, :3698-3702).
+    const ops = [_]Atomic{ .iadd, .iadd, .ior, .imax, .imin, .iand, .xchg, .cmpxchg, .umin, .umax };
+    var seen: usize = 0;
+    for (work.program(), 0..) |each, at| {
+        if (each.tag != .ssbo_atomic) continue;
+        try testing.expect(seen < ops.len);
+        try testing.expectEqual(ops[seen], each.atomic);
+        try testing.expectEqual(@as(u32, @intCast(4 * seen)), each.at);
+        try testing.expectEqual(@as(u16, none), each.from[0]);
+        try testing.expectEqual(each.atomic == .cmpxchg, each.from[1] != none);
+        try testing.expect(work.divergent[at]);
+        seen += 1;
+    }
+    try testing.expectEqual(ops.len, seen);
+    try testing.expect(work.buffers_written and work.uses_ssbo);
+    const int = struct {
+        fn of(value: u32) Word {
+            return .{ .float = @bitCast(value) };
+        }
+    }.of;
+    const counters: Word = .{ .ssbo = .{ .set = 0, .binding = 1, .reach = 40 } };
+    // Each atomic through TMUAU, its configuration 0xffffff00 | op << 3
+    // | 1 << 7 | 7, a pixel's 32-bit word (nir_to_vir.c:650-669): the add
+    // of 1 the increment, op 8 (v3d_get_op_for_atomic_add, :175-187),
+    // the add of 3 the add, 0; or 9, signed max 7 and min 6, and 8, the
+    // exchange 2, the compare-exchange 3 and a pixel's two words, 2
+    // (:666-667), unsigned min 4 and max 5 (v3d_general_tmu_op_for_atomic,
+    // :189-208). The offsets past 15 are uniforms, 4 to 12 small
+    // immediates.
+    try expectStream(&.{
+        int(0x3fc00000), counters, int(0xffffffc7), int(0xffffff87), int(0xffffffcf), int(0xffffffbf), int(16),
+        int(0xffffffb7), counters, int(20),         int(0xffffffc7), int(24),         int(0xffffff97), int(28),
+        int(0xffffff9a), int(32),  int(0xffffffa7), counters,        int(36),         int(0xffffffaf), int(0xffffff84),
+    }, code.stream());
+    // The increment writes no TMUD (atomic_add_replaced, :507-519): nine
+    // operands and the compare-exchange's second. Each returns its word,
+    // read though the program reads none (nir_intrinsic_dest_components,
+    // :612), and nothing waits on a write alone: no TMUWT
+    // (ntq_flush_tmu, :266-299).
+    try testing.expectEqual(@as(usize, 10), countOf(code, "mov tmud"));
+    try testing.expectEqual(@as(usize, 10), countOf(code, "tmuau"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "tmua,"));
+    try testing.expectEqual(@as(usize, 10), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "tmuwt"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "unifa"));
+    try testing.expect(code.tmu_dirty_rcl);
+    try testing.expect(code.writes_z and code.disable_ez);
+    try testing.expectEqual(@as(usize, 43), code.words.len);
+}
+
+test "through Mesa's back end, an atomic's result is a value, the decrement writes no operand either, and a barrier flushes the TMU" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_returned);
+    var atomics: [4]u16 = @splat(none);
+    var count: usize = 0;
+    var barriers: usize = 0;
+    for (work.program(), 0..) |each, at| switch (each.tag) {
+        .ssbo_atomic => {
+            try testing.expect(count < atomics.len);
+            atomics[count] = @intCast(at);
+            count += 1;
+        },
+        .barrier => barriers += 1,
+        else => {},
+    };
+    try testing.expectEqual(@as(usize, 4), count);
+    try testing.expectEqual(@as(usize, 1), barriers);
+    const steps = work.program();
+    // The add of 1 at the index the colour gives, its offset dynamic;
+    // the add of 0xffffffff, ixor, and the compare-exchange of the first
+    // two's results: the comparator first, the value second
+    // (fill_common_atomic_sources, spirv_to_nir.c:3698-3702).
+    try testing.expect(steps[atomics[0]].from[0] != none);
+    try testing.expectEqual(Atomic.iadd, steps[atomics[1]].atomic);
+    try testing.expectEqual(Atomic.ixor, steps[atomics[2]].atomic);
+    try testing.expectEqual(Atomic.cmpxchg, steps[atomics[3]].atomic);
+    try testing.expectEqual(atomics[0], steps[atomics[3]].a);
+    try testing.expectEqual(atomics[1], steps[atomics[3]].from[1]);
+    const int = struct {
+        fn of(value: u32) Word {
+            return .{ .float = @bitCast(value) };
+        }
+    }.of;
+    // The increment 8 and the decrement 9 (v3d_get_op_for_atomic_add,
+    // nir_to_vir.c:175-187), the xor 10, the compare-exchange 3, a
+    // pixel's two words.
+    try expectStream(&.{ int(0x3fc00000), .{ .ssbo = .{ .set = 0, .binding = 1, .reach = 20 } }, int(0xffffffc7), int(0xffffffcf), int(0xffffffd7), int(16), int(0xffffff9a), int(0x3a83126f), int(0xffffff84) }, code.stream());
+    // Neither writes TMUD: the xor's 5, then the comparator and the value
+    // (emit_tmu_general_atomic_writes, :400-420).
+    try testing.expectEqual(@as(usize, 3), countOf(code, "mov tmud"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmud, 5"));
+    // The first two results, read into registers in the order the
+    // atomics went out, written to TMUD in that order.
+    var lines: [64][disasm.most_text]u8 = undefined;
+    var texts: [64][]const u8 = undefined;
+    try testing.expect(code.words.len <= lines.len);
+    for (code.words, 0..) |word, at| texts[at] = disasm.disasm(word, &lines[at]).?;
+    var loaded: [2][]const u8 = undefined;
+    var found: usize = 0;
+    for (texts[0..code.words.len]) |line| {
+        if (found == loaded.len) break;
+        const k = std.mem.indexOf(u8, line, "ldtmu.") orelse continue;
+        var end = k + "ldtmu.".len;
+        while (end < line.len and line[end] != ';' and line[end] != ' ') end += 1;
+        loaded[found] = line[k + "ldtmu.".len .. end];
+        found += 1;
+    }
+    try testing.expectEqual(loaded.len, found);
+    var written: [2]?usize = .{ null, null };
+    for (loaded, 0..) |register, k| {
+        var name: [32]u8 = undefined;
+        const move = try std.fmt.bufPrint(&name, "mov tmud, {s}", .{register});
+        for (texts[0..code.words.len], 0..) |line, at| {
+            const i = std.mem.indexOf(u8, line, move) orelse continue;
+            const after = i + move.len;
+            if (after < line.len and std.ascii.isDigit(line[after])) continue;
+            written[k] = at;
+            break;
+        }
+    }
+    try testing.expect(written[0] != null and written[1] != null and written[0].? < written[1].?);
+    try testing.expectEqual(@as(usize, 4), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "tmuwt"));
+    try testing.expect(code.tmu_dirty_rcl);
+    try testing.expectEqual(@as(usize, 27), code.words.len);
+}
+
+test "through Mesa's back end, an acquire-release atomic has a barrier before and after it, and the relaxed one none" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_ordered);
+    // Semantics 72, AcquireRelease | UniformMemory: release, a barrier
+    // before; acquire, a barrier after (vtn_split_barrier_semantics,
+    // spirv_to_nir.c:2581-2661). The add of 2 relaxed, 0, none.
+    var tags: [8]Tag = undefined;
+    var count: usize = 0;
+    for (work.program()) |each| switch (each.tag) {
+        .ssbo_atomic, .barrier => {
+            try testing.expect(count < tags.len);
+            tags[count] = each.tag;
+            count += 1;
+        },
+        else => {},
+    };
+    try testing.expectEqualSlices(Tag, &.{ .barrier, .ssbo_atomic, .barrier, .ssbo_atomic }, tags[0..count]);
+    // The barrier after is a flush (nir_to_vir.c:3857-3861): the first's
+    // word read before the second goes out.
+    var read_first: ?usize = null;
+    var second: ?usize = null;
+    for (code.words, 0..) |word, at| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        if (read_first == null and std.mem.indexOf(u8, line, "ldtmu") != null) read_first = at;
+        if (std.mem.indexOf(u8, line, "mov tmud, 2") != null) second = at;
+    }
+    try testing.expect(read_first != null and second != null and read_first.? < second.?);
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 17), code.words.len);
+}
+
+test "through Mesa's back end, a readonly buffer's words an atomic program wrote are read through unifa, and nothing is left dirty" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_counted);
+    try testing.expect(!work.buffers_written and work.uses_ssbo);
+    const int = struct {
+        fn of(value: u32) Word {
+            return .{ .float = @bitCast(value) };
+        }
+    }.of;
+    const counters: Word = .{ .ssbo = .{ .set = 0, .binding = 1, .reach = 40 } };
+    // The ten words through unifa, its address set at 8, at 20 and at
+    // the start, the base held in two registers; 64, the 2 added to the
+    // highest before its shift by 5 shifted itself (nir_opt_algebraic.py:
+    // 728); then the factors past the small immediates: 1/512, 1/65536,
+    // 1/196608 and 1/255. 1/64, 1/32 and the colour's 1/16 are small
+    // immediates.
+    try expectStream(&.{ counters, int(64), counters, int(20), int(0x3b000000), int(0x37800000), int(0x36aaaaab), int(0x3b808081), int(0xffffff84) }, code.stream());
+    try testing.expectEqual(@as(usize, 13), countOf(code, "ldunifa"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "tmu"));
+    try testing.expect(!code.tmu_dirty_rcl);
+    try testing.expectEqual(@as(usize, 46), code.words.len);
+}
+
+test "an atomic in an arm, on a uniform buffer, or in a vertex program, is refused" {
+    // An atomic is a write peephole_select cannot make a select of
+    // (block_check_for_allowed_instrs, nir_opt_peephole_select.c:106-236).
+    var armed: Work = .{};
+    try testing.expectError(Error.Branches, throughMesa(&armed, &reference.glslc_armed));
+    // glslc_atomics's `OpDecorate %21 BufferBlock` made Block.
+    var uniform: Work = .{};
+    try testing.expectError(Error.Storage, throughMesa(&uniform, &comptime patched(&reference.glslc_atomics, .decorate, 1, 1, @intFromEnum(spirv.Decoration.block))));
+    // The coordinate shader would add as well.
+    var vertex: Work = .{};
+    try testing.expectError(Error.Storage, vertexThroughMesa(&vertex, &reference.glslc_vertex_atomic, .{}));
 }
 
 test "an index computed into the push constants is refused, and the plan holds no block read" {
