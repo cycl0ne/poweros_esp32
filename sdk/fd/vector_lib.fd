@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: MIT
+//! vector.library's functions: paths of lines and curves in a program's
+//! own units, filled or stroked with smooth edges onto its pens through a
+//! matrix. Open it with OpenLibrary("vector.library", 1).
+##include libs/graphics/graphics as graphics
+##include libs/utility/utility as utility
+##include libs/vector/vector as vector
+##basetype VectorBase
+##name vector.library
+##bias 4
+##public
+/// An empty path; null without the memory for one.
+?*vector.Path CreatePath()
+/// A path given back. Null does nothing.
+void DisposePath(?*vector.Path path)
+/// The path emptied, its memory kept for the next one built in it.
+void ClearPath(*vector.Path path)
+/// A new contour started at (x, y).
+void MoveTo(*vector.Path path, f32 x, f32 y)
+/// A line from the current point to (x, y).
+void LineTo(*vector.Path path, f32 x, f32 y)
+/// A quadratic curve from the current point to (x, y), pulled toward (x1, y1).
+void QuadTo(*vector.Path path, f32 x1, f32 y1, f32 x, f32 y)
+/// A cubic curve from the current point to (x, y), leaving toward (x1, y1) and arriving from (x2, y2).
+void CubicTo(*vector.Path path, f32 x1, f32 y1, f32 x2, f32 y2, f32 x, f32 y)
+/// The contour closed back to where it started.
+void ClosePath(*vector.Path path)
+/// A canvas over the caller's pens (VCA_*); null without a size or the memory.
+?*vector.Canvas CreateCanvasTagList(?[*]const utility.TagItem tags)
+/// A canvas given back; its pens stay the caller's. Null does nothing.
+void DisposeCanvas(?*vector.Canvas canvas)
+/// The pens the canvas draws on from now on; null draws nothing.
+void SetCanvasPens(*vector.Canvas canvas, ?[*]graphics.Pen pens, u32 bytes_per_row)
+/// The path filled through the matrix (null: the identity) in the paint, by the rule (RULE_*).
+i32 FillPath(*vector.Canvas canvas, *const vector.Path path, ?*const vector.Matrix matrix, *const vector.Paint paint, u32 rule)
+/// The path stroked in its own units, then through the matrix (null: the identity), in the paint.
+i32 StrokePath(*vector.Canvas canvas, *const vector.Path path, ?*const vector.Matrix matrix, *const vector.Paint paint, *const vector.Stroke stroke)
+##end

@@ -44,6 +44,8 @@ pub const diskfont = @import("libs/diskfont/diskfont.zig");
 /// The system's settings as files (ENV:Sys, ENVARC:Sys).
 pub const prefs = @import("libs/prefs/prefs.zig");
 pub const truetype = @import("libs/truetype/truetype.zig");
+/// Shapes with smooth edges: paths filled and stroked onto pens.
+pub const vector = @import("libs/vector/vector.zig");
 pub const asl = @import("libs/asl/asl.zig");
 pub const iffparse = @import("libs/iffparse/iffparse.zig");
 /// Programs that watch the input stream and act on it, through

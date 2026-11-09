@@ -1,0 +1,627 @@
+TABLE OF CONTENTS
+
+vector.library/ClearPath
+vector.library/ClosePath
+vector.library/CreateCanvasTagList
+vector.library/CreatePath
+vector.library/CubicTo
+vector.library/DisposeCanvas
+vector.library/DisposePath
+vector.library/FillPath
+vector.library/LineTo
+vector.library/MoveTo
+vector.library/QuadTo
+vector.library/SetCanvasPens
+vector.library/StrokePath
+vector.library/ClearPath                              vector.library/ClearPath
+
+   NAME
+	ClearPath -- The path emptied, its memory kept for the next one built in it.
+
+   SYNOPSIS
+	    fn ClearPath(vb: *VectorBase, path: *vector.Path) void
+
+   SINCE
+	1.0. LVO -28.
+
+   INPUTS
+	- `path` - the path.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	Every contour goes, and with it the current point and a want of
+	memory the path had met: it is as `CreatePath` made it, but it keeps
+	the memory it had grown to. A program that builds a path anew for
+	every frame clears one rather than making and giving back another.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The caller's, as before.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreatePath`, `DisposePath`
+
+   EXAMPLES
+	    vb.ClearPath(path);
+	    vb.MoveTo(path, 0, 0);
+vector.library/ClosePath                              vector.library/ClosePath
+
+   NAME
+	ClosePath -- The contour closed back to where it started.
+
+   SYNOPSIS
+	    fn ClosePath(vb: *VectorBase, path: *vector.Path) void
+
+   SINCE
+	1.0. LVO -48.
+
+   INPUTS
+	- `path` - the path.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	A straight line back to the contour's start closes it: a stroke joins
+	its ends there instead of giving them caps. The current point is the
+	start from then on, and the next segment starts a new contour there.
+	A contour already closed, or no contour at all, is left as it is.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The caller's, as before.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`MoveTo`, `StrokePath`
+
+   EXAMPLES
+	    vb.MoveTo(path, 0, 0);
+	    vb.LineTo(path, 10, 0);
+	    vb.LineTo(path, 10, 10);
+	    vb.ClosePath(path);
+vector.library/CreateCanvasTagList          vector.library/CreateCanvasTagList
+
+   NAME
+	CreateCanvasTagList -- A canvas over the caller's pens (VCA_*); null without a size or the memory.
+
+   SYNOPSIS
+	    fn CreateCanvasTagList(vb: *VectorBase, tags: ?[*]const utility.TagItem) ?*vector.Canvas
+
+   SINCE
+	1.0. LVO -52.
+
+   INPUTS
+	- `tags` - what the canvas is:
+	  - `VCA_Width`, `VCA_Height` - its size in pixels. Both are needed,
+	    each from 1 to 1048576.
+	  - `VCA_Pens` - `[*]graphics.Pen`, what is drawn on: 0xAARRGGBB, not
+	    premultiplied. Without it nothing is drawn until `SetCanvasPens`.
+	  - `VCA_BytesPerRow` - from one row of pens to the next; four times
+	    the width unless given.
+
+   RESULT
+	The canvas, or null: no size, or not the memory for its working
+	memory.
+
+   BEHAVIOR
+	The canvas holds the library's working memory for drawing on pens of
+	that size: the coverage of a band of rows, at most 512 KiB of it,
+	which a fill or a stroke is summed into a band at a time. A canvas of
+	360 by 360 pixels is one band; a larger one is drawn in as many as it
+	takes. The pens themselves are only written, where a shape covers
+	them.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The canvas is the caller's until `DisposeCanvas`, and one task's at a
+	time. The pens stay the caller's, and must last while they are drawn
+	on.
+
+   NOTES
+	The tags are read here and not kept. `TAG_IGNORE`, `TAG_MORE` and
+	`TAG_SKIP` are followed as utility.library follows them.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DisposeCanvas`, `SetCanvasPens`, `FillPath`, `StrokePath`
+
+   EXAMPLES
+	    const tags = [_]utility.TagItem{
+	        .{ .tag = vector.VCA_Width, .data = 48 },
+	        .{ .tag = vector.VCA_Height, .data = 48 },
+	        .{ .tag = vector.VCA_Pens, .data = @intFromPtr(&pens) },
+	        .{},
+	    };
+	    const canvas = vb.CreateCanvasTagList(&tags) orelse return error.NoMemory;
+	    defer vb.DisposeCanvas(canvas);
+vector.library/CreatePath                            vector.library/CreatePath
+
+   NAME
+	CreatePath -- An empty path; null without the memory for one.
+
+   SYNOPSIS
+	    fn CreatePath(vb: *VectorBase) ?*vector.Path
+
+   SINCE
+	1.0. LVO -20.
+
+   INPUTS
+	None.
+
+   RESULT
+	The path, or null when there was not the memory for it.
+
+   BEHAVIOR
+	A path holds contours of lines and curves in the caller's own units,
+	built a segment at a time with `MoveTo`, `LineTo`, `QuadTo`, `CubicTo`
+	and `ClosePath`. Curves stay curves: the path is broken into lines
+	only when it is drawn, at the size it is drawn at, so one path is
+	drawn at any size. Its memory grows as segments are added.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The caller's until `DisposePath`, and one task's at a time: the
+	library holds no lock for it.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DisposePath`, `ClearPath`, `MoveTo`, `FillPath`, `StrokePath`
+
+   EXAMPLES
+	    const path = vb.CreatePath() orelse return error.NoMemory;
+	    defer vb.DisposePath(path);
+vector.library/CubicTo                                  vector.library/CubicTo
+
+   NAME
+	CubicTo -- A cubic curve from the current point to (x, y), leaving toward (x1, y1) and arriving from (x2, y2).
+
+   SYNOPSIS
+	    fn CubicTo(vb: *VectorBase, path: *vector.Path, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) void
+
+   SINCE
+	1.0. LVO -44.
+
+   INPUTS
+	- `path` - the path.
+	- `x1`, `y1` - the first control point, in the path's units.
+	- `x2`, `y2` - the second.
+	- `x`, `y` - where the curve ends.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	A Bézier curve, as SVG's `C` and Lottie's vertices draw: (x, y) is the
+	current point from then on. It is kept as a curve and broken into
+	lines only when drawn, enough of them that none strays from it by
+	more than a quarter of a pixel at the size it is drawn at. Without a
+	current point it is passed over, and after a `ClosePath` it starts a
+	new contour, as `LineTo` does.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The caller's, as before.
+
+   NOTES
+	Without the memory for it the curve is not added, and the path
+	remembers that something did not fit (see `MoveTo`).
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`QuadTo`, `LineTo`
+
+   EXAMPLES
+	    // A quarter of a circle of radius 100 round (0, 0).
+	    vb.MoveTo(path, 100, 0);
+	    vb.CubicTo(path, 100, 55.23, 55.23, 100, 0, 100);
+vector.library/DisposeCanvas                      vector.library/DisposeCanvas
+
+   NAME
+	DisposeCanvas -- A canvas given back; its pens stay the caller's. Null does nothing.
+
+   SYNOPSIS
+	    fn DisposeCanvas(vb: *VectorBase, canvas: ?*vector.Canvas) void
+
+   SINCE
+	1.0. LVO -56.
+
+   INPUTS
+	- `canvas` - what `CreateCanvasTagList` answered, or null.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	The canvas's working memory goes back. The pens it drew on are left
+	as they are, with what was drawn on them.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The canvas is gone: the handle must not be used again. The pens are
+	the caller's to free.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateCanvasTagList`
+
+   EXAMPLES
+	    vb.DisposeCanvas(canvas);
+vector.library/DisposePath                          vector.library/DisposePath
+
+   NAME
+	DisposePath -- A path given back. Null does nothing.
+
+   SYNOPSIS
+	    fn DisposePath(vb: *VectorBase, path: ?*vector.Path) void
+
+   SINCE
+	1.0. LVO -24.
+
+   INPUTS
+	- `path` - what `CreatePath` answered, or null.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	The path's memory goes back, its segments with it. What was drawn
+	with it stays on the pens it was drawn on.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The path is gone: the handle must not be used again.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreatePath`, `ClearPath`
+
+   EXAMPLES
+	    vb.DisposePath(path);
+vector.library/FillPath                                vector.library/FillPath
+
+   NAME
+	FillPath -- The path filled through the matrix (null: the identity) in the paint, by the rule (RULE_*).
+
+   SYNOPSIS
+	    fn FillPath(vb: *VectorBase, canvas: *vector.Canvas, path: *const vector.Path, matrix: ?*const vector.Matrix, paint: *const vector.Paint, rule: u32) i32
+
+   SINCE
+	1.0. LVO -64.
+
+   INPUTS
+	- `canvas` - what it is drawn on.
+	- `path` - what is filled. Every contour is closed for it, open or
+	  not, with a straight line back to its start.
+	- `matrix` - the path's units to pixels, or null when they are pixels.
+	- `paint` - what it is painted in (`vector.Paint`): in 1.0 its colour,
+	  at its colour's coverage times its opacity, whatever its kind.
+	- `rule` - `RULE_NONZERO`: inside wherever the contours wind round a
+	  point; `RULE_EVENODD`: wherever they wind round it an odd number of
+	  times, so a contour inside another is a hole.
+
+   RESULT
+	`VECTOR_OK`, or `VECTORERR_NOMEM` when the path had run out of memory
+	as it was built or there was no room to break it into lines: what
+	there was is drawn.
+
+   BEHAVIOR
+	The curves are broken into lines at the size they are drawn at, and
+	every pixel is painted by how much of it the shape covers, so the
+	edges are smooth. The paint goes over what each pen held: a pen's
+	share of the shape times the paint's opacity of it, mixed with the
+	pen by its own coverage. Pixels off the canvas are passed over; so
+	is everything with no pens set.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The path, the matrix and the paint are the caller's and only read;
+	the pens are written.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`StrokePath`, `CreateCanvasTagList`, `MoveTo`
+
+   EXAMPLES
+	    const red = vector.Paint{ .colour = .{ .r = 1 } };
+	    const twice = vector.Matrix.scale(2, 2);
+	    _ = vb.FillPath(canvas, path, &twice, &red, vector.RULE_NONZERO);
+vector.library/LineTo                                    vector.library/LineTo
+
+   NAME
+	LineTo -- A line from the current point to (x, y).
+
+   SYNOPSIS
+	    fn LineTo(vb: *VectorBase, path: *vector.Path, x: f32, y: f32) void
+
+   SINCE
+	1.0. LVO -36.
+
+   INPUTS
+	- `path` - the path.
+	- `x`, `y` - where the line ends, in the path's units.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	(x, y) is the current point from then on. Before the path's first
+	`MoveTo` there is nowhere for a line to start, and it is passed over.
+	After a `ClosePath` the line starts a new contour where the closed
+	one began, as SVG's path data does.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The caller's, as before.
+
+   NOTES
+	Without the memory for it the line is not added, and the path
+	remembers that something did not fit (see `MoveTo`).
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`MoveTo`, `QuadTo`, `CubicTo`, `ClosePath`
+
+   EXAMPLES
+	    vb.MoveTo(path, 0, 0);
+	    vb.LineTo(path, 100, 0);
+	    vb.LineTo(path, 50, 80);
+	    vb.ClosePath(path);
+vector.library/MoveTo                                    vector.library/MoveTo
+
+   NAME
+	MoveTo -- A new contour started at (x, y).
+
+   SYNOPSIS
+	    fn MoveTo(vb: *VectorBase, path: *vector.Path, x: f32, y: f32) void
+
+   SINCE
+	1.0. LVO -32.
+
+   INPUTS
+	- `path` - the path.
+	- `x`, `y` - where the contour starts, in the path's units.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	A contour still open ends where it is: a fill closes it with a
+	straight line, a stroke gives it its caps. (x, y) is the current
+	point, where the next segment starts. A move followed by nothing is a
+	contour of one point, which a stroke with round caps draws as a dot.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The caller's, as before.
+
+   NOTES
+	Without the memory for it the move is not added, and the path
+	remembers that something did not fit: `FillPath` and `StrokePath`
+	draw what there is and answer `VECTORERR_NOMEM`.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`LineTo`, `CubicTo`, `ClosePath`
+
+   EXAMPLES
+	    vb.MoveTo(path, 10, 10);
+	    vb.LineTo(path, 90, 10);
+vector.library/QuadTo                                    vector.library/QuadTo
+
+   NAME
+	QuadTo -- A quadratic curve from the current point to (x, y), pulled toward (x1, y1).
+
+   SYNOPSIS
+	    fn QuadTo(vb: *VectorBase, path: *vector.Path, x1: f32, y1: f32, x: f32, y: f32) void
+
+   SINCE
+	1.0. LVO -40.
+
+   INPUTS
+	- `path` - the path.
+	- `x1`, `y1` - the control point, in the path's units.
+	- `x`, `y` - where the curve ends.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	The curve leaves the current point toward (x1, y1) and arrives at
+	(x, y) from it, as TrueType's and SVG's `Q` curves do; (x, y) is the
+	current point from then on. It is kept as a curve and broken into
+	lines only when drawn. Without a current point it is passed over, and
+	after a `ClosePath` it starts a new contour, as `LineTo` does.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The caller's, as before.
+
+   NOTES
+	Without the memory for it the curve is not added, and the path
+	remembers that something did not fit (see `MoveTo`).
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CubicTo`, `LineTo`
+
+   EXAMPLES
+	    vb.MoveTo(path, 0, 50);
+	    vb.QuadTo(path, 50, 0, 100, 50);
+vector.library/SetCanvasPens                      vector.library/SetCanvasPens
+
+   NAME
+	SetCanvasPens -- The pens the canvas draws on from now on; null draws nothing.
+
+   SYNOPSIS
+	    fn SetCanvasPens(vb: *VectorBase, canvas: *vector.Canvas, pens: ?[*]graphics.Pen, bytes_per_row: u32) void
+
+   SINCE
+	1.0. LVO -60.
+
+   INPUTS
+	- `canvas` - the canvas.
+	- `pens` - its width by its height of them, 0xAARRGGBB, or null.
+	- `bytes_per_row` - from one row of them to the next; 0 for four
+	  times the canvas's width.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	The canvas keeps its size and its working memory, and draws on these
+	pens instead: a program that draws frame after frame into buffers of
+	one size hands each over in turn. With null, a fill or a stroke
+	draws nothing.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The pens stay the caller's, and must last while they are drawn on.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateCanvasTagList`, `FillPath`
+
+   EXAMPLES
+	    vb.SetCanvasPens(canvas, frame.pens, frame.bytes_per_row);
+vector.library/StrokePath                            vector.library/StrokePath
+
+   NAME
+	StrokePath -- The path stroked in its own units, then through the matrix (null: the identity), in the paint.
+
+   SYNOPSIS
+	    fn StrokePath(vb: *VectorBase, canvas: *vector.Canvas, path: *const vector.Path, matrix: ?*const vector.Matrix, paint: *const vector.Paint, stroke: *const vector.Stroke) i32
+
+   SINCE
+	1.0. LVO -68.
+
+   INPUTS
+	- `canvas` - what it is drawn on.
+	- `path` - what is stroked: its open contours with caps at their
+	  ends, its closed ones joined all round.
+	- `matrix` - the path's units to pixels, or null when they are pixels.
+	- `paint` - what it is painted in, as `FillPath` paints.
+	- `stroke` - how (`vector.Stroke`), in the path's own units: the
+	  width, the joins (`JOIN_MITER`, `JOIN_ROUND`, `JOIN_BEVEL`), the caps
+	  (`CAP_BUTT`, `CAP_ROUND`, `CAP_SQUARE`) and the miter limit, in
+	  stroke widths. 1.0 draws a dashed stroke whole.
+
+   RESULT
+	`VECTOR_OK`, or `VECTORERR_NOMEM` as `FillPath` answers it.
+
+   BEHAVIOR
+	The stroke is made of pieces in the path's units - a quadrilateral a
+	line, a piece at each corner, a cap at each open end - and those are
+	drawn through the matrix, so a stroke drawn through one that stretches
+	a way is stretched with it, as SVG draws one. A miter longer than the
+	limit is bevelled. A contour of one point is a dot when the caps are
+	round, and nothing otherwise; a stroke under a fiftieth of a pixel
+	wide is not drawn.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The path, the matrix, the paint and the stroke are the caller's and
+	only read; the pens are written.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`FillPath`, `ClosePath`
+
+   EXAMPLES
+	    const black = vector.Paint{};
+	    const line = vector.Stroke{ .width = 2, .join = vector.JOIN_ROUND, .cap = vector.CAP_ROUND };
+	    _ = vb.StrokePath(canvas, path, null, &black, &line);

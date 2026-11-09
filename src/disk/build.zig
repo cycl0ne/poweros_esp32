@@ -40,7 +40,9 @@ pub const catalogs = [_]Catalog{
 /// Code compiled into each program that imports it, by name, rather than
 /// loaded: a library's inner part that its test programs build in as well.
 /// The rasterizer core is facet.library's, and is called per triangle and
-/// per tile - too often to go through a jump table. The SMB client is
+/// per tile - too often to go through a jump table. vector.library's
+/// drawing is the library itself, kept apart so that it is tested on the
+/// host and used by host tools as it is. The SMB client is
 /// the protocol and the share files, which smb-handler, C:net/MountShare
 /// and SYS:System/Shares each need all or part of. The baseline JPEG
 /// decoder is jpeg.datatype's, and mjpeg.vcodec's for Motion JPEG. The
@@ -57,6 +59,7 @@ pub const catalogs = [_]Catalog{
 /// written once.
 const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
     .{ .name = "raster", .source = "libs/facet/driver/cpu/raster/raster.zig" },
+    .{ .name = "vector", .source = "libs/vector/draw/draw.zig" },
     .{ .name = "v3d", .source = "libs/facet/driver/v3d/v3d.zig" },
     .{ .name = "jpegdecode", .source = "classes/datatypes/jpeg/decode.zig" },
     .{ .name = "filmsound", .source = "libs/videocodec/filmsound.zig" },
@@ -215,6 +218,7 @@ const modules = [_]Program{
     .{ .disk = "libs/wpa.library", .source = "libs/wpa/wpa.zig", .name = "wpa.library" },
     .{ .disk = "libs/diskfont.library", .source = "libs/diskfont/diskfont.zig", .name = "diskfont.library" },
     .{ .disk = "libs/truetype.library", .source = "libs/truetype/truetype.zig", .name = "truetype.library" },
+    .{ .disk = "libs/vector.library", .source = "libs/vector/vector.zig", .name = "vector.library", .imports = &.{"vector"} },
     .{ .disk = "libs/asl.library", .source = "libs/asl/asl.zig", .name = "asl.library" },
     .{ .disk = "libs/iffparse.library", .source = "libs/iffparse/iffparse.zig", .name = "iffparse.library" },
     .{ .disk = "libs/commodities.library", .source = "libs/commodities/commodities.zig", .name = "commodities.library" },

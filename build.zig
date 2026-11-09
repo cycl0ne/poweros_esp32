@@ -1596,6 +1596,12 @@ pub fn build(b: *std.Build) void {
     raster_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("raster", raster_mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = raster_mod })).step);
+    // vector.library's drawing, likewise: tested on its own, and the
+    // module the library's own tests build it with.
+    const vector_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/vector/draw/draw.zig"), .target = b.graph.host });
+    vector_mod.addImport("sdk", sdk);
+    disk_test_mod.addImport("vector", vector_mod);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = vector_mod })).step);
     // The V3D's control list packets and QPU instructions, on their own: the
     // rest of the driver is only of use on the board.
     const v3d_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/facet/driver/v3d/v3d.zig"), .target = b.graph.host });
