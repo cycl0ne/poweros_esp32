@@ -4993,4 +4993,47 @@ pub const LIBRARY_VERSION = 1;
 /// rounds the place on screen to the nearest 1/64th and the CPU's record
 /// truncated it. FacetBoth's other 225 cases are as they were at 1.162,
 /// and FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 163;
+///
+/// 164: **Storage buffers read (docs/facet-vulkan10.md item 59).** A
+/// fragment or vertex shader that reads a storage buffer is compiled by
+/// Mesa's back end, where it was refused for its BufferBlock. SPIR-V 1.0
+/// declares one in the Uniform class with its block decorated
+/// BufferBlock, and its last member may be a runtime array
+/// (OpTypeRuntimeArray): `Block.storage` and `Block.runtime`, a runtime
+/// array the last member of a storage buffer's block alone, read at any
+/// constant index. NonWritable is taken on the variable and its members.
+/// Its loads are `.ssbo` steps, load_ssbo as nir_lower_explicit_io makes
+/// it (v3dv_pipeline.c:418-420), CSE'd and kept out of a flattened arm as
+/// a load_ubo is. Nothing in the profile writes a buffer, so
+/// nir_opt_access makes each load ACCESS_NON_WRITEABLE (nir_opt_access.c:
+/// 250-293), and v3d reads it through unifa, not the TMU
+/// (ntq_emit_load_unifa, nir_to_vir.c:3338-3343): QUNIFORM_SSBO_OFFSET,
+/// the slot not shifted, the offset ADDed into unifa or the address MOVed
+/// there, and c->current_unifa_is_ubo kept beside the rest
+/// (:3398-3446). The stream's word is `compile.StorageAddress`, whose
+/// `reach` is one past the last float read; the draw writes the buffer's
+/// address and its descriptor's offsets (write_ubo_ssbo_uniforms,
+/// v3dv_uniforms.c:235-350) and turns the pipeline's program down, for
+/// the colour that says so, where nothing is bound there or the reach
+/// passes the range. A vertex program's buffers are held to the same, the
+/// vertex function called where one is not bound.
+///
+/// - Not ported: a computed offset, which takes the TMU's general lookup
+///   (ntq_emit_tmu_general, nir_to_vir.c:502-725), stores and atomics
+///   (vertexPipelineStoresAndAtomics and fragmentStoresAndAtomics stay
+///   false), OpArrayLength, and the StorageBuffer class of SPIR-V 1.3.
+///
+/// Tests: the V3D's 192, two new and one rewritten. glslc_storage_buffer
+/// (206 words): three load_ssbos through unifa, written twice, the
+/// second time the address loaded before plus 64, nine ldunifas, the
+/// stream the buffer reaching 80 and the 64, 30 words; glslc_uniform_buffer
+/// with BufferBlock read as a storage buffer, the MOV into unifa its
+/// ldunif is not made to write itself; a runtime array in a uniform
+/// buffer and one not last refused. 3147 tests in all. FacetBoth 1.32:
+/// the shipped case of a storage buffer, glslc's words on the V3D beside
+/// a function of the same arithmetic in the same order on the cores.
+///
+/// On the CM5 the case is 8 pixels of 230,400 apart, the triangle's edge,
+/// as the uniform buffers' cases are; FacetBoth's other 226 cases are as
+/// they were at 1.163, and FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 164;

@@ -918,7 +918,7 @@ fn compiled(back: Back, work: *compile.Work, words: []const u32, stream: *[compi
         // library's draws are where a program that reads them is held to
         // the cores (FacetBoth). Nor is a fragment program's stream ever
         // of the viewport, which a vertex program's alone is.
-        .push, .ubo, .viewport => return null,
+        .push, .ubo, .ssbo, .viewport => return null,
     };
     return .{
         .{

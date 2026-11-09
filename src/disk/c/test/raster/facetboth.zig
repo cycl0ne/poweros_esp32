@@ -62,7 +62,10 @@
 //! constants. The shipped case of a vertex shader (since 1.31) is
 //! glslc's words of "as it is", which the V3D runs on the QPU, the
 //! vertex program and the coordinate program both, where the cores call
-//! the function.
+//! the function. The shipped case of a storage buffer (since 1.32) is
+//! glslc's words of a `readonly` buffer's tint, its scale and the third
+//! of its runtime array, which the V3D reads through unifa, as Mesa reads
+//! a load_ssbo of a buffer the program does not write.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -77,7 +80,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.31 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.32 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -719,6 +722,17 @@ const Shipped = struct {
             b.color(b.vector(&.{ b.component(sum, 0), b.component(sum, 1), b.component(sum, 2), b.component(c, 3) }));
         }
     });
+    /// What `storage_buffer` computes, for the cores, and in its order:
+    /// the colour times the tint, times the scale, plus values[2]. A
+    /// storage buffer's slot is a uniform buffer's to the cores, so the
+    /// function reads it as one (since 1.32).
+    const StorageRead = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const tinted = b.mul(v, b.uniform(0, 0, 0, .f32x4));
+            b.color(b.add(b.scale(tinted, b.uniform(0, 0, 16, .f32x1)), b.uniform(0, 0, 64, .f32x4)));
+        }
+    });
     /// What `uniform_matrix` computes, for the cores: each row the last
     /// column times z, then the second times y and the first times x
     /// added on, as matrix_multiply sums them (since 1.29).
@@ -830,6 +844,7 @@ const shipped_entries = [_]shader.Entry{
     Shipped.UniformMatrices.entry("shipped uniform matrices"),
     Shipped.ConstantMatrix.entry("shipped constant matrix"),
     shader.vertex("shipped as it is", &asItIsVertex, 4),
+    Shipped.StorageRead.entry("shipped storage"),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                .{},                               .{},                                  .{},
@@ -839,7 +854,7 @@ const shipped_words = [_]shader.Spirv{
     Shipped.Chosen.spirv,               Shipped.Branched.spirv,            shader.Spirv.of(&branch_unoptimized), Shipped.Nested.spirv,
     Shipped.Bools.spirv,                Shipped.Nests.spirv,               Shipped.Joined.spirv,                 Shipped.Collapsed.spirv,
     shader.Spirv.of(&nested_discard),   Shipped.Uniformed.spirv,           shader.Spirv.of(&uniform_nested),     shader.Spirv.of(&uniform_matrix),
-    shader.Spirv.of(&uniform_matrices), shader.Spirv.of(&constant_matrix), shader.Spirv.of(&vertex_as_it_is),
+    shader.Spirv.of(&uniform_matrices), shader.Spirv.of(&constant_matrix), shader.Spirv.of(&vertex_as_it_is),    shader.Spirv.of(&storage_buffer),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -1198,6 +1213,60 @@ const vertex_as_it_is = [_]u32{
     0x00050041, 0x00000026, 0x00000027, 0x0000000D, 0x0000000F, 0x0003003E,
     0x00000027, 0x00000025, 0x0004003D, 0x00000007, 0x0000002A, 0x00000029,
     0x0003003E, 0x00000028, 0x0000002A, 0x000100FD, 0x00010038,
+};
+/// glslc's own output, at -O, for a `readonly` storage buffer, the V3D's
+/// host tests' glslc_storage_buffer: a BufferBlock whose last member is a
+/// runtime array, read at constant offsets through unifa (since 1.32).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// layout(std430, set = 0, binding = 0) readonly buffer Tints {
+///     vec4 tint;
+///     float scale;
+///     vec4 values[];
+/// } tints;
+/// void main() {
+///     ocolor = vcolor * tints.tint * tints.scale + tints.values[2];
+/// }
+/// ```
+const storage_buffer = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000020, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x0000000B, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000B, 0x0000001E, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000006, 0x00000010, 0x00030047, 0x0000000E, 0x00000003, 0x00040048,
+    0x0000000E, 0x00000000, 0x00000018, 0x00050048, 0x0000000E, 0x00000000,
+    0x00000023, 0x00000000, 0x00040048, 0x0000000E, 0x00000001, 0x00000018,
+    0x00050048, 0x0000000E, 0x00000001, 0x00000023, 0x00000010, 0x00040048,
+    0x0000000E, 0x00000002, 0x00000018, 0x00050048, 0x0000000E, 0x00000002,
+    0x00000023, 0x00000020, 0x00030047, 0x00000010, 0x00000018, 0x00040047,
+    0x00000010, 0x00000021, 0x00000000, 0x00040047, 0x00000010, 0x00000022,
+    0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006,
+    0x00000004, 0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B,
+    0x00000008, 0x00000009, 0x00000003, 0x00040020, 0x0000000A, 0x00000001,
+    0x00000007, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001, 0x0003001D,
+    0x0000000D, 0x00000007, 0x0005001E, 0x0000000E, 0x00000007, 0x00000006,
+    0x0000000D, 0x00040020, 0x0000000F, 0x00000002, 0x0000000E, 0x0004003B,
+    0x0000000F, 0x00000010, 0x00000002, 0x00040015, 0x00000011, 0x00000020,
+    0x00000001, 0x0004002B, 0x00000011, 0x00000012, 0x00000000, 0x00040020,
+    0x00000013, 0x00000002, 0x00000007, 0x0004002B, 0x00000011, 0x00000017,
+    0x00000001, 0x00040020, 0x00000018, 0x00000002, 0x00000006, 0x0004002B,
+    0x00000011, 0x0000001C, 0x00000002, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x00000007,
+    0x0000000C, 0x0000000B, 0x00050041, 0x00000013, 0x00000014, 0x00000010,
+    0x00000012, 0x0004003D, 0x00000007, 0x00000015, 0x00000014, 0x00050085,
+    0x00000007, 0x00000016, 0x0000000C, 0x00000015, 0x00050041, 0x00000018,
+    0x00000019, 0x00000010, 0x00000017, 0x0004003D, 0x00000006, 0x0000001A,
+    0x00000019, 0x0005008E, 0x00000007, 0x0000001B, 0x00000016, 0x0000001A,
+    0x00060041, 0x00000013, 0x0000001D, 0x00000010, 0x0000001C, 0x0000001C,
+    0x0004003D, 0x00000007, 0x0000001E, 0x0000001D, 0x00050081, 0x00000007,
+    0x0000001F, 0x0000001B, 0x0000001E, 0x0003003E, 0x00000009, 0x0000001F,
+    0x000100FD, 0x00010038,
 };
 /// glslc's own output, at -O, for a constant mat3 times a vector,
 /// glslc_constant_matrix: three constant columns, read where the product
@@ -1895,6 +1964,12 @@ const Side = struct {
     /// The same layout's set the uniform arrays and matrices read
     /// (since 1.29).
     blocks_set: ?*facet.DescriptorSet = null,
+    /// A storage buffer at binding 0 of set 0, the 128 bytes of
+    /// `uniforms` at 896, which the shipped storage buffer reads (since
+    /// 1.32).
+    storage_set_layout: ?*facet.DescriptorSetLayout = null,
+    storage_layout: ?*facet.PipelineLayout = null,
+    storage_set: ?*facet.DescriptorSet = null,
     compute_layout: ?*facet.PipelineLayout = null,
     compute_pipelines: [2]?*facet.Pipeline = @splat(null),
     /// The pipelines of the case being drawn.
@@ -1975,7 +2050,7 @@ const Side = struct {
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 4 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 5 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -2391,11 +2466,12 @@ const Side = struct {
     /// 0, its tint at 16; binding 1's, a dynamic one, at 256, with a
     /// second at 512 that a dynamic offset of 256 reaches. `blocks_set`
     /// is the same with binding 0 the 128 bytes at 768, which the uniform
-    /// arrays and matrices read (since 1.29).
+    /// arrays and matrices read (since 1.29). `storage_set` has the 128
+    /// bytes at 896 as a storage buffer (since 1.32).
     fn upUniforms(side: *Side) Failure!void {
         const fb = side.fb;
         const device = side.device.?;
-        const bytes = try side.buffer(1024, facet.BUFFER_USAGE_UNIFORM_BUFFER, &side.uniforms);
+        const bytes = try side.buffer(1024, facet.BUFFER_USAGE_UNIFORM_BUFFER | facet.BUFFER_USAGE_STORAGE_BUFFER, &side.uniforms);
         @memset(bytes[0..1024], 0);
         const floats: [*]align(1) f32 = @ptrCast(bytes);
         @memcpy(floats[4..8], &[4]f32{ 0.5, 1, 0.75, 1 });
@@ -2417,6 +2493,11 @@ const Side = struct {
             0.125,  -0.125,  -0.3125, 0,
             0.6875, 0.25,    -0.3125, -0.625,
         });
+        // The storage buffer's, at 896: its tint, its scale, and the
+        // third of its values at 64, which keep every channel between 0
+        // and 0.875 (since 1.32).
+        @memcpy(floats[224..229], &[5]f32{ 1, 0.75, 0.5, 1, 0.75 });
+        @memcpy(floats[240..244], &[4]f32{ 0.125, 0.0625, 0.25, 0 });
         const bindings = [2]facet.DescriptorSetLayoutBinding{
             .{ .binding = 0, .descriptor_type = .uniform_buffer, .stage_flags = facet.SHADER_STAGE_FRAGMENT },
             .{ .binding = 1, .descriptor_type = .uniform_buffer_dynamic, .stage_flags = facet.SHADER_STAGE_FRAGMENT },
@@ -2443,12 +2524,22 @@ const Side = struct {
             .{ .dst_set = side.blocks_set.?, .dst_binding = 1, .descriptor_type = .uniform_buffer_dynamic, .buffer_info = @ptrCast(&infos[1]) },
         };
         fb.UpdateDescriptorSets(device, 2, &block_writes, 0, null);
+        const storage_binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .storage_buffer, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+        try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&storage_binding) }, &side.storage_set_layout), error.Refused);
+        try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&side.storage_set_layout) }, &side.storage_layout), error.Refused);
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&side.storage_set_layout) }, &made), error.Refused);
+        side.storage_set = made[0];
+        const stored = facet.DescriptorBufferInfo{ .buffer = side.uniforms, .offset = 896, .range = 128 };
+        const storage_write = facet.WriteDescriptorSet{ .dst_set = side.storage_set.?, .dst_binding = 0, .descriptor_type = .storage_buffer, .buffer_info = @ptrCast(&stored) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&storage_write), 0, null);
     }
 
     fn down(side: *Side) void {
         const fb = side.fb;
         const device = side.device orelse return;
         _ = fb.DeviceWaitIdle(device);
+        fb.DestroyPipelineLayout(device, side.storage_layout);
+        fb.DestroyDescriptorSetLayout(device, side.storage_set_layout);
         fb.DestroyPipelineLayout(device, side.uniform_layout);
         fb.DestroyDescriptorSetLayout(device, side.uniform_set_layout);
         fb.DestroyBuffer(device, side.uniforms);
@@ -3631,6 +3722,15 @@ const Cases = struct {
             }
         }.run;
     }
+    /// The shipped storage buffer, `storage_set`'s, over the geometry the
+    /// shipped cases draw (since 1.32).
+    fn stored(side: *Side) Failure!void {
+        side.begin(.{});
+        try side.use(.{ .vertex = "as it is", .fragment = "shipped storage", .layout = side.storage_layout.? });
+        side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.storage_layout.?, 0, 1, @ptrCast(&side.storage_set), 0, null);
+        side.draw(clockwise_at, 6);
+        side.end();
+    }
     /// The vertices' colour times a pushed float, plus a pushed colour.
     fn tinted(side: *Side) Failure!void {
         side.begin(.{});
@@ -3867,6 +3967,7 @@ const cases = [_]Case{
     .{ .name = "shipped uniform matrices", .run = Cases.uniformedBy("shipped uniform matrices") },
     .{ .name = "shipped constant matrix", .run = Cases.shipped("as it is", "shipped constant matrix", false, clockwise_at) },
     .{ .name = "shipped vertex shader", .run = Cases.shipped("shipped as it is", "shipped smooth", false, clockwise_at) },
+    .{ .name = "shipped storage buffer", .run = Cases.stored },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },
