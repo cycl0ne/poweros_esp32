@@ -5424,4 +5424,60 @@ pub const LIBRARY_VERSION = 1;
 /// edge, as the other shipped cases are: the V3D's masked branch and its
 /// uniform one draw what the cores draw. FacetBoth's other 232 cases are
 /// as they were at 1.170, and FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 171;
+///
+/// 172: **Loops, unrolled as Mesa unrolls them (docs/facet-vulkan10.md
+/// item 59).** A loop whose trip count nir_loop_analyze works out is
+/// read as nir_opt_loop_unroll's simple_unroll makes it
+/// (nir_opt_loop_unroll.c:104-209): its body once for each run, one run
+/// after another, and no branch, where it was refused with
+/// `Error.Branches`. v3d's compile unrolls (nir_to_vir.c:2344-2349), at
+/// v3dv's max_unroll_iterations of 16 (v3dv_pipeline.c:215).
+///
+/// compile.zig's planLoop reads the loop before the walk takes it. The
+/// header's phis, and the variables stored into at the loop's top level,
+/// which nir_lower_vars_to_ssa makes phis, are the candidates for a basic
+/// induction variable: a constant on the way in, and on the way back an
+/// iadd, fadd, imul, fmul, ishl, ishr or ushr of itself and a constant
+/// (compute_induction_information, nir_loop_analyze.c:248-332), an isub
+/// or fsub an iadd or fadd of the negation (nir_opt_algebraic.py:
+/// 2401-2402). The loop's one terminator is its test: a comparison, or an
+/// inot of one, of a candidate or its update and a constant made before
+/// the loop (get_induction_and_limit_vars, :1050-1077). The trip count is
+/// calculate_iterations' (:929-1048): will_break_on_first_iteration,
+/// get_iteration of the span over the step with nir_opcodes.py's integer
+/// division, test_iterations' bias of -1 to 1, get_iteration_empirical
+/// for a product or a shift, and none for an fmul. A for loop's test at
+/// its top is peeled first (opt_loop_peel_initial_break, nir_opt_loop.c:
+/// 412-502), so the loop tests the update def; a do-while loop is tested
+/// at its end. Either way the trip count is the times the loop goes back,
+/// and it runs once more.
+///
+/// check_unrolling_restrictions (nir_opt_loop_unroll.c:898-931): a trip
+/// count over 16, or a cost over 16 * 26 by instr_cost
+/// (nir_loop_analyze.c:78-167), is refused unless the LoopControl asks
+/// Unroll, and a loop of DontUnroll is refused. The walk then reads the
+/// loop's blocks again for each run, the header's phis taking their way
+/// in first and their way back after.
+///
+/// Refused still: a loop of no trip count it can work out (to a push
+/// constant, by an fmul), a break or a continue in an arm, a second
+/// terminator, a loop in a loop, a return in one: what complex_unroll,
+/// or a loop kept (ntq_emit_loop, nir_to_vir.c:4760), would take.
+///
+/// Tests: the V3D's 226, six new. glslc_looped is four sums and no
+/// branch, and glslc_looped_plain, its variables form, is its program to
+/// the word; glslc_until is three runs and glslc_stepped four. A loop
+/// never entered is no run, a countdown four runs, a doubling five.
+/// glslc_cheap's 17 runs are unrolled, 18 refused unless Unroll asks.
+/// DontUnroll, glslc_costly's cost, glslc_bounded, glslc_broken and
+/// glslc_loop_in_loop are refused, and calculate_iterations' own
+/// x != 0.9 by 0.2 has no count. Of seven mutations of the port, seven
+/// fail the tests.
+/// FacetBoth 1.40: three cases of loops.
+///
+/// On the CM5 each case is 8 pixels of 230,400 apart, the triangle's
+/// edge, as the other shipped cases are: glslc's for loop, do-while loop
+/// and loop of a float, unrolled, draw what the cores draw written out.
+/// FacetBoth's other 234 cases are as they were at 1.171, and FacetProbe
+/// passes its 890 checks.
+pub const LIBRARY_REVISION = 172;
