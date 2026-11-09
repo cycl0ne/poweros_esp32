@@ -35,7 +35,10 @@
 //! Tan, FSign, Step and SmoothStep, and OpSelect after each of the
 //! comparisons glslc writes but >. The shipped case of selections (since
 //! 1.22) is an `if` and `else` and a ternary of calls, which the V3D
-//! flattens as Mesa does: both arms run, the merge chooses.
+//! flattens as Mesa does: both arms run, the merge chooses. The shipped
+//! case of variables (since 1.23) is the same GLSL as glslc writes it
+//! without -O, in variables of the function's own, which the V3D makes
+//! values as Mesa does; the cores run the selections' function.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -50,7 +53,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.22 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.23 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -556,13 +559,102 @@ const shipped_entries = [_]shader.Entry{
     Shipped.Called.entry("shipped called"),
     Shipped.Chosen.entry("shipped chosen"),
     Shipped.Branched.entry("shipped branched"),
+    Shipped.Branched.entry("shipped unoptimized"),
 };
 const shipped_words = [_]shader.Spirv{
-    .{},                       .{},                    .{},                      .{},
-    Shipped.Smooth.spirv,      Shipped.Flat.spirv,     Shipped.Dimmed.spirv,     Shipped.Textured.spirv,
-    Shipped.Modulated.spirv,   Shipped.Pushed.spirv,   Shipped.Tinted.spirv,     Shipped.Cutout.spirv,
-    Shipped.CutoutOther.spirv, Shipped.Shadowed.spirv, Shipped.Arithmetic.spirv, Shipped.Called.spirv,
-    Shipped.Chosen.spirv,      Shipped.Branched.spirv,
+    .{},                       .{},                    .{},                                  .{},
+    Shipped.Smooth.spirv,      Shipped.Flat.spirv,     Shipped.Dimmed.spirv,                 Shipped.Textured.spirv,
+    Shipped.Modulated.spirv,   Shipped.Pushed.spirv,   Shipped.Tinted.spirv,                 Shipped.Cutout.spirv,
+    Shipped.CutoutOther.spirv, Shipped.Shadowed.spirv, Shipped.Arithmetic.spirv,             Shipped.Called.spirv,
+    Shipped.Chosen.spirv,      Shipped.Branched.spirv, shader.Spirv.of(&branch_unoptimized),
+};
+
+/// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
+/// V3D's host tests hold to compile to the program of glslc's optimized
+/// module, word for word: `c` and `k` in variables of the function's own,
+/// floats of `c` stored through access chains in the arms (since 1.23).
+///
+/// ```sh
+/// glslc -fshader-stage=frag branch.frag -o branch_O0.spv   # 454 words
+/// spirv-val --target-env vulkan1.0 branch_O0.spv         # no output, and 0
+/// ```
+const branch_unoptimized = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000050, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000047, 0x00030010,
+    0x00000004, 0x00000007, 0x00030003, 0x00000002, 0x000001C2, 0x000A0004,
+    0x475F4C47, 0x4C474F4F, 0x70635F45, 0x74735F70, 0x5F656C79, 0x656E696C,
+    0x7269645F, 0x69746365, 0x00006576, 0x00080004, 0x475F4C47, 0x4C474F4F,
+    0x6E695F45, 0x64756C63, 0x69645F65, 0x74636572, 0x00657669, 0x00040005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00030005, 0x00000009, 0x00000063,
+    0x00040005, 0x0000000B, 0x6C6F6376, 0x0000726F, 0x00030005, 0x00000033,
+    0x0000006B, 0x00040005, 0x00000047, 0x6C6F636F, 0x0000726F, 0x00040047,
+    0x0000000B, 0x0000001E, 0x00000000, 0x00040047, 0x00000047, 0x0000001E,
+    0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006,
+    0x00000004, 0x00040020, 0x00000008, 0x00000007, 0x00000007, 0x00040020,
+    0x0000000A, 0x00000001, 0x00000007, 0x0004003B, 0x0000000A, 0x0000000B,
+    0x00000001, 0x00040015, 0x0000000D, 0x00000020, 0x00000000, 0x0004002B,
+    0x0000000D, 0x0000000E, 0x00000000, 0x00040020, 0x0000000F, 0x00000001,
+    0x00000006, 0x0004002B, 0x00000006, 0x00000012, 0x3F000000, 0x00020014,
+    0x00000013, 0x0004002B, 0x0000000D, 0x00000017, 0x00000001, 0x0004002B,
+    0x00000006, 0x0000001A, 0x40400000, 0x00040020, 0x0000001F, 0x00000007,
+    0x00000006, 0x0004002B, 0x0000000D, 0x00000021, 0x00000002, 0x0004002B,
+    0x0000000D, 0x00000024, 0x00000003, 0x0004002B, 0x00000006, 0x0000002C,
+    0x3E800000, 0x0004002B, 0x00000006, 0x0000003C, 0x40000000, 0x0004002B,
+    0x00000006, 0x0000003E, 0x3DCCCCCD, 0x00040020, 0x00000046, 0x00000003,
+    0x00000007, 0x0004003B, 0x00000046, 0x00000047, 0x00000003, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x0004003B, 0x00000008, 0x00000009, 0x00000007, 0x0004003B, 0x0000001F,
+    0x00000033, 0x00000007, 0x0004003B, 0x0000001F, 0x00000037, 0x00000007,
+    0x0004003D, 0x00000007, 0x0000000C, 0x0000000B, 0x0003003E, 0x00000009,
+    0x0000000C, 0x00050041, 0x0000000F, 0x00000010, 0x0000000B, 0x0000000E,
+    0x0004003D, 0x00000006, 0x00000011, 0x00000010, 0x000500B8, 0x00000013,
+    0x00000014, 0x00000011, 0x00000012, 0x000300F7, 0x00000016, 0x00000000,
+    0x000400FA, 0x00000014, 0x00000015, 0x00000029, 0x000200F8, 0x00000015,
+    0x00050041, 0x0000000F, 0x00000018, 0x0000000B, 0x00000017, 0x0004003D,
+    0x00000006, 0x00000019, 0x00000018, 0x00050085, 0x00000006, 0x0000001B,
+    0x00000019, 0x0000001A, 0x0006000C, 0x00000006, 0x0000001C, 0x00000001,
+    0x0000000D, 0x0000001B, 0x00050085, 0x00000006, 0x0000001D, 0x0000001C,
+    0x00000012, 0x00050081, 0x00000006, 0x0000001E, 0x0000001D, 0x00000012,
+    0x00050041, 0x0000001F, 0x00000020, 0x00000009, 0x0000000E, 0x0003003E,
+    0x00000020, 0x0000001E, 0x00050041, 0x0000000F, 0x00000022, 0x0000000B,
+    0x00000021, 0x0004003D, 0x00000006, 0x00000023, 0x00000022, 0x00050041,
+    0x0000000F, 0x00000025, 0x0000000B, 0x00000024, 0x0004003D, 0x00000006,
+    0x00000026, 0x00000025, 0x00050085, 0x00000006, 0x00000027, 0x00000023,
+    0x00000026, 0x00050041, 0x0000001F, 0x00000028, 0x00000009, 0x00000017,
+    0x0003003E, 0x00000028, 0x00000027, 0x000200F9, 0x00000016, 0x000200F8,
+    0x00000029, 0x00050041, 0x0000000F, 0x0000002A, 0x0000000B, 0x00000017,
+    0x0004003D, 0x00000006, 0x0000002B, 0x0000002A, 0x00050085, 0x00000006,
+    0x0000002D, 0x0000002B, 0x0000002C, 0x00050041, 0x0000001F, 0x0000002E,
+    0x00000009, 0x0000000E, 0x0003003E, 0x0000002E, 0x0000002D, 0x00050041,
+    0x0000000F, 0x0000002F, 0x0000000B, 0x00000021, 0x0004003D, 0x00000006,
+    0x00000030, 0x0000002F, 0x0006000C, 0x00000006, 0x00000031, 0x00000001,
+    0x0000001F, 0x00000030, 0x00050041, 0x0000001F, 0x00000032, 0x00000009,
+    0x00000021, 0x0003003E, 0x00000032, 0x00000031, 0x000200F9, 0x00000016,
+    0x000200F8, 0x00000016, 0x00050041, 0x0000000F, 0x00000034, 0x0000000B,
+    0x00000024, 0x0004003D, 0x00000006, 0x00000035, 0x00000034, 0x000500BA,
+    0x00000013, 0x00000036, 0x00000035, 0x00000012, 0x000300F7, 0x00000039,
+    0x00000000, 0x000400FA, 0x00000036, 0x00000038, 0x00000040, 0x000200F8,
+    0x00000038, 0x00050041, 0x0000000F, 0x0000003A, 0x0000000B, 0x0000000E,
+    0x0004003D, 0x00000006, 0x0000003B, 0x0000003A, 0x0007000C, 0x00000006,
+    0x0000003D, 0x00000001, 0x0000001A, 0x0000003B, 0x0000003C, 0x00050081,
+    0x00000006, 0x0000003F, 0x0000003D, 0x0000003E, 0x0003003E, 0x00000037,
+    0x0000003F, 0x000200F9, 0x00000039, 0x000200F8, 0x00000040, 0x00050041,
+    0x0000000F, 0x00000041, 0x0000000B, 0x00000017, 0x0004003D, 0x00000006,
+    0x00000042, 0x00000041, 0x0006000C, 0x00000006, 0x00000043, 0x00000001,
+    0x0000001D, 0x00000042, 0x00050085, 0x00000006, 0x00000044, 0x00000043,
+    0x0000002C, 0x0003003E, 0x00000037, 0x00000044, 0x000200F9, 0x00000039,
+    0x000200F8, 0x00000039, 0x0004003D, 0x00000006, 0x00000045, 0x00000037,
+    0x0003003E, 0x00000033, 0x00000045, 0x00050041, 0x0000001F, 0x00000048,
+    0x00000009, 0x0000000E, 0x0004003D, 0x00000006, 0x00000049, 0x00000048,
+    0x00050041, 0x0000001F, 0x0000004A, 0x00000009, 0x00000017, 0x0004003D,
+    0x00000006, 0x0000004B, 0x0000004A, 0x00050041, 0x0000001F, 0x0000004C,
+    0x00000009, 0x00000021, 0x0004003D, 0x00000006, 0x0000004D, 0x0000004C,
+    0x0004003D, 0x00000006, 0x0000004E, 0x00000033, 0x00070050, 0x00000007,
+    0x0000004F, 0x00000049, 0x0000004B, 0x0000004D, 0x0000004E, 0x0003003E,
+    0x00000047, 0x0000004F, 0x000100FD, 0x00010038,
 };
 
 const plain_entries = [_]shader.Entry{
@@ -2975,6 +3067,7 @@ const cases = [_]Case{
     .{ .name = "shipped GLSL.std.450 calls", .run = Cases.shipped("as it is", "shipped called", false, clockwise_at) },
     .{ .name = "shipped chosen floats", .run = Cases.shipped("as it is", "shipped chosen", false, clockwise_at) },
     .{ .name = "shipped selections", .run = Cases.shipped("as it is", "shipped branched", false, clockwise_at) },
+    .{ .name = "shipped variables", .run = Cases.shipped("as it is", "shipped unoptimized", false, clockwise_at) },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },

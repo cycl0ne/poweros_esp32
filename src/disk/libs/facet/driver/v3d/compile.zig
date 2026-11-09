@@ -112,6 +112,9 @@ pub const most_members = sdk.facet.shader.MAX_PUSH_CONSTANTS_SIZE / 4;
 /// program, and a module that declares one it never samples costs
 /// nothing.
 pub const most_samplers = 16;
+/// The variables of the function's own a module may declare, each a
+/// float or a vector of them.
+pub const most_locals = 16;
 /// One for each float a step answers.
 pub const most_slots = 4 * most_steps;
 /// Instructions chosen, before they are words.
@@ -159,8 +162,8 @@ pub const Error = error{
     /// A type other than a 32-bit float and its vectors of 2 to 4.
     Type,
     /// A variable in a storage class this back end has no answer for:
-    /// a uniform, a variable of the function's own, a sampler of
-    /// anything but a 2D texture. Also the plan's answer to a module that
+    /// a uniform, a variable of the function's own that is not a float
+    /// or a vector of them, a sampler of anything but a 2D texture. Also the plan's answer to a module that
     /// reads its push constants, which only Mesa's back end compiles.
     Storage,
     /// Input locations that are not 0 upwards without a gap, or a colour
@@ -633,6 +636,17 @@ pub const Work = struct {
     step_count: u32 = 0,
     /// The step the body stored into the colour out.
     stored: u16 = none,
+    /// The function's own variables, as nir_lower_vars_to_ssa makes
+    /// them values (since 1.155): how many floats each is, and which
+    /// float each of its floats holds where the walk has got to, a
+    /// `step` of `none` where nothing was stored into it yet. At a
+    /// selection, what they held before its arms, and what each arm
+    /// leaves them holding.
+    local_kind: [most_locals]Kind = undefined,
+    local_count: u32 = 0,
+    values: Values = undefined,
+    before: Values = undefined,
+    ends: [2]Values = undefined,
     /// The one step that samples, where there is one.
     sampled: u16 = none,
     varyings: u32 = 0,
@@ -682,7 +696,7 @@ pub const Work = struct {
     code: [most_words]u64 = undefined,
     word_count: u32 = 0,
 
-    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part };
+    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part };
 
     /// `chain_part` of a pointer to a whole member.
     pub const whole: u8 = 0xFF;
@@ -1146,6 +1160,32 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.sampler_count += 1;
                     continue;
                 }
+                if (class == .function) {
+                    // A variable of the function's own, which Mesa makes
+                    // values (nir_lower_vars_to_ssa, nir_to_vir.c:2240):
+                    // a float or a vector of them, declared at the top of
+                    // the first block as SPIR-V has it, and maybe given a
+                    // constant to start with (since 1.155). A struct or
+                    // an array would want a place to live, and there is
+                    // no stack on a QPU.
+                    if (!in_body or blocks != 1 or flow != .body) return Error.Body;
+                    const kind = kindOf(work, pointee) catch return Error.Storage;
+                    if (work.local_count == most_locals) return Error.Storage;
+                    const local = work.local_count;
+                    work.thing[id] = .variable;
+                    work.class[id] = @intCast(@intFromEnum(class));
+                    work.points[id] = @intCast(local);
+                    work.wide[id] = @intCast(kind.parts());
+                    work.local_kind[local] = kind;
+                    work.values[local] = @splat(unstored);
+                    if (operands.len == 4) {
+                        if (work.thing[try idOf(operands[3])] != .constant) return Error.Body;
+                        const first = try operand(work, operands[3], kind);
+                        for (0..kind.parts()) |k| work.values[local][k] = partOf(work, first, @intCast(k));
+                    } else if (operands.len != 3) return Error.Body;
+                    work.local_count += 1;
+                    continue;
+                }
                 const floats = try kindOf(work, pointee);
                 work.thing[id] = .variable;
                 work.class[id] = @intCast(@intFromEnum(class));
@@ -1169,8 +1209,6 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         work.output = id;
                         work.output_count = 1;
                     },
-                    // A variable of the function's own would want a place
-                    // to live, and there is no stack on a QPU.
                     else => return Error.Storage,
                 }
             },
@@ -1198,8 +1236,13 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     .arms => if (id == selection.merge) {
                         if (selection.yes != selection.merge and !selection.seen_yes) return Error.Branches;
                         if (selection.no != selection.merge and !selection.seen_no) return Error.Branches;
+                        // A way in that is no arm leaves the variables
+                        // as they were before the branch.
+                        if (selection.yes == selection.merge) work.ends[0] = work.before;
+                        if (selection.no == selection.merge) work.ends[1] = work.before;
                         selection.arms_to = @intCast(work.step_count);
                         selection.label = id;
+                        try merge(work, selection.condition);
                         flow = .merging;
                     } else if (id == selection.yes and !selection.seen_yes) {
                         selection.seen_yes = true;
@@ -1248,6 +1291,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 selection.no = operands[2];
                 if (selection.yes == selection.no) return Error.Branches;
                 selection.arms_from = @intCast(work.step_count);
+                work.before = work.values;
                 flow = .arms;
             },
             .branch => {
@@ -1255,6 +1299,10 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // a jump to a block no selection names: a loop's, or one
                 // of no structure.
                 if (flow != .arm or operands.len < 1 or operands[0] != selection.merge) return Error.Branches;
+                // What the arm leaves the variables holding, and the
+                // other arm begins from what they held before.
+                work.ends[if (selection.arm == selection.yes) 0 else 1] = work.values;
+                work.values = work.before;
                 flow = .arms;
             },
             .kill => {
@@ -1289,7 +1337,14 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // is a texture instruction, or the colour stored, is
                     // neither, and the selection stays a branch.
                     .arm => switch (instruction.op) {
-                        .store, .image_sample_implicit_lod, .image_sample_dref_implicit_lod => return Error.Branches,
+                        .image_sample_implicit_lod, .image_sample_dref_implicit_lod => return Error.Branches,
+                        // A store into a variable of the function's own
+                        // is a value the merge chooses, a load and a store
+                        // nir_lower_vars_to_ssa leaves none of (since
+                        // 1.155); one into the colour out is a store.
+                        .store => if (storesLocal(work, operands)) {
+                            selection.empty = false;
+                        } else return Error.Branches,
                         else => selection.empty = false,
                     },
                     else => return Error.Branches,
@@ -1408,6 +1463,81 @@ fn floatOf(work: *Work, of: Float) Error!u16 {
     return put(work, .{ .tag = .component, .kind = .f32x1, .a = of.step, .at = of.part });
 }
 
+/// The floats of the function's variables, for each the float it holds.
+const Values = [most_locals][4]Float;
+
+/// A float of a variable nothing was stored into.
+const unstored: Float = .{ .step = none, .part = 0 };
+
+fn isLocal(work: *const Work, id: u16) bool {
+    return work.thing[id] == .variable and work.class[id] == @intFromEnum(spirv.StorageClass.function);
+}
+
+/// Whether an OpStore's pointer is a variable of the function's own, or
+/// one float of one.
+fn storesLocal(work: *const Work, operands: []const u32) bool {
+    if (operands.len < 1) return false;
+    const into = idOf(operands[0]) catch return false;
+    return isLocal(work, into) or work.thing[into] == .local_part;
+}
+
+/// The float a variable holds, where one was stored, else 0: an undef
+/// read is nir_lower_undef_to_zero's 0 (nir_to_vir.c:2353).
+fn heldOf(work: *Work, of: Float) Error!Float {
+    if (of.step != none) return of;
+    return .{ .step = try immediateOf(work, 0, .f32x1), .part = 0 };
+}
+
+/// A variable of the function's own as the value a load of it answers:
+/// the step it was stored from where it holds that step's floats in
+/// order, else a vector of the floats it holds, which copy propagation
+/// sees through as it sees through nir_lower_vars_to_ssa's moves.
+fn localOf(work: *Work, local: u16) Error!u16 {
+    const kind = work.local_kind[local];
+    var holds: [4]Float = undefined;
+    for (0..kind.parts()) |k| holds[k] = try heldOf(work, work.values[local][k]);
+    if (kind == .f32x1) return floatOf(work, holds[0]);
+    const whole = for (0..kind.parts()) |k| {
+        if (holds[k].step != holds[0].step or holds[k].part != k) break false;
+    } else work.steps[holds[0].step].kind == kind;
+    if (whole) return holds[0].step;
+    var made = Step{ .tag = .construct, .kind = kind };
+    for (0..kind.parts()) |k| {
+        made.from[k] = holds[k].step;
+        made.part[k] = holds[k].part;
+    }
+    return put(work, made);
+}
+
+/// The variables at a flattened selection's merge. nir_lower_vars_to_ssa
+/// gives the merge block a phi of each variable two ways bring different
+/// values of, nir_lower_phis_to_scalar makes it a phi of each float, and
+/// nir_opt_peephole_select a bcsel of each: a `select` on the selection's
+/// comparison, in the order the variables were declared. A float both
+/// ways bring is that float, and where one way brings nothing - a
+/// variable stored into in one arm only and never before - the other's,
+/// as nir_opt_remove_phis takes a phi with an undef source for its other
+/// (nir_opt_remove_phis.c:105-175; since 1.155).
+fn merge(work: *Work, condition: u16) Error!void {
+    for (0..work.local_count) |local| {
+        for (0..work.local_kind[local].parts()) |k| {
+            const yes = work.ends[0][local][k];
+            const no = work.ends[1][local][k];
+            work.values[local][k] = if (yes.step == no.step and yes.part == no.part)
+                yes
+            else if (yes.step == none)
+                no
+            else if (no.step == none)
+                yes
+            else chosen: {
+                var made = Step{ .tag = .select, .kind = .f32x1, .a = condition, .b = try floatOf(work, yes) };
+                made.from[0] = try floatOf(work, no);
+                break :chosen .{ .step = try put(work, made), .part = 0 };
+            };
+        }
+    }
+}
+
 /// The ALU operations of a selection's arms as nir_opt_peephole_select
 /// counts them (block_check_for_allowed_instrs,
 /// nir_opt_peephole_select.c:246-310): a float each, but none for a move,
@@ -1436,6 +1566,12 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
             used = true;
             only_added = false;
         }
+        // A float a variable holds after the merge, where the other way
+        // in left it nothing to choose against, is read later.
+        for (work.values[0..work.local_count]) |holds| for (holds) |each_float| if (each_float.step == at) {
+            used = true;
+            only_added = false;
+        };
         if (!used) continue;
         if (each.tag == .mul and only_added) continue;
         count += if (each.tag == .dot) work.steps[each.a].kind.parts() else each.kind.parts();
@@ -1498,6 +1634,23 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
         .store => {
             if (operands.len < 2) return Error.Body;
             const into = try idOf(operands[0]);
+            if (work.thing[into] == .local_part) {
+                // One float of a variable of the function's own:
+                // nir_lower_vars_to_ssa's nir_vector_insert into what it
+                // held (rename_variables, nir_lower_vars_to_ssa.c:716-722).
+                const value = try operand(work, operands[1], .f32x1);
+                work.values[work.points[into]][work.chain_part[into]] = partOf(work, value, 0);
+                return;
+            }
+            if (isLocal(work, into)) {
+                // The whole of one: what it holds is the value stored
+                // (nir_lower_vars_to_ssa.c:723-733).
+                const local = work.points[into];
+                const kind = work.local_kind[local];
+                const value = try operand(work, operands[1], kind);
+                for (0..kind.parts()) |k| work.values[local][k] = partOf(work, value, @intCast(k));
+                return;
+            }
             if (into != work.output) return Error.Body;
             work.stored = try operand(work, operands[1], .f32x4);
         },
@@ -1529,6 +1682,24 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 if (try kindOf(work, try idOf(operands[0])) != .f32x1) return Error.Type;
                 const of = try inputStep(work, work.points[from]);
                 work.step_of[id] = try put(work, .{ .tag = .component, .kind = .f32x1, .a = of, .at = work.chain_part[from] });
+                return;
+            }
+            if (work.thing[from] == .local_part) {
+                // One float of a variable of the function's own: what it
+                // holds, nir_vector_extract of the value
+                // (nir_lower_vars_to_ssa.c:676-687; since 1.155).
+                if (try kindOf(work, try idOf(operands[0])) != .f32x1) return Error.Type;
+                const holds = try heldOf(work, work.values[work.points[from]][work.chain_part[from]]);
+                work.step_of[id] = try floatOf(work, holds);
+                return;
+            }
+            if (isLocal(work, from)) {
+                // The whole of one, nir_phi_builder_value_get_block_def's
+                // value where the walk has got to
+                // (nir_lower_vars_to_ssa.c:633-689).
+                const local = work.points[from];
+                if (try kindOf(work, try idOf(operands[0])) != work.local_kind[local]) return Error.Type;
+                work.step_of[id] = try localOf(work, local);
                 return;
             }
             if (work.thing[from] != .variable) return Error.Body;
@@ -1563,6 +1734,23 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 if (work.class[type_id] != @intFromEnum(spirv.StorageClass.input)) return Error.Body;
                 if (try kindOf(work, work.points[type_id]) != .f32x1) return Error.Type;
                 work.thing[id] = .input_part;
+                work.points[id] = work.points[base];
+                work.chain_part[id] = @intCast(which);
+                return;
+            }
+            if (isLocal(work, base)) {
+                // One float of a vector of the function's own, at a
+                // constant index, as glslc without -O writes `c.r = x`: a
+                // pointer to it, which a store replaces and a load reads
+                // (deref_vec_component, nir_lower_vars_to_ssa.c:586-602;
+                // since 1.155).
+                if (operands.len != 4) return Error.Body;
+                const which = try indexOf(work, operands[3]);
+                if (work.wide[base] == 1 or which >= work.wide[base]) return Error.Body;
+                if (work.thing[type_id] != .pointer) return Error.Type;
+                if (work.class[type_id] != @intFromEnum(spirv.StorageClass.function)) return Error.Body;
+                if (try kindOf(work, work.points[type_id]) != .f32x1) return Error.Type;
+                work.thing[id] = .local_part;
                 work.points[id] = work.points[base];
                 work.chain_part[id] = @intCast(which);
                 return;
@@ -4837,6 +5025,70 @@ test "a selection Mesa leaves a branch is refused: an arm over the limit, a samp
     try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_branch, .branch, 0, 0, 41)));
     // A phi naming a block that is neither arm.
     try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_branch, .phi, 0, 3, 5)));
+}
+
+test "through Mesa's back end, glslc's if and else without -O: its variables made values, and the optimized module's program to the word" {
+    // `c` and `k` in variables of the function's own, floats of `c`
+    // stored through access chains in the arms: nir_lower_vars_to_ssa
+    // makes them the values the optimized module's phis choose, and the
+    // program is the same, its uniforms too.
+    var theirs: Work = .{};
+    const optimized = try throughMesa(&theirs, &reference.glslc_branch);
+    const kept = try testing.allocator.dupe(u64, optimized.words);
+    defer testing.allocator.free(kept);
+    const stream_kept = try testing.allocator.dupe(Word, optimized.stream());
+    defer testing.allocator.free(stream_kept);
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_branch_unoptimized);
+    try testing.expectEqual(@as(u32, 3), work.local_count);
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .select));
+    try testing.expectEqualSlices(u64, kept, code.words);
+    try testing.expectEqual(stream_kept.len, code.stream().len);
+    for (stream_kept, code.stream()) |a, b| try testing.expectEqual(a, b);
+    var plan: Work = .{};
+    try testing.expectError(Error.Body, compile(&plan, &reference.glslc_branch_unoptimized));
+}
+
+test "through Mesa's back end, glslc's discard without -O: the texel in a variable of its own, and the optimized module's program to the word" {
+    var theirs: Work = .{};
+    const optimized = try throughMesa(&theirs, &reference.glslc_cutout);
+    const kept = try testing.allocator.dupe(u64, optimized.words);
+    defer testing.allocator.free(kept);
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_cutout_unoptimized);
+    try testing.expectEqualSlices(u64, kept, code.words);
+    try testing.expect(code.writes_z and code.disable_ez);
+    var plan: Work = .{};
+    try testing.expectError(Error.Discards, compile(&plan, &reference.glslc_cutout_unoptimized));
+}
+
+test "a variable of the function's own read before anything is stored into it is 0, and one stored one way only is what that way stored" {
+    // The texel stored into the colour out rather than `texel`: the
+    // alpha and then the colour are loaded from a variable that holds
+    // nothing, which is 0 (nir_lower_undef_to_zero).
+    var work: Work = .{};
+    _ = try throughMesa(&work, &comptime patched(&reference.glslc_cutout_unoptimized, .store, 0, 0, 32));
+    const colour = work.steps[work.stored];
+    try testing.expectEqual(Tag.construct, colour.tag);
+    for (colour.from[0..4]) |each| {
+        try testing.expectEqual(Tag.constant, work.steps[each].tag);
+        try testing.expectEqual(@as(f32, 0), work.pool[work.steps[each].at]);
+    }
+    // The ternary's false arm stored into the other float: `k` is stored
+    // in the true arm only, so the merge takes it without a select, and
+    // the other float, stored in the false arm only, likewise. Three
+    // selects are left, the vector's.
+    var one_way: Work = .{};
+    _ = try throughMesa(&one_way, &comptime patched(&reference.glslc_branch_unoptimized, .store, 6, 0, 51));
+    try testing.expectEqual(@as(usize, 3), stepsOf(&one_way, .select));
+}
+
+test "a variable of the function's own that is not a float or a vector of them is refused" {
+    // `texel`'s pointer type made a pointer to a bool.
+    var work: Work = .{};
+    try testing.expectError(Error.Storage, throughMesa(&work, &comptime patched(&reference.glslc_cutout_unoptimized, .type_pointer, 0, 2, 26)));
+    // The colour out stored in an arm is still a store Mesa leaves there.
+    try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_branch_unoptimized, .store, 1, 0, 71)));
 }
 
 test "a call the walk does not lower, or into a set that is not GLSL.std.450, is refused" {

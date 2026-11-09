@@ -4545,4 +4545,43 @@ pub const LIBRARY_VERSION = 1;
 /// elsewhere and a phi of a block neither arm, refused. tests/ir.zig: the
 /// modules read back, both arms on the cores against f64, and the way
 /// past a selection of no false arm.
-pub const LIBRARY_REVISION = 154;
+///
+/// 155: **The V3D compiles a shader's variables of its own, made values
+/// as Mesa makes them (docs/facet-vulkan10.md item 59).** glslc without
+/// -O keeps every GLSL local in an OpVariable of the Function class,
+/// stores into it and loads from it, through an access chain where it
+/// names one float of a vector; so does any toolchain that does not run
+/// spirv-opt's mem2reg. Every such shader was refused for its storage.
+///
+/// - A Function variable of a float or a vector of them is
+///   nir_lower_vars_to_ssa's (nir_to_vir.c:2240): the walk keeps, for
+///   each of its floats, the float it holds. A store replaces them, all
+///   or the one an access chain at a constant index names
+///   (rename_variables, nir_lower_vars_to_ssa.c:716-733); a load answers
+///   them (:633-689), the stored step itself where it holds that step
+///   whole. An initializer is a store at the top.
+/// - At a flattened selection the arms each start from what the
+///   variables held before the branch, and the merge chooses between what
+///   they leave: the phi nir_lower_vars_to_ssa puts there, one a float
+///   after nir_lower_phis_to_scalar, a `select` each after
+///   nir_opt_peephole_select. A float both ways bring is that float, and
+///   where one way brings nothing the other's, as nir_opt_remove_phis
+///   takes an undef (nir_opt_remove_phis.c:105-175). A store into a
+///   variable in an arm is no store the pass keeps the branch for.
+/// - A float read before anything was stored into it is 0, as
+///   nir_lower_undef_to_zero makes it (nir_to_vir.c:2353).
+/// - A struct, an array or a bool of the function's own is still refused
+///   as storage, and so is a store into the colour out in an arm.
+///
+/// Tests: the V3D's 162, four new: glslc's `if` and `else` without -O
+/// (`glslc_branch_unoptimized`, 454 words) and its discard without -O
+/// (`glslc_cutout_unoptimized`, 217 words) compiled to the programs of
+/// the optimized modules, word for word, the uniforms too; a variable
+/// read before a store is 0s, and one stored one way only takes that
+/// way's float without a select; a variable of a bool, and the colour
+/// stored in an arm, refused. FacetBoth 1.23: the shipped case of
+/// variables, the -O0 module on the V3D against the selections' function
+/// on the cores, 8 pixels of 230400 apart on the CM5, the edge alone, as
+/// the -O module's case is; the other 213 cases unchanged, FacetProbe 888
+/// of 888.
+pub const LIBRARY_REVISION = 155;
