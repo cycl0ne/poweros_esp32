@@ -5036,4 +5036,52 @@ pub const LIBRARY_VERSION = 1;
 /// On the CM5 the case is 8 pixels of 230,400 apart, the triangle's edge,
 /// as the uniform buffers' cases are; FacetBoth's other 226 cases are as
 /// they were at 1.163, and FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 164;
+///
+/// 165: **32-bit integers (docs/facet-vulkan10.md item 59).** A shader
+/// that computes with integers is compiled by Mesa's back end, where it
+/// was refused for the type. OpTypeInt values and vectors of them are
+/// words as floats are, and an OpConstant of one is its bits in the pool.
+/// `.integer` steps are NIR's integer ALU, `compile.Integer`, each word
+/// one VIR operation as ntq_emit_alu emits it (nir_to_vir.c:1421-1806):
+/// ADD, SUB, MIN, MAX, UMIN, UMAX, SHL, ASR, SHR, AND, OR, XOR and NOT
+/// on the add side, NEG, a 32-bit multiply as MULTOP and UMUL24
+/// (vir_UMUL), iabs the MAX of the word and its NEG, and FTOIZ, FTOUZ,
+/// ITOF and UTOF; an f2i32 of an fround_even one FTOIN of its source.
+/// SPIR-V's ops are vtn's (vtn_alu.c:290-318, :1031-1059, :240-275), and
+/// GLSL.std.450's SAbs, SSign, SMin, UMin, SMax, UMax, SClamp and UClamp
+/// (vtn_glsl450.c:160-176, :287-292), isign as v3dv has it lowered
+/// (nir_opt_algebraic.py:2836) and the clamps a max and a min
+/// (nir_builder.h:1418-1429). An integer operation of constants is
+/// folded, wrapping. The integer comparisons are `Comparison`'s ieq,
+/// ine, ilt, ige, ult and uge, the four NIR has none of read with their
+/// operands swapped (vtn_alu.c:388-396), OpLogicalEqual and
+/// OpLogicalNotEqual ieq and ine of bools; ntq_emit_comparison makes
+/// them an XOR pushing Z, a MIN of the two the other way about pushing
+/// C, and a SUB pushing C, inverted for ine, ige and uge
+/// (nir_to_vir.c:1173-1232). The inot of one read once is the opposite
+/// (nir_opt_algebraic.py:749-754); ineg and iabs cost nothing to
+/// nir_opt_peephole_select, as fneg and fabs do. A bool may be a
+/// variable of the function's own, which glslc -O0 keeps a comparison
+/// in, and a push constant's word read twice is read once, as
+/// nir_opt_cse takes a load_uniform (nir_intrinsics.py:1365, :1403).
+///
+/// - Not ported: the divisions and remainders (nir_lower_idiv), the
+///   integer rules of nir_opt_algebraic but the inot's, an integer
+///   varying or attribute, which wants flat interpolation, and an integer
+///   colour, which wants an integer format of the tile buffer.
+///
+/// Tests: the V3D's 197, five new and one rewritten. glslc_integers
+/// (663 words): three FTOIZs, an FTOUZ, three ITOFs and three UTOFs, two
+/// UMULs, the comparisons two MINs, two SUBs and two XORs pushing the
+/// flags, 59 words; glslc_integer_compares (338): the twelve comparisons
+/// each with its operands as vtn has them; glslc_integer_nots_O0 (428):
+/// ilt, ult and ieq made ige, uge and ine where an iand reads their not,
+/// the -O0 module's second loads of the push constants one; the folding
+/// of each operation; an integer varying, an integer colour and OpSDiv
+/// refused. FacetBoth 1.33: the shipped case of integers, glslc's words
+/// on the V3D beside a function of the same integers on the cores.
+///
+/// On the CM5 the case is 8 pixels of 230,400 apart, the triangle's edge,
+/// as the other V3D cases are; FacetBoth's other 227 cases are as they
+/// were at 1.164, and FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 165;

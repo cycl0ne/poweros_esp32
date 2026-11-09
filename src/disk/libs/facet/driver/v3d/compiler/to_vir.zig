@@ -64,6 +64,7 @@ const Work = compile.Work;
 const Step = compile.Step;
 const Comparison = compile.Comparison;
 const Logic = compile.Logic;
+const Integer = compile.Integer;
 
 pub const Error = vir.Error || error{
     /// No strategy could give the temporaries registers.
@@ -487,6 +488,50 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
                 .inot => try c.add(.not, .{a}),
             };
         },
+        // ntq_emit_alu's integer operations, a word at a time (since
+        // 1.165): ADD, SUB, MIN, MAX, UMIN, UMAX, SHL, ASR, SHR, AND, OR,
+        // XOR and NOT on the add side (nir_to_vir.c:1656-1694), NEG
+        // (:1421), a 32-bit multiply as MULTOP and UMUL24 (vir_UMUL,
+        // :1700), iabs the MAX of the word and its NEG (:1805), and the
+        // conversions FTOIZ, FTOUZ, ITOF and UTOF (:1466-1516). An f2i32
+        // of an fround_even is one FTOIN of the fround_even's source
+        // (:1466-1472), the FROUND left for vir_opt_dead_code where
+        // nothing else reads it.
+        .integer => {
+            const op: Integer = @enumFromInt(each.at);
+            const b_scalar = !op.unary() and e.work.steps[each.b].kind == .f32x1;
+            const rounded = op == .f2i32 and e.work.steps[each.a].tag == .round;
+            for (0..parts) |k| {
+                if (rounded) {
+                    e.defs[at][k] = try c.add(.ftoin, .{try getSrc(e, e.work.steps[each.a].a, k)});
+                    continue;
+                }
+                const a = try getSrc(e, each.a, k);
+                const b = if (op.unary()) c.undef else try getSrc(e, each.b, if (b_scalar) 0 else k);
+                e.defs[at][k] = switch (op) {
+                    .iadd => try c.add(.add, .{ a, b }),
+                    .isub => try c.add(.sub, .{ a, b }),
+                    .imul => try c.umul(a, b),
+                    .ineg => try c.add(.neg, .{a}),
+                    .iabs => try c.add(.max, .{ a, try c.add(.neg, .{a}) }),
+                    .imin => try c.add(.min, .{ a, b }),
+                    .imax => try c.add(.max, .{ a, b }),
+                    .umin => try c.add(.umin, .{ a, b }),
+                    .umax => try c.add(.umax, .{ a, b }),
+                    .ishl => try c.add(.shl, .{ a, b }),
+                    .ishr => try c.add(.asr, .{ a, b }),
+                    .ushr => try c.add(.shr, .{ a, b }),
+                    .iand => try c.add(.@"and", .{ a, b }),
+                    .ior => try c.add(.@"or", .{ a, b }),
+                    .ixor => try c.add(.xor, .{ a, b }),
+                    .inot => try c.add(.not, .{a}),
+                    .f2i32 => try c.add(.ftoiz, .{a}),
+                    .f2u32 => try c.add(.ftouz, .{a}),
+                    .i2f32 => try c.add(.itof, .{a}),
+                    .u2f32 => try c.add(.utof, .{a}),
+                };
+            }
+        },
         // slt (nir_to_vir.c:1710-1723): the comparison, and 1.0 or 0.0 of
         // the flags, which are remembered as holding it (since 1.153).
         .set_less => {
@@ -614,12 +659,15 @@ fn emitLdunifa(e: *Emit, kept: bool) Error!Reg {
     return result;
 }
 
-/// ntq_emit_comparison (nir_to_vir.c:1173-1232), for the float ones:
-/// FCMP a, b pushing Z for feq, the same inverted for fneu, FCMP b, a
-/// pushing C for fge and FCMP a, b pushing N for flt. NIR has no
-/// greater-than and no less-or-equal: spirv_to_nir reads
-/// OpFOrdGreaterThan as flt and OpFOrdLessThanEqual as fge, each with its
-/// operands swapped (vtn_nir_alu_op_for_spirv_opcode, vtn_alu.c:369-381).
+/// ntq_emit_comparison (nir_to_vir.c:1173-1232): FCMP a, b pushing Z for
+/// feq, the same inverted for fneu, FCMP b, a pushing C for fge and
+/// FCMP a, b pushing N for flt. NIR has no greater-than and no
+/// less-or-equal: spirv_to_nir reads OpFOrdGreaterThan as flt and
+/// OpFOrdLessThanEqual as fge, each with its operands swapped
+/// (vtn_nir_alu_op_for_spirv_opcode, vtn_alu.c:369-381). The integer
+/// ones (since 1.165): XOR a, b pushing Z for ieq, inverted for ine; MIN
+/// b, a pushing C for ilt, inverted for ige; SUB a, b pushing C for ult,
+/// inverted for uge; the operands already swapped where vtn swaps them.
 fn emitComparison(e: *Emit, compare: Step) Error!instr.Cond {
     const c = e.c;
     const a = try getSrc(e, compare.a, 0);
@@ -632,8 +680,14 @@ fn emitComparison(e: *Emit, compare: Step) Error!instr.Cond {
         .equal, .not_equal => c.setPf(try c.addDest(.fcmp, vir.nopReg(), .{ src0, src1 }), .pushz),
         .greater_equal, .less_equal => c.setPf(try c.addDest(.fcmp, vir.nopReg(), .{ src1, src0 }), .pushc),
         .less, .greater => c.setPf(try c.addDest(.fcmp, vir.nopReg(), .{ src0, src1 }), .pushn),
+        .int_equal, .int_not_equal => c.setPf(try c.addDest(.xor, vir.nopReg(), .{ src0, src1 }), .pushz),
+        .int_less, .int_greater_equal => c.setPf(try c.addDest(.min, vir.nopReg(), .{ src1, src0 }), .pushc),
+        .uint_less, .uint_greater_equal => c.setPf(try c.addDest(.sub, vir.nopReg(), .{ src0, src1 }), .pushc),
     }
-    return if (which == .not_equal) .ifna else .ifa;
+    return switch (which) {
+        .not_equal, .int_not_equal, .int_greater_equal, .uint_greater_equal => .ifna,
+        else => .ifa,
+    };
 }
 
 /// ntq_fsincos (nir_to_vir.c:990-1003): the angle in periods of pi, a

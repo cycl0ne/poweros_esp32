@@ -174,7 +174,10 @@ pub const Error = error{
     Operands,
     /// Not a fragment program.
     Stage,
-    /// A type other than a 32-bit float and its vectors of 2 to 4.
+    /// A type other than a 32-bit float and its vectors of 2 to 4, or
+    /// since 1.165 a 32-bit integer and its vectors; or an integer where
+    /// none is taken: a varying, an attribute or a colour, which want
+    /// flat interpolation and integer formats this back end has not got.
     Type,
     /// A variable in a storage class this back end has no answer for:
     /// a uniform, a variable of the function's own that is not a float
@@ -313,6 +316,19 @@ pub const profile: spirv.Profile = .{
         // A storage buffer's last member, read at constant indexes
         // (since 1.164).
         .type_runtime_array,
+        // 32-bit integers: their arithmetic, bits and comparisons, and
+        // their conversions to and from floats, as ntq_emit_alu emits
+        // them (since 1.165). The divisions are not: v3dv has NIR lower
+        // them to a sequence of float and integer steps
+        // (nir_lower_idiv), which is not ported.
+         .i_add,               .i_sub,                          .i_mul,
+        .s_negate,            .shift_left_logical,  .shift_right_logical,            .shift_right_arithmetic,
+        .bitwise_and,         .bitwise_or,          .bitwise_xor,                    .not,
+        .bitcast,             .convert_f_to_s,      .convert_f_to_u,                 .convert_s_to_f,
+        .convert_u_to_f,      .i_equal,             .i_not_equal,                    .s_less_than,
+        .s_less_than_equal,   .s_greater_than,      .s_greater_than_equal,           .u_less_than,
+        .u_less_than_equal,   .u_greater_than,      .u_greater_than_equal,           .logical_equal,
+        .logical_not_equal,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform },
     .image_dims = &.{.dim_2d},
@@ -347,7 +363,8 @@ pub const Tag = enum {
     /// Floats the draw hands over, one uniform each.
     constant,
     /// How a float compares with another, `at` a `Comparison`: a bool,
-    /// which a `discard` reads (since 1.139) and a `select` (since 1.153).
+    /// which a `discard` reads (since 1.139) and a `select` (since 1.153);
+    /// or an integer with another, or a bool with another (since 1.165).
     compare,
     /// `a` and `b`, `a` or `b`, or not `a`, `at` a `Logic`: a bool of
     /// bools, NIR's iand, ior and inot, which v3d emits as AND, OR and NOT
@@ -382,6 +399,12 @@ pub const Tag = enum {
     /// 250-293), and v3d reads it through unifa as it reads a uniform
     /// buffer (ntq_emit_load_unifa, nir_to_vir.c:3338-3343; since 1.164).
     ssbo,
+    /// 32-bit integers, or floats made integers or integers floats: NIR's
+    /// integer ALU, `at` an `Integer`, each word of `a` (and `b`) one VIR
+    /// operation as ntq_emit_alu emits it (nir_to_vir.c:1421-1806; since
+    /// 1.165). A value's words are a float's or an integer's as the
+    /// operation that made it says; `kind` is how many there are.
+    integer,
     /// One float of a value.
     component,
     /// Floats of other values, gathered.
@@ -454,10 +477,70 @@ pub const Tag = enum {
 /// What a `compare` asks, as NIR has SPIR-V's ordered comparisons and its
 /// unordered not-equal (vtn_alu.c:369-381): flt, flt swapped, feq, fneu,
 /// fge and fge swapped. `less` and `greater` are 0 and 1, as they were.
-pub const Comparison = enum(u32) { less, greater, equal, not_equal, greater_equal, less_equal };
+pub const Comparison = enum(u32) {
+    less,
+    greater,
+    equal,
+    not_equal,
+    greater_equal,
+    less_equal,
+    /// Of 32-bit integers, or of bools, which are 0 and ~0 (since 1.165):
+    /// NIR's ieq, ine, ilt, ige, ult and uge, which vtn makes of SPIR-V's
+    /// with the two swapped where it has no comparison of its own
+    /// (vtn_nir_alu_op_for_spirv_opcode, vtn_alu.c:388-396).
+    int_equal,
+    int_not_equal,
+    int_less,
+    int_greater_equal,
+    uint_less,
+    uint_greater_equal,
+};
 
 /// What a `logic` makes of its bools.
 pub const Logic = enum(u32) { iand, ior, inot };
+
+/// What an `integer` step does, by NIR's name for it (since 1.165): the
+/// arithmetic, the bits, and the conversions to and from floats. NIR's
+/// iclamp and uclamp are a max and a min, and isign a max and a min too
+/// (`lower_isign`, nir_opt_algebraic.py:2836).
+pub const Integer = enum(u32) {
+    iadd,
+    isub,
+    imul,
+    ineg,
+    iabs,
+    imin,
+    imax,
+    umin,
+    umax,
+    ishl,
+    ishr,
+    ushr,
+    iand,
+    ior,
+    ixor,
+    inot,
+    f2i32,
+    f2u32,
+    i2f32,
+    u2f32,
+
+    /// Whether it reads one value, not two.
+    pub fn unary(op: Integer) bool {
+        return switch (op) {
+            .ineg, .iabs, .inot, .f2i32, .f2u32, .i2f32, .u2f32 => true,
+            else => false,
+        };
+    }
+
+    /// Whether its two may be either way round (NIR_OP_IS_2SRC_COMMUTATIVE).
+    pub fn commutes(op: Integer) bool {
+        return switch (op) {
+            .iadd, .imul, .imin, .imax, .umin, .umax, .iand, .ior, .ixor => true,
+            else => false,
+        };
+    }
+};
 
 /// Whether a step is a bool: a comparison, a bool of bools, or one of two
 /// bools chosen.
@@ -909,6 +992,9 @@ pub const Work = struct {
     /// selection, what they held before its arms, and what each arm
     /// leaves them holding.
     local_kind: [most_locals]Kind = undefined,
+    /// Whether a variable of the function's own holds a bool (since
+    /// 1.165).
+    local_bool: [most_locals]bool = undefined,
     local_count: u32 = 0,
     values: Values = undefined,
     before: [most_nesting]Values = undefined,
@@ -999,7 +1085,7 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
         .sample_compared => return Error.Samplers,
         // Nor does any compute beyond a sum and a product.
         .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot => return Error.Body,
-        .select, .set_less, .sat, .sin, .cos, .sign, .logic => return Error.Body,
+        .select, .set_less, .sat, .sin, .cos, .sign, .logic, .integer => return Error.Body,
         else => {},
     };
     try settle(work);
@@ -1480,7 +1566,8 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (operands.len < 3) return Error.Body;
                 const id = try idOf(operands[0]);
                 const component = try idOf(operands[1]);
-                if (work.thing[component] != .float) return Error.Type;
+                // Of floats, or of 32-bit integers (since 1.165).
+                if (work.thing[component] != .float and work.thing[component] != .int) return Error.Type;
                 if (operands[2] < 2 or operands[2] > 4) return Error.Type;
                 work.thing[id] = .vector;
                 work.wide[id] = @intCast(operands[2]);
@@ -1493,7 +1580,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (operands.len < 3) return Error.Body;
                 const id = try idOf(operands[0]);
                 const column = try idOf(operands[1]);
-                if (work.thing[column] != .vector) return Error.Type;
+                if (work.thing[column] != .vector or isIntegerType(work, column)) return Error.Type;
                 if (operands[2] < 2 or operands[2] > 4) return Error.Type;
                 work.thing[id] = .matrix;
                 work.points[id] = column;
@@ -1512,9 +1599,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     else => return Error.Type,
                 }
                 if (isRuntime(work, element)) return Error.Type;
-                const length = try idOf(operands[2]);
-                if (work.thing[length] != .int_constant) return Error.Type;
-                const count = work.points[length];
+                const count = try indexOf(work, operands[2]);
                 if (count == 0 or count == none) return Error.Storage;
                 work.thing[id] = .array;
                 work.points[id] = element;
@@ -1577,16 +1662,19 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (operands.len < 3) return Error.Body;
                 const type_id = try idOf(operands[0]);
                 const id = try idOf(operands[1]);
+                if (work.thing[type_id] != .float and work.thing[type_id] != .int) return Error.Type;
+                if (work.pool_count == work.pool.len) return Error.Uniforms;
                 if (work.thing[type_id] == .int) {
-                    // An index into the push constants, read as one by an
-                    // access chain. A value past the table's is `none`,
-                    // which no member is.
+                    // An index into a block, read as one by an access
+                    // chain (`indexOf`), or since 1.165 an integer, a
+                    // word of the pool as a float's is.
                     work.thing[id] = .int_constant;
-                    work.points[id] = if (operands[2] < none) @intCast(operands[2]) else none;
+                    work.points[id] = @intCast(work.pool_count);
+                    work.wide[id] = 1;
+                    work.pool[work.pool_count] = @bitCast(operands[2]);
+                    work.pool_count += 1;
                     continue;
                 }
-                if (work.thing[type_id] != .float) return Error.Type;
-                if (work.pool_count == work.pool.len) return Error.Uniforms;
                 work.thing[id] = .constant;
                 work.points[id] = @intCast(work.pool_count);
                 work.wide[id] = 1;
@@ -1626,7 +1714,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 work.wide[id] = @intCast(parts.len);
                 for (parts) |part| {
                     const member = try idOf(part);
-                    if (work.thing[member] != .constant or work.wide[member] != 1) return Error.Type;
+                    if (!isConstant(work, member) or work.wide[member] != 1) return Error.Type;
                     work.pool[work.pool_count] = work.pool[work.points[member]];
                     work.pool_count += 1;
                 }
@@ -1701,8 +1789,11 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // constant to start with (since 1.155). A struct or
                     // an array would want a place to live, and there is
                     // no stack on a QPU.
+                    // A bool too, which glslc -O0 keeps a comparison in
+                    // (since 1.165).
                     if (!in_body or blocks != 1 or flow != .body) return Error.Body;
-                    const kind = kindOf(work, pointee) catch return Error.Storage;
+                    const is_bool = work.thing[pointee] == .boolean;
+                    const kind = if (is_bool) .f32x1 else kindOf(work, pointee) catch return Error.Storage;
                     if (work.local_count == most_locals) return Error.Storage;
                     const local = work.local_count;
                     work.thing[id] = .variable;
@@ -1710,12 +1801,15 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.points[id] = @intCast(local);
                     work.wide[id] = @intCast(kind.parts());
                     work.local_kind[local] = kind;
+                    work.local_bool[local] = is_bool;
                     work.values[local] = @splat(unstored);
                     work.local_count += 1;
                     if (operands.len == 4) {
+                        // There is no bool constant to start one with.
+                        if (is_bool) return Error.Body;
                         // nir_lower_variable_initializers' store, at the
                         // top of the function.
-                        if (work.thing[try idOf(operands[3])] != .constant) return Error.Body;
+                        if (!isConstant(work, try idOf(operands[3]))) return Error.Body;
                         const first = try operand(work, operands[3], kind);
                         for (0..kind.parts()) |k| work.values[local][k] = partOf(work, first, @intCast(k));
                         touch(work, @intCast(local));
@@ -1733,6 +1827,10 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     continue;
                 }
                 const floats = try kindOf(work, pointee);
+                // An integer varying is Flat, which `qpu.varying` does not
+                // interpolate, an integer attribute is not ported, and the
+                // tile buffer takes floats (since 1.165).
+                if (isIntegerType(work, pointee) and class != .function) return Error.Type;
                 work.thing[id] = .variable;
                 work.class[id] = @intCast(@intFromEnum(class));
                 work.wide[id] = @intCast(floats.parts());
@@ -2548,6 +2646,12 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
             // may: no limit flattens its arm (since 1.160). A load_ssbo
             // is held to the same (since 1.164).
             .ubo, .ssbo => return std.math.maxInt(u32),
+            // ineg and iabs are move-like, as fneg and fabs are
+            // (nir_opt_peephole_select.c:251-264; since 1.165).
+            .integer => switch (@as(Integer, @enumFromInt(each.at))) {
+                .ineg, .iabs => continue,
+                else => {},
+            },
             else => {},
         }
         var used = false;
@@ -2604,8 +2708,10 @@ fn boolOf(work: *const Work, word: u32) Error!u16 {
 /// list they are tried in (nir_algebraic_instr, nir_search.c:809-838):
 ///
 /// - (('inot', ('feq(is_used_once)', a, b)), ('fneu', a, b)) and the
-///   other way about (:747-748), the new comparison put after the old one
-///   (nir_replace_instr, :700-718); (('inot', ('inot', a)), a) (:1736).
+///   other way about (:747-748), and the same of the integer comparisons,
+///   ilt and ige, ult and uge, ieq and ine (:749-754; since 1.165), the
+///   new comparison put after the old one (nir_replace_instr, :700-718);
+///   (('inot', ('inot', a)), a) (:1736).
 /// - (('iand', a, a), a) and (('ior', a, a), a) (:1724, :1728).
 /// - (('bcsel', ('inot', a), b, c), ('bcsel', a, c, b)) (:978); a bcsel
 ///   in an arm of one on the same condition, that arm of it (:979-980);
@@ -2710,13 +2816,19 @@ const Order = struct {
     /// nir_opt_cse: a step equal to one before it - the same operation of
     /// the same floats, the two of an operation that does not mind their
     /// list either way about - is that one (nir_instrs_equal,
-    /// nir_instr_set.c). Varyings, constants, push constants and samples
-    /// are each one step already, and a discard is no value.
+    /// nir_instr_set.c). A push constant's word read twice is one read
+    /// too: load_push_constant, and the load_uniform v3dv makes of it
+    /// (lower_load_push_constant, v3dv_pipeline.c:571-580), are
+    /// CAN_ELIMINATE and CAN_REORDER (nir_intrinsics.py:1365, :1403), and
+    /// glslc -O0 loads one through an access chain each time it is read
+    /// (since 1.165). Varyings, constants and samples are each one step
+    /// already, and a discard is no value.
     fn cse(list: *Order, work: *Work) bool {
         var progress = false;
         var at = list.first;
         while (at != none) : (at = list.next[at]) {
-            if (!list.present(at) or !computes(work.steps[at].tag)) continue;
+            const tag = work.steps[at].tag;
+            if (!list.present(at) or !(computes(tag) or tag == .push)) continue;
             var earlier = list.first;
             while (earlier != at) : (earlier = list.next[earlier]) {
                 if (!list.present(earlier)) continue;
@@ -2788,6 +2900,12 @@ const Order = struct {
                         const flipped: ?Comparison = switch (@as(Comparison, @enumFromInt(operand_step.at))) {
                             .equal => .not_equal,
                             .not_equal => .equal,
+                            .int_less => .int_greater_equal,
+                            .int_greater_equal => .int_less,
+                            .uint_less => .uint_greater_equal,
+                            .uint_greater_equal => .uint_less,
+                            .int_equal => .int_not_equal,
+                            .int_not_equal => .int_equal,
                             else => null,
                         };
                         if (flipped) |into| {
@@ -2947,7 +3065,11 @@ fn equalSteps(work: *const Work, a: Step, b: Step) bool {
     const commutes = switch (a.tag) {
         .add, .mul, .min, .max => true,
         .logic => a.at != @intFromEnum(Logic.inot),
-        .compare => a.at == @intFromEnum(Comparison.equal) or a.at == @intFromEnum(Comparison.not_equal),
+        .compare => switch (@as(Comparison, @enumFromInt(a.at))) {
+            .equal, .not_equal, .int_equal, .int_not_equal => true,
+            else => false,
+        },
+        .integer => @as(Integer, @enumFromInt(a.at)).commutes(),
         else => false,
     };
     return commutes and sameFloat(work, a.a, b.b) and sameFloat(work, a.b, b.a);
@@ -2965,6 +3087,7 @@ fn readsOf(each: Step) [4]?u16 {
         },
         .select => .{ each.a, each.b, each.from[0], null },
         .logic => .{ each.a, if (each.at != @intFromEnum(Logic.inot)) each.b else null, null, null },
+        .integer => .{ each.a, if (!@as(Integer, @enumFromInt(each.at)).unary()) each.b else null, null, null },
         .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .sample, .output, .round_to_int => .{ each.a, null, null, null },
         .compare, .set_less, .add, .mul, .sub, .min, .max, .dot, .sample_compared => .{ each.a, each.b, null, null },
     };
@@ -3026,7 +3149,8 @@ fn replaceUses(work: *Work, from: u16, to: u16) void {
 /// A type id as a count of floats.
 fn kindOf(work: *const Work, id: u16) Error!Kind {
     return switch (work.thing[id]) {
-        .float => .f32x1,
+        // A 32-bit integer is a word as a float is (since 1.165).
+        .float, .int => .f32x1,
         .vector => std.enums.fromInt(Kind, work.wide[id]) orelse Error.Type,
         else => Error.Type,
     };
@@ -3081,7 +3205,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 // (nir_lower_vars_to_ssa.c:723-733).
                 const local = work.points[into];
                 const kind = work.local_kind[local];
-                const value = try operand(work, operands[1], kind);
+                const value = if (work.local_bool[local]) try boolOf(work, operands[1]) else try operand(work, operands[1], kind);
                 for (0..kind.parts()) |k| work.values[local][k] = partOf(work, value, @intCast(k));
                 touch(work, local);
                 return;
@@ -3163,6 +3287,17 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 // value where the walk has got to
                 // (nir_lower_vars_to_ssa.c:633-689).
                 const local = work.points[from];
+                if (work.local_bool[local]) {
+                    // A bool's value is the step that made it, or a
+                    // select of such at a merge; one stored nowhere would
+                    // be an undef, which nothing here is made of.
+                    if (work.thing[try idOf(operands[0])] != .boolean) return Error.Type;
+                    const value = work.values[local][0];
+                    if (value.step == none) return Error.Body;
+                    work.step_of[id] = value.step;
+                    touch(work, local);
+                    return;
+                }
                 if (try kindOf(work, try idOf(operands[0])) != work.local_kind[local]) return Error.Type;
                 work.step_of[id] = try localOf(work, local);
                 touch(work, local);
@@ -3510,6 +3645,101 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             const b = try operand(work, operands[3], kind);
             work.step_of[id] = try binary(work, .mul, a, try unary(work, .recip, b));
         },
+        .i_add, .i_sub, .i_mul, .shift_left_logical, .shift_right_logical, .shift_right_arithmetic, .bitwise_and, .bitwise_or, .bitwise_xor => {
+            // ResultType, Result, two integers or vectors of them, NIR's
+            // iadd, isub, imul, ishl, ushr, ishr, iand, ior and ixor
+            // (vtn_nir_alu_op_for_spirv_opcode, vtn_alu.c:290-316). A
+            // shift's amount is already 32 bits here, so vtn's u2u32 of it
+            // (vtn_alu.c:1031-1059) is nothing (since 1.165).
+            if (operands.len != 4) return Error.Body;
+            const type_id = try idOf(operands[0]);
+            if (!isIntegerType(work, type_id)) return Error.Type;
+            const kind = try kindOf(work, type_id);
+            const id = try idOf(operands[1]);
+            const a = try operand(work, operands[2], kind);
+            const b = try operand(work, operands[3], kind);
+            const op: Integer = switch (instruction.op) {
+                .i_add => .iadd,
+                .i_sub => .isub,
+                .i_mul => .imul,
+                .shift_left_logical => .ishl,
+                .shift_right_logical => .ushr,
+                .shift_right_arithmetic => .ishr,
+                .bitwise_and => .iand,
+                .bitwise_or => .ior,
+                else => .ixor,
+            };
+            work.step_of[id] = try integerOf(work, op, a, b);
+        },
+        .s_negate, .not => {
+            if (operands.len != 3) return Error.Body;
+            const type_id = try idOf(operands[0]);
+            if (!isIntegerType(work, type_id)) return Error.Type;
+            const id = try idOf(operands[1]);
+            const a = try operand(work, operands[2], try kindOf(work, type_id));
+            work.step_of[id] = try integerOf(work, if (instruction.op == .s_negate) .ineg else .inot, a, null);
+        },
+        .convert_f_to_s, .convert_f_to_u, .convert_s_to_f, .convert_u_to_f => {
+            // f2i32, f2u32, i2f32 and u2f32 (vtn_handle_convert,
+            // vtn_alu.c:240-275), of 32 bits each way (since 1.165).
+            if (operands.len != 3) return Error.Body;
+            const type_id = try idOf(operands[0]);
+            const to_integer = instruction.op == .convert_f_to_s or instruction.op == .convert_f_to_u;
+            if (isIntegerType(work, type_id) != to_integer) return Error.Type;
+            const kind = try kindOf(work, type_id);
+            const id = try idOf(operands[1]);
+            const a = try operand(work, operands[2], kind);
+            const op: Integer = switch (instruction.op) {
+                .convert_f_to_s => .f2i32,
+                .convert_f_to_u => .f2u32,
+                .convert_s_to_f => .i2f32,
+                else => .u2f32,
+            };
+            work.step_of[id] = try integerOf(work, op, a, null);
+        },
+        .bitcast => {
+            // The same words read as another type's, NIR's mov of them:
+            // nothing to emit, as many words either way (since 1.165).
+            if (operands.len != 3) return Error.Body;
+            const kind = try kindOf(work, try idOf(operands[0]));
+            const id = try idOf(operands[1]);
+            work.step_of[id] = try operand(work, operands[2], kind);
+        },
+        .i_equal, .i_not_equal, .s_less_than, .s_greater_than, .s_less_than_equal, .s_greater_than_equal, .u_less_than, .u_greater_than, .u_less_than_equal, .u_greater_than_equal => {
+            // Two integers, and a bool: ieq, ine, ilt, ige, ult and uge,
+            // the two swapped for the four NIR has no comparison of
+            // (vtn_alu.c:388-396; since 1.165).
+            if (operands.len != 4) return Error.Body;
+            if (work.thing[try idOf(operands[0])] != .boolean) return Error.Type;
+            const id = try idOf(operands[1]);
+            const x = try operand(work, operands[2], .f32x1);
+            const y = try operand(work, operands[3], .f32x1);
+            const swap = switch (instruction.op) {
+                .s_greater_than, .s_less_than_equal, .u_greater_than, .u_less_than_equal => true,
+                else => false,
+            };
+            const which: Comparison = switch (instruction.op) {
+                .i_equal => .int_equal,
+                .i_not_equal => .int_not_equal,
+                .s_less_than, .s_greater_than => .int_less,
+                .s_less_than_equal, .s_greater_than_equal => .int_greater_equal,
+                .u_less_than, .u_greater_than => .uint_less,
+                else => .uint_greater_equal,
+            };
+            work.step_of[id] = try put(work, .{ .tag = .compare, .kind = .f32x1, .a = if (swap) y else x, .b = if (swap) x else y, .at = @intFromEnum(which) });
+        },
+        .logical_equal, .logical_not_equal => {
+            // Two bools compared, ieq and ine of them (vtn_alu.c:317-318),
+            // which nir_lower_bool_to_int32 makes of their 0 and ~0
+            // (since 1.165).
+            if (operands.len != 4) return Error.Body;
+            if (work.thing[try idOf(operands[0])] != .boolean) return Error.Type;
+            const id = try idOf(operands[1]);
+            const a = try boolOf(work, operands[2]);
+            const b = try boolOf(work, operands[3]);
+            const which: Comparison = if (instruction.op == .logical_equal) .int_equal else .int_not_equal;
+            work.step_of[id] = try put(work, .{ .tag = .compare, .kind = .f32x1, .a = a, .b = b, .at = @intFromEnum(which) });
+        },
         .dot => {
             if (operands.len != 4) return Error.Body;
             if (try kindOf(work, try idOf(operands[0])) != .f32x1) return Error.Type;
@@ -3688,7 +3918,7 @@ fn blockLoad(work: *Work, variable: u16, offset: u32, kind: Kind) Error!u16 {
 /// refused.
 fn sizeOf(work: *Work, type_id: u16, stride: u16) Error!u32 {
     switch (work.thing[type_id]) {
-        .float => return 4,
+        .float, .int => return 4,
         .vector => return 4 * @as(u32, work.wide[type_id]),
         .matrix => {
             if (stride == none) return Error.Storage;
@@ -3881,11 +4111,14 @@ fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) E
         .pow, .exp, .log, .exp2, .log2, .sqrt, .inverse_sqrt => {},
         .f_min, .f_max, .n_min, .n_max, .f_clamp, .n_clamp, .f_mix, .length, .distance, .normalize => {},
         .sin, .cos, .tan, .f_sign, .step, .smooth_step => {},
+        // Of integers (since 1.165).
+        .s_abs, .s_sign, .s_min, .u_min, .s_max, .u_max, .s_clamp, .u_clamp => {},
         else => return Error.Body,
     }
     const wanted: usize = switch (which) {
         .f_min, .f_max, .n_min, .n_max, .pow, .distance, .step => 2,
-        .f_clamp, .n_clamp, .f_mix, .smooth_step => 3,
+        .s_min, .u_min, .s_max, .u_max => 2,
+        .f_clamp, .n_clamp, .f_mix, .smooth_step, .s_clamp, .u_clamp => 3,
         else => 1,
     };
     if (arguments.len != wanted) return Error.Body;
@@ -3931,6 +4164,20 @@ fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) E
             binary(work, .min, try binary(work, .max, x[0], x[1]), x[2]),
         // fsin and fcos, ntq_fsincos's; ftan their quotient, fdiv lowered
         // (nir_ftan, nir_builtin_builder.h:254-257).
+        // iabs, imin, umin, imax, umax (vtn_glsl450.c:160-176), iclamp
+        // and uclamp a min of a max (:287-292, nir_builder.h:1418-1429),
+        // and isign lowered (`lower_isign`, nir_opt_algebraic.py:2836):
+        // integers alone, as SPIR-V has them (since 1.165).
+        .s_abs, .s_sign, .s_min, .u_min, .s_max, .u_max, .s_clamp, .u_clamp => switch (which) {
+            .s_abs => integerOf(work, .iabs, x[0], null),
+            .s_sign => integerOf(work, .imin, try integerOf(work, .imax, x[0], try integerSplat(work, kind, -1)), try integerSplat(work, kind, 1)),
+            .s_min => integerOf(work, .imin, x[0], x[1]),
+            .u_min => integerOf(work, .umin, x[0], x[1]),
+            .s_max => integerOf(work, .imax, x[0], x[1]),
+            .u_max => integerOf(work, .umax, x[0], x[1]),
+            .s_clamp => integerOf(work, .imin, try integerOf(work, .imax, x[0], x[1]), x[2]),
+            else => integerOf(work, .umin, try integerOf(work, .umax, x[0], x[1]), x[2]),
+        },
         .sin => unary(work, .sin, x[0]),
         .cos => unary(work, .cos, x[0]),
         .tan => tan: {
@@ -4111,6 +4358,61 @@ fn unary(work: *Work, tag: Tag, a: u16) Error!u16 {
 
 /// `tag` of `a` and `b`, of `a`'s kind: `b` is of it too, or one float.
 /// Or the constant it folds to.
+fn integerOf(work: *Work, op: Integer, a: u16, b: ?u16) Error!u16 {
+    if (try foldedInteger(work, op, a, b)) |constant| return constant;
+    return put(work, .{ .tag = .integer, .kind = work.steps[a].kind, .a = a, .b = b orelse 0, .at = @intFromEnum(op) });
+}
+
+/// nir_opt_constant_folding of an integer operation whose operands are
+/// constants: the words it comes to, wrapping as NIR's 32-bit arithmetic
+/// does, a shift by the low five bits of its amount (nir_opcodes.py), and
+/// a float made an integer held to the integers' range, as Zig's own
+/// conversion is not (since 1.165).
+fn foldedInteger(work: *Work, op: Integer, a: u16, b: ?u16) Error!?u16 {
+    const of_a = work.steps[a];
+    if (of_a.tag != .constant) return null;
+    var of_b: Step = of_a;
+    if (b) |at| {
+        of_b = work.steps[at];
+        if (of_b.tag != .constant) return null;
+    }
+    const parts = of_a.kind.parts();
+    if (work.pool_count + parts > work.pool.len) return Error.Uniforms;
+    const out = work.pool_count;
+    for (0..parts) |k| {
+        const x: u32 = @bitCast(work.pool[of_a.at + k]);
+        const y: u32 = @bitCast(work.pool[of_b.at + k]);
+        const sx: i32 = @bitCast(x);
+        const sy: i32 = @bitCast(y);
+        const f: f32 = @bitCast(x);
+        const word: u32 = switch (op) {
+            .iadd => x +% y,
+            .isub => x -% y,
+            .imul => x *% y,
+            .ineg => 0 -% x,
+            .iabs => @bitCast(if (sx < 0) 0 -% sx else sx),
+            .imin => @bitCast(@min(sx, sy)),
+            .imax => @bitCast(@max(sx, sy)),
+            .umin => @min(x, y),
+            .umax => @max(x, y),
+            .ishl => x << @intCast(y & 31),
+            .ishr => @bitCast(sx >> @intCast(y & 31)),
+            .ushr => x >> @intCast(y & 31),
+            .iand => x & y,
+            .ior => x | y,
+            .ixor => x ^ y,
+            .inot => ~x,
+            .f2i32 => @bitCast(if (std.math.isNan(f)) 0 else @as(i32, @intFromFloat(@min(@max(@trunc(f), -2147483648.0), 2147483520.0)))),
+            .f2u32 => if (std.math.isNan(f)) 0 else @as(u32, @intFromFloat(@min(@max(@trunc(f), 0.0), 4294967040.0))),
+            .i2f32 => @bitCast(@as(f32, @floatFromInt(sx))),
+            .u2f32 => @bitCast(@as(f32, @floatFromInt(x))),
+        };
+        work.pool[out + k] = @bitCast(word);
+    }
+    work.pool_count += parts;
+    return try put(work, .{ .tag = .constant, .kind = of_a.kind, .at = out });
+}
+
 fn binary(work: *Work, tag: Tag, a: u16, b: u16) Error!u16 {
     if (try foldedOf(work, tag, a, b)) |constant| return constant;
     return put(work, .{ .tag = tag, .kind = work.steps[a].kind, .a = a, .b = b });
@@ -4145,7 +4447,7 @@ fn kindOfValue(work: *const Work, word: u32) Error!Kind {
         if (isBool(work, work.step_of[id])) return Error.Type;
         return work.steps[work.step_of[id]].kind;
     }
-    if (work.thing[id] != .constant) return Error.Body;
+    if (!isConstant(work, id)) return Error.Body;
     return std.enums.fromInt(Kind, work.wide[id]) orelse Error.Type;
 }
 
@@ -4189,7 +4491,35 @@ fn blockOfVariable(work: *const Work, variable: u16) *const Block {
 fn indexOf(work: *const Work, word: u32) Error!u16 {
     const id = try idOf(word);
     if (work.thing[id] != .int_constant) return Error.Body;
-    return work.points[id];
+    // A value past the table's is `none`, which no member is.
+    const value: u32 = @bitCast(work.pool[work.points[id]]);
+    return if (value < none) @intCast(value) else none;
+}
+
+/// `value` in each word of `kind`, a constant step: the immediate an
+/// integer lowering builds (since 1.165).
+fn integerSplat(work: *Work, kind: Kind, value: i32) Error!u16 {
+    const parts = kind.parts();
+    if (work.pool_count + parts > work.pool.len) return Error.Uniforms;
+    const at = work.pool_count;
+    for (0..parts) |k| work.pool[at + k] = @bitCast(value);
+    work.pool_count += parts;
+    return put(work, .{ .tag = .constant, .kind = kind, .at = at });
+}
+
+/// Whether `id` is a constant of the pool's: a float's, a vector's, or
+/// since 1.165 an integer's.
+fn isConstant(work: *const Work, id: u16) bool {
+    return work.thing[id] == .constant or work.thing[id] == .int_constant;
+}
+
+/// Whether `type_id` is an integer or a vector of them (since 1.165).
+fn isIntegerType(work: *const Work, type_id: u16) bool {
+    return switch (work.thing[type_id]) {
+        .int => true,
+        .vector => work.thing[work.points[type_id]] == .int,
+        else => false,
+    };
 }
 
 /// An operand id as a step of `kind`. A constant becomes a step of its
@@ -4217,7 +4547,7 @@ fn operand(work: *Work, word: u32, kind: Kind) Error!u16 {
         if (work.steps[work.step_of[id]].kind != kind) return Error.Type;
         return work.step_of[id];
     }
-    if (work.thing[id] != .constant) return Error.Body;
+    if (!isConstant(work, id)) return Error.Body;
     if (work.wide[id] != kind.parts()) return Error.Type;
     // Where its floats are in the pool, not in the stream: what place
     // they take in the stream is the order the instructions ask for them,
@@ -4310,7 +4640,7 @@ fn settle(work: *Work) Error!void {
             .compare, .discard => return Error.Discards,
             .sample_compared => return Error.Samplers,
             .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot => return Error.Body,
-            .select, .set_less, .sat, .sin, .cos, .sign, .logic => return Error.Body,
+            .select, .set_less, .sat, .sin, .cos, .sign, .logic, .integer => return Error.Body,
             // A vertex program's: `compile` reads a fragment program alone.
             .output, .viewport, .round_to_int => return Error.Stage,
             // A float of its own, read where it is first wanted rather
@@ -7006,10 +7336,14 @@ test "a variable of the function's own read before anything is stored into it is
     try testing.expectEqual(@as(usize, 3), stepsOf(&one_way, .select));
 }
 
-test "a variable of the function's own that is not a float or a vector of them is refused" {
-    // `texel`'s pointer type made a pointer to a bool.
+test "a variable of the function's own that is not a float, an integer, a vector of them or a bool is refused" {
+    // The bools' pointer type made a pointer to the push constants'
+    // struct.
     var work: Work = .{};
-    try testing.expectError(Error.Storage, throughMesa(&work, &comptime patched(&reference.glslc_cutout_unoptimized, .type_pointer, 0, 2, 26)));
+    try testing.expectError(Error.Storage, throughMesa(&work, &comptime patched(&reference.glslc_integer_nots_O0, .type_pointer, 0, 2, 13)));
+    // `texel`'s pointer type made a pointer to a bool: a variable there
+    // may be (since 1.165), but the vector loaded from it is no bool.
+    try testing.expectError(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_cutout_unoptimized, .type_pointer, 0, 2, 26)));
     // The colour out stored in an arm is still a store Mesa leaves there.
     try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_branch_unoptimized, .store, 1, 0, 71)));
 }
@@ -7210,6 +7544,234 @@ fn liveOf(work: *const Work, tag: Tag) usize {
         if (each.tag == tag and reached[at]) count += 1;
     }
     return count;
+}
+
+fn liveCompareOf(work: *const Work, which: Comparison) usize {
+    const reached = liveMask(work);
+    var count: usize = 0;
+    for (work.program(), 0..) |each, at| {
+        if (each.tag == .compare and each.at == @intFromEnum(which) and reached[at]) count += 1;
+    }
+    return count;
+}
+
+/// The push constant's word a step reads, where it reads one.
+fn pushWordOf(work: *const Work, at: u16) ?u32 {
+    const each = work.steps[at];
+    return if (each.tag == .push) each.at else null;
+}
+
+test "through Mesa's back end, 32-bit integers are the add side's integer operations, a multiply MULTOP and UMUL24, and the conversions to and from floats" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_integers);
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+    // The colour times 255.0, the push constants' words where they are
+    // first read, and the integers that are no small immediates: 100,
+    // the clamp's top and the green's, 25, 40, 32, 20 and 27. The 0, 2,
+    // 3, 5, 12, 8 and 4 are; then 1 / 255.0, for each of the two floats
+    // the vec4's fmul reads it for after try_opt_ldunif's 20 instructions
+    // (vir.c:2811).
+    const push = struct {
+        fn of(at: u32) Word {
+            return .{ .push = at };
+        }
+    }.of;
+    const int = struct {
+        fn of(value: u32) Word {
+            return .{ .float = @bitCast(value) };
+        }
+    }.of;
+    try testing.expectEqualSlices(Word, &.{
+        .{ .float = 255.0 }, push(0), int(100), int(100), push(1),                   push(2),                   push(3), push(6), push(4), int(25), push(5), push(7),
+        int(40),             int(32), int(20),  int(27),  .{ .float = 1.0 / 255.0 }, .{ .float = 1.0 / 255.0 },
+    }, code.stream());
+    // The colour made integers, an FTOIZ of each word read (nir_to_vir.c:
+    // 1466-1477): not the green's, which nir_opt_dce has taken out; the
+    // green an FTOUZ. Three ITOFs and three UTOFs back (:1478-1516).
+    try testing.expectEqual(@as(usize, 3), countOf(code, "ftoiz"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "ftouz"));
+    try testing.expectEqual(@as(usize, 3), countOf(code, "itof"));
+    try testing.expectEqual(@as(usize, 3), countOf(code, "utof"));
+    // The two products: MULTOP then UMUL24 (vir_UMUL, :1700).
+    try testing.expectEqual(@as(usize, 2), countOf(code, "multop"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "umul24"));
+    // -s.y, and the abs the MAX of the sum and its NEG (:1805).
+    try testing.expectEqual(@as(usize, 2), countOf(code, "neg "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "shl "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "asr "));
+    try testing.expectEqual(@as(usize, 3), countOf(code, "shr "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "not "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "umax "));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "umin "));
+    // s.y < s.z and s.z >= s.y a MIN pushing C, u.x < u.y and u.x > u.y a
+    // SUB, and == and != an XOR pushing Z (ntq_emit_comparison,
+    // :1173-1232).
+    try testing.expectEqual(@as(usize, 2), countOf(code, "min.pushc"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "sub.pushc"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "xor.pushz"));
+    try testing.expectEqual(@as(usize, 59), code.words.len);
+    // The plan has no hand-written program to hold one to.
+    var plan: Work = .{};
+    try testing.expectError(Error.Body, compile(&plan, &reference.glslc_integers));
+}
+
+test "through Mesa's back end, the integer comparisons are XOR, MIN and SUB pushing the flags, the four NIR has none of read the other way about" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_integer_compares);
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+    try testing.expectEqualSlices(Word, &.{ .{ .push = 0 }, .{ .push = 1 }, .{ .push = 2 }, .{ .push = 3 } }, code.stream());
+    // s.x > s.y is ilt(s.y, s.x), s.x >= s.y ige(s.x, s.y) and s.x <= s.y
+    // ige(s.y, s.x), and the same of u.x and u.y unsigned
+    // (vtn_alu.c:388-396); then s.x == s.y.
+    const Seen = struct { which: Comparison, a: ?u32, b: ?u32 };
+    const expected = [_]Seen{
+        .{ .which = .int_less, .a = 1, .b = 0 },
+        .{ .which = .int_greater_equal, .a = 0, .b = 1 },
+        .{ .which = .int_greater_equal, .a = 1, .b = 0 },
+        .{ .which = .uint_less, .a = 3, .b = 2 },
+        .{ .which = .uint_greater_equal, .a = 2, .b = 3 },
+        .{ .which = .uint_greater_equal, .a = 3, .b = 2 },
+        .{ .which = .int_equal, .a = 0, .b = 1 },
+    };
+    var seen: [12]Seen = undefined;
+    var count: usize = 0;
+    const reached = liveMask(&work);
+    for (work.program(), 0..) |each, at| {
+        if (each.tag != .compare or !reached[at]) continue;
+        seen[count] = .{ .which = @enumFromInt(each.at), .a = pushWordOf(&work, each.a), .b = pushWordOf(&work, each.b) };
+        count += 1;
+    }
+    // level != u.x, and the bools' ==, !=, == and !=: ieq and ine of
+    // their 0 and ~0 (vtn_alu.c:317-318). Three of each.
+    try testing.expectEqual(@as(usize, 12), count);
+    try testing.expectEqualSlices(Seen, &expected, seen[0..expected.len]);
+    try testing.expectEqual(@as(usize, 3), liveCompareOf(&work, .int_equal));
+    try testing.expectEqual(@as(usize, 3), liveCompareOf(&work, .int_not_equal));
+    try testing.expectEqual(@as(usize, 3), countOf(code, "min.pushc"));
+    try testing.expectEqual(@as(usize, 3), countOf(code, "sub.pushc"));
+    try testing.expectEqual(@as(usize, 6), countOf(code, "xor.pushz"));
+    // The level: FTOUZ, and UTOF back.
+    try testing.expectEqual(@as(usize, 1), countOf(code, "ftouz"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "utof"));
+    try testing.expectEqual(@as(usize, 43), code.words.len);
+}
+
+test "through Mesa's back end, the not of an integer comparison read once is the opposite comparison" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_integer_nots_O0);
+    // Each not reaches an iand rather than a select, so it is the inot
+    // nir_opt_algebraic rewrites (nir_opt_algebraic.py:749-754), not the
+    // bcsel (:978): ilt, ult and ieq are ige, uge and ine, and the iands
+    // read those.
+    try testing.expectEqual(@as(usize, 0), liveLogicOf(&work, .inot));
+    try testing.expectEqual(@as(usize, 3), liveLogicOf(&work, .iand));
+    try testing.expectEqual(@as(usize, 1), liveCompareOf(&work, .int_greater_equal));
+    try testing.expectEqual(@as(usize, 1), liveCompareOf(&work, .uint_greater_equal));
+    try testing.expectEqual(@as(usize, 1), liveCompareOf(&work, .int_not_equal));
+    try testing.expectEqual(@as(usize, 0), liveCompareOf(&work, .int_less));
+    try testing.expectEqual(@as(usize, 0), liveCompareOf(&work, .uint_less));
+    try testing.expectEqual(@as(usize, 0), liveCompareOf(&work, .int_equal));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "not "));
+    // glslc -O0 loads s.x and s.y again for the ==: nir_opt_cse takes the
+    // second load_uniform of each for the first, so each word is in the
+    // stream once.
+    try testing.expectEqualSlices(Word, &.{ .{ .push = 0 }, .{ .push = 1 }, .{ .push = 2 }, .{ .push = 3 }, .{ .float = 0.75 } }, code.stream());
+    try testing.expectEqual(@as(usize, 32), code.words.len);
+}
+
+test "an integer operation of constants is folded as NIR's 32-bit arithmetic is: wrapping, a shift by five bits of its amount, a float made one held to the range" {
+    var work: Work = .{};
+    const of = struct {
+        fn word(w: *Work, value: u32) !u16 {
+            const at = w.pool_count;
+            w.pool[at] = @bitCast(value);
+            w.pool_count += 1;
+            return put(w, .{ .tag = .constant, .kind = .f32x1, .at = at });
+        }
+        fn folded(w: *Work, op: Integer, a: u32, b: ?u32) !u32 {
+            const x = try word(w, a);
+            const y: ?u16 = if (b) |value| try word(w, value) else null;
+            const made = try integerOf(w, op, x, y);
+            try testing.expectEqual(Tag.constant, w.steps[made].tag);
+            return @bitCast(w.pool[w.steps[made].at]);
+        }
+    };
+    const minus = struct {
+        fn word(value: i32) u32 {
+            return @bitCast(value);
+        }
+    }.word;
+    const bits = struct {
+        fn word(value: f32) u32 {
+            return @bitCast(value);
+        }
+    }.word;
+    try testing.expectEqual(@as(u32, 0), try of.folded(&work, .iadd, 0xFFFFFFFF, 1));
+    try testing.expectEqual(@as(u32, 0xFFFFFFFF), try of.folded(&work, .isub, 0, 1));
+    try testing.expectEqual(@as(u32, 0x80000000), try of.folded(&work, .imul, 0x40000000, 2));
+    try testing.expectEqual(@as(u32, 0x80000000), try of.folded(&work, .ineg, 0x80000000, null));
+    try testing.expectEqual(@as(u32, 0x80000000), try of.folded(&work, .iabs, 0x80000000, null));
+    try testing.expectEqual(@as(u32, 5), try of.folded(&work, .iabs, minus(-5), null));
+    try testing.expectEqual(minus(-1), try of.folded(&work, .imin, 1, minus(-1)));
+    try testing.expectEqual(@as(u32, 1), try of.folded(&work, .umin, 1, minus(-1)));
+    try testing.expectEqual(@as(u32, 1), try of.folded(&work, .imax, 1, minus(-1)));
+    try testing.expectEqual(minus(-1), try of.folded(&work, .umax, 1, minus(-1)));
+    try testing.expectEqual(@as(u32, 2), try of.folded(&work, .ishl, 1, 33));
+    try testing.expectEqual(minus(-1), try of.folded(&work, .ishr, 0x80000000, 63));
+    try testing.expectEqual(@as(u32, 1), try of.folded(&work, .ushr, 0x80000000, 31));
+    try testing.expectEqual(@as(u32, 0x0F), try of.folded(&work, .iand, 0xFF, 0x0F));
+    try testing.expectEqual(@as(u32, 0xFF), try of.folded(&work, .ior, 0xF0, 0x0F));
+    try testing.expectEqual(@as(u32, 0xF0), try of.folded(&work, .ixor, 0xFF, 0x0F));
+    try testing.expectEqual(@as(u32, 0xFFFFFF00), try of.folded(&work, .inot, 0xFF, null));
+    // Towards zero, as FTOIZ and FTOUZ are.
+    try testing.expectEqual(minus(-3), try of.folded(&work, .f2i32, bits(-3.75), null));
+    try testing.expectEqual(@as(u32, 3), try of.folded(&work, .f2u32, bits(3.75), null));
+    // Out of the range Vulkan leaves undefined, and a NaN: held to it, 0.
+    try testing.expectEqual(@as(u32, 0x7FFFFF80), try of.folded(&work, .f2i32, bits(1e20), null));
+    try testing.expectEqual(@as(u32, 0x80000000), try of.folded(&work, .f2i32, bits(-1e20), null));
+    try testing.expectEqual(@as(u32, 0), try of.folded(&work, .f2i32, bits(std.math.nan(f32)), null));
+    try testing.expectEqual(@as(u32, 0), try of.folded(&work, .f2u32, bits(-5.0), null));
+    try testing.expectEqual(bits(-2.0), try of.folded(&work, .i2f32, minus(-2), null));
+    try testing.expectEqual(bits(4294967296.0), try of.folded(&work, .u2f32, 0xFFFFFFFF, null));
+    // A step of anything but constants is not folded.
+    const input = try put(&work, .{ .tag = .input, .kind = .f32x1 });
+    try testing.expectEqual(Tag.integer, work.steps[try integerOf(&work, .iadd, input, try of.word(&work, 1))].tag);
+}
+
+test "a 32-bit integer is computed, compared and converted, but no varying, no colour and no division is one" {
+    // The colour in made a vector of integers, the push constants' ivec4:
+    // a varying of them would want flat interpolation, which is not
+    // ported, and is refused by its type. The colour out the same: it
+    // would want an integer format of the tile buffer.
+    var work: Work = .{};
+    try testing.expectError(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_integers, .type_pointer, 0, 2, 7)));
+    try testing.expectError(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_integers, .type_pointer, 5, 2, 7)));
+    // An OpIMul made OpSDiv, which v3dv has nir_lower_idiv lower and
+    // which is not ported: refused as an opcode of no profile.
+    try testing.expectError(Error.Refused, throughMesa(&work, &comptime reopcoded(&reference.glslc_integers, .i_mul, 0, .s_div)));
+}
+
+/// `words` with the `at`th instruction of `op` made one of `into`, its
+/// operands as they were.
+fn reopcoded(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32, comptime into: spirv.Op) [words.len]u32 {
+    comptime {
+        var copy: [words.len]u32 = words[0..words.len].*;
+        var seen: u32 = 0;
+        var k: usize = 5;
+        while (k < copy.len) {
+            const count = copy[k] >> 16;
+            if (count == 0) @compileError("a word count of zero");
+            if (copy[k] & 0xFFFF == @intFromEnum(op)) {
+                if (seen == at) {
+                    copy[k] = count << 16 | @intFromEnum(into);
+                    return copy;
+                }
+                seen += 1;
+            }
+            k += count;
+        }
+        @compileError("no such instruction to change");
+    }
 }
 
 fn liveLogicOf(work: *const Work, which: Logic) usize {
