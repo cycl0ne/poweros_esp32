@@ -68,7 +68,11 @@ pub fn lay(swapchain: *Swapchain, sys: *ExecBase, usage: u32) void {
             .usage = usage,
             .kind = .rows,
             .pitch = picture.pitch,
+            // One layer, which is its rows: what GetImageSubresourceLayout
+            // answers for a layer of an image in rows (since 1.91).
+            .layer_bytes = @as(u64, picture.pitch) * swapchain.height,
             .bytes = @as(u64, picture.pitch) * swapchain.height,
+            .sample_bytes = @as(u64, picture.pitch) * swapchain.height,
             .data = picture.pixels,
             .presentable = true,
             .display = picture.display,

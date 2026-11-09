@@ -21,6 +21,7 @@ const _render = @import("../render/_render.zig");
 const _pipeline = @import("../pipeline/_pipeline.zig");
 const DescriptorSet = @import("../descriptor/_descriptor.zig").Set;
 const QueryPool = @import("../query/_query.zig").Pool;
+const Event = @import("../sync/_sync.zig").Event;
 
 pub const CommandPool = struct {
     device: *Device,
@@ -81,6 +82,36 @@ pub const Barrier = extern struct {
     head: Head = .{ .op = op },
     src_stage_mask: u32,
     dst_stage_mask: u32,
+};
+
+/// CmdSetEvent: the event set, the work before it being done
+/// (_sync.zig).
+pub const SetEvent = extern struct {
+    pub const op: _stream.Op = .set_event;
+    head: Head = .{ .op = op },
+    stage_mask: u32,
+    pad: u32 = 0,
+    event: *Event,
+};
+
+/// CmdResetEvent: the event reset, the work before it being done.
+pub const ResetEvent = extern struct {
+    pub const op: _stream.Op = .reset_event;
+    head: Head = .{ .op = op },
+    stage_mask: u32,
+    pad: u32 = 0,
+    event: *Event,
+};
+
+/// CmdWaitEvents, followed by its `count` events: the work after it
+/// waits until each is set.
+pub const WaitEvents = extern struct {
+    pub const op: _stream.Op = .wait_events;
+    head: Head = .{ .op = op },
+    count: u32,
+    src_stage_mask: u32,
+    dst_stage_mask: u32,
+    pad: u32 = 0,
 };
 
 /// CmdCopyBufferToImage, followed by its regions.
@@ -275,6 +306,16 @@ pub const BlitImage = extern struct {
     destination: *Image,
 };
 
+/// CmdResolveImage, followed by its regions (since 1.101).
+pub const ResolveImage = extern struct {
+    pub const op: _stream.Op = .resolve_image;
+    head: Head = .{ .op = op },
+    count: u32,
+    pad: u32 = 0,
+    source: *Image,
+    destination: *Image,
+};
+
 /// CmdCopyImageToBuffer, followed by its regions.
 pub const CopyImageToBuffer = extern struct {
     pub const op: _stream.Op = .copy_image_to_buffer;
@@ -297,6 +338,10 @@ pub const ClearAttachment = extern struct {
     stencil: u32,
     /// Which of the subpass's colour attachments the colour is for.
     output: u32,
+    /// The layers cleared, counted from the one each view begins at
+    /// (`ClearRect.base_array_layer`, `layer_count`, since 1.91).
+    base_layer: u32 = 0,
+    layer_count: u32 = 1,
 };
 
 pub const EndRenderPass = extern struct {

@@ -42,10 +42,10 @@ pub fn texelsOf(format: facet.Format) shader.TexelFormat {
         .r8g8_unorm => .rg8,
         .r8_uint => .r8u,
         .r8g8_uint => .rg8u,
-        .r8g8b8a8_uint => .rgba8u,
+        .r8g8b8a8_uint, .a8b8g8r8_uint_pack32 => .rgba8u,
         .r8_sint => .r8i,
         .r8g8_sint => .rg8i,
-        .r8g8b8a8_sint => .rgba8i,
+        .r8g8b8a8_sint, .a8b8g8r8_sint_pack32 => .rgba8i,
         .r16_unorm => .r16,
         .r16g16_unorm => .rg16,
         .r16g16b16a16_unorm => .rgba16,
@@ -69,7 +69,7 @@ pub fn texelsOf(format: facet.Format) shader.TexelFormat {
         // bits.
         .r8_snorm => .r8n,
         .r8g8_snorm => .rg8n,
-        .r8g8b8a8_snorm => .rgba8n,
+        .r8g8b8a8_snorm, .a8b8g8r8_snorm_pack32 => .rgba8n,
         .r16_snorm => .r16n,
         .r16g16_snorm => .rg16n,
         .r16g16b16a16_snorm => .rgba16n,
@@ -78,7 +78,11 @@ pub fn texelsOf(format: facet.Format) shader.TexelFormat {
         .r8g8b8a8_srgb, .a8b8g8r8_srgb_pack32 => .rgba8srgb,
         .b8g8r8a8_srgb => .bgra8srgb,
         // A8B8G8R8_PACK32 is 0xAABBGGRR, which is where R8G8B8A8 keeps
-        // its bytes on a little-endian machine: the same texels.
+        // its bytes on a little-endian machine: the same texels, so each
+        // is read as its R8G8B8A8 form is - `_srgb` above, and `_snorm`,
+        // `_uint` and `_sint` too since 1.127, as v3dv gives each pair the
+        // one texture type (src/broadcom/vulkan/v3dvx_formats.c:131-134,
+        // :191-195).
         .a8b8g8r8_unorm_pack32 => .rgba8888,
         .a2b10g10r10_unorm_pack32 => .rgb10a2,
         .a2r10g10b10_unorm_pack32 => .bgr10a2,

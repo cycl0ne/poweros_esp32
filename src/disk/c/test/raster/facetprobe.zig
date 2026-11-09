@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.41 (06.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.47 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -37,6 +37,139 @@ const template = "CORES/S,V3D/S,QUIET/S";
 /// The side of the pictures drawn into: two tiles across, so that what is
 /// written back tile by tile is seen as well.
 const side = 64;
+
+/// What one device can do, as the probe works it out for itself.
+///
+/// Until 1.82 these were fields of `facet.PhysicalDeviceFeatures` and the
+/// probe read them straight out of GetPhysicalDeviceFeatures. That call
+/// answers Vulkan's 55 features now, and most of these are not among them:
+/// they were facet's own record of what a device refuses, which is the
+/// library's and not a program's.
+///
+/// So the probe asks the way a Vulkan program would have to, and that is
+/// an improvement rather than a loss - it is now held to what the public
+/// surface *says*, not to a private field, and a device whose limits or
+/// format properties disagreed with its own refusals would be caught here
+/// instead of agreeing with itself.
+///
+/// One has no counterpart on Vulkan's surface at all: `samplers`, whether
+/// the fixed forms that read a sampler run on the device, since a fixed
+/// form is the library's own and Vulkan has no word for it. Until 1.140 it
+/// was taken from `sampler_anisotropy` with `unnormalized_coordinates`
+/// beside it, which on both devices were true exactly where it was; the
+/// V3D broke that in 1.140, sampling through a sampler's anisotropy and
+/// its texels from a generated program while its fixed forms still read
+/// none. So it is read off the device's type now: the cores, `cpu`, run
+/// every one of those forms. The V3D runs all but two since 1.141 - the
+/// shadow form and the cube of an array - so `samplers` false means "not
+/// every one" and the checks say which. A sample in texels is no longer asked at all: Vulkan requires it
+/// of every implementation, both devices take it since 1.140, and the
+/// probe holds each to it.
+const Can = struct {
+    stored_depth: bool,
+    stored_stencil: bool,
+    sampled_depth: bool,
+    storage_images: bool,
+    texel_buffers: bool,
+    input_attachments: bool,
+    dynamic_descriptors: bool,
+    depth_bias: bool,
+    independent_blend: bool,
+    occlusion_queries: bool,
+    pipeline_statistics_queries: bool,
+    cube_arrays: bool,
+    several_outputs: bool,
+    samplers: bool,
+    kept_compressed: bool,
+    kept_floats: bool,
+    wide_channels: bool,
+    whole_textures: bool,
+    small_texels: bool,
+    depth_bounds: bool,
+    depth_clamp: bool,
+    stored_both: bool,
+    /// Whether a depth that holds a stencil may be sampled: the cores'
+    /// since 1.94, the V3D's not, as v3dv's D24S8 is the only such format
+    /// it samples and this one is not there (since 1.46).
+    sampled_stencil: bool,
+    etc2_textures: bool,
+    /// Whether a generated shader may sample at a constant texel offset:
+    /// SPIR-V's `ConstOffset`. Read off `max_texel_offset`, which Vulkan
+    /// requires of every implementation and no feature gates, so a 0
+    /// there is a device saying it cannot. The cores can since 1.87 and
+    /// the V3D refuses the operand (item 28).
+    texel_offsets: bool,
+
+    fn formatOf(fb: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format) facet.FormatProperties {
+        var said: facet.FormatProperties = undefined;
+        fb.GetPhysicalDeviceFormatProperties(physical, format, &said);
+        return said;
+    }
+
+    /// Worked out from this device's features, limits and format
+    /// properties: every line says which public answer it reads.
+    fn of(fb: *FacetBase, physical: *facet.PhysicalDevice) Can {
+        var features: facet.PhysicalDeviceFeatures = undefined;
+        fb.GetPhysicalDeviceFeatures(physical, &features);
+        var properties: facet.PhysicalDeviceProperties = undefined;
+        fb.GetPhysicalDeviceProperties(physical, &properties);
+        const limits = &properties.limits;
+        // A format's own features say what may be done with an image of it,
+        // which is where the four depth and stencil answers live.
+        const depth = formatOf(fb, physical, .d16_unorm).optimal_tiling_features;
+        const stencil = formatOf(fb, physical, .s8_uint).optimal_tiling_features;
+        const blocks = formatOf(fb, physical, .bc1_rgb_unorm_block).optimal_tiling_features;
+        const halves = formatOf(fb, physical, .r16g16b16a16_sfloat).optimal_tiling_features;
+        const wide = formatOf(fb, physical, .r16g16_unorm).optimal_tiling_features;
+        const whole = formatOf(fb, physical, .r16g16_uint).optimal_tiling_features;
+        const small = formatOf(fb, physical, .r8_unorm).optimal_tiling_features;
+        const texels = formatOf(fb, physical, .r8g8b8a8_unorm).buffer_features;
+        return .{
+            .stored_depth = depth & facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT != 0,
+            .stored_stencil = stencil & facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT != 0,
+            .sampled_depth = depth & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0,
+            // A device that takes no storage image a stage has none.
+            .storage_images = limits.max_per_stage_descriptor_storage_images != 0,
+            .texel_buffers = texels & facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER != 0,
+            .input_attachments = limits.max_per_stage_descriptor_input_attachments != 0,
+            .dynamic_descriptors = limits.max_descriptor_set_uniform_buffers_dynamic != 0,
+            // Vulkan's `depthBiasClamp` comes with the bias here: the depth
+            // offset packet takes its three numbers together.
+            .depth_bias = features.depth_bias_clamp == facet.TRUE,
+            .independent_blend = features.independent_blend == facet.TRUE,
+            // An occlusion query counts its samples exactly where it has
+            // one at all, so the precise bit is the query's.
+            .occlusion_queries = features.occlusion_query_precise == facet.TRUE,
+            .pipeline_statistics_queries = features.pipeline_statistics_query == facet.TRUE,
+            .cube_arrays = features.image_cube_array == facet.TRUE,
+            // What one fragment function may write.
+            .several_outputs = limits.max_fragment_output_attachments > 1,
+            .samplers = properties.device_type == .cpu,
+            // A device that keeps a format's bytes as it was given them can
+            // copy them back out, which is the transfer bit on a format it
+            // cannot otherwise do anything with.
+            .kept_compressed = blocks & facet.FORMAT_FEATURE_TRANSFER_SRC != 0,
+            .kept_floats = halves & facet.FORMAT_FEATURE_TRANSFER_SRC != 0,
+            .wide_channels = wide != 0,
+            .whole_textures = whole != 0,
+            .small_texels = small != 0,
+            .depth_bounds = features.depth_bounds == facet.TRUE,
+            .depth_clamp = features.depth_clamp == facet.TRUE,
+            // One image holding depth and stencil together, kept past the
+            // pass that drew it.
+            .stored_both = formatOf(fb, physical, .d16_unorm_s8_uint).optimal_tiling_features &
+                facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT != 0,
+            .sampled_stencil = formatOf(fb, physical, .d16_unorm_s8_uint).optimal_tiling_features &
+                facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0,
+            // `texture_compression_etc2` is false on both devices, Vulkan
+            // asking for the whole ten-format family behind that bit where
+            // five are here, so what a device really does with ETC2 is
+            // read off the format itself.
+            .etc2_textures = formatOf(fb, physical, .etc2_r8g8b8_unorm_block).optimal_tiling_features != 0,
+            .texel_offsets = limits.max_texel_offset != 0,
+        };
+    }
+};
 
 /// Everything made through facet.library on one device, given back by
 /// `down` in the order it goes.
@@ -47,6 +180,7 @@ const Probe = struct {
     instance: *facet.Instance,
     physical: *facet.PhysicalDevice,
     features: facet.PhysicalDeviceFeatures = undefined,
+    can: Can = undefined,
     memory: facet.PhysicalDeviceMemoryProperties = undefined,
     device: ?*facet.Device = null,
     queue: *facet.Queue = undefined,
@@ -69,6 +203,7 @@ const Probe = struct {
     fn up(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) ?Probe {
         var probe = Probe{ .fb = fb, .dl = dl, .quiet = quiet, .instance = instance, .physical = physical };
         fb.GetPhysicalDeviceFeatures(physical, &probe.features);
+        probe.can = Can.of(fb, physical);
         fb.GetPhysicalDeviceMemoryProperties(physical, &probe.memory);
         const queue_info = facet.DeviceQueueCreateInfo{};
         if (fb.CreateDevice(physical, &.{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&queue_info) }, &probe.device) != .success) return null;
@@ -202,8 +337,14 @@ const Probe = struct {
     }
 
     fn framebuffer(probe: *Probe, pass: *facet.RenderPass, views: []const *facet.ImageView) ?*facet.Framebuffer {
+        return probe.layeredFramebuffer(pass, views, 1);
+    }
+
+    /// A framebuffer of `layers` layers, kept; null where the call refused
+    /// it (since 1.91, a framebuffer has more than one).
+    fn layeredFramebuffer(probe: *Probe, pass: *facet.RenderPass, views: []const *facet.ImageView, layers: u32) ?*facet.Framebuffer {
         var made: ?*facet.Framebuffer = null;
-        if (probe.fb.CreateFramebuffer(probe.device.?, &.{ .render_pass = pass, .attachment_count = @intCast(views.len), .attachments = views.ptr, .width = side, .height = side }, &made) != .success) return null;
+        if (probe.fb.CreateFramebuffer(probe.device.?, &.{ .render_pass = pass, .attachment_count = @intCast(views.len), .attachments = views.ptr, .width = side, .height = side, .layers = layers }, &made) != .success) return null;
         return keep(&probe.frames, made);
     }
 
@@ -457,7 +598,7 @@ fn checkDepth(probe: *Probe, wanted: u16, found: u16, name: [*:0]const u8) void 
 fn depthChecks(probe: *Probe) void {
     const fb = probe.fb;
     defer probe.give();
-    if (!probe.features.stored_depth) {
+    if (!probe.can.stored_depth) {
         // The device keeps no depth: the pass that asks for one is refused,
         // and one that keeps none is made.
         probe.check(passKeeping(probe, .clear, .clear, .store) == null, "a stored depth refused where the device keeps none");
@@ -567,7 +708,7 @@ fn depthChecks(probe: *Probe) void {
     const value = facet.ClearDepthStencilValue{ .depth = 1 };
     const subresource = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
     commands = probe.record() orelse return probe.check(false, "a third recording");
-    fb.CmdClearDepthStencilImage(commands, depth[0], 0, &value, 1, @ptrCast(&subresource));
+    fb.CmdClearDepthStencilImage(commands, depth[0], .undefined, &value, 1, @ptrCast(&subresource));
     fb.CmdCopyImageToBuffer(commands, depth[0], .general, read_back, 1, @ptrCast(&whole));
     if (!probe.submit()) return probe.check(false, "the clear submitted");
     checkDepth(probe, 0xFFFF, depthAt(back_bytes, 4, 4), "CmdClearDepthStencilImage set the whole image");
@@ -693,7 +834,7 @@ fn storageImageChecks(probe: *Probe) void {
     };
     var set_layout: ?*facet.DescriptorSetLayout = null;
     const made = fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout);
-    if (!probe.features.storage_images) {
+    if (!probe.can.storage_images) {
         probe.check(made == .error_feature_not_present, "a storage image refused where the device writes none");
         probe.check(set_layout == null, "and nothing given back for it");
         return;
@@ -868,8 +1009,9 @@ fn storageImageChecks(probe: *Probe) void {
 
     // --- 1.56: a colour attachment written through as a storage image ---
     // The linear features say whose rows may be written through: a
-    // texture of 8888 is 0xAARRGGBB, as b8g8r8a8's rows are, and nothing
-    // reads a word with red in its low byte.
+    // texture of 8888 is 0xAARRGGBB, as b8g8r8a8's rows are, and the one
+    // that reads a word with red in its low byte is fetched from, not
+    // written through (since 1.110).
     fb.GetPhysicalDeviceFormatProperties(probe.physical, .b8g8r8a8_unorm, &properties);
     probe.check(properties.linear_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE != 0, "rows of b8g8r8a8 say they may be written through");
     fb.GetPhysicalDeviceFormatProperties(probe.physical, .r8g8b8a8_unorm, &properties);
@@ -883,7 +1025,10 @@ fn storageImageChecks(probe: *Probe) void {
         return probe.check(false, "an image drawn into and written through at once");
     probe.check(true, "an image drawn into and written through at once");
     var denied: ?*facet.Image = null;
-    probe.check(fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side }, .usage = both_usage | facet.IMAGE_USAGE_SAMPLED }, &denied) != .success, "sampled and drawn into at once still refused");
+    // Sampled as well it is refused on both devices: the cores sample an
+    // image they draw into where it lies only if nothing writes it
+    // through (docs/facet-vulkan10.md item 48), and the V3D does neither.
+    probe.check(fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side }, .usage = both_usage | facet.IMAGE_USAGE_SAMPLED }, &denied) != .success, "sampled, drawn into and written through at once refused");
     probe.check(fb.CreateImage(device, &.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = side, .height = side }, .usage = both_usage }, &denied) != .success, "and r8g8b8a8 rows written through refused");
     probe.check(denied == null, "and nothing given back for either");
     const both_view = probe.viewed(.{ .image = both, .format = .b8g8r8a8_unorm }) orelse return probe.check(false, "a view of it");
@@ -1003,7 +1148,7 @@ fn storageImageChecks(probe: *Probe) void {
     // to what its channel holds. 300 is above a byte, -5 below what an
     // unsigned channel holds, and 70000 above 16 bits: nothing is scaled
     // on the way, so each comes back as itself or at its channel's end.
-    if (probe.features.whole_textures) {
+    if (probe.can.whole_textures) {
         const numbers_out: [*]const i64 = @ptrCast(@alignCast(told_bytes));
         const given_numbers = [4]i32{ 300, -5, 70000, 1 };
         const Whole = struct { format: facet.Format, want: [4]i64, says: [*:0]const u8 };
@@ -1128,7 +1273,7 @@ fn texelBufferChecks(probe: *Probe) void {
 
     var reading: ?*facet.BufferView = null;
     const made = fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r32g32b32a32_sfloat }, &reading);
-    if (!probe.features.texel_buffers) {
+    if (!probe.can.texel_buffers) {
         probe.check(made == .error_feature_not_present, "a buffer view refused where the device has none");
         return;
     }
@@ -1141,8 +1286,8 @@ fn texelBufferChecks(probe: *Probe) void {
 
     // Refused: a format no view takes, and an offset that is not a texel's.
     var none: ?*facet.BufferView = null;
-    probe.check(fb.CreateBufferView(device, &.{ .buffer = floats, .format = .d16_unorm }, &none) == .error_format_not_supported, "a format no view takes refused");
-    probe.check(fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r32g32b32a32_sfloat, .offset = 4 }, &none) == .error_initialization_failed, "an offset that is not a texel's refused");
+    probe.check(fb.CreateBufferView(device, &.{ .buffer = floats, .format = .d16_unorm }, &none) == .error_validation_failed, "a format no view takes refused");
+    probe.check(fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r32g32b32a32_sfloat, .offset = 4 }, &none) == .error_validation_failed, "an offset that is not a texel's refused");
     probe.check(none == null, "and nothing given back for either");
 
     var module: ?*facet.ShaderModule = null;
@@ -1264,6 +1409,10 @@ fn texelBufferChecks(probe: *Probe) void {
         .{ .format = .e5b9g9r9_ufloat_pack32, .size = 4 },
         .{ .format = .r32g32b32_uint, .size = 12 },
         .{ .format = .r32g32b32_sint, .size = 12 },
+        // 1.127: the A8B8G8R8 words of the rest.
+        .{ .format = .a8b8g8r8_snorm_pack32, .size = 4 },
+        .{ .format = .a8b8g8r8_uint_pack32, .size = 4 },
+        .{ .format = .a8b8g8r8_sint_pack32, .size = 4 },
     };
     var all_made = true;
     var all_counted = true;
@@ -1530,7 +1679,7 @@ fn blendChecks(probe: *Probe) void {
     const takes = facet.PipelineColorBlendAttachmentState{};
     const differing = [2]facet.PipelineColorBlendAttachmentState{ keeps, takes };
     const each_own = pipelineOf(probe, pass, module.?, layout.?, .{ .blends = &differing });
-    if (!probe.features.independent_blend) {
+    if (!probe.can.independent_blend) {
         probe.check(each_own == null, "attachments that differ refused where a device blends them alike");
         const alike = [2]facet.PipelineColorBlendAttachmentState{ keeps, keeps };
         probe.check(pipelineOf(probe, pass, module.?, layout.?, .{ .blends = &alike }) != null, "the same state for both still taken");
@@ -1603,7 +1752,7 @@ fn biasChecks(probe: *Probe) void {
     const depth_only = [1]facet.PipelineColorBlendAttachmentState{.{ .color_write_mask = 0 }};
     const nearer = facet.PipelineRasterizationStateCreateInfo{ .depth_bias_enable = true, .depth_bias_constant_factor = -3 };
     const biased = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_tested = true, .raster = nearer });
-    if (!probe.features.depth_bias) {
+    if (!probe.can.depth_bias) {
         probe.check(biased == null, "a depth bias refused where the device moves none");
         probe.check(pipelineOf(probe, pass, module.?, layout.?, .{ .depth_tested = true }) != null, "a pipeline without one is still taken");
         return;
@@ -1719,7 +1868,7 @@ fn dynamicChecks(probe: *Probe) void {
     };
     var set_layout: ?*facet.DescriptorSetLayout = null;
     const made = fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout);
-    if (!probe.features.dynamic_descriptors) {
+    if (!probe.can.dynamic_descriptors) {
         probe.check(made == .error_feature_not_present, "a dynamic buffer descriptor refused where the device has none");
         probe.check(set_layout == null, "and nothing given back for it");
         return;
@@ -1731,11 +1880,24 @@ fn dynamicChecks(probe: *Probe) void {
     // A set holds only so many of them, as the limit says.
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(probe.physical, &properties);
-    const most = properties.limits.max_descriptor_set_dynamic_buffers;
-    probe.check(most != 0, "the limit says how many a set holds");
+    // Vulkan counts the two dynamic kinds apart, where facet folded them
+    // into one number until 1.82, and over a whole pipeline layout. Since
+    // 1.85 they are Vulkan's floor, eight and four, and one set holds the
+    // two together: twelve, of either kind.
+    const uniforms = properties.limits.max_descriptor_set_uniform_buffers_dynamic;
+    const storages = properties.limits.max_descriptor_set_storage_buffers_dynamic;
+    probe.check(uniforms >= 8 and storages >= 4, "the two dynamic kinds at Vulkan's floor, eight and four");
+    const most = uniforms + storages;
+    const whole = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .uniform_buffer_dynamic, .descriptor_count = uniforms, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_buffer_dynamic, .descriptor_count = storages, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var held: ?*facet.DescriptorSetLayout = null;
+    probe.check(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = whole.len, .bindings = &whole }, &held) == .success, "a set of the whole of both made");
+    if (held) |each| fb.DestroyDescriptorSetLayout(device, each);
     var none: ?*facet.DescriptorSetLayout = null;
     const too_many = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .uniform_buffer_dynamic, .descriptor_count = most + 1 };
-    probe.check(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&too_many) }, &none) == .error_feature_not_present, "a set of more than the limit refused");
+    probe.check(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&too_many) }, &none) == .error_feature_not_present, "a set of more than the two together refused");
     probe.check(none == null, "and nothing given back for that either");
 
     var module: ?*facet.ShaderModule = null;
@@ -1789,9 +1951,27 @@ fn dynamicChecks(probe: *Probe) void {
         for (0..4) |k| right = right and out[into + k] == in[from + k];
         if (into > 0) right = right and out[into - 1] == 0;
         probe.check(right, name);
-        // What is left of the range from the offset is what the function
-        // reaches: 128 bytes less the offset, in numbers of four.
-        probe.checkEqual((128 - offsets[1]) / 4, out[into + 4], "what was left of the range from there");
+        // The range moves with the offset, as in Vulkan: the function
+        // reaches the whole of its 128 bytes wherever the bind put them.
+        // Until FacetProbe 1.47 this was 128 less the offset (facet.library
+        // 1.160).
+        probe.checkEqual(128 / 4, out[into + 4], "the whole range, wherever the bind moved it");
+    }
+
+    // An offset that would take the range past the buffer's end - 136 of
+    // a range of 128 in 256 bytes - leaves the descriptor not written, so
+    // the function finds nothing to write into.
+    {
+        @memset(storage_bytes[0..256], 0);
+        const past = probe.record() orelse return probe.check(false, "a recording");
+        fb.CmdBindPipeline(past, .compute, pipelines[0].?);
+        const beyond = [2]u32{ 0, 136 };
+        fb.CmdBindDescriptorSets(past, .compute, layout.?, 0, 1, @ptrCast(&sets), 2, &beyond);
+        fb.CmdDispatch(past, 1, 1, 1);
+        if (!probe.submit()) return probe.check(false, "the dispatch submitted");
+        var untouched = true;
+        for (out[0..64]) |word| untouched = untouched and word == 0;
+        probe.check(untouched, "a range shifted past its buffer reads as not written");
     }
 
     // Offsets left out are 0: read and written where the writes left them.
@@ -1825,7 +2005,7 @@ fn queryChecks(probe: *Probe) void {
     probe.checkEqual(limits.max_image_dimension_2d, shape.max_extent.width, "as wide as the device's limit says");
     probe.checkEqual(1, shape.max_extent.depth, "and one deep");
     probe.checkEqual(limits.max_image_array_layers, shape.max_array_layers, "the layers of an array");
-    probe.checkEqual(1, shape.sample_counts, "one sample a pixel");
+    probe.checkEqual(limits.sampled_image_color_sample_counts, shape.sample_counts, "the samples a pixel its limit says");
     probe.check(shape.max_mip_levels > 1, "the levels of the largest");
     probe.check(shape.max_resource_size != 0, "the bytes an image may take");
 
@@ -1844,13 +2024,14 @@ fn queryChecks(probe: *Probe) void {
     probe.check(shape.max_mip_levels > 1, "and has the levels its slices have");
 
     // 1.66: a depth attachment has the levels 1.63 gave it, and the
-    // layers 1.58 gave one that is read back.
+    // layers 1.58 gave one that is read back; since 1.91 one that is not
+    // read back has them as well, a framebuffer's layers being drawn into.
     if (fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .d16_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &shape) != .success) {
         return probe.check(false, "the largest depth attachment");
     }
     probe.check(shape.max_mip_levels > 1, "a depth attachment has levels of its own");
-    probe.checkEqual(1, shape.max_array_layers, "and one layer until it is read back");
-    if (probe.features.sampled_depth) {
+    probe.checkEqual(limits.max_image_array_layers, shape.max_array_layers, "and its layers, read back or not");
+    if (probe.can.sampled_depth) {
         const read_back = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;
         if (fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .d16_unorm, .@"2d", .optimal, read_back, 0, &shape) != .success) {
             return probe.check(false, "the largest sampled depth attachment");
@@ -1871,16 +2052,79 @@ fn queryChecks(probe: *Probe) void {
     if (laid == .success) {
         var needs: facet.MemoryRequirements = undefined;
         fb.GetImageMemoryRequirements(device, biggest.?, &needs);
-        probe.checkEqual(shape.max_resource_size, needs.size, "its memory is what max_resource_size said");
         probe.check(needs.size > @as(u64, shape.max_extent.width) * shape.max_extent.height * 4, "which is more than one level of one layer");
+        // Where the answer says four samples a pixel, it is the larger of
+        // that image and the largest of four, one level as such an image
+        // is (since 1.98): the two are kept apart, a texture of levels
+        // against rows of samples.
+        var most = needs.size;
+        if (shape.sample_counts & facet.SAMPLE_COUNT_4 != 0) {
+            var four: ?*facet.Image = null;
+            const four_laid = fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = shape.max_extent, .array_layers = shape.max_array_layers, .samples = 4, .usage = sampled }, &four);
+            probe.check(four_laid == .success, "and the largest of four samples a pixel");
+            if (four_laid == .success) {
+                fb.GetImageMemoryRequirements(device, four.?, &needs);
+                most = @max(most, needs.size);
+            }
+            fb.DestroyImage(device, four);
+        }
+        probe.checkEqual(shape.max_resource_size, most, "its memory is what max_resource_size said");
     }
     fb.DestroyImage(device, biggest);
 
     // Shapes there is no image of at all.
     probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .d16_unorm, .@"2d", .linear, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &shape) == .error_format_not_supported, "a depth image in rows refused");
     probe.checkEqual(0, shape.max_mip_levels, "and nothing written for it");
-    probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"1d", .optimal, sampled, 0, &shape) == .error_format_not_supported, "a 1D image refused");
-    probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &shape) == .error_format_not_supported, "an attachment that is sampled too refused");
+
+    // A 1D image, which is an image since 1.86: a texture of one row, as
+    // wide as a 2D image, and its levels halve that width alone - which
+    // is Vulkan's own rule for one. The 1D view types are its own and the
+    // 2D ones are not, a 2D image a row high being a different image.
+    probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"1d", .optimal, sampled, 0, &shape) == .success, "a 1D image is a shape");
+    probe.checkEqual(limits.max_image_dimension_1d, shape.max_extent.width, "as wide as the limit says");
+    probe.checkEqual(1, shape.max_extent.height, "one row high");
+    probe.checkEqual(1, shape.max_extent.depth, "and one deep");
+    // Bound into memory, as a view's image is: until 1.135 the view here
+    // was of an image not bound, which CreateImageView has refused since
+    // 1.0, so the check could not hold wherever it ran.
+    if (probe.bound(.{ .image_type = .@"1d", .format = .b8g8r8a8_unorm, .extent = .{ .width = 256, .height = 1 }, .usage = sampled }, 0)) |line| {
+        probe.check(probe.viewed(.{ .image = line, .view_type = .@"1d", .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } }) != null, "a 1D view of it made");
+        var flat_view: ?*facet.ImageView = null;
+        probe.check(fb.CreateImageView(device, &.{ .image = line, .view_type = .@"2d", .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } }, &flat_view) == .error_validation_failed, "and a 2D view of it refused");
+    } else probe.check(false, "a 1D image made");
+    var row: ?*facet.Image = null;
+    probe.check(fb.CreateImage(device, &.{ .image_type = .@"1d", .format = .b8g8r8a8_unorm, .extent = .{ .width = 256, .height = 2 }, .usage = sampled }, &row) == .error_validation_failed, "a 1D image two rows high refused");
+
+    // A constant texel offset on a sample (item 28, since 1.87). Vulkan
+    // asks -8 and 7 of every implementation and no feature gates it, so a
+    // device either reaches the pair or reports neither - and the thing
+    // that must never happen is a device advertising a range it refuses
+    // every use of, which is what the V3D would do if it inherited the
+    // cores' numbers. Only this board can see that: the host count in
+    // tests/vulkan_limits.zig is the cores' alone.
+    if (probe.can.texel_offsets) {
+        probe.check(limits.min_texel_offset <= -8, "a device that offsets reaches -8");
+        probe.check(limits.max_texel_offset >= 7, "and reaches 7");
+    } else {
+        probe.check(limits.min_texel_offset == 0, "a device that does not offset says 0");
+        probe.check(limits.max_texel_offset == 0, "at both ends");
+    }
+    // The gather pair rides on `shader_image_gather_extended`, which this
+    // library reports false, so 0 is their mandatory value rather than a
+    // shortfall of either device.
+    probe.check(limits.min_texel_gather_offset == 0, "and no gather offset");
+    probe.check(limits.max_texel_gather_offset == 0, "at either end");
+
+    // 1.119: an attachment that is sampled too is made where the device
+    // keeps it in rows and samples it where it lies - the cores, and not
+    // the V3D yet (docs/facet-vulkan10.md item 48). Whichever the device
+    // is, the query and CreateImage say the same.
+    const drawn_and_sampled = sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT;
+    const answered = fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"2d", .optimal, drawn_and_sampled, 0, &shape);
+    var drawn: ?*facet.Image = null;
+    const drawn_made = fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = drawn_and_sampled }, &drawn);
+    probe.check((answered == .success) == (drawn_made == .success), if (answered == .success) "an attachment that is sampled too made, as the query says" else "an attachment that is sampled too refused, as the query says");
+    fb.DestroyImage(device, drawn);
 
     // What the query says is what CreateImage does.
     var image: ?*facet.Image = null;
@@ -1889,14 +2133,19 @@ fn queryChecks(probe: *Probe) void {
     fb.DestroyImage(device, image);
     image = null;
     const over = fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = widest + 1, .height = 1 }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image);
-    probe.check(over == .error_format_not_supported and image == null, "one texel wider refused");
+    probe.check(over == .error_validation_failed and image == null, "one texel wider refused");
 
     // The render area's granularity is the device's tile.
     const pass = passKeeping(probe, .clear, .clear, .dont_care) orelse return probe.check(false, "a pass to ask about");
     var granularity: facet.Extent2D = undefined;
     fb.GetRenderAreaGranularity(device, pass, &granularity);
-    probe.checkEqual(limits.tile_size, granularity.width, "the render area's granularity is the tile");
-    probe.checkEqual(limits.tile_size, granularity.height, "square");
+    // `limits.tile_size` left PhysicalDeviceLimits at 1.82, Vulkan having
+    // no member for it, so this call is the only way to ask - and there is
+    // nothing beside it to check it against. What must hold of it: it is
+    // square, a power of two, and no larger than the framebuffer.
+    probe.checkEqual(granularity.width, granularity.height, "the render area's granularity is square");
+    probe.check(granularity.width != 0 and granularity.width & (granularity.width - 1) == 0, "and a power of two");
+    probe.check(granularity.width <= limits.max_framebuffer_width, "and no wider than a framebuffer");
 
     // What a block has behind it: all of a plain one, none of a lazily
     // allocated one.
@@ -2014,7 +2263,7 @@ fn inputChecks(probe: *Probe) void {
     };
     const pass_info = facet.RenderPassCreateInfo{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 2, .subpasses = &subpasses };
 
-    if (!probe.features.input_attachments) {
+    if (!probe.can.input_attachments) {
         probe.check(layout_made == .error_feature_not_present, "an input attachment layout refused where the device reads none");
         probe.check(set_layout == null, "and nothing given back for it");
         probe.check(probe.renderPass(pass_info) == null, "a subpass that reads one refused there too");
@@ -2028,10 +2277,12 @@ fn inputChecks(probe: *Probe) void {
     const pass = probe.renderPass(pass_info) orelse return probe.check(false, "a pass whose second subpass reads the first's");
     probe.check(true, "a pass whose second subpass reads the first's");
 
-    // A subpass that reads what it draws is a loop, and a depth
-    // attachment has no rows to read.
+    // A subpass that reads what it draws, which Vulkan allows - a loop
+    // whose reads it leaves undefined where nothing orders the write
+    // before them - is drawn since 1.134, with the self-dependency or
+    // without it; it was refused until then.
     const loop = facet.SubpassDescription{ .input_attachment_count = 1, .input_attachments = &to_first, .color_attachment_count = 1, .color_attachments = &to_first };
-    probe.check(probe.renderPass(.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&loop) }) == null, "a subpass that reads what it draws refused");
+    probe.check(probe.renderPass(.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&loop) }) != null, "a subpass that reads what it draws made");
     const with_depth = [2]facet.AttachmentDescription{
         .{ .format = .d16_unorm, .final_layout = .general },
         .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
@@ -2040,7 +2291,7 @@ fn inputChecks(probe: *Probe) void {
     // 1.62: a depth attachment is read as an input attachment, where
     // the device keeps a depth to be read at all.
     const depth_pass = probe.renderPass(.{ .attachment_count = 2, .attachments = &with_depth, .subpass_count = 1, .subpasses = @ptrCast(&reads_depth) });
-    probe.check((depth_pass != null) == probe.features.sampled_depth, if (probe.features.sampled_depth) "a depth attachment read as an input attachment" else "a depth attachment read as an input attachment refused where none is kept");
+    probe.check((depth_pass != null) == probe.can.sampled_depth, if (probe.can.sampled_depth) "a depth attachment read as an input attachment" else "a depth attachment read as an input attachment refused where none is kept");
 
     // The pictures: the one read is made to be read, and one that is not.
     const extent = facet.Extent3D{ .width = side, .height = side };
@@ -2053,11 +2304,18 @@ fn inputChecks(probe: *Probe) void {
     const second_memory = probe.memories[1].?;
     const plain = probe.image(plain_info, wanted) orelse return probe.check(false, "a picture not made to be read");
 
-    // An input attachment is kept in rows, so it is not also a texture.
-    var none: ?*facet.Image = null;
+    // An input attachment is kept in rows, so it is sampled as well only
+    // on a device that samples rows where they lie: the cores since 1.119
+    // and not the V3D yet (docs/facet-vulkan10.md item 48). The query and
+    // CreateImage say the same either way.
+    var read_and_sampled: ?*facet.Image = null;
     const both = facet.ImageCreateInfo{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_INPUT_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED };
-    probe.check(fb.CreateImage(device, &both, &none) != .success, "an image both read and sampled refused");
-    probe.check(none == null, "and nothing given back for that either");
+    var both_shape: facet.ImageFormatProperties = undefined;
+    const both_said = fb.GetPhysicalDeviceImageFormatProperties(probe.physical, both.format, .@"2d", .optimal, both.usage, 0, &both_shape);
+    const both_made = fb.CreateImage(device, &both, &read_and_sampled);
+    probe.check((both_said == .success) == (both_made == .success), if (both_said == .success) "an image both read and sampled made, as the query says" else "an image both read and sampled refused, as the query says");
+    probe.check((both_made == .success) == (read_and_sampled != null), "and given back exactly where it is made");
+    fb.DestroyImage(device, read_and_sampled);
 
     const frame = probe.framebuffer(pass, &.{ first[1], second[1] }) orelse return probe.check(false, "a framebuffer over the two");
 
@@ -2119,7 +2377,7 @@ fn inputChecks(probe: *Probe) void {
 
     // 1.62: the depth the first subpass drew, read pixel by pixel by the
     // next - the plane the view's aspect names, out of the image's rows.
-    if (!probe.features.sampled_depth or !probe.features.stored_depth) return;
+    if (!probe.can.sampled_depth or !probe.can.stored_depth) return;
     const deep = probe.image(.{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT }, 0) orelse
         return probe.check(false, "a depth attachment made to be read");
     var transient: ?*facet.Image = null;
@@ -2237,14 +2495,14 @@ fn passStenciling(probe: *Probe, format: facet.Format, ops: *const [4:0]u8) ?*fa
 fn stencilChecks(probe: *Probe) void {
     const fb = probe.fb;
     defer probe.give();
-    if (!probe.features.stored_stencil) {
+    if (!probe.can.stored_stencil) {
         probe.check(passStenciling(probe, .s8_uint, "cdcs") == null, "a stored stencil refused where the device keeps none");
         probe.check(passStenciling(probe, .d16_unorm_s8_uint, "cdld") == null, "a loaded stencil refused the same way");
         probe.check(passStenciling(probe, .s8_uint, "cdcd") != null, "a stencil that stays in the tiles is still taken");
         return;
     }
-    // An op for a plane the format has not.
-    probe.check(passStenciling(probe, .d16_unorm, "cdcs") == null, "a stencil op refused for a format with no stencil");
+    // An op for a plane the format has not keeps nothing (since 1.106).
+    probe.check(passStenciling(probe, .d16_unorm, "cdcs") != null, "a stencil op for a format with no stencil keeps nothing (since 1.106)");
 
     const extent = facet.Extent3D{ .width = side, .height = side };
     const marked: u8 = 5;
@@ -2283,15 +2541,17 @@ fn stencilChecks(probe: *Probe) void {
     // A format that holds a depth beside the stencil keeps either only
     // where the device writes a pixel's planes where they lie in it
     // (`stored_both`, since 1.47); a device that stores a tile buffer
-    // whole - the V3D - takes the format of a stencil alone.
-    if (!probe.features.stored_both) {
+    // whole - the V3D - takes the format of a stencil alone, and refuses
+    // the other kept with `error_validation_failed`, its format query
+    // giving it no DEPTH_STENCIL_ATTACHMENT (since 1.135).
+    if (!probe.can.stored_both) {
         probe.check(passStenciling(probe, .d16_unorm_s8_uint, "cdcs") == null, "a stored stencil refused for a format that holds a depth too");
         probe.check(passStenciling(probe, .d16_unorm_s8_uint, "cdcd") != null, "one that stays in the tiles is still taken");
     }
 
     // One format of stencil alone, and one that holds a depth beside it
     // where the device keeps either of the two.
-    const formats: []const facet.Format = if (probe.features.stored_both) &.{ .s8_uint, .d16_unorm_s8_uint } else &.{.s8_uint};
+    const formats: []const facet.Format = if (probe.can.stored_both) &.{ .s8_uint, .d16_unorm_s8_uint } else &.{.s8_uint};
     for (formats) |format| {
         const stride: u32 = if (format == .s8_uint) 1 else 4;
         const inside: u32 = if (stride == 1) 0 else 2;
@@ -2358,7 +2618,7 @@ fn stencilChecks(probe: *Probe) void {
         const only_stencil = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL };
         @memset(back_bytes[0..bytes], 0xAA);
         commands = probe.record() orelse return probe.check(false, "a third recording");
-        fb.CmdClearDepthStencilImage(commands, stencil[0], 0, &value, 1, @ptrCast(&only_stencil));
+        fb.CmdClearDepthStencilImage(commands, stencil[0], .undefined, &value, 1, @ptrCast(&only_stencil));
         fb.CmdCopyImageToBuffer(commands, stencil[0], .general, read_back, 1, @ptrCast(&whole));
         if (!probe.submit()) return probe.check(false, "the clear submitted");
         probe.checkEqual(9, back_bytes[(8 * side + 16) * stride + inside], "cleared without a pass over it");
@@ -2370,7 +2630,10 @@ fn stencilChecks(probe: *Probe) void {
 
 /// A shadow sample of a depth texture: s, t and the reference are the
 /// vertices' second three floats, and what it draws is how much of the
-/// sample passed - white for all of it, black for none.
+/// sample passed, where a depth view reads its depth - red for all of it,
+/// black for none (since 1.121). The fragments are the fixed form's,
+/// `shader.FixedKind.texture_shadow`, so a device that runs no fragment
+/// function of the program draws it too (since 1.46).
 const Shadowed = struct {
     fn vertex(vertices: *const facet.shader.Vertices) callconv(.c) void {
         for (0..vertices.count) |k| {
@@ -2380,19 +2643,9 @@ const Shadowed = struct {
         }
     }
 
-    fn fragment(fragments: *const facet.shader.Fragments) callconv(.c) void {
-        facet.shader.texturedBy(
-            true,
-            .{ .format = .d16, .filter = .nearest, .address = .clamp },
-            fragments,
-            fragments.resources.sampled(0, 0, 0),
-            fragments.resources.samplerOf(0, 0, 0),
-        );
-    }
-
     const entries = [_]facet.shader.Entry{
         facet.shader.vertex("main", &vertex, 3),
-        facet.shader.fragment("main", &fragment, 3),
+        facet.shader.fixedFragment("main", .{ .kind = .texture_shadow }),
     };
     const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
@@ -2405,7 +2658,7 @@ fn sampledDepthChecks(probe: *Probe) void {
     const usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;
     var made: ?*facet.Image = null;
     const asked = fb.CreateImage(device, &.{ .format = .d16_unorm, .extent = extent, .usage = usage }, &made);
-    if (!probe.features.sampled_depth) {
+    if (!probe.can.sampled_depth) {
         probe.check(asked != .success and made == null, "a sampled depth image refused where the device samples none");
         return;
     }
@@ -2428,10 +2681,12 @@ fn sampledDepthChecks(probe: *Probe) void {
     const shown_memory = probe.memories[2].?;
 
     // The first pass draws the left half at 0.25 and stores the depth.
+    // Its colour is the fixed form's white (`Smooth`), every device drawing
+    // that, and its push constant is read by nothing (since 1.46).
     const storing = passKeeping(probe, .clear, .clear, .store) orelse return probe.check(false, "a pass that stores its depth");
     const frame = probe.framebuffer(storing, &.{ color[1], depth[1] }) orelse return probe.check(false, "a framebuffer over the two");
     var flat: ?*facet.ShaderModule = null;
-    if (fb.CreateShaderModule(device, &.{ .code = &Flat.code }, &flat) != .success) return probe.check(false, "the first shader module");
+    if (fb.CreateShaderModule(device, &.{ .code = &Smooth.code }, &flat) != .success) return probe.check(false, "the first shader module");
     _ = Probe.keep(&probe.modules, flat);
     const range = facet.PushConstantRange{ .size = 4 };
     var flat_layout: ?*facet.PipelineLayout = null;
@@ -2503,7 +2758,10 @@ fn sampledDepthChecks(probe: *Probe) void {
     const shade = pipelineOf(probe, reading, module.?, layout.?, .{ .attributes = &attributes, .stride = 24 }) orelse
         return probe.check(false, "a pipeline that samples the depth");
 
-    const white: u32 = 0xFFFF_FFFF;
+    // What passed reads (1, 0, 0, 1) and what failed (0, 0, 0, 1): a
+    // depth reads (D, 0, 0, 1), as Vulkan converts one, and what a
+    // comparison gave stands in its D (since 1.121).
+    const white: u32 = 0xFFFF_0000;
     const black: u32 = 0xFF00_0000;
     const near: f32 = @round(0.25 * 65535);
     // Mapped once: a block is mapped one at a time.
@@ -2538,15 +2796,20 @@ fn sampledDepthChecks(probe: *Probe) void {
 
     // --- 1.58: the planes a view names, and layers ---
     // A format that holds a stencil is sampled as well: a view takes one
-    // of its planes, and both at once is no texture.
+    // of its planes, or both at once, its depth (since 1.94). A device
+    // that does not sample one refuses the image (since 1.46).
     const with_stencil = probe.bound(.{ .format = .d16_unorm_s8_uint, .extent = extent, .usage = usage | facet.IMAGE_USAGE_TRANSFER_DST }, 0);
-    probe.check(with_stencil != null, "a sampled depth image of a format that holds a stencil");
+    probe.check((with_stencil != null) == probe.can.sampled_stencil, if (probe.can.sampled_stencil) "a sampled depth image of a format that holds a stencil" else "a sampled depth image that holds a stencil refused where none is sampled");
     if (with_stencil) |held| {
         const depth_plane = probe.viewed(.{ .image = held, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } });
         const stencil_plane = probe.viewed(.{ .image = held, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL } });
         probe.check(depth_plane != null and stencil_plane != null, "a view of each of its planes");
+        // Both at once is a view since 1.94, its texture the depth, which
+        // a framebuffer draws both planes of; until 1.135 this looked for
+        // the refusal that went then.
         var two: ?*facet.ImageView = null;
-        probe.check(fb.CreateImageView(device, &.{ .image = held, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL } }, &two) != .success and two == null, "and both planes at once no view at all");
+        probe.check(fb.CreateImageView(device, &.{ .image = held, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL } }, &two) == .success, "and of both planes at once, its depth");
+        fb.DestroyImageView(device, two);
 
         // Its depth plane cleared and sampled, the stencil beside it left
         // whole: the plane is read two bytes of every four, so a sample
@@ -2555,9 +2818,9 @@ fn sampledDepthChecks(probe: *Probe) void {
             const filled = facet.ClearDepthStencilValue{ .depth = 0.75, .stencil = 0xFF };
             const planes = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL };
             commands = probe.record() orelse return probe.check(false, "a recording of the plane cleared");
-            fb.CmdClearDepthStencilImage(commands, held, 0, &filled, 1, @ptrCast(&planes));
+            fb.CmdClearDepthStencilImage(commands, held, .undefined, &filled, 1, @ptrCast(&planes));
             if (!probe.submit()) return probe.check(false, "the plane cleared");
-            probe.checkEqual(0xFFFF_FFFF, sampledWith(probe, plane, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, 0.5), "the depth plane of such an image sampled at 16 bits");
+            probe.checkEqual(white, sampledWith(probe, plane, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, 0.5), "the depth plane of such an image sampled at 16 bits");
         }
     }
 
@@ -2611,16 +2874,24 @@ fn sampledDepthChecks(probe: *Probe) void {
     probe.check(mipped != null, "a sampled depth image of two levels");
     if (mipped) |held| {
         // Its memory is the pyramid: the first level's rows, 2 bytes a
-        // pixel, and the second's, half as wide and half as high.
+        // pixel, and the second's, half as wide and half as high. A
+        // device that lays out what it samples itself answers the level
+        // as it does a texture's, `row_pitch` 0 (since 1.46): the second
+        // level is then somewhere in the memory, as big as it is at least.
         const first_bytes = @as(u64, side) * 2 * side;
         const second_bytes = @as(u64, side / 2) * 2 * (side / 2);
         var needs: facet.MemoryRequirements = undefined;
         fb.GetImageMemoryRequirements(device, held, &needs);
-        probe.checkEqual(first_bytes + second_bytes, needs.size, "its memory is both levels' rows");
         var level_layout: facet.SubresourceLayout = undefined;
         fb.GetImageSubresourceLayout(device, held, &.{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .mip_level = 1 }, &level_layout);
-        probe.checkEqual(first_bytes, level_layout.offset, "the second level begins after the first level's rows");
-        probe.checkEqual(@as(u64, side / 2) * 2, level_layout.row_pitch, "and its rows are as wide as that level is");
+        if (level_layout.row_pitch != 0) {
+            probe.checkEqual(first_bytes + second_bytes, needs.size, "its memory is both levels' rows");
+            probe.checkEqual(first_bytes, level_layout.offset, "the second level begins after the first level's rows");
+            probe.checkEqual(@as(u64, side / 2) * 2, level_layout.row_pitch, "and its rows are as wide as that level is");
+        } else {
+            probe.check(needs.size >= first_bytes + second_bytes, "its memory holds both levels");
+            probe.check(level_layout.size >= second_bytes and level_layout.offset + level_layout.size <= needs.size, "and the second level lies in it, as big as it is");
+        }
 
         const first_view = probe.viewed(.{ .image = held, .format = .d16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .level_count = 1 } });
         const deeper_view = probe.viewed(.{ .image = held, .format = .d16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } });
@@ -2648,7 +2919,7 @@ fn sampledDepthChecks(probe: *Probe) void {
             const far = facet.ClearDepthStencilValue{ .depth = 0.75 };
             const every_level = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
             commands = probe.record() orelse return probe.check(false, "a recording of both levels cleared");
-            fb.CmdClearDepthStencilImage(commands, held, 0, &far, 1, @ptrCast(&every_level));
+            fb.CmdClearDepthStencilImage(commands, held, .undefined, &far, 1, @ptrCast(&every_level));
             if (!probe.submit()) return probe.check(false, "both its levels cleared");
             if (probe.framebuffer(storing, &.{ color[1], first_view.? })) |frame_of| {
                 const quad = quadAt(0.25);
@@ -2728,7 +2999,7 @@ fn boundsChecks(probe: *Probe) void {
     // The depth stored where the device keeps one, so that what the clamp
     // left can be read back; in the tiles alone otherwise, which is all
     // the bounds test needs.
-    const stores = probe.features.stored_depth;
+    const stores = probe.can.stored_depth;
     const pass = passKeeping(probe, .clear, .clear, if (stores) .store else .dont_care) orelse
         return probe.check(false, "a pass of a colour and a depth");
     // The colour comes from the vertices, not from a push constant: these
@@ -2742,13 +3013,13 @@ fn boundsChecks(probe: *Probe) void {
     _ = Probe.keep(&probe.layouts, layout);
     const painted = Shape{ .attributes = &Painted.attributes, .stride = Painted.stride, .depth_tested = true };
 
-    if (!probe.features.depth_bounds) {
+    if (!probe.can.depth_bounds) {
         probe.check(pipelineOf(probe, pass, module.?, layout.?, shapeWith(painted, .{ .depth_state = bounded })) == null, "a depth bounds test refused where the device has none");
     }
-    if (!probe.features.depth_clamp) {
+    if (!probe.can.depth_clamp) {
         probe.check(pipelineOf(probe, pass, module.?, layout.?, shapeWith(painted, .{ .raster = clamping })) == null, "a depth clamp refused where the device has none");
     }
-    if (!probe.features.depth_bounds and !probe.features.depth_clamp) return;
+    if (!probe.can.depth_bounds and !probe.can.depth_clamp) return;
 
     const color = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = extent, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse
         return probe.check(false, "a picture to draw into");
@@ -2783,7 +3054,7 @@ fn boundsChecks(probe: *Probe) void {
     const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
     const pixels, const pitch = probe.mapped(color[0], color_memory) orelse return probe.check(false, "the picture read back");
 
-    if (probe.features.depth_bounds) {
+    if (probe.can.depth_bounds) {
         const marks = pipelineOf(probe, pass, module.?, layout.?, painted) orelse return probe.check(false, "a pipeline that writes the depth");
         const in_bounds = pipelineOf(probe, pass, module.?, layout.?, shapeWith(painted, .{ .depth_state = bounded })) orelse
             return probe.check(false, "a pipeline whose bounds are tested");
@@ -2813,7 +3084,7 @@ fn boundsChecks(probe: *Probe) void {
         }
     }
 
-    if (probe.features.depth_clamp) {
+    if (probe.can.depth_clamp) {
         // The viewport's own range, so what a clamped depth is held at is
         // not the whole of it.
         const low: f32 = 0.25;
@@ -2944,7 +3215,7 @@ fn groupChecks(probe: *Probe) void {
     for ([2][*:0]const u8{ "crowd", "greedy" }) |name| {
         var refused: [1]?*facet.Pipeline = undefined;
         const over = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = name }, .layout = layout.? };
-        probe.check(fb.CreateComputePipelines(device, null, 1, @ptrCast(&over), &refused) == .error_feature_not_present, "a group over the limits refused");
+        probe.check(fb.CreateComputePipelines(device, null, 1, @ptrCast(&over), &refused) == .error_validation_failed, "a group over the limits refused");
         probe.check(refused[0] == null, "and nothing given back for it");
     }
 
@@ -3130,6 +3401,36 @@ fn sizeChecks(probe: *Probe) void {
         };
         if (right) probe.check(true, name) else probe.checkEqual(wanted, found, name);
     }
+
+    // 1.120: a view of the same texture that swizzles, drawn by the same
+    // form - red 1, green 0, and the blue and the alpha the texel's own:
+    // through the run-time sampler on the cores, and on the V3D by the
+    // TMU, which takes the view's swizzle over the format's own
+    // (docs/facet-vulkan10.md item 41).
+    const swizzled = probe.viewed(.{ .image = texture[0], .format = .b8g8r8a8_unorm, .components = .{ .r = .one, .g = .zero } }) orelse
+        return probe.check(false, "a view of the texture that swizzles");
+    const to_swizzled = facet.DescriptorImageInfo{ .image_view = swizzled };
+    const rewrite = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .descriptor_count = 1, .image_info = @ptrCast(&to_swizzled) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&rewrite), 0, null);
+    const quad = [6][5]f32{
+        .{ -1, -1, 0.5, 0, 0 }, .{ 1, -1, 0.5, 1, 0 }, .{ -1, 1, 0.5, 0, 1 },
+        .{ -1, 1, 0.5, 0, 1 },  .{ 1, -1, 0.5, 1, 0 }, .{ 1, 1, 0.5, 1, 1 },
+    };
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(quad))], std.mem.asBytes(&quad));
+    commands = probe.record() orelse return probe.check(false, "a recording of the swizzled draw");
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = onto, .render_area = area, .clear_value_count = 1, .clear_values = &clear }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, clamps);
+    fb.CmdBindDescriptorSets(commands, .graphics, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    if (!probe.submit()) return probe.check(false, "the swizzled frame submitted");
+    for (rows, 0..) |py, y| for (columns, 0..) |px, x| {
+        const want = 0xFFFF_0000 | (greyOf(@intCast(x), @intCast(y)) & 0xFF);
+        const seen = pixelAt(pixels, pitch, px, py);
+        if (seen != want) return probe.checkEqual(want, seen, "a view that swizzles: red 1, green 0, blue and alpha its own");
+    };
+    probe.check(true, "a view that swizzles: red 1, green 0, blue and alpha its own");
 }
 
 // --- 1.43: the smaller edges -------------------------------------------------
@@ -3168,7 +3469,7 @@ fn edgeChecks(probe: *Probe) void {
         facet.QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_PRIMITIVES;
     var pool: ?*facet.QueryPool = null;
     const asked = fb.CreateQueryPool(device, &.{ .query_type = .pipeline_statistics, .query_count = 1, .pipeline_statistics = wanted }, &pool);
-    if (!probe.features.pipeline_statistics_queries) {
+    if (!probe.can.pipeline_statistics_queries) {
         probe.check(asked != .success and pool == null, "a statistics pool refused where the device counts none");
     } else if (asked != .success or pool == null) {
         probe.check(false, "a statistics pool that counts a geometry shader's two");
@@ -3343,7 +3644,7 @@ fn blockChecks(probe: *Probe) void {
     const fb = probe.fb;
     const device = probe.device.?;
     defer probe.give();
-    const kept = probe.features.kept_compressed;
+    const kept = probe.can.kept_compressed;
     const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
     const across = 16;
 
@@ -3574,7 +3875,7 @@ fn floatChecks(probe: *Probe) void {
     const fb = probe.fb;
     const device = probe.device.?;
     defer probe.give();
-    const kept = probe.features.kept_floats;
+    const kept = probe.can.kept_floats;
     const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
     const across = 4;
 
@@ -3769,14 +4070,14 @@ fn shapeChecks(probe: *Probe) void {
     const fb = probe.fb;
     const device = probe.device.?;
     defer probe.give();
-    const arrays = probe.features.cube_arrays;
+    const arrays = probe.can.cube_arrays;
     const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
     const across = 4;
     const square = facet.Extent3D{ .width = across, .height = across };
 
     // ETC2 is taken on every device, sampled and copied into but never read
     // back: the blocks are gone once they are unpacked.
-    probe.check(probe.features.etc2_textures, "ETC2 and EAC are taken, unpacked as they are copied in");
+    probe.check(probe.can.etc2_textures, "ETC2 and EAC are taken, unpacked as they are copied in");
     var properties: facet.FormatProperties = undefined;
     fb.GetPhysicalDeviceFormatProperties(probe.physical, .etc2_r8g8b8a8_unorm_block, &properties);
     const features = properties.optimal_tiling_features;
@@ -3802,7 +4103,9 @@ fn shapeChecks(probe: *Probe) void {
     probe.check((stack_view != null) == arrays, if (arrays) "a view of cubes one after another" else "a view of cubes one after another is refused here");
     // Whatever the device, a view of part of a cube is not one of cubes.
     probe.check(probe.viewed(.{ .image = stack, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .layer_count = 4 } }) == null, "layers that are not a multiple of six are refused");
-    probe.check(probe.viewed(.{ .image = stack, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 2, .layer_count = 6 } }) == null, "and a first layer that does not begin a cube");
+    // From any layer, as Vulkan counts a cube array's faces from its first
+    // (since 1.135; from a multiple of six before).
+    probe.check((probe.viewed(.{ .image = stack, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 2, .layer_count = 6 } }) != null) == arrays, if (arrays) "and a view of cubes from any layer" else "nor one from another layer");
 
     const etc = probe.bound(.{ .format = .etc2_r8g8b8a8_unorm_block, .extent = square, .usage = sampled }, 0) orelse
         return probe.check(false, "a texture of 4 by 4 of ETC2 with alpha");
@@ -3939,7 +4242,7 @@ fn samplesChecks(probe: *Probe) void {
 
     var pool: ?*facet.QueryPool = null;
     const asked = fb.CreateQueryPool(device, &.{ .query_type = .occlusion, .query_count = 2 }, &pool);
-    if (!probe.features.occlusion_queries) {
+    if (!probe.can.occlusion_queries) {
         return probe.check(asked != .success and pool == null, "an occlusion pool refused where the device counts no samples");
     }
     if (asked != .success or pool == null) return probe.check(false, "an occlusion pool of two queries");
@@ -4027,7 +4330,7 @@ fn smallChecks(probe: *Probe) void {
     const fb = probe.fb;
     const device = probe.device.?;
     defer probe.give();
-    const small = probe.features.small_texels;
+    const small = probe.can.small_texels;
     const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
     // Large enough that what each format asks for is above the page a
     // device with a layout of its own rounds an image up to.
@@ -4222,12 +4525,10 @@ fn texelChecks(probe: *Probe) void {
         .unnormalized_coordinates = true,
     };
 
+    // Every device: Vulkan has no feature that turns it off. Until 1.140
+    // the V3D refused it with `error_feature_not_present`.
     var by_texel: ?*facet.Sampler = null;
     const asked = fb.CreateSampler(device, &in_texels, &by_texel);
-    if (!probe.features.unnormalized_coordinates) {
-        probe.check(asked == .error_feature_not_present and by_texel == null, "a sampler in texels refused where the device reads none");
-        return;
-    }
     probe.check(asked == .success and by_texel != null, "a sampler whose coordinates are texels");
     if (asked != .success) return;
     defer fb.DestroySampler(device, by_texel);
@@ -4238,18 +4539,21 @@ fn texelChecks(probe: *Probe) void {
     var refused: ?*facet.Sampler = null;
     var two_filters = in_texels;
     two_filters.min_filter = .linear;
-    probe.check(fb.CreateSampler(device, &two_filters, &refused) == .error_initialization_failed, "two filters with it refused");
+    probe.check(fb.CreateSampler(device, &two_filters, &refused) == .error_validation_failed, "two filters with it refused");
     var levelled = in_texels;
     levelled.max_lod = facet.texture.lod_unclamped;
-    probe.check(fb.CreateSampler(device, &levelled, &refused) == .error_initialization_failed, "and a level past the first");
+    probe.check(fb.CreateSampler(device, &levelled, &refused) == .error_validation_failed, "and a level past the first");
     var tapped = in_texels;
     tapped.anisotropy_enable = true;
     tapped.max_anisotropy = 4;
-    probe.check(fb.CreateSampler(device, &tapped, &refused) == .error_initialization_failed, "and several samples along an axis");
+    probe.check(fb.CreateSampler(device, &tapped, &refused) == .error_validation_failed, "and several samples along an axis");
     var tiled = in_texels;
     tiled.address_mode_u = .repeat;
-    probe.check(fb.CreateSampler(device, &tiled, &refused) == .error_initialization_failed, "and an edge that is neither held nor bordered");
+    probe.check(fb.CreateSampler(device, &tiled, &refused) == .error_validation_failed, "and an edge that is neither held nor bordered");
     probe.check(refused == null, "and nothing given back for any of them");
+
+    // The draw below is a fixed form's, `texture_sampled`, which every
+    // device draws since 1.141.
 
     // The texture of the small texels' two colours, its left half and its
     // right, and a picture to draw it into.
@@ -4378,7 +4682,7 @@ fn wideChecks(probe: *Probe) void {
     const fb = probe.fb;
     const device = probe.device.?;
     defer probe.give();
-    const wide = probe.features.wide_channels;
+    const wide = probe.can.wide_channels;
     const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
     const across = 8;
     const extent = facet.Extent3D{ .width = across, .height = across };
@@ -4562,7 +4866,7 @@ fn wholeChecks(probe: *Probe) void {
     const fb = probe.fb;
     const device = probe.device.?;
     defer probe.give();
-    const wholes = probe.features.whole_textures;
+    const wholes = probe.can.whole_textures;
     const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
     const across = 8;
     const extent = facet.Extent3D{ .width = across, .height = across };
@@ -4754,13 +5058,17 @@ fn pointChecks(probe: *Probe) void {
 
     // The range the device gives: one pixel at the narrow end and wider
     // than one at the other, which is what Vulkan's `largePoints` says,
-    // and every size between them drawn as it is.
+    // and the step between two sizes the rasterizer's own sub-pixel
+    // precision. It was 0 until 1.82, which Vulkan reads as no size
+    // between the ends at all.
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(probe.physical, &properties);
     const range = properties.limits.point_size_range;
     probe.check(range[0] == 1, "the narrowest point is one pixel");
     probe.check(range[1] > 1, "and the widest is wider than one, as largePoints says");
-    probe.check(properties.limits.point_size_granularity == 0, "every size between them is drawn as it is");
+    const step = @as(f32, 1) / @as(f32, @floatFromInt(@as(u32, 1) << @intCast(properties.limits.sub_pixel_precision_bits)));
+    probe.check(properties.limits.point_size_granularity == step, "the sizes between them a sub-pixel step apart");
+    probe.check(properties.limits.point_size_granularity <= 1, "which is no more than a pixel, as Vulkan has it");
 
     var slot: usize = 0;
     for (probe.memories, 0..) |each, k| if (each == null) {
@@ -5036,17 +5344,6 @@ fn heldChecks(probe: *Probe) void {
     }) orelse return probe.check(false, "a pass to draw in");
     const attributes = [1]facet.VertexInputAttributeDescription{.{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat }};
 
-    // Where the device runs no form that reads a sampler, every one of
-    // them is refused there and the program draws on the cores instead.
-    if (!probe.features.samplers) {
-        var refused = false;
-        for ([4][*:0]const u8{ "arrayby", "cubeby", "volumeby", "cubesby" }) |name| {
-            if (pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = name }) == null) refused = true else refused = false;
-            if (!refused) break;
-        }
-        return probe.check(refused, "a form past 2D that reads a sampler is refused where the device reads none");
-    }
-
     // Bound without a view of their own: a plain 2D one is not what
     // either of these is read as.
     const cube_image = probe.bound(.{ .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .format = .b8g8r8a8_unorm, .extent = .{ .width = across, .height = across }, .array_layers = 6, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, 0) orelse
@@ -5059,11 +5356,19 @@ fn heldChecks(probe: *Probe) void {
         return probe.check(false, "a view of it as an array");
     const cube_view = probe.viewed(.{ .image = cube_image, .format = .b8g8r8a8_unorm, .view_type = .cube, .subresource_range = .{ .layer_count = 6 } }) orelse
         return probe.check(false, "and one as a cube");
+    // The 2D form reads a 2D view, as Vulkan has a sampler2D read one:
+    // until 1.141 it was given the cube's, which only the cores drew.
+    const face_view = probe.viewed(.{ .image = cube_image, .format = .b8g8r8a8_unorm, .subresource_range = .{ .layer_count = 1 } }) orelse
+        return probe.check(false, "and one of its first face alone");
     const volume_view = probe.viewed(.{ .image = volume_image, .format = .b8g8r8a8_unorm, .view_type = .@"3d" }) orelse
         return probe.check(false, "a view of the 3D image");
-    const cubes_view = probe.viewed(.{ .image = cubes_image, .format = .b8g8r8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .layer_count = 12 } }) orelse
+    // A view of cubes as an array is made only where the device has them
+    // (`image_cube_array`): not on the V3D, which since 1.141 gets this
+    // far, and whose cases of it are left out below.
+    const arrays = probe.can.cube_arrays;
+    const cubes_view = if (!arrays) null else probe.viewed(.{ .image = cubes_image, .format = .b8g8r8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .layer_count = 12 } }) orelse
         return probe.check(false, "a view of the two cubes as an array of them");
-    const second_view = probe.viewed(.{ .image = cubes_image, .format = .b8g8r8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 6, .layer_count = 6 } }) orelse
+    const second_view = if (!arrays) null else probe.viewed(.{ .image = cubes_image, .format = .b8g8r8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 6, .layer_count = 6 } }) orelse
         return probe.check(false, "and one that begins at the second cube");
 
     const texels, const texel_bytes = probe.buffer(layer_bytes * 6, facet.BUFFER_USAGE_TRANSFER_SRC) orelse
@@ -5125,16 +5430,25 @@ fn heldChecks(probe: *Probe) void {
         return probe.check(false, "one whose form reads a cube through a sampler");
     const of_volume = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "volumeby" }) orelse
         return probe.check(false, "one whose form reads a 3D texture through a sampler");
-    const of_cubes = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "cubesby" }) orelse
-        return probe.check(false, "one whose form reads a cube of an array through a sampler");
+    // A cube of an array through a sampler is drawn where every form that
+    // reads one is - the cores. The V3D draws the others since 1.141, its
+    // programs those of the forms without a sampler, and has no program
+    // for a cube of an array: refused there, and its checks below left
+    // out. Until 1.141 every form here was refused on the V3D.
+    const of_cubes = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "cubesby" });
+    if (probe.can.samplers) {
+        probe.check(of_cubes != null, "one whose form reads a cube of an array through a sampler");
+    } else {
+        probe.check(of_cubes == null, "one whose form reads a cube of an array through a sampler refused where not every form that reads one is drawn");
+    }
     const of_wide = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "wideby" }) orelse
         return probe.check(false, "one that reads past the texture's edges");
     const of_held = pipelineOf(probe, pass, module.?, held_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "wideby" }) orelse
         return probe.check(false, "and the same over the layout that holds a sampler");
 
     const Case = struct {
-        pipeline: *facet.Pipeline,
-        view: *facet.ImageView,
+        pipeline: ?*facet.Pipeline,
+        view: ?*facet.ImageView,
         instance: u32,
         sets: *[1]?*facet.DescriptorSet,
         layout: *facet.PipelineLayout,
@@ -5162,17 +5476,19 @@ fn heldChecks(probe: *Probe) void {
         .{ .pipeline = of_cubes, .view = second_view, .instance = 1, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(4), .at = middle, .says = "a view that begins at the second cube reads it as cube 0" },
         // Past the edges, with the tiling sampler written into the set:
         // the texture again.
-        .{ .pipeline = of_wide, .view = cube_view, .instance = 0, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(0), .at = corner, .says = "the written sampler tiles past the texture's edge" },
+        .{ .pipeline = of_wide, .view = face_view, .instance = 0, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(0), .at = corner, .says = "the written sampler tiles past the texture's edge" },
         // The same draw through the layout that holds the bordered
         // sampler: the layout's wins, so the border is read there.
-        .{ .pipeline = of_held, .view = cube_view, .instance = 0, .sets = &held_set, .layout = held_pipes.?, .want = 0xFFFF_FFFF, .at = corner, .says = "the layout's own sampler is read instead of the one written" },
+        .{ .pipeline = of_held, .view = face_view, .instance = 0, .sets = &held_set, .layout = held_pipes.?, .want = 0xFFFF_FFFF, .at = corner, .says = "the layout's own sampler is read instead of the one written" },
     }) |case| {
-        const info = facet.DescriptorImageInfo{ .sampler = tiled, .image_view = case.view };
+        const drawn = case.pipeline orelse continue;
+        const read = case.view orelse continue;
+        const info = facet.DescriptorImageInfo{ .sampler = tiled, .image_view = read };
         const write = facet.WriteDescriptorSet{ .dst_set = case.sets[0].?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .descriptor_count = 1, .image_info = @ptrCast(&info) };
         fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
         commands = probe.record() orelse return probe.check(false, "a recording of the draw");
         fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = onto, .render_area = area, .clear_value_count = 1, .clear_values = &clear }, .@"inline");
-        fb.CmdBindPipeline(commands, .graphics, case.pipeline);
+        fb.CmdBindPipeline(commands, .graphics, drawn);
         fb.CmdBindDescriptorSets(commands, .graphics, case.layout, 0, 1, @ptrCast(case.sets), 0, null);
         fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
         fb.CmdDraw(commands, 6, 1, 0, case.instance);
@@ -5404,8 +5720,16 @@ fn cutChecks(probe: *Probe) void {
     defer probe.give();
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(probe.physical, &properties);
-    const held = properties.limits.max_tessellation_patch_components;
-    probe.check(held >= 4, "the device says how many floats a patch may carry");
+    // The eight maxTessellation* limits read 0 since 1.82, because
+    // `tessellation_shader` is false: a program bringing SPIR-V cannot
+    // declare either tessellation stage (`spirv.facet_profile` leaves
+    // `Profile.stages` at vertex and fragment), and Vulkan makes the
+    // unsupported value mandatory once the feature says false. What the
+    // library's own Zig surface tessellates is said by `shader.Patch`, and
+    // the checks below exercise it through that surface.
+    probe.check(probe.features.tessellation_shader == facet.FALSE, "the device says it runs no SPIR-V tessellation stage");
+    probe.checkEqual(0, properties.limits.max_tessellation_patch_size, "so the patch limits read Vulkan's unsupported value");
+    probe.checkEqual(0, properties.limits.max_tessellation_control_per_patch_output_components, "all of them");
 
     const color_attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal };
     const reference = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
@@ -5562,7 +5886,7 @@ fn togetherChecks(probe: *Probe) void {
     // The flag is the cores': a device whose fragment programs each write
     // the one colour refuses the pass outright, and the subpass without
     // it is drawn once for each attachment as it always was.
-    if (!probe.features.several_outputs) {
+    if (!probe.can.several_outputs) {
         probe.check(togetherPass(probe, true) == null, "a subpass drawn together refused where a fragment program writes the one colour");
         const apart = togetherPass(probe, false) orelse return probe.check(false, "the same subpass drawn once for each");
         probe.check(true, "the same subpass drawn once for each");
@@ -5824,6 +6148,405 @@ fn sharedDepthChecks(probe: *Probe) void {
     probe.checkEqual(white, pixelAt(between_pixels, between_pitch, side / 2, side / 2), "the subpass in between drew into its own picture");
 }
 
+// --- 1.91: framebuffers of layers --------------------------------------------
+
+/// A pixel of one layer read back into a buffer, the layers one after
+/// another and `side` pixels a row: 0xAARRGGBB, as `pixelAt` reads.
+fn layerPixel(bytes: [*]const u8, layer: u32, x: u32, y: u32) u32 {
+    return pixelAt(bytes + @as(usize, layer) * side * side * 4, side * 4, x, y);
+}
+
+/// A framebuffer of layers (since 1.91, which made them on the cores as
+/// lavapipe makes them): as many as `max_framebuffer_layers` says and not
+/// one more. A pass over a view of a later layer clears and draws there
+/// and nowhere else - on the V3D, which has the one layer, that is where
+/// its tiles are stored to and its depth is kept. And on a device with
+/// layers to spare, a pass of two clears both, draws into the first, and
+/// clears a rectangle of the second when CmdClearAttachments names it.
+fn layerChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(probe.physical, &properties);
+    const most = properties.limits.max_framebuffer_layers;
+
+    const description = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal };
+    const reference = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&reference) };
+    const pass = probe.renderPass(.{ .attachment_count = 1, .attachments = @ptrCast(&description), .subpass_count = 1, .subpasses = @ptrCast(&subpass) }) orelse
+        return probe.check(false, "a pass that clears its colour");
+
+    // An image of as many layers as a framebuffer may have, and three at
+    // least: a layer past what a pass names is one to see left alone.
+    const layers = @max(most, 3);
+    const extent = facet.Extent3D{ .width = side, .height = side };
+    const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const stack = probe.bound(.{ .format = .b8g8r8a8_unorm, .extent = extent, .array_layers = layers, .usage = usage }, 0) orelse
+        return probe.check(false, "a colour attachment of layers");
+    probe.check(true, "a colour attachment of layers");
+    const every = probe.viewed(.{ .image = stack, .format = .b8g8r8a8_unorm, .view_type = .@"2d_array", .subresource_range = .{ .layer_count = layers } }) orelse
+        return probe.check(false, "a view of all its layers");
+    const second = probe.viewed(.{ .image = stack, .format = .b8g8r8a8_unorm, .subresource_range = .{ .base_array_layer = 1, .layer_count = 1 } }) orelse
+        return probe.check(false, "a view of its second layer");
+
+    // As many layers as the device says, and one more refused: on the V3D
+    // by its limit alone, the view having the layers.
+    probe.check(probe.layeredFramebuffer(pass, &.{every}, most) != null, "a framebuffer of as many layers as the device says");
+    probe.check(probe.layeredFramebuffer(pass, &.{every}, most + 1) == null, "and one of a layer more refused");
+    const on_second = probe.framebuffer(pass, &.{second}) orelse return probe.check(false, "a framebuffer over the second layer");
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Painted.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{}, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    const painted = pipelineOf(probe, pass, module.?, layout.?, .{ .attributes = &Painted.attributes, .stride = Painted.stride }) orelse
+        return probe.check(false, "a pipeline over the pass");
+
+    // A white quad over the left half: the right half is the clear's.
+    const white_paint = [3]f32{ 1, 1, 1 };
+    const left = [6][6]f32{
+        Painted.at(-1, -1, 0.5, white_paint), Painted.at(0, -1, 0.5, white_paint), Painted.at(-1, 1, 0.5, white_paint),
+        Painted.at(-1, 1, 0.5, white_paint),  Painted.at(0, -1, 0.5, white_paint), Painted.at(0, 1, 0.5, white_paint),
+    };
+    const vertex_buffer, const vertex_bytes = probe.buffer(@sizeOf(@TypeOf(left)), facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer");
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(left))], std.mem.asBytes(&left));
+    const layer_bytes = side * side * 4;
+    const back, const back_bytes = probe.buffer(3 * layer_bytes, facet.BUFFER_USAGE_TRANSFER_DST) orelse
+        return probe.check(false, "a buffer to read three layers into");
+    var regions: [3]facet.BufferImageCopy = undefined;
+    for (&regions, 0..) |*region, k| region.* = .{ .buffer_offset = k * layer_bytes, .image_extent = extent, .image_subresource = .{ .base_array_layer = @intCast(k) } };
+
+    const offset: u64 = 0;
+    const blue: u32 = 0xFF00_00FF;
+    const green: u32 = 0xFF00_FF00;
+    const red: u32 = 0xFFFF_0000;
+    const yellow: u32 = 0xFFFF_FF00;
+    const white: u32 = 0xFFFF_FFFF;
+    const blue_value = facet.ClearColorValue{ .float32 = .{ 0, 0, 1, 1 } };
+    const all = facet.ImageSubresourceRange{};
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+
+    // The image blue, and a pass over the view of its second layer that
+    // clears it green and draws the white half.
+    @memset(back_bytes[0 .. 3 * layer_bytes], 0);
+    const green_clear = [1]facet.ClearValue{.{ .color = .{ .float32 = .{ 0, 1, 0, 1 } } }};
+    var commands = probe.record() orelse return probe.check(false, "a recording of a pass over the second layer");
+    fb.CmdClearColorImage(commands, stack, .transfer_dst_optimal, &blue_value, 1, @ptrCast(&all));
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = on_second, .render_area = area, .clear_value_count = 1, .clear_values = &green_clear }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, painted);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    fb.CmdCopyImageToBuffer(commands, stack, .general, back, regions.len, &regions);
+    if (!probe.submit()) return probe.check(false, "the pass over the second layer submitted");
+    probe.checkEqual(white, layerPixel(back_bytes, 1, 8, 8), "a pass over a view of the second layer draws into it");
+    probe.checkEqual(green, layerPixel(back_bytes, 1, 48, 40), "and clears it");
+    // Past the first tile across and down: each tile is stored on its own.
+    probe.checkEqual(green, layerPixel(back_bytes, 1, 40, 56), "and clears it in another tile");
+    probe.checkEqual(blue, layerPixel(back_bytes, 0, 8, 8), "and leaves the first layer as it was");
+    probe.checkEqual(blue, layerPixel(back_bytes, 0, 48, 40), "the whole of it");
+    probe.checkEqual(blue, layerPixel(back_bytes, 2, 8, 8), "and the third");
+
+    // A depth kept through a view of its second layer, where the device
+    // keeps one.
+    if (probe.can.stored_depth) depth: {
+        const keeping = passKeeping(probe, .clear, .clear, .store) orelse break :depth probe.check(false, "a pass that keeps its depth");
+        const depth_usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+        const depths = probe.bound(.{ .format = .d16_unorm, .extent = extent, .array_layers = 2, .usage = depth_usage }, 0) orelse
+            break :depth probe.check(false, "a depth attachment of two layers");
+        probe.check(true, "a depth attachment of two layers");
+        const depth_second = probe.viewed(.{ .image = depths, .format = .d16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .base_array_layer = 1, .layer_count = 1 } }) orelse
+            break :depth probe.check(false, "a view of the depth's second layer");
+        const kept = probe.framebuffer(keeping, &.{ second, depth_second }) orelse break :depth probe.check(false, "a framebuffer keeping a depth in its second layer");
+        const far = facet.ClearDepthStencilValue{ .depth = 1 };
+        const depth_all = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
+        const both_clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 1, 0, 1 } } }, .{ .depth_stencil = .{ .depth = 0.25 } } };
+        var depth_regions: [2]facet.BufferImageCopy = undefined;
+        for (&depth_regions, 0..) |*region, k| region.* = .{ .buffer_offset = k * side * side * 2, .image_extent = extent, .image_subresource = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .base_array_layer = @intCast(k) } };
+        @memset(back_bytes[0 .. 2 * side * side * 2], 0xAA);
+        commands = probe.record() orelse break :depth probe.check(false, "a recording of the kept depth");
+        fb.CmdClearDepthStencilImage(commands, depths, .transfer_dst_optimal, &far, 1, @ptrCast(&depth_all));
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = keeping, .framebuffer = kept, .render_area = area, .clear_value_count = 2, .clear_values = &both_clears }, .@"inline");
+        fb.CmdEndRenderPass(commands);
+        fb.CmdCopyImageToBuffer(commands, depths, .general, back, depth_regions.len, &depth_regions);
+        if (!probe.submit()) break :depth probe.check(false, "the kept depth submitted");
+        const quarter: u16 = @intFromFloat(@round(0.25 * 65535));
+        checkDepth(probe, quarter, depthAt(back_bytes + side * side * 2, 8, 8), "a depth kept through a view of the second layer kept there");
+        checkDepth(probe, quarter, depthAt(back_bytes + side * side * 2, 40, 56), "in another tile as well");
+        checkDepth(probe, 0xFFFF, depthAt(back_bytes, 8, 8), "and the first layer's depth left as it was");
+    }
+
+    // Two layers in one pass, where the device has them: both cleared
+    // red, the first drawn into, and the right half of the second cleared
+    // yellow by CmdClearAttachments. The third is not the framebuffer's.
+    if (most < 2) return;
+    const two = probe.layeredFramebuffer(pass, &.{every}, 2) orelse return probe.check(false, "a framebuffer of two layers");
+    const red_clear = [1]facet.ClearValue{.{ .color = .{ .float32 = .{ 1, 0, 0, 1 } } }};
+    const yellow_attachment = facet.ClearAttachment{ .clear_value = .{ .color = .{ .float32 = .{ 1, 1, 0, 1 } } } };
+    const right_of_second = facet.ClearRect{ .rect = .{ .offset = .{ .x = side / 2 }, .extent = .{ .width = side / 2, .height = side } }, .base_array_layer = 1 };
+    @memset(back_bytes[0 .. 3 * layer_bytes], 0);
+    commands = probe.record() orelse return probe.check(false, "a recording of a pass of two layers");
+    fb.CmdClearColorImage(commands, stack, .transfer_dst_optimal, &blue_value, 1, @ptrCast(&all));
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = two, .render_area = area, .clear_value_count = 1, .clear_values = &red_clear }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, painted);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdClearAttachments(commands, 1, @ptrCast(&yellow_attachment), 1, @ptrCast(&right_of_second));
+    fb.CmdEndRenderPass(commands);
+    fb.CmdCopyImageToBuffer(commands, stack, .general, back, regions.len, &regions);
+    if (!probe.submit()) return probe.check(false, "the pass of two layers submitted");
+    probe.checkEqual(white, layerPixel(back_bytes, 0, 8, 8), "a pass of two layers draws into the first");
+    probe.checkEqual(red, layerPixel(back_bytes, 0, 48, 40), "and clears it");
+    probe.checkEqual(red, layerPixel(back_bytes, 1, 8, 8), "and clears the second, which it does not draw into");
+    probe.checkEqual(yellow, layerPixel(back_bytes, 1, 48, 40), "a rectangle of the second cleared where CmdClearAttachments names it");
+    probe.checkEqual(red, layerPixel(back_bytes, 0, 56, 8), "and the first layer left red there");
+    probe.checkEqual(blue, layerPixel(back_bytes, 2, 48, 40), "a layer past the framebuffer's left alone");
+}
+
+/// 1.129: events, set and reset by the queue's work, then waited for. The
+/// wait is for one the host sets only once the work is submitted, which
+/// Vulkan 1.0 had a program do: the queue's task holds the work after it
+/// until then, which the host tests cannot show, the work being played
+/// there by the task that submits it.
+fn eventChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    var events: [2]?*facet.Event = @splat(null);
+    // Given back once the queue is idle, which `give` waits for.
+    defer for (events) |event| fb.DestroyEvent(device, event);
+    defer probe.give();
+    for (&events) |*event| {
+        if (fb.CreateEvent(device, &.{}, event) != .success) return probe.check(false, "two events");
+    }
+    const by_queue, const by_host = .{ events[0].?, events[1].? };
+    probe.check(fb.GetEventStatus(device, by_queue) == .event_reset, "an event is made reset");
+    const target, const bytes = probe.buffer(16, facet.BUFFER_USAGE_TRANSFER_DST) orelse return probe.check(false, "a buffer to fill");
+    @memset(bytes[0..16], 0);
+
+    _ = fb.SetEvent(device, by_host);
+    var commands = probe.record() orelse return probe.check(false, "the events set and reset");
+    fb.CmdFillBuffer(commands, target, 0, 4, 0x1111_1111);
+    fb.CmdSetEvent(commands, by_queue, facet.PIPELINE_STAGE_TRANSFER);
+    fb.CmdResetEvent(commands, by_host, facet.PIPELINE_STAGE_TRANSFER);
+    if (!probe.submit()) return probe.check(false, "the events set and reset");
+    probe.check(fb.GetEventStatus(device, by_queue) == .event_set, "CmdSetEvent sets an event, the work before it done");
+    probe.checkEqual(0x1111_1111, std.mem.readInt(u32, bytes[0..4], .little), "that work done");
+    probe.check(fb.GetEventStatus(device, by_host) == .event_reset, "CmdResetEvent resets one");
+
+    commands = probe.record() orelse return probe.check(false, "a wait for events");
+    const awaited = [2]*facet.Event{ by_queue, by_host };
+    fb.CmdWaitEvents(commands, 2, &awaited, facet.PIPELINE_STAGE_TRANSFER | facet.PIPELINE_STAGE_HOST, facet.PIPELINE_STAGE_TRANSFER, 0, null, 0, null, 0, null);
+    fb.CmdFillBuffer(commands, target, 4, 4, 0x2222_2222);
+    if (fb.EndCommandBuffer(commands) != .success) return probe.check(false, "a wait for events");
+    if (fb.ResetFences(device, 1, @ptrCast(&probe.fence)) != .success) return probe.check(false, "a wait for events");
+    const info = facet.SubmitInfo{ .command_buffer_count = 1, .command_buffers = @ptrCast(&probe.commands) };
+    if (fb.QueueSubmit(probe.queue, 1, @ptrCast(&info), probe.fence) != .success) return probe.check(false, "a wait for events");
+    // From here the host sets the event whatever is found, or the queue
+    // would wait for ever.
+    probe.check(fb.WaitForFences(device, 1, @ptrCast(&probe.fence), true, 50_000_000) == .timeout, "CmdWaitEvents holds the work after it while an event is reset");
+    probe.checkEqual(0, std.mem.readInt(u32, bytes[4..8], .little), "none of that work done");
+    _ = fb.SetEvent(device, by_host);
+    probe.check(fb.WaitForFences(device, 1, @ptrCast(&probe.fence), true, 1_000_000_000) == .success, "SetEvent lets it go on");
+    probe.checkEqual(0x2222_2222, std.mem.readInt(u32, bytes[4..8], .little), "and the work after it is done");
+    probe.check(fb.GetEventStatus(device, by_host) == .event_set and fb.GetEventStatus(device, by_queue) == .event_set, "the events stay set");
+}
+
+/// 1.130: a pipeline cache hands out Vulkan's header, of the device's own
+/// numbers: the cores' and the V3D's differ, which the host tests have
+/// only one of.
+fn cacheChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(probe.physical, &properties);
+    var cache: ?*facet.PipelineCache = null;
+    if (fb.CreatePipelineCache(device, &.{}, &cache) != .success) return probe.check(false, "a pipeline cache");
+    defer fb.DestroyPipelineCache(device, cache);
+    var bytes: [32]u8 = @splat(0);
+    var size: usize = bytes.len;
+    if (fb.GetPipelineCacheData(device, cache.?, &size, &bytes) != .success) return probe.check(false, "a pipeline cache's data");
+    probe.checkEqual(32, size, "a pipeline cache's data is its header of 32 bytes");
+    const header = std.mem.bytesToValue(facet.PipelineCacheHeaderVersionOne, &bytes);
+    probe.checkEqual(properties.vendor_id, header.vendor_id, "of the device's vendor");
+    probe.checkEqual(properties.device_id, header.device_id, "and the device's own number");
+    probe.check(std.mem.eql(u8, &properties.pipeline_cache_uuid, &header.pipeline_cache_uuid), "and its pipeline cache UUID");
+}
+
+// --- 1.131: a view of another format (item 42) -------------------------------
+
+/// Group (x, y) reads texel (x, y) of an R8G8B8A8 image through a view of
+/// R32_UINT, which the image's four bytes are one number to, and writes
+/// what it read into the buffer; the group at (1, 2) then writes a number
+/// of its own over its texel. No group touches another's texel.
+const Viewed = struct {
+    fn words(groups: *const facet.shader.Groups) callconv(.c) void {
+        const image = groups.resources.written(0, 0, 0) orelse return;
+        const out = groups.resources.storage(u32, 0, 1) orelse return;
+        const x = groups.group[0];
+        const y = groups.group[1];
+        out[y * 4 + x] = @truncate(@as(u64, @bitCast(image.wholesAt(0, 0, x, y)[0])));
+        if (x == 1 and y == 2) image.setWholes(0, 0, x, y, .{ 0x88BB_AA99, 0, 0, 1 });
+    }
+
+    const entries = [_]facet.shader.Entry{facet.shader.compute("words", &words)};
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+/// 1.131: an image made IMAGE_CREATE_MUTABLE_FORMAT, which a view of
+/// another format Vulkan has compatible with its own may be made of. The
+/// cores keep such an image's texels as they lie, so that a view of
+/// R32_UINT of an R8G8B8A8 image reads its four bytes as one number and
+/// writes one where the copies find it again; a view of a format of
+/// another size is refused. A device that cannot (the V3D, until the
+/// half of item 42 that is v3dv's) says so in the format query, and then
+/// CreateImage refuses the image the same way.
+fn mutableChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    const mutable = facet.IMAGE_CREATE_MUTABLE_FORMAT;
+    // Written through where the device writes through images at all.
+    const written: u32 = if (probe.can.storage_images) facet.IMAGE_USAGE_STORAGE else 0;
+    const usage = facet.IMAGE_USAGE_SAMPLED | written | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const info = facet.ImageCreateInfo{ .flags = mutable, .format = .r8g8b8a8_unorm, .extent = .{ .width = 4, .height = 4 }, .usage = usage };
+    var shape: facet.ImageFormatProperties = undefined;
+    const said = fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .r8g8b8a8_unorm, .@"2d", .optimal, usage, mutable, &shape);
+    probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .r8g8b8a8_unorm, .@"2d", .optimal, usage, 0, &shape) == .success, "an R8G8B8A8 image to sample, write through where the device can, and copy");
+    if (said != .success) {
+        probe.check(said == .error_format_not_supported, "views of another format of it refused, as the format query says");
+        var none: ?*facet.Image = null;
+        probe.check(fb.CreateImage(device, &info, &none) == .error_validation_failed and none == null, "and CreateImage refuses the image, which the query declined");
+        return;
+    }
+    probe.check(true, "views of another format of it, as the format query says");
+    const made = probe.bound(info, 0) orelse return probe.check(false, "an image made for views of another format");
+    probe.check(true, "an image made for views of another format");
+    const words = probe.viewed(.{ .image = made, .format = .r32_uint }) orelse return probe.check(false, "a view of R32_UINT of it");
+    probe.check(true, "a view of R32_UINT of it");
+    probe.check(probe.viewed(.{ .image = made, .format = .r16_unorm }) == null, "and one of R16_UNORM, of another size, refused");
+    probe.check(probe.viewed(.{ .image = made, .format = .d16_unorm_s8_uint }) == null, "and one of depth and stencil refused");
+
+    // Bytes of the texel's place, copied in as they are.
+    const texels, const texel_bytes = probe.buffer(64, facet.BUFFER_USAGE_TRANSFER_SRC) orelse return probe.check(false, "a buffer the texels come from");
+    for (0..64) |k| texel_bytes[k] = @intCast(0x10 + k * 3);
+    const whole = facet.BufferImageCopy{ .image_extent = .{ .width = 4, .height = 4 } };
+    var commands = probe.record() orelse return probe.check(false, "a recording");
+    fb.CmdCopyBufferToImage(commands, texels, made, .general, 1, @ptrCast(&whole));
+    if (!probe.submit()) return probe.check(false, "the copy in submitted");
+
+    if (!probe.can.storage_images) return;
+    const bindings = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    if (fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout) != .success) return probe.check(false, "a set layout of a storage image");
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Viewed.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    if (fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool) != .success) return probe.check(false, "a descriptor pool");
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets) != .success)
+        return probe.check(false, "a descriptor set");
+    const read, const read_bytes = probe.buffer(64, facet.BUFFER_USAGE_STORAGE_BUFFER) orelse return probe.check(false, "a buffer the function writes");
+    @memset(read_bytes[0..64], 0);
+    const image_info = facet.DescriptorImageInfo{ .image_view = words };
+    const buffer_info = facet.DescriptorBufferInfo{ .buffer = read, .range = facet.WHOLE_SIZE };
+    const writes = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&image_info) },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&buffer_info) },
+    };
+    fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
+    const pipeline_info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "words" }, .layout = layout.? };
+    var pipeline: ?*facet.Pipeline = null;
+    if (fb.CreateComputePipelines(device, null, 1, @ptrCast(&pipeline_info), @ptrCast(&pipeline)) != .success) return probe.check(false, "the compute pipeline");
+    _ = Probe.keep(&probe.pipelines, pipeline);
+
+    commands = probe.record() orelse return probe.check(false, "a second recording");
+    fb.CmdBindPipeline(commands, .compute, pipeline.?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 4, 4, 1);
+    if (!probe.submit()) return probe.check(false, "the dispatch submitted");
+    // Each texel's four bytes, the first the lowest: R32_UINT's number.
+    var as_words = true;
+    for (0..16) |k| as_words = as_words and std.mem.readInt(u32, read_bytes[k * 4 ..][0..4], .little) == std.mem.readInt(u32, texel_bytes[k * 4 ..][0..4], .little);
+    probe.check(as_words, "the view of R32_UINT reads each texel's four bytes as one number");
+
+    const back, const back_bytes = probe.buffer(64, facet.BUFFER_USAGE_TRANSFER_DST) orelse return probe.check(false, "a buffer to read the image into");
+    @memset(back_bytes[0..64], 0);
+    commands = probe.record() orelse return probe.check(false, "a third recording");
+    fb.CmdCopyImageToBuffer(commands, made, .general, back, 1, @ptrCast(&whole));
+    if (!probe.submit()) return probe.check(false, "the copy out submitted");
+    probe.checkEqual(0x88BB_AA99, std.mem.readInt(u32, back_bytes[36..40], .little), "and the number it writes is the four bytes the copy finds, the lowest first");
+    var others = true;
+    for (0..64) |k| others = others and (k / 4 == 9 or back_bytes[k] == texel_bytes[k]);
+    probe.check(others, "beside the bytes copied in, where they lie");
+}
+
+/// A clear of one level of a texture of levels, and of a 3D texture's
+/// level, read back whole (since 1.141). Until then the V3D's clear wrote
+/// a level where the cores keep it, and its level 0 lies last; and on
+/// every device a clear of a 3D image's one array layer, which is what
+/// Vulkan's range names, cleared its first slice alone.
+fn levelClearChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    defer probe.give();
+    const across = 16;
+    const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
+    const flat = probe.bound(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = across, .height = across }, .mip_levels = 2, .usage = usage }, 0) orelse
+        return probe.check(false, "a texture of two levels to clear");
+    const deep = probe.bound(.{ .format = .b8g8r8a8_unorm, .image_type = .@"3d", .extent = .{ .width = across, .height = across, .depth = 4 }, .mip_levels = 2, .usage = usage }, 0) orelse
+        return probe.check(false, "a 3D texture of four slices and two levels to clear");
+    // Read back in this order: the flat one's levels, then the 3D one's
+    // four slices of level 0 and two of level 1.
+    const big = across * across * 4;
+    const small = big / 4;
+    const total = big + small + 4 * big + 2 * small;
+    const back, const back_bytes = probe.buffer(total, facet.BUFFER_USAGE_TRANSFER_DST) orelse
+        return probe.check(false, "a buffer the levels are read back into");
+    @memset(back_bytes[0..total], 0);
+    const blue = facet.ClearColorValue{ .float32 = .{ 0, 0, 1, 1 } };
+    const red = facet.ClearColorValue{ .float32 = .{ 1, 0, 0, 1 } };
+    const level_0 = facet.ImageSubresourceRange{ .level_count = 1, .layer_count = 1 };
+    const level_1 = facet.ImageSubresourceRange{ .base_mip_level = 1, .level_count = 1, .layer_count = 1 };
+    const outs = [4]facet.BufferImageCopy{
+        .{ .image_extent = .{ .width = across, .height = across } },
+        .{ .buffer_offset = big, .image_subresource = .{ .mip_level = 1 }, .image_extent = .{ .width = across / 2, .height = across / 2 } },
+        .{ .buffer_offset = big + small, .image_extent = .{ .width = across, .height = across, .depth = 4 } },
+        .{ .buffer_offset = 5 * big + small, .image_subresource = .{ .mip_level = 1 }, .image_extent = .{ .width = across / 2, .height = across / 2, .depth = 2 } },
+    };
+    const commands = probe.record() orelse return probe.check(false, "a recording of the clears");
+    for ([2]*facet.Image{ flat, deep }) |image| {
+        fb.CmdClearColorImage(commands, image, .transfer_dst_optimal, &blue, 1, @ptrCast(&level_0));
+        fb.CmdClearColorImage(commands, image, .transfer_dst_optimal, &red, 1, @ptrCast(&level_1));
+    }
+    fb.CmdCopyImageToBuffer(commands, flat, .general, back, 2, &outs);
+    fb.CmdCopyImageToBuffer(commands, deep, .general, back, 2, outs[2..]);
+    if (!probe.submit()) return probe.check(false, "the clears submitted");
+    const Part = struct { from: u32, bytes: u32, want: u32, says: [*:0]const u8 };
+    for ([_]Part{
+        .{ .from = 0, .bytes = big, .want = 0xFF00_00FF, .says = "a clear of level 0 of a texture of levels writes all of it" },
+        .{ .from = big, .bytes = small, .want = 0xFFFF_0000, .says = "and a clear of level 1 all of that, and nothing of level 0" },
+        .{ .from = big + small, .bytes = 4 * big, .want = 0xFF00_00FF, .says = "a clear of a 3D texture's level 0 writes each of its four slices" },
+        .{ .from = 5 * big + small, .bytes = 2 * small, .want = 0xFFFF_0000, .says = "and of its level 1 both of that level's two" },
+    }) |part| {
+        // The first texel that is not the colour, or the last one.
+        var at = part.from;
+        while (at + 4 < part.from + part.bytes and std.mem.readInt(u32, back_bytes[at..][0..4], .little) == part.want) at += 4;
+        probe.checkEqual(part.want, std.mem.readInt(u32, back_bytes[at..][0..4], .little), part.says);
+    }
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -5860,6 +6583,11 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     cutChecks(&probe);
     togetherChecks(&probe);
     sharedDepthChecks(&probe);
+    layerChecks(&probe);
+    eventChecks(&probe);
+    cacheChecks(&probe);
+    mutableChecks(&probe);
+    levelClearChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

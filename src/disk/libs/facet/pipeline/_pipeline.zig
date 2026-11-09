@@ -3,9 +3,11 @@
 //! state, settled as it is made.
 //!
 //! What facet.library's pipelines draw:
-//! - triangles - lists, strips and fans - filled, one sample a pixel;
+//! - points, lines and triangles - lists, strips and fans - the triangles
+//!   filled or as their edges or corners, one sample a pixel or four where
+//!   the device draws them;
 //! - patches tessellated on the cores, into triangles or lines;
-//! - the vertex function's inputs read from up to four vertex buffers,
+//! - the vertex function's inputs read from up to sixteen vertex buffers,
 //!   an attribute a location, of floats or of bytes 0 to 1;
 //! - culled by their facing, front or back or both;
 //! - a depth test of any compare, the depth written or not, the triangles'
@@ -16,8 +18,10 @@
 //!   attachment its own way, and no logic op;
 //! - one viewport and one scissor, given here or set by commands.
 //!
-//! Anything else is refused as the pipeline is made
-//! (`error_feature_not_present`), rather than drawn otherwise than asked.
+//! Anything else is refused as the pipeline is made, rather than drawn
+//! otherwise than asked: `error_validation_failed` where Vulkan does not
+//! allow it on the device, `error_feature_not_present` where it does
+//! (since 1.133; CreateGraphicsPipelines' RESULT says which).
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -31,6 +35,13 @@ pub const PipelineLayout = struct {
     device: *Device,
     set_count: u32,
     push_size: u32,
+};
+
+/// A pipeline cache (since 1.130), which holds no pipeline, as lavapipe's
+/// holds none (lvp_pipeline_cache.c): what it hands out is Vulkan's header
+/// alone.
+pub const Cache = struct {
+    device: *Device,
 };
 
 /// Where a vertex buffer binding's data goes.
@@ -132,6 +143,21 @@ pub const Pipeline = struct {
     fragment: shader.FragmentFn,
     /// The fragment function's fixed form, if it has one.
     fixed: shader.Fixed,
+    /// Its fragment shader as a device with a processor of its own wants
+    /// it: the SPIR-V the program shipped beside the function (a
+    /// `shader.Module`), or nothing where it shipped none. A driver that
+    /// compiles reads it in `make_pipeline` and refuses what it cannot
+    /// make code of (`error_feature_not_present`); one that does not, and
+    /// one that finds nothing here, calls `fragment` as it always has.
+    /// The words are the program's own memory and live as long as it
+    /// keeps them there (since 1.75).
+    fragment_words: []const u32 = &.{},
+    /// Whether the fragment shader may drop a pixel, which makes the depth
+    /// wait for it: its fixed form says so, or the SPIR-V shipped beside
+    /// it holds an `OpKill`, as llvmpipe goes by the shader's
+    /// `info.fs.uses_discard` (since 1.139). A function shipped with no
+    /// words and no form that drops is taken at its word that it does not.
+    discards: bool = false,
     varyings: u32,
     /// The locations the vertex function's inputs take: the highest an
     /// attribute reads into, and one.
@@ -149,8 +175,54 @@ pub const Pipeline = struct {
     /// An index of all ones ends a strip or a fan, and the next starts.
     restart: bool,
     /// Its draws draw nothing: the rasterizer is switched off, or every
-    /// triangle is culled.
+    /// triangle is culled - a polygon's face, which a line or a point has
+    /// none of (since 1.92). Both of those discard the primitive *before*
+    /// rasterisation, so a draw of this pipeline still owes the counters
+    /// of input assembly and the vertex stage - which is what separates it
+    /// from `sample_mask` below. See driver/cpu/_draw.zig.
     draws_nothing: bool,
+    /// Of those, the ones whose every face is culled
+    /// (`CULL_MODE_FRONT_AND_BACK`) and whose rasterizer is on: their
+    /// primitives reach clipping, are counted going in, and stop at setup.
+    /// That is llvmpipe's `triangle_noop`, which `lp_setup_choose_triangle`
+    /// picks for that cull after gallium's draw module has counted the
+    /// primitives into its clip stage. (Since 1.92.)
+    culls_everything: bool,
+    /// `PipelineMultisampleStateCreateInfo.sample_mask`'s first word, or
+    /// all ones where the program passed none - which Vulkan says to read
+    /// as every sample covered. With one sample a pixel only bit 0 is
+    /// read: Vulkan reads ceil(rasterization_samples / 32) words and
+    /// ignores the bits above the sample count. Clearing it covers no
+    /// sample, so nothing is shaded - but the mask is applied *after*
+    /// rasterisation, so such a draw owes the clipping counters as well,
+    /// and this is therefore not `draws_nothing`. (Since 1.89.)
+    sample_mask: u32,
+    /// `PipelineMultisampleStateCreateInfo.rasterization_samples`, which
+    /// Vulkan has be its subpass's count: 1, or 4 on a device that draws
+    /// them (since 1.100).
+    samples: u32 = 1,
+    /// `alpha_to_coverage_enable`: colour 0's alpha cuts the samples a
+    /// pixel covers, which every implementation of Vulkan 1.0 does - it
+    /// has no feature to ask for. The cores dither it as lavapipe does
+    /// (driver/cpu/raster/batched.zig). The V3D takes it at four samples
+    /// through a compiled program's FTOC since 1.149, and draws a pipeline
+    /// of one without it, as v3dv does; a fixed form of four that asks
+    /// for it it refuses (docs/facet-vulkan10.md item 61, V6). (Since
+    /// 1.108.)
+    alpha_to_coverage: bool = false,
+    /// Its subpass draws no colour: the one part of a subpass of no colour
+    /// attachment, or of none but unused ones. A driver that compiles
+    /// keys its program on it, as v3dv keys cbufs on the subpass's colour
+    /// formats (v3dv_pipeline.c:2137-2142); the V3D's draws in such a
+    /// subpass with no colour (since 1.150, docs/facet-vulkan10.md item
+    /// 43).
+    colorless: bool = false,
+    /// The stages name a fragment one. Where they do not, `fragment` is
+    /// the function of no instructions (since 1.115), and a driver that
+    /// compiles draws with a program of no colour of its own, as v3dv
+    /// draws with its noop fragment shader (v3dv_pipeline.c:2616-2645;
+    /// the V3D since 1.150, docs/facet-vulkan10.md item 85).
+    fragment_stage: bool = true,
     cull: Cull,
     front: facet.FrontFace,
     depth_test: ?facet.CompareOp,
@@ -162,7 +234,7 @@ pub const Pipeline = struct {
     bias: ?Bias,
     /// Whether what lies past the near plane is drawn all the same, its
     /// depth held inside the viewport's range a pixel at a time
-    /// (`depth_clamp_enable`, `PhysicalDeviceFeatures.depth_clamp`).
+    /// (`depth_clamp_enable`, `Capabilities.depth_clamp`).
     clamped: bool = false,
     /// Whether a pixel is drawn only where the depth already there lies
     /// between two bounds (`depth_bounds_test_enable`), and which: null
@@ -179,7 +251,7 @@ pub const Pipeline = struct {
     prepass: bool,
     /// What each colour attachment of the subpass is mixed with what is
     /// there by: one for each, `mixingAt` giving the one being drawn
-    /// (`PhysicalDeviceFeatures.independent_blend`, since 1.33). All hold
+    /// (`Capabilities.independent_blend`, since 1.33). All hold
     /// the default where the create info gave no attachment state.
     mixings: [_render.most_colors]Mixing,
     /// The colour attachments the fragment function writes in the one

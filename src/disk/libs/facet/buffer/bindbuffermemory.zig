@@ -24,10 +24,12 @@ const _memory = @import("../memory/_memory.zig");
 /// - `offset` - where in it the buffer starts.
 ///
 /// RESULT:
-/// `success`; `error_out_of_device_memory` when the buffer does not fit
+/// `success`; `error_validation_failed` when the buffer does not fit
 /// there - past the block's end, the offset not aligned as
 /// GetBufferMemoryRequirements says, or a type the buffer may not be in -
-/// or it is bound already.
+/// or it is bound already (VUID-vkBindBufferMemory-memoryOffset-01031,
+/// -None-10741, -None-10739, -memory-01035, -buffer-07459;
+/// `error_out_of_device_memory` until 1.134).
 ///
 /// BEHAVIOR:
 /// The buffer's bytes are the block's from `offset` on, for as long as
@@ -62,7 +64,10 @@ pub fn BindBufferMemory(base: *FacetBase, device: *facet.Device, buffer: *facet.
     _ = device;
     const made = _objects.of(_buffer.Buffer, buffer);
     const block = _objects.of(_memory.DeviceMemory, memory);
-    if (made.memory != null or !_memory.suits(block, offset, _buffer.requirements(made))) return .error_out_of_device_memory;
+    // Each of these breaks one of Vulkan's rules: no memory has run out
+    // (VUID-vkBindBufferMemory-buffer-07459, -memoryOffset-01031,
+    // -memory-01035, -None-10739, -None-10741; since 1.134).
+    if (made.memory != null or !_memory.suits(block, offset, _buffer.requirements(made))) return .error_validation_failed;
     made.memory = block;
     made.offset = offset;
     made.data = _memory.at(block, offset);

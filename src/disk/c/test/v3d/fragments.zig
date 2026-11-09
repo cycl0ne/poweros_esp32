@@ -218,6 +218,11 @@ pub const Scene = struct {
             .coordinate = scene.program(pass),
             .coordinate_uniforms = uniforms,
             .varyings = varyings,
+            .fragment_threads = how.fragment.threads,
+            .center_w = how.fragment.center_w,
+            .lock_scoreboard_on_first_thrsw = how.fragment.lock_scoreboard_on_first_thrsw,
+            .writes_z = how.fragment.writes_z,
+            .disable_ez = how.fragment.disable_ez,
         });
         const vertex_stride: u32 = @sizeOf(Vertex);
         cl.attribute(&list, vertices, 4, 4, 0, vertex_stride);
@@ -225,7 +230,7 @@ pub const Scene = struct {
         if (varyings > 0) cl.attribute(&list, vertices + 32, @min(varyings, 4), 0, @min(varyings, 4), vertex_stride);
         if (varyings > 4) cl.attribute(&list, vertices + 48, varyings - 4, 0, varyings - 4, vertex_stride);
 
-        v3d.frame.writeDrawState(&scene.bin, &.{
+        v3d.frame.writeDrawState(&scene.bin, &scene.frame, &.{
             .clip = how.clip,
             .cfg = how.cfg,
             .mixing = how.mixing,
@@ -473,11 +478,11 @@ const Picture = struct {
 };
 
 fn makePicture(scene: *Scene, across: u32, down: u32, levels: u32) ?Picture {
-    const layout = tiling.layoutOf(4, across, down, levels);
+    const layout = tiling.layoutOf(4, across, down, 1, levels, false);
     const block = scene.space.alloc(layout.bytes) orelse return null;
     if (!scene.space.flush()) return null;
     var picture = Picture{ .block = block, .layout = layout };
-    tiling.writeTextureState(&picture.state, &layout, .rgba, block.address, 0, levels - 1, 1, 0);
+    tiling.writeTextureState(&picture.state, &layout, .rgba, tiling.own_picks, block.address, 0, levels - 1, 1, 0);
     return picture;
 }
 
@@ -487,13 +492,19 @@ fn placeTexel(level: u32, x: u32, y: u32) u32 {
 }
 
 /// The two uniforms of a program that samples: its state and a sampler's,
-/// placed in the frame.
+/// placed in the frame. `filter` both ways, `wrap` on every axis, the rest
+/// as a fixed form has it.
 fn sampling(scene: *Scene, picture: *const Picture, filter: tiling.Filter, wrap: tiling.Wrap) [2]u32 {
+    return samplingBy(scene, picture, .{ .mag = filter, .min = filter, .wrap = @splat(wrap) });
+}
+
+/// The same, through `state`.
+fn samplingBy(scene: *Scene, picture: *const Picture, state: tiling.SamplerState) [2]u32 {
     const texture_cpu, const texture_at = scene.place(tiling.texture_state_bytes, tiling.texture_state_alignment);
     @memcpy(texture_cpu[0..tiling.texture_state_bytes], &picture.state);
     const sampler_cpu, const sampler_at = scene.place(tiling.sampler_state_bytes, tiling.sampler_state_alignment);
-    tiling.writeSamplerState(sampler_cpu[0..tiling.sampler_state_bytes], filter, wrap);
-    return .{ tiling.parameter0(texture_at), tiling.parameter1(sampler_at) };
+    tiling.writeSamplerState(sampler_cpu[0..tiling.sampler_state_bytes], state);
+    return .{ tiling.parameter0(texture_at), tiling.parameter1(sampler_at, false) };
 }
 
 const Across = struct {
@@ -581,15 +592,28 @@ fn sizeLevels(across: u32, down: u32) u32 {
     return levels;
 }
 
-fn wrapped(at_texel: i32, size: i32, wrap: tiling.Wrap) u32 {
+/// The texel `at_texel` reads, as Vulkan's address modes have it (the
+/// spec's "Wrapping Operation"); null for the border.
+fn wrapped(at_texel: i32, size: i32, wrap: tiling.Wrap) ?u32 {
     return @intCast(switch (wrap) {
         .repeat => @mod(at_texel, size),
         .clamp => @min(@max(at_texel, 0), size - 1),
+        // Every other copy turned round: `(size - 1) - mirror((i mod
+        // 2size) - size)`, which is `i mod 2size` folded back at size.
+        .mirror => mirror: {
+            const folded = @mod(at_texel, 2 * size);
+            break :mirror if (folded < size) folded else 2 * size - 1 - folded;
+        },
+        // `clamp(mirror(i), 0, size - 1)`, mirror(i) being i, or -(1 + i)
+        // below 0.
+        .mirror_once => @min(if (at_texel >= 0) at_texel else -(1 + at_texel), size - 1),
+        .border => if (at_texel < 0 or at_texel >= size) return null else at_texel,
     });
 }
 
 /// A small texture past its edges, and between its texels: each filter and
-/// each wrap against the sum done here.
+/// each of the TMU's five wraps against the sum done here, the border
+/// opaque white. Until 1.140 the wraps were repeat and clamp alone.
 pub fn filterTest(scene: *Scene) i32 {
     const side: u32 = 16;
     const scale: u32 = 4;
@@ -600,11 +624,11 @@ pub fn filterTest(scene: *Scene) i32 {
     var result: i32 = dos.RETURN_OK;
     // From -1 to 2: the texture three times across, at 4 pixels a texel.
     const drawn = 3 * side * scale;
-    for ([_]tiling.Filter{ .nearest, .bilinear }) |filter| for ([_]tiling.Wrap{ .repeat, .clamp }) |wrap| {
+    for ([_]tiling.Filter{ .nearest, .bilinear }) |filter| for ([_]tiling.Wrap{ .repeat, .clamp, .mirror, .mirror_once, .border }) |wrap| {
         var corners: [6]Vertex = undefined;
         rectangle(&corners, 0, 0, @floatFromInt(drawn), @floatFromInt(drawn), 0.5, Across{ .from = -1, .to = 2 });
         scene.begin(.{});
-        const uniforms = sampling(scene, &picture, filter, wrap);
+        const uniforms = samplingBy(scene, &picture, .{ .mag = filter, .min = filter, .wrap = @splat(wrap), .border = .opaque_white });
         scene.draw(.{ .fragment = qpu.texture_fragment, .uniforms = &uniforms, .vertices = &corners });
         if (!scene.finish()) return dos.RETURN_FAIL;
         var tally = Tally{};
@@ -618,7 +642,7 @@ pub fn filterTest(scene: *Scene) i32 {
         };
         _ = Printf(scene.dl, "%s, %s: %ld wrong of %ld, %ld at worst\n", .{
             @as([*:0]const u8, if (filter == .nearest) "nearest" else "bilinear"),
-            @as([*:0]const u8, if (wrap == .repeat) "repeat" else "clamp"),
+            @as([*:0]const u8, @tagName(wrap)),
             tally.wrong,
             tally.checked,
             @as(u64, tally.worst),
@@ -635,21 +659,34 @@ pub fn filterTest(scene: *Scene) i32 {
 fn filtered(filter: tiling.Filter, wrap: tiling.Wrap, side: u32, u: f32, v: f32) u32 {
     const size: i32 = @intCast(side);
     if (filter == .nearest) {
-        const x = wrapped(@intFromFloat(@floor(u)), size, wrap);
-        const y = wrapped(@intFromFloat(@floor(v)), size, wrap);
+        const x = wrapped(@intFromFloat(@floor(u)), size, wrap) orelse return 0xFFFF_FFFF;
+        const y = wrapped(@intFromFloat(@floor(v)), size, wrap) orelse return 0xFFFF_FFFF;
         return 0xFF00_0000 | x * 16 | (y * 16) << 8;
     }
     const left = @floor(u - 0.5);
     const top = @floor(v - 0.5);
     const across = u - 0.5 - left;
     const down = v - 0.5 - top;
-    const x0: f32 = @floatFromInt(wrapped(@as(i32, @intFromFloat(left)), size, wrap));
-    const x1: f32 = @floatFromInt(wrapped(@as(i32, @intFromFloat(left)) + 1, size, wrap));
-    const y0: f32 = @floatFromInt(wrapped(@as(i32, @intFromFloat(top)), size, wrap));
-    const y1: f32 = @floatFromInt(wrapped(@as(i32, @intFromFloat(top)) + 1, size, wrap));
-    const red = (x0 * (1 - across) + x1 * across) * 16 / 255;
-    const green = (y0 * (1 - down) + y1 * down) * 16 / 255;
-    return rgba(red, green, 0, 1);
+    const x0 = wrapped(@as(i32, @intFromFloat(left)), size, wrap);
+    const x1 = wrapped(@as(i32, @intFromFloat(left)) + 1, size, wrap);
+    const y0 = wrapped(@as(i32, @intFromFloat(top)), size, wrap);
+    const y1 = wrapped(@as(i32, @intFromFloat(top)) + 1, size, wrap);
+    // The four texels, a border one white, mixed channel by channel.
+    const corners = [4][4]f32{ texelOf(x0, y0), texelOf(x1, y0), texelOf(x0, y1), texelOf(x1, y1) };
+    const weights = [4]f32{ (1 - across) * (1 - down), across * (1 - down), (1 - across) * down, across * down };
+    var mixed: [4]f32 = @splat(0);
+    for (corners, weights) |corner, weight| {
+        for (&mixed, corner) |*into, channel| into.* += channel * weight;
+    }
+    return rgba(mixed[0], mixed[1], mixed[2], mixed[3]);
+}
+
+/// A texel of `filterTest`'s texture as four channels, 0 to 1: red its
+/// column and green its row, or opaque white for the border.
+fn texelOf(x: ?u32, y: ?u32) [4]f32 {
+    const column = x orelse return @splat(1);
+    const row = y orelse return @splat(1);
+    return .{ @as(f32, @floatFromInt(column * 16)) / 255, @as(f32, @floatFromInt(row * 16)) / 255, 0, 1 };
 }
 
 /// A texture times the colour the vertices carry.
@@ -801,4 +838,379 @@ pub fn insideTest(scene: *Scene) i32 {
         tally.check(x, y, scene.pixel(x, y), if (in) a_pixel else backdrop, 0);
     };
     return tally.report(scene.dl, "inside", scene.took_us);
+}
+
+// --- what the back end compiles ----------------------------------------------
+
+const compile = v3d.compile;
+const ir = sdk.facet.ir;
+
+/// The colour the vertices carry, as a graph: the module facet's own
+/// emitter writes for it compiles to `qpu.color_fragment` word for word
+/// (the host test says so), so this draw is the whole path from a
+/// program's SPIR-V to a picture.
+const Interpolated = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.input(0, .f32x4));
+    }
+});
+
+/// A colour of its own, which the draw hands over as four uniforms: the
+/// first generated program whose words no hand-written one matches.
+const OwnColour = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.constant(.{ 0.25, 0.5, 0.75, 1 }));
+    }
+});
+
+/// The colour the vertices carry, dimmed by a fifth varying they carry
+/// beside it: five varyings, a vector times a scalar, and a scalar that
+/// every part of the product reads and none may write over.
+const Dimmed = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.scale(b.input(0, .f32x4), b.input(1, .f32x1)));
+    }
+});
+
+/// A texture sampled at the coordinate the vertices carry, drawn as it
+/// comes: `qpu.texture_code`'s shape, and the first generated program that
+/// writes the TMU and reads it back. The TMU hands over two words of two
+/// half-floats each, which is the form the tile buffer takes, so nothing
+/// here touches the texel.
+const Textured = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.sample(0, 0, b.input(0, .f32x2)));
+    }
+});
+
+/// That texel times the colour the vertices carry beside it, which is
+/// `qpu.texture_color_fragment` word for word: the multiply is where a
+/// half of a word can be read as a float, so each product reads one.
+const Modulated = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.mul(b.sample(0, 0, b.input(0, .f32x2)), b.input(1, .f32x4)));
+    }
+});
+
+/// A module compiled and made ready to draw with. The code is in
+/// `work.code` and lives until the next `compile`, which is long enough:
+/// `Scene.draw` copies it into the V3D's objects as it records the draw.
+///
+/// `tmu` is what `sampling` answered for the draw, for a program that
+/// samples: the back end says where in the stream the TMU's two
+/// configuration parameters go, and only a draw with a texture bound
+/// knows what they are. A program that wants them where the caller has
+/// none is not drawn with a stream it cannot read - it is refused here,
+/// as a program the back end would not compile is.
+fn compiled(back: Back, work: *compile.Work, words: []const u32, stream: *[compile.most_uniforms]u32, tmu: ?[2]u32) ?struct { qpu.Fragment, []const u32 } {
+    const code = switch (back) {
+        .plan => compile.compile(work, words),
+        .mesa => |sys| compile.compileThroughMesa(work, words, v3d.heap.of(sys), .{}),
+    } catch return null;
+    for (code.stream(), 0..) |word, k| stream[k] = switch (word) {
+        .float => |each| @bitCast(each),
+        // The texture's state, as the first `wrtmuc` takes it, and the
+        // sampler's as the second does: by the word's tag and not by
+        // where it sits, because the order is the back end's to pick.
+        .texture => (tmu orelse return null)[0],
+        .sampler => (tmu orelse return null)[1],
+        // No scene here pushes constants or binds a uniform buffer: the
+        // library's draws are where a program that reads them is held to
+        // the cores (FacetBoth).
+        .push, .ubo => return null,
+    };
+    return .{
+        .{
+            .code = code.words,
+            .varyings = code.varyings,
+            .uniforms = code.uniform_count,
+            .threads = code.threads,
+            .center_w = code.center_w,
+            .lock_scoreboard_on_first_thrsw = code.lock_scoreboard_on_first_thrsw,
+            .writes_z = code.writes_z,
+            .disable_ez = code.disable_ez,
+        },
+        stream[0..code.uniform_count],
+    };
+}
+
+/// Which back end compiles: the plan's, which `compile.compile` is, or the
+/// one ported from Mesa (`compile.compileThroughMesa`), whose working
+/// memory is the task's.
+pub const Back = union(enum) {
+    plan,
+    mesa: *ExecBase,
+
+    /// What a picture is called in the report: the plan's are
+    /// "generated", as they were before there was a second back end.
+    fn named(back: Back, comptime what: []const u8) [*:0]const u8 {
+        return switch (back) {
+            .plan => "generated " ++ what,
+            .mesa => "mesa " ++ what,
+        };
+    }
+};
+
+/// What Mesa's back end made, said before it is run: the host tests pin
+/// its words, and a board that compiled something else says so here
+/// rather than by a renderer that does not finish.
+fn said(scene: *const Scene, back: Back, comptime what: []const u8, fragment: qpu.Fragment, uniforms: []const u32) void {
+    if (back == .plan) return;
+    _ = Printf(scene.dl, "%s: %ld instructions, %ld threads, %ld uniforms, centre W %ld, scoreboard on the first switch %ld\n", .{
+        back.named(what),
+        @as(u64, fragment.code.len),
+        @as(u64, fragment.threads),
+        @as(u64, uniforms.len),
+        @as(u64, @intFromBool(fragment.center_w)),
+        @as(u64, @intFromBool(fragment.lock_scoreboard_on_first_thrsw)),
+    });
+}
+
+/// Where two programs of the same length first differ, or null where they
+/// are the same program word for word.
+fn differingAt(made: []const u64, want: []const u64) ?u32 {
+    for (made, want, 0..) |one, other, which| if (one != other) return @intCast(which);
+    return null;
+}
+
+/// Five fragment programs compiled from their SPIR-V and drawn with, each
+/// picture checked against the arithmetic worked out here. The last two
+/// sample a texture, and what they read the TMU with is the stream the
+/// back end laid out with the draw's two parameters written into it. This
+/// is the first thing the QPUs run that nobody wrote by hand, and it is a
+/// command of its own rather than a pipeline on purpose: a program that
+/// hangs the renderer here costs a reboot, and one that hangs it inside
+/// the library costs the display.
+///
+/// With `back` Mesa's, the same five pictures from the code Mesa's back
+/// end makes of the same words: the host tests pin that code, so what is
+/// held to the programs written by hand here is held to them only for
+/// the plan's, and the pictures are checked the same for both.
+pub fn generatedTest(scene: *Scene, sys: *ExecBase, back: Back) i32 {
+    const memory = sys.AllocVec(@sizeOf(compile.Work), exec.MEMF_CLEAR) orelse {
+        _ = Printf(scene.dl, "No memory for the compiler\n", .{});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.FreeVec(memory);
+    const work: *compile.Work = @ptrCast(@alignCast(memory));
+    var stream: [compile.most_uniforms]u32 = @splat(0);
+    var worst: i32 = dos.RETURN_OK;
+
+    // The interpolated colour, over the same triangle `smoothTest` draws:
+    // three colours mixed as w has them.
+    {
+        const fragment, const uniforms = compiled(back, work, Interpolated.words, &stream, null) orelse {
+            _ = Printf(scene.dl, "%s: the back end would not compile it\n", .{back.named("smooth")});
+            return dos.RETURN_FAIL;
+        };
+        said(scene, back, "smooth", fragment, uniforms);
+        if (back == .plan and fragment.code.len != qpu.color_fragment.code.len) {
+            _ = Printf(scene.dl, "generated smooth: %ld instructions, not the %ld of the one written by hand\n", .{ @as(u64, fragment.code.len), @as(u64, qpu.color_fragment.code.len) });
+            return dos.RETURN_FAIL;
+        }
+        const corners = [3]Vertex{
+            at(0, 0.8, 0.5, 1, &.{ 1, 0, 0, 1 }),
+            at(-0.8, -0.8, 0.5, 2, &.{ 0, 1, 0, 1 }),
+            at(0.8, -0.8, 0.5, 4, &.{ 0, 0, 1, 1 }),
+        };
+        scene.begin(.{});
+        scene.draw(.{ .fragment = fragment, .uniforms = uniforms, .vertices = &corners });
+        if (!scene.finish()) return dos.RETURN_FAIL;
+        var tally = Tally{};
+        for (0..height) |row| for (0..width) |column| {
+            const x: u32 = @intCast(column);
+            const y: u32 = @intCast(row);
+            const each = shares(&corners, x, y) orelse continue;
+            const inside = each[0] > edge_margin and each[1] > edge_margin and each[2] > edge_margin;
+            const outside = each[0] < -edge_margin or each[1] < -edge_margin or each[2] < -edge_margin;
+            if (inside) {
+                tally.check(x, y, scene.pixel(x, y), rgba(@floatCast(each[0]), @floatCast(each[1]), @floatCast(each[2]), 1), 2);
+            } else if (outside) {
+                tally.check(x, y, scene.pixel(x, y), backdrop, 0);
+            }
+        };
+        worst = @max(worst, tally.report(scene.dl, back.named("smooth"), scene.took_us));
+    }
+
+    // A colour of its own: four uniforms read, packed and written out.
+    {
+        const fragment, const uniforms = compiled(back, work, OwnColour.words, &stream, null) orelse {
+            _ = Printf(scene.dl, "%s: the back end would not compile it\n", .{back.named("flat")});
+            return dos.RETURN_FAIL;
+        };
+        said(scene, back, "flat", fragment, uniforms);
+        // Mesa's packs the four into halves as it compiles (opt.zig's
+        // constant ALU), so it reads fewer.
+        if (back == .plan and uniforms.len != 4) {
+            _ = Printf(scene.dl, "generated flat: %ld uniforms, not four\n", .{@as(u64, uniforms.len)});
+            return dos.RETURN_FAIL;
+        }
+        var quad: [6]Vertex = undefined;
+        // In pixels, as `rectangle` wants them: the middle half of the
+        // image, which is -0.5 to 0.5 of it where the check below looks.
+        rectangle(&quad, 320, 180, 960, 540, 0.5, Nothing{});
+        scene.begin(.{});
+        scene.draw(.{ .fragment = fragment, .uniforms = uniforms, .vertices = &quad });
+        if (!scene.finish()) return dos.RETURN_FAIL;
+        const want = rgba(0.25, 0.5, 0.75, 1);
+        var tally = Tally{};
+        for (0..height) |row| for (0..width) |column| {
+            const x: u32 = @intCast(column);
+            const y: u32 = @intCast(row);
+            const across = acrossAt(@as(f32, @floatFromInt(x)) + 0.5);
+            const down = downAt(@as(f32, @floatFromInt(y)) + 0.5);
+            // A margin round the edges, where a pixel is half covered.
+            const inside = across > -0.49 and across < 0.49 and down > -0.49 and down < 0.49;
+            const outside = across < -0.51 or across > 0.51 or down < -0.51 or down > 0.51;
+            if (inside) {
+                tally.check(x, y, scene.pixel(x, y), want, 2);
+            } else if (outside) {
+                tally.check(x, y, scene.pixel(x, y), backdrop, 0);
+            }
+        };
+        worst = @max(worst, tally.report(scene.dl, back.named("flat"), scene.took_us));
+    }
+
+    // A vector times a scalar: five varyings, and the light each corner
+    // carries dimming the colour it carries.
+    {
+        const fragment, const uniforms = compiled(back, work, Dimmed.words, &stream, null) orelse {
+            _ = Printf(scene.dl, "%s: the back end would not compile it\n", .{back.named("scaled")});
+            return dos.RETURN_FAIL;
+        };
+        said(scene, back, "scaled", fragment, uniforms);
+        if (fragment.varyings != 5) {
+            _ = Printf(scene.dl, "%s: %ld varyings, not five\n", .{ back.named("scaled"), @as(u64, fragment.varyings) });
+            return dos.RETURN_FAIL;
+        }
+        const corners = [3]Vertex{
+            at(0, 0.8, 0.5, 1, &.{ 1, 1, 1, 1, 1 }),
+            at(-0.8, -0.8, 0.5, 1, &.{ 1, 1, 1, 1, 0.5 }),
+            at(0.8, -0.8, 0.5, 1, &.{ 1, 1, 1, 1, 0 }),
+        };
+        scene.begin(.{});
+        scene.draw(.{ .fragment = fragment, .uniforms = uniforms, .vertices = &corners });
+        if (!scene.finish()) return dos.RETURN_FAIL;
+        var tally = Tally{};
+        for (0..height) |row| for (0..width) |column| {
+            const x: u32 = @intCast(column);
+            const y: u32 = @intCast(row);
+            const each = shares(&corners, x, y) orelse continue;
+            const inside = each[0] > edge_margin and each[1] > edge_margin and each[2] > edge_margin;
+            const outside = each[0] < -edge_margin or each[1] < -edge_margin or each[2] < -edge_margin;
+            if (inside) {
+                const light: f32 = @floatCast(each[0] * 1 + each[1] * 0.5 + each[2] * 0);
+                tally.check(x, y, scene.pixel(x, y), rgba(light, light, light, light), 2);
+            } else if (outside) {
+                tally.check(x, y, scene.pixel(x, y), backdrop, 0);
+            }
+        };
+        worst = @max(worst, tally.report(scene.dl, back.named("scaled"), scene.took_us));
+    }
+
+    // A texture drawn one texel to a pixel, as `textureTest` draws it with
+    // the program written by hand: every texel says where it was put, so
+    // the picture is the TMU's answer against where it went in. Nothing
+    // multiplies the texel, so it goes to the tile buffer as the two words
+    // it came back as, and the pixels are exact.
+    {
+        const side: u32 = 256;
+        var picture = makePicture(scene, side, side, 1) orelse return dos.RETURN_FAIL;
+        defer scene.space.free(&picture.block);
+        for (0..side) |y| for (0..side) |x| picture.put(0, @intCast(x), @intCast(y), placeTexel(0, @intCast(x), @intCast(y)));
+        scene.space.toGpu(&picture.block);
+        var corners: [6]Vertex = undefined;
+        rectangle(&corners, 0, 0, @floatFromInt(side), @floatFromInt(side), 0.5, Across{});
+        // The frame is begun first: `sampling` places the texture's state
+        // and the sampler's in it, and hands back the two words the stream
+        // wants, which is what `compiled` has been given them for.
+        scene.begin(.{});
+        const tmu = sampling(scene, &picture, .nearest, .repeat);
+        const fragment, const uniforms = compiled(back, work, Textured.words, &stream, tmu) orelse {
+            _ = Printf(scene.dl, "%s: the back end would not compile it\n", .{back.named("textured")});
+            return dos.RETURN_FAIL;
+        };
+        said(scene, back, "textured", fragment, uniforms);
+        // The same instructions as the hand-written program, in the same
+        // places: only the two registers the texel comes back in differ,
+        // which is rf6 and rf7 here because that is what the varyings left
+        // free. The host test holds the words themselves to it.
+        if (back == .plan and fragment.code.len != qpu.texture_fragment.code.len) {
+            _ = Printf(scene.dl, "generated textured: %ld instructions, not the %ld of the one written by hand\n", .{ @as(u64, fragment.code.len), @as(u64, qpu.texture_fragment.code.len) });
+            return dos.RETURN_FAIL;
+        }
+        // Two varyings for the coordinate, and the TMU's two words and
+        // nothing else in the stream.
+        if (fragment.varyings != 2 or uniforms.len != 2) {
+            _ = Printf(scene.dl, "%s: %ld varyings and %ld uniforms, not two and two\n", .{ back.named("textured"), @as(u64, fragment.varyings), @as(u64, uniforms.len) });
+            return dos.RETURN_FAIL;
+        }
+        scene.draw(.{ .fragment = fragment, .uniforms = uniforms, .vertices = &corners });
+        if (!scene.finish()) return dos.RETURN_FAIL;
+        var tally = Tally{};
+        for (0..side) |row| for (0..side) |column| {
+            const x: u32 = @intCast(column);
+            const y: u32 = @intCast(row);
+            tally.check(x, y, scene.pixel(x, y), placeTexel(0, x, y), 0);
+        };
+        worst = @max(worst, tally.report(scene.dl, back.named("textured"), scene.took_us));
+    }
+
+    // That texel times the colour the vertices carry, over the geometry
+    // `modulateTest` draws: the same texture, the same colour in the same
+    // varyings, and the same sum here, because the code is the same code.
+    {
+        const side: u32 = 64;
+        var picture = makePicture(scene, side, side, 1) orelse return dos.RETURN_FAIL;
+        defer scene.space.free(&picture.block);
+        for (0..side) |y| for (0..side) |x| picture.put(0, @intCast(x), @intCast(y), 0xFF80_0000 | @as(u32, @intCast(x * 4)) | @as(u32, @intCast(y * 4)) << 8);
+        scene.space.toGpu(&picture.block);
+        // What `modulateTest` carries: the coordinate, then the colour.
+        const Carry = struct {
+            fn of(_: @This(), x: f32, y: f32) [6]f32 {
+                return .{ x, y, 0.5, 1, 0.25, 0.75 };
+            }
+        };
+        var corners: [6]Vertex = undefined;
+        rectangle(&corners, 0, 0, @floatFromInt(side), @floatFromInt(side), 0.5, Carry{});
+        scene.begin(.{});
+        const tmu = sampling(scene, &picture, .nearest, .repeat);
+        const fragment, const uniforms = compiled(back, work, Modulated.words, &stream, tmu) orelse {
+            _ = Printf(scene.dl, "%s: the back end would not compile it\n", .{back.named("modulated")});
+            return dos.RETURN_FAIL;
+        };
+        said(scene, back, "modulated", fragment, uniforms);
+        // This one is the hand-written program word for word, so it is
+        // held to it before it is run: the host test says the same, and a
+        // board that disagrees with the host is what this is here to say.
+        // A wrong instruction hangs the renderer, so it is said before the
+        // draw and not after it.
+        if (back == .plan and fragment.code.len != qpu.texture_color_fragment.code.len) {
+            _ = Printf(scene.dl, "generated modulated: %ld instructions, not the %ld of the one written by hand\n", .{ @as(u64, fragment.code.len), @as(u64, qpu.texture_color_fragment.code.len) });
+            return dos.RETURN_FAIL;
+        }
+        const differing = if (back == .plan) differingAt(fragment.code, qpu.texture_color_fragment.code) else null;
+        if (differing) |which| {
+            _ = Printf(scene.dl, "generated modulated: instruction %ld is %016lx, not the %016lx of the one written by hand\n", .{ @as(u64, which), fragment.code[which], qpu.texture_color_fragment.code[which] });
+            return dos.RETURN_FAIL;
+        }
+        if (fragment.varyings != 6 or uniforms.len != 2) {
+            _ = Printf(scene.dl, "%s: %ld varyings and %ld uniforms, not six and two\n", .{ back.named("modulated"), @as(u64, fragment.varyings), @as(u64, uniforms.len) });
+            return dos.RETURN_FAIL;
+        }
+        scene.draw(.{ .fragment = fragment, .uniforms = uniforms, .vertices = &corners });
+        if (!scene.finish()) return dos.RETURN_FAIL;
+        var tally = Tally{};
+        for (0..side) |row| for (0..side) |column| {
+            const x: u32 = @intCast(column);
+            const y: u32 = @intCast(row);
+            // The texel's red times 0.5 and its green times 1, its blue
+            // 0x80 times 0.25, and the alpha 1 times 0.75.
+            const want = rgba(@as(f32, @floatFromInt(x * 4)) / 255 * 0.5, @as(f32, @floatFromInt(y * 4)) / 255, 128.0 / 255.0 * 0.25, 0.75);
+            tally.check(x, y, scene.pixel(x, y), want, 2);
+        };
+        worst = @max(worst, tally.report(scene.dl, back.named("modulated"), scene.took_us));
+    }
+
+    return worst;
 }

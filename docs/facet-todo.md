@@ -30,7 +30,9 @@ them.
 
 **Nothing is left here.** Every item this section held has been done, the
 last of them in 1.74: the compressed formats are all of BC1 to BC7, the
-texel buffers read every format Vulkan 1.0 asks of them, textures are
+texel buffers read every format Vulkan 1.0 asks of them (the A8B8G8R8
+words of `_snorm`, `_uint` and `_sint` only since 1.127, which this said
+before it was so), textures are
 kept in their own channels and in whole numbers, and a point is as wide as
 its vertex says.
 
@@ -51,9 +53,18 @@ would pay for them and get nothing back. Most of them are feature bits,
 and `PhysicalDeviceFeatures` is answered by the *device* - so a driver
 written for a chip that has the thing in hardware says yes to it while the
 cores and the V3D go on saying no, and no program that asks politely has
-to change. That is what the feature structure is for. The three that are
-core with no bit of their own - multisampling, events and a pipeline cache
-- would simply start working on a device that brings what they need.
+to change. That is what the feature structure is for. None of what is
+left is core with no bit of its own. Multisampling was, and the one a
+conformant 1.0 device may not refuse; the cores draw four samples a pixel
+since 1.112, and the V3D's is the rest of docs/facet-vulkan10.md item 61.
+Events were too, and are there since 1.129, as lavapipe's queue has them:
+that a wait on one finds it set, in a queue that plays its work in order,
+was the reason they were left out, and is what Vulkan has a program see
+to (docs/facet-vulkan10.md item 9). A pipeline cache was the third, for
+the reason that nothing is compiled. The V3D compiles a pipeline's
+programs since 1.76, so that reason went then; the cache's four calls are
+there since 1.130, holding nothing as lavapipe's holds nothing, and what
+it can hold on the V3D is docs/facet-vulkan10.md item 10.
 
 The next device the library is likely to meet is an **RDNA 3.5** one, and
 most of this table is hardware it has: a blend unit with logic operations
@@ -64,14 +75,11 @@ item in, and what the item costs *here* until then.
 
 | Item | Standing | Why not on this hardware | What brings it in |
 |---|---|---|---|
-| **Multisampling entirely**, and `CmdResolveImage` with it | `1.0 core`: the only row here that a conformant 1.0 device may not refuse - its required limits make 4 colour samples a minimum (`framebufferColorSampleCounts`). Sample shading and alpha-to-one are feature bits beside it | The cores' rasterizer earns its speed by keeping a tile in cache: 64 x 64 pixels, colour 16 KiB + depth 8 KiB + stencil 4 KiB, one buffer a part and four parts, about 114 KiB live. 4x samples makes it ~456 KiB - past the A76's 64 KiB of L1 data cache, which is the whole point of tiling. It also reaches every path in the library: the quad walk writes four pixels under one coverage mask, every load, store and clear gains a sample loop, and resolve attachments appear in a pass | A chip that multisamples and resolves in hardware. Then the work is the library's sample plumbing - `rasterization_samples`, an attachment's `samples`, resolve references, `CmdResolveImage` - with the cores and the V3D still answering no |
 | **Logic operations**, for every attachment | `1.0 feature` (`logicOp`) | They sit where blending sits but are integer operations on the final colour, so they cannot use the blend fast path. Mesa's V3D driver lowers `logicOp` **into the fragment program**, which is the one thing impossible here: the QPUs run no program of ours. So it would be a second blend path on the cores and nothing on the GPU, for the one 1.0 blend feature that predates programmable blending | AMD's blend unit has logic operations in it (which is why RADV answers yes), so an RDNA driver gets them nearly free. The library's side is `logic_op_enable` and `LogicOp`, which are already enumerated and refused in one place |
 | **Dual-source blending** (the `SRC1` factors) | `1.0 feature` (`dualSrcBlend`) | Every fragment form writes one colour: the V3D's tile write is literally "render target 0, four half-floats", and `shader.Fragments` carries one colour a quad. 1.51 paid to let a function write several *attachments*; this is two colours for *one* | A chip whose blend unit takes a second source, with a shader stage that can emit it. The SDK's side is one more output convention beside `shader.fragmentOutputs` |
 | **Geometry shaders** | `1.0 feature` (`geometryShader`) | The binner's input is a vertex array of known count. A geometry stage turns one primitive into many, so its output wants an allocation sized at run time - a stage and a pass between the vertex work and the binning. Tessellation (1.50) already amplifies, with bounded output and no extra pass. There is no `SHADER_STAGE_GEOMETRY` bit at all; both of its statistics read 0 since 1.43, so a program that counts them is not refused | A chip with the stage in hardware. The library's side is the stage bit, the entry kind in `shader.zig`, and a primitive stream the binner takes from somewhere other than the vertex array |
 | **Several viewports and scissors** | `1.0 feature` (`multiViewport`) | A viewport index has to be chosen per primitive in the vertex stage, and the SDK has no slot for one; the tile walk then compares against several rectangles instead of one. One viewport is also what keeps the scissor and the depth bounds a single state | A chip with several viewports (an RDNA one has sixteen), and the use that wants them: one pass into several layers or eyes, which is multiview - Vulkan 1.1, section 5 |
-| **Sparse resources** | `1.0 feature` | Memory here is exec's: a block with a physical address, DMA-reachable, bound whole. Sparse wants page-level mapping for each resource and a page table a driver walks, and the V3D's MMU belongs to the firmware. Nothing on an 8 GB board needs an image larger than its memory - the limits are 8192 square and 256 layers | A chip with its own page tables and a driver allowed to write them. Then `QueueBindSparse`, the two sparse queries, and a memory model that maps pages rather than blocks |
-| **Events**, and a wait on one inside a command buffer | `1.0 core` | With one queue family of one queue, played in order by one task, a `CmdWaitEvents` is either already satisfied or a deadlock: only the host pair - `SetEvent`, `GetEventStatus` - would mean anything, and a fence already says what it would say | A device with more than one queue, where a wait has something to wait for. Eight calls and eight LVOs, and the player honouring them |
-| **A pipeline cache** | `1.0 core` | There is nothing to compile: a pipeline is the create info's state copied into a struct, so the cache would cache a memcpy. The parameter is taken and ignored, which is why no program notices | **The day any device compiles** - the QPU compiler of section 4, or an RDNA back end - a pipeline carries code and a cache earns its name. This one's reason expires on its own |
+| **Sparse resources** | `1.0 feature` | Memory here is exec's: a block with a physical address, DMA-reachable, bound whole. Sparse wants page-level mapping for each resource and a page table a driver walks, and the V3D's MMU belongs to the firmware. Nothing on an 8 GB board needs an image larger than its memory - the limits are 8192 square and 256 layers | A chip with its own page tables and a driver allowed to write them. Then the three sparse calls, there since 1.124 and answering none, binding something, and a memory model that maps pages rather than blocks |
 | **Tessellation point mode** | `1.0 core` | The tessellator's output path builds triangles, or the lines of `isolines`; point mode would be a third path, emitting a point for each tessellated vertex. Points themselves do rasterize - one pixel each - so it is only that path which is missing, for a mode whose use is looking at a tessellation | A chip whose tessellator has the mode, or an hour's work on ours the day somebody wants it. It is the smallest item in this table |
 
 ## 3. Vulkan 1.0, bounded by the hardware or by the shape of the library
@@ -81,7 +89,6 @@ driver, or a different library.
 
 | Item | Standing | What binds it |
 |---|---|---|
-| A query's counter is 32 bits, held at its highest | `1.0 core` (64 bits) | No 64-bit atomic on every machine the library runs on. A timestamp is 64 bits: one task writes it whole |
 | One queue family of one queue, so `SharingMode` is nominal | `1.0 core` | One task plays what is submitted, in the order it was |
 | `fifo` is the one present mode | `above 1.0` (`VK_KHR_swapchain`), part of facet's table | A display shows a buffer from its next frame on, and there is no way to ask it for anything else |
 | A swapchain's images cannot be sampled | as above | They are rows, not blocks of texels. Copied both ways since 1.43 |
@@ -203,8 +210,10 @@ is the hook a compiler would replace.
 5. Compute on the QPUs, if ever: it wants the whole of the above plus the
    dispatch path.
 
-**Size: months, not a revision.** Everything else on this list is smaller
-than step 2 of it.
+**Size: about 13,950 Mesa lines to port and about 11,950 facet lines to
+write** (item 59 of docs/facet-vulkan10.md, 920 of the facet lines being
+items 55 and 60's). Everything else on this list is smaller than step 2 of
+it.
 
 ### Why step 1 is the one that matters
 

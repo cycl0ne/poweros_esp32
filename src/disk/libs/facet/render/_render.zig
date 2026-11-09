@@ -18,8 +18,9 @@
 //! - a colour: CLEAR clears every tile of the render area the first time
 //!   it is drawn into; LOAD, DONT_CARE and any time after that keep what the
 //!   image holds, read into a tile only where something is drawn - a tile
-//!   nothing touches is neither read nor written. What is drawn is stored,
-//!   whatever the store op.
+//!   nothing touches is neither read nor written, unless the colour is
+//!   resolved, which reads and writes every tile of the area (since
+//!   1.109). What is drawn is stored, whatever the store op.
 //! - the depth: CLEAR or DONT_CARE, the tiles' depth cleared as each
 //!   starts; it is never stored, and its store op is DONT_CARE.
 
@@ -55,26 +56,46 @@ pub const Part = struct {
     color_loads: [most_colors]ColorLoad = @splat(.keep),
     /// Whether the depth attachment is read from its image as the part
     /// starts, and written into it as the part ends: a depth that outlives
-    /// the pass (`PhysicalDeviceFeatures.stored_depth`). Both are false for
+    /// the pass (`Capabilities.stored_depth`). Both are false for
     /// a depth that lives in the tiles alone.
     loads_depth: bool = false,
     stores_depth: bool = false,
     /// The same for its stencil, which has its own two ops and its own
     /// plane in the image's rows
-    /// (`PhysicalDeviceFeatures.stored_stencil`).
+    /// (`Capabilities.stored_stencil`).
     loads_stencil: bool = false,
     stores_stencil: bool = false,
     /// Whether the subpass reads the colour attachment this part draws
-    /// into: it named it as an input attachment of its own and the pass
-    /// has a self-dependency by region for it, so the fragment function
-    /// is given the pixels already in the tile
-    /// (`shader.Fragments.keptAt`, since 1.64).
+    /// into: it named it as an input attachment of its own, so the
+    /// fragment function is given the pixels already in the tile
+    /// (`shader.Fragments.keptAt`, since 1.64; with a self-dependency by
+    /// region alone until 1.134).
     reads_target: bool = false,
+    /// The samples a pixel of its attachments holds: 1, or 4 on a device
+    /// that draws them (`Capabilities.multisampling`, since 1.100). Vulkan
+    /// has every attachment of a subpass hold the same count.
+    samples: u32 = 1,
+    /// Each colour attachment's resolve attachment, by its place among the
+    /// pass's, or null for none: what that colour's samples are averaged
+    /// into as the subpass ends (since 1.100).
+    resolves: [most_colors]?u32 = @splat(null),
+    /// The place of its first colour among the subpass's colour
+    /// attachments: the location a fragment function writes it at, and
+    /// the blend state it is mixed by. A part's number in its subpass
+    /// where it is drawn once for each, unless one before it is
+    /// ATTACHMENT_UNUSED and has no part (since 1.118); 0 where they go
+    /// together.
+    output: u32 = 0,
 };
 
 pub const Subpass = struct {
     first_part: u32,
     part_count: u32,
+    /// Its colour attachments as Vulkan counts them, those named
+    /// ATTACHMENT_UNUSED too: what a pipeline's blend state has one entry
+    /// for each of (VUID-VkGraphicsPipelineCreateInfo-renderPass-07609,
+    /// since 1.118).
+    color_count: u32,
     /// Goes on in the tiles of the one before it.
     joined: bool,
 };
@@ -86,6 +107,9 @@ pub const RenderPass = struct {
     part_count: u32 = 0,
     subpasses: [most_subpasses]Subpass = undefined,
     subpass_count: u32 = 0,
+    /// Each attachment's samples, as its description says: what
+    /// CreateFramebuffer holds each view's image to (since 1.100).
+    samples: [most_attachments]u32 = @splat(1),
 };
 
 /// What a part of a subpass draws into: a view for each of its colour
@@ -93,9 +117,17 @@ pub const RenderPass = struct {
 pub const Target = struct {
     width: u32,
     height: u32,
+    /// The framebuffer's layers, of each view from the layer it begins at
+    /// (since 1.91). A pass clears every one of them and draws into the
+    /// first: in Vulkan 1.0 only a geometry shader's `Layer` picks
+    /// another, and no device here has a geometry shader.
+    layers: u32 = 1,
     colors: [most_colors]*ImageView = undefined,
     color_count: u32 = 1,
     depth: ?*ImageView,
+    /// Each colour's resolve attachment, where the part has one
+    /// (`Part.resolves`, since 1.100).
+    resolves: [most_colors]?*ImageView = @splat(null),
 };
 
 pub const Framebuffer = struct {

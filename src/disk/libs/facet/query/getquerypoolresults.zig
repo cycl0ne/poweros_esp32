@@ -35,14 +35,19 @@ const Pool = _query.Pool;
 /// RESULT:
 /// `success` where every query read was available; `not_ready` where one
 /// was not, the others written all the same; `error_device_lost`;
-/// `error_out_of_host_memory` where `size` is too small for what was asked
-/// for, nothing written past what fitted.
+/// `error_validation_failed` where `size` is too small for what was asked
+/// for, nothing written past what fitted
+/// (VUID-vkGetQueryPoolResults-dataSize-00817; `error_out_of_host_memory`
+/// until 1.134).
 ///
 /// BEHAVIOR:
 /// A statistics query writes one value for each statistic it counts, in the
 /// order of their bits; the other kinds write one. Without
 /// `QUERY_RESULT_64` a value is 4 bytes and one that will not fit is held
-/// at 0xFFFFFFFF, where Vulkan leaves it undefined.
+/// at 0xFFFFFFFF, which Vulkan allows, "the value may either wrap or
+/// saturate" (17.2). With it a value is 8 bytes and whole: a query counts
+/// in 64 bits, as llvmpipe's do (since 1.122; a count was held at
+/// 0xFFFFFFFF in 8 bytes as well before).
 ///
 /// `QUERY_RESULT_WAIT` waits for the device's queue to go idle, which is
 /// when everything recorded before has been played and every value is

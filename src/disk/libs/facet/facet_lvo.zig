@@ -26,6 +26,23 @@ const AllocateMemory = @import("memory/allocatememory.zig").AllocateMemory;
 const FreeMemory = @import("memory/freememory.zig").FreeMemory;
 const MapMemory = @import("memory/mapmemory.zig").MapMemory;
 const UnmapMemory = @import("memory/unmapmemory.zig").UnmapMemory;
+const FlushMappedMemoryRanges = @import("memory/flushmappedmemoryranges.zig").FlushMappedMemoryRanges;
+const InvalidateMappedMemoryRanges = @import("memory/invalidatemappedmemoryranges.zig").InvalidateMappedMemoryRanges;
+const GetPhysicalDeviceSparseImageFormatProperties = @import("instance/getphysicaldevicesparseimageformatproperties.zig").GetPhysicalDeviceSparseImageFormatProperties;
+const GetImageSparseMemoryRequirements = @import("image/getimagesparsememoryrequirements.zig").GetImageSparseMemoryRequirements;
+const QueueBindSparse = @import("queue/queuebindsparse.zig").QueueBindSparse;
+const CreateEvent = @import("sync/createevent.zig").CreateEvent;
+const DestroyEvent = @import("sync/destroyevent.zig").DestroyEvent;
+const GetEventStatus = @import("sync/geteventstatus.zig").GetEventStatus;
+const SetEvent = @import("sync/setevent.zig").SetEvent;
+const ResetEvent = @import("sync/resetevent.zig").ResetEvent;
+const CmdSetEvent = @import("command/cmdsetevent.zig").CmdSetEvent;
+const CmdResetEvent = @import("command/cmdresetevent.zig").CmdResetEvent;
+const CmdWaitEvents = @import("command/cmdwaitevents.zig").CmdWaitEvents;
+const CreatePipelineCache = @import("pipeline/createpipelinecache.zig").CreatePipelineCache;
+const DestroyPipelineCache = @import("pipeline/destroypipelinecache.zig").DestroyPipelineCache;
+const GetPipelineCacheData = @import("pipeline/getpipelinecachedata.zig").GetPipelineCacheData;
+const MergePipelineCaches = @import("pipeline/mergepipelinecaches.zig").MergePipelineCaches;
 const GetPhysicalDeviceFormatProperties = @import("instance/getphysicaldeviceformatproperties.zig").GetPhysicalDeviceFormatProperties;
 const CreateBuffer = @import("buffer/createbuffer.zig").CreateBuffer;
 const DestroyBuffer = @import("buffer/destroybuffer.zig").DestroyBuffer;
@@ -111,6 +128,7 @@ const CmdSetStencilWriteMask = @import("command/cmdsetstencilwritemask.zig").Cmd
 const CmdSetStencilReference = @import("command/cmdsetstencilreference.zig").CmdSetStencilReference;
 const CmdCopyImage = @import("command/cmdcopyimage.zig").CmdCopyImage;
 const CmdBlitImage = @import("command/cmdblitimage.zig").CmdBlitImage;
+const CmdResolveImage = @import("command/cmdresolveimage.zig").CmdResolveImage;
 const CmdCopyImageToBuffer = @import("command/cmdcopyimagetobuffer.zig").CmdCopyImageToBuffer;
 const CmdClearAttachments = @import("command/cmdclearattachments.zig").CmdClearAttachments;
 const CmdDrawIndirect = @import("command/cmddrawindirect.zig").CmdDrawIndirect;
@@ -334,6 +352,57 @@ fn lvoMapMemory(base: *FacetBase, device: *facet.Device, memory: *facet.DeviceMe
 fn lvoUnmapMemory(base: *FacetBase, device: *facet.Device, memory: *facet.DeviceMemory) callconv(.c) void {
     return UnmapMemory(base, device, memory);
 }
+fn lvoFlushMappedMemoryRanges(base: *FacetBase, device: *facet.Device, range_count: u32, ranges: [*]const facet.MappedMemoryRange) callconv(.c) facet.Result {
+    return FlushMappedMemoryRanges(base, device, range_count, ranges);
+}
+fn lvoInvalidateMappedMemoryRanges(base: *FacetBase, device: *facet.Device, range_count: u32, ranges: [*]const facet.MappedMemoryRange) callconv(.c) facet.Result {
+    return InvalidateMappedMemoryRanges(base, device, range_count, ranges);
+}
+fn lvoGetPhysicalDeviceSparseImageFormatProperties(base: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, image_type: facet.ImageType, samples: u32, usage: u32, tiling: facet.ImageTiling, count: *u32, properties: ?[*]facet.SparseImageFormatProperties) callconv(.c) void {
+    return GetPhysicalDeviceSparseImageFormatProperties(base, physical, format, image_type, samples, usage, tiling, count, properties);
+}
+fn lvoGetImageSparseMemoryRequirements(base: *FacetBase, device: *facet.Device, image: *facet.Image, count: *u32, requirements: ?[*]facet.SparseImageMemoryRequirements) callconv(.c) void {
+    return GetImageSparseMemoryRequirements(base, device, image, count, requirements);
+}
+fn lvoQueueBindSparse(base: *FacetBase, queue: *facet.Queue, count: u32, binds: ?[*]const facet.BindSparseInfo, fence: ?*facet.Fence) callconv(.c) facet.Result {
+    return QueueBindSparse(base, queue, count, binds, fence);
+}
+fn lvoCreateEvent(base: *FacetBase, device: *facet.Device, info: *const facet.EventCreateInfo, event: *?*facet.Event) callconv(.c) facet.Result {
+    return CreateEvent(base, device, info, event);
+}
+fn lvoDestroyEvent(base: *FacetBase, device: *facet.Device, event: ?*facet.Event) callconv(.c) void {
+    return DestroyEvent(base, device, event);
+}
+fn lvoGetEventStatus(base: *FacetBase, device: *facet.Device, event: *facet.Event) callconv(.c) facet.Result {
+    return GetEventStatus(base, device, event);
+}
+fn lvoSetEvent(base: *FacetBase, device: *facet.Device, event: *facet.Event) callconv(.c) facet.Result {
+    return SetEvent(base, device, event);
+}
+fn lvoResetEvent(base: *FacetBase, device: *facet.Device, event: *facet.Event) callconv(.c) facet.Result {
+    return ResetEvent(base, device, event);
+}
+fn lvoCmdSetEvent(base: *FacetBase, buffer: *facet.CommandBuffer, event: *facet.Event, stage_mask: u32) callconv(.c) void {
+    return CmdSetEvent(base, buffer, event, stage_mask);
+}
+fn lvoCmdResetEvent(base: *FacetBase, buffer: *facet.CommandBuffer, event: *facet.Event, stage_mask: u32) callconv(.c) void {
+    return CmdResetEvent(base, buffer, event, stage_mask);
+}
+fn lvoCmdWaitEvents(base: *FacetBase, buffer: *facet.CommandBuffer, event_count: u32, events: [*]const *facet.Event, src_stage_mask: u32, dst_stage_mask: u32, memory_barrier_count: u32, memory_barriers: ?[*]const facet.MemoryBarrier, buffer_barrier_count: u32, buffer_barriers: ?[*]const facet.BufferMemoryBarrier, image_barrier_count: u32, image_barriers: ?[*]const facet.ImageMemoryBarrier) callconv(.c) void {
+    return CmdWaitEvents(base, buffer, event_count, events, src_stage_mask, dst_stage_mask, memory_barrier_count, memory_barriers, buffer_barrier_count, buffer_barriers, image_barrier_count, image_barriers);
+}
+fn lvoCreatePipelineCache(base: *FacetBase, device: *facet.Device, info: *const facet.PipelineCacheCreateInfo, cache: *?*facet.PipelineCache) callconv(.c) facet.Result {
+    return CreatePipelineCache(base, device, info, cache);
+}
+fn lvoDestroyPipelineCache(base: *FacetBase, device: *facet.Device, cache: ?*facet.PipelineCache) callconv(.c) void {
+    return DestroyPipelineCache(base, device, cache);
+}
+fn lvoGetPipelineCacheData(base: *FacetBase, device: *facet.Device, cache: *facet.PipelineCache, size: *usize, data: ?*anyopaque) callconv(.c) facet.Result {
+    return GetPipelineCacheData(base, device, cache, size, data);
+}
+fn lvoMergePipelineCaches(base: *FacetBase, device: *facet.Device, destination: *facet.PipelineCache, count: u32, sources: [*]const *facet.PipelineCache) callconv(.c) facet.Result {
+    return MergePipelineCaches(base, device, destination, count, sources);
+}
 fn lvoGetPhysicalDeviceFormatProperties(base: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, properties: *facet.FormatProperties) callconv(.c) void {
     return GetPhysicalDeviceFormatProperties(base, physical, format, properties);
 }
@@ -452,7 +521,7 @@ fn lvoCmdCopyQueryPoolResults(base: *FacetBase, buffer: *facet.CommandBuffer, po
     return CmdCopyQueryPoolResults(base, buffer, pool, first, count, destination, offset, stride, flags);
 }
 
-fn lvoCmdClearDepthStencilImage(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, layout: u32, value: *const facet.ClearDepthStencilValue, range_count: u32, ranges: [*]const facet.ImageSubresourceRange) callconv(.c) void {
+fn lvoCmdClearDepthStencilImage(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, layout: facet.ImageLayout, value: *const facet.ClearDepthStencilValue, range_count: u32, ranges: [*]const facet.ImageSubresourceRange) callconv(.c) void {
     return CmdClearDepthStencilImage(base, buffer, image, layout, value, range_count, ranges);
 }
 
@@ -665,6 +734,9 @@ fn lvoCmdCopyImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *face
 fn lvoCmdBlitImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageBlit, filter: facet.Filter) callconv(.c) void {
     return CmdBlitImage(base, buffer, source, source_layout, destination, destination_layout, region_count, regions, filter);
 }
+fn lvoCmdResolveImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageResolve) callconv(.c) void {
+    return CmdResolveImage(base, buffer, source, source_layout, destination, destination_layout, region_count, regions);
+}
 fn lvoCmdCopyImageToBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, image_layout: facet.ImageLayout, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferImageCopy) callconv(.c) void {
     return CmdCopyImageToBuffer(base, buffer, image, image_layout, destination, region_count, regions);
 }
@@ -826,6 +898,24 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetDeviceMemoryCommitment),
     vec(lvoCmdSetDepthBounds),
     vec(lvoCmdSetBlendConstantsAt),
+    vec(lvoCmdResolveImage),
+    vec(lvoFlushMappedMemoryRanges),
+    vec(lvoInvalidateMappedMemoryRanges),
+    vec(lvoGetPhysicalDeviceSparseImageFormatProperties),
+    vec(lvoGetImageSparseMemoryRequirements),
+    vec(lvoQueueBindSparse),
+    vec(lvoCreateEvent),
+    vec(lvoDestroyEvent),
+    vec(lvoGetEventStatus),
+    vec(lvoSetEvent),
+    vec(lvoResetEvent),
+    vec(lvoCmdSetEvent),
+    vec(lvoCmdResetEvent),
+    vec(lvoCmdWaitEvents),
+    vec(lvoCreatePipelineCache),
+    vec(lvoDestroyPipelineCache),
+    vec(lvoGetPipelineCacheData),
+    vec(lvoMergePipelineCaches),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

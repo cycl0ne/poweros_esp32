@@ -7,10 +7,10 @@
 //! The board part is what finds it: where the machine has no such part the
 //! instance lists no device of it. It is switched on when a device first
 //! wants it, and what that makes - the MMU's table, the interrupts, the
-//! programs - stays while any queue or block of memory is left, in the one
-//! `Hardware` all the instances of the library share. It goes back to
-//! nothing but stays powered: a second power-up after a power-down halted
-//! the machine.
+//! programs - stays while any queue, block of memory or pipeline's program
+//! is left, in the one `Hardware` all the instances of the library share.
+//! It goes back to nothing but stays powered: a second power-up after a
+//! power-down halted the machine.
 //!
 //! Vertex functions stay the program's, and run on the cores; pixels are the
 //! V3D's, and it has a program for each fixed form of fragment function
@@ -42,9 +42,11 @@ const Pipeline = @import("../../pipeline/_pipeline.zig").Pipeline;
 const Queue = @import("../../queue/_queue.zig").Queue;
 const CommandBuffer = @import("../../command/_command.zig").CommandBuffer;
 const _driver = @import("../_driver.zig");
+const _image = @import("../../image/_image.zig");
 const _format = @import("../_format.zig");
 const _play = @import("_play.zig");
 const qpu = v3d.qpu;
+const compile = v3d.compile;
 const tiling = v3d.tiling;
 const Block = v3d.Block;
 
@@ -60,6 +62,7 @@ pub const ops = _driver.Ops{
     .execute = &execute,
     .texture_offset = &textureOffset,
     .texture_memory = &textureMemory,
+    .texture_level = &textureLevel,
     .picture_memory = exec.MEMF_DMA,
 };
 
@@ -73,6 +76,9 @@ pub const Programs = struct {
     array: u32,
     cube: u32,
     volume: u32,
+    shadow: u32,
+    /// `qpu.no_color_fragment` (since 1.150).
+    no_color: u32,
 };
 
 /// What the V3D has while anything uses it. Its job, and its table, are
@@ -81,10 +87,17 @@ pub const Hardware = struct {
     gpu: v3d.Gpu,
     space: v3d.Space,
     engine: v3d.Engine,
-    /// The queues and the blocks of memory that hold it.
+    /// The queues, the blocks of memory and the pipelines' programs that
+    /// hold it.
     users: u32,
     programs_block: Block,
     programs: Programs,
+    /// The program of no colour as a draw takes a pipeline's own: what
+    /// draws in a subpass of no colour where the pipeline's program was
+    /// not compiled for one, and for a pipeline of no fragment stage
+    /// (`_play.zig`'s `draw` and `clearRectangle`, since 1.150). Its block
+    /// is `programs_block`, given back with the rest.
+    no_color: Shader,
     /// The table has changed since the MMU last read it.
     stale: bool = false,
     /// A job faulted or never ended. Nothing more is sent: what comes after
@@ -96,47 +109,138 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
     if (v3d.Gpu.find(sys) == null) return false;
     physical.properties = .{
         .api_version = facet.API_VERSION_1_0,
-        .driver_version = facet.makeVersion(facet_version.LIBRARY_VERSION, facet_version.LIBRARY_REVISION),
+        .driver_version = facet.makeVersion(facet_version.LIBRARY_VERSION, facet_version.LIBRARY_REVISION, 0),
         .vendor_id = 0x14E4,
         .device_id = 0x2712,
         .device_type = .integrated_gpu,
         .device_name = @splat(0),
-        .limits = .{
-            .max_image_dimension_2d = _instance.max_image_dimension,
-            .max_framebuffer_width = _instance.max_image_dimension,
-            .max_framebuffer_height = _instance.max_image_dimension,
-            .max_image_dimension_3d = _instance.max_image_dimension_3d,
-            .max_image_array_layers = _instance.max_image_array_layers,
-            .max_color_attachments = _render.most_colors,
-            .max_vertex_input_bindings = _instance.max_vertex_input_bindings,
-            .max_vertex_input_attributes = _instance.max_vertex_input_attributes,
-            .max_vertex_input_binding_stride = 2048,
-            .max_vertex_output_components = _instance.max_vertex_output_components,
-            .max_push_constants_size = _instance.max_push_constants_size,
-            .max_bound_descriptor_sets = _instance.max_bound_descriptor_sets,
-            .max_per_stage_descriptor_sampled_images = 1,
-            .max_per_stage_descriptor_uniform_buffers = 12,
-            .max_descriptor_set_dynamic_buffers = facet.shader.MAX_DYNAMIC_OFFSETS,
-            // A compute function runs on the cores for either device.
-            .max_compute_work_group_size = _instance.max_compute_work_group_size,
-            .max_compute_work_group_invocations = _instance.max_compute_work_group_invocations,
-            .max_compute_shared_memory_size = _instance.max_compute_shared_memory_size,
-            .max_tessellation_patch_components = _instance.max_tessellation_patch_components,
-            .min_memory_map_alignment = _memory.alignment,
-            .tile_size = v3d.frame.tile_pixels,
-            .cores = 1,
-            // The limit is the library's sampling, not this device's TMU:
-            // `sampler_anisotropy` below says who takes it.
-            .max_sampler_anisotropy = _instance.max_sampler_anisotropy,
-            .timestamp_period_ns = _instance.timestamp_period_ns,
-            // A point is widened into a rectangle on the cores for
-            // either device, so both draw one of any size (since 1.70).
-            .point_size_range = .{ 1, _instance.max_point_size },
+        // Filled from the properties themselves once they are all here,
+        // just below, so the UUID cannot fall out of step with them.
+        .pipeline_cache_uuid = undefined,
+        .sparse_properties = .{},
+        // The library's own numbers, with what this hardware decides for
+        // itself set over them. Everything not named here the V3D answers
+        // for exactly as the cores do, because the library's own objects
+        // decide it (`_instance.limits`).
+        .limits = said: {
+            var said = _instance.limits;
+            // A program samples through the sampler bound beside its
+            // texture, and the TMU is given all of it as v3dv packs it
+            // (`tiling.samplerOf`, since 1.140): one a stage, as there is
+            // one texture a stage below, since a program samples once.
+            // The bias, the anisotropy and the precision are v3dv's for
+            // this GPU (v3dv_device.c:1153, 1158, 1159); the bias is what
+            // Vulkan asks at least 2 of, and the field holds -128 to just
+            // under 128 (`tiling.SamplerState.bias`). A fixed form that
+            // wants a sampler reads it the same way where this device
+            // draws it (`samplesHere`, since 1.141).
+            said.max_per_stage_descriptor_samplers = 1;
+            said.max_descriptor_set_samplers = facet.shader.MAX_SETS;
+            said.max_sampler_lod_bias = 14;
+            said.max_sampler_anisotropy = 16;
+            said.mipmap_precision_bits = 8;
+            // The texture unit takes one texture a stage.
+            said.max_per_stage_descriptor_sampled_images = 1;
+            said.max_descriptor_set_sampled_images = facet.shader.MAX_SETS;
+            // No storage image and no input attachment here
+            // (`can.storage_images`, `can.input_attachments`).
+            said.max_per_stage_descriptor_storage_images = 0;
+            said.max_descriptor_set_storage_images = 0;
+            said.max_per_stage_descriptor_input_attachments = 0;
+            // A QPU fragment program writes one colour: the forms that
+            // write several are refused here and drawn on the cores
+            // (`can.several_outputs`). docs/facet-vulkan10.md item 55.
+            said.max_fragment_output_attachments = 1;
+            said.max_fragment_combined_output_resources = 1;
+            said.max_descriptor_set_input_attachments = 0;
+            // What this device will sample from, by what the image holds: a
+            // colour, and a depth since 1.142 (`can.sampled_depth`), each
+            // of one sample: one of four it draws into since 1.148 but
+            // samples none, its TMU yet to fetch a sample where the frame
+            // stored it (item 61's V7), so these two say the 1 bit alone
+            // as `narrowSampleCounts` said it for them before. No
+            // whole-number format (`can.whole_textures`), no stencil, no
+            // storage image. A mask of no bits says the device samples no
+            // image of that kind at all, which is what Vulkan means by it.
+            said.sampled_image_color_sample_counts = facet.SAMPLE_COUNT_1;
+            said.sampled_image_depth_sample_counts = facet.SAMPLE_COUNT_1;
+            said.sampled_image_integer_sample_counts = 0;
+            said.sampled_image_stencil_sample_counts = 0;
+            said.storage_image_sample_counts = 0;
+            // The rasterizer places an edge in 1/64 of a pixel, not 1/256,
+            // and a point's or a line's width is told apart that finely
+            // with it.
+            said.sub_pixel_precision_bits = 6;
+            said.point_size_granularity = 1.0 / 64.0;
+            said.line_width_granularity = 1.0 / 64.0;
+            // A viewport's position is written as a signed 16-bit whole
+            // part and a 6-bit fraction (`cl.zig`), so the furthest a
+            // corner may lie is -32768 and 16383.996, the largest the
+            // encoding holds.
+            said.viewport_bounds_range = .{ -32768, 16383 };
+            // A constant texel offset, which the cores apply and this
+            // device refuses: `spirv.look` turns the `ConstOffset` image
+            // operand away against this driver's own profile and
+            // `compile` answers `Error.Operands`, so a pipeline asking
+            // for one is refused where it is made. Vulkan asks -8 and 7
+            // of every implementation unconditionally, so a zero here is
+            // a shortfall of this device and not a choice - the shape
+            // `samplers` is in, and item 28's remaining half.
+            //
+            // **Read off the profile rather than written down.** Without
+            // something here this device would inherit the cores' range
+            // from `_instance.limits` and advertise an offset it refuses
+            // every use of, which is worse than advertising none; and a
+            // number written here by hand would have to be remembered on
+            // the day the QPUs learn the operand. The limit follows the
+            // capability instead, and cannot fall out of step with it.
+            const offsets = compile.profile.takesImageOperand(.const_offset);
+            said.min_texel_offset = if (offsets) _instance.limits.min_texel_offset else 0;
+            said.max_texel_offset = if (offsets) _instance.limits.max_texel_offset else 0;
+            // The varyings a vertex hands on: eight, which is the limit of
+            // this library's own QPU code and not of the V3D. The hardware
+            // takes 64 - Mesa's v3dv reports `16 * 4` for both rows on this
+            // same V3D 7.1 (src/broadcom/vulkan/v3dv_device.c, from
+            // `V3D_MAX_FS_INPUTS` in src/broadcom/common/v3d_limits.h), its
+            // compiler writing each output into the VPM as it is made
+            // (`vir_STVPMV`, src/broadcom/compiler/nir_to_vir.c). This
+            // compiler instead keeps every varying in one of ten usable
+            // registers beside the four floats a program needs of its own
+            // (compile.zig), and the vertex programs are pregenerated, one
+            // for each count, `programs.vertex` being
+            // `qpu.most_varyings + 1` long. So the number is read off the
+            // compiler's own cap, for the reason the texel offsets are read
+            // off its profile: the cores report `shader.MAX_VARYINGS` since
+            // 1.90, and without these two lines this device would inherit
+            // 64 and refuse every pipeline above 8 while advertising it
+            // takes them. It rises when the compiler's vertex outputs are
+            // ported from Mesa's, not by writing a larger number here.
+            // Item 17 of docs/facet-vulkan10.md. (1.90 called this a real
+            // ceiling of the hardware, which Mesa shows it is not.)
+            said.max_vertex_output_components = compile.most_varyings;
+            said.max_fragment_input_components = compile.most_varyings;
+            // One layer a framebuffer. A frame here is one pass of the
+            // binner and one render control list over one layer; v3dv
+            // takes 256 by emitting `NUMBER_OF_LAYERS` before the binning
+            // mode, sizing the tile lists and the tile state for every
+            // layer, and walking the render list once a layer at that
+            // layer's tile lists and addresses (`job_emit_binning_prolog`
+            // and `cmd_buffer_emit_render_pass_layer_rcl`,
+            // src/broadcom/vulkan/v3dvx_cmd_buffer.c), which is the port
+            // this number waits on. What it already does is begin at the
+            // layer a view names, as v3dv's `v3dv_layer_offset` does
+            // (`_play.zig`, since 1.91). Item 22.
+            said.max_framebuffer_layers = 1;
+            break :said said;
         },
     };
+    physical.properties.pipeline_cache_uuid = _driver.cacheUuid(&physical.properties);
+    // The library's own two numbers, which left the limits at 1.82.
+    physical.tile_size = v3d.frame.tile_pixels;
+    physical.cores = 1;
     const name = "VideoCore VII V3D 7.1";
     @memcpy(physical.properties.device_name[0..name.len], name);
-    physical.features = .{
+    physical.can = .{
         // Only the fixed forms have QPU programs; a pipeline with a function
         // of its own is refused here and runs on the cores instead.
         .own_fragment_functions = false,
@@ -147,14 +251,22 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .tessellation_on_device = false,
         // No QPU program discards yet, so texture_cutout is refused above.
         .discarding_fragment_forms = false,
-        // The TMU's state is written from the form's own `sampling` as a
-        // draw is played: there is no program that reads a sampler, so the
-        // forms that want one are refused and drawn on the cores.
+        // Not every fixed form that wants a sampler: the 2D, array, cube
+        // and 3D ones run here since 1.141, their programs the ones of
+        // the forms without a sampler and the TMU told the bound sampler
+        // whole (`samplesHere` beside makePipeline), and the shadow one
+        // since 1.142, but the cube of an array is refused and drawn on
+        // the cores. A generated program's sampler is the TMU's whole
+        // since 1.140 (`tiling.samplerOf`).
         .samplers = false,
-        .sampler_anisotropy = false,
-        // Nothing here reads a sampler at all, so a sample in texels is
-        // refused with the rest of what a sampler says (since 1.67).
-        .unnormalized_coordinates = false,
+        // The TMU's own, 2 to 16 samples, as v3dv has it
+        // (v3dv_device.c:349; `tiling.anisotropyOf`). Until 1.140 this was
+        // false and the limit 1, as Vulkan asks of a device without it.
+        .sampler_anisotropy = true,
+        // Bit 1 of the TMU's configuration parameter 1, which v3dv sets
+        // from the sampler (v3dv_uniforms.c:213-218; `tiling.parameter1`).
+        // Refused until 1.140, with the rest of what a sampler says.
+        .unnormalized_coordinates = true,
         // The hardware's own counter, pointed at a word of the frame's by
         // the packet beside a draw and added to the query as the frame is
         // drawn (`cl.occlusionQuery`, since 1.47). What the QPUs were
@@ -172,9 +284,18 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .stored_depth = true,
         .stored_stencil = true,
         .stored_both = false,
-        // Its texture unit keeps a texture its own way, and knows no
-        // depth format: a sampled depth image is refused.
-        .sampled_depth = false,
+        // A sampled D16_UNORM lies as a texture does here, the pass
+        // storing its depth in the level's tiling, and the TMU reads it as
+        // DEPTH_COMP16, as v3dv does (v3dvx_formats.c:204,
+        // v3dvx_cmd_buffer.c:396-406; `_image.deviceLaid`). Refused until
+        // 1.142, the format query leaving the sampled bits out since 1.80.
+        // Unfiltered, as v3dv has D16_UNORM here (v3dvx_formats.c:204, its
+        // filtering false, so v3dv_formats.c:273-276 gives no
+        // FILTER_LINEAR), and no stencil: v3dv's one format of both is
+        // D24_UNORM_S8_UINT (v3dvx_formats.c:209), which is not here.
+        .sampled_depth = true,
+        .sampled_stencil = false,
+        .filtered_depth = false,
         // Its TMU is fed texels the library unpacked, so a compressed or a
         // float image is unpacked on the copy here as before.
         .kept_compressed = false,
@@ -249,6 +370,24 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .textures_3d = true,
         .compressed_textures = true,
         .float_textures = true,
+        // Four samples a pixel, in tiles of four (since 1.148,
+        // docs/facet-vulkan10.md item 61): the frame takes its coverage at
+        // four places, stores its colour and its depth all four together
+        // where their images keep them (`_image.Image.quads`), and averages
+        // the colour into a resolve attachment as each tile ends, or on the
+        // CPU where the render area is not of whole supertiles
+        // (`frame.tilesInArea`). Sampling such an image is item 59's
+        // and step V7's, and refused until then (`_image.multisampled`).
+        .multisampling = true,
+        // A subpass of no colour attachment, or of unused ones alone: the
+        // frame's one render target the unused one v3dv configures
+        // (`cl.unusedRenderTarget`), its tiles moving no colour, its draws
+        // the program of no colour or one compiled for none (since 1.150,
+        // docs/facet-vulkan10.md item 43). A subpass of no attachment at
+        // all draws at its pipelines' count, four as well, the frame
+        // started again at four where its first draw asks for them, as
+        // v3dv's job is (`_play.zig`'s `restartAtFour`, item 61's V8).
+        .colorless_subpasses = true,
     };
     physical.queue_family = .{
         .queue_flags = facet.QUEUE_GRAPHICS | facet.QUEUE_COMPUTE | facet.QUEUE_TRANSFER,
@@ -302,6 +441,23 @@ pub fn hold(base: *FacetBase) ?*Hardware {
     return hardware;
 }
 
+/// The V3D held once more for a block of memory or a program a device
+/// makes. The device's queue holds it from CreateDevice to DestroyDevice
+/// (`_play.open`), so it is there and this cannot fail, as v3dv's device
+/// works on the hardware its physical device opened (v3dv_device.c:1514
+/// `create_physical_device`). Since 1.134: AllocateMemory and the fragment
+/// program held it with `hold`, and answered `error_initialization_failed`
+/// where it would not come up, which neither call lists and no program
+/// reached.
+fn holdAgain(base: *FacetBase) *Hardware {
+    const sys = base.sys_base;
+    sys.ObtainSemaphore(&base.v3d_lock);
+    defer sys.ReleaseSemaphore(&base.v3d_lock);
+    const hardware: *Hardware = @ptrCast(@alignCast(base.v3d.?));
+    hardware.users += 1;
+    return hardware;
+}
+
 fn bringUp(sys: *ExecBase, hardware: *Hardware) bool {
     hardware.users = 1;
     hardware.stale = false;
@@ -324,7 +480,7 @@ fn bringUp(sys: *ExecBase, hardware: *Hardware) bool {
 
 /// Every program in one block of the V3D's.
 fn loadPrograms(hardware: *Hardware) bool {
-    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.volume_fragment };
+    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.volume_fragment, &qpu.shadow_fragment, &qpu.no_color_fragment };
     var words: usize = qpu.coordinate_program.len;
     for (0..qpu.most_varyings + 1) |varyings| words += qpu.vertexProgram(@intCast(varyings)).len;
     for (fragments) |fragment| words += fragment.code.len;
@@ -352,9 +508,34 @@ fn loadPrograms(hardware: *Hardware) bool {
     hardware.programs.array = put(block, &used, qpu.array_fragment.code);
     hardware.programs.cube = put(block, &used, qpu.cube_fragment.code);
     hardware.programs.volume = put(block, &used, qpu.volume_fragment.code);
+    hardware.programs.shadow = put(block, &used, qpu.shadow_fragment.code);
+    hardware.programs.no_color = put(block, &used, qpu.no_color_fragment.code);
+    hardware.no_color = noColorShader(block, hardware.programs.no_color);
     hardware.space.toGpu(&block);
     hardware.programs_block = block;
     return true;
+}
+
+/// `qpu.no_color_fragment` at `address` in `block`, as a compiled
+/// program is kept: its one uniform the depth's write specifier, and what
+/// the shader record says of it.
+fn noColorShader(block: Block, address: u32) Shader {
+    const fragment = &qpu.no_color_fragment;
+    var uniforms: [compile.most_uniforms]compile.Word = undefined;
+    uniforms[0] = .{ .float = @bitCast(qpu.no_color_specifier) };
+    return .{
+        .block = block,
+        .address = address,
+        .varyings = fragment.varyings,
+        .uniforms = uniforms,
+        .uniform_count = fragment.uniforms,
+        .sampler = null,
+        .threads = fragment.threads,
+        .center_w = fragment.center_w,
+        .lock_scoreboard_on_first_thrsw = fragment.lock_scoreboard_on_first_thrsw,
+        .writes_z = fragment.writes_z,
+        .disable_ez = fragment.disable_ez,
+    };
 }
 
 /// The V3D let go of once, what it holds given back with the last. The core
@@ -378,10 +559,7 @@ fn allocateMemory(device: *Device, memory: *DeviceMemory) callconv(.c) facet.Res
     const base = device.base;
     const sys = device.sys;
     const kept = _objects.create(sys, Block) orelse return .error_out_of_host_memory;
-    const hardware = hold(base) orelse {
-        _objects.destroy(sys, kept);
-        return .error_initialization_failed;
-    };
+    const hardware = holdAgain(base);
     sys.ObtainSemaphore(&base.v3d_lock);
     const block = hardware.space.alloc(bytes);
     if (block != null) hardware.stale = true;
@@ -410,21 +588,190 @@ fn freeMemory(device: *Device, memory: *DeviceMemory) callconv(.c) void {
     letGo(base, hardware);
 }
 
+/// What a pipeline whose fragment shader the V3D compiles itself keeps.
+pub const Shader = struct {
+    /// The code, in a block of its own. The per-frame chunks cannot hold
+    /// it: `beginRenderPass` resets them, and this lives as long as the
+    /// pipeline.
+    block: Block,
+    /// Where the V3D has its first instruction. The shader record ORs its
+    /// flag bits into the low bits of a program address, which a block of
+    /// the space's leaves clear (`space.alloc` aligns to a page).
+    address: u32,
+    /// The varyings it reads, which is the vertex function's count: it was
+    /// held to that as the pipeline was made.
+    varyings: u32,
+    /// The head of its uniform stream, by value, because a draw copies it
+    /// into the stream it carves and the compiler's own memory is one
+    /// block every pipeline is compiled through. Two of its words may be
+    /// the TMU's configuration, which only a draw can fill in.
+    uniforms: [compile.most_uniforms]compile.Word,
+    uniform_count: u32,
+    /// The combined image sampler it reads, where it reads one: where
+    /// the draw is to look for the texture and the sampler whose state
+    /// those two words are.
+    sampler: ?compile.Sampler,
+    /// What the shader record says of the program, which Mesa's back end
+    /// decided as it compiled (`cl.Programs`): its threads, whether it
+    /// reads W at the pixel's centre, and where it waits on the
+    /// scoreboard (since 1.137).
+    threads: u8,
+    center_w: bool,
+    lock_scoreboard_on_first_thrsw: bool,
+    /// Whether it writes Z and has early Z off: a program that drops
+    /// pixels (since 1.139).
+    writes_z: bool,
+    disable_ez: bool,
+
+    pub fn stream(made: *const Shader) []const compile.Word {
+        return made.uniforms[0..made.uniform_count];
+    }
+};
+
 fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
+    // A pipeline that draws nothing - its rasterizer discarding, or every
+    // face culled - has no program to make: a draw with it ends before one
+    // is read (`_play.draw`), and this device counts no statistics a
+    // stage would owe. So such a pipeline of no fragment stage is made
+    // here, which is the one Vulkan allows beside a discarding rasterizer
+    // (VUID-VkGraphicsPipelineCreateInfo-pStages-06894; since 1.134,
+    // refused before as item 85's V3D half refuses the others).
+    if (pipeline.draws_nothing) return .success;
     const fixed = pipeline.fixed;
-    // A form that drops pixels needs a QPU program that discards, and one
-    // that samples through a sampler a program that reads it: there is
-    // neither yet, so such a pipeline is refused here and drawn on the
-    // cores.
-    // Nor is there one for a cube of an array, which reads a fourth
-    // coordinate (since 1.46) - `texture_cube_array_sampled` reads a
-    // sampler besides, so `needsSampler` already refuses it (since 1.53).
-    if (fixed.kind == .none or fixed.kind == .texture_cube_array or fixed.discards() or fixed.needsSampler() or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
+    // Alpha to coverage, in a pipeline of four samples alone, as v3dv
+    // keys it (v3dv_pipeline.c:1321-1324): one of one sample draws
+    // without it here, a fixed form as well. A compiled program covers by
+    // its colour's alpha through the QPU's FTOC (`coverageOf`, since
+    // 1.149, docs/facet-vulkan10.md item 61, V6); a fixed form's
+    // hand-written program does not, so one of four that asks for it is
+    // refused and drawn on the cores, as every pipeline that did was
+    // before (since 1.108).
+    if (coverageOf(pipeline) and fixed.kind != .none) return .error_feature_not_present;
+    // No fixed form: the program's own fragment shader, which this device
+    // draws with where the program shipped the SPIR-V beside the function
+    // and the back end can make code of it (since 1.76). Where it cannot,
+    // the pipeline is refused and the cores draw it, as before. A pipeline
+    // of no fragment stage ships none, and draws with the program of no
+    // colour, v3dv's noop fragment shader (v3dv_pipeline.c:2616-2645),
+    // which with no colour of its own writes the depth alone in a subpass
+    // of colour as well (`Hardware.no_color`; since 1.150,
+    // docs/facet-vulkan10.md item 85).
+    if (fixed.kind == .none) {
+        if (!pipeline.fragment_stage) return .success;
+        if (pipeline.fragment_words.len == 0) return .error_feature_not_present;
+        return compiled(pipeline);
+    }
+    // A form that drops pixels needs a QPU program that discards, which no
+    // fixed form's has yet, so such a pipeline is refused here and drawn
+    // on the cores. Nor is there a program for a cube of an array, which
+    // reads a fourth coordinate (since 1.46). A form that samples through
+    // the sampler bound beside its texture is drawn where `samplesHere`
+    // says, and refused elsewhere.
+    if (fixed.kind == .texture_cube_array or fixed.discards() or (fixed.needsSampler() and !samplesHere(fixed)) or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
+    return .success;
+}
+
+/// Whether this device draws `fixed`, a form that samples through the
+/// sampler bound beside its texture. It runs the program of the form it is
+/// otherwise, with the TMU told the sampler whole as v3dv packs it
+/// (`_play.zig`'s `textureUniforms`, since 1.141): a 2D texture, a layer
+/// of an array, a cube and a 3D texture. A cube is read over its seams
+/// with the sampler's wraps saying nothing of it, as Vulkan has it (the
+/// spec's "Wrapping Operation") and as the cores read it since 1.60
+/// (`texture.sampleCubeBy`); v3dv packs the wraps as they are whatever
+/// the view (v3dvx_device.c:255-257), and so does this.
+///
+/// `texture_shadow` since 1.142: its program writes the reference to
+/// TMUDREF, where the TMU compares (v3d_tex.c:155-157; `qpu.shadow_code`),
+/// and the depth it reads is a D16_UNORM laid out as a texture. One it
+/// refuses: `texture_cube_array_sampled`, as no program reads a cube of an
+/// array.
+fn samplesHere(fixed: facet.shader.Fixed) bool {
+    return switch (fixed.kind) {
+        .texture_sampled, .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled, .texture_shadow => true,
+        else => false,
+    };
+}
+
+/// Whether the pipeline's program covers by its colour's alpha: alpha to
+/// coverage, at four samples (`makePipeline`).
+fn coverageOf(pipeline: *const Pipeline) bool {
+    return pipeline.alpha_to_coverage and pipeline.samples > 1;
+}
+
+/// The pipeline's own fragment shader compiled and put where the V3D
+/// reads it. The compiler's working memory is a block of its own and some
+/// kilobytes wide, so it is taken for the call and given back: a pipeline
+/// is made once and drawn with many times.
+///
+/// The compiler is the one ported from Mesa (compile.compileThroughMesa,
+/// driver/v3d/compiler/), since 1.137: the plan's (compile.compile) is
+/// what V3DTest's GENERATED still draws with, and reads the same words.
+/// Its lists and graphs are in an arena of the calling task's for the one
+/// compile. What it refuses the cores draw, as before.
+fn compiled(pipeline: *Pipeline) facet.Result {
+    const device = pipeline.device;
+    const base = device.base;
+    const sys = device.sys;
+    const work = _objects.create(sys, compile.Work) orelse return .error_out_of_host_memory;
+    defer _objects.destroy(sys, work);
+    // Keyed as v3dv keys it: alpha to coverage, and render target 0 where
+    // the subpass draws a colour (v3dv_pipeline.c:2137-2142, since 1.150).
+    const key = compile.Key{ .sample_alpha_to_coverage = coverageOf(pipeline), .cbufs = if (pipeline.colorless) 0 else 1 };
+    const code = compile.compileThroughMesa(work, pipeline.fragment_words, v3d.heap.of(sys), key) catch |err| return switch (err) {
+        error.OutOfMemory => .error_out_of_host_memory,
+        else => .error_feature_not_present,
+    };
+    // The vertex function writes the varyings the fragment program reads.
+    // CreateGraphicsPipelines already holds the two entries to the one
+    // count, so this is the words disagreeing with the entry that shipped
+    // them rather than a pipeline that was put together wrongly.
+    if (code.varyings != pipeline.varyings) return .error_feature_not_present;
+    const kept = _objects.create(sys, Shader) orelse return .error_out_of_host_memory;
+    const hardware = holdAgain(base);
+    sys.ObtainSemaphore(&base.v3d_lock);
+    const block = hardware.space.alloc(@intCast(code.words.len * 8));
+    if (block) |each| {
+        const into: [*]u64 = @ptrCast(@alignCast(each.cpu));
+        @memcpy(into[0..code.words.len], code.words);
+        hardware.space.toGpu(&each);
+        hardware.stale = true;
+    }
+    sys.ReleaseSemaphore(&base.v3d_lock);
+    const made = block orelse {
+        letGo(base, hardware);
+        _objects.destroy(sys, kept);
+        return .error_out_of_device_memory;
+    };
+    kept.* = .{
+        .block = made,
+        .address = made.address,
+        .varyings = code.varyings,
+        .uniforms = code.uniforms,
+        .uniform_count = code.uniform_count,
+        .sampler = code.sampler,
+        .threads = code.threads,
+        .center_w = code.center_w,
+        .lock_scoreboard_on_first_thrsw = code.lock_scoreboard_on_first_thrsw,
+        .writes_z = code.writes_z,
+        .disable_ez = code.disable_ez,
+    };
+    pipeline.driver = kept;
     return .success;
 }
 
 fn unmakePipeline(pipeline: *Pipeline) callconv(.c) void {
-    _ = pipeline;
+    const kept: *Shader = @ptrCast(@alignCast(pipeline.driver orelse return));
+    const base = pipeline.device.base;
+    const sys = pipeline.device.sys;
+    const hardware: *Hardware = @ptrCast(@alignCast(base.v3d.?));
+    sys.ObtainSemaphore(&base.v3d_lock);
+    hardware.space.free(&kept.block);
+    hardware.stale = true;
+    sys.ReleaseSemaphore(&base.v3d_lock);
+    pipeline.driver = null;
+    _objects.destroy(sys, kept);
+    letGo(base, hardware);
 }
 
 /// The queue's task blocks in the frame's jobs, on what the V3D's interrupts
@@ -435,13 +782,27 @@ fn execute(queue: *Queue, buffer: *CommandBuffer, done: *exec.Waitable) callconv
     queue.device.sys.SignalWaitable(done);
 }
 
-fn textureMemory(format: facet.Format, width: u32, height: u32, levels: u32) callconv(.c) _driver.TextureMemory {
-    const layout = _play.layoutOf(format, width, height, levels);
-    return .{ .bytes = layout.bytes, .alignment = tiling.alignment };
+/// A layer's memory, or a 3D image's whole: its levels each its slices one
+/// after another, the step from a slice to the next level 0's (since
+/// 1.141, `tiling.layoutOf`).
+fn textureMemory(format: facet.Format, width: u32, height: u32, depth: u32, levels: u32, samples: u32) callconv(.c) _driver.TextureMemory {
+    const layout = _play.layoutOf(format, width, height, depth, levels, samples > 1);
+    return .{ .bytes = layout.bytes, .alignment = tiling.alignment, .layer_bytes = if (depth > 1) layout.levels[0].slice_bytes else 0 };
 }
 
-/// Where a texel of a texture is, in bytes from its memory.
-fn textureOffset(image: *const @import("../../image/_image.zig").Image, level: u32, x: u32, y: u32) callconv(.c) usize {
-    const layout = _play.layoutOf(image.format, image.width, image.height, image.levels);
-    return tiling.texelOffset(&layout, level, x, y);
+/// Where a texel of a layer of a texture is, or of a 3D texture's slice,
+/// in bytes from its memory. Of one sample's plane of an image of four,
+/// that sample's texel in the pixel's quad (`tiling.sampleTexel`, since
+/// 1.146).
+fn textureOffset(image: *const _image.Image, level: u32, layer: u32, x: u32, y: u32) callconv(.c) usize {
+    const layout = _play.imageLayout(image);
+    const at: [2]u32 = if (image.quads) tiling.sampleTexel(x, y, image.sample) else .{ x, y };
+    return _play.layerAt(image, &layout, level, layer) + tiling.texelOffset(&layout, level, at[0], at[1]);
+}
+
+/// A level of a layer of a texture, or of a 3D texture's slice: all of
+/// its texels, the padding of its tiles with them.
+fn textureLevel(image: *const _image.Image, level: u32, layer: u32) callconv(.c) _driver.Span {
+    const layout = _play.imageLayout(image);
+    return .{ .at = _play.layerAt(image, &layout, level, layer) + layout.levels[level].offset, .bytes = layout.levels[level].slice_bytes };
 }

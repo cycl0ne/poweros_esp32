@@ -25,9 +25,15 @@ const PipelineLayout = @import("_pipeline.zig").PipelineLayout;
 /// - `layout` - where the layout is written; null when it fails.
 ///
 /// RESULT:
-/// `success`; `error_feature_not_present` for more than four sets, or
-/// push constants past 128 bytes; `error_initialization_failed` for a range
-/// not on 4 bytes; `error_out_of_host_memory`.
+/// `success`; `error_validation_failed` for more than four sets, or push
+/// constants past 128 bytes: the device's `max_bound_descriptor_sets` and
+/// `max_push_constants_size`, which Vulkan holds a layout to
+/// (VUID-VkPipelineLayoutCreateInfo-setLayoutCount-00286,
+/// VUID-VkPushConstantRange-offset-00294, -size-00298), and
+/// `error_feature_not_present` until 1.133; `error_validation_failed` as
+/// well for a range not on 4 bytes or of none
+/// (VUID-VkPushConstantRange-offset-00295, -size-00296, -size-00297;
+/// `error_initialization_failed` until 1.134); `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
 /// A shader reads set `n` as `Resources.sets[n]` and the push constants
@@ -61,11 +67,11 @@ const PipelineLayout = @import("_pipeline.zig").PipelineLayout;
 pub fn CreatePipelineLayout(base: *FacetBase, device: *facet.Device, info: *const facet.PipelineLayoutCreateInfo, layout: *?*facet.PipelineLayout) facet.Result {
     layout.* = null;
     const owner = _objects.of(Device, device);
-    if (info.set_layout_count > shader.MAX_SETS) return .error_feature_not_present;
+    if (info.set_layout_count > shader.MAX_SETS) return .error_validation_failed;
     var push_size: u32 = 0;
     if (info.push_constant_ranges) |ranges| for (ranges[0..info.push_constant_range_count]) |range| {
-        if (range.offset % 4 != 0 or range.size % 4 != 0 or range.size == 0) return .error_initialization_failed;
-        if (range.offset > shader.MAX_PUSH_CONSTANTS_SIZE or range.size > shader.MAX_PUSH_CONSTANTS_SIZE - range.offset) return .error_feature_not_present;
+        if (range.offset % 4 != 0 or range.size % 4 != 0 or range.size == 0) return .error_validation_failed;
+        if (range.offset > shader.MAX_PUSH_CONSTANTS_SIZE or range.size > shader.MAX_PUSH_CONSTANTS_SIZE - range.offset) return .error_validation_failed;
         push_size = @max(push_size, range.offset + range.size);
     };
     const made = _objects.create(base.sys_base, PipelineLayout) orelse return .error_out_of_host_memory;

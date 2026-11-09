@@ -8,16 +8,28 @@
 //! each statistic asked for, lowest bit first) - then a flag for each
 //! saying whether it is available. The values are written where the work is
 //! done - the queue's task for what a draw was given, the cores at once for
-//! what the tiles shaded - so every counter is added to atomically, and
-//! their addresses stay put for as long as the pool does.
+//! what the tiles shaded - and their addresses stay put for as long as the
+//! pool does.
 //!
-//! A counter is 32 bits wide, because the library runs on 32-bit machines
-//! as well and those have no 64-bit atomic. It is held at its highest
-//! rather than wrapping round, so a count that outgrows it is wrong by
-//! being too low and never by being nonsense. A timestamp is 64 bits and is
-//! written whole by the one task that plays the commands, so it needs no
-//! atomic of its own: the flag that makes it available is what carries it
-//! to whoever reads it.
+//! A counter is 64 bits wide, as Vulkan's are, and is kept in `lanes`
+//! lanes, one for each part a frame's tiles are drawn in: each part adds
+//! to its own lane and to no other, and a counter is read as the sum of
+//! them. That is llvmpipe's query, which keeps a count for each of its
+//! rasterizer threads (`llvmpipe_query.start` and `end`,
+//! src/gallium/drivers/llvmpipe/lp_query.h:45-46), each thread adding to
+//! its own (`lp_rast_end_query`, lp_rast.c:665-688), and adds them up when
+//! it is read (`llvmpipe_get_query_result`, lp_query.c:122-129, 196-206).
+//! What the queue's task adds - a draw's numbers, a dispatch's, the V3D's
+//! frame - goes into the first lane, part 0's, which is the task's own:
+//! exec's `ShareWork` has the caller do part 0. So no lane has two writers
+//! and none needs an atomic add, which a 32-bit machine has not got for 64
+//! bits (since 1.122; a counter was 32 bits before, added to atomically
+//! and held at its highest). A timestamp is 64 bits and is written whole
+//! by the one task that plays the commands. The flag that makes a query
+//! available is what carries its values to whoever reads them; one read
+//! before that, a partial count, is what the lanes hold at that moment,
+//! and on a 32-bit machine a lane being added to may be read between its
+//! two words.
 //!
 //! What counts what: a draw's own numbers are added as it is played
 //! (driver/cpu/_draw.zig), the triangles the rasterizer kept come from its
@@ -59,6 +71,14 @@ pub const Statistic = enum(u5) {
 /// Vulkan says a statistic of a stage that never ran holds (since 1.43).
 pub const no_statistics: u32 = Statistic.geometry_invocations.bit() | Statistic.geometry_primitives.bit();
 
+/// The lanes each counter is kept in: one for each part a frame's tiles
+/// may be drawn in, which the cores' driver holds the rasterizer's
+/// `most_parts` to (since 1.122).
+pub const lanes = 4;
+
+/// A counter: its `lanes` lanes, one after another, part 0's first.
+pub const Counter = [*]u64;
+
 pub const Pool = struct {
     device: *Device,
     kind: facet.QueryType,
@@ -68,9 +88,9 @@ pub const Pool = struct {
     statistics: u32,
     /// The values one query holds: 1, or one for each statistic.
     stride: u32,
-    /// What the work adds: `count * stride` of them, and none of them for a
-    /// pool of timestamps.
-    counts: [*]u32,
+    /// What the work adds: `count * stride` counters of `lanes` lanes
+    /// each, and none of them for a pool of timestamps.
+    counts: [*]u64,
     /// Where a timestamp goes: `count` of them, and none of them for a pool
     /// of another kind.
     times: [*]u64,
@@ -82,14 +102,16 @@ pub fn make(sys: *ExecBase, device: *Device, info: *const facet.QueryPoolCreateI
     const timing = info.query_type == .timestamp;
     const stride: u32 = if (info.query_type == .pipeline_statistics) @popCount(info.pipeline_statistics) else 1;
     // The widest first, so that each lies where it must: the timestamps,
-    // then the counters, then the flags.
+    // then the counters' lanes, then the flags. The first after the pool,
+    // which on a 32-bit machine may be a size of 4 more than 8.
+    const head = std.mem.alignForward(usize, @sizeOf(Pool), @alignOf(u64));
     const times_bytes: usize = if (timing) @as(usize, info.query_count) * @sizeOf(u64) else 0;
-    const counts_bytes: usize = if (timing) 0 else @as(usize, info.query_count) * stride * @sizeOf(u32);
+    const counts_bytes: usize = if (timing) 0 else @as(usize, info.query_count) * stride * lanes * @sizeOf(u64);
     const flags_bytes = info.query_count * @sizeOf(bool);
-    const memory = sys.AllocVec(@sizeOf(Pool) + times_bytes + counts_bytes + flags_bytes, exec.MEMF_CLEAR) orelse return null;
+    const memory = sys.AllocVec(head + times_bytes + counts_bytes + flags_bytes, exec.MEMF_CLEAR) orelse return null;
     const pool: *Pool = @ptrCast(@alignCast(memory));
-    const times: [*]u64 = @ptrFromInt(@intFromPtr(memory) + @sizeOf(Pool));
-    const counts: [*]u32 = @ptrFromInt(@intFromPtr(times) + times_bytes);
+    const times: [*]u64 = @ptrFromInt(@intFromPtr(memory) + head);
+    const counts: [*]u64 = @ptrFromInt(@intFromPtr(times) + times_bytes);
     const available: [*]bool = @ptrFromInt(@intFromPtr(counts) + counts_bytes);
     pool.* = .{
         .device = device,
@@ -113,7 +135,7 @@ pub fn reset(pool: *Pool, first: u32, count: u32) void {
         if (pool.kind == .timestamp) {
             pool.times[at] = 0;
         } else {
-            for (0..pool.stride) |k| @atomicStore(u32, &pool.counts[@as(usize, at) * pool.stride + k], 0, .monotonic);
+            for (pool.counts[@as(usize, at) * pool.stride * lanes ..][0 .. pool.stride * lanes]) |*lane| storeLane(lane, 0);
         }
         @atomicStore(bool, &pool.available[at], false, .release);
     }
@@ -131,28 +153,30 @@ pub fn isAvailable(pool: *const Pool, index: u32) bool {
 }
 
 /// Value `slot` of query `index`: a timestamp whole, or what a counter has
-/// come to.
+/// come to, its lanes added up.
 pub fn valueAt(pool: *const Pool, index: u32, slot: u32) u64 {
     if (pool.kind == .timestamp) return pool.times[index];
-    return @atomicLoad(u32, &pool.counts[@as(usize, index) * pool.stride + slot], .monotonic);
+    var sum: u64 = 0;
+    for (pool.counts[(@as(usize, index) * pool.stride + slot) * lanes ..][0..lanes]) |*lane| sum +%= loadLane(lane);
+    return sum;
 }
 
 /// Where `statistic` is counted in query `index`; null for one the pool
 /// does not count, and for a pool of another kind.
-pub fn counterOf(pool: *Pool, index: u32, statistic: Statistic) ?*u32 {
+pub fn counterOf(pool: *Pool, index: u32, statistic: Statistic) ?Counter {
     if (pool.kind != .pipeline_statistics or index >= pool.count) return null;
     const bit = statistic.bit();
     if (pool.statistics & bit == 0) return null;
     // The values are in the order of the bits: how many below this one.
     const slot = @popCount(pool.statistics & (bit - 1));
-    return &pool.counts[@as(usize, index) * pool.stride + slot];
+    return pool.counts + (@as(usize, index) * pool.stride + slot) * lanes;
 }
 
 /// Where an occlusion query counts its samples; null for a pool of another
 /// kind.
-pub fn samplesOf(pool: *Pool, index: u32) ?*u32 {
+pub fn samplesOf(pool: *Pool, index: u32) ?Counter {
     if (pool.kind != .occlusion or index >= pool.count) return null;
-    return &pool.counts[@as(usize, index) * pool.stride];
+    return pool.counts + @as(usize, index) * pool.stride * lanes;
 }
 
 /// Where the timestamp of query `index` goes.
@@ -165,17 +189,17 @@ pub fn timeOf(pool: *Pool, index: u32) ?*u64 {
 /// the query being counted into, worked out once when it begins. A null is
 /// a number nothing asked for.
 pub const Counters = struct {
-    input_vertices: ?*u32 = null,
-    input_primitives: ?*u32 = null,
-    vertex_invocations: ?*u32 = null,
-    clipping_invocations: ?*u32 = null,
-    clipping_primitives: ?*u32 = null,
-    fragment_invocations: ?*u32 = null,
-    patches: ?*u32 = null,
-    evaluations: ?*u32 = null,
-    compute_invocations: ?*u32 = null,
+    input_vertices: ?Counter = null,
+    input_primitives: ?Counter = null,
+    vertex_invocations: ?Counter = null,
+    clipping_invocations: ?Counter = null,
+    clipping_primitives: ?Counter = null,
+    fragment_invocations: ?Counter = null,
+    patches: ?Counter = null,
+    evaluations: ?Counter = null,
+    compute_invocations: ?Counter = null,
     /// An occlusion query's samples.
-    samples: ?*u32 = null,
+    samples: ?Counter = null,
 
     /// What query `index` of `pool` counts.
     pub fn of(pool: *Pool, index: u32) Counters {
@@ -206,23 +230,34 @@ pub const Counters = struct {
 /// into.
 pub const none: Counters = .{};
 
-/// `by` added to a counter, where there is one. Several cores add to the
-/// same one: the tiles are shared between them. It stops at the highest a
-/// counter holds rather than wrapping round.
-pub inline fn add(counter: ?*u32, by: u64) void {
+/// `by` added to a counter, where there is one, by the queue's task: in
+/// the first lane, which is the task's own (`lanes`). A part drawing tiles
+/// adds to its own lane instead (driver/cpu/raster/batched.zig
+/// `Batch.countPixels`).
+pub inline fn add(counter: ?Counter, by: u64) void {
     const at = counter orelse return;
-    const most = std.math.maxInt(u32);
-    const step: u32 = @intCast(@min(by, most));
-    if (step == 0) return;
-    var have = @atomicLoad(u32, at, .monotonic);
-    while (have != most) {
-        have = @cmpxchgWeak(u32, at, have, have +| step, .monotonic, .monotonic) orelse return;
-    }
+    if (by == 0) return;
+    storeLane(&at[0], loadLane(&at[0]) +% by);
+}
+
+/// Whether a lane is read and written whole: a 64-bit machine does that
+/// in one go, which is all a lane of one writer needs to be read while it
+/// is added to; a 32-bit one has no 64-bit atomic.
+const whole_lanes = @bitSizeOf(usize) >= 64;
+
+inline fn loadLane(lane: *const u64) u64 {
+    return if (comptime whole_lanes) @atomicLoad(u64, lane, .monotonic) else lane.*;
+}
+
+inline fn storeLane(lane: *u64, value: u64) void {
+    if (comptime whole_lanes) @atomicStore(u64, lane, value, .monotonic) else lane.* = value;
 }
 
 /// The queries `first` to `count` past it written into `into`, `stride`
-/// bytes apart, as `flags` says: false where `into` is too small for them,
-/// and `not_ready` where a query is not available and nothing waited.
+/// bytes apart, as `flags` says: `error_validation_failed` where `into` is
+/// too small for them (VUID-vkGetQueryPoolResults-dataSize-00817;
+/// `error_out_of_host_memory` until 1.134), and `not_ready` where a query
+/// is not available and nothing waited.
 pub fn write(pool: *Pool, first: u32, count: u32, into: []u8, stride: u64, flags: u32) facet.Result {
     const wide = flags & facet.QUERY_RESULT_64 != 0;
     const unit: u64 = if (wide) 8 else 4;
@@ -233,8 +268,12 @@ pub fn write(pool: *Pool, first: u32, count: u32, into: []u8, stride: u64, flags
     for (0..count) |k| {
         const index = first + @as(u32, @intCast(k));
         if (index >= pool.count) break;
-        const at: usize = @intCast(k * stride);
-        if (@as(u64, at) + values * unit > into.len) return .error_out_of_host_memory;
+        // Room for each query asked for (VUID-vkGetQueryPoolResults-dataSize-00817),
+        // worked out so that no stride or size overflows: a program's
+        // mistake, and no memory run out (since 1.134).
+        const offset = std.math.mul(u64, k, stride) catch return .error_validation_failed;
+        if (offset > into.len or values * unit > into.len - offset) return .error_validation_failed;
+        const at: usize = @intCast(offset);
         const ready = isAvailable(pool, index);
         if (!ready) answer = .not_ready;
         for (0..pool.stride) |slot| {
@@ -271,8 +310,8 @@ pub fn bytesFor(pool: *const Pool, count: u32, stride: u64, flags: u32) u64 {
 
 const testing = std.testing;
 
-test "the counters of a statistics query: where each one lies, and held at its highest" {
-    var counts = [3]u32{ 0, 0, 0 };
+test "the counters of a statistics query: where each one lies, its lanes added up, and 64 bits of it kept whole" {
+    var counts = [_]u64{0} ** (3 * lanes);
     var flags = [1]bool{false};
     var pool = Pool{
         .device = undefined,
@@ -285,9 +324,10 @@ test "the counters of a statistics query: where each one lies, and held at its h
         .times = undefined,
         .available = &flags,
     };
-    try testing.expectEqual(&counts[0], counterOf(&pool, 0, .input_vertices).?);
-    try testing.expectEqual(&counts[1], counterOf(&pool, 0, .vertex_invocations).?);
-    try testing.expectEqual(&counts[2], counterOf(&pool, 0, .compute_invocations).?);
+    // Each counter is its lanes, one after another.
+    try testing.expectEqual(@as(Counter, &counts), counterOf(&pool, 0, .input_vertices).?);
+    try testing.expectEqual(@as(Counter, counts[lanes..]), counterOf(&pool, 0, .vertex_invocations).?);
+    try testing.expectEqual(@as(Counter, counts[2 * lanes ..]), counterOf(&pool, 0, .compute_invocations).?);
     // Not asked for, past the last, and of another kind: nothing to add to.
     try testing.expectEqual(null, counterOf(&pool, 0, .input_primitives));
     try testing.expectEqual(null, counterOf(&pool, 1, .input_vertices));
@@ -297,25 +337,37 @@ test "the counters of a statistics query: where each one lies, and held at its h
     const counters = Counters.of(&pool, 0);
     try testing.expect(counters.any());
     try testing.expectEqual(null, counters.fragment_invocations);
+    // The queue's task adds in the first lane; a value is its lanes added
+    // up, the others being what the parts drawing tiles added.
     add(counters.input_vertices, 3);
     add(counters.input_vertices, 4);
     add(counters.vertex_invocations, 0);
     try testing.expectEqual(7, valueAt(&pool, 0, 0));
+    try testing.expectEqual(@as(u64, 7), counts[0]);
     try testing.expectEqual(0, valueAt(&pool, 0, 1));
-    // A count that outgrows 32 bits stops there rather than wrapping round.
+    counts[1] = 10;
+    counts[lanes - 1] = 200;
+    try testing.expectEqual(217, valueAt(&pool, 0, 0));
+    try testing.expectEqual(0, valueAt(&pool, 0, 1));
+    // A count that outgrows 32 bits is kept whole, in a lane and in the
+    // sum of them.
     add(counters.compute_invocations, std.math.maxInt(u32) - 1);
     add(counters.compute_invocations, 100);
-    try testing.expectEqual(std.math.maxInt(u32), valueAt(&pool, 0, 2));
+    try testing.expectEqual(@as(u64, std.math.maxInt(u32)) + 99, valueAt(&pool, 0, 2));
     add(counters.compute_invocations, 1 << 40);
-    try testing.expectEqual(std.math.maxInt(u32), valueAt(&pool, 0, 2));
+    counts[2 * lanes + 2] = 1 << 33;
+    try testing.expectEqual((1 << 40) + (1 << 33) + @as(u64, std.math.maxInt(u32)) + 99, valueAt(&pool, 0, 2));
 
     // Nothing counted: what a draw is handed where no query is being
     // counted into, and adding to it does nothing.
     try testing.expect(!none.any());
     add(none.input_vertices, 5);
 
+    // A reset clears every lane.
     reset(&pool, 0, 4);
     try testing.expectEqual(0, valueAt(&pool, 0, 0));
+    try testing.expectEqual(0, valueAt(&pool, 0, 2));
+    try testing.expectEqual([_]u64{0} ** (3 * lanes), counts);
     try testing.expect(!isAvailable(&pool, 0));
     finish(&pool, 0);
     try testing.expect(isAvailable(&pool, 0));
@@ -365,9 +417,42 @@ test "the values written as they were asked for: four bytes or eight, availabili
     into = @splat(0xAA);
     try testing.expectEqual(facet.Result.success, write(&pool, 0, 1, &into, 8, facet.QUERY_RESULT_64));
     try testing.expectEqual(5, std.mem.readInt(u64, into[0..8], .little));
-    try testing.expectEqual(facet.Result.error_out_of_host_memory, write(&pool, 0, 1, into[0..4], 8, facet.QUERY_RESULT_64));
+    // Too small breaks Vulkan's rules (VUID-vkGetQueryPoolResults-dataSize-00817;
+    // `error_out_of_host_memory` until 1.134), and so does a stride that
+    // runs past what can be counted: refused, not overflowed.
+    try testing.expectEqual(facet.Result.error_validation_failed, write(&pool, 0, 1, into[0..4], 8, facet.QUERY_RESULT_64));
+    try testing.expectEqual(facet.Result.error_validation_failed, write(&pool, 0, 2, &into, 0xFFFF_FFFF_FFFF_FFF8, facet.QUERY_RESULT_64));
     // Past the pool's last: what is there is written and no more, and the
     // one that is not available still says it is not ready.
     try testing.expectEqual(facet.Result.not_ready, write(&pool, 1, 4, &into, 8, facet.QUERY_RESULT_PARTIAL));
     try testing.expectEqual(0, bytesFor(&pool, 0, 8, 0));
+}
+
+test "an occlusion count past 32 bits: what every part and the queue's task added, eight bytes of it whole and four held at their most" {
+    var counts = [_]u64{0} ** (2 * lanes);
+    var flags = [2]bool{ true, true };
+    var pool = Pool{
+        .device = undefined,
+        .kind = .occlusion,
+        .count = 2,
+        .statistics = 0,
+        .stride = 1,
+        .counts = &counts,
+        .times = undefined,
+        .available = &flags,
+    };
+    // The second query's lanes, after the first's.
+    const second = samplesOf(&pool, 1).?;
+    try testing.expectEqual(@as(Counter, counts[lanes..]), second);
+    // Each part counted a frame's samples past 32 bits in its own lane,
+    // and the queue's task five more in the first.
+    for (0..lanes) |part| second[part] = (1 << 32) + part;
+    add(second, 5);
+    const whole: u64 = lanes * (1 << 32) + lanes * (lanes - 1) / 2 + 5;
+    var into: [16]u8 = @splat(0xAA);
+    try testing.expectEqual(facet.Result.success, write(&pool, 0, 2, &into, 8, facet.QUERY_RESULT_64));
+    try testing.expectEqual(0, std.mem.readInt(u64, into[0..8], .little));
+    try testing.expectEqual(whole, std.mem.readInt(u64, into[8..16], .little));
+    try testing.expectEqual(facet.Result.success, write(&pool, 1, 1, &into, 4, 0));
+    try testing.expectEqual(0xFFFF_FFFF, std.mem.readInt(u32, into[0..4], .little));
 }

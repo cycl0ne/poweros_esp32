@@ -45,10 +45,12 @@ const driver = @import("driver.zig");
 const _queries = @import("../_queries.zig");
 const _query = @import("../../query/_query.zig");
 const _render = @import("../../render/_render.zig");
+const _sync = @import("../../sync/_sync.zig");
 const Hardware = driver.Hardware;
 const regs = v3d.regs;
 const cl = v3d.cl;
 const qpu = v3d.qpu;
+const compile = v3d.compile;
 const tiling = v3d.tiling;
 const frames = v3d.frame;
 const Frame = frames.Frame;
@@ -114,6 +116,9 @@ pub const Player = struct {
     line_width: f32 = 1,
     stencil: _vertices.StencilSet = .{},
     resources: shader.Resources = .{},
+    /// Which of its subpass's parts is being drawn: a query counts the
+    /// first alone (since 1.116).
+    part: u32 = 0,
     /// What was bound where a subpass of several attachments began.
     saved: _vertices.Bound = undefined,
     /// What compute functions have bound, apart from what draws have.
@@ -122,11 +127,37 @@ pub const Player = struct {
     /// The frame being made.
     frame: Frame = undefined,
     area: Area = undefined,
-    image: *Image = undefined,
+    /// The colour's image, or null in a frame of no colour (since 1.150).
+    image: ?*Image = null,
+    /// Where in that image's memory the frame's rows begin: the layer its
+    /// view begins at, which the GPU is given and the CPU's caches are kept
+    /// in step over (since 1.91). Mesa's v3dv adds the same to every load
+    /// and store it emits (`v3dv_layer_offset`, v3dv_image.c).
+    image_first: usize = 0,
+    /// And the bytes from there the frame stores into: the rows of its
+    /// height, or a level of four samples (since 1.147).
+    image_bytes: usize = 0,
     /// The image whose rows hold the depth or the stencil the frame keeps,
     /// for the caches either side of the job: null where the pass keeps
     /// neither (since 1.47).
     kept_image: ?*Image = null,
+    /// The same for the kept plane: the level and the layer its view
+    /// names (since 1.91).
+    kept_first: usize = 0,
+    /// And how many bytes of it the frame reaches.
+    kept_bytes: usize = 0,
+    /// The layer of its colour's image the frame draws into, the one its
+    /// view begins at (since 1.148).
+    color_layer: u32 = 0,
+    /// The colour's resolve attachment in a frame of four, or null for
+    /// none: averaged into by the tiles as they end where the frame has a
+    /// `Frame.resolve`, and by the CPU after the frame where it has not
+    /// (since 1.148).
+    resolve_view: ?*const _image.ImageView = null,
+    /// The first byte of its rows the tiles store into, and how many, for
+    /// the caches either side of the job.
+    resolve_first: usize = 0,
+    resolve_bytes: usize = 0,
     /// The occlusion query being counted into, or null for none: what
     /// CmdBeginQuery begins and CmdEndQuery ends (since 1.47).
     counting: ?_queries.Counting = null,
@@ -139,6 +170,9 @@ pub const Player = struct {
     /// The frame's group of counters, carved when the first query counts.
     tally_group: ?Place = null,
     bin: cl.List = undefined,
+    /// The address of the binner's list's first part, where the binner
+    /// starts (`startBinning`, since 1.150).
+    bin_start: u32 = 0,
     /// A draw is on the binner's list.
     binned: bool = false,
     /// Memory a draw's vertices are worked in, kept for the next.
@@ -194,8 +228,34 @@ pub fn broken(queue: *const Queue) bool {
 }
 
 /// A sampled image's layout in memory.
-pub fn layoutOf(format: facet.Format, width: u32, height: u32, levels: u32) tiling.Layout {
-    return tiling.layoutOf(_image.bytesOf(format), width, height, @min(levels, tiling.most_levels));
+pub fn layoutOf(format: facet.Format, width: u32, height: u32, depth: u32, levels: u32, four: bool) tiling.Layout {
+    return tiling.layoutOf(_image.bytesOf(format), width, height, depth, @min(levels, tiling.most_levels), four);
+}
+
+/// The store's and the load's name for a level's tiling.
+fn memoryOf(kind: tiling.Kind) u64 {
+    return switch (kind) {
+        .lineartile => cl.MEMORY_LINEARTILE,
+        .ublinear_1 => cl.MEMORY_UBLINEAR_1,
+        .ublinear_2 => cl.MEMORY_UBLINEAR_2,
+        .uif => cl.MEMORY_UIF,
+        .uif_xor => cl.MEMORY_UIF_XOR,
+    };
+}
+
+/// A texture image's layout: of a 3D image, its slices in each level
+/// (since 1.141).
+pub fn imageLayout(image: *const _image.Image) tiling.Layout {
+    return layoutOf(image.format, image.width, image.height, if (image.volume) image.layers else 1, image.levels, image.quads);
+}
+
+/// Where layer `layer` of a texture image begins, or slice `layer` of
+/// level `level` of a 3D one, from where the image's level does: a layer
+/// is a texture of its own, `layer_bytes` from the one before, and a 3D
+/// image's slices lie in each level (`tiling.sliceAt`, since 1.141).
+pub fn layerAt(image: *const _image.Image, layout: *const tiling.Layout, level: u32, layer: u32) usize {
+    if (image.volume) return tiling.sliceAt(layout, level, layer);
+    return layer * @as(usize, @intCast(image.layer_bytes));
 }
 
 /// The commands of `buffer`, in order.
@@ -221,12 +281,24 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
     var repeat: ?_vertices.Repeat = null;
     while (commands.next()) |head| switch (head.op) {
         .barrier => {},
+        .set_event, .reset_event, .wait_events => _sync.play(queue.device.sys, head),
         .copy_buffer_to_image => copyBufferToImage(queue, _stream.as(_command.CopyBufferToImage, head)),
         .copy_buffer => _vertices.copyBuffer(_stream.as(_command.CopyBuffer, head)),
         .fill_buffer => if (!_vertices.fillBuffer(_stream.as(_command.FillBuffer, head))) noRoom(queue, "a fill of bytes that are not the buffer's"),
         .update_buffer => if (!_vertices.updateBuffer(_stream.as(_command.UpdateBuffer, head))) noRoom(queue, "an update of bytes that are not the buffer's"),
-        .clear_color_image => if (!_transfer.clearColorImage(_stream.as(_command.ClearColorImage, head))) noRoom(queue, "a clear of an image whose format it cannot write"),
-        .clear_depth_stencil_image => if (!_transfer.clearDepthImage(_stream.as(_command.ClearDepthStencilImage, head))) noRoom(queue, "a clear of a depth image whose pixels it cannot write"),
+        // The CPU clears, so what it wrote goes out before the TMU reads
+        // it, as after a copy (since 1.142; until then a cleared texture
+        // could be sampled from what the caches had not yet written).
+        .clear_color_image => {
+            const command = _stream.as(_command.ClearColorImage, head);
+            if (!_transfer.clearColorImage(command)) noRoom(queue, "a clear of an image whose format it cannot write");
+            texturesToGpu(queue, command.image);
+        },
+        .clear_depth_stencil_image => {
+            const command = _stream.as(_command.ClearDepthStencilImage, head);
+            if (!_transfer.clearDepthImage(command)) noRoom(queue, "a clear of a depth image whose pixels it cannot write");
+            texturesToGpu(queue, command.image);
+        },
         .copy_image => {
             const command = _stream.as(_command.CopyImage, head);
             _transfer.copyImage(command);
@@ -235,6 +307,16 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
         .blit_image => {
             const command = _stream.as(_command.BlitImage, head);
             _transfer.blitImage(command);
+            texturesToGpu(queue, command.destination);
+        },
+        // On the cores' body, which reads each sample where this device
+        // keeps it (`_image.sampleOf`, since 1.146). A pass's resolve is in
+        // the tiles since 1.148; v3dv does this command in them too, with a
+        // job of its own (`resolve_image_tlb`, v3dv_meta_copy.c:5109),
+        // which is yet to be ported.
+        .resolve_image => {
+            const command = _stream.as(_command.ResolveImage, head);
+            _transfer.resolveImage(command);
             texturesToGpu(queue, command.destination);
         },
         .copy_image_to_buffer => _transfer.copyImageToBuffer(_stream.as(_command.CopyImageToBuffer, head)),
@@ -366,7 +448,9 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
 /// and the counter those samples are added to as the frame ends (since
 /// 1.47).
 const Tally = struct {
-    samples: *u32,
+    /// The query's counter, whose first lane the frame's count goes into,
+    /// the task's own (query/_query.zig `lanes`).
+    samples: _query.Counter,
     at: *u32,
     address: u32,
 };
@@ -468,20 +552,28 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     endRenderPass(queue);
     const player = playerOf(queue);
     if (player.hardware.broken) return;
-    player.resources.output = part;
+    player.part = part;
+    // The location its colour is written at: its part's number, unless a
+    // colour before it is unused and has none (since 1.118).
+    player.resources.output = command.parts[part].output;
     const framebuffer = &command.targets[part];
-    const image = framebuffer.colors[0].image;
-    const output: struct { u64, bool } = switch (image.format) {
+    // A part of no colour - a subpass of no colour attachment, or of
+    // unused ones alone - has no image of colour, and `colors[0]` is not
+    // set: its frame configures the unused render target and moves no
+    // colour (`Frame.color`, since 1.150).
+    const has_color = command.parts[part].color_count != 0;
+    const image: ?*Image = if (has_color) framebuffer.colors[0].image else null;
+    const output: struct { u64, bool } = if (image) |each| switch (each.format) {
         .b8g8r8a8_unorm => .{ cl.OUTPUT_RGBA8, true },
         .r8g8b8a8_unorm => .{ cl.OUTPUT_RGBA8, false },
         .r5g6b5_unorm_pack16 => .{ cl.OUTPUT_BGR565, false },
         else => return,
-    };
-    const address = addressOf(queue, image);
-    if (address == 0) {
-        exec.kprintf(queue.device.sys, "v3d: an image at %lx is out of its reach\n", .{@intFromPtr(image.data)});
+    } else .{ cl.OUTPUT_RGBA8, false };
+    const address = if (image) |each| addressOf(queue, each) else 0;
+    if (image) |each| if (address == 0) {
+        exec.kprintf(queue.device.sys, "v3d: an image at %lx is out of its reach\n", .{@intFromPtr(each.data)});
         return;
-    }
+    };
     // The render area, cut to the framebuffer.
     const offset = command.area.offset;
     const left: u32 = @intCast(std.math.clamp(offset.x, 0, @as(i64, framebuffer.width)));
@@ -490,16 +582,24 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     const bottom: u32 = @intCast(std.math.clamp(@as(i64, offset.y) + command.area.extent.height, top, framebuffer.height));
     if (left == right or top == bottom) return;
     const whole = left == 0 and top == 0 and right == framebuffer.width and bottom == framebuffer.height;
-    const clears = command.parts[part].color_loads[0] == .clear;
-    const tiles = ((framebuffer.width + 63) / 64) * ((framebuffer.height + 63) / 64);
-    if (!sized(queue, &player.tile_lists, tileListsBytes(tiles, 0))) return;
-    player.triangles = 0;
-    if (!sized(queue, &player.tile_state, tiles * tile_state_bytes)) return;
-    for (player.chunks[0..player.chunk_count]) |*chunk| chunk.used = 0;
-    player.chunk_at = 0;
-    const list = carve(queue, list_part_bytes, 8) orelse return;
+    const clears = has_color and command.parts[part].color_loads[0] == .clear;
+    // The tile its samples and its one render target fit, at 32 bits of
+    // internal colour whatever the format, or none. Four samples where the
+    // colour has four, which its depth has too, Vulkan having a subpass's
+    // attachments of one count (since 1.147, docs/facet-vulkan10.md item
+    // 61, step V4); in a part of no colour, where its depth has, and in
+    // one of no attachment where its first draw's pipeline has
+    // (`restartAtFour`, V8).
+    const four = if (image) |each| each.samples > 1 else command.parts[part].samples > 1;
+    const tile = frames.chooseTile(if (has_color) 4 else 0, four);
     const color = command.clear_colors[part];
     player.image = image;
+    // The layer the view begins at, an image kept in rows having layers
+    // since 1.91: until then the frame began at the image's first byte
+    // whatever its view said.
+    const place = if (image) |each| colorPlace(each, framebuffer.colors[0].base_layer, framebuffer.height) else ColorPlace{ .first = 0, .bytes = 0, .stride = 0, .memory = cl.MEMORY_RASTER };
+    player.image_first = place.first;
+    player.image_bytes = place.bytes;
     player.kept_image = null;
     // `beginBin` stops the hardware's counter, so the frame starts with no
     // word and writes the packet again at the first draw that counts.
@@ -510,15 +610,17 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     player.frame = .{
         .width = framebuffer.width,
         .height = framebuffer.height,
-        .image = address,
-        .stride = image.pitch,
+        .image = address + @as(u32, @intCast(player.image_first)),
+        .stride = place.stride,
+        .memory = place.memory,
         .format = output[0],
         .swap_rb = output[1],
         // Red in the low byte.
         .clear = color & 0xFF00_FF00 | (color >> 16 & 0xFF) | (color & 0xFF) << 16,
-        .tile_lists = player.tile_lists.?.address,
+        // `startBinning`'s, once it has made them.
+        .tile_lists = 0,
         .binned = false,
-        .load = !clears or !whole,
+        .load = has_color and (!clears or !whole),
         .clear_inside = clears and !whole,
         .depth = command.parts[part].tests_depth,
         .clear_depth = @as(f32, @floatFromInt(command.clear_depth)) / 65535,
@@ -530,18 +632,146 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
             break :kept made;
         },
         .area = if (whole) null else player.area,
+        .four = four,
+        .tile = tile,
+        .color = has_color,
     };
-    player.bin = .{ .at = list.cpu, .address = list.address };
-    player.binned = false;
-    frames.beginBin(&player.bin, &player.frame);
+    player.color_layer = if (has_color) framebuffer.colors[0].base_layer else 0;
+    // The colour's resolve attachment, in a frame of four. The tiles
+    // average its samples into it as each ends where every tile they
+    // render lies inside the area, and the CPU does after the frame where
+    // one does not, as v3dv resolves in the TLB only over a render area
+    // aligned to its tiles and with a job of its own after the frame
+    // otherwise (`use_tlb_resolve`, v3dv_cmd_buffer.c:1184-1203). A
+    // resolve attachment is of the colour's format and of one sample
+    // (VUID-VkSubpassDescription-pResolveAttachments-00849, -00850), and
+    // here in rows, an image drawn into being kept in rows on this device
+    // (`_image.create`); one of any other shape is not resolved into.
+    player.resolve_view = null;
+    if (four) if (image) |each| if (framebuffer.resolves[0]) |view| resolve: {
+        const into = view.image;
+        if (into.samples != 1 or into.format != each.format or into.kind != .rows or !_image.readable(into)) break :resolve;
+        player.resolve_view = view;
+        if (!frames.tilesInArea(&player.frame)) break :resolve;
+        const at = addressOf(queue, into);
+        if (at == 0) break :resolve;
+        const rows = _image.rowsAt(into, view.base_level, view.base_layer);
+        player.resolve_first = rows.at;
+        player.resolve_bytes = @as(usize, rows.pitch) * framebuffer.height;
+        player.frame.resolve = .{ .image = at + @as(u32, @intCast(rows.at)), .stride = rows.pitch };
+    };
+    // A depth or a stencil kept in memory and stored, over a render area
+    // a tile the renderer renders sticks out of, is loaded first whatever
+    // its load op, so that the tile's store writes back what lay outside
+    // the area, as v3dv loads an attachment it stores wherever the area is
+    // not tile aligned (`v3dv_cmd_buffer_check_needs_load`,
+    // v3dv_cmd_buffer.c:1557-1564). What the pass begins with inside the
+    // area is then a rectangle drawn over it, as v3dv clears there with
+    // CmdClearAttachments (`cmd_buffer_emit_subpass_clears`,
+    // v3dv_cmd_buffer.c:1430-1488) - here whatever the op, the part not
+    // saying it was CLEAR, which for DONT_CARE leaves contents Vulkan
+    // leaves undefined (since 1.151). Before, such a tile stored the
+    // tile's clear over the pixels outside the area.
+    var kept_inside: ?frames.Kept = null;
+    if (player.frame.kept) |*kept| if (kept.store and !kept.load and !frames.tilesInArea(&player.frame)) {
+        kept.load = true;
+        kept_inside = kept.*;
+    };
+    if (!startBinning(queue)) return;
     player.drawing = true;
-    if (clears and !whole) clearArea(queue, color);
+    const colors_inside = clears and !whole;
+    if (colors_inside or kept_inside != null) {
+        const depth_inside = if (kept_inside) |kept| kept.buffer == cl.STORE_Z else false;
+        const stencil_inside = if (kept_inside) |kept| kept.buffer == cl.STORE_STENCIL else false;
+        clearRectangle(
+            queue,
+            player.area,
+            color,
+            if (colors_inside) 0xF else 0,
+            if (depth_inside) player.frame.clear_depth else null,
+            if (stencil_inside) @truncate(player.frame.clear_stencil) else null,
+        );
+    }
+}
+
+/// The frame's tile lists, tile state and binner's list made for its
+/// tiles, its chunks given back, and the binner's list begun: what a frame
+/// starts with, and what one started again at four starts with
+/// (`restartAtFour`).
+fn startBinning(queue: *Queue) bool {
+    const player = playerOf(queue);
+    const frame = &player.frame;
+    const tiles = frame.tilesX() * frame.tilesY();
+    if (!sized(queue, &player.tile_lists, tileListsBytes(tiles, 0))) return false;
+    frame.tile_lists = player.tile_lists.?.address;
+    player.triangles = 0;
+    if (!sized(queue, &player.tile_state, tiles * tile_state_bytes)) return false;
+    for (player.chunks[0..player.chunk_count]) |*chunk| chunk.used = 0;
+    player.chunk_at = 0;
+    const list = carve(queue, list_part_bytes, 8) orelse return false;
+    player.bin = .{ .at = list.cpu, .address = list.address };
+    // Where the binner starts: this first part, however many the list
+    // goes on into (`roomOnList`), as v3dv starts its job's at the first
+    // of its chained blocks (v3dv_queue.c:733-737). Since 1.150: before,
+    // a list grown past its first part was started at its last, without
+    // the binning mode it begins with.
+    player.bin_start = list.address;
+    player.binned = false;
+    frames.beginBin(&player.bin, frame);
+    return true;
+}
+
+/// v3dv's cmd_buffer_restart_job_for_msaa_if_needed
+/// (v3dv_cmd_buffer.c:2655-2735, called at :2906): a subpass of no
+/// attachment draws at its pipelines' sample count, which its frame cannot
+/// know as it starts, so where the first draw's pipeline has four and the
+/// frame has one, the frame starts again at four, of the size it has and
+/// in the tile four samples of no colour take (item 61's V8, since 1.150).
+/// Nothing has been binned yet - all a subpass's pipelines are of one
+/// count, Vulkan having no variableMultisampleRate - so nothing is lost.
+/// False where there is no memory to start again.
+fn restartAtFour(queue: *Queue, pipeline: *const Pipeline) bool {
+    const player = playerOf(queue);
+    if (player.binned or pipeline.samples <= 1 or player.frame.four) return true;
+    // Any attachment gives the frame its count, which its pipelines have
+    // (VUID-VkGraphicsPipelineCreateInfo-multisampledRenderToSingleSampled-06853,
+    // held to in CreateGraphicsPipelines).
+    if (player.frame.color or player.frame.depth or player.frame.stencil) return true;
+    player.frame.four = true;
+    player.frame.tile = frames.chooseTile(0, true);
+    // The counter is started again in the new list by the first draw
+    // that counts, and nothing has been counted to keep.
+    player.tally_address = 0;
+    player.tally_count = 0;
+    player.tally_group = null;
+    return startBinning(queue);
+}
+
+/// Where a frame stores its colour: the rows of the layer its view begins
+/// at, or for an image of four samples that layer's level, where the
+/// device keeps each pixel's four together and the tiles store them all
+/// at once, in the level's own tiling (`_image.Image.quads`, since 1.147;
+/// v3dvx_cmd_buffer.c:396-406, 408-409).
+const ColorPlace = struct { first: usize, bytes: usize, stride: u32, memory: u64 };
+
+fn colorPlace(image: *const _image.Image, layer: u32, height: u32) ColorPlace {
+    if (image.quads) {
+        const layout = imageLayout(image);
+        const level = &layout.levels[0];
+        return .{
+            .first = layerAt(image, &layout, 0, layer) + level.offset,
+            .bytes = level.slice_bytes,
+            .stride = tiling.blocksDown(&layout, 0),
+            .memory = memoryOf(level.kind),
+        };
+    }
+    return .{ .first = _image.rowsAt(image, 0, layer).at, .bytes = @as(usize, image.pitch) * height, .stride = image.pitch, .memory = cl.MEMORY_RASTER };
 }
 
 /// The depth or the stencil a part keeps in its image's rows, or null where
 /// both live in the tiles alone. One plane at most: a format that holds
 /// them both is refused on this device, the hardware storing a plane as its
-/// own pixels one after another (`PhysicalDeviceFeatures.stored_both`).
+/// own pixels one after another (`Capabilities.stored_both`).
 fn keptOf(queue: *Queue, part: *const _render.Part, framebuffer: *const _render.Target) ?frames.Kept {
     const keeps_depth = part.loads_depth or part.stores_depth;
     const keeps_stencil = part.loads_stencil or part.stores_stencil;
@@ -553,26 +783,51 @@ fn keptOf(queue: *Queue, part: *const _render.Part, framebuffer: *const _render.
         exec.kprintf(queue.device.sys, "v3d: a depth image at %lx is out of its reach\n", .{@intFromPtr(image.data)});
         return null;
     }
+    // A depth image sampled as well lies as a texture (since 1.142,
+    // `_image.deviceLaid`): the level and the layer the view names, stored
+    // in that level's own tiling, as v3dv stores into a slice of its image
+    // (v3dvx_cmd_buffer.c:396-406), so the TMU reads it where it lies. And
+    // one of four samples, kept together in its level, which the frame of
+    // four stores all of (since 1.147).
+    if (_image.deviceLaid(image)) {
+        const layout = imageLayout(image);
+        const level = &layout.levels[view.base_level];
+        const at = layerAt(image, &layout, view.base_level, view.base_layer) + level.offset;
+        playerOf(queue).kept_first = at;
+        playerOf(queue).kept_bytes = level.slice_bytes;
+        return .{
+            .buffer = if (keeps_depth) cl.STORE_Z else cl.STORE_STENCIL,
+            .format = if (keeps_depth) cl.OUTPUT_D16 else cl.OUTPUT_S8,
+            .image = address + @as(u32, @intCast(at)),
+            .stride = tiling.blocksDown(&layout, view.base_level),
+            .memory = memoryOf(level.kind),
+            .load = if (keeps_depth) part.loads_depth else part.loads_stencil,
+            .store = if (keeps_depth) part.stores_depth else part.stores_stencil,
+        };
+    }
+    // The level and the layer the view names, in that level's own rows, as
+    // the cores' `planeOf` has drawn into since 1.58 and 1.63: until 1.91
+    // this device stored a kept plane at the image's first byte, with the
+    // first level's pitch, whatever the view said.
+    const rows = _image.rowsAt(image, view.base_level, view.base_layer);
+    playerOf(queue).kept_first = rows.at;
+    playerOf(queue).kept_bytes = @as(usize, rows.pitch) * framebuffer.height;
     return .{
         .buffer = if (keeps_depth) cl.STORE_Z else cl.STORE_STENCIL,
         .format = if (keeps_depth) cl.OUTPUT_D16 else cl.OUTPUT_S8,
-        .image = address,
-        .stride = image.pitch,
+        .image = address + @as(u32, @intCast(rows.at)),
+        .stride = rows.pitch,
         .load = if (keeps_depth) part.loads_depth else part.loads_stencil,
         .store = if (keeps_depth) part.stores_depth else part.stores_stencil,
     };
 }
 
-/// A clear of part of the image: a rectangle of the colour, over all of it
-/// and cut to the part.
-fn clearArea(queue: *Queue, color: u32) void {
-    const player = playerOf(queue);
-    clearRectangle(queue, player.area, color, 0xF, null, null);
-}
-
 /// A part of the attachments cleared in the middle of a pass.
 fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void {
     const player = playerOf(queue);
+    // A framebuffer here has the one layer (`max_framebuffer_layers`), so
+    // a rectangle of any other names nothing of it (since 1.91).
+    if (command.base_layer != 0 or command.layer_count == 0) return;
     const aspect = command.aspect_mask;
     const rect = command.rect;
     const x = @as(i64, rect.offset.x);
@@ -587,7 +842,10 @@ fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void
         queue,
         .{ .left = left, .top = top, .right = right, .bottom = bottom },
         command.color,
-        if (aspect & facet.IMAGE_ASPECT_COLOR != 0 and command.output == player.resources.output) 0xF else 0,
+        // No colour in a frame of none, where a colour attachment the
+        // clear names is an unused one, whose clear has no effect (since
+        // 1.150).
+        if (aspect & facet.IMAGE_ASPECT_COLOR != 0 and command.output == player.resources.output and player.frame.color) 0xF else 0,
         if (aspect & facet.IMAGE_ASPECT_DEPTH != 0 and player.frame.depth) command.depth else null,
         if (aspect & facet.IMAGE_ASPECT_STENCIL != 0 and player.frame.stencil) @truncate(command.stencil) else null,
     );
@@ -597,6 +855,14 @@ fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void
 /// the colour and the depth and the stencil given.
 fn clearRectangle(queue: *Queue, clip: frames.Area, color: u32, channels: u32, depth: ?f32, stencil: ?u8) void {
     const player = playerOf(queue);
+    // Nothing to write: a colour the frame does not draw, and neither
+    // plane (since 1.150, where it drew a rectangle that wrote nothing).
+    if (channels == 0 and depth == null and stencil == null) return;
+    // In a frame of no colour, the program of no colour, which reads no
+    // varying and writes the depth the rasterizer made, the rectangle's
+    // own (since 1.150).
+    const no_color = !player.frame.color;
+    const varyings: u32 = if (no_color) 0 else 4;
     const channel = struct {
         fn of(value: u32, shift: u5) f32 {
             return @as(f32, @floatFromInt(value >> shift & 0xFF)) / 255;
@@ -606,13 +872,13 @@ fn clearRectangle(queue: *Queue, clip: frames.Area, color: u32, channels: u32, d
     const corners = [_]u32{ 0, 1, 2, 2, 1, 3 };
     const indices = carve(queue, @sizeOf(@TypeOf(corners)), 4) orelse return;
     @memcpy(indices.cpu[0..@sizeOf(@TypeOf(corners))], std.mem.asBytes(&corners));
-    const stride = recordStride(4);
+    const stride = recordStride(varyings);
     const vertices = carve(queue, 4 * stride, 4) orelse return;
     const half_width = @as(f32, @floatFromInt(player.frame.width)) / 2;
     const half_height = @as(f32, @floatFromInt(player.frame.height)) / 2;
     const viewport = ViewportScale{ .half_width = half_width, .half_height = half_height, .scale = 1, .offset = 0 };
     for ([4][2]f32{ .{ -1, -1 }, .{ 1, -1 }, .{ -1, 1 }, .{ 1, 1 } }, 0..) |corner, k| {
-        writeRecord(vertices.cpu + k * stride, &[4]f32{ corner[0], corner[1], depth orelse 0, 1 }, &viewport, 4, .{ .constant = rgba });
+        writeRecord(vertices.cpu + k * stride, &[4]f32{ corner[0], corner[1], depth orelse 0, 1 }, &viewport, varyings, .{ .constant = rgba });
     }
     const stencil_face = cl.StencilFace{ .fail = 1, .pass = 2, .depth_fail = 1, .compare = cl.COMPARE_ALWAYS, .compare_mask = 0, .write_mask = 0xFF, .reference = stencil orelse 0 };
     const state = frames.DrawState{
@@ -625,18 +891,24 @@ fn clearRectangle(queue: *Queue, clip: frames.Area, color: u32, channels: u32, d
         .width = half_width * 2,
         .height = half_height * 2,
     };
-    const uniforms = carve(queue, 4, 4) orelse return noRoom(queue, "a clear with no memory for its uniforms");
+    const hardware = player.hardware;
+    const uniforms = if (no_color)
+        streamOf(queue, &hardware.no_color, null) orelse return noRoom(queue, "a clear with no memory for its uniforms")
+    else
+        (carve(queue, 4, 4) orelse return noRoom(queue, "a clear with no memory for its uniforms")).address;
     if (!roomOnList(queue)) return noRoom(queue, "a clear with no memory for the binner's list");
-    frames.writeDrawState(&player.bin, &state);
-    if (!sendVertices(queue, vertices.address, 4, player.hardware.programs.color, uniforms.address)) return;
+    frames.writeDrawState(&player.bin, &player.frame, &state);
+    const fragment = if (no_color) hardware.no_color.address else hardware.programs.color;
+    if (!sendVertices(queue, vertices.address, varyings, fragment, uniforms, if (no_color) &hardware.no_color else null)) return;
     cl.indexBufferSetup(&player.bin, indices.address, @sizeOf(@TypeOf(corners)));
     cl.indexedPrimList(&player.bin, cl.PRIM_TRIANGLES, corners.len);
     player.binned = true;
 }
 
-/// What was written into a texture on the cores seen by the V3D.
+/// What was written into a texture on the cores seen by the V3D, or into a
+/// depth image laid out as one (since 1.142).
 fn texturesToGpu(queue: *Queue, image: *Image) void {
-    if (image.kind == .texture) if (image.data) |data| {
+    if (_image.deviceLaid(image)) if (image.data) |data| {
         playerOf(queue).hardware.space.rangeToGpu(data, @intCast(image.bytes));
     };
 }
@@ -675,16 +947,22 @@ fn endRenderPass(queue: *Queue) void {
 
     const space = &hardware.space;
     const image = player.image;
-    const image_bytes: usize = @as(usize, image.pitch) * player.frame.height;
+    const image_bytes = player.image_bytes;
     for (player.chunks[0..player.chunk_count]) |*chunk| {
         if (chunk.used != 0) space.rangeToGpu(chunk.block.cpu, chunk.used);
     }
-    space.rangeToGpu(image.data.?, image_bytes);
+    if (image) |each| space.rangeToGpu(each.data.? + player.image_first, image_bytes);
     // The depth or the stencil the frame keeps lies in another image: what
-    // the CPU wrote there goes out to memory before a load reads it, and
-    // what a store writes is dropped from the CPU's caches after.
-    const kept_bytes: usize = if (player.kept_image) |kept| @as(usize, kept.pitch) * player.frame.height else 0;
-    if (player.frame.kept) |kept| if (kept.load) space.rangeToGpu(player.kept_image.?.data.?, kept_bytes);
+    // the CPU wrote there goes out to memory before the frame, and what a
+    // store writes is dropped from the CPU's caches after. Out before a
+    // store as well as a load (since 1.136): a line is dropped with a
+    // write-back first (exec's CachePostDMA, `dc civac`), so one the CPU
+    // left dirty - a CmdClearDepthStencilImage, which the CPU writes -
+    // landed over what the V3D stored, where only a load sent it out.
+    const kept_bytes: usize = if (player.frame.kept != null) player.kept_bytes else 0;
+    if (player.frame.kept != null) space.rangeToGpu(player.kept_image.?.data.? + player.kept_first, kept_bytes);
+    // And the rows the tiles resolve into, for the same reason.
+    if (player.frame.resolve != null) space.rangeToGpu(player.resolve_view.?.image.data.? + player.resolve_first, player.resolve_bytes);
 
     sys.ObtainSemaphore(&device.base.v3d_lock);
     defer sys.ReleaseSemaphore(&device.base.v3d_lock);
@@ -698,16 +976,31 @@ fn endRenderPass(queue: *Queue) void {
     }
     const engine = &hardware.engine;
     if (player.binned) {
-        const binned = engine.bin(player.bin.address, player.bin.here(), &player.tile_lists.?, &player.tile_state.?);
+        const binned = engine.bin(player.bin_start, player.bin.here(), &player.tile_lists.?, &player.tile_state.?);
         if (binned != .done) return lost(player, sys, binned, "binning");
     }
     const rendered = engine.render(render.address, render.here());
-    space.rangeFromGpu(image.data.?, image_bytes);
-    if (player.frame.kept) |kept| if (kept.store) space.rangeFromGpu(player.kept_image.?.data.?, kept_bytes);
+    if (image) |each| space.rangeFromGpu(each.data.? + player.image_first, image_bytes);
+    if (player.frame.kept) |kept| if (kept.store) space.rangeFromGpu(player.kept_image.?.data.? + player.kept_first, kept_bytes);
+    if (player.frame.resolve != null) space.rangeFromGpu(player.resolve_view.?.image.data.? + player.resolve_first, player.resolve_bytes);
     addTallies(player, space);
     if (rendered != .done) return lost(player, sys, rendered, "rendering");
-    if (image.display) |display| {
-        const area = player.area;
+    // A resolve the tiles could not do, over the render area, from the
+    // samples the frame stored, as v3dv finishes the job and then resolves
+    // what its tiles did not by CmdResolveImage's own path
+    // (`cmd_buffer_subpass_handle_pending_resolves`,
+    // v3dv_cmd_buffer.c:957-1005): here that path's body on the CPU
+    // (`_transfer.resolveRectangle`).
+    const area = player.area;
+    // A frame of no colour has no resolve and nothing shown.
+    const color_image = image orelse return;
+    if (player.resolve_view) |view| if (player.frame.resolve == null) {
+        _transfer.resolveRectangle(color_image, player.color_layer, .{ area.left, area.top }, view.image, view.base_level, view.base_layer, .{ area.left, area.top }, area.right - area.left, area.bottom - area.top);
+    };
+    // What is shown is the resolve where there is one, as the cores show
+    // it (`cpu/_play.zig`), a swapchain's image being of one sample.
+    const shown = if (player.resolve_view) |view| view.image else color_image;
+    if (shown.display) |display| {
         display.handOn(area.left, area.top, area.right - area.left, area.bottom - area.top);
     }
 }
@@ -798,9 +1091,70 @@ fn writeRecord(into: [*]u8, output: [*]const f32, viewport: *const ViewportScale
     }
 }
 
+/// A compiled program's uniform stream, written where the V3D reads it:
+/// its floats, the TMU's two words from `tmu`, and the push constants as
+/// the command buffer last set them before this draw (`CmdPushConstants`),
+/// read as v3dv reads QUNIFORM_UNIFORM (v3dv_uniforms.c:513). Its address,
+/// or null with no memory for it.
+fn streamOf(queue: *Queue, made: *const driver.Shader, tmu: ?Configuration) ?u32 {
+    const stream = made.stream();
+    const bytes: u32 = @max(4, @as(u32, @intCast(stream.len * 4)));
+    const place = carve(queue, bytes, 4) orelse return null;
+    const words: [*]u32 = @ptrCast(@alignCast(place.cpu));
+    const pushed = &playerOf(queue).resources.push;
+    for (stream, 0..) |word, k| words[k] = switch (word) {
+        .float => |each| @bitCast(each),
+        // `Code.sampler` is set for exactly the streams that hold these,
+        // so `tmu` is there whenever they are.
+        .texture => if (tmu) |each| each.texture else 0,
+        .sampler => if (tmu) |each| each.sampler else 0,
+        // `compile` holds every word inside the push constants, so `at`
+        // is one of theirs.
+        .push => |at| std.mem.readInt(u32, pushed[at * 4 ..][0..4], .little),
+        // `buffersBound` has found each.
+        .ubo => |each| bufferAddress(queue, each, true) orelse 0,
+    };
+    return place.address;
+}
+
+/// Where the V3D reads a uniform buffer's floats: the buffer's address,
+/// its descriptor's offset and a dynamic one's, and the offset the
+/// program reads at (write_ubo_ssbo_uniforms, v3dv_uniforms.c:235-350;
+/// since 1.160). Its bytes from there go out of the CPU's caches first,
+/// as v3dv's memory is coherent and what the CPU wrote is in memory
+/// before the V3D reads it, where `out` says so. Null where nothing is
+/// bound there, where the program reads past the descriptor's range, or
+/// where the bind shifted that range past its buffer
+/// (`shader.SHIFTED_OUT`): the range moves with a dynamic offset, as in
+/// v3dv, and stays as long as the write gave it.
+fn bufferAddress(queue: *Queue, at: compile.UboAddress, out: bool) ?u32 {
+    const resources = &playerOf(queue).resources;
+    const found = resources.slot(at.set, at.binding, 0) orelse return null;
+    const bytes: [*]const u8 = @ptrCast(found.pointer orelse return null);
+    const shift = resources.shiftOf(at.set, found);
+    if (shift == shader.SHIFTED_OUT or at.offset >= found.range) return null;
+    const address = std.math.cast(u32, @intFromPtr(bytes) + shift + at.offset) orelse return null;
+    if (out) playerOf(queue).hardware.space.rangeToGpu(bytes + shift + at.offset, found.range - at.offset);
+    return address;
+}
+
+/// Whether every uniform buffer `made` reads is bound, and where the V3D
+/// reaches it.
+fn buffersBound(queue: *Queue, made: *const driver.Shader) bool {
+    for (made.stream()) |word| switch (word) {
+        .ubo => |each| if (bufferAddress(queue, each, false) == null) return false,
+        else => {},
+    };
+    return true;
+}
+
 /// A vertex's record's attributes, its programs and its shader state, and
 /// the packet that says so.
-fn sendVertices(queue: *Queue, vertices: u32, varyings: u32, fragment: u32, uniforms: u32) bool {
+///
+/// `own` is the pipeline's own compiled program where `fragment` is it,
+/// which says its threads, its W and its scoreboard; null for one written
+/// by hand, whose are `cl.Programs`' defaults.
+fn sendVertices(queue: *Queue, vertices: u32, varyings: u32, fragment: u32, uniforms: u32, own: ?*const driver.Shader) bool {
     const player = playerOf(queue);
     const programs = &player.hardware.programs;
     const attributes: u32 = 2 + @as(u32, @intFromBool(varyings > 0)) + @as(u32, @intFromBool(varyings > 4));
@@ -809,11 +1163,25 @@ fn sendVertices(queue: *Queue, vertices: u32, varyings: u32, fragment: u32, unif
     cl.shaderRecord(&list, .{
         .fragment = fragment,
         .fragment_uniforms = uniforms,
-        .vertex = programs.vertex[varyings],
+        // One pregenerated program for each varying count this device
+        // takes, and `varyings` is held to that by CreateGraphicsPipelines
+        // against the limit this driver reports (`compile.most_varyings`,
+        // which is what `programs.vertex` is sized by). The bound is
+        // repeated here because the cores report `shader.MAX_VARYINGS`
+        // since 1.90 and this table is eight long: an index past it would
+        // be a read of whatever follows the array, and a draw that draws
+        // nothing is the right answer for a pipeline that should never
+        // have reached here.
+        .vertex = if (varyings < programs.vertex.len) programs.vertex[varyings] else return false,
         .vertex_uniforms = uniforms,
         .coordinate = programs.coordinate,
         .coordinate_uniforms = uniforms,
         .varyings = varyings,
+        .fragment_threads = if (own) |made| made.threads else 4,
+        .center_w = if (own) |made| made.center_w else false,
+        .lock_scoreboard_on_first_thrsw = if (own) |made| made.lock_scoreboard_on_first_thrsw else false,
+        .writes_z = if (own) |made| made.writes_z else false,
+        .disable_ez = if (own) |made| made.disable_ez else false,
     });
     const stride = recordStride(varyings);
     cl.attribute(&list, vertices, 4, 4, 0, stride);
@@ -824,40 +1192,117 @@ fn sendVertices(queue: *Queue, vertices: u32, varyings: u32, fragment: u32, unif
     return true;
 }
 
-/// The two uniforms of a program that samples: the texture's state and the
-/// sampler's, carved beside them. Null without a texture bound, or no memory.
-fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
+/// The two words a program that samples reads as the TMU's
+/// configuration. A fixed form has them in a place of their own; a
+/// generated program has them among the floats it holds, where its own
+/// `wrtmuc` fall - so this answers the words and the caller places them.
+const Configuration = struct { texture: u32, sampler: u32 };
+
+/// Where a channel of a view's swizzle comes from, as the TMU's state names
+/// it (since 1.120).
+fn pickOf(source: facet.texture.Swizzle.Source) tiling.Pick {
+    return switch (source) {
+        inline else => |one| @field(tiling.Pick, @tagName(one)),
+    };
+}
+
+/// The TMU's two words for the texture bound at `set`, `binding`, read
+/// as `how` says, `compared` with the reference the program writes.
+/// Null without a texture bound, with one of a format the TMU does not
+/// read, a comparison of anything but a depth, or with no memory.
+fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, how: tiling.Sampled, compared: bool) ?Configuration {
     const player = playerOf(queue);
-    const sampled = player.resources.sampled(0, 0, 0) orelse return null;
+    const sampled = player.resources.sampled(set, binding, 0) orelse return null;
     const view: *const _image.ImageView = @fieldParentPtr("texels", sampled);
     const image = view.image;
-    if (image.kind != .texture or image.data == null) return null;
+    // A texture, or since 1.142 a depth image laid out as one, which the
+    // pass stored where the TMU reads it (`_image.deviceLaid`).
+    if (image.data == null or !_image.deviceLaid(image)) return null;
     const texels: tiling.Texels = switch (image.format) {
         .b8g8r8a8_unorm => .bgra,
         .r8g8b8a8_unorm => .rgba,
         .r5g6b5_unorm_pack16 => .rgb565,
         // One byte of red a texel, the TMU's own R8 (since 1.48).
         .r8_unorm => .r8,
+        // As v3dv samples D16_UNORM (v3dvx_formats.c:204; since 1.142).
+        .d16_unorm => .d16,
         else => return null,
     };
-    const layout = layoutOf(image.format, image.width, image.height, image.levels);
+    if (compared and texels != .d16) return null;
+    const layout = imageLayout(image);
     const state = carve(queue, tiling.texture_state_bytes, tiling.texture_state_alignment) orelse return null;
-    tiling.writeTextureState(state.cpu[0..tiling.texture_state_bytes], &layout, texels, @intCast(@intFromPtr(image.data) + view.base_layer * image.layer_bytes), view.base_level, view.base_level + view.level_count - 1, view.layer_count, @intCast(image.layer_bytes));
+    // The view's swizzle, which the TMU applies over the format's own
+    // (since 1.120).
+    const picks = [4]tiling.Pick{ pickOf(view.swizzle.r), pickOf(view.swizzle.g), pickOf(view.swizzle.b), pickOf(view.swizzle.a) };
+    // A 3D image's slices are told by the step between level 0's, which
+    // is its `layer_bytes`, as v3dv tells them (v3dvx_image.c:107,
+    // v3dv_image.c:135): the TMU finds a smaller level's from there.
+    const first_layer = if (image.volume) 0 else view.base_layer * image.layer_bytes;
+    tiling.writeTextureState(state.cpu[0..tiling.texture_state_bytes], &layout, texels, picks, @intCast(@intFromPtr(image.data) + first_layer), view.base_level, view.base_level + view.level_count - 1, view.layer_count, @intCast(image.layer_bytes));
     const sampler = carve(queue, tiling.sampler_state_bytes, tiling.sampler_state_alignment) orelse return null;
-    const filter: tiling.Filter = switch (fixed.sampling.filter) {
-        .nearest => .nearest,
-        .bilinear => .bilinear,
+    tiling.writeSamplerState(sampler.cpu[0..tiling.sampler_state_bytes], how.state);
+    return .{ .texture = tiling.parameter0(state.address), .sampler = tiling.parameter1(sampler.address, how.unnormalized) };
+}
+
+/// The two uniforms of a fixed form that samples, in a place of their
+/// own: the form says how it is sampled, and the texture is the one
+/// bound at set 0, binding 0, which is where a fixed form's is.
+///
+/// A form that samples through the sampler bound beside the texture
+/// (`Fixed.needsSampler`) takes that sampler, at set 0, binding 0 as the
+/// cores read it (`shader.zig`'s `texturedBy` and `layeredBy`), whole
+/// (`tiling.samplerOf`, since 1.141); null where none is bound there.
+///
+/// The shadow form's program writes the reference (`qpu.shadow_code`), so
+/// its sampler's comparison is carried and its depth read as compared
+/// (since 1.142).
+fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
+    const dref = fixed.kind == .texture_shadow;
+    const how: tiling.Sampled = if (fixed.needsSampler()) bound: {
+        const sampler = playerOf(queue).resources.samplerOf(0, 0, 0) orelse return null;
+        break :bound tiling.samplerOf(sampler, dref) orelse return null;
+    } else own: {
+        const filter: tiling.Filter = switch (fixed.sampling.filter) {
+            .nearest => .nearest,
+            .bilinear => .bilinear,
+        };
+        const wrap: tiling.Wrap = if (fixed.kind == .texture_cube) .clamp else switch (fixed.sampling.address) {
+            .wrap => .repeat,
+            .clamp => .clamp,
+        };
+        break :own .{ .state = .{ .mag = filter, .min = filter, .wrap = @splat(wrap) } };
     };
-    const wrap: tiling.Wrap = if (fixed.kind == .texture_cube) .clamp else switch (fixed.sampling.address) {
-        .wrap => .repeat,
-        .clamp => .clamp,
-    };
-    tiling.writeSamplerState(sampler.cpu[0..tiling.sampler_state_bytes], filter, wrap);
+    const made = tmuConfiguration(queue, 0, 0, how, dref) orelse return null;
     const place = carve(queue, 8, 4) orelse return null;
     const words: [*]u32 = @ptrCast(@alignCast(place.cpu));
-    words[0] = tiling.parameter0(state.address);
-    words[1] = tiling.parameter1(sampler.address);
+    words[0] = made.texture;
+    words[1] = made.sampler;
     return place.address;
+}
+
+/// The TMU's two words for a generated program's sampler: the texture
+/// and the sampler the draw bound where the module named them. The
+/// module carries the set and the binding; the sampler carries how,
+/// which is the difference from a fixed form, whose `Fixed.sampling`
+/// says it instead.
+///
+/// The sampler is the whole of it since 1.140 - its levels mixed, held
+/// and shifted, its five wraps an axis apiece, its border, its anisotropy
+/// and its texels - as v3dv packs it (`tiling.samplerOf`). Null where
+/// nothing is bound, or for a sampler that compares beside a program that
+/// does not, which is the one `tiling.samplerOf` turns down: the draw
+/// paints `shader.missing` for it. A program that compares has its
+/// sampler's comparison, and a depth to compare with (since 1.143).
+/// Until 1.140 this went through `texture.samplingOf`, which is the
+/// cores' fast path, and so painted that colour for every sampler but one
+/// filter, one wrap of two and every level as it is.
+fn sampledBy(queue: *Queue, which: compile.Sampler) ?Configuration {
+    const player = playerOf(queue);
+    const sampler = player.resources.samplerOf(which.set, which.binding, 0) orelse return null;
+    // A program that compares writes the reference to TMUDREF, and the
+    // sampler's comparison goes to the TMU with it (since 1.143).
+    const how = tiling.samplerOf(sampler, which.compared) orelse return null;
+    return tmuConfiguration(queue, which.set, which.binding, how, which.compared);
 }
 
 /// A stencil operation as the hardware numbers them: keep and zero the other
@@ -900,6 +1345,17 @@ fn mixingOf(player: *const Player, pipeline: *const Pipeline) cl.Mixing {
             player.blend_constants,
         .channels = mixing.mask,
     };
+}
+
+/// The samples a draw writes. In a frame of four, the pipeline's mask
+/// where it has four, and all four where it has one, as v3dv's
+/// `pipeline_set_sample_mask` (v3dv_pipeline.c:2903-2913): a pipeline of
+/// one in a frame of four is against Vulkan. In a frame of one the
+/// hardware wants all four bits or none (:2908-2909), and none is a draw
+/// facet leaves out (`draw`).
+fn sampleMaskOf(player: *const Player, pipeline: *const Pipeline) u4 {
+    if (!player.frame.four) return if (pipeline.sample_mask & 1 != 0) 0xF else 0;
+    return if (pipeline.samples > 1) @truncate(pipeline.sample_mask) else 0xF;
 }
 
 /// What a draw is drawn with, or null where nothing of it can be seen.
@@ -950,6 +1406,7 @@ fn drawStateOf(player: *const Player, pipeline: *const Pipeline, viewport: *cons
         .height = viewport.height,
         .min_depth = viewport.min_depth,
         .max_depth = viewport.max_depth,
+        .sample_mask = sampleMaskOf(player, pipeline),
     };
 }
 
@@ -967,9 +1424,13 @@ fn countSamples(queue: *Queue) void {
 
 /// The word this frame counts the query being counted into with: the one
 /// it already has, or a new one zeroed; 0 where nothing is counted or
-/// there is no room for another.
+/// there is no room for another. A subpass played once for each of its
+/// colour attachments is counted in the first of them alone, as on the
+/// cores (since 1.116): the frames of the others leave the counter
+/// stopped, as a frame with no query does.
 fn tallyFor(queue: *Queue) u32 {
     const player = playerOf(queue);
+    if (player.part != 0) return 0;
     const counting = player.counting orelse return 0;
     const samples = counting.counters.samples orelse return 0;
     for (player.tallies[0..player.tally_count]) |tally| {
@@ -1006,7 +1467,22 @@ fn addTallies(player: *Player, space: *const v3d.Space) void {
 fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instance: u32, instances: u32) void {
     const player = playerOf(queue);
     const pipeline = player.pipeline orelse return;
-    if (pipeline.draws_nothing or count == 0 or instances == 0) return;
+    // The sample mask covering nothing is one more way to draw nothing,
+    // and on this device that is the whole of it: it reports
+    // `pipeline_statistics_queries = false` (driver.zig), so unlike the
+    // cores there is no counter that a masked-off draw still owes, and
+    // returning here is exact. (Since 1.89, item 61 of
+    // docs/facet-vulkan10.md.)
+    if (pipeline.draws_nothing or sampleMaskOf(player, pipeline) == 0 or count == 0 or instances == 0) return;
+    // A frame of no attachment, started again at four where its first
+    // draw's pipeline draws four (item 61's V8, since 1.150). Before
+    // anything of this draw's is carved: starting again gives the frame's
+    // memory back. Where there is none to start again with, the frame is
+    // dropped, as one that could not begin is.
+    if (!restartAtFour(queue, pipeline)) {
+        player.drawing = false;
+        return noRoom(queue, "a frame of no attachment started again at four samples");
+    }
     const viewport = pipeline.viewport orelse player.viewport;
     const state = drawStateOf(player, pipeline, &viewport) orelse return;
     const indices = _vertices.indicesOf(player, pipeline, first, count, vertex_offset) orelse return;
@@ -1063,24 +1539,41 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     var carried: Carried = .as_they_are;
     var fragment: u32 = undefined;
     var uniforms: u32 = undefined;
-    switch (fixed.kind) {
+    // The pipeline's own program, where it is what `fragment` is.
+    var own: ?*const driver.Shader = null;
+    // The program of no colour (`Hardware.no_color`, since 1.150) draws a
+    // pipeline of no fragment stage, as v3dv's noop fragment shader does
+    // (v3dv_pipeline.c:2616-2645), and in a frame of no colour every
+    // fixed form, whose program writes a colour the frame has not and
+    // drops no pixel: what it leaves is the depth and the stencil, which
+    // the program of no colour leaves the same. A compiled program was
+    // compiled for its subpass (`Pipeline.colorless`) and draws itself.
+    var no_color = !player.frame.color and fixed.kind != .none;
+    if (!no_color) switch (fixed.kind) {
         .color => {
             carried = .{ .colors_from = 0 };
             fragment = programs.color;
             const place = carve(queue, 4, 4) orelse return noRoom(queue, "a draw with no memory for its uniforms");
             uniforms = place.address;
         },
-        .texture, .texture_color, .texture_array, .texture_cube, .texture_3d => {
+        // The forms that sample through the bound sampler run the
+        // programs of the forms they are otherwise, the TMU told the
+        // sampler (`textureUniforms`, since 1.141).
+        // And the shadow one, whose program writes the reference (since
+        // 1.142).
+        .texture, .texture_color, .texture_array, .texture_cube, .texture_3d, .texture_sampled, .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled, .texture_shadow => {
             if (fixed.kind == .texture_color) carried = .{ .colors_from = 2 };
             fragment = switch (fixed.kind) {
-                .texture => programs.texture,
+                .texture, .texture_sampled => programs.texture,
                 .texture_color => programs.texture_color,
-                .texture_array => programs.array,
-                .texture_cube => programs.cube,
+                .texture_array, .texture_array_sampled => programs.array,
+                .texture_cube, .texture_cube_sampled => programs.cube,
+                .texture_shadow => programs.shadow,
                 else => programs.volume,
             };
             uniforms = textureUniforms(queue, fixed) orelse missing: {
                 // As `shader.missing`: the colour says what has gone wrong.
+                // (A frame of no colour never reaches here: `no_color`.)
                 varyings = 4;
                 carried = .{ .constant = missing_color };
                 fragment = programs.color;
@@ -1088,12 +1581,57 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
                 break :missing place.address;
             };
         },
-        // Refused when the pipeline was made (driver.zig): no program drops
-        // pixels, and none reads a sampler, so none of these reaches a
-        // frame here.
-        .none, .texture_cutout, .texture_sampled, .texture_shadow, .texture_cube_array => return,
-        .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled => return,
-        .texture_cube_array_sampled => return,
+        // No fixed form: the pipeline's own fragment shader, compiled as
+        // the pipeline was made (since 1.76). Its varyings are 0 to 1, as
+        // the graph wrote them and the tile buffer takes them, so they go
+        // out as they are and not divided back out of `shader.channel`'s
+        // scaling the way a fixed form's are.
+        .none => none: {
+            if (!pipeline.fragment_stage) {
+                no_color = true;
+                break :none;
+            }
+            const made: *const driver.Shader = @ptrCast(@alignCast(pipeline.driver orelse return));
+            // Where the program samples, the TMU's two words come from
+            // the texture and the sampler bound at the set and binding
+            // the module named - which a draw knows and a pipeline does
+            // not. Null where there is no texture there, or where the
+            // sampler compares (`sampledBy`).
+            const tmu: ?Configuration = if (made.sampler) |each| sampledBy(queue, each) else null;
+            // A uniform buffer the program reads and the draw has not
+            // bound is what has gone wrong too (since 1.160).
+            const lacking = (made.sampler != null and tmu == null) or !buffersBound(queue, made);
+            if (lacking and !player.frame.color) {
+                // No colour to say what has gone wrong with: the depth
+                // drawn as if nothing dropped a pixel.
+                no_color = true;
+            } else if (lacking) {
+                // As `shader.missing`, and as a fixed form does: the
+                // colour says what has gone wrong.
+                varyings = 4;
+                carried = .{ .constant = missing_color };
+                fragment = programs.color;
+                const place = carve(queue, 4, 4) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+                uniforms = place.address;
+            } else {
+                fragment = made.address;
+                own = made;
+                carried = .as_they_are;
+                uniforms = streamOf(queue, made, tmu) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+            }
+        },
+        // Refused when the pipeline was made (driver.zig): no fixed form's
+        // program drops pixels or reads a cube of an array
+        // (`samplesHere`), so none of these reaches a frame here.
+        .texture_cutout, .texture_cube_array, .texture_cube_array_sampled => return,
+    };
+    if (no_color) {
+        const made = &player.hardware.no_color;
+        varyings = made.varyings;
+        carried = .as_they_are;
+        fragment = made.address;
+        own = made;
+        uniforms = streamOf(queue, made, null) orelse return noRoom(queue, "a draw with no memory for its uniforms");
     }
 
     const scale = ViewportScale{
@@ -1105,7 +1643,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     const record_bytes = recordStride(varyings);
     if (!roomOnList(queue)) return noRoom(queue, "a draw with no memory for the binner's list");
     countSamples(queue);
-    frames.writeDrawState(&player.bin, &state);
+    frames.writeDrawState(&player.bin, &player.frame, &state);
     for (0..instances) |k| {
         const instance = first_instance +% @as(u32, @intCast(k));
         _vertices.readInputs(player, pipeline, lowest, vertices, instance, inputs[0 .. @as(usize, vertices) * locations]);
@@ -1164,7 +1702,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             writeRecord(records.cpu + vertex * record_bytes, drawn + vertex * stride, &scale, varyings, carried);
         }
         if (!roomOnList(queue)) return noRoom(queue, "a draw with no memory for the binner's list");
-        if (!sendVertices(queue, records.address, varyings, fragment, uniforms)) return noRoom(queue, "a draw with no memory for its shader record");
+        if (!sendVertices(queue, records.address, varyings, fragment, uniforms, own)) return noRoom(queue, "a draw with no memory for its shader record");
         cl.indexBufferSetup(&player.bin, index_place.address, kept * 4);
         cl.indexedPrimList(&player.bin, cl.PRIM_TRIANGLES, kept);
         player.binned = true;
@@ -1199,9 +1737,7 @@ fn copyBufferToImage(queue: *Queue, command: *const _command.CopyBufferToImage) 
             _image.copyFromBuffer(image, from, region);
         }
     }
-    if (image.kind == .texture) if (image.data) |data| {
-        playerOf(queue).hardware.space.rangeToGpu(data, @intCast(image.bytes));
-    };
+    texturesToGpu(queue, image);
 }
 
 /// A rectangle of texels into a level of a texture, as they are in the
@@ -1221,11 +1757,11 @@ fn copyToTexture(image: *Image, from: []const u8, region: *const facet.BufferIma
     const row_length = if (region.buffer_row_length != 0) region.buffer_row_length else region.image_extent.width;
     const source_pitch = @as(usize, row_length) * pixel;
     const start = std.math.cast(usize, region.buffer_offset) orelse return;
-    const layout = layoutOf(image.format, image.width, image.height, image.levels);
+    const layout = imageLayout(image);
     const range = _image.layersOf(image, region.image_subresource, region.image_offset.z, region.image_extent.depth) orelse return;
     const slice_height = if (region.buffer_image_height != 0) region.buffer_image_height else region.image_extent.height;
     for (0..range.count) |slice| {
-        const layer_data = data + (range.first + slice) * @as(usize, @intCast(image.layer_bytes));
+        const layer_data = data + layerAt(image, &layout, level, range.first + @as(u32, @intCast(slice)));
         for (0..height) |row| {
             const at = start + slice * slice_height * source_pitch + row * source_pitch;
             if (at + width * pixel > from.len) return;

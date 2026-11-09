@@ -26,6 +26,24 @@
 //! each pixel's depth and stencil beside each other, which the planes'
 //! `stride` says.
 //!
+//! A frame of four samples a pixel keeps sample 0 of each in the buffer,
+//! as a frame of one does, and samples 1 to 3 in planes of their own
+//! beside it: of every colour attachment since 1.103, and of the depth
+//! and the stencil since 1.105. Each is cleared, loaded and stored on
+//! its own, from and into its own plane of the image.
+//!
+//! A colour of four samples may be resolved as the frame ends, into a
+//! surface of one (`Attachments.Color.resolve`, since 1.109): each tile,
+//! once its samples are stored, has them averaged into the resolve's
+//! surface over its part of the area, a pixel at a time as the surface
+//! now holds them (`resolveSurface`). lavapipe blits the multisampled
+//! image into the resolve attachment over the render area as the
+//! rendering ends (`resolve_color`, lvp_execute.c:1782-1827, from
+//! `handle_end_rendering`, :2053), and v3dv resolves a tile at a time in
+//! its tile buffer (v3dvx_cmd_buffer.c:640-686): here it is a tile at a
+//! time, from the samples as they were stored, so that it is
+//! CmdResolveImage's average to the byte, a 565 sample's dither and all.
+//!
 //! The tiles are handed on once all of them are in the surface, in a
 //! second round shared out the same way. On the JH7110 handing on is the
 //! L2's write-back of the tile's lines, one line after the other, and a
@@ -39,10 +57,11 @@
 //! 2.7 ms (FillRect: 2.8 ms).
 //!
 //! A tile is written back only when something was drawn into it this
-//! frame, or when the frame starts cleared. One nothing touched in a frame
-//! kept from the last is not read, not written and not handed on: its
-//! write-back would be lines the display has to fetch again from memory
-//! for nothing.
+//! frame, or when the frame starts cleared, or when a colour is resolved
+//! (since 1.109), which is of every pixel of the area, drawn into or not.
+//! One nothing touched in a frame kept from the last is not read, not
+//! written and not handed on: its write-back would be lines the display
+//! has to fetch again from memory for nothing.
 
 const sdk = @import("sdk");
 const bins = @import("bins.zig");
@@ -51,6 +70,11 @@ const Header = bins.Header;
 /// The side of a tile, in pixels.
 pub const tile_size = 64;
 const tile_pixels = tile_size * tile_size;
+
+/// The words of a plane of depth in a tile, 16 bits a pixel, and of one
+/// of stencil, a byte. (Since 1.105.)
+const depth_plane_words = tile_pixels / 2;
+const stencil_plane_words = tile_pixels / 4;
 
 /// The most parts a frame's tiles are shared between: a buffer each.
 pub const most_parts = 4;
@@ -67,6 +91,14 @@ pub const most_colors = 4;
 /// one run: a tile hands out its part's own rather than growing every
 /// worker's stack by it. (Since 1.51.)
 pub const batch_color_words = 64 * 4;
+
+/// The words a batch of quads' depths take at four samples a pixel,
+/// held for a fragment function that may drop pixels: sixteen 16-bit
+/// depths a quad, as many quads as a batch holds (`batched.batch_quads`,
+/// which a comptime check there holds to this). A tile hands out its
+/// part's own, as it does the colours of several attachments, rather
+/// than the worker's stack growing by them. (Since 1.105.)
+pub const batch_depth_words = 64 * 16 / 2;
 
 /// The cache line a tile's rows start on.
 const line_bytes = 64;
@@ -178,6 +210,118 @@ pub const Packing = struct {
     const dithered = Packing{ .bytes = 2, .store = &storeDithered, .load = &loadWidened };
 };
 
+/// A rectangle of a surface set to `color`, 0xAARRGGBB, as a tile cleared to
+/// it and stored leaves it: through the surface's own packing, so a 565
+/// pixel is dithered as the tile's would be at that pixel, and the two are
+/// the same bytes. For what a pass clears and never draws into - the layers
+/// of a framebuffer past its first (since 1.91) - which goes into memory
+/// without a tile. Cut to the surface. One sample's plane: of a
+/// multisampled image the caller fills each sample's, a surface of its
+/// own (since 1.104).
+pub fn fillSurface(surface: Surface, area: Rect, color: u32) void {
+    const packing = Packing.of(surface.format);
+    const right = @min(area.x +| area.width, surface.width);
+    const bottom = @min(area.y +| area.height, surface.height);
+    if (area.x >= right or area.y >= bottom) return;
+    const run: [tile_size]u32 = @splat(color);
+    var y = area.y;
+    while (y < bottom) : (y += 1) {
+        var x = area.x;
+        while (x < right) {
+            const count = @min(right - x, run.len);
+            packing.store(surface.pixels + @as(usize, y) * surface.pitch + @as(usize, x) * packing.bytes, &run, count, x, y);
+            x += count;
+        }
+    }
+}
+
+/// Four samples of four 8-bit channels averaged, each channel
+/// (s0 + s1 + s2 + s3 + 2) >> 2: the sum over four, rounded to the
+/// nearest and a half up. Two channels go at a time, each in a lane of 16
+/// bits, which holds at most 4 * 255 + 2 = 1022, so no lane carries into
+/// the next; the mask after the shift drops what the lane above shifted
+/// down. CmdResolveImage's average (since 1.101), and a pass's resolve's
+/// (since 1.109), which are the same.
+pub fn average8888(samples: [4]u32) u32 {
+    const m: u32 = 0x00FF00FF;
+    const even = ((samples[0] & m) + (samples[1] & m) + (samples[2] & m) + (samples[3] & m) + 0x0002_0002) >> 2;
+    const odd = (((samples[0] >> 8) & m) + ((samples[1] >> 8) & m) + ((samples[2] >> 8) & m) + ((samples[3] >> 8) & m) + 0x0002_0002) >> 2;
+    return (even & m) | ((odd & m) << 8);
+}
+
+/// Four samples of R5G6B5 averaged the same way, a channel at a time, in
+/// the low half of each word.
+pub fn average565(samples: [4]u32) u32 {
+    var red: u32 = 2;
+    var green: u32 = 2;
+    var blue: u32 = 2;
+    for (samples) |sample| {
+        red += (sample >> 11) & 0x1F;
+        green += (sample >> 5) & 0x3F;
+        blue += sample & 0x1F;
+    }
+    return ((red >> 2) << 11) | ((green >> 2) << 5) | (blue >> 2);
+}
+
+/// A rectangle of `from`, a surface of four samples a pixel, resolved
+/// into `into`, one of one sample a pixel: each pixel the average of the
+/// four as `from` holds them (`average8888`, `average565`), the samples
+/// `sample_bytes` apart. What a colour attachment's resolve is given as a
+/// frame ends, a tile at a time (`Target.drawTile`), and of a
+/// framebuffer's layers past the first, which no tile reaches. Cut to
+/// both surfaces; a surface of another format than `from`'s is given
+/// nothing, as Vulkan has a resolve keep the one format. (Since 1.109.)
+pub fn resolveSurface(from: Surface, into: Surface, area: Rect) void {
+    if (from.format != into.format) return;
+    const right = @min(area.x +| area.width, from.width, into.width);
+    const bottom = @min(area.y +| area.height, from.height, into.height);
+    if (area.x >= right or area.y >= bottom) return;
+    switch (from.format) {
+        .bgra32, .rgba32 => resolveRows(u32, average8888, from, into, area.x, area.y, right, bottom),
+        .rgb565 => resolveRows(u16, average565, from, into, area.x, area.y, right, bottom),
+    }
+}
+
+fn resolveRows(comptime Pixel: type, comptime average: fn ([4]u32) u32, from: Surface, into: Surface, left: u32, top: u32, right: u32, bottom: u32) void {
+    @setRuntimeSafety(false);
+    var y = top;
+    while (y < bottom) : (y += 1) {
+        const row = from.pixels + @as(usize, y) * from.pitch;
+        var planes: [4][*]const Pixel = undefined;
+        for (&planes, 0..) |*plane, sample| plane.* = @ptrCast(@alignCast(row + sample * from.sample_bytes));
+        const out: [*]Pixel = @ptrCast(@alignCast(into.pixels + @as(usize, y) * into.pitch));
+        var x = left;
+        while (x < right) : (x += 1) {
+            out[x] = @intCast(average(.{ planes[0][x], planes[1][x], planes[2][x], planes[3][x] }));
+        }
+    }
+}
+
+/// A rectangle of a depth plane set to `depth`, as `storeDepth` leaves a
+/// tile cleared to it: the 16 bits low byte first, wherever the plane's
+/// stride puts them. The caller cuts the rectangle to the plane, and of a
+/// multisampled image fills each sample's (since 1.104).
+pub fn fillDepth(plane: Attachments.Plane, area: Rect, depth: u16) void {
+    for (area.y..area.y + area.height) |y| {
+        const row = plane.pixels + y * plane.pitch;
+        for (area.x..area.x + area.width) |x| {
+            const at = row + x * plane.stride;
+            at[0] = @truncate(depth);
+            at[1] = @truncate(depth >> 8);
+        }
+    }
+}
+
+/// A rectangle of a stencil plane set to `stencil`, as `storeStencil`
+/// leaves a tile cleared to it. The caller cuts the rectangle to the plane,
+/// and of a multisampled image fills each sample's (since 1.104).
+pub fn fillStencil(plane: Attachments.Plane, area: Rect, stencil: u8) void {
+    for (area.y..area.y + area.height) |y| {
+        const row = plane.pixels + y * plane.pitch;
+        for (area.x..area.x + area.width) |x| row[x * plane.stride] = stencil;
+    }
+}
+
 fn storeSame(into: [*]u8, from: [*]const u32, count: u32, _: u32, _: u32) void {
     const pixels: [*]u32 = @ptrCast(@alignCast(into));
     @memcpy(pixels[0..count], from[0..count]);
@@ -261,6 +405,11 @@ pub const Surface = struct {
     width: u32,
     height: u32,
     format: Format,
+    /// From one sample's plane to the next, for a multisampled image:
+    /// each laid out as the first, after it (`Image.sample_bytes`). Only
+    /// the samples past the first are reached by it, so a frame of one
+    /// sample a pixel never uses it. (Since 1.103.)
+    sample_bytes: usize = 0,
 };
 
 /// What each frame starts with.
@@ -277,6 +426,11 @@ pub const Attachments = struct {
     color_count: u32 = 1,
     depth: Depth = .{},
     stencil: Stencil = .{},
+    /// A pixel's samples, 1 or 4: at four each colour attachment has a
+    /// plane in every tile for each sample (`Tile.samplePlane`), loaded
+    /// from and stored into its surface's own (`Surface.sample_bytes`).
+    /// (Since 1.103.)
+    samples: u32 = 1,
 
     /// Colour attachment `output`'s: the first's for 0.
     pub inline fn colorAt(attachments: *const Attachments, output: u32) Color {
@@ -289,11 +443,18 @@ pub const Attachments = struct {
         load: Load = .clear,
         /// 0xAARRGGBB.
         clear: u32 = 0xFF00_0000,
+        /// Where its samples are averaged into as the frame ends, at four
+        /// samples a pixel: a surface of one sample a pixel, of the
+        /// colour's own format, each tile's part of the area averaged
+        /// into it once the tile's samples are stored
+        /// (`resolveSurface`). Null for none. (Since 1.109.)
+        resolve: ?Surface = null,
     };
 
     pub const Depth = struct {
         /// Whether triangles are tested against a depth: 16 bits a pixel,
-        /// 0 nearest, set to `clear` as each tile starts.
+        /// a sample's at four samples a pixel (since 1.105), 0 nearest,
+        /// set to `clear` as each tile starts.
         used: bool = false,
         clear: u16 = 0xFFFF,
         /// Where the depth outlives the frame: the image's rows, 16 bits a
@@ -317,11 +478,15 @@ pub const Attachments = struct {
         pixels: [*]u8,
         pitch: u32,
         stride: u32,
+        /// From one sample's plane to the next, as a surface's
+        /// (`Surface.sample_bytes`). (Since 1.105.)
+        sample_bytes: usize = 0,
     };
 
     pub const Stencil = struct {
-        /// Whether a test may read it: 8 bits a pixel, set to `clear` as each
-        /// tile starts.
+        /// Whether a test may read it: 8 bits a pixel, a sample's at four
+        /// samples a pixel (since 1.105), set to `clear` as each tile
+        /// starts.
         used: bool = false,
         clear: u8 = 0,
         /// Where the stencil outlives the frame: the image's rows, a byte a
@@ -347,6 +512,12 @@ pub const Finished = struct {
 
 /// What the draws of a frame came to.
 pub const Stats = struct {
+    /// The draws made into the frame that rasterize, as v3dv counts its
+    /// job's (`job->draw_count`, v3dv_cmd_buffer.c:2912) but for those
+    /// whose rasterizer discards, which have no count of samples (since
+    /// 1.134): a subpass of no attachment is laid at its first one's count
+    /// of samples (driver/cpu/_draw.zig, since 1.114).
+    draws: u32 = 0,
     /// Triangles the draws were given.
     triangles: u32 = 0,
     /// Those not drawn: wholly outside the view, facing away, with no
@@ -356,6 +527,14 @@ pub const Stats = struct {
     cut: u32 = 0,
     /// Triangles set up, and places on the tiles' lists they took.
     set_up: u32 = 0,
+    /// Triangles the clipper let through to setup, whole or a piece of one
+    /// it cut - before setup culls a face, finds no area or no pixel in the
+    /// area (since 1.92).
+    pieces: u32 = 0,
+    /// Primitives out of clipping, `CLIPPING_PRIMITIVES`: each of those
+    /// pieces, but a rectangle a line or a point was widened into once
+    /// (since 1.92).
+    clipped: u32 = 0,
     binned: u32 = 0,
     /// Time in the draws: transforming, cutting and setting up, and
     /// putting on the lists (`Host.now`).
@@ -375,8 +554,10 @@ const TileState = struct {
 /// pixels the depth pre-pass's second pass has shaded, a bit each, a row
 /// a word. The colour attachments past the first, where a frame draws
 /// several together, have planes of their own outside it
-/// (`Target.extras`): the one colour a frame usually draws keeps the
-/// buffer the 24 KiB it was, and the cache with it.
+/// (`Target.extras`), and so do the samples past the first of a frame
+/// of four, of the colours (since 1.103) and of the depth and the
+/// stencil (since 1.105): the one colour a frame usually draws keeps
+/// the buffer the 24 KiB it was, and the cache with it.
 const Buffer = extern struct {
     color: [tile_pixels]u32 align(line_bytes),
     depth: [tile_pixels]u16,
@@ -387,6 +568,10 @@ const Buffer = extern struct {
 /// The tile a part draws: its buffer, and where it lies on the surface.
 pub const Tile = struct {
     buffer: *Buffer,
+    /// The part drawing it, 0 to `most_parts` - 1: whose buffer it is
+    /// drawn in, and the lane of a query's counters its pixels are counted
+    /// in (`batched.State.samples`, since 1.122).
+    part: u32 = 0,
     /// This part's planes for the colour attachments past the first, one
     /// after another, `tile_pixels` words each; null where the frame
     /// draws the one colour. (Since 1.51.)
@@ -398,6 +583,22 @@ pub const Tile = struct {
     /// Null where the frame draws the one colour, whose colours go on the
     /// stack as they always did. (Since 1.51.)
     extra_colors: ?[*][4]u32 = null,
+    /// The planes of samples 1 to `samples` - 1 of every colour
+    /// attachment, `samples` - 1 of the first's and then of each after,
+    /// `tile_pixels` words each; null at one sample a pixel. (Since
+    /// 1.103.)
+    sample_planes: ?[*]u32 = null,
+    samples: u32 = 1,
+    /// The planes of samples 1 to `samples` - 1 of the depth, 16 bits a
+    /// pixel, and of the stencil, a byte, `tile_pixels` of them each;
+    /// null at one sample a pixel. (Since 1.105.)
+    depth_planes: ?[*]u16 = null,
+    stencil_planes: ?[*]u8 = null,
+    /// A batch's depths at more than one sample a pixel, held for a
+    /// fragment function that may drop pixels (`batch_depth_words`):
+    /// sample s of a quad's pixel i at 4s + i. Null at one, whose batch
+    /// holds its own. (Since 1.105.)
+    batch_depths: ?[*][16]u16 = null,
     /// The grid square's number, row by row.
     index: u32,
     /// The grid square's top left on the surface.
@@ -425,6 +626,12 @@ pub const Tile = struct {
         return .{ .left = @intCast(left), .top = @intCast(top), .right = @intCast(right), .bottom = @intCast(bottom) };
     }
 
+    /// The part of the tile inside the area, on the surface: what is
+    /// written back, resolved and handed on.
+    pub inline fn rect(tile: *const Tile) Rect {
+        return .{ .x = tile.x + tile.left, .y = tile.y + tile.top, .width = tile.right - tile.left, .height = tile.bottom - tile.top };
+    }
+
     /// Row `y` of the tile's colour, from its left.
     pub inline fn row(tile: *const Tile, y: u32) [*]u32 {
         return tile.buffer.color[y * tile_size ..].ptr;
@@ -436,6 +643,13 @@ pub const Tile = struct {
     pub inline fn plane(tile: *const Tile, output: u32) [*]u32 {
         if (output == 0) return &tile.buffer.color;
         return tile.extras.? + (output - 1) * tile_pixels;
+    }
+
+    /// Sample `sample` of colour attachment `output`'s plane: `plane` for
+    /// sample 0, one of `sample_planes` for the others. (Since 1.103.)
+    pub inline fn samplePlane(tile: *const Tile, output: u32, sample: u32) [*]u32 {
+        if (sample == 0) return tile.plane(output);
+        return tile.sample_planes.? + (output * (tile.samples - 1) + sample - 1) * tile_pixels;
     }
 
     /// Row `y` of colour attachment `output`'s plane, from its left.
@@ -453,6 +667,30 @@ pub const Tile = struct {
     pub inline fn stencilRow(tile: *const Tile, y: u32) [*]u8 {
         return tile.buffer.stencil[y * tile_size ..].ptr;
     }
+
+    /// Sample `sample`'s plane of the depth, 64 x 64: the buffer's own
+    /// for 0, one of `depth_planes` for the others. (Since 1.105.)
+    pub inline fn depthPlane(tile: *const Tile, sample: u32) [*]u16 {
+        if (sample == 0) return &tile.buffer.depth;
+        return tile.depth_planes.? + (sample - 1) * tile_pixels;
+    }
+
+    /// The same of the stencil. (Since 1.105.)
+    pub inline fn stencilPlane(tile: *const Tile, sample: u32) [*]u8 {
+        if (sample == 0) return &tile.buffer.stencil;
+        return tile.stencil_planes.? + (sample - 1) * tile_pixels;
+    }
+
+    /// Row `y` of sample `sample`'s depth, from its left. (Since 1.105.)
+    pub inline fn depthRowOf(tile: *const Tile, sample: u32, y: u32) [*]u16 {
+        return tile.depthPlane(sample) + y * tile_size;
+    }
+
+    /// Row `y` of sample `sample`'s stencil, from its left. (Since
+    /// 1.105.)
+    pub inline fn stencilRowOf(tile: *const Tile, sample: u32, y: u32) [*]u8 {
+        return tile.stencilPlane(sample) + y * tile_size;
+    }
 };
 
 /// The grid of tiles over an area: its top left on the surface - moved
@@ -465,7 +703,10 @@ const Grid = struct {
 
     fn over(surfaces: []const Surface, area: Rect) error{OutOfBounds}!Grid {
         if (area.width == 0 or area.height == 0) return error.OutOfBounds;
-        if (surfaces.len == 0 or surfaces.len > most_colors) return error.OutOfBounds;
+        // None at all is a subpass with no colour attachment, whose grid
+        // begins at the area's own left, there being no surface's lines
+        // to keep it to (since 1.113).
+        if (surfaces.len > most_colors) return error.OutOfBounds;
         // The grid's left is on a cache line of every surface it writes,
         // so the widest pixel count a line holds is what it is rounded
         // to: no two tiles share a line of any of them.
@@ -508,12 +749,15 @@ pub const Target = struct {
     tiles: []TileState,
     /// A buffer for each part.
     buffers: *[most_parts]Buffer,
-    /// The planes for the colour attachments past the first, where the
-    /// frame draws several together: `extra_planes` for each part, one
-    /// after another, `tile_pixels` words each. Null where there are
-    /// none. (Since 1.51.)
+    /// What each part has past its buffer, one part's after another
+    /// (`wordsOf`): the planes for the colour attachments past the
+    /// first, where the frame draws several together, `extra_planes`
+    /// of them `tile_pixels` words each; samples 1 to `sample_room` - 1
+    /// of every colour attachment's plane (since 1.103); and the room
+    /// for a batch's colours. Null where there is nothing. (Since 1.51.)
     extras: ?[*]u32 = null,
     extra_planes: u32 = 0,
+    sample_room: u32 = 1,
     /// The squares a frame draws, in the order they are handed out, and
     /// the next to hand out.
     order: []u32,
@@ -541,7 +785,10 @@ pub const Target = struct {
 
     /// The same over several colour attachments, drawn together: a
     /// surface for each, all holding `area`, and `attachments.color_count`
-    /// saying how many the frames draw. (Since 1.51.)
+    /// saying how many the frames draw. (Since 1.51.) Or over none, for a
+    /// subpass with no colour attachment: its tiles load and store none
+    /// (`colorCount` is 0), and hold the depth alone or nothing (since
+    /// 1.113).
     pub fn initAll(host: Host, surfaces: []const Surface, area: Rect, attachments: Attachments) error{ OutOfMemory, OutOfBounds }!Target {
         const grid = try Grid.over(surfaces, area);
         var target = Target{
@@ -564,7 +811,7 @@ pub const Target = struct {
             .room = 0,
         };
         target.take(surfaces);
-        try target.lay(grid.squares(), planesOf(attachments));
+        try target.lay(grid.squares(), planesOf(attachments), attachments.samples);
         return target;
     }
 
@@ -578,7 +825,8 @@ pub const Target = struct {
     }
 
     /// Colour attachment `output`'s surface: the first's where the frame
-    /// draws fewer than that.
+    /// draws fewer than that. A frame of none has none to give, so a
+    /// caller that may be in one asks `surface_count` first.
     pub inline fn surfaceAt(target: *const Target, output: u32) Surface {
         return target.surfaces[@min(output, target.surface_count - 1)];
     }
@@ -588,17 +836,24 @@ pub const Target = struct {
         return @min(@max(attachments.color_count, 1), most_colors) - 1;
     }
 
-    /// The words one part takes for `planes` extra planes and the batch
-    /// colours of the attachments they and the first make: 0 for a frame
-    /// of the one colour, whose colours go on the worker's stack.
-    fn wordsOf(planes: u32) usize {
-        if (planes == 0) return 0;
-        return @as(usize, planes) * tile_pixels + @as(usize, planes + 1) * batch_color_words;
+    /// The words one part takes for `planes` extra planes, for samples 1
+    /// to `samples` - 1 of each of those and the first's (since 1.103),
+    /// of the depth and of the stencil, with a batch's depths at that
+    /// many samples (since 1.105), and for the batch colours of the
+    /// attachments: 0 for a frame of the one colour at one sample a
+    /// pixel. The one colour a draw usually writes has its batch's
+    /// colours on the worker's stack.
+    fn wordsOf(planes: u32, samples: u32) usize {
+        const room: usize = samples - 1;
+        const held: usize = if (room == 0) 0 else batch_depth_words;
+        const sample_words = (@as(usize, planes + 1) * tile_pixels + depth_plane_words + stencil_plane_words) * room + held;
+        if (planes == 0) return sample_words;
+        return @as(usize, planes) * tile_pixels + sample_words + @as(usize, planes + 1) * batch_color_words;
     }
 
     /// The same for this target's own planes.
     inline fn partWords(target: *const Target) usize {
-        return wordsOf(target.extra_planes);
+        return wordsOf(target.extra_planes, target.sample_room);
     }
 
     /// The target moved onto `area` of `surface`, which may be another, and
@@ -614,7 +869,9 @@ pub const Target = struct {
     pub fn moveToAll(target: *Target, surfaces: []const Surface, area: Rect, attachments: Attachments) error{ OutOfMemory, OutOfBounds }!void {
         const grid = try Grid.over(surfaces, area);
         const planes = planesOf(attachments);
-        if (grid.squares() > target.room or planes > target.extra_planes) try target.lay(@max(grid.squares(), target.room), @max(planes, target.extra_planes));
+        if (grid.squares() > target.room or planes > target.extra_planes or attachments.samples > target.sample_room) {
+            try target.lay(@max(grid.squares(), target.room), @max(planes, target.extra_planes), @max(attachments.samples, target.sample_room));
+        }
         target.take(surfaces);
         target.area = area;
         target.attachments = attachments;
@@ -627,12 +884,12 @@ pub const Target = struct {
     }
 
     /// A block for the buffers, `planes` colour planes a part past the
-    /// first and `squares` squares, in place of the one there was: all of
-    /// them laid out in it.
-    fn lay(target: *Target, squares: u32, planes: u32) error{OutOfMemory}!void {
+    /// first, room for `samples` samples a pixel and `squares` squares, in
+    /// place of the one there was: all of them laid out in it.
+    fn lay(target: *Target, squares: u32, planes: u32, samples: u32) error{OutOfMemory}!void {
         const host = target.host;
         const buffers_bytes = @sizeOf([most_parts]Buffer);
-        const extras_bytes = @as(usize, most_parts) * wordsOf(planes) * @sizeOf(u32);
+        const extras_bytes = @as(usize, most_parts) * wordsOf(planes, samples) * @sizeOf(u32);
         const tiles_bytes = squares * @sizeOf(TileState);
         const order_bytes = squares * @sizeOf(u32);
         const bytes = line_bytes + buffers_bytes + extras_bytes + tiles_bytes + order_bytes;
@@ -641,8 +898,9 @@ pub const Target = struct {
         var at = (@intFromPtr(memory) + line_bytes - 1) / line_bytes * line_bytes;
         target.buffers = @ptrFromInt(at);
         at += buffers_bytes;
-        target.extras = if (planes == 0) null else @as([*]u32, @ptrFromInt(at));
+        target.extras = if (extras_bytes == 0) null else @as([*]u32, @ptrFromInt(at));
         target.extra_planes = planes;
+        target.sample_room = samples;
         at += extras_bytes;
         target.tiles = @as([*]TileState, @ptrFromInt(at))[0..squares];
         at += tiles_bytes;
@@ -663,7 +921,11 @@ pub const Target = struct {
     pub fn begin(target: *Target) void {
         // A tile nothing draws into is skipped - unless the frame starts
         // cleared, when every tile has to be written: the colour, or a
-        // depth that is kept and starts cleared.
+        // depth that is kept and starts cleared. Or unless a colour is
+        // resolved, which is of every pixel of the area, as lavapipe
+        // blits the whole render area (lvp_execute.c:1805-1809): a tile
+        // a pass loads and draws nothing into is resolved from what it
+        // loaded (since 1.109).
         const depth = target.attachments.depth;
         const stencil = target.attachments.stencil;
         var any_cleared = false;
@@ -671,7 +933,7 @@ pub const Target = struct {
         for (0..colors) |output| {
             const color = target.attachments.colorAt(@intCast(output));
             target.clear_pixels[output] = color.clear;
-            if (color.load == .clear) any_cleared = true;
+            if (color.load == .clear or color.resolve != null) any_cleared = true;
         }
         const cleared = any_cleared or
             (depth.store and depth.load == .clear) or
@@ -762,10 +1024,27 @@ pub const Target = struct {
         const x = target.grid_x + index % target.columns * tile_size;
         const y = target.grid_y + index / target.columns * tile_size;
         const area = target.area;
+        // This part's block: its extra planes; its samples' planes of
+        // colour, then of depth and of stencil, and its batch's depths
+        // at those samples; then its batch colours.
+        const block = if (target.extras) |first| first + @as(usize, part) * target.partWords() else null;
+        const planes: usize = target.extra_planes;
+        const samples = target.attachments.samples;
+        const room: usize = target.sample_room - 1;
+        const depths_at = (planes + (planes + 1) * room) * tile_pixels;
+        const stencils_at = depths_at + room * depth_plane_words;
+        const held_at = stencils_at + room * stencil_plane_words;
+        const colors_at = held_at + @as(usize, if (room == 0) 0 else batch_depth_words);
         return .{
             .buffer = &target.buffers[part],
-            .extras = if (target.extras) |first| first + @as(usize, part) * target.partWords() else null,
-            .extra_colors = if (target.extras) |first| @ptrCast(@alignCast(first + @as(usize, part) * target.partWords() + target.extra_planes * tile_pixels)) else null,
+            .part = part,
+            .extras = if (planes == 0) null else block,
+            .sample_planes = if (samples == 1) null else block.? + planes * tile_pixels,
+            .samples = samples,
+            .depth_planes = if (samples == 1) null else @ptrCast(block.? + depths_at),
+            .stencil_planes = if (samples == 1) null else @ptrCast(block.? + stencils_at),
+            .batch_depths = if (samples == 1) null else @ptrCast(block.? + held_at),
+            .extra_colors = if (planes == 0) null else @ptrCast(@alignCast(block.? + colors_at)),
             .index = index,
             .x = x,
             .y = y,
@@ -777,27 +1056,35 @@ pub const Target = struct {
     }
 
     /// One tile: started as the attachments say, drawn, and written into
-    /// the surface.
+    /// the surface, and each colour with a resolve averaged into it
+    /// (since 1.109).
     fn drawTile(target: *Target, tile: *const Tile) void {
-        const buffer = tile.buffer;
         const colors = target.colorCount();
         var output: u32 = 0;
         while (output < colors) : (output += 1) {
-            switch (target.attachments.colorAt(output).load) {
-                .clear => @memset(tile.plane(output)[0..tile_pixels], target.clear_pixels[output]),
-                .keep => target.load(tile, output),
-            }
+            var sample: u32 = 0;
+            while (sample < tile.samples) : (sample += 1) switch (target.attachments.colorAt(output).load) {
+                .clear => @memset(tile.samplePlane(output, sample)[0..tile_pixels], target.clear_pixels[output]),
+                .keep => target.load(tile, output, sample),
+            };
         }
+        // The depth and the stencil, each sample's plane (since 1.105).
         const depth = &target.attachments.depth;
-        if (depth.used) switch (depth.load) {
-            .clear => @memset(&buffer.depth, depth.clear),
-            .keep => target.loadDepth(tile),
-        };
+        if (depth.used) {
+            var sample: u32 = 0;
+            while (sample < tile.samples) : (sample += 1) switch (depth.load) {
+                .clear => @memset(tile.depthPlane(sample)[0..tile_pixels], depth.clear),
+                .keep => target.loadDepth(tile, sample),
+            };
+        }
         const stencil = &target.attachments.stencil;
-        if (stencil.used) switch (stencil.load) {
-            .clear => @memset(&buffer.stencil, stencil.clear),
-            .keep => target.loadStencil(tile),
-        };
+        if (stencil.used) {
+            var sample: u32 = 0;
+            while (sample < tile.samples) : (sample += 1) switch (stencil.load) {
+                .clear => @memset(tile.stencilPlane(sample)[0..tile_pixels], stencil.clear),
+                .keep => target.loadStencil(tile, sample),
+            };
+        }
         const state = &target.tiles[tile.index];
         // The triangles at the head of the list that ask for the depth
         // pre-pass are shaded where their depth was left, the rest as
@@ -812,9 +1099,22 @@ pub const Target = struct {
             }
         }
         output = 0;
-        while (output < colors) : (output += 1) target.store(tile, output);
-        if (depth.store) target.storeDepth(tile);
-        if (stencil.store) target.storeStencil(tile);
+        while (output < colors) : (output += 1) {
+            var sample: u32 = 0;
+            while (sample < tile.samples) : (sample += 1) target.store(tile, output, sample);
+            // Its samples, as the surface now holds them, averaged into
+            // its resolve while their rows are still in this part's
+            // cache (since 1.109).
+            if (target.attachments.colorAt(output).resolve) |into| resolveSurface(target.surfaces[output], into, tile.rect());
+        }
+        if (depth.store) {
+            var sample: u32 = 0;
+            while (sample < tile.samples) : (sample += 1) target.storeDepth(tile, sample);
+        }
+        if (stencil.store) {
+            var sample: u32 = 0;
+            while (sample < tile.samples) : (sample += 1) target.storeStencil(tile, sample);
+        }
     }
 
     /// The depth pre-pass's first pass (prepass.zig): the depth of the
@@ -836,47 +1136,46 @@ pub const Target = struct {
 
     /// The part of a tile inside the area, handed on.
     fn handOn(target: *Target, tile: *const Tile) void {
-        target.host.hand_on(target.host.context, .{
-            .x = tile.x + tile.left,
-            .y = tile.y + tile.top,
-            .width = tile.right - tile.left,
-            .height = tile.bottom - tile.top,
-        });
+        target.host.hand_on(target.host.context, tile.rect());
     }
 
     /// Colour attachment `output`'s surface under the tile, into that
-    /// attachment's plane in the buffer.
-    fn load(target: *Target, tile: *const Tile, output: u32) void {
+    /// attachment's plane in the buffer: sample `sample`'s of each.
+    fn load(target: *Target, tile: *const Tile, output: u32, sample: u32) void {
         const packing = target.packings[output];
         const column = tile.x + tile.left;
+        const plane = tile.samplePlane(output, sample);
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
-            packing.load(tile.rowOf(output, row) + tile.left, target.pixelAt(output, column, tile.y + row), tile.right - tile.left);
+            packing.load(plane + row * tile_size + tile.left, target.pixelAt(output, sample, column, tile.y + row), tile.right - tile.left);
         }
     }
 
-    /// The tile's plane for colour attachment `output`, into its surface.
-    fn store(target: *Target, tile: *const Tile, output: u32) void {
+    /// The tile's plane for colour attachment `output`, into its surface:
+    /// sample `sample`'s of each.
+    fn store(target: *Target, tile: *const Tile, output: u32, sample: u32) void {
         const packing = target.packings[output];
         const column = tile.x + tile.left;
+        const plane = tile.samplePlane(output, sample);
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
-            packing.store(target.pixelAt(output, column, tile.y + row), tile.rowOf(output, row) + tile.left, tile.right - tile.left, column, tile.y + row);
+            packing.store(target.pixelAt(output, sample, column, tile.y + row), plane + row * tile_size + tile.left, tile.right - tile.left, column, tile.y + row);
         }
     }
 
     /// The depth plane under the tile, into its buffer: what a pass whose
-    /// depth attachment loads starts from.
-    fn loadDepth(target: *Target, tile: *const Tile) void {
+    /// depth attachment loads starts from. Sample `sample`'s of each
+    /// (since 1.105).
+    fn loadDepth(target: *Target, tile: *const Tile, sample: u32) void {
         const plane = target.attachments.depth.plane orelse {
-            @memset(&tile.buffer.depth, target.attachments.depth.clear);
+            @memset(tile.depthPlane(sample)[0..tile_pixels], target.attachments.depth.clear);
             return;
         };
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
             const count = tile.right - tile.left;
-            const from = pixelOf(plane, tile.x + tile.left, tile.y + row);
-            const into = tile.depthRow(row) + tile.left;
+            const from = pixelOf(plane, sample, tile.x + tile.left, tile.y + row);
+            const into = tile.depthRowOf(sample, row) + tile.left;
             // Depth alone lies as the tile's own does, so a row is one
             // copy; beside a stencil it is every other pixel.
             if (plane.stride == 2) {
@@ -888,14 +1187,15 @@ pub const Target = struct {
         }
     }
 
-    /// The tile's depth, into the plane: what outlives the frame.
-    fn storeDepth(target: *Target, tile: *const Tile) void {
+    /// The tile's depth, into the plane: what outlives the frame. Sample
+    /// `sample`'s of each (since 1.105).
+    fn storeDepth(target: *Target, tile: *const Tile, sample: u32) void {
         const plane = target.attachments.depth.plane orelse return;
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
             const count = tile.right - tile.left;
-            const into = pixelOf(plane, tile.x + tile.left, tile.y + row);
-            const from = tile.depthRow(row) + tile.left;
+            const into = pixelOf(plane, sample, tile.x + tile.left, tile.y + row);
+            const from = tile.depthRowOf(sample, row) + tile.left;
             if (plane.stride == 2) {
                 @memcpy(into[0 .. count * 2], @as([*]const u8, @ptrCast(from))[0 .. count * 2]);
             } else for (0..count) |k| {
@@ -907,17 +1207,18 @@ pub const Target = struct {
     }
 
     /// The stencil plane under the tile, into its buffer: a byte a pixel,
-    /// what a pass whose stencil loads starts from.
-    fn loadStencil(target: *Target, tile: *const Tile) void {
+    /// what a pass whose stencil loads starts from. Sample `sample`'s of
+    /// each (since 1.105).
+    fn loadStencil(target: *Target, tile: *const Tile, sample: u32) void {
         const plane = target.attachments.stencil.plane orelse {
-            @memset(&tile.buffer.stencil, target.attachments.stencil.clear);
+            @memset(tile.stencilPlane(sample)[0..tile_pixels], target.attachments.stencil.clear);
             return;
         };
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
             const count = tile.right - tile.left;
-            const from = pixelOf(plane, tile.x + tile.left, tile.y + row);
-            const into = tile.stencilRow(row) + tile.left;
+            const from = pixelOf(plane, sample, tile.x + tile.left, tile.y + row);
+            const into = tile.stencilRowOf(sample, row) + tile.left;
             if (plane.stride == 1) {
                 @memcpy(into[0..count], from[0..count]);
             } else for (0..count) |k| {
@@ -927,13 +1228,14 @@ pub const Target = struct {
     }
 
     /// The tile's stencil, into the plane: what outlives the frame.
-    fn storeStencil(target: *Target, tile: *const Tile) void {
+    /// Sample `sample`'s of each (since 1.105).
+    fn storeStencil(target: *Target, tile: *const Tile, sample: u32) void {
         const plane = target.attachments.stencil.plane orelse return;
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
             const count = tile.right - tile.left;
-            const into = pixelOf(plane, tile.x + tile.left, tile.y + row);
-            const from = tile.stencilRow(row) + tile.left;
+            const into = pixelOf(plane, sample, tile.x + tile.left, tile.y + row);
+            const from = tile.stencilRowOf(sample, row) + tile.left;
             if (plane.stride == 1) {
                 @memcpy(into[0..count], from[0..count]);
             } else for (0..count) |k| {
@@ -942,16 +1244,18 @@ pub const Target = struct {
         }
     }
 
-    /// The plane's pixel at column `x` of row `y`: its own bytes, the
-    /// plane's first byte being the first pixel's.
-    inline fn pixelOf(plane: Attachments.Plane, x: u32, y: u32) [*]u8 {
-        return plane.pixels + @as(usize, y) * plane.pitch + @as(usize, x) * plane.stride;
+    /// The plane's pixel at column `x` of row `y`, of sample `sample`'s
+    /// plane: its own bytes, the plane's first byte being the first
+    /// pixel's of sample 0.
+    inline fn pixelOf(plane: Attachments.Plane, sample: u32, x: u32, y: u32) [*]u8 {
+        return plane.pixels + sample * plane.sample_bytes + @as(usize, y) * plane.pitch + @as(usize, x) * plane.stride;
     }
 
-    /// Colour attachment `output`'s surface, at column `x` of row `y`.
-    inline fn pixelAt(target: *const Target, output: u32, x: u32, y: u32) [*]u8 {
+    /// Colour attachment `output`'s surface, at column `x` of row `y` of
+    /// sample `sample`'s plane.
+    inline fn pixelAt(target: *const Target, output: u32, sample: u32, x: u32, y: u32) [*]u8 {
         const surface = target.surfaces[output];
-        return surface.pixels + @as(usize, y) * surface.pitch + @as(usize, x) * target.packings[output].bytes;
+        return surface.pixels + sample * surface.sample_bytes + @as(usize, y) * surface.pitch + @as(usize, x) * target.packings[output].bytes;
     }
 };
 
@@ -981,12 +1285,74 @@ fn handOnTiles(data: ?*anyopaque, part: u32, parts: u32) callconv(.c) void {
 }
 
 /// Whether any pixel of the square at (x, y) is inside all three of the
-/// triangle's edges: for each, its most inside corner is.
+/// triangle's edges: for each, its most inside corner is - at more than
+/// one sample a pixel, that corner's most inside sample (`Edge.inmost`).
 fn touches(triangle: *const Header, x: u32, y: u32) bool {
     for (triangle.edges) |edge| {
         const corner_x: i64 = if (edge.a > 0) x + tile_size - 1 else x;
         const corner_y: i64 = if (edge.b > 0) y + tile_size - 1 else y;
-        if (edge.at(corner_x, corner_y) < 0) return false;
+        if (edge.at(corner_x, corner_y) + edge.inmost < 0) return false;
     }
     return true;
+}
+
+test "a part's block holds everything a tile is handed past its buffer, and nothing lies over anything else: at one sample a pixel and at four, for each count of colour attachments" {
+    const testing = @import("std").testing;
+    const Memory = struct {
+        fn allocate(context: ?*anyopaque, bytes: usize) ?[*]u8 {
+            _ = context;
+            const made = testing.allocator.alloc(u8, bytes) catch return null;
+            return made.ptr;
+        }
+        fn free(context: ?*anyopaque, memory: [*]u8, bytes: usize) void {
+            _ = context;
+            testing.allocator.free(memory[0..bytes]);
+        }
+        fn handOn(context: ?*anyopaque, area: Rect) void {
+            _ = context;
+            _ = area;
+        }
+        fn addressOf(pointer: anytype) ?usize {
+            return if (pointer) |at| @intFromPtr(at) else null;
+        }
+    };
+    const host = Host{ .share = &Host.oneAfterAnother, .hand_on = &Memory.handOn, .allocate = &Memory.allocate, .free = &Memory.free };
+    var pixels: [most_colors][tile_pixels]u32 = undefined;
+    var surfaces: [most_colors]Surface = undefined;
+    for (&surfaces, &pixels) |*surface, *plane| surface.* = .{ .pixels = @ptrCast(plane), .pitch = tile_size * 4, .width = tile_size, .height = tile_size, .format = .bgra32 };
+    const area = Rect{ .width = tile_size, .height = tile_size };
+    // The parts draw at once on the board, each in its own block, one
+    // after another in the target's memory: a block that holds less than
+    // its tiles are handed runs into the next part's, which a test whose
+    // parts draw one after another never sees.
+    for ([2]u32{ 1, 4 }) |samples| for (1..most_colors + 1) |colors| {
+        var target = try Target.initAll(host, surfaces[0..colors], area, .{ .color_count = @intCast(colors), .samples = samples });
+        defer target.deinit();
+        const words = target.partWords();
+        const room: usize = samples - 1;
+        const planes: usize = colors - 1;
+        for (0..most_parts) |part| {
+            const tile = target.tileAt(0, @intCast(part));
+            // The tile says whose it is: the lane of a query's counters
+            // its pixels are counted in (since 1.122).
+            try testing.expectEqual(part, tile.part);
+            const handed = [_]struct { ?usize, usize }{
+                .{ Memory.addressOf(tile.extras), planes * tile_pixels * 4 },
+                .{ Memory.addressOf(tile.sample_planes), (planes + 1) * room * tile_pixels * 4 },
+                .{ Memory.addressOf(tile.depth_planes), room * tile_pixels * 2 },
+                .{ Memory.addressOf(tile.stencil_planes), room * tile_pixels },
+                .{ Memory.addressOf(tile.batch_depths), batch_depth_words * 4 },
+                .{ Memory.addressOf(tile.extra_colors), (planes + 1) * batch_color_words * 4 },
+            };
+            const block = if (target.extras) |extras| @intFromPtr(extras) + part * words * 4 else 0;
+            for (handed, 0..) |one, k| {
+                const at = one[0] orelse continue;
+                try testing.expect(at >= block and at + one[1] <= block + words * 4);
+                for (handed[k + 1 ..]) |other| {
+                    const there = other[0] orelse continue;
+                    try testing.expect(at + one[1] <= there or there + other[1] <= at);
+                }
+            }
+        }
+    };
 }

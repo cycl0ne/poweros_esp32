@@ -206,7 +206,11 @@ test "a surface: its size, one format, fifo, and as many images as it has room f
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceSurfaceSupport(bench.physical, 0, bench.surface, &supported));
     try testing.expect(!supported);
     const result, _ = bench.swapchain(2, null);
-    try testing.expectEqual(facet.Result.error_format_not_supported, result);
+    try testing.expectEqual(facet.Result.error_validation_failed, result);
+    // Asked for the format the display is, still no format the surface
+    // gives (VUID-VkSwapchainCreateInfoKHR-surface-01270).
+    const same, _ = bench.swapchainOf(2, null, .undefined);
+    try testing.expectEqual(facet.Result.error_validation_failed, same);
 }
 
 test "a display of 565: its format, a swapchain of it, what is drawn dithered into its pixels" {
@@ -219,7 +223,7 @@ test "a display of 565: its format, a swapchain of it, what is drawn dithered in
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceSurfaceFormats(bench.physical, bench.surface, &count, &format));
     try testing.expectEqual(facet.Format.r5g6b5_unorm_pack16, format[0].format);
     var made, var swapchain = bench.swapchainOf(2, null, .b8g8r8a8_unorm);
-    try testing.expectEqual(facet.Result.error_format_not_supported, made);
+    try testing.expectEqual(facet.Result.error_validation_failed, made);
     made, swapchain = bench.swapchainOf(2, null, .r5g6b5_unorm_pack16);
     try testing.expectEqual(facet.Result.success, made);
     defer fb.DestroySwapchain(bench.device, swapchain);
@@ -269,12 +273,15 @@ test "a swapchain: its images the surface's buffers, handed out in turn, shown i
     try testing.expectEqual(facet.Result.incomplete, fb.GetSwapchainImages(bench.device, swapchain.?, &count, &images));
     count = 2;
     try testing.expectEqual(facet.Result.success, fb.GetSwapchainImages(bench.device, swapchain.?, &count, &images));
-    // Bound already, and the program's to neither bind nor destroy.
+    // Bound already, and the program's to neither bind nor destroy: Vulkan
+    // has a swapchain's images bound as they are handed out, so binding one
+    // breaks its rules (VUID-vkBindImageMemory-image-07460;
+    // `error_out_of_device_memory` until 1.134).
     var needs: facet.MemoryRequirements = undefined;
     fb.GetImageMemoryRequirements(bench.device, images[0], &needs);
     const block = try rig_zig.allocate(&bench.rig, bench.device, needs.size);
     defer fb.FreeMemory(bench.device, block);
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, fb.BindImageMemory(bench.device, images[0], block, 0));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.BindImageMemory(bench.device, images[0], block, 0));
     fb.DestroyImage(bench.device, images[0]);
 
     // The first is shown as the swapchain starts: the second is handed out,
@@ -405,7 +412,7 @@ test "refused: a surface that changed, a swapchain handed on, no room, a second 
     acquired, _ = bench.acquire(second.?, 0);
     try testing.expectEqual(facet.Result.error_out_of_date, acquired);
     result, _ = bench.swapchain(1, second);
-    try testing.expectEqual(facet.Result.error_initialization_failed, result);
+    try testing.expectEqual(facet.Result.error_validation_failed, result);
     fb.DestroySwapchain(bench.device, second);
     try testing.expectEqual(@as(u32, 0), fake.made);
 }
@@ -516,7 +523,7 @@ test "a swapchain's image copied out of and into, since 1.43" {
     // drawn into; sampling is not, their pixels being rows.
     const copies = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
     var refused: ?*facet.Swapchain = null;
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSwapchain(device, &.{
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateSwapchain(device, &.{
         .surface = bench.surface,
         .min_image_count = 2,
         .image_format = .b8g8r8a8_unorm,
@@ -524,6 +531,21 @@ test "a swapchain's image copied out of and into, since 1.43" {
         .image_usage = copies | facet.IMAGE_USAGE_SAMPLED,
     }, &refused));
     try testing.expectEqual(null, refused);
+    // Nor more layers than the surface's one, nor a present mode it does
+    // not list (VUID-VkSwapchainCreateInfoKHR-imageArrayLayers-01275,
+    // -presentMode-01281; since 1.133).
+    for ([_]struct { u32, facet.PresentMode }{ .{ 2, .fifo }, .{ 1, .mailbox } }) |case| {
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateSwapchain(device, &.{
+            .surface = bench.surface,
+            .min_image_count = 2,
+            .image_format = .b8g8r8a8_unorm,
+            .image_extent = .{ .width = width, .height = height },
+            .image_usage = copies,
+            .image_array_layers = case[0],
+            .present_mode = case[1],
+        }, &refused));
+        try testing.expectEqual(null, refused);
+    }
 
     var chain: ?*facet.Swapchain = null;
     try testing.expectEqual(facet.Result.success, fb.CreateSwapchain(device, &.{

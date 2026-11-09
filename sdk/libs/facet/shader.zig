@@ -69,8 +69,11 @@ pub const Entry = extern struct {
         return entry.varyings & 0xFF;
     }
 
-    /// Its fixed form.
-    pub fn fixed(entry: *const Entry) Fixed {
+    /// Its fixed form, or null where those bits name none: a word a
+    /// program made up, or one of a revision later than the library's.
+    /// (Since 1.75 it answers with a null rather than reading the byte as
+    /// a kind whatever it holds.)
+    pub fn fixed(entry: *const Entry) ?Fixed {
         return Fixed.fromBits(entry.varyings);
     }
 
@@ -123,6 +126,57 @@ pub const Code = extern struct {
     entries: [*]const Entry,
 };
 
+/// One entry's shader as a device that compiles wants it: a SPIR-V 1.0
+/// module, header and all, in the program's own memory for as long as the
+/// shader module lives - as an entry's name and function already are.
+/// A null, or a `count` of 0, is an entry that ships none: the vertex
+/// entries of a program whose fragment shaders alone are compiled say
+/// `.{}` and nothing else. (Since 1.75.)
+pub const Spirv = extern struct {
+    words: ?[*]const u32 = null,
+    count: u32 = 0,
+
+    /// An entry's words, from what `ir.Fragment` wrote.
+    pub fn of(given: []const u32) Spirv {
+        return .{ .words = given.ptr, .count = @intCast(given.len) };
+    }
+
+    /// The words as a slice; empty where the entry ships none.
+    pub fn module(each: Spirv) []const u32 {
+        const first = each.words orelse return &.{};
+        if (each.count == 0) return &.{};
+        return first[0..each.count];
+    }
+};
+
+/// What `ShaderModuleCreateInfo.code` points to where the entries ship
+/// their SPIR-V as well, with `SHADER_MODULE_CREATE_SPIRV` in `flags` and
+/// a `code_size` this wide. The words are a side of the entries, index
+/// for index: entry k's are `spirv[k]`, and `spirv_count` is
+/// `entry_count`.
+///
+/// Its first three fields **are** `Code`'s, asserted below rather than
+/// intended, and the magic is the same. So a library that has not got the
+/// flag reads such a module as a `Code` and runs the Zig functions: a
+/// program offers its words to every revision and loses nothing but the
+/// GPU path on an older one. (Since 1.75.)
+pub const Module = extern struct {
+    magic: u32 = MAGIC,
+    entry_count: u32,
+    entries: [*]const Entry,
+    spirv: [*]const Spirv,
+    spirv_count: u32,
+};
+
+comptime {
+    // The prefix is the whole of the compatibility, so it is checked on
+    // every target the SDK is built for rather than reasoned about once.
+    if (@offsetOf(Module, "magic") != @offsetOf(Code, "magic")) @compileError("shader.Module's prefix is not shader.Code's");
+    if (@offsetOf(Module, "entry_count") != @offsetOf(Code, "entry_count")) @compileError("shader.Module's prefix is not shader.Code's");
+    if (@offsetOf(Module, "entries") != @offsetOf(Code, "entries")) @compileError("shader.Module's prefix is not shader.Code's");
+    if (@sizeOf(Module) <= @sizeOf(Code)) @compileError("shader.Module has to be wider than shader.Code");
+}
+
 /// An entry for a vertex function.
 pub fn vertex(name: [*:0]const u8, function: VertexFn, varyings: u32) Entry {
     return .{ .name = name, .stage = facet.SHADER_STAGE_VERTEX, .function = function, .varyings = varyings };
@@ -139,7 +193,7 @@ pub fn fragment(name: [*:0]const u8, function: FragmentFn, varyings: u32) Entry 
 /// `fragment` entry writes. 1 to 4, and the pipeline is refused where it
 /// is not the subpass's colour attachment count exactly.
 /// `Fragments.colorsOf` is where each one's colours go.
-/// (Since 1.51. `PhysicalDeviceFeatures.several_outputs`.)
+/// (Since 1.51. `Capabilities.several_outputs`.)
 pub fn fragmentOutputs(name: [*:0]const u8, function: FragmentFn, varyings: u32, outputs: u32) Entry {
     const held: u32 = @min(@max(outputs, 1), 4) - 1;
     return .{ .name = name, .stage = facet.SHADER_STAGE_FRAGMENT, .function = function, .varyings = varyings | held << 18 };
@@ -230,8 +284,10 @@ pub const FixedKind = enum(u8) {
     texture_sampled = 8,
     /// The same compared with a reference rather than read as a colour: a
     /// shadow sample (`texture.Sampler.compare`). Varyings s, t and the
-    /// reference, and what it writes is how much of the sample passed -
-    /// white for all of it, black for none.
+    /// reference, and what it writes is how much of the sample passed,
+    /// where a view of a depth reads the depth: (1, 0, 0, 1) for all of it,
+    /// black for none, as a depth view reads (D, 0, 0, 1) (since 1.121).
+    /// The V3D draws it since 1.142, as the TMU compares (TMUDREF).
     texture_shadow = 9,
     /// One cube of an array of them: varyings x, y and z, the direction,
     /// and then which cube, the nearest there is - a view of `cube_array`,
@@ -244,10 +300,12 @@ pub const FixedKind = enum(u8) {
     /// mixed, a bias and a clamp on them, mirrored and bordered edges, and
     /// anisotropy. (Since 1.49.)
     texture_array_sampled = 11,
-    /// A cube map the same way: varyings x, y and z, the direction. The
-    /// sample is taken inside the face the direction falls on, so the
-    /// sampler's edges are that face's - where `texture_cube` reads over
-    /// the seam into the next face. (Since 1.49.)
+    /// A cube map the same way: varyings x, y and z, the direction. Since
+    /// 1.60 a sample is read over the seam into the next face, as
+    /// `texture_cube` reads it, and the sampler's wraps say nothing of a
+    /// cube (`texture.sampleCubeBy`); from 1.49 to 1.60 it was taken
+    /// inside the one face, with the sampler's edges as that face's.
+    /// (Since 1.49.)
     texture_cube_sampled = 12,
     /// A 3D texture the same way: varyings s, t and r, each 0 to 1 across
     /// it, with `wrap[2]` for what lies past the first and last slice and
@@ -259,10 +317,10 @@ pub const FixedKind = enum(u8) {
     texture_3d_sampled = 13,
     /// One cube of an array of them as the sampler bound beside it says:
     /// varyings x, y and z, the direction, and then which cube, as
-    /// `texture_cube_array` has them. The sample is taken inside the face
-    /// the direction falls on, that cube's own, so the sampler's edges are
-    /// that face's - where `texture_cube_array` reads over the seam into
-    /// the next face of the same cube. (Since 1.53.)
+    /// `texture_cube_array` has them. Since 1.60 a sample is read over the
+    /// seam into the next face of the same cube, as `texture_cube_array`
+    /// reads it, and the sampler's wraps say nothing of a cube
+    /// (`texture.sampleCubeBy`). (Since 1.53.)
     texture_cube_array_sampled = 14,
 };
 
@@ -292,7 +350,8 @@ pub const Fixed = struct {
     /// Whether the form samples through a sampler bound with the texture,
     /// rather than as `sampling` says. A device whose fragment programs are
     /// its own has one for each form it can draw, so such a pipeline is
-    /// refused where `PhysicalDeviceFeatures.samplers` is false.
+    /// refused where `Capabilities.samplers` is false - all of them, or
+    /// some: the V3D draws the 2D, array, cube and 3D ones since 1.141.
     pub fn needsSampler(fixed: Fixed) bool {
         return switch (fixed.kind) {
             .texture_sampled, .texture_shadow => true,
@@ -316,9 +375,16 @@ pub const Fixed = struct {
             @as(u32, @intFromEnum(fixed.sampling.address)) << 17;
     }
 
-    fn fromBits(bits_given: u32) Fixed {
+    /// The form `bits_given` names, or null where its kind byte names no
+    /// kind. That byte is the program's own, so it is read and not
+    /// trusted: `@enumFromInt` of a value the enumeration has not got is
+    /// illegal behaviour, which is a panic where there are checks and
+    /// nothing at all where there are none. The filter and the address are
+    /// one bit each and so are always a value. (Since 1.75.)
+    fn fromBits(bits_given: u32) ?Fixed {
+        const named = std.enums.fromInt(FixedKind, @as(u8, @truncate(bits_given >> 8))) orelse return null;
         return .{
-            .kind = @enumFromInt(@as(u8, @truncate(bits_given >> 8))),
+            .kind = named,
             .sampling = .{
                 .filter = @enumFromInt(@as(u1, @truncate(bits_given >> 16))),
                 .address = @enumFromInt(@as(u1, @truncate(bits_given >> 17))),
@@ -363,19 +429,65 @@ pub fn fixedFragment(name: [*:0]const u8, comptime fixed: Fixed) Entry {
 /// push constants.
 pub const MAX_SETS = 4;
 /// The dynamic buffer descriptors one set may hold: each takes an offset
-/// from CmdBindDescriptorSets (`Resources.offsets`), so two of them is
-/// eight across the four sets - which is Vulkan's guarantee for the
-/// uniform ones of a pipeline layout, and twice it for the storage ones.
-/// It is low because the offsets are part of what a draw was bound with,
-/// which is copied for every draw that changed it. Four a set were tried
-/// again for 1.43: FacetMany drew a frame in 11.61 and 11.62 ms with them,
-/// and in 11.18 to 11.58 ms with two over seven runs - above every reading
-/// two gave, by about 2 per cent of the mean, though by less than that
-/// test drifts from batch to batch. Two is kept: nothing has asked for
-/// more, and a program that wants eight ranges can bind eight offsets
-/// across the four sets.
-pub const MAX_DYNAMIC_OFFSETS = 2;
+/// from CmdBindDescriptorSets (`Resources.offsets`).
+///
+/// **Twelve, which is Vulkan's floor for a whole pipeline layout, in one
+/// set.** Vulkan's two limits are per *layout* -
+/// `maxDescriptorSetUniformBuffersDynamic` at least 8 and
+/// `maxDescriptorSetStorageBuffersDynamic` at least 4 - and they put no
+/// limit on one set, so a layout is entitled to spend all twelve of them
+/// on a single set layout. That is what this has to hold, and why it is
+/// twelve rather than the eight and four read separately: a set holding
+/// 8 uniform and 4 storage dynamic descriptors is a legal layout, and
+/// before 1.85 it was refused at the third (item 19 of
+/// docs/facet-vulkan10.md).
+///
+/// It was 2 until then, on the reasoning that four sets of two is the
+/// eight a layout may hold, which is true of a layout and false of a set:
+/// CreateDescriptorSetLayout refused the third dynamic descriptor of one
+/// set whatever the other three held.
+///
+/// The cost it was kept low for is real but small. The offsets are part
+/// of what a draw was bound with, which the cores copy into the frame's
+/// arena once for each draw whose bindings changed, so this array's size
+/// is in that copy: `[MAX_SETS][12]u32` is 192 bytes where two a set was
+/// 32, and `Resources` goes from about 200 bytes to about 360. Four a set
+/// were measured for 1.43 - FacetMany drew a frame in 11.61 and 11.62 ms
+/// with them against 11.18 to 11.58 ms with two over seven runs, about 2
+/// per cent of the mean, by less than that test drifts between batches -
+/// so the measurement never separated the copy from the noise, and
+/// conformance is not a thing to trade against it either way.
+pub const MAX_DYNAMIC_OFFSETS = 12;
+
+/// The shift `Resources.offsets` holds for a dynamic buffer descriptor
+/// whose offset would take its range past its buffer's end, which
+/// VUID-vkCmdBindDescriptorSets-pDynamicOffsets-01971 forbids: the
+/// descriptor then reads as not written, rather than as bytes that are
+/// not the buffer's (since 1.160).
+pub const SHIFTED_OUT: u32 = std.math.maxInt(u32);
 pub const MAX_PUSH_CONSTANTS_SIZE = 128;
+/// The floats a vertex function may hand to a fragment function past the
+/// position, which is `Entry.varyings`' low 8 bits and both ends of
+/// Vulkan's pair: `PhysicalDeviceLimits.max_vertex_output_components` out
+/// of the vertex stage and `max_fragment_input_components` into the
+/// fragment stage, each required to be at least 64.
+///
+/// **This is the one place the number is written.** It was 8 until 1.90,
+/// and it was written in five uncoupled places - this library's limits
+/// table, the cores' rasterizer, the vertex widening path, `ir.zig`'s
+/// comptime bound, and the V3D's QPU ceiling - with nothing tying them
+/// together. Four of those read it from here now; the fifth, the V3D's,
+/// is a real and different ceiling and stays its own (`qpu.most_varyings`,
+/// which is why that device reports 8 and refuses more at pipeline
+/// creation). Item 17 of docs/facet-vulkan10.md.
+///
+/// A draw pays for what it carries and not for this number: the
+/// per-triangle plane store and the per-vertex output store are both
+/// sized at run time from the pipeline's own count, and the tiles hold no
+/// varyings at all. The one place the width is comptime is the clip
+/// path's vertex, and that is bucketed so a draw of 8 or fewer costs what
+/// it did before (driver/cpu/raster/batched.zig).
+pub const MAX_VARYINGS = 64;
 
 /// A descriptor as a shader reads it: a uniform or storage buffer's bytes
 /// from the offset written, and how many; a sampled image's texture; a
@@ -1081,6 +1193,40 @@ pub const Attachment = extern struct {
     /// hold reads as transparent black.
     left: u32 = 0,
     top: u32 = 0,
+    /// The samples each pixel holds: 1, or 4 for an attachment of four
+    /// samples a pixel (since 1.111). What this reads by itself is sample
+    /// 0, and `sampleOf` gives the others: sample s lies `s - 1` times
+    /// `sample_bytes` on from `others`, which is the next plane of the
+    /// image's memory for one an earlier subpass drew, and the tile's own
+    /// planes of samples for the one this part is drawing. That is
+    /// llvmpipe's image load of several samples, which adds the sample
+    /// times its stride to the texel's offset (`lp_build_img_op_soa`,
+    /// src/gallium/auxiliary/gallivm/lp_bld_sample_soa.c:4941-4956), and
+    /// lavapipe reads a subpass input of several samples with that load
+    /// (`try_lower_input_load`, src/gallium/frontends/lavapipe/nir/
+    /// lvp_nir_lower_input_attachments.c:49-86).
+    samples: u32 = 1,
+    sample_bytes: usize = 0,
+    others: ?[*]const u8 = null,
+
+    /// Sample `which` of an attachment of several samples a pixel, as an
+    /// attachment of one: what Vulkan's `subpassLoad` of a
+    /// `subpassInputMS` reads, through `colorAt` and `at` of what it gives.
+    /// A sample the attachment has not got reads as transparent black
+    /// everywhere, as llvmpipe's load reads nothing for a sample past the
+    /// count (`lp_build_sample_ms_offset`, lp_bld_sample_soa.c:2170-2187).
+    /// Of an attachment of one sample, sample 0 is the attachment itself.
+    /// (Since 1.111.)
+    pub fn sampleOf(attachment: *const Attachment, which: u32) Attachment {
+        var one = attachment.*;
+        one.samples = 1;
+        if (which == 0) return one;
+        one.bytes = null;
+        if (which < attachment.samples) if (attachment.others) |first| {
+            one.bytes = first + @as(usize, which - 1) * attachment.sample_bytes;
+        };
+        return one;
+    }
 
     /// The pixel at (x, y) of the attachment as 0xAARRGGBB; transparent
     /// black outside what this holds.
@@ -1133,8 +1279,9 @@ pub const Resources = extern struct {
     output: u32 = 0,
     /// What each set's dynamic buffer descriptors are shifted by, as
     /// CmdBindDescriptorSets gave them: `offsets[set][slot.dynamic - 1]`
-    /// is a slot's own, and `buffer` adds it. The sets' other slots are
-    /// not shifted (`Slot.dynamic` is 0 for them).
+    /// is a slot's own, and `buffer` adds it, or `SHIFTED_OUT` where the
+    /// shift would take the range past its buffer. The sets' other slots
+    /// are not shifted (`Slot.dynamic` is 0 for them).
     offsets: [MAX_SETS][MAX_DYNAMIC_OFFSETS]u32 = @splat(@splat(0)),
 
     /// Element `element` of binding `binding` in set `set`, or null where
@@ -1153,8 +1300,8 @@ pub const Resources = extern struct {
     /// `bufferAt` reaches the others.
     ///
     /// A dynamic buffer descriptor is read from the offset
-    /// CmdBindDescriptorSets gave for it, and what is left of the range
-    /// from there has to hold a `T`.
+    /// CmdBindDescriptorSets gave for it, and its range moves with it, as
+    /// in Vulkan; until 1.160 the offset ate into the range instead.
     pub fn buffer(resources: *const Resources, comptime T: type, set: u32, binding: u32) ?*const T {
         return resources.bufferAt(T, set, binding, 0);
     }
@@ -1165,14 +1312,15 @@ pub const Resources = extern struct {
     pub fn bufferAt(resources: *const Resources, comptime T: type, set: u32, binding: u32, element: u32) ?*const T {
         const found = resources.slot(set, binding, element) orelse return null;
         const shift = resources.shiftOf(set, found);
-        if (found.range -| shift < @sizeOf(T)) return null;
+        if (shift == SHIFTED_OUT or found.range < @sizeOf(T)) return null;
         const bytes: [*]const u8 = @ptrCast(found.pointer orelse return null);
         return @ptrCast(@alignCast(bytes + shift));
     }
 
     /// What `found`, a slot of set `set`, has its bytes shifted by: the
     /// offset CmdBindDescriptorSets gave for it where it is a dynamic
-    /// buffer descriptor, and 0 for every other kind.
+    /// buffer descriptor - `SHIFTED_OUT` where that took its range past
+    /// its buffer - and 0 for every other kind.
     pub fn shiftOf(resources: *const Resources, set: u32, found: *const Slot) u32 {
         if (found.dynamic == 0 or set >= MAX_SETS) return 0;
         const at = found.dynamic - 1;
@@ -1191,7 +1339,13 @@ pub const Resources = extern struct {
     /// keeps its own - and since 1.70 by `wholesAt` as the four whole
     /// numbers a texture of Vulkan's `_uint` or `_sint` formats keeps,
     /// which no colour and no float carries exactly
-    /// (`PhysicalDeviceFeatures.whole_textures`).
+    /// (`Capabilities.whole_textures`).
+    ///
+    /// An image of four samples a pixel is fetched a sample at a time
+    /// (since 1.110): its texture holds each sample's texels apart
+    /// (`texture.Texture.samples`), what it reads by itself is sample 0,
+    /// and `texture.Texture.sampleOf` gives any one of them as a texture
+    /// of one, to read at the pixel the function wants.
     pub fn sampled(resources: *const Resources, set: u32, binding: u32, element: u32) ?*const texture.Texture {
         const found = resources.slot(set, binding, element) orelse return null;
         return @ptrCast(@alignCast(found.pointer orelse return null));
@@ -1268,18 +1422,19 @@ pub const Resources = extern struct {
     /// written through, as the `T`s it has room for. (Since 1.43.)
     pub fn storageAt(resources: *const Resources, comptime T: type, set: u32, binding: u32, element: u32) ?[]T {
         const found = resources.slot(set, binding, element) orelse return null;
-        // A dynamic one starts where the bind said, and what is left of
-        // the range from there is how many a function may reach.
+        // A dynamic one starts where the bind said, and its range moves
+        // with it: the whole of it is how many a function may reach.
         const shift = resources.shiftOf(set, found);
+        if (shift == SHIFTED_OUT) return null;
         const bytes: [*]u8 = @ptrCast(@constCast(found.pointer orelse return null));
         const first: [*]T = @ptrCast(@alignCast(bytes + shift));
-        return first[0 .. (found.range -| shift) / @sizeOf(T)];
+        return first[0 .. found.range / @sizeOf(T)];
     }
 
     /// Element `element` of binding `binding` of set `set`, an input
     /// attachment: its pixels, or null where it is not written. What
     /// another subpass drew, read from the image's memory
-    /// (`PhysicalDeviceFeatures.input_attachments`).
+    /// (`Capabilities.input_attachments`).
     ///
     /// Asking this of a binding of another kind gives back whatever that
     /// kind's slot holds, read as an attachment: the layout says what a
@@ -1579,7 +1734,10 @@ pub const Quad = extern struct {
     /// form that drops pixels may clear a bit to drop that one: a pipeline
     /// whose form can do it has its depth written after the function has run,
     /// for the pixels left, so a dropped one leaves behind no depth to hide
-    /// what is past it. `PhysicalDeviceFeatures.discarding_fragment_forms`
+    /// what is past it. With a stencil test that writes the stencil, the
+    /// tests themselves are made after it, and a dropped pixel leaves the
+    /// stencil as it was too (since 1.107). Its bits are then those
+    /// covered, until the tests. `Capabilities.discarding_fragment_forms`
     /// says where that happens.
     kept: u8,
 };
@@ -1812,15 +1970,23 @@ pub fn textured(comptime sampling: texture.Sampling, fragments: *const Fragments
     // compressed one on a device that keeps its blocks, say, where the
     // form says 8888 - is drawn all the same, through the sampler that
     // reads whatever a texture holds. A pixel at a time: slow, and the
-    // form to declare is the texture's own format.
-    if (given.format != sampling.format) return texturedOther(sampling, fragments, given);
+    // form to declare is the texture's own format. So is one kept in rows
+    // (`Texture.pitch`) whatever its format, the fast path's places being
+    // those of blocks: an image drawn into and sampled where its rows lie
+    // is one of `argb8888` (since 1.119), a fixed form's own format. And
+    // so is a view that swizzles its channels (since 1.120), which the
+    // fast path reads as they lie, as llvmpipe's linear path takes no
+    // swizzle either (`lp_linear_check_sampler`,
+    // src/gallium/drivers/llvmpipe/lp_linear_sampler.c:918-924).
+    if (given.format != sampling.format or given.pitch != 0 or !given.swizzle.isIdentity()) return texturedOther(sampling, fragments, given);
     if (fragments.exact) texturedQuads(sampling, true, fragments, given) else texturedQuads(sampling, false, fragments, given);
 }
 
-/// `textured` where the texture's format is not the form's: the colours
-/// come from `Texture.sampleLayer`, which reads any format at run time,
-/// a pixel at a time. The level is the quad's own steps', as a GPU takes
-/// it. (Since 1.44.)
+/// `textured` where the texture's format is not the form's, where it is
+/// kept in rows, or where its view swizzles it: the colours come from
+/// `Texture.sampleLayer`, which reads any format and any layout at run
+/// time, swizzled, a pixel at a time. The level is
+/// the quad's own steps', as a GPU takes it. (Since 1.44.)
 fn texturedOther(comptime sampling: texture.Sampling, fragments: *const Fragments, given: *const texture.Texture) void {
     @setRuntimeSafety(false);
     const texels = [2]f32{ @floatFromInt(given.width(0)), @floatFromInt(given.height(0)) };

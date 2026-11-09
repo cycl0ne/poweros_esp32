@@ -58,8 +58,21 @@ const CommandBuffer = @import("../command/_command.zig").CommandBuffer;
 
 /// What a sampled image of a device's own layout needs of its memory.
 pub const TextureMemory = extern struct {
+    /// A layer's, or all of a 3D image.
     bytes: u64,
     alignment: u64,
+    /// Of a 3D image, the bytes from one slice of level 0 to the next: its
+    /// levels are each its own slices one after another, as v3dv lays them
+    /// out (v3dv_image.c:135, `cube_map_stride`; since 1.141). 0 for any
+    /// other image, whose layers are each `bytes` aligned.
+    layer_bytes: u64 = 0,
+};
+
+/// Where a level of a layer of an image lies, in bytes from its memory,
+/// and how many bytes it takes.
+pub const Span = extern struct {
+    at: u64,
+    bytes: u64,
 };
 
 pub const Ops = extern struct {
@@ -67,8 +80,16 @@ pub const Ops = extern struct {
     /// where the machine has not got what the driver drives, and the
     /// instance lists no device of it.
     describe: *const fn (sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool,
-    /// What the device does with a format.
-    format_properties: *const fn (format: facet.Format) callconv(.c) facet.FormatProperties,
+    /// What the device does with a format. `physical` is the device being
+    /// asked, as its own `describe` left it: what a format does differs
+    /// between two devices of a machine only by the features it said it
+    /// has - whether it keeps a compressed or a float texture, a texture's
+    /// own channels or its whole numbers as it was given them, and whether
+    /// it samples a depth image where its rows lie - so both drivers point
+    /// at `_format.properties` (since 1.80; the format alone before, with
+    /// one bool standing in for the four kept features and nothing for
+    /// `sampled_depth`).
+    format_properties: *const fn (physical: *const PhysicalDevice, format: facet.Format) callconv(.c) facet.FormatProperties,
     /// `memory.size` bytes of `memory.type_index` behind `memory`: its
     /// `data` set, or the error AllocateMemory answers with. Never asked
     /// for the lazily allocated type, which has nothing behind it.
@@ -89,11 +110,22 @@ pub const Ops = extern struct {
     /// same.
     execute: *const fn (queue: *Queue, buffer: *CommandBuffer, done: *exec.Waitable) callconv(.c) void,
     /// A sampled image's memory, for a device that does not read textures
-    /// in the rasterizer's layout. Null for one that does.
-    texture_memory: ?*const fn (format: facet.Format, width: u32, height: u32, levels: u32) callconv(.c) TextureMemory = null,
+    /// in the rasterizer's layout. Null for one that does. `depth` is a 3D
+    /// image's slices and 1 for any other (since 1.141). `samples` is 4
+    /// for an image of four samples, whose samples the device keeps
+    /// together (`Image.quads`, since 1.146), and 1 for any other.
+    texture_memory: ?*const fn (format: facet.Format, width: u32, height: u32, depth: u32, levels: u32, samples: u32) callconv(.c) TextureMemory = null,
     /// Where a texel of such an image is, in bytes from its memory: null for
-    /// the rasterizer's layout, kept as `Image.texels` says.
-    texture_offset: ?*const fn (image: *const @import("../image/_image.zig").Image, level: u32, x: u32, y: u32) callconv(.c) usize = null,
+    /// the rasterizer's layout, kept as `Image.texels` says. `layer` is a
+    /// layer, or a 3D image's slice (since 1.141; the library placed the
+    /// layers before, and a 3D image's slices as layers). Of a plane
+    /// `_image.sampleOf` made of an image whose samples lie together, the
+    /// texel of the plane's sample, `Image.sample` (since 1.146).
+    texture_offset: ?*const fn (image: *const @import("../image/_image.zig").Image, level: u32, layer: u32, x: u32, y: u32) callconv(.c) usize = null,
+    /// Where a level of a layer of such an image lies, or of a 3D image's
+    /// slice, all of it: what a clear fills (since 1.141). Null with the
+    /// two above.
+    texture_level: ?*const fn (image: *const @import("../image/_image.zig").Image, level: u32, layer: u32) callconv(.c) Span = null,
     /// What a swapchain's pictures in the machine's memory have to be, for
     /// the device to reach them.
     picture_memory: u32 = exec.MEMF_ANY,
@@ -135,7 +167,7 @@ pub const stamp: u64 = blk: {
         Pipeline,       _pipeline.Tessellated, _image.Image,    _image.ImageView,
         _buffer.Buffer, _render.Part,          _render.Subpass, _render.RenderPass,
         _render.Target, _render.Framebuffer,   _descriptor.Set, CommandBuffer,
-        _stream.Stream, _stream.Head,          _vertices.Bound,
+        _stream.Stream, _stream.Head,          _vertices.Bound, Span,
     };
     for (shared) |T| sum = shapeOf(sum, T);
     // Every command as it is recorded.
@@ -158,7 +190,39 @@ fn named(sum: u64, name: []const u8) u64 {
     return made;
 }
 
-/// A struct's size, and each field's name, place and size.
+/// What `PhysicalDeviceProperties.pipeline_cache_uuid` holds for a device a
+/// driver has just described: `stamp`, and what names the device, mixed.
+///
+/// Vulkan asks that this change whenever anything that could make a cached
+/// pipeline wrong changes, so that a program keeping a cache between runs
+/// knows when to throw it away. `stamp` is already that: it moves when the
+/// library's version moves and when any shape a module and the library
+/// share moves, which covers every way the compiled form of a pipeline
+/// could change here. The device's own numbers go in after it so that two
+/// devices of one machine do not answer with the same UUID.
+///
+/// Called with the properties the driver has just filled rather than with
+/// the three numbers written out again, so that it cannot fall out of step
+/// with them. (Since 1.82.)
+pub fn cacheUuid(properties: *const facet.PhysicalDeviceProperties) [facet.UUID_SIZE]u8 {
+    var low = mixed(stamp, properties.vendor_id);
+    low = mixed(low, properties.device_id);
+    low = mixed(low, @intFromEnum(properties.device_type));
+    var out: [facet.UUID_SIZE]u8 = undefined;
+    std.mem.writeInt(u64, out[0..8], stamp, .big);
+    std.mem.writeInt(u64, out[8..16], low, .big);
+    return out;
+}
+
+/// A struct's size, and each field's name, place and size - and, where the
+/// field points at a function, that call as well (since 1.80). A pointer is
+/// the same size whatever it points at, so a driver call that gained a
+/// parameter left every name, place and size of `Ops` as it was: the stamp
+/// took no notice, and a module built before the change would be loaded and
+/// then called with the wrong arguments. What `callOf` adds catches a
+/// parameter gained or lost, one whose measure changed, and one swapped for
+/// another type of the same size and alignment, which no measure tells
+/// apart.
 fn shapeOf(sum: u64, comptime T: type) u64 {
     var made = mixed(mixed(sum, @sizeOf(T)), @alignOf(T));
     if (@typeInfo(T) != .@"struct") return made;
@@ -167,8 +231,45 @@ fn shapeOf(sum: u64, comptime T: type) u64 {
         made = named(made, field.name);
         made = mixed(made, @offsetOf(T, field.name));
         made = mixed(made, @sizeOf(field.type));
+        made = callOf(made, field.type);
     }
     return made;
+}
+
+/// The call a field points at, where it points at a function: how many
+/// parameters it takes, and the measure of each of them and of its answer.
+/// An optional pointer is read through, and a field that points at no
+/// function left alone.
+///
+/// The measure is a size, an alignment and the type's own name. The name is
+/// what catches a parameter swapped for another type of the same shape - a
+/// `*const PhysicalDevice` for a `*const Device`, both one pointer - which
+/// a size and an alignment read alike. It costs a module rebuilt where a
+/// type was only renamed, and the library and its drivers are built from
+/// the one source and shipped in the one package anyway.
+fn callOf(sum: u64, comptime T: type) u64 {
+    const Pointed = switch (@typeInfo(T)) {
+        .pointer => |pointer| pointer.child,
+        .optional => |optional| switch (@typeInfo(optional.child)) {
+            .pointer => |pointer| pointer.child,
+            else => return sum,
+        },
+        else => return sum,
+    };
+    if (@typeInfo(Pointed) != .@"fn") return sum;
+    const call = @typeInfo(Pointed).@"fn";
+    var made = mixed(sum, call.params.len);
+    for (call.params) |param| made = measured(made, param.type);
+    return measured(made, call.return_type);
+}
+
+/// A parameter's or an answer's size and alignment: 0 for one of no type,
+/// and 1 for an opaque one, which has neither.
+fn measured(sum: u64, comptime T: ?type) u64 {
+    const Given = T orelse return mixed(sum, 0);
+    const made = named(sum, @typeName(Given));
+    if (@typeInfo(Given) == .@"opaque") return mixed(made, 1);
+    return mixed(mixed(made, @sizeOf(Given)), @alignOf(Given));
 }
 
 /// What a file opened as a module turned out to be.
@@ -237,6 +338,36 @@ pub fn lookForModules(base: *FacetBase) void {
 }
 
 const testing = std.testing;
+
+test "the shape sum reads a driver call's own parameters, which no name, place or size shows" {
+    const Format = extern struct { call: *const fn (format: facet.Format) callconv(.c) facet.FormatProperties };
+    const Asked = extern struct { call: *const fn (physical: *const PhysicalDevice, format: facet.Format) callconv(.c) facet.FormatProperties };
+    const Answers = extern struct { call: *const fn (physical: *const PhysicalDevice, format: facet.Format) callconv(.c) bool };
+    const Perhaps = extern struct { call: ?*const fn (format: facet.Format) callconv(.c) facet.FormatProperties };
+    const Otherwise = extern struct { call: ?*const fn (format: facet.Format) callconv(.c) bool };
+    // One pointer swapped for a pointer at something else: the same size
+    // and the same alignment, so only the type's name tells them apart.
+    const Elsewhere = extern struct { what: u64 };
+    const Swapped = extern struct { call: *const fn (elsewhere: *const Elsewhere, format: facet.Format) callconv(.c) facet.FormatProperties };
+    // A shape is summed as the stamp is, which is at comptime: the fields
+    // of a type are no runtime value. A type's name is walked a byte at a
+    // time, so the quota the stamp sets for itself is wanted here too.
+    @setEvalBranchQuota(1_000_000);
+    const sums = comptime [6]u64{ shapeOf(0, Format), shapeOf(0, Asked), shapeOf(0, Answers), shapeOf(0, Perhaps), shapeOf(0, Otherwise), shapeOf(0, Swapped) };
+    // One pointer each, at the one offset, under the one name: what tells
+    // the first two apart is the call, which is why `callOf` is there.
+    try testing.expectEqual(@sizeOf(Format), @sizeOf(Asked));
+    try testing.expect(sums[0] != sums[1]);
+    // What the call answers counts as well, and an optional pointer - the
+    // shape a driver's own calls are declared with - is read through.
+    try testing.expect(sums[1] != sums[2]);
+    try testing.expect(sums[3] != sums[4]);
+    // And a parameter swapped for another type of the one size and
+    // alignment, which the measure alone reads alike: the name catches it.
+    try testing.expectEqual(@sizeOf(*const PhysicalDevice), @sizeOf(*const Elsewhere));
+    try testing.expectEqual(@alignOf(*const PhysicalDevice), @alignOf(*const Elsewhere));
+    try testing.expect(sums[1] != sums[5]);
+}
 
 test "a module is taken only with the library's stamp" {
     var memory: [@sizeOf(ModuleBase)]u8 align(@alignOf(ModuleBase)) = undefined;

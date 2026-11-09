@@ -3,6 +3,7 @@
 
 const sdk = @import("sdk");
 const facet = sdk.facet;
+const shader = facet.shader;
 const FacetBase = @import("../facet_base.zig").FacetBase;
 const _objects = @import("../_objects.zig");
 const _descriptor = @import("_descriptor.zig");
@@ -118,16 +119,24 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
                     // A sampler of its own has no image, and a sampled
                     // image no sampler; a combined one has both.
                     const with: ?*const facet.texture.Sampler = if (write.descriptor_type == .sampled_image or write.descriptor_type == .storage_image) null else sampler: {
+                        // A binding that holds a sampler of its own does
+                        // not read the write's, which may be anything
+                        // (VUID-VkWriteDescriptorSet-descriptorType-00325
+                        // asks for a sampler only where the layout holds
+                        // none): it is not looked at (since 1.134).
+                        if (fixed) break :sampler null;
                         const with_sampler = info.sampler orelse break :sampler null;
                         break :sampler &_objects.of(Sampler, with_sampler).kept;
                     };
                     if (write.descriptor_type == .sampler) break :sampled .{ .sampler = with };
                     const view = _objects.of(ImageView, info.image_view orelse break :sampled .{ .sampler = with });
                     // A texture, a depth attachment sampled where it
-                    // lies (`_image.sampledDepth`, since 1.39), or an
+                    // lies (`_image.sampledDepth`, since 1.39), an
                     // attachment written through as a storage image, whose
-                    // rows are the texture (`writtenRows`, since 1.56).
-                    const kept = view.image.kind == .texture or _image.sampledDepth(view.image) or _image.writtenRows(view.image);
+                    // rows are the texture (`writtenRows`, since 1.56), or
+                    // an image of four samples sampled where its rows lie
+                    // (`sampledRows`, since 1.110): `_image.hasTexels`.
+                    const kept = _image.hasTexels(view.image);
                     if (!kept or view.image.data == null) break :sampled .{ .sampler = with };
                     // A storage image is written through, so the image has
                     // to have been made for it; one that was not is left
@@ -153,9 +162,17 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
                     const info = (write.buffer_info orelse break)[k];
                     const buffer = _objects.of(_buffer.Buffer, info.buffer orelse break :bound .{});
                     const bytes = _buffer.bytes(buffer, info.offset, info.range) orelse break :bound .{};
+                    // A dynamic one is shifted by the bind with its range
+                    // whole, as far as its buffer goes on past it.
+                    if (dynamic != 0 and dynamic <= shader.MAX_DYNAMIC_OFFSETS) {
+                        const past = buffer.size - info.offset - bytes.len;
+                        set.rooms[dynamic - 1] = @intCast(@min(past, 0xFFFF_FFFF));
+                    }
                     break :bound .{ .pointer = bytes.ptr, .range = @intCast(@min(bytes.len, 0xFFFF_FFFF)) };
                 },
             };
+            // One left unwritten has no room to be shifted in.
+            if (dynamic != 0 and dynamic <= shader.MAX_DYNAMIC_OFFSETS and found.slot.pointer == null) set.rooms[dynamic - 1] = 0;
             found.slot.dynamic = dynamic;
             if (fixed) {
                 found.slot.sampler = held;
@@ -175,6 +192,12 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
             const fixed = target.slot.fixed_sampler;
             const held = target.slot.sampler;
             target.slot.* = source.slot.*;
+            // A dynamic one takes the room its source had to be shifted
+            // in, under the number the target set gives it.
+            if (dynamic != 0 and dynamic <= shader.MAX_DYNAMIC_OFFSETS) {
+                const was = source.slot.dynamic;
+                into.rooms[dynamic - 1] = if (was != 0 and was <= shader.MAX_DYNAMIC_OFFSETS) from.rooms[was - 1] else 0;
+            }
             target.slot.dynamic = dynamic;
             if (fixed) {
                 target.slot.sampler = held;

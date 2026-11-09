@@ -29,6 +29,12 @@ const _render = @import("../../render/_render.zig");
 const _play = @import("_play.zig");
 const Player = _play.Player;
 
+// A query's counter keeps a lane for each part a frame's tiles may be
+// drawn in, each part adding to its own (query/_query.zig, since 1.122).
+comptime {
+    std.debug.assert(raster.most_parts <= _query.lanes);
+}
+
 /// The most vertices a draw works, the V3D driver's limit too: past it the
 /// draw is left out and said to be, and a CmdDraw over it never gets this far.
 const most_vertices = @import("../../instance/_instance.zig").max_draw_vertices;
@@ -127,7 +133,7 @@ pub fn constantOf(constants: [4]f32) u32 {
 pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instance: u32, instances: u32) void {
     const player = _play.playerOf(queue);
     const pipeline = player.pipeline orelse return;
-    if (pipeline.draws_nothing or count == 0 or instances == 0) return;
+    if (count == 0 or instances == 0) return;
     const indices = _vertices.indicesOf(player, pipeline, first, count, vertex_offset) orelse return;
     const lowest, const highest = _vertices.range(indices) orelse return;
     if (highest - lowest >= most_vertices) return _play.noRoom(queue, "a draw of more vertices than one works");
@@ -159,6 +165,39 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
     const corner_count = _vertices.assemble(pipeline.topology, indices, lowest, corners[0..most_corners]);
 
     const target = &player.target.?;
+    // A subpass of no attachment is drawn at its pipelines' count of
+    // samples (VUID-VkGraphicsPipelineCreateInfo-subpass-00758), the same
+    // in every pipeline it binds while `variable_multisample_rate` is off
+    // (VUID-vkCmdBindPipeline-pipeline-00781). Its tiles, laid at one
+    // sample as it began, are laid again at four before its first draw
+    // where that draw's pipeline has four, as v3dv starts its job again
+    // with MSAA there (`cmd_buffer_restart_job_for_msaa_if_needed`,
+    // v3dv_cmd_buffer.c:2676-2730, before `job->draw_count++` at 2912;
+    // since 1.114). After the first draw a pipeline of another count,
+    // which Vulkan does not allow, draws at the first's; and a pipeline
+    // of four in a subpass whose attachments have one, not compatible
+    // with its own pass (VUID-vkCmdDraw-renderPass-02684), draws at
+    // theirs, since the tiles are laid again over no surface. A pipeline
+    // whose rasterizer discards has no count of its own, its multisample
+    // state not being read (since 1.134), so its draw is not the one that
+    // lays them: the first that rasterizes is. v3dv counts every draw
+    // there, and draws such a subpass at one sample after a discarding
+    // first draw.
+    const discards = pipeline.draws_nothing and !pipeline.culls_everything;
+    if (!discards and target.stats.draws == 0 and pipeline.samples > 1 and target.attachments.samples == 1 and
+        target.attachments.color_count == 0 and !target.attachments.depth.used and !target.attachments.stencil.used)
+    {
+        var attachments = target.attachments;
+        attachments.samples = pipeline.samples;
+        target.moveToAll(&.{}, target.area, attachments) catch
+            return _play.noRoom(queue, "a draw of four samples a pixel in a subpass of no attachment");
+        target.begin();
+        // Laying the tiles again starts the arena over, so a copy of the
+        // resources an earlier draw made there - a discarding draw, which
+        // is not the first - went with it (since 1.134).
+        player.drawn = null;
+    }
+    if (!discards) target.stats.draws += 1;
     const resources = player.drawn orelse resources: {
         const copy = target.arena.create(shader.Resources) orelse return;
         copy.* = player.resources;
@@ -176,13 +215,20 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
     const blend, const mixing = player.mixingFor(pipeline, translated, first_output);
     var more_blends: [_render.most_colors - 1]raster.pipeline.Blend = @splat(.off);
     var more_mixings: [_render.most_colors - 1]raster.pipeline.Mixing = @splat(.{});
-    for (1..colors) |k| {
+    // None past the first where there is no first: a subpass of no colour
+    // attachment (since 1.113).
+    for (1..@max(colors, 1)) |k| {
         more_blends[k - 1], more_mixings[k - 1] = player.mixingFor(pipeline, translated, @intCast(k));
     }
     const stencil: ?[2]raster.batched.StencilFace = if (player.stencil.of(pipeline)) |faces| .{ stencilFaceOf(faces[0]), stencilFaceOf(faces[1]) } else null;
-    // What a query counts of this draw, or nothing where none is being
-    // counted into: the addresses were worked out when it began.
-    const counters: *const _query.Counters = if (player.query) |*counting| &counting.counters else &_query.none;
+    // What the queries begun count of this draw, nothing where none is:
+    // the addresses were worked out as each began (both at once since
+    // 1.117). A
+    // subpass played once for each of its colour attachments is counted
+    // in the first of them alone: the draw is one in Vulkan's terms, and
+    // the parts after it draw the same samples through the same tests
+    // (since 1.116).
+    const counters: *const _query.Counters = if (player.part > 0) &_query.none else &player.queries.counters;
     const state = raster.batched.State{
         .viewport = .{ .x = viewport.x, .y = viewport.y, .width = viewport.width, .height = viewport.height },
         .min_depth = viewport.min_depth,
@@ -196,6 +242,8 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         // Lines and points are not culled, and a triangle's edges were as
         // they were made.
         .cull = if (wide) .none else translated.cull,
+        .sample_mask = pipeline.sample_mask,
+        .rectangles = wide,
         .front = translated.front,
         .depth_test = translated.depth_test,
         .depth_write = pipeline.depth_write,
@@ -215,7 +263,8 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         .stencil = stencil,
         .prepass = pipeline.prepass and stencil == null,
         .varyings = pipeline.varyings,
-        .discards = pipeline.fixed.discards(),
+        .discards = pipeline.discards,
+        .alpha_to_coverage = pipeline.alpha_to_coverage,
         .fragment = pipeline.fragment,
         .resources = resources,
         // The pixels already in the tile, for a subpass that reads the
@@ -225,16 +274,52 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         .fragments = counters.fragment_invocations,
     };
 
-    // What the stages are given, for a statistics query. The triangles the
-    // rasterizer kept are its own count, taken either side of the draw.
+    // What the stages are given, for a statistics query. What came out of
+    // clipping is the rasterizer's own count, taken either side of the
+    // draw (`stats.clipped`, since 1.92).
     const counted_before = target.stats;
     _query.add(counters.input_vertices, @as(u64, count) * instances);
     _query.add(counters.vertex_invocations, @as(u64, vertices) * instances);
-    _query.add(counters.input_primitives, @as(u64, corner_count / 3) * instances);
-    defer if (counters.clipping_invocations != null or counters.clipping_primitives != null) {
-        _query.add(counters.clipping_invocations, target.stats.triangles - counted_before.triangles);
-        _query.add(counters.clipping_primitives, target.stats.set_up - counted_before.set_up);
-    };
+    // Primitives, not triangles: `assemble` writes one corner a point and
+    // two a line, so three was the count of a triangle topology and a
+    // third of a point list. Item 83 of docs/facet-vulkan10.md.
+    const per_primitive = _vertices.cornersPerPrimitive(pipeline.topology, if (pipeline.tessellated) |patches| patches.points else 0);
+    _query.add(counters.input_primitives, @as(u64, corner_count / per_primitive) * instances);
+    defer _query.add(counters.clipping_primitives, target.stats.clipped - counted_before.clipped);
+
+    // What went *in* to clipping is counted from the primitives - one a
+    // point, a line or a triangle - and not from the triangles the
+    // rasterizer is given, which are two for each line or point it widens
+    // and were the count until 1.92. That is llvmpipe's: gallium's draw
+    // module counts `c_invocations` as the primitives its clip stage is
+    // handed, before anything is culled, and lp_setup_vbuf.c adds them in
+    // unless the rasterizer is discarded. With no tessellation they are
+    // what input assembly made; tessellated, what the evaluation made,
+    // counted below. Item 83 of docs/facet-vulkan10.md.
+    //
+    // A pipeline that draws nothing - `rasterizer_discard_enable`, or
+    // every face culled - still owes the counts above, and this returned
+    // before them until 1.88. Vulkan's one licence to leave a counter
+    // alone here covers the clipping pair under the discard and nothing
+    // else: "if rasterizerDiscardEnable is enabled, the clipping input and
+    // output primitives counters may not be incremented". A cull of every
+    // face is no discard: its primitives reach clipping and stop at setup,
+    // as llvmpipe's `triangle_noop` stops them, so they are counted going
+    // in and none coming out (since 1.92; both were left at zero before).
+    //
+    // The vertex function itself is not run where there is no
+    // tessellation to feed, and that is honest only because
+    // `vertex_pipeline_stores_and_atomics` is false on both devices: a
+    // vertex function writes its outputs and nothing else, and the outputs
+    // of a draw that rasterises nothing cannot be read. The day a device
+    // claims that feature this has to run the stage for real. Tessellated,
+    // it runs, and the tessellation with it, for what those stages count.
+    const discarded = pipeline.draws_nothing and !pipeline.culls_everything;
+    if (pipeline.tessellated == null) {
+        if (!discarded) _query.add(counters.clipping_invocations, @as(u64, corner_count / per_primitive) * instances);
+        if (pipeline.draws_nothing) return;
+    }
+    const per_drawn = _vertices.cornersPerPrimitive(pipeline.drawn_topology, 0);
 
     for (0..instances) |k| {
         const instance = first_instance +% @as(u32, @intCast(k));
@@ -257,6 +342,8 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         if (pipeline.tessellated != null) {
             const made = _tessellate.run(queue.device.sys, pipeline, resources, outputs, corners[0..corner_count], instance, most_vertices, counters) orelse continue;
             defer made.free(queue.device.sys);
+            if (!discarded) _query.add(counters.clipping_invocations, made.corners().len / per_drawn);
+            if (pipeline.draws_nothing) continue;
             if (wide) {
                 const widened = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, made.vertices, stride, made.corners(), made.wide_vertices, made.wide_indices, null);
                 raster.batched.draw(target, &state, made.wide_vertices[0 .. @as(usize, widened.vertices) * stride], stride, made.wide_indices[0..widened.indices]) catch return;
@@ -287,15 +374,24 @@ const no_resources = shader.Resources{};
 /// drawn over the part, writing what is cleared and no more.
 pub fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void {
     const player = _play.playerOf(queue);
+    // The layers past the framebuffer's first are in the image's rows alone
+    // and are cleared there (since 1.91); the first is in the tiles, and
+    // is cleared here only where the rectangle names it.
+    _play.clearRectangle(player, command);
+    if (command.base_layer != 0 or command.layer_count == 0) return;
     const target = &player.target.?;
     const aspect = command.aspect_mask;
     const clears_stencil = aspect & facet.IMAGE_ASPECT_STENCIL != 0;
     const clears_depth = aspect & facet.IMAGE_ASPECT_DEPTH != 0;
     const color = command.color;
     const rect = command.rect;
-    const surface = target.surfaceAt(0);
-    const surface_width: f32 = @floatFromInt(surface.width);
-    const surface_height: f32 = @floatFromInt(surface.height);
+    // The viewport over the first colour attachment's surface; in a
+    // subpass of none, over the framebuffer's corner to the render area's
+    // far one, which holds every rectangle Vulkan lets be cleared
+    // (VUID-vkCmdClearAttachments-pRects-00016, since 1.113).
+    const reach: [2]u32 = if (target.surface_count > 0) .{ target.surfaceAt(0).width, target.surfaceAt(0).height } else .{ target.area.x + target.area.width, target.area.y + target.area.height };
+    const surface_width: f32 = @floatFromInt(reach[0]);
+    const surface_height: f32 = @floatFromInt(reach[1]);
     const stencil_face = raster.batched.StencilFace{ .pass = .replace, .compare = .always, .write_mask = 0xFF, .reference = @truncate(command.stencil) };
     const state = raster.batched.State{
         .viewport = .{ .x = 0, .y = 0, .width = surface_width, .height = surface_height },

@@ -90,10 +90,37 @@ test "an instance lists one physical device: the cores, its memory made from exe
     rig.fb.GetPhysicalDeviceProperties(physical, &properties);
     try testing.expectEqual(facet.PhysicalDeviceType.cpu, properties.device_type);
     try testing.expectEqual(facet.API_VERSION_1_0, properties.api_version);
-    try testing.expectEqual(facet.makeVersion(facet_init.LIBRARY_VERSION, facet_init.LIBRARY_REVISION), properties.driver_version);
-    try testing.expect(properties.limits.cores >= 1 and properties.limits.cores <= 4);
-    try testing.expectEqual(@as(u32, 64), properties.limits.tile_size);
+    try testing.expectEqual(facet.makeVersion(facet_init.LIBRARY_VERSION, facet_init.LIBRARY_REVISION, 0), properties.driver_version);
     try testing.expect(std.mem.startsWith(u8, &properties.device_name, "facet.library rasterizer, "));
+    // The tile and the core count left PhysicalDeviceLimits at 1.82, Vulkan
+    // having no member for either, and are the library's own record's now.
+    // The tile is still asked for in Vulkan's way, by
+    // GetRenderAreaGranularity (see the render pass tests).
+    const record = _objects.of(_instance.PhysicalDevice, physical);
+    try testing.expect(record.cores >= 1 and record.cores <= 4);
+    try testing.expectEqual(@as(u32, 64), record.tile_size);
+    // Vulkan's own members, which the structure had none of before 1.82.
+    try testing.expectEqual(@as(usize, 256), facet.MAX_PHYSICAL_DEVICE_NAME_SIZE);
+    try testing.expectEqual(@as(usize, 256), properties.device_name.len);
+    // A pipeline cache UUID has to say which implementation made a cache,
+    // so it must not be all zeroes and the two devices must not share one.
+    try testing.expect(!std.mem.allEqual(u8, &properties.pipeline_cache_uuid, 0));
+    // Nothing here binds memory a piece at a time, so every one of the five
+    // is false - and they are read as `Bool32`, four bytes, not a Zig bool.
+    try testing.expectEqual(@as(u32, 0), properties.sparse_properties.residency_standard_2d_block_shape);
+    try testing.expectEqual(@as(u32, 0), properties.sparse_properties.residency_non_resident_strict);
+    try testing.expectEqual(@as(u64, 0), properties.limits.sparse_address_space_size);
+    // The three members whose type changed to Vulkan's: a float period, a
+    // float anisotropy, and a `usize` map alignment.
+    // The period is cleared with the queue family's timestamp bits on a
+    // machine with no timer.device, which is this rig: what must hold is
+    // that the two agree, not which way they went.
+    try testing.expectEqual(properties.limits.timestamp_period > 0, record.queue_family.timestamp_valid_bits > 0);
+    // And Vulkan's true for every graphics and compute queue timing things
+    // promises them at least 36 bits, so it goes with them (since 1.93).
+    try testing.expect(properties.limits.timestamp_compute_and_graphics == facet.FALSE or record.queue_family.timestamp_valid_bits >= 36);
+    try testing.expectEqual(@as(f32, 16), properties.limits.max_sampler_anisotropy);
+    try testing.expectEqual(@as(usize, 64), properties.limits.min_memory_map_alignment);
 
     count = 0;
     rig.fb.GetPhysicalDeviceQueueFamilyProperties(physical, &count, null);
@@ -120,13 +147,181 @@ test "an instance lists one physical device: the cores, its memory made from exe
     try testing.expectEqual(facet.MEMORY_PROPERTY_DEVICE_LOCAL | facet.MEMORY_PROPERTY_LAZILY_ALLOCATED, memory.memory_types[2].property_flags);
 }
 
+test "a device asked for a feature it has not got is refused, which is Vulkan's enable step" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    var instance: ?*facet.Instance = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateInstance(&.{}, &instance));
+    defer rig.fb.DestroyInstance(instance);
+    var count: u32 = 1;
+    var physicals: [1]*facet.PhysicalDevice = undefined;
+    try testing.expectEqual(facet.Result.success, rig.fb.EnumeratePhysicalDevices(instance.?, &count, &physicals));
+    const physical = physicals[0];
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    rig.fb.GetPhysicalDeviceFeatures(physical, &features);
+
+    const queue_info = facet.DeviceQueueCreateInfo{};
+    const one_queue = facet.DeviceCreateInfo{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&queue_info) };
+
+    // Asking for nothing is what Vulkan's null pEnabledFeatures means, and
+    // every call still refuses what the device cannot do, so a program that
+    // asks for nothing is not given a device that behaves unpredictably.
+    var device: ?*facet.Device = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateDevice(physical, &one_queue, &device));
+    rig.fb.DestroyDevice(device);
+
+    // Asking for exactly what it said it has.
+    device = null;
+    var wanted = features;
+    var asking = one_queue;
+    asking.enabled_features = &wanted;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateDevice(physical, &asking, &device));
+    rig.fb.DestroyDevice(device);
+
+    // Asking for a geometry stage, which no device of this library has.
+    try testing.expectEqual(facet.FALSE, features.geometry_shader);
+    device = null;
+    wanted = features;
+    wanted.geometry_shader = facet.TRUE;
+    try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.CreateDevice(physical, &asking, &device));
+    try testing.expect(device == null);
+
+    // And the one feature Vulkan 1.0 requires of every implementation is
+    // there to be asked for on its own.
+    try testing.expectEqual(facet.TRUE, features.robust_buffer_access);
+    device = null;
+    wanted = .{ .robust_buffer_access = facet.TRUE };
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateDevice(physical, &asking, &device));
+    rig.fb.DestroyDevice(device);
+}
+
+// The shape of the three structures a physical device is described by,
+// held without needing a Vulkan header - which the build cannot count on,
+// and `scripts/vulkan-struct-check.sh` is for. What that script does and
+// this cannot is say the *names* are Vulkan's; what this does and the
+// script cannot is run on every build.
+test "the physical-device structures keep Vulkan's shape" {
+    const Limits = facet.PhysicalDeviceLimits;
+    const Features = facet.PhysicalDeviceFeatures;
+    const Sparse = facet.PhysicalDeviceSparseProperties;
+    const Properties = facet.PhysicalDeviceProperties;
+
+    // Vulkan's member counts. A field added or dropped lands here first.
+    try testing.expectEqual(106, @typeInfo(Limits).@"struct".fields.len);
+    try testing.expectEqual(55, @typeInfo(Features).@"struct".fields.len);
+    try testing.expectEqual(5, @typeInfo(Sparse).@"struct".fields.len);
+    try testing.expectEqual(9, @typeInfo(Properties).@"struct".fields.len);
+
+    // Not one Zig `bool` anywhere in them. A VkBool32 is four bytes, and a
+    // one-byte bool is how facet's old features structure came to be 49
+    // bytes where Vulkan's is 220 - the single mistake that made the call
+    // unreadable to a conformant caller.
+    inline for (.{ Limits, Features, Sparse, Properties }) |T| {
+        inline for (@typeInfo(T).@"struct".fields) |field| {
+            try testing.expect(field.type != bool);
+        }
+    }
+    inline for (@typeInfo(Features).@"struct".fields) |field| {
+        try testing.expectEqual(@as(usize, 4), @sizeOf(field.type));
+    }
+    inline for (@typeInfo(Sparse).@"struct".fields) |field| {
+        try testing.expectEqual(@as(usize, 4), @sizeOf(field.type));
+    }
+
+    // Vulkan's order, at the ends and at the one member that was added in
+    // the middle.
+    try testing.expectEqualStrings("max_image_dimension_1d", @typeInfo(Limits).@"struct".fields[0].name);
+    try testing.expectEqualStrings("non_coherent_atom_size", @typeInfo(Limits).@"struct".fields[105].name);
+    try testing.expectEqualStrings("robust_buffer_access", @typeInfo(Features).@"struct".fields[0].name);
+    try testing.expectEqualStrings("inherited_queries", @typeInfo(Features).@"struct".fields[54].name);
+    try testing.expectEqualStrings("pipeline_cache_uuid", @typeInfo(Properties).@"struct".fields[6].name);
+    try testing.expectEqualStrings("sparse_properties", @typeInfo(Properties).@"struct".fields[8].name);
+
+    // Vulkan's array lengths, which were 64 and absent before 1.82.
+    try testing.expectEqual(@as(usize, 256), @typeInfo(@FieldType(Properties, "device_name")).array.len);
+    try testing.expectEqual(@as(usize, 16), @typeInfo(@FieldType(Properties, "pipeline_cache_uuid")).array.len);
+
+    // Four-byte aligned, every one, which is what sdk/sdk.zig asks of every
+    // structure of this SDK for the ESP32's stack - and the reason these are
+    // Vulkan's member for member but not byte for byte.
+    try testing.expectEqual(@as(usize, 4), @alignOf(Limits));
+    try testing.expectEqual(@as(usize, 4), @alignOf(Features));
+    try testing.expectEqual(@as(usize, 4), @alignOf(Sparse));
+    try testing.expectEqual(@as(usize, 4), @alignOf(Properties));
+
+    // The sizes. Features and the sparse properties are byte for byte
+    // Vulkan's, every member of each being four bytes wide, and measured
+    // against the header on the machine this was written on they are 220
+    // and 20. The limits and the properties are 492 and 804 where C makes
+    // them 504 and 824: the twelve and twenty bytes are padding C inserts
+    // before an eight-byte member and `align(4)` does not. A 32-bit chip
+    // has a shorter `min_memory_map_alignment`, so these hold where a
+    // pointer is eight bytes.
+    try testing.expectEqual(@as(usize, 220), @sizeOf(Features));
+    try testing.expectEqual(@as(usize, 4 * 55), @sizeOf(Features));
+    try testing.expectEqual(@as(usize, 20), @sizeOf(Sparse));
+    if (@sizeOf(usize) == 8) {
+        try testing.expectEqual(@as(usize, 492), @sizeOf(Limits));
+        try testing.expectEqual(@as(usize, 804), @sizeOf(Properties));
+    }
+}
+
+// Measured against Vulkan's own macros on the machine this was written on:
+// `VK_API_VERSION_1_0` and the three after it, and a round trip through the
+// widest value each field holds. The numbers are the header's, not this
+// file's arithmetic repeated.
+test "the version encoding is Vulkan's, field for field" {
+    try testing.expectEqual(@as(u32, 4194304), facet.makeApiVersion(0, 1, 0, 0));
+    try testing.expectEqual(@as(u32, 4198400), facet.makeApiVersion(0, 1, 1, 0));
+    try testing.expectEqual(@as(u32, 4202496), facet.makeApiVersion(0, 1, 2, 0));
+    try testing.expectEqual(@as(u32, 4206592), facet.makeApiVersion(0, 1, 3, 0));
+    try testing.expectEqual(@as(u32, 4202627), facet.makeApiVersion(0, 1, 2, 131));
+    // The highest patch of 1.0 is one below 1.1, which is only true if the
+    // minor version really is ten bits and the patch twelve.
+    try testing.expectEqual(@as(u32, 4198399), facet.makeApiVersion(0, 1, 0, 4095));
+    try testing.expectEqual(facet.makeApiVersion(0, 1, 1, 0), facet.makeApiVersion(0, 1, 0, 4095) + 1);
+    // makeVersion is the same with no variant, which is Vulkan's own.
+    try testing.expectEqual(facet.makeApiVersion(0, 1, 81, 0), facet.makeVersion(1, 81, 0));
+    // Every field at its widest, packed and taken back out.
+    const packed_all = facet.makeApiVersion(3, 77, 1023, 4095);
+    try testing.expectEqual(@as(u32, 1937768447), packed_all);
+    try testing.expectEqual(@as(u32, 3), facet.apiVersionVariant(packed_all));
+    try testing.expectEqual(@as(u32, 77), facet.apiVersionMajor(packed_all));
+    try testing.expectEqual(@as(u32, 1023), facet.apiVersionMinor(packed_all));
+    try testing.expectEqual(@as(u32, 4095), facet.apiVersionPatch(packed_all));
+    // And the library's own revision fits the minor version with room to
+    // spare: ten bits is 1023, where 1.81 is the revision today.
+    try testing.expect(facet_init.LIBRARY_REVISION <= 1023);
+    try testing.expectEqual(facet_init.LIBRARY_REVISION, facet.apiVersionMinor(facet.makeVersion(facet_init.LIBRARY_VERSION, facet_init.LIBRARY_REVISION, 0)));
+}
+
 test "an interface newer than the library's is refused; the library stays while an instance lasts" {
     var rig = try Rig.up();
     defer rig.down() catch |err| std.debug.panic("{}", .{err});
     var instance: ?*facet.Instance = null;
-    const newer = facet.makeVersion(facet_init.LIBRARY_VERSION, facet_init.LIBRARY_REVISION + 1);
-    try testing.expectEqual(facet.Result.error_initialization_failed, rig.fb.CreateInstance(&.{ .api_version = newer }, &instance));
-    try testing.expect(instance == null);
+    // Vulkan's own VK_API_VERSION_1_0, which is what a ported program fills
+    // this in with, and the number the comparison refused until 1.82.
+    try testing.expectEqual(@as(u32, 4194304), facet.API_VERSION_1_0);
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateInstance(&.{ .api_version = 4194304 }, &instance));
+    rig.fb.DestroyInstance(instance);
+    // The patch is not compared: any patch of a version the library has is
+    // taken, which is what Vulkan asks of an implementation.
+    instance = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateInstance(&.{ .api_version = facet.makeApiVersion(0, 1, 0, 4095) }, &instance));
+    rig.fb.DestroyInstance(instance);
+    // A newer minor version, a newer major version, and a variant that is
+    // not Vulkan's: Vulkan's code for a version nothing present can provide
+    // (1.80).
+    for ([_]u32{
+        facet.makeApiVersion(0, 1, 1, 0),
+        facet.makeApiVersion(0, 2, 0, 0),
+        facet.makeApiVersion(1, 1, 0, 0),
+    }) |newer| {
+        instance = null;
+        try testing.expectEqual(facet.Result.error_incompatible_driver, rig.fb.CreateInstance(&.{ .api_version = newer }, &instance));
+        try testing.expect(instance == null);
+    }
+    instance = null;
     try testing.expectEqual(facet.Result.success, rig.fb.CreateInstance(&.{ .api_version = 0 }, &instance));
 
     const lib = rig.fb.lib();
@@ -135,6 +330,88 @@ test "an interface newer than the library's is refused; the library stays while 
     try testing.expect(lib.flags & exec.LIBF_DELEXP != 0);
     rig.fb.DestroyInstance(instance);
     rig.fb.DestroyInstance(null);
+}
+
+test "the result codes, the barrier masks and the image layouts carry Vulkan's own numbers" {
+    // VkResult. The five 1.80 added are in place, and their neighbours
+    // have not moved to make room for them.
+    try testing.expectEqual(@as(i32, 2), @intFromEnum(facet.Result.timeout));
+    try testing.expectEqual(@as(i32, 3), @intFromEnum(facet.Result.event_set));
+    try testing.expectEqual(@as(i32, 4), @intFromEnum(facet.Result.event_reset));
+    try testing.expectEqual(@as(i32, 5), @intFromEnum(facet.Result.incomplete));
+    try testing.expectEqual(@as(i32, -5), @intFromEnum(facet.Result.error_memory_map_failed));
+    try testing.expectEqual(@as(i32, -6), @intFromEnum(facet.Result.error_layer_not_present));
+    try testing.expectEqual(@as(i32, -7), @intFromEnum(facet.Result.error_extension_not_present));
+    try testing.expectEqual(@as(i32, -8), @intFromEnum(facet.Result.error_feature_not_present));
+    try testing.expectEqual(@as(i32, -9), @intFromEnum(facet.Result.error_incompatible_driver));
+    try testing.expectEqual(@as(i32, -10), @intFromEnum(facet.Result.error_too_many_objects));
+    // And Vulkan 1.0's since vk.xml took it into the version's own block,
+    // with the extension's number (1.133).
+    try testing.expectEqual(@as(i32, -1000011001), @intFromEnum(facet.Result.error_validation_failed));
+
+    // VkPipelineStageFlagBits, every core bit of it (1.80).
+    try testing.expectEqual(@as(u32, 1 << 1), facet.PIPELINE_STAGE_DRAW_INDIRECT);
+    try testing.expectEqual(@as(u32, 1 << 4), facet.PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER);
+    try testing.expectEqual(@as(u32, 1 << 5), facet.PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER);
+    try testing.expectEqual(@as(u32, 1 << 6), facet.PIPELINE_STAGE_GEOMETRY_SHADER);
+    try testing.expectEqual(@as(u32, 1 << 11), facet.PIPELINE_STAGE_COMPUTE_SHADER);
+    const stages = [_]u32{
+        facet.PIPELINE_STAGE_TOP_OF_PIPE,                 facet.PIPELINE_STAGE_DRAW_INDIRECT,
+        facet.PIPELINE_STAGE_VERTEX_INPUT,                facet.PIPELINE_STAGE_VERTEX_SHADER,
+        facet.PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER, facet.PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER,
+        facet.PIPELINE_STAGE_GEOMETRY_SHADER,             facet.PIPELINE_STAGE_FRAGMENT_SHADER,
+        facet.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS,        facet.PIPELINE_STAGE_LATE_FRAGMENT_TESTS,
+        facet.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT,     facet.PIPELINE_STAGE_COMPUTE_SHADER,
+        facet.PIPELINE_STAGE_TRANSFER,                    facet.PIPELINE_STAGE_BOTTOM_OF_PIPE,
+        facet.PIPELINE_STAGE_HOST,                        facet.PIPELINE_STAGE_ALL_GRAPHICS,
+        facet.PIPELINE_STAGE_ALL_COMMANDS,
+    };
+    // The seventeen are bits 0 to 16, each of them once: the sum says no
+    // two are the same bit, the or says none is missing.
+    try testing.expectEqual(@as(u32, (1 << 17) - 1), orAndSum(&stages).ored);
+    try testing.expectEqual(@as(u32, (1 << 17) - 1), orAndSum(&stages).sum);
+
+    // VkAccessFlagBits, likewise.
+    try testing.expectEqual(@as(u32, 1 << 0), facet.ACCESS_INDIRECT_COMMAND_READ);
+    try testing.expectEqual(@as(u32, 1 << 4), facet.ACCESS_INPUT_ATTACHMENT_READ);
+    try testing.expectEqual(@as(u32, 1 << 6), facet.ACCESS_SHADER_WRITE);
+    const accesses = [_]u32{
+        facet.ACCESS_INDIRECT_COMMAND_READ,          facet.ACCESS_INDEX_READ,
+        facet.ACCESS_VERTEX_ATTRIBUTE_READ,          facet.ACCESS_UNIFORM_READ,
+        facet.ACCESS_INPUT_ATTACHMENT_READ,          facet.ACCESS_SHADER_READ,
+        facet.ACCESS_SHADER_WRITE,                   facet.ACCESS_COLOR_ATTACHMENT_READ,
+        facet.ACCESS_COLOR_ATTACHMENT_WRITE,         facet.ACCESS_DEPTH_STENCIL_ATTACHMENT_READ,
+        facet.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE, facet.ACCESS_TRANSFER_READ,
+        facet.ACCESS_TRANSFER_WRITE,                 facet.ACCESS_HOST_READ,
+        facet.ACCESS_HOST_WRITE,                     facet.ACCESS_MEMORY_READ,
+        facet.ACCESS_MEMORY_WRITE,
+    };
+    try testing.expectEqual(@as(u32, (1 << 17) - 1), orAndSum(&accesses).ored);
+    try testing.expectEqual(@as(u32, (1 << 17) - 1), orAndSum(&accesses).sum);
+
+    // VkImageLayout's nine core values are 0 to 8 in order, which is
+    // where `depth_stencil_read_only_optimal` lands (1.80): added in the
+    // middle, so this is also the check that nothing after it shifted.
+    const layouts = [_]facet.ImageLayout{
+        .undefined,                       .general,
+        .color_attachment_optimal,        .depth_stencil_attachment_optimal,
+        .depth_stencil_read_only_optimal, .shader_read_only_optimal,
+        .transfer_src_optimal,            .transfer_dst_optimal,
+        .preinitialized,
+    };
+    for (layouts, 0..) |layout, k| try testing.expectEqual(@as(u32, @intCast(k)), @intFromEnum(layout));
+}
+
+/// The or of `bits` and their sum: equal only where no two of them are
+/// the same bit.
+fn orAndSum(bits: []const u32) struct { ored: u32, sum: u32 } {
+    var ored: u32 = 0;
+    var sum: u32 = 0;
+    for (bits) |bit| {
+        ored |= bit;
+        sum += bit;
+    }
+    return .{ .ored = ored, .sum = sum };
 }
 
 test "a device with its queue, and queues the family has not got refused" {
@@ -157,9 +434,14 @@ test "a device with its queue, and queues the family has not got refused" {
 
     var refused: ?*facet.Device = null;
     const two = facet.DeviceQueueCreateInfo{ .queue_count = 2 };
-    try testing.expectEqual(facet.Result.error_initialization_failed, rig.fb.CreateDevice(physical, &.{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&two) }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateDevice(physical, &.{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&two) }, &refused));
     const other = facet.DeviceQueueCreateInfo{ .queue_family_index = 1 };
-    try testing.expectEqual(facet.Result.error_initialization_failed, rig.fb.CreateDevice(physical, &.{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&other) }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateDevice(physical, &.{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&other) }, &refused));
+    // The one family asked for twice, a queue each time: more queues than
+    // it has (VUID-VkDeviceCreateInfo-queueFamilyIndex-02802,
+    // -pQueueCreateInfos-06755; `error_initialization_failed` until 1.134).
+    const twice = [2]facet.DeviceQueueCreateInfo{ .{}, .{} };
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateDevice(physical, &.{ .queue_create_info_count = 2, .queue_create_infos = &twice }, &refused));
     try testing.expect(refused == null);
 
     // Without a queue: a device for memory and objects alone.
@@ -199,38 +481,162 @@ test "memory: from its type's heap, aligned to a cache line, mapped once; the la
     try testing.expectEqual(@as(usize, 0), address % 64);
     // Every byte of it is the program's.
     @memset(@as([*]u8, @ptrCast(data.?))[0..100_000], 0x5A);
+    // Mapped twice, a range of nothing, or one past the block's end: each
+    // breaks one of Vulkan's rules (VUID-vkMapMemory-memory-00678,
+    // -size-00680, -size-00681, -offset-00679; `error_memory_map_failed`
+    // until 1.134).
     var twice: ?*anyopaque = null;
-    try testing.expectEqual(facet.Result.error_memory_map_failed, rig.fb.MapMemory(device, memory.?, 0, facet.WHOLE_SIZE, 0, &twice));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.MapMemory(device, memory.?, 0, facet.WHOLE_SIZE, 0, &twice));
     try testing.expect(twice == null);
     rig.fb.UnmapMemory(device, memory.?);
     try testing.expectEqual(facet.Result.success, rig.fb.MapMemory(device, memory.?, 4096, 1000, 0, &twice));
     try testing.expectEqual(address + 4096, @intFromPtr(twice.?));
     rig.fb.UnmapMemory(device, memory.?);
-    try testing.expectEqual(facet.Result.error_memory_map_failed, rig.fb.MapMemory(device, memory.?, 99_000, 2000, 0, &twice));
-    try testing.expectEqual(facet.Result.error_memory_map_failed, rig.fb.MapMemory(device, memory.?, 100_000, facet.WHOLE_SIZE, 0, &twice));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.MapMemory(device, memory.?, 4096, 0, 0, &twice));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.MapMemory(device, memory.?, 99_000, 2000, 0, &twice));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.MapMemory(device, memory.?, 100_000, facet.WHOLE_SIZE, 0, &twice));
+    try testing.expect(twice == null);
 
-    // A type the device has not got cannot be had, nor no bytes, nor
-    // more than there is.
+    // More than there is cannot be had; more than the heap holds, a type
+    // the device has not got, and no bytes, break Vulkan's rules
+    // (VUID-vkAllocateMemory-pAllocateInfo-01713, -01714,
+    // VUID-VkMemoryAllocateInfo-allocationSize-07897;
+    // `error_out_of_device_memory` until 1.134).
     var refused: ?*facet.DeviceMemory = null;
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.AllocateMemory(device, &.{ .allocation_size = region_bytes, .memory_type_index = 0 }, &refused));
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.AllocateMemory(device, &.{ .allocation_size = 64, .memory_type_index = 3 }, &refused));
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.AllocateMemory(device, &.{ .allocation_size = 0, .memory_type_index = 0 }, &refused));
+    var heaps: facet.PhysicalDeviceMemoryProperties = undefined;
+    rig.fb.GetPhysicalDeviceMemoryProperties(physical, &heaps);
+    const heap = heaps.memory_heaps[heaps.memory_types[0].heap_index].size;
+    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.AllocateMemory(device, &.{ .allocation_size = heap, .memory_type_index = 0 }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.AllocateMemory(device, &.{ .allocation_size = heap + 1, .memory_type_index = 0 }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.AllocateMemory(device, &.{ .allocation_size = 64, .memory_type_index = 3 }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.AllocateMemory(device, &.{ .allocation_size = 0, .memory_type_index = 0 }, &refused));
     try testing.expect(refused == null);
 
     var lazy: ?*facet.DeviceMemory = null;
     const before = rig.header.free;
     try testing.expectEqual(facet.Result.success, rig.fb.AllocateMemory(device, &.{ .allocation_size = 4 << 20, .memory_type_index = 2 }, &lazy));
     try testing.expect(before - rig.header.free < 4096);
-    try testing.expectEqual(facet.Result.error_memory_map_failed, rig.fb.MapMemory(device, lazy.?, 0, facet.WHOLE_SIZE, 0, &twice));
+    // The lazily allocated type is not HOST_VISIBLE
+    // (VUID-vkMapMemory-memory-00682; `error_memory_map_failed` until 1.134).
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.MapMemory(device, lazy.?, 0, facet.WHOLE_SIZE, 0, &twice));
 
     rig.fb.FreeMemory(device, lazy);
     rig.fb.FreeMemory(device, memory);
     rig.fb.FreeMemory(device, null);
 }
 
+test "a mapping's ranges flushed and invalidated: success and nothing touched, every type that maps being coherent (since 1.123)" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+
+    // What makes the two calls nothing: no type that maps is other than
+    // coherent. The atom a range is rounded to is a cache line.
+    var memory_properties: facet.PhysicalDeviceMemoryProperties = undefined;
+    rig.fb.GetPhysicalDeviceMemoryProperties(physical, &memory_properties);
+    var mapping: u32 = 0;
+    for (memory_properties.memory_types[0..memory_properties.memory_type_count]) |kind| {
+        if (kind.property_flags & facet.MEMORY_PROPERTY_HOST_VISIBLE == 0) continue;
+        mapping += 1;
+        try testing.expect(kind.property_flags & facet.MEMORY_PROPERTY_HOST_COHERENT != 0);
+    }
+    try testing.expect(mapping > 0);
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    rig.fb.GetPhysicalDeviceProperties(physical, &properties);
+    try testing.expectEqual(64, properties.limits.non_coherent_atom_size);
+
+    var memory: ?*facet.DeviceMemory = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.AllocateMemory(device, &.{ .allocation_size = 8192, .memory_type_index = 0 }, &memory));
+    defer rig.fb.FreeMemory(device, memory);
+    var data: ?*anyopaque = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.MapMemory(device, memory.?, 0, facet.WHOLE_SIZE, 0, &data));
+    const bytes: [*]u8 = @ptrCast(data.?);
+    for (bytes[0..8192], 0..) |*byte, at| byte.* = @truncate(at *% 7);
+    // A range of two atoms, and one from the middle to the mapping's end,
+    // each Vulkan's default where it says nothing.
+    const ranges = [_]facet.MappedMemoryRange{
+        .{ .memory = memory.?, .offset = 64, .size = 128 },
+        .{ .memory = memory.?, .offset = 4096 },
+    };
+    try testing.expectEqual(facet.WHOLE_SIZE, ranges[1].size);
+    try testing.expectEqual(facet.Result.success, rig.fb.FlushMappedMemoryRanges(device, ranges.len, &ranges));
+    try testing.expectEqual(facet.Result.success, rig.fb.InvalidateMappedMemoryRanges(device, ranges.len, &ranges));
+    for (bytes[0..8192], 0..) |byte, at| try testing.expectEqual(@as(u8, @truncate(at *% 7)), byte);
+    rig.fb.UnmapMemory(device, memory.?);
+}
+
+test "memory bound a piece at a time: no family binds it, no format has a sparse image, an image asks nothing of it, and a bind is refused (since 1.124)" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+
+    // No family binds sparse memory, and no feature says any is bound.
+    var count: u32 = 1;
+    var family: [1]facet.QueueFamilyProperties = undefined;
+    rig.fb.GetPhysicalDeviceQueueFamilyProperties(physical, &count, &family);
+    try testing.expectEqual(0, family[0].queue_flags & facet.QUEUE_SPARSE_BINDING);
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    rig.fb.GetPhysicalDeviceFeatures(physical, &features);
+    try testing.expectEqual(facet.FALSE, features.sparse_binding);
+    try testing.expectEqual(facet.FALSE, features.sparse_residency_image_2d);
+
+    // No format, type, sample count, usage or tiling has a sparse image:
+    // the count comes back 0, and nothing is written.
+    var formats: [2]facet.SparseImageFormatProperties = undefined;
+    @memset(std.mem.asBytes(&formats), 0xA5);
+    for ([_]facet.Format{ .r8g8b8a8_unorm, .d16_unorm }) |format| for ([_]u32{ 1, 4 }) |samples| {
+        count = formats.len;
+        rig.fb.GetPhysicalDeviceSparseImageFormatProperties(physical, format, .@"2d", samples, facet.IMAGE_USAGE_SAMPLED, .optimal, &count, &formats);
+        try testing.expectEqual(0, count);
+    };
+    count = 7;
+    rig.fb.GetPhysicalDeviceSparseImageFormatProperties(physical, .r8g8b8a8_unorm, .@"3d", 1, facet.IMAGE_USAGE_SAMPLED, .linear, &count, null);
+    try testing.expectEqual(0, count);
+    for (std.mem.asBytes(&formats)) |byte| try testing.expectEqual(0xA5, byte);
+
+    // An image is never sparse: it asks nothing of sparse memory.
+    var image: ?*facet.Image = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_SAMPLED }, &image));
+    defer rig.fb.DestroyImage(device, image);
+    var requirements: [1]facet.SparseImageMemoryRequirements = undefined;
+    @memset(std.mem.asBytes(&requirements), 0xA5);
+    count = requirements.len;
+    rig.fb.GetImageSparseMemoryRequirements(device, image.?, &count, &requirements);
+    try testing.expectEqual(0, count);
+    for (std.mem.asBytes(&requirements)) |byte| try testing.expectEqual(0xA5, byte);
+
+    // A bind is refused, a queue that binds none being the only kind there
+    // is; its fence is not signalled.
+    var queue: ?*facet.Queue = null;
+    rig.fb.GetDeviceQueue(device, 0, 0, &queue);
+    var fence: ?*facet.Fence = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateFence(device, &.{}, &fence));
+    defer rig.fb.DestroyFence(device, fence);
+    const bind = facet.BindSparseInfo{};
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.QueueBindSparse(queue.?, 1, @ptrCast(&bind), fence));
+    try testing.expectEqual(facet.Result.not_ready, rig.fb.GetFenceStatus(device, fence.?));
+
+    // Vulkan's shapes, member for member, where they carry no sType: a
+    // C program's arrays of them lie as a Zig program's do.
+    try testing.expectEqual(20, @sizeOf(facet.SparseImageFormatProperties));
+    try testing.expectEqual(48, @sizeOf(facet.SparseImageMemoryRequirements));
+    if (@sizeOf(usize) == 8) {
+        try testing.expectEqual(40, @sizeOf(facet.SparseMemoryBind));
+        try testing.expectEqual(64, @sizeOf(facet.SparseImageMemoryBind));
+        try testing.expectEqual(24, @sizeOf(facet.SparseBufferMemoryBindInfo));
+    }
+}
+
 // --- buffers and images -------------------------------------------------------
 
 const _objects = @import("../_objects.zig");
+const _instance = @import("../instance/_instance.zig");
 const _image = @import("../image/_image.zig");
 const texture = facet.texture;
 
@@ -255,23 +661,29 @@ test "the formats: what each does in each tiling" {
     try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
     try testing.expect(properties.linear_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND != 0);
     try testing.expect(properties.linear_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE == 0);
-    // A depth attachment, and a transfer since a pass may store its depth;
-    // never sampled, and never linear.
+    // A depth attachment, a transfer since a pass may store its depth,
+    // sampled where its rows lie on the cores, and blitted both ways into
+    // an image of its own format since 1.126; never linear.
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .d16_unorm, &properties);
     try testing.expectEqual(
         facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST |
+            facet.FORMAT_FEATURE_BLIT_SRC | facet.FORMAT_FEATURE_BLIT_DST |
             facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR,
         properties.optimal_tiling_features,
     );
     try testing.expectEqual(0, properties.linear_tiling_features);
     // Since 1.38 one with a stencil keeps it the same way, so it too is
     // transferred: a copy reads or writes each pixel's depth and stencil
-    // at once.
+    // at once. Sampled since 1.135 where the depth is, as CreateImage has
+    // made either sampled since 1.58: the stencil never filtered, and the
+    // depth of a format of both as a depth is.
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .d16_unorm_s8_uint, &properties);
-    try testing.expectEqual(facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST, properties.optimal_tiling_features);
+    try testing.expectEqual(facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST |
+        facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR, properties.optimal_tiling_features);
     try testing.expectEqual(0, properties.linear_tiling_features);
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .s8_uint, &properties);
-    try testing.expectEqual(facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST, properties.optimal_tiling_features);
+    try testing.expectEqual(facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST |
+        facet.FORMAT_FEATURE_SAMPLED_IMAGE, properties.optimal_tiling_features);
     // A vertex format, and texels a BufferView reads as well.
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .r32g32b32_sfloat, &properties);
     try testing.expectEqual(facet.FORMAT_FEATURE_VERTEX_BUFFER | facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER | facet.FORMAT_FEATURE_STORAGE_TEXEL_BUFFER, properties.buffer_features);
@@ -288,7 +700,10 @@ test "a buffer: its requirements, and bound only where it fits" {
     defer rig.fb.DestroyDevice(device);
 
     var buffer: ?*facet.Buffer = null;
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.CreateBuffer(device, &.{ .size = 0, .usage = facet.BUFFER_USAGE_VERTEX_BUFFER }, &buffer));
+    // A size of nothing (VUID-VkBufferCreateInfo-size-00912;
+    // `error_out_of_device_memory` until 1.134).
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateBuffer(device, &.{ .size = 0, .usage = facet.BUFFER_USAGE_VERTEX_BUFFER }, &buffer));
+    try testing.expect(buffer == null);
     try testing.expectEqual(facet.Result.success, rig.fb.CreateBuffer(device, &.{ .size = 1000, .usage = facet.BUFFER_USAGE_VERTEX_BUFFER }, &buffer));
     defer rig.fb.DestroyBuffer(device, buffer);
     var needs: facet.MemoryRequirements = undefined;
@@ -302,11 +717,16 @@ test "a buffer: its requirements, and bound only where it fits" {
     var lazy: ?*facet.DeviceMemory = null;
     try testing.expectEqual(facet.Result.success, rig.fb.AllocateMemory(device, &.{ .allocation_size = 4096, .memory_type_index = 2 }, &lazy));
     defer rig.fb.FreeMemory(device, lazy);
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.BindBufferMemory(device, buffer.?, lazy.?, 0));
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.BindBufferMemory(device, buffer.?, memory, 8));
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.BindBufferMemory(device, buffer.?, memory, 3200));
+    // A type the buffer may not be in, an offset off its alignment, past
+    // the block's end, and bound twice: each breaks one of Vulkan's rules
+    // (VUID-vkBindBufferMemory-memory-01035, -None-10739, -None-10741,
+    // -buffer-07459; `error_out_of_device_memory` until 1.134).
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindBufferMemory(device, buffer.?, lazy.?, 0));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindBufferMemory(device, buffer.?, memory, 8));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindBufferMemory(device, buffer.?, memory, 3200));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindBufferMemory(device, buffer.?, memory, 4096));
     try testing.expectEqual(facet.Result.success, rig.fb.BindBufferMemory(device, buffer.?, memory, 3088));
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.BindBufferMemory(device, buffer.?, memory, 0));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindBufferMemory(device, buffer.?, memory, 0));
     var data: ?*anyopaque = null;
     try testing.expectEqual(facet.Result.success, rig.fb.MapMemory(device, memory, 0, facet.WHOLE_SIZE, 0, &data));
     const made = _objects.of(@import("../buffer/_buffer.zig").Buffer, buffer.?);
@@ -334,7 +754,24 @@ test "an image: a texture, rows or a depth, by what it is for" {
     rig.fb.GetImageSubresourceLayout(device, image.?, &.{ .mip_level = 1 }, &layout);
     try testing.expectEqual(@as(u64, 256 * 256 * 8), layout.offset);
     try testing.expectEqual(@as(u64, 128 * 128 * 8), layout.size);
-    rig.fb.DestroyImage(device, image);
+    // Bound where Vulkan has it bound: into a type it may be in, on its
+    // alignment, inside the block, and once (VUID-vkBindImageMemory-memory-01047,
+    // -None-10735, -None-10737, -image-07460; `error_out_of_device_memory`
+    // until 1.134).
+    {
+        const block = try allocate(&rig, device, needs.size + 64);
+        defer rig.fb.FreeMemory(device, block);
+        var nothing_behind: ?*facet.DeviceMemory = null;
+        try testing.expectEqual(facet.Result.success, rig.fb.AllocateMemory(device, &.{ .allocation_size = needs.size, .memory_type_index = 2 }, &nothing_behind));
+        defer rig.fb.FreeMemory(device, nothing_behind);
+        try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindImageMemory(device, image.?, nothing_behind.?, 0));
+        try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindImageMemory(device, image.?, block, 32));
+        try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindImageMemory(device, image.?, block, 128));
+        try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindImageMemory(device, image.?, block, needs.size + 64));
+        try testing.expectEqual(facet.Result.success, rig.fb.BindImageMemory(device, image.?, block, 64));
+        try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindImageMemory(device, image.?, block, 0));
+        rig.fb.DestroyImage(device, image);
+    }
 
     // A texture of any size, since 1.42: each level the one before halved
     // and no less than one, its blocks laid out by the next power of two
@@ -351,7 +788,7 @@ test "an image: a texture, rows or a depth, by what it is for" {
     }
     rig.fb.DestroyImage(device, image);
     // More levels than halving the longer side gives is still refused.
-    try testing.expectEqual(facet.Result.error_format_not_supported, rig.fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 100, .height = 60 }, .mip_levels = 8, .usage = sampled }, &image));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 100, .height = 60 }, .mip_levels = 8, .usage = sampled }, &image));
 
     // Rows: each on a cache line.
     try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 100, .height = 30 }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image));
@@ -365,7 +802,14 @@ test "an image: a texture, rows or a depth, by what it is for" {
     try testing.expectEqual(@as(u64, 256), layout.row_pitch);
     rig.fb.DestroyImage(device, image);
 
-    // A depth: any memory type, the lazily allocated one too.
+    // A depth not made transient: a type with memory behind it, Vulkan
+    // offering the lazily allocated type to a transient image alone
+    // (since 1.134; any type before).
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &.{ .format = .d16_unorm, .extent = .{ .width = 800, .height = 600 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, &image));
+    rig.fb.GetImageMemoryRequirements(device, image.?, &needs);
+    try testing.expectEqual(@as(u32, 0b011), needs.memory_type_bits);
+    rig.fb.DestroyImage(device, image);
+    // A transient depth: any memory type, the lazily allocated one too.
     try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &.{ .format = .d16_unorm, .extent = .{ .width = 800, .height = 600 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, &image));
     rig.fb.GetImageMemoryRequirements(device, image.?, &needs);
     try testing.expectEqual(@as(u32, 0b111), needs.memory_type_bits);
@@ -378,22 +822,58 @@ test "an image: a texture, rows or a depth, by what it is for" {
     rig.fb.DestroyImage(device, image);
     rig.fb.FreeMemory(device, lazy);
 
-    // What facet.library 1.0 does not make.
+    // What facet.library 1.0 does not make. Drawn into and sampled at once
+    // it does since 1.119, in rows (docs/facet-vulkan10.md item 48), but
+    // not written through as a storage image as well.
     const refused = [_]facet.ImageCreateInfo{
-        .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT },
+        .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_STORAGE },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .tiling = .linear, .usage = sampled },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .mip_levels = 8, .usage = sampled },
         .{ .format = .r32_sfloat, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
         .{ .format = .d16_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_SAMPLED },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64, .depth = 2 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
-        .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
+        .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .samples = 2, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
+        .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .samples = 8, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
         .{ .format = .r32g32_sfloat, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_TRANSFER_DST },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 16384, .height = 64 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
     };
     for (refused) |info| {
-        try testing.expectEqual(facet.Result.error_format_not_supported, rig.fb.CreateImage(device, &info, &image));
+        try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateImage(device, &info, &image));
         try testing.expect(image == null);
     }
+}
+
+test "a compressed image down to its last level, and no compressed image of one dimension" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+    const fb = rig.fb;
+    const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
+
+    // A block of 8 bytes, BC1's and BC4's, at every level down to one
+    // texel: until 1.97 the level 4 texels across overflowed its layout,
+    // in CreateImage and in the query's largest image, which has them all.
+    // BC3's block of 16 bytes did not, and is here beside them.
+    for ([_]facet.Format{ .bc1_rgb_unorm_block, .bc1_rgba_unorm_block, .bc4_unorm_block, .bc3_unorm_block }) |format| {
+        var image: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &.{ .format = format, .extent = .{ .width = 16, .height = 16, .depth = 1 }, .mip_levels = 5, .usage = sampled }, &image));
+        fb.DestroyImage(device, image);
+        var properties: facet.ImageFormatProperties = undefined;
+        try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, format, .@"2d", .optimal, sampled, 0, &properties));
+        try testing.expectEqual(@as(u32, 14), properties.max_mip_levels);
+
+        // And no compressed image of one dimension, as neither Mesa driver
+        // makes one: the query and CreateImage say so alike.
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, format, .@"1d", .optimal, sampled, 0, &properties));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = format, .image_type = .@"1d", .extent = .{ .width = 16, .height = 1, .depth = 1 }, .usage = sampled }, &image));
+    }
+    // ETC2 is unpacked as it is copied in, and is refused as one dimension
+    // all the same.
+    var image: ?*facet.Image = null;
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = .etc2_r8g8b8_unorm_block, .image_type = .@"1d", .extent = .{ .width = 16, .height = 1, .depth = 1 }, .usage = sampled }, &image));
 }
 
 test "a copy into a texture: each texel where the texture layout keeps it, as 0xAARRGGBB; a view from a level on" {
@@ -437,9 +917,14 @@ test "a copy into a texture: each texel where the texture layout keeps it, as 0x
     try testing.expectEqual(@as(u32, 0), texture.gather(kept[made.texels.index(0, 0, 1)]));
 
     var view: ?*facet.ImageView = null;
-    try testing.expectEqual(facet.Result.error_format_not_supported, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .b8g8r8a8_unorm }, &view));
-    try testing.expectEqual(facet.Result.error_format_not_supported, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .r8g8b8a8_unorm, .components = .{ .r = .b } }, &view));
-    try testing.expectEqual(facet.Result.error_format_not_supported, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .r8g8b8a8_unorm, .subresource_range = .{ .base_mip_level = 1, .level_count = 3 } }, &view));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .b8g8r8a8_unorm }, &view));
+    // A view that swizzles is made since 1.120, its texels reading red
+    // from blue (docs/facet-vulkan10.md item 41).
+    var swizzled: ?*facet.ImageView = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .r8g8b8a8_unorm, .components = .{ .r = .b } }, &swizzled));
+    try testing.expectEqual(texture.Swizzle{ .r = .blue }, _objects.of(_image.ImageView, swizzled.?).texels.swizzle);
+    rig.fb.DestroyImageView(device, swizzled);
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .r8g8b8a8_unorm, .subresource_range = .{ .base_mip_level = 1, .level_count = 3 } }, &view));
     try testing.expectEqual(facet.Result.success, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .r8g8b8a8_unorm, .subresource_range = .{ .base_mip_level = 1 } }, &view));
     defer rig.fb.DestroyImageView(device, view);
     const seen = _objects.of(_image.ImageView, view.?);
@@ -503,10 +988,189 @@ test "a texture whose sides are not powers of two: copied into, and a view from 
     try testing.expectEqual(@as(u32, 0x1234_5678), made.texels.peek(2, 24, 14));
 }
 
+/// Every format this library names, for a test that asks the same of each.
+const every_format = names: {
+    const fields = @typeInfo(facet.Format).@"enum".fields;
+    var all: [fields.len]facet.Format = undefined;
+    for (fields, 0..) |field, n| all[n] = @enumFromInt(field.value);
+    break :names all;
+};
+
+/// What CreateImage's image of `info` asks of its memory, or null where
+/// CreateImage refuses it.
+fn imageBytes(rig: *Rig, device: *facet.Device, info: facet.ImageCreateInfo) ?u64 {
+    var image: ?*facet.Image = null;
+    if (rig.fb.CreateImage(device, &info, &image) != .success) return null;
+    defer rig.fb.DestroyImage(device, image);
+    var needs: facet.MemoryRequirements = undefined;
+    rig.fb.GetImageMemoryRequirements(device, image.?, &needs);
+    return needs.size;
+}
+
+test "an image of four samples a pixel is four planes of one sample's bytes, and the format query says 4 exactly where one is made" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+    const fb = rig.fb;
+    const record = _objects.of(_instance.PhysicalDevice, physical);
+    const color = facet.IMAGE_USAGE_COLOR_ATTACHMENT;
+    const depth = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT;
+    const copied = facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const small = facet.Extent3D{ .width = 37, .height = 19, .depth = 1 };
+
+    // The cores draw four samples since 1.112; a device that does not
+    // makes no image of four.
+    try testing.expect(record.can.multisampling);
+    record.can.multisampling = false;
+    try testing.expectEqual(null, imageBytes(&rig, device, .{ .format = .b8g8r8a8_unorm, .extent = small, .samples = 4, .usage = color }));
+    record.can.multisampling = true;
+
+    // Four planes, each the whole of the image at one sample: a colour
+    // attachment's rows, padded to a cache line at this width, and a
+    // depth attachment's, with layers and without.
+    const shapes = [_]struct { facet.Format, u32, u32 }{
+        .{ .b8g8r8a8_unorm, color | copied, 1 },
+        .{ .r8g8b8a8_unorm, color | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT, 1 },
+        .{ .r5g6b5_unorm_pack16, color | facet.IMAGE_USAGE_INPUT_ATTACHMENT, 3 },
+        .{ .d16_unorm, depth | copied, 1 },
+        .{ .s8_uint, depth, 6 },
+        .{ .d16_unorm_s8_uint, depth | facet.IMAGE_USAGE_INPUT_ATTACHMENT, 2 },
+        // Sampled where it lies, since 1.110.
+        .{ .d16_unorm, depth | facet.IMAGE_USAGE_SAMPLED, 1 },
+        .{ .d16_unorm_s8_uint, depth | facet.IMAGE_USAGE_SAMPLED | copied, 3 },
+    };
+    for (shapes) |shape| {
+        const format, const usage, const layers = shape;
+        var info = facet.ImageCreateInfo{ .format = format, .extent = small, .array_layers = layers, .usage = usage };
+        const one = imageBytes(&rig, device, info) orelse return error.TestUnexpectedResult;
+        info.samples = 4;
+        try testing.expectEqual(@as(?u64, 4 * one), imageBytes(&rig, device, info));
+    }
+    // Sampled, of each colour format an attachment is drawn in (since
+    // 1.110): rows at four samples, an attachment's of its size four times
+    // over, where one sample is a texture's blocks. A colour attachment or
+    // an input attachment as well since 1.119, in the same rows, as one
+    // sample may be either (docs/facet-vulkan10.md item 48); never written
+    // through, as no image of four samples is.
+    for ([_]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 }) |format| {
+        const rows = imageBytes(&rig, device, .{ .format = format, .extent = small, .array_layers = 2, .usage = color }) orelse return error.TestUnexpectedResult;
+        try testing.expectEqual(@as(?u64, 4 * rows), imageBytes(&rig, device, .{ .format = format, .extent = small, .array_layers = 2, .samples = 4, .usage = facet.IMAGE_USAGE_SAMPLED | copied }));
+        for ([_]u32{ color, facet.IMAGE_USAGE_INPUT_ATTACHMENT }) |beside| {
+            try testing.expectEqual(@as(?u64, 4 * rows), imageBytes(&rig, device, .{ .format = format, .extent = small, .array_layers = 2, .samples = 4, .usage = facet.IMAGE_USAGE_SAMPLED | beside }));
+        }
+        try testing.expectEqual(null, imageBytes(&rig, device, .{ .format = format, .extent = small, .samples = 4, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE }));
+    }
+
+    // What Vulkan forbids of a multisampled image, and what this library
+    // does not make one of yet, is refused, each beside the same image
+    // made at one sample.
+    const refused = [_]facet.ImageCreateInfo{
+        .{ .format = .b8g8r8a8_unorm, .image_type = .@"3d", .extent = small, .usage = copied },
+        .{ .format = .b8g8r8a8_unorm, .image_type = .@"1d", .extent = .{ .width = 37, .height = 1, .depth = 1 }, .usage = copied },
+        .{ .format = .d16_unorm, .extent = small, .mip_levels = 2, .usage = depth },
+        .{ .format = .b8g8r8a8_unorm, .extent = small, .tiling = .linear, .usage = color },
+        .{ .format = .b8g8r8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = .{ .width = 16, .height = 16, .depth = 1 }, .array_layers = 6, .usage = color },
+        .{ .format = .b8g8r8a8_unorm, .extent = small, .usage = color | facet.IMAGE_USAGE_STORAGE },
+        .{ .format = .b8g8r8a8_unorm, .extent = small, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE },
+    };
+    for (refused) |shape| {
+        var info = shape;
+        try testing.expect(imageBytes(&rig, device, info) != null);
+        info.samples = 4;
+        try testing.expectEqual(null, imageBytes(&rig, device, info));
+    }
+    for ([_]u32{ 2, 8, 16, 3 }) |count| {
+        try testing.expectEqual(null, imageBytes(&rig, device, .{ .format = .b8g8r8a8_unorm, .extent = small, .samples = count, .usage = color }));
+    }
+    // A format that is no attachment is refused at four samples though
+    // an image of it is made at one, as Vulkan says only one sample of it.
+    var no_attachment: u32 = 0;
+    for (every_format) |format| {
+        var features: facet.FormatProperties = undefined;
+        fb.GetPhysicalDeviceFormatProperties(physical, format, &features);
+        if (features.optimal_tiling_features & (facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT) != 0) continue;
+        var info = facet.ImageCreateInfo{ .format = format, .extent = small, .usage = copied };
+        if (imageBytes(&rig, device, info) == null) continue;
+        info.samples = 4;
+        try testing.expectEqual(null, imageBytes(&rig, device, info));
+        no_attachment += 1;
+    }
+    try testing.expect(no_attachment > 0);
+
+    // The query asks CreateImage's own rules, at four samples as at one:
+    // its largest image of four samples is the largest of one at one
+    // level, four times the bytes.
+    var properties: facet.ImageFormatProperties = undefined;
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, color, 0, &properties));
+    try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, properties.sample_counts);
+    try testing.expectEqual(@as(u64, 8192 * 4 * 8192 * 256 * 4), properties.max_resource_size);
+    // Sampled, a colour and a depth (since 1.110): Vulkan has a query's
+    // sample counts hold `sampled_image_color_sample_counts` and
+    // `sampled_image_depth_sample_counts` for such a usage, 1 and 4 here.
+    for ([_]struct { facet.Format, u32 }{
+        .{ .r8g8b8a8_unorm, facet.IMAGE_USAGE_SAMPLED },
+        .{ .r5g6b5_unorm_pack16, facet.IMAGE_USAGE_SAMPLED | copied },
+        .{ .d16_unorm_s8_uint, depth | facet.IMAGE_USAGE_SAMPLED },
+    }) |asked| {
+        try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, asked[0], .@"2d", .optimal, asked[1], 0, &properties));
+        try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, properties.sample_counts);
+    }
+
+    // And over every format, image type, tiling, both flags and each of
+    // the 255 usages, with the capability and without: 4 is said exactly
+    // where CreateImage makes such an image at four samples, the largest
+    // one inside what is answered and the smallest; never where Vulkan
+    // has the answer be one sample alone (2D, optimal, not cube
+    // compatible, a format that is an attachment); and never without the
+    // capability.
+    for ([_]bool{ false, true }) |can| {
+        record.can.multisampling = can;
+        var said_four: u32 = 0;
+        for (every_format) |format| {
+            var features: facet.FormatProperties = undefined;
+            fb.GetPhysicalDeviceFormatProperties(physical, format, &features);
+            const attachment = features.optimal_tiling_features & (facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT) != 0;
+            for ([_]facet.ImageType{ .@"1d", .@"2d", .@"3d" }) |image_type| {
+                for ([_]facet.ImageTiling{ .optimal, .linear }) |tiling| {
+                    for ([_]u32{ 0, facet.IMAGE_CREATE_CUBE_COMPATIBLE }) |flags| {
+                        for (1..256) |bits| {
+                            const usage: u32 = @intCast(bits);
+                            if (fb.GetPhysicalDeviceImageFormatProperties(physical, format, image_type, tiling, usage, flags, &properties) != .success) continue;
+                            try testing.expectEqual(facet.SAMPLE_COUNT_1, properties.sample_counts & ~facet.SAMPLE_COUNT_4);
+                            const four = properties.sample_counts & facet.SAMPLE_COUNT_4 != 0;
+                            if (four) {
+                                try testing.expect(can and attachment and image_type == .@"2d" and tiling == .optimal and flags == 0);
+                                said_four += 1;
+                            }
+                            // TRANSIENT_ATTACHMENT alone is no image's
+                            // (VUID-VkImageCreateInfo-usage-00966): CreateImage
+                            // refuses it itself, and the query answers it as
+                            // the transfers alone, no more strictly than
+                            // beside a colour attachment (since 1.135).
+                            if (usage == facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT) continue;
+                            const largest = facet.ImageCreateInfo{ .flags = flags, .image_type = image_type, .format = format, .extent = properties.max_extent, .array_layers = properties.max_array_layers, .samples = 4, .tiling = tiling, .usage = usage };
+                            try testing.expectEqual(four, imageBytes(&rig, device, largest) != null);
+                            var smallest = largest;
+                            smallest.extent = .{ .width = 1, .height = 1, .depth = 1 };
+                            smallest.array_layers = if (flags != 0) 6 else 1;
+                            try testing.expectEqual(four, imageBytes(&rig, device, smallest) != null);
+                        }
+                    }
+                }
+            }
+        }
+        if (can) try testing.expect(said_four > 0) else try testing.expectEqual(0, said_four);
+    }
+}
+
 // --- command buffers, the queue, fences and semaphores -------------------------
 
 const _stream = @import("../command/_stream.zig");
 const _command = @import("../command/_command.zig");
+const _sync = @import("../sync/_sync.zig");
 
 test "the three device queries: the largest image of a shape, the render area's granularity, and what a block has behind it" {
     var rig = try Rig.up();
@@ -526,20 +1190,32 @@ test "the three device queries: the largest image of a shape, the render area's 
     try testing.expectEqual(@as(u32, 1), properties.max_extent.depth);
     try testing.expectEqual(@as(u32, 14), properties.max_mip_levels);
     try testing.expectEqual(@as(u32, 256), properties.max_array_layers);
-    try testing.expectEqual(@as(u32, 1), properties.sample_counts);
+    // One sample or four: an image of four is sampled since 1.110, and the
+    // cores draw four since 1.112.
+    try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, properties.sample_counts);
     try testing.expect(properties.max_resource_size != 0);
 
-    // A colour attachment is one level and one layer, in either tiling,
-    // and its bytes are its rows.
+    // A colour attachment's bytes are its rows: one level of one layer of
+    // them in linear tiling, and in optimal tiling the 256 a framebuffer
+    // may reach since 1.91, a layer's rows after the layer before, at four
+    // samples a pixel since 1.112, four planes of them. Since 1.119 an
+    // optimal one has the whole chain of levels Vulkan asks of it as well,
+    // the largest of them still the one of four samples at one level.
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .linear, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &properties));
     try testing.expectEqual(@as(u32, 1), properties.max_mip_levels);
     try testing.expectEqual(@as(u32, 1), properties.max_array_layers);
     try testing.expectEqual(@as(u64, 8192 * 4 * 8192), properties.max_resource_size);
-    // A depth attachment has the levels 1.63 gave it, and one layer
-    // until it is sampled as well, which 1.58 gave 256 of.
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &properties));
+    try testing.expectEqual(@as(u32, 14), properties.max_mip_levels);
+    try testing.expectEqual(@as(u32, 256), properties.max_array_layers);
+    try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, properties.sample_counts);
+    try testing.expectEqual(@as(u64, 8192 * 4 * 8192 * 256 * 4), properties.max_resource_size);
+    // A depth attachment has the levels 1.63 gave it, and the layers 1.58
+    // gave one sampled as well, which since 1.91 one never sampled has
+    // too, for a framebuffer of layers.
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .d16_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &properties));
     try testing.expectEqual(@as(u32, 14), properties.max_mip_levels);
-    try testing.expectEqual(@as(u32, 1), properties.max_array_layers);
+    try testing.expectEqual(@as(u32, 256), properties.max_array_layers);
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .d16_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED, 0, &properties));
     try testing.expectEqual(@as(u32, 14), properties.max_mip_levels);
     try testing.expectEqual(@as(u32, 256), properties.max_array_layers);
@@ -557,7 +1233,12 @@ test "the three device queries: the largest image of a shape, the render area's 
     // answer describes, to the byte: the same image made, and
     // GetImageMemoryRequirements asked (since 1.66). CreateImage lays an
     // image out and binds nothing, so the largest of them costs an
-    // object and no memory at all.
+    // object and no memory at all. Where the answer says four samples a
+    // pixel, which the cores draw since 1.112, it is the larger of that
+    // image and the largest of four, one level as such an image is: a
+    // sampled colour image of four is kept in rows, a word a pixel in
+    // each sample's plane, where one of one is a texture of two words a
+    // texel and its levels.
     const shapes = [_]struct { facet.Format, facet.ImageType, facet.ImageTiling, u32, u32 }{
         .{ .b8g8r8a8_unorm, .@"2d", .optimal, sampled, 0 },
         .{ .b8g8r8a8_unorm, .@"2d", .optimal, sampled, facet.IMAGE_CREATE_CUBE_COMPATIBLE },
@@ -584,12 +1265,29 @@ test "the three device queries: the largest image of a shape, the render area's 
         }, &largest));
         var needs: facet.MemoryRequirements = undefined;
         fb.GetImageMemoryRequirements(device, largest.?, &needs);
-        try testing.expectEqual(properties.max_resource_size, needs.size);
         fb.DestroyImage(device, largest);
+        var most = needs.size;
+        if (properties.sample_counts & facet.SAMPLE_COUNT_4 != 0) {
+            var four: ?*facet.Image = null;
+            try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &.{
+                .flags = flags,
+                .image_type = kind,
+                .format = format,
+                .extent = properties.max_extent,
+                .array_layers = properties.max_array_layers,
+                .samples = 4,
+                .tiling = tiling,
+                .usage = usage,
+            }, &four));
+            fb.GetImageMemoryRequirements(device, four.?, &needs);
+            fb.DestroyImage(device, four);
+            most = @max(most, needs.size);
+        }
+        try testing.expectEqual(properties.max_resource_size, most);
         // One level more, or one layer more, is refused: the answer is
         // the largest there is.
         var over: ?*facet.Image = null;
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{
             .flags = flags,
             .image_type = kind,
             .format = format,
@@ -599,7 +1297,7 @@ test "the three device queries: the largest image of a shape, the render area's 
             .tiling = tiling,
             .usage = usage,
         }, &over));
-        if (!volume) try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+        if (!volume) try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{
             .flags = flags,
             .image_type = kind,
             .format = format,
@@ -616,9 +1314,23 @@ test "the three device queries: the largest image of a shape, the render area's 
     properties = .{ .max_mip_levels = 9 };
     try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .d16_unorm, .@"2d", .linear, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &properties));
     try testing.expectEqual(@as(u32, 0), properties.max_mip_levels);
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"1d", .optimal, sampled, 0, &properties));
-    // A colour attachment that is sampled as well is no image here.
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &properties));
+    // A 1D image is an image here since 1.86: a texture of one row, as
+    // wide as a 2D image and with the levels halving that width alone,
+    // which is Vulkan's own rule for one (item 21).
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"1d", .optimal, sampled, 0, &properties));
+    var limits: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(physical, &limits);
+    try testing.expect(limits.limits.max_image_dimension_1d >= 4096);
+    try testing.expectEqual(limits.limits.max_image_dimension_1d, properties.max_extent.width);
+    try testing.expectEqual(@as(u32, 1), properties.max_extent.height);
+    try testing.expectEqual(@as(u32, 1), properties.max_extent.depth);
+    try testing.expectEqual(std.math.log2_int(u32, limits.limits.max_image_dimension_1d) + 1, properties.max_mip_levels);
+    // A colour attachment that is sampled as well is an image since
+    // 1.119, kept in rows of the whole chain of levels (item 48); one
+    // written through besides is still none.
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &properties));
+    try testing.expectEqual(std.math.log2_int(u32, limits.limits.max_image_dimension_2d) + 1, properties.max_mip_levels);
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_STORAGE, 0, &properties));
     // And a format nothing is made of.
     try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .undefined, .@"2d", .optimal, sampled, 0, &properties));
 
@@ -629,7 +1341,7 @@ test "the three device queries: the largest image of a shape, the render area's 
     const widest = properties.max_extent.width;
     try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = widest, .height = 1 }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image));
     fb.DestroyImage(device, image);
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = widest + 1, .height = 1 }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = widest + 1, .height = 1 }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image));
     try testing.expect(image == null);
 
     // The render area's granularity is the device's tile, whatever the
@@ -644,8 +1356,12 @@ test "the three device queries: the largest image of a shape, the render area's 
     fb.GetPhysicalDeviceProperties(physical, &device_properties);
     var granularity: facet.Extent2D = undefined;
     fb.GetRenderAreaGranularity(device, pass.?, &granularity);
-    try testing.expectEqual(device_properties.limits.tile_size, granularity.width);
-    try testing.expectEqual(device_properties.limits.tile_size, granularity.height);
+    // GetRenderAreaGranularity is Vulkan's way to ask the tile, and since
+    // 1.82 it is the only way: the number left PhysicalDeviceLimits with
+    // `cores`, Vulkan having no member for either.
+    const tile = _objects.of(_instance.PhysicalDevice, physical).tile_size;
+    try testing.expectEqual(tile, granularity.width);
+    try testing.expectEqual(tile, granularity.height);
     try testing.expect(granularity.width != 0);
 
     // What a block has behind it: all of a plain one, none of a lazily
@@ -709,6 +1425,98 @@ test "a recording: its commands in order over its chunks; a reset keeps them for
     try testing.expectEqual(free_before, rig.header.free);
 }
 
+/// The nine sample-count masks of `limits` in VkPhysicalDeviceLimits'
+/// order: the framebuffer's colour, depth, stencil and no-attachments
+/// masks, then the sampled image's colour, integer, depth and stencil
+/// masks, and the storage image's.
+fn expectSampleCounts(want: [9]u32, limits: *const facet.PhysicalDeviceLimits) !void {
+    const got = [9]u32{
+        limits.framebuffer_color_sample_counts,
+        limits.framebuffer_depth_sample_counts,
+        limits.framebuffer_stencil_sample_counts,
+        limits.framebuffer_no_attachments_sample_counts,
+        limits.sampled_image_color_sample_counts,
+        limits.sampled_image_integer_sample_counts,
+        limits.sampled_image_depth_sample_counts,
+        limits.sampled_image_stencil_sample_counts,
+        limits.storage_image_sample_counts,
+    };
+    try testing.expectEqualSlices(u32, &want, &got);
+}
+
+test "a device's sample counts follow what it draws, and the three optional multisample features stay off" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const record = _objects.of(_instance.PhysicalDevice, physical);
+    const one = facet.SAMPLE_COUNT_1;
+    const four = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4;
+
+    // The library's table is what a device drawing four samples a pixel
+    // may say: the 4 bit in the seven masks Vulkan asks it of, and the 1
+    // bit alone in the integer and storage masks.
+    try expectSampleCounts(.{ four, four, four, four, four, one, four, four, one }, &_instance.limits);
+
+    // The cores draw four since 1.112, so six masks take the 4 bit, at
+    // Vulkan's standard places; and the no-attachments mask since 1.114,
+    // a subpass of no attachment drawing at its pipelines' count.
+    try testing.expect(record.can.multisampling);
+    try testing.expect(record.can.colorless_subpasses);
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    rig.fb.GetPhysicalDeviceProperties(physical, &properties);
+    try expectSampleCounts(.{ four, four, four, four, four, one, four, four, one }, &properties.limits);
+    try testing.expectEqual(facet.TRUE, properties.limits.standard_sample_locations);
+
+    // The cores described again, as a device that does not draw four:
+    // one sample in every mask.
+    var plain = record.*;
+    try testing.expect(record.ops.describe(rig.sys, &plain));
+    plain.can.multisampling = false;
+    _instance.narrowSampleCounts(&plain);
+    try expectSampleCounts(.{ one, one, one, one, one, one, one, one, one }, &plain.properties.limits);
+
+    // And as one that draws four but makes no subpass of no attachment,
+    // as the V3D made none until 1.150: the 1 bit alone in that mask.
+    var colorless = record.*;
+    try testing.expect(record.ops.describe(rig.sys, &colorless));
+    colorless.can.colorless_subpasses = false;
+    _instance.narrowSampleCounts(&colorless);
+    try expectSampleCounts(.{ four, four, four, one, four, one, four, four, one }, &colorless.properties.limits);
+
+    // A bit a driver cleared stays clear, with the capability or without:
+    // the V3D's four zeros for the images it does not sample
+    // (driver/v3d/driver.zig), whose describe only the board can run.
+    for ([_]bool{ false, true }) |can| {
+        var v3d = record.*;
+        v3d.properties.limits = _instance.limits;
+        v3d.properties.limits.sampled_image_integer_sample_counts = 0;
+        v3d.properties.limits.sampled_image_depth_sample_counts = 0;
+        v3d.properties.limits.sampled_image_stencil_sample_counts = 0;
+        v3d.properties.limits.storage_image_sample_counts = 0;
+        v3d.can.multisampling = can;
+        // And a subpass of no attachment, at its pipelines' count, since
+        // 1.150 (docs/facet-vulkan10.md items 43 and 61's V8).
+        v3d.can.colorless_subpasses = true;
+        _instance.narrowSampleCounts(&v3d);
+        const drawn = if (can) four else one;
+        try expectSampleCounts(.{ drawn, drawn, drawn, drawn, drawn, 0, 0, 0, 0 }, &v3d.properties.limits);
+    }
+
+    // Sample rate shading, alpha to one and a variable sample rate are
+    // optional, and none of them is a part of drawing four samples: each
+    // stays false with the capability as it does without.
+    for ([_]bool{ false, true }) |can| {
+        record.can.multisampling = can;
+        defer record.can.multisampling = true;
+        var features: facet.PhysicalDeviceFeatures = undefined;
+        rig.fb.GetPhysicalDeviceFeatures(physical, &features);
+        try testing.expectEqual(facet.FALSE, features.sample_rate_shading);
+        try testing.expectEqual(facet.FALSE, features.alpha_to_one);
+        try testing.expectEqual(facet.FALSE, features.variable_multisample_rate);
+    }
+}
+
 test "a device says what it does, and a false is what a create call refuses" {
     var rig = try Rig.up();
     defer rig.down() catch |err| std.debug.panic("{}", .{err});
@@ -717,58 +1525,72 @@ test "a device says what it does, and a false is what a create call refuses" {
     const device = try rig.device(physical);
     defer rig.fb.DestroyDevice(device);
 
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    rig.fb.GetPhysicalDeviceFeatures(physical, &features);
+    const can = _objects.of(_instance.PhysicalDevice, physical).can;
 
     // The cores: the rasterizer calls whatever function the pipeline carries,
     // and compute and tessellation are on this device because it is them.
-    try testing.expect(features.own_fragment_functions);
-    try testing.expect(features.sampling_format);
-    try testing.expect(features.compute_on_device);
-    try testing.expect(features.tessellation_on_device);
-    try testing.expect(features.depth_prepass);
-    try testing.expect(features.blending);
-    try testing.expect(features.stencil_test);
-    try testing.expect(features.several_subpasses);
-    try testing.expect(features.cube_maps);
+    try testing.expect(can.own_fragment_functions);
+    try testing.expect(can.sampling_format);
+    try testing.expect(can.compute_on_device);
+    try testing.expect(can.tessellation_on_device);
+    try testing.expect(can.depth_prepass);
+    try testing.expect(can.blending);
+    try testing.expect(can.stencil_test);
+    try testing.expect(can.several_subpasses);
+    try testing.expect(can.cube_maps);
     // The cores hold the depth in their tiles, so they can keep it.
-    try testing.expect(features.stored_depth);
+    try testing.expect(can.stored_depth);
     // A fragment function of the program's can read an attachment's rows.
-    try testing.expect(features.input_attachments);
+    try testing.expect(can.input_attachments);
+    // And four samples a pixel (since 1.112).
+    try testing.expect(can.multisampling);
+    // And a subpass with no colour attachment (since 1.113).
+    try testing.expect(can.colorless_subpasses);
 
     // And what it says it does not do, it refuses: a false here is worth
     // having only if the call agrees with it.
-    try testing.expect(!features.multisampling);
-    try testing.expect(!features.logic_ops);
+    try testing.expect(!can.logic_ops);
 
     const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
     var pass: ?*facet.RenderPass = null;
 
-    // An input attachment that is drawn in the same subpass is a loop,
-    // whatever the feature says.
+    // An input attachment that is drawn in the same subpass, with no
+    // dependency of the subpass on itself: a feedback loop, which Vulkan
+    // allows, the attachment in the general layout for both
+    // (VUID-VkSubpassDescription-attachment-06912, -layout-02519). Made
+    // since 1.134 on a device that reads input attachments, as this one
+    // does; until then refused as a loop, whatever the feature said.
     {
-        const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .final_layout = .color_attachment_optimal };
+        try testing.expect(can.input_attachments);
+        const own = facet.AttachmentReference{ .attachment = 0, .layout = .general };
+        const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .final_layout = .general };
         const subpass = facet.SubpassDescription{
             .input_attachment_count = 1,
-            .input_attachments = @ptrCast(&color),
+            .input_attachments = @ptrCast(&own),
             .color_attachment_count = 1,
-            .color_attachments = @ptrCast(&color),
+            .color_attachments = @ptrCast(&own),
         };
         const info = facet.RenderPassCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) };
-        try testing.expectEqual(facet.Result.error_initialization_failed, rig.fb.CreateRenderPass(device, &info, &pass));
+        try testing.expectEqual(facet.Result.success, rig.fb.CreateRenderPass(device, &info, &pass));
+        rig.fb.DestroyRenderPass(device, pass);
+        pass = null;
     }
 
     // Logic operations, which features deny.
     {
-        try testing.expect(!features.logic_ops);
+        try testing.expect(!can.logic_ops);
     }
 
-    // More than one sample, likewise.
-    {
-        const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .samples = 4, .load_op = .clear, .final_layout = .color_attachment_optimal };
+    // Four samples are drawn, and two or eight, which no device draws,
+    // are refused.
+    for ([_]u32{ 4, 2, 8 }) |samples| {
+        const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .samples = samples, .load_op = .clear, .final_layout = .color_attachment_optimal };
         const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color) };
         const info = facet.RenderPassCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) };
-        try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.CreateRenderPass(device, &info, &pass));
+        const want: facet.Result = if (samples == 4) .success else .error_feature_not_present;
+        try testing.expectEqual(want, rig.fb.CreateRenderPass(device, &info, &pass));
+        rig.fb.DestroyRenderPass(device, pass);
+        pass = null;
     }
 
     // One sample and no input attachment: the same pass is made.
@@ -810,7 +1632,7 @@ test "a draw of more vertices than one works is refused as it is recorded" {
     try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.EndCommandBuffer(buffer));
 
     // Spent: it records again only after a reset, and the refusal is not kept.
-    try testing.expectEqual(facet.Result.error_initialization_failed, rig.fb.EndCommandBuffer(buffer));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.EndCommandBuffer(buffer));
     try testing.expectEqual(facet.Result.success, rig.fb.ResetCommandBuffer(buffer, 0));
     try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(buffer, &.{}));
     rig.fb.CmdDraw(buffer, 3, 1, 0, 0);
@@ -861,16 +1683,21 @@ test "a submission plays its command buffers in order, then signals its fence; a
     try testing.expectEqual(facet.Result.success, rig.fb.BindImageMemory(device, image.?, image_memory, 0));
 
     var pool: ?*facet.CommandPool = null;
+    // A pool for a family the device has not got
+    // (VUID-vkCreateCommandPool-queueFamilyIndex-01937;
+    // `error_initialization_failed` until 1.134).
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateCommandPool(device, &.{ .queue_family_index = 1 }, &pool));
+    try testing.expect(pool == null);
     try testing.expectEqual(facet.Result.success, rig.fb.CreateCommandPool(device, &.{}, &pool));
     defer rig.fb.DestroyCommandPool(device, pool);
     var commands: [2]?*facet.CommandBuffer = undefined;
-    try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .level = @enumFromInt(2), .command_buffer_count = 2 }, &commands));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .level = @enumFromInt(2), .command_buffer_count = 2 }, &commands));
     try testing.expectEqual(facet.Result.success, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .command_buffer_count = 2 }, &commands));
 
     // Recorded outside a recording: nothing.
     const region = facet.BufferImageCopy{ .image_extent = .{ .width = 16, .height = 16 } };
     rig.fb.CmdCopyBufferToImage(commands[0].?, staging, image.?, .transfer_dst_optimal, 1, @ptrCast(&region));
-    try testing.expectEqual(facet.Result.error_initialization_failed, rig.fb.EndCommandBuffer(commands[0].?));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.EndCommandBuffer(commands[0].?));
 
     try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(commands[0].?, &.{ .flags = facet.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT }));
     const barrier = facet.ImageMemoryBarrier{ .new_layout = .transfer_dst_optimal, .image = image.? };
@@ -960,4 +1787,305 @@ test "semaphores order one submission after another; a fence alone follows all b
     try testing.expectEqual(@as(u64, 1), @import("../sync/_sync.zig").microseconds(1));
     try testing.expectEqual(@as(u64, 2), @import("../sync/_sync.zig").microseconds(1001));
     try testing.expectEqual(exec.WAIT_FOREVER, @import("../sync/_sync.zig").microseconds(facet.WAIT_FOREVER_NS));
+}
+
+test "events: set and reset by the host and by a queue's work, waited for in the queue's order, and lost with the device (since 1.129)" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+    var queue: ?*facet.Queue = null;
+    rig.fb.GetDeviceQueue(device, 0, 0, &queue);
+
+    var events: [3]?*facet.Event = undefined;
+    for (&events) |*event| try testing.expectEqual(facet.Result.success, rig.fb.CreateEvent(device, &.{}, event));
+    defer for (events) |event| rig.fb.DestroyEvent(device, event);
+    rig.fb.DestroyEvent(device, null);
+    const by_queue, const reset_by_queue, const by_host = .{ events[0].?, events[1].?, events[2].? };
+
+    // Made reset; set and reset by the host at once, and again to no
+    // effect, the others left as they are.
+    for (events) |event| try testing.expectEqual(facet.Result.event_reset, rig.fb.GetEventStatus(device, event.?));
+    for (0..2) |_| {
+        try testing.expectEqual(facet.Result.success, rig.fb.SetEvent(device, by_host));
+        try testing.expectEqual(facet.Result.event_set, rig.fb.GetEventStatus(device, by_host));
+    }
+    try testing.expectEqual(facet.Result.event_reset, rig.fb.GetEventStatus(device, by_queue));
+    for (0..2) |_| {
+        try testing.expectEqual(facet.Result.success, rig.fb.ResetEvent(device, by_host));
+        try testing.expectEqual(facet.Result.event_reset, rig.fb.GetEventStatus(device, by_host));
+    }
+
+    const target, const target_memory, const written = try mappedBuffer(&rig, device, 16, facet.BUFFER_USAGE_TRANSFER_DST);
+    defer rig.fb.FreeMemory(device, target_memory);
+    defer rig.fb.DestroyBuffer(device, target);
+    @memset(written[0..16], 0);
+    var pool: ?*facet.CommandPool = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateCommandPool(device, &.{}, &pool));
+    defer rig.fb.DestroyCommandPool(device, pool);
+    var commands: [4]?*facet.CommandBuffer = undefined;
+    try testing.expectEqual(facet.Result.success, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .command_buffer_count = 3 }, commands[0..3]));
+    try testing.expectEqual(facet.Result.success, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .level = .secondary }, commands[3..4]));
+    const setting, const waiting, const empty, const secondary = .{ commands[0].?, commands[1].?, commands[2].?, commands[3].? };
+    var fence: ?*facet.Fence = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateFence(device, &.{}, &fence));
+    defer rig.fb.DestroyFence(device, fence);
+
+    // Set and reset by the queue, once the work before is done: what the
+    // host asks next says so.
+    try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(setting, &.{}));
+    rig.fb.CmdFillBuffer(setting, target, 0, 4, 0x1111_1111);
+    rig.fb.CmdSetEvent(setting, by_queue, facet.PIPELINE_STAGE_TRANSFER);
+    rig.fb.CmdResetEvent(setting, reset_by_queue, facet.PIPELINE_STAGE_TRANSFER);
+    try testing.expectEqual(facet.Result.success, rig.fb.EndCommandBuffer(setting));
+    try testing.expectEqual(facet.Result.success, rig.fb.SetEvent(device, reset_by_queue));
+    try testing.expectEqual(facet.Result.event_set, rig.fb.GetEventStatus(device, reset_by_queue));
+    const set_submit = facet.SubmitInfo{ .command_buffer_count = 1, .command_buffers = @ptrCast(&commands[0]) };
+    try testing.expectEqual(facet.Result.success, rig.fb.QueueSubmit(queue.?, 1, @ptrCast(&set_submit), fence));
+    try testing.expectEqual(facet.Result.success, rig.fb.WaitForFences(device, 1, @ptrCast(&fence), true, facet.WAIT_FOREVER_NS));
+    try testing.expectEqual(facet.Result.event_set, rig.fb.GetEventStatus(device, by_queue));
+    try testing.expectEqual(facet.Result.event_reset, rig.fb.GetEventStatus(device, reset_by_queue));
+    try testing.expectEqual(@as(u32, 0x1111_1111), std.mem.readInt(u32, written[0..4], .little));
+
+    // Waited for: one set by the queue before, one by the host before the
+    // submission, as Vulkan has it. Each is set already, so the work after
+    // goes on; the wait leaves them set, and a secondary's commands of
+    // events are played as a primary's.
+    try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(secondary, &.{}));
+    rig.fb.CmdResetEvent(secondary, by_host, facet.PIPELINE_STAGE_TRANSFER);
+    rig.fb.CmdFillBuffer(secondary, target, 8, 4, 0x3333_3333);
+    try testing.expectEqual(facet.Result.success, rig.fb.EndCommandBuffer(secondary));
+    try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(waiting, &.{}));
+    const awaited = [2]*facet.Event{ by_queue, by_host };
+    rig.fb.CmdWaitEvents(waiting, 2, &awaited, facet.PIPELINE_STAGE_TRANSFER | facet.PIPELINE_STAGE_HOST, facet.PIPELINE_STAGE_TRANSFER, 0, null, 0, null, 0, null);
+    rig.fb.CmdFillBuffer(waiting, target, 4, 4, 0x2222_2222);
+    rig.fb.CmdExecuteCommands(waiting, 1, @ptrCast(&commands[3]));
+    try testing.expectEqual(facet.Result.success, rig.fb.EndCommandBuffer(waiting));
+    const recorded = _objects.of(_command.CommandBuffer, waiting);
+    var reader = recorded.stream.commands();
+    const head = reader.next().?;
+    try testing.expectEqual(_stream.Op.wait_events, head.op);
+    const wait = _stream.as(_command.WaitEvents, head);
+    try testing.expectEqual(@as(u32, 2), wait.count);
+    try testing.expectEqual(@as(*const anyopaque, by_host), @as(*const anyopaque, _stream.items(_command.WaitEvents, *_sync.Event, wait, 2)[1]));
+    try testing.expectEqual(facet.Result.success, rig.fb.SetEvent(device, by_host));
+    try testing.expectEqual(facet.Result.event_set, rig.fb.GetEventStatus(device, by_host));
+    try testing.expectEqual(facet.Result.success, rig.fb.ResetFences(device, 1, @ptrCast(&fence)));
+    const wait_submit = facet.SubmitInfo{ .command_buffer_count = 1, .command_buffers = @ptrCast(&commands[1]) };
+    try testing.expectEqual(facet.Result.success, rig.fb.QueueSubmit(queue.?, 1, @ptrCast(&wait_submit), fence));
+    try testing.expectEqual(facet.Result.success, rig.fb.WaitForFences(device, 1, @ptrCast(&fence), true, facet.WAIT_FOREVER_NS));
+    try testing.expectEqual(@as(u32, 0x2222_2222), std.mem.readInt(u32, written[4..8], .little));
+    try testing.expectEqual(@as(u32, 0x3333_3333), std.mem.readInt(u32, written[8..12], .little));
+    try testing.expectEqual(facet.Result.event_set, rig.fb.GetEventStatus(device, by_queue));
+    try testing.expectEqual(facet.Result.event_reset, rig.fb.GetEventStatus(device, by_host));
+
+    // No event to wait for: nothing recorded, as Mesa's runtime has it.
+    try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(empty, &.{}));
+    rig.fb.CmdWaitEvents(empty, 0, &awaited, facet.PIPELINE_STAGE_TRANSFER, facet.PIPELINE_STAGE_TRANSFER, 0, null, 0, null, 0, null);
+    try testing.expectEqual(facet.Result.success, rig.fb.EndCommandBuffer(empty));
+    var none = _objects.of(_command.CommandBuffer, empty).stream.commands();
+    try testing.expect(none.next() == null);
+
+    // Lost with the device; the host still sets it.
+    _objects.of(@import("../device/_device.zig").Device, device).lose();
+    try testing.expectEqual(facet.Result.error_device_lost, rig.fb.GetEventStatus(device, by_host));
+    try testing.expectEqual(facet.Result.success, rig.fb.SetEvent(device, by_host));
+    try testing.expectEqual(@as(u32, 1), _objects.of(_sync.Event, by_host).waitable.signalled);
+    rig.fb.FreeCommandBuffers(device, pool.?, 4, &commands);
+}
+
+test "a pipeline cache: Vulkan's header of the device's own numbers and nothing after it, made again from it, merged, and taken by the pipeline calls (since 1.130)" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+    // Numbers of a device's own, as the V3D's are, where the cores' are 0.
+    const described = _objects.of(@import("../instance/_instance.zig").PhysicalDevice, physical);
+    described.properties.vendor_id = 0x14E4;
+    described.properties.device_id = 0x2712;
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    rig.fb.GetPhysicalDeviceProperties(physical, &properties);
+
+    var caches: [2]?*facet.PipelineCache = .{ null, null };
+    defer for (caches) |cache| rig.fb.DestroyPipelineCache(device, cache);
+    try testing.expectEqual(facet.Result.success, rig.fb.CreatePipelineCache(device, &.{}, &caches[0]));
+    rig.fb.DestroyPipelineCache(device, null);
+
+    // The bytes there are, then the bytes: the header, least significant
+    // byte first, and nothing after it.
+    try testing.expectEqual(@as(usize, 32), @sizeOf(facet.PipelineCacheHeaderVersionOne));
+    var size: usize = 0;
+    try testing.expectEqual(facet.Result.success, rig.fb.GetPipelineCacheData(device, caches[0].?, &size, null));
+    try testing.expectEqual(@as(usize, 32), size);
+    var bytes: [40]u8 = @splat(0xAA);
+    size = bytes.len;
+    try testing.expectEqual(facet.Result.success, rig.fb.GetPipelineCacheData(device, caches[0].?, &size, &bytes));
+    try testing.expectEqual(@as(usize, 32), size);
+    try testing.expectEqual(@as(u32, 32), std.mem.readInt(u32, bytes[0..4], .little));
+    try testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, bytes[4..8], .little));
+    try testing.expectEqual(@as(u32, 0x14E4), std.mem.readInt(u32, bytes[8..12], .little));
+    try testing.expectEqual(@as(u32, 0x2712), std.mem.readInt(u32, bytes[12..16], .little));
+    try testing.expectEqualSlices(u8, &properties.pipeline_cache_uuid, bytes[16..32]);
+    for (bytes[32..]) |byte| try testing.expectEqual(@as(u8, 0xAA), byte);
+    const header = std.mem.bytesToValue(facet.PipelineCacheHeaderVersionOne, bytes[0..32]);
+    try testing.expectEqual(facet.PipelineCacheHeaderVersion.one, header.header_version);
+    try testing.expectEqual(properties.vendor_id, header.vendor_id);
+    try testing.expectEqual(properties.device_id, header.device_id);
+
+    // No room for the header: nothing written, and 0.
+    var short: [31]u8 = @splat(0xAA);
+    size = short.len;
+    try testing.expectEqual(facet.Result.incomplete, rig.fb.GetPipelineCacheData(device, caches[0].?, &size, &short));
+    try testing.expectEqual(@as(usize, 0), size);
+    for (short) |byte| try testing.expectEqual(@as(u8, 0xAA), byte);
+
+    // Made again from what it gave, which it gives again; merged.
+    try testing.expectEqual(facet.Result.success, rig.fb.CreatePipelineCache(device, &.{ .initial_data_size = 32, .initial_data = &bytes }, &caches[1]));
+    var again: [32]u8 = @splat(0);
+    size = again.len;
+    try testing.expectEqual(facet.Result.success, rig.fb.GetPipelineCacheData(device, caches[1].?, &size, &again));
+    try testing.expectEqualSlices(u8, bytes[0..32], &again);
+    try testing.expectEqual(facet.Result.success, rig.fb.MergePipelineCaches(device, caches[0].?, 1, @ptrCast(&caches[1])));
+
+    // A pipeline made with one.
+    var module: ?*facet.ShaderModule = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateShaderModule(device, &.{ .code = &Specialized.code }, &module));
+    defer rig.fb.DestroyShaderModule(device, module);
+    var layout: ?*facet.PipelineLayout = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreatePipelineLayout(device, &.{}, &layout));
+    defer rig.fb.DestroyPipelineLayout(device, layout);
+    var pipeline: [1]?*facet.Pipeline = .{null};
+    const info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.? }, .layout = layout.? };
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateComputePipelines(device, caches[0], 1, @ptrCast(&info), &pipeline));
+    try testing.expect(pipeline[0] != null);
+    rig.fb.DestroyPipeline(device, pipeline[0]);
+}
+
+/// A vertex, a fragment and a compute function, each as plain as the
+/// pipelines that specialization constants are refused on need.
+const Specialized = struct {
+    fn vertex(vertices: *const facet.shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| vertices.output(@intCast(k))[0..4].* = .{ 0, 0, 0, 1 };
+    }
+
+    fn fragment(fragments: *const facet.shader.Fragments) callconv(.c) void {
+        facet.shader.fill(fragments, 0xFF00_0000);
+    }
+
+    fn group(groups: *const facet.shader.Groups) callconv(.c) void {
+        _ = groups;
+    }
+
+    const entries = [_]facet.shader.Entry{
+        facet.shader.vertex("main", &vertex, 0),
+        facet.shader.fragment("main", &fragment, 0),
+        facet.shader.compute("main", &group),
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+test "a stage that names specialization constants is refused, not made with them dropped, and an empty SpecializationInfo is made" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+
+    var module: ?*facet.ShaderModule = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateShaderModule(device, &.{ .code = &Specialized.code }, &module));
+    defer rig.fb.DestroyShaderModule(device, module);
+    var layout: ?*facet.PipelineLayout = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreatePipelineLayout(device, &.{}, &layout));
+    defer rig.fb.DestroyPipelineLayout(device, layout);
+
+    // Nothing reads them, so a pipeline made with them would run what the
+    // program did not ask for.
+    const value: u32 = 7;
+    const entry = facet.SpecializationMapEntry{ .constant_id = 0, .offset = 0, .size = @sizeOf(u32) };
+    const constants = facet.SpecializationInfo{
+        .map_entry_count = 1,
+        .map_entries = @ptrCast(&entry),
+        .data_size = @sizeOf(u32),
+        .data = &value,
+    };
+    // One naming no constant specializes nothing, as in Vulkan: a program
+    // that fills the struct for every stage and leaves it empty where it
+    // has none is not turned away by it.
+    const none = facet.SpecializationInfo{};
+
+    // A compute pipeline.
+    {
+        var pipeline: [1]?*facet.Pipeline = .{null};
+        const asked = facet.ComputePipelineCreateInfo{
+            .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .specialization_info = &constants },
+            .layout = layout.?,
+        };
+        try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.CreateComputePipelines(device, null, 1, @ptrCast(&asked), &pipeline));
+        try testing.expect(pipeline[0] == null);
+
+        // The same one without them is made, so the refusal is the
+        // constants' and not the stage's or the module's.
+        const plain = facet.ComputePipelineCreateInfo{
+            .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.? },
+            .layout = layout.?,
+        };
+        try testing.expectEqual(facet.Result.success, rig.fb.CreateComputePipelines(device, null, 1, @ptrCast(&plain), &pipeline));
+        rig.fb.DestroyPipeline(device, pipeline[0]);
+
+        // And one that points at a `SpecializationInfo` naming no
+        // constant is made as well: the pointer alone is not the refusal.
+        const empty = facet.ComputePipelineCreateInfo{
+            .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .specialization_info = &none },
+            .layout = layout.?,
+        };
+        try testing.expectEqual(facet.Result.success, rig.fb.CreateComputePipelines(device, null, 1, @ptrCast(&empty), &pipeline));
+        try testing.expect(pipeline[0] != null);
+        rig.fb.DestroyPipeline(device, pipeline[0]);
+    }
+
+    // A graphics pipeline, the fragment stage alone carrying them.
+    {
+        const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+        const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .final_layout = .color_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color) };
+        var pass: ?*facet.RenderPass = null;
+        const pass_info = facet.RenderPassCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) };
+        try testing.expectEqual(facet.Result.success, rig.fb.CreateRenderPass(device, &pass_info, &pass));
+        defer rig.fb.DestroyRenderPass(device, pass);
+
+        const raster = facet.PipelineRasterizationStateCreateInfo{};
+        const viewport = facet.Viewport{ .width = 8, .height = 8 };
+        const scissor = facet.Rect2D{ .extent = .{ .width = 8, .height = 8 } };
+        const viewport_state = facet.PipelineViewportStateCreateInfo{ .viewports = @ptrCast(&viewport), .scissors = @ptrCast(&scissor) };
+        var stages = [2]facet.PipelineShaderStageCreateInfo{
+            .{ .stage = facet.SHADER_STAGE_VERTEX, .module = module.? },
+            .{ .stage = facet.SHADER_STAGE_FRAGMENT, .module = module.?, .specialization_info = &constants },
+        };
+        const info = facet.GraphicsPipelineCreateInfo{
+            .stage_count = stages.len,
+            .stages = &stages,
+            .viewport_state = &viewport_state,
+            .rasterization_state = &raster,
+            .layout = layout.?,
+            .render_pass = pass.?,
+        };
+        var pipeline: ?*facet.Pipeline = null;
+        try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.CreateGraphicsPipelines(device, null, 1, @ptrCast(&info), @ptrCast(&pipeline)));
+        try testing.expect(pipeline == null);
+
+        stages[1].specialization_info = null;
+        try testing.expectEqual(facet.Result.success, rig.fb.CreateGraphicsPipelines(device, null, 1, @ptrCast(&info), @ptrCast(&pipeline)));
+        rig.fb.DestroyPipeline(device, pipeline);
+
+        // The empty one here too.
+        stages[1].specialization_info = &none;
+        try testing.expectEqual(facet.Result.success, rig.fb.CreateGraphicsPipelines(device, null, 1, @ptrCast(&info), @ptrCast(&pipeline)));
+        try testing.expect(pipeline != null);
+        rig.fb.DestroyPipeline(device, pipeline);
+    }
 }

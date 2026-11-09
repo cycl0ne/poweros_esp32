@@ -59,6 +59,9 @@ pub const WADDR_TMUS: u64 = 33;
 pub const WADDR_TMUT: u64 = 34;
 pub const WADDR_TMUR: u64 = 35;
 pub const WADDR_TMUI: u64 = 36;
+/// The reference a shadow sample compares with (Mesa's v3d_tex.c:155-157;
+/// since 1.142).
+pub const WADDR_TMUDREF: u64 = 38;
 pub const WADDR_TMUSCM: u64 = 40;
 
 const add_nop: u64 = MA | WADDR_NOP << WADDR_A_SHIFT | OP_ADD_NOP << OP_ADD_SHIFT;
@@ -155,6 +158,27 @@ pub fn vfpackMagic(waddr: u64, low: Rf, high: Rf) u64 {
         @as(u64, low) << RADDR_A_SHIFT | high;
 }
 
+/// The register an instruction writes on each side, the add side first,
+/// and null where that side writes none: a nop, or one of the magic
+/// addresses, which are not the thread's registers at all. What a
+/// generated program is held to reads this (`compile.zig`).
+pub fn destinations(instruction: u64) [2]?Rf {
+    return .{
+        if (instruction & MA != 0) null else @truncate(instruction >> WADDR_A_SHIFT),
+        if (instruction & MM != 0) null else @truncate(instruction >> WADDR_M_SHIFT),
+    };
+}
+
+/// The register an instruction's signal writes, where it has one:
+/// `ldunifrf`, `ldvary` and `ldtmu` name it in the signal's own address
+/// field and not on either side.
+pub fn signalled(instruction: u64) ?Rf {
+    return switch (instruction >> SIG_SHIFT & 0x1F) {
+        SIG_LDUNIFRF, SIG_LDVARY, SIG_LDTMU => @truncate(instruction >> SIG_ADDRESS_SHIFT),
+        else => null,
+    };
+}
+
 /// A program that copies its `count` first inputs to its first outputs,
 /// each through one register: the two share their place in the VPM.
 fn PassThrough(comptime count: u4) type {
@@ -216,18 +240,39 @@ pub const Fragment = struct {
     varyings: u32,
     /// The uniforms it reads, one after the other.
     uniforms: u32,
+    /// What the shader record says of it (`cl.Programs`): a program
+    /// written here runs four threads and reads W only for its varyings;
+    /// one Mesa's back end compiled says its own.
+    threads: u8 = 4,
+    center_w: bool = false,
+    lock_scoreboard_on_first_thrsw: bool = false,
+    writes_z: bool = false,
+    disable_ez: bool = false,
 };
 
-/// W, as the hardware hands it to a fragment.
-const rf_w: Rf = 3;
+/// How many registers the programs written here and the plan's keep to
+/// at four threads. The hardware gives each of four threads 32, as
+/// Mesa's allocator has it ("4x has 32", vir_register_allocate.c:1583)
+/// and as programs of 23 and 28 from it draw on the CM5 (V3DTest MESA);
+/// 16 is what these were written for, and what the plan is held to.
+pub const registers = 16;
+
+/// W, as the hardware hands it to a fragment. rf0 to rf2 are the
+/// hardware's as well: rf0 carries a varying's constant part.
+pub const rf_w: Rf = 3;
+/// The first register a program of its own may keep a value in.
+pub const rf_first: Rf = 4;
 /// Scratch: a varying's two parts, and the depth of the first program's
 /// registers. In a threaded program there are 16 of them.
-const rf_slope: Rf = 14;
-const rf_scaled: Rf = 15;
+pub const rf_slope: Rf = 14;
+pub const rf_scaled: Rf = 15;
+/// One past the last register a program of its own may keep a value in:
+/// the scratch above is written by every varying it reads.
+pub const rf_last: Rf = rf_slope;
 
 /// A varying into `to`: three instructions, as the constant reaches rf0
 /// only by the third.
-fn varying(comptime to: Rf) [3]u64 {
+pub fn varying(to: Rf) [3]u64 {
     return .{
         ldvary(rf_slope),
         fmul(rf_scaled, rf_slope, rf_w),
@@ -235,7 +280,7 @@ fn varying(comptime to: Rf) [3]u64 {
     };
 }
 
-const end_of_program = [3]u64{ thrsw, nop, nop };
+pub const end_of_program = [3]u64{ thrsw, nop, nop };
 
 /// The switch to the last section: two thread switches in a row are what
 /// tells the hardware it is the last. Every fragment program has it, sampling
@@ -243,7 +288,7 @@ const end_of_program = [3]u64{ thrsw, nop, nop };
 /// reaches the tile buffer ahead of one drawn before it at the same place,
 /// and the renderer hangs. Two instructions must follow before that buffer
 /// is touched, which are the switch's delay slots.
-const last_section = [4]u64{ thrsw, thrsw, nop, nop };
+pub const last_section = [4]u64{ thrsw, thrsw, nop, nop };
 
 /// The sample at two floats, in `s` and `t`: T first, the configuration
 /// from two uniforms, and the write to S that starts it. Then the last
@@ -278,6 +323,25 @@ const color_code = varying(4) ++ varying(5) ++ varying(6) ++ varying(7) ++ last_
 } ++ end_of_program;
 
 pub const color_fragment = Fragment{ .code = &color_code, .varyings = 4, .uniforms = 0 };
+
+/// The program of no colour: v3dv's noop fragment shader
+/// (v3dv_pipeline.c:2616-2645) as Mesa's back end makes it with no render
+/// target in the key (`compile.compileNoColor`, whose test holds these
+/// words to it). The switch to the last section, then its one TLB write
+/// in the program's end: the depth the rasterizer made, written through
+/// ("mov tlbu, rf5", the source a null register packs to, which an
+/// invariant write does not read), with `no_color_specifier` its one
+/// uniform (emit_frag_end, nir_to_vir.c:2098-2126). It writes Z, so early
+/// Z is off for it. A subpass of no colour draws with it, and a pipeline
+/// of no fragment stage (since 1.150).
+const no_color_code = [_]u64{ thrsw, thrsw, nop, 0x3820_3206_BB14_3000, nop, nop };
+
+/// TLB_TYPE_DEPTH, TLB_V42_DEPTH_TYPE_INVARIANT and
+/// TLB_SAMPLE_MODE_PER_PIXEL, over the 0xffffff00 every specifier has
+/// (nir_to_vir.c:2118-2131).
+pub const no_color_specifier: u32 = 0xffff_ff84;
+
+pub const no_color_fragment = Fragment{ .code = &no_color_code, .varyings = 0, .uniforms = 1, .writes_z = true, .disable_ez = true };
 
 /// A texture at the varyings s and t, with two uniforms: the configuration
 /// parameters P0 and P1. It comes back as two words, of two half-floats
@@ -321,6 +385,21 @@ const volume_code = varying(4) ++ varying(5) ++ varying(6) ++ [_]u64{
 } ++ sample_end;
 
 pub const volume_fragment = Fragment{ .code = &volume_code, .varyings = 3, .uniforms = 2 };
+
+/// A shadow sample: varyings s, t and the reference, which goes to
+/// TMUDREF before S starts the lookup, as handle_tex_src writes a
+/// comparator (Mesa's v3d_tex.c:155-157; since 1.142). The TMU compares
+/// with the sampler's function, and what passed comes back where the
+/// depth would, in red (`tiling.Texels.d16`).
+const shadow_code = varying(4) ++ varying(5) ++ varying(6) ++ [_]u64{
+    movMagic(WADDR_TMUT, 5),
+    movMagic(WADDR_TMUDREF, 6),
+    wrtmuc,
+    wrtmuc,
+    movMagic(WADDR_TMUS, 4),
+} ++ sample_end;
+
+pub const shadow_fragment = Fragment{ .code = &shadow_code, .varyings = 3, .uniforms = 2 };
 
 /// A cube map: varyings x, y and z. The TMU takes a direction whose largest
 /// part is 1 (Mesa's nir_normalize_cubemap_coords), so it is divided by that.
@@ -387,18 +466,40 @@ test "fmul and fadd read and write where qpu_pack.c puts them" {
     try std.testing.expectEqual(@as(u64, 0), fadd(4, 15, 0) >> RADDR_A_SHIFT & 63);
 }
 
-test "a program keeps to the registers a thread has" {
-    for ([_]Fragment{ flat_fragment, color_fragment, texture_fragment, texture_color_fragment }) |fragment| {
-        for (fragment.code) |instruction| {
-            const op_add = instruction >> OP_ADD_SHIFT & 0xFF;
-            if (op_add == OP_ADD_FADD) try std.testing.expect(instruction >> WADDR_A_SHIFT & 63 < 16);
+test "a program keeps to the registers a thread has, on both sides and in its signals" {
+    const programs = [_]Fragment{ flat_fragment, color_fragment, texture_fragment, texture_color_fragment, array_fragment, cube_fragment, volume_fragment, shadow_fragment };
+    for (programs) |fragment| {
+        var waits: u32 = 0;
+        for (fragment.code, 0..) |instruction, at| {
+            for (destinations(instruction)) |side| if (side) |to| try std.testing.expect(to < registers);
+            if (signalled(instruction)) |to| try std.testing.expect(to < registers);
+            // The wait on the scoreboard: two thread switches in a row,
+            // and exactly one of them in a program.
+            if (instruction == thrsw and at + 1 < fragment.code.len and fragment.code[at + 1] == thrsw) waits += 1;
         }
+        try std.testing.expectEqual(@as(u32, 1), waits);
         // Each ends in a thread switch and its two delay slots.
         const end = fragment.code[fragment.code.len - 3 ..];
         try std.testing.expectEqual(thrsw, end[0]);
         try std.testing.expectEqual(nop, end[1]);
         try std.testing.expectEqual(nop, end[2]);
     }
+}
+
+test "the destinations of the instructions that have them are read off where qpu_pack.c has them" {
+    try std.testing.expectEqual([2]?Rf{ 9, null }, destinations(fadd(9, 1, 2)));
+    try std.testing.expectEqual([2]?Rf{ null, 11 }, destinations(fmul(11, 1, 2)));
+    try std.testing.expectEqual([2]?Rf{ null, null }, destinations(nop));
+    // A magic address is not a register, on either side.
+    try std.testing.expectEqual([2]?Rf{ null, null }, destinations(movMagic(WADDR_TLB, 4)));
+    try std.testing.expectEqual([2]?Rf{ null, null }, destinations(vfpackMagic(WADDR_TLB, 4, 5)));
+    // The loads name their register in the signal's own field.
+    try std.testing.expectEqual(@as(?Rf, 7), signalled(ldunifrf(7)));
+    try std.testing.expectEqual(@as(?Rf, 8), signalled(ldvary(8)));
+    try std.testing.expectEqual(@as(?Rf, 10), signalled(ldtmu(10)));
+    try std.testing.expectEqual(@as(?Rf, null), signalled(nop));
+    try std.testing.expectEqual(@as(?Rf, null), signalled(thrsw));
+    try std.testing.expectEqual(@as(?Rf, null), signalled(wrtmuc));
 }
 
 test "a value read and written has its offset and registers in place" {

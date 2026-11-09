@@ -108,9 +108,32 @@ const most_apart_on_gpu = still.width * still.height / 20;
 // what they draw on the host.
 //
 // The shape of it says where to look: 15046 pixels are the same to the bit,
-// 4154 are further than 2, and *none* lie between. A difference in filtering
-// would spread across that gap; whole mip levels differing would not, and
-// `texture.levelFor` turns on a step. Unproven, and the next thing to measure.
+// 4154 are further than 2, and *none* lie between. Two measurements of
+// 06.11.2026 narrow that a long way, and neither needed the board.
+//
+// **The 4154 are the cube itself.** A flood fill of reference/cube.ppm from a
+// corner - which the backdrop's Gouraud quad lets through and the box's
+// texture stops - gives 15046 and 4154 exactly, the board's own two numbers,
+// and gives them for every tolerance from 2 to 11. So the backdrop is
+// bit-exact on the board and every single pixel of the box is wrong. That is
+// not whole mip levels differing, which would touch part of the box and not
+// all of it, so `texture.levelFor`'s step is dropped as the hypothesis.
+//
+// **And it is not the AArch64 build.** qemu_virt_a64 is the same chip as this
+// board - build.zig makes both `.a64psci` and installs one disk-a64 tree, so
+// the binaries are these binaries - and it reports bgra32 as this board does,
+// meeting this same reference. `./zig build virt64-ramfb
+// -Dboard=qemu_virt_a64 -Dvirt-ui=none`, then `C:test/FacetCube CHECK CORES`,
+// answers `alike`: 19200 the same, 0 off by anything, 0 at worst, on
+// facet.library 1.80. What the cores compute is right on the chip; what
+// differs is something this board has and QEMU has not.
+//
+// What is left to try, in order. First the stale-program trap of
+// docs/facet-todo.md:296-297 - a program on the SSD older than the library it
+// calls - which the package of 06.11.2026 has now cleared, so the next
+// `CHECK CORES` here may simply pass and the defect be gone. Then the
+// texture's own memory on the board, because the box is textured and the
+// backdrop that is bit-exact is not.
 
 const Gpu = facetgpu.Gpu;
 const Failure = facetgpu.Failure;

@@ -13,14 +13,34 @@
 //!   samples in its own way, by that device's (Ops.texture_memory);
 //! - a depth attachment is `depth`: its pixels live in the tiles alone,
 //!   cleared as each tile starts and never stored, so its memory is never
-//!   touched and may be of the lazily allocated type.
+//!   touched and, where it is made transient, may be of the lazily
+//!   allocated type.
 //!
-//! An image both drawn into and sampled is not one facet.library 1.0
-//! makes: the two kinds lie differently.
+//! **An image both drawn into and sampled is `rows`** (since 1.119), and
+//! sampled where its rows lie, as a sampled depth attachment is: nothing
+//! copied and nothing kept twice (`sampledRows`). That is llvmpipe's way,
+//! which lays every texture out the one way whatever it is bound as
+//! (`llvmpipe_texture_layout`, src/gallium/drivers/llvmpipe/
+//! lp_texture.c:154-223). A device whose images lie in a layout of its own
+//! (`Ops.texture_memory`) does not make one yet.
+//!
+//! **An image kept in rows may have levels** (since 1.119), as a depth
+//! attachment may since 1.63: each level's rows after the level before,
+//! each row on a cache line, and the whole pyramid again for each layer
+//! (`rowsAt`). A pass draws into the level its framebuffer's view names.
 //!
 //! **A texture may have layers**: an array's, a cube's six faces, or a 3D
 //! image's slices. Each lies as a whole texture does, `layer_bytes` from the
-//! one before. A 3D image has one level, so its slices need not halve.
+//! one before, so a 3D image's level is that level of each slice, and has
+//! half the slices of the level before it (`texture.Texture.slicesAt`).
+//!
+//! **An image may have four samples a pixel** (since 1.98), on a device that
+//! draws them: each sample's plane is the whole image at one sample, every
+//! layer of it, the next sample's plane after it (`Image.samples`). One of a
+//! colour format that is sampled is `rows` (since 1.110): Vulkan fetches it
+//! a texel at a time and never filters it, so its rows are the texture as
+//! they lie, each sample's plane a texture's worth after the one before
+//! (`sampledRows`).
 //!
 //! **Some formats are not kept** (`_decode`): compressed and float textures
 //! are unpacked as they are copied in. `format` is what is kept, and
@@ -38,6 +58,7 @@ const texture = facet.texture;
 const shader = facet.shader;
 const Device = @import("../device/_device.zig").Device;
 const _memory = @import("../memory/_memory.zig");
+const _driver = @import("../driver/_driver.zig");
 const DeviceMemory = _memory.DeviceMemory;
 const max_image_dimension = @import("../instance/_instance.zig").max_image_dimension;
 const drawable = @import("../surface/_surface.zig").drawable;
@@ -58,15 +79,53 @@ pub const Image = struct {
     levels: u32,
     /// An array's layers, a cube's faces, or a 3D image's slices.
     layers: u32 = 1,
+    /// From a layer to the next. Of a 3D image on a device of a layout of
+    /// its own, from one slice of level 0 to the next, the device placing
+    /// the slices of each level (`Ops.texture_memory`, since 1.141).
     layer_bytes: u64 = 0,
+    /// The samples each pixel holds: 1, or 4 on a device that draws them
+    /// (`Capabilities.multisampling`, since 1.98). Sample s of a pixel lies
+    /// `s * sample_bytes` past sample 0, `sample_bytes` being the whole of
+    /// the image at one sample, every layer of it. That is llvmpipe's
+    /// layout, its `sample_stride` the size of the single-sampled texture
+    /// and its size that times the samples (`llvmpipe_texture_layout`,
+    /// src/gallium/drivers/llvmpipe/lp_texture.c).
+    samples: u32 = 1,
+    /// Given wherever an image is made, a swapchain's as well, since every
+    /// copy and clear steps through the planes by it (since 1.99). 0 for
+    /// an image whose samples lie together (`quads`).
+    sample_bytes: u64,
+    /// An image of four samples whose device lays them out its own way,
+    /// each pixel's four together: the V3D's, as v3dv lays one out, an
+    /// image of twice the width and twice the height, each pixel a 2 x 2
+    /// quad of it, in UIF (v3dv_image.c:136-140, 180-183). Its memory is
+    /// what `Ops.texture_memory` says for four samples, and its texels are
+    /// where `Ops.texture_offset` says, the rows its kind has elsewhere
+    /// being none of it (since 1.146). Its kind is still `rows` or
+    /// `depth`, what it is drawn into as.
+    quads: bool = false,
+    /// Of a plane `sampleOf` made of an image with `quads`: which of its
+    /// samples the plane is, the device finding it in each pixel's quad.
+    sample: u32 = 0,
     /// A 3D image: its slices are reached by z, not by layer.
     volume: bool = false,
+    /// A 1D image, which this library keeps as a texture of one row: its
+    /// height and depth are 1 and its levels halve its width alone. The
+    /// flag is what tells it from a 2D image a row high, which is a
+    /// different thing to Vulkan and takes different view types.
+    /// (Since 1.86.)
+    line: bool = false,
     /// IMAGE_CREATE_CUBE_COMPATIBLE.
     cube: bool = false,
     /// IMAGE_CREATE_PACKED_TEXELS: an 8888 texel kept in the 32 bits of
     /// its word rather than spread over 64 (`texture.Format.argb8888`,
-    /// `PhysicalDeviceFeatures.small_texels`, since 1.48).
+    /// `Capabilities.small_texels`, since 1.48).
     packed_texels: bool = false,
+    /// IMAGE_CREATE_MUTABLE_FORMAT: its texels kept as they lie, the bytes
+    /// a copy gives them, so that a view of another format Vulkan has
+    /// compatible with its own reads them that format's way (`takesView`,
+    /// since 1.131).
+    mutable: bool = false,
     usage: u32,
     kind: Kind,
     /// `rows`: the bytes from one row to the next.
@@ -109,12 +168,20 @@ pub const Display = struct {
 
 pub const ImageView = struct {
     image: *Image,
+    /// What its texels are read as and what a pass draws into it in: the
+    /// image's own format, or since 1.131 another Vulkan has compatible
+    /// with it, of an image made IMAGE_CREATE_MUTABLE_FORMAT.
+    format: facet.Format,
     base_level: u32,
     level_count: u32,
     base_layer: u32 = 0,
     layer_count: u32 = 1,
     /// `texture`: the levels it takes, as a sample reads them.
     texels: texture.Texture = undefined,
+    /// Its component swizzle, which its texels apply (since 1.120): kept
+    /// here as well for a view without texels, which a framebuffer takes
+    /// only where it swizzles nothing.
+    swizzle: texture.Swizzle = .{},
     /// `rows`: its pixels, for a fragment function of a later subpass to
     /// read (`IMAGE_USAGE_INPUT_ATTACHMENT`, `shader.Resources.input`).
     /// Nothing to read where the image is of another kind.
@@ -160,10 +227,12 @@ pub fn rowFormat(format: facet.Format) shader.TexelFormat {
 
 /// How a shader function writes the pixels of an image kept in rows, as
 /// the texture over them (`texture.Texture.linear`): null for a format
-/// whose rows no texture reads, which is every one whose texel is not a
-/// word of its own. `r8g8b8a8_unorm` is one of those - a texture of 8888
-/// is 0xAARRGGBB, as `b8g8r8a8_unorm`'s rows are, and nothing reads a
-/// word with red in its low byte. (Since 1.56.)
+/// whose rows no function writes through. `r8g8b8a8_unorm` is one of
+/// those: a texture of 8888 is 0xAARRGGBB, as `b8g8r8a8_unorm`'s rows
+/// are, and the one that reads a word with red in its low byte,
+/// `texture.Format.rgba8`, is read only where an image kept in rows is
+/// sampled (`sampledRowFormat`, since 1.110), which nothing writes
+/// through. (Since 1.56.)
 pub fn rowTexture(format: facet.Format) ?texture.Format {
     return switch (format) {
         .b8g8r8a8_unorm => .argb8888,
@@ -174,7 +243,7 @@ pub fn rowTexture(format: facet.Format) ?texture.Format {
 
 /// Whether a texture of `format` keeps channels of its own rather than
 /// the 8888 colour a sample makes of them
-/// (`PhysicalDeviceFeatures.wide_channels`, since 1.69).
+/// (`Capabilities.wide_channels`, since 1.69).
 pub fn wideChannels(format: facet.Format) bool {
     return switch (format) {
         .r8g8_unorm, .r16_unorm, .r16g16_unorm, .r16g16b16a16_unorm => true,
@@ -185,10 +254,12 @@ pub fn wideChannels(format: facet.Format) bool {
 /// Whether a texture of `format` keeps whole numbers rather than a colour
 /// or a part of one: Vulkan's `_uint` and `_sint` formats, one channel,
 /// two or four, of 8, 16 or 32 bits
-/// (`PhysicalDeviceFeatures.whole_textures`, since 1.70).
+/// (`Capabilities.whole_textures`, since 1.70), and since 1.127 the
+/// A8B8G8R8 words of the 8-bit four, which are the same bytes.
 pub fn wholeNumbers(format: facet.Format) bool {
     return switch (format) {
         .r8_uint, .r8g8_uint, .r8g8b8a8_uint, .r8_sint, .r8g8_sint, .r8g8b8a8_sint => true,
+        .a8b8g8r8_uint_pack32, .a8b8g8r8_sint_pack32 => true,
         .r16_uint, .r16g16_uint, .r16g16b16a16_uint, .r16_sint, .r16g16_sint, .r16g16b16a16_sint => true,
         .r32_uint, .r32g32_uint, .r32g32b32a32_uint, .r32_sint, .r32g32_sint, .r32g32b32a32_sint => true,
         else => false,
@@ -200,6 +271,37 @@ pub fn wholeNumbers(format: facet.Format) bool {
 /// function writes (`rowTexture`, since 1.56).
 pub fn writtenRows(image: *const Image) bool {
     return image.kind == .rows and image.usage & facet.IMAGE_USAGE_STORAGE != 0;
+}
+
+/// Whether an image kept in rows is sampled (`shapeFor`): one of four
+/// samples a pixel, kept in rows as it is copied and resolved, those rows
+/// the texture a fragment function fetches each sample of
+/// (`texture.Texture.sampleOf`, since 1.110); or since 1.119 one drawn
+/// into, or read as an input attachment, as well, those rows the texture
+/// a sample filters, at every level they have. A depth attachment's is
+/// `sampledDepth`.
+pub fn sampledRows(image: *const Image) bool {
+    return image.kind == .rows and image.usage & facet.IMAGE_USAGE_SAMPLED != 0;
+}
+
+/// How such an image's rows are read as a texture: a format of 8888 as the
+/// word it is - `b8g8r8a8_unorm`'s 0xAARRGGBB as `argb8888`, and
+/// `r8g8b8a8_unorm`'s, red in the low byte, as `rgba8` - and R5G6B5 as
+/// `rgb565`. Null for any other. (Since 1.110.)
+pub fn sampledRowFormat(format: facet.Format) ?texture.Format {
+    return switch (format) {
+        .r8g8b8a8_unorm => .rgba8,
+        else => rowTexture(format),
+    };
+}
+
+/// Whether an image has texels a descriptor hands a function, which
+/// BindImageMemory lays over its memory: a texture, a depth attachment
+/// sampled where it lies, an attachment written through as a storage
+/// image, and an image kept in rows sampled where they lie - one of four
+/// samples since 1.110, and one drawn into as well since 1.119.
+pub fn hasTexels(image: *const Image) bool {
+    return image.kind == .texture or sampledDepth(image) or writtenRows(image) or sampledRows(image);
 }
 
 /// The bytes a texel, a pixel or a vertex's value of `format` takes; 0
@@ -217,7 +319,7 @@ pub fn bytesOf(format: facet.Format) u32 {
         // or 32 bits.
         .r8_uint, .r8_sint => 1,
         .r8g8_uint, .r8g8_sint, .r16_uint, .r16_sint => 2,
-        .r8g8b8a8_uint, .r8g8b8a8_sint, .r16g16_uint, .r16g16_sint, .r32_uint, .r32_sint => 4,
+        .r8g8b8a8_uint, .r8g8b8a8_sint, .a8b8g8r8_uint_pack32, .a8b8g8r8_sint_pack32, .r16g16_uint, .r16g16_sint, .r32_uint, .r32_sint => 4,
         .r16g16b16a16_uint, .r16g16b16a16_sint, .r32g32_uint, .r32g32_sint => 8,
         .r32g32b32a32_uint, .r32g32b32a32_sint => 16,
         .d16_unorm_s8_uint => 4,
@@ -240,7 +342,7 @@ pub fn textureFormat(format: facet.Format) ?texture.Format {
 
 /// The same, with IMAGE_CREATE_PACKED_TEXELS: an 8888 texel is then kept
 /// in the 32 bits of its word rather than spread over 64, which is the
-/// same colour in half the memory (`PhysicalDeviceFeatures.small_texels`,
+/// same colour in half the memory (`Capabilities.small_texels`,
 /// since 1.48). The flag means nothing to any other format.
 pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
     return switch (format) {
@@ -249,7 +351,7 @@ pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
         // One byte of red a texel, read as (red, 0, 0, 1) (since 1.48).
         .r8_unorm => .r8,
         // Kept in their blocks and decoded as they are sampled, on a
-        // device that says so (`PhysicalDeviceFeatures.kept_compressed`).
+        // device that says so (`Capabilities.kept_compressed`).
         .bc1_rgba_unorm_block => .bc1,
         .bc1_rgb_unorm_block => .bc1_rgb,
         .bc2_unorm_block => .bc2,
@@ -265,7 +367,7 @@ pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
         .bc6h_sfloat_block => .bc6hs,
         // Kept as the floats they were copied in as, and rounded to 8 bits
         // a channel as they are sampled, on a device that says so
-        // (`PhysicalDeviceFeatures.kept_floats`).
+        // (`Capabilities.kept_floats`).
         .r16g16b16a16_sfloat => .rgba16f,
         .r32g32b32a32_sfloat => .rgba32f,
         .b10g11r11_ufloat_pack32 => .rg11b10f,
@@ -275,20 +377,20 @@ pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
         // writes through.
         .r32_sfloat => .r32f,
         // Channels of the texture's own, kept as they lie, on a device
-        // that says so (`PhysicalDeviceFeatures.wide_channels`, since
+        // that says so (`Capabilities.wide_channels`, since
         // 1.69): two bytes of red and green, and 16 bits a channel.
         .r8g8_unorm => .rg8,
         .r16_unorm => .r16,
         .r16g16_unorm => .rg16,
         .r16g16b16a16_unorm => .rgba16,
         // Whole numbers, likewise kept as they lie, on a device that says
-        // so (`PhysicalDeviceFeatures.whole_textures`, since 1.70).
+        // so (`Capabilities.whole_textures`, since 1.70).
         .r8_uint => .r8u,
         .r8g8_uint => .rg8u,
-        .r8g8b8a8_uint => .rgba8u,
+        .r8g8b8a8_uint, .a8b8g8r8_uint_pack32 => .rgba8u,
         .r8_sint => .r8i,
         .r8g8_sint => .rg8i,
-        .r8g8b8a8_sint => .rgba8i,
+        .r8g8b8a8_sint, .a8b8g8r8_sint_pack32 => .rgba8i,
         .r16_uint => .r16u,
         .r16g16_uint => .rg16u,
         .r16g16b16a16_uint => .rgba16u,
@@ -302,10 +404,158 @@ pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
         .r32g32_sint => .rg32i,
         .r32g32b32a32_sint => .rgba32i,
         // A depth sampled where it lies, in rows
-        // (`PhysicalDeviceFeatures.sampled_depth`).
+        // (`Capabilities.sampled_depth`).
         .d16_unorm => .d16,
         else => null,
     };
+}
+
+/// How a texture keeps texels of `format` as they lie - the bytes a copy
+/// gives it, nothing spread or reordered - which is how an image made
+/// IMAGE_CREATE_MUTABLE_FORMAT keeps its own, and how a view of it reads
+/// them in another format: B8G8R8A8's word as `argb8888`, R8G8B8A8's four
+/// bytes as `rgba8`, and every other format as a texture keeps it
+/// already. Null for a format no texture keeps as it lies: one unpacked
+/// as it is copied in on every device - ETC2, EAC, and the two of four
+/// channels in 16 bits - or one no image is made of. (Since 1.131.)
+///
+/// That is how llvmpipe keeps every texture, in its format's own bytes
+/// (`llvmpipe_texture_layout`, src/gallium/drivers/llvmpipe/
+/// lp_texture.c:154-223), which is why lavapipe can hand a view's format
+/// to a sampler view of the same resource and nothing else
+/// (`lvp_CreateImageView`, src/gallium/frontends/lavapipe/
+/// lvp_image.c:483, `lvp_create_samplerview` :350-365).
+pub fn lyingFormat(format: facet.Format) ?texture.Format {
+    return switch (format) {
+        .b8g8r8a8_unorm => .argb8888,
+        .r8g8b8a8_unorm => .rgba8,
+        else => keptFormat(format, false),
+    };
+}
+
+/// Whether the device `can` says of keeps texels of `format` as they lie
+/// (`lyingFormat`) rather than unpacking them as they are copied in: a
+/// compressed format's blocks and a float format's floats where it keeps
+/// those (`Capabilities.kept_compressed`, `kept_floats`), a texture's own
+/// channels and its whole numbers likewise (`wide_channels`,
+/// `whole_textures`), and an 8888 word's 32 bits and R8_UNORM's byte
+/// where it keeps a texel smaller than its colour (`small_texels`).
+/// R5G6B5's 16 bits are kept as they lie everywhere. (Since 1.131.)
+fn keepsAsTheyLie(can: *const _instance.Capabilities, format: facet.Format) bool {
+    if (lyingFormat(format) == null) return false;
+    if (_decode.blockBytes(format) != 0) return can.kept_compressed;
+    if (_decode.texelBytes(format) != 0) return can.kept_floats;
+    if (wideChannels(format)) return can.wide_channels;
+    if (wholeNumbers(format)) return can.whole_textures;
+    return switch (format) {
+        .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r8_unorm => can.small_texels,
+        else => true,
+    };
+}
+
+/// How a texture image keeps its texels: as they lie where it was made
+/// IMAGE_CREATE_MUTABLE_FORMAT (`lyingFormat`, since 1.131), and as
+/// `keptFormat` has it otherwise.
+fn keptBy(image: *const Image) ?texture.Format {
+    return if (image.mutable) lyingFormat(image.format) else keptFormat(image.format, image.packed_texels);
+}
+
+/// Whether a view of `view` may be made of an image of `image`, by
+/// Vulkan's format compatibility classes (58.1.8, "Format Compatibility
+/// Classes"): the one format; two colour formats that are not compressed
+/// and take the same bytes a texel; and two compressed formats whose
+/// blocks differ in nothing but how their texels' numbers are read, which
+/// Vulkan numbers in pairs, from BC1_RGB_UNORM_BLOCK and
+/// BC1_RGB_SRGB_BLOCK (131 and 132) to ASTC_12x12_UNORM_BLOCK and
+/// ASTC_12x12_SRGB_BLOCK (183 and 184). A depth or a stencil format is
+/// compatible with itself alone. (Since 1.131.)
+pub fn compatible(image: facet.Format, view: facet.Format) bool {
+    if (image == view) return true;
+    if (hasDepth(image) or hasStencil(image) or hasDepth(view) or hasStencil(view)) return false;
+    const first = compressedClass(image);
+    const second = compressedClass(view);
+    if (first != null or second != null) return first != null and second != null and first.? == second.?;
+    const size = texelSize(image);
+    return size != 0 and size == texelSize(view);
+}
+
+/// A compressed format's class, the pair of formats Vulkan numbers it in;
+/// null for a format that is not compressed.
+fn compressedClass(format: facet.Format) ?u32 {
+    const value = @intFromEnum(format);
+    if (value < 131 or value > 184) return null;
+    return (value - 131) / 2;
+}
+
+/// The bytes a texel of a format that is not compressed takes, whether a
+/// texture keeps it as it lies or unpacks it; 0 for one no image is made
+/// of.
+fn texelSize(format: facet.Format) u32 {
+    const kept = bytesOf(format);
+    return if (kept != 0) kept else _decode.unpackedBytes(format);
+}
+
+/// Whether a view in a format of `features` may be made of an image made
+/// for `usage`: Vulkan has a view made only of an image a view is for
+/// (VUID-VkImageViewCreateInfo-image-04441), its format having a feature
+/// at all (-None-02273), and that format do whatever the image is for -
+/// be sampled, written through, drawn into or read as an input attachment
+/// (VUID-VkImageViewCreateInfo-usage-02274, -02275, -08931, -02277,
+/// -08932). (Since 1.131.) TRANSIENT_ATTACHMENT is no view's usage of its
+/// own since 1.135: an image made with it is made with an attachment's
+/// usage too (-usage-00966), whose feature decides.
+fn viewable(features: u32, usage: u32) bool {
+    const for_views = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_COLOR_ATTACHMENT |
+        facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT;
+    if (usage & for_views == 0 or features == 0) return false;
+    const drawn = facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT;
+    if (usage & facet.IMAGE_USAGE_SAMPLED != 0 and features & facet.FORMAT_FEATURE_SAMPLED_IMAGE == 0) return false;
+    if (usage & facet.IMAGE_USAGE_STORAGE != 0 and features & facet.FORMAT_FEATURE_STORAGE_IMAGE == 0) return false;
+    if (usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0 and features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT == 0) return false;
+    if (usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT != 0 and features & facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT == 0) return false;
+    if (usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0 and features & drawn == 0) return false;
+    return true;
+}
+
+/// Whether a view of `format` reads `image`'s texels: its own format,
+/// always; and since 1.131, of an image made IMAGE_CREATE_MUTABLE_FORMAT,
+/// a format Vulkan has compatible with it (`compatible`) that reads them
+/// where they lie, in the way the image's kind keeps them - a texture's
+/// in its layout, as `lyingFormat` reads them, on a device that keeps
+/// that format as it lies; an image's rows written through as
+/// `rowTexture` reads them, sampled as `sampledRowFormat` does, and drawn
+/// into or read as an input attachment as `rowFormat` does. A depth image
+/// takes its own format alone. `can` is the device's.
+pub fn takesView(can: *const _instance.Capabilities, image: *const Image, format: facet.Format) bool {
+    if (format == image.given_format) return true;
+    if (!image.mutable or !compatible(image.given_format, format)) return false;
+    return switch (image.kind) {
+        .texture => keepsAsTheyLie(can, format),
+        .rows => if (writtenRows(image))
+            rowTexture(format) != null
+        else if (sampledRows(image))
+            sampledRowFormat(format) != null
+        else
+            rowFormat(format) != .none,
+        .depth => false,
+    };
+}
+
+/// A view's texels in `format`, which `takesView` took, rather than the
+/// image's own: the same texels at the same places, their bytes read the
+/// view's way. That is what Vulkan has a view of a compatible format be:
+/// "the same mapping between texel coordinates and memory locations
+/// irrespective of the format, with only the interpretation of the bit
+/// pattern changing". Compatible formats take the same bytes a texel, or
+/// a block, so the levels lie where the image's own lie. (Since 1.131.)
+pub fn readAs(texels: texture.Texture, image: *const Image, format: facet.Format) texture.Texture {
+    var made = texels;
+    made.format = switch (image.kind) {
+        .texture => lyingFormat(format).?,
+        .rows => if (writtenRows(image)) rowTexture(format).? else sampledRowFormat(format).?,
+        .depth => unreachable,
+    };
+    return made;
 }
 
 /// Whether an image is a depth attachment's that may also be sampled: its
@@ -332,10 +582,62 @@ pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
 /// The same, for a physical device that no Device was made from yet: what
 /// GetPhysicalDeviceImageFormatProperties asks of a shape. The image's
 /// `device` is not filled in.
+///
+/// **An image made IMAGE_CREATE_MUTABLE_FORMAT** (since 1.131) is made
+/// only where every view Vulkan lets a program make of it is one this
+/// library makes: each format compatible with the image's own whose
+/// features do what the image is for (`viewable`) has to read its texels
+/// where they lie (`takesView`). Vulkan gives a program nothing to ask
+/// which of those views would be refused, so the image is refused
+/// instead, which GetPhysicalDeviceImageFormatProperties then says. An
+/// R5G6B5 image to be sampled is one: B4G4R4A4 is sampled, of the same
+/// two bytes, and is unpacked as it is copied in, so no texture reads it
+/// where it lies.
 pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateInfo) ?Image {
+    const image = laidOut(physical, info) orelse return null;
+    if (image.mutable) for (std.enums.values(facet.Format)) |other| {
+        if (other == info.format or !compatible(info.format, other)) continue;
+        const described = physical.ops.format_properties(physical, other);
+        const features = if (info.tiling == .optimal) described.optimal_tiling_features else described.linear_tiling_features;
+        if (viewable(features, info.usage) and !takesView(&physical.can, &image, other)) return null;
+    };
+    return image;
+}
+
+/// The image `info` asks for, laid out, or null for one this library does
+/// not make: `shapeFor` before it looks at the views of another format.
+fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateInfo) ?Image {
     const extent = info.extent;
     const volume = info.image_type == .@"3d";
-    if ((info.image_type != .@"2d" and !volume) or info.samples != 1) return null;
+    // A 1D image is a texture of one row (since 1.86). Vulkan asks that
+    // its height and depth be 1, and the layout this library keeps halves
+    // the longer side alone, so such a texture's levels come to
+    // floor(log2(width)) + 1 of themselves (`texture.Sizes.of`) - which
+    // is Vulkan's own rule for a 1D image. Nothing else about it is
+    // special: it is sampled, copied and laid out as any texture of its
+    // width is.
+    const line = info.image_type == .@"1d";
+    if (info.image_type != .@"2d" and !volume and !line) return null;
+    // TRANSIENT_ATTACHMENT beside the attachments' usage alone
+    // (VUID-VkImageCreateInfo-usage-00963; since 1.135): until then a
+    // depth attachment was made transient beside the transfers, and a
+    // colour image beside them, SAMPLED or STORAGE. That it comes with one
+    // of them (-usage-00966) CreateImage asks itself, so that the format
+    // query is no stricter for TRANSIENT alone than for TRANSIENT beside
+    // a colour attachment, as Vulkan has it be for a usage within another
+    // ("Additional Image Capabilities").
+    const attachment_usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT;
+    if (info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT != 0 and
+        info.usage & ~(attachment_usage | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT) != 0) return null;
+    if (info.samples != 1 and !multisampled(physical, info)) return null;
+    if (line and (extent.height != 1 or extent.depth != 1)) return null;
+    // A compressed format is no 1D image's, as neither Mesa driver makes
+    // one (`lvp_get_image_format_properties`,
+    // src/gallium/frontends/lavapipe/lvp_formats.c;
+    // `get_image_format_properties`, src/broadcom/vulkan/v3dv_formats.c),
+    // its blocks being four rows high. Until 1.97 one was made, and the
+    // layout of a level a block across overflowed (`texture.Level`).
+    if (line and _decode.blockBytes(info.format) != 0) return null;
     const layers = if (volume) extent.depth else info.array_layers;
     if (layers == 0 or (!volume and extent.depth != 1)) return null;
     // A 3D image's depth is its layers, and may be any number since 1.46;
@@ -343,9 +645,9 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     if (volume and (info.array_layers != 1 or layers > _instance.max_image_dimension_3d)) return null;
     if (layers > _instance.max_image_array_layers) return null;
     const cube = info.flags & facet.IMAGE_CREATE_CUBE_COMPATIBLE != 0;
-    if (cube and (volume or layers < 6 or extent.width != extent.height)) return null;
+    if (cube and (volume or line or layers < 6 or extent.width != extent.height)) return null;
     // A texel kept smaller than the colour it reads as, on a device that
-    // keeps one (`PhysicalDeviceFeatures.small_texels`, since 1.48): an
+    // keeps one (`Capabilities.small_texels`, since 1.48): an
     // 8888 texel in the 32 bits of its word rather than spread over 64,
     // and a texel of one byte of red. Both are for an image a function
     // reads or writes; nothing else is kept in a texture's layout.
@@ -355,45 +657,62 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         .r8g8b8a8_unorm, .b8g8r8a8_unorm => true,
         else => false,
     };
-    if (packed_texels and !(physical.features.small_texels and in_texels and packs)) return null;
-    if (info.format == .r8_unorm and !(physical.features.small_texels and in_texels)) return null;
+    if (packed_texels and !(physical.can.small_texels and in_texels and packs)) return null;
+    // A view of another format may be made of it (since 1.131), so its
+    // texels are kept as they lie and each such format reads the same
+    // bytes its own way.
+    const mutable = info.flags & facet.IMAGE_CREATE_MUTABLE_FORMAT != 0;
+    if (info.format == .r8_unorm and !(physical.can.small_texels and in_texels)) return null;
     // A texture whose channels are its own, kept as they lie
-    // (`PhysicalDeviceFeatures.wide_channels`, since 1.69): two bytes of
+    // (`Capabilities.wide_channels`, since 1.69): two bytes of
     // red and green, or 16 bits a channel. Such an image is for a
     // function to read or to write, as a small texel is, and a device
     // that keeps 8 bits a channel refuses it.
-    if (wideChannels(info.format) and !(physical.features.wide_channels and in_texels)) return null;
+    if (wideChannels(info.format) and !(physical.can.wide_channels and in_texels)) return null;
     // And a texture of whole numbers, which a function reads with
     // `texture.Texture.wholesAt` and writes with `setWholes`
-    // (`PhysicalDeviceFeatures.whole_textures`, since 1.70): no colour
+    // (`Capabilities.whole_textures`, since 1.70): no colour
     // carries one, so an image of such a format is for a function and
     // nothing else.
-    if (wholeNumbers(info.format) and !(physical.features.whole_textures and in_texels)) return null;
-    // Layers are for a function to read or to write: an attachment or
-    // rows have one, and both want the layout a sample reads, which is
-    // `optimal` tiling. An image of layers written through and never
-    // sampled is one of them since 1.55.
+    if (wholeNumbers(info.format) and !(physical.can.whole_textures and in_texels)) return null;
+    // Layers want `optimal` tiling, as a format unpacked on the way in
+    // does: a linear image is one layer, which is all Vulkan promises of
+    // one. Until 1.91 an image of layers was also one a function reads or
+    // writes - sampled, or written through and never sampled since 1.55 -
+    // and an attachment had the one. Since 1.91 an attachment may have
+    // them too, a colour attachment's rows or a depth attachment's a
+    // layer after the layer before, for a framebuffer of layers
+    // (CreateFramebuffer); so may an image a transfer alone touches. A 3D
+    // image's slices are not such layers and stay a function's: a pass
+    // draws into a slice through a 2D view of it, which is Vulkan 1.1's
+    // (VK_KHR_maintenance1's IMAGE_CREATE_2D_ARRAY_COMPATIBLE), not 1.0's.
     if ((layers > 1 or _decode.unpacks(info.format)) and info.tiling != .optimal) return null;
-    if (layers > 1 and !in_texels) return null;
+    if (layers > 1 and volume and !in_texels) return null;
     // A compressed image is kept in its blocks, and a float one in its
     // floats, where this device samples them
-    // (`PhysicalDeviceFeatures.kept_compressed`, `kept_floats`); where it
+    // (`Capabilities.kept_compressed`, `kept_floats`); where it
     // does not they are unpacked into 8 bits a channel. A storage image is
     // written texel by texel, which neither kind takes.
     const writes_texels = info.usage & facet.IMAGE_USAGE_STORAGE != 0;
     // An ETC2 or EAC block is never kept: no sampler of this library reads
     // one, so such an image is unpacked whatever the device says.
-    const keeps_blocks = physical.features.kept_compressed and _decode.blockBytes(info.format) != 0 and !_decode.etc(info.format) and !writes_texels;
+    const keeps_blocks = physical.can.kept_compressed and _decode.blockBytes(info.format) != 0 and !_decode.etc(info.format) and !writes_texels;
     // A float image keeps its floats even where a function writes it
     // through, since 1.57: `texture.Texture.setParts` writes one texel of
     // floats, where nothing writes one texel of a compressed block.
-    const keeps_floats = physical.features.kept_floats and _decode.texelBytes(info.format) != 0;
+    const keeps_floats = physical.can.kept_floats and _decode.texelBytes(info.format) != 0;
     const kept_format: facet.Format = if (_decode.unpacks(info.format) and !(keeps_blocks or keeps_floats)) .r8g8b8a8_unorm else info.format;
     // What is unpacked on the way in is unpacked to be sampled: a format
     // kept as it lies - a compressed image's blocks, a float one's floats
     // - is not (since 1.57, where a float image written through keeps its
     // floats and so needs no sampling).
     if (kept_format != info.format and info.usage & facet.IMAGE_USAGE_SAMPLED == 0) return null;
+    // Nor where a view of another format may be made of it: what is
+    // unpacked is no longer the bytes such a view would read, and a device
+    // whose images lie in a layout of its own reads none of this library's
+    // views of another format yet (`Ops.texture_memory`), the V3D's half
+    // of docs/facet-vulkan10.md item 42 being to come.
+    if (mutable and (kept_format != info.format or physical.ops.texture_memory != null)) return null;
     if (extent.width == 0 or extent.height == 0 or extent.width > max_image_dimension or extent.height > max_image_dimension) return null;
     if (info.mip_levels == 0) return null;
     // A block's bytes stand in for a texel's where the blocks are kept:
@@ -407,14 +726,17 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         .given_format = info.format,
         .layers = layers,
         .volume = volume,
+        .line = line,
         .cube = cube,
         .packed_texels = packed_texels,
+        .mutable = mutable,
         .width = extent.width,
         .height = extent.height,
         .levels = info.mip_levels,
         .usage = info.usage,
         .kind = .rows,
         .bytes = 0,
+        .sample_bytes = 0,
     };
     const depth_usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT |
         facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
@@ -430,9 +752,12 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         const sampled = info.usage & facet.IMAGE_USAGE_SAMPLED != 0;
         const read_back = info.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0;
         if (sampled or read_back) {
-            if (!physical.features.sampled_depth) return null;
+            if (!physical.can.sampled_depth) return null;
             if (info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT != 0) return null;
         }
+        // A stencil sampled where the device samples one (since 1.142):
+        // the V3D samples a depth of its own alone.
+        if (sampled and hasStencil(info.format) and !physical.can.sampled_stencil) return null;
         var allowed = depth_usage;
         if (sampled) allowed |= facet.IMAGE_USAGE_SAMPLED;
         if (read_back) allowed |= facet.IMAGE_USAGE_INPUT_ATTACHMENT;
@@ -453,57 +778,230 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         // names the level and the layer a pass draws into, and a sample
         // reads any of them.
         image.layer_bytes = 0;
-        for (0..info.mip_levels) |lod| image.layer_bytes += depthLevelBytes(&image, @intCast(lod));
+        for (0..info.mip_levels) |lod| image.layer_bytes += levelBytes(&image, @intCast(lod));
         image.bytes = image.layer_bytes * layers;
-        return image;
+        // A sampled one on a device of a layout of its own lies as that
+        // device's textures do, each layer a texture of its own, so the
+        // pass stores it where the TMU reads it, as v3dv keeps every image
+        // (since 1.142, `deviceLaid`).
+        if (sampled) if (physical.ops.texture_memory) |own| {
+            const memory = own(info.format, extent.width, extent.height, 1, info.mip_levels, 1);
+            image.layer_bytes = std.mem.alignForward(u64, memory.bytes, memory.alignment);
+            image.bytes = image.layer_bytes * layers;
+            image.alignment = memory.alignment;
+        };
+        // Of four samples there, laid out as its device keeps them, which
+        // is never sampled (`multisampled`; since 1.146).
+        if (info.samples > 1) if (physical.ops.texture_memory) |own| return inQuads(image, own(info.format, extent.width, extent.height, 1, 1, info.samples), info.samples);
+        return withPlanes(image, info.samples);
     }
     if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT != 0) return null;
     // Drawn into, or read as an input attachment, and written through as a
     // storage image at once (since 1.56): the image stays in rows, as an
-    // attachment is, and a function writes those rows. Never sampled as
-    // well, a sample wanting the blocked layout, and of a format whose
-    // rows a texture reads.
+    // attachment is, and a function writes those rows. Not sampled as
+    // well, which `sampled_rows` is, and of a format whose rows a texture
+    // reads.
     const rows_written = info.usage & facet.IMAGE_USAGE_STORAGE != 0 and
         info.usage & facet.IMAGE_USAGE_SAMPLED == 0 and
         info.usage & (facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT) != 0 and
         info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT == 0 and
         rowTexture(info.format) != null and info.mip_levels == 1 and layers == 1;
+    // Sampled where its rows lie. At four samples a pixel (since 1.110):
+    // kept in rows, as such an image is drawn, copied and resolved, those
+    // rows being the texture a fragment function fetches each sample of
+    // (`texture.Texture.sampleOf`). Vulkan fetches a multisampled image a
+    // texel at a time and never filters it, so nothing re-tiles them, and
+    // lavapipe's sampler view of one is the same resource of several
+    // samples (`lvp_image_create`, src/gallium/frontends/lavapipe/
+    // lvp_image.c:87-89, :104).
+    //
+    // And at one, drawn into or read as an input attachment as well
+    // (since 1.119, docs/facet-vulkan10.md item 48): kept in rows, as an
+    // attachment is drawn and copied, and those rows the texture a sample
+    // filters, at every level they have. llvmpipe lays a texture out the
+    // one way whatever it is bound as (`llvmpipe_texture_layout`,
+    // src/gallium/drivers/llvmpipe/lp_texture.c:154-223): the rasteriser
+    // writes the level a surface names (`init_scene_texture`,
+    // lp_scene.c:159-185) and the sampler reads the same bytes. Until
+    // 1.119 such an image was refused, and the one of four samples with
+    // it, Vulkan having a query's sample counts hold the 1 wherever they
+    // hold the 4.
+    //
+    // Either is of a format whose rows a texture reads
+    // (`sampledRowFormat`), which the three a pass draws into are, in
+    // optimal tiling, on a device that keeps its images in this library's
+    // layout: the V3D's are its own (`Ops.texture_memory`), and its half
+    // of item 48 is to come. Not written through as a storage image as
+    // well, which `rows_written` is for one level and one layer alone; not
+    // transient, as it has memory behind it; and not a 3D image, whose
+    // slices no pass of Vulkan 1.0 draws into.
+    const attachment = info.usage & (facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT) != 0;
+    const sampled_rows = info.usage & facet.IMAGE_USAGE_SAMPLED != 0 and (info.samples != 1 or attachment);
+    if (sampled_rows) {
+        if (physical.ops.texture_memory != null or sampledRowFormat(info.format) == null) return null;
+        const not_sampled = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
+        if (info.tiling != .optimal or volume or info.usage & not_sampled != 0) return null;
+    }
     // Read as an input attachment: its pixels are read out of its rows,
-    // so not in a texture's layout and not a transient attachment, which
-    // has no memory at all.
+    // so not in a texture's layout - sampled as well, it is
+    // `sampled_rows` - and not a transient attachment, which has no
+    // memory at all.
     if (info.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0) {
-        const not_rows = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
-        if (info.usage & not_rows != 0) return null;
+        if (info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT != 0) return null;
         if (info.usage & facet.IMAGE_USAGE_STORAGE != 0 and !rows_written) return null;
     }
     // Sampled, written through as a storage image, or both: all one kind,
-    // kept in the layout a sample reads.
-    if (info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0 and !rows_written) {
+    // kept in the layout a sample reads. And one kept in its blocks,
+    // whatever it is for (since 1.126): a copy moves the blocks and a blit
+    // decodes them where a texture keeps them, and rows of them had no
+    // texture laid over them, so a copy into one made for the transfers
+    // alone wrote through a texture that was never there.
+    if ((info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0 or keeps_blocks) and !rows_written and !sampled_rows) {
         if (info.tiling != .optimal or info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0) return null;
-        const kept = keptFormat(kept_format, packed_texels) orelse return null;
+        // As they lie, where a view of another format may be made of it,
+        // on a device that keeps its format so (since 1.131).
+        if (mutable and !keepsAsTheyLie(&physical.can, kept_format)) return null;
+        const kept = keptBy(&image) orelse return null;
         image.kind = .texture;
         var one_layer: u64 = texture.Texture.bytes(kept, extent.width, extent.height, info.mip_levels) catch return null;
         one_layer = std.mem.alignForward(u64, one_layer, row_alignment);
+        var all = one_layer * layers;
         if (physical.ops.texture_memory) |own| {
-            const memory = own(kept_format, extent.width, extent.height, info.mip_levels);
+            const memory = own(kept_format, extent.width, extent.height, if (volume) layers else 1, info.mip_levels, 1);
             one_layer = std.mem.alignForward(u64, memory.bytes, memory.alignment);
+            all = one_layer * layers;
             image.alignment = memory.alignment;
+            // A 3D image's slices are the device's to place, each level
+            // holding its own (since 1.141): its memory is all of them,
+            // and the step from a slice to the next level 0's.
+            if (volume) {
+                all = one_layer;
+                one_layer = memory.layer_bytes;
+            }
         }
         image.layer_bytes = one_layer;
-        image.bytes = one_layer * layers;
+        image.bytes = all;
         // Its levels' layout, over no memory yet: BindImageMemory moves it.
         image.texels = texelsOver(&image, @ptrFromInt(_memory.alignment)) catch return null;
-        return image;
+        return withPlanes(image, info.samples);
     }
     if (info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0 and !drawable(info.format)) return null;
-    // Rows of a colour format, of one level.
-    if (info.mip_levels != 1 or textureFormat(info.format) == null) return null;
+    // Rows of a colour format, a layer's rows after the layer before
+    // (since 1.91): `rowsAt` finds a layer's first row, and a
+    // framebuffer's view the layer a pass begins at.
+    if (textureFormat(info.format) == null) return null;
+    // And levels since 1.119, as a depth attachment's: each in rows of its
+    // own after the level before (`levelAt`), a pass drawing into the one
+    // its framebuffer's view names. Vulkan has an optimal image's
+    // `maxMipLevels` be "the number of levels in the complete mipmap
+    // chain" whatever its usage, and until 1.119 the format query answered
+    // 1 for every image kept in rows. A linear image may keep the one, as
+    // Vulkan lets it, and so do a 3D image and an image on a device whose
+    // images lie in a layout of its own (`Ops.texture_memory`). One of
+    // compressed blocks is never in rows since 1.126.
+    if (info.mip_levels != 1) {
+        if (info.tiling != .optimal or volume or physical.ops.texture_memory != null) return null;
+        if (info.mip_levels > mostLevels(extent.width, extent.height)) return null;
+    }
+    // Of four samples on a device of a layout of its own: in its own, as
+    // a depth image is (since 1.146).
+    if (info.samples > 1) if (physical.ops.texture_memory) |own| return inQuads(image, own(info.format, extent.width, extent.height, 1, 1, info.samples), info.samples);
     image.pitch = std.mem.alignForward(u32, extent.width * pixel, row_alignment);
-    image.bytes = @as(u64, image.pitch) * extent.height;
+    image.layer_bytes = 0;
+    for (0..info.mip_levels) |lod| image.layer_bytes += levelBytes(&image, @intCast(lod));
+    image.bytes = image.layer_bytes * layers;
     // Written through as a storage image as well: the rows are the
     // texture a function writes, over no memory yet (since 1.56).
     if (rows_written) image.texels = texelsOver(&image, @ptrFromInt(_memory.alignment)) catch return null;
-    return image;
+    return withPlanes(image, info.samples);
+}
+
+/// Whether an image of more than one sample a pixel is one this library
+/// makes, since 1.98: four samples, on a device that draws them
+/// (`Capabilities.multisampling`) and keeps its images in this library's
+/// layout, the V3D's tiling being its own (`Ops.texture_memory`).
+///
+/// Vulkan has a multisampled image be 2D, optimal and of one level, and
+/// not cube compatible (VUID-VkImageCreateInfo-samples-02257), and asks a
+/// sample count beyond one only of a format that is a colour or a depth
+/// attachment, whatever the image's own usage ("Supported Sample Counts").
+/// That format test is v3dv's on this same GPU and lavapipe's on the
+/// cores (`get_image_format_properties`,
+/// src/broadcom/vulkan/v3dv_formats.c; src/gallium/frontends/lavapipe/
+/// lvp_formats.c), and it reads the device's own format table, so this
+/// and GetPhysicalDeviceFormatProperties cannot disagree.
+///
+/// The image may be drawn into, read as an input attachment, copied, and
+/// since 1.110 sampled - a fragment function fetching each sample where
+/// it lies (`texture.Texture.sampleOf`, `sampledRows`, `sampledDepth`) -
+/// and may have layers. A storage one waits for
+/// `shader_storage_image_multisample`, which is false, Vulkan's
+/// `storageImageSampleCounts` being 1 without it.
+fn multisampled(physical: *const _instance.PhysicalDevice, info: *const facet.ImageCreateInfo) bool {
+    if (info.samples != 4 or !physical.can.multisampling) return false;
+    // A device of a layout of its own keeps the four samples together
+    // (`Image.quads`, since 1.146), and fetches none of them yet: v3dv's
+    // compiler reads one through its quad (v3d_nir_lower_txf_ms.c:46-51),
+    // facet's for the V3D after item 59 (docs/facet-vulkan10.md item 61,
+    // step V7).
+    if (physical.ops.texture_memory != null and info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_INPUT_ATTACHMENT) != 0) return false;
+    if (info.image_type != .@"2d" or info.tiling != .optimal or info.mip_levels != 1) return false;
+    if (info.flags & facet.IMAGE_CREATE_CUBE_COMPATIBLE != 0) return false;
+    const taken = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT |
+        facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT |
+        facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_SAMPLED;
+    if (info.usage & ~taken != 0) return false;
+    const features = physical.ops.format_properties(physical, info.format).optimal_tiling_features;
+    return features & (facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT) != 0;
+}
+
+/// Sample `sample`'s plane of `image` as an image of one sample a pixel:
+/// the same rows, `sample * sample_bytes` further into its memory. A copy
+/// or a clear goes through each plane this way, so that what reads and
+/// writes texels need not know of samples (since 1.99).
+pub fn sampleOf(image: *const Image, sample: u32) Image {
+    var plane = image.*;
+    plane.samples = 1;
+    // All of the memory, the device finding the sample in each pixel's
+    // quad (since 1.146).
+    if (image.quads) {
+        plane.sample = sample;
+        return plane;
+    }
+    if (image.data) |data| plane.data = data + @as(usize, sample) * @as(usize, @intCast(image.sample_bytes));
+    plane.bytes = image.sample_bytes;
+    return plane;
+}
+
+/// The planes a clear steps through: each sample's, or the one memory of
+/// an image whose samples lie together.
+pub fn planesOf(image: *const Image) u32 {
+    return if (image.quads) 1 else image.samples;
+}
+
+/// `image`, of `samples` samples a pixel kept together in `memory`, as a
+/// device of a layout of its own lays them out (`Image.quads`): each
+/// layer the device's image of four, on the device's alignment.
+fn inQuads(image: Image, memory: _driver.TextureMemory, samples: u32) Image {
+    var made = image;
+    made.quads = true;
+    made.samples = samples;
+    made.sample_bytes = 0;
+    made.pitch = 0;
+    made.layer_bytes = std.mem.alignForward(u64, memory.bytes, memory.alignment);
+    made.bytes = made.layer_bytes * image.layers;
+    made.alignment = memory.alignment;
+    return made;
+}
+
+/// `image`, whose `bytes` are what it takes at one sample a pixel, with
+/// `samples` planes of them, one after another (`Image.samples`).
+fn withPlanes(image: Image, samples: u32) Image {
+    var made = image;
+    made.samples = samples;
+    made.sample_bytes = image.bytes;
+    made.bytes = image.bytes * samples;
+    return made;
 }
 
 /// A texture image's levels and layers as a sample reads them, over `memory`.
@@ -517,18 +1015,25 @@ pub fn texelsOver(image: *const Image, memory: [*]u8) texture.Texture.Error!text
     // A colour attachment written through as a storage image: its rows
     // are the texture, as a sampled depth's are (since 1.56).
     if (writtenRows(image)) return texture.Texture.linear(rowTexture(image.format).?, image.width, image.height, image.pitch, memory);
-    var made = try texture.Texture.init(keptFormat(image.format, image.packed_texels).?, image.width, image.height, image.levels, memory);
+    // An image kept in rows sampled where they lie: every level of every
+    // layer of sample 0's plane, each sample's plane after it - one of
+    // four samples since 1.110, and one drawn into as well since 1.119.
+    if (sampledRows(image)) return levelsOver(image, sampledRowFormat(image.format).?, 0, 0, 0, image.levels, 0, image.layers, memory);
+    var made = try texture.Texture.init(keptBy(image).?, image.width, image.height, image.levels, memory);
     made.layer_count = image.layers;
     made.layer_bytes = @intCast(image.layer_bytes);
     return made;
 }
 
-/// What an image needs of its memory: a depth attachment any type, the
-/// lazily allocated one too; the rest a type with something behind it - a
-/// depth one that is sampled among them, its rows being read.
+/// What an image needs of its memory: a transient depth attachment any
+/// type, the lazily allocated one too; the rest a type with something
+/// behind it - a depth one that is sampled among them, its rows being read.
+/// Vulkan has the lazily allocated type offered to an image made
+/// IMAGE_USAGE_TRANSIENT_ATTACHMENT, and to no other (since 1.134: every
+/// depth attachment that is not read was offered it before).
 pub fn requirements(image: *const Image) facet.MemoryRequirements {
     const properties = &image.device.physical.memory;
-    const anywhere = image.kind == .depth and !keptDepth(image);
+    const anywhere = image.kind == .depth and !keptDepth(image) and image.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT != 0;
     return .{
         .size = image.bytes,
         .alignment = image.alignment,
@@ -544,26 +1049,43 @@ pub fn requirements(image: *const Image) facet.MemoryRequirements {
 /// inside the same rows. An `aspect` naming neither plane, which is what
 /// a view asking for the colour takes - the default, and what every view
 /// of such an image took before 1.58 - is the format's own plane: its
-/// depth where it has one, and its stencil where it has not. Null for an
-/// aspect the format has not got, or for both planes at once.
-/// (Since 1.58.)
+/// depth where it has one, and its stencil where it has not. Both planes
+/// at once, of a format holding both, is its depth since 1.94: such a view
+/// is a framebuffer's, which draws into both whatever the view names, and
+/// no descriptor may hold one, so this is only what a sample of it would
+/// read regardless - lavapipe's answer, which takes the stencil for the
+/// stencil alone (`lvp_create_samplerview`). Null for an aspect the format
+/// has not got. (Since 1.58.)
 fn planeOver(image: *const Image, aspect: u32, first_level: u32, levels: u32, first_layer: u32, layers: u32, memory: [*]u8) ?texture.Texture {
     const plane = planeAt(image, aspect) orelse return null;
     // The depth is read as 16 bits of depth and the stencil as one byte,
     // which `texture.Format.r8` reads as (red, 0, 0, 1).
     const kept: texture.Format = if (plane.depth) .d16 else .r8;
+    return levelsOver(image, kept, plane.at, plane.stride, first_level, levels, first_layer, layers, memory);
+}
+
+/// The levels from `first_level` on, `levels` of them, of the layers from
+/// `first_layer` on, `layers` of them, of an image kept in rows, as a
+/// texture over `memory` that reads each texel as `kept`: `at` bytes into
+/// a pixel, and `stride` bytes from one pixel to the next, 0 for the
+/// format's own size. Each level is the rows a pass drew into, where it
+/// lies inside the layer, and each sample's plane is a sample's worth
+/// after the one before. A depth attachment's plane is read this way
+/// (since 1.58, levels since 1.63, samples since 1.110), and since 1.119
+/// so is a colour image kept in rows and sampled.
+fn levelsOver(image: *const Image, kept: texture.Format, at: u32, stride: u32, first_level: u32, levels: u32, first_layer: u32, layers: u32, memory: [*]u8) texture.Texture {
     const first = levelSize(image, first_level);
-    const begins = @as(usize, @intCast(depthLevelAt(image, first_level)));
-    var made = texture.Texture.linearBy(kept, first[0], first[1], depthPitch(image, first_level), plane.stride, memory + plane.at + first_layer * @as(usize, @intCast(image.layer_bytes)) + begins);
-    // The levels after the first, each in rows as wide as that level is,
-    // where it lies inside the layer (since 1.63).
+    const begins = rowsAt(image, first_level, first_layer);
+    var made = texture.Texture.linearBy(kept, first[0], first[1], begins.pitch, stride, memory + at + begins.at);
     for (first_level + 1..first_level + levels) |lod| {
         const size = levelSize(image, @intCast(lod));
-        const at = @as(usize, @intCast(depthLevelAt(image, @intCast(lod)))) - begins;
-        made.linearLevel(size[0], size[1], @intCast(at), depthPitch(image, @intCast(lod)));
+        const rows = rowsAt(image, @intCast(lod), first_layer);
+        made.linearLevel(size[0], size[1], @intCast(rows.at - begins.at), rows.pitch);
     }
     made.layer_count = layers;
     made.layer_bytes = @intCast(image.layer_bytes);
+    made.samples = image.samples;
+    made.sample_bytes = @intCast(image.sample_bytes);
     return made;
 }
 
@@ -573,14 +1095,33 @@ fn planeOver(image: *const Image, aspect: u32, first_level: u32, levels: u32, fi
 /// from `planeOver`, which picked the plane by itself before.)
 const Plane = struct { at: u32, stride: u32, depth: bool };
 
+/// Whether `aspect` names a plane `image`'s depth format has got, as a view's
+/// has to (VUID-VkImageViewCreateInfo-subresourceRange-09594): an aspect
+/// naming neither plane is the format's own (`planeAt`). (Since 1.135.)
+pub fn hasPlane(image: *const Image, aspect: u32) bool {
+    return planeAt(image, aspect) != null;
+}
+
 /// The plane `aspect` names, by the rule `planeOver` describes: null for
-/// an aspect the format has not got, or for both planes at once.
+/// an aspect the format has not got.
 /// (Since 1.62.)
 fn planeAt(image: *const Image, aspect: u32) ?Plane {
-    const asked = aspect & (facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL);
+    const both = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL;
+    const asked = aspect & both;
     const stride = bytesOf(image.format);
     if (stride == 0) return null;
-    const planes = if (asked != 0) asked else if (hasDepth(image.format)) facet.IMAGE_ASPECT_DEPTH else facet.IMAGE_ASPECT_STENCIL;
+    // Both at once, of a format that holds both, is the depth (since
+    // 1.94). Of a format holding one plane alone it names the other as
+    // well, which that format has not got.
+    const holds_both = hasDepth(image.format) and hasStencil(image.format);
+    const planes = if (asked == both and holds_both)
+        facet.IMAGE_ASPECT_DEPTH
+    else if (asked != 0)
+        asked
+    else if (hasDepth(image.format))
+        facet.IMAGE_ASPECT_DEPTH
+    else
+        facet.IMAGE_ASPECT_STENCIL;
     const wants_depth = planes == facet.IMAGE_ASPECT_DEPTH;
     const wants_stencil = planes == facet.IMAGE_ASPECT_STENCIL;
     if (wants_depth and !hasDepth(image.format)) return null;
@@ -599,57 +1140,86 @@ fn mostLevels(width: u32, height: u32) u32 {
     return @min(32 - @clz(longer), texture.most_levels);
 }
 
-/// The bytes from one row of a level of a depth attachment to the next:
-/// the level's own width in pixels, on a cache line. (Since 1.63.)
-pub fn depthPitch(image: *const Image, level: u32) u32 {
+/// Whether `info` is a 3D image refused for its levels alone: more than
+/// its width and height halve to, and no more than its depth does. Vulkan
+/// counts the depth in an image's chain of levels
+/// (VUID-VkImageCreateInfo-mipLevels-00958), and the layout this library
+/// keeps halves the width and the height alone (`texture.Texture.bytes`),
+/// so it makes a 3D image of as many levels as those give and no more
+/// (docs/facet-vulkan10.md item 93). CreateImage asks it of an image it
+/// has refused. (Since 1.135.)
+pub fn levelsPastSides(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateInfo) bool {
+    if (info.image_type != .@"3d") return false;
+    const extent = info.extent;
+    const sides = mostLevels(extent.width, extent.height);
+    const chain = 32 - @clz(@max(@max(extent.width, extent.height), extent.depth));
+    if (info.mip_levels <= sides or info.mip_levels > chain) return false;
+    var fewer = info.*;
+    fewer.mip_levels = sides;
+    return shapeFor(physical, &fewer) != null;
+}
+
+/// The bytes from one row of a level of an image kept in rows to the
+/// next: the level's own width in pixels, on a cache line, and level 0's
+/// the image's own `pitch`, which is a swapchain image's display's. (Since
+/// 1.63 for a depth attachment, as `depthPitch`; since 1.119 for every
+/// image kept in rows.)
+pub fn levelPitch(image: *const Image, level: u32) u32 {
+    if (level == 0) return image.pitch;
     return std.mem.alignForward(u32, @max(image.width >> @intCast(level), 1) * bytesOf(image.format), row_alignment);
 }
 
-/// What one level of one layer of a depth attachment takes: its rows, the
-/// last of them on a cache line so that the level after it begins on one.
-/// (Since 1.63.)
-fn depthLevelBytes(image: *const Image, level: u32) u64 {
+/// What one level of one layer of an image kept in rows takes: its rows,
+/// the last of them on a cache line so that the level after it begins on
+/// one. (Since 1.63, as `depthLevelBytes`.)
+fn levelBytes(image: *const Image, level: u32) u64 {
     const height = @max(image.height >> @intCast(level), 1);
-    return std.mem.alignForward(u64, @as(u64, depthPitch(image, level)) * height, row_alignment);
+    return std.mem.alignForward(u64, @as(u64, levelPitch(image, level)) * height, row_alignment);
 }
 
-/// Where a level of a depth attachment begins inside a layer, in bytes:
-/// the levels before it, each its own rows. (Since 1.63.)
-pub fn depthLevelAt(image: *const Image, level: u32) u64 {
+/// Where a level of an image kept in rows begins inside a layer, in bytes:
+/// the levels before it, each its own rows. (Since 1.63, as
+/// `depthLevelAt`.)
+pub fn levelAt(image: *const Image, level: u32) u64 {
     var at: u64 = 0;
-    for (0..level) |lod| at += depthLevelBytes(image, @intCast(lod));
+    for (0..level) |lod| at += levelBytes(image, @intCast(lod));
     return at;
 }
 
 /// Where a level of a layer of an image kept in rows begins, in bytes from
 /// the image's memory, and the bytes from one of its rows to the next. A
-/// depth attachment may have levels since 1.63, each in rows of its own
-/// inside the layer; every other image kept in rows has the one level, at
-/// the layer's start.
+/// depth attachment may have levels since 1.63, and every other image
+/// kept in rows since 1.119, each level in rows of its own inside the
+/// layer (`levelAt`); level 0 is at the layer's start.
 pub fn rowsAt(image: *const Image, level: u32, layer: u32) struct { at: usize, pitch: u32 } {
     const layer_at = layer * @as(usize, @intCast(image.layer_bytes));
-    if (image.kind != .depth) return .{ .at = layer_at, .pitch = image.pitch };
-    return .{ .at = layer_at + @as(usize, @intCast(depthLevelAt(image, level))), .pitch = depthPitch(image, level) };
+    return .{ .at = layer_at + @as(usize, @intCast(levelAt(image, level))), .pitch = levelPitch(image, level) };
 }
 
 /// One plane of a depth attachment's rows as an input attachment reads
 /// them, pixel by pixel: the layer the view names, the depth as `r16` -
 /// 0 to 1, nearest first - and the stencil as `r8u`, the whole number
 /// it is, each read `stride` bytes apart so that a format holding both is
-/// two planes inside the same rows. Null for an image with no memory
-/// behind it, or for an aspect the format has not got. (Since 1.62.)
+/// two planes inside the same rows. Of four samples, each sample's rows a
+/// plane after the one before (since 1.111). Null for an image with no
+/// memory behind it, or for an aspect the format has not got. (Since
+/// 1.62.)
 pub fn depthRows(image: *const Image, aspect: u32, level: u32, first_layer: u32) ?shader.Attachment {
     const data = image.data orelse return null;
     const plane = planeAt(image, aspect) orelse return null;
     const rows = rowsAt(image, level, first_layer);
     const size = levelSize(image, level);
+    const first = data + rows.at + plane.at;
     return .{
-        .bytes = data + rows.at + plane.at,
+        .bytes = first,
         .pitch = rows.pitch,
         .width = size[0],
         .height = size[1],
         .format = if (plane.depth) .r16 else .r8u,
         .stride = plane.stride,
+        .samples = image.samples,
+        .sample_bytes = @intCast(image.sample_bytes),
+        .others = first + @as(usize, @intCast(image.sample_bytes)),
     };
 }
 
@@ -672,6 +1242,15 @@ pub fn levelsFrom(image: *const Image, base: u32, count: u32, first_layer: u32, 
     made.layer_count = layers;
     made.layer_bytes = @intCast(image.layer_bytes);
     return made;
+}
+
+/// Of an image kept in rows sampled where they lie, the levels from
+/// `first_level` on, `levels` of them, of the layers from `first_layer` on,
+/// `layers` of them, as the texture a view of them reads: the image's own
+/// rows, begun at that level of that layer (`sampledRows`; layers since
+/// 1.110, levels since 1.119).
+pub fn rowLevels(image: *const Image, first_level: u32, levels: u32, first_layer: u32, layers: u32) texture.Texture {
+    return levelsOver(image, sampledRowFormat(image.format).?, 0, 0, first_level, levels, first_layer, layers, image.data.?);
 }
 
 /// The layers a copy's subresource and depth reach.
@@ -698,7 +1277,7 @@ pub fn unpacks(image: *const Image) bool {
 }
 
 /// Whether an image's texels lie compressed where they were copied in, in
-/// blocks of 4 x 4 texels (`PhysicalDeviceFeatures.kept_compressed`): a
+/// blocks of 4 x 4 texels (`Capabilities.kept_compressed`): a
 /// sample decodes the block it reads, and a copy moves whole blocks.
 pub fn blocked(image: *const Image) bool {
     return _decode.blockBytes(image.format) != 0;
@@ -710,7 +1289,7 @@ pub fn blockBytes(image: *const Image) u32 {
 }
 
 /// Whether an image's texels are the floats they were copied in as
-/// (`PhysicalDeviceFeatures.kept_floats`): a sample rounds one to 8 bits a
+/// (`Capabilities.kept_floats`): a sample rounds one to 8 bits a
 /// channel as it reads it, and a copy moves its bytes as they lie.
 pub fn floatTexels(image: *const Image) bool {
     return _decode.texelBytes(image.format) != 0;
@@ -722,6 +1301,15 @@ pub fn floatTexels(image: *const Image) bool {
 /// were copied in as, so a copy out reads it back unchanged.
 pub fn keptTexels(image: *const Image) bool {
     return floatTexels(image) or wideChannels(image.format) or wholeNumbers(image.format);
+}
+
+/// Whether a copy puts a texture's texels where they go as the bytes it
+/// was given, and reads them back the same: an image that keeps what it
+/// was given (`keptTexels`), and since 1.131 one made
+/// IMAGE_CREATE_MUTABLE_FORMAT, whose 8888 texels are their word's bytes
+/// rather than spread (`lyingFormat`).
+fn movedAsTheyLie(image: *const Image) bool {
+    return image.mutable or keptTexels(image);
 }
 
 /// The block holding texel (x, y) of a level of a layer, into `into`;
@@ -776,9 +1364,10 @@ pub fn copyBlocks(image: *Image, from: []const u8, region: *const facet.BufferIm
     }
 }
 
-/// A rectangle of a compressed or a float format from a buffer's bytes into
-/// a level of an image, unpacked; the part of it outside the image, or past
-/// the end of `from`, left out. Blocks start on a multiple of 4.
+/// A rectangle of a compressed or a float format, or since 1.127 of four
+/// channels in 16 bits, from a buffer's bytes into a level of an image,
+/// unpacked; the part of it outside the image, or past the end of `from`,
+/// left out. Blocks start on a multiple of 4.
 pub fn copyUnpacking(image: *Image, from: []const u8, region: *const facet.BufferImageCopy) void {
     if (image.data == null) return;
     const level = region.image_subresource.mip_level;
@@ -811,7 +1400,7 @@ pub fn copyUnpacking(image: *Image, from: []const u8, region: *const facet.Buffe
                 }
             };
         } else {
-            const texel = _decode.texelBytes(image.given_format);
+            const texel = _decode.unpackedBytes(image.given_format);
             const pitch = @as(usize, row_length) * texel;
             const slice_at = start + slice * @as(usize, slice_height) * pitch;
             for (0..height) |row| for (0..width) |column| {
@@ -829,7 +1418,8 @@ pub fn copyUnpacking(image: *Image, from: []const u8, region: *const facet.Buffe
 /// texture layout for a texture, row by row for rows. The part of the
 /// rectangle outside the image, or past the end of `from`, is left out.
 pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.BufferImageCopy) void {
-    if (image.data == null) return;
+    // A multisampled image is no buffer copy's (VUID-vkCmdCopyBufferToImage-dstImage-07973).
+    if (image.data == null or image.samples != 1) return;
     if (unpacks(image)) return copyUnpacking(image, from, region);
     if (blocked(image)) return copyBlocks(image, from, region);
     const level = region.image_subresource.mip_level;
@@ -845,8 +1435,9 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
     const pixel = bytesOf(image.format);
     // An image that keeps what it is given - a float one's floats, or a
     // texture's own channels since 1.69 - takes the texel's bytes as they
-    // lie rather than through a colour of 8 bits a channel.
-    const keeps = keptTexels(image);
+    // lie rather than through a colour of 8 bits a channel, and so since
+    // 1.131 does one a view of another format may be made of.
+    const keeps = movedAsTheyLie(image);
     const row_length = if (region.buffer_row_length != 0) region.buffer_row_length else region.image_extent.width;
     const source_pitch = @as(usize, row_length) * pixel;
     const slice_height = if (region.buffer_image_height != 0) region.buffer_image_height else region.image_extent.height;
@@ -858,11 +1449,17 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
             if (at + width * pixel > from.len) return;
             const source = from[at..][0 .. width * pixel];
             const y = top + @as(u32, @intCast(row));
+            if (deviceLaid(image)) {
+                // Where the device keeps each texel (since 1.142: a
+                // sampled depth image there).
+                for (0..width) |column| writeTexel(image, level, layer, left + @as(u32, @intCast(column)), y, source[column * pixel ..]);
+                continue;
+            }
             switch (image.kind) {
                 .rows, .depth => {
                     // A depth image may have layers since 1.58 and levels
-                    // since 1.63; a rows one has the one of each, at the
-                    // start of its memory.
+                    // since 1.63; a rows one has the one level, and
+                    // layers since 1.91.
                     const rows = rowsAt(image, level, layer);
                     const into = image.data.? + rows.at + @as(usize, y) * rows.pitch + @as(usize, left) * pixel;
                     @memcpy(into[0..source.len], source);
@@ -896,11 +1493,26 @@ fn texelOf(format: facet.Format, bytes: []const u8) u32 {
     };
 }
 
+/// Whether an image lies as its device's own textures do
+/// (`Ops.texture_offset`): every texture on such a device, and since 1.142
+/// a depth image sampled there, which v3dv keeps as it keeps the rest.
+pub fn deviceLaid(image: *const Image) bool {
+    if (image.device.physical.ops.texture_offset == null) return false;
+    // And an image of four samples there (since 1.146).
+    if (image.quads) return true;
+    return switch (image.kind) {
+        .texture => true,
+        .depth => image.usage & facet.IMAGE_USAGE_SAMPLED != 0,
+        .rows => false,
+    };
+}
+
 /// Where a level's texels are on a device with a layout of its own, in bytes
-/// from the image's memory.
+/// from the image's memory: the layer, or a 3D image's slice, placed by
+/// the device too (since 1.141).
 fn deviceOffset(image: *const Image, level: u32, layer: u32, x: u32, y: u32) ?usize {
-    const offset = image.device.physical.ops.texture_offset orelse return null;
-    return layer * @as(usize, @intCast(image.layer_bytes)) + offset(image, level, x, y);
+    if (!deviceLaid(image)) return null;
+    return image.device.physical.ops.texture_offset.?(image, level, layer, x, y);
 }
 
 /// Whether an image's texels can be read and written: it has memory, and they
@@ -916,6 +1528,12 @@ pub fn levelSize(image: *const Image, level: u32) [2]u32 {
 
 /// Texel (x, y) of a level of a layer as a buffer would hold it, in `into`.
 pub fn readTexel(image: *const Image, level: u32, layer: u32, x: u32, y: u32, into: []u8) void {
+    // Where its device lays it out: a texture there, a depth image since
+    // 1.142, and one of four samples since 1.146, a sample's plane of it.
+    if (deviceOffset(image, level, layer, x, y)) |offset| {
+        const pixel = bytesOf(image.format);
+        return @memcpy(into[0..pixel], (image.data.? + offset)[0..pixel]);
+    }
     switch (image.kind) {
         // A depth image is rows as well, of the level and the layer
         // asked for: what a pass that stores its depth wrote.
@@ -925,10 +1543,7 @@ pub fn readTexel(image: *const Image, level: u32, layer: u32, x: u32, y: u32, in
             const from = image.data.? + rows.at + @as(usize, y) * rows.pitch + @as(usize, x) * pixel;
             @memcpy(into[0..pixel], from[0..pixel]);
         },
-        .texture => if (deviceOffset(image, level, layer, x, y)) |offset| {
-            const pixel = bytesOf(image.format);
-            @memcpy(into[0..pixel], (image.data.? + offset)[0..pixel]);
-        } else if (keptTexels(image)) {
+        .texture => if (movedAsTheyLie(image)) {
             // The floats, or the channels, as they lie: what went in
             // comes out again.
             image.texels.texelsAt(layer, level, x, y, into);
@@ -940,6 +1555,10 @@ pub fn readTexel(image: *const Image, level: u32, layer: u32, x: u32, y: u32, in
 
 /// Texel (x, y) of a level of a layer set from what a buffer would hold.
 pub fn writeTexel(image: *Image, level: u32, layer: u32, x: u32, y: u32, from: []const u8) void {
+    if (deviceOffset(image, level, layer, x, y)) |offset| {
+        const pixel = bytesOf(image.format);
+        return @memcpy((image.data.? + offset)[0..pixel], from[0..pixel]);
+    }
     switch (image.kind) {
         .rows, .depth => {
             const pixel = bytesOf(image.format);
@@ -947,10 +1566,7 @@ pub fn writeTexel(image: *Image, level: u32, layer: u32, x: u32, y: u32, from: [
             const into = image.data.? + rows.at + @as(usize, y) * rows.pitch + @as(usize, x) * pixel;
             @memcpy(into[0..pixel], from[0..pixel]);
         },
-        .texture => if (deviceOffset(image, level, layer, x, y)) |offset| {
-            const pixel = bytesOf(image.format);
-            @memcpy((image.data.? + offset)[0..pixel], from[0..pixel]);
-        } else if (keptTexels(image)) {
+        .texture => if (movedAsTheyLie(image)) {
             image.texels.putTexels(layer, level, x, y, from);
         } else {
             image.texels.putLayer(layer, level, x, y, texelOf(image.format, from));
@@ -989,6 +1605,14 @@ pub fn colorOfBytes(format: facet.Format, bytes: []const u8) u32 {
         // The channels a texture keeps as they lie, as the colour of
         // their top 8 bits (since 1.69).
         .r8g8_unorm, .r16_unorm, .r16g16_unorm, .r16g16b16a16_unorm => texture.channelColor(keptFormat(format, false).?, bytes.ptr),
+        // A float texel as a sample reads it, each channel held to 0 to 1
+        // and rounded to 8 bits (since 1.126): what a blit reads of an
+        // image that keeps its floats, in rows or a texture.
+        .r16g16b16a16_sfloat => texture.floatTexel(.rgba16f, bytes.ptr),
+        .r32g32b32a32_sfloat => texture.floatTexel(.rgba32f, bytes.ptr),
+        .b10g11r11_ufloat_pack32 => texture.floatTexel(.rg11b10f, bytes.ptr),
+        .e5b9g9r9_ufloat_pack32 => texture.floatTexel(.rgb9e5, bytes.ptr),
+        .r32_sfloat => texture.floatTexel(.r32f, bytes.ptr),
         else => if (wholeNumbers(format))
             // The whole numbers held to the colour they stand for (since
             // 1.70): nothing, or the channel at the full.

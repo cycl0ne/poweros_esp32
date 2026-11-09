@@ -44,7 +44,7 @@ const Image = @import("../image/_image.zig").Image;
 /// `CmdClearDepthStencilImage` writes instead.
 ///
 /// **A float image takes the channels as they were given** since 1.61
-/// (`PhysicalDeviceFeatures.kept_floats`): the four floats are put into
+/// (`Capabilities.kept_floats`): the four floats are put into
 /// the format's own texel the way a copy of one would be, so a channel
 /// above 1 or below 0 goes in as far as the format reaches instead of
 /// being rounded to a byte. Before 1.61 such an image was the one this

@@ -23,8 +23,30 @@ const _image = @import("_image.zig");
 /// - `image` - where the image is written; null when it fails.
 ///
 /// RESULT:
-/// `success`; `error_format_not_supported` for an image facet.library
-/// does not make; `error_out_of_host_memory`.
+/// `success`; `error_validation_failed` for an image that breaks one of
+/// VkImageCreateInfo's rules (since 1.135; `error_format_not_supported`
+/// until then): one GetPhysicalDeviceImageFormatProperties declines, or
+/// one past the extent, the levels, the layers or the samples it answers
+/// (VUID-VkImageCreateInfo-imageCreateMaxMipLevels-02251, -extent-02252,
+/// -extent-02253, -extent-02254, -mipLevels-02255, -arrayLayers-02256,
+/// -samples-02258), that query asking the rules this call keeps - but a
+/// 3D image one slice deep, neither SAMPLED nor STORAGE or a colour or
+/// input attachment written through as a storage image, which the query
+/// declines for the 256 slices it asks and this call makes (-02251
+/// allowing that, creating it being invalid usage; docs/facet-vulkan10.md
+/// item 94); and
+/// whatever it answers, a side, levels or layers of 0 (-extent-00944 to
+/// -extent-00946, -mipLevels-00947, -arrayLayers-00948), a cube that is
+/// not square or has fewer than six layers (-flags-08865, -flags-08866),
+/// more levels than its own extent's chain has (-mipLevels-00958), more
+/// than one sample with more than one level (-samples-02257), or
+/// TRANSIENT_ATTACHMENT beside a usage other than the attachments', or
+/// with none of those (-usage-00963, -usage-00966; made until 1.135).
+/// `error_feature_not_present` for the one kind of image refused that
+/// Vulkan allows: of type `3d`, deeper than it is wide and high, with more
+/// levels than its width and height halve to and no more than its depth
+/// does, which -mipLevels-00958 allows (docs/facet-vulkan10.md item 93;
+/// `error_format_not_supported` until 1.135). `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
 /// What it is for decides how it lies in its memory:
@@ -37,16 +59,26 @@ const _image = @import("_image.zig");
 ///   by the next one up, so such a texture takes up to 2 x the memory of
 ///   one as wide as a power of two (since 1.42); past the width nothing is
 ///   ever read.
-/// - COLOR_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, one level: rows,
-///   each on a cache line, in either tiling. What is drawn into one of
-///   R5G6B5 is dithered into it (CmdBeginRenderPass).
+/// - COLOR_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5: rows, each on a
+///   cache line, in either tiling. What is drawn into one of R5G6B5 is
+///   dithered into it (CmdBeginRenderPass). In optimal tiling it may have
+///   levels since 1.119, as a depth attachment does: a layer holds the
+///   whole pyramid, a level's rows after the level before, and a pass
+///   draws into the level its framebuffer's view names.
+///   With SAMPLED as well (since 1.119), optimal and not of type `3d`,
+///   those rows are the texture a sampler reads, at every level and layer
+///   a view names: an image drawn into and then sampled with nothing
+///   copied, as llvmpipe does it. Not with STORAGE or
+///   TRANSIENT_ATTACHMENT then.
 /// - D16_UNORM, S8_UINT or D16_UNORM_S8_UINT with
 ///   DEPTH_STENCIL_ATTACHMENT, optimal, one level: a depth that lives in
 ///   the tiles alone, never stored, whose memory may be of the lazily
-///   allocated type. With a load or a store op it is kept in rows instead
+///   allocated type where it is made TRANSIENT_ATTACHMENT as well (since
+///   1.134; transient or not before). With a load or a store op it is
+///   kept in rows instead
 ///   (CreateRenderPass), and with SAMPLED as well those rows are the
 ///   texture a sampler reads: a shadow map drawn into and sampled out of
-///   with nothing copied (`PhysicalDeviceFeatures.sampled_depth`, since
+///   with nothing copied (`Capabilities.sampled_depth`, since
 ///   1.39). One sampled wants memory something is behind and is not
 ///   written through as a storage image.
 ///   Any of the three formats is sampled since 1.58, and such an image
@@ -67,14 +99,31 @@ const _image = @import("_image.zig");
 ///   with it too.
 /// - INPUT_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, in either
 ///   tiling: rows, which a later subpass reads pixel by pixel
-///   (CreateRenderPass). It goes with COLOR_ATTACHMENT and the transfers,
-///   not with SAMPLED, STORAGE or TRANSIENT_ATTACHMENT, which lie
-///   otherwise or nowhere. On a depth format it is the bullet above.
-/// - Anything else of a colour format, one level: rows.
+///   (CreateRenderPass). It goes with COLOR_ATTACHMENT, the transfers and,
+///   since 1.119, SAMPLED, the rows then being the texture a sampler reads
+///   as above; not with TRANSIENT_ATTACHMENT, which lies nowhere. On a
+///   depth format it is the bullet above.
+/// - Anything else of a colour format: rows, with levels in optimal tiling
+///   as a colour attachment has them (since 1.119).
 ///
-/// Images have one sample a pixel, and are up to 8192 wide and high. One both
-/// SAMPLED and COLOR_ATTACHMENT is not made: a texture and an attachment lie
-/// differently.
+/// Images are up to 8192 wide and high. One both SAMPLED and
+/// COLOR_ATTACHMENT, or SAMPLED and INPUT_ATTACHMENT, is made on a device
+/// that keeps its images in this library's layout; the V3D's lie in its
+/// own (`Ops.texture_memory`), and there it is refused, as an image of
+/// levels kept in rows is.
+///
+/// **An image may have four samples a pixel** on a device that draws them
+/// (`Capabilities.multisampling`, since 1.98): 2D, optimal, one level and
+/// not cube compatible, of a format that is a colour or a depth
+/// attachment, as Vulkan has it. Each sample's plane is the whole image at
+/// one sample, every layer of it, the next sample's plane after it. Such an
+/// image is drawn into, read as an input attachment, copied and resolved,
+/// and since 1.110 sampled: one of a colour format is then kept in rows, as
+/// one drawn into is, and those rows are the texture a fragment function
+/// fetches each sample of (`texture.Texture.sampleOf`), as it fetches a
+/// depth attachment's planes. A colour one may be a colour attachment or an
+/// input attachment as well since 1.119, as a sampled colour image of one
+/// sample may; no image of four samples is STORAGE.
 ///
 /// **A colour attachment may be written through as a storage image** since
 /// 1.56: COLOR_ATTACHMENT, or INPUT_ATTACHMENT, with STORAGE and without
@@ -85,17 +134,23 @@ const _image = @import("_image.zig");
 /// So a function may seed the rows before a pass draws into them, or write
 /// over them after it, and writing them while the pass that draws into them
 /// is open has no order against that store - as it has none in Vulkan
-/// without a barrier. R8G8B8A8 is `error_format_not_supported` for this: a
-/// texture of 8888 is 0xAARRGGBB, as B8G8R8A8's rows are, and nothing reads
-/// a word with red in its low byte. FORMAT_FEATURE_STORAGE_IMAGE in a
-/// format's **linear** features says its rows may be written through.
+/// without a barrier. R8G8B8A8 is refused for this: a
+/// texture of 8888 is 0xAARRGGBB, as B8G8R8A8's rows are, and the texture
+/// that reads a word with red in its low byte (`texture.Format.rgba8`,
+/// since 1.110) is fetched from, not written through.
+/// FORMAT_FEATURE_STORAGE_IMAGE in a format's **linear** features says its
+/// rows may be written through.
 ///
 /// A SAMPLED image may have up to 256 layers, or be 3D, of type `3d`, of any
 /// depth up to 256 and with levels of its own (since 1.46): a level is half
 /// as deep as the one before it, and no less than one slice deep, each slice
-/// carrying the whole of its own pyramid. IMAGE_CREATE_CUBE_COMPATIBLE says a
-/// view of type cube, or of cube_array, will be made: of a square image of 6
-/// layers or more, a multiple of six of them for an array of cubes.
+/// carrying the whole of its own pyramid: as many levels as halving its
+/// width and height gives, so one deeper than it is wide and high is
+/// refused the levels past those that its depth gives (docs/facet-vulkan10.md
+/// item 93). IMAGE_CREATE_CUBE_COMPATIBLE says a view of type cube, or of
+/// cube_array, will be made: of a square image of 6 layers or more, six of
+/// them for a cube and a multiple of six for an array of cubes, from any
+/// layer.
 ///
 /// A STORAGE image may have layers and levels the same way, and since
 /// 1.55 needs no SAMPLED beside it to have them: a function writing one
@@ -106,7 +161,7 @@ const _image = @import("_image.zig");
 /// A SAMPLED image may be of BC1, BC2, BC3, R16G16B16A16_SFLOAT,
 /// R32G32B32A32_SFLOAT, B10G11R11_UFLOAT or E5B9G9R9_UFLOAT, in optimal tiling.
 /// A float one is kept as the floats it was copied in as on a device that
-/// samples them (`PhysicalDeviceFeatures.kept_floats`, since 1.45): the two
+/// samples them (`Capabilities.kept_floats`, since 1.45): the two
 /// packed formats then take 4 bytes a texel rather than the 8 an unpacked
 /// texel is kept spread in, and a copy out gives back what went in. A sample
 /// holds each channel inside 0 to 1 and rounds it to 8 bits, the tiles having
@@ -117,7 +172,14 @@ const _image = @import("_image.zig");
 /// It may also be of ETC2 or EAC - ETC2_R8G8B8, ETC2_R8G8B8A1, ETC2_R8G8B8A8,
 /// EAC_R11 or EAC_R11G11 - which no sampler of this library reads: such an
 /// image is always kept as R8G8B8A8, its blocks unpacked as they are copied
-/// in (`PhysicalDeviceFeatures.etc2_textures`, since 1.46).
+/// in (`Capabilities.etc2_textures`, since 1.46). So is one of
+/// B4G4R4A4_UNORM_PACK16 or A1R5G5B5_UNORM_PACK16 (since 1.127), four
+/// channels in 16 bits that no sampler here reads either: each word is
+/// widened to 8 bits a channel as it is copied in, as R5G6B5's are where a
+/// texture keeps them.
+///
+/// One of A8B8G8R8_UINT_PACK32 or _SINT_PACK32 is an image of R8G8B8A8's
+/// whole numbers, the same bytes, wherever that one is made (since 1.127).
 ///
 /// R32_SFLOAT is an image since 1.57, in optimal tiling: one float a texel,
 /// sampled as (red, 0, 0, 1) the way R8_UNORM is read, with the float held
@@ -127,12 +189,16 @@ const _image = @import("_image.zig");
 /// attachment and not a vertex's value.
 ///
 /// A compressed one - BC1, BC2, BC3 - is kept in its blocks on a device that
-/// samples them (`PhysicalDeviceFeatures.kept_compressed`, since 1.44): an
+/// samples them (`Capabilities.kept_compressed`, since 1.44): an
 /// eighth to a quarter of that memory, and the blocks are copied in and out
 /// as they lie, by CmdCopyBufferToImage, CmdCopyImageToBuffer and CmdCopyImage
 /// between two images of the one format, their offsets and extents on a
 /// multiple of 4 as Vulkan asks. GetImageMemoryRequirements says which was
-/// done. A device without the feature unpacks it as a float image is unpacked.
+/// done. Such an image is a texture whatever it is for, one made for the
+/// transfers alone as well (since 1.126): that one lay in rows until then,
+/// with no texture over them, and a copy into it wrote through a texture
+/// that was never laid. A device without the feature unpacks it as a
+/// float image is unpacked.
 /// A STORAGE image is written texel by texel, so a compressed one is unpacked
 /// there whatever the device: nothing writes one texel of a block, and such
 /// an image wants SAMPLED beside it, being unpacked to be sampled. A float
@@ -141,7 +207,7 @@ const _image = @import("_image.zig");
 /// either.
 ///
 /// **A texel may be kept smaller than the colour it reads as** on a device
-/// that says so (`PhysicalDeviceFeatures.small_texels`, since 1.48), which
+/// that says so (`Capabilities.small_texels`, since 1.48), which
 /// is where a texture is large enough that the memory it fills is what it
 /// costs:
 /// - R8_UNORM is one byte a texel, read as (red, 0, 0, 1) the way Vulkan
@@ -158,9 +224,24 @@ const _image = @import("_image.zig");
 ///   for `rgba8888` draws it through the run-time sampler as it does any
 ///   other format it was not built for.
 ///
-/// Both are `error_format_not_supported` where the device has not got
+/// Both are refused where the device has not got
 /// them, and so is the flag on an image that is neither sampled nor a
 /// storage image, or whose format has no 8888 word to keep.
+///
+/// **IMAGE_CREATE_MUTABLE_FORMAT** (since 1.131) makes an image that a
+/// view of another format may be made of, one Vulkan has compatible with
+/// the image's own: of the same bytes a texel for a colour format, the
+/// other of its pair for a block format, and none for depth or stencil
+/// (CreateImageView). Its texels are kept as they lie - B8G8R8A8's as the
+/// word PACKED_TEXELS keeps, R8G8B8A8's as its four bytes - so that each
+/// such view reads and writes the same bytes its own way, and copies move
+/// them as they are. It is refused where a compatible
+/// format whose features take the image's usage could not be read where
+/// the texels lie: an R5G6B5 image to sample, B4G4R4A4 being sampled and
+/// kept unpacked, while one only drawn into is made. So it is on a format
+/// kept unpacked itself, and on a device whose images lie in a layout of
+/// its own (`Ops.texture_memory`, the V3D), whose half of
+/// docs/facet-vulkan10.md item 42 is to come.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -194,7 +275,19 @@ const _image = @import("_image.zig");
 /// ```
 pub fn CreateImage(base: *FacetBase, device: *facet.Device, info: *const facet.ImageCreateInfo, image: *?*facet.Image) facet.Result {
     image.* = null;
-    const shape = _image.shapeOf(_objects.of(Device, device), info) orelse return .error_format_not_supported;
+    const owner = _objects.of(Device, device);
+    // TRANSIENT_ATTACHMENT with none of the attachments' usage
+    // (VUID-VkImageCreateInfo-usage-00966), refused here rather than by
+    // `_image.shapeOf`: the format query asks those rules, and Vulkan has
+    // it answer no more strictly for TRANSIENT alone than for TRANSIENT
+    // beside an attachment ("Additional Image Capabilities"). Since 1.135.
+    const attachments = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT;
+    if (info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT != 0 and info.usage & attachments == 0) return .error_validation_failed;
+    // Every image refused breaks one of VkImageCreateInfo's rules, the
+    // format query's limits among them, but a 3D image's levels past its
+    // sides, which Vulkan allows (item 93).
+    const shape = _image.shapeOf(owner, info) orelse
+        return if (_image.levelsPastSides(owner.physical, info)) .error_feature_not_present else .error_validation_failed;
     const made = _objects.create(base.sys_base, _image.Image) orelse return .error_out_of_host_memory;
     made.* = shape;
     image.* = _objects.handle(facet.Image, made);

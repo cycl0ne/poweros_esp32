@@ -27,7 +27,8 @@ pub const Header = struct {
     right: i32,
     bottom: i32,
     /// Its edges, in the order the rows are walked in (`sortForWalk`); a
-    /// pixel is inside where all three are 0 or more (`Edge`).
+    /// pixel, or a sample of one, is inside where all three are 0 or more
+    /// (`Edge`).
     edges: [3]Edge,
     /// How it is drawn in the depth pre-pass (prepass.zig), for a
     /// triangle of a pipeline that asks for one; null for any other.
@@ -57,6 +58,12 @@ pub const Edge = struct {
     /// along the rows, whose `a` is 0.
     down_whole: i64,
     down_part: i64,
+    /// What the most inside of a pixel's samples has more than its
+    /// centre: 0 at one sample a pixel, the centre being the sample. What
+    /// tells whether a tile holds any of the triangle (target.zig), and
+    /// which rows an edge along them holds any of (walk.zig). (Since
+    /// 1.102.)
+    inmost: i64 = 0,
 
     pub fn of(a: i64, b: i64, c: i64) Edge {
         if (a == 0) return .{ .a = a, .b = b, .c = c, .down_whole = 0, .down_part = 0 };
@@ -67,6 +74,14 @@ pub const Edge = struct {
 
     pub fn at(edge: Edge, x: i64, y: i64) i64 {
         return edge.a * x + edge.b * y + edge.c;
+    }
+
+    /// What the value gains `offset` from a pixel's centre, x and y in
+    /// 1/256ths of a pixel (`setup.sampleOffsets`): exact, setup's `a`
+    /// and `b` being 256 times what the edge runs and rises. (Since
+    /// 1.102.)
+    pub inline fn offsetBy(edge: Edge, offset: [2]i64) i64 {
+        return (edge.a * offset[0] + edge.b * offset[1]) >> 8;
     }
 };
 

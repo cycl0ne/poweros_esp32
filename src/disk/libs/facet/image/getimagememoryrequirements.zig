@@ -28,9 +28,15 @@ const _image = @import("_image.zig");
 /// An offset aligned to a cache line, 64 bytes. A texture's size is its
 /// levels in blocks, an 8888 texel at 8 bytes; rows' are their pitch, the
 /// width rounded up to a cache line, times the height. A depth attachment
-/// may be in any memory type, the lazily allocated one too, and nothing
-/// of its memory is touched; every other image needs a type with memory
-/// behind it.
+/// made IMAGE_USAGE_TRANSIENT_ATTACHMENT may be in any memory type, the
+/// lazily allocated one too: a pass that neither loads nor stores it, nor
+/// hands it on to a later part, touches nothing of its memory, and
+/// CreateFramebuffer answers `error_feature_not_present` for one in the
+/// lazily allocated type that a pass keeps. Every other image needs a type
+/// with memory behind it, Vulkan letting the lazily allocated type be
+/// offered to a transient image alone (since 1.134; before, facet offered
+/// it to every depth attachment neither sampled nor read as an input
+/// attachment).
 ///
 /// CONTEXT:
 /// - Waits: no.

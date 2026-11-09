@@ -17,10 +17,30 @@ pub const Engine = @import("engine.zig").Engine;
 pub const cl = @import("cl.zig");
 pub const frame = @import("frame.zig");
 pub const qpu = @import("qpu.zig");
+pub const compile = @import("compile.zig");
 pub const tiling = @import("tiling.zig");
+/// A std.mem.Allocator over exec's AllocVec, for the compiler.
+pub const heap = @import("heap.zig");
+/// The QPU's instructions as Mesa has them (src/broadcom/qpu), which the
+/// compiler is ported onto: unpacked, packed, and printed.
+pub const qpu_instr = @import("qpu/instr.zig");
+pub const qpu_pack = @import("qpu/pack.zig");
+pub const qpu_disasm = @import("qpu/disasm.zig");
 
 test {
     _ = qpu;
+    _ = compile;
     _ = cl;
+    _ = frame;
     _ = tiling;
+    _ = heap;
+    _ = @import("qpu/tests.zig");
+    _ = @import("compiler/validate.zig");
+    _ = @import("compiler/list.zig");
+    _ = @import("compiler/dag.zig");
+    _ = @import("compiler/schedule.zig");
+    _ = @import("compiler/opt.zig");
+    _ = @import("compiler/ra.zig");
+    _ = @import("compiler/allocate.zig");
+    _ = @import("compiler/tests.zig");
 }

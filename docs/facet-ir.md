@@ -1,0 +1,657 @@
+# facet.library: a shader a device can compile
+
+What a program's shader is today: a Zig function, compiled for the host
+CPU, found through a function pointer in a module stamped `FCTZ`
+(`sdk/libs/facet/shader.zig`). The V3D cannot run it - the QPUs execute no
+program of the library's - so it runs the seven hand-written QPU programs
+instead, and `CreateGraphicsPipelines` refuses every pipeline that wants
+anything else. `docs/facet-todo.md` section 4 is the plan this document
+settles: the shader becomes something a device can **compile**, and the
+first thing compiled is the V3D's.
+
+The decision this document records, and its one reason:
+
+> **The shipped form of a shader is a real SPIR-V module.** Not a format
+> of facet's own that resembles one. The reason is testing: `spirv-val`
+> checks every module the library emits, `glslc` turns any GLSL shader
+> into test input, `spirv-dis` makes a failure readable, Mesa's
+> `src/broadcom/compiler` is a reference back end **for this exact chip**,
+> and a desktop Vulkan driver renders the same module for a reference
+> picture. A private format buys none of that, and would have to be
+> defended by hand.
+
+The second reason is the one `facet-todo.md:209` gives: the input language
+belongs to the library, so each later device costs a back end and nothing
+else. Both reasons want the same thing, which is why this is worth doing
+properly rather than quickly.
+
+## What a program writes, and what it ships
+
+One source. A shader is recorded at **comptime** as a small graph
+(`sdk/libs/facet/ir.zig`), and two artefacts are taken from it:
+
+| Artefact | What it is | Who reads it |
+|---|---|---|
+| `words` | a SPIR-V 1.0 module, `const`, in the program's rodata | a device that compiles: the V3D, later an RDNA one; `spirv-val` and a desktop driver in the tests |
+| the function | a `shader.FragmentFn` the comptime graph expands **inline** over the quad batch | the cores, at today's speed |
+
+The cores keep running Zig, because their fragment ABI is one
+`callconv(.c)` call per 64 quads with `@Vector(4, f32)` rows and no
+per-pixel branching, and an interpreter cannot meet that bar. The graph is
+walked at comptime, so the generated function is as specialised as a
+hand-written one: `values[k]` is a comptime index, `inline for` over the
+ops leaves no loop, and `exact` stays a comptime parameter rather than a
+branch in the quad loop.
+
+```zig
+const Textured = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.mul(b.sample(0, 0, b.input(0, .f32x2)), b.input(1, .f32x4)));
+    }
+}, .{ .varyings = 6 });
+
+// In the module, beside each other, from the one graph:
+//   shader.fragment("textured", Textured.fragment, 6)   - the cores
+//   Textured.words                                      - every other device
+```
+
+`ir.Build` is a recorder: each call appends an operation and answers its
+index, which is the only handle a program gets. There is no expression
+overloading, no operator precedence and no type inference past what the
+operations state, because the graph has to be readable by a back end that
+has never heard of Zig.
+
+## How the words reach the library
+
+`shader.Entry` and `shader.Code` **cannot grow**. `Entry` is an `extern
+struct` of 32 bytes on aarch64 and 16 on riscv32 (facet ships on the
+ESP32-P4 as well); `CreateShaderModule` copies the program's entry array
+with the **library's** `@sizeOf(shader.Entry)`, and refuses a module whose
+`code_size` is under the **library's** `@sizeOf(shader.Code)`. One field
+added to either, and every program already on `DH0:` is read past its own
+array or refused outright. 1.48 and 1.58 taught this lesson about
+`texture.Format` and `texture.Texture`; it is not to be learned again.
+
+So the words ride **beside** the entries, in a struct whose first fields
+are a byte-exact prefix of `Code`, and the library is told to look for
+them by a flag:
+
+```zig
+/// What ShaderModuleCreateInfo.code points to where the stages ship
+/// their SPIR-V as well. Its first fields are `Code`'s, so a library
+/// that has not got SHADER_MODULE_CREATE_SPIRV reads it as a `Code` and
+/// runs the Zig functions. (Since 1.75.)
+pub const Module = extern struct {
+    magic: u32 = MAGIC,
+    entry_count: u32,
+    entries: [*]const Entry,
+    /// One a side of `entries`, index for index: entry k's words are
+    /// `spirv[k]`, and a `count` of 0 is an entry with none.
+    spirv: [*]const Spirv,
+    spirv_count: u32,
+};
+
+pub const Spirv = extern struct {
+    words: [*]const u32,
+    count: u32,
+};
+
+comptime {
+    // The prefix is the compatibility, so it is asserted, not intended.
+    if (@offsetOf(Module, "magic") != @offsetOf(Code, "magic")) @compileError("Module's prefix is not Code's");
+    if (@offsetOf(Module, "entry_count") != @offsetOf(Code, "entry_count")) @compileError("Module's prefix is not Code's");
+    if (@offsetOf(Module, "entries") != @offsetOf(Code, "entries")) @compileError("Module's prefix is not Code's");
+    if (@sizeOf(Module) <= @sizeOf(Code)) @compileError("Module must be wider than Code");
+}
+```
+
+The magic stays `FCTZ`. The flag is a bit of
+`ShaderModuleCreateInfo.flags`, which **no revision of the library has
+ever read** - and the words are pointed at, not copied, exactly as an
+entry's name and function already are.
+
+| | What happens |
+|---|---|
+| New library, old program | Byte for byte what happens today: no flag, no sidecar, the first three fields are all there is. |
+| **Old library, new program** | The module is **accepted**: `code_size` passes the `<` check, the magic matches, the entries are at the offsets it expects, the tail is ignored. The program draws on the cores - which is where it draws on such a library anyway. No revision gate in the program, and nothing lost but the GPU path. |
+| New library, new program | The flag is set, `code_size` proves the struct is that wide, `spirv_count` must equal `entry_count`, and entry k's words are `spirv[k]`. |
+| Stale `v3d.fdriver` | `_driver.stamp` mixes `LIBRARY_REVISION`, so the board's driver module is refused with a log line at **every** revision of this work and must be replaced each time. The V3D then does not appear at all, and every program draws on the cores. |
+
+Index pairing rather than a record of its own means the sidecar carries no
+second copy of `_shader.find`'s `(stage, name)` key, and nothing per-entry
+that could drift out of step with `Entry`. The library refuses
+`spirv_count != entry_count` rather than trusting it: the array is the
+program's.
+
+## The subset, and two tiers of refusal
+
+`spirv-val` is not a subset checker. Measured on this machine, it accepts
+`Workgroup` variables in a fragment shader, `OpAtomicIAdd`,
+`OpTypeRuntimeArray`, `OpDPdx`/`OpDPdy`/`OpFwidth` (plain `Shader`
+capability, no extra), `OpImageSampleExplicitLod` with `Grad`, unbounded
+loops with `OpPhi` across the header, `OpSwitch`, `OpFunctionCall`,
+separate `OpTypeSampler`, `ImageFormat Rgba8` on a sampled image, two
+entry points in one module, and any entry-point name. facet refuses those
+itself, through three allowlists - capability, opcode, type and storage
+class - and `spirv.Profile` is the type that holds one.
+
+Refusal happens in two places, and the difference matters:
+
+| Where | What it refuses | Result |
+|---|---|---|
+| `CreateShaderModule`, against `spirv.facet_profile` | a module that is **malformed**: a bad header, a word count that walks off the end, an id over the bound, a section out of order, no entry point | `error_invalid_shader_nv` |
+| `make_pipeline`, against the **back end's own** `Profile` | a module that is well formed but asks for what this device will not compile | `error_feature_not_present` |
+
+A module that is merely *richer* than facet's subset is not refused by the
+library: it is kept, logged, and left for a device that can take it. The
+library must never refuse words a later back end could run - that is the
+one mistake that costs `facet-todo.md` section 4's steps 1 to 5 twice.
+
+There is a third answer, and it is neither tier, because by the time it
+is needed the words have long since been accepted. A program that
+samples compiles, and its uniform stream is then not floats: two of its
+words are the TMU's configuration, the texture's state and the
+sampler's. Only a draw can fill those in - the texture and the sampler
+are bound to the descriptor set the module names, not to the pipeline -
+so `compile.Code.uniforms` is an array of `Word`, a union of `float`,
+`texture` and `sampler`, and the draw substitutes the two as it lays the
+stream down. Where the draw cannot - nothing bound at that set and
+binding, or a sampler asking for something the TMU's state cannot say -
+it does what a fixed form does and what `shader.missing` means: it draws
+the magenta of `missing_color` through `programs.color`. The pipeline is
+valid, the device can run it, and the picture says what is missing
+rather than the draw failing or the cores being handed the work.
+
+`spirv.zig` holds the format and nothing else. It imports `std` and never
+imports `ir.zig`, because **a back end does not need facet's language to
+compile facet's SPIR-V - it needs the format.** The build enforces it:
+`build.zig:1313` gives the `v3d` module `sdk` and nothing more.
+
+## Where the colour convention is paid
+
+SPIR-V speaks 0 to 1. facet's existing forms do not: a vertex function
+writes a channel through `shader.channel(v) = v * 255 + 0.5`, the varying
+carries it pre-scaled, and `smoothQuads` does `bytesOf(over_w * w)` with
+no scaling of its own. The V3D path undoes it again in `_play.zig`'s
+`Carried` union, to hand the QPUs 0 to 1.
+
+The rule, in one line each way:
+
+- **The graph is 0 to 1**, Vulkan's convention, so the words mean to a
+  desktop driver what they mean to facet. The conversion lives in exactly
+  one place: the generated function's sink, `bytesOf(channel(v))`.
+- **A program whose fragment entry is generated does not call
+  `shader.channel` in its vertex function.** Its varyings carry 0 to 1.
+
+The hand-written fixed forms are left exactly as they are, and keep
+drawing every pipeline that names one. The generated path serves
+`FixedKind.none` - a fragment function of the program's own - and nothing
+else. So no existing picture changes, `FacetCube CHECK` keeps comparing
+the same code that produced its reference, and the fixed forms become the
+**oracles** the generated path is proved against rather than something it
+replaces.
+
+## The files
+
+| File | What it owns | Imports |
+|---|---|---|
+| `sdk/libs/facet/spirv.zig` | the format: opcodes, enums, the emitter's word buffer and type interning, the reader, `Profile`, `facet_profile` | `std` only |
+| `sdk/libs/facet/ir.zig` | the language: `Kind`, `Tag`, `Op`, `Build`, `Graph`, `Fragment`/`Vertex` type forms, the words via `spirv.zig`, the generated core function | `std`, `spirv.zig`, `shader.zig` |
+| `src/disk/libs/facet/tests/spirv.zig` | the emitter against validated modules, the reader's refusals | reached from `src/disk/tests.zig` |
+| `src/disk/libs/facet/tests/ir.zig` | a generated function against the hand-written fixed form it mirrors | as above |
+| `src/disk/libs/facet/driver/v3d/compile.zig` | the QPU back end: SPIR-V words to `u64` instructions, and the uniform stream beside them - `Code.Word`, since two of its words are the TMU's configuration and only a draw knows those | the `v3d` module, host-tested from `v3d.zig` |
+| `scripts/spirv-check.sh` | emits the library's modules and runs `spirv-val` over them, skipping with a message where the tool is absent | - |
+| `scripts/vulkan-check.sh`, `.c`, `vulkan-check.vert`, `vulkan-check-uv.vert` | the same modules drawn with by every Vulkan driver the machine has, every pixel checked; skips the same way. Two vertex shaders, because a fragment module that reads a coordinate at location 0 and one that reads a colour there cannot be given the same one. `--prove` tells it three named lies and fails if any goes unnoticed | - |
+
+A test in `sdk/libs/facet/` never runs: `sdk` is always an imported
+module and never a test root, which is why `texture.zig`'s own test has
+been dead since 1.20. Every test above lives where it is reached.
+
+## The QPU back end
+
+Three levels, so that everything checkable is checked in the pure middle
+one, on the host:
+
+1. **`Program`** - what the words asked for, read by `spirv.zig`.
+2. **`Plan`** - registers assigned, instructions chosen, nothing encoded.
+   Every rule lives here and every test reads here.
+3. **`u64` words** - `qpu.zig`'s encoders, one call an instruction.
+
+The rules the hardware does not forgive, as structure rather than
+intention:
+
+- `last_section` - two `thrsw` in a row, with the scoreboard wait - is
+  **spliced in as a shared constant** from `qpu.zig`, never scheduled and
+  never copied. Without it a pixel reaches the tile buffer ahead of one
+  drawn before it at the same place and the renderer hangs; a hang sets
+  `hardware.broken` on the one `Hardware` every instance of the library
+  shares, so it costs the display driver and every other client until the
+  last one lets go.
+- Where the splice goes is a rule of its own, and not "between the body
+  and the colour": **after the last varying read and the last TMU write,
+  before the first tile-buffer write.** A program that does not sample
+  has no TMU write to wait for, so the rule leaves it the whole body to
+  sit in and `settle` puts it where it always was, right before the
+  colour. A program that samples has one, and then it falls inside the
+  body - between the write to S that starts the lookup and the two words
+  coming back, which is the four instructions all five hand-written
+  sampling programs leave there. `sound` reads that distance off every
+  compiled program that samples rather than trusting the plan to have
+  kept it.
+- Registers: next free, except that a dying operand may be the
+  destination; over 16 live values the pipeline is refused rather than
+  spilled. A threaded fragment program has 16 registers and there is no
+  stack on a QPU.
+- No scheduler. The latencies are honoured by emitting the same shapes
+  the hand-written programs use: `varying()`'s three instructions,
+  `ldtmu` after the TMU write, two `nop`s after `recip`. Where a value is
+  not ready the program waits in `nop`s rather than finding something
+  else to do.
+- Ten registers, not sixteen: rf0 to rf2 are the hardware's, rf3 is W,
+  and rf14 and rf15 are what every varying read passes through. So a
+  value lives in rf4 to rf13, and `compile.zig`'s `registers` is 10.
+- A varying is taken in order and cannot be stepped over: `ldvary` hands
+  over the next one there is. So every varying up to the last one the body
+  reads costs its three instructions, read or not, and the input locations
+  have to be 0 upwards without a gap - that is the numbering a vertex
+  function writes (`ir.Build.input` holds a shader to it), and a module
+  that means another one is refused rather than mis-compiled.
+- A uniform is read where it is first wanted, not at the top: `ldunifrf`
+  takes the next one in the stream wherever its instruction sits, so the
+  order of the stream is the order the body asks, and a constant does not
+  hold a register from the start of the program. It is what lets eight
+  varyings and four floats of its own fit ten registers.
+- **A texel is not four registers.** The TMU hands back two words of two
+  half-floats each, which is the form the tile buffer takes: red low and
+  green high in the first, blue low and alpha high in the second. So a
+  texel's floats are slots that name a half of a register
+  (`Work.slot_half`) and the float they share it with
+  (`Work.slot_pair`), and neither of the two gives the register back
+  while the other still wants it.
+- `fmulLow`/`fmulHigh` is the only instruction that reads one half as a
+  float, so the plan has three answers to a texel and no fourth. Where
+  nothing touches it, it goes to the tile buffer in the form it came in
+  (`Act.color_packed`, which is what `qpu.texture_code` does). Where the
+  step over it is a multiply with a texel's float on exactly one side,
+  that multiply **is** the read (`Act.half`, which is what
+  `qpu.texture_color_code` does, and it is why a texture modulated by
+  the vertices' colour costs four instructions and not eight). Anything
+  else - an add, a texel against a texel - is the same instruction
+  against a 1 the program holds as a uniform like any other float of its
+  own (`plain`, `one`).
+- **Where a program samples, every uniform is loaded with the
+  varyings** - the 1 and the program's own floats alike - and not where
+  it is first wanted. The splice falls inside such a program's body, so
+  a float first wanted after the texel would be an `ldunifrf` in the
+  last thread section, and no hand-written program reads the stream
+  there: `flat_code` takes both of its uniforms before `last_section`,
+  and all five sampling programs take their two `wrtmuc` before it.
+  `sound` holds every compiled program to it, so it is a checked rule
+  and not a comment. For the 1 in particular, `wantsOne` is a pre-pass
+  over the steps and `fuses` - which says whether a multiply reads a
+  half in its own breath - is shared between it and the plan, so the two
+  cannot drift; `wantsOne` may say yes where the plan then fuses every
+  read, and a uniform loaded and not used costs one instruction where
+  the other way round costs what nobody here knows.
+
+  A program that does **not** sample keeps the lazy loads: its splice is
+  the last thing before the colour, nothing can fall past it, and
+  reading a float where it is wanted is what lets eight varyings and
+  four floats of its own fit ten registers. The cost of the eager loads
+  is registers held across the sample, so a sampling program with a vec4
+  varying and a vec4 of its own beside the texel wants eleven and is
+  refused - the cores draw it and the picture is right. Refusing every
+  sampling program with a float of its own would have been the other
+  safe answer; it would have lost the common one, a texture tinted by a
+  constant, which fits.
+- Latency is a readiness per register (`Work.ready`), not one constant. A
+  value an instruction computed may be read by the instruction after it.
+  A value a signal brings has to be waited out: a uniform six
+  instructions (`uniform_latency`, the distance `flat_code` leaves), a
+  texel two (`texel_latency` - every hand-written program that samples
+  issues its two `ldtmu` back to back and reads the first of them in the
+  instruction after the second, and reading one any sooner has never run
+  on this board). `wait` pays whatever is owed in `nop`s before the
+  instruction that wants the register, so a plan that is long enough
+  already costs nothing.
+- A decoration's literal, a `DescriptorSet` and a `Binding` are the
+  module's own numbers, so each is held against the table that keeps it
+  before it is stored: `none` is 0xFFFF, and a literal of exactly 65535
+  would otherwise be read back as "never decorated"
+  (`Error.Numbered`). How many samplers a module *declares* is this back
+  end's table and not the device's limit - the device can do one
+  *sample*, and a module may declare sixteen and sample one - so that
+  has a refusal of its own (`Error.Declared`), and a log line can tell a
+  bound another build could raise from a limit no build can.
+- Three things the source does not settle, paid for rather than guessed:
+  how long an `ldunifrf` is before its register may be read, how long an
+  `ldtmu` is, and what the hardware makes of a program that reads fewer
+  varyings than its record declares. The first two are waited out to the
+  distances the hand-written programs leave, because a longer wait cannot
+  hurt and a shorter one is not written down anywhere; the third never
+  arises, because every varying the draw carries costs its three
+  instructions whether the body reads it or not, as in all seven
+  hand-written programs.
+- A decoration the back end does not understand is **refused**, not
+  ignored. `Flat` and `NoPerspective` are the reason: a varying decorated
+  either way is not what `qpu.varying` interpolates, and a wrong colour
+  with no fault behind it is the hardest failure to find. So is
+  `OpExecutionMode`: `OriginLowerLeft` compiles to the same words as
+  `OriginUpperLeft` and draws the picture upside down, so the mode is read
+  and only the one facet emits is taken.
+- The first form to reach the GPU is the **interpolated colour**, not flat
+  colour: `driver.Programs` has no `flat` field and `loadPrograms` loads
+  six programs, so flat has no preloaded program to diff against at run
+  time, while `color_fragment` does.
+- The first board run is in **`C:test/v3dtest`**, a standalone command, not
+  in a pipeline. A hang there costs a reboot; a hang inside the library
+  costs the machine's display.
+
+Generated code is allocated per pipeline from `hardware.space.alloc` (its
+own block, page-aligned, which `cl.shaderRecord`'s flag bits in the low
+bits of a program address require), written, `space.toGpu`'d, and freed in
+`unmake_pipeline`. The per-frame chunks cannot hold it: `beginRenderPass`
+resets them.
+
+## The test ladder
+
+Each rung is a thing that can fail on its own, cheapest first:
+
+1. **Byte-exact words.** The emitter's output against five modules
+   assembled with `spirv-as` and validated with `spirv-val` - `min_flat`
+   70 words, `min_interp` 72, `min_tex` 113, `min_texmod` 135,
+   `min_discard` 141 - and two of facet's own that an assembler cannot
+   give the same ids, validated all the same: `min_vert` 193 against the
+   assembler's 200, and `min_scaled` 94. Host test, no tools needed.
+2. **`spirv-val`.** `scripts/spirv-check.sh` over every module the library
+   can emit. Skips with a message where SPIRV-Tools is not installed.
+3. **The reader's refusals.** A malformed module per rule - bad magic,
+   bad bound, a word count off the end, a section out of order, a
+   capability outside the allowlist - each refused with its own result.
+4. **The generated function against the fixed form.** The same scene
+   through `shader.smooth` with pre-scaled planes and through the
+   generated function with unscaled ones, pixel for pixel, on the host.
+   For the sampler family, against `shader.textured` over 289 planes:
+   **equal, bit for bit** at the nearest texel, and within two of 255
+   where it mixes. The nearest case is held as equality and not as
+   nearness on purpose - the fixed form picks its texel in 1/256ths and
+   the generated one in floats, scaling by 256 is exact in binary, and a
+   byte through `bytesOf(b / 255)` comes back as that byte for all 256 -
+   so a rounding that crept into either would be seen. The mix cannot be
+   exact: `sampleLayer` mixes across and then down, rounding at each
+   step, where the graph takes the result out into floats and back.
+
+   This rung did not exist for a sampling graph until 1.78, and not
+   because nobody had written it: `ir.Fragment(...).function` **did not
+   compile** for a graph with a `.sample` op, and no test had found out,
+   because every sampling graph in the tree had been asked only for its
+   `.words`. A lazy declaration nothing instantiates is a declaration
+   nothing checks.
+5. **The QPU words against the hand-written program.** `compile.zig`'s
+   output for the interpolated colour against `qpu.color_fragment`,
+   instruction for instruction, on the host - plus the structural checks
+   the existing suite does not make: every destination of every
+   instruction below rf16 on **both** the add and the mul side, and
+   exactly one `last_section`, in the right place, with every TMU write
+   before it and every tile-buffer write after it. Since the sampler
+   family, two more: a texture at a vec2 varying drawn as it comes
+   against `qpu.texture_code`, instruction for instruction, with the two
+   words the TMU hands back in rf6 and rf7 where that program's shared
+   `sample_end` fixes them at rf10 and rf11; and that texture times the
+   colour the vertices carry against `qpu.texture_color_fragment.code`,
+   word for word.
+6. **The board, standalone.** `C:test/v3dtest GENERATED` renders with
+   generated code and checks every pixel against the arithmetic in the
+   test. Run on the CM5: the interpolated colour, a colour of its own from
+   four uniforms, and a colour dimmed by a fifth varying - 0 wrong of
+   866813, 902720 and 885760 pixels, about 750 us a frame each.
+
+   And, since 1.78, the two sampling programs: a texture drawn as it
+   comes, one texel to a pixel over a 256x256 image, and that texture
+   times the colour the vertices carry over `modulateTest`'s own
+   geometry. **0 wrong of 65536 and of 4096 pixels, and 0 at worst** -
+   not within a step but exactly the texel, which is what a NEAREST
+   sample of a byte texture through half-floats comes to and what the
+   hand-written programs already got. 726 and 725 us.
+
+   The modulated case is held to `qpu.texture_color_fragment.code` word
+   for word *before* the draw, and the draw is skipped on a mismatch: a
+   wrong instruction in a program the TMU is waiting on hangs the
+   renderer, which costs the display and wants a power cycle. The
+   textured case is held to the hand-written program's length only,
+   because this allocator takes the lowest free registers and puts the
+   texel in rf6/rf7 where that program's shared `sample_end` fixes
+   rf10/rf11; rung 5 is where those words are pinned.
+7. **The board, in the library.** `C:test/FacetProbe`, `FacetBoth` on both
+   devices, `FacetCube CHECK`, `FacetMany` for the draw time. Run on the
+   CM5 at 1.76: FacetProbe 726 checks and none failed, FacetCube `CHECK`
+   alike, FacetMany 99856 triangles in 11.6 ms a frame of 1920x1080.
+   FacetBoth draws every case on both devices and a few of them are a
+   handful of pixels apart - 14 of 230400 across a cube's edge, 11 in a
+   subpass - which is the cores' rasteriser against the V3D's, in draws
+   that ship no SPIR-V at all and go nowhere near `compile.zig`.
+
+   Re-run at 1.79: FacetProbe 726 and none failed, FacetCube alike with
+   the same counts, and FacetBoth's half-floats, floats, packed floats
+   and shared exponent exact, with the subpass and two-attachment cases
+   8 to 11 of 230400 apart as before. **Those numbers are the baseline,
+   and the reason they are written down here**: FacetBoth instantiates
+   no `ir.Fragment` at all - every one of its fragment entries is a
+   fixed form - so a change to the SPIR-V compiler or to a generated
+   function cannot move them, and one that does has broken something
+   else.
+8. **A desktop Vulkan driver.** `scripts/vulkan-check.sh` makes a real
+   pipeline out of the modules on every Vulkan device the machine has,
+   draws one triangle with each, and holds every pixel against the shares
+   worked out in the harness - the same arithmetic rungs 4 and 6 hold
+   facet to, under the slack `FacetBoth` uses. facet's picture is that
+   arithmetic and the driver's picture is that arithmetic, so the two are
+   the same picture. This is the rung that makes the choice of SPIR-V pay
+   for itself, and the one that catches a wrong reading of the spec
+   rather than a wrong implementation of facet's reading of it: a
+   Location on the wrong variable, an execution mode left out, or an
+   interface facet alone agrees with passes `spirv-val` and draws the
+   wrong picture.
+
+   Six cases. `min_flat`, `min_interp` and `min_scaled` over a vertex
+   shader of the script's own; `min_vert` with `min_interp`, which is
+   facet's SPIR-V on both sides of the pipeline, matrix in a uniform
+   block and all; and `min_tex` and `min_texmod` over a second vertex
+   shader of the script's own, which is there because a module that reads
+   a coordinate at location 0 and one that reads a colour there cannot
+   share one.
+
+   The sampler cases keep the oracle exact rather than close: a 4x4
+   image of sixteen texels, no two alike and no two a swap of u and v
+   apart, read with NEAREST and CLAMP_TO_EDGE, so the answer is the
+   texel the coordinate lands in with none of the driver's own weights
+   in it. A pixel within 0.02 texels of a boundary is left unchecked,
+   for the reason the triangle's edge is: a driver snaps a corner to its
+   own subpixel grid, and within a fraction of a texel of a boundary
+   that is a different texel rather than a channel out by one.
+
+   Run here against NVIDIA's own driver (RTX 5090, API 1.4.351) and
+   Mesa's RADV (Ryzen 9 9950X, API 1.4.354), and the two answer alike:
+   0 wrong of 63088 pixels for `flat`, `interp` and `scaled`, of 64924
+   for `placed` and of 61790 for `tex` and `texmod`; 1 of 255 at worst,
+   and exactly right at every pixel in `flat` and `tex`.
+
+   That it passed is worth nothing on its own - a check whose loop never
+   runs passes too - so `--prove` runs it three times more, each time
+   having told it one small lie about what the pixel should hold, and
+   every lie has to come back caught. Red and green swapped in the
+   answer is caught in 12 of 12 cases; the texel at
+   `floor(c*size - 0.5)`, which is where LINEAR's lower-left weight sits
+   and NEAREST's answer is not, in 4 of 12, and u and v swapped before
+   the lookup in 4 of 12. The two sampler lies are caught in exactly the
+   four cases that sample, on both drivers, which is where a lie about
+   the sampler ought to be caught and nowhere else. The texel table is
+   built for those two: sixteen texels with no two alike and no two a
+   swap of u and v apart, so neither lie can land on a texel that hides
+   it.
+
+Rungs 1 to 5 run in `./zig build test`. Rungs 2 and 8 are scripts
+because a build step that fails where a tool is missing would break the
+build for anyone without SPIRV-Tools, glslc or a Vulkan driver.
+
+## The order of the work
+
+| # | What | Revision |
+|---|---|---|
+| 1 | this document | - |
+| 2 | `Fixed.fromBits` range-checked, an unknown fixed kind refused in `settle` - a latent `@enumFromInt` on a program's own word, fixed before anything neighbours it | 1.75 |
+| 3 | `spirv.zig`: the format, the emitter, the reader, `Profile`; rungs 1 to 3 | 1.75 |
+| 4 | `ir.zig`: the graph, the words, the generated core function; rung 4 | 1.75 |
+| 5 | the library: `Module`, the flag, `CreateShaderModule`, `settle`, `Pipeline`'s words, `PhysicalDeviceFeatures` | 1.75 |
+| 6 | `compile.zig`: the interpolated colour to QPU words; rung 5 | - |
+| 7 | the V3D driver: code per pipeline, the shader record, `make_pipeline`; rungs 6 and 7 | 1.76 |
+| 8 | rung 8: `scripts/vulkan-check.sh`, facet's modules through a driver that has never seen facet | - |
+| 9 | the sampler family, the host half: `compile.zig` compiles a module that samples, rung 5 against the two hand-written programs it answers, rung 8 on this PC's two drivers | - |
+| 10 | the sampler family, the draw half: the TMU's two configuration words out of the descriptor set the module names, and the magenta where there is nothing there | 1.77 |
+| 11 | the family held to the board and to eight reviews: rungs 4, 6 and 7 over a generated program that samples, and the six defects they found | 1.78 |
+| 12 | the two devices made to agree: a generated shader samples as the sampler the draw bound says on whichever one draws it, and `CmdBindPipeline` turns down a pipeline from another device | 1.79 |
+| 13 | the rest, a form a family at a time - discard next, since `OpKill` is what sends most of the draws that are left to the cores | - |
+
+Step 6 changes nothing a program can see - `compile.zig` is reached from
+its own host tests and from nowhere else yet - so it is not a revision.
+The driver begins to compile in step 7, and that is.
+
+Steps 1 to 12 are done: rungs 1 to 5 in `./zig build test`, rungs 6 and 7
+on the CM5 and rung 8 on this PC's two drivers, as the ladder above
+records.
+
+Steps 9 and 10 are the sampler family, split by where the work is. Step
+9 is the host half: a module that samples compiles, and the two forms a
+program was written by hand for come out as those programs - rung 5
+holds them to `qpu.texture_code` and to `qpu.texture_color_fragment`,
+and rung 8 draws the same two modules with on this PC's two drivers.
+Step 10 is the draw half, which is revision 1.77: the pipeline keeps a
+sampling program, and the draw turns the set and binding the module
+named into the TMU's two words, or draws the magenta where there is
+nothing there.
+
+Step 11 is where the family stopped being written and started being
+proven. The board draws it: `v3dtest GENERATED`'s two sampling cases are
+0 wrong of 65536 and 4096 pixels and 0 at worst, `FacetProbe` is 726
+checks and 0 failed, and `FacetCube CHECK` is as alike as it was. Rung 4
+runs at last, which took fixing a function that had never compiled, and
+rung 8 draws the same two modules with on two desktop drivers.
+
+Eight adversarial reviews of the back end came between, and found six
+defects - three of them a wrong picture reachable from a module a
+compiler writes, one a panic on an untrusted module, two refusals of
+words this device can run. Three reviews converged on the same one. The
+file also both forbade a uniform past the thread switch and emitted up
+to four, which is now one rule and a checked one. What `sound` reads off
+every compiled program grew by two invariants as a result, so the next
+two of that kind are caught without a test having to name them.
+
+Step 12 came out of the same reviews but is not the back end's: the two
+devices disagreed about a generated shader's filtering. Vulkan puts it
+in the sampler object and SPIR-V has nowhere to carry what a graph
+asked, so the V3D read the bound sampler and the cores read the graph -
+one pipeline, two pictures. Both read `texture.samplingOf` now, which is
+in neither of them for that reason, and a sampler it cannot answer for
+is drawn by neither.
+
+What is left is step 13, the long one: every fragment form the fixed
+kinds cover, taken a family at a time. Discard is next, and it is the
+first that has no hand-written QPU program to be held against - so rung
+5 has nothing to say about it, and rungs 4, 6 and 8 carry it alone.
+
+Steps 2 to 5 are the library's side and are provable on the host. Step 6
+is where the days go. `facet-todo.md` section 4 says months for the whole
+of it and that is not an exaggeration. Section 4 has two numbered lists -
+seven things it takes, and five it would be split into - and it is the
+**split** this table is walking: what is here is its steps 1 and 2, step
+3 is deliberately not attempted, and steps 6 to 13 above are its step 4.
+
+### What comes after step 13
+
+Step 13 is a long tail rather than a step, and the families in it are not
+alike. The order is the one section 4 gives, and the first of them is
+where the cheap part ends:
+
+- **Discard**, and it bends the method rather than breaking it. Every
+  generated program so far is a macro expansion of a shape a hand-written
+  program already proves, which is what lets rung 5 compare them
+  instruction for instruction and what lets `settle` get away with no
+  scheduler. There is still **no hand-written discard program** -
+  `qpu.zig` has seven and none of them drops a pixel - so rung 5 has
+  nothing to compare a discarding program against until one is written.
+
+  What this section said before, that rung 5 "goes blind" and rungs 4, 6
+  and 8 carry discard alone, was too pessimistic. Three things measured on
+  06.11.2026 say so, and all three are off the board:
+
+  - **Rung 4 has a bit-exact oracle already.** `texture_cutout` is a fixed
+    form that drops a pixel, and it drops it under `shader.cutout_alpha`,
+    128 of 255. `floor(a * 255 + 0.5) < 128` exactly when `a < 0.5`, so
+    that fixed form and a generated `a < 0.5` discard agree pixel for
+    pixel with no slack at all, and the cores run both on the host.
+  - **Rung 8 takes a discard case with no new oracle.** The sixteen texels
+    of `scripts/vulkan-check.c` carry four alphas - 0xFF, 0xD0, 0xA0 and
+    0x70, four texels each - so exactly four of the sixteen fall under
+    128, and the nearest alpha to the threshold is 16 away from it. A
+    discard case needs no change to the pattern and has no pixel near the
+    boundary to be unsure about, which is the property the existing six
+    cases already rely on.
+  - **The encoder's new fields have a host oracle too.** The condition
+    field, the flag push and `setmsf` are encodings, and `qpu.zig` already
+    holds its fields against Mesa's own `qpu_disasm` samples on this PC -
+    `test "the fields lie where Mesa's samples have them"`. A hand-written
+    discard program can be built from the `qpu.*` builders the way the
+    plan assertions are; written from the same reading of Mesa's packing
+    as the encoder, though, it catches a plan-to-encoder slip and not a
+    wrong field, which is what the Mesa vectors are for.
+
+  What is genuinely left for the board is narrow: whether a conditional
+  `setmsf` issued after the two `thrsw` of `last_section` suppresses the
+  write as intended. That is the same kind of unwritten-down timing fact
+  that `uniform_latency` 6 and `texel_latency` 2 were paid for rather than
+  guessed.
+
+  It still wants the encoder to grow: condition flags, a flag push,
+  `setmsf`, and either branches with their three delay slots or
+  flag-conditioned writes instead. On the words' side it wants
+  `OpTypeBool`, a comparison, `OpSelectionMerge` and
+  `OpBranchConditional`, all of which `Error.Branches` turns down today
+  because the back end takes one basic block.
+- **The sampler's other three kinds** - an array layer, a 3D slice, a
+  cube face - which *do* have hand-written programs, so they are the
+  cheap kind again: rung 5 has an oracle and the TMU's configuration is
+  the part that differs.
+- **Then the forms with no fixed equivalent at all**, which is the point
+  of the exercise and the first time the compiler is doing something the
+  library could not already do.
+
+Past the whole of that lie the two things section 4 lists and this
+document has deliberately left alone:
+
+- **A real allocator and a real scheduler** (its step 3). Today there is
+  liveness and allocation but **no spilling** - over the ten registers a
+  pipeline is refused and the cores draw it - and no scheduler at all,
+  the latencies being paid in `nop`s. Both are fine while programs are
+  macro expansions of proven shapes and stop being fine when they are
+  not.
+- **Compute on the QPUs** (its step 5), "if ever": it wants everything
+  above plus the dispatch path.
+
+The feature bits still dark are `input_attachments`, `storage_images`,
+`several_outputs`, `cube_arrays` and `pipeline_statistics_queries`; each
+is a form or two of the above. What **no** amount of this reaches is in
+"What this is not" below - the Khronos CTS, which wants a
+`libvulkan`-shaped shim over facet before a single test of it can run.
+
+## What this is not
+
+- **Not a Vulkan driver.** The API stays facet's, called through an LVO
+  table, so the Khronos CTS is out of reach without a `libvulkan`-shaped
+  shim over facet on the host. What is in reach is the CTS's shaders, as
+  input to the compiler.
+- **Not a replacement for the fixed forms.** They keep every pipeline that
+  names one, and they are the oracles.
+- **Not a compiler on the board for anything but the V3D.** The words are
+  built at comptime on the PC; nothing parses GLSL anywhere near the CM5.
+- **Not compute.** Compute and tessellation stay on the cores, as
+  `facet-gaps.md` already records.

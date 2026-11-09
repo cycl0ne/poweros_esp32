@@ -47,11 +47,14 @@ Generated from the source by `./zig build autodoc`.
 - [CmdNextSubpass](#cmdnextsubpass) - Recorded: what the subpass drew stored, and the next subpass begun.
 - [CmdPipelineBarrier](#cmdpipelinebarrier) - Recorded: a barrier between the work before it and the work after.
 - [CmdPushConstants](#cmdpushconstants) - Recorded: bytes of push constants set.
+- [CmdResetEvent](#cmdresetevent) - Recorded: the event reset once the work before it is done.
 - [CmdResetQueryPool](#cmdresetquerypool) - Recorded: `count` queries from `first` set back to nothing counted and not available.
+- [CmdResolveImage](#cmdresolveimage) - Recorded: the samples of a multisampled image averaged into an image of one sample, rectangle by rectangle.
 - [CmdSetBlendConstants](#cmdsetblendconstants) - Recorded: the blend constants, for a pipeline that leaves them to commands.
 - [CmdSetBlendConstantsAt](#cmdsetblendconstantsat) - Recorded: one colour attachment's own blend constants, for a pipeline that leaves them to commands.
 - [CmdSetDepthBias](#cmdsetdepthbias) - Recorded: the depth bias, for a pipeline that leaves it to commands.
 - [CmdSetDepthBounds](#cmdsetdepthbounds) - Recorded: the depth bounds, for a pipeline that leaves them to commands.
+- [CmdSetEvent](#cmdsetevent) - Recorded: the event set once the work before it is done.
 - [CmdSetLineWidth](#cmdsetlinewidth) - Recorded: the width of lines, for a pipeline that leaves it to commands.
 - [CmdSetScissor](#cmdsetscissor) - Recorded: the scissor, for a pipeline that leaves it to commands.
 - [CmdSetStencilCompareMask](#cmdsetstencilcomparemask) - Recorded: the stencil test's compare mask, for a pipeline that leaves it to commands.
@@ -59,6 +62,7 @@ Generated from the source by `./zig build autodoc`.
 - [CmdSetStencilWriteMask](#cmdsetstencilwritemask) - Recorded: the stencil test's write mask, for a pipeline that leaves it to commands.
 - [CmdSetViewport](#cmdsetviewport) - Recorded: the viewport, for a pipeline that leaves it to commands.
 - [CmdUpdateBuffer](#cmdupdatebuffer) - Recorded: bytes written into a buffer, kept with the command.
+- [CmdWaitEvents](#cmdwaitevents) - Recorded: the work after it waits until each of the events is set.
 - [CmdWriteTimestamp](#cmdwritetimestamp) - Recorded: the clock written into query `query` of `pool` when the command is played.
 - [CreateBuffer](#createbuffer) - A buffer of so many bytes, for what its usage says.
 - [CreateBufferView](#createbufferview) - A range of a buffer read as texels of a format, for a texel buffer descriptor.
@@ -67,12 +71,14 @@ Generated from the source by `./zig build autodoc`.
 - [CreateDescriptorPool](#createdescriptorpool) - A descriptor pool: the most sets it gives out at once.
 - [CreateDescriptorSetLayout](#createdescriptorsetlayout) - A descriptor set layout: a set's bindings, each of a kind, with its descriptors.
 - [CreateDevice](#createdevice) - A device of the program's own, with its queue.
+- [CreateEvent](#createevent) - An event, reset: set by the host or by a queue's work, and waited for by a queue's work.
 - [CreateFence](#createfence) - A fence: signalled by a queue when the submission it came with is done.
 - [CreateFramebuffer](#createframebuffer) - A framebuffer: an image view for each of a render pass's attachments.
 - [CreateGraphicsPipelines](#creategraphicspipelines) - `count` graphics pipelines, one for each of `infos`, into `pipelines`.
 - [CreateImage](#createimage) - An image: a texture, an attachment, or what a copy moves.
 - [CreateImageView](#createimageview) - A view of an image: the levels of it a texture descriptor samples, or what a framebuffer draws into.
 - [CreateInstance](#createinstance) - A program's hold on the library, through which it finds the devices.
+- [CreatePipelineCache](#createpipelinecache) - A pipeline cache: what pipelines are made faster with the next time, and what GetPipelineCacheData hands out to keep for another run.
 - [CreatePipelineLayout](#createpipelinelayout) - A pipeline layout: the descriptor sets and the push constants a pipeline's shaders read.
 - [CreateQueryPool](#createquerypool) - A query pool: `query_count` queries of one kind, nothing counted yet.
 - [CreateRenderPass](#createrenderpass) - A render pass: the attachments it draws into, what each starts with and what is kept of it.
@@ -88,12 +94,14 @@ Generated from the source by `./zig build autodoc`.
 - [DestroyDescriptorPool](#destroydescriptorpool) - The descriptor pool given back, and every set allocated from it.
 - [DestroyDescriptorSetLayout](#destroydescriptorsetlayout) - The descriptor set layout given back; the sets allocated with it stay.
 - [DestroyDevice](#destroydevice) - The device given back, and its queue's task ended.
+- [DestroyEvent](#destroyevent) - The event given back.
 - [DestroyFence](#destroyfence) - The fence given back.
 - [DestroyFramebuffer](#destroyframebuffer) - The framebuffer given back.
 - [DestroyImage](#destroyimage) - The image given back.
 - [DestroyImageView](#destroyimageview) - The view given back.
 - [DestroyInstance](#destroyinstance) - The instance given back.
 - [DestroyPipeline](#destroypipeline) - The pipeline given back: no submission still drawing with it.
+- [DestroyPipelineCache](#destroypipelinecache) - The pipeline cache given back.
 - [DestroyPipelineLayout](#destroypipelinelayout) - The pipeline layout given back.
 - [DestroyQueryPool](#destroyquerypool) - The pool given back.
 - [DestroyRenderPass](#destroyrenderpass) - The render pass given back.
@@ -105,14 +113,17 @@ Generated from the source by `./zig build autodoc`.
 - [DeviceWaitIdle](#devicewaitidle) - Wait until every queue of the device has done all it was given.
 - [EndCommandBuffer](#endcommandbuffer) - The command buffer's recording ended: it can be submitted.
 - [EnumeratePhysicalDevices](#enumeratephysicaldevices) - The instance's physical devices.
+- [FlushMappedMemoryRanges](#flushmappedmemoryranges) - What the host wrote through a mapping, in `ranges`, made the device's to read: nothing to do, every memory type being coherent.
 - [FreeCommandBuffers](#freecommandbuffers) - Command buffers given back to the pool they came from.
 - [FreeDescriptorSets](#freedescriptorsets) - `count` descriptor sets given back to the pool they came from.
 - [FreeMemory](#freememory) - The block given back.
 - [GetBufferMemoryRequirements](#getbuffermemoryrequirements) - What the buffer needs of the memory it is bound into.
 - [GetDeviceMemoryCommitment](#getdevicememorycommitment) - How many bytes of a block the device has really put behind it.
 - [GetDeviceQueue](#getdevicequeue) - A queue the device was made with.
+- [GetEventStatus](#geteventstatus) - Whether an event is set, without waiting: `event_set` or `event_reset`.
 - [GetFenceStatus](#getfencestatus) - Whether a fence is signalled, without waiting.
 - [GetImageMemoryRequirements](#getimagememoryrequirements) - What the image needs of the memory it is bound into.
+- [GetImageSparseMemoryRequirements](#getimagesparsememoryrequirements) - What binding an image sparsely asks of memory: nothing, no image being sparse.
 - [GetImageSubresourceLayout](#getimagesubresourcelayout) - Where a level of an image lies in its memory, and how its rows do.
 - [GetPhysicalDeviceFeatures](#getphysicaldevicefeatures) - What a physical device does, so that a program may ask before it is refused.
 - [GetPhysicalDeviceFormatProperties](#getphysicaldeviceformatproperties) - What the device does with a format, in each tiling and in a buffer.
@@ -120,21 +131,28 @@ Generated from the source by `./zig build autodoc`.
 - [GetPhysicalDeviceMemoryProperties](#getphysicaldevicememoryproperties) - The physical device's memory types and heaps.
 - [GetPhysicalDeviceProperties](#getphysicaldeviceproperties) - What a physical device is, and the most it does.
 - [GetPhysicalDeviceQueueFamilyProperties](#getphysicaldevicequeuefamilyproperties) - The physical device's queue families.
+- [GetPhysicalDeviceSparseImageFormatProperties](#getphysicaldevicesparseimageformatproperties) - The blocks a sparse image of a format, type, sample count, usage and tiling would be bound in: none, no device having a sparse image.
 - [GetPhysicalDeviceSurfaceCapabilities](#getphysicaldevicesurfacecapabilities) - What a swapchain on the surface can be, into `capabilities`.
 - [GetPhysicalDeviceSurfaceFormats](#getphysicaldevicesurfaceformats) - The formats a swapchain on the surface can have into `formats`, at most `count.*` of them, and how many there are into `count`; null for `formats` counts alone.
 - [GetPhysicalDeviceSurfacePresentModes](#getphysicaldevicesurfacepresentmodes) - The present modes of the surface into `modes`, at most `count.*` of them, and how many there are into `count`; null for `modes` counts alone.
 - [GetPhysicalDeviceSurfaceSupport](#getphysicaldevicesurfacesupport) - Whether queue family `family` can present to the surface, into `supported`.
+- [GetPipelineCacheData](#getpipelinecachedata) - What a pipeline cache holds, as bytes to keep and give to another CreatePipelineCache: Vulkan's header of 32 bytes, and nothing after it.
 - [GetQueryPoolResults](#getquerypoolresults) - What `count` queries from `first` counted, written into `data`.
 - [GetRenderAreaGranularity](#getrenderareagranularity) - The granularity of a render area on this device: the tile it draws in.
 - [GetSwapchainImages](#getswapchainimages) - The swapchain's images into `images`, at most `count.*` of them, and how many there are into `count`; null for `images` counts alone.
+- [InvalidateMappedMemoryRanges](#invalidatemappedmemoryranges) - What the device wrote, in `ranges`, made the host's to read through its mapping: nothing to do, every memory type being coherent.
 - [MapMemory](#mapmemory) - The address of a block's memory, from an offset on.
+- [MergePipelineCaches](#mergepipelinecaches) - What `sources` hold put into `destination`: nothing, none holding any.
+- [QueueBindSparse](#queuebindsparse) - Memory bound to sparse buffers and images, in batches, by the queue: refused, no queue family binding sparse memory.
 - [QueuePresent](#queuepresent) - Images handed to the queue to be shown, once the semaphores are signalled.
 - [QueueSubmit](#queuesubmit) - Batches of work for the queue, played in order by its task.
 - [QueueWaitIdle](#queuewaitidle) - Wait until the queue has done all it was given.
 - [ResetCommandBuffer](#resetcommandbuffer) - The command buffer back to where it started.
 - [ResetCommandPool](#resetcommandpool) - Every command buffer of the pool back to where it started.
 - [ResetDescriptorPool](#resetdescriptorpool) - Every set allocated from the pool freed at once.
+- [ResetEvent](#resetevent) - The event reset by the host.
 - [ResetFences](#resetfences) - Fences back to unsignalled.
+- [SetEvent](#setevent) - The event set by the host.
 - [UnmapMemory](#unmapmemory) - The block's mapping ended.
 - [UpdateDescriptorSets](#updatedescriptorsets) - Descriptors written into sets, and copied from one set to another.
 - [WaitForFences](#waitforfences) - Wait until fences are signalled: all of them, or any.
@@ -240,8 +258,10 @@ fn AllocateCommandBuffers(base: *FacetBase, device: *facet.Device, info: *const 
 
 **RESULT**
 
-`success`; `error_feature_not_present` for a level there is not;
-`error_out_of_host_memory`, none allocated.
+`success`; `error_validation_failed` for a level that is none of
+Vulkan's (VUID-VkCommandBufferAllocateInfo-level-parameter;
+`error_feature_not_present` until 1.133); `error_out_of_host_memory`,
+none allocated.
 
 **BEHAVIOR**
 
@@ -363,16 +383,23 @@ fn AllocateMemory(base: *FacetBase, device: *facet.Device, info: *const facet.Me
 
 **RESULT**
 
-`success`; `error_out_of_device_memory` when no region with the
-type's attributes has room, for no bytes, and for a type the device
-has not got; `error_out_of_host_memory`.
+`success`; `error_validation_failed` for no bytes, for a type the
+device has not got, and for more than the type's heap holds
+(VUID-VkMemoryAllocateInfo-allocationSize-07897,
+VUID-vkAllocateMemory-pAllocateInfo-01714, -01713;
+`error_out_of_device_memory` until 1.134, except that a block of the
+lazily allocated type, which takes nothing, was made however far past
+its heap, and the V3D panicked at a size in the last 12 KiB below
+4 GiB); `error_out_of_device_memory` when no region with the type's
+attributes has room; `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
 The memory is exec's (AllocMem, with the attributes of the type's
-heap), aligned to a cache line and not cleared. Memory of the lazily
-allocated type takes nothing: it is for an attachment whose pixels
-stay in the tiles, and cannot be mapped.
+heap): on the cores aligned to a cache line and not cleared, on the
+V3D whole pages, cleared. Memory of the lazily allocated type takes
+nothing: it is for an attachment whose pixels stay in the tiles, and
+cannot be mapped.
 
 **CONTEXT**
 
@@ -490,10 +517,12 @@ fn BindBufferMemory(base: *FacetBase, device: *facet.Device, buffer: *facet.Buff
 
 **RESULT**
 
-`success`; `error_out_of_device_memory` when the buffer does not fit
+`success`; `error_validation_failed` when the buffer does not fit
 there - past the block's end, the offset not aligned as
 GetBufferMemoryRequirements says, or a type the buffer may not be in -
-or it is bound already.
+or it is bound already (VUID-vkBindBufferMemory-memoryOffset-01031,
+-None-10741, -None-10739, -memory-01035, -buffer-07459;
+`error_out_of_device_memory` until 1.134).
 
 **BEHAVIOR**
 
@@ -554,10 +583,13 @@ fn BindImageMemory(base: *FacetBase, device: *facet.Device, image: *facet.Image,
 
 **RESULT**
 
-`success`; `error_out_of_device_memory` when the image does not fit
+`success`; `error_validation_failed` when the image does not fit
 there - past the block's end, the offset not aligned as
 GetImageMemoryRequirements says, or a type the image may not be in -
-or it is bound already, as a swapchain's image always is.
+or it is bound already, as a swapchain's image always is: Vulkan has
+those bound as they are handed out
+(VUID-vkBindImageMemory-memoryOffset-01046, -None-10737, -None-10735,
+-memory-01047, -image-07460; `error_out_of_device_memory` until 1.134).
 
 **BEHAVIOR**
 
@@ -776,7 +808,7 @@ fn CmdBindDescriptorSets(base: *FacetBase, buffer: *facet.CommandBuffer, bind_po
   sets, their bindings and the elements of each run; null and 0 where
   there is none. Offsets past what the sets want are left alone, and a
   descriptor whose offset is missing is read from where it was written
-  (since 1.35, `PhysicalDeviceFeatures.dynamic_descriptors`).
+  (since 1.35, `Capabilities.dynamic_descriptors`).
 
 **RESULT**
 
@@ -789,9 +821,13 @@ when the draws run. Sets past the fourth are not bound.
 
 A `uniform_buffer_dynamic` or a `storage_buffer_dynamic` reads its
 buffer from the offset given here, past the one its write gave, and
-what is left of the range from there is what a function may read
-(`shader.Resources.buffer`, and `bufferAt` for an element past the
-first). The offsets are the binding's, not the set's: binding the same
+the range its write gave moves with it: that whole range is what a
+function may read (`shader.Resources.buffer`, and `bufferAt` for an
+element past the first). An offset that would take the range past the
+buffer's end, which Vulkan forbids, leaves the descriptor reading as
+not written. Until 1.160 the offset ate into the range instead, so a
+descriptor shifted by its range's length or more read as not written
+however large its buffer. The offsets are the binding's, not the set's: binding the same
 set again with others is how one set serves draw after draw, each with
 a range of its own.
 
@@ -930,7 +966,11 @@ The pipeline has to last until the work is done.
 
 **NOTES**
 
-None.
+A pipeline and the command buffer it is recorded into have to come
+from one device, as Vulkan requires. Nothing is recorded for a
+pipeline from another: each device's driver reads `Pipeline.driver` as
+its own kind of object, so drawing with another device's pipeline
+would hand the hardware whatever lay at that field. (Since 1.79.)
 
 **BUGS**
 
@@ -1026,7 +1066,9 @@ fn CmdBlitImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.I
 **INPUTS**
 
 - `buffer` - a command buffer recording.
-- `source`, `destination` - images of colour, of any formats.
+- `source`, `destination` - images of formats whose features say
+  BLIT_SRC and BLIT_DST (GetPhysicalDeviceFormatProperties, since
+  1.126): of colour, or both of D16_UNORM.
 - `source_layout`, `destination_layout` - not looked at.
 - `region_count`, `regions` - the rectangles: corners the other way round
   turn it round.
@@ -1043,10 +1085,17 @@ rounded into the destination's format, not dithered. What falls outside
 the destination is left out, and the source's edge is read beyond it.
 
 A source kept in its blocks is read out of them, texel by texel (since
-1.44), and one kept as floats is read and rounded the same way (since
-1.45). Nothing here compresses or makes floats, so a destination that
-keeps what it was given takes nothing, as Vulkan does not allow a
-compressed one either.
+1.44), and one kept as floats, or as channels of 16 bits, is read as a
+sample reads it, each channel held to 0 to 1 and rounded to 8 bits:
+since 1.126, where before a float one read as nothing and one of 8
+bytes a texel as what lay past its first 4. Nothing here compresses or
+makes floats, so a destination that keeps what it was given takes
+nothing, as Vulkan does not allow a compressed one either.
+
+A depth goes into an image of its own format, D16_UNORM, without a
+filter, as Vulkan has it (VUID-vkCmdBlitImage-srcImage-00231, -00232):
+each pixel takes the nearest one's depth as it lies (since 1.126). An
+image with a stencil takes nothing.
 
 **CONTEXT**
 
@@ -1097,7 +1146,8 @@ fn CmdClearAttachments(base: *FacetBase, buffer: *facet.CommandBuffer, attachmen
 - `buffer` - a command buffer recording.
 - `attachment_count`, `attachments` - what to clear: IMAGE_ASPECT_COLOR for
   the colour attachment, and IMAGE_ASPECT_DEPTH and IMAGE_ASPECT_STENCIL.
-- `rect_count`, `rects` - where: inside the render area.
+- `rect_count`, `rects` - where: inside the render area, and the layers,
+  counted from the one each view begins at.
 
 **RESULT**
 
@@ -1107,6 +1157,12 @@ None.
 
 Inside a render pass, whatever draws there before or after it. The scissor
 and the pipeline bound have no part in it, and nothing bound changes.
+
+A rectangle's layers are cleared, each of them, since 1.91, when a
+framebuffer came to have layers: until then its `base_array_layer` and
+`layer_count` were dropped, a framebuffer having the one. Layers past the
+framebuffer's last are left alone - naming them is the program's error in
+Vulkan - and so is a rectangle that begins past it.
 
 **CONTEXT**
 
@@ -1180,7 +1236,7 @@ which nothing here compresses, and a depth one, which
 `CmdClearDepthStencilImage` writes instead.
 
 **A float image takes the channels as they were given** since 1.61
-(`PhysicalDeviceFeatures.kept_floats`): the four floats are put into
+(`Capabilities.kept_floats`): the four floats are put into
 the format's own texel the way a copy of one would be, so a channel
 above 1 or below 0 goes in as far as the format reaches instead of
 being rounded to a byte. Before 1.61 such an image was the one this
@@ -1244,6 +1300,9 @@ fn CmdClearDepthStencilImage(base: *FacetBase, buffer: *facet.CommandBuffer, ima
   `s8_uint` or `d16_unorm_s8_uint`, which is not an attachment of the
   pass being recorded: this is a transfer, not a draw.
 - `layout` - what the image is in, which this library does not act on.
+  A `facet.ImageLayout`, as its five sibling commands take (since
+  1.80; a bare `u32` before, so the layout had to be spelled as a
+  number here and as a name there).
 - `value` - the depth, 0 to 1, as the tiles hold one: 0 nearest, and
   the stencil, a byte, for a format that holds one (since 1.38).
 - `range_count`, `ranges` - which levels and layers, by
@@ -1286,7 +1345,7 @@ until the work is done.
 **NOTES**
 
 This is for a depth or stencil image a render pass stores into
-(`PhysicalDeviceFeatures.stored_depth`, `stored_stencil`): it is how
+(`Capabilities.stored_depth`, `stored_stencil`): it is how
 one is put back to the furthest depth, or to a stencil of its own,
 without a pass over it. Where the pass clears its attachment itself
 there is nothing for this to do.
@@ -1304,7 +1363,7 @@ None known.
 ```zig
 const value = facet.ClearDepthStencilValue{ .depth = 1 };
 const range = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
-fb.CmdClearDepthStencilImage(commands, depth.?, 0, &value, 1, @ptrCast(&range));
+fb.CmdClearDepthStencilImage(commands, depth.?, .undefined, &value, 1, @ptrCast(&range));
 ```
 
 ## CmdCopyBuffer
@@ -1404,13 +1463,15 @@ copied as it is. What lies outside the level, or past the end of the
 buffer, is left out. A depth attachment takes nothing.
 
 An image of a compressed format kept in its blocks
-(`PhysicalDeviceFeatures.kept_compressed`, since 1.44) takes them as
+(`Capabilities.kept_compressed`, since 1.44) takes them as
 they lie, nothing decoded: the buffer holds a row of blocks every
 `buffer_row_length` texels, as Vulkan counts them, and the offsets are
 on a multiple of 4 or the region is left out. One that is unpacked
 instead takes the texels decoded. A float image kept as its floats
 (`kept_floats`, since 1.45) takes them as they lie too, a texel at a
-time; one that is unpacked takes them rounded to 8 bits a channel.
+time; one that is unpacked takes them rounded to 8 bits a channel. One
+of B4G4R4A4 or A1R5G5B5 (since 1.127) takes each word widened to 8 bits
+a channel.
 
 **CONTEXT**
 
@@ -1475,7 +1536,7 @@ Outside a render pass. The part of a rectangle outside either image is
 left out, and so are images of depth or stencil, which live in the tiles.
 
 Two images that keep their blocks, of the one format, are copied block by
-block (`PhysicalDeviceFeatures.kept_compressed`, since 1.44), their
+block (`Capabilities.kept_compressed`, since 1.44), their
 offsets on a multiple of 4; a compressed image and an uncompressed one,
 either way round, take nothing. Two that keep their floats, of the one
 format, are copied texel by texel as they lie (`kept_floats`, since
@@ -1545,7 +1606,7 @@ end, is left out.
 
 An image kept in its blocks gives them back as they lie, a row of them
 every `buffer_row_length` texels, its offsets on a multiple of 4
-(`PhysicalDeviceFeatures.kept_compressed`, since 1.44). A float image
+(`Capabilities.kept_compressed`, since 1.44). A float image
 kept as its floats gives its texels back the same way (`kept_floats`,
 since 1.45). One that was unpacked as it was copied in, either kind,
 has nothing of its format to give and takes nothing.
@@ -1668,7 +1729,9 @@ fn CmdDispatch(base: *FacetBase, buffer: *facet.CommandBuffer, x: u32, y: u32, z
 **INPUTS**
 
 - `buffer` - a command buffer recording, outside a render pass.
-- `x`, `y`, `z` - how many groups along each axis.
+- `x`, `y`, `z` - how many groups along each axis: 65535 at most on
+  each, `PhysicalDeviceLimits.max_compute_work_group_count` (since
+  1.128).
 
 **RESULT**
 
@@ -2494,6 +2557,66 @@ None known.
 fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_VERTEX, 0, @sizeOf(Matrix), &transform);
 ```
 
+## CmdResetEvent
+
+Recorded: the event reset once the work before it is done.
+
+**SYNOPSIS**
+
+```zig
+fn CmdResetEvent(base: *FacetBase, buffer: *facet.CommandBuffer, event: *facet.Event, stage_mask: u32) void
+```
+
+**SINCE**
+
+1.129. LVO -572.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording, outside a render pass.
+- `event` - the event.
+- `stage_mask` - the stages whose work before it is done first
+  (PIPELINE_STAGE_*), PIPELINE_STAGE_HOST not among them.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Played, it resets the event, as lavapipe's queue does
+(`handle_event_reset2`, lvp_execute.c:3414-3422), the queue having
+done every command before it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The event is the caller's, and has to last until the work is done.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdSetEvent`, `ResetEvent`
+
+**EXAMPLES**
+
+```zig
+fb.CmdResetEvent(commands, uploaded.?, facet.PIPELINE_STAGE_TRANSFER);
+```
+
 ## CmdResetQueryPool
 
 Recorded: `count` queries from `first` set back to nothing counted and not available.
@@ -2553,6 +2676,75 @@ None known.
 
 ```zig
 fb.CmdResetQueryPool(commands, counted, 0, 1);
+```
+
+## CmdResolveImage
+
+Recorded: the samples of a multisampled image averaged into an image of one sample, rectangle by rectangle.
+
+**SYNOPSIS**
+
+```zig
+fn CmdResolveImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageResolve) void
+```
+
+**SINCE**
+
+1.101. LVO -524.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `source` - an image of four samples a pixel.
+- `destination` - an image of one sample, of the source's format.
+- `source_layout`, `destination_layout` - not looked at.
+- `region_count`, `regions` - the rectangles, and the layers of each.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Outside a render pass. Each pixel of a rectangle of the destination is
+the average of the source's samples at the same place in its rectangle:
+for each channel, the samples' sum over their count, rounded to the
+nearest, as Mesa's resolve averages them. What falls outside either
+image is left out. A source not of four samples, a destination of more
+than one, or two formats, none of which Vulkan has a program give,
+resolve nothing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+What is given is copied as the command is recorded; the images have to
+last until it has been played.
+
+**NOTES**
+
+Only a device that draws four samples makes an image of them
+(`Capabilities.multisampling`): the cores since 1.112, and the V3D
+not yet (docs/facet-vulkan10.md item 61, V5).
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdCopyImage`, `CmdBlitImage`, `CreateRenderPass`
+
+**EXAMPLES**
+
+```zig
+const region = facet.ImageResolve{ .extent = .{ .width = 800, .height = 600, .depth = 1 } };
+fb.CmdResolveImage(commands, drawn.?, .transfer_src_optimal, shown.?, .transfer_dst_optimal, 1, @ptrCast(&region));
 ```
 
 ## CmdSetBlendConstants
@@ -2826,6 +3018,69 @@ None known.
 // The nearer half of the depth alone: a light's volume, drawn only
 // where what is there is near enough to be lit.
 fb.CmdSetDepthBounds(commands, 0, 0.5);
+```
+
+## CmdSetEvent
+
+Recorded: the event set once the work before it is done.
+
+**SYNOPSIS**
+
+```zig
+fn CmdSetEvent(base: *FacetBase, buffer: *facet.CommandBuffer, event: *facet.Event, stage_mask: u32) void
+```
+
+**SINCE**
+
+1.129. LVO -568.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording, outside a render pass.
+- `event` - the event.
+- `stage_mask` - the stages whose work before it is done first
+  (PIPELINE_STAGE_*).
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Played, it sets the event, as lavapipe's queue does
+(`handle_event_set2`, lvp_execute.c:3401-3412): the queue has done
+every command before it, in whatever stage, when it gets there. A
+CmdWaitEvents after it in the queue's order finds the event set, and
+GetEventStatus says so from then on.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The event is the caller's, and has to last until the work is done.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdResetEvent`, `CmdWaitEvents`, `GetEventStatus`
+
+**EXAMPLES**
+
+```zig
+fb.CmdCopyBuffer(commands, staging, vertices, 1, @ptrCast(&region));
+fb.CmdSetEvent(commands, uploaded.?, facet.PIPELINE_STAGE_TRANSFER);
 ```
 
 ## CmdSetLineWidth
@@ -3245,6 +3500,84 @@ const matrix: [16]f32 = transform;
 fb.CmdUpdateBuffer(commands, uniforms.?, 0, @sizeOf(@TypeOf(matrix)), &matrix);
 ```
 
+## CmdWaitEvents
+
+Recorded: the work after it waits until each of the events is set.
+
+**SYNOPSIS**
+
+```zig
+fn CmdWaitEvents(base: *FacetBase, buffer: *facet.CommandBuffer, event_count: u32, events: [*]const *facet.Event, src_stage_mask: u32, dst_stage_mask: u32, memory_barrier_count: u32, memory_barriers: ?[*]const facet.MemoryBarrier, buffer_barrier_count: u32, buffer_barriers: ?[*]const facet.BufferMemoryBarrier, image_barrier_count: u32, image_barriers: ?[*]const facet.ImageMemoryBarrier) void
+```
+
+**SINCE**
+
+1.129. LVO -576.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `event_count`, `events` - the events, one at least.
+- `src_stage_mask` - the stages of the CmdSetEvents that set them,
+  and PIPELINE_STAGE_HOST for those the host sets (PIPELINE_STAGE_*).
+- `dst_stage_mask` - the stages of the work after it that waits.
+- `memory_barrier_count`, `memory_barriers`,
+  `buffer_barrier_count`, `buffer_barriers`, `image_barrier_count`,
+  `image_barriers` - what memory is written before and read after, as
+  for CmdPipelineBarrier.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Played, it has the queue's task wait until every one of the events is
+set, as lavapipe's queue does (`handle_wait_events2`,
+lvp_execute.c:3424-3433), leaving each set; then the commands after it
+go on. Where lavapipe spins, the task sleeps until a SetEvent wakes it.
+An event set by a CmdSetEvent earlier in the queue's order, or by the
+host before the work was submitted, as Vulkan has it, is set already:
+nothing is waited for. The barriers are what CmdPipelineBarrier's are
+and change nothing, the queue doing each command before the next, so
+the command is the wait alone; Mesa's runtime makes it the wait and
+that barrier (`vk_common_CmdWaitEvents`, vk_synchronization.c:307-370).
+No event at all records nothing, as there.
+
+**CONTEXT**
+
+- Waits: no; the queue's task waits when it is played.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The arrays are the caller's, read during the call. The events are the
+caller's, and have to last until the work is done.
+
+**NOTES**
+
+An event the host sets after the work is submitted still lets the
+queue go on when it is set: Vulkan 1.0 had a program wait so, and has
+it set first since (its queue forward progress section). Until it is
+set nothing after it on the queue is done, and an event nothing sets
+holds the queue for ever.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdSetEvent`, `SetEvent`, `CmdPipelineBarrier`
+
+**EXAMPLES**
+
+```zig
+fb.CmdWaitEvents(commands, 1, @ptrCast(&uploaded), facet.PIPELINE_STAGE_TRANSFER, facet.PIPELINE_STAGE_VERTEX_INPUT, 0, null, 0, null, 0, null);
+```
+
 ## CmdWriteTimestamp
 
 Recorded: the clock written into query `query` of `pool` when the command is played.
@@ -3275,7 +3608,7 @@ None.
 **BEHAVIOR**
 
 The value is the E-clock in microseconds, which is what
-`PhysicalDeviceLimits.timestamp_period_ns` of 1000 says; the query is
+`PhysicalDeviceLimits.timestamp_period` of 1000 says; the query is
 available from then on.
 
 The commands of a buffer are played one after another, each finished
@@ -3297,9 +3630,13 @@ The pool has to last until the work is done.
 
 **NOTES**
 
-Without timer.device there is no clock to read:
-`PhysicalDeviceFeatures.timestamp_queries` is false then and
-CreateQueryPool refuses the kind, so this cannot be reached.
+Without timer.device there is no clock to read, and the queue family
+says so with `timestamp_valid_bits` 0: Vulkan asks every
+`vkCmdWriteTimestamp` for a queue family whose bits are not 0. One
+written all the same is 0, which is all a value with no meaningful bits
+can be, and is available like any other, so that a read that waits for
+it is not left waiting for ever. Until 1.93 its pool could not be made,
+and this was never reached.
 
 **BUGS**
 
@@ -3341,8 +3678,9 @@ fn CreateBuffer(base: *FacetBase, device: *facet.Device, info: *const facet.Buff
 
 **RESULT**
 
-`success`; `error_out_of_device_memory` for a size of nothing;
-`error_out_of_host_memory`.
+`success`; `error_validation_failed` for a size of nothing
+(VUID-VkBufferCreateInfo-size-00912; `error_out_of_device_memory` until
+1.134); `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -3404,27 +3742,43 @@ fn CreateBufferView(base: *FacetBase, device: *facet.Device, info: *const facet.
   through, and bound to memory.
 - `info.format` - how the bytes are read: `r8g8b8a8_unorm`,
   `b8g8r8a8_unorm`, `r5g6b5_unorm_pack16`, `r32_sfloat`,
-  `r32g32_sfloat`, `r32g32b32_sfloat`, `r32g32b32a32_sfloat`, and
-  since 1.54 one channel, two or four of 8, 16 or 32 bits - a
-  `_unorm` read as 0 to 1, a `_uint` or a `_sint` as the whole number
-  itself, and `r16_sfloat`, `r16g16_sfloat` and
-  `r16g16b16a16_sfloat` as half-floats. Those are the formats whose
-  `buffer_features` say `UNIFORM_TEXEL_BUFFER`, which
-  `GetPhysicalDeviceFormatProperties` tells and is the same on every
-  device.
-- `info.offset` - the first byte of the texels, a multiple of the
-  format's size.
+  `r32g32_sfloat`, `r32g32b32_sfloat`, `r32g32b32a32_sfloat`; since
+  1.54 one channel, two or four of 8, 16 or 32 bits - a `_unorm` read
+  as 0 to 1, a `_uint` or a `_sint` as the whole number itself, and
+  `r16_sfloat`, `r16g16_sfloat` and `r16g16b16a16_sfloat` as
+  half-floats; and since 1.68 the `_snorm` of the 8- and 16-bit ones,
+  read as -1 to 1, `r8_srgb`, `r8g8_srgb`, `r8g8b8a8_srgb` and
+  `b8g8r8a8_srgb`, read through sRGB's transfer function, the A8B8G8R8
+  words (`_unorm` and `_srgb`, and since 1.127 `_snorm`, `_uint` and
+  `_sint`), the four 2-10-10-10 words, `b10g11r11_ufloat_pack32` and
+  `e5b9g9r9_ufloat_pack32`, and `r32g32b32_uint` and `_sint`. Those
+  are the formats whose `buffer_features` say `UNIFORM_TEXEL_BUFFER`,
+  which `GetPhysicalDeviceFormatProperties` tells and is the same on
+  every device.
+- `info.offset` - the first byte of the texels, a multiple of
+  `PhysicalDeviceLimits.min_texel_buffer_offset_alignment`, 16, whatever
+  the format's size (since 1.125; a multiple of the format's size
+  before).
 - `info.range` - how many bytes of them, a multiple of the format's
   size; `facet.WHOLE_SIZE` reaches the end of the buffer.
 - `view` - where the view goes.
 
 **RESULT**
 
-`success`; `error_format_not_supported` for a format no view takes;
-`error_feature_not_present` where the device has no texel buffers, or
-the buffer was not made for them; `error_initialization_failed` for an
-offset or a range that is not the format's size, or a range of no
-texels, or a buffer with no memory; `error_out_of_host_memory`.
+`success`; `error_feature_not_present` where the device has no texel
+buffers; `error_validation_failed` for a format no view takes, whose
+features have neither texel buffer bit
+(VUID-VkBufferViewCreateInfo-format-08778, -format-08779;
+`error_format_not_supported` until 1.135), for a buffer not made for
+them (-buffer-00932; `error_feature_not_present` until 1.133), and for
+an offset that is not on the limit or is past
+the buffer's end, a range that is not a multiple of the format's size,
+is 0, or reaches past the buffer's end, or a buffer with no memory
+(-buffer-02750, -buffer-02751, -offset-00925, -range-00929,
+-range-00928, -offset-00931, -buffer-00935;
+`error_initialization_failed` until 1.134, and a range past the end
+was cut to it where a texel was left there);
+`error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -3433,8 +3787,28 @@ bytes: they are read where they lie, as the buffer's memory holds them.
 So a program writing the buffer through its mapped memory is seen by
 the next function that reads the view, with no copy anywhere.
 
-The range is held to the buffer: a range reaching past its end is cut
-to it, and what is left has to be a texel at least.
+A range given is held to the buffer as Vulkan has it: one reaching
+past its end is refused (VUID-VkBufferViewCreateInfo-offset-00931).
+Until 1.134 it was cut to the end, and refused only where less than a
+texel was left there. `WHOLE_SIZE` is the bytes from the offset to the
+end, as many whole texels as they hold, which Vulkan has be "the
+nearest smaller multiple" of a texel and does not ask to be one: where
+less than a texel is left the view has none, and a function reads 0
+from it, as it does past the last texel of any view
+(`shader.Texels.at`). Until 1.134 such a view was refused.
+
+The offset is held to the limit alone, as Vulkan has it
+(VUID-VkBufferViewCreateInfo-buffer-02750, -buffer-02751, which were
+-offset-00926 when 1.125 said so): a texel is read a byte at a
+time, so nothing asks it to start on a multiple of its own size, and
+three channels of 32 bits, 12 bytes, may start at 16, which no power
+of two that is a limit could have said otherwise. lavapipe and v3dv
+look at the offset no further (`lvp_CreateBufferView`,
+lvp_image.c:785-817; `v3dv_CreateBufferView`, v3dv_image.c:885-940), their
+limits llvmpipe's 16 (lp_screen.c:288) and the V3D's texture unit's 64
+(`V3D_TMU_TEXEL_ALIGN`, v3d_limits.h:60), which this library's V3D will
+want the day its texture unit reads a texel buffer; until then its
+texel buffers are read by the cores'.
 
 **CONTEXT**
 
@@ -3461,11 +3835,14 @@ whole numbers as well, and `setInt` writes it from them, which is what
 a 32-bit integer format wants: a value past 2^24 is more than `at`'s
 float carries exactly.
 
-No image is kept in the formats 1.54 added and no vertex attribute is
-read in one: they say `UNIFORM_TEXEL_BUFFER` and
-`STORAGE_TEXEL_BUFFER` in `buffer_features` and nothing else. The two
-that were already image formats, `r8_unorm` and `r16g16b16a16_sfloat`,
-keep what they had and gain these.
+No vertex attribute is read in the formats 1.54 added, and on the V3D
+no image is kept in one either: there they say `UNIFORM_TEXEL_BUFFER`
+and `STORAGE_TEXEL_BUFFER` in `buffer_features` and nothing else. On
+the cores the 16-bit `_unorm` ones and `r8g8_unorm` are images as well
+since 1.69 (`Capabilities.wide_channels`), and the whole numbers since
+1.70 (`Capabilities.whole_textures`). The two that were already image
+formats, `r8_unorm` and `r16g16b16a16_sfloat`, keep what they had and
+gain these.
 
 **BUGS**
 
@@ -3505,8 +3882,9 @@ fn CreateCommandPool(base: *FacetBase, device: *facet.Device, info: *const facet
 
 **RESULT**
 
-`success`; `error_initialization_failed` for a queue family the device
-has not got; `error_out_of_host_memory`.
+`success`; `error_validation_failed` for a queue family the device
+has not got (VUID-vkCreateCommandPool-queueFamilyIndex-01937;
+`error_initialization_failed` until 1.134); `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -3563,7 +3941,8 @@ fn CreateComputePipelines(base: *FacetBase, device: *facet.Device, cache: ?*face
 **INPUTS**
 
 - `device` - the device.
-- `cache` - null: facet.library has no pipeline caches.
+- `cache` - a pipeline cache, or null; it holds no pipeline, and
+  nothing is looked up in it or put into it (since 1.130).
 - `count`, `infos` - each pipeline's function, of stage
   SHADER_STAGE_COMPUTE, and layout. The function's own entry says what a
   group of it holds: its invocations and the bytes they share
@@ -3575,9 +3954,12 @@ fn CreateComputePipelines(base: *FacetBase, device: *facet.Device, cache: ?*face
 
 `success`; else what the first that could not be made came to:
 `error_invalid_shader_nv` for a stage that is not of a compute function
-the module has; `error_feature_not_present` for a workgroup over the
-device's limits; `error_out_of_host_memory`. Those made are made either
-way.
+the module has; `error_validation_failed` for a workgroup over the
+device's limits (VUID-RuntimeSpirv-x-06429, -y-06430, -z-06431,
+-x-06432, -Workgroup-06530; `error_feature_not_present` until 1.133);
+`error_feature_not_present` for a stage whose `specialization_info`
+names a constant (since 1.80); `error_out_of_host_memory`. Those made
+are made either way.
 
 **BEHAVIOR**
 
@@ -3593,6 +3975,15 @@ invocations itself. A group over `PhysicalDeviceLimits`'
 than `max_compute_work_group_invocations`, or sharing more than
 `max_compute_shared_memory_size` bytes, is refused here rather than cut
 to what fits.
+
+Specialization constants are not honoured: a stage whose
+`specialization_info` names any (`map_entry_count` above 0) is refused
+with `error_feature_not_present` rather than made with the constants
+dropped, which would run what the program did not ask for (since 1.80;
+before it the pointer was read by nothing and no one was told). A
+`SpecializationInfo` of no entries specializes nothing, as in Vulkan,
+and is made: a program that fills the struct for every stage and leaves
+it empty where it has no constants is not turned away.
 
 **CONTEXT**
 
@@ -3649,8 +4040,9 @@ fn CreateDescriptorPool(base: *FacetBase, device: *facet.Device, info: *const fa
 
 **RESULT**
 
-`success`; `error_initialization_failed` for a pool of no sets;
-`error_out_of_host_memory`.
+`success`; `error_validation_failed` for a pool of no sets
+(VUID-VkDescriptorPoolCreateInfo-descriptorPoolOverallocation-09227;
+`error_initialization_failed` until 1.134); `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -3713,11 +4105,15 @@ fn CreateDescriptorSetLayout(base: *FacetBase, device: *facet.Device, info: *con
 
 **RESULT**
 
-`success`; `error_feature_not_present` for a kind of descriptor
-facet.library does not have, for samplers of the layout's own on a
-device without `PhysicalDeviceFeatures.immutable_samplers`, a binding
+`success`; `error_validation_failed` for a kind of descriptor that is
+none of Vulkan's (VUID-VkDescriptorSetLayoutBinding-descriptorType-parameter;
+`error_feature_not_present` until 1.133); `error_feature_not_present`
+for a kind the device has not got (below), for samplers of the layout's
+own on a device without `Capabilities.immutable_samplers`, a binding
 numbered past 255, or more than 65535 descriptors;
-`error_initialization_failed` for a binding given twice;
+`error_validation_failed` for a binding given twice
+(VUID-VkDescriptorSetLayoutCreateInfo-binding-00279;
+`error_initialization_failed` until 1.134);
 `error_out_of_host_memory`.
 
 **BEHAVIOR**
@@ -3759,7 +4155,7 @@ image sampler is for. Stage flags are not looked at: every stage reads
 every binding.
 
 **A sampler of the layout's own** is taken since 1.49
-(`immutable_samplers`, `PhysicalDeviceFeatures.immutable_samplers`): on
+(`immutable_samplers`, `Capabilities.immutable_samplers`): on
 a `sampler` or `combined_image_sampler` binding the layout holds one
 sampler for each of the binding's descriptors, and every set made of
 the layout starts with them in its slots. A write of a combined image
@@ -3806,8 +4202,15 @@ fn CreateDevice(base: *FacetBase, physical: *facet.PhysicalDevice, info: *const 
 
 **RESULT**
 
-`success`; `error_initialization_failed` for queues the family has
-not got, and when the queue's task cannot be made;
+`success`; `error_validation_failed` for queues the device has not
+got - of a family other than its one, more than one, or the family
+asked for twice (VUID-VkDeviceQueueCreateInfo-queueFamilyIndex-00381,
+-queueCount-00382, VUID-VkDeviceCreateInfo-queueFamilyIndex-02802,
+-pQueueCreateInfos-06755; `error_initialization_failed` until 1.134);
+`error_feature_not_present` for a feature asked for that the device
+has not got; `error_initialization_failed` when the device's queue
+cannot be started - the V3D's hardware not coming up, or the memory
+the queue's player or its task's stack wants not being had;
 `error_out_of_host_memory`.
 
 **BEHAVIOR**
@@ -3847,6 +4250,67 @@ const queue_info = facet.DeviceQueueCreateInfo{ .queue_family_index = 0 };
 var device: ?*facet.Device = null;
 if (fb.CreateDevice(physical, &.{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&queue_info) }, &device) != .success) return error.NoDevice;
 defer fb.DestroyDevice(device);
+```
+
+## CreateEvent
+
+An event, reset: set by the host or by a queue's work, and waited for by a queue's work.
+
+**SYNOPSIS**
+
+```zig
+fn CreateEvent(base: *FacetBase, device: *facet.Device, info: *const facet.EventCreateInfo, event: *?*facet.Event) facet.Result
+```
+
+**SINCE**
+
+1.129. LVO -548.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - 0 for its flags.
+- `event` - where the event is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+An event is an exec waitable, unsignalled at first, as lavapipe's
+starts at 0 (`lvp_CreateEvent`, lvp_device.c:2708-2727). It stays set
+until it is reset: a wait does not take it, as one for a semaphore
+does.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The event is the caller's, until DestroyEvent.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DestroyEvent`, `SetEvent`, `CmdSetEvent`, `CmdWaitEvents`
+
+**EXAMPLES**
+
+```zig
+var uploaded: ?*facet.Event = null;
+if (fb.CreateEvent(device, &.{}, &uploaded) != .success) return error.NoEvent;
 ```
 
 ## CreateFence
@@ -3927,27 +4391,73 @@ fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const facet
 
 - `device` - the device.
 - `info` - the render pass, a view for each of its attachments in their
-  order, and the size drawn in.
+  order, the size drawn in, and its layers.
 - `framebuffer` - where the framebuffer is written; null when it fails.
 
 **RESULT**
 
-`success`; `error_initialization_failed` for views that do not fit the
-pass - another number of them, a colour view of an image not made for a
-colour attachment or in another format, a depth view of an image not
-made for depth, an image smaller than the size, more than one layer;
+`success`; `error_validation_failed` for views that do not fit the
+pass - another number of them, or none given where it has some; a
+colour or resolve view of an image not made for a colour attachment,
+or in another format than its attachment's - the view's own, which
+since 1.131 may differ from its image's (CreateImageView,
+IMAGE_CREATE_MUTABLE_FORMAT); a depth view of an image not made for
+depth; a view of other samples than its attachment's, or one that
+swizzles its channels (since 1.120); an image smaller than the size,
+or a view of fewer layers than the framebuffer has - and for a size or
+layers of none, or of more than the device takes
+(`PhysicalDeviceLimits.max_framebuffer_width`, `max_framebuffer_height`
+and `max_framebuffer_layers`)
+(VUID-VkFramebufferCreateInfo-attachmentCount-00876, -flags-02778,
+-pAttachments-00877, -00880, -02633, -00881, -00884, -flags-04533,
+-04534, -04535, -width-00885, -00886, -height-00887, -00888,
+-layers-00889, -00890; `error_initialization_failed` until 1.134);
+`error_feature_not_present` for a view of a level smaller than the
+size, of an image that is not, which Vulkan allows and this library
+does not draw into (docs/facet-vulkan10.md item 92;
+`error_initialization_failed` until 1.134), and for a depth the pass
+keeps in an image with no memory behind it - both answered once every
+view has been held to Vulkan's rules, so that a framebuffer breaking
+one of them as well is `error_validation_failed` (since 1.134);
 `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
-Each colour attachment's view is of its image's first level. The size
-may be smaller than the images: the framebuffer is their top left.
+Each colour attachment's view is of any of its image's levels since
+1.119, and of its first before, and of any of its layers since 1.91:
+the pass draws into the level and the layer the view begins at, and it
+is that level's rows that have to hold the size, as a depth view's do.
+Vulkan holds only the image's first level to the size
+(VUID-VkFramebufferCreateInfo-flags-04533, -04534), so a level smaller
+than it is `error_feature_not_present` here, a pass having no rows past
+the level's to draw into (docs/facet-vulkan10.md item 92), and an image
+smaller than it `error_validation_failed`.
+The size may be smaller than the images: the framebuffer is their top
+left. So each level of one image, drawn into in turn, is its own mip
+level, and a later pass samples the image they make (CreateImage).
+
+A pass with no attachments has a framebuffer of no views, `attachments`
+null (since 1.113): its size is all there is of it, which the pass
+draws over, so that is held to the device's most, as Vulkan asks of
+every framebuffer (VUID-VkFramebufferCreateInfo-width-00886 and
+-height-00888).
+
+A framebuffer has layers since 1.91, as many as the device's
+`max_framebuffer_layers` - 256 on the cores, which is what Vulkan asks,
+and 1 on the V3D. Each view holds that many from the layer it begins
+at, and a pass clears every one of them where an attachment's load op
+clears, as CmdClearAttachments clears the ones a rectangle names. What
+it draws goes into the first: Vulkan 1.0 has nothing but a geometry
+shader's `Layer` to pick another, and no device here has one. That is
+how Mesa's lavapipe plays a pass too (`render_clear` and
+`handle_clear_attachments`, src/gallium/frontends/lavapipe/lvp_execute.c).
 
 A depth view names the level and the layer the pass draws into - levels
 since 1.63, layers since 1.58 - and it is that level's rows that have
-to hold the size, not the image's first. So the levels of one depth
-image are a shadow map and the smaller copies a pass draws for
-themselves, each through a framebuffer of that level's size.
+to hold the size, not the image's first, as for a colour view. So the
+levels of one depth image are a shadow map and the smaller copies a
+pass draws for themselves, each through a framebuffer of that level's
+size.
 
 **CONTEXT**
 
@@ -3997,7 +4507,8 @@ fn CreateGraphicsPipelines(base: *FacetBase, device: *facet.Device, cache: ?*fac
 **INPUTS**
 
 - `device` - the device.
-- `cache` - null: facet.library has no pipeline caches.
+- `cache` - a pipeline cache, or null; it holds no pipeline, and
+  nothing is looked up in it or put into it (since 1.130).
 - `count`, `infos` - each pipeline's stages and state.
 - `pipelines` - where each is written; null for one that could not be
   made.
@@ -4005,18 +4516,37 @@ fn CreateGraphicsPipelines(base: *FacetBase, device: *facet.Device, cache: ?*fac
 **RESULT**
 
 `success`; else what the first that could not be made came to:
-`error_invalid_shader_nv` for stages that are not one vertex and one
-fragment function of the same varyings, with or without a tessellation
-control and evaluation function, whose varyings then the fragment
-function's have to be, or for a fragment function that writes other
+`error_invalid_shader_nv` for stages that are not one vertex function
+and one fragment function of the same varyings or none (since 1.115),
+with or without a tessellation control and evaluation function, whose
+varyings then the fragment function's have to be, or for a fragment
+function that writes other
 than the subpass's colour attachments (`shader.fragmentOutputs`, since
-1.51); `error_feature_not_present`
-for state facet.library does not draw (see BEHAVIOR);
-`error_format_not_supported` for an attribute in a format it does not
-read; `error_initialization_failed` for state that does not hold
-together - an attribute of a binding not given, no viewport where it is
-not set by commands; `error_out_of_host_memory`. Those made are made
-either way.
+1.51), or for a fragment entry whose `varyings` word names no fixed
+form (since 1.75); `error_feature_not_present`
+for state Vulkan allows and facet.library does not draw (see BEHAVIOR),
+among it a stage whose `specialization_info` names a constant (since
+1.80); `error_validation_failed` for state Vulkan does not allow on the
+device (since 1.133, `error_feature_not_present` before): a feature it
+reports false - `depth_clamp`, `depth_bounds`, `independent_blend`,
+`logic_op`, `multi_viewport`, `dual_src_blend`, `sample_rate_shading`,
+`alpha_to_one`, and `geometry_shader` for the topologies of adjacency -
+a sample count it does not draw, a vertex binding, stride, attribute or
+location past its limits, or a topology, polygon mode, blend factor or
+blend operation that is none of Vulkan 1.0's;
+`error_validation_failed` as well for an attribute in a format it
+does not read, whose features have no VERTEX_BUFFER
+(VUID-VkVertexInputAttributeDescription-format-00623;
+`error_format_not_supported` until 1.135), and for state that does not
+hold together - a subpass the pass has not got, an attribute of a binding
+not given, tessellation functions without a patch list and its state
+or a patch list without them, a sample count that is not the
+subpass's, a compare or stencil operation that is none of Vulkan's,
+other than a blend state for each colour attachment, no viewport or
+scissor where commands do not set them (`error_initialization_failed`
+until 1.134); `error_out_of_host_memory`. Those made are made either
+way. A state Vulkan does not have the pipeline read is not looked at
+(BEHAVIOR).
 
 **BEHAVIOR**
 
@@ -4027,22 +4557,38 @@ device with a processor of its own the fragment function has to be of a
 fixed form (`shader.fixedFragment`), or the pipeline is refused with
 `error_feature_not_present`.
 
+A pipeline of no fragment stage, as Vulkan 1.0 allows - a shadow map's
+- is drawn with a fragment function of the library's own that does
+nothing, as lavapipe binds `noop_fs` where a pipeline has none
+(lvp_device.c:2048-2052, lvp_execute.c:552-554; since 1.115). Vulkan
+leaves what it writes into a colour attachment undefined, and here every
+colour attachment keeps what it held; alpha to coverage, which takes
+the alpha of a colour that is not written, changes no sample, as in
+llvmpipe (lp_state_fs.c:1181-1185). A device with a processor of its
+own has no code for it and refuses it with `error_feature_not_present`
+where it draws: the V3D, until v3dv's no-op fragment shader is ported
+(v3dv_pipeline.c:2616-2642, docs/facet-vulkan10.md item 85). One that
+draws nothing - its rasterizer discarding, or every face culled - wants
+no program, and the V3D makes it (since 1.134).
+
 With tessellation functions, the topology is `patch_list` and the
 `tessellation_state` says the vertices of a patch, 1 to 32: the cores make
 each patch into triangles or lines (`shader.Tessellation`), for a device
 with a processor of its own too, and those are drawn; without them,
-`patch_list` is `error_initialization_failed`. The evaluation entry says
+`patch_list` is `error_validation_failed` (`error_initialization_failed`
+until 1.134). The evaluation entry says
 the domain, which way round its triangles go, and how the fraction of a
 level is spent (`shader.Spacing`, since 1.50): a domain or a spacing of a
 value this library has not is `error_invalid_shader_nv`. The control entry
 says the floats the patch carries from the one function to the other
 (`shader.control`, `Patch.ownValues`, since 1.50), more of them than
 `PhysicalDeviceLimits.max_tessellation_patch_components` being
-`error_feature_not_present`.
+`error_validation_failed` (`error_feature_not_present` until 1.133).
 
 What it draws: points, lines and line strips, and triangle lists, strips
 and fans, a restart index ending a strip or a fan; triangles filled, or as
 their edges or corners (POLYGON_MODE_LINE, POINT); one sample a pixel,
+or four in a subpass of four on a device that draws them (since 1.100);
 triangles culled by facing as asked; lines `line_width` pixels wide, set
 here or by CmdSetLineWidth, and points one pixel; a
 depth test of any compare, written or not, with a bias on the triangles'
@@ -4062,6 +4608,23 @@ CmdSetStencilReference;
 the others are taken and do nothing). A pipeline with the rasterizer
 discarding, or culling front and back, draws nothing.
 
+A pipeline whose rasterizer discards has no multisample, depth or
+colour blend state: they are fragment shader and fragment output
+interface state, which Vulkan has a complete pipeline include only
+where the rasterizer does not discard ("If ... rasterizerDiscardEnable
+... is VK_FALSE ... fragment shader state and fragment output interface
+state is included in a complete graphics pipeline"). Its viewport
+state Vulkan does not ask for there either
+(VUID-VkGraphicsPipelineCreateInfo-rasterizerDiscardEnable-09024). So
+those four are not read, and may be null. Nor is the depth state of a
+pipeline whose subpass has no depth attachment, nor the colour blend
+state of one whose subpass has no colour attachment but those named
+ATTACHMENT_UNUSED. Mesa's runtime reads them the same way
+(`may_have_rasterization`, vk_graphics_state.c:1482-1493, and
+`vk_graphics_pipeline_state_fill`, :1600, :1662-1663, :1701-1702,
+:1841-1861). Until 1.134 each was read wherever it was given, and a
+pipeline could be refused for what one held.
+
 `PIPELINE_CREATE_DEPTH_PREPASS` in `flags`, facet.library's own, has the
 pipeline's triangles' depth drawn first in each tile and each pixel then
 shaded once, by the nearest: a scene drawn back to front costs little
@@ -4070,13 +4633,29 @@ without it. For a depth test of LESS or LESS_OR_EQUAL, written, and no
 blending; ignored otherwise. Other flags are taken and do nothing.
 
 On a device with a processor of its own, the fragment function has to be
-one of the fixed forms (`shader.fixedFragment`), or the pipeline is
-refused with `error_feature_not_present`; the cores, always the first
-device listed, take any.
+one of the fixed forms (`shader.fixedFragment`), or the shader has to
+come with its SPIR-V (a `shader.Module` and
+`SHADER_MODULE_CREATE_SPIRV`, since 1.75), or the pipeline is refused
+with `error_feature_not_present`; the cores, always the first device
+listed, take any. Where the words are there they are handed to the
+driver with the pipeline, and a driver that cannot make code of them
+answers `error_feature_not_present` all the same: a shader may be well
+formed SPIR-V and still ask for more than the device has.
+
+Specialization constants are not honoured: a stage whose
+`specialization_info` names any (`map_entry_count` above 0) is refused
+with `error_feature_not_present` rather than made with the constants
+dropped, which would draw what the program did not ask for (since
+1.80; before it the pointer was read by nothing and no one was told).
+A `SpecializationInfo` of no entries specializes nothing, as in Vulkan,
+and is made: a program that fills the struct for every stage and leaves
+it empty where it has no constants is not turned away.
 
 Attributes are read as floats - r32_sfloat to r32g32b32a32_sfloat - or
 as bytes 0 to 1, r8g8b8a8_unorm and b8g8r8a8_unorm, into four floats
-each, up to four bindings and eight locations.
+each, up to sixteen bindings and sixteen locations, which is the floor
+Vulkan puts under `maxVertexInputBindings` and
+`maxVertexInputAttributes`. It was four and eight until 1.84.
 
 **CONTEXT**
 
@@ -4097,7 +4676,7 @@ A depth test on a render pass without depth is no test, as Vulkan has
 it, nor a stencil test on one without stencil. Lines and points use the
 front's stencil test, and take no depth bias: only triangles are moved,
 as in Vulkan, and `depth_bias_enable` wants a device whose
-`PhysicalDeviceFeatures.depth_bias` is true (since 1.34).
+`Capabilities.depth_bias` is true (since 1.34).
 
 `depth_clamp_enable` draws what lies past the near plane instead of
 cutting it away, each pixel's depth held inside the viewport's
@@ -4106,7 +4685,7 @@ cutting it away, each pixel's depth held inside the viewport's
 **already** in the attachment lies between `min_depth_bounds` and
 `max_depth_bounds`, whatever the depth being drawn; `DynamicState`'s
 `depth_bounds` leaves the two to CmdSetDepthBounds. Both want a device
-whose `PhysicalDeviceFeatures.depth_clamp` or `depth_bounds` is true -
+whose `Capabilities.depth_clamp` or `depth_bounds` is true -
 every device since 1.47, the V3D's own configuration having both - and
 on the cores both have a draw's pixels walked one at a time, as a
 stencil test does, so they cost more there than the quads the fast
@@ -4116,7 +4695,7 @@ On an attachment without alpha, R5G6B5, what is there reads as wholly
 opaque. `color_blend_state.attachments` holds one state for each colour
 attachment of the subpass, or none for the default over all of them; a
 subpass of several has each blended its own way (since 1.33,
-`PhysicalDeviceFeatures.independent_blend`). The blend constants are
+`Capabilities.independent_blend`). The blend constants are
 the pipeline's and shared, as in Vulkan, unless
 `attachment_constants` gives one set for each attachment instead -
 facet.library's own, since 1.51 - and with `blend_constants` among the
@@ -4185,8 +4764,30 @@ fn CreateImage(base: *FacetBase, device: *facet.Device, info: *const facet.Image
 
 **RESULT**
 
-`success`; `error_format_not_supported` for an image facet.library
-does not make; `error_out_of_host_memory`.
+`success`; `error_validation_failed` for an image that breaks one of
+VkImageCreateInfo's rules (since 1.135; `error_format_not_supported`
+until then): one GetPhysicalDeviceImageFormatProperties declines, or
+one past the extent, the levels, the layers or the samples it answers
+(VUID-VkImageCreateInfo-imageCreateMaxMipLevels-02251, -extent-02252,
+-extent-02253, -extent-02254, -mipLevels-02255, -arrayLayers-02256,
+-samples-02258), that query asking the rules this call keeps - but a
+3D image one slice deep, neither SAMPLED nor STORAGE or a colour or
+input attachment written through as a storage image, which the query
+declines for the 256 slices it asks and this call makes (-02251
+allowing that, creating it being invalid usage; docs/facet-vulkan10.md
+item 94); and
+whatever it answers, a side, levels or layers of 0 (-extent-00944 to
+-extent-00946, -mipLevels-00947, -arrayLayers-00948), a cube that is
+not square or has fewer than six layers (-flags-08865, -flags-08866),
+more levels than its own extent's chain has (-mipLevels-00958), more
+than one sample with more than one level (-samples-02257), or
+TRANSIENT_ATTACHMENT beside a usage other than the attachments', or
+with none of those (-usage-00963, -usage-00966; made until 1.135).
+`error_feature_not_present` for the one kind of image refused that
+Vulkan allows: of type `3d`, deeper than it is wide and high, with more
+levels than its width and height halve to and no more than its depth
+does, which -mipLevels-00958 allows (docs/facet-vulkan10.md item 93;
+`error_format_not_supported` until 1.135). `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -4200,16 +4801,26 @@ What it is for decides how it lies in its memory:
   by the next one up, so such a texture takes up to 2 x the memory of
   one as wide as a power of two (since 1.42); past the width nothing is
   ever read.
-- COLOR_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, one level: rows,
-  each on a cache line, in either tiling. What is drawn into one of
-  R5G6B5 is dithered into it (CmdBeginRenderPass).
+- COLOR_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5: rows, each on a
+  cache line, in either tiling. What is drawn into one of R5G6B5 is
+  dithered into it (CmdBeginRenderPass). In optimal tiling it may have
+  levels since 1.119, as a depth attachment does: a layer holds the
+  whole pyramid, a level's rows after the level before, and a pass
+  draws into the level its framebuffer's view names.
+  With SAMPLED as well (since 1.119), optimal and not of type `3d`,
+  those rows are the texture a sampler reads, at every level and layer
+  a view names: an image drawn into and then sampled with nothing
+  copied, as llvmpipe does it. Not with STORAGE or
+  TRANSIENT_ATTACHMENT then.
 - D16_UNORM, S8_UINT or D16_UNORM_S8_UINT with
   DEPTH_STENCIL_ATTACHMENT, optimal, one level: a depth that lives in
   the tiles alone, never stored, whose memory may be of the lazily
-  allocated type. With a load or a store op it is kept in rows instead
+  allocated type where it is made TRANSIENT_ATTACHMENT as well (since
+  1.134; transient or not before). With a load or a store op it is
+  kept in rows instead
   (CreateRenderPass), and with SAMPLED as well those rows are the
   texture a sampler reads: a shadow map drawn into and sampled out of
-  with nothing copied (`PhysicalDeviceFeatures.sampled_depth`, since
+  with nothing copied (`Capabilities.sampled_depth`, since
   1.39). One sampled wants memory something is behind and is not
   written through as a storage image.
   Any of the three formats is sampled since 1.58, and such an image
@@ -4230,14 +4841,31 @@ What it is for decides how it lies in its memory:
   with it too.
 - INPUT_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, in either
   tiling: rows, which a later subpass reads pixel by pixel
-  (CreateRenderPass). It goes with COLOR_ATTACHMENT and the transfers,
-  not with SAMPLED, STORAGE or TRANSIENT_ATTACHMENT, which lie
-  otherwise or nowhere. On a depth format it is the bullet above.
-- Anything else of a colour format, one level: rows.
+  (CreateRenderPass). It goes with COLOR_ATTACHMENT, the transfers and,
+  since 1.119, SAMPLED, the rows then being the texture a sampler reads
+  as above; not with TRANSIENT_ATTACHMENT, which lies nowhere. On a
+  depth format it is the bullet above.
+- Anything else of a colour format: rows, with levels in optimal tiling
+  as a colour attachment has them (since 1.119).
 
-Images have one sample a pixel, and are up to 8192 wide and high. One both
-SAMPLED and COLOR_ATTACHMENT is not made: a texture and an attachment lie
-differently.
+Images are up to 8192 wide and high. One both SAMPLED and
+COLOR_ATTACHMENT, or SAMPLED and INPUT_ATTACHMENT, is made on a device
+that keeps its images in this library's layout; the V3D's lie in its
+own (`Ops.texture_memory`), and there it is refused, as an image of
+levels kept in rows is.
+
+**An image may have four samples a pixel** on a device that draws them
+(`Capabilities.multisampling`, since 1.98): 2D, optimal, one level and
+not cube compatible, of a format that is a colour or a depth
+attachment, as Vulkan has it. Each sample's plane is the whole image at
+one sample, every layer of it, the next sample's plane after it. Such an
+image is drawn into, read as an input attachment, copied and resolved,
+and since 1.110 sampled: one of a colour format is then kept in rows, as
+one drawn into is, and those rows are the texture a fragment function
+fetches each sample of (`texture.Texture.sampleOf`), as it fetches a
+depth attachment's planes. A colour one may be a colour attachment or an
+input attachment as well since 1.119, as a sampled colour image of one
+sample may; no image of four samples is STORAGE.
 
 **A colour attachment may be written through as a storage image** since
 1.56: COLOR_ATTACHMENT, or INPUT_ATTACHMENT, with STORAGE and without
@@ -4248,17 +4876,23 @@ what a subpass draws reaches them when it stores, at the end of its part.
 So a function may seed the rows before a pass draws into them, or write
 over them after it, and writing them while the pass that draws into them
 is open has no order against that store - as it has none in Vulkan
-without a barrier. R8G8B8A8 is `error_format_not_supported` for this: a
-texture of 8888 is 0xAARRGGBB, as B8G8R8A8's rows are, and nothing reads
-a word with red in its low byte. FORMAT_FEATURE_STORAGE_IMAGE in a
-format's **linear** features says its rows may be written through.
+without a barrier. R8G8B8A8 is refused for this: a
+texture of 8888 is 0xAARRGGBB, as B8G8R8A8's rows are, and the texture
+that reads a word with red in its low byte (`texture.Format.rgba8`,
+since 1.110) is fetched from, not written through.
+FORMAT_FEATURE_STORAGE_IMAGE in a format's **linear** features says its
+rows may be written through.
 
 A SAMPLED image may have up to 256 layers, or be 3D, of type `3d`, of any
 depth up to 256 and with levels of its own (since 1.46): a level is half
 as deep as the one before it, and no less than one slice deep, each slice
-carrying the whole of its own pyramid. IMAGE_CREATE_CUBE_COMPATIBLE says a
-view of type cube, or of cube_array, will be made: of a square image of 6
-layers or more, a multiple of six of them for an array of cubes.
+carrying the whole of its own pyramid: as many levels as halving its
+width and height gives, so one deeper than it is wide and high is
+refused the levels past those that its depth gives (docs/facet-vulkan10.md
+item 93). IMAGE_CREATE_CUBE_COMPATIBLE says a view of type cube, or of
+cube_array, will be made: of a square image of 6 layers or more, six of
+them for a cube and a multiple of six for an array of cubes, from any
+layer.
 
 A STORAGE image may have layers and levels the same way, and since
 1.55 needs no SAMPLED beside it to have them: a function writing one
@@ -4269,7 +4903,7 @@ an image of layers was refused unless it was sampled as well.
 A SAMPLED image may be of BC1, BC2, BC3, R16G16B16A16_SFLOAT,
 R32G32B32A32_SFLOAT, B10G11R11_UFLOAT or E5B9G9R9_UFLOAT, in optimal tiling.
 A float one is kept as the floats it was copied in as on a device that
-samples them (`PhysicalDeviceFeatures.kept_floats`, since 1.45): the two
+samples them (`Capabilities.kept_floats`, since 1.45): the two
 packed formats then take 4 bytes a texel rather than the 8 an unpacked
 texel is kept spread in, and a copy out gives back what went in. A sample
 holds each channel inside 0 to 1 and rounds it to 8 bits, the tiles having
@@ -4280,7 +4914,14 @@ nor another image into it, by CmdCopyImage.
 It may also be of ETC2 or EAC - ETC2_R8G8B8, ETC2_R8G8B8A1, ETC2_R8G8B8A8,
 EAC_R11 or EAC_R11G11 - which no sampler of this library reads: such an
 image is always kept as R8G8B8A8, its blocks unpacked as they are copied
-in (`PhysicalDeviceFeatures.etc2_textures`, since 1.46).
+in (`Capabilities.etc2_textures`, since 1.46). So is one of
+B4G4R4A4_UNORM_PACK16 or A1R5G5B5_UNORM_PACK16 (since 1.127), four
+channels in 16 bits that no sampler here reads either: each word is
+widened to 8 bits a channel as it is copied in, as R5G6B5's are where a
+texture keeps them.
+
+One of A8B8G8R8_UINT_PACK32 or _SINT_PACK32 is an image of R8G8B8A8's
+whole numbers, the same bytes, wherever that one is made (since 1.127).
 
 R32_SFLOAT is an image since 1.57, in optimal tiling: one float a texel,
 sampled as (red, 0, 0, 1) the way R8_UNORM is read, with the float held
@@ -4290,12 +4931,16 @@ field, a mask or an accumulation buffer is kept in it. It is not a colour
 attachment and not a vertex's value.
 
 A compressed one - BC1, BC2, BC3 - is kept in its blocks on a device that
-samples them (`PhysicalDeviceFeatures.kept_compressed`, since 1.44): an
+samples them (`Capabilities.kept_compressed`, since 1.44): an
 eighth to a quarter of that memory, and the blocks are copied in and out
 as they lie, by CmdCopyBufferToImage, CmdCopyImageToBuffer and CmdCopyImage
 between two images of the one format, their offsets and extents on a
 multiple of 4 as Vulkan asks. GetImageMemoryRequirements says which was
-done. A device without the feature unpacks it as a float image is unpacked.
+done. Such an image is a texture whatever it is for, one made for the
+transfers alone as well (since 1.126): that one lay in rows until then,
+with no texture over them, and a copy into it wrote through a texture
+that was never laid. A device without the feature unpacks it as a
+float image is unpacked.
 A STORAGE image is written texel by texel, so a compressed one is unpacked
 there whatever the device: nothing writes one texel of a block, and such
 an image wants SAMPLED beside it, being unpacked to be sampled. A float
@@ -4304,7 +4949,7 @@ one keeps its floats since 1.57, a function writing one texel of them by
 either.
 
 **A texel may be kept smaller than the colour it reads as** on a device
-that says so (`PhysicalDeviceFeatures.small_texels`, since 1.48), which
+that says so (`Capabilities.small_texels`, since 1.48), which
 is where a texture is large enough that the memory it fills is what it
 costs:
 - R8_UNORM is one byte a texel, read as (red, 0, 0, 1) the way Vulkan
@@ -4321,9 +4966,24 @@ costs:
   for `rgba8888` draws it through the run-time sampler as it does any
   other format it was not built for.
 
-Both are `error_format_not_supported` where the device has not got
+Both are refused where the device has not got
 them, and so is the flag on an image that is neither sampled nor a
 storage image, or whose format has no 8888 word to keep.
+
+**IMAGE_CREATE_MUTABLE_FORMAT** (since 1.131) makes an image that a
+view of another format may be made of, one Vulkan has compatible with
+the image's own: of the same bytes a texel for a colour format, the
+other of its pair for a block format, and none for depth or stencil
+(CreateImageView). Its texels are kept as they lie - B8G8R8A8's as the
+word PACKED_TEXELS keeps, R8G8B8A8's as its four bytes - so that each
+such view reads and writes the same bytes its own way, and copies move
+them as they are. It is refused where a compatible
+format whose features take the image's usage could not be read where
+the texels lie: an R5G6B5 image to sample, B4G4R4A4 being sampled and
+kept unpacked, while one only drawn into is made. So it is on a format
+kept unpacked itself, and on a device whose images lie in a layout of
+its own (`Ops.texture_memory`, the V3D), whose half of
+docs/facet-vulkan10.md item 42 is to come.
 
 **CONTEXT**
 
@@ -4379,48 +5039,128 @@ fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const facet.I
 **INPUTS**
 
 - `device` - the device the image was made on.
-- `info` - the image, bound already, its own format, and the levels
-  the view takes.
+- `info` - the image, bound already, its own format - or another Vulkan
+  has compatible with it, where the image was made
+  IMAGE_CREATE_MUTABLE_FORMAT (since 1.131) - and the levels the view
+  takes.
 - `view` - where the view is written; null when it fails.
 
 **RESULT**
 
-`success`; `error_format_not_supported` for a view facet.library does
-not make - of another format than the image's, of a type the image is
-not for, with channels swizzled, of levels or layers the image has not
-got, or of an image not yet bound into memory; `error_out_of_host_memory`.
+`success`; `error_validation_failed` for a view Vulkan's rules forbid
+(since 1.135; `error_format_not_supported` until then): of another
+format than the image's where the image was not made
+IMAGE_CREATE_MUTABLE_FORMAT (VUID-VkImageViewCreateInfo-image-12397),
+of one not compatible with it (-image-01761), or of one whose features
+do not do what the image is for (-None-02273, -usage-02274,
+-usage-02275, -usage-08931, -usage-02277, -usage-08932), CreateImage
+making no image of the flag that a view Vulkan allows would be refused
+of; of an image made for no view, which Vulkan has take none
+(-image-04441), of another format its texels are not read in where
+they lie, its other views being made (`_image.takesView`); with a
+swizzle that is none of Vulkan's seven values
+(VUID-VkComponentMapping-r-parameter and the other three); of a type
+that is none of Vulkan's or that the image does not take, or of layers
+that type does not take (-viewType-parameter, -subResourceRange-01021,
+-image-01003, -image-06723, -image-06728, -viewType-01004,
+-imageViewType-04973, -imageViewType-04974, -viewType-02960 to
+-viewType-02963); of levels or layers the image has not got, or of none
+(-subresourceRange-01478, -subresourceRange-01718, -image-06724,
+-subresourceRange-06725, VUID-VkImageSubresourceRange-levelCount-01720,
+-layerCount-01721); of an aspect its format has not got - a plane of a
+depth format it has not, or a depth or a stencil of a colour format
+(-subresourceRange-09594); or of an image not yet bound into memory
+(-image-01020); `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
 A view of a texture samples its levels from `base_mip_level` on, as a
-texture of its own whose first level is that one. A view of an
-attachment is all of it.
+texture of its own whose first level is that one. So, since 1.119, does
+a view of an attachment drawn into and sampled at once, which is kept
+in rows: it reads the rows a pass drew into, at the levels and the
+layers it names. A framebuffer given a view of any image kept in rows
+draws into the level the view begins at, an image kept in rows having
+levels since 1.119.
+
+**It may be of another format than the image's** since 1.131, where
+the image was made IMAGE_CREATE_MUTABLE_FORMAT: one Vulkan has
+compatible with the image's own - the same bytes a texel, or a
+compressed format's block - which reads the same texels at the same
+places its own way, as Vulkan has it ("the same mapping between texel
+coordinates and memory locations irrespective of the format, with only
+the interpretation of the bit pattern changing"). Such an image keeps
+its texels as they lie, so a view of R32_UINT of an R8G8B8A8_UNORM
+image reads each texel's four bytes as one whole number, and one of
+B8G8R8A8_UNORM reads them with red and blue the other way round. A
+texture's view reads them in the texture's layout, a view of an image
+sampled where its rows lie reads the rows, and a framebuffer given
+such a view draws into the rows in the view's format, which is the
+one its render pass names. That is lavapipe's view: the view's format
+handed to the sampler view, the image view and the surface of the one
+resource (`lvp_CreateImageView`, src/gallium/frontends/lavapipe/
+lvp_image.c:483; `add_img_view_surface`, lvp_execute.c:1520-1525).
+
+**Its channels may be swizzled** since 1.120, as Vulkan's
+`VkComponentMapping` has them: each of `components` names the channel of
+the texel it reads, its own (`identity`), or 0 or 1. Every read of the
+view's texels is swizzled - a sample through a sampler or by a fixed
+form, `colorAt`, `partsAt` and `wholesAt` - and so are the border and
+what a comparison gave, Vulkan replacing a texel and comparing a depth
+before it swizzles (`texture.Swizzle`). A channel the format has not got
+reads 0, or 1 for an alpha, before the swizzle: an R8 view may read its
+alpha as its red, and reads 1. A depth or a stencil reads (D, 0, 0, 1),
+as Vulkan converts such a texel, before the swizzle: a swizzle takes 0
+from its green and its blue and 1 from its alpha (since 1.121 whatever
+the view's swizzle, since 1.120 where it swizzles). A fixed form
+compiled for the view's format draws one that swizzles through the
+run-time sampler, a pixel at a time. A framebuffer takes no view that
+swizzles, and neither a storage image nor an input attachment may be
+one, as Vulkan has it (VUID-VkWriteDescriptorSet-descriptorType-00336).
+On the V3D the TMU swizzles, the view's over the format's own.
 
 Of type `2d` it is one layer, of a texture with any number of them. Of type
 `2d_array` it is the layers asked for, for `shader.FixedKind.texture_array`;
 `cube` is 6 layers of an image made IMAGE_CREATE_CUBE_COMPATIBLE, for
-`texture_cube`, and `3d` the whole of a 3D image, for `texture_3d`.
+`texture_cube`, and `3d` the whole of a 3D image, for `texture_3d`: the
+one layer Vulkan has such an image have, `layer_count` 1 or REMAINING,
+which holds every slice. From `base_mip_level` on it reads the slices
+of the levels it begins at, each level half as deep as the one before
+(`texture.Texture.slicesAt`). Both since 1.135: a `layer_count` of 1
+was refused before and one of the whole depth taken, and a view from a
+level past the first read the whole depth's slices at it, which that
+level has not got.
 
 Of type `cube_array` it is as many cubes as its layers divided by six, of
 such an image, for `texture_cube_array` and, since 1.53,
-`texture_cube_array_sampled`: its layers are a multiple of six
-and its first layer begins a cube, so `base_array_layer` is a multiple of
-six as well (`PhysicalDeviceFeatures.cube_arrays`, since 1.46).
+`texture_cube_array_sampled`: its layers are a multiple of six, and its
+first is the first face of its first cube whatever layer of the image
+that is, as Vulkan counts a cube array's faces from `baseArrayLayer`
+(since 1.135; a multiple of six before) (`Capabilities.cube_arrays`,
+since 1.46).
 
 **A view of a sampled depth image takes one of its planes** since 1.58
-(`PhysicalDeviceFeatures.sampled_depth`): IMAGE_ASPECT_DEPTH is the
+(`Capabilities.sampled_depth`): IMAGE_ASPECT_DEPTH is the
 depth, read at all 16 bits by a sampler that compares and as a grey of
 its top 8 by one that does not, and IMAGE_ASPECT_STENCIL is the
-stencil, read as (red, 0, 0, 1) the way a texel of one byte is. Both
-aspects at once is `error_format_not_supported`, as is a plane the
-format has not got; an aspect naming neither - IMAGE_ASPECT_COLOR, the
-default, and what every such view asked for before 1.58 - is the
-format's own plane, its depth where it has one and its stencil where
-it has not. The plane is a texture over the image's own rows, so a
-format holding both is two textures inside the same rows, read four
-bytes apart. Since 1.63 it is the levels the view names as well, each
-in rows of its own: a sample of such a view reads the level it chooses,
-as it does of any texture.
+stencil, read as (red, 0, 0, 1) the way a texel of one byte is. A
+plane the format has not got is `error_validation_failed` (since 1.135,
+`error_format_not_supported` before); an
+aspect naming neither - IMAGE_ASPECT_COLOR, the default, and what every
+such view asked for before 1.58 - is the format's own plane, its depth
+where it has one and its stencil where it has not. The plane is a
+texture over the image's own rows, so a format holding both is two
+textures inside the same rows, read four bytes apart. Since 1.63 it is
+the levels the view names as well, each in rows of its own: a sample
+of such a view reads the level it chooses, as it does of any texture.
+
+**Both aspects at once**, of a format holding both, is a view since
+1.94 and was refused before. It is what a framebuffer is given for a
+pass's depth/stencil attachment, which draws into both planes whatever
+the view names, as Vulkan has it. No descriptor may hold such a view,
+Vulkan having a descriptor's view of a depth/stencil image name one
+aspect, so its texture is only what a sample would read regardless:
+the depth, as lavapipe's is (`lvp_create_samplerview` takes the stencil
+for the stencil alone).
 
 Since 1.62 the same plane is what a later subpass reads as an **input
 attachment** (`shader.Attachment`), where the image was made one
@@ -4489,8 +5229,18 @@ fn CreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, insta
 
 **RESULT**
 
-`success`; `error_initialization_failed` for an interface newer than
-the library's; `error_out_of_host_memory`.
+`success`; `error_incompatible_driver` for an interface newer than the
+library's, which is what Vulkan answers where nothing present can
+provide the version asked for (`error_initialization_failed` before
+1.80); `error_out_of_host_memory`.
+
+An interface is newer when its major version, or its minor version
+within the same major, is above the `API_VERSION_1_0` this library has.
+The patch is not compared, Vulkan asking that any patch of a version an
+implementation has be taken, and a variant other than Vulkan's own 0 is
+refused (since 1.82; before it the comparison was against the library's
+own revision in an encoding of facet's own, which refused Vulkan's
+`VK_API_VERSION_1_0` itself).
 
 **BEHAVIOR**
 
@@ -4540,6 +5290,70 @@ if (fb.CreateInstance(&.{ .application_name = "Cube" }, &instance) != .success) 
 defer fb.DestroyInstance(instance);
 ```
 
+## CreatePipelineCache
+
+A pipeline cache: what pipelines are made faster with the next time, and what GetPipelineCacheData hands out to keep for another run.
+
+**SYNOPSIS**
+
+```zig
+fn CreatePipelineCache(base: *FacetBase, device: *facet.Device, info: *const facet.PipelineCacheCreateInfo, cache: *?*facet.PipelineCache) facet.Result
+```
+
+**SINCE**
+
+1.130. LVO -580.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - 0 for its flags, and what an earlier GetPipelineCacheData
+  gave, or none.
+- `cache` - where the cache is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+The cache holds nothing, as lavapipe's holds nothing
+(`lvp_CreatePipelineCache`, lvp_pipeline_cache.c:26-53), and the initial
+data is not read: what GetPipelineCacheData gives is a header and no
+pipeline, and data from anywhere else leaves a cache empty in Vulkan as
+well.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The cache is the caller's, until DestroyPipelineCache. The initial
+data stays the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DestroyPipelineCache`, `GetPipelineCacheData`, `CreateGraphicsPipelines`
+
+**EXAMPLES**
+
+```zig
+var cache: ?*facet.PipelineCache = null;
+if (fb.CreatePipelineCache(device, &.{}, &cache) != .success) return error.NoCache;
+```
+
 ## CreatePipelineLayout
 
 A pipeline layout: the descriptor sets and the push constants a pipeline's shaders read.
@@ -4563,9 +5377,15 @@ fn CreatePipelineLayout(base: *FacetBase, device: *facet.Device, info: *const fa
 
 **RESULT**
 
-`success`; `error_feature_not_present` for more than four sets, or
-push constants past 128 bytes; `error_initialization_failed` for a range
-not on 4 bytes; `error_out_of_host_memory`.
+`success`; `error_validation_failed` for more than four sets, or push
+constants past 128 bytes: the device's `max_bound_descriptor_sets` and
+`max_push_constants_size`, which Vulkan holds a layout to
+(VUID-VkPipelineLayoutCreateInfo-setLayoutCount-00286,
+VUID-VkPushConstantRange-offset-00294, -size-00298), and
+`error_feature_not_present` until 1.133; `error_validation_failed` as
+well for a range not on 4 bytes or of none
+(VUID-VkPushConstantRange-offset-00295, -size-00296, -size-00297;
+`error_initialization_failed` until 1.134); `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -4627,30 +5447,49 @@ fn CreateQueryPool(base: *FacetBase, device: *facet.Device, info: *const facet.Q
 
 **RESULT**
 
-`success`; `error_feature_not_present` for a kind this device has not
-got (`PhysicalDeviceFeatures.occlusion_queries`,
-`pipeline_statistics_queries`, `timestamp_queries`), or for a bit that
-is none of Vulkan's; `error_initialization_failed` for no queries at
-all, or a statistics pool that counts nothing;
-`error_out_of_host_memory`. A geometry shader's two statistics may be
+`success`; `error_feature_not_present` for occlusion queries on a
+device without them (`Capabilities.occlusion_queries`), which Vulkan
+has every device count; `error_validation_failed` for pipeline
+statistics on a device without the feature
+(`Capabilities.pipeline_statistics_queries`), a bit that is none of
+Vulkan's or a kind that is none of them
+(VUID-VkQueryPoolCreateInfo-queryType-00791, -queryType-00792,
+-queryType-parameter; `error_feature_not_present` until 1.133), and
+for no queries at all, or a statistics pool that counts nothing
+(-queryCount-02763, -queryType-09534; `error_initialization_failed`
+until 1.134); `error_out_of_host_memory`. A geometry shader's two statistics may be
 asked for since 1.43, there being no such stage to count: they read 0,
-which is what Vulkan has a statistic of a stage that never ran hold.
+which is what Vulkan has a statistic of a stage that never ran hold. A
+timestamp pool is made on every device since 1.93, with a clock or
+without one: see below.
 
 **BEHAVIOR**
 
 A query holds one value, or for `pipeline_statistics` one for each
-statistic asked for, in the order of their bits. Every query starts not
-available and counting nothing, as `CmdResetQueryPool` leaves it; Vulkan
-asks for a reset before a query is used all the same, and a program that
-means to be read elsewhere should do it.
+statistic asked for, in the order of their bits, and a value is 64 bits
+wide since 1.122. A counter is kept in a lane for each part the cores
+draw a frame's tiles in and added up when it is read, which is how
+llvmpipe keeps one for each of its threads (lp_query.h:45-46): it takes
+32 bytes of the pool, a timestamp 8. Every query starts not available
+and counting nothing, as `CmdResetQueryPool` leaves it; Vulkan asks for
+a reset before a query is used all the same, and a program that means
+to be read elsewhere should do it.
 
 Which kinds a device has is what it counts with: an occlusion query is
 counted by the rasterizer on the cores and by the hardware's own counter
 on the V3D, which every device has since 1.47; the statistics are the
 calls round the rasterizer, so they are the cores' alone; and a
 timestamp is the E-clock read as the command is played, which every
-device does - where the machine has timer.device, or there is no clock
-to read and the kind is refused.
+device does where the machine has timer.device.
+
+Without timer.device there is no clock to read, and the device says so
+as Vulkan has a device say it: `QueueFamilyProperties.timestamp_valid_bits`
+and `PhysicalDeviceLimits.timestamp_period` are 0, and
+`timestamp_compute_and_graphics` is false. The pool is made all the
+same. Vulkan gives `vkCreateQueryPool` no way to refuse a kind, and a
+program learns what its queue can time from the queue family; until
+1.93 the pool was refused here. What a timestamp written into it reads
+is `CmdWriteTimestamp`'s.
 
 **CONTEXT**
 
@@ -4709,19 +5548,105 @@ fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const facet.
 **RESULT**
 
 `success`; `error_feature_not_present` for a pass facet.library does
-not draw (BEHAVIOR); `error_format_not_supported` for an attachment in
-a format it cannot draw into, or read as an input attachment;
-`error_initialization_failed` for a subpass that names an attachment
-there is not, or reads one it draws into itself without saying so in a
-dependency by region (BEHAVIOR);
-`error_out_of_host_memory`.
+not draw (BEHAVIOR); `error_validation_failed` for no subpass at all, or
+a subpass of another bind point than graphics, of more colour
+attachments than `PhysicalDeviceLimits.max_color_attachments`, or of a
+flag that is none of Vulkan's or facet.library's own
+(VUID-VkRenderPassCreateInfo-subpassCount-arraylength,
+VUID-VkSubpassDescription-pipelineBindPoint-04952,
+-colorAttachmentCount-00845, -flags-parameter;
+`error_feature_not_present` until 1.133);
+`error_validation_failed` as well for an attachment whose format's
+features have not got what its use asks: COLOR_ATTACHMENT for a
+colour, DEPTH_STENCIL_ATTACHMENT for a depth, and one of the two for an
+input attachment (VUID-VkSubpassDescription-pColorAttachments-02648,
+-pDepthStencilAttachment-02650, -pInputAttachments-02647;
+`error_format_not_supported` until 1.135, and `error_feature_not_present`
+for a d16_unorm_s8_uint one that keeps a plane on a device without
+`stored_both`) - though a d16_unorm_s8_uint depth attachment that keeps
+neither plane is drawn on such a device, the V3D, whose format query
+gives it no DEPTH_STENCIL_ATTACHMENT (BEHAVIOR; docs/facet-vulkan10.md
+item 94), as an s8_uint one that keeps nothing would be on a device
+without `stored_stencil`, which no device is, one that keeps its
+stencil being `error_feature_not_present` there -
+for an attachment of a count of
+samples that is none of Vulkan's (VUID-VkAttachmentDescription-samples-parameter;
+`error_feature_not_present` until 1.134), and for a subpass that names
+an attachment there is not, or none where it counts some; attachments
+of one subpass of different counts of samples; a resolve attachment
+for an unused colour or one of one sample, or of more than one sample
+or another format than its colour's; a colour attachment that is the
+depth attachment as well, or one named twice; a colour attachment of
+a depth format that it reads as an input attachment as well, or a
+depth attachment of a colour format that it reads so
+(VUID-VkRenderPassCreateInfo-attachment-00834,
+VUID-VkSubpassDescription-pInputAttachments-parameter,
+-pColorAttachments-parameter, -pColorAttachments-09430,
+-pDepthStencilAttachment-01418, -pResolveAttachments-00847 to -00850,
+-pDepthStencilAttachment-04438, -pColorAttachments-02648,
+-pDepthStencilAttachment-02650, and for the one named twice the render
+pass chapter under VkAttachmentDescription: "A given attachment index
+must not be used multiple times in a single subpass";
+`error_initialization_failed` until 1.134);
+`error_feature_not_present` for a subpass that reads its own depth
+attachment, which Vulkan allows and this library does not draw
+(docs/facet-vulkan10.md item 92), and for one of colours drawn together
+that reads another than the first, which only this library's own
+SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER asks for (item 80; both
+`error_initialization_failed` until 1.134); `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
 The pass has up to 4 subpasses and up to 8 attachments. A subpass draws
-into 1 to 4 colour attachments - b8g8r8a8_unorm or r8g8b8a8_unorm - 8 in all
+into 0 to 4 colour attachments - b8g8r8a8_unorm, r8g8b8a8_unorm or
+r5g6b5_unorm_pack16 - 8 in all
 the subpasses, and may test against a depth attachment, d16_unorm, s8_uint
-or d16_unorm_s8_uint. No resolve or multisampled attachments.
+or d16_unorm_s8_uint.
+
+A subpass of no colour attachment - a depth attachment alone, the
+shadow map's pass and the depth pre-pass, or no attachment at all - is
+taken on a device that draws one (`Capabilities.colorless_subpasses`,
+the cores' since 1.113), and is `error_feature_not_present` on one
+that does not. What its fragment function colours goes nowhere: Mesa's
+lavapipe hands llvmpipe a framebuffer of no colour buffers for it
+(lvp_execute.c:1974-1980), whose tiles have none to load or store
+(lp_rast.c:126-131) and whose blending is a loop over none
+(lp_state_fs.c:3618-3622). A subpass with no attachment at all draws
+over its render area at the count of samples its pipelines say, as
+Vulkan has it: one, or four on a device that draws them
+(`framebuffer_no_attachments_sample_counts`, since 1.114; one alone in
+1.113).
+
+An attachment holds one sample a pixel, or four on a device that draws
+them (`Capabilities.multisampling`, since 1.100), and every attachment of
+a subpass holds the same count. A colour attachment of four samples may
+name a resolve attachment, of one sample and of its format, which its
+samples are averaged into as the subpass ends: over the render area, in
+every layer of the framebuffer, each pixel the average of its four
+samples as the attachment holds them, as CmdResolveImage averages them
+(since 1.109). An attachment of four samples may be an input attachment
+as well, read a sample at a time (`shader.Attachment.sampleOf`, since
+1.111): from the image's memory where an earlier subpass drew it, and
+from the tile where the subpass reads what it draws. An attachment on a
+device without the capability holds one sample: one of more is
+`error_feature_not_present`. A resolve attachment for a colour of one
+sample, or of another format or count, and attachments of one subpass
+whose counts differ, are `error_validation_failed`, as Vulkan has none
+of them (`error_initialization_failed` until 1.134).
+
+A colour attachment of a subpass may be ATTACHMENT_UNUSED: what the
+fragment function writes at that location is discarded, and the
+locations after it keep their attachments, as Vulkan has it (since
+1.118). Mesa's render pass gives such a reference no image view
+(vk_render_pass.c:1924-1930), and lavapipe gives it no colour buffer
+(lvp_execute.c:1984-1999). A subpass drawn a part for each colour
+attachment has no part for it, and one whose every colour is unused is
+drawn as a subpass of none. One whose colours go together
+(SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER) would have a plane in its tiles
+with no image behind it, and is `error_feature_not_present`. A resolve
+attachment for an unused colour is `error_validation_failed`
+(VUID-VkSubpassDescription-pResolveAttachments-00847;
+`error_initialization_failed` until 1.134).
 
 The subpasses are drawn one after another. A colour attachment's load op
 CLEAR clears the render area the first time a subpass names it; LOAD,
@@ -4733,14 +5658,14 @@ CLEAR or DONT_CARE - both clear it - and its store op DONT_CARE leave it
 there, costing no memory at all. Since 1.30 it may outlive the pass
 instead: with the store op STORE each tile's depth is written into the
 image's memory as the tile is drawn, and with the load op LOAD each
-tile starts from what is there. Both want a format that holds a depth
-and a device whose `stored_depth` is true - every device since 1.47 -
-and an image bound to memory something is behind, which
-CreateFramebuffer holds to; otherwise that is
-`error_feature_not_present`. A depth the V3D stored may be one of the
-65535ths away from the one the cores would have stored: the hardware
-keeps a deeper number and writes its top 16 bits, which is the same
-where the depth falls on a 65535th and one more where it does not.
+tile starts from what is there. Both want a device whose
+`stored_depth` is true - every device since 1.47 - and an image bound
+to memory something is behind, which CreateFramebuffer holds to;
+otherwise that is `error_feature_not_present`. A depth the V3D stored
+may be one of the 65535ths away from the one the cores would have
+stored: the hardware keeps a deeper number and writes its top 16 bits,
+which is the same where the depth falls on a 65535th and one more where
+it does not.
 
 Since 1.38 the stencil keeps its own the same way, by its own two ops:
 with `stencil_store_op` STORE each tile's stencil, a byte a pixel, is
@@ -4750,16 +5675,31 @@ a format that holds a stencil - `s8_uint` or `d16_unorm_s8_uint` - and
 a device whose `stored_stencil` is true, every device again. A format
 that holds both keeps each pixel's depth and its stencil beside each
 other, so the four ops are taken on their own: a pass may store the
-stencil and leave the depth in the tiles, or the other way round. An
-op for a plane the format has not is `error_feature_not_present`.
+stencil and leave the depth in the tiles, or the other way round.
+
+Each pair of ops is for its own plane, as in Vulkan: `load_op` and
+`store_op` for the depth, `stencil_load_op` and `stencil_store_op` for
+the stencil (VkAttachmentDescription). A pair whose plane the format
+has not loads and stores nothing, whatever it says - the stencil's of a
+`d16_unorm`, the depth's of an `s8_uint` - as Mesa's render passes read
+each pair only for a plane the format has (vk_render_pass.c:1561-1567,
+:1833-1839; `v3dv_cmd_buffer_check_needs_load`,
+v3dv_cmd_buffer.c:1533-1544). Until 1.106 such an op was
+`error_feature_not_present`.
 
 Keeping either plane of a format that holds **both** - `d16_unorm_s8_uint`
 - wants `stored_both` as well (since 1.47): the cores write a pixel's
 planes where they lie in its four bytes, while a device that stores the
 whole of a tile buffer, the V3D, writes one plane's pixels one after
 another and so keeps only a format of that plane alone. There such an
-op is `error_feature_not_present`, and a `d16_unorm` or an `s8_uint`
-attachment keeps what it holds.
+op is `error_validation_failed`, GetPhysicalDeviceFormatProperties
+giving the format no DEPTH_STENCIL_ATTACHMENT on such a device
+(VUID-VkSubpassDescription-pDepthStencilAttachment-02650;
+`error_feature_not_present` until 1.135), and a `d16_unorm` or an
+`s8_uint` attachment keeps what it holds. A `d16_unorm_s8_uint`
+attachment that keeps neither plane is drawn there all the same, in
+the tiles alone, though it breaks the same rule
+(docs/facet-vulkan10.md item 94).
 
 Two subpasses share a depth attachment either way. One right after the
 other and with the same colour attachments too goes on in the tiles of
@@ -4782,12 +5722,13 @@ up to 8 `input_attachments`, each read pixel by pixel at the
 fragment's own place (`shader.Resources.input`, `shader.Attachment`).
 Such an attachment is read out of the image's memory, so its format is
 one whose pixels are kept in rows - b8g8r8a8_unorm, r8g8b8a8_unorm or
-r5g6b5_unorm_pack16, anything else being
-`error_format_not_supported` - and what it holds is what an earlier
+r5g6b5_unorm_pack16, anything else being `error_validation_failed`
+(since 1.135; `error_format_not_supported` before), as no other colour
+format has COLOR_ATTACHMENT - and what it holds is what an earlier
 subpass drew, or what its load op left there.
 
 **A depth attachment is read that way too** since 1.62
-(`PhysicalDeviceFeatures.sampled_depth`): one plane of it, the one the
+(`Capabilities.sampled_depth`): one plane of it, the one the
 view's aspect names, the depth as 0 to 1 and the stencil as the whole
 number it is (`CreateImageView`, `shader.Attachment`). Where an
 earlier subpass drew that depth, the part which drew it last writes it
@@ -4799,10 +5740,12 @@ memory behind it and not the tiles alone - a transient one is refused
 (CreateImage).
 
 **A subpass may read the colour attachment it is drawing into** since
-1.64, which is Vulkan's self-dependency by region: the subpass names
-one of its own colour attachments as an input attachment, and the pass
-carries a `SubpassDependency` of that subpass on itself with
-DEPENDENCY_BY_REGION. It is read as any input attachment is - the
+1.64: the subpass names one of its own colour attachments as an input
+attachment, which Vulkan allows - "the same view can be used
+simultaneously as an input and color or depth/stencil attachment".
+Until 1.134 the pass also had to carry Vulkan's self-dependency by
+region, a `SubpassDependency` of that subpass on itself with
+DEPENDENCY_BY_REGION; it is not read now. It is read as any input attachment is - the
 `input_attachment` descriptor written with a view of it, and
 `shader.Fragments.input` then `colorAt` at the fragment's own place -
 and what it answers there is the tile, which already holds that pixel
@@ -4813,14 +5756,20 @@ Only the fragment's own pixel is read: the rest of the attachment is
 in other tiles, drawn on other cores or not yet drawn, and reads as
 transparent black - which is all Vulkan's by-region dependency
 promises either. A subpass of several colour attachments drawn
-together reads the first of them this way and no other; reading the
-depth attachment it draws into is not among this.
+together reads the first of them this way, and another of them is
+`error_feature_not_present`: only the library's own flag draws them
+together, and that goes with the flag (docs/facet-vulkan10.md item 80).
+Reading the depth attachment it draws into is not among this either,
+and is `error_feature_not_present` as well (item 92; both
+`error_initialization_failed` until 1.134).
 
-Without that dependency, drawing into an attachment
-and reading it in the same subpass is a loop, which is
-`error_initialization_failed`, and only a device whose
-`input_attachments` is true reads any - the cores, not the V3D -
-others answering `error_feature_not_present`. The pass does not say
+Without that dependency the subpass is drawn the same way since 1.134.
+Vulkan allows such a pass - a feedback loop, whose reads it leaves
+undefined where nothing orders the write before them - and the tile's
+pixel is an answer it allows; until then the pass was refused, with
+`error_initialization_failed`. Only a device whose `input_attachments`
+is true reads any - the cores, not the V3D - others answering
+`error_feature_not_present`. The pass does not say
 which descriptor a subpass reads one through: the set written with the
 `input_attachment` descriptor does (UpdateDescriptorSets), and the
 image wants IMAGE_USAGE_INPUT_ATTACHMENT (CreateImage).
@@ -4843,14 +5792,15 @@ blended its own way, into a plane of each tile's own. The flag wants a
 device whose `several_outputs` is true: the cores, not the V3D, whose
 fragment programs are the fixed forms and each write the one colour;
 there it is `error_feature_not_present`, and a subpass without it is
-drawn as it always was. Any other bit in `flags` is
-`error_feature_not_present` too.
+drawn as it always was. Any other bit in `flags` is none of Vulkan
+1.0's (VUID-VkSubpassDescription-flags-parameter): `error_validation_failed`
+since 1.133, `error_feature_not_present` before.
 
 Attachments a subpass does not name are left as they are. The
 dependencies say nothing of what waits for what - a queue's commands
-are done one after the other - and are read for one thing alone: a
-subpass's dependency on itself by region, which lets it read the
-attachment it draws into (since 1.64).
+are done one after the other - and are not read. From 1.64 to 1.133
+one thing was read of them: a subpass's dependency on itself by
+region, without which it could not read the attachment it draws into.
 
 **CONTEXT**
 
@@ -4912,13 +5862,19 @@ fn CreateSampler(base: *FacetBase, device: *facet.Device, info: *const facet.Sam
 
 **RESULT**
 
-`success`; `error_feature_not_present` for an address mode that is
-none of Vulkan's five, for a filter, mipmap mode, compare operation or
-border colour that is not one of Vulkan's, or for
-`unnormalized_coordinates` on a device that reads none
-(`PhysicalDeviceFeatures.unnormalized_coordinates`);
-`error_initialization_failed` for `unnormalized_coordinates` asked for
-beside something Vulkan does not allow with it;
+`success`; `error_validation_failed` for an address mode that is none
+of the five (Vulkan 1.0's four and `mirror_clamp_to_edge`), or for a
+filter, mipmap mode or compare operation that is none of Vulkan 1.0's,
+or, where an address mode clamps to the border, for a border colour
+that is none of its six
+(VUID-VkSamplerCreateInfo-addressModeU-parameter and the other members'
+own, -compareEnable-01080, -addressModeU-01078;
+`error_feature_not_present` until 1.133); `error_validation_failed` for `unnormalized_coordinates` asked for
+beside something Vulkan does not allow with it, on any device
+(VUID-VkSamplerCreateInfo-unnormalizedCoordinates-01072 to -01077;
+`error_initialization_failed` until 1.134); `error_feature_not_present`
+for `unnormalized_coordinates` that keeps to them on a device that
+reads none (`Capabilities.unnormalized_coordinates`);
 `error_out_of_host_memory`.
 
 **BEHAVIOR**
@@ -4927,9 +5883,11 @@ The sampler holds what it was given, in the terms the sampling is
 written in (`texture.Sampler`): nothing is worked out again for each
 sample.
 
-`max_anisotropy` is held to `PhysicalDeviceLimits.max_sampler_anisotropy`
+`max_anisotropy` is held to the device's own
+`PhysicalDeviceLimits.max_sampler_anisotropy` (since 1.80; the
+library's cap of 16 before, whatever the device said)
 rather than refused above it, and is taken only where
-`PhysicalDeviceFeatures.sampler_anisotropy` says so; without
+`Capabilities.sampler_anisotropy` says so; without
 `anisotropy_enable` it is 1, one sample. `max_lod` below `min_lod`
 leaves the sample on `min_lod`. `compare_enable` makes every sample
 through it a shadow sample: what is read is compared with the reference
@@ -4939,8 +5897,8 @@ sample passed, not a colour.
 `unnormalized_coordinates` places the sample in texels of the texture
 rather than 0 to 1 across it, for a program that reads a texture as a
 table of values (since 1.67). Vulkan asks five things of such a
-sampler, and all five are held to here, an
-`error_initialization_failed` for each:
+sampler, and all five are held to here, an `error_validation_failed`
+for each (`error_initialization_failed` until 1.134):
 - one filter for both: `mag_filter` and `min_filter` the same. Which of
   the two a sample would take is worked out from how fast the
   coordinates change, which says nothing in texels - so Vulkan has
@@ -4961,12 +5919,15 @@ six: an int border and a float border are the same here, a texel being
 read as 0 to 1 whatever its format, and Vulkan 1.0 has no border but
 transparent black, opaque black and opaque white.
 
-A sampler is made on either device, but is read by the sampling the
-cores do: a pipeline whose fragment form samples through one
-(`shader.FixedKind.texture_sampled`, `texture_shadow`, since 1.49
-`texture_array_sampled`, `texture_cube_sampled` and `texture_3d_sampled`,
-and since 1.53 `texture_cube_array_sampled`)
-is refused on a device whose `PhysicalDeviceFeatures.samplers` is false.
+A sampler is made on either device and read by either: the cores'
+sampling takes it whole, and the V3D's TMU is told it whole as v3dv
+packs it (since 1.140), but for a comparison. A pipeline whose fragment
+form samples through one (`shader.FixedKind.texture_sampled`,
+`texture_shadow`, since 1.49 `texture_array_sampled`,
+`texture_cube_sampled` and `texture_3d_sampled`, and since 1.53
+`texture_cube_array_sampled`) is refused on a device whose
+`Capabilities.samplers` is false, or some of them are: the V3D draws
+the 2D, array, cube and 3D ones since 1.141.
 
 **CONTEXT**
 
@@ -5167,25 +6128,45 @@ fn CreateShaderModule(base: *FacetBase, device: *facet.Device, info: *const face
 **INPUTS**
 
 - `device` - the device.
-- `info` - `code`, a shader.Code, and its size.
+- `info` - `code`, a shader.Code, and its size; `flags`, which with
+  `SHADER_MODULE_CREATE_SPIRV` says the code is a `shader.Module`
+  instead and carries SPIR-V beside the entries (since 1.75).
 - `module` - where the module is written; null when it fails.
 
 **RESULT**
 
 `success`; `error_invalid_shader_nv` for code that is not a
-shader.Code - SPIR-V among it - or an entry of a stage that is neither
-vertex nor fragment, or with more varyings than a vertex carries;
-`error_out_of_host_memory`. Two stages carry something else in that
-word: a compute entry its workgroup (`shader.computeGroup`), and a
-tessellation control entry the floats its patch carries to its
-evaluation function (`shader.control`, since 1.50). What those may
-hold is CreateComputePipelines' and CreateGraphicsPipelines' to say.
+shader.Code, or an entry of a stage that is neither vertex nor
+fragment, or with more varyings than a vertex carries, or - with
+`SHADER_MODULE_CREATE_SPIRV` - for a `code_size` narrower than a
+`shader.Module`, a `spirv_count` that is not the entry count, or words
+that are not SPIR-V at all; `error_out_of_host_memory`. Two stages
+carry something else in that word: a compute entry its workgroup
+(`shader.computeGroup`), and a tessellation control entry the floats
+its patch carries to its evaluation function (`shader.control`, since
+1.50). What those may hold is CreateComputePipelines' and
+CreateGraphicsPipelines' to say.
 
 **BEHAVIOR**
 
 The entries are copied. The functions they name are the program's
 own, compiled into it: CreateGraphicsPipelines takes a pipeline's from
 them by stage and name.
+
+With `SHADER_MODULE_CREATE_SPIRV` the code is a `shader.Module`: a
+`shader.Code` with a second array behind it, one `shader.Spirv` for
+each entry, holding the SPIR-V of that entry's shader or nothing
+(since 1.75). The table is copied like the entries; the words
+themselves stay the program's.
+
+Those words are looked over here only for what no device could ever
+run - a header that is not SPIR-V's, a word count that walks off the
+end, an instruction that is none - and such a module is refused. A
+module that is merely richer than this device's own format is kept:
+CreateGraphicsPipelines hands it to the driver, and a driver that
+cannot make code of it is the one to say so
+(`error_feature_not_present`). A device without a processor of its own
+ignores the words and calls the function.
 
 **CONTEXT**
 
@@ -5206,13 +6187,28 @@ code does.
 A shader runs on every core at once and on the queue's task: see
 sdk.facet.shader for what it may do.
 
+`error_invalid_shader_nv` is the one result this call answers that
+core Vulkan 1.0 does not list for `vkCreateShaderModule`: there the
+whole list is success and the two out-of-memory codes, because code
+that is not valid SPIR-V breaks that call's valid usage and so is
+undefined behaviour rather than a reportable error. Core Vulkan 1.0
+therefore has no code at all that means "these words are malformed",
+and facet keeps the refusal on purpose rather than take the undefined
+behaviour: a program's own bug in its words is told to it here, at the
+call that read them, which is the first of the two tiers above. The
+number is Khronos's own for that meaning (-1000012000,
+`VK_ERROR_INVALID_SHADER_NV`, contributed by VK_NV_glsl_shader), not
+one invented here, and the layer that has to translate it is a Vulkan
+shim running without that extension enabled - not this call. (Said in
+1.80; the behaviour is 1.75's.)
+
 **BUGS**
 
 None known.
 
 **SEE ALSO**
 
-`CreateGraphicsPipelines`, `DestroyShaderModule`
+`CreateGraphicsPipelines`, `DestroyShaderModule`, `sdk.facet.spirv`
 
 **EXAMPLES**
 
@@ -5254,11 +6250,20 @@ fn CreateSwapchain(base: *FacetBase, device: *facet.Device, info: *const facet.S
 `success`; `error_out_of_device_memory` when the display's memory has
 no room for that many pictures; `error_native_window_in_use` when the
 surface has a swapchain that is not `old_swapchain`;
-`error_initialization_failed` for a size that is not the surface's;
-`error_format_not_supported` for a format that is not its;
-`error_feature_not_present` for a use, a present mode or layers it does
-not have; `error_surface_lost` when the window the surface is over has
-closed; `error_out_of_host_memory`.
+`error_validation_failed` for a format other than the one
+GetPhysicalDeviceSurfaceFormats gives, or on a surface it gives none
+for, which GetPhysicalDeviceSurfaceSupport says no queue presents to
+(VUID-VkSwapchainCreateInfoKHR-imageFormat-01273, -surface-01270;
+`error_format_not_supported` until 1.135), for a use, a present mode or layers the
+surface does not have, as GetPhysicalDeviceSurfaceCapabilities and
+GetPhysicalDeviceSurfacePresentModes give them
+(VUID-VkSwapchainCreateInfoKHR-presentMode-01427, -imageArrayLayers-01275,
+-presentMode-01281; `error_feature_not_present` until 1.133), and for
+a size that is not the surface's, its least and its most extent being
+the one it has (-pNext-07781; `error_initialization_failed` until
+1.134);
+`error_surface_lost` when the window the surface is over has closed;
+`error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -5770,6 +6775,62 @@ None known.
 fb.DestroyDevice(device);
 ```
 
+## DestroyEvent
+
+The event given back.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyEvent(base: *FacetBase, device: *facet.Device, event: ?*facet.Event) void
+```
+
+**SINCE**
+
+1.129. LVO -552.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `event` - the event, or null, which does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+No work still to be done may set it, reset it or wait for it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The event is gone.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateEvent`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyEvent(device, uploaded);
+```
+
 ## DestroyFence
 
 The fence given back.
@@ -6114,6 +7175,64 @@ None known.
 
 ```zig
 fb.DestroyPipeline(device, pipeline);
+```
+
+## DestroyPipelineCache
+
+The pipeline cache given back.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyPipelineCache(base: *FacetBase, device: *facet.Device, cache: ?*facet.PipelineCache) void
+```
+
+**SINCE**
+
+1.130. LVO -584.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `cache` - the cache, or null, which does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+As lavapipe gives its back (`lvp_DestroyPipelineCache`,
+lvp_pipeline_cache.c:55-68). The pipelines made with it are not its,
+and stay.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The cache is gone.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreatePipelineCache`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyPipelineCache(device, cache);
 ```
 
 ## DestroyPipelineLayout
@@ -6657,7 +7776,9 @@ fn EndCommandBuffer(base: *FacetBase, buffer: *facet.CommandBuffer) facet.Result
 while it recorded; `error_feature_not_present` when a command asked for
 more than the library draws, as CmdDraw does of more vertices than a draw
 works. Either way the buffer cannot be submitted, and is recorded again
-after a reset; `error_initialization_failed` for a buffer not recording.
+after a reset; `error_validation_failed` for a buffer not recording
+(VUID-vkEndCommandBuffer-commandBuffer-00059;
+`error_initialization_failed` until 1.134).
 
 **BEHAVIOR**
 
@@ -6756,6 +7877,75 @@ var count: u32 = 1;
 var physical: [1]*facet.PhysicalDevice = undefined;
 _ = fb.EnumeratePhysicalDevices(instance, &count, &physical);
 if (count == 0) return error.NoDevice;
+```
+
+## FlushMappedMemoryRanges
+
+What the host wrote through a mapping, in `ranges`, made the device's to read: nothing to do, every memory type being coherent.
+
+**SYNOPSIS**
+
+```zig
+fn FlushMappedMemoryRanges(base: *FacetBase, device: *facet.Device, range_count: u32, ranges: [*]const facet.MappedMemoryRange) facet.Result
+```
+
+**SINCE**
+
+1.123. LVO -528.
+
+**INPUTS**
+
+- `device` - the device the blocks were allocated from.
+- `range_count`, `ranges` - the ranges, each of a block mapped now:
+  `size` bytes from `offset`, which counts from the block's start, or
+  to the end of the mapping for `WHOLE_SIZE`.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+Every memory type that can be mapped is `MEMORY_PROPERTY_HOST_COHERENT`
+on either device, so a write through a mapping is the device's to read
+once the submission that reads it is made, with nothing in between.
+Vulkan has the call all the same, for a type that is not coherent, and
+a program written for one calls it; it is lavapipe's and v3dv's, which
+answer `success` and look at nothing (`lvp_FlushMappedMemoryRanges`,
+lvp_device.c:2390-2396; `v3dv_FlushMappedMemoryRanges`,
+v3dv_device.c:2724-2730). A range outside its block's mapping, or not
+rounded to `PhysicalDeviceLimits.non_coherent_atom_size`, is the
+program's mistake (VUID-VkMappedMemoryRange-size-00685,
+VUID-VkMappedMemoryRange-offset-00687) and is not looked for either.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The ranges stay the caller's, and are not read.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`InvalidateMappedMemoryRanges`, `MapMemory`
+
+**EXAMPLES**
+
+```zig
+const range = facet.MappedMemoryRange{ .memory = memory };
+_ = fb.FlushMappedMemoryRanges(device, 1, @ptrCast(&range));
 ```
 
 ## FreeCommandBuffers
@@ -7114,6 +8304,66 @@ var queue: ?*facet.Queue = null;
 fb.GetDeviceQueue(device, 0, 0, &queue);
 ```
 
+## GetEventStatus
+
+Whether an event is set, without waiting: `event_set` or `event_reset`.
+
+**SYNOPSIS**
+
+```zig
+fn GetEventStatus(base: *FacetBase, device: *facet.Device, event: *facet.Event) facet.Result
+```
+
+**SINCE**
+
+1.129. LVO -556.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `event` - the event.
+
+**RESULT**
+
+`event_set` for a set event, `event_reset` for one that is not;
+`error_device_lost` once the device is lost, as v3dv answers
+(`v3dv_GetEventStatus`, v3dv_event.c:451-459).
+
+**BEHAVIOR**
+
+Nothing changes: the event stays as it is. What a command buffer still
+being played sets or resets may change it as soon as this returns.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: yes: it only reads.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+Vulkan has no call that waits on the host for an event: a program
+that has to asks this until it is set, or waits for a fence.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetEvent`, `ResetEvent`, `CmdSetEvent`
+
+**EXAMPLES**
+
+```zig
+const done = fb.GetEventStatus(device, uploaded.?) == .event_set;
+```
+
 ## GetFenceStatus
 
 Whether a fence is signalled, without waiting.
@@ -7200,9 +8450,15 @@ None.
 An offset aligned to a cache line, 64 bytes. A texture's size is its
 levels in blocks, an 8888 texel at 8 bytes; rows' are their pitch, the
 width rounded up to a cache line, times the height. A depth attachment
-may be in any memory type, the lazily allocated one too, and nothing
-of its memory is touched; every other image needs a type with memory
-behind it.
+made IMAGE_USAGE_TRANSIENT_ATTACHMENT may be in any memory type, the
+lazily allocated one too: a pass that neither loads nor stores it, nor
+hands it on to a later part, touches nothing of its memory, and
+CreateFramebuffer answers `error_feature_not_present` for one in the
+lazily allocated type that a pass keeps. Every other image needs a type
+with memory behind it, Vulkan letting the lazily allocated type be
+offered to a transient image alone (since 1.134; before, facet offered
+it to every depth attachment neither sampled nor read as an input
+attachment).
 
 **CONTEXT**
 
@@ -7234,6 +8490,72 @@ var needs: facet.MemoryRequirements = undefined;
 fb.GetImageMemoryRequirements(device, picture, &needs);
 ```
 
+## GetImageSparseMemoryRequirements
+
+What binding an image sparsely asks of memory: nothing, no image being sparse.
+
+**SYNOPSIS**
+
+```zig
+fn GetImageSparseMemoryRequirements(base: *FacetBase, device: *facet.Device, image: *facet.Image, count: *u32, requirements: ?[*]facet.SparseImageMemoryRequirements) void
+```
+
+**SINCE**
+
+1.124. LVO -540.
+
+**INPUTS**
+
+- `device` - the device the image was made on.
+- `image` - the image.
+- `count` - set to 0.
+- `requirements` - not written; may be null.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+An image is sparse only where it was made with
+`IMAGE_CREATE_SPARSE_RESIDENCY`, which no device of this library takes,
+its `sparse_residency_*` features being false: "If the image was not
+created with VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT then
+pSparseMemoryRequirementCount will be zero and pSparseMemoryRequirements
+will not be written to" (the sparse resources chapter). That is v3dv's
+answer (`v3dv_GetImageSparseMemoryRequirements`,
+v3dv_device.c:3430-3438). Vulkan has the call carried all the same.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The image and `count` stay the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetImageMemoryRequirements`, `GetPhysicalDeviceSparseImageFormatProperties`
+
+**EXAMPLES**
+
+```zig
+var count: u32 = 0;
+fb.GetImageSparseMemoryRequirements(device, image, &count, null);
+```
+
 ## GetImageSubresourceLayout
 
 Where a level of an image lies in its memory, and how its rows do.
@@ -7252,7 +8574,8 @@ fn GetImageSubresourceLayout(base: *FacetBase, device: *facet.Device, image: *fa
 
 - `device` - the device it was made on.
 - `image` - the image.
-- `subresource` - which level: 0 for an image in rows.
+- `subresource` - which level and which layer: level 0 for an image in
+  rows.
 - `layout` - where its layout is written.
 
 **RESULT**
@@ -7262,16 +8585,23 @@ None.
 **BEHAVIOR**
 
 For an image in rows - a linear image, and an attachment - the offset
-is 0, `row_pitch` the bytes from one row to the next, `size` the pitch
-times the height: with its memory mapped, the program reads and writes
-the pixels there. For a texture it is where the level starts and how
+is where the layer begins, 0 for the first, `row_pitch` the bytes from
+one row to the next, `size` and `array_pitch` the pitch times the
+height: with its memory mapped, the program reads and writes the
+pixels there. Such an image has layers since 1.91, one after another;
+a level or a layer it has not got answers all 0. For a texture it is
+where the level starts and how
 many bytes it takes, its rows not the program's to know (`row_pitch`
 0). A depth attachment answers since 1.63, its rows being real and
 its levels its own: the offset is where the level of the layer begins,
 `row_pitch` that level's own pitch, `size` what the level takes and
 `array_pitch` the whole pyramid one layer holds. One with nothing
 behind it - a transient one, which lives in the tiles - answers all 0,
-as does a level or a layer it has not got.
+as does a level or a layer it has not got. On a device that lays out
+what it samples itself, the V3D, a texture and a sampled depth answer
+where its driver puts the level of the layer, and how many bytes that
+takes, with `row_pitch` 0 (since 1.142): the rows are the TMU's, laid
+out as Mesa's v3dv lays them (`v3d_setup_slices`, v3dv_image.c:112-282).
 
 **CONTEXT**
 
@@ -7329,28 +8659,49 @@ None.
 
 **BEHAVIOR**
 
-Every field is what the device's driver said of it as the instance was
-made, and holds while the instance lasts. A `false` is what a create call
-would answer `error_feature_not_present` to, so a program may choose
-another way instead of failing; a `true` is a promise for this device, not
-for the next one listed.
+Vulkan's 55 members, in Vulkan's order and four bytes each, made from
+what the device's driver said of itself as the instance was made. They
+hold while the instance lasts.
 
-Sixteen of the fields differ between the devices of one machine, and are
-the reason to look. `own_fragment_functions`, `sampling_format`,
-`depth_prepass`, `discarding_fragment_forms`, `input_attachments`,
-`sampled_depth`, `storage_images`, `samplers`, `sampler_anisotropy`,
-`pipeline_statistics_queries`, `kept_compressed`, `kept_floats`,
-`cube_arrays` and `stored_both` are the cores' and not the V3D's.
-`compute_on_device` and `tessellation_on_device` are the cores' too, and
-for the plain reason that the cores are that device: both kinds of work
-run on them whichever device made the pipeline, so on the V3D they are
-false while the work still happens. The limits say the rest of
-what parts differ: a CM5's V3D takes one sampled image a stage where the
-cores take sixteen (`GetPhysicalDeviceProperties`).
+Until 1.82 this handed out a structure of facet's own: 49 Zig `bool`
+fields, one byte each, chosen so there was one wherever a create call
+could refuse something. A program reading a `VkPhysicalDeviceFeatures`
+out of that read 49 bytes of something else. Those 49 are the library's
+own record now (`_instance.Capabilities`) and still decide what every
+create call refuses; this call answers Vulkan's question instead, which
+is a different question.
 
-What the library has no call for at all - samplers, events, query pools, a
-pipeline cache, sparse memory - has no field here. That a call is missing
-is in the jump table, not in a feature.
+**Vulkan 1.0 requires exactly one of these 55**, `robust_buffer_access`,
+of an implementation that does not advertise
+`VK_KHR_portability_subset`; its "Feature Requirements" section ends
+"All other features defined in the Specification are optional". So a
+`FALSE` here is usually a real choice a program may work around, which
+is the opposite of facet's old 49, where most of the fields gated
+something Vulkan requires unconditionally and a false was a defect.
+
+**But a `FALSE` is not free.** Vulkan's required-limits table gives most
+limits two values, one for the feature being off and one for it on, and
+the off value is *mandatory*: say `sampler_anisotropy` is false and
+`max_sampler_anisotropy` must read 1, say `multi_viewport` is false and
+`max_viewports` must read 1, say `shader_clip_distance` is false and
+`max_clip_distances` must read 0. Each `of(...)` below therefore ties a
+limit as well, and `_instance.limits` says which.
+
+What a program may usefully branch on per device is `sampler_anisotropy`
+and `image_cube_array`, which the cores have and a CM5's V3D has not,
+with the limits saying the rest of what differs - that V3D takes one
+sampled image a stage where the cores take as many as a set will hold
+(`GetPhysicalDeviceProperties`).
+
+**What is no longer asked here.** Six of facet's 49 were facet's own
+idea with no Vulkan meaning - `own_fragment_functions`,
+`sampling_format`, `compute_on_device`, `tessellation_on_device`,
+`depth_prepass` and `discarding_fragment_forms` - and they described the
+fixed forms, which are facet's own surface rather than Vulkan's. There
+is no member for them, so a program that wants a fixed form asks for the
+pipeline and is answered `error_feature_not_present` if the device has
+not got it, which it was answered before as well. Where those belong is
+the open question of docs/facet-vulkan10.md item 51.
 
 **CONTEXT**
 
@@ -7381,8 +8732,8 @@ None known.
 ```zig
 var features: facet.PhysicalDeviceFeatures = undefined;
 fb.GetPhysicalDeviceFeatures(physical, &features);
-if (!features.own_fragment_functions) {
-    // This device runs only the fixed forms: shader.fixedFragment.
+if (features.sampler_anisotropy == facet.TRUE) {
+    // This device samples along the longer axis: maxSamplerAnisotropy.
 }
 ```
 
@@ -7418,11 +8769,15 @@ None.
   from; a vertex's value.
 - R5G6B5_UNORM_PACK16: colour attachments, blended, in either tiling;
   sampled, filtered, in optimal tiling; copied.
-- D16_UNORM: a depth attachment, in optimal tiling.
+- D16_UNORM: a depth attachment, in optimal tiling, and copied both
+  ways; sampled and filtered as well on a device that samples a depth
+  where its rows lie (`Capabilities.sampled_depth`), and not
+  on one that does not, which refuses such an image at CreateImage
+  (since 1.80).
 - R32_SFLOAT to R32G32B32A32_SFLOAT: a vertex's value.
 - R8_UNORM: sampled, filtered, written through as a storage image, in
   optimal tiling, and copied both ways. One byte a texel, read as
-  (red, 0, 0, 1) (`PhysicalDeviceFeatures.small_texels`, since 1.48);
+  (red, 0, 0, 1) (`Capabilities.small_texels`, since 1.48);
   never an attachment and never a buffer's.
 - BC1, BC2, BC3, R16G16B16A16_SFLOAT, R32G32B32A32_SFLOAT,
   B10G11R11_UFLOAT and E5B9G9R9_UFLOAT: sampled, filtered, in optimal
@@ -7436,6 +8791,28 @@ None.
   EAC_R11G11: sampled, filtered, in optimal tiling, and copied into.
   No sampler of this library reads such a block, so they are always
   unpacked to 8 bits a channel and never copied out of (since 1.46).
+- B4G4R4A4_UNORM_PACK16 and A1R5G5B5_UNORM_PACK16: sampled, filtered,
+  in optimal tiling, and copied into. No sampler of this library reads
+  four channels in 16 bits either, so they are always unpacked to 8
+  bits a channel as ETC2 is, and never copied out of (since 1.127).
+- A8B8G8R8_SNORM_PACK32, _UINT_PACK32 and _SINT_PACK32: what
+  R8G8B8A8_SNORM, _UINT and _SINT say, on either device, being the same
+  bytes (since 1.127).
+- Blits (since 1.126): BLIT_SRC, in optimal tiling, beside every colour
+  format sampled there but those of whole numbers, a blit reading the
+  texel as a sample does; BLIT_DST beside the three colour attachments
+  in either tiling, and beside R8_UNORM. D16_UNORM says both, a depth
+  going into an image of its own format. No blit carries a whole number
+  or a stencil, and none reads an image in linear tiling.
+
+Every answer that differs between two devices of one machine is read
+off that device's `PhysicalDeviceFeatures` (since 1.80): what it keeps
+as it was given it - a compressed image's blocks, a float one's floats,
+a texture's own channels, its whole numbers - and whether it samples a
+depth where its rows lie. A format the device keeps none of says nothing
+of an image here, only of a buffer where it has one, which is the same
+answer CreateImage gives. Before that the reply depended on the format
+alone but for one bool, and said a sampled D16_UNORM on every device.
 
 An image to be sampled may have sides of any size (since 1.42). One of
 B8G8R8A8 or R8G8B8A8 may keep its texel in the 32 bits of its word
@@ -7464,7 +8841,7 @@ None known.
 
 **SEE ALSO**
 
-`CreateImage`
+`CreateImage`, `GetPhysicalDeviceFeatures`
 
 **EXAMPLES**
 
@@ -7492,24 +8869,37 @@ fn GetPhysicalDeviceImageFormatProperties(base: *FacetBase, physical: *facet.Phy
 
 - `physical` - a physical device EnumeratePhysicalDevices listed.
 - `format` - the format the image would be made with.
-- `image_type` - `2d` or `3d`; `1d` has no images.
+- `image_type` - `1d`, `2d` or `3d`; a `1d` image is a texture of
+  one row, and asks for height and depth 1 (since 1.86).
 - `tiling` - `optimal` or `linear`.
 - `usage` - the IMAGE_USAGE_* bits it would be made with.
-- `flags` - the IMAGE_CREATE_* flags, CUBE_COMPATIBLE among them.
+- `flags` - the IMAGE_CREATE_* flags, CUBE_COMPATIBLE among them, and
+  since 1.131 MUTABLE_FORMAT, refused where CreateImage refuses it.
 - `properties` - where the answer is written; zeroed where there is
   no such image.
 
 **RESULT**
 
 `success`, or `error_format_not_supported` where CreateImage would
-refuse every image of that shape, whatever its extent.
+refuse every image of that shape, whatever its extent - but for two
+kinds of shape. TRANSIENT_ATTACHMENT alone, with no other usage, is
+answered as the transfers alone are: no more strictly than
+TRANSIENT beside a colour attachment, as Vulkan has a usage within
+another be answered ("Additional Image Capabilities"), and the same
+where that one is `success`, while on the cores a float or a BC
+format, which is no colour attachment, is `success` too. CreateImage
+refuses every such image (VUID-VkImageCreateInfo-usage-00966; since
+1.135). And a 3D image neither sampled nor written through, or a
+colour or input attachment written through as a storage image, is
+declined, the question being asked at 256 slices, while CreateImage
+makes many such images a slice deep (docs/facet-vulkan10.md item 94).
 
 **BEHAVIOR**
 
 The question is asked of the same rules CreateImage keeps: the image
 of the largest extent is laid out by the very code CreateImage lays
 an image out with, so an extent inside what is answered here is made
-and one outside it is refused.
+and one outside it is refused, the shapes RESULT names apart.
 
 What is answered, from the device's own limits
 (GetPhysicalDeviceProperties) and from what CreateImage takes of
@@ -7519,14 +8909,25 @@ them:
   a 3D one, 256, and 1 deep for every other.
 - `max_mip_levels`: the levels of `max_extent`, as many as halving
   its longest side gives, where the shape takes levels - a sampled
-  image, one written through, a depth attachment since 1.63, and a 3D
-  image whose slices have levels of their own - and 1 where it does
-  not, which is a colour attachment and rows.
+  image, one written through, a depth attachment since 1.63, a 3D
+  image whose slices have levels of their own, and since 1.119 a
+  colour attachment and any other optimal image kept in rows, which is
+  Vulkan's rule for an optimal image ("the number of levels in the
+  complete mipmap chain") - and 1 where it does not: a linear image, as
+  Vulkan lets it, and on the V3D an image kept in rows
+  (`Ops.texture_memory`).
 - `max_array_layers`: `max_image_array_layers`, 256, where the shape
   takes layers - an image a function reads or writes, a sampled or
   read-back depth attachment among them - and 1 for every other
   shape, a 3D image's layers being its depth.
-- `sample_counts`: 1, one sample a pixel.
+- `sample_counts`: 1, and 4 as well where CreateImage takes an image
+  of four samples a pixel of the extent and the layers above at one
+  level (since 1.98): a 2D image in optimal tiling, not cube
+  compatible, of a format that is an attachment, drawn into, read as
+  an input attachment, copied or, since 1.110, sampled - and since
+  1.119 sampled and drawn into at once, as one sample is - on a device
+  that draws four samples (`_image.shapeFor`). Where 4 is said, every
+  such image inside these bounds is made.
 - `max_resource_size`: the bytes an image of all of the above takes,
   every level of every layer of it (since 1.66), which is what
   GetImageMemoryRequirements answers for such an image. It may be
@@ -7550,9 +8951,12 @@ levels are as many as halving the longer side gives, which
 
 **NOTES**
 
-A format may be sampled and drawn into without one image being both:
-the two lie differently in memory, so the usages are asked about one
-at a time, as CreateImage takes them.
+Until 1.119 a format could be sampled and drawn into without one image
+being both, so a program asked about the usages one at a time. Since
+then the cores keep such an image in rows and sample it where they
+lie, as llvmpipe and v3dv both make one; the V3D still answers
+`error_format_not_supported` for the two at once, its half of
+docs/facet-vulkan10.md item 48 being to come.
 
 Until 1.66 `max_resource_size` was the largest heap's bytes, which is
 a fact about the memory and not about the image, and the levels and
@@ -7775,6 +9179,73 @@ None known.
 var count: u32 = 1;
 var family: [1]facet.QueueFamilyProperties = undefined;
 fb.GetPhysicalDeviceQueueFamilyProperties(physical, &count, &family);
+```
+
+## GetPhysicalDeviceSparseImageFormatProperties
+
+The blocks a sparse image of a format, type, sample count, usage and tiling would be bound in: none, no device having a sparse image.
+
+**SYNOPSIS**
+
+```zig
+fn GetPhysicalDeviceSparseImageFormatProperties(base: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, image_type: facet.ImageType, samples: u32, usage: u32, tiling: facet.ImageTiling, count: *u32, properties: ?[*]facet.SparseImageFormatProperties) void
+```
+
+**SINCE**
+
+1.124. LVO -536.
+
+**INPUTS**
+
+- `physical` - the device.
+- `format`, `image_type`, `samples`, `usage`, `tiling` - the image, as
+  CreateImage would be given it with `IMAGE_CREATE_SPARSE_RESIDENCY`.
+- `count` - set to 0.
+- `properties` - not written; may be null.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+No device of this library binds memory sparsely: `sparse_binding` and
+the eight `sparse_residency_*` features are false. So no format has a
+sparse image, and the count is 0 whatever is asked about: "If
+VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT is not supported for the given
+arguments, pPropertyCount will be zero upon return, and no data will be
+written to pProperties" (the sparse resources chapter). That is v3dv's
+answer (`v3dv_GetPhysicalDeviceSparseImageFormatProperties`,
+v3dv_formats.c:818-829). Vulkan has the call carried all the same.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`count` stays the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetImageSparseMemoryRequirements`, `GetPhysicalDeviceFeatures`
+
+**EXAMPLES**
+
+```zig
+var count: u32 = 0;
+fb.GetPhysicalDeviceSparseImageFormatProperties(physical, .r8g8b8a8_unorm, .@"2d", 1, facet.IMAGE_USAGE_SAMPLED, .optimal, &count, null);
 ```
 
 ## GetPhysicalDeviceSurfaceCapabilities
@@ -8038,6 +9509,73 @@ _ = fb.GetPhysicalDeviceSurfaceSupport(physical, 0, surface.?, &supported);
 if (!supported) return error.CannotShow;
 ```
 
+## GetPipelineCacheData
+
+What a pipeline cache holds, as bytes to keep and give to another CreatePipelineCache: Vulkan's header of 32 bytes, and nothing after it.
+
+**SYNOPSIS**
+
+```zig
+fn GetPipelineCacheData(base: *FacetBase, device: *facet.Device, cache: *facet.PipelineCache, size: *usize, data: ?*anyopaque) facet.Result
+```
+
+**SINCE**
+
+1.130. LVO -588.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `cache` - the cache.
+- `size` - the bytes there is room for at `data`; set to the bytes
+  written, or with `data` null to the bytes there are.
+- `data` - where they are written, or null.
+
+**RESULT**
+
+`success`; `incomplete` where there is no room for the header, and
+then nothing is written and `size` is 0.
+
+**BEHAVIOR**
+
+The header is `PipelineCacheHeaderVersionOne`, its numbers least
+significant byte first as Vulkan has them whatever the machine: its
+size, version one, and the device's `vendor_id`, `device_id` and
+`pipeline_cache_uuid` (PhysicalDeviceProperties), as lavapipe writes
+its own (`lvp_GetPipelineCacheData`, lvp_pipeline_cache.c:70-94). No
+pipeline follows it, the cache holding none.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The bytes are the caller's.
+
+**NOTES**
+
+The UUID moves with the library's revision (`_driver.cacheUuid`), so
+data kept from another build of it is told apart.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreatePipelineCache`, `GetPhysicalDeviceProperties`
+
+**EXAMPLES**
+
+```zig
+var size: usize = 0;
+_ = fb.GetPipelineCacheData(device, cache.?, &size, null);
+```
+
 ## GetQueryPoolResults
 
 What `count` queries from `first` counted, written into `data`.
@@ -8070,15 +9608,20 @@ fn GetQueryPoolResults(base: *FacetBase, device: *facet.Device, pool: *facet.Que
 
 `success` where every query read was available; `not_ready` where one
 was not, the others written all the same; `error_device_lost`;
-`error_out_of_host_memory` where `size` is too small for what was asked
-for, nothing written past what fitted.
+`error_validation_failed` where `size` is too small for what was asked
+for, nothing written past what fitted
+(VUID-vkGetQueryPoolResults-dataSize-00817; `error_out_of_host_memory`
+until 1.134).
 
 **BEHAVIOR**
 
 A statistics query writes one value for each statistic it counts, in the
 order of their bits; the other kinds write one. Without
 `QUERY_RESULT_64` a value is 4 bytes and one that will not fit is held
-at 0xFFFFFFFF, where Vulkan leaves it undefined.
+at 0xFFFFFFFF, which Vulkan allows, "the value may either wrap or
+saturate" (17.2). With it a value is 8 bytes and whole: a query counts
+in 64 bits, as llvmpipe's do (since 1.122; a count was held at
+0xFFFFFFFF in 8 bytes as well before).
 
 `QUERY_RESULT_WAIT` waits for the device's queue to go idle, which is
 when everything recorded before has been played and every value is
@@ -8251,6 +9794,76 @@ var images: [4]*facet.Image = undefined;
 _ = fb.GetSwapchainImages(device, swapchain.?, &count, &images);
 ```
 
+## InvalidateMappedMemoryRanges
+
+What the device wrote, in `ranges`, made the host's to read through its mapping: nothing to do, every memory type being coherent.
+
+**SYNOPSIS**
+
+```zig
+fn InvalidateMappedMemoryRanges(base: *FacetBase, device: *facet.Device, range_count: u32, ranges: [*]const facet.MappedMemoryRange) facet.Result
+```
+
+**SINCE**
+
+1.123. LVO -532.
+
+**INPUTS**
+
+- `device` - the device the blocks were allocated from.
+- `range_count`, `ranges` - the ranges, each of a block mapped now:
+  `size` bytes from `offset`, which counts from the block's start, or
+  to the end of the mapping for `WHOLE_SIZE`.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+Every memory type that can be mapped is `MEMORY_PROPERTY_HOST_COHERENT`
+on either device, so what the device wrote is the host's to read
+through a mapping once the submission that wrote it is done - its fence
+signalled, or `QueueWaitIdle` back - with nothing in between. Vulkan has
+the call all the same, for a type that is not coherent, and a program
+written for one calls it; it is lavapipe's and v3dv's, which answer
+`success` and look at nothing (`lvp_InvalidateMappedMemoryRanges`,
+lvp_device.c:2398-2404; `v3dv_InvalidateMappedMemoryRanges`,
+v3dv_device.c:2732-2738). A range outside its block's mapping, or not
+rounded to `PhysicalDeviceLimits.non_coherent_atom_size`, is the
+program's mistake (VUID-VkMappedMemoryRange-size-00685,
+VUID-VkMappedMemoryRange-offset-00687) and is not looked for either.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The ranges stay the caller's, and are not read.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FlushMappedMemoryRanges`, `MapMemory`
+
+**EXAMPLES**
+
+```zig
+const range = facet.MappedMemoryRange{ .memory = memory };
+_ = fb.InvalidateMappedMemoryRanges(device, 1, @ptrCast(&range));
+```
+
 ## MapMemory
 
 The address of a block's memory, from an offset on.
@@ -8277,8 +9890,13 @@ fn MapMemory(base: *FacetBase, device: *facet.Device, memory: *facet.DeviceMemor
 
 **RESULT**
 
-`success`; `error_memory_map_failed` for lazily allocated memory, for
-a block mapped already, and for a range past its end.
+`success`; `error_validation_failed` for lazily allocated memory, the
+one type that is not MEMORY_PROPERTY_HOST_VISIBLE, for a block mapped
+already, and for a range of nothing or past the block's end
+(VUID-vkMapMemory-memory-00682, -memory-00678, -offset-00679,
+-size-00680, -size-00681; `error_memory_map_failed` until 1.134). A
+mapping is never refused for want of addresses, which is what Vulkan's
+`error_memory_map_failed` is: the address handed out is the block's own.
 
 **BEHAVIOR**
 
@@ -8317,6 +9935,130 @@ None known.
 var data: ?*anyopaque = null;
 if (fb.MapMemory(device, memory, 0, facet.WHOLE_SIZE, 0, &data) != .success) return error.NoMap;
 const vertices: [*]Vertex = @ptrCast(@alignCast(data.?));
+```
+
+## MergePipelineCaches
+
+What `sources` hold put into `destination`: nothing, none holding any.
+
+**SYNOPSIS**
+
+```zig
+fn MergePipelineCaches(base: *FacetBase, device: *facet.Device, destination: *facet.PipelineCache, count: u32, sources: [*]const *facet.PipelineCache) facet.Result
+```
+
+**SINCE**
+
+1.130. LVO -592.
+
+**INPUTS**
+
+- `device` - the device they were made on.
+- `destination` - the cache put into, not among the sources.
+- `count`, `sources` - the caches put into it.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+A cache holds nothing, so nothing is put anywhere, as lavapipe has it
+(`lvp_MergePipelineCaches`, lvp_pipeline_cache.c:96-103).
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The caches stay the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreatePipelineCache`, `GetPipelineCacheData`
+
+**EXAMPLES**
+
+```zig
+_ = fb.MergePipelineCaches(device, kept.?, 1, @ptrCast(&worker));
+```
+
+## QueueBindSparse
+
+Memory bound to sparse buffers and images, in batches, by the queue: refused, no queue family binding sparse memory.
+
+**SYNOPSIS**
+
+```zig
+fn QueueBindSparse(base: *FacetBase, queue: *facet.Queue, count: u32, binds: ?[*]const facet.BindSparseInfo, fence: ?*facet.Fence) facet.Result
+```
+
+**SINCE**
+
+1.124. LVO -544.
+
+**INPUTS**
+
+- `queue` - the queue.
+- `count`, `binds` - the batches: for each, the semaphores it waits
+  for, the ranges and blocks it binds and the semaphores it signals.
+- `fence` - would be signalled when they are bound; may be null.
+
+**RESULT**
+
+`error_validation_failed`, and nothing bound, waited for or signalled.
+It was `error_feature_not_present` until 1.133.
+
+**BEHAVIOR**
+
+Vulkan has the queue be of a family with `QUEUE_SPARSE_BINDING`
+(VUID-vkQueueBindSparse-queuetype), and no family of either device has
+it, `sparse_binding` being false; so no call a program may make reaches
+here, and one that does breaks that rule, which is what
+`error_validation_failed` says. v3dv answers `VK_ERROR_FEATURE_NOT_PRESENT`
+(`v3dv_QueueBindSparse`, v3dv_queue.c:1172-1178), a code Vulkan does
+not list for the call; the call's own, a lost device and no memory, are
+for calls a program may make. Vulkan has the call carried all the same.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The batches and the fence stay the caller's, and are not read.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`QueueSubmit`, `GetPhysicalDeviceQueueFamilyProperties`
+
+**EXAMPLES**
+
+```zig
+const refused = fb.QueueBindSparse(queue, 0, null, null);
 ```
 
 ## QueuePresent
@@ -8699,6 +10441,64 @@ None known.
 _ = fb.ResetDescriptorPool(device, pool.?, 0);
 ```
 
+## ResetEvent
+
+The event reset by the host.
+
+**SYNOPSIS**
+
+```zig
+fn ResetEvent(base: *FacetBase, device: *facet.Device, event: *facet.Event) facet.Result
+```
+
+**SINCE**
+
+1.129. LVO -564.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `event` - the event.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+The event is reset at once, as lavapipe stores 0 (`lvp_ResetEvent`,
+lvp_device.c:2764-2772); one not set stays as it is.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+No CmdWaitEvents of the event may still be waiting: Vulkan has the
+program know that work is done first (VUID-vkResetEvent-event-03821).
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetEvent`, `GetEventStatus`, `CmdResetEvent`
+
+**EXAMPLES**
+
+```zig
+_ = fb.ResetEvent(device, uploaded.?);
+```
+
 ## ResetFences
 
 Fences back to unsignalled.
@@ -8754,6 +10554,67 @@ None known.
 ```zig
 _ = fb.WaitForFences(device, 1, @ptrCast(&frame_done), true, facet.WAIT_FOREVER_NS);
 _ = fb.ResetFences(device, 1, @ptrCast(&frame_done));
+```
+
+## SetEvent
+
+The event set by the host.
+
+**SYNOPSIS**
+
+```zig
+fn SetEvent(base: *FacetBase, device: *facet.Device, event: *facet.Event) facet.Result
+```
+
+**SINCE**
+
+1.129. LVO -560.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `event` - the event.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+The event is set at once, as lavapipe stores 1 (`lvp_SetEvent`,
+lvp_device.c:2754-2762), and stays set until it is reset; one set
+already stays as it is. A queue's task waiting for it in a
+CmdWaitEvents is woken.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+Vulkan has an event the host sets be set before the work that waits for
+it is submitted (VUID-vkSetEvent-event-09543), and a CmdWaitEvents of
+such an event have PIPELINE_STAGE_HOST in its source stages.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ResetEvent`, `GetEventStatus`, `CmdWaitEvents`
+
+**EXAMPLES**
+
+```zig
+_ = fb.SetEvent(device, uploaded.?);
 ```
 
 ## UnmapMemory

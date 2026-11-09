@@ -272,7 +272,7 @@ pub fn Pipeline(comptime config: Config) type {
         fn setUp(pipeline: *const Self, target: *Target, corners: [3]Clip, color: u32, texture: TexturePointer) error{OutOfMemory}!void {
             var projected: [3]setup.Projected = undefined;
             for (&projected, corners) |*into, corner| into.* = setup.project(corner.position, pipeline.viewport);
-            const made = setup.onSurface(projected, config.cull, config.front, target.areaBounds()) orelse {
+            const made = setup.onSurface(projected, config.cull, config.front, target.areaBounds(), 1) orelse {
                 target.stats.dropped += 1;
                 return;
             };
@@ -385,14 +385,14 @@ pub fn Pipeline(comptime config: Config) type {
             // both ways of dividing, unroll more than the default allows.
             @setEvalBranchQuota(10_000);
             const triangle: *const Triangle = @alignCast(@fieldParentPtr("header", header));
-            walk.quads(tile, header, Shaded(.untested).of(tile, triangle), Shaded(.untested).run);
+            walk.quads(1, tile, header, Shaded(.untested).of(tile, triangle), Shaded(.untested).run);
         }
 
         /// The same over those of its pixels the depth test keeps.
         fn rasterShadedDepth(tile: *const Tile, header: *const Header) void {
             @setEvalBranchQuota(10_000);
             const triangle: *const Triangle = @alignCast(@fieldParentPtr("header", header));
-            walk.quads(tile, header, Shaded(.tested).of(tile, triangle), Shaded(.tested).run);
+            walk.quads(1, tile, header, Shaded(.tested).of(tile, triangle), Shaded(.tested).run);
         }
 
         /// The same over those of its pixels where its depth is what the
@@ -400,7 +400,7 @@ pub fn Pipeline(comptime config: Config) type {
         fn rasterShadedSecond(tile: *const Tile, header: *const Header) void {
             @setEvalBranchQuota(10_000);
             const triangle: *const Triangle = @alignCast(@fieldParentPtr("header", header));
-            walk.quads(tile, header, Shaded(.second).of(tile, triangle), Shaded(.second).run);
+            walk.quads(1, tile, header, Shaded(.second).of(tile, triangle), Shaded(.second).run);
         }
 
         const two_passes = bins.Prepass{ .depth = &prepass.DepthOnly(Triangle).raster, .shade = &rasterShadedSecond };

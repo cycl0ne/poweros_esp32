@@ -3,19 +3,62 @@
 //! device after them, a CM5's V3D, and each pair compared pixel by pixel:
 //! the cores are the reference. A case is a command buffer's worth - a kind
 //! of draw, a piece of a pipeline's state, a render area, a format - in
-//! pictures the program reads back.
+//! pictures the program reads back. The cases called "shipped" draw with
+//! fragment shaders whose SPIR-V the module ships beside the functions:
+//! the cores run the functions, and the V3D compiles the words.
 //!
 //!   FacetBoth SIZE/K,ONLY/K
 //!
 //! Pictures are SIZE big, WIDTHxHEIGHT: 640x360 if not given. ONLY runs the
 //! cases with that in their name. A job that never ends stops the V3D until
 //! the program goes, and with it the cases after it. It prints for
-//! each case how many pixels are further apart than two steps of a channel,
-//! and returns WARN if any case has more than one in a thousand, with a map
+//! each case how many pixels are further apart than two steps of a channel
+//! (five for anisotropic filtering, whose samples Vulkan leaves to the
+//! implementation), and returns WARN if any case has more than one in a
+//! thousand, with a map
 //! of where they are. Textures
 //! are drawn no smaller than the level their pixels are on either way: the
 //! two choose a level by different sums, and pictures of a texture turned
-//! in depth are C:test/FacetCube's to look at.
+//! in depth are C:test/FacetCube's to look at. The cases of four samples
+//! a pixel (since 1.16) draw into an image of four and resolve it into the
+//! first picture, in the pass or by CmdResolveImage after it. The cases of
+//! no colour (since 1.18) draw a depth alone, then look at it in a pass of
+//! colour: a shadow map sampled, or a subpass after it tested against it;
+//! and the cases of no attachment at all count what they draw with an
+//! occlusion query, the two counts compared as well. The shipped cases of
+//! float arithmetic (since 1.20) are of GLSL.std.450's calls, which the
+//! V3D lowers as Mesa does, through an SFU that is not exact, and whose
+//! roundings and Fract jump where a varying crosses a whole number: a
+//! line of pixels a step apart there is the two devices' interpolation,
+//! not a sum gone wrong. The shipped case of chosen floats (since 1.21)
+//! is the same where a comparison turns over and Step jumps: Sin, Cos,
+//! Tan, FSign, Step and SmoothStep, and OpSelect after each of the
+//! comparisons glslc writes but >. The shipped case of selections (since
+//! 1.22) is an `if` and `else` and a ternary of calls, which the V3D
+//! flattens as Mesa does: both arms run, the merge chooses. The shipped
+//! case of variables (since 1.23) is the same GLSL as glslc writes it
+//! without -O, in variables of the function's own, which the V3D makes
+//! values as Mesa does; the cores run the selections' function. The
+//! shipped case of nested selections (since 1.24) is an `else if` and an
+//! `if` and `else` in an arm, which the V3D flattens from the inside out.
+//! The shipped case of bools (since 1.25) is an && and an || of
+//! comparisons and a ! of one, as `both`, `either` and `not`, which the V3D
+//! computes as Mesa does: an AND, an OR and a NOT of the comparisons'
+//! flags. The shipped cases of selects of selects (since 1.26) are the
+//! shapes nir_opt_algebraic makes one or two selects of, and the ones it
+//! makes a select on an iand of: the V3D's program of each is the one of
+//! the shader written as Mesa leaves it. The shipped cases of collapsed
+//! selections (since 1.27) are an `if` of no `else` all of the true arm of
+//! another, and the same with a discard, which the V3D makes one
+//! selection, and one terminate, on the iand of the two conditions, as
+//! nir_opt_collapse_if does; the discard is glslc's words on the V3D.
+//! The case of uniform buffers (since 1.28) reads a tint from one and a
+//! colour and a float from a dynamic one, at two dynamic offsets, which
+//! the V3D reads through unifa. The cases of uniform arrays and matrices
+//! (since 1.29) are glslc's words on the V3D: a block of an array and a
+//! struct, a mat3 times a vector, and the rest of SPIR-V's matrix
+//! arithmetic, each beside a function of the same arithmetic in the same
+//! order for the cores.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -23,13 +66,14 @@ const dos = sdk.dos;
 const exec = sdk.exec;
 const facet = sdk.facet;
 const shader = facet.shader;
+const ir = facet.ir;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.8 (31.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.29 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -144,12 +188,65 @@ fn textureVertex(vertices: *const shader.Vertices) callconv(.c) void {
     }
 }
 
+/// `textureVertex`'s, its coordinate scaled by `across` and `down`: the
+/// texture several times over, so that its further levels are read, or
+/// in texels.
+fn scaledVertex(comptime across: f32, comptime down: f32) shader.VertexFn {
+    return &struct {
+        fn run(vertices: *const shader.Vertices) callconv(.c) void {
+            for (0..vertices.count) |k| {
+                const p = place(vertices, k);
+                const uv = vertices.input(@intCast(k), 2);
+                vertices.output(@intCast(k))[0..6].* = .{ p[0], p[1], p[2], p[3], uv[0] * across, uv[1] * down };
+            }
+        }
+    }.run;
+}
+
 fn modulateVertex(vertices: *const shader.Vertices) callconv(.c) void {
     for (0..vertices.count) |k| {
         const p = place(vertices, k);
         const c = vertices.input(@intCast(k), 1);
         const uv = vertices.input(@intCast(k), 2);
         vertices.output(@intCast(k))[0..10].* = .{ p[0], p[1], p[2], p[3], uv[0], uv[1], shader.channel(c[0]), shader.channel(c[1]), shader.channel(c[2]), shader.channel(c[3]) };
+    }
+}
+
+/// The place alone, for a fragment shader that reads no varyings.
+fn placeVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| vertices.output(@intCast(k))[0..4].* = place(vertices, k);
+}
+
+/// The colour as it is, 0 to 1, as a fragment shader the program ships
+/// the SPIR-V of reads it: its function scales it where it writes a pixel
+/// on the cores, and the V3D takes it as it is (1.76). Not
+/// `shader.channel`, which a fixed form's vertex function calls.
+fn asItIsVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = place(vertices, k);
+        const c = vertices.input(@intCast(k), 1);
+        vertices.output(@intCast(k))[0..8].* = .{ p[0], p[1], p[2], p[3], c[0], c[1], c[2], c[3] };
+    }
+}
+
+/// The colour as it is and a fifth float, the light, which falls off
+/// along the texture's first coordinate.
+fn dimmedVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = place(vertices, k);
+        const c = vertices.input(@intCast(k), 1);
+        const uv = vertices.input(@intCast(k), 2);
+        vertices.output(@intCast(k))[0..9].* = .{ p[0], p[1], p[2], p[3], c[0], c[1], c[2], c[3], 1 - 0.5 * uv[0] };
+    }
+}
+
+/// `modulateVertex`'s coordinate and colour, the colour as it is.
+fn modulateAsItIsVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = place(vertices, k);
+        const c = vertices.input(@intCast(k), 1);
+        const uv = vertices.input(@intCast(k), 2);
+        vertices.output(@intCast(k))[0..10].* = .{ p[0], p[1], p[2], p[3], uv[0], uv[1], c[0], c[1], c[2], c[3] };
     }
 }
 
@@ -207,6 +304,33 @@ fn volumeVertex(vertices: *const shader.Vertices) callconv(.c) void {
         const r = if (vertices.instance < volume_depth) (@as(f32, @floatFromInt(vertices.instance)) + 0.5) / volume_depth else uv[0];
         vertices.output(@intCast(k))[0..7].* = .{ p[0], p[1], p[2], p[3], uv[0], uv[1], r };
     }
+}
+
+/// The vertices' colour, their depth leaning from left to right and a
+/// little from top to bottom: a fan drawn with it leaves a depth that
+/// slopes, from about 0.3 to about 0.8, in a shadow map (since 1.14).
+fn tiltedVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = place(vertices, k);
+        const c = vertices.input(@intCast(k), 1);
+        const z = 0.5 + 0.35 * p[0] - 0.1 * p[1];
+        vertices.output(@intCast(k))[0..8].* = .{ p[0], p[1], z, p[3], shader.channel(c[0]), shader.channel(c[1]), shader.channel(c[2]), shader.channel(c[3]) };
+    }
+}
+
+/// The whole picture from `quad_at`'s texture coordinates, each pixel's
+/// centre on the centre of the shadow map's texel under it, and
+/// `reference` the same at every pixel: what is compared at a pixel is
+/// the depth drawn there, and no texel is read at an edge (since 1.14).
+fn shadowVertex(comptime reference: f32) shader.VertexFn {
+    return &struct {
+        fn run(vertices: *const shader.Vertices) callconv(.c) void {
+            for (0..vertices.count) |k| {
+                const uv = vertices.input(@intCast(k), 2);
+                vertices.output(@intCast(k))[0..7].* = .{ uv[0] * 2 - 1, uv[1] * 2 - 1, 0.5, 1, uv[0], uv[1], reference };
+            }
+        }
+    }.run;
 }
 
 /// A triangle a group makes of the far, near and laid over ones in the
@@ -267,7 +391,824 @@ fn levelsOf(comptime outer: [4]f32, comptime inner: [2]f32) shader.ControlFn {
     }.control;
 }
 
-const entries = [_]shader.Entry{
+// Fragment shaders the module ships the SPIR-V of: the cores run each
+// graph's function, the V3D compiles its words (since 1.76, through Mesa's
+// back end since 1.137). V3DTest's GENERATED and MESA draw these five as
+// well, from the V3D's own objects; these go through the library.
+const Shipped = struct {
+    const Smooth = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.input(0, .f32x4));
+        }
+    });
+    const Flat = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.constant(.{ 0.25, 0.5, 0.75, 1 }));
+        }
+    });
+    const Dimmed = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.scale(b.input(0, .f32x4), b.input(1, .f32x1)));
+        }
+    });
+    /// Set 0, binding 0: a combined image sampler (`Side.sampler_set`).
+    const Textured = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.sample(0, 0, b.input(0, .f32x2)));
+        }
+    });
+    const Modulated = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.mul(b.sample(0, 0, b.input(0, .f32x2)), b.input(1, .f32x4)));
+        }
+    });
+    /// The push constants (`Side.push_layout`): a colour at 0, and a
+    /// float at 16 the vertices' colour is scaled by before it is added.
+    const Pushed = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.push(0, .f32x4));
+        }
+    });
+    const Tinted = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.add(b.scale(b.input(0, .f32x4), b.push(16, .f32x1)), b.push(0, .f32x4)));
+        }
+    });
+    /// The texture with its pixel dropped where its red is under a half,
+    /// and where it is over: the checks of `texelAt`'s first level are
+    /// 0xF0 and 0x20 of red, so each drops half of them.
+    const Cutout = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const taken = b.sample(0, 0, b.input(0, .f32x2));
+            b.discardIf(b.lessThan(b.component(taken, 0), b.scalar(0.5)));
+            b.color(taken);
+        }
+    });
+    const CutoutOther = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const taken = b.sample(0, 0, b.input(0, .f32x2));
+            b.discardIf(b.greaterThan(b.component(taken, 0), b.scalar(0.5)));
+            b.color(taken);
+        }
+    });
+    /// A shadow sample of `Side.shadow_sets`' map, the reference the
+    /// vertices' third float: what passed in red and alpha 1, the colour
+    /// the fixed form `texture_shadow` draws (since 1.15). The V3D
+    /// compiles its OpImageSampleDrefImplicitLod to a TMUDREF write.
+    const Shadowed = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const passed = b.sampleCompared(0, 0, b.input(0, .f32x2), b.input(1, .f32x1));
+            b.color(b.add(b.scale(b.constant(.{ 1, 0, 0, 0 }), passed), b.constant(.{ 0, 0, 0, 1 })));
+        }
+    });
+    /// Float arithmetic through GLSL.std.450, the shader the V3D's host
+    /// tests hold to glslc's word for word: Normalize, a dot, FClamp, FMix
+    /// of a constant weight, Fract, FAbs, Sqrt, Pow, a negation, FMax and
+    /// Length of the colour (since 1.20).
+    const Arithmetic = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const half = b.scalar(0.5);
+            const n = b.normalize(b.sub(b.vector(&.{ x, y, z }), b.constantOf(.f32x3, .{ 0.5, 0.5, 0.5, 0 })));
+            const lit = b.clamp(b.dot(n, b.constantOf(.f32x3, .{ 0.267, 0.535, 0.802, 0 })), b.scalar(0), b.scalar(1));
+            const r = b.mix(x, lit, b.scalar(0.25));
+            const g = b.mul(b.fract(b.mul(y, b.scalar(3))), half);
+            const bl = b.max(b.mul(b.sqrt(b.abs(b.sub(z, half))), b.pow(w, b.scalar(2.2))), b.neg(x));
+            const a = b.mul(b.length(b.vector(&.{ x, y })), half);
+            b.color(b.vector(&.{ r, g, bl, a }));
+        }
+    });
+    /// The rest of the calls the V3D lowers: the four roundings, Exp, Log,
+    /// Exp2, Log2, Distance, InverseSqrt, FMin, a division, and FMix of a
+    /// weight that varies, green's (since 1.20).
+    const Called = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const scaled = b.mul(v, b.constant(.{ 2.5, 2.5, 2.5, 2.5 }));
+            const rounded = b.add(b.add(b.floor(scaled), b.ceil(scaled)), b.add(b.trunc(scaled), b.roundEven(scaled)));
+            const grown = b.add(b.exp(x), b.log(b.add(y, b.scalar(1))));
+            const twos = b.add(b.exp2(x), b.log2(b.add(y, b.scalar(1))));
+            const away = b.distance(b.vector(&.{ x, y }), b.constantOf(.f32x2, .{ 0.25, 0.75, 0, 0 }));
+            const sums = b.vector(&.{ b.inverseSqrt(b.add(x, b.scalar(1))), b.mul(b.min(grown, twos), b.scalar(0.25)), b.div(away, b.scalar(2)), b.scalar(1) });
+            const weight = b.vector(&.{ y, y, y, y });
+            b.color(b.mix(sums, b.mul(rounded, b.constant(.{ 0.1, 0.1, 0.1, 0.1 })), weight));
+        }
+    });
+    /// The shader the V3D's host tests hold to glslc's glslc_chosen word
+    /// for word: Sin, Cos, Tan, FClamp to 0 and 1, Step, SmoothStep and
+    /// FSign, and OpSelect after <, >=, !=, == and <= (since 1.21).
+    const Chosen = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const half = b.scalar(0.5);
+            const six = b.scalar(6);
+            const quarter = b.scalar(0.25);
+            const x = b.component(v, 0);
+            const sine = b.add(b.mul(b.sin(b.mul(x, six)), half), half);
+            const y = b.component(v, 1);
+            const cosine = b.add(b.mul(b.cos(b.mul(y, six)), half), half);
+            const z = b.component(v, 2);
+            const tangent = b.clamp(b.mul(b.tan(z), quarter), b.scalar(0), b.scalar(1));
+            const by_less = b.select(b.lessThan(x, y), sine, cosine);
+            const stepped = b.step(b.scalar(0.3), x);
+            const eased = b.smoothStep(b.scalar(0.2), b.scalar(0.8), y);
+            const by_half = b.select(b.greaterEqual(z, half), stepped, eased);
+            const signed = b.add(b.mul(b.sign(b.sub(x, half)), quarter), half);
+            const unequal = b.select(b.notEqual(x, y), b.scalar(0.75), b.scalar(1));
+            const by_equal = b.select(b.equal(y, z), quarter, unequal);
+            const by_order = b.select(b.lessEqual(x, z), signed, by_equal);
+            b.color(b.vector(&.{ by_less, by_half, tangent, by_order }));
+        }
+    });
+    /// The shader the V3D's host tests hold to glslc's glslc_branch word
+    /// for word: two selections, one with an `else` that changes three
+    /// floats of the colour, one a ternary of Pow and Exp2 (since 1.22).
+    const Branched = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const half = b.scalar(0.5);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const first = b.ifHolds(b.lessThan(x, half));
+            const red_yes = b.add(b.mul(b.sin(b.mul(y, b.scalar(3))), half), half);
+            const green_yes = b.mul(z, w);
+            b.otherwise(first);
+            const red_no = b.mul(y, b.scalar(0.25));
+            const blue_no = b.sqrt(z);
+            b.endIf(first);
+            const r = b.merged(first, red_yes, red_no);
+            const g = b.merged(first, green_yes, y);
+            const bl = b.merged(first, z, blue_no);
+            const second = b.ifHolds(b.greaterThan(w, half));
+            const alpha_yes = b.add(b.pow(x, b.scalar(2)), b.scalar(0.1));
+            b.otherwise(second);
+            const alpha_no = b.mul(b.exp2(y), b.scalar(0.25));
+            b.endIf(second);
+            const a = b.merged(second, alpha_yes, alpha_no);
+            b.color(b.vector(&.{ r, g, bl, a }));
+        }
+    });
+    /// The shader the V3D's host tests hold to glslc's glslc_nested word
+    /// for word: an `else if`, and an `if` and `else` in the true arm of
+    /// a selection of no false arm (since 1.24).
+    const Nested = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const half = b.scalar(0.5);
+            const quarter = b.scalar(0.25);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const first = b.ifHolds(b.lessThan(x, quarter));
+            const red_first = b.mul(y, b.scalar(2));
+            b.otherwise(first);
+            const second = b.ifHolds(b.lessThan(x, half));
+            const green_second = b.sin(b.mul(z, b.scalar(3)));
+            b.otherwise(second);
+            const blue_third = b.add(w, b.scalar(0.125));
+            b.endIf(second);
+            const red_else = b.merged(second, half, x);
+            const green_else = b.merged(second, green_second, y);
+            const blue_else = b.merged(second, z, blue_third);
+            b.endIf(first);
+            const r = b.merged(first, red_first, red_else);
+            const g = b.merged(first, y, green_else);
+            const bl = b.merged(first, z, blue_else);
+            const third = b.ifHolds(b.greaterThan(w, half));
+            const fourth = b.ifHolds(b.greaterThan(y, half));
+            const product = b.mul(x, y);
+            b.otherwise(fourth);
+            const power = b.exp2(y);
+            b.endIf(fourth);
+            const chosen = b.merged(fourth, product, power);
+            const scaled = b.add(b.mul(chosen, half), quarter);
+            b.endIf(third);
+            const a = b.merged(third, scaled, z);
+            b.color(b.vector(&.{ r, g, bl, a }));
+        }
+    });
+    /// The shader the V3D's host tests hold to glslc's glslc_logic word for
+    /// word: `x < 0.5 && y > 0.25` and `z < 0.25 || !(w < 0.75)`, each the
+    /// condition of an `if` (since 1.25).
+    const Bools = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const half = b.scalar(0.5);
+            const quarter = b.scalar(0.25);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const first = b.ifHolds(b.both(b.lessThan(x, half), b.greaterThan(y, quarter)));
+            const doubled = b.mul(z, b.scalar(2));
+            b.endIf(first);
+            const r = b.merged(first, doubled, x);
+            const second = b.ifHolds(b.either(b.lessThan(z, quarter), b.not(b.lessThan(w, b.scalar(0.75)))));
+            b.endIf(second);
+            const g = b.merged(second, half, y);
+            b.color(b.vector(&.{ r, g, z, w }));
+        }
+    });
+    /// Selects of selects on one condition, and on one condition in both
+    /// arms (nir_opt_algebraic.py:979-984), as the V3D's host tests have
+    /// them (since 1.26).
+    const Nests = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const half = b.scalar(0.5);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const lt = b.lessThan(x, half);
+            const gt = b.greaterThan(y, half);
+            const r = b.select(lt, b.select(lt, x, y), z);
+            const g = b.select(lt, y, b.select(lt, z, w));
+            const bl = b.select(lt, b.select(gt, z, x), b.select(gt, z, w));
+            const a = b.select(lt, b.select(gt, w, y), b.select(gt, x, y));
+            b.color(b.vector(&.{ r, g, bl, a }));
+        }
+    });
+    /// A select of one float twice, selects in an arm that share the
+    /// other arm's float, and two selects alike (nir_opt_algebraic.py:1936,
+    /// :2512-2513, nir_opt_cse), as the host tests have them (since 1.26).
+    const Joined = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const half = b.scalar(0.5);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const lt = b.lessThan(x, half);
+            const gt = b.greaterThan(y, half);
+            const r = b.select(lt, w, w);
+            const g = b.select(lt, b.select(gt, y, z), z);
+            const bl = b.select(lt, b.select(gt, z, x), z);
+            const a = b.select(gt, b.select(lt, w, x), b.select(lt, w, x));
+            b.color(b.vector(&.{ r, g, bl, a }));
+        }
+    });
+    /// glslc_collapse's shader, which the V3D makes one selection on the
+    /// iand of the two conditions (since 1.27).
+    const Collapsed = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const half = b.scalar(0.5);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const outer = b.ifHolds(b.lessThan(x, half));
+            const inner = b.ifHolds(b.lessThan(y, half));
+            const sine = b.sin(b.mul(z, b.scalar(3)));
+            b.endIf(inner);
+            const red_inner = b.merged(inner, sine, x);
+            b.endIf(outer);
+            const r = b.merged(outer, red_inner, x);
+            b.color(b.vector(&.{ r, y, z, w }));
+        }
+    });
+    /// The colour the vertices carry times a tint in a uniform buffer,
+    /// plus a colour in a dynamic one scaled by a float beside it
+    /// (`Side.uniform_set`; since 1.28).
+    const Uniformed = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const tinted = b.mul(b.input(0, .f32x4), b.uniform(0, 0, 16, .f32x4));
+            b.color(b.add(tinted, b.scale(b.uniform(0, 1, 0, .f32x4), b.uniform(0, 1, 20, .f32x1))));
+        }
+    });
+    /// What `nested_discard` computes, for the cores: the discard of both
+    /// comparisons (since 1.27).
+    const NestedDiscard = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const half = b.scalar(0.5);
+            b.discardIf(b.both(b.lessThan(b.component(v, 1), half), b.lessThan(b.component(v, 0), half)));
+            b.color(v);
+        }
+    });
+    /// What `uniform_nested` computes, for the cores, and in its order:
+    /// the mix as the V3D lowers one whose third is no constant, x plus
+    /// t times y less x (since 1.29).
+    const UniformNested = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const c = b.add(b.mul(v, b.uniform(0, 0, 32, .f32x4)), b.uniform(0, 0, 0, .f32x4));
+            const rgb = b.vector(&.{ b.component(c, 0), b.component(c, 1), b.component(c, 2) });
+            const tint = b.uniform(0, 0, 48, .f32x4);
+            const toward = b.vector(&.{ b.component(tint, 0), b.component(tint, 1), b.component(tint, 2) });
+            const amount = b.uniform(0, 0, 64, .f32x1);
+            const mixed = b.add(rgb, b.mul(b.vector(&.{ amount, amount, amount }), b.sub(toward, rgb)));
+            const last = b.uniform(0, 0, 80, .f32x4);
+            const shifted = b.scale(b.vector(&.{ b.component(last, 0), b.component(last, 1), b.component(last, 2) }), b.uniform(0, 0, 28, .f32x1));
+            const sum = b.add(mixed, shifted);
+            b.color(b.vector(&.{ b.component(sum, 0), b.component(sum, 1), b.component(sum, 2), b.component(c, 3) }));
+        }
+    });
+    /// What `uniform_matrix` computes, for the cores: each row the last
+    /// column times z, then the second times y and the first times x
+    /// added on, as matrix_multiply sums them (since 1.29).
+    const UniformMatrix = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const first = b.scale(b.uniform(0, 0, 0, .f32x3), x);
+            const second = b.scale(b.uniform(0, 0, 16, .f32x3), y);
+            const third = b.scale(b.uniform(0, 0, 32, .f32x3), z);
+            const turned = b.add(first, b.add(second, third));
+            const shift = b.uniform(0, 0, 48, .f32x4);
+            const sum = b.add(turned, b.vector(&.{ b.component(shift, 0), b.component(shift, 1), b.component(shift, 2) }));
+            b.color(b.vector(&.{ b.component(sum, 0), b.component(sum, 1), b.component(sum, 2), b.component(v, 3) }));
+        }
+    });
+    /// What `uniform_matrices` computes, for the cores, column by column
+    /// (since 1.29).
+    const UniformMatrices = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const a0 = b.uniform(0, 0, 0, .f32x2);
+            const a1 = b.uniform(0, 0, 16, .f32x2);
+            const b0 = b.uniform(0, 0, 32, .f32x2);
+            const b1 = b.uniform(0, 0, 48, .f32x2);
+            const sum0 = b.add(a0, b0);
+            const sum1 = b.add(a1, b1);
+            const diff0 = b.sub(a0, b0);
+            const diff1 = b.sub(a1, b1);
+            // sum times the transpose of diff, whose column i is the two
+            // columns' float i; then all of it times w.
+            const prod0 = b.add(b.scale(sum0, b.component(diff0, 0)), b.scale(sum1, b.component(diff1, 0)));
+            const prod1 = b.add(b.scale(sum0, b.component(diff0, 1)), b.scale(sum1, b.component(diff1, 1)));
+            const p0 = b.scale(prod0, w);
+            const p1 = b.scale(prod1, w);
+            const p0x = b.component(p0, 0);
+            const p0y = b.component(p0, 1);
+            const p1x = b.component(p1, 0);
+            // The vector times it: the transpose of it times the vector.
+            const left = b.add(b.scale(b.vector(&.{ p0x, p1x }), x), b.scale(b.vector(&.{ p0y, b.component(p1, 1) }), y));
+            const right = b.add(b.scale(b.neg(a0), z), b.scale(b.neg(a1), w));
+            const both = b.add(left, right);
+            const c0 = b.uniform(0, 0, 64, .f32x2);
+            const c1 = b.uniform(0, 0, 80, .f32x2);
+            const c2 = b.uniform(0, 0, 96, .f32x2);
+            const cs = b.add(b.scale(c0, x), b.add(b.scale(c1, y), b.scale(c2, z)));
+            // made[1] + prod[0], float by float; and the outer product's
+            // column 1, float 0, is x times pad.w.
+            const third = b.add(b.component(cs, 0), b.mul(b.add(w, p0y), b.add(z, p0x)));
+            const pad = b.uniform(0, 0, 112, .f32x4);
+            const fourth = b.add(b.add(p1x, b.component(pad, 0)), b.mul(x, b.component(pad, 3)));
+            b.color(b.vector(&.{ b.component(both, 0), b.component(both, 1), third, fourth }));
+        }
+    });
+};
+
+/// The entries that ship words, after all the others, and the words of
+/// each in the same order: `shader.Module.spirv` is index for index.
+const shipped_entries = [_]shader.Entry{
+    shader.vertex("place", &placeVertex, 0),
+    shader.vertex("as it is", &asItIsVertex, 4),
+    shader.vertex("dimmed", &dimmedVertex, 5),
+    shader.vertex("modulate as it is", &modulateAsItIsVertex, 6),
+    Shipped.Smooth.entry("shipped smooth"),
+    Shipped.Flat.entry("shipped flat"),
+    Shipped.Dimmed.entry("shipped dimmed"),
+    Shipped.Textured.entry("shipped texture"),
+    Shipped.Modulated.entry("shipped modulated"),
+    Shipped.Pushed.entry("shipped pushed"),
+    Shipped.Tinted.entry("shipped tinted"),
+    Shipped.Cutout.entry("shipped cutout"),
+    Shipped.CutoutOther.entry("shipped cutout other"),
+    Shipped.Shadowed.entry("shipped shadow"),
+    Shipped.Arithmetic.entry("shipped arithmetic"),
+    Shipped.Called.entry("shipped called"),
+    Shipped.Chosen.entry("shipped chosen"),
+    Shipped.Branched.entry("shipped branched"),
+    Shipped.Branched.entry("shipped unoptimized"),
+    Shipped.Nested.entry("shipped nested"),
+    Shipped.Bools.entry("shipped bools"),
+    Shipped.Nests.entry("shipped nests"),
+    Shipped.Joined.entry("shipped joined"),
+    Shipped.Collapsed.entry("shipped collapsed"),
+    Shipped.NestedDiscard.entry("shipped nested discard"),
+    Shipped.Uniformed.entry("shipped uniformed"),
+    Shipped.UniformNested.entry("shipped uniform nested"),
+    Shipped.UniformMatrix.entry("shipped uniform matrix"),
+    Shipped.UniformMatrices.entry("shipped uniform matrices"),
+};
+const shipped_words = [_]shader.Spirv{
+    .{},                                .{},                     .{},                                  .{},
+    Shipped.Smooth.spirv,               Shipped.Flat.spirv,      Shipped.Dimmed.spirv,                 Shipped.Textured.spirv,
+    Shipped.Modulated.spirv,            Shipped.Pushed.spirv,    Shipped.Tinted.spirv,                 Shipped.Cutout.spirv,
+    Shipped.CutoutOther.spirv,          Shipped.Shadowed.spirv,  Shipped.Arithmetic.spirv,             Shipped.Called.spirv,
+    Shipped.Chosen.spirv,               Shipped.Branched.spirv,  shader.Spirv.of(&branch_unoptimized), Shipped.Nested.spirv,
+    Shipped.Bools.spirv,                Shipped.Nests.spirv,     Shipped.Joined.spirv,                 Shipped.Collapsed.spirv,
+    shader.Spirv.of(&nested_discard),   Shipped.Uniformed.spirv, shader.Spirv.of(&uniform_nested),     shader.Spirv.of(&uniform_matrix),
+    shader.Spirv.of(&uniform_matrices),
+};
+
+/// glslc's own output, at -O, for a discard in an `if` of no `else` all
+/// of the true arm of another, the V3D's host tests' glslc_nested_discard:
+/// the V3D makes it terminate_if of the two conditions' iand, as
+/// nir_opt_collapse_if and nir_opt_peephole_select do (since 1.27).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// void main() {
+///     if (vcolor.x < 0.5) {
+///         if (vcolor.y < 0.5) discard;
+///     }
+///     ocolor = vcolor;
+/// }
+/// ```
+const nested_discard = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001E, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x0000001C, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000001C, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x00000008,
+    0x00000001, 0x00000007, 0x0004003B, 0x00000008, 0x00000009, 0x00000001,
+    0x00040015, 0x0000000A, 0x00000020, 0x00000000, 0x0004002B, 0x0000000A,
+    0x0000000B, 0x00000000, 0x00040020, 0x0000000C, 0x00000001, 0x00000006,
+    0x0004002B, 0x00000006, 0x0000000F, 0x3F000000, 0x00020014, 0x00000010,
+    0x0004002B, 0x0000000A, 0x00000014, 0x00000001, 0x00040020, 0x0000001B,
+    0x00000003, 0x00000007, 0x0004003B, 0x0000001B, 0x0000001C, 0x00000003,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x00050041, 0x0000000C, 0x0000000D, 0x00000009, 0x0000000B,
+    0x0004003D, 0x00000006, 0x0000000E, 0x0000000D, 0x000500B8, 0x00000010,
+    0x00000011, 0x0000000E, 0x0000000F, 0x000300F7, 0x00000013, 0x00000000,
+    0x000400FA, 0x00000011, 0x00000012, 0x00000013, 0x000200F8, 0x00000012,
+    0x00050041, 0x0000000C, 0x00000015, 0x00000009, 0x00000014, 0x0004003D,
+    0x00000006, 0x00000016, 0x00000015, 0x000500B8, 0x00000010, 0x00000017,
+    0x00000016, 0x0000000F, 0x000300F7, 0x00000019, 0x00000000, 0x000400FA,
+    0x00000017, 0x00000018, 0x00000019, 0x000200F8, 0x00000018, 0x000100FC,
+    0x000200F8, 0x00000019, 0x000200F9, 0x00000013, 0x000200F8, 0x00000013,
+    0x0004003D, 0x00000007, 0x0000001D, 0x00000009, 0x0003003E, 0x0000001C,
+    0x0000001D, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for a uniform buffer of an array, a struct
+/// and a vector, the V3D's host tests' glslc_uniform_nested: its loads at
+/// the offsets the strides and the members give (since 1.29).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// struct Tint {
+///     vec4 color;
+///     float amount;
+/// };
+/// layout(set = 0, binding = 0) uniform Scene {
+///     vec4 palette[3];
+///     Tint tint;
+///     vec4 last;
+/// } scene;
+/// void main() {
+///     vec4 c = vcolor * scene.palette[2] + scene.palette[0];
+///     vec3 mixed = mix(c.rgb, scene.tint.color.rgb, scene.tint.amount);
+///     ocolor = vec4(mixed + scene.last.xyz * scene.palette[1].w, c.a);
+/// }
+/// ```
+const uniform_nested = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000003D, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x0000002D, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000F, 0x00000006, 0x00000010, 0x00050048, 0x00000010,
+    0x00000000, 0x00000023, 0x00000000, 0x00050048, 0x00000010, 0x00000001,
+    0x00000023, 0x00000010, 0x00030047, 0x00000011, 0x00000002, 0x00050048,
+    0x00000011, 0x00000000, 0x00000023, 0x00000000, 0x00050048, 0x00000011,
+    0x00000001, 0x00000023, 0x00000030, 0x00050048, 0x00000011, 0x00000002,
+    0x00000023, 0x00000050, 0x00040047, 0x00000013, 0x00000021, 0x00000000,
+    0x00040047, 0x00000013, 0x00000022, 0x00000000, 0x00040047, 0x0000002D,
+    0x0000001E, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007,
+    0x00000006, 0x00000004, 0x00040020, 0x0000000A, 0x00000001, 0x00000007,
+    0x0004003B, 0x0000000A, 0x0000000B, 0x00000001, 0x00040015, 0x0000000D,
+    0x00000020, 0x00000000, 0x0004002B, 0x0000000D, 0x0000000E, 0x00000003,
+    0x0004001C, 0x0000000F, 0x00000007, 0x0000000E, 0x0004001E, 0x00000010,
+    0x00000007, 0x00000006, 0x0005001E, 0x00000011, 0x0000000F, 0x00000010,
+    0x00000007, 0x00040020, 0x00000012, 0x00000002, 0x00000011, 0x0004003B,
+    0x00000012, 0x00000013, 0x00000002, 0x00040015, 0x00000014, 0x00000020,
+    0x00000001, 0x0004002B, 0x00000014, 0x00000015, 0x00000000, 0x0004002B,
+    0x00000014, 0x00000016, 0x00000002, 0x00040020, 0x00000017, 0x00000002,
+    0x00000007, 0x00040017, 0x0000001E, 0x00000006, 0x00000003, 0x0004002B,
+    0x00000014, 0x00000023, 0x00000001, 0x00040020, 0x00000027, 0x00000002,
+    0x00000006, 0x00040020, 0x0000002C, 0x00000003, 0x00000007, 0x0004003B,
+    0x0000002C, 0x0000002D, 0x00000003, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x00000007,
+    0x0000000C, 0x0000000B, 0x00060041, 0x00000017, 0x00000018, 0x00000013,
+    0x00000015, 0x00000016, 0x0004003D, 0x00000007, 0x00000019, 0x00000018,
+    0x00050085, 0x00000007, 0x0000001A, 0x0000000C, 0x00000019, 0x00060041,
+    0x00000017, 0x0000001B, 0x00000013, 0x00000015, 0x00000015, 0x0004003D,
+    0x00000007, 0x0000001C, 0x0000001B, 0x00050081, 0x00000007, 0x0000001D,
+    0x0000001A, 0x0000001C, 0x0008004F, 0x0000001E, 0x00000022, 0x0000001D,
+    0x0000001D, 0x00000000, 0x00000001, 0x00000002, 0x00060041, 0x00000017,
+    0x00000024, 0x00000013, 0x00000023, 0x00000015, 0x0004003D, 0x00000007,
+    0x00000025, 0x00000024, 0x0008004F, 0x0000001E, 0x00000026, 0x00000025,
+    0x00000025, 0x00000000, 0x00000001, 0x00000002, 0x00060041, 0x00000027,
+    0x00000028, 0x00000013, 0x00000023, 0x00000023, 0x0004003D, 0x00000006,
+    0x00000029, 0x00000028, 0x00060050, 0x0000001E, 0x0000002A, 0x00000029,
+    0x00000029, 0x00000029, 0x0008000C, 0x0000001E, 0x0000002B, 0x00000001,
+    0x0000002E, 0x00000022, 0x00000026, 0x0000002A, 0x00050041, 0x00000017,
+    0x0000002F, 0x00000013, 0x00000016, 0x0004003D, 0x00000007, 0x00000030,
+    0x0000002F, 0x0008004F, 0x0000001E, 0x00000031, 0x00000030, 0x00000030,
+    0x00000000, 0x00000001, 0x00000002, 0x00070041, 0x00000027, 0x00000032,
+    0x00000013, 0x00000015, 0x00000023, 0x0000000E, 0x0004003D, 0x00000006,
+    0x00000033, 0x00000032, 0x0005008E, 0x0000001E, 0x00000034, 0x00000031,
+    0x00000033, 0x00050081, 0x0000001E, 0x00000035, 0x0000002B, 0x00000034,
+    0x00050051, 0x00000006, 0x00000038, 0x0000001D, 0x00000003, 0x00050051,
+    0x00000006, 0x00000039, 0x00000035, 0x00000000, 0x00050051, 0x00000006,
+    0x0000003A, 0x00000035, 0x00000001, 0x00050051, 0x00000006, 0x0000003B,
+    0x00000035, 0x00000002, 0x00070050, 0x00000007, 0x0000003C, 0x00000039,
+    0x0000003A, 0x0000003B, 0x00000038, 0x0003003E, 0x0000002D, 0x0000003C,
+    0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for a mat3 in a uniform buffer times a
+/// vector, glslc_uniform_matrix: the matrix loaded column by column, and
+/// matrix_multiply's sum (since 1.29).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// layout(set = 0, binding = 0) uniform Turn {
+///     mat3 turn;
+///     vec4 shift;
+/// } t;
+/// void main() {
+///     vec3 turned = t.turn * vcolor.rgb;
+///     ocolor = vec4(turned + t.shift.xyz, vcolor.a);
+/// }
+/// ```
+const uniform_matrix = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000002B, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000015, 0x0000001A, 0x00030010,
+    0x00000004, 0x00000007, 0x00030047, 0x0000000C, 0x00000002, 0x00040048,
+    0x0000000C, 0x00000000, 0x00000005, 0x00050048, 0x0000000C, 0x00000000,
+    0x00000007, 0x00000010, 0x00050048, 0x0000000C, 0x00000000, 0x00000023,
+    0x00000000, 0x00050048, 0x0000000C, 0x00000001, 0x00000023, 0x00000030,
+    0x00040047, 0x0000000E, 0x00000021, 0x00000000, 0x00040047, 0x0000000E,
+    0x00000022, 0x00000000, 0x00040047, 0x00000015, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000001A, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000003, 0x00040018, 0x0000000A,
+    0x00000007, 0x00000003, 0x00040017, 0x0000000B, 0x00000006, 0x00000004,
+    0x0004001E, 0x0000000C, 0x0000000A, 0x0000000B, 0x00040020, 0x0000000D,
+    0x00000002, 0x0000000C, 0x0004003B, 0x0000000D, 0x0000000E, 0x00000002,
+    0x00040015, 0x0000000F, 0x00000020, 0x00000001, 0x0004002B, 0x0000000F,
+    0x00000010, 0x00000000, 0x00040020, 0x00000011, 0x00000002, 0x0000000A,
+    0x00040020, 0x00000014, 0x00000001, 0x0000000B, 0x0004003B, 0x00000014,
+    0x00000015, 0x00000001, 0x00040020, 0x00000019, 0x00000003, 0x0000000B,
+    0x0004003B, 0x00000019, 0x0000001A, 0x00000003, 0x0004002B, 0x0000000F,
+    0x0000001C, 0x00000001, 0x00040020, 0x0000001D, 0x00000002, 0x0000000B,
+    0x00040015, 0x00000022, 0x00000020, 0x00000000, 0x0004002B, 0x00000022,
+    0x00000023, 0x00000003, 0x00040020, 0x00000024, 0x00000001, 0x00000006,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x00050041, 0x00000011, 0x00000012, 0x0000000E, 0x00000010,
+    0x0004003D, 0x0000000A, 0x00000013, 0x00000012, 0x0004003D, 0x0000000B,
+    0x00000016, 0x00000015, 0x0008004F, 0x00000007, 0x00000017, 0x00000016,
+    0x00000016, 0x00000000, 0x00000001, 0x00000002, 0x00050091, 0x00000007,
+    0x00000018, 0x00000013, 0x00000017, 0x00050041, 0x0000001D, 0x0000001E,
+    0x0000000E, 0x0000001C, 0x0004003D, 0x0000000B, 0x0000001F, 0x0000001E,
+    0x0008004F, 0x00000007, 0x00000020, 0x0000001F, 0x0000001F, 0x00000000,
+    0x00000001, 0x00000002, 0x00050081, 0x00000007, 0x00000021, 0x00000018,
+    0x00000020, 0x00050041, 0x00000024, 0x00000025, 0x00000015, 0x00000023,
+    0x0004003D, 0x00000006, 0x00000026, 0x00000025, 0x00050051, 0x00000006,
+    0x00000027, 0x00000021, 0x00000000, 0x00050051, 0x00000006, 0x00000028,
+    0x00000021, 0x00000001, 0x00050051, 0x00000006, 0x00000029, 0x00000021,
+    0x00000002, 0x00070050, 0x0000000B, 0x0000002A, 0x00000027, 0x00000028,
+    0x00000029, 0x00000026, 0x0003003E, 0x0000001A, 0x0000002A, 0x000100FD,
+    0x00010038,
+};
+
+/// glslc's own output, at -O, for the rest of SPIR-V's matrix arithmetic,
+/// glslc_uniform_matrices: matrices built of columns, a transpose, the
+/// products, a scalar, an outer product, a column and a float of one
+/// extracted (since 1.29).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// layout(set = 0, binding = 0) uniform Mats {
+///     mat2 a;
+///     mat2 b;
+///     mat3x2 c;
+///     vec4 pad;
+/// } m;
+/// void main() {
+///     mat2 sum = m.a + m.b;
+///     mat2 diff = m.a - m.b;
+///     mat2 prod = sum * transpose(diff) * vcolor.w;
+///     vec2 left = vcolor.xy * prod;
+///     vec2 right = (-m.a) * vcolor.zw;
+///     vec2 cs = m.c * vcolor.xyz;
+///     mat2 made = mat2(vcolor.xy, vcolor.zw);
+///     vec2 col = made[1] + prod[0];
+///     mat2 outer = outerProduct(vcolor.xy, m.pad.zw);
+///     ocolor = vec4(left + right, cs.x + col.y * col.x, prod[1][0] + m.pad.x + outer[1].x);
+/// }
+/// ```
+const uniform_matrices = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000008B, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000031, 0x00000070, 0x00030010,
+    0x00000004, 0x00000007, 0x00030047, 0x0000000D, 0x00000002, 0x00040048,
+    0x0000000D, 0x00000000, 0x00000005, 0x00050048, 0x0000000D, 0x00000000,
+    0x00000007, 0x00000010, 0x00050048, 0x0000000D, 0x00000000, 0x00000023,
+    0x00000000, 0x00040048, 0x0000000D, 0x00000001, 0x00000005, 0x00050048,
+    0x0000000D, 0x00000001, 0x00000007, 0x00000010, 0x00050048, 0x0000000D,
+    0x00000001, 0x00000023, 0x00000020, 0x00040048, 0x0000000D, 0x00000002,
+    0x00000005, 0x00050048, 0x0000000D, 0x00000002, 0x00000007, 0x00000010,
+    0x00050048, 0x0000000D, 0x00000002, 0x00000023, 0x00000040, 0x00050048,
+    0x0000000D, 0x00000003, 0x00000023, 0x00000070, 0x00040047, 0x0000000F,
+    0x00000021, 0x00000000, 0x00040047, 0x0000000F, 0x00000022, 0x00000000,
+    0x00040047, 0x00000031, 0x0000001E, 0x00000000, 0x00040047, 0x00000070,
+    0x0000001E, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007,
+    0x00000006, 0x00000002, 0x00040018, 0x00000008, 0x00000007, 0x00000002,
+    0x00040018, 0x0000000B, 0x00000007, 0x00000003, 0x00040017, 0x0000000C,
+    0x00000006, 0x00000004, 0x0006001E, 0x0000000D, 0x00000008, 0x00000008,
+    0x0000000B, 0x0000000C, 0x00040020, 0x0000000E, 0x00000002, 0x0000000D,
+    0x0004003B, 0x0000000E, 0x0000000F, 0x00000002, 0x00040015, 0x00000010,
+    0x00000020, 0x00000001, 0x0004002B, 0x00000010, 0x00000011, 0x00000000,
+    0x00040020, 0x00000012, 0x00000002, 0x00000008, 0x0004002B, 0x00000010,
+    0x00000015, 0x00000001, 0x00040020, 0x00000030, 0x00000001, 0x0000000C,
+    0x0004003B, 0x00000030, 0x00000031, 0x00000001, 0x00040015, 0x00000032,
+    0x00000020, 0x00000000, 0x0004002B, 0x00000032, 0x00000033, 0x00000003,
+    0x00040020, 0x00000034, 0x00000001, 0x00000006, 0x0004002B, 0x00000010,
+    0x0000004A, 0x00000002, 0x00040020, 0x0000004B, 0x00000002, 0x0000000B,
+    0x00040017, 0x0000004E, 0x00000006, 0x00000003, 0x0004002B, 0x00000010,
+    0x00000069, 0x00000003, 0x00040020, 0x0000006A, 0x00000002, 0x0000000C,
+    0x00040020, 0x0000006F, 0x00000003, 0x0000000C, 0x0004003B, 0x0000006F,
+    0x00000070, 0x00000003, 0x0004002B, 0x00000032, 0x00000074, 0x00000000,
+    0x00040020, 0x00000081, 0x00000002, 0x00000006, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x00050041,
+    0x00000012, 0x00000013, 0x0000000F, 0x00000011, 0x0004003D, 0x00000008,
+    0x00000014, 0x00000013, 0x00050041, 0x00000012, 0x00000016, 0x0000000F,
+    0x00000015, 0x0004003D, 0x00000008, 0x00000017, 0x00000016, 0x00050051,
+    0x00000007, 0x00000018, 0x00000014, 0x00000000, 0x00050051, 0x00000007,
+    0x00000019, 0x00000017, 0x00000000, 0x00050081, 0x00000007, 0x0000001A,
+    0x00000018, 0x00000019, 0x00050051, 0x00000007, 0x0000001B, 0x00000014,
+    0x00000001, 0x00050051, 0x00000007, 0x0000001C, 0x00000017, 0x00000001,
+    0x00050081, 0x00000007, 0x0000001D, 0x0000001B, 0x0000001C, 0x00050050,
+    0x00000008, 0x0000001E, 0x0000001A, 0x0000001D, 0x00050083, 0x00000007,
+    0x00000026, 0x00000018, 0x00000019, 0x00050083, 0x00000007, 0x00000029,
+    0x0000001B, 0x0000001C, 0x00050050, 0x00000008, 0x0000002A, 0x00000026,
+    0x00000029, 0x00040054, 0x00000008, 0x0000002E, 0x0000002A, 0x00050092,
+    0x00000008, 0x0000002F, 0x0000001E, 0x0000002E, 0x00050041, 0x00000034,
+    0x00000035, 0x00000031, 0x00000033, 0x0004003D, 0x00000006, 0x00000036,
+    0x00000035, 0x0005008F, 0x00000008, 0x00000037, 0x0000002F, 0x00000036,
+    0x0004003D, 0x0000000C, 0x0000003A, 0x00000031, 0x0007004F, 0x00000007,
+    0x0000003B, 0x0000003A, 0x0000003A, 0x00000000, 0x00000001, 0x00050090,
+    0x00000007, 0x0000003D, 0x0000003B, 0x00000037, 0x0004007F, 0x00000007,
+    0x00000042, 0x00000018, 0x0004007F, 0x00000007, 0x00000044, 0x0000001B,
+    0x00050050, 0x00000008, 0x00000045, 0x00000042, 0x00000044, 0x0007004F,
+    0x00000007, 0x00000047, 0x0000003A, 0x0000003A, 0x00000002, 0x00000003,
+    0x00050091, 0x00000007, 0x00000048, 0x00000045, 0x00000047, 0x00050041,
+    0x0000004B, 0x0000004C, 0x0000000F, 0x0000004A, 0x0004003D, 0x0000000B,
+    0x0000004D, 0x0000004C, 0x0008004F, 0x0000004E, 0x00000050, 0x0000003A,
+    0x0000003A, 0x00000000, 0x00000001, 0x00000002, 0x00050091, 0x00000007,
+    0x00000051, 0x0000004D, 0x00000050, 0x00050051, 0x00000006, 0x0000005B,
+    0x0000003A, 0x00000002, 0x00050051, 0x00000006, 0x0000005C, 0x0000003A,
+    0x00000003, 0x00050050, 0x00000007, 0x0000005E, 0x0000005B, 0x0000005C,
+    0x00050051, 0x00000007, 0x00000064, 0x00000037, 0x00000000, 0x00050081,
+    0x00000007, 0x00000065, 0x0000005E, 0x00000064, 0x00050041, 0x0000006A,
+    0x0000006B, 0x0000000F, 0x00000069, 0x0004003D, 0x0000000C, 0x0000006C,
+    0x0000006B, 0x0007004F, 0x00000007, 0x0000006D, 0x0000006C, 0x0000006C,
+    0x00000002, 0x00000003, 0x00050093, 0x00000008, 0x0000006E, 0x0000003B,
+    0x0000006D, 0x00050081, 0x00000007, 0x00000073, 0x0000003D, 0x00000048,
+    0x00050051, 0x00000006, 0x00000077, 0x00000051, 0x00000000, 0x00050051,
+    0x00000006, 0x0000007A, 0x00000065, 0x00000001, 0x00050051, 0x00000006,
+    0x0000007C, 0x00000065, 0x00000000, 0x00050085, 0x00000006, 0x0000007D,
+    0x0000007A, 0x0000007C, 0x00050081, 0x00000006, 0x0000007E, 0x00000077,
+    0x0000007D, 0x00060051, 0x00000006, 0x00000080, 0x00000037, 0x00000001,
+    0x00000000, 0x00060041, 0x00000081, 0x00000082, 0x0000000F, 0x00000069,
+    0x00000074, 0x0004003D, 0x00000006, 0x00000083, 0x00000082, 0x00050081,
+    0x00000006, 0x00000084, 0x00000080, 0x00000083, 0x00060051, 0x00000006,
+    0x00000086, 0x0000006E, 0x00000001, 0x00000000, 0x00050081, 0x00000006,
+    0x00000087, 0x00000084, 0x00000086, 0x00050051, 0x00000006, 0x00000088,
+    0x00000073, 0x00000000, 0x00050051, 0x00000006, 0x00000089, 0x00000073,
+    0x00000001, 0x00070050, 0x0000000C, 0x0000008A, 0x00000088, 0x00000089,
+    0x0000007E, 0x00000087, 0x0003003E, 0x00000070, 0x0000008A, 0x000100FD,
+    0x00010038,
+};
+
+/// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
+/// V3D's host tests hold to compile to the program of glslc's optimized
+/// module, word for word: `c` and `k` in variables of the function's own,
+/// floats of `c` stored through access chains in the arms (since 1.23).
+///
+/// ```sh
+/// glslc -fshader-stage=frag branch.frag -o branch_O0.spv   # 454 words
+/// spirv-val --target-env vulkan1.0 branch_O0.spv         # no output, and 0
+/// ```
+const branch_unoptimized = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000050, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000047, 0x00030010,
+    0x00000004, 0x00000007, 0x00030003, 0x00000002, 0x000001C2, 0x000A0004,
+    0x475F4C47, 0x4C474F4F, 0x70635F45, 0x74735F70, 0x5F656C79, 0x656E696C,
+    0x7269645F, 0x69746365, 0x00006576, 0x00080004, 0x475F4C47, 0x4C474F4F,
+    0x6E695F45, 0x64756C63, 0x69645F65, 0x74636572, 0x00657669, 0x00040005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00030005, 0x00000009, 0x00000063,
+    0x00040005, 0x0000000B, 0x6C6F6376, 0x0000726F, 0x00030005, 0x00000033,
+    0x0000006B, 0x00040005, 0x00000047, 0x6C6F636F, 0x0000726F, 0x00040047,
+    0x0000000B, 0x0000001E, 0x00000000, 0x00040047, 0x00000047, 0x0000001E,
+    0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006,
+    0x00000004, 0x00040020, 0x00000008, 0x00000007, 0x00000007, 0x00040020,
+    0x0000000A, 0x00000001, 0x00000007, 0x0004003B, 0x0000000A, 0x0000000B,
+    0x00000001, 0x00040015, 0x0000000D, 0x00000020, 0x00000000, 0x0004002B,
+    0x0000000D, 0x0000000E, 0x00000000, 0x00040020, 0x0000000F, 0x00000001,
+    0x00000006, 0x0004002B, 0x00000006, 0x00000012, 0x3F000000, 0x00020014,
+    0x00000013, 0x0004002B, 0x0000000D, 0x00000017, 0x00000001, 0x0004002B,
+    0x00000006, 0x0000001A, 0x40400000, 0x00040020, 0x0000001F, 0x00000007,
+    0x00000006, 0x0004002B, 0x0000000D, 0x00000021, 0x00000002, 0x0004002B,
+    0x0000000D, 0x00000024, 0x00000003, 0x0004002B, 0x00000006, 0x0000002C,
+    0x3E800000, 0x0004002B, 0x00000006, 0x0000003C, 0x40000000, 0x0004002B,
+    0x00000006, 0x0000003E, 0x3DCCCCCD, 0x00040020, 0x00000046, 0x00000003,
+    0x00000007, 0x0004003B, 0x00000046, 0x00000047, 0x00000003, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x0004003B, 0x00000008, 0x00000009, 0x00000007, 0x0004003B, 0x0000001F,
+    0x00000033, 0x00000007, 0x0004003B, 0x0000001F, 0x00000037, 0x00000007,
+    0x0004003D, 0x00000007, 0x0000000C, 0x0000000B, 0x0003003E, 0x00000009,
+    0x0000000C, 0x00050041, 0x0000000F, 0x00000010, 0x0000000B, 0x0000000E,
+    0x0004003D, 0x00000006, 0x00000011, 0x00000010, 0x000500B8, 0x00000013,
+    0x00000014, 0x00000011, 0x00000012, 0x000300F7, 0x00000016, 0x00000000,
+    0x000400FA, 0x00000014, 0x00000015, 0x00000029, 0x000200F8, 0x00000015,
+    0x00050041, 0x0000000F, 0x00000018, 0x0000000B, 0x00000017, 0x0004003D,
+    0x00000006, 0x00000019, 0x00000018, 0x00050085, 0x00000006, 0x0000001B,
+    0x00000019, 0x0000001A, 0x0006000C, 0x00000006, 0x0000001C, 0x00000001,
+    0x0000000D, 0x0000001B, 0x00050085, 0x00000006, 0x0000001D, 0x0000001C,
+    0x00000012, 0x00050081, 0x00000006, 0x0000001E, 0x0000001D, 0x00000012,
+    0x00050041, 0x0000001F, 0x00000020, 0x00000009, 0x0000000E, 0x0003003E,
+    0x00000020, 0x0000001E, 0x00050041, 0x0000000F, 0x00000022, 0x0000000B,
+    0x00000021, 0x0004003D, 0x00000006, 0x00000023, 0x00000022, 0x00050041,
+    0x0000000F, 0x00000025, 0x0000000B, 0x00000024, 0x0004003D, 0x00000006,
+    0x00000026, 0x00000025, 0x00050085, 0x00000006, 0x00000027, 0x00000023,
+    0x00000026, 0x00050041, 0x0000001F, 0x00000028, 0x00000009, 0x00000017,
+    0x0003003E, 0x00000028, 0x00000027, 0x000200F9, 0x00000016, 0x000200F8,
+    0x00000029, 0x00050041, 0x0000000F, 0x0000002A, 0x0000000B, 0x00000017,
+    0x0004003D, 0x00000006, 0x0000002B, 0x0000002A, 0x00050085, 0x00000006,
+    0x0000002D, 0x0000002B, 0x0000002C, 0x00050041, 0x0000001F, 0x0000002E,
+    0x00000009, 0x0000000E, 0x0003003E, 0x0000002E, 0x0000002D, 0x00050041,
+    0x0000000F, 0x0000002F, 0x0000000B, 0x00000021, 0x0004003D, 0x00000006,
+    0x00000030, 0x0000002F, 0x0006000C, 0x00000006, 0x00000031, 0x00000001,
+    0x0000001F, 0x00000030, 0x00050041, 0x0000001F, 0x00000032, 0x00000009,
+    0x00000021, 0x0003003E, 0x00000032, 0x00000031, 0x000200F9, 0x00000016,
+    0x000200F8, 0x00000016, 0x00050041, 0x0000000F, 0x00000034, 0x0000000B,
+    0x00000024, 0x0004003D, 0x00000006, 0x00000035, 0x00000034, 0x000500BA,
+    0x00000013, 0x00000036, 0x00000035, 0x00000012, 0x000300F7, 0x00000039,
+    0x00000000, 0x000400FA, 0x00000036, 0x00000038, 0x00000040, 0x000200F8,
+    0x00000038, 0x00050041, 0x0000000F, 0x0000003A, 0x0000000B, 0x0000000E,
+    0x0004003D, 0x00000006, 0x0000003B, 0x0000003A, 0x0007000C, 0x00000006,
+    0x0000003D, 0x00000001, 0x0000001A, 0x0000003B, 0x0000003C, 0x00050081,
+    0x00000006, 0x0000003F, 0x0000003D, 0x0000003E, 0x0003003E, 0x00000037,
+    0x0000003F, 0x000200F9, 0x00000039, 0x000200F8, 0x00000040, 0x00050041,
+    0x0000000F, 0x00000041, 0x0000000B, 0x00000017, 0x0004003D, 0x00000006,
+    0x00000042, 0x00000041, 0x0006000C, 0x00000006, 0x00000043, 0x00000001,
+    0x0000001D, 0x00000042, 0x00050085, 0x00000006, 0x00000044, 0x00000043,
+    0x0000002C, 0x0003003E, 0x00000037, 0x00000044, 0x000200F9, 0x00000039,
+    0x000200F8, 0x00000039, 0x0004003D, 0x00000006, 0x00000045, 0x00000037,
+    0x0003003E, 0x00000033, 0x00000045, 0x00050041, 0x0000001F, 0x00000048,
+    0x00000009, 0x0000000E, 0x0004003D, 0x00000006, 0x00000049, 0x00000048,
+    0x00050041, 0x0000001F, 0x0000004A, 0x00000009, 0x00000017, 0x0004003D,
+    0x00000006, 0x0000004B, 0x0000004A, 0x00050041, 0x0000001F, 0x0000004C,
+    0x00000009, 0x00000021, 0x0004003D, 0x00000006, 0x0000004D, 0x0000004C,
+    0x0004003D, 0x00000006, 0x0000004E, 0x00000033, 0x00070050, 0x00000007,
+    0x0000004F, 0x00000049, 0x0000004B, 0x0000004D, 0x0000004E, 0x0003003E,
+    0x00000047, 0x0000004F, 0x000100FD, 0x00010038,
+};
+
+const plain_entries = [_]shader.Entry{
     shader.compute("vertices", &computeVertices),
     shader.compute("numbers", &computeNumbers),
     shader.control("even", levelsOf(.{ 4, 4, 4, 4 }, .{ 4, 4 }), 0),
@@ -279,17 +1220,28 @@ const entries = [_]shader.Entry{
     shader.evaluation("isolines", &quadEvaluation, 4, .{ .domain = .isolines }),
     shader.vertex("color", &colorVertex, 4),
     shader.vertex("texture", &textureVertex, 2),
+    shader.vertex("tiled", scaledVertex(8, 8), 2),
+    shader.vertex("stretched", scaledVertex(32, 1), 2),
+    shader.vertex("in texels", scaledVertex(texture_side, texture_side), 2),
     shader.vertex("modulate", &modulateVertex, 6),
     shader.vertex("array", &arrayVertex, 3),
     shader.vertex("small array", &smallArrayVertex, 3),
     shader.vertex("cube", &cubeVertex, 3),
     shader.vertex("volume", &volumeVertex, 3),
+    shader.vertex("tilted", &tiltedVertex, 4),
+    shader.vertex("whole at a half", shadowVertex(0.5), 3),
+    shader.vertex("whole at 0.6", shadowVertex(0.6), 3),
     shader.fixedFragment("array", .{ .kind = .texture_array, .sampling = .{ .filter = .nearest } }),
     shader.fixedFragment("array bilinear", .{ .kind = .texture_array, .sampling = .{ .filter = .bilinear } }),
     shader.fixedFragment("cube", .{ .kind = .texture_cube, .sampling = .{ .filter = .nearest } }),
     shader.fixedFragment("cube bilinear", .{ .kind = .texture_cube, .sampling = .{ .filter = .bilinear } }),
     shader.fixedFragment("volume", .{ .kind = .texture_3d, .sampling = .{ .filter = .nearest } }),
     shader.fixedFragment("volume bilinear", .{ .kind = .texture_3d, .sampling = .{ .filter = .bilinear } }),
+    shader.fixedFragment("sampled", .{ .kind = .texture_sampled }),
+    shader.fixedFragment("array sampled", .{ .kind = .texture_array_sampled }),
+    shader.fixedFragment("cube sampled", .{ .kind = .texture_cube_sampled }),
+    shader.fixedFragment("volume sampled", .{ .kind = .texture_3d_sampled }),
+    shader.fixedFragment("shadow", .{ .kind = .texture_shadow }),
     shader.fixedFragment("color", .{ .kind = .color }),
     shader.fixedFragment("texture", .{ .kind = .texture, .sampling = .{ .filter = .bilinear } }),
     shader.fixedFragment("nearest", .{ .kind = .texture, .sampling = .{ .filter = .nearest } }),
@@ -297,12 +1249,189 @@ const entries = [_]shader.Entry{
     shader.fixedFragment("clamp", .{ .kind = .texture, .sampling = .{ .filter = .bilinear, .address = .clamp } }),
     shader.fixedFragment("modulate", .{ .kind = .texture_color, .sampling = .{ .filter = .nearest } }),
 };
-const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+const entries = plain_entries ++ shipped_entries;
+const words = [_]shader.Spirv{.{}} ** plain_entries.len ++ shipped_words;
+const code = shader.Module{ .entry_count = entries.len, .entries = &entries, .spirv = &words, .spirv_count = words.len };
 
 const texture_side: u32 = 64;
 const picture_usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
 const texture_levels = 7;
 const formats = [_]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 };
+
+/// A sampler a texture is drawn through, as a case of its own: the
+/// fragment shader that samples, the vertex function and the part of
+/// `geometry` it is drawn with, which say what of the sampler shows, and
+/// the texture. Each is in a set of its own beside `Side.sampler_set`. The
+/// case is called `label` and then `what`.
+const Through = struct {
+    label: [:0]const u8 = "shipped texture",
+    what: [:0]const u8,
+    /// The shipped shader that samples, or a fixed form that reads the
+    /// bound sampler.
+    fragment: [*:0]const u8 = "shipped texture",
+    info: facet.SamplerCreateInfo,
+    vertex: [*:0]const u8,
+    first: u32 = quad_at,
+    instance: u32 = 0,
+    view: View = .texture,
+    /// `Case.slack`.
+    slack: ?u32 = null,
+
+    const View = enum {
+        /// The first texture, all its levels.
+        texture,
+        /// Its first level alone, which a sampler in texels is read
+        /// through: Vulkan has such a sampler read a view of one level.
+        first_level,
+        array,
+        cube,
+        volume,
+    };
+};
+
+/// What a sampler says beyond one filter, one wrap and every level as it
+/// is: until 1.140 the V3D painted `shader.missing` for each of these, and
+/// they are the TMU's own since (`tiling.samplerOf`). "tiled" reads the
+/// texture eight times over the quad, which is about level 1; the wide
+/// quad reads it from -1.25 to 2.25, at level 0.
+const shipped_throughs = [_]Through{
+    .{
+        .what = "levels mixed and shifted",
+        .info = .{ .mipmap_mode = .linear, .mip_lod_bias = 1.5, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "tiled",
+    },
+    .{
+        .what = "levels held to 3 and 4",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .min_lod = 3, .max_lod = 4 },
+        .vertex = "tiled",
+    },
+    .{
+        .what = "mirrored across and held down",
+        .info = .{ .address_mode_u = .mirrored_repeat, .address_mode_v = .clamp_to_edge, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+        .first = wide_at,
+    },
+    .{
+        .what = "bordered in white",
+        .info = .{ .address_mode_u = .clamp_to_border, .address_mode_v = .clamp_to_border, .border_color = .float_opaque_white, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+        .first = wide_at,
+    },
+    .{
+        .what = "mirrored once",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .address_mode_u = .mirror_clamp_to_edge, .address_mode_v = .mirror_clamp_to_edge, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+        .first = wide_at,
+    },
+    // Vulkan leaves the samples of anisotropic filtering to the
+    // implementation, and the two take theirs differently: the cores
+    // average up to four bilinear samples along the longer axis, each
+    // rounded to 8 bits first (`texture.tapped`), and the TMU its own
+    // way. On the board in 1.140 they agree within two steps over most
+    // of the quad, and within five on about one pixel in a hundred, all
+    // at its left - from x 93 to about 210 - and a few near x 480. The
+    // same pixels differ when the coordinate is moved on by 16 repeats,
+    // which reads the same texels, so it is where the pixel is on the
+    // screen and not where it is in the texture; why is not known. A
+    // TMU that took one sample would read about two levels further, each
+    // a colour of its own, which is far past five steps.
+    .{
+        .what = "four samples along",
+        .info = .{ .mipmap_mode = .linear, .anisotropy_enable = true, .max_anisotropy = 4, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "stretched",
+        .slack = 5,
+    },
+    .{
+        .what = "in texels",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .address_mode_u = .clamp_to_edge, .address_mode_v = .clamp_to_edge, .unnormalized_coordinates = true },
+        .vertex = "in texels",
+        .first = wide_at,
+        .view = .first_level,
+    },
+};
+
+/// The same through the fixed form that reads the bound sampler,
+/// `texture_sampled`, which the V3D draws since 1.141 with the program of
+/// `texture` and the TMU told the sampler.
+const formed_throughs = formed: {
+    var made = shipped_throughs;
+    for (&made) |*each| {
+        each.label = "sampled form";
+        each.fragment = "sampled";
+    }
+    break :formed made;
+};
+
+/// A layer of an array, a cube and a 3D texture through a sampler: the
+/// fixed forms `texture_array_sampled`, `texture_cube_sampled` and
+/// `texture_3d_sampled`, which the V3D draws the same way since 1.141.
+/// "small array" reads the array's further levels; "cube" at instance 6
+/// looks across the edge of two faces, which a cube is read over whatever
+/// the sampler's wraps, here the default `repeat`; "volume" at instance
+/// `volume_depth` goes across the slices from left to right, so that a
+/// border past them shows at both sides.
+const layered_throughs = [_]Through{
+    .{
+        .label = "array",
+        .what = "through a sampler, levels mixed and shifted",
+        .fragment = "array sampled",
+        .info = .{ .mipmap_mode = .linear, .mip_lod_bias = 1, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "small array",
+        .instance = 2,
+        .view = .array,
+    },
+    .{
+        .label = "array",
+        .what = "through a sampler, past the last",
+        .fragment = "array sampled",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "array",
+        .instance = 7,
+        .view = .array,
+    },
+    .{
+        .label = "cube",
+        .what = "through a sampler, +z",
+        .fragment = "cube sampled",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "cube",
+        .instance = 4,
+        .view = .cube,
+    },
+    .{
+        .label = "cube",
+        .what = "through a sampler, across an edge",
+        .fragment = "cube sampled",
+        .info = .{ .max_lod = facet.texture.lod_unclamped },
+        .vertex = "cube",
+        .instance = 6,
+        .view = .cube,
+    },
+    .{
+        .label = "3D",
+        .what = "through a sampler, across, bordered",
+        .fragment = "volume sampled",
+        .info = .{ .address_mode_w = .clamp_to_border, .border_color = .float_opaque_white, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "volume",
+        .instance = volume_depth,
+        .view = .volume,
+    },
+    .{
+        .label = "3D",
+        .what = "through a sampler, a slice held to its edges",
+        .fragment = "volume sampled",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .address_mode_u = .clamp_to_edge, .address_mode_v = .mirrored_repeat, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "volume",
+        .instance = 3,
+        .view = .volume,
+    },
+};
+
+const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs;
+
+/// What the shadow-map cases compare with (`Cases.shadowed`): the
+/// reference less than the depth, and greater (since 1.14).
+const shadow_ops = [_]facet.CompareOp{ .less, .greater };
 
 const layer_side: u32 = 32;
 const array_layers = 4;
@@ -485,6 +1614,16 @@ const Options = struct {
     target: Target = .bgra,
     depth: bool = true,
     load: bool = false,
+    /// In place of `Side.layout`, whose set 0 is a sampled image.
+    layout: ?*facet.PipelineLayout = null,
+    /// Its samples a pixel, its pass's, and the mask of them it writes:
+    /// all where null (since 1.16).
+    samples: u32 = 1,
+    sample_mask: ?u32 = null,
+    /// Colour 0's alpha cuts the samples a pixel covers (since 1.17).
+    alpha_to_coverage: bool = false,
+    /// No fragment stage at all: the vertex stage alone (since 1.18).
+    no_fragment: bool = false,
 };
 
 /// What a pass of a case is.
@@ -543,6 +1682,64 @@ const Side = struct {
     sets: [formats.len]?*facet.DescriptorSet = @splat(null),
     layout: ?*facet.PipelineLayout = null,
     module: ?*facet.ShaderModule = null,
+    /// What a shipped shader that samples reads: the first texture
+    /// through a sampler of its own, as a combined image sampler at set
+    /// 0, binding 0.
+    sampler: ?*facet.Sampler = null,
+    sampler_set_layout: ?*facet.DescriptorSetLayout = null,
+    sampler_layout: ?*facet.PipelineLayout = null,
+    sampler_set: ?*facet.DescriptorSet = null,
+    /// `throughs`, each in a set of its own (`upThroughs`), and the first
+    /// texture's first level alone (`Through.View.first_level`).
+    through: [throughs.len]?*facet.Sampler = @splat(null),
+    through_sets: [throughs.len]?*facet.DescriptorSet = @splat(null),
+    first_level: ?*facet.ImageView = null,
+    /// A depth as large as the picture that is sampled too, a shadow map,
+    /// the pass that draws it and keeps it, and the samplers that compare
+    /// with it, `shadow_ops`, each in a set of its own (since 1.14).
+    shadow: ?*facet.Image = null,
+    shadow_view: ?*facet.ImageView = null,
+    shadow_pass: ?*facet.RenderPass = null,
+    shadow_frame: ?*facet.Framebuffer = null,
+    shadow_samplers: [shadow_ops.len]?*facet.Sampler = @splat(null),
+    shadow_sets: [shadow_ops.len]?*facet.DescriptorSet = @splat(null),
+    /// The same shadow map drawn in a pass of it alone, no colour (since
+    /// 1.18).
+    shadow_alone: ?*facet.RenderPass = null,
+    shadow_alone_frame: ?*facet.Framebuffer = null,
+    /// And one that begins with what the map holds, to draw over a part
+    /// of it, its layout the one the first leaves it in (since 1.19).
+    shadow_again: ?*facet.RenderPass = null,
+    /// A pass of the first picture and the depth whose first subpass draws
+    /// the depth alone, and one whose first subpass names its colour
+    /// ATTACHMENT_UNUSED; each's second draws the picture tested against
+    /// what the first left. And a pass of no attachment, whose draws an
+    /// occlusion query counts (since 1.18).
+    prepassed: ?*facet.RenderPass = null,
+    unused_first: ?*facet.RenderPass = null,
+    prepassed_frame: ?*facet.Framebuffer = null,
+    /// Their depth, kept from the one subpass to the next, so in memory
+    /// that is there, which `depth` is not.
+    pre_depth: ?*facet.Image = null,
+    pre_depth_view: ?*facet.ImageView = null,
+    empty: ?*facet.RenderPass = null,
+    empty_frame: ?*facet.Framebuffer = null,
+    queries: ?*facet.QueryPool = null,
+    /// Four samples a pixel (since 1.16): a colour of them in the first
+    /// picture's format and a depth in the tiles alone, a pass that
+    /// resolves the colour into the first picture as it ends, and one that
+    /// leaves it for CmdResolveImage.
+    four: ?*facet.Image = null,
+    four_view: ?*facet.ImageView = null,
+    four_depth: ?*facet.Image = null,
+    four_depth_view: ?*facet.ImageView = null,
+    resolving: ?*facet.RenderPass = null,
+    resolving_frame: ?*facet.Framebuffer = null,
+    four_alone: ?*facet.RenderPass = null,
+    four_alone_frame: ?*facet.Framebuffer = null,
+    /// What a shipped shader that reads the push constants is made with:
+    /// no set, and the fragment stage's 20 bytes of them.
+    push_layout: ?*facet.PipelineLayout = null,
     command_pool: ?*facet.CommandPool = null,
     commands: ?*facet.CommandBuffer = null,
     fence: ?*facet.Fence = null,
@@ -553,6 +1750,16 @@ const Side = struct {
     number_bytes: [*]u8 = undefined,
     compute_set_layout: ?*facet.DescriptorSetLayout = null,
     compute_set: ?*facet.DescriptorSet = null,
+    /// What `Shipped.Uniformed` reads: a uniform buffer at binding 0 and
+    /// a dynamic one at binding 1 of set 0, both in `uniforms`
+    /// (`upUniforms`; since 1.28).
+    uniforms: ?*facet.Buffer = null,
+    uniform_set_layout: ?*facet.DescriptorSetLayout = null,
+    uniform_layout: ?*facet.PipelineLayout = null,
+    uniform_set: ?*facet.DescriptorSet = null,
+    /// The same layout's set the uniform arrays and matrices read
+    /// (since 1.29).
+    blocks_set: ?*facet.DescriptorSet = null,
     compute_layout: ?*facet.PipelineLayout = null,
     compute_pipelines: [2]?*facet.Pipeline = @splat(null),
     /// The pipelines of the case being drawn.
@@ -633,7 +1840,7 @@ const Side = struct {
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 1 + layered_count }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 4 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -641,7 +1848,26 @@ const Side = struct {
             const write = facet.WriteDescriptorSet{ .dst_set = set.?, .dst_binding = 0, .descriptor_type = .sampled_image, .image_info = @ptrCast(&image_info) };
             fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
         }
-        try expect(fb.CreateShaderModule(device, &.{ .code = &code }, &side.module), error.Refused);
+        const combined = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+        try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&combined) }, &side.sampler_set_layout), error.Refused);
+        try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&side.sampler_set_layout) }, &side.sampler_layout), error.Refused);
+        const fragment_push = facet.PushConstantRange{ .stage_flags = facet.SHADER_STAGE_FRAGMENT, .size = 20 };
+        try expect(fb.CreatePipelineLayout(device, &.{ .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&fragment_push) }, &side.push_layout), error.Refused);
+        // The texture's own levels: the V3D samples through no sampler
+        // that holds them to fewer (`texture.samplingOf`), and draws the
+        // missing colour instead.
+        try expect(fb.CreateSampler(device, &.{ .mag_filter = .nearest, .min_filter = .nearest, .max_lod = facet.texture.lod_unclamped }, &side.sampler), error.Refused);
+        var sampled_sets: [1]?*facet.DescriptorSet = undefined;
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&side.sampler_set_layout) }, &sampled_sets), error.Refused);
+        side.sampler_set = sampled_sets[0];
+        const sampled_info = facet.DescriptorImageInfo{ .sampler = side.sampler, .image_view = side.texture_views[0] };
+        const sampled_write = facet.WriteDescriptorSet{ .dst_set = side.sampler_set.?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&sampled_info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&sampled_write), 0, null);
+        side.first_level = try side.view(side.textures[0].?, formats[0], facet.IMAGE_ASPECT_COLOR, 1);
+        // The module ships the SPIR-V of the shaders above beside the
+        // functions: the flag says so, and `code_size` that the program's
+        // memory is a `shader.Module` wide.
+        try expect(fb.CreateShaderModule(device, &.{ .flags = facet.SHADER_MODULE_CREATE_SPIRV, .code_size = @sizeOf(shader.Module), .code = &code }, &side.module), error.Refused);
         try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&side.set_layout) }, &side.layout), error.Refused);
         try expect(fb.CreateCommandPool(device, &.{ .flags = facet.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER }, &side.command_pool), error.Refused);
         var commands: [1]?*facet.CommandBuffer = undefined;
@@ -673,9 +1899,117 @@ const Side = struct {
         };
         try expect(fb.CreateComputePipelines(device, null, 2, &compute_infos, &side.compute_pipelines), error.Refused);
         try expect(fb.CreateFence(device, &.{}, &side.fence), error.Refused);
+        try side.upUniforms();
         try side.stageTextures();
         try side.upLayered();
+        try side.upThroughs();
         try side.upPasses();
+        try side.upShadow();
+        try side.upFour();
+    }
+
+    /// The image of four samples, its depth, and the two passes over them:
+    /// `resolving`, whose subpass resolves the colour into the first
+    /// picture, and `four_alone`, which keeps it for a transfer.
+    fn upFour(side: *Side) Failure!void {
+        const fb = side.fb;
+        const device = side.device.?;
+        const extent = facet.Extent3D{ .width = side.width, .height = side.height };
+        try side.image(.{ .format = formats[0], .extent = extent, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC }, 0, &side.four);
+        side.four_view = try side.view(side.four.?, formats[0], facet.IMAGE_ASPECT_COLOR, 1);
+        try side.image(.{ .format = .d16_unorm, .extent = extent, .samples = 4, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, facet.MEMORY_PROPERTY_LAZILY_ALLOCATED, &side.four_depth);
+        side.four_depth_view = try side.view(side.four_depth.?, .d16_unorm, facet.IMAGE_ASPECT_DEPTH, 1);
+        const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+        {
+            const attachments = [3]facet.AttachmentDescription{
+                .{ .format = formats[0], .samples = 4, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal },
+                .{ .format = formats[0], .load_op = .dont_care, .store_op = .store, .final_layout = .general },
+                .{ .format = .d16_unorm, .samples = 4, .load_op = .clear, .final_layout = .depth_stencil_attachment_optimal },
+            };
+            const resolve = facet.AttachmentReference{ .attachment = 1, .layout = .color_attachment_optimal };
+            const depth = facet.AttachmentReference{ .attachment = 2, .layout = .depth_stencil_attachment_optimal };
+            const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .resolve_attachments = @ptrCast(&resolve), .depth_stencil_attachment = &depth };
+            try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 3, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &side.resolving), error.Refused);
+            const views = [3]*facet.ImageView{ side.four_view.?, side.picture_views[0].?, side.four_depth_view.? };
+            try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.resolving.?, .attachment_count = 3, .attachments = &views, .width = side.width, .height = side.height }, &side.resolving_frame), error.Refused);
+        }
+        const attachments = [2]facet.AttachmentDescription{
+            .{ .format = formats[0], .samples = 4, .load_op = .clear, .store_op = .store, .final_layout = .transfer_src_optimal },
+            .{ .format = .d16_unorm, .samples = 4, .load_op = .clear, .final_layout = .depth_stencil_attachment_optimal },
+        };
+        const depth = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .depth_stencil_attachment = &depth };
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &side.four_alone), error.Refused);
+        const views = [2]*facet.ImageView{ side.four_view.?, side.four_depth_view.? };
+        try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.four_alone.?, .attachment_count = 2, .attachments = &views, .width = side.width, .height = side.height }, &side.four_alone_frame), error.Refused);
+    }
+
+    /// The shadow map, its pass over the first picture and it, and a set
+    /// for each of `shadow_ops`: a sampler that reads the nearest texel,
+    /// held to the edges, and compares.
+    fn upShadow(side: *Side) Failure!void {
+        const fb = side.fb;
+        const device = side.device.?;
+        const extent = facet.Extent3D{ .width = side.width, .height = side.height };
+        try side.image(.{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED }, 0, &side.shadow);
+        side.shadow_view = try side.view(side.shadow.?, .d16_unorm, facet.IMAGE_ASPECT_DEPTH, 1);
+        const attachments = [2]facet.AttachmentDescription{
+            .{ .format = formats[0], .load_op = .clear, .store_op = .store, .final_layout = .general },
+            .{ .format = .d16_unorm, .load_op = .clear, .store_op = .store, .final_layout = .shader_read_only_optimal },
+        };
+        const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+        const depth = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .depth_stencil_attachment = &depth };
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &side.shadow_pass), error.Refused);
+        const views = [2]*facet.ImageView{ side.picture_views[0].?, side.shadow_view.? };
+        try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.shadow_pass.?, .attachment_count = 2, .attachments = &views, .width = side.width, .height = side.height }, &side.shadow_frame), error.Refused);
+        // The depth alone, as a shadow map's pass is (since 1.18).
+        const alone = [1]facet.AttachmentDescription{attachments[1]};
+        const alone_depth = facet.AttachmentReference{ .attachment = 0, .layout = .depth_stencil_attachment_optimal };
+        const alone_subpass = facet.SubpassDescription{ .depth_stencil_attachment = &alone_depth };
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 1, .attachments = &alone, .subpass_count = 1, .subpasses = @ptrCast(&alone_subpass) }, &side.shadow_alone), error.Refused);
+        var again = alone;
+        again[0].initial_layout = .shader_read_only_optimal;
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 1, .attachments = &again, .subpass_count = 1, .subpasses = @ptrCast(&alone_subpass) }, &side.shadow_again), error.Refused);
+        const alone_views = [1]*facet.ImageView{side.shadow_view.?};
+        try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.shadow_alone.?, .attachment_count = 1, .attachments = &alone_views, .width = side.width, .height = side.height }, &side.shadow_alone_frame), error.Refused);
+        const layouts: [shadow_ops.len]?*facet.DescriptorSetLayout = @splat(side.sampler_set_layout);
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = shadow_ops.len, .set_layouts = @ptrCast(&layouts) }, &side.shadow_sets), error.Refused);
+        for (shadow_ops, &side.shadow_samplers, side.shadow_sets) |op, *made, set| {
+            try expect(fb.CreateSampler(device, &.{
+                .mag_filter = .nearest,
+                .min_filter = .nearest,
+                .address_mode_u = .clamp_to_edge,
+                .address_mode_v = .clamp_to_edge,
+                .compare_enable = true,
+                .compare_op = op,
+            }, made), error.Refused);
+            const info = facet.DescriptorImageInfo{ .sampler = made.*, .image_view = side.shadow_view, .image_layout = .shader_read_only_optimal };
+            const write = facet.WriteDescriptorSet{ .dst_set = set.?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&info) };
+            fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+        }
+    }
+
+    /// `throughs`' samplers, each in a set of its own with its texture:
+    /// after the layered ones, which some of them read.
+    fn upThroughs(side: *Side) Failure!void {
+        const fb = side.fb;
+        const device = side.device.?;
+        const through_layouts: [throughs.len]?*facet.DescriptorSetLayout = @splat(side.sampler_set_layout);
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = throughs.len, .set_layouts = @ptrCast(&through_layouts) }, &side.through_sets), error.Refused);
+        for (throughs, &side.through, side.through_sets) |each, *made, set| {
+            try expect(fb.CreateSampler(device, &each.info, made), error.Refused);
+            const read = switch (each.view) {
+                .texture => side.texture_views[0],
+                .first_level => side.first_level,
+                .array => side.layered_views[@intFromEnum(Layered.array)],
+                .cube => side.layered_views[@intFromEnum(Layered.cube)],
+                .volume => side.layered_views[@intFromEnum(Layered.volume)],
+            };
+            const info = facet.DescriptorImageInfo{ .sampler = made.*, .image_view = read };
+            const write = facet.WriteDescriptorSet{ .dst_set = set.?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&info) };
+            fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+        }
     }
 
     fn upPasses(side: *Side) Failure!void {
@@ -702,6 +2036,37 @@ const Side = struct {
         const views = [3]*facet.ImageView{ side.picture_views[0].?, side.picture_views[1].?, side.depth_view.? };
         try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.subpassed.?, .attachment_count = 3, .attachments = &views, .width = side.width, .height = side.height }, &side.subpassed_frame), error.Refused);
         try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.two_colors.?, .attachment_count = 3, .attachments = &views, .width = side.width, .height = side.height }, &side.two_colors_frame), error.Refused);
+
+        // The depth drawn first in a subpass of its own, and then the
+        // picture tested against it, the depth kept between the two: in a
+        // subpass of no colour attachment, or of one ATTACHMENT_UNUSED.
+        // The two passes are compatible, so the one framebuffer serves
+        // both (since 1.18).
+        const unused = [1]facet.AttachmentReference{.{ .attachment = facet.ATTACHMENT_UNUSED, .layout = .color_attachment_optimal }};
+        const pre = [2]facet.AttachmentDescription{ attachments[0], attachments[2] };
+        const pre_depth = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
+        const prepasses = [2]facet.SubpassDescription{
+            .{ .depth_stencil_attachment = &pre_depth },
+            .{ .color_attachment_count = 1, .color_attachments = &first, .depth_stencil_attachment = &pre_depth },
+        };
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &pre, .subpass_count = 2, .subpasses = &prepasses }, &side.prepassed), error.Refused);
+        const unused_first = [2]facet.SubpassDescription{
+            .{ .color_attachment_count = 1, .color_attachments = &unused, .depth_stencil_attachment = &pre_depth },
+            prepasses[1],
+        };
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &pre, .subpass_count = 2, .subpasses = &unused_first }, &side.unused_first), error.Refused);
+        const extent = facet.Extent3D{ .width = side.width, .height = side.height };
+        try side.image(.{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, 0, &side.pre_depth);
+        side.pre_depth_view = try side.view(side.pre_depth.?, .d16_unorm, facet.IMAGE_ASPECT_DEPTH, 1);
+        const pre_views = [2]*facet.ImageView{ side.picture_views[0].?, side.pre_depth_view.? };
+        try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.prepassed.?, .attachment_count = 2, .attachments = &pre_views, .width = side.width, .height = side.height }, &side.prepassed_frame), error.Refused);
+
+        // No attachment at all: a framebuffer that is a size alone, and a
+        // query that counts the samples drawn in it.
+        const nothing = facet.SubpassDescription{};
+        try expect(fb.CreateRenderPass(device, &.{ .subpass_count = 1, .subpasses = @ptrCast(&nothing) }, &side.empty), error.Refused);
+        try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.empty.?, .attachment_count = 0, .width = side.width, .height = side.height }, &side.empty_frame), error.Refused);
+        try expect(fb.CreateQueryPool(device, &.{ .query_type = .occlusion, .query_count = 1 }, &side.queries), error.Refused);
     }
 
     /// A pass of its own begun, the first picture and the second cleared in
@@ -887,25 +2252,116 @@ const Side = struct {
         return error.NoMemory;
     }
 
+    /// The uniform buffers `Shipped.Uniformed` reads: binding 0's block at
+    /// 0, its tint at 16; binding 1's, a dynamic one, at 256, with a
+    /// second at 512 that a dynamic offset of 256 reaches. `blocks_set`
+    /// is the same with binding 0 the 128 bytes at 768, which the uniform
+    /// arrays and matrices read (since 1.29).
+    fn upUniforms(side: *Side) Failure!void {
+        const fb = side.fb;
+        const device = side.device.?;
+        const bytes = try side.buffer(1024, facet.BUFFER_USAGE_UNIFORM_BUFFER, &side.uniforms);
+        @memset(bytes[0..1024], 0);
+        const floats: [*]align(1) f32 = @ptrCast(bytes);
+        @memcpy(floats[4..8], &[4]f32{ 0.5, 1, 0.75, 1 });
+        @memcpy(floats[64..68], &[4]f32{ 0, 0.25, 0.5, 0 });
+        floats[69] = 0.5;
+        @memcpy(floats[128..132], &[4]f32{ 0.5, 0, 0, 0 });
+        floats[133] = 0.25;
+        // The uniform arrays' and matrices' block, at 768: values that
+        // keep every channel of the three between 0.03 and 0.97 over the
+        // triangle's colours, so that none is clamped where it could
+        // differ (since 1.29).
+        @memcpy(floats[192..224], &[32]f32{
+            -0.125, -0.0625, 0.75,    0.625,
+            -0.125, -0.25,   -0.25,   -0.375,
+            0,      0.1875,  0.625,   -0.125,
+            0.25,   0.3125,  0.0625,  0.625,
+            0.4375, 0.375,   0.4375,  0.5625,
+            -0.25,  0.125,   0.25,    -0.1875,
+            0.125,  -0.125,  -0.3125, 0,
+            0.6875, 0.25,    -0.3125, -0.625,
+        });
+        const bindings = [2]facet.DescriptorSetLayoutBinding{
+            .{ .binding = 0, .descriptor_type = .uniform_buffer, .stage_flags = facet.SHADER_STAGE_FRAGMENT },
+            .{ .binding = 1, .descriptor_type = .uniform_buffer_dynamic, .stage_flags = facet.SHADER_STAGE_FRAGMENT },
+        };
+        try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &side.uniform_set_layout), error.Refused);
+        try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&side.uniform_set_layout) }, &side.uniform_layout), error.Refused);
+        var made: [1]?*facet.DescriptorSet = undefined;
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&side.uniform_set_layout) }, &made), error.Refused);
+        side.uniform_set = made[0];
+        const infos = [2]facet.DescriptorBufferInfo{
+            .{ .buffer = side.uniforms, .offset = 0, .range = 32 },
+            .{ .buffer = side.uniforms, .offset = 256, .range = 32 },
+        };
+        const writes = [2]facet.WriteDescriptorSet{
+            .{ .dst_set = side.uniform_set.?, .dst_binding = 0, .descriptor_type = .uniform_buffer, .buffer_info = @ptrCast(&infos[0]) },
+            .{ .dst_set = side.uniform_set.?, .dst_binding = 1, .descriptor_type = .uniform_buffer_dynamic, .buffer_info = @ptrCast(&infos[1]) },
+        };
+        fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&side.uniform_set_layout) }, &made), error.Refused);
+        side.blocks_set = made[0];
+        const blocks = facet.DescriptorBufferInfo{ .buffer = side.uniforms, .offset = 768, .range = 128 };
+        const block_writes = [2]facet.WriteDescriptorSet{
+            .{ .dst_set = side.blocks_set.?, .dst_binding = 0, .descriptor_type = .uniform_buffer, .buffer_info = @ptrCast(&blocks) },
+            .{ .dst_set = side.blocks_set.?, .dst_binding = 1, .descriptor_type = .uniform_buffer_dynamic, .buffer_info = @ptrCast(&infos[1]) },
+        };
+        fb.UpdateDescriptorSets(device, 2, &block_writes, 0, null);
+    }
+
     fn down(side: *Side) void {
         const fb = side.fb;
         const device = side.device orelse return;
         _ = fb.DeviceWaitIdle(device);
+        fb.DestroyPipelineLayout(device, side.uniform_layout);
+        fb.DestroyDescriptorSetLayout(device, side.uniform_set_layout);
+        fb.DestroyBuffer(device, side.uniforms);
         for (side.compute_pipelines) |each| fb.DestroyPipeline(device, each);
         fb.DestroyPipelineLayout(device, side.compute_layout);
         fb.DestroyDescriptorSetLayout(device, side.compute_set_layout);
         fb.DestroyBuffer(device, side.computed);
         fb.DestroyBuffer(device, side.numbers);
         fb.DestroyFence(device, side.fence);
+        fb.DestroyFramebuffer(device, side.resolving_frame);
+        fb.DestroyFramebuffer(device, side.four_alone_frame);
+        fb.DestroyRenderPass(device, side.resolving);
+        fb.DestroyRenderPass(device, side.four_alone);
+        fb.DestroyImageView(device, side.four_view);
+        fb.DestroyImageView(device, side.four_depth_view);
+        fb.DestroyImage(device, side.four);
+        fb.DestroyImage(device, side.four_depth);
+        fb.DestroyQueryPool(device, side.queries);
+        fb.DestroyFramebuffer(device, side.empty_frame);
+        fb.DestroyRenderPass(device, side.empty);
+        fb.DestroyFramebuffer(device, side.prepassed_frame);
+        fb.DestroyRenderPass(device, side.prepassed);
+        fb.DestroyRenderPass(device, side.unused_first);
+        fb.DestroyImageView(device, side.pre_depth_view);
+        fb.DestroyImage(device, side.pre_depth);
         fb.DestroyFramebuffer(device, side.subpassed_frame);
         fb.DestroyFramebuffer(device, side.two_colors_frame);
         fb.DestroyRenderPass(device, side.subpassed);
         fb.DestroyRenderPass(device, side.two_colors);
         fb.DestroyCommandPool(device, side.command_pool);
         fb.DestroyPipelineLayout(device, side.layout);
+        fb.DestroyPipelineLayout(device, side.sampler_layout);
+        fb.DestroyPipelineLayout(device, side.push_layout);
         fb.DestroyShaderModule(device, side.module);
         fb.DestroyDescriptorPool(device, side.descriptor_pool);
         fb.DestroyDescriptorSetLayout(device, side.set_layout);
+        fb.DestroyDescriptorSetLayout(device, side.sampler_set_layout);
+        fb.DestroySampler(device, side.sampler);
+        for (side.through) |each| fb.DestroySampler(device, each);
+        fb.DestroyImageView(device, side.first_level);
+        for (side.shadow_samplers) |each| fb.DestroySampler(device, each);
+        fb.DestroyFramebuffer(device, side.shadow_alone_frame);
+        fb.DestroyRenderPass(device, side.shadow_alone);
+        fb.DestroyRenderPass(device, side.shadow_again);
+        fb.DestroyFramebuffer(device, side.shadow_frame);
+        fb.DestroyRenderPass(device, side.shadow_pass);
+        fb.DestroyImageView(device, side.shadow_view);
+        fb.DestroyImage(device, side.shadow);
         for (&side.framebuffers) |*pair| for (pair) |each| fb.DestroyFramebuffer(device, each);
         for (side.stencil_framebuffers) |each| fb.DestroyFramebuffer(device, each);
         for (side.stencil_passes) |each| fb.DestroyRenderPass(device, each);
@@ -947,16 +2403,39 @@ const Side = struct {
         const t = @intFromEnum(pass.target);
         const d = @intFromBool(pass.depth);
         const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = pass.clear } }, .{ .depth_stencil = .{ .depth = 1, .stencil = pass.clear_stencil } } };
-        const area: facet.Rect2D = if (pass.area) |part| .{
-            .offset = .{ .x = side.partOf(side.width, part[0]), .y = side.partOf(side.height, part[1]) },
-            .extent = .{
-                .width = @intCast(side.partOf(side.width, part[2]) - side.partOf(side.width, part[0])),
-                .height = @intCast(side.partOf(side.height, part[3]) - side.partOf(side.height, part[1])),
-            },
-        } else .{ .extent = .{ .width = side.width, .height = side.height } };
+        const area = side.areaOf(pass.area);
         const s = @intFromEnum(pass.stencil) -| 1;
         const stenciled = pass.stencil != .none;
         fb.CmdBeginRenderPass(commands, &.{ .render_pass = if (stenciled) side.stencil_passes[s].? else side.passes[t][d][@intFromBool(pass.load)].?, .framebuffer = if (stenciled) side.stencil_framebuffers[s].? else side.framebuffers[t][d].?, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+        side.state();
+    }
+
+    /// Parts of 1 of the picture as a render area; all of it if null.
+    fn areaOf(side: *const Side, part: ?[4]f32) facet.Rect2D {
+        const given = part orelse return .{ .extent = .{ .width = side.width, .height = side.height } };
+        return .{
+            .offset = .{ .x = side.partOf(side.width, given[0]), .y = side.partOf(side.height, given[1]) },
+            .extent = .{
+                .width = @intCast(side.partOf(side.width, given[2]) - side.partOf(side.width, given[0])),
+                .height = @intCast(side.partOf(side.height, given[3]) - side.partOf(side.height, given[1])),
+            },
+        };
+    }
+
+    /// A pass of four samples begun over `area`: `resolving`, or
+    /// `four_alone`, each clearing the colour to a red of its own and the
+    /// depth to 1 (since 1.16).
+    fn beginFour(side: *Side, resolves: bool, area: ?[4]f32) void {
+        const color = facet.ClearValue{ .color = .{ .float32 = .{ 0.3, 0.12, 0.05, 1 } } };
+        const depth = facet.ClearValue{ .depth_stencil = .{ .depth = 1 } };
+        const clears = if (resolves) [3]facet.ClearValue{ color, color, depth } else [3]facet.ClearValue{ color, depth, depth };
+        side.fb.CmdBeginRenderPass(side.commands.?, &.{
+            .render_pass = if (resolves) side.resolving.? else side.four_alone.?,
+            .framebuffer = if (resolves) side.resolving_frame.? else side.four_alone_frame.?,
+            .render_area = side.areaOf(area),
+            .clear_value_count = if (resolves) 3 else 2,
+            .clear_values = &clears,
+        }, .@"inline");
         side.state();
     }
 
@@ -1037,8 +2516,10 @@ const Side = struct {
         };
         const blend_attachments: [4]facet.PipelineColorBlendAttachmentState = @splat(blend_attachment);
         const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = options.colors, .attachments = &blend_attachments, .blend_constants = options.constants };
+        const mask = [1]u32{options.sample_mask orelse 0xFFFF_FFFF};
+        const multisample = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = options.samples, .sample_mask = if (options.sample_mask != null) &mask else null, .alpha_to_coverage_enable = options.alpha_to_coverage };
         const info = facet.GraphicsPipelineCreateInfo{
-            .stage_count = if (options.patch_points != 0) 4 else 2,
+            .stage_count = if (options.patch_points != 0) 4 else if (options.no_fragment) 1 else 2,
             .stages = &stages,
             .vertex_input_state = &input,
             .input_assembly_state = &assembly,
@@ -1046,9 +2527,10 @@ const Side = struct {
             .viewport_state = &viewports,
             .rasterization_state = &rasterization,
             .depth_stencil_state = &depth,
+            .multisample_state = if (options.samples != 1) &multisample else null,
             .color_blend_state = &blend,
             .dynamic_state = &dynamic,
-            .layout = side.layout.?,
+            .layout = options.layout orelse side.layout.?,
             .render_pass = options.pass orelse if (options.stencil != .none) side.stencil_passes[@intFromEnum(options.stencil) - 1].? else side.passes[@intFromEnum(options.target)][@intFromBool(options.depth)][@intFromBool(options.load)].?,
             .subpass = options.subpass,
         };
@@ -1072,6 +2554,11 @@ const Side = struct {
     fn texture(side: *Side, format: usize) void {
         side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.layout.?, 0, 1, @ptrCast(&side.sets[format]), 0, null);
     }
+
+    /// The combined image sampler a shipped shader samples through.
+    fn sampled(side: *Side) void {
+        side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.sampler_layout.?, 0, 1, @ptrCast(&side.sampler_set), 0, null);
+    }
 };
 
 const offset_16 = @sizeOf(@TypeOf(restart_indices)) + 2;
@@ -1081,6 +2568,13 @@ const Case = struct {
     name: [*:0]const u8,
     target: Target = .bgra,
     run: *const fn (side: *Side) Failure!void,
+    /// How many steps of a channel two pixels may be apart and count as
+    /// the same, where it is not `compare`'s own: only where Vulkan
+    /// leaves the answer to the implementation (since 1.140).
+    slack: ?u32 = null,
+    /// The case counts what it draws with `Side.queries`, and the two
+    /// counts are compared as well as the pictures (since 1.18).
+    counted: bool = false,
 };
 
 const Cases = struct {
@@ -1744,11 +3238,352 @@ const Cases = struct {
         side.draw(quad_at, 6);
         side.end();
     }
+    /// A fragment shader the module ships the words of, drawn with the
+    /// vertex function `vertex` over the geometry at `first`; through the
+    /// combined image sampler where it samples.
+    fn shipped(comptime vertex: [*:0]const u8, comptime fragment: [*:0]const u8, comptime samples: bool, comptime first: u32) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                side.begin(.{});
+                if (samples) side.sampled();
+                try side.use(.{ .vertex = vertex, .fragment = fragment, .layout = if (samples) side.sampler_layout.? else null });
+                side.draw(first, 6);
+                side.end();
+            }
+        }.run;
+    }
+    /// A shadow map drawn and then compared with, over the whole picture,
+    /// through `fragment` - the fixed form `texture_shadow`, or a
+    /// generated shader that compares (since 1.15) - and the sampler of
+    /// `shadow_ops[which]`:
+    /// red where the comparison passed and black where it did not, since a
+    /// view of a depth reads (D, 0, 0, 1). The map is the far and the near
+    /// triangle at 0.75 and 0.25 in the clear's 1, or, `tilted`, a fan
+    /// whose depth slopes past the reference; `vertex` sets the reference.
+    /// The pass leaves the map for the shader to read, and the barrier
+    /// says the sample comes after the depth was written, as Vulkan asks.
+    fn shadowed(comptime tilted: bool, comptime which: usize, comptime vertex: [*:0]const u8, comptime fragment: [*:0]const u8) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                try shadowMap(side, tilted, .with_color);
+                try lookAtShadow(side, which, vertex, fragment);
+            }
+        }.run;
+    }
+    /// How a shadow map is drawn: in its pass with the first picture, as
+    /// it was until 1.18; or in a pass of it alone, by the fixed form of
+    /// colour, by a shipped shader that the V3D compiles for a subpass of
+    /// no colour, or by no fragment stage at all (since 1.18).
+    const Drawn = enum { with_color, fixed, shipped, stageless };
+    /// The shadow map less than a half, drawn as `drawn` says.
+    fn shadowedAlone(comptime tilted: bool, comptime drawn: Drawn) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                try shadowMap(side, tilted, drawn);
+                try lookAtShadow(side, 0, "whole at a half", "shadow");
+            }
+        }.run;
+    }
+    fn shadowMap(side: *Side, tilted: bool, drawn: Drawn) Failure!void {
+        const fb = side.fb;
+        const commands = side.commands.?;
+        const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } }, .{ .depth_stencil = .{ .depth = 1 } } };
+        const alone = drawn != .with_color;
+        fb.CmdBeginRenderPass(commands, &.{
+            .render_pass = if (alone) side.shadow_alone.? else side.shadow_pass.?,
+            .framebuffer = if (alone) side.shadow_alone_frame.? else side.shadow_frame.?,
+            .render_area = .{ .extent = .{ .width = side.width, .height = side.height } },
+            .clear_value_count = if (alone) 1 else 2,
+            .clear_values = if (alone) clears[1..] else &clears,
+        }, .@"inline");
+        side.state();
+        var options = Options{ .test_depth = true, .write_depth = true, .pass = if (alone) side.shadow_alone.? else side.shadow_pass.?, .colors = if (alone) 0 else 1 };
+        switch (drawn) {
+            .with_color, .fixed => {},
+            .shipped => {
+                options.vertex = "as it is";
+                options.fragment = "shipped smooth";
+            },
+            .stageless => options.no_fragment = true,
+        }
+        if (tilted) {
+            options.vertex = "tilted";
+            options.topology = .triangle_fan;
+            try side.use(options);
+            side.draw(fan_at, 5);
+        } else {
+            try side.use(options);
+            side.draw(far_at, 3);
+            side.draw(near_at, 3);
+        }
+        side.end();
+        const written = facet.ImageMemoryBarrier{
+            .src_access_mask = facet.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE,
+            .dst_access_mask = facet.ACCESS_SHADER_READ,
+            .old_layout = .shader_read_only_optimal,
+            .new_layout = .shader_read_only_optimal,
+            .image = side.shadow.?,
+            .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH },
+        };
+        fb.CmdPipelineBarrier(commands, facet.PIPELINE_STAGE_LATE_FRAGMENT_TESTS, facet.PIPELINE_STAGE_FRAGMENT_SHADER, 0, 0, null, 0, null, 1, @ptrCast(&written));
+    }
+    /// The shadow map drawn whole in a pass of it alone, then cleared and
+    /// the far triangle drawn over a part of it in another, which stores
+    /// it: the map outside the part is what the first pass left, where a
+    /// tile the second renders across the part's edge has to write it back
+    /// as it was. The near triangle's 0.25 below the part is in such tiles
+    /// on the V3D, and every depth is clear of the half it is compared
+    /// with (since 1.19).
+    fn shadowedOverPart(side: *Side) Failure!void {
+        const fb = side.fb;
+        const commands = side.commands.?;
+        try shadowMap(side, false, .fixed);
+        const far_away = facet.ClearValue{ .depth_stencil = .{ .depth = 1 } };
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = side.shadow_again.?, .framebuffer = side.shadow_alone_frame.?, .render_area = side.areaOf(.{ 0.1, 0.15, 0.6, 0.6 }), .clear_value_count = 1, .clear_values = @ptrCast(&far_away) }, .@"inline");
+        side.state();
+        try side.use(.{ .test_depth = true, .write_depth = true, .pass = side.shadow_again.?, .colors = 0 });
+        side.draw(far_at, 3);
+        side.end();
+        const written = facet.ImageMemoryBarrier{
+            .src_access_mask = facet.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE,
+            .dst_access_mask = facet.ACCESS_SHADER_READ,
+            .old_layout = .shader_read_only_optimal,
+            .new_layout = .shader_read_only_optimal,
+            .image = side.shadow.?,
+            .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH },
+        };
+        fb.CmdPipelineBarrier(commands, facet.PIPELINE_STAGE_LATE_FRAGMENT_TESTS, facet.PIPELINE_STAGE_FRAGMENT_SHADER, 0, 0, null, 0, null, 1, @ptrCast(&written));
+        try lookAtShadow(side, 0, "whole at a half", "shadow");
+    }
+    /// The quad over the first picture, the shadow map compared with as
+    /// `shadow_ops[which]` says.
+    fn lookAtShadow(side: *Side, which: usize, vertex: [*:0]const u8, fragment: [*:0]const u8) Failure!void {
+        side.begin(.{});
+        side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.sampler_layout.?, 0, 1, @ptrCast(&side.shadow_sets[which]), 0, null);
+        try side.use(.{ .vertex = vertex, .fragment = fragment, .layout = side.sampler_layout.? });
+        side.draw(quad_at, 6);
+        side.end();
+    }
+    /// The far and the near triangle's depths drawn in a subpass of no
+    /// colour - none, or one ATTACHMENT_UNUSED - by the fixed form of
+    /// colour or by no fragment stage, cleared back to 1 over two
+    /// rectangles where `cleared`; then the near and the far drawn in
+    /// colour in the next subpass, tested less or equal against what the
+    /// first left and writing none. Where the first kept its depth the far
+    /// is hidden behind the near, and where the clear reached it is not
+    /// (since 1.18).
+    fn prepassed(comptime unused: bool, comptime stageless: bool, comptime cleared: bool) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                const pass = if (unused) side.unused_first.? else side.prepassed.?;
+                const commands = side.commands.?;
+                const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0.06, 0.09, 0.2, 1 } } }, .{ .depth_stencil = .{ .depth = 1 } } };
+                side.fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = side.prepassed_frame.?, .render_area = .{ .extent = .{ .width = side.width, .height = side.height } }, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+                side.state();
+                try side.use(.{ .pass = pass, .test_depth = true, .write_depth = true, .no_fragment = stageless, .colors = if (unused) 1 else 0 });
+                side.draw(far_at, 3);
+                side.draw(near_at, 3);
+                if (cleared) {
+                    const attachment = facet.ClearAttachment{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .clear_value = .{ .depth_stencil = .{ .depth = 1 } } };
+                    const rects = [2]facet.ClearRect{
+                        .{ .rect = .{ .offset = .{ .x = side.partOf(side.width, 0.3), .y = side.partOf(side.height, 0.3) }, .extent = .{ .width = @intCast(side.partOf(side.width, 0.25)), .height = @intCast(side.partOf(side.height, 0.25)) } } },
+                        .{ .rect = .{ .offset = .{ .x = side.partOf(side.width, 0.05), .y = side.partOf(side.height, 0.05) }, .extent = .{ .width = @intCast(side.partOf(side.width, 0.2)), .height = @intCast(side.partOf(side.height, 0.3)) } } },
+                    };
+                    side.fb.CmdClearAttachments(commands, 1, @ptrCast(&attachment), rects.len, &rects);
+                }
+                side.fb.CmdNextSubpass(commands, .@"inline");
+                try side.use(.{ .pass = pass, .subpass = 1, .test_depth = true, .compare = .less_or_equal });
+                side.draw(near_at, 3);
+                side.draw(far_at, 3);
+                side.end();
+            }
+        }.run;
+    }
+    /// The near triangle, then the far one's depth alone by a pipeline of
+    /// no fragment stage in a pass of colour, then the glass over both
+    /// tested against them: the far leaves its colour as it was, which
+    /// the cores keep by writing none and the V3D by a program that writes
+    /// none (since 1.18).
+    fn stagelessInColor(side: *Side) Failure!void {
+        side.begin(.{});
+        try side.use(.{ .test_depth = true, .write_depth = true });
+        side.draw(near_at, 3);
+        try side.use(.{ .test_depth = true, .write_depth = true, .no_fragment = true });
+        side.draw(far_at, 3);
+        try side.use(.{ .test_depth = true, .blend = true });
+        side.draw(glass_at, 3);
+        side.end();
+    }
+    /// The picture cleared, then the far, the near and the glass drawn in
+    /// a pass of no attachment at `samples` a pixel, counted by an
+    /// occlusion query: every sample of them, there being no depth to
+    /// fail. The pass draws at its pipeline's count, the V3D's frame
+    /// started again at four where it has four (since 1.18).
+    fn counted(comptime samples: u32) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                const fb = side.fb;
+                const commands = side.commands.?;
+                side.begin(.{ .depth = false });
+                side.end();
+                fb.CmdResetQueryPool(commands, side.queries.?, 0, 1);
+                fb.CmdBeginRenderPass(commands, &.{ .render_pass = side.empty.?, .framebuffer = side.empty_frame.?, .render_area = .{ .extent = .{ .width = side.width, .height = side.height } } }, .@"inline");
+                side.state();
+                fb.CmdBeginQuery(commands, side.queries.?, 0, facet.QUERY_CONTROL_PRECISE);
+                try side.use(.{ .pass = side.empty.?, .samples = samples, .colors = 0 });
+                side.draw(far_at, 3);
+                side.draw(near_at, 3);
+                side.draw(glass_at, 3);
+                fb.CmdEndQuery(commands, side.queries.?, 0);
+                side.end();
+            }
+        }.run;
+    }
+    /// A texture through `throughs[k]`.
+    fn through(comptime k: usize) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                const each = throughs[k];
+                side.begin(.{});
+                side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.sampler_layout.?, 0, 1, @ptrCast(&side.through_sets[k]), 0, null);
+                try side.use(.{ .vertex = each.vertex, .fragment = each.fragment, .layout = side.sampler_layout.? });
+                side.fb.CmdDraw(side.commands.?, 6, 1, each.first, each.instance);
+                side.end();
+            }
+        }.run;
+    }
+    /// A colour pushed, drawn; then its green alone pushed again, by
+    /// four bytes at offset 4, and drawn over another part of the
+    /// picture. Each draw reads what was pushed before it, and the bytes
+    /// not pushed again keep what they were.
+    fn pushed(side: *Side) Failure!void {
+        side.begin(.{});
+        try side.use(.{ .vertex = "place", .fragment = "shipped pushed", .layout = side.push_layout.? });
+        const first = [4]f32{ 0.25, 0.5, 0.75, 1 };
+        side.fb.CmdPushConstants(side.commands.?, side.push_layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 16, &first);
+        side.draw(clockwise_at, 6);
+        const green_only: f32 = 0.125;
+        side.fb.CmdPushConstants(side.commands.?, side.push_layout.?, facet.SHADER_STAGE_FRAGMENT, 4, 4, &green_only);
+        side.draw(glass_at, 3);
+        side.end();
+    }
+    /// The vertices' colour times a tint in a uniform buffer, plus a
+    /// colour in a dynamic one times a float beside it; then the same
+    /// over another part of the picture with the dynamic offset moved on
+    /// to the second block (since 1.28).
+    fn uniformed(side: *Side) Failure!void {
+        side.begin(.{});
+        try side.use(.{ .vertex = "as it is", .fragment = "shipped uniformed", .layout = side.uniform_layout.? });
+        const first = [1]u32{0};
+        side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.uniform_layout.?, 0, 1, @ptrCast(&side.uniform_set), 1, &first);
+        side.draw(clockwise_at, 6);
+        const second = [1]u32{256};
+        side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.uniform_layout.?, 0, 1, @ptrCast(&side.uniform_set), 1, &second);
+        side.draw(glass_at, 3);
+        side.end();
+    }
+    /// A shipped fragment shader that reads binding 0 of `blocks_set`,
+    /// over the geometry the shipped cases draw (since 1.29).
+    fn uniformedBy(comptime fragment: [*:0]const u8) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                side.begin(.{});
+                try side.use(.{ .vertex = "as it is", .fragment = fragment, .layout = side.uniform_layout.? });
+                const first = [1]u32{0};
+                side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.uniform_layout.?, 0, 1, @ptrCast(&side.blocks_set), 1, &first);
+                side.draw(clockwise_at, 6);
+                side.end();
+            }
+        }.run;
+    }
+    /// The vertices' colour times a pushed float, plus a pushed colour.
+    fn tinted(side: *Side) Failure!void {
+        side.begin(.{});
+        try side.use(.{ .vertex = "as it is", .fragment = "shipped tinted", .layout = side.push_layout.? });
+        const values = [5]f32{ 0.125, 0, 0.25, 0, 0.5 };
+        side.fb.CmdPushConstants(side.commands.?, side.push_layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 20, &values);
+        side.draw(clockwise_at, 6);
+        side.end();
+    }
+    /// The texture with half its checks dropped, in front of the far
+    /// triangle and drawn first: the triangle shows where a pixel was
+    /// dropped, and only there. A dropped pixel that wrote its depth
+    /// all the same would hide it.
+    fn cutoutInFront(side: *Side) Failure!void {
+        side.begin(.{});
+        side.sampled();
+        try side.use(.{ .vertex = "texture", .fragment = "shipped cutout", .layout = side.sampler_layout.?, .test_depth = true, .write_depth = true });
+        side.draw(quad_at, 6);
+        try side.use(.{ .test_depth = true, .write_depth = true });
+        side.draw(far_at, 3);
+        side.end();
+    }
     fn missing(side: *Side) Failure!void {
         side.begin(.{});
         try side.use(.{ .vertex = "texture", .fragment = "nearest" });
         side.draw(quad_at, 6);
         side.end();
+    }
+    /// The far and the near triangle, the depth tested, and glass blended
+    /// over them, at four samples a pixel and with the pipelines' sample
+    /// `mask` - all four where null - over `area` of the picture, all of it
+    /// where null: resolved into the first picture as the pass ends, which
+    /// keeps outside the area the clear of a pass before it (since 1.16).
+    fn resolved(comptime area: ?[4]f32, comptime mask: ?u32) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                side.begin(.{ .depth = false });
+                side.end();
+                side.beginFour(true, area);
+                try side.use(.{ .pass = side.resolving.?, .samples = 4, .sample_mask = mask, .test_depth = true, .write_depth = true });
+                side.draw(far_at, 3);
+                side.draw(near_at, 3);
+                try side.use(.{ .pass = side.resolving.?, .samples = 4, .sample_mask = mask, .blend = true });
+                side.draw(glass_at, 3);
+                side.end();
+            }
+        }.run;
+    }
+    /// The far triangle, opaque, and the glass in front of it, its alpha
+    /// 0.4, at four samples with alpha to coverage and no blending, through
+    /// the shipped shader that hands the colour on, which the V3D compiles
+    /// with its FTOC (since 1.17): resolved, a pixel of the glass is the
+    /// average of the samples its alpha covered. Vulkan leaves which those
+    /// are to the implementation - the cores dither them - so two pixels
+    /// one sample apart are the same here, a sample being at most 51 steps
+    /// of a channel of the glass over the blue.
+    fn covered(side: *Side) Failure!void {
+        side.begin(.{ .depth = false });
+        side.end();
+        side.beginFour(true, null);
+        try side.use(.{ .vertex = "as it is", .fragment = "shipped smooth", .pass = side.resolving.?, .samples = 4, .test_depth = true, .write_depth = true, .alpha_to_coverage = true });
+        side.draw(far_at, 3);
+        side.draw(glass_at, 3);
+        side.end();
+    }
+    /// The same over all of the picture in a pass that keeps its four
+    /// samples, resolved into the first picture by CmdResolveImage after a
+    /// barrier that says the colour was written (since 1.16).
+    fn resolvedAfter(side: *Side) Failure!void {
+        const fb = side.fb;
+        side.beginFour(false, null);
+        try side.use(.{ .pass = side.four_alone.?, .samples = 4, .test_depth = true, .write_depth = true });
+        side.draw(far_at, 3);
+        side.draw(near_at, 3);
+        try side.use(.{ .pass = side.four_alone.?, .samples = 4, .blend = true });
+        side.draw(glass_at, 3);
+        side.end();
+        const written = facet.ImageMemoryBarrier{
+            .src_access_mask = facet.ACCESS_COLOR_ATTACHMENT_WRITE,
+            .dst_access_mask = facet.ACCESS_TRANSFER_READ,
+            .old_layout = .transfer_src_optimal,
+            .new_layout = .transfer_src_optimal,
+            .image = side.four.?,
+            .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR },
+        };
+        fb.CmdPipelineBarrier(side.commands.?, facet.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT, facet.PIPELINE_STAGE_TRANSFER, 0, 0, null, 0, null, 1, @ptrCast(&written));
+        const region = facet.ImageResolve{ .extent = .{ .width = side.width, .height = side.height, .depth = 1 } };
+        fb.CmdResolveImage(side.commands.?, side.four.?, .transfer_src_optimal, side.pictures[0].?, .general, 1, @ptrCast(&region));
     }
     fn onTarget(comptime target: Target) *const fn (side: *Side) Failure!void {
         return &struct {
@@ -1870,6 +3705,32 @@ const cases = [_]Case{
     .{ .name = "texture in rgba", .run = Cases.textured("nearest", 1, quad_at) },
     .{ .name = "texture in 565", .run = Cases.textured("nearest 565", 2, quad_at) },
     .{ .name = "texture times colour", .run = &Cases.modulate },
+    .{ .name = "shipped colour", .run = Cases.shipped("as it is", "shipped smooth", false, clockwise_at) },
+    .{ .name = "shipped flat", .run = Cases.shipped("place", "shipped flat", false, clockwise_at) },
+    .{ .name = "shipped dimmed", .run = Cases.shipped("dimmed", "shipped dimmed", false, clockwise_at) },
+    .{ .name = "shipped texture", .run = Cases.shipped("texture", "shipped texture", true, quad_at) },
+    .{ .name = "shipped texture times colour", .run = Cases.shipped("modulate as it is", "shipped modulated", true, quad_at) },
+    .{ .name = "shipped push, pushed again", .run = Cases.pushed },
+    .{ .name = "shipped push times colour", .run = Cases.tinted },
+    .{ .name = "shipped cutout", .run = Cases.shipped("texture", "shipped cutout", true, quad_at) },
+    .{ .name = "shipped cutout the other way", .run = Cases.shipped("texture", "shipped cutout other", true, quad_at) },
+    .{ .name = "shipped cutout in front", .run = Cases.cutoutInFront },
+    .{ .name = "shipped float arithmetic", .run = Cases.shipped("as it is", "shipped arithmetic", false, clockwise_at) },
+    .{ .name = "shipped GLSL.std.450 calls", .run = Cases.shipped("as it is", "shipped called", false, clockwise_at) },
+    .{ .name = "shipped chosen floats", .run = Cases.shipped("as it is", "shipped chosen", false, clockwise_at) },
+    .{ .name = "shipped selections", .run = Cases.shipped("as it is", "shipped branched", false, clockwise_at) },
+    .{ .name = "shipped variables", .run = Cases.shipped("as it is", "shipped unoptimized", false, clockwise_at) },
+    .{ .name = "shipped nested selections", .run = Cases.shipped("as it is", "shipped nested", false, clockwise_at) },
+    .{ .name = "shipped && and ||", .run = Cases.shipped("as it is", "shipped bools", false, clockwise_at) },
+    .{ .name = "shipped selects of selects", .run = Cases.shipped("as it is", "shipped nests", false, clockwise_at) },
+    .{ .name = "shipped selects joined", .run = Cases.shipped("as it is", "shipped joined", false, clockwise_at) },
+    .{ .name = "shipped collapsed selections", .run = Cases.shipped("as it is", "shipped collapsed", false, clockwise_at) },
+    .{ .name = "shipped nested discard", .run = Cases.shipped("as it is", "shipped nested discard", false, clockwise_at) },
+    .{ .name = "shipped uniform buffers", .run = Cases.uniformed },
+    .{ .name = "shipped uniform arrays", .run = Cases.uniformedBy("shipped uniform nested") },
+    .{ .name = "shipped uniform matrix", .run = Cases.uniformedBy("shipped uniform matrix") },
+    .{ .name = "shipped uniform matrices", .run = Cases.uniformedBy("shipped uniform matrices") },
+} ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },
     .{ .name = "drawn in 565", .target = .rgb565, .run = Cases.onTarget(.rgb565) },
@@ -1924,7 +3785,49 @@ const cases = [_]Case{
     .{ .name = "subpasses, second picture", .target = .rgba, .run = &Cases.subpasses },
     .{ .name = "two attachments, first", .run = &Cases.twoColors },
     .{ .name = "two attachments, second", .target = .rgba, .run = &Cases.twoColors },
+    .{ .name = "shadow map, less than a half", .run = Cases.shadowed(false, 0, "whole at a half", "shadow") },
+    .{ .name = "shadow map, greater than 0.6", .run = Cases.shadowed(false, 1, "whole at 0.6", "shadow") },
+    .{ .name = "shadow map, a slope less than a half", .run = Cases.shadowed(true, 0, "whole at a half", "shadow") },
+    // The same through a generated shader, which the V3D compiles
+    // (since 1.15).
+    .{ .name = "shadow map, generated, less than a half", .run = Cases.shadowed(false, 0, "whole at a half", "shipped shadow") },
+    .{ .name = "shadow map, generated, greater than 0.6", .run = Cases.shadowed(false, 1, "whole at 0.6", "shipped shadow") },
+    .{ .name = "shadow map, generated, a slope less than a half", .run = Cases.shadowed(true, 0, "whole at a half", "shipped shadow") },
+    // Four samples a pixel (since 1.16), which the V3D draws since facet
+    // 1.148: resolved in its tiles over all of the picture or over a part
+    // of whole supertiles - at 640 wide, a quarter is five tiles of 32 -
+    // and on the CPU after the pass over any other.
+    .{ .name = "four samples, resolved in the pass", .run = Cases.resolved(null, null) },
+    .{ .name = "four samples, resolved over a part to the edges", .run = Cases.resolved(.{ 0.25, 0, 1, 1 }, null) },
+    .{ .name = "four samples, resolved over a part", .run = Cases.resolved(.{ 0.1, 0.15, 0.7, 0.8 }, null) },
+    .{ .name = "four samples, two of them written", .run = Cases.resolved(null, 0x5) },
+    .{ .name = "four samples, resolved by CmdResolveImage", .run = &Cases.resolvedAfter },
+    .{ .name = "four samples, covered by alpha", .run = &Cases.covered, .slack = 52 },
+    // No colour (since 1.18), which the V3D draws since facet 1.150: a
+    // shadow map drawn in a pass of it alone, and a depth drawn in a
+    // subpass of its own before the colour is, as a pre-pass is.
+    .{ .name = "shadow map alone, less than a half", .run = Cases.shadowedAlone(false, .fixed) },
+    .{ .name = "shadow map alone, a slope less than a half", .run = Cases.shadowedAlone(true, .fixed) },
+    .{ .name = "shadow map alone, generated", .run = Cases.shadowedAlone(false, .shipped) },
+    .{ .name = "shadow map alone, no fragment stage", .run = Cases.shadowedAlone(false, .stageless) },
+    // Drawn again over a part, which keeps the rest (since 1.19).
+    .{ .name = "shadow map alone, drawn again over a part", .run = &Cases.shadowedOverPart },
+    .{ .name = "pre-pass of no colour", .run = Cases.prepassed(false, false, false) },
+    .{ .name = "pre-pass of no colour, no fragment stage", .run = Cases.prepassed(false, true, false) },
+    .{ .name = "pre-pass of no colour, cleared in it", .run = Cases.prepassed(false, false, true) },
+    .{ .name = "pre-pass of an unused colour", .run = Cases.prepassed(true, false, false) },
+    .{ .name = "no fragment stage, in a pass of colour", .run = &Cases.stagelessInColor },
+    // No attachment at all: what is drawn, counted.
+    .{ .name = "no attachment, counted", .run = Cases.counted(1), .counted = true },
+    .{ .name = "no attachment, four samples, counted", .run = Cases.counted(4), .counted = true },
 };
+
+/// A case for each of `throughs`, after the shipped ones.
+fn throughCases() [throughs.len]Case {
+    var made: [throughs.len]Case = undefined;
+    inline for (&made, throughs, 0..) |*into, each, k| into.* = .{ .name = each.label ++ ", " ++ each.what, .run = Cases.through(k), .slack = each.slack };
+    return made;
+}
 
 /// How far apart two pixels are, in the channel furthest apart: in steps of
 /// a channel of 8 bits, or of 565.
@@ -1952,7 +3855,7 @@ fn compare(dl: *DosBase, case: *const Case, cores: *const Side, gpu: *const Side
     const t = @intFromEnum(case.target);
     const bytes: usize = if (case.target == .rgb565) 2 else 4;
     // 565 is dithered on the cores: a step either way is no difference.
-    const slack: u32 = if (case.target == .rgb565) 1 else 2;
+    const slack: u32 = case.slack orelse if (case.target == .rgb565) 1 else 2;
     var wrong: u64 = 0;
     var worst: u32 = 0;
     var first_x: usize = 0;
@@ -2049,8 +3952,27 @@ fn runAll(dl: *DosBase, cores: *Side, gpu: *Side, only: ?[*:0]const u8) Failure!
             side.forgetPipelines();
         }
         if (!compare(dl, case, cores, gpu)) result = dos.RETURN_WARN;
+        if (case.counted and !compareCounts(dl, case, cores, gpu)) result = dos.RETURN_WARN;
     }
     return result;
+}
+
+/// What a case's occlusion query counted on each side: the same within a
+/// sample in 200, or 64, the two rasterizers' edges being their own
+/// (since 1.18).
+fn compareCounts(dl: *DosBase, case: *const Case, cores: *const Side, gpu: *const Side) bool {
+    var tallies: [2]u64 = undefined;
+    for ([2]*const Side{ cores, gpu }, &tallies) |side, *count| {
+        count.* = 0;
+        if (side.fb.GetQueryPoolResults(side.device.?, side.queries.?, 0, 1, @sizeOf(u64), count, @sizeOf(u64), facet.QUERY_RESULT_64 | facet.QUERY_RESULT_WAIT) != .success) {
+            _ = Printf(dl, "%s: no count from a query\n", .{case.name});
+            return false;
+        }
+    }
+    const apart_by = if (tallies[0] > tallies[1]) tallies[0] - tallies[1] else tallies[1] - tallies[0];
+    const like = apart_by <= @max(64, tallies[0] / 200);
+    _ = Printf(dl, "%s: counted %lu on the cores, %lu on the other%s\n", .{ case.name, tallies[0], tallies[1], @as([*:0]const u8, if (like) "" else ", too far apart") });
+    return like;
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {

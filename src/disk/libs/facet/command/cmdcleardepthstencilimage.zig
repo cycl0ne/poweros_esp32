@@ -25,6 +25,9 @@ const Image = @import("../image/_image.zig").Image;
 ///   `s8_uint` or `d16_unorm_s8_uint`, which is not an attachment of the
 ///   pass being recorded: this is a transfer, not a draw.
 /// - `layout` - what the image is in, which this library does not act on.
+///   A `facet.ImageLayout`, as its five sibling commands take (since
+///   1.80; a bare `u32` before, so the layout had to be spelled as a
+///   number here and as a name there).
 /// - `value` - the depth, 0 to 1, as the tiles hold one: 0 nearest, and
 ///   the stencil, a byte, for a format that holds one (since 1.38).
 /// - `range_count`, `ranges` - which levels and layers, by
@@ -62,7 +65,7 @@ const Image = @import("../image/_image.zig").Image;
 ///
 /// NOTES:
 /// This is for a depth or stencil image a render pass stores into
-/// (`PhysicalDeviceFeatures.stored_depth`, `stored_stencil`): it is how
+/// (`Capabilities.stored_depth`, `stored_stencil`): it is how
 /// one is put back to the furthest depth, or to a stencil of its own,
 /// without a pass over it. Where the pass clears its attachment itself
 /// there is nothing for this to do.
@@ -77,9 +80,9 @@ const Image = @import("../image/_image.zig").Image;
 /// ```zig
 /// const value = facet.ClearDepthStencilValue{ .depth = 1 };
 /// const range = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
-/// fb.CmdClearDepthStencilImage(commands, depth.?, 0, &value, 1, @ptrCast(&range));
+/// fb.CmdClearDepthStencilImage(commands, depth.?, .undefined, &value, 1, @ptrCast(&range));
 /// ```
-pub fn CmdClearDepthStencilImage(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, layout: u32, value: *const facet.ClearDepthStencilValue, range_count: u32, ranges: [*]const facet.ImageSubresourceRange) void {
+pub fn CmdClearDepthStencilImage(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, layout: facet.ImageLayout, value: *const facet.ClearDepthStencilValue, range_count: u32, ranges: [*]const facet.ImageSubresourceRange) void {
     _ = base;
     _ = layout;
     const made = _command.recording(buffer) orelse return;

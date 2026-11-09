@@ -24,8 +24,9 @@ const Pool = @import("_descriptor.zig").Pool;
 /// - `pool` - where the pool is written; null when it fails.
 ///
 /// RESULT:
-/// `success`; `error_initialization_failed` for a pool of no sets;
-/// `error_out_of_host_memory`.
+/// `success`; `error_validation_failed` for a pool of no sets
+/// (VUID-VkDescriptorPoolCreateInfo-descriptorPoolOverallocation-09227;
+/// `error_initialization_failed` until 1.134); `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
 /// The pool counts the sets it has given out against `max_sets`. The
@@ -61,7 +62,7 @@ const Pool = @import("_descriptor.zig").Pool;
 pub fn CreateDescriptorPool(base: *FacetBase, device: *facet.Device, info: *const facet.DescriptorPoolCreateInfo, pool: *?*facet.DescriptorPool) facet.Result {
     pool.* = null;
     const owner = _objects.of(Device, device);
-    if (info.max_sets == 0) return .error_initialization_failed;
+    if (info.max_sets == 0) return .error_validation_failed;
     const made = _objects.create(base.sys_base, Pool) orelse return .error_out_of_host_memory;
     made.* = .{ .device = owner, .flags = info.flags, .max_sets = info.max_sets };
     pool.* = _objects.handle(facet.DescriptorPool, made);

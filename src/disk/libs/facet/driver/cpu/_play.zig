@@ -15,7 +15,9 @@
 //!
 //! A tile written into a swapchain's image is handed on to the display
 //! by the part that wrote it (rtg's RefreshRect), as C:test/Cube hands
-//! on its own; into any other image it is handed on to nothing.
+//! on its own; into any other image it is handed on to nothing. A colour
+//! of four samples is handed on as its resolve attachment, which is the
+//! swapchain's image where the program resolves into one (since 1.109).
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -41,6 +43,7 @@ const _transfer = @import("../_transfer.zig");
 const _draw = @import("_draw.zig");
 const _queries = @import("../_queries.zig");
 const _query = @import("../../query/_query.zig");
+const _sync = @import("../../sync/_sync.zig");
 
 pub const VertexBuffer = _vertices.VertexBuffer;
 
@@ -54,7 +57,8 @@ pub const Player = struct {
     /// Inside a render pass that could begin.
     drawing: bool = false,
     /// Where the pass's tiles are handed on to: the display's buffer the
-    /// colour attachment is, or null.
+    /// first colour attachment is - or its resolve attachment, where it
+    /// has one (since 1.109) - or null (`displayOf`).
     display: ?_image.Display = null,
     /// What the draws are drawn with: bound, and set by commands.
     pipeline: ?*Pipeline = null,
@@ -80,8 +84,11 @@ pub const Player = struct {
     /// Whether each colour attachment the part draws has no alpha to
     /// read, which a blend of the destination's alpha takes as 1: one
     /// for each, the first's alone until a subpass draws several
-    /// together (since 1.51).
+    /// together (since 1.51), each at its location (since 1.118).
     target_opaques: [_render.most_colors]bool = @splat(false),
+    /// Which of its subpass's parts is being drawn: a query counts the
+    /// first alone (since 1.116).
+    part: u32 = 0,
     /// Whether the part being drawn reads the colour attachment it draws
     /// into: its fragment functions are given the tile's own pixels for
     /// it (`shader.Fragments.keptAt`, since 1.64).
@@ -101,9 +108,12 @@ pub const Player = struct {
     /// Memory a draw's vertices are worked in, kept for the next.
     scratch: ?[*]u8 = null,
     scratch_bytes: usize = 0,
-    /// The query the work is counted into, between CmdBeginQuery and
-    /// CmdEndQuery; null while nothing counts.
-    query: ?_queries.Counting = null,
+    /// The queries the work is counted into, each between its
+    /// CmdBeginQuery and CmdEndQuery: one of each type that counts, both
+    /// at once (since 1.117).
+    queries: _queries.Active = .{},
+    /// What the pass reaches past its framebuffer's first layer with.
+    layered: Layered = .{},
 
     /// How colour attachment `output` is blended into by `pipeline`: its
     /// own of the pipeline's mixings, with the constants a command set
@@ -174,6 +184,7 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
     var repeat: ?_vertices.Repeat = null;
     while (commands.next()) |head| switch (head.op) {
         .barrier => {},
+        .set_event, .reset_event, .wait_events => _sync.play(queue.device.sys, head),
         .copy_buffer_to_image => copyBufferToImage(_stream.as(_command.CopyBufferToImage, head)),
         .copy_buffer => _vertices.copyBuffer(_stream.as(_command.CopyBuffer, head)),
         .fill_buffer => if (!_vertices.fillBuffer(_stream.as(_command.FillBuffer, head))) noRoom(queue, "a fill of bytes that are not the buffer's"),
@@ -182,6 +193,7 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
         .clear_depth_stencil_image => if (!_transfer.clearDepthImage(_stream.as(_command.ClearDepthStencilImage, head))) noRoom(queue, "a clear of a depth image whose pixels it cannot write"),
         .copy_image => _transfer.copyImage(_stream.as(_command.CopyImage, head)),
         .blit_image => _transfer.blitImage(_stream.as(_command.BlitImage, head)),
+        .resolve_image => _transfer.resolveImage(_stream.as(_command.ResolveImage, head)),
         .copy_image_to_buffer => _transfer.copyImageToBuffer(_stream.as(_command.CopyImageToBuffer, head)),
         .clear_attachment => if (player.drawing) _draw.clearAttachment(queue, _stream.as(_command.ClearAttachment, head)),
         .begin_render_pass => {
@@ -269,22 +281,18 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
             // A pool of another kind, or a query past its last, counts
             // nothing: CmdBeginQuery refuses what it can see while it is
             // recorded, and the rest is said here.
-            player.query = _queries.begun(command);
-            if (player.query == null and command.query >= command.pool.count) noRoom(queue, "a query begun past the pool's last");
+            player.queries.begin(command);
+            if (command.query >= command.pool.count) noRoom(queue, "a query begun past the pool's last");
         },
         .end_query => {
             const command = _stream.as(_command.EndQuery, head);
             _queries.ended(command);
-            if (player.query) |counting| if (counting.pool == command.pool and counting.index == command.query) {
-                player.query = null;
-            };
+            player.queries.end(command.pool, command.query);
         },
         .reset_query_pool => {
             const command = _stream.as(_command.ResetQueryPool, head);
             _query.reset(command.pool, command.first, command.count);
-            if (player.query) |counting| if (counting.pool == command.pool) {
-                player.query = null;
-            };
+            player.queries.forget(command.pool);
         },
         .write_timestamp => {
             const command = _stream.as(_command.WriteTimestamp, head);
@@ -312,29 +320,88 @@ fn restart(player: *Player) void {
     player.compute_pipeline = null;
     player.compute_resources = .{};
     player.drawn = null;
-    player.query = null;
+    player.queries = .{};
 }
 
-/// What the work of a command is counted into: the query begun, or nothing.
+/// What the work of a command is counted into: the queries begun, or
+/// nothing.
 fn countersOf(player: *const Player) *const _query.Counters {
-    return if (player.query) |*counting| &counting.counters else &_query.none;
+    return &player.queries.counters;
 }
+
+/// What a pass reaches past its framebuffer's first layer with (since
+/// 1.91): the part's framebuffer, its colour attachments, the render area
+/// cut to the framebuffer, and which of the depth's planes the pass keeps in
+/// the image. Nothing draws into those layers, so this is all a clear of
+/// them needs.
+pub const Layered = struct {
+    framebuffer: ?*const _render.Target = null,
+    colors: u32 = 0,
+    area: raster.Rect = .{},
+    depth: bool = false,
+    stencil: bool = false,
+};
 
 /// The surface a framebuffer's colour attachment is: its image's memory,
-/// row after row. Null for an image not bound.
+/// row after row, from the layer its view begins at. Null for an image not
+/// bound.
 fn surfaceOf(framebuffer: *const _render.Target, output: u32) ?raster.Surface {
-    const image = framebuffer.colors[output].image;
+    return surfaceAt(framebuffer.colors[output], 0, 0);
+}
+
+/// The surface a part's colour attachment `output` is resolved into, at
+/// the layer its view begins at: its resolve attachment's, or null where
+/// it has none (since 1.109).
+fn resolveOf(framebuffer: *const _render.Target, output: u32) ?raster.Surface {
+    const view = framebuffer.resolves[output] orelse return null;
+    return surfaceAt(view, 0, 0);
+}
+
+/// The display a part's tiles are handed on to, if any: its first colour
+/// attachment's image's, or that attachment's resolve attachment's where
+/// it has one, the tiles writing their averages into it as they are
+/// written back (since 1.109). A swapchain's image is of one sample, so
+/// it is a resolve attachment and never the colour of four. None for a
+/// part of no colour attachment, which shows nothing (since 1.113).
+pub fn displayOf(framebuffer: *const _render.Target) ?_image.Display {
+    if (framebuffer.color_count == 0) return null;
+    const shown = framebuffer.resolves[0] orelse framebuffer.colors[0];
+    return shown.image.display;
+}
+
+/// The same `layer` layers past the one the view begins at. An image kept in
+/// rows has layers since 1.91, and until then this was the image's first
+/// layer whatever its view said: what drew into a view of the second layer
+/// went into the first, the one place the depth's `planeOf` was already
+/// right about. A multisampled image's samples follow sample 0's plane,
+/// a plane each (since 1.103): this is sample `sample`'s, and the tiles
+/// reach those past sample 0's by `sample_bytes` (since 1.104). Of the
+/// level the view names, an image kept in rows having levels since 1.119:
+/// a pass draws into that level's own rows, as llvmpipe maps the level a
+/// surface names, with that level's stride (`init_scene_texture`,
+/// src/gallium/drivers/llvmpipe/lp_scene.c:159-185). In the view's format,
+/// which since 1.131 may be another than its image's, of the same bytes a
+/// pixel: lavapipe makes a surface of the view's format over the image's
+/// resource (`create_img_surface`, src/gallium/frontends/lavapipe/
+/// lvp_execute.c:1506-1518).
+fn surfaceAt(view: *const _image.ImageView, layer: u32, sample: u32) ?raster.Surface {
+    const image = view.image;
+    const data = image.data orelse return null;
+    const plane = @as(usize, sample) * @as(usize, @intCast(image.sample_bytes));
+    const rows = _image.rowsAt(image, view.base_level, view.base_layer + layer);
+    const size = _image.levelSize(image, view.base_level);
     return .{
-        .pixels = image.data orelse return null,
-        .pitch = image.pitch,
-        .width = image.width,
-        .height = image.height,
-        .format = switch (image.format) {
+        .pixels = data + plane + rows.at,
+        .pitch = rows.pitch,
+        .width = size[0],
+        .height = size[1],
+        .format = switch (view.format) {
             .b8g8r8a8_unorm => .bgra32,
             .r8g8b8a8_unorm => .rgba32,
             .r5g6b5_unorm_pack16 => .rgb565,
             else => unreachable,
         },
+        .sample_bytes = @intCast(image.sample_bytes),
     };
 }
 
@@ -342,8 +409,17 @@ fn surfaceOf(framebuffer: *const _render.Target, output: u32) ?raster.Surface {
 /// pixel, or its stencil, wherever that lies in the pixel's bytes
 /// (`_image.stencilOffset`). Null where there is nothing in memory to read
 /// or write.
-fn planeOf(view: ?*const _image.ImageView, which: enum { depth, stencil }) ?raster.Attachments.Plane {
-    const held = view orelse return null;
+fn planeOf(view: ?*const _image.ImageView, which: Aspect) ?raster.Attachments.Plane {
+    return planeAt(view orelse return null, which, 0, 0);
+}
+
+const Aspect = enum { depth, stencil };
+
+/// The same `layer` layers past the one the view begins at (since 1.91),
+/// in sample `sample`'s plane of a multisampled image, laid out as a
+/// colour image's are (since 1.104); the tiles reach those past sample
+/// 0's by `sample_bytes` (since 1.105).
+fn planeAt(held: *const _image.ImageView, which: Aspect, layer: u32, sample: u32) ?raster.Attachments.Plane {
     const image = held.image;
     const format = image.format;
     const stride = _image.bytesOf(format);
@@ -356,16 +432,128 @@ fn planeOf(view: ?*const _image.ImageView, which: enum { depth, stencil }) ?rast
     // The level and the layer the view names, a depth image having layers
     // since 1.58 and levels since 1.63: a pass draws into the ones its
     // framebuffer's view begins at, in that level's own rows.
-    const rows = _image.rowsAt(image, held.base_level, held.base_layer);
-    return .{ .pixels = data + rows.at + at, .pitch = rows.pitch, .stride = stride };
+    const rows = _image.rowsAt(image, held.base_level, held.base_layer + layer);
+    const plane = @as(usize, sample) * @as(usize, @intCast(image.sample_bytes));
+    return .{ .pixels = data + plane + rows.at + at, .pitch = rows.pitch, .stride = stride, .sample_bytes = @intCast(image.sample_bytes) };
 }
 
-fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, output: u32) void {
+/// The layers of a framebuffer past its first, cleared as a part begins where
+/// an attachment's load op clears (since 1.91). Nothing draws into them -
+/// Vulkan 1.0 has only a geometry shader's `Layer` to pick one, and no device
+/// here has a geometry shader - so the clear is all the pass does to them,
+/// and it goes straight into the image's rows rather than through the
+/// tiles. This is Mesa's lavapipe: `render_clear` (lvp_execute.c) clears a
+/// surface over every layer of the view the framebuffer has before anything
+/// is drawn. What is written is what a tile cleared and stored leaves
+/// (`raster.fillSurface`), so the first layer and the rest of a framebuffer
+/// cleared alike are the same bytes, a 565 one dithered and all.
+///
+/// A depth or a stencil is written where the part keeps it in the image and
+/// does not load it, which is the one case its other layers outlive the pass
+/// with something defined in them.
+///
+/// A multisampled image's layers are cleared in every sample's plane (since
+/// 1.104; until then in the first alone), as llvmpipe clears a surface of
+/// more than one sample a sample at a time (`llvmpipe_clear_render_target`,
+/// lp_surface.c:356-368; `llvmpipe_clear_depth_stencil`, :429-442).
+fn clearLayers(layered: Layered, part: *const _render.Part, command: *const _command.BeginRenderPass, first_clear: u32) void {
+    const framebuffer = layered.framebuffer orelse return;
+    if (framebuffer.layers <= 1) return;
+    for (0..layered.colors) |k| {
+        if (part.color_loads[k] != .clear) continue;
+        const color = command.clear_colors[@min(first_clear + k, _render.most_colors - 1)];
+        const held = framebuffer.colors[k];
+        for (1..framebuffer.layers) |layer| for (0..held.image.samples) |sample| {
+            const surface = surfaceAt(held, @intCast(layer), @intCast(sample)) orelse break;
+            raster.fillSurface(surface, layered.area, color);
+        };
+    }
+    const view = framebuffer.depth orelse return;
+    const clears_depth = layered.depth and part.stores_depth and !part.loads_depth;
+    const clears_stencil = layered.stencil and part.stores_stencil and !part.loads_stencil;
+    if (!clears_depth and !clears_stencil) return;
+    for (1..framebuffer.layers) |layer| for (0..view.image.samples) |sample| {
+        const at: u32 = @intCast(layer);
+        const plane_of: u32 = @intCast(sample);
+        if (clears_depth) if (planeAt(view, .depth, at, plane_of)) |plane| raster.fillDepth(plane, layered.area, @intCast(command.clear_depth));
+        if (clears_stencil) if (planeAt(view, .stencil, at, plane_of)) |plane| raster.fillStencil(plane, layered.area, @intCast(command.clear_stencil));
+    };
+}
+
+/// The layers of a framebuffer past its first resolved as a part ends
+/// (since 1.109): each colour attachment that has a resolve attachment,
+/// its samples averaged into it over the render area, as the tiles
+/// resolve the first. No tile reaches those layers, so they are resolved
+/// from what the image's rows hold by then - what the part's load ops and
+/// clears left there (`clearLayers`, `clearRectangle`). lavapipe resolves
+/// every layer of the framebuffer (`resolve_color`, lvp_execute.c:1809).
+fn resolveLayers(layered: Layered) void {
+    const framebuffer = layered.framebuffer orelse return;
+    for (0..layered.colors) |k| {
+        const into = framebuffer.resolves[k] orelse continue;
+        for (1..framebuffer.layers) |layer| {
+            const from = surfaceAt(framebuffer.colors[k], @intCast(layer), 0) orelse break;
+            const resolve = surfaceAt(into, @intCast(layer), 0) orelse break;
+            raster.resolveSurface(from, resolve, layered.area);
+        }
+    }
+}
+
+/// CmdClearAttachments' rectangle, over the layers it names past the
+/// framebuffer's first (since 1.91): the first is in the tiles and cleared by
+/// drawing (`_draw.clearAttachment`), and these are in the image's rows and
+/// cleared in them, as `clearLayers` clears them for a load op. Layers past
+/// the framebuffer's last are left alone, as is what lies outside the render
+/// area, which the tiles never reach either. lavapipe's
+/// `handle_clear_attachments` is the same over `clear_attachment_layers`.
+/// A multisampled image's layers are cleared in every sample's plane, as
+/// `clearLayers` clears them (since 1.104).
+pub fn clearRectangle(player: *const Player, command: *const _command.ClearAttachment) void {
+    const layered = player.layered;
+    const framebuffer = layered.framebuffer orelse return;
+    const first = @max(command.base_layer, 1);
+    const end = @min(command.base_layer +| command.layer_count, framebuffer.layers);
+    if (first >= end) return;
+    const rect = command.rect;
+    const area = layered.area;
+    const left: u32 = @intCast(std.math.clamp(@as(i64, rect.offset.x), area.x, area.x + area.width));
+    const top: u32 = @intCast(std.math.clamp(@as(i64, rect.offset.y), area.y, area.y + area.height));
+    const right: u32 = @intCast(std.math.clamp(@as(i64, rect.offset.x) + rect.extent.width, left, area.x + area.width));
+    const bottom: u32 = @intCast(std.math.clamp(@as(i64, rect.offset.y) + rect.extent.height, top, area.y + area.height));
+    if (left == right or top == bottom) return;
+    const cut = raster.Rect{ .x = left, .y = top, .width = right - left, .height = bottom - top };
+    const aspect = command.aspect_mask;
+    // The colour of this part's own attachment, as the tiles' clear masks
+    // every other one out.
+    const color = aspect & facet.IMAGE_ASPECT_COLOR != 0 and command.output == player.resources.output and layered.colors != 0;
+    const depth = aspect & facet.IMAGE_ASPECT_DEPTH != 0 and layered.depth;
+    const stencil = aspect & facet.IMAGE_ASPECT_STENCIL != 0 and layered.stencil;
+    for (first..end) |layer| {
+        const at: u32 = @intCast(layer);
+        if (color) {
+            const held = framebuffer.colors[0];
+            for (0..held.image.samples) |sample| {
+                if (surfaceAt(held, at, @intCast(sample))) |surface| raster.fillSurface(surface, cut, command.color);
+            }
+        }
+        const view = framebuffer.depth orelse continue;
+        for (0..view.image.samples) |sample| {
+            const plane_of: u32 = @intCast(sample);
+            if (depth) if (planeAt(view, .depth, at, plane_of)) |plane| raster.fillDepth(plane, cut, _render.depthOf(.{ .depth = command.depth, .stencil = 0 }));
+            if (stencil) if (planeAt(view, .stencil, at, plane_of)) |plane| raster.fillStencil(plane, cut, @truncate(command.stencil));
+        }
+    }
+}
+
+fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part: u32) void {
     const player = playerOf(queue);
     endRenderPass(player);
-    player.resources.output = output;
-    const framebuffer = &command.targets[output];
-    const render_pass = &command.parts[output];
+    player.part = part;
+    const framebuffer = &command.targets[part];
+    const render_pass = &command.parts[part];
+    // The location its first colour is written at: its part's number,
+    // unless a colour before it is unused and has none (since 1.118).
+    player.resources.output = render_pass.output;
     // A surface for each colour attachment the part draws: the one it
     // usually has, and all of a subpass's where they go together
     // (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, since 1.51).
@@ -374,13 +562,14 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, outp
     for (0..colors) |k| surfaces[k] = surfaceOf(framebuffer, @intCast(k)) orelse return;
     // The clears are the subpass's, in the order its parts draw them, so
     // this part's begin after the colours of the parts before it: that is
-    // `output` where the subpass is played again for each of them, and 0
+    // `part` where the subpass is played again for each of them, and 0
     // where its one part draws them all.
     var first_clear: u32 = 0;
-    for (command.parts[0..output]) |before| first_clear += before.color_count;
-    // Each attachment says for itself whether it has an alpha to read.
+    for (command.parts[0..part]) |before| first_clear += before.color_count;
+    // Each attachment says for itself whether it has an alpha to read, at
+    // the location a blend asks for it by.
     player.target_opaques = @splat(false);
-    for (surfaces[0..colors], 0..) |each, k| player.target_opaques[k] = each.format == .rgb565;
+    for (surfaces[0..colors], 0..) |each, k| player.target_opaques[@min(render_pass.output + k, _render.most_colors - 1)] = each.format == .rgb565;
     // What the subpass reads of what it draws (since 1.64).
     player.reads_target = render_pass.reads_target;
     // The render area, cut to the framebuffer.
@@ -400,8 +589,13 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, outp
     const plane: ?raster.Attachments.Plane = if (keeps_depth) planeOf(framebuffer.depth, .depth) else null;
     const stencil_plane: ?raster.Attachments.Plane = if (keeps_stencil) planeOf(framebuffer.depth, .stencil) else null;
     var attachments = raster.Attachments{
-        .color = .{ .load = if (render_pass.color_loads[0] == .clear) .clear else .keep, .clear = command.clear_colors[@min(first_clear, _render.most_colors - 1)] },
+        .color = .{
+            .load = if (render_pass.color_loads[0] == .clear) .clear else .keep,
+            .clear = command.clear_colors[@min(first_clear, _render.most_colors - 1)],
+            .resolve = resolveOf(framebuffer, 0),
+        },
         .color_count = colors,
+        .samples = render_pass.samples,
         .depth = .{
             .used = render_pass.tests_depth,
             .clear = @intCast(command.clear_depth),
@@ -418,12 +612,13 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, outp
         },
     };
     // Those past the first: the subpass's own clears, in the order its
-    // part draws them.
-    for (1..colors) |k| attachments.more[k - 1] = .{
+    // part draws them - none in a subpass of none (since 1.113).
+    for (1..@max(colors, 1)) |k| attachments.more[k - 1] = .{
         .load = if (render_pass.color_loads[k] == .clear) .clear else .keep,
         .clear = command.clear_colors[@min(first_clear + k, _render.most_colors - 1)],
+        .resolve = resolveOf(framebuffer, @intCast(k)),
     };
-    player.display = framebuffer.colors[0].image.display;
+    player.display = displayOf(framebuffer);
     if (player.target) |*target| {
         target.moveToAll(surfaces[0..colors], area, attachments) catch return;
     } else {
@@ -432,6 +627,15 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, outp
     player.target.?.begin();
     player.drawn = null;
     player.drawing = true;
+    // The framebuffer's other layers, which no tile reaches (since 1.91).
+    player.layered = .{
+        .framebuffer = framebuffer,
+        .colors = colors,
+        .area = area,
+        .depth = plane != null,
+        .stencil = stencil_plane != null,
+    };
+    clearLayers(player.layered, render_pass, command, first_clear);
 }
 
 fn endRenderPass(player: *Player) void {
@@ -439,6 +643,8 @@ fn endRenderPass(player: *Player) void {
     player.drawing = false;
     player.drawn = null;
     _ = player.target.?.finish();
+    resolveLayers(player.layered);
+    player.layered = .{};
 }
 
 /// What the queue's target is given of the system: exec's workers and

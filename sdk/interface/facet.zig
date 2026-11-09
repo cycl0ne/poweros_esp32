@@ -144,6 +144,24 @@ pub const LVO = struct {
     pub const GetDeviceMemoryCommitment = libraries.lvo(127);
     pub const CmdSetDepthBounds = libraries.lvo(128);
     pub const CmdSetBlendConstantsAt = libraries.lvo(129);
+    pub const CmdResolveImage = libraries.lvo(130);
+    pub const FlushMappedMemoryRanges = libraries.lvo(131);
+    pub const InvalidateMappedMemoryRanges = libraries.lvo(132);
+    pub const GetPhysicalDeviceSparseImageFormatProperties = libraries.lvo(133);
+    pub const GetImageSparseMemoryRequirements = libraries.lvo(134);
+    pub const QueueBindSparse = libraries.lvo(135);
+    pub const CreateEvent = libraries.lvo(136);
+    pub const DestroyEvent = libraries.lvo(137);
+    pub const GetEventStatus = libraries.lvo(138);
+    pub const SetEvent = libraries.lvo(139);
+    pub const ResetEvent = libraries.lvo(140);
+    pub const CmdSetEvent = libraries.lvo(141);
+    pub const CmdResetEvent = libraries.lvo(142);
+    pub const CmdWaitEvents = libraries.lvo(143);
+    pub const CreatePipelineCache = libraries.lvo(144);
+    pub const DestroyPipelineCache = libraries.lvo(145);
+    pub const GetPipelineCacheData = libraries.lvo(146);
+    pub const MergePipelineCaches = libraries.lvo(147);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -266,7 +284,7 @@ pub const Fn = struct {
     pub const CmdResetQueryPool = *const fn (*FacetBase, *facet.CommandBuffer, *facet.QueryPool, u32, u32) callconv(.c) void;
     pub const CmdWriteTimestamp = *const fn (*FacetBase, *facet.CommandBuffer, u32, *facet.QueryPool, u32) callconv(.c) void;
     pub const CmdCopyQueryPoolResults = *const fn (*FacetBase, *facet.CommandBuffer, *facet.QueryPool, u32, u32, *facet.Buffer, u64, u64, u32) callconv(.c) void;
-    pub const CmdClearDepthStencilImage = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Image, u32, *const facet.ClearDepthStencilValue, u32, [*]const facet.ImageSubresourceRange) callconv(.c) void;
+    pub const CmdClearDepthStencilImage = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Image, facet.ImageLayout, *const facet.ClearDepthStencilValue, u32, [*]const facet.ImageSubresourceRange) callconv(.c) void;
     pub const CreateBufferView = *const fn (*FacetBase, *facet.Device, *const facet.BufferViewCreateInfo, *?*facet.BufferView) callconv(.c) facet.Result;
     pub const DestroyBufferView = *const fn (*FacetBase, *facet.Device, ?*facet.BufferView) callconv(.c) void;
     pub const CmdSetDepthBias = *const fn (*FacetBase, *facet.CommandBuffer, f32, f32, f32) callconv(.c) void;
@@ -275,6 +293,24 @@ pub const Fn = struct {
     pub const GetDeviceMemoryCommitment = *const fn (*FacetBase, *facet.Device, *facet.DeviceMemory, *u64) callconv(.c) void;
     pub const CmdSetDepthBounds = *const fn (*FacetBase, *facet.CommandBuffer, f32, f32) callconv(.c) void;
     pub const CmdSetBlendConstantsAt = *const fn (*FacetBase, *facet.CommandBuffer, u32, *const [4]f32) callconv(.c) void;
+    pub const CmdResolveImage = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Image, facet.ImageLayout, *facet.Image, facet.ImageLayout, u32, [*]const facet.ImageResolve) callconv(.c) void;
+    pub const FlushMappedMemoryRanges = *const fn (*FacetBase, *facet.Device, u32, [*]const facet.MappedMemoryRange) callconv(.c) facet.Result;
+    pub const InvalidateMappedMemoryRanges = *const fn (*FacetBase, *facet.Device, u32, [*]const facet.MappedMemoryRange) callconv(.c) facet.Result;
+    pub const GetPhysicalDeviceSparseImageFormatProperties = *const fn (*FacetBase, *facet.PhysicalDevice, facet.Format, facet.ImageType, u32, u32, facet.ImageTiling, *u32, ?[*]facet.SparseImageFormatProperties) callconv(.c) void;
+    pub const GetImageSparseMemoryRequirements = *const fn (*FacetBase, *facet.Device, *facet.Image, *u32, ?[*]facet.SparseImageMemoryRequirements) callconv(.c) void;
+    pub const QueueBindSparse = *const fn (*FacetBase, *facet.Queue, u32, ?[*]const facet.BindSparseInfo, ?*facet.Fence) callconv(.c) facet.Result;
+    pub const CreateEvent = *const fn (*FacetBase, *facet.Device, *const facet.EventCreateInfo, *?*facet.Event) callconv(.c) facet.Result;
+    pub const DestroyEvent = *const fn (*FacetBase, *facet.Device, ?*facet.Event) callconv(.c) void;
+    pub const GetEventStatus = *const fn (*FacetBase, *facet.Device, *facet.Event) callconv(.c) facet.Result;
+    pub const SetEvent = *const fn (*FacetBase, *facet.Device, *facet.Event) callconv(.c) facet.Result;
+    pub const ResetEvent = *const fn (*FacetBase, *facet.Device, *facet.Event) callconv(.c) facet.Result;
+    pub const CmdSetEvent = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Event, u32) callconv(.c) void;
+    pub const CmdResetEvent = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Event, u32) callconv(.c) void;
+    pub const CmdWaitEvents = *const fn (*FacetBase, *facet.CommandBuffer, u32, [*]const *facet.Event, u32, u32, u32, ?[*]const facet.MemoryBarrier, u32, ?[*]const facet.BufferMemoryBarrier, u32, ?[*]const facet.ImageMemoryBarrier) callconv(.c) void;
+    pub const CreatePipelineCache = *const fn (*FacetBase, *facet.Device, *const facet.PipelineCacheCreateInfo, *?*facet.PipelineCache) callconv(.c) facet.Result;
+    pub const DestroyPipelineCache = *const fn (*FacetBase, *facet.Device, ?*facet.PipelineCache) callconv(.c) void;
+    pub const GetPipelineCacheData = *const fn (*FacetBase, *facet.Device, *facet.PipelineCache, *usize, ?*anyopaque) callconv(.c) facet.Result;
+    pub const MergePipelineCaches = *const fn (*FacetBase, *facet.Device, *facet.PipelineCache, u32, [*]const *facet.PipelineCache) callconv(.c) facet.Result;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -887,7 +923,7 @@ pub const FacetBase = opaque {
     }
 
     /// Recorded: the levels of a depth image set to a depth and a stencil.
-    pub fn CmdClearDepthStencilImage(self: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, layout: u32, value: *const facet.ClearDepthStencilValue, range_count: u32, ranges: [*]const facet.ImageSubresourceRange) void {
+    pub fn CmdClearDepthStencilImage(self: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, layout: facet.ImageLayout, value: *const facet.ClearDepthStencilValue, range_count: u32, ranges: [*]const facet.ImageSubresourceRange) void {
         return libraries.call(self, LVO.CmdClearDepthStencilImage, Fn.CmdClearDepthStencilImage, .{ buffer, image, layout, value, range_count, ranges });
     }
 
@@ -932,5 +968,104 @@ pub const FacetBase = opaque {
     /// set a pipeline shares between them.
     pub fn CmdSetBlendConstantsAt(self: *FacetBase, buffer: *facet.CommandBuffer, attachment: u32, constants: *const [4]f32) void {
         return libraries.call(self, LVO.CmdSetBlendConstantsAt, Fn.CmdSetBlendConstantsAt, .{ buffer, attachment, constants });
+    }
+
+    /// Recorded: the samples of a multisampled image averaged into an image of
+    /// one sample, rectangle by rectangle.
+    pub fn CmdResolveImage(self: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageResolve) void {
+        return libraries.call(self, LVO.CmdResolveImage, Fn.CmdResolveImage, .{ buffer, source, source_layout, destination, destination_layout, region_count, regions });
+    }
+
+    /// What the host wrote through a mapping, in `ranges`, made the device's to
+    /// read: nothing to do, every memory type being coherent.
+    pub fn FlushMappedMemoryRanges(self: *FacetBase, device: *facet.Device, range_count: u32, ranges: [*]const facet.MappedMemoryRange) facet.Result {
+        return libraries.call(self, LVO.FlushMappedMemoryRanges, Fn.FlushMappedMemoryRanges, .{ device, range_count, ranges });
+    }
+
+    /// What the device wrote, in `ranges`, made the host's to read through its
+    /// mapping: nothing to do, every memory type being coherent.
+    pub fn InvalidateMappedMemoryRanges(self: *FacetBase, device: *facet.Device, range_count: u32, ranges: [*]const facet.MappedMemoryRange) facet.Result {
+        return libraries.call(self, LVO.InvalidateMappedMemoryRanges, Fn.InvalidateMappedMemoryRanges, .{ device, range_count, ranges });
+    }
+
+    /// The blocks a sparse image of a format, type, sample count, usage and
+    /// tiling would be bound in: none, no device having a sparse image.
+    pub fn GetPhysicalDeviceSparseImageFormatProperties(self: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, image_type: facet.ImageType, samples: u32, usage: u32, tiling: facet.ImageTiling, count: *u32, properties: ?[*]facet.SparseImageFormatProperties) void {
+        return libraries.call(self, LVO.GetPhysicalDeviceSparseImageFormatProperties, Fn.GetPhysicalDeviceSparseImageFormatProperties, .{ physical, format, image_type, samples, usage, tiling, count, properties });
+    }
+
+    /// What binding an image sparsely asks of memory: nothing, no image being
+    /// sparse.
+    pub fn GetImageSparseMemoryRequirements(self: *FacetBase, device: *facet.Device, image: *facet.Image, count: *u32, requirements: ?[*]facet.SparseImageMemoryRequirements) void {
+        return libraries.call(self, LVO.GetImageSparseMemoryRequirements, Fn.GetImageSparseMemoryRequirements, .{ device, image, count, requirements });
+    }
+
+    /// Memory bound to sparse buffers and images, in batches, by the queue:
+    /// refused, no queue family binding sparse memory.
+    pub fn QueueBindSparse(self: *FacetBase, queue: *facet.Queue, count: u32, binds: ?[*]const facet.BindSparseInfo, fence: ?*facet.Fence) facet.Result {
+        return libraries.call(self, LVO.QueueBindSparse, Fn.QueueBindSparse, .{ queue, count, binds, fence });
+    }
+
+    /// An event, reset: set by the host or by a queue's work, and waited for by
+    /// a queue's work.
+    pub fn CreateEvent(self: *FacetBase, device: *facet.Device, info: *const facet.EventCreateInfo, event: *?*facet.Event) facet.Result {
+        return libraries.call(self, LVO.CreateEvent, Fn.CreateEvent, .{ device, info, event });
+    }
+
+    /// The event given back.
+    pub fn DestroyEvent(self: *FacetBase, device: *facet.Device, event: ?*facet.Event) void {
+        return libraries.call(self, LVO.DestroyEvent, Fn.DestroyEvent, .{ device, event });
+    }
+
+    /// Whether an event is set, without waiting: `event_set` or `event_reset`.
+    pub fn GetEventStatus(self: *FacetBase, device: *facet.Device, event: *facet.Event) facet.Result {
+        return libraries.call(self, LVO.GetEventStatus, Fn.GetEventStatus, .{ device, event });
+    }
+
+    /// The event set by the host.
+    pub fn SetEvent(self: *FacetBase, device: *facet.Device, event: *facet.Event) facet.Result {
+        return libraries.call(self, LVO.SetEvent, Fn.SetEvent, .{ device, event });
+    }
+
+    /// The event reset by the host.
+    pub fn ResetEvent(self: *FacetBase, device: *facet.Device, event: *facet.Event) facet.Result {
+        return libraries.call(self, LVO.ResetEvent, Fn.ResetEvent, .{ device, event });
+    }
+
+    /// Recorded: the event set once the work before it is done.
+    pub fn CmdSetEvent(self: *FacetBase, buffer: *facet.CommandBuffer, event: *facet.Event, stage_mask: u32) void {
+        return libraries.call(self, LVO.CmdSetEvent, Fn.CmdSetEvent, .{ buffer, event, stage_mask });
+    }
+
+    /// Recorded: the event reset once the work before it is done.
+    pub fn CmdResetEvent(self: *FacetBase, buffer: *facet.CommandBuffer, event: *facet.Event, stage_mask: u32) void {
+        return libraries.call(self, LVO.CmdResetEvent, Fn.CmdResetEvent, .{ buffer, event, stage_mask });
+    }
+
+    /// Recorded: the work after it waits until each of the events is set.
+    pub fn CmdWaitEvents(self: *FacetBase, buffer: *facet.CommandBuffer, event_count: u32, events: [*]const *facet.Event, src_stage_mask: u32, dst_stage_mask: u32, memory_barrier_count: u32, memory_barriers: ?[*]const facet.MemoryBarrier, buffer_barrier_count: u32, buffer_barriers: ?[*]const facet.BufferMemoryBarrier, image_barrier_count: u32, image_barriers: ?[*]const facet.ImageMemoryBarrier) void {
+        return libraries.call(self, LVO.CmdWaitEvents, Fn.CmdWaitEvents, .{ buffer, event_count, events, src_stage_mask, dst_stage_mask, memory_barrier_count, memory_barriers, buffer_barrier_count, buffer_barriers, image_barrier_count, image_barriers });
+    }
+
+    /// A pipeline cache: what pipelines are made faster with the next time,
+    /// and what GetPipelineCacheData hands out to keep for another run.
+    pub fn CreatePipelineCache(self: *FacetBase, device: *facet.Device, info: *const facet.PipelineCacheCreateInfo, cache: *?*facet.PipelineCache) facet.Result {
+        return libraries.call(self, LVO.CreatePipelineCache, Fn.CreatePipelineCache, .{ device, info, cache });
+    }
+
+    /// The pipeline cache given back.
+    pub fn DestroyPipelineCache(self: *FacetBase, device: *facet.Device, cache: ?*facet.PipelineCache) void {
+        return libraries.call(self, LVO.DestroyPipelineCache, Fn.DestroyPipelineCache, .{ device, cache });
+    }
+
+    /// What a pipeline cache holds, as bytes to keep and give to another
+    /// CreatePipelineCache: Vulkan's header of 32 bytes, and nothing after it.
+    pub fn GetPipelineCacheData(self: *FacetBase, device: *facet.Device, cache: *facet.PipelineCache, size: *usize, data: ?*anyopaque) facet.Result {
+        return libraries.call(self, LVO.GetPipelineCacheData, Fn.GetPipelineCacheData, .{ device, cache, size, data });
+    }
+
+    /// What `sources` hold put into `destination`: nothing, none holding any.
+    pub fn MergePipelineCaches(self: *FacetBase, device: *facet.Device, destination: *facet.PipelineCache, count: u32, sources: [*]const *facet.PipelineCache) facet.Result {
+        return libraries.call(self, LVO.MergePipelineCaches, Fn.MergePipelineCaches, .{ device, destination, count, sources });
     }
 };

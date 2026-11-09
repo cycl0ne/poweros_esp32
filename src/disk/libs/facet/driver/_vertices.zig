@@ -241,10 +241,16 @@ pub fn bindDescriptorSets(resources: *shader.Resources, command: *const _command
         resources.sets[at] = &set.view;
         // Each dynamic buffer descriptor of the set takes the next
         // offset, in the order its bindings run; one not given is 0, so
-        // the descriptor is read from where its write left it.
+        // the descriptor is read from where its write left it. Its range
+        // moves with it, and an offset that takes the range past its
+        // buffer (VUID-vkCmdBindDescriptorSets-pDynamicOffsets-01971)
+        // leaves it reading as not written (since 1.160).
         resources.offsets[at] = @splat(0);
         for (0..set.dynamic_count) |k| {
-            if (k < shader.MAX_DYNAMIC_OFFSETS) resources.offsets[at][k] = if (taken < offsets.len) offsets[taken] else 0;
+            if (k < shader.MAX_DYNAMIC_OFFSETS) {
+                const offset = if (taken < offsets.len) offsets[taken] else 0;
+                resources.offsets[at][k] = if (offset > set.rooms[k]) shader.SHIFTED_OUT else offset;
+            }
             taken += 1;
         }
     }
@@ -319,6 +325,53 @@ pub fn mostCorners(topology: facet.PrimitiveTopology, count: u32) usize {
     };
 }
 
+/// The vertices one primitive takes, which is how many corners
+/// `assemble` writes for it: one for a point, two for a line, three for a
+/// triangle, and a patch's own control points for a patch.
+///
+/// `VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT` counts
+/// *primitives*, so the corners `assemble` made are divided by this and
+/// not by three: a point list of ten points assembles ten corners and is
+/// ten primitives, and a line list of five lines assembles ten corners
+/// and is five. `patch_points` is `Pipeline.Tessellated.points`, or 0
+/// where the pipeline tessellates nothing - a `patch_list` drawn without
+/// a tessellation stage has no patch size to divide by, so one vertex is
+/// taken to be one primitive.
+pub fn cornersPerPrimitive(topology: facet.PrimitiveTopology, patch_points: u32) u32 {
+    return switch (topology) {
+        .point_list => 1,
+        .line_list, .line_strip => 2,
+        .patch_list => @max(1, patch_points),
+        else => 3,
+    };
+}
+
+test "the corners a primitive takes: what assemble writes, divided back" {
+    const testing = @import("std").testing;
+    // Exactly `assemble`'s own shape, topology by topology: what it
+    // writes for n primitives, divided by this, is n again.
+    try testing.expectEqual(@as(u32, 1), cornersPerPrimitive(.point_list, 0));
+    try testing.expectEqual(@as(u32, 2), cornersPerPrimitive(.line_list, 0));
+    try testing.expectEqual(@as(u32, 2), cornersPerPrimitive(.line_strip, 0));
+    try testing.expectEqual(@as(u32, 3), cornersPerPrimitive(.triangle_list, 0));
+    try testing.expectEqual(@as(u32, 3), cornersPerPrimitive(.triangle_strip, 0));
+    try testing.expectEqual(@as(u32, 3), cornersPerPrimitive(.triangle_fan, 0));
+    try testing.expectEqual(@as(u32, 4), cornersPerPrimitive(.patch_list, 4));
+    try testing.expectEqual(@as(u32, 1), cornersPerPrimitive(.patch_list, 0));
+    // And held against `mostCorners`, which is the same rule counted the
+    // other way round: n primitives' worth of vertices assembles n
+    // primitives. A strip is the exception by construction - its corners
+    // are shared - so it is counted from what it assembles, not from
+    // `count`.
+    for ([_]facet.PrimitiveTopology{ .point_list, .line_list, .triangle_list }) |topology| {
+        const per = cornersPerPrimitive(topology, 0);
+        for (1..7) |n| {
+            const vertices: u32 = @intCast(n * per);
+            try testing.expectEqual(n, mostCorners(topology, vertices) / per);
+        }
+    }
+}
+
 /// Whether a pipeline's draws come to something other than filled triangles.
 pub fn widens(pipeline: *const Pipeline) bool {
     return switch (pipeline.drawn_topology) {
@@ -364,7 +417,15 @@ const nearest_w: f32 = 1.0 / 65536.0;
 
 /// The most floats a vertex carries `widen` can work with: a position and
 /// `shader`'s varyings.
-const most_stride = 64;
+/// The floats a widened vertex carries: its position and its varyings,
+/// from the SDK's own cap so that this cannot fall behind
+/// `PhysicalDeviceLimits.max_vertex_output_components`. It was a bare 64
+/// until 1.90, which was 4 + 60 and so four short of the 64 varyings now
+/// reported - and `widen` below answers a stride past this with an
+/// all-zero `Wide`, which draws *nothing* and says nothing, on both
+/// devices. Item 17 of docs/facet-vulkan10.md names it the one way that
+/// item could have shipped looking done.
+const most_stride = 4 + shader.MAX_VARYINGS;
 
 /// What `widen` writes to.
 const Widening = struct {

@@ -261,7 +261,7 @@ void CmdWriteTimestamp(*facet.CommandBuffer buffer, u32 stage, *facet.QueryPool 
 /// Recorded: the queries' values written into a buffer, as GetQueryPoolResults gives them.
 void CmdCopyQueryPoolResults(*facet.CommandBuffer buffer, *facet.QueryPool pool, u32 first, u32 count, *facet.Buffer destination, u64 offset, u64 stride, u32 flags)
 /// Recorded: the levels of a depth image set to a depth and a stencil.
-void CmdClearDepthStencilImage(*facet.CommandBuffer buffer, *facet.Image image, u32 layout, *const facet.ClearDepthStencilValue value, u32 range_count, [*]const facet.ImageSubresourceRange ranges)
+void CmdClearDepthStencilImage(*facet.CommandBuffer buffer, *facet.Image image, facet.ImageLayout layout, *const facet.ClearDepthStencilValue value, u32 range_count, [*]const facet.ImageSubresourceRange ranges)
 /// A range of a buffer read as texels of a format.
 facet.Result CreateBufferView(*facet.Device device, *const facet.BufferViewCreateInfo info, *?*facet.BufferView view)
 /// A buffer view given back; null does nothing.
@@ -281,4 +281,49 @@ void CmdSetDepthBounds(*facet.CommandBuffer buffer, f32 min, f32 max)
 /// One colour attachment's own blend constants, where Vulkan has the one
 /// set a pipeline shares between them.
 void CmdSetBlendConstantsAt(*facet.CommandBuffer buffer, u32 attachment, *const [4]f32 constants)
+/// Recorded: the samples of a multisampled image averaged into an image of
+/// one sample, rectangle by rectangle.
+void CmdResolveImage(*facet.CommandBuffer buffer, *facet.Image source, facet.ImageLayout source_layout, *facet.Image destination, facet.ImageLayout destination_layout, u32 region_count, [*]const facet.ImageResolve regions)
+/// What the host wrote through a mapping, in `ranges`, made the device's to
+/// read: nothing to do, every memory type being coherent.
+facet.Result FlushMappedMemoryRanges(*facet.Device device, u32 range_count, [*]const facet.MappedMemoryRange ranges)
+/// What the device wrote, in `ranges`, made the host's to read through its
+/// mapping: nothing to do, every memory type being coherent.
+facet.Result InvalidateMappedMemoryRanges(*facet.Device device, u32 range_count, [*]const facet.MappedMemoryRange ranges)
+/// The blocks a sparse image of a format, type, sample count, usage and
+/// tiling would be bound in: none, no device having a sparse image.
+void GetPhysicalDeviceSparseImageFormatProperties(*facet.PhysicalDevice physical, facet.Format format, facet.ImageType image_type, u32 samples, u32 usage, facet.ImageTiling tiling, *u32 count, ?[*]facet.SparseImageFormatProperties properties)
+/// What binding an image sparsely asks of memory: nothing, no image being
+/// sparse.
+void GetImageSparseMemoryRequirements(*facet.Device device, *facet.Image image, *u32 count, ?[*]facet.SparseImageMemoryRequirements requirements)
+/// Memory bound to sparse buffers and images, in batches, by the queue:
+/// refused, no queue family binding sparse memory.
+facet.Result QueueBindSparse(*facet.Queue queue, u32 count, ?[*]const facet.BindSparseInfo binds, ?*facet.Fence fence)
+/// An event, reset: set by the host or by a queue's work, and waited for by
+/// a queue's work.
+facet.Result CreateEvent(*facet.Device device, *const facet.EventCreateInfo info, *?*facet.Event event)
+/// The event given back.
+void DestroyEvent(*facet.Device device, ?*facet.Event event)
+/// Whether an event is set, without waiting: `event_set` or `event_reset`.
+facet.Result GetEventStatus(*facet.Device device, *facet.Event event)
+/// The event set by the host.
+facet.Result SetEvent(*facet.Device device, *facet.Event event)
+/// The event reset by the host.
+facet.Result ResetEvent(*facet.Device device, *facet.Event event)
+/// Recorded: the event set once the work before it is done.
+void CmdSetEvent(*facet.CommandBuffer buffer, *facet.Event event, u32 stage_mask)
+/// Recorded: the event reset once the work before it is done.
+void CmdResetEvent(*facet.CommandBuffer buffer, *facet.Event event, u32 stage_mask)
+/// Recorded: the work after it waits until each of the events is set.
+void CmdWaitEvents(*facet.CommandBuffer buffer, u32 event_count, [*]const *facet.Event events, u32 src_stage_mask, u32 dst_stage_mask, u32 memory_barrier_count, ?[*]const facet.MemoryBarrier memory_barriers, u32 buffer_barrier_count, ?[*]const facet.BufferMemoryBarrier buffer_barriers, u32 image_barrier_count, ?[*]const facet.ImageMemoryBarrier image_barriers)
+/// A pipeline cache: what pipelines are made faster with the next time,
+/// and what GetPipelineCacheData hands out to keep for another run.
+facet.Result CreatePipelineCache(*facet.Device device, *const facet.PipelineCacheCreateInfo info, *?*facet.PipelineCache cache)
+/// The pipeline cache given back.
+void DestroyPipelineCache(*facet.Device device, ?*facet.PipelineCache cache)
+/// What a pipeline cache holds, as bytes to keep and give to another
+/// CreatePipelineCache: Vulkan's header of 32 bytes, and nothing after it.
+facet.Result GetPipelineCacheData(*facet.Device device, *facet.PipelineCache cache, *usize size, ?*anyopaque data)
+/// What `sources` hold put into `destination`: nothing, none holding any.
+facet.Result MergePipelineCaches(*facet.Device device, *facet.PipelineCache destination, u32 count, [*]const *facet.PipelineCache sources)
 ##end

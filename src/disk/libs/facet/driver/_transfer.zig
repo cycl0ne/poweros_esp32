@@ -8,6 +8,7 @@ const std = @import("std");
 const sdk = @import("sdk");
 const facet = sdk.facet;
 const texture = facet.texture;
+const raster = @import("raster");
 const _buffer = @import("../buffer/_buffer.zig");
 const _command = @import("../command/_command.zig");
 const _stream = @import("../command/_stream.zig");
@@ -15,24 +16,45 @@ const _image = @import("../image/_image.zig");
 const Image = _image.Image;
 
 /// CmdCopyImage's regions, the part of each inside both images. Texels go as
-/// they are: images of the same size of texel.
+/// they are: images of the same size of texel. A multisampled image's
+/// samples go each to the same sample of the other, whose count Vulkan
+/// has be the same (VUID-vkCmdCopyImage-srcImage-00136): plane by plane, as
+/// llvmpipe lays them (`Image.samples`, since 1.99).
 pub fn copyImage(command: *const _command.CopyImage) void {
-    const source = command.source;
-    const destination = command.destination;
+    if (command.source.samples != command.destination.samples) return;
+    for (0..command.source.samples) |sample| {
+        const source = _image.sampleOf(command.source, @intCast(sample));
+        var destination = _image.sampleOf(command.destination, @intCast(sample));
+        copyPlane(command, &source, &destination);
+    }
+}
+
+/// CmdCopyImage's regions between two images of one sample a pixel, or
+/// one sample's plane of each. What is copied is the bits, between any two
+/// formats of one size (58.1.8's size-compatible, which
+/// VUID-vkCmdCopyImage-srcImage-01548 asks of them): each texel goes as
+/// the bytes a buffer would hold it in, whatever the two images keep it
+/// as, and since 1.132 that is so for every such pair. lavapipe hands each
+/// copy to `resource_copy_region` (`handle_copy_image`,
+/// src/gallium/frontends/lavapipe/lvp_execute.c:2784-2867), which llvmpipe
+/// does over the bytes as they lie (`lp_resource_copy`,
+/// src/gallium/drivers/llvmpipe/lp_surface.c:86-116); before, two images
+/// that kept their texels differently, or kept them as given in formats
+/// of their own, took nothing.
+fn copyPlane(command: *const _command.CopyImage, source: *const Image, destination: *Image) void {
     if (!_image.readable(source) or !_image.readable(destination)) return;
     if (_image.unpacks(source) or _image.unpacks(destination)) return;
-    // Both keeping their blocks, of the one format: the blocks go as they
-    // lie, nothing decoded (`PhysicalDeviceFeatures.kept_compressed`).
-    if (_image.blocked(source) or _image.blocked(destination)) {
-        if (source.format == destination.format) copyBlocks(command);
+    const from_blocks = _image.blocked(source);
+    const to_blocks = _image.blocked(destination);
+    // Both keeping their blocks, of one size (of one format before 1.132):
+    // the blocks go as they lie, nothing decoded
+    // (`Capabilities.kept_compressed`).
+    if (from_blocks and to_blocks) {
+        if (_image.blockBytes(source) == _image.blockBytes(destination)) copyBlocks(command, source, destination);
         return;
     }
-    // Two images that keep what they were given - their floats, or their
-    // own channels since 1.69 - move the texels as they lie as well, and
-    // only between images of the one format: nothing here turns one such
-    // format into another.
-    if (_image.keptTexels(source) != _image.keptTexels(destination)) return;
-    if (_image.keptTexels(source) and source.format != destination.format) return;
+    // A block to a texel as large, or a texel to a block (since 1.132).
+    if (from_blocks or to_blocks) return copyAcross(command, source, destination);
     const pixel = _image.bytesOf(source.format);
     if (pixel != _image.bytesOf(destination.format)) return;
     for (_stream.items(_command.CopyImage, facet.ImageCopy, command, command.count)) |*region| {
@@ -67,9 +89,7 @@ pub fn copyImage(command: *const _command.CopyImage) void {
 /// format: block by block, the offsets and the extent on a multiple of 4 as
 /// Vulkan asks of a compressed image. A region whose offsets are not is
 /// left out.
-fn copyBlocks(command: *const _command.CopyImage) void {
-    const source = command.source;
-    const destination = command.destination;
+fn copyBlocks(command: *const _command.CopyImage, source: *const Image, destination: *Image) void {
     const wide = _image.blockBytes(source);
     for (_stream.items(_command.CopyImage, facet.ImageCopy, command, command.count)) |*region| {
         const from_level = region.src_subresource.mip_level;
@@ -101,11 +121,149 @@ fn copyBlocks(command: *const _command.CopyImage) void {
     }
 }
 
+/// CmdCopyImage's regions between a block image and an uncompressed one
+/// whose texel is as large as its block (since 1.132): each block of the
+/// one is the bytes of a texel of the other. A region's offsets are each
+/// in its own image's texels and its extent in the source's, so a source
+/// of blocks writes a quarter as many texels each way as its extent says,
+/// and a source of texels as many blocks as it has texels: Vulkan's size
+/// adjustment (26.3, 58.1.8), which `util_resource_copy_region` makes by
+/// counting the region in blocks of each format.
+fn copyAcross(command: *const _command.CopyImage, source: *const Image, destination: *Image) void {
+    const from_blocks = _image.blocked(source);
+    const wide = if (from_blocks) _image.blockBytes(source) else _image.blockBytes(destination);
+    if (wide != _image.bytesOf(if (from_blocks) destination.format else source.format)) return;
+    // How far a block or a texel reaches each way, in its own texels.
+    const from_step: u32 = if (from_blocks) 4 else 1;
+    const to_step: u32 = if (from_blocks) 1 else 4;
+    for (_stream.items(_command.CopyImage, facet.ImageCopy, command, command.count)) |*region| {
+        const from_level = region.src_subresource.mip_level;
+        const to_level = region.dst_subresource.mip_level;
+        if (from_level >= source.levels or to_level >= destination.levels) continue;
+        if (region.src_offset.x < 0 or region.src_offset.y < 0 or region.dst_offset.x < 0 or region.dst_offset.y < 0) continue;
+        const from_size = _image.levelSize(source, from_level);
+        const to_size = _image.levelSize(destination, to_level);
+        const from_x: u32 = @intCast(region.src_offset.x);
+        const from_y: u32 = @intCast(region.src_offset.y);
+        const to_x: u32 = @intCast(region.dst_offset.x);
+        const to_y: u32 = @intCast(region.dst_offset.y);
+        if (from_x % from_step != 0 or from_y % from_step != 0 or to_x % to_step != 0 or to_y % to_step != 0) continue;
+        if (from_x >= from_size[0] or from_y >= from_size[1] or to_x >= to_size[0] or to_y >= to_size[1]) continue;
+        // The region in blocks of the block image, which are texels of
+        // the other, as far as both images reach.
+        const across = @min(divCeil(@min(region.extent.width, from_size[0] - from_x), from_step), divCeil(to_size[0] - to_x, to_step));
+        const down = @min(divCeil(@min(region.extent.height, from_size[1] - from_y), from_step), divCeil(to_size[1] - to_y, to_step));
+        const from_layers = _image.layersOf(source, region.src_subresource, region.src_offset.z, region.extent.depth) orelse continue;
+        const to_layers = _image.layersOf(destination, region.dst_subresource, region.dst_offset.z, region.extent.depth) orelse continue;
+        var bytes: [16]u8 = undefined;
+        for (0..@min(from_layers.count, to_layers.count)) |layer_number| {
+            const from_layer = from_layers.first + @as(u32, @intCast(layer_number));
+            const to_layer = to_layers.first + @as(u32, @intCast(layer_number));
+            for (0..down) |row| for (0..across) |column| {
+                const r: u32 = @intCast(row);
+                const c: u32 = @intCast(column);
+                const fx = from_x + c * from_step;
+                const fy = from_y + r * from_step;
+                const tx = to_x + c * to_step;
+                const ty = to_y + r * to_step;
+                if (from_blocks) {
+                    _image.readBlock(source, from_level, from_layer, fx, fy, bytes[0..wide]);
+                    _image.writeTexel(destination, to_level, to_layer, tx, ty, bytes[0..wide]);
+                } else {
+                    _image.readTexel(source, from_level, from_layer, fx, fy, &bytes);
+                    _image.writeBlock(destination, to_level, to_layer, tx, ty, bytes[0..wide]);
+                }
+            };
+        }
+    }
+}
+
+fn divCeil(value: u32, step: u32) u32 {
+    return (value + step - 1) / step;
+}
+
+/// CmdResolveImage's regions, the part of each inside both images: each
+/// pixel of the destination the average of the source's samples at the
+/// same place (since 1.101). lavapipe has llvmpipe blit the region
+/// (`handle_resolve_image`, lvp_execute.c), and the resolve averages the
+/// samples, their sum times one over their count (`build_tex_resolve`,
+/// vk_meta_blit_resolve.c), and Vulkan has the write take one of the two
+/// values nearest to that and should take the nearer (Fixed-Point Data
+/// Conversions). Here that is done in whole numbers
+/// (`raster.average8888`, `raster.average565`): the same average, and its
+/// nearest value, a tie taken upward. A pass's resolve attachment is
+/// given the same average (since 1.109).
+///
+/// Vulkan has the source of more than one sample, the destination of one,
+/// both of the one format (VUID-vkCmdResolveImage-srcImage-00257,
+/// VUID-vkCmdResolveImage-dstImage-00259,
+/// VUID-vkCmdResolveImage-srcImage-12546): a command that is not is left
+/// out, and so is a source of any count but four, the one this library
+/// makes. An image of four samples is of an attachment's format
+/// (`_image.shapeFor`), so it is 8888 or 565 and never one of whole
+/// numbers, whose resolve would take one sample instead.
+pub fn resolveImage(command: *const _command.ResolveImage) void {
+    const source = command.source;
+    const destination = command.destination;
+    if (source.samples != 4 or destination.samples != 1 or source.format != destination.format) return;
+    if (!_image.readable(source) or !_image.readable(destination)) return;
+    const pixel = _image.bytesOf(source.format);
+    if (pixel != 4 and source.format != .r5g6b5_unorm_pack16) return;
+    for (_stream.items(_command.ResolveImage, facet.ImageResolve, command, command.count)) |*region| {
+        const to_level = region.dst_subresource.mip_level;
+        if (region.src_subresource.mip_level != 0 or to_level >= destination.levels) continue;
+        if (region.src_offset.x < 0 or region.src_offset.y < 0 or region.dst_offset.x < 0 or region.dst_offset.y < 0) continue;
+        const from_size = _image.levelSize(source, 0);
+        const to_size = _image.levelSize(destination, to_level);
+        const from_x: u32 = @intCast(region.src_offset.x);
+        const from_y: u32 = @intCast(region.src_offset.y);
+        const to_x: u32 = @intCast(region.dst_offset.x);
+        const to_y: u32 = @intCast(region.dst_offset.y);
+        if (from_x >= from_size[0] or from_y >= from_size[1] or to_x >= to_size[0] or to_y >= to_size[1]) continue;
+        const width = @min(region.extent.width, from_size[0] - from_x, to_size[0] - to_x);
+        const height = @min(region.extent.height, from_size[1] - from_y, to_size[1] - to_y);
+        const from_layers = _image.layersOf(source, region.src_subresource, region.src_offset.z, region.extent.depth) orelse continue;
+        const to_layers = _image.layersOf(destination, region.dst_subresource, region.dst_offset.z, region.extent.depth) orelse continue;
+        for (0..@min(from_layers.count, to_layers.count)) |layer_number| {
+            const layer: u32 = @intCast(layer_number);
+            resolveRectangle(source, from_layers.first + layer, .{ from_x, from_y }, destination, to_level, to_layers.first + layer, .{ to_x, to_y }, width, height);
+        }
+    }
+}
+
+/// Each pixel of a `width` by `height` rectangle of `source`'s layer
+/// `from_layer`, from `from`, the average of its four samples, written into
+/// `destination`'s level and layer at `to`: what CmdResolveImage does for a
+/// region, every sample read where its image keeps it (`_image.sampleOf`),
+/// and what the V3D does after a pass whose resolve it cannot do in its
+/// tiles (since 1.148). Both of one format of 8888 or 565, the source of
+/// four samples, and the rectangle inside both.
+pub fn resolveRectangle(source: *const Image, from_layer: u32, from: [2]u32, destination: *Image, to_level: u32, to_layer: u32, to: [2]u32, width: u32, height: u32) void {
+    const pixel = _image.bytesOf(source.format);
+    var planes: [4]Image = undefined;
+    for (&planes, 0..) |*plane, sample| plane.* = _image.sampleOf(source, @intCast(sample));
+    for (0..height) |row| for (0..width) |column| {
+        const x: u32 = @intCast(column);
+        const y: u32 = @intCast(row);
+        var words: [4]u32 = undefined;
+        for (&planes, &words) |*plane, *word| {
+            var bytes: [4]u8 = @splat(0);
+            _image.readTexel(plane, 0, from_layer, from[0] + x, from[1] + y, &bytes);
+            word.* = std.mem.readInt(u32, &bytes, .little);
+        }
+        var bytes: [4]u8 = undefined;
+        std.mem.writeInt(u32, &bytes, if (pixel == 4) raster.average8888(words) else raster.average565(words), .little);
+        _image.writeTexel(destination, to_level, to_layer, to[0] + x, to[1] + y, bytes[0..pixel]);
+    };
+}
+
 /// CmdCopyImageToBuffer's regions: the part of each inside the image, as far
 /// as the buffer goes.
 pub fn copyImageToBuffer(command: *const _command.CopyImageToBuffer) void {
     const image = command.image;
     if (!_image.readable(image) or _image.unpacks(image)) return;
+    // A multisampled image is no buffer copy's (VUID-vkCmdCopyImageToBuffer-srcImage-07973).
+    if (image.samples != 1) return;
     const into = _buffer.bytes(command.destination, 0, facet.WHOLE_SIZE) orelse return;
     if (_image.blocked(image)) return blocksToBuffer(command, into);
     const pixel = _image.bytesOf(image.format);
@@ -162,12 +320,17 @@ fn blocksToBuffer(command: *const _command.CopyImageToBuffer, into: []u8) void {
     }
 }
 
-/// The colours of a level read by way of 0xAARRGGBB.
+/// The colours of a level read by way of 0xAARRGGBB: the colour a sample
+/// reads of each texel, whatever the image keeps it as.
 fn colorAt(image: *const Image, level: u32, layer: u32, x: u32, y: u32) u32 {
     // A compressed image has no texel of its own in memory: the one it
     // holds is decoded out of the block it lies in.
     if (_image.blocked(image)) return _image.blockColor(image, level, layer, x, y);
-    var texel: [4]u8 = undefined;
+    // Room for the widest texel, four floats (since 1.126). A texel kept
+    // as it was given is read as it lies, and was cut to the four bytes of
+    // a colour word before: one of 8 or 16 bytes read as nothing, or as
+    // what lay past the word, and a float one as nothing at all.
+    var texel: [16]u8 = undefined;
     _image.readTexel(image, level, layer, x, y, &texel);
     return _image.colorOfBytes(image.format, &texel);
 }
@@ -212,14 +375,22 @@ pub fn clearColorImage(command: *const _command.ClearColorImage) bool {
         const first_layer = range.base_array_layer;
         if (first_layer >= image.layers) continue;
         const layers = if (range.layer_count == facet.REMAINING) image.layers - first_layer else @min(range.layer_count, image.layers - first_layer);
-        for (first_layer..first_layer + layers) |layer| {
-            const layer_at = @as(usize, @intCast(image.layer_bytes)) * layer;
-            for (first_level..first_level + levels) |level| {
-                const span = spanOf(image, @intCast(level)) orelse continue;
-                if (layer_at + span.at + span.bytes > image.bytes) continue;
-                fill(data + layer_at + span.at, span.bytes, texel);
+        // Every sample's plane, each the whole image at one sample (since
+        // 1.99), or the one memory of four samples kept together, all of
+        // which a level's span is (`_image.planesOf`, since 1.146).
+        for (0.._image.planesOf(image)) |sample| for (first_level..first_level + levels) |level| {
+            const sample_at = @as(usize, @intCast(image.sample_bytes)) * sample;
+            // A 3D image's level is every slice it has, fewer at each
+            // level, whatever the range: Vulkan's names its one array
+            // layer (since 1.141; until then its slices were taken for
+            // layers, and the first alone cleared where the range said 1).
+            const from: usize, const to: usize = if (image.volume) .{ 0, image.texels.slicesAt(@intCast(level)) } else .{ first_layer, first_layer + layers };
+            for (from..to) |layer| {
+                const span = spanOf(image, @intCast(level), @intCast(layer)) orelse continue;
+                if (sample_at + span.at + span.bytes > image.bytes) continue;
+                fill(data + sample_at + span.at, span.bytes, texel);
             }
-        }
+        };
     }
     return true;
 }
@@ -250,11 +421,23 @@ pub fn clearDepthImage(command: *const _command.ClearDepthStencilImage) bool {
         const layers = @min(if (range.layer_count == facet.REMAINING) image.layers else range.layer_count, image.layers - range.base_array_layer);
         const clears_depth = depth_there and range.aspect_mask & facet.IMAGE_ASPECT_DEPTH != 0;
         const clears_stencil = stencil_there and range.aspect_mask & facet.IMAGE_ASPECT_STENCIL != 0;
-        for (0..layers) |one| for (0..levels) |step| {
+        // Every sample's plane, as a colour clear does (since 1.99).
+        for (0.._image.planesOf(image)) |sample| for (0..layers) |one| for (0..levels) |step| {
             const level = range.base_mip_level + @as(u32, @intCast(step));
-            const rows = _image.rowsAt(image, level, range.base_array_layer + @as(u32, @intCast(one)));
+            const layer = range.base_array_layer + @as(u32, @intCast(one));
+            // Laid out by its device (since 1.142): the level where the
+            // device keeps it, all of it the one value, as a depth or a
+            // stencil alone is in rows.
+            if (_image.deviceLaid(image)) {
+                const span = image.device.physical.ops.texture_level.?(image, level, layer);
+                const into: [*]u8 = data + @as(usize, @intCast(span.at));
+                if (clears_depth and stride == 2) fill(into, @intCast(span.bytes), .{ .two = command.depth });
+                if (clears_stencil and stride == 1) fill(into, @intCast(span.bytes), .{ .one = command.stencil });
+                continue;
+            }
+            const rows = _image.rowsAt(image, level, layer);
             const size = _image.levelSize(image, level);
-            const into_level = data + rows.at;
+            const into_level = data + sample * @as(usize, @intCast(image.sample_bytes)) + rows.at;
             // A format of depth alone or stencil alone, both aspects
             // asked for: every byte of every row is the one value.
             if (clears_depth and stride == 2) {
@@ -280,19 +463,38 @@ pub fn clearDepthImage(command: *const _command.ClearDepthStencilImage) bool {
     return true;
 }
 
-/// Where a level lies in a layer and how many bytes it is. Null for a level
-/// the image does not keep that way.
-fn spanOf(image: *const Image, level: u32) ?struct { at: usize, bytes: usize } {
+/// Where a level of a layer lies, from the image's memory, and how many
+/// bytes it is. Null for a level the image does not keep that way.
+fn spanOf(image: *const Image, level: u32, layer: u32) ?struct { at: usize, bytes: usize } {
     switch (image.kind) {
-        // One level, rows of `pitch` bytes: the padding at a row's end is
-        // written too, being the image's own memory and read by nothing.
-        .rows => return if (level != 0) null else .{ .at = 0, .bytes = @as(usize, image.pitch) * image.height },
+        // A level's rows, each of the level's own pitch: the padding at a
+        // row's end is written too, being the image's own memory and read
+        // by nothing. An image kept in rows has levels since 1.119.
+        .rows => {
+            // Four samples kept together, where its device says: the
+            // whole level, every sample of it (since 1.146).
+            if (image.quads) {
+                const span = image.device.physical.ops.texture_level.?(image, level, layer);
+                return .{ .at = @intCast(span.at), .bytes = @intCast(span.bytes) };
+            }
+            const rows = _image.rowsAt(image, level, layer);
+            return .{ .at = rows.at, .bytes = @as(usize, rows.pitch) * _image.levelSize(image, level)[1] };
+        },
         .texture => {
+            if (level >= image.levels) return null;
+            // On a device of a layout of its own, where its driver says
+            // (since 1.141): the cores' places for the levels are not the
+            // V3D's, whose level 0 lies last.
+            if (image.device.physical.ops.texture_level) |own| {
+                const span = own(image, level, layer);
+                return .{ .at = @intCast(span.at), .bytes = @intCast(span.bytes) };
+            }
             const texels = &image.texels;
             if (level >= texels.levels) return null;
+            const layer_at = @as(usize, @intCast(image.layer_bytes)) * layer;
             const at = texels.layout[level].start;
             const end = if (level + 1 < texels.levels) texels.layout[level + 1].start else @as(u32, @intCast(image.layer_bytes));
-            return if (end <= at) null else .{ .at = at, .bytes = end - at };
+            return if (end <= at) null else .{ .at = layer_at + at, .bytes = end - at };
         },
         .depth => return null,
     }
@@ -345,7 +547,17 @@ fn texelOf(image: *const Image, color: u32, parts: [4]f32, words: [4]u32) ?Texel
             .r5g6b5_unorm_pack16 => .{ .two = narrow(color) },
             else => null,
         },
-        .texture => switch (image.texels.format) {
+        // On a device of a layout of its own a texel is kept as a buffer
+        // holds it in the image's format (`_image.readTexel`), not as the
+        // cores keep it: until 1.141 the clear wrote the cores' 64-bit
+        // texel there, every second word of it read as a texel.
+        .texture => if (image.device.physical.ops.texture_offset != null) switch (image.format) {
+            .b8g8r8a8_unorm => .{ .four = color },
+            .r8g8b8a8_unorm => .{ .four = color & 0xFF00_FF00 | (color >> 16 & 0xFF) | (color & 0xFF) << 16 },
+            .r5g6b5_unorm_pack16 => .{ .two = narrow(color) },
+            .r8_unorm => .{ .one = @truncate(color >> 16) },
+            else => null,
+        } else switch (image.texels.format) {
             .rgba8888 => .{ .eight = texture.spread(color) },
             // A texel kept smaller than its colour (since 1.48): the word
             // as it is, and the red alone.
@@ -379,6 +591,10 @@ fn texelOf(image: *const Image, color: u32, parts: [4]f32, words: [4]u32) ?Texel
             .rgba8u, .rgba8i, .rg16u, .rg16i, .r32u, .r32i => .{ .four = wholePattern(image.texels.format, u32, wholes) },
             .rgba16u, .rgba16i, .rg32u, .rg32i => .{ .eight = wholePattern(image.texels.format, u64, wholes) },
             .rgba32u, .rgba32i => .{ .sixteen = wholePattern(image.texels.format, u128, wholes) },
+            // R8G8B8A8's four bytes as they lie, red first: how a texture a
+            // view of another format may be made of keeps them (since
+            // 1.131), and the same bytes its rows would hold.
+            .rgba8 => .{ .four = color & 0xFF00_FF00 | (color >> 16 & 0xFF) | (color & 0xFF) << 16 },
             // A clear of a colour is not for a depth texture:
             // CmdClearDepthStencilImage writes that one. Nor for a
             // compressed image, whose texels are written as whole blocks
@@ -427,11 +643,26 @@ pub fn blitImage(command: *const _command.BlitImage) void {
     const source = command.source;
     const destination = command.destination;
     if (!_image.readable(source) or !_image.readable(destination)) return;
-    // A compressed source is read block by block and scaled like any
-    // other, and a float one texel by texel; nothing here compresses or
-    // makes floats, so a destination that keeps what it was given is left
-    // alone, as Vulkan does not allow a compressed one either.
-    if (_image.blocked(destination) or _image.keptTexels(destination)) return;
+    // An image of more than one sample is no blit's, either way
+    // (VUID-vkCmdBlitImage-srcImage-00233, VUID-vkCmdBlitImage-dstImage-00234).
+    if (source.samples != 1 or destination.samples != 1) return;
+    // A depth is blitted into an image of its own format alone, and
+    // without a filter (VUID-vkCmdBlitImage-srcImage-00231, -00232): each
+    // pixel takes the nearest one's depth as it lies (since 1.126), which
+    // is lavapipe's blit of the depth aspect (`handle_blit_image`,
+    // src/gallium/frontends/lavapipe/lvp_execute.c:3040-3047). D16_UNORM
+    // is the format that says so; one with a stencil is left alone. Before
+    // 1.126 a blit into a depth image wrote two bytes it never set.
+    const depth = source.kind == .depth;
+    if (depth or destination.kind == .depth) {
+        if (source.format != .d16_unorm or destination.format != .d16_unorm) return;
+    } else if (_image.blocked(destination) or _image.keptTexels(destination)) {
+        // A compressed source is read block by block and scaled like any
+        // other, and a float one texel by texel; nothing here compresses
+        // or makes floats, so a destination that keeps what it was given
+        // is left alone, as Vulkan does not allow a compressed one either.
+        return;
+    }
     for (_stream.items(_command.BlitImage, facet.ImageBlit, command, command.count)) |*region| {
         const from_level = region.src_subresource.mip_level;
         const to_level = region.dst_subresource.mip_level;
@@ -458,6 +689,12 @@ pub fn blitImage(command: *const _command.BlitImage) void {
                 var x = left;
                 while (x < right) : (x += 1) {
                     const u = along(x, to_x, from_x);
+                    if (depth) {
+                        var texel: [2]u8 = undefined;
+                        _image.readTexel(source, from_level, from_layer, held(@intFromFloat(@floor(u)), from_size[0]), held(@intFromFloat(@floor(v)), from_size[1]), &texel);
+                        _image.writeTexel(destination, to_level, to_layer, @intCast(x), @intCast(y), &texel);
+                        continue;
+                    }
                     const color = if (command.filter == .linear) linear: {
                         const low_u = u - 0.5;
                         const low_v = v - 0.5;
