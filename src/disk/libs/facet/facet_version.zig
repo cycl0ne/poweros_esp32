@@ -4914,4 +4914,37 @@ pub const LIBRARY_VERSION = 1;
 /// On the CM5, the three are 8 pixels of 230,400 apart each, the
 /// triangle's edge; FacetBoth's other 221 cases are as they were at
 /// 1.160, and FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 161;
+///
+/// 162: **Constant matrices (docs/facet-vulkan10.md item 59).** A
+/// fragment shader's `const mat3` and the like, an OpConstantComposite of
+/// matrix type, compiles: vtn_const_ssa_value makes each column a
+/// load_const of its own (spirv_to_nir.c:544-552), and so does
+/// `compile.zig`. The matrix is held as its columns' constants
+/// (`Thing.constant_matrix`) until it is first read, where `matrixOf`
+/// makes each column a step as `operand` makes any constant one, and the
+/// matrix a value of 1.161's kind; OpCompositeExtract reads one the same
+/// way. A column that is no constant vector of the matrix's rows, or a
+/// count of columns other than its type's, is refused.
+///
+/// - nir_opt_algebraic's rules for a float times 1 or 0 and plus 0
+///   (nir_opt_algebraic.py:236-237, 282-283, 292), which Mesa applies to
+///   each float once v3d has made the vectors scalars, are not ported: a
+///   matrix of 0s and 1s, a colour conversion's, compiles to the same
+///   values with more instructions than Mesa's. Under Vulkan 1.0's
+///   default float controls the two differ only where Vulkan leaves a
+///   product with an infinity or a NaN open.
+///
+/// Tests: the V3D's 186, two new. glslc_constant_matrix (225 words): a
+/// constant mat3 times a vector less a constant one, the twelve floats in
+/// the stream in the order they are first wanted, three fsubs, nine fmuls
+/// and six fadds beside the varyings', 24 words; a float as a column and
+/// a column too many refused. 3141 tests in all. FacetBoth 1.30: the
+/// shipped case of a constant matrix, glslc's words on the V3D beside a
+/// function of the same arithmetic in the same order on the cores, its
+/// floats chosen to keep every channel between 0.14 and 0.75.
+///
+/// On the CM5 the case is 8 pixels of 230,400 apart, the triangle's edge;
+/// FacetBoth's other 224 cases are as they were at 1.161, and FacetProbe
+/// passes its 890 checks. This is the first revision on main and the
+/// shader branch alike: main merged the branch at 1.161.
+pub const LIBRARY_REVISION = 162;

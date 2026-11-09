@@ -709,7 +709,9 @@ pub const Work = struct {
     length: [most_ids]u16 = @splat(0),
     array_stride: [most_ids]u16 = @splat(none),
     /// The matrices the body holds: a `matrix_value`'s `points` is its
-    /// place here (since 1.161).
+    /// place here (since 1.161). A `constant_matrix`'s is too, its
+    /// columns the ids of their constants until it is first read
+    /// (since 1.162).
     matrices: [most_matrices]Matrix = undefined,
     matrix_count: u32 = 0,
 
@@ -823,7 +825,7 @@ pub const Work = struct {
     code: [most_words]u64 = undefined,
     word_count: u32 = 0,
 
-    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value };
+    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value, constant_matrix };
 
     /// `chain_part` of a pointer to a whole member.
     pub const whole: u8 = 0xFF;
@@ -1323,6 +1325,26 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (operands.len < 2) return Error.Body;
                 const type_id = try idOf(operands[0]);
                 const id = try idOf(operands[1]);
+                if (work.thing[type_id] == .matrix) {
+                    // A matrix of constant columns, as vtn_const_ssa_value
+                    // makes one: each column a load_const of its own
+                    // (spirv_to_nir.c:544-552). Its columns are the ids
+                    // of their constants here, steps the first time the
+                    // matrix is read (`matrixOf`), as a constant is
+                    // (since 1.162).
+                    const columns = operands[2..];
+                    if (columns.len != work.wide[type_id]) return Error.Body;
+                    var made = Matrix{ .count = @intCast(columns.len) };
+                    for (columns, 0..) |column, k| {
+                        const member = try idOf(column);
+                        if (work.thing[member] != .constant or work.wide[member] != work.wide[work.points[type_id]]) return Error.Type;
+                        made.columns[k] = member;
+                    }
+                    work.thing[id] = .constant_matrix;
+                    work.points[id] = try keptMatrix(work, made);
+                    work.wide[id] = made.count;
+                    continue;
+                }
                 if (work.thing[type_id] != .vector) return Error.Type;
                 const parts = operands[2..];
                 if (parts.len != work.wide[type_id]) return Error.Body;
@@ -2807,6 +2829,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (operands.len < 4) return Error.Body;
             const id = try idOf(operands[1]);
             const composite = try idOf(operands[2]);
+            if (work.thing[composite] == .constant_matrix) _ = try matrixOf(work, operands[2]);
             if (work.thing[composite] == .matrix_value) {
                 // A matrix's column, or one float of it: the column's
                 // step, and the float of that as of any vector
@@ -3210,9 +3233,21 @@ fn sizeOf(work: *Work, type_id: u16, stride: u16) Error!u32 {
     }
 }
 
-/// The matrix `word` names, by its place in `Work.matrices`.
-fn matrixOf(work: *const Work, word: u32) Error!u16 {
+/// The matrix `word` names, by its place in `Work.matrices`. A constant
+/// one is made a value the first time it is read: its columns' constants
+/// become steps there, as any constant does where it is first wanted
+/// (`operand`), and it keeps its place (since 1.162).
+fn matrixOf(work: *Work, word: u32) Error!u16 {
     const id = try idOf(word);
+    if (work.thing[id] == .constant_matrix) {
+        const at = work.points[id];
+        const waiting = &work.matrices[at];
+        for (waiting.columns[0..waiting.count]) |*column| {
+            const kind = std.enums.fromInt(Kind, work.wide[column.*]) orelse return Error.Type;
+            column.* = try operand(work, column.*, kind);
+        }
+        work.thing[id] = .matrix_value;
+    }
     if (work.thing[id] != .matrix_value) return Error.Type;
     return work.points[id];
 }
@@ -7118,6 +7153,41 @@ test "through Mesa's back end, the matrix arithmetic SPIR-V has: transposes, pro
     try testing.expectEqual(@as(usize, 25), countOf(code, "fadd"));
     try testing.expectEqual(@as(usize, 4), countOf(code, "fsub"));
     try testing.expectEqual(@as(usize, 51), code.words.len);
+}
+
+test "through Mesa's back end, a constant matrix is its columns' constants, read where the product first wants them" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_constant_matrix);
+    // The vector subtracted, then the three columns: vtn makes a
+    // constant's load_const where its value is first wanted, and the
+    // matrix is wanted whole by OpMatrixTimesVector, after the FSub.
+    try testing.expectEqualSlices(Word, &.{
+        .{ .float = 0.90625 },  .{ .float = 0.84375 },  .{ .float = 0.46875 },
+        .{ .float = -0.78125 }, .{ .float = -0.28125 }, .{ .float = -0.5625 },
+        .{ .float = -0.4375 },  .{ .float = -0.53125 }, .{ .float = -0.3125 },
+        .{ .float = -0.375 },   .{ .float = -0.71875 }, .{ .float = -0.8125 },
+    }, code.stream());
+    try testing.expectEqual(@as(usize, 12), countOf(code, "ldunif"));
+    // Three fsubs; then each row the last column times z, and the second
+    // times y and the first times x added on: nine fmuls and six fadds
+    // beside the varyings' four of each.
+    try testing.expectEqual(@as(usize, 3), countOf(code, "fsub"));
+    try testing.expectEqual(@as(usize, 13), countOf(code, "fmul"));
+    try testing.expectEqual(@as(usize, 10), countOf(code, "fadd"));
+    try testing.expectEqual(@as(usize, 24), code.words.len);
+}
+
+test "a constant matrix of other than its columns' shape, or of other than constant columns, is refused" {
+    var work: Work = .{};
+    // The matrix's last column its own first float, %12: a float, not a
+    // column.
+    const float_column = comptime patched(&reference.glslc_constant_matrix, .constant_composite, 3, 4, 12);
+    try testing.expectError(Error.Type, throughMesa(&work, &float_column));
+    // The matrix type made one of two columns: the constant's three are
+    // one too many.
+    work = .{};
+    const two_columns = comptime patched(&reference.glslc_constant_matrix, .type_matrix, 0, 2, 2);
+    try testing.expectError(Error.Body, throughMesa(&work, &two_columns));
 }
 
 test "a transpose of a transpose is the matrix itself, and two transposes multiplied are the transpose of the other product" {
