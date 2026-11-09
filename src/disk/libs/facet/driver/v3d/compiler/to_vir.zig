@@ -47,6 +47,20 @@
 //!   not done here (GCM, loop unrolling, UBO load sorting, moving buffer
 //!   loads, TMU pipelining) and so would make the same program, and 5's
 //!   fallback scheduler is not ported.
+//! - A selection Mesa keeps a branch is one since 1.171, at the top level
+//!   alone (ntq_emit_if, nir_to_vir.c:4315-4573, its uniform and its
+//!   non-uniform form). What strategy 0 does to it is not ported:
+//!   nir_opt_gcm (:2300-2304), which may move an instruction into the one
+//!   arm that reads it or out of an arm, where here a step is made where
+//!   the walk puts it; and nir_opt_if's rewrites (:2299): two selections
+//!   of one condition made one (opt_if_merge, nir_opt_if.c:1345), one of
+//!   an empty true arm turned over (opt_if_simplification, :741), and the
+//!   condition read in an arm made a constant
+//!   (opt_if_evaluate_condition_use, :1016). Each changes the
+//!   instructions, not what they compute.
+//! - nir_convert_from_ssa is done on the steps (`fromSsa`): its webs,
+//!   their interference worked out for the one shape a kept selection
+//!   has, where every float is made before it, in an arm, or past it.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -207,6 +221,33 @@ const Emit = struct {
     /// whose slots are numbered apart (c->current_unifa_is_ubo; since
     /// 1.164).
     current_unifa_is_ubo: bool = false,
+    /// The registers nir_convert_from_ssa makes of the kept selections'
+    /// phis, one of each web, which ntq_setup_registers gives a
+    /// temporary each (nir_to_vir.c:4850-4863); and the web each float of
+    /// a step was coalesced into, which it writes (since 1.171).
+    webs: [compile.most_steps]Reg = undefined,
+    web_count: u32 = 0,
+    web_of: [compile.most_steps][4]u8 = @splat(@splat(no_web)),
+    /// The kept selection being emitted.
+    branch: If = .{},
+};
+
+/// A float coalesced into no web.
+const no_web: u8 = 0xFF;
+
+/// A kept selection as ntq_emit_if emits it (nir_to_vir.c:4562): its
+/// marks, its blocks, and how it is emitted (since 1.171).
+const If = struct {
+    begin: u16 = 0,
+    otherwise: u16 = 0,
+    end: u16 = 0,
+    then_block: ?*vir.Block = null,
+    else_block: ?*vir.Block = null,
+    after_block: ?*vir.Block = null,
+    empty_else: bool = false,
+    uniform: bool = false,
+    was_uniform_control_flow: bool = false,
+    was_in_control_flow: bool = false,
 };
 
 /// How far ahead of unifa a load_ubo may be and still be reached by
@@ -330,6 +371,16 @@ fn emitSmoothVarying(c: *Compile, vary: Reg, w: Reg, c_reg: Reg) Error!Reg {
 /// steps, the colour's store, and the TMU flushed in the block that used
 /// it.
 fn emitBlock(e: *Emit) Error!void {
+    try fromSsa(e);
+    // A register for each web something is in: one merged into another
+    // has nothing.
+    var held: [compile.most_steps]bool = @splat(false);
+    for (e.web_of) |parts| for (parts) |web| {
+        if (web != no_web) held[web] = true;
+    };
+    for (e.webs[0..e.web_count], held[0..e.web_count]) |*web, is| {
+        if (is) web.* = try e.c.getTemp();
+    }
     for (e.work.steps[0..e.work.step_count], 0..) |each, at| try emitStep(e, each, @intCast(at));
     // A program of no colour has no store to emit (since 1.150).
     if (hasColor(e)) try emitColorWrite(e);
@@ -354,7 +405,13 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
                         c.undef;
                 }
             } else for (0..parts) |k| {
-                e.defs[at][k] = e.inputs[input.first + k];
+                // load_input's MOV of the varying (ntq_emit_load_input,
+                // nir_to_vir.c:2960-2977), which copy propagation takes
+                // out, unless it writes a phi's register (since 1.171).
+                if (e.web_of[at][k] != no_web)
+                    try storeDef(e, at, k, try c.mul(.mov, .{e.inputs[input.first + k]}))
+                else
+                    e.defs[at][k] = e.inputs[input.first + k];
             }
         },
         // emit_store_output_vs (nir_to_vir.c:3074-3082): the float, then
@@ -378,7 +435,7 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         .round_to_int => {
             const value = try getSrc(e, each.a, 0);
             _ = try c.add(.fround, .{value});
-            e.defs[at][0] = try c.add(.ftoin, .{value});
+            try storeDef(e, at, 0, try c.add(.ftoin, .{value}));
         },
         .constant => {
             for (0..parts) |k| e.defs[at][k] = try c.uniformUi(@bitCast(e.work.pool[each.at + k]));
@@ -395,39 +452,39 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
             for (0..parts) |k| {
                 const a = try getSrc(e, each.a, k);
                 const b = try getSrc(e, each.b, if (b_scalar) 0 else k);
-                e.defs[at][k] = switch (each.tag) {
+                try storeDef(e, at, k, switch (each.tag) {
                     .add => try c.add(.fadd, .{ a, b }),
                     .sub => try c.add(.fsub, .{ a, b }),
                     .min => try c.add(.fmin, .{ a, b }),
                     .max => try c.add(.fmax, .{ a, b }),
                     else => try c.mul(.fmul, .{ a, b }),
-                };
+                });
             }
         },
         // A negation of 32 bits is the sign bit XORed (nir_to_vir.c:1412-1419).
         .negate => for (0..parts) |k| {
-            e.defs[at][k] = try c.add(.xor, .{ try getSrc(e, each.a, k), try c.uniformUi(@as(u32, 1) << 31) });
+            try storeDef(e, at, k, try c.add(.xor, .{ try getSrc(e, each.a, k), try c.uniformUi(@as(u32, 1) << 31) }));
         },
         // fabs: FMOV with the ABS unpack (nir_to_vir.c:1793-1801).
         .abs => for (0..parts) |k| {
             const made = try c.mul(.fmov, .{try getSrc(e, each.a, k)});
             vir.setUnpack(c.defs[made.index].?, 0, .abs);
-            e.defs[at][k] = made;
+            try storeDef(e, at, k, made);
         },
         // fsat at 7.1: FMOV with the SAT unpack (nir_to_vir.c:1865-1882;
         // since 1.153).
         .sat => for (0..parts) |k| {
             const made = try c.mul(.fmov, .{try getSrc(e, each.a, k)});
             vir.setUnpack(c.defs[made.index].?, 0, .sat);
-            e.defs[at][k] = made;
+            try storeDef(e, at, k, made);
         },
         // fsin and fcos (nir_to_vir.c:1782-1787): ntq_fsincos.
         .sin, .cos => for (0..parts) |k| {
-            e.defs[at][k] = try sinCos(c, try getSrc(e, each.a, k), each.tag == .cos);
+            try storeDef(e, at, k, try sinCos(c, try getSrc(e, each.a, k), each.tag == .cos));
         },
         // fsign (nir_to_vir.c:1788): ntq_fsign.
         .sign => for (0..parts) |k| {
-            e.defs[at][k] = try sign(c, try getSrc(e, each.a, k));
+            try storeDef(e, at, k, try sign(c, try getSrc(e, each.a, k)));
         },
         // One operand each, the add side's: the rounding (:1769-1779) and
         // the SFU's, which at 7.1 are add operations written to any
@@ -443,7 +500,7 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
                 .exp2 => .exp,
                 else => .log,
             };
-            e.defs[at][k] = try c.add(op, .{try getSrc(e, each.a, k)});
+            try storeDef(e, at, k, try c.add(op, .{try getSrc(e, each.a, k)}));
         },
         // fdot lowered for a device of no FMA: the products the last
         // float first, each summed onto those before it (lower_reduction,
@@ -457,7 +514,7 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
                 const product = try c.mul(.fmul, .{ try getSrc(e, each.a, channel), try getSrc(e, each.b, channel) });
                 last = if (i == 0) product else try c.add(.fadd, .{ last, product });
             }
-            e.defs[at][0] = last;
+            try storeDef(e, at, 0, last);
         },
         .sample => {
             try emitTex(e, each, at);
@@ -503,12 +560,12 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
             const rounded = op == .f2i32 and e.work.steps[each.a].tag == .round;
             for (0..parts) |k| {
                 if (rounded) {
-                    e.defs[at][k] = try c.add(.ftoin, .{try getSrc(e, e.work.steps[each.a].a, k)});
+                    try storeDef(e, at, k, try c.add(.ftoin, .{try getSrc(e, e.work.steps[each.a].a, k)}));
                     continue;
                 }
                 const a = try getSrc(e, each.a, k);
                 const b = if (op.unary()) c.undef else try getSrc(e, each.b, if (b_scalar) 0 else k);
-                e.defs[at][k] = switch (op) {
+                try storeDef(e, at, k, switch (op) {
                     .iadd => try c.add(.add, .{ a, b }),
                     .isub => try c.add(.sub, .{ a, b }),
                     .imul => try c.umul(a, b),
@@ -529,7 +586,7 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
                     .f2u32 => try c.add(.ftouz, .{a}),
                     .i2f32 => try c.add(.itof, .{a}),
                     .u2f32 => try c.add(.utof, .{a}),
-                };
+                });
             }
         },
         // slt (nir_to_vir.c:1710-1723): the comparison, and 1.0 or 0.0 of
@@ -539,7 +596,7 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
             const result = try c.mul(.mov, .{try c.sel(cond, try c.uniformF(1.0), try c.uniformF(0.0))});
             c.flags_temp = @intCast(result.index);
             c.flags_cond = cond;
-            e.defs[at][0] = result;
+            try storeDef(e, at, 0, result);
         },
         // b32csel (nir_to_vir.c:1740-1745): the sources, then the bool as
         // a condition, the flags where they still hold it, and SEL
@@ -549,7 +606,7 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
             const yes = try getSrc(e, each.b, 0);
             const no = try getSrc(e, each.from[0], 0);
             const cond = try boolToCond(e, each.a);
-            e.defs[at][0] = try c.mul(.mov, .{try c.sel(cond, yes, no)});
+            try storeDef(e, at, 0, try c.mul(.mov, .{try c.sel(cond, yes, no)}));
         },
         // nir_intrinsic_terminate_if (nir_to_vir.c:3833), outside of any
         // control flow: the pixel's mask cleared where the condition
@@ -563,7 +620,7 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         // try_emit_uniform (nir_to_vir.c:2847): a word of the push
         // constants each, as QUNIFORM_UNIFORM at the offset over four.
         .push => {
-            for (0..parts) |k| e.defs[at][k] = try c.uniform(.uniform, @intCast(each.at + k));
+            for (0..parts) |k| try storeDef(e, at, k, try c.uniform(.uniform, @intCast(each.at + k)));
         },
         // ntq_emit_intrinsic's load_ubo (nir_to_vir.c:3634-3641): through
         // unifa, which its constant offset always allows here. A
@@ -583,6 +640,10 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         // since 1.167).
         .ubo_indirect, .ssbo_indirect => {
             if (e.work.divergent[each.a] or writable(e, each)) return emitTmuGeneral(e, each, at);
+            // Nor under the execute mask where the offset is read out of
+            // a web's register, which only the lanes that run wrote
+            // (:3318-3336; since 1.171).
+            if (e.c.inNonuniformControlFlow() and derivedFromReg(e, each.a)) return emitTmuGeneral(e, each, at);
             try emitLoadUnifa(e, each, at);
         },
         // store_ssbo, through the TMU (:3645-3649; since 1.168). It
@@ -593,8 +654,565 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         .ssbo_atomic => return emitTmuGeneral(e, each, at),
         // A barrier: what the TMU holds flushed (:3857-3861; since 1.169).
         .barrier => try flushTmu(e),
+        // A kept selection (since 1.171).
+        .begin_if => try beginIf(e, at),
+        .begin_else => try beginElse(e),
+        .end_if => try endIf(e),
+        // A phi is its web's register, which both ways have written.
+        .phi => e.defs[at][0] = e.webs[e.web_of[at][0]],
     }
     e.defined[at] = true;
+}
+
+/// nir_src_derived_from_reg: whether a step reads, through steps that
+/// compute, a float coalesced into a web.
+fn derivedFromReg(e: *const Emit, at: u16) bool {
+    const each = e.work.steps[at];
+    for (e.web_of[at][0..each.kind.parts()]) |web| if (web != no_web) return true;
+    if (each.tag == .phi) return true;
+    for (compile.readsOfStep(each)) |field| if (field) |of| {
+        if (derivedFromReg(e, of)) return true;
+    };
+    return false;
+}
+
+/// ntq_store_def (nir_to_vir.c:772): a float made, as the step's own, or
+/// written into the register of the web it was coalesced into, by the
+/// instruction that made it - under the execute mask where the lanes
+/// differ - or by a MOV where that instruction cannot be rewritten
+/// (since 1.171).
+fn storeDef(e: *Emit, at: u16, k: usize, result: Reg) Error!void {
+    const web = e.web_of[at][k];
+    if (web == no_web) {
+        e.defs[at][k] = result;
+        return;
+    }
+    try storeReg(e, e.webs[web], result);
+    e.defs[at][k] = e.webs[web];
+}
+
+/// The store_reg half of ntq_store_def (nir_to_vir.c:808-847): the last
+/// instruction, which made `result`, writes `into` instead. A uniform
+/// loaded before and only reused, a load signal under the execute mask,
+/// or anything else than the instruction just emitted is moved first.
+fn storeReg(e: *Emit, into: Reg, result_in: Reg) Error!void {
+    const c = e.c;
+    var result = result_in;
+    var last = lastInst(c);
+    const def = c.defs[result.index];
+    const is_reused_uniform = def != null and def.?.qpu.sig.ldunif and def.? != last;
+    if (is_reused_uniform or def != last or
+        (c.inNonuniformControlFlow() and isLdSignal(last)))
+    {
+        result = try c.mul(.mov, .{result});
+        last = lastInst(c);
+    }
+    c.defs[last.dst.index] = null;
+    last.dst.index = into.index;
+    if (c.inNonuniformControlFlow()) {
+        c.cursor = vir.beforeInst(last);
+        c.setPf(try c.mulDest(.mov, vir.nopReg(), .{c.execute}), .pushz);
+        c.cursor = vir.afterInst(last);
+        vir.setCond(last, .ifa);
+    }
+}
+
+fn lastInst(c: *Compile) *Inst {
+    return list.entry(Inst, "link", c.cur_block.?.instructions.prev.?);
+}
+
+/// is_ld_signal (v3d_compiler.h): a signal that loads into the
+/// instruction's register, which no condition holds back.
+fn isLdSignal(inst: *const Inst) bool {
+    const sig = inst.qpu.sig;
+    return sig.ldunif or sig.ldunifa or sig.ldunifrf or sig.ldunifarf or sig.ldtmu or sig.ldvary or sig.ldvpm or sig.ldtlb or sig.ldtlbu;
+}
+
+/// ntq_emit_if (nir_to_vir.c:4562), at a kept selection's begin_if: the
+/// block before it ends, its TMU flushed (ntq_emit_block, :4677-4692),
+/// and the selection is a branch on the condition where every lane goes
+/// the same way and nothing outside runs under the execute mask, else
+/// under it.
+fn beginIf(e: *Emit, at: u16) Error!void {
+    const c = e.c;
+    try flushTmu(e);
+    const steps = e.work.program();
+    const marks = branchAt(steps, at);
+    const condition = steps[at].a;
+    e.branch = .{ .begin = marks.begin, .otherwise = marks.otherwise, .end = marks.end };
+    const branch = &e.branch;
+    // The false arm's block is empty where it holds nothing, nor any
+    // copy into a web (nir_if_first_else_block, :4459-4462).
+    branch.empty_else = armCost(e, marks.otherwise, marks.end, 1) == 0;
+    branch.was_in_control_flow = c.in_control_flow;
+    c.in_control_flow = true;
+    branch.uniform = !c.inNonuniformControlFlow() and !e.work.divergent[condition];
+    branch.then_block = try c.newBlock();
+    branch.after_block = try c.newBlock();
+    branch.else_block = if (branch.empty_else) branch.after_block else try c.newBlock();
+    if (branch.uniform) {
+        // ntq_emit_uniform_if (:4355): jump to the false arm where any
+        // lane, of those dispatched and not discarded, takes it.
+        const cond = try boolToCond(e, condition);
+        const jump = try c.branch(if (cond == .ifa) .anyna else .anya);
+        jump.qpu.branch.msfign = .p;
+        try c.linkBlocks(c.cur_block.?, branch.else_block.?);
+        try c.linkBlocks(c.cur_block.?, branch.then_block.?);
+        c.setEmitBlock(branch.then_block.?);
+        return;
+    }
+    // ntq_emit_nonuniform_if (:4455): each lane's execute is 0 where it
+    // takes the true arm, else the false arm's block.
+    branch.was_uniform_control_flow = false;
+    if (!c.inNonuniformControlFlow()) {
+        c.execute = try c.mul(.mov, .{try c.uniformUi(0)});
+        branch.was_uniform_control_flow = true;
+    }
+    var cond = try boolToCond(e, condition);
+    if (branch.was_uniform_control_flow) {
+        cond = invert(cond);
+    } else {
+        const inst = try c.mulDest(.mov, vir.nopReg(), .{c.execute});
+        if (cond == .ifa) {
+            c.setUf(inst, .nornz);
+        } else {
+            c.setUf(inst, .andz);
+            cond = .ifa;
+        }
+    }
+    _ = try c.movCond(cond, c.execute, try c.uniformUi(branch.else_block.?.index));
+    // The flags for taking the true arm, which is jumped over where no
+    // lane takes it, unless it is too small to pay.
+    c.setPf(try c.mulDest(.mov, vir.nopReg(), .{c.execute}), .pushz);
+    if (!cheap(e, marks.begin, marks.otherwise, 0)) {
+        _ = try c.branch(.allna);
+        try c.linkBlocks(c.cur_block.?, branch.else_block.?);
+    }
+    try c.linkBlocks(c.cur_block.?, branch.then_block.?);
+    c.setEmitBlock(branch.then_block.?);
+}
+
+/// The true arm's end, at the begin_else: its copies into the webs, its
+/// TMU flushed, and the false arm's block begun where it has one.
+fn beginElse(e: *Emit) Error!void {
+    const c = e.c;
+    const branch = &e.branch;
+    try emitCopies(e, 0);
+    try flushTmu(e);
+    if (branch.empty_else) return;
+    if (branch.uniform) {
+        // At the true arm's end, a jump past the false arm, unless the
+        // arm ended in a break or a continue.
+        if (!c.cur_block.?.branch_emitted) {
+            _ = try c.branch(.always);
+            try c.linkBlocks(c.cur_block.?, branch.after_block.?);
+        }
+        c.setEmitBlock(branch.else_block.?);
+        return;
+    }
+    // Every lane still running points at the merge, and where all do,
+    // the false arm is jumped over, unless it is too small to pay.
+    c.setPf(try c.mulDest(.mov, vir.nopReg(), .{c.execute}), .pushz);
+    _ = try c.movCond(.ifa, c.execute, try c.uniformUi(branch.after_block.?.index));
+    if (!cheap(e, branch.otherwise, branch.end, 1)) {
+        c.setPf(try c.addDest(.xor, vir.nopReg(), .{ c.execute, try c.uniformUi(branch.after_block.?.index) }), .pushz);
+        _ = try c.branch(.alla);
+        try c.linkBlocks(c.cur_block.?, branch.after_block.?);
+    }
+    try c.linkBlocks(c.cur_block.?, branch.else_block.?);
+    c.setEmitBlock(branch.else_block.?);
+    try activateExecuteForBlock(c);
+}
+
+/// The false arm's end, at the end_if: its copies, its TMU flushed, and
+/// the merge block, where the lanes the selection held back run again.
+fn endIf(e: *Emit) Error!void {
+    const c = e.c;
+    const branch = &e.branch;
+    try emitCopies(e, 1);
+    try flushTmu(e);
+    try c.linkBlocks(c.cur_block.?, branch.after_block.?);
+    c.setEmitBlock(branch.after_block.?);
+    if (!branch.uniform) {
+        if (branch.was_uniform_control_flow)
+            c.execute = c.undef
+        else
+            try activateExecuteForBlock(c);
+    }
+    c.in_control_flow = branch.was_in_control_flow;
+}
+
+/// ntq_activate_execute_for_block (nir_to_vir.c:4315): the lanes whose
+/// jump target is this block run again.
+fn activateExecuteForBlock(c: *Compile) Error!void {
+    c.setPf(try c.addDest(.xor, vir.nopReg(), .{ c.execute, try c.uniformUi(c.cur_block.?.index) }), .pushz);
+    _ = try c.movCond(.ifa, c.execute, try c.uniformUi(0));
+}
+
+/// v3d_qpu_cond_invert.
+fn invert(cond: instr.Cond) instr.Cond {
+    return switch (cond) {
+        .ifa => .ifna,
+        .ifna => .ifa,
+        .ifb => .ifnb,
+        .ifnb => .ifb,
+        .none => .none,
+    };
+}
+
+/// The phis of the kept selection being emitted, in order.
+fn phisOf(e: *const Emit, out: *[compile.most_steps]u16) []const u16 {
+    const steps = e.work.program();
+    const condition = steps[e.branch.begin].a;
+    var count: usize = 0;
+    var k = e.branch.end + 1;
+    while (k < steps.len and steps[k].tag != .begin_if) : (k += 1) {
+        if (steps[k].tag == .phi and steps[k].from[0] == condition) {
+            out[count] = k;
+            count += 1;
+        }
+    }
+    return out[0..count];
+}
+
+/// What NIR's block of the arm from `from` to `to` holds, as
+/// is_cheap_block counts it (nir_to_vir.c:4323-4352): an ALU operation a
+/// float, a constant one load_const, a copy into a web a MOV and a
+/// constant's a load_const more. Anything else is past any count.
+fn armCost(e: *const Emit, from: u16, to: u16, side: usize) u32 {
+    const steps = e.work.program();
+    var count: u32 = 0;
+    for (steps[from + 1 .. to]) |each| {
+        count += switch (each.tag) {
+            .component, .construct => 0,
+            .constant => 1,
+            .add, .mul, .sub, .min, .max, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .set_less, .integer, .round_to_int, .select, .compare, .logic => @intCast(each.kind.parts()),
+            .dot => @intCast(e.work.steps[each.a].kind.parts() * 2 - 1),
+            else => return std.math.maxInt(u32),
+        };
+    }
+    var phis: [compile.most_steps]u16 = undefined;
+    for (phisOf(e, &phis)) |phi| {
+        const of = sourceOf(steps[phi], side);
+        if (e.web_of[of.step][of.part] == e.web_of[phi][0]) continue;
+        count += if (steps[of.step].tag == .constant) 2 else 1;
+    }
+    return count;
+}
+
+/// is_cheap_block: two instructions or fewer, all ALU.
+fn cheap(e: *const Emit, from: u16, to: u16, side: usize) bool {
+    return armCost(e, from, to, side) < 3;
+}
+
+/// The parallel copy at the end of way `side` into the webs of the phis
+/// it does not bring coalesced, made MOVs as resolve_parallel_copy makes
+/// them (nir_from_ssa.c:718-906): a copy whose web no other copy still
+/// reads goes first, and a cycle is broken through a temporary. A
+/// constant is a uniform loaded where it is copied, as
+/// nir_trivialize_registers's MOV of its load_const reads it.
+fn emitCopies(e: *Emit, side: usize) Error!void {
+    const c = e.c;
+    const steps = e.work.program();
+    var phis: [compile.most_steps]u16 = undefined;
+    var into: [compile.most_steps]Reg = undefined;
+    var from: [compile.most_steps]?Reg = undefined;
+    var constant: [compile.most_steps]?u32 = undefined;
+    var count: usize = 0;
+    for (phisOf(e, &phis)) |phi| {
+        const of = sourceOf(steps[phi], side);
+        const web = e.web_of[phi][0];
+        if (e.web_of[of.step][of.part] == web) continue;
+        into[count] = e.webs[web];
+        if (steps[of.step].tag == .constant) {
+            from[count] = null;
+            constant[count] = @bitCast(e.work.pool[steps[of.step].at + of.part]);
+        } else {
+            from[count] = try getSrc(e, of.step, of.part);
+            constant[count] = null;
+        }
+        count += 1;
+    }
+    var done: [compile.most_steps]bool = @splat(false);
+    var left = count;
+    while (left > 0) {
+        const ready = for (0..count) |i| {
+            if (done[i]) continue;
+            const read = for (0..count) |other| {
+                if (done[other] or other == i) continue;
+                if (from[other]) |src| if (src.file == .temp and src.index == into[i].index) break true;
+            } else false;
+            if (!read) break i;
+        } else null;
+        if (ready) |i| {
+            const src = if (from[i]) |src| src else try c.uniformUi(constant[i].?);
+            try storeReg(e, into[i], try c.mul(.mov, .{src}));
+            done[i] = true;
+            left -= 1;
+            continue;
+        }
+        // A cycle: the first copy's web is read out into a temporary,
+        // which the copies that read it read instead.
+        const first = for (0..count) |i| {
+            if (!done[i]) break i;
+        } else unreachable;
+        const saved = try c.mul(.mov, .{into[first]});
+        for (0..count) |other| {
+            if (done[other]) continue;
+            if (from[other]) |src| if (src.file == .temp and src.index == into[first].index) {
+                from[other] = saved;
+            };
+        }
+    }
+}
+
+/// What nir_convert_from_ssa (nir_from_ssa.c:927-983, with phi_webs_only
+/// and consider_divergence) makes of the kept selections' phis: a web of
+/// each, the phi and the copies isolate_phi_nodes_block puts at the end
+/// of each way in (:334-382), and into it, by aggressive_coalesce_block
+/// in the blocks' order (:403-443), each float a copy is of that differs
+/// as the phi does and interferes with nothing in the web (Boissinot et
+/// al.'s test, merge_sets_interfere, :231-332). A constant is SSA only
+/// and copied (:419-424); a sample's or a load's float is a MOV
+/// nir_lower_phis_to_scalar put at the end of its way
+/// (nir_lower_phis_to_scalar.c), which is copied too, as is a bool, whose
+/// comparison's flags the walk keeps. What is not coalesced is copied
+/// into the web where its way ends (`emitCopies`).
+fn fromSsa(e: *Emit) Error!void {
+    const steps = e.work.program();
+    // Where each float is read, a float being a def of its own once
+    // nir_lower_io_to_scalar and nir_lower_alu_to_scalar are done: a bit
+    // of each step that reads it, through the components and constructs
+    // that only name it, and for a phi the end of the way it comes; and
+    // whether the colour reads it. A step that computes reads each float
+    // of what it reads.
+    var uses: [compile.most_steps][4]u128 = @splat(@splat(0));
+    var at_end: [compile.most_steps][4]bool = @splat(@splat(false));
+    var at = steps.len;
+    while (at > 0) {
+        at -= 1;
+        const each = steps[at];
+        switch (each.tag) {
+            .phi => {
+                const branch = branchOf(steps, @intCast(at));
+                uses[each.a][each.part[0]] |= bitOf(branch.otherwise);
+                uses[each.b][each.part[1]] |= bitOf(branch.end);
+            },
+            .component => uses[each.a][each.at] |= uses[at][0],
+            .construct => for (0..each.kind.parts()) |k| {
+                uses[each.from[k]][each.part[k]] |= uses[at][k];
+            },
+            else => for (compile.readsOfStep(each)) |field| if (field) |of| {
+                for (&uses[of]) |*part| part.* |= bitOf(@intCast(at));
+            },
+        }
+    }
+    if (e.work.stored != compile.none) for (0..steps[e.work.stored].kind.parts()) |k| {
+        endRead(steps, &at_end, .{ .step = e.work.stored, .part = @intCast(k) });
+    };
+
+    var begin: u16 = 0;
+    while (begin < steps.len) : (begin += 1) {
+        if (steps[begin].tag != .begin_if) continue;
+        const branch = branchAt(steps, begin);
+        var phis: [compile.most_steps]u16 = undefined;
+        var count: usize = 0;
+        var k = branch.end + 1;
+        while (k < steps.len and steps[k].tag != .begin_if) : (k += 1) {
+            if (steps[k].tag == .phi and steps[k].from[0] == steps[begin].a) {
+                phis[count] = k;
+                count += 1;
+            }
+        }
+        const kept = Branch{ .begin = branch.begin, .otherwise = branch.otherwise, .end = branch.end, .phis = phis[0..count], .first_web = @intCast(e.web_count), .uses = &uses, .at_end = &at_end, .steps = steps };
+        for (kept.phis) |phi| {
+            e.web_of[phi][0] = @intCast(e.web_count);
+            e.web_count += 1;
+        }
+        for (0..2) |side| for (kept.phis, 0..) |phi, j| {
+            const web = e.web_of[phi][0];
+            const of = sourceOf(steps[phi], side);
+            if (!coalescable(e, &kept, of, side)) continue;
+            if (e.work.divergent[of.step] != e.work.divergent[phi]) continue;
+            if (kept.interferes(e, of, side, j, web)) continue;
+            join(e, of, web);
+        };
+    }
+}
+
+fn bitOf(at: u16) u128 {
+    return @as(u128, 1) << @intCast(at);
+}
+
+/// The steps after `at`.
+fn above(at: u16) u128 {
+    if (at >= 127) return 0;
+    return ~((bitOf(at) << 1) - 1);
+}
+
+/// The steps after `at`, to `to` and with it.
+fn span(at: u16, to: u16) u128 {
+    return above(at) & ~above(to);
+}
+
+/// A float the colour reads, and what it names.
+fn endRead(steps: []const Step, at_end: *[compile.most_steps][4]bool, of: compile.Float) void {
+    at_end[of.step][of.part] = true;
+    const each = steps[of.step];
+    switch (each.tag) {
+        .component => endRead(steps, at_end, .{ .step = each.a, .part = @intCast(each.at) }),
+        .construct => endRead(steps, at_end, .{ .step = each.from[of.part], .part = each.part[of.part] }),
+        else => {},
+    }
+}
+
+/// A kept selection's marks.
+const Marks = struct { begin: u16, otherwise: u16, end: u16 };
+
+/// The marks of the kept selection whose begin_if is `begin`.
+fn branchAt(steps: []const Step, begin: u16) Marks {
+    var marks: Marks = .{ .begin = begin, .otherwise = begin, .end = begin };
+    var k = begin + 1;
+    while (steps[k].tag != .begin_else) k += 1;
+    marks.otherwise = k;
+    while (steps[k].tag != .end_if) k += 1;
+    marks.end = k;
+    return marks;
+}
+
+/// The marks of the kept selection a phi is at the merge of: the last
+/// begin_if before it.
+fn branchOf(steps: []const Step, phi: u16) Marks {
+    var k = phi;
+    while (steps[k].tag != .begin_if) k -= 1;
+    return branchAt(steps, k);
+}
+
+/// The float `of` put in the web `web`, and where it is in a web of a
+/// selection before, all that web with it (merge_merge_sets,
+/// nir_from_ssa.c:197-223).
+fn join(e: *Emit, of: compile.Float, web: u8) void {
+    const was = e.web_of[of.step][of.part];
+    if (was == no_web) {
+        e.web_of[of.step][of.part] = web;
+        return;
+    }
+    for (&e.web_of) |*parts| for (parts) |*part| {
+        if (part.* == was) part.* = web;
+    };
+}
+
+/// The float a phi has from one way: the true arm's, 0, or the false
+/// arm's, 1.
+fn sourceOf(phi: Step, side: usize) compile.Float {
+    return if (side == 0) .{ .step = phi.a, .part = phi.part[0] } else .{ .step = phi.b, .part = phi.part[1] };
+}
+
+/// A kept selection as nir_convert_from_ssa sees it: its blocks' ends,
+/// its phis in order, and where each step is read.
+const Branch = struct {
+    begin: u16,
+    otherwise: u16,
+    end: u16,
+    phis: []const u16,
+    /// Its first phi's web: the webs before it are of selections before.
+    first_web: u8,
+    uses: *const [compile.most_steps][4]u128,
+    at_end: *const [compile.most_steps][4]bool,
+    steps: []const Step,
+
+    const Where = enum { before, yes, no, after };
+
+    fn where(branch: *const Branch, at: u16) Where {
+        if (at < branch.begin) return .before;
+        if (at < branch.otherwise) return .yes;
+        if (at < branch.end) return .no;
+        return .after;
+    }
+
+    /// Read past the merge: live into the merge block.
+    fn readAfter(branch: *const Branch, of: compile.Float) bool {
+        return branch.uses[of.step][of.part] & above(branch.end) != 0 or branch.at_end[of.step][of.part];
+    }
+
+    /// nir_def_is_live_at (nir_liveness.c) of the float `of` at the step
+    /// `at`: read after it in its block, the copies at the block's end
+    /// with it, or past the block's end.
+    fn liveAtStep(branch: *const Branch, of: compile.Float, at: u16) bool {
+        const used = branch.uses[of.step][of.part];
+        const to: u16 = switch (branch.where(at)) {
+            .before, .after => return used & above(at) != 0 or branch.at_end[of.step][of.part],
+            .yes => branch.otherwise,
+            .no => branch.end,
+        };
+        return used & span(at, to) != 0 or branch.readAfter(of);
+    }
+
+    /// Live at the copy of phi `j` at the end of way `side`: read by a
+    /// copy after it, a float being a def of its own once
+    /// nir_lower_alu_to_scalar and nir_lower_io_to_scalar are done, or
+    /// past the merge.
+    fn liveAtCopy(branch: *const Branch, of: compile.Float, side: usize, j: usize) bool {
+        for (branch.phis[j + 1 ..]) |later| {
+            const read = sourceOf(branch.steps[later], side);
+            if (read.step == of.step and read.part == of.part) return true;
+        }
+        return branch.readAfter(of);
+    }
+
+    /// Whether the float `of`, which phi `j` has from way `side`, cannot
+    /// share the phi's web: it is live where something in the web it
+    /// dominates is made, or something in the web that dominates it is
+    /// live where it is made.
+    fn interferes(branch: *const Branch, e: *const Emit, of: compile.Float, side: usize, j: usize, web: u8) bool {
+        const where_of = branch.where(of.step);
+        const before = where_of == .before;
+        // The copy at the end of its own way, and where it is made before
+        // the selection, the other way's copy and the phi.
+        if (branch.liveAtCopy(of, side, j)) return true;
+        if (before and (branch.liveAtCopy(of, 1 - side, j) or branch.readAfter(of))) return true;
+        // The true arm's float, where it was coalesced first: the one made
+        // before the selection is live where the other is made if read
+        // after it there, where its way ends, or past the merge
+        // (nir_def_is_live_at). Where both are made before, each is read
+        // where its own way ends, so that is always so, two floats of one
+        // step too: a def each, one after the other, once
+        // nir_lower_io_to_scalar and nir_lower_alu_to_scalar are done.
+        if (side == 1) {
+            const yes = sourceOf(branch.steps[branch.phis[j]], 0);
+            if (e.web_of[yes.step][yes.part] == web) {
+                if (branch.where(yes.step) == .before and branch.liveAtStep(yes, of.step)) return true;
+                if (before and branch.liveAtStep(of, yes.step)) return true;
+            }
+        }
+        return false;
+    }
+};
+
+/// Whether a float may be coalesced into a web at all: one the walk makes
+/// one instruction of, in a block its way goes through, and not yet in a
+/// web; or a phi of a selection before, whose web is merged whole. A
+/// float in that web that is live here is live where the phi is made, so
+/// the phi is what is checked (merge_sets_interfere's nearest dominator,
+/// nir_from_ssa.c:273-300).
+fn coalescable(e: *const Emit, branch: *const Branch, of: compile.Float, side: usize) bool {
+    const web = e.web_of[of.step][of.part];
+    if (web != no_web) return e.work.steps[of.step].tag == .phi and web < branch.first_web;
+    const each = e.work.steps[of.step];
+    const scalar = each.kind == .f32x1;
+    const made = switch (each.tag) {
+        .add, .mul, .sub, .min, .max, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot, .set_less, .integer, .round_to_int, .input => true,
+        .select => !compile.isBool(e.work, of.step),
+        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_atomic => scalar,
+        else => false,
+    };
+    if (!made) return false;
+    return switch (branch.where(of.step)) {
+        .before => true,
+        .yes => side == 0,
+        .no => side == 1,
+        .after => false,
+    };
 }
 
 /// ntq_emit_load_unifa (nir_to_vir.c:3299-3507), for what the profile
@@ -675,7 +1293,7 @@ fn emitLoadUnifa(e: *Emit, each: Step, at: u16) Error!void {
 
     for (0..each.kind.parts()) |i| {
         const data = try emitLdunifa(e, true);
-        e.defs[at][i] = try c.mul(.mov, .{data});
+        try storeDef(e, at, i, try c.mul(.mov, .{data}));
     }
 }
 
@@ -1023,6 +1641,10 @@ fn emitTmuGeneral(e: *Emit, each: Step, at: u16) Error!void {
     else
         general_tmu_lookup_type_vec2 + num_components - 2;
 
+    // Under the execute mask, the address is written for the lanes that
+    // run (emit_tmu_general_address_write, :457-459, :490-491; since
+    // 1.171).
+    if (c.inNonuniformControlFlow()) c.setPf(try c.mulDest(.mov, vir.nopReg(), .{c.execute}), .pushz);
     const tmua = vir.magicReg(if (config == ~@as(u32, 0)) .tmua else .tmuau);
     const tmu = if (dynamic_src)
         try c.addDest(.add, tmua, .{ base_offset, try getSrc(e, offset_src, 0) })
@@ -1031,6 +1653,7 @@ fn emitTmuGeneral(e: *Emit, each: Step, at: u16) Error!void {
     else
         try c.mulDest(.mov, tmua, .{base_offset});
     if (config != ~@as(u32, 0)) tmu.uniform = try c.getUniformIndex(.constant, config);
+    if (c.inNonuniformControlFlow()) vir.setCond(tmu, .ifa);
     tmu.ldtmu_count = dest_components;
     try addPendingTmuFlush(e, at, (@as(u32, 1) << @intCast(dest_components)) - 1);
 }
@@ -1062,7 +1685,7 @@ fn flushTmu(e: *Emit) Error!void {
             for (0..4) |j| {
                 if (pending.component_mask & @as(u32, 1) << @intCast(j) != 0) {
                     const word = try c.mul(.mov, .{try c.ldtmu()});
-                    if (general) e.defs[pending.step][j] = word else e.words[pending.step][j] = word;
+                    if (general) try storeDef(e, pending.step, j, word) else e.words[pending.step][j] = word;
                 }
             }
             if (general) e.defined[pending.step] = true else e.words_defined[pending.step] = true;
