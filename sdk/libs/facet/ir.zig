@@ -118,6 +118,20 @@ pub const Tag = enum(u8) {
     multiply,
     add,
     subtract,
+    /// `a` with its sign turned: SPIR-V's OpFNegate (since 1.152).
+    negate,
+    /// `a` over `b`, float by float: OpFDiv (since 1.152).
+    divide,
+    /// `a` and `b` multiplied float by float and summed, one float: OpDot
+    /// (since 1.152).
+    dot,
+    /// A call of GLSL.std.450, `at` the instruction, of `a`, `b` and `c`
+    /// as it takes them: OpExtInst (since 1.152). `Build` names the ones
+    /// both devices answer.
+    extended,
+    /// A vector of floats, `a`, `b`, `c` and `d` as many as it has:
+    /// OpCompositeConstruct (since 1.152).
+    construct,
     /// A vector times one float.
     scale,
     /// One float out of a value.
@@ -138,6 +152,10 @@ pub const Op = struct {
     /// Which operations it reads, as indices into the graph.
     a: u16 = 0,
     b: u16 = 0,
+    /// The third an `extended` reads, FClamp's high and FMix's weight,
+    /// and the third and fourth float of a `construct`.
+    c: u16 = 0,
+    d: u16 = 0,
     /// A location for an input, `set << 16 | binding` for a sample, a
     /// component for a component.
     at: u32 = 0,
@@ -248,6 +266,30 @@ pub const Build = struct {
         return build.put(.{ .tag = .constant, .kind = .f32x4, .value = parts });
     }
 
+    /// A value of the shader's own of `kind`, its first floats of `parts`
+    /// (since 1.152).
+    pub fn constantOf(build: *Build, comptime kind: Kind, comptime parts: [4]f32) u16 {
+        if (kind == .boolean) @compileError("a constant is floats");
+        return build.put(.{ .tag = .constant, .kind = kind, .value = parts });
+    }
+
+    /// A vector of two to four floats, each one float of the graph
+    /// (since 1.152).
+    pub fn vector(build: *Build, comptime parts: []const u16) u16 {
+        if (parts.len < 2 or parts.len > 4) @compileError("a vector is of two to four floats");
+        var at: [4]u16 = @splat(0);
+        for (parts, 0..) |each, k| {
+            if (build.ops[each].kind != .f32x1) @compileError("a vector is made of floats, one each");
+            at[k] = each;
+        }
+        const kind: Kind = switch (parts.len) {
+            2 => .f32x2,
+            3 => .f32x3,
+            else => .f32x4,
+        };
+        return build.put(.{ .tag = .construct, .kind = kind, .a = at[0], .b = at[1], .c = at[2], .d = at[3] });
+    }
+
     /// Floats of the push constants, `offset` bytes in: a member of the
     /// shader's one push-constant block, at that Offset, which the draw
     /// fills with CmdPushConstants. Vulkan lays such a block out by
@@ -340,6 +382,95 @@ pub const Build = struct {
     pub fn sub(build: *Build, a: u16, b: u16) u16 {
         return build.pair(.subtract, a, b);
     }
+    pub fn div(build: *Build, a: u16, b: u16) u16 {
+        return build.pair(.divide, a, b);
+    }
+    pub fn neg(build: *Build, a: u16) u16 {
+        return build.put(.{ .tag = .negate, .kind = build.ops[a].kind, .a = a });
+    }
+
+    /// The sum of the products, one float.
+    pub fn dot(build: *Build, a: u16, b: u16) u16 {
+        if (!build.ops[a].kind.sameSize(build.ops[b].kind)) @compileError("these two are not the same width");
+        if (build.ops[a].kind == .f32x1 or build.ops[a].kind == .boolean) @compileError("a dot is of two vectors");
+        return build.put(.{ .tag = .dot, .kind = .f32x1, .a = a, .b = b });
+    }
+
+    // GLSL.std.450's float functions (since 1.152): of a value, a float at
+    // a time, the kind of what they are given - but Length and Distance,
+    // which answer one float of a vector.
+
+    pub fn abs(build: *Build, a: u16) u16 {
+        return build.call(.f_abs, a, 0, 0);
+    }
+    pub fn floor(build: *Build, a: u16) u16 {
+        return build.call(.floor, a, 0, 0);
+    }
+    pub fn ceil(build: *Build, a: u16) u16 {
+        return build.call(.ceil, a, 0, 0);
+    }
+    pub fn trunc(build: *Build, a: u16) u16 {
+        return build.call(.trunc, a, 0, 0);
+    }
+    pub fn roundEven(build: *Build, a: u16) u16 {
+        return build.call(.round_even, a, 0, 0);
+    }
+    pub fn fract(build: *Build, a: u16) u16 {
+        return build.call(.fract, a, 0, 0);
+    }
+    pub fn sqrt(build: *Build, a: u16) u16 {
+        return build.call(.sqrt, a, 0, 0);
+    }
+    pub fn inverseSqrt(build: *Build, a: u16) u16 {
+        return build.call(.inverse_sqrt, a, 0, 0);
+    }
+    pub fn exp(build: *Build, a: u16) u16 {
+        return build.call(.exp, a, 0, 0);
+    }
+    pub fn log(build: *Build, a: u16) u16 {
+        return build.call(.log, a, 0, 0);
+    }
+    pub fn exp2(build: *Build, a: u16) u16 {
+        return build.call(.exp2, a, 0, 0);
+    }
+    pub fn log2(build: *Build, a: u16) u16 {
+        return build.call(.log2, a, 0, 0);
+    }
+    pub fn pow(build: *Build, a: u16, b: u16) u16 {
+        return build.call(.pow, a, b, 0);
+    }
+    pub fn min(build: *Build, a: u16, b: u16) u16 {
+        return build.call(.f_min, a, b, 0);
+    }
+    pub fn max(build: *Build, a: u16, b: u16) u16 {
+        return build.call(.f_max, a, b, 0);
+    }
+    pub fn clamp(build: *Build, a: u16, low: u16, high: u16) u16 {
+        return build.call(.f_clamp, a, low, high);
+    }
+    /// `a` towards `b` by `t`: GLSL's mix, FMix.
+    pub fn mix(build: *Build, a: u16, b: u16, t: u16) u16 {
+        return build.call(.f_mix, a, b, t);
+    }
+    pub fn length(build: *Build, a: u16) u16 {
+        return build.call(.length, a, 0, 0);
+    }
+    pub fn distance(build: *Build, a: u16, b: u16) u16 {
+        return build.call(.distance, a, b, 0);
+    }
+    pub fn normalize(build: *Build, a: u16) u16 {
+        return build.call(.normalize, a, 0, 0);
+    }
+
+    fn call(build: *Build, comptime which: spirv.Glsl, a: u16, b: u16, c: u16) u16 {
+        const kind = build.ops[a].kind;
+        if (kind == .boolean) @compileError("GLSL.std.450 is called with floats");
+        const takes = callArguments(which);
+        if (takes > 1 and !kind.sameSize(build.ops[b].kind)) @compileError("these two are not the same width");
+        if (takes > 2 and !kind.sameSize(build.ops[c].kind)) @compileError("these three are not the same width");
+        const answers: Kind = if (which == .length or which == .distance) .f32x1 else kind;
+        return build.put(.{ .tag = .extended, .kind = answers, .a = a, .b = b, .c = c, .at = @intFromEnum(which) });
+    }
 
     /// A value times one float.
     pub fn scale(build: *Build, of: u16, by: u16) u16 {
@@ -376,6 +507,15 @@ pub const Build = struct {
         _ = build.put(.{ .tag = .color, .kind = .f32x4, .a = value });
     }
 };
+
+/// How many values a GLSL.std.450 function `Build` names takes.
+fn callArguments(comptime which: spirv.Glsl) u32 {
+    return switch (which) {
+        .pow, .f_min, .f_max, .distance => 2,
+        .f_clamp, .f_mix => 3,
+        else => 1,
+    };
+}
 
 /// The graph `body` records.
 pub fn graphOf(comptime body: fn (*Build) void) Graph {
@@ -486,8 +626,17 @@ fn wordsOf(comptime graph: Graph) []const u32 {
         // The push-constant block's variable, where there is a block:
         // taken last, so that a graph with none is the module it was.
         const push_id: u32 = if (graph.pushes.len == 0) 0 else emit.id();
+        // GLSL.std.450, imported where a graph calls it and only there,
+        // after the capability as the logical layout has it: a graph that
+        // calls nothing is the module it was (since 1.152).
+        var calls = false;
+        for (graph.ops) |op| if (op.tag == .extended) {
+            calls = true;
+        };
+        const glsl_id: u32 = if (calls) emit.id() else 0;
 
         emit.capability(.shader);
+        if (calls) emit.extInstImport(glsl_id, spirv.glsl_set);
         emit.memoryModel(.logical, .glsl450);
         var interface: [1 + most_ops]u32 = @splat(0);
         interface[0] = colour_out;
@@ -660,6 +809,47 @@ fn wordsOf(comptime graph: Graph) []const u32 {
                     const right = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.b);
                     const made = emit.id();
                     emit.at(.vector_times_scalar, &.{ vectorFor(&emit, &vector_types, float_type, op.kind), made, left, right });
+                    value_ids[k] = made;
+                },
+                .negate => {
+                    const of = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.a);
+                    const made = emit.id();
+                    emit.at(.f_negate, &.{ vectorFor(&emit, &vector_types, float_type, op.kind), made, of });
+                    value_ids[k] = made;
+                },
+                .construct => {
+                    var words: [6]u32 = undefined;
+                    const parts = op.kind.parts();
+                    words[0] = vectorFor(&emit, &vector_types, float_type, op.kind);
+                    for (([4]u16{ op.a, op.b, op.c, op.d })[0..parts], 0..) |of, n| {
+                        words[2 + n] = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, of);
+                    }
+                    const made = emit.id();
+                    words[1] = made;
+                    emit.at(.composite_construct, words[0 .. 2 + parts]);
+                    value_ids[k] = made;
+                },
+                .divide, .dot => {
+                    const left = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.a);
+                    const right = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.b);
+                    const made = emit.id();
+                    emit.at(if (op.tag == .divide) .f_div else .dot, &.{ vectorFor(&emit, &vector_types, float_type, op.kind), made, left, right });
+                    value_ids[k] = made;
+                },
+                .extended => {
+                    const which: spirv.Glsl = @enumFromInt(op.at);
+                    const takes = callArguments(which);
+                    var words: [7]u32 = undefined;
+                    words[0] = vectorFor(&emit, &vector_types, float_type, op.kind);
+                    words[1] = 0;
+                    words[2] = glsl_id;
+                    words[3] = op.at;
+                    for (([3]u16{ op.a, op.b, op.c })[0..takes], 0..) |of, n| {
+                        words[4 + n] = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, of);
+                    }
+                    const made = emit.id();
+                    words[1] = made;
+                    emit.at(.ext_inst, words[0 .. 4 + takes]);
                     value_ids[k] = made;
                 },
                 .component => {
@@ -890,6 +1080,17 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
                     .subtract => inline for (0..comptime op.kind.parts()) |part| {
                         values[i][part] = values[op.a][part] - values[op.b][part];
                     },
+                    .negate => inline for (0..comptime op.kind.parts()) |part| {
+                        values[i][part] = -values[op.a][part];
+                    },
+                    .divide => inline for (0..comptime op.kind.parts()) |part| {
+                        values[i][part] = values[op.a][part] / values[op.b][part];
+                    },
+                    .construct => inline for (comptime ([4]u16{ op.a, op.b, op.c, op.d })[0..op.kind.parts()], 0..) |of, part| {
+                        values[i][part] = values[of][0];
+                    },
+                    .dot => values[i][0] = dotOf(comptime graph.ops[op.a].kind.parts(), values[op.a], values[op.b]),
+                    .extended => values[i] = called(@enumFromInt(op.at), comptime graph.ops[op.a].kind.parts(), values[op.a], values[op.b], values[op.c]),
                     .scale => inline for (0..comptime op.kind.parts()) |part| {
                         values[i][part] = values[op.a][part] * values[op.b][0];
                     },
@@ -909,6 +1110,67 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
         }
     };
     return &made.run;
+}
+
+/// The products of two values summed, the first floats first.
+inline fn dotOf(comptime parts: u32, a: [4]Pixels, b: [4]Pixels) Pixels {
+    var sum = a[0] * b[0];
+    inline for (1..parts) |part| sum += a[part] * b[part];
+    return sum;
+}
+
+/// A GLSL.std.450 function on the cores, as the extended set's
+/// specification says it, of `parts` floats of each of its values. The
+/// V3D lowers each as Mesa does (`driver/v3d/compile.zig`'s `glslCall`),
+/// through an SFU whose results are not exact, so the two agree to within
+/// a channel's step rather than to the bit (since 1.152).
+inline fn called(comptime which: spirv.Glsl, comptime parts: u32, a: [4]Pixels, b: [4]Pixels, c: [4]Pixels) [4]Pixels {
+    @setRuntimeSafety(false);
+    const one: Pixels = @splat(1);
+    var made: [4]Pixels = undefined;
+    switch (which) {
+        .length, .distance => {
+            var d = a;
+            if (which == .distance) inline for (0..parts) |part| {
+                d[part] = a[part] - b[part];
+            };
+            made[0] = @sqrt(dotOf(parts, d, d));
+        },
+        .normalize => {
+            const inverse = one / @sqrt(dotOf(parts, a, a));
+            inline for (0..parts) |part| made[part] = a[part] * inverse;
+        },
+        else => inline for (0..parts) |part| {
+            const x = a[part];
+            made[part] = switch (which) {
+                .f_abs => @abs(x),
+                .floor => @floor(x),
+                .ceil => @ceil(x),
+                .trunc => @trunc(x),
+                // To the nearest, a half to the even one of the two.
+                .round_even => even: {
+                    const nearest = @round(x);
+                    const tie = @abs(x - @trunc(x)) == @as(Pixels, @splat(0.5));
+                    break :even @select(f32, tie, @round(x * @as(Pixels, @splat(0.5))) * @as(Pixels, @splat(2)), nearest);
+                },
+                .fract => x - @floor(x),
+                .sqrt => @sqrt(x),
+                .inverse_sqrt => one / @sqrt(x),
+                .exp => @exp(x),
+                .log => @log(x),
+                .exp2 => @exp2(x),
+                .log2 => @log2(x),
+                // x to the y, for an x above 0, as the set defines it.
+                .pow => @exp2(@log2(x) * b[part]),
+                .f_min => @min(x, b[part]),
+                .f_max => @max(x, b[part]),
+                .f_clamp => @min(@max(x, b[part]), c[part]),
+                .f_mix => x * (one - c[part]) + b[part] * c[part],
+                else => @compileError("a GLSL.std.450 function Build does not name"),
+            };
+        },
+    }
+    return made;
 }
 
 /// Which varying an input's first float is.

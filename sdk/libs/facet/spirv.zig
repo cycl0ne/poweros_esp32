@@ -150,6 +150,98 @@ pub const ExecutionMode = enum(u32) { origin_upper_left = 7, origin_lower_left =
 pub const StorageClass = enum(u32) { uniform_constant = 0, input = 1, uniform = 2, output = 3, workgroup = 4, cross_workgroup = 5, private = 6, function = 7, push_constant = 9, _ };
 pub const Decoration = enum(u32) { block = 2, row_major = 4, col_major = 5, array_stride = 6, matrix_stride = 7, built_in = 11, no_perspective = 13, flat = 14, location = 30, binding = 33, descriptor_set = 34, offset = 35, _ };
 pub const BuiltIn = enum(u32) { position = 0, point_size = 1, clip_distance = 3, cull_distance = 4, frag_depth = 22, _ };
+/// The instructions of the extended set GLSL.std.450, by the numbers its
+/// specification gives them (GLSL.std.450.h), which an OpExtInst names.
+/// Read out of glslc's modules as well: Normalize 69, FClamp 43, FMix 46,
+/// Fract 10, FAbs 4, Sqrt 31, Pow 26, FMax 40, Length 66 (since 1.152).
+pub const Glsl = enum(u32) {
+    round = 1,
+    round_even = 2,
+    trunc = 3,
+    f_abs = 4,
+    s_abs = 5,
+    f_sign = 6,
+    s_sign = 7,
+    floor = 8,
+    ceil = 9,
+    fract = 10,
+    radians = 11,
+    degrees = 12,
+    sin = 13,
+    cos = 14,
+    tan = 15,
+    asin = 16,
+    acos = 17,
+    atan = 18,
+    sinh = 19,
+    cosh = 20,
+    tanh = 21,
+    asinh = 22,
+    acosh = 23,
+    atanh = 24,
+    atan2 = 25,
+    pow = 26,
+    exp = 27,
+    log = 28,
+    exp2 = 29,
+    log2 = 30,
+    sqrt = 31,
+    inverse_sqrt = 32,
+    determinant = 33,
+    matrix_inverse = 34,
+    modf = 35,
+    modf_struct = 36,
+    f_min = 37,
+    u_min = 38,
+    s_min = 39,
+    f_max = 40,
+    u_max = 41,
+    s_max = 42,
+    f_clamp = 43,
+    u_clamp = 44,
+    s_clamp = 45,
+    f_mix = 46,
+    i_mix = 47,
+    step = 48,
+    smooth_step = 49,
+    fma = 50,
+    frexp = 51,
+    frexp_struct = 52,
+    ldexp = 53,
+    pack_snorm_4x8 = 54,
+    pack_unorm_4x8 = 55,
+    pack_snorm_2x16 = 56,
+    pack_unorm_2x16 = 57,
+    pack_half_2x16 = 58,
+    pack_double_2x32 = 59,
+    unpack_snorm_2x16 = 60,
+    unpack_unorm_2x16 = 61,
+    unpack_half_2x16 = 62,
+    unpack_snorm_4x8 = 63,
+    unpack_unorm_4x8 = 64,
+    unpack_double_2x32 = 65,
+    length = 66,
+    distance = 67,
+    cross = 68,
+    normalize = 69,
+    face_forward = 70,
+    reflect = 71,
+    refract = 72,
+    find_i_lsb = 73,
+    find_s_msb = 74,
+    find_u_msb = 75,
+    interpolate_at_centroid = 76,
+    interpolate_at_sample = 77,
+    interpolate_at_offset = 78,
+    n_min = 79,
+    n_max = 80,
+    n_clamp = 81,
+    _,
+};
+
+/// The name a module imports GLSL.std.450 by.
+pub const glsl_set = "GLSL.std.450";
+
 pub const Dim = enum(u32) { dim_1d = 0, dim_2d = 1, dim_3d = 2, cube = 3, _ };
 pub const ImageFormat = enum(u32) { unknown = 0, _ };
 pub const FunctionControl = enum(u32) { none = 0, _ };
@@ -297,6 +389,15 @@ pub const Emit = struct {
 
     pub fn capability(emit: *Emit, which: Capability) void {
         emit.instruction(.head, .capability, &.{@intFromEnum(which)});
+    }
+
+    /// An extended instruction set imported as `which`: after the
+    /// capabilities and before the memory model, where the logical layout
+    /// has it (since 1.152).
+    pub fn extInstImport(emit: *Emit, which: u32, name: []const u8) void {
+        emit.put(.head, (@as(u32, 2 + textWords(name)) << 16) | @intFromEnum(Op.ext_inst_import));
+        emit.put(.head, which);
+        emit.text(.head, name);
     }
 
     pub fn memoryModel(emit: *Emit, addressing: AddressingModel, memory: MemoryModel) void {
@@ -609,9 +710,11 @@ pub const Profile = struct {
 /// `ocolor = vcolor;` emits OpExtInstImport, OpSource, OpSourceExtension
 /// and OpName around instructions that were all already here, so the
 /// module was turned away at its sixth word. `ext_inst_import` is the
-/// declaration alone - `ext_inst`, which is the use of an imported set,
-/// is still not here, so a module that calls one of GLSL.std.450's
-/// functions is refused for that and not for importing it.
+/// declaration alone; `ext_inst`, which is the use of an imported set,
+/// is here since 1.152, when the V3D began to compile GLSL.std.450's
+/// float functions: a call a device cannot run is that device's to
+/// refuse, at the pipeline, as every other opcode its profile leaves out
+/// is.
 pub const facet_opcodes: []const Op = &.{
     .capability,                .memory_model,        .entry_point,              .execution_mode,
     .decorate,                  .member_decorate,     .type_void,                .type_bool,
@@ -630,6 +733,8 @@ pub const facet_opcodes: []const Op = &.{
     // Declarations and annotations, which say nothing a device runs.
     .ext_inst_import,           .source,              .source_extension,         .name,
     .member_name,
+    // A call into an imported set (since 1.152).
+                  .ext_inst,
 };
 
 /// The format's own profile, which is what `CreateShaderModule` reads a

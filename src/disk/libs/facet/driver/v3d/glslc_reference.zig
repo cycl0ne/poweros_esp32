@@ -3,8 +3,8 @@
 //! output for shaders whose facet forms `tests/spirv_reference.zig`
 //! keeps: the interpolated colour, the colour tinted by the push
 //! constants (since 1.138), the texture whose pixel is dropped where
-//! its alpha is under a half (since 1.139), and a shadow sample (since
-//! 1.143).
+//! its alpha is under a half (since 1.139), a shadow sample (since
+//! 1.143), and float arithmetic through GLSL.std.450 (since 1.152).
 //!
 //! They are here rather than beside the other reference modules because a
 //! Zig module cannot import a file above its own root, and these are read
@@ -399,4 +399,160 @@ pub const glslc_shadow = [_]u32{
     0x00060059, 0x00000006, 0x0000001E, 0x00000011, 0x0000001C, 0x0000001D,
     0x0005008E, 0x00000007, 0x0000001F, 0x0000000C, 0x0000001E, 0x0003003E,
     0x00000009, 0x0000001F, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at `-O`, for float arithmetic through GLSL.std.450:
+/// a difference, Normalize, a dot, FClamp, FMix, Fract, a product by a
+/// half where the source divides by 2, FAbs, Sqrt, Pow, a negation,
+/// FMax and Length, the floats of the varying read through access
+/// chains and a shuffle (since 1.152).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// void main() {
+///     vec3 n = normalize(vcolor.xyz - vec3(0.5));
+///     float lit = clamp(dot(n, vec3(0.267, 0.535, 0.802)), 0.0, 1.0);
+///     float r = mix(vcolor.x, lit, 0.25);
+///     float g = fract(vcolor.y * 3.0) / 2.0;
+///     float b = sqrt(abs(vcolor.z - 0.5)) * pow(vcolor.w, 2.2);
+///     ocolor = vec4(r, g, max(b, -vcolor.x), length(vcolor.xy) * 0.5);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag arith.frag -o arith.spv   # 315 words
+/// spirv-val --target-env vulkan1.0 arith.spv           # no output, and 0
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 76
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %12 %62
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %12 Location 0
+///                OpDecorate %62 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 3
+///          %10 = OpTypeVector %6 4
+///          %11 = OpTypePointer Input %10
+///          %12 = OpVariable %11 Input
+///          %15 = OpConstant %6 0.5
+///          %16 = OpConstantComposite %7 %15 %15 %15
+///          %22 = OpConstant %6 0.26699999
+///          %23 = OpConstant %6 0.535000026
+///          %24 = OpConstant %6 0.801999986
+///          %25 = OpConstantComposite %7 %22 %23 %24
+///          %27 = OpConstant %6 0
+///          %28 = OpConstant %6 1
+///          %31 = OpTypeInt 32 0
+///          %32 = OpConstant %31 0
+///          %33 = OpTypePointer Input %6
+///          %37 = OpConstant %6 0.25
+///          %40 = OpConstant %31 1
+///          %43 = OpConstant %6 3
+///          %49 = OpConstant %31 2
+///          %55 = OpConstant %31 3
+///          %58 = OpConstant %6 2.20000005
+///          %61 = OpTypePointer Output %10
+///          %62 = OpVariable %61 Output
+///          %70 = OpTypeVector %6 2
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %13 = OpLoad %10 %12
+///          %14 = OpVectorShuffle %7 %13 %13 0 1 2
+///          %17 = OpFSub %7 %14 %16
+///          %18 = OpExtInst %7 %1 Normalize %17
+///          %26 = OpDot %6 %18 %25
+///          %29 = OpExtInst %6 %1 FClamp %26 %27 %28
+///          %34 = OpAccessChain %33 %12 %32
+///          %35 = OpLoad %6 %34
+///          %38 = OpExtInst %6 %1 FMix %35 %29 %37
+///          %41 = OpAccessChain %33 %12 %40
+///          %42 = OpLoad %6 %41
+///          %44 = OpFMul %6 %42 %43
+///          %45 = OpExtInst %6 %1 Fract %44
+///          %47 = OpFMul %6 %45 %15
+///          %50 = OpAccessChain %33 %12 %49
+///          %51 = OpLoad %6 %50
+///          %52 = OpFSub %6 %51 %15
+///          %53 = OpExtInst %6 %1 FAbs %52
+///          %54 = OpExtInst %6 %1 Sqrt %53
+///          %56 = OpAccessChain %33 %12 %55
+///          %57 = OpLoad %6 %56
+///          %59 = OpExtInst %6 %1 Pow %57 %58
+///          %60 = OpFMul %6 %54 %59
+///          %68 = OpFNegate %6 %35
+///          %69 = OpExtInst %6 %1 FMax %60 %68
+///          %72 = OpVectorShuffle %70 %13 %13 0 1
+///          %73 = OpExtInst %6 %1 Length %72
+///          %74 = OpFMul %6 %73 %15
+///          %75 = OpCompositeConstruct %10 %38 %47 %69 %74
+///                OpStore %62 %75
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_arith = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000004C, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000C, 0x0000003E, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000C, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000003E, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000003, 0x00040017, 0x0000000A,
+    0x00000006, 0x00000004, 0x00040020, 0x0000000B, 0x00000001, 0x0000000A,
+    0x0004003B, 0x0000000B, 0x0000000C, 0x00000001, 0x0004002B, 0x00000006,
+    0x0000000F, 0x3F000000, 0x0006002C, 0x00000007, 0x00000010, 0x0000000F,
+    0x0000000F, 0x0000000F, 0x0004002B, 0x00000006, 0x00000016, 0x3E88B439,
+    0x0004002B, 0x00000006, 0x00000017, 0x3F08F5C3, 0x0004002B, 0x00000006,
+    0x00000018, 0x3F4D4FDF, 0x0006002C, 0x00000007, 0x00000019, 0x00000016,
+    0x00000017, 0x00000018, 0x0004002B, 0x00000006, 0x0000001B, 0x00000000,
+    0x0004002B, 0x00000006, 0x0000001C, 0x3F800000, 0x00040015, 0x0000001F,
+    0x00000020, 0x00000000, 0x0004002B, 0x0000001F, 0x00000020, 0x00000000,
+    0x00040020, 0x00000021, 0x00000001, 0x00000006, 0x0004002B, 0x00000006,
+    0x00000025, 0x3E800000, 0x0004002B, 0x0000001F, 0x00000028, 0x00000001,
+    0x0004002B, 0x00000006, 0x0000002B, 0x40400000, 0x0004002B, 0x0000001F,
+    0x00000031, 0x00000002, 0x0004002B, 0x0000001F, 0x00000037, 0x00000003,
+    0x0004002B, 0x00000006, 0x0000003A, 0x400CCCCD, 0x00040020, 0x0000003D,
+    0x00000003, 0x0000000A, 0x0004003B, 0x0000003D, 0x0000003E, 0x00000003,
+    0x00040017, 0x00000046, 0x00000006, 0x00000002, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000A, 0x0000000D, 0x0000000C, 0x0008004F, 0x00000007, 0x0000000E,
+    0x0000000D, 0x0000000D, 0x00000000, 0x00000001, 0x00000002, 0x00050083,
+    0x00000007, 0x00000011, 0x0000000E, 0x00000010, 0x0006000C, 0x00000007,
+    0x00000012, 0x00000001, 0x00000045, 0x00000011, 0x00050094, 0x00000006,
+    0x0000001A, 0x00000012, 0x00000019, 0x0008000C, 0x00000006, 0x0000001D,
+    0x00000001, 0x0000002B, 0x0000001A, 0x0000001B, 0x0000001C, 0x00050041,
+    0x00000021, 0x00000022, 0x0000000C, 0x00000020, 0x0004003D, 0x00000006,
+    0x00000023, 0x00000022, 0x0008000C, 0x00000006, 0x00000026, 0x00000001,
+    0x0000002E, 0x00000023, 0x0000001D, 0x00000025, 0x00050041, 0x00000021,
+    0x00000029, 0x0000000C, 0x00000028, 0x0004003D, 0x00000006, 0x0000002A,
+    0x00000029, 0x00050085, 0x00000006, 0x0000002C, 0x0000002A, 0x0000002B,
+    0x0006000C, 0x00000006, 0x0000002D, 0x00000001, 0x0000000A, 0x0000002C,
+    0x00050085, 0x00000006, 0x0000002F, 0x0000002D, 0x0000000F, 0x00050041,
+    0x00000021, 0x00000032, 0x0000000C, 0x00000031, 0x0004003D, 0x00000006,
+    0x00000033, 0x00000032, 0x00050083, 0x00000006, 0x00000034, 0x00000033,
+    0x0000000F, 0x0006000C, 0x00000006, 0x00000035, 0x00000001, 0x00000004,
+    0x00000034, 0x0006000C, 0x00000006, 0x00000036, 0x00000001, 0x0000001F,
+    0x00000035, 0x00050041, 0x00000021, 0x00000038, 0x0000000C, 0x00000037,
+    0x0004003D, 0x00000006, 0x00000039, 0x00000038, 0x0007000C, 0x00000006,
+    0x0000003B, 0x00000001, 0x0000001A, 0x00000039, 0x0000003A, 0x00050085,
+    0x00000006, 0x0000003C, 0x00000036, 0x0000003B, 0x0004007F, 0x00000006,
+    0x00000044, 0x00000023, 0x0007000C, 0x00000006, 0x00000045, 0x00000001,
+    0x00000028, 0x0000003C, 0x00000044, 0x0007004F, 0x00000046, 0x00000048,
+    0x0000000D, 0x0000000D, 0x00000000, 0x00000001, 0x0006000C, 0x00000006,
+    0x00000049, 0x00000001, 0x00000042, 0x00000048, 0x00050085, 0x00000006,
+    0x0000004A, 0x00000049, 0x0000000F, 0x00070050, 0x0000000A, 0x0000004B,
+    0x00000026, 0x0000002F, 0x00000045, 0x0000004A, 0x0003003E, 0x0000003E,
+    0x0000004B, 0x000100FD, 0x00010038,
 };

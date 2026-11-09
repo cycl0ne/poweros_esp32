@@ -25,7 +25,12 @@
 //! no colour (since 1.18) draw a depth alone, then look at it in a pass of
 //! colour: a shadow map sampled, or a subpass after it tested against it;
 //! and the cases of no attachment at all count what they draw with an
-//! occlusion query, the two counts compared as well.
+//! occlusion query, the two counts compared as well. The shipped cases of
+//! float arithmetic (since 1.20) are of GLSL.std.450's calls, which the
+//! V3D lowers as Mesa does, through an SFU that is not exact, and whose
+//! roundings and Fract jump where a varying crosses a whole number: a
+//! line of pixels a step apart there is the two devices' interpolation,
+//! not a sum gone wrong.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -40,7 +45,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.19 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.20 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -428,6 +433,45 @@ const Shipped = struct {
             b.color(b.add(b.scale(b.constant(.{ 1, 0, 0, 0 }), passed), b.constant(.{ 0, 0, 0, 1 })));
         }
     });
+    /// Float arithmetic through GLSL.std.450, the shader the V3D's host
+    /// tests hold to glslc's word for word: Normalize, a dot, FClamp, FMix
+    /// of a constant weight, Fract, FAbs, Sqrt, Pow, a negation, FMax and
+    /// Length of the colour (since 1.20).
+    const Arithmetic = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const half = b.scalar(0.5);
+            const n = b.normalize(b.sub(b.vector(&.{ x, y, z }), b.constantOf(.f32x3, .{ 0.5, 0.5, 0.5, 0 })));
+            const lit = b.clamp(b.dot(n, b.constantOf(.f32x3, .{ 0.267, 0.535, 0.802, 0 })), b.scalar(0), b.scalar(1));
+            const r = b.mix(x, lit, b.scalar(0.25));
+            const g = b.mul(b.fract(b.mul(y, b.scalar(3))), half);
+            const bl = b.max(b.mul(b.sqrt(b.abs(b.sub(z, half))), b.pow(w, b.scalar(2.2))), b.neg(x));
+            const a = b.mul(b.length(b.vector(&.{ x, y })), half);
+            b.color(b.vector(&.{ r, g, bl, a }));
+        }
+    });
+    /// The rest of the calls the V3D lowers: the four roundings, Exp, Log,
+    /// Exp2, Log2, Distance, InverseSqrt, FMin, a division, and FMix of a
+    /// weight that varies, green's (since 1.20).
+    const Called = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const scaled = b.mul(v, b.constant(.{ 2.5, 2.5, 2.5, 2.5 }));
+            const rounded = b.add(b.add(b.floor(scaled), b.ceil(scaled)), b.add(b.trunc(scaled), b.roundEven(scaled)));
+            const grown = b.add(b.exp(x), b.log(b.add(y, b.scalar(1))));
+            const twos = b.add(b.exp2(x), b.log2(b.add(y, b.scalar(1))));
+            const away = b.distance(b.vector(&.{ x, y }), b.constantOf(.f32x2, .{ 0.25, 0.75, 0, 0 }));
+            const sums = b.vector(&.{ b.inverseSqrt(b.add(x, b.scalar(1))), b.mul(b.min(grown, twos), b.scalar(0.25)), b.div(away, b.scalar(2)), b.scalar(1) });
+            const weight = b.vector(&.{ y, y, y, y });
+            b.color(b.mix(sums, b.mul(rounded, b.constant(.{ 0.1, 0.1, 0.1, 0.1 })), weight));
+        }
+    });
 };
 
 /// The entries that ship words, after all the others, and the words of
@@ -447,12 +491,14 @@ const shipped_entries = [_]shader.Entry{
     Shipped.Cutout.entry("shipped cutout"),
     Shipped.CutoutOther.entry("shipped cutout other"),
     Shipped.Shadowed.entry("shipped shadow"),
+    Shipped.Arithmetic.entry("shipped arithmetic"),
+    Shipped.Called.entry("shipped called"),
 };
 const shipped_words = [_]shader.Spirv{
-    .{},                       .{},                    .{},                  .{},
-    Shipped.Smooth.spirv,      Shipped.Flat.spirv,     Shipped.Dimmed.spirv, Shipped.Textured.spirv,
-    Shipped.Modulated.spirv,   Shipped.Pushed.spirv,   Shipped.Tinted.spirv, Shipped.Cutout.spirv,
-    Shipped.CutoutOther.spirv, Shipped.Shadowed.spirv,
+    .{},                       .{},                    .{},                      .{},
+    Shipped.Smooth.spirv,      Shipped.Flat.spirv,     Shipped.Dimmed.spirv,     Shipped.Textured.spirv,
+    Shipped.Modulated.spirv,   Shipped.Pushed.spirv,   Shipped.Tinted.spirv,     Shipped.Cutout.spirv,
+    Shipped.CutoutOther.spirv, Shipped.Shadowed.spirv, Shipped.Arithmetic.spirv, Shipped.Called.spirv,
 };
 
 const plain_entries = [_]shader.Entry{
@@ -2861,6 +2907,8 @@ const cases = [_]Case{
     .{ .name = "shipped cutout", .run = Cases.shipped("texture", "shipped cutout", true, quad_at) },
     .{ .name = "shipped cutout the other way", .run = Cases.shipped("texture", "shipped cutout other", true, quad_at) },
     .{ .name = "shipped cutout in front", .run = Cases.cutoutInFront },
+    .{ .name = "shipped float arithmetic", .run = Cases.shipped("as it is", "shipped arithmetic", false, clockwise_at) },
+    .{ .name = "shipped GLSL.std.450 calls", .run = Cases.shipped("as it is", "shipped called", false, clockwise_at) },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },

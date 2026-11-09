@@ -314,14 +314,62 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         .construct => {
             for (0..parts) |k| e.defs[at][k] = try getSrc(e, each.from[k], each.part[k]);
         },
-        // ntq_emit_alu (nir_to_vir.c:1365): the sources, then the op.
-        .add, .mul => {
+        // ntq_emit_alu (nir_to_vir.c:1365): the sources, then the op, a
+        // float at a time, as nir_lower_alu_to_scalar has left them. FSUB,
+        // FMIN and FMAX are the add side's (:1441-1463; since 1.152).
+        .add, .mul, .sub, .min, .max => {
             const b_scalar = e.work.steps[each.b].kind == .f32x1;
             for (0..parts) |k| {
                 const a = try getSrc(e, each.a, k);
                 const b = try getSrc(e, each.b, if (b_scalar) 0 else k);
-                e.defs[at][k] = if (each.tag == .add) try c.add(.fadd, .{ a, b }) else try c.mul(.fmul, .{ a, b });
+                e.defs[at][k] = switch (each.tag) {
+                    .add => try c.add(.fadd, .{ a, b }),
+                    .sub => try c.add(.fsub, .{ a, b }),
+                    .min => try c.add(.fmin, .{ a, b }),
+                    .max => try c.add(.fmax, .{ a, b }),
+                    else => try c.mul(.fmul, .{ a, b }),
+                };
             }
+        },
+        // A negation of 32 bits is the sign bit XORed (nir_to_vir.c:1412-1419).
+        .negate => for (0..parts) |k| {
+            e.defs[at][k] = try c.add(.xor, .{ try getSrc(e, each.a, k), try c.uniformUi(@as(u32, 1) << 31) });
+        },
+        // fabs: FMOV with the ABS unpack (nir_to_vir.c:1793-1801).
+        .abs => for (0..parts) |k| {
+            const made = try c.mul(.fmov, .{try getSrc(e, each.a, k)});
+            vir.setUnpack(c.defs[made.index].?, 0, .abs);
+            e.defs[at][k] = made;
+        },
+        // One operand each, the add side's: the rounding (:1769-1779) and
+        // the SFU's, which at 7.1 are add operations written to any
+        // register (VIR_SFU, v3d_compiler.h:1331-1346; :1756-1766).
+        .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2 => for (0..parts) |k| {
+            const op: vir.AddOp = switch (each.tag) {
+                .floor => .ffloor,
+                .ceil => .fceil,
+                .trunc => .ftrunc,
+                .round => .fround,
+                .recip => .recip,
+                .rsqrt => .rsqrt,
+                .exp2 => .exp,
+                else => .log,
+            };
+            e.defs[at][k] = try c.add(op, .{try getSrc(e, each.a, k)});
+        },
+        // fdot lowered for a device of no FMA: the products the last
+        // float first, each summed onto those before it (lower_reduction,
+        // nir_lower_alu_width.c:96-127, reversed as lower_fdot has it where
+        // the sum need not be exact, :161-173).
+        .dot => {
+            const n = e.work.steps[each.a].kind.parts();
+            var last: Reg = undefined;
+            for (0..n) |i| {
+                const channel = n - 1 - i;
+                const product = try c.mul(.fmul, .{ try getSrc(e, each.a, channel), try getSrc(e, each.b, channel) });
+                last = if (i == 0) product else try c.add(.fadd, .{ last, product });
+            }
+            e.defs[at][0] = last;
         },
         .sample => {
             try emitTex(e, each, at);

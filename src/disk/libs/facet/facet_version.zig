@@ -4418,4 +4418,44 @@ pub const LIBRARY_VERSION = 1;
 /// Tests: the V3D's 149, none new: the question is the one 1.148's test
 /// asks, and the frame's first draw is the board's to see. FacetBoth 1.19
 /// draws the shadow map again over part of it.
-pub const LIBRARY_REVISION = 151;
+///
+/// 152: **The V3D compiles float arithmetic and GLSL.std.450's float
+/// functions (docs/facet-vulkan10.md item 59).** A fragment shader that
+/// subtracts, negates, divides, takes a dot or calls one of
+/// GLSL.std.450's float functions was drawn on the cores, and
+/// CreateShaderModule refused any call into an imported set at all.
+///
+/// - `spirv.facet_opcodes` takes `ext_inst`: a call a device cannot run
+///   is that device's to refuse at the pipeline, as every other opcode
+///   is. `spirv.Glsl` numbers the set's instructions, read back out of
+///   glslc's modules as well.
+/// - The V3D's walk lowers each as spirv_to_nir and v3dv's NIR options
+///   have Mesa lower it (vtn_glsl450.c:131-180, 245-277;
+///   v3dv_pipeline.c:177-207): a division a product by RECIP, Sqrt RSQRT
+///   then RECIP, Pow LOG, FMUL, EXP, Exp and Log by M_LOG2E, Fract a
+///   FFLOOR taken off, FClamp FMAX then FMIN, Normalize the vector by
+///   RSQRT of its dot, Length and Distance RECIP of that, FMix
+///   x(1 - t) + yt for a constant weight and x + t(y - x) for another
+///   (nir_lower_flrp.c:495-551). A dot is the products summed the last
+///   first (nir_lower_alu_width.c:161-173), and a sum of a negation a
+///   difference (nir_opt_algebraic.py:3868).
+/// - `compiler/to_vir.zig` emits what ntq_emit_alu does
+///   (nir_to_vir.c:1412-1463, 1756-1801): FSUB, FMIN, FMAX, the XOR of
+///   the sign bit, FMOV's ABS unpack, FFLOOR, FCEIL, FTRUNC, FROUND, and
+///   the SFU's RECIP, RSQRT, EXP and LOG.
+/// - glslc's `-O` writes a varying's float through an access chain and a
+///   vector's through OpVectorShuffle: both are read now, as names.
+/// - `ir.Build` writes the same - `neg`, `div`, `dot`, `vector`,
+///   `constantOf`, and the calls - for both devices: the words, and the
+///   cores' function, which computes each as the set's specification
+///   says.
+/// - Still refused, by name: the trigonometry, Step, SmoothStep, FSign,
+///   Cross, the integers, packing and interpolation.
+///
+/// Tests: the V3D's 152, three new: glslc's module of the family lowered
+/// as Mesa lowers it, each operation where Mesa puts it, the plan
+/// refusing it; facet's emitter's module of the same shader compiled to
+/// the same words; a call left out, and a set by another name, refused.
+/// tests/ir.zig: the modules read back with the set imported once, and
+/// the cores' sums against f64, a half rounded to the even.
+pub const LIBRARY_REVISION = 152;

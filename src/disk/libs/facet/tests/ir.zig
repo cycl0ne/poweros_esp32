@@ -934,3 +934,112 @@ test "a generated shadow sample is the fixed form texture_shadow, bit for bit, a
     }
     try std.testing.expect(mixed);
 }
+
+/// Float arithmetic through GLSL.std.450 (since 1.152): the shader of
+/// `driver/v3d/glslc_reference.zig`'s `glslc_arith`, which the V3D
+/// compiles word for word as it compiles glslc's.
+const Arithmetic = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const x = b.component(v, 0);
+        const y = b.component(v, 1);
+        const z = b.component(v, 2);
+        const w = b.component(v, 3);
+        const half = b.scalar(0.5);
+        const n = b.normalize(b.sub(b.vector(&.{ x, y, z }), b.constantOf(.f32x3, .{ 0.5, 0.5, 0.5, 0 })));
+        const lit = b.clamp(b.dot(n, b.constantOf(.f32x3, .{ 0.267, 0.535, 0.802, 0 })), b.scalar(0), b.scalar(1));
+        const red = b.mix(x, lit, b.scalar(0.25));
+        const green = b.mul(b.fract(b.mul(y, b.scalar(3))), half);
+        const blue = b.max(b.mul(b.sqrt(b.abs(b.sub(z, half))), b.pow(w, b.scalar(2.2))), b.neg(x));
+        const alpha = b.mul(b.length(b.vector(&.{ x, y })), half);
+        b.color(b.vector(&.{ red, green, blue, alpha }));
+    }
+});
+
+/// The rest of GLSL.std.450 `Build` names, each once.
+const Called = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const x = b.component(v, 0);
+        const y = b.component(v, 1);
+        const twice = b.mul(v, b.constant(.{ 2.5, 2.5, 2.5, 2.5 }));
+        const rounded = b.add(b.add(b.floor(twice), b.ceil(twice)), b.add(b.trunc(twice), b.roundEven(twice)));
+        const grown = b.add(b.exp(x), b.log(b.add(y, b.scalar(1))));
+        const twos = b.add(b.exp2(x), b.log2(b.add(y, b.scalar(1))));
+        const apart = b.distance(b.vector(&.{ x, y }), b.constantOf(.f32x2, .{ 0.25, 0.75, 0, 0 }));
+        const sums = b.vector(&.{ b.inverseSqrt(b.add(x, b.scalar(1))), b.min(grown, twos), b.div(apart, b.scalar(2)), b.scalar(1) });
+        b.color(b.mul(b.mix(sums, b.normalize(v), b.input(1, .f32x4)), b.mul(rounded, b.constant(.{ 0.05, 0.05, 0.05, 0.05 }))));
+    }
+});
+
+test "float arithmetic and GLSL.std.450 are a module the reader takes, the set imported once" {
+    inline for (.{ Arithmetic, Called }) |Made| {
+        switch (spirv.look(Made.words, spirv.facet_profile)) {
+            .fault => |fault| {
+                std.debug.print("refused: {s}\n", .{@tagName(fault)});
+                return error.TestUnexpectedResult;
+            },
+            .seen => {},
+        }
+        // OpExtInstImport "GLSL.std.450" once, after the capability.
+        var reader = spirv.Reader.of(Made.words);
+        var imports: u32 = 0;
+        var first_two: [2]spirv.Op = undefined;
+        var seen: u32 = 0;
+        while (try reader.next()) |instruction| {
+            if (seen < 2) first_two[seen] = instruction.op;
+            seen += 1;
+            if (instruction.op == .ext_inst_import) imports += 1;
+        }
+        try std.testing.expectEqual(@as(u32, 1), imports);
+        try std.testing.expectEqual(spirv.Op.capability, first_two[0]);
+        try std.testing.expectEqual(spirv.Op.ext_inst_import, first_two[1]);
+    }
+    // A graph that calls nothing imports nothing, and is the module it was.
+    try expectWords(&reference.min_interp, Smooth.words);
+}
+
+/// A channel as the generated function writes it.
+fn byteOf(value: f64) u32 {
+    return @intFromFloat(@min(@max(value * 255 + 0.5, 0), 255.5));
+}
+
+test "the cores' float arithmetic is the sum done in f64, to within a channel's step" {
+    const v = [4]f64{ 0.8, 0.3, 0.9, 0.6 };
+    var batch = Batch.flat(1, &.{ 0.8, 0.3, 0.9, 0.6 });
+    const made = batch.fragments(5);
+    Arithmetic.function(&made);
+    // The same shader as the GLSL says it.
+    const d = [3]f64{ v[0] - 0.5, v[1] - 0.5, v[2] - 0.5 };
+    const size = @sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    const lit = std.math.clamp((d[0] * 0.267 + d[1] * 0.535 + d[2] * 0.802) / size, 0, 1);
+    const red = v[0] * 0.75 + lit * 0.25;
+    const green = (v[1] * 3 - @floor(v[1] * 3)) * 0.5;
+    const blue = @max(@sqrt(@abs(v[2] - 0.5)) * std.math.pow(f64, v[3], 2.2), -v[0]);
+    const alpha = @sqrt(v[0] * v[0] + v[1] * v[1]) * 0.5;
+    const want = byteOf(alpha) << 24 | byteOf(red) << 16 | byteOf(green) << 8 | byteOf(blue);
+    const got = batch.colors[0][0];
+    for ([4]u5{ 0, 8, 16, 24 }) |shift| {
+        const a: i32 = @intCast(want >> shift & 0xFF);
+        const b: i32 = @intCast(got >> shift & 0xFF);
+        if (@abs(a - b) > 1) {
+            std.debug.print("want 0x{X:0>8}, made 0x{X:0>8}\n", .{ want, got });
+            return error.TestExpectedEqual;
+        }
+    }
+    // Every pixel of the quad alike: the planes are flat.
+    for (batch.colors[0]) |each| try std.testing.expectEqual(got, each);
+}
+
+test "the cores round a half to the even whole number, and the rest of GLSL.std.450 runs" {
+    // 2.5 a channel: Floor 2, Ceil 3, Trunc 2, RoundEven 2, summed 9, by
+    // 0.05 is 0.45 a channel of the weight; the weight of 0 leaves `sums`.
+    var batch = Batch.flat(1, &.{ 1, 1, 1, 1, 0, 0, 0, 0 });
+    const made = batch.fragments(9);
+    Called.function(&made);
+    const colour = batch.colors[0][0];
+    // Alpha: 1 times 0.45.
+    try std.testing.expectEqual(byteOf(0.45), colour >> 24);
+    // Red: 1 / sqrt(2) times 0.45.
+    try std.testing.expectEqual(byteOf(0.45 / @sqrt(2.0)), colour >> 16 & 0xFF);
+}

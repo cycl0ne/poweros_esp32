@@ -94,8 +94,9 @@ const allocate = @import("compiler/allocate.zig");
 /// because its tables are one word an id and it holds them on the heap,
 /// not on the stack of the call that compiles.
 pub const most_ids = 256;
-/// The most values a body may compute.
-pub const most_steps = 64;
+/// The most values a body may compute. 128 since 1.152, where a call of
+/// GLSL.std.450 can lower to several.
+pub const most_steps = 128;
 /// The varyings the hardware carries
 /// (`PhysicalDeviceLimits.max_vertex_output_components`).
 pub const most_varyings = qpu.most_varyings;
@@ -261,6 +262,13 @@ pub const profile: spirv.Profile = .{
         // A depth compared with a reference, the TMU told it through
         // TMUDREF (v3d_tex.c:155-157; since 1.143).
               .image_sample_dref_implicit_lod,
+        // The float arithmetic, a call of GLSL.std.450 among it, lowered
+        // as v3dv's NIR options have Mesa lower it; and a vector's floats
+        // named by a shuffle, or a varying's one float by an access chain,
+        // which compute nothing (since 1.152).
+        .f_sub,
+        .f_negate,        .f_div,              .dot,                            .ext_inst,
+        .vector_shuffle,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant },
     .image_dims = &.{.dim_2d},
@@ -309,6 +317,36 @@ pub const Tag = enum {
     construct,
     add,
     mul,
+    /// The float arithmetic of item 59, each one VIR operation a float as
+    /// ntq_emit_alu emits it (since 1.152); Mesa's back end alone compiles
+    /// them. `a` less `b` (FSUB, nir_to_vir.c:1441), and the lesser and
+    /// the greater of the two (FMIN, FMAX, :1449-1463). `b` may be one
+    /// float, read for each of `a`'s, as a `mul`'s may.
+    sub,
+    min,
+    max,
+    /// `a` with its sign turned: the sign bit XORed, as Mesa emits a
+    /// negation of 32 bits (nir_to_vir.c:1412-1419).
+    negate,
+    /// `a` without its sign: FMOV with the ABS unpack (:1793-1801).
+    abs,
+    /// `a` rounded down, up, towards 0 and to the nearest even (FFLOOR,
+    /// FCEIL, FTRUNC, FROUND, :1769-1779).
+    floor,
+    ceil,
+    trunc,
+    round,
+    /// One over `a`, one over its square root, 2 to its power and its
+    /// logarithm to 2: the SFU's (RECIP, RSQRT, EXP, LOG, :1756-1766).
+    recip,
+    rsqrt,
+    exp2,
+    log2,
+    /// `a` and `b` multiplied float by float and summed: one float, NIR's
+    /// fdot as nir_lower_alu_width lowers it on a device that prefers
+    /// FMUL and FADD to an FMA, the last floats first (lower_fdot,
+    /// nir_lower_alu_width.c:161-173, lower_reduction, :96-127).
+    dot,
     /// A texel, read through the TMU. Its four floats are not four
     /// registers: the TMU hands back two words of two half-floats each,
     /// and `Work.slot_half` says which half of which word a float is.
@@ -528,6 +566,9 @@ pub const Work = struct {
     /// and its byte offset, from OpMemberDecorate Offset.
     block: u16 = none,
     offsets_of: u16 = none,
+    /// The id GLSL.std.450 is imported as, where it is: the one extended
+    /// set whose calls the walk lowers (since 1.152).
+    glsl: u16 = none,
     push_variable: u16 = none,
     member_type: [most_members]u16 = @splat(none),
     member_offset: [most_members]u16 = @splat(none),
@@ -610,7 +651,7 @@ pub const Work = struct {
     code: [most_words]u64 = undefined,
     word_count: u32 = 0,
 
-    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean };
+    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part };
 
     /// `chain_part` of a pointer to a whole member.
     pub const whole: u8 = 0xFF;
@@ -638,6 +679,8 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
         .push => return Error.Storage,
         .discard => return Error.Discards,
         .sample_compared => return Error.Samplers,
+        // Nor does any compute beyond a sum and a product.
+        .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot => return Error.Body,
         else => {},
     };
     try settle(work);
@@ -812,7 +855,15 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             // before any function, so they must be named here rather than
             // fall to the body arm below, which would answer Error.Body.
             .capability, .memory_model, .entry_point, .type_void, .type_function => {},
-            .ext_inst_import, .source, .source_extension, .name, .member_name => {},
+            .source, .source_extension, .name, .member_name => {},
+            .ext_inst_import => {
+                // Result, Name. GLSL.std.450 is the set whose calls the
+                // walk lowers; any other is imported for nothing, and a
+                // call into it is refused (since 1.152).
+                if (operands.len < 2) return Error.Body;
+                const id = try idOf(operands[0]);
+                if (literalIs(operands[1..], "GLSL.std.450")) work.glsl = id;
+            },
             .execution_mode => {
                 // Which mode it is matters: a program compiled as if its
                 // origin were the top left and run with it at the bottom
@@ -1228,6 +1279,16 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 work.step_of[id] = try put(work, .{ .tag = .push, .kind = kind, .at = at });
                 return;
             }
+            if (work.thing[from] == .input_part) {
+                // One float of a varying, which an access chain named:
+                // the varying's step, and the float of it, as Mesa's
+                // load_input of one component reads the one varying
+                // (since 1.152).
+                if (try kindOf(work, try idOf(operands[0])) != .f32x1) return Error.Type;
+                const of = try inputStep(work, work.points[from]);
+                work.step_of[id] = try put(work, .{ .tag = .component, .kind = .f32x1, .a = of, .at = work.chain_part[from] });
+                return;
+            }
             if (work.thing[from] != .variable) return Error.Body;
             if (work.class[from] == @intFromEnum(spirv.StorageClass.uniform_constant)) {
                 // The sampler itself, which is no value: it says which
@@ -1237,15 +1298,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 return;
             }
             if (work.class[from] != @intFromEnum(spirv.StorageClass.input)) return Error.Body;
-            const which = work.points[from];
-            // A varying is handed over once: two loads of the one
-            // variable are the one step, or the second would take the
-            // next varying rather than read this one again.
-            if (work.inputs[which].step == none) {
-                const made = try put(work, .{ .tag = .input, .kind = work.inputs[which].kind, .at = which });
-                work.inputs[which].step = made;
-            }
-            work.step_of[id] = work.inputs[which].step;
+            work.step_of[id] = try inputStep(work, work.points[from]);
         },
         .access_chain => {
             // ResultType, Result, Base, then the indexes: a member of
@@ -1256,7 +1309,23 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (operands.len < 4 or operands.len > 5) return Error.Body;
             const type_id = try idOf(operands[0]);
             const id = try idOf(operands[1]);
-            if (try idOf(operands[2]) != work.push_variable) return Error.Storage;
+            const base = try idOf(operands[2]);
+            if (work.thing[base] == .variable and work.class[base] == @intFromEnum(spirv.StorageClass.input)) {
+                // One float of a varying, at a constant index, as glslc
+                // writes `vcolor.x` (since 1.152): a pointer to it, read
+                // when it is loaded.
+                if (operands.len != 4) return Error.Body;
+                const which = try indexOf(work, operands[3]);
+                if (work.wide[base] == 1 or which >= work.wide[base]) return Error.Body;
+                if (work.thing[type_id] != .pointer) return Error.Type;
+                if (work.class[type_id] != @intFromEnum(spirv.StorageClass.input)) return Error.Body;
+                if (try kindOf(work, work.points[type_id]) != .f32x1) return Error.Type;
+                work.thing[id] = .input_part;
+                work.points[id] = work.points[base];
+                work.chain_part[id] = @intCast(which);
+                return;
+            }
+            if (base != work.push_variable) return Error.Storage;
             const member = try indexOf(work, operands[3]);
             if (member >= work.member_count) return Error.Body;
             const member_kind = try kindOf(work, work.member_type[member]);
@@ -1333,15 +1402,89 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             const which: u32 = if (instruction.op == .f_ord_less_than) 0 else 1;
             work.step_of[id] = try put(work, .{ .tag = .compare, .kind = .f32x1, .a = a, .b = b, .at = which });
         },
-        .f_add, .f_mul => {
+        .f_add, .f_mul, .f_sub => {
             if (operands.len != 4) return Error.Body;
             const type_id = try idOf(operands[0]);
             const id = try idOf(operands[1]);
             const kind = try kindOf(work, type_id);
             const a = try operand(work, operands[2], kind);
             const b = try operand(work, operands[3], kind);
-            const tag: Tag = if (instruction.op == .f_add) .add else .mul;
-            work.step_of[id] = try put(work, .{ .tag = tag, .kind = kind, .a = a, .b = b });
+            work.step_of[id] = try switch (instruction.op) {
+                // A sum one of whose two is negated is a difference, as
+                // Mesa's late algebraic pass makes fadd(a, fneg(b)) an
+                // fsub where the device has one (nir_opt_algebraic.py:3868,
+                // `has_fsub`, v3dv_pipeline.c:207), either way round: the
+                // XOR the negation came to is then read by nothing and
+                // goes in vir_optimize.
+                .f_add => if (work.steps[b].tag == .negate)
+                    binary(work, .sub, a, work.steps[b].a)
+                else if (work.steps[a].tag == .negate)
+                    binary(work, .sub, b, work.steps[a].a)
+                else
+                    binary(work, .add, a, b),
+                .f_mul => binary(work, .mul, a, b),
+                else => binary(work, .sub, a, b),
+            };
+        },
+        .f_negate => {
+            if (operands.len != 3) return Error.Body;
+            const kind = try kindOf(work, try idOf(operands[0]));
+            const id = try idOf(operands[1]);
+            work.step_of[id] = try unary(work, .negate, try operand(work, operands[2], kind));
+        },
+        .f_div => {
+            // a times one over b, as v3dv has NIR lower it (`lower_fdiv`,
+            // v3dv_pipeline.c:193; nir_opt_algebraic.py:1918).
+            if (operands.len != 4) return Error.Body;
+            const kind = try kindOf(work, try idOf(operands[0]));
+            const id = try idOf(operands[1]);
+            const a = try operand(work, operands[2], kind);
+            const b = try operand(work, operands[3], kind);
+            work.step_of[id] = try binary(work, .mul, a, try unary(work, .recip, b));
+        },
+        .dot => {
+            if (operands.len != 4) return Error.Body;
+            if (try kindOf(work, try idOf(operands[0])) != .f32x1) return Error.Type;
+            const id = try idOf(operands[1]);
+            const kind = try kindOfValue(work, operands[2]);
+            if (kind == .f32x1) return Error.Type;
+            const a = try operand(work, operands[2], kind);
+            const b = try operand(work, operands[3], kind);
+            work.step_of[id] = try dotOf(work, a, b);
+        },
+        .vector_shuffle => {
+            // ResultType, Result, two vectors, then a float of either for
+            // each of the result's: names, as nir_swizzle's are, which a
+            // construct of them is. 0xFFFFFFFF, a float left undefined,
+            // is refused rather than made up (since 1.152).
+            if (operands.len < 6) return Error.Body;
+            const kind = try kindOf(work, try idOf(operands[0]));
+            const id = try idOf(operands[1]);
+            const first_kind = try kindOfValue(work, operands[2]);
+            const second_kind = try kindOfValue(work, operands[3]);
+            const first = try operand(work, operands[2], first_kind);
+            const second = try operand(work, operands[3], second_kind);
+            const picks = operands[4..];
+            if (picks.len != kind.parts()) return Error.Body;
+            var made = Step{ .tag = .construct, .kind = kind };
+            for (picks, 0..) |pick, k| {
+                if (pick < first_kind.parts()) {
+                    made.from[k] = first;
+                    made.part[k] = @intCast(pick);
+                } else if (pick - first_kind.parts() < second_kind.parts()) {
+                    made.from[k] = second;
+                    made.part[k] = @intCast(pick - first_kind.parts());
+                } else return Error.Body;
+            }
+            work.step_of[id] = try put(work, made);
+        },
+        .ext_inst => {
+            // ResultType, Result, Set, Instruction, then its operands.
+            if (operands.len < 5) return Error.Body;
+            const kind = try kindOf(work, try idOf(operands[0]));
+            const id = try idOf(operands[1]);
+            if (work.glsl == none or try idOf(operands[2]) != work.glsl) return Error.Body;
+            work.step_of[id] = try glslCall(work, operands[3], kind, operands[4..]);
         },
         .image_sample_implicit_lod => {
             // ResultType, Result, SampledImage, Coordinate. An image
@@ -1394,6 +1537,175 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
         },
         else => return Error.Refused,
     }
+}
+
+/// A call of GLSL.std.450 in the steps it lowers to: spirv_to_nir's
+/// (vtn_glsl450.c:131-180 for one NIR op, :245-277 for the built ones)
+/// and then v3dv's NIR options (v3dv_pipeline.c:177-198): fdiv, fsqrt,
+/// fpow, ffract and flrp lowered, fsat not at 7.1 (:225), fsub kept
+/// (:207). What is left out - the trigonometry, Step and SmoothStep, the
+/// sign, the integers, Cross, the packing and interpolation - is refused
+/// by name, `Error.Body` (since 1.152).
+fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) Error!u16 {
+    const which = std.enums.fromInt(spirv.Glsl, instruction) orelse return Error.Body;
+    switch (which) {
+        .round, .round_even, .trunc, .f_abs, .floor, .ceil, .fract, .radians, .degrees => {},
+        .pow, .exp, .log, .exp2, .log2, .sqrt, .inverse_sqrt => {},
+        .f_min, .f_max, .n_min, .n_max, .f_clamp, .n_clamp, .f_mix, .length, .distance, .normalize => {},
+        else => return Error.Body,
+    }
+    const wanted: usize = switch (which) {
+        .f_min, .f_max, .n_min, .n_max, .pow, .distance => 2,
+        .f_clamp, .n_clamp, .f_mix => 3,
+        else => 1,
+    };
+    if (arguments.len != wanted) return Error.Body;
+    // Length and Distance answer one float of vectors; every other takes
+    // operands of the kind it answers.
+    const of_kind = switch (which) {
+        .length, .distance => try kindOfValue(work, arguments[0]),
+        else => kind,
+    };
+    if ((which == .length or which == .distance) and kind != .f32x1) return Error.Type;
+    var x: [3]u16 = undefined;
+    for (arguments, 0..) |each, k| x[k] = try operand(work, each, of_kind);
+    return switch (which) {
+        .round, .round_even => unary(work, .round, x[0]),
+        .trunc => unary(work, .trunc, x[0]),
+        .f_abs => unary(work, .abs, x[0]),
+        .floor => unary(work, .floor, x[0]),
+        .ceil => unary(work, .ceil, x[0]),
+        // a - ffloor(a) (`lower_ffract`, nir_opt_algebraic.py:546).
+        .fract => binary(work, .sub, x[0], try unary(work, .floor, x[0])),
+        // fmul_imm(x, M_PI / 180) and (180 / M_PI) (nir_radians,
+        // nir_degrees, nir_builtin_builder.h:171-174, 238-241).
+        .radians => binary(work, .mul, x[0], try immediate(work, double(std.math.pi / @as(f64, 180.0)))),
+        .degrees => binary(work, .mul, x[0], try immediate(work, double(@as(f64, 180.0) / std.math.pi))),
+        // fexp2(flog2(a) * b) (`lower_fpow`, nir_opt_algebraic.py:1884).
+        .pow => unary(work, .exp2, try binary(work, .mul, try unary(work, .log2, x[0]), x[1])),
+        // fexp2(x * M_LOG2E) and flog2(x) * (1 / M_LOG2E) (nir_fexp,
+        // nir_flog, nir_builtin_builder.h:112-122).
+        .exp => unary(work, .exp2, try binary(work, .mul, x[0], try immediate(work, double(std.math.log2e)))),
+        .log => binary(work, .mul, try unary(work, .log2, x[0]), try immediate(work, double(@as(f64, 1.0) / std.math.log2e))),
+        .exp2 => unary(work, .exp2, x[0]),
+        .log2 => unary(work, .log2, x[0]),
+        // frcp(frsq(a)) (`lower_fsqrt`, nir_opt_algebraic.py:1921).
+        .sqrt => unary(work, .recip, try unary(work, .rsqrt, x[0])),
+        .inverse_sqrt => unary(work, .rsqrt, x[0]),
+        .f_min, .n_min => binary(work, .min, x[0], x[1]),
+        .f_max, .n_max => binary(work, .max, x[0], x[1]),
+        // fmin(fmax(x, lo), hi) (nir_fclamp, nir_builder.h:1411-1415).
+        .f_clamp, .n_clamp => binary(work, .min, try binary(work, .max, x[0], x[1]), x[2]),
+        .f_mix => mix(work, x[0], x[1], x[2]),
+        // fsqrt(fdot(v, v)) (nir_fast_length, nir_builtin_builder.c:63-66),
+        // its square root lowered as Sqrt's.
+        .length => lengthOf(work, x[0]),
+        .distance => lengthOf(work, try binary(work, .sub, x[0], x[1])),
+        // fdiv(v, fsqrt(fdot(v, v))) (nir_fast_normalize,
+        // nir_builtin_builder.h:194-197): lowered, v times
+        // frcp(frcp(frsq(d))), the two frcp one fcanonicalize
+        // (nir_opt_algebraic.py:1919), which folds away (:161-171).
+        .normalize => binary(work, .mul, x[0], try unary(work, .rsqrt, try dotOf(work, x[0], x[0]))),
+        else => unreachable,
+    };
+}
+
+/// A constant of C's doubles, as nir_imm_floatN_t takes one to 32 bits.
+fn double(value: f64) f32 {
+    return @floatCast(value);
+}
+
+/// flrp(x, y, t) as nir_lower_flrp lowers it where there is no FMA and
+/// precision is not demanded (vir.c:2084-2085): x(1 - t) + yt where t is a
+/// constant, its 1 - t folded, and x + t(y - x) otherwise
+/// (convert_flrp_instruction, nir_lower_flrp.c:495-551,
+/// replace_with_strict and replace_with_fast, :96-145). Left out is the
+/// choice it makes for a flrp sharing its x or its y and its t with
+/// another (get_similar_flrp_stats), which shares work and changes no
+/// sum's terms but their order.
+fn mix(work: *Work, x: u16, y: u16, t: u16) Error!u16 {
+    const of_t = work.steps[t];
+    if (of_t.tag != .constant) {
+        const product = try binary(work, .mul, t, try binary(work, .sub, y, x));
+        return binary(work, .add, x, product);
+    }
+    const parts = of_t.kind.parts();
+    if (work.pool_count + parts > work.pool.len) return Error.Uniforms;
+    const at = work.pool_count;
+    for (0..parts) |k| work.pool[at + k] = 1.0 + -work.pool[of_t.at + k];
+    work.pool_count += parts;
+    const one_less = try put(work, .{ .tag = .constant, .kind = of_t.kind, .at = at });
+    const first = try binary(work, .mul, x, one_less);
+    const second = try binary(work, .mul, y, t);
+    return binary(work, .add, first, second);
+}
+
+/// fsqrt(fdot(v, v)) lowered: frcp(frsq(d)). A float alone is its own
+/// dot, an fmul (nir_fdot of one component).
+fn lengthOf(work: *Work, v: u16) Error!u16 {
+    return unary(work, .recip, try unary(work, .rsqrt, try dotOf(work, v, v)));
+}
+
+/// The dot of two values of one kind; of one float each, their product,
+/// as nir_fdot builds it for one component.
+fn dotOf(work: *Work, a: u16, b: u16) Error!u16 {
+    if (work.steps[a].kind == .f32x1) return binary(work, .mul, a, b);
+    return put(work, .{ .tag = .dot, .kind = .f32x1, .a = a, .b = b });
+}
+
+fn unary(work: *Work, tag: Tag, a: u16) Error!u16 {
+    return put(work, .{ .tag = tag, .kind = work.steps[a].kind, .a = a });
+}
+
+/// `tag` of `a` and `b`, of `a`'s kind: `b` is of it too, or one float.
+fn binary(work: *Work, tag: Tag, a: u16, b: u16) Error!u16 {
+    return put(work, .{ .tag = tag, .kind = work.steps[a].kind, .a = a, .b = b });
+}
+
+/// A float of the walk's own, a step of one uniform: what NIR's
+/// nir_imm_float is where a lowering multiplies by one (since 1.152).
+fn immediate(work: *Work, value: f32) Error!u16 {
+    if (work.pool_count == work.pool.len) return Error.Uniforms;
+    const at = work.pool_count;
+    work.pool[at] = value;
+    work.pool_count += 1;
+    return put(work, .{ .tag = .constant, .kind = .f32x1, .at = at });
+}
+
+/// The step of the varying `which`, loaded the first time it is read: a
+/// varying is handed over once, so two loads of it are the one step, or
+/// the second would take the next varying rather than read this one
+/// again.
+fn inputStep(work: *Work, which: u16) Error!u16 {
+    if (work.inputs[which].step == none) {
+        const made = try put(work, .{ .tag = .input, .kind = work.inputs[which].kind, .at = which });
+        work.inputs[which].step = made;
+    }
+    return work.inputs[which].step;
+}
+
+/// The kind of what an operand id names: its step's, or a constant's.
+fn kindOfValue(work: *const Work, word: u32) Error!Kind {
+    const id = try idOf(word);
+    if (work.step_of[id] != none) {
+        const of = work.steps[work.step_of[id]];
+        if (of.tag == .compare) return Error.Type;
+        return of.kind;
+    }
+    if (work.thing[id] != .constant) return Error.Body;
+    return std.enums.fromInt(Kind, work.wide[id]) orelse Error.Type;
+}
+
+/// Whether a literal string's words are `name`, nul-terminated and padded
+/// with zeros to the word.
+fn literalIs(words: []const u32, name: []const u8) bool {
+    if (words.len != name.len / 4 + 1) return false;
+    for (0..words.len * 4) |k| {
+        const byte: u8 = @truncate(words[k / 4] >> @intCast(8 * (k % 4)));
+        const expected: u8 = if (k < name.len) name[k] else 0;
+        if (byte != expected) return false;
+    }
+    return true;
 }
 
 /// An access chain's index: an integer constant's value.
@@ -1520,6 +1832,7 @@ fn settle(work: *Work) Error!void {
             .push => return Error.Storage,
             .compare, .discard => return Error.Discards,
             .sample_compared => return Error.Samplers,
+            .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot => return Error.Body,
             // A float of its own, read where it is first wanted rather
             // than at the top: a uniform is the next one in the stream
             // wherever the instruction sits, and holding them to the end
@@ -3749,4 +4062,137 @@ test "compileThroughMesa makes what compileVir does, its memory given back" {
     // And a refusal gives back the register sets it was made after.
     var work: Work = .{};
     try testing.expectError(Error.Samplers, compileThroughMesa(&work, Twice.words, testing.allocator, .{}));
+}
+
+/// glslc's float arithmetic (`reference.glslc_arith`) as facet's emitter
+/// writes it, in the same order: what the cores draw beside the V3D.
+const Arithmetic = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const x = b.component(v, 0);
+        const y = b.component(v, 1);
+        const z = b.component(v, 2);
+        const w = b.component(v, 3);
+        const half = b.scalar(0.5);
+        const n = b.normalize(b.sub(b.vector(&.{ x, y, z }), b.constantOf(.f32x3, .{ 0.5, 0.5, 0.5, 0 })));
+        const lit = b.clamp(b.dot(n, b.constantOf(.f32x3, .{ 0.267, 0.535, 0.802, 0 })), b.scalar(0), b.scalar(1));
+        const red = b.mix(x, lit, b.scalar(0.25));
+        const green = b.mul(b.fract(b.mul(y, b.scalar(3))), half);
+        const blue = b.max(b.mul(b.sqrt(b.abs(b.sub(z, half))), b.pow(w, b.scalar(2.2))), b.neg(x));
+        const alpha = b.mul(b.length(b.vector(&.{ x, y })), half);
+        b.color(b.vector(&.{ red, green, blue, alpha }));
+    }
+});
+
+/// How many steps of `tag` the walk made.
+fn stepsOf(work: *const Work, tag: Tag) usize {
+    var count: usize = 0;
+    for (work.program()) |each| {
+        if (each.tag == tag) count += 1;
+    }
+    return count;
+}
+
+/// How many of a program's instructions have `op` on their add side, or
+/// on their mul side.
+fn sideOps(code: Code, comptime op: []const u8, mul_side: bool) usize {
+    var count: usize = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        const cut = std.mem.indexOf(u8, line, ";") orelse line.len;
+        const side = if (mul_side) std.mem.trimStart(u8, line[cut + 1 ..], " ") else line[0..cut];
+        if (std.mem.startsWith(u8, side, op ++ " ")) count += 1;
+    }
+    return count;
+}
+
+test "through Mesa's back end, glslc's float arithmetic: GLSL.std.450 lowered as v3dv has NIR lower it" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_arith);
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+    try testing.expectEqual(@as(u8, 4), code.threads);
+    // The walk's lowering: Normalize a dot and RSQRT, the dot of the
+    // constant a second, Length a third, its square root RSQRT and RECIP
+    // as Sqrt's is; Pow LOG then EXP; FClamp FMAX then FMIN, and the
+    // negated x the second FMAX's other operand; Fract FFLOOR and FSUB.
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .dot));
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .rsqrt));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .recip));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .log2));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .exp2));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .max));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .min));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .floor));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .abs));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .negate));
+    // The program has each of them where Mesa puts it: the SFU's and the
+    // rounding on the add side, FABS an FMOV's unpack on the mul side,
+    // the negation an XOR of the sign bit.
+    try testing.expectEqual(@as(usize, 3), sideOps(code, "rsqrt", false));
+    try testing.expectEqual(@as(usize, 2), sideOps(code, "recip", false));
+    try testing.expectEqual(@as(usize, 1), sideOps(code, "log", false));
+    try testing.expectEqual(@as(usize, 1), sideOps(code, "exp", false));
+    try testing.expectEqual(@as(usize, 1), sideOps(code, "ffloor", false));
+    try testing.expectEqual(@as(usize, 2), sideOps(code, "fmax", false));
+    try testing.expectEqual(@as(usize, 1), sideOps(code, "fmin", false));
+    try testing.expectEqual(@as(usize, 1), sideOps(code, "xor", false));
+    // FABS is an FMOV of the mul side in VIR, which the scheduler may move
+    // to the add side at 7.1, as Mesa's qpu_convert_mul_to_add does.
+    try testing.expectEqual(@as(usize, 1), sideOps(code, "fmov", true) + sideOps(code, "fmov", false));
+    var unpacked = false;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        if (std.mem.indexOf(u8, line, "fmov") != null and std.mem.indexOf(u8, line, ".abs") != null) unpacked = true;
+    }
+    try testing.expect(unpacked);
+    // FMix's weight is the constant 0.25: x(1 - t) + yt, its 1 - t folded
+    // to 0.75, which is a uniform; and the sign bit the XOR reads is one.
+    var folded = false;
+    var sign = false;
+    for (code.stream()) |word| switch (word) {
+        .float => |value| {
+            if (value == 0.75) folded = true;
+            if (@as(u32, @bitCast(value)) == 0x8000_0000) sign = true;
+        },
+        else => {},
+    };
+    try testing.expect(folded and sign);
+    // The plan computes sums and products alone.
+    var plan: Work = .{};
+    try testing.expectError(Error.Body, compile(&plan, &reference.glslc_arith));
+}
+
+test "through Mesa's back end, glslc's float arithmetic is facet's, to the word" {
+    var theirs: Work = .{};
+    const glslc = try throughMesa(&theirs, &reference.glslc_arith);
+    var ours: Work = .{};
+    const facet_made = try throughMesa(&ours, Arithmetic.words);
+    try testing.expectEqualSlices(u64, glslc.words, facet_made.words);
+    try testing.expectEqual(glslc.stream().len, facet_made.stream().len);
+    for (glslc.stream(), facet_made.stream()) |a, b| try testing.expectEqual(a, b);
+}
+
+test "a call the walk does not lower, or into a set that is not GLSL.std.450, is refused" {
+    var work: Work = .{};
+    // FMix (46) made Sin (13), which the walk leaves out.
+    var sine = reference.glslc_arith;
+    var calls: usize = 0;
+    var at: usize = spirv.header_words;
+    while (at < sine.len) : (at += sine[at] >> 16) {
+        if (sine[at] & 0xFFFF == @intFromEnum(spirv.Op.ext_inst) and sine[at + 4] == @intFromEnum(spirv.Glsl.f_mix)) {
+            sine[at + 4] = @intFromEnum(spirv.Glsl.sin);
+            calls += 1;
+        }
+    }
+    try testing.expectEqual(@as(usize, 1), calls);
+    try testing.expectError(Error.Body, throughMesa(&work, &sine));
+    // The set imported under another name: every call into it refused.
+    var other = reference.glslc_arith;
+    at = spirv.header_words;
+    while (at < other.len) : (at += other[at] >> 16) {
+        if (other[at] & 0xFFFF == @intFromEnum(spirv.Op.ext_inst_import)) other[at + 2] ^= 0x20;
+    }
+    try testing.expectError(Error.Body, throughMesa(&work, &other));
 }
