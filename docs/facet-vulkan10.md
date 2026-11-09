@@ -2160,6 +2160,16 @@ Not ported, as before: the rules that want floats proven numbers or not zero (:7
 
 Two shaders of selects of selects compile to the words of the shaders written as Mesa leaves them, one with two iands, an inot and three selects left. On the CM5, FacetBoth 1.26's cases of them are each 8 pixels of 230,400 apart, the triangle's edge alone; the other 216 cases are unchanged, the nested selections' too, and FacetProbe is 888 of 888.
 
+**Then the collapse**, facet.library 1.159. An `if` of no `else` that is all of another's true arm, but for the block before it, was refused from 1.156 to 1.158, as was a discard nested in an arm. v3d's loop meets it in nir_opt_peephole_select, which tries nir_opt_collapse_if at the inner merge block first (nir_opt_peephole_select.c:531-533) and makes the two one selection on the iand of their conditions (:412-506).
+
+- **Where and whether.** The iand is made where Mesa builds it, after the outer arm's block before the inner selection (:487-490), and read only where the two collapse; nir_opt_dce takes it where they do not. Whether they do is decided at the outer merge block as the loop's two passes meet them, limit 0 and then 24 (nir_to_vir.c:2264-2279): the collapse wants the inner arm a block NIR keeps (:425-427), the outer arm's block before it under the limit (:464-471), and each outer phi of an inner one bringing from the other way what the inner one brings from its own, unless the outer selection asks to be flattened (:444-462). Where it cannot, the inner selection is flattened and the outer after it, as before, and :2512-2515 join the selects.
+- **A nested discard** is terminate_if of the iand: nir_opt_peephole_select flattens a discard only in its last pass (`discard_ok`), after the collapse. One the collapse does not take is refused.
+- **SelectionControl** is read (vtn_selection_control, vtn_structured_cfg.c:1328-1340): Flatten is no limit, DontFlatten a limit of 0 (get_options_for_if, nir_opt_peephole_select.c:329-345). A selection asking not to be flattened is a branch, and refused; one asking to be is flattened whatever its arms cost.
+
+Not ported: a collapse of selections nested deeper than two; a shape whose outcome depends on whether nir_opt_cse takes a stored constant's load_const for an earlier one; an outer arm that jumps to the inner merge block. Each is refused.
+
+glslc_collapse compiles to one select on the iand of its two comparisons, glslc_nested_discard to terminate_if of theirs, and the two shapes the collapse leaves alone to the selections flattened from the inside out. On the CM5, FacetBoth 1.27's cases of the collapsed selections and the nested discard are 8 and 6 pixels of 230,400 apart, the triangle's edge alone; the other 218 cases are unchanged, and FacetProbe is 888 of 888.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim

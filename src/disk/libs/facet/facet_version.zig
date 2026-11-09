@@ -4725,4 +4725,57 @@ pub const LIBRARY_VERSION = 1;
 /// 230400 apart on the CM5, the edge alone, as the other selections' cases
 /// are; the other 216 cases unchanged, the nested selections' too,
 /// FacetProbe 888 of 888.
-pub const LIBRARY_REVISION = 158;
+///
+/// 159: **nir_opt_collapse_if, a discard nested in an arm, and
+/// SelectionControl (docs/facet-vulkan10.md item 59).** A selection of no
+/// false arm that is all of another's true arm but for the block before
+/// it was refused, as was a discard nested in an arm (since 1.156); v3d's
+/// loop meets it in nir_opt_peephole_select, which tries
+/// nir_opt_collapse_if at the inner merge block first
+/// (nir_opt_peephole_select.c:531-533) and makes the two one selection on
+/// the iand of their conditions (:412-506).
+///
+/// - The iand is made where Mesa builds it, after the outer arm's block
+///   before the inner selection (:487-490), wherever two selections may
+///   collapse, and read only where they do; nir_opt_dce takes it where
+///   they do not.
+/// - Whether they do is decided at the outer merge block, as the two
+///   passes of the loop meet them, limit 0 and then 24
+///   (nir_to_vir.c:2264-2279): each tries the collapse first, which wants
+///   the inner arm a block NIR keeps (:425-427), the outer arm's block
+///   before it under the limit (:464-471), and each outer phi of an inner
+///   one bringing from the other way what the inner one brings from its
+///   own, unless the outer selection asks to be flattened (:444-462); the
+///   inner selection is flattened where it cannot be, and the outer after
+///   it, as before. The phis are read ahead of the walk.
+/// - A discard in a selection nested in another's arm is terminate_if of
+///   the iand: nir_opt_peephole_select flattens a discard only in its
+///   last pass (`discard_ok`), after the collapse has made the two one.
+///   One the collapse does not take is refused, `Error.Discards`.
+/// - OpSelectionMerge's SelectionControl is read (vtn_selection_control,
+///   vtn_structured_cfg.c:1328-1340): Flatten is no limit and DontFlatten
+///   a limit of 0 (get_options_for_if, nir_opt_peephole_select.c:329-345),
+///   so a selection asking not to be flattened is a branch, refused, and
+///   one asking to be is flattened whatever its arms cost. Any other bit
+///   is refused.
+/// - Refused, not ported: a collapse of selections nested deeper than
+///   two; a shape whose outcome depends on whether nir_opt_cse takes a
+///   stored constant's load_const for an earlier one, which would leave a
+///   block empty or not; an outer arm that jumps to the inner merge
+///   block.
+///
+/// Tests: the V3D's 175, five new in place of 1.156's one refusing the
+/// two shapes: glslc_collapse (202 words at -O, 245 without) and facet's
+/// emitter's of the same shader to one select, on the iand of the two
+/// comparisons; glslc_nested_discard (153 words) to terminate_if of the
+/// iand; glslc_collapse_kept (226 words), whose outer phi takes a value
+/// the inner one does not, to two selects and no iand, and with Flatten
+/// asked of the outer selection to the collapse; glslc_collapse_free (178
+/// words), a constant alone in the inner arm, flattened in the first pass
+/// and joined by :2512 to one select on an iand; DontFlatten a branch,
+/// Flatten on glslc_branch the same words; an outer arm to the inner merge
+/// refused. FacetBoth 1.27: the shipped cases of collapsed selections and
+/// of the nested discard, 8 and 6 pixels of 230400 apart on the CM5, the
+/// edge alone, as the other selections' cases are; the other 218 cases
+/// unchanged, FacetProbe 888 of 888.
+pub const LIBRARY_REVISION = 159;

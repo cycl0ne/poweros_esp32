@@ -47,7 +47,11 @@
 //! flags. The shipped cases of selects of selects (since 1.26) are the
 //! shapes nir_opt_algebraic makes one or two selects of, and the ones it
 //! makes a select on an iand of: the V3D's program of each is the one of
-//! the shader written as Mesa leaves it.
+//! the shader written as Mesa leaves it. The shipped cases of collapsed
+//! selections (since 1.27) are an `if` of no `else` all of the true arm of
+//! another, and the same with a discard, which the V3D makes one
+//! selection, and one terminate, on the iand of the two conditions, as
+//! nir_opt_collapse_if does; the discard is glslc's words on the V3D.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -62,7 +66,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.26 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.27 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -647,6 +651,36 @@ const Shipped = struct {
             b.color(b.vector(&.{ r, g, bl, a }));
         }
     });
+    /// glslc_collapse's shader, which the V3D makes one selection on the
+    /// iand of the two conditions (since 1.27).
+    const Collapsed = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const half = b.scalar(0.5);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const outer = b.ifHolds(b.lessThan(x, half));
+            const inner = b.ifHolds(b.lessThan(y, half));
+            const sine = b.sin(b.mul(z, b.scalar(3)));
+            b.endIf(inner);
+            const red_inner = b.merged(inner, sine, x);
+            b.endIf(outer);
+            const r = b.merged(outer, red_inner, x);
+            b.color(b.vector(&.{ r, y, z, w }));
+        }
+    });
+    /// What `nested_discard` computes, for the cores: the discard of both
+    /// comparisons (since 1.27).
+    const NestedDiscard = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const half = b.scalar(0.5);
+            b.discardIf(b.both(b.lessThan(b.component(v, 1), half), b.lessThan(b.component(v, 0), half)));
+            b.color(v);
+        }
+    });
 };
 
 /// The entries that ship words, after all the others, and the words of
@@ -675,14 +709,62 @@ const shipped_entries = [_]shader.Entry{
     Shipped.Bools.entry("shipped bools"),
     Shipped.Nests.entry("shipped nests"),
     Shipped.Joined.entry("shipped joined"),
+    Shipped.Collapsed.entry("shipped collapsed"),
+    Shipped.NestedDiscard.entry("shipped nested discard"),
 };
 const shipped_words = [_]shader.Spirv{
-    .{},                       .{},                    .{},                                  .{},
-    Shipped.Smooth.spirv,      Shipped.Flat.spirv,     Shipped.Dimmed.spirv,                 Shipped.Textured.spirv,
-    Shipped.Modulated.spirv,   Shipped.Pushed.spirv,   Shipped.Tinted.spirv,                 Shipped.Cutout.spirv,
-    Shipped.CutoutOther.spirv, Shipped.Shadowed.spirv, Shipped.Arithmetic.spirv,             Shipped.Called.spirv,
-    Shipped.Chosen.spirv,      Shipped.Branched.spirv, shader.Spirv.of(&branch_unoptimized), Shipped.Nested.spirv,
-    Shipped.Bools.spirv,       Shipped.Nests.spirv,    Shipped.Joined.spirv,
+    .{},                              .{},                    .{},                                  .{},
+    Shipped.Smooth.spirv,             Shipped.Flat.spirv,     Shipped.Dimmed.spirv,                 Shipped.Textured.spirv,
+    Shipped.Modulated.spirv,          Shipped.Pushed.spirv,   Shipped.Tinted.spirv,                 Shipped.Cutout.spirv,
+    Shipped.CutoutOther.spirv,        Shipped.Shadowed.spirv, Shipped.Arithmetic.spirv,             Shipped.Called.spirv,
+    Shipped.Chosen.spirv,             Shipped.Branched.spirv, shader.Spirv.of(&branch_unoptimized), Shipped.Nested.spirv,
+    Shipped.Bools.spirv,              Shipped.Nests.spirv,    Shipped.Joined.spirv,                 Shipped.Collapsed.spirv,
+    shader.Spirv.of(&nested_discard),
+};
+
+/// glslc's own output, at -O, for a discard in an `if` of no `else` all
+/// of the true arm of another, the V3D's host tests' glslc_nested_discard:
+/// the V3D makes it terminate_if of the two conditions' iand, as
+/// nir_opt_collapse_if and nir_opt_peephole_select do (since 1.27).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// void main() {
+///     if (vcolor.x < 0.5) {
+///         if (vcolor.y < 0.5) discard;
+///     }
+///     ocolor = vcolor;
+/// }
+/// ```
+const nested_discard = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001E, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x0000001C, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000001C, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x00000008,
+    0x00000001, 0x00000007, 0x0004003B, 0x00000008, 0x00000009, 0x00000001,
+    0x00040015, 0x0000000A, 0x00000020, 0x00000000, 0x0004002B, 0x0000000A,
+    0x0000000B, 0x00000000, 0x00040020, 0x0000000C, 0x00000001, 0x00000006,
+    0x0004002B, 0x00000006, 0x0000000F, 0x3F000000, 0x00020014, 0x00000010,
+    0x0004002B, 0x0000000A, 0x00000014, 0x00000001, 0x00040020, 0x0000001B,
+    0x00000003, 0x00000007, 0x0004003B, 0x0000001B, 0x0000001C, 0x00000003,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x00050041, 0x0000000C, 0x0000000D, 0x00000009, 0x0000000B,
+    0x0004003D, 0x00000006, 0x0000000E, 0x0000000D, 0x000500B8, 0x00000010,
+    0x00000011, 0x0000000E, 0x0000000F, 0x000300F7, 0x00000013, 0x00000000,
+    0x000400FA, 0x00000011, 0x00000012, 0x00000013, 0x000200F8, 0x00000012,
+    0x00050041, 0x0000000C, 0x00000015, 0x00000009, 0x00000014, 0x0004003D,
+    0x00000006, 0x00000016, 0x00000015, 0x000500B8, 0x00000010, 0x00000017,
+    0x00000016, 0x0000000F, 0x000300F7, 0x00000019, 0x00000000, 0x000400FA,
+    0x00000017, 0x00000018, 0x00000019, 0x000200F8, 0x00000018, 0x000100FC,
+    0x000200F8, 0x00000019, 0x000200F9, 0x00000013, 0x000200F8, 0x00000013,
+    0x0004003D, 0x00000007, 0x0000001D, 0x00000009, 0x0003003E, 0x0000001C,
+    0x0000001D, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
@@ -3188,6 +3270,8 @@ const cases = [_]Case{
     .{ .name = "shipped && and ||", .run = Cases.shipped("as it is", "shipped bools", false, clockwise_at) },
     .{ .name = "shipped selects of selects", .run = Cases.shipped("as it is", "shipped nests", false, clockwise_at) },
     .{ .name = "shipped selects joined", .run = Cases.shipped("as it is", "shipped joined", false, clockwise_at) },
+    .{ .name = "shipped collapsed selections", .run = Cases.shipped("as it is", "shipped collapsed", false, clockwise_at) },
+    .{ .name = "shipped nested discard", .run = Cases.shipped("as it is", "shipped nested discard", false, clockwise_at) },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },
