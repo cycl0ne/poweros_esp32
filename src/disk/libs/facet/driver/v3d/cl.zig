@@ -541,6 +541,23 @@ pub const Programs = struct {
     /// drops pixels says (v3dvx_pipeline.c:454-459). Since 1.139.
     writes_z: bool = false,
     disable_ez: bool = false,
+    /// What the vertex and coordinate programs say of themselves where
+    /// Mesa's back end compiled them, as pack_shader_state_record has it
+    /// from their prog data (v3dvx_pipeline.c:410-432; since 1.163); null
+    /// for the programs written by hand, which pass the record on.
+    compiled_vertex: ?CompiledVertex = null,
+};
+
+/// A compiled vertex program's and coordinate program's VPM segments, in
+/// sectors of eight, input and output shared; their threads; and whether
+/// each starts in its last thread section.
+pub const CompiledVertex = struct {
+    vertex_sectors: u32,
+    coordinate_sectors: u32,
+    vertex_threads: u8,
+    coordinate_threads: u8,
+    vertex_single_seg: bool,
+    coordinate_single_seg: bool,
 };
 
 /// Values a program writes: its segment's size in sectors of 8.
@@ -556,8 +573,9 @@ pub fn shaderRecord(list: *List, programs: Programs) void {
     list.word(clipping | writes_z | disable_ez | center_w | scoreboard_on_first | no_implicit_varyings | programs.varyings << 24);
     // Size in sectors, the input's 0 for sharing the output's, and 1 less
     // than the 1 required in play.
-    const coordinate_sectors = (coordinate_values + 7) / 8;
-    const vertex_sectors = (4 + programs.varyings + 7) / 8;
+    const compiled = programs.compiled_vertex;
+    const coordinate_sectors = if (compiled) |each| each.coordinate_sectors else (coordinate_values + 7) / 8;
+    const vertex_sectors = if (compiled) |each| each.vertex_sectors else (4 + programs.varyings + 7) / 8;
     list.word(coordinate_sectors | vertex_sectors << 16);
     const threadable: u32 = 1 << 0;
     const final_section: u32 = 1 << 1;
@@ -568,10 +586,31 @@ pub fn shaderRecord(list: *List, programs: Programs) void {
     const four_ways: u32 = @intFromBool(programs.fragment_threads == 4);
     list.word(programs.fragment | four_ways * threadable);
     list.word(programs.fragment_uniforms);
-    list.word(programs.vertex | threadable | final_section);
-    list.word(programs.vertex_uniforms);
-    list.word(programs.coordinate | threadable | final_section);
+    if (compiled) |each| {
+        list.word(programs.vertex | @as(u32, @intFromBool(each.vertex_threads == 4)) * threadable | @as(u32, @intFromBool(each.vertex_single_seg)) * final_section);
+        list.word(programs.vertex_uniforms);
+        list.word(programs.coordinate | @as(u32, @intFromBool(each.coordinate_threads == 4)) * threadable | @as(u32, @intFromBool(each.coordinate_single_seg)) * final_section);
+    } else {
+        list.word(programs.vertex | threadable | final_section);
+        list.word(programs.vertex_uniforms);
+        list.word(programs.coordinate | threadable | final_section);
+    }
     list.word(programs.coordinate_uniforms);
+}
+
+/// An attribute record of `values` floats a vertex, 1 to 4, read as
+/// floats, of which the coordinate program reads the first `by_coordinate`
+/// and the vertex program the first `by_vertex`: what v3dv packs for
+/// VK_FORMAT_R32G32B32A32_SFLOAT (pack_shader_state_attribute_record,
+/// v3dvx_pipeline.c:641-667), the type float, neither signed nor normalized nor
+/// read as an integer (GL Shader State Attribute Record,
+/// v3d_packet.xml:1476-1499; since 1.163).
+pub fn floatAttribute(list: *List, address: u32, values: u32, by_coordinate: u32, by_vertex: u32, stride: u32) void {
+    const type_float: u32 = 2 << 2;
+    list.word(address);
+    list.word((values & 3) | type_float | by_coordinate << 8 | by_vertex << 12);
+    list.word(stride);
+    list.word(0xFF_FFFF);
 }
 
 /// An attribute record: `values` of 32 bits each, copied as they are, of

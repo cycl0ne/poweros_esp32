@@ -4947,4 +4947,50 @@ pub const LIBRARY_VERSION = 1;
 /// FacetBoth's other 224 cases are as they were at 1.161, and FacetProbe
 /// passes its 890 checks. This is the first revision on main and the
 /// shader branch alike: main merged the branch at 1.161.
-pub const LIBRARY_REVISION = 162;
+///
+/// 163: **The vertex stage on the QPU (docs/facet-vulkan10.md item 60).**
+/// A pipeline whose vertex stage ships SPIR-V (`Pipeline.vertex_words`)
+/// and whose fragment program is compiled runs its vertex shader on the
+/// QPU where it draws triangles, the vertex function not called: Mesa's
+/// back end compiles it as v3dv does, twice (`driver.VertexStage`), the
+/// vertex program keyed by the floats the fragment program reads and the
+/// coordinate program the binner runs. `compileVertexThroughMesa` reads
+/// gl_PerVertex's gl_Position, the varyings at their locations and the
+/// attributes; `finishVertex` stores the varyings where the fragment
+/// program reads them and adds v3d_nir_emit_ff_vpm_outputs's
+/// (v3d_nir_lower_io.c:493-586) - 1/Wc, the coordinate program's
+/// position, the place on screen through FTOIN, Zs and 1/Wc, and 0 for
+/// what nothing stored - and `attributes` sizes each attribute by the
+/// floats an output is made of (`liveFloats`, nir_opt_dce after
+/// nir_lower_io_vars_to_scalar). to_vir emits LDVPMV_IN and STVPMV with
+/// their rows as uniforms, the viewport's words (`compile.Viewport`) and
+/// FTOIN. The draw converts the attributes to floats on the CPU as before,
+/// into memory the V3D reads, and gives each driver location a float
+/// attribute record (`cl.floatAttribute`, GFXH-930's rule with it); the
+/// shader record takes each program's threads, VPM sectors and
+/// single_seg (`cl.CompiledVertex`).
+///
+/// - A pipeline that tessellates, draws lines or points, has a fixed form
+///   or no fragment stage, or whose vertex shader is refused, calls its
+///   vertex function as before, and is not refused.
+/// - Not ported: gl_PointSize, the clip and cull distances,
+///   gl_VertexIndex and gl_InstanceIndex, integer attributes, a varying
+///   stored twice or a float at a time, and nir_schedule (vir.c:
+///   2118-2140) for either stage.
+///
+/// Tests: the V3D's 190, four new. glslc_vertex_as_it_is (239 words): the
+/// vertex program's ten LDVPMV_IN and eight STVPMV, its stream of rows and
+/// viewport words, 31 words; the coordinate program's six and six, c not
+/// read, 19 words; a fragment program reading two floats of the colour
+/// and one of a location nothing writes, c's size 2 and a 0 stored;
+/// gl_PointSize written, and the module read as a fragment shader,
+/// refused. 3145 tests in all. FacetBoth 1.31: the shipped case of a vertex
+/// shader, glslc's words of "as it is" on the QPU beside the function on
+/// the cores, through "shipped smooth".
+///
+/// On the CM5 the case is 5 pixels of 230,400 apart, the triangle's
+/// edges, where the same draw with the vertex function is 8: the QPU
+/// rounds the place on screen to the nearest 1/64th and the CPU's record
+/// truncated it. FacetBoth's other 225 cases are as they were at 1.162,
+/// and FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 163;

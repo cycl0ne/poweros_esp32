@@ -916,8 +916,9 @@ fn compiled(back: Back, work: *compile.Work, words: []const u32, stream: *[compi
         .sampler => (tmu orelse return null)[1],
         // No scene here pushes constants or binds a uniform buffer: the
         // library's draws are where a program that reads them is held to
-        // the cores (FacetBoth).
-        .push, .ubo => return null,
+        // the cores (FacetBoth). Nor is a fragment program's stream ever
+        // of the viewport, which a vertex program's alone is.
+        .push, .ubo, .viewport => return null,
     };
     return .{
         .{

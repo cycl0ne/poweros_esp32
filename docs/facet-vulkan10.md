@@ -2202,6 +2202,50 @@ The back end is fragment-only and refuses any other stage by name; the vertex an
 
 > Verified: compile.zig:2 "a SPIR-V **fragment** module turned into V3D 7.1 instructions"; compile.zig:527 `if (seen.stage != .fragment) return Error.Stage;`; the profile's `.stages = &.{.fragment}`.
 
+**The vertex stage first, facet.library 1.163.** A pipeline whose vertex
+stage ships SPIR-V beside its function, and whose fragment program is
+compiled (no fixed form), runs its vertex shader on the QPU where it draws
+triangles. Mesa's back end compiles it twice, as v3dv does
+(pipeline_compile_vertex_shader, v3dv_pipeline.c:1990-2020): the vertex
+program, keyed by the floats the fragment program reads (used_outputs,
+:1461-1473), and the coordinate program the binner runs (is_coord). The
+walk takes gl_PerVertex, a Block of BuiltIn members and no offsets, and
+its gl_Position, which v3d_nir_lower_vpm_output keeps for the
+fixed-function outputs (v3d_nir_lower_io.c:146-153). Each varying's floats
+are stored where the fragment program reads them, at the program's end as
+nir_move_output_stores_to_end puts them (vir.c:1121); then come
+v3d_nir_emit_ff_vpm_outputs's (v3d_nir_lower_io.c:493-586): 1/Wc, the
+coordinate program's position, the place on screen - x and y times the
+viewport's scale and 1/Wc, FTOIN (nir_to_vir.c:1466-1472) - the vertex
+program's Zs and 1/Wc, and 0 for what the fragment program reads and
+nothing stored. An attribute is read a float at a time by LDVPMV_IN at its
+row (ntq_emit_load_input, nir_to_vir.c:2934-2981), the floats an output is
+made of and no others (nir_lower_io_vars_to_scalar and nir_opt_dce,
+vir.c:1093-1106; `compile.liveFloats`), and its size is the highest of
+those and one (ntq_setup_vs_inputs, nir_to_vir.c:2385-2410). The VPM
+segment is shared by input and output, in sectors of eight
+(v3d_vs_set_prog_data, vir.c:860-936). The draw converts the attributes to
+four floats a location on the CPU, as it did for the vertex function
+(`_vertices.readInputs`), gives each driver location a float attribute
+record of them, read by each program as far as it reads
+(v3dvx_cmd_buffer.c:2686-2771, GFXH-930's rule with it), and writes each
+program's stream with the viewport's words (v3dv_uniforms.c:526-552).
+
+- Where it is not v3dv's: the attributes are converted on the CPU and not
+  fetched by the VPM in their formats; and the fragment program reads
+  every varying it declares, so the vertex program stores them all, where
+  Mesa's linking drops what is not read.
+- Still the vertex function, as before, and the pipeline not refused: a
+  pipeline that tessellates, or draws lines or points (made triangles of
+  on the CPU), or has a fixed form or no fragment stage, or whose vertex
+  shader the back end refuses.
+- Not ported: gl_PointSize, the clip and cull distances, gl_VertexIndex
+  and gl_InstanceIndex, integer attributes, a varying stored twice or a
+  float of it at a time; and, for both stages, nir_schedule, which
+  v3d_attempt_compile runs on the NIR before it is made VIR
+  (vir.c:2118-2140): the VIR is in the order of the steps.
+- The compute stage is the item's other half.
+
 ### 61. Multisampling: 4 samples a pixel on both devices, with resolve attachments and CmdResolveImage's body **[critical path]**
 
 *rasterisation* &mdash; conformance-blocking, port, **sized 07.11.2026: 21 commits, about 1,590 lines of code, 1,340 of tests and 90 of docs**; **the cores' half done in 1.114**, the V3D's is steps V1 to V8

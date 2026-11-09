@@ -45,6 +45,7 @@ const _driver = @import("../_driver.zig");
 const _image = @import("../../image/_image.zig");
 const _format = @import("../_format.zig");
 const _play = @import("_play.zig");
+const _vertices = @import("../_vertices.zig");
 const qpu = v3d.qpu;
 const compile = v3d.compile;
 const tiling = v3d.tiling;
@@ -622,8 +623,35 @@ pub const Shader = struct {
     /// pixels (since 1.139).
     writes_z: bool,
     disable_ez: bool,
+    /// The pipeline's vertex shader compiled for the QPU, where it shipped
+    /// one that Mesa's back end compiles and the draw can run it: the
+    /// vertex function is not called then (since 1.163).
+    vertex: ?VertexStage = null,
 
     pub fn stream(made: *const Shader) []const compile.Word {
+        return made.uniforms[0..made.uniform_count];
+    }
+};
+
+/// A vertex shader as v3dv compiles it, twice: the program the renderer
+/// runs, and the coordinate program the binner runs, of the position
+/// alone (pipeline_compile_vertex_shader, v3dv_pipeline.c:1990-2020).
+pub const VertexStage = struct {
+    vertex: VertexShader,
+    coordinate: VertexShader,
+};
+
+/// One of the two, its code in a block of its own as a `Shader`'s is.
+pub const VertexShader = struct {
+    block: Block,
+    address: u32,
+    uniforms: [compile.most_uniforms]compile.Word,
+    uniform_count: u32,
+    threads: u8,
+    /// What the shader record and the attribute records say of it.
+    program: compile.VertexProgram,
+
+    pub fn stream(made: *const VertexShader) []const compile.Word {
         return made.uniforms[0..made.uniform_count];
     }
 };
@@ -727,6 +755,13 @@ fn compiled(pipeline: *Pipeline) facet.Result {
     // count, so this is the words disagreeing with the entry that shipped
     // them rather than a pipeline that was put together wrongly.
     if (code.varyings != pipeline.varyings) return .error_feature_not_present;
+    // The floats of each location the fragment program reads, which the
+    // vertex program is keyed by (used_outputs, from the fragment
+    // program's input_slots: pipeline_populate_v3d_vs_key,
+    // v3dv_pipeline.c:1461-1473), before `work` is compiled through
+    // again.
+    var reads = compile.VertexKey{};
+    for (work.inputs[0..work.input_count]) |each| reads.reads[each.location] = @intCast(each.kind.parts());
     const kept = _objects.create(sys, Shader) orelse return .error_out_of_host_memory;
     const hardware = holdAgain(base);
     sys.ObtainSemaphore(&base.v3d_lock);
@@ -756,8 +791,71 @@ fn compiled(pipeline: *Pipeline) facet.Result {
         .writes_z = code.writes_z,
         .disable_ez = code.disable_ez,
     };
+    kept.vertex = vertexStage(pipeline, work, hardware, reads);
     pipeline.driver = kept;
     return .success;
+}
+
+/// The pipeline's vertex shader compiled for the QPU and put where the V3D
+/// reads it, both programs, or null where the vertex function is to run
+/// on the CPU as before: the pipeline shipped no words for it, or it
+/// tessellates, or it draws lines or points, which are made triangles of
+/// on the CPU (`_vertices.widens`), or the back end refuses the words, or
+/// the program reads an attribute the pipeline does not describe, or
+/// there is no memory for it. None of that refuses the pipeline: its
+/// vertex function is the vertex shader too (since 1.163).
+fn vertexStage(pipeline: *const Pipeline, work: *compile.Work, hardware: *Hardware, reads: compile.VertexKey) ?VertexStage {
+    if (pipeline.vertex_words.len == 0 or pipeline.tessellated != null or _vertices.widens(pipeline)) return null;
+    const sys = pipeline.device.sys;
+    const base = pipeline.device.base;
+    var made: [2]VertexShader = undefined;
+    for (0..2) |k| {
+        var key = reads;
+        key.coordinate = k == 1;
+        const code = compile.compileVertexThroughMesa(work, pipeline.vertex_words, v3d.heap.of(sys), key) catch null;
+        const usable = if (code) |each| readsDescribed(pipeline, &each.vertex) else false;
+        const block: ?Block = if (usable) block: {
+            const words = code.?.words;
+            sys.ObtainSemaphore(&base.v3d_lock);
+            defer sys.ReleaseSemaphore(&base.v3d_lock);
+            const each = hardware.space.alloc(@intCast(words.len * 8)) orelse break :block null;
+            const into: [*]u64 = @ptrCast(@alignCast(each.cpu));
+            @memcpy(into[0..words.len], words);
+            hardware.space.toGpu(&each);
+            hardware.stale = true;
+            break :block each;
+        } else null;
+        const kept = block orelse {
+            if (k == 1) freeVertexShader(base, hardware, &made[0]);
+            return null;
+        };
+        made[k] = .{
+            .block = kept,
+            .address = kept.address,
+            .uniforms = code.?.uniforms,
+            .uniform_count = code.?.uniform_count,
+            .threads = code.?.threads,
+            .program = code.?.vertex,
+        };
+    }
+    return .{ .vertex = made[0], .coordinate = made[1] };
+}
+
+/// Whether every attribute the program reads is at a location the
+/// pipeline describes, which `_vertices.readInputs` fills.
+fn readsDescribed(pipeline: *const Pipeline, program: *const compile.VertexProgram) bool {
+    for (program.attribute_location[0..program.attribute_count], program.vattr_sizes[0..program.attribute_count]) |location, size| {
+        if (size != 0 and location >= pipeline.locations) return false;
+    }
+    return true;
+}
+
+fn freeVertexShader(base: *FacetBase, hardware: *Hardware, made: *VertexShader) void {
+    const sys = base.sys_base;
+    sys.ObtainSemaphore(&base.v3d_lock);
+    defer sys.ReleaseSemaphore(&base.v3d_lock);
+    hardware.space.free(&made.block);
+    hardware.stale = true;
 }
 
 fn unmakePipeline(pipeline: *Pipeline) callconv(.c) void {
@@ -767,6 +865,10 @@ fn unmakePipeline(pipeline: *Pipeline) callconv(.c) void {
     const hardware: *Hardware = @ptrCast(@alignCast(base.v3d.?));
     sys.ObtainSemaphore(&base.v3d_lock);
     hardware.space.free(&kept.block);
+    if (kept.vertex) |*stage| {
+        hardware.space.free(&stage.vertex.block);
+        hardware.space.free(&stage.coordinate.block);
+    }
     hardware.stale = true;
     sys.ReleaseSemaphore(&base.v3d_lock);
     pipeline.driver = null;

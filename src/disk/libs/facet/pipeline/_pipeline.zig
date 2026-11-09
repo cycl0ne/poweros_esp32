@@ -152,6 +152,10 @@ pub const Pipeline = struct {
     /// The words are the program's own memory and live as long as it
     /// keeps them there (since 1.75).
     fragment_words: []const u32 = &.{},
+    /// Its vertex shader's SPIR-V, the same way: what a device with a
+    /// processor of its own may run there instead of calling `vertex`,
+    /// and calls `vertex` where it does not (since 1.163).
+    vertex_words: []const u32 = &.{},
     /// Whether the fragment shader may drop a pixel, which makes the depth
     /// wait for it: its fixed form says so, or the SPIR-V shipped beside
     /// it holds an `OpKill`, as llvmpipe goes by the shader's

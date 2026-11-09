@@ -3635,3 +3635,127 @@ pub const glslc_constant_matrix = [_]u32{
     0x00000028, 0x00000029, 0x0000002A, 0x00000027, 0x0003003E, 0x00000009,
     0x0000002B, 0x000100FD, 0x00010038,
 };
+
+/// FacetBoth's "as it is" vertex function as a vertex shader, glslc -O
+/// (`-fshader-stage=vert`), 239 words: the corner's place
+/// moved by the instance's offset times its W, and its colour handed on.
+/// Since 1.163 Mesa's back end compiles it for the QPU, the vertex program
+/// and the coordinate program both.
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 p;
+/// layout(location = 1) in vec4 c;
+/// layout(location = 3) in vec2 moved;
+/// layout(location = 0) out vec4 vcolor;
+/// void main() {
+///     gl_Position = vec4(p.xy + moved * p.w, p.z, p.w);
+///     vcolor = c;
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 43
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Vertex %4 "main" %13 %17 %22 %40 %41
+///                OpDecorate %11 Block
+///                OpMemberDecorate %11 0 BuiltIn Position
+///                OpMemberDecorate %11 1 BuiltIn PointSize
+///                OpMemberDecorate %11 2 BuiltIn ClipDistance
+///                OpMemberDecorate %11 3 BuiltIn CullDistance
+///                OpDecorate %17 Location 0
+///                OpDecorate %22 Location 3
+///                OpDecorate %40 Location 0
+///                OpDecorate %41 Location 1
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypeInt 32 0
+///           %9 = OpConstant %8 1
+///          %10 = OpTypeArray %6 %9
+///          %11 = OpTypeStruct %7 %6 %10 %10
+///          %12 = OpTypePointer Output %11
+///          %13 = OpVariable %12 Output
+///          %14 = OpTypeInt 32 1
+///          %15 = OpConstant %14 0
+///          %16 = OpTypePointer Input %7
+///          %17 = OpVariable %16 Input
+///          %18 = OpTypeVector %6 2
+///          %21 = OpTypePointer Input %18
+///          %22 = OpVariable %21 Input
+///          %24 = OpConstant %8 3
+///          %25 = OpTypePointer Input %6
+///          %30 = OpConstant %8 2
+///          %38 = OpTypePointer Output %7
+///          %40 = OpVariable %38 Output
+///          %41 = OpVariable %16 Input
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %19 = OpLoad %7 %17
+///          %20 = OpVectorShuffle %18 %19 %19 0 1
+///          %23 = OpLoad %18 %22
+///          %26 = OpAccessChain %25 %17 %24
+///          %27 = OpLoad %6 %26
+///          %28 = OpVectorTimesScalar %18 %23 %27
+///          %29 = OpFAdd %18 %20 %28
+///          %31 = OpAccessChain %25 %17 %30
+///          %32 = OpLoad %6 %31
+///          %35 = OpCompositeExtract %6 %29 0
+///          %36 = OpCompositeExtract %6 %29 1
+///          %37 = OpCompositeConstruct %7 %35 %36 %32 %27
+///          %39 = OpAccessChain %38 %13 %15
+///                OpStore %39 %37
+///          %42 = OpLoad %7 %41
+///                OpStore %40 %42
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_vertex_as_it_is = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000002B, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x000A000F, 0x00000000,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000011, 0x00000016,
+    0x00000028, 0x00000029, 0x00030047, 0x0000000B, 0x00000002, 0x00050048,
+    0x0000000B, 0x00000000, 0x0000000B, 0x00000000, 0x00050048, 0x0000000B,
+    0x00000001, 0x0000000B, 0x00000001, 0x00050048, 0x0000000B, 0x00000002,
+    0x0000000B, 0x00000003, 0x00050048, 0x0000000B, 0x00000003, 0x0000000B,
+    0x00000004, 0x00040047, 0x00000011, 0x0000001E, 0x00000000, 0x00040047,
+    0x00000016, 0x0000001E, 0x00000003, 0x00040047, 0x00000028, 0x0000001E,
+    0x00000000, 0x00040047, 0x00000029, 0x0000001E, 0x00000001, 0x00020013,
+    0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006,
+    0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040015,
+    0x00000008, 0x00000020, 0x00000000, 0x0004002B, 0x00000008, 0x00000009,
+    0x00000001, 0x0004001C, 0x0000000A, 0x00000006, 0x00000009, 0x0006001E,
+    0x0000000B, 0x00000007, 0x00000006, 0x0000000A, 0x0000000A, 0x00040020,
+    0x0000000C, 0x00000003, 0x0000000B, 0x0004003B, 0x0000000C, 0x0000000D,
+    0x00000003, 0x00040015, 0x0000000E, 0x00000020, 0x00000001, 0x0004002B,
+    0x0000000E, 0x0000000F, 0x00000000, 0x00040020, 0x00000010, 0x00000001,
+    0x00000007, 0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x00040017,
+    0x00000012, 0x00000006, 0x00000002, 0x00040020, 0x00000015, 0x00000001,
+    0x00000012, 0x0004003B, 0x00000015, 0x00000016, 0x00000001, 0x0004002B,
+    0x00000008, 0x00000018, 0x00000003, 0x00040020, 0x00000019, 0x00000001,
+    0x00000006, 0x0004002B, 0x00000008, 0x0000001E, 0x00000002, 0x00040020,
+    0x00000026, 0x00000003, 0x00000007, 0x0004003B, 0x00000026, 0x00000028,
+    0x00000003, 0x0004003B, 0x00000010, 0x00000029, 0x00000001, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x0004003D, 0x00000007, 0x00000013, 0x00000011, 0x0007004F, 0x00000012,
+    0x00000014, 0x00000013, 0x00000013, 0x00000000, 0x00000001, 0x0004003D,
+    0x00000012, 0x00000017, 0x00000016, 0x00050041, 0x00000019, 0x0000001A,
+    0x00000011, 0x00000018, 0x0004003D, 0x00000006, 0x0000001B, 0x0000001A,
+    0x0005008E, 0x00000012, 0x0000001C, 0x00000017, 0x0000001B, 0x00050081,
+    0x00000012, 0x0000001D, 0x00000014, 0x0000001C, 0x00050041, 0x00000019,
+    0x0000001F, 0x00000011, 0x0000001E, 0x0004003D, 0x00000006, 0x00000020,
+    0x0000001F, 0x00050051, 0x00000006, 0x00000023, 0x0000001D, 0x00000000,
+    0x00050051, 0x00000006, 0x00000024, 0x0000001D, 0x00000001, 0x00070050,
+    0x00000007, 0x00000025, 0x00000023, 0x00000024, 0x00000020, 0x0000001B,
+    0x00050041, 0x00000026, 0x00000027, 0x0000000D, 0x0000000F, 0x0003003E,
+    0x00000027, 0x00000025, 0x0004003D, 0x00000007, 0x0000002A, 0x00000029,
+    0x0003003E, 0x00000028, 0x0000002A, 0x000100FD, 0x00010038,
+};
