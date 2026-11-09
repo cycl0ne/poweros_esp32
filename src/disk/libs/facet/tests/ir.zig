@@ -1029,6 +1029,47 @@ const Branched = ir.Fragment(struct {
     }
 });
 
+/// Selections in others' arms: an `else if`, and an `if` and `else` in
+/// the true arm of a selection of no false arm, work after it there:
+/// driver/v3d/glslc_reference.zig's glslc_nested, built (since 1.156).
+const Nested = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const quarter = b.scalar(0.25);
+        const x = b.component(v, 0);
+        const y = b.component(v, 1);
+        const z = b.component(v, 2);
+        const w = b.component(v, 3);
+        const first = b.ifHolds(b.lessThan(x, quarter));
+        const red_first = b.mul(y, b.scalar(2));
+        b.otherwise(first);
+        const second = b.ifHolds(b.lessThan(x, half));
+        const green_second = b.sin(b.mul(z, b.scalar(3)));
+        b.otherwise(second);
+        const blue_third = b.add(w, b.scalar(0.125));
+        b.endIf(second);
+        const red_else = b.merged(second, half, x);
+        const green_else = b.merged(second, green_second, y);
+        const blue_else = b.merged(second, z, blue_third);
+        b.endIf(first);
+        const red = b.merged(first, red_first, red_else);
+        const green = b.merged(first, y, green_else);
+        const blue = b.merged(first, z, blue_else);
+        const third = b.ifHolds(b.greaterThan(w, half));
+        const fourth = b.ifHolds(b.greaterThan(y, half));
+        const product = b.mul(x, y);
+        b.otherwise(fourth);
+        const power = b.exp2(y);
+        b.endIf(fourth);
+        const chosen = b.merged(fourth, product, power);
+        const scaled = b.add(b.mul(chosen, half), quarter);
+        b.endIf(third);
+        const alpha = b.merged(third, scaled, z);
+        b.color(b.vector(&.{ red, green, blue, alpha }));
+    }
+});
+
 /// A selection with no false arm, the input first read in its true arm
 /// and after it: loaded before the branch, where both are dominated.
 const Unbalanced = ir.Fragment(struct {
@@ -1159,6 +1200,46 @@ test "the cores choose as the comparisons say, and Sin, Tan, Step, SmoothStep an
             }
         }
         for (batch.colors[0]) |each| try std.testing.expectEqual(got, each);
+    }
+}
+
+test "selections nested in arms are a module the reader takes, each outer merge choosing what the inner chose" {
+    switch (spirv.look(Nested.words, spirv.facet_profile)) {
+        .fault => |fault| {
+            std.debug.print("refused: {s}\n", .{@tagName(fault)});
+            return error.TestUnexpectedResult;
+        },
+        .seen => {},
+    }
+    // Every way through both: each arm of the `else if`, and the inner
+    // `if` and `else` with the outer selection taken and not.
+    for ([_][4]f32{
+        .{ 0.125, 0.75, 0.25, 0.75 },
+        .{ 0.375, 0.25, 0.5, 0.875 },
+        .{ 0.75, 0.625, 0.125, 0.25 },
+        .{ 0.875, 0.375, 0.625, 0.625 },
+    }) |v| {
+        var batch = Batch.flat(1, &v);
+        const made = batch.fragments(5);
+        Nested.function(&made);
+        const x: f64 = v[0];
+        const y: f64 = v[1];
+        const z: f64 = v[2];
+        const w: f64 = v[3];
+        const red = if (x < 0.25) y * 2 else if (x < 0.5) 0.5 else x;
+        const green = if (x < 0.25) y else if (x < 0.5) @sin(z * 3) else y;
+        const blue = if (x < 0.25) z else if (x < 0.5) z else w + 0.125;
+        const alpha = if (w > 0.5) (if (y > 0.5) x * y else @exp2(y)) * 0.5 + 0.25 else z;
+        const want = byteOf(alpha) << 24 | byteOf(red) << 16 | byteOf(green) << 8 | byteOf(blue);
+        const got = batch.colors[0][0];
+        for ([4]u5{ 0, 8, 16, 24 }) |shift| {
+            const a: i32 = @intCast(want >> shift & 0xFF);
+            const b: i32 = @intCast(got >> shift & 0xFF);
+            if (@abs(a - b) > 1) {
+                std.debug.print("at {any}: want 0x{X:0>8}, made 0x{X:0>8}\n", .{ v, want, got });
+                return error.TestExpectedEqual;
+            }
+        }
     }
 }
 

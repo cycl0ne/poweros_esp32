@@ -38,7 +38,9 @@
 //! flattens as Mesa does: both arms run, the merge chooses. The shipped
 //! case of variables (since 1.23) is the same GLSL as glslc writes it
 //! without -O, in variables of the function's own, which the V3D makes
-//! values as Mesa does; the cores run the selections' function.
+//! values as Mesa does; the cores run the selections' function. The
+//! shipped case of nested selections (since 1.24) is an `else if` and an
+//! `if` and `else` in an arm, which the V3D flattens from the inside out.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -53,7 +55,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.23 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.24 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -536,6 +538,46 @@ const Shipped = struct {
             b.color(b.vector(&.{ r, g, bl, a }));
         }
     });
+    /// The shader the V3D's host tests hold to glslc's glslc_nested word
+    /// for word: an `else if`, and an `if` and `else` in the true arm of
+    /// a selection of no false arm (since 1.24).
+    const Nested = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const half = b.scalar(0.5);
+            const quarter = b.scalar(0.25);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const first = b.ifHolds(b.lessThan(x, quarter));
+            const red_first = b.mul(y, b.scalar(2));
+            b.otherwise(first);
+            const second = b.ifHolds(b.lessThan(x, half));
+            const green_second = b.sin(b.mul(z, b.scalar(3)));
+            b.otherwise(second);
+            const blue_third = b.add(w, b.scalar(0.125));
+            b.endIf(second);
+            const red_else = b.merged(second, half, x);
+            const green_else = b.merged(second, green_second, y);
+            const blue_else = b.merged(second, z, blue_third);
+            b.endIf(first);
+            const r = b.merged(first, red_first, red_else);
+            const g = b.merged(first, y, green_else);
+            const bl = b.merged(first, z, blue_else);
+            const third = b.ifHolds(b.greaterThan(w, half));
+            const fourth = b.ifHolds(b.greaterThan(y, half));
+            const product = b.mul(x, y);
+            b.otherwise(fourth);
+            const power = b.exp2(y);
+            b.endIf(fourth);
+            const chosen = b.merged(fourth, product, power);
+            const scaled = b.add(b.mul(chosen, half), quarter);
+            b.endIf(third);
+            const a = b.merged(third, scaled, z);
+            b.color(b.vector(&.{ r, g, bl, a }));
+        }
+    });
 };
 
 /// The entries that ship words, after all the others, and the words of
@@ -560,13 +602,14 @@ const shipped_entries = [_]shader.Entry{
     Shipped.Chosen.entry("shipped chosen"),
     Shipped.Branched.entry("shipped branched"),
     Shipped.Branched.entry("shipped unoptimized"),
+    Shipped.Nested.entry("shipped nested"),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                       .{},                    .{},                                  .{},
     Shipped.Smooth.spirv,      Shipped.Flat.spirv,     Shipped.Dimmed.spirv,                 Shipped.Textured.spirv,
     Shipped.Modulated.spirv,   Shipped.Pushed.spirv,   Shipped.Tinted.spirv,                 Shipped.Cutout.spirv,
     Shipped.CutoutOther.spirv, Shipped.Shadowed.spirv, Shipped.Arithmetic.spirv,             Shipped.Called.spirv,
-    Shipped.Chosen.spirv,      Shipped.Branched.spirv, shader.Spirv.of(&branch_unoptimized),
+    Shipped.Chosen.spirv,      Shipped.Branched.spirv, shader.Spirv.of(&branch_unoptimized), Shipped.Nested.spirv,
 };
 
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
@@ -3068,6 +3111,7 @@ const cases = [_]Case{
     .{ .name = "shipped chosen floats", .run = Cases.shipped("as it is", "shipped chosen", false, clockwise_at) },
     .{ .name = "shipped selections", .run = Cases.shipped("as it is", "shipped branched", false, clockwise_at) },
     .{ .name = "shipped variables", .run = Cases.shipped("as it is", "shipped unoptimized", false, clockwise_at) },
+    .{ .name = "shipped nested selections", .run = Cases.shipped("as it is", "shipped nested", false, clockwise_at) },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },

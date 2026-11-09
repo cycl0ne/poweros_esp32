@@ -4584,4 +4584,50 @@ pub const LIBRARY_VERSION = 1;
 /// on the cores, 8 pixels of 230400 apart on the CM5, the edge alone, as
 /// the -O module's case is; the other 213 cases unchanged, FacetProbe 888
 /// of 888.
-pub const LIBRARY_REVISION = 155;
+///
+/// 156: **The V3D compiles a selection nested in another's arm, flattened
+/// from the inside out as Mesa flattens it (docs/facet-vulkan10.md item
+/// 59).** An `else if` is a selection in the false arm of another, and
+/// glslc writes one so at -O and without; every such shader was refused
+/// as a branch.
+///
+/// - The walk keeps a stack of selections, `most_nesting` deep. One in an
+///   arm is read as nir_opt_peephole_select's walk over the blocks
+///   (nir_opt_peephole_select_impl, nir_opt_peephole_select.c:607-619)
+///   meets it: its merge block, with it before, ahead of the outer one's,
+///   so it is flattened first and the outer arm is then one block. That
+///   arm goes on in the inner merge block, the block it ends in, which
+///   is what a phi at the outer merge names. The outer arms are counted
+///   with the inner one's work and selects in them, as Mesa counts them.
+/// - nir_opt_collapse_if (:412-506) takes a selection of no false arm
+///   that is all of the true arm of another of none, before either is
+///   flattened, into one selection on the two conditions' iand: a bool
+///   computed, which is not here. That shape is refused, also where Mesa
+///   would find a phi it cannot drop and flatten the two after all. A
+///   discard in a nested arm, terminate_if of the iand (rewrite_instr,
+///   :351-410), is `Error.Discards`.
+/// - The merge's selects for the function's variables are in the order
+///   Mesa's phis are: nir_phi_builder_finish puts each before the
+///   block's first (nir_phi_builder.c:272-297), so the variables come in
+///   the reverse of the order they were first used in
+///   (register_variable_uses, nir_lower_vars_to_ssa.c:501-550), each
+///   one's floats in order (nir_lower_phis_to_scalar.c:195-218). 1.155
+///   took them in the order declared.
+/// - `ir.Build` takes `ifHolds` in an arm: what an arm puts down may read
+///   what was made in the arms it is nested in, and a `merged` either
+///   arm's value or one from where the selection is. The emitter names
+///   each arm's last block in the phi.
+///
+/// Tests: the V3D's 166, four new: glslc's nested selections
+/// (`glslc_nested`, 387 words) flattened, eight selects of four
+/// comparisons; the module without -O (`glslc_nested_unoptimized`, 497
+/// words) and facet's emitter's of the same shader (309 words,
+/// spirv-val clean) compiled to the same words; nir_opt_collapse_if's
+/// shape (`glslc_collapse`), a discard nested in an arm
+/// (`glslc_nested_discard`) and an outer arm jumping elsewhere, refused.
+/// tests/ir.zig: the module read back, and every way through it on the
+/// cores against f64. FacetBoth 1.24: the shipped case of nested
+/// selections, 8 pixels of 230400 apart on the CM5, the edge alone, as
+/// the other selections' cases are; the other 214 cases unchanged,
+/// FacetProbe 888 of 888.
+pub const LIBRARY_REVISION = 156;

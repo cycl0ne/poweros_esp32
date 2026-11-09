@@ -198,7 +198,9 @@ pub const Op = struct {
     /// always was. (Since 1.87.)
     offset: [2]i32 = .{ 0, 0 },
     /// The selection whose arm an operation is in, `outside` for none,
-    /// and which arm: 1 the true, 2 the false (since 1.154).
+    /// and which arm: 1 the true, 2 the false (since 1.154). A
+    /// selection's own `if_holds` is in the arm it is nested in, if any
+    /// (since 1.156).
     within: u16 = outside,
     arm: u2 = 0,
 };
@@ -305,16 +307,31 @@ pub const Build = struct {
             else => {},
         };
         // SSA as SPIR-V has it: a value made in an arm is read in that arm
-        // and past the selection only through a `merged` of it, which
-        // checks its own two.
+        // or one nested in it, and past the selection only through a
+        // `merged` of it, which checks its own two.
         if (op.tag != .merged) for (readOf(made)) |read| if (read) |at| {
             const of = build.ops[at];
-            if (of.within != outside and (of.within != made.within or of.arm != made.arm))
-                @compileError("a value made in a selection's arm is read in that arm, or past it through `merged`");
+            if (!build.sees(made.within, made.arm, of.within, of.arm))
+                @compileError("a value made in a selection's arm is read in that arm or one nested in it, or past it through `merged`");
         };
         build.ops[build.count] = made;
         build.count += 1;
         return build.count - 1;
+    }
+
+    /// Whether what is put down in the arm `arm` of the selection `within`
+    /// may read a value made in the arm `of_arm` of `of_within`: the same
+    /// arm, one it is nested in, or outside every selection.
+    fn sees(build: *const Build, within: u16, arm: u2, of_within: u16, of_arm: u2) bool {
+        var at = within;
+        var side = arm;
+        while (true) {
+            if (at == of_within and side == of_arm) return true;
+            if (at == outside) return false;
+            const selection = build.ops[at];
+            at = selection.within;
+            side = selection.arm;
+        }
     }
 
     /// A varying, at `location`. The floats of the locations are the
@@ -630,13 +647,12 @@ pub const Build = struct {
     /// what is put down from there to `endIf` where it does not, and
     /// `merged` takes a value of each past it. glslc writes an `if` and
     /// `else`, or a ternary whose arms do more than name a value, so.
-    /// The arms compute, read varyings and push constants; a sample, a
-    /// discard, the colour and another selection are for outside them,
-    /// which is what a device that flattens the arms into straight code
-    /// can run (since 1.154).
+    /// The arms compute, read varyings and push constants, and may hold
+    /// selections of their own (since 1.156); a sample, a discard and the
+    /// colour are for outside them, which is what a device that flattens
+    /// the arms into straight code can run (since 1.154).
     pub fn ifHolds(build: *Build, held: u16) u16 {
         if (build.ops[held].kind != .boolean) @compileError("a selection is on a comparison");
-        if (build.open != outside) @compileError("a selection inside another's arm");
         const at = build.put(.{ .tag = .if_holds, .kind = .boolean, .a = held });
         build.open = at;
         build.arm = 1;
@@ -646,8 +662,8 @@ pub const Build = struct {
     /// The false arm of the selection `at` begins.
     pub fn otherwise(build: *Build, at: u16) void {
         if (build.open != at or build.arm != 1) @compileError("`otherwise` follows its selection's true arm");
-        build.open = outside;
-        build.arm = 0;
+        build.open = build.ops[at].within;
+        build.arm = build.ops[at].arm;
         _ = build.put(.{ .tag = .otherwise, .kind = .boolean, .a = at });
         build.open = at;
         build.arm = 2;
@@ -656,8 +672,8 @@ pub const Build = struct {
     /// The selection `at` is over.
     pub fn endIf(build: *Build, at: u16) void {
         if (build.open != at) @compileError("`endIf` ends the selection that is open");
-        build.open = outside;
-        build.arm = 0;
+        build.open = build.ops[at].within;
+        build.arm = build.ops[at].arm;
         _ = build.put(.{ .tag = .end_if, .kind = .boolean, .a = at });
         build.ended = at;
     }
@@ -673,7 +689,8 @@ pub const Build = struct {
         if (kind == .boolean or kind != build.ops[no].kind) @compileError("both values of a merge are floats of one width");
         for ([2]u16{ yes, no }, [2]u2{ 1, 2 }) |value, arm| {
             const of = build.ops[value];
-            if (of.within != outside and (of.within != at or of.arm != arm))
+            const selection = build.ops[at];
+            if (!(of.within == at and of.arm == arm) and !build.sees(selection.within, selection.arm, of.within, of.arm))
                 @compileError("a merge takes each value from its own arm, or from before the selection");
         }
         return build.put(.{ .tag = .merged, .kind = kind, .a = at, .b = yes, .c = no });
@@ -929,7 +946,10 @@ fn wordsOf(comptime graph: Graph) []const u32 {
         // phi names the block each value came from (since 1.154).
         var block_label = emit.id();
         emit.label(block_label);
-        var arm_labels: [most_ops][4]u32 = @splat(@splat(0));
+        // Each selection's true and false labels, its merge, the block it
+        // is in, and the blocks its arms end in: an arm that holds a
+        // selection of its own goes on in that one's merge block.
+        var arm_labels: [most_ops][6]u32 = @splat(@splat(0));
 
         // A varying is loaded where it is first read, not where it was
         // declared, because that is where an assembler puts it.
@@ -1079,27 +1099,30 @@ fn wordsOf(comptime graph: Graph) []const u32 {
                     emit.at(.selection_merge, &.{ merge, 0 });
                     emit.at(.branch_conditional, &.{ value_ids[op.a], yes, if (has_else) no else merge });
                     emit.label(yes);
-                    arm_labels[k] = .{ yes, no, merge, block_label };
+                    arm_labels[k] = .{ yes, no, merge, block_label, 0, 0 };
                     block_label = yes;
                 },
                 .otherwise => {
+                    arm_labels[op.a][4] = block_label;
                     emit.at(.branch, &.{arm_labels[op.a][2]});
                     emit.label(arm_labels[op.a][1]);
                     block_label = arm_labels[op.a][1];
                 },
                 .end_if => {
+                    arm_labels[op.a][if (arm_labels[op.a][1] != 0) 5 else 4] = block_label;
                     emit.at(.branch, &.{arm_labels[op.a][2]});
                     emit.label(arm_labels[op.a][2]);
                     block_label = arm_labels[op.a][2];
                 },
                 .merged => {
-                    // The way in where the false arm is the merge block
-                    // itself is the selection's own block.
+                    // Each way in is the block its arm ended in; where the
+                    // false arm is the merge block itself, the selection's
+                    // own block.
                     const labels = arm_labels[op.a];
                     const yes = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.b);
                     const no = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.c);
                     const made = emit.id();
-                    emit.at(.phi, &.{ vectorFor(&emit, &vector_types, float_type, op.kind), made, yes, labels[0], no, if (labels[1] != 0) labels[1] else labels[3] });
+                    emit.at(.phi, &.{ vectorFor(&emit, &vector_types, float_type, op.kind), made, yes, labels[4], no, if (labels[1] != 0) labels[5] else labels[3] });
                     value_ids[k] = made;
                 },
                 .discard_if => {

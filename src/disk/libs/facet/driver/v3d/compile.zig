@@ -115,6 +115,8 @@ pub const most_samplers = 16;
 /// The variables of the function's own a module may declare, each a
 /// float or a vector of them.
 pub const most_locals = 16;
+/// How deep selections may be nested in each other's arms.
+pub const most_nesting = 8;
 /// One for each float a step answers.
 pub const most_slots = 4 * most_steps;
 /// Instructions chosen, before they are words.
@@ -176,10 +178,13 @@ pub const Error = error{
     /// It drops pixels (`OpKill`), which wants the flag registers.
     Discards,
     /// More than one basic block where it is not a selection Mesa would
-    /// flatten: a loop, a branch of no merge, a selection nested in
-    /// another, an arm that samples, stores or holds more than
-    /// nir_opt_peephole_select takes (since 1.154 a selection whose arms
-    /// are within its limit is read, as Mesa flattens it).
+    /// flatten: a loop, a branch of no merge, an arm that samples, stores
+    /// or holds more than nir_opt_peephole_select takes, a selection in
+    /// the one arm of another that Mesa would collapse into it
+    /// (nir_opt_collapse_if), selections nested deeper than
+    /// `most_nesting` (since 1.154 a selection whose arms are within its
+    /// limit is read, as Mesa flattens it; since 1.156 one nested in
+    /// another's arm).
     Branches,
     /// An instruction the walk has no answer for, or one whose operands
     /// are not what this back end expects.
@@ -645,8 +650,15 @@ pub const Work = struct {
     local_kind: [most_locals]Kind = undefined,
     local_count: u32 = 0,
     values: Values = undefined,
-    before: Values = undefined,
-    ends: [2]Values = undefined,
+    before: [most_nesting]Values = undefined,
+    ends: [most_nesting][2]Values = undefined,
+    /// The variables in the order they were first stored into or loaded
+    /// from, which is the order nir_lower_vars_to_ssa gives the phi
+    /// builder their values (register_variable_uses,
+    /// nir_lower_vars_to_ssa.c:501-550; since 1.156).
+    first_used: [most_locals]u8 = undefined,
+    used_count: u32 = 0,
+    used: u32 = 0,
     /// The one step that samples, where there is one.
     sampled: u16 = none,
     varyings: u32 = 0,
@@ -892,8 +904,19 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
     // (nir_opt_peephole_select.c:508-605), which is what is read here: the
     // arms' steps one after the other, and a `select` of each float a
     // phi chooses (since 1.154).
-    var flow: enum { body, branch, arms, arm, killed, merging } = .body;
-    var selection: Selection = .{};
+    //
+    // A selection may be in an arm of another, and is flattened first:
+    // the pass walks the blocks in order (nir_opt_peephole_select_impl,
+    // :607-619), and reaches the inner one's merge block, with the inner
+    // selection before it, ahead of the outer one's, whose arm is then
+    // one block. The outer arm goes on in the inner merge block, which is
+    // where it ends and the block a phi of the outer merge names (since
+    // 1.156).
+    var flow: Flow = .body;
+    var nest: [most_nesting]Selection = @splat(.{});
+    var depth: u32 = 0;
+    // The block the walk is in.
+    var label: u32 = 0;
     while (reader.next() catch return Error.Refused) |instruction| {
         const operands = instruction.operands();
         if (returned) {
@@ -902,11 +925,16 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             continue;
         }
         // The merge block's phis are over at its first other instruction:
-        // the arms are then what nir_opt_peephole_select counts.
+        // the arms are then what nir_opt_peephole_select counts, and the
+        // walk is back where the selection was.
         if (flow == .merging and instruction.op != .phi) {
-            if (armCost(work, selection.arms_from, selection.arms_to) > peephole_limit) return Error.Branches;
-            flow = .body;
+            const inner = nest[depth - 1];
+            if (armCost(work, inner.arms_from, inner.arms_to) > peephole_limit) return Error.Branches;
+            flow = inner.outside;
+            depth -= 1;
+            if (depth > 0) nest[depth - 1].lone = inner.no == inner.merge or inner.quiet_no;
         }
+        const selection = &nest[if (depth == 0) 0 else depth - 1];
         switch (instruction.op) {
             // Nothing to plan for: the module's own declarations, and the
             // annotations a toolchain puts in front of them. They arrive
@@ -1178,12 +1206,15 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.wide[id] = @intCast(kind.parts());
                     work.local_kind[local] = kind;
                     work.values[local] = @splat(unstored);
+                    work.local_count += 1;
                     if (operands.len == 4) {
+                        // nir_lower_variable_initializers' store, at the
+                        // top of the function.
                         if (work.thing[try idOf(operands[3])] != .constant) return Error.Body;
                         const first = try operand(work, operands[3], kind);
                         for (0..kind.parts()) |k| work.values[local][k] = partOf(work, first, @intCast(k));
+                        touch(work, @intCast(local));
                     } else if (operands.len != 3) return Error.Body;
-                    work.local_count += 1;
                     continue;
                 }
                 const floats = try kindOf(work, pointee);
@@ -1225,34 +1256,42 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             .label => {
                 if (!in_body or operands.len < 1) return Error.Body;
                 const id = operands[0];
+                label = id;
                 switch (flow) {
                     .body => {
                         // The function's first block: any other is a
                         // selection's.
                         blocks += 1;
                         if (blocks > 1) return Error.Branches;
-                        selection.label = id;
                     },
                     .arms => if (id == selection.merge) {
                         if (selection.yes != selection.merge and !selection.seen_yes) return Error.Branches;
                         if (selection.no != selection.merge and !selection.seen_no) return Error.Branches;
+                        // nir_opt_collapse_if (nir_opt_peephole_select.c:
+                        // 412-506) takes a selection of no false arm that
+                        // is all of the true arm of another of none, before
+                        // flattening either: it is the two conditions'
+                        // iand, a bool computed, which is not here. It is
+                        // refused wherever the shape is, also where Mesa
+                        // would find a phi it cannot drop and flatten the
+                        // two after all.
+                        const no_else = selection.no == selection.merge or selection.quiet_no;
+                        if (selection.collapses and no_else) return Error.Branches;
                         // A way in that is no arm leaves the variables
                         // as they were before the branch.
-                        if (selection.yes == selection.merge) work.ends[0] = work.before;
-                        if (selection.no == selection.merge) work.ends[1] = work.before;
+                        const level = depth - 1;
+                        if (selection.yes == selection.merge) work.ends[level][0] = work.before[level];
+                        if (selection.no == selection.merge) work.ends[level][1] = work.before[level];
                         selection.arms_to = @intCast(work.step_count);
-                        selection.label = id;
-                        try merge(work, selection.condition);
+                        try merge(work, selection.condition, level);
                         flow = .merging;
                     } else if (id == selection.yes and !selection.seen_yes) {
                         selection.seen_yes = true;
-                        selection.arm = id;
-                        selection.empty = true;
+                        selection.enter(id);
                         flow = .arm;
                     } else if (id == selection.no and !selection.seen_no) {
                         selection.seen_no = true;
-                        selection.arm = id;
-                        selection.empty = true;
+                        selection.enter(id);
                         flow = .arm;
                     } else return Error.Branches,
                     // After the block that drops the pixel, the merge
@@ -1260,7 +1299,6 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     .killed => {
                         if (id != selection.merge) return Error.Branches;
                         selection.arms_to = @intCast(work.step_count);
-                        selection.label = id;
                         flow = .merging;
                     },
                     .branch, .arm, .merging => return Error.Branches,
@@ -1270,12 +1308,20 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // MergeBlock, SelectionControl. Whether it asks for the
                 // branch flattened or kept is a hint, which Mesa reads
                 // only where it cannot flatten; here a selection is
-                // flattened or refused. One in an arm is a selection
-                // nested in another, which nir_opt_peephole_select takes
-                // from the inside out, and is not here.
-                if (!in_body or blocks == 0 or flow != .body) return Error.Branches;
+                // flattened or refused. One in an arm is nested in that
+                // selection, and taken first (since 1.156).
+                if (!in_body or blocks == 0) return Error.Branches;
+                if (flow != .body and flow != .arm) return Error.Branches;
                 if (operands.len < 2) return Error.Body;
-                selection = .{ .merge = operands[0], .header = selection.label, .label = selection.label };
+                if (depth == most_nesting) return Error.Branches;
+                if (flow == .arm) {
+                    selection.empty = false;
+                    selection.quiet = false;
+                    selection.lone = false;
+                    selection.inner += 1;
+                }
+                nest[depth] = .{ .merge = operands[0], .header = label, .outside = flow };
+                depth += 1;
                 flow = .branch;
             },
             .branch_conditional => {
@@ -1291,7 +1337,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 selection.no = operands[2];
                 if (selection.yes == selection.no) return Error.Branches;
                 selection.arms_from = @intCast(work.step_count);
-                work.before = work.values;
+                work.before[depth - 1] = work.values;
                 flow = .arms;
             },
             .branch => {
@@ -1300,9 +1346,15 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // of no structure.
                 if (flow != .arm or operands.len < 1 or operands[0] != selection.merge) return Error.Branches;
                 // What the arm leaves the variables holding, and the
-                // other arm begins from what they held before.
-                work.ends[if (selection.arm == selection.yes) 0 else 1] = work.values;
-                work.values = work.before;
+                // other arm begins from what they held before. The block
+                // it ends in is the way in a phi names.
+                const side: u1 = if (selection.arm == selection.yes) 0 else 1;
+                work.ends[depth - 1][side] = work.values;
+                work.values = work.before[depth - 1];
+                selection.ends_in[side] = label;
+                if (side == 0) {
+                    selection.collapses = selection.inner == 1 and selection.lone;
+                } else selection.quiet_no = selection.quiet;
                 flow = .arms;
             },
             .kill => {
@@ -1312,14 +1364,17 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // A pixel dropped always, or after other work in its arm,
                 // is the family's and refused by its name; one beside an
                 // else arm leaves the body going on in two places.
-                if (flow != .arm or !selection.empty) return Error.Discards;
+                // One in a nested selection's arm would want the two
+                // conditions' iand (rewrite_instr, :351-410), which is a
+                // bool computed and not here.
+                if (flow != .arm or !selection.empty or depth > 1) return Error.Discards;
                 if (selection.arm != selection.yes or selection.no != selection.merge) return Error.Branches;
                 _ = try put(work, .{ .tag = .discard, .kind = .f32x1, .a = selection.condition });
                 flow = .killed;
             },
             .phi => {
                 if (flow != .merging) return Error.Branches;
-                try phiOf(work, &selection, operands);
+                try phiOf(work, selection, operands);
             },
             .returns => {
                 if (flow != .body) return Error.Branches;
@@ -1345,7 +1400,13 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         .store => if (storesLocal(work, operands)) {
                             selection.empty = false;
                         } else return Error.Branches,
-                        else => selection.empty = false,
+                        else => {
+                            selection.empty = false;
+                            if (!quietOf(work, instruction)) {
+                                selection.quiet = false;
+                                selection.lone = false;
+                            }
+                        },
                     },
                     else => return Error.Branches,
                 }
@@ -1363,29 +1424,71 @@ fn idOf(word: u32) Error!u16 {
     return @intCast(word);
 }
 
+/// Where `read` is in a selection's shape: its OpSelectionMerge, its
+/// OpBranchConditional, between its arms, in one, past an OpKill, or at
+/// its merge block's phis; or in no selection's.
+const Flow = enum { body, branch, arms, arm, killed, merging };
+
 /// A selection as `read` goes through it.
 const Selection = struct {
-    /// The merge block, and the block the selection is in.
+    /// The merge block, the block the selection is in, and where `read`
+    /// goes back to past the merge: the body, or the arm of the selection
+    /// it is in.
     merge: u32 = 0,
     header: u32 = 0,
-    /// The block the body is in.
-    label: u32 = 0,
+    outside: Flow = .body,
     /// The true and false labels, either of which may be the merge block,
-    /// and whether each arm has been read.
+    /// whether each arm has been read, and the block each ended in.
     yes: u32 = 0,
     no: u32 = 0,
     seen_yes: bool = false,
     seen_no: bool = false,
+    ends_in: [2]u32 = .{ 0, 0 },
     /// The arm being read, and whether it is still empty.
     arm: u32 = 0,
     empty: bool = true,
+    /// For nir_opt_collapse_if's shape: whether the arm holds nothing NIR
+    /// keeps once nir_lower_vars_to_ssa has run, how many selections are
+    /// nested in it, and whether the last of them had no false arm and
+    /// the arm has held nothing kept since. Then whether the true arm was
+    /// all one such selection, and whether the false arm held nothing.
+    quiet: bool = true,
+    inner: u32 = 0,
+    lone: bool = false,
+    collapses: bool = false,
+    quiet_no: bool = false,
     /// The comparison it branches on.
     condition: u16 = none,
     /// The arms' steps: from the first after the branch to the first in
     /// the merge block.
     arms_from: u16 = 0,
     arms_to: u16 = 0,
+
+    fn enter(selection: *Selection, arm: u32) void {
+        selection.arm = arm;
+        selection.empty = true;
+        selection.quiet = true;
+        selection.inner = 0;
+        selection.lone = false;
+    }
 };
+
+/// Whether an instruction in an arm is one nir_lower_vars_to_ssa leaves
+/// nothing of: a variable of the function's own named, loaded or stored
+/// into. Every other leaves an instruction in the arm's block.
+fn quietOf(work: *const Work, instruction: spirv.Instruction) bool {
+    const operands = instruction.operands();
+    return switch (instruction.op) {
+        .store => storesLocal(work, operands),
+        .load, .access_chain => operands.len >= 3 and pointsLocal(work, operands[2]),
+        else => false,
+    };
+}
+
+fn pointsLocal(work: *const Work, word: u32) bool {
+    const id = idOf(word) catch return false;
+    return isLocal(work, id) or work.thing[id] == .local_part;
+}
 
 /// The limit v3d's optimization loop gives nir_opt_peephole_select
 /// (nir_to_vir.c:2274-2279), `expensive_alu_ok` with it: a selection
@@ -1407,9 +1510,9 @@ fn phiOf(work: *Work, selection: *const Selection, operands: []const u32) Error!
     var by: [2]u16 = .{ none, none };
     for ([2]usize{ 2, 4 }) |at| {
         const parent = operands[at + 1];
-        const side: usize = if (parent == selection.yes and selection.yes != selection.merge)
+        const side: usize = if (parent == selection.ends_in[0] and selection.yes != selection.merge)
             0
-        else if (parent == selection.no and selection.no != selection.merge)
+        else if (parent == selection.ends_in[1] and selection.no != selection.merge)
             1
         else if (parent == selection.header and selection.yes == selection.merge)
             0
@@ -1476,9 +1579,17 @@ fn isLocal(work: *const Work, id: u16) bool {
 /// Whether an OpStore's pointer is a variable of the function's own, or
 /// one float of one.
 fn storesLocal(work: *const Work, operands: []const u32) bool {
-    if (operands.len < 1) return false;
-    const into = idOf(operands[0]) catch return false;
-    return isLocal(work, into) or work.thing[into] == .local_part;
+    return operands.len >= 1 and pointsLocal(work, operands[0]);
+}
+
+/// A variable stored into or loaded from, the first time: it is next in
+/// the order nir_lower_vars_to_ssa takes them in.
+fn touch(work: *Work, local: u16) void {
+    const bit = @as(u32, 1) << @intCast(local);
+    if (work.used & bit != 0) return;
+    work.used |= bit;
+    work.first_used[work.used_count] = @intCast(local);
+    work.used_count += 1;
 }
 
 /// The float a variable holds, where one was stored, else 0: an undef
@@ -1513,16 +1624,25 @@ fn localOf(work: *Work, local: u16) Error!u16 {
 /// gives the merge block a phi of each variable two ways bring different
 /// values of, nir_lower_phis_to_scalar makes it a phi of each float, and
 /// nir_opt_peephole_select a bcsel of each: a `select` on the selection's
-/// comparison, in the order the variables were declared. A float both
-/// ways bring is that float, and where one way brings nothing - a
-/// variable stored into in one arm only and never before - the other's,
-/// as nir_opt_remove_phis takes a phi with an undef source for its other
-/// (nir_opt_remove_phis.c:105-175; since 1.155).
-fn merge(work: *Work, condition: u16) Error!void {
-    for (0..work.local_count) |local| {
+/// comparison. A float both ways bring is that float, and where one way
+/// brings nothing - a variable stored into in one arm only and never
+/// before - the other's, as nir_opt_remove_phis takes a phi with an undef
+/// source for its other (nir_opt_remove_phis.c:105-175; since 1.155).
+///
+/// The phis are in the order nir_phi_builder_finish puts them down, each
+/// before the block's first (nir_phi_builder.c:272-297): the variables in
+/// the reverse of the order they were first used in, and each one's
+/// floats in order after
+/// nir_lower_phis_to_scalar, which puts each before the vector's
+/// (nir_lower_phis_to_scalar.c:195-218; since 1.156).
+fn merge(work: *Work, condition: u16, level: u32) Error!void {
+    var at = work.used_count;
+    while (at > 0) {
+        at -= 1;
+        const local = work.first_used[at];
         for (0..work.local_kind[local].parts()) |k| {
-            const yes = work.ends[0][local][k];
-            const no = work.ends[1][local][k];
+            const yes = work.ends[level][0][local][k];
+            const no = work.ends[level][1][local][k];
             work.values[local][k] = if (yes.step == no.step and yes.part == no.part)
                 yes
             else if (yes.step == none)
@@ -1640,6 +1760,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 // held (rename_variables, nir_lower_vars_to_ssa.c:716-722).
                 const value = try operand(work, operands[1], .f32x1);
                 work.values[work.points[into]][work.chain_part[into]] = partOf(work, value, 0);
+                touch(work, work.points[into]);
                 return;
             }
             if (isLocal(work, into)) {
@@ -1649,6 +1770,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 const kind = work.local_kind[local];
                 const value = try operand(work, operands[1], kind);
                 for (0..kind.parts()) |k| work.values[local][k] = partOf(work, value, @intCast(k));
+                touch(work, local);
                 return;
             }
             if (into != work.output) return Error.Body;
@@ -1691,6 +1813,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 if (try kindOf(work, try idOf(operands[0])) != .f32x1) return Error.Type;
                 const holds = try heldOf(work, work.values[work.points[from]][work.chain_part[from]]);
                 work.step_of[id] = try floatOf(work, holds);
+                touch(work, work.points[from]);
                 return;
             }
             if (isLocal(work, from)) {
@@ -1700,6 +1823,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 const local = work.points[from];
                 if (try kindOf(work, try idOf(operands[0])) != work.local_kind[local]) return Error.Type;
                 work.step_of[id] = try localOf(work, local);
+                touch(work, local);
                 return;
             }
             if (work.thing[from] != .variable) return Error.Body;
@@ -4951,6 +5075,48 @@ const Branched = ir.Fragment(struct {
     }
 });
 
+/// glslc_nested's shader through the IR: an `else if`, and an `if` and
+/// `else` in the true arm of a selection of no false arm, in the order
+/// glslc writes them, each float the vector's arms change merged one by
+/// one (since 1.156).
+const Nested = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const quarter = b.scalar(0.25);
+        const x = b.component(v, 0);
+        const y = b.component(v, 1);
+        const z = b.component(v, 2);
+        const w = b.component(v, 3);
+        const first = b.ifHolds(b.lessThan(x, quarter));
+        const red_first = b.mul(y, b.scalar(2));
+        b.otherwise(first);
+        const second = b.ifHolds(b.lessThan(x, half));
+        const green_second = b.sin(b.mul(z, b.scalar(3)));
+        b.otherwise(second);
+        const blue_third = b.add(w, b.scalar(0.125));
+        b.endIf(second);
+        const red_else = b.merged(second, half, x);
+        const green_else = b.merged(second, green_second, y);
+        const blue_else = b.merged(second, z, blue_third);
+        b.endIf(first);
+        const red = b.merged(first, red_first, red_else);
+        const green = b.merged(first, y, green_else);
+        const blue = b.merged(first, z, blue_else);
+        const third = b.ifHolds(b.greaterThan(w, half));
+        const fourth = b.ifHolds(b.greaterThan(y, half));
+        const product = b.mul(x, y);
+        b.otherwise(fourth);
+        const power = b.exp2(y);
+        b.endIf(fourth);
+        const chosen = b.merged(fourth, product, power);
+        const scaled = b.add(b.mul(chosen, half), quarter);
+        b.endIf(third);
+        const alpha = b.merged(third, scaled, z);
+        b.color(b.vector(&.{ red, green, blue, alpha }));
+    }
+});
+
 /// A selection with no false arm whose true arm is `pairs` sums and
 /// sines: two ALU operations each as nir_opt_peephole_select counts them.
 fn Costly(comptime pairs: usize) type {
@@ -5089,6 +5255,59 @@ test "a variable of the function's own that is not a float or a vector of them i
     try testing.expectError(Error.Storage, throughMesa(&work, &comptime patched(&reference.glslc_cutout_unoptimized, .type_pointer, 0, 2, 26)));
     // The colour out stored in an arm is still a store Mesa leaves there.
     try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_branch_unoptimized, .store, 1, 0, 71)));
+}
+
+test "through Mesa's back end, glslc's nested selections: the inner flattened first, the outer's phis naming the inner merge block" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_nested);
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+    // Four comparisons, one a selection. The `else if`: three floats of
+    // the colour chosen by the inner selection, then by the outer. The
+    // `if` in the true arm of one with no false arm: `k` chosen by each.
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .compare));
+    try testing.expectEqual(@as(usize, 8), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .sin));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .exp2));
+    var plan: Work = .{};
+    try testing.expectError(Error.Body, compile(&plan, &reference.glslc_nested));
+}
+
+test "through Mesa's back end, glslc's nested selections without -O are the optimized module's program, to the word" {
+    var theirs: Work = .{};
+    const optimized = try throughMesa(&theirs, &reference.glslc_nested);
+    const kept = try testing.allocator.dupe(u64, optimized.words);
+    defer testing.allocator.free(kept);
+    const stream_kept = try testing.allocator.dupe(Word, optimized.stream());
+    defer testing.allocator.free(stream_kept);
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_nested_unoptimized);
+    try testing.expectEqual(@as(usize, 8), stepsOf(&work, .select));
+    try testing.expectEqualSlices(u64, kept, code.words);
+    try testing.expectEqual(stream_kept.len, code.stream().len);
+    for (stream_kept, code.stream()) |a, b| try testing.expectEqual(a, b);
+}
+
+test "through Mesa's back end, glslc's nested selections are facet's, to the word" {
+    var theirs: Work = .{};
+    const glslc = try throughMesa(&theirs, &reference.glslc_nested);
+    var ours: Work = .{};
+    const facet_made = try throughMesa(&ours, Nested.words);
+    try testing.expectEqualSlices(u64, glslc.words, facet_made.words);
+    try testing.expectEqual(glslc.stream().len, facet_made.stream().len);
+    for (glslc.stream(), facet_made.stream()) |a, b| try testing.expectEqual(a, b);
+}
+
+test "a selection Mesa would collapse into another, or a discard nested in one, is refused" {
+    // An `if` of no `else` that is all of the true arm of another:
+    // nir_opt_collapse_if's iand of the two conditions.
+    var work: Work = .{};
+    try testing.expectError(Error.Branches, throughMesa(&work, &reference.glslc_collapse));
+    // The same shape with the inner arm a discard: terminate_if of the
+    // iand.
+    try testing.expectError(Error.Discards, throughMesa(&work, &reference.glslc_nested_discard));
+    // The outer arm's end a jump to the inner merge block, where its own
+    // merge is due.
+    try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_nested, .branch, 3, 0, 36)));
 }
 
 test "a call the walk does not lower, or into a set that is not GLSL.std.450, is refused" {
