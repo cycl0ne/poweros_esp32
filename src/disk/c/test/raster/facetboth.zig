@@ -41,6 +41,10 @@
 //! values as Mesa does; the cores run the selections' function. The
 //! shipped case of nested selections (since 1.24) is an `else if` and an
 //! `if` and `else` in an arm, which the V3D flattens from the inside out.
+//! The shipped case of bools (since 1.25) is an && and an || of
+//! comparisons and a ! of one, as `both`, `either` and `not`, which the V3D
+//! computes as Mesa does: an AND, an OR and a NOT of the comparisons'
+//! flags.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -55,7 +59,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.24 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.25 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -578,6 +582,28 @@ const Shipped = struct {
             b.color(b.vector(&.{ r, g, bl, a }));
         }
     });
+    /// The shader the V3D's host tests hold to glslc's glslc_logic word for
+    /// word: `x < 0.5 && y > 0.25` and `z < 0.25 || !(w < 0.75)`, each the
+    /// condition of an `if` (since 1.25).
+    const Bools = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const half = b.scalar(0.5);
+            const quarter = b.scalar(0.25);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const first = b.ifHolds(b.both(b.lessThan(x, half), b.greaterThan(y, quarter)));
+            const doubled = b.mul(z, b.scalar(2));
+            b.endIf(first);
+            const r = b.merged(first, doubled, x);
+            const second = b.ifHolds(b.either(b.lessThan(z, quarter), b.not(b.lessThan(w, b.scalar(0.75)))));
+            b.endIf(second);
+            const g = b.merged(second, half, y);
+            b.color(b.vector(&.{ r, g, z, w }));
+        }
+    });
 };
 
 /// The entries that ship words, after all the others, and the words of
@@ -603,6 +629,7 @@ const shipped_entries = [_]shader.Entry{
     Shipped.Branched.entry("shipped branched"),
     Shipped.Branched.entry("shipped unoptimized"),
     Shipped.Nested.entry("shipped nested"),
+    Shipped.Bools.entry("shipped bools"),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                       .{},                    .{},                                  .{},
@@ -610,6 +637,7 @@ const shipped_words = [_]shader.Spirv{
     Shipped.Modulated.spirv,   Shipped.Pushed.spirv,   Shipped.Tinted.spirv,                 Shipped.Cutout.spirv,
     Shipped.CutoutOther.spirv, Shipped.Shadowed.spirv, Shipped.Arithmetic.spirv,             Shipped.Called.spirv,
     Shipped.Chosen.spirv,      Shipped.Branched.spirv, shader.Spirv.of(&branch_unoptimized), Shipped.Nested.spirv,
+    Shipped.Bools.spirv,
 };
 
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
@@ -3112,6 +3140,7 @@ const cases = [_]Case{
     .{ .name = "shipped selections", .run = Cases.shipped("as it is", "shipped branched", false, clockwise_at) },
     .{ .name = "shipped variables", .run = Cases.shipped("as it is", "shipped unoptimized", false, clockwise_at) },
     .{ .name = "shipped nested selections", .run = Cases.shipped("as it is", "shipped nested", false, clockwise_at) },
+    .{ .name = "shipped && and ||", .run = Cases.shipped("as it is", "shipped bools", false, clockwise_at) },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },

@@ -145,6 +145,13 @@ pub const Tag = enum(u8) {
     not_equal,
     less_equal,
     greater_equal,
+    /// `a` and `b` both holding, `a` or `b` or both, and `a` not holding,
+    /// each of comparisons or of these: OpLogicalAnd, OpLogicalOr and
+    /// OpLogicalNot, GLSL's &&, || and ! where neither side does more than
+    /// compare (since 1.157).
+    both,
+    either,
+    not,
     /// `b` where the comparison `a` holds and `c` where it does not, one
     /// float each: OpSelect, as glslc writes a ternary of plain values
     /// (since 1.153).
@@ -205,6 +212,16 @@ pub const Op = struct {
     arm: u2 = 0,
 };
 
+/// Whether `op` is a bool a shader computes: a comparison, or `both`,
+/// `either` or `not` of them. A selection's own operations and a discard
+/// are of kind `.boolean` too, and are no value (since 1.157).
+fn isBool(op: Op) bool {
+    return op.kind == .boolean and switch (op.tag) {
+        .if_holds, .otherwise, .end_if, .discard_if => false,
+        else => true,
+    };
+}
+
 /// No selection: what `Op.within` says of an operation outside any arm.
 pub const outside: u16 = 0xFFFF;
 
@@ -213,7 +230,7 @@ pub const outside: u16 = 0xFFFF;
 fn readOf(op: Op) [4]?u16 {
     return switch (op.tag) {
         .input, .constant, .push, .otherwise, .end_if => .{ null, null, null, null },
-        .sample, .negate, .component, .discard_if, .color, .if_holds => .{ op.a, null, null, null },
+        .sample, .negate, .component, .discard_if, .color, .if_holds, .not => .{ op.a, null, null, null },
         .extended => switch (callArguments(@enumFromInt(op.at))) {
             1 => .{ op.a, null, null, null },
             2 => .{ op.a, op.b, null, null },
@@ -627,10 +644,33 @@ pub const Build = struct {
         return build.put(.{ .tag = tag, .kind = .boolean, .a = a, .b = b });
     }
 
+    /// GLSL's `a && b`: both comparisons hold. Both are computed, which
+    /// is what glslc's short circuit comes to where its right side only
+    /// compares (since 1.157).
+    pub fn both(build: *Build, a: u16, b: u16) u16 {
+        return build.logic(.both, a, b);
+    }
+    /// GLSL's `a || b`: one of them holds, or both.
+    pub fn either(build: *Build, a: u16, b: u16) u16 {
+        return build.logic(.either, a, b);
+    }
+    /// GLSL's `!a`. Of an ordered comparison it is the unordered opposite,
+    /// which a NaN passes: `not(lessThan(a, b))` holds where `a >= b` or
+    /// either is a NaN.
+    pub fn not(build: *Build, a: u16) u16 {
+        if (!isBool(build.ops[a])) @compileError("what `not` turns is a comparison or a bool of them");
+        return build.put(.{ .tag = .not, .kind = .boolean, .a = a });
+    }
+
+    fn logic(build: *Build, comptime tag: Tag, a: u16, b: u16) u16 {
+        if (!isBool(build.ops[a]) or !isBool(build.ops[b])) @compileError("&& and || are of comparisons or of bools of them");
+        return build.put(.{ .tag = tag, .kind = .boolean, .a = a, .b = b });
+    }
+
     /// `yes` where the comparison `held` holds and `no` where it does
     /// not, one float each: GLSL's `held ? yes : no` of plain values.
     pub fn select(build: *Build, held: u16, yes: u16, no: u16) u16 {
-        if (build.ops[held].kind != .boolean) @compileError("what is chosen by is a comparison");
+        if (!isBool(build.ops[held])) @compileError("what is chosen by is a comparison or a bool of them");
         if (build.ops[yes].kind != .f32x1 or build.ops[no].kind != .f32x1) @compileError("a choice is of one float each");
         return build.put(.{ .tag = .select, .kind = .f32x1, .a = held, .b = yes, .c = no });
     }
@@ -638,7 +678,7 @@ pub const Build = struct {
     /// Drop the pixels the comparison holds: neither their colour nor
     /// their depth is kept.
     pub fn discardIf(build: *Build, held: u16) void {
-        if (build.ops[held].kind != .boolean) @compileError("what is dropped is said by a comparison");
+        if (!isBool(build.ops[held])) @compileError("what is dropped is said by a comparison or a bool of them");
         _ = build.put(.{ .tag = .discard_if, .kind = .boolean, .a = held });
     }
 
@@ -652,7 +692,7 @@ pub const Build = struct {
     /// colour are for outside them, which is what a device that flattens
     /// the arms into straight code can run (since 1.154).
     pub fn ifHolds(build: *Build, held: u16) u16 {
-        if (build.ops[held].kind != .boolean) @compileError("a selection is on a comparison");
+        if (!isBool(build.ops[held])) @compileError("a selection is on a comparison or a bool of them");
         const at = build.put(.{ .tag = .if_holds, .kind = .boolean, .a = held });
         build.open = at;
         build.arm = 1;
@@ -1074,6 +1114,16 @@ fn wordsOf(comptime graph: Graph) []const u32 {
                     }, &.{ bool_type, made, left, right });
                     value_ids[k] = made;
                 },
+                .both, .either => {
+                    const made = emit.id();
+                    emit.at(if (op.tag == .both) .logical_and else .logical_or, &.{ bool_type, made, value_ids[op.a], value_ids[op.b] });
+                    value_ids[k] = made;
+                },
+                .not => {
+                    const made = emit.id();
+                    emit.at(.logical_not, &.{ bool_type, made, value_ids[op.a] });
+                    value_ids[k] = made;
+                },
                 .select => {
                     const yes = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.b);
                     const no = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.c);
@@ -1372,6 +1422,9 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
                     .not_equal => holds[i] = values[op.a][0] != values[op.b][0],
                     .less_equal => holds[i] = values[op.a][0] <= values[op.b][0],
                     .greater_equal => holds[i] = values[op.a][0] >= values[op.b][0],
+                    .both => holds[i] = @select(bool, holds[op.a], holds[op.b], @as(@Vector(4, bool), @splat(false))),
+                    .either => holds[i] = @select(bool, holds[op.a], @as(@Vector(4, bool), @splat(true)), holds[op.b]),
+                    .not => holds[i] = @select(bool, holds[op.a], @as(@Vector(4, bool), @splat(false)), @as(@Vector(4, bool), @splat(true))),
                     .select => values[i][0] = @select(f32, holds[op.a], values[op.b][0], values[op.c][0]),
                     // Both arms are computed, as a device that flattens
                     // them computes them, and the merge chooses.

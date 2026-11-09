@@ -2140,6 +2140,16 @@ Not ported, as with 1.154's hoisting: the rules that act on a bcsel of bcsels, o
 
 glslc's nested selections at `-O` (`glslc_nested`, 387 words), the same without `-O` (497 words), and facet's emitter's (309 words, spirv-val clean) compile to the same words: four comparisons and eight selects. On the CM5, FacetBoth 1.24's case of it is 8 pixels of 230,400 apart, the triangle's edge alone, as the other selections' cases are; the other 214 cases are unchanged, and FacetProbe is 888 of 888.
 
+**Then the bools**, facet.library 1.157. glslc writes `a && b` and `a || b` as a selection on `a` whose arm computes `b`, merged by a phi of bools, and `!a` as OpLogicalNot; `!(w < 0.75)` at `-O` is OpFUnordGreaterThanEqual.
+
+- **Bools of bools.** OpLogicalAnd, OpLogicalOr and OpLogicalNot are iand, ior and inot (vtn_alu.c:316-320), a step of their own that to_vir lowers to AND, OR and NOT of the comparisons' bools (ntq_emit_alu, nir_to_vir.c:1683-1694). A select, a branch and a discard take one as they take a comparison (ntq_emit_bool_to_cond, :1262). The unordered comparisons but `==` and `!=` are the inot of the opposite ordered one (vtn_alu.c:953-985).
+- **A phi of bools** is a select of bools, as nir_opt_peephole_select makes it, and nir_opt_algebraic's rules on bools follow in a pass over the steps in order until none changes: inot(inot a) is a (nir_opt_algebraic.py:1736); the inot of an feq or fneu read once is the other (:747-748); iand(a, a) and ior(a, a) are a (:1724, :1728); a select on inot(a) is on a with its arms swapped (:978); bcsel(a, a, b) is ior(a, b) and bcsel(a, b, a) is iand(a, b) (:986, :988). So the phi of an `&&` comes to the iand of its two comparisons and the phi of an `||` to their ior, with no select of bools left.
+- **The emitter.** `ir.Build` has `both`, `either` and `not`. The cores compute them as GLSL does: a `not` of an ordered comparison holds for a NaN, where the opposite ordered comparison fails. A select, a discard and a selection take them as they take a comparison, and none of them takes a selection's own operations any more.
+
+Not ported: the inot of an flt or fge made the opposite, which wants both floats proven numbers (:745-746); the bcsels made an fmin or fmax (:974-977) and those of bcsels (:979-984); comparisons sharing a float made one of an fmin or fmax (:1157-1190); De Morgan's (:1796-1797). Bool constants, OpLogicalEqual and OpLogicalNotEqual, OpFUnordEqual and OpFOrdNotEqual are refused as before, and so is nir_opt_collapse_if's shape, which wants the iand made before either selection is flattened.
+
+glslc's `&&` and `||` at `-O` (`glslc_logic`, 286 words), the same without `-O` (335 words), and facet's emitter's (196 words, spirv-val clean) compile to the same words: one iand, one ior and one inot of four comparisons, two selects. A shader of each rule on bools compiles to the words of the one written without them. On the CM5, FacetBoth 1.25's case of it is 9 pixels of 230,400 apart, the triangle's edge alone, the first at the pixel every selection case's is; the other 215 cases are unchanged, and FacetProbe is 888 of 888.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim

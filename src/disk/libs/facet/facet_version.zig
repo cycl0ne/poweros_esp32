@@ -4630,4 +4630,52 @@ pub const LIBRARY_VERSION = 1;
 /// selections, 8 pixels of 230400 apart on the CM5, the edge alone, as
 /// the other selections' cases are; the other 214 cases unchanged,
 /// FacetProbe 888 of 888.
-pub const LIBRARY_REVISION = 156;
+///
+/// 157: **The V3D computes bools of bools, as Mesa does (docs/facet-vulkan10.md
+/// item 59).** glslc writes `a && b` and `a || b` as a selection on `a`
+/// whose arm computes `b`, merged by a phi of bools, and `!a` as
+/// OpLogicalNot; `!(w < 0.75)` it folds into OpFUnordGreaterThanEqual.
+///
+/// - OpLogicalAnd, OpLogicalOr and OpLogicalNot are iand, ior and inot
+///   (vtn_alu.c:316-320), a step of the new tag `logic`, which to_vir
+///   lowers to AND, OR and NOT of the comparisons' bools (ntq_emit_alu,
+///   nir_to_vir.c:1683-1694). A select, a branch and a discard take one
+///   as they take a comparison (ntq_emit_bool_to_cond, :1262).
+/// - The unordered comparisons but == and != are the inot of the
+///   opposite ordered one (vtn_alu.c:953-985).
+/// - A phi of bools is a select of bools, as nir_opt_peephole_select
+///   makes it, and nir_opt_algebraic's rules on bools follow, in a pass
+///   over the steps in order until none changes: inot(inot a) is a
+///   (nir_opt_algebraic.py:1736), inot of an feq or fneu read once is
+///   the other (:747-748), iand(a, a) and ior(a, a) are a (:1724,
+///   :1728), a select on inot(a) is on a with its arms swapped (:978),
+///   and bcsel(a, a, b) and bcsel(a, b, a) are ior(a, b) and iand(a, b)
+///   (:986, :988). The phi of an && comes to the iand of its two
+///   comparisons, the phi of an || to their ior.
+/// - Not ported: the inot of an flt or fge made the opposite, which
+///   wants both floats proven numbers (:745-746); the bcsels made an fmin
+///   or fmax (:974-977) and those of bcsels (:979-984); the comparisons
+///   sharing a float made one of an fmin or fmax (:1157-1190); De Morgan's
+///   (:1796-1797); bool constants, OpLogicalEqual and OpLogicalNotEqual,
+///   OpFUnordEqual and OpFOrdNotEqual, refused as before.
+///   nir_opt_collapse_if's shape, which needs the iand made before either
+///   selection is flattened, is still refused.
+/// - `ir.Build` has `both`, `either` and `not`, OpLogicalAnd, OpLogicalOr
+///   and OpLogicalNot, which the cores compute as GLSL does: a `not` of an
+///   ordered comparison holds for a NaN. A select, a discard and a
+///   selection take them as they take a comparison, and none of them
+///   takes a selection's own operations any more.
+///
+/// Tests: the V3D's 170, four new: glslc's && and || (`glslc_logic`, 286
+/// words) flattened to one iand, one ior and one inot of four
+/// comparisons, two selects, an AND, an OR and a NOT in the program; the
+/// module without -O (`glslc_logic_unoptimized`, 335 words) and facet's
+/// emitter's of the same shader (196 words, spirv-val clean) compiled to
+/// the same words; a shader of each rule on bools compiled to the words
+/// of the one written without them. tests/ir.zig: both modules read
+/// back, the && and || every way on the cores against f64, a NaN passing
+/// a `not` and failing the ordered comparison. FacetBoth 1.25: the
+/// shipped case of && and ||, 9 pixels of 230400 apart on the CM5, the
+/// edge alone, as the other selections' cases are; the other 215 cases
+/// unchanged, FacetProbe 888 of 888.
+pub const LIBRARY_REVISION = 157;

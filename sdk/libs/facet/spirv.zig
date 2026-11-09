@@ -123,13 +123,20 @@ pub const Op = enum(u16) {
     vector_times_scalar = 142,
     matrix_times_vector = 145,
     dot = 148,
+    logical_or = 166,
+    logical_and = 167,
+    logical_not = 168,
     select = 169,
     f_ord_equal = 180,
     f_unord_not_equal = 183,
     f_ord_less_than = 184,
+    f_unord_less_than = 185,
     f_ord_greater_than = 186,
+    f_unord_greater_than = 187,
     f_ord_less_than_equal = 188,
+    f_unord_less_than_equal = 189,
     f_ord_greater_than_equal = 190,
+    f_unord_greater_than_equal = 191,
     dpdx = 207,
     dpdy = 208,
     fwidth = 209,
@@ -739,9 +746,13 @@ pub const facet_opcodes: []const Op = &.{
     // .member_name, then a call into an imported set (since 1.152) and
     // the comparisons glslc writes for ==, != and <= (since 1.153), then
     // a value chosen at a selection's merge, and one float of a vector
-    // replaced, as glslc writes an if and else (since 1.154).
+    // replaced, as glslc writes an if and else (since 1.154); then bools
+    // of bools and the unordered comparisons, as glslc writes &&, || and
+    // ! (since 1.157).
     .member_name,               .ext_inst,            .f_ord_equal,              .f_unord_not_equal,
-    .f_ord_less_than_equal,     .phi,                 .composite_insert,
+    .f_ord_less_than_equal,     .phi,                 .composite_insert,         .logical_and,
+    .logical_or,                .f_unord_less_than,   .f_unord_less_than_equal,  .f_unord_greater_than_equal,
+    .f_unord_greater_than,      .logical_not,
 };
 
 /// The format's own profile, which is what `CreateShaderModule` reads a

@@ -1243,6 +1243,87 @@ test "selections nested in arms are a module the reader takes, each outer merge 
     }
 }
 
+/// glslc_logic's shader: && and || of comparisons, and a ! of one
+/// (since 1.157).
+const Bools = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const quarter = b.scalar(0.25);
+        const x = b.component(v, 0);
+        const y = b.component(v, 1);
+        const z = b.component(v, 2);
+        const w = b.component(v, 3);
+        const first = b.ifHolds(b.both(b.lessThan(x, half), b.greaterThan(y, quarter)));
+        const doubled = b.mul(z, b.scalar(2));
+        b.endIf(first);
+        const red = b.merged(first, doubled, x);
+        const second = b.ifHolds(b.either(b.lessThan(z, quarter), b.not(b.lessThan(w, b.scalar(0.75)))));
+        b.endIf(second);
+        const green = b.merged(second, half, y);
+        b.color(b.vector(&.{ red, green, z, w }));
+    }
+});
+
+/// What a NaN does to `not`: of an ordered comparison it is the unordered
+/// opposite, which a NaN passes, where the ordered opposite does not.
+const Unordered = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const one = b.scalar(1);
+        const zero = b.scalar(0);
+        const x = b.component(v, 0);
+        const w = b.component(v, 3);
+        const red = b.select(b.not(b.lessThan(w, half)), one, zero);
+        const green = b.select(b.greaterEqual(w, half), one, zero);
+        const blue = b.select(b.either(b.not(b.equal(w, w)), b.lessThan(x, half)), one, zero);
+        b.color(b.vector(&.{ red, green, blue, one }));
+    }
+});
+
+test "&&, || and ! are a module the reader takes, and the cores hold them as GLSL does, a NaN passing a !" {
+    inline for (.{ Bools, Unordered }) |Made| switch (spirv.look(Made.words, spirv.facet_profile)) {
+        .fault => |fault| {
+            std.debug.print("refused: {s}\n", .{@tagName(fault)});
+            return error.TestUnexpectedResult;
+        },
+        .seen => {},
+    };
+    // Each side of each: the && held and failed on its right, the ||
+    // held on its left and on its right, and failed.
+    for ([_][4]f32{
+        .{ 0.25, 0.625, 0.375, 0.5 },
+        .{ 0.25, 0.125, 0.125, 0.5 },
+        .{ 0.75, 0.375, 0.5, 0.875 },
+        .{ 0.375, 0.375, 0.4375, 0.25 },
+    }) |v| {
+        var batch = Batch.flat(1, &v);
+        const made = batch.fragments(5);
+        Bools.function(&made);
+        const x: f64 = v[0];
+        const y: f64 = v[1];
+        const z: f64 = v[2];
+        const w: f64 = v[3];
+        const red = if (x < 0.5 and y > 0.25) z * 2 else x;
+        const green = if (z < 0.25 or !(w < 0.75)) 0.5 else y;
+        const want = byteOf(w) << 24 | byteOf(red) << 16 | byteOf(green) << 8 | byteOf(z);
+        try std.testing.expectEqual(want, batch.colors[0][0]);
+    }
+    // A NaN fails w < 0.5 and w >= 0.5 both, so passes the ! of the one
+    // and not the other, and w == w fails.
+    for ([_]struct { [4]f32, u32 }{
+        .{ .{ 0.75, 0, 0, std.math.nan(f32) }, 0xFFFF00FF },
+        .{ .{ 0.25, 0, 0, 0.25 }, 0xFF0000FF },
+        .{ .{ 0.75, 0, 0, 0.75 }, 0xFFFFFF00 },
+    }) |case| {
+        var batch = Batch.flat(1, &case[0]);
+        const made = batch.fragments(5);
+        Unordered.function(&made);
+        try std.testing.expectEqual(case[1], batch.colors[0][0]);
+    }
+}
+
 test "a selection is a module the reader takes, its arms both run on the cores and the merge chooses" {
     inline for (.{ Branched, Unbalanced }) |Made| switch (spirv.look(Made.words, spirv.facet_profile)) {
         .fault => |fault| {

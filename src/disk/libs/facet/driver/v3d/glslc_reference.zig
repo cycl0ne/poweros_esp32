@@ -2001,3 +2001,325 @@ pub const glslc_nested_discard = [_]u32{
     0x0004003D, 0x00000007, 0x0000001D, 0x00000009, 0x0003003E, 0x0000001C,
     0x0000001D, 0x000100FD, 0x00010038,
 };
+
+/// glslc's own output, at `-O`, for && and || in conditions: each a
+/// selection that computes the second comparison only where the first
+/// leaves the answer open, and an OpPhi of the bools at its merge, the
+/// condition of the next selection; `!(w < 0.75)` an
+/// OpFUnordGreaterThanEqual. Mesa flattens each and nir_opt_algebraic makes
+/// the phi's bcsel an iand or an ior (since 1.157).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// void main() {
+///     vec4 c = vcolor;
+///     if (vcolor.x < 0.5 && vcolor.y > 0.25) {
+///         c.r = vcolor.z * 2.0;
+///     }
+///     if (vcolor.z < 0.25 || !(vcolor.w < 0.75)) {
+///         c.g = 0.5;
+///     }
+///     ocolor = c;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag logic.frag -o logic.spv   # 286 words
+/// spirv-val --target-env vulkan1.0 logic.spv           # no output, and 0
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 65
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %11 %55
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %11 Location 0
+///                OpDecorate %55 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///          %10 = OpTypePointer Input %7
+///          %11 = OpVariable %10 Input
+///          %13 = OpTypeBool
+///          %14 = OpTypeInt 32 0
+///          %15 = OpConstant %14 0
+///          %16 = OpTypePointer Input %6
+///          %19 = OpConstant %6 0.5
+///          %23 = OpConstant %14 1
+///          %26 = OpConstant %6 0.25
+///          %31 = OpConstant %14 2
+///          %34 = OpConstant %6 2
+///          %44 = OpConstant %14 3
+///          %47 = OpConstant %6 0.75
+///          %54 = OpTypePointer Output %7
+///          %55 = OpVariable %54 Output
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %12 = OpLoad %7 %11
+///          %17 = OpAccessChain %16 %11 %15
+///          %18 = OpLoad %6 %17
+///          %20 = OpFOrdLessThan %13 %18 %19
+///                OpSelectionMerge %22 None
+///                OpBranchConditional %20 %21 %22
+///          %21 = OpLabel
+///          %24 = OpAccessChain %16 %11 %23
+///          %25 = OpLoad %6 %24
+///          %27 = OpFOrdGreaterThan %13 %25 %26
+///                OpBranch %22
+///          %22 = OpLabel
+///          %28 = OpPhi %13 %20 %5 %27 %21
+///                OpSelectionMerge %30 None
+///                OpBranchConditional %28 %29 %30
+///          %29 = OpLabel
+///          %32 = OpAccessChain %16 %11 %31
+///          %33 = OpLoad %6 %32
+///          %35 = OpFMul %6 %33 %34
+///          %58 = OpCompositeInsert %7 %35 %12 0
+///                OpBranch %30
+///          %30 = OpLabel
+///          %63 = OpPhi %7 %12 %22 %58 %29
+///          %38 = OpAccessChain %16 %11 %31
+///          %39 = OpLoad %6 %38
+///          %40 = OpFOrdLessThan %13 %39 %26
+///          %41 = OpLogicalNot %13 %40
+///                OpSelectionMerge %43 None
+///                OpBranchConditional %41 %42 %43
+///          %42 = OpLabel
+///          %45 = OpAccessChain %16 %11 %44
+///          %46 = OpLoad %6 %45
+///          %49 = OpFUnordGreaterThanEqual %13 %46 %47
+///                OpBranch %43
+///          %43 = OpLabel
+///          %50 = OpPhi %13 %40 %30 %49 %42
+///                OpSelectionMerge %52 None
+///                OpBranchConditional %50 %51 %52
+///          %51 = OpLabel
+///          %60 = OpCompositeInsert %7 %19 %63 1
+///                OpBranch %52
+///          %52 = OpLabel
+///          %64 = OpPhi %7 %63 %43 %60 %51
+///                OpStore %55 %64
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_logic = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000041, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000037, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000037, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x0000000A,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001,
+    0x00020014, 0x0000000D, 0x00040015, 0x0000000E, 0x00000020, 0x00000000,
+    0x0004002B, 0x0000000E, 0x0000000F, 0x00000000, 0x00040020, 0x00000010,
+    0x00000001, 0x00000006, 0x0004002B, 0x00000006, 0x00000013, 0x3F000000,
+    0x0004002B, 0x0000000E, 0x00000017, 0x00000001, 0x0004002B, 0x00000006,
+    0x0000001A, 0x3E800000, 0x0004002B, 0x0000000E, 0x0000001F, 0x00000002,
+    0x0004002B, 0x00000006, 0x00000022, 0x40000000, 0x0004002B, 0x0000000E,
+    0x0000002C, 0x00000003, 0x0004002B, 0x00000006, 0x0000002F, 0x3F400000,
+    0x00040020, 0x00000036, 0x00000003, 0x00000007, 0x0004003B, 0x00000036,
+    0x00000037, 0x00000003, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x00000007, 0x0000000C,
+    0x0000000B, 0x00050041, 0x00000010, 0x00000011, 0x0000000B, 0x0000000F,
+    0x0004003D, 0x00000006, 0x00000012, 0x00000011, 0x000500B8, 0x0000000D,
+    0x00000014, 0x00000012, 0x00000013, 0x000300F7, 0x00000016, 0x00000000,
+    0x000400FA, 0x00000014, 0x00000015, 0x00000016, 0x000200F8, 0x00000015,
+    0x00050041, 0x00000010, 0x00000018, 0x0000000B, 0x00000017, 0x0004003D,
+    0x00000006, 0x00000019, 0x00000018, 0x000500BA, 0x0000000D, 0x0000001B,
+    0x00000019, 0x0000001A, 0x000200F9, 0x00000016, 0x000200F8, 0x00000016,
+    0x000700F5, 0x0000000D, 0x0000001C, 0x00000014, 0x00000005, 0x0000001B,
+    0x00000015, 0x000300F7, 0x0000001E, 0x00000000, 0x000400FA, 0x0000001C,
+    0x0000001D, 0x0000001E, 0x000200F8, 0x0000001D, 0x00050041, 0x00000010,
+    0x00000020, 0x0000000B, 0x0000001F, 0x0004003D, 0x00000006, 0x00000021,
+    0x00000020, 0x00050085, 0x00000006, 0x00000023, 0x00000021, 0x00000022,
+    0x00060052, 0x00000007, 0x0000003A, 0x00000023, 0x0000000C, 0x00000000,
+    0x000200F9, 0x0000001E, 0x000200F8, 0x0000001E, 0x000700F5, 0x00000007,
+    0x0000003F, 0x0000000C, 0x00000016, 0x0000003A, 0x0000001D, 0x00050041,
+    0x00000010, 0x00000026, 0x0000000B, 0x0000001F, 0x0004003D, 0x00000006,
+    0x00000027, 0x00000026, 0x000500B8, 0x0000000D, 0x00000028, 0x00000027,
+    0x0000001A, 0x000400A8, 0x0000000D, 0x00000029, 0x00000028, 0x000300F7,
+    0x0000002B, 0x00000000, 0x000400FA, 0x00000029, 0x0000002A, 0x0000002B,
+    0x000200F8, 0x0000002A, 0x00050041, 0x00000010, 0x0000002D, 0x0000000B,
+    0x0000002C, 0x0004003D, 0x00000006, 0x0000002E, 0x0000002D, 0x000500BF,
+    0x0000000D, 0x00000031, 0x0000002E, 0x0000002F, 0x000200F9, 0x0000002B,
+    0x000200F8, 0x0000002B, 0x000700F5, 0x0000000D, 0x00000032, 0x00000028,
+    0x0000001E, 0x00000031, 0x0000002A, 0x000300F7, 0x00000034, 0x00000000,
+    0x000400FA, 0x00000032, 0x00000033, 0x00000034, 0x000200F8, 0x00000033,
+    0x00060052, 0x00000007, 0x0000003C, 0x00000013, 0x0000003F, 0x00000001,
+    0x000200F9, 0x00000034, 0x000200F8, 0x00000034, 0x000700F5, 0x00000007,
+    0x00000040, 0x0000003F, 0x0000002B, 0x0000003C, 0x00000033, 0x0003003E,
+    0x00000037, 0x00000040, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output for `glslc_logic`'s GLSL without `-O`: `c` in a
+/// variable of the function's own, and `!(w < 0.75)` an OpLogicalNot of
+/// the ordered comparison (since 1.157).
+///
+/// ```sh
+/// glslc -fshader-stage=frag logic.frag -o logic_O0.spv   # 335 words
+/// spirv-val --target-env vulkan1.0 logic_O0.spv        # no output, and 0
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 57
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %11 %55
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpSource GLSL 450
+///                OpSourceExtension "GL_GOOGLE_cpp_style_line_directive"
+///                OpSourceExtension "GL_GOOGLE_include_directive"
+///                OpName %4 "main"
+///                OpName %9 "c"
+///                OpName %11 "vcolor"
+///                OpName %55 "ocolor"
+///                OpDecorate %11 Location 0
+///                OpDecorate %55 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Function %7
+///          %10 = OpTypePointer Input %7
+///          %11 = OpVariable %10 Input
+///          %13 = OpTypeBool
+///          %14 = OpTypeInt 32 0
+///          %15 = OpConstant %14 0
+///          %16 = OpTypePointer Input %6
+///          %19 = OpConstant %6 0.5
+///          %23 = OpConstant %14 1
+///          %26 = OpConstant %6 0.25
+///          %31 = OpConstant %14 2
+///          %34 = OpConstant %6 2
+///          %36 = OpTypePointer Function %6
+///          %44 = OpConstant %14 3
+///          %47 = OpConstant %6 0.75
+///          %54 = OpTypePointer Output %7
+///          %55 = OpVariable %54 Output
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///           %9 = OpVariable %8 Function
+///          %12 = OpLoad %7 %11
+///                OpStore %9 %12
+///          %17 = OpAccessChain %16 %11 %15
+///          %18 = OpLoad %6 %17
+///          %20 = OpFOrdLessThan %13 %18 %19
+///                OpSelectionMerge %22 None
+///                OpBranchConditional %20 %21 %22
+///          %21 = OpLabel
+///          %24 = OpAccessChain %16 %11 %23
+///          %25 = OpLoad %6 %24
+///          %27 = OpFOrdGreaterThan %13 %25 %26
+///                OpBranch %22
+///          %22 = OpLabel
+///          %28 = OpPhi %13 %20 %5 %27 %21
+///                OpSelectionMerge %30 None
+///                OpBranchConditional %28 %29 %30
+///          %29 = OpLabel
+///          %32 = OpAccessChain %16 %11 %31
+///          %33 = OpLoad %6 %32
+///          %35 = OpFMul %6 %33 %34
+///          %37 = OpAccessChain %36 %9 %15
+///                OpStore %37 %35
+///                OpBranch %30
+///          %30 = OpLabel
+///          %38 = OpAccessChain %16 %11 %31
+///          %39 = OpLoad %6 %38
+///          %40 = OpFOrdLessThan %13 %39 %26
+///          %41 = OpLogicalNot %13 %40
+///                OpSelectionMerge %43 None
+///                OpBranchConditional %41 %42 %43
+///          %42 = OpLabel
+///          %45 = OpAccessChain %16 %11 %44
+///          %46 = OpLoad %6 %45
+///          %48 = OpFOrdLessThan %13 %46 %47
+///          %49 = OpLogicalNot %13 %48
+///                OpBranch %43
+///          %43 = OpLabel
+///          %50 = OpPhi %13 %40 %30 %49 %42
+///                OpSelectionMerge %52 None
+///                OpBranchConditional %50 %51 %52
+///          %51 = OpLabel
+///          %53 = OpAccessChain %36 %9 %23
+///                OpStore %53 %19
+///                OpBranch %52
+///          %52 = OpLabel
+///          %56 = OpLoad %7 %9
+///                OpStore %55 %56
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_logic_unoptimized = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000039, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000037, 0x00030010,
+    0x00000004, 0x00000007, 0x00030003, 0x00000002, 0x000001C2, 0x000A0004,
+    0x475F4C47, 0x4C474F4F, 0x70635F45, 0x74735F70, 0x5F656C79, 0x656E696C,
+    0x7269645F, 0x69746365, 0x00006576, 0x00080004, 0x475F4C47, 0x4C474F4F,
+    0x6E695F45, 0x64756C63, 0x69645F65, 0x74636572, 0x00657669, 0x00040005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00030005, 0x00000009, 0x00000063,
+    0x00040005, 0x0000000B, 0x6C6F6376, 0x0000726F, 0x00040005, 0x00000037,
+    0x6C6F636F, 0x0000726F, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000037, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x00000008,
+    0x00000007, 0x00000007, 0x00040020, 0x0000000A, 0x00000001, 0x00000007,
+    0x0004003B, 0x0000000A, 0x0000000B, 0x00000001, 0x00020014, 0x0000000D,
+    0x00040015, 0x0000000E, 0x00000020, 0x00000000, 0x0004002B, 0x0000000E,
+    0x0000000F, 0x00000000, 0x00040020, 0x00000010, 0x00000001, 0x00000006,
+    0x0004002B, 0x00000006, 0x00000013, 0x3F000000, 0x0004002B, 0x0000000E,
+    0x00000017, 0x00000001, 0x0004002B, 0x00000006, 0x0000001A, 0x3E800000,
+    0x0004002B, 0x0000000E, 0x0000001F, 0x00000002, 0x0004002B, 0x00000006,
+    0x00000022, 0x40000000, 0x00040020, 0x00000024, 0x00000007, 0x00000006,
+    0x0004002B, 0x0000000E, 0x0000002C, 0x00000003, 0x0004002B, 0x00000006,
+    0x0000002F, 0x3F400000, 0x00040020, 0x00000036, 0x00000003, 0x00000007,
+    0x0004003B, 0x00000036, 0x00000037, 0x00000003, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003B,
+    0x00000008, 0x00000009, 0x00000007, 0x0004003D, 0x00000007, 0x0000000C,
+    0x0000000B, 0x0003003E, 0x00000009, 0x0000000C, 0x00050041, 0x00000010,
+    0x00000011, 0x0000000B, 0x0000000F, 0x0004003D, 0x00000006, 0x00000012,
+    0x00000011, 0x000500B8, 0x0000000D, 0x00000014, 0x00000012, 0x00000013,
+    0x000300F7, 0x00000016, 0x00000000, 0x000400FA, 0x00000014, 0x00000015,
+    0x00000016, 0x000200F8, 0x00000015, 0x00050041, 0x00000010, 0x00000018,
+    0x0000000B, 0x00000017, 0x0004003D, 0x00000006, 0x00000019, 0x00000018,
+    0x000500BA, 0x0000000D, 0x0000001B, 0x00000019, 0x0000001A, 0x000200F9,
+    0x00000016, 0x000200F8, 0x00000016, 0x000700F5, 0x0000000D, 0x0000001C,
+    0x00000014, 0x00000005, 0x0000001B, 0x00000015, 0x000300F7, 0x0000001E,
+    0x00000000, 0x000400FA, 0x0000001C, 0x0000001D, 0x0000001E, 0x000200F8,
+    0x0000001D, 0x00050041, 0x00000010, 0x00000020, 0x0000000B, 0x0000001F,
+    0x0004003D, 0x00000006, 0x00000021, 0x00000020, 0x00050085, 0x00000006,
+    0x00000023, 0x00000021, 0x00000022, 0x00050041, 0x00000024, 0x00000025,
+    0x00000009, 0x0000000F, 0x0003003E, 0x00000025, 0x00000023, 0x000200F9,
+    0x0000001E, 0x000200F8, 0x0000001E, 0x00050041, 0x00000010, 0x00000026,
+    0x0000000B, 0x0000001F, 0x0004003D, 0x00000006, 0x00000027, 0x00000026,
+    0x000500B8, 0x0000000D, 0x00000028, 0x00000027, 0x0000001A, 0x000400A8,
+    0x0000000D, 0x00000029, 0x00000028, 0x000300F7, 0x0000002B, 0x00000000,
+    0x000400FA, 0x00000029, 0x0000002A, 0x0000002B, 0x000200F8, 0x0000002A,
+    0x00050041, 0x00000010, 0x0000002D, 0x0000000B, 0x0000002C, 0x0004003D,
+    0x00000006, 0x0000002E, 0x0000002D, 0x000500B8, 0x0000000D, 0x00000030,
+    0x0000002E, 0x0000002F, 0x000400A8, 0x0000000D, 0x00000031, 0x00000030,
+    0x000200F9, 0x0000002B, 0x000200F8, 0x0000002B, 0x000700F5, 0x0000000D,
+    0x00000032, 0x00000028, 0x0000001E, 0x00000031, 0x0000002A, 0x000300F7,
+    0x00000034, 0x00000000, 0x000400FA, 0x00000032, 0x00000033, 0x00000034,
+    0x000200F8, 0x00000033, 0x00050041, 0x00000024, 0x00000035, 0x00000009,
+    0x00000017, 0x0003003E, 0x00000035, 0x00000013, 0x000200F9, 0x00000034,
+    0x000200F8, 0x00000034, 0x0004003D, 0x00000007, 0x00000038, 0x00000009,
+    0x0003003E, 0x00000037, 0x00000038, 0x000100FD, 0x00010038,
+};

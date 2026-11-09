@@ -57,6 +57,7 @@ const Reg = vir.Reg;
 const Work = compile.Work;
 const Step = compile.Step;
 const Comparison = compile.Comparison;
+const Logic = compile.Logic;
 
 pub const Error = vir.Error || error{
     /// No strategy could give the temporaries registers.
@@ -405,6 +406,16 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         .compare => {
             const cond = try emitComparison(e, each);
             e.defs[at][0] = try condToBool(c, cond);
+        },
+        // iand, ior and inot of the 0 and ~0 a bool is: AND, OR and NOT
+        // (ntq_emit_alu, nir_to_vir.c:1683-1694; since 1.157).
+        .logic => {
+            const a = try getSrc(e, each.a, 0);
+            e.defs[at][0] = switch (@as(Logic, @enumFromInt(each.at))) {
+                .iand => try c.add(.@"and", .{ a, try getSrc(e, each.b, 0) }),
+                .ior => try c.add(.@"or", .{ a, try getSrc(e, each.b, 0) }),
+                .inot => try c.add(.not, .{a}),
+            };
         },
         // slt (nir_to_vir.c:1710-1723): the comparison, and 1.0 or 0.0 of
         // the flags, which are remembered as holding it (since 1.153).

@@ -287,6 +287,10 @@ pub const profile: spirv.Profile = .{
         .vector_shuffle,  .f_unord_not_equal,  .f_ord_less_than_equal,          .f_ord_greater_than_equal,
         .select,          .f_ord_equal,        .composite_insert,               .phi,
         .branch,
+        // Then bools of bools and the unordered comparisons, as glslc
+        // writes &&, || and ! (since 1.157).
+                 .logical_and,        .f_unord_greater_than_equal,     .f_unord_greater_than,
+        .logical_or,      .f_unord_less_than,  .f_unord_less_than_equal,        .logical_not,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant },
     .image_dims = &.{.dim_2d},
@@ -321,14 +325,19 @@ pub const Tag = enum {
     /// How a float compares with another, `at` a `Comparison`: a bool,
     /// which a `discard` reads (since 1.139) and a `select` (since 1.153).
     compare,
-    /// `b` where `a`, a `compare`, holds, and `from[0]` where it does not:
-    /// NIR's b32csel (nir_to_vir.c:1740-1745; since 1.153). One float.
+    /// `a` and `b`, `a` or `b`, or not `a`, `at` a `Logic`: a bool of
+    /// bools, NIR's iand, ior and inot, which v3d emits as AND, OR and NOT
+    /// of the 0 and ~0 a bool is (nir_to_vir.c:1683-1694; since 1.157).
+    logic,
+    /// `b` where `a`, a bool, holds, and `from[0]` where it does not:
+    /// NIR's b32csel (nir_to_vir.c:1740-1745; since 1.153). One float, or
+    /// one bool where the two are bools (since 1.157).
     select,
     /// 1.0 where `a` is less than `b` and 0.0 where not: NIR's slt, which
     /// GLSL.std.450's Step is made of (nir_to_vir.c:1710-1723; since
     /// 1.153). `b` may be one float, read for each of `a`'s.
     set_less,
-    /// The pixel dropped where `a`, a `compare`, holds: what
+    /// The pixel dropped where `a`, a bool, holds: what
     /// nir_opt_peephole_select makes of a selection whose block is a
     /// terminate alone (`discard_ok`, nir_to_vir.c:2293), terminate_if.
     discard,
@@ -395,6 +404,20 @@ pub const Tag = enum {
 /// unordered not-equal (vtn_alu.c:369-381): flt, flt swapped, feq, fneu,
 /// fge and fge swapped. `less` and `greater` are 0 and 1, as they were.
 pub const Comparison = enum(u32) { less, greater, equal, not_equal, greater_equal, less_equal };
+
+/// What a `logic` makes of its bools.
+pub const Logic = enum(u32) { iand, ior, inot };
+
+/// Whether a step is a bool: a comparison, a bool of bools, or one of two
+/// bools chosen.
+pub fn isBool(work: *const Work, at: u16) bool {
+    const each = work.steps[at];
+    return switch (each.tag) {
+        .compare, .logic => true,
+        .select => isBool(work, each.b),
+        else => false,
+    };
+}
 
 /// Which half of a packed pair of half-floats a float is, where it is one
 /// at all. The TMU's two words are the only ones here.
@@ -738,7 +761,7 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
         .sample_compared => return Error.Samplers,
         // Nor does any compute beyond a sum and a product.
         .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot => return Error.Body,
-        .select, .set_less, .sat, .sin, .cos, .sign => return Error.Body,
+        .select, .set_less, .sat, .sin, .cos, .sign, .logic => return Error.Body,
         else => {},
     };
     try settle(work);
@@ -1331,7 +1354,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (flow != .branch) return Error.Branches;
                 if (operands.len < 3) return Error.Body;
                 const condition = work.step_of[try idOf(operands[0])];
-                if (condition == none or work.steps[condition].tag != .compare) return Error.Body;
+                if (condition == none or !isBool(work, condition)) return Error.Body;
                 selection.condition = condition;
                 selection.yes = operands[1];
                 selection.no = operands[2];
@@ -1416,6 +1439,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
     }
     if (work.output_count == 0) return Error.Outputs;
     if (work.stored == none) return Error.NoColor;
+    algebraic(work);
     try order(work);
 }
 
@@ -1503,7 +1527,11 @@ const peephole_limit = 24;
 /// that float, as nir_opt_remove_phis leaves it (since 1.154).
 fn phiOf(work: *Work, selection: *const Selection, operands: []const u32) Error!void {
     if (operands.len != 6) return Error.Branches;
-    const kind = try kindOf(work, try idOf(operands[0]));
+    // A phi of bools, as glslc writes && and ||: one bcsel of the two
+    // (since 1.157).
+    const type_id = try idOf(operands[0]);
+    const boolean = work.thing[type_id] == .boolean;
+    const kind: Kind = if (boolean) .f32x1 else try kindOf(work, type_id);
     const id = try idOf(operands[1]);
     // Which way each value came: an arm's block, or the selection's own
     // where the other label is the merge block.
@@ -1521,7 +1549,13 @@ fn phiOf(work: *Work, selection: *const Selection, operands: []const u32) Error!
         else
             return Error.Branches;
         if (by[side] != none) return Error.Branches;
-        by[side] = try operand(work, operands[at], kind);
+        by[side] = if (boolean) try boolOf(work, operands[at]) else try operand(work, operands[at], kind);
+    }
+    if (boolean) {
+        var chosen = Step{ .tag = .select, .kind = .f32x1, .a = selection.condition, .b = by[0] };
+        chosen.from[0] = by[1];
+        work.step_of[id] = if (by[0] == by[1]) by[0] else try put(work, chosen);
+        return;
     }
     var made = Step{ .tag = .construct, .kind = kind };
     for (0..kind.parts()) |k| {
@@ -1705,9 +1739,153 @@ fn readsStep(user: Step, target: u16) bool {
         .input, .constant, .push => false,
         .construct => std.mem.indexOfScalar(u16, user.from[0..user.kind.parts()], target) != null,
         .select => user.a == target or user.b == target or user.from[0] == target,
+        .logic => user.a == target or (user.at != @intFromEnum(Logic.inot) and user.b == target),
         .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2 => user.a == target,
         else => user.a == target or user.b == target,
     };
+}
+
+/// An operand id as a bool step: a comparison, a bool of bools or a bool
+/// chosen. A bool constant is not here.
+fn boolOf(work: *const Work, word: u32) Error!u16 {
+    const at = work.step_of[try idOf(word)];
+    if (at == none) return Error.Body;
+    if (!isBool(work, at)) return Error.Type;
+    return at;
+}
+
+/// The rules of nir_opt_algebraic that act on what a flattened selection
+/// leaves of bools, as v3d's optimization loop runs the pass after
+/// nir_opt_peephole_select (nir_to_vir.c:2280) and again until nothing
+/// changes: the steps in order, each rewritten by the first rule that
+/// matches it, a step nothing reads left alone as nir_opt_dce takes it
+/// out (since 1.157).
+///
+/// - (('inot', ('inot', a)), a) (nir_opt_algebraic.py:1736).
+/// - (('inot', ('feq(is_used_once)', a, b)), ('fneu', a, b)) and the
+///   other way about (:747-748).
+/// - (('iand', a, a), a) and (('ior', a, a), a) (:1724, :1728).
+/// - (('bcsel', ('inot', a), b, c), ('bcsel', a, c, b)) (:978), of
+///   floats as of bools.
+/// - (('bcsel', a, a, b), ('ior', a, b)) and (('bcsel', a, b, a),
+///   ('iand', a, b)) (:986, :988): what glslc's phis of || and && come
+///   to.
+///
+/// Not ported: the rules on an inot of a float comparison, which want
+/// both floats proven numbers (:745-746), the rules joining comparisons
+/// that share a float into one of an fmin or fmax (:1157-1190), De
+/// Morgan's (:1796-1797) and the rest that want a new instruction made
+/// before the one rewritten. A shader is the same without them.
+fn algebraic(work: *Work) void {
+    var progress = true;
+    while (progress) {
+        progress = false;
+        for (0..work.step_count) |at| {
+            if (usesOf(work, @intCast(at)) == 0) continue;
+            if (rewritten(work, @intCast(at))) progress = true;
+        }
+    }
+}
+
+fn rewritten(work: *Work, at: u16) bool {
+    const each = work.steps[at];
+    switch (each.tag) {
+        .logic => {
+            const which: Logic = @enumFromInt(each.at);
+            if (which == .inot) {
+                const of = work.steps[each.a];
+                if (of.tag == .logic and of.at == @intFromEnum(Logic.inot)) {
+                    replaceUses(work, at, of.a);
+                    return true;
+                }
+                if (of.tag == .compare and usesOf(work, each.a) == 1) {
+                    const flipped: Comparison = switch (@as(Comparison, @enumFromInt(of.at))) {
+                        .equal => .not_equal,
+                        .not_equal => .equal,
+                        else => return false,
+                    };
+                    work.steps[at] = .{ .tag = .compare, .kind = .f32x1, .a = of.a, .b = of.b, .at = @intFromEnum(flipped) };
+                    return true;
+                }
+                return false;
+            }
+            if (each.a == each.b) {
+                replaceUses(work, at, each.a);
+                return true;
+            }
+        },
+        .select => {
+            const condition = work.steps[each.a];
+            if (condition.tag == .logic and condition.at == @intFromEnum(Logic.inot)) {
+                work.steps[at].a = condition.a;
+                work.steps[at].b = each.from[0];
+                work.steps[at].from[0] = each.b;
+                return true;
+            }
+            if (!isBool(work, each.b)) return false;
+            if (each.b == each.a) {
+                work.steps[at] = .{ .tag = .logic, .kind = .f32x1, .a = each.a, .b = each.from[0], .at = @intFromEnum(Logic.ior) };
+                return true;
+            }
+            if (each.from[0] == each.a) {
+                work.steps[at] = .{ .tag = .logic, .kind = .f32x1, .a = each.a, .b = each.b, .at = @intFromEnum(Logic.iand) };
+                return true;
+            }
+        },
+        else => {},
+    }
+    return false;
+}
+
+/// How many times the steps after `at`, and the colour stored, read it.
+fn usesOf(work: *const Work, at: u16) u32 {
+    var count: u32 = if (work.stored == at) 1 else 0;
+    for (work.steps[at + 1 .. work.step_count]) |user| {
+        for (operandsOf(user)) |field| if (field) |of| {
+            if (of == at) count += 1;
+        };
+    }
+    return count;
+}
+
+/// What a step reads, field by field.
+fn operandsOf(user: Step) [4]?u16 {
+    return switch (user.tag) {
+        .input, .constant, .push => .{ null, null, null, null },
+        .construct => .{
+            user.from[0],
+            if (user.kind.parts() > 1) user.from[1] else null,
+            if (user.kind.parts() > 2) user.from[2] else null,
+            if (user.kind.parts() > 3) user.from[3] else null,
+        },
+        .select => .{ user.a, user.b, user.from[0], null },
+        .logic => .{ user.a, if (user.at != @intFromEnum(Logic.inot)) user.b else null, null, null },
+        .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2 => .{ user.a, null, null, null },
+        else => .{ user.a, user.b, null, null },
+    };
+}
+
+/// Every read of `from` after it a read of `to`: nir_def_rewrite_uses.
+fn replaceUses(work: *Work, from: u16, to: u16) void {
+    if (work.stored == from) work.stored = to;
+    for (work.steps[from + 1 .. work.step_count]) |*user| {
+        switch (user.tag) {
+            .input, .constant, .push => {},
+            .construct => for (user.from[0..user.kind.parts()]) |*of| {
+                if (of.* == from) of.* = to;
+            },
+            .select => {
+                if (user.a == from) user.a = to;
+                if (user.b == from) user.b = to;
+                if (user.from[0] == from) user.from[0] = to;
+            },
+            else => {
+                const reads = operandsOf(user.*);
+                if (reads[0] != null and user.a == from) user.a = to;
+                if (reads[1] != null and user.b == from) user.b = to;
+            },
+        }
+    }
 }
 
 /// A type id as a count of floats.
@@ -1905,7 +2083,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             const id = try idOf(operands[1]);
             const of = work.step_of[try idOf(operands[2])];
             if (of == none) return Error.Body;
-            if (work.steps[of].tag == .compare) return Error.Type;
+            if (isBool(work, of)) return Error.Type;
             if (operands[3] >= work.steps[of].kind.parts()) return Error.Body;
             work.step_of[id] = try put(work, .{ .tag = .component, .kind = .f32x1, .a = of, .at = operands[3] });
         },
@@ -1949,7 +2127,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 else
                     try operand(work, each, std.enums.fromInt(Kind, work.wide[each_id]) orelse return Error.Type);
                 if (of == none) return Error.Body;
-                if (work.steps[of].tag == .compare) return Error.Type;
+                if (isBool(work, of)) return Error.Type;
                 const parts = work.steps[of].kind.parts();
                 var part: u8 = 0;
                 while (part < parts) : (part += 1) {
@@ -1983,18 +2161,56 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             };
             work.step_of[id] = try put(work, .{ .tag = .compare, .kind = .f32x1, .a = a, .b = b, .at = @intFromEnum(which) });
         },
+        .f_unord_less_than, .f_unord_greater_than, .f_unord_less_than_equal, .f_unord_greater_than_equal => {
+            // FUnordLessThan(a, b) is !FOrdGreaterThanEqual(a, b), and so
+            // on: the inot of the ordered comparison that is its opposite
+            // (vtn_alu.c:953-985), NaN or not (since 1.157).
+            if (operands.len != 4) return Error.Body;
+            const type_id = try idOf(operands[0]);
+            const id = try idOf(operands[1]);
+            if (work.thing[type_id] != .boolean) return Error.Type;
+            const a = try operand(work, operands[2], .f32x1);
+            const b = try operand(work, operands[3], .f32x1);
+            const opposite: Comparison = switch (instruction.op) {
+                .f_unord_less_than => .greater_equal,
+                .f_unord_greater_than => .less_equal,
+                .f_unord_less_than_equal => .greater,
+                else => .less,
+            };
+            const compared = try put(work, .{ .tag = .compare, .kind = .f32x1, .a = a, .b = b, .at = @intFromEnum(opposite) });
+            work.step_of[id] = try put(work, .{ .tag = .logic, .kind = .f32x1, .a = compared, .at = @intFromEnum(Logic.inot) });
+        },
+        .logical_and, .logical_or, .logical_not => {
+            // ResultType, Result, one bool or two: NIR's iand, ior and
+            // inot (vtn_alu.c:316-320; since 1.157).
+            const not = instruction.op == .logical_not;
+            if (operands.len != @as(usize, if (not) 3 else 4)) return Error.Body;
+            if (work.thing[try idOf(operands[0])] != .boolean) return Error.Type;
+            const id = try idOf(operands[1]);
+            const a = try boolOf(work, operands[2]);
+            const b = if (not) 0 else try boolOf(work, operands[3]);
+            const which: Logic = switch (instruction.op) {
+                .logical_and => .iand,
+                .logical_or => .ior,
+                else => .inot,
+            };
+            work.step_of[id] = try put(work, .{ .tag = .logic, .kind = .f32x1, .a = a, .b = b, .at = @intFromEnum(which) });
+        },
         .select => {
             // ResultType, Result, Condition, Object 1, Object 2: NIR's
             // bcsel. Of one float, its condition one bool; a vector
             // chosen wants a vector of bools in SPIR-V 1.0, which nothing
             // here makes (since 1.153).
             if (operands.len != 5) return Error.Body;
-            if (try kindOf(work, try idOf(operands[0])) != .f32x1) return Error.Type;
+            const type_id = try idOf(operands[0]);
             const id = try idOf(operands[1]);
             const condition = work.step_of[try idOf(operands[2])];
-            if (condition == none or work.steps[condition].tag != .compare) return Error.Type;
-            const yes = try operand(work, operands[3], .f32x1);
-            const no = try operand(work, operands[4], .f32x1);
+            if (condition == none or !isBool(work, condition)) return Error.Type;
+            // One of two bools, a bcsel of them (since 1.157).
+            const boolean = work.thing[type_id] == .boolean;
+            if (!boolean and try kindOf(work, type_id) != .f32x1) return Error.Type;
+            const yes = if (boolean) try boolOf(work, operands[3]) else try operand(work, operands[3], .f32x1);
+            const no = if (boolean) try boolOf(work, operands[4]) else try operand(work, operands[4], .f32x1);
             var made = Step{ .tag = .select, .kind = .f32x1, .a = condition, .b = yes };
             made.from[0] = no;
             work.step_of[id] = try put(work, made);
@@ -2412,9 +2628,8 @@ fn inputStep(work: *Work, which: u16) Error!u16 {
 fn kindOfValue(work: *const Work, word: u32) Error!Kind {
     const id = try idOf(word);
     if (work.step_of[id] != none) {
-        const of = work.steps[work.step_of[id]];
-        if (of.tag == .compare) return Error.Type;
-        return of.kind;
+        if (isBool(work, work.step_of[id])) return Error.Type;
+        return work.steps[work.step_of[id]].kind;
     }
     if (work.thing[id] != .constant) return Error.Body;
     return std.enums.fromInt(Kind, work.wide[id]) orelse Error.Type;
@@ -2460,7 +2675,7 @@ fn operand(work: *Work, word: u32, kind: Kind) Error!u16 {
     const id = try idOf(word);
     if (work.step_of[id] != none) {
         // A bool is no float, whatever its step's width says.
-        if (work.steps[work.step_of[id]].tag == .compare) return Error.Type;
+        if (isBool(work, work.step_of[id])) return Error.Type;
         if (work.steps[work.step_of[id]].kind != kind) return Error.Type;
         return work.step_of[id];
     }
@@ -2557,7 +2772,7 @@ fn settle(work: *Work) Error!void {
             .compare, .discard => return Error.Discards,
             .sample_compared => return Error.Samplers,
             .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot => return Error.Body,
-            .select, .set_less, .sat, .sin, .cos, .sign => return Error.Body,
+            .select, .set_less, .sat, .sin, .cos, .sign, .logic => return Error.Body,
             // A float of its own, read where it is first wanted rather
             // than at the top: a uniform is the next one in the stream
             // wherever the instruction sits, and holding them to the end
@@ -5308,6 +5523,151 @@ test "a selection Mesa would collapse into another, or a discard nested in one, 
     // The outer arm's end a jump to the inner merge block, where its own
     // merge is due.
     try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_nested, .branch, 3, 0, 36)));
+}
+
+/// How many of the steps nothing reads have no tag `tag`: the live ones
+/// of it.
+fn liveOf(work: *const Work, tag: Tag) usize {
+    var count: usize = 0;
+    for (work.program(), 0..) |each, at| {
+        if (each.tag == tag and usesOf(work, @intCast(at)) > 0) count += 1;
+    }
+    return count;
+}
+
+fn liveLogicOf(work: *const Work, which: Logic) usize {
+    var count: usize = 0;
+    for (work.program(), 0..) |each, at| {
+        if (each.tag == .logic and each.at == @intFromEnum(which) and usesOf(work, @intCast(at)) > 0) count += 1;
+    }
+    return count;
+}
+
+test "through Mesa's back end, glslc's && and ||: each a selection flattened, its phi of bools an iand or an ior" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_logic);
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+    // The && phi's bcsel(a, b, a) is iand(a, b); the || one's
+    // bcsel(inot(a), b, a) is bcsel(a, a, b), then ior(a, b). The
+    // second comparison of the || is the inot of FOrdLessThan that
+    // OpFUnordGreaterThanEqual is.
+    try testing.expectEqual(@as(usize, 1), liveLogicOf(&work, .iand));
+    try testing.expectEqual(@as(usize, 1), liveLogicOf(&work, .ior));
+    try testing.expectEqual(@as(usize, 1), liveLogicOf(&work, .inot));
+    try testing.expectEqual(@as(usize, 2), liveOf(&work, .select));
+    // AND, OR and NOT each once in the program.
+    var counts = [3]usize{ 0, 0, 0 };
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        for ([_][]const u8{ "and ", "or ", "not " }, &counts) |name, *count| {
+            if (std.mem.indexOf(u8, line, name) != null) count.* += 1;
+        }
+    }
+    try testing.expectEqual([3]usize{ 1, 1, 1 }, counts);
+    var plan: Work = .{};
+    try testing.expectError(Error.Body, compile(&plan, &reference.glslc_logic));
+}
+
+test "through Mesa's back end, glslc's && and || without -O are the optimized module's program, to the word" {
+    var theirs: Work = .{};
+    const optimized = try throughMesa(&theirs, &reference.glslc_logic);
+    const kept = try testing.allocator.dupe(u64, optimized.words);
+    defer testing.allocator.free(kept);
+    const stream_kept = try testing.allocator.dupe(Word, optimized.stream());
+    defer testing.allocator.free(stream_kept);
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_logic_unoptimized);
+    try testing.expectEqualSlices(u64, kept, code.words);
+    try testing.expectEqual(stream_kept.len, code.stream().len);
+    for (stream_kept, code.stream()) |a, b| try testing.expectEqual(a, b);
+}
+
+/// glslc_logic's shader in the IR: its && and || as `both` and `either`,
+/// which is what its short circuits come to where their right sides only
+/// compare, and its `!(w < 0.75)` a `not` of the comparison.
+const Bools = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const quarter = b.scalar(0.25);
+        const x = b.component(v, 0);
+        const y = b.component(v, 1);
+        const z = b.component(v, 2);
+        const w = b.component(v, 3);
+        const first = b.ifHolds(b.both(b.lessThan(x, half), b.greaterThan(y, quarter)));
+        const doubled = b.mul(z, b.scalar(2));
+        b.endIf(first);
+        const red = b.merged(first, doubled, x);
+        const second = b.ifHolds(b.either(b.lessThan(z, quarter), b.not(b.lessThan(w, b.scalar(0.75)))));
+        b.endIf(second);
+        const green = b.merged(second, half, y);
+        b.color(b.vector(&.{ red, green, z, w }));
+    }
+});
+
+test "through Mesa's back end, glslc's && and || are facet's both and either, to the word" {
+    var theirs: Work = .{};
+    const glslc = try throughMesa(&theirs, &reference.glslc_logic);
+    var ours: Work = .{};
+    const facet_made = try throughMesa(&ours, Bools.words);
+    try testing.expectEqualSlices(u64, glslc.words, facet_made.words);
+    try testing.expectEqual(glslc.stream().len, facet_made.stream().len);
+    for (glslc.stream(), facet_made.stream()) |a, b| try testing.expectEqual(a, b);
+}
+
+/// Bools that nir_opt_algebraic takes apart: a `not` of a `not`, a `not`
+/// of an equality read once, an `and` of a comparison with itself, and a
+/// select on a `not`.
+const Turned = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const x = b.component(v, 0);
+        const y = b.component(v, 1);
+        const z = b.component(v, 2);
+        const w = b.component(v, 3);
+        const red = b.select(b.not(b.not(b.lessThan(x, half))), y, z);
+        const green = b.select(b.not(b.equal(y, half)), x, w);
+        const kept = b.lessThan(z, half);
+        const blue = b.select(b.not(b.both(kept, kept)), x, y);
+        b.color(b.vector(&.{ red, green, blue, w }));
+    }
+});
+
+/// What nir_opt_algebraic leaves of Turned, written so.
+const Untangled = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const x = b.component(v, 0);
+        const y = b.component(v, 1);
+        const z = b.component(v, 2);
+        const w = b.component(v, 3);
+        const red = b.select(b.lessThan(x, half), y, z);
+        const green = b.select(b.notEqual(y, half), x, w);
+        const blue = b.select(b.lessThan(z, half), y, x);
+        b.color(b.vector(&.{ red, green, blue, w }));
+    }
+});
+
+test "through Mesa's back end, nir_opt_algebraic's rules on bools: what they leave is the program of the shader written without them" {
+    var written: Work = .{};
+    const untangled = try throughMesa(&written, Untangled.words);
+    const kept = try testing.allocator.dupe(u64, untangled.words);
+    defer testing.allocator.free(kept);
+    var work: Work = .{};
+    const code = try throughMesa(&work, Turned.words);
+    try testing.expectEqualSlices(u64, kept, code.words);
+    // inot(inot a) is a, inot(feq a b) read once is fneu a b, iand(a, a)
+    // is a, and the select on inot(a) is on a, its arms swapped: no NOT
+    // and no AND is left.
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        try testing.expect(std.mem.indexOf(u8, line, "not ") == null);
+        try testing.expect(std.mem.indexOf(u8, line, "and ") == null);
+    }
 }
 
 test "a call the walk does not lower, or into a set that is not GLSL.std.450, is refused" {
