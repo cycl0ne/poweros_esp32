@@ -1,5 +1,9 @@
 TABLE OF CONTENTS
 
+vector.library/AddEllipse
+vector.library/AddPathData
+vector.library/AddRect
+vector.library/ArcTo
 vector.library/ClearPath
 vector.library/ClosePath
 vector.library/CreateCanvasTagList
@@ -10,9 +14,222 @@ vector.library/DisposePath
 vector.library/FillPath
 vector.library/LineTo
 vector.library/MoveTo
+vector.library/PathBounds
+vector.library/PopLayer
+vector.library/PushLayer
 vector.library/QuadTo
 vector.library/SetCanvasPens
 vector.library/StrokePath
+vector.library/AddEllipse                            vector.library/AddEllipse
+
+   NAME
+	AddEllipse -- A closed ellipse round (cx, cy); SVG's ellipse.
+
+   SYNOPSIS
+	    fn AddEllipse(vb: *VectorBase, path: *vector.Path, cx: f32, cy: f32, rx: f32, ry: f32) void
+
+   SINCE
+	1.1. LVO -80.
+
+   INPUTS
+	- `path` - the path.
+	- `cx`, `cy` - its centre, in the path's units.
+	- `rx`, `ry` - its radii across and down; the same for a circle.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	A contour of its own, closed, of four cubic curves, as SVG draws an
+	`ellipse` or a `circle`: from its rightmost point, clockwise on the
+	screen. A radius of 0 or less adds nothing. The current point is the
+	rightmost point afterwards.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The caller's, as before.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AddRect`, `ArcTo`
+
+   EXAMPLES
+	    vb.AddEllipse(path, 50, 50, 20, 20); // a circle
+vector.library/AddPathData                          vector.library/AddPathData
+
+   NAME
+	AddPathData -- SVG path data onto the path: VECTORERR_SYNTAX at the first error, the path kept up to it.
+
+   SYNOPSIS
+	    fn AddPathData(vb: *VectorBase, path: *vector.Path, text: [*]const u8, length: u32) i32
+
+   SINCE
+	1.1. LVO -84.
+
+   INPUTS
+	- `path` - the path the contours are added to.
+	- `text`, `length` - the data: the `d` of an SVG `path`, such as
+	  `M 10 10 h 20 a 5 5 0 0 1 5 5 z`. It need not end in a 0.
+
+   RESULT
+	`VECTOR_OK`; `VECTORERR_SYNTAX` at the first thing that is not SVG's
+	path data; `VECTORERR_NOMEM` when a segment did not fit.
+
+   BEHAVIOR
+	Every command of SVG's path data, in both its forms: absolute, and
+	relative to the current point. `M`, `L`, `H`, `V`, `C`, `S`, `Q`,
+	`T`, `A`, `Z`; a command's numbers given again for another of the
+	same - a move's as lines - and `S` and `T` mirroring the last curve's
+	control point when the command before was one of their kind. Numbers
+	may run together where a sign or a second point parts them
+	(`10-5.5.5`), with an exponent, and an arc's two flags may be single
+	digits with nothing between them.
+
+	At an error the commands before it are kept and the one it is in is
+	not, which is how SVG draws data that goes wrong. The data is a path
+	of its own: it must start with a move, and a relative one first is
+	taken from (0, 0).
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The text is the caller's and only read.
+
+   NOTES
+	A program can keep its pictures as path data and build them with
+	this, as an SVG file does.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ArcTo`, `MoveTo`, `PathBounds`
+
+   EXAMPLES
+	    const d = "M 4 12 l 6 6 l 10 -12";
+	    if (vb.AddPathData(path, d, d.len) != vector.VECTOR_OK) return;
+vector.library/AddRect                                  vector.library/AddRect
+
+   NAME
+	AddRect -- A closed rectangle, its corners rounded rx across and ry down; SVG's rect.
+
+   SYNOPSIS
+	    fn AddRect(vb: *VectorBase, path: *vector.Path, rect: *const vector.Rect, rx: f32, ry: f32) void
+
+   SINCE
+	1.1. LVO -76.
+
+   INPUTS
+	- `path` - the path.
+	- `rect` - where it is and how large (`vector.Rect`), in the path's
+	  units.
+	- `rx`, `ry` - how far round each corner goes, across and down; 0 for
+	  square corners.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	A contour of its own, closed, as SVG draws a `rect`: from the top
+	left - after its rounding - going right, so clockwise on the screen.
+	The corners are quarters of an ellipse, `rx` and `ry` each held to
+	half the side it is along, and square when either is 0 or less. A
+	width or a height of 0 or less adds nothing. The current point is the
+	contour's start afterwards.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The rectangle is the caller's and only read.
+
+   NOTES
+	SVG's `rx` given alone stands for `ry` too, and the other way round:
+	a program reading SVG passes the one for both.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AddEllipse`, `MoveTo`
+
+   EXAMPLES
+	    const box = vector.Rect{ .x = 10, .y = 10, .width = 80, .height = 40 };
+	    vb.AddRect(path, &box, 6, 6);
+vector.library/ArcTo                                      vector.library/ArcTo
+
+   NAME
+	ArcTo -- SVG's elliptical arc from the current point to (x, y): the radii, the ellipse's angle in degrees, ARC_LARGE and ARC_SWEEP.
+
+   SYNOPSIS
+	    fn ArcTo(vb: *VectorBase, path: *vector.Path, rx: f32, ry: f32, angle: f32, flags: u32, x: f32, y: f32) void
+
+   SINCE
+	1.1. LVO -72.
+
+   INPUTS
+	- `path` - the path.
+	- `rx`, `ry` - the ellipse's radii across and down, in the path's
+	  units; their sign is taken off.
+	- `angle` - how far the ellipse is turned, in degrees, clockwise on
+	  the screen.
+	- `flags` - `ARC_LARGE` for the arc of more than half the ellipse
+	  rather than less, `ARC_SWEEP` for the one going the way angles rise
+	  (clockwise on the screen) rather than the other.
+	- `x`, `y` - where the arc ends.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	SVG's `A`: of the two ellipses of these radii and this angle through
+	the current point and (x, y), and the two arcs of each between them,
+	the one the flags pick. Radii too small to reach from one end to the
+	other are made just large enough, so the arc is half an ellipse; a
+	radius of 0 makes a line, and an arc ending where it starts is
+	nothing. It is added as a cubic curve for every quarter turn or less
+	of it, kept as curves until drawn. Without a current point it is
+	passed over, and after a `ClosePath` it starts a new contour, as
+	`LineTo` does.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The caller's, as before.
+
+   NOTES
+	Without the memory for it the arc is added as far as it fitted, a
+	curve at a time, and the path remembers that something did not fit
+	(see `MoveTo`).
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CubicTo`, `AddEllipse`, `AddPathData`
+
+   EXAMPLES
+	    // A half circle of radius 10 over the top from (0, 10) to (20, 10).
+	    vb.MoveTo(path, 0, 10);
+	    vb.ArcTo(path, 10, 10, 0, vector.ARC_SWEEP, 20, 10);
 vector.library/ClearPath                              vector.library/ClearPath
 
    NAME
@@ -271,8 +488,9 @@ vector.library/StrokePath
 	Nothing.
 
    BEHAVIOR
-	The canvas's working memory goes back. The pens it drew on are left
-	as they are, with what was drawn on them.
+	The canvas's working memory goes back, and any layer still pushed with
+	it, not put down. The pens it drew on are left as they are, with what
+	was drawn on them.
 
    CONTEXT
 	- Waits: no.
@@ -346,8 +564,12 @@ vector.library/StrokePath
 	- `path` - what is filled. Every contour is closed for it, open or
 	  not, with a straight line back to its start.
 	- `matrix` - the path's units to pixels, or null when they are pixels.
-	- `paint` - what it is painted in (`vector.Paint`): in 1.0 its colour,
-	  at its colour's coverage times its opacity, whatever its kind.
+	- `paint` - what it is painted in (`vector.Paint`): one colour, or
+	  since 1.1 a linear or radial gradient with its stops, spread and
+	  matrix (1.0 paints a gradient's colour), at the paint's opacity.
+	  A gradient with no stops paints nothing, one with one paints its
+	  colour, and one of no length or radius its last stop's colour, as
+	  SVG has it.
 	- `rule` - `RULE_NONZERO`: inside wherever the contours wind round a
 	  point; `RULE_EVENODD`: wherever they wind round it an odd number of
 	  times, so a contour inside another is a hole.
@@ -365,6 +587,15 @@ vector.library/StrokePath
 	pen by its own coverage. Pixels off the canvas are passed over; so
 	is everything with no pens set.
 
+	A gradient is laid in its own units, taken into the path's by the
+	paint's matrix and then to pixels by this one: each pixel's centre
+	is taken back to see where along it the pixel is. Its colour there
+	comes from 256 made from the stops for the fill, mixed as they are
+	and not premultiplied. A radial gradient's focus outside its circle
+	makes a cone, beside which nothing is painted, as SVG 2 draws it.
+
+	With a layer pushed (`PushLayer`) it is drawn on the layer.
+
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
@@ -379,7 +610,7 @@ vector.library/StrokePath
 	None known.
 
    SEE ALSO
-	`StrokePath`, `CreateCanvasTagList`, `MoveTo`
+	`StrokePath`, `CreateCanvasTagList`, `MoveTo`, `PathBounds`, `PushLayer`
 
    EXAMPLES
 	    const red = vector.Paint{ .colour = .{ .r = 1 } };
@@ -480,6 +711,159 @@ vector.library/StrokePath
    EXAMPLES
 	    vb.MoveTo(path, 10, 10);
 	    vb.LineTo(path, 90, 10);
+vector.library/PathBounds                            vector.library/PathBounds
+
+   NAME
+	PathBounds -- The bounds of the path's curves through the matrix (null: the identity); false for an empty path.
+
+   SYNOPSIS
+	    fn PathBounds(vb: *VectorBase, path: *const vector.Path, matrix: ?*const vector.Matrix, bounds: *vector.Rect) bool
+
+   SINCE
+	1.1. LVO -88.
+
+   INPUTS
+	- `path` - the path.
+	- `matrix` - the path's units to the ones the bounds are wanted in, or
+	  null for the path's own.
+	- `bounds` - where they are put.
+
+   RESULT
+	True and `bounds` filled in; false for a path with no point, and
+	`bounds` left as it was.
+
+   BEHAVIOR
+	The smallest rectangle round the path's curves as drawn through the
+	matrix - of the curves themselves, not of their control points -
+	which is SVG's bounding box, the one `objectBoundingBox` gradients
+	are laid over. Every point counts, a contour's move with the rest. A
+	path with nothing but a point has bounds of no size.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The path and the matrix are the caller's and only read.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`FillPath`, `AddPathData`
+
+   EXAMPLES
+	    // A gradient laid over the shape's box, as objectBoundingBox has it.
+	    var box: vector.Rect = undefined;
+	    if (vb.PathBounds(path, null, &box)) {
+	        paint.matrix = vector.Matrix.translate(box.x, box.y).then(vector.Matrix.scale(box.width, box.height));
+	    }
+vector.library/PopLayer                                vector.library/PopLayer
+
+   NAME
+	PopLayer -- The last layer pushed put down on what is under it.
+
+   SYNOPSIS
+	    fn PopLayer(vb: *VectorBase, canvas: *vector.Canvas) void
+
+   SINCE
+	1.1. LVO -96.
+
+   INPUTS
+	- `canvas` - the canvas.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	What was drawn on the layer goes down on what is under it - the layer
+	it is inside, or the pens - at the layer's opacity, each pixel over
+	what is there as a paint goes; and the layer is given back. A layer
+	that had no memory, or was past the most, is only ended. With no
+	layer pushed it does nothing.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The pens under the layer are written.
+
+   NOTES
+	Pens set with `SetCanvasPens` while a layer is pushed are the ones
+	it goes down on.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`PushLayer`
+
+   EXAMPLES
+	    vb.PopLayer(canvas);
+vector.library/PushLayer                              vector.library/PushLayer
+
+   NAME
+	PushLayer -- What is drawn until PopLayer goes onto a layer of its own, put down at the opacity.
+
+   SYNOPSIS
+	    fn PushLayer(vb: *VectorBase, canvas: *vector.Canvas, opacity: f32) i32
+
+   SINCE
+	1.1. LVO -92.
+
+   INPUTS
+	- `canvas` - the canvas.
+	- `opacity` - how much of the layer shows when it is put down, 0 to 1:
+	  SVG's `opacity` on a group.
+
+   RESULT
+	`VECTOR_OK`; `VECTORERR_NOMEM` without the memory for the layer, which
+	is then drawn without one; `VECTORERR_DEPTH` past `MAX_LAYERS` layers
+	one inside another, when the layer is nothing. Whatever it answers,
+	a `PopLayer` goes with it.
+
+   BEHAVIOR
+	Every fill and stroke from now until the `PopLayer` that goes with
+	it is drawn onto pens of the layer's own, clear and the canvas's
+	size; the pop puts them down on what is under them at `opacity`. So a
+	group's shapes that overlap are seen as one, at the group's opacity,
+	not through each other. Layers go inside one another.
+
+	Without the memory for the layer, the opacity goes into every paint
+	drawn until the pop instead, which is the same where the shapes do
+	not overlap - drawn a little wrong rather than not at all.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The layer is the canvas's, given back by the pop or by
+	`DisposeCanvas`.
+
+   NOTES
+	A layer is four bytes a pixel of the whole canvas, cleared when
+	pushed: on a small machine, a large canvas's layers are what runs
+	out first.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`PopLayer`, `FillPath`
+
+   EXAMPLES
+	    _ = vb.PushLayer(canvas, 0.5);
+	    _ = vb.FillPath(canvas, body, null, &grey, vector.RULE_NONZERO);
+	    _ = vb.StrokePath(canvas, body, null, &black, &outline);
+	    vb.PopLayer(canvas);
 vector.library/QuadTo                                    vector.library/QuadTo
 
    NAME
@@ -590,8 +974,8 @@ vector.library/StrokePath
 	- `paint` - what it is painted in, as `FillPath` paints.
 	- `stroke` - how (`vector.Stroke`), in the path's own units: the
 	  width, the joins (`JOIN_MITER`, `JOIN_ROUND`, `JOIN_BEVEL`), the caps
-	  (`CAP_BUTT`, `CAP_ROUND`, `CAP_SQUARE`) and the miter limit, in
-	  stroke widths. 1.0 draws a dashed stroke whole.
+	  (`CAP_BUTT`, `CAP_ROUND`, `CAP_SQUARE`), the miter limit, in stroke
+	  widths, and since 1.1 the dashes (1.0 draws a dashed stroke whole).
 
    RESULT
 	`VECTOR_OK`, or `VECTORERR_NOMEM` as `FillPath` answers it.
@@ -604,6 +988,16 @@ vector.library/StrokePath
 	limit is bevelled. A contour of one point is a dot when the caps are
 	round, and nothing otherwise; a stroke under a fiftieth of a pixel
 	wide is not drawn.
+
+	Dashes are cut from each contour in the path's units, from
+	`dash_offset` along it, before it is stroked, so each dash has its
+	caps; they go on from one segment to the next and round a closed
+	contour, whose last dash is joined to its first. An odd count of
+	lengths is gone through twice, and lengths that are negative or come
+	to nothing draw the stroke whole, as SVG has it. A stroke is cut at
+	most 65536 times; past that it goes on as the dash or gap it is in.
+
+	With a layer pushed (`PushLayer`) it is drawn on the layer.
 
    CONTEXT
 	- Waits: no.

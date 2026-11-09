@@ -27,6 +27,13 @@ const DisposeCanvas = @import("canvas/disposecanvas.zig").DisposeCanvas;
 const SetCanvasPens = @import("canvas/setcanvaspens.zig").SetCanvasPens;
 const FillPath = @import("canvas/fillpath.zig").FillPath;
 const StrokePath = @import("canvas/strokepath.zig").StrokePath;
+const ArcTo = @import("path/arcto.zig").ArcTo;
+const AddRect = @import("path/addrect.zig").AddRect;
+const AddEllipse = @import("path/addellipse.zig").AddEllipse;
+const AddPathData = @import("path/addpathdata.zig").AddPathData;
+const PathBounds = @import("path/pathbounds.zig").PathBounds;
+const PushLayer = @import("canvas/pushlayer.zig").PushLayer;
+const PopLayer = @import("canvas/poplayer.zig").PopLayer;
 
 /// vector.library's interface, as the SDK generates it from
 /// sdk/fd/vector_lib.fd.
@@ -65,6 +72,13 @@ const contract_files = [_][]const u8{
     @embedFile("canvas/setcanvaspens.zig"),
     @embedFile("canvas/fillpath.zig"),
     @embedFile("canvas/strokepath.zig"),
+    @embedFile("path/arcto.zig"),
+    @embedFile("path/addrect.zig"),
+    @embedFile("path/addellipse.zig"),
+    @embedFile("path/addpathdata.zig"),
+    @embedFile("path/pathbounds.zig"),
+    @embedFile("canvas/pushlayer.zig"),
+    @embedFile("canvas/poplayer.zig"),
 };
 
 fn lvoCreatePath(vb: *VectorBase) callconv(.c) ?*vector.Path {
@@ -106,6 +120,27 @@ fn lvoFillPath(vb: *VectorBase, canvas: *vector.Canvas, path: *const vector.Path
 fn lvoStrokePath(vb: *VectorBase, canvas: *vector.Canvas, path: *const vector.Path, matrix: ?*const vector.Matrix, paint: *const vector.Paint, stroke: *const vector.Stroke) callconv(.c) i32 {
     return StrokePath(vb, canvas, path, matrix, paint, stroke);
 }
+fn lvoArcTo(vb: *VectorBase, path: *vector.Path, rx: f32, ry: f32, angle: f32, flags: u32, x: f32, y: f32) callconv(.c) void {
+    return ArcTo(vb, path, rx, ry, angle, flags, x, y);
+}
+fn lvoAddRect(vb: *VectorBase, path: *vector.Path, rect: *const vector.Rect, rx: f32, ry: f32) callconv(.c) void {
+    return AddRect(vb, path, rect, rx, ry);
+}
+fn lvoAddEllipse(vb: *VectorBase, path: *vector.Path, cx: f32, cy: f32, rx: f32, ry: f32) callconv(.c) void {
+    return AddEllipse(vb, path, cx, cy, rx, ry);
+}
+fn lvoAddPathData(vb: *VectorBase, path: *vector.Path, text: [*]const u8, length: u32) callconv(.c) i32 {
+    return AddPathData(vb, path, text, length);
+}
+fn lvoPathBounds(vb: *VectorBase, path: *const vector.Path, matrix: ?*const vector.Matrix, bounds: *vector.Rect) callconv(.c) bool {
+    return PathBounds(vb, path, matrix, bounds);
+}
+fn lvoPushLayer(vb: *VectorBase, canvas: *vector.Canvas, opacity: f32) callconv(.c) i32 {
+    return PushLayer(vb, canvas, opacity);
+}
+fn lvoPopLayer(vb: *VectorBase, canvas: *vector.Canvas) callconv(.c) void {
+    return PopLayer(vb, canvas);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -125,6 +160,13 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoSetCanvasPens),
     vec(lvoFillPath),
     vec(lvoStrokePath),
+    vec(lvoArcTo),
+    vec(lvoAddRect),
+    vec(lvoAddEllipse),
+    vec(lvoAddPathData),
+    vec(lvoPathBounds),
+    vec(lvoPushLayer),
+    vec(lvoPopLayer),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

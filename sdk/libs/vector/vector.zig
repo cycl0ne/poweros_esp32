@@ -15,6 +15,12 @@
 //! painted by how much of it the shape covers, so an edge is smooth
 //! without a pixel being drawn more than once.
 //!
+//! Since 1.1 a paint is a gradient as well as a colour, a stroke may be
+//! dashed, a path takes SVG's arcs, rectangles, ellipses and path data,
+//! and what is drawn may go onto a layer that is put down at an opacity.
+//! A program that needs these looks for revision 1 or later in the
+//! library it opened.
+//!
 //! Open it with OpenLibrary(VECTORNAME, VECTOR_VERSION); its functions
 //! are in sdk/interface/vector.zig. A path and a canvas are one task's at
 //! a time: the library holds no lock, and two tasks drawing on two
@@ -42,6 +48,20 @@ pub const Point = extern struct {
     x: f32 = 0,
     y: f32 = 0,
 };
+
+/// A rectangle from (`x`, `y`), `width` across and `height` down.
+pub const Rect = extern struct {
+    x: f32 = 0,
+    y: f32 = 0,
+    width: f32 = 0,
+    height: f32 = 0,
+};
+
+/// `ArcTo`'s flags, SVG's two: the arc of more than half the ellipse
+/// rather than the one of less, and the one going the way angles rise
+/// (clockwise on the screen) rather than the other.
+pub const ARC_LARGE: u32 = 1;
+pub const ARC_SWEEP: u32 = 2;
 
 /// An affine transform: x' = a x + c y + e, y' = b x + d y + f. The
 /// default is the identity.
@@ -233,3 +253,6 @@ pub const VECTORERR_NOMEM: i32 = -1;
 pub const VECTORERR_SYNTAX: i32 = -2;
 /// Layers nested deeper than a canvas holds.
 pub const VECTORERR_DEPTH: i32 = -3;
+
+/// The most layers a canvas holds one inside another (`PushLayer`).
+pub const MAX_LAYERS = 16;

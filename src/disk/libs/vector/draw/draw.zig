@@ -12,7 +12,12 @@
 //!   a band of rows at a time.
 //! - `stroke.zig` - a stroke as pieces, made in the path's own units.
 //! - `canvas.zig` - the caller's pens: a fill or a stroke drawn band by
-//!   band, and laid down by coverage.
+//!   band, and laid down by coverage; the layers pushed on it.
+//! - `shapes.zig` - SVG's arc, a rounded rectangle, an ellipse, as curves.
+//! - `pathdata.zig` - SVG's path data read onto a path.
+//! - `bounds.zig` - a path's bounds, of its curves.
+//! - `gradient.zig` - where a pixel is along a gradient, and its colour.
+//! - `dash.zig` - a stroke's contours cut into dashes.
 //!
 //! lottie.datatype drew with the coverage, the flattening and the stroker
 //! before vector.library 1.0 (in its raster.zig); they were moved here
@@ -21,6 +26,9 @@
 pub const Memory = @import("memory.zig").Memory;
 pub const Path = @import("path.zig").Path;
 pub const Canvas = @import("canvas.zig").Canvas;
+pub const shapes = @import("shapes.zig");
+pub const pathdata = @import("pathdata.zig");
+pub const bounds = @import("bounds.zig").bounds;
 
 test {
     _ = @import("memory.zig");
@@ -29,4 +37,9 @@ test {
     _ = @import("coverage.zig");
     _ = @import("stroke.zig");
     _ = @import("canvas.zig");
+    _ = @import("shapes.zig");
+    _ = @import("pathdata.zig");
+    _ = @import("bounds.zig");
+    _ = @import("gradient.zig");
+    _ = @import("dash.zig");
 }

@@ -29,6 +29,13 @@ pub const LVO = struct {
     pub const SetCanvasPens = libraries.lvo(14);
     pub const FillPath = libraries.lvo(15);
     pub const StrokePath = libraries.lvo(16);
+    pub const ArcTo = libraries.lvo(17);
+    pub const AddRect = libraries.lvo(18);
+    pub const AddEllipse = libraries.lvo(19);
+    pub const AddPathData = libraries.lvo(20);
+    pub const PathBounds = libraries.lvo(21);
+    pub const PushLayer = libraries.lvo(22);
+    pub const PopLayer = libraries.lvo(23);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -47,6 +54,13 @@ pub const Fn = struct {
     pub const SetCanvasPens = *const fn (*VectorBase, *vector.Canvas, ?[*]graphics.Pen, u32) callconv(.c) void;
     pub const FillPath = *const fn (*VectorBase, *vector.Canvas, *const vector.Path, ?*const vector.Matrix, *const vector.Paint, u32) callconv(.c) i32;
     pub const StrokePath = *const fn (*VectorBase, *vector.Canvas, *const vector.Path, ?*const vector.Matrix, *const vector.Paint, *const vector.Stroke) callconv(.c) i32;
+    pub const ArcTo = *const fn (*VectorBase, *vector.Path, f32, f32, f32, u32, f32, f32) callconv(.c) void;
+    pub const AddRect = *const fn (*VectorBase, *vector.Path, *const vector.Rect, f32, f32) callconv(.c) void;
+    pub const AddEllipse = *const fn (*VectorBase, *vector.Path, f32, f32, f32, f32) callconv(.c) void;
+    pub const AddPathData = *const fn (*VectorBase, *vector.Path, [*]const u8, u32) callconv(.c) i32;
+    pub const PathBounds = *const fn (*VectorBase, *const vector.Path, ?*const vector.Matrix, *vector.Rect) callconv(.c) bool;
+    pub const PushLayer = *const fn (*VectorBase, *vector.Canvas, f32) callconv(.c) i32;
+    pub const PopLayer = *const fn (*VectorBase, *vector.Canvas) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -120,5 +134,40 @@ pub const VectorBase = opaque {
     /// The path stroked in its own units, then through the matrix (null: the identity), in the paint.
     pub fn StrokePath(self: *VectorBase, canvas: *vector.Canvas, path: *const vector.Path, matrix: ?*const vector.Matrix, paint: *const vector.Paint, stroke: *const vector.Stroke) i32 {
         return libraries.call(self, LVO.StrokePath, Fn.StrokePath, .{ canvas, path, matrix, paint, stroke });
+    }
+
+    /// SVG's elliptical arc from the current point to (x, y): the radii, the ellipse's angle in degrees, ARC_LARGE and ARC_SWEEP.
+    pub fn ArcTo(self: *VectorBase, path: *vector.Path, rx: f32, ry: f32, angle: f32, flags: u32, x: f32, y: f32) void {
+        return libraries.call(self, LVO.ArcTo, Fn.ArcTo, .{ path, rx, ry, angle, flags, x, y });
+    }
+
+    /// A closed rectangle, its corners rounded rx across and ry down; SVG's rect.
+    pub fn AddRect(self: *VectorBase, path: *vector.Path, rect: *const vector.Rect, rx: f32, ry: f32) void {
+        return libraries.call(self, LVO.AddRect, Fn.AddRect, .{ path, rect, rx, ry });
+    }
+
+    /// A closed ellipse round (cx, cy); SVG's ellipse.
+    pub fn AddEllipse(self: *VectorBase, path: *vector.Path, cx: f32, cy: f32, rx: f32, ry: f32) void {
+        return libraries.call(self, LVO.AddEllipse, Fn.AddEllipse, .{ path, cx, cy, rx, ry });
+    }
+
+    /// SVG path data onto the path: VECTORERR_SYNTAX at the first error, the path kept up to it.
+    pub fn AddPathData(self: *VectorBase, path: *vector.Path, text: [*]const u8, length: u32) i32 {
+        return libraries.call(self, LVO.AddPathData, Fn.AddPathData, .{ path, text, length });
+    }
+
+    /// The bounds of the path's curves through the matrix (null: the identity); false for an empty path.
+    pub fn PathBounds(self: *VectorBase, path: *const vector.Path, matrix: ?*const vector.Matrix, bounds: *vector.Rect) bool {
+        return libraries.call(self, LVO.PathBounds, Fn.PathBounds, .{ path, matrix, bounds });
+    }
+
+    /// What is drawn until PopLayer goes onto a layer of its own, put down at the opacity.
+    pub fn PushLayer(self: *VectorBase, canvas: *vector.Canvas, opacity: f32) i32 {
+        return libraries.call(self, LVO.PushLayer, Fn.PushLayer, .{ canvas, opacity });
+    }
+
+    /// The last layer pushed put down on what is under it.
+    pub fn PopLayer(self: *VectorBase, canvas: *vector.Canvas) void {
+        return libraries.call(self, LVO.PopLayer, Fn.PopLayer, .{canvas});
     }
 };

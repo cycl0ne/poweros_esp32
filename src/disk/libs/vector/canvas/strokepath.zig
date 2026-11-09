@@ -23,8 +23,8 @@ const VectorBase = _base.VectorBase;
 /// - `paint` - what it is painted in, as `FillPath` paints.
 /// - `stroke` - how (`vector.Stroke`), in the path's own units: the
 ///   width, the joins (`JOIN_MITER`, `JOIN_ROUND`, `JOIN_BEVEL`), the caps
-///   (`CAP_BUTT`, `CAP_ROUND`, `CAP_SQUARE`) and the miter limit, in
-///   stroke widths. 1.0 draws a dashed stroke whole.
+///   (`CAP_BUTT`, `CAP_ROUND`, `CAP_SQUARE`), the miter limit, in stroke
+///   widths, and since 1.1 the dashes (1.0 draws a dashed stroke whole).
 ///
 /// RESULT:
 /// `VECTOR_OK`, or `VECTORERR_NOMEM` as `FillPath` answers it.
@@ -37,6 +37,16 @@ const VectorBase = _base.VectorBase;
 /// limit is bevelled. A contour of one point is a dot when the caps are
 /// round, and nothing otherwise; a stroke under a fiftieth of a pixel
 /// wide is not drawn.
+///
+/// Dashes are cut from each contour in the path's units, from
+/// `dash_offset` along it, before it is stroked, so each dash has its
+/// caps; they go on from one segment to the next and round a closed
+/// contour, whose last dash is joined to its first. An odd count of
+/// lengths is gone through twice, and lengths that are negative or come
+/// to nothing draw the stroke whole, as SVG has it. A stroke is cut at
+/// most 65536 times; past that it goes on as the dash or gap it is in.
+///
+/// With a layer pushed (`PushLayer`) it is drawn on the layer.
 ///
 /// CONTEXT:
 /// - Waits: no.

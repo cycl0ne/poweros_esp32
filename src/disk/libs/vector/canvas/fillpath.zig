@@ -20,8 +20,12 @@ const VectorBase = _base.VectorBase;
 /// - `path` - what is filled. Every contour is closed for it, open or
 ///   not, with a straight line back to its start.
 /// - `matrix` - the path's units to pixels, or null when they are pixels.
-/// - `paint` - what it is painted in (`vector.Paint`): in 1.0 its colour,
-///   at its colour's coverage times its opacity, whatever its kind.
+/// - `paint` - what it is painted in (`vector.Paint`): one colour, or
+///   since 1.1 a linear or radial gradient with its stops, spread and
+///   matrix (1.0 paints a gradient's colour), at the paint's opacity.
+///   A gradient with no stops paints nothing, one with one paints its
+///   colour, and one of no length or radius its last stop's colour, as
+///   SVG has it.
 /// - `rule` - `RULE_NONZERO`: inside wherever the contours wind round a
 ///   point; `RULE_EVENODD`: wherever they wind round it an odd number of
 ///   times, so a contour inside another is a hole.
@@ -39,6 +43,15 @@ const VectorBase = _base.VectorBase;
 /// pen by its own coverage. Pixels off the canvas are passed over; so
 /// is everything with no pens set.
 ///
+/// A gradient is laid in its own units, taken into the path's by the
+/// paint's matrix and then to pixels by this one: each pixel's centre
+/// is taken back to see where along it the pixel is. Its colour there
+/// comes from 256 made from the stops for the fill, mixed as they are
+/// and not premultiplied. A radial gradient's focus outside its circle
+/// makes a cone, beside which nothing is painted, as SVG 2 draws it.
+///
+/// With a layer pushed (`PushLayer`) it is drawn on the layer.
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
@@ -53,7 +66,7 @@ const VectorBase = _base.VectorBase;
 /// None known.
 ///
 /// SEE ALSO:
-/// `StrokePath`, `CreateCanvasTagList`, `MoveTo`
+/// `StrokePath`, `CreateCanvasTagList`, `MoveTo`, `PathBounds`, `PushLayer`
 ///
 /// EXAMPLES:
 /// ```zig

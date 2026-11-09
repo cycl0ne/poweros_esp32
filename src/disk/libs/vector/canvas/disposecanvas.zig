@@ -22,8 +22,9 @@ const VectorBase = _base.VectorBase;
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// The canvas's working memory goes back. The pens it drew on are left
-/// as they are, with what was drawn on them.
+/// The canvas's working memory goes back, and any layer still pushed with
+/// it, not put down. The pens it drew on are left as they are, with what
+/// was drawn on them.
 ///
 /// CONTEXT:
 /// - Waits: no.

@@ -35,4 +35,18 @@ void SetCanvasPens(*vector.Canvas canvas, ?[*]graphics.Pen pens, u32 bytes_per_r
 i32 FillPath(*vector.Canvas canvas, *const vector.Path path, ?*const vector.Matrix matrix, *const vector.Paint paint, u32 rule)
 /// The path stroked in its own units, then through the matrix (null: the identity), in the paint.
 i32 StrokePath(*vector.Canvas canvas, *const vector.Path path, ?*const vector.Matrix matrix, *const vector.Paint paint, *const vector.Stroke stroke)
+/// SVG's elliptical arc from the current point to (x, y): the radii, the ellipse's angle in degrees, ARC_LARGE and ARC_SWEEP.
+void ArcTo(*vector.Path path, f32 rx, f32 ry, f32 angle, u32 flags, f32 x, f32 y)
+/// A closed rectangle, its corners rounded rx across and ry down; SVG's rect.
+void AddRect(*vector.Path path, *const vector.Rect rect, f32 rx, f32 ry)
+/// A closed ellipse round (cx, cy); SVG's ellipse.
+void AddEllipse(*vector.Path path, f32 cx, f32 cy, f32 rx, f32 ry)
+/// SVG path data onto the path: VECTORERR_SYNTAX at the first error, the path kept up to it.
+i32 AddPathData(*vector.Path path, [*]const u8 text, u32 length)
+/// The bounds of the path's curves through the matrix (null: the identity); false for an empty path.
+bool PathBounds(*const vector.Path path, ?*const vector.Matrix matrix, *vector.Rect bounds)
+/// What is drawn until PopLayer goes onto a layer of its own, put down at the opacity.
+i32 PushLayer(*vector.Canvas canvas, f32 opacity)
+/// The last layer pushed put down on what is under it.
+void PopLayer(*vector.Canvas canvas)
 ##end
