@@ -5411,3 +5411,513 @@ pub const glslc_dead = [_]u32{
     0x0003003E, 0x00000009, 0x0000001D, 0x0004003D, 0x00000007, 0x00000020,
     0x00000013, 0x0003003E, 0x0000001F, 0x00000020, 0x000100FD, 0x00010038,
 };
+
+/// A storage buffer written at a constant offset and at an index the colour
+/// gives, and read where the program writes it, glslc -O
+/// (`-fshader-stage=frag`), 284 words: two store_ssbos, written through the
+/// TMU's general lookup, a pixel's (ntq_emit_tmu_general,
+/// nir_to_vir.c:502-725), and a load_ssbo the program may have written, read
+/// through the TMU too and not unifa (:3338-3343; since 1.168).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// layout(set = 0, binding = 0) uniform Block { vec4 rows[8]; } block;
+/// layout(set = 0, binding = 1) buffer Written { float count; vec4 last; vec4 rows[]; } written;
+/// void main() {
+///     int i = int(vcolor.x * 1.5);
+///     written.count = 2.0;
+///     written.rows[i] = block.rows[i + 3] * 0.5;
+///     ocolor = vcolor * written.last;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag writes.frag -o writes.spv   # 284 words
+/// spirv-val --target-env vulkan1.0 writes.spv              # no output, and 0
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 52
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %12 %46
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %12 Location 0
+///                OpDecorate %21 ArrayStride 16
+///                OpDecorate %22 BufferBlock
+///                OpMemberDecorate %22 0 Offset 0
+///                OpMemberDecorate %22 1 Offset 16
+///                OpMemberDecorate %22 2 Offset 32
+///                OpDecorate %24 Binding 1
+///                OpDecorate %24 DescriptorSet 0
+///                OpDecorate %32 ArrayStride 16
+///                OpDecorate %33 Block
+///                OpMemberDecorate %33 0 Offset 0
+///                OpDecorate %35 Binding 0
+///                OpDecorate %35 DescriptorSet 0
+///                OpDecorate %46 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeInt 32 1
+///           %9 = OpTypeFloat 32
+///          %10 = OpTypeVector %9 4
+///          %11 = OpTypePointer Input %10
+///          %12 = OpVariable %11 Input
+///          %13 = OpTypeInt 32 0
+///          %14 = OpConstant %13 0
+///          %15 = OpTypePointer Input %9
+///          %18 = OpConstant %9 1.5
+///          %21 = OpTypeRuntimeArray %10
+///          %22 = OpTypeStruct %9 %10 %21
+///          %23 = OpTypePointer Uniform %22
+///          %24 = OpVariable %23 Uniform
+///          %25 = OpConstant %6 0
+///          %26 = OpConstant %9 2
+///          %27 = OpTypePointer Uniform %9
+///          %29 = OpConstant %6 2
+///          %31 = OpConstant %13 8
+///          %32 = OpTypeArray %10 %31
+///          %33 = OpTypeStruct %32
+///          %34 = OpTypePointer Uniform %33
+///          %35 = OpVariable %34 Uniform
+///          %37 = OpConstant %6 3
+///          %39 = OpTypePointer Uniform %10
+///          %42 = OpConstant %9 0.5
+///          %45 = OpTypePointer Output %10
+///          %46 = OpVariable %45 Output
+///          %48 = OpConstant %6 1
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %16 = OpAccessChain %15 %12 %14
+///          %17 = OpLoad %9 %16
+///          %19 = OpFMul %9 %17 %18
+///          %20 = OpConvertFToS %6 %19
+///          %28 = OpAccessChain %27 %24 %25
+///                OpStore %28 %26
+///          %38 = OpIAdd %6 %20 %37
+///          %40 = OpAccessChain %39 %35 %25 %38
+///          %41 = OpLoad %10 %40
+///          %43 = OpVectorTimesScalar %10 %41 %42
+///          %44 = OpAccessChain %39 %24 %29 %20
+///                OpStore %44 %43
+///          %47 = OpLoad %10 %12
+///          %49 = OpAccessChain %39 %24 %48
+///          %50 = OpLoad %10 %49
+///          %51 = OpFMul %10 %47 %50
+///                OpStore %46 %51
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_writes = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000034, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000C, 0x0000002E, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000C, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000015, 0x00000006, 0x00000010, 0x00030047, 0x00000016,
+    0x00000003, 0x00050048, 0x00000016, 0x00000000, 0x00000023, 0x00000000,
+    0x00050048, 0x00000016, 0x00000001, 0x00000023, 0x00000010, 0x00050048,
+    0x00000016, 0x00000002, 0x00000023, 0x00000020, 0x00040047, 0x00000018,
+    0x00000021, 0x00000001, 0x00040047, 0x00000018, 0x00000022, 0x00000000,
+    0x00040047, 0x00000020, 0x00000006, 0x00000010, 0x00030047, 0x00000021,
+    0x00000002, 0x00050048, 0x00000021, 0x00000000, 0x00000023, 0x00000000,
+    0x00040047, 0x00000023, 0x00000021, 0x00000000, 0x00040047, 0x00000023,
+    0x00000022, 0x00000000, 0x00040047, 0x0000002E, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015,
+    0x00000006, 0x00000020, 0x00000001, 0x00030016, 0x00000009, 0x00000020,
+    0x00040017, 0x0000000A, 0x00000009, 0x00000004, 0x00040020, 0x0000000B,
+    0x00000001, 0x0000000A, 0x0004003B, 0x0000000B, 0x0000000C, 0x00000001,
+    0x00040015, 0x0000000D, 0x00000020, 0x00000000, 0x0004002B, 0x0000000D,
+    0x0000000E, 0x00000000, 0x00040020, 0x0000000F, 0x00000001, 0x00000009,
+    0x0004002B, 0x00000009, 0x00000012, 0x3FC00000, 0x0003001D, 0x00000015,
+    0x0000000A, 0x0005001E, 0x00000016, 0x00000009, 0x0000000A, 0x00000015,
+    0x00040020, 0x00000017, 0x00000002, 0x00000016, 0x0004003B, 0x00000017,
+    0x00000018, 0x00000002, 0x0004002B, 0x00000006, 0x00000019, 0x00000000,
+    0x0004002B, 0x00000009, 0x0000001A, 0x40000000, 0x00040020, 0x0000001B,
+    0x00000002, 0x00000009, 0x0004002B, 0x00000006, 0x0000001D, 0x00000002,
+    0x0004002B, 0x0000000D, 0x0000001F, 0x00000008, 0x0004001C, 0x00000020,
+    0x0000000A, 0x0000001F, 0x0003001E, 0x00000021, 0x00000020, 0x00040020,
+    0x00000022, 0x00000002, 0x00000021, 0x0004003B, 0x00000022, 0x00000023,
+    0x00000002, 0x0004002B, 0x00000006, 0x00000025, 0x00000003, 0x00040020,
+    0x00000027, 0x00000002, 0x0000000A, 0x0004002B, 0x00000009, 0x0000002A,
+    0x3F000000, 0x00040020, 0x0000002D, 0x00000003, 0x0000000A, 0x0004003B,
+    0x0000002D, 0x0000002E, 0x00000003, 0x0004002B, 0x00000006, 0x00000030,
+    0x00000001, 0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003,
+    0x000200F8, 0x00000005, 0x00050041, 0x0000000F, 0x00000010, 0x0000000C,
+    0x0000000E, 0x0004003D, 0x00000009, 0x00000011, 0x00000010, 0x00050085,
+    0x00000009, 0x00000013, 0x00000011, 0x00000012, 0x0004006E, 0x00000006,
+    0x00000014, 0x00000013, 0x00050041, 0x0000001B, 0x0000001C, 0x00000018,
+    0x00000019, 0x0003003E, 0x0000001C, 0x0000001A, 0x00050080, 0x00000006,
+    0x00000026, 0x00000014, 0x00000025, 0x00060041, 0x00000027, 0x00000028,
+    0x00000023, 0x00000019, 0x00000026, 0x0004003D, 0x0000000A, 0x00000029,
+    0x00000028, 0x0005008E, 0x0000000A, 0x0000002B, 0x00000029, 0x0000002A,
+    0x00060041, 0x00000027, 0x0000002C, 0x00000018, 0x0000001D, 0x00000014,
+    0x0003003E, 0x0000002C, 0x0000002B, 0x0004003D, 0x0000000A, 0x0000002F,
+    0x0000000C, 0x00050041, 0x00000027, 0x00000031, 0x00000018, 0x00000030,
+    0x0004003D, 0x0000000A, 0x00000032, 0x00000031, 0x00050085, 0x0000000A,
+    0x00000033, 0x0000002F, 0x00000032, 0x0003003E, 0x0000002E, 0x00000033,
+    0x000100FD, 0x00010038,
+};
+
+/// What `glslc_writes` wrote, read from a readonly buffer at an index the
+/// colour gives, glslc -O (`-fshader-stage=frag`), 231 words: NonWritable on
+/// the variable and on each member, so its loads are ACCESS_NON_WRITEABLE
+/// (nir_opt_access.c), and the program, which writes no buffer, still reads
+/// its count through unifa (since 1.168).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// layout(set = 0, binding = 1) readonly buffer Written { float count; vec4 last; vec4 rows[]; } written;
+/// void main() {
+///     int i = int(vcolor.x * 1.5);
+///     ocolor = written.rows[i] * written.count + vcolor * 0.25;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag reads.frag -o reads.spv   # 231 words
+/// spirv-val --target-env vulkan1.0 reads.spv             # no output, and 0
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 41
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %12 %22
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %12 Location 0
+///                OpDecorate %22 Location 0
+///                OpDecorate %23 ArrayStride 16
+///                OpDecorate %24 BufferBlock
+///                OpMemberDecorate %24 0 NonWritable
+///                OpMemberDecorate %24 0 Offset 0
+///                OpMemberDecorate %24 1 NonWritable
+///                OpMemberDecorate %24 1 Offset 16
+///                OpMemberDecorate %24 2 NonWritable
+///                OpMemberDecorate %24 2 Offset 32
+///                OpDecorate %26 NonWritable
+///                OpDecorate %26 Binding 1
+///                OpDecorate %26 DescriptorSet 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeInt 32 1
+///           %9 = OpTypeFloat 32
+///          %10 = OpTypeVector %9 4
+///          %11 = OpTypePointer Input %10
+///          %12 = OpVariable %11 Input
+///          %13 = OpTypeInt 32 0
+///          %14 = OpConstant %13 0
+///          %15 = OpTypePointer Input %9
+///          %18 = OpConstant %9 1.5
+///          %21 = OpTypePointer Output %10
+///          %22 = OpVariable %21 Output
+///          %23 = OpTypeRuntimeArray %10
+///          %24 = OpTypeStruct %9 %10 %23
+///          %25 = OpTypePointer Uniform %24
+///          %26 = OpVariable %25 Uniform
+///          %27 = OpConstant %6 2
+///          %29 = OpTypePointer Uniform %10
+///          %32 = OpConstant %6 0
+///          %33 = OpTypePointer Uniform %9
+///          %38 = OpConstant %9 0.25
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %16 = OpAccessChain %15 %12 %14
+///          %17 = OpLoad %9 %16
+///          %19 = OpFMul %9 %17 %18
+///          %20 = OpConvertFToS %6 %19
+///          %30 = OpAccessChain %29 %26 %27 %20
+///          %31 = OpLoad %10 %30
+///          %34 = OpAccessChain %33 %26 %32
+///          %35 = OpLoad %9 %34
+///          %36 = OpVectorTimesScalar %10 %31 %35
+///          %37 = OpLoad %10 %12
+///          %39 = OpVectorTimesScalar %10 %37 %38
+///          %40 = OpFAdd %10 %36 %39
+///                OpStore %22 %40
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_reads = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000029, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000C, 0x00000016, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000C, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000016, 0x0000001E, 0x00000000, 0x00040047, 0x00000017,
+    0x00000006, 0x00000010, 0x00030047, 0x00000018, 0x00000003, 0x00040048,
+    0x00000018, 0x00000000, 0x00000018, 0x00050048, 0x00000018, 0x00000000,
+    0x00000023, 0x00000000, 0x00040048, 0x00000018, 0x00000001, 0x00000018,
+    0x00050048, 0x00000018, 0x00000001, 0x00000023, 0x00000010, 0x00040048,
+    0x00000018, 0x00000002, 0x00000018, 0x00050048, 0x00000018, 0x00000002,
+    0x00000023, 0x00000020, 0x00030047, 0x0000001A, 0x00000018, 0x00040047,
+    0x0000001A, 0x00000021, 0x00000001, 0x00040047, 0x0000001A, 0x00000022,
+    0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00040015, 0x00000006, 0x00000020, 0x00000001, 0x00030016, 0x00000009,
+    0x00000020, 0x00040017, 0x0000000A, 0x00000009, 0x00000004, 0x00040020,
+    0x0000000B, 0x00000001, 0x0000000A, 0x0004003B, 0x0000000B, 0x0000000C,
+    0x00000001, 0x00040015, 0x0000000D, 0x00000020, 0x00000000, 0x0004002B,
+    0x0000000D, 0x0000000E, 0x00000000, 0x00040020, 0x0000000F, 0x00000001,
+    0x00000009, 0x0004002B, 0x00000009, 0x00000012, 0x3FC00000, 0x00040020,
+    0x00000015, 0x00000003, 0x0000000A, 0x0004003B, 0x00000015, 0x00000016,
+    0x00000003, 0x0003001D, 0x00000017, 0x0000000A, 0x0005001E, 0x00000018,
+    0x00000009, 0x0000000A, 0x00000017, 0x00040020, 0x00000019, 0x00000002,
+    0x00000018, 0x0004003B, 0x00000019, 0x0000001A, 0x00000002, 0x0004002B,
+    0x00000006, 0x0000001B, 0x00000002, 0x00040020, 0x0000001D, 0x00000002,
+    0x0000000A, 0x0004002B, 0x00000006, 0x00000020, 0x00000000, 0x00040020,
+    0x00000021, 0x00000002, 0x00000009, 0x0004002B, 0x00000009, 0x00000026,
+    0x3E800000, 0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003,
+    0x000200F8, 0x00000005, 0x00050041, 0x0000000F, 0x00000010, 0x0000000C,
+    0x0000000E, 0x0004003D, 0x00000009, 0x00000011, 0x00000010, 0x00050085,
+    0x00000009, 0x00000013, 0x00000011, 0x00000012, 0x0004006E, 0x00000006,
+    0x00000014, 0x00000013, 0x00060041, 0x0000001D, 0x0000001E, 0x0000001A,
+    0x0000001B, 0x00000014, 0x0004003D, 0x0000000A, 0x0000001F, 0x0000001E,
+    0x00050041, 0x00000021, 0x00000022, 0x0000001A, 0x00000020, 0x0004003D,
+    0x00000009, 0x00000023, 0x00000022, 0x0005008E, 0x0000000A, 0x00000024,
+    0x0000001F, 0x00000023, 0x0004003D, 0x0000000A, 0x00000025, 0x0000000C,
+    0x0005008E, 0x0000000A, 0x00000027, 0x00000025, 0x00000026, 0x00050081,
+    0x0000000A, 0x00000028, 0x00000024, 0x00000027, 0x0003003E, 0x00000016,
+    0x00000028, 0x000100FD, 0x00010038,
+};
+
+/// A storage buffer written at an index the colour gives, with a value read
+/// from a member of it that is readonly, glslc -O (`-fshader-stage=frag`),
+/// 223 words: the member's NonWritable makes its load ACCESS_NON_WRITEABLE
+/// though the program writes the buffer (nir_opt_access.c), and it is read
+/// through unifa; the member that is not, through the TMU (since 1.168).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// layout(set = 0, binding = 1) buffer Written { readonly float count; vec4 last; vec4 rows[]; } written;
+/// void main() {
+///     int i = int(vcolor.x * 1.5);
+///     written.rows[i] = vcolor * written.count;
+///     ocolor = vcolor * written.last;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag member.frag -o member.spv   # 223 words
+/// spirv-val --target-env vulkan1.0 member.spv              # no output, and 0
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 42
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %12 %36
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %12 Location 0
+///                OpDecorate %21 ArrayStride 16
+///                OpDecorate %22 BufferBlock
+///                OpMemberDecorate %22 0 NonWritable
+///                OpMemberDecorate %22 0 Offset 0
+///                OpMemberDecorate %22 1 Offset 16
+///                OpMemberDecorate %22 2 Offset 32
+///                OpDecorate %24 Binding 1
+///                OpDecorate %24 DescriptorSet 0
+///                OpDecorate %36 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeInt 32 1
+///           %9 = OpTypeFloat 32
+///          %10 = OpTypeVector %9 4
+///          %11 = OpTypePointer Input %10
+///          %12 = OpVariable %11 Input
+///          %13 = OpTypeInt 32 0
+///          %14 = OpConstant %13 0
+///          %15 = OpTypePointer Input %9
+///          %18 = OpConstant %9 1.5
+///          %21 = OpTypeRuntimeArray %10
+///          %22 = OpTypeStruct %9 %10 %21
+///          %23 = OpTypePointer Uniform %22
+///          %24 = OpVariable %23 Uniform
+///          %25 = OpConstant %6 2
+///          %28 = OpConstant %6 0
+///          %29 = OpTypePointer Uniform %9
+///          %33 = OpTypePointer Uniform %10
+///          %35 = OpTypePointer Output %10
+///          %36 = OpVariable %35 Output
+///          %38 = OpConstant %6 1
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %16 = OpAccessChain %15 %12 %14
+///          %17 = OpLoad %9 %16
+///          %19 = OpFMul %9 %17 %18
+///          %20 = OpConvertFToS %6 %19
+///          %27 = OpLoad %10 %12
+///          %30 = OpAccessChain %29 %24 %28
+///          %31 = OpLoad %9 %30
+///          %32 = OpVectorTimesScalar %10 %27 %31
+///          %34 = OpAccessChain %33 %24 %25 %20
+///                OpStore %34 %32
+///          %39 = OpAccessChain %33 %24 %38
+///          %40 = OpLoad %10 %39
+///          %41 = OpFMul %10 %27 %40
+///                OpStore %36 %41
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_member = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000002A, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000C, 0x00000024, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000C, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000015, 0x00000006, 0x00000010, 0x00030047, 0x00000016,
+    0x00000003, 0x00040048, 0x00000016, 0x00000000, 0x00000018, 0x00050048,
+    0x00000016, 0x00000000, 0x00000023, 0x00000000, 0x00050048, 0x00000016,
+    0x00000001, 0x00000023, 0x00000010, 0x00050048, 0x00000016, 0x00000002,
+    0x00000023, 0x00000020, 0x00040047, 0x00000018, 0x00000021, 0x00000001,
+    0x00040047, 0x00000018, 0x00000022, 0x00000000, 0x00040047, 0x00000024,
+    0x0000001E, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00040015, 0x00000006, 0x00000020, 0x00000001, 0x00030016,
+    0x00000009, 0x00000020, 0x00040017, 0x0000000A, 0x00000009, 0x00000004,
+    0x00040020, 0x0000000B, 0x00000001, 0x0000000A, 0x0004003B, 0x0000000B,
+    0x0000000C, 0x00000001, 0x00040015, 0x0000000D, 0x00000020, 0x00000000,
+    0x0004002B, 0x0000000D, 0x0000000E, 0x00000000, 0x00040020, 0x0000000F,
+    0x00000001, 0x00000009, 0x0004002B, 0x00000009, 0x00000012, 0x3FC00000,
+    0x0003001D, 0x00000015, 0x0000000A, 0x0005001E, 0x00000016, 0x00000009,
+    0x0000000A, 0x00000015, 0x00040020, 0x00000017, 0x00000002, 0x00000016,
+    0x0004003B, 0x00000017, 0x00000018, 0x00000002, 0x0004002B, 0x00000006,
+    0x00000019, 0x00000002, 0x0004002B, 0x00000006, 0x0000001C, 0x00000000,
+    0x00040020, 0x0000001D, 0x00000002, 0x00000009, 0x00040020, 0x00000021,
+    0x00000002, 0x0000000A, 0x00040020, 0x00000023, 0x00000003, 0x0000000A,
+    0x0004003B, 0x00000023, 0x00000024, 0x00000003, 0x0004002B, 0x00000006,
+    0x00000026, 0x00000001, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x00050041, 0x0000000F, 0x00000010,
+    0x0000000C, 0x0000000E, 0x0004003D, 0x00000009, 0x00000011, 0x00000010,
+    0x00050085, 0x00000009, 0x00000013, 0x00000011, 0x00000012, 0x0004006E,
+    0x00000006, 0x00000014, 0x00000013, 0x0004003D, 0x0000000A, 0x0000001B,
+    0x0000000C, 0x00050041, 0x0000001D, 0x0000001E, 0x00000018, 0x0000001C,
+    0x0004003D, 0x00000009, 0x0000001F, 0x0000001E, 0x0005008E, 0x0000000A,
+    0x00000020, 0x0000001B, 0x0000001F, 0x00060041, 0x00000021, 0x00000022,
+    0x00000018, 0x00000019, 0x00000014, 0x0003003E, 0x00000022, 0x00000020,
+    0x00050041, 0x00000021, 0x00000027, 0x00000018, 0x00000026, 0x0004003D,
+    0x0000000A, 0x00000028, 0x00000027, 0x00050085, 0x0000000A, 0x00000029,
+    0x0000001B, 0x00000028, 0x0003003E, 0x00000024, 0x00000029, 0x000100FD,
+    0x00010038,
+};
+
+/// A vertex shader that writes a storage buffer, glslc -O
+/// (`-fshader-stage=vert`), 172 words: refused, for a vertex program runs
+/// twice, as the coordinate shader too, and its stores with it (since
+/// 1.168).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 position;
+/// layout(set = 0, binding = 1) buffer Written { float count; } written;
+/// void main() {
+///     written.count = 2.0;
+///     gl_Position = position;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=vert vstore.vert -o vstore.spv   # 172 words
+/// spirv-val --target-env vulkan1.0 vstore.spv              # no output, and 0
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 27
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Vertex %4 "main" %21 %23
+///                OpDecorate %7 BufferBlock
+///                OpMemberDecorate %7 0 Offset 0
+///                OpDecorate %9 Binding 1
+///                OpDecorate %9 DescriptorSet 0
+///                OpDecorate %19 Block
+///                OpMemberDecorate %19 0 BuiltIn Position
+///                OpMemberDecorate %19 1 BuiltIn PointSize
+///                OpMemberDecorate %19 2 BuiltIn ClipDistance
+///                OpMemberDecorate %19 3 BuiltIn CullDistance
+///                OpDecorate %23 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeStruct %6
+///           %8 = OpTypePointer Uniform %7
+///           %9 = OpVariable %8 Uniform
+///          %10 = OpTypeInt 32 1
+///          %11 = OpConstant %10 0
+///          %12 = OpConstant %6 2
+///          %13 = OpTypePointer Uniform %6
+///          %15 = OpTypeVector %6 4
+///          %16 = OpTypeInt 32 0
+///          %17 = OpConstant %16 1
+///          %18 = OpTypeArray %6 %17
+///          %19 = OpTypeStruct %15 %6 %18 %18
+///          %20 = OpTypePointer Output %19
+///          %21 = OpVariable %20 Output
+///          %22 = OpTypePointer Input %15
+///          %23 = OpVariable %22 Input
+///          %25 = OpTypePointer Output %15
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpAccessChain %13 %9 %11
+///                OpStore %14 %12
+///          %24 = OpLoad %15 %23
+///          %26 = OpAccessChain %25 %21 %11
+///                OpStore %26 %24
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_vertex_store = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001B, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000000,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000015, 0x00000017, 0x00030047,
+    0x00000007, 0x00000003, 0x00050048, 0x00000007, 0x00000000, 0x00000023,
+    0x00000000, 0x00040047, 0x00000009, 0x00000021, 0x00000001, 0x00040047,
+    0x00000009, 0x00000022, 0x00000000, 0x00030047, 0x00000013, 0x00000002,
+    0x00050048, 0x00000013, 0x00000000, 0x0000000B, 0x00000000, 0x00050048,
+    0x00000013, 0x00000001, 0x0000000B, 0x00000001, 0x00050048, 0x00000013,
+    0x00000002, 0x0000000B, 0x00000003, 0x00050048, 0x00000013, 0x00000003,
+    0x0000000B, 0x00000004, 0x00040047, 0x00000017, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x0003001E, 0x00000007, 0x00000006, 0x00040020,
+    0x00000008, 0x00000002, 0x00000007, 0x0004003B, 0x00000008, 0x00000009,
+    0x00000002, 0x00040015, 0x0000000A, 0x00000020, 0x00000001, 0x0004002B,
+    0x0000000A, 0x0000000B, 0x00000000, 0x0004002B, 0x00000006, 0x0000000C,
+    0x40000000, 0x00040020, 0x0000000D, 0x00000002, 0x00000006, 0x00040017,
+    0x0000000F, 0x00000006, 0x00000004, 0x00040015, 0x00000010, 0x00000020,
+    0x00000000, 0x0004002B, 0x00000010, 0x00000011, 0x00000001, 0x0004001C,
+    0x00000012, 0x00000006, 0x00000011, 0x0006001E, 0x00000013, 0x0000000F,
+    0x00000006, 0x00000012, 0x00000012, 0x00040020, 0x00000014, 0x00000003,
+    0x00000013, 0x0004003B, 0x00000014, 0x00000015, 0x00000003, 0x00040020,
+    0x00000016, 0x00000001, 0x0000000F, 0x0004003B, 0x00000016, 0x00000017,
+    0x00000001, 0x00040020, 0x00000019, 0x00000003, 0x0000000F, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x00050041, 0x0000000D, 0x0000000E, 0x00000009, 0x0000000B, 0x0003003E,
+    0x0000000E, 0x0000000C, 0x0004003D, 0x0000000F, 0x00000018, 0x00000017,
+    0x00050041, 0x00000019, 0x0000001A, 0x00000015, 0x0000000B, 0x0003003E,
+    0x0000001A, 0x00000018, 0x000100FD, 0x00010038,
+};

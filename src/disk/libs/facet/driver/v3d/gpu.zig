@@ -136,6 +136,16 @@ pub const Gpu = struct {
         return false;
     }
 
+    /// Whether `mask` of a core register went clear in time (since
+    /// 1.168).
+    pub fn waitCoreClear(gpu: *const Gpu, offset: usize, mask: u32, wait_us: u64) bool {
+        const until = hardware.systimer.uptimeUs() + wait_us;
+        while (hardware.systimer.uptimeUs() < until) {
+            if (gpu.coreRead(offset) & mask == 0) return true;
+        }
+        return false;
+    }
+
     /// The word in the power manager its reset is in: safe at any time.
     pub fn resetWord(gpu: *const Gpu) u32 {
         return reg(gpu.power_manager + regs.PM_GRAFX).*;

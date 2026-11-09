@@ -2233,6 +2233,17 @@ Not ported: a load whose offset differs in non-uniform control flow (:456-459, :
 
 glslc_divergent is 19 instructions, one TMUAU write of 0xFFFFFFFC and four LDTMUs. glslc_quad's coordinate lookup is a quad's (0xFFFFFF7A), its scale's a pixel's through TMUA, and its sample's P1 has the mask; glslc_steady's sample, at a coordinate the same in every lane, keeps its helper pixels; glslc_dead, at -O0, is the interpolated colour's program word for word. On the CM5, FacetBoth 1.35's case of block reads at offsets that differ from pixel to pixel, a uniform buffer's row and a storage buffer's triple's member at an index the red gives and its scale at one the alpha gives, is 8 pixels of 230,400 apart, the triangle's edge alone; the other 229 cases are unchanged, the textured ones with the mask among them, and FacetProbe is 890 of 890.
 
+**Then storage buffer writes**, facet.library 1.168. A fragment program's store into a storage buffer is a store_ssbo, which v3d writes through the TMU's general lookup (ntq_emit_tmu_general, nir_to_vir.c:502-725), and so does the port.
+
+- **The store.** Each float goes into TMUD (emit_tmu_general_store_writes, :346-392), counted with the address's write before any is emitted, and the address into TMUA or TMUAU. A store's lookup is always a pixel's, so a helper pixel writes nothing (:650-670); a TMUWT is owed instead of LDTMUs, and the program's tmu_dirty_rcl is set (:532-533).
+- **Loads beside it.** A load of a buffer the program may write goes through the TMU, not unifa, which would not see the writes (ntq_emit_load_unifa, :3338-3343). Only a load that nir_opt_access makes ACCESS_NON_WRITEABLE still goes through unifa: one of a NonWritable variable or member, or any load where the program writes no buffer. A load at a constant offset that goes through the TMU is a quad's lookup, for a load the same in every lane keeps its helper pixels. Loads that may be written are never merged into one.
+- **Early Z.** A program that names a storage buffer no longer has its early fragment tests promoted (info.num_ssbos, :2074). It writes the rasterizer's Z through TLBU. From 1.164 to 1.167 every such program had been promoted.
+- **The job.** When any of a job's programs wrote, the caches are cleaned after it, as Linux's CACHE_CLEAN job does (v3d_clean_caches, v3d_gem.c:215-248): TMUWCF, then L2TFLS in clean mode. The memory is HOST_COHERENT, so the storage buffers the job bound are also dropped from the CPU's caches.
+
+Refused: a store in a vertex program, which runs twice, as the coordinate shader too; a store into a uniform buffer, the push constants or a NonWritable member; a store of a matrix. fragmentStoresAndAtomics stays unadvertised until the atomics are ported, since the one feature names both.
+
+glslc_writes is 34 instructions: five TMUD writes, a TMUA and three TMUAU, two TMUWTs and eight LDTMUs. glslc_reads reads its count through unifa and its row through the TMU, and leaves nothing dirty. In glslc_member, a readonly member is read through unifa beside the stores. glslc_vertex_store is refused. On the CM5, FacetBoth 1.36's case of stores is 8 pixels of 230,400 apart, the triangle's edge alone. Its first pass writes a storage buffer's count and the rows the red picks, and its second reads them back. The other 230 cases are unchanged, the storage buffers' among them, now with Z written, and FacetProbe is 890 of 890.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim
