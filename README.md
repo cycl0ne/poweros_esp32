@@ -1030,7 +1030,7 @@ board's firmware starts from either of a pair - and a PowerOS container
 over the rest with the system and a work partition on posfs in it; gives
 each an empty volume; copies the files, from `SYS:` and `SYS:Storage/Boot`
 or from a package, checking each one against the sum its list gives; and
-leaves `SYS:System/manifest` and `ENVARC:Sys/install.prefs` behind, which
+leaves `SYS:Storage/installed.manifest` and `ENVARC:Sys/install.prefs` behind, which
 say what was installed and from where. The
 [install guide](sdk/docs/guides/install.md) has each keyword, both
 sources, the package's list and what each board's firmware reads. The

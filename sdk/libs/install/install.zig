@@ -45,8 +45,9 @@ pub const half_names = [2][]const u8{ "system", "boot" };
 pub const package_manifest = "manifest";
 
 /// The list a machine keeps of what it was given, which an update
-/// compares against.
-pub const installed_manifest = "SYS:System/manifest";
+/// compares against. It lies beside `boot_manifest`, under its own name:
+/// that one covers the boot half alone.
+pub const installed_manifest = "SYS:Storage/installed.manifest";
 
 /// Where a machine keeps its own copy of the boot half: `SYS:Storage` is
 /// a package of which only that half is there, so the drawer under it is

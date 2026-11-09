@@ -5,7 +5,7 @@
 //! `sdk.update`.
 //!
 //! **Three things are compared, not two**: the list the machine was given
-//! (`SYS:System/manifest`), the list in the package, and the file itself.
+//! (`SYS:Storage/installed.manifest`), the list in the package, and the file itself.
 //!
 //!     installed  file      package   what happens
 //!     =          there     =         nothing; the file is not read

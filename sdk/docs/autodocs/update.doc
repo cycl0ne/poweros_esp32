@@ -220,7 +220,7 @@ update.library/GetUpdateInfo
 	  stopped with Ctrl-C between two files.
 	- `RETURN_FAIL`: it could not finish. Ctrl-C in the middle of a file
 	  read from an address is said as the break it was; anything else is
-	  said as a failure - no `SYS:System/manifest`, the package or its list
+	  said as a failure - no `SYS:Storage/installed.manifest`, the package or its list
 	  not to be read or not sound, a package for another chip or (without
 	  `UPD_Force`) another board, a file that did not arrive whole, a
 	  volume that took no write; with `UPD_Boot`, the firmware's partition
@@ -233,6 +233,11 @@ update.library/GetUpdateInfo
 	where the two disagree. For each path that something happens to, a row
 	is said: `new`, `newer`, `again`, `kept`, `gone`, `drawer`, then
 	`list` once the package's list is the machine's own.
+
+	The machine's list is read from `SYS:Storage/installed.manifest`, or,
+	where a system was installed with it at `SYS:System/manifest`, from
+	there: a run that is not a check then writes it to its own place even
+	with nothing else to do, says `list` for it, and deletes the old one.
 
 	### Written
 	Each file is fetched to a name of its own on its volume, held against

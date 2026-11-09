@@ -54,7 +54,7 @@
 //! board is refused, since such a kernel starts with no console; FORCE
 //! installs it all the same.
 //!
-//! It leaves `SYS:System/manifest` on the new volume - the list an update
+//! It leaves `SYS:Storage/installed.manifest` on the new volume - the list an update
 //! compares against - and `ENVARC:Sys/install.prefs`, which says what was
 //! installed where and from where. RESTART starts the machine again at
 //! the end, every drive of a block device held still first so that what
@@ -85,7 +85,7 @@ const files = @import("files.zig");
 const Run = shared.Run;
 
 pub const COMMAND_NAME = shared.COMMAND_NAME;
-const VERSION_STRING = "\x00$VER: Install 1.3 (05.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Install 1.4 (09.11.2026)\r\n";
 
 /// rdb.library is opened at version 1 and its revision asked after: the
 /// GPT calls came with 1.4 and a FAT partition of a GPT, which the boot

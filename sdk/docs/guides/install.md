@@ -211,7 +211,7 @@ machine therefore installs a medium with no network and nothing else at
 hand - the one it is running from, a card for another machine, a system
 onto an SSD from the image in RAM. Two files are not copied, since they
 describe the machine doing the copying and not the files: the list in
-`SYS:System/manifest` and `ENVARC:Sys/install.prefs`. Each file's
+`SYS:Storage/installed.manifest` and `ENVARC:Sys/install.prefs`. Each file's
 protection bits, date and comment go with it, and the drawers are made in
 the order the names sort in.
 
@@ -274,9 +274,10 @@ every board's archive and package at once; both write into `release/`.
 
 ## What it writes down about itself
 
-On the new system volume, `SYS:System/manifest` - the list of what it was
-given, which an update compares against - and `ENVARC:Sys/install.prefs`,
-one line:
+On the new system volume, `SYS:Storage/installed.manifest` - the list of
+what it was given, which an update compares against, beside
+`SYS:Storage/manifest`, which covers only the boot half - and
+`ENVARC:Sys/install.prefs`, one line:
 
 ```
 DEVICE=nvme.device UNIT=0 SYSTEM=DH0 WORK=DH1 BOOT=BOOT BOOTB=BOOTB
@@ -384,7 +385,8 @@ the reason said - Ctrl-C in the middle of a file read from an address is
 one, said as the break it was.
 
 Three things are compared, not two - the list the machine was given
-(`SYS:System/manifest`), the list in the package, and the file itself:
+(`SYS:Storage/installed.manifest`), the list in the package, and the file
+itself:
 
 | installed | file | package | what happens |
 |---|---|---|---|
@@ -404,6 +406,11 @@ update costs one name a path for everything the build left as it was -
 over a 50 MB package that differs in two files, 4.7 KB is fetched - and
 a file that went missing comes back.
 
+A system whose list is in `SYS:System/manifest` has it read from there.
+The first run that is not a check writes it to
+`SYS:Storage/installed.manifest` - as it was, when nothing else is to be
+done - says `list` for it, and deletes the old one.
+
 A line is said for every path something happens to, the first word
 saying what: `new` for one the build has begun to ship, `newer` for one
 it changed, `again` for one that was not there, `kept` for one changed on
@@ -417,7 +424,7 @@ file written into it, `same` for one already right and `tried` for
   new     SYS:c/Mixer
   gone    SYS:programs/Docs/Battery.md
   kept    SYS:s/startup-sequence
-  list    SYS:System/manifest
+  list    SYS:Storage/installed.manifest
 Done: 1 written (39), 1 deleted, 1 kept as they are, 0 drawers made.
 What is kept was changed on this machine; FORCE takes the package's own.
 ```

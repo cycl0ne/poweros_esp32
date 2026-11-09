@@ -22,7 +22,7 @@
 //! which is where the system came from.
 //!
 //! Three things are compared, not two: the list the machine was given
-//! (`SYS:System/manifest`), the list in the package, and the file
+//! (`SYS:Storage/installed.manifest`), the list in the package, and the file
 //! itself.
 //!
 //!     installed  file      package   what happens

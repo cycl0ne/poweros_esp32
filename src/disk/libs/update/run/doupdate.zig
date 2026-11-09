@@ -40,7 +40,7 @@ const _boot = @import("../boot/_boot.zig");
 ///   stopped with Ctrl-C between two files.
 /// - `RETURN_FAIL`: it could not finish. Ctrl-C in the middle of a file
 ///   read from an address is said as the break it was; anything else is
-///   said as a failure - no `SYS:System/manifest`, the package or its list
+///   said as a failure - no `SYS:Storage/installed.manifest`, the package or its list
 ///   not to be read or not sound, a package for another chip or (without
 ///   `UPD_Force`) another board, a file that did not arrive whole, a
 ///   volume that took no write; with `UPD_Boot`, the firmware's partition
@@ -53,6 +53,11 @@ const _boot = @import("../boot/_boot.zig");
 /// where the two disagree. For each path that something happens to, a row
 /// is said: `new`, `newer`, `again`, `kept`, `gone`, `drawer`, then
 /// `list` once the package's list is the machine's own.
+///
+/// The machine's list is read from `SYS:Storage/installed.manifest`, or,
+/// where a system was installed with it at `SYS:System/manifest`, from
+/// there: a run that is not a check then writes it to its own place even
+/// with nothing else to do, says `list` for it, and deletes the old one.
 ///
 /// ### Written
 /// Each file is fetched to a name of its own on its volume, held against
@@ -112,8 +117,14 @@ pub fn DoUpdate(base: *UpdateBase, run: *Run, tags: ?[*]const utility.TagItem) i
 fn walk(run: *Run, settings: *const prefs.install.Settings) i32 {
     const sys = run.sys;
 
-    const mine = prefs.loadWhole(sys, run.dl, install.installed_manifest) orelse {
-        return _run.fail(run, "%s is not there: this system was not installed from a list, and there is nothing to compare against. C:Install leaves one\n", .{install.installed_manifest});
+    // The list where the machine keeps it, or where a system installed
+    // with it elsewhere has it: `_system.walk` moves that one.
+    var former = false;
+    const mine = prefs.loadWhole(sys, run.dl, install.installed_manifest) orelse found: {
+        former = true;
+        break :found prefs.loadWhole(sys, run.dl, _system.former_list) orelse {
+            return _run.fail(run, "%s is not there: this system was not installed from a list, and there is nothing to compare against. C:Install leaves one\n", .{install.installed_manifest});
+        };
     };
     defer sys.FreeVec(@ptrCast(mine.ptr));
 
@@ -146,7 +157,7 @@ fn walk(run: *Run, settings: *const prefs.install.Settings) i32 {
     update.bytesAsText(&size, run.bytes);
     _run.say(run, "%s: %d files, %s\n", .{ run.from, run.files, @as([*:0]const u8, @ptrCast(&size)) });
 
-    var code = _system.walk(run, mine, theirs);
+    var code = _system.walk(run, mine, theirs, former);
     if (code == dos.RETURN_FAIL) return code;
 
     // What the firmware reads goes last: a system whose files are all

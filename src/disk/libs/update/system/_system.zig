@@ -27,11 +27,16 @@ const Name = shared.Name;
 /// Where the system half's files are.
 const volume = "SYS:";
 
+/// Where a system installed with its list outside `SYS:Storage` has it:
+/// read when `install.installed_manifest` is not there, and moved.
+pub const former_list = "SYS:System/manifest";
+
 /// Both lists walked, and the package's left as the machine's own where
-/// anything was written. The return code: 0 for nothing to do, 5 where
-/// something is to be done and `UPD_Check` only said so, 20 for a run that
-/// could not finish.
-pub fn walk(run: *Run, installed: []const u8, fresh: []const u8) i32 {
+/// anything was written; `former` says the machine's was read from
+/// `former_list`, so that it is moved whatever else happens. The return
+/// code: 0 for nothing to do, 5 where something is to be done and
+/// `UPD_Check` only said so, 20 for a run that could not finish.
+pub fn walk(run: *Run, installed: []const u8, fresh: []const u8, former: bool) i32 {
     var mine = manifest.Reader.init(installed) catch |err| {
         return shared.fail(run, "%s: %s\n", .{ install.installed_manifest, manifest.why(err) });
     };
@@ -65,7 +70,7 @@ pub fn walk(run: *Run, installed: []const u8, fresh: []const u8) i32 {
 
     const code = remove(run, &gone);
     if (code != dos.RETURN_OK) return code;
-    return saveList(run, fresh);
+    return saveList(run, installed, fresh, former);
 }
 
 /// What is to happen to one path, and the doing of it.
@@ -188,13 +193,22 @@ fn remove(run: *Run, gone: *shared.Buffer) i32 {
 /// compares against. It is written last: a run that ends before this
 /// looks like one that never happened, and every file it did write is
 /// already what the package says, so the next run passes over it.
-fn saveList(run: *Run, fresh: []const u8) i32 {
+///
+/// A list read from `former_list` is written to its own place even when
+/// nothing else changed - then as it was read, since the package's would
+/// make a file changed here look like the package's to the next run - and
+/// the old one is deleted after it, so there is always one to read.
+fn saveList(run: *Run, installed: []const u8, fresh: []const u8, former: bool) i32 {
     if (run.check) return if (changed(run)) dos.RETURN_WARN else dos.RETURN_OK;
-    if (!changed(run)) return dos.RETURN_OK;
-    if (!prefs.save(run.dl, install.installed_manifest, fresh)) {
+    const list = if (changed(run)) fresh else if (former) installed else return dos.RETURN_OK;
+    if (!prefs.save(run.dl, install.installed_manifest, list)) {
         return shared.failed(run, install.installed_manifest, run.dl.IoErr());
     }
     shared.row(run, "list", install.installed_manifest, 0);
+    if (former and !run.dl.DeleteFile(former_list)) {
+        const code = run.dl.IoErr();
+        if (code != dos.ERROR_OBJECT_NOT_FOUND) shared.fault(run, code, former_list, false);
+    }
     return dos.RETURN_OK;
 }
 

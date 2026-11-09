@@ -41,8 +41,8 @@ const Disk = struct {
 var lent: [512 * 1024]u8 align(16) = undefined;
 
 /// exec, utility and dos with memory lent; a process with WORK: behind
-/// it, SYS: assigned to WORK:Sys with `C` and `System` in it; the
-/// library made and opened.
+/// it, SYS: assigned to WORK:Sys with `C`, `System` and `Storage` in it;
+/// the library made and opened.
 const Rig = struct {
     db: *host.dos.DosBase,
     region: *exec.MemHeader = undefined,
@@ -68,7 +68,7 @@ const Rig = struct {
         node.task = &Disk.port;
         try testing.expect(dl.AddDosEntry(node));
         rig.proc.pkt_wait = &Disk.wait;
-        for ([_][*:0]const u8{ "WORK:Sys", "WORK:Sys/C", "WORK:Sys/System", "WORK:Package", "WORK:Package/system", "WORK:Package/system/C" }) |name| {
+        for ([_][*:0]const u8{ "WORK:Sys", "WORK:Sys/C", "WORK:Sys/System", "WORK:Sys/Storage", "WORK:Package", "WORK:Package/system", "WORK:Package/system/C" }) |name| {
             dl.UnLock(dl.CreateDir(name) orelse return error.NoDir);
         }
         try testing.expect(dl.AssignLock("SYS", dl.Lock("WORK:Sys", dos.SHARED_LOCK)));
@@ -193,12 +193,17 @@ const old_tool = "the tool as it was installed\n";
 const new_tool = "the tool as the build has it now, longer\n";
 const fresh_tool = "a tool the build has begun to ship\n";
 
-/// The machine as it was installed: SYS:C/Tool and its list; the package:
-/// Tool changed, New added.
-fn installed(rig: *Rig) !void {
+/// Where the machine keeps its list, and where a system installed with it
+/// elsewhere has it.
+const kept_list = "SYS:Storage/installed.manifest";
+const former_list = "SYS:System/manifest";
+
+/// The machine as it was installed: SYS:C/Tool and its list, at `list_at`;
+/// the package: Tool changed, New added.
+fn installed(rig: *Rig, list_at: [*:0]const u8) !void {
     var text: [1024]u8 = undefined;
     try rig.write("SYS:C/Tool", old_tool);
-    try rig.write("SYS:System/manifest", listOf(&.{.{ .path = "system/C/Tool", .bytes = old_tool }}, &text));
+    try rig.write(list_at, listOf(&.{.{ .path = "system/C/Tool", .bytes = old_tool }}, &text));
     try rig.write("WORK:Package/system/C/New", fresh_tool);
     try rig.write("WORK:Package/system/C/Tool", new_tool);
     try rig.write("WORK:Package/manifest", listOf(&.{
@@ -211,7 +216,7 @@ test "a run checked, then done: what it would write said, then written, and the 
     var rig: Rig = undefined;
     try rig.init();
     defer rig.deinit() catch unreachable;
-    try installed(&rig);
+    try installed(&rig, kept_list);
     const upd = rig.upd;
 
     var heard: Heard = .{};
@@ -238,14 +243,14 @@ test "a run checked, then done: what it would write said, then written, and the 
 
     heard = .{};
     try testing.expectEqual(dos.RETURN_OK, upd.DoUpdate(run, null));
-    try testing.expectEqualStrings("new SYS:C/New\nnewer SYS:C/Tool\nlist SYS:System/manifest\n", heard.rowsSaid());
+    try testing.expectEqualStrings("new SYS:C/New\nnewer SYS:C/Tool\nlist SYS:Storage/installed.manifest\n", heard.rowsSaid());
     try testing.expectEqual(@as(u32, 2), heard.wrote);
     try testing.expectEqual(@as(u64, fresh_tool.len + new_tool.len), heard.wrote_bytes);
     try testing.expectEqualStrings(new_tool, try rig.read("SYS:C/Tool", &bytes));
     try testing.expectEqualStrings(fresh_tool, try rig.read("SYS:C/New", &bytes));
     var list: [1024]u8 = undefined;
     var theirs: [1024]u8 = undefined;
-    try testing.expectEqualStrings(try rig.read("WORK:Package/manifest", &theirs), try rig.read("SYS:System/manifest", &list));
+    try testing.expectEqualStrings(try rig.read("WORK:Package/manifest", &theirs), try rig.read(kept_list, &list));
 
     // Done once, nothing is left to do.
     heard = .{};
@@ -260,7 +265,7 @@ test "a file changed on the machine is kept, and FORCE takes the package's" {
     var rig: Rig = undefined;
     try rig.init();
     defer rig.deinit() catch unreachable;
-    try installed(&rig);
+    try installed(&rig, kept_list);
     const mine = "the tool as somebody here changed it\n";
     try rig.write("SYS:C/Tool", mine);
     const upd = rig.upd;
@@ -283,9 +288,75 @@ test "a file changed on the machine is kept, and FORCE takes the package's" {
 
     heard = .{};
     try testing.expectEqual(dos.RETURN_OK, upd.DoUpdate(run, &[_]TagItem{ .{ .tag = update.UPD_Force, .data = 1 }, .{} }));
-    try testing.expectEqualStrings("new SYS:C/New\nnewer SYS:C/Tool\nlist SYS:System/manifest\n", heard.rowsSaid());
+    try testing.expectEqualStrings("new SYS:C/New\nnewer SYS:C/Tool\nlist SYS:Storage/installed.manifest\n", heard.rowsSaid());
     var bytes: [256]u8 = undefined;
     try testing.expectEqualStrings(new_tool, try rig.read("SYS:C/Tool", &bytes));
+}
+
+test "a list in SYS:System, with files to write: the package's written to SYS:Storage, the old one deleted" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    try installed(&rig, former_list);
+    const upd = rig.upd;
+
+    var heard: Heard = .{};
+    var hook: utility.Hook = .{ .entry = &Heard.entry, .data = &heard };
+    const run = upd.CreateUpdate(&[_]TagItem{
+        .{ .tag = update.UPD_Source, .data = @intFromPtr("WORK:Package") },
+        .{ .tag = update.UPD_Hook, .data = @intFromPtr(&hook) },
+        .{},
+    }) orelse return error.NoRun;
+    defer upd.DeleteUpdate(run);
+
+    try testing.expectEqual(dos.RETURN_OK, upd.DoUpdate(run, null));
+    try testing.expectEqualStrings("new SYS:C/New\nnewer SYS:C/Tool\nlist SYS:Storage/installed.manifest\n", heard.rowsSaid());
+    var list: [1024]u8 = undefined;
+    var theirs: [1024]u8 = undefined;
+    try testing.expectEqualStrings(try rig.read("WORK:Package/manifest", &theirs), try rig.read(kept_list, &list));
+    try testing.expectError(error.NoFile, rig.read(former_list, &list));
+}
+
+test "a list in SYS:System with nothing to write: moved as it was read, so a file changed here stays kept" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    var text: [1024]u8 = undefined;
+    var theirs_text: [1024]u8 = undefined;
+    const was = listOf(&.{.{ .path = "system/C/Tool", .bytes = old_tool }}, &text);
+    try rig.write(former_list, was);
+    try rig.write("SYS:C/Tool", "the tool as somebody here changed it\n");
+    try rig.write("WORK:Package/system/C/Tool", new_tool);
+    try rig.write("WORK:Package/manifest", listOf(&.{.{ .path = "system/C/Tool", .bytes = new_tool }}, &theirs_text));
+    const upd = rig.upd;
+
+    var heard: Heard = .{};
+    var hook: utility.Hook = .{ .entry = &Heard.entry, .data = &heard };
+    const run = upd.CreateUpdate(&[_]TagItem{
+        .{ .tag = update.UPD_Source, .data = @intFromPtr("WORK:Package") },
+        .{ .tag = update.UPD_Hook, .data = @intFromPtr(&hook) },
+        .{},
+    }) orelse return error.NoRun;
+    defer upd.DeleteUpdate(run);
+    var bytes: [1024]u8 = undefined;
+
+    // A check moves nothing.
+    try testing.expectEqual(dos.RETURN_OK, upd.DoUpdate(run, &[_]TagItem{ .{ .tag = update.UPD_Check, .data = 1 }, .{} }));
+    try testing.expectEqualStrings("kept SYS:C/Tool\n", heard.rowsSaid());
+    try testing.expectEqualStrings(was, try rig.read(former_list, &bytes));
+    try testing.expectError(error.NoFile, rig.read(kept_list, &bytes));
+
+    // A run moves it as it was read.
+    heard = .{};
+    try testing.expectEqual(dos.RETURN_OK, upd.DoUpdate(run, null));
+    try testing.expectEqualStrings("kept SYS:C/Tool\nlist SYS:Storage/installed.manifest\n", heard.rowsSaid());
+    try testing.expectEqualStrings(was, try rig.read(kept_list, &bytes));
+    try testing.expectError(error.NoFile, rig.read(former_list, &bytes));
+
+    // The next run reads it there, and still keeps the file.
+    heard = .{};
+    try testing.expectEqual(dos.RETURN_OK, upd.DoUpdate(run, null));
+    try testing.expectEqualStrings("kept SYS:C/Tool\n", heard.rowsSaid());
 }
 
 test "a run with no package to read is not made, and says why" {

@@ -41,7 +41,7 @@ const envarc_drawer = "Prefs/Env-Archive/";
 /// What a walk of the running system leaves out: the machine's own
 /// record of itself, which the install writes afresh.
 const machines_own = [_][]const u8{
-    "System/manifest",
+    install.installed_manifest[running_source.len..],
     envarc_drawer ++ "Sys/install.prefs",
 };
 
