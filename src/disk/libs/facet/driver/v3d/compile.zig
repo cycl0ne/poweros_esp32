@@ -108,9 +108,13 @@ pub const most_constants = 32;
 /// `shader.MAX_PUSH_CONSTANTS_SIZE`, and a uniform buffer's are held to
 /// as many.
 pub const most_members = sdk.facet.shader.MAX_PUSH_CONSTANTS_SIZE / 4;
-/// The structs decorated Block a module may declare: the push constants'
-/// and its uniform buffers' (since 1.160).
+/// The structs with member Offsets a module may declare: the push
+/// constants', its uniform buffers' (since 1.160), and the structs inside
+/// them (since 1.161).
 pub const most_blocks = 8;
+/// The matrices a body may hold as values: each its columns' steps
+/// (since 1.161).
+pub const most_matrices = 32;
 /// The uniform buffers a module may declare: v3dv's MAX_UNIFORM_BUFFERS
 /// (v3dv_limits.h), the descriptor map's slots for them (since 1.160).
 pub const most_ubos = 16;
@@ -245,25 +249,25 @@ pub const Sampler = struct {
 pub const profile: spirv.Profile = .{
     .capabilities = &.{.shader},
     .opcodes = &.{
-        .capability,      .memory_model,       .entry_point,                    .execution_mode,
-        .decorate,        .type_void,          .type_float,                     .type_vector,
-        .type_pointer,    .type_function,      .constant,                       .constant_composite,
-        .variable,        .function,           .label,                          .load,
+        .capability,          .memory_model,        .entry_point,                    .execution_mode,
+        .decorate,            .type_void,           .type_float,                     .type_vector,
+        .type_pointer,        .type_function,       .constant,                       .constant_composite,
+        .variable,            .function,            .label,                          .load,
         // What a real toolchain writes around the instructions: an
         // extended set imported but not used (`ext_inst` is absent, so a
         // call into one is still refused) and the names and source
         // strings glslc always emits. None of them is computation.
-        .ext_inst_import, .source,             .source_extension,               .name,
-        .member_name,     .store,              .composite_extract,              .composite_construct,
-        .f_add,           .f_mul,              .vector_times_scalar,            .returns,
-        .function_end,    .type_image,         .type_sampled_image,             .image_sample_implicit_lod,
+        .ext_inst_import,     .source,              .source_extension,               .name,
+        .member_name,         .store,               .composite_extract,              .composite_construct,
+        .f_add,               .f_mul,               .vector_times_scalar,            .returns,
+        .function_end,        .type_image,          .type_sampled_image,             .image_sample_implicit_lod,
         // A pixel dropped where a float is less or greater than another,
         // in the one shape a conditional discard has in SPIR-V: the
         // comparison, a selection whose true block is `OpKill` alone, and
         // the merge block the body goes on in (since 1.139). An `OpKill`
         // in any other place is refused by name, `Error.Discards`.
-        .kill,            .type_bool,          .f_ord_less_than,                .f_ord_greater_than,
-        .selection_merge, .branch_conditional,
+        .kill,                .type_bool,           .f_ord_less_than,                .f_ord_greater_than,
+        .selection_merge,     .branch_conditional,
         // The same: taken here so that a module carrying a constant texel
         // offset is refused for the operand and not for the integer type
         // the offset's constant is declared with. `profile.image_operands`
@@ -274,12 +278,16 @@ pub const profile: spirv.Profile = .{
         // is the only place one is read: a value of it anywhere else is
         // refused in the body, this back end computing with 32-bit
         // floats and their vectors alone.
-        .type_int,
+         .type_int,
         // The push constants: a block of floats and vectors of them, one
         // member read at a time through an access chain whose indexes
-        // are constants (since 1.138).
+        // are constants (since 1.138); then arrays, structs and matrices
+        // in a block, and the matrix arithmetic vtn lowers to columns of
+        // vector arithmetic (since 1.161).
                               .type_struct,
-        .member_decorate, .access_chain,
+        .member_decorate,     .access_chain,        .type_array,                     .type_matrix,
+        .matrix_times_vector, .vector_times_matrix, .matrix_times_matrix,            .matrix_times_scalar,
+        .transpose,           .outer_product,
         // A depth compared with a reference, the TMU told it through
         // TMUDREF (v3d_tex.c:155-157; since 1.143).
               .image_sample_dref_implicit_lod,
@@ -288,18 +296,18 @@ pub const profile: spirv.Profile = .{
         // named by a shuffle, or a varying's one float by an access chain,
         // which compute nothing (since 1.152).
         .f_sub,
-        .f_negate,        .f_div,              .dot,                            .ext_inst,
+        .f_negate,            .f_div,               .dot,                            .ext_inst,
         // The shuffle, then the other comparisons glslc writes and a float
         // chosen by one (since 1.153), then a selection's arms, their
         // values chosen at its merge and one float of a vector replaced
         // (since 1.154).
-        .vector_shuffle,  .f_unord_not_equal,  .f_ord_less_than_equal,          .f_ord_greater_than_equal,
-        .select,          .f_ord_equal,        .composite_insert,               .phi,
+        .vector_shuffle,      .f_unord_not_equal,   .f_ord_less_than_equal,          .f_ord_greater_than_equal,
+        .select,              .f_ord_equal,         .composite_insert,               .phi,
         .branch,
         // Then bools of bools and the unordered comparisons, as glslc
         // writes &&, || and ! (since 1.157).
-                 .logical_and,        .f_unord_greater_than_equal,     .f_unord_greater_than,
-        .logical_or,      .f_unord_less_than,  .f_unord_less_than_equal,        .logical_not,
+                     .logical_and,         .f_unord_greater_than_equal,     .f_unord_greater_than,
+        .logical_or,          .f_unord_less_than,   .f_unord_less_than_equal,        .logical_not,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform },
     .image_dims = &.{.dim_2d},
@@ -620,13 +628,16 @@ pub const UboAddress = struct {
     offset: u32,
 };
 
-/// A struct decorated Block: the push constants' or a uniform buffer's.
-/// Each member is a float or a vector of them, with its type and its
-/// byte offset, from OpMemberDecorate Offset.
+/// A struct with member Offsets: one decorated Block, the push constants'
+/// or a uniform buffer's, or a struct inside one (since 1.161). Each
+/// member has its type and its byte offset, from OpMemberDecorate Offset,
+/// and a matrix member, or an array of matrices, the MatrixStride its
+/// columns are apart.
 pub const Block = struct {
     type_id: u16 = none,
     member_type: [most_members]u16 = @splat(none),
     member_offset: [most_members]u16 = @splat(none),
+    member_stride: [most_members]u16 = @splat(none),
     member_count: u32 = 0,
     /// Its OpTypeStruct read.
     declared: bool = false,
@@ -638,6 +649,19 @@ pub const Ubo = struct {
     block: u16,
     set: u16,
     binding: u16,
+};
+
+/// A matrix the body holds as a value: the steps of its columns, each a
+/// vector of its rows, as vtn holds one, a vtn_ssa_value of `elems`
+/// (since 1.161).
+pub const Matrix = struct {
+    columns: [4]u16 = @splat(none),
+    count: u8 = 0,
+    /// The matrix this one is the transpose of, where `transposeOf` made
+    /// it: what transposing it again answers, and what `multiplied` reads
+    /// where both of its matrices are transposes (vtn_ssa_value's
+    /// `transposed`, spirv_to_nir.c:4486-4510).
+    transposed: u16 = none,
 };
 
 // --- the work ----------------------------------------------------------------
@@ -674,6 +698,20 @@ pub const Work = struct {
     /// `member_pointer`: the variable of the block it is a member of,
     /// the push constants' or a uniform buffer's (since 1.160).
     chain_base: [most_ids]u16 = @splat(none),
+    /// `member_pointer`: the byte offset of what it names in the block,
+    /// and the MatrixStride of the matrices it is in or names, `none`
+    /// where there are none (since 1.161).
+    chain_offset: [most_ids]u16 = @splat(0),
+    chain_stride: [most_ids]u16 = @splat(none),
+    /// `array`: how many elements, and the ArrayStride they are apart,
+    /// which an OpDecorate may give before the type is declared
+    /// (since 1.161).
+    length: [most_ids]u16 = @splat(0),
+    array_stride: [most_ids]u16 = @splat(none),
+    /// The matrices the body holds: a `matrix_value`'s `points` is its
+    /// place here (since 1.161).
+    matrices: [most_matrices]Matrix = undefined,
+    matrix_count: u32 = 0,
 
     /// The structs decorated `Block`, the push constants' and the uniform
     /// buffers' (since 1.160), each found by its type.
@@ -785,7 +823,7 @@ pub const Work = struct {
     code: [most_words]u64 = undefined,
     word_count: u32 = 0,
 
-    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part };
+    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value };
 
     /// `chain_part` of a pointer to a whole member.
     pub const whole: u8 = 0xFF;
@@ -1080,6 +1118,9 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // decoration this is here to turn down by name.
                 switch (what) {
                     .location, .descriptor_set, .binding => {},
+                    // How far an array's elements are apart in a block
+                    // (since 1.161).
+                    .array_stride => {},
                     // A block, which carries no literal: the push
                     // constants', or a uniform buffer's (since 1.160).
                     // A storage buffer's, BufferBlock, is refused.
@@ -1100,29 +1141,42 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     .location => work.location[id] = value,
                     .descriptor_set => work.set[id] = value,
                     .binding => work.binding[id] = value,
+                    // A word apart at least: ldunifa reads words.
+                    .array_stride => {
+                        if (value == 0 or value % 4 != 0) return Error.Storage;
+                        work.array_stride[id] = value;
+                    },
                     else => unreachable,
                 }
             },
             .member_decorate => {
-                // StructureType, Member, Decoration, its literal. The one
-                // decoration taken is the member's byte offset, which is
-                // where its floats are in the block: a word of them each,
-                // so it is a multiple of four. Whether they fit is for
-                // the variable to say, whose class tells the push
-                // constants from a uniform buffer. A block's other
-                // member decorations are for matrices and the vertex
-                // stage's built-ins, neither of which is here.
+                // StructureType, Member, Decoration, its literal. The
+                // member's byte offset is where its floats are in the
+                // block: a word of them each, so it is a multiple of
+                // four. Whether they fit is for the variable to say,
+                // whose class tells the push constants from a uniform
+                // buffer. A matrix member's MatrixStride is how far its
+                // columns are apart, and ColMajor is how they are laid
+                // out anyway (since 1.161); RowMajor, whose columns are
+                // not a vector's floats side by side, and the vertex
+                // stage's built-ins are not here.
                 if (operands.len < 3) return Error.Body;
                 const id = try idOf(operands[0]);
                 const what = std.enums.fromInt(spirv.Decoration, operands[2]) orelse return Error.Refused;
-                if (what != .offset) return Error.Refused;
-                if (operands.len < 4) return Error.Body;
+                if (what != .offset and what != .matrix_stride and what != .col_major) return Error.Refused;
                 const block = try blockOf(work, id);
                 const member = operands[1];
                 if (member >= most_members) return Error.Storage;
-                const offset = operands[3];
-                if (offset % 4 != 0 or offset >= none) return Error.Storage;
-                block.member_offset[member] = @intCast(offset);
+                if (what == .col_major) continue;
+                if (operands.len < 4) return Error.Body;
+                const literal = operands[3];
+                if (literal % 4 != 0 or literal >= none) return Error.Storage;
+                if (what == .matrix_stride) {
+                    if (literal == 0) return Error.Storage;
+                    block.member_stride[member] = @intCast(literal);
+                    continue;
+                }
+                block.member_offset[member] = @intCast(literal);
             },
             .type_float => {
                 if (operands.len < 2) return Error.Body;
@@ -1144,9 +1198,11 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 work.thing[id] = .int;
             },
             .type_struct => {
-                // A block and no other struct: a value of one would be a
-                // step of many kinds, and none is. Each member is a float
-                // or a vector of them, with an offset.
+                // A block, or a struct in one, and no other struct: a
+                // value of one would be a step of many kinds, and none
+                // is. Each member is a float, a vector, a matrix, an
+                // array or a struct of offsets of its own (since 1.161),
+                // with an offset, and all of it inside the block.
                 if (operands.len < 1) return Error.Body;
                 const id = try idOf(operands[0]);
                 const block = findBlock(work, id) orelse return Error.Type;
@@ -1154,10 +1210,9 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (members.len == 0 or members.len > most_members) return Error.Storage;
                 for (members, 0..) |each, k| {
                     const member = try idOf(each);
-                    const kind = try kindOf(work, member);
                     const offset = block.member_offset[k];
                     if (offset == none) return Error.Storage;
-                    if (offset + 4 * kind.parts() >= none) return Error.Storage;
+                    if (offset + try sizeOf(work, member, block.member_stride[k]) >= none) return Error.Storage;
                     block.member_type[k] = member;
                 }
                 // An offset given for a member the struct does not have.
@@ -1174,6 +1229,40 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (operands[2] < 2 or operands[2] > 4) return Error.Type;
                 work.thing[id] = .vector;
                 work.wide[id] = @intCast(operands[2]);
+                // Its float, which an access chain into it names.
+                work.points[id] = component;
+            },
+            .type_matrix => {
+                // Result, ColumnType, ColumnCount: a vector of floats
+                // each (since 1.161).
+                if (operands.len < 3) return Error.Body;
+                const id = try idOf(operands[0]);
+                const column = try idOf(operands[1]);
+                if (work.thing[column] != .vector) return Error.Type;
+                if (operands[2] < 2 or operands[2] > 4) return Error.Type;
+                work.thing[id] = .matrix;
+                work.points[id] = column;
+                work.wide[id] = @intCast(operands[2]);
+            },
+            .type_array => {
+                // Result, ElementType, Length, the length an integer
+                // constant: what a block holds, each element ArrayStride
+                // apart (since 1.161). A value of one is no step, as a
+                // struct's is not.
+                if (operands.len < 3) return Error.Body;
+                const id = try idOf(operands[0]);
+                const element = try idOf(operands[1]);
+                switch (work.thing[element]) {
+                    .float, .vector, .matrix, .array, .structure => {},
+                    else => return Error.Type,
+                }
+                const length = try idOf(operands[2]);
+                if (work.thing[length] != .int_constant) return Error.Type;
+                const count = work.points[length];
+                if (count == 0 or count == none) return Error.Storage;
+                work.thing[id] = .array;
+                work.points[id] = element;
+                work.length[id] = count;
             },
             .type_image => {
                 // Result, SampledType, Dim, Depth, Arrayed, MS, Sampled,
@@ -1264,9 +1353,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     if (work.thing[pointee] != .structure) return Error.Storage;
                     if (work.push_variable != none) return Error.Storage;
                     const block = findBlock(work, pointee) orelse return Error.Storage;
-                    for (block.member_type[0..block.member_count], block.member_offset[0..block.member_count]) |member, offset| {
-                        if (offset + 4 * (try kindOf(work, member)).parts() > sdk.facet.shader.MAX_PUSH_CONSTANTS_SIZE) return Error.Storage;
-                    }
+                    if (try sizeOf(work, pointee, none) > sdk.facet.shader.MAX_PUSH_CONSTANTS_SIZE) return Error.Storage;
                     work.thing[id] = .variable;
                     work.class[id] = @intCast(@intFromEnum(class));
                     work.points[id] = @intCast(block - &work.blocks[0]);
@@ -2549,30 +2636,27 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             const id = try idOf(operands[1]);
             const from = try idOf(operands[2]);
             if (work.thing[from] == .member_pointer) {
-                // Floats of the push constants: a uniform each, which
-                // Mesa reads as QUNIFORM_UNIFORM at the word the offset
-                // names (ntq_emit_load_uniform, nir_to_vir.c:2880, after
-                // v3dv's lower_load_push_constant, v3dv_pipeline.c:571).
-                // Two loads of one member are two steps, and the second
-                // costs no word of the stream: vir_uniform finds it there
-                // already (vir_get_uniform_index, vir.c:2771).
-                const kind = try kindOf(work, try idOf(operands[0]));
-                if (kind.parts() != work.wide[from]) return Error.Type;
+                // Floats of a block, at the offset the chain came to. A
+                // whole matrix is its columns, each loaded on its own,
+                // MatrixStride apart, as _vtn_variable_load_store walks a
+                // matrix's (vtn_variables.c:763-780) and
+                // nir_lower_explicit_io gives each its offset (since
+                // 1.161). A whole array or struct would be a value of
+                // many kinds, and is refused.
+                const pointee = work.points[from];
+                if (try idOf(operands[0]) != pointee) return Error.Type;
                 const base = work.chain_base[from];
-                const block = blockOfVariable(work, base);
-                const member = work.points[from];
-                const part: u32 = if (work.chain_part[from] == Work.whole) 0 else work.chain_part[from];
-                const offset = block.member_offset[member] + 4 * part;
-                if (base != work.push_variable) {
-                    // Floats of a uniform buffer: a load_ubo of the
-                    // descriptor map's slot and a constant offset, as
-                    // vtn and nir_lower_explicit_io make it of the access
-                    // chain (v3dv_pipeline.c:415-425, the 32bit index
-                    // offset format), a component each (since 1.160).
-                    work.step_of[id] = try put(work, .{ .tag = .ubo, .kind = kind, .b = work.points[base], .at = offset });
+                const offset: u32 = work.chain_offset[from];
+                if (work.thing[pointee] == .matrix) {
+                    const column = try kindOf(work, work.points[pointee]);
+                    var made = Matrix{ .count = work.wide[pointee] };
+                    for (0..made.count) |c| {
+                        made.columns[c] = try blockLoad(work, base, offset + @as(u32, @intCast(c)) * work.chain_stride[from], column);
+                    }
+                    try holdMatrix(work, id, made);
                     return;
                 }
-                work.step_of[id] = try put(work, .{ .tag = .push, .kind = kind, .at = offset / 4 });
+                work.step_of[id] = try blockLoad(work, base, offset, try kindOf(work, pointee));
                 return;
             }
             if (work.thing[from] == .input_part) {
@@ -2617,12 +2701,13 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             work.step_of[id] = try inputStep(work, work.points[from]);
         },
         .access_chain => {
-            // ResultType, Result, Base, then the indexes: a member of
-            // the push constants, and maybe one float of it, each a
-            // constant. An index computed in the body would want the
-            // push constants read through the TMU (Mesa's
-            // ntq_emit_tmu_general fallback), which is not here.
-            if (operands.len < 4 or operands.len > 5) return Error.Body;
+            // ResultType, Result, Base, then the indexes, each a
+            // constant: a member of the push constants or of a uniform
+            // buffer, through its structs, arrays and matrices to a float
+            // (since 1.161). An index computed in the body would want the
+            // offset computed too (ntq_emit_load_unifa's dynamic_src,
+            // nir_to_vir.c:3349), which is not here.
+            if (operands.len < 4) return Error.Body;
             const type_id = try idOf(operands[0]);
             const id = try idOf(operands[1]);
             const base = try idOf(operands[2]);
@@ -2659,39 +2744,90 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 return;
             }
             // A member of the push constants, or of a uniform buffer
-            // (since 1.160).
-            const class: spirv.StorageClass = if (base == work.push_variable)
-                .push_constant
-            else if (work.thing[base] == .variable and work.class[base] == @intFromEnum(spirv.StorageClass.uniform))
-                .uniform
-            else
-                return Error.Storage;
-            const block = blockOfVariable(work, base);
-            const member = try indexOf(work, operands[3]);
-            if (member >= block.member_count) return Error.Body;
-            const member_kind = try kindOf(work, block.member_type[member]);
-            var part: u8 = Work.whole;
-            var parts = member_kind.parts();
-            if (operands.len == 5) {
-                const which = try indexOf(work, operands[4]);
-                if (member_kind == .f32x1 or which >= parts) return Error.Body;
-                part = @intCast(which);
-                parts = 1;
+            // (since 1.160), or of one of those a chain named already
+            // (since 1.161): the byte offset vtn's explicit layout gives
+            // it, which is the constant nir_lower_explicit_io's
+            // arithmetic folds to (vtn_pointer_dereference,
+            // vtn_variables.c). A member adds its Offset and an element
+            // its ArrayStride times the index; a matrix's column adds its
+            // MatrixStride, and a vector's float four bytes.
+            var variable: u16 = base;
+            var offset: u32 = 0;
+            var pointee: u16 = none;
+            var stride: u16 = none;
+            if (work.thing[base] == .member_pointer) {
+                variable = work.chain_base[base];
+                offset = work.chain_offset[base];
+                pointee = work.points[base];
+                stride = work.chain_stride[base];
+            } else if (base == work.push_variable or (work.thing[base] == .variable and work.class[base] == @intFromEnum(spirv.StorageClass.uniform))) {
+                pointee = blockOfVariable(work, base).type_id;
+            } else return Error.Storage;
+            for (operands[3..]) |each| {
+                const index: u32 = try indexOf(work, each);
+                switch (work.thing[pointee]) {
+                    .structure => {
+                        const block = findBlock(work, pointee) orelse return Error.Body;
+                        if (index >= block.member_count) return Error.Body;
+                        offset += block.member_offset[index];
+                        stride = block.member_stride[index];
+                        pointee = block.member_type[index];
+                    },
+                    .array => {
+                        if (index >= work.length[pointee]) return Error.Body;
+                        offset += index * work.array_stride[pointee];
+                        pointee = work.points[pointee];
+                    },
+                    .matrix => {
+                        if (index >= work.wide[pointee] or stride == none) return Error.Body;
+                        offset += index * stride;
+                        pointee = work.points[pointee];
+                        stride = none;
+                    },
+                    .vector => {
+                        if (index >= work.wide[pointee]) return Error.Body;
+                        offset += 4 * index;
+                        pointee = work.points[pointee];
+                    },
+                    else => return Error.Body,
+                }
             }
+            if (offset >= none) return Error.Storage;
             // A pointer of the block's class to what it names.
             if (work.thing[type_id] != .pointer) return Error.Type;
-            if (work.class[type_id] != @intFromEnum(class)) return Error.Body;
-            if ((try kindOf(work, work.points[type_id])).parts() != parts) return Error.Type;
+            if (work.class[type_id] != work.class[variable]) return Error.Body;
+            if (work.points[type_id] != pointee) return Error.Type;
             work.thing[id] = .member_pointer;
-            work.points[id] = member;
-            work.chain_part[id] = part;
-            work.chain_base[id] = base;
-            work.wide[id] = @intCast(parts);
+            work.points[id] = pointee;
+            work.chain_base[id] = variable;
+            work.chain_offset[id] = @intCast(offset);
+            work.chain_stride[id] = stride;
         },
         .composite_extract => {
-            if (operands.len != 4) return Error.Body;
+            if (operands.len < 4) return Error.Body;
             const id = try idOf(operands[1]);
-            const of = work.step_of[try idOf(operands[2])];
+            const composite = try idOf(operands[2]);
+            if (work.thing[composite] == .matrix_value) {
+                // A matrix's column, or one float of it: the column's
+                // step, and the float of that as of any vector
+                // (vtn_composite_extract, then vtn_vector_extract;
+                // since 1.161).
+                if (operands.len > 5) return Error.Body;
+                const whole = work.matrices[work.points[composite]];
+                if (operands[3] >= whole.count) return Error.Body;
+                const column = whole.columns[operands[3]];
+                if (operands.len == 4) {
+                    if (try kindOf(work, try idOf(operands[0])) != work.steps[column].kind) return Error.Type;
+                    work.step_of[id] = column;
+                    return;
+                }
+                if (try kindOf(work, try idOf(operands[0])) != .f32x1) return Error.Type;
+                if (operands[4] >= work.steps[column].kind.parts()) return Error.Body;
+                work.step_of[id] = try put(work, .{ .tag = .component, .kind = .f32x1, .a = column, .at = operands[4] });
+                return;
+            }
+            if (operands.len != 4) return Error.Body;
+            const of = work.step_of[composite];
             if (of == none) return Error.Body;
             if (isBool(work, of)) return Error.Type;
             if (operands[3] >= work.steps[of].kind.parts()) return Error.Body;
@@ -2719,6 +2855,18 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (operands.len < 3) return Error.Body;
             const type_id = try idOf(operands[0]);
             const id = try idOf(operands[1]);
+            if (work.thing[type_id] == .matrix) {
+                // A matrix of its columns, each a vector of its rows: the
+                // vtn_ssa_value of `elems` vtn makes of them
+                // (vtn_handle_composite, spirv_to_nir.c; since 1.161).
+                const columns = operands[2..];
+                if (columns.len != work.wide[type_id]) return Error.Body;
+                const rows = try kindOf(work, work.points[type_id]);
+                var made = Matrix{ .count = @intCast(columns.len) };
+                for (columns, 0..) |each, c| made.columns[c] = try operand(work, each, rows);
+                try holdMatrix(work, id, made);
+                return;
+            }
             const kind = try kindOf(work, type_id);
             var made = Step{ .tag = .construct, .kind = kind };
             var floats: u32 = 0;
@@ -2958,8 +3106,232 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             const scalar = try operand(work, operands[3], .f32x1);
             work.step_of[id] = try put(work, .{ .tag = .mul, .kind = kind, .a = vector, .b = scalar });
         },
+        .transpose, .matrix_times_scalar, .matrix_times_vector, .vector_times_matrix, .matrix_times_matrix, .outer_product => {
+            // vtn_handle_matrix_alu's matrix opcodes (vtn_alu.c:182-237)
+            // and OpOuterProduct (:817-823), on matrices held as their
+            // columns (since 1.161). The ones it takes for matrices that
+            // SPIR-V gives scalars and vectors alone - FNegate, FAdd and
+            // FSub - spirv-val refuses, and so does this.
+            const binary_op = instruction.op != .transpose;
+            if (operands.len != @as(usize, if (binary_op) 4 else 3)) return Error.Body;
+            const type_id = try idOf(operands[0]);
+            const id = try idOf(operands[1]);
+            switch (instruction.op) {
+                .transpose => {
+                    const of = try matrixOf(work, operands[2]);
+                    try holdShaped(work, id, type_id, work.matrices[try transposeOf(work, of)]);
+                },
+                .matrix_times_scalar => {
+                    const of = try matrixOf(work, operands[2]);
+                    const scalar = try operand(work, operands[3], .f32x1);
+                    const scaled = work.matrices[of];
+                    // Of a transpose, the transpose of the original
+                    // times it, which keeps its `transposed` (:216-223).
+                    const made = if (scaled.transposed != none)
+                        work.matrices[try transposeOf(work, try keptMatrix(work, try timesScalar(work, work.matrices[scaled.transposed], scalar)))]
+                    else
+                        try timesScalar(work, scaled, scalar);
+                    try holdShaped(work, id, type_id, made);
+                },
+                .matrix_times_vector, .matrix_times_matrix => {
+                    const left = work.matrices[try matrixOf(work, operands[2])];
+                    const right = if (instruction.op == .matrix_times_matrix)
+                        work.matrices[try matrixOf(work, operands[3])]
+                    else
+                        try wrapped(work, operands[3]);
+                    try holdProduct(work, id, type_id, try multiplied(work, left, right));
+                },
+                .vector_times_matrix => {
+                    // matrix_multiply(transpose(M), v) (:225-233).
+                    const of = try matrixOf(work, operands[3]);
+                    const vector = try wrapped(work, operands[2]);
+                    try holdProduct(work, id, type_id, try multiplied(work, work.matrices[try transposeOf(work, of)], vector));
+                },
+                .outer_product => {
+                    // A column for each float of the second: the first
+                    // times it.
+                    const first = try operand(work, operands[2], try kindOfValue(work, operands[2]));
+                    const second = try operand(work, operands[3], try kindOfValue(work, operands[3]));
+                    var made = Matrix{ .count = @intCast(work.steps[second].kind.parts()) };
+                    for (0..made.count) |i| made.columns[i] = try binary(work, .mul, first, try channelOf(work, second, @intCast(i)));
+                    try holdShaped(work, id, type_id, made);
+                },
+                else => unreachable,
+            }
+        },
         else => return Error.Refused,
     }
+}
+
+/// A block's floats at `offset`, a load of `variable`'s: a load_ubo of the
+/// descriptor map's slot and the offset for a uniform buffer, as vtn and
+/// nir_lower_explicit_io make it in v3dv's 32bit_index_offset format
+/// (v3dv_pipeline.c:415-425; since 1.160), and the push constants' word
+/// for them, which Mesa reads as QUNIFORM_UNIFORM at the word the offset
+/// names (ntq_emit_load_uniform, nir_to_vir.c:2880, after v3dv's
+/// lower_load_push_constant, v3dv_pipeline.c:571). Two loads of one
+/// member are two steps, and the second costs no word of the stream:
+/// vir_uniform finds it there already (vir_get_uniform_index,
+/// vir.c:2771).
+fn blockLoad(work: *Work, variable: u16, offset: u32, kind: Kind) Error!u16 {
+    if (offset >= none) return Error.Storage;
+    if (variable != work.push_variable) return put(work, .{ .tag = .ubo, .kind = kind, .b = work.points[variable], .at = offset });
+    return put(work, .{ .tag = .push, .kind = kind, .at = offset / 4 });
+}
+
+/// How many bytes a value of `type_id` takes in a block, a matrix's
+/// columns `stride` apart: what vtn's explicit layout gives it, the last
+/// column or element ending it (since 1.161). A matrix with no
+/// MatrixStride and an array with no ArrayStride have no layout, and are
+/// refused.
+fn sizeOf(work: *Work, type_id: u16, stride: u16) Error!u32 {
+    switch (work.thing[type_id]) {
+        .float => return 4,
+        .vector => return 4 * @as(u32, work.wide[type_id]),
+        .matrix => {
+            if (stride == none) return Error.Storage;
+            return (@as(u32, work.wide[type_id]) - 1) * stride + try sizeOf(work, work.points[type_id], none);
+        },
+        .array => {
+            const apart = work.array_stride[type_id];
+            if (apart == none) return Error.Storage;
+            return (@as(u32, work.length[type_id]) - 1) * apart + try sizeOf(work, work.points[type_id], stride);
+        },
+        .structure => {
+            const block = findBlock(work, type_id) orelse return Error.Type;
+            if (!block.declared) return Error.Type;
+            var end: u32 = 0;
+            for (block.member_type[0..block.member_count], block.member_offset[0..block.member_count], block.member_stride[0..block.member_count]) |member, offset, apart| {
+                end = @max(end, offset + try sizeOf(work, member, apart));
+            }
+            return end;
+        },
+        else => return Error.Type,
+    }
+}
+
+/// The matrix `word` names, by its place in `Work.matrices`.
+fn matrixOf(work: *const Work, word: u32) Error!u16 {
+    const id = try idOf(word);
+    if (work.thing[id] != .matrix_value) return Error.Type;
+    return work.points[id];
+}
+
+/// `made` kept among the matrices, by its place there.
+fn keptMatrix(work: *Work, made: Matrix) Error!u16 {
+    if (work.matrix_count == most_matrices) return Error.Steps;
+    const at: u16 = @intCast(work.matrix_count);
+    work.matrices[at] = made;
+    work.matrix_count += 1;
+    return at;
+}
+
+/// `id` the value of `made`.
+fn holdMatrix(work: *Work, id: u16, made: Matrix) Error!void {
+    work.thing[id] = .matrix_value;
+    work.points[id] = try keptMatrix(work, made);
+}
+
+/// `id` the value of `made`, which has to be the matrix `type_id` says:
+/// as many columns, each as many floats.
+fn holdShaped(work: *Work, id: u16, type_id: u16, made: Matrix) Error!void {
+    if (work.thing[type_id] != .matrix or work.wide[type_id] != made.count) return Error.Type;
+    const rows = try kindOf(work, work.points[type_id]);
+    for (made.columns[0..made.count]) |column| if (work.steps[column].kind != rows) return Error.Type;
+    try holdMatrix(work, id, made);
+}
+
+/// `id` a product: a vector where it has one column and `type_id` is a
+/// vector, as unwrap_matrix answers it (vtn_alu.c:35-42), and a matrix
+/// otherwise.
+fn holdProduct(work: *Work, id: u16, type_id: u16, made: Matrix) Error!void {
+    if (work.thing[type_id] == .matrix) return holdShaped(work, id, type_id, made);
+    if (made.count != 1 or try kindOf(work, type_id) != work.steps[made.columns[0]].kind) return Error.Type;
+    work.step_of[id] = made.columns[0];
+}
+
+/// A vector as a matrix of one column, as wrap_matrix makes one
+/// (vtn_alu.c:18-33): no transpose of anything.
+fn wrapped(work: *Work, word: u32) Error!Matrix {
+    const kind = try kindOfValue(work, word);
+    if (kind == .f32x1) return Error.Type;
+    var made = Matrix{ .count = 1 };
+    made.columns[0] = try operand(work, word, kind);
+    return made;
+}
+
+/// Float `k` of `of`: nir_channel, which of one float is that float.
+fn channelOf(work: *Work, of: u16, k: u8) Error!u16 {
+    if (work.steps[of].kind == .f32x1) return of;
+    return put(work, .{ .tag = .component, .kind = .f32x1, .a = of, .at = k });
+}
+
+/// The transpose of matrix `of`, by its place among the matrices:
+/// vtn_ssa_transpose (spirv_to_nir.c:4486-4510), whose column `i` is the
+/// vector of every column's float `i`, and which remembers what it is the
+/// transpose of - so a transpose of a transpose is the matrix itself.
+fn transposeOf(work: *Work, of: u16) Error!u16 {
+    const source = work.matrices[of];
+    if (source.transposed != none) return source.transposed;
+    const rows = work.steps[source.columns[0]].kind.parts();
+    const across = std.enums.fromInt(Kind, source.count) orelse return Error.Type;
+    var made = Matrix{ .count = @intCast(rows), .transposed = of };
+    for (0..rows) |i| {
+        var column = Step{ .tag = .construct, .kind = across };
+        for (0..source.count) |j| {
+            column.from[j] = source.columns[j];
+            column.part[j] = @intCast(i);
+        }
+        made.columns[i] = try put(work, column);
+    }
+    return keptMatrix(work, made);
+}
+
+/// Each column of `of` times `scalar`: mat_times_scalar (vtn_alu.c:
+/// 100-114).
+fn timesScalar(work: *Work, of: Matrix, scalar: u16) Error!Matrix {
+    var made = Matrix{ .count = of.count };
+    for (of.columns[0..of.count], 0..) |column, i| made.columns[i] = try binary(work, .mul, column, scalar);
+    return made;
+}
+
+/// `left` times `right`, matrices or vectors wrapped as one column:
+/// matrix_multiply (vtn_alu.c:45-98). Column `i` is the sum of `left`'s
+/// columns, each times float `j` of `right`'s column `i`: the last one's
+/// fmul, then an ffma_weak for each before it, last to first - which
+/// nir_opt_algebraic makes fadd(fmul(a, b), c) on a device with no ffma,
+/// as the V3D has none (nir_opt_algebraic.py:424). Where both are
+/// transposes, it is the transpose of the originals multiplied the other
+/// way round, with the counts the transposes had (:69-77).
+fn multiplied(work: *Work, left: Matrix, right: Matrix) Error!Matrix {
+    const left_columns = left.count;
+    const right_columns = right.count;
+    var src0 = left;
+    var src1 = right;
+    var transpose_result = false;
+    if (left.transposed != none and right.transposed != none) {
+        src1 = work.matrices[left.transposed];
+        src0 = work.matrices[right.transposed];
+        transpose_result = true;
+    }
+    // Where the counts the transposes had are not the originals', which
+    // only matrices that are not square bring about, Mesa reads past
+    // them: refused.
+    if (src0.count < left_columns or src1.count < right_columns) return Error.Type;
+    var made = Matrix{ .count = right_columns };
+    for (0..right_columns) |i| {
+        const column = src1.columns[i];
+        if (work.steps[column].kind.parts() < left_columns) return Error.Type;
+        var sum = try binary(work, .mul, src0.columns[left_columns - 1], try channelOf(work, column, left_columns - 1));
+        var j: u8 = left_columns - 1;
+        while (j > 0) {
+            j -= 1;
+            sum = try binary(work, .add, try binary(work, .mul, src0.columns[j], try channelOf(work, column, j)), sum);
+        }
+        made.columns[i] = sum;
+    }
+    if (transpose_result) return work.matrices[try transposeOf(work, try keptMatrix(work, made))];
+    return made;
 }
 
 /// A call of GLSL.std.450 in the steps it lowers to: spirv_to_nir's
@@ -6687,4 +7059,122 @@ test "a storage buffer's block, and a uniform buffer bound nowhere, are refused"
     try testing.expect(found);
     var unbound: Work = .{};
     try testing.expectError(Error.Location, throughMesa(&unbound, &unset));
+}
+
+test "through Mesa's back end, a block's arrays and structs are read at the offsets their strides and members give" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_uniform_nested);
+    // palette[2] at 32, then palette[0] at 0, behind it: unifa again;
+    // tint.color at 48, past where a skip reaches, again; tint.amount at
+    // 64 reads on, and so does last at 80, over three floats that are
+    // read for nothing; palette[1].w at 28 writes it a fourth time.
+    try testing.expectEqualSlices(Word, &.{
+        .{ .ubo = .{ .set = 0, .binding = 0, .offset = 32 } },
+        .{ .ubo = .{ .set = 0, .binding = 0, .offset = 0 } },
+        .{ .ubo = .{ .set = 0, .binding = 0, .offset = 48 } },
+        .{ .ubo = .{ .set = 0, .binding = 0, .offset = 28 } },
+    }, code.stream());
+    try testing.expectEqual(@as(usize, 4), countOf(code, "ldunifrf.unifa"));
+    // 4 + 4 + 4 + 1 + 3 + 4 + 1, less last.w, which nothing reads and
+    // no ldunifa after it steps over.
+    try testing.expectEqual(@as(usize, 20), countOf(code, "ldunifa"));
+    try testing.expectEqual(@as(usize, 47), code.words.len);
+    var plan: Work = .{};
+    try testing.expectError(Error.Storage, compile(&plan, &reference.glslc_uniform_nested));
+}
+
+test "through Mesa's back end, a matrix in a block is loaded column by column, and a matrix times a vector is matrix_multiply's sum" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_uniform_matrix);
+    // One unifa write: the three columns at 0, 16 and 32, a float read
+    // for nothing between each, then shift at 48; its w, which nothing
+    // reads, is the last and dropped.
+    try testing.expectEqualSlices(Word, &.{.{ .ubo = .{ .set = 0, .binding = 0, .offset = 0 } }}, code.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(code, "ldunifrf.unifa"));
+    try testing.expectEqual(@as(usize, 15), countOf(code, "ldunifa"));
+    // Each of the three rows: the last column times z, then the second
+    // times y and the first times x added on, then the shift - nine
+    // fmuls and nine fadds beside the varyings' four of each.
+    try testing.expectEqual(@as(usize, 13), countOf(code, "fmul"));
+    try testing.expectEqual(@as(usize, 13), countOf(code, "fadd"));
+    try testing.expectEqual(@as(usize, 30), code.words.len);
+}
+
+test "through Mesa's back end, the matrix arithmetic SPIR-V has: transposes, products, a scalar, an outer product, columns extracted" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_uniform_matrices);
+    // a, b and c read on from one unifa write at 0, two floats for
+    // nothing between columns; pad at 112 for the outer product reads on
+    // as well, and pad.x after it writes unifa again. The -0 is the
+    // negation's, an XOR of the sign (ntq_emit_alu's fneg).
+    try testing.expectEqualSlices(Word, &.{
+        .{ .ubo = .{ .set = 0, .binding = 0, .offset = 0 } },
+        .{ .float = -0.0 },
+        .{ .ubo = .{ .set = 0, .binding = 0, .offset = 112 } },
+    }, code.stream());
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ldunifrf.unifa"));
+    try testing.expectEqual(@as(usize, 33), countOf(code, "ldunifa"));
+    try testing.expectEqual(@as(usize, 29), countOf(code, "fmul"));
+    try testing.expectEqual(@as(usize, 25), countOf(code, "fadd"));
+    try testing.expectEqual(@as(usize, 4), countOf(code, "fsub"));
+    try testing.expectEqual(@as(usize, 51), code.words.len);
+}
+
+test "a transpose of a transpose is the matrix itself, and two transposes multiplied are the transpose of the other product" {
+    // vtn_ssa_transpose remembers what it transposed (spirv_to_nir.c:
+    // 4486-4510), and matrix_multiply reads that where both of its are
+    // transposes (vtn_alu.c:69-77).
+    var work: Work = .{};
+    var a = Matrix{ .count = 2 };
+    var b = Matrix{ .count = 2 };
+    for (0..2) |c| {
+        a.columns[c] = try put(&work, .{ .tag = .ubo, .kind = .f32x2, .at = @intCast(16 * c) });
+        b.columns[c] = try put(&work, .{ .tag = .ubo, .kind = .f32x2, .at = @intCast(32 + 16 * c) });
+    }
+    const at_a = try keptMatrix(&work, a);
+    const at_b = try keptMatrix(&work, b);
+    const ta = try transposeOf(&work, at_a);
+    const before = work.step_count;
+    try testing.expectEqual(at_a, try transposeOf(&work, ta));
+    try testing.expectEqual(before, work.step_count);
+    // Column 0 of the transpose is the vector of both columns' first
+    // floats.
+    const first = work.steps[work.matrices[ta].columns[0]];
+    try testing.expectEqual(Tag.construct, first.tag);
+    try testing.expectEqualSlices(u16, &.{ a.columns[0], a.columns[1] }, first.from[0..2]);
+    try testing.expectEqualSlices(u8, &.{ 0, 0 }, first.part[0..2]);
+    // transpose(A) times transpose(B): the transpose of B times A, whose
+    // column 0 is B's first column times A's first column's x, added to
+    // B's second times its y.
+    const tb = try transposeOf(&work, at_b);
+    const product = try multiplied(&work, work.matrices[ta], work.matrices[tb]);
+    try testing.expect(product.transposed != none);
+    const sum = work.steps[work.matrices[product.transposed].columns[0]];
+    try testing.expectEqual(Tag.add, sum.tag);
+    const head = work.steps[sum.a];
+    const last = work.steps[sum.b];
+    try testing.expectEqual(Tag.mul, head.tag);
+    try testing.expectEqual(Tag.mul, last.tag);
+    try testing.expectEqual(b.columns[0], head.a);
+    try testing.expectEqual(b.columns[1], last.a);
+    try testing.expectEqual(a.columns[0], work.steps[head.b].a);
+    try testing.expectEqual(@as(u32, 0), work.steps[head.b].at);
+    try testing.expectEqual(@as(u32, 1), work.steps[last.b].at);
+}
+
+test "a block without its strides, an index past an array, a row-major matrix and a stride of no whole word are refused" {
+    // nested's ArrayStride made a Location: the array has no layout.
+    var work: Work = .{};
+    try testing.expectError(Error.Storage, throughMesa(&work, &comptime patched(&reference.glslc_uniform_nested, .decorate, 1, 1, @intFromEnum(spirv.Decoration.location))));
+    // Of 18 bytes, which ldunifa's words do not land on.
+    try testing.expectError(Error.Storage, throughMesa(&work, &comptime patched(&reference.glslc_uniform_nested, .decorate, 1, 2, 18)));
+    // palette[3], one past its end.
+    try testing.expectError(Error.Body, throughMesa(&work, &comptime patched(&reference.glslc_uniform_nested, .access_chain, 0, 4, 14)));
+    // matrix's MatrixStride made a second Offset: no stride for its
+    // columns.
+    try testing.expectError(Error.Storage, throughMesa(&work, &comptime patched(&reference.glslc_uniform_matrix, .member_decorate, 1, 2, @intFromEnum(spirv.Decoration.offset))));
+    try testing.expectError(Error.Storage, throughMesa(&work, &comptime patched(&reference.glslc_uniform_matrix, .member_decorate, 1, 3, 0)));
+    // Its ColMajor made RowMajor, whose columns are not a vector's floats
+    // side by side.
+    try testing.expectError(Error.Refused, throughMesa(&work, &comptime patched(&reference.glslc_uniform_matrix, .member_decorate, 0, 2, @intFromEnum(spirv.Decoration.row_major))));
 }

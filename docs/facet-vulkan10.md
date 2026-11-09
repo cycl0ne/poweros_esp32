@@ -2181,6 +2181,15 @@ Not ported: nir_opt_load_store_vectorize (nir_to_vir.c:2315-2338) and v3d_nir_so
 
 glslc_uniform_buffer compiles to one unifa write and eight ldunifas, one of them over the gap from 20 to 24; glslc_uniform_buffers, two buffers read backwards, to three unifa writes and thirteen ldunifas. On the CM5, FacetBoth 1.28's case of the uniform buffers, one of them dynamic and bound twice at two offsets, is 10 pixels of 230,400 apart, the triangle's edge alone; the other 220 cases are unchanged, and FacetProbe 1.47 is 890 of 890, 387 of them on the V3D.
 
+**Then the arrays and matrices**, facet.library 1.161. A block holds arrays, structs of offsets of their own and column-major matrices, read through access chains of constant indexes, and a fragment shader multiplies with matrices.
+
+- **Offsets.** An access chain comes to the constant nir_lower_explicit_io's arithmetic folds to: a member adds its Offset, an element its ArrayStride times the index, a matrix's column its MatrixStride, a float four bytes (vtn_pointer_dereference, vtn_variables.c). A member with no layout, a stride of no whole word and RowMajor are refused.
+- **Matrices.** A whole matrix is loaded column by column (_vtn_variable_load_store, vtn_variables.c:763-780) and held as its columns. Transpose, the three products and a matrix times a scalar are vtn_handle_matrix_alu's (vtn_alu.c:182-237), the outer product :817-823. A product is matrix_multiply's sum, the last column first, each ffma_weak before it made fadd(fmul) as the V3D has no ffma (nir_opt_algebraic.py:424); a transpose remembers what it transposed (spirv_to_nir.c:4486-4510). vtn's matrix FNegate, FAdd and FSub are left out: SPIR-V gives them no matrices, and spirv-opt makes glslc's sums vector arithmetic.
+
+Not ported: an index computed in the body, matrices and arrays carried by a store, a phi or a select, constant matrices.
+
+glslc_uniform_nested reads an array, a struct and a vector at six offsets with four unifa writes; glslc_uniform_matrix is one unifa write and nine fmuls and fadds for a mat3 times a vector and its shift; glslc_uniform_matrices takes the rest. On the CM5, FacetBoth 1.29's three cases are 8 pixels of 230,400 apart each, the triangle's edge alone, over a block whose values keep every channel between 0.03 and 0.97; the other 221 cases are unchanged, and FacetProbe is 890 of 890.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim

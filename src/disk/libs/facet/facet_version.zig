@@ -4858,4 +4858,60 @@ pub const LIBRARY_VERSION = 1;
 /// 230,400 apart, the triangle's edge; its other 220 cases are as they
 /// were at 1.159, and FacetProbe 1.47 passes its 890 checks, 387 of them
 /// on the V3D.
-pub const LIBRARY_REVISION = 160;
+/// 161: **Arrays, structs and matrices in a block, and the matrix
+/// arithmetic (docs/facet-vulkan10.md item 59).** A uniform buffer's or
+/// the push constants' block holds arrays, structs of offsets of their
+/// own and column-major matrices now, read through access chains of
+/// constant indexes, and a fragment shader multiplies with matrices.
+///
+/// - OpTypeArray takes its ArrayStride, OpTypeMatrix its columns, and a
+///   struct inside a block its member Offsets and MatrixStrides; a member
+///   with no layout - a matrix with no MatrixStride, an array with no
+///   ArrayStride - is `Error.Storage`, and so is a stride of no whole
+///   word. RowMajor is refused, its columns not being a vector's floats
+///   side by side.
+/// - An access chain is a byte offset: a member adds its Offset, an
+///   element its ArrayStride times the index, a column its MatrixStride
+///   and a float four bytes, which is the constant nir_lower_explicit_io's
+///   arithmetic folds to (vtn_pointer_dereference, vtn_variables.c). A
+///   chain may start from another chain. A load of a float or a vector is
+///   the load_ubo or push constant of 1.160 at that offset.
+/// - A whole matrix is loaded column by column, as
+///   _vtn_variable_load_store walks one (vtn_variables.c:763-780), and
+///   held as its columns' steps (`compile.Matrix`, vtn's `elems`).
+///   OpTranspose, OpMatrixTimesScalar, OpVectorTimesMatrix,
+///   OpMatrixTimesVector and OpMatrixTimesMatrix are
+///   vtn_handle_matrix_alu's (vtn_alu.c:182-237): a transpose's column
+///   `i` the vector of every column's float `i`, remembering what it
+///   transposed (vtn_ssa_transpose, spirv_to_nir.c:4486-4510), and a
+///   product matrix_multiply's (vtn_alu.c:45-98) - the last column times
+///   its float, then an ffma_weak for each column before it, last to
+///   first, which nir_opt_algebraic makes fadd(fmul) on a device without
+///   ffma (nir_opt_algebraic.py:424). OpOuterProduct is :817-823. A
+///   matrix is built of its columns by OpCompositeConstruct, and a column
+///   or a float of one taken by OpCompositeExtract.
+/// - vtn's matrix FNegate, FAdd and FSub are not ported: SPIR-V gives
+///   those opcodes scalars and vectors alone, spirv-val refuses them on a
+///   matrix, and spirv-opt makes glslc's matrix sums columns of vector
+///   arithmetic. `spirv.facet_opcodes` and the V3D's profile take the
+///   array type and the matrix opcodes.
+/// - Not ported, as before: an index computed in the body, matrices or
+///   arrays as values a store, a phi or a select carries, constant
+///   matrices, integers, and storage buffers.
+///
+/// Tests: the V3D's 184, five new. glslc_uniform_nested (320 words): an
+/// array, a struct and a vector at 32, 0, 48, 64, 80 and 28, four unifa
+/// writes and 20 ldunifas; glslc_uniform_matrix (235 words): a mat3 times
+/// a vector, one unifa write, 15 ldunifas, nine fmuls and nine fadds for
+/// the product and the shift; glslc_uniform_matrices (493 words): two
+/// unifa writes, 33 ldunifas; a transpose of a transpose and two
+/// transposes multiplied; the layouts refused. 3108 tests in all.
+/// FacetBoth 1.29: the shipped cases of uniform arrays, a uniform matrix
+/// and uniform matrices, glslc's words on the V3D beside functions of the
+/// same arithmetic in the same order on the cores, over a block whose
+/// values keep every channel between 0.03 and 0.97.
+///
+/// On the CM5, the three are 8 pixels of 230,400 apart each, the
+/// triangle's edge; FacetBoth's other 221 cases are as they were at
+/// 1.160, and FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 161;

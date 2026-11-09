@@ -106,6 +106,7 @@ pub const Op = enum(u16) {
     composite_construct = 80,
     composite_extract = 81,
     composite_insert = 82,
+    transpose = 84,
     sampled_image = 86,
     image_sample_implicit_lod = 87,
     image_sample_explicit_lod = 88,
@@ -121,7 +122,11 @@ pub const Op = enum(u16) {
     f_mul = 133,
     f_div = 136,
     vector_times_scalar = 142,
+    matrix_times_scalar = 143,
+    vector_times_matrix = 144,
     matrix_times_vector = 145,
+    matrix_times_matrix = 146,
+    outer_product = 147,
     dot = 148,
     logical_or = 166,
     logical_and = 167,
@@ -762,6 +767,11 @@ pub const facet_opcodes: []const Op = &.{
     .f_ord_less_than_equal,     .phi,                 .composite_insert,         .logical_and,
     .logical_or,                .f_unord_less_than,   .f_unord_less_than_equal,  .f_unord_greater_than_equal,
     .f_unord_greater_than,      .logical_not,
+    // Arrays in a block, and the matrix arithmetic SPIR-V has: what
+    // vtn_handle_matrix_alu and OpOuterProduct lower to columns of vector
+    // arithmetic (vtn_alu.c:182-237, :817-823; since 1.161).
+            .type_array,               .transpose,
+    .matrix_times_scalar,       .vector_times_matrix, .matrix_times_matrix,      .outer_product,
 };
 
 /// The format's own profile, which is what `CreateShaderModule` reads a

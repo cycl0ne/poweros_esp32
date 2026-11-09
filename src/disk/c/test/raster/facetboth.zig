@@ -54,7 +54,11 @@
 //! nir_opt_collapse_if does; the discard is glslc's words on the V3D.
 //! The case of uniform buffers (since 1.28) reads a tint from one and a
 //! colour and a float from a dynamic one, at two dynamic offsets, which
-//! the V3D reads through unifa.
+//! the V3D reads through unifa. The cases of uniform arrays and matrices
+//! (since 1.29) are glslc's words on the V3D: a block of an array and a
+//! struct, a mat3 times a vector, and the rest of SPIR-V's matrix
+//! arithmetic, each beside a function of the same arithmetic in the same
+//! order for the cores.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -69,7 +73,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.28 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.29 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -693,6 +697,84 @@ const Shipped = struct {
             b.color(v);
         }
     });
+    /// What `uniform_nested` computes, for the cores, and in its order:
+    /// the mix as the V3D lowers one whose third is no constant, x plus
+    /// t times y less x (since 1.29).
+    const UniformNested = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const c = b.add(b.mul(v, b.uniform(0, 0, 32, .f32x4)), b.uniform(0, 0, 0, .f32x4));
+            const rgb = b.vector(&.{ b.component(c, 0), b.component(c, 1), b.component(c, 2) });
+            const tint = b.uniform(0, 0, 48, .f32x4);
+            const toward = b.vector(&.{ b.component(tint, 0), b.component(tint, 1), b.component(tint, 2) });
+            const amount = b.uniform(0, 0, 64, .f32x1);
+            const mixed = b.add(rgb, b.mul(b.vector(&.{ amount, amount, amount }), b.sub(toward, rgb)));
+            const last = b.uniform(0, 0, 80, .f32x4);
+            const shifted = b.scale(b.vector(&.{ b.component(last, 0), b.component(last, 1), b.component(last, 2) }), b.uniform(0, 0, 28, .f32x1));
+            const sum = b.add(mixed, shifted);
+            b.color(b.vector(&.{ b.component(sum, 0), b.component(sum, 1), b.component(sum, 2), b.component(c, 3) }));
+        }
+    });
+    /// What `uniform_matrix` computes, for the cores: each row the last
+    /// column times z, then the second times y and the first times x
+    /// added on, as matrix_multiply sums them (since 1.29).
+    const UniformMatrix = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const first = b.scale(b.uniform(0, 0, 0, .f32x3), x);
+            const second = b.scale(b.uniform(0, 0, 16, .f32x3), y);
+            const third = b.scale(b.uniform(0, 0, 32, .f32x3), z);
+            const turned = b.add(first, b.add(second, third));
+            const shift = b.uniform(0, 0, 48, .f32x4);
+            const sum = b.add(turned, b.vector(&.{ b.component(shift, 0), b.component(shift, 1), b.component(shift, 2) }));
+            b.color(b.vector(&.{ b.component(sum, 0), b.component(sum, 1), b.component(sum, 2), b.component(v, 3) }));
+        }
+    });
+    /// What `uniform_matrices` computes, for the cores, column by column
+    /// (since 1.29).
+    const UniformMatrices = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const a0 = b.uniform(0, 0, 0, .f32x2);
+            const a1 = b.uniform(0, 0, 16, .f32x2);
+            const b0 = b.uniform(0, 0, 32, .f32x2);
+            const b1 = b.uniform(0, 0, 48, .f32x2);
+            const sum0 = b.add(a0, b0);
+            const sum1 = b.add(a1, b1);
+            const diff0 = b.sub(a0, b0);
+            const diff1 = b.sub(a1, b1);
+            // sum times the transpose of diff, whose column i is the two
+            // columns' float i; then all of it times w.
+            const prod0 = b.add(b.scale(sum0, b.component(diff0, 0)), b.scale(sum1, b.component(diff1, 0)));
+            const prod1 = b.add(b.scale(sum0, b.component(diff0, 1)), b.scale(sum1, b.component(diff1, 1)));
+            const p0 = b.scale(prod0, w);
+            const p1 = b.scale(prod1, w);
+            const p0x = b.component(p0, 0);
+            const p0y = b.component(p0, 1);
+            const p1x = b.component(p1, 0);
+            // The vector times it: the transpose of it times the vector.
+            const left = b.add(b.scale(b.vector(&.{ p0x, p1x }), x), b.scale(b.vector(&.{ p0y, b.component(p1, 1) }), y));
+            const right = b.add(b.scale(b.neg(a0), z), b.scale(b.neg(a1), w));
+            const both = b.add(left, right);
+            const c0 = b.uniform(0, 0, 64, .f32x2);
+            const c1 = b.uniform(0, 0, 80, .f32x2);
+            const c2 = b.uniform(0, 0, 96, .f32x2);
+            const cs = b.add(b.scale(c0, x), b.add(b.scale(c1, y), b.scale(c2, z)));
+            // made[1] + prod[0], float by float; and the outer product's
+            // column 1, float 0, is x times pad.w.
+            const third = b.add(b.component(cs, 0), b.mul(b.add(w, p0y), b.add(z, p0x)));
+            const pad = b.uniform(0, 0, 112, .f32x4);
+            const fourth = b.add(b.add(p1x, b.component(pad, 0)), b.mul(x, b.component(pad, 3)));
+            b.color(b.vector(&.{ b.component(both, 0), b.component(both, 1), third, fourth }));
+        }
+    });
 };
 
 /// The entries that ship words, after all the others, and the words of
@@ -724,15 +806,19 @@ const shipped_entries = [_]shader.Entry{
     Shipped.Collapsed.entry("shipped collapsed"),
     Shipped.NestedDiscard.entry("shipped nested discard"),
     Shipped.Uniformed.entry("shipped uniformed"),
+    Shipped.UniformNested.entry("shipped uniform nested"),
+    Shipped.UniformMatrix.entry("shipped uniform matrix"),
+    Shipped.UniformMatrices.entry("shipped uniform matrices"),
 };
 const shipped_words = [_]shader.Spirv{
-    .{},                              .{},                     .{},                                  .{},
-    Shipped.Smooth.spirv,             Shipped.Flat.spirv,      Shipped.Dimmed.spirv,                 Shipped.Textured.spirv,
-    Shipped.Modulated.spirv,          Shipped.Pushed.spirv,    Shipped.Tinted.spirv,                 Shipped.Cutout.spirv,
-    Shipped.CutoutOther.spirv,        Shipped.Shadowed.spirv,  Shipped.Arithmetic.spirv,             Shipped.Called.spirv,
-    Shipped.Chosen.spirv,             Shipped.Branched.spirv,  shader.Spirv.of(&branch_unoptimized), Shipped.Nested.spirv,
-    Shipped.Bools.spirv,              Shipped.Nests.spirv,     Shipped.Joined.spirv,                 Shipped.Collapsed.spirv,
-    shader.Spirv.of(&nested_discard), Shipped.Uniformed.spirv,
+    .{},                                .{},                     .{},                                  .{},
+    Shipped.Smooth.spirv,               Shipped.Flat.spirv,      Shipped.Dimmed.spirv,                 Shipped.Textured.spirv,
+    Shipped.Modulated.spirv,            Shipped.Pushed.spirv,    Shipped.Tinted.spirv,                 Shipped.Cutout.spirv,
+    Shipped.CutoutOther.spirv,          Shipped.Shadowed.spirv,  Shipped.Arithmetic.spirv,             Shipped.Called.spirv,
+    Shipped.Chosen.spirv,               Shipped.Branched.spirv,  shader.Spirv.of(&branch_unoptimized), Shipped.Nested.spirv,
+    Shipped.Bools.spirv,                Shipped.Nests.spirv,     Shipped.Joined.spirv,                 Shipped.Collapsed.spirv,
+    shader.Spirv.of(&nested_discard),   Shipped.Uniformed.spirv, shader.Spirv.of(&uniform_nested),     shader.Spirv.of(&uniform_matrix),
+    shader.Spirv.of(&uniform_matrices),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -778,6 +864,260 @@ const nested_discard = [_]u32{
     0x000200F8, 0x00000019, 0x000200F9, 0x00000013, 0x000200F8, 0x00000013,
     0x0004003D, 0x00000007, 0x0000001D, 0x00000009, 0x0003003E, 0x0000001C,
     0x0000001D, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for a uniform buffer of an array, a struct
+/// and a vector, the V3D's host tests' glslc_uniform_nested: its loads at
+/// the offsets the strides and the members give (since 1.29).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// struct Tint {
+///     vec4 color;
+///     float amount;
+/// };
+/// layout(set = 0, binding = 0) uniform Scene {
+///     vec4 palette[3];
+///     Tint tint;
+///     vec4 last;
+/// } scene;
+/// void main() {
+///     vec4 c = vcolor * scene.palette[2] + scene.palette[0];
+///     vec3 mixed = mix(c.rgb, scene.tint.color.rgb, scene.tint.amount);
+///     ocolor = vec4(mixed + scene.last.xyz * scene.palette[1].w, c.a);
+/// }
+/// ```
+const uniform_nested = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000003D, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x0000002D, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000F, 0x00000006, 0x00000010, 0x00050048, 0x00000010,
+    0x00000000, 0x00000023, 0x00000000, 0x00050048, 0x00000010, 0x00000001,
+    0x00000023, 0x00000010, 0x00030047, 0x00000011, 0x00000002, 0x00050048,
+    0x00000011, 0x00000000, 0x00000023, 0x00000000, 0x00050048, 0x00000011,
+    0x00000001, 0x00000023, 0x00000030, 0x00050048, 0x00000011, 0x00000002,
+    0x00000023, 0x00000050, 0x00040047, 0x00000013, 0x00000021, 0x00000000,
+    0x00040047, 0x00000013, 0x00000022, 0x00000000, 0x00040047, 0x0000002D,
+    0x0000001E, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007,
+    0x00000006, 0x00000004, 0x00040020, 0x0000000A, 0x00000001, 0x00000007,
+    0x0004003B, 0x0000000A, 0x0000000B, 0x00000001, 0x00040015, 0x0000000D,
+    0x00000020, 0x00000000, 0x0004002B, 0x0000000D, 0x0000000E, 0x00000003,
+    0x0004001C, 0x0000000F, 0x00000007, 0x0000000E, 0x0004001E, 0x00000010,
+    0x00000007, 0x00000006, 0x0005001E, 0x00000011, 0x0000000F, 0x00000010,
+    0x00000007, 0x00040020, 0x00000012, 0x00000002, 0x00000011, 0x0004003B,
+    0x00000012, 0x00000013, 0x00000002, 0x00040015, 0x00000014, 0x00000020,
+    0x00000001, 0x0004002B, 0x00000014, 0x00000015, 0x00000000, 0x0004002B,
+    0x00000014, 0x00000016, 0x00000002, 0x00040020, 0x00000017, 0x00000002,
+    0x00000007, 0x00040017, 0x0000001E, 0x00000006, 0x00000003, 0x0004002B,
+    0x00000014, 0x00000023, 0x00000001, 0x00040020, 0x00000027, 0x00000002,
+    0x00000006, 0x00040020, 0x0000002C, 0x00000003, 0x00000007, 0x0004003B,
+    0x0000002C, 0x0000002D, 0x00000003, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x00000007,
+    0x0000000C, 0x0000000B, 0x00060041, 0x00000017, 0x00000018, 0x00000013,
+    0x00000015, 0x00000016, 0x0004003D, 0x00000007, 0x00000019, 0x00000018,
+    0x00050085, 0x00000007, 0x0000001A, 0x0000000C, 0x00000019, 0x00060041,
+    0x00000017, 0x0000001B, 0x00000013, 0x00000015, 0x00000015, 0x0004003D,
+    0x00000007, 0x0000001C, 0x0000001B, 0x00050081, 0x00000007, 0x0000001D,
+    0x0000001A, 0x0000001C, 0x0008004F, 0x0000001E, 0x00000022, 0x0000001D,
+    0x0000001D, 0x00000000, 0x00000001, 0x00000002, 0x00060041, 0x00000017,
+    0x00000024, 0x00000013, 0x00000023, 0x00000015, 0x0004003D, 0x00000007,
+    0x00000025, 0x00000024, 0x0008004F, 0x0000001E, 0x00000026, 0x00000025,
+    0x00000025, 0x00000000, 0x00000001, 0x00000002, 0x00060041, 0x00000027,
+    0x00000028, 0x00000013, 0x00000023, 0x00000023, 0x0004003D, 0x00000006,
+    0x00000029, 0x00000028, 0x00060050, 0x0000001E, 0x0000002A, 0x00000029,
+    0x00000029, 0x00000029, 0x0008000C, 0x0000001E, 0x0000002B, 0x00000001,
+    0x0000002E, 0x00000022, 0x00000026, 0x0000002A, 0x00050041, 0x00000017,
+    0x0000002F, 0x00000013, 0x00000016, 0x0004003D, 0x00000007, 0x00000030,
+    0x0000002F, 0x0008004F, 0x0000001E, 0x00000031, 0x00000030, 0x00000030,
+    0x00000000, 0x00000001, 0x00000002, 0x00070041, 0x00000027, 0x00000032,
+    0x00000013, 0x00000015, 0x00000023, 0x0000000E, 0x0004003D, 0x00000006,
+    0x00000033, 0x00000032, 0x0005008E, 0x0000001E, 0x00000034, 0x00000031,
+    0x00000033, 0x00050081, 0x0000001E, 0x00000035, 0x0000002B, 0x00000034,
+    0x00050051, 0x00000006, 0x00000038, 0x0000001D, 0x00000003, 0x00050051,
+    0x00000006, 0x00000039, 0x00000035, 0x00000000, 0x00050051, 0x00000006,
+    0x0000003A, 0x00000035, 0x00000001, 0x00050051, 0x00000006, 0x0000003B,
+    0x00000035, 0x00000002, 0x00070050, 0x00000007, 0x0000003C, 0x00000039,
+    0x0000003A, 0x0000003B, 0x00000038, 0x0003003E, 0x0000002D, 0x0000003C,
+    0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for a mat3 in a uniform buffer times a
+/// vector, glslc_uniform_matrix: the matrix loaded column by column, and
+/// matrix_multiply's sum (since 1.29).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// layout(set = 0, binding = 0) uniform Turn {
+///     mat3 turn;
+///     vec4 shift;
+/// } t;
+/// void main() {
+///     vec3 turned = t.turn * vcolor.rgb;
+///     ocolor = vec4(turned + t.shift.xyz, vcolor.a);
+/// }
+/// ```
+const uniform_matrix = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000002B, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000015, 0x0000001A, 0x00030010,
+    0x00000004, 0x00000007, 0x00030047, 0x0000000C, 0x00000002, 0x00040048,
+    0x0000000C, 0x00000000, 0x00000005, 0x00050048, 0x0000000C, 0x00000000,
+    0x00000007, 0x00000010, 0x00050048, 0x0000000C, 0x00000000, 0x00000023,
+    0x00000000, 0x00050048, 0x0000000C, 0x00000001, 0x00000023, 0x00000030,
+    0x00040047, 0x0000000E, 0x00000021, 0x00000000, 0x00040047, 0x0000000E,
+    0x00000022, 0x00000000, 0x00040047, 0x00000015, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000001A, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000003, 0x00040018, 0x0000000A,
+    0x00000007, 0x00000003, 0x00040017, 0x0000000B, 0x00000006, 0x00000004,
+    0x0004001E, 0x0000000C, 0x0000000A, 0x0000000B, 0x00040020, 0x0000000D,
+    0x00000002, 0x0000000C, 0x0004003B, 0x0000000D, 0x0000000E, 0x00000002,
+    0x00040015, 0x0000000F, 0x00000020, 0x00000001, 0x0004002B, 0x0000000F,
+    0x00000010, 0x00000000, 0x00040020, 0x00000011, 0x00000002, 0x0000000A,
+    0x00040020, 0x00000014, 0x00000001, 0x0000000B, 0x0004003B, 0x00000014,
+    0x00000015, 0x00000001, 0x00040020, 0x00000019, 0x00000003, 0x0000000B,
+    0x0004003B, 0x00000019, 0x0000001A, 0x00000003, 0x0004002B, 0x0000000F,
+    0x0000001C, 0x00000001, 0x00040020, 0x0000001D, 0x00000002, 0x0000000B,
+    0x00040015, 0x00000022, 0x00000020, 0x00000000, 0x0004002B, 0x00000022,
+    0x00000023, 0x00000003, 0x00040020, 0x00000024, 0x00000001, 0x00000006,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x00050041, 0x00000011, 0x00000012, 0x0000000E, 0x00000010,
+    0x0004003D, 0x0000000A, 0x00000013, 0x00000012, 0x0004003D, 0x0000000B,
+    0x00000016, 0x00000015, 0x0008004F, 0x00000007, 0x00000017, 0x00000016,
+    0x00000016, 0x00000000, 0x00000001, 0x00000002, 0x00050091, 0x00000007,
+    0x00000018, 0x00000013, 0x00000017, 0x00050041, 0x0000001D, 0x0000001E,
+    0x0000000E, 0x0000001C, 0x0004003D, 0x0000000B, 0x0000001F, 0x0000001E,
+    0x0008004F, 0x00000007, 0x00000020, 0x0000001F, 0x0000001F, 0x00000000,
+    0x00000001, 0x00000002, 0x00050081, 0x00000007, 0x00000021, 0x00000018,
+    0x00000020, 0x00050041, 0x00000024, 0x00000025, 0x00000015, 0x00000023,
+    0x0004003D, 0x00000006, 0x00000026, 0x00000025, 0x00050051, 0x00000006,
+    0x00000027, 0x00000021, 0x00000000, 0x00050051, 0x00000006, 0x00000028,
+    0x00000021, 0x00000001, 0x00050051, 0x00000006, 0x00000029, 0x00000021,
+    0x00000002, 0x00070050, 0x0000000B, 0x0000002A, 0x00000027, 0x00000028,
+    0x00000029, 0x00000026, 0x0003003E, 0x0000001A, 0x0000002A, 0x000100FD,
+    0x00010038,
+};
+
+/// glslc's own output, at -O, for the rest of SPIR-V's matrix arithmetic,
+/// glslc_uniform_matrices: matrices built of columns, a transpose, the
+/// products, a scalar, an outer product, a column and a float of one
+/// extracted (since 1.29).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// layout(set = 0, binding = 0) uniform Mats {
+///     mat2 a;
+///     mat2 b;
+///     mat3x2 c;
+///     vec4 pad;
+/// } m;
+/// void main() {
+///     mat2 sum = m.a + m.b;
+///     mat2 diff = m.a - m.b;
+///     mat2 prod = sum * transpose(diff) * vcolor.w;
+///     vec2 left = vcolor.xy * prod;
+///     vec2 right = (-m.a) * vcolor.zw;
+///     vec2 cs = m.c * vcolor.xyz;
+///     mat2 made = mat2(vcolor.xy, vcolor.zw);
+///     vec2 col = made[1] + prod[0];
+///     mat2 outer = outerProduct(vcolor.xy, m.pad.zw);
+///     ocolor = vec4(left + right, cs.x + col.y * col.x, prod[1][0] + m.pad.x + outer[1].x);
+/// }
+/// ```
+const uniform_matrices = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000008B, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000031, 0x00000070, 0x00030010,
+    0x00000004, 0x00000007, 0x00030047, 0x0000000D, 0x00000002, 0x00040048,
+    0x0000000D, 0x00000000, 0x00000005, 0x00050048, 0x0000000D, 0x00000000,
+    0x00000007, 0x00000010, 0x00050048, 0x0000000D, 0x00000000, 0x00000023,
+    0x00000000, 0x00040048, 0x0000000D, 0x00000001, 0x00000005, 0x00050048,
+    0x0000000D, 0x00000001, 0x00000007, 0x00000010, 0x00050048, 0x0000000D,
+    0x00000001, 0x00000023, 0x00000020, 0x00040048, 0x0000000D, 0x00000002,
+    0x00000005, 0x00050048, 0x0000000D, 0x00000002, 0x00000007, 0x00000010,
+    0x00050048, 0x0000000D, 0x00000002, 0x00000023, 0x00000040, 0x00050048,
+    0x0000000D, 0x00000003, 0x00000023, 0x00000070, 0x00040047, 0x0000000F,
+    0x00000021, 0x00000000, 0x00040047, 0x0000000F, 0x00000022, 0x00000000,
+    0x00040047, 0x00000031, 0x0000001E, 0x00000000, 0x00040047, 0x00000070,
+    0x0000001E, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007,
+    0x00000006, 0x00000002, 0x00040018, 0x00000008, 0x00000007, 0x00000002,
+    0x00040018, 0x0000000B, 0x00000007, 0x00000003, 0x00040017, 0x0000000C,
+    0x00000006, 0x00000004, 0x0006001E, 0x0000000D, 0x00000008, 0x00000008,
+    0x0000000B, 0x0000000C, 0x00040020, 0x0000000E, 0x00000002, 0x0000000D,
+    0x0004003B, 0x0000000E, 0x0000000F, 0x00000002, 0x00040015, 0x00000010,
+    0x00000020, 0x00000001, 0x0004002B, 0x00000010, 0x00000011, 0x00000000,
+    0x00040020, 0x00000012, 0x00000002, 0x00000008, 0x0004002B, 0x00000010,
+    0x00000015, 0x00000001, 0x00040020, 0x00000030, 0x00000001, 0x0000000C,
+    0x0004003B, 0x00000030, 0x00000031, 0x00000001, 0x00040015, 0x00000032,
+    0x00000020, 0x00000000, 0x0004002B, 0x00000032, 0x00000033, 0x00000003,
+    0x00040020, 0x00000034, 0x00000001, 0x00000006, 0x0004002B, 0x00000010,
+    0x0000004A, 0x00000002, 0x00040020, 0x0000004B, 0x00000002, 0x0000000B,
+    0x00040017, 0x0000004E, 0x00000006, 0x00000003, 0x0004002B, 0x00000010,
+    0x00000069, 0x00000003, 0x00040020, 0x0000006A, 0x00000002, 0x0000000C,
+    0x00040020, 0x0000006F, 0x00000003, 0x0000000C, 0x0004003B, 0x0000006F,
+    0x00000070, 0x00000003, 0x0004002B, 0x00000032, 0x00000074, 0x00000000,
+    0x00040020, 0x00000081, 0x00000002, 0x00000006, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x00050041,
+    0x00000012, 0x00000013, 0x0000000F, 0x00000011, 0x0004003D, 0x00000008,
+    0x00000014, 0x00000013, 0x00050041, 0x00000012, 0x00000016, 0x0000000F,
+    0x00000015, 0x0004003D, 0x00000008, 0x00000017, 0x00000016, 0x00050051,
+    0x00000007, 0x00000018, 0x00000014, 0x00000000, 0x00050051, 0x00000007,
+    0x00000019, 0x00000017, 0x00000000, 0x00050081, 0x00000007, 0x0000001A,
+    0x00000018, 0x00000019, 0x00050051, 0x00000007, 0x0000001B, 0x00000014,
+    0x00000001, 0x00050051, 0x00000007, 0x0000001C, 0x00000017, 0x00000001,
+    0x00050081, 0x00000007, 0x0000001D, 0x0000001B, 0x0000001C, 0x00050050,
+    0x00000008, 0x0000001E, 0x0000001A, 0x0000001D, 0x00050083, 0x00000007,
+    0x00000026, 0x00000018, 0x00000019, 0x00050083, 0x00000007, 0x00000029,
+    0x0000001B, 0x0000001C, 0x00050050, 0x00000008, 0x0000002A, 0x00000026,
+    0x00000029, 0x00040054, 0x00000008, 0x0000002E, 0x0000002A, 0x00050092,
+    0x00000008, 0x0000002F, 0x0000001E, 0x0000002E, 0x00050041, 0x00000034,
+    0x00000035, 0x00000031, 0x00000033, 0x0004003D, 0x00000006, 0x00000036,
+    0x00000035, 0x0005008F, 0x00000008, 0x00000037, 0x0000002F, 0x00000036,
+    0x0004003D, 0x0000000C, 0x0000003A, 0x00000031, 0x0007004F, 0x00000007,
+    0x0000003B, 0x0000003A, 0x0000003A, 0x00000000, 0x00000001, 0x00050090,
+    0x00000007, 0x0000003D, 0x0000003B, 0x00000037, 0x0004007F, 0x00000007,
+    0x00000042, 0x00000018, 0x0004007F, 0x00000007, 0x00000044, 0x0000001B,
+    0x00050050, 0x00000008, 0x00000045, 0x00000042, 0x00000044, 0x0007004F,
+    0x00000007, 0x00000047, 0x0000003A, 0x0000003A, 0x00000002, 0x00000003,
+    0x00050091, 0x00000007, 0x00000048, 0x00000045, 0x00000047, 0x00050041,
+    0x0000004B, 0x0000004C, 0x0000000F, 0x0000004A, 0x0004003D, 0x0000000B,
+    0x0000004D, 0x0000004C, 0x0008004F, 0x0000004E, 0x00000050, 0x0000003A,
+    0x0000003A, 0x00000000, 0x00000001, 0x00000002, 0x00050091, 0x00000007,
+    0x00000051, 0x0000004D, 0x00000050, 0x00050051, 0x00000006, 0x0000005B,
+    0x0000003A, 0x00000002, 0x00050051, 0x00000006, 0x0000005C, 0x0000003A,
+    0x00000003, 0x00050050, 0x00000007, 0x0000005E, 0x0000005B, 0x0000005C,
+    0x00050051, 0x00000007, 0x00000064, 0x00000037, 0x00000000, 0x00050081,
+    0x00000007, 0x00000065, 0x0000005E, 0x00000064, 0x00050041, 0x0000006A,
+    0x0000006B, 0x0000000F, 0x00000069, 0x0004003D, 0x0000000C, 0x0000006C,
+    0x0000006B, 0x0007004F, 0x00000007, 0x0000006D, 0x0000006C, 0x0000006C,
+    0x00000002, 0x00000003, 0x00050093, 0x00000008, 0x0000006E, 0x0000003B,
+    0x0000006D, 0x00050081, 0x00000007, 0x00000073, 0x0000003D, 0x00000048,
+    0x00050051, 0x00000006, 0x00000077, 0x00000051, 0x00000000, 0x00050051,
+    0x00000006, 0x0000007A, 0x00000065, 0x00000001, 0x00050051, 0x00000006,
+    0x0000007C, 0x00000065, 0x00000000, 0x00050085, 0x00000006, 0x0000007D,
+    0x0000007A, 0x0000007C, 0x00050081, 0x00000006, 0x0000007E, 0x00000077,
+    0x0000007D, 0x00060051, 0x00000006, 0x00000080, 0x00000037, 0x00000001,
+    0x00000000, 0x00060041, 0x00000081, 0x00000082, 0x0000000F, 0x00000069,
+    0x00000074, 0x0004003D, 0x00000006, 0x00000083, 0x00000082, 0x00050081,
+    0x00000006, 0x00000084, 0x00000080, 0x00000083, 0x00060051, 0x00000006,
+    0x00000086, 0x0000006E, 0x00000001, 0x00000000, 0x00050081, 0x00000006,
+    0x00000087, 0x00000084, 0x00000086, 0x00050051, 0x00000006, 0x00000088,
+    0x00000073, 0x00000000, 0x00050051, 0x00000006, 0x00000089, 0x00000073,
+    0x00000001, 0x00070050, 0x0000000C, 0x0000008A, 0x00000088, 0x00000089,
+    0x0000007E, 0x00000087, 0x0003003E, 0x00000070, 0x0000008A, 0x000100FD,
+    0x00010038,
 };
 
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
@@ -1417,6 +1757,9 @@ const Side = struct {
     uniform_set_layout: ?*facet.DescriptorSetLayout = null,
     uniform_layout: ?*facet.PipelineLayout = null,
     uniform_set: ?*facet.DescriptorSet = null,
+    /// The same layout's set the uniform arrays and matrices read
+    /// (since 1.29).
+    blocks_set: ?*facet.DescriptorSet = null,
     compute_layout: ?*facet.PipelineLayout = null,
     compute_pipelines: [2]?*facet.Pipeline = @splat(null),
     /// The pipelines of the case being drawn.
@@ -1497,7 +1840,7 @@ const Side = struct {
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 3 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 4 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -1911,7 +2254,9 @@ const Side = struct {
 
     /// The uniform buffers `Shipped.Uniformed` reads: binding 0's block at
     /// 0, its tint at 16; binding 1's, a dynamic one, at 256, with a
-    /// second at 512 that a dynamic offset of 256 reaches.
+    /// second at 512 that a dynamic offset of 256 reaches. `blocks_set`
+    /// is the same with binding 0 the 128 bytes at 768, which the uniform
+    /// arrays and matrices read (since 1.29).
     fn upUniforms(side: *Side) Failure!void {
         const fb = side.fb;
         const device = side.device.?;
@@ -1923,6 +2268,20 @@ const Side = struct {
         floats[69] = 0.5;
         @memcpy(floats[128..132], &[4]f32{ 0.5, 0, 0, 0 });
         floats[133] = 0.25;
+        // The uniform arrays' and matrices' block, at 768: values that
+        // keep every channel of the three between 0.03 and 0.97 over the
+        // triangle's colours, so that none is clamped where it could
+        // differ (since 1.29).
+        @memcpy(floats[192..224], &[32]f32{
+            -0.125, -0.0625, 0.75,    0.625,
+            -0.125, -0.25,   -0.25,   -0.375,
+            0,      0.1875,  0.625,   -0.125,
+            0.25,   0.3125,  0.0625,  0.625,
+            0.4375, 0.375,   0.4375,  0.5625,
+            -0.25,  0.125,   0.25,    -0.1875,
+            0.125,  -0.125,  -0.3125, 0,
+            0.6875, 0.25,    -0.3125, -0.625,
+        });
         const bindings = [2]facet.DescriptorSetLayoutBinding{
             .{ .binding = 0, .descriptor_type = .uniform_buffer, .stage_flags = facet.SHADER_STAGE_FRAGMENT },
             .{ .binding = 1, .descriptor_type = .uniform_buffer_dynamic, .stage_flags = facet.SHADER_STAGE_FRAGMENT },
@@ -1941,6 +2300,14 @@ const Side = struct {
             .{ .dst_set = side.uniform_set.?, .dst_binding = 1, .descriptor_type = .uniform_buffer_dynamic, .buffer_info = @ptrCast(&infos[1]) },
         };
         fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&side.uniform_set_layout) }, &made), error.Refused);
+        side.blocks_set = made[0];
+        const blocks = facet.DescriptorBufferInfo{ .buffer = side.uniforms, .offset = 768, .range = 128 };
+        const block_writes = [2]facet.WriteDescriptorSet{
+            .{ .dst_set = side.blocks_set.?, .dst_binding = 0, .descriptor_type = .uniform_buffer, .buffer_info = @ptrCast(&blocks) },
+            .{ .dst_set = side.blocks_set.?, .dst_binding = 1, .descriptor_type = .uniform_buffer_dynamic, .buffer_info = @ptrCast(&infos[1]) },
+        };
+        fb.UpdateDescriptorSets(device, 2, &block_writes, 0, null);
     }
 
     fn down(side: *Side) void {
@@ -3115,6 +3482,20 @@ const Cases = struct {
         side.draw(glass_at, 3);
         side.end();
     }
+    /// A shipped fragment shader that reads binding 0 of `blocks_set`,
+    /// over the geometry the shipped cases draw (since 1.29).
+    fn uniformedBy(comptime fragment: [*:0]const u8) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                side.begin(.{});
+                try side.use(.{ .vertex = "as it is", .fragment = fragment, .layout = side.uniform_layout.? });
+                const first = [1]u32{0};
+                side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.uniform_layout.?, 0, 1, @ptrCast(&side.blocks_set), 1, &first);
+                side.draw(clockwise_at, 6);
+                side.end();
+            }
+        }.run;
+    }
     /// The vertices' colour times a pushed float, plus a pushed colour.
     fn tinted(side: *Side) Failure!void {
         side.begin(.{});
@@ -3346,6 +3727,9 @@ const cases = [_]Case{
     .{ .name = "shipped collapsed selections", .run = Cases.shipped("as it is", "shipped collapsed", false, clockwise_at) },
     .{ .name = "shipped nested discard", .run = Cases.shipped("as it is", "shipped nested discard", false, clockwise_at) },
     .{ .name = "shipped uniform buffers", .run = Cases.uniformed },
+    .{ .name = "shipped uniform arrays", .run = Cases.uniformedBy("shipped uniform nested") },
+    .{ .name = "shipped uniform matrix", .run = Cases.uniformedBy("shipped uniform matrix") },
+    .{ .name = "shipped uniform matrices", .run = Cases.uniformedBy("shipped uniform matrices") },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },
