@@ -79,8 +79,8 @@ const tx = sdk.gadgets.text;
 const cb_class = sdk.gadgets.checkbox;
 
 pub const COMMAND_NAME = "Shares";
-const VERSION = "1.0";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (02.11.2026)\r\n";
+const VERSION = "1.1";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
@@ -268,7 +268,9 @@ const App = struct {
 
     /// The upper list made anew from what the last look found.
     fn showFound(app: *App) void {
-        app.set(app.found, &.{ pair(lb.LISTBROWSER_Rows, lb.LISTBROWSER_DETACH), .{} });
+        // Taken away without a window, so that the gadget is drawn once,
+        // as the list is given back, and not empty in between.
+        app.setIn(null, app.found, &.{ pair(lb.LISTBROWSER_Rows, lb.LISTBROWSER_DETACH), .{} });
         lb.freeRows(app.sys, &app.found_rows);
         var selected: u32 = lb.LISTBROWSER_NONE;
         for (app.link.shares[0..app.link.count], 0..) |*share, index| {
@@ -350,7 +352,9 @@ const App = struct {
     /// The lower list made anew from the share files and the device list.
     fn showMine(app: *App) void {
         app.known_list.read(app.dl);
-        app.set(app.mine, &.{ pair(lb.LISTBROWSER_Rows, lb.LISTBROWSER_DETACH), .{} });
+        // Taken away without a window, so that the gadget is drawn once,
+        // as the list is given back, and not empty in between.
+        app.setIn(null, app.mine, &.{ pair(lb.LISTBROWSER_Rows, lb.LISTBROWSER_DETACH), .{} });
         lb.freeRows(app.sys, &app.mine_rows);
         var selected: u32 = lb.LISTBROWSER_NONE;
         for (app.known_list.items[0..app.known_list.count], 0..) |*item, index| {

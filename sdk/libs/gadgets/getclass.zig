@@ -25,7 +25,13 @@
 //! The field is a `string.gadget` in no window's list: this gadget
 //! places it before every message it hands on, exactly as
 //! integer.gadget does with its own. Its `ICA_TARGET` is this gadget,
-//! which reads what was typed when the field is done with.
+//! which reads what was typed when the field is done with. The field
+//! says so in its own name, its `GA_ID` among the tags, so that update is
+//! not handed to gadgetclass: the field's ID would become this gadget's,
+//! and the window would hear Return in it as another gadget's.
+//!
+//! Set in a window - by the program, the field or the requester - the
+//! gadget draws itself again.
 //!
 //! What the program hears is an `OM_NOTIFY` on this gadget's own target,
 //! carrying the attributes that changed and the gadget's `GA_ID`, so a
@@ -163,7 +169,8 @@ fn asString(from: []const u8) [*:0]const u8 {
 }
 
 /// The drawer and the file joined the way dos joins them: a drawer that
-/// ends in a colon or a slash takes the name straight after it.
+/// ends in a colon or a slash takes the name straight after it, and a
+/// drawer with no name is shown as it is.
 fn joinPath(own: *Data) void {
     @memset(&own.shown, 0);
     var at: usize = 0;
@@ -172,7 +179,7 @@ fn joinPath(own: *Data) void {
         own.shown[at] = own.drawer[i];
         at += 1;
     }
-    if (at != 0 and own.shown[at - 1] != ':' and own.shown[at - 1] != '/' and at + 1 < own.shown.len) {
+    if (own.file[0] != 0 and at != 0 and own.shown[at - 1] != ':' and own.shown[at - 1] != '/' and at + 1 < own.shown.len) {
         own.shown[at] = '/';
         at += 1;
     }
@@ -185,7 +192,9 @@ fn joinPath(own: *Data) void {
 }
 
 /// A path typed into the field split back into a drawer and a name, at
-/// the last colon or slash.
+/// the last colon or slash. For drawers only the whole of it is the
+/// drawer: the requester opens in it, and answers it where nothing else
+/// is picked.
 fn splitPath(own: *Data) void {
     var length: usize = 0;
     while (length < own.shown.len and own.shown[length] != 0) length += 1;
@@ -194,6 +203,7 @@ fn splitPath(own: *Data) void {
     while (i < length) : (i += 1) {
         if (own.shown[i] == '/' or own.shown[i] == ':') cut = i + 1;
     }
+    if (own.drawers_only != 0) cut = length;
     @memset(&own.drawer, 0);
     @memset(&own.file, 0);
     const drawer_len = @min(cut, own.drawer.len - 1);
@@ -737,12 +747,22 @@ pub fn Library(comptime spec: Spec) type {
                 classusr.OM_SET, classusr.OM_UPDATE => {
                     const set: *classusr.OpSet = @ptrCast(@alignCast(msg));
                     const own = classes.instData(Data, cl, o.?);
-                    var changed = ib.SendSuperMessage(cl, o, msg);
+                    // The field telling what was typed in it speaks in its
+                    // own name, its GA_ID among the tags: the superclass
+                    // is not told, or that would become this gadget's.
+                    const from_field = msg.method_id == classusr.OM_UPDATE and
+                        base.utility_base.FindTagItem(gc.STRINGA_TextVal, set.attr_list) != null;
+                    var changed = if (from_field) 0 else ib.SendSuperMessage(cl, o, msg);
                     const typing = msg.method_id == classusr.OM_UPDATE and
                         @as(*classusr.OpUpdate, @ptrCast(@alignCast(msg))).flags & classusr.OPUF_INTERIM != 0;
                     if (setAttrs(base, own, set.attr_list, false, typing)) changed = 1;
-                    if (changed != 0 and msg.method_id == classusr.OM_UPDATE and set.gadget_info != null) {
+                    // Shown again where it is in a window: what a program
+                    // sets as much as what the field or the requester did.
+                    if (changed != 0 and set.gadget_info != null and
+                        (msg.method_id == classusr.OM_UPDATE or classes.objectClass(o.?) == cl))
+                    {
                         support.redraw(ib, o.?, set.gadget_info);
+                        if (msg.method_id == classusr.OM_SET) return 0;
                     }
                     return changed;
                 },

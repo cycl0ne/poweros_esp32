@@ -1048,7 +1048,8 @@ read, which is why an update over a 50 MB package that differs in two
 files fetches 4.7 KB. `CHECK` says what would happen and writes nothing,
 and its return code tells a script whether there is anything to do. The
 system volume is given a snapshot before the first file is written.
-`SYS:System/Update` does the same in a window: a check as it opens, a
+`SYS:System/Update` does the same in a window: a check as it opens, the
+package's drawer picked from a requester and kept in `update.prefs`, a
 row for every path, a gauge while it writes, Stop, Restart, and Keep for
 a kernel that came up on its try. The work is
 `LIBS:update.library`'s, which a program calls the same way

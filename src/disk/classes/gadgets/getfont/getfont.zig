@@ -17,6 +17,8 @@ const Class = _get.Library(.{
     .name = gfo.GETFONT_CLASS,
     .kind = .font,
     .dummy = gfo.GETFONT_Dummy,
+    .revision = 2,
+    .date = "09.11.2026",
 });
 
 /// The library the class is in; its ROM tag is `Library.resident_tag`.

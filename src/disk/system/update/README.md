@@ -17,7 +17,9 @@ from.
 
 **A check as it opens.** The package's list is held against the one this
 machine was given, and the field at the top shows the package that was
-read. Every path something would happen to is a row: what would happen to
+read. The button beside the field asks for the drawer the package is
+in, and checks it once one is picked; an address a server answers is
+typed in, and Return checks it. Every path something would happen to is a row: what would happen to
 it, the path, and how much would be written for it -
 
 - `new` a file the build has begun to ship, `newer` one it changed,
@@ -30,9 +32,8 @@ it, the path, and how much would be written for it -
 The two lines over the list say what it comes to - how many files would be
 written and how much, deleted, kept and made - and what to do about it.
 
-**Check** looks again, at what the field holds: another package is typed
-in and checked, Return in the field doing the same. Two switches change
-what is looked at, and changing either checks again:
+**Check** looks again, at what the field holds. Two switches change what
+is looked at, and changing either checks again:
 
 - **With the kernel** writes the files the firmware reads as well, into
   the partition it reads them from. It starts as `BOOT` in `update.prefs`
@@ -40,6 +41,12 @@ what is looked at, and changing either checks again:
 - **Replace changed files** writes the package's own over a file that was
   changed on this machine, where the package changed it too. A file that
   only this machine changed is never touched.
+
+**The package is kept.** Once a check has read the package the field
+names, it is written into `ENVARC:Sys/update.prefs` as the one to look
+at, so the window opens on it next time, and `C:Update` and the look at
+every start go there too. The file's other settings stay as they were;
+where there was none, the one written does not look at every start.
 
 **Update** writes what the check found, the gauge filling by the bytes
 written. Every file is fetched beside the one it replaces, checked
@@ -64,7 +71,10 @@ and once it is kept, the button is not there.
 
 The work is done on a process of its own, so the window answers while a
 package is read over the network; closing the window stops the update
-first.
+first. A check shows that it is going only once it takes longer than
+half a second, so a quick one changes the window once, where its answer
+is new. The field and the switches can be changed while a check goes:
+the check stops and starts again on what they say now.
 
 ## See also
 

@@ -246,6 +246,24 @@ test "the settings files of a fresh disk: the explanation the SDK writes" {
     try utilityDown(ub);
 }
 
+test "every explanation ends its last line, so the line written after it is read" {
+    const headers = [_][]const u8{
+        prefs.anvil.header,   prefs.audio.header,     prefs.dock.header,   prefs.font.header,
+        prefs.install.header, prefs.intuition.header, prefs.locale.header, prefs.palette.header,
+        prefs.sound.header,   prefs.style.header,     prefs.update.header,
+    };
+    for (headers) |header| try testing.expect(std.mem.endsWith(u8, header, "\n"));
+    // What the editor writes - the explanation, then the line - reads back.
+    const settings: prefs.update.Settings = .{ .boot = true };
+    var text: [prefs.update.header.len + prefs.update.max_line + 1]u8 = undefined;
+    @memcpy(text[0..prefs.update.header.len], prefs.update.header);
+    var length = prefs.update.header.len;
+    length += prefs.update.write(&settings, text[length..]);
+    text[length] = '\n';
+    length += 1;
+    try testing.expectEqualStrings("ATSTART=YES APPLY=NO BOOT=YES", prefs.firstLine(text[0..length]).?);
+}
+
 test "sound.prefs: a line read, its file quoted, written back; the tone rises, sounds and dies away" {
     const ub = try utilityUp();
     defer kexec.deinit();

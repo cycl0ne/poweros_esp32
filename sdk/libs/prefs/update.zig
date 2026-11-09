@@ -135,4 +135,5 @@ pub const header =
     \\#
     \\# Without this file nothing looks anywhere. `C:Update AUTO` is what
     \\# reads it, and SYS:Programs/Prefs has a page for it.
+    \\
 ;

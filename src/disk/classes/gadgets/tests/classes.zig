@@ -59,6 +59,8 @@ const chart = @import("../chart/chart.zig");
 const keyboard = @import("../keyboard/keyboard.zig");
 const cr = sdk.gadgets.chart;
 const integer = @import("../integer/integer.zig");
+const getfile = @import("../getfile/getfile.zig");
+const gfi = sdk.gadgets.getfile;
 const chooser = @import("../chooser/chooser.zig");
 const pageclass = @import("../page/page.zig");
 const scrollgroup = @import("../scrollgroup/scrollgroup.zig");
@@ -2383,6 +2385,97 @@ test "integer.gadget: the arrows step the number, and a number typed is brought 
     try testing.expect(ib.FindClass(ig.INTEGER_CLASS) == null);
     _ = sys.RemLibrary(string_lib);
     try testing.expect(ib.FindClass(st.STRING_CLASS) == null);
+    ByTail.remove();
+    try host_rom.intuition.tearDown(kib);
+}
+
+/// A library of a name a class opens and never calls, which the host
+/// tests do not have: it is opened and closed, and goes when removed.
+const StandIn = struct {
+    const vectors = [_]*const anyopaque{ &exec.libOpen, &exec.libClose, &expunge, &exec.libExtFunc };
+
+    fn make(name: [:0]const u8) !*exec.Library {
+        return kexec.SysBase.iface().CreateLibrary(&.{ .name = name, .vectors = &vectors }) orelse error.NoStandIn;
+    }
+
+    fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
+        if (lib.open_cnt != 0) {
+            lib.flags |= exec.LIBF_DELEXP;
+            return null;
+        }
+        const sys = kexec.SysBase.iface();
+        sys.DetachLibrary(lib);
+        const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);
+        sys.FreeMem(start, @as(usize, lib.neg_size) + lib.pos_size);
+        return null;
+    }
+};
+
+test "getfile.gadget: a drawer held whole, and its own GA_ID kept when its field says what was typed" {
+    const kib = try host_rom.intuition.setUp();
+    ByTail.install();
+    const sys = kexec.SysBase.iface();
+    const asl_lib = try StandIn.make("asl.library");
+    const dos_lib = try StandIn.make("dos.library");
+    const string_lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &string.Library.resident_tag, null).?));
+    const ib = kib.iface();
+    const lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &getfile.Library.resident_tag, null).?));
+
+    const field = ib.NewObjectTagList(null, gfi.GETFILE_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 7 },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{ .tag = gfi.GETFILE_DrawersOnly, .data = 1 },
+        .{ .tag = gfi.GETFILE_Drawer, .data = @intFromPtr("Work:packages/q35") },
+        .{},
+    }).?;
+    // A drawer with no name is shown as it is, with no separator added.
+    try testing.expectEqualStrings("Work:packages/q35", std.mem.span(@as([*:0]const u8, @ptrFromInt(attr(ib, field, gfi.GETFILE_FullFile)))));
+
+    // The field says what was typed in it, as string.gadget says it: in
+    // its own name. Its GA_ID is not this gadget's.
+    const own = classes.instData(sdk.gadgets.getclass.Data, classes.objectClass(field), field);
+    _ = ib.SetAttrsTagList(own.field.?, &[_]TagItem{ .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr("MEDIA:poweros/packages/qemu_q35") }, .{} });
+    var typed = classusr.OpUpdate{
+        .method_id = classusr.OM_UPDATE,
+        .attr_list = &[_]TagItem{
+            .{ .tag = gc.STRINGA_TextVal, .data = attr(ib, own.field.?, gc.STRINGA_TextVal) },
+            .{ .tag = gc.STRINGA_LongVal, .data = 0 },
+            .{ .tag = gc.GA_ID, .data = 0 },
+            .{},
+        },
+        .flags = classusr.OPUF_INTERIM,
+    };
+    // While it is typed in, nothing is taken.
+    _ = ib.SendMessage(field, @ptrCast(&typed));
+    try testing.expectEqualStrings("Work:packages/q35", std.mem.span(@as([*:0]const u8, @ptrFromInt(attr(ib, field, gfi.GETFILE_Drawer)))));
+    try testing.expectEqual(@as(u32, 7), gc.gadget(field).id);
+    // Done with, the whole of it is the drawer, and the gadget is still 7.
+    typed.flags = 0;
+    _ = ib.SendMessage(field, @ptrCast(&typed));
+    try testing.expectEqualStrings("MEDIA:poweros/packages/qemu_q35", std.mem.span(@as([*:0]const u8, @ptrFromInt(attr(ib, field, gfi.GETFILE_Drawer)))));
+    try testing.expectEqualStrings("", std.mem.span(@as([*:0]const u8, @ptrFromInt(attr(ib, field, gfi.GETFILE_File)))));
+    try testing.expectEqualStrings("MEDIA:poweros/packages/qemu_q35", std.mem.span(@as([*:0]const u8, @ptrFromInt(attr(ib, field, gfi.GETFILE_FullFile)))));
+    try testing.expectEqual(@as(u32, 7), gc.gadget(field).id);
+    try testing.expectEqual(@as(usize, 7), attr(ib, field, gc.GA_ID));
+
+    // For files, what was typed is split into the drawer and the name.
+    const file = ib.NewObjectTagList(null, gfi.GETFILE_CLASS, &[_]TagItem{ .{ .tag = gc.GA_ID, .data = 8 }, .{} }).?;
+    const file_own = classes.instData(sdk.gadgets.getclass.Data, classes.objectClass(file), file);
+    _ = ib.SetAttrsTagList(file_own.field.?, &[_]TagItem{ .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr("SYS:Prefs/Env") }, .{} });
+    typed.attr_list = &[_]TagItem{ .{ .tag = gc.STRINGA_TextVal, .data = attr(ib, file_own.field.?, gc.STRINGA_TextVal) }, .{ .tag = gc.GA_ID, .data = 0 }, .{} };
+    _ = ib.SendMessage(file, @ptrCast(&typed));
+    try testing.expectEqualStrings("SYS:Prefs/", std.mem.span(@as([*:0]const u8, @ptrFromInt(attr(ib, file, gfi.GETFILE_Drawer)))));
+    try testing.expectEqualStrings("Env", std.mem.span(@as([*:0]const u8, @ptrFromInt(attr(ib, file, gfi.GETFILE_File)))));
+    try testing.expectEqual(@as(u32, 8), gc.gadget(file).id);
+
+    ib.DisposeObject(file);
+    ib.DisposeObject(field);
+    // The class first: it has the field's library and the stand-ins open.
+    _ = sys.RemLibrary(lib);
+    try testing.expect(ib.FindClass(gfi.GETFILE_CLASS) == null);
+    _ = sys.RemLibrary(string_lib);
+    _ = sys.RemLibrary(dos_lib);
+    _ = sys.RemLibrary(asl_lib);
     ByTail.remove();
     try host_rom.intuition.tearDown(kib);
 }

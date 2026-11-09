@@ -448,11 +448,16 @@ the top, a row in the list for every path something would happen to,
 with how much is written for it, and what the check comes to in the two
 lines above the list.
 
-- **Check** looks again, at what the field holds: another package is
-  typed in and checked, Return in the field doing the same.
+- **Check** looks again, at what the field holds. The field's button
+  asks for the package's drawer; an address is typed in, Return checking
+  it. A drawer picked checks it at once.
 - **With the kernel** is `BOOT`, and starts as BOOT in `update.prefs`
   has it; **Replace changed files** is `FORCE`. Changing either checks
   again.
+- The package a check read is kept as SOURCE in `update.prefs`, in
+  `ENVARC:` and `ENV:`, the file's other settings as they were: the
+  window, `Update` and the look at start go there next. Where there was
+  no file the one written does not look at every start.
 - **Update** writes what the check found, the gauge filling by the bytes
   written. It is there only once a check has found something to do.
 - **Stop** ends the run where it is: what was written stays, the
@@ -465,7 +470,10 @@ lines above the list.
 
 The run goes on a process of its own, so the window answers while a
 package is read over the network; closing the window stops the run
-first.
+first. A check shows that it is going only after half a second: one
+done sooner changes the window once, where its answer differs from the
+last. The field and the switches stay live while a check goes - a
+change stops it and checks again.
 
 ## The kernel and the way back
 

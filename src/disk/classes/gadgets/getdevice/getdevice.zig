@@ -18,8 +18,8 @@ const Class = _get.Library(.{
     .kind = .device,
     .dummy = gd.GETDEVICE_Dummy,
     .version = 1,
-    .revision = 0,
-    .date = "12.10.2026",
+    .revision = 1,
+    .date = "09.11.2026",
 });
 
 /// The library the class is in; its ROM tag is `Library.resident_tag`.

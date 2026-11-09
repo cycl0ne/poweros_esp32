@@ -42,5 +42,7 @@ pub const GETFILE_FullFile = GETFILE_Dummy + 0x05;
 pub const GETFILE_Pattern = GETFILE_Dummy + 0x06;
 /// Bool: the requester asks where to save rather than what to open.
 pub const GETFILE_DoSaveMode = GETFILE_Dummy + 0x07;
-/// Bool: only drawers are shown, and a drawer is what is picked.
+/// Bool: only drawers are shown, and a drawer is what is picked. The
+/// field then holds the drawer whole, `GETFILE_Drawer` and
+/// `GETFILE_FullFile` both what it shows, and the requester opens in it.
 pub const GETFILE_DrawersOnly = GETFILE_Dummy + 0x08;
