@@ -65,7 +65,13 @@
 //! the function. The shipped case of a storage buffer (since 1.32) is
 //! glslc's words of a `readonly` buffer's tint, its scale and the third
 //! of its runtime array, which the V3D reads through unifa, as Mesa reads
-//! a load_ssbo of a buffer the program does not write.
+//! a load_ssbo of a buffer the program does not write. The shipped case
+//! of integers (since 1.33) is glslc's words of the colour made integers
+//! and of the push constants' integers added, multiplied, shifted, mixed
+//! bit by bit, compared and converted, which the V3D computes with the
+//! QPU's integer operations, beside a function of the same integers for
+//! the cores: each lands in a channel so that one computed wrong moves
+//! it by 4 steps or more.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -80,7 +86,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.32 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.33 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -810,6 +816,65 @@ const Shipped = struct {
     });
 };
 
+/// What `integers` computes, for the cores, and in its order: the colour
+/// made integers, offset and held to 0 to 100, its green an unsigned
+/// integer held to 100, and the integers of the push constants each
+/// channel has added. `ir.Build` computes with floats alone, so this is a
+/// function of its own; the QPU's FTOIZ and FTOUZ round towards zero, as
+/// `@trunc` does, and its integer arithmetic wraps (since 1.33).
+fn integersFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    @setRuntimeSafety(false);
+    const pushed: [8]u32 = @bitCast(fragments.resources.push[0..32].*);
+    var s: [4]i32 = undefined;
+    for (&s, pushed[0..4]) |*each, word| each.* = @bitCast(word);
+    const u = pushed[4..8].*;
+    const sum = s[1] *% s[2] +% (s[3] >> @as(u5, @truncate(u[2] -% 2)));
+    const r = if (sum < 0) 0 -% sum else sum;
+    const g = (((u[0] >> 25) ^ u[1]) | (u[2] << 3)) & ~u[3];
+    const b = (@max(s[1], s[2]) -% @min(s[1], s[2])) *% 5 +% @min(0 -% s[1], s[2]);
+    var a: i32 = 0;
+    if (s[1] < s[2]) a += 40;
+    if (u[0] < u[1]) a += 32;
+    if (s[2] >= s[1]) a += 20;
+    if (u[0] > u[1]) a += 12;
+    if (s[1] == s[2]) a += 8;
+    if (u[0] != u[1]) a += 4;
+    const most = (@max(u[0], u[1]) >> 27) +% (@min(u[0], u[1]) >> 2);
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const planes = rows.at(quad);
+        const w = @as(shader.Pixels, @splat(1)) / planes[0];
+        inline for (0..4) |p| {
+            var c: [4]i32 = undefined;
+            inline for (&c, planes[1..]) |*each, over_w| each.* = std.math.clamp(towardZero(over_w[p] * w[p] * 255.0) +% s[0], 0, 100);
+            const level = @min(unsignedTowardZero(planes[2][p] * w[p] * 255.0), 100);
+            const r_byte = byteOf(c[0] +% r);
+            const g_byte = byteOf(@bitCast(level +% g));
+            const b_byte = byteOf(c[2] +% b);
+            const a_byte = byteOf(c[3] +% a +% @as(i32, @bitCast(most)));
+            out[p] = a_byte << 24 | r_byte << 16 | g_byte << 8 | b_byte;
+        }
+    }
+}
+
+/// A float made a signed integer as FTOIZ makes it, and as the cores can
+/// without a fault: towards zero, held to the integers, a NaN 0.
+fn towardZero(x: f32) i32 {
+    if (std.math.isNan(x)) return 0;
+    return @intFromFloat(@trunc(@min(@max(x, -2147483648.0), 2147483520.0)));
+}
+
+/// The same unsigned, as FTOUZ: a negative float 0.
+fn unsignedTowardZero(x: f32) u32 {
+    if (std.math.isNan(x)) return 0;
+    return @intFromFloat(@trunc(@min(@max(x, 0.0), 4294967040.0)));
+}
+
+/// An integer as the channel the tile buffer holds of it, 0 to 255.
+fn byteOf(value: i32) u32 {
+    return @intCast(std.math.clamp(value, 0, 255));
+}
+
 /// The entries that ship words, after all the others, and the words of
 /// each in the same order: `shader.Module.spirv` is index for index.
 const shipped_entries = [_]shader.Entry{
@@ -845,6 +910,7 @@ const shipped_entries = [_]shader.Entry{
     Shipped.ConstantMatrix.entry("shipped constant matrix"),
     shader.vertex("shipped as it is", &asItIsVertex, 4),
     Shipped.StorageRead.entry("shipped storage"),
+    shader.fragment("shipped integers", &integersFragment, 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                .{},                               .{},                                  .{},
@@ -855,6 +921,7 @@ const shipped_words = [_]shader.Spirv{
     Shipped.Bools.spirv,                Shipped.Nests.spirv,               Shipped.Joined.spirv,                 Shipped.Collapsed.spirv,
     shader.Spirv.of(&nested_discard),   Shipped.Uniformed.spirv,           shader.Spirv.of(&uniform_nested),     shader.Spirv.of(&uniform_matrix),
     shader.Spirv.of(&uniform_matrices), shader.Spirv.of(&constant_matrix), shader.Spirv.of(&vertex_as_it_is),    shader.Spirv.of(&storage_buffer),
+    shader.Spirv.of(&integers),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -1267,6 +1334,143 @@ const storage_buffer = [_]u32{
     0x0004003D, 0x00000007, 0x0000001E, 0x0000001D, 0x00050081, 0x00000007,
     0x0000001F, 0x0000001B, 0x0000001E, 0x0003003E, 0x00000009, 0x0000001F,
     0x000100FD, 0x00010038,
+};
+/// glslc's own output, at -O, for 32-bit integers, the V3D's host tests'
+/// glslc_integers: the colour made integers, offset and clamped, and of
+/// the push constants' integers a product, shifts, bits, the most and
+/// least of two signed and unsigned, comparisons choosing integers, and
+/// conversions each way, each landing in a channel (since 1.33).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// layout(push_constant) uniform Push { ivec4 s; uvec4 u; } push;
+/// void main() {
+///     ivec4 c = clamp(ivec4(vcolor * 255.0) + push.s.x, ivec4(0), ivec4(100));
+///     uint green = min(uint(vcolor.y * 255.0), 100u);
+///     int r = abs(push.s.y * push.s.z + (push.s.w >> (push.u.z - 2u)));
+///     uint g = (((push.u.x >> 25) ^ push.u.y) | (push.u.z << 3)) & ~push.u.w;
+///     int b = (max(push.s.y, push.s.z) - min(push.s.y, push.s.z)) * 5 + min(-push.s.y, push.s.z);
+///     int a = (push.s.y < push.s.z ? 40 : 0) + (push.u.x < push.u.y ? 32 : 0)
+///           + (push.s.z >= push.s.y ? 20 : 0) + (push.u.x > push.u.y ? 12 : 0)
+///           + (push.s.y == push.s.z ? 8 : 0) + (push.u.x != push.u.y ? 4 : 0);
+///     uint most = (max(push.u.x, push.u.y) >> 27) + (min(push.u.x, push.u.y) >> 2);
+///     ocolor = vec4(float(c.x + r), float(green) + float(g), float(c.z + b), float(c.w + a) + float(most)) / 255.0;
+/// }
+/// ```
+const integers = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x000000C8, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x000000A7, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000D, 0x0000001E, 0x00000000,
+    0x00030047, 0x00000014, 0x00000002, 0x00050048, 0x00000014, 0x00000000,
+    0x00000023, 0x00000000, 0x00050048, 0x00000014, 0x00000001, 0x00000023,
+    0x00000010, 0x00040047, 0x000000A7, 0x0000001E, 0x00000000, 0x00020013,
+    0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006,
+    0x00000020, 0x00000001, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00030016, 0x0000000A, 0x00000020, 0x00040017, 0x0000000B, 0x0000000A,
+    0x00000004, 0x00040020, 0x0000000C, 0x00000001, 0x0000000B, 0x0004003B,
+    0x0000000C, 0x0000000D, 0x00000001, 0x0004002B, 0x0000000A, 0x0000000F,
+    0x437F0000, 0x00040015, 0x00000012, 0x00000020, 0x00000000, 0x00040017,
+    0x00000013, 0x00000012, 0x00000004, 0x0004001E, 0x00000014, 0x00000007,
+    0x00000013, 0x00040020, 0x00000015, 0x00000009, 0x00000014, 0x0004003B,
+    0x00000015, 0x00000016, 0x00000009, 0x0004002B, 0x00000006, 0x00000017,
+    0x00000000, 0x0004002B, 0x00000012, 0x00000018, 0x00000000, 0x00040020,
+    0x00000019, 0x00000009, 0x00000006, 0x0007002C, 0x00000007, 0x0000001E,
+    0x00000017, 0x00000017, 0x00000017, 0x00000017, 0x0004002B, 0x00000006,
+    0x0000001F, 0x00000064, 0x0007002C, 0x00000007, 0x00000020, 0x0000001F,
+    0x0000001F, 0x0000001F, 0x0000001F, 0x0004002B, 0x00000012, 0x00000024,
+    0x00000001, 0x00040020, 0x00000025, 0x00000001, 0x0000000A, 0x0004002B,
+    0x00000012, 0x0000002A, 0x00000064, 0x0004002B, 0x00000012, 0x00000030,
+    0x00000002, 0x0004002B, 0x00000012, 0x00000034, 0x00000003, 0x0004002B,
+    0x00000006, 0x00000037, 0x00000001, 0x00040020, 0x00000038, 0x00000009,
+    0x00000012, 0x0004002B, 0x00000006, 0x00000042, 0x00000019, 0x0004002B,
+    0x00000006, 0x00000049, 0x00000003, 0x0004002B, 0x00000006, 0x0000005C,
+    0x00000005, 0x00020014, 0x0000006A, 0x0004002B, 0x00000006, 0x0000006C,
+    0x00000028, 0x0004002B, 0x00000006, 0x00000073, 0x00000020, 0x0004002B,
+    0x00000006, 0x0000007B, 0x00000014, 0x0004002B, 0x00000006, 0x00000083,
+    0x0000000C, 0x0004002B, 0x00000006, 0x0000008B, 0x00000008, 0x0004002B,
+    0x00000006, 0x00000093, 0x00000004, 0x0004002B, 0x00000006, 0x0000009C,
+    0x0000001B, 0x0004002B, 0x00000006, 0x000000A3, 0x00000002, 0x00040020,
+    0x000000A6, 0x00000003, 0x0000000B, 0x0004003B, 0x000000A6, 0x000000A7,
+    0x00000003, 0x0004002B, 0x0000000A, 0x000000C6, 0x3B808081, 0x0007002C,
+    0x0000000B, 0x000000C7, 0x000000C6, 0x000000C6, 0x000000C6, 0x000000C6,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003D, 0x0000000B, 0x0000000E, 0x0000000D, 0x0005008E,
+    0x0000000B, 0x00000010, 0x0000000E, 0x0000000F, 0x0004006E, 0x00000007,
+    0x00000011, 0x00000010, 0x00060041, 0x00000019, 0x0000001A, 0x00000016,
+    0x00000017, 0x00000018, 0x0004003D, 0x00000006, 0x0000001B, 0x0000001A,
+    0x00070050, 0x00000007, 0x0000001C, 0x0000001B, 0x0000001B, 0x0000001B,
+    0x0000001B, 0x00050080, 0x00000007, 0x0000001D, 0x00000011, 0x0000001C,
+    0x0008000C, 0x00000007, 0x00000021, 0x00000001, 0x0000002D, 0x0000001D,
+    0x0000001E, 0x00000020, 0x00050041, 0x00000025, 0x00000026, 0x0000000D,
+    0x00000024, 0x0004003D, 0x0000000A, 0x00000027, 0x00000026, 0x00050085,
+    0x0000000A, 0x00000028, 0x00000027, 0x0000000F, 0x0004006D, 0x00000012,
+    0x00000029, 0x00000028, 0x0007000C, 0x00000012, 0x0000002B, 0x00000001,
+    0x00000026, 0x00000029, 0x0000002A, 0x00060041, 0x00000019, 0x0000002E,
+    0x00000016, 0x00000017, 0x00000024, 0x0004003D, 0x00000006, 0x0000002F,
+    0x0000002E, 0x00060041, 0x00000019, 0x00000031, 0x00000016, 0x00000017,
+    0x00000030, 0x0004003D, 0x00000006, 0x00000032, 0x00000031, 0x00050084,
+    0x00000006, 0x00000033, 0x0000002F, 0x00000032, 0x00060041, 0x00000019,
+    0x00000035, 0x00000016, 0x00000017, 0x00000034, 0x0004003D, 0x00000006,
+    0x00000036, 0x00000035, 0x00060041, 0x00000038, 0x00000039, 0x00000016,
+    0x00000037, 0x00000030, 0x0004003D, 0x00000012, 0x0000003A, 0x00000039,
+    0x00050082, 0x00000012, 0x0000003B, 0x0000003A, 0x00000030, 0x000500C3,
+    0x00000006, 0x0000003C, 0x00000036, 0x0000003B, 0x00050080, 0x00000006,
+    0x0000003D, 0x00000033, 0x0000003C, 0x0006000C, 0x00000006, 0x0000003E,
+    0x00000001, 0x00000005, 0x0000003D, 0x00060041, 0x00000038, 0x00000040,
+    0x00000016, 0x00000037, 0x00000018, 0x0004003D, 0x00000012, 0x00000041,
+    0x00000040, 0x000500C2, 0x00000012, 0x00000043, 0x00000041, 0x00000042,
+    0x00060041, 0x00000038, 0x00000044, 0x00000016, 0x00000037, 0x00000024,
+    0x0004003D, 0x00000012, 0x00000045, 0x00000044, 0x000500C6, 0x00000012,
+    0x00000046, 0x00000043, 0x00000045, 0x000500C4, 0x00000012, 0x0000004A,
+    0x0000003A, 0x00000049, 0x000500C5, 0x00000012, 0x0000004B, 0x00000046,
+    0x0000004A, 0x00060041, 0x00000038, 0x0000004C, 0x00000016, 0x00000037,
+    0x00000034, 0x0004003D, 0x00000012, 0x0000004D, 0x0000004C, 0x000400C8,
+    0x00000012, 0x0000004E, 0x0000004D, 0x000500C7, 0x00000012, 0x0000004F,
+    0x0000004B, 0x0000004E, 0x0007000C, 0x00000006, 0x00000055, 0x00000001,
+    0x0000002A, 0x0000002F, 0x00000032, 0x0007000C, 0x00000006, 0x0000005A,
+    0x00000001, 0x00000027, 0x0000002F, 0x00000032, 0x00050082, 0x00000006,
+    0x0000005B, 0x00000055, 0x0000005A, 0x00050084, 0x00000006, 0x0000005D,
+    0x0000005B, 0x0000005C, 0x0004007E, 0x00000006, 0x00000060, 0x0000002F,
+    0x0007000C, 0x00000006, 0x00000063, 0x00000001, 0x00000027, 0x00000060,
+    0x00000032, 0x00050080, 0x00000006, 0x00000064, 0x0000005D, 0x00000063,
+    0x000500B1, 0x0000006A, 0x0000006B, 0x0000002F, 0x00000032, 0x000600A9,
+    0x00000006, 0x0000006D, 0x0000006B, 0x0000006C, 0x00000017, 0x000500B0,
+    0x0000006A, 0x00000072, 0x00000041, 0x00000045, 0x000600A9, 0x00000006,
+    0x00000074, 0x00000072, 0x00000073, 0x00000017, 0x00050080, 0x00000006,
+    0x00000075, 0x0000006D, 0x00000074, 0x000500AF, 0x0000006A, 0x0000007A,
+    0x00000032, 0x0000002F, 0x000600A9, 0x00000006, 0x0000007C, 0x0000007A,
+    0x0000007B, 0x00000017, 0x00050080, 0x00000006, 0x0000007D, 0x00000075,
+    0x0000007C, 0x000500AC, 0x0000006A, 0x00000082, 0x00000041, 0x00000045,
+    0x000600A9, 0x00000006, 0x00000084, 0x00000082, 0x00000083, 0x00000017,
+    0x00050080, 0x00000006, 0x00000085, 0x0000007D, 0x00000084, 0x000500AA,
+    0x0000006A, 0x0000008A, 0x0000002F, 0x00000032, 0x000600A9, 0x00000006,
+    0x0000008C, 0x0000008A, 0x0000008B, 0x00000017, 0x00050080, 0x00000006,
+    0x0000008D, 0x00000085, 0x0000008C, 0x000500AB, 0x0000006A, 0x00000092,
+    0x00000041, 0x00000045, 0x000600A9, 0x00000006, 0x00000094, 0x00000092,
+    0x00000093, 0x00000017, 0x00050080, 0x00000006, 0x00000095, 0x0000008D,
+    0x00000094, 0x0007000C, 0x00000012, 0x0000009B, 0x00000001, 0x00000029,
+    0x00000041, 0x00000045, 0x000500C2, 0x00000012, 0x0000009D, 0x0000009B,
+    0x0000009C, 0x0007000C, 0x00000012, 0x000000A2, 0x00000001, 0x00000026,
+    0x00000041, 0x00000045, 0x000500C2, 0x00000012, 0x000000A4, 0x000000A2,
+    0x000000A3, 0x00050080, 0x00000012, 0x000000A5, 0x0000009D, 0x000000A4,
+    0x00050051, 0x00000006, 0x000000A9, 0x00000021, 0x00000000, 0x00050080,
+    0x00000006, 0x000000AB, 0x000000A9, 0x0000003E, 0x0004006F, 0x0000000A,
+    0x000000AC, 0x000000AB, 0x00040070, 0x0000000A, 0x000000AE, 0x0000002B,
+    0x00040070, 0x0000000A, 0x000000B0, 0x0000004F, 0x00050081, 0x0000000A,
+    0x000000B1, 0x000000AE, 0x000000B0, 0x00050051, 0x00000006, 0x000000B3,
+    0x00000021, 0x00000002, 0x00050080, 0x00000006, 0x000000B5, 0x000000B3,
+    0x00000064, 0x0004006F, 0x0000000A, 0x000000B6, 0x000000B5, 0x00050051,
+    0x00000006, 0x000000B8, 0x00000021, 0x00000003, 0x00050080, 0x00000006,
+    0x000000BA, 0x000000B8, 0x00000095, 0x0004006F, 0x0000000A, 0x000000BB,
+    0x000000BA, 0x00040070, 0x0000000A, 0x000000BD, 0x000000A5, 0x00050081,
+    0x0000000A, 0x000000BE, 0x000000BB, 0x000000BD, 0x00070050, 0x0000000B,
+    0x000000BF, 0x000000AC, 0x000000B1, 0x000000B6, 0x000000BE, 0x00050085,
+    0x0000000B, 0x000000C1, 0x000000BF, 0x000000C7, 0x0003003E, 0x000000A7,
+    0x000000C1, 0x000100FD, 0x00010038,
 };
 /// glslc's own output, at -O, for a constant mat3 times a vector,
 /// glslc_constant_matrix: three constant columns, read where the product
@@ -2061,7 +2265,8 @@ const Side = struct {
         const combined = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&combined) }, &side.sampler_set_layout), error.Refused);
         try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&side.sampler_set_layout) }, &side.sampler_layout), error.Refused);
-        const fragment_push = facet.PushConstantRange{ .stage_flags = facet.SHADER_STAGE_FRAGMENT, .size = 20 };
+        // 32 bytes: the shipped integers' two vectors of four (since 1.33).
+        const fragment_push = facet.PushConstantRange{ .stage_flags = facet.SHADER_STAGE_FRAGMENT, .size = 32 };
         try expect(fb.CreatePipelineLayout(device, &.{ .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&fragment_push) }, &side.push_layout), error.Refused);
         // The texture's own levels: the V3D samples through no sampler
         // that holds them to fewer (`texture.samplingOf`), and draws the
@@ -3722,6 +3927,18 @@ const Cases = struct {
             }
         }.run;
     }
+    /// The shipped integers over the geometry the shipped cases draw, the
+    /// push constants' signed vector -128, -3, 9 and -800 and unsigned one
+    /// 0xB4000000, 0x41, 6 and 0xFFFFFF00: signed and unsigned tell apart
+    /// in every comparison, shift, least and most (since 1.33).
+    fn integered(side: *Side) Failure!void {
+        side.begin(.{});
+        try side.use(.{ .vertex = "as it is", .fragment = "shipped integers", .layout = side.push_layout.? });
+        const values = [8]u32{ @bitCast(@as(i32, -128)), @bitCast(@as(i32, -3)), 9, @bitCast(@as(i32, -800)), 0xB4000000, 0x41, 6, 0xFFFFFF00 };
+        side.fb.CmdPushConstants(side.commands.?, side.push_layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 32, &values);
+        side.draw(clockwise_at, 6);
+        side.end();
+    }
     /// The shipped storage buffer, `storage_set`'s, over the geometry the
     /// shipped cases draw (since 1.32).
     fn stored(side: *Side) Failure!void {
@@ -3968,6 +4185,7 @@ const cases = [_]Case{
     .{ .name = "shipped constant matrix", .run = Cases.shipped("as it is", "shipped constant matrix", false, clockwise_at) },
     .{ .name = "shipped vertex shader", .run = Cases.shipped("shipped as it is", "shipped smooth", false, clockwise_at) },
     .{ .name = "shipped storage buffer", .run = Cases.stored },
+    .{ .name = "shipped integers", .run = Cases.integered },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },
