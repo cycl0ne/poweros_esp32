@@ -107,6 +107,9 @@ pub const Tag = enum(u8) {
     /// Floats the draw hands over in its push constants
     /// (CmdPushConstants), `at` bytes in. (Since 1.138.)
     push,
+    /// Floats of the uniform buffer bound at set `c`, binding `d`, `at`
+    /// bytes in. (Since 1.160.)
+    uniform,
     /// A texture read at a coordinate.
     sample,
     /// A depth texture compared with a reference at a coordinate, through
@@ -229,7 +232,7 @@ pub const outside: u16 = 0xFFFF;
 /// operations name their selection, which is no value.
 fn readOf(op: Op) [4]?u16 {
     return switch (op.tag) {
-        .input, .constant, .push, .otherwise, .end_if => .{ null, null, null, null },
+        .input, .constant, .push, .uniform, .otherwise, .end_if => .{ null, null, null, null },
         .sample, .negate, .component, .discard_if, .color, .if_holds, .not => .{ op.a, null, null, null },
         .extended => switch (callArguments(@enumFromInt(op.at))) {
             1 => .{ op.a, null, null, null },
@@ -278,6 +281,22 @@ pub const Push = struct {
     }
 };
 
+/// A uniform buffer the shader reads: where the draw binds it, and its
+/// members, each place it is read at, in the order of their offsets.
+/// (Since 1.160.)
+pub const Uniform = struct {
+    set: u32,
+    binding: u32,
+    members: []const Push,
+
+    /// How many bytes of the buffer its members reach.
+    pub fn bytes(block: Uniform) u32 {
+        var most: u32 = 0;
+        for (block.members) |each| most = @max(most, each.offset + each.bytes());
+        return most;
+    }
+};
+
 /// A shader, recorded. Everything here is comptime.
 pub const Graph = struct {
     ops: []const Op,
@@ -286,6 +305,8 @@ pub const Graph = struct {
     /// The push-constant block's members, each place it is read at once,
     /// in the order of their offsets.
     pushes: []const Push = &.{},
+    /// The uniform buffers, in the order they are first read.
+    uniforms: []const Uniform = &.{},
     /// The floats the vertex function writes past the position, which is
     /// what the entry's word has to say.
     varyings: u32,
@@ -417,6 +438,25 @@ pub const Build = struct {
         if (offset % alignment != 0) @compileError("a push constant is placed as std430 places it: 4 for a float, 8 for two, 16 for three or four");
         if (offset + 4 * kind.parts() > shader.MAX_PUSH_CONSTANTS_SIZE) @compileError("the push constants are shader.MAX_PUSH_CONSTANTS_SIZE bytes");
         return build.put(.{ .tag = .push, .kind = kind, .at = offset });
+    }
+
+    /// Floats of the uniform buffer bound at `set` and `binding`,
+    /// `offset` bytes in: a member of a block of its own at that Offset.
+    /// Vulkan lays such a block out by std140's rules, which for floats
+    /// and their vectors are std430's: a vector of two floats at a
+    /// multiple of 8, of three or four at a multiple of 16. Two reads of
+    /// one place and one width are one member; two members may not
+    /// overlap. (Since 1.160.)
+    pub fn uniform(build: *Build, comptime set: u32, comptime binding: u32, comptime offset: u32, comptime kind: Kind) u16 {
+        if (kind == .boolean) @compileError("a uniform buffer's member is floats");
+        const alignment: u32 = switch (kind) {
+            .f32x1 => 4,
+            .f32x2 => 8,
+            else => 16,
+        };
+        if (offset % alignment != 0) @compileError("a uniform buffer's member is placed as std140 places it: 4 for a float, 8 for two, 16 for three or four");
+        if (set >= shader.MAX_SETS or binding > 0xFFFF) @compileError("a uniform buffer is bound at a set and a binding there are");
+        return build.put(.{ .tag = .uniform, .kind = kind, .at = offset, .c = set, .d = binding });
     }
 
     /// A texture, bound at `set` and `binding`, read at `coordinate`. The
@@ -767,7 +807,35 @@ pub fn graphOf(comptime body: fn (*Build) void) Graph {
         var discards = false;
         var pushes: [most_ops]Push = undefined;
         var push_count: u32 = 0;
+        var blocks: [most_ops]struct { set: u32, binding: u32, members: [most_ops]Push, count: u32 } = undefined;
+        var block_count: u32 = 0;
         for (build.ops[0..build.count]) |op| switch (op.tag) {
+            .uniform => {
+                const member = Push{ .offset = op.at, .kind = op.kind };
+                var which = block_count;
+                for (blocks[0..block_count], 0..) |each, k| {
+                    if (each.set == op.c and each.binding == op.d) which = k;
+                }
+                if (which == block_count) {
+                    blocks[which] = .{ .set = op.c, .binding = op.d, .members = undefined, .count = 0 };
+                    block_count += 1;
+                }
+                const block = &blocks[which];
+                var known = false;
+                for (block.members[0..block.count]) |each| {
+                    if (each.offset == member.offset and each.kind == member.kind) {
+                        known = true;
+                    } else if (member.offset < each.offset + each.bytes() and each.offset < member.offset + member.bytes()) {
+                        @compileError("two members of a uniform buffer overlap: a block's members may not");
+                    }
+                }
+                if (!known) {
+                    var at = block.count;
+                    while (at > 0 and block.members[at - 1].offset > member.offset) : (at -= 1) block.members[at] = block.members[at - 1];
+                    block.members[at] = member;
+                    block.count += 1;
+                }
+            },
             .input => {
                 inputs[input_count] = .{ .location = op.at, .kind = op.kind, .first = @bitCast(op.value[0]) };
                 input_count += 1;
@@ -802,11 +870,18 @@ pub fn graphOf(comptime body: fn (*Build) void) Graph {
         const kept_inputs = inputs[0..input_count].*;
         const kept_sampled = sampled[0..sampled_count].*;
         const kept_pushes = pushes[0..push_count].*;
+        var uniforms: [most_ops]Uniform = undefined;
+        for (blocks[0..block_count], 0..) |each, k| {
+            const members = each.members[0..each.count].*;
+            uniforms[k] = .{ .set = each.set, .binding = each.binding, .members = &members };
+        }
+        const kept_uniforms = uniforms[0..block_count].*;
         return .{
             .ops = &kept_ops,
             .inputs = &kept_inputs,
             .sampled = &kept_sampled,
             .pushes = &kept_pushes,
+            .uniforms = &kept_uniforms,
             .varyings = build.varyings,
             .discards = discards,
         };
@@ -861,6 +936,10 @@ fn wordsOf(comptime graph: Graph) []const u32 {
         // The push-constant block's variable, where there is a block:
         // taken last, so that a graph with none is the module it was.
         const push_id: u32 = if (graph.pushes.len == 0) 0 else emit.id();
+        // The uniform buffers' variables after it, for the same reason
+        // (since 1.160).
+        var uniform_ids: [most_ops]u32 = @splat(0);
+        for (graph.uniforms, 0..) |_, k| uniform_ids[k] = emit.id();
         // GLSL.std.450, imported where a graph calls it and only there,
         // after the capability as the logical layout has it: a graph that
         // calls nothing is the module it was (since 1.152).
@@ -884,6 +963,10 @@ fn wordsOf(comptime graph: Graph) []const u32 {
         for (graph.sampled, 0..) |each, k| {
             emit.decorate(sampler_ids[k], .descriptor_set, &.{each.set});
             emit.decorate(sampler_ids[k], .binding, &.{each.binding});
+        }
+        for (graph.uniforms, 0..) |each, k| {
+            emit.decorate(uniform_ids[k], .descriptor_set, &.{each.set});
+            emit.decorate(uniform_ids[k], .binding, &.{each.binding});
         }
 
         const void_type = emit.typeVoid();
@@ -939,6 +1022,24 @@ fn wordsOf(comptime graph: Graph) []const u32 {
             for (graph.pushes, 0..) |_, k| {
                 member_indices[k] = emit.constant(int_type, k);
                 member_pointers[k] = emit.typePointer(.push_constant, member_types[k]);
+            }
+        }
+        // The uniform buffers: a block of its own each, as glslc declares
+        // one for each `uniform` block, a member for each place read, and
+        // pointers in the Uniform class to them (since 1.160).
+        var uniform_pointers: [most_ops][most_ops]u32 = @splat(@splat(0));
+        var uniform_indices: [most_ops][most_ops]u32 = @splat(@splat(0));
+        for (graph.uniforms, 0..) |each, b| {
+            var member_types: [most_ops]u32 = @splat(0);
+            for (each.members, 0..) |member, k| member_types[k] = vectorFor(&emit, &vector_types, float_type, member.kind);
+            const block = emit.typeStructOwn(member_types[0..each.members.len]);
+            emit.decorate(block, .block, &.{});
+            for (each.members, 0..) |member, k| emit.memberDecorate(block, k, .offset, &.{member.offset});
+            emit.variable(emit.typePointer(.uniform, block), uniform_ids[b], .uniform);
+            const int_type = emit.typeInt(32, true);
+            for (each.members, 0..) |_, k| {
+                uniform_indices[b][k] = emit.constant(int_type, k);
+                uniform_pointers[b][k] = emit.typePointer(.uniform, member_types[k]);
             }
         }
 
@@ -1004,6 +1105,16 @@ fn wordsOf(comptime graph: Graph) []const u32 {
                     const member = pushMember(graph, op);
                     const pointer = emit.id();
                     emit.at(.access_chain, &.{ member_pointers[member], pointer, push_id, member_indices[member] });
+                    const made = emit.id();
+                    emit.at(.load, &.{ vectorFor(&emit, &vector_types, float_type, op.kind), made, pointer });
+                    value_ids[k] = made;
+                },
+                .uniform => {
+                    // The same, as glslc writes `material.tint`.
+                    const block = uniformBlock(graph, op);
+                    const member = uniformMember(graph, op);
+                    const pointer = emit.id();
+                    emit.at(.access_chain, &.{ uniform_pointers[block][member], pointer, uniform_ids[block], uniform_indices[block][member] });
                     const made = emit.id();
                     emit.at(.load, &.{ vectorFor(&emit, &vector_types, float_type, op.kind), made, pointer });
                     value_ids[k] = made;
@@ -1202,6 +1313,22 @@ fn wordsOf(comptime graph: Graph) []const u32 {
 }
 
 /// Which member of the push-constant block an operation reads.
+/// Which of the graph's uniform buffers a `uniform` reads, and which
+/// member of it.
+fn uniformBlock(comptime graph: Graph, comptime op: Op) u32 {
+    comptime {
+        for (graph.uniforms, 0..) |each, k| if (each.set == op.c and each.binding == op.d) return k;
+        unreachable;
+    }
+}
+
+fn uniformMember(comptime graph: Graph, comptime op: Op) u32 {
+    comptime {
+        for (graph.uniforms[uniformBlock(graph, op)].members, 0..) |each, k| if (each.offset == op.at and each.kind == op.kind) return k;
+        unreachable;
+    }
+}
+
 fn pushMember(comptime graph: Graph, comptime op: Op) u32 {
     comptime {
         for (graph.pushes, 0..) |each, k| if (each.offset == op.at and each.kind == op.kind) return k;
@@ -1356,6 +1483,13 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
             // The push constants as floats, once a call: the draw's, the
             // same for every pixel.
             const pushed: *const [shader.MAX_PUSH_CONSTANTS_SIZE / 4]f32 = @ptrCast(&fragments.resources.push);
+            // Each uniform buffer's bytes, where one is bound long enough
+            // for its members; its floats read as 0 where not (since
+            // 1.160).
+            var buffers: [@max(graph.uniforms.len, 1)]?[*]const u8 = @splat(null);
+            inline for (graph.uniforms, 0..) |each, which| {
+                if (fragments.resources.bufferAt([each.bytes()]u8, each.set, each.binding, 0)) |bound| buffers[which] = bound;
+            }
             for (0..fragments.count) |k| {
                 const quad = &fragments.quads[k];
                 const out = &fragments.colors[k];
@@ -1380,6 +1514,11 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
                     },
                     .push => inline for (0..comptime op.kind.parts()) |part| {
                         values[i][part] = @splat(pushed[op.at / 4 + part]);
+                    },
+                    .uniform => inline for (0..comptime op.kind.parts()) |part| {
+                        const bytes = buffers[comptime uniformBlock(graph, op)];
+                        const word: u32 = if (bytes) |held| std.mem.readInt(u32, held[op.at + 4 * part ..][0..4], .little) else 0;
+                        values[i][part] = @splat(@as(f32, @bitCast(word)));
                     },
                     .sample => {
                         const which = comptime sampledBefore(graph, i);

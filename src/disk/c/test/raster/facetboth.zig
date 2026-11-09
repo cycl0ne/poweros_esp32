@@ -52,6 +52,9 @@
 //! another, and the same with a discard, which the V3D makes one
 //! selection, and one terminate, on the iand of the two conditions, as
 //! nir_opt_collapse_if does; the discard is glslc's words on the V3D.
+//! The case of uniform buffers (since 1.28) reads a tint from one and a
+//! colour and a float from a dynamic one, at two dynamic offsets, which
+//! the V3D reads through unifa.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -66,7 +69,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.27 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.28 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -671,6 +674,15 @@ const Shipped = struct {
             b.color(b.vector(&.{ r, y, z, w }));
         }
     });
+    /// The colour the vertices carry times a tint in a uniform buffer,
+    /// plus a colour in a dynamic one scaled by a float beside it
+    /// (`Side.uniform_set`; since 1.28).
+    const Uniformed = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const tinted = b.mul(b.input(0, .f32x4), b.uniform(0, 0, 16, .f32x4));
+            b.color(b.add(tinted, b.scale(b.uniform(0, 1, 0, .f32x4), b.uniform(0, 1, 20, .f32x1))));
+        }
+    });
     /// What `nested_discard` computes, for the cores: the discard of both
     /// comparisons (since 1.27).
     const NestedDiscard = ir.Fragment(struct {
@@ -711,15 +723,16 @@ const shipped_entries = [_]shader.Entry{
     Shipped.Joined.entry("shipped joined"),
     Shipped.Collapsed.entry("shipped collapsed"),
     Shipped.NestedDiscard.entry("shipped nested discard"),
+    Shipped.Uniformed.entry("shipped uniformed"),
 };
 const shipped_words = [_]shader.Spirv{
-    .{},                              .{},                    .{},                                  .{},
-    Shipped.Smooth.spirv,             Shipped.Flat.spirv,     Shipped.Dimmed.spirv,                 Shipped.Textured.spirv,
-    Shipped.Modulated.spirv,          Shipped.Pushed.spirv,   Shipped.Tinted.spirv,                 Shipped.Cutout.spirv,
-    Shipped.CutoutOther.spirv,        Shipped.Shadowed.spirv, Shipped.Arithmetic.spirv,             Shipped.Called.spirv,
-    Shipped.Chosen.spirv,             Shipped.Branched.spirv, shader.Spirv.of(&branch_unoptimized), Shipped.Nested.spirv,
-    Shipped.Bools.spirv,              Shipped.Nests.spirv,    Shipped.Joined.spirv,                 Shipped.Collapsed.spirv,
-    shader.Spirv.of(&nested_discard),
+    .{},                              .{},                     .{},                                  .{},
+    Shipped.Smooth.spirv,             Shipped.Flat.spirv,      Shipped.Dimmed.spirv,                 Shipped.Textured.spirv,
+    Shipped.Modulated.spirv,          Shipped.Pushed.spirv,    Shipped.Tinted.spirv,                 Shipped.Cutout.spirv,
+    Shipped.CutoutOther.spirv,        Shipped.Shadowed.spirv,  Shipped.Arithmetic.spirv,             Shipped.Called.spirv,
+    Shipped.Chosen.spirv,             Shipped.Branched.spirv,  shader.Spirv.of(&branch_unoptimized), Shipped.Nested.spirv,
+    Shipped.Bools.spirv,              Shipped.Nests.spirv,     Shipped.Joined.spirv,                 Shipped.Collapsed.spirv,
+    shader.Spirv.of(&nested_discard), Shipped.Uniformed.spirv,
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -1397,6 +1410,13 @@ const Side = struct {
     number_bytes: [*]u8 = undefined,
     compute_set_layout: ?*facet.DescriptorSetLayout = null,
     compute_set: ?*facet.DescriptorSet = null,
+    /// What `Shipped.Uniformed` reads: a uniform buffer at binding 0 and
+    /// a dynamic one at binding 1 of set 0, both in `uniforms`
+    /// (`upUniforms`; since 1.28).
+    uniforms: ?*facet.Buffer = null,
+    uniform_set_layout: ?*facet.DescriptorSetLayout = null,
+    uniform_layout: ?*facet.PipelineLayout = null,
+    uniform_set: ?*facet.DescriptorSet = null,
     compute_layout: ?*facet.PipelineLayout = null,
     compute_pipelines: [2]?*facet.Pipeline = @splat(null),
     /// The pipelines of the case being drawn.
@@ -1477,7 +1497,7 @@ const Side = struct {
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 2 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 3 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -1536,6 +1556,7 @@ const Side = struct {
         };
         try expect(fb.CreateComputePipelines(device, null, 2, &compute_infos, &side.compute_pipelines), error.Refused);
         try expect(fb.CreateFence(device, &.{}, &side.fence), error.Refused);
+        try side.upUniforms();
         try side.stageTextures();
         try side.upLayered();
         try side.upThroughs();
@@ -1888,10 +1909,47 @@ const Side = struct {
         return error.NoMemory;
     }
 
+    /// The uniform buffers `Shipped.Uniformed` reads: binding 0's block at
+    /// 0, its tint at 16; binding 1's, a dynamic one, at 256, with a
+    /// second at 512 that a dynamic offset of 256 reaches.
+    fn upUniforms(side: *Side) Failure!void {
+        const fb = side.fb;
+        const device = side.device.?;
+        const bytes = try side.buffer(1024, facet.BUFFER_USAGE_UNIFORM_BUFFER, &side.uniforms);
+        @memset(bytes[0..1024], 0);
+        const floats: [*]align(1) f32 = @ptrCast(bytes);
+        @memcpy(floats[4..8], &[4]f32{ 0.5, 1, 0.75, 1 });
+        @memcpy(floats[64..68], &[4]f32{ 0, 0.25, 0.5, 0 });
+        floats[69] = 0.5;
+        @memcpy(floats[128..132], &[4]f32{ 0.5, 0, 0, 0 });
+        floats[133] = 0.25;
+        const bindings = [2]facet.DescriptorSetLayoutBinding{
+            .{ .binding = 0, .descriptor_type = .uniform_buffer, .stage_flags = facet.SHADER_STAGE_FRAGMENT },
+            .{ .binding = 1, .descriptor_type = .uniform_buffer_dynamic, .stage_flags = facet.SHADER_STAGE_FRAGMENT },
+        };
+        try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &side.uniform_set_layout), error.Refused);
+        try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&side.uniform_set_layout) }, &side.uniform_layout), error.Refused);
+        var made: [1]?*facet.DescriptorSet = undefined;
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&side.uniform_set_layout) }, &made), error.Refused);
+        side.uniform_set = made[0];
+        const infos = [2]facet.DescriptorBufferInfo{
+            .{ .buffer = side.uniforms, .offset = 0, .range = 32 },
+            .{ .buffer = side.uniforms, .offset = 256, .range = 32 },
+        };
+        const writes = [2]facet.WriteDescriptorSet{
+            .{ .dst_set = side.uniform_set.?, .dst_binding = 0, .descriptor_type = .uniform_buffer, .buffer_info = @ptrCast(&infos[0]) },
+            .{ .dst_set = side.uniform_set.?, .dst_binding = 1, .descriptor_type = .uniform_buffer_dynamic, .buffer_info = @ptrCast(&infos[1]) },
+        };
+        fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
+    }
+
     fn down(side: *Side) void {
         const fb = side.fb;
         const device = side.device orelse return;
         _ = fb.DeviceWaitIdle(device);
+        fb.DestroyPipelineLayout(device, side.uniform_layout);
+        fb.DestroyDescriptorSetLayout(device, side.uniform_set_layout);
+        fb.DestroyBuffer(device, side.uniforms);
         for (side.compute_pipelines) |each| fb.DestroyPipeline(device, each);
         fb.DestroyPipelineLayout(device, side.compute_layout);
         fb.DestroyDescriptorSetLayout(device, side.compute_set_layout);
@@ -3042,6 +3100,21 @@ const Cases = struct {
         side.draw(glass_at, 3);
         side.end();
     }
+    /// The vertices' colour times a tint in a uniform buffer, plus a
+    /// colour in a dynamic one times a float beside it; then the same
+    /// over another part of the picture with the dynamic offset moved on
+    /// to the second block (since 1.28).
+    fn uniformed(side: *Side) Failure!void {
+        side.begin(.{});
+        try side.use(.{ .vertex = "as it is", .fragment = "shipped uniformed", .layout = side.uniform_layout.? });
+        const first = [1]u32{0};
+        side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.uniform_layout.?, 0, 1, @ptrCast(&side.uniform_set), 1, &first);
+        side.draw(clockwise_at, 6);
+        const second = [1]u32{256};
+        side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.uniform_layout.?, 0, 1, @ptrCast(&side.uniform_set), 1, &second);
+        side.draw(glass_at, 3);
+        side.end();
+    }
     /// The vertices' colour times a pushed float, plus a pushed colour.
     fn tinted(side: *Side) Failure!void {
         side.begin(.{});
@@ -3272,6 +3345,7 @@ const cases = [_]Case{
     .{ .name = "shipped selects joined", .run = Cases.shipped("as it is", "shipped joined", false, clockwise_at) },
     .{ .name = "shipped collapsed selections", .run = Cases.shipped("as it is", "shipped collapsed", false, clockwise_at) },
     .{ .name = "shipped nested discard", .run = Cases.shipped("as it is", "shipped nested discard", false, clockwise_at) },
+    .{ .name = "shipped uniform buffers", .run = Cases.uniformed },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },

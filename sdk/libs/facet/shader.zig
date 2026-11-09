@@ -458,6 +458,13 @@ pub const MAX_SETS = 4;
 /// so the measurement never separated the copy from the noise, and
 /// conformance is not a thing to trade against it either way.
 pub const MAX_DYNAMIC_OFFSETS = 12;
+
+/// The shift `Resources.offsets` holds for a dynamic buffer descriptor
+/// whose offset would take its range past its buffer's end, which
+/// VUID-vkCmdBindDescriptorSets-pDynamicOffsets-01971 forbids: the
+/// descriptor then reads as not written, rather than as bytes that are
+/// not the buffer's (since 1.160).
+pub const SHIFTED_OUT: u32 = std.math.maxInt(u32);
 pub const MAX_PUSH_CONSTANTS_SIZE = 128;
 /// The floats a vertex function may hand to a fragment function past the
 /// position, which is `Entry.varyings`' low 8 bits and both ends of
@@ -1272,8 +1279,9 @@ pub const Resources = extern struct {
     output: u32 = 0,
     /// What each set's dynamic buffer descriptors are shifted by, as
     /// CmdBindDescriptorSets gave them: `offsets[set][slot.dynamic - 1]`
-    /// is a slot's own, and `buffer` adds it. The sets' other slots are
-    /// not shifted (`Slot.dynamic` is 0 for them).
+    /// is a slot's own, and `buffer` adds it, or `SHIFTED_OUT` where the
+    /// shift would take the range past its buffer. The sets' other slots
+    /// are not shifted (`Slot.dynamic` is 0 for them).
     offsets: [MAX_SETS][MAX_DYNAMIC_OFFSETS]u32 = @splat(@splat(0)),
 
     /// Element `element` of binding `binding` in set `set`, or null where
@@ -1292,8 +1300,8 @@ pub const Resources = extern struct {
     /// `bufferAt` reaches the others.
     ///
     /// A dynamic buffer descriptor is read from the offset
-    /// CmdBindDescriptorSets gave for it, and what is left of the range
-    /// from there has to hold a `T`.
+    /// CmdBindDescriptorSets gave for it, and its range moves with it, as
+    /// in Vulkan; until 1.160 the offset ate into the range instead.
     pub fn buffer(resources: *const Resources, comptime T: type, set: u32, binding: u32) ?*const T {
         return resources.bufferAt(T, set, binding, 0);
     }
@@ -1304,14 +1312,15 @@ pub const Resources = extern struct {
     pub fn bufferAt(resources: *const Resources, comptime T: type, set: u32, binding: u32, element: u32) ?*const T {
         const found = resources.slot(set, binding, element) orelse return null;
         const shift = resources.shiftOf(set, found);
-        if (found.range -| shift < @sizeOf(T)) return null;
+        if (shift == SHIFTED_OUT or found.range < @sizeOf(T)) return null;
         const bytes: [*]const u8 = @ptrCast(found.pointer orelse return null);
         return @ptrCast(@alignCast(bytes + shift));
     }
 
     /// What `found`, a slot of set `set`, has its bytes shifted by: the
     /// offset CmdBindDescriptorSets gave for it where it is a dynamic
-    /// buffer descriptor, and 0 for every other kind.
+    /// buffer descriptor - `SHIFTED_OUT` where that took its range past
+    /// its buffer - and 0 for every other kind.
     pub fn shiftOf(resources: *const Resources, set: u32, found: *const Slot) u32 {
         if (found.dynamic == 0 or set >= MAX_SETS) return 0;
         const at = found.dynamic - 1;
@@ -1413,12 +1422,13 @@ pub const Resources = extern struct {
     /// written through, as the `T`s it has room for. (Since 1.43.)
     pub fn storageAt(resources: *const Resources, comptime T: type, set: u32, binding: u32, element: u32) ?[]T {
         const found = resources.slot(set, binding, element) orelse return null;
-        // A dynamic one starts where the bind said, and what is left of
-        // the range from there is how many a function may reach.
+        // A dynamic one starts where the bind said, and its range moves
+        // with it: the whole of it is how many a function may reach.
         const shift = resources.shiftOf(set, found);
+        if (shift == SHIFTED_OUT) return null;
         const bytes: [*]u8 = @ptrCast(@constCast(found.pointer orelse return null));
         const first: [*]T = @ptrCast(@alignCast(bytes + shift));
-        return first[0 .. (found.range -| shift) / @sizeOf(T)];
+        return first[0 .. found.range / @sizeOf(T)];
     }
 
     /// Element `element` of binding `binding` of set `set`, an input

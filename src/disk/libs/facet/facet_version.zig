@@ -4778,4 +4778,84 @@ pub const LIBRARY_VERSION = 1;
 /// of the nested discard, 8 and 6 pixels of 230400 apart on the CM5, the
 /// edge alone, as the other selections' cases are; the other 218 cases
 /// unchanged, FacetProbe 888 of 888.
-pub const LIBRARY_REVISION = 159;
+///
+/// 160: **Uniform buffers in a fragment shader, through unifa
+/// (docs/facet-vulkan10.md item 59).** A block in the Uniform storage
+/// class at a set and a binding, its members floats and vectors of them
+/// read through access chains of constant indexes, as glslc writes a
+/// `uniform` block.
+///
+/// - The front end reads several blocks now, the push constants' and up
+///   to 16 uniform buffers' (v3dv's MAX_UNIFORM_BUFFERS), each found by
+///   its struct; a member's load is a load_ubo of the buffer's slot and a
+///   constant offset, as vtn and nir_lower_explicit_io make it in v3dv's
+///   32bit_index_offset format (v3dv_pipeline.c:415-425). BufferBlock, a
+///   storage buffer's, is refused as before, and a buffer of no set or
+///   binding is `Error.Location`.
+/// - A load_ubo is CSE'd as nir_opt_cse takes it (CAN_REORDER,
+///   nir_intrinsics.py:1367), and taken out by nir_opt_dce where nothing
+///   reads it. In a selection's arm it keeps the selection a branch: no
+///   load_ubo from vtn may be speculated (nir_opt_peephole_select.c:
+///   132-141), so the shape is refused.
+/// - to_vir emits it as ntq_emit_load_unifa does (nir_to_vir.c:
+///   3299-3507): QUNIFORM_UBO_ADDR of the slot shifted up by one and the
+///   offset, loaded by the ldunif straight into unifa, then an ldunifa a
+///   float; a later load of the same buffer in the block up to 12 bytes
+///   past where unifa stands reads on from there, with ldunifas that read
+///   nothing for the gap, and any other writes unifa again. The scheduler
+///   had the three delay slots between a unifa write and an ldunifa
+///   already (qpu_schedule.c:1437-1442).
+/// - The stream's word for it says the set, the binding and the offset,
+///   the descriptor map's entry looked up as the program was compiled,
+///   and the draw writes the buffer's address there, with its
+///   descriptor's offset and a dynamic one's (write_ubo_ssbo_uniforms,
+///   v3dv_uniforms.c:235-350). The bytes from there go out of the CPU's
+///   caches first. A buffer the program reads and the draw has not bound
+///   draws the missing colour, as a missing texture does.
+/// - `ir.Build.uniform(set, binding, offset, kind)` reads one on both
+///   devices: a block of its own for each buffer in the module
+///   (`spirv.Emit.typeStructOwn`, since two blocks of one shape are two
+///   structs), and on the cores the bound buffer's bytes, zeros where none
+///   is bound.
+/// - A dynamic offset no longer eats into its descriptor's range. Since
+///   1.35 a descriptor shifted by the bind kept what was left of its range
+///   from the offset, so a range of 32 shifted by 256 read as not
+///   written, however large its buffer: FacetBoth's first run of the case
+///   on the CM5 had 31,733 pixels apart, for that. Vulkan moves the window
+///   and keeps the range, as v3dv adds the dynamic offset to the address
+///   and nothing else. The set now keeps how far each dynamic descriptor
+///   may be shifted with its range still inside its buffer
+///   (`_descriptor.Set.rooms`, written by a write and carried by a copy),
+///   the bind checks each offset against it
+///   (VUID-vkCmdBindDescriptorSets-pDynamicOffsets-01971), and one that
+///   takes the range past its buffer leaves `shader.SHIFTED_OUT` in
+///   `Resources.offsets`, so `buffer`, `storage` and the V3D's address
+///   read it as not written.
+/// - Not ported: nir_opt_load_store_vectorize's merging of neighbouring
+///   loads (nir_to_vir.c:2315-2338) and v3d_nir_sort_constant_ubo_loads
+///   (vir.c:1551-1772), which change how often unifa is written and not
+///   what is read; arrays, matrices and structs in a block; an index
+///   computed in the body, which wants the TMU (ntq_emit_tmu_general);
+///   storage buffers.
+///
+/// Tests: the V3D's 179, four new: glslc_uniform_buffer (274 words) to
+/// one unifa write and eight ldunifas, one of them over the gap from 20
+/// to 24, the emitter's module of the same shader to the same reads;
+/// glslc_uniform_buffers (241 words), two buffers read backwards, to three
+/// unifa writes and thirteen ldunifas; a member read twice one load, one
+/// read in an arm `Error.Branches`; BufferBlock refused, a buffer of no
+/// set `Error.Location`. tests/ir.zig: two buffers at two sets read on
+/// the cores at their offsets, zeros where one is unbound, the module
+/// word for word `min_uniform` (194 words, spirv-val clean). The
+/// dynamic descriptors' test in tests/draw.zig reads the whole range at
+/// both shifts, a range shifted past its buffer as not written and one
+/// shifted to its very end as read, and the room a write and a copy keep.
+/// 3103 tests in all. FacetBoth 1.28: the shipped case of uniform
+/// buffers. FacetProbe 1.47: the whole range wherever the bind moved it,
+/// and one shifted past its buffer not written.
+///
+/// On the CM5, FacetBoth 1.28's case of uniform buffers is 10 pixels of
+/// 230,400 apart, the triangle's edge; its other 220 cases are as they
+/// were at 1.159, and FacetProbe 1.47 passes its 890 checks, 387 of them
+/// on the V3D.
+pub const LIBRARY_REVISION = 160;

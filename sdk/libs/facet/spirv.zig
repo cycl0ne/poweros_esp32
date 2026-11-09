@@ -531,6 +531,15 @@ pub const Emit = struct {
     pub fn typeStruct(emit: *Emit, members: []const u32) u32 {
         return emit.once(.type_struct, members);
     }
+    /// A struct of its own, never one declared before: a block is one,
+    /// decorated as itself, as glslang declares each block (since 1.160).
+    pub fn typeStructOwn(emit: *Emit, members: []const u32) u32 {
+        const made = emit.id();
+        emit.put(.declarations, (@as(u32, 2 + @as(u32, @intCast(members.len))) << 16) | @intFromEnum(Op.type_struct));
+        emit.put(.declarations, made);
+        for (members) |member| emit.put(.declarations, member);
+        return made;
+    }
     pub fn typeFunction(emit: *Emit, returns: u32, parameters: []const u32) u32 {
         var operands: [8]u32 = @splat(0);
         operands[0] = returns;

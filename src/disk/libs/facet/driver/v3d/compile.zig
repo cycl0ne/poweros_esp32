@@ -104,9 +104,16 @@ pub const most_varyings = qpu.most_varyings;
 pub const most_uniforms = 32;
 /// The constants a module may declare, read or not.
 pub const most_constants = 32;
-/// The members the push constants' block may have: one float each fills
-/// `shader.MAX_PUSH_CONSTANTS_SIZE`.
+/// The members a block may have: one float each fills
+/// `shader.MAX_PUSH_CONSTANTS_SIZE`, and a uniform buffer's are held to
+/// as many.
 pub const most_members = sdk.facet.shader.MAX_PUSH_CONSTANTS_SIZE / 4;
+/// The structs decorated Block a module may declare: the push constants'
+/// and its uniform buffers' (since 1.160).
+pub const most_blocks = 8;
+/// The uniform buffers a module may declare: v3dv's MAX_UNIFORM_BUFFERS
+/// (v3dv_limits.h), the descriptor map's slots for them (since 1.160).
+pub const most_ubos = 16;
 /// The combined image samplers a module may declare. One is read: the
 /// TMU is written once and read once here, as in every hand-written
 /// program, and a module that declares one it never samples costs
@@ -208,6 +215,8 @@ pub const Error = error{
     /// Not a limit of the device - a module may declare many and sample
     /// one, and that one is all this device has to do - but of the table
     /// that holds where each is bound. Raising `most_samplers` raises it.
+    /// Since 1.160 also more uniform buffers than `most_ubos`, or more
+    /// blocks than `most_blocks`.
     Declared,
     /// A `Location`, `DescriptorSet` or `Binding` literal past what the
     /// tables can tell apart from "never decorated". A module's own
@@ -292,7 +301,7 @@ pub const profile: spirv.Profile = .{
                  .logical_and,        .f_unord_greater_than_equal,     .f_unord_greater_than,
         .logical_or,      .f_unord_less_than,  .f_unord_less_than_equal,        .logical_not,
     },
-    .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant },
+    .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform },
     .image_dims = &.{.dim_2d},
     .stages = &.{.fragment},
     .most_ids = most_ids,
@@ -345,6 +354,12 @@ pub const Tag = enum {
     /// the first of them is (its byte offset over four). The words are
     /// the draw's, read when the uniform stream is written (since 1.138).
     push,
+    /// Floats of a uniform buffer, NIR's load_ubo of a constant offset:
+    /// `b` is the buffer's slot in v3dv's descriptor map (`Work.ubos`)
+    /// and `at` the byte offset of the first float. v3d reads them
+    /// through unifa (ntq_emit_load_unifa, nir_to_vir.c:3299; since
+    /// 1.160).
+    ubo,
     /// One float of a value.
     component,
     /// Floats of other values, gathered.
@@ -589,6 +604,40 @@ pub const Word = union(enum) {
     /// from the command buffer's push constants as the stream is written
     /// (v3dv_uniforms.c:513, v3dv_write_uniforms).
     push: u32,
+    /// Where a uniform buffer's floats are, `offset` bytes into the
+    /// buffer bound at `set`, `binding`: Mesa's QUNIFORM_UBO_ADDR, whose
+    /// unit is the descriptor map's slot, looked up here already, and
+    /// which the draw writes as the buffer's address and its descriptor's
+    /// offsets plus this (write_ubo_ssbo_uniforms, v3dv_uniforms.c:
+    /// 235-350; since 1.160).
+    ubo: UboAddress,
+};
+
+/// A uniform buffer's address as the stream holds it.
+pub const UboAddress = struct {
+    set: u16,
+    binding: u16,
+    offset: u32,
+};
+
+/// A struct decorated Block: the push constants' or a uniform buffer's.
+/// Each member is a float or a vector of them, with its type and its
+/// byte offset, from OpMemberDecorate Offset.
+pub const Block = struct {
+    type_id: u16 = none,
+    member_type: [most_members]u16 = @splat(none),
+    member_offset: [most_members]u16 = @splat(none),
+    member_count: u32 = 0,
+    /// Its OpTypeStruct read.
+    declared: bool = false,
+};
+
+/// A uniform buffer the module declares: its block, and where the draw
+/// binds it.
+pub const Ubo = struct {
+    block: u16,
+    set: u16,
+    binding: u16,
 };
 
 // --- the work ----------------------------------------------------------------
@@ -622,19 +671,24 @@ pub const Work = struct {
     /// where it names all of them.
     chain_part: [most_ids]u8 = @splat(whole),
 
-    /// The push constants' block: the struct type decorated `Block`, the
-    /// struct its members' offsets were given for, and the one variable
-    /// of it. Each member is a float or a vector of them, with its type
-    /// and its byte offset, from OpMemberDecorate Offset.
-    block: u16 = none,
-    offsets_of: u16 = none,
+    /// `member_pointer`: the variable of the block it is a member of,
+    /// the push constants' or a uniform buffer's (since 1.160).
+    chain_base: [most_ids]u16 = @splat(none),
+
+    /// The structs decorated `Block`, the push constants' and the uniform
+    /// buffers' (since 1.160), each found by its type.
+    blocks: [most_blocks]Block = @splat(.{}),
+    block_count: u32 = 0,
     /// The id GLSL.std.450 is imported as, where it is: the one extended
     /// set whose calls the walk lowers (since 1.152).
     glsl: u16 = none,
+    /// The push constants' one variable; its `points` is its block.
     push_variable: u16 = none,
-    member_type: [most_members]u16 = @splat(none),
-    member_offset: [most_members]u16 = @splat(none),
-    member_count: u32 = 0,
+    /// The uniform buffers, in the order their variables are declared:
+    /// each variable's `points` is its place here, which is the slot of
+    /// v3dv's descriptor map for it (`Code.ubos`; since 1.160).
+    ubos: [most_ubos]Ubo = undefined,
+    ubo_count: u32 = 0,
 
     /// Every constant the module declares, read or not. A float of a
     /// vector's is declared on its own as well, and most of those are
@@ -752,11 +806,11 @@ pub const Work = struct {
 /// already been turned down by `CreateShaderModule`.
 pub fn compile(work: *Work, words: []const u32) Error!Code {
     try readModule(work, words);
-    // No hand-written program reads a push constant, drops a pixel or
-    // compares, so the plan has nothing to hold any of them to: only
-    // Mesa's back end compiles them.
+    // No hand-written program reads a push constant or a uniform buffer,
+    // drops a pixel or compares, so the plan has nothing to hold any of
+    // them to: only Mesa's back end compiles them.
     for (work.program()) |each| switch (each.tag) {
-        .push => return Error.Storage,
+        .push, .ubo => return Error.Storage,
         .discard => return Error.Discards,
         .sample_compared => return Error.Samplers,
         // Nor does any compute beyond a sum and a product.
@@ -855,6 +909,14 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
             .tmu_config_p1 => if (data == 0) .sampler else return Error.Invalid,
             // A word of the push constants: `Step.at` of a `.push`.
             .uniform => .{ .push = data },
+            // A uniform buffer's address: the unit is the buffer's slot
+            // shifted up by one, as ntq_emit_load_unifa gives it.
+            .ubo_addr => ubo: {
+                const unit = vir.unitDataGetUnit(data);
+                if (unit == 0 or unit > work.ubo_count) return Error.Invalid;
+                const bound = work.ubos[unit - 1];
+                break :ubo .{ .ubo = .{ .set = bound.set, .binding = bound.binding, .offset = vir.unitDataGetOffset(data) } };
+            },
             // A spill's offset or size: a draw has no memory to spill to.
             else => return Error.Registers,
         };
@@ -1018,13 +1080,11 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // decoration this is here to turn down by name.
                 switch (what) {
                     .location, .descriptor_set, .binding => {},
-                    // The push constants' block, which carries no
-                    // literal. There is one: a uniform buffer would be
-                    // the other kind of block, and its storage class is
-                    // not in the profile.
+                    // A block, which carries no literal: the push
+                    // constants', or a uniform buffer's (since 1.160).
+                    // A storage buffer's, BufferBlock, is refused.
                     .block => {
-                        if (work.block != none) return Error.Refused;
-                        work.block = id;
+                        _ = try blockOf(work, id);
                         continue;
                     },
                     else => return Error.Refused,
@@ -1046,22 +1106,23 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             .member_decorate => {
                 // StructureType, Member, Decoration, its literal. The one
                 // decoration taken is the member's byte offset, which is
-                // where its floats are among the push constants: a word
-                // of them each, so it is a multiple of four. A block's
-                // other member decorations are for matrices and the
-                // vertex stage's built-ins, neither of which is here.
+                // where its floats are in the block: a word of them each,
+                // so it is a multiple of four. Whether they fit is for
+                // the variable to say, whose class tells the push
+                // constants from a uniform buffer. A block's other
+                // member decorations are for matrices and the vertex
+                // stage's built-ins, neither of which is here.
                 if (operands.len < 3) return Error.Body;
                 const id = try idOf(operands[0]);
                 const what = std.enums.fromInt(spirv.Decoration, operands[2]) orelse return Error.Refused;
                 if (what != .offset) return Error.Refused;
                 if (operands.len < 4) return Error.Body;
-                if (work.offsets_of != none and work.offsets_of != id) return Error.Refused;
-                work.offsets_of = id;
+                const block = try blockOf(work, id);
                 const member = operands[1];
                 if (member >= most_members) return Error.Storage;
                 const offset = operands[3];
-                if (offset % 4 != 0 or offset >= sdk.facet.shader.MAX_PUSH_CONSTANTS_SIZE) return Error.Storage;
-                work.member_offset[member] = @intCast(offset);
+                if (offset % 4 != 0 or offset >= none) return Error.Storage;
+                block.member_offset[member] = @intCast(offset);
             },
             .type_float => {
                 if (operands.len < 2) return Error.Body;
@@ -1083,26 +1144,26 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 work.thing[id] = .int;
             },
             .type_struct => {
-                // The push constants' block and no other struct: a value
-                // of one would be a step of many kinds, and none is. Each
-                // member is a float or a vector of them, with an offset
-                // that keeps all of its floats inside the push constants.
+                // A block and no other struct: a value of one would be a
+                // step of many kinds, and none is. Each member is a float
+                // or a vector of them, with an offset.
                 if (operands.len < 1) return Error.Body;
                 const id = try idOf(operands[0]);
-                if (id != work.block or id != work.offsets_of) return Error.Type;
+                const block = findBlock(work, id) orelse return Error.Type;
                 const members = operands[1..];
                 if (members.len == 0 or members.len > most_members) return Error.Storage;
                 for (members, 0..) |each, k| {
                     const member = try idOf(each);
                     const kind = try kindOf(work, member);
-                    const offset = work.member_offset[k];
+                    const offset = block.member_offset[k];
                     if (offset == none) return Error.Storage;
-                    if (offset + 4 * kind.parts() > sdk.facet.shader.MAX_PUSH_CONSTANTS_SIZE) return Error.Storage;
-                    work.member_type[k] = member;
+                    if (offset + 4 * kind.parts() >= none) return Error.Storage;
+                    block.member_type[k] = member;
                 }
                 // An offset given for a member the struct does not have.
-                for (work.member_offset[members.len..]) |offset| if (offset != none) return Error.Storage;
-                work.member_count = @intCast(members.len);
+                for (block.member_offset[members.len..]) |offset| if (offset != none) return Error.Storage;
+                block.member_count = @intCast(members.len);
+                block.declared = true;
                 work.thing[id] = .structure;
             },
             .type_vector => {
@@ -1199,11 +1260,33 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // The block, and once: Vulkan has an entry point use
                     // one push constant variable at most, and a member is
                     // found by its offset, which two blocks would share.
+                    // All of its floats are inside the push constants.
                     if (work.thing[pointee] != .structure) return Error.Storage;
                     if (work.push_variable != none) return Error.Storage;
+                    const block = findBlock(work, pointee) orelse return Error.Storage;
+                    for (block.member_type[0..block.member_count], block.member_offset[0..block.member_count]) |member, offset| {
+                        if (offset + 4 * (try kindOf(work, member)).parts() > sdk.facet.shader.MAX_PUSH_CONSTANTS_SIZE) return Error.Storage;
+                    }
                     work.thing[id] = .variable;
                     work.class[id] = @intCast(@intFromEnum(class));
+                    work.points[id] = @intCast(block - &work.blocks[0]);
                     work.push_variable = id;
+                    continue;
+                }
+                if (class == .uniform) {
+                    // A uniform buffer: a block at a set and a binding,
+                    // which v3dv's descriptor map gives a slot
+                    // (lower_vulkan_resource_index, v3dv_pipeline.c), and
+                    // the draw the buffer bound there (since 1.160).
+                    if (work.thing[pointee] != .structure) return Error.Storage;
+                    const block = findBlock(work, pointee) orelse return Error.Storage;
+                    if (work.set[id] == none or work.binding[id] == none) return Error.Location;
+                    if (work.ubo_count == most_ubos) return Error.Declared;
+                    work.thing[id] = .variable;
+                    work.class[id] = @intCast(@intFromEnum(class));
+                    work.points[id] = @intCast(work.ubo_count);
+                    work.ubos[work.ubo_count] = .{ .block = @intCast(block - &work.blocks[0]), .set = work.set[id], .binding = work.binding[id] };
+                    work.ubo_count += 1;
                     continue;
                 }
                 if (class == .uniform_constant) {
@@ -1918,6 +2001,10 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
         const each = work.steps[at];
         switch (each.tag) {
             .input, .constant, .push, .component, .construct, .negate, .abs, .sat => continue,
+            // A load_ubo is let through only where it may be speculated
+            // (nir_opt_peephole_select.c:132-141), which none from vtn
+            // may: no limit flattens its arm (since 1.160).
+            .ubo => return std.math.maxInt(u32),
             else => {},
         }
         var used = false;
@@ -2285,7 +2372,9 @@ fn sameFloat(work: *const Work, a: u16, b: u16) bool {
 }
 
 /// Whether a step is an ALU instruction in NIR, which nir_opt_algebraic
-/// and nir_opt_cse look at. A component and a construct only name floats.
+/// and nir_opt_cse look at, or a load_ubo, which nir_opt_cse takes as it
+/// takes one (CAN_REORDER, nir_intrinsics.py:1367; since 1.160). A
+/// component and a construct only name floats.
 fn computes(tag: Tag) bool {
     return switch (tag) {
         .input, .constant, .push, .component, .construct, .sample, .sample_compared, .discard => false,
@@ -2298,6 +2387,8 @@ fn computes(tag: Tag) bool {
 /// feq's or fneu's in either order (NIR_OP_IS_2SRC_COMMUTATIVE).
 fn equalSteps(work: *const Work, a: Step, b: Step) bool {
     if (a.tag != b.tag or a.kind != b.kind or a.at != b.at) return false;
+    // A load_ubo's buffer is its `b`, which is no step.
+    if (a.tag == .ubo) return a.b == b.b;
     const left = readsOf(a);
     const right = readsOf(b);
     var straight = true;
@@ -2320,7 +2411,7 @@ fn equalSteps(work: *const Work, a: Step, b: Step) bool {
 /// What a step reads, field by field.
 fn readsOf(each: Step) [4]?u16 {
     return switch (each.tag) {
-        .input, .constant, .push => .{ null, null, null, null },
+        .input, .constant, .push, .ubo => .{ null, null, null, null },
         .construct => .{
             each.from[0],
             if (each.kind.parts() > 1) each.from[1] else null,
@@ -2369,7 +2460,7 @@ fn replaceUses(work: *Work, from: u16, to: u16) void {
     if (work.stored == from) work.stored = to;
     for (work.steps[0..work.step_count]) |*user| {
         switch (user.tag) {
-            .input, .constant, .push => {},
+            .input, .constant, .push, .ubo => {},
             .construct => for (user.from[0..user.kind.parts()]) |*of| {
                 if (of.* == from) of.* = to;
             },
@@ -2467,10 +2558,21 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 // already (vir_get_uniform_index, vir.c:2771).
                 const kind = try kindOf(work, try idOf(operands[0]));
                 if (kind.parts() != work.wide[from]) return Error.Type;
+                const base = work.chain_base[from];
+                const block = blockOfVariable(work, base);
                 const member = work.points[from];
                 const part: u32 = if (work.chain_part[from] == Work.whole) 0 else work.chain_part[from];
-                const at = work.member_offset[member] / 4 + part;
-                work.step_of[id] = try put(work, .{ .tag = .push, .kind = kind, .at = at });
+                const offset = block.member_offset[member] + 4 * part;
+                if (base != work.push_variable) {
+                    // Floats of a uniform buffer: a load_ubo of the
+                    // descriptor map's slot and a constant offset, as
+                    // vtn and nir_lower_explicit_io make it of the access
+                    // chain (v3dv_pipeline.c:415-425, the 32bit index
+                    // offset format), a component each (since 1.160).
+                    work.step_of[id] = try put(work, .{ .tag = .ubo, .kind = kind, .b = work.points[base], .at = offset });
+                    return;
+                }
+                work.step_of[id] = try put(work, .{ .tag = .push, .kind = kind, .at = offset / 4 });
                 return;
             }
             if (work.thing[from] == .input_part) {
@@ -2556,10 +2658,18 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 work.chain_part[id] = @intCast(which);
                 return;
             }
-            if (base != work.push_variable) return Error.Storage;
+            // A member of the push constants, or of a uniform buffer
+            // (since 1.160).
+            const class: spirv.StorageClass = if (base == work.push_variable)
+                .push_constant
+            else if (work.thing[base] == .variable and work.class[base] == @intFromEnum(spirv.StorageClass.uniform))
+                .uniform
+            else
+                return Error.Storage;
+            const block = blockOfVariable(work, base);
             const member = try indexOf(work, operands[3]);
-            if (member >= work.member_count) return Error.Body;
-            const member_kind = try kindOf(work, work.member_type[member]);
+            if (member >= block.member_count) return Error.Body;
+            const member_kind = try kindOf(work, block.member_type[member]);
             var part: u8 = Work.whole;
             var parts = member_kind.parts();
             if (operands.len == 5) {
@@ -2568,13 +2678,14 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 part = @intCast(which);
                 parts = 1;
             }
-            // A pointer of the push constants' class to what it names.
+            // A pointer of the block's class to what it names.
             if (work.thing[type_id] != .pointer) return Error.Type;
-            if (work.class[type_id] != @intFromEnum(spirv.StorageClass.push_constant)) return Error.Body;
+            if (work.class[type_id] != @intFromEnum(class)) return Error.Body;
             if ((try kindOf(work, work.points[type_id])).parts() != parts) return Error.Type;
             work.thing[id] = .member_pointer;
             work.points[id] = member;
             work.chain_part[id] = part;
+            work.chain_base[id] = base;
             work.wide[id] = @intCast(parts);
         },
         .composite_extract => {
@@ -3147,6 +3258,30 @@ fn literalIs(words: []const u32, name: []const u8) bool {
 }
 
 /// An access chain's index: an integer constant's value.
+/// The block of struct type `id`, made where it is not yet one: a
+/// decoration may name it before or after another's (since 1.160).
+fn blockOf(work: *Work, id: u16) Error!*Block {
+    if (findBlock(work, id)) |found| return found;
+    if (work.block_count == most_blocks) return Error.Declared;
+    const made = &work.blocks[work.block_count];
+    made.* = .{ .type_id = id };
+    work.block_count += 1;
+    return made;
+}
+
+fn findBlock(work: *Work, id: u16) ?*Block {
+    for (work.blocks[0..work.block_count]) |*each| if (each.type_id == id) return each;
+    return null;
+}
+
+/// The block a variable of the push constants or of a uniform buffer is
+/// of: its `points` names it, the block for the one and the uniform
+/// buffer for the other.
+fn blockOfVariable(work: *const Work, variable: u16) *const Block {
+    if (variable == work.push_variable) return &work.blocks[work.points[variable]];
+    return &work.blocks[work.ubos[work.points[variable]].block];
+}
+
 fn indexOf(work: *const Work, word: u32) Error!u16 {
     const id = try idOf(word);
     if (work.thing[id] != .int_constant) return Error.Body;
@@ -3267,7 +3402,7 @@ fn settle(work: *Work) Error!void {
             // are already in registers, so neither costs an instruction.
             .input, .component, .construct => {},
             // Refused by `compile` before the plan is laid out.
-            .push => return Error.Storage,
+            .push, .ubo => return Error.Storage,
             .compare, .discard => return Error.Discards,
             .sample_compared => return Error.Samplers,
             .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot => return Error.Body,
@@ -6431,4 +6566,125 @@ test "a call the walk does not lower, or into a set that is not GLSL.std.450, is
         if (other[at] & 0xFFFF == @intFromEnum(spirv.Op.ext_inst_import)) other[at + 2] ^= 0x20;
     }
     try testing.expectError(Error.Body, throughMesa(&work, &other));
+}
+
+/// `reference.glslc_uniform_buffer`'s shader as facet's emitter writes it:
+/// the colour times a uniform buffer's tint and strength, plus its shift.
+const Material = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const tint = b.uniform(0, 0, 0, .f32x4);
+        const strength = b.uniform(0, 0, 16, .f32x1);
+        const shift = b.uniform(0, 0, 24, .f32x2);
+        const r = b.add(b.mul(b.mul(b.component(v, 0), b.component(tint, 0)), strength), b.component(shift, 0));
+        const g = b.add(b.mul(b.mul(b.component(v, 1), b.component(tint, 1)), strength), b.component(shift, 1));
+        const bl = b.add(b.mul(b.mul(b.component(v, 2), b.component(tint, 2)), strength), b.scalar(0));
+        b.color(b.vector(&.{ r, g, bl, b.component(v, 3) }));
+    }
+});
+
+test "through Mesa's back end, a uniform buffer's members are read through unifa: written once, and stepped on by ldunifa" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_uniform_buffer);
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+    // One word of the stream, the buffer's address at offset 0, which an
+    // ldunif loads into unifa itself; the tint's four floats, the
+    // strength's one, an ldunifa that reads nothing from 20 to 24, and
+    // the shift's two (ntq_emit_load_unifa, nir_to_vir.c:3398-3459).
+    try testing.expectEqualSlices(Word, &.{.{ .ubo = .{ .set = 0, .binding = 0, .offset = 0 } }}, code.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(code, "ldunifrf.unifa"));
+    try testing.expectEqual(@as(usize, 8), countOf(code, "ldunifa"));
+    try testing.expectEqual(@as(usize, 21), code.words.len);
+    // facet's emitter's module of the same shader: the same reads.
+    var ours: Work = .{};
+    const emitted = try throughMesa(&ours, Material.words);
+    try testing.expectEqualSlices(Word, code.stream(), emitted.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(emitted, "ldunifrf.unifa"));
+    try testing.expectEqual(@as(usize, 8), countOf(emitted, "ldunifa"));
+    try testing.expectEqual(@as(usize, 21), emitted.words.len);
+    // The plan has no hand-written program to hold one to.
+    var plan: Work = .{};
+    try testing.expectError(Error.Storage, compile(&plan, &reference.glslc_uniform_buffer));
+}
+
+test "through Mesa's back end, a load before the last one's, or of another uniform buffer, writes unifa again" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_uniform_buffers);
+    // light.far at 64, then light.color at 0, before it: unifa again;
+    // light.near at 16 reads on from color's end; mix_by.amount is in
+    // the other buffer, at set 1, binding 2.
+    try testing.expectEqualSlices(Word, &.{
+        .{ .ubo = .{ .set = 0, .binding = 0, .offset = 64 } },
+        .{ .ubo = .{ .set = 0, .binding = 0, .offset = 0 } },
+        .{ .ubo = .{ .set = 1, .binding = 2, .offset = 0 } },
+    }, code.stream());
+    try testing.expectEqual(@as(usize, 3), countOf(code, "ldunifrf.unifa"));
+    try testing.expectEqual(@as(usize, 13), countOf(code, "ldunifa"));
+}
+
+/// One member read twice, which nir_opt_cse makes one load_ubo.
+const ReadTwice = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.add(b.uniform(0, 0, 0, .f32x4), b.mul(b.input(0, .f32x4), b.uniform(0, 0, 0, .f32x4))));
+    }
+});
+
+/// A uniform buffer read in a selection's arm.
+const ReadInArm = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const x = b.component(v, 0);
+        const chosen = b.ifHolds(b.lessThan(x, b.scalar(0.5)));
+        const loaded = b.uniform(0, 0, 0, .f32x1);
+        b.endIf(chosen);
+        const red = b.merged(chosen, loaded, x);
+        b.color(b.vector(&.{ red, b.component(v, 1), b.component(v, 2), b.component(v, 3) }));
+    }
+});
+
+test "through Mesa's back end, two loads of one member are one, and a load in an arm keeps its selection a branch" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, ReadTwice.words);
+    // nir_opt_cse takes a load_ubo as it takes an ALU instruction
+    // (CAN_REORDER, nir_intrinsics.py:1367): four ldunifas, not eight.
+    try testing.expectEqual(@as(usize, 4), countOf(code, "ldunifa"));
+    try testing.expectEqual(@as(usize, 1), code.stream().len);
+    // No load_ubo is speculated (nir_opt_peephole_select.c:132-141), so
+    // its arm is not flattened, and a branch is not here.
+    var armed: Work = .{};
+    try testing.expectError(Error.Branches, throughMesa(&armed, ReadInArm.words));
+}
+
+test "a storage buffer's block, and a uniform buffer bound nowhere, are refused" {
+    // glslc_uniform_buffer's `OpDecorate %16 Block` made BufferBlock.
+    var stored = reference.glslc_uniform_buffer;
+    var at: usize = 5;
+    var found = false;
+    while (at < stored.len) {
+        const count = stored[at] >> 16;
+        if (stored[at] == 0x00030047 and stored[at + 1] == 16 and stored[at + 2] == @intFromEnum(spirv.Decoration.block)) {
+            // BufferBlock, which `spirv.Decoration` does not name.
+            stored[at + 2] = 3;
+            found = true;
+        }
+        at += count;
+    }
+    try testing.expect(found);
+    var work: Work = .{};
+    try testing.expectError(Error.Refused, throughMesa(&work, &stored));
+    // Its DescriptorSet made a second Binding: a buffer of no set.
+    var unset = reference.glslc_uniform_buffer;
+    at = 5;
+    found = false;
+    while (at < unset.len) {
+        const count = unset[at] >> 16;
+        if (unset[at] == 0x00040047 and unset[at + 1] == 18 and unset[at + 2] == @intFromEnum(spirv.Decoration.descriptor_set)) {
+            unset[at + 2] = @intFromEnum(spirv.Decoration.binding);
+            found = true;
+        }
+        at += count;
+    }
+    try testing.expect(found);
+    var unbound: Work = .{};
+    try testing.expectError(Error.Location, throughMesa(&unbound, &unset));
 }

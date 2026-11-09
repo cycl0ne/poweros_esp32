@@ -3,6 +3,7 @@
 
 const sdk = @import("sdk");
 const facet = sdk.facet;
+const shader = facet.shader;
 const FacetBase = @import("../facet_base.zig").FacetBase;
 const _objects = @import("../_objects.zig");
 const _descriptor = @import("_descriptor.zig");
@@ -161,9 +162,17 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
                     const info = (write.buffer_info orelse break)[k];
                     const buffer = _objects.of(_buffer.Buffer, info.buffer orelse break :bound .{});
                     const bytes = _buffer.bytes(buffer, info.offset, info.range) orelse break :bound .{};
+                    // A dynamic one is shifted by the bind with its range
+                    // whole, as far as its buffer goes on past it.
+                    if (dynamic != 0 and dynamic <= shader.MAX_DYNAMIC_OFFSETS) {
+                        const past = buffer.size - info.offset - bytes.len;
+                        set.rooms[dynamic - 1] = @intCast(@min(past, 0xFFFF_FFFF));
+                    }
                     break :bound .{ .pointer = bytes.ptr, .range = @intCast(@min(bytes.len, 0xFFFF_FFFF)) };
                 },
             };
+            // One left unwritten has no room to be shifted in.
+            if (dynamic != 0 and dynamic <= shader.MAX_DYNAMIC_OFFSETS and found.slot.pointer == null) set.rooms[dynamic - 1] = 0;
             found.slot.dynamic = dynamic;
             if (fixed) {
                 found.slot.sampler = held;
@@ -183,6 +192,12 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
             const fixed = target.slot.fixed_sampler;
             const held = target.slot.sampler;
             target.slot.* = source.slot.*;
+            // A dynamic one takes the room its source had to be shifted
+            // in, under the number the target set gives it.
+            if (dynamic != 0 and dynamic <= shader.MAX_DYNAMIC_OFFSETS) {
+                const was = source.slot.dynamic;
+                into.rooms[dynamic - 1] = if (was != 0 and was <= shader.MAX_DYNAMIC_OFFSETS) from.rooms[was - 1] else 0;
+            }
             target.slot.dynamic = dynamic;
             if (fixed) {
                 target.slot.sampler = held;

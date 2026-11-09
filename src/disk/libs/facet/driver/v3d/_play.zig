@@ -1111,8 +1111,41 @@ fn streamOf(queue: *Queue, made: *const driver.Shader, tmu: ?Configuration) ?u32
         // `compile` holds every word inside the push constants, so `at`
         // is one of theirs.
         .push => |at| std.mem.readInt(u32, pushed[at * 4 ..][0..4], .little),
+        // `buffersBound` has found each.
+        .ubo => |each| bufferAddress(queue, each, true) orelse 0,
     };
     return place.address;
+}
+
+/// Where the V3D reads a uniform buffer's floats: the buffer's address,
+/// its descriptor's offset and a dynamic one's, and the offset the
+/// program reads at (write_ubo_ssbo_uniforms, v3dv_uniforms.c:235-350;
+/// since 1.160). Its bytes from there go out of the CPU's caches first,
+/// as v3dv's memory is coherent and what the CPU wrote is in memory
+/// before the V3D reads it, where `out` says so. Null where nothing is
+/// bound there, where the program reads past the descriptor's range, or
+/// where the bind shifted that range past its buffer
+/// (`shader.SHIFTED_OUT`): the range moves with a dynamic offset, as in
+/// v3dv, and stays as long as the write gave it.
+fn bufferAddress(queue: *Queue, at: compile.UboAddress, out: bool) ?u32 {
+    const resources = &playerOf(queue).resources;
+    const found = resources.slot(at.set, at.binding, 0) orelse return null;
+    const bytes: [*]const u8 = @ptrCast(found.pointer orelse return null);
+    const shift = resources.shiftOf(at.set, found);
+    if (shift == shader.SHIFTED_OUT or at.offset >= found.range) return null;
+    const address = std.math.cast(u32, @intFromPtr(bytes) + shift + at.offset) orelse return null;
+    if (out) playerOf(queue).hardware.space.rangeToGpu(bytes + shift + at.offset, found.range - at.offset);
+    return address;
+}
+
+/// Whether every uniform buffer `made` reads is bound, and where the V3D
+/// reaches it.
+fn buffersBound(queue: *Queue, made: *const driver.Shader) bool {
+    for (made.stream()) |word| switch (word) {
+        .ubo => |each| if (bufferAddress(queue, each, false) == null) return false,
+        else => {},
+    };
+    return true;
 }
 
 /// A vertex's record's attributes, its programs and its shader state, and
@@ -1565,11 +1598,14 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             // not. Null where there is no texture there, or where the
             // sampler compares (`sampledBy`).
             const tmu: ?Configuration = if (made.sampler) |each| sampledBy(queue, each) else null;
-            if (made.sampler != null and tmu == null and !player.frame.color) {
+            // A uniform buffer the program reads and the draw has not
+            // bound is what has gone wrong too (since 1.160).
+            const lacking = (made.sampler != null and tmu == null) or !buffersBound(queue, made);
+            if (lacking and !player.frame.color) {
                 // No colour to say what has gone wrong with: the depth
                 // drawn as if nothing dropped a pixel.
                 no_color = true;
-            } else if (made.sampler != null and tmu == null) {
+            } else if (lacking) {
                 // As `shader.missing`, and as a fixed form does: the
                 // colour says what has gone wrong.
                 varyings = 4;

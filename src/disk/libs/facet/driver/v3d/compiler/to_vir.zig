@@ -186,7 +186,19 @@ const Emit = struct {
     writes_z: bool = false,
     /// info.fs.early_fragment_tests, as emit_frag_end leaves it.
     early_fragment_tests: bool = true,
+    /// Where the last load_ubo of a constant offset left unifa: its
+    /// block, its buffer and the offset the next ldunifa reads
+    /// (c->current_unifa_block, _index and _offset, nir_to_vir.c:
+    /// 3398-3415; since 1.160).
+    current_unifa_block: ?*vir.Block = null,
+    current_unifa_index: u32 = 0,
+    current_unifa_offset: u32 = 0,
 };
+
+/// How far ahead of unifa a load_ubo may be and still be reached by
+/// ldunifas that read nothing (MAX_UNIFA_SKIP_DISTANCE,
+/// v3d_compiler.h:69).
+const max_unifa_skip_distance = 16;
 
 /// v3d_compile (vir.c:2605): the steps compiled under each strategy in
 /// turn until one gives every temporary a register. Each attempt starts
@@ -450,8 +462,82 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         .push => {
             for (0..parts) |k| e.defs[at][k] = try c.uniform(.uniform, @intCast(each.at + k));
         },
+        // ntq_emit_intrinsic's load_ubo (nir_to_vir.c:3634-3641): through
+        // unifa, which its constant offset always allows here.
+        .ubo => try emitLoadUnifa(e, each, at),
     }
     e.defined[at] = true;
+}
+
+/// ntq_emit_load_unifa (nir_to_vir.c:3299-3507), for what the profile
+/// has: a load_ubo of 32-bit floats at a constant offset, outside of any
+/// control flow, so its offset is uniform and derived from no register.
+/// unifa is written with the buffer's address and the offset, and each
+/// ldunifa reads a word and moves it on by four; a load in the same
+/// block and buffer a little past the last one reads on from there,
+/// with ldunifas that read nothing to step over the gap, instead of
+/// writing unifa again (since 1.160).
+fn emitLoadUnifa(e: *Emit, each: Step, at: u16) Error!void {
+    const c = e.c;
+    // Every ldunifa moves the address on by 4 bytes, so the current
+    // offset is 4 bytes past the last load's.
+    const max_unifa_skip_dist: u32 = max_unifa_skip_distance - 4;
+    const const_offset = each.at;
+    // QUNIFORM_UBO_ADDR takes the buffer's index shifted up by one, 0
+    // being the push constants' in Vulkan.
+    const index = @as(u32, each.b) + 1;
+
+    var skip_unifa = false;
+    var ldunifa_skips: u32 = 0;
+    if (c.cur_block == e.current_unifa_block and
+        e.current_unifa_index == index and
+        e.current_unifa_offset <= const_offset and
+        e.current_unifa_offset + max_unifa_skip_dist >= const_offset)
+    {
+        skip_unifa = true;
+        ldunifa_skips = (const_offset - e.current_unifa_offset) / 4;
+    } else {
+        e.current_unifa_block = c.cur_block;
+        e.current_unifa_index = index;
+        e.current_unifa_offset = const_offset;
+    }
+
+    if (!skip_unifa) {
+        const base_offset = try c.uniform(.ubo_addr, vir.unitDataCreate(index, const_offset));
+        const unifa = vir.magicReg(.unifa);
+        // The ldunif made to load into unifa itself, where it is the one
+        // just emitted rather than an earlier one reused, which saves the
+        // MOV.
+        const block = c.cur_block.?;
+        const last = list.entry(Inst, "link", block.instructions.prev.?);
+        if (c.defs[base_offset.index] == last) {
+            last.dst = unifa;
+            c.defs[base_offset.index] = null;
+        } else {
+            _ = try c.mulDest(.mov, unifa, .{base_offset});
+        }
+    } else {
+        for (0..ldunifa_skips) |_| _ = try emitLdunifa(e, false);
+    }
+
+    for (0..each.kind.parts()) |i| {
+        const data = try emitLdunifa(e, true);
+        e.defs[at][i] = try c.mul(.mov, .{data});
+    }
+}
+
+/// emit_ldunifa (nir_to_vir.c:3246): a word read through unifa, kept
+/// where `kept` says so, and the offset moved on.
+fn emitLdunifa(e: *Emit, kept: bool) Error!Reg {
+    const c = e.c;
+    const ldunifa = try c.addInst(.nop, c.undef, c.undef, c.undef);
+    ldunifa.qpu.sig.ldunifa = true;
+    const result = if (kept) try c.emitDef(ldunifa) else blk: {
+        _ = c.emitNondef(ldunifa);
+        break :blk c.undef;
+    };
+    e.current_unifa_offset += 4;
+    return result;
 }
 
 /// ntq_emit_comparison (nir_to_vir.c:1173-1232), for the float ones:

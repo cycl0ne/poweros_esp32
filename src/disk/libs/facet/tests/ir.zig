@@ -346,6 +346,81 @@ test "a generated colour reads the push constants the draw set, at their offsets
     try std.testing.expectEqual(@as(u32, 0), zero.colors[0][0]);
 }
 
+/// The colour the vertices carry times a tint in one uniform buffer, plus
+/// a colour in another scaled by a float beside it (since 1.160).
+const UniformTinted = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const tinted = b.mul(b.input(0, .f32x4), b.uniform(0, 1, 16, .f32x4));
+        b.color(b.add(tinted, b.scale(b.uniform(1, 0, 0, .f32x4), b.uniform(1, 0, 20, .f32x1))));
+    }
+});
+
+/// What UniformTinted comes to on a pixel whose colour is (0.5, 0.25, 0,
+/// 1), tinted (0.5, 1, 1, 0.5), with (0, 0.125, 0.5, 0) times 0.5 added:
+/// every product and sum of it exact.
+const UniformTintedMade = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.constant(.{ 0.25, 0.3125, 0.25, 0.5 }));
+    }
+});
+
+test "a generated colour reads the uniform buffers the draw bound, at their sets, bindings and offsets" {
+    // The block the module declares for each: a member for each place
+    // read, in the order of their offsets, in the Uniform class, which
+    // Khronos' validator takes.
+    try std.testing.expectEqual(@as(usize, 2), UniformTinted.graph.uniforms.len);
+    try std.testing.expectEqual(@as(usize, 1), UniformTinted.graph.uniforms[0].members.len);
+    try std.testing.expectEqual(@as(usize, 2), UniformTinted.graph.uniforms[1].members.len);
+    try std.testing.expectEqual(@as(u32, 24), UniformTinted.graph.uniforms[1].bytes());
+    try expectWords(&reference.min_uniform, UniformTinted.words);
+    switch (spirv.look(UniformTinted.words, spirv.facet_profile)) {
+        .fault => |fault| {
+            std.debug.print("refused: {s}\n", .{@tagName(fault)});
+            return error.TestUnexpectedResult;
+        },
+        .seen => |seen| try std.testing.expectEqual(@as(u32, 2), seen.uniforms),
+    }
+
+    var first: [32]u8 = @splat(0xFF);
+    @memcpy(first[16..32], std.mem.asBytes(&[4]f32{ 0.5, 1, 1, 0.5 }));
+    var second: [24]u8 = @splat(0xFF);
+    @memcpy(second[0..16], std.mem.asBytes(&[4]f32{ 0, 0.125, 0.5, 0 }));
+    @memcpy(second[20..24], std.mem.asBytes(&@as(f32, 0.5)));
+    const slots = [2]shader.Slot{ .{}, .{ .pointer = &first, .range = first.len } };
+    const firsts = [3]u16{ 0, 1, 2 };
+    const set = shader.Set{ .first = &firsts, .binding_count = 2, .slots = &slots };
+    const other_slots = [1]shader.Slot{.{ .pointer = &second, .range = second.len }};
+    const other_set = shader.Set{ .first = &firsts, .binding_count = 1, .slots = &other_slots };
+
+    var mine = Batch.flat(1, &.{ 0.5, 0.25, 0, 1 });
+    mine.resources.sets[0] = &set;
+    mine.resources.sets[1] = &other_set;
+    const made = mine.fragments(5);
+    UniformTinted.function(&made);
+    var theirs = Batch.flat(1, &.{});
+    const constant = theirs.fragments(1);
+    UniformTintedMade.function(&constant);
+    try std.testing.expectEqualSlices(u32, &theirs.colors[0], &mine.colors[0]);
+
+    // A buffer bound nowhere reads as zeros: the tint alone is left of the
+    // sum, the other set being unbound.
+    var half = Batch.flat(1, &.{ 0.5, 0.25, 0, 1 });
+    half.resources.sets[0] = &set;
+    const unbound = half.fragments(5);
+    UniformTinted.function(&unbound);
+    var tinted = Batch.flat(1, &.{});
+    const tint_only = tinted.fragments(1);
+    UniformTintOnly.function(&tint_only);
+    try std.testing.expectEqualSlices(u32, &tinted.colors[0], &half.colors[0]);
+}
+
+/// The tint of UniformTinted alone: (0.25, 0.25, 0, 0.5).
+const UniformTintOnly = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.constant(.{ 0.25, 0.25, 0, 0.5 }));
+    }
+});
+
 // --- rung 4 for the sampler family -----------------------------------------
 //
 // The generated function that samples against `shader.textured`, which is

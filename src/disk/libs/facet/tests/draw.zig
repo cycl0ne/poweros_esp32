@@ -12779,6 +12779,31 @@ test "dynamic buffer descriptors: one set read from where the bind says, draw af
     // The write left the slots where they were in the order.
     try testing.expectEqual(@as(u8, 1), made.view.slots[0].dynamic);
     try testing.expectEqual(@as(u8, 2), made.view.slots[1].dynamic);
+    // And each has the 128 bytes past its range to be shifted in.
+    try testing.expectEqual([2]u32{ 128, 128 }, made.rooms[0..2].*);
+    {
+        // A copy takes its source's room with it, under the number the
+        // target set gives the descriptor: the uniform's into the second
+        // of a set whose first is the storage buffer's.
+        const turned = [2]facet.DescriptorSetLayoutBinding{
+            .{ .binding = 0, .descriptor_type = .storage_buffer_dynamic, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+            .{ .binding = 1, .descriptor_type = .uniform_buffer_dynamic, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        };
+        var turned_layout: ?*facet.DescriptorSetLayout = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = turned.len, .bindings = &turned }, &turned_layout));
+        defer fb.DestroyDescriptorSetLayout(device, turned_layout);
+        var turned_pool: ?*facet.DescriptorPool = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &turned_pool));
+        defer fb.DestroyDescriptorPool(device, turned_pool);
+        var turned_sets: [1]?*facet.DescriptorSet = undefined;
+        try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = turned_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&turned_layout) }, &turned_sets));
+        const short = facet.DescriptorBufferInfo{ .buffer = out_buffer, .offset = 64, .range = 32 };
+        const first = facet.WriteDescriptorSet{ .dst_set = turned_sets[0].?, .dst_binding = 0, .descriptor_type = .storage_buffer_dynamic, .buffer_info = @ptrCast(&short) };
+        const copied = facet.CopyDescriptorSet{ .src_set = set, .src_binding = 0, .dst_set = turned_sets[0].?, .dst_binding = 1, .descriptor_count = 1 };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&first), 1, @ptrCast(&copied));
+        const turned_made = _objects.of(_descriptor.Set, turned_sets[0].?);
+        try testing.expectEqual([2]u32{ 160, 128 }, turned_made.rooms[0..2].*);
+    }
 
     const info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = reader }, .layout = layout };
     var pipelines: [1]?*facet.Pipeline = undefined;
@@ -12805,9 +12830,12 @@ test "dynamic buffer descriptors: one set read from where the bind says, draw af
         if (into > 0) try testing.expectEqual(@as(u32, 0), out[into - 1]);
     }
 
-    // What is left of a range from the offset is what a function reaches:
-    // 128 bytes shifted by 64 leaves 16 of its 32 numbers, and the whole
-    // 32 of the uniform's range no longer fit in what is left of it.
+    // The range moves with the offset, as in Vulkan
+    // (v3dv_uniforms.c:write_ubo_ssbo_uniforms adds the dynamic offset to
+    // the address and leaves the descriptor's range be): 128 bytes shifted
+    // by 64 in a buffer of 256 are still the whole 32 numbers, and the
+    // whole 32 of the uniform's range fit there too. Until 1.160 the
+    // offset ate into the range, which left 16 and no room for the 32.
     @memset(out[0..64], 0);
     var commands = try bench.record();
     fb.CmdBindPipeline(commands, .compute, counters[0].?);
@@ -12816,7 +12844,7 @@ test "dynamic buffer descriptors: one set read from where the bind says, draw af
     fb.CmdDispatch(commands, 1, 1, 1);
     try bench.submit();
     try testing.expectEqual(@as(u32, 32), out[0]);
-    try testing.expectEqual(@as(u32, 0), out[1]);
+    try testing.expectEqual(@as(u32, 1), out[1]);
     @memset(out[0..64], 0);
     commands = try bench.record();
     fb.CmdBindPipeline(commands, .compute, counters[0].?);
@@ -12824,8 +12852,39 @@ test "dynamic buffer descriptors: one set read from where the bind says, draw af
     fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 2, &near);
     fb.CmdDispatch(commands, 1, 1, 1);
     try bench.submit();
-    try testing.expectEqual(@as(u32, 16), out[16]);
+    try testing.expectEqual(@as(u32, 32), out[16]);
     try testing.expectEqual(@as(u32, 1), out[17]);
+
+    // An offset that takes the range past the buffer's end, which
+    // VUID-vkCmdBindDescriptorSets-pDynamicOffsets-01971 forbids, leaves
+    // the descriptor reading as not written: the uniform's 128 bytes from
+    // 136 would end at 264 of 256, and the storage buffer's the same.
+    // Shifted to the very end it is still read.
+    @memset(out[0..64], 0);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, counters[0].?);
+    const past = [2]u32{ 136, 0 };
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 2, &past);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(u32, 32), out[0]);
+    try testing.expectEqual(@as(u32, 0), out[1]);
+    @memset(out[0..64], 0);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, counters[0].?);
+    const out_past = [2]u32{ 128, 136 };
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 2, &out_past);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    for (out[0..64]) |word| try testing.expectEqual(@as(u32, 0), word);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, counters[0].?);
+    const at_end = [2]u32{ 128, 128 };
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 2, &at_end);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(u32, 32), out[32]);
+    try testing.expectEqual(@as(u32, 1), out[33]);
 
     // Offsets left out are 0: the descriptors are read from where their
     // writes left them.

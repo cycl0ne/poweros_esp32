@@ -241,10 +241,16 @@ pub fn bindDescriptorSets(resources: *shader.Resources, command: *const _command
         resources.sets[at] = &set.view;
         // Each dynamic buffer descriptor of the set takes the next
         // offset, in the order its bindings run; one not given is 0, so
-        // the descriptor is read from where its write left it.
+        // the descriptor is read from where its write left it. Its range
+        // moves with it, and an offset that takes the range past its
+        // buffer (VUID-vkCmdBindDescriptorSets-pDynamicOffsets-01971)
+        // leaves it reading as not written (since 1.160).
         resources.offsets[at] = @splat(0);
         for (0..set.dynamic_count) |k| {
-            if (k < shader.MAX_DYNAMIC_OFFSETS) resources.offsets[at][k] = if (taken < offsets.len) offsets[taken] else 0;
+            if (k < shader.MAX_DYNAMIC_OFFSETS) {
+                const offset = if (taken < offsets.len) offsets[taken] else 0;
+                resources.offsets[at][k] = if (offset > set.rooms[k]) shader.SHIFTED_OUT else offset;
+            }
             taken += 1;
         }
     }

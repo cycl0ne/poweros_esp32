@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.46 (08.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.47 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -1951,9 +1951,27 @@ fn dynamicChecks(probe: *Probe) void {
         for (0..4) |k| right = right and out[into + k] == in[from + k];
         if (into > 0) right = right and out[into - 1] == 0;
         probe.check(right, name);
-        // What is left of the range from the offset is what the function
-        // reaches: 128 bytes less the offset, in numbers of four.
-        probe.checkEqual((128 - offsets[1]) / 4, out[into + 4], "what was left of the range from there");
+        // The range moves with the offset, as in Vulkan: the function
+        // reaches the whole of its 128 bytes wherever the bind put them.
+        // Until FacetProbe 1.47 this was 128 less the offset (facet.library
+        // 1.160).
+        probe.checkEqual(128 / 4, out[into + 4], "the whole range, wherever the bind moved it");
+    }
+
+    // An offset that would take the range past the buffer's end - 136 of
+    // a range of 128 in 256 bytes - leaves the descriptor not written, so
+    // the function finds nothing to write into.
+    {
+        @memset(storage_bytes[0..256], 0);
+        const past = probe.record() orelse return probe.check(false, "a recording");
+        fb.CmdBindPipeline(past, .compute, pipelines[0].?);
+        const beyond = [2]u32{ 0, 136 };
+        fb.CmdBindDescriptorSets(past, .compute, layout.?, 0, 1, @ptrCast(&sets), 2, &beyond);
+        fb.CmdDispatch(past, 1, 1, 1);
+        if (!probe.submit()) return probe.check(false, "the dispatch submitted");
+        var untouched = true;
+        for (out[0..64]) |word| untouched = untouched and word == 0;
+        probe.check(untouched, "a range shifted past its buffer reads as not written");
     }
 
     // Offsets left out are 0: read and written where the writes left them.

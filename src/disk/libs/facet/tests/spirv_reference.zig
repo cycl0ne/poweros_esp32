@@ -707,3 +707,106 @@ pub const min_shadow = [_]u32{
     0x00000013, 0x00000018, 0x0003003E, 0x00000002, 0x00000019, 0x000100FD,
     0x00010038,
 };
+
+/// The colour the vertices carry times a tint in one uniform buffer, plus a
+/// colour in another times a float beside it: a block of a `vec4` at 16 at
+/// set 0, binding 1, and one of a `vec4` at 0 and a `float` at 20 at set 1,
+/// binding 0. Each block is a struct of its own, decorated `Block`, in the
+/// Uniform class, and each member is reached through an access chain as
+/// the push constants' are (since 1.160).
+///
+/// Facet's own output, like `min_push` above: its ids are the emitter's.
+/// Khronos' validator says it is a module:
+///
+/// ```sh
+/// spirv-val --target-env vulkan1.0 facet_uniform.spv   # no output, and 0
+/// ```
+///
+/// Read back with `spirv-dis --raw-id --no-header`:
+///
+/// ```
+///                OpCapability Shader
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %1 "main" %2 %3
+///                OpExecutionMode %1 OriginUpperLeft
+///                OpDecorate %2 Location 0
+///                OpDecorate %3 Location 0
+///                OpDecorate %4 DescriptorSet 0
+///                OpDecorate %4 Binding 1
+///                OpDecorate %5 DescriptorSet 1
+///                OpDecorate %5 Binding 0
+///                OpDecorate %12 Block
+///                OpMemberDecorate %12 0 Offset 16
+///                OpDecorate %17 Block
+///                OpMemberDecorate %17 0 Offset 0
+///                OpMemberDecorate %17 1 Offset 20
+///           %6 = OpTypeVoid
+///           %7 = OpTypeFunction %6
+///           %8 = OpTypeFloat 32
+///           %9 = OpTypeVector %8 4
+///          %10 = OpTypePointer Output %9
+///           %2 = OpVariable %10 Output
+///          %11 = OpTypePointer Input %9
+///           %3 = OpVariable %11 Input
+///          %12 = OpTypeStruct %9
+///          %13 = OpTypePointer Uniform %12
+///           %4 = OpVariable %13 Uniform
+///          %14 = OpTypeInt 32 1
+///          %15 = OpConstant %14 0
+///          %16 = OpTypePointer Uniform %9
+///          %17 = OpTypeStruct %9 %8
+///          %18 = OpTypePointer Uniform %17
+///           %5 = OpVariable %18 Uniform
+///          %19 = OpConstant %14 1
+///          %20 = OpTypePointer Uniform %8
+///           %1 = OpFunction %6 None %7
+///          %21 = OpLabel
+///          %22 = OpAccessChain %16 %4 %15
+///          %23 = OpLoad %9 %22
+///          %24 = OpLoad %9 %3
+///          %25 = OpFMul %9 %24 %23
+///          %26 = OpAccessChain %16 %5 %15
+///          %27 = OpLoad %9 %26
+///          %28 = OpAccessChain %20 %5 %19
+///          %29 = OpLoad %8 %28
+///          %30 = OpVectorTimesScalar %9 %27 %29
+///          %31 = OpFAdd %9 %25 %30
+///                OpStore %2 %31
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const min_uniform = [_]u32{
+    0x07230203, 0x00010000, 0x0000004B, 0x00000020, 0x00000000, 0x00020011,
+    0x00000001, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000001, 0x6E69616D, 0x00000000, 0x00000002, 0x00000003, 0x00030010,
+    0x00000001, 0x00000007, 0x00040047, 0x00000002, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000003, 0x0000001E, 0x00000000, 0x00040047, 0x00000004,
+    0x00000022, 0x00000000, 0x00040047, 0x00000004, 0x00000021, 0x00000001,
+    0x00040047, 0x00000005, 0x00000022, 0x00000001, 0x00040047, 0x00000005,
+    0x00000021, 0x00000000, 0x00030047, 0x0000000C, 0x00000002, 0x00050048,
+    0x0000000C, 0x00000000, 0x00000023, 0x00000010, 0x00030047, 0x00000011,
+    0x00000002, 0x00050048, 0x00000011, 0x00000000, 0x00000023, 0x00000000,
+    0x00050048, 0x00000011, 0x00000001, 0x00000023, 0x00000014, 0x00020013,
+    0x00000006, 0x00030021, 0x00000007, 0x00000006, 0x00030016, 0x00000008,
+    0x00000020, 0x00040017, 0x00000009, 0x00000008, 0x00000004, 0x00040020,
+    0x0000000A, 0x00000003, 0x00000009, 0x0004003B, 0x0000000A, 0x00000002,
+    0x00000003, 0x00040020, 0x0000000B, 0x00000001, 0x00000009, 0x0004003B,
+    0x0000000B, 0x00000003, 0x00000001, 0x0003001E, 0x0000000C, 0x00000009,
+    0x00040020, 0x0000000D, 0x00000002, 0x0000000C, 0x0004003B, 0x0000000D,
+    0x00000004, 0x00000002, 0x00040015, 0x0000000E, 0x00000020, 0x00000001,
+    0x0004002B, 0x0000000E, 0x0000000F, 0x00000000, 0x00040020, 0x00000010,
+    0x00000002, 0x00000009, 0x0004001E, 0x00000011, 0x00000009, 0x00000008,
+    0x00040020, 0x00000012, 0x00000002, 0x00000011, 0x0004003B, 0x00000012,
+    0x00000005, 0x00000002, 0x0004002B, 0x0000000E, 0x00000013, 0x00000001,
+    0x00040020, 0x00000014, 0x00000002, 0x00000008, 0x00050036, 0x00000006,
+    0x00000001, 0x00000000, 0x00000007, 0x000200F8, 0x00000015, 0x00050041,
+    0x00000010, 0x00000016, 0x00000004, 0x0000000F, 0x0004003D, 0x00000009,
+    0x00000017, 0x00000016, 0x0004003D, 0x00000009, 0x00000018, 0x00000003,
+    0x00050085, 0x00000009, 0x00000019, 0x00000018, 0x00000017, 0x00050041,
+    0x00000010, 0x0000001A, 0x00000005, 0x0000000F, 0x0004003D, 0x00000009,
+    0x0000001B, 0x0000001A, 0x00050041, 0x00000014, 0x0000001C, 0x00000005,
+    0x00000013, 0x0004003D, 0x00000008, 0x0000001D, 0x0000001C, 0x0005008E,
+    0x00000009, 0x0000001E, 0x0000001B, 0x0000001D, 0x00050081, 0x00000009,
+    0x0000001F, 0x00000019, 0x0000001E, 0x0003003E, 0x00000002, 0x0000001F,
+    0x000100FD, 0x00010038,
+};

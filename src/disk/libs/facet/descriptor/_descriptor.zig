@@ -124,6 +124,12 @@ pub const Set = struct {
     /// of CmdBindDescriptorSets'. Its layout held them inside
     /// `shader.MAX_DYNAMIC_OFFSETS`.
     dynamic_count: u32 = 0,
+    /// How far each of its dynamic buffer descriptors may be shifted with
+    /// its range still inside its buffer: what the buffer holds past the
+    /// range its write gave, by `Slot.dynamic - 1`, and 0 where nothing is
+    /// written. CmdBindDescriptorSets reads it as the draws run (since
+    /// 1.160).
+    rooms: [shader.MAX_DYNAMIC_OFFSETS]u32 = @splat(0),
 };
 
 /// A set of `layout`'s from `pool`, its slots empty; null when memory ran

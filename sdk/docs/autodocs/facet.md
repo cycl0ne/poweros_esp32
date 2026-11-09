@@ -821,9 +821,13 @@ when the draws run. Sets past the fourth are not bound.
 
 A `uniform_buffer_dynamic` or a `storage_buffer_dynamic` reads its
 buffer from the offset given here, past the one its write gave, and
-what is left of the range from there is what a function may read
-(`shader.Resources.buffer`, and `bufferAt` for an element past the
-first). The offsets are the binding's, not the set's: binding the same
+the range its write gave moves with it: that whole range is what a
+function may read (`shader.Resources.buffer`, and `bufferAt` for an
+element past the first). An offset that would take the range past the
+buffer's end, which Vulkan forbids, leaves the descriptor reading as
+not written. Until 1.160 the offset ate into the range instead, so a
+descriptor shifted by its range's length or more read as not written
+however large its buffer. The offsets are the binding's, not the set's: binding the same
 set again with others is how one set serves draw after draw, each with
 a range of its own.
 
