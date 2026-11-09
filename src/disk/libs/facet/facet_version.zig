@@ -5522,4 +5522,35 @@ pub const LIBRARY_VERSION = 1;
 /// sets, the second the 16-bit one mirrored where the first repeats, and
 /// glslc's loop of four samples. FacetBoth's other 237 cases are as they
 /// were at 1.172, and FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 173;
+///
+/// 174: **nir_opt_algebraic's float identities on the V3D (docs/
+/// facet-vulkan10.md item 59).** A Vulkan 1.0 module has no float
+/// controls, so vtn leaves every float operation fast math
+/// (vtn_handle_fp_fast_math, vtn_alu.c:472-485), and the walk refuses
+/// NoContraction: Mesa's `~`, `nsz` and `nnan` rules hold of all of them.
+/// compile.zig's algebraic pass now has them, in the list's order
+/// (`Order.floatRule`): an fneg of an fneg (:230); an fadd of a zero
+/// (:236-237) and of an fneg and what it negates (:266-267); an fadd of a
+/// value and itself an fmul by 2.0 (:274); an fmul by a zero (:277-278),
+/// by 1.0 (:292) and by -1.0 (:296); an fsub as the fadd of the fneg it
+/// is lowered to (:2401); and the late fadd of an fneg, an fsub (:3868).
+/// A vector some floats of which a rule rewrites and the rest not is
+/// taken a float at a time (`Order.split`), as nir_lower_alu_to_scalar
+/// has left it (nir_to_vir.c:2259). The fcanonicalize a rule leaves goes
+/// (:161-163): no module asks the V3D to flush denormals.
+///
+/// Not ported: an fadd of two fmuls sharing a factor (:246), of an fneg
+/// and an fadd it cancels into (:271-272), of `a` and an fadd of `a` read
+/// once (:275), and the rules of b2f, fsat and fmulz.
+///
+/// Tests: the V3D's 229, one new and nine whose programs are shorter.
+/// glslc_looped's first run, of float(i) 0, is no instruction: 36 words,
+/// from 45. glslc_cheap's first fadd, of the sum's 0.0, goes; the
+/// uniform buffer's vec3(shift, 0.0) adds two floats, not three; a texel
+/// plus (0.1, 0.2, 0.3, 0) three; an alpha times 1.0 is the alpha. `Lit`,
+/// the plan's test of four floats of its own, adds 0.4 where it added 0.
+/// Of 19 mutations of the port, 19 fail the tests.
+///
+/// On the CM5 FacetBoth's 239 cases are each as they were at 1.173, and
+/// FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 174;

@@ -2294,6 +2294,14 @@ Refused still: a second sample where the plan compiles the program, since its ha
 
 glslc_two_textures is three lookups: `base` is unit 0, `detail` unit 1, and `base` read again unit 0. Made to read `detail` first, the units swap, and one binding of two sets is two units. glslc_sampled_loop, unrolled, is four lookups of one unit and eight LDTMUs. Of five mutations of the port, five fail the tests; the fifth, a unit told by its binding alone, needed the two sets' test. On the CM5, FacetBoth 1.41's two cases are 0 of 230,400 apart: two textures in two sets, the second the 16-bit one mirrored where the first repeats, and glslc's loop of four samples. The other 237 cases are unchanged, and FacetProbe is 890 of 890.
 
+**Then Mesa's float identities**, facet.library 1.174. A Vulkan 1.0 module has no float controls, so vtn leaves every float operation fast math (vtn_handle_fp_fast_math, vtn_alu.c:472-485), and the walk refuses NoContraction: Mesa's inexact, `nsz` and `nnan` rules hold of every float operation facet reads. The unrolled loops showed what was missing: glslc_looped's first run, of float(i) 0, was still a product by 0 and two sums of it.
+
+- **The rules.** `Order.floatRule`, in nir_opt_algebraic.py's order: an fneg of an fneg (:230); an fadd of a zero (:236-237), and of an fneg and what it negates, a zero (:266-267); an fadd of a value and itself, an fmul by 2.0 (:274); an fmul by a zero, a zero (:277-278), by 1.0 the value (:292), by -1.0 its fneg (:296). An fsub is the fadd of the fneg it is lowered to (:2401), and an fadd of an fneg a rule leaves is the fsub the late rules make (:3868, `has_fsub`). The fcanonicalize a rule leaves goes, as optimize_fcanonicalize takes it out where nothing flushes denormals (:161-163).
+- **A float at a time.** Mesa sees each float alone: nir_lower_alu_to_scalar runs before nir_opt_algebraic (v3d_optimize_nir, nir_to_vir.c:2259). A vector some floats of which a rule rewrites and the rest not is a construct of an operation of each float (`Order.split`), so `vec3(shift, 0.0) + v` adds two floats, not three.
+- **Not ported.** An fadd of two fmuls sharing a factor (:246), of an fneg and an fadd it cancels into (:271-272), of `a` and an fadd of `a` read once (:275), and the rules of b2f, fsat and fmulz.
+
+glslc_looped is 36 words, from 45: its first run is no instruction. glslc_cheap's first fadd goes, the uniform buffer's program is 20 words and the indexed one's 74, a texel plus (0.1, 0.2, 0.3, 0) three sums, and an alpha times 1.0 the alpha. `Lit`, the plan's test of four floats of its own, adds 0.4 where it added 0. Of 19 mutations of the port, 19 fail the tests. On the CM5, FacetBoth's 239 cases are each as they were at 1.173, and FacetProbe is 890 of 890.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim

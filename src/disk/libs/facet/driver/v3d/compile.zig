@@ -3854,6 +3854,16 @@ fn boolOf(work: *const Work, word: u32) Error!u16 {
 ///   constant (:2438). A rule's operation of constants is the constant it
 ///   folds to, there, a round before nir_opt_constant_folding would make
 ///   it.
+/// - Of floats (`Order.floatRule`; since 1.174), which a Vulkan 1.0
+///   module leaves fast math: (('fneg', ('fneg', a)), a) (:230); an fadd
+///   of a zero, the other operand (:236-237), and of an fneg and what it
+///   negates, a zero (:266-267); (('fadd', a, a), ('fmul', a, 2.0))
+///   (:274); an fmul by a zero, a zero (:277-278), by 1.0 the other
+///   operand (:292) and by -1.0 its fneg (:296); an fsub as the fadd of an
+///   fneg it is lowered to (:2401), and an fadd of an fneg that fsub, as
+///   the late rules make it (:3868). A vector a rule takes some floats of
+///   and not the rest is taken a float at a time (`Order.split`), as
+///   nir_lower_alu_to_scalar has left it.
 /// - (('inot', ('feq(is_used_once)', a, b)), ('fneu', a, b)) and the
 ///   other way about (:747-748), and the same of the integer comparisons,
 ///   ilt and ige, ult and uge, ieq and ine (:749-754; since 1.165), the
@@ -3881,7 +3891,10 @@ fn boolOf(work: *const Work, word: u32) Error!u16 {
 /// (:248-249), a shift of three iadds (:732-733), a product of a shift
 /// (:597), the products of a negation and of products reassociated
 /// (:2413, :2419, :2435, :3641), and every other rule of an integer
-/// operation the shader computes itself.
+/// operation the shader computes itself. Of floats: an fadd of two fmuls
+/// sharing a factor (:246), of an fneg and an fadd it cancels into
+/// (:271-272), of `a` and an fadd of `a` read once (:275), and every
+/// other rule of a float operation.
 fn algebraic(work: *Work) Error!void {
     var list = Order.start(work);
     try list.rematerialize(work);
@@ -4208,9 +4221,137 @@ const Order = struct {
                     }
                 }
             },
+            .negate, .add, .sub, .mul => if (try list.floatRule(work, at)) |left| return left,
             else => {},
         }
         return null;
+    }
+
+    /// The identities of float arithmetic (since 1.174): `at`, an fneg,
+    /// an fadd, an fsub or an fmul, rewritten by the first that matches
+    /// it, in the list's order, its operands either way about where it
+    /// commutes, and the step it leaves in its place, or null.
+    ///
+    /// A Vulkan 1.0 module has no float controls and decorates nothing
+    /// FPFastMathMode, so vtn leaves every float operation
+    /// nir_fp_fast_math (vtn_handle_fp_fast_math, vtn_alu.c:472-485); the
+    /// walk refuses NoContraction, which would make one nir_fp_exact. So
+    /// the inexact (`~`), `nsz` and `nnan` rules hold of every one here.
+    /// The fcanonicalize a rule leaves is taken out by
+    /// optimize_fcanonicalize (:161-163): no module asks the V3D to flush
+    /// denormals. An fsub is what nir_opt_algebraic lowers to an fadd of
+    /// the fneg (:2401) and makes again late on a device that has one
+    /// (:3868, `has_fsub`, v3dv_pipeline.c:207): its rules are the fadd's
+    /// of that fneg, the fneg of a constant folded; and an fadd of an fneg
+    /// a rule leaves is that fsub, as the walk makes one of an fadd it
+    /// reads.
+    ///
+    /// Not ported: an fadd of two fmuls sharing a factor (:246), of an
+    /// fneg and an fadd it cancels into (:271-272), of `a` and an fadd of
+    /// `a` read once (:275), and the rules of b2f, fsat and fmulz, which
+    /// are not steps here.
+    fn floatRule(list: *Order, work: *Work, at: u16) Error!?u16 {
+        const each = work.steps[at];
+        const pairs = [2][2]u16{ .{ each.a, each.b }, .{ each.b, each.a } };
+        switch (each.tag) {
+            // (('fneg', ('fneg', a)), ('fcanonicalize', a)) (:230).
+            .negate => if (try list.negatedBefore(work, at, each.a)) |inner| return list.replaced(work, at, inner),
+            .add => {
+                // (('fadd(nsz)', a, 0.0), ('fcanonicalize', a)) and
+                // (('fadd', a, -0.0), ('fcanonicalize', a)) (:236-237).
+                for (pairs) |pair| if (allConstant(work, pair[1], isSignedZero) and work.steps[pair[0]].kind == each.kind) return list.replaced(work, at, pair[0]);
+                // (('~fadd', ('fneg', a), a), 0.0) and
+                // (('fadd(nnan)', ('fneg', a), a), 0.0) (:266-267).
+                for (pairs) |pair| if (negatesValue(work, pair[0], pair[1])) return list.replaced(work, at, try list.splatBefore(work, at, each.kind, 0));
+                // (('fadd', a, a), ('fmul', a, 2.0)) (:274).
+                if (sameValue(work, each.a, each.b)) return try list.rebuilt(work, at, .{ .tag = .mul, .kind = each.kind, .a = each.a, .b = try list.splatBefore(work, at, .f32x1, @bitCast(@as(f32, 2))) });
+                // (('fadd@32', a, ('fneg', 'b')), ('fsub', 'a', 'b'),
+                // 'options->has_fsub') (:3868), late.
+                for (pairs) |pair| if (work.steps[pair[0]].kind == each.kind) {
+                    if (try list.negatedBefore(work, at, pair[1])) |inner| return try list.rebuilt(work, at, .{ .tag = .sub, .kind = each.kind, .a = pair[0], .b = inner });
+                };
+            },
+            .sub => {
+                // `a` less a zero: an fadd of the zero's fneg (:236-237).
+                if (allConstant(work, each.b, isSignedZero) and work.steps[each.a].kind == each.kind) return list.replaced(work, at, each.a);
+                // A zero less `b`: an fadd of the zero and the fneg of
+                // `b`, that fneg (:236-237).
+                if (allConstant(work, each.a, isSignedZero) and work.steps[each.b].kind == each.kind) return try list.rebuilt(work, at, .{ .tag = .negate, .kind = each.kind, .a = each.b });
+                // `a` less itself: an fadd of `a` and its fneg (:266-267).
+                if (sameValue(work, each.a, each.b)) return list.replaced(work, at, try list.splatBefore(work, at, each.kind, 0));
+                // `a` less an fneg of `c`: an fadd of an fneg of an fneg
+                // (:230).
+                if (try list.negatedBefore(work, at, each.b)) |inner| return try list.rebuilt(work, at, .{ .tag = .add, .kind = each.kind, .a = each.a, .b = inner });
+            },
+            .mul => {
+                // (('fmul(nsz,nnan)', 'a', 0.0), 0.0) and the same of
+                // -0.0 (:277-278).
+                for (pairs) |pair| if (allConstant(work, pair[1], isSignedZero)) return list.replaced(work, at, try list.splatBefore(work, at, each.kind, 0));
+                // (('fmul', a, 1.0), ('fcanonicalize', a)) (:292).
+                for (pairs) |pair| if (allConstant(work, pair[1], isFloatOne) and work.steps[pair[0]].kind == each.kind) return list.replaced(work, at, pair[0]);
+                // (('fmul', a, -1.0), ('fneg', a)) (:296).
+                for (pairs) |pair| if (allConstant(work, pair[1], isFloatMinusOne) and work.steps[pair[0]].kind == each.kind) return try list.rebuilt(work, at, .{ .tag = .negate, .kind = each.kind, .a = pair[0] });
+            },
+            else => return null,
+        }
+        return list.split(work, at);
+    }
+
+    /// A vector fneg, fadd, fsub or fmul a rule above would rewrite a
+    /// float of and not the whole: nir_lower_alu_to_scalar has made it an
+    /// instruction a float before nir_opt_algebraic sees it
+    /// (v3d_optimize_nir, nir_to_vir.c:2259; preprocess_nir,
+    /// v3dv_pipeline.c:404), so the rule rewrites that float alone. It is
+    /// a construct of the operation of each float, a constant float a
+    /// constant of its own, which the rules take one by one in the next
+    /// round.
+    fn split(list: *Order, work: *Work, at: u16) Error!?u16 {
+        const each = work.steps[at];
+        if (each.kind == .f32x1) return null;
+        const parts = each.kind.parts();
+        const folds = for (0..parts) |k| {
+            if (floatFolds(work, each, @intCast(k))) break true;
+        } else false;
+        if (!folds) return null;
+        var made = Step{ .tag = .construct, .kind = each.kind };
+        for (0..parts) |k| {
+            var scalar = Step{ .tag = each.tag, .kind = .f32x1, .a = try list.floatBefore(work, at, operandPart(work, each.a, @intCast(k))) };
+            if (each.tag != .negate) scalar.b = try list.floatBefore(work, at, operandPart(work, each.b, @intCast(k)));
+            made.from[k] = try list.before(work, at, scalar);
+            made.part[k] = 0;
+        }
+        return try list.rebuilt(work, at, made);
+    }
+
+    /// What `of` is the fneg of, where it is one, as a step of its kind;
+    /// a float of one named through a component, as a step of its own.
+    fn negatedBefore(list: *Order, work: *Work, at: u16, of: u16) Error!?u16 {
+        if (work.steps[of].tag == .negate) return work.steps[of].a;
+        if (work.steps[of].kind != .f32x1) return null;
+        const float = partOf(work, of, 0);
+        const turned = work.steps[float.step];
+        if (turned.tag != .negate) return null;
+        return try list.floatBefore(work, at, partOf(work, turned.a, float.part));
+    }
+
+    /// A float as a step of one, put before `at`: the step itself where it
+    /// is one float, a constant of its own where it is a constant's, else
+    /// a component of it.
+    fn floatBefore(list: *Order, work: *Work, at: u16, of: Float) Error!u16 {
+        if (floatBits(work, of)) |word| return list.splatBefore(work, at, .f32x1, word);
+        if (work.steps[of.step].kind == .f32x1) return of.step;
+        return list.before(work, at, .{ .tag = .component, .kind = .f32x1, .a = of.step, .at = of.part });
+    }
+
+    /// A constant of `kind`, each word `word`, put before `at`: the
+    /// constant a float rule leaves.
+    fn splatBefore(list: *Order, work: *Work, at: u16, kind: Kind, word: u32) Error!u16 {
+        const parts = kind.parts();
+        if (work.pool_count + parts > work.pool.len) return Error.Uniforms;
+        const out = work.pool_count;
+        for (0..parts) |k| work.pool[out + k] = @bitCast(word);
+        work.pool_count += parts;
+        return list.before(work, at, .{ .tag = .constant, .kind = kind, .at = out });
     }
 
     /// The rules of an address's arithmetic (since 1.166): `at`, an
@@ -4397,6 +4538,29 @@ fn allWords(work: *const Work, at: u16, comptime f: fn (u32) bool) bool {
     return true;
 }
 
+/// Whether every float of `at` is a constant `f` holds of, named through
+/// the components and constructs that name it: a load_const, or a vec of
+/// them, which nir_opt_constant_folding makes one (since 1.174).
+fn allConstant(work: *const Work, at: u16, comptime f: fn (u32) bool) bool {
+    for (0..work.steps[at].kind.parts()) |k| {
+        const word = floatBits(work, partOf(work, at, @intCast(k))) orelse return false;
+        if (!f(word)) return false;
+    }
+    return true;
+}
+
+fn isSignedZero(word: u32) bool {
+    return word & 0x7FFF_FFFF == 0;
+}
+
+fn isFloatOne(word: u32) bool {
+    return word == @as(u32, @bitCast(@as(f32, 1)));
+}
+
+fn isFloatMinusOne(word: u32) bool {
+    return word == @as(u32, @bitCast(@as(f32, -1)));
+}
+
 /// is_pos_power_of_two (nir_search_helpers.h:38-66), of imul's integer
 /// operands: a power of two above nothing.
 fn isPositivePowerOfTwo(word: u32) bool {
@@ -4442,6 +4606,65 @@ fn logicOf(which: Logic, a: u16, b: u16) Step {
 /// Whether two steps name the same float, through the components and
 /// constructs that only name it: one SSA value in NIR, which a rule's
 /// variable matches twice.
+/// The float `k` of an operand of an operation float by float: of a
+/// scalar, its one (since 1.174).
+fn operandPart(work: *const Work, at: u16, k: u8) Float {
+    return partOf(work, at, if (work.steps[at].kind == .f32x1) 0 else k);
+}
+
+/// Whether `x` is a float of an fneg of `y` (since 1.174).
+fn negates(work: *const Work, x: Float, y: Float) bool {
+    const turned = work.steps[x.step];
+    return turned.tag == .negate and sameFloats(partOf(work, turned.a, x.part), y);
+}
+
+/// Whether `x` is the fneg of `y`, float for float (since 1.174).
+fn negatesValue(work: *const Work, x: u16, y: u16) bool {
+    const kind = work.steps[x].kind;
+    if (kind != work.steps[y].kind) return false;
+    for (0..kind.parts()) |k| if (!negates(work, partOf(work, x, @intCast(k)), partOf(work, y, @intCast(k)))) return false;
+    return true;
+}
+
+fn isZeroBits(bits: ?u32) bool {
+    return if (bits) |word| isSignedZero(word) else false;
+}
+
+/// A zero, a one or a minus one: a factor an fmul rule takes.
+fn isFactorBits(bits: ?u32) bool {
+    const word = bits orelse return false;
+    return isSignedZero(word) or isFloatOne(word) or isFloatMinusOne(word);
+}
+
+/// Whether a rule of `Order.floatRule` rewrites the float `k` of the
+/// vector operation `each`, taken alone (since 1.174).
+fn floatFolds(work: *const Work, each: Step, k: u8) bool {
+    const a = operandPart(work, each.a, k);
+    if (each.tag == .negate) return work.steps[a.step].tag == .negate;
+    const b = operandPart(work, each.b, k);
+    const left = floatBits(work, a);
+    const right = floatBits(work, b);
+    return switch (each.tag) {
+        .add => isZeroBits(left) or isZeroBits(right) or sameFloats(a, b) or work.steps[a.step].tag == .negate or work.steps[b.step].tag == .negate,
+        .sub => isZeroBits(left) or isZeroBits(right) or sameFloats(a, b) or work.steps[b.step].tag == .negate,
+        .mul => isFactorBits(left) or isFactorBits(right),
+        else => false,
+    };
+}
+
+/// Whether two steps are the same value, float for float: what NIR's
+/// one SSA value is, a match of `a` twice in a rule (since 1.174).
+fn sameValue(work: *const Work, a: u16, b: u16) bool {
+    const kind = work.steps[a].kind;
+    if (kind != work.steps[b].kind) return false;
+    for (0..kind.parts()) |k| {
+        const left = partOf(work, a, @intCast(k));
+        const right = partOf(work, b, @intCast(k));
+        if (left.step != right.step or left.part != right.part) return false;
+    }
+    return true;
+}
+
 fn sameFloat(work: *const Work, a: u16, b: u16) bool {
     const left = partOf(work, a, 0);
     const right = partOf(work, b, 0);
@@ -7101,11 +7324,12 @@ const Dimmed = ir.Fragment(struct {
 
 /// Two colours multiplied and a constant added: eight varyings and four
 /// floats of its own, which only fit because a dying value's register is
-/// written over and a uniform is read where it is wanted.
+/// written over and a uniform is read where it is wanted. None of the
+/// four is a zero, which an fadd takes out (nir_opt_algebraic.py:236).
 const Lit = ir.Fragment(struct {
     pub fn body(b: *ir.Build) void {
         const made = b.mul(b.input(0, .f32x4), b.input(1, .f32x4));
-        b.color(b.add(made, b.constant(.{ 0.1, 0.2, 0.3, 0 })));
+        b.color(b.add(made, b.constant(.{ 0.1, 0.2, 0.3, 0.4 })));
     }
 });
 
@@ -7540,7 +7764,7 @@ test "eight varyings and four floats of its own fit the ten registers there are"
     const code = try compile(&work, Lit.words);
     try testing.expectEqual(@as(u32, 8), code.varyings);
     try testing.expectEqualSlices(Word, &[_]Word{
-        .{ .float = 0.1 }, .{ .float = 0.2 }, .{ .float = 0.3 }, .{ .float = 0 },
+        .{ .float = 0.1 }, .{ .float = 0.2 }, .{ .float = 0.3 }, .{ .float = 0.4 },
     }, code.stream());
     // Eight, which is what `Lit`'s plan above comes to. Not
     // `<= registers`: `compile` cannot answer with more than there are -
@@ -7682,11 +7906,11 @@ test "a texel added to is read out of its pair first, by a 1 loaded before the s
     // The 1 first, then its own floats, then the TMU's two: every float
     // is loaded in front of the splice where the program samples, so
     // they are all asked for before the write to S that configures the
-    // TMU.
+    // TMU. The fourth float's sum, with 0, is the texel's float itself
+    // (nir_opt_algebraic.py:236; since 1.174).
     try testing.expectEqualSlices(Word, &[_]Word{
-        .{ .float = 1 },     .{ .float = 0.1 }, .{ .float = 0.2 },
-        .{ .float = 0.3 },   .{ .float = 0 },   .{ .texture = 0 },
-        .{ .sampler = .{} },
+        .{ .float = 1 },   .{ .float = 0.1 }, .{ .float = 0.2 },
+        .{ .float = 0.3 }, .{ .texture = 0 }, .{ .sampler = .{} },
     }, code.stream());
     var halves: u32 = 0;
     var adds: u32 = 0;
@@ -7701,14 +7925,14 @@ test "a texel added to is read out of its pair first, by a 1 loaded before the s
         },
         else => {},
     };
-    // One read per float of the texel, and the four adds over them.
+    // One read per float of the texel, and the three adds over them.
     try testing.expectEqual(@as(u32, 4), halves);
-    try testing.expectEqual(@as(u32, 4), adds);
-    // Every uniform is read before the splice - the 1 and the four
+    try testing.expectEqual(@as(u32, 3), adds);
+    // Every uniform is read before the splice - the 1 and the three
     // floats of its own - although the adds that want them are all past
     // it. `sound` holds every program to that; this says the number for
     // the one program the suite pins word for word.
-    try testing.expectEqual(@as(u32, 5), before);
+    try testing.expectEqual(@as(u32, 4), before);
 }
 
 test "what this back end has no program for is refused by name, and nothing is mis-compiled" {
@@ -8054,10 +8278,12 @@ test "a constant may be a constituent of a construct, whatever read it first" {
     try testing.expectEqual(@as(u32, 2), plain_code.uniform_count);
     // The same words with the two constants read by an OpFMul first.
     // Whether an unrelated earlier instruction happened to read them
-    // cannot decide whether the module is taken.
+    // cannot decide whether the module is taken. The product by 1.0 is
+    // the float itself (nir_opt_algebraic.py:292; since 1.174), so the
+    // 0.25 is the one uniform.
     const read_code = try compile(&work, comptime built(.{ .construct_constants = true, .read_first = true }));
     try sound(&work, read_code);
-    try testing.expectEqual(@as(u32, 2), read_code.uniform_count);
+    try testing.expectEqual(@as(u32, 1), read_code.uniform_count);
 }
 
 test "a module may declare more samplers than it samples" {
@@ -8349,20 +8575,20 @@ test "through Mesa's back end, a texel added to: the floats of its own read arou
         text("nop", "nop", "ldvary.rf4; wrtmuc"),
         text("nop", "fmul rf5, rf4, rf3", "ldvary.rf7; wrtmuc"),
         // The floats of its own, read around the thread switch: Mesa
-        // reads the uniform stream in the last section as anywhere else.
-        // The third, 0.3, is an ldunif to rf0, which its sum reads five
-        // instructions on, and the fourth, 0, a small immediate.
-        text("fadd rf6, rf0, rf5", "fmul rf8, rf7, rf3", "ldunifrf.rf12"),
-        text("fadd rf9, rf0, rf8", "nop", "thrsw; ldunifrf.rf13"),
-        text("nop", "mov tmut, rf9", "thrsw; ldunif"),
+        // reads the uniform stream in the last section as anywhere else,
+        // each an ldunif to rf0 its sum reads the instruction after. The
+        // fourth, 0, has no sum: the texel's float is written itself
+        // (nir_opt_algebraic.py:236, a float at a time; since 1.174).
+        text("fadd rf6, rf0, rf5", "fmul rf8, rf7, rf3", ""),
+        text("fadd rf9, rf0, rf8", "nop", "thrsw; ldunif"),
+        text("nop", "mov tmut, rf9", "thrsw"),
         text("nop", "mov tmus, rf6", ""),
         text("nop", "nop", "ldtmu.rf10"),
-        text("fadd rf14, rf12, rf10.l", "nop", "ldtmu.rf11"),
-        text("fadd rf15, rf13, rf10.h", "nop", ""),
-        text("fadd rf16, rf0, rf11.l", "nop", ""),
-        text("fadd rf17, rf11.h, 0", "nop", ""),
-        text("vfpack tlb, rf14, rf15", "nop", "thrsw"),
-        text("vfpack tlb, rf16, rf17", "nop", ""),
+        text("fadd rf12, rf0, rf10.l", "nop", "ldtmu.rf11; ldunif"),
+        text("fadd rf13, rf0, rf10.h", "nop", "ldunif"),
+        text("fadd rf14, rf0, rf11.l", "nop", ""),
+        text("vfpack tlb, rf12, rf13", "nop", "thrsw"),
+        text("vfpack tlb, rf14, rf11.h", "nop", ""),
         text("nop", "nop", ""),
     });
 }
@@ -9868,7 +10094,152 @@ test "through Mesa's back end, the not of an integer comparison read once is the
     // second load_uniform of each for the first, so each word is in the
     // stream once.
     try testing.expectEqualSlices(Word, &.{ .{ .push = 0 }, .{ .push = 1 }, .{ .push = 2 }, .{ .push = 3 }, .{ .float = 0.75 } }, code.stream());
-    try testing.expectEqual(@as(usize, 32), code.words.len);
+    // The colour's alpha, a product by 1.0, is the float itself
+    // (nir_opt_algebraic.py:292, a float at a time; since 1.174).
+    try testing.expectEqual(@as(usize, 31), code.words.len);
+}
+
+/// x * 1, then + 0, - (-0), fneg twice and * -1: the fneg of x, which y
+/// less is y + x (since 1.174).
+const Identities = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const x = b.input(0, .f32x4);
+        const y = b.input(1, .f32x4);
+        const once = b.add(b.mul(x, b.constant(.{ 1, 1, 1, 1 })), b.constant(.{ 0, 0, 0, 0 }));
+        const twice = b.neg(b.neg(b.sub(once, b.constant(.{ -0.0, -0.0, -0.0, -0.0 }))));
+        b.color(b.sub(y, b.mul(twice, b.constant(.{ -1, -1, -1, -1 }))));
+    }
+});
+
+/// x * 0, y - y and -x + x: a zero, and their sums of it zero too.
+const Cancelled = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const x = b.input(0, .f32x4);
+        const y = b.input(1, .f32x4);
+        b.color(b.add(b.add(b.mul(x, b.constant(.{ 0, 0, 0, 0 })), b.sub(y, y)), b.add(b.neg(x), x)));
+    }
+});
+
+/// x + x, and 0 - y.
+const Doubled = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const x = b.input(0, .f32x4);
+        const y = b.input(1, .f32x4);
+        b.color(b.mul(b.add(x, x), b.sub(b.constant(.{ 0, 0, 0, 0 }), y)));
+    }
+});
+
+/// x plus (0.5, 0, 0.25, -0), and that times (1, -1, 0, 2): a float of
+/// each a rule rewrites, the others not.
+const PartlyFolded = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const x = b.input(0, .f32x4);
+        const sum = b.add(x, b.constant(.{ 0.5, 0, 0.25, -0.0 }));
+        b.color(b.mul(sum, b.constant(.{ 1, -1, 0, 2 })));
+    }
+});
+
+/// The operands the other way about: 0 + x, 1 * that, y + -y; and x
+/// plus itself swizzled, two floats of which are the same float.
+const Mirrored = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const x = b.input(0, .f32x4);
+        const y = b.input(1, .f32x4);
+        const same = b.mul(b.constant(.{ 1, 1, 1, 1 }), b.add(b.constant(.{ 0, 0, 0, 0 }), x));
+        const swizzled = b.vector(&.{ b.component(x, 1), b.component(x, 0), b.component(x, 2), b.component(x, 3) });
+        b.color(b.add(b.add(swizzled, same), b.add(y, b.neg(y))));
+    }
+});
+
+/// x plus floats of its own fneg, x.y's and x.x's, and y.z and y.w:
+/// differences, not zeros, and sums; and x less y's fneg's x and z.
+const Crossed = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const x = b.input(0, .f32x4);
+        const y = b.input(1, .f32x4);
+        const turned = b.neg(x);
+        const unlike = b.add(x, b.vector(&.{ b.component(turned, 1), b.component(turned, 0), b.component(y, 2), b.component(y, 3) }));
+        const ny = b.neg(y);
+        b.color(b.mul(unlike, b.sub(x, b.vector(&.{ b.component(ny, 0), b.component(y, 1), b.component(ny, 2), b.component(y, 3) }))));
+    }
+});
+
+/// An fneg of a float of an fneg, and a float less a float of one.
+const Through = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const x = b.input(0, .f32x4);
+        const y = b.input(1, .f32x4);
+        const back = b.neg(b.component(b.neg(y), 0));
+        const plus = b.sub(b.component(y, 1), b.component(b.neg(x), 1));
+        b.color(b.vector(&.{ back, plus, b.component(x, 2), b.component(x, 3) }));
+    }
+});
+
+test "the float identities of nir_opt_algebraic: a sum of a zero, a product of a zero or a one, an fneg twice and a value less itself, the whole vector or a float at a time" {
+    // y - fneg(x) is y + x: one fadd, and nothing else computed.
+    var work: Work = .{};
+    _ = try throughMesa(&work, Identities.words);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .add));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .mul));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .sub));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .negate));
+    // A zero, written as it is: a constant and no instruction of it.
+    work = .{};
+    const zero = try throughMesa(&work, Cancelled.words);
+    for ([_]Tag{ .add, .mul, .sub, .negate }) |tag| try testing.expectEqual(@as(usize, 0), stepsOf(&work, tag));
+    try testing.expectEqual(@as(usize, 0), opsOf(zero, "fadd") + opsOf(zero, "fmul"));
+    // x + x is x * 2.0 (:274), and 0 - y the fneg of y.
+    work = .{};
+    _ = try throughMesa(&work, Doubled.words);
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .add));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .sub));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .negate));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .mul));
+    // A float at a time (nir_lower_alu_to_scalar): x.x + 0.5 and
+    // x.z + 0.25 are sums, x.y and x.w the floats themselves; then
+    // x.x + 0.5 itself, the fneg of x.y, a zero and x.w * 2.0. The zero
+    // leaves x.z + 0.25 unread, and no instruction makes it.
+    work = .{};
+    const partly = try throughMesa(&work, PartlyFolded.words);
+    for (work.program()) |each| switch (each.tag) {
+        .add, .mul, .negate => try testing.expectEqual(Kind.f32x1, each.kind),
+        .sub => return error.TestUnexpectedResult,
+        else => {},
+    };
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .negate));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .mul));
+    try testing.expectEqual(@as(usize, 1), countOf(partly, "fadd rf14, rf6, 0x3f000000"));
+    try testing.expectEqual(@as(usize, 0), countOf(partly, "0x3e800000"));
+    try testing.expectEqual(@as(usize, 1), countOf(partly, "xor "));
+    try testing.expectEqual(@as(usize, 1), countOf(partly, "fmul rf17, rf13, 0x40000000"));
+    try testing.expectEqual(@as(usize, 1), countOf(partly, "vfpack tlb, 0, rf17"));
+    // Either operand the constant or the fneg; and the swizzle's z and w
+    // are x.z and x.w twice, products by 2.0, its x and y x.y + x.x and
+    // x.x + x.y, which nir_opt_cse takes for one sum.
+    work = .{};
+    _ = try throughMesa(&work, Mirrored.words);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .add));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .mul));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .negate));
+    for (work.program()) |each| switch (each.tag) {
+        .add, .mul => try testing.expectEqual(Kind.f32x1, each.kind),
+        else => {},
+    };
+    // x.x - x.y and x.y - x.x (:3868), x.z + y.z and x.w + y.w; then
+    // x.x + y.x, x.y - y.y, x.z + y.z again and x.w - y.w; and the
+    // product of the two, of four floats.
+    work = .{};
+    _ = try throughMesa(&work, Crossed.words);
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .add));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .sub));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .negate));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .mul));
+    // Through a component: y.x itself, and y.y + x.y.
+    work = .{};
+    _ = try throughMesa(&work, Through.words);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .add));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .sub));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .negate));
 }
 
 test "an integer operation of constants is folded as NIR's 32-bit arithmetic is: wrapping, a shift by five bits of its amount, a float made one held to the range" {
@@ -10254,14 +10625,16 @@ test "through Mesa's back end, a uniform buffer's members are read through unifa
     try testing.expectEqualSlices(Word, &.{.{ .ubo = .{ .set = 0, .binding = 0, .offset = 0 } }}, code.stream());
     try testing.expectEqual(@as(usize, 1), countOf(code, "ldunifrf.unifa"));
     try testing.expectEqual(@as(usize, 8), countOf(code, "ldunifa"));
-    try testing.expectEqual(@as(usize, 21), code.words.len);
+    // The shift's z, 0.0, adds nothing to the sum's (:236, a float at a
+    // time; since 1.174).
+    try testing.expectEqual(@as(usize, 20), code.words.len);
     // facet's emitter's module of the same shader: the same reads.
     var ours: Work = .{};
     const emitted = try throughMesa(&ours, Material.words);
     try testing.expectEqualSlices(Word, code.stream(), emitted.stream());
     try testing.expectEqual(@as(usize, 1), countOf(emitted, "ldunifrf.unifa"));
     try testing.expectEqual(@as(usize, 8), countOf(emitted, "ldunifa"));
-    try testing.expectEqual(@as(usize, 21), emitted.words.len);
+    try testing.expectEqual(@as(usize, 20), emitted.words.len);
     // The plan has no hand-written program to hold one to.
     var plan: Work = .{};
     try testing.expectError(Error.Storage, compile(&plan, &reference.glslc_uniform_buffer));
@@ -10636,7 +11009,9 @@ test "through Mesa's back end, a block read at an offset computed, the same in e
     try testing.expectEqual(@as(usize, 2), countOf(code, "multop"));
     try testing.expectEqual(@as(usize, 2), countOf(code, "umul24"));
     try testing.expectEqual(@as(usize, 0), countOf(code, "tmu"));
-    try testing.expectEqual(@as(usize, 76), code.words.len);
+    // The two floats of 0.0 added to the colour's last two add nothing
+    // (:236, a float at a time; since 1.174).
+    try testing.expectEqual(@as(usize, 74), code.words.len);
 }
 
 test "through Mesa's back end, a block read at an offset that differs from lane to lane is the TMU's general lookup, a pixel's where nothing wants the helper pixels" {
@@ -11355,16 +11730,18 @@ test "a vertex shader that writes other than gl_Position of gl_PerVertex, or is 
     try testing.expectError(Error.Stage, throughMesa(&work, &reference.glslc_vertex_as_it_is));
 }
 
-test "a loop of a constant trip count is unrolled as nir_opt_loop_unroll unrolls it: four sums, no branch; its variables form the optimized module's program to the word" {
+test "a loop of a constant trip count is unrolled as nir_opt_loop_unroll unrolls it: four runs, no branch; its variables form the optimized module's program to the word" {
     // `for (int i = 0; i < 4; i++)`: the test at the top, so
     // opt_loop_peel_initial_break peels the first run, the loop then
     // tests the update def, and its trip count is 3 (find_trip_count's
     // trip_offset); simple_unroll makes the peeled run and three more.
-    // float(i) of each is a constant, and v * 0.0625 is made once.
+    // float(i) of each is a constant, and v * 0.0625 is made once. The
+    // first run's float(i) is 0, its product 0 (nir_opt_algebraic.py:277)
+    // and its two sums the other operand (:236; since 1.174).
     var theirs: Work = .{};
     const optimized = try throughMesa(&theirs, &reference.glslc_looped);
-    try testing.expectEqual(@as(usize, 8), stepsOf(&theirs, .add));
-    try testing.expectEqual(@as(usize, 5), stepsOf(&theirs, .mul));
+    try testing.expectEqual(@as(usize, 6), stepsOf(&theirs, .add));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&theirs, .mul));
     try testing.expectEqual(@as(usize, 0), stepsOf(&theirs, .begin_if));
     try testing.expectEqual(@as(usize, 0), countOf(optimized, "bu"));
     try testing.expectEqual(@as(usize, 0), countOf(optimized, ".if"));
@@ -11425,10 +11802,12 @@ test "a loop counted down, or by a product, is counted as nir_loop_analyze count
 
 test "a loop is unrolled to 16 trips and a cost of 16 * 26, more where its LoopControl asks, and none where it asks not to be" {
     // 17 runs of an fadd and an fmax of four floats: a trip count of 16,
-    // max_unroll_iterations (v3dv_pipeline.c), at a cost of 16 * 8.
+    // max_unroll_iterations (v3dv_pipeline.c), at a cost of 16 * 8. The
+    // first run's fadd is of the sum's 0.0, which the unrolled program
+    // does not keep (nir_opt_algebraic.py:236; since 1.174).
     var work: Work = .{};
     _ = try throughMesa(&work, &reference.glslc_cheap);
-    try testing.expectEqual(@as(usize, 17), stepsOf(&work, .add));
+    try testing.expectEqual(@as(usize, 16), stepsOf(&work, .add));
     try testing.expectEqual(@as(usize, 17), stepsOf(&work, .max));
     try testing.expectEqual(@as(usize, 0), stepsOf(&work, .begin_if));
     // 18 runs are 17 trips, over the limit (check_unrolling_restrictions)...
