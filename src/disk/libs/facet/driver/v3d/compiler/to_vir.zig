@@ -107,11 +107,6 @@ const tlb_v42_depth_type_invariant: u32 = 0 << 3;
 /// 0 to 3 (cle/v3d_packet.xml:1537).
 pub const texel_words: u32 = 0b11;
 
-/// The one combined image sampler there is, as Mesa numbers the texture
-/// and the sampler for the driver in the high bits of P0 and P1.
-const texture_index = 0;
-const sampler_index = 0;
-
 /// A compile strategy, of the fields that change anything here (struct
 /// v3d_compiler_strategy, v3d_compiler.h).
 const Strategy = struct {
@@ -1474,8 +1469,10 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     if (compared) _ = try tmuWrite(c, .tmudref, try getSrc(e, each.b, 0));
 
     // The texture's number in the high bits of the address, for the
-    // driver to put the texture's state there.
-    const p0_packed = return_words | texture_index << 24;
+    // driver to put the texture's state there (v3d_tex.c:297-301): here
+    // the sampler the module declares, which `compile` makes the
+    // program's unit (since 1.173).
+    const p0_packed = return_words | @as(u32, each.at) << 24;
     try wrtmuc(c, .tmu_config_p0, p0_packed);
 
     // P1 is needed: a sample needs a sampler (v3d_tex.c:311-321). Its
@@ -1485,7 +1482,7 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // sampler's number above it. P2 is the default, so neither it nor
     // the P1 a P2 would need is written.
     const p1_packed: u32 = if (c.stage != .fragment or e.work.skip_helpers[at]) compile.per_pixel_mask else 0;
-    try wrtmuc(c, .tmu_config_p1, p1_packed | sampler_index << 24);
+    try wrtmuc(c, .tmu_config_p1, p1_packed | @as(u32, each.at) << 24);
 
     const retiring = try tmuWrite(c, .tmus, s);
     // Mesa's own count, which is the mask of the words rather than how

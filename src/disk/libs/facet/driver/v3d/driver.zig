@@ -127,22 +127,23 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             var said = _instance.limits;
             // A program samples through the sampler bound beside its
             // texture, and the TMU is given all of it as v3dv packs it
-            // (`tiling.samplerOf`, since 1.140): one a stage, as there is
-            // one texture a stage below, since a program samples once.
-            // The bias, the anisotropy and the precision are v3dv's for
-            // this GPU (v3dv_device.c:1153, 1158, 1159); the bias is what
-            // Vulkan asks at least 2 of, and the field holds -128 to just
-            // under 128 (`tiling.SamplerState.bias`). A fixed form that
-            // wants a sampler reads it the same way where this device
-            // draws it (`samplesHere`, since 1.141).
-            said.max_per_stage_descriptor_samplers = 1;
-            said.max_descriptor_set_samplers = facet.shader.MAX_SETS;
+            // (`tiling.samplerOf`, since 1.140): as many a stage as a
+            // module may declare (`compile.most_samplers`), each a unit of
+            // its own (since 1.173; one before, and a set's held to the
+            // sets). What a set holds is the library's to say: the units
+            // are a stage's, not a set's. The bias, the anisotropy and the
+            // precision are v3dv's for this GPU (v3dv_device.c:1153, 1158,
+            // 1159); the bias is what Vulkan asks at least 2 of, and the
+            // field holds -128 to just under 128
+            // (`tiling.SamplerState.bias`). A fixed form that wants a
+            // sampler reads it the same way where this device draws it
+            // (`samplesHere`, since 1.141).
+            said.max_per_stage_descriptor_samplers = compile.most_samplers;
             said.max_sampler_lod_bias = 14;
             said.max_sampler_anisotropy = 16;
             said.mipmap_precision_bits = 8;
-            // The texture unit takes one texture a stage.
-            said.max_per_stage_descriptor_sampled_images = 1;
-            said.max_descriptor_set_sampled_images = facet.shader.MAX_SETS;
+            // A texture a unit: as many as the samplers (since 1.173).
+            said.max_per_stage_descriptor_sampled_images = compile.most_samplers;
             // No storage image and no input attachment here
             // (`can.storage_images`, `can.input_attachments`).
             said.max_per_stage_descriptor_storage_images = 0;
@@ -533,7 +534,6 @@ fn noColorShader(block: Block, address: u32) Shader {
         .varyings = fragment.varyings,
         .uniforms = uniforms,
         .uniform_count = fragment.uniforms,
-        .sampler = null,
         .threads = fragment.threads,
         .center_w = fragment.center_w,
         .lock_scoreboard_on_first_thrsw = fragment.lock_scoreboard_on_first_thrsw,
@@ -611,10 +611,11 @@ pub const Shader = struct {
     /// the TMU's configuration, which only a draw can fill in.
     uniforms: [compile.most_uniforms]compile.Word,
     uniform_count: u32,
-    /// The combined image sampler it reads, where it reads one: where
-    /// the draw is to look for the texture and the sampler whose state
-    /// those two words are.
-    sampler: ?compile.Sampler,
+    /// The combined image samplers it reads, by unit: where the draw is
+    /// to look for the texture and the sampler whose states a unit's two
+    /// words are (`compile.Code.samplers`; several since 1.173).
+    samplers: [compile.most_samplers]compile.Sampler = undefined,
+    sampler_count: u32 = 0,
     /// What the shader record says of the program, which Mesa's back end
     /// decided as it compiled (`cl.Programs`): its threads, whether it
     /// reads W at the pixel's centre, and where it waits on the
@@ -636,6 +637,10 @@ pub const Shader = struct {
 
     pub fn stream(made: *const Shader) []const compile.Word {
         return made.uniforms[0..made.uniform_count];
+    }
+
+    pub fn sampled(made: *const Shader) []const compile.Sampler {
+        return made.samplers[0..made.sampler_count];
     }
 };
 
@@ -799,7 +804,8 @@ fn compiled(pipeline: *Pipeline) facet.Result {
         .varyings = code.varyings,
         .uniforms = code.uniforms,
         .uniform_count = code.uniform_count,
-        .sampler = code.sampler,
+        .samplers = code.samplers,
+        .sampler_count = code.sampler_count,
         .threads = code.threads,
         .center_w = code.center_w,
         .lock_scoreboard_on_first_thrsw = code.lock_scoreboard_on_first_thrsw,

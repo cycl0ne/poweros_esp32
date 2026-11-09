@@ -333,7 +333,10 @@ const Rig = @import("facet.zig").Rig;
 /// once a layer as v3dv's is (driver/v3d/driver.zig); one sample in the
 /// colour and depth sampled-image masks, until its TMU fetches a sample
 /// where a frame of four stored it (item 61's V7); and none in the stencil
-/// one, which it does not sample. The three framebuffer masks hold the 4
+/// one, which it does not sample. The four rows of samplers and sampled
+/// images, a stage's and a set's, it meets since 1.173: it said one a
+/// stage, which this note did not name, and a set's held to the sets.
+/// The three framebuffer masks hold the 4
 /// bit since 1.148, when it drew four (V5), and the no-attachments mask
 /// since 1.150, when it made a subpass of no attachment (item 43's V3D
 /// half) and drew four in it (V8).

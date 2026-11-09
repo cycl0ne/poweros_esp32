@@ -5480,4 +5480,46 @@ pub const LIBRARY_VERSION = 1;
 /// and loop of a float, unrolled, draw what the cores draw written out.
 /// FacetBoth's other 234 cases are as they were at 1.171, and FacetProbe
 /// passes its 890 checks.
-pub const LIBRARY_REVISION = 172;
+///
+/// 173: **Several samples a program on the V3D (docs/facet-vulkan10.md
+/// item 59).** Mesa's back end takes any number of samples, of one
+/// combined image sampler or of several, where a second was refused with
+/// `Error.Samplers`: each is a TMU lookup of its own (v3d_vir_emit_tex,
+/// v3d_tex.c:230), with its two configuration words of its unit.
+///
+/// A unit is a set and binding the program samples, given as v3dv's
+/// descriptor_map_add gives the texture map's (v3dv_pipeline.c:516-560):
+/// in the order the program first reads each, a sampler read again the
+/// unit it has. to_vir.zig puts the sampler the module declares in P0's
+/// and P1's high bits, as v3d_tex.c:297-303 and 341-348 put the texture's
+/// and the sampler's index, and compile.zig makes it the unit:
+/// `Word.texture` and `Word.sampler` carry it, and `Code.sampled` says
+/// where each is bound. The draw looks up each unit's texture and sampler
+/// and writes their states where the stream names that unit, as
+/// write_tmu_p0 and write_tmu_p1 do (v3dv_uniforms.c:139-232); a unit not
+/// bound draws the missing colour, as one did. The V3D now says 16
+/// samplers and 16 sampled images a stage (`compile.most_samplers`,
+/// Vulkan's floor; v3dv's are 24 and 16), where it said 1, and a set's
+/// are the library's: the units are a stage's.
+///
+/// Refused still: a second sample where the plan compiles the program,
+/// whose hand-written programs write the TMU once; a sampler one sample
+/// compares through and another does not, whose one state cannot be
+/// both.
+///
+/// Tests: the V3D's 228, two new and two that asserted the refusal now
+/// asserting another. glslc_two_textures (184 words) is three lookups,
+/// `base` units 0 and `detail` 1, and `base` read again unit 0; made to
+/// read `detail` first, the units swap; one binding of two sets is two
+/// units. glslc_sampled_loop (227 words) is four lookups of one unit,
+/// unrolled, and eight LDTMUs. A sampler both compared and not is
+/// refused. Of five mutations of the port, five fail the tests (the
+/// fifth, a unit told by its binding alone, after the two sets' test was
+/// added for it).
+/// FacetBoth 1.41: two cases of samples.
+///
+/// On the CM5 both are 0 pixels of 230,400 apart: two textures in two
+/// sets, the second the 16-bit one mirrored where the first repeats, and
+/// glslc's loop of four samples. FacetBoth's other 237 cases are as they
+/// were at 1.172, and FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 173;

@@ -100,7 +100,8 @@
 //! on a condition that differs from pixel to pixel and one on a pushed
 //! float, drawn taken and not. The shipped loops (since 1.40) are
 //! glslc's, which the V3D unrolls as Mesa does: a for loop, a do-while
-//! loop and a loop of a float.
+//! loop and a loop of a float. The shipped samples (since 1.41) are two
+//! textures in two sets, and a loop of four samples of one.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -115,7 +116,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.40 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.41 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -928,6 +929,28 @@ const Shipped = struct {
             b.color(sum);
         }
     });
+    /// Two textures, set 0's and set 1's (`Side.two_layout`): half the
+    /// first at the coordinate plus half the second at it turned, each a
+    /// unit of its own on the V3D (since 1.41).
+    const TwoTextures = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const uv = b.input(0, .f32x2);
+            const turned = b.vector(&.{ b.component(uv, 1), b.component(uv, 0) });
+            const half = b.scalar(0.5);
+            b.color(b.add(b.scale(b.sample(0, 0, uv), half), b.scale(b.sample(1, 0, turned), half)));
+        }
+    });
+    /// What glslc's `four_samples` computes: the texture at the
+    /// coordinate and at an eighth, a quarter and three eighths across,
+    /// summed in turn, and a quarter of the sum (since 1.41).
+    const FourSamples = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const uv = b.input(0, .f32x2);
+            var sum = b.constant(.{ 0, 0, 0, 0 });
+            inline for (0..4) |i| sum = b.add(sum, b.sample(0, 0, b.add(uv, b.constantOf(.f32x2, .{ @as(f32, i) * 0.125, 0, 0, 0 }))));
+            b.color(b.scale(sum, b.scalar(0.25)));
+        }
+    });
 };
 
 /// What `integers` computes, for the cores, and in its order: the colour
@@ -1258,6 +1281,8 @@ const shipped_entries = [_]shader.Entry{
     Shipped.Looped.entry("shipped looped"),
     Shipped.Until.entry("shipped until"),
     Shipped.Stepped.entry("shipped stepped"),
+    Shipped.TwoTextures.entry("shipped two textures"),
+    Shipped.FourSamples.entry("shipped four samples"),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                .{},                               .{},                                  .{},
@@ -1271,6 +1296,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&integers),         shader.Spirv.of(&indexed),         shader.Spirv.of(&lanes),              shader.Spirv.of(&store_writes),
     shader.Spirv.of(&store_reads),      shader.Spirv.of(&store_atomics),   shader.Spirv.of(&store_counted),      Shipped.Kept.spirv,
     Shipped.KeptPushed.spirv,           shader.Spirv.of(&for_loop),        shader.Spirv.of(&do_while),           shader.Spirv.of(&float_loop),
+    Shipped.TwoTextures.spirv,          shader.Spirv.of(&four_samples),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -2535,6 +2561,69 @@ const float_loop = [_]u32{
     0x00000025, 0x000100FD, 0x00010038,
 };
 
+/// glslc's own output, at -O, for a loop of four samples, the V3D's host
+/// tests' glslc_sampled_loop: unrolled, four lookups of the one texture,
+/// each at its own coordinate (since 1.41).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec2 uv;
+/// layout(location = 0) out vec4 color;
+/// layout(set = 0, binding = 0) uniform sampler2D tex;
+/// void main() {
+///     vec4 sum = vec4(0.0);
+///     for (int i = 0; i < 4; i++) {
+///         sum += texture(tex, uv + vec2(float(i) * 0.125, 0.0));
+///     }
+///     color = sum * 0.25;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag sampled_loop.frag -o sampled_loop.spv   # 227 words
+/// spirv-val --target-env vulkan1.0 sampled_loop.spv                   # no output, and 0
+/// ```
+const four_samples = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000035, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000020, 0x0000002F, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000001C, 0x00000021, 0x00000000,
+    0x00040047, 0x0000001C, 0x00000022, 0x00000000, 0x00040047, 0x00000020,
+    0x0000001E, 0x00000000, 0x00040047, 0x0000002F, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x0004002B, 0x00000006, 0x0000000A, 0x00000000, 0x0007002C, 0x00000007,
+    0x0000000B, 0x0000000A, 0x0000000A, 0x0000000A, 0x0000000A, 0x00040015,
+    0x0000000C, 0x00000020, 0x00000001, 0x0004002B, 0x0000000C, 0x0000000F,
+    0x00000000, 0x0004002B, 0x0000000C, 0x00000016, 0x00000004, 0x00020014,
+    0x00000017, 0x00090019, 0x00000019, 0x00000006, 0x00000001, 0x00000000,
+    0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B, 0x0000001A,
+    0x00000019, 0x00040020, 0x0000001B, 0x00000000, 0x0000001A, 0x0004003B,
+    0x0000001B, 0x0000001C, 0x00000000, 0x00040017, 0x0000001E, 0x00000006,
+    0x00000002, 0x00040020, 0x0000001F, 0x00000001, 0x0000001E, 0x0004003B,
+    0x0000001F, 0x00000020, 0x00000001, 0x0004002B, 0x00000006, 0x00000024,
+    0x3E000000, 0x0004002B, 0x0000000C, 0x0000002C, 0x00000001, 0x00040020,
+    0x0000002E, 0x00000003, 0x00000007, 0x0004003B, 0x0000002E, 0x0000002F,
+    0x00000003, 0x0004002B, 0x00000006, 0x00000031, 0x3E800000, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x000200F9, 0x00000010, 0x000200F8, 0x00000010, 0x000700F5, 0x00000007,
+    0x00000034, 0x0000000B, 0x00000005, 0x0000002A, 0x00000011, 0x000700F5,
+    0x0000000C, 0x00000033, 0x0000000F, 0x00000005, 0x0000002D, 0x00000011,
+    0x000500B1, 0x00000017, 0x00000018, 0x00000033, 0x00000016, 0x000400F6,
+    0x00000012, 0x00000011, 0x00000000, 0x000400FA, 0x00000018, 0x00000011,
+    0x00000012, 0x000200F8, 0x00000011, 0x0004003D, 0x0000001A, 0x0000001D,
+    0x0000001C, 0x0004003D, 0x0000001E, 0x00000021, 0x00000020, 0x0004006F,
+    0x00000006, 0x00000023, 0x00000033, 0x00050085, 0x00000006, 0x00000025,
+    0x00000023, 0x00000024, 0x00050050, 0x0000001E, 0x00000026, 0x00000025,
+    0x0000000A, 0x00050081, 0x0000001E, 0x00000027, 0x00000021, 0x00000026,
+    0x00050057, 0x00000007, 0x00000028, 0x0000001D, 0x00000027, 0x00050081,
+    0x00000007, 0x0000002A, 0x00000034, 0x00000028, 0x00050080, 0x0000000C,
+    0x0000002D, 0x00000033, 0x0000002C, 0x000200F9, 0x00000010, 0x000200F8,
+    0x00000012, 0x0005008E, 0x00000007, 0x00000032, 0x00000034, 0x00000031,
+    0x0003003E, 0x0000002F, 0x00000032, 0x000100FD, 0x00010038,
+};
+
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
 /// V3D's host tests hold to compile to the program of glslc's optimized
 /// module, word for word: `c` and `k` in variables of the function's own,
@@ -3101,6 +3190,11 @@ const Side = struct {
     /// through a sampler of its own, as a combined image sampler at set
     /// 0, binding 0.
     sampler: ?*facet.Sampler = null,
+    /// A second texture, the 16-bit one, through a sampler of its own,
+    /// in a set of its own, and the layout of the two sets (since 1.41).
+    second_sampler: ?*facet.Sampler = null,
+    second_set: ?*facet.DescriptorSet = null,
+    two_layout: ?*facet.PipelineLayout = null,
     sampler_set_layout: ?*facet.DescriptorSetLayout = null,
     sampler_layout: ?*facet.PipelineLayout = null,
     sampler_set: ?*facet.DescriptorSet = null,
@@ -3280,7 +3374,7 @@ const Side = struct {
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 8 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 9 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -3304,6 +3398,17 @@ const Side = struct {
         const sampled_info = facet.DescriptorImageInfo{ .sampler = side.sampler, .image_view = side.texture_views[0] };
         const sampled_write = facet.WriteDescriptorSet{ .dst_set = side.sampler_set.?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&sampled_info) };
         fb.UpdateDescriptorSets(device, 1, @ptrCast(&sampled_write), 0, null);
+        // The second texture, mirrored where the first repeats, at set 1
+        // beside it (since 1.41).
+        try expect(fb.CreateSampler(device, &.{ .mag_filter = .nearest, .min_filter = .nearest, .address_mode_u = .mirrored_repeat, .address_mode_v = .mirrored_repeat, .max_lod = facet.texture.lod_unclamped }, &side.second_sampler), error.Refused);
+        var second_sets: [1]?*facet.DescriptorSet = undefined;
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&side.sampler_set_layout) }, &second_sets), error.Refused);
+        side.second_set = second_sets[0];
+        const second_info = facet.DescriptorImageInfo{ .sampler = side.second_sampler, .image_view = side.texture_views[2] };
+        const second_write = facet.WriteDescriptorSet{ .dst_set = side.second_set.?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&second_info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&second_write), 0, null);
+        const two_sets = [2]?*facet.DescriptorSetLayout{ side.sampler_set_layout, side.sampler_set_layout };
+        try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 2, .set_layouts = @ptrCast(&two_sets) }, &side.two_layout), error.Refused);
         side.first_level = try side.view(side.textures[0].?, formats[0], facet.IMAGE_ASPECT_COLOR, 1);
         // The module ships the SPIR-V of the shaders above beside the
         // functions: the flag says so, and `code_size` that the program's
@@ -3846,12 +3951,14 @@ const Side = struct {
         fb.DestroyCommandPool(device, side.command_pool);
         fb.DestroyPipelineLayout(device, side.layout);
         fb.DestroyPipelineLayout(device, side.sampler_layout);
+        fb.DestroyPipelineLayout(device, side.two_layout);
         fb.DestroyPipelineLayout(device, side.push_layout);
         fb.DestroyShaderModule(device, side.module);
         fb.DestroyDescriptorPool(device, side.descriptor_pool);
         fb.DestroyDescriptorSetLayout(device, side.set_layout);
         fb.DestroyDescriptorSetLayout(device, side.sampler_set_layout);
         fb.DestroySampler(device, side.sampler);
+        fb.DestroySampler(device, side.second_sampler);
         for (side.through) |each| fb.DestroySampler(device, each);
         fb.DestroyImageView(device, side.first_level);
         for (side.shadow_samplers) |each| fb.DestroySampler(device, each);
@@ -5097,6 +5204,16 @@ const Cases = struct {
         side.draw(clockwise_at, 3);
         side.end();
     }
+    /// Two textures in two sets, over the wide quad, so the second's
+    /// mirroring shows where the first repeats (since 1.41).
+    fn twoTextures(side: *Side) Failure!void {
+        side.begin(.{});
+        const sets = [2]?*facet.DescriptorSet{ side.sampler_set, side.second_set };
+        side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.two_layout.?, 0, 2, @ptrCast(&sets), 0, null);
+        try side.use(.{ .vertex = "texture", .fragment = "shipped two textures", .layout = side.two_layout.? });
+        side.draw(wide_at, 6);
+        side.end();
+    }
     /// The shipped selection on a pushed float: the first triangle drawn
     /// with it under a half, which takes the true arm in every pixel, and
     /// the second with it over, which takes none (since 1.39).
@@ -5358,6 +5475,8 @@ const cases = [_]Case{
     .{ .name = "shipped loop", .run = Cases.shipped("as it is", "shipped looped", false, clockwise_at) },
     .{ .name = "shipped do-while loop", .run = Cases.shipped("as it is", "shipped until", false, clockwise_at) },
     .{ .name = "shipped float loop", .run = Cases.shipped("as it is", "shipped stepped", false, clockwise_at) },
+    .{ .name = "shipped two textures", .run = Cases.twoTextures },
+    .{ .name = "shipped four samples", .run = Cases.shipped("texture", "shipped four samples", true, quad_at) },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },
