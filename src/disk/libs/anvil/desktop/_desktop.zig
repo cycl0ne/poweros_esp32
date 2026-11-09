@@ -33,6 +33,12 @@
 //! **Once it is up** it starts the programs of its startup drawer
 //! (`startup.zig`), and goes on answering while it waits for them.
 //!
+//! **Its words** - the menus, the title, what it says and asks - are in
+//! `anvil.cd`, read through `sdk.locale.Strings` from the catalog of the
+//! language the user prefers when there is one (`text`), opened as it
+//! comes up and closed once its windows are gone. The processes it starts
+//! for About, Information and its file work open their own.
+//!
 //! **Reboot**, picked and confirmed, starts the machine again from the
 //! desktop (`commands.reboot`).
 //!
@@ -92,6 +98,9 @@ const startup_area = @import("startup.zig");
 const work_area = @import("work.zig");
 const about_area = @import("about.zig");
 const scene = @import("scene.zig");
+const strings = @import("strings");
+const Text = sdk.locale.Strings(strings);
+const Id = strings.Id;
 
 /// How often the title and the disks are looked at, in seconds.
 pub const tick_seconds = 2;
@@ -123,6 +132,9 @@ pub const Desktop = struct {
     base: *AnvilBase,
     sys: *ExecBase,
     dl: *DosBase,
+    /// Its words, in the language the user prefers; the ones built in
+    /// until it is up, and without locale.library.
+    text: Text,
     /// The disks' icons placed anew (`ANVA_CleanUp`).
     clean_up: bool = false,
 
@@ -251,6 +263,7 @@ pub const Desktop = struct {
     /// stopped it (whatever came before it is still held, for `tearDown`).
     fn setUp(d: *Desktop) i32 {
         const sys = d.sys;
+        d.text = Text.open(sys);
         d.volumes.init(.unknown);
         d.drawers.init(.unknown);
         d.read_signal = sys.AllocSignal(-1);
@@ -456,7 +469,7 @@ pub const Desktop = struct {
         var entries: [menus.table.len + 1 + app_area.tools_max]mn.NewMenu = undefined;
         var labels: [app_area.tools_max][*:0]const u8 = undefined;
         for (0..d.tools.count) |i| labels[i] = &d.tools.labels[i];
-        const made = d.ib.CreateMenusA(menus.build(&entries, labels[0..d.tools.count]).ptr, null) orelse return null;
+        const made = d.ib.CreateMenusA(menus.build(&entries, &d.text, labels[0..d.tools.count]).ptr, null) orelse return null;
         if (!d.ib.LayoutMenusA(made, d.screen.?, null)) {
             d.ib.FreeMenus(made);
             return null;
@@ -654,7 +667,19 @@ pub const Desktop = struct {
         const external = if (d.unified) 0 else d.sys.AvailMem(exec.MEMF_EXTERNAL);
         var cell: sdk.resources.battery.BatteryState = .{};
         const measured = if (d.battery) |bb| bb.ReadBattery(&cell) else false;
-        _ = title_text.memoryTitle(&d.title, internal, external, d.unified, if (measured) &cell else null);
+        const separators = drawer_path.Separators.of(d.text.locale);
+        const words = title_text.Words{
+            .memory = d.text.get(.MSG_TITLE_MEMORY),
+            .internal = d.text.get(.MSG_TITLE_INTERNAL),
+            .psram = d.text.get(.MSG_TITLE_PSRAM),
+            .free = d.text.get(.MSG_TITLE_FREE),
+            .battery = d.text.get(.MSG_TITLE_BATTERY),
+            .charging = d.text.get(.MSG_TITLE_CHARGING),
+            .external_power = d.text.get(.MSG_TITLE_EXTERNAL_POWER),
+            .group = separators.group,
+            .point = separators.point,
+        };
+        _ = title_text.memoryTitle(&d.title, internal, external, d.unified, if (measured) &cell else null, &words);
         if (d.backdrop) |window| d.ib.SetWindowTitles(window, wn.TITLE_UNCHANGED, &d.title);
         var it = d.drawers.iterator();
         while (it.next()) |node| {
@@ -811,7 +836,7 @@ pub const Desktop = struct {
 
     /// Last Message: the last thing the desktop said, said again.
     fn lastMessage(d: *Desktop) void {
-        if (d.message[0] == 0) return d.say("Nothing has been said");
+        if (d.message[0] == 0) return d.tell(.MSG_NOTHING_SAID, .{});
         var again: [96]u8 = undefined;
         var length: usize = 0;
         while (d.message[length] != 0) : (length += 1) again[length] = d.message[length];
@@ -859,6 +884,13 @@ pub const Desktop = struct {
             if (ic.hit(&d.look, .{}, x, y)) found = ic;
         }
         return found;
+    }
+
+    /// The string `id` said in the screen's title, `args` put in as its
+    /// format asks (`say`).
+    pub fn tell(d: *Desktop, comptime id: Id, args: anytype) void {
+        var line: [96]u8 = undefined;
+        d.say(d.text.format(&line, id, args));
     }
 
     /// Something said in the screen's title for a few seconds - and kept
@@ -980,18 +1012,18 @@ pub const Desktop = struct {
     fn askQuit(d: *Desktop) void {
         const added = app_area.count(d);
         const running = d.running;
-        const text: [*:0]const u8 = if (running != 0 and added != 0)
-            "Programs started from the desktop still run (%lu).\nThey go on running. Windows, icons and\nmenu items programs added to it (%lu)\ngo with it.\n\nQuit the desktop?"
+        const question: Id = if (running != 0 and added != 0)
+            .MSG_QUIT_RUNNING_ADDED
         else if (running != 0)
-            "Programs started from the desktop still run (%lu).\nThey go on running.\n\nQuit the desktop?"
+            .MSG_QUIT_RUNNING
         else if (added != 0)
-            "Windows, icons and menu items programs\nadded to the desktop (%lu) go with it.\n\nQuit the desktop?"
+            .MSG_QUIT_ADDED
         else
-            "Quit the desktop?";
+            .MSG_QUIT_ASK;
         const ask = intuition.requesters.EasyStruct{
             .title = "Anvil",
-            .text_format = text,
-            .gadget_format = "Quit|Cancel",
+            .text_format = d.text.get(question),
+            .gadget_format = d.text.get(.MSG_QUIT_BUTTONS),
         };
         const args = if (running != 0) [_]u64{ running, added } else [_]u64{ added, 0 };
         if (d.ib.EasyRequestArgs(d.backdrop, &ask, null, &args) == 1) d.quit = true;
@@ -1121,6 +1153,8 @@ pub const Desktop = struct {
             if (d.measure_rp) |rp| d.gb.FreeRastPort(rp);
         }
         if (d.screen) |screen| d.ib.UnlockPubScreen(null, screen);
+        // Its words last: the menus and the windows showed them.
+        d.text.close();
         // Whatever is still on a port was sent to the desktop: replied.
         for ([_]?*exec.MsgPort{ d.notify_port, d.windows_port }) |held| {
             const port = held orelse continue;

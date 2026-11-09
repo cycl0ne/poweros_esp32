@@ -177,8 +177,8 @@ pub fn tick(d: *Desktop) void {
     const entry = &startup.entries[startup.current];
     const easy = intuition.requesters.EasyStruct{
         .title = "Anvil",
-        .text_format = "Program '%s'\nhas not yet ended.\nWait some more?",
-        .gadget_format = "Wait|Go On",
+        .text_format = d.text.get(.MSG_STARTUP_WAIT),
+        .gadget_format = d.text.get(.MSG_STARTUP_BUTTONS),
     };
     const args = [_]usize{@intFromPtr(&entry.name)};
     if (d.ib.EasyRequestArgs(d.backdrop, &easy, null, &args) == 1) {

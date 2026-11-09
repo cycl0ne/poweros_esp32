@@ -221,6 +221,11 @@ pub const catalogs = [_]Catalog{
 };
 ```
 
+The catalog is named after the program's place on the disk
+(`c/count.catalog`) unless the program's `catalog` names it: the
+system's own modules keep theirs under `sys/`, as the desktop's
+`sys/anvil.catalog`.
+
 The program then imports its strings as the module `strings` and reads
 them through `sdk.locale.Strings`:
 
@@ -250,7 +255,8 @@ program's may be handed the strings and read them while the program
 keeps them open.
 
 Notepad, Sheet and the Player have their texts in catalogs, German on
-the disk (`LOCALE:Catalogs/deutsch/programs/<Program>.catalog`); their
+the disk (`LOCALE:Catalogs/deutsch/programs/<Program>.catalog`), and so
+has the desktop (`LOCALE:Catalogs/deutsch/sys/anvil.catalog`); their
 descriptors and translations are beside their sources.
 
 `OpenCatalogA(loc, name, tags)` looks for `name` in `OC_Language`'s

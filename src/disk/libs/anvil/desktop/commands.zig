@@ -36,6 +36,7 @@ const volumes = @import("volumes.zig");
 const select = @import("select.zig");
 const textview = @import("../drawer/textview.zig");
 const drawer_ribbon = @import("../drawer/ribbon.zig");
+const strings = @import("strings");
 const anvil_prefs = sdk.prefs.anvil;
 const drives = dos.blockdrives;
 
@@ -95,7 +96,7 @@ fn collect(d: *Desktop, files: *work.Files) void {
         }
     };
     eachPicked(d, Add{ .d = d, .files = files }, Add.each);
-    if (files.lost) d.say("Not every file picked could be taken");
+    if (files.lost) d.tell(.MSG_NOT_EVERY_FILE, .{});
 }
 
 /// An item of the Icons menu.
@@ -133,9 +134,9 @@ fn delete(d: *Desktop) void {
     collect(d, &files);
     if (files.count == 0) return;
     const easy = intuition.requesters.EasyStruct{
-        .title = "Delete",
-        .text_format = "Delete what is picked (%lu) for good?\nA drawer goes with all that is in it.",
-        .gadget_format = "Delete|Cancel",
+        .title = d.text.get(.MSG_RIBBON_DELETE),
+        .text_format = d.text.get(.MSG_DELETE_ASK),
+        .gadget_format = d.text.get(.MSG_DELETE_BUTTONS),
     };
     const args = [_]u64{files.count};
     if (d.ib.EasyRequestArgs(d.backdrop, &easy, null, &args) != 1) return;
@@ -167,18 +168,18 @@ fn rename(d: *Desktop, picked: Picked) void {
     if (picked.icon.app != null) return;
     var answer: [dos.name_max + 1]u8 = undefined;
     const ic = picked.icon;
-    const length = ask.name(d, "Rename", "A new name for it:", ic.name(), &answer) orelse return;
+    const length = ask.name(d, d.text.get(.MSG_RIBBON_RENAME), d.text.get(.MSG_RENAME_PROMPT), ic.name(), &answer) orelse return;
     var full: [dos.path_max + 1]u8 = undefined;
     const old_length = run.pathOf(picked.where, ic, &full) orelse return;
     if (kindOf(picked) == icon.WBDISK) {
-        if (!d.dl.Relabel(@ptrCast(&full), @ptrCast(&answer))) d.say("The disk could not be renamed");
+        if (!d.dl.Relabel(@ptrCast(&full), @ptrCast(&answer))) d.tell(.MSG_DISK_NOT_RENAMED, .{});
         return;
     }
     const parent = drawer_path.parent(full[0..old_length]) orelse return;
     var to: [dos.path_max + 1]u8 = undefined;
     const to_length = drawer_path.join(&to, parent, answer[0..length]) orelse return;
     if (!d.dl.Rename(@ptrCast(&full), @ptrCast(&to))) {
-        d.say("It could not be renamed");
+        d.tell(.MSG_NOT_RENAMED, .{});
         return;
     }
     var from_icon: [dos.path_max + 6]u8 = undefined;
@@ -212,7 +213,7 @@ fn snapshotIcon(d: *Desktop, where: ?*Drawer, ic: *Icon, keep: bool) void {
     object.current_x = if (keep) ic.x else icon.NO_ICON_POSITION;
     object.current_y = if (keep) ic.y else icon.NO_ICON_POSITION;
     if (!d.icon_base.PutDiskObject(@ptrCast(&full), object)) {
-        d.say("An icon could not be written");
+        d.tell(.MSG_ICON_NOT_WRITTEN, .{});
         return;
     }
     ic.moved = false;
@@ -258,22 +259,22 @@ fn format(d: *Desktop, picked: Picked) void {
     @memcpy(volume[0..name.len], name);
     volume[name.len] = ':';
     const easy = intuition.requesters.EasyStruct{
-        .title = "Format Disk",
-        .text_format = "Format %s?\nEverything on it is lost.",
-        .gadget_format = "Format|Cancel",
+        .title = d.text.get(.MSG_FORMAT_TITLE),
+        .text_format = d.text.get(.MSG_FORMAT_ASK),
+        .gadget_format = d.text.get(.MSG_FORMAT_BUTTONS),
     };
     const args = [_]usize{@intFromPtr(&volume)};
     if (d.ib.EasyRequestArgs(d.backdrop, &easy, null, &args) != 1) return;
-    const dp = d.dl.GetDeviceProc(&volume, null) orelse return d.say("The disk is not there");
+    const dp = d.dl.GetDeviceProc(&volume, null) orelse return d.tell(.MSG_DISK_NOT_THERE, .{});
     defer d.dl.FreeDeviceProc(dp);
-    const port = dp.port orelse return d.say("The disk is not there");
+    const port = dp.port orelse return d.tell(.MSG_DISK_NOT_THERE, .{});
     // The drive by its device: once inhibited it may have no volume.
     var device: [dos.MAX_DEVICE_NAME + 2:0]u8 = @splat(0);
-    if (!deviceOf(d, port, &device)) return d.say("The disk is not there");
+    if (!deviceOf(d, port, &device)) return d.tell(.MSG_DISK_NOT_THERE, .{});
     var label: [dos.name_max + 1:0]u8 = @splat(0);
     @memcpy(label[0..name.len], name);
-    if (!d.dl.Inhibit(&device, true)) return d.say("The disk is in use");
-    if (!d.dl.Format(&device, &label, 0)) d.say("The disk could not be formatted");
+    if (!d.dl.Inhibit(&device, true)) return d.tell(.MSG_DISK_BUSY, .{});
+    if (!d.dl.Format(&device, &label, 0)) d.tell(.MSG_DISK_NOT_FORMATTED, .{});
     _ = d.dl.Inhibit(&device, false);
 }
 
@@ -303,11 +304,11 @@ fn deviceOf(d: *Desktop, port: *exec.MsgPort, into: *[dos.MAX_DEVICE_NAME + 2:0]
 /// New Drawer: its name asked for, the drawer made with an icon.
 pub fn newDrawer(d: *Desktop, dr: *Drawer) void {
     var answer: [dos.name_max + 1]u8 = undefined;
-    const length = ask.name(d, "New Drawer", "A name for the new drawer:", "Unnamed", &answer) orelse return;
+    const length = ask.name(d, d.text.get(.MSG_MENU_NEW_DRAWER), d.text.get(.MSG_NEW_DRAWER_PROMPT), sliceOf(d.text.get(.MSG_UNNAMED)), &answer) orelse return;
     var full: [dos.path_max + 1]u8 = undefined;
     _ = drawer_path.join(&full, dr.pathText(), answer[0..length]) orelse return;
     const made = d.dl.CreateDir(@ptrCast(&full)) orelse {
-        d.say("The drawer could not be made");
+        d.tell(.MSG_DRAWER_NOT_MADE, .{});
         return;
     };
     d.dl.UnLock(made);
@@ -366,7 +367,7 @@ pub fn cleanUpBy(d: *Desktop, where: ?*Drawer, sub: u32) void {
 /// Snap to Grid switched `on` or off, and kept in anvil.prefs.
 pub fn snapToGrid(d: *Desktop, on: bool) void {
     d.prefs.snap = on;
-    keepPrefs(d, "Snap to Grid");
+    keepPrefs(d, .MSG_MENU_SNAP);
 }
 
 /// Arrange on Resize switched `on` or off, and kept in anvil.prefs.
@@ -375,7 +376,7 @@ pub fn snapToGrid(d: *Desktop, on: bool) void {
 pub fn arrangeOnResize(d: *Desktop, on: bool) void {
     d.prefs.arrange = on;
     if (on) drawer.arrangeAll(d);
-    keepPrefs(d, "Arrange on Resize");
+    keepPrefs(d, .MSG_MENU_ARRANGE);
 }
 
 /// Ribbon switched `on` or off: every drawer's window given its ribbon or
@@ -385,18 +386,18 @@ pub fn showRibbons(d: *Desktop, on: bool) void {
     d.prefs.ribbon = on;
     drawer_ribbon.followAll(d);
     rethink(d, d.active_window);
-    keepPrefs(d, "Ribbon");
+    keepPrefs(d, .MSG_MENU_RIBBON);
 }
 
 /// The prefs as the desktop has them, after a switch of the Window menu
-/// - `what`, named in what is said when they cannot be kept - written to
+/// - `what`, the item named in what is said when they cannot be kept - written to
 /// anvil.prefs: in ENV: for now and in ENVARC: across a boot, after the
 /// file's explanation. The file's notification then finds nothing
 /// changed, so nothing is made anew.
-fn keepPrefs(d: *Desktop, comptime what: []const u8) void {
+fn keepPrefs(d: *Desktop, what: strings.Id) void {
     const line_room = 256;
     const room = anvil_prefs.header.len + line_room + 1;
-    const memory = d.sys.AllocVec(room, exec.MEMF_ANY) orelse return d.say(what ++ " could not be kept");
+    const memory = d.sys.AllocVec(room, exec.MEMF_ANY) orelse return d.tell(.MSG_SETTING_NOT_KEPT, .{d.text.get(what)});
     defer d.sys.FreeVec(memory);
     const text: [*]u8 = @ptrCast(memory);
     var length: usize = anvil_prefs.header.len;
@@ -406,7 +407,7 @@ fn keepPrefs(d: *Desktop, comptime what: []const u8) void {
     length += 1;
     const now = sdk.prefs.save(d.dl, anvil_prefs.ENV_FILE, text[0..length]);
     const kept = sdk.prefs.save(d.dl, anvil_prefs.ENVARC_FILE, text[0..length]);
-    if (!now or !kept) d.say(what ++ " could not be written to anvil.prefs");
+    if (!now or !kept) d.tell(.MSG_SETTING_NOT_WRITTEN, .{d.text.get(what)});
 }
 
 /// Snapshot Window: the window's box, view - a list's order with it - and
@@ -433,7 +434,7 @@ pub fn snapshotWindow(d: *Desktop, dr: *Drawer, all: bool) void {
     const was = object.drawer_data;
     object.drawer_data = &data;
     defer object.drawer_data = was;
-    if (!d.icon_base.PutDiskObject(&full, object)) d.say("The drawer's icon could not be written");
+    if (!d.icon_base.PutDiskObject(&full, object)) d.tell(.MSG_DRAWER_ICON_NOT_WRITTEN, .{});
     if (!all) return;
     var it = dr.icons.iterator();
     while (it.next()) |node| snapshotIcon(d, dr, @alignCast(@fieldParentPtr("node", node)), true);
@@ -558,11 +559,11 @@ fn wentFrom(dr: *Drawer) drawer_ribbon.Went {
 /// its output in a console that opens if it prints.
 pub fn executeCommand(d: *Desktop) void {
     var answer: [dos.name_max + 1]u8 = undefined;
-    const length = ask.name(d, "Execute Command", "A command to run:", "", &answer) orelse return;
+    const length = ask.name(d, d.text.get(.MSG_EXECUTE_TITLE), d.text.get(.MSG_EXECUTE_PROMPT), "", &answer) orelse return;
     var line: [dos.name_max + 2:0]u8 = @splat(0);
     @memcpy(line[0..length], answer[0..length]);
     line[length] = '\n';
-    run.command(d, &line, "Output");
+    run.command(d, &line, sliceOf(d.text.get(.MSG_OUTPUT)));
 }
 
 /// Volume: SYS:Programs/Volume started as a double click on its icon
@@ -584,13 +585,13 @@ pub fn openVolume(d: *Desktop) void {
 /// the machine runs on as it was.
 pub fn reboot(d: *Desktop) void {
     const easy = intuition.requesters.EasyStruct{
-        .title = "Reboot",
-        .text_format = "Start the machine again?\nWhat programs have not saved is lost.",
-        .gadget_format = "Reboot|Cancel",
+        .title = d.text.get(.MSG_REBOOT_TITLE),
+        .text_format = d.text.get(.MSG_REBOOT_ASK),
+        .gadget_format = d.text.get(.MSG_REBOOT_BUTTONS),
     };
     if (d.ib.EasyRequestArgs(d.backdrop, &easy, null, null) != 1) return;
     // Two lists of every drive's name: too large for the desktop's stack.
-    const memory = d.sys.AllocVec(2 * @sizeOf(drives.List), exec.MEMF_ANY) orelse return d.say("No memory to reboot");
+    const memory = d.sys.AllocVec(2 * @sizeOf(drives.List), exec.MEMF_ANY) orelse return d.tell(.MSG_NO_MEMORY_REBOOT, .{});
     defer d.sys.FreeVec(memory);
     const lists: *[2]drives.List = @ptrCast(@alignCast(memory));
     const mounted = &lists[0];
@@ -627,9 +628,9 @@ fn rebootAnyway(d: *Desktop, refused: *const drives.List) bool {
         length += text.len;
     }
     const easy = intuition.requesters.EasyStruct{
-        .title = "Reboot",
-        .text_format = "In use, so what they hold may not be written out:\n%s\n\nReboot all the same?",
-        .gadget_format = "Reboot|Cancel",
+        .title = d.text.get(.MSG_REBOOT_TITLE),
+        .text_format = d.text.get(.MSG_REBOOT_IN_USE),
+        .gadget_format = d.text.get(.MSG_REBOOT_BUTTONS),
     };
     const args = [_]usize{@intFromPtr(&names)};
     return d.ib.EasyRequestArgs(d.backdrop, &easy, null, &args) == 1;

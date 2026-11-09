@@ -310,7 +310,7 @@ fn intoDrawer(d: *Desktop, held: *const Held, into: []const u8, trash: bool) boo
             copies.add(d.sys, from[0..length]);
             any = true;
         } else {
-            d.say("Only a file of the trash's own disk goes into its trash");
+            d.tell(.MSG_TRASH_OWN_DISK, .{});
         }
     }
     copies.queue(d, .copy, into);
@@ -338,7 +338,7 @@ fn moveFile(d: *Desktop, from: [*:0]const u8, into: [*:0]const u8, name: []const
     var to: [dos.path_max + 1:0]u8 = @splat(0);
     const length = drawer_path.join(&to, textOf(into), name) orelse return false;
     if (!d.dl.Rename(from, @ptrCast(&to))) {
-        d.say("A file could not be moved there");
+        d.tell(.MSG_NOT_MOVED, .{});
         return false;
     }
     // Its icon goes with it, when it has one.

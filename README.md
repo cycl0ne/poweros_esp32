@@ -257,8 +257,8 @@ Beside them:
   or in `ENV:Sys/locale.prefs`; dates, dos's
   error texts and the shell's messages in it - German shipped - and a
   program's own texts from its catalog, built from a descriptor and
-  checked by `sdk/tools/catcomp`: Notepad's, Sheet's and the Player's
-  in German
+  checked by `sdk/tools/catcomp`: the desktop's, Notepad's, Sheet's
+  and the Player's in German
   ([locale guide](sdk/docs/guides/locale.md)).
 - **Programs:** in `SYS:Programs` MultiView, Notepad, Sheet, Terminal,
   Player, FontView, Battery, Prefs and Volume; in `SYS:System` the Shell,

@@ -167,7 +167,7 @@ fn rewrite(d: *Desktop, path: []const u8, add: bool) bool {
 /// Leave Out: `path`'s icon put on the desktop and kept there.
 pub fn leaveOut(d: *Desktop, path: []const u8) void {
     if (!rewrite(d, path, true)) {
-        d.say("The disk will not keep what is left out");
+        d.tell(.MSG_LEFT_OUT_NOT_KEPT, .{});
         return;
     }
     put(d, path);

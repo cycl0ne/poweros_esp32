@@ -63,43 +63,51 @@ test "the ground: a picture scaled to cover, centred, and which colours are ligh
 
 test "the title: free memory in the unit that suits it, PSRAM only when there is some" {
     var text: [96]u8 = undefined;
-    const n = title.memoryTitle(&text, 123 * 1024 + 500, 4_620_288, false, null);
+    const n = title.memoryTitle(&text, 123 * 1024 + 500, 4_620_288, false, null, &.{});
     try testing.expectEqualStrings("Anvil   Internal 123 KB free   PSRAM 4.4 MB free", text[0..n]);
     try testing.expectEqual(@as(u8, 0), text[n]);
-    const m = title.memoryTitle(&text, 1_000 * 1024, 0, false, null);
+    const m = title.memoryTitle(&text, 1_000 * 1024, 0, false, null, &.{});
     try testing.expectEqualStrings("Anvil   Internal 1,000 KB free", text[0..m]);
     // Rounded down: a megabyte short of a gigabyte is not one.
-    const k = title.memoryTitle(&text, 1023 * 1024 * 1024 + 1023 * 1024, 1024 * 1024, false, null);
+    const k = title.memoryTitle(&text, 1023 * 1024 * 1024 + 1023 * 1024, 1024 * 1024, false, null, &.{});
     try testing.expectEqualStrings("Anvil   Internal 1023.9 MB free   PSRAM 1.0 MB free", text[0..k]);
 }
 
 test "the title: one figure where the RAM is one kind" {
     var text: [96]u8 = undefined;
-    const n = title.memoryTitle(&text, 8_373_475 * 1024, 123, true, null);
+    const n = title.memoryTitle(&text, 8_373_475 * 1024, 123, true, null, &.{});
     try testing.expectEqualStrings("Anvil   Memory 7.98 GB free", text[0..n]);
-    const m = title.memoryTitle(&text, 508_548 * 1024, 0, true, null);
+    const m = title.memoryTitle(&text, 508_548 * 1024, 0, true, null, &.{});
     try testing.expectEqualStrings("Anvil   Memory 496.6 MB free", text[0..m]);
     // A hundredth below ten keeps its nought.
-    const k = title.memoryTitle(&text, 2 * 1024 * 1024 * 1024 + 64 * 1024 * 1024, 0, true, null);
+    const k = title.memoryTitle(&text, 2 * 1024 * 1024 * 1024 + 64 * 1024 * 1024, 0, true, null, &.{});
     try testing.expectEqualStrings("Anvil   Memory 2.06 GB free", text[0..k]);
+    // In a German locale's words and numbers.
+    const german = title.Words{ .memory = "Speicher", .free = "frei", .group = ".", .point = "," };
+    const tenths = title.memoryTitle(&text, 508_548 * 1024, 0, true, null, &german);
+    try testing.expectEqualStrings("Anvil   Speicher 496,6 MB frei", text[0..tenths]);
+    const hundredths = title.memoryTitle(&text, 2 * 1024 * 1024 * 1024 + 64 * 1024 * 1024, 0, true, null, &german);
+    try testing.expectEqualStrings("Anvil   Speicher 2,06 GB frei", text[0..hundredths]);
+    const thousands = title.memoryTitle(&text, 1_000 * 1024, 0, false, null, &.{ .internal = "Intern", .free = "frei", .group = "." });
+    try testing.expectEqualStrings("Anvil   Intern 1.000 KB frei", text[0..thousands]);
 }
 
 test "the title: the battery's charge where a cell is measured" {
     const battery = @import("sdk").resources.battery;
     var text: [96]u8 = undefined;
     var state = battery.BatteryState{ .flags = battery.BATTF_MEASURED | battery.BATTF_PRESENT, .percent = 70 };
-    var n = title.memoryTitle(&text, 446 * 1024, 32_747 * 1024, false, &state);
+    var n = title.memoryTitle(&text, 446 * 1024, 32_747 * 1024, false, &state, &.{});
     try testing.expectEqualStrings("Anvil   Internal 446 KB free   PSRAM 31.9 MB free   Battery 70%", text[0..n]);
     state.flags |= battery.BATTF_KNOWS_EXTERNAL | battery.BATTF_EXTERNAL;
-    n = title.memoryTitle(&text, 446 * 1024, 0, false, &state);
+    n = title.memoryTitle(&text, 446 * 1024, 0, false, &state, &.{});
     try testing.expectEqualStrings("Anvil   Internal 446 KB free   Battery 70%, external power", text[0..n]);
     state.flags |= battery.BATTF_CHARGING;
     state.percent = 100;
-    n = title.memoryTitle(&text, 446 * 1024, 32_747 * 1024, false, &state);
+    n = title.memoryTitle(&text, 446 * 1024, 32_747 * 1024, false, &state, &.{});
     try testing.expectEqualStrings("Anvil   Internal 446 KB free   PSRAM 31.9 MB free   Battery 100%, charging", text[0..n]);
     // Measured, but no cell: nothing said.
     state.flags = battery.BATTF_MEASURED;
-    n = title.memoryTitle(&text, 446 * 1024, 0, false, &state);
+    n = title.memoryTitle(&text, 446 * 1024, 0, false, &state, &.{});
     try testing.expectEqualStrings("Anvil   Internal 446 KB free", text[0..n]);
 }
 
@@ -141,21 +149,29 @@ test "snapping: the free cell nearest where an icon was let go, counted from the
 
 test "a disk's title: how full, free and used, in K, then M, G, T and P past 9,999 of each" {
     var text: [96]u8 = undefined;
-    const n = drawer_path.diskTitle(&text, "Work", 1000, 450, 1024);
+    const n = drawer_path.diskTitle(&text, "Work", 1000, 450, 1024, &.{});
     try testing.expectEqualStrings("Work  45% full, 550K free, 450K in use", text[0..n]);
-    const m = drawer_path.diskTitle(&text, "Card", 4_000_000, 1_000_000, 512);
+    const m = drawer_path.diskTitle(&text, "Card", 4_000_000, 1_000_000, 512, &.{});
     try testing.expectEqualStrings("Card  25% full, 1,464M free, 488M in use", text[0..m]);
     // A 2 TB disk a quarter full, in 4 KiB blocks.
-    const g = drawer_path.diskTitle(&text, "Big", 488_281_250, 122_070_312, 4096);
+    const g = drawer_path.diskTitle(&text, "Big", 488_281_250, 122_070_312, 4096, &.{});
     try testing.expectEqualStrings("Big  25% full, 1,396G free, 465G in use", text[0..g]);
-    try testing.expectEqualStrings("Gone", text[0..drawer_path.diskTitle(&text, "Gone", 0, 0, 0)]);
+    try testing.expectEqualStrings("Gone", text[0..drawer_path.diskTitle(&text, "Gone", 0, 0, 0, &.{})]);
     // Each unit up to 9,999, the next past it; P as far as a u64 goes.
     var size: [24]u8 = undefined;
-    try testing.expectEqualStrings("9,999M", size[0..drawer_path.amount(&size, 9999 << 20)]);
-    try testing.expectEqualStrings("9G", size[0..drawer_path.amount(&size, 10000 << 20)]);
-    try testing.expectEqualStrings("12T", size[0..drawer_path.amount(&size, 12 << 40)]);
-    try testing.expectEqualStrings("10P", size[0..drawer_path.amount(&size, 10 << 50)]);
-    try testing.expectEqualStrings("16,383P", size[0..drawer_path.amount(&size, ~@as(u64, 0))]);
+    try testing.expectEqualStrings("9,999M", size[0..drawer_path.amount(&size, 9999 << 20, ",")]);
+    try testing.expectEqualStrings("9G", size[0..drawer_path.amount(&size, 10000 << 20, ",")]);
+    try testing.expectEqualStrings("12T", size[0..drawer_path.amount(&size, 12 << 40, ",")]);
+    try testing.expectEqualStrings("10P", size[0..drawer_path.amount(&size, 10 << 50, ",")]);
+    try testing.expectEqualStrings("16,383P", size[0..drawer_path.amount(&size, ~@as(u64, 0), ",")]);
+    // In a German locale's numbers, the thousands parted by points.
+    try testing.expectEqualStrings("9.999M", size[0..drawer_path.amount(&size, 9999 << 20, ".")]);
+    const german = drawer_path.Words{ .full = "voll", .free = "frei", .in_use = "belegt", .group = "." };
+    const card = drawer_path.diskTitle(&text, "Card", 4_000_000, 1_000_000, 512, &german);
+    try testing.expectEqualStrings("Card  25% voll, 1.464M frei, 488M belegt", text[0..card]);
+    // Cut where `into` ends, a separator too.
+    try testing.expectEqual(@as(usize, 2), drawer_path.number(size[0..2], 12_345, "."));
+    try testing.expectEqualStrings("12", size[0..2]);
 }
 
 test "rows: names in order case aside, the protection as hsparwed" {
@@ -365,7 +381,8 @@ test "a drawer's ribbon: a button for each command, found by its ID; off and che
     // Each command has one button, of the kind it is; nothing else has an
     // ID the ribbon's commands answer to.
     var seen: u32 = 0;
-    for (ribbon.table) |line| {
+    for (ribbon.table) |row| {
+        const line = row.entry;
         if (line.type != rb.RB_LARGE and line.type != rb.RB_MEDIUM and line.type != rb.RB_SMALL) continue;
         const which = ribbon.commandOf(line.id) orelse return error.NoCommand;
         try testing.expect(seen & ribbon.bit(which) == 0);
@@ -410,7 +427,8 @@ fn menuItem(menu: u32, number: u32) ?sdk.intuition.menus.NewMenu {
     const mn = sdk.intuition.menus;
     var menu_at: i32 = -1;
     var item_at: i32 = -1;
-    for (menus.table) |line| {
+    for (menus.table) |entry| {
+        const line = entry.menu;
         switch (line.type) {
             mn.NM_TITLE => {
                 menu_at += 1;

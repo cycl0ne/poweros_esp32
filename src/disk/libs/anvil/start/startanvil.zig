@@ -116,6 +116,7 @@ pub fn StartAnvil(base: *AnvilBase, tags: ?[*]const utility.TagItem) bool {
         .base = base,
         .sys = sys,
         .dl = dl,
+        .text = .{ .sys = sys },
         .clean_up = clean_up,
         .starter = sys.FindTask(null),
         .start_signal = @intCast(signal),

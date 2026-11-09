@@ -53,8 +53,8 @@ pub fn name(d: *Desktop, title: [*:0]const u8, prompt: [*:0]const u8, start: []c
     const buttons = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
         pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ),
         pair(lg.LAYOUTA_Spacing, 6),
-        pair(lg.LAYOUTA_AddChild, @intFromPtr(ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{ pair(gc.GA_Text, @intFromPtr("_OK")), pair(gc.GA_ID, ID_OK), pair(gc.GA_RelVerify, 1), .{} }))),
-        pair(lg.LAYOUTA_AddChild, @intFromPtr(ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{ pair(gc.GA_Text, @intFromPtr("_Cancel")), pair(gc.GA_ID, ID_CANCEL), pair(gc.GA_RelVerify, 1), .{} }))),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{ pair(gc.GA_Text, @intFromPtr(d.text.get(.MSG_OK))), pair(gc.GA_ID, ID_OK), pair(gc.GA_RelVerify, 1), .{} }))),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{ pair(gc.GA_Text, @intFromPtr(d.text.get(.MSG_CANCEL))), pair(gc.GA_ID, ID_CANCEL), pair(gc.GA_RelVerify, 1), .{} }))),
         .{},
     });
     const layout = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{

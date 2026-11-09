@@ -414,10 +414,16 @@ fn makeTitle(d: *Desktop, dr: *Drawer) void {
     defer if (lock) |held| d.dl.UnLock(held);
     const known = if (lock) |held| d.dl.Info(held, &info) else false;
     const shown = name[0..@min(name.len, 64)];
+    const words = path.Words{
+        .full = d.text.get(.MSG_DISK_FULL),
+        .free = d.text.get(.MSG_TITLE_FREE),
+        .in_use = d.text.get(.MSG_DISK_IN_USE),
+        .group = path.Separators.of(d.text.locale).group,
+    };
     if (known) {
-        _ = path.diskTitle(&dr.title, shown, info.num_blocks, info.num_blocks_used, info.bytes_per_block);
+        _ = path.diskTitle(&dr.title, shown, info.num_blocks, info.num_blocks_used, info.bytes_per_block, &words);
     } else {
-        _ = path.diskTitle(&dr.title, shown, 0, 0, 0);
+        _ = path.diskTitle(&dr.title, shown, 0, 0, 0, &words);
     }
 }
 
@@ -835,13 +841,17 @@ fn drawOn(d: *Desktop, dr: *Drawer, rp: *graphics.RastPort, at: icons.Origin, wi
         return;
     }
     const cols = textview.columns(&d.drawer_look, dr.inner_width);
+    const drawer_word = d.text.get(.MSG_LIST_DRAWER);
+    var drawer_length: usize = 0;
+    while (drawer_word[drawer_length] != 0) drawer_length += 1;
+    const group = path.Separators.of(d.text.locale).group;
     var y: i32 = -at.y;
     var it = dr.icons.iterator();
     while (it.next()) |node| : (y += cols.row_height) {
         if (y + cols.row_height <= 0) continue;
         if (y >= height) break;
         const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
-        textview.drawRow(d.gb, d.dl, rp, &d.drawer_look, cols, ic, y, at.x, width);
+        textview.drawRow(d.gb, d.dl, rp, &d.drawer_look, cols, ic, drawer_word[0..drawer_length], group, y, at.x, width);
     }
 }
 
@@ -994,6 +1004,7 @@ fn drawHeads(d: *Desktop, dr: *Drawer, part: Rect) void {
         }
     };
     const heads = textview.Headings{
+        .titles = .{ d.text.get(.MSG_MENU_BY_NAME), d.text.get(.MSG_MENU_BY_SIZE), d.text.get(.MSG_MENU_BY_DATE), d.text.get(.MSG_LIST_PROTECTION) },
         .sorted = dr.view,
         .reversed = dr.reversed,
         .pressed = dr.pressed,

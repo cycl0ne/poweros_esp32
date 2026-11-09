@@ -1,0 +1,355 @@
+## version $VER: sys/anvil.catalog 1.0 (09.11.2026)
+## language deutsch
+## codeset 106
+; The desktop's strings in German. Left out, so the English built in is
+; shown: Parent (MSG_RIBBON_PARENT) and Tool types (MSG_INFO_TOOL_TYPES).
+;
+; The menus.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Hintergrund
+MSG_MENU_EXECUTE
+Befehl ausführen...
+MSG_MENU_REDRAW_ALL
+Alles neu zeichnen
+MSG_MENU_UPDATE_ALL
+Alles aktualisieren
+MSG_MENU_LAST_MESSAGE
+Letzte Meldung
+MSG_MENU_VOLUME
+Lautstärke...
+MSG_MENU_ABOUT
+Über...
+MSG_MENU_QUIT
+Beenden...
+MSG_MENU_REBOOT
+Neu starten...
+MSG_MENU_WINDOW
+Fenster
+MSG_MENU_NEW_DRAWER
+Neue Schublade
+MSG_MENU_OPEN_PARENT
+Übergeordnete öffnen
+MSG_MENU_BACK
+Zurück
+MSG_MENU_FORWARD
+Vorwärts
+MSG_MENU_CLOSE
+Schließen
+MSG_MENU_UPDATE
+Aktualisieren
+MSG_MENU_SHELL
+Shell
+MSG_MENU_SELECT_CONTENTS
+Inhalt auswählen
+MSG_MENU_CLEAN_UP
+Aufräumen
+MSG_MENU_CLEAN_UP_BY
+Aufräumen nach
+MSG_MENU_BY_NAME
+Name
+MSG_MENU_BY_DATE
+Datum
+MSG_MENU_BY_SIZE
+Größe
+MSG_MENU_SNAP
+Am Raster ausrichten
+MSG_MENU_ARRANGE
+Bei Größenänderung anordnen
+MSG_MENU_SNAPSHOT
+Position merken
+MSG_MENU_SNAPSHOT_WINDOW
+Fenster
+MSG_MENU_SNAPSHOT_ALL
+Alles
+MSG_MENU_SHOW
+Zeigen
+MSG_MENU_ONLY_ICONS
+Nur Symbole
+MSG_MENU_ALL_FILES
+Alle Dateien
+MSG_MENU_VIEW_BY
+Ansicht nach
+MSG_MENU_BY_ICON
+Symbol
+MSG_MENU_RIBBON
+Menüband
+MSG_MENU_ICONS
+Symbole
+MSG_MENU_OPEN
+Öffnen
+MSG_MENU_COPY
+Kopieren
+MSG_MENU_RENAME
+Umbenennen...
+MSG_MENU_INFORMATION
+Information...
+MSG_MENU_UNSNAPSHOT
+Position vergessen
+MSG_MENU_LEAVE_OUT
+Ablegen
+MSG_MENU_PUT_AWAY
+Zurücklegen
+MSG_MENU_DELETE
+Löschen...
+MSG_MENU_FORMAT
+Datenträger formatieren...
+MSG_MENU_EMPTY_TRASH
+Papierkorb leeren
+MSG_MENU_TOOLS
+Werkzeuge
+;
+; A drawer's ribbon.
+MSG_RIBBON_HOME
+Start
+MSG_RIBBON_GO
+Gehe zu
+MSG_RIBBON_DRAWER
+Schublade
+MSG_RIBBON_RENAME
+Umbenennen
+MSG_RIBBON_DELETE
+Löschen
+MSG_RIBBON_INFORMATION
+Information
+MSG_RIBBON_VIEW
+Ansicht
+MSG_RIBBON_ARRANGE
+Anordnen
+;
+; A drawer shown as a list.
+MSG_LIST_PROTECTION
+Schutz
+MSG_LIST_DRAWER
+Schublade
+;
+; The screen's title.
+MSG_TITLE_MEMORY
+Speicher
+MSG_TITLE_INTERNAL
+Intern
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+frei
+MSG_TITLE_BATTERY
+Akku
+MSG_TITLE_CHARGING
+lädt
+MSG_TITLE_EXTERNAL_POWER
+Netzbetrieb
+;
+; A disk's window title.
+MSG_DISK_FULL
+voll
+MSG_DISK_IN_USE
+belegt
+;
+; What the desktop says in the screen's title.
+MSG_NOTHING_SAID
+Es wurde noch nichts gemeldet
+MSG_NOT_EVERY_FILE
+Nicht jede gewählte Datei ließ sich übernehmen
+MSG_DISK_NOT_RENAMED
+Der Datenträger ließ sich nicht umbenennen
+MSG_NOT_RENAMED
+Das ließ sich nicht umbenennen
+MSG_ICON_NOT_WRITTEN
+Ein Symbol ließ sich nicht schreiben
+MSG_DISK_NOT_THERE
+Der Datenträger ist nicht da
+MSG_DISK_BUSY
+Der Datenträger wird benutzt
+MSG_DISK_NOT_FORMATTED
+Der Datenträger ließ sich nicht formatieren
+MSG_DRAWER_NOT_MADE
+Die Schublade ließ sich nicht anlegen
+MSG_SETTING_NOT_KEPT
+%s ließ sich nicht merken
+MSG_SETTING_NOT_WRITTEN
+%s ließ sich nicht in anvil.prefs schreiben
+MSG_DRAWER_ICON_NOT_WRITTEN
+Das Symbol der Schublade ließ sich nicht schreiben
+MSG_NO_MEMORY_REBOOT
+Kein Speicher für den Neustart
+MSG_NO_MEMORY_ABOUT
+Kein Speicher für Über
+MSG_NO_TOOL
+Für %s gibt es kein Programm, das es öffnet
+MSG_NOT_STARTED
+%s ließ sich nicht starten
+MSG_COMMAND_NOT_STARTED
+Der Befehl ließ sich nicht starten
+MSG_SHELL_DRAWER_NOT_FOUND
+Die Schublade für die Shell ist nicht zu finden
+MSG_SHELL_NOT_STARTED
+Die Shell ließ sich nicht starten
+MSG_TRASH_OWN_DISK
+In den Papierkorb kommen nur Dateien seines eigenen Datenträgers
+MSG_NOT_MOVED
+Eine Datei ließ sich nicht dorthin verschieben
+MSG_LEFT_OUT_NOT_KEPT
+Der Datenträger behält nicht, was abgelegt ist
+MSG_NO_MEMORY_WORK
+Kein Speicher, um die Arbeit zu beginnen
+;
+; The questions asked, with their buttons.
+MSG_QUIT_RUNNING_ADDED
+Vom Desktop gestartete Programme laufen noch (%lu).\n\
+Sie laufen weiter. Fenster, Symbole und\n\
+Menüpunkte, die Programme hinzugefügt haben (%lu),\n\
+verschwinden mit ihm.\n\nDesktop beenden?
+MSG_QUIT_RUNNING
+Vom Desktop gestartete Programme laufen noch (%lu).\n\
+Sie laufen weiter.\n\nDesktop beenden?
+MSG_QUIT_ADDED
+Fenster, Symbole und Menüpunkte, die Programme\n\
+dem Desktop hinzugefügt haben (%lu), verschwinden mit ihm.\n\n\
+Desktop beenden?
+MSG_QUIT_ASK
+Desktop beenden?
+MSG_QUIT_BUTTONS
+Beenden|Abbrechen
+MSG_DELETE_ASK
+Das Gewählte (%lu) endgültig löschen?\n\
+Eine Schublade geht mit ihrem ganzen Inhalt.
+MSG_DELETE_BUTTONS
+Löschen|Abbrechen
+MSG_RENAME_PROMPT
+Ein neuer Name dafür:
+MSG_FORMAT_TITLE
+Datenträger formatieren
+MSG_FORMAT_ASK
+%s formatieren?\nAlles darauf geht verloren.
+MSG_FORMAT_BUTTONS
+Formatieren|Abbrechen
+MSG_NEW_DRAWER_PROMPT
+Ein Name für die neue Schublade:
+MSG_UNNAMED
+Unbenannt
+MSG_EXECUTE_TITLE
+Befehl ausführen
+MSG_EXECUTE_PROMPT
+Ein Befehl, der laufen soll:
+MSG_OUTPUT
+Ausgabe
+MSG_REBOOT_TITLE
+Neu starten
+MSG_REBOOT_ASK
+Den Rechner neu starten?\nWas Programme nicht gespeichert haben, geht verloren.
+MSG_REBOOT_BUTTONS
+Neu starten|Abbrechen
+MSG_REBOOT_IN_USE
+In Benutzung, was sie halten, wird vielleicht nicht geschrieben:\n%s\n\n\
+Trotzdem neu starten?
+MSG_STARTUP_WAIT
+Das Programm '%s'\nist noch nicht beendet.\nNoch länger warten?
+MSG_STARTUP_BUTTONS
+Warten|Weiter
+MSG_OK
+_OK
+MSG_CANCEL
+_Abbrechen
+;
+; About.
+MSG_ABOUT_TITLE
+Über Anvil
+MSG_ABOUT_WHAT
+Der Desktop von PowerOS
+MSG_ABOUT_RELEASE
+Release
+MSG_ABOUT_KERNEL
+Kernel
+MSG_ABOUT_BOARD
+Platine
+MSG_ABOUT_PROCESSOR
+Prozessor
+MSG_ABOUT_CORES
+Kerne
+MSG_ABOUT_CLOCK
+Takt
+MSG_ABOUT_SCREEN
+Bildschirm
+MSG_ABOUT_SYSTEM_DISK
+Systemlaufwerk
+MSG_ABOUT_UP_FOR
+Läuft seit
+MSG_ABOUT_IN_USE
+Belegt
+MSG_ABOUT_OF
+von
+MSG_ABOUT_BITS
+Bit pro Pixel
+MSG_ABOUT_DAY
+Tag
+MSG_ABOUT_DAYS
+Tagen
+;
+; Information.
+MSG_INFO_TITLE
+Information
+MSG_INFO_STATE
+Zustand
+MSG_INFO_READ_ONLY
+Nur lesen
+MSG_INFO_VALIDATING
+Wird geprüft
+MSG_INFO_READ_WRITE
+Lesen und schreiben
+MSG_INFO_UNKNOWN
+Unbekannt
+MSG_INFO_BLOCKS
+Blöcke
+MSG_INFO_USED
+Belegt
+MSG_INFO_FREE
+Frei
+MSG_INFO_BLOCK_SIZE
+Blockgröße
+MSG_INFO_BYTES
+Bytes
+MSG_INFO_BLOCKS_COUNTED
+Blöcke
+MSG_INFO_CREATED
+Angelegt
+MSG_INFO_LAST_CHANGED
+Zuletzt geändert
+MSG_INFO_SCRIPT
+Skript
+MSG_INFO_ARCHIVED
+Archiviert
+MSG_INFO_READABLE
+Lesbar
+MSG_INFO_WRITABLE
+Schreibbar
+MSG_INFO_EXECUTABLE
+Ausführbar
+MSG_INFO_DELETABLE
+Löschbar
+MSG_INFO_COMMENT
+Kommentar
+MSG_INFO_STACK
+Stapel
+MSG_INFO_DEFAULT_TOOL
+Standardprogramm
+MSG_INFO_SAVE
+_Speichern
+MSG_INFO_NOT_WRITTEN
+Das Symbol ließ sich nicht schreiben.
+MSG_INFO_OK
+OK
+;
+; The window copying and deleting.
+MSG_WORK_COPYING
+Kopieren
+MSG_WORK_DELETING
+Löschen
+MSG_WORK_STOP
+_Stopp
+MSG_WORK_WAITING
+Noch %lu in der Warteschlange
+MSG_WORK_REPLACE_ASK
+%s ist schon da.\nErsetzen?
+MSG_WORK_REPLACE_BUTTONS
+Ersetzen|Alle ersetzen|Überspringen|Stopp

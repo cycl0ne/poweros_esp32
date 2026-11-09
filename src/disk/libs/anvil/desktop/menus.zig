@@ -3,10 +3,15 @@
 //! their numbers. A bar counts as an item. Every window of the desktop
 //! has the same strip: what an item does depends on the window it was
 //! picked in and what is selected, and an item that can do nothing there
-//! is off.
+//! is off. The table holds each label's string (`anvil.cd`), and the
+//! labels are put in from the catalog of the language the user prefers
+//! as the strip is made (`build`).
 
 const sdk = @import("sdk");
 const mn = sdk.intuition.menus;
+const strings = @import("strings");
+const Text = sdk.locale.Strings(strings);
+const Id = strings.Id;
 
 pub const MENU_ANVIL = 0;
 pub const MENU_WINDOW = 1;
@@ -76,87 +81,98 @@ pub const ITEM_DELETE = 9;
 pub const ITEM_FORMAT = 10;
 pub const ITEM_EMPTY_TRASH = 11;
 
-fn item(label: [*:0]const u8, key: ?[*:0]const u8, flags: u32) mn.NewMenu {
-    return .{ .type = mn.NM_ITEM, .label = label, .comm_key = key, .flags = flags };
+/// A menu's entry, and the string its label is.
+pub const Entry = struct { menu: mn.NewMenu, text: ?Id = null };
+
+fn title(text: Id) Entry {
+    return .{ .menu = .{ .type = mn.NM_TITLE, .label = strings.builtin(text) }, .text = text };
 }
 
-fn sub(label: [*:0]const u8, flags: u32, exclude: u32) mn.NewMenu {
-    return .{ .type = mn.NM_SUB, .label = label, .flags = flags, .mutual_exclude = exclude };
+fn item(text: Id, key: ?[*:0]const u8, flags: u32) Entry {
+    return .{ .menu = .{ .type = mn.NM_ITEM, .label = strings.builtin(text), .comm_key = key, .flags = flags }, .text = text };
 }
 
-const bar = mn.NewMenu{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL };
+fn sub(text: Id, flags: u32, exclude: u32) Entry {
+    return .{ .menu = .{ .type = mn.NM_SUB, .label = strings.builtin(text), .flags = flags, .mutual_exclude = exclude }, .text = text };
+}
+
+const bar = Entry{ .menu = .{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL } };
 const pick = mn.CHECKIT;
 
-pub const table = [_]mn.NewMenu{
-    .{ .type = mn.NM_TITLE, .label = "Anvil" },
-    item("Backdrop", "B", mn.CHECKIT | mn.MENUTOGGLE | mn.CHECKED),
-    item("Execute Command...", "E", 0),
-    item("Redraw All", null, 0),
-    item("Update All", null, 0),
-    item("Last Message", null, 0),
+pub const table = [_]Entry{
+    title(.MSG_MENU_ANVIL),
+    item(.MSG_MENU_BACKDROP, "B", mn.CHECKIT | mn.MENUTOGGLE | mn.CHECKED),
+    item(.MSG_MENU_EXECUTE, "E", 0),
+    item(.MSG_MENU_REDRAW_ALL, null, 0),
+    item(.MSG_MENU_UPDATE_ALL, null, 0),
+    item(.MSG_MENU_LAST_MESSAGE, null, 0),
     bar,
-    item("Volume...", null, 0),
-    item("About...", null, 0),
+    item(.MSG_MENU_VOLUME, null, 0),
+    item(.MSG_MENU_ABOUT, null, 0),
     bar,
-    item("Quit...", "Q", 0),
-    item("Reboot...", null, 0),
+    item(.MSG_MENU_QUIT, "Q", 0),
+    item(.MSG_MENU_REBOOT, null, 0),
 
-    .{ .type = mn.NM_TITLE, .label = "Window" },
-    item("New Drawer", "N", 0),
-    item("Open Parent", "K", 0),
-    item("Back", null, 0),
-    item("Forward", null, 0),
-    item("Close", "W", 0),
-    item("Update", null, 0),
-    item("Shell", null, 0),
+    title(.MSG_MENU_WINDOW),
+    item(.MSG_MENU_NEW_DRAWER, "N", 0),
+    item(.MSG_MENU_OPEN_PARENT, "K", 0),
+    item(.MSG_MENU_BACK, null, 0),
+    item(.MSG_MENU_FORWARD, null, 0),
+    item(.MSG_MENU_CLOSE, "W", 0),
+    item(.MSG_MENU_UPDATE, null, 0),
+    item(.MSG_MENU_SHELL, null, 0),
     bar,
-    item("Select Contents", "A", 0),
-    item("Clean Up", ".", 0),
-    item("Clean Up By", null, 0),
-    sub("Name", 0, 0),
-    sub("Date", 0, 0),
-    sub("Size", 0, 0),
-    item("Snap to Grid", null, mn.CHECKIT | mn.MENUTOGGLE),
-    item("Arrange on Resize", null, mn.CHECKIT | mn.MENUTOGGLE | mn.CHECKED),
+    item(.MSG_MENU_SELECT_CONTENTS, "A", 0),
+    item(.MSG_MENU_CLEAN_UP, ".", 0),
+    item(.MSG_MENU_CLEAN_UP_BY, null, 0),
+    sub(.MSG_MENU_BY_NAME, 0, 0),
+    sub(.MSG_MENU_BY_DATE, 0, 0),
+    sub(.MSG_MENU_BY_SIZE, 0, 0),
+    item(.MSG_MENU_SNAP, null, mn.CHECKIT | mn.MENUTOGGLE),
+    item(.MSG_MENU_ARRANGE, null, mn.CHECKIT | mn.MENUTOGGLE | mn.CHECKED),
     bar,
-    item("Snapshot", null, 0),
-    sub("Window", 0, 0),
-    sub("All", 0, 0),
-    item("Show", null, 0),
-    sub("Only Icons", pick, 0b10),
-    sub("All Files", pick | mn.CHECKED, 0b01),
-    item("View By", null, 0),
-    sub("Icon", pick | mn.CHECKED, 0b1110),
-    sub("Name", pick, 0b1101),
-    sub("Date", pick, 0b1011),
-    sub("Size", pick, 0b0111),
+    item(.MSG_MENU_SNAPSHOT, null, 0),
+    sub(.MSG_MENU_SNAPSHOT_WINDOW, 0, 0),
+    sub(.MSG_MENU_SNAPSHOT_ALL, 0, 0),
+    item(.MSG_MENU_SHOW, null, 0),
+    sub(.MSG_MENU_ONLY_ICONS, pick, 0b10),
+    sub(.MSG_MENU_ALL_FILES, pick | mn.CHECKED, 0b01),
+    item(.MSG_MENU_VIEW_BY, null, 0),
+    sub(.MSG_MENU_BY_ICON, pick | mn.CHECKED, 0b1110),
+    sub(.MSG_MENU_BY_NAME, pick, 0b1101),
+    sub(.MSG_MENU_BY_DATE, pick, 0b1011),
+    sub(.MSG_MENU_BY_SIZE, pick, 0b0111),
     bar,
-    item("Ribbon", null, mn.CHECKIT | mn.MENUTOGGLE),
+    item(.MSG_MENU_RIBBON, null, mn.CHECKIT | mn.MENUTOGGLE),
 
-    .{ .type = mn.NM_TITLE, .label = "Icons" },
-    item("Open", "O", 0),
-    item("Copy", "C", 0),
-    item("Rename...", "R", 0),
-    item("Information...", "I", 0),
-    item("Snapshot", "S", 0),
-    item("UnSnapshot", "U", 0),
-    item("Leave Out", "L", 0),
-    item("Put Away", "P", 0),
+    title(.MSG_MENU_ICONS),
+    item(.MSG_MENU_OPEN, "O", 0),
+    item(.MSG_MENU_COPY, "C", 0),
+    item(.MSG_MENU_RENAME, "R", 0),
+    item(.MSG_MENU_INFORMATION, "I", 0),
+    item(.MSG_MENU_SNAPSHOT, "S", 0),
+    item(.MSG_MENU_UNSNAPSHOT, "U", 0),
+    item(.MSG_MENU_LEAVE_OUT, "L", 0),
+    item(.MSG_MENU_PUT_AWAY, "P", 0),
     bar,
-    item("Delete...", "D", 0),
-    item("Format Disk...", null, 0),
-    item("Empty Trash", null, 0),
-    .{},
+    item(.MSG_MENU_DELETE, "D", 0),
+    item(.MSG_MENU_FORMAT, null, 0),
+    item(.MSG_MENU_EMPTY_TRASH, null, 0),
+    .{ .menu = .{} },
 };
 
-/// The whole table into `into`: the menus above, then Tools with an item
-/// for each of `labels` - off while there are none. The labels are not
-/// copied; `into` must hold `table.len + 1 + labels.len` entries.
-pub fn build(into: []mn.NewMenu, labels: []const [*:0]const u8) []mn.NewMenu {
+/// The whole table into `into`, each label in `text`'s language: the
+/// menus above, then Tools with an item for each of `labels` - off while
+/// there are none. The labels are not copied; `into` must hold
+/// `table.len + 1 + labels.len` entries.
+pub fn build(into: []mn.NewMenu, text: *const Text, labels: []const [*:0]const u8) []mn.NewMenu {
     const fixed = table.len - 1;
-    @memcpy(into[0..fixed], table[0..fixed]);
-    into[fixed] = .{ .type = mn.NM_TITLE, .label = "Tools", .flags = if (labels.len == 0) mn.NM_MENUDISABLED else 0 };
-    for (labels, fixed + 1..) |label, at| into[at] = item(label, null, 0);
+    for (table[0..fixed], into[0..fixed]) |entry, *made| {
+        made.* = entry.menu;
+        if (entry.text) |id| made.label = text.get(id);
+    }
+    into[fixed] = .{ .type = mn.NM_TITLE, .label = text.get(.MSG_MENU_TOOLS), .flags = if (labels.len == 0) mn.NM_MENUDISABLED else 0 };
+    for (labels, fixed + 1..) |label, at| into[at] = .{ .type = mn.NM_ITEM, .label = label };
     into[fixed + 1 + labels.len] = .{};
     return into[0 .. fixed + 2 + labels.len];
 }

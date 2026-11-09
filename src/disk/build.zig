@@ -17,8 +17,9 @@ const poweros_sdk = @import("poweros_sdk");
 /// Something built for the disk: its place there, its root source file,
 /// the name its load file is known by, the inner modules it is built
 /// with (`inner_modules`), and the catalog descriptor its strings are made
-/// from - imported as `strings`, its catalog named after its place.
-pub const Program = struct { disk: []const u8, source: []const u8, name: []const u8, imports: []const []const u8 = &.{}, strings: ?[]const u8 = null };
+/// from - imported as `strings`, its catalog named after its place unless
+/// `catalog` names it (`sys/` for the system's own modules).
+pub const Program = struct { disk: []const u8, source: []const u8, name: []const u8, imports: []const []const u8 = &.{}, strings: ?[]const u8 = null, catalog: ?[]const u8 = null };
 
 /// A translation of a program's strings: its place on the disk, in
 /// LOCALE:Catalogs/<language>/, the descriptor and the translation it is
@@ -32,6 +33,7 @@ pub const catalogs = [_]Catalog{
     .{ .disk = "locale/Catalogs/deutsch/programs/Sheet.catalog", .descriptor = "programs/sheet/sheet.cd", .translation = "programs/sheet/catalogs/deutsch.ct", .name = "programs/Sheet.catalog" },
     .{ .disk = "locale/Catalogs/deutsch/programs/Player.catalog", .descriptor = "programs/player/player.cd", .translation = "programs/player/catalogs/deutsch.ct", .name = "programs/Player.catalog" },
     .{ .disk = "locale/Catalogs/deutsch/programs/Movie.catalog", .descriptor = "programs/movie/movie.cd", .translation = "programs/movie/catalogs/deutsch.ct", .name = "programs/Movie.catalog" },
+    .{ .disk = "locale/Catalogs/deutsch/sys/anvil.catalog", .descriptor = "libs/anvil/anvil.cd", .translation = "libs/anvil/catalogs/deutsch.ct", .name = "sys/anvil.catalog" },
 };
 
 /// Code compiled into each program that imports it, by name, rather than
@@ -206,7 +208,7 @@ const modules = [_]Program{
     .{ .disk = "libs/filter.library", .source = "libs/filter/filter.zig", .name = "filter.library" },
     .{ .disk = "libs/update.library", .source = "libs/update/update.zig", .name = "update.library" },
     .{ .disk = "libs/icon.library", .source = "libs/icon/icon.zig", .name = "icon.library" },
-    .{ .disk = "libs/anvil.library", .source = "libs/anvil/anvil.zig", .name = "anvil.library" },
+    .{ .disk = "libs/anvil.library", .source = "libs/anvil/anvil.zig", .name = "anvil.library", .strings = "libs/anvil/anvil.cd", .catalog = "sys/anvil.catalog" },
     .{ .disk = "libs/tls.library", .source = "libs/tls/tls.zig", .name = "tls.library" },
     .{ .disk = "libs/wpa.library", .source = "libs/wpa/wpa.zig", .name = "wpa.library" },
     .{ .disk = "libs/diskfont.library", .source = "libs/diskfont/diskfont.zig", .name = "diskfont.library" },
@@ -682,7 +684,7 @@ pub fn build(b: *std.Build) void {
             }
         }
         if (program.strings) |descriptor| {
-            const catalog_name = b.fmt("{s}.catalog", .{program.disk});
+            const catalog_name = program.catalog orelse b.fmt("{s}.catalog", .{program.disk});
             imports[count] = .{ .name = "strings", .module = poweros_sdk.addStrings(b, sdk, b.path(descriptor), catalog_name) };
             count += 1;
         }

@@ -19,6 +19,9 @@
 //! asked for none and still shows the usual one goes on asking for none),
 //! default tool and tool types; Cancel or the close gadget leaves everything as it
 //! was. The drawer's notification brings the change to the desktop.
+//!
+//! **Its words** are the desktop's (`anvil.cd`), from the catalog of the
+//! language the user prefers, which the window's process opens itself.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -46,17 +49,20 @@ const _base = @import("../anvil_base.zig");
 const AnvilBase = _base.AnvilBase;
 const path = @import("../drawer/path.zig");
 const usual_stack = @import("../start/startanvil.zig").usual_stack;
+const strings = @import("strings");
+const Text = sdk.locale.Strings(strings);
+const Id = strings.Id;
 
 /// The bits shown, in the order of their boxes: ticked means allowed for
 /// the four that are set to forbid (rwed), set for the others.
-const Bit = struct { label: [*:0]const u8, mask: u32, forbids: bool };
+const Bit = struct { label: Id, mask: u32, forbids: bool };
 const bits = [_]Bit{
-    .{ .label = "Script", .mask = dos.FIBF_SCRIPT, .forbids = false },
-    .{ .label = "Archived", .mask = dos.FIBF_ARCHIVE, .forbids = false },
-    .{ .label = "Readable", .mask = dos.FIBF_READ, .forbids = true },
-    .{ .label = "Writable", .mask = dos.FIBF_WRITE, .forbids = true },
-    .{ .label = "Executable", .mask = dos.FIBF_EXECUTE, .forbids = true },
-    .{ .label = "Deletable", .mask = dos.FIBF_DELETE, .forbids = true },
+    .{ .label = .MSG_INFO_SCRIPT, .mask = dos.FIBF_SCRIPT, .forbids = false },
+    .{ .label = .MSG_INFO_ARCHIVED, .mask = dos.FIBF_ARCHIVE, .forbids = false },
+    .{ .label = .MSG_INFO_READABLE, .mask = dos.FIBF_READ, .forbids = true },
+    .{ .label = .MSG_INFO_WRITABLE, .mask = dos.FIBF_WRITE, .forbids = true },
+    .{ .label = .MSG_INFO_EXECUTABLE, .mask = dos.FIBF_EXECUTE, .forbids = true },
+    .{ .label = .MSG_INFO_DELETABLE, .mask = dos.FIBF_DELETE, .forbids = true },
 };
 
 /// How many tool types are written back, and how long they may be in all.
@@ -84,6 +90,8 @@ const Info = struct {
     sys: *ExecBase = undefined,
     dl: *DosBase = undefined,
     ib: *IntuitionBase = undefined,
+    /// The window's words, opened by its process.
+    text: Text = undefined,
     libraries: [3 + classes.len]?*exec.Library = @splat(null),
     /// The icon file's contents; null for a file without one.
     object: ?*icon.DiskObject = null,
@@ -239,6 +247,8 @@ fn infoMain(sys: *ExecBase) callconv(.c) void {
     const info: *Info = @ptrCast(@alignCast(me.user_data orelse return));
     defer sys.FreeVec(info);
     info.sys = sys;
+    info.text = Text.open(sys);
+    defer info.text.close();
     defer close(info);
     info.dl = @ptrCast(open(info, 0, dos.DOSNAME) orelse return);
     info.ib = @ptrCast(open(info, 1, intuition.INTUITIONNAME) orelse return);
@@ -310,8 +320,8 @@ fn line(info: *Info, parts: []const []const u8) [*:0]const u8 {
     return into;
 }
 
-fn numberText(into: []u8, value: u64) []const u8 {
-    return into[0..path.number(into, value)];
+fn numberText(into: []u8, value: u64, group: [*:0]const u8) []const u8 {
+    return into[0..path.number(into, value, group)];
 }
 
 fn dateText(dl: *DosBase, into: *[2 * dos.LEN_DATSTRING]u8, stamp: dos.DateStamp) []const u8 {
@@ -360,27 +370,30 @@ fn show(info: *Info) void {
     var number: [24]u8 = undefined;
     var more: [24]u8 = undefined;
     var when: [2 * dos.LEN_DATSTRING]u8 = undefined;
-    children.text(ib, line(info, &.{textOf(@ptrCast(&info.fib.file_name))}), "Name");
+    const text = &info.text;
+    const bytes_word = textOf(text.get(.MSG_INFO_BYTES));
+    const group = path.Separators.of(text.locale).group;
+    children.text(ib, line(info, &.{textOf(@ptrCast(&info.fib.file_name))}), text.get(.MSG_MENU_BY_NAME));
     if (info.kind == .disk) {
         const disk = &info.disk;
-        const state: []const u8 = switch (disk.disk_state) {
-            dos.ID_WRITE_PROTECTED => "Read only",
-            dos.ID_VALIDATING => "Being validated",
-            dos.ID_VALIDATED => "Read and write",
-            else => "Unknown",
-        };
+        const state = textOf(text.get(switch (disk.disk_state) {
+            dos.ID_WRITE_PROTECTED => .MSG_INFO_READ_ONLY,
+            dos.ID_VALIDATING => .MSG_INFO_VALIDATING,
+            dos.ID_VALIDATED => .MSG_INFO_READ_WRITE,
+            else => .MSG_INFO_UNKNOWN,
+        }));
         const free = disk.num_blocks - @min(disk.num_blocks_used, disk.num_blocks);
-        children.text(ib, line(info, &.{state}), "State");
-        children.text(ib, line(info, &.{numberText(&number, disk.num_blocks)}), "Blocks");
-        children.text(ib, line(info, &.{numberText(&number, disk.num_blocks_used)}), "Used");
-        children.text(ib, line(info, &.{numberText(&number, free)}), "Free");
-        children.text(ib, line(info, &.{ numberText(&number, disk.bytes_per_block), " bytes" }), "Block size");
-        children.text(ib, line(info, &.{dateText(info.dl, &when, info.made)}), "Created");
+        children.text(ib, line(info, &.{state}), text.get(.MSG_INFO_STATE));
+        children.text(ib, line(info, &.{numberText(&number, disk.num_blocks, group)}), text.get(.MSG_INFO_BLOCKS));
+        children.text(ib, line(info, &.{numberText(&number, disk.num_blocks_used, group)}), text.get(.MSG_INFO_USED));
+        children.text(ib, line(info, &.{numberText(&number, free, group)}), text.get(.MSG_INFO_FREE));
+        children.text(ib, line(info, &.{ numberText(&number, disk.bytes_per_block, group), " ", bytes_word }), text.get(.MSG_INFO_BLOCK_SIZE));
+        children.text(ib, line(info, &.{dateText(info.dl, &when, info.made)}), text.get(.MSG_INFO_CREATED));
     } else {
         if (info.kind == .tool or info.kind == .project) {
-            children.text(ib, line(info, &.{ numberText(&number, info.fib.size), " bytes, ", numberText(&more, info.fib.num_blocks), " blocks" }), "Size");
+            children.text(ib, line(info, &.{ numberText(&number, info.fib.size, group), " ", bytes_word, ", ", numberText(&more, info.fib.num_blocks, group), " ", textOf(text.get(.MSG_INFO_BLOCKS_COUNTED)) }), text.get(.MSG_MENU_BY_SIZE));
         }
-        children.text(ib, line(info, &.{dateText(info.dl, &when, info.fib.date)}), "Last changed");
+        children.text(ib, line(info, &.{dateText(info.dl, &when, info.fib.date)}), text.get(.MSG_INFO_LAST_CHANGED));
         // The bits, three to a row, label under label.
         var grid_tags: [3 + 2 * bits.len + 1]TagItem = undefined;
         grid_tags[0] = pair(lg.LAYOUTA_Orientation, lg.LORIENT_GRID);
@@ -390,17 +403,17 @@ fn show(info: *Info) void {
             const set = info.fib.protection & bit.mask != 0;
             info.boxes[at] = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{ pair(cb.CHECKBOX_Checked, @intFromBool(set != bit.forbids)), .{} });
             grid_tags[3 + 2 * at] = pair(lg.LAYOUTA_AddChild, @intFromPtr(info.boxes[at]));
-            grid_tags[4 + 2 * at] = pair(lg.CHILDA_Label, @intFromPtr(bit.label));
+            grid_tags[4 + 2 * at] = pair(lg.CHILDA_Label, @intFromPtr(text.get(bit.label)));
         }
         grid_tags[grid_tags.len - 1] = .{};
-        children.add(ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &grid_tags), "Protection");
+        children.add(ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &grid_tags), text.get(.MSG_LIST_PROTECTION));
         if (info.kind != .garbage) {
             info.comment = ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
                 pair(gc.STRINGA_MaxChars, info.fib.comment.len - 1),
                 pair(gc.STRINGA_TextVal, @intFromPtr(&info.fib.comment)),
                 .{},
             });
-            children.add(info.comment, "Comment");
+            children.add(info.comment, text.get(.MSG_INFO_COMMENT));
             children.tag(lg.CHILDA_MinWidth, 280);
         }
     }
@@ -413,20 +426,20 @@ fn show(info: *Info) void {
                 pair(ig.INTEGER_Number, if (object.stack_size != 0) object.stack_size else usual_stack),
                 .{},
             });
-            children.add(info.stack, "Stack");
+            children.add(info.stack, text.get(.MSG_INFO_STACK));
         }
         if (info.kind == .disk or info.kind == .project) {
             if (object.default_tool) |tool| {
-                const text = textOf(tool);
-                const take: usize = @min(text.len, dos.path_max);
-                @memcpy(info.tool_text[0..take], text[0..take]);
+                const named = textOf(tool);
+                const take: usize = @min(named.len, dos.path_max);
+                @memcpy(info.tool_text[0..take], named[0..take]);
             }
             info.tool = ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
                 pair(gc.STRINGA_MaxChars, dos.path_max),
                 pair(gc.STRINGA_TextVal, @intFromPtr(&info.tool_text)),
                 .{},
             });
-            children.add(info.tool, "Default tool");
+            children.add(info.tool, text.get(.MSG_INFO_DEFAULT_TOOL));
             children.tag(lg.CHILDA_MinWidth, 280);
         }
         if (info.libraries[AT_TEXTEDIT] != null and (info.kind == .drawer or info.kind == .tool or info.kind == .project)) {
@@ -438,7 +451,7 @@ fn show(info: *Info) void {
             });
             if (info.types != null) {
                 children.tag(lg.LAYOUTA_AddChild, @intFromPtr(info.types));
-                children.tag(lg.CHILDA_Label, @intFromPtr("Tool types"));
+                children.tag(lg.CHILDA_Label, @intFromPtr(text.get(.MSG_INFO_TOOL_TYPES)));
                 // A few lines' room, not the page the editor asks for.
                 children.tag(lg.CHILDA_MinHeight, 80);
                 children.tag(lg.CHILDA_MaxHeight, 120);
@@ -450,8 +463,8 @@ fn show(info: *Info) void {
     children.add(ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
         pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ),
         pair(lg.LAYOUTA_Spacing, 6),
-        pair(lg.LAYOUTA_AddChild, @intFromPtr(ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{ pair(gc.GA_Text, @intFromPtr("_Save")), pair(gc.GA_ID, ID_SAVE), pair(gc.GA_RelVerify, 1), .{} }))),
-        pair(lg.LAYOUTA_AddChild, @intFromPtr(ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{ pair(gc.GA_Text, @intFromPtr("_Cancel")), pair(gc.GA_ID, ID_CANCEL), pair(gc.GA_RelVerify, 1), .{} }))),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{ pair(gc.GA_Text, @intFromPtr(text.get(.MSG_INFO_SAVE))), pair(gc.GA_ID, ID_SAVE), pair(gc.GA_RelVerify, 1), .{} }))),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{ pair(gc.GA_Text, @intFromPtr(text.get(.MSG_CANCEL))), pair(gc.GA_ID, ID_CANCEL), pair(gc.GA_RelVerify, 1), .{} }))),
         .{},
     }), null);
     children.tags[children.count] = .{};
@@ -568,7 +581,7 @@ fn save(info: *Info, window: *intuition.Window) void {
         object.tool_types = &info.type_pointers;
     }
     if (!iconBase(info).PutDiskObject(&info.name, object)) {
-        const easy = intuition.EasyStruct{ .title = "Information", .text_format = "The icon could not be written.", .gadget_format = "OK" };
+        const easy = intuition.EasyStruct{ .title = info.text.get(.MSG_INFO_TITLE), .text_format = info.text.get(.MSG_INFO_NOT_WRITTEN), .gadget_format = info.text.get(.MSG_INFO_OK) };
         _ = ib.EasyRequestArgs(window, &easy, null, null);
     }
 }

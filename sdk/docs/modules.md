@@ -190,7 +190,6 @@ flowchart TB
 <!-- modchart disk -->
 ```mermaid
 flowchart TB
-    m_Shell["Shell"]
     m_aac_acodec["aac.acodec"]
     m_ac3_acodec["ac3.acodec"]
     m_acm_device["acm.device"]
@@ -294,7 +293,6 @@ flowchart TB
     m_aic8800_device --> m_timer_device
     m_aic8800_device --> m_usb_library
     m_aic8800_device --> m_wpa_library
-    m_anvil_library --> m_Shell
     m_anvil_library --> m_battery_resource
     m_anvil_library --> m_command_image
     m_anvil_library --> m_datatypes_library
@@ -473,7 +471,7 @@ flowchart TB
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827
     class m_datatype_classes,m_gadget_classes cls
     classDef rom fill:#f3f4f6,stroke:#9ca3af,color:#374151
-    class m_Shell,m_battery_resource,m_battmem_resource,m_dma_resource,m_dos_library,m_expander_resource,m_flash_device,m_gpio_resource,m_graphics_library,m_input_device,m_intuition_library,m_keyboard_device,m_keymap_library,m_layers_library,m_mouse_device,m_platform_resource,m_rta_library,m_rtg_library,m_serial_device,m_timer_device,m_usbport_resource,m_usbserial_device,m_videodec_resource rom
+    class m_battery_resource,m_battmem_resource,m_dma_resource,m_dos_library,m_expander_resource,m_flash_device,m_gpio_resource,m_graphics_library,m_input_device,m_intuition_library,m_keyboard_device,m_keymap_library,m_layers_library,m_mouse_device,m_platform_resource,m_rta_library,m_rtg_library,m_serial_device,m_timer_device,m_usbport_resource,m_usbserial_device,m_videodec_resource rom
 ```
 <!-- modchart end -->
 

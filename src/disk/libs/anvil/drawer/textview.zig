@@ -185,9 +185,8 @@ pub fn columns(look: *const icons.Look, width: i32) Columns {
 
 // --- the headings ------------------------------------------------------------------
 
-/// The titles over the columns, left to right.
+/// The columns' headings, left to right.
 pub const Heading = enum { name, size, date, protection };
-const titles = [_][]const u8{ "Name", "Size", "Date", "Protection" };
 
 /// The view a heading sorts by; null for Protection, which does not sort.
 pub fn sortsBy(heading: Heading) ?View {
@@ -229,6 +228,9 @@ pub fn headingAt(cols: Columns, x: i32, reach: i32) ?Heading {
 /// the heading a press is on - and what draws it: the screen's pens and
 /// a frame of frameiclass's, or none.
 pub const Headings = struct {
+    /// The titles over the columns, left to right, in the desktop's
+    /// language.
+    titles: [4][*:0]const u8,
     sorted: View,
     reversed: bool,
     pressed: ?Heading,
@@ -245,7 +247,10 @@ pub fn drawHeadings(ib: *IntuitionBase, gb: *GraphicsBase, rp: *graphics.RastPor
     if (look.font) |font| gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(font) }, .{} });
     gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} });
     const baseline = y + @divTrunc(height - look.font_height, 2) + look.baseline;
-    for ([_]Heading{ .name, .size, .date, .protection }, titles) |heading, title| {
+    for ([_]Heading{ .name, .size, .date, .protection }, heads.titles) |heading, written| {
+        var title_length: usize = 0;
+        while (written[title_length] != 0) title_length += 1;
+        const title = written[0..title_length];
         const span = spanOf(cols, heading, reach);
         const box = Rect{ .min_x = span[0] - scroll, .min_y = y, .max_x = span[1] - scroll, .max_y = y + height };
         if (box.max_x <= 0 or box.min_x >= width) continue;
@@ -320,8 +325,9 @@ pub fn protectionText(into: *[8]u8, bits: u32) void {
 
 /// One row drawn through `rp` with its top at `y`, the drawer scrolled
 /// `origin_x` across: in `look.text`, or selected on a bar of the fill pen
-/// `width` wide.
-pub fn drawRow(gb: *GraphicsBase, dl: *DosBase, rp: *graphics.RastPort, look: *const icons.Look, cols: Columns, ic: *const Icon, y: i32, origin_x: i32, width: i32) void {
+/// `width` wide. A drawer's size column says `drawer_word`, a file's
+/// size has its thousands parted by `group`.
+pub fn drawRow(gb: *GraphicsBase, dl: *DosBase, rp: *graphics.RastPort, look: *const icons.Look, cols: Columns, ic: *const Icon, drawer_word: []const u8, group: [*:0]const u8, y: i32, origin_x: i32, width: i32) void {
     if (ic.selected) {
         gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = look.fill }, .{} });
         gb.RectFill(rp, &.{ .min_x = 0, .min_y = y, .max_x = width, .max_y = y + cols.row_height });
@@ -340,9 +346,10 @@ pub fn drawRow(gb: *GraphicsBase, dl: *DosBase, rp: *graphics.RastPort, look: *c
 
     var size_text: [24]u8 = undefined;
     const size_len: usize = if (ic.entry.isDrawer()) blk: {
-        @memcpy(size_text[0..6], "Drawer");
-        break :blk 6;
-    } else path.number(&size_text, ic.entry.size);
+        const take = @min(drawer_word.len, size_text.len);
+        @memcpy(size_text[0..take], drawer_word[0..take]);
+        break :blk take;
+    } else path.number(&size_text, ic.entry.size, group);
     const size_width = gb.TextLength(rp, &size_text, @intCast(size_len));
     gb.Move(rp, cols.size_right - size_width - origin_x, base_y);
     gb.Text(rp, &size_text, @intCast(size_len));

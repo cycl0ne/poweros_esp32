@@ -112,6 +112,22 @@ The screen's title, while the desktop is the active window, says how much
 memory is free - the internal and PSRAM apart - and is brought up to date
 every two seconds.
 
+## Its words
+
+Everything the desktop says - its menus and a drawer's ribbon, the
+screen's and the drawers' titles, a drawer's list headings, its
+questions and what it says in the screen's title, About, Information
+and the window copying and deleting - is described in
+`src/disk/libs/anvil/anvil.cd` and built into the library in English.
+In another language it is read from
+`LOCALE:Catalogs/<language>/sys/anvil.catalog`, in the language the
+user prefers (Prefs' Region page, [locale guide](locale.md)); German
+is on the disk, its translation beside the descriptor in `catalogs/`.
+The desktop takes its language as it starts, so its menus, ribbon and
+titles change at its next start; About, Information and the window
+copying and deleting take theirs as each opens. What programs add -
+their windows, icons and menu items - is in their own words.
+
 ## Drawers
 
 A double click on a disk opens it into a window of its icons, and on a

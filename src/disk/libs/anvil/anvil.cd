@@ -1,0 +1,364 @@
+; The desktop's strings, in English: anvil.library is built with these,
+; and a translation in LOCALE:Catalogs/<language>/sys/anvil.catalog
+; stands in for them. A requester's text is written by RawDoFmt, which
+; takes its values in order: a translation keeps them so. A label's `_`
+; marks the key that presses its button.
+#version 1
+;
+; The menus. An item that asks something before it acts ends in "...".
+MSG_MENU_ANVIL (1//)
+Anvil
+MSG_MENU_BACKDROP (//)
+Backdrop
+MSG_MENU_EXECUTE (//)
+Execute Command...
+MSG_MENU_REDRAW_ALL (//)
+Redraw All
+MSG_MENU_UPDATE_ALL (//)
+Update All
+MSG_MENU_LAST_MESSAGE (//)
+Last Message
+MSG_MENU_VOLUME (//)
+Volume...
+MSG_MENU_ABOUT (//)
+About...
+MSG_MENU_QUIT (//)
+Quit...
+MSG_MENU_REBOOT (//)
+Reboot...
+MSG_MENU_WINDOW (//)
+Window
+MSG_MENU_NEW_DRAWER (//)
+New Drawer
+MSG_MENU_OPEN_PARENT (//)
+Open Parent
+MSG_MENU_BACK (//)
+Back
+MSG_MENU_FORWARD (//)
+Forward
+MSG_MENU_CLOSE (//)
+Close
+MSG_MENU_UPDATE (//)
+Update
+MSG_MENU_SHELL (//)
+Shell
+MSG_MENU_SELECT_CONTENTS (//)
+Select Contents
+MSG_MENU_CLEAN_UP (//)
+Clean Up
+MSG_MENU_CLEAN_UP_BY (//)
+Clean Up By
+MSG_MENU_BY_NAME (//)
+Name
+MSG_MENU_BY_DATE (//)
+Date
+MSG_MENU_BY_SIZE (//)
+Size
+MSG_MENU_SNAP (//)
+Snap to Grid
+MSG_MENU_ARRANGE (//)
+Arrange on Resize
+MSG_MENU_SNAPSHOT (//)
+Snapshot
+MSG_MENU_SNAPSHOT_WINDOW (//)
+Window
+MSG_MENU_SNAPSHOT_ALL (//)
+All
+MSG_MENU_SHOW (//)
+Show
+MSG_MENU_ONLY_ICONS (//)
+Only Icons
+MSG_MENU_ALL_FILES (//)
+All Files
+MSG_MENU_VIEW_BY (//)
+View By
+MSG_MENU_BY_ICON (//)
+Icon
+MSG_MENU_RIBBON (//)
+Ribbon
+MSG_MENU_ICONS (//)
+Icons
+MSG_MENU_OPEN (//)
+Open
+MSG_MENU_COPY (//)
+Copy
+MSG_MENU_RENAME (//)
+Rename...
+MSG_MENU_INFORMATION (//)
+Information...
+MSG_MENU_UNSNAPSHOT (//)
+UnSnapshot
+MSG_MENU_LEAVE_OUT (//)
+Leave Out
+MSG_MENU_PUT_AWAY (//)
+Put Away
+MSG_MENU_DELETE (//)
+Delete...
+MSG_MENU_FORMAT (//)
+Format Disk...
+MSG_MENU_EMPTY_TRASH (//)
+Empty Trash
+MSG_MENU_TOOLS (//)
+Tools
+;
+; A drawer's ribbon: its tabs and groups, and the buttons whose words
+; are not a menu item's.
+MSG_RIBBON_HOME (//)
+Home
+MSG_RIBBON_GO (//)
+Go
+MSG_RIBBON_PARENT (//)
+Parent
+MSG_RIBBON_DRAWER (//)
+Drawer
+MSG_RIBBON_RENAME (//)
+Rename
+MSG_RIBBON_DELETE (//)
+Delete
+MSG_RIBBON_INFORMATION (//)
+Information
+MSG_RIBBON_VIEW (//)
+View
+MSG_RIBBON_ARRANGE (//)
+Arrange
+;
+; A drawer shown as a list: the headings no menu item has, and what a
+; drawer's size says.
+MSG_LIST_PROTECTION (//)
+Protection
+MSG_LIST_DRAWER (//)
+Drawer
+;
+; The screen's title: "Anvil   Internal 123 KB free   PSRAM 4.4 MB free
+; Battery 70%, charging", the amounts put in between the words.
+MSG_TITLE_MEMORY (//)
+Memory
+MSG_TITLE_INTERNAL (//)
+Internal
+MSG_TITLE_PSRAM (//)
+PSRAM
+MSG_TITLE_FREE (//)
+free
+MSG_TITLE_BATTERY (//)
+Battery
+MSG_TITLE_CHARGING (//)
+charging
+MSG_TITLE_EXTERNAL_POWER (//)
+external power
+;
+; A disk's window title: "Work  45% full, 550K free, 450K in use".
+MSG_DISK_FULL (//)
+full
+MSG_DISK_IN_USE (//)
+in use
+;
+; What the desktop says in the screen's title for a few seconds.
+MSG_NOTHING_SAID (//)
+Nothing has been said
+MSG_NOT_EVERY_FILE (//)
+Not every file picked could be taken
+MSG_DISK_NOT_RENAMED (//)
+The disk could not be renamed
+MSG_NOT_RENAMED (//)
+It could not be renamed
+MSG_ICON_NOT_WRITTEN (//)
+An icon could not be written
+MSG_DISK_NOT_THERE (//)
+The disk is not there
+MSG_DISK_BUSY (//)
+The disk is in use
+MSG_DISK_NOT_FORMATTED (//)
+The disk could not be formatted
+MSG_DRAWER_NOT_MADE (//)
+The drawer could not be made
+MSG_SETTING_NOT_KEPT (//)
+%s could not be kept
+MSG_SETTING_NOT_WRITTEN (//)
+%s could not be written to anvil.prefs
+MSG_DRAWER_ICON_NOT_WRITTEN (//)
+The drawer's icon could not be written
+MSG_NO_MEMORY_REBOOT (//)
+No memory to reboot
+MSG_NO_MEMORY_ABOUT (//)
+No memory for About
+MSG_NO_TOOL (//)
+%s has no tool to open it
+MSG_NOT_STARTED (//)
+%s could not be started
+MSG_COMMAND_NOT_STARTED (//)
+The command could not be started
+MSG_SHELL_DRAWER_NOT_FOUND (//)
+The shell's drawer could not be found
+MSG_SHELL_NOT_STARTED (//)
+The shell could not be started
+MSG_TRASH_OWN_DISK (//)
+Only a file of the trash's own disk goes into its trash
+MSG_NOT_MOVED (//)
+A file could not be moved there
+MSG_LEFT_OUT_NOT_KEPT (//)
+The disk will not keep what is left out
+MSG_NO_MEMORY_WORK (//)
+No memory to start the work
+;
+; The questions asked, with their buttons.
+MSG_QUIT_RUNNING_ADDED (//)
+Programs started from the desktop still run (%lu).\n\
+They go on running. Windows, icons and\n\
+menu items programs added to it (%lu)\n\
+go with it.\n\nQuit the desktop?
+MSG_QUIT_RUNNING (//)
+Programs started from the desktop still run (%lu).\n\
+They go on running.\n\nQuit the desktop?
+MSG_QUIT_ADDED (//)
+Windows, icons and menu items programs\n\
+added to the desktop (%lu) go with it.\n\nQuit the desktop?
+MSG_QUIT_ASK (//)
+Quit the desktop?
+MSG_QUIT_BUTTONS (//)
+Quit|Cancel
+MSG_DELETE_ASK (//)
+Delete what is picked (%lu) for good?\n\
+A drawer goes with all that is in it.
+MSG_DELETE_BUTTONS (//)
+Delete|Cancel
+MSG_RENAME_PROMPT (//)
+A new name for it:
+MSG_FORMAT_TITLE (//)
+Format Disk
+MSG_FORMAT_ASK (//)
+Format %s?\nEverything on it is lost.
+MSG_FORMAT_BUTTONS (//)
+Format|Cancel
+MSG_NEW_DRAWER_PROMPT (//)
+A name for the new drawer:
+MSG_UNNAMED (//)
+Unnamed
+MSG_EXECUTE_TITLE (//)
+Execute Command
+MSG_EXECUTE_PROMPT (//)
+A command to run:
+MSG_OUTPUT (//)
+Output
+MSG_REBOOT_TITLE (//)
+Reboot
+MSG_REBOOT_ASK (//)
+Start the machine again?\nWhat programs have not saved is lost.
+MSG_REBOOT_BUTTONS (//)
+Reboot|Cancel
+MSG_REBOOT_IN_USE (//)
+In use, so what they hold may not be written out:\n%s\n\n\
+Reboot all the same?
+MSG_STARTUP_WAIT (//)
+Program '%s'\nhas not yet ended.\nWait some more?
+MSG_STARTUP_BUTTONS (//)
+Wait|Go On
+MSG_OK (//)
+_OK
+MSG_CANCEL (//)
+_Cancel
+;
+; About: the window's title, what the desktop is, and its rows' labels
+; and words.
+MSG_ABOUT_TITLE (//)
+About Anvil
+MSG_ABOUT_WHAT (//)
+The PowerOS desktop
+MSG_ABOUT_RELEASE (//)
+Release
+MSG_ABOUT_KERNEL (//)
+Kernel
+MSG_ABOUT_BOARD (//)
+Board
+MSG_ABOUT_PROCESSOR (//)
+Processor
+MSG_ABOUT_CORES (//)
+Cores
+MSG_ABOUT_CLOCK (//)
+Clock
+MSG_ABOUT_SCREEN (//)
+Screen
+MSG_ABOUT_SYSTEM_DISK (//)
+System disk
+MSG_ABOUT_UP_FOR (//)
+Up for
+MSG_ABOUT_IN_USE (//)
+In use
+MSG_ABOUT_OF (//)
+of
+MSG_ABOUT_BITS (//)
+bits a pixel
+MSG_ABOUT_DAY (//)
+day
+MSG_ABOUT_DAYS (//)
+days
+;
+; Information: the window's labels, a disk's state, the protection bits,
+; its buttons, and what it says when the icon cannot be written.
+MSG_INFO_TITLE (//)
+Information
+MSG_INFO_STATE (//)
+State
+MSG_INFO_READ_ONLY (//)
+Read only
+MSG_INFO_VALIDATING (//)
+Being validated
+MSG_INFO_READ_WRITE (//)
+Read and write
+MSG_INFO_UNKNOWN (//)
+Unknown
+MSG_INFO_BLOCKS (//)
+Blocks
+MSG_INFO_USED (//)
+Used
+MSG_INFO_FREE (//)
+Free
+MSG_INFO_BLOCK_SIZE (//)
+Block size
+MSG_INFO_BYTES (//)
+bytes
+MSG_INFO_BLOCKS_COUNTED (//)
+blocks
+MSG_INFO_CREATED (//)
+Created
+MSG_INFO_LAST_CHANGED (//)
+Last changed
+MSG_INFO_SCRIPT (//)
+Script
+MSG_INFO_ARCHIVED (//)
+Archived
+MSG_INFO_READABLE (//)
+Readable
+MSG_INFO_WRITABLE (//)
+Writable
+MSG_INFO_EXECUTABLE (//)
+Executable
+MSG_INFO_DELETABLE (//)
+Deletable
+MSG_INFO_COMMENT (//)
+Comment
+MSG_INFO_STACK (//)
+Stack
+MSG_INFO_DEFAULT_TOOL (//)
+Default tool
+MSG_INFO_TOOL_TYPES (//)
+Tool types
+MSG_INFO_SAVE (//)
+_Save
+MSG_INFO_NOT_WRITTEN (//)
+The icon could not be written.
+MSG_INFO_OK (//)
+OK
+;
+; The window copying and deleting, and the question a copy asks.
+MSG_WORK_COPYING (//)
+Copying
+MSG_WORK_DELETING (//)
+Deleting
+MSG_WORK_STOP (//)
+_Stop
+MSG_WORK_WAITING (//)
+%lu more waiting
+MSG_WORK_REPLACE_ASK (//)
+%s is there already.\nReplace it?
+MSG_WORK_REPLACE_BUTTONS (//)
+Replace|Replace All|Skip|Stop

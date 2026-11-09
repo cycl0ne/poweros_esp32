@@ -41,6 +41,8 @@
 //! it, after `ended` has let go of it. A job is the desktop's
 //! allocation, and the process's to free once it is done or dropped.
 //! The drawers it changed see the change through their notification.
+//! Its words come from the desktop's catalog (`anvil.cd`), which the
+//! process opens for itself: it may outlive the desktop that started it.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -58,6 +60,9 @@ const timer = sdk.devices.timer;
 const TagItem = utility.TagItem;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
+const strings = @import("strings");
+const Text = sdk.locale.Strings(strings);
+const Id = strings.Id;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const IconBase = sdk.interface.icon.IconBase;
 const TimerBase = sdk.interface.timer.TimerBase;
@@ -126,6 +131,8 @@ pub const Work = extern struct {
     // The process's own.
     sys: *ExecBase = undefined,
     dl: *DosBase = undefined,
+    /// Its words, opened on its stack; null until they are.
+    text: ?*const Text = null,
     ib: ?*IntuitionBase = null,
     icon_base: ?*IconBase = null,
     libraries: [5]?*exec.Library = @splat(null),
@@ -139,7 +146,7 @@ pub const Work = extern struct {
     rate_text: [24:0]u8 = @splat(0),
     /// How many jobs wait after this one, under the rate, as shown.
     queued: ?*Object = null,
-    queued_text: [24:0]u8 = @splat(0),
+    queued_text: [64:0]u8 = @splat(0),
     shown_waiting: u32 = 0,
     /// The E-clock the rate is measured on; null without timer.device.
     clock: timer.TimeRequest = .{},
@@ -178,7 +185,7 @@ pub fn start(d: *Desktop, kind: Kind, sources: []const []const u8, into: []const
     while (from < sources.len) {
         const part = sources[from..@min(sources.len, from + sources_max)];
         from += part.len;
-        const memory = d.sys.AllocVec(@sizeOf(Job), exec.MEMF_CLEAR) orelse return d.say("No memory to start the work");
+        const memory = d.sys.AllocVec(@sizeOf(Job), exec.MEMF_CLEAR) orelse return d.tell(.MSG_NO_MEMORY_WORK, .{});
         const job: *Job = @ptrCast(@alignCast(memory));
         job.* = .{ .kind = kind };
         for (part) |source| {
@@ -278,7 +285,7 @@ fn queue(d: *Desktop, job: *Job) void {
     }
     const memory = sys.AllocVec(@sizeOf(Work), exec.MEMF_CLEAR) orelse {
         sys.FreeVec(job);
-        d.say("No memory to start the work");
+        d.tell(.MSG_NO_MEMORY_WORK, .{});
         return;
     };
     const work: *Work = @ptrCast(@alignCast(memory));
@@ -302,7 +309,7 @@ fn queue(d: *Desktop, job: *Job) void {
         _base.holdLibrary(d.base, -1);
         sys.FreeVec(job);
         sys.FreeVec(memory);
-        d.say("No memory to start the work");
+        d.tell(.MSG_NO_MEMORY_WORK, .{});
         return;
     }
     d.running += 1;
@@ -317,11 +324,18 @@ pub fn ended(d: *Desktop, message: *run.Ended) void {
     if (&work.ended == message) d.work = null;
 }
 
-fn titleOf(kind: Kind) [*:0]const u8 {
-    return switch (kind) {
-        .copy => "Copying",
-        .delete, .empty => "Deleting",
-    };
+fn titleOf(work: *const Work, kind: Kind) [*:0]const u8 {
+    return wordOf(work, switch (kind) {
+        .copy => .MSG_WORK_COPYING,
+        .delete, .empty => .MSG_WORK_DELETING,
+    });
+}
+
+/// The string `id` in the language the user prefers; the one built in
+/// before the process has its words.
+fn wordOf(work: *const Work, id: Id) [*:0]const u8 {
+    const text = work.text orelse return strings.builtin(id);
+    return text.get(id);
 }
 
 /// The work process: its window up, then each job in turn counted and
@@ -335,6 +349,10 @@ fn workMain(sys: *ExecBase) callconv(.c) void {
     defer finish(work);
     work.dl = @ptrCast(open(work, 0, dos.DOSNAME) orelse return);
     defer close(work);
+    var text = Text.open(sys);
+    defer text.close();
+    work.text = &text;
+    defer work.text = null;
     // The first job before the window, which is titled for it.
     var job = takeNext(work) orelse return;
     work.ib = @ptrCast(open(work, 1, intuition.INTUITIONNAME));
@@ -452,7 +470,7 @@ fn openWindow(work: *Work) void {
     }
     work.queued = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&work.queued_text)), .{} });
     const stop = ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
-        pair(gc.GA_Text, @intFromPtr("_Stop")),
+        pair(gc.GA_Text, @intFromPtr(wordOf(work, .MSG_WORK_STOP))),
         pair(gc.GA_ID, ID_STOP),
         pair(gc.GA_RelVerify, 1),
         .{},
@@ -483,7 +501,7 @@ fn openWindow(work: *Work) void {
     const layout = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &tags) orelse return;
     const first = if (work.job) |held| held.kind else Kind.copy;
     work.window_object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
-        pair(wn.WA_Title, @intFromPtr(titleOf(first))),
+        pair(wn.WA_Title, @intFromPtr(titleOf(work, first))),
         pair(wn.WA_DragBar, 1),
         pair(wn.WA_DepthGadget, 1),
         pair(wn.WA_CloseGadget, 1),
@@ -517,7 +535,7 @@ fn readyWindow(work: *Work, job: *Job) void {
     @memset(&work.rate_text, 0);
     const ib = work.ib orelse return;
     const window = work.window orelse return;
-    ib.SetWindowTitles(window, titleOf(job.kind), wn.TITLE_UNCHANGED);
+    ib.SetWindowTitles(window, titleOf(work, job.kind), wn.TITLE_UNCHANGED);
     if (work.label) |label| _ = ib.SetGadgetAttrsTagList(label, window, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&work.label_text)), .{} });
     if (work.rate) |rate| _ = ib.SetGadgetAttrsTagList(rate, window, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&work.rate_text)), .{} });
     work.shown_waiting = ~@as(u32, 0);
@@ -558,10 +576,9 @@ fn showWaiting(work: *Work) void {
     if (count == work.shown_waiting) return;
     work.shown_waiting = count;
     @memset(&work.queued_text, 0);
-    if (count != 0) {
-        var n = digits(&work.queued_text, count);
-        n += put(work.queued_text[n..], " more waiting");
-    }
+    if (count != 0) if (work.text) |text| {
+        _ = text.format(&work.queued_text, .MSG_WORK_WAITING, .{@as(u64, count)});
+    };
     _ = ib.SetGadgetAttrsTagList(line, window, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&work.queued_text)), .{} });
 }
 
@@ -920,9 +937,9 @@ const Answer = enum { replace, replace_all, skip, stop };
 fn ask(work: *Work, target: [*:0]const u8) Answer {
     const ib = work.ib orelse return .skip;
     const easy = intuition.requesters.EasyStruct{
-        .title = "Copying",
-        .text_format = "%s is there already.\nReplace it?",
-        .gadget_format = "Replace|Replace All|Skip|Stop",
+        .title = titleOf(work, .copy),
+        .text_format = wordOf(work, .MSG_WORK_REPLACE_ASK),
+        .gadget_format = wordOf(work, .MSG_WORK_REPLACE_BUTTONS),
     };
     const args = [_]usize{@intFromPtr(target)};
     return switch (ib.EasyRequestArgs(work.window, &easy, null, &args)) {

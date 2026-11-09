@@ -8,7 +8,8 @@
 //! only icons (Show), and Clean Up, Snap to Grid, Arrange on Resize and
 //! Snapshot (Arrange).
 //!
-//! It is made from `table` with `rb.build` when the window opens: a gadget
+//! It is made from `table` with `rb.build` when the window opens, each
+//! label put in from the desktop's catalog (`anvil.cd`): a gadget
 //! of the inside at its top, as wide as the inside, as high as it says it
 //! needs (`GM_DOMAIN`). The strip above the view (`Drawer.top`) is that
 //! high with the row of headings under it, and intuition draws the ribbon
@@ -47,6 +48,8 @@ const Desktop = @import("../desktop/_desktop.zig").Desktop;
 const commands = @import("../desktop/commands.zig");
 const menus = @import("../desktop/menus.zig");
 const run = @import("../desktop/run.zig");
+const strings = @import("strings");
+const Id = strings.Id;
 
 /// The ribbon's own gadget ID, which it reports a tab turned, or itself
 /// minimized and brought back, with.
@@ -104,47 +107,54 @@ pub fn isToggle(which: Command) bool {
     };
 }
 
-fn group(label: [*:0]const u8, glyph: u32, reduce: u32) rb.NewRibbon {
-    return .{ .type = rb.RB_GROUP, .label = label, .glyph = glyph, .reduce = reduce };
+/// A line of the ribbon, and the string its label is.
+pub const Entry = struct { entry: rb.NewRibbon, label: ?Id = null };
+
+fn tab(label: Id) Entry {
+    return .{ .entry = .{ .type = rb.RB_TAB, .label = strings.builtin(label) }, .label = label };
 }
 
-fn button(size: u32, which: Command, label: [*:0]const u8, glyph: u32) rb.NewRibbon {
-    return .{ .type = size, .id = @intFromEnum(which), .label = label, .glyph = glyph, .kind = if (isToggle(which)) tb.TBKIND_TOGGLE else tb.TBKIND_PUSH };
+fn group(label: Id, glyph: u32, reduce: u32) Entry {
+    return .{ .entry = .{ .type = rb.RB_GROUP, .label = strings.builtin(label), .glyph = glyph, .reduce = reduce }, .label = label };
+}
+
+fn button(size: u32, which: Command, label: Id, glyph: u32) Entry {
+    return .{ .entry = .{ .type = size, .id = @intFromEnum(which), .label = strings.builtin(label), .glyph = glyph, .kind = if (isToggle(which)) tb.TBKIND_TOGGLE else tb.TBKIND_PUSH }, .label = label };
 }
 
 /// The ribbon, as `rb.build` makes it: a line for each tab, its groups
 /// after it and each group's buttons after the group. A group with a
 /// higher `reduce` is made smaller first when the window is narrow.
-pub const table = [_]rb.NewRibbon{
-    .{ .type = rb.RB_TAB, .label = "Home" },
-    group("Go", command.CMD_PARENT, 0),
-    button(rb.RB_MEDIUM, .back, "Back", command.CMD_BACK),
-    button(rb.RB_MEDIUM, .forward, "Forward", command.CMD_FORWARD),
-    button(rb.RB_LARGE, .parent, "Parent", command.CMD_PARENT),
-    group("Drawer", command.CMD_NEW_DRAWER, 1),
-    button(rb.RB_MEDIUM, .new_drawer, "New Drawer", command.CMD_NEW_DRAWER),
-    button(rb.RB_MEDIUM, .update, "Update", command.CMD_UPDATE),
-    button(rb.RB_MEDIUM, .shell, "Shell", command.CMD_SHELL),
-    group("Icons", command.CMD_OPEN, 2),
-    button(rb.RB_MEDIUM, .open, "Open", command.CMD_OPEN),
-    button(rb.RB_MEDIUM, .rename, "Rename", command.CMD_RENAME),
-    button(rb.RB_MEDIUM, .delete, "Delete", command.CMD_DELETE),
-    button(rb.RB_MEDIUM, .information, "Information", command.CMD_INFORMATION),
-    button(rb.RB_MEDIUM, .copy, "Copy", command.CMD_COPY),
-    .{ .type = rb.RB_TAB, .label = "View" },
-    group("View", command.CMD_VIEW_ICONS, 1),
-    button(rb.RB_LARGE, .by_icon, "Icons", command.CMD_VIEW_ICONS),
-    button(rb.RB_MEDIUM, .by_name, "Name", command.CMD_VIEW_LIST),
-    button(rb.RB_MEDIUM, .by_date, "Date", command.CMD_VIEW_DATE),
-    button(rb.RB_MEDIUM, .by_size, "Size", command.CMD_VIEW_SIZE),
-    group("Show", command.CMD_ALL_FILES, 0),
-    button(rb.RB_LARGE, .all_files, "All Files", command.CMD_ALL_FILES),
-    group("Arrange", command.CMD_CLEAN_UP, 2),
-    button(rb.RB_LARGE, .clean_up, "Clean Up", command.CMD_CLEAN_UP),
-    button(rb.RB_MEDIUM, .snap, "Snap to Grid", command.CMD_SNAP_GRID),
-    button(rb.RB_MEDIUM, .arrange, "Arrange on Resize", command.CMD_ARRANGE),
-    button(rb.RB_MEDIUM, .snapshot, "Snapshot", command.CMD_SNAPSHOT),
-    .{ .type = rb.RB_END },
+pub const table = [_]Entry{
+    tab(.MSG_RIBBON_HOME),
+    group(.MSG_RIBBON_GO, command.CMD_PARENT, 0),
+    button(rb.RB_MEDIUM, .back, .MSG_MENU_BACK, command.CMD_BACK),
+    button(rb.RB_MEDIUM, .forward, .MSG_MENU_FORWARD, command.CMD_FORWARD),
+    button(rb.RB_LARGE, .parent, .MSG_RIBBON_PARENT, command.CMD_PARENT),
+    group(.MSG_RIBBON_DRAWER, command.CMD_NEW_DRAWER, 1),
+    button(rb.RB_MEDIUM, .new_drawer, .MSG_MENU_NEW_DRAWER, command.CMD_NEW_DRAWER),
+    button(rb.RB_MEDIUM, .update, .MSG_MENU_UPDATE, command.CMD_UPDATE),
+    button(rb.RB_MEDIUM, .shell, .MSG_MENU_SHELL, command.CMD_SHELL),
+    group(.MSG_MENU_ICONS, command.CMD_OPEN, 2),
+    button(rb.RB_MEDIUM, .open, .MSG_MENU_OPEN, command.CMD_OPEN),
+    button(rb.RB_MEDIUM, .rename, .MSG_RIBBON_RENAME, command.CMD_RENAME),
+    button(rb.RB_MEDIUM, .delete, .MSG_RIBBON_DELETE, command.CMD_DELETE),
+    button(rb.RB_MEDIUM, .information, .MSG_RIBBON_INFORMATION, command.CMD_INFORMATION),
+    button(rb.RB_MEDIUM, .copy, .MSG_MENU_COPY, command.CMD_COPY),
+    tab(.MSG_RIBBON_VIEW),
+    group(.MSG_RIBBON_VIEW, command.CMD_VIEW_ICONS, 1),
+    button(rb.RB_LARGE, .by_icon, .MSG_MENU_ICONS, command.CMD_VIEW_ICONS),
+    button(rb.RB_MEDIUM, .by_name, .MSG_MENU_BY_NAME, command.CMD_VIEW_LIST),
+    button(rb.RB_MEDIUM, .by_date, .MSG_MENU_BY_DATE, command.CMD_VIEW_DATE),
+    button(rb.RB_MEDIUM, .by_size, .MSG_MENU_BY_SIZE, command.CMD_VIEW_SIZE),
+    group(.MSG_MENU_SHOW, command.CMD_ALL_FILES, 0),
+    button(rb.RB_LARGE, .all_files, .MSG_MENU_ALL_FILES, command.CMD_ALL_FILES),
+    group(.MSG_RIBBON_ARRANGE, command.CMD_CLEAN_UP, 2),
+    button(rb.RB_LARGE, .clean_up, .MSG_MENU_CLEAN_UP, command.CMD_CLEAN_UP),
+    button(rb.RB_MEDIUM, .snap, .MSG_MENU_SNAP, command.CMD_SNAP_GRID),
+    button(rb.RB_MEDIUM, .arrange, .MSG_MENU_ARRANGE, command.CMD_ARRANGE),
+    button(rb.RB_MEDIUM, .snapshot, .MSG_MENU_SNAPSHOT, command.CMD_SNAPSHOT),
+    .{ .entry = .{ .type = rb.RB_END } },
 };
 
 /// What a drawer's buttons show: those that are off, and the toggles that
@@ -212,7 +222,14 @@ pub fn stateOf(view: View, show_all: bool, is_volume: bool, switches: Switches, 
 /// for it (`_drawer.placeStrip`).
 pub fn make(d: *Desktop, dr: *Drawer) void {
     if (!d.has_ribbon or !d.prefs.ribbon) return;
-    const built = rb.build(d.sys, d.ib, &table, &[_]TagItem{
+    // The labels in the desktop's language: its catalog stays open for
+    // as long as a drawer's window does.
+    var lines: [table.len]rb.NewRibbon = undefined;
+    for (table, &lines) |line, *made| {
+        made.* = line.entry;
+        if (line.label) |id| made.label = d.text.get(id);
+    }
+    const built = rb.build(d.sys, d.ib, &lines, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_RIBBON },
         .{ .tag = gc.GA_Left, .data = 0 },
         .{ .tag = gc.GA_Top, .data = 0 },

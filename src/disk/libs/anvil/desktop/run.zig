@@ -294,8 +294,8 @@ fn launch(d: *Desktop, work: *Work) bool {
     }
     // A script, through IconX.
     if (first.entry_protection & dos.FIBF_SCRIPT != 0) return start(d, work, "C:IconX", null, first.object);
-    var said: [96]u8 = undefined;
-    d.say(sayText(&said, drawer_path.lastPart(first.pathText()), " has no tool to open it"));
+    const named = namedFor(drawer_path.lastPart(first.pathText()));
+    d.tell(.MSG_NO_TOOL, .{named.ptr()});
     return failed(work, dos.ERROR_OBJECT_WRONG_TYPE);
 }
 
@@ -306,11 +306,21 @@ fn failed(work: *Work, code: i32) bool {
     return false;
 }
 
-fn sayText(into: []u8, name: []const u8, rest: []const u8) []const u8 {
-    const shown = name[0..@min(name.len, into.len - rest.len - 1)];
-    @memcpy(into[0..shown.len], shown);
-    @memcpy(into[shown.len..][0..rest.len], rest);
-    return into[0 .. shown.len + rest.len];
+/// A name as what is said puts it in: NUL after it, cut to a title's
+/// room.
+const Named = struct {
+    text: [64:0]u8 = @splat(0),
+
+    fn ptr(named: *const Named) [*:0]const u8 {
+        return &named.text;
+    }
+};
+
+fn namedFor(name: []const u8) Named {
+    var named: Named = .{};
+    const take = @min(name.len, named.text.len);
+    @memcpy(named.text[0..take], name[0..take]);
+    return named;
 }
 
 fn textOf(text: [*:0]const u8) []const u8 {
@@ -476,8 +486,8 @@ fn start(d: *Desktop, work: *Work, tool: []const u8, tool_at: ?usize, object: ?*
         _ = dl.Close(input);
         _ = dl.Close(output);
         if (ended) |made| d.sys.FreeVec(made);
-        var said: [96]u8 = undefined;
-        d.say(sayText(&said, title, " could not be started"));
+        const named = namedFor(title);
+        d.tell(.MSG_NOT_STARTED, .{named.ptr()});
         return failed(work, failure);
     }
     if (ended != null) d.running += 1;
@@ -519,7 +529,7 @@ pub fn command(d: *Desktop, line: [*:0]const u8, title: []const u8) void {
         _ = dl.Close(input);
         _ = dl.Close(output);
         d.sys.FreeVec(memory);
-        d.say("The command could not be started");
+        d.tell(.MSG_COMMAND_NOT_STARTED, .{});
         return;
     }
     d.running += 1;
@@ -536,7 +546,7 @@ pub fn shell(d: *Desktop, path: []const u8) void {
     if (path.len > dos.path_max) return;
     var name: [dos.path_max + 1:0]u8 = @splat(0);
     @memcpy(name[0..path.len], path);
-    const home = dl.Lock(&name, dos.SHARED_LOCK) orelse return d.say("The shell's drawer could not be found");
+    const home = dl.Lock(&name, dos.SHARED_LOCK) orelse return d.tell(.MSG_SHELL_DRAWER_NOT_FOUND, .{});
     const script = dl.Open("S:Shell-Startup", dos.MODE_OLDFILE);
     const tags = [_]TagItem{
         .{ .tag = dos.SYS_Window, .data = @intFromPtr(shell_window) },
@@ -549,7 +559,7 @@ pub fn shell(d: *Desktop, path: []const u8) void {
     if (dl.SystemTagList(null, &tags) < 0) {
         if (script) |file| _ = dl.Close(file);
         dl.UnLock(home);
-        d.say("The shell could not be started");
+        d.tell(.MSG_SHELL_NOT_STARTED, .{});
     }
 }
 
