@@ -5186,4 +5186,65 @@ pub const LIBRARY_VERSION = 1;
 /// as the other V3D cases are; FacetBoth's other 229 cases are as they
 /// were at 1.166, the textured ones with the mask among them, and
 /// FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 167;
+///
+/// 168: **Storage buffer writes (docs/facet-vulkan10.md item 59).** A
+/// fragment program's OpStore through an access chain into a storage
+/// buffer is a `.ssbo_store` step (`compile.blockStore`), the store_ssbo
+/// vtn makes of it: the value, the buffer's slot, and its offset, a
+/// constant or a step where it is computed. v3d writes it through the
+/// TMU's general lookup (ntq_emit_tmu_general, nir_to_vir.c:502-725), now
+/// `to_vir.emitTmuGeneral`'s for stores too: each float into TMUD
+/// (emit_tmu_general_store_writes, :346-392), counted with the address's
+/// write before any is emitted, then the address into TMUA or TMUAU, a
+/// pixel's lookup always - a store's is never a quad's, so a helper
+/// pixel writes nothing (:650-670) - and a TMUWT owed instead of LDTMUs.
+/// The program's tmu_dirty_rcl is set (:532-533).
+///
+/// A load of a buffer the program may write is not read through unifa,
+/// which would not see the writes (ntq_emit_load_unifa, :3338-3343): it
+/// is unless ACCESS_NON_WRITEABLE, which nir_opt_access gives a load of a
+/// NonWritable variable or member, or of any buffer where the program
+/// writes none (nir_opt_access.c; v3dv_pipeline.c:394-397). Such a load
+/// goes through the TMU at its constant offset too, a quad's lookup, for
+/// a load the same in every lane keeps its helper pixels. Loads of a
+/// buffer that may be written are never one (`equalSteps`): only
+/// CAN_REORDER ones are, which a readonly one is.
+///
+/// A program that names a storage buffer no longer has its early
+/// fragment tests promoted (info.num_ssbos, nir_to_vir.c:2074): it writes
+/// Z, the rasterizer's, through TLBU, and disable_ez is set. Since 1.164
+/// every such program had been promoted.
+///
+/// The job: v3dv gathers the programs' tmu_dirty_rcl into the job's
+/// (v3dvx_cmd_buffer.c:2559-2564) and asks for the caches to be cleaned
+/// after it (v3dv_queue.c:746-747), which Linux does as a CACHE_CLEAN job
+/// (v3d_clean_caches, v3d_gem.c:215-248): `Engine.cleanCaches`, TMUWCF
+/// then L2TFLS in clean mode, each waited for. The memory is
+/// HOST_COHERENT, where Linux maps v3dv's buffers write-combined, so the
+/// storage buffers a job binds are kept (`keepStorage`, 32 of them) and
+/// dropped from the CPU's caches after a job that wrote.
+///
+/// - Refused: a store in a vertex program, which runs twice, as the
+///   coordinate shader too; into a uniform buffer, the push constants or
+///   a NonWritable member; of a matrix. fragmentStoresAndAtomics and
+///   vertexPipelineStoresAndAtomics stay unadvertised until the atomics
+///   are ported, the features naming both.
+///
+/// Tests: the V3D's 207, three new and three changed. glslc_writes (284
+/// words) is 34 instructions: five TMUD writes, a TMUA and three TMUAU,
+/// two TMUWTs, eight LDTMUs, a store's configuration 0xFFFFFFFC and the
+/// last's load at offset 16 a quad's, 0xFFFFFF7C; glslc_reads (231
+/// words): the count through unifa, the row through the TMU, nothing
+/// dirty; glslc_member (223 words): a readonly member's load through
+/// unifa beside the stores; glslc_vertex_store (172 words) refused. The
+/// three programs of a storage buffer that wrote no Z now end with its
+/// TLBU configuration, 0xFFFFFF84. FacetBoth 1.36: the shipped stores, a
+/// pass whose program writes a storage buffer and a second that reads it
+/// back, beside functions of the same writes and reads on the cores.
+///
+/// On the CM5 the case is 8 pixels of 230,400 apart, the triangle's edge,
+/// as the other V3D cases are: the second pass read what the first wrote.
+/// FacetBoth's other 230 cases are as they were at 1.167, the storage
+/// buffers' among them, now with Z written, and FacetProbe passes its 890
+/// checks.
+pub const LIBRARY_REVISION = 168;

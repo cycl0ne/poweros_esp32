@@ -17,6 +17,9 @@ const hub_irqs = regs.HUB_INT_MMU_WRV | regs.HUB_INT_MMU_PTI | regs.HUB_INT_MMU_
 
 /// How much a job is given before it counts as lost.
 const job_wait_us: u64 = 5_000_000;
+/// How long a cache clean may take, as Linux's wait_for(..., 100) has it
+/// (v3d_gem.c:233-246; since 1.168).
+const clean_wait_us: u64 = 100_000;
 /// What the binner gets when it runs out: blocks ready, since an interrupt
 /// cannot allocate.
 const overflow_bytes: u32 = 256 * 1024;
@@ -109,6 +112,21 @@ pub const Engine = struct {
         const gpu = engine.gpu;
         gpu.coreWrite(regs.CTL_L2TCACTL, regs.L2TCACTL_L2TFLS | regs.L2TCACTL_FLM_FLUSH);
         gpu.coreWrite(regs.CTL_SLCACTL, regs.SLCACTL_ALL);
+    }
+
+    /// What the TMU wrote, out of its write combiner and the L2T to
+    /// memory: Linux's v3d_clean_caches (v3d_gem.c:215-248), which the
+    /// CACHE_CLEAN queue runs after a job whose shaders wrote through the
+    /// TMU (DRM_V3D_SUBMIT_CL_FLUSH_CACHE, v3d_submit.c:1214-1221;
+    /// v3d_sched.c:679), each wait 100 ms. 7.1 has no pending flush to
+    /// wait for first (GFXH-1897, :223-229). Whether both went clear in
+    /// time (since 1.168).
+    pub fn cleanCaches(engine: *Engine) bool {
+        const gpu = engine.gpu;
+        gpu.coreWrite(regs.CTL_L2TCACTL, regs.L2TCACTL_TMUWCF);
+        if (!gpu.waitCoreClear(regs.CTL_L2TCACTL, regs.L2TCACTL_TMUWCF, clean_wait_us)) return false;
+        gpu.coreWrite(regs.CTL_L2TCACTL, regs.L2TCACTL_L2TFLS | regs.L2TCACTL_FLM_CLEAN);
+        return gpu.waitCoreClear(regs.CTL_L2TCACTL, regs.L2TCACTL_L2TFLS, clean_wait_us);
     }
 
     /// The renderer through `start`..`end`, until it is done.

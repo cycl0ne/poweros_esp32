@@ -623,6 +623,9 @@ pub const Shader = struct {
     /// pixels (since 1.139).
     writes_z: bool,
     disable_ez: bool,
+    /// It writes through the TMU, so the job's caches are cleaned after
+    /// (`compile.Code.tmu_dirty_rcl`; since 1.168).
+    tmu_dirty_rcl: bool = false,
     /// The pipeline's vertex shader compiled for the QPU, where it shipped
     /// one that Mesa's back end compiles and the draw can run it: the
     /// vertex function is not called then (since 1.163).
@@ -650,6 +653,8 @@ pub const VertexShader = struct {
     threads: u8,
     /// What the shader record and the attribute records say of it.
     program: compile.VertexProgram,
+    /// It writes through the TMU, as a spill does (since 1.168).
+    tmu_dirty_rcl: bool = false,
 
     pub fn stream(made: *const VertexShader) []const compile.Word {
         return made.uniforms[0..made.uniform_count];
@@ -790,6 +795,7 @@ fn compiled(pipeline: *Pipeline) facet.Result {
         .lock_scoreboard_on_first_thrsw = code.lock_scoreboard_on_first_thrsw,
         .writes_z = code.writes_z,
         .disable_ez = code.disable_ez,
+        .tmu_dirty_rcl = code.tmu_dirty_rcl,
     };
     kept.vertex = vertexStage(pipeline, work, hardware, reads);
     pipeline.driver = kept;
@@ -836,6 +842,7 @@ fn vertexStage(pipeline: *const Pipeline, work: *compile.Work, hardware: *Hardwa
             .uniform_count = code.?.uniform_count,
             .threads = code.?.threads,
             .program = code.?.vertex,
+            .tmu_dirty_rcl = code.?.tmu_dirty_rcl,
         };
     }
     return .{ .vertex = made[0], .coordinate = made[1] };

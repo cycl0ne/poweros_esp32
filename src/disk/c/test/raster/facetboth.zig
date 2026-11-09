@@ -81,7 +81,12 @@
 //! glslc's words of a uniform buffer's row and a storage buffer's
 //! triple's member at an index the colour's red gives, and of its scale
 //! at one its alpha gives, which the V3D reads through the TMU's general
-//! lookup, a pixel's, the scale's of the default configuration.
+//! lookup, a pixel's, the scale's of the default configuration. The
+//! shipped case of stores (since 1.36) is glslc's words of a pass that
+//! writes a storage buffer's count and the rows its red picks, through
+//! the TMU, and of a second pass that reads them back into the colour,
+//! beside functions of the same writes and reads for the cores: a write
+//! that does not reach memory leaves the colour the buffer started with.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -96,7 +101,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.35 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.36 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -963,6 +968,66 @@ fn lanesFragment(fragments: *const shader.Fragments) callconv(.c) void {
     }
 }
 
+/// What `store_writes` computes, for the cores, and in its order: by each
+/// pixel inside the triangle - a helper pixel writes nothing, as the
+/// V3D's lookup is a pixel's - the written buffer's count made 2 and its
+/// row i the uniform buffer's row i + 3 halved, i the red times 1.5 made
+/// an integer towards zero and held to 0 and 1, as `lanesFragment` holds
+/// it; and the colour times the buffer's last. The pixels of a quad
+/// write the same row with the same floats, which is all they share
+/// (since 1.36).
+fn writesFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    @setRuntimeSafety(false);
+    const block = fragments.resources.buffer([32]f32, 0, 0) orelse return;
+    const written: *[32]f32 = @constCast(fragments.resources.buffer([32]f32, 0, 1) orelse return);
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const planes = rows.at(quad);
+        const over = @as(shader.Pixels, @splat(1)) / planes[0];
+        var v: [4]shader.Pixels = undefined;
+        inline for (&v, 0..) |*each, c| each.* = planes[1 + c] * over;
+        const by_red = v[0] * @as(shader.Pixels, @splat(1.5));
+        inline for (0..4) |p| {
+            if (quad.covered & @as(u8, 1) << p != 0) {
+                const i: usize = @intCast(std.math.clamp(towardZero(by_red[p]), 0, 1));
+                @atomicStore(f32, &written[0], 2, .unordered);
+                for (0..4) |c| @atomicStore(f32, &written[8 + 4 * i + c], block[4 * (i + 3) + c] * 0.5, .unordered);
+            }
+        }
+        var bytes: [4]@Vector(4, u32) = undefined;
+        inline for (&bytes, 0..) |*channel, c| {
+            const last: shader.Pixels = @splat(@atomicLoad(f32, &written[4 + c], .unordered));
+            channel.* = channelOf(v[c] * last);
+        }
+        out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+    }
+}
+
+/// What `store_reads` computes, for the cores, and in its order: the written
+/// buffer's row i times its count, plus the colour times a quarter, i as
+/// `writesFragment` makes it (since 1.36).
+fn readsFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    @setRuntimeSafety(false);
+    const written = fragments.resources.buffer([32]f32, 0, 1) orelse return;
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const planes = rows.at(quad);
+        const over = @as(shader.Pixels, @splat(1)) / planes[0];
+        var v: [4]shader.Pixels = undefined;
+        inline for (&v, 0..) |*each, c| each.* = planes[1 + c] * over;
+        const by_red = v[0] * @as(shader.Pixels, @splat(1.5));
+        var row: [4]shader.Pixels = undefined;
+        inline for (0..4) |p| {
+            const i: usize = @intCast(std.math.clamp(towardZero(by_red[p]), 0, 1));
+            for (0..4) |c| row[c][p] = written[8 + 4 * i + c];
+        }
+        const count: shader.Pixels = @splat(written[0]);
+        var bytes: [4]@Vector(4, u32) = undefined;
+        inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(row[c] * count + v[c] * @as(shader.Pixels, @splat(0.25)));
+        out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+    }
+}
+
 /// A float channel of four pixels as the tile buffer holds it, 0 to 255,
 /// as `ir`'s generated functions make it.
 fn channelOf(value: shader.Pixels) @Vector(4, u32) {
@@ -1007,6 +1072,8 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped integers", &integersFragment, 4),
     shader.fragment("shipped indexed", &indexedFragment, 4),
     shader.fragment("shipped lanes", &lanesFragment, 4),
+    shader.fragment("shipped writes", &writesFragment, 4),
+    shader.fragment("shipped reads", &readsFragment, 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                .{},                               .{},                                  .{},
@@ -1017,7 +1084,8 @@ const shipped_words = [_]shader.Spirv{
     Shipped.Bools.spirv,                Shipped.Nests.spirv,               Shipped.Joined.spirv,                 Shipped.Collapsed.spirv,
     shader.Spirv.of(&nested_discard),   Shipped.Uniformed.spirv,           shader.Spirv.of(&uniform_nested),     shader.Spirv.of(&uniform_matrix),
     shader.Spirv.of(&uniform_matrices), shader.Spirv.of(&constant_matrix), shader.Spirv.of(&vertex_as_it_is),    shader.Spirv.of(&storage_buffer),
-    shader.Spirv.of(&integers),         shader.Spirv.of(&indexed),         shader.Spirv.of(&lanes),
+    shader.Spirv.of(&integers),         shader.Spirv.of(&indexed),         shader.Spirv.of(&lanes),              shader.Spirv.of(&store_writes),
+    shader.Spirv.of(&store_reads),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -1735,6 +1803,131 @@ const lanes = [_]u32{
     0x0000003B, 0x0000003C, 0x00050081, 0x0000000A, 0x0000003E, 0x00000037,
     0x0000003D, 0x0003003E, 0x0000001D, 0x0000003E, 0x000100FD, 0x00010038,
 };
+
+/// glslc's words of a fragment shader that writes a storage buffer: its
+/// count made 2 and its row i the uniform buffer's row i + 3 halved, i
+/// the red times 1.5, and the colour times its last, which the V3D reads
+/// through the TMU, for the program writes the buffer (since 1.36).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// layout(set = 0, binding = 0) uniform Block { vec4 rows[8]; } block;
+/// layout(set = 0, binding = 1) buffer Written { float count; vec4 last; vec4 rows[]; } written;
+/// void main() {
+///     int i = int(vcolor.x * 1.5);
+///     written.count = 2.0;
+///     written.rows[i] = block.rows[i + 3] * 0.5;
+///     ocolor = vcolor * written.last;
+/// }
+/// ```
+const store_writes = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000034, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000C, 0x0000002E, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000C, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000015, 0x00000006, 0x00000010, 0x00030047, 0x00000016,
+    0x00000003, 0x00050048, 0x00000016, 0x00000000, 0x00000023, 0x00000000,
+    0x00050048, 0x00000016, 0x00000001, 0x00000023, 0x00000010, 0x00050048,
+    0x00000016, 0x00000002, 0x00000023, 0x00000020, 0x00040047, 0x00000018,
+    0x00000021, 0x00000001, 0x00040047, 0x00000018, 0x00000022, 0x00000000,
+    0x00040047, 0x00000020, 0x00000006, 0x00000010, 0x00030047, 0x00000021,
+    0x00000002, 0x00050048, 0x00000021, 0x00000000, 0x00000023, 0x00000000,
+    0x00040047, 0x00000023, 0x00000021, 0x00000000, 0x00040047, 0x00000023,
+    0x00000022, 0x00000000, 0x00040047, 0x0000002E, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015,
+    0x00000006, 0x00000020, 0x00000001, 0x00030016, 0x00000009, 0x00000020,
+    0x00040017, 0x0000000A, 0x00000009, 0x00000004, 0x00040020, 0x0000000B,
+    0x00000001, 0x0000000A, 0x0004003B, 0x0000000B, 0x0000000C, 0x00000001,
+    0x00040015, 0x0000000D, 0x00000020, 0x00000000, 0x0004002B, 0x0000000D,
+    0x0000000E, 0x00000000, 0x00040020, 0x0000000F, 0x00000001, 0x00000009,
+    0x0004002B, 0x00000009, 0x00000012, 0x3FC00000, 0x0003001D, 0x00000015,
+    0x0000000A, 0x0005001E, 0x00000016, 0x00000009, 0x0000000A, 0x00000015,
+    0x00040020, 0x00000017, 0x00000002, 0x00000016, 0x0004003B, 0x00000017,
+    0x00000018, 0x00000002, 0x0004002B, 0x00000006, 0x00000019, 0x00000000,
+    0x0004002B, 0x00000009, 0x0000001A, 0x40000000, 0x00040020, 0x0000001B,
+    0x00000002, 0x00000009, 0x0004002B, 0x00000006, 0x0000001D, 0x00000002,
+    0x0004002B, 0x0000000D, 0x0000001F, 0x00000008, 0x0004001C, 0x00000020,
+    0x0000000A, 0x0000001F, 0x0003001E, 0x00000021, 0x00000020, 0x00040020,
+    0x00000022, 0x00000002, 0x00000021, 0x0004003B, 0x00000022, 0x00000023,
+    0x00000002, 0x0004002B, 0x00000006, 0x00000025, 0x00000003, 0x00040020,
+    0x00000027, 0x00000002, 0x0000000A, 0x0004002B, 0x00000009, 0x0000002A,
+    0x3F000000, 0x00040020, 0x0000002D, 0x00000003, 0x0000000A, 0x0004003B,
+    0x0000002D, 0x0000002E, 0x00000003, 0x0004002B, 0x00000006, 0x00000030,
+    0x00000001, 0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003,
+    0x000200F8, 0x00000005, 0x00050041, 0x0000000F, 0x00000010, 0x0000000C,
+    0x0000000E, 0x0004003D, 0x00000009, 0x00000011, 0x00000010, 0x00050085,
+    0x00000009, 0x00000013, 0x00000011, 0x00000012, 0x0004006E, 0x00000006,
+    0x00000014, 0x00000013, 0x00050041, 0x0000001B, 0x0000001C, 0x00000018,
+    0x00000019, 0x0003003E, 0x0000001C, 0x0000001A, 0x00050080, 0x00000006,
+    0x00000026, 0x00000014, 0x00000025, 0x00060041, 0x00000027, 0x00000028,
+    0x00000023, 0x00000019, 0x00000026, 0x0004003D, 0x0000000A, 0x00000029,
+    0x00000028, 0x0005008E, 0x0000000A, 0x0000002B, 0x00000029, 0x0000002A,
+    0x00060041, 0x00000027, 0x0000002C, 0x00000018, 0x0000001D, 0x00000014,
+    0x0003003E, 0x0000002C, 0x0000002B, 0x0004003D, 0x0000000A, 0x0000002F,
+    0x0000000C, 0x00050041, 0x00000027, 0x00000031, 0x00000018, 0x00000030,
+    0x0004003D, 0x0000000A, 0x00000032, 0x00000031, 0x00050085, 0x0000000A,
+    0x00000033, 0x0000002F, 0x00000032, 0x0003003E, 0x0000002E, 0x00000033,
+    0x000100FD, 0x00010038,
+};
+
+/// glslc's words of a fragment shader that reads back what
+/// `store_writes` wrote, readonly: the row the red picks times the
+/// count, plus a quarter of the colour (since 1.36).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// layout(set = 0, binding = 1) readonly buffer Written { float count; vec4 last; vec4 rows[]; } written;
+/// void main() {
+///     int i = int(vcolor.x * 1.5);
+///     ocolor = written.rows[i] * written.count + vcolor * 0.25;
+/// }
+/// ```
+const store_reads = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000029, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000C, 0x00000016, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000C, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000016, 0x0000001E, 0x00000000, 0x00040047, 0x00000017,
+    0x00000006, 0x00000010, 0x00030047, 0x00000018, 0x00000003, 0x00040048,
+    0x00000018, 0x00000000, 0x00000018, 0x00050048, 0x00000018, 0x00000000,
+    0x00000023, 0x00000000, 0x00040048, 0x00000018, 0x00000001, 0x00000018,
+    0x00050048, 0x00000018, 0x00000001, 0x00000023, 0x00000010, 0x00040048,
+    0x00000018, 0x00000002, 0x00000018, 0x00050048, 0x00000018, 0x00000002,
+    0x00000023, 0x00000020, 0x00030047, 0x0000001A, 0x00000018, 0x00040047,
+    0x0000001A, 0x00000021, 0x00000001, 0x00040047, 0x0000001A, 0x00000022,
+    0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00040015, 0x00000006, 0x00000020, 0x00000001, 0x00030016, 0x00000009,
+    0x00000020, 0x00040017, 0x0000000A, 0x00000009, 0x00000004, 0x00040020,
+    0x0000000B, 0x00000001, 0x0000000A, 0x0004003B, 0x0000000B, 0x0000000C,
+    0x00000001, 0x00040015, 0x0000000D, 0x00000020, 0x00000000, 0x0004002B,
+    0x0000000D, 0x0000000E, 0x00000000, 0x00040020, 0x0000000F, 0x00000001,
+    0x00000009, 0x0004002B, 0x00000009, 0x00000012, 0x3FC00000, 0x00040020,
+    0x00000015, 0x00000003, 0x0000000A, 0x0004003B, 0x00000015, 0x00000016,
+    0x00000003, 0x0003001D, 0x00000017, 0x0000000A, 0x0005001E, 0x00000018,
+    0x00000009, 0x0000000A, 0x00000017, 0x00040020, 0x00000019, 0x00000002,
+    0x00000018, 0x0004003B, 0x00000019, 0x0000001A, 0x00000002, 0x0004002B,
+    0x00000006, 0x0000001B, 0x00000002, 0x00040020, 0x0000001D, 0x00000002,
+    0x0000000A, 0x0004002B, 0x00000006, 0x00000020, 0x00000000, 0x00040020,
+    0x00000021, 0x00000002, 0x00000009, 0x0004002B, 0x00000009, 0x00000026,
+    0x3E800000, 0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003,
+    0x000200F8, 0x00000005, 0x00050041, 0x0000000F, 0x00000010, 0x0000000C,
+    0x0000000E, 0x0004003D, 0x00000009, 0x00000011, 0x00000010, 0x00050085,
+    0x00000009, 0x00000013, 0x00000011, 0x00000012, 0x0004006E, 0x00000006,
+    0x00000014, 0x00000013, 0x00060041, 0x0000001D, 0x0000001E, 0x0000001A,
+    0x0000001B, 0x00000014, 0x0004003D, 0x0000000A, 0x0000001F, 0x0000001E,
+    0x00050041, 0x00000021, 0x00000022, 0x0000001A, 0x00000020, 0x0004003D,
+    0x00000009, 0x00000023, 0x00000022, 0x0005008E, 0x0000000A, 0x00000024,
+    0x0000001F, 0x00000023, 0x0004003D, 0x0000000A, 0x00000025, 0x0000000C,
+    0x0005008E, 0x0000000A, 0x00000027, 0x00000025, 0x00000026, 0x00050081,
+    0x0000000A, 0x00000028, 0x00000024, 0x00000027, 0x0003003E, 0x00000016,
+    0x00000028, 0x000100FD, 0x00010038,
+};
 /// glslc's own output, at -O, for a constant mat3 times a vector,
 /// glslc_constant_matrix: three constant columns, read where the product
 /// first wants them (since 1.30).
@@ -2444,6 +2637,12 @@ const Side = struct {
     indexed_set_layout: ?*facet.DescriptorSetLayout = null,
     indexed_layout: ?*facet.PipelineLayout = null,
     indexed_set: ?*facet.DescriptorSet = null,
+    /// The storage buffer the shipped stores write and read back, 128
+    /// bytes of their own, and `indexed_layout`'s set of the uniform
+    /// arrays' block and it (since 1.36).
+    written: ?*facet.Buffer = null,
+    written_bytes: [*]u8 = undefined,
+    written_set: ?*facet.DescriptorSet = null,
     compute_layout: ?*facet.PipelineLayout = null,
     compute_pipelines: [2]?*facet.Pipeline = @splat(null),
     /// The pipelines of the case being drawn.
@@ -2524,7 +2723,7 @@ const Side = struct {
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 6 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 7 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -3028,6 +3227,15 @@ const Side = struct {
             .{ .dst_set = side.indexed_set.?, .dst_binding = 1, .descriptor_type = .storage_buffer, .buffer_info = @ptrCast(&stored) },
         };
         fb.UpdateDescriptorSets(device, 2, &indexed_writes, 0, null);
+        side.written_bytes = try side.buffer(128, facet.BUFFER_USAGE_STORAGE_BUFFER, &side.written);
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&side.indexed_set_layout) }, &made), error.Refused);
+        side.written_set = made[0];
+        const written = facet.DescriptorBufferInfo{ .buffer = side.written };
+        const written_writes = [2]facet.WriteDescriptorSet{
+            .{ .dst_set = side.written_set.?, .dst_binding = 0, .descriptor_type = .uniform_buffer, .buffer_info = @ptrCast(&blocks) },
+            .{ .dst_set = side.written_set.?, .dst_binding = 1, .descriptor_type = .storage_buffer, .buffer_info = @ptrCast(&written) },
+        };
+        fb.UpdateDescriptorSets(device, 2, &written_writes, 0, null);
     }
 
     fn down(side: *Side) void {
@@ -3041,6 +3249,7 @@ const Side = struct {
         fb.DestroyPipelineLayout(device, side.uniform_layout);
         fb.DestroyDescriptorSetLayout(device, side.uniform_set_layout);
         fb.DestroyBuffer(device, side.uniforms);
+        fb.DestroyBuffer(device, side.written);
         for (side.compute_pipelines) |each| fb.DestroyPipeline(device, each);
         fb.DestroyPipelineLayout(device, side.compute_layout);
         fb.DestroyDescriptorSetLayout(device, side.compute_set_layout);
@@ -4263,6 +4472,31 @@ const Cases = struct {
         side.draw(clockwise_at, 6);
         side.end();
     }
+    /// The shipped stores: a pass whose program writes `written_set`'s
+    /// storage buffer, its count and the rows the colour's red picks, and
+    /// colours by its last, over the geometry the shipped cases draw; a
+    /// barrier from the fragment shader's writes to its reads; and a pass
+    /// over the first triangle whose program reads the rows and the count
+    /// back into the colour. The buffer starts with a count of 0.25 and
+    /// rows of 0.875, which a write that does not reach memory leaves to
+    /// show (since 1.36).
+    fn stores(side: *Side) Failure!void {
+        const floats: [*]align(1) f32 = @ptrCast(side.written_bytes);
+        @memset(floats[0..32], 0.875);
+        @memcpy(floats[0..8], &[8]f32{ 0.25, 0, 0, 0, 0.75, 0.5, 1, 1 });
+        side.begin(.{});
+        try side.use(.{ .vertex = "as it is", .fragment = "shipped writes", .layout = side.indexed_layout.? });
+        side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.indexed_layout.?, 0, 1, @ptrCast(&side.written_set), 0, null);
+        side.draw(clockwise_at, 6);
+        side.end();
+        const written = facet.MemoryBarrier{ .src_access_mask = facet.ACCESS_SHADER_WRITE, .dst_access_mask = facet.ACCESS_SHADER_READ };
+        side.fb.CmdPipelineBarrier(side.commands.?, facet.PIPELINE_STAGE_FRAGMENT_SHADER, facet.PIPELINE_STAGE_FRAGMENT_SHADER, 0, 1, @ptrCast(&written), 0, null, 0, null);
+        side.begin(.{ .load = true });
+        try side.use(.{ .vertex = "as it is", .fragment = "shipped reads", .layout = side.indexed_layout.?, .load = true });
+        side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.indexed_layout.?, 0, 1, @ptrCast(&side.written_set), 0, null);
+        side.draw(clockwise_at, 3);
+        side.end();
+    }
     /// The vertices' colour times a pushed float, plus a pushed colour.
     fn tinted(side: *Side) Failure!void {
         side.begin(.{});
@@ -4503,6 +4737,7 @@ const cases = [_]Case{
     .{ .name = "shipped integers", .run = Cases.integered },
     .{ .name = "shipped indexed", .run = Cases.indexed },
     .{ .name = "shipped lanes", .run = Cases.lanes },
+    .{ .name = "shipped stores", .run = Cases.stores },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },

@@ -412,6 +412,12 @@ pub const Tag = enum {
     /// Floats of a storage buffer at an offset the program computes, as
     /// `ubo_indirect` holds them (since 1.166).
     ssbo_indirect,
+    /// NIR's store_ssbo: the floats of `a` written into a storage buffer,
+    /// `b` its slot and `at` the byte offset of the first, or, where
+    /// `from[0]` is no `none`, at the offset that step computes. v3d
+    /// writes them through the TMU (ntq_emit_tmu_general,
+    /// nir_to_vir.c:502-725; since 1.168). It makes no value.
+    ssbo_store,
     /// 32-bit integers, or floats made integers or integers floats: NIR's
     /// integer ALU, `at` an `Integer`, each word of `a` (and `b`) one VIR
     /// operation as ntq_emit_alu emits it (nir_to_vir.c:1421-1806; since
@@ -585,6 +591,10 @@ pub const Step = struct {
     /// float of it.
     from: [4]u16 = @splat(0),
     part: [4]u8 = @splat(0),
+    /// `ssbo`, `ssbo_indirect`: the load's ACCESS_NON_WRITEABLE, which
+    /// vtn gives a load through a member or of a variable decorated
+    /// NonWritable (vtn_variables.c:397, :512, :1666-1667; since 1.168).
+    non_writeable: bool = false,
 };
 
 /// A varying the module declares.
@@ -721,6 +731,11 @@ pub const Code = struct {
     /// them (v3dvx_pipeline.c:454-459). Since 1.139.
     writes_z: bool = false,
     disable_ez: bool = false,
+    /// The program writes through the TMU - a storage buffer, or a spill
+    /// - so the job's caches are to be cleaned after it: prog_data's
+    /// tmu_dirty_rcl (vir.c:1048), which v3dv gathers into the job's
+    /// (v3dvx_cmd_buffer.c:2559-2564; since 1.168).
+    tmu_dirty_rcl: bool = false,
     /// A vertex program's, for its shader record and its attribute
     /// records (`v3d_vs_prog_data`, v3d_vs_set_prog_data, vir.c:860-936;
     /// since 1.163): the floats of each attribute it reads by driver
@@ -790,8 +805,9 @@ pub const UboAddress = struct {
 
 /// A storage buffer's address as the stream holds it, and `reach`, how
 /// many of its bytes the program reads from its start: one past the last
-/// of the floats its loads read, which the draw holds to the descriptor's
-/// range (since 1.164).
+/// of the floats its loads read at a constant offset, or its stores write
+/// there (since 1.168), which the draw holds to the descriptor's range
+/// (since 1.164).
 pub const StorageAddress = struct {
     set: u16,
     binding: u16,
@@ -818,6 +834,8 @@ pub const Block = struct {
     /// Decorated BufferBlock: a storage buffer's, as SPIR-V 1.0 has one
     /// (since 1.164).
     storage: bool = false,
+    /// Each member's NonWritable (since 1.168).
+    member_non_writable: [most_members]bool = @splat(false),
     /// Its last member is a runtime array, which only a storage buffer's
     /// block may have, and nothing may hold.
     runtime: bool = false,
@@ -920,6 +938,18 @@ pub const Work = struct {
     /// step of the byte offset, which `chain_offset` is then not; `none`
     /// where every index is one (since 1.166).
     chain_dynamic: [most_ids]u16 = @splat(none),
+    /// A variable decorated NonWritable, and a `member_pointer` through
+    /// such a variable or a member decorated so: vtn's access, gathered
+    /// down the chain (vtn_variables.c:397, :512; since 1.168).
+    non_writable: [most_ids]bool = @splat(false),
+    /// The program writes a storage buffer: nir_opt_access's
+    /// buffers_written, without which every load of one is
+    /// ACCESS_NON_WRITEABLE (nir_opt_access.c:266-272; since 1.168).
+    buffers_written: bool = false,
+    /// An access chain names a storage buffer's variable: info.num_ssbos
+    /// is not 0, the variables vtn keeps being those the body names
+    /// (spirv_to_nir.c:7533-7551; since 1.168).
+    uses_ssbo: bool = false,
     /// `array`: how many elements, and the ArrayStride they are apart,
     /// which an OpDecorate may give before the type is declared
     /// (since 1.161).
@@ -1110,7 +1140,7 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
     // drops a pixel or compares, so the plan has nothing to hold any of
     // them to: only Mesa's back end compiles them.
     for (work.program()) |each| switch (each.tag) {
-        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect => return Error.Storage,
+        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store => return Error.Storage,
         .discard => return Error.Discards,
         .sample_compared => return Error.Samplers,
         // Nor does any compute beyond a sum and a product.
@@ -1271,6 +1301,7 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
         .lock_scoreboard_on_first_thrsw = c.lock_scoreboard_on_first_thrsw,
         .writes_z = program.writes_z,
         .disable_ez = program.disable_ez,
+        .tmu_dirty_rcl = c.tmu_dirty_rcl,
         .vertex = if (work.stage == .vertex) vertexProgram(work, program.single_seg) else .{},
     };
 }
@@ -1460,10 +1491,13 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         (try blockOf(work, id)).storage = true;
                         continue;
                     },
-                    // A buffer the program does not write, which nothing
-                    // in the profile does: nir_opt_access infers as much
-                    // (nir_opt_access.c:225-228).
-                    .non_writable => continue,
+                    // A buffer the program may not write: its loads are
+                    // ACCESS_NON_WRITEABLE (vtn_variables.c:1666-1667;
+                    // since 1.168).
+                    .non_writable => {
+                        work.non_writable[id] = true;
+                        continue;
+                    },
                     else => return Error.Refused,
                 }
                 if (operands.len < 3) return Error.Body;
@@ -1513,9 +1547,14 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 const block = try blockOf(work, id);
                 const member = operands[1];
                 if (member >= most_members) return Error.Storage;
-                // A storage buffer's member NonWritable, as its variable
-                // may be (since 1.164).
-                if (what == .col_major or what == .non_writable) continue;
+                // A storage buffer's member NonWritable, which a load
+                // through it is (vtn_handle_access_qualifier,
+                // spirv_to_nir.c:1568-1575, :1627-1628; since 1.168).
+                if (what == .non_writable) {
+                    block.member_non_writable[member] = true;
+                    continue;
+                }
+                if (what == .col_major) continue;
                 if (operands.len < 4) return Error.Body;
                 const literal = operands[3];
                 if (literal % 4 != 0 or literal >= none) return Error.Storage;
@@ -2677,7 +2716,7 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
             // (nir_opt_peephole_select.c:132-141), which none from vtn
             // may: no limit flattens its arm (since 1.160). A load_ssbo
             // is held to the same (since 1.164).
-            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect => return std.math.maxInt(u32),
+            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store => return std.math.maxInt(u32),
             // ineg and iabs are move-like, as fneg and fabs are
             // (nir_opt_peephole_select.c:251-264; since 1.165).
             .integer => switch (@as(Integer, @enumFromInt(each.at))) {
@@ -2874,7 +2913,7 @@ const Order = struct {
         while (at != none) : (at = list.prev[at]) {
             if (list.removed[at]) continue;
             const each = work.steps[at];
-            if (each.tag == .discard or each.tag == .output) reached[at] = true;
+            if (each.tag == .discard or each.tag == .output or each.tag == .ssbo_store) reached[at] = true;
             if (!reached[at]) continue;
             for (readsOf(each)) |field| if (field) |operand_at| {
                 reached[operand_at] = true;
@@ -3286,7 +3325,7 @@ fn sameFloat(work: *const Work, a: u16, b: u16) bool {
 /// component and a construct only name floats.
 fn computes(tag: Tag) bool {
     return switch (tag) {
-        .input, .constant, .push, .component, .construct, .sample, .sample_compared, .discard, .output, .viewport => false,
+        .input, .constant, .push, .component, .construct, .sample, .sample_compared, .discard, .output, .viewport, .ssbo_store => false,
         else => true,
     };
 }
@@ -3304,6 +3343,11 @@ fn equalSteps(work: *const Work, a: Step, b: Step) bool {
         return true;
     }
     if (a.tag != b.tag or a.kind != b.kind or a.at != b.at) return false;
+    // A load_ssbo of memory the program may write is no CAN_REORDER,
+    // which nir_opt_access gives only memory it may not
+    // (nir_opt_access.c:289-290), so nir_opt_cse leaves it be (since
+    // 1.168).
+    if ((a.tag == .ssbo or a.tag == .ssbo_indirect) and work.buffers_written and !(a.non_writeable and b.non_writeable)) return false;
     // A load_ubo's buffer is its `b`, which is no step, and a
     // load_ssbo's, which CAN_REORDER lets nir_opt_cse take as well
     // (nir_instr_set.c; since 1.164).
@@ -3348,6 +3392,7 @@ fn readsOf(each: Step) [4]?u16 {
         .integer => .{ each.a, if (!@as(Integer, @enumFromInt(each.at)).unary()) each.b else null, null, null },
         .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .sample, .output, .round_to_int, .ubo_indirect, .ssbo_indirect => .{ each.a, null, null, null },
         .compare, .set_less, .add, .mul, .sub, .min, .max, .dot, .sample_compared => .{ each.a, each.b, null, null },
+        .ssbo_store => .{ each.a, if (each.from[0] != none) each.from[0] else null, null, null },
     };
 }
 
@@ -3362,6 +3407,10 @@ fn renameReads(each: *Step, renamed: *const [most_steps]u16) void {
             each.a = renamed[each.a];
             each.b = renamed[each.b];
             each.from[0] = renamed[each.from[0]];
+        },
+        .ssbo_store => {
+            each.a = renamed[each.a];
+            if (each.from[0] != none) each.from[0] = renamed[each.from[0]];
         },
         else => {
             if (reads[0] != null) each.a = renamed[each.a];
@@ -3393,6 +3442,10 @@ fn replaceUses(work: *Work, from: u16, to: u16) void {
             .select => {
                 if (user.a == from) user.a = to;
                 if (user.b == from) user.b = to;
+                if (user.from[0] == from) user.from[0] = to;
+            },
+            .ssbo_store => {
+                if (user.a == from) user.a = to;
                 if (user.from[0] == from) user.from[0] = to;
             },
             else => {
@@ -3489,6 +3542,17 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 work.varying_count += 1;
                 return;
             }
+            if (work.thing[into] == .member_pointer) {
+                // Floats of a storage buffer, written where the chain
+                // came to (since 1.168). A whole matrix would be its
+                // columns, each stored on its own, which is not here.
+                const pointee = work.points[into];
+                if (work.thing[pointee] == .matrix) return Error.Storage;
+                const kind = try kindOf(work, pointee);
+                const value = try operand(work, operands[1], kind);
+                try blockStore(work, work.chain_base[into], work.chain_dynamic[into], work.chain_offset[into], work.non_writable[into], value, kind);
+                return;
+            }
             if (into != work.output) return Error.Body;
             work.stored = try operand(work, operands[1], .f32x4);
         },
@@ -3513,12 +3577,12 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                     const column = try kindOf(work, work.points[pointee]);
                     var made = Matrix{ .count = work.wide[pointee] };
                     for (0..made.count) |c| {
-                        made.columns[c] = try blockLoad(work, base, dynamic, offset + @as(u32, @intCast(c)) * work.chain_stride[from], column);
+                        made.columns[c] = try blockLoad(work, base, dynamic, offset + @as(u32, @intCast(c)) * work.chain_stride[from], column, work.non_writable[from]);
                     }
                     try holdMatrix(work, id, made);
                     return;
                 }
-                work.step_of[id] = try blockLoad(work, base, dynamic, offset, try kindOf(work, pointee));
+                work.step_of[id] = try blockLoad(work, base, dynamic, offset, try kindOf(work, pointee), work.non_writable[from]);
                 return;
             }
             if (work.thing[from] == .input_part) {
@@ -3657,6 +3721,9 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             var dynamic: u16 = none;
             var pointee: u16 = none;
             var stride: u16 = none;
+            // The variable's NonWritable, or the chain's it goes on from,
+            // and every member's it goes through (since 1.168).
+            var non_writable = work.non_writable[base];
             if (work.thing[base] == .member_pointer) {
                 variable = work.chain_base[base];
                 offset = work.chain_offset[base];
@@ -3683,6 +3750,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                         if (computed != none) return Error.Body;
                         const block = findBlock(work, pointee) orelse return Error.Body;
                         if (index >= block.member_count) return Error.Body;
+                        if (block.member_non_writable[index]) non_writable = true;
                         adds = block.member_offset[index];
                         stride = block.member_stride[index];
                         pointee = block.member_type[index];
@@ -3744,6 +3812,8 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             work.chain_offset[id] = @intCast(offset);
             work.chain_stride[id] = stride;
             work.chain_dynamic[id] = dynamic;
+            work.non_writable[id] = non_writable;
+            if (variable != work.push_variable and work.ubos[work.points[variable]].storage) work.uses_ssbo = true;
         },
         .composite_extract => {
             if (operands.len < 4) return Error.Body;
@@ -4212,7 +4282,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
 /// vir_uniform finds it there already (vir_get_uniform_index,
 /// vir.c:2771). A storage buffer's is a load_ssbo, which the same pass
 /// makes in the same format (v3dv_pipeline.c:418-420; since 1.164).
-fn blockLoad(work: *Work, variable: u16, dynamic: u16, offset: u32, kind: Kind) Error!u16 {
+fn blockLoad(work: *Work, variable: u16, dynamic: u16, offset: u32, kind: Kind, non_writable: bool) Error!u16 {
     if (offset >= none) return Error.Storage;
     if (variable != work.push_variable) {
         const slot = work.points[variable];
@@ -4221,12 +4291,29 @@ fn blockLoad(work: *Work, variable: u16, dynamic: u16, offset: u32, kind: Kind) 
             // At an offset computed: a column past a matrix's first adds
             // its own to it, as the deref of it does (since 1.166).
             const at = if (offset == 0) dynamic else try integerOf(work, .iadd, dynamic, try integerSplat(work, .f32x1, @intCast(offset)));
-            return put(work, .{ .tag = if (storage) .ssbo_indirect else .ubo_indirect, .kind = kind, .a = at, .b = slot });
+            return put(work, .{ .tag = if (storage) .ssbo_indirect else .ubo_indirect, .kind = kind, .a = at, .b = slot, .non_writeable = storage and non_writable });
         }
-        return put(work, .{ .tag = if (storage) .ssbo else .ubo, .kind = kind, .b = slot, .at = offset });
+        return put(work, .{ .tag = if (storage) .ssbo else .ubo, .kind = kind, .b = slot, .at = offset, .non_writeable = storage and non_writable });
     }
     if (dynamic != none) return Error.Storage;
     return put(work, .{ .tag = .push, .kind = kind, .at = offset / 4 });
+}
+
+/// A store_ssbo of `value` at `offset` into `variable`'s buffer, or at the
+/// offset `dynamic` computes, as vtn and nir_lower_explicit_io make it in
+/// v3dv's 32bit_index_offset format, the same as a load's
+/// (v3dv_pipeline.c:415-425; since 1.168). The push constants and a
+/// uniform buffer are not the program's to write, nor is what is
+/// NonWritable. A vertex program's is refused: v3dv runs it twice, as
+/// the coordinate program too.
+fn blockStore(work: *Work, variable: u16, dynamic: u16, offset: u32, non_writable: bool, value: u16, kind: Kind) Error!void {
+    if (offset >= none or variable == work.push_variable) return Error.Storage;
+    const slot = work.points[variable];
+    if (!work.ubos[slot].storage or non_writable) return Error.Storage;
+    if (work.stage != .fragment) return Error.Storage;
+    const at = if (dynamic == none or offset == 0) dynamic else try integerOf(work, .iadd, dynamic, try integerSplat(work, .f32x1, @intCast(offset)));
+    work.buffers_written = true;
+    _ = try put(work, .{ .tag = .ssbo_store, .kind = kind, .a = value, .b = slot, .at = if (dynamic == none) offset else 0, .from = .{ at, 0, 0, 0 } });
 }
 
 /// Which steps differ from lane to lane, nir_divergence_analysis's
@@ -4334,13 +4421,14 @@ fn sizeOf(work: *Work, type_id: u16, stride: u16) Error!u32 {
 
 /// How many bytes of storage buffer `slot` the program reads from its
 /// start: one past the last float of its last-reaching load (since
-/// 1.164). A load at an offset computed reaches where the program says,
+/// 1.164), or store (since 1.168). A load or store at an offset computed reaches where the program says,
 /// which is its own to keep within the range bound, as Vulkan without
 /// robustBufferAccess has it: it counts for nothing here (since 1.166).
 fn reachOf(work: *const Work, slot: u16) u32 {
     var reach: u32 = 0;
     for (work.program()) |each| {
-        if (each.tag == .ssbo and each.b == slot) reach = @max(reach, each.at + 4 * @as(u32, each.kind.parts()));
+        const constant = each.tag == .ssbo or (each.tag == .ssbo_store and each.from[0] == none);
+        if (constant and each.b == slot) reach = @max(reach, each.at + 4 * @as(u32, each.kind.parts()));
     }
     return reach;
 }
@@ -5026,7 +5114,7 @@ fn settle(work: *Work) Error!void {
             // are already in registers, so neither costs an instruction.
             .input, .component, .construct => {},
             // Refused by `compile` before the plan is laid out.
-            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect => return Error.Storage,
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store => return Error.Storage,
             .compare, .discard => return Error.Discards,
             .sample_compared => return Error.Samplers,
             .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot => return Error.Body,
@@ -8534,10 +8622,16 @@ test "through Mesa's back end, a uniform buffer's block made BufferBlock is a st
     // The same eight ldunifas as the uniform buffer's, from unifa written
     // once: the buffer's address, which reaches to the shift's end at 32,
     // and a MOV into unifa, which a load_ssbo's ldunif is not made to
-    // write itself (nir_to_vir.c:3421-3446; since 1.164).
+    // write itself (nir_to_vir.c:3421-3446; since 1.164). A program that
+    // names a storage buffer has its early fragment tests not promoted
+    // and writes Z: the TLBU's configuration last (nir_to_vir.c:2074,
+    // :2098-2124; since 1.168).
     var work: Work = .{};
     const code = try throughMesa(&work, &stored);
-    try testing.expectEqualSlices(Word, &.{.{ .ssbo = .{ .set = 0, .binding = 0, .reach = 32 } }}, code.stream());
+    try expectStream(&.{
+        .{ .ssbo = .{ .set = 0, .binding = 0, .reach = 32 } },
+        .{ .float = @bitCast(@as(u32, 0xffffff84)) },
+    }, code.stream());
     try testing.expectEqual(@as(usize, 0), countOf(code, "ldunifrf.unifa"));
     try testing.expectEqual(@as(usize, 1), countOf(code, "mov unifa"));
     try testing.expectEqual(@as(usize, 8), countOf(code, "ldunifa"));
@@ -8566,10 +8660,12 @@ test "through Mesa's back end, a storage buffer is read through unifa, its runti
     // tint's end, and values[2] at 32 + 2 * 16, past where a skip
     // reaches: unifa again, the address the ldunif before loaded, which
     // vir_uniform takes again (try_opt_ldunif, vir.c:2811), plus 64,
-    // a constant of the stream (nir_to_vir.c:3439-3446).
-    try testing.expectEqualSlices(Word, &.{
+    // a constant of the stream (nir_to_vir.c:3439-3446). Then Z's
+    // configuration, a storage buffer's program's (since 1.168).
+    try expectStream(&.{
         .{ .ssbo = .{ .set = 0, .binding = 0, .reach = 80 } },
         .{ .float = @bitCast(@as(u32, 64)) },
+        .{ .float = @bitCast(@as(u32, 0xffffff84)) },
     }, code.stream());
     try testing.expectEqual(@as(usize, 1), countOf(code, "mov unifa"));
     try testing.expectEqual(@as(usize, 1), countOf(code, "add unifa"));
@@ -8801,8 +8897,9 @@ test "through Mesa's back end, a block read at an offset computed, the same in e
     const ubo: Word = .{ .ubo = .{ .set = 0, .binding = 0, .offset = 0 } };
     const ssbo: Word = .{ .ssbo = .{ .set = 0, .binding = 1, .reach = 0 } };
     // The order the scheduler leaves them in, of the steps nir_opt_dce
-    // leaves (since 1.167).
-    try testing.expectEqualSlices(Word, &.{ .{ .push = 0 }, ubo, .{ .push = 1 }, int(80), int(128), int(16), int(144), ubo, int(48), ssbo, int(112), ssbo }, code.stream());
+    // leaves (since 1.167), and Z's configuration last, a storage
+    // buffer's program's (since 1.168).
+    try expectStream(&.{ .{ .push = 0 }, ubo, .{ .push = 1 }, int(80), int(128), int(16), int(144), ubo, int(48), ssbo, int(112), ssbo, int(0xffffff84) }, code.stream());
     try testing.expectEqual(@as(usize, 8), countOf(code, "add unifa"));
     try testing.expectEqual(@as(usize, 0), countOf(code, "mov unifa"));
     // 4 + 1 + 2 + 2 + 4 + 4 + 1 + 1 words: no load reads on from the
@@ -8938,6 +9035,96 @@ test "through Mesa's back end, a load that nothing reads is not in the program" 
     const colour = try throughMesa(&smooth, Smooth.words);
     try testing.expectEqualSlices(u64, colour.words, code.words);
     try testing.expectEqual(@as(usize, 0), code.stream().len);
+}
+
+test "through Mesa's back end, a storage buffer is written through the TMU, a pixel's, and read where it is written through the TMU too" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_writes);
+    var stores: usize = 0;
+    var load: u16 = none;
+    for (work.program(), 0..) |each, at| switch (each.tag) {
+        .ssbo_store => stores += 1,
+        .ssbo => load = @intCast(at),
+        else => {},
+    };
+    try testing.expectEqual(@as(usize, 2), stores);
+    try testing.expect(load != none and !work.steps[load].non_writeable);
+    try testing.expect(work.buffers_written and work.uses_ssbo);
+    const int = struct {
+        fn of(value: u32) Word {
+            return .{ .float = @bitCast(value) };
+        }
+    }.of;
+    const written: Word = .{ .ssbo = .{ .set = 0, .binding = 1, .reach = 32 } };
+    // The count's 2.0 into TMUD and the address alone into TMUA, a
+    // pixel's 32-bit word, the default configuration (nir_to_vir.c:
+    // 456-492); the row through TMUAU, its four floats a pixel's vec4,
+    // 0xffffff00 | 15 << 3 | 1 << 7 | 4 (:650-670): a store's lookup is
+    // never a quad's. The last, a load of a buffer the program writes,
+    // through the TMU at its constant offset 16 and not unifa
+    // (:3338-3343): a quad's, for a load the same in every lane does not
+    // skip the helper pixels (no_add_divergence,
+    // nir_opt_load_skip_helpers.c:99-113). And Z, for a program that
+    // names a storage buffer writes it (since 1.168).
+    try expectStream(&.{ int(0x3fc00000), written, int(48), .{ .ubo = .{ .set = 0, .binding = 0, .offset = 0 } }, int(0xfffffffc), int(32), written, int(0xfffffffc), int(16), int(0xffffff7c), int(0xffffff84) }, code.stream());
+    try testing.expectEqual(@as(usize, 5), countOf(code, "mov tmud"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmua,"));
+    try testing.expectEqual(@as(usize, 3), countOf(code, "add tmuau"));
+    // Each flush waits for the stores before it: one TMUWT however many
+    // there are (ntq_flush_tmu, nir_to_vir.c:266-299).
+    try testing.expectEqual(@as(usize, 2), countOf(code, "tmuwt"));
+    try testing.expectEqual(@as(usize, 8), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "unifa"));
+    try testing.expect(code.tmu_dirty_rcl);
+    try testing.expect(code.writes_z and code.disable_ez);
+    try testing.expectEqual(@as(usize, 34), code.words.len);
+}
+
+test "through Mesa's back end, a readonly buffer is read through unifa where the program writes none, and a readonly member where it writes the rest" {
+    // NonWritable on the variable and each member, and no store: the
+    // count through unifa, the row at an index that differs through the
+    // TMU, a pixel's, and nothing left dirty.
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_reads);
+    try testing.expect(!work.buffers_written and work.uses_ssbo);
+    try expectStream(&.{
+        .{ .float = @bitCast(@as(u32, 0x3fc00000)) },
+        .{ .float = @bitCast(@as(u32, 32)) },
+        .{ .ssbo = .{ .set = 0, .binding = 1, .reach = 4 } },
+        .{ .float = @bitCast(@as(u32, 0xfffffffc)) },
+        .{ .float = @bitCast(@as(u32, 0xffffff84)) },
+    }, code.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov unifa"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "ldunifa"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "add tmuau"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "tmud"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "tmuwt"));
+    try testing.expect(!code.tmu_dirty_rcl);
+    try testing.expect(code.writes_z and code.disable_ez);
+    try testing.expectEqual(@as(usize, 25), code.words.len);
+    // A readonly count in a buffer the program writes the rows of: its
+    // member's NonWritable makes the load ACCESS_NON_WRITEABLE all the
+    // same (nir_opt_access.c), through unifa; the last, of a member that
+    // is not, through the TMU.
+    var member: Work = .{};
+    const written = try throughMesa(&member, &reference.glslc_member);
+    try testing.expect(member.buffers_written);
+    try testing.expectEqual(@as(usize, 1), countOf(written, "ldunifa"));
+    try testing.expectEqual(@as(usize, 4), countOf(written, "mov tmud"));
+    try testing.expectEqual(@as(usize, 2), countOf(written, "add tmuau"));
+    try testing.expectEqual(@as(usize, 1), countOf(written, "tmuwt"));
+    try testing.expect(written.tmu_dirty_rcl);
+}
+
+test "a store into a uniform buffer, or in a vertex program, is refused" {
+    // glslc_writes's `OpDecorate %22 BufferBlock` made Block: the buffer
+    // it writes is a uniform buffer.
+    var uniform: Work = .{};
+    try testing.expectError(Error.Storage, throughMesa(&uniform, &comptime patched(&reference.glslc_writes, .decorate, 2, 1, @intFromEnum(spirv.Decoration.block))));
+    // A vertex program runs as the coordinate shader too, and would
+    // write twice.
+    var vertex: Work = .{};
+    try testing.expectError(Error.Storage, vertexThroughMesa(&vertex, &reference.glslc_vertex_store, .{}));
 }
 
 test "an index computed into the push constants is refused, and the plan holds no block read" {

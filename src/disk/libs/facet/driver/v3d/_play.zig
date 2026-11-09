@@ -175,6 +175,20 @@ pub const Player = struct {
     bin_start: u32 = 0,
     /// A draw is on the binner's list.
     binned: bool = false,
+    /// A program a draw runs writes through the TMU: the job's
+    /// tmu_dirty_rcl, which v3dv gathers from them
+    /// (v3dvx_cmd_buffer.c:2559-2564) and the caches are cleaned after
+    /// for (since 1.168).
+    tmu_dirty_rcl: bool = false,
+    /// The storage buffers the job's draws bind, as far as their
+    /// descriptors' ranges go: what the CPU's caches hold of them is
+    /// dropped after a job whose programs write through the TMU, for the
+    /// memory is HOST_COHERENT, where Linux maps v3dv's buffers
+    /// write-combined instead (since 1.168). Past `most_storage` the job's
+    /// others are said and not dropped.
+    storage: [most_storage]Range = undefined,
+    storage_count: u32 = 0,
+    storage_over: bool = false,
     /// Memory a draw's vertices are worked in, kept for the next.
     scratch: ?[*]u8 = null,
     scratch_bytes: usize = 0,
@@ -460,6 +474,15 @@ const Tally = struct {
 /// begins more than this many in one pass has the rest counted as 0.
 const most_tallies = 16;
 
+/// Bytes of memory from `at`.
+const Range = struct {
+    at: [*]const u8,
+    bytes: usize,
+};
+
+/// The storage buffers a job keeps to drop from the CPU's caches.
+const most_storage = 32;
+
 /// What the group takes and where it must lie: the hardware wants a group
 /// of sixteen counters on a boundary of 1024 bytes, with the words
 /// themselves in the 64 at the start of it (Mesa's v3dv_query.c).
@@ -607,6 +630,11 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     player.tally_count = 0;
     player.tally_group = null;
     player.area = .{ .left = left, .top = top, .right = right, .bottom = bottom };
+    // A job's flag starts clear, as v3dv's job is made, and binds no
+    // storage buffer yet (since 1.168).
+    player.tmu_dirty_rcl = false;
+    player.storage_count = 0;
+    player.storage_over = false;
     player.frame = .{
         .width = framebuffer.width,
         .height = framebuffer.height,
@@ -980,6 +1008,17 @@ fn endRenderPass(queue: *Queue) void {
         if (binned != .done) return lost(player, sys, binned, "binning");
     }
     const rendered = engine.render(render.address, render.here());
+    // What the programs wrote through the TMU, out to memory before
+    // anything reads it: the CACHE_CLEAN job Linux runs after a job
+    // submitted with DRM_V3D_SUBMIT_CL_FLUSH_CACHE, which v3dv asks for
+    // where the job's tmu_dirty_rcl is (v3dv_queue.c:746-747,
+    // v3d_submit.c:1214-1221; since 1.168). A clean that does not finish
+    // is said, as Linux's drm_err says it, and the job is not lost.
+    if (rendered == .done and player.tmu_dirty_rcl) {
+        if (!engine.cleanCaches()) exec.kprintf(sys, "v3d: the TMU's writes did not go out\n", .{});
+        for (player.storage[0..player.storage_count]) |each| space.rangeFromGpu(each.at, each.bytes);
+        if (player.storage_over) exec.kprintf(sys, "v3d: a job bound more than %lu storage buffers, and the CPU may read the rest stale\n", .{@as(u64, most_storage)});
+    }
     if (image) |each| space.rangeFromGpu(each.data.? + player.image_first, image_bytes);
     if (player.frame.kept) |kept| if (kept.store) space.rangeFromGpu(player.kept_image.?.data.? + player.kept_first, kept_bytes);
     if (player.frame.resolve != null) space.rangeFromGpu(player.resolve_view.?.image.data.? + player.resolve_first, player.resolve_bytes);
@@ -1171,8 +1210,25 @@ fn storageAddress(queue: *Queue, at: compile.StorageAddress, out: bool) ?u32 {
     const shift = resources.shiftOf(at.set, found);
     if (shift == shader.SHIFTED_OUT or at.reach > found.range) return null;
     const address = std.math.cast(u32, @intFromPtr(bytes) + shift) orelse return null;
-    if (out) playerOf(queue).hardware.space.rangeToGpu(bytes + shift, found.range);
+    if (out) {
+        const player = playerOf(queue);
+        player.hardware.space.rangeToGpu(bytes + shift, found.range);
+        keepStorage(player, .{ .at = bytes + shift, .bytes = found.range });
+    }
     return address;
+}
+
+/// A storage buffer a draw binds, kept for after the job, once.
+fn keepStorage(player: *Player, range: Range) void {
+    for (player.storage[0..player.storage_count]) |each| {
+        if (each.at == range.at and each.bytes == range.bytes) return;
+    }
+    if (player.storage_count == most_storage) {
+        player.storage_over = true;
+        return;
+    }
+    player.storage[player.storage_count] = range;
+    player.storage_count += 1;
 }
 
 /// Whether every uniform buffer and storage buffer a program's `stream`
@@ -1742,6 +1798,12 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     // buffer either of its programs reads is not bound, which the vertex
     // function is left to make of (since 1.164).
     const compiled_vertex: ?*const driver.VertexStage = if (own) |made| (if (made.vertex) |*stage| (if (buffersBound(queue, stage.vertex.stream()) and buffersBound(queue, stage.coordinate.stream())) stage else null) else null) else null;
+    if (own) |made| if (made.tmu_dirty_rcl) {
+        player.tmu_dirty_rcl = true;
+    };
+    if (compiled_vertex) |stage| if (stage.vertex.tmu_dirty_rcl or stage.coordinate.tmu_dirty_rcl) {
+        player.tmu_dirty_rcl = true;
+    };
     const scale = ViewportScale{
         .half_width = viewport.width / 2,
         .half_height = viewport.height / 2,

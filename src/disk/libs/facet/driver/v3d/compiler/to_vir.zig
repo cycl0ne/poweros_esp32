@@ -569,15 +569,25 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         // unifa, which its constant offset always allows here. A
         // load_ssbo too (:3638-3643), of a buffer nothing writes, which is
         // every one in the profile (since 1.164).
-        .ubo, .ssbo => try emitLoadUnifa(e, each, at),
+        .ubo => try emitLoadUnifa(e, each, at),
+        // A load_ssbo of memory the program may write is not read through
+        // unifa, which would not see what the program wrote (:3338-3343),
+        // but through the TMU (since 1.168).
+        .ssbo => {
+            if (writable(e, each)) return emitTmuGeneral(e, each, at);
+            try emitLoadUnifa(e, each, at);
+        },
         // At an offset computed: through unifa where the offset is the
         // same in every lane, and else through the TMU, whose LDTMUs
         // define the floats when it is flushed (:3315-3317, :3634-3643;
         // since 1.167).
         .ubo_indirect, .ssbo_indirect => {
-            if (e.work.divergent[each.a]) return emitTmuGeneral(e, each, at);
+            if (e.work.divergent[each.a] or writable(e, each)) return emitTmuGeneral(e, each, at);
             try emitLoadUnifa(e, each, at);
         },
+        // store_ssbo, through the TMU (:3645-3649; since 1.168). It
+        // makes no value.
+        .ssbo_store => return emitTmuGeneral(e, each, at),
     }
     e.defined[at] = true;
 }
@@ -872,45 +882,82 @@ const general_tmu_lookup_type_32bit_ui: u32 = 7;
 /// (v3d_general_tmu_op, nir_to_vir.c:213-226).
 const tmu_op_regular: u32 = 15;
 
+/// A load_ssbo of memory the program may write: one that is not
+/// ACCESS_NON_WRITEABLE, which nir_opt_access makes every load of a
+/// program that writes no buffer (nir_opt_access.c:266-272; since 1.168).
+fn writable(e: *const Emit, each: Step) bool {
+    return (each.tag == .ssbo or each.tag == .ssbo_indirect) and !each.non_writeable and e.work.buffers_written;
+}
+
 /// ntq_emit_tmu_general (nir_to_vir.c:502-725), for a load_ubo or a
-/// load_ssbo at an offset that differs from lane to lane (since 1.167).
-/// The buffer's address first, a uniform buffer's slot shifted up by one
-/// at an offset of 0 and a storage buffer's own (:560-603). Then the
-/// count Mesa makes before it emits: one TMU write, the address, whose
-/// offset is read, which may flush what the TMU holds (MODE_COUNT,
-/// emit_tmu_general_address_write :449-454); the threads that leaves room
-/// for, and a flush where the output FIFO would overflow (:690-701).
-/// Then the write itself (:456-492): the offset added to the address into
-/// TMUAU, with the configuration as its uniform, or into TMUA where the
-/// configuration is the default, a pixel's 32-bit word. The lookup is a
-/// quad's in a fragment program, unless its helper pixels are skipped
-/// (ACCESS_SKIP_HELPERS, :640-648), and reads a 32-bit word or as many as
-/// the load has (:650-670). The LDTMUs are owed (:702-710).
+/// load_ssbo at an offset that differs from lane to lane (since 1.167), a
+/// load_ssbo of memory the program may write and a store_ssbo (since
+/// 1.168). The buffer's address first, a uniform buffer's slot shifted up
+/// by one at an offset of 0 and a storage buffer's own (:560-603). Then
+/// the count Mesa makes before it emits: a TMUD write for each float a
+/// store writes, whose value is read (emit_tmu_general_store_writes,
+/// :346-392), and one for the address, whose offset is read where it is
+/// computed (:449-454) - either may flush what the TMU holds; the threads
+/// that leaves room for, and a flush where the output FIFO would overflow
+/// (:690-701). Then the writes themselves: the floats into TMUD, and the
+/// offset added to the address into TMUAU, with the configuration as its
+/// uniform, or into TMUA where the configuration is the default, a
+/// pixel's 32-bit word (:456-492). A load's lookup is a quad's in a
+/// fragment program, unless its helper pixels are skipped
+/// (ACCESS_SKIP_HELPERS, :640-648), and a store's a pixel's; either reads
+/// or writes a 32-bit word or as many as it has (:650-670). The LDTMUs
+/// are owed, or a store's TMUWT (:702-710), and a store leaves the job's
+/// caches to be cleaned (tmu_dirty_rcl, :532-533).
 fn emitTmuGeneral(e: *Emit, each: Step, at: u16) Error!void {
     const c = e.c;
-    const base_offset = if (each.tag == .ssbo_indirect)
-        try c.uniform(.ssbo_offset, each.b)
+    const is_store = each.tag == .ssbo_store;
+    if (is_store) c.tmu_dirty_rcl = true;
+    // The offset's step where it is computed, and else the constant one.
+    const offset_src: u16 = switch (each.tag) {
+        .ubo_indirect, .ssbo_indirect => each.a,
+        .ssbo_store => each.from[0],
+        else => compile.none,
+    };
+    const dynamic_src = offset_src != compile.none;
+    const const_offset: u32 = if (dynamic_src) 0 else each.at;
+    const base_offset = if (each.tag == .ubo_indirect)
+        try c.uniform(.ubo_addr, vir.unitDataCreate(@as(u32, each.b) + 1, 0))
     else
-        try c.uniform(.ubo_addr, vir.unitDataCreate(@as(u32, each.b) + 1, 0));
+        try c.uniform(.ssbo_offset, each.b);
 
-    const dest_components: u32 = @intCast(each.kind.parts());
-    const tmu_writes: u32 = 1;
-    _ = try getSrc(e, each.a, 0);
+    const parts: u32 = @intCast(each.kind.parts());
+    const dest_components: u32 = if (is_store) 0 else parts;
+    var tmu_writes: u32 = 0;
+    if (is_store) for (0..parts) |k| {
+        _ = try getSrc(e, each.a, k);
+        tmu_writes += 1;
+    };
+    tmu_writes += 1;
+    if (dynamic_src) _ = try getSrc(e, offset_src, 0);
     while (tmu_writes > 16 / @as(u32, c.threads)) c.threads /= 2;
     if (tmuFifoOverflow(e, dest_components)) try flushTmu(e);
 
-    const perquad = if (c.stage == .fragment and !e.work.skip_helpers[at])
+    if (is_store) for (0..parts) |k| {
+        _ = try c.mulDest(.mov, vir.magicReg(.tmud), .{try getSrc(e, each.a, k)});
+    };
+    const num_components = if (is_store) tmu_writes - 1 else parts;
+    const perquad = if (!is_store and c.stage == .fragment and !e.work.skip_helpers[at])
         general_tmu_lookup_per_quad
     else
         general_tmu_lookup_per_pixel;
     var config: u32 = 0xffffff00 | tmu_op_regular << 3 | perquad;
-    config |= if (dest_components == 1)
+    config |= if (num_components == 1)
         general_tmu_lookup_type_32bit_ui
     else
-        general_tmu_lookup_type_vec2 + dest_components - 2;
+        general_tmu_lookup_type_vec2 + num_components - 2;
 
     const tmua = vir.magicReg(if (config == ~@as(u32, 0)) .tmua else .tmuau);
-    const tmu = try c.addDest(.add, tmua, .{ base_offset, try getSrc(e, each.a, 0) });
+    const tmu = if (dynamic_src)
+        try c.addDest(.add, tmua, .{ base_offset, try getSrc(e, offset_src, 0) })
+    else if (const_offset != 0)
+        try c.addDest(.add, tmua, .{ base_offset, try c.uniformUi(const_offset) })
+    else
+        try c.mulDest(.mov, tmua, .{base_offset});
     if (config != ~@as(u32, 0)) tmu.uniform = try c.getUniformIndex(.constant, config);
     tmu.ldtmu_count = dest_components;
     try addPendingTmuFlush(e, at, (@as(u32, 1) << @intCast(dest_components)) - 1);
@@ -925,7 +972,8 @@ fn tmuFifoOverflow(e: *const Emit, components: u32) bool {
 
 /// ntq_flush_tmu (nir_to_vir.c:266): the thread switch, and the LDTMUs or
 /// the TMUWT, for every TMU operation waiting. A sample's words are
-/// unpacked after, and a general load's are its floats (since 1.167).
+/// unpacked after, and a general load's are its floats (since 1.167;
+/// at a constant offset, since 1.168).
 fn flushTmu(e: *Emit) Error!void {
     if (e.flush_count == 0) return;
     const c = e.c;
@@ -935,7 +983,10 @@ fn flushTmu(e: *Emit) Error!void {
     for (e.flush[0..e.flush_count]) |pending| {
         if (pending.component_mask > 0) {
             const tag = e.work.steps[pending.step].tag;
-            const general = tag == .ubo_indirect or tag == .ssbo_indirect;
+            const general = switch (tag) {
+                .ubo, .ubo_indirect, .ssbo, .ssbo_indirect => true,
+                else => false,
+            };
             for (0..4) |j| {
                 if (pending.component_mask & @as(u32, 1) << @intCast(j) != 0) {
                     const word = try c.mul(.mov, .{try c.ldtmu()});
@@ -1021,15 +1072,16 @@ fn emitFragEnd(e: *Emit) Error!void {
     // A colour the TLB takes: render target 0 is among the key's, and
     // the program writes it (nir_to_vir.c:2050-2054).
     const has_any_tlb_color_write = e.key.cbufs & 1 != 0 and hasColor(e);
-    // There is no image, buffer or sample mask, so early_fragment_tests
-    // is promoted where a colour is written, nothing discards and nothing
+    // There is no image or sample mask, so early_fragment_tests is
+    // promoted where a colour is written, no storage buffer is named
+    // (info.num_ssbos, :2074; since 1.168), nothing discards and nothing
     // covers by alpha (nir_to_vir.c:2073-2081; v3dv has no
     // can_earlyz_with_discard), and where it is not the program writes Z
     // (nir_to_vir.c:2098): a program of no colour always does, its one
     // TLB write, where Mesa also says it discards (:2125-2126), which
     // nothing after reads here. It has no gl_FragDepth, so that Z is the
     // one the rasterizer made, written through as it is.
-    e.early_fragment_tests = has_any_tlb_color_write and !e.uses_discard and !e.key.sample_alpha_to_coverage;
+    e.early_fragment_tests = has_any_tlb_color_write and !e.work.uses_ssbo and !e.uses_discard and !e.key.sample_alpha_to_coverage;
     if (!e.early_fragment_tests) {
         e.writes_z = true;
         const inst = try c.mulDest(.mov, vir.magicReg(.tlbu), .{vir.nopReg()});
