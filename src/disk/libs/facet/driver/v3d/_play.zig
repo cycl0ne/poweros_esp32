@@ -893,7 +893,7 @@ fn clearRectangle(queue: *Queue, clip: frames.Area, color: u32, channels: u32, d
     };
     const hardware = player.hardware;
     const uniforms = if (no_color)
-        streamOf(queue, &hardware.no_color, null) orelse return noRoom(queue, "a clear with no memory for its uniforms")
+        streamOf(queue, hardware.no_color.stream(), null, null) orelse return noRoom(queue, "a clear with no memory for its uniforms")
     else
         (carve(queue, 4, 4) orelse return noRoom(queue, "a clear with no memory for its uniforms")).address;
     if (!roomOnList(queue)) return noRoom(queue, "a clear with no memory for the binner's list");
@@ -1094,10 +1094,10 @@ fn writeRecord(into: [*]u8, output: [*]const f32, viewport: *const ViewportScale
 /// A compiled program's uniform stream, written where the V3D reads it:
 /// its floats, the TMU's two words from `tmu`, and the push constants as
 /// the command buffer last set them before this draw (`CmdPushConstants`),
-/// read as v3dv reads QUNIFORM_UNIFORM (v3dv_uniforms.c:513). Its address,
-/// or null with no memory for it.
-fn streamOf(queue: *Queue, made: *const driver.Shader, tmu: ?Configuration) ?u32 {
-    const stream = made.stream();
+/// read as v3dv reads QUNIFORM_UNIFORM (v3dv_uniforms.c:513). A vertex
+/// program's has the viewport's words in it too, from `scale` (since
+/// 1.163). Its address, or null with no memory for it.
+fn streamOf(queue: *Queue, stream: []const compile.Word, tmu: ?Configuration, scale: ?*const ViewportScale) ?u32 {
     const bytes: u32 = @max(4, @as(u32, @intCast(stream.len * 4)));
     const place = carve(queue, bytes, 4) orelse return null;
     const words: [*]u32 = @ptrCast(@alignCast(place.cpu));
@@ -1113,8 +1113,23 @@ fn streamOf(queue: *Queue, made: *const driver.Shader, tmu: ?Configuration) ?u32
         .push => |at| std.mem.readInt(u32, pushed[at * 4 ..][0..4], .little),
         // `buffersBound` has found each.
         .ubo => |each| bufferAddress(queue, each, true) orelse 0,
+        // A vertex program's alone, which the draw gives `scale` to.
+        .viewport => |which| @bitCast(if (scale) |each| viewportWord(each, which) else 0),
     };
     return place.address;
+}
+
+/// A word of the viewport as v3dv writes QUNIFORM_VIEWPORT_* (v3dv_uniforms.c:
+/// 526-552): x and y scaled to the clipper's 1/64ths of a pixel
+/// (clipper_xy_granularity, v3d_device_info.c:91), the depth's offset and
+/// its scale. `writeRecord` works the same on the CPU (since 1.163).
+fn viewportWord(scale: *const ViewportScale, which: compile.Viewport) f32 {
+    return switch (which) {
+        .x_scale => scale.half_width * 64,
+        .y_scale => scale.half_height * 64,
+        .z_offset => scale.offset,
+        .z_scale => scale.scale,
+    };
 }
 
 /// Where the V3D reads a uniform buffer's floats: the buffer's address,
@@ -1188,6 +1203,70 @@ fn sendVertices(queue: *Queue, vertices: u32, varyings: u32, fragment: u32, unif
     cl.attribute(&list, vertices + 16, 4, 2, 4, stride);
     if (varyings > 0) cl.attribute(&list, vertices + 32, @min(varyings, 4), 0, @min(varyings, 4), stride);
     if (varyings > 4) cl.attribute(&list, vertices + 48, varyings - 4, 0, varyings - 4, stride);
+    cl.glShaderState(&player.bin, record.address, attributes);
+    return true;
+}
+
+/// The shader record of a draw whose vertex shader the QPU runs, and its
+/// attribute records, and the packet that says so, as
+/// v3dX(cmd_buffer_emit_gl_shader_state) emits them (v3dvx_cmd_buffer.c:
+/// 2560-2790; since 1.163). `inputs` is where the draw's attributes are,
+/// four floats a location and `locations` of them a vertex, as
+/// `_vertices.readInputs` makes them of what the buffers hold: a record
+/// for each driver location the vertex program reads, four floats wide,
+/// of which each program reads what it reads of it.
+fn sendCompiledVertices(queue: *Queue, inputs: u32, locations: u32, stage: *const driver.VertexStage, vertex_uniforms: u32, coordinate_uniforms: u32, fragment: u32, uniforms: u32, own: *const driver.Shader) bool {
+    const player = playerOf(queue);
+    const vs = &stage.vertex.program;
+    const cs = &stage.coordinate.program;
+    // va_count: the attributes the vertex program still has after
+    // nir_remove_dead_variables (driver_location_map,
+    // v3dvx_pipeline.c:694-721).
+    var va_count: u32 = 0;
+    for (vs.vattr_sizes[0..vs.attribute_count]) |size| va_count += @intFromBool(size != 0);
+    const attributes = @max(va_count, 1);
+    const record = carve(queue, cl.shader_record_bytes + 16 * attributes, 32) orelse return false;
+    var list = cl.List{ .at = record.cpu, .address = record.address };
+    cl.shaderRecord(&list, .{
+        .fragment = fragment,
+        .fragment_uniforms = uniforms,
+        .vertex = stage.vertex.address,
+        .vertex_uniforms = vertex_uniforms,
+        .coordinate = stage.coordinate.address,
+        .coordinate_uniforms = coordinate_uniforms,
+        .varyings = own.varyings,
+        .fragment_threads = own.threads,
+        .center_w = own.center_w,
+        .lock_scoreboard_on_first_thrsw = own.lock_scoreboard_on_first_thrsw,
+        .writes_z = own.writes_z,
+        .disable_ez = own.disable_ez,
+        .compiled_vertex = .{
+            .vertex_sectors = vs.vpm_output_sectors,
+            .coordinate_sectors = cs.vpm_output_sectors,
+            .vertex_threads = stage.vertex.threads,
+            .coordinate_threads = stage.coordinate.threads,
+            .vertex_single_seg = vs.single_seg,
+            .coordinate_single_seg = cs.single_seg,
+        },
+    });
+    const stride = locations * @sizeOf([4]f32);
+    var cs_loaded_any = false;
+    for (0..vs.attribute_count) |driver_location| {
+        if (vs.vattr_sizes[driver_location] == 0) continue;
+        var by_coordinate: u32 = cs.vattr_sizes[driver_location];
+        if (by_coordinate != 0) cs_loaded_any = true;
+        // GFXH-930: the coordinate program reads at least one attribute,
+        // the last where it reads none, tested as v3dv tests it, against
+        // the driver location.
+        if (driver_location == va_count - 1 and !cs_loaded_any) {
+            by_coordinate = 1;
+            cs_loaded_any = true;
+        }
+        cl.floatAttribute(&list, inputs + 16 * @as(u32, vs.attribute_location[driver_location]), 4, by_coordinate, vs.vattr_sizes[driver_location], stride);
+    }
+    // GFXH-930 again: with no attribute, one of a float that is never
+    // used, at an address the V3D reaches.
+    if (va_count == 0) cl.floatAttribute(&list, record.address, 1, 1, 1, 0);
     cl.glShaderState(&player.bin, record.address, attributes);
     return true;
 }
@@ -1617,7 +1696,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
                 fragment = made.address;
                 own = made;
                 carried = .as_they_are;
-                uniforms = streamOf(queue, made, tmu) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+                uniforms = streamOf(queue, made.stream(), tmu, null) orelse return noRoom(queue, "a draw with no memory for its uniforms");
             }
         },
         // Refused when the pipeline was made (driver.zig): no fixed form's
@@ -1631,9 +1710,13 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         carried = .as_they_are;
         fragment = made.address;
         own = made;
-        uniforms = streamOf(queue, made, null) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+        uniforms = streamOf(queue, made.stream(), null, null) orelse return noRoom(queue, "a draw with no memory for its uniforms");
     }
 
+    // The pipeline's vertex shader on the QPU, where it was compiled for
+    // it and the draw runs the pipeline's own fragment program: the
+    // vertex function is not called then (since 1.163).
+    const compiled_vertex: ?*const driver.VertexStage = if (own) |made| (if (made.vertex) |*stage| stage else null) else null;
     const scale = ViewportScale{
         .half_width = viewport.width / 2,
         .half_height = viewport.height / 2,
@@ -1646,6 +1729,23 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     frames.writeDrawState(&player.bin, &player.frame, &state);
     for (0..instances) |k| {
         const instance = first_instance +% @as(u32, @intCast(k));
+        if (compiled_vertex) |stage| {
+            // The attributes made floats where the V3D reads them, and the
+            // programs' own streams: the triangles are the ones kept
+            // above, of vertices numbered from `lowest`.
+            const place = carve(queue, @intCast(@max(inputs_bytes, 16)), 16) orelse return noRoom(queue, "a draw with no memory for its attributes");
+            const into: [*][4]f32 = @ptrCast(@alignCast(place.cpu));
+            _vertices.readInputs(player, pipeline, lowest, vertices, instance, into[0 .. @as(usize, vertices) * locations]);
+            const vertex_uniforms = streamOf(queue, stage.vertex.stream(), null, &scale) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+            const coordinate_uniforms = streamOf(queue, stage.coordinate.stream(), null, &scale) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+            if (!roomOnList(queue)) return noRoom(queue, "a draw with no memory for the binner's list");
+            if (!sendCompiledVertices(queue, place.address, locations, stage, vertex_uniforms, coordinate_uniforms, fragment, uniforms, own.?)) return noRoom(queue, "a draw with no memory for its shader record");
+            cl.indexBufferSetup(&player.bin, index_place.address, kept * 4);
+            cl.indexedPrimList(&player.bin, cl.PRIM_TRIANGLES, kept);
+            player.binned = true;
+            player.triangles += kept / 3;
+            continue;
+        }
         _vertices.readInputs(player, pipeline, lowest, vertices, instance, inputs[0 .. @as(usize, vertices) * locations]);
         // One pixel unless the function says otherwise, which is the
         // point every draw made before 1.70.

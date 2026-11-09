@@ -296,6 +296,8 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     // them: what a device with a processor of its own compiles instead of
     // calling the function (since 1.75).
     var fragment_words: []const u32 = &.{};
+    // And beside the vertex function (since 1.163).
+    var vertex_words: []const u32 = &.{};
     for (info.stages[0..info.stage_count]) |stage| {
         // Specialization constants are not honoured, and a pipeline that
         // drew with them dropped would draw something the program did
@@ -309,7 +311,10 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         const at = _shader.findAt(module, stage.stage, stage.name) orelse return .error_invalid_shader_nv;
         const entry = &module.entries()[at];
         switch (stage.stage) {
-            facet.SHADER_STAGE_VERTEX => vertex = entry,
+            facet.SHADER_STAGE_VERTEX => {
+                vertex = entry;
+                vertex_words = module.wordsAt(at);
+            },
             facet.SHADER_STAGE_FRAGMENT => {
                 fragment = entry;
                 fragment_words = module.wordsAt(at);
@@ -365,6 +370,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .fragment = @ptrCast(@alignCast(fragment_entry.function)),
         .fixed = fixed_form,
         .fragment_words = fragment_words,
+        .vertex_words = vertex_words,
         .discards = discards,
         // What is drawn carries, which with tessellation is the
         // evaluation function's output and not the vertex function's: the

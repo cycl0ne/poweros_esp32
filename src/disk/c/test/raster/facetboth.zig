@@ -59,7 +59,10 @@
 //! struct, a mat3 times a vector, and the rest of SPIR-V's matrix
 //! arithmetic, each beside a function of the same arithmetic in the same
 //! order for the cores; and, since 1.30, a matrix of the shader's own
-//! constants.
+//! constants. The shipped case of a vertex shader (since 1.31) is
+//! glslc's words of "as it is", which the V3D runs on the QPU, the
+//! vertex program and the coordinate program both, where the cores call
+//! the function.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -74,7 +77,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.30 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.31 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -826,6 +829,7 @@ const shipped_entries = [_]shader.Entry{
     Shipped.UniformMatrix.entry("shipped uniform matrix"),
     Shipped.UniformMatrices.entry("shipped uniform matrices"),
     Shipped.ConstantMatrix.entry("shipped constant matrix"),
+    shader.vertex("shipped as it is", &asItIsVertex, 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                .{},                               .{},                                  .{},
@@ -835,7 +839,7 @@ const shipped_words = [_]shader.Spirv{
     Shipped.Chosen.spirv,               Shipped.Branched.spirv,            shader.Spirv.of(&branch_unoptimized), Shipped.Nested.spirv,
     Shipped.Bools.spirv,                Shipped.Nests.spirv,               Shipped.Joined.spirv,                 Shipped.Collapsed.spirv,
     shader.Spirv.of(&nested_discard),   Shipped.Uniformed.spirv,           shader.Spirv.of(&uniform_nested),     shader.Spirv.of(&uniform_matrix),
-    shader.Spirv.of(&uniform_matrices), shader.Spirv.of(&constant_matrix),
+    shader.Spirv.of(&uniform_matrices), shader.Spirv.of(&constant_matrix), shader.Spirv.of(&vertex_as_it_is),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -1135,6 +1139,65 @@ const uniform_matrices = [_]u32{
     0x00000001, 0x00070050, 0x0000000C, 0x0000008A, 0x00000088, 0x00000089,
     0x0000007E, 0x00000087, 0x0003003E, 0x00000070, 0x0000008A, 0x000100FD,
     0x00010038,
+};
+/// glslc's own output, at -O, of `asItIsVertex` as a vertex shader, the
+/// V3D's host tests' glslc_vertex_as_it_is: the place moved by the
+/// instance's offset times W, and the colour handed on as it is. The V3D
+/// compiles it for the QPU twice, the coordinate program of the position
+/// alone (since 1.31).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 p;
+/// layout(location = 1) in vec4 c;
+/// layout(location = 3) in vec2 moved;
+/// layout(location = 0) out vec4 vcolor;
+/// void main() {
+///     gl_Position = vec4(p.xy + moved * p.w, p.z, p.w);
+///     vcolor = c;
+/// }
+/// ```
+const vertex_as_it_is = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000002B, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x000A000F, 0x00000000,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000011, 0x00000016,
+    0x00000028, 0x00000029, 0x00030047, 0x0000000B, 0x00000002, 0x00050048,
+    0x0000000B, 0x00000000, 0x0000000B, 0x00000000, 0x00050048, 0x0000000B,
+    0x00000001, 0x0000000B, 0x00000001, 0x00050048, 0x0000000B, 0x00000002,
+    0x0000000B, 0x00000003, 0x00050048, 0x0000000B, 0x00000003, 0x0000000B,
+    0x00000004, 0x00040047, 0x00000011, 0x0000001E, 0x00000000, 0x00040047,
+    0x00000016, 0x0000001E, 0x00000003, 0x00040047, 0x00000028, 0x0000001E,
+    0x00000000, 0x00040047, 0x00000029, 0x0000001E, 0x00000001, 0x00020013,
+    0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006,
+    0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040015,
+    0x00000008, 0x00000020, 0x00000000, 0x0004002B, 0x00000008, 0x00000009,
+    0x00000001, 0x0004001C, 0x0000000A, 0x00000006, 0x00000009, 0x0006001E,
+    0x0000000B, 0x00000007, 0x00000006, 0x0000000A, 0x0000000A, 0x00040020,
+    0x0000000C, 0x00000003, 0x0000000B, 0x0004003B, 0x0000000C, 0x0000000D,
+    0x00000003, 0x00040015, 0x0000000E, 0x00000020, 0x00000001, 0x0004002B,
+    0x0000000E, 0x0000000F, 0x00000000, 0x00040020, 0x00000010, 0x00000001,
+    0x00000007, 0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x00040017,
+    0x00000012, 0x00000006, 0x00000002, 0x00040020, 0x00000015, 0x00000001,
+    0x00000012, 0x0004003B, 0x00000015, 0x00000016, 0x00000001, 0x0004002B,
+    0x00000008, 0x00000018, 0x00000003, 0x00040020, 0x00000019, 0x00000001,
+    0x00000006, 0x0004002B, 0x00000008, 0x0000001E, 0x00000002, 0x00040020,
+    0x00000026, 0x00000003, 0x00000007, 0x0004003B, 0x00000026, 0x00000028,
+    0x00000003, 0x0004003B, 0x00000010, 0x00000029, 0x00000001, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x0004003D, 0x00000007, 0x00000013, 0x00000011, 0x0007004F, 0x00000012,
+    0x00000014, 0x00000013, 0x00000013, 0x00000000, 0x00000001, 0x0004003D,
+    0x00000012, 0x00000017, 0x00000016, 0x00050041, 0x00000019, 0x0000001A,
+    0x00000011, 0x00000018, 0x0004003D, 0x00000006, 0x0000001B, 0x0000001A,
+    0x0005008E, 0x00000012, 0x0000001C, 0x00000017, 0x0000001B, 0x00050081,
+    0x00000012, 0x0000001D, 0x00000014, 0x0000001C, 0x00050041, 0x00000019,
+    0x0000001F, 0x00000011, 0x0000001E, 0x0004003D, 0x00000006, 0x00000020,
+    0x0000001F, 0x00050051, 0x00000006, 0x00000023, 0x0000001D, 0x00000000,
+    0x00050051, 0x00000006, 0x00000024, 0x0000001D, 0x00000001, 0x00070050,
+    0x00000007, 0x00000025, 0x00000023, 0x00000024, 0x00000020, 0x0000001B,
+    0x00050041, 0x00000026, 0x00000027, 0x0000000D, 0x0000000F, 0x0003003E,
+    0x00000027, 0x00000025, 0x0004003D, 0x00000007, 0x0000002A, 0x00000029,
+    0x0003003E, 0x00000028, 0x0000002A, 0x000100FD, 0x00010038,
 };
 /// glslc's own output, at -O, for a constant mat3 times a vector,
 /// glslc_constant_matrix: three constant columns, read where the product
@@ -3803,6 +3866,7 @@ const cases = [_]Case{
     .{ .name = "shipped uniform matrix", .run = Cases.uniformedBy("shipped uniform matrix") },
     .{ .name = "shipped uniform matrices", .run = Cases.uniformedBy("shipped uniform matrices") },
     .{ .name = "shipped constant matrix", .run = Cases.shipped("as it is", "shipped constant matrix", false, clockwise_at) },
+    .{ .name = "shipped vertex shader", .run = Cases.shipped("shipped as it is", "shipped smooth", false, clockwise_at) },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },

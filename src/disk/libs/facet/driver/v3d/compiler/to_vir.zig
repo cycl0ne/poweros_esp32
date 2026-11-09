@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Mesa's nir_to_vir.c, the paths a fragment program of compile.zig's
-//! profile takes through it, with v3d_tex.c's sample and vir.c's compile
-//! strategies around them: compile.zig's steps made into VIR, which the
+//! profile takes through it, and since 1.163 a vertex program's (its
+//! LDVPMV_IN and STVPMV, the viewport's words and FTOIN), with
+//! v3d_tex.c's sample and vir.c's compile strategies around them: compile.zig's steps made into VIR, which the
 //! register allocator, the scheduler and the packer (allocate.zig,
 //! schedule.zig, to_qpu.zig) make into the QPU's instructions.
 //!
@@ -37,6 +38,11 @@
 //!   of what Mesa's key varies, alpha to coverage and that alone (`Key`). One sample a pixel or four
 //!   (since 1.148): the colour is written a pixel at a time either way,
 //!   as Mesa writes it without sample shading (msaa_per_sample_output).
+//! - nir_schedule, which v3d_attempt_compile runs on the NIR before it is
+//!   made VIR (vir.c:2118-2140), is not ported: the VIR is in the order
+//!   of the steps, which is the order of the module's instructions with
+//!   a vertex program's stores at its end, and the QPU's own scheduler
+//!   (schedule.zig) orders it from there.
 //! - Of the strategies (vir.c:2214), 0 and 2. 1, 3 and 4 turn off what is
 //!   not done here (GCM, loop unrolling, UBO load sorting, moving buffer
 //!   loads, TMU pipelining) and so would make the same program, and 5's
@@ -141,6 +147,9 @@ pub const Program = struct {
     /// drops pixels has, or one that covers by alpha.
     writes_z: bool,
     disable_ez: bool,
+    /// It has no thread switch, and starts in its last thread section: a
+    /// vertex program's prog_data single_seg (since 1.163).
+    single_seg: bool,
 
     pub fn destroy(program: Program) void {
         program.c.destroy();
@@ -214,7 +223,7 @@ pub fn compileSteps(allocator: std.mem.Allocator, compiler: *const vir.Compiler,
         defer if (!kept) c.destroy();
         // vir_compile_init (vir.c:573), what of it is the strategy's.
         c.compiler = compiler;
-        c.stage = .fragment;
+        c.stage = if (work.stage == .vertex) .vertex else .fragment;
         c.threads = strategy.max_threads;
         c.max_tmu_spills = strategy.max_tmu_spills;
         e.* = .{ .c = c, .work = work, .key = key };
@@ -238,6 +247,8 @@ pub fn compileSteps(allocator: std.mem.Allocator, compiler: *const vir.Compiler,
             // !info.fs.early_fragment_tests (vir.c:1013), as
             // emit_frag_end set it.
             .disable_ez = !e.early_fragment_tests,
+            // !c->last_thrsw (v3d_set_prog_data, vir.c:1041).
+            .single_seg = c.last_thrsw == null,
         };
     }
     return if (failed_register_allocation) Error.Registers else Error.Invalid;
@@ -252,10 +263,13 @@ fn attemptCompile(e: *Emit, strategy: Strategy) Error!u32 {
     try nirToVir(e);
     // The last thread switch before the tile buffer writes.
     const restore = try emitLastThrsw(c);
-    try emitFragEnd(e);
+    // emit_vert_end has nothing to emit at 7.1: GFXH-1684's VPMWT is
+    // 4.2's (nir_to_vir.c:2166-2173; since 1.163).
+    if (c.stage == .fragment) try emitFragEnd(e);
     try opt.optimize(c);
     schedFlags(c);
-    checkPayloadW(e);
+    // vir_check_payload_w looks at a fragment program alone.
+    if (c.stage == .fragment) checkPayloadW(e);
     return nirToVirFinish(c, strategy, restore);
 }
 
@@ -263,6 +277,10 @@ fn attemptCompile(e: *Emit, strategy: Strategy) Error!u32 {
 /// moved out of the registers it comes in, the varyings, and the body.
 fn nirToVir(e: *Emit) Error!void {
     const c = e.c;
+    // A vertex program's inputs are loaded where the body reads them, and
+    // it reads no instance, base instance or vertex id
+    // (ntq_setup_vs_inputs, nir_to_vir.c:2385-2433; since 1.163).
+    if (c.stage == .vertex) return emitBlock(e);
     e.start_msf = try c.add(.msf, .{});
     // W is rf3 on 7.1, and rf0 before it.
     e.payload_w = try c.mul(.mov, .{vir.reg(.reg, 3)});
@@ -319,7 +337,43 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
     switch (each.tag) {
         .input => {
             const input = e.work.inputs[each.at];
-            for (0..parts) |k| e.defs[at][k] = e.inputs[input.first + k];
+            if (c.stage == .vertex) {
+                // ntq_emit_load_input (nir_to_vir.c:2934-2981): an
+                // LDVPMV_IN of each float the program reads, at its place
+                // among the VPM's floats (since 1.163). One it does not
+                // read nir_opt_dce has taken out, and so is nothing here.
+                for (0..parts) |k| {
+                    e.defs[at][k] = if (input.live & @as(u8, 1) << @intCast(k) != 0)
+                        try c.add(.ldvpmv_in, .{try c.uniformUi(@intCast(input.first + k))})
+                    else
+                        c.undef;
+                }
+            } else for (0..parts) |k| {
+                e.defs[at][k] = e.inputs[input.first + k];
+            }
+        },
+        // emit_store_output_vs (nir_to_vir.c:3074-3082): the float, then
+        // the VPM's index as a uniform and the STVPMV of the two
+        // (vir_VPM_WRITE, :2160-2163; since 1.163).
+        .output => {
+            const value = try getSrc(e, each.a, 0);
+            _ = try c.addNodst(.stvpmv, .{ try c.uniformUi(each.at), value });
+        },
+        // load_viewport_*_scale and _z_offset (nir_to_vir.c:3697-3715).
+        .viewport => e.defs[at][0] = try c.uniform(switch (@as(compile.Viewport, @enumFromInt(each.at))) {
+            .x_scale => .viewport_x_scale,
+            .y_scale => .viewport_y_scale,
+            .z_offset => .viewport_z_offset,
+            .z_scale => .viewport_z_scale,
+        }, 0),
+        // f2i32 of fround_even, which ntq_emit_alu makes one FTOIN of the
+        // fround_even's source (nir_to_vir.c:1466-1472). The fround_even
+        // was visited first and is an FROUND that nothing reads, which
+        // vir_opt_dead_code takes out.
+        .round_to_int => {
+            const value = try getSrc(e, each.a, 0);
+            _ = try c.add(.fround, .{value});
+            e.defs[at][0] = try c.add(.ftoin, .{value});
         },
         .constant => {
             for (0..parts) |k| e.defs[at][k] = try c.uniformUi(@bitCast(e.work.pool[each.at + k]));
