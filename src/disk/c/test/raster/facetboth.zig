@@ -44,7 +44,10 @@
 //! The shipped case of bools (since 1.25) is an && and an || of
 //! comparisons and a ! of one, as `both`, `either` and `not`, which the V3D
 //! computes as Mesa does: an AND, an OR and a NOT of the comparisons'
-//! flags.
+//! flags. The shipped cases of selects of selects (since 1.26) are the
+//! shapes nir_opt_algebraic makes one or two selects of, and the ones it
+//! makes a select on an iand of: the V3D's program of each is the one of
+//! the shader written as Mesa leaves it.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -59,7 +62,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.25 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.26 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -604,6 +607,46 @@ const Shipped = struct {
             b.color(b.vector(&.{ r, g, z, w }));
         }
     });
+    /// Selects of selects on one condition, and on one condition in both
+    /// arms (nir_opt_algebraic.py:979-984), as the V3D's host tests have
+    /// them (since 1.26).
+    const Nests = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const half = b.scalar(0.5);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const lt = b.lessThan(x, half);
+            const gt = b.greaterThan(y, half);
+            const r = b.select(lt, b.select(lt, x, y), z);
+            const g = b.select(lt, y, b.select(lt, z, w));
+            const bl = b.select(lt, b.select(gt, z, x), b.select(gt, z, w));
+            const a = b.select(lt, b.select(gt, w, y), b.select(gt, x, y));
+            b.color(b.vector(&.{ r, g, bl, a }));
+        }
+    });
+    /// A select of one float twice, selects in an arm that share the
+    /// other arm's float, and two selects alike (nir_opt_algebraic.py:1936,
+    /// :2512-2513, nir_opt_cse), as the host tests have them (since 1.26).
+    const Joined = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const half = b.scalar(0.5);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const lt = b.lessThan(x, half);
+            const gt = b.greaterThan(y, half);
+            const r = b.select(lt, w, w);
+            const g = b.select(lt, b.select(gt, y, z), z);
+            const bl = b.select(lt, b.select(gt, z, x), z);
+            const a = b.select(gt, b.select(lt, w, x), b.select(lt, w, x));
+            b.color(b.vector(&.{ r, g, bl, a }));
+        }
+    });
 };
 
 /// The entries that ship words, after all the others, and the words of
@@ -630,6 +673,8 @@ const shipped_entries = [_]shader.Entry{
     Shipped.Branched.entry("shipped unoptimized"),
     Shipped.Nested.entry("shipped nested"),
     Shipped.Bools.entry("shipped bools"),
+    Shipped.Nests.entry("shipped nests"),
+    Shipped.Joined.entry("shipped joined"),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                       .{},                    .{},                                  .{},
@@ -637,7 +682,7 @@ const shipped_words = [_]shader.Spirv{
     Shipped.Modulated.spirv,   Shipped.Pushed.spirv,   Shipped.Tinted.spirv,                 Shipped.Cutout.spirv,
     Shipped.CutoutOther.spirv, Shipped.Shadowed.spirv, Shipped.Arithmetic.spirv,             Shipped.Called.spirv,
     Shipped.Chosen.spirv,      Shipped.Branched.spirv, shader.Spirv.of(&branch_unoptimized), Shipped.Nested.spirv,
-    Shipped.Bools.spirv,
+    Shipped.Bools.spirv,       Shipped.Nests.spirv,    Shipped.Joined.spirv,
 };
 
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
@@ -3141,6 +3186,8 @@ const cases = [_]Case{
     .{ .name = "shipped variables", .run = Cases.shipped("as it is", "shipped unoptimized", false, clockwise_at) },
     .{ .name = "shipped nested selections", .run = Cases.shipped("as it is", "shipped nested", false, clockwise_at) },
     .{ .name = "shipped && and ||", .run = Cases.shipped("as it is", "shipped bools", false, clockwise_at) },
+    .{ .name = "shipped selects of selects", .run = Cases.shipped("as it is", "shipped nests", false, clockwise_at) },
+    .{ .name = "shipped selects joined", .run = Cases.shipped("as it is", "shipped joined", false, clockwise_at) },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },

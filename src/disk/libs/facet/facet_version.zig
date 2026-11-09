@@ -4678,4 +4678,51 @@ pub const LIBRARY_VERSION = 1;
 /// shipped case of && and ||, 9 pixels of 230400 apart on the CM5, the
 /// edge alone, as the other selections' cases are; the other 215 cases
 /// unchanged, FacetProbe 888 of 888.
-pub const LIBRARY_REVISION = 157;
+///
+/// 158: **What v3d's optimization loop does to a flattened body, in Mesa's
+/// order (docs/facet-vulkan10.md item 59).** 1.157 rewrote the steps
+/// first to last; nir_algebraic_impl pops the last instruction first
+/// (nir_search.c:880-906), and a select on a `not` is turned before the
+/// `not` is looked at, so `x != y ? a : b` written as a select on
+/// `not(equal)` is a select on the feq with its arms swapped, not on an
+/// fneu. And the loop runs nir_opt_dce and nir_opt_cse before each
+/// nir_opt_algebraic (v3d_optimize_nir, nir_to_vir.c:2234-2300), which
+/// were not here.
+///
+/// - The steps are kept in the program's order as a NIR block keeps its
+///   instructions: a rule's new steps go where Mesa's builder puts them,
+///   before the one rewritten or, for an inot, after its operand
+///   (nir_replace_instr, :700-718), and the array is laid out in that
+///   order again at the end. A round is nir_opt_dce, nir_opt_cse and one
+///   nir_opt_algebraic, last step first, each rewritten by the first rule
+///   in nir_opt_algebraic.py's order; what reads a rewritten step is
+///   looked at again after the rest (nir_algebraic_update_automaton,
+///   :617-638). Rounds go on until one changes nothing.
+/// - nir_opt_cse: a step equal to an earlier one, the operands of an
+///   add, a mul, an iand, an ior, an feq and an fneu in either order, is
+///   that one.
+/// - The rules on a bcsel of bcsels: on the same condition in an arm
+///   (nir_opt_algebraic.py:979-980), on one condition in both arms
+///   sharing a value (:981-984), of one float twice (:1936), and read
+///   once in an arm of another, sharing the other arm's value, made one
+///   bcsel on an iand or ior of the conditions (:2512-2515). These last
+///   are what two nested selections flattened come to: glslc_nested's
+///   green and blue are each one select now, on iand(second,
+///   inot(first)) and on ior(first, second), six selects left of eight.
+/// - Not ported, as before: the rules that want floats proven numbers or
+///   not zero (:745-746, :823-838, :974-977, :1910-1913, :2510), the
+///   iands and iors of comparisons and of each other (:1157-1190,
+///   :1796-1797 and others), the hoisting (:3483-3496), and every rule of
+///   a bool constant.
+/// - The Crowded test's nine vectors were three of them twice, which
+///   nir_opt_cse makes one; they are nine others.
+///
+/// Tests: the V3D's 171, one new: two shaders of selects of selects
+/// compiled to the words of the shaders written as Mesa leaves them, one
+/// with two iands, an inot and three selects left; Turned held to Mesa's
+/// order; glslc_nested's iand, ior and inot. FacetBoth 1.26: the shipped
+/// cases of selects of selects and of selects joined, each 8 pixels of
+/// 230400 apart on the CM5, the edge alone, as the other selections' cases
+/// are; the other 216 cases unchanged, the nested selections' too,
+/// FacetProbe 888 of 888.
+pub const LIBRARY_REVISION = 158;

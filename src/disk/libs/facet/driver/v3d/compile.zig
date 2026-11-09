@@ -1439,7 +1439,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
     }
     if (work.output_count == 0) return Error.Outputs;
     if (work.stored == none) return Error.NoColor;
-    algebraic(work);
+    try algebraic(work);
     try order(work);
 }
 
@@ -1735,14 +1735,10 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
 
 /// Whether `user` reads the step `target`.
 fn readsStep(user: Step, target: u16) bool {
-    return switch (user.tag) {
-        .input, .constant, .push => false,
-        .construct => std.mem.indexOfScalar(u16, user.from[0..user.kind.parts()], target) != null,
-        .select => user.a == target or user.b == target or user.from[0] == target,
-        .logic => user.a == target or (user.at != @intFromEnum(Logic.inot) and user.b == target),
-        .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2 => user.a == target,
-        else => user.a == target or user.b == target,
+    for (readsOf(user)) |field| if (field) |of| {
+        if (of == target) return true;
     };
+    return false;
 }
 
 /// An operand id as a bool step: a comparison, a bool of bools or a bool
@@ -1754,121 +1750,414 @@ fn boolOf(work: *const Work, word: u32) Error!u16 {
     return at;
 }
 
-/// The rules of nir_opt_algebraic that act on what a flattened selection
-/// leaves of bools, as v3d's optimization loop runs the pass after
-/// nir_opt_peephole_select (nir_to_vir.c:2280) and again until nothing
-/// changes: the steps in order, each rewritten by the first rule that
-/// matches it, a step nothing reads left alone as nir_opt_dce takes it
-/// out (since 1.157).
+/// What v3d's optimization loop does to the body once
+/// nir_opt_peephole_select has flattened it, round after round until one
+/// changes nothing (v3d_optimize_nir, nir_to_vir.c:2234-2300): nir_opt_dce
+/// takes out what nothing live reads, nir_opt_cse takes a step equal to an
+/// earlier one for that one, and nir_opt_algebraic rewrites (since 1.157;
+/// as Mesa runs them since 1.158). The steps are kept in the list of the
+/// program, as a NIR block keeps its instructions, so that a step a rule
+/// makes goes where Mesa's builder puts it, and laid out in that list
+/// again at the end.
 ///
-/// - (('inot', ('inot', a)), a) (nir_opt_algebraic.py:1736).
+/// The rules, in the list nir_opt_algebraic.py lists them, which is the
+/// list they are tried in (nir_algebraic_instr, nir_search.c:809-838):
+///
 /// - (('inot', ('feq(is_used_once)', a, b)), ('fneu', a, b)) and the
-///   other way about (:747-748).
+///   other way about (:747-748), the new comparison put after the old one
+///   (nir_replace_instr, :700-718); (('inot', ('inot', a)), a) (:1736).
 /// - (('iand', a, a), a) and (('ior', a, a), a) (:1724, :1728).
-/// - (('bcsel', ('inot', a), b, c), ('bcsel', a, c, b)) (:978), of
-///   floats as of bools.
-/// - (('bcsel', a, a, b), ('ior', a, b)) and (('bcsel', a, b, a),
-///   ('iand', a, b)) (:986, :988): what glslc's phis of || and && come
-///   to.
+/// - (('bcsel', ('inot', a), b, c), ('bcsel', a, c, b)) (:978); a bcsel
+///   in an arm of one on the same condition, that arm of it (:979-980);
+///   two bcsels on one condition in the two arms, sharing a value, one
+///   bcsel of them (:981-984); (('bcsel', a, a, b), ('ior', a, b)) and
+///   (('bcsel', a, b, a), ('iand', a, b)) (:986, :988), what glslc's
+///   phis of || and && come to; (('bcsel', a, b, b), b) (:1936); and a
+///   bcsel read once in an arm of another, sharing the other arm's value,
+///   one bcsel on the iand or ior of the two conditions (:2512-2515),
+///   what two nested selections flattened come to.
 ///
-/// Not ported: the rules on an inot of a float comparison, which want
-/// both floats proven numbers (:745-746), the rules joining comparisons
-/// that share a float into one of an fmin or fmax (:1157-1190), De
-/// Morgan's (:1796-1797) and the rest that want a new instruction made
-/// before the one rewritten. A shader is the same without them.
-fn algebraic(work: *Work) void {
-    var progress = true;
-    while (progress) {
-        progress = false;
-        for (0..work.step_count) |at| {
-            if (usesOf(work, @intCast(at)) == 0) continue;
-            if (rewritten(work, @intCast(at))) progress = true;
-        }
+/// Not ported: the bcsels made an fmin or fmax, an fabs or an fsqrt, or a
+/// float itself, which want floats proven numbers or not zero (:823-838,
+/// :974-977, :1910-1913, :2510); the inot of an flt or fge made the
+/// opposite, which wants the same (:745-746); the iands and iors of
+/// comparisons sharing a float (:1157-1190) and of iands and iors
+/// (:1796-1797 and others); the bcsels of two of one operation hoisted
+/// (:3483-3496); and every rule of a bool constant, which is not here.
+fn algebraic(work: *Work) Error!void {
+    var list = Order.start(work);
+    while (true) {
+        list.dce(work);
+        const merged = list.cse(work);
+        const rewrote = try list.run(work);
+        if (!merged and !rewrote) break;
     }
+    list.layOut(work);
 }
 
-fn rewritten(work: *Work, at: u16) bool {
-    const each = work.steps[at];
+/// The steps in the list of the program, which a rule's new steps are
+/// put into between others; and which of them are out of it.
+const Order = struct {
+    next: [most_steps]u16 = @splat(none),
+    prev: [most_steps]u16 = @splat(none),
+    first: u16 = none,
+    last: u16 = none,
+    /// Rewritten by a rule, or found equal to an earlier step: nothing
+    /// reads it any more.
+    removed: [most_steps]bool = @splat(false),
+    /// Read by nothing live when the round began: nir_opt_dce took it
+    /// out. A step that a rule leaves unread in a round is still there
+    /// until the next, as Mesa's is, and is still counted as a use.
+    gone: [most_steps]bool = @splat(false),
+
+    fn start(work: *const Work) Order {
+        var list: Order = .{};
+        for (0..work.step_count) |at| {
+            const step_at: u16 = @intCast(at);
+            list.prev[step_at] = list.last;
+            if (list.last != none) list.next[list.last] = step_at else list.first = step_at;
+            list.last = step_at;
+        }
+        return list;
+    }
+
+    fn present(list: *const Order, at: u16) bool {
+        return !list.removed[at] and !list.gone[at];
+    }
+
+    /// A new step, put in the program before `at`.
+    fn before(list: *Order, work: *Work, at: u16, adding: Step) Error!u16 {
+        const new = try put(work, adding);
+        const earlier = list.prev[at];
+        list.prev[new] = earlier;
+        list.next[new] = at;
+        list.prev[at] = new;
+        if (earlier != none) list.next[earlier] = new else list.first = new;
+        return new;
+    }
+
+    /// A new step, put in the program after `at`.
+    fn after(list: *Order, work: *Work, at: u16, adding: Step) Error!u16 {
+        const new = try put(work, adding);
+        const later = list.next[at];
+        list.next[new] = later;
+        list.prev[new] = at;
+        list.next[at] = new;
+        if (later != none) list.prev[later] = new else list.last = new;
+        return new;
+    }
+
+    /// nir_opt_dce: live is the colour's step, a discard, and what a live
+    /// step reads.
+    fn dce(list: *Order, work: *const Work) void {
+        var reached: [most_steps]bool = @splat(false);
+        if (work.stored != none) reached[work.stored] = true;
+        var at = list.last;
+        while (at != none) : (at = list.prev[at]) {
+            if (list.removed[at]) continue;
+            const each = work.steps[at];
+            if (each.tag == .discard) reached[at] = true;
+            if (!reached[at]) continue;
+            for (readsOf(each)) |field| if (field) |operand_at| {
+                reached[operand_at] = true;
+            };
+        }
+        for (0..work.step_count) |k| {
+            if (!reached[k]) list.gone[k] = true;
+        }
+    }
+
+    /// nir_opt_cse: a step equal to one before it - the same operation of
+    /// the same floats, the two of an operation that does not mind their
+    /// list either way about - is that one (nir_instrs_equal,
+    /// nir_instr_set.c). Varyings, constants, push constants and samples
+    /// are each one step already, and a discard is no value.
+    fn cse(list: *Order, work: *Work) bool {
+        var progress = false;
+        var at = list.first;
+        while (at != none) : (at = list.next[at]) {
+            if (!list.present(at) or !computes(work.steps[at].tag)) continue;
+            var earlier = list.first;
+            while (earlier != at) : (earlier = list.next[earlier]) {
+                if (!list.present(earlier)) continue;
+                if (!equalSteps(work, work.steps[earlier], work.steps[at])) continue;
+                replaceUses(work, at, earlier);
+                list.removed[at] = true;
+                progress = true;
+                break;
+            }
+        }
+        return progress;
+    }
+
+    /// How many times the steps still in the program, and the colour
+    /// stored, read `at`: what is_used_once counts.
+    fn usesOf(list: *const Order, work: *const Work, at: u16) u32 {
+        var count: u32 = if (work.stored == at) 1 else 0;
+        for (work.steps[0..work.step_count], 0..) |user, k| {
+            if (!list.present(@intCast(k))) continue;
+            for (readsOf(user)) |field| if (field) |operand_at| {
+                if (operand_at == at) count += 1;
+            };
+        }
+        return count;
+    }
+
+    /// One nir_opt_algebraic: the steps from the last to the first, as
+    /// nir_algebraic_impl pops them (nir_search.c:880-906), each rewritten
+    /// by the first rule that matches it. What reads the step a rule leaves
+    /// in its place is looked at again after the rest
+    /// (nir_algebraic_update_automaton, :617-638); the new step itself is
+    /// not, until the next round.
+    fn run(list: *Order, work: *Work) Error!bool {
+        var queue: [4 * most_steps]u16 = undefined;
+        var head: usize = 0;
+        var tail: usize = 0;
+        var at = list.last;
+        while (at != none) : (at = list.prev[at]) {
+            if (!list.present(at) or !computes(work.steps[at].tag)) continue;
+            queue[tail] = at;
+            tail += 1;
+        }
+        var progress = false;
+        while (head < tail) {
+            const each = queue[head];
+            head += 1;
+            if (!list.present(each)) continue;
+            const left = try list.rule(work, each) orelse continue;
+            progress = true;
+            for (work.steps[0..work.step_count], 0..) |user, k| {
+                if (!list.present(@intCast(k)) or !computes(user.tag) or !readsStep(user, left)) continue;
+                if (tail == queue.len) return Error.Steps;
+                queue[tail] = @intCast(k);
+                tail += 1;
+            }
+        }
+        return progress;
+    }
+
+    /// `at` rewritten by the first rule that matches it, and the step it
+    /// leaves in its place, or null.
+    fn rule(list: *Order, work: *Work, at: u16) Error!?u16 {
+        const each = work.steps[at];
+        switch (each.tag) {
+            .logic => switch (@as(Logic, @enumFromInt(each.at))) {
+                .inot => {
+                    const operand_step = work.steps[each.a];
+                    if (operand_step.tag == .compare and list.usesOf(work, each.a) == 1) {
+                        const flipped: ?Comparison = switch (@as(Comparison, @enumFromInt(operand_step.at))) {
+                            .equal => .not_equal,
+                            .not_equal => .equal,
+                            else => null,
+                        };
+                        if (flipped) |into| {
+                            // An inot of an instruction is built after
+                            // that instruction, not before the inot.
+                            const flipped_at = try list.after(work, each.a, .{ .tag = .compare, .kind = .f32x1, .a = operand_step.a, .b = operand_step.b, .at = @intFromEnum(into) });
+                            return list.replaced(work, at, flipped_at);
+                        }
+                    }
+                    if (operand_step.tag == .logic and operand_step.at == @intFromEnum(Logic.inot)) return list.replaced(work, at, operand_step.a);
+                },
+                .iand, .ior => if (each.a == each.b) return list.replaced(work, at, each.a),
+            },
+            .select => {
+                const condition = each.a;
+                const yes = each.b;
+                const no = each.from[0];
+                const on = work.steps[condition];
+                if (on.tag == .logic and on.at == @intFromEnum(Logic.inot))
+                    return try list.rebuilt(work, at, selectOf(on.a, no, yes));
+                const y = work.steps[yes];
+                const n = work.steps[no];
+                const yes_select = y.tag == .select;
+                const no_select = n.tag == .select;
+                if (yes_select and y.a == condition) return try list.rebuilt(work, at, selectOf(condition, y.b, no));
+                if (no_select and n.a == condition) return try list.rebuilt(work, at, selectOf(condition, yes, n.from[0]));
+                if (yes_select and no_select and y.a == n.a) {
+                    const once = list.usesOf(work, no) == 1 or list.usesOf(work, yes) == 1;
+                    if (once and sameFloat(work, y.b, n.b)) {
+                        const inner = try list.before(work, at, selectOf(condition, y.from[0], n.from[0]));
+                        return try list.rebuilt(work, at, selectOf(y.a, y.b, inner));
+                    }
+                    if (once and sameFloat(work, y.from[0], n.from[0])) {
+                        const inner = try list.before(work, at, selectOf(condition, y.b, n.b));
+                        return try list.rebuilt(work, at, selectOf(y.a, inner, y.from[0]));
+                    }
+                }
+                if (yes == condition) return try list.rebuilt(work, at, logicOf(.ior, condition, no));
+                if (no == condition) return try list.rebuilt(work, at, logicOf(.iand, condition, yes));
+                if (sameFloat(work, yes, no)) return list.replaced(work, at, yes);
+                if (yes_select and list.usesOf(work, yes) == 1) {
+                    if (sameFloat(work, y.from[0], no)) {
+                        const both = try list.before(work, at, logicOf(.iand, condition, y.a));
+                        return try list.rebuilt(work, at, selectOf(both, y.b, no));
+                    }
+                    if (sameFloat(work, y.b, no)) {
+                        const turned = try list.before(work, at, logicOf(.inot, y.a, 0));
+                        const both = try list.before(work, at, logicOf(.iand, condition, turned));
+                        return try list.rebuilt(work, at, selectOf(both, y.from[0], no));
+                    }
+                }
+                if (no_select and list.usesOf(work, no) == 1) {
+                    if (sameFloat(work, n.b, yes)) {
+                        const either = try list.before(work, at, logicOf(.ior, condition, n.a));
+                        return try list.rebuilt(work, at, selectOf(either, yes, n.from[0]));
+                    }
+                    if (sameFloat(work, n.from[0], yes)) {
+                        const turned = try list.before(work, at, logicOf(.inot, condition, 0));
+                        const both = try list.before(work, at, logicOf(.iand, n.a, turned));
+                        return try list.rebuilt(work, at, selectOf(both, n.b, yes));
+                    }
+                }
+            },
+            else => {},
+        }
+        return null;
+    }
+
+    /// The rule's last new step put before `at`, and `at` out.
+    fn rebuilt(list: *Order, work: *Work, at: u16, last: Step) Error!u16 {
+        return list.replaced(work, at, try list.before(work, at, last));
+    }
+
+    /// What read `at` reads `to`, and `at` is out.
+    fn replaced(list: *Order, work: *Work, at: u16, to: u16) u16 {
+        replaceUses(work, at, to);
+        list.removed[at] = true;
+        return to;
+    }
+
+    /// The steps laid out in the program's list again, those out of it
+    /// dropped, and what names a step renamed.
+    fn layOut(list: *const Order, work: *Work) void {
+        var renamed: [most_steps]u16 = @splat(none);
+        var kept: [most_steps]Step = undefined;
+        var count: u16 = 0;
+        var at = list.first;
+        while (at != none) : (at = list.next[at]) {
+            if (list.removed[at]) continue;
+            renamed[at] = count;
+            kept[count] = work.steps[at];
+            count += 1;
+        }
+        for (kept[0..count]) |*each| renameReads(each, &renamed);
+        @memcpy(work.steps[0..count], kept[0..count]);
+        work.step_count = count;
+        if (work.stored != none) work.stored = renamed[work.stored];
+        if (work.sampled != none) work.sampled = renamed[work.sampled];
+        for (work.inputs[0..work.input_count]) |*each| {
+            if (each.step != none) each.step = renamed[each.step];
+        }
+        for (&work.step_of) |*each| {
+            if (each.* != none) each.* = renamed[each.*];
+        }
+    }
+};
+
+fn selectOf(condition: u16, yes: u16, no: u16) Step {
+    var made = Step{ .tag = .select, .kind = .f32x1, .a = condition, .b = yes };
+    made.from[0] = no;
+    return made;
+}
+
+fn logicOf(which: Logic, a: u16, b: u16) Step {
+    return .{ .tag = .logic, .kind = .f32x1, .a = a, .b = b, .at = @intFromEnum(which) };
+}
+
+/// Whether two steps name the same float, through the components and
+/// constructs that only name it: one SSA value in NIR, which a rule's
+/// variable matches twice.
+fn sameFloat(work: *const Work, a: u16, b: u16) bool {
+    const left = partOf(work, a, 0);
+    const right = partOf(work, b, 0);
+    return left.step == right.step and left.part == right.part;
+}
+
+/// Whether a step is an ALU instruction in NIR, which nir_opt_algebraic
+/// and nir_opt_cse look at. A component and a construct only name floats.
+fn computes(tag: Tag) bool {
+    return switch (tag) {
+        .input, .constant, .push, .component, .construct, .sample, .sample_compared, .discard => false,
+        else => true,
+    };
+}
+
+/// Whether two steps compute the same: one operation, its own operand,
+/// and the same floats, an add's, a mul's, an iand's, an ior's and an
+/// feq's or fneu's in either order (NIR_OP_IS_2SRC_COMMUTATIVE).
+fn equalSteps(work: *const Work, a: Step, b: Step) bool {
+    if (a.tag != b.tag or a.kind != b.kind or a.at != b.at) return false;
+    const left = readsOf(a);
+    const right = readsOf(b);
+    var straight = true;
+    for (left, right) |x, y| {
+        if ((x == null) != (y == null)) return false;
+        if (x) |operand_at| if (!sameFloat(work, operand_at, y.?)) {
+            straight = false;
+        };
+    }
+    if (straight) return true;
+    const commutes = switch (a.tag) {
+        .add, .mul, .min, .max => true,
+        .logic => a.at != @intFromEnum(Logic.inot),
+        .compare => a.at == @intFromEnum(Comparison.equal) or a.at == @intFromEnum(Comparison.not_equal),
+        else => false,
+    };
+    return commutes and sameFloat(work, a.a, b.b) and sameFloat(work, a.b, b.a);
+}
+
+/// What a step reads, field by field.
+fn readsOf(each: Step) [4]?u16 {
+    return switch (each.tag) {
+        .input, .constant, .push => .{ null, null, null, null },
+        .construct => .{
+            each.from[0],
+            if (each.kind.parts() > 1) each.from[1] else null,
+            if (each.kind.parts() > 2) each.from[2] else null,
+            if (each.kind.parts() > 3) each.from[3] else null,
+        },
+        .select => .{ each.a, each.b, each.from[0], null },
+        .logic => .{ each.a, if (each.at != @intFromEnum(Logic.inot)) each.b else null, null, null },
+        .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .sample => .{ each.a, null, null, null },
+        .compare, .set_less, .add, .mul, .sub, .min, .max, .dot, .sample_compared => .{ each.a, each.b, null, null },
+    };
+}
+
+/// A step's reads renamed.
+fn renameReads(each: *Step, renamed: *const [most_steps]u16) void {
+    const reads = readsOf(each.*);
     switch (each.tag) {
-        .logic => {
-            const which: Logic = @enumFromInt(each.at);
-            if (which == .inot) {
-                const of = work.steps[each.a];
-                if (of.tag == .logic and of.at == @intFromEnum(Logic.inot)) {
-                    replaceUses(work, at, of.a);
-                    return true;
-                }
-                if (of.tag == .compare and usesOf(work, each.a) == 1) {
-                    const flipped: Comparison = switch (@as(Comparison, @enumFromInt(of.at))) {
-                        .equal => .not_equal,
-                        .not_equal => .equal,
-                        else => return false,
-                    };
-                    work.steps[at] = .{ .tag = .compare, .kind = .f32x1, .a = of.a, .b = of.b, .at = @intFromEnum(flipped) };
-                    return true;
-                }
-                return false;
-            }
-            if (each.a == each.b) {
-                replaceUses(work, at, each.a);
-                return true;
-            }
+        .construct => for (each.from[0..each.kind.parts()]) |*of| {
+            of.* = renamed[of.*];
         },
         .select => {
-            const condition = work.steps[each.a];
-            if (condition.tag == .logic and condition.at == @intFromEnum(Logic.inot)) {
-                work.steps[at].a = condition.a;
-                work.steps[at].b = each.from[0];
-                work.steps[at].from[0] = each.b;
-                return true;
-            }
-            if (!isBool(work, each.b)) return false;
-            if (each.b == each.a) {
-                work.steps[at] = .{ .tag = .logic, .kind = .f32x1, .a = each.a, .b = each.from[0], .at = @intFromEnum(Logic.ior) };
-                return true;
-            }
-            if (each.from[0] == each.a) {
-                work.steps[at] = .{ .tag = .logic, .kind = .f32x1, .a = each.a, .b = each.b, .at = @intFromEnum(Logic.iand) };
-                return true;
-            }
+            each.a = renamed[each.a];
+            each.b = renamed[each.b];
+            each.from[0] = renamed[each.from[0]];
         },
-        else => {},
+        else => {
+            if (reads[0] != null) each.a = renamed[each.a];
+            if (reads[1] != null) each.b = renamed[each.b];
+        },
     }
-    return false;
 }
 
 /// How many times the steps after `at`, and the colour stored, read it.
 fn usesOf(work: *const Work, at: u16) u32 {
     var count: u32 = if (work.stored == at) 1 else 0;
     for (work.steps[at + 1 .. work.step_count]) |user| {
-        for (operandsOf(user)) |field| if (field) |of| {
+        for (readsOf(user)) |field| if (field) |of| {
             if (of == at) count += 1;
         };
     }
     return count;
 }
 
-/// What a step reads, field by field.
-fn operandsOf(user: Step) [4]?u16 {
-    return switch (user.tag) {
-        .input, .constant, .push => .{ null, null, null, null },
-        .construct => .{
-            user.from[0],
-            if (user.kind.parts() > 1) user.from[1] else null,
-            if (user.kind.parts() > 2) user.from[2] else null,
-            if (user.kind.parts() > 3) user.from[3] else null,
-        },
-        .select => .{ user.a, user.b, user.from[0], null },
-        .logic => .{ user.a, if (user.at != @intFromEnum(Logic.inot)) user.b else null, null, null },
-        .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2 => .{ user.a, null, null, null },
-        else => .{ user.a, user.b, null, null },
-    };
-}
-
-/// Every read of `from` after it a read of `to`: nir_def_rewrite_uses.
+/// What read `from` reads `to`.
 fn replaceUses(work: *Work, from: u16, to: u16) void {
     if (work.stored == from) work.stored = to;
-    for (work.steps[from + 1 .. work.step_count]) |*user| {
+    for (work.steps[0..work.step_count]) |*user| {
         switch (user.tag) {
             .input, .constant, .push => {},
             .construct => for (user.from[0..user.kind.parts()]) |*of| {
@@ -1880,7 +2169,7 @@ fn replaceUses(work: *Work, from: u16, to: u16) void {
                 if (user.from[0] == from) user.from[0] = to;
             },
             else => {
-                const reads = operandsOf(user.*);
+                const reads = readsOf(user.*);
                 if (reads[0] != null and user.a == from) user.a = to;
                 if (reads[1] != null and user.b == from) user.b = to;
             },
@@ -4392,14 +4681,16 @@ const disasm = @import("qpu/disasm.zig");
 
 /// Nine vectors made before any is summed: 44 floats live at once, more
 /// than the 32 registers a 4-threaded program has under Mesa's allocator.
+/// No two are one operation of the same floats, which nir_opt_cse would
+/// make one (since 1.158).
 const Crowded = ir.Fragment(struct {
     pub fn body(b: *ir.Build) void {
         const a = b.input(0, .f32x4);
         const c = b.input(1, .f32x4);
         const made = [_]u16{
-            b.mul(a, c), b.add(a, c), b.mul(a, a),
-            b.mul(c, c), b.add(a, a), b.add(c, c),
-            b.mul(c, a), b.add(c, a), b.mul(a, c),
+            b.mul(a, c),           b.add(a, c),           b.mul(a, a),
+            b.mul(c, c),           b.add(a, a),           b.add(c, c),
+            b.mul(b.add(a, c), c), b.add(b.mul(a, c), a), b.mul(b.add(a, a), c),
         };
         var sum = made[0];
         for (made[1..]) |each| sum = b.add(sum, each);
@@ -5477,10 +5768,16 @@ test "through Mesa's back end, glslc's nested selections: the inner flattened fi
     const code = try throughMesa(&work, &reference.glslc_nested);
     try testing.expectEqual(@as(u32, 4), code.varyings);
     // Four comparisons, one a selection. The `else if`: three floats of
-    // the colour chosen by the inner selection, then by the outer. The
-    // `if` in the true arm of one with no false arm: `k` chosen by each.
-    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .compare));
-    try testing.expectEqual(@as(usize, 8), stepsOf(&work, .select));
+    // the colour chosen by the inner selection, then by the outer. Green's
+    // outer select keeps y where the inner one keeps it too, and blue's z:
+    // each is one select, on iand(second, inot(first)) and on ior(first,
+    // second) (nir_opt_algebraic.py:2515, :2514). The `if` in the true arm
+    // of one with no false arm: `k` chosen by each.
+    try testing.expectEqual(@as(usize, 4), liveOf(&work, .compare));
+    try testing.expectEqual(@as(usize, 6), liveOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), liveLogicOf(&work, .iand));
+    try testing.expectEqual(@as(usize, 1), liveLogicOf(&work, .ior));
+    try testing.expectEqual(@as(usize, 1), liveLogicOf(&work, .inot));
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .sin));
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .exp2));
     var plan: Work = .{};
@@ -5496,7 +5793,7 @@ test "through Mesa's back end, glslc's nested selections without -O are the opti
     defer testing.allocator.free(stream_kept);
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_nested_unoptimized);
-    try testing.expectEqual(@as(usize, 8), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 6), liveOf(&work, .select));
     try testing.expectEqualSlices(u64, kept, code.words);
     try testing.expectEqual(stream_kept.len, code.stream().len);
     for (stream_kept, code.stream()) |a, b| try testing.expectEqual(a, b);
@@ -5525,20 +5822,39 @@ test "a selection Mesa would collapse into another, or a discard nested in one, 
     try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_nested, .branch, 3, 0, 36)));
 }
 
-/// How many of the steps nothing reads have no tag `tag`: the live ones
-/// of it.
+/// Which steps are live: the colour's, each discard, and what a live
+/// step reads.
+fn liveMask(work: *const Work) [most_steps]bool {
+    var reached: [most_steps]bool = @splat(false);
+    if (work.stored != none) reached[work.stored] = true;
+    var at = work.step_count;
+    while (at > 0) {
+        at -= 1;
+        const each = work.steps[at];
+        if (each.tag == .discard) reached[at] = true;
+        if (!reached[at]) continue;
+        for (readsOf(each)) |field| if (field) |operand_at| {
+            reached[operand_at] = true;
+        };
+    }
+    return reached;
+}
+
+/// How many of the live steps are of the tag `tag`.
 fn liveOf(work: *const Work, tag: Tag) usize {
+    const reached = liveMask(work);
     var count: usize = 0;
     for (work.program(), 0..) |each, at| {
-        if (each.tag == tag and usesOf(work, @intCast(at)) > 0) count += 1;
+        if (each.tag == tag and reached[at]) count += 1;
     }
     return count;
 }
 
 fn liveLogicOf(work: *const Work, which: Logic) usize {
+    const reached = liveMask(work);
     var count: usize = 0;
     for (work.program(), 0..) |each, at| {
-        if (each.tag == .logic and each.at == @intFromEnum(which) and usesOf(work, @intCast(at)) > 0) count += 1;
+        if (each.tag == .logic and each.at == @intFromEnum(which) and reached[at]) count += 1;
     }
     return count;
 }
@@ -5617,8 +5933,8 @@ test "through Mesa's back end, glslc's && and || are facet's both and either, to
 }
 
 /// Bools that nir_opt_algebraic takes apart: a `not` of a `not`, a `not`
-/// of an equality read once, an `and` of a comparison with itself, and a
-/// select on a `not`.
+/// of an equality, an `and` of a comparison with itself, and a select on a
+/// `not`.
 const Turned = ir.Fragment(struct {
     pub fn body(b: *ir.Build) void {
         const v = b.input(0, .f32x4);
@@ -5635,7 +5951,10 @@ const Turned = ir.Fragment(struct {
     }
 });
 
-/// What nir_opt_algebraic leaves of Turned, written so.
+/// What nir_opt_algebraic leaves of Turned, written so. It pops the last
+/// instruction first (nir_search.c:880-906), so a select on a `not` is
+/// turned before the `not` is looked at: the `not` of the equality is
+/// left unread, not made an fneu.
 const Untangled = ir.Fragment(struct {
     pub fn body(b: *ir.Build) void {
         const v = b.input(0, .f32x4);
@@ -5645,7 +5964,7 @@ const Untangled = ir.Fragment(struct {
         const z = b.component(v, 2);
         const w = b.component(v, 3);
         const red = b.select(b.lessThan(x, half), y, z);
-        const green = b.select(b.notEqual(y, half), x, w);
+        const green = b.select(b.equal(y, half), w, x);
         const blue = b.select(b.lessThan(z, half), y, x);
         b.color(b.vector(&.{ red, green, blue, w }));
     }
@@ -5659,15 +5978,114 @@ test "through Mesa's back end, nir_opt_algebraic's rules on bools: what they lea
     var work: Work = .{};
     const code = try throughMesa(&work, Turned.words);
     try testing.expectEqualSlices(u64, kept, code.words);
-    // inot(inot a) is a, inot(feq a b) read once is fneu a b, iand(a, a)
-    // is a, and the select on inot(a) is on a, its arms swapped: no NOT
-    // and no AND is left.
+    // The select on inot(a) is on a, its arms swapped, inot(inot a) is a,
+    // and iand(a, a) is a: no NOT and no AND is left.
     for (code.words) |word| {
         var buffer: [disasm.most_text]u8 = undefined;
         const line = disasm.disasm(word, &buffer).?;
         try testing.expect(std.mem.indexOf(u8, line, "not ") == null);
         try testing.expect(std.mem.indexOf(u8, line, "and ") == null);
     }
+}
+
+/// Selects of selects nir_opt_algebraic makes one or two of: on the same
+/// condition in an arm (nir_opt_algebraic.py:979, :980), and on one
+/// condition in both arms, sharing a value (:981, :983).
+const Nests = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const x = b.component(v, 0);
+        const y = b.component(v, 1);
+        const z = b.component(v, 2);
+        const w = b.component(v, 3);
+        const lt = b.lessThan(x, half);
+        const gt = b.greaterThan(y, half);
+        const red = b.select(lt, b.select(lt, x, y), z);
+        const green = b.select(lt, y, b.select(lt, z, w));
+        const blue = b.select(lt, b.select(gt, z, x), b.select(gt, z, w));
+        const alpha = b.select(lt, b.select(gt, w, y), b.select(gt, x, y));
+        b.color(b.vector(&.{ red, green, blue, alpha }));
+    }
+});
+
+/// What Mesa leaves of Nests, written so: the new selects where the old
+/// outer one was, the inner of two first.
+const NestsLeft = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const x = b.component(v, 0);
+        const y = b.component(v, 1);
+        const z = b.component(v, 2);
+        const w = b.component(v, 3);
+        const lt = b.lessThan(x, half);
+        const gt = b.greaterThan(y, half);
+        const red = b.select(lt, x, z);
+        const green = b.select(lt, y, w);
+        const blue = b.select(gt, z, b.select(lt, x, w));
+        const alpha = b.select(gt, b.select(lt, w, x), y);
+        b.color(b.vector(&.{ red, green, blue, alpha }));
+    }
+});
+
+/// A select of one float twice (:1936), a select read once in an arm of
+/// another that shares its other arm's float (:2512, :2513), and two
+/// selects alike, which nir_opt_cse makes one before the select of them is
+/// a select of one float twice.
+const Joined = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const x = b.component(v, 0);
+        const y = b.component(v, 1);
+        const z = b.component(v, 2);
+        const w = b.component(v, 3);
+        const lt = b.lessThan(x, half);
+        const gt = b.greaterThan(y, half);
+        const red = b.select(lt, w, w);
+        const green = b.select(lt, b.select(gt, y, z), z);
+        const blue = b.select(lt, b.select(gt, z, x), z);
+        const alpha = b.select(gt, b.select(lt, w, x), b.select(lt, w, x));
+        b.color(b.vector(&.{ red, green, blue, alpha }));
+    }
+});
+
+/// What Mesa leaves of Joined, written so: the iands where the selects of
+/// them are, an inot before its iand.
+const JoinedLeft = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const x = b.component(v, 0);
+        const y = b.component(v, 1);
+        const z = b.component(v, 2);
+        const w = b.component(v, 3);
+        const lt = b.lessThan(x, half);
+        const gt = b.greaterThan(y, half);
+        const green = b.select(b.both(lt, gt), y, z);
+        const blue = b.select(b.both(lt, b.not(gt)), x, z);
+        const alpha = b.select(lt, w, x);
+        b.color(b.vector(&.{ w, green, blue, alpha }));
+    }
+});
+
+test "through Mesa's back end, selects of selects: what nir_opt_algebraic and nir_opt_cse leave is the program of the shader written so" {
+    inline for (.{ .{ Nests, NestsLeft }, .{ Joined, JoinedLeft } }) |pair| {
+        var written: Work = .{};
+        const left = try throughMesa(&written, pair[1].words);
+        const kept = try testing.allocator.dupe(u64, left.words);
+        defer testing.allocator.free(kept);
+        var work: Work = .{};
+        const code = try throughMesa(&work, pair[0].words);
+        try testing.expectEqualSlices(u64, kept, code.words);
+    }
+    // Joined's iands, and its inot of the second comparison.
+    var work: Work = .{};
+    _ = try throughMesa(&work, Joined.words);
+    try testing.expectEqual(@as(usize, 2), liveLogicOf(&work, .iand));
+    try testing.expectEqual(@as(usize, 1), liveLogicOf(&work, .inot));
+    try testing.expectEqual(@as(usize, 3), liveOf(&work, .select));
 }
 
 test "a call the walk does not lower, or into a set that is not GLSL.std.450, is refused" {

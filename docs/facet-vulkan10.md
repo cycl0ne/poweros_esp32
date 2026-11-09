@@ -2150,6 +2150,16 @@ Not ported: the inot of an flt or fge made the opposite, which wants both floats
 
 glslc's `&&` and `||` at `-O` (`glslc_logic`, 286 words), the same without `-O` (335 words), and facet's emitter's (196 words, spirv-val clean) compile to the same words: one iand, one ior and one inot of four comparisons, two selects. A shader of each rule on bools compiles to the words of the one written without them. On the CM5, FacetBoth 1.25's case of it is 9 pixels of 230,400 apart, the triangle's edge alone, the first at the pixel every selection case's is; the other 215 cases are unchanged, and FacetProbe is 888 of 888.
 
+**Then Mesa's order**, facet.library 1.158. 1.157 ran the rules over the steps first to last. nir_algebraic_impl pops the last instruction first (nir_search.c:880-906), so a select on a `not` is turned before the `not` is looked at: a select on `not(equal(y, h))` is one on the feq with its arms swapped, not on an fneu. And v3d's loop runs nir_opt_dce and nir_opt_cse before each nir_opt_algebraic (v3d_optimize_nir, nir_to_vir.c:2234-2300); neither was here.
+
+- **The program's order.** The steps are kept in order as a NIR block keeps its instructions. A rule's new steps go where Mesa's builder puts them: before the one rewritten, or after its operand for an inot (nir_replace_instr, :700-718). The array is laid out in that order again at the end. A round is nir_opt_dce, nir_opt_cse and one nir_opt_algebraic, last step first, each step rewritten by the first rule in nir_opt_algebraic.py's order, and what reads a rewritten step looked at again after the rest (nir_algebraic_update_automaton, :617-638). The rounds go on until one changes nothing.
+- **nir_opt_cse.** A step equal to an earlier one is that one; the operands of an add, a mul, an iand, an ior, an feq and an fneu may be either way about.
+- **Selects of selects.** On the same condition in an arm (nir_opt_algebraic.py:979-980); on one condition in both arms sharing a value (:981-984); of one float twice (:1936); and read once in an arm of another, sharing the other arm's value, one select on the iand or ior of the two conditions (:2512-2515). The last are what nested selections flattened come to: glslc_nested's green and blue are each one select now, on iand(second, inot(first)) and on ior(first, second), six selects left of eight.
+
+Not ported, as before: the rules that want floats proven numbers or not zero (:745-746, :823-838, :974-977, :1910-1913, :2510), the iands and iors of comparisons and of each other (:1157-1190, :1796-1797 and others), the hoisting (:3483-3496), and every rule of a bool constant.
+
+Two shaders of selects of selects compile to the words of the shaders written as Mesa leaves them, one with two iands, an inot and three selects left. On the CM5, FacetBoth 1.26's cases of them are each 8 pixels of 230,400 apart, the triangle's edge alone; the other 216 cases are unchanged, the nested selections' too, and FacetProbe is 888 of 888.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim
