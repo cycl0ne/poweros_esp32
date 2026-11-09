@@ -318,16 +318,87 @@ pub fn nameOf(output: *const Output) [*:0]const u8 {
 /// Which output a machine should play through before any other, highest
 /// first. What a listener expects is the speakers of the machine in
 /// front of them, then a jack they have plugged something into, and a
-/// display link last - a monitor is often on and silent.
-pub fn rankOf(output: *const Output) i8 {
+/// display link after those - a monitor is often on and silent. A jack
+/// with nothing in it (`empty`, from `jackEmpty`) comes after every
+/// display link, its kind still ordering it among the other jacks.
+pub fn rankOf(output: *const Output, empty: bool) i8 {
     if (output.display) return 10;
-    return switch (output.device) {
+    const rank: i8 = switch (output.device) {
         verbs.device_speaker => 40,
         verbs.device_headphone => 35,
         verbs.device_line_out => 30,
         verbs.device_spdif_out, verbs.device_digital_out => 15,
         else => 20,
     };
+    return if (empty) rank - empty_below else rank;
+}
+
+/// How far an empty jack drops: past a display link from the highest
+/// rank there is.
+const empty_below = 40 - 10 + 5;
+
+/// Whether a jack is seen to have nothing plugged into it. Only a pin on
+/// a jack that can tell is asked; any other - fixed inside the machine,
+/// a display link, a jack without the sense - counts as in use. The
+/// function group and the pin are woken and waited for until they are
+/// awake (`wake`), since a pin that is still asleep answers what it saw
+/// when it last was awake, and the pin is told to look again where it
+/// needs that, as a display link's pin is (`display.look`). What it
+/// answered is said in the log, every analog output a line.
+pub fn jackEmpty(c: *Controller, codec: *Codec, output: *const Output) bool {
+    if (output.display) return false;
+    const pin: u32 = output.pin;
+    if (output.connectivity != verbs.connectivity_jack) {
+        note(c, "pin %d is not on a jack (connectivity %d): taken as in use", .{ pin, @as(u32, output.connectivity) });
+        return false;
+    }
+    const address = codec.address;
+    const capability = ask(c, address, output.pin, verbs.parameter(verbs.param_pin_cap)) orelse {
+        note(c, "pin %d did not say what it can do: taken as in use", .{pin});
+        return false;
+    };
+    if (capability & verbs.pin_cap_presence == 0) {
+        note(c, "pin %d cannot tell what is plugged in (it can do %x): taken as in use", .{ pin, capability });
+        return false;
+    }
+    wake(c, address, codec.group);
+    wake(c, address, output.pin);
+    if (capability & verbs.pin_cap_trigger != 0) {
+        _ = ask(c, address, output.pin, verbs.pin_sense_trigger);
+    }
+    const sense = ask(c, address, output.pin, verbs.pin_sense_get) orelse {
+        note(c, "pin %d did not say what it sees: taken as in use", .{pin});
+        return false;
+    };
+    const empty = sense & verbs.pin_sense_present == 0;
+    note(c, "pin %d sees %x (it can do %x): %s", .{
+        pin, sense, capability, @as([*:0]const u8, if (empty) "nothing plugged in" else "something plugged in"),
+    });
+    return empty;
+}
+
+/// The most a node is waited for to come awake, in microseconds.
+const wake_most = 100_000;
+
+/// A node set to D0 and waited for until it says it is there: the state
+/// it was set to is the one asked for at once, the state it is in - the
+/// upper half of its answer - only once it has come up. At most
+/// `wake_most`; a node that does not answer is not waited for.
+fn wake(c: *Controller, address: u4, node: u8) void {
+    _ = ask(c, address, node, verbs.powerSet(verbs.power_d0));
+    var waited: u32 = 0;
+    while (waited < wake_most) {
+        const state = ask(c, address, node, verbs.power_get) orelse return;
+        if ((state >> 4) & 0xf == verbs.power_d0) return;
+        waited += controller.pause(c, 1000);
+    }
+    note(c, "node %d is not awake after %d ms", .{ @as(u32, node), @as(u32, wake_most / 1000) });
+}
+
+/// A line for the log at the info level, which is what a machine keeps
+/// from its start.
+fn note(c: *Controller, comptime text: [:0]const u8, args: anytype) void {
+    sdk.exec.klog(c.sys, exec.LOG_INFO, "rta-hda: " ++ text ++ "\n", args);
 }
 
 /// The way out switched on: the function group and every node on the way
@@ -527,6 +598,20 @@ pub fn stepFor(amp: u32, gain: u32) ?Level {
 /// of them, is: what the emulator's codec says, and the shape of a great
 /// many real ones.
 const an_amp: u32 = 0x8003_4a4a;
+
+test "an empty jack comes after a display link and keeps its order" {
+    const display_link = Output{ .display = true };
+    const headphones = Output{ .device = verbs.device_headphone };
+    const line_out = Output{ .device = verbs.device_line_out };
+    const speaker_jack = Output{ .device = verbs.device_speaker };
+    const link = rankOf(&display_link, false);
+    try std.testing.expect(rankOf(&headphones, false) > link);
+    try std.testing.expect(rankOf(&headphones, true) < link);
+    try std.testing.expect(rankOf(&speaker_jack, true) < link);
+    try std.testing.expect(rankOf(&headphones, true) > rankOf(&line_out, true));
+    // Still above the null sink rta keeps at the end of the list.
+    try std.testing.expect(rankOf(&Output{ .device = verbs.device_spdif_out }, true) > -100);
+}
 
 test "as played is the step the amplifier calls no change" {
     const level = stepFor(an_amp, 0x1_0000).?;

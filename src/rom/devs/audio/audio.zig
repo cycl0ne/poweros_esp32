@@ -10,7 +10,9 @@
 //! the list (AUDIOCMD_PREFEROUTPUT), else the first, the one its drivers
 //! made most wanted - a codec behind a speaker, an amplifier that takes
 //! I2S, a stream that plays into nothing on a machine without a sound
-//! part - until a program picks another (AUDIOCMD_SETOUTPUT). The
+//! part - until a program picks another (AUDIOCMD_SETOUTPUT). One that
+//! will not start - its driver sees nothing at its end, an HDMI port with
+//! no monitor on it - is passed over for the next on the list. The
 //! device knows none of them by name; what it reads of a sink is its
 //! number, its mode - the rate, how many sides are heard, what the halves
 //! of a frame carry - and the ring of buffers it runs on. A change of
@@ -22,12 +24,12 @@
 //! DAC unplugged, a file a program is done with - leaves rta.library's
 //! list at once and is marked gone, and the task is woken. It stops it,
 //! which gives it back, and plays through the preferred output or the
-//! first on the list from then on, every stream going on where it was.
-//! With none left, a write is answered AUDIOERR_NOOUTPUT, until an output
-//! comes: the next write plays through it. A machine whose only outputs
-//! come and go - a USB speaker - starts the same way, with none; and so
-//! does one whose output will not start yet - an HDMI port with no
-//! monitor on it - which the next write tries again.
+//! first on the list that starts from then on, every stream going on
+//! where it was. With none left, a write is answered AUDIOERR_NOOUTPUT,
+//! until an output comes: the next write plays through it. A machine
+//! whose only outputs come and go - a USB speaker - starts the same way,
+//! with none; and so does one none of whose outputs will start yet, which
+//! the next write tries again.
 //!
 //! rta.library says nothing when a sink comes, so the task looks for the
 //! preferred output itself: every `look_every` buffers it plays, while the
@@ -113,8 +115,8 @@ const recorder = @import("recorder.zig");
 
 pub const DEVICE_NAME = audio.AUDIONAME;
 const DEVICE_VERSION = 2;
-const DEVICE_REVISION = 13;
-const BUILD_DATE = "29.10.2026";
+const DEVICE_REVISION = 14;
+const BUILD_DATE = "09.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -423,13 +425,23 @@ fn sinkOf(ab: *AudioBase, id: u32) ?*rta.AudioSink {
     return null;
 }
 
-/// What the device plays through when it has to choose: the preferred
-/// output when it is on the list, else the first; null for none.
-fn firstChoice(ab: *AudioBase) ?*rta.AudioSink {
-    if (ab.preferred != 0) {
-        if (sinkOf(ab, ab.preferred)) |sink| return sink;
+/// What the device plays through when it has to choose, started: the
+/// preferred output when it is on the list and starts, else the first on
+/// the list that starts - one its driver says has nothing to play into,
+/// a socket with nothing in it or a display link with no monitor at its
+/// end, is passed over for the next. False if none starts.
+fn attachFirstChoice(ab: *AudioBase) bool {
+    const wanted = if (ab.preferred != 0) sinkOf(ab, ab.preferred) else null;
+    if (wanted) |sink| {
+        if (attachSink(ab, sink)) return true;
     }
-    return ab.rta_base.NextSink(null);
+    const rb = ab.rta_base;
+    var sink = rb.NextSink(null);
+    while (sink) |each| : (sink = rb.NextSink(each)) {
+        if (each == wanted) continue;
+        if (attachSink(ab, each)) return true;
+    }
+    return false;
 }
 
 /// The volume set for the output of that number, or null for none.
@@ -635,8 +647,8 @@ fn writeHandedOff(ab: *AudioBase) bool {
 
 /// The requests handed to the task, in order: a change of output, or of
 /// the preferred one, replied when made; a write queued once there is an
-/// output - the preferred one or the first on the list, when there was
-/// none - in the mode the streams want, if nothing else plays, and
+/// output - the preferred one or the first on the list that starts, when
+/// there was none - in the mode the streams want, if nothing else plays, and
 /// replied when it has played, or answered AUDIOERR_NOOUTPUT while there
 /// is none. Then the way in started or stopped as the recording now
 /// needs.
@@ -653,9 +665,7 @@ fn serveCommands(ab: *AudioBase) void {
                 sys.ReplyIO(io);
                 continue;
             };
-            if (ab.sink == null) {
-                if (firstChoice(ab)) |sink| _ = attachSink(ab, sink);
-            }
+            if (ab.sink == null) _ = attachFirstChoice(ab);
             if (ab.sink == null) {
                 io.err = audio.AUDIOERR_NOOUTPUT;
                 ioa.std.actual = 0;
@@ -676,14 +686,14 @@ fn serveCommands(ab: *AudioBase) void {
 }
 
 /// The output played through deleted by its driver: stopped, which gives
-/// it back, and the preferred one or the first on the list played through
-/// instead - none, if there is none.
+/// it back, and the preferred one or the first on the list that starts
+/// played through instead - none, if none does.
 fn lostSink(ab: *AudioBase) void {
     if (ab.sink) |sink| {
         if (sink.id == ab.preferred) ab.preferred_here = 0;
     }
     detachSink(ab);
-    if (firstChoice(ab)) |next| _ = attachSink(ab, next);
+    _ = attachFirstChoice(ab);
 }
 
 /// The output started again in the mode the streams want; the same sink,
@@ -1146,7 +1156,7 @@ fn audioTask(sys: *ExecBase) callconv(.c) void {
         // write looks for one. The task runs either way: one that ended
         // here would be started again by the next open on the stack it
         // is still ending on.
-        if (firstChoice(ab)) |sink| _ = attachSink(ab, sink);
+        _ = attachFirstChoice(ab);
     }
     if (ok) ab.ready = 1;
     if (ab.starter) |starter| {
@@ -2240,6 +2250,50 @@ test "the outputs are listed in order and one is chosen; the streams go on where
     _ = replied(port);
     rb.DeleteSink(headphones);
     try testDeviceGone(ab, &.{port});
+}
+
+test "an output that will not start is passed over for the next on the list; with none that starts there is none" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const rb = ab.rta_base;
+    const head_tags = [_]sdk.utility.TagItem{
+        .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr("Headphones") },
+        .{ .tag = rta.tags.RTAA_Priority, .data = @bitCast(@as(isize, -1)) },
+        .{},
+    };
+    const headphones = rb.CreateSinkTagList(capture.DRIVER_NAME, &head_tags).?;
+    const speaker = ab.sink.?;
+
+    // The first on the list with nothing at its end: the next plays.
+    detachSink(ab);
+    capture.refuse(speaker, true);
+    try testing.expect(attachFirstChoice(ab));
+    try testing.expectEqual(headphones, ab.sink.?);
+
+    // A preferred one that will not start: the first on the list that
+    // does, which is not the preferred one tried again.
+    detachSink(ab);
+    ab.preferred = speaker.id;
+    try testing.expect(attachFirstChoice(ab));
+    try testing.expectEqual(headphones, ab.sink.?);
+
+    // A preferred one that starts, ahead of the first on the list.
+    detachSink(ab);
+    capture.refuse(speaker, false);
+    ab.preferred = headphones.id;
+    try testing.expect(attachFirstChoice(ab));
+    try testing.expectEqual(headphones, ab.sink.?);
+
+    // None that starts: no output.
+    detachSink(ab);
+    capture.refuse(speaker, true);
+    capture.refuse(headphones, true);
+    try testing.expect(!attachFirstChoice(ab));
+    try testing.expect(ab.sink == null);
+
+    ab.preferred = 0;
+    rb.DeleteSink(headphones);
+    try testDeviceGone(ab, &.{});
 }
 
 /// Buffers played on the output, as many as between two looks for the

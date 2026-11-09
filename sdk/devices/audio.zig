@@ -125,9 +125,11 @@
 //! **A machine may have several outputs** - a jack and a speaker, a DAC
 //! plugged in - and the device plays through one at a time: the preferred
 //! one (AUDIOCMD_PREFEROUTPUT) when it is there, else the first on the
-//! list, until it is told another (AUDIOCMD_SETOUTPUT). One that goes - a
-//! DAC unplugged - leaves the device playing through the preferred one or
-//! the first on the list, every stream going on; when it was the last,
+//! list, until it is told another (AUDIOCMD_SETOUTPUT); one that will not
+//! start - nothing at the end of an HDMI link - is passed over for the
+//! next. One that goes - a DAC unplugged - leaves the device playing
+//! through the preferred one or the first on the list that starts, every
+//! stream going on; when it was the last,
 //! writes and triggers are answered AUDIOERR_NOOUTPUT until one comes - as
 //! they are on a machine that starts with none, whose outputs USB brings.
 //! The preferred one coming - the headphones plugged in - takes the sound

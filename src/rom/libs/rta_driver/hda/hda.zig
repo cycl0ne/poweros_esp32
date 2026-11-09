@@ -25,7 +25,22 @@
 //! converter becomes a sink of its own, named and ordered by what the
 //! pin is for: the speakers of a machine before a jack, a jack before a
 //! display link, so a machine plays through what the person in front of
-//! it expects without being asked. Each sink takes a stream descriptor
+//! it expects without being asked. A jack that can tell is asked whether
+//! anything is plugged into it as its sink is made, and one with nothing
+//! in it goes after the display links.
+//!
+//! **A display link is an output while something is at its far end.** A
+//! machine has a socket for every link its display engine has, and most
+//! of them are empty; and the one a monitor is on carries sound only
+//! once the display driver has switched its sound on, which may be after
+//! the sinks are made. So a task of the driver's looks at every link
+//! every two seconds (`watch`): a link with nothing at its end has its
+//! sink taken off rta's list - one played through moves the machine on
+//! to the next output - and one that has something again is given its
+//! sink back, under the same name and so the same number, which is what
+//! a preference names it by. Each is made at the start as the rest are,
+//! so a machine that plays at once finds the monitor's, and is passed
+//! over while nothing is there yet. Each sink takes a stream descriptor
 //! of the controller when it is started and gives it back when it is
 //! stopped, so two of them play at once on a controller that has two
 //! descriptors free.
@@ -64,8 +79,8 @@ const err = rta.errors;
 const MODULE_NAME = "rta-hda";
 const DRIVER_NAME = "hda";
 const VERSION = 1;
-const REVISION = 5;
-const BUILD_DATE = "06.11.2026";
+const REVISION = 7;
+const BUILD_DATE = "09.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -170,15 +185,38 @@ const State = struct {
     cards: [max_controllers]?*Card = @splat(null),
     card_count: u32 = 0,
     /// The sinks made, so that a start can see whether another of them
-    /// is already playing through the converter it wants.
+    /// is already playing through the converter it wants. A sink taken
+    /// off leaves its place empty for the next one made.
     made: [max_sinks]?*Instance = @splat(null),
     made_count: u32 = 0,
+    /// The display links, which the watch looks at (`watch`).
+    links: [max_sinks]Link = undefined,
+    link_count: u32 = 0,
+    /// The task that looks at them, on a stack of its own.
+    watch_task: exec.Task = .{},
+    watch_stack: ?*anyopaque = null,
     /// Which way out the sink now being made is for. A sink of this
     /// driver is made by this driver, from an output it has just found
     /// and holds the only pointer to; a create from anywhere else has no
     /// output to be made for and is refused.
     making: ?Making = null,
 };
+
+/// A display link the watch looks at: the way out it is, the name its
+/// sink has whenever it has one, and that sink - null while nothing is
+/// at the link's far end.
+const Link = struct {
+    card: *Card,
+    codec: *codec_file.Codec,
+    output: *const codec_file.Output,
+    name: [name_len]u8 = @splat(0),
+    sink: ?*rta.AudioSink = null,
+};
+
+/// How often the watch looks at the links, in microseconds.
+const watch_every_us = 2_000_000;
+/// The watch's stack: it reads a pin, and makes or takes off a sink.
+const watch_stack_size = 8192;
 
 /// What the sink now being made is a way out of.
 const Making = struct {
@@ -227,6 +265,7 @@ fn instanceOf(sink: *rta.AudioSink) *Instance {
 }
 
 const ops = rta.AudioSinkOps{
+    .destroy = &destroy,
     .start = &start,
     .stop = &stop,
     .buffer = &buffer,
@@ -293,6 +332,7 @@ fn init(seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*anyopaque {
     }
     makeSinks(state, rb);
     releaseTimer(state);
+    startWatch(state);
     // The libraries stay open and the state stays allocated: the
     // controllers are this module's from here on, and the driver is on
     // rta's list for good.
@@ -397,6 +437,7 @@ fn make(state: *State, function: *pci.PCIDevice) ?*Card {
             .coherent = coherent(state, function),
         },
     };
+    sys.InitSemaphore(&card.hw.lock);
     const answered = controller.reset(&card.hw) orelse {
         sdk.exec.kprintf(sys, "%s: the controller at %x does not come out of reset\n", .{
             MODULE_NAME, @as(u32, function.device_id),
@@ -571,7 +612,8 @@ fn coherent(state: *State, function: *pci.PCIDevice) bool {
 /// one name twice, and rta works a sink's number out from its name, so
 /// the second of a kind and every one after it gets a number after the
 /// name: what remembers which output a machine played through then means
-/// one of them and not either.
+/// one of them and not either. A display link is kept as well, with its
+/// name, for the watch to take its sink off and give it back by.
 fn makeSinks(state: *State, rb: *RtaBase) void {
     const sys = state.sys;
     var seen: [max_sinks]?[*:0]const u8 = @splat(null);
@@ -580,7 +622,7 @@ fn makeSinks(state: *State, rb: *RtaBase) void {
         const card = maybe orelse continue;
         for (card.read[0..card.read_count]) |*codec| {
             for (codec.outputs[0..codec.output_count]) |*output| {
-                if (state.made_count == max_sinks) {
+                if (seen_count == max_sinks) {
                     sdk.exec.kprintf(sys, "%s: more ways out than sinks; the rest are left alone\n", .{MODULE_NAME});
                     return;
                 }
@@ -592,28 +634,116 @@ fn makeSinks(state: *State, rb: *RtaBase) void {
                 seen[seen_count] = called;
                 seen_count += 1;
                 var text: [name_len]u8 = undefined;
-                const rank: i32 = codec_file.rankOf(output);
-                const sink_tags = [_]TagItem{
-                    .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr(numbered(&text, called, number)) },
-                    .{ .tag = rta.tags.RTAA_Priority, .data = @bitCast(@as(isize, rank)) },
-                    .{},
-                };
-                state.making = .{ .card = card, .codec = codec, .output = output };
-                const made = rb.CreateSinkTagList(DRIVER_NAME, &sink_tags);
-                state.making = null;
-                if (made) |sink| {
-                    state.made[state.made_count] = instanceOf(sink);
-                    state.made_count += 1;
-                    sdk.exec.kprintf(sys, "%s: %s is a sink at priority %d\n", .{
-                        MODULE_NAME, sink.node.name orelse called, rank,
-                    });
-                } else {
-                    sdk.exec.kprintf(sys, "%s: no sink for %s: %s\n", .{
-                        MODULE_NAME, called, rb.RtaErrorText(rb.RtaLastError()),
-                    });
-                }
+                const name = numbered(&text, called, number);
+                const rank: i32 = codec_file.rankOf(output, codec_file.jackEmpty(&card.hw, codec, output));
+                const made = makeSink(state, rb, .{ .card = card, .codec = codec, .output = output }, name, rank);
+                if (!output.display) continue;
+                const link = &state.links[state.link_count];
+                link.* = .{ .card = card, .codec = codec, .output = output, .sink = made };
+                var at: usize = 0;
+                while (name[at] != 0 and at + 1 < name_len) : (at += 1) link.name[at] = name[at];
+                state.link_count += 1;
             }
         }
+    }
+}
+
+/// One sink made for the way out `making` names, under `name` at
+/// `rank`, and kept among those made; null, said in the log, where rta
+/// would not make it or every place is taken.
+fn makeSink(state: *State, rb: *RtaBase, making: Making, name: [*:0]const u8, rank: i32) ?*rta.AudioSink {
+    const sys = state.sys;
+    // The first place a sink taken off left, or the next one.
+    var slot: ?*?*Instance = null;
+    for (state.made[0..state.made_count]) |*each| {
+        if (@atomicLoad(?*Instance, each, .acquire) == null) {
+            slot = each;
+            break;
+        }
+    }
+    if (slot == null and state.made_count < max_sinks) {
+        slot = &state.made[state.made_count];
+        state.made_count += 1;
+    }
+    const into = slot orelse {
+        sdk.exec.kprintf(sys, "%s: no place for %s's sink\n", .{ MODULE_NAME, name });
+        return null;
+    };
+    const sink_tags = [_]TagItem{
+        .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr(name) },
+        .{ .tag = rta.tags.RTAA_Priority, .data = @bitCast(@as(isize, rank)) },
+        .{},
+    };
+    state.making = making;
+    const made = rb.CreateSinkTagList(DRIVER_NAME, &sink_tags);
+    state.making = null;
+    const sink = made orelse {
+        sdk.exec.kprintf(sys, "%s: no sink for %s: %s\n", .{
+            MODULE_NAME, name, rb.RtaErrorText(rb.RtaLastError()),
+        });
+        return null;
+    };
+    @atomicStore(?*Instance, into, instanceOf(sink), .release);
+    sdk.exec.kprintf(sys, "%s: %s is a sink at priority %d\n", .{
+        MODULE_NAME, sink.node.name orelse name, rank,
+    });
+    return sink;
+}
+
+/// The watch started, where there is a display link to look at; on a
+/// stack of its own, for good. Without the memory the links keep the
+/// sinks they were made with.
+fn startWatch(state: *State) void {
+    if (state.link_count == 0) return;
+    const sys = state.sys;
+    const stack = sys.AllocMem(watch_stack_size, exec.MEMF_ANY | exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return;
+    state.watch_stack = stack;
+    state.watch_task = .{
+        .node = .{ .type = .task, .pri = 0, .name = MODULE_NAME ++ " watch" },
+        .sp_lower = @intFromPtr(stack),
+        .sp_upper = @intFromPtr(stack) + watch_stack_size,
+    };
+    _ = sys.AddTask(&state.watch_task, &watchTask, null);
+}
+
+/// The watch: every `watch_every_us`, each link looked at (`watch`), on
+/// a timer of its own - a request is answered to the task that opened
+/// it.
+fn watchTask(sys: *ExecBase) callconv(.c) void {
+    const state: *State = @alignCast(@fieldParentPtr("watch_task", sys.FindTask(null).?));
+    const rb = state.rb orelse return;
+    const port = sys.CreateMsgPort() orelse return;
+    var wait = timer.TimeRequest{};
+    wait.node.message.reply_port = port;
+    wait.node.message.length = @sizeOf(timer.TimeRequest);
+    if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &wait.node, 0) != 0) {
+        sdk.exec.kprintf(sys, "%s: no timer to watch the display links by\n", .{MODULE_NAME});
+        sys.DeleteMsgPort(port);
+        return;
+    }
+    while (true) {
+        wait.node.command = timer.TR_ADDREQUEST;
+        wait.time = timer.TimeVal.fromMicros(watch_every_us);
+        _ = sys.DoIO(&wait.node);
+        for (state.links[0..state.link_count]) |*link| watch(state, rb, link);
+    }
+}
+
+/// One link looked at: its sink taken off rta's list when nothing is at
+/// its far end any more, and made again under its name when something
+/// is. A sink something plays through goes once that is stopped, and
+/// the player moves on to the next output.
+fn watch(state: *State, rb: *RtaBase, link: *Link) void {
+    const there = display.present(&link.card.hw, link.codec, link.output);
+    const name: [*:0]const u8 = @ptrCast(&link.name);
+    if (there and link.sink == null) {
+        sdk.exec.kprintf(state.sys, "%s: %s: something at its far end\n", .{ MODULE_NAME, name });
+        link.sink = makeSink(state, rb, .{ .card = link.card, .codec = link.codec, .output = link.output }, name, codec_file.rankOf(link.output, false));
+    } else if (!there and link.sink != null) {
+        sdk.exec.kprintf(state.sys, "%s: %s: nothing at its far end, its sink taken off\n", .{ MODULE_NAME, name });
+        const sink = link.sink.?;
+        link.sink = null;
+        rb.DeleteSink(sink);
     }
 }
 
@@ -691,14 +821,14 @@ fn modeOf(rate: u32, first: bool) rta.AudioMode {
 }
 
 /// The sink gone: whatever it still holds given back, and it taken off
-/// the driver's own list. The instance itself is rta's memory and goes
-/// with the sink.
+/// the driver's own list, its place left for the next one made. The
+/// instance itself is rta's memory and goes with the sink.
 fn destroy(sink: *rta.AudioSink) callconv(.c) void {
     const instance = instanceOf(sink);
     streamDown(instance);
     const state = instance.state;
     for (state.made[0..state.made_count]) |*each| {
-        if (each.* == instance) each.* = null;
+        if (@atomicLoad(?*Instance, each, .acquire) == instance) @atomicStore(?*Instance, each, null, .release);
     }
 }
 
@@ -725,8 +855,8 @@ fn stop(sink: *rta.AudioSink) callconv(.c) void {
 /// rather than quietly taking the first one's sound away.
 fn busyConverter(instance: *Instance) bool {
     const state = instance.state;
-    for (state.made[0..state.made_count]) |maybe| {
-        const other = maybe orelse continue;
+    for (&state.made) |*each| {
+        const other = @atomicLoad(?*Instance, each, .acquire) orelse continue;
         if (other == instance or !other.up) continue;
         if (other.codec == instance.codec and other.output.converter == instance.output.converter) return true;
     }

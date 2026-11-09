@@ -13,14 +13,20 @@
 //! result, and a bit that says a command is in flight. They carry one
 //! verb at a time and answer it before returning.
 //!
-//! This driver talks to a codec only while it is being set up, and waits
-//! for each answer where it asked for it, so the second is the one that
-//! fits: no memory a controller has to reach, no ring pointers, no
+//! This driver talks to a codec while it is being set up, as a way out
+//! is started and stopped, and as the display links are looked at, and
+//! waits for each answer where it asked for it, so the second is the one
+//! that fits: no memory a controller has to reach, no ring pointers, no
 //! acknowledgement protocol, and nothing to get wrong between two verbs.
 //! The rings have one job this cannot do - a codec's unsolicited
 //! answers, which is how a jack says something was plugged into it - and
 //! they can be brought up for that alone when something wants it, with
 //! no commands going through them at all.
+//!
+//! **One verb at a time, whoever sends it.** The registers carry one
+//! command, and more than one task talks to a codec - the one that
+//! starts a way out, and the one that looks at the display links - so a
+//! verb is sent and its answer read under the controller's lock.
 //!
 //! **Nothing here waits on an interrupt.** Setting a codec up happens at
 //! cold start, before there is anything to be interrupted for, and a
@@ -60,6 +66,9 @@ pub const Controller = struct {
     out_streams: u32 = 0,
     in_streams: u32 = 0,
     wide: bool = false,
+    /// Held while a verb is in flight, so that the answer read is that
+    /// verb's: set up with InitSemaphore by whoever made this.
+    lock: exec.SignalSemaphore = .{},
 
     /// What the processors wrote, written back for the controller.
     pub fn toDevice(c: *Controller, address: usize, bytes: usize) void {
@@ -136,6 +145,8 @@ pub fn reset(c: *Controller) ?u16 {
 pub fn verb(c: *Controller, codec: u4, node: u8, payload: u20) ?u32 {
     const command: u32 = (@as(u32, codec) << 28) | (@as(u32, node) << 20) | payload;
     const at = c.at;
+    c.sys.ObtainSemaphore(&c.lock);
+    defer c.sys.ReleaseSemaphore(&c.lock);
 
     // Nothing in flight before this one. A controller left busy by
     // whoever had it before is waited for rather than written over.

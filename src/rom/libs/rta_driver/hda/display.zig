@@ -34,7 +34,9 @@
 //! machine has a display socket for every link its chip has, and most of
 //! them have nothing in them; a sink that would play into one of those
 //! says there is no output, so that the machine moves on to the next
-//! output rather than playing into a socket.
+//! output rather than playing into a socket. Nor is it listed: the
+//! driver looks at every link every few seconds (`present`), and a link
+//! has a sink only while something is at its far end.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -89,6 +91,21 @@ pub fn look(c: *Controller, codec: *codec_file.Codec, output: *const codec_file.
     if (sense & verbs.pin_sense_described == 0) return far;
     describe(c, codec, output, &far);
     return far;
+}
+
+/// Whether anything is at the far end of the link, asked as `look` asks
+/// but without a line in the log and without its description read: what
+/// the look at the display links (`hda.watch`) asks every few seconds.
+pub fn present(c: *Controller, codec: *codec_file.Codec, output: *const codec_file.Output) bool {
+    const address = codec.address;
+    _ = ask(c, address, codec.group, verbs.powerSet(verbs.power_d0));
+    _ = ask(c, address, output.pin, verbs.powerSet(verbs.power_d0));
+    const capability = ask(c, address, output.pin, verbs.parameter(verbs.param_pin_cap)) orelse 0;
+    if (capability & verbs.pin_cap_trigger != 0) {
+        _ = ask(c, address, output.pin, verbs.pin_sense_trigger);
+    }
+    const sense = ask(c, address, output.pin, verbs.pin_sense_get) orelse return false;
+    return sense & verbs.pin_sense_present != 0;
 }
 
 /// The far end's own description read out of the pin and taken apart: a

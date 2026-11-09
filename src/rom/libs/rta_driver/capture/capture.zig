@@ -96,6 +96,9 @@ pub const Instance = struct {
     /// Made with `own_volume`, and the volume its part was set to.
     has_volume: bool = false,
     volume: u32 = rta.sinks.AUDIOGAIN_UNITY,
+    /// Whether a start is refused as one with nothing at its end
+    /// (`refuse`).
+    refused: bool = false,
 };
 
 /// The sink's instance.
@@ -112,6 +115,17 @@ pub fn instanceOf(sink: *rta.AudioSink) *Instance {
 /// - `sink` - a sink this driver made.
 pub fn played(sink: *rta.AudioSink) void {
     instanceOf(sink).due += 1;
+}
+
+/// The sink's starts refused from now on with `RTAERR_NO_OUTPUT`, as a
+/// socket with nothing in it or a display link with no monitor refuses
+/// them - or, `on` false, taken again.
+///
+/// INPUTS:
+/// - `sink` - a sink this driver made.
+/// - `on` - whether its starts are refused.
+pub fn refuse(sink: *rta.AudioSink, on: bool) void {
+    instanceOf(sink).refused = on;
 }
 
 /// What the sink has played so far.
@@ -153,6 +167,7 @@ fn destroy(sink: *rta.AudioSink) callconv(.c) void {
 fn start(sink: *rta.AudioSink, mode: *const rta.AudioMode, task: *exec.Task, signal_mask: u32) callconv(.c) i32 {
     const state = sinkState(sink);
     const instance = instanceOf(sink);
+    if (instance.refused) return err.RTAERR_NO_OUTPUT;
     instance.started_rate = mode.rate;
     instance.next = 0;
     instance.due = 0;
