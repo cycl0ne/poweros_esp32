@@ -6,9 +6,9 @@
 //! its values (`json.zig`); every frame is drawn from that tape anew,
 //! on the loader process, into the frame buffer the superclass hands
 //! over: layers and shapes walked (`render.zig`), their properties taken
-//! at the frame's time (`property.zig`), paths flattened and filled or
-//! stroked with smooth edges (`raster.zig`). What the frame does not
-//! cover is left clear, so the ground the object is drawn on shows.
+//! at the frame's time (`property.zig`), paths filled or stroked with
+//! smooth edges by vector.library. What the frame does not cover is left
+//! clear, so the ground the object is drawn on shows.
 //!
 //! **Size and rate.** The animation is drawn at the size the file gives,
 //! made smaller to fit in `max_side` pixels each way: a frame's pixels
@@ -33,11 +33,12 @@ const datatypes = sdk.datatypes;
 const subclass = datatypes.subclass;
 const dtc = datatypes.datatypesclass;
 const adt = datatypes.animationclass;
+const vector = sdk.vector;
 const json = @import("json.zig");
-const raster = @import("raster.zig");
 const render = @import("render.zig");
 const DosBase = sdk.interface.dos.DosBase;
 const ExecBase = sdk.interface.exec.ExecBase;
+const VectorBase = sdk.interface.vector.VectorBase;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
@@ -50,16 +51,21 @@ const Pen = graphics.Pen;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "lottie.datatype",
     .version = 1,
-    .revision = 1,
-    .date = "28.10.2026",
+    .revision = 2,
+    .date = "09.11.2026",
     .super = adt.ANIMATIONDTCLASS,
-    .opens = &.{adt.ANIMATION_LIBRARY},
+    .opens = &.{ adt.ANIMATION_LIBRARY, vector.VECTORNAME },
     .Instance = Data,
     .dispatch = dispatch,
     .functions = &.{exec.libraries.vec(recognise)},
 });
 comptime {
     _ = Library;
+}
+
+/// vector.library, opened by the library's init (`.opens`, the second).
+fn vectorBase(base: *const Base) *VectorBase {
+    return @ptrCast(base.opened[1].?);
 }
 
 /// The largest a frame is drawn, either way, in pixels.
@@ -69,10 +75,6 @@ const max_rate = 30;
 /// A recognise reads the whole file; one larger than this is not looked
 /// into.
 const recognise_most = 4 << 20;
-/// Room for the points and contours of the paths one fill or stroke
-/// paints.
-const max_points = 16384;
-const max_contours = 1024;
 
 /// lottie.datatype's part of an object: the file, its tape, and what a
 /// frame is drawn with - used by the loader process only, once made.
@@ -90,10 +92,10 @@ pub const Data = extern struct {
     in_point: f32 = 0,
     step: f32 = 1,
     rate: u32 = 0,
-    acc: ?[*]f32 = null,
-    points: ?[*]raster.P = null,
-    ends: ?[*]u32 = null,
-    closed: ?[*]bool = null,
+    /// The path every fill and stroke is built in, and the canvas the
+    /// frame is drawn on, the frame's pens handed to it each time.
+    path: ?*vector.Path = null,
+    canvas: ?*vector.Canvas = null,
 };
 
 fn tapeOf(own: *const Data) json.Tape {
@@ -101,21 +103,17 @@ fn tapeOf(own: *const Data) json.Tape {
 }
 
 /// Frame `frame` into the buffer animation.datatype handed over.
-fn loadFrame(own: *Data, msg: *adt.AdtFrame) void {
+fn loadFrame(vb: *VectorBase, own: *Data, msg: *adt.AdtFrame) void {
     msg.duration = 1000 / @max(own.rate, 1);
-    if (own.acc == null) return;
+    const path = own.path orelse return;
+    const canvas = own.canvas orelse return;
     const tape = tapeOf(own);
-    var area = raster.Raster{ .acc = own.acc.?, .width = own.width, .height = own.height };
-    var outline = raster.Outline{
-        .points = own.points.?[0..max_points],
-        .ends = own.ends.?[0..max_contours],
-        .closed = own.closed.?[0..max_contours],
-    };
+    vb.SetCanvasPens(canvas, msg.pens, msg.bytes_per_row);
     var renderer = render.Renderer{
         .tape = tape,
-        .raster = &area,
-        .outline = &outline,
-        .canvas = .{ .pens = msg.pens, .bytes_per_row = msg.bytes_per_row, .width = own.width, .height = own.height },
+        .vb = vb,
+        .path = path,
+        .canvas = canvas,
         .assets = tape.get(0, "assets"),
     };
     renderer.frame(0, own.in_point + @as(f32, @floatFromInt(msg.frame)) * own.step, own.scale);
@@ -171,14 +169,18 @@ fn readFile(base: *Base, cl: *Class, o: *Object, own: *Data, bytes: []u8) i32 {
     own.frames = @max(1, @as(u32, @intFromFloat(@floor((header.out_point - header.in_point) / own.step))));
 
     const pixels: usize = @as(usize, own.width) * own.height;
-    // The accumulation buffer, the outline, and the three frames
-    // animation.datatype holds.
-    const acc_bytes = raster.Raster.floats(own.width, own.height) * @sizeOf(f32);
-    if (!subclass.roomFor(sys, acc_bytes + max_points * @sizeOf(raster.P) + 3 * pixels * 4)) return datatypes.DTERROR_TOO_LARGE;
-    own.acc = @ptrCast(@alignCast(sys.AllocVec(@intCast(acc_bytes), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return datatypes.DTERROR_NOT_ENOUGH_DATA));
-    own.points = @ptrCast(@alignCast(sys.AllocVec(max_points * @sizeOf(raster.P), exec.MEMF_ANY) orelse return datatypes.DTERROR_NOT_ENOUGH_DATA));
-    own.ends = @ptrCast(@alignCast(sys.AllocVec(max_contours * @sizeOf(u32), exec.MEMF_ANY) orelse return datatypes.DTERROR_NOT_ENOUGH_DATA));
-    own.closed = @ptrCast(sys.AllocVec(max_contours, exec.MEMF_ANY) orelse return datatypes.DTERROR_NOT_ENOUGH_DATA);
+    // The canvas's coverage - a frame this small is one band of it - and
+    // the three frames animation.datatype holds.
+    const coverage_bytes = @as(usize, own.width + 2) * own.height * @sizeOf(f32);
+    if (!subclass.roomFor(sys, coverage_bytes + 3 * pixels * 4)) return datatypes.DTERROR_TOO_LARGE;
+    const vb = vectorBase(base);
+    own.path = vb.CreatePath() orelse return datatypes.DTERROR_NOT_ENOUGH_DATA;
+    const canvas_tags = [_]TagItem{
+        .{ .tag = vector.VCA_Width, .data = own.width },
+        .{ .tag = vector.VCA_Height, .data = own.height },
+        .{},
+    };
+    own.canvas = vb.CreateCanvasTagList(&canvas_tags) orelse return datatypes.DTERROR_NOT_ENOUGH_DATA;
 
     const tags = [_]TagItem{
         .{ .tag = adt.ADTA_Width, .data = own.width },
@@ -191,13 +193,11 @@ fn readFile(base: *Base, cl: *Class, o: *Object, own: *Data, bytes: []u8) i32 {
     return 0;
 }
 
-fn freeAll(sys: *ExecBase, own: *const Data) void {
+fn freeAll(sys: *ExecBase, vb: *VectorBase, own: *const Data) void {
     sys.FreeVec(own.file);
     sys.FreeVec(own.nodes);
-    sys.FreeVec(own.acc);
-    sys.FreeVec(own.points);
-    sys.FreeVec(own.ends);
-    sys.FreeVec(own.closed);
+    vb.DisposePath(own.path);
+    vb.DisposeCanvas(own.canvas);
 }
 
 /// datatypes.library's question: whether the file is JSON with what a
@@ -276,11 +276,11 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             // The object is gone after that, so its numbers are kept here.
             const kept = classes.instData(Data, cl, o.?).*;
             const result = ib.SendSuperMessage(cl, o, msg);
-            freeAll(sys, &kept);
+            freeAll(sys, vectorBase(base), &kept);
             return result;
         },
         adt.ADTM_LOADFRAME => {
-            loadFrame(classes.instData(Data, cl, o.?), @ptrCast(@alignCast(msg)));
+            loadFrame(vectorBase(base), classes.instData(Data, cl, o.?), @ptrCast(@alignCast(msg)));
             return 1;
         },
         else => return ib.SendSuperMessage(cl, o, msg),

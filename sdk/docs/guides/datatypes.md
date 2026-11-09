@@ -304,8 +304,8 @@ groups, rectangles, ellipses and paths; fills and strokes of one colour;
 transforms, parents and keyframes with their easing - and passes over
 gradients, masks, mattes, text, images, expressions, trims and 3D,
 drawing the rest of the file without them. A frame is drawn in software
-at the file's size, made smaller to fit in 360 pixels each way, and at
-the file's rate up to 30 frames a second.
+by vector.library, at the file's size made smaller to fit in 360 pixels
+each way, and at the file's rate up to 30 frames a second.
 
 ## Sounds
 

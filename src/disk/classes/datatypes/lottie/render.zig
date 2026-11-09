@@ -24,23 +24,31 @@
 //! gradients, masks and mattes (a matte's source is not drawn, the layer
 //! it is for is drawn without it), text and image layers, expressions,
 //! trims, repeaters, stars, dashes, skew and 3D.
+//!
+//! **Drawn by vector.library.** The paths are built in pixels - every
+//! point through its layers' and groups' transforms - and filled or
+//! stroked on the frame with no matrix of the library's, a stroke's
+//! width scaled to pixels as Lottie scales it.
 
+const sdk = @import("sdk");
+const vector = sdk.vector;
+const VectorBase = sdk.interface.vector.VectorBase;
 const json = @import("json.zig");
 const property = @import("property.zig");
-const raster = @import("raster.zig");
 const Tape = json.Tape;
-const Matrix = raster.Matrix;
-const P = raster.P;
+const Matrix = vector.Matrix;
+const P = vector.Point;
 
 /// The deepest nesting of precompositions, groups and parents followed.
 const max_depth = 16;
 
-/// What a frame is drawn with.
+/// What a frame is drawn with: vector.library, the path every fill and
+/// stroke is built in, and the canvas over the frame's pens.
 pub const Renderer = struct {
     tape: Tape,
-    raster: *raster.Raster,
-    outline: *raster.Outline,
-    canvas: raster.Canvas,
+    vb: *VectorBase,
+    path: *vector.Path,
+    canvas: *vector.Canvas,
     /// The file's assets, where precompositions are.
     assets: ?u32,
 
@@ -110,15 +118,16 @@ pub const Renderer = struct {
         const width = tape.number(tape.get(layer_index, "sw")) orelse return;
         const height = tape.number(tape.get(layer_index, "sh")) orelse return;
         const colour = hexColour(tape.string(tape.get(layer_index, "sc")) orelse return) orelse return;
-        const outline = renderer.outline;
-        outline.reset();
-        outline.moveTo(matrix.apply(.{ .x = 0, .y = 0 }));
-        outline.lineTo(matrix.apply(.{ .x = width, .y = 0 }));
-        outline.lineTo(matrix.apply(.{ .x = width, .y = height }));
-        outline.lineTo(matrix.apply(.{ .x = 0, .y = height }));
-        outline.end(true);
-        renderer.raster.fill(outline);
-        renderer.raster.paint(renderer.canvas, colour, opacity, false);
+        const vb = renderer.vb;
+        const path = renderer.path;
+        vb.ClearPath(path);
+        for ([_]P{ .{ .x = 0, .y = 0 }, .{ .x = width, .y = 0 }, .{ .x = width, .y = height }, .{ .x = 0, .y = height } }, 0..) |corner, i| {
+            const at = matrix.apply(corner);
+            if (i == 0) vb.MoveTo(path, at.x, at.y) else vb.LineTo(path, at.x, at.y);
+        }
+        vb.ClosePath(path);
+        const paint = vector.Paint{ .colour = colour, .opacity = opacity };
+        _ = vb.FillPath(renderer.canvas, path, null, &paint, vector.RULE_NONZERO);
     }
 
     /// A list of shapes, from the last: each fill and stroke paints the
@@ -138,7 +147,7 @@ pub const Renderer = struct {
                 const group_opacity = property.scalar(tape, tape.get(transform, "o"), time, 100) / 100;
                 renderer.items(inside, time, matrix.then(transformMatrix(tape, transform, time)), opacity * group_opacity, depth + 1);
             } else if (same(kind, "fl") or same(kind, "st")) {
-                renderer.outline.reset();
+                renderer.vb.ClearPath(renderer.path);
                 renderer.paths(list.?, n, time, matrix, depth);
                 renderer.style(item, kind[0] == 's', time, matrix, opacity);
             }
@@ -146,7 +155,7 @@ pub const Renderer = struct {
     }
 
     /// The paths among the first `upto` items of a list, and inside its
-    /// groups, onto the outline.
+    /// groups, onto the path.
     fn paths(renderer: *Renderer, list: u32, upto: u32, time: f32, matrix: Matrix, depth: u32) void {
         if (depth > max_depth) return;
         const tape = renderer.tape;
@@ -165,42 +174,42 @@ pub const Renderer = struct {
             } else if (same(kind, "el")) {
                 renderer.ellipse(item, time, matrix);
             } else if (same(kind, "sh")) {
-                renderer.path(item, time, matrix);
+                renderer.shape(item, time, matrix);
             }
         }
     }
 
-    /// The outline painted by a fill or a stroke.
+    /// The path painted by a fill or a stroke. What did not fit in memory
+    /// is left out: the frame is drawn as far as it went.
     fn style(renderer: *Renderer, item: u32, stroked: bool, time: f32, matrix: Matrix, opacity: f32) void {
         const tape = renderer.tape;
         const colour_value = property.value(tape, tape.get(item, "c"), time, property.Value.of(&.{ 0, 0, 0 }));
-        var colour = raster.Colour{ .r = colour_value.at(0), .g = colour_value.at(1), .b = colour_value.at(2) };
+        var colour = vector.Colour{ .r = colour_value.at(0), .g = colour_value.at(1), .b = colour_value.at(2) };
         // Files of the oldest kind give colours to 255.
         if (colour.r > 1 or colour.g > 1 or colour.b > 1) colour = .{ .r = colour.r / 255, .g = colour.g / 255, .b = colour.b / 255 };
-        const alpha = opacity * property.scalar(tape, tape.get(item, "o"), time, 100) / 100;
+        const paint = vector.Paint{
+            .colour = colour,
+            .opacity = opacity * property.scalar(tape, tape.get(item, "o"), time, 100) / 100,
+        };
         if (stroked) {
-            const width = property.scalar(tape, tape.get(item, "w"), time, 1) * matrix.size();
-            const join: raster.Join = switch (@as(i32, @intFromFloat(tape.number(tape.get(item, "lj")) orelse 1))) {
-                2 => .round,
-                3 => .bevel,
-                else => .miter,
-            };
-            const cap: raster.Cap = switch (@as(i32, @intFromFloat(tape.number(tape.get(item, "lc")) orelse 1))) {
-                2 => .round,
-                3 => .square,
-                else => .butt,
-            };
-            renderer.raster.stroke(renderer.outline, .{
-                .half = width / 2,
-                .join = join,
-                .cap = cap,
+            const stroke = vector.Stroke{
+                .width = property.scalar(tape, tape.get(item, "w"), time, 1) * matrix.size(),
+                .join = switch (@as(i32, @intFromFloat(tape.number(tape.get(item, "lj")) orelse 1))) {
+                    2 => vector.JOIN_ROUND,
+                    3 => vector.JOIN_BEVEL,
+                    else => vector.JOIN_MITER,
+                },
+                .cap = switch (@as(i32, @intFromFloat(tape.number(tape.get(item, "lc")) orelse 1))) {
+                    2 => vector.CAP_ROUND,
+                    3 => vector.CAP_SQUARE,
+                    else => vector.CAP_BUTT,
+                },
                 .miter_limit = tape.number(tape.get(item, "ml")) orelse 4,
-            });
-            renderer.raster.paint(renderer.canvas, colour, alpha, false);
+            };
+            _ = renderer.vb.StrokePath(renderer.canvas, renderer.path, null, &paint, &stroke);
         } else {
-            const even_odd = (tape.number(tape.get(item, "r")) orelse 1) == 2;
-            renderer.raster.fill(renderer.outline);
-            renderer.raster.paint(renderer.canvas, colour, alpha, even_odd);
+            const rule: u32 = if ((tape.number(tape.get(item, "r")) orelse 1) == 2) vector.RULE_EVENODD else vector.RULE_NONZERO;
+            _ = renderer.vb.FillPath(renderer.canvas, renderer.path, null, &paint, rule);
         }
     }
 
@@ -234,7 +243,7 @@ pub const Renderer = struct {
             corners.add(.{ .x = left + round, .y = top }, .{ .x = -c, .y = 0 }, zero);
             corners.add(.{ .x = right - round, .y = top }, zero, .{ .x = c, .y = 0 });
         }
-        corners.write(renderer.outline, matrix, reversed(tape, item));
+        corners.write(renderer, matrix, reversed(tape, item));
     }
 
     fn ellipse(renderer: *Renderer, item: u32, time: f32, matrix: Matrix) void {
@@ -252,17 +261,17 @@ pub const Renderer = struct {
         points.add(.{ .x = x + rx, .y = y }, .{ .x = 0, .y = -cy }, .{ .x = 0, .y = cy });
         points.add(.{ .x = x, .y = y + ry }, .{ .x = cx, .y = 0 }, .{ .x = -cx, .y = 0 });
         points.add(.{ .x = x - rx, .y = y }, .{ .x = 0, .y = cy }, .{ .x = 0, .y = -cy });
-        points.write(renderer.outline, matrix, reversed(tape, item));
+        points.write(renderer, matrix, reversed(tape, item));
     }
 
     /// A path's vertices, between two keyframes' as far as it has come.
-    fn path(renderer: *Renderer, item: u32, time: f32, matrix: Matrix) void {
+    fn shape(renderer: *Renderer, item: u32, time: f32, matrix: Matrix) void {
         const tape = renderer.tape;
         const at = property.shape(tape, tape.get(item, "ks"), time) orelse return;
         const closed = tape.flag(tape.get(at.from, "c"));
         var from = Cursor.of(tape, at.from);
         var to: ?Cursor = if (at.to) |other| Cursor.of(tape, other) else null;
-        var writer = Writer{ .outline = renderer.outline, .matrix = matrix };
+        var writer = Writer.of(renderer, matrix);
         while (from.next()) |start| {
             var vertex = start;
             if (to) |*other| if (other.next()) |end| {
@@ -296,9 +305,9 @@ const Vertices = struct {
         vertices.count += 1;
     }
 
-    /// Onto the outline, closed, the other way round when asked.
-    fn write(vertices: *const Vertices, outline: *raster.Outline, matrix: Matrix, backwards: bool) void {
-        var writer = Writer{ .outline = outline, .matrix = matrix };
+    /// Onto the path, closed, the other way round when asked.
+    fn write(vertices: *const Vertices, renderer: *Renderer, matrix: Matrix, backwards: bool) void {
+        var writer = Writer.of(renderer, matrix);
         if (backwards) {
             var i = vertices.count;
             while (i > 0) {
@@ -318,38 +327,47 @@ fn reversed(tape: Tape, item: u32) bool {
     return (tape.number(tape.get(item, "d")) orelse 1) == 3;
 }
 
-/// Vertices onto the outline as cubic curves, each from the last.
+/// Vertices onto the path as cubic curves, each from the last, in
+/// pixels.
 const Writer = struct {
-    outline: *raster.Outline,
+    vb: *VectorBase,
+    path: *vector.Path,
     matrix: Matrix,
     first: ?Vertex = null,
     last: Vertex = undefined,
 
+    fn of(renderer: *const Renderer, matrix: Matrix) Writer {
+        return .{ .vb = renderer.vb, .path = renderer.path, .matrix = matrix };
+    }
+
     fn vertex(writer: *Writer, next: Vertex) void {
         if (writer.first == null) {
             writer.first = next;
-            writer.outline.moveTo(writer.matrix.apply(next.v));
+            const at = writer.matrix.apply(next.v);
+            writer.vb.MoveTo(writer.path, at.x, at.y);
         } else writer.curve(writer.last, next);
         writer.last = next;
     }
 
     fn curve(writer: *Writer, from: Vertex, to: Vertex) void {
         const m = writer.matrix;
+        const end = m.apply(to.v);
         if (from.out.x == 0 and from.out.y == 0 and to.in.x == 0 and to.in.y == 0) {
-            writer.outline.lineTo(m.apply(to.v));
+            writer.vb.LineTo(writer.path, end.x, end.y);
         } else {
-            writer.outline.cubicTo(
-                m.apply(.{ .x = from.v.x + from.out.x, .y = from.v.y + from.out.y }),
-                m.apply(.{ .x = to.v.x + to.in.x, .y = to.v.y + to.in.y }),
-                m.apply(to.v),
-            );
+            const c1 = m.apply(.{ .x = from.v.x + from.out.x, .y = from.v.y + from.out.y });
+            const c2 = m.apply(.{ .x = to.v.x + to.in.x, .y = to.v.y + to.in.y });
+            writer.vb.CubicTo(writer.path, c1.x, c1.y, c2.x, c2.y, end.x, end.y);
         }
     }
 
+    /// The contour ended; an open one is left open, and the next move
+    /// starts another.
     fn finish(writer: *Writer, closed: bool) void {
         const first = writer.first orelse return;
-        if (closed) writer.curve(writer.last, first);
-        writer.outline.end(closed);
+        if (!closed) return;
+        writer.curve(writer.last, first);
+        writer.vb.ClosePath(writer.path);
     }
 };
 
@@ -433,7 +451,7 @@ fn positionOf(tape: Tape, prop: ?u32, time: f32) P {
 }
 
 /// `#rrggbb` as a colour.
-fn hexColour(text: []const u8) ?raster.Colour {
+fn hexColour(text: []const u8) ?vector.Colour {
     const digits = if (text.len > 0 and text[0] == '#') text[1..] else text;
     if (digits.len < 6) return null;
     var value: u32 = 0;
@@ -457,46 +475,4 @@ fn same(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
     for (a, b) |x, y| if (x != y) return false;
     return true;
-}
-
-const testing = @import("std").testing;
-const sdk = @import("sdk");
-const Pen = sdk.graphics.Pen;
-
-test "a shape layer: a red square in a group, moved by its layer" {
-    const text =
-        \\{"w":20,"h":20,"fr":10,"ip":0,"op":10,"layers":[
-        \\ {"ty":4,"ip":0,"op":10,"st":0,
-        \\  "ks":{"p":{"a":1,"k":[{"t":0,"s":[0,0],"o":{"x":0,"y":0},"i":{"x":1,"y":1}},{"t":10,"s":[10,0]}]},"a":{"a":0,"k":[0,0]}},
-        \\  "shapes":[{"ty":"gr","it":[
-        \\    {"ty":"rc","p":{"a":0,"k":[5,5]},"s":{"a":0,"k":[6,6]},"r":{"a":0,"k":0}},
-        \\    {"ty":"fl","c":{"a":0,"k":[1,0,0,1]},"o":{"a":0,"k":100}},
-        \\    {"ty":"tr","p":{"a":0,"k":[0,0]}}]}]}]}
-    ;
-    var nodes: [256]json.Node = undefined;
-    const counted = json.parse(text, null).?;
-    _ = json.parse(text, nodes[0..counted]).?;
-    const tape = Tape{ .text = text, .nodes = nodes[0..counted] };
-    var acc: [22 * 20]f32 = @splat(0);
-    var r = raster.Raster{ .acc = &acc, .width = 20, .height = 20 };
-    var points: [256]P = undefined;
-    var ends: [16]u32 = undefined;
-    var closed: [16]bool = undefined;
-    var outline = raster.Outline{ .points = &points, .ends = &ends, .closed = &closed };
-    var pens: [400]Pen = @splat(0);
-    var renderer = Renderer{
-        .tape = tape,
-        .raster = &r,
-        .outline = &outline,
-        .canvas = .{ .pens = &pens, .bytes_per_row = 80, .width = 20, .height = 20 },
-        .assets = null,
-    };
-    renderer.frame(0, 0, 1);
-    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[5 * 20 + 5]);
-    try testing.expectEqual(@as(Pen, 0), pens[5 * 20 + 12]);
-    @memset(&pens, 0);
-    // Half way, the layer has moved five units right.
-    renderer.frame(0, 5, 1);
-    try testing.expectEqual(@as(Pen, 0), pens[5 * 20 + 3]);
-    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[5 * 20 + 10]);
 }

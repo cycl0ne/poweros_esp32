@@ -191,8 +191,7 @@ test {
     _ = @import("classes/datatypes/model/camera.zig");
     _ = @import("classes/datatypes/lottie/json.zig");
     _ = @import("classes/datatypes/lottie/property.zig");
-    _ = @import("classes/datatypes/lottie/raster.zig");
-    _ = @import("classes/datatypes/lottie/render.zig");
+    _ = @import("classes/datatypes/lottie/tests/render.zig");
     _ = @import("classes/datatypes/ilbm/planes.zig");
     _ = @import("classes/datatypes/bmp/decode.zig");
     _ = @import("classes/datatypes/bmp/icon.zig");
