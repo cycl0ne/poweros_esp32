@@ -61,7 +61,8 @@ const _request = @import("_request.zig");
 /// packed answer that does not start as one, HTTPERR_NOMEM.
 ///
 /// An answer is an answer whatever its status: a 404 or a 500 is a
-/// request whose HTTP_Status says so.
+/// request whose HTTP_Status says so. A failure is kept by the client as
+/// its last, with its details, for `Fault` to say in words.
 ///
 /// BEHAVIOR:
 /// The request goes as HTTP/1.1 over a connection the client kept to the
@@ -112,7 +113,7 @@ const _request = @import("_request.zig");
 ///
 /// SEE ALSO:
 /// `ReadRequest`, `WriteRequest`, `GetRequestAttr`, `GetHeader`,
-/// `CloseRequest`, `CreateClient`
+/// `CloseRequest`, `CreateClient`, `Fault`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -135,6 +136,7 @@ pub fn OpenRequest(base: *HttpBase, client: *http.Client, method: [*:0]const u8,
         failure.code = http.HTTPERR_STATE;
         return null;
     };
+    own.errno = 0;
     var settings: _request.Settings = .{
         .tags = tags,
         .user = optionalText(ub.GetTagData(http.HTTP_User, 0, tags)),
@@ -157,7 +159,8 @@ pub fn OpenRequest(base: *HttpBase, client: *http.Client, method: [*:0]const u8,
 
     const request = _request.open(own, method, url, settings, &failure);
     if (request) |made| failure.verdict = made.verdict;
-    tellFailure(base, tags, failure);
+    if (request == null) _client.remember(own, &failure);
+    tellFailure(base, tags, &failure);
     const made = request orelse return null;
     return _request.handleOf(made);
 }
@@ -167,7 +170,7 @@ fn optionalText(data: usize) ?[*:0]const u8 {
 }
 
 /// HTTP_GetTLSError, HTTP_GetVerdict and HTTP_GetAlert filled in.
-fn tellFailure(base: *HttpBase, tags: ?[*]const utility.TagItem, failure: _connection.Failure) void {
+fn tellFailure(base: *HttpBase, tags: ?[*]const utility.TagItem, failure: *const _connection.Failure) void {
     const ub = base.utility_base;
     const tls_error = ub.GetTagData(http.HTTP_GetTLSError, 0, tags);
     if (tls_error != 0) @as(*i32, @ptrFromInt(tls_error)).* = failure.tls_error;

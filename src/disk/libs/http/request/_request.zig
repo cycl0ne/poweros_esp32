@@ -227,6 +227,7 @@ pub fn open(client: *Client, method: [*:0]const u8, url_text: [*:0]const u8, set
     if (settings.unzip) {
         cb = _base.compressionOf(base) orelse {
             failure.code = http.HTTPERR_LIBRARY;
+            failure.library = compression.COMPRESSIONNAME;
             return null;
         };
     }

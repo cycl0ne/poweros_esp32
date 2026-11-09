@@ -213,8 +213,6 @@ MSG_NO_NETWORK (//)
 No network: bsdsocket.library is not there
 MSG_NO_HTTP (//)
 http.library is not there
-MSG_NO_TLS (//)
-tls.library is not there
 MSG_NO_MEMORY_CONNECTION (//)
 No memory for the connection
 MSG_SERVICE_NO_ADDRESS (//)
@@ -249,26 +247,8 @@ MSG_LIST_TOO_LONG (//)
 The station's list names an address too long
 MSG_NOT_AN_ADDRESS (//)
 This is not an address to listen to
-MSG_HOST_NO_ADDRESS (//)
-The station's host has no address
-MSG_CLOCK_NOT_SET (//)
-The clock is not set, so the station's certificate cannot be checked (TimeSync)
-MSG_CERTIFICATE (//)
-The station's certificate was not accepted
-MSG_SECURE_FAILED (//)
-The secure connection failed
-MSG_CLOSED (//)
-The station closed the connection without answering
-MSG_NOT_HTTP (//)
-The station does not answer in HTTP
 MSG_NONSENSE (//)
 The station's answer makes no sense
-MSG_CIRCLES (//)
-The station sends the request round in circles
-MSG_UNREACHED (//)
-The station could not be reached
-MSG_CONNECTION_FAILED (//)
-The connection failed
 ;
 ; What the shell is told when the Player cannot start: its name first.
 MSG_NOLIBRARY (//)

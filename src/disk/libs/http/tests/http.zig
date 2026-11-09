@@ -12,6 +12,8 @@ const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const http = sdk.http;
+const tls = sdk.tls;
+const bsd = sdk.bsdsocket;
 const utility = sdk.utility;
 const compression = sdk.compression;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -235,6 +237,7 @@ fn fakeConnect(client: *_client.Client, url: Url, failure: *_connection.Failure)
     server.made += 1;
     if (script.refuse != http.HTTPERR_OK) {
         failure.code = script.refuse;
+        if (script.refuse == http.HTTPERR_HOST) failure.setHost(url.hostName());
         return null;
     }
     fake.* = .{
@@ -797,6 +800,65 @@ test "what is refused, and why" {
     var err: i32 = 0;
     try testing.expectEqual(@as(?*http.Request, null), rig.hb.OpenRequest(@ptrCast(&stranger), "GET", "http://h/", null, &err));
     try testing.expectEqual(http.HTTPERR_STATE, err);
+    try rig.deinit();
+}
+
+/// What Fault says for `code`, checked against `expected`, its length too.
+fn expectFault(rig: *Rig, client: ?*http.Client, code: i32, header: ?[*:0]const u8, expected: []const u8) !void {
+    var why: [256]u8 = @splat(0xAA);
+    const length = rig.hb.Fault(client, code, header, &why, why.len);
+    try testing.expectEqualStrings(expected, std.mem.sliceTo(&why, 0));
+    try testing.expectEqual(@as(i32, @intCast(expected.len)), length);
+}
+
+test "a failure in words: the code's alone, and the client's last with what it kept" {
+    var rig = try Rig.init(&.{
+        .{ .refuse = http.HTTPERR_HOST },
+    }, null);
+    // The code's words, with a header and without.
+    try expectFault(&rig, null, http.HTTPERR_HOST, null, "the host has no address");
+    try expectFault(&rig, null, http.HTTPERR_HOST, "HttpGet", "HttpGet: the host has no address");
+    try expectFault(&rig, null, http.HTTPERR_TLS, null, "the TLS session failed");
+    try expectFault(&rig, null, -99, null, "the request failed (-99)");
+    var why: [16]u8 = @splat(0xAA);
+    try testing.expectEqual(@as(i32, 0), rig.hb.Fault(null, http.HTTPERR_OK, "x", &why, why.len));
+    try testing.expectEqual(@as(u8, 0), why[0]);
+    try testing.expectEqual(@as(i32, 0), rig.hb.Fault(null, http.HTTPERR_HOST, null, &why, 0));
+
+    // The client's last failure: the host it could not find, named.
+    try testing.expectEqual(http.HTTPERR_HOST, rig.refused("GET", "http://nowhere.example/", null));
+    try expectFault(&rig, rig.client, http.HTTPERR_HOST, null, "nowhere.example has no address");
+    // Another code than the last has its words alone.
+    try expectFault(&rig, rig.client, http.HTTPERR_IO, null, "the connection failed");
+    // Cut to the buffer, the NUL always there.
+    var small: [12]u8 = @splat(0xAA);
+    try testing.expectEqual(@as(i32, 11), rig.hb.Fault(rig.client, http.HTTPERR_HOST, "Git", &small, small.len));
+    try testing.expectEqualStrings("Git: nowher", std.mem.sliceTo(&small, 0));
+    try testing.expectEqual(@as(i32, 11), rig.hb.Fault(rig.client, http.HTTPERR_HOST, "a header too long for it", &small, small.len));
+    try testing.expectEqualStrings("a header to", std.mem.sliceTo(&small, 0));
+    // A failure before any connection is the last one now.
+    try testing.expectEqual(http.HTTPERR_URL, rig.refused("GET", "ftp://h/", null));
+    try expectFault(&rig, rig.client, http.HTTPERR_HOST, null, "the host has no address");
+    try expectFault(&rig, rig.client, http.HTTPERR_URL, null, "not an http:// or https:// URL, or one too long");
+
+    // What a TLS session, a socket and a missing library leave.
+    const own = _client.of(rig.client).?;
+    _client.remember(own, &.{ .code = http.HTTPERR_TLS, .tls_error = tls.TLSERR_CERTIFICATE, .verdict = tls.TLSV_EXPIRED });
+    try expectFault(&rig, rig.client, http.HTTPERR_TLS, "Git", "Git: the server's certificate is not trusted: it has expired");
+    _client.remember(own, &.{ .code = http.HTTPERR_TLS, .tls_error = tls.TLSERR_ALERT, .alert = 40 });
+    try expectFault(&rig, rig.client, http.HTTPERR_TLS, null, "the server refused the TLS session (alert 40)");
+    _client.remember(own, &.{ .code = http.HTTPERR_TLS, .tls_error = tls.TLSERR_CLOCK });
+    try expectFault(&rig, rig.client, http.HTTPERR_TLS, null, "the clock is not set, so no certificate can be checked (TimeSync)");
+    own.errno = bsd.EINTR;
+    _client.remember(own, &.{ .code = http.HTTPERR_IO });
+    try expectFault(&rig, rig.client, http.HTTPERR_IO, null, "stopped");
+    own.errno = bsd.EWOULDBLOCK;
+    _client.remember(own, &.{ .code = http.HTTPERR_IO });
+    try expectFault(&rig, rig.client, http.HTTPERR_IO, null, "the server did not answer in time");
+    // The Errno goes with HTTPERR_IO alone.
+    _client.remember(own, &.{ .code = http.HTTPERR_LIBRARY, .library = tls.TLSNAME });
+    try testing.expectEqual(@as(i32, 0), own.last.errno);
+    try expectFault(&rig, rig.client, http.HTTPERR_LIBRARY, null, "tls.library is not there");
     try rig.deinit();
 }
 

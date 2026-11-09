@@ -28,13 +28,16 @@
 //! is said when it fails. NOVERIFY leaves the certificate unchecked - for
 //! a test server of one's own, never for anything that matters. The
 //! clock must be set (TimeSync) for any certificate to be checked.
+//!
+//! A request that fails is said in http.library's words (Fault), in the
+//! user's language: what was wrong with a certificate, the host that has
+//! no address, bsdsocket's words for a connection that failed.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
 const bsd = sdk.bsdsocket;
 const http = sdk.http;
-const tls = sdk.tls;
 const utility = sdk.utility;
 const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -45,7 +48,7 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "HTTPGet";
-const VERSION_STRING = "\x00$VER: HTTPGet 1.9 (29.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: HTTPGet 1.10 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "URL/A,TO/K,QUIET/S,NOVERIFY/S";
@@ -56,22 +59,8 @@ const arg_noverify = 3;
 
 const MSG_NOLIBRARY = "%s: can't open %s\n";
 const MSG_NOMEMORY = "%s: no memory\n";
-const MSG_BADURL = "%s: %s is no http:// URL\n";
-const MSG_TLS_CERTIFICATE = "%s: the server's certificate is not trusted: %s\n";
-const MSG_TLS_CLOCK = "%s: the clock is not set, so no certificate can be checked (TimeSync)\n";
-const MSG_TLS_ALERT = "%s: the server refused the TLS session (alert %u)\n";
-const MSG_TLS_HANDSHAKE = "%s: the TLS handshake failed\n";
-const MSG_TLS_FAILED = "%s: TLS failed (%d)\n";
-const MSG_NOHOST = "%s: the host of %s has no address\n";
-const MSG_FAILED = "%s: the connection failed: %s (errno %d)\n";
 const MSG_STOPPED = "%s: stopped\n";
-const MSG_NOTHTTP = "%s: the answer is not HTTP\n";
-const MSG_CLOSED = "%s: the server closed the connection without answering\n";
-const MSG_EARLY = "%s: the connection ended before the body did\n";
-const MSG_BADCHUNK = "%s: the body's chunks make no sense\n";
 const MSG_STATUS = "%s: %s\n";
-const MSG_REDIRECTS = "%s: more than %u redirects, or one to nowhere\n";
-const MSG_HTTP_FAILED = "%s: the request failed (%d)\n";
 const MSG_DONE = "%lu bytes in %lu.%02u s, %lu KiB/s\n";
 
 /// The piece the body is read and written in: 256 KiB on the 64-bit
@@ -137,28 +126,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     const started = eclock(timer_base);
     var err: i32 = http.HTTPERR_OK;
-    var tls_error: i32 = tls.TLSERR_OK;
-    var verdict: u32 = tls.TLSV_TRUSTED;
-    var alert: u32 = 0;
     const request = hb.OpenRequest(client, "GET", url, &[_]utility.TagItem{
         .{ .tag = http.HTTP_Header, .data = @intFromPtr("Accept: */*") },
         .{ .tag = http.HTTP_Redirects, .data = redirects_most },
-        .{ .tag = http.HTTP_GetTLSError, .data = @intFromPtr(&tls_error) },
-        .{ .tag = http.HTTP_GetVerdict, .data = @intFromPtr(&verdict) },
-        .{ .tag = http.HTTP_GetAlert, .data = @intFromPtr(&alert) },
         .{},
-    }, &err) orelse {
-        return switch (err) {
-            http.HTTPERR_URL => say(dl, MSG_BADURL, .{url}),
-            http.HTTPERR_HOST => say(dl, MSG_NOHOST, .{url}),
-            http.HTTPERR_TLS => tlsFailed(dl, tls_error, verdict, alert),
-            http.HTTPERR_PROTOCOL => say(dl, MSG_NOTHTTP, .{}),
-            http.HTTPERR_CLOSED => say(dl, MSG_CLOSED, .{}),
-            http.HTTPERR_REDIRECT => say(dl, MSG_REDIRECTS, .{@as(u32, redirects_most)}),
-            http.HTTPERR_LIBRARY => say(dl, MSG_NOLIBRARY, .{@as([*:0]const u8, tls.TLSNAME)}),
-            else => failed(dl, sb, err),
-        };
-    };
+    }, &err) orelse return failed(dl, sb, hb, client, err);
     defer hb.CloseRequest(request);
 
     const status = hb.GetRequestAttr(request, http.HTTP_Status);
@@ -189,12 +161,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         }
         const got = hb.ReadRequest(request, buffer, buffer_bytes);
         if (got == 0) break;
-        if (got < 0) return switch (got) {
-            http.HTTPERR_TRUNCATED => say(dl, MSG_EARLY, .{}),
-            http.HTTPERR_PROTOCOL => say(dl, MSG_BADCHUNK, .{}),
-            http.HTTPERR_TLS => say(dl, MSG_TLS_FAILED, .{got}),
-            else => failed(dl, sb, got),
-        };
+        if (got < 0) return failed(dl, sb, hb, client, got);
         if (dl.Write(file, buffer, got) != got) {
             _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
             return dos.RETURN_ERROR;
@@ -226,53 +193,11 @@ fn eclock(timer_base: *TimerBase) u64 {
     return count / rate * 1_000_000 + count % rate * 1_000_000 / rate;
 }
 
-/// A request that failed said, by bsdsocket's Errno for a connection.
-fn failed(dl: *DosBase, sb: *SocketBase, code: i32) i32 {
-    switch (code) {
-        http.HTTPERR_IO => {
-            if (sb.Errno() == bsd.EINTR) {
-                _ = Printf(dl, MSG_STOPPED, .{COMMAND_NAME});
-                return dos.RETURN_WARN;
-            }
-            _ = Printf(dl, MSG_FAILED, .{ COMMAND_NAME, bsd.errnoText(sb, sb.Errno()), sb.Errno() });
-        },
-        http.HTTPERR_NOMEM => _ = Printf(dl, MSG_NOMEMORY, .{COMMAND_NAME}),
-        else => _ = Printf(dl, MSG_HTTP_FAILED, .{ COMMAND_NAME, code }),
-    }
-    return dos.RETURN_ERROR;
-}
-
-fn say(dl: *DosBase, comptime format: [:0]const u8, detail: anytype) i32 {
-    _ = Printf(dl, format, .{COMMAND_NAME} ++ detail);
-    return dos.RETURN_ERROR;
-}
-
-/// What the certificate check said, in words.
-fn verdictText(verdict: u32) [*:0]const u8 {
-    return switch (verdict) {
-        tls.TLSV_MALFORMED => "one of its certificates cannot be read",
-        tls.TLSV_UNKNOWN_ISSUER => "no trusted root signed it",
-        tls.TLSV_BAD_SIGNATURE => "a signature in its chain is wrong",
-        tls.TLSV_UNSUPPORTED => "it is signed in a way that cannot be checked",
-        tls.TLSV_EXPIRED => "it has expired",
-        tls.TLSV_NOT_YET_VALID => "it is not valid yet",
-        tls.TLSV_NOT_CA => "it was issued by a certificate that may not issue",
-        tls.TLSV_PATH_LENGTH => "its chain is longer than its CAs allow",
-        tls.TLSV_NAME_CONSTRAINTS => "a CA in its chain has name constraints",
-        tls.TLSV_WRONG_USAGE => "it is not for a server",
-        tls.TLSV_WRONG_NAME => "it is for another host",
-        tls.TLSV_TOO_LONG => "its chain is too long",
-        else => "for no reason given",
-    };
-}
-
-fn tlsFailed(dl: *DosBase, code: i32, verdict: u32, alert: u32) i32 {
-    switch (code) {
-        tls.TLSERR_CERTIFICATE => _ = Printf(dl, MSG_TLS_CERTIFICATE, .{ COMMAND_NAME, verdictText(verdict) }),
-        tls.TLSERR_CLOCK => _ = Printf(dl, MSG_TLS_CLOCK, .{COMMAND_NAME}),
-        tls.TLSERR_ALERT => _ = Printf(dl, MSG_TLS_ALERT, .{ COMMAND_NAME, alert }),
-        tls.TLSERR_HANDSHAKE => _ = Printf(dl, MSG_TLS_HANDSHAKE, .{COMMAND_NAME}),
-        else => _ = Printf(dl, MSG_TLS_FAILED, .{ COMMAND_NAME, code }),
-    }
-    return dos.RETURN_ERROR;
+/// A request that failed said in http.library's words: a warning when
+/// Ctrl-C ended its wait, an error else.
+fn failed(dl: *DosBase, sb: *SocketBase, hb: *HttpBase, client: *http.Client, code: i32) i32 {
+    var why: [256]u8 = undefined;
+    _ = hb.Fault(client, code, COMMAND_NAME, &why, why.len);
+    _ = Printf(dl, "%s\n", .{@as([*:0]const u8, @ptrCast(&why))});
+    return if (code == http.HTTPERR_IO and sb.Errno() == bsd.EINTR) dos.RETURN_WARN else dos.RETURN_ERROR;
 }

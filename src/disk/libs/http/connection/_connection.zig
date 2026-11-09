@@ -84,7 +84,8 @@ pub const Connection = struct {
     }
 };
 
-/// Why a connection could not be made.
+/// Why a request failed, or a connection could not be made: what the
+/// client keeps of its last failure for Fault.
 pub const Failure = struct {
     code: i32 = http.HTTPERR_OK,
     /// The TLS session's TLSERR_*, its certificate check's TLSV_* and the
@@ -92,6 +93,22 @@ pub const Failure = struct {
     tls_error: i32 = tls.TLSERR_OK,
     verdict: u32 = tls.TLSV_TRUSTED,
     alert: u32 = 0,
+    /// bsdsocket's Errno, for HTTPERR_IO; 0 when it is not known.
+    errno: i32 = 0,
+    /// The library that is not there, for HTTPERR_LIBRARY.
+    library: ?[*:0]const u8 = null,
+    /// The host without an address, for HTTPERR_HOST: as the URL wrote
+    /// it, NUL-terminated.
+    host_length: u16 = 0,
+    host: [host_most + 1]u8 = undefined,
+
+    /// `name` kept as the host that has no address.
+    pub fn setHost(failure: *Failure, name: []const u8) void {
+        const length = @min(name.len, host_most);
+        @memcpy(failure.host[0..length], name[0..length]);
+        failure.host[length] = 0;
+        failure.host_length = @intCast(length);
+    }
 };
 
 const socket_ops: Ops = .{ .send = socketSend, .receive = socketReceive, .close = socketClose };
@@ -111,6 +128,7 @@ pub fn connect(client: *Client, url: Url, failure: *Failure) ?*Connection {
     if (url.secure) {
         tb = _base.tlsOf(base) orelse {
             failure.code = http.HTTPERR_LIBRARY;
+            failure.library = sdk.tls.TLSNAME;
             return null;
         };
     }
@@ -125,6 +143,7 @@ pub fn connect(client: *Client, url: Url, failure: *Failure) ?*Connection {
     var list: ?*bsd.addrinfo = null;
     if (sb.GetAddrInfo(&host, &service, &hints, &list) != 0) {
         failure.code = http.HTTPERR_HOST;
+        failure.setHost(name);
         return null;
     }
     defer sb.FreeAddrInfo(list.?);
@@ -134,7 +153,10 @@ pub fn connect(client: *Client, url: Url, failure: *Failure) ?*Connection {
     var entry = list;
     while (entry) |each| : (entry = each.ai_next) {
         socket = sb.Socket(each.ai_family, each.ai_socktype, each.ai_protocol);
-        if (socket < 0) continue;
+        if (socket < 0) {
+            client.errno = sb.Errno();
+            continue;
+        }
         _ = sb.SetSockOpt(socket, bsd.SOL_SOCKET, bsd.SO_RCVBUF, &ring_bytes, @sizeOf(i32));
         if (client.timeout != 0) {
             const wait: TimeVal = .{ .secs = client.timeout };
@@ -142,6 +164,7 @@ pub fn connect(client: *Client, url: Url, failure: *Failure) ?*Connection {
             _ = sb.SetSockOpt(socket, bsd.SOL_SOCKET, bsd.SO_SNDTIMEO, &wait, @sizeOf(TimeVal));
         }
         if (sb.Connect(socket, each.ai_addr.?, each.ai_addrlen) == 0) break;
+        client.errno = sb.Errno();
         _ = sb.CloseSocket(socket);
         socket = -1;
     }
@@ -177,6 +200,7 @@ pub fn connect(client: *Client, url: Url, failure: *Failure) ?*Connection {
             .{},
         };
         connection.session = library.OpenSession(sb, socket, &tags, &code) orelse {
+            if (code == tls.TLSERR_IO) client.errno = sb.Errno();
             failure.code = if (code == tls.TLSERR_IO) http.HTTPERR_IO else http.HTTPERR_TLS;
             failure.tls_error = code;
             socketClose(connection);
@@ -193,13 +217,18 @@ fn socketSend(connection: *Connection, data: []const u8) i32 {
         const tb = client.base.tls_base.?;
         const sent = tb.WriteSession(session, data.ptr, @intCast(data.len));
         if (sent == @as(i32, @intCast(data.len))) return http.HTTPERR_OK;
-        return if (sent == tls.TLSERR_IO) http.HTTPERR_IO else http.HTTPERR_TLS;
+        if (sent != tls.TLSERR_IO) return http.HTTPERR_TLS;
+        client.errno = client.socket_base.Errno();
+        return http.HTTPERR_IO;
     }
     const sb = client.socket_base;
     var at: usize = 0;
     while (at < data.len) {
         const sent = sb.Send(connection.socket, data.ptr + at, @intCast(data.len - at), 0);
-        if (sent <= 0) return http.HTTPERR_IO;
+        if (sent <= 0) {
+            client.errno = sb.Errno();
+            return http.HTTPERR_IO;
+        }
         at += @intCast(sent);
     }
     return http.HTTPERR_OK;
@@ -211,10 +240,14 @@ fn socketReceive(connection: *Connection, into: []u8) i32 {
         const tb = client.base.tls_base.?;
         const got = tb.ReadSession(session, into.ptr, @intCast(into.len));
         if (got >= 0) return got;
-        return if (got == tls.TLSERR_IO) http.HTTPERR_IO else http.HTTPERR_TLS;
+        if (got != tls.TLSERR_IO) return http.HTTPERR_TLS;
+        client.errno = client.socket_base.Errno();
+        return http.HTTPERR_IO;
     }
     const got = client.socket_base.Recv(connection.socket, into.ptr, @intCast(into.len), 0);
-    return if (got < 0) http.HTTPERR_IO else got;
+    if (got >= 0) return got;
+    client.errno = client.socket_base.Errno();
+    return http.HTTPERR_IO;
 }
 
 fn socketClose(connection: *Connection) void {

@@ -43,7 +43,7 @@ const station_zig = @import("station.zig");
 const Station = station_zig.Station;
 
 pub const COMMAND_NAME = "Play";
-const VERSION_STRING = "\x00$VER: Play 1.4 (29.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Play 1.5 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILE/A,VOLUME/K/N,START/K/N,QUIET/S";

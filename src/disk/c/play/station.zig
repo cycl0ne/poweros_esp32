@@ -37,7 +37,6 @@ const dos = sdk.dos;
 const ac = sdk.audiocodec;
 const bsd = sdk.bsdsocket;
 const http = sdk.http;
-const tls = sdk.tls;
 const utility = sdk.utility;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
@@ -304,13 +303,11 @@ pub const Station = struct {
         defer hb.DeleteClient(client);
 
         var err: i32 = http.HTTPERR_OK;
-        var tls_error: i32 = tls.TLSERR_OK;
         const request = hb.OpenRequest(client, "GET", &station.url, &[_]TagItem{
             .{ .tag = http.HTTP_Header, .data = @intFromPtr("Icy-MetaData: 1") },
             .{ .tag = http.HTTP_Header, .data = @intFromPtr("Accept: */*") },
-            .{ .tag = http.HTTP_GetTLSError, .data = @intFromPtr(&tls_error) },
             .{},
-        }, &err) orelse return station.lostBy(sb, err, tls_error, true);
+        }, &err) orelse return station.lostBy(hb, client, err, true);
         defer hb.CloseRequest(request);
         const status = hb.GetRequestAttr(request, http.HTTP_Status);
         if (status < 200 or status > 299) return station.because("the station answered", @ptrFromInt(hb.GetRequestAttr(request, http.HTTP_StatusLine)));
@@ -326,7 +323,7 @@ pub const Station = struct {
                 if (station.isHalted()) return;
                 // Its end: the station's own, nothing to say.
                 if (got == 0) return;
-                return station.lostBy(sb, got, tls.TLSERR_OK, false);
+                return station.lostBy(hb, client, got, false);
             }
             const sound = station.strip.take(station.piece[0..@intCast(got)]);
             if (station.strip.takeBlock()) |block| station.titled(block);
@@ -334,27 +331,17 @@ pub const Station = struct {
         }
     }
 
-    /// A connection that could not be made, or failed, by http.library's
-    /// error - and tls.library's, `tls_error`, for a secure one: `opening`
-    /// while it was being made.
-    fn lostBy(station: *Station, sb: *SocketBase, err: i32, tls_error: i32, opening: bool) void {
+    /// A connection that could not be made, or failed: in http.library's
+    /// words (Fault) - what was wrong with a certificate, the host without
+    /// an address, why the connection failed - but for an answer that
+    /// stops making sense once the stream has begun (`opening` false),
+    /// which is the station's.
+    fn lostBy(station: *Station, hb: *HttpBase, client: *http.Client, err: i32, opening: bool) void {
         if (station.isHalted()) return;
-        switch (err) {
-            http.HTTPERR_URL => station.because("not an http:// or https:// address", null),
-            http.HTTPERR_HOST => station.because("the host has no address", null),
-            http.HTTPERR_TLS => station.because(switch (tls_error) {
-                tls.TLSERR_CLOCK => "the clock is not set, so no certificate can be checked (TimeSync)",
-                tls.TLSERR_CERTIFICATE => "the station's certificate is not trusted",
-                else => "the secure connection failed",
-            }, null),
-            http.HTTPERR_LIBRARY => station.because("no " ++ tls.TLSNAME, null),
-            http.HTTPERR_CLOSED => station.because("the station closed the connection", null),
-            http.HTTPERR_PROTOCOL => station.because(if (opening) "the answer is not HTTP" else "the stream makes no sense", null),
-            http.HTTPERR_REDIRECT => station.because("the address redirects in circles", null),
-            http.HTTPERR_NOMEM => station.because("no memory for the connection", null),
-            http.HTTPERR_IO => station.because(if (opening) "the station cannot be reached" else "the connection failed", bsd.errnoText(sb, sb.Errno())),
-            else => station.because("the connection failed", null),
-        }
+        if (err == http.HTTPERR_PROTOCOL and !opening) return station.because("the stream makes no sense", null);
+        var why: [128]u8 = undefined;
+        _ = hb.Fault(client, err, null, &why, why.len);
+        station.because(@ptrCast(&why), null);
     }
 
     /// Why the connection ended: `first`, and after a colon `then` when

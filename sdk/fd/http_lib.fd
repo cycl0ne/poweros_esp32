@@ -31,4 +31,7 @@ usize GetRequestAttr(*http.Request request, utility.Tag attr)
 /// The value of the answer's header `name`, case aside; null when it has
 /// none.
 ?[*:0]const u8 GetHeader(*http.Request request, [*:0]const u8 name)
+/// What `code` means, in words, into `buffer` - with the client's last
+/// failure's own details when it was this one: the length written.
+i32 Fault(?*http.Client client, i32 code, ?[*:0]const u8 header, [*]u8 buffer, u32 length)
 ##end

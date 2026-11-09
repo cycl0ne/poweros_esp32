@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const http = sdk.http;
 const HttpBase = @import("../http_base.zig").HttpBase;
 const _request = @import("_request.zig");
+const _client = @import("../client/_client.zig");
 
 /// Sends the next bytes of a request's body the program writes, or ends
 /// the body and reads the head of the answer.
@@ -40,7 +41,8 @@ const _request = @import("_request.zig");
 /// body of the answer is read with ReadRequest.
 ///
 /// A failure breaks the request: every call after it answers the same
-/// error, and the connection is not kept.
+/// error, and the connection is not kept. The client keeps it as its
+/// last failure, for `Fault` to say in words.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the server, as long as HTTP_Timeout allows; Ctrl-C
@@ -60,7 +62,7 @@ const _request = @import("_request.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `OpenRequest`, `ReadRequest`, `CloseRequest`
+/// `OpenRequest`, `ReadRequest`, `CloseRequest`, `Fault`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -77,6 +79,13 @@ const _request = @import("_request.zig");
 /// ```
 pub fn WriteRequest(_: *HttpBase, request: *http.Request, data: ?*const anyopaque, length: u32) i32 {
     const own = _request.of(request) orelse return http.HTTPERR_STATE;
+    own.client.errno = 0;
+    const done = write(own, data, length);
+    if (done < 0) _client.remember(own.client, &.{ .code = done });
+    return done;
+}
+
+fn write(own: *_request.Request, data: ?*const anyopaque, length: u32) i32 {
     if (length == 0) return _request.write(own, null);
     if (length > 0x7FFF_FFFF) return http.HTTPERR_STATE;
     const bytes: [*]const u8 = @ptrCast(data orelse return http.HTTPERR_STATE);

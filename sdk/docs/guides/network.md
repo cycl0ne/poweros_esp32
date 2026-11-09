@@ -397,6 +397,25 @@ seconds of quiet, or with Ctrl-C: `HTTPERR_IO`, and bsdsocket's `Errno`
 says which (`EWOULDBLOCK`, `EINTR`). A server that takes the request and
 closes before it answers gives `HTTPERR_CLOSED`.
 
+**A failure in words.** `Fault` puts what an `HTTPERR_*` means into a
+buffer, in the user's language (`sys/http.catalog`), with a header before
+it as dos.library's `Fault` has one. The client keeps its last failure -
+of `OpenRequest`, `ReadRequest` or `WriteRequest` - and for that code the
+words say what it kept: why the certificate was not trusted, the host
+that has no address, bsdsocket's words for the `Errno`, that Ctrl-C
+stopped the wait or that `HTTP_Timeout` ran out, the library that is not
+there.
+
+```zig
+const request = hb.OpenRequest(client, "GET", url, null, &err) orelse {
+    var why: [256]u8 = undefined;
+    _ = hb.Fault(client, err, "Fetch", &why, why.len);
+    _ = dos.stdio.Printf(dl, "%s\n", .{@as([*:0]const u8, @ptrCast(&why))});
+    // Fetch: the server's certificate is not trusted: it has expired
+    return;
+};
+```
+
 A client and its requests belong to the task whose socket base they use.
 A request takes some 14 KiB, and 8 KiB more while it unpacks; the head
 of an answer must fit in 8 KiB. `C:net/HTTPGet` is written on it.

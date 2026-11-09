@@ -11,6 +11,7 @@ Generated from the source by `./zig build autodoc`.
 - [CloseRequest](#closerequest) - Ends a request: its connection goes back to the client for the next request when it can, and the request is freed.
 - [CreateClient](#createclient) - Makes a client, through which a program makes its requests and which keeps their connections for the next.
 - [DeleteClient](#deleteclient) - Closes the connections a client keeps and frees the client.
+- [Fault](#fault) - Puts what an http.library error means into a buffer, in the user's language: for the client's last failure, with what it knows of it.
 - [GetHeader](#getheader) - Finds a header of the answer by its name and answers its value.
 - [GetRequestAttr](#getrequestattr) - Answers one of a request's attributes.
 - [OpenRequest](#openrequest) - Sends a request to a URL and reads the head of its answer, following redirects.
@@ -208,6 +209,103 @@ None known.
 hb.DeleteClient(client);
 ```
 
+## Fault
+
+Puts what an http.library error means into a buffer, in the user's language: for the client's last failure, with what it knows of it.
+
+**SYNOPSIS**
+
+```zig
+fn Fault(base: *HttpBase, client: ?*http.Client, code: i32, header: ?[*:0]const u8, buffer: [*]u8, length: u32) i32
+```
+
+**SINCE**
+
+1.4. LVO -52.
+
+**INPUTS**
+
+- `client`: the client the request was made through, or null for
+  the code's words alone.
+- `code`: an HTTPERR_*, as OpenRequest put it into `err` or
+  ReadRequest or WriteRequest answered it.
+- `header`: put before the words with ": " after it, such as the
+  program's name; null for none.
+- `buffer`: where the words go.
+- `length`: the buffer's size in bytes, the NUL included.
+
+**RESULT**
+
+The length of what was put into the buffer, the NUL not counted. 0
+for HTTPERR_OK or a `length` of 0.
+
+**BEHAVIOR**
+
+The words are a clause without its full stop, in lower case:
+`the host has no address`, or `HttpGet: the host has no address`
+with a header. When `code` is the client's last failure - the last
+OpenRequest, ReadRequest or WriteRequest of the client's that failed
+- they say what the client kept of it:
+
+- HTTPERR_IO: bsdsocket's words for its Errno (`the connection
+  failed: Connection refused`); `stopped` when Ctrl-C ended the wait,
+  and `the server did not answer in time` when HTTP_Timeout did.
+- HTTPERR_HOST: the host's name (`example.org has no address`).
+- HTTPERR_TLS: why the certificate was not trusted (`the server's
+  certificate is not trusted: it has expired`), that the clock is not
+  set, the alert the server refused with, or that the handshake failed.
+- HTTPERR_LIBRARY: the library's name (`tls.library is not there`).
+
+For another client's code, or a code the client did not fail with
+last, they are the code's alone. A code that is no HTTPERR_* gives
+`the request failed (<code>)`. The whole is cut to `length - 1` bytes
+and ended with a NUL.
+
+The words are those of `sys/http.catalog` in the language the locale
+prefers, where locale.library and a catalog are there, and English
+otherwise; bsdsocket's words for an Errno are its own.
+
+**CONTEXT**
+
+- Waits: yes, while locale.library and the catalog are opened.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: yes, the one that opened the client's socket base: the
+  catalog is a file, and an Errno's words come from that base.
+
+**OWNERSHIP**
+
+The buffer is the caller's. Nothing is kept.
+
+**NOTES**
+
+A request that fails tells the client at once; any of its calls after
+that, failing too, puts its own failure there instead. Ask for the
+words before the next request.
+
+A program that answers Ctrl-C with a return code of its own still
+checks bsdsocket's Errno for EINTR itself: Fault only says it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenRequest`, `ReadRequest`, `WriteRequest`, dos.library `Fault`
+
+**EXAMPLES**
+
+```zig
+var err: i32 = 0;
+const request = hb.OpenRequest(client, "GET", url, null, &err) orelse {
+    var why: [256]u8 = undefined;
+    _ = hb.Fault(client, err, "HttpGet", &why, why.len);
+    _ = dos.Printf(dl, "%s\n", .{@as([*:0]const u8, @ptrCast(&why))});
+    return dos.RETURN_ERROR;
+};
+```
+
 ## GetHeader
 
 Finds a header of the answer by its name and answers its value.
@@ -401,7 +499,8 @@ long, or a request head longer than 8 KiB, HTTPERR_LIBRARY without tls.library f
 packed answer that does not start as one, HTTPERR_NOMEM.
 
 An answer is an answer whatever its status: a 404 or a 500 is a
-request whose HTTP_Status says so.
+request whose HTTP_Status says so. A failure is kept by the client as
+its last, with its details, for `Fault` to say in words.
 
 **BEHAVIOR**
 
@@ -458,7 +557,7 @@ None known.
 **SEE ALSO**
 
 `ReadRequest`, `WriteRequest`, `GetRequestAttr`, `GetHeader`,
-`CloseRequest`, `CreateClient`
+`CloseRequest`, `CreateClient`, `Fault`
 
 **EXAMPLES**
 
@@ -513,7 +612,8 @@ its Content-Length says, at its last chunk, or where the server closes
 the connection; the answer to HEAD, a 204 and a 304 have none.
 
 An error breaks the request: every read after it answers the same
-error, and the connection is not kept.
+error, and the connection is not kept. The client keeps it as its
+last failure, for `Fault` to say in words.
 
 **CONTEXT**
 
@@ -537,7 +637,7 @@ None known.
 
 **SEE ALSO**
 
-`OpenRequest`, `GetRequestAttr`, `CloseRequest`
+`OpenRequest`, `GetRequestAttr`, `CloseRequest`, `Fault`
 
 **EXAMPLES**
 
@@ -592,7 +692,8 @@ but a redirect is not followed: it is the answer. After the end, the
 body of the answer is read with ReadRequest.
 
 A failure breaks the request: every call after it answers the same
-error, and the connection is not kept.
+error, and the connection is not kept. The client keeps it as its
+last failure, for `Fault` to say in words.
 
 **CONTEXT**
 
@@ -617,7 +718,7 @@ None known.
 
 **SEE ALSO**
 
-`OpenRequest`, `ReadRequest`, `CloseRequest`
+`OpenRequest`, `ReadRequest`, `CloseRequest`, `Fault`
 
 **EXAMPLES**
 

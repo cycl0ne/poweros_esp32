@@ -10,6 +10,7 @@ const dos = sdk.dos;
 const http = sdk.http;
 const bsd = sdk.bsdsocket;
 const utility = sdk.utility;
+const HttpBase = sdk.interface.http.HttpBase;
 const shared = @import("../run/_run.zig");
 const Run = shared.Run;
 const Name = shared.Name;
@@ -121,7 +122,7 @@ fn get(run: *Run, url: [*:0]const u8, buffer: ?*shared.Buffer, out: ?*dos.FileHa
         .{ .tag = http.HTTP_UserAgent, .data = @intFromPtr(user_agent) },
         .{},
     }, &err) orelse {
-        if (!broken(run, err)) _ = shared.fail(run, "%s: %s\n", .{ url, why(err) });
+        if (!broken(run, err)) failedRequest(run, hb, client, url, err);
         return false;
     };
     defer hb.CloseRequest(request);
@@ -139,7 +140,7 @@ fn get(run: *Run, url: [*:0]const u8, buffer: ?*shared.Buffer, out: ?*dos.FileHa
         const got = hb.ReadRequest(request, run.buffer.ptr, @intCast(run.buffer.len));
         if (got == 0) break;
         if (got < 0) {
-            if (!broken(run, got)) _ = shared.fail(run, "%s: %s\n", .{ url, why(got) });
+            if (!broken(run, got)) failedRequest(run, hb, client, url, got);
             return false;
         }
         const piece: usize = @intCast(got);
@@ -176,19 +177,11 @@ fn broken(run: *Run, code: i32) bool {
 const redirects_most = 5;
 const user_agent = "PowerOS-Update/1.0";
 
-/// What an HTTP or TLS code means, as a line.
-pub fn why(code: i32) [*:0]const u8 {
-    return switch (code) {
-        http.HTTPERR_URL => "no http:// or https:// URL",
-        http.HTTPERR_HOST => "the host has no address",
-        http.HTTPERR_TLS => "TLS failed - the clock must be set for a certificate to be checked",
-        http.HTTPERR_PROTOCOL => "the answer is not HTTP",
-        http.HTTPERR_CLOSED => "the server closed the connection without answering",
-        http.HTTPERR_REDIRECT => "more redirects than are followed, or one to nowhere",
-        http.HTTPERR_TRUNCATED => "the connection ended before the body did",
-        http.HTTPERR_NOMEM => "no memory",
-        http.HTTPERR_LIBRARY => "LIBS:tls.library is not there",
-        http.HTTPERR_IO => "the connection failed",
-        else => "the request failed",
-    };
+/// A request for `url` that failed with `code`, said in http.library's
+/// words (Fault): what was wrong with a certificate, the host without an
+/// address, why the connection failed.
+fn failedRequest(run: *Run, hb: *HttpBase, client: *http.Client, url: [*:0]const u8, code: i32) void {
+    var words: [256]u8 = undefined;
+    _ = hb.Fault(client, code, null, &words, words.len);
+    _ = shared.fail(run, "%s: %s\n", .{ url, @as([*:0]const u8, @ptrCast(&words)) });
 }

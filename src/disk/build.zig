@@ -17,9 +17,12 @@ const poweros_sdk = @import("poweros_sdk");
 /// Something built for the disk: its place there, its root source file,
 /// the name its load file is known by, the inner modules it is built
 /// with (`inner_modules`), and the catalog descriptor its strings are made
-/// from - imported as `strings`, its catalog named after its place unless
-/// `catalog` names it (`sys/` for the system's own modules).
-pub const Program = struct { disk: []const u8, source: []const u8, name: []const u8, imports: []const []const u8 = &.{}, strings: ?[]const u8 = null, catalog: ?[]const u8 = null };
+/// from - imported as `strings`, or as `strings_as` names it, its catalog
+/// named after its place unless `catalog` names it (`sys/` for the
+/// system's own modules). A module the disk's host tests take in beside
+/// anvil.library, whose strings they import as `strings`, imports its
+/// own under a name of its own.
+pub const Program = struct { disk: []const u8, source: []const u8, name: []const u8, imports: []const []const u8 = &.{}, strings: ?[]const u8 = null, strings_as: []const u8 = "strings", catalog: ?[]const u8 = null };
 
 /// A translation of a program's strings: its place on the disk, in
 /// LOCALE:Catalogs/<language>/, the descriptor and the translation it is
@@ -35,6 +38,7 @@ pub const catalogs = [_]Catalog{
     .{ .disk = "locale/Catalogs/deutsch/programs/Movie.catalog", .descriptor = "programs/movie/movie.cd", .translation = "programs/movie/catalogs/deutsch.ct", .name = "programs/Movie.catalog" },
     .{ .disk = "locale/Catalogs/deutsch/System/Clock.catalog", .descriptor = "system/clock/clock.cd", .translation = "system/clock/catalogs/deutsch.ct", .name = "System/Clock.catalog" },
     .{ .disk = "locale/Catalogs/deutsch/sys/anvil.catalog", .descriptor = "libs/anvil/anvil.cd", .translation = "libs/anvil/catalogs/deutsch.ct", .name = "sys/anvil.catalog" },
+    .{ .disk = "locale/Catalogs/deutsch/sys/http.catalog", .descriptor = "libs/http/http.cd", .translation = "libs/http/catalogs/deutsch.ct", .name = "sys/http.catalog" },
 };
 
 /// Code compiled into each program that imports it, by name, rather than
@@ -179,7 +183,7 @@ const modules = [_]Program{
     .{ .disk = "libs/bsdsocket.library", .source = "libs/bsdsocket/bsdsocket.zig", .name = "bsdsocket.library" },
     .{ .disk = "libs/crypto.library", .source = "libs/crypto/crypto.zig", .name = "crypto.library" },
     .{ .disk = "libs/compression.library", .source = "libs/compression/compression.zig", .name = "compression.library" },
-    .{ .disk = "libs/http.library", .source = "libs/http/http.zig", .name = "http.library" },
+    .{ .disk = "libs/http.library", .source = "libs/http/http.zig", .name = "http.library", .strings = "libs/http/http.cd", .strings_as = "http_strings", .catalog = "sys/http.catalog" },
     .{ .disk = "libs/rdb.library", .source = "libs/rdb/rdb.zig", .name = "rdb.library" },
     .{ .disk = "libs/usb.library", .source = "libs/usb/usb.zig", .name = "usb.library" },
     .{ .disk = "libs/pci.library", .source = "libs/pci/pci.zig", .name = "pci.library" },
@@ -688,7 +692,7 @@ pub fn build(b: *std.Build) void {
         }
         if (program.strings) |descriptor| {
             const catalog_name = program.catalog orelse b.fmt("{s}.catalog", .{program.disk});
-            imports[count] = .{ .name = "strings", .module = poweros_sdk.addStrings(b, sdk, b.path(descriptor), catalog_name) };
+            imports[count] = .{ .name = program.strings_as, .module = poweros_sdk.addStrings(b, sdk, b.path(descriptor), catalog_name) };
             count += 1;
         }
         const seg = poweros_sdk.addProgram(b, sdk, .{
