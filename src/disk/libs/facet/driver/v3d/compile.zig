@@ -3856,9 +3856,13 @@ fn boolOf(work: *const Work, word: u32) Error!u16 {
 ///   it.
 /// - Of floats (`Order.floatRule`; since 1.174), which a Vulkan 1.0
 ///   module leaves fast math: (('fneg', ('fneg', a)), a) (:230); an fadd
-///   of a zero, the other operand (:236-237), and of an fneg and what it
-///   negates, a zero (:266-267); (('fadd', a, a), ('fmul', a, 2.0))
-///   (:274); an fmul by a zero, a zero (:277-278), by 1.0 the other
+///   of a zero, the other operand (:236-237); of two fmuls sharing a
+///   factor, the fmul of it and the fadd of the others (:246; since
+///   1.175); of an fneg and what it negates, a zero (:266-267); of an
+///   fneg and an fadd it cancels into, what is left (:271-272; since
+///   1.175); (('fadd', a, a), ('fmul', a, 2.0)) (:274); of `a` and an
+///   fadd of `a` read once, the other plus `a` times 2.0 (:275; since
+///   1.175); an fmul by a zero, a zero (:277-278), by 1.0 the other
 ///   operand (:292) and by -1.0 its fneg (:296); an fsub as the fadd of an
 ///   fneg it is lowered to (:2401), and an fadd of an fneg that fsub, as
 ///   the late rules make it (:3868). A vector a rule takes some floats of
@@ -3891,10 +3895,9 @@ fn boolOf(work: *const Work, word: u32) Error!u16 {
 /// (:248-249), a shift of three iadds (:732-733), a product of a shift
 /// (:597), the products of a negation and of products reassociated
 /// (:2413, :2419, :2435, :3641), and every other rule of an integer
-/// operation the shader computes itself. Of floats: an fadd of two fmuls
-/// sharing a factor (:246), of an fneg and an fadd it cancels into
-/// (:271-272), of `a` and an fadd of `a` read once (:275), and every
-/// other rule of a float operation.
+/// operation the shader computes itself. Of floats: the rules of b2f,
+/// fsat and fmulz, which are not steps here, and every other rule of a
+/// float operation.
 fn algebraic(work: *Work) Error!void {
     var list = Order.start(work);
     try list.rematerialize(work);
@@ -4246,10 +4249,9 @@ const Order = struct {
     /// a rule leaves is that fsub, as the walk makes one of an fadd it
     /// reads.
     ///
-    /// Not ported: an fadd of two fmuls sharing a factor (:246), of an
-    /// fneg and an fadd it cancels into (:271-272), of `a` and an fadd of
-    /// `a` read once (:275), and the rules of b2f, fsat and fmulz, which
-    /// are not steps here.
+    /// Not ported: the rules of b2f, fsat and fmulz, which are not steps
+    /// here. The rules of two operations (:246, :271-272, :275) take a
+    /// vector whole, not a float at a time.
     fn floatRule(list: *Order, work: *Work, at: u16) Error!?u16 {
         const each = work.steps[at];
         const pairs = [2][2]u16{ .{ each.a, each.b }, .{ each.b, each.a } };
@@ -4260,11 +4262,21 @@ const Order = struct {
                 // (('fadd(nsz)', a, 0.0), ('fcanonicalize', a)) and
                 // (('fadd', a, -0.0), ('fcanonicalize', a)) (:236-237).
                 for (pairs) |pair| if (allConstant(work, pair[1], isSignedZero) and work.steps[pair[0]].kind == each.kind) return list.replaced(work, at, pair[0]);
+                // (('~fadd', ('fmul', a, b), ('fmul', a, c)),
+                // ('fmul', a, ('fadd', b, c))) (:246; since 1.175).
+                if (try list.factored(work, at)) |left| return left;
                 // (('~fadd', ('fneg', a), a), 0.0) and
                 // (('fadd(nnan)', ('fneg', a), a), 0.0) (:266-267).
                 for (pairs) |pair| if (negatesValue(work, pair[0], pair[1])) return list.replaced(work, at, try list.splatBefore(work, at, each.kind, 0));
+                // (('~fadd', ('fneg', a), ('fadd', a, b)), b) and
+                // (('~fadd', a, ('fadd', ('fneg', a), b)), b) (:271-272;
+                // since 1.175).
+                if (try list.cancelled(work, at)) |left| return left;
                 // (('fadd', a, a), ('fmul', a, 2.0)) (:274).
                 if (sameValue(work, each.a, each.b)) return try list.rebuilt(work, at, .{ .tag = .mul, .kind = each.kind, .a = each.a, .b = try list.splatBefore(work, at, .f32x1, @bitCast(@as(f32, 2))) });
+                // (('fadd(contract)', a, ('fadd(is_used_once)', a, b)),
+                // ('fadd', b, ('fmul', a, 2.0))) (:275; since 1.175).
+                if (try list.contracted(work, at)) |left| return left;
                 // (('fadd@32', a, ('fneg', 'b')), ('fsub', 'a', 'b'),
                 // 'options->has_fsub') (:3868), late.
                 for (pairs) |pair| if (work.steps[pair[0]].kind == each.kind) {
@@ -4279,6 +4291,9 @@ const Order = struct {
                 if (allConstant(work, each.a, isSignedZero) and work.steps[each.b].kind == each.kind) return try list.rebuilt(work, at, .{ .tag = .negate, .kind = each.kind, .a = each.b });
                 // `a` less itself: an fadd of `a` and its fneg (:266-267).
                 if (sameValue(work, each.a, each.b)) return list.replaced(work, at, try list.splatBefore(work, at, each.kind, 0));
+                // The fadd's (:271-272, :275; since 1.175).
+                if (try list.cancelled(work, at)) |left| return left;
+                if (try list.contracted(work, at)) |left| return left;
                 // `a` less an fneg of `c`: an fadd of an fneg of an fneg
                 // (:230).
                 if (try list.negatedBefore(work, at, each.b)) |inner| return try list.rebuilt(work, at, .{ .tag = .add, .kind = each.kind, .a = each.a, .b = inner });
@@ -4295,6 +4310,95 @@ const Order = struct {
             else => return null,
         }
         return list.split(work, at);
+    }
+
+    /// (('~fadd', ('fmul', a, b), ('fmul', a, c)), ('fmul', a, ('fadd',
+    /// b, c))) (:246) of the fadd `at`: its three commutative operations
+    /// flipped in the order nir_search tries them, the bit of each in its
+    /// place in the pattern (match_expression, nir_search.c:355-380 and
+    /// :655-672; __index_comm_exprs, nir_algebraic.py:463-480). A vector
+    /// is the product's first operand, as an operation float by float
+    /// reads a scalar second.
+    fn factored(list: *Order, work: *Work, at: u16) Error!?u16 {
+        const each = work.steps[at];
+        if (work.steps[each.a].tag != .mul or work.steps[each.b].tag != .mul) return null;
+        for (0..8) |comb| {
+            const left = work.steps[if (comb & 1 != 0) each.b else each.a];
+            const right = work.steps[if (comb & 1 != 0) each.a else each.b];
+            const a = if (comb & 2 != 0) left.b else left.a;
+            const b = if (comb & 2 != 0) left.a else left.b;
+            const other = if (comb & 4 != 0) right.b else right.a;
+            const c = if (comb & 4 != 0) right.a else right.b;
+            if (!sameValue(work, a, other)) continue;
+            const sum = if (work.steps[b].kind == .f32x1)
+                try list.before(work, at, .{ .tag = .add, .kind = work.steps[c].kind, .a = c, .b = b })
+            else
+                try list.before(work, at, .{ .tag = .add, .kind = work.steps[b].kind, .a = b, .b = c });
+            const product: Step = if (work.steps[a].kind == each.kind)
+                .{ .tag = .mul, .kind = each.kind, .a = a, .b = sum }
+            else
+                .{ .tag = .mul, .kind = each.kind, .a = sum, .b = a };
+            if (work.steps[product.a].kind != each.kind) return null;
+            return try list.rebuilt(work, at, product);
+        }
+        return null;
+    }
+
+    /// (('~fadd', ('fneg', a), ('fadd', a, b)), b) and (('~fadd', a,
+    /// ('fadd', ('fneg', a), b)), b) (:271-272) of the fadd or fsub `at`,
+    /// an fsub the fadd of the fneg it is lowered to (:2401), the inner
+    /// fadd as well.
+    fn cancelled(list: *Order, work: *Work, at: u16) Error!?u16 {
+        const outer = addendsOf(work, at) orelse return null;
+        inline for (.{ false, true }) |second| {
+            for (0..4) |comb| {
+                const p = outer[if (comb & 1 != 0) 1 else 0];
+                const q = outer[if (comb & 1 != 0) 0 else 1];
+                if (q.turned) continue;
+                const inner = addendsOf(work, q.at) orelse continue;
+                const i = inner[if (comb & 2 != 0) 1 else 0];
+                const kept = inner[if (comb & 2 != 0) 0 else 1];
+                const matched = if (!second)
+                    !i.turned and sameNegated(work, p, i.at)
+                else
+                    !p.turned and sameNegated(work, i, p.at);
+                if (!matched) continue;
+                const left = try list.addendBefore(work, at, kept);
+                if (work.steps[left].kind != work.steps[at].kind) return null;
+                return list.replaced(work, at, left);
+            }
+        }
+        return null;
+    }
+
+    /// (('fadd(contract)', a, ('fadd(is_used_once)', a, b)), ('fadd', b,
+    /// ('fmul', a, 2.0))) (:275) of the fadd or fsub `at`, either an fsub
+    /// the fadd of the fneg it is lowered to; an fadd of an fneg made the
+    /// fsub the late rules make of it (:3868).
+    fn contracted(list: *Order, work: *Work, at: u16) Error!?u16 {
+        const each = work.steps[at];
+        const outer = addendsOf(work, at) orelse return null;
+        for (0..4) |comb| {
+            const a = outer[if (comb & 1 != 0) 1 else 0];
+            const q = outer[if (comb & 1 != 0) 0 else 1];
+            if (a.turned or q.turned or list.usesOf(work, q.at) != 1) continue;
+            const inner = addendsOf(work, q.at) orelse continue;
+            const other = inner[if (comb & 2 != 0) 1 else 0];
+            const b = inner[if (comb & 2 != 0) 0 else 1];
+            if (other.turned or !sameValue(work, a.at, other.at)) continue;
+            if (work.steps[a.at].kind != each.kind) return null;
+            if (!b.turned and work.steps[b.at].kind != each.kind) return null;
+            const doubled = try list.before(work, at, .{ .tag = .mul, .kind = each.kind, .a = a.at, .b = try list.splatBefore(work, at, .f32x1, @bitCast(@as(f32, 2))) });
+            if (b.turned) return try list.rebuilt(work, at, .{ .tag = .sub, .kind = each.kind, .a = doubled, .b = b.at });
+            return try list.rebuilt(work, at, .{ .tag = .add, .kind = each.kind, .a = b.at, .b = doubled });
+        }
+        return null;
+    }
+
+    /// An addend as a step: an fsub's second its fneg, put before `at`.
+    fn addendBefore(list: *Order, work: *Work, at: u16, of: Addend) Error!u16 {
+        if (!of.turned) return of.at;
+        return list.before(work, at, .{ .tag = .negate, .kind = work.steps[of.at].kind, .a = of.at });
     }
 
     /// A vector fneg, fadd, fsub or fmul a rule above would rewrite a
@@ -4606,6 +4710,28 @@ fn logicOf(which: Logic, a: u16, b: u16) Step {
 /// Whether two steps name the same float, through the components and
 /// constructs that only name it: one SSA value in NIR, which a rule's
 /// variable matches twice.
+/// An operand of an fadd: an fsub's second is its fneg (since 1.175).
+const Addend = struct { at: u16, turned: bool = false };
+
+/// The two an fadd adds, or an fsub, as the fadd of the fneg
+/// nir_opt_algebraic lowers it to (:2401).
+fn addendsOf(work: *const Work, at: u16) ?[2]Addend {
+    const each = work.steps[at];
+    return switch (each.tag) {
+        .add => .{ .{ .at = each.a }, .{ .at = each.b } },
+        .sub => .{ .{ .at = each.a }, .{ .at = each.b, .turned = true } },
+        else => null,
+    };
+}
+
+/// Whether `of` is the fneg of the value `at`: an fneg step of it, or an
+/// fsub's second that is it.
+fn sameNegated(work: *const Work, of: Addend, at: u16) bool {
+    if (of.turned) return sameValue(work, of.at, at);
+    const turned = work.steps[of.at];
+    return turned.tag == .negate and sameValue(work, turned.a, at);
+}
+
 /// The float `k` of an operand of an operation float by float: of a
 /// scalar, its one (since 1.174).
 fn operandPart(work: *const Work, at: u16, k: u8) Float {
@@ -4684,7 +4810,9 @@ fn computes(tag: Tag) bool {
 
 /// Whether two steps compute the same: one operation, its own operand,
 /// and the same floats, an add's, a mul's, an iand's, an ior's and an
-/// feq's or fneu's in either order (NIR_OP_IS_2SRC_COMMUTATIVE).
+/// feq's or fneu's in either order (NIR_OP_IS_2SRC_COMMUTATIVE). Every
+/// float of an operand is the same, and so is its width: until 1.175 the
+/// first float alone was held to, so `y * x.x` was taken for `x * y`.
 fn equalSteps(work: *const Work, a: Step, b: Step) bool {
     // A constant's words are in the pool, where `at` says (since 1.166).
     if (a.tag == .constant and b.tag == .constant) {
@@ -4711,7 +4839,7 @@ fn equalSteps(work: *const Work, a: Step, b: Step) bool {
     var straight = true;
     for (left, right) |x, y| {
         if ((x == null) != (y == null)) return false;
-        if (x) |operand_at| if (!sameFloat(work, operand_at, y.?)) {
+        if (x) |operand_at| if (!sameValue(work, operand_at, y.?)) {
             straight = false;
         };
     }
@@ -4726,7 +4854,7 @@ fn equalSteps(work: *const Work, a: Step, b: Step) bool {
         .integer => @as(Integer, @enumFromInt(a.at)).commutes(),
         else => false,
     };
-    return commutes and sameFloat(work, a.a, b.b) and sameFloat(work, a.b, b.a);
+    return commutes and sameValue(work, a.a, b.b) and sameValue(work, a.b, b.a);
 }
 
 /// What a step reads, field by field.
@@ -10175,6 +10303,177 @@ const Through = ir.Fragment(struct {
     }
 });
 
+/// x * y + z * x, z y swizzled, and y * x.x + y * x.y: a factor in
+/// common.
+const Factored = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const x = b.input(0, .f32x4);
+        const y = b.input(1, .f32x4);
+        const z = b.vector(&.{ b.component(y, 3), b.component(y, 2), b.component(y, 1), b.component(y, 0) });
+        const common = b.add(b.mul(x, y), b.mul(z, x));
+        const scaled = b.add(b.scale(y, b.component(x, 0)), b.scale(y, b.component(x, 1)));
+        b.color(b.mul(common, scaled));
+    }
+});
+
+/// y * x.x + z * x.x, z y swizzled: the factor in common the scalar.
+const FactoredByScalar = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const x = b.input(0, .f32x4);
+        const y = b.input(1, .f32x4);
+        const z = b.vector(&.{ b.component(y, 3), b.component(y, 2), b.component(y, 1), b.component(y, 0) });
+        b.color(b.add(b.scale(y, b.component(x, 0)), b.scale(z, b.component(x, 0))));
+    }
+});
+
+/// y * x.x + y * x: the sum of a scalar and a vector, the vector its
+/// first operand.
+const FactoredMixed = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const x = b.input(0, .f32x4);
+        const y = b.input(1, .f32x4);
+        b.color(b.add(b.scale(y, b.component(x, 0)), b.mul(y, x)));
+    }
+});
+
+/// -x + (x - y): the fneg of y.
+const CancelledToNegated = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const x = b.input(0, .f32x4);
+        b.color(b.add(b.neg(x), b.sub(x, b.input(1, .f32x4))));
+    }
+});
+
+/// What a sum and an fneg cancel to, four ways: -x + (x + y),
+/// x + (-x + y), (y + x) - x and x + (y - x), each y.
+const CancelledSums = [_][]const u32{
+    ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const x = b.input(0, .f32x4);
+            b.color(b.add(b.neg(x), b.add(x, b.input(1, .f32x4))));
+        }
+    }).words,
+    ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const x = b.input(0, .f32x4);
+            b.color(b.add(x, b.add(b.neg(x), b.input(1, .f32x4))));
+        }
+    }).words,
+    ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const x = b.input(0, .f32x4);
+            b.color(b.sub(b.add(b.input(1, .f32x4), x), x));
+        }
+    }).words,
+    ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const x = b.input(0, .f32x4);
+            b.color(b.add(x, b.sub(b.input(1, .f32x4), x)));
+        }
+    }).words,
+};
+
+/// x + (x + y), the inner sum read once; x + (x - y); and x + (x + y)
+/// where x + y is read again.
+const Contracted = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const x = b.input(0, .f32x4);
+        const y = b.input(1, .f32x4);
+        b.color(b.mul(b.add(x, b.add(x, y)), b.add(x, b.sub(x, y))));
+    }
+});
+
+const ContractedNot = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const x = b.input(0, .f32x4);
+        const y = b.input(1, .f32x4);
+        const inner = b.add(x, y);
+        b.color(b.mul(b.add(x, inner), inner));
+    }
+});
+
+/// x * y and y * x.x, then y * x and y * x.x: the same first float,
+/// either way about, and not the same product.
+const FirstFloatAlike = [_][]const u32{
+    ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const x = b.input(0, .f32x4);
+            const y = b.input(1, .f32x4);
+            b.color(b.max(b.mul(x, y), b.scale(y, b.component(x, 0))));
+        }
+    }).words,
+    ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const x = b.input(0, .f32x4);
+            const y = b.input(1, .f32x4);
+            b.color(b.max(b.mul(y, x), b.scale(y, b.component(x, 0))));
+        }
+    }).words,
+};
+
+test "nir_opt_cse takes a step for another only where every float of each operand is the same" {
+    // y * x.x is x * y, and y * x, in its first float alone: two
+    // products, and the fmax of the two (since 1.175).
+    for (FirstFloatAlike) |words| {
+        var work: Work = .{};
+        _ = try throughMesa(&work, words);
+        try testing.expectEqual(@as(usize, 2), stepsOf(&work, .mul));
+        try testing.expectEqual(@as(usize, 1), stepsOf(&work, .max));
+        for (work.program()) |each| if (each.tag == .max) try testing.expect(each.a != each.b);
+    }
+}
+
+test "the fadds nir_opt_algebraic rewrites of fadds and fmuls: a factor in common, a sum an fneg cancels, a value added to a sum of it read once" {
+    // x * (y + z) (:246), the second product's operands flipped; and
+    // y * (x.x + x.y), the sum of the two scalars.
+    var work: Work = .{};
+    _ = try throughMesa(&work, Factored.words);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .add));
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .mul));
+    var scalar_sums: usize = 0;
+    for (work.program()) |each| {
+        if (each.tag == .add and each.kind == .f32x1) scalar_sums += 1;
+    }
+    try testing.expectEqual(@as(usize, 1), scalar_sums);
+    // (y + z) * x.x: the vector the product's first operand.
+    work = .{};
+    _ = try throughMesa(&work, FactoredByScalar.words);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .add));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .mul));
+    for (work.program()) |each| if (each.tag == .mul) {
+        try testing.expectEqual(Kind.f32x4, work.steps[each.a].kind);
+        try testing.expectEqual(Kind.f32x1, work.steps[each.b].kind);
+    };
+    // y * (x + x.x), a float at a time: x.x * 2.0 and x.y, x.z and x.w
+    // plus x.x.
+    work = .{};
+    _ = try throughMesa(&work, FactoredMixed.words);
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .add));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .mul));
+    // Each y, written as it is (:271-272; an fsub its fadd of the fneg).
+    for (CancelledSums) |words| {
+        work = .{};
+        _ = try throughMesa(&work, words);
+        for ([_]Tag{ .add, .sub, .negate, .mul }) |tag| try testing.expectEqual(@as(usize, 0), stepsOf(&work, tag));
+    }
+    // The fneg of y, the fsub's second.
+    work = .{};
+    _ = try throughMesa(&work, CancelledToNegated.words);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .negate));
+    for ([_]Tag{ .add, .sub, .mul }) |tag| try testing.expectEqual(@as(usize, 0), stepsOf(&work, tag));
+    // y + x * 2.0 and x * 2.0 - y (:275, :3868), x * 2.0 made once.
+    work = .{};
+    _ = try throughMesa(&work, Contracted.words);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .add));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .sub));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .mul));
+    // Read again, x + y is kept: two fadds.
+    work = .{};
+    _ = try throughMesa(&work, ContractedNot.words);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .add));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .mul));
+}
+
 test "the float identities of nir_opt_algebraic: a sum of a zero, a product of a zero or a one, an fneg twice and a value less itself, the whole vector or a float at a time" {
     // y - fneg(x) is y + x: one fadd, and nothing else computed.
     var work: Work = .{};
@@ -11737,11 +12036,14 @@ test "a loop of a constant trip count is unrolled as nir_opt_loop_unroll unrolls
     // trip_offset); simple_unroll makes the peeled run and three more.
     // float(i) of each is a constant, and v * 0.0625 is made once. The
     // first run's float(i) is 0, its product 0 (nir_opt_algebraic.py:277)
-    // and its two sums the other operand (:236; since 1.174).
+    // and its two sums the other operand (:236; since 1.174), so the sum
+    // is v * 0.0625 itself; the second run adds it to a sum of it read
+    // once, which is that sum's other operand plus it times 2.0 (:275;
+    // since 1.175).
     var theirs: Work = .{};
     const optimized = try throughMesa(&theirs, &reference.glslc_looped);
-    try testing.expectEqual(@as(usize, 6), stepsOf(&theirs, .add));
-    try testing.expectEqual(@as(usize, 4), stepsOf(&theirs, .mul));
+    try testing.expectEqual(@as(usize, 5), stepsOf(&theirs, .add));
+    try testing.expectEqual(@as(usize, 5), stepsOf(&theirs, .mul));
     try testing.expectEqual(@as(usize, 0), stepsOf(&theirs, .begin_if));
     try testing.expectEqual(@as(usize, 0), countOf(optimized, "bu"));
     try testing.expectEqual(@as(usize, 0), countOf(optimized, ".if"));

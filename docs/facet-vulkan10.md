@@ -2302,6 +2302,13 @@ glslc_two_textures is three lookups: `base` is unit 0, `detail` unit 1, and `bas
 
 glslc_looped is 36 words, from 45: its first run is no instruction. glslc_cheap's first fadd goes, the uniform buffer's program is 20 words and the indexed one's 74, a texel plus (0.1, 0.2, 0.3, 0) three sums, and an alpha times 1.0 the alpha. `Lit`, the plan's test of four floats of its own, adds 0.4 where it added 0. Of 19 mutations of the port, 19 fail the tests. On the CM5, FacetBoth's 239 cases are each as they were at 1.173, and FacetProbe is 890 of 890.
 
+**Then the rest of the fadd rules up to :296, and nir_opt_cse held to every float**, facet.library 1.175.
+
+- **Three more rules.** An fadd of two fmuls sharing a factor is the fmul of it and the fadd of the others (:246), the three commutative operations flipped in the order nir_search tries them (nir_search.c:655-672, the bits as __index_comm_exprs numbers them, nir_algebraic.py:463-480). An fadd of an fneg and an fadd it cancels into is what is left (:271-272). An fadd of `a` and an fadd of `a` read once is the other plus `a` times 2.0 (:275). An fsub is the fadd of the fneg it is lowered to, the inner one too, so (y + x) - x is y and x + (x - y) is x * 2.0 - y.
+- **nir_opt_cse.** `equalSteps` held two steps' operands to their first float alone, since 1.158: y * x.x was taken for x * y and for y * x, and so would a vector operation whose operand agreed in its first float only. Every float, and the width, is held to now. None of the suite's programs or FacetBoth's had met it; Factored, the first test of :246, did.
+
+glslc_looped's second run adds v * 0.0625 to a sum of it read once (:275): five fadds and five fmuls, from six and four. Of 15 mutations of the port and the fix, 15 fail the tests. On the CM5, FacetBoth's 239 cases are each as they were at 1.174, and FacetProbe is 890 of 890.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim

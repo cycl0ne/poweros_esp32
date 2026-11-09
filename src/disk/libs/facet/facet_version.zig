@@ -5553,4 +5553,31 @@ pub const LIBRARY_VERSION = 1;
 ///
 /// On the CM5 FacetBoth's 239 cases are each as they were at 1.173, and
 /// FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 174;
+///
+/// 175: **The rest of nir_opt_algebraic's fadd rules up to :296 on the
+/// V3D, and nir_opt_cse held to every float (docs/facet-vulkan10.md item
+/// 59).** `Order.floatRule` takes three more, in the list's order: an
+/// fadd of two fmuls sharing a factor, the fmul of it and the fadd of the
+/// others (:246), its three commutative operations flipped in the order
+/// nir_search tries them (nir_search.c:655-672; the bits as
+/// __index_comm_exprs gives them, nir_algebraic.py:463-480); an fadd of
+/// an fneg and an fadd it cancels into, what is left (:271-272); and an
+/// fadd of `a` and an fadd of `a` read once, the other plus `a` times 2.0
+/// (:275). An fsub is the fadd of the fneg it is lowered to (:2401), the
+/// inner one too, so (y + x) - x is y and x + (x - y) is x * 2.0 - y.
+///
+/// nir_opt_cse took a step for another where each operand's first float
+/// was the same (`equalSteps`, since 1.158): y * x.x was taken for x * y
+/// and for y * x, and so would a vector operation whose operand agreed
+/// in its first float alone. Every float of an operand, and its width,
+/// is held to now. None of the suite's programs, and none of FacetBoth's,
+/// had met it.
+///
+/// Tests: the V3D's 231, two new. glslc_looped's second run adds
+/// v * 0.0625 to a sum of it read once: five fadds and five fmuls, from
+/// six and four. Of 15 mutations of the port and the fix, 15 fail the
+/// tests.
+///
+/// On the CM5 FacetBoth's 239 cases are each as they were at 1.174, and
+/// FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 175;
