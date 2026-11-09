@@ -122,8 +122,8 @@ const drives = @import("drives.zig");
 const Span = model.Span;
 
 pub const COMMAND_NAME = "HDToolBox";
-const VERSION = "1.3";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (26.10.2026)\r\n";
+const VERSION = "1.4";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -1981,27 +1981,21 @@ const App = struct {
     /// and why on the status line, when it cannot be.
     fn readFile(app: *App, path: [*:0]const u8, size: *u32) ?[*]u8 {
         const dl = app.dl;
-        const fh = dl.Open(path, dos.MODE_OLDFILE) orelse {
-            app.say("The file cannot be opened");
+        var length: usize = 0;
+        const code = dl.ReadFile(path, 0x7FFF_FFFF, exec.MEMF_ANY, &length) orelse {
+            app.say(switch (dl.IoErr()) {
+                dos.ERROR_OBJECT_NOT_FOUND => "The file cannot be opened",
+                dos.ERROR_NO_FREE_STORE => "No memory for the file",
+                else => "The file cannot be read",
+            });
             return null;
         };
-        defer _ = dl.Close(fh);
-        var fib: dos.FileInfoBlock = .{};
-        if (!dl.ExamineFH(fh, &fib) or fib.size == 0 or fib.size > 0x7FFF_FFFF) {
-            app.say("The file cannot be read");
-            return null;
-        }
-        const bytes: u32 = @intCast(fib.size);
-        const code: [*]u8 = @ptrCast(app.sys.AllocVec(bytes, exec.MEMF_ANY) orelse {
-            app.say("No memory for the file");
-            return null;
-        });
-        if (dl.Read(fh, code, @intCast(bytes)) != bytes) {
+        if (length == 0) {
             app.sys.FreeVec(code);
             app.say("The file cannot be read");
             return null;
         }
-        size.* = bytes;
+        size.* = @intCast(length);
         return code;
     }
 

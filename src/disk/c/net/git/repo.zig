@@ -130,7 +130,7 @@ pub const Repository = struct {
         for ([_][]const u8{ "objects/pack/", "objects/info/", "refs/heads/", "refs/tags/" }) |dir| {
             var into: files.Path = undefined;
             const name = repo.path(&into, &.{dir}) orelse return false;
-            if (!files.makeDirs(git, name)) {
+            if (!git.dl.CreateDirs(name, false)) {
                 _ = git.dl.PrintFault(git.dl.IoErr(), name);
                 return false;
             }

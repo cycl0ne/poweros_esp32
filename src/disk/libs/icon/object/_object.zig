@@ -176,23 +176,12 @@ pub const Read = union(enum) {
 
 /// The file `path` read whole.
 pub fn readWhole(base: *IconBase, path: [*:0]const u8) Read {
-    const sys = base.sys_base;
     const dl = base.dos_base;
-    const file = dl.Open(path, dos.MODE_OLDFILE) orelse return .{ .failed = dl.IoErr() };
-    defer _ = dl.Close(file);
-    // A seek answers where the file was, so the size is what the seek
-    // back to the beginning hands over.
-    if (dl.Seek(file, 0, dos.OFFSET_END) < 0) return .{ .failed = dl.IoErr() };
-    const size = dl.Seek(file, 0, dos.OFFSET_BEGINNING);
-    if (size <= 0) return .{ .failed = dos.ERROR_OBJECT_WRONG_TYPE };
-    if (size > FILE_MAX) return .{ .failed = dos.ERROR_OBJECT_TOO_LARGE };
-    const length: usize = @intCast(size);
-    const memory = sys.AllocVec(length, exec.MEMF_ANY) orelse return .{ .failed = dos.ERROR_NO_FREE_STORE };
-    const bytes: [*]u8 = @ptrCast(memory);
-    if (dl.Read(file, bytes, @intCast(size)) != size) {
-        const failure = dl.IoErr();
-        sys.FreeVec(memory);
-        return .{ .failed = if (failure != 0) failure else dos.ERROR_OBJECT_WRONG_TYPE };
+    var length: usize = 0;
+    const bytes = dl.ReadFile(path, FILE_MAX, exec.MEMF_ANY, &length) orelse return .{ .failed = dl.IoErr() };
+    if (length == 0) {
+        base.sys_base.FreeVec(bytes);
+        return .{ .failed = dos.ERROR_OBJECT_WRONG_TYPE };
     }
     return .{ .got = bytes[0..length] };
 }

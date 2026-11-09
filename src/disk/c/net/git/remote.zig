@@ -162,7 +162,7 @@ fn remove(repo: *Repository, name: []const u8) i32 {
     if (repo.path(&path, &.{ "refs/remotes/", name })) |directory| {
         if (git.dl.Lock(directory, dos.SHARED_LOCK)) |lock| {
             git.dl.UnLock(lock);
-            if (!files.removeTree(git, directory, false)) {
+            if (!git.dl.DeleteTree(directory, 0, null)) {
                 _ = git.dl.PrintFault(git.dl.IoErr(), directory);
                 return dos.RETURN_ERROR;
             }

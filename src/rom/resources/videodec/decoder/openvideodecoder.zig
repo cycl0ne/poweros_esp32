@@ -22,7 +22,6 @@ const engine = @import("../videodec_init.zig").engine;
 const amdgpu = sdk.resources.amdgpu;
 const watchdog = sdk.resources.watchdog;
 const WatchdogBase = sdk.interface.watchdog.WatchdogBase;
-const datatypes = sdk.datatypes;
 
 /// Where the firmware is read from.
 pub const FIRMWARE = "DEVS:firmware/wave511_dec_fw.bin";
@@ -318,18 +317,19 @@ fn startVcn(vb: *VideoDecBase) void {
 
 /// The file `name` read whole, or null with why said.
 fn readFile(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8) ?[]u8 {
-    const lock = dl.Lock(name, dos.SHARED_LOCK) orelse {
-        exec.kprintf(sys, "%s: no %s\n", .{ types.VIDEODECNAME, name });
+    var length: usize = 0;
+    const bytes = dl.ReadFile(name, ~@as(usize, 0), exec.MEMF_ANY, &length) orelse {
+        if (dl.IoErr() == dos.ERROR_OBJECT_NOT_FOUND) {
+            exec.kprintf(sys, "%s: no %s\n", .{ types.VIDEODECNAME, name });
+        } else exec.kprintf(sys, "%s: %s cannot be read\n", .{ types.VIDEODECNAME, name });
         return null;
     };
-    defer dl.UnLock(lock);
-    return switch (datatypes.subclass.readWhole(sys, dl, lock)) {
-        .got => |bytes| bytes,
-        else => {
-            exec.kprintf(sys, "%s: %s cannot be read\n", .{ types.VIDEODECNAME, name });
-            return null;
-        },
-    };
+    if (length == 0) {
+        sys.FreeVec(bytes);
+        exec.kprintf(sys, "%s: %s cannot be read\n", .{ types.VIDEODECNAME, name });
+        return null;
+    }
+    return bytes[0..length];
 }
 
 /// The firmware's file read into `into`: false when it is missing,

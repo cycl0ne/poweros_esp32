@@ -117,7 +117,7 @@ pub const Writer = struct {
             _ = dl.DeleteFile(temporary);
             return id;
         }
-        if (!files.makeDirs(git, name) or !dl.Rename(temporary, name)) {
+        if (!git.dl.CreateDirs(name, false) or !dl.Rename(temporary, name)) {
             _ = dl.PrintFault(dl.IoErr(), name);
             _ = dl.DeleteFile(temporary);
             return null;

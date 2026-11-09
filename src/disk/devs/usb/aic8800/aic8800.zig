@@ -41,8 +41,8 @@ const Command = _aic.Command;
 
 pub const DEVICE_NAME = _aic.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 1;
-const BUILD_DATE = "29.10.2026";
+const DEVICE_REVISION = 2;
+const BUILD_DATE = "09.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -214,21 +214,16 @@ const Pipes = struct {
 fn readFile(base: *AicBase, name: [*:0]const u8) ?[]u8 {
     const sys = base.sys_base;
     const dl = base.dos_base.?;
-    const file = dl.Open(name, dos.MODE_OLDFILE) orelse {
-        exec.kprintf(sys, "%s: no %s\n", .{ @as([*:0]const u8, DEVICE_NAME), name });
+    var length: usize = 0;
+    const bytes = dl.ReadFile(name, ~@as(usize, 0), exec.MEMF_ANY, &length) orelse {
+        if (dl.IoErr() == dos.ERROR_OBJECT_NOT_FOUND) exec.kprintf(sys, "%s: no %s\n", .{ @as([*:0]const u8, DEVICE_NAME), name });
         return null;
     };
-    defer _ = dl.Close(file);
-    var fib: dos.FileInfoBlock = .{};
-    if (!dl.ExamineFH(file, &fib) or fib.size == 0) return null;
-    const size: usize = @intCast(fib.size);
-    const memory = sys.AllocVec(size, exec.MEMF_ANY) orelse return null;
-    const bytes: [*]u8 = @ptrCast(memory);
-    if (dl.Read(file, bytes, @intCast(size)) != @as(isize, @intCast(size))) {
-        sys.FreeVec(memory);
+    if (length == 0) {
+        sys.FreeVec(bytes);
         return null;
     }
-    return bytes[0..size];
+    return bytes[0..length];
 }
 
 /// The boot ROM's revision read, its files read, the firmware given it

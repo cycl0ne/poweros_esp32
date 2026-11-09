@@ -533,4 +533,17 @@ bool CheckRequest(?*dos.DosRequest request)
 /// `request`'s answer, waited for: Read's or Write's, the count or -1
 /// with IoErr.
 isize WaitRequest(?*dos.DosRequest request)
+// Whole files and trees
+/// The file `name` read whole into memory of its own (AllocVec with
+/// `requirements`, freed with FreeVec), a NUL after its bytes, their
+/// number in `length`: null with IoErr - ERROR_OBJECT_TOO_LARGE past
+/// `most` bytes.
+?[*]u8 ReadFile([*:0]const u8 name, usize most, u32 requirements, *usize length)
+/// Every directory on the path `name` that is not there made, from the
+/// volume down - its last part too when `last`: true, or false with IoErr.
+bool CreateDirs([*:0]const u8 name, bool last)
+/// `name` deleted, a directory with all it holds (DELF_KEEP: only that),
+/// `hook` told of each object (a DeleteMsg) and able to stop the walk:
+/// true, or false with IoErr.
+bool DeleteTree([*:0]const u8 name, u32 flags, ?*utility.Hook hook)
 ##end

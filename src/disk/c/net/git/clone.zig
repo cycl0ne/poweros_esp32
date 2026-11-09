@@ -106,9 +106,7 @@ const Clone = struct {
             }
             return true;
         }
-        var with_slash: files.Path = undefined;
-        const path = files.join(&with_slash, &.{ name, "/" }) orelse return false;
-        if (!files.makeDirs(git, path)) {
+        if (!dl.CreateDirs(dir, true)) {
             _ = dl.PrintFault(dl.IoErr(), dir);
             return false;
         }
@@ -472,7 +470,7 @@ pub fn run(git: *Git, argv: []const usize) i32 {
     }
     clone.close();
     // What was made, taken away again; a directory found empty is left.
-    if (!files.removeTree(git, @ptrCast(&clone.dir), !clone.made_dir)) {
+    if (!git.dl.DeleteTree(@ptrCast(&clone.dir), if (clone.made_dir) 0 else dos.DELF_KEEP, null)) {
         _ = git.dl.PrintFault(git.dl.IoErr(), @ptrCast(&clone.dir));
     }
     return dos.RETURN_ERROR;

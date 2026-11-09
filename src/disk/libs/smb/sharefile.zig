@@ -272,34 +272,11 @@ pub fn writePassword(dl: *DosBase, path: [*:0]const u8, hash: *const [16]u8) boo
 /// `bytes` written as the file at `path`, every directory on the way to
 /// it made first.
 fn putFile(dl: *DosBase, path: [*:0]const u8, bytes: []const u8) bool {
-    if (!makeDirs(dl, path)) return false;
+    if (!dl.CreateDirs(path, false)) return false;
     const handle = dl.Open(path, dos.MODE_NEWFILE) orelse return false;
     const count = dl.Write(handle, bytes.ptr, @intCast(bytes.len));
     const closed = dl.Close(handle);
     return count == bytes.len and closed;
-}
-
-/// Every directory on `path` that is not there made, from the volume
-/// down: false when one cannot be.
-pub fn makeDirs(dl: *DosBase, path: [*:0]const u8) bool {
-    var into: [128:0]u8 = @splat(0);
-    var length: usize = 0;
-    while (path[length] != 0) length += 1;
-    if (length >= into.len) return false;
-    var at: usize = 0;
-    while (at < length) : (at += 1) {
-        if (path[at] != '/') continue;
-        if (at == 0 or path[at - 1] == ':') continue;
-        @memcpy(into[0..at], path[0..at]);
-        into[at] = 0;
-        if (dl.Lock(&into, dos.ACCESS_READ)) |lock| {
-            dl.UnLock(lock);
-            continue;
-        }
-        const made = dl.CreateDir(&into) orelse return false;
-        dl.UnLock(made);
-    }
-    return true;
 }
 
 /// A password file's one line: an NT hash in hex, as `hashOf` reads it

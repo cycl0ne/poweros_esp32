@@ -13,6 +13,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const dos = sdk.dos;
 const TagItem = sdk.utility.TagItem;
+const Hook = sdk.utility.Hook;
 const MsgPort = exec.MsgPort;
 const DosPacket = dos.DosPacket;
 const Process = dos.Process;
@@ -178,6 +179,9 @@ const StartRead = @import("file/startread.zig").StartRead;
 const StartWrite = @import("file/startwrite.zig").StartWrite;
 const CheckRequest = @import("file/checkrequest.zig").CheckRequest;
 const WaitRequest = @import("file/waitrequest.zig").WaitRequest;
+const ReadFile = @import("file/readfile.zig").ReadFile;
+const CreateDirs = @import("lock/createdirs.zig").CreateDirs;
+const DeleteTree = @import("lock/deletetree.zig").DeleteTree;
 
 /// dos.library's interface, as the SDK generates it from sdk/fd/dos_lib.fd.
 const interface = sdk.interface.dos;
@@ -361,6 +365,9 @@ const contract_files = [_][]const u8{
     @embedFile("file/startwrite.zig"),
     @embedFile("file/checkrequest.zig"),
     @embedFile("file/waitrequest.zig"),
+    @embedFile("file/readfile.zig"),
+    @embedFile("lock/createdirs.zig"),
+    @embedFile("lock/deletetree.zig"),
 };
 
 fn lvoDoPkt(db: *DosBase, port: *MsgPort, action: i32, arg1: isize, arg2: isize, arg3: isize, arg4: isize, arg5: isize) callconv(.c) isize {
@@ -820,6 +827,18 @@ fn lvoWaitRequest(db: *DosBase, request: ?*DosRequest) callconv(.c) isize {
     return WaitRequest(db, request);
 }
 
+fn lvoReadFile(db: *DosBase, name: [*:0]const u8, most: usize, requirements: u32, length: *usize) callconv(.c) ?[*]u8 {
+    return ReadFile(db, name, most, requirements, length);
+}
+
+fn lvoCreateDirs(db: *DosBase, name: [*:0]const u8, last: bool) callconv(.c) bool {
+    return CreateDirs(db, name, last);
+}
+
+fn lvoDeleteTree(db: *DosBase, name: [*:0]const u8, flags: u32, hook: ?*Hook) callconv(.c) bool {
+    return DeleteTree(db, name, flags, hook);
+}
+
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
 pub const vectors = [_]*const anyopaque{
@@ -979,6 +998,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoStartWrite),
     vec(lvoCheckRequest),
     vec(lvoWaitRequest),
+    vec(lvoReadFile),
+    vec(lvoCreateDirs),
+    vec(lvoDeleteTree),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -986,7 +1008,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the ROM's slots, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 156), vectors.len);
+    try testing.expectEqual(@as(usize, 159), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

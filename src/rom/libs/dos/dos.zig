@@ -1845,6 +1845,197 @@ test "Examine, ExNext, ExamineFH on a RAM: disk" {
     try tearDown(db);
 }
 
+test "ReadFile: a file whole, a NUL after it; too large, empty, missing" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try RamFs.mount(db, &tp);
+    try makeFile(dl, "RAMT:f", 40);
+    var length: usize = 99;
+    const bytes = dl.ReadFile("RAMT:f", 40, exec.MEMF_ANY, &length).?;
+    try testing.expectEqual(@as(usize, 40), length);
+    try testing.expectEqualSlices(u8, &@as([40]u8, @splat('x')), bytes[0..40]);
+    try testing.expectEqual(@as(u8, 0), bytes[40]);
+    db.sys_base.FreeVec(bytes);
+    // One byte past `most`.
+    try testing.expect(dl.ReadFile("RAMT:f", 39, exec.MEMF_ANY, &length) == null);
+    try testing.expectEqual(dos.ERROR_OBJECT_TOO_LARGE, dl.IoErr());
+    try testing.expectEqual(@as(usize, 0), length);
+    try makeFile(dl, "RAMT:empty", 0);
+    const none = dl.ReadFile("RAMT:empty", 10, exec.MEMF_ANY, &length).?;
+    try testing.expectEqual(@as(usize, 0), length);
+    try testing.expectEqual(@as(u8, 0), none[0]);
+    db.sys_base.FreeVec(none);
+    try testing.expect(dl.ReadFile("RAMT:gone", 10, exec.MEMF_ANY, &length) == null);
+    try testing.expectEqual(dos.ERROR_OBJECT_NOT_FOUND, dl.IoErr());
+    RamFs.disk.deinit();
+    try tearDown(db);
+}
+
+/// Whether `name` locks.
+fn exists(dl: *interface.DosBase, name: [*:0]const u8) bool {
+    const lock = dl.Lock(name, dos.SHARED_LOCK) orelse return false;
+    dl.UnLock(lock);
+    return true;
+}
+
+test "CreateDirs: the directories of a file, a whole path, what is there, a file in the way" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try RamFs.mount(db, &tp);
+    try testing.expect(dl.CreateDirs("RAMT:a/b/c/file", false));
+    try testing.expect(exists(dl, "RAMT:a/b/c"));
+    try testing.expect(!exists(dl, "RAMT:a/b/c/file"));
+    try testing.expect(dl.CreateDirs("RAMT:a/b/d/e", true));
+    try testing.expect(exists(dl, "RAMT:a/b/d/e"));
+    // There already; a `/` at the end.
+    try testing.expect(dl.CreateDirs("RAMT:a/b/", true));
+    try testing.expect(dl.CreateDirs("RAMT:a", true));
+    try makeFile(dl, "RAMT:a/f", 1);
+    try testing.expect(!dl.CreateDirs("RAMT:a/f/x", true));
+    try testing.expectEqual(dos.ERROR_OBJECT_WRONG_TYPE, dl.IoErr());
+    try testing.expect(!dl.CreateDirs("RAMT:a/f", true));
+    try testing.expectEqual(dos.ERROR_OBJECT_WRONG_TYPE, dl.IoErr());
+    // Only the directory part of a file's name.
+    try testing.expect(dl.CreateDirs("RAMT:a/f", false));
+    try testing.expect(dl.DeleteTree("RAMT:a", 0, null));
+    RamFs.disk.deinit();
+    try tearDown(db);
+}
+
+/// What makes the tree's file names 72 bytes long.
+const long_tail = "-" ++ "n" ** 62;
+
+/// What the DeleteTree tests' hook saw, and when it stops the walk.
+const Deleted = struct {
+    gone: u32 = 0,
+    failed: u32 = 0,
+    last_failure: i32 = 0,
+    stop_after: u32 = ~@as(u32, 0),
+    hook: sdk.utility.Hook = .{},
+
+    fn seen(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+        const deleted: *Deleted = @fieldParentPtr("hook", hook);
+        const told: *const dos.DeleteMsg = @ptrCast(@alignCast(message.?));
+        const name: [*:0]const u8 = @ptrCast(object.?);
+        std.debug.assert(name == told.name);
+        if (told.failure == 0) deleted.gone += 1 else {
+            deleted.failed += 1;
+            deleted.last_failure = told.failure;
+        }
+        return @intFromBool(deleted.gone + deleted.failed >= deleted.stop_after);
+    }
+
+    fn init(deleted: *Deleted) *sdk.utility.Hook {
+        deleted.hook = .{ .entry = seen };
+        return &deleted.hook;
+    }
+};
+
+/// RAMT:t: a directory of 30 files whose names - 72 bytes - are more
+/// than one of DeleteTree's batches on the host, and two below it, one
+/// with a file of its own: 34 objects in all.
+fn makeTree(dl: *interface.DosBase) !void {
+    try testing.expect(dl.CreateDirs("RAMT:t/sub/deeper", true));
+    try makeFile(dl, "RAMT:t/sub/deeper/last", 2);
+    for (0..30) |index| {
+        var name: [96]u8 = undefined;
+        const text = try std.fmt.bufPrintZ(&name, "RAMT:t/file-{d:0>4}" ++ long_tail, .{index});
+        try makeFile(dl, text, 1);
+    }
+}
+
+test "DeleteTree: a tree innermost first, each object told; kept and emptied; a file; a stop" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try RamFs.mount(db, &tp);
+    try makeTree(dl);
+    var deleted: Deleted = .{};
+    try testing.expect(dl.DeleteTree("RAMT:t", 0, deleted.init()));
+    try testing.expectEqual(@as(u32, 34), deleted.gone);
+    try testing.expectEqual(@as(u32, 0), deleted.failed);
+    try testing.expect(!exists(dl, "RAMT:t"));
+    // Emptied, kept.
+    try makeTree(dl);
+    deleted = .{};
+    try testing.expect(dl.DeleteTree("RAMT:t", dos.DELF_KEEP, deleted.init()));
+    try testing.expectEqual(@as(u32, 33), deleted.gone);
+    try testing.expect(exists(dl, "RAMT:t"));
+    try testing.expect(!exists(dl, "RAMT:t/sub"));
+    // A file is deleted as itself; DELF_KEEP wants a directory.
+    try makeFile(dl, "RAMT:t/one", 1);
+    try testing.expect(!dl.DeleteTree("RAMT:t/one", dos.DELF_KEEP, null));
+    try testing.expectEqual(dos.ERROR_OBJECT_WRONG_TYPE, dl.IoErr());
+    try testing.expect(dl.DeleteTree("RAMT:t/one", 0, null));
+    try testing.expect(!dl.DeleteTree("RAMT:t/one", 0, null));
+    try testing.expectEqual(dos.ERROR_OBJECT_NOT_FOUND, dl.IoErr());
+    // The hook stops it.
+    try makeTree(dl);
+    deleted = .{ .stop_after = 10 };
+    try testing.expect(!dl.DeleteTree("RAMT:t", 0, deleted.init()));
+    try testing.expectEqual(dos.ERROR_BREAK, dl.IoErr());
+    try testing.expectEqual(@as(u32, 10), deleted.gone);
+    try testing.expect(exists(dl, "RAMT:t/sub/deeper"));
+    try testing.expect(dl.DeleteTree("RAMT:t", 0, null));
+    try testing.expect(!exists(dl, "RAMT:t"));
+    RamFs.disk.deinit();
+    try tearDown(db);
+}
+
+test "DeleteTree: what will not go stops the walk, or is passed over (ONWARD), or forced" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try RamFs.mount(db, &tp);
+    try makeTree(dl);
+    try testing.expect(dl.SetProtection("RAMT:t/sub/deeper/last", dos.FIBF_DELETE));
+    try testing.expect(dl.SetProtection("RAMT:t/file-0015" ++ long_tail, dos.FIBF_DELETE));
+    var deleted: Deleted = .{};
+    try testing.expect(!dl.DeleteTree("RAMT:t", 0, deleted.init()));
+    try testing.expectEqual(dos.ERROR_DELETE_PROTECTED, dl.IoErr());
+    try testing.expectEqual(@as(u32, 1), deleted.failed);
+    try testing.expect(exists(dl, "RAMT:t/sub/deeper/last") or exists(dl, "RAMT:t/file-0015" ++ long_tail));
+    // On past both: all else goes, and the directories they are in stay.
+    deleted = .{};
+    try testing.expect(!dl.DeleteTree("RAMT:t", dos.DELF_ONWARD, deleted.init()));
+    try testing.expectEqual(dos.ERROR_DIRECTORY_NOT_EMPTY, dl.IoErr());
+    try testing.expect(exists(dl, "RAMT:t/sub/deeper/last"));
+    try testing.expect(exists(dl, "RAMT:t/file-0015" ++ long_tail));
+    try testing.expect(!exists(dl, "RAMT:t/file-0014" ++ long_tail));
+    try testing.expect(!exists(dl, "RAMT:t/file-0016" ++ long_tail));
+    // The two files, deeper, sub and t told as failures.
+    try testing.expectEqual(@as(u32, 5), deleted.failed);
+    try testing.expectEqual(dos.ERROR_DIRECTORY_NOT_EMPTY, deleted.last_failure);
+    // Forced.
+    deleted = .{};
+    try testing.expect(dl.DeleteTree("RAMT:t", dos.DELF_FORCE, deleted.init()));
+    try testing.expectEqual(@as(u32, 5), deleted.gone);
+    try testing.expectEqual(@as(u32, 0), deleted.failed);
+    try testing.expect(!exists(dl, "RAMT:t"));
+    // The volume's root emptied: the colon takes no `/` after it.
+    try makeFile(dl, "RAMT:x", 1);
+    dl.UnLock(dl.CreateDir("RAMT:y").?);
+    try testing.expect(dl.DeleteTree("RAMT:", dos.DELF_KEEP, null));
+    try testing.expect(!exists(dl, "RAMT:x"));
+    try testing.expect(!exists(dl, "RAMT:y"));
+    RamFs.disk.deinit();
+    try tearDown(db);
+}
+
 /// ExAll's hook for the test: leaves out the names starting with 'b'.
 fn skipB(_: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     const level: *i32 = @ptrCast(@alignCast(object.?));

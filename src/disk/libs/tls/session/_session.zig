@@ -97,15 +97,10 @@ pub fn ready(base: *TLSBase) i32 {
 fn readFile(base: *TLSBase, name: [*:0]const u8, limit: u32, requirements: u32, length: *u32) ?[*]u8 {
     const sys = base.sys_base;
     const dl = base.dos_base.?;
-    const file = dl.Open(name, dos.MODE_OLDFILE) orelse return null;
-    defer _ = dl.Close(file);
-    _ = dl.Seek(file, 0, dos.OFFSET_END);
-    const size = dl.Seek(file, 0, dos.OFFSET_BEGINNING);
-    if (size <= 0 or size > limit) return null;
-    const memory = sys.AllocVec(@intCast(size), requirements) orelse return null;
-    const bytes: [*]u8 = @ptrCast(memory);
-    if (dl.Read(file, bytes, @intCast(size)) != size) {
-        sys.FreeVec(memory);
+    var size: usize = 0;
+    const bytes = dl.ReadFile(name, limit, requirements, &size) orelse return null;
+    if (size == 0) {
+        sys.FreeVec(bytes);
         return null;
     }
     length.* = @intCast(size);

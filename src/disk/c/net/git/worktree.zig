@@ -762,7 +762,7 @@ pub fn switchTrees(repo: *Repository, from: ?*const Id, to: *const Id) bool {
                     refuse(git, action.entry.path, "is too long a path here");
                     skip = true;
                 }
-                if (!skip and !files.makeDirs(git, local.?)) {
+                if (!skip and !git.dl.CreateDirs(local.?, false)) {
                     _ = git.dl.PrintFault(git.dl.IoErr(), local.?);
                     refuse(git, action.entry.path, "could not be made");
                     skip = true;

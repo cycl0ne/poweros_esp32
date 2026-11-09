@@ -30,8 +30,8 @@ const vcn = @import("codec/_vcn.zig");
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = types.VIDEODECNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 6;
-const BUILD_DATE = "07.11.2026";
+pub const RESOURCE_REVISION = 7;
+const BUILD_DATE = "09.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
