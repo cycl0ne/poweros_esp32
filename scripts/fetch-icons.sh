@@ -46,6 +46,7 @@ categories/applications-system
 categories/applications-other
 categories/applications-games
 apps/system-software-update
+actions/appointment-new
 "
 sizes="48 40"
 

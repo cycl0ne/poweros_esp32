@@ -142,8 +142,8 @@ const image_dirs = [_][]const u8{
     // empty until some are put there.
     "WBStartup",
     // SYS:System - the system's own tools: Shell, which the desktop's
-    // own icons start, HDToolBox, CPULoad, NetLoad and MemMap; in Docs
-    // what each of the others is.
+    // own icons start, HDToolBox, CPULoad, NetLoad, MemMap and Clock; in
+    // Docs what each of the others is.
     "System",
     "System/Docs",
     // SYS:Commodities - the programs that work on the input before the
@@ -184,6 +184,7 @@ const image_dirs = [_][]const u8{
     "locale/Catalogs/deutsch/c",
     "locale/Catalogs/deutsch/c/test",
     "locale/Catalogs/deutsch/programs",
+    "locale/Catalogs/deutsch/System",
 };
 
 /// An icon the build writes onto the image: where it goes, the picture
@@ -296,6 +297,7 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "System/CPULoad.info", .picture = "utilities-system-monitor", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/NetLoad.info", .picture = "utilities-system-monitor", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/MemMap.info", .picture = "computer", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "System/Clock.info", .picture = "appointment-new", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=MODE=ANALOG", "TYPE=SECONDS=YES", "TYPE=DATE=YES" } },
     .{ .path = "System/Shares.info", .picture = "folder-remote", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/Update.info", .picture = "system-software-update", .fields = &.{ "KIND=TOOL", icon_stack }, .chips = &.{ .rv64sbi, .a64psci, .x64uefi } },
     .{ .path = "System/Docs.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
@@ -303,6 +305,7 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "System/Docs/NetLoad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/HDToolBox.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/MemMap.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "System/Docs/Clock.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/Shares.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/Update.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack }, .chips = &.{ .rv64sbi, .a64psci, .x64uefi } },
     // The commodities, each icon with the tool types it reads, and what

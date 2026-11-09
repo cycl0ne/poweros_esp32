@@ -254,9 +254,10 @@ order, so a translation of one keeps them so. Another process of the
 program's may be handed the strings and read them while the program
 keeps them open.
 
-Notepad, Sheet and the Player have their texts in catalogs, German on
-the disk (`LOCALE:Catalogs/deutsch/programs/<Program>.catalog`), and so
-has the desktop (`LOCALE:Catalogs/deutsch/sys/anvil.catalog`); their
+Notepad, Sheet, the Player and Movie have their texts in catalogs,
+German on the disk (`LOCALE:Catalogs/deutsch/programs/<Program>.catalog`),
+and so have the Clock (`LOCALE:Catalogs/deutsch/System/Clock.catalog`)
+and the desktop (`LOCALE:Catalogs/deutsch/sys/anvil.catalog`); their
 descriptors and translations are beside their sources.
 
 `OpenCatalogA(loc, name, tags)` looks for `name` in `OC_Language`'s

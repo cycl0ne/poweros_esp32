@@ -1,0 +1,49 @@
+; Clock's strings, in English: the program is built with these, and a
+; translation in LOCALE:Catalogs/<language>/System/Clock.catalog stands
+; in for them. A text with values is written by RawDoFmt, which takes
+; them in order: a translation keeps them so.
+#version 1
+;
+; The window.
+MSG_WINDOW_TITLE (1//)
+Clock
+;
+; The menus.
+MSG_MENU_PROJECT (//)
+Project
+MSG_MENU_ANALOG (//)
+Analog
+MSG_MENU_DIGITAL (//)
+Digital
+MSG_MENU_ABOUT (//)
+About...
+MSG_MENU_QUIT (//)
+Quit
+MSG_MENU_SETTINGS (//)
+Settings
+MSG_MENU_SECONDS (//)
+Seconds
+MSG_MENU_DATE (//)
+Date
+MSG_MENU_24_HOURS (//)
+24 Hours
+MSG_MENU_SAVE (//)
+Save Settings
+;
+; The requesters.
+MSG_ABOUT_TITLE (//)
+About Clock
+MSG_ABOUT (//)
+%s\n\nThe time, on a dial or in figures.\nA double click in the window changes between them.
+MSG_OK (//)
+OK
+MSG_NOT_SAVED (//)
+The settings could not be kept in\n%s.
+;
+; In the shell.
+MSG_NOLIBRARY (//)
+%s: cannot open %s\n
+MSG_NOMEMORY (//)
+%s: not enough memory\n
+MSG_NOWINDOW (//)
+%s: cannot open its window\n

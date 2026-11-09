@@ -71,7 +71,7 @@ own icon's tool types, changed with Information.
   what they show; a click runs the program that shows more, and they
   are moved and taken off as any entry is:
   - **Clock**: the time on a clock face; its words are the time and the
-    date.
+    date. A click opens the Clock, or brings the one open to the front.
   - **Battery**: the board's battery, filled as far as it is charged -
     red once it is low - with a bolt while it charges.
   - **Volume**: a speaker with a wave for each third of the volume; a

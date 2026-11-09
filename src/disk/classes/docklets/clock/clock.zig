@@ -6,7 +6,8 @@
 //! hands, each tapering from the middle to a point. It looks every second
 //! and changes when the minute does. What it says is the time and the
 //! date as `Date` prints them: "14:05, Tuesday 27-Oct-2026". A click on
-//! it runs nothing.
+//! it opens the Clock, `SYS:System/Clock`, or brings the one open to the
+//! front.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -24,8 +25,10 @@ pub const Data = extern struct {
 const Class = docklets.DockletClass(Data, .{
     .name = docklets.CLOCK_CLASS,
     .version = 1,
-    .date = "27.10.2026",
+    .revision = 1,
+    .date = "09.11.2026",
     .title = "Clock",
+    .command = "SYS:System/Clock",
     .opens = &.{"dos.library"},
     .look = look,
     .text = text,

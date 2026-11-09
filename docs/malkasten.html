@@ -1,0 +1,809 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PowerOS Malkasten</title>
+<!-- A copy of the palette page published at
+     https://claude.ai/artifact/1517CMM6DdzJ6bo9Tiz2Km, to be read without
+     the network: it draws every picture itself and loads nothing. -->
+<style>body{margin:0;padding:0}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style>
+<style>
+/* Layout: one column of sections; each has a heading, a line of text and a
+   strip of PowerOS screen ground on which the pictures sit in real pixels. */
+:root {
+  --bg: #EDEFF2;
+  --surface: #FFFFFF;
+  --fg: #1B1E23;
+  --muted: #59616E;
+  --line: #D6DAE0;
+  --accent: #2F7BDB;
+  --ui: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14161A; --surface: #1C1F24; --fg: #E6E8EB; --muted: #9BA3AF; --line: #2C3138; --accent: #6AA8F5;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14161A; --surface: #1C1F24; --fg: #E6E8EB; --muted: #9BA3AF; --line: #2C3138; --accent: #6AA8F5;
+  color-scheme: dark;
+}
+
+body { background: var(--bg); color: var(--fg); font-family: var(--ui); font-size: 15px; line-height: 1.55; }
+.wrap {
+  max-width: 1100px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 36px 72px;
+  display: flex; flex-direction: column; gap: 44px;
+}
+section { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; }
+h1 { font-size: 40px; line-height: 1.1; font-weight: 700; margin: 4px 0 0; letter-spacing: -.01em; text-wrap: balance; }
+h2 { font-size: 22px; line-height: 1.25; font-weight: 600; margin: 0; text-wrap: balance; }
+h3 { font-size: 15px; font-weight: 600; margin: 0; }
+p { margin: 0; max-width: 68ch; }
+.lede { color: var(--muted); }
+code, .mono { font-family: var(--mono); font-size: 12.5px; }
+
+/* Controls */
+.controls { display: flex; flex-wrap: wrap; gap: 14px 24px; margin-top: 8px; }
+.seg { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.seg legend { font-size: 12px; color: var(--muted); padding: 0; margin-bottom: 6px; letter-spacing: .02em; }
+.seg .opts { display: flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.seg label { position: relative; display: block; }
+.seg input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.seg span { display: block; padding: 7px 14px; font-size: 14px; border-right: 1px solid var(--line); cursor: pointer; }
+.seg label:last-child span { border-right: 0; }
+.seg input:checked + span { background: var(--accent); color: #FFFFFF; }
+.seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -4px; }
+
+/* A piece of PowerOS screen. Its colours are the screen's pens, chosen
+   above, and stay the same in both page themes. */
+.screen {
+  --scr-bg: #AAAAAA; --scr-panel: #B8B8B8; --scr-ink: #000000; --scr-ink-dim: #5A5A5A;
+  --scr-shine: #FFFFFF; --scr-shadow: #000000; --scr-sep: #6E6E6E; --scr-fill: #6688BB;
+  --scr-hover: #C8C8C8; --scr-press: #98A8C2; --scr-checked: #A9BAD4;
+  --scr-edge: #6A6A6A; --scr-edge-strong: #34425A; --scr-touch: #C0C0C0;
+  --scr-doc: #FFFFFF; --scr-grid: #C6C6C6; --scr-ctx: #8B5CF6;
+  background: var(--scr-bg); color: var(--scr-ink);
+}
+.screen[data-ground="light"] {
+  --scr-bg: #E5E8EC; --scr-panel: #F5F6F8; --scr-ink: #1D2128; --scr-ink-dim: #848C98;
+  --scr-shine: #FFFFFF; --scr-shadow: #98A0AB; --scr-sep: #CDD2D9; --scr-fill: #3D8BEB;
+  --scr-hover: #E4EDF9; --scr-press: #C6DAF5; --scr-checked: #D4E4FA;
+  --scr-edge: #A8C2E6; --scr-edge-strong: #3D8BEB; --scr-touch: #ECEFF3;
+  --scr-doc: #FFFFFF; --scr-grid: #E0E3E8; --scr-ctx: #8B5CF6;
+}
+.screen[data-ground="dark"] {
+  --scr-bg: #2A2E35; --scr-panel: #353A42; --scr-ink: #E6E8EB; --scr-ink-dim: #7E8691;
+  --scr-shine: #4B525D; --scr-shadow: #121418; --scr-sep: #22252B; --scr-fill: #5B9BF0;
+  --scr-hover: #434954; --scr-press: #2D4A71; --scr-checked: #33507B;
+  --scr-edge: #5E6773; --scr-edge-strong: #6AA8F5; --scr-touch: #3C424B;
+  --scr-doc: #1F2228; --scr-grid: #353A42; --scr-ctx: #A98BFA;
+}
+canvas { display: block; image-rendering: crisp-edges; image-rendering: pixelated; flex: none; }
+.scroll { overflow-x: auto; border-radius: 8px; border: 1px solid var(--line); }
+figure { margin: 0; }
+
+/* Tool buttons */
+.tb {
+  appearance: none; font: inherit; color: inherit; background: transparent;
+  border: 1px solid transparent; border-radius: 3px; margin: 0; padding: 0;
+  display: inline-flex; align-items: center; gap: 6px; cursor: default;
+}
+.tb.large { flex-direction: column; justify-content: flex-start; width: 60px; padding: 4px 2px 3px; gap: 3px; font-size: 12px; line-height: 1.2; text-align: center; }
+.tb.medium { height: 22px; padding: 0 7px 0 3px; font-size: 12.5px; white-space: nowrap; }
+.tb.small { width: 24px; height: 22px; justify-content: center; }
+.tb:hover:not(:disabled), .tb.is-hover { background: var(--scr-hover); border-color: var(--scr-edge); }
+.tb:active:not(:disabled), .tb.is-press { background: var(--scr-press); border-color: var(--scr-edge-strong); }
+.tb[aria-pressed="true"] { background: var(--scr-checked); border-color: var(--scr-edge-strong); }
+.tb.is-touch { background: var(--scr-touch); border-color: var(--scr-edge); }
+.tb:disabled { color: var(--scr-ink-dim); }
+.tb:focus-visible { outline: 2px solid var(--scr-fill); outline-offset: 1px; }
+
+/* The ribbon mock-up */
+.sheetwin { display: flex; flex-direction: column; min-width: 860px; padding: 10px 10px 0; }
+.tabs { display: flex; gap: 2px; padding-left: 6px; font-size: 13px; }
+.tab { padding: 4px 14px 5px; border: 1px solid transparent; border-bottom: 0; border-radius: 4px 4px 0 0; position: relative; top: 1px; }
+.tab.is-current { background: var(--scr-panel); border-color: var(--scr-shine) var(--scr-shadow) transparent var(--scr-shine); font-weight: 600; z-index: 1; }
+.tab.ctx { box-shadow: inset 0 3px 0 var(--scr-ctx); }
+.panel {
+  display: flex; align-items: stretch; height: 98px; box-sizing: border-box;
+  background: var(--scr-panel); padding: 4px 0 2px;
+  border: 1px solid; border-color: var(--scr-shine) var(--scr-shadow) var(--scr-shadow) var(--scr-shine);
+}
+.group { display: flex; flex-direction: column; padding: 0 6px; border-right: 1px solid var(--scr-sep); box-shadow: 1px 0 0 var(--scr-shine); }
+.group:last-child { border-right: 0; box-shadow: none; }
+.items { flex: 1; display: flex; gap: 2px; align-items: stretch; }
+.col { display: flex; flex-direction: column; gap: 2px; }
+.row { display: flex; gap: 2px; align-items: center; }
+.glabel { font-size: 11.5px; display: flex; justify-content: center; align-items: center; gap: 6px; padding-top: 2px; white-space: nowrap; opacity: .85; }
+.launch { width: 9px; height: 9px; display: block; }
+.chooser, .field { height: 20px; box-sizing: border-box; font-size: 12.5px; display: inline-flex; align-items: center; border: 1px solid; }
+.chooser { width: 84px; justify-content: space-between; padding: 0 5px 0 6px; background: var(--scr-panel); border-color: var(--scr-shine) var(--scr-shadow) var(--scr-shadow) var(--scr-shine); }
+.chooser::after { content: ""; border: 4px solid transparent; border-top: 5px solid currentColor; border-bottom: 0; }
+.field { width: 36px; justify-content: flex-end; padding-right: 5px; background: var(--scr-doc); border-color: var(--scr-shadow) var(--scr-shine) var(--scr-shine) var(--scr-shadow); font-variant-numeric: tabular-nums; }
+.sheetdoc { margin-top: 8px; background: var(--scr-doc); border-top: 1px solid var(--scr-shadow); }
+.sheetdoc table { border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.sheetdoc th, .sheetdoc td { border: 1px solid var(--scr-grid); height: 21px; padding: 0 8px; }
+.sheetdoc th { background: var(--scr-panel); font-weight: 500; text-align: center; min-width: 24px; }
+.sheetdoc td { min-width: 120px; }
+.sheetdoc td.n { text-align: right; }
+.sheetdoc td.cur { outline: 2px solid var(--scr-fill); outline-offset: -2px; font-weight: 600; }
+
+/* Button states */
+.states { display: flex; flex-wrap: wrap; gap: 18px; padding: 16px; }
+.states figure { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.states figcaption { font-size: 12px; }
+
+/* Build-up strip */
+.steps { display: flex; flex-wrap: wrap; gap: 22px; padding: 18px 16px; }
+.steps figure { display: flex; flex-direction: column; gap: 6px; }
+.steps figcaption { font-size: 12px; max-width: 110px; }
+.steps b { font-family: var(--mono); font-weight: 500; }
+
+/* All pictures */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 310px), 1fr)); gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; min-width: 0; }
+.card header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 9px 12px; }
+.card header code { color: var(--muted); font-size: 11.5px; }
+.sizes { display: flex; align-items: flex-end; gap: 14px; padding: 14px 12px 8px; }
+.sizes figure { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.sizes figcaption { font-family: var(--mono); font-size: 10.5px; opacity: .75; }
+.sizes .loupe { margin-left: auto; }
+
+/* Palette */
+.palette { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 10px 18px; }
+.hue { display: flex; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.chips { display: flex; gap: 4px; flex: none; }
+.chip { display: flex; flex-direction: column; gap: 3px; align-items: center; }
+.chip i { display: block; width: 40px; height: 28px; border-radius: 4px; box-shadow: inset 0 0 0 1px rgba(127,127,127,.25); }
+.chip small { font-family: var(--mono); font-size: 9.5px; color: var(--muted); }
+.hue div:last-child { min-width: 0; }
+.hue strong { display: block; font-size: 14px; }
+.hue span { font-size: 13px; color: var(--muted); }
+
+/* Notes */
+.calls { border-collapse: collapse; font-size: 14px; width: 100%; max-width: 760px; }
+.calls th, .calls td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.calls th { font-size: 12px; color: var(--muted); font-weight: 500; }
+ul.notes { margin: 0; padding-left: 20px; max-width: 72ch; display: flex; flex-direction: column; gap: 6px; }
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">PowerOS · Entwurf für command.image</p>
+    <h1>Malkasten</h1>
+    <p class="lede" style="margin-top:6px">Online: <a href="https://claude.ai/artifact/1517CMM6DdzJ6bo9Tiz2Km" style="color:var(--accent)">claude.ai/artifact/1517CMM6DdzJ6bo9Tiz2Km</a> · Farben, Regeln und Beispiele: <a href="colors.md" style="color:var(--accent)">colors.md</a></p>
+    <p class="lede" style="margin-top:10px">Bunte Befehlsbilder für das Ribbon. Jedes Bild ist nur aus Formen gebaut, die graphics.library heute zeichnet: Rechtecke mit runden Ecken, Kreise, Ringe und Bogenstücke, Vielecke, Verläufe mit höchstens vier Stufen und Farben mit Alpha. Es gibt keine Linien und keinen Weichzeichner. Für jede Größe wird das Bild neu gezeichnet, in echten Pixeln, nicht skaliert.</p>
+    <div class="controls">
+      <fieldset class="seg">
+        <legend>Grund des Screens</legend>
+        <div class="opts">
+          <label><input type="radio" name="ground" id="g-classic" value="classic" checked><span>Grau (Standard)</span></label>
+          <label><input type="radio" name="ground" id="g-light" value="light"><span>Hell</span></label>
+          <label><input type="radio" name="ground" id="g-dark" value="dark"><span>Dunkel</span></label>
+        </div>
+      </fieldset>
+      <fieldset class="seg">
+        <legend>Vielecke</legend>
+        <div class="opts">
+          <label><input type="radio" name="poly" id="p-smooth" value="smooth" checked><span>Glatt (nach der Vorarbeit)</span></label>
+          <label><input type="radio" name="poly" id="p-hard" value="hard"><span>Hart (AreaEnd heute)</span></label>
+        </div>
+      </fieldset>
+    </div>
+  </header>
+
+  <section>
+    <h2>Im Ribbon</h2>
+    <p class="lede">Sheet mit der Seite „Start“. Große Knöpfe zeigen das Bild in 32 Pixeln, mittlere und kleine in 16, so hoch wie die Schrift des Screens. Fett, Kursiv, Unterstrichen und die Ausrichtung rasten beim Klicken ein. „Wiederholen“ ist gesperrt.</p>
+    <div class="scroll">
+      <div class="screen sheetwin">
+        <div class="tabs">
+          <span class="tab is-current">Start</span>
+          <span class="tab">Einfügen</span>
+          <span class="tab">Ansicht</span>
+          <span class="tab ctx" title="Ein Kontext-Tab: erscheint, solange ein Diagramm markiert ist">Diagramm</span>
+        </div>
+        <div class="panel">
+          <div class="group">
+            <div class="items">
+              <button type="button" class="tb large" title="Einfügen"><canvas data-g="paste" data-s="32"></canvas><span>Einfügen</span></button>
+              <div class="col">
+                <button type="button" class="tb medium" title="Ausschneiden"><canvas data-g="cut" data-s="16"></canvas><span>Ausschneiden</span></button>
+                <button type="button" class="tb medium" title="Kopieren"><canvas data-g="copy" data-s="16"></canvas><span>Kopieren</span></button>
+              </div>
+            </div>
+            <div class="glabel">Zwischenablage</div>
+          </div>
+          <div class="group">
+            <div class="items">
+              <div class="col">
+                <button type="button" class="tb medium" title="Rückgängig"><canvas data-g="undo" data-s="16"></canvas><span>Rückgängig</span></button>
+                <button type="button" class="tb medium" disabled title="Wiederholen"><canvas data-g="redo" data-s="16" data-dis="1"></canvas><span>Wiederholen</span></button>
+              </div>
+            </div>
+            <div class="glabel">Rückgängig</div>
+          </div>
+          <div class="group">
+            <div class="items">
+              <div class="col">
+                <div class="row"><span class="chooser">Sans</span><span class="field">11</span></div>
+                <div class="row">
+                  <button type="button" class="tb small" data-toggle aria-pressed="true" title="Fett"><canvas data-g="bold" data-s="16"></canvas></button>
+                  <button type="button" class="tb small" data-toggle aria-pressed="false" title="Kursiv"><canvas data-g="italic" data-s="16"></canvas></button>
+                  <button type="button" class="tb small" data-toggle aria-pressed="false" title="Unterstrichen"><canvas data-g="underline" data-s="16"></canvas></button>
+                </div>
+              </div>
+            </div>
+            <div class="glabel">Schrift
+              <svg class="launch" viewBox="0 0 9 9" aria-label="Weitere Einstellungen zur Schrift"><path d="M0.5 0.5h5M0.5 0.5v5" stroke="currentColor" fill="none"/><path d="M3 3l5 5M8 4.5V8H4.5" stroke="currentColor" fill="none"/></svg>
+            </div>
+          </div>
+          <div class="group">
+            <div class="items">
+              <div class="col">
+                <div class="row">
+                  <button type="button" class="tb small" data-align aria-pressed="true" title="Links"><canvas data-g="alignleft" data-s="16"></canvas></button>
+                  <button type="button" class="tb small" data-align aria-pressed="false" title="Mitte"><canvas data-g="aligncentre" data-s="16"></canvas></button>
+                  <button type="button" class="tb small" data-align aria-pressed="false" title="Rechts"><canvas data-g="alignright" data-s="16"></canvas></button>
+                </div>
+                <button type="button" class="tb medium" data-toggle aria-pressed="false" title="Zeilenumbruch in der Zelle"><canvas data-g="wrap" data-s="16"></canvas><span>Umbruch</span></button>
+              </div>
+            </div>
+            <div class="glabel">Ausrichtung</div>
+          </div>
+          <div class="group">
+            <div class="items">
+              <div class="col">
+                <button type="button" class="tb medium" title="Eine Zeile über der markierten einfügen"><canvas data-g="insertrow" data-s="16"></canvas><span>Zeile einfügen</span></button>
+                <button type="button" class="tb medium" title="Die markierten Zeilen löschen"><canvas data-g="deleterow" data-s="16"></canvas><span>Zeile löschen</span></button>
+              </div>
+            </div>
+            <div class="glabel">Zellen</div>
+          </div>
+          <div class="group">
+            <div class="items">
+              <button type="button" class="tb large" title="Summe der Zellen darüber"><canvas data-g="sum" data-s="32"></canvas><span>Summe</span></button>
+              <button type="button" class="tb large" title="Sortieren"><canvas data-g="sort" data-s="32"></canvas><span>Sortieren</span></button>
+              <button type="button" class="tb large" title="Suchen"><canvas data-g="find" data-s="32"></canvas><span>Suchen</span></button>
+            </div>
+            <div class="glabel">Bearbeiten</div>
+          </div>
+        </div>
+        <div class="sheetdoc">
+          <table>
+            <thead><tr><th></th><th>A</th><th>B</th><th>C</th><th>D</th></tr></thead>
+            <tbody>
+              <tr><th>1</th><td>Miete</td><td class="n">850,00</td><td></td><td></td></tr>
+              <tr><th>2</th><td>Strom</td><td class="n">64,20</td><td></td><td></td></tr>
+              <tr><th>3</th><td>Internet</td><td class="n">39,99</td><td></td><td></td></tr>
+              <tr><th>4</th><td>Summe</td><td class="n cur">954,19</td><td></td><td></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Zustände eines Knopfs</h2>
+    <p class="lede">Der Knopf ist in Ruhe flach und bekommt erst unter dem Zeiger einen Rahmen. Auf einem Board mit Touch und ohne Zeiger hat er immer einen. Gesperrt heißt: das Bild in Graustufen, mit halber Deckung.</p>
+    <div class="scroll">
+      <div class="screen states">
+        <figure><button type="button" class="tb large"><canvas data-g="paste" data-s="32"></canvas><span>Einfügen</span></button><figcaption>In Ruhe</figcaption></figure>
+        <figure><button type="button" class="tb large is-hover"><canvas data-g="paste" data-s="32"></canvas><span>Einfügen</span></button><figcaption>Zeiger darauf</figcaption></figure>
+        <figure><button type="button" class="tb large is-press"><canvas data-g="paste" data-s="32"></canvas><span>Einfügen</span></button><figcaption>Gedrückt</figcaption></figure>
+        <figure><button type="button" class="tb large" aria-pressed="true"><canvas data-g="wrap" data-s="32"></canvas><span>Umbruch</span></button><figcaption>Eingerastet</figcaption></figure>
+        <figure><button type="button" class="tb large" disabled><canvas data-g="paste" data-s="32" data-dis="1"></canvas><span>Einfügen</span></button><figcaption>Gesperrt</figcaption></figure>
+        <figure><button type="button" class="tb large is-touch"><canvas data-g="paste" data-s="32"></canvas><span>Einfügen</span></button><figcaption>Touch, in Ruhe</figcaption></figure>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>So entsteht ein Bild</h2>
+    <p class="lede">„Speichern“ in 48 Pixeln, doppelt so groß gezeigt. Erst der Schatten, dann die ganze Form im dunklen Ton als Rand, darüber dieselbe Form um ein Pixel kleiner mit dem Verlauf von hell nach Grund, dann das Glanzlicht und zuletzt die Einzelheiten.</p>
+    <div class="scroll">
+      <div class="screen steps">
+        <figure><canvas data-g="save" data-s="48" data-zoom="2" data-limit="1"></canvas><figcaption><b>1</b> Schatten, Schwarz mit 22 % Deckung</figcaption></figure>
+        <figure><canvas data-g="save" data-s="48" data-zoom="2" data-limit="2"></canvas><figcaption><b>2</b> Rand im dunklen Ton</figcaption></figure>
+        <figure><canvas data-g="save" data-s="48" data-zoom="2" data-limit="3"></canvas><figcaption><b>3</b> Fläche, Verlauf hell nach Grund</figcaption></figure>
+        <figure><canvas data-g="save" data-s="48" data-zoom="2" data-limit="4"></canvas><figcaption><b>4</b> Glanzlicht, Weiß nach durchsichtig</figcaption></figure>
+        <figure><canvas data-g="save" data-s="48" data-zoom="2"></canvas><figcaption><b>5</b> Schieber und Etikett</figcaption></figure>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Alle Bilder</h2>
+    <p class="lede">In 48, 32, 24 und 16 Pixeln, rechts die 16 vierfach vergrößert. Unter 20 Pixeln fallen Schatten, Glanz, Verläufe und die Zeilen auf den Blättern weg, damit nichts verschwimmt.</p>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <section>
+    <h2>Palette</h2>
+    <p class="lede">Jede Farbe in drei Tönen. Der helle und der Grundton bilden den Verlauf der Fläche, der dunkle den Rand. Was direkt auf dem Grund steht, die Buchstaben bei Fett oder die Zeilen bei der Ausrichtung, nimmt den Textstift des Screens.</p>
+    <div class="palette" id="palette"></div>
+  </section>
+
+  <section>
+    <h2>Was dahinter steckt</h2>
+    <div class="scroll" style="border:0">
+      <table class="calls">
+        <thead><tr><th>Hier im Browser</th><th>Auf PowerOS</th></tr></thead>
+        <tbody>
+          <tr><td>Rechteck mit runden Ecken</td><td><code>FillRoundRect</code></td></tr>
+          <tr><td>Kreis, Ring, Bogenstück</td><td><code>FillArc</code> mit Innenradius, <code>RPTAG_Smooth</code></td></tr>
+          <tr><td>Vieleck</td><td><code>InitArea</code>, <code>AreaMove</code>, <code>AreaDraw</code>, <code>AreaEnd</code></td></tr>
+          <tr><td>Verlauf</td><td><code>RPTAG_FillStyle</code> mit <code>FILL_LINEAR</code> oder <code>FILL_RADIAL</code>, bis zu vier Stufen, im Kasten der Form</td></tr>
+          <tr><td>Schatten, Glanzlicht</td><td>Farben <code>0xAARRGGBB</code> mit Alpha</td></tr>
+          <tr><td>Gesperrt</td><td>in Graustufen in den Speicher gezeichnet (<code>RPTAG_Surface</code>), dann mit halber Deckung geblittet</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul class="notes">
+      <li>Die Bilder sind in einem Raster von 100 × 100 Einheiten beschrieben, wie die Docklets, und werden für jede Größe auf ganze Pixel gerundet.</li>
+      <li>Der Rand ist bis 63 Pixel ein Pixel breit, darüber ein Zweiunddreißigstel der Größe.</li>
+      <li>„Hart (AreaEnd heute)“ zeigt, wie Vielecke ohne die Vorarbeit aussehen: ein Pixel gehört ganz dazu oder gar nicht. Runde und gerade Kanten bleiben glatt, schräge bekommen Treppen, am deutlichsten bei Schere, Pfeilen, Σ und Kursiv.</li>
+      <li>Die Seite zeichnet mit dem Canvas des Browsers nach denselben Regeln. Auf PowerOS kann das Ergebnis in einzelnen Randpixeln abweichen.</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+"use strict";
+const D2R = Math.PI / 180;
+const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16), 1];
+const css = (c) => `rgba(${c[0]},${c[1]},${c[2]},${c[3]})`;
+const grey = (c) => { const y = Math.round(0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2]); return [y, y, y, c[3]]; };
+const mix = (a, b, t) => [0, 1, 2].map((i) => Math.round(a[i] * (1 - t) + b[i] * t)).concat([a[3] * (1 - t) + b[3] * t]);
+const scale = (c, k) => [Math.round(c[0] * k), Math.round(c[1] * k), Math.round(c[2] * k), c[3]];
+const withAlpha = (c, a) => [c[0], c[1], c[2], a];
+
+// The palette: name, light, base, dark, what it is for.
+const PAL_DEF = [
+  ["blue", "Blau", "#A6D0FF", "#3D8BEB", "#1D58AC", "Diskette, Lupenglas, Pfeile, Zeilen auf Blättern"],
+  ["yellow", "Gelb", "#FFE69A", "#F5BF3A", "#B07F0C", "Ordner"],
+  ["green", "Grün", "#A8E9A4", "#3DB85A", "#1D7A34", "Neu, Einfügen, Summe, Lämpchen"],
+  ["red", "Rot", "#FFA59A", "#E5483B", "#A3271F", "Löschen, Scherengriffe, Unterstrich"],
+  ["orange", "Orange", "#FFCA92", "#F28C28", "#AE560C", "Umbruch, Ersetzen"],
+  ["violet", "Violett", "#D4BBFF", "#8B5CF6", "#5631B0", "Sortieren, Formel, Kontext-Tabs"],
+  ["teal", "Türkis", "#96EAE2", "#1FB0A6", "#11756F", "Einstellungen, Netz"],
+  ["brown", "Braun", "#E9C397", "#B9804A", "#774A22", "Klemmbrett"],
+  ["metal", "Metall", "#F4F6F9", "#B9C0CA", "#666E7B", "Klingen, Klammer, Drucker, Zahnrad"],
+  ["iron", "Eisen", "#9AA3B0", "#5A6371", "#30353D", "Griffe, Schlitze, Schrauben"],
+  ["paper", "Papier", "#FFFFFF", "#EEF1F5", "#8F99A6", "Blätter, Etiketten"],
+];
+const PAL = {};
+for (const [k, , l, b, d] of PAL_DEF) PAL[k] = [hex(l), hex(b), hex(d)];
+const WHITE = [255, 255, 255, 1];
+const BLACK = [0, 0, 0, 1];
+const GLOSS = { lin: [0, 0, 0, 1], stops: [[0, [255, 255, 255, 0.55]], [0.5, [255, 255, 255, 0]], [1, [255, 255, 255, 0]]] };
+const INK = { classic: hex("#000000"), light: hex("#1D2128"), dark: hex("#E6E8EB") };
+
+// --- shapes, in pixels -------------------------------------------------
+
+function inset(s, d) {
+  if (s.k === "rr") return { ...s, x0: s.x0 + d, y0: s.y0 + d, x1: s.x1 - d, y1: s.y1 - d, r: Math.max(0, s.r - d) };
+  if (s.k === "arc") {
+    const n = { ...s, r: s.r - d, in: s.in > 0 ? s.in + d : 0 };
+    if (s.a1 - s.a0 < 360) {
+      const da = d / Math.max(1, (s.r + s.in) / 2) / D2R;
+      n.a0 = s.a0 + da; n.a1 = s.a1 - da;
+    }
+    return n;
+  }
+  return { ...s, pts: insetPts(s.pts, d) };
+}
+
+function insetPts(pts, d) {
+  const n = pts.length;
+  let area = 0;
+  for (let i = 0; i < n; i++) { const a = pts[i], b = pts[(i + 1) % n]; area += a[0] * b[1] - b[0] * a[1]; }
+  const s = area > 0 ? 1 : -1;
+  const nrm = (a, b) => { const ex = b[0] - a[0], ey = b[1] - a[1], L = Math.hypot(ex, ey) || 1; return [-s * ey / L, s * ex / L]; };
+  return pts.map((p, i) => {
+    const n1 = nrm(pts[(i - 1 + n) % n], p), n2 = nrm(p, pts[(i + 1) % n]);
+    const k = Math.max(0.25, 1 + n1[0] * n2[0] + n1[1] * n2[1]);
+    return [p[0] + d * (n1[0] + n2[0]) / k, p[1] + d * (n1[1] + n2[1]) / k];
+  });
+}
+
+function moved(s, dx, dy) {
+  if (s.k === "rr") return { ...s, x0: s.x0 + dx, x1: s.x1 + dx, y0: s.y0 + dy, y1: s.y1 + dy };
+  if (s.k === "arc") return { ...s, cx: s.cx + dx, cy: s.cy + dy };
+  return { ...s, pts: s.pts.map(([x, y]) => [x + dx, y + dy]) };
+}
+
+function boxOf(s) {
+  if (s.k === "rr") return [s.x0, s.y0, s.x1, s.y1];
+  if (s.k === "arc") return [s.cx - s.r, s.cy - s.r, s.cx + s.r, s.cy + s.r];
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (const [x, y] of s.pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  return [x0, y0, x1, y1];
+}
+
+function trace(ctx, s) {
+  ctx.beginPath();
+  if (s.k === "rr") {
+    if (s.x1 <= s.x0 || s.y1 <= s.y0) return;
+    const r = Math.min(s.r, (s.x1 - s.x0) / 2, (s.y1 - s.y0) / 2);
+    if (r <= 0) { ctx.rect(s.x0, s.y0, s.x1 - s.x0, s.y1 - s.y0); return; }
+    ctx.moveTo(s.x0 + r, s.y0);
+    ctx.arcTo(s.x1, s.y0, s.x1, s.y1, r);
+    ctx.arcTo(s.x1, s.y1, s.x0, s.y1, r);
+    ctx.arcTo(s.x0, s.y1, s.x0, s.y0, r);
+    ctx.arcTo(s.x0, s.y0, s.x1, s.y0, r);
+    ctx.closePath();
+    return;
+  }
+  if (s.k === "arc") {
+    if (s.r <= 0 || s.in >= s.r) return;
+    if (s.a1 - s.a0 >= 360) {
+      ctx.arc(s.cx, s.cy, s.r, 0, 2 * Math.PI);
+      if (s.in > 0) { ctx.moveTo(s.cx + s.in, s.cy); ctx.arc(s.cx, s.cy, s.in, 0, 2 * Math.PI, true); }
+      return;
+    }
+    if (s.a1 <= s.a0) return;
+    const A0 = -s.a0 * D2R, A1 = -s.a1 * D2R;
+    ctx.arc(s.cx, s.cy, s.r, A0, A1, true);
+    if (s.in > 0) ctx.arc(s.cx, s.cy, s.in, A1, A0, false); else ctx.lineTo(s.cx, s.cy);
+    ctx.closePath();
+    return;
+  }
+  s.pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.closePath();
+}
+
+// A colour, or a gradient laid in the shape's own box, as FillStyle does.
+function paintOf(f, ctx, p, s) {
+  if (Array.isArray(p)) return css(f.col(p));
+  const [x0, y0, x1, y1] = boxOf(s), w = x1 - x0, h = y1 - y0;
+  const last = p.stops[p.stops.length - 1][1];
+  let g;
+  if (p.lin) {
+    const [a, b, c, d] = p.lin;
+    const gx0 = x0 + a * w, gy0 = y0 + b * h, gx1 = x0 + c * w, gy1 = y0 + d * h;
+    if (gx0 === gx1 && gy0 === gy1) return css(f.col(last));
+    g = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
+  } else {
+    const [a, b, c, d] = p.rad;
+    const fx = x0 + a * w, fy = y0 + b * h, tx = x0 + c * w, ty = y0 + d * h;
+    g = ctx.createRadialGradient(fx, fy, 0, fx, fy, Math.max(1, Math.hypot(tx - fx, ty - fy)));
+  }
+  for (const [t, c] of p.stops) g.addColorStop(t, css(f.col(c)));
+  return g;
+}
+
+const scratchCache = {};
+function scratch(key, n) {
+  const k = key + n;
+  let c = scratchCache[k];
+  if (!c) { c = document.createElement("canvas"); c.width = c.height = n; scratchCache[k] = c; }
+  return c;
+}
+
+// A polygon as AreaEnd fills it today: a pixel is in or out, by its middle.
+function hardFill(f, s, p, ctx) {
+  const n = f.size, m = scratch("m", n), c = scratch("c", n);
+  const mx = m.getContext("2d", { willReadFrequently: true }), cx = c.getContext("2d");
+  mx.clearRect(0, 0, n, n);
+  trace(mx, s); mx.fillStyle = "#000"; mx.fill();
+  const img = mx.getImageData(0, 0, n, n), d = img.data;
+  for (let i = 3; i < d.length; i += 4) d[i] = d[i] >= 128 ? 255 : 0;
+  mx.putImageData(img, 0, 0);
+  cx.globalCompositeOperation = "source-over";
+  cx.clearRect(0, 0, n, n);
+  cx.fillStyle = paintOf(f, cx, p, s);
+  cx.fillRect(0, 0, n, n);
+  cx.globalCompositeOperation = "destination-in";
+  cx.drawImage(m, 0, 0);
+  cx.globalCompositeOperation = "source-over";
+  ctx.drawImage(c, 0, 0);
+}
+
+function fillShape(f, s, p, ctx) {
+  ctx = ctx || f.ctx;
+  if (s.k === "poly" && f.o.hard) return hardFill(f, s, p, ctx);
+  trace(ctx, s);
+  ctx.fillStyle = paintOf(f, ctx, p, s);
+  ctx.fill();
+}
+
+// Design units: a 100 by 100 grid, like the docklets' Frame.part.
+function bar(x0, y0, x1, y1, w) {
+  const dx = x1 - x0, dy = y1 - y0, L = Math.hypot(dx, dy) || 1, nx = -dy / L * w / 2, ny = dx / L * w / 2;
+  return [[x0 + nx, y0 + ny], [x1 + nx, y1 + ny], [x1 - nx, y1 - ny], [x0 - nx, y0 - ny]];
+}
+function taper(x0, y0, x1, y1, w0, w1) {
+  const dx = x1 - x0, dy = y1 - y0, L = Math.hypot(dx, dy) || 1, ux = -dy / L, uy = dx / L;
+  return [[x0 + ux * w0 / 2, y0 + uy * w0 / 2], [x1 + ux * w1 / 2, y1 + uy * w1 / 2], [x1 - ux * w1 / 2, y1 - uy * w1 / 2], [x0 - ux * w0 / 2, y0 - uy * w0 / 2]];
+}
+
+class Frame {
+  constructor(ctx, size, o) {
+    this.ctx = ctx; this.size = size; this.o = o;
+    this.detail = size >= 20;
+    this.rim = Math.max(1, Math.floor(size / 32));
+    this.limit = o.limit || 99;
+    this.mirror = false;
+  }
+  P(u) { return Math.round(u * this.size / 100); }
+  X(u) { return this.P(this.mirror ? 100 - u : u); }
+  col(c) { return this.o.disabled ? grey(c) : c; }
+
+  rr(x0, y0, x1, y1, r) {
+    if (this.mirror) [x0, x1] = [100 - x1, 100 - x0];
+    return { k: "rr", x0: this.P(x0), y0: this.P(y0), x1: this.P(x1), y1: this.P(y1), r: this.P(r) };
+  }
+  ring(cx, cy, r, inner, a0 = 0, a1 = 360) {
+    if (this.mirror) { cx = 100 - cx; [a0, a1] = [180 - a1, 180 - a0]; }
+    return { k: "arc", cx: this.P(cx), cy: this.P(cy), r: this.P(r), in: inner > 0 ? this.P(inner) : 0, a0, a1 };
+  }
+  disc(cx, cy, r) { return this.ring(cx, cy, r, 0); }
+  poly(pts) { return { k: "poly", pts: pts.map(([x, y]) => [this.X(x), this.P(y)]) }; }
+
+  fill(s, p) { fillShape(this, s, p); }
+  ink(shapes) { for (const s of shapes) fillShape(this, s, this.o.ink); }
+  hl(x0, x1, y, t, c) { const s = this.rr(x0, y, x1, y + t, 0); if (s.y1 <= s.y0) s.y1 = s.y0 + 1; this.fill(s, c); }
+
+  // Shapes in one colour of the palette: shadow, rim, body, gloss.
+  solid(shapes, hue, opt = {}) {
+    const [L, B, Dk] = PAL[hue], d = this.rim, lim = this.limit;
+    const rimC = opt.shade ? scale(Dk, 0.78) : Dk;
+    const body = (opt.flat || !this.detail)
+      ? (opt.shade ? mix(B, Dk, 0.5) : B)
+      : { lin: [0, 0, 0, 1], stops: opt.shade ? [[0, B], [1, Dk]] : [[0, L], [1, B]] };
+    if (this.detail && !opt.noShadow && lim >= 1) this.shadow(shapes);
+    if (lim >= 2) for (const s of shapes) this.fill(s, rimC);
+    if (lim >= 3) for (const s of shapes) this.fill(inset(s, d), body);
+    if (this.detail && !opt.noGloss && !opt.flat && lim >= 4) for (const s of shapes) this.fill(inset(s, d), GLOSS);
+  }
+  shadow(shapes) {
+    const n = this.size, c = scratch("s", n), cx = c.getContext("2d");
+    cx.clearRect(0, 0, n, n);
+    const dx = Math.round(n / 48), dy = Math.max(1, Math.round(n / 24));
+    for (const s of shapes) {
+      const m = moved(s, dx, dy);
+      if (m.k === "poly" && this.o.hard) hardFill(this, m, BLACK, cx);
+      else { trace(cx, m); cx.fillStyle = "#000"; cx.fill(); }
+    }
+    const ctx = this.ctx;
+    ctx.save(); ctx.globalAlpha = 0.22; ctx.drawImage(c, 0, 0); ctx.restore();
+  }
+
+  // A sheet of paper with a folded corner and lines on it.
+  sheet(x0, y0, x1, y1, fold, lineHue) {
+    this.solid([this.poly([[x0, y0], [x1 - fold, y0], [x1, y0 + fold], [x1, y1], [x0, y1]])], "paper", { noGloss: true });
+    this.solid([this.poly([[x1 - fold, y0], [x1 - fold, y0 + fold], [x1, y0 + fold]])], "metal", { noShadow: true, noGloss: true });
+    if (!this.detail) return;
+    const c = lineHue ? PAL[lineHue][1] : [196, 203, 213, 1];
+    const left = x0 + 9, right = x1 - 9, step = (y1 - y0 - fold - 10) / 4;
+    for (let i = 0; i < 4; i++) {
+      const y = y0 + fold + 6 + i * step;
+      this.hl(left, i === 3 ? left + (right - left) * 0.6 : right, y, 3.5, c);
+    }
+  }
+  // A round badge with a plus or a cross.
+  badge(cx, cy, r, hue, mark) {
+    this.solid([this.disc(cx, cy, r)], hue);
+    const w = r * 0.34, l = r * 0.62;
+    if (mark === "plus") {
+      this.fill(this.rr(cx - l, cy - w / 2, cx + l, cy + w / 2, 0), WHITE);
+      this.fill(this.rr(cx - w / 2, cy - l, cx + w / 2, cy + l, 0), WHITE);
+    } else {
+      const e = l * 0.75;
+      this.fill(this.poly(bar(cx - e, cy - e, cx + e, cy + e, w)), WHITE);
+      this.fill(this.poly(bar(cx - e, cy + e, cx + e, cy - e, w)), WHITE);
+    }
+  }
+  // A small table with one row picked out, and a badge.
+  table(hue, mark) {
+    this.solid([this.rr(6, 14, 80, 86, 4)], "paper", { noGloss: true });
+    this.solid([this.rr(6, 14, 80, 32, 3)], "blue", { noShadow: true, noGloss: true });
+    const d = this.rim, x0 = this.P(6) + d, x1 = this.P(80) - d;
+    this.fill({ k: "rr", x0, y0: this.P(50), x1, y1: this.P(68), r: 0 }, PAL[hue][0]);
+    if (this.detail) {
+      const g = [176, 184, 196, 1];
+      for (const x of [31, 56]) this.fill({ k: "rr", x0: this.P(x), y0: this.P(32), x1: this.P(x) + d, y1: this.P(86) - d, r: 0 }, g);
+      for (const y of [50, 68]) this.fill({ k: "rr", x0, y0: this.P(y), x1, y1: this.P(y) + d, r: 0 }, g);
+    }
+    this.badge(78, 78, 21, hue, mark);
+  }
+}
+
+// --- the pictures --------------------------------------------------------
+
+function undo(f) {
+  f.solid([f.ring(54, 58, 35, 17, -40, 180), f.poly([[6, 55], [50, 55], [28, 88]])], "blue");
+}
+function align(how) {
+  return (f) => {
+    [76, 52, 76, 44].forEach((w, i) => {
+      const y = 14 + i * 20;
+      const x0 = how === "l" ? 12 : how === "c" ? 50 - w / 2 : 88 - w;
+      f.ink([f.rr(x0, y, x0 + w, y + 10, 2)]);
+    });
+  };
+}
+
+const GLYPHS = [
+  { id: "new", name: "Neu", cmd: "CMD_NEW", draw(f) {
+    f.sheet(18, 6, 78, 92, 18, null);
+    f.badge(74, 76, 20, "green", "plus");
+  } },
+  { id: "open", name: "Öffnen", cmd: "CMD_OPEN", draw(f) {
+    f.solid([f.poly([[6, 20], [34, 20], [42, 28], [90, 28], [90, 84], [6, 84]])], "yellow", { shade: true, noGloss: true });
+    f.solid([f.rr(16, 34, 80, 76, 2)], "paper", { noShadow: true, noGloss: true });
+    f.solid([f.poly([[20, 46], [98, 46], [86, 88], [4, 88]])], "yellow");
+  } },
+  { id: "save", name: "Speichern", cmd: "CMD_SAVE", draw(f) {
+    f.solid([f.poly([[8, 8], [78, 8], [92, 22], [92, 92], [8, 92]])], "blue");
+    if (f.limit < 5) return;
+    f.solid([f.rr(26, 8, 70, 36, 2)], "metal", { noShadow: true, noGloss: true });
+    if (f.detail) f.fill(f.rr(54, 13, 62, 31, 1), PAL.blue[2]);
+    f.solid([f.rr(20, 50, 80, 92, 3)], "paper", { noShadow: true, noGloss: true });
+    if (f.detail) { f.hl(28, 72, 62, 3.5, PAL.blue[1]); f.hl(28, 60, 74, 3.5, PAL.blue[1]); }
+  } },
+  { id: "print", name: "Drucken", cmd: "CMD_PRINT", draw(f) {
+    f.solid([f.rr(26, 6, 74, 40, 2)], "paper", { noGloss: true });
+    f.solid([f.rr(6, 32, 94, 74, 9)], "metal");
+    f.solid([f.rr(18, 56, 82, 66, 3)], "iron", { noShadow: true, noGloss: true });
+    f.solid([f.rr(24, 62, 76, 94, 2)], "paper", { noGloss: true });
+    if (f.detail) {
+      f.hl(32, 68, 72, 3.5, PAL.blue[1]); f.hl(32, 58, 82, 3.5, PAL.blue[1]);
+      f.solid([f.disc(82, 44, 5)], "green", { noShadow: true, noGloss: true });
+    }
+  } },
+  { id: "cut", name: "Ausschneiden", cmd: "CMD_CUT", draw(f) {
+    f.solid([f.poly(taper(58, 68, 27, 5, 11, 2)), f.poly(taper(42, 68, 73, 5, 11, 2))], "metal");
+    f.solid([f.ring(30, 78, 19, 7), f.ring(70, 78, 19, 7)], "red");
+    if (f.detail) f.solid([f.disc(50, 50, 4.5)], "iron", { noShadow: true, noGloss: true });
+  } },
+  { id: "copy", name: "Kopieren", cmd: "CMD_COPY", draw(f) {
+    f.sheet(6, 4, 60, 70, 14, "blue");
+    f.sheet(36, 28, 92, 96, 16, "blue");
+  } },
+  { id: "paste", name: "Einfügen", cmd: "CMD_PASTE", draw(f) {
+    f.solid([f.rr(8, 12, 74, 94, 7)], "brown");
+    f.solid([f.rr(24, 4, 58, 20, 4)], "metal", { noShadow: true });
+    if (f.detail) f.fill(f.rr(35, 7.5, 47, 11.5, 2), PAL.iron[2]);
+    f.sheet(40, 34, 94, 98, 14, "blue");
+  } },
+  { id: "undo", name: "Rückgängig", cmd: "CMD_UNDO", draw: undo },
+  { id: "redo", name: "Wiederholen", cmd: "CMD_REDO", draw(f) { f.mirror = true; undo(f); f.mirror = false; } },
+  { id: "find", name: "Suchen", cmd: "CMD_FIND", draw(f) {
+    f.solid([f.poly(bar(62, 62, 91, 91, 15))], "iron");
+    f.solid([f.ring(40, 40, 32, 22)], "metal");
+    f.fill(f.disc(40, 40, 22), f.detail
+      ? { rad: [0.32, 0.28, 1, 1], stops: [[0, [244, 251, 255, 1]], [0.6, PAL.blue[0]], [1, withAlpha(PAL.blue[1], 0.9)]] }
+      : PAL.blue[0]);
+    if (f.detail) f.fill(f.disc(32, 31, 6), [255, 255, 255, 0.8]);
+  } },
+  { id: "bold", name: "Fett", cmd: "CMD_BOLD", draw(f) {
+    f.ink([f.rr(22, 10, 42, 90, 0), f.rr(22, 10, 50, 23, 0), f.ring(49, 30.5, 20.5, 7.5, -90, 90),
+      f.rr(22, 38, 54, 51, 0), f.ring(53, 69.5, 20.5, 7.5, -90, 90), f.rr(22, 77, 53, 90, 0)]);
+  } },
+  { id: "italic", name: "Kursiv", cmd: "CMD_ITALIC", draw(f) {
+    f.ink([f.poly([[42, 10], [82, 10], [80, 21], [40, 21]]), f.poly([[55, 21], [69, 21], [51, 79], [37, 79]]),
+      f.poly([[20, 79], [60, 79], [58, 90], [18, 90]])]);
+  } },
+  { id: "underline", name: "Unterstrichen", cmd: "CMD_UNDERLINE", draw(f) {
+    f.ink([f.rr(22, 8, 36, 54, 0), f.rr(64, 8, 78, 54, 0), f.ring(50, 54, 28, 14, 180, 360)]);
+    f.solid([f.rr(16, 84, 84, 96, 2)], "red", { noShadow: true, noGloss: true });
+  } },
+  { id: "alignleft", name: "Links", cmd: "CMD_ALIGN_LEFT", draw: align("l") },
+  { id: "aligncentre", name: "Mitte", cmd: "CMD_ALIGN_CENTRE", draw: align("c") },
+  { id: "alignright", name: "Rechts", cmd: "CMD_ALIGN_RIGHT", draw: align("r") },
+  { id: "wrap", name: "Zeilenumbruch", cmd: "CMD_WRAP", draw(f) {
+    f.ink([f.rr(10, 12, 90, 22, 3), f.rr(10, 67, 38, 77, 3)]);
+    f.solid([f.rr(10, 37, 66, 47, 0), f.ring(66, 57, 20, 10, -90, 90), f.poly([[66, 58], [66, 86], [44, 72]])], "orange");
+  } },
+  { id: "sum", name: "Summe", cmd: "CMD_SUM", draw(f) {
+    f.solid([f.poly([[16, 8], [84, 8], [86, 30], [76, 30], [72, 20], [40, 20], [62, 50], [40, 80], [72, 80], [76, 70], [86, 70], [84, 92], [16, 92], [16, 86], [46, 50], [16, 14]])], "green");
+  } },
+  { id: "sort", name: "Sortieren", cmd: "CMD_SORT", draw(f) {
+    f.ink([f.rr(52, 12, 72, 24, 2), f.rr(52, 40, 82, 52, 2), f.rr(52, 68, 92, 80, 2)]);
+    f.solid([f.poly(bar(27, 8, 27, 60, 13)), f.poly([[9, 56], [45, 56], [27, 90]])], "violet");
+  } },
+  { id: "insertrow", name: "Zeile einfügen", cmd: "CMD_INSERT_ROW", draw(f) { f.table("green", "plus"); } },
+  { id: "deleterow", name: "Zeile löschen", cmd: "CMD_DELETE_ROW", draw(f) { f.table("red", "x"); } },
+  { id: "settings", name: "Einstellungen", cmd: "CMD_SETTINGS", draw(f) {
+    const teeth = [];
+    for (let i = 0; i < 8; i++) {
+      const a = (i * 45 + 22.5) * D2R;
+      teeth.push(f.poly(bar(50 + 28 * Math.cos(a), 50 - 28 * Math.sin(a), 50 + 45 * Math.cos(a), 50 - 45 * Math.sin(a), 16)));
+    }
+    f.solid([...teeth, f.ring(50, 50, 36, 15)], "metal", { flat: true });
+    f.solid([f.ring(50, 50, 22, 15)], "teal", { noShadow: true });
+  } },
+];
+const BY_ID = Object.fromEntries(GLYPHS.map((g) => [g.id, g]));
+
+// --- the page ------------------------------------------------------------
+
+const state = { ground: "classic", hard: false };
+
+function drawGlyph(canvas) {
+  const g = BY_ID[canvas.dataset.g];
+  if (!g) return;
+  const size = +canvas.dataset.s, zoom = +(canvas.dataset.zoom || 1);
+  const o = {
+    disabled: !!canvas.dataset.dis,
+    limit: canvas.dataset.limit ? +canvas.dataset.limit : 99,
+    hard: state.hard,
+    ink: INK[state.ground],
+  };
+  canvas.width = canvas.height = size;
+  canvas.style.width = canvas.style.height = size * zoom + "px";
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, size, size);
+  if (o.disabled) {
+    const off = scratch("d", size), ox = off.getContext("2d");
+    ox.clearRect(0, 0, size, size);
+    g.draw(new Frame(ox, size, o));
+    ctx.save(); ctx.globalAlpha = 0.45; ctx.drawImage(off, 0, 0); ctx.restore();
+  } else {
+    g.draw(new Frame(ctx, size, o));
+  }
+}
+
+function renderAll() {
+  document.querySelectorAll(".screen").forEach((s) => { s.dataset.ground = state.ground; });
+  document.querySelectorAll("canvas[data-g]").forEach(drawGlyph);
+}
+
+function buildCards() {
+  const host = document.getElementById("cards");
+  for (const g of GLYPHS) {
+    const card = document.createElement("article");
+    card.className = "card";
+    const sizes = [48, 32, 24, 16].map((s) => `<figure><canvas data-g="${g.id}" data-s="${s}"></canvas><figcaption>${s}</figcaption></figure>`).join("");
+    card.innerHTML = `<header><h3>${g.name}</h3><code>${g.cmd}</code></header>
+      <div class="screen sizes">${sizes}<figure class="loupe"><canvas data-g="${g.id}" data-s="16" data-zoom="4"></canvas><figcaption>16 × 4</figcaption></figure></div>`;
+    host.appendChild(card);
+  }
+}
+
+function buildPalette() {
+  const host = document.getElementById("palette");
+  for (const [, name, l, b, d, use] of PAL_DEF) {
+    const row = document.createElement("div");
+    row.className = "hue";
+    const chip = (h, t) => `<span class="chip"><i style="background:${h}" title="${t} ${h}"></i><small>${h.slice(1)}</small></span>`;
+    row.innerHTML = `<div class="chips">${chip(l, "hell")}${chip(b, "Grund")}${chip(d, "dunkel")}</div><div><strong>${name}</strong><span>${use}</span></div>`;
+    host.appendChild(row);
+  }
+}
+
+function wire() {
+  document.querySelectorAll('input[name="ground"]').forEach((i) => i.addEventListener("change", () => { state.ground = i.value; renderAll(); }));
+  document.querySelectorAll('input[name="poly"]').forEach((i) => i.addEventListener("change", () => { state.hard = i.value === "hard"; renderAll(); }));
+  document.querySelectorAll("[data-toggle]").forEach((b) => b.addEventListener("click", () => {
+    b.setAttribute("aria-pressed", b.getAttribute("aria-pressed") === "true" ? "false" : "true");
+  }));
+  const aligns = document.querySelectorAll("[data-align]");
+  aligns.forEach((b) => b.addEventListener("click", () => aligns.forEach((o) => o.setAttribute("aria-pressed", o === b ? "true" : "false"))));
+}
+
+buildCards();
+buildPalette();
+wire();
+const checked = document.querySelector('input[name="ground"]:checked');
+if (checked) state.ground = checked.value;
+const poly = document.querySelector('input[name="poly"]:checked');
+if (poly) state.hard = poly.value === "hard";
+renderAll();
+</script>
+
+</body>
+</html>

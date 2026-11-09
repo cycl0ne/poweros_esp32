@@ -48,6 +48,7 @@ AArch64 `virt` machines and in its x86-64 q35 machine.
 | [Wi-Fi](docs/esp32s3wifi.md) | the ESP32-S3's radio's device, and how it is built |
 | [USB Wi-Fi](docs/aic8800.md) | the AIC8800 stick's device, and how it is built |
 | [posfs](docs/posfs.md) | the PowerOS file system: its format on the medium, field by field, and how it works |
+| [Colours](docs/colors.md) | the palette the pictures are painted in, how a picture is built up, and examples; [the palette page](docs/malkasten.html) to read without the network |
 | [Porting](docs/porting.md) | the checklist for a new CPU, firmware or board: every place a machine has to be named, and what each of the five chips does there |
 | [Example programs](src/disk/c/) | every command on the disk, built the same way |
 | [Repository layout](#repository-layout) | where things are |
@@ -257,14 +258,16 @@ Beside them:
   or in `ENV:Sys/locale.prefs`; dates, dos's
   error texts and the shell's messages in it - German shipped - and a
   program's own texts from its catalog, built from a descriptor and
-  checked by `sdk/tools/catcomp`: the desktop's, Notepad's, Sheet's
-  and the Player's in German
+  checked by `sdk/tools/catcomp`: the desktop's, Notepad's, Sheet's,
+  the Player's, Movie's and the Clock's in German
   ([locale guide](sdk/docs/guides/locale.md)).
 - **Programs:** in `SYS:Programs` MultiView, Notepad, Sheet, Terminal,
   Player, FontView, Battery, Prefs and Volume; in `SYS:System` the Shell,
-  HDToolBox, Shares, Update, CPULoad, NetLoad and MemMap; in `SYS:Commodities`
-  Exchange, which lists the commodities running and makes each active or
-  inactive, shows or hides its window, or ends it, and the commodities
+  HDToolBox, Shares, Update, CPULoad, NetLoad, MemMap and Clock - the
+  time on a dial or in figures, which the dock's clock opens; in
+  `SYS:Commodities` Exchange, which lists the commodities running and
+  makes each active or inactive, shows or hides its window, or ends it,
+  and the commodities
   themselves - Blanker, a screen that darkens when nothing happens;
   FKey, functions on freely chosen keys; AutoPoint, the window under the
   pointer activated; ClickToFront, a double click that brings a window

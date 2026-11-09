@@ -16,6 +16,8 @@ test {
     _ = @import("programs/sheet/tests/sheet.zig");
     _ = @import("system/hdtoolbox/tests/hdtoolbox.zig");
     _ = @import("system/memmap/tests/memmap.zig");
+    _ = @import("system/clock/time.zig");
+    _ = @import("system/clock/panel.zig");
     _ = @import("programs/terminal/tests/terminal.zig");
     _ = @import("programs/player/spectrum.zig");
     _ = @import("programs/player/visual.zig");

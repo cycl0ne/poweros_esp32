@@ -347,7 +347,7 @@ library that makes one from a few functions, are in
 
 | Docklet | What | A click runs |
 |---|---|---|
-| clock.docklet | the time, as a clock face; the date in its words | nothing |
+| clock.docklet | the time, as a clock face; the date in its words | `SYS:System/Clock` |
 | battery.docklet | the board's battery (battery.resource), filled to its charge | nothing |
 | volume.docklet | how loud the machine plays, as a speaker and its waves | `SYS:Programs/Volume` |
 | cpu.docklet | how busy each core is, a bar each | `SYS:System/CPULoad` |
@@ -364,7 +364,8 @@ its own box (`IM_DRAW`) or fitted to the one it is given
 button's 48. What they draw with - smooth shapes in a square, a palette
 of eleven hues in three tones, a shadow, shading and gloss - is
 [`shapes.zig`](../libs/gadgets/shapes.zig), which the docklets draw on
-too; their tags start at `IMAGES_Dummy` in
+too ([colours](../../docs/colors.md): the palette, the layers, examples);
+their tags start at `IMAGES_Dummy` in
 [`images.zig`](../libs/images/images.zig).
 
 | Class | What | Header |

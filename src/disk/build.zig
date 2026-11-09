@@ -33,6 +33,7 @@ pub const catalogs = [_]Catalog{
     .{ .disk = "locale/Catalogs/deutsch/programs/Sheet.catalog", .descriptor = "programs/sheet/sheet.cd", .translation = "programs/sheet/catalogs/deutsch.ct", .name = "programs/Sheet.catalog" },
     .{ .disk = "locale/Catalogs/deutsch/programs/Player.catalog", .descriptor = "programs/player/player.cd", .translation = "programs/player/catalogs/deutsch.ct", .name = "programs/Player.catalog" },
     .{ .disk = "locale/Catalogs/deutsch/programs/Movie.catalog", .descriptor = "programs/movie/movie.cd", .translation = "programs/movie/catalogs/deutsch.ct", .name = "programs/Movie.catalog" },
+    .{ .disk = "locale/Catalogs/deutsch/System/Clock.catalog", .descriptor = "system/clock/clock.cd", .translation = "system/clock/catalogs/deutsch.ct", .name = "System/Clock.catalog" },
     .{ .disk = "locale/Catalogs/deutsch/sys/anvil.catalog", .descriptor = "libs/anvil/anvil.cd", .translation = "libs/anvil/catalogs/deutsch.ct", .name = "sys/anvil.catalog" },
 };
 
@@ -136,6 +137,7 @@ const window_programs = [_]Program{
     .{ .disk = "System/CPULoad", .source = "system/cpuload/cpuload.zig", .name = "cpuload" },
     .{ .disk = "System/NetLoad", .source = "system/netload/netload.zig", .name = "netload" },
     .{ .disk = "System/MemMap", .source = "system/memmap/memmap.zig", .name = "memmap" },
+    .{ .disk = "System/Clock", .source = "system/clock/clock.zig", .name = "clock", .strings = "system/clock/clock.cd" },
     .{ .disk = "System/Shares", .source = "system/shares/shares.zig", .name = "shares", .imports = &.{"smbclient"} },
     .{ .disk = "System/Update", .source = "system/update/update.zig", .name = "sysupdate" },
     .{ .disk = "Commodities/Exchange", .source = "commodities/exchange/exchange.zig", .name = "exchange" },
@@ -631,6 +633,7 @@ pub const files = [_]File{
     .{ .disk = "System/Docs/CPULoad.md", .source = "system/cpuload/README.md" },
     .{ .disk = "System/Docs/NetLoad.md", .source = "system/netload/README.md" },
     .{ .disk = "System/Docs/MemMap.md", .source = "system/memmap/README.md" },
+    .{ .disk = "System/Docs/Clock.md", .source = "system/clock/README.md" },
     .{ .disk = "System/Docs/Shares.md", .source = "system/shares/README.md" },
     .{ .disk = "System/Docs/Update.md", .source = "system/update/README.md" },
     // SYS:Commodities/Docs - the same for the commodities.
