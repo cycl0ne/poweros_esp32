@@ -50,7 +50,7 @@ const FileHandle = dos.FileHandle;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SSH";
-const VERSION_STRING = "\x00$VER: SSH 1.1 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SSH 1.2 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "HOST,PORT/K/N,USER/K,KEYGEN/S,COMMAND/F";

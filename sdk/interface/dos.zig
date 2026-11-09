@@ -173,6 +173,7 @@ pub const LVO = struct {
     pub const ReadFile = libraries.lvo(156);
     pub const CreateDirs = libraries.lvo(157);
     pub const DeleteTree = libraries.lvo(158);
+    pub const ReadPassword = libraries.lvo(159);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -333,6 +334,7 @@ pub const Fn = struct {
     pub const ReadFile = *const fn (*DosBase, [*:0]const u8, usize, u32, *usize) callconv(.c) ?[*]u8;
     pub const CreateDirs = *const fn (*DosBase, [*:0]const u8, bool) callconv(.c) bool;
     pub const DeleteTree = *const fn (*DosBase, [*:0]const u8, u32, ?*utility.Hook) callconv(.c) bool;
+    pub const ReadPassword = *const fn (*DosBase, ?*dos.FileHandle, [*]u8, usize) callconv(.c) isize;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1303,5 +1305,13 @@ pub const DosBase = opaque {
     /// true, or false with IoErr.
     pub fn DeleteTree(self: *DosBase, name: [*:0]const u8, flags: u32, hook: ?*utility.Hook) bool {
         return libraries.call(self, LVO.DeleteTree, Fn.DeleteTree, .{ name, flags, hook });
+    }
+
+    /// A password typed on the console `file` without its echo into `buffer`
+    /// (a NUL after it when there is room), a newline written after: its
+    /// length, or -1 with the buffer wiped - IoErr ERROR_BREAK for Ctrl-C, 0
+    /// when the input ended.
+    pub fn ReadPassword(self: *DosBase, file: ?*dos.FileHandle, buffer: [*]u8, size: usize) isize {
+        return libraries.call(self, LVO.ReadPassword, Fn.ReadPassword, .{ file, buffer, size });
     }
 };

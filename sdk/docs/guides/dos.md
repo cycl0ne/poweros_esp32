@@ -1277,3 +1277,22 @@ while (dl.CheckSignal(exec.SIGBREAKF_CTRL_C) == 0) {
     _ = Printf(dl, "key %x\n", .{key});
 }
 ```
+
+**A password** is typed without its echo: `ReadPassword(fh, buffer,
+size)` puts the console raw, reads what is typed - Backspace and Delete
+take back, Return ends - puts the console back in the mode it was in,
+and writes a newline, so what comes next starts a line of its own. It
+answers the characters' number, a NUL after them when there is room, or
+-1 when Ctrl-C, Ctrl-\ or the input's end gave it up, with the buffer
+wiped and `IoErr()` `ERROR_BREAK` for Ctrl-C. The prompt before it is
+the program's. `C:net/Git` asks for a token this way, `C:net/SSH` and
+`C:net/SCP` for a password, and `C:net/ShellServer` at a Telnet
+session's start.
+
+```zig
+_ = dl.PutStr("Password: ");
+_ = dl.Flush(dl.Output());
+var password: [128]u8 = undefined;
+const length = dl.ReadPassword(dl.Input(), &password, password.len);
+if (length < 0) return dos.RETURN_WARN;
+```

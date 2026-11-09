@@ -415,26 +415,10 @@ pub const Client = struct {
         if (!dl.IsInteractive(input)) return false;
         _ = Printf(dl, MSG_PASSWORD, .{ @as([*:0]const u8, @ptrCast(&client.user)), @as([*:0]const u8, &client.host) });
         _ = dl.Flush(client.output);
-        _ = dl.SetMode(input, 1);
-        defer _ = dl.SetMode(input, 0);
+        // Without its echo, a newline after it; wiped by dos when given up.
         const login = &client.login;
-        var length: usize = 0;
-        while (true) {
-            var char: [1]u8 = undefined;
-            if (dl.Read(input, &char, 1) != 1 or char[0] == 3 or char[0] == 0x1C) {
-                wipe(&login.password);
-                _ = dl.Write(client.output, "\n", 1);
-                return false;
-            }
-            if (char[0] == '\r' or char[0] == '\n') break;
-            if (char[0] == 8 or char[0] == 127) {
-                if (length > 0) length -= 1;
-            } else if (length < login.password.len and char[0] >= ' ') {
-                login.password[length] = char[0];
-                length += 1;
-            }
-        }
-        _ = dl.Write(client.output, "\n", 1);
+        const length = dl.ReadPassword(input, &login.password, login.password.len);
+        if (length < 0) return false;
         login.password_length = @intCast(length);
         return true;
     }

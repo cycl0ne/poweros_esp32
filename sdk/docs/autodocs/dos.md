@@ -114,6 +114,7 @@ Generated from the source by `./zig build autodoc`.
 - [ReadFile](#readfile) - Reads the file `name` whole into memory of its own, a NUL after its bytes.
 - [ReadItem](#readitem) - Reads the next item of a command line into a buffer.
 - [ReadLink](#readlink) - Asks a handler for the path a soft link gives, in place of the name that met it.
+- [ReadPassword](#readpassword) - Reads a password, a passphrase or a token as it is typed on the console `file`, nothing of it shown.
 - [Relabel](#relabel) - Gives the volume in a drive a new name, when its file system can.
 - [RemAssignList](#remassignlist) - Removes one directory from an assign.
 - [RemDosEntry](#remdosentry) - Takes a node off the device list.
@@ -6701,6 +6702,83 @@ None known.
 var path: [sdk.dos.path_max + 1]u8 = undefined;
 if (dos_lib.ReadLink(port, dir, name, &path, path.len) >= 0) {
     _ = dos_lib.PutStr(@ptrCast(&path));
+}
+```
+
+## ReadPassword
+
+Reads a password, a passphrase or a token as it is typed on the console `file`, nothing of it shown.
+
+**SYNOPSIS**
+
+```zig
+fn ReadPassword(db: *DosBase, file: ?*FileHandle, buffer: [*]u8, size: usize) isize
+```
+
+**SINCE**
+
+1.19. LVO -640.
+
+**INPUTS**
+
+- `file` - the console it is typed on: a process's Input(), or a
+  session's console.
+- `buffer`, `size` - where the characters go; a NUL after them when
+  there is room.
+
+**RESULT**
+
+The characters typed; -1 when nothing may be taken, the buffer then
+wiped - IoErr() ERROR_BREAK for Ctrl-C, 0 when the input ended,
+ERROR_OBJECT_WRONG_TYPE for a `file` that is no console, Read's error.
+
+**BEHAVIOR**
+
+The console is put in raw mode, so nothing typed is echoed, and read
+a character at a time: Backspace and Delete take the last one back,
+Return or a line feed ends the line, Ctrl-C, Ctrl-\ and the input's
+end give it up. A control character else is passed over, and a
+character past `size` too. The console is put back in the mode it was
+in - a RAW: window stays raw - and a newline written to it, so what
+comes next starts a line of its own.
+
+**CONTEXT**
+
+- Waits: yes, for each character typed.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a process, or a task with a console handle of its own.
+
+**OWNERSHIP**
+
+The buffer is the caller's, to wipe once the secret is used.
+
+**NOTES**
+
+The prompt is the caller's to write and flush before. Bytes typed
+ahead past the Return stay in the handle's buffer for the next read.
+A key that sends an escape sequence - an arrow - gives the characters
+after its escape.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetMode`, `Read`, `IsInteractive`, `FGets`
+
+**EXAMPLES**
+
+```zig
+_ = dl.PutStr("Password: ");
+_ = dl.Flush(dl.Output());
+var password: [128]u8 = undefined;
+const length = dl.ReadPassword(dl.Input(), &password, password.len);
+if (length < 0) return dos.RETURN_WARN;
+defer {
+    const wiped: [*]volatile u8 = &password;
+    for (0..password.len) |at| wiped[at] = 0;
 }
 ```
 

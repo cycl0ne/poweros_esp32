@@ -59,7 +59,7 @@ const CryptoBase = sdk.interface.crypto.CryptoBase;
 const sftp = @import("sftp.zig");
 
 pub const COMMAND_NAME = "ShellServer";
-const VERSION_STRING = "\x00$VER: ShellServer 1.11 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShellServer 1.12 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "PORT/K/N,QUIET/S,SSH/S";
@@ -86,7 +86,7 @@ const MSG_LISTENING = "%s: listening on port %u; Ctrl-C stops\n";
 const MSG_CONNECTED = "%s: %s from %s\n";
 const MSG_WAITING = "%s: waiting for %u shells to end\n";
 const MSG_PROMPT = "Password: ";
-const MSG_WRONG = "\r\nWrong password\r\n";
+const MSG_WRONG = "Wrong password\n";
 const MSG_HOSTKEY = "%s: host key %s (%s)\n";
 const MSG_NEWKEY = "%s: made the host key %s\n";
 const MSG_NOKEY = "%s: no host key: %s cannot be read or written\n";
@@ -582,33 +582,15 @@ fn password(dl: *DosBase, console: *dos.FileHandle) bool {
     var tried: u32 = 0;
     while (tried < tries) : (tried += 1) {
         _ = dl.Write(console, MSG_PROMPT, MSG_PROMPT.len);
-        _ = dl.SetMode(console, 1);
         var typed: [64]u8 = undefined;
-        var length: usize = 0;
-        var ended = false;
-        while (true) {
-            var char: [1]u8 = undefined;
-            if (dl.Read(console, &char, 1) != 1) {
-                ended = true;
-                break;
-            }
-            if (char[0] == '\r' or char[0] == '\n') break;
-            if ((char[0] == 8 or char[0] == 127) and length > 0) {
-                length -= 1;
-            } else if (length < typed.len and char[0] >= ' ') {
-                typed[length] = char[0];
-                length += 1;
-            }
-        }
-        _ = dl.SetMode(console, 0);
-        if (ended) return false;
+        // Without its echo, a newline after it, by dos.
+        const typed_length = dl.ReadPassword(console, &typed, typed.len);
+        if (typed_length < 0) return false;
+        const length: usize = @intCast(typed_length);
         const right = length == wanted_length and for (typed[0..length], wanted[0..length]) |got, want| {
             if (got != want) break false;
         } else true;
-        if (right) {
-            _ = dl.Write(console, "\r\n", 2);
-            return true;
-        }
+        if (right) return true;
         _ = dl.Write(console, MSG_WRONG, MSG_WRONG.len);
     }
     return false;

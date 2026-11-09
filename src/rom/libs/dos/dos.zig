@@ -2036,6 +2036,109 @@ test "DeleteTree: what will not go stops the walk, or is passed over (ONWARD), o
     try tearDown(db);
 }
 
+/// A console for ReadPassword: what is typed, a byte a packet, the modes
+/// it was put in, what was written to it.
+const FakeConsole = struct {
+    var port: MsgPort = undefined;
+    var dl: *interface.DosBase = undefined;
+    var typed: []const u8 = "";
+    var raw = false;
+    var modes: [4]isize = undefined;
+    var mode_count: usize = 0;
+    var written: [16]u8 = undefined;
+    var written_length: usize = 0;
+
+    fn wait(proc: *Process, sys: *ExecBase) callconv(.c) *exec.Message {
+        const pkt = DosPacket.fromMessage(sys.GetMsg(&port).?);
+        var res1: isize = dos.DOSFALSE;
+        var res2: i32 = 0;
+        switch (pkt.getAction()) {
+            .screen_mode => {
+                modes[mode_count] = pkt.args.screen_mode.mode;
+                mode_count += 1;
+                raw = pkt.args.screen_mode.mode != 0;
+                res1 = dos.DOSTRUE;
+            },
+            .disk_info => {
+                const info: *dos.InfoData = @ptrFromInt(@as(usize, @bitCast(pkt.args.raw[0])));
+                info.* = .{ .disk_type = if (raw) dos.ID_RAWCON else dos.ID_CON };
+                res1 = dos.DOSTRUE;
+            },
+            .read => {
+                // A console answers with what has been typed: a byte here.
+                const count: usize = @min(typed.len, 1);
+                if (count == 1) pkt.args.io.buffer.?[0] = typed[0];
+                typed = typed[count..];
+                res1 = @intCast(count);
+            },
+            .write => {
+                const bytes = pkt.args.io.buffer.?[0..@intCast(pkt.args.io.length)];
+                @memcpy(written[written_length..][0..bytes.len], bytes);
+                written_length += bytes.len;
+                res1 = pkt.args.io.length;
+            },
+            else => res2 = dos.ERROR_ACTION_NOT_KNOWN,
+        }
+        dl.ReplyPkt(pkt, res1, res2);
+        return sys.GetMsg(&proc.msg_port).?;
+    }
+
+    fn start(db: *DosBase, tp: *TestProcess, text: []const u8, raw_at_first: bool) void {
+        dl = base(db);
+        handlerPort(&port);
+        typed = text;
+        raw = raw_at_first;
+        mode_count = 0;
+        written_length = 0;
+        tp.proc.pkt_wait = &wait;
+    }
+};
+
+test "ReadPassword: no echo, Backspace, Return; Ctrl-C and the end wipe; a RAW: window stays raw" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    var console: FileHandle = .{ .task = &FakeConsole.port, .interactive = true };
+    var buffer: [8]u8 = @splat('#');
+
+    FakeConsole.start(db, &tp, "se\x08cret\x01\rnext", false);
+    try testing.expectEqual(@as(isize, 5), dl.ReadPassword(&console, &buffer, buffer.len));
+    try testing.expectEqualStrings("scret\x00\x00\x00", &buffer);
+    try testing.expectEqualSlices(isize, &.{ 1, 0 }, FakeConsole.modes[0..FakeConsole.mode_count]);
+    try testing.expectEqualStrings("\n", FakeConsole.written[0..FakeConsole.written_length]);
+    try testing.expectEqualStrings("next", FakeConsole.typed); // typed ahead: left
+
+    // More than the buffer holds: the rest passed over.
+    FakeConsole.start(db, &tp, "abcdefghij\n", false);
+    try testing.expectEqual(@as(isize, 8), dl.ReadPassword(&console, &buffer, buffer.len));
+    try testing.expectEqualStrings("abcdefgh", &buffer);
+
+    // Ctrl-C, Ctrl-\\, the end: nothing kept.
+    for ([_][]const u8{ "ab\x03", "ab\x1c", "ab" }, [_]i32{ dos.ERROR_BREAK, 0, 0 }) |text, code| {
+        FakeConsole.start(db, &tp, text, false);
+        buffer = @splat('#');
+        try testing.expectEqual(@as(isize, -1), dl.ReadPassword(&console, &buffer, buffer.len));
+        try testing.expectEqual(code, dl.IoErr());
+        try testing.expectEqualSlices(u8, &@as([8]u8, @splat(0)), &buffer);
+        try testing.expectEqualStrings("\n", FakeConsole.written[0..FakeConsole.written_length]);
+    }
+
+    // A console in raw mode already: left so.
+    FakeConsole.start(db, &tp, "x\r", true);
+    try testing.expectEqual(@as(isize, 1), dl.ReadPassword(&console, &buffer, buffer.len));
+    try testing.expectEqual(@as(usize, 0), FakeConsole.mode_count);
+    try testing.expect(FakeConsole.raw);
+
+    // No console.
+    var file: FileHandle = .{ .task = &FakeConsole.port };
+    try testing.expectEqual(@as(isize, -1), dl.ReadPassword(&file, &buffer, buffer.len));
+    try testing.expectEqual(dos.ERROR_OBJECT_WRONG_TYPE, dl.IoErr());
+    try tearDown(db);
+}
+
 /// ExAll's hook for the test: leaves out the names starting with 'b'.
 fn skipB(_: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     const level: *i32 = @ptrCast(@alignCast(object.?));

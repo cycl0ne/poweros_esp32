@@ -546,4 +546,10 @@ bool CreateDirs([*:0]const u8 name, bool last)
 /// `hook` told of each object (a DeleteMsg) and able to stop the walk:
 /// true, or false with IoErr.
 bool DeleteTree([*:0]const u8 name, u32 flags, ?*utility.Hook hook)
+// Secrets
+/// A password typed on the console `file` without its echo into `buffer`
+/// (a NUL after it when there is room), a newline written after: its
+/// length, or -1 with the buffer wiped - IoErr ERROR_BREAK for Ctrl-C, 0
+/// when the input ended.
+isize ReadPassword(?*dos.FileHandle file, [*]u8 buffer, usize size)
 ##end

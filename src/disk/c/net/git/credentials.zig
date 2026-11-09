@@ -160,27 +160,14 @@ fn ask(git: *Git, remote: *const url.RemoteUrl, credentials: *Credentials) bool 
     git.put(remote.origin()[scheme_end..]);
     git.put("': ");
     _ = dl.Flush(git.output);
-    _ = dl.SetMode(input, 1);
-    defer _ = dl.SetMode(input, 0);
-    var length: usize = 0;
-    while (true) {
-        var char: [1]u8 = undefined;
-        if (dl.Read(input, &char, 1) != 1 or char[0] == 3 or char[0] == 0x1C) {
-            credentials.wipe();
-            git.put("\n");
-            return false;
-        }
-        if (char[0] == '\r' or char[0] == '\n') break;
-        if (char[0] == 8 or char[0] == 127) {
-            if (length > 0) length -= 1;
-        } else if (length < url.secret_most and char[0] >= ' ') {
-            credentials.password[length] = char[0];
-            length += 1;
-        }
+    // Without its echo, a newline after it, by dos.
+    const length = dl.ReadPassword(input, &credentials.password, url.secret_most);
+    if (length < 0) {
+        credentials.wipe();
+        return false;
     }
-    git.put("\n");
-    credentials.password[length] = 0;
-    credentials.password_length = length;
+    credentials.password[@intCast(length)] = 0;
+    credentials.password_length = @intCast(length);
     credentials.have = true;
     return true;
 }

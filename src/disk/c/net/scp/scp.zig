@@ -44,7 +44,7 @@ const UtilityBase = sdk.interface.utility.UtilityBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SCP";
-const VERSION_STRING = "\x00$VER: SCP 1.4 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SCP 1.5 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/A,TO/A,ALL/S,PORT/K/N,USER/K,QUIET/S";
