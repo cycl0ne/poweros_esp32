@@ -574,11 +574,12 @@ pub fn parameter0(state: u32) u32 {
     return state | 0b11;
 }
 
-/// Configuration parameter 1: the sampler's address, with helper pixels
-/// sampling too, so that a quad's level is worked out from all of it; and
-/// whether the coordinates are in texels (`Unnormalized coordinates`, bit 1
-/// of TMU Config Parameter 1, v3d_packet.xml:1542-1547), which v3dv sets
-/// from the sampler as it writes the uniform (v3dv_uniforms.c:213-218).
+/// Configuration parameter 1: the sampler's address, and whether the
+/// coordinates are in texels (`Unnormalized coordinates`, bit 1 of TMU
+/// Config Parameter 1, v3d_packet.xml:1542-1547), which v3dv sets from the
+/// sampler as it writes the uniform (v3dv_uniforms.c:213-218). The
+/// per-pixel mask is the program's, ORed in where its sample skips the
+/// helper pixels (`compile.per_pixel_mask`; since 1.167).
 pub fn parameter1(sampler: u32, unnormalized: bool) u32 {
     return sampler | @as(u32, @intFromBool(unnormalized)) << 1;
 }

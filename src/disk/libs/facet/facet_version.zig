@@ -5129,4 +5129,61 @@ pub const LIBRARY_VERSION = 1;
 /// On the CM5 the case is 8 pixels of 230,400 apart, the triangle's edge,
 /// as the other V3D cases are; FacetBoth's other 228 cases are as they
 /// were at 1.165, and FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 166;
+///
+/// 167: **Block reads at offsets that differ from lane to lane
+/// (docs/facet-vulkan10.md item 59).** Where an offset 1.166 reads
+/// through unifa differs from lane to lane, v3d reads the floats through
+/// the TMU's general lookup instead (ntq_emit_load_unifa,
+/// nir_to_vir.c:3315-3317, then ntq_emit_tmu_general, :502-725):
+/// `to_vir.emitTmuGeneral`. The buffer's address is loaded first, a
+/// uniform buffer's at an offset of 0; the offset read, which may flush
+/// the TMU; the threads and the output FIFO checked; then the offset
+/// added to the address into TMUAU, with the lookup's configuration as
+/// its uniform (`0xffffff00 | 15 << 3 | per-pixel | type`), or into TMUA
+/// with none where the configuration is the default, a pixel's 32-bit
+/// word (emit_tmu_general_address_write, :438-492). The LDTMUs are owed,
+/// and `flushTmu` makes them the load's floats.
+///
+/// `compile.lanes` is what decides: nir_divergence_analysis's answer for
+/// every step (v3d_attempt_compile, vir.c:2105) - a varying differs, and
+/// so does whatever reads one - and, for a fragment program,
+/// nir_opt_load_skip_helpers's (vir.c:2107-2115): a sample's coordinate
+/// wants the helper pixels, for its level of detail is worked out across
+/// the quad (nir_opt_load_skip_helpers.c:151-157), and so does a load's
+/// offset where the load is not one to skip, which only one that differs
+/// is (no_add_divergence, :98-113). What they read wants them too. A
+/// sample or a load that differs and is read into nothing that wants
+/// them skips them (:258-275): the load's lookup is a pixel's, else a
+/// quad's (:640-648), and the sample's P1 has its per-pixel mask on
+/// (v3d_tex.c:311-321), which the stream's `.sampler` word now carries
+/// (`compile.per_pixel_mask`): every sample at a varying's coordinate
+/// drawn into the colour has it, as Mesa's has.
+///
+/// The steps nir_opt_dce took out are no longer laid out in the program
+/// (`Order.layOut`), a varying's excepted: v3d's own dead code
+/// elimination keeps a TMU lookup (vir_opt_dead_code.c:207), so a load
+/// nothing reads would have cost one that NIR's never made. The uniforms
+/// of glslc_indexed come in another order, the scheduler having fewer
+/// instructions to order.
+///
+/// - Not ported: a load whose offset differs in non-uniform control flow
+///   (:456-459, :490-491), there being none in the profile; an index
+///   computed into the push constants, still refused (Error.Storage).
+///
+/// Tests: the V3D's 204, four new and three rewritten. glslc_divergent
+/// (178 words) is 19 instructions, one TMUAU write of 0xFFFFFFFC and
+/// four LDTMUs; glslc_quad (247 words): the coordinate's lookup a quad's
+/// of two words (0xFFFFFF7A), the scale's a pixel's through TMUA and the
+/// sample's P1 with the mask; glslc_steady (221 words): a sample at a
+/// coordinate the same in every lane keeps its helper pixels, P1 0;
+/// glslc_dead (234 words, -O0): the load gone, the interpolated colour's
+/// program word for word. HalfRead and AllRead, whose reads nothing
+/// reads, take the texel's shortcut. FacetBoth 1.35: the shipped case of
+/// block reads at offsets that differ from pixel to pixel, glslc's words
+/// on the V3D beside a function of the same reads on the cores.
+///
+/// On the CM5 the case is 8 pixels of 230,400 apart, the triangle's edge,
+/// as the other V3D cases are; FacetBoth's other 229 cases are as they
+/// were at 1.166, the textured ones with the mask among them, and
+/// FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 167;

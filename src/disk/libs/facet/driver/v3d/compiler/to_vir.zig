@@ -569,7 +569,15 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         // unifa, which its constant offset always allows here. A
         // load_ssbo too (:3638-3643), of a buffer nothing writes, which is
         // every one in the profile (since 1.164).
-        .ubo, .ssbo, .ubo_indirect, .ssbo_indirect => try emitLoadUnifa(e, each, at),
+        .ubo, .ssbo => try emitLoadUnifa(e, each, at),
+        // At an offset computed: through unifa where the offset is the
+        // same in every lane, and else through the TMU, whose LDTMUs
+        // define the floats when it is flushed (:3315-3317, :3634-3643;
+        // since 1.167).
+        .ubo_indirect, .ssbo_indirect => {
+            if (e.work.divergent[each.a]) return emitTmuGeneral(e, each, at);
+            try emitLoadUnifa(e, each, at);
+        },
     }
     e.defined[at] = true;
 }
@@ -594,8 +602,7 @@ fn emitLoadUnifa(e: *Emit, each: Step, at: u16) Error!void {
     // offset is 4 bytes past the last load's.
     const max_unifa_skip_dist: u32 = max_unifa_skip_distance - 4;
     // An offset the program computes, the same in every lane
-    // (`compile.uniformOffsets`), is added to the buffer's address
-    // (since 1.166).
+    // (`compile.lanes`), is added to the buffer's address (since 1.166).
     const dynamic_src = each.tag == .ubo_indirect or each.tag == .ssbo_indirect;
     const const_offset: u32 = if (dynamic_src) 0 else each.at;
     // QUNIFORM_UBO_ADDR takes the buffer's index shifted up by one, 0
@@ -838,12 +845,13 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     const p0_packed = return_words | texture_index << 24;
     try wrtmuc(c, .tmu_config_p0, p0_packed);
 
-    // P1 is needed: a sample needs a sampler. Its output 16-bit, the
-    // per-pixel mask off in a fragment program that keeps its helper
-    // invocations, the coordinates normalized: all its bits 0, and the
-    // sampler's number above them. P2 is the default, so neither it nor
+    // P1 is needed: a sample needs a sampler (v3d_tex.c:311-321). Its
+    // output 16-bit, the coordinates normalized, and the per-pixel mask
+    // on where the sample skips its helper pixels or the program is not
+    // a fragment program's (since 1.167): that bit alone, and the
+    // sampler's number above it. P2 is the default, so neither it nor
     // the P1 a P2 would need is written.
-    const p1_packed: u32 = 0;
+    const p1_packed: u32 = if (c.stage != .fragment or e.work.skip_helpers[at]) compile.per_pixel_mask else 0;
     try wrtmuc(c, .tmu_config_p1, p1_packed | sampler_index << 24);
 
     const retiring = try tmuWrite(c, .tmus, s);
@@ -851,6 +859,61 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // many: the scheduler only holds a lookup back for it.
     retiring.ldtmu_count = return_words;
     try addPendingTmuFlush(e, at, return_words);
+}
+
+/// The TMU's general lookup, as its configuration word has it
+/// (nir_to_vir.c:43-52): the lookup a quad's or a pixel's, and what it
+/// reads.
+const general_tmu_lookup_per_quad: u32 = 0 << 7;
+const general_tmu_lookup_per_pixel: u32 = 1 << 7;
+const general_tmu_lookup_type_vec2: u32 = 2;
+const general_tmu_lookup_type_32bit_ui: u32 = 7;
+/// V3D_TMU_OP_REGULAR (v3d_packet.xml:99), a load's operation
+/// (v3d_general_tmu_op, nir_to_vir.c:213-226).
+const tmu_op_regular: u32 = 15;
+
+/// ntq_emit_tmu_general (nir_to_vir.c:502-725), for a load_ubo or a
+/// load_ssbo at an offset that differs from lane to lane (since 1.167).
+/// The buffer's address first, a uniform buffer's slot shifted up by one
+/// at an offset of 0 and a storage buffer's own (:560-603). Then the
+/// count Mesa makes before it emits: one TMU write, the address, whose
+/// offset is read, which may flush what the TMU holds (MODE_COUNT,
+/// emit_tmu_general_address_write :449-454); the threads that leaves room
+/// for, and a flush where the output FIFO would overflow (:690-701).
+/// Then the write itself (:456-492): the offset added to the address into
+/// TMUAU, with the configuration as its uniform, or into TMUA where the
+/// configuration is the default, a pixel's 32-bit word. The lookup is a
+/// quad's in a fragment program, unless its helper pixels are skipped
+/// (ACCESS_SKIP_HELPERS, :640-648), and reads a 32-bit word or as many as
+/// the load has (:650-670). The LDTMUs are owed (:702-710).
+fn emitTmuGeneral(e: *Emit, each: Step, at: u16) Error!void {
+    const c = e.c;
+    const base_offset = if (each.tag == .ssbo_indirect)
+        try c.uniform(.ssbo_offset, each.b)
+    else
+        try c.uniform(.ubo_addr, vir.unitDataCreate(@as(u32, each.b) + 1, 0));
+
+    const dest_components: u32 = @intCast(each.kind.parts());
+    const tmu_writes: u32 = 1;
+    _ = try getSrc(e, each.a, 0);
+    while (tmu_writes > 16 / @as(u32, c.threads)) c.threads /= 2;
+    if (tmuFifoOverflow(e, dest_components)) try flushTmu(e);
+
+    const perquad = if (c.stage == .fragment and !e.work.skip_helpers[at])
+        general_tmu_lookup_per_quad
+    else
+        general_tmu_lookup_per_pixel;
+    var config: u32 = 0xffffff00 | tmu_op_regular << 3 | perquad;
+    config |= if (dest_components == 1)
+        general_tmu_lookup_type_32bit_ui
+    else
+        general_tmu_lookup_type_vec2 + dest_components - 2;
+
+    const tmua = vir.magicReg(if (config == ~@as(u32, 0)) .tmua else .tmuau);
+    const tmu = try c.addDest(.add, tmua, .{ base_offset, try getSrc(e, each.a, 0) });
+    if (config != ~@as(u32, 0)) tmu.uniform = try c.getUniformIndex(.constant, config);
+    tmu.ldtmu_count = dest_components;
+    try addPendingTmuFlush(e, at, (@as(u32, 1) << @intCast(dest_components)) - 1);
 }
 
 /// ntq_tmu_fifo_overflow (nir_to_vir.c:252): whether `components` more
@@ -861,7 +924,8 @@ fn tmuFifoOverflow(e: *const Emit, components: u32) bool {
 }
 
 /// ntq_flush_tmu (nir_to_vir.c:266): the thread switch, and the LDTMUs or
-/// the TMUWT, for every TMU operation waiting.
+/// the TMUWT, for every TMU operation waiting. A sample's words are
+/// unpacked after, and a general load's are its floats (since 1.167).
 fn flushTmu(e: *Emit) Error!void {
     if (e.flush_count == 0) return;
     const c = e.c;
@@ -870,12 +934,15 @@ fn flushTmu(e: *Emit) Error!void {
     var emitted_tmuwt = false;
     for (e.flush[0..e.flush_count]) |pending| {
         if (pending.component_mask > 0) {
+            const tag = e.work.steps[pending.step].tag;
+            const general = tag == .ubo_indirect or tag == .ssbo_indirect;
             for (0..4) |j| {
                 if (pending.component_mask & @as(u32, 1) << @intCast(j) != 0) {
-                    e.words[pending.step][j] = try c.mul(.mov, .{try c.ldtmu()});
+                    const word = try c.mul(.mov, .{try c.ldtmu()});
+                    if (general) e.defs[pending.step][j] = word else e.words[pending.step][j] = word;
                 }
             }
-            e.words_defined[pending.step] = true;
+            if (general) e.defined[pending.step] = true else e.words_defined[pending.step] = true;
         } else if (!emitted_tmuwt) {
             _ = try c.addNodst(.tmuwt, .{});
             emitted_tmuwt = true;
