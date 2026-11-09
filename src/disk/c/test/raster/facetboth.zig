@@ -33,7 +33,9 @@
 //! not a sum gone wrong. The shipped case of chosen floats (since 1.21)
 //! is the same where a comparison turns over and Step jumps: Sin, Cos,
 //! Tan, FSign, Step and SmoothStep, and OpSelect after each of the
-//! comparisons glslc writes but >.
+//! comparisons glslc writes but >. The shipped case of selections (since
+//! 1.22) is an `if` and `else` and a ternary of calls, which the V3D
+//! flattens as Mesa does: both arms run, the merge chooses.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -48,7 +50,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.21 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.22 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -501,6 +503,36 @@ const Shipped = struct {
             b.color(b.vector(&.{ by_less, by_half, tangent, by_order }));
         }
     });
+    /// The shader the V3D's host tests hold to glslc's glslc_branch word
+    /// for word: two selections, one with an `else` that changes three
+    /// floats of the colour, one a ternary of Pow and Exp2 (since 1.22).
+    const Branched = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const half = b.scalar(0.5);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const first = b.ifHolds(b.lessThan(x, half));
+            const red_yes = b.add(b.mul(b.sin(b.mul(y, b.scalar(3))), half), half);
+            const green_yes = b.mul(z, w);
+            b.otherwise(first);
+            const red_no = b.mul(y, b.scalar(0.25));
+            const blue_no = b.sqrt(z);
+            b.endIf(first);
+            const r = b.merged(first, red_yes, red_no);
+            const g = b.merged(first, green_yes, y);
+            const bl = b.merged(first, z, blue_no);
+            const second = b.ifHolds(b.greaterThan(w, half));
+            const alpha_yes = b.add(b.pow(x, b.scalar(2)), b.scalar(0.1));
+            b.otherwise(second);
+            const alpha_no = b.mul(b.exp2(y), b.scalar(0.25));
+            b.endIf(second);
+            const a = b.merged(second, alpha_yes, alpha_no);
+            b.color(b.vector(&.{ r, g, bl, a }));
+        }
+    });
 };
 
 /// The entries that ship words, after all the others, and the words of
@@ -523,13 +555,14 @@ const shipped_entries = [_]shader.Entry{
     Shipped.Arithmetic.entry("shipped arithmetic"),
     Shipped.Called.entry("shipped called"),
     Shipped.Chosen.entry("shipped chosen"),
+    Shipped.Branched.entry("shipped branched"),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                       .{},                    .{},                      .{},
     Shipped.Smooth.spirv,      Shipped.Flat.spirv,     Shipped.Dimmed.spirv,     Shipped.Textured.spirv,
     Shipped.Modulated.spirv,   Shipped.Pushed.spirv,   Shipped.Tinted.spirv,     Shipped.Cutout.spirv,
     Shipped.CutoutOther.spirv, Shipped.Shadowed.spirv, Shipped.Arithmetic.spirv, Shipped.Called.spirv,
-    Shipped.Chosen.spirv,
+    Shipped.Chosen.spirv,      Shipped.Branched.spirv,
 };
 
 const plain_entries = [_]shader.Entry{
@@ -2941,6 +2974,7 @@ const cases = [_]Case{
     .{ .name = "shipped float arithmetic", .run = Cases.shipped("as it is", "shipped arithmetic", false, clockwise_at) },
     .{ .name = "shipped GLSL.std.450 calls", .run = Cases.shipped("as it is", "shipped called", false, clockwise_at) },
     .{ .name = "shipped chosen floats", .run = Cases.shipped("as it is", "shipped chosen", false, clockwise_at) },
+    .{ .name = "shipped selections", .run = Cases.shipped("as it is", "shipped branched", false, clockwise_at) },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },

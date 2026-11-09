@@ -4502,4 +4502,47 @@ pub const LIBRARY_VERSION = 1;
 /// FOrdNotEqual refused. tests/ir.zig: the module read back, and the
 /// cores' choices and functions against f64 down each arm. glslc's
 /// float arithmetic now has one FMAX and no FMIN, its FClamp an fsat.
-pub const LIBRARY_REVISION = 153;
+///
+/// 154: **The V3D compiles a selection, flattened as Mesa flattens it
+/// (docs/facet-vulkan10.md item 59).** glslc writes an `if` and `else`,
+/// and a ternary whose arms do more than name a value, as a selection:
+/// OpSelectionMerge, OpBranchConditional, an arm block or two and OpPhi
+/// at the merge. Every such shader was refused as a branch.
+///
+/// - The walk reads a selection as nir_opt_peephole_select leaves it
+///   (nir_opt_peephole_select.c:508-605): the arms' instructions, both,
+///   one after the other, and for each phi a `select` of each float on
+///   the selection's comparison, as nir_lower_phis_to_scalar makes it one
+///   bcsel a float; a float both ways bring alike is that float, as
+///   nir_opt_remove_phis leaves it. Either label may be the merge block
+///   itself, the way in from there the selection's own block.
+/// - A selection stays a branch, and is refused, where the pass leaves
+///   it one: an arm that samples or stores, one that is a selection of
+///   its own, or arms of more than the limit of 24 v3d gives it
+///   (nir_to_vir.c:2274-2279), counted as block_check_for_allowed_instrs
+///   counts (:246-310), a move, negation, absolute value and fsat
+///   nothing and a product only summed nothing. The count is of the
+///   steps after lowering, where Mesa counts before: as many or more, so
+///   an arm near the limit may be refused that Mesa flattens, never the
+///   other way about.
+/// - OpCompositeInsert is a vector with one float replaced
+///   (vtn_composite_insert, spirv_to_nir.c:4612-4650).
+/// - A conditional discard is the same shape with an arm of OpKill alone,
+///   read by the same path.
+/// - `spirv.facet_opcodes` and the profile take `phi`, `branch` and
+///   `composite_insert`.
+/// - `ir.Build` has `ifHolds`, `otherwise`, `endIf` and `merged`: the
+///   arms put down between them, a value made in an arm read only there
+///   or by a `merged`, each held at comptime. A varying read past the
+///   branch is loaded before it, where both arms are dominated. The cores
+///   run both arms and choose.
+///
+/// Tests: the V3D's 158, three new: glslc's `if` and `else`
+/// (`glslc_branch`, 360 words) flattened, both arms' work and a select a
+/// float, the flags still holding each comparison; facet's emitter's
+/// module of the same shader compiled to the same words; the limit at 24
+/// and 26, an arm that samples (`glslc_sampled_arm`), an arm that jumps
+/// elsewhere and a phi of a block neither arm, refused. tests/ir.zig: the
+/// modules read back, both arms on the cores against f64, and the way
+/// past a selection of no false arm.
+pub const LIBRARY_REVISION = 154;

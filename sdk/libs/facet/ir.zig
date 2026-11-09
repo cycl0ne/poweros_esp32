@@ -149,6 +149,18 @@ pub const Tag = enum(u8) {
     /// float each: OpSelect, as glslc writes a ternary of plain values
     /// (since 1.153).
     select,
+    /// A selection on the comparison `a`: the operations up to its
+    /// `otherwise`, or its `end_if` where it has none, are its true arm.
+    /// OpSelectionMerge and OpBranchConditional (since 1.154).
+    if_holds,
+    /// The false arm of the selection `a`: an OpBranch to its merge block
+    /// and the arm's label.
+    otherwise,
+    /// The selection `a` over: an OpBranch, and the merge block's label.
+    end_if,
+    /// A value past the selection `a`: `b` where its comparison held and
+    /// `c` where not, OpPhi. Only these read a value made in an arm.
+    merged,
     /// Drop the pixels a comparison holds.
     discard_if,
     /// The colour, which is where a shader ends.
@@ -185,7 +197,36 @@ pub const Op = struct {
     /// graph that does not ask for one is word for word the module it
     /// always was. (Since 1.87.)
     offset: [2]i32 = .{ 0, 0 },
+    /// The selection whose arm an operation is in, `outside` for none,
+    /// and which arm: 1 the true, 2 the false (since 1.154).
+    within: u16 = outside,
+    arm: u2 = 0,
 };
+
+/// No selection: what `Op.within` says of an operation outside any arm.
+pub const outside: u16 = 0xFFFF;
+
+/// The operations `op` reads as values, by its tag. A selection's own
+/// operations name their selection, which is no value.
+fn readOf(op: Op) [4]?u16 {
+    return switch (op.tag) {
+        .input, .constant, .push, .otherwise, .end_if => .{ null, null, null, null },
+        .sample, .negate, .component, .discard_if, .color, .if_holds => .{ op.a, null, null, null },
+        .extended => switch (callArguments(@enumFromInt(op.at))) {
+            1 => .{ op.a, null, null, null },
+            2 => .{ op.a, op.b, null, null },
+            else => .{ op.a, op.b, op.c, null },
+        },
+        .construct => switch (op.kind.parts()) {
+            2 => .{ op.a, op.b, null, null },
+            3 => .{ op.a, op.b, op.c, null },
+            else => .{ op.a, op.b, op.c, op.d },
+        },
+        .select => .{ op.a, op.b, op.c, null },
+        .merged => .{ op.b, op.c, null, null },
+        else => .{ op.a, op.b, null, null },
+    };
+}
 
 /// A varying the shader reads.
 pub const Input = struct {
@@ -246,10 +287,32 @@ pub const Build = struct {
     /// The locations declared so far, to hold a shader to declaring them
     /// in order.
     locations: u32 = 0,
+    /// The selection whose arm is being put down, and which arm; the one
+    /// last ended, which its `merged` values follow (since 1.154).
+    open: u16 = outside,
+    arm: u2 = 0,
+    ended: u16 = outside,
 
     fn put(build: *Build, op: Op) u16 {
         if (build.count == most_ops) @compileError("a shader holds ir.most_ops operations");
-        build.ops[build.count] = op;
+        var made = op;
+        made.within = build.open;
+        made.arm = build.arm;
+        if (build.open != outside) switch (op.tag) {
+            .input => @compileError("a varying is declared outside a selection's arms"),
+            .sample, .sample_compared => @compileError("a sample is outside a selection's arms: a device that flattens them runs both"),
+            .discard_if, .color => @compileError("a discard and the colour are outside a selection's arms"),
+            else => {},
+        };
+        // SSA as SPIR-V has it: a value made in an arm is read in that arm
+        // and past the selection only through a `merged` of it, which
+        // checks its own two.
+        if (op.tag != .merged) for (readOf(made)) |read| if (read) |at| {
+            const of = build.ops[at];
+            if (of.within != outside and (of.within != made.within or of.arm != made.arm))
+                @compileError("a value made in a selection's arm is read in that arm, or past it through `merged`");
+        };
+        build.ops[build.count] = made;
         build.count += 1;
         return build.count - 1;
     }
@@ -562,6 +625,60 @@ pub const Build = struct {
         _ = build.put(.{ .tag = .discard_if, .kind = .boolean, .a = held });
     }
 
+    /// A selection on the comparison `held`, for work only some pixels
+    /// want: what is put down until `otherwise` is done where it holds,
+    /// what is put down from there to `endIf` where it does not, and
+    /// `merged` takes a value of each past it. glslc writes an `if` and
+    /// `else`, or a ternary whose arms do more than name a value, so.
+    /// The arms compute, read varyings and push constants; a sample, a
+    /// discard, the colour and another selection are for outside them,
+    /// which is what a device that flattens the arms into straight code
+    /// can run (since 1.154).
+    pub fn ifHolds(build: *Build, held: u16) u16 {
+        if (build.ops[held].kind != .boolean) @compileError("a selection is on a comparison");
+        if (build.open != outside) @compileError("a selection inside another's arm");
+        const at = build.put(.{ .tag = .if_holds, .kind = .boolean, .a = held });
+        build.open = at;
+        build.arm = 1;
+        return at;
+    }
+
+    /// The false arm of the selection `at` begins.
+    pub fn otherwise(build: *Build, at: u16) void {
+        if (build.open != at or build.arm != 1) @compileError("`otherwise` follows its selection's true arm");
+        build.open = outside;
+        build.arm = 0;
+        _ = build.put(.{ .tag = .otherwise, .kind = .boolean, .a = at });
+        build.open = at;
+        build.arm = 2;
+    }
+
+    /// The selection `at` is over.
+    pub fn endIf(build: *Build, at: u16) void {
+        if (build.open != at) @compileError("`endIf` ends the selection that is open");
+        build.open = outside;
+        build.arm = 0;
+        _ = build.put(.{ .tag = .end_if, .kind = .boolean, .a = at });
+        build.ended = at;
+    }
+
+    /// The value past the selection `at`: `yes` where its comparison held,
+    /// `no` where not, each made in its arm or before the selection. Said
+    /// right after `endIf`, as many as are wanted.
+    pub fn merged(build: *Build, at: u16, yes: u16, no: u16) u16 {
+        const last = build.ops[build.count - 1];
+        if (build.ended != at or !((last.tag == .end_if or last.tag == .merged) and last.a == at))
+            @compileError("`merged` follows its selection's `endIf`, before anything else");
+        const kind = build.ops[yes].kind;
+        if (kind == .boolean or kind != build.ops[no].kind) @compileError("both values of a merge are floats of one width");
+        for ([2]u16{ yes, no }, [2]u2{ 1, 2 }) |value, arm| {
+            const of = build.ops[value];
+            if (of.within != outside and (of.within != at or of.arm != arm))
+                @compileError("a merge takes each value from its own arm, or from before the selection");
+        }
+        return build.put(.{ .tag = .merged, .kind = kind, .a = at, .b = yes, .c = no });
+    }
+
     /// The colour, 0 to 1 a channel. A shader says this once and last.
     pub fn color(build: *Build, value: u16) void {
         if (build.ops[value].kind != .f32x4) @compileError("a colour is four floats");
@@ -808,7 +925,11 @@ fn wordsOf(comptime graph: Graph) []const u32 {
         };
 
         emit.function(void_type, main_id, function_type);
-        emit.label(emit.id());
+        // The block the body is in: the first, then each merge block. A
+        // phi names the block each value came from (since 1.154).
+        var block_label = emit.id();
+        emit.label(block_label);
+        var arm_labels: [most_ops][4]u32 = @splat(@splat(0));
 
         // A varying is loaded where it is first read, not where it was
         // declared, because that is where an assembler puts it.
@@ -940,6 +1061,47 @@ fn wordsOf(comptime graph: Graph) []const u32 {
                     emit.at(.select, &.{ float_type, made, value_ids[op.a], yes, no });
                     value_ids[k] = made;
                 },
+                .if_holds => {
+                    // Every varying read from here on loaded here first,
+                    // in the block both arms and the merge are dominated
+                    // by: a load in one arm is no value in the other, nor
+                    // before a phi in the merge block.
+                    for (graph.ops[0..k], 0..) |before, j| if (before.tag == .input and value_ids[j] == 0 and readLater(graph, j, k)) {
+                        _ = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, j);
+                    };
+                    var has_else = false;
+                    for (graph.ops[k + 1 ..]) |after| if (after.tag == .otherwise and after.a == k) {
+                        has_else = true;
+                    };
+                    const merge = emit.id();
+                    const yes = emit.id();
+                    const no = if (has_else) emit.id() else 0;
+                    emit.at(.selection_merge, &.{ merge, 0 });
+                    emit.at(.branch_conditional, &.{ value_ids[op.a], yes, if (has_else) no else merge });
+                    emit.label(yes);
+                    arm_labels[k] = .{ yes, no, merge, block_label };
+                    block_label = yes;
+                },
+                .otherwise => {
+                    emit.at(.branch, &.{arm_labels[op.a][2]});
+                    emit.label(arm_labels[op.a][1]);
+                    block_label = arm_labels[op.a][1];
+                },
+                .end_if => {
+                    emit.at(.branch, &.{arm_labels[op.a][2]});
+                    emit.label(arm_labels[op.a][2]);
+                    block_label = arm_labels[op.a][2];
+                },
+                .merged => {
+                    // The way in where the false arm is the merge block
+                    // itself is the selection's own block.
+                    const labels = arm_labels[op.a];
+                    const yes = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.b);
+                    const no = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.c);
+                    const made = emit.id();
+                    emit.at(.phi, &.{ vectorFor(&emit, &vector_types, float_type, op.kind), made, yes, labels[0], no, if (labels[1] != 0) labels[1] else labels[3] });
+                    value_ids[k] = made;
+                },
                 .discard_if => {
                     // Structured or it is not SPIR-V: the block they join
                     // at is named before the branch, and the block that
@@ -952,6 +1114,7 @@ fn wordsOf(comptime graph: Graph) []const u32 {
                     emit.label(drop);
                     emit.at(.kill, &.{});
                     emit.label(merge);
+                    block_label = merge;
                 },
                 .color => {
                     const value = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.a);
@@ -996,6 +1159,16 @@ fn vectorFor(comptime emit: *spirv.Emit, comptime vector_types: *[5]u32, comptim
 
 /// The id of what operation `at` answers, loading a varying the first time
 /// one is read.
+/// Whether an operation after `from` reads the operation `at`.
+fn readLater(comptime graph: Graph, comptime at: usize, comptime from: usize) bool {
+    comptime {
+        for (graph.ops[from + 1 ..]) |after| for (readOf(after)) |read| {
+            if (read) |of| if (of == at) return true;
+        };
+        return false;
+    }
+}
+
 fn loadInput(
     comptime emit: *spirv.Emit,
     comptime graph: Graph,
@@ -1177,6 +1350,12 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
                     .less_equal => holds[i] = values[op.a][0] <= values[op.b][0],
                     .greater_equal => holds[i] = values[op.a][0] >= values[op.b][0],
                     .select => values[i][0] = @select(f32, holds[op.a], values[op.b][0], values[op.c][0]),
+                    // Both arms are computed, as a device that flattens
+                    // them computes them, and the merge chooses.
+                    .if_holds, .otherwise, .end_if => {},
+                    .merged => inline for (0..comptime op.kind.parts()) |part| {
+                        values[i][part] = @select(f32, holds[graph.ops[op.a].a], values[op.b][part], values[op.c][part]);
+                    },
                     .discard_if => inline for (0..4) |pixel| {
                         if (holds[op.a][pixel]) quad.kept &= ~(@as(u8, 1) << @intCast(pixel));
                     },

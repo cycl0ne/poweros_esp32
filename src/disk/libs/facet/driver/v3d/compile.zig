@@ -172,7 +172,11 @@ pub const Error = error{
     Varyings,
     /// It drops pixels (`OpKill`), which wants the flag registers.
     Discards,
-    /// More than one basic block: a branch of any kind.
+    /// More than one basic block where it is not a selection Mesa would
+    /// flatten: a loop, a branch of no merge, a selection nested in
+    /// another, an arm that samples, stores or holds more than
+    /// nir_opt_peephole_select takes (since 1.154 a selection whose arms
+    /// are within its limit is read, as Mesa flattens it).
     Branches,
     /// An instruction the walk has no answer for, or one whose operands
     /// are not what this back end expects.
@@ -269,9 +273,12 @@ pub const profile: spirv.Profile = .{
         .f_sub,
         .f_negate,        .f_div,              .dot,                            .ext_inst,
         // The shuffle, then the other comparisons glslc writes and a float
-        // chosen by one (since 1.153).
+        // chosen by one (since 1.153), then a selection's arms, their
+        // values chosen at its merge and one float of a vector replaced
+        // (since 1.154).
         .vector_shuffle,  .f_unord_not_equal,  .f_ord_less_than_equal,          .f_ord_greater_than_equal,
-        .select,          .f_ord_equal,
+        .select,          .f_ord_equal,        .composite_insert,               .phi,
+        .branch,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant },
     .image_dims = &.{.dim_2d},
@@ -861,18 +868,30 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
     var in_body = false;
     var blocks: u32 = 0;
     var returned = false;
-    // Where a conditional discard is in its shape: OpSelectionMerge, then
-    // OpBranchConditional to a block of `OpKill` alone and to the merge
-    // block, then that block, then the merge block's label.
-    var flow: enum { body, branch, kill_label, kill, merge_label } = .body;
-    var merge: u32 = 0;
-    var dropped: u32 = 0;
+    // Where a selection is in its shape: OpSelectionMerge, then
+    // OpBranchConditional to its arms, each a block that ends in an
+    // OpBranch to the merge block, or one of them the merge block itself;
+    // then the merge block, its OpPhis first. A conditional discard is
+    // the same with a true arm of `OpKill` alone and no other (since
+    // 1.139). Mesa's nir_opt_peephole_select flattens such a selection
+    // into its arms' instructions, both, and a bcsel for each phi
+    // (nir_opt_peephole_select.c:508-605), which is what is read here: the
+    // arms' steps one after the other, and a `select` of each float a
+    // phi chooses (since 1.154).
+    var flow: enum { body, branch, arms, arm, killed, merging } = .body;
+    var selection: Selection = .{};
     while (reader.next() catch return Error.Refused) |instruction| {
         const operands = instruction.operands();
         if (returned) {
             // Past OpReturn only the function's end may follow.
             if (instruction.op != .function_end) return Error.Body;
             continue;
+        }
+        // The merge block's phis are over at its first other instruction:
+        // the arms are then what nir_opt_peephole_select counts.
+        if (flow == .merging and instruction.op != .phi) {
+            if (armCost(work, selection.arms_from, selection.arms_to) > peephole_limit) return Error.Branches;
+            flow = .body;
         }
         switch (instruction.op) {
             // Nothing to plan for: the module's own declarations, and the
@@ -1167,51 +1186,92 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             },
             .label => {
                 if (!in_body or operands.len < 1) return Error.Body;
+                const id = operands[0];
                 switch (flow) {
                     .body => {
+                        // The function's first block: any other is a
+                        // selection's.
                         blocks += 1;
                         if (blocks > 1) return Error.Branches;
+                        selection.label = id;
                     },
-                    .kill_label => {
-                        if (operands[0] != dropped) return Error.Branches;
-                        flow = .kill;
+                    .arms => if (id == selection.merge) {
+                        if (selection.yes != selection.merge and !selection.seen_yes) return Error.Branches;
+                        if (selection.no != selection.merge and !selection.seen_no) return Error.Branches;
+                        selection.arms_to = @intCast(work.step_count);
+                        selection.label = id;
+                        flow = .merging;
+                    } else if (id == selection.yes and !selection.seen_yes) {
+                        selection.seen_yes = true;
+                        selection.arm = id;
+                        selection.empty = true;
+                        flow = .arm;
+                    } else if (id == selection.no and !selection.seen_no) {
+                        selection.seen_no = true;
+                        selection.arm = id;
+                        selection.empty = true;
+                        flow = .arm;
+                    } else return Error.Branches,
+                    // After the block that drops the pixel, the merge
+                    // block, where nothing is chosen.
+                    .killed => {
+                        if (id != selection.merge) return Error.Branches;
+                        selection.arms_to = @intCast(work.step_count);
+                        selection.label = id;
+                        flow = .merging;
                     },
-                    .merge_label => {
-                        if (operands[0] != merge) return Error.Branches;
-                        flow = .body;
-                    },
-                    .branch, .kill => return Error.Branches,
+                    .branch, .arm, .merging => return Error.Branches,
                 }
             },
             .selection_merge => {
                 // MergeBlock, SelectionControl. Whether it asks for the
-                // branch flattened or kept is a hint, and there is no
-                // branch here either way.
+                // branch flattened or kept is a hint, which Mesa reads
+                // only where it cannot flatten; here a selection is
+                // flattened or refused. One in an arm is a selection
+                // nested in another, which nir_opt_peephole_select takes
+                // from the inside out, and is not here.
                 if (!in_body or blocks == 0 or flow != .body) return Error.Branches;
                 if (operands.len < 2) return Error.Body;
-                merge = operands[0];
+                selection = .{ .merge = operands[0], .header = selection.label, .label = selection.label };
                 flow = .branch;
             },
             .branch_conditional => {
                 // Condition, True Label, False Label, and maybe weights.
-                // The false label is the merge block: the true one drops
-                // the pixel, and the body goes on in the other. An `if`
-                // whose block holds anything else is a branch, refused.
+                // One of the two may be the merge block itself: an `if`
+                // with no `else`, or the other way about.
                 if (flow != .branch) return Error.Branches;
                 if (operands.len < 3) return Error.Body;
-                if (operands[2] != merge or operands[1] == merge) return Error.Branches;
                 const condition = work.step_of[try idOf(operands[0])];
                 if (condition == none or work.steps[condition].tag != .compare) return Error.Body;
-                _ = try put(work, .{ .tag = .discard, .kind = .f32x1, .a = condition });
-                dropped = operands[1];
-                flow = .kill_label;
+                selection.condition = condition;
+                selection.yes = operands[1];
+                selection.no = operands[2];
+                if (selection.yes == selection.no) return Error.Branches;
+                selection.arms_from = @intCast(work.step_count);
+                flow = .arms;
+            },
+            .branch => {
+                // An arm's end, to the merge block. Any other OpBranch is
+                // a jump to a block no selection names: a loop's, or one
+                // of no structure.
+                if (flow != .arm or operands.len < 1 or operands[0] != selection.merge) return Error.Branches;
+                flow = .arms;
             },
             .kill => {
-                // Only as the block a conditional discard branches to: a
-                // pixel dropped always, or in a block of more than this,
-                // is the family's and refused by its name.
-                if (flow != .kill) return Error.Discards;
-                flow = .merge_label;
+                // Only as the true arm of a selection with no other, and
+                // alone in it: the conditional discard, which Mesa makes
+                // a terminate_if (nir_opt_peephole_select's `discard_ok`).
+                // A pixel dropped always, or after other work in its arm,
+                // is the family's and refused by its name; one beside an
+                // else arm leaves the body going on in two places.
+                if (flow != .arm or !selection.empty) return Error.Discards;
+                if (selection.arm != selection.yes or selection.no != selection.merge) return Error.Branches;
+                _ = try put(work, .{ .tag = .discard, .kind = .f32x1, .a = selection.condition });
+                flow = .killed;
+            },
+            .phi => {
+                if (flow != .merging) return Error.Branches;
+                try phiOf(work, &selection, operands);
             },
             .returns => {
                 if (flow != .body) return Error.Branches;
@@ -1220,9 +1280,20 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             .function_end => {},
             else => {
                 if (!in_body or blocks == 0) return Error.Body;
-                // Nothing between the branch and the merge block's label
-                // but the block that drops the pixel.
-                if (flow != .body) return Error.Branches;
+                switch (flow) {
+                    .body => {},
+                    // An arm Mesa flattens holds ALU work and loads it may
+                    // run where the arm is not taken
+                    // (block_check_for_allowed_instrs,
+                    // nir_opt_peephole_select.c:59-326): a sample, which
+                    // is a texture instruction, or the colour stored, is
+                    // neither, and the selection stays a branch.
+                    .arm => switch (instruction.op) {
+                        .store, .image_sample_implicit_lod, .image_sample_dref_implicit_lod => return Error.Branches,
+                        else => selection.empty = false,
+                    },
+                    else => return Error.Branches,
+                }
                 try step(work, instruction);
             },
         }
@@ -1235,6 +1306,152 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
 fn idOf(word: u32) Error!u16 {
     if (word == 0 or word >= most_ids) return Error.Refused;
     return @intCast(word);
+}
+
+/// A selection as `read` goes through it.
+const Selection = struct {
+    /// The merge block, and the block the selection is in.
+    merge: u32 = 0,
+    header: u32 = 0,
+    /// The block the body is in.
+    label: u32 = 0,
+    /// The true and false labels, either of which may be the merge block,
+    /// and whether each arm has been read.
+    yes: u32 = 0,
+    no: u32 = 0,
+    seen_yes: bool = false,
+    seen_no: bool = false,
+    /// The arm being read, and whether it is still empty.
+    arm: u32 = 0,
+    empty: bool = true,
+    /// The comparison it branches on.
+    condition: u16 = none,
+    /// The arms' steps: from the first after the branch to the first in
+    /// the merge block.
+    arms_from: u16 = 0,
+    arms_to: u16 = 0,
+};
+
+/// The limit v3d's optimization loop gives nir_opt_peephole_select
+/// (nir_to_vir.c:2274-2279), `expensive_alu_ok` with it: a selection
+/// whose arms are more than this many ALU operations stays a branch.
+const peephole_limit = 24;
+
+/// An OpPhi at a flattened selection's merge: ResultType, Result, and a
+/// value and its parent block for each way in. Each float is a `select`
+/// on the selection's comparison, as nir_lower_phis_to_scalar and then
+/// nir_opt_peephole_select make it, a bcsel for each float in order
+/// (nir_to_vir.c:2264-2279); where the two ways bring the same float,
+/// that float, as nir_opt_remove_phis leaves it (since 1.154).
+fn phiOf(work: *Work, selection: *const Selection, operands: []const u32) Error!void {
+    if (operands.len != 6) return Error.Branches;
+    const kind = try kindOf(work, try idOf(operands[0]));
+    const id = try idOf(operands[1]);
+    // Which way each value came: an arm's block, or the selection's own
+    // where the other label is the merge block.
+    var by: [2]u16 = .{ none, none };
+    for ([2]usize{ 2, 4 }) |at| {
+        const parent = operands[at + 1];
+        const side: usize = if (parent == selection.yes and selection.yes != selection.merge)
+            0
+        else if (parent == selection.no and selection.no != selection.merge)
+            1
+        else if (parent == selection.header and selection.yes == selection.merge)
+            0
+        else if (parent == selection.header and selection.no == selection.merge)
+            1
+        else
+            return Error.Branches;
+        if (by[side] != none) return Error.Branches;
+        by[side] = try operand(work, operands[at], kind);
+    }
+    var made = Step{ .tag = .construct, .kind = kind };
+    for (0..kind.parts()) |k| {
+        const yes = partOf(work, by[0], @intCast(k));
+        const no = partOf(work, by[1], @intCast(k));
+        if (yes.step == no.step and yes.part == no.part) {
+            made.from[k] = yes.step;
+            made.part[k] = yes.part;
+            continue;
+        }
+        var chosen = Step{ .tag = .select, .kind = .f32x1, .a = selection.condition, .b = try floatOf(work, yes) };
+        chosen.from[0] = try floatOf(work, no);
+        made.from[k] = try put(work, chosen);
+        made.part[k] = 0;
+    }
+    work.step_of[id] = if (kind == .f32x1)
+        (if (work.steps[made.from[0]].kind == .f32x1 and made.part[0] == 0) made.from[0] else try floatOf(work, .{ .step = made.from[0], .part = made.part[0] }))
+    else
+        try put(work, made);
+}
+
+/// A float of a step, named through the components and constructs that
+/// only name it: what copy propagation leaves of them.
+const Float = struct { step: u16, part: u8 };
+
+fn partOf(work: *const Work, at: u16, k: u8) Float {
+    var of: Float = .{ .step = at, .part = k };
+    while (true) {
+        const each = work.steps[of.step];
+        switch (each.tag) {
+            .construct => of = .{ .step = each.from[of.part], .part = each.part[of.part] },
+            .component => of = .{ .step = each.a, .part = @intCast(each.at) },
+            else => return of,
+        }
+    }
+}
+
+/// The float as a step of one: the step itself where it is one float,
+/// else a component of it.
+fn floatOf(work: *Work, of: Float) Error!u16 {
+    if (work.steps[of.step].kind == .f32x1) return of.step;
+    return put(work, .{ .tag = .component, .kind = .f32x1, .a = of.step, .at = of.part });
+}
+
+/// The ALU operations of a selection's arms as nir_opt_peephole_select
+/// counts them (block_check_for_allowed_instrs,
+/// nir_opt_peephole_select.c:246-310): a float each, but none for a move,
+/// a negation, an absolute value or an fsat, which are expected to
+/// become modifiers, nor for a product only summed, which an FMA would
+/// take. Mesa counts before nir_opt_algebraic lowers the arms, the first
+/// time the loop reaches it; these are the steps after lowering, as many
+/// or more, so an arm near the limit may be refused here that Mesa would
+/// still flatten, and never the other way about. A step nothing reads is
+/// one nir_opt_dce has taken out before the count.
+fn armCost(work: *const Work, from: u16, to: u16) u32 {
+    var count: u32 = 0;
+    for (from..to) |at| {
+        const each = work.steps[at];
+        switch (each.tag) {
+            .input, .constant, .push, .component, .construct, .negate, .abs, .sat => continue,
+            else => {},
+        }
+        var used = false;
+        var only_added = true;
+        for (work.steps[at + 1 .. work.step_count]) |user| if (readsStep(user, @intCast(at))) {
+            used = true;
+            if (user.tag != .add) only_added = false;
+        };
+        if (work.stored == at) {
+            used = true;
+            only_added = false;
+        }
+        if (!used) continue;
+        if (each.tag == .mul and only_added) continue;
+        count += if (each.tag == .dot) work.steps[each.a].kind.parts() else each.kind.parts();
+    }
+    return count;
+}
+
+/// Whether `user` reads the step `target`.
+fn readsStep(user: Step, target: u16) bool {
+    return switch (user.tag) {
+        .input, .constant, .push => false,
+        .construct => std.mem.indexOfScalar(u16, user.from[0..user.kind.parts()], target) != null,
+        .select => user.a == target or user.b == target or user.from[0] == target,
+        .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2 => user.a == target,
+        else => user.a == target or user.b == target,
+    };
 }
 
 /// A type id as a count of floats.
@@ -1379,6 +1596,24 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (work.steps[of].tag == .compare) return Error.Type;
             if (operands[3] >= work.steps[of].kind.parts()) return Error.Body;
             work.step_of[id] = try put(work, .{ .tag = .component, .kind = .f32x1, .a = of, .at = operands[3] });
+        },
+        .composite_insert => {
+            // ResultType, Result, Object, Composite, one index: the
+            // vector with that float replaced, nir_vector_insert_imm's
+            // vecN of the others and the one (vtn_composite_insert,
+            // spirv_to_nir.c:4612-4650).
+            if (operands.len != 5) return Error.Body;
+            const kind = try kindOf(work, try idOf(operands[0]));
+            const id = try idOf(operands[1]);
+            const object = try operand(work, operands[2], .f32x1);
+            const composite = try operand(work, operands[3], kind);
+            if (operands[4] >= kind.parts()) return Error.Body;
+            var made = Step{ .tag = .construct, .kind = kind };
+            for (0..kind.parts()) |k| {
+                made.from[k] = if (k == operands[4]) object else composite;
+                made.part[k] = if (k == operands[4]) 0 else @intCast(k);
+            }
+            work.step_of[id] = try put(work, made);
         },
         .composite_construct => {
             if (operands.len < 3) return Error.Body;
@@ -4495,6 +4730,113 @@ test "a constant operation folds, as NIR folds it, and a vector OpSelect or FOrd
     try testing.expectEqual(@as(usize, 1), changed);
     var refused: Work = .{};
     try testing.expectError(Error.Refused, throughMesa(&refused, &unordered));
+}
+
+/// glslc_branch's shader through the IR: the selections and their arms in
+/// the order glslc writes them, the vector's three floats each arm
+/// changes merged one by one.
+const Branched = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const x = b.component(v, 0);
+        const y = b.component(v, 1);
+        const z = b.component(v, 2);
+        const w = b.component(v, 3);
+        const first = b.ifHolds(b.lessThan(x, half));
+        const red_yes = b.add(b.mul(b.sin(b.mul(y, b.scalar(3))), half), half);
+        const green_yes = b.mul(z, w);
+        b.otherwise(first);
+        const red_no = b.mul(y, b.scalar(0.25));
+        const blue_no = b.sqrt(z);
+        b.endIf(first);
+        const red = b.merged(first, red_yes, red_no);
+        const green = b.merged(first, green_yes, y);
+        const blue = b.merged(first, z, blue_no);
+        const second = b.ifHolds(b.greaterThan(w, half));
+        const alpha_yes = b.add(b.pow(x, b.scalar(2)), b.scalar(0.1));
+        b.otherwise(second);
+        const alpha_no = b.mul(b.exp2(y), b.scalar(0.25));
+        b.endIf(second);
+        const alpha = b.merged(second, alpha_yes, alpha_no);
+        b.color(b.vector(&.{ red, green, blue, alpha }));
+    }
+});
+
+/// A selection with no false arm whose true arm is `pairs` sums and
+/// sines: two ALU operations each as nir_opt_peephole_select counts them.
+fn Costly(comptime pairs: usize) type {
+    return ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const x = b.component(v, 0);
+            const half = b.scalar(0.5);
+            const at = b.ifHolds(b.lessThan(x, half));
+            var made = x;
+            inline for (0..pairs) |_| made = b.sin(b.add(made, half));
+            b.endIf(at);
+            const chosen = b.merged(at, made, x);
+            b.color(b.vector(&.{ chosen, x, x, x }));
+        }
+    });
+}
+
+test "through Mesa's back end, glslc's if and else: flattened as nir_opt_peephole_select flattens them" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_branch);
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+    // Both arms' work, one after the other: the first true arm's sine,
+    // its false arm's square root (RSQRT and RECIP), the second's Pow
+    // (LOG and EXP) and Exp2.
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .sin));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .rsqrt));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .recip));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .log2));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .exp2));
+    // A select for each float a phi chooses: three of the vector, whose
+    // fourth comes the same both ways (nir_opt_remove_phis), and the one
+    // float.
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .compare));
+    // Two FCMPs: each select finds the flags still holding its
+    // selection's comparison, nothing in the arms having pushed others.
+    var compares: usize = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        if (std.mem.startsWith(u8, line, "fcmp")) compares += 1;
+    }
+    try testing.expectEqual(@as(usize, 2), compares);
+    // The plan computes sums and products alone.
+    var plan: Work = .{};
+    try testing.expectError(Error.Body, compile(&plan, &reference.glslc_branch));
+}
+
+test "through Mesa's back end, glslc's if and else is facet's, to the word" {
+    var theirs: Work = .{};
+    const glslc = try throughMesa(&theirs, &reference.glslc_branch);
+    var ours: Work = .{};
+    const facet_made = try throughMesa(&ours, Branched.words);
+    try testing.expectEqualSlices(u64, glslc.words, facet_made.words);
+    try testing.expectEqual(glslc.stream().len, facet_made.stream().len);
+    for (glslc.stream(), facet_made.stream()) |a, b| try testing.expectEqual(a, b);
+}
+
+test "a selection Mesa leaves a branch is refused: an arm over the limit, a sample in one, a jump elsewhere" {
+    // Twelve sums and sines are 24, nir_opt_peephole_select's limit, and
+    // flattened; thirteen are 26 and stay a branch. With no false arm,
+    // the way past the true one is the selection's own block.
+    var work: Work = .{};
+    _ = try throughMesa(&work, Costly(12).words);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .select));
+    try testing.expectError(Error.Branches, throughMesa(&work, Costly(13).words));
+    // A sample is a texture instruction, which the pass leaves in its
+    // arm.
+    try testing.expectError(Error.Branches, throughMesa(&work, &reference.glslc_sampled_arm));
+    // The first arm's end a jump to the second arm rather than the merge.
+    try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_branch, .branch, 0, 0, 41)));
+    // A phi naming a block that is neither arm.
+    try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_branch, .phi, 0, 3, 5)));
 }
 
 test "a call the walk does not lower, or into a set that is not GLSL.std.450, is refused" {

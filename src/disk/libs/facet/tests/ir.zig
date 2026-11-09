@@ -999,8 +999,51 @@ const Chosen = ir.Fragment(struct {
     }
 });
 
+/// An `if` and `else` and a ternary whose arms call functions:
+/// driver/v3d/glslc_reference.zig's glslc_branch, built (since 1.154).
+const Branched = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const x = b.component(v, 0);
+        const y = b.component(v, 1);
+        const z = b.component(v, 2);
+        const w = b.component(v, 3);
+        const first = b.ifHolds(b.lessThan(x, half));
+        const red_yes = b.add(b.mul(b.sin(b.mul(y, b.scalar(3))), half), half);
+        const green_yes = b.mul(z, w);
+        b.otherwise(first);
+        const red_no = b.mul(y, b.scalar(0.25));
+        const blue_no = b.sqrt(z);
+        b.endIf(first);
+        const red = b.merged(first, red_yes, red_no);
+        const green = b.merged(first, green_yes, y);
+        const blue = b.merged(first, z, blue_no);
+        const second = b.ifHolds(b.greaterThan(w, half));
+        const alpha_yes = b.add(b.pow(x, b.scalar(2)), b.scalar(0.1));
+        b.otherwise(second);
+        const alpha_no = b.mul(b.exp2(y), b.scalar(0.25));
+        b.endIf(second);
+        const alpha = b.merged(second, alpha_yes, alpha_no);
+        b.color(b.vector(&.{ red, green, blue, alpha }));
+    }
+});
+
+/// A selection with no false arm, the input first read in its true arm
+/// and after it: loaded before the branch, where both are dominated.
+const Unbalanced = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const lit = b.input(1, .f32x1);
+        const at = b.ifHolds(b.greaterThan(lit, b.scalar(0.5)));
+        const dimmed = b.mul(v, b.constant(.{ 0.5, 0.5, 0.5, 1 }));
+        b.endIf(at);
+        b.color(b.merged(at, dimmed, v));
+    }
+});
+
 test "float arithmetic and GLSL.std.450 are a module the reader takes, the set imported once" {
-    inline for (.{ Arithmetic, Called, Chosen }) |Made| {
+    inline for (.{ Arithmetic, Called, Chosen, Branched }) |Made| {
         switch (spirv.look(Made.words, spirv.facet_profile)) {
             .fault => |fault| {
                 std.debug.print("refused: {s}\n", .{@tagName(fault)});
@@ -1117,4 +1160,43 @@ test "the cores choose as the comparisons say, and Sin, Tan, Step, SmoothStep an
         }
         for (batch.colors[0]) |each| try std.testing.expectEqual(got, each);
     }
+}
+
+test "a selection is a module the reader takes, its arms both run on the cores and the merge chooses" {
+    inline for (.{ Branched, Unbalanced }) |Made| switch (spirv.look(Made.words, spirv.facet_profile)) {
+        .fault => |fault| {
+            std.debug.print("refused: {s}\n", .{@tagName(fault)});
+            return error.TestUnexpectedResult;
+        },
+        .seen => {},
+    };
+    // Each arm of each selection, against the GLSL in f64.
+    for ([_][4]f32{ .{ 0.25, 0.4, 0.81, 0.75 }, .{ 0.75, 0.6, 0.36, 0.25 } }) |v| {
+        var batch = Batch.flat(1, &v);
+        const made = batch.fragments(5);
+        Branched.function(&made);
+        const x: f64 = v[0];
+        const y: f64 = v[1];
+        const z: f64 = v[2];
+        const w: f64 = v[3];
+        const red = if (x < 0.5) @sin(y * 3) * 0.5 + 0.5 else y * 0.25;
+        const green = if (x < 0.5) z * w else y;
+        const blue = if (x < 0.5) z else @sqrt(z);
+        const alpha = if (w > 0.5) std.math.pow(f64, x, 2) + 0.1 else @exp2(y) * 0.25;
+        const want = byteOf(alpha) << 24 | byteOf(red) << 16 | byteOf(green) << 8 | byteOf(blue);
+        const got = batch.colors[0][0];
+        for ([4]u5{ 0, 8, 16, 24 }) |shift| {
+            const a: i32 = @intCast(want >> shift & 0xFF);
+            const b: i32 = @intCast(got >> shift & 0xFF);
+            if (@abs(a - b) > 1) {
+                std.debug.print("at {any}: want 0x{X:0>8}, made 0x{X:0>8}\n", .{ v, want, got });
+                return error.TestExpectedEqual;
+            }
+        }
+    }
+    // No false arm: the colour as it came where the comparison fails.
+    var batch = Batch.flat(1, &.{ 0.8, 0.6, 0.4, 1, 0.25 });
+    const made = batch.fragments(6);
+    Unbalanced.function(&made);
+    try std.testing.expectEqual(byteOf(1) << 24 | byteOf(0.8) << 16 | byteOf(0.6) << 8 | byteOf(0.4), batch.colors[0][0]);
 }

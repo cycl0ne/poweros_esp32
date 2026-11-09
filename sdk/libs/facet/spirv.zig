@@ -105,6 +105,7 @@ pub const Op = enum(u16) {
     vector_shuffle = 79,
     composite_construct = 80,
     composite_extract = 81,
+    composite_insert = 82,
     sampled_image = 86,
     image_sample_implicit_lod = 87,
     image_sample_explicit_lod = 88,
@@ -736,9 +737,11 @@ pub const facet_opcodes: []const Op = &.{
     // Declarations and annotations, which say nothing a device runs.
     .ext_inst_import,           .source,              .source_extension,         .name,
     // .member_name, then a call into an imported set (since 1.152) and
-    // the comparisons glslc writes for ==, != and <= (since 1.153).
+    // the comparisons glslc writes for ==, != and <= (since 1.153), then
+    // a value chosen at a selection's merge, and one float of a vector
+    // replaced, as glslc writes an if and else (since 1.154).
     .member_name,               .ext_inst,            .f_ord_equal,              .f_unord_not_equal,
-    .f_ord_less_than_equal,
+    .f_ord_less_than_equal,     .phi,                 .composite_insert,
 };
 
 /// The format's own profile, which is what `CreateShaderModule` reads a

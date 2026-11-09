@@ -2110,6 +2110,16 @@ glslc's `-O` module of a shader that uses each of them (`glslc_reference.glslc_c
 
 Left out still, and refused by name: the inverse and hyperbolic trigonometry, Cross, the integer functions, the packing and the interpolation; and branches, which glslc writes for a ternary whose arms do more than name a value (nir_opt_peephole_select's work).
 
+**Then the selections**, facet.library 1.154. glslc writes an `if` and `else`, and a ternary whose arms do more than name a value, as a selection: OpSelectionMerge, OpBranchConditional to one arm block or two, each ending in an OpBranch to the merge block, and OpPhi there. Mesa does not branch for most of them: v3d's optimization loop runs nir_opt_peephole_select with a limit of 24 and `expensive_alu_ok` (nir_to_vir.c:2274-2279), which moves both arms' instructions in front of the selection and makes each phi a bcsel (nir_opt_peephole_select.c:508-605).
+
+- **The walk** reads a selection the same way: the arms' steps one after the other, then at the merge a `select` of each float a phi chooses, as nir_lower_phis_to_scalar leaves one bcsel a float; a float both ways bring alike is that float, as nir_opt_remove_phis leaves it. Either label may be the merge block itself, and the way in from there is then the selection's own block. OpCompositeInsert, which glslc writes for `c.r = ...`, is a vector with one float replaced (vtn_composite_insert, spirv_to_nir.c:4612-4650). The conditional discard is the same shape with a true arm of OpKill alone, on the same path.
+- **Where Mesa keeps the branch, it is refused**, `Error.Branches`: an arm that samples or stores (block_check_for_allowed_instrs takes neither, :59-326), a selection inside an arm, and arms of more than 24 ALU operations as that function counts them (:246-310): a move, a negation, an absolute value or an fsat nothing, a product only summed nothing. Mesa counts before nir_opt_algebraic has lowered the arms; the walk counts its steps after lowering, as many or more, so an arm near the limit may be refused that Mesa flattens, and never the other way about.
+- **The emitter.** `ir.Build` has `ifHolds`, `otherwise`, `endIf` and `merged`, held at comptime to SPIR-V's dominance: a value made in an arm is read in that arm, or past the selection through a `merged` of it; a varying read past the branch is loaded before it. The cores run both arms and choose, as the V3D does.
+
+Not ported: the algebraic rules that act on a bcsel once it exists, such as hoisting a product both arms share (`bcsel(a, b * c, b * d)` to `b * bcsel(a, c, d)`, nir_opt_algebraic.py:3475-3505); they save instructions, and a shader is the same without them.
+
+glslc's `-O` module of an `if` and `else` and a ternary of Pow and Exp2 (`glslc_reference.glslc_branch`, 360 words) and facet's emitter's of the same shader (259 words, spirv-val clean) compile to the same words, both arms' work in each, four selects, and two FCMPs, the flags still holding each comparison at its selects. On the CM5, FacetBoth 1.22's case is 8 pixels of 230,400 apart from the cores, the triangle's edge alone, as the shipped colour on the same triangle is; the other 212 cases are unchanged, and FacetProbe is 888 of 888.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim
