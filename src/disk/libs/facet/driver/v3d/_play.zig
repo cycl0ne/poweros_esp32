@@ -921,7 +921,7 @@ fn clearRectangle(queue: *Queue, clip: frames.Area, color: u32, channels: u32, d
     };
     const hardware = player.hardware;
     const uniforms = if (no_color)
-        streamOf(queue, hardware.no_color.stream(), null, null) orelse return noRoom(queue, "a clear with no memory for its uniforms")
+        streamOf(queue, hardware.no_color.stream(), &.{}, null) orelse return noRoom(queue, "a clear with no memory for its uniforms")
     else
         (carve(queue, 4, 4) orelse return noRoom(queue, "a clear with no memory for its uniforms")).address;
     if (!roomOnList(queue)) return noRoom(queue, "a clear with no memory for the binner's list");
@@ -1131,24 +1131,25 @@ fn writeRecord(into: [*]u8, output: [*]const f32, viewport: *const ViewportScale
 }
 
 /// A compiled program's uniform stream, written where the V3D reads it:
-/// its floats, the TMU's two words from `tmu`, and the push constants as
+/// its floats, the TMU's two words of each unit from `tmus`, a unit's
+/// configuration at its place (since 1.173), and the push constants as
 /// the command buffer last set them before this draw (`CmdPushConstants`),
 /// read as v3dv reads QUNIFORM_UNIFORM (v3dv_uniforms.c:513). A vertex
 /// program's has the viewport's words in it too, from `scale` (since
 /// 1.163). Its address, or null with no memory for it.
-fn streamOf(queue: *Queue, stream: []const compile.Word, tmu: ?Configuration, scale: ?*const ViewportScale) ?u32 {
+fn streamOf(queue: *Queue, stream: []const compile.Word, tmus: []const Configuration, scale: ?*const ViewportScale) ?u32 {
     const bytes: u32 = @max(4, @as(u32, @intCast(stream.len * 4)));
     const place = carve(queue, bytes, 4) orelse return null;
     const words: [*]u32 = @ptrCast(@alignCast(place.cpu));
     const pushed = &playerOf(queue).resources.push;
     for (stream, 0..) |word, k| words[k] = switch (word) {
         .float => |each| @bitCast(each),
-        // `Code.sampler` is set for exactly the streams that hold these,
-        // so `tmu` is there whenever they are.
-        .texture => if (tmu) |each| each.texture else 0,
+        // `Code.sampled` names every unit these do, and the draw found
+        // each before it came here.
+        .texture => |unit| if (unit < tmus.len) tmus[unit].texture else 0,
         // The sampler's address, with the bits the program sets of it
         // (since 1.167).
-        .sampler => |bits| if (tmu) |each| each.sampler | bits else 0,
+        .sampler => |each| if (each.unit < tmus.len) tmus[each.unit].sampler | each.bits else 0,
         // `compile` holds every word inside the push constants, so `at`
         // is one of theirs.
         .push => |at| std.mem.readInt(u32, pushed[at * 4 ..][0..4], .little),
@@ -1750,15 +1751,21 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
                 break :none;
             }
             const made: *const driver.Shader = @ptrCast(@alignCast(pipeline.driver orelse return));
-            // Where the program samples, the TMU's two words come from
-            // the texture and the sampler bound at the set and binding
-            // the module named - which a draw knows and a pipeline does
-            // not. Null where there is no texture there, or where the
-            // sampler compares (`sampledBy`).
-            const tmu: ?Configuration = if (made.sampler) |each| sampledBy(queue, each) else null;
+            // Where the program samples, the TMU's two words of each unit
+            // come from the texture and the sampler bound at the set and
+            // binding the module named - which a draw knows and a
+            // pipeline does not. Missing where there is no texture there,
+            // or where the sampler compares and the program does not
+            // (`sampledBy`).
+            var tmus: [compile.most_samplers]Configuration = undefined;
+            var found: usize = 0;
+            for (made.sampled()) |each| {
+                tmus[found] = sampledBy(queue, each) orelse break;
+                found += 1;
+            }
             // A uniform buffer the program reads and the draw has not
             // bound is what has gone wrong too (since 1.160).
-            const lacking = (made.sampler != null and tmu == null) or !buffersBound(queue, made.stream());
+            const lacking = found != made.sampled().len or !buffersBound(queue, made.stream());
             if (lacking and !player.frame.color) {
                 // No colour to say what has gone wrong with: the depth
                 // drawn as if nothing dropped a pixel.
@@ -1775,7 +1782,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
                 fragment = made.address;
                 own = made;
                 carried = .as_they_are;
-                uniforms = streamOf(queue, made.stream(), tmu, null) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+                uniforms = streamOf(queue, made.stream(), tmus[0..found], null) orelse return noRoom(queue, "a draw with no memory for its uniforms");
             }
         },
         // Refused when the pipeline was made (driver.zig): no fixed form's
@@ -1789,7 +1796,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         carried = .as_they_are;
         fragment = made.address;
         own = made;
-        uniforms = streamOf(queue, made.stream(), null, null) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+        uniforms = streamOf(queue, made.stream(), &.{}, null) orelse return noRoom(queue, "a draw with no memory for its uniforms");
     }
 
     // The pipeline's vertex shader on the QPU, where it was compiled for
@@ -1823,8 +1830,8 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             const place = carve(queue, @intCast(@max(inputs_bytes, 16)), 16) orelse return noRoom(queue, "a draw with no memory for its attributes");
             const into: [*][4]f32 = @ptrCast(@alignCast(place.cpu));
             _vertices.readInputs(player, pipeline, lowest, vertices, instance, into[0 .. @as(usize, vertices) * locations]);
-            const vertex_uniforms = streamOf(queue, stage.vertex.stream(), null, &scale) orelse return noRoom(queue, "a draw with no memory for its uniforms");
-            const coordinate_uniforms = streamOf(queue, stage.coordinate.stream(), null, &scale) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+            const vertex_uniforms = streamOf(queue, stage.vertex.stream(), &.{}, &scale) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+            const coordinate_uniforms = streamOf(queue, stage.coordinate.stream(), &.{}, &scale) orelse return noRoom(queue, "a draw with no memory for its uniforms");
             if (!roomOnList(queue)) return noRoom(queue, "a draw with no memory for the binner's list");
             if (!sendCompiledVertices(queue, place.address, locations, stage, vertex_uniforms, coordinate_uniforms, fragment, uniforms, own.?)) return noRoom(queue, "a draw with no memory for its shader record");
             cl.indexBufferSetup(&player.bin, index_place.address, kept * 4);

@@ -219,8 +219,11 @@ pub const Error = error{
     Registers,
     /// More instructions than the code buffer holds.
     TooLong,
-    /// More than one sample: the TMU is written once and read once here,
-    /// as every hand-written program writes it once and reads it once.
+    /// More than one sample where the plan compiles the program, as every
+    /// hand-written program writes the TMU once and reads it once; or a
+    /// sampler one sample compares through and another does not, whose
+    /// one state cannot be both (since 1.173 Mesa's back end takes
+    /// several samples, of one sampler or of several).
     Samplers,
     /// More combined image samplers *declared* than `most_samplers`.
     /// Not a limit of the device - a module may declare many and sample
@@ -780,10 +783,15 @@ pub const Code = struct {
     /// `Work` is one block a driver compiles everything through.
     uniforms: [most_uniforms]Word,
     uniform_count: u32,
-    /// The combined image sampler the program reads, where it reads one.
-    /// The draw looks it up in its descriptor sets and writes the two
-    /// `.texture` and `.sampler` words of the stream from what it finds.
-    sampler: ?Sampler,
+    /// The combined image samplers the program reads, by unit. The draw
+    /// looks each up in its descriptor sets and writes the `.texture` and
+    /// `.sampler` words of the stream of that unit from what it finds. A
+    /// unit is a set and binding the program samples, numbered as
+    /// descriptor_map_add numbers the texture map (v3dv_pipeline.c:
+    /// 516-560): in the order the program first reads each (since 1.173;
+    /// one sampler before).
+    samplers: [most_samplers]Sampler = undefined,
+    sampler_count: u32 = 0,
     /// The registers it keeps values in, for a test to read.
     registers: u32,
     /// What the shader record says of the program, which Mesa's back end
@@ -819,6 +827,11 @@ pub const Code = struct {
     pub fn stream(code: *const Code) []const Word {
         return code.uniforms[0..code.uniform_count];
     }
+
+    /// The combined image samplers, by unit.
+    pub fn sampled(code: *const Code) []const Sampler {
+        return code.samplers[0..code.sampler_count];
+    }
 };
 
 /// One word of the uniform stream. A program of its own reads floats it
@@ -827,12 +840,16 @@ pub const Code = struct {
 /// and the sampler beside it are not known until then.
 pub const Word = union(enum) {
     float: f32,
-    /// The texture's state, as the first `wrtmuc` takes it.
-    texture,
-    /// The sampler's state, as the second takes it, with the bits the
-    /// program sets of it: `per_pixel_mask` where helper pixels skip the
-    /// sample (v3d_tex.c:313-321; since 1.167), else none.
-    sampler: u32,
+    /// The state of a unit's texture, as a sample's first `wrtmuc` takes
+    /// it: Mesa's QUNIFORM_TMU_CONFIG_P0, the unit in its high bits
+    /// (v3d_tex.c:297-303), which the draw writes as the texture's state
+    /// there (write_tmu_p0, v3dv_uniforms.c:139-185). `Code.sampled` says
+    /// where each unit is bound (since 1.173).
+    texture: u8,
+    /// The state of a unit's sampler, as the second takes it
+    /// (QUNIFORM_TMU_CONFIG_P1, v3d_tex.c:341-348; write_tmu_p1,
+    /// v3dv_uniforms.c:187-232).
+    sampler: SamplerWord,
     /// A word of the push constants, by its place among them (the byte
     /// offset over four): what Mesa's QUNIFORM_UNIFORM is in v3dv, filled
     /// from the command buffer's push constants as the stream is written
@@ -854,6 +871,11 @@ pub const Word = union(enum) {
     /// 1.164).
     ssbo: StorageAddress,
 };
+
+/// A `.sampler` word: the unit, and the bits the program sets of the
+/// sampler's state, `per_pixel_mask` where helper pixels skip the sample
+/// (v3d_tex.c:313-321; since 1.167), else none.
+pub const SamplerWord = struct { unit: u8 = 0, bits: u32 = 0 };
 
 /// TMU Config Parameter 1's Per-pixel mask enable (v3d_packet.xml:1544):
 /// the lookup made for the pixels the quad covers alone, its helper
@@ -1062,7 +1084,7 @@ pub const Work = struct {
     /// The combined image samplers the module declares.
     samplers: [most_samplers]Sampler = undefined,
     sampler_count: u32 = 0,
-    /// How many times the body samples. One, where it samples at all.
+    /// How many times the body samples (more than once since 1.173).
     sample_count: u32 = 0,
 
     inputs: [most_varyings]Input = undefined,
@@ -1130,7 +1152,7 @@ pub const Work = struct {
     first_used: [most_locals]u8 = undefined,
     used_count: u32 = 0,
     used: u32 = 0,
-    /// The one step that samples, where there is one.
+    /// The first step that samples, where there is one: the plan's one.
     sampled: u16 = none,
     varyings: u32 = 0,
 
@@ -1216,6 +1238,9 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
     // No hand-written program reads a push constant or a uniform buffer,
     // drops a pixel or compares, so the plan has nothing to hold any of
     // them to: only Mesa's back end compiles them.
+    // Every hand-written program that samples writes the TMU once and
+    // reads it once.
+    if (work.sample_count > 1) return Error.Samplers;
     for (work.program()) |each| switch (each.tag) {
         .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier => return Error.Storage,
         .discard => return Error.Discards,
@@ -1229,14 +1254,18 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
     };
     try settle(work);
     try encode(work);
-    return .{
+    var made: Code = .{
         .words = work.code[0..work.word_count],
         .varyings = work.varyings,
         .uniforms = work.stream,
         .uniform_count = work.stream_count,
-        .sampler = if (work.sample_count == 0) null else work.samplers[work.steps[work.sampled].at],
         .registers = work.high_water,
     };
+    if (work.sample_count != 0) {
+        made.samplers[0] = work.samplers[work.steps[work.sampled].at];
+        made.sampler_count = 1;
+    }
+    return made;
 }
 
 /// `words` compiled through Mesa's back end rather than the plan: read as
@@ -1325,6 +1354,9 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
     @memcpy(work.code[0..c.qpu_insts.len], c.qpu_insts);
     work.word_count = @intCast(c.qpu_insts.len);
 
+    var units: Units = .{};
+    try units.of(work);
+
     // The stream in the order the program reads it, which is the order
     // the scheduler left the uniforms in.
     if (c.num_uniforms > most_uniforms) return Error.Uniforms;
@@ -1332,11 +1364,13 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
         work.stream[at] = switch (contents) {
             .constant => .{ .float = @bitCast(data) },
             // The draw's own words, which `tiling.parameter0` and
-            // `parameter1` write as these are: both words of the one
+            // `parameter1` write as these are: both words of a unit's
             // texture, and its sampler, with the per-pixel mask the
-            // program sets of it (since 1.167).
-            .tmu_config_p0 => if (data == to_vir.texel_words) .texture else return Error.Invalid,
-            .tmu_config_p1 => if (data & ~per_pixel_mask == 0) .{ .sampler = data } else return Error.Invalid,
+            // program sets of it (since 1.167). The unit `to_vir` puts in
+            // the high bits is the sampler the module declares, made the
+            // program's own here (since 1.173).
+            .tmu_config_p0 => if (vir.unitDataGetOffset(data) == to_vir.texel_words) .{ .texture = try units.at(vir.unitDataGetUnit(data)) } else return Error.Invalid,
+            .tmu_config_p1 => if (vir.unitDataGetOffset(data) & ~per_pixel_mask == 0) .{ .sampler = .{ .unit = try units.at(vir.unitDataGetUnit(data)), .bits = vir.unitDataGetOffset(data) } } else return Error.Invalid,
             // A word of the push constants: `Step.at` of a `.push`.
             .uniform => .{ .push = data },
             // A uniform buffer's address: the unit is the buffer's slot
@@ -1373,7 +1407,8 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
         .varyings = work.varyings,
         .uniforms = work.stream,
         .uniform_count = work.stream_count,
-        .sampler = if (work.sample_count == 0) null else samplerRead(work),
+        .samplers = units.samplers,
+        .sampler_count = units.count,
         .registers = program.registers,
         .threads = c.threads,
         .center_w = program.uses_center_w,
@@ -1402,14 +1437,44 @@ fn vertexProgram(work: *const Work, single_seg: bool) VertexProgram {
     return made;
 }
 
-/// The combined image sampler the program's one sample reads, and whether
-/// it compares.
-fn samplerRead(work: *const Work) Sampler {
-    const taken = work.steps[work.sampled];
-    var made = work.samplers[taken.at];
-    made.compared = taken.tag == .sample_compared;
-    return made;
-}
+/// The units of the samplers the program's samples read, as
+/// descriptor_map_add gives them (v3dv_pipeline.c:516-560): a set and
+/// binding a unit, the one it already has where an earlier sample read
+/// it, in the program's order; and whether each compares (since 1.173).
+const Units = struct {
+    samplers: [most_samplers]Sampler = undefined,
+    count: u32 = 0,
+    /// The unit of each sampler the module declares, or `no_unit`.
+    of_declared: [most_samplers]u8 = @splat(no_unit),
+
+    const no_unit: u8 = 0xFF;
+
+    fn of(units: *Units, work: *const Work) Error!void {
+        for (work.program()) |each| {
+            if (each.tag != .sample and each.tag != .sample_compared) continue;
+            const compared = each.tag == .sample_compared;
+            const declared = work.samplers[each.at];
+            const unit: u8 = for (units.samplers[0..units.count], 0..) |known, k| {
+                if (known.set == declared.set and known.binding == declared.binding) break @intCast(k);
+            } else made: {
+                units.samplers[units.count] = declared;
+                units.samplers[units.count].compared = compared;
+                units.count += 1;
+                break :made @intCast(units.count - 1);
+            };
+            // One sampler state for the unit: a comparison is in it or
+            // not, and a sample of the other kind would read it wrongly.
+            if (units.samplers[unit].compared != compared) return Error.Samplers;
+            units.of_declared[each.at] = unit;
+        }
+    }
+
+    /// The unit of the sampler the module declares `declared`th.
+    fn at(units: *const Units, declared: u32) Error!u8 {
+        if (declared >= most_samplers or units.of_declared[declared] == no_unit) return Error.Invalid;
+        return units.of_declared[declared];
+    }
+};
 
 /// The words looked at against the profile and read into `work`: what
 /// `compile` and `compileVir` share.
@@ -4279,7 +4344,8 @@ const Order = struct {
     /// program does (since 1.167): v3d's own dead code elimination keeps
     /// a TMU operation (vir_has_side_effects, vir_opt_dead_code.c:207), so
     /// a sample or a load that nothing reads would cost the TMU a lookup
-    /// that NIR's never made. A sample dropped leaves no sampler.
+    /// that NIR's never made. A sample dropped leaves no sampler, and the
+    /// samples are counted again, the first of them `sampled`.
     fn layOut(list: *const Order, work: *Work) void {
         var renamed: [most_steps]u16 = @splat(none);
         var kept: [most_steps]Step = undefined;
@@ -4296,9 +4362,12 @@ const Order = struct {
         @memcpy(work.steps[0..count], kept[0..count]);
         work.step_count = count;
         if (work.stored != none) work.stored = renamed[work.stored];
-        if (work.sampled != none) {
-            work.sampled = renamed[work.sampled];
-            if (work.sampled == none) work.sample_count = 0;
+        work.sampled = none;
+        work.sample_count = 0;
+        for (work.steps[0..count], 0..) |each, place| {
+            if (each.tag != .sample and each.tag != .sample_compared) continue;
+            if (work.sampled == none) work.sampled = @intCast(place);
+            work.sample_count += 1;
         }
         for (work.inputs[0..work.input_count]) |*each| {
             if (each.step != none) each.step = renamed[each.step];
@@ -5320,15 +5389,11 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (try kindOf(work, type_id) != .f32x4) return Error.Type;
             const which = work.sampler_of[try idOf(operands[2])];
             if (which == none) return Error.Body;
-            // The coordinate before the count is raised, so that a second
-            // sample is refused for being a second and not for anything
-            // its coordinate does.
             const where = try operand(work, operands[3], .f32x2);
-            if (work.sample_count != 0) return Error.Samplers;
             const made = try put(work, .{ .tag = .sample, .kind = .f32x4, .a = where, .at = which });
             work.step_of[id] = made;
-            work.sampled = made;
-            work.sample_count = 1;
+            if (work.sampled == none) work.sampled = made;
+            work.sample_count += 1;
         },
         .image_sample_dref_implicit_lod => {
             // ResultType, Result, SampledImage, Coordinate, Dref: one
@@ -5342,11 +5407,10 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (which == none) return Error.Body;
             const where = try coordinateOf(work, operands[3]);
             const against = try operand(work, operands[4], .f32x1);
-            if (work.sample_count != 0) return Error.Samplers;
             const made = try put(work, .{ .tag = .sample_compared, .kind = .f32x1, .a = where, .b = against, .at = which });
             work.step_of[id] = made;
-            work.sampled = made;
-            work.sample_count = 1;
+            if (work.sampled == none) work.sampled = made;
+            work.sample_count += 1;
         },
         .vector_times_scalar => {
             if (operands.len != 4) return Error.Body;
@@ -6540,9 +6604,9 @@ fn sample(work: *Work, each: Step, at: u16) Error!void {
     const t = try plain(work, coordinate[1]);
     try wait(work, &.{ s, t }, 0);
     try act(work, .{ .tmu = .{ .which = .t, .from = t } });
-    try streamed(work, .texture);
+    try streamed(work, .{ .texture = 0 });
     try act(work, .config);
-    try streamed(work, .{ .sampler = 0 });
+    try streamed(work, .{ .sampler = .{} });
     try act(work, .config);
     try act(work, .{ .tmu = .{ .which = .s, .from = s } });
     try act(work, .last_section);
@@ -7289,7 +7353,7 @@ fn sound(work: *const Work, code: Code) !void {
     // A sample is one write to S, two configuration parameters and two
     // words back, the first of them five instructions after the write -
     // four of which are the splice, as `qpu.texture_code` leaves it.
-    if (code.sampler == null) {
+    if (code.sampled().len == 0) {
         try testing.expectEqual(@as(u32, 0), configs);
         try testing.expectEqual(@as(u32, 0), texels);
         try testing.expectEqual(@as(?u32, null), started);
@@ -7573,7 +7637,7 @@ test "a texture sampled at a varying is the hand-written program, with the texel
     var work: Work = .{};
     const code = try compile(&work, Textured.words);
     try testing.expectEqual(@as(u32, 2), code.varyings);
-    try testing.expectEqual(Sampler{ .set = 0, .binding = 0 }, code.sampler.?);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0 }, code.sampled()[0]);
     try sound(&work, code);
     // `qpu.texture_code` instruction for instruction, with the two words
     // the TMU hands back in rf6 and rf7 rather than its rf10 and rf11:
@@ -7594,7 +7658,7 @@ test "a texture sampled at a varying is the hand-written program, with the texel
     try testing.expectEqualSlices(u64, &want, code.words);
     // Nothing of its own in the stream: the two words are the TMU's, and
     // only a draw knows what they are.
-    try testing.expectEqualSlices(Word, &[_]Word{ .texture, .{ .sampler = 0 } }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, .{ .sampler = .{} } }, code.stream());
 }
 
 test "a texture times the colour the vertices carry comes to the program that was written by hand, word for word" {
@@ -7607,7 +7671,7 @@ test "a texture times the colour the vertices carry comes to the program that wa
     // as it does in the hand-written program - and each product is
     // written over the colour that went into it, which dies at it.
     try testing.expectEqualSlices(u64, qpu.texture_color_fragment.code, code.words);
-    try testing.expectEqualSlices(Word, &[_]Word{ .texture, .{ .sampler = 0 } }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, .{ .sampler = .{} } }, code.stream());
 }
 
 test "a texel added to is read out of its pair first, by a 1 loaded before the splice" {
@@ -7620,9 +7684,9 @@ test "a texel added to is read out of its pair first, by a 1 loaded before the s
     // they are all asked for before the write to S that configures the
     // TMU.
     try testing.expectEqualSlices(Word, &[_]Word{
-        .{ .float = 1 },   .{ .float = 0.1 }, .{ .float = 0.2 },
-        .{ .float = 0.3 }, .{ .float = 0 },   .texture,
-        .{ .sampler = 0 },
+        .{ .float = 1 },     .{ .float = 0.1 }, .{ .float = 0.2 },
+        .{ .float = 0.3 },   .{ .float = 0 },   .{ .texture = 0 },
+        .{ .sampler = .{} },
     }, code.stream());
     var halves: u32 = 0;
     var adds: u32 = 0;
@@ -7956,7 +8020,7 @@ test "a construct that names one float of a texel's word keeps the other alive" 
     // anything read it.
     const code = try compile(&work, comptime built(.{ .construct_texel = true, .samplers = 1 }));
     try sound(&work, code);
-    try testing.expectEqual(@as(?Sampler, .{ .set = 0, .binding = 0 }), code.sampler);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0 }, code.sampled()[0]);
     // The rule, read off the plan rather than waited for as a symptom:
     // whether the wrongly freed register is then handed out depends on
     // which one is lowest and free, so a program can carry the mistake
@@ -8003,7 +8067,7 @@ test "a module may declare more samplers than it samples" {
     // refusal of its own and not the device's.
     const code = try compile(&work, comptime built(.{ .samplers = 5 }));
     try sound(&work, code);
-    try testing.expectEqual(@as(?Sampler, .{ .set = 0, .binding = 0 }), code.sampler);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0 }, code.sampled()[0]);
     // Past the table, and said as the table and not as the hardware.
     try testing.expectError(Error.Declared, compile(&work, comptime built(.{ .samplers = most_samplers + 1 })));
 }
@@ -8152,9 +8216,9 @@ test "through Mesa's back end, a texture: the lookup started in the delay slots 
     var work: Work = .{};
     const code = try throughMesa(&work, Textured.words);
     try testing.expectEqual(@as(u32, 2), code.varyings);
-    try testing.expectEqual(Sampler{ .set = 0, .binding = 0 }, code.sampler.?);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0 }, code.sampled()[0]);
     // The draw's two words, as the hand-written program reads them.
-    try testing.expectEqualSlices(Word, &[_]Word{ .texture, .{ .sampler = per_pixel_mask } }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, .{ .sampler = .{ .bits = per_pixel_mask } } }, code.stream());
     try testing.expectEqual(@as(u32, 12), code.registers);
     try expectText(code, &.{
         // The configuration first: the scheduler lets the two wrtmuc go
@@ -8183,7 +8247,7 @@ test "through Mesa's back end, a depth compared: the reference to TMUDREF after 
     try testing.expectEqual(@as(u32, 3), code.varyings);
     // The draw is told the program compares, and hands the TMU the
     // sampler's comparison and a depth.
-    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .compared = true }, code.sampler.?);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .compared = true }, code.sampled()[0]);
     // v3d_tex.c's order: the coordinate's T, the comparator, then S last,
     // which starts the lookup; and both words read back, as P0 asks.
     var buffer: [disasm.most_text]u8 = undefined;
@@ -8233,7 +8297,7 @@ test "through Mesa's back end, glslc's shadow sample is facet's, to the word: it
     var theirs: Work = .{};
     const glslc = try throughMesa(&theirs, &reference.glslc_shadow);
     try testing.expectEqualSlices(u64, kept, glslc.words);
-    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .compared = true }, glslc.sampler.?);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .compared = true }, glslc.sampled()[0]);
     // The plan refuses it, as it refuses facet's own.
     var plan: Work = .{};
     try testing.expectError(Error.Samplers, compile(&plan, &reference.glslc_shadow));
@@ -8244,7 +8308,7 @@ test "through Mesa's back end, a texel times the colour reads the texel's halves
     const code = try throughMesa(&work, Modulated.words);
     try testing.expectEqual(@as(u32, 6), code.varyings);
     try testing.expectEqual(@as(u8, 4), code.threads);
-    try testing.expectEqualSlices(Word, &[_]Word{ .texture, .{ .sampler = per_pixel_mask } }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, .{ .sampler = .{ .bits = per_pixel_mask } } }, code.stream());
     // Mesa's allocator gives 7.1's four threads 32 registers each and
     // goes round them from rf4, where `qpu.registers` keeps the
     // hand-written programs in 16. The board has the 32: V3DTest MESA
@@ -8277,7 +8341,7 @@ test "through Mesa's back end, a texel added to: the floats of its own read arou
     var work: Work = .{};
     const code = try throughMesa(&work, Tinted.words);
     try testing.expectEqualSlices(Word, &[_]Word{
-        .texture,          .{ .sampler = per_pixel_mask },
+        .{ .texture = 0 }, .{ .sampler = .{ .bits = per_pixel_mask } },
         .{ .float = 0.1 }, .{ .float = 0.2 },
         .{ .float = 0.3 },
     }, code.stream());
@@ -8322,7 +8386,6 @@ test "through Mesa's back end, what does not fit 4 threads is compiled at 2, whe
 
 test "through Mesa's back end, a module is refused for what the reading refuses, by the same name" {
     var work: Work = .{};
-    try testing.expectError(Error.Samplers, throughMesa(&work, Twice.words));
     try testing.expectError(Error.Operands, throughMesa(&work, Offset.words));
     try testing.expectError(Error.Stage, throughMesa(&work, &vertex_words));
     try testing.expectError(Error.Varyings, throughMesa(&work, Wide.words));
@@ -8586,7 +8649,7 @@ test "through Mesa's back end, the program of no colour is qpu.zig's, to the wor
     try testing.expectEqual(qpu.no_color_fragment.lock_scoreboard_on_first_thrsw, code.lock_scoreboard_on_first_thrsw);
     try testing.expect(code.writes_z and qpu.no_color_fragment.writes_z);
     try testing.expect(code.disable_ez and qpu.no_color_fragment.disable_ez);
-    try testing.expectEqual(@as(?Sampler, null), code.sampler);
+    try testing.expectEqual(@as(usize, 0), code.sampled().len);
     // Its one TLB write is the depth, in the program's end.
     var buffer: [disasm.most_text]u8 = undefined;
     try testing.expectEqualStrings("nop                           ; mov tlbu, rf5               ; thrsw", disasm.disasm(code.words[3], &buffer).?);
@@ -8654,7 +8717,7 @@ test "compileThroughMesa makes what compileVir does, its memory given back" {
     }
     // And a refusal gives back the register sets it was made after.
     var work: Work = .{};
-    try testing.expectError(Error.Samplers, compileThroughMesa(&work, Twice.words, testing.allocator, .{}));
+    try testing.expectError(Error.Operands, compileThroughMesa(&work, Offset.words, testing.allocator, .{}));
 }
 
 /// glslc's float arithmetic (`reference.glslc_arith`) as facet's emitter
@@ -9097,7 +9160,7 @@ test "a selection Mesa leaves a branch is a branch: an arm over the limit, a sam
     try testing.expectEqual(@as(usize, 1), opsOf(arm, "mov.ifna"));
     try testing.expectEqual(@as(usize, 4), opsOf(arm, "mov.ifa"));
     try testing.expectEqual(@as(usize, 27), arm.words.len);
-    try expectStream(&[_]Word{ .{ .float = @bitCast(@as(u32, 8)) }, .texture, .{ .sampler = 4 } }, arm.stream());
+    try expectStream(&[_]Word{ .{ .float = @bitCast(@as(u32, 8)) }, .{ .texture = 0 }, .{ .sampler = .{ .bits = 4 } } }, arm.stream());
     // The first arm's end a jump to the second arm rather than the merge.
     try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_branch, .branch, 0, 0, 41)));
     // A phi naming a block that is neither arm.
@@ -9127,7 +9190,7 @@ test "through Mesa's back end, glslc's sample in one arm and a constant in the o
     try testing.expectEqual(@as(usize, 8 + 2), opsOf(code, "mov.ifa"));
     try testing.expectEqual(@as(usize, 2), opsOf(code, "xor.pushz"));
     try testing.expectEqual(@as(usize, 38), code.words.len);
-    try expectStream(&[_]Word{ .{ .float = @bitCast(@as(u32, 12)) }, .texture, .{ .sampler = 4 }, .{ .float = @bitCast(@as(u32, 4)) }, .{ .float = 0.75 } }, code.stream());
+    try expectStream(&[_]Word{ .{ .float = @bitCast(@as(u32, 12)) }, .{ .texture = 0 }, .{ .sampler = .{ .bits = 4 } }, .{ .float = @bitCast(@as(u32, 4)) }, .{ .float = 0.75 } }, code.stream());
 }
 
 test "through Mesa's back end, glslc's store in an arm on a push constant: a uniform branch, the store unmasked" {
@@ -10597,7 +10660,7 @@ test "through Mesa's back end, a block read at an offset that differs from lane 
     const config: u32 = 0xffffff00 | 15 << 3 | 1 << 7 | 4;
     try testing.expectEqual(@as(u32, 0xFFFFFFFC), config);
     try expectStream(&.{ .{ .float = 3 }, ubo, .{ .float = @bitCast(config) } }, code.stream());
-    try testing.expectEqual(@as(?Sampler, null), code.sampler);
+    try testing.expectEqual(@as(usize, 0), code.sampled().len);
     try testing.expectEqual(@as(u8, 4), code.threads);
     // The ADD of the address and the offset into TMUAU (:466-488), the
     // thread switch the flush makes the last, a pair, and an LDTMU for
@@ -10657,16 +10720,16 @@ test "through Mesa's back end, a load at an offset that differs, read into a sam
     const quad_config: u32 = 0xffffff00 | 15 << 3 | 0 << 7 | 2;
     try testing.expectEqual(@as(u32, 0xFFFFFF7A), quad_config);
     try expectStream(&.{
-        .{ .float = 3 },                     ubo,
-        .{ .float = @bitCast(quad_config) }, .texture,
-        .{ .sampler = per_pixel_mask },      .{ .float = @bitCast(@as(u32, 64)) },
+        .{ .float = 3 },                             ubo,
+        .{ .float = @bitCast(quad_config) },         .{ .texture = 0 },
+        .{ .sampler = .{ .bits = per_pixel_mask } }, .{ .float = @bitCast(@as(u32, 64)) },
         ubo,
     }, code.stream());
     try testing.expectEqual(@as(usize, 1), countOf(code, "add tmuau, "));
     try testing.expectEqual(@as(usize, 1), countOf(code, "add tmua, "));
     try testing.expectEqual(@as(usize, 5), countOf(code, "ldtmu"));
     try testing.expectEqual(@as(usize, 0), countOf(code, "unifa"));
-    try testing.expectEqual(Sampler{ .set = 0, .binding = 1 }, code.sampler.?);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 1 }, code.sampled()[0]);
 }
 
 test "through Mesa's back end, a sample at a coordinate the same in every lane keeps its helper pixels" {
@@ -10681,7 +10744,7 @@ test "through Mesa's back end, a sample at a coordinate the same in every lane k
         try testing.expect(!work.skip_helpers[at]);
     };
     const ubo: Word = .{ .ubo = .{ .set = 0, .binding = 0, .offset = 0 } };
-    try testing.expectEqualSlices(Word, &.{ .{ .push = 0 }, ubo, .texture, .{ .sampler = 0 } }, code.stream());
+    try testing.expectEqualSlices(Word, &.{ .{ .push = 0 }, ubo, .{ .texture = 0 }, .{ .sampler = .{} } }, code.stream());
     try testing.expectEqual(@as(usize, 1), countOf(code, "add unifa"));
     try testing.expectEqual(@as(usize, 0), countOf(code, "tmua"));
 }
@@ -11420,4 +11483,80 @@ test "calculate_iterations: a count Mesa's bias test finds no exit for, a loop p
     const same: Test = .{ .cmp = .ieq, .limit = 5, .limit_rhs = true, .invert = true, .on_def = false };
     try testing.expectEqual(@as(?u32, 1), tripCount(same, .{ .init = 5, .update = .iadd, .step = 1, .phi_first = true }));
     try testing.expectEqual(@as(?u32, null), tripCount(same, .{ .init = 5, .update = .iadd, .step = 0, .phi_first = true }));
+}
+
+/// Two samplers at one binding of two sets: two units, the set telling
+/// them apart as descriptor_map_add's does.
+const TwoSets = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const uv = b.input(0, .f32x2);
+        b.color(b.mul(b.sample(0, 0, uv), b.sample(1, 0, uv)));
+    }
+});
+
+/// One sampler read twice, compared once and once not: the TMU is given
+/// one state for it, which holds a comparison or does not.
+const MixedCompare = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const uv = b.input(0, .f32x2);
+        b.color(b.scale(b.sample(0, 0, uv), b.sampleCompared(0, 0, uv, b.input(1, .f32x1))));
+    }
+});
+
+test "through Mesa's back end, two textures are two units, given as descriptor_map_add gives them, and a sampler read again keeps its unit" {
+    // glslc's `base` at 0, 0, `detail` at 1, 2, and `base` again: three
+    // lookups, each its two configuration words of its unit, and two
+    // words back each (texel_words).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_two_textures);
+    try testing.expectEqualSlices(Sampler, &.{ .{ .set = 0, .binding = 0 }, .{ .set = 1, .binding = 2 } }, code.sampled());
+    try expectStream(&.{
+        .{ .texture = 0 }, .{ .sampler = .{ .unit = 0, .bits = per_pixel_mask } },
+        .{ .texture = 1 }, .{ .sampler = .{ .unit = 1, .bits = per_pixel_mask } },
+        .{ .texture = 0 }, .{ .sampler = .{ .unit = 0, .bits = per_pixel_mask } },
+    }, code.stream());
+    try testing.expectEqual(@as(usize, 3), countOf(code, "tmus"));
+    try testing.expectEqual(@as(usize, 6), countOf(code, "ldtmu"));
+    // The first sample made one of `detail`, declared second: the units
+    // are in the order the program reads the samplers, not the module
+    // declares them. The load of `base` the first sample reads, %14, is
+    // the first OpLoad, of %13 made of %20.
+    work = .{};
+    const swapped = comptime patched(&reference.glslc_two_textures, .load, 0, 2, 20);
+    const other = try throughMesa(&work, &swapped);
+    try testing.expectEqualSlices(Sampler, &.{ .{ .set = 1, .binding = 2 }, .{ .set = 0, .binding = 0 } }, other.sampled());
+    try testing.expectEqual(Word{ .texture = 0 }, other.stream()[0]);
+    try testing.expectEqual(Word{ .texture = 0 }, other.stream()[2]);
+    try testing.expectEqual(Word{ .texture = 1 }, other.stream()[4]);
+    // The ir's two samplers of one set, and two of one binding in two.
+    work = .{};
+    const twice = try throughMesa(&work, Twice.words);
+    try testing.expectEqualSlices(Sampler, &.{ .{ .set = 0, .binding = 0 }, .{ .set = 0, .binding = 1 } }, twice.sampled());
+    work = .{};
+    const sets = try throughMesa(&work, TwoSets.words);
+    try testing.expectEqualSlices(Sampler, &.{ .{ .set = 0, .binding = 0 }, .{ .set = 1, .binding = 0 } }, sets.sampled());
+    // The plan has one TMU lookup a program still.
+    work = .{};
+    try testing.expectError(Error.Samplers, compile(&work, &reference.glslc_two_textures));
+}
+
+test "through Mesa's back end, a loop of four samples is four lookups of one unit, and a sampler compared once and once not is refused" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_sampled_loop);
+    try testing.expectEqualSlices(Sampler, &.{.{ .set = 0, .binding = 0 }}, code.sampled());
+    var textures: usize = 0;
+    for (code.stream()) |word| switch (word) {
+        .texture => |unit| {
+            try testing.expectEqual(@as(u8, 0), unit);
+            textures += 1;
+        },
+        .sampler => |each| try testing.expectEqual(@as(u8, 0), each.unit),
+        else => {},
+    };
+    try testing.expectEqual(@as(usize, 4), textures);
+    try testing.expectEqual(@as(usize, 4), countOf(code, "tmus"));
+    try testing.expectEqual(@as(usize, 8), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "bu"));
+    work = .{};
+    try testing.expectError(Error.Samplers, throughMesa(&work, MixedCompare.words));
 }
