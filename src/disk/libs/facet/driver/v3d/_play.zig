@@ -1113,6 +1113,7 @@ fn streamOf(queue: *Queue, stream: []const compile.Word, tmu: ?Configuration, sc
         .push => |at| std.mem.readInt(u32, pushed[at * 4 ..][0..4], .little),
         // `buffersBound` has found each.
         .ubo => |each| bufferAddress(queue, each, true) orelse 0,
+        .ssbo => |each| storageAddress(queue, each, true) orelse 0,
         // A vertex program's alone, which the draw gives `scale` to.
         .viewport => |which| @bitCast(if (scale) |each| viewportWord(each, which) else 0),
     };
@@ -1153,11 +1154,31 @@ fn bufferAddress(queue: *Queue, at: compile.UboAddress, out: bool) ?u32 {
     return address;
 }
 
-/// Whether every uniform buffer `made` reads is bound, and where the V3D
-/// reaches it.
-fn buffersBound(queue: *Queue, made: *const driver.Shader) bool {
-    for (made.stream()) |word| switch (word) {
+/// Where the V3D reads a storage buffer: the buffer's address and its
+/// descriptor's offsets, as v3dv writes QUNIFORM_SSBO_OFFSET
+/// (write_ubo_ssbo_uniforms, v3dv_uniforms.c:235-350), the program adding
+/// the offset of each load; its bytes out of the CPU's caches first where
+/// `out` says so, as `bufferAddress` sends a uniform buffer's. Null where
+/// nothing is bound there, where the program reads past the descriptor's
+/// range, or where the bind shifted that range past its buffer (since
+/// 1.164).
+fn storageAddress(queue: *Queue, at: compile.StorageAddress, out: bool) ?u32 {
+    const resources = &playerOf(queue).resources;
+    const found = resources.slot(at.set, at.binding, 0) orelse return null;
+    const bytes: [*]const u8 = @ptrCast(found.pointer orelse return null);
+    const shift = resources.shiftOf(at.set, found);
+    if (shift == shader.SHIFTED_OUT or at.reach > found.range) return null;
+    const address = std.math.cast(u32, @intFromPtr(bytes) + shift) orelse return null;
+    if (out) playerOf(queue).hardware.space.rangeToGpu(bytes + shift, found.range);
+    return address;
+}
+
+/// Whether every uniform buffer and storage buffer a program's `stream`
+/// reads is bound, and where the V3D reaches it.
+fn buffersBound(queue: *Queue, stream: []const compile.Word) bool {
+    for (stream) |word| switch (word) {
         .ubo => |each| if (bufferAddress(queue, each, false) == null) return false,
+        .ssbo => |each| if (storageAddress(queue, each, false) == null) return false,
         else => {},
     };
     return true;
@@ -1679,7 +1700,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             const tmu: ?Configuration = if (made.sampler) |each| sampledBy(queue, each) else null;
             // A uniform buffer the program reads and the draw has not
             // bound is what has gone wrong too (since 1.160).
-            const lacking = (made.sampler != null and tmu == null) or !buffersBound(queue, made);
+            const lacking = (made.sampler != null and tmu == null) or !buffersBound(queue, made.stream());
             if (lacking and !player.frame.color) {
                 // No colour to say what has gone wrong with: the depth
                 // drawn as if nothing dropped a pixel.
@@ -1715,8 +1736,10 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
 
     // The pipeline's vertex shader on the QPU, where it was compiled for
     // it and the draw runs the pipeline's own fragment program: the
-    // vertex function is not called then (since 1.163).
-    const compiled_vertex: ?*const driver.VertexStage = if (own) |made| (if (made.vertex) |*stage| stage else null) else null;
+    // vertex function is not called then (since 1.163). Not where a
+    // buffer either of its programs reads is not bound, which the vertex
+    // function is left to make of (since 1.164).
+    const compiled_vertex: ?*const driver.VertexStage = if (own) |made| (if (made.vertex) |*stage| (if (buffersBound(queue, stage.vertex.stream()) and buffersBound(queue, stage.coordinate.stream())) stage else null) else null) else null;
     const scale = ViewportScale{
         .half_width = viewport.width / 2,
         .half_height = viewport.height / 2,

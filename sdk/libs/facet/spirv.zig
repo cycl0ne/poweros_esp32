@@ -164,7 +164,7 @@ pub const MemoryModel = enum(u32) { simple = 0, glsl450 = 1, _ };
 pub const ExecutionModel = enum(u32) { vertex = 0, tessellation_control = 1, tessellation_evaluation = 2, geometry = 3, fragment = 4, gl_compute = 5, _ };
 pub const ExecutionMode = enum(u32) { origin_upper_left = 7, origin_lower_left = 8, early_fragment_tests = 9, depth_replacing = 12, local_size = 17, _ };
 pub const StorageClass = enum(u32) { uniform_constant = 0, input = 1, uniform = 2, output = 3, workgroup = 4, cross_workgroup = 5, private = 6, function = 7, push_constant = 9, _ };
-pub const Decoration = enum(u32) { block = 2, row_major = 4, col_major = 5, array_stride = 6, matrix_stride = 7, built_in = 11, no_perspective = 13, flat = 14, location = 30, binding = 33, descriptor_set = 34, offset = 35, _ };
+pub const Decoration = enum(u32) { block = 2, buffer_block = 3, row_major = 4, col_major = 5, array_stride = 6, matrix_stride = 7, built_in = 11, no_perspective = 13, flat = 14, non_writable = 24, location = 30, binding = 33, descriptor_set = 34, offset = 35, _ };
 pub const BuiltIn = enum(u32) { position = 0, point_size = 1, clip_distance = 3, cull_distance = 4, frag_depth = 22, _ };
 /// The instructions of the extended set GLSL.std.450, by the numbers its
 /// specification gives them (GLSL.std.450.h), which an OpExtInst names.

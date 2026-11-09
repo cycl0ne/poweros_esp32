@@ -202,6 +202,10 @@ const Emit = struct {
     current_unifa_block: ?*vir.Block = null,
     current_unifa_index: u32 = 0,
     current_unifa_offset: u32 = 0,
+    /// Whether that buffer is a uniform buffer and not a storage buffer,
+    /// whose slots are numbered apart (c->current_unifa_is_ubo; since
+    /// 1.164).
+    current_unifa_is_ubo: bool = false,
 };
 
 /// How far ahead of unifa a load_ubo may be and still be reached by
@@ -517,8 +521,10 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
             for (0..parts) |k| e.defs[at][k] = try c.uniform(.uniform, @intCast(each.at + k));
         },
         // ntq_emit_intrinsic's load_ubo (nir_to_vir.c:3634-3641): through
-        // unifa, which its constant offset always allows here.
-        .ubo => try emitLoadUnifa(e, each, at),
+        // unifa, which its constant offset always allows here. A
+        // load_ssbo too (:3638-3643), of a buffer nothing writes, which is
+        // every one in the profile (since 1.164).
+        .ubo, .ssbo => try emitLoadUnifa(e, each, at),
     }
     e.defined[at] = true;
 }
@@ -530,20 +536,24 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
 /// ldunifa reads a word and moves it on by four; a load in the same
 /// block and buffer a little past the last one reads on from there,
 /// with ldunifas that read nothing to step over the gap, instead of
-/// writing unifa again (since 1.160).
+/// writing unifa again (since 1.160). A load_ssbo the same, of a buffer
+/// nothing writes (:3338-3343): its address is QUNIFORM_SSBO_OFFSET,
+/// which the offset is added to in the program (since 1.164).
 fn emitLoadUnifa(e: *Emit, each: Step, at: u16) Error!void {
     const c = e.c;
+    const is_ssbo = each.tag == .ssbo;
     // Every ldunifa moves the address on by 4 bytes, so the current
     // offset is 4 bytes past the last load's.
     const max_unifa_skip_dist: u32 = max_unifa_skip_distance - 4;
     const const_offset = each.at;
     // QUNIFORM_UBO_ADDR takes the buffer's index shifted up by one, 0
-    // being the push constants' in Vulkan.
-    const index = @as(u32, each.b) + 1;
+    // being the push constants' in Vulkan; a storage buffer's is its own.
+    const index = @as(u32, each.b) + @intFromBool(!is_ssbo);
 
     var skip_unifa = false;
     var ldunifa_skips: u32 = 0;
     if (c.cur_block == e.current_unifa_block and
+        e.current_unifa_is_ubo == !is_ssbo and
         e.current_unifa_index == index and
         e.current_unifa_offset <= const_offset and
         e.current_unifa_offset + max_unifa_skip_dist >= const_offset)
@@ -552,21 +562,31 @@ fn emitLoadUnifa(e: *Emit, each: Step, at: u16) Error!void {
         ldunifa_skips = (const_offset - e.current_unifa_offset) / 4;
     } else {
         e.current_unifa_block = c.cur_block;
+        e.current_unifa_is_ubo = !is_ssbo;
         e.current_unifa_index = index;
         e.current_unifa_offset = const_offset;
     }
 
     if (!skip_unifa) {
-        const base_offset = try c.uniform(.ubo_addr, vir.unitDataCreate(index, const_offset));
+        const base_offset = if (!is_ssbo)
+            try c.uniform(.ubo_addr, vir.unitDataCreate(index, const_offset))
+        else
+            try c.uniform(.ssbo_offset, index);
         const unifa = vir.magicReg(.unifa);
-        // The ldunif made to load into unifa itself, where it is the one
-        // just emitted rather than an earlier one reused, which saves the
-        // MOV.
-        const block = c.cur_block.?;
-        const last = list.entry(Inst, "link", block.instructions.prev.?);
-        if (c.defs[base_offset.index] == last) {
-            last.dst = unifa;
-            c.defs[base_offset.index] = null;
+        if (!is_ssbo) {
+            // The ldunif made to load into unifa itself, where it is the
+            // one just emitted rather than an earlier one reused, which
+            // saves the MOV.
+            const block = c.cur_block.?;
+            const last = list.entry(Inst, "link", block.instructions.prev.?);
+            if (c.defs[base_offset.index] == last) {
+                last.dst = unifa;
+                c.defs[base_offset.index] = null;
+            } else {
+                _ = try c.mulDest(.mov, unifa, .{base_offset});
+            }
+        } else if (const_offset != 0) {
+            _ = try c.addDest(.add, unifa, .{ base_offset, try c.uniformUi(const_offset) });
         } else {
             _ = try c.mulDest(.mov, unifa, .{base_offset});
         }

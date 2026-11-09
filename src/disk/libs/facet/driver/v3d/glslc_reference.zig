@@ -3759,3 +3759,126 @@ pub const glslc_vertex_as_it_is = [_]u32{
     0x00000027, 0x00000025, 0x0004003D, 0x00000007, 0x0000002A, 0x00000029,
     0x0003003E, 0x00000028, 0x0000002A, 0x000100FD, 0x00010038,
 };
+
+/// A storage buffer read at constant offsets, glslc -O
+/// (`-fshader-stage=frag`), 206 words: the colour times the buffer's tint
+/// and its scale, plus the third of its values. The buffer is `readonly`,
+/// so glslc decorates its block BufferBlock and its members and variable
+/// NonWritable, and its last member is a runtime array. Since 1.164 Mesa's
+/// back end reads it through unifa, as a load_ssbo of a buffer the program
+/// does not write (ntq_emit_load_unifa, nir_to_vir.c:3299-3507).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// layout(std430, set = 0, binding = 0) readonly buffer Tints {
+///     vec4 tint;
+///     float scale;
+///     vec4 values[];
+/// } tints;
+/// void main() {
+///     ocolor = vcolor * tints.tint * tints.scale + tints.values[2];
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag ssbo.frag -o ssbo.spv   # 206 words
+/// spirv-val --target-env vulkan1.0 ssbo.spv          # no output, and 0
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 32
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %11
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %11 Location 0
+///                OpDecorate %13 ArrayStride 16
+///                OpDecorate %14 BufferBlock
+///                OpMemberDecorate %14 0 NonWritable
+///                OpMemberDecorate %14 0 Offset 0
+///                OpMemberDecorate %14 1 NonWritable
+///                OpMemberDecorate %14 1 Offset 16
+///                OpMemberDecorate %14 2 NonWritable
+///                OpMemberDecorate %14 2 Offset 32
+///                OpDecorate %16 NonWritable
+///                OpDecorate %16 Binding 0
+///                OpDecorate %16 DescriptorSet 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypePointer Input %7
+///          %11 = OpVariable %10 Input
+///          %13 = OpTypeRuntimeArray %7
+///          %14 = OpTypeStruct %7 %6 %13
+///          %15 = OpTypePointer Uniform %14
+///          %16 = OpVariable %15 Uniform
+///          %17 = OpTypeInt 32 1
+///          %18 = OpConstant %17 0
+///          %19 = OpTypePointer Uniform %7
+///          %23 = OpConstant %17 1
+///          %24 = OpTypePointer Uniform %6
+///          %28 = OpConstant %17 2
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %12 = OpLoad %7 %11
+///          %20 = OpAccessChain %19 %16 %18
+///          %21 = OpLoad %7 %20
+///          %22 = OpFMul %7 %12 %21
+///          %25 = OpAccessChain %24 %16 %23
+///          %26 = OpLoad %6 %25
+///          %27 = OpVectorTimesScalar %7 %22 %26
+///          %29 = OpAccessChain %19 %16 %28 %28
+///          %30 = OpLoad %7 %29
+///          %31 = OpFAdd %7 %27 %30
+///                OpStore %9 %31
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_storage_buffer = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000020, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x0000000B, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000B, 0x0000001E, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000006, 0x00000010, 0x00030047, 0x0000000E, 0x00000003, 0x00040048,
+    0x0000000E, 0x00000000, 0x00000018, 0x00050048, 0x0000000E, 0x00000000,
+    0x00000023, 0x00000000, 0x00040048, 0x0000000E, 0x00000001, 0x00000018,
+    0x00050048, 0x0000000E, 0x00000001, 0x00000023, 0x00000010, 0x00040048,
+    0x0000000E, 0x00000002, 0x00000018, 0x00050048, 0x0000000E, 0x00000002,
+    0x00000023, 0x00000020, 0x00030047, 0x00000010, 0x00000018, 0x00040047,
+    0x00000010, 0x00000021, 0x00000000, 0x00040047, 0x00000010, 0x00000022,
+    0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006,
+    0x00000004, 0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B,
+    0x00000008, 0x00000009, 0x00000003, 0x00040020, 0x0000000A, 0x00000001,
+    0x00000007, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001, 0x0003001D,
+    0x0000000D, 0x00000007, 0x0005001E, 0x0000000E, 0x00000007, 0x00000006,
+    0x0000000D, 0x00040020, 0x0000000F, 0x00000002, 0x0000000E, 0x0004003B,
+    0x0000000F, 0x00000010, 0x00000002, 0x00040015, 0x00000011, 0x00000020,
+    0x00000001, 0x0004002B, 0x00000011, 0x00000012, 0x00000000, 0x00040020,
+    0x00000013, 0x00000002, 0x00000007, 0x0004002B, 0x00000011, 0x00000017,
+    0x00000001, 0x00040020, 0x00000018, 0x00000002, 0x00000006, 0x0004002B,
+    0x00000011, 0x0000001C, 0x00000002, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x00000007,
+    0x0000000C, 0x0000000B, 0x00050041, 0x00000013, 0x00000014, 0x00000010,
+    0x00000012, 0x0004003D, 0x00000007, 0x00000015, 0x00000014, 0x00050085,
+    0x00000007, 0x00000016, 0x0000000C, 0x00000015, 0x00050041, 0x00000018,
+    0x00000019, 0x00000010, 0x00000017, 0x0004003D, 0x00000006, 0x0000001A,
+    0x00000019, 0x0005008E, 0x00000007, 0x0000001B, 0x00000016, 0x0000001A,
+    0x00060041, 0x00000013, 0x0000001D, 0x00000010, 0x0000001C, 0x0000001C,
+    0x0004003D, 0x00000007, 0x0000001E, 0x0000001D, 0x00050081, 0x00000007,
+    0x0000001F, 0x0000001B, 0x0000001E, 0x0003003E, 0x00000009, 0x0000001F,
+    0x000100FD, 0x00010038,
+};

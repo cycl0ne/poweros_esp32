@@ -310,6 +310,9 @@ pub const profile: spirv.Profile = .{
         // writes &&, || and ! (since 1.157).
                      .logical_and,         .f_unord_greater_than_equal,     .f_unord_greater_than,
         .logical_or,          .f_unord_less_than,   .f_unord_less_than_equal,        .logical_not,
+        // A storage buffer's last member, read at constant indexes
+        // (since 1.164).
+        .type_runtime_array,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform },
     .image_dims = &.{.dim_2d},
@@ -372,6 +375,13 @@ pub const Tag = enum {
     /// through unifa (ntq_emit_load_unifa, nir_to_vir.c:3299; since
     /// 1.160).
     ubo,
+    /// Floats of a storage buffer, NIR's load_ssbo of a constant offset,
+    /// as `ubo` holds them: `b` the buffer's slot, `at` the byte offset.
+    /// Nothing in the profile writes a buffer, so nir_opt_access has made
+    /// each load ACCESS_NON_WRITEABLE and CAN_REORDER (nir_opt_access.c:
+    /// 250-293), and v3d reads it through unifa as it reads a uniform
+    /// buffer (ntq_emit_load_unifa, nir_to_vir.c:3338-3343; since 1.164).
+    ssbo,
     /// One float of a value.
     component,
     /// Floats of other values, gathered.
@@ -654,6 +664,12 @@ pub const Word = union(enum) {
     ubo: UboAddress,
     /// A word of the draw's viewport (`Viewport`; since 1.163).
     viewport: Viewport,
+    /// Where a storage buffer is, bound at `set`, `binding`: Mesa's
+    /// QUNIFORM_SSBO_OFFSET, which the draw writes as the buffer's address
+    /// and its descriptor's offsets, the program adding the offset it
+    /// reads at (write_ubo_ssbo_uniforms, v3dv_uniforms.c:235-350; since
+    /// 1.164).
+    ssbo: StorageAddress,
 };
 
 /// What a `.viewport` step reads, as v3dv writes QUNIFORM_VIEWPORT_X_SCALE,
@@ -667,6 +683,16 @@ pub const UboAddress = struct {
     set: u16,
     binding: u16,
     offset: u32,
+};
+
+/// A storage buffer's address as the stream holds it, and `reach`, how
+/// many of its bytes the program reads from its start: one past the last
+/// of the floats its loads read, which the draw holds to the descriptor's
+/// range (since 1.164).
+pub const StorageAddress = struct {
+    set: u16,
+    binding: u16,
+    reach: u32,
 };
 
 /// A struct with member Offsets: one decorated Block, the push constants'
@@ -686,6 +712,12 @@ pub const Block = struct {
     /// and no Offsets (since 1.163).
     member_builtin: [most_members]u16 = @splat(none),
     per_vertex: bool = false,
+    /// Decorated BufferBlock: a storage buffer's, as SPIR-V 1.0 has one
+    /// (since 1.164).
+    storage: bool = false,
+    /// Its last member is a runtime array, which only a storage buffer's
+    /// block may have, and nothing may hold.
+    runtime: bool = false,
 };
 
 /// What a vertex program is besides its instructions (`Code.vertex`).
@@ -724,6 +756,9 @@ pub const Ubo = struct {
     block: u16,
     set: u16,
     binding: u16,
+    /// A storage buffer, whose block is BufferBlock: its loads are
+    /// `.ssbo` steps and its address QUNIFORM_SSBO_OFFSET (since 1.164).
+    storage: bool = false,
 };
 
 /// A matrix the body holds as a value: the steps of its columns, each a
@@ -959,7 +994,7 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
     // drops a pixel or compares, so the plan has nothing to hold any of
     // them to: only Mesa's back end compiles them.
     for (work.program()) |each| switch (each.tag) {
-        .push, .ubo => return Error.Storage,
+        .push, .ubo, .ssbo => return Error.Storage,
         .discard => return Error.Discards,
         .sample_compared => return Error.Samplers,
         // Nor does any compute beyond a sum and a product.
@@ -1083,7 +1118,17 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
                 const unit = vir.unitDataGetUnit(data);
                 if (unit == 0 or unit > work.ubo_count) return Error.Invalid;
                 const bound = work.ubos[unit - 1];
+                if (bound.storage) return Error.Invalid;
                 break :ubo .{ .ubo = .{ .set = bound.set, .binding = bound.binding, .offset = vir.unitDataGetOffset(data) } };
+            },
+            // A storage buffer's address: the slot itself, not shifted
+            // (ntq_emit_load_unifa, nir_to_vir.c:3383-3390), and how far
+            // the program reads into it (since 1.164).
+            .ssbo_offset => ssbo: {
+                if (data >= work.ubo_count) return Error.Invalid;
+                const bound = work.ubos[data];
+                if (!bound.storage) return Error.Invalid;
+                break :ssbo .{ .ssbo = .{ .set = bound.set, .binding = bound.binding, .reach = reachOf(work, @intCast(data)) } };
             },
             // A word of the draw's viewport (since 1.163).
             .viewport_x_scale => .{ .viewport = .x_scale },
@@ -1287,11 +1332,20 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     .array_stride => {},
                     // A block, which carries no literal: the push
                     // constants', or a uniform buffer's (since 1.160).
-                    // A storage buffer's, BufferBlock, is refused.
                     .block => {
                         _ = try blockOf(work, id);
                         continue;
                     },
+                    // A storage buffer's, as SPIR-V 1.0 declares one
+                    // (since 1.164).
+                    .buffer_block => {
+                        (try blockOf(work, id)).storage = true;
+                        continue;
+                    },
+                    // A buffer the program does not write, which nothing
+                    // in the profile does: nir_opt_access infers as much
+                    // (nir_opt_access.c:225-228).
+                    .non_writable => continue,
                     else => return Error.Refused,
                 }
                 if (operands.len < 3) return Error.Body;
@@ -1337,11 +1391,13 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     block.per_vertex = true;
                     continue;
                 }
-                if (what != .offset and what != .matrix_stride and what != .col_major) return Error.Refused;
+                if (what != .offset and what != .matrix_stride and what != .col_major and what != .non_writable) return Error.Refused;
                 const block = try blockOf(work, id);
                 const member = operands[1];
                 if (member >= most_members) return Error.Storage;
-                if (what == .col_major) continue;
+                // A storage buffer's member NonWritable, as its variable
+                // may be (since 1.164).
+                if (what == .col_major or what == .non_writable) continue;
                 if (operands.len < 4) return Error.Body;
                 const literal = operands[3];
                 if (literal % 4 != 0 or literal >= none) return Error.Storage;
@@ -1398,6 +1454,19 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     const member = try idOf(each);
                     const offset = block.member_offset[k];
                     if (offset == none) return Error.Storage;
+                    if (work.thing[member] == .structure) {
+                        // A struct whose last member is a runtime array
+                        // is a storage buffer's block, which nothing holds.
+                        const inner = findBlock(work, member) orelse return Error.Type;
+                        if (inner.runtime) return Error.Storage;
+                    }
+                    if (isRuntime(work, member)) {
+                        // A runtime array, the last member of a storage
+                        // buffer's block alone; it counts no bytes here
+                        // (since 1.164).
+                        if (k != members.len - 1 or !block.storage) return Error.Storage;
+                        block.runtime = true;
+                    }
                     if (offset + try sizeOf(work, member, block.member_stride[k]) >= none) return Error.Storage;
                     block.member_type[k] = member;
                 }
@@ -1442,6 +1511,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     .float, .vector, .matrix, .array, .structure => {},
                     else => return Error.Type,
                 }
+                if (isRuntime(work, element)) return Error.Type;
                 const length = try idOf(operands[2]);
                 if (work.thing[length] != .int_constant) return Error.Type;
                 const count = work.points[length];
@@ -1449,6 +1519,24 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 work.thing[id] = .array;
                 work.points[id] = element;
                 work.length[id] = count;
+            },
+            .type_runtime_array => {
+                // Result, ElementType: an array of no length, the last
+                // member of a storage buffer's block, its elements
+                // ArrayStride apart. An access chain reaches any element
+                // of it, at a constant index (since 1.164). Its length is
+                // 0, which no array of a length has.
+                if (operands.len < 2) return Error.Body;
+                const id = try idOf(operands[0]);
+                const element = try idOf(operands[1]);
+                switch (work.thing[element]) {
+                    .float, .vector, .matrix, .array, .structure => {},
+                    else => return Error.Type,
+                }
+                if (isRuntime(work, element)) return Error.Type;
+                work.thing[id] = .array;
+                work.points[id] = element;
+                work.length[id] = 0;
             },
             .type_image => {
                 // Result, SampledType, Dim, Depth, Arrayed, MS, Sampled,
@@ -1570,7 +1658,9 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // A uniform buffer: a block at a set and a binding,
                     // which v3dv's descriptor map gives a slot
                     // (lower_vulkan_resource_index, v3dv_pipeline.c), and
-                    // the draw the buffer bound there (since 1.160).
+                    // the draw the buffer bound there (since 1.160). Or a
+                    // storage buffer, whose block is BufferBlock, which
+                    // SPIR-V 1.0 puts in this class too (since 1.164).
                     if (work.thing[pointee] != .structure) return Error.Storage;
                     const block = findBlock(work, pointee) orelse return Error.Storage;
                     if (work.set[id] == none or work.binding[id] == none) return Error.Location;
@@ -1578,7 +1668,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.thing[id] = .variable;
                     work.class[id] = @intCast(@intFromEnum(class));
                     work.points[id] = @intCast(work.ubo_count);
-                    work.ubos[work.ubo_count] = .{ .block = @intCast(block - &work.blocks[0]), .set = work.set[id], .binding = work.binding[id] };
+                    work.ubos[work.ubo_count] = .{ .block = @intCast(block - &work.blocks[0]), .set = work.set[id], .binding = work.binding[id], .storage = block.storage };
                     work.ubo_count += 1;
                     continue;
                 }
@@ -2455,8 +2545,9 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
             .input, .constant, .push, .component, .construct, .negate, .abs, .sat => continue,
             // A load_ubo is let through only where it may be speculated
             // (nir_opt_peephole_select.c:132-141), which none from vtn
-            // may: no limit flattens its arm (since 1.160).
-            .ubo => return std.math.maxInt(u32),
+            // may: no limit flattens its arm (since 1.160). A load_ssbo
+            // is held to the same (since 1.164).
+            .ubo, .ssbo => return std.math.maxInt(u32),
             else => {},
         }
         var used = false;
@@ -2839,8 +2930,10 @@ fn computes(tag: Tag) bool {
 /// feq's or fneu's in either order (NIR_OP_IS_2SRC_COMMUTATIVE).
 fn equalSteps(work: *const Work, a: Step, b: Step) bool {
     if (a.tag != b.tag or a.kind != b.kind or a.at != b.at) return false;
-    // A load_ubo's buffer is its `b`, which is no step.
-    if (a.tag == .ubo) return a.b == b.b;
+    // A load_ubo's buffer is its `b`, which is no step, and a
+    // load_ssbo's, which CAN_REORDER lets nir_opt_cse take as well
+    // (nir_instr_set.c; since 1.164).
+    if (a.tag == .ubo or a.tag == .ssbo) return a.b == b.b;
     const left = readsOf(a);
     const right = readsOf(b);
     var straight = true;
@@ -2863,7 +2956,7 @@ fn equalSteps(work: *const Work, a: Step, b: Step) bool {
 /// What a step reads, field by field.
 fn readsOf(each: Step) [4]?u16 {
     return switch (each.tag) {
-        .input, .constant, .push, .ubo, .viewport => .{ null, null, null, null },
+        .input, .constant, .push, .ubo, .ssbo, .viewport => .{ null, null, null, null },
         .construct => .{
             each.from[0],
             if (each.kind.parts() > 1) each.from[1] else null,
@@ -2912,7 +3005,7 @@ fn replaceUses(work: *Work, from: u16, to: u16) void {
     if (work.stored == from) work.stored = to;
     for (work.steps[0..work.step_count]) |*user| {
         switch (user.tag) {
-            .input, .constant, .push, .ubo => {},
+            .input, .constant, .push, .ubo, .ssbo => {},
             .construct => for (user.from[0..user.kind.parts()]) |*of| {
                 if (of.* == from) of.* = to;
             },
@@ -3175,7 +3268,9 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                         pointee = block.member_type[index];
                     },
                     .array => {
-                        if (index >= work.length[pointee]) return Error.Body;
+                        // A runtime array's elements are all the draw's
+                        // to have bound (since 1.164).
+                        if (!isRuntime(work, pointee) and index >= work.length[pointee]) return Error.Body;
                         offset += index * work.array_stride[pointee];
                         pointee = work.points[pointee];
                     },
@@ -3574,10 +3669,15 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
 /// lower_load_push_constant, v3dv_pipeline.c:571). Two loads of one
 /// member are two steps, and the second costs no word of the stream:
 /// vir_uniform finds it there already (vir_get_uniform_index,
-/// vir.c:2771).
+/// vir.c:2771). A storage buffer's is a load_ssbo, which the same pass
+/// makes in the same format (v3dv_pipeline.c:418-420; since 1.164).
 fn blockLoad(work: *Work, variable: u16, offset: u32, kind: Kind) Error!u16 {
     if (offset >= none) return Error.Storage;
-    if (variable != work.push_variable) return put(work, .{ .tag = .ubo, .kind = kind, .b = work.points[variable], .at = offset });
+    if (variable != work.push_variable) {
+        const slot = work.points[variable];
+        const tag: Tag = if (work.ubos[slot].storage) .ssbo else .ubo;
+        return put(work, .{ .tag = tag, .kind = kind, .b = slot, .at = offset });
+    }
     return put(work, .{ .tag = .push, .kind = kind, .at = offset / 4 });
 }
 
@@ -3597,6 +3697,8 @@ fn sizeOf(work: *Work, type_id: u16, stride: u16) Error!u32 {
         .array => {
             const apart = work.array_stride[type_id];
             if (apart == none) return Error.Storage;
+            // A runtime array: what the buffer holds of it is the draw's.
+            if (work.length[type_id] == 0) return 0;
             return (@as(u32, work.length[type_id]) - 1) * apart + try sizeOf(work, work.points[type_id], stride);
         },
         .structure => {
@@ -3610,6 +3712,22 @@ fn sizeOf(work: *Work, type_id: u16, stride: u16) Error!u32 {
         },
         else => return Error.Type,
     }
+}
+
+/// How many bytes of storage buffer `slot` the program reads from its
+/// start: one past the last float of its last-reaching load (since
+/// 1.164).
+fn reachOf(work: *const Work, slot: u16) u32 {
+    var reach: u32 = 0;
+    for (work.program()) |each| {
+        if (each.tag == .ssbo and each.b == slot) reach = @max(reach, each.at + 4 * @as(u32, each.kind.parts()));
+    }
+    return reach;
+}
+
+/// Whether `type_id` is a runtime array (since 1.164).
+fn isRuntime(work: *const Work, type_id: u16) bool {
+    return work.thing[type_id] == .array and work.length[type_id] == 0;
 }
 
 /// The matrix `word` names, by its place in `Work.matrices`. A constant
@@ -4188,7 +4306,7 @@ fn settle(work: *Work) Error!void {
             // are already in registers, so neither costs an instruction.
             .input, .component, .construct => {},
             // Refused by `compile` before the plan is laid out.
-            .push, .ubo => return Error.Storage,
+            .push, .ubo, .ssbo => return Error.Storage,
             .compare, .discard => return Error.Discards,
             .sample_compared => return Error.Samplers,
             .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot => return Error.Body,
@@ -7443,7 +7561,7 @@ test "through Mesa's back end, two loads of one member are one, and a load in an
     try testing.expectError(Error.Branches, throughMesa(&armed, ReadInArm.words));
 }
 
-test "a storage buffer's block, and a uniform buffer bound nowhere, are refused" {
+test "through Mesa's back end, a uniform buffer's block made BufferBlock is a storage buffer, and a uniform buffer bound nowhere is refused" {
     // glslc_uniform_buffer's `OpDecorate %16 Block` made BufferBlock.
     var stored = reference.glslc_uniform_buffer;
     var at: usize = 5;
@@ -7451,15 +7569,22 @@ test "a storage buffer's block, and a uniform buffer bound nowhere, are refused"
     while (at < stored.len) {
         const count = stored[at] >> 16;
         if (stored[at] == 0x00030047 and stored[at + 1] == 16 and stored[at + 2] == @intFromEnum(spirv.Decoration.block)) {
-            // BufferBlock, which `spirv.Decoration` does not name.
-            stored[at + 2] = 3;
+            stored[at + 2] = @intFromEnum(spirv.Decoration.buffer_block);
             found = true;
         }
         at += count;
     }
     try testing.expect(found);
+    // The same eight ldunifas as the uniform buffer's, from unifa written
+    // once: the buffer's address, which reaches to the shift's end at 32,
+    // and a MOV into unifa, which a load_ssbo's ldunif is not made to
+    // write itself (nir_to_vir.c:3421-3446; since 1.164).
     var work: Work = .{};
-    try testing.expectError(Error.Refused, throughMesa(&work, &stored));
+    const code = try throughMesa(&work, &stored);
+    try testing.expectEqualSlices(Word, &.{.{ .ssbo = .{ .set = 0, .binding = 0, .reach = 32 } }}, code.stream());
+    try testing.expectEqual(@as(usize, 0), countOf(code, "ldunifrf.unifa"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov unifa"));
+    try testing.expectEqual(@as(usize, 8), countOf(code, "ldunifa"));
     // Its DescriptorSet made a second Binding: a buffer of no set.
     var unset = reference.glslc_uniform_buffer;
     at = 5;
@@ -7475,6 +7600,45 @@ test "a storage buffer's block, and a uniform buffer bound nowhere, are refused"
     try testing.expect(found);
     var unbound: Work = .{};
     try testing.expectError(Error.Location, throughMesa(&unbound, &unset));
+}
+
+test "through Mesa's back end, a storage buffer is read through unifa, its runtime array at the offset its stride gives" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_storage_buffer);
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+    // Three load_ssbos: the tint at 0, the scale at 16, read on from the
+    // tint's end, and values[2] at 32 + 2 * 16, past where a skip
+    // reaches: unifa again, the address the ldunif before loaded, which
+    // vir_uniform takes again (try_opt_ldunif, vir.c:2811), plus 64,
+    // a constant of the stream (nir_to_vir.c:3439-3446).
+    try testing.expectEqualSlices(Word, &.{
+        .{ .ssbo = .{ .set = 0, .binding = 0, .reach = 80 } },
+        .{ .float = @bitCast(@as(u32, 64)) },
+    }, code.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov unifa"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "add unifa"));
+    try testing.expectEqual(@as(usize, 9), countOf(code, "ldunifa"));
+    try testing.expectEqual(@as(usize, 30), code.words.len);
+    var steps: usize = 0;
+    for (work.program()) |each| {
+        if (each.tag == .ssbo) steps += 1;
+        try testing.expect(each.tag != .ubo);
+    }
+    try testing.expectEqual(@as(usize, 3), steps);
+    // The plan has no hand-written program to hold one to.
+    var plan: Work = .{};
+    try testing.expectError(Error.Storage, compile(&plan, &reference.glslc_storage_buffer));
+}
+
+test "a runtime array is a storage buffer's last member, and nothing else's" {
+    // BufferBlock made Block: a uniform buffer with a runtime array.
+    var work: Work = .{};
+    try testing.expectError(Error.Storage, throughMesa(&work, &comptime patched(&reference.glslc_storage_buffer, .decorate, 3, 1, @intFromEnum(spirv.Decoration.block))));
+    // The scale and the values swapped in the struct: the runtime array
+    // its second member, at 16, and not its last.
+    const swapped = comptime patched(&patched(&reference.glslc_storage_buffer, .type_struct, 0, 2, 13), .type_struct, 0, 3, 6);
+    var middle: Work = .{};
+    try testing.expectError(Error.Storage, throughMesa(&middle, &swapped));
 }
 
 test "through Mesa's back end, a block's arrays and structs are read at the offsets their strides and members give" {
