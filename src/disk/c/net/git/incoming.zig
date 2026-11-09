@@ -83,7 +83,7 @@ fn index(repo: *Repository, got: *const Received, pack_name: [*:0]const u8, idx_
         _ = dl.Close(window.file);
         return null;
     };
-    indexer.init(git.sys, git.zb, git.cb, window.source());
+    indexer.init(git.sys, git.ub, git.zb, git.cb, window.source());
     indexer.progress = .{ .context = git, .step = step };
     var sink: files.FileSink = .{ .dl = dl, .file = idx_file };
     var indexed = indexer.run(got.bytes, got.count, &got.checksum, sink.asSink());

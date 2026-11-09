@@ -145,33 +145,27 @@ pub const Git = struct {
     }
 };
 
-/// Memory handed out from blocks taken as needed, all given back by
-/// `free`.
+/// Memory handed out from an exec pool, made at the first `take` and
+/// given back whole by `free`.
 pub const Arena = struct {
     sys: *ExecBase,
-    /// The newest block; each holds the one before it.
-    block: ?*Block = null,
-    at: usize = 0,
-    end: usize = 0,
+    pool: ?*anyopaque = null,
 
-    const Block = struct { older: ?*Block };
-    const block_bytes = 16 * 1024;
+    const puddle_bytes = 16 * 1024;
+    /// A request this big gets memory of its own, back to the system with
+    /// the pool.
+    const alone_bytes = 4 * 1024;
 
     /// `size` bytes aligned to `alignment`; null when there is no memory.
+    /// A pool's blocks are aligned to MEM_BLOCKSIZE, more than any of
+    /// Git's types asks for.
     pub fn take(arena: *Arena, size: usize, alignment: usize) ?[*]u8 {
-        var start = (arena.at + alignment - 1) & ~(alignment - 1);
-        if (arena.block == null or start + size > arena.end) {
-            const wanted = @max(block_bytes, size + @sizeOf(Block) + alignment);
-            const memory = arena.sys.AllocVec(wanted, exec.MEMF_ANY) orelse return null;
-            const block: *Block = @ptrCast(@alignCast(memory));
-            block.older = arena.block;
-            arena.block = block;
-            arena.at = @intFromPtr(block) + @sizeOf(Block);
-            arena.end = @intFromPtr(block) + wanted;
-            start = (arena.at + alignment - 1) & ~(alignment - 1);
-        }
-        arena.at = start + size;
-        return @ptrFromInt(start);
+        if (alignment > exec.MEM_BLOCKSIZE) return null;
+        const pool = arena.pool orelse made: {
+            arena.pool = arena.sys.CreatePool(exec.MEMF_ANY, puddle_bytes, alone_bytes) orelse return null;
+            break :made arena.pool;
+        };
+        return @ptrCast(arena.sys.AllocPooled(pool, @max(size, 1)) orelse return null);
     }
 
     /// A `T`, set to `value`.
@@ -191,11 +185,7 @@ pub const Arena = struct {
     }
 
     pub fn free(arena: *Arena) void {
-        var block = arena.block;
-        while (block) |each| {
-            block = each.older;
-            arena.sys.FreeVec(each);
-        }
-        arena.* = .{ .sys = arena.sys };
+        if (arena.pool) |pool| arena.sys.DeletePool(pool);
+        arena.pool = null;
     }
 };

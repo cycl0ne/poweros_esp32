@@ -92,6 +92,7 @@ test {
     _ = @import("url/decodeurl.zig");
     _ = @import("url/encodeurl.zig");
     _ = @import("url/parseurl.zig");
+    _ = @import("sort/sortarray.zig");
     _ = @import("math/_math.zig");
     _ = @import("math/sdivmod32.zig");
     _ = @import("math/smult32.zig");
@@ -170,7 +171,7 @@ test "utility.library: made from its ROM tag, opened by name, never expunged" {
     defer kexec.deinit();
     try testing.expectEqual(&ub.lib, kexec.OpenLibrary(kexec.SysBase, LIBRARY_NAME, 1).?);
     try testing.expectEqual(@as(u16, 1), ub.lib.version);
-    try testing.expectEqual(@as(u16, 5), ub.lib.revision);
+    try testing.expectEqual(@as(u16, 6), ub.lib.revision);
     try testing.expect(kexec.OpenLibrary(kexec.SysBase, LIBRARY_NAME, 2) == null);
     kexec.CloseLibrary(kexec.SysBase, &ub.lib);
     _ = kexec.RemLibrary(kexec.SysBase, &ub.lib);

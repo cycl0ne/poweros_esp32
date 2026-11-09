@@ -154,4 +154,8 @@ usize DecodeUrl([*]const u8 from, usize from_length, [*]u8 into, usize into_leng
 /// Bytes as a URL's part, `%XX` for what needs it - URLF_SLASH keeps
 /// `/`, URLF_LATIN1 encodes Latin-1 as UTF-8: the bytes the whole takes.
 usize EncodeUrl([*]const u8 from, usize from_length, [*]u8 into, usize into_length, u32 flags)
+// Sorting
+/// `count` elements of `size` bytes at `array` put in order, in place:
+/// `hook` answers below 0 when its object goes before its message.
+void SortArray(?*anyopaque array, usize count, usize size, *utility.Hook hook)
 ##end

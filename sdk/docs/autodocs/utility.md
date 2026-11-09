@@ -57,6 +57,7 @@ Generated from the source by `./zig build autodoc`.
 - [SMult32](#smult32) - Multiplies two signed 32-bit numbers and keeps the low 32 bits.
 - [SMult64](#smult64) - Multiplies two signed 32-bit numbers into their whole 64-bit product.
 - [SetWildStar](#setwildstar) - Makes `*` a wildcard, or a plain character again, for the patterns parsed from now on.
+- [SortArray](#sortarray) - Puts the elements of an array in order, in place, as a hook compares them.
 - [Strchr](#strchr) - Finds the first occurrence of a character in a string.
 - [Strcmp](#strcmp) - Compares two strings, case included.
 - [Stricmp](#stricmp) - Compares two strings without regard to case.
@@ -2923,6 +2924,84 @@ None known.
 ```zig
 const old = ub.SetWildStar(true);
 defer _ = ub.SetWildStar(old);
+```
+
+## SortArray
+
+Puts the elements of an array in order, in place, as a hook compares them.
+
+**SYNOPSIS**
+
+```zig
+fn SortArray(ub: *UtilityBase, array: ?*anyopaque, count: usize, size: usize, hook: *Hook) void
+```
+
+**SINCE**
+
+1.6. LVO -300.
+
+**INPUTS**
+
+- `array` - the first element.
+- `count` - how many elements there are.
+- `size` - the bytes of one element, from its start to the next's.
+- `hook` - what compares two elements: called with one as the object
+  and another as the message, it answers - read as an `isize` - below
+  0 when the object goes before the message, 0 or above when not.
+
+**RESULT**
+
+None; the elements are in order.
+
+**BEHAVIOR**
+
+A heap sort: the elements are made a heap with the one that goes last
+on top, the top swapped to the end and the rest made a heap again,
+until one is left. That takes about 2 n log2 n comparisons at most,
+whatever order the elements come in, and no memory. Elements are
+swapped a word at a time when `array` and `size` are a word's
+multiple, a byte at a time else. A `count` below 2 or a `size` of 0
+calls the hook not at all.
+
+**CONTEXT**
+
+- Waits: only when the hook does.
+- Interrupts: safe when the hook is.
+- Locks: none taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The array and the hook are the caller's; the
+elements the hook is handed are in the array, moved between calls.
+
+**NOTES**
+
+The sort is not stable: elements that compare alike end up in no
+order of their own. An answer of Stricmp or CompareMem may be handed
+back as it is. The hook's `data` carries what the comparison needs
+besides the two elements - a table they index, a library to call.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CallHookPkt`, `CompareMem`, `Stricmp`
+
+**EXAMPLES**
+
+```zig
+fn byName(hook: *utility.Hook, first: ?*anyopaque, second: ?*anyopaque) callconv(.c) usize {
+    const ub: *UtilityBase = @ptrCast(@alignCast(hook.data.?));
+    const a: *const Entry = @ptrCast(@alignCast(first.?));
+    const b: *const Entry = @ptrCast(@alignCast(second.?));
+    return @bitCast(@as(isize, ub.Stricmp(a.name, b.name)));
+}
+
+var by_name: utility.Hook = .{ .entry = byName, .data = ub };
+ub.SortArray(entries.ptr, entries.len, @sizeOf(Entry), &by_name);
 ```
 
 ## Strchr

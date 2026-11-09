@@ -245,7 +245,7 @@ pub fn list(repo: *Repository, prefix: []const u8, arena: *context.Arena) ?[]Lis
         out[count] = each.ref;
         count += 1;
     }
-    _git.heapSort(Listed, out[0..count], {}, listedBefore);
+    _git.sort(git.ub, Listed, out[0..count], {}, listedBefore);
     return out[0..count];
 }
 

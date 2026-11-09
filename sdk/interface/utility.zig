@@ -83,6 +83,7 @@ pub const LVO = struct {
     pub const ParseUrl = libraries.lvo(71);
     pub const DecodeUrl = libraries.lvo(72);
     pub const EncodeUrl = libraries.lvo(73);
+    pub const SortArray = libraries.lvo(74);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -151,6 +152,7 @@ pub const Fn = struct {
     pub const ParseUrl = *const fn (*UtilityBase, [*]const u8, usize, *utility.UrlParts, u32) callconv(.c) bool;
     pub const DecodeUrl = *const fn (*UtilityBase, [*]const u8, usize, [*]u8, usize) callconv(.c) usize;
     pub const EncodeUrl = *const fn (*UtilityBase, [*]const u8, usize, [*]u8, usize, u32) callconv(.c) usize;
+    pub const SortArray = *const fn (*UtilityBase, ?*anyopaque, usize, usize, *utility.Hook) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -464,5 +466,11 @@ pub const UtilityBase = opaque {
     /// `/`, URLF_LATIN1 encodes Latin-1 as UTF-8: the bytes the whole takes.
     pub fn EncodeUrl(self: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize, flags: u32) usize {
         return libraries.call(self, LVO.EncodeUrl, Fn.EncodeUrl, .{ from, from_length, into, into_length, flags });
+    }
+
+    /// `count` elements of `size` bytes at `array` put in order, in place:
+    /// `hook` answers below 0 when its object goes before its message.
+    pub fn SortArray(self: *UtilityBase, array: ?*anyopaque, count: usize, size: usize, hook: *utility.Hook) void {
+        return libraries.call(self, LVO.SortArray, Fn.SortArray, .{ array, count, size, hook });
     }
 };

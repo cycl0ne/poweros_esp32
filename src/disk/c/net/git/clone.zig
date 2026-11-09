@@ -311,7 +311,7 @@ const Clone = struct {
                 list[count] = ref;
                 count += 1;
             }
-            _git.heapSort(*Advertised, list[0..count], {}, nameBefore);
+            _git.sort(clone.git.ub, *Advertised, list[0..count], {}, nameBefore);
             const head_line = "# pack-refs with: peeled fully-peeled sorted \n";
             const text = clone.arena.take(head_line.len + bytes, 1) orelse return clone.noMemory();
             var out: _git.Out = .{ .into = text[0 .. head_line.len + bytes] };

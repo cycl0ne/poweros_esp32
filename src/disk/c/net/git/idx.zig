@@ -11,6 +11,7 @@
 const _git = @import("_git.zig");
 const Id = _git.Id;
 const CryptoBase = @import("sdk").interface.crypto.CryptoBase;
+const UtilityBase = @import("sdk").interface.utility.UtilityBase;
 
 const magic = "\xfftOc";
 const fanout_at = 8;
@@ -133,8 +134,8 @@ pub fn write(cb: *CryptoBase, entries: []const Entry, pack_checksum: *const Id, 
 }
 
 /// `entries` sorted by id, in place.
-pub fn sort(entries: []Entry) void {
-    _git.heapSort(Entry, entries, {}, idBefore);
+pub fn sort(ub: *UtilityBase, entries: []Entry) void {
+    _git.sort(ub, Entry, entries, {}, idBefore);
 }
 
 fn idBefore(_: void, a: *const Entry, b: *const Entry) bool {

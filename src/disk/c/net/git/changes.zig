@@ -182,7 +182,7 @@ pub const Changes = struct {
     pub fn untracked(changes: *Changes, each: UntrackedFn, each_context: *anyopaque) bool {
         if (!changes.sortPaths()) return false;
         const found = changes.findUntracked() orelse return false;
-        _git.heapSort([]const u8, found, {}, pathBefore);
+        _git.sort(changes.git.ub, []const u8, found, {}, pathBefore);
         for (found) |path| {
             if (!each(each_context, path)) return true;
         }

@@ -396,7 +396,7 @@ test "both packs: every object with git's id, deltas of either kind resolved" {
         try testing.expect(read.find(&id("ffffffffffffffffffffffffffffffffffffffff")) == null);
 
         // The same index written here, byte for byte.
-        idx.sort(&entries);
+        idx.sort(rig.ub, &entries);
         var buffer: BufferSink = .{ .out = .{ .into = &idx_out } };
         try testing.expect(idx.write(rig.cb, &entries, read.packChecksum(), buffer.sink()));
         try testing.expectEqualSlices(u8, index_bytes, buffer.out.written());
@@ -416,7 +416,7 @@ test "an index with offsets past 2 GiB, and entries sorted" {
         entry.crc = @intCast(at);
         entry.offset = if (at % 3 == 0) 0x1_0000_0000 + at else at * 100;
     }
-    idx.sort(&entries);
+    idx.sort(rig.ub, &entries);
     for (entries[1..], 0..) |entry, at| try testing.expect(_git.order(&entries[at].id, &entry.id) == .less);
     var buffer: BufferSink = .{ .out = .{ .into = &large_out } };
     try testing.expect(idx.write(rig.cb, &entries, &id("9ff1f2e13a25093afd701961624229b5925787e1"), buffer.sink()));

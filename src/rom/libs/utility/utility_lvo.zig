@@ -60,6 +60,7 @@ const Utf8Kind = @import("text/utf8kind.zig").Utf8Kind;
 const ParseUrl = @import("url/parseurl.zig").ParseUrl;
 const DecodeUrl = @import("url/decodeurl.zig").DecodeUrl;
 const EncodeUrl = @import("url/encodeurl.zig").EncodeUrl;
+const SortArray = @import("sort/sortarray.zig").SortArray;
 const PackStructureTags = @import("pack/packstructuretags.zig").PackStructureTags;
 const UnpackStructureTags = @import("pack/unpackstructuretags.zig").UnpackStructureTags;
 const AddNamedObject = @import("namedobjects/addnamedobject.zig").AddNamedObject;
@@ -183,6 +184,7 @@ const contract_files = [_][]const u8{
     @embedFile("url/parseurl.zig"),
     @embedFile("url/decodeurl.zig"),
     @embedFile("url/encodeurl.zig"),
+    @embedFile("sort/sortarray.zig"),
 };
 
 /// The empty slots of the table: each returns 0.
@@ -380,6 +382,9 @@ fn lvoDecodeUrl(ub: *UtilityBase, from: [*]const u8, from_length: usize, into: [
 fn lvoEncodeUrl(ub: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize, flags: u32) callconv(.c) usize {
     return EncodeUrl(ub, from, from_length, into, into_length, flags);
 }
+fn lvoSortArray(ub: *UtilityBase, array: ?*anyopaque, count: usize, size: usize, hook: *Hook) callconv(.c) void {
+    SortArray(ub, array, count, size, hook);
+}
 
 fn lvoGetUniqueID(ub: *UtilityBase) callconv(.c) u32 {
     return GetUniqueID(ub);
@@ -463,6 +468,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoParseUrl),
     vec(lvoDecodeUrl),
     vec(lvoEncodeUrl),
+    vec(lvoSortArray),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -470,7 +476,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: every slot, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 74), vectors.len);
+    try testing.expectEqual(@as(usize, 75), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

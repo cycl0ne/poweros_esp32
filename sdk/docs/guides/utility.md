@@ -6,8 +6,9 @@ call in the system; hooks, the way a library calls a program back; dates;
 32- and 64-bit multiplication and division; strings and Latin-1 case;
 text between UTF-8 and Latin-1; URLs taken apart and their escapes; the
 patterns names are matched against; named objects; unique numbers; pack
-tables; comparing records; and reading the lines of settings files. This guide goes through them by what a
-program wants to do. Every call is in full in the
+tables; comparing records and sorting arrays; and reading the lines of
+settings files. This guide goes through them by what a program wants to
+do. Every call is in full in the
 [autodocs](../autodocs/utility.md).
 
 ## Opening it
@@ -27,8 +28,9 @@ const ub: *UtilityBase = @ptrCast(lib);
 Version 1 has every call here; `CompareMem` came with revision 1 (1.1),
 `NextSetting` with revision 2 (1.2), `ZoneOffset`, `DateToUtc` and
 `UtcToDate` with revision 3 (1.3), `Utf8ToLatin1`, `Latin1ToUtf8` and
-`Utf8Kind` with revision 4 (1.4), and `ParseUrl`, `DecodeUrl` and
-`EncodeUrl` with revision 5 (1.5), which `ub.lib().revision` tells. The
+`Utf8Kind` with revision 4 (1.4), `ParseUrl`, `DecodeUrl` and
+`EncodeUrl` with revision 5 (1.5), and `SortArray` with revision 6
+(1.6), which `ub.lib().revision` tells. The
 structures and constants are in `sdk.utility`, a file per area
 (`tagitem`, `hooks`, `date`, `name`, `pack`, `pattern`, `setting`,
 `text`, `url`),
@@ -679,6 +681,38 @@ if (ub.CompareMem(&now, &told, @sizeOf(Told)) != 0) {
 }
 ```
 
+## Sorting an array
+
+`SortArray(array, count, size, hook)` puts `count` elements of `size`
+bytes in order where they are. The hook compares two: it is called with
+one element as the object and another as the message, and answers -
+read as an `isize` - below 0 when the object goes before the message, 0
+or above when not. An answer of `Stricmp` or `CompareMem` can be handed
+back as it is, and the hook's `data` carries whatever else the
+comparison needs:
+
+```zig
+const Entry = struct { name: [*:0]const u8, size: u64 };
+
+fn byName(hook: *utility.Hook, first: ?*anyopaque, second: ?*anyopaque) callconv(.c) usize {
+    const ub: *UtilityBase = @ptrCast(@alignCast(hook.data.?));
+    const a: *const Entry = @ptrCast(@alignCast(first.?));
+    const b: *const Entry = @ptrCast(@alignCast(second.?));
+    return @bitCast(@as(isize, ub.Stricmp(a.name, b.name)));
+}
+
+var by_name: utility.Hook = .{ .entry = byName, .data = ub };
+ub.SortArray(entries.ptr, entries.len, @sizeOf(Entry), &by_name);
+```
+
+It is a heap sort: no memory taken, so it cannot fail, and about
+2 n log2 n comparisons at most whatever order the elements come in -
+an array already sorted costs as much as a shuffled one. It is not
+stable: elements that compare alike end up in no order of their own,
+so a list that must keep its ties in order compares by a second key
+too. Elements whose size is a word's multiple, in an array on a word's
+boundary, are swapped a word at a time.
+
 ## Lines of settings
 
 `NextSetting(scan)` reads a line of `KEY=value` pairs a pair at a time -
@@ -718,7 +752,7 @@ dos.library's `ReadArgs` and `ReadItem` read the shell's form, with its
 | `AllocateTagItems`, `CloneTagItems`, `FreeTagItems`, `AllocNamedObjectA`, `ReleaseNamedObject` | no | no: they allocate, free or take a lock |
 | `ParsePattern`, `MatchPattern` and their `NoCase` forms | no | no: they may allocate, and report through IoErr, which only a process has |
 | `AddNamedObject`, `FindNamedObject`, `RemNamedObject`, `AttemptRemNamedObject`, `FreeNamedObject` | for a name space's semaphore | no |
-| `CallHookPkt` | as the hook does | as the hook allows |
+| `CallHookPkt`, `SortArray` | as the hook does | as the hook allows |
 
 ## See also
 

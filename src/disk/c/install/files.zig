@@ -24,10 +24,12 @@ const exec = sdk.exec;
 const install = sdk.install;
 const manifest = install.manifest;
 const prefs = sdk.prefs;
+const utility = sdk.utility;
 const shared = @import("_install.zig");
 const Run = shared.Run;
 const Drive = shared.Drive;
 const ExecBase = sdk.interface.exec.ExecBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 
 /// The volume the running system is on, and what a path on it begins
 /// with.
@@ -143,41 +145,19 @@ const List = struct {
 
     /// The entries put in the order a manifest's lines are in, which its
     /// reader insists on: a list written from a walk is then the same
-    /// list a package would bring. Heapsort - a system volume is
-    /// thousands of entries, and this is in memory, not on the disk.
-    fn sort(list: *List) void {
+    /// list a package would bring.
+    fn sort(list: *List, ub: *UtilityBase) void {
         const items = list.all();
-        if (items.len < 2) return;
-        var start = items.len / 2;
-        while (start > 0) {
-            start -= 1;
-            list.sift(items, start, items.len);
-        }
-        var end = items.len;
-        while (end > 1) {
-            end -= 1;
-            const first = items[0];
-            items[0] = items[end];
-            items[end] = first;
-            list.sift(items, 0, end);
-        }
+        var hook: utility.Hook = .{ .entry = compare, .data = list };
+        ub.SortArray(items.ptr, items.len, @sizeOf(Item), &hook);
     }
 
-    fn sift(list: *List, items: []Item, from: usize, end: usize) void {
-        var root = from;
-        while (root * 2 + 1 < end) {
-            var child = root * 2 + 1;
-            if (child + 1 < end and list.before(items[child], items[child + 1])) child += 1;
-            if (!list.before(items[root], items[child])) return;
-            const held = items[root];
-            items[root] = items[child];
-            items[child] = held;
-            root = child;
-        }
-    }
-
-    fn before(list: *const List, one: Item, other: Item) bool {
-        return manifest.orderPaths(list.pathOf(one), list.pathOf(other)) == .before;
+    fn compare(hook: *utility.Hook, first: ?*anyopaque, second: ?*anyopaque) callconv(.c) usize {
+        const list: *const List = @ptrCast(@alignCast(hook.data.?));
+        const one: *const Item = @ptrCast(@alignCast(first.?));
+        const other: *const Item = @ptrCast(@alignCast(second.?));
+        const answer: isize = if (manifest.orderPaths(list.pathOf(one.*), list.pathOf(other.*)) == .before) -1 else 0;
+        return @bitCast(answer);
     }
 
     /// The whole list as a manifest's text, into a buffer of its own;
@@ -331,7 +311,7 @@ fn fromRunning(run: *Run, buffer: []u8) i32 {
         if (walk(run, into, buffer, install.boot_store, .boot, drive, slot == 0)) |code| return code;
     }
 
-    list.sort();
+    list.sort(run.ub);
     var header: manifest.Header = .{ .chip = sdk.hardware.chip };
     const board = run.board[0..shared.length(@ptrCast(&run.board))];
     if (board.len != 0) header.board = board;

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! What Git's host tests run on: exec with memory lent to it,
 //! crypto.library and compression.library made and opened as a program
-//! opens them, and a sink that collects bytes in a buffer.
+//! opens them, utility.library made, and a sink that collects bytes in a
+//! buffer.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -10,9 +11,11 @@ const compression = sdk.compression;
 const ExecBase = sdk.interface.exec.ExecBase;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
 const CompressionBase = sdk.interface.compression.CompressionBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const crypto_init = @import("../../../../libs/crypto/crypto_init.zig");
 const compression_init = @import("../../../../libs/compression/compression_init.zig");
 const kexec = @import("host_rom").exec;
+const kutility = @import("host_rom").utility;
 const _git = @import("../_git.zig");
 
 const testing = std.testing;
@@ -26,6 +29,7 @@ pub const Rig = struct {
     compression_lib: *exec.Library,
     cb: *CryptoBase,
     zb: *CompressionBase,
+    ub: *UtilityBase,
 
     pub fn init() !Rig {
         try kexec.setUp();
@@ -35,6 +39,7 @@ pub const Rig = struct {
         const compression_made = kexec.InitResident(kexec.SysBase, &compression_init.compression_library_tag, null) orelse return error.NoCompression;
         const cb = sys.OpenLibrary(sdk.crypto.CRYPTONAME, 1) orelse return error.NoBase;
         const zb = sys.OpenLibrary(compression.COMPRESSIONNAME, 1) orelse return error.NoBase;
+        const utility_made = kexec.InitResident(kexec.SysBase, &kutility.utility_library_tag, null) orelse return error.NoUtility;
         return .{
             .sys = sys,
             .region = region,
@@ -42,6 +47,7 @@ pub const Rig = struct {
             .compression_lib = @ptrCast(@alignCast(compression_made)),
             .cb = @ptrCast(cb),
             .zb = @ptrCast(zb),
+            .ub = @ptrCast(@alignCast(utility_made)),
         };
     }
 
@@ -51,6 +57,7 @@ pub const Rig = struct {
         rig.sys.CloseLibrary(rig.zb.lib());
         _ = rig.sys.RemLibrary(rig.crypto_lib);
         _ = rig.sys.RemLibrary(rig.compression_lib);
+        kutility.freeForTests(@ptrCast(@alignCast(rig.ub)));
         try kexec.expectNoLeaks();
         try testing.expectEqual(@intFromPtr(rig.region.upper) - @intFromPtr(rig.region.lower), rig.region.free);
         rig.sys.Remove(&rig.region.node);
