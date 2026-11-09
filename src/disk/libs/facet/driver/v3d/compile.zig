@@ -193,14 +193,16 @@ pub const Error = error{
     Varyings,
     /// It drops pixels (`OpKill`), which wants the flag registers.
     Discards,
-    /// More than one basic block where it is not a selection Mesa would
-    /// flatten: a loop, a branch of no merge, an arm that samples, stores
-    /// or holds more than nir_opt_peephole_select takes, a selection in
-    /// the one arm of another that Mesa would collapse into it
-    /// (nir_opt_collapse_if), selections nested deeper than
-    /// `most_nesting` (since 1.154 a selection whose arms are within its
-    /// limit is read, as Mesa flattens it; since 1.156 one nested in
-    /// another's arm).
+    /// More than one basic block where it is not what the walk takes: a
+    /// loop of no trip count nir_loop_analyze finds, over
+    /// nir_opt_loop_unroll's limits, asking DontUnroll, or with a break, a
+    /// continue or a loop in it (since 1.172 a loop Mesa unrolls is read
+    /// unrolled); a branch of no merge; a selection kept a branch (since
+    /// 1.171) in another's arm or with one in its arm, a ninth, a phi of
+    /// bools, the colour stored or a pixel dropped in its arm, or one in a
+    /// vertex program; selections nested deeper than `most_nesting`
+    /// (since 1.154 a selection whose arms are within its limit is read,
+    /// as Mesa flattens it; since 1.156 one nested in another's arm).
     Branches,
     /// An instruction the walk has no answer for, or one whose operands
     /// are not what this back end expects.
@@ -338,6 +340,9 @@ pub const profile: spirv.Profile = .{
         .atomic_i_decrement,  .atomic_i_add,        .atomic_i_sub,                   .atomic_s_min,
         .atomic_u_min,        .atomic_s_max,        .atomic_u_max,                   .atomic_and,
         .atomic_or,           .atomic_xor,
+        // A loop, unrolled as nir_opt_loop_unroll unrolls it (since
+        // 1.172).
+                 .loop_merge,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform },
     .image_dims = &.{.dim_2d},
@@ -1472,12 +1477,35 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
     var depth: u32 = 0;
     // The block the walk is in.
     var label: u32 = 0;
+    // A loop, unrolled as nir_opt_loop_unroll unrolls it: the walk goes
+    // through its words once for each time Mesa's copy of them runs, and
+    // back to its header for the next (since 1.172).
+    var loop: Loop = .{};
+    // The block a top-level OpBranch goes to, which is the next, and the
+    // block it left, a phi's way in.
+    var jumped: u32 = 0;
+    var came_from: u32 = 0;
+    // A header's phis, set together once all are read.
+    var settled: [most_settled]Settled = undefined;
+    var settling: u32 = 0;
+    // A block of phis of two ways in, which is a loop's header.
+    var two_ways = false;
+    // Where the block a top-level branch went to starts, and what the
+    // variables held and how many steps there were there: a loop's, where
+    // it is one.
+    var block_at: u32 = 0;
+    var entry_values: Values = undefined;
+    var entry_steps: u16 = 0;
     while (reader.next() catch return Error.Refused) |instruction| {
         const operands = instruction.operands();
         if (returned) {
             // Past OpReturn only the function's end may follow.
             if (instruction.op != .function_end) return Error.Body;
             continue;
+        }
+        if (settling > 0 and instruction.op != .phi) {
+            for (settled[0..settling]) |each| work.step_of[each.id] = each.step;
+            settling = 0;
         }
         // The merge block's phis are over at its first other instruction:
         // the arms are then what nir_opt_peephole_select counts, and the
@@ -2031,10 +2059,21 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 label = id;
                 switch (flow) {
                     .body => {
-                        // The function's first block: any other is a
-                        // selection's.
+                        // The function's first block; any other is a
+                        // selection's, or one a top-level OpBranch went
+                        // to: a loop's header, a block of a loop's, or
+                        // its merge block (since 1.172).
                         blocks += 1;
-                        if (blocks > 1) return Error.Branches;
+                        if (blocks > 1) {
+                            if (id != jumped) return Error.Branches;
+                            jumped = 0;
+                            if (loop.leaving and id == loop.merge) loop = .{};
+                            if (!loop.active) {
+                                block_at = @intCast(reader.at);
+                                entry_values = work.values;
+                                entry_steps = @intCast(work.step_count);
+                            }
+                        }
                     },
                     .arms => if (id == selection.merge) {
                         if (selection.yes != selection.merge and !selection.seen_yes) return Error.Branches;
@@ -2120,7 +2159,28 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 depth += 1;
                 flow = .branch;
             },
-            .branch_conditional => {
+            .branch_conditional => if (flow == .body) {
+                // A loop's test, of no selection: taken where Mesa's
+                // count says, as the comparison nothing reads any more
+                // (since 1.172).
+                if (!loop.active or two_ways or operands.len < 3) return Error.Branches;
+                const out: usize = if (operands[1] == loop.merge) 1 else if (operands[2] == loop.merge) 2 else return Error.Branches;
+                const on = operands[3 - out];
+                came_from = label;
+                if (loop.done < loop.continues) {
+                    if (on == loop.header) {
+                        if (loop.done == 0) try checkLoopCost(work, &loop);
+                        loop.done += 1;
+                        reader.at = loop.header_at;
+                        label = loop.header;
+                    } else jumped = on;
+                } else {
+                    if (loop.done == 0) try checkLoopCost(work, &loop);
+                    loop.leaving = true;
+                    jumped = loop.merge;
+                    reader.at = loop.merge_at;
+                }
+            } else {
                 // Condition, True Label, False Label, and maybe weights.
                 // One of the two may be the merge block itself: an `if`
                 // with no `else`, or the other way about.
@@ -2150,10 +2210,23 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 work.before[depth - 1] = work.values;
                 flow = .arms;
             },
-            .branch => {
+            .branch => if (flow == .body) {
+                // To a loop's header, or a block of a loop or after one:
+                // the next. The way back to a header is to its words
+                // again, for the next trip (since 1.172).
+                if (two_ways or operands.len < 1) return Error.Branches;
+                const to = operands[0];
+                came_from = label;
+                if (loop.active and to == loop.header) {
+                    if (loop.done == 0) try checkLoopCost(work, &loop);
+                    loop.done += 1;
+                    reader.at = loop.header_at;
+                    label = loop.header;
+                } else jumped = to;
+            } else {
                 // An arm's end, to the merge block. Any other OpBranch is
-                // a jump to a block no selection names: a loop's, or one
-                // of no structure.
+                // a jump to a block no selection names, or of no
+                // structure.
                 if (flow != .arm or operands.len < 1 or operands[0] != selection.merge) return Error.Branches;
                 // What the arm leaves the variables holding, and the
                 // other arm begins from what they held before. The block
@@ -2186,9 +2259,43 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 selection.killed = true;
                 flow = .killed;
             },
-            .phi => {
+            .phi => if (flow == .body) {
+                // A loop header's: on its trips after the first, the
+                // value of the way back; else the value of the way the
+                // walk came (since 1.172).
+                if (blocks < 2 or settling == settled.len) return Error.Branches;
+                const back = loop.active and label == loop.header;
+                if (!back and operands.len > 4) two_ways = true;
+                settled[settling] = try loopPhiOf(work, operands, if (back) loop.entered_from else came_from, back);
+                settling += 1;
+            } else {
                 if (flow != .merging) return Error.Branches;
                 try phiOf(work, selection, operands);
+            },
+            .loop_merge => {
+                // MergeBlock, ContinueTarget, LoopControl and its
+                // literals: a loop, planned the first time through its
+                // header (since 1.172). Mesa keeps a loop in a loop, in
+                // a selection's arm, or one asked not to be unrolled, a
+                // loop; so is one nir_loop_analyze finds no trip count
+                // of, and one over the limits.
+                if (loop.active and label == loop.header) continue;
+                if (flow != .body or loop.active or blocks < 2 or block_at == 0) return Error.Branches;
+                if (operands.len < 3) return Error.Body;
+                const control = operands[2];
+                if (control & ~loop_controls != 0) return Error.Refused;
+                if (control & loop_dont_unroll != 0) return Error.Branches;
+                loop = .{
+                    .header = label,
+                    .merge = operands[0],
+                    .header_at = block_at,
+                    .entered_from = came_from,
+                    .force = control & loop_unroll != 0,
+                    .from = entry_steps,
+                };
+                try planLoop(work, reader.words, &loop, operands[1], &entry_values);
+                loop.active = true;
+                two_ways = false;
             },
             .returns => {
                 if (flow != .body) return Error.Branches;
@@ -2243,6 +2350,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             },
         }
     }
+    if (loop.active or jumped != 0) return Error.Branches;
     if (work.stage == .vertex) return finishVertex(work);
     if (work.output_count == 0) return Error.Outputs;
     if (work.stored == none) return Error.NoColor;
@@ -2395,6 +2503,697 @@ fn attributes(work: *Work) Error!void {
 fn idOf(word: u32) Error!u16 {
     if (word == 0 or word >= most_ids) return Error.Refused;
     return @intCast(word);
+}
+
+// --- loops -------------------------------------------------------------------
+//
+// A loop is unrolled as Mesa unrolls it (since 1.172). v3dv sets
+// max_unroll_iterations to 16 (v3dv_pipeline.c:215), and v3d's
+// optimization loop runs nir_opt_loop_unroll where it has a compile
+// (nir_to_vir.c:2344-2349), under every strategy facet ports
+// (vir.c:2214-2221). Before that, the preprocessing's own rounds of
+// v3d_optimize_nir (v3dv_pipeline.c:413, 443), which never unroll, have
+// run nir_opt_loop (nir_to_vir.c:2287): a loop whose first test follows
+// its first block is peeled into do-while form there
+// (opt_loop_peel_initial_break, nir_opt_loop.c:412-502), the first test
+// before it and in it the test after the step. So the trip count
+// nir_loop_analyze finds is one less than the times the body runs, for a
+// for loop as for a do-while.
+//
+// simple_unroll (nir_opt_loop_unroll.c:104-209) puts the loop's blocks
+// before its test once, and then, for each trip, the blocks after it and
+// those before it again. The walk does the same: it goes through the
+// loop's words once for each time Mesa's copy of them runs, each header
+// phi the value its way in brings, and leaves to the merge block when
+// the trips are done. What is left is straight-line steps, and the test
+// of each trip a comparison nothing reads, which nir_opt_dce takes.
+
+/// LoopControl's bits (SPIR-V 3.23): Unroll, DontUnroll, and the seven
+/// vtn reads as none (vtn_loop_control, vtn_structured_cfg.c:1458-1478);
+/// any other is vtn_fail.
+const loop_unroll: u32 = 0x1;
+const loop_dont_unroll: u32 = 0x2;
+const loop_controls: u32 = 0x1ff;
+
+/// v3dv's max_unroll_iterations (v3dv_pipeline.c:215) and
+/// nir_opt_loop_unroll's LOOP_UNROLL_LIMIT (nir_opt_loop_unroll.c:36):
+/// a loop of a known trip count is unrolled where its count is at most
+/// the first, and its cost times its count at most the two multiplied
+/// (check_unrolling_restrictions, :898-931).
+const max_unroll_iterations = 16;
+const loop_unroll_limit = 26;
+
+/// A loop as `read` unrolls it.
+const Loop = struct {
+    /// Its header block, and the block after it.
+    header: u32 = 0,
+    merge: u32 = 0,
+    /// Where the header's instructions start, past its OpLabel, and where
+    /// the merge block's OpLabel is: where each trip starts again, and
+    /// where the walk goes on when they are done.
+    header_at: u32 = 0,
+    merge_at: u32 = 0,
+    /// The block that branched into the header: its phis' way in.
+    entered_from: u32 = 0,
+    /// How many times the test's way on is taken, and how many of them
+    /// the walk has gone.
+    continues: u32 = 0,
+    done: u32 = 0,
+    /// The trip count Mesa holds to its limits.
+    trips: u32 = 0,
+    /// LoopControl's Unroll, which unrolls past the limits
+    /// (check_unrolling_restrictions, :901-902).
+    force: bool = false,
+    /// The steps before its first trip, which `loopCost` counts from.
+    from: u16 = 0,
+    active: bool = false,
+    leaving: bool = false,
+};
+
+/// A header phi's value for a trip, set with the others once all are
+/// read: a block's phis take their values together.
+const Settled = struct { id: u16, step: u16 };
+const most_settled = 16;
+
+/// What `planLoop` keeps of each id the loop makes: the instruction, its
+/// first two operands, where it is in the loop's words, and whether it is
+/// at the loop's top level, in no selection's arm
+/// (compute_induction_information's test that a source's block is the
+/// loop's own, nir_loop_analyze.c:275-279). An OpLoad of a variable of the
+/// function's own holds the value it reads: the id last stored into it
+/// on the way there, or the variable with `local_bit` where the trip has
+/// stored nothing into it yet, which is the phi nir_lower_vars_to_ssa
+/// puts in the header; 0 where it is not known.
+const Defined = struct {
+    op: spirv.Op = .nop,
+    a: u16 = 0,
+    b: u16 = 0,
+    order: u16 = 0,
+    top: bool = false,
+};
+const local_bit: u16 = 0x8000;
+
+/// NIR's comparisons a loop's test may be (nir_is_supported_terminator_
+/// condition, nir_loop_analyze.h:107-118).
+const Cmp = enum { flt, fge, feq, fneu, ilt, ige, ieq, ine, ult, uge };
+
+/// The operations an induction variable steps by
+/// (compute_induction_information, nir_loop_analyze.c:296-301).
+const Update = enum { iadd, fadd, imul, fmul, ishl, ishr, ushr };
+
+/// A basic induction variable: a header phi of a constant way in, whose
+/// way back is one of `Update` of it and a constant.
+const Induction = struct {
+    init: u32,
+    update: Update,
+    step: u32,
+    phi_first: bool,
+
+    /// The update def from the phi's value.
+    fn next(induction: Induction, value: u32) u32 {
+        return if (induction.phi_first) updated(induction.update, value, induction.step) else updated(induction.update, induction.step, value);
+    }
+};
+
+/// The loop's test as nir_loop_analyze has it: the comparison, its
+/// constant, which side that is on, whether the loop goes on where the
+/// comparison holds (`invert_cond`), and whether it compares the update
+/// def rather than the phi.
+const Test = struct {
+    cmp: Cmp,
+    limit: u32,
+    limit_rhs: bool,
+    invert: bool,
+    on_def: bool,
+
+    /// Whether the loop leaves at the test where the phi holds `value`.
+    fn breaks(test_of: Test, induction: Induction, value: u32) bool {
+        const tested = if (test_of.on_def) induction.next(value) else value;
+        const holds = if (test_of.limit_rhs) comparedBits(test_of.cmp, tested, test_of.limit) else comparedBits(test_of.cmp, test_of.limit, tested);
+        return if (test_of.invert) !holds else holds;
+    }
+};
+
+/// A 32-bit comparison as nir_eval_const_opcode folds it.
+fn comparedBits(cmp: Cmp, x: u32, y: u32) bool {
+    const fx: f32 = @bitCast(x);
+    const fy: f32 = @bitCast(y);
+    const sx: i32 = @bitCast(x);
+    const sy: i32 = @bitCast(y);
+    return switch (cmp) {
+        .flt => fx < fy,
+        .fge => fx >= fy,
+        .feq => fx == fy,
+        .fneu => fx != fy,
+        .ilt => sx < sy,
+        .ige => sx >= sy,
+        .ieq => x == y,
+        .ine => x != y,
+        .ult => x < y,
+        .uge => x >= y,
+    };
+}
+
+/// A 32-bit update as nir_eval_const_opcode folds it, a shift by the low
+/// five bits of its amount (nir_opcodes.py).
+fn updated(update: Update, x: u32, y: u32) u32 {
+    return switch (update) {
+        .iadd => x +% y,
+        .imul => x *% y,
+        .fadd => @bitCast(@as(f32, @bitCast(x)) + @as(f32, @bitCast(y))),
+        .fmul => @bitCast(@as(f32, @bitCast(x)) * @as(f32, @bitCast(y))),
+        .ishl => x << @intCast(y & 31),
+        .ishr => @bitCast(@as(i32, @bitCast(x)) >> @intCast(y & 31)),
+        .ushr => x >> @intCast(y & 31),
+    };
+}
+
+/// invert_comparison_if_needed (nir_loop_analyze.c:719-749).
+fn invertedIf(cmp: Cmp, invert: bool) Cmp {
+    if (!invert) return cmp;
+    return switch (cmp) {
+        .fge => .flt,
+        .ige => .ilt,
+        .uge => .ult,
+        .flt => .fge,
+        .ilt => .ige,
+        .ult => .uge,
+        .feq => .fneu,
+        .ieq => .ine,
+        .fneu => .feq,
+        .ine => .ieq,
+    };
+}
+
+/// get_iteration (nir_loop_analyze.c:751-820): the trip count of an
+/// induction stepped by addition, from the span to the limit; null for
+/// its -1.
+fn getIteration(test_of: Test, induction: Induction) ?i32 {
+    const initial = induction.init;
+    const stride = induction.step;
+    const limit = test_of.limit;
+    switch (invertedIf(test_of.cmp, test_of.invert)) {
+        // In order for execution to be here, limit is initial; the loop
+        // runs once unless the step is zero (:760-766).
+        .ine => return if (stride == 0) null else 1,
+        .ige, .ilt, .ieq => {
+            const span: i32 = @bitCast(limit -% initial);
+            const by: i32 = @bitCast(stride);
+            // nir_opcodes.py's idiv and udiv (:869-870): 0 where they
+            // divide by 0, or the least int by -1.
+            const iter: u32 = if (by == 0 or (span == std.math.minInt(i32) and by == -1)) 0 else @bitCast(@divTrunc(span, by));
+            return if (iter > std.math.maxInt(i32)) null else @intCast(iter);
+        },
+        .uge, .ult => {
+            const span = limit -% initial;
+            const iter: u32 = if (stride == 0) 0 else span / stride;
+            return if (iter > std.math.maxInt(i32)) null else @intCast(iter);
+        },
+        // (initial + step) == initial ? -1 : 1 (:782-797).
+        .fneu => {
+            const span: f32 = @as(f32, @bitCast(initial)) + @as(f32, @bitCast(stride));
+            return if (span == @as(f32, @bitCast(initial))) null else 1;
+        },
+        .fge, .flt, .feq => {
+            const span = @as(f32, @bitCast(limit)) - @as(f32, @bitCast(initial));
+            const quotient = span / @as(f32, @bitCast(stride));
+            // f2i64, then the count read as an int: what is out of
+            // range or not a number comes to -1 on either host's
+            // conversion.
+            if (std.math.isNan(quotient) or @abs(quotient) >= 9.2e18) return null;
+            const iter: i64 = @intFromFloat(quotient);
+            if (iter < 0) return null;
+            return @bitCast(@as(u32, @truncate(@as(u64, @intCast(iter)))));
+        },
+    }
+}
+
+/// test_iterations (nir_loop_analyze.c:880-927): whether the loop leaves
+/// at the test after `iter` steps, the phi `initial` plus `iter` times
+/// the step.
+fn testIterations(iter: i32, test_of: Test, induction: Induction) bool {
+    const float = induction.update == .fadd;
+    const count: u32 = if (float) @bitCast(@as(f32, @floatFromInt(iter))) else @bitCast(iter);
+    const product = updated(if (float) .fmul else .imul, count, induction.step);
+    const sum = updated(if (float) .fadd else .iadd, product, induction.init);
+    const holds = if (test_of.limit_rhs) comparedBits(test_of.cmp, sum, test_of.limit) else comparedBits(test_of.cmp, test_of.limit, sum);
+    return if (test_of.invert) !holds else holds;
+}
+
+/// calculate_iterations (nir_loop_analyze.c:929-1048), with
+/// will_break_on_first_iteration (:861-878) and get_iteration_empirical
+/// (:822-859): the loop's trip count, or null for its -1.
+fn tripCount(test_of: Test, induction: Induction) ?u32 {
+    // A test of the update def steps the initial value first (:957-969).
+    const trip_offset: i32 = if (test_of.on_def) 1 else 0;
+    if (test_of.breaks(induction, induction.init)) return 0;
+    const iter = switch (induction.update) {
+        .iadd, .fadd => getIteration(test_of, induction) orelse return null,
+        // A floating-point product is not counted (:992-999).
+        .fmul => return null,
+        // The others are tried, a trip at a time (:1000-1006).
+        .imul, .ishl, .ishr, .ushr => {
+            var count: u32 = 0;
+            var value = induction.init;
+            while (count <= max_unroll_iterations) : (count += 1) {
+                if (test_of.breaks(induction, value)) return count;
+                value = induction.next(value);
+            }
+            return null;
+        },
+    };
+    if (iter < 0) return null;
+    const actual = invertedIf(test_of.cmp, test_of.invert);
+    if (actual == .ine or actual == .fneu) return @intCast(iter);
+    // The count tested a trip either way, for an ill-formed loop or one
+    // off by one (:1022-1045).
+    var bias: i32 = -1;
+    while (bias <= 1) : (bias += 1) {
+        const biased = @as(i64, iter) + bias;
+        if (biased < 1 or biased > std.math.maxInt(i32)) continue;
+        if (testIterations(@intCast(biased), test_of, induction)) return @intCast(biased - trip_offset);
+    }
+    return null;
+}
+
+/// The comparison NIR makes of a SPIR-V one, its operands swapped where
+/// NIR has only the other way about (vtn_alu.c:369-396), and wrapped in
+/// an inot for the unordered ones (vtn_alu.c:953-985).
+const Compared = struct { cmp: Cmp, swap: bool = false, negate: bool = false };
+fn comparedOf(op: spirv.Op) ?Compared {
+    return switch (op) {
+        .s_less_than => .{ .cmp = .ilt },
+        .s_greater_than => .{ .cmp = .ilt, .swap = true },
+        .s_greater_than_equal => .{ .cmp = .ige },
+        .s_less_than_equal => .{ .cmp = .ige, .swap = true },
+        .u_less_than => .{ .cmp = .ult },
+        .u_greater_than => .{ .cmp = .ult, .swap = true },
+        .u_greater_than_equal => .{ .cmp = .uge },
+        .u_less_than_equal => .{ .cmp = .uge, .swap = true },
+        .i_equal => .{ .cmp = .ieq },
+        .i_not_equal => .{ .cmp = .ine },
+        .f_ord_less_than => .{ .cmp = .flt },
+        .f_ord_greater_than => .{ .cmp = .flt, .swap = true },
+        .f_ord_greater_than_equal => .{ .cmp = .fge },
+        .f_ord_less_than_equal => .{ .cmp = .fge, .swap = true },
+        .f_ord_equal => .{ .cmp = .feq },
+        .f_unord_not_equal => .{ .cmp = .fneu },
+        .f_unord_less_than => .{ .cmp = .fge, .negate = true },
+        .f_unord_greater_than => .{ .cmp = .fge, .swap = true, .negate = true },
+        .f_unord_less_than_equal => .{ .cmp = .flt, .swap = true, .negate = true },
+        .f_unord_greater_than_equal => .{ .cmp = .flt, .negate = true },
+        else => null,
+    };
+}
+
+/// The instructions of the profile that make no result, which `planLoop`
+/// does not take an id from.
+fn makesNothing(op: spirv.Op) bool {
+    return switch (op) {
+        .store, .branch, .branch_conditional, .selection_merge, .loop_merge, .label, .returns, .return_value, .function_end, .kill, .memory_barrier, .atomic_store, .nop => true,
+        else => false,
+    };
+}
+
+/// The 32 bits of a float a variable holds, where it is a constant.
+fn floatBits(work: *const Work, of: Float) ?u32 {
+    if (of.step == none) return null;
+    const each = work.steps[of.step];
+    if (each.tag != .constant or of.part >= each.kind.parts()) return null;
+    return @bitCast(work.pool[each.at + of.part]);
+}
+
+/// A constant float or integer the walk holds for an id made before the
+/// loop: its 32 bits, from its step, or from the pool where it is an
+/// OpConstant no instruction has read yet.
+fn constantBits(work: *const Work, id: u16) ?u32 {
+    const at = work.step_of[id];
+    if (at == none) {
+        if (!isConstant(work, id) or work.wide[id] != 1) return null;
+        return @bitCast(work.pool[work.points[id]]);
+    }
+    const of = work.steps[at];
+    if (of.tag != .constant or of.kind != .f32x1) return null;
+    return @bitCast(work.pool[of.at]);
+}
+
+/// nir_loop_analyze for the loop whose header `loop` names
+/// (find_loop_terminators, compute_induction_information and
+/// find_trip_count, nir_loop_analyze.c:248-398, 1141-1366): its words
+/// read through once, without a step made, for the one test it leaves
+/// at, the basic induction variable that test compares with a constant,
+/// and the trip count of the two. A loop of no such test, or of more than
+/// one way out or back - a break or a continue in an arm, a second
+/// conditional branch out, a loop in it - is one nir_loop_analyze finds
+/// no exact count of, or complex_loop, and Mesa keeps it a loop:
+/// `Error.Branches`.
+fn planLoop(work: *const Work, words: []const u32, loop: *Loop, continue_target: u32, entry: *const Values) Error!void {
+    var defined: [most_ids]Defined = @splat(.{});
+    var reader = spirv.Reader{ .words = words, .at = loop.header_at };
+    var merges: [most_nesting]u32 = undefined;
+    var open: u32 = 0;
+    // The id last stored into each variable at the top level, and which
+    // were stored into in an arm, whose phi is not a basic induction.
+    var stored: [most_locals]u16 = @splat(0);
+    var in_arm: [most_locals]bool = @splat(false);
+    // The header's phis: each its value on the way in and on the way back.
+    const Phi = struct { id: u16, values: [2]u16, parents: [2]u32 };
+    var phis: [most_settled]Phi = undefined;
+    var phi_count: u32 = 0;
+    const Leaving = struct { condition: u16, yes: u32, no: u32, order: u16 };
+    var leaving: ?Leaving = null;
+    var back_edges: u32 = 0;
+    var back_from: u32 = 0;
+    // A selection before the test: the test is then not the first
+    // control flow after the header block, which the peel asks for.
+    var selection_before = false;
+    var heading = false;
+    var place: u16 = 0;
+    var label = loop.header;
+    var headers: u32 = 0;
+    while (true) {
+        const at: u32 = @intCast(reader.at);
+        const instruction = (reader.next() catch return Error.Refused) orelse return Error.Branches;
+        const operands = instruction.operands();
+        place +|= 1;
+        switch (instruction.op) {
+            .label => {
+                if (operands.len < 1) return Error.Body;
+                const id = operands[0];
+                if (id == loop.merge) {
+                    if (open != 0) return Error.Branches;
+                    loop.merge_at = at;
+                    break;
+                }
+                if (open > 0 and id == merges[open - 1]) open -= 1;
+                label = id;
+            },
+            .loop_merge => {
+                headers += 1;
+                if (headers > 1) return Error.Branches;
+            },
+            .selection_merge => {
+                if (operands.len < 1) return Error.Body;
+                if (open == merges.len) return Error.Branches;
+                merges[open] = operands[0];
+                open += 1;
+                heading = true;
+                if (leaving == null) selection_before = true;
+            },
+            .branch_conditional => {
+                if (heading) {
+                    // A selection's: neither way may leave the loop or
+                    // go to its continue target but through its merge.
+                    heading = false;
+                    if (operands.len < 3) return Error.Body;
+                    for (operands[1..3]) |to| {
+                        if (to == loop.merge or to == loop.header) return Error.Branches;
+                        if (to == continue_target and merges[open - 1] != continue_target) return Error.Branches;
+                    }
+                    continue;
+                }
+                // A conditional branch of no selection: the loop's test.
+                // One in an arm, or a second, is a break or a continue
+                // that leaves the loop complex.
+                if (open != 0 or leaving != null or operands.len < 3) return Error.Branches;
+                const yes = operands[1];
+                const no = operands[2];
+                if (yes == no or (yes != loop.merge and no != loop.merge)) return Error.Branches;
+                leaving = .{ .condition = try idOf(operands[0]), .yes = yes, .no = no, .order = place };
+                if ((if (yes == loop.merge) no else yes) == loop.header) {
+                    back_edges += 1;
+                    back_from = label;
+                }
+            },
+            .branch => {
+                if (operands.len < 1) return Error.Body;
+                const to = operands[0];
+                if (to == loop.header) {
+                    if (open != 0) return Error.Branches;
+                    back_edges += 1;
+                    back_from = label;
+                } else if (to == loop.merge) {
+                    return Error.Branches;
+                } else if (to == continue_target and open != 0 and merges[open - 1] != continue_target) {
+                    return Error.Branches;
+                }
+            },
+            .phi => {
+                if (operands.len < 2) return Error.Body;
+                const id = try idOf(operands[1]);
+                defined[id] = .{ .op = .phi, .order = place, .top = open == 0 };
+                if (label == loop.header) {
+                    if (operands.len != 6 or phi_count == phis.len) return Error.Branches;
+                    phis[phi_count] = .{ .id = id, .values = .{ try idOf(operands[2]), try idOf(operands[4]) }, .parents = .{ operands[3], operands[5] } };
+                    phi_count += 1;
+                }
+            },
+            .load => {
+                if (operands.len < 3) return Error.Body;
+                const id = try idOf(operands[1]);
+                const from = try idOf(operands[2]);
+                var value: u16 = 0;
+                if (isLocal(work, from) and open == 0) {
+                    const local = work.points[from];
+                    if (!in_arm[local]) value = if (stored[local] == 0) local_bit | local else stored[local];
+                }
+                defined[id] = .{ .op = .load, .a = value, .order = place, .top = open == 0 };
+            },
+            .store => {
+                if (operands.len < 2) return Error.Body;
+                const into = try idOf(operands[0]);
+                if (isLocal(work, into)) {
+                    const local = work.points[into];
+                    if (open == 0) stored[local] = try idOf(operands[1]) else in_arm[local] = true;
+                } else if (defined[into].op == .access_chain and defined[into].a & local_bit != 0) {
+                    in_arm[defined[into].a & ~local_bit] = true;
+                } else if (defined[into].op == .nop and work.thing[into] == .local_part) {
+                    in_arm[work.points[into]] = true;
+                }
+            },
+            .access_chain => {
+                if (operands.len < 3) return Error.Body;
+                const id = try idOf(operands[1]);
+                const base = try idOf(operands[2]);
+                defined[id] = .{ .op = .access_chain, .a = if (isLocal(work, base)) local_bit | work.points[base] else 0, .order = place };
+            },
+            .returns, .return_value, .function_end => return Error.Branches,
+            else => if (!makesNothing(instruction.op) and operands.len >= 2) {
+                const id = try idOf(operands[1]);
+                const a: u16 = if (operands.len > 2 and operands[2] < most_ids) @intCast(operands[2]) else 0;
+                const b: u16 = if (operands.len > 3 and operands[3] < most_ids) @intCast(operands[3]) else 0;
+                defined[id] = .{ .op = instruction.op, .a = a, .b = b, .order = place, .top = open == 0 };
+            },
+        }
+    }
+    const test_branch = leaving orelse return Error.Branches;
+    if (back_edges != 1) return Error.Branches;
+
+    // Each candidate for a basic induction variable: a header phi, or a
+    // variable stored into at the top level, which nir_lower_vars_to_ssa
+    // makes one. Its value on the way in, and the id of its way back.
+    const Candidate = struct { basis: u16, init: ?u32, back: u16, induction: ?Induction = null };
+    var candidates: [most_settled + most_locals]Candidate = undefined;
+    var count: u32 = 0;
+    for (phis[0..phi_count]) |phi| {
+        const in_side: usize = if (phi.parents[0] == loop.entered_from) 0 else if (phi.parents[1] == loop.entered_from) 1 else return Error.Branches;
+        if (phi.parents[1 - in_side] != back_from) return Error.Branches;
+        candidates[count] = .{ .basis = phi.id, .init = constantBits(work, phi.values[in_side]), .back = resolved(&defined, phi.values[1 - in_side]) };
+        count += 1;
+    }
+    for (0..most_locals) |local| {
+        if (stored[local] == 0 or in_arm[local]) continue;
+        const entering = entry[local][0];
+        const init: ?u32 = if (work.local_kind[local] == .f32x1 and entering.step != none) floatBits(work, entering) else null;
+        candidates[count] = .{ .basis = local_bit | @as(u16, @intCast(local)), .init = init, .back = resolved(&defined, stored[local]) };
+        count += 1;
+    }
+    // compute_induction_information: the way back an Update of the phi
+    // and a constant, at the top level. An isub or an fsub of a constant
+    // is an iadd or an fadd of its negation by then: nir_opt_algebraic
+    // lowers the two (nir_opt_algebraic.py:2401-2402) and folds the
+    // negation.
+    var constant_back = false;
+    for (candidates[0..count]) |*candidate| {
+        const back = candidate.back;
+        if (back & local_bit == 0 and defined[back].op == .nop and constantBits(work, back) != null) constant_back = true;
+        const init = candidate.init orelse continue;
+        if (back & local_bit != 0) continue;
+        const of = defined[back];
+        if (!of.top) continue;
+        const update: Update = switch (of.op) {
+            .i_add, .i_sub => .iadd,
+            .f_add, .f_sub => .fadd,
+            .i_mul => .imul,
+            .f_mul => .fmul,
+            .shift_left_logical => .ishl,
+            .shift_right_arithmetic => .ishr,
+            .shift_right_logical => .ushr,
+            else => continue,
+        };
+        const sub = of.op == .i_sub or of.op == .f_sub;
+        var made: ?Induction = null;
+        if (of.a != 0 and resolved(&defined, of.a) == candidate.basis and of.b != 0 and defined[of.b].op == .nop) {
+            if (constantBits(work, of.b)) |stride| {
+                const by = if (!sub) stride else if (update == .iadd) 0 -% stride else stride ^ 0x8000_0000;
+                made = .{ .init = init, .update = update, .step = by, .phi_first = true };
+            }
+        } else if (!sub and of.b != 0 and resolved(&defined, of.b) == candidate.basis and of.a != 0 and defined[of.a].op == .nop) {
+            if (constantBits(work, of.a)) |stride| made = .{ .init = init, .update = update, .step = stride, .phi_first = false };
+        }
+        candidate.induction = made;
+    }
+
+    // find_trip_count: the test's comparison, an inot of one unwrapped,
+    // one side an induction variable or its update def, the other a
+    // constant (get_induction_and_limit_vars, :1050-1077, the left side
+    // first).
+    var invert = test_branch.no == loop.merge;
+    var at = resolved(&defined, test_branch.condition);
+    if (at & local_bit != 0) return Error.Branches;
+    if (defined[at].op == .logical_not and defined[at].top) {
+        at = resolved(&defined, defined[at].a);
+        if (at & local_bit != 0) return Error.Branches;
+        invert = !invert;
+    }
+    const comparison = defined[at];
+    if (!comparison.top) return Error.Branches;
+    const shape = comparedOf(comparison.op) orelse return Error.Branches;
+    if (shape.negate) invert = !invert;
+    const sides: [2]u16 = if (shape.swap) .{ comparison.b, comparison.a } else .{ comparison.a, comparison.b };
+    const Side = struct { candidate: u32, on_def: bool };
+    var found: [2]?Side = .{ null, null };
+    for (sides, &found) |side, *each| {
+        if (side == 0) continue;
+        const value = resolved(&defined, side);
+        for (candidates[0..count], 0..) |candidate, k| {
+            if (candidate.induction == null) continue;
+            if (value == candidate.basis) each.* = .{ .candidate = @intCast(k), .on_def = false };
+            if (value == candidate.back) each.* = .{ .candidate = @intCast(k), .on_def = true };
+        }
+    }
+    const limit_rhs = found[0] != null;
+    const ind = found[0] orelse found[1] orelse return Error.Branches;
+    const limit_id = sides[if (limit_rhs) 1 else 0];
+    if (limit_id == 0) return Error.Branches;
+    const limit_at = resolved(&defined, limit_id);
+    if (limit_at & local_bit != 0 or defined[limit_at].op != .nop) return Error.Branches;
+    const limit = constantBits(work, limit_at) orelse return Error.Branches;
+    const induction = candidates[ind.candidate].induction.?;
+    const update_order = defined[candidates[ind.candidate].back].order;
+
+    const straight = !selection_before;
+    const last = (if (test_branch.yes == loop.merge) test_branch.no else test_branch.yes) == loop.header;
+    const test_of = Test{ .cmp = shape.cmp, .limit = limit, .limit_rhs = limit_rhs, .invert = invert, .on_def = true };
+    if (straight and !last and !ind.on_def and update_order > test_branch.order) {
+        // A for or a while loop: its first test peeled, constant here,
+        // and the loop in do-while form, the test of the update def. One
+        // that is never entered is no loop once nir_opt_dead_cf has
+        // taken the peeled branch.
+        var first = test_of;
+        first.on_def = false;
+        if (first.breaks(induction, induction.init)) {
+            loop.trips = 0;
+            loop.continues = 0;
+            return;
+        }
+        loop.trips = tripCount(test_of, induction) orelse return Error.Branches;
+        loop.continues = loop.trips + 1;
+    } else if (last and ind.on_def) {
+        // A do-while loop, its test the last of it. One whose header has
+        // a phi of a constant way back, or that asks to be unrolled, is
+        // peeled as well where the test is its first control flow
+        // (should_peel_initial_break, nir_opt_loop.c:352-410), which is
+        // not done here.
+        if (straight and (loop.force or constant_back)) return Error.Branches;
+        loop.trips = tripCount(test_of, induction) orelse return Error.Branches;
+        loop.continues = loop.trips;
+    } else return Error.Branches;
+    if (!loop.force and loop.trips > max_unroll_iterations) return Error.Branches;
+    if (loop.continues > most_steps) return Error.Steps;
+}
+
+/// An id through the loads of variables `planLoop` read: the value a load
+/// reads, or the variable's phi with `local_bit`.
+fn resolved(defined: *const [most_ids]Defined, id: u16) u16 {
+    var at = id;
+    var hops: u32 = 0;
+    while (at & local_bit == 0 and defined[at].op == .load and defined[at].a != 0 and hops < most_ids) : (hops += 1) at = defined[at].a;
+    return at;
+}
+
+/// instr_cost (nir_loop_analyze.c:78-167) summed over the steps one trip
+/// of the loop made: an intrinsic or a texture instruction 1, an ALU
+/// operation 1 for each float, as NIR is scalar by then (nir_to_vir.c:
+/// 2259), and none for a vec, a move, a constant, an operation of
+/// constants alone (is_const_after_unrolling, which the walk has folded),
+/// or a product only summed, which an FMA takes. Mesa counts the loop's
+/// NIR before it is unrolled; these are the steps of its first trip after
+/// the walk's lowering, in which an operation of the phis' constant ways
+/// in may have been folded, so a loop near the limit may be unrolled here
+/// that Mesa keeps a loop.
+fn loopCost(work: *const Work, from: u16, to: u16) u32 {
+    var cost: u32 = 0;
+    for (from..to) |at| {
+        const each = work.steps[at];
+        switch (each.tag) {
+            .constant, .component, .construct, .phi, .begin_if, .begin_else, .end_if => continue,
+            .input => {
+                cost += each.kind.parts();
+                continue;
+            },
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .discard, .sample, .sample_compared, .output, .viewport => {
+                cost += 1;
+                continue;
+            },
+            else => {},
+        }
+        var constants = true;
+        for (readsOfStep(each)) |field| if (field) |of| {
+            if (work.steps[of].tag != .constant) constants = false;
+        };
+        if (constants) continue;
+        if (each.tag == .mul) {
+            var only_added = true;
+            var used = false;
+            for (work.steps[at + 1 .. to]) |user| if (readsStep(user, @intCast(at))) {
+                used = true;
+                if (user.tag != .add) only_added = false;
+            };
+            if (used and only_added) continue;
+        }
+        cost += each.kind.parts();
+    }
+    return cost;
+}
+
+/// check_unrolling_restrictions' cost (nir_opt_loop_unroll.c:924-928),
+/// once the loop's first trip is made.
+fn checkLoopCost(work: *const Work, loop: *const Loop) Error!void {
+    if (loop.force or loop.trips == 0) return;
+    const cost = loopCost(work, loop.from, @intCast(work.step_count));
+    if (cost * loop.trips > max_unroll_iterations * loop_unroll_limit) return Error.Branches;
+}
+
+/// A header phi's value for this trip: on the way in, the value of the
+/// block the walk came from; on the way back, the other.
+fn loopPhiOf(work: *Work, operands: []const u32, from: u32, back: bool) Error!Settled {
+    if (operands.len < 4 or operands.len % 2 != 0 or operands.len > 6) return Error.Branches;
+    const type_id = try idOf(operands[0]);
+    const boolean = work.thing[type_id] == .boolean;
+    const id = try idOf(operands[1]);
+    var chosen: ?u32 = null;
+    var at: usize = 2;
+    while (at < operands.len) : (at += 2) {
+        const parent = operands[at + 1];
+        if ((parent == from) != back) {
+            if (chosen != null) return Error.Branches;
+            chosen = operands[at];
+        }
+    }
+    const value = chosen orelse return Error.Branches;
+    const step_at = if (boolean) try boolOf(work, value) else try operand(work, value, try kindOf(work, type_id));
+    return .{ .id = id, .step = step_at };
 }
 
 /// Where `read` is in a selection's shape: its OpSelectionMerge, its
@@ -6325,6 +7124,29 @@ fn patched(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32,
             k += count;
         }
         @compileError("no such instruction to patch");
+    }
+}
+
+/// `words` with the `at`th instruction of `op` made one of `to`, of the
+/// same operands: an IAdd an IMul, a comparison another.
+fn retyped(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32, comptime to: spirv.Op) [words.len]u32 {
+    comptime {
+        var copy: [words.len]u32 = words[0..words.len].*;
+        var seen: u32 = 0;
+        var k: usize = 5;
+        while (k < copy.len) {
+            const count = copy[k] >> 16;
+            if (count == 0) @compileError("a word count of zero");
+            if (copy[k] & 0xFFFF == @intFromEnum(op)) {
+                if (seen == at) {
+                    copy[k] = (count << 16) | @intFromEnum(to);
+                    return copy;
+                }
+                seen += 1;
+            }
+            k += count;
+        }
+        @compileError("no such instruction to retype");
     }
 }
 
@@ -10468,4 +11290,134 @@ test "a vertex shader that writes other than gl_Position of gl_PerVertex, or is 
     try testing.expectError(Error.Outputs, vertexThroughMesa(&work, &point_size, .{}));
     work = .{};
     try testing.expectError(Error.Stage, throughMesa(&work, &reference.glslc_vertex_as_it_is));
+}
+
+test "a loop of a constant trip count is unrolled as nir_opt_loop_unroll unrolls it: four sums, no branch; its variables form the optimized module's program to the word" {
+    // `for (int i = 0; i < 4; i++)`: the test at the top, so
+    // opt_loop_peel_initial_break peels the first run, the loop then
+    // tests the update def, and its trip count is 3 (find_trip_count's
+    // trip_offset); simple_unroll makes the peeled run and three more.
+    // float(i) of each is a constant, and v * 0.0625 is made once.
+    var theirs: Work = .{};
+    const optimized = try throughMesa(&theirs, &reference.glslc_looped);
+    try testing.expectEqual(@as(usize, 8), stepsOf(&theirs, .add));
+    try testing.expectEqual(@as(usize, 5), stepsOf(&theirs, .mul));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&theirs, .begin_if));
+    try testing.expectEqual(@as(usize, 0), countOf(optimized, "bu"));
+    try testing.expectEqual(@as(usize, 0), countOf(optimized, ".if"));
+    const kept = try testing.allocator.dupe(u64, optimized.words);
+    defer testing.allocator.free(kept);
+    const stream_kept = try testing.allocator.dupe(Word, optimized.stream());
+    defer testing.allocator.free(stream_kept);
+    // The variables form: `sum` and `i` in variables, the test in a block
+    // of its own and the update in the continue block.
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_looped_plain);
+    try testing.expectEqual(@as(u32, 2), work.local_count);
+    try testing.expectEqualSlices(u64, kept, code.words);
+    try testing.expectEqual(stream_kept.len, code.stream().len);
+    for (stream_kept, code.stream()) |a, b| try testing.expectEqual(a, b);
+}
+
+test "a loop that leaves at its first test is no run; one whose test is at its end runs once more than it steps" {
+    // i < 0 from 0: will_break_on_first_iteration, a trip count of 0, and
+    // the peeled run is the loop's break alone: the sum is its zero.
+    var work: Work = .{};
+    const never = comptime patched(&reference.glslc_looped, .constant, 2, 2, 0);
+    _ = try throughMesa(&work, &never);
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .add));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .mul));
+    // do { ... i++; } while (i < 3): the test of the update def at the
+    // loop's end, nothing to peel, a trip count of 3 and three runs.
+    work = .{};
+    _ = try throughMesa(&work, &reference.glslc_until);
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .max));
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .mul));
+    // A float from 0 by 0.25 while under 1: get_iteration's fsub and
+    // fdiv, 4, and test_iterations' check of 3 to 5.
+    work = .{};
+    _ = try throughMesa(&work, &reference.glslc_stepped);
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .max));
+}
+
+test "a loop counted down, or by a product, is counted as nir_loop_analyze counts it" {
+    // for (int i = 3; i >= 0; i--): the isub an iadd of -1
+    // (nir_opt_algebraic.py), the test an ige; runs at 3, 2, 1 and 0.
+    var work: Work = .{};
+    const down = comptime patched(&patched(&patched(&retyped(&retyped(&reference.glslc_cheap, .i_add, 0, .i_sub), .s_less_than, 0, .s_greater_than_equal), .constant, 0, 2, 3), .constant, 1, 2, 0), .constant, 2, 2, 1);
+    _ = try throughMesa(&work, &down);
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .max));
+    // for (int i = 1; i < 17; i *= 2): get_iteration_empirical, a run at
+    // 1, 2, 4, 8 and 16.
+    work = .{};
+    const doubled = comptime patched(&patched(&retyped(&reference.glslc_cheap, .i_add, 0, .i_mul), .constant, 0, 2, 1), .constant, 2, 2, 2);
+    _ = try throughMesa(&work, &doubled);
+    try testing.expectEqual(@as(usize, 5), stepsOf(&work, .max));
+    // x *= 0.25 of a float: an fmul is not counted (calculate_iterations),
+    // so the loop is not unrolled, and a loop kept is refused.
+    work = .{};
+    const scaled = comptime retyped(&reference.glslc_stepped, .f_add, 0, .f_mul);
+    try testing.expectError(Error.Branches, throughMesa(&work, &scaled));
+}
+
+test "a loop is unrolled to 16 trips and a cost of 16 * 26, more where its LoopControl asks, and none where it asks not to be" {
+    // 17 runs of an fadd and an fmax of four floats: a trip count of 16,
+    // max_unroll_iterations (v3dv_pipeline.c), at a cost of 16 * 8.
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_cheap);
+    try testing.expectEqual(@as(usize, 17), stepsOf(&work, .add));
+    try testing.expectEqual(@as(usize, 17), stepsOf(&work, .max));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .begin_if));
+    // 18 runs are 17 trips, over the limit (check_unrolling_restrictions)...
+    work = .{};
+    const longer = comptime patched(&reference.glslc_cheap, .constant, 1, 2, 18);
+    try testing.expectError(Error.Branches, throughMesa(&work, &longer));
+    // ...but not for a loop of Unroll, which is unrolled whatever it costs.
+    work = .{};
+    const asked = comptime patched(&longer, .loop_merge, 0, 2, 1);
+    _ = try throughMesa(&work, &asked);
+    try testing.expectEqual(@as(usize, 18), stepsOf(&work, .max));
+    // DontUnroll: the loop kept, which is refused.
+    work = .{};
+    const kept = comptime patched(&reference.glslc_looped, .loop_merge, 0, 2, 2);
+    try testing.expectError(Error.Branches, throughMesa(&work, &kept));
+    // 17 runs of twelve operations of four floats: a cost of 16 * 48,
+    // over 16 * 26.
+    work = .{};
+    try testing.expectError(Error.Branches, throughMesa(&work, &reference.glslc_costly));
+}
+
+test "a loop to a push constant, one left by a break, and one in another are refused" {
+    // No trip count, a second terminator, and a loop not innermost: what
+    // only complex_unroll or a loop kept (ntq_emit_loop) would take.
+    var work: Work = .{};
+    try testing.expectError(Error.Branches, throughMesa(&work, &reference.glslc_bounded));
+    work = .{};
+    try testing.expectError(Error.Branches, throughMesa(&work, &reference.glslc_broken));
+    work = .{};
+    try testing.expectError(Error.Branches, throughMesa(&work, &reference.glslc_loop_in_loop));
+}
+
+test "calculate_iterations: a count Mesa's bias test finds no exit for, a loop peeled, and an ine of no step" {
+    const bits = struct {
+        fn of(x: f32) u32 {
+            return @bitCast(x);
+        }
+    }.of;
+    // for (float x = 0.0; x != 0.9; x += 0.2), nir_loop_analyze.c's own
+    // example: 4.5 runs, and 3, 4 or 5 of 0.2 are no 0.9.
+    const never: Test = .{ .cmp = .fneu, .limit = bits(0.9), .limit_rhs = true, .invert = true, .on_def = false };
+    try testing.expectEqual(@as(?u32, null), tripCount(never, .{ .init = bits(0.0), .update = .fadd, .step = bits(0.2), .phi_first = true }));
+    // i < 4 from 0 by 1, tested after the update once peeled: 3 trips.
+    const peeled: Test = .{ .cmp = .ilt, .limit = 4, .limit_rhs = true, .invert = true, .on_def = true };
+    const counted: Induction = .{ .init = 0, .update = .iadd, .step = 1, .phi_first = true };
+    try testing.expectEqual(@as(?u32, 3), tripCount(peeled, counted));
+    // The same not peeled: 4.
+    var unpeeled = peeled;
+    unpeeled.on_def = false;
+    try testing.expectEqual(@as(?u32, 4), tripCount(unpeeled, counted));
+    // while (i == 5) from 5: by 1 a run, by 0 never left.
+    const same: Test = .{ .cmp = .ieq, .limit = 5, .limit_rhs = true, .invert = true, .on_def = false };
+    try testing.expectEqual(@as(?u32, 1), tripCount(same, .{ .init = 5, .update = .iadd, .step = 1, .phi_first = true }));
+    try testing.expectEqual(@as(?u32, null), tripCount(same, .{ .init = 5, .update = .iadd, .step = 0, .phi_first = true }));
 }

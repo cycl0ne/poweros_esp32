@@ -98,7 +98,9 @@
 //! as each part would write again. The shipped kept branches (since
 //! 1.39) are selections the V3D compiles to branches as Mesa does, one
 //! on a condition that differs from pixel to pixel and one on a pushed
-//! float, drawn taken and not.
+//! float, drawn taken and not. The shipped loops (since 1.40) are
+//! glslc's, which the V3D unrolls as Mesa does: a for loop, a do-while
+//! loop and a loop of a float.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -113,7 +115,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.39 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.40 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -890,6 +892,42 @@ const Shipped = struct {
             b.color(b.vector(&.{ reds, y, x, b.scalar(1) }));
         }
     });
+    /// What glslc's `for_loop` computes, its loop of four runs written out
+    /// as the V3D unrolls it (nir_opt_loop_unroll's simple_unroll): each
+    /// run's v.wzyx times i / 8, plus v / 16, added to the sum in turn
+    /// (since 1.40).
+    const Looped = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const turned = b.vector(&.{ b.component(v, 3), b.component(v, 2), b.component(v, 1), b.component(v, 0) });
+            const sixteenth = b.scale(v, b.scalar(0.0625));
+            var sum = b.constant(.{ 0, 0, 0, 0 });
+            inline for (0..4) |i| sum = b.add(sum, b.add(b.scale(turned, b.scalar(@as(f32, i) * 0.125)), sixteenth));
+            b.color(sum);
+        }
+    });
+    /// What glslc's `do_while` computes: three runs of the sum halved,
+    /// held to at least v.wzyx (since 1.40).
+    const Until = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const turned = b.vector(&.{ b.component(v, 3), b.component(v, 2), b.component(v, 1), b.component(v, 0) });
+            var sum = v;
+            inline for (0..3) |_| sum = b.max(b.scale(sum, b.scalar(0.5)), turned);
+            b.color(sum);
+        }
+    });
+    /// What glslc's `float_loop` computes, a float from 0 by a quarter
+    /// while under 1: the most of v times each of 0, 0.25, 0.5 and 0.75,
+    /// and of nothing (since 1.40).
+    const Stepped = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            var sum = b.constant(.{ 0, 0, 0, 0 });
+            inline for (0..4) |i| sum = b.max(sum, b.scale(v, b.scalar(@as(f32, i) * 0.25)));
+            b.color(sum);
+        }
+    });
 };
 
 /// What `integers` computes, for the cores, and in its order: the colour
@@ -1217,6 +1255,9 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped counted", &countedFragment, 4),
     Shipped.Kept.entry("shipped kept"),
     Shipped.KeptPushed.entry("shipped kept pushed"),
+    Shipped.Looped.entry("shipped looped"),
+    Shipped.Until.entry("shipped until"),
+    Shipped.Stepped.entry("shipped stepped"),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                .{},                               .{},                                  .{},
@@ -1229,7 +1270,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&uniform_matrices), shader.Spirv.of(&constant_matrix), shader.Spirv.of(&vertex_as_it_is),    shader.Spirv.of(&storage_buffer),
     shader.Spirv.of(&integers),         shader.Spirv.of(&indexed),         shader.Spirv.of(&lanes),              shader.Spirv.of(&store_writes),
     shader.Spirv.of(&store_reads),      shader.Spirv.of(&store_atomics),   shader.Spirv.of(&store_counted),      Shipped.Kept.spirv,
-    Shipped.KeptPushed.spirv,
+    Shipped.KeptPushed.spirv,           shader.Spirv.of(&for_loop),        shader.Spirv.of(&do_while),           shader.Spirv.of(&float_loop),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -2331,6 +2372,167 @@ const constant_matrix = [_]u32{
     0x0000002A, 0x00000022, 0x00000002, 0x00070050, 0x00000007, 0x0000002B,
     0x00000028, 0x00000029, 0x0000002A, 0x00000027, 0x0003003E, 0x00000009,
     0x0000002B, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for a loop of four sums, the V3D's host
+/// tests' glslc_looped: the V3D unrolls it as Mesa does, peeling the first
+/// run (opt_loop_peel_initial_break) and making the other three of its
+/// trip count, and keeps no branch (since 1.40).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 v;
+/// layout(location = 0) out vec4 color;
+/// void main() {
+///     vec4 sum = vec4(0.0);
+///     for (int i = 0; i < 4; i++) {
+///         sum += v.wzyx * (float(i) * 0.125) + v * 0.0625;
+///     }
+///     color = sum;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag looped.frag -o looped.spv   # 195 words
+/// spirv-val --target-env vulkan1.0 looped.spv            # no output, and 0
+/// ```
+const for_loop = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000030, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000001A, 0x0000002C, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000001A, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000002C, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x0004002B, 0x00000006,
+    0x0000000A, 0x00000000, 0x0007002C, 0x00000007, 0x0000000B, 0x0000000A,
+    0x0000000A, 0x0000000A, 0x0000000A, 0x00040015, 0x0000000C, 0x00000020,
+    0x00000001, 0x0004002B, 0x0000000C, 0x0000000F, 0x00000000, 0x0004002B,
+    0x0000000C, 0x00000016, 0x00000004, 0x00020014, 0x00000017, 0x00040020,
+    0x00000019, 0x00000001, 0x00000007, 0x0004003B, 0x00000019, 0x0000001A,
+    0x00000001, 0x0004002B, 0x00000006, 0x0000001F, 0x3E000000, 0x0004002B,
+    0x00000006, 0x00000023, 0x3D800000, 0x0004002B, 0x0000000C, 0x00000029,
+    0x00000001, 0x00040020, 0x0000002B, 0x00000003, 0x00000007, 0x0004003B,
+    0x0000002B, 0x0000002C, 0x00000003, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x000200F9, 0x00000010,
+    0x000200F8, 0x00000010, 0x000700F5, 0x00000007, 0x0000002F, 0x0000000B,
+    0x00000005, 0x00000027, 0x00000011, 0x000700F5, 0x0000000C, 0x0000002E,
+    0x0000000F, 0x00000005, 0x0000002A, 0x00000011, 0x000500B1, 0x00000017,
+    0x00000018, 0x0000002E, 0x00000016, 0x000400F6, 0x00000012, 0x00000011,
+    0x00000000, 0x000400FA, 0x00000018, 0x00000011, 0x00000012, 0x000200F8,
+    0x00000011, 0x0004003D, 0x00000007, 0x0000001B, 0x0000001A, 0x0009004F,
+    0x00000007, 0x0000001C, 0x0000001B, 0x0000001B, 0x00000003, 0x00000002,
+    0x00000001, 0x00000000, 0x0004006F, 0x00000006, 0x0000001E, 0x0000002E,
+    0x00050085, 0x00000006, 0x00000020, 0x0000001E, 0x0000001F, 0x0005008E,
+    0x00000007, 0x00000021, 0x0000001C, 0x00000020, 0x0005008E, 0x00000007,
+    0x00000024, 0x0000001B, 0x00000023, 0x00050081, 0x00000007, 0x00000025,
+    0x00000021, 0x00000024, 0x00050081, 0x00000007, 0x00000027, 0x0000002F,
+    0x00000025, 0x00050080, 0x0000000C, 0x0000002A, 0x0000002E, 0x00000029,
+    0x000200F9, 0x00000010, 0x000200F8, 0x00000012, 0x0003003E, 0x0000002C,
+    0x0000002F, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for a do-while loop, the V3D's host tests'
+/// glslc_until: its test at its end, of the counter after its step, two
+/// trips and three runs (since 1.40).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 v;
+/// layout(location = 0) out vec4 color;
+/// void main() {
+///     vec4 sum = v;
+///     int i = 0;
+///     do {
+///         sum = max(sum * 0.5, v.wzyx);
+///         i++;
+///     } while (i < 3);
+///     color = sum;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag until.frag -o until.spv   # 159 words
+/// spirv-val --target-env vulkan1.0 until.spv           # no output, and 0
+/// ```
+const do_while = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000027, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000023, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000023, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x0000000A,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001,
+    0x00040015, 0x0000000D, 0x00000020, 0x00000001, 0x0004002B, 0x0000000D,
+    0x00000010, 0x00000000, 0x0004002B, 0x00000006, 0x00000016, 0x3F000000,
+    0x0004002B, 0x0000000D, 0x0000001C, 0x00000001, 0x0004002B, 0x0000000D,
+    0x0000001F, 0x00000003, 0x00020014, 0x00000020, 0x00040020, 0x00000022,
+    0x00000003, 0x00000007, 0x0004003B, 0x00000022, 0x00000023, 0x00000003,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003D, 0x00000007, 0x0000000C, 0x0000000B, 0x000200F9,
+    0x00000011, 0x000200F8, 0x00000011, 0x000700F5, 0x0000000D, 0x00000026,
+    0x00000010, 0x00000005, 0x0000001D, 0x00000011, 0x000700F5, 0x00000007,
+    0x00000025, 0x0000000C, 0x00000005, 0x0000001A, 0x00000011, 0x0005008E,
+    0x00000007, 0x00000017, 0x00000025, 0x00000016, 0x0009004F, 0x00000007,
+    0x00000019, 0x0000000C, 0x0000000C, 0x00000003, 0x00000002, 0x00000001,
+    0x00000000, 0x0007000C, 0x00000007, 0x0000001A, 0x00000001, 0x00000028,
+    0x00000017, 0x00000019, 0x00050080, 0x0000000D, 0x0000001D, 0x00000026,
+    0x0000001C, 0x000500B1, 0x00000020, 0x00000021, 0x0000001D, 0x0000001F,
+    0x000400F6, 0x00000013, 0x00000011, 0x00000000, 0x000400FA, 0x00000021,
+    0x00000011, 0x00000013, 0x000200F8, 0x00000013, 0x0003003E, 0x00000023,
+    0x0000001A, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for a loop of a float stepped by a quarter
+/// from 0 to under 1, the V3D's host tests' glslc_stepped: a trip count
+/// get_iteration works out from the span, four runs (since 1.40).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 v;
+/// layout(location = 0) out vec4 color;
+/// void main() {
+///     vec4 sum = vec4(0.0);
+///     for (float x = 0.0; x < 1.0; x += 0.25) {
+///         sum = max(sum, v * x);
+///     }
+///     color = sum;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag stepped.frag -o stepped.spv   # 153 words
+/// spirv-val --target-env vulkan1.0 stepped.spv             # no output, and 0
+/// ```
+const float_loop = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000026, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000019, 0x00000022, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000019, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000022, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x0004002B, 0x00000006,
+    0x0000000A, 0x00000000, 0x0007002C, 0x00000007, 0x0000000B, 0x0000000A,
+    0x0000000A, 0x0000000A, 0x0000000A, 0x0004002B, 0x00000006, 0x00000014,
+    0x3F800000, 0x00020014, 0x00000015, 0x00040020, 0x00000018, 0x00000001,
+    0x00000007, 0x0004003B, 0x00000018, 0x00000019, 0x00000001, 0x0004002B,
+    0x00000006, 0x0000001E, 0x3E800000, 0x00040020, 0x00000021, 0x00000003,
+    0x00000007, 0x0004003B, 0x00000021, 0x00000022, 0x00000003, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x000200F9, 0x0000000E, 0x000200F8, 0x0000000E, 0x000700F5, 0x00000007,
+    0x00000025, 0x0000000B, 0x00000005, 0x0000001D, 0x0000000F, 0x000700F5,
+    0x00000006, 0x00000024, 0x0000000A, 0x00000005, 0x00000020, 0x0000000F,
+    0x000500B8, 0x00000015, 0x00000016, 0x00000024, 0x00000014, 0x000400F6,
+    0x00000010, 0x0000000F, 0x00000000, 0x000400FA, 0x00000016, 0x0000000F,
+    0x00000010, 0x000200F8, 0x0000000F, 0x0004003D, 0x00000007, 0x0000001A,
+    0x00000019, 0x0005008E, 0x00000007, 0x0000001C, 0x0000001A, 0x00000024,
+    0x0007000C, 0x00000007, 0x0000001D, 0x00000001, 0x00000028, 0x00000025,
+    0x0000001C, 0x00050081, 0x00000006, 0x00000020, 0x00000024, 0x0000001E,
+    0x000200F9, 0x0000000E, 0x000200F8, 0x00000010, 0x0003003E, 0x00000022,
+    0x00000025, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
@@ -5153,6 +5355,9 @@ const cases = [_]Case{
     .{ .name = "shipped atomics", .run = Cases.atomics },
     .{ .name = "shipped kept branches", .run = Cases.shipped("as it is", "shipped kept", false, clockwise_at) },
     .{ .name = "shipped kept uniform branches", .run = Cases.keptPushed },
+    .{ .name = "shipped loop", .run = Cases.shipped("as it is", "shipped looped", false, clockwise_at) },
+    .{ .name = "shipped do-while loop", .run = Cases.shipped("as it is", "shipped until", false, clockwise_at) },
+    .{ .name = "shipped float loop", .run = Cases.shipped("as it is", "shipped stepped", false, clockwise_at) },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },
