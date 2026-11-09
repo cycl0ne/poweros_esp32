@@ -40,7 +40,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.18 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.19 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -954,6 +954,9 @@ const Side = struct {
     /// 1.18).
     shadow_alone: ?*facet.RenderPass = null,
     shadow_alone_frame: ?*facet.Framebuffer = null,
+    /// And one that begins with what the map holds, to draw over a part
+    /// of it, its layout the one the first leaves it in (since 1.19).
+    shadow_again: ?*facet.RenderPass = null,
     /// A pass of the first picture and the depth whose first subpass draws
     /// the depth alone, and one whose first subpass names its colour
     /// ATTACHMENT_UNUSED; each's second draws the picture tested against
@@ -1201,6 +1204,9 @@ const Side = struct {
         const alone_depth = facet.AttachmentReference{ .attachment = 0, .layout = .depth_stencil_attachment_optimal };
         const alone_subpass = facet.SubpassDescription{ .depth_stencil_attachment = &alone_depth };
         try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 1, .attachments = &alone, .subpass_count = 1, .subpasses = @ptrCast(&alone_subpass) }, &side.shadow_alone), error.Refused);
+        var again = alone;
+        again[0].initial_layout = .shader_read_only_optimal;
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 1, .attachments = &again, .subpass_count = 1, .subpasses = @ptrCast(&alone_subpass) }, &side.shadow_again), error.Refused);
         const alone_views = [1]*facet.ImageView{side.shadow_view.?};
         try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.shadow_alone.?, .attachment_count = 1, .attachments = &alone_views, .width = side.width, .height = side.height }, &side.shadow_alone_frame), error.Refused);
         const layouts: [shadow_ops.len]?*facet.DescriptorSetLayout = @splat(side.sampler_set_layout);
@@ -1526,6 +1532,7 @@ const Side = struct {
         for (side.shadow_samplers) |each| fb.DestroySampler(device, each);
         fb.DestroyFramebuffer(device, side.shadow_alone_frame);
         fb.DestroyRenderPass(device, side.shadow_alone);
+        fb.DestroyRenderPass(device, side.shadow_again);
         fb.DestroyFramebuffer(device, side.shadow_frame);
         fb.DestroyRenderPass(device, side.shadow_pass);
         fb.DestroyImageView(device, side.shadow_view);
@@ -2495,6 +2502,34 @@ const Cases = struct {
         };
         fb.CmdPipelineBarrier(commands, facet.PIPELINE_STAGE_LATE_FRAGMENT_TESTS, facet.PIPELINE_STAGE_FRAGMENT_SHADER, 0, 0, null, 0, null, 1, @ptrCast(&written));
     }
+    /// The shadow map drawn whole in a pass of it alone, then cleared and
+    /// the far triangle drawn over a part of it in another, which stores
+    /// it: the map outside the part is what the first pass left, where a
+    /// tile the second renders across the part's edge has to write it back
+    /// as it was. The near triangle's 0.25 below the part is in such tiles
+    /// on the V3D, and every depth is clear of the half it is compared
+    /// with (since 1.19).
+    fn shadowedOverPart(side: *Side) Failure!void {
+        const fb = side.fb;
+        const commands = side.commands.?;
+        try shadowMap(side, false, .fixed);
+        const far_away = facet.ClearValue{ .depth_stencil = .{ .depth = 1 } };
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = side.shadow_again.?, .framebuffer = side.shadow_alone_frame.?, .render_area = side.areaOf(.{ 0.1, 0.15, 0.6, 0.6 }), .clear_value_count = 1, .clear_values = @ptrCast(&far_away) }, .@"inline");
+        side.state();
+        try side.use(.{ .test_depth = true, .write_depth = true, .pass = side.shadow_again.?, .colors = 0 });
+        side.draw(far_at, 3);
+        side.end();
+        const written = facet.ImageMemoryBarrier{
+            .src_access_mask = facet.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE,
+            .dst_access_mask = facet.ACCESS_SHADER_READ,
+            .old_layout = .shader_read_only_optimal,
+            .new_layout = .shader_read_only_optimal,
+            .image = side.shadow.?,
+            .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH },
+        };
+        fb.CmdPipelineBarrier(commands, facet.PIPELINE_STAGE_LATE_FRAGMENT_TESTS, facet.PIPELINE_STAGE_FRAGMENT_SHADER, 0, 0, null, 0, null, 1, @ptrCast(&written));
+        try lookAtShadow(side, 0, "whole at a half", "shadow");
+    }
     /// The quad over the first picture, the shadow map compared with as
     /// `shadow_ops[which]` says.
     fn lookAtShadow(side: *Side, which: usize, vertex: [*:0]const u8, fragment: [*:0]const u8) Failure!void {
@@ -2906,6 +2941,8 @@ const cases = [_]Case{
     .{ .name = "shadow map alone, a slope less than a half", .run = Cases.shadowedAlone(true, .fixed) },
     .{ .name = "shadow map alone, generated", .run = Cases.shadowedAlone(false, .shipped) },
     .{ .name = "shadow map alone, no fragment stage", .run = Cases.shadowedAlone(false, .stageless) },
+    // Drawn again over a part, which keeps the rest (since 1.19).
+    .{ .name = "shadow map alone, drawn again over a part", .run = &Cases.shadowedOverPart },
     .{ .name = "pre-pass of no colour", .run = Cases.prepassed(false, false, false) },
     .{ .name = "pre-pass of no colour, no fragment stage", .run = Cases.prepassed(false, true, false) },
     .{ .name = "pre-pass of no colour, cleared in it", .run = Cases.prepassed(false, false, true) },

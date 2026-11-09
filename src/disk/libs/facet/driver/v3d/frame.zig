@@ -139,7 +139,7 @@ pub const Frame = struct {
     tile: cl.Tile = .{ .width = tile_pixels, .height = tile_pixels },
     /// In a frame of four, the rows the colour's samples are averaged into
     /// as each tile ends, or null where it has no resolve attachment or
-    /// one the tiles cannot write (`resolvesInTiles`; since 1.148,
+    /// one the tiles cannot write (`tilesInArea`; since 1.148,
     /// docs/facet-vulkan10.md item 61, step V5).
     resolve: ?Resolve = null,
     /// The frame has a colour: render target 0 is `image`. Without one
@@ -187,19 +187,19 @@ pub fn supertilesOf(frame: *const Frame) Supertiles {
     return at;
 }
 
-/// Whether the tiles can resolve the frame's colour into its resolve
-/// attachment: every tile they render lies inside its area, or over the
-/// frame's edge, as v3dv takes a render area "tile aligned" before it
-/// resolves in the TLB (`v3dv_subpass_area_is_tile_aligned`,
-/// v3dv_pass.c:663-683, its framebuffer padded at the edge,
-/// v3dv_device.c:3178). Aligned to the supertile rather than the tile:
-/// the renderer renders every supertile the area touches, whole
-/// (`writeRender`, as v3dv's `cmd_buffer_emit_render_pass_rcl` does,
-/// v3dvx_cmd_buffer.c:771-795), and a tile's resolve writes all its
-/// pixels, so one sticking out of the area would average into the
-/// attachment where Vulkan has a resolve leave it alone. A frame of all
-/// of its tiles always can.
-pub fn resolvesInTiles(frame: *const Frame) bool {
+/// Whether every tile the renderer renders lies inside the frame's area,
+/// or over the frame's edge: v3dv's render area "tile aligned"
+/// (`v3dv_subpass_area_is_tile_aligned`, v3dv_pass.c:663-683, its
+/// framebuffer padded at the edge, v3dv_device.c:3178). Aligned to the
+/// supertile rather than the tile: the renderer renders every supertile
+/// the area touches, whole (`writeRender`, as v3dv's
+/// `cmd_buffer_emit_render_pass_rcl` does, v3dvx_cmd_buffer.c:771-795),
+/// and a tile's store writes all its pixels. Where it is so, the tiles
+/// can resolve the colour into its resolve attachment (since 1.148), and
+/// store a kept depth or stencil they did not load (since 1.151): where
+/// it is not, a tile sticking out of the area would write what Vulkan has
+/// the pass leave alone. A frame of all of its tiles always is.
+pub fn tilesInArea(frame: *const Frame) bool {
     const area = frame.area orelse return true;
     const at = supertilesOf(frame);
     const across = at.width * frame.tile.width;
@@ -659,7 +659,7 @@ test "a frame of four that resolves stores the average into the resolve's rows b
 
     // 100 by 70 in tiles of 32 is 4 by 3 of them, a supertile each.
     try std.testing.expectEqual(Supertiles{ .width = 1, .height = 1, .across = 4, .down = 3 }, supertilesOf(&frame));
-    try std.testing.expect(resolvesInTiles(&frame));
+    try std.testing.expect(tilesInArea(&frame));
     const Case = struct { area: Area, aligned: bool };
     for ([_]Case{
         .{ .area = .{ .left = 32, .top = 32, .right = 96, .bottom = 64 }, .aligned = true },
@@ -670,7 +670,7 @@ test "a frame of four that resolves stores the average into the resolve's rows b
         .{ .area = .{ .left = 0, .top = 0, .right = 32, .bottom = 40 }, .aligned = false },
     }) |case| {
         frame.area = case.area;
-        try std.testing.expectEqual(case.aligned, resolvesInTiles(&frame));
+        try std.testing.expectEqual(case.aligned, tilesInArea(&frame));
     }
     // 2560 by 1440, 80 by 45 tiles: grown to supertiles of 4 by 4, 20 by
     // 12 of them, so a tile's alignment is no longer enough.
@@ -678,7 +678,7 @@ test "a frame of four that resolves stores the average into the resolve's rows b
     frame.height = 1440;
     try std.testing.expectEqual(Supertiles{ .width = 4, .height = 4, .across = 20, .down = 12 }, supertilesOf(&frame));
     frame.area = .{ .left = 128, .top = 128, .right = 256, .bottom = 256 };
-    try std.testing.expect(resolvesInTiles(&frame));
+    try std.testing.expect(tilesInArea(&frame));
     frame.area = .{ .left = 32, .top = 32, .right = 64, .bottom = 64 };
-    try std.testing.expect(!resolvesInTiles(&frame));
+    try std.testing.expect(!tilesInArea(&frame));
 }

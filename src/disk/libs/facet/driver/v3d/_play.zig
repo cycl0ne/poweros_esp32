@@ -652,7 +652,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
         const into = view.image;
         if (into.samples != 1 or into.format != each.format or into.kind != .rows or !_image.readable(into)) break :resolve;
         player.resolve_view = view;
-        if (!frames.resolvesInTiles(&player.frame)) break :resolve;
+        if (!frames.tilesInArea(&player.frame)) break :resolve;
         const at = addressOf(queue, into);
         if (at == 0) break :resolve;
         const rows = _image.rowsAt(into, view.base_level, view.base_layer);
@@ -660,9 +660,38 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
         player.resolve_bytes = @as(usize, rows.pitch) * framebuffer.height;
         player.frame.resolve = .{ .image = at + @as(u32, @intCast(rows.at)), .stride = rows.pitch };
     };
+    // A depth or a stencil kept in memory and stored, over a render area
+    // a tile the renderer renders sticks out of, is loaded first whatever
+    // its load op, so that the tile's store writes back what lay outside
+    // the area, as v3dv loads an attachment it stores wherever the area is
+    // not tile aligned (`v3dv_cmd_buffer_check_needs_load`,
+    // v3dv_cmd_buffer.c:1557-1564). What the pass begins with inside the
+    // area is then a rectangle drawn over it, as v3dv clears there with
+    // CmdClearAttachments (`cmd_buffer_emit_subpass_clears`,
+    // v3dv_cmd_buffer.c:1430-1488) - here whatever the op, the part not
+    // saying it was CLEAR, which for DONT_CARE leaves contents Vulkan
+    // leaves undefined (since 1.151). Before, such a tile stored the
+    // tile's clear over the pixels outside the area.
+    var kept_inside: ?frames.Kept = null;
+    if (player.frame.kept) |*kept| if (kept.store and !kept.load and !frames.tilesInArea(&player.frame)) {
+        kept.load = true;
+        kept_inside = kept.*;
+    };
     if (!startBinning(queue)) return;
     player.drawing = true;
-    if (clears and !whole) clearArea(queue, color);
+    const colors_inside = clears and !whole;
+    if (colors_inside or kept_inside != null) {
+        const depth_inside = if (kept_inside) |kept| kept.buffer == cl.STORE_Z else false;
+        const stencil_inside = if (kept_inside) |kept| kept.buffer == cl.STORE_STENCIL else false;
+        clearRectangle(
+            queue,
+            player.area,
+            color,
+            if (colors_inside) 0xF else 0,
+            if (depth_inside) player.frame.clear_depth else null,
+            if (stencil_inside) @truncate(player.frame.clear_stencil) else null,
+        );
+    }
 }
 
 /// The frame's tile lists, tile state and binner's list made for its
@@ -791,13 +820,6 @@ fn keptOf(queue: *Queue, part: *const _render.Part, framebuffer: *const _render.
         .load = if (keeps_depth) part.loads_depth else part.loads_stencil,
         .store = if (keeps_depth) part.stores_depth else part.stores_stencil,
     };
-}
-
-/// A clear of part of the image: a rectangle of the colour, over all of it
-/// and cut to the part.
-fn clearArea(queue: *Queue, color: u32) void {
-    const player = playerOf(queue);
-    clearRectangle(queue, player.area, color, 0xF, null, null);
 }
 
 /// A part of the attachments cleared in the middle of a pass.

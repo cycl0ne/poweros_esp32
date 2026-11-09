@@ -376,7 +376,7 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // where their images keep them (`_image.Image.quads`), and averages
         // the colour into a resolve attachment as each tile ends, or on the
         // CPU where the render area is not of whole supertiles
-        // (`frame.resolvesInTiles`). Sampling such an image is item 59's
+        // (`frame.tilesInArea`). Sampling such an image is item 59's
         // and step V7's, and refused until then (`_image.multisampled`).
         .multisampling = true,
         // A subpass of no colour attachment, or of unused ones alone: the

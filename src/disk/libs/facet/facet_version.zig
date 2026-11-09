@@ -4396,4 +4396,26 @@ pub const LIBRARY_VERSION = 1;
 /// of nothing where nothing is kept. The host's: a subpass of unused
 /// colours alone refused without the capability and taken with it, and
 /// the V3D as described meets the no-attachments mask.
-pub const LIBRARY_REVISION = 150;
+///
+/// 151: **The V3D keeps a depth or a stencil whole over a render area
+/// that is not tile aligned.** A frame whose kept plane its tiles store
+/// but do not load, over an area that some tile the renderer renders
+/// sticks out of, had that tile store its clear over what lay outside the
+/// area, which Vulkan has the pass leave alone: a shadow map drawn again
+/// over part of itself lost the rest of the tiles it touched.
+///
+/// - Such a plane is loaded first, whatever its load op, as v3dv loads an
+///   attachment it stores wherever the area is not tile aligned
+///   (`v3dv_cmd_buffer_check_needs_load`, v3dv_cmd_buffer.c:1557-1564).
+/// - What the pass begins with inside the area is a rectangle drawn over
+///   it, of the clear's depth or stencil, as v3dv clears there with
+///   CmdClearAttachments (`cmd_buffer_emit_subpass_clears`,
+///   v3dv_cmd_buffer.c:1430-1488), the colour's rectangle the same draw.
+///   For DONT_CARE too, which leaves what Vulkan leaves undefined.
+/// - `frame.resolvesInTiles` is `frame.tilesInArea`: the same question,
+///   asked now of a kept plane's store as of a resolve.
+///
+/// Tests: the V3D's 149, none new: the question is the one 1.148's test
+/// asks, and the frame's first draw is the board's to see. FacetBoth 1.19
+/// draws the shadow map again over part of it.
+pub const LIBRARY_REVISION = 151;

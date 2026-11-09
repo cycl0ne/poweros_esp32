@@ -1603,6 +1603,25 @@ stage, sampled by the shadow-map cases' quad (3, 5, 3 and 3 pixels of
 pre-pass, of no colour attachment and of an unused one, with a depth
 CmdClearAttachments inside it (8 or 9 apart, the edges every case has).
 
+**Found after it, and done in 1.151: a kept depth over part of the frame.**
+A pass that stores a depth or a stencil it does not load, over a render
+area some tile sticks out of, had that tile store its clear over the
+pixels outside the area, which Vulkan has the pass leave alone. FacetBoth
+1.19 draws a shadow map, then draws over a part of it again in a pass of
+the depth alone that clears: 4230 of 230400 apart on 1.150, a band across
+the tiles that straddle the area's lower edge, exactly where they lie. The
+port is v3dv's two halves of it. Wherever the area is not tile aligned an
+attachment that is stored is loaded first, whatever its load op
+(`v3dv_cmd_buffer_check_needs_load`, v3dv_cmd_buffer.c:1557-1564), and
+the clear inside the area is drawn, as v3dv clears there with
+CmdClearAttachments (`cmd_buffer_emit_subpass_clears`,
+v3dv_cmd_buffer.c:1430-1488): in `_play.zig`'s `beginRenderPass`, one
+rectangle of the colour, the depth or the stencil, cut to the area. The
+question of the tiles is the one a resolve in them asks (1.148), so
+`frame.resolvesInTiles` is `frame.tilesInArea`. On 1.151 the case is 3
+apart, as the map drawn once is; FacetBoth's 208 other cases are as they
+were, and FacetProbe is 888 of 888.
+
 ### 44. Allow a both-aspect view of a sampled depth+stencil image
 
 *image views / depth* &mdash; **done in 1.94**, small
