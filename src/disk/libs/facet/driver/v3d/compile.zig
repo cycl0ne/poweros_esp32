@@ -405,8 +405,9 @@ pub const Tag = enum {
     /// Where the offset is the same in every lane v3d reads them through
     /// unifa all the same, the offset added to the buffer's address
     /// (ntq_emit_load_unifa, nir_to_vir.c:3315-3317, :3348, :3398-3400,
-    /// :3441-3444); where it is not, through the TMU, which is not ported
-    /// (`uniformOffsets`; since 1.166).
+    /// :3441-3444; since 1.166); where it is not, through the TMU's
+    /// general lookup (ntq_emit_tmu_general, :502-725; `lanes`, since
+    /// 1.167).
     ubo_indirect,
     /// Floats of a storage buffer at an offset the program computes, as
     /// `ubo_indirect` holds them (since 1.166).
@@ -743,8 +744,10 @@ pub const Word = union(enum) {
     float: f32,
     /// The texture's state, as the first `wrtmuc` takes it.
     texture,
-    /// The sampler's state, as the second takes it.
-    sampler,
+    /// The sampler's state, as the second takes it, with the bits the
+    /// program sets of it: `per_pixel_mask` where helper pixels skip the
+    /// sample (v3d_tex.c:313-321; since 1.167), else none.
+    sampler: u32,
     /// A word of the push constants, by its place among them (the byte
     /// offset over four): what Mesa's QUNIFORM_UNIFORM is in v3dv, filled
     /// from the command buffer's push constants as the stream is written
@@ -766,6 +769,11 @@ pub const Word = union(enum) {
     /// 1.164).
     ssbo: StorageAddress,
 };
+
+/// TMU Config Parameter 1's Per-pixel mask enable (v3d_packet.xml:1544):
+/// the lookup made for the pixels the quad covers alone, its helper
+/// pixels left out (since 1.167).
+pub const per_pixel_mask: u32 = 1 << 2;
 
 /// What a `.viewport` step reads, as v3dv writes QUNIFORM_VIEWPORT_X_SCALE,
 /// _Y_SCALE, _Z_OFFSET and _Z_SCALE (v3dv_uniforms.c:526-552): the
@@ -1071,6 +1079,12 @@ pub const Work = struct {
     code: [most_words]u64 = undefined,
     word_count: u32 = 0,
 
+    /// What `lanes` finds of each step of the program laid out: whether
+    /// it differs from lane to lane, and whether a sample or a load that
+    /// does may leave helper pixels out (since 1.167).
+    divergent: [most_steps]bool = @splat(false),
+    skip_helpers: [most_steps]bool = @splat(false),
+
     pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value, constant_matrix, position_pointer };
 
     /// `chain_part` of a pointer to a whole member.
@@ -1188,7 +1202,7 @@ pub fn compileNoColorThroughMesa(work: *Work, child: std.mem.Allocator) (Error |
 /// What `work` holds, read from a module or left empty, made VIR, given
 /// registers, scheduled and packed.
 fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.Compiler, key: Key) (Error || std.mem.Allocator.Error)!Code {
-    try uniformOffsets(work);
+    lanes(work);
     const program = to_vir.compileSteps(allocator, compiler, work, key) catch |err| return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         error.Registers => Error.Registers,
@@ -1210,9 +1224,10 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
             .constant => .{ .float = @bitCast(data) },
             // The draw's own words, which `tiling.parameter0` and
             // `parameter1` write as these are: both words of the one
-            // texture, and its sampler.
+            // texture, and its sampler, with the per-pixel mask the
+            // program sets of it (since 1.167).
             .tmu_config_p0 => if (data == to_vir.texel_words) .texture else return Error.Invalid,
-            .tmu_config_p1 => if (data == 0) .sampler else return Error.Invalid,
+            .tmu_config_p1 => if (data & ~per_pixel_mask == 0) .{ .sampler = data } else return Error.Invalid,
             // A word of the push constants: `Step.at` of a `.push`.
             .uniform => .{ .push = data },
             // A uniform buffer's address: the unit is the buffer's slot
@@ -3160,7 +3175,12 @@ const Order = struct {
     }
 
     /// The steps laid out in the program's list again, those out of it
-    /// dropped, and what names a step renamed.
+    /// dropped, and what names a step renamed. What nir_opt_dce took out
+    /// is dropped too, but for a varying, which `to_vir` reads where the
+    /// program does (since 1.167): v3d's own dead code elimination keeps
+    /// a TMU operation (vir_has_side_effects, vir_opt_dead_code.c:207), so
+    /// a sample or a load that nothing reads would cost the TMU a lookup
+    /// that NIR's never made. A sample dropped leaves no sampler.
     fn layOut(list: *const Order, work: *Work) void {
         var renamed: [most_steps]u16 = @splat(none);
         var kept: [most_steps]Step = undefined;
@@ -3168,6 +3188,7 @@ const Order = struct {
         var at = list.first;
         while (at != none) : (at = list.next[at]) {
             if (list.removed[at]) continue;
+            if (list.gone[at] and work.steps[at].tag != .input) continue;
             renamed[at] = count;
             kept[count] = work.steps[at];
             count += 1;
@@ -3176,7 +3197,10 @@ const Order = struct {
         @memcpy(work.steps[0..count], kept[0..count]);
         work.step_count = count;
         if (work.stored != none) work.stored = renamed[work.stored];
-        if (work.sampled != none) work.sampled = renamed[work.sampled];
+        if (work.sampled != none) {
+            work.sampled = renamed[work.sampled];
+            if (work.sampled == none) work.sample_count = 0;
+        }
         for (work.inputs[0..work.input_count]) |*each| {
             if (each.step != none) each.step = renamed[each.step];
         }
@@ -4205,28 +4229,63 @@ fn blockLoad(work: *Work, variable: u16, dynamic: u16, offset: u32, kind: Kind) 
     return put(work, .{ .tag = .push, .kind = kind, .at = offset / 4 });
 }
 
-/// Whether every block load at an offset computed has that offset the
-/// same in every lane, as ldunifa needs: nir_divergence_analysis's answer
-/// (v3d_attempt_compile runs it, vir.c:2105). A varying differs from
-/// lane to lane, a flat one too where v3dv's options do not say one
-/// primitive fills a subgroup (v3dv_pipeline.c:217-218), and a vertex
-/// program's attribute does (load_interpolated_input, load_input;
-/// nir_divergence_analysis.c:472-489, :932); an ALU
-/// operation (:139-160), a sample (visit_tex, :1185) and a load at an
-/// offset computed (:655-671) where an operand does. A constant, a push
-/// constant (:888-900), the viewport and a load at a constant offset do
-/// not. A load whose offset differs v3d makes a TMU read
+/// Which steps differ from lane to lane, nir_divergence_analysis's
+/// answer (v3d_attempt_compile runs it, vir.c:2105), and of a fragment
+/// program's samples and loads that do, which helper pixels may skip,
+/// nir_opt_load_skip_helpers's (vir.c:2107-2115; since 1.167).
+///
+/// A varying differs, a flat one too where v3dv's options do not say one
+/// primitive fills a subgroup (v3dv_pipeline.c:217-218), and so does a
+/// vertex program's attribute (load_interpolated_input, load_input;
+/// nir_divergence_analysis.c:472-489, :932); an ALU operation (:139-160),
+/// a sample (visit_tex, :1185) and a load at an offset computed
+/// (:655-671) where an operand does. A constant, a push constant
+/// (:888-900), the viewport and a load at a constant offset do not. v3d
+/// reads a load at an offset that differs through the TMU
 /// (ntq_emit_load_unifa, nir_to_vir.c:3315-3317, then
-/// ntq_emit_tmu_general), which is not ported: refused (since 1.166).
-fn uniformOffsets(work: *const Work) Error!void {
-    var divergent: [most_steps]bool = @splat(false);
-    for (work.program(), 0..) |each, at| {
-        if (each.tag == .input) divergent[at] = true;
+/// ntq_emit_tmu_general); one at an offset that does not, through unifa.
+///
+/// A step's helper pixels are wanted where it is read, step by step, into
+/// what a sample's coordinate is - an implicit level of detail is worked
+/// out across the quad (nir_opt_load_skip_helpers.c:151-157) - and into a
+/// load's offset where the load is not one to skip, which only one that
+/// differs is (no_add_divergence, :99-113, :222-232). A discard is
+/// v3dv's demote_if (discard_is_demote, v3dv_pipeline.c:219), which wants
+/// none (:28-70). A sample or a load that differs and is read into
+/// nothing that wants them skips them: ACCESS_SKIP_HELPERS, or the
+/// sample's skip_helpers (:258-275).
+fn lanes(work: *Work) void {
+    const steps = work.program();
+    work.divergent = @splat(false);
+    work.skip_helpers = @splat(false);
+    for (steps, 0..) |each, at| {
+        if (each.tag == .input) work.divergent[at] = true;
         for (readsOf(each)) |field| if (field) |of| {
-            if (divergent[of]) divergent[at] = true;
+            if (work.divergent[of]) work.divergent[at] = true;
         };
-        if ((each.tag == .ubo_indirect or each.tag == .ssbo_indirect) and divergent[each.a]) return Error.Storage;
     }
+    if (work.stage != .fragment) return;
+    var needs: [most_steps]bool = @splat(false);
+    var at = steps.len;
+    while (at > 0) {
+        at -= 1;
+        const each = steps[at];
+        switch (each.tag) {
+            .sample, .sample_compared => needs[each.a] = true,
+            .ubo_indirect, .ssbo_indirect => if (!work.divergent[at]) {
+                needs[each.a] = true;
+            },
+            else => {},
+        }
+        if (!needs[at]) continue;
+        for (readsOf(each)) |field| if (field) |of| {
+            needs[of] = true;
+        };
+    }
+    for (steps, 0..) |each, k| switch (each.tag) {
+        .sample, .sample_compared, .ubo_indirect, .ssbo_indirect => work.skip_helpers[k] = work.divergent[k] and !needs[k],
+        else => {},
+    };
 }
 
 /// `index` times `stride`, as nir_amul_imm builds it (_nir_mul_imm,
@@ -5106,7 +5165,7 @@ fn sample(work: *Work, each: Step, at: u16) Error!void {
     try act(work, .{ .tmu = .{ .which = .t, .from = t } });
     try streamed(work, .texture);
     try act(work, .config);
-    try streamed(work, .sampler);
+    try streamed(work, .{ .sampler = 0 });
     try act(work, .config);
     try act(work, .{ .tmu = .{ .which = .s, .from = s } });
     try act(work, .last_section);
@@ -6135,7 +6194,7 @@ test "a texture sampled at a varying is the hand-written program, with the texel
     try testing.expectEqualSlices(u64, &want, code.words);
     // Nothing of its own in the stream: the two words are the TMU's, and
     // only a draw knows what they are.
-    try testing.expectEqualSlices(Word, &[_]Word{ .texture, .sampler }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ .texture, .{ .sampler = 0 } }, code.stream());
 }
 
 test "a texture times the colour the vertices carry comes to the program that was written by hand, word for word" {
@@ -6148,7 +6207,7 @@ test "a texture times the colour the vertices carry comes to the program that wa
     // as it does in the hand-written program - and each product is
     // written over the colour that went into it, which dies at it.
     try testing.expectEqualSlices(u64, qpu.texture_color_fragment.code, code.words);
-    try testing.expectEqualSlices(Word, &[_]Word{ .texture, .sampler }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ .texture, .{ .sampler = 0 } }, code.stream());
 }
 
 test "a texel added to is read out of its pair first, by a 1 loaded before the splice" {
@@ -6163,7 +6222,7 @@ test "a texel added to is read out of its pair first, by a 1 loaded before the s
     try testing.expectEqualSlices(Word, &[_]Word{
         .{ .float = 1 },   .{ .float = 0.1 }, .{ .float = 0.2 },
         .{ .float = 0.3 }, .{ .float = 0 },   .texture,
-        .sampler,
+        .{ .sampler = 0 },
     }, code.stream());
     var halves: u32 = 0;
     var adds: u32 = 0;
@@ -6418,7 +6477,8 @@ const huge_location = patched(Smooth.words, .decorate, 1, 2, 0xFFFF_FFFF);
 /// A texel drawn as it comes, with one of its floats also read out on its
 /// own. `sound` holds every program to a `color_packed` register that
 /// still holds a word from the TMU; before the guard in `settle` this
-/// moved an unpacked f32 to the tile buffer as two half-floats.
+/// moved an unpacked f32 to the tile buffer as two half-floats. Since
+/// 1.167 nir_opt_dce takes the read out, nothing reading it.
 const HalfRead = ir.Fragment(struct {
     pub fn body(b: *ir.Build) void {
         const taken = b.sample(0, 0, b.input(0, .f32x2));
@@ -6429,6 +6489,7 @@ const HalfRead = ir.Fragment(struct {
 
 /// The same with all four floats read out: before the guard both writes
 /// to the tile buffer named registers the pool had handed out again.
+/// These reads are taken out too.
 const AllRead = ir.Fragment(struct {
     pub fn body(b: *ir.Build) void {
         const taken = b.sample(0, 0, b.input(0, .f32x2));
@@ -6437,34 +6498,23 @@ const AllRead = ir.Fragment(struct {
     }
 });
 
-test "a texel read out of its pair is packed back for the colour, not moved out raw" {
+test "a texel read out of its pair, into nothing that is read, is drawn as it comes" {
+    // nir_opt_dce takes the reads out (since 1.167), so the texel is
+    // still in its pairs and takes the shortcut, as the texel drawn with
+    // nothing read out does. `settle` packs a texel read out of its
+    // pairs back for the colour; a read that is live, in a program that
+    // draws the texel as it comes, would want a discard, which `ir` has
+    // none of.
     var work: Work = .{};
-    // Both of these drew the wrong colour before `settle` came to decide
-    // the shortcut per pair rather than per step. `sound` is what holds
-    // it now, and it runs on every program the suite compiles.
-    for ([2][]const u32{ HalfRead.words, AllRead.words }) |words| {
+    for ([3][]const u32{ HalfRead.words, AllRead.words, Textured.words }) |words| {
         const code = try compile(&work, words);
         try sound(&work, code);
-        // Packed back by `color`, not moved out by `color_packed`.
         var raw: u32 = 0;
-        var packed_back: u32 = 0;
-        for (work.plan()) |each| switch (each) {
-            .color_packed => raw += 1,
-            .color => packed_back += 1,
-            else => {},
+        for (work.plan()) |each| if (each == .color_packed) {
+            raw += 1;
         };
-        try testing.expectEqual(@as(u32, 0), raw);
-        try testing.expectEqual(@as(u32, 2), packed_back);
+        try testing.expectEqual(@as(u32, 2), raw);
     }
-    // And the texel drawn with nothing read out still takes the
-    // shortcut, which is the whole point of having one.
-    const whole = try compile(&work, Textured.words);
-    try sound(&work, whole);
-    var raw: u32 = 0;
-    for (work.plan()) |each| if (each == .color_packed) {
-        raw += 1;
-    };
-    try testing.expectEqual(@as(u32, 2), raw);
 }
 
 test "a float named by all four parts of a construct is not written over by the first part's product" {
@@ -6704,7 +6754,7 @@ test "through Mesa's back end, a texture: the lookup started in the delay slots 
     try testing.expectEqual(@as(u32, 2), code.varyings);
     try testing.expectEqual(Sampler{ .set = 0, .binding = 0 }, code.sampler.?);
     // The draw's two words, as the hand-written program reads them.
-    try testing.expectEqualSlices(Word, &[_]Word{ .texture, .sampler }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ .texture, .{ .sampler = per_pixel_mask } }, code.stream());
     try testing.expectEqual(@as(u32, 12), code.registers);
     try expectText(code, &.{
         // The configuration first: the scheduler lets the two wrtmuc go
@@ -6794,7 +6844,7 @@ test "through Mesa's back end, a texel times the colour reads the texel's halves
     const code = try throughMesa(&work, Modulated.words);
     try testing.expectEqual(@as(u32, 6), code.varyings);
     try testing.expectEqual(@as(u8, 4), code.threads);
-    try testing.expectEqualSlices(Word, &[_]Word{ .texture, .sampler }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{ .texture, .{ .sampler = per_pixel_mask } }, code.stream());
     // Mesa's allocator gives 7.1's four threads 32 registers each and
     // goes round them from rf4, where `qpu.registers` keeps the
     // hand-written programs in 16. The board has the 32: V3DTest MESA
@@ -6827,7 +6877,7 @@ test "through Mesa's back end, a texel added to: the floats of its own read arou
     var work: Work = .{};
     const code = try throughMesa(&work, Tinted.words);
     try testing.expectEqualSlices(Word, &[_]Word{
-        .texture,          .sampler,
+        .texture,          .{ .sampler = per_pixel_mask },
         .{ .float = 0.1 }, .{ .float = 0.2 },
         .{ .float = 0.3 },
     }, code.stream());
@@ -7748,6 +7798,19 @@ const Collapsed = ir.Fragment(struct {
 
 /// How many of a program's instructions say `name` as the disassembler
 /// prints them.
+/// The stream word for word, a float by its bits: the TMU's
+/// configuration of a general lookup is a NaN as a float (since 1.167).
+fn expectStream(expected: []const Word, found: []const Word) !void {
+    try testing.expectEqual(expected.len, found.len);
+    for (expected, found) |want, got| switch (want) {
+        .float => |bits| {
+            try testing.expect(got == .float);
+            try testing.expectEqual(@as(u32, @bitCast(bits)), @as(u32, @bitCast(got.float)));
+        },
+        else => try testing.expectEqual(want, got),
+    };
+}
+
 fn countOf(code: Code, name: []const u8) usize {
     var count: usize = 0;
     for (code.words) |word| {
@@ -8737,7 +8800,9 @@ test "through Mesa's back end, a block read at an offset computed, the same in e
     }.of;
     const ubo: Word = .{ .ubo = .{ .set = 0, .binding = 0, .offset = 0 } };
     const ssbo: Word = .{ .ssbo = .{ .set = 0, .binding = 1, .reach = 0 } };
-    try testing.expectEqualSlices(Word, &.{ .{ .push = 0 }, ubo, .{ .push = 1 }, int(16), int(80), int(128), ubo, int(144), int(48), ssbo, int(112), ssbo }, code.stream());
+    // The order the scheduler leaves them in, of the steps nir_opt_dce
+    // leaves (since 1.167).
+    try testing.expectEqualSlices(Word, &.{ .{ .push = 0 }, ubo, .{ .push = 1 }, int(80), int(128), int(16), int(144), ubo, int(48), ssbo, int(112), ssbo }, code.stream());
     try testing.expectEqual(@as(usize, 8), countOf(code, "add unifa"));
     try testing.expectEqual(@as(usize, 0), countOf(code, "mov unifa"));
     // 4 + 1 + 2 + 2 + 4 + 4 + 1 + 1 words: no load reads on from the
@@ -8751,14 +8816,134 @@ test "through Mesa's back end, a block read at an offset computed, the same in e
     try testing.expectEqual(@as(usize, 76), code.words.len);
 }
 
-test "a block read at an offset that differs from lane to lane, and an index computed into the push constants, are refused" {
-    // The index the colour's red gives, which the TMU would read
-    // (nir_to_vir.c:3315-3317).
+test "through Mesa's back end, a block read at an offset that differs from lane to lane is the TMU's general lookup, a pixel's where nothing wants the helper pixels" {
+    // The index the colour's red gives: an offset that differs, which
+    // ntq_emit_load_unifa leaves to the TMU (nir_to_vir.c:3315-3317).
     var work: Work = .{};
-    try testing.expectError(Error.Storage, throughMesa(&work, &reference.glslc_divergent));
+    const code = try throughMesa(&work, &reference.glslc_divergent);
+    var load: u16 = none;
+    for (work.program(), 0..) |each, at| if (each.tag == .ubo_indirect) {
+        load = @intCast(at);
+    };
+    try testing.expect(load != none);
+    try testing.expect(work.divergent[load]);
+    // Read into the colour alone: ACCESS_SKIP_HELPERS
+    // (nir_opt_load_skip_helpers.c:258-275).
+    try testing.expect(work.skip_helpers[load]);
+    // The buffer's address of an offset of 0 (:563-574), and the
+    // configuration TMUAU takes (:640-670): a regular lookup (:213-226),
+    // a pixel's, of four words.
+    const ubo: Word = .{ .ubo = .{ .set = 0, .binding = 0, .offset = 0 } };
+    const config: u32 = 0xffffff00 | 15 << 3 | 1 << 7 | 4;
+    try testing.expectEqual(@as(u32, 0xFFFFFFFC), config);
+    try expectStream(&.{ .{ .float = 3 }, ubo, .{ .float = @bitCast(config) } }, code.stream());
+    try testing.expectEqual(@as(?Sampler, null), code.sampler);
+    try testing.expectEqual(@as(u8, 4), code.threads);
+    // The ADD of the address and the offset into TMUAU (:466-488), the
+    // thread switch the flush makes the last, a pair, and an LDTMU for
+    // each float (ntq_flush_tmu, :266-300).
+    try expectText(code, &.{
+        text("nop", "nop", "ldvary.rf4"),
+        text("nop", "fmul rf5, rf4, rf3", "ldvary.rf7"),
+        text("fadd rf6, rf0, rf5", "fmul rf8, rf7, rf3", "ldvary.rf10"),
+        text("fadd rf9, rf0, rf8", "fmul rf11, rf10, rf3", "ldvary.rf13"),
+        text("fadd rf12, rf0, rf11", "fmul rf14, rf13, rf3", "ldunifrf.rf16"),
+        text("fadd rf15, rf0, rf14", "fmul rf17, rf6, rf16", "ldunif"),
+        text("ftoiz rf18, rf17", "nop", ""),
+        text("shl rf19, rf18, 4", "nop", ""),
+        text("add tmuau, rf0, rf19", "nop", "thrsw"),
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", "ldtmu.rf20"),
+        text("nop", "fmul rf24, rf6, rf20", "ldtmu.rf21"),
+        text("nop", "fmul rf25, rf9, rf21", "ldtmu.rf22"),
+        text("vfpack tlb, rf24, rf25", "fmul rf26, rf12, rf22", "ldtmu.rf23"),
+        text("nop", "fmul rf27, rf15, rf23", ""),
+        text("vfpack tlb, rf26, rf27", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+}
+
+test "through Mesa's back end, a load at an offset that differs, read into a sample's coordinate, is a quad's; one read into the colour alone a pixel's, of the default configuration" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_quad);
+    var coordinate: u16 = none;
+    var scale: u16 = none;
+    var sampled: u16 = none;
+    for (work.program(), 0..) |each, at| switch (each.tag) {
+        .ubo_indirect => if (each.kind == .f32x2) {
+            coordinate = @intCast(at);
+        } else {
+            scale = @intCast(at);
+        },
+        .sample => sampled = @intCast(at),
+        else => {},
+    };
+    try testing.expect(coordinate != none and scale != none and sampled != none);
+    // The sample's level of detail is worked out across the quad, so its
+    // coordinate wants the helper pixels (nir_opt_load_skip_helpers.c:
+    // 151-157); the sample and the scale, read into the colour alone, do
+    // not (:258-275).
+    try testing.expect(!work.skip_helpers[coordinate]);
+    try testing.expect(work.skip_helpers[scale]);
+    try testing.expect(work.skip_helpers[sampled]);
+    // The coordinate's lookup a quad's, of two words (nir_to_vir.c:
+    // 640-670): TMUAU and its configuration. The scale's a pixel's, of a
+    // 32-bit word, which is the default and goes to TMUA with no
+    // uniform (:463-467, :485-488). The sample's P1 with the per-pixel
+    // mask (v3d_tex.c:311-321).
+    const ubo: Word = .{ .ubo = .{ .set = 0, .binding = 0, .offset = 0 } };
+    const quad_config: u32 = 0xffffff00 | 15 << 3 | 0 << 7 | 2;
+    try testing.expectEqual(@as(u32, 0xFFFFFF7A), quad_config);
+    try expectStream(&.{
+        .{ .float = 3 },                     ubo,
+        .{ .float = @bitCast(quad_config) }, .texture,
+        .{ .sampler = per_pixel_mask },      .{ .float = @bitCast(@as(u32, 64)) },
+        ubo,
+    }, code.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(code, "add tmuau, "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "add tmua, "));
+    try testing.expectEqual(@as(usize, 5), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "unifa"));
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 1 }, code.sampler.?);
+}
+
+test "through Mesa's back end, a sample at a coordinate the same in every lane keeps its helper pixels" {
+    // The coordinate read at an index of the push constants: through
+    // unifa, and nothing of the sample differs from lane to lane, so
+    // nir_opt_load_skip_helpers leaves it alone (add_load_to_worklist,
+    // :98-113) and P1's per-pixel mask is off (v3d_tex.c:311-321).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_steady);
+    for (work.program(), 0..) |each, at| if (each.tag == .sample) {
+        try testing.expect(!work.divergent[at]);
+        try testing.expect(!work.skip_helpers[at]);
+    };
+    const ubo: Word = .{ .ubo = .{ .set = 0, .binding = 0, .offset = 0 } };
+    try testing.expectEqualSlices(Word, &.{ .{ .push = 0 }, ubo, .texture, .{ .sampler = 0 } }, code.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(code, "add unifa"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "tmua"));
+}
+
+test "through Mesa's back end, a load that nothing reads is not in the program" {
+    // glslc -O0 stores it into a variable nothing loads; nir_opt_dce
+    // takes the load out, where v3d's own dead code elimination would
+    // keep the TMU's lookup (vir_opt_dead_code.c:207). What is left is
+    // the interpolated colour (since 1.167).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_dead);
+    for (work.program()) |each| try testing.expect(each.tag == .input);
+    var smooth: Work = .{};
+    const colour = try throughMesa(&smooth, Smooth.words);
+    try testing.expectEqualSlices(u64, colour.words, code.words);
+    try testing.expectEqual(@as(usize, 0), code.stream().len);
+}
+
+test "an index computed into the push constants is refused, and the plan holds no block read" {
     // push.colors[push.which], which v3dv reads from its buffer of the
     // push constants.
-    work = .{};
+    var work: Work = .{};
     try testing.expectError(Error.Storage, throughMesa(&work, &reference.glslc_pushed));
     // The plan has no hand-written program to hold a block read to.
     var plan: Work = .{};

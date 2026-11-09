@@ -1107,7 +1107,9 @@ fn streamOf(queue: *Queue, stream: []const compile.Word, tmu: ?Configuration, sc
         // `Code.sampler` is set for exactly the streams that hold these,
         // so `tmu` is there whenever they are.
         .texture => if (tmu) |each| each.texture else 0,
-        .sampler => if (tmu) |each| each.sampler else 0,
+        // The sampler's address, with the bits the program sets of it
+        // (since 1.167).
+        .sampler => |bits| if (tmu) |each| each.sampler | bits else 0,
         // `compile` holds every word inside the push constants, so `at`
         // is one of theirs.
         .push => |at| std.mem.readInt(u32, pushed[at * 4 ..][0..4], .little),
