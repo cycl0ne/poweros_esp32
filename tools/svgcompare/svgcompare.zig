@@ -3,10 +3,10 @@
 //! and compared with what another renderer drew - rsvg-convert's, which
 //! is what the disk's icons are made with.
 //!
-//!   svgcompare [--size N] [--detail] [--hash] [--fonts DIR] [--out DIR [--zoom Z]] <file.svg> <drawn.png> ...
+//!   svgcompare [--size N|WxH] [--detail] [--hash] [--fonts DIR] [--out DIR [--zoom Z]] <file.svg> <drawn.png> ...
 //!
-//! Each SVG file is drawn N by N pixels (48 if not given), stretched to
-//! that as `rsvg-convert -w N -h N` stretches it, with svg.datatype's
+//! Each SVG file is drawn N by N pixels (48 if not given), or W by H,
+//! stretched to that as `rsvg-convert -w N -h N` stretches it, with svg.datatype's
 //! own reading and drawing (`classes/datatypes/svg/`) and vector.library's
 //! module: the same code as on the machine, the library's jump table
 //! left out. The PNG beside it is the other renderer's picture.
@@ -285,25 +285,25 @@ const Picture = struct {
 };
 
 /// `text` drawn `size` by `size`; null when it is not SVG.
-fn drawSvg(gpa: std.mem.Allocator, sources: *Sources, text: []u8, size: u32) !?Picture {
+fn drawSvg(gpa: std.mem.Allocator, sources: *Sources, text: []u8, width: u32, height: u32) !?Picture {
     const counts = document.count(text) orelse return null;
     const bytes = document.bytesFor(counts);
     const block = try gpa.alignedAlloc(u8, .@"8", @max(bytes, 8));
     defer gpa.free(block);
     const doc = document.build(text, counts, block[0..bytes]);
-    const pens = try gpa.alloc(sdk.graphics.Pen, @as(usize, size) * size);
+    const pens = try gpa.alloc(sdk.graphics.Pen, @as(usize, width) * height);
     defer gpa.free(pens);
     @memset(pens, 0);
-    const canvas = module.Canvas.create(memory, size, size) orelse return error.OutOfMemory;
+    const canvas = module.Canvas.create(memory, width, height) orelse return error.OutOfMemory;
     defer canvas.destroy();
-    canvas.setPens(pens.ptr, size * 4);
+    canvas.setPens(pens.ptr, width * 4);
     const path = module.Path.create(memory) orelse return error.OutOfMemory;
     defer path.destroy();
     const work = try gpa.create(svg.Work);
     defer gpa.destroy(work);
     const intrinsic = svg.intrinsic(&doc);
     var direct = Direct{};
-    svg.draw(&direct, sources, &doc, @ptrCast(canvas), @ptrCast(path), work, svg.baseMatrix(intrinsic, size, size), intrinsic.viewport);
+    svg.draw(&direct, sources, &doc, @ptrCast(canvas), @ptrCast(path), work, svg.baseMatrix(intrinsic, width, height), intrinsic.viewport);
     const rgba = try gpa.alloc(u8, pens.len * 4);
     for (pens, 0..) |pen, i| {
         rgba[i * 4 + 0] = @truncate(pen >> 16);
@@ -311,7 +311,7 @@ fn drawSvg(gpa: std.mem.Allocator, sources: *Sources, text: []u8, size: u32) !?P
         rgba[i * 4 + 2] = @truncate(pen);
         rgba[i * 4 + 3] = @truncate(pen >> 24);
     }
-    return .{ .width = size, .height = size, .rgba = rgba };
+    return .{ .width = width, .height = height, .rgba = rgba };
 }
 
 /// FNV-1a, 64 bits, over the pens - 0xAARRGGBB - as little-endian
@@ -497,7 +497,8 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const gpa = std.heap.page_allocator;
     const args = try init.minimal.args.toSlice(arena);
-    var size: u32 = 48;
+    var width: u32 = 48;
+    var height: u32 = 48;
     var out_dir: ?[]const u8 = null;
     var zoom: u32 = 1;
     var detail = false;
@@ -508,7 +509,11 @@ pub fn main(init: std.process.Init) !void {
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "--size") and i + 1 < args.len) {
             i += 1;
-            size = std.fmt.parseInt(u32, args[i], 10) catch fatal("{s}: not a size", .{args[i]});
+            // N by N, or W by H: a picture of another shape at the size
+            // `C:test/DTTime WIDTH W HEIGHT H` makes it.
+            var sides = std.mem.splitScalar(u8, args[i], 'x');
+            width = std.fmt.parseInt(u32, sides.first(), 10) catch fatal("{s}: not a size", .{args[i]});
+            height = if (sides.next()) |h| std.fmt.parseInt(u32, h, 10) catch fatal("{s}: not a size", .{args[i]}) else width;
         } else if (std.mem.eql(u8, args[i], "--detail")) {
             detail = true;
         } else if (std.mem.eql(u8, args[i], "--hash")) {
@@ -525,8 +530,8 @@ pub fn main(init: std.process.Init) !void {
             out_dir = args[i];
         } else try files.append(arena, args[i]);
     }
-    if (files.items.len == 0 or files.items.len % 2 != 0 or size == 0 or size > 4096) {
-        fatal("usage: svgcompare [--size N] [--out DIR] <file.svg> <drawn.png> ...", .{});
+    if (files.items.len == 0 or files.items.len % 2 != 0 or width == 0 or width > 4096 or height == 0 or height > 4096) {
+        fatal("usage: svgcompare [--size N|WxH] [--out DIR] <file.svg> <drawn.png> ...", .{});
     }
     const cwd = Io.Dir.cwd();
     var sources = Sources{ .io = io, .fonts = fonts };
@@ -540,7 +545,7 @@ pub fn main(init: std.process.Init) !void {
         const name = std.fs.path.stem(svg_path);
         const text = cwd.readFileAlloc(io, svg_path, gpa, .limited(16 << 20)) catch |e| fatal("{s}: {t}", .{ svg_path, e });
         defer gpa.free(text);
-        const ours = (try drawSvg(gpa, &sources, text, size)) orelse {
+        const ours = (try drawSvg(gpa, &sources, text, width, height)) orelse {
             std.debug.print("{s:<40} not SVG to this reader\n", .{name});
             try failed.append(arena, name);
             continue;
@@ -550,10 +555,10 @@ pub fn main(init: std.process.Init) !void {
         defer gpa.free(reference);
         const theirs = readPng(gpa, reference) catch |e| fatal("{s}: {t}", .{ png_path, e });
         defer gpa.free(theirs.rgba);
-        if (theirs.width != size or theirs.height != size) fatal("{s}: {d}x{d}, not {d}x{d}", .{ png_path, theirs.width, theirs.height, size, size });
+        if (theirs.width != width or theirs.height != height) fatal("{s}: {d}x{d}, not {d}x{d}", .{ png_path, theirs.width, theirs.height, width, height });
         var side: ?[]u8 = null;
         if (out_dir != null) {
-            side = try gpa.alloc(u8, @as(usize, size) * size * 3 * 4);
+            side = try gpa.alloc(u8, @as(usize, width) * height * 3 * 4);
         }
         defer if (side) |s| gpa.free(s);
         const d = compare(ours, theirs, side);
@@ -569,8 +574,8 @@ pub fn main(init: std.process.Init) !void {
         });
         if (hash) std.debug.print("    pens {x:0>16}\n", .{pensHash(ours.rgba)});
         if (detail and d.largest > 64) {
-            const x = d.at % size;
-            const y = d.at / size;
+            const x = d.at % width;
+            const y = d.at / width;
             std.debug.print("    largest at {d},{d}: ours {x:0>2}{x:0>2}{x:0>2}/{x:0>2}, theirs {x:0>2}{x:0>2}{x:0>2}/{x:0>2}\n", .{
                 x,                         y,
                 ours.rgba[d.at * 4],       ours.rgba[d.at * 4 + 1],
@@ -581,9 +586,9 @@ pub fn main(init: std.process.Init) !void {
         }
         if (out_dir) |dir| {
             const path = try std.fmt.allocPrint(arena, "{s}/{s}.png", .{ dir, name });
-            const shown = try zoomed(gpa, side.?, size * 3, size, zoom);
+            const shown = try zoomed(gpa, side.?, width * 3, height, zoom);
             defer if (zoom != 1) gpa.free(shown);
-            try writePng(gpa, io, path, size * 3 * zoom, size * zoom, shown);
+            try writePng(gpa, io, path, width * 3 * zoom, height * zoom, shown);
         }
     }
     const count = files.items.len / 2;
