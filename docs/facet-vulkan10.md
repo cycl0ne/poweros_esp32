@@ -2538,6 +2538,22 @@ Of 21 mutations of the port, 21 fail the tests. Two first did only once a test h
 
 On the CM5, FacetBoth's 264 cases are each as they were at 1.184. Its new case is glslc's sample of the texture with the same sample read twice more in an arm, its blue, green, red and alpha times its red: 0 of 230400 pixels apart. FacetProbe is 890 of 890.
 
+**Then an fabs of an fneg is the fabs of what it negates**, facet.library 1.186.
+
+(('fabs', ('fneg', a)), ('fabs', a)) (nir_opt_algebraic.py:232), not ported at 1.179, is now a rule of the port's nir_opt_algebraic, of the floats nir_lower_alu_to_scalar makes an instruction each of (nir_to_vir.c:2259):
+- an fabs of a vector fneg is the fabs of the vector;
+- an fabs of a vector with a negated float is an fabs a float, that float's of what it negates.
+
+The fneg's XOR, and its uniform of -0.0, go where nothing else reads the fneg. The fabs nir_normalize_cubemap_coords takes of a negated direction's floats reads the floats, and only the direction keeps its fnegs.
+
+Results:
+- glslc_abs_negated has no XOR and no uniform; a test works its colour out on the host.
+- glslc_cube_negated's fabs are each of the input.
+
+Of 6 mutations of the port, 5 fail the tests. The sixth gives the scalar fabs a split makes a second operand: the same program, as an fabs reads none.
+
+On the CM5, FacetBoth's 265 cases are each as they were at 1.185. Its new case is glslc's sample of the cube at the direction with its first and third negated, the nearest, on the +z instance and so of the -z face: 0 of 230400 pixels apart. FacetProbe is 890 of 890.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim

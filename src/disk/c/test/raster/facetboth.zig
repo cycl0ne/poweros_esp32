@@ -148,7 +148,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.50 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.51 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -1450,6 +1450,31 @@ fn cubeGradedFragment(fragments: *const shader.Fragments) callconv(.c) void {
     }
 }
 
+/// What `shipped_cube_negated` computes, for the cores: the cube bound at
+/// set 0, binding 0, through the sampler beside it, at the three floats
+/// of varying 0 with the first and the third negated. The board's cube
+/// has one level, which the nearest of both filters reads, so the level
+/// is not worked out (since 1.51).
+fn negatedCubeFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    const given = fragments.resources.sampled(0, 0, 0) orelse return shader.fill(fragments, shader.missing);
+    const with = fragments.resources.samplerOf(0, 0, 0) orelse return shader.fill(fragments, shader.missing);
+    @setRuntimeSafety(false);
+    var rows = shader.Rows(4).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const row = rows.at(quad);
+        const w = @as(shader.Pixels, @splat(1)) / row[0];
+        const ss: [4]f32 = row[1] * w;
+        const ts: [4]f32 = row[2] * w;
+        const rs: [4]f32 = row[3] * w;
+        var colors: [4]u32 = undefined;
+        for (&colors, ss, ts, rs) |*color, s, t, r| {
+            const hit = facet.texture.cubeHit(-s, t, -r);
+            color.* = facet.texture.sampleCubeBy(given, with, 0, hit.face, .{ .u = hit.u, .v = hit.v });
+        }
+        out.* = colors;
+    }
+}
+
 /// lower_gradient_cube_map's level, worked out as it reads (Mesa's
 /// nir_lower_tex.c:783-848), of `direction` normalized as
 /// nir_normalize_cubemap_coords has it: the face the largest magnitude
@@ -1691,6 +1716,7 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped grad offset", gradedFragment(false, 0, .{ 1, -2 }), 2),
     shader.fragment("shipped grad cube", &cubeGradedFragment, 3),
     Shipped.Twice.entry("shipped twice"),
+    shader.fragment("shipped cube negated", &negatedCubeFragment, 3),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                    .{},                                       .{},                                    .{},
@@ -1709,7 +1735,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_bias),         Shipped.Offset.spirv,                      shader.Spirv.of(&shipped_size),         shader.Spirv.of(&shipped_size_layers),
     shader.Spirv.of(&shipped_size_volume),  shader.Spirv.of(&shipped_fetch),           shader.Spirv.of(&shipped_fetch_layers), shader.Spirv.of(&shipped_fetch_volume),
     shader.Spirv.of(&shipped_fetch_offset), shader.Spirv.of(&shipped_fetch_dependent), shader.Spirv.of(&shipped_grad),         shader.Spirv.of(&shipped_grad_layers),
-    shader.Spirv.of(&shipped_grad_offset),  shader.Spirv.of(&shipped_grad_cube),       shader.Spirv.of(&shipped_twice),
+    shader.Spirv.of(&shipped_grad_offset),  shader.Spirv.of(&shipped_grad_cube),       shader.Spirv.of(&shipped_twice),        shader.Spirv.of(&shipped_cube_negated),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -4139,6 +4165,59 @@ const shipped_twice = [_]u32{
     0x00000028, 0x0000002A, 0x000100FD, 0x00010038,
 };
 
+/// glslc's own output, at -O, for a sample of a cube at the three floats
+/// of varying 0, the first and the third negated. The fabs
+/// nir_normalize_cubemap_coords takes of each float is of two fnegs,
+/// which the V3D takes out of them, as nir_opt_algebraic does (since
+/// 1.51).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform samplerCube sky;
+/// layout(location = 0) in vec3 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = texture(sky, vec3(-at.x, at.y, -at.z));
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag cube_negated.frag -o cube_negated.spv   # 176 words
+/// spirv-val --target-env vulkan1.0 cube_negated.spv                     # no output, and 0
+/// ```
+const shipped_cube_negated = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000021, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000011, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000011, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000003,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040017, 0x0000000F,
+    0x00000006, 0x00000003, 0x00040020, 0x00000010, 0x00000001, 0x0000000F,
+    0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x00040015, 0x00000012,
+    0x00000020, 0x00000000, 0x0004002B, 0x00000012, 0x00000013, 0x00000000,
+    0x00040020, 0x00000014, 0x00000001, 0x00000006, 0x0004002B, 0x00000012,
+    0x00000018, 0x00000001, 0x0004002B, 0x00000012, 0x0000001B, 0x00000002,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003D, 0x0000000B, 0x0000000E, 0x0000000D, 0x00050041,
+    0x00000014, 0x00000015, 0x00000011, 0x00000013, 0x0004003D, 0x00000006,
+    0x00000016, 0x00000015, 0x0004007F, 0x00000006, 0x00000017, 0x00000016,
+    0x00050041, 0x00000014, 0x00000019, 0x00000011, 0x00000018, 0x0004003D,
+    0x00000006, 0x0000001A, 0x00000019, 0x00050041, 0x00000014, 0x0000001C,
+    0x00000011, 0x0000001B, 0x0004003D, 0x00000006, 0x0000001D, 0x0000001C,
+    0x0004007F, 0x00000006, 0x0000001E, 0x0000001D, 0x00060050, 0x0000000F,
+    0x0000001F, 0x00000017, 0x0000001A, 0x0000001E, 0x00050057, 0x00000007,
+    0x00000020, 0x0000000E, 0x0000001F, 0x0003003E, 0x00000009, 0x00000020,
+    0x000100FD, 0x00010038,
+};
+
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
 /// V3D's host tests hold to compile to the program of glslc's optimized
 /// module, word for word: `c` and `k` in variables of the function's own,
@@ -4627,7 +4706,22 @@ const graded_throughs = [_]Through{
     },
 };
 
-const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs ++ shipped_layered_throughs ++ levelled_throughs ++ sized_throughs ++ fetched_throughs ++ graded_throughs;
+/// A cube at a negated direction: glslc's `shipped_cube_negated` on the
+/// +z instance, which reads the -z face, the cores' `negatedCubeFragment`
+/// (since 1.51).
+const negated_throughs = [_]Through{
+    .{
+        .label = "shipped cube",
+        .what = "at the direction's first and third negated, the nearest",
+        .fragment = "shipped cube negated",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "cube",
+        .instance = 4,
+        .view = .cube,
+    },
+};
+
+const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs ++ shipped_layered_throughs ++ levelled_throughs ++ sized_throughs ++ fetched_throughs ++ graded_throughs ++ negated_throughs;
 
 /// What the shadow-map cases compare with (`Cases.shadowed`): the
 /// reference less than the depth, and greater (since 1.14).
