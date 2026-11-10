@@ -335,16 +335,15 @@ fn make(sys: *ExecBase, made: Made) ?*Station {
     return station;
 }
 
-/// The genres as the service writes them, `a,b,c`, with a space after
-/// each comma, in place where there is room.
 /// A text ended in its buffer made fit to show, where it is: every
 /// control character - a tab among them - a space, and the spaces at its
-/// ends taken off. What is left.
+/// ends taken off. What is left. The text is UTF-8, whose controls are
+/// the 7-bit ones; every byte of a character past ASCII is 0x80 or more.
 fn tidy(text: []u8) []const u8 {
     var length: usize = 0;
     while (text[length] != 0) length += 1;
     for (text[0..length]) |*char| {
-        if (char.* < ' ' or (char.* >= 0x7F and char.* < 0xA0)) char.* = ' ';
+        if (char.* < ' ' or char.* == 0x7F) char.* = ' ';
     }
     var start: usize = 0;
     while (start < length and text[start] == ' ') start += 1;
@@ -355,6 +354,8 @@ fn tidy(text: []u8) []const u8 {
     return text[0..length];
 }
 
+/// The genres as the service writes them, `a,b,c`, with a space after
+/// each comma, in place where there is room.
 fn withSpaces(tags: *[name_room + 1]u8) []const u8 {
     var spaced: [name_room + 1]u8 = undefined;
     var out: usize = 0;

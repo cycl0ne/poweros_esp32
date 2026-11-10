@@ -36,7 +36,7 @@ const RastPort = graphics.RastPort;
 const rdargs = dos.rdargs;
 
 pub const COMMAND_NAME = "ListFonts";
-const VERSION_STRING = "\x00$VER: ListFonts 1.0 (28.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ListFonts 1.1 (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "NAME,SAMPLE/S";
@@ -51,7 +51,7 @@ const MSG_NONE = "No fonts\n";
 const MSG_WAITING = "The close gadget or Ctrl-C closes the window\n";
 
 /// The line drawn in each size.
-const sample = "The quick brown fox - 0123456789 - \xc4\xd6\xdc\xe4\xf6\xfc\xdf";
+const sample = "The quick brown fox - 0123456789 - ÄÖÜäöüß";
 
 /// Where a size is, in the order families list them.
 const Where = enum(u8) { rom, disk, scalable, loaded, scaled };

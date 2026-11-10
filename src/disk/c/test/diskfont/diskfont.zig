@@ -32,7 +32,7 @@ const rdargs = dos.rdargs;
 const timer = sdk.devices.timer;
 
 pub const COMMAND_NAME = "DiskFont";
-const VERSION_STRING = "\x00$VER: DiskFont 1.1 (28.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: DiskFont 1.2 (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "NAME,SIZE/N/M,DESIGNED/S,POINTS/S,LIST/S";
@@ -50,7 +50,7 @@ const MSG_NOWINDOW = "No window\n";
 const MSG_WAITING = "The close gadget or Ctrl-C closes the window\n";
 
 /// The line drawn in each font.
-const sample = "The quick brown fox - 0123456789 - \xc4\xd6\xdc\xe4\xf6\xfc\xdf";
+const sample = "The quick brown fox - 0123456789 - ÄÖÜäöüß";
 
 /// At most this many sizes at once.
 const max_fonts = 12;

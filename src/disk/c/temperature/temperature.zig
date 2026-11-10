@@ -22,7 +22,7 @@ const ThermalBase = sdk.interface.thermal.ThermalBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Temperature";
-const VERSION_STRING = "\x00$VER: Temperature 1.0 (21.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Temperature 1.1 (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "WATCH/S";
@@ -113,5 +113,5 @@ fn printDegrees(dl: *DosBase, millicelsius: i32) void {
     const negative = millicelsius < 0;
     const tenths: u32 = (@abs(millicelsius) + 50) / 100;
     const sign: [*:0]const u8 = if (negative and tenths != 0) "-" else "";
-    _ = Printf(dl, "%s%lu.%lu \xB0C", .{ sign, @as(u64, tenths / 10), @as(u64, tenths % 10) });
+    _ = Printf(dl, "%s%lu.%lu °C", .{ sign, @as(u64, tenths / 10), @as(u64, tenths % 10) });
 }

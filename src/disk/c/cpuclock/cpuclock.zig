@@ -30,7 +30,7 @@ const st = st_expansion.systemtags;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "CpuClock";
-const VERSION_STRING = "\x00$VER: CpuClock 1.1 (30.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: CpuClock 1.2 (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "";
@@ -107,7 +107,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var temperature = [_]u32{ 0, 0 };
     if (videocore.call(sys, mailbox, buffer, TAG_GET_TEMPERATURE, &temperature)) {
         const tenths = (temperature[1] + 50) / 100;
-        _ = Printf(dl, "temperature  %lu.%lu \xB0C\n", .{ @as(u64, tenths / 10), @as(u64, tenths % 10) });
+        _ = Printf(dl, "temperature  %lu.%lu °C\n", .{ @as(u64, tenths / 10), @as(u64, tenths % 10) });
     }
     var held = [_]u32{0};
     if (videocore.call(sys, mailbox, buffer, TAG_GET_THROTTLED, &held)) {

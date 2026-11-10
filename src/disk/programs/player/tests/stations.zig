@@ -63,7 +63,7 @@ test "Player's stations: two answers found, the most heard first" {
     found.init();
     const mp3 = "changeuuid,stationuuid,name,url,url_resolved,favicon,tags,country,bitrate,codec,clickcount\n" ++
         "c1,u-1,Jazz One,http://x/1.pls,http://one.example/live,http://one.example/f.png,\"jazz,smooth jazz\",Germany,128,MP3,40\n" ++
-        "c2,u-2,Caf\xC3\xA9 Radio,http://two.example/,http://two.example/,,lounge,France,192,MP3,10\n" ++
+        "c2,u-2,Café — Radio €,http://two.example/,http://two.example/,,lounge,France,192,MP3,10\n" ++
         "c3,u-3,No address,,,,,,0,MP3,99\n";
     const ogg = "stationuuid,name,url_resolved,clickcount,bitrate,country,tags\n" ++
         "u-4, \tOgg\tStation\t,http://four.example/ogg,25,96, Austria,jazz\n";
@@ -83,7 +83,7 @@ test "Player's stations: two answers found, the most heard first" {
     try testing.expectEqualStrings("Ogg Station", cell(four, 0));
     try testing.expectEqualStrings("Austria", cell(four, 1));
     const two = four.next().?;
-    try testing.expectEqualStrings("Caf\xC3\xA9 Radio", cell(two, 0));
+    try testing.expectEqualStrings("Café — Radio €", cell(two, 0));
     try testing.expect(two.logo() == null);
     try testing.expect(two.next() == null);
     found.clear(sys);
