@@ -6359,4 +6359,40 @@ pub const LIBRARY_VERSION = 1;
 /// cores' models made wrong on purpose they are 53,595 and 74,374 apart,
 /// so the V3D draws them with its own programs. FacetProbe passes its 890
 /// checks.
-pub const LIBRARY_REVISION = 192;
+///
+/// 193: **gl_PointSize (docs/facet-vulkan10.md item 60).** A vertex
+/// program may store gl_PerVertex's gl_PointSize beside its gl_Position,
+/// once. v3dv sets per_vertex_point_size of any vertex shader that writes
+/// it, whatever the pipeline draws (v3dv_pipeline.c:1375-1376, 1418-1419),
+/// and so both programs store it: in the VPM's row after the
+/// fixed-function outputs, the vertex program's row 4 and the coordinate
+/// program's 6, the varyings a row later (v3d_nir_setup_vpm_layout_vs,
+/// v3d_nir_lower_io.c:427-428). What is stored is the larger of it and
+/// 1.0, nir_lower_point_size's fmax (vir.c:1110-1111), which
+/// nir_opt_constant_folding folds where the program writes 1.0. The
+/// shader record's bit 0 says the VPM holds it (writes_psiz, vir.c:901-902;
+/// v3dvx_pipeline.c:379, :402). A pipeline that draws points is still
+/// drawn with the vertex function, its points made triangles on the CPU.
+///
+/// Tests: the V3D's 324, three new. glslc_point_size stores the alpha's
+/// eight times, at least 1.0, at row 4 and its colour at rows 5 to 8, in
+/// the order the program stores them, and its coordinate program stores
+/// it at row 6; glslc_point_one stores 1.0 with no fmax; glslc_point_last
+/// stores its colour first and the point size after it. A second store of
+/// it is refused, and so is a store to gl_ClipDistance; the record's bit
+/// 0 is tested. Of 12 mutations, all fail the tests. Three failed none at
+/// first, or only failed to compile: the point size stored after every
+/// varying, until glslc_point_last; the stores made all in one order,
+/// whose uniforms and pictures are the same, until the rows of the steps
+/// were tested; and the record's bit dropped, until made a mutation that
+/// compiles. The draw's handing the bit on is the board's to test.
+///
+/// On the CM5, FacetBoth's 280 cases are each as they were at 1.192. Its
+/// two new ones, glslc_point_size and glslc_point_one through "shipped
+/// smooth", are each 5 of 230400 pixels apart: the same 5, first pixel and
+/// worst as "shipped vertex shader", the same program without a point
+/// size. With the cores' models made wrong on purpose they are 70,815
+/// apart and the V3D's pixels as they were, so the V3D draws them with
+/// its own programs, and reads their varyings from the rows after the
+/// point size's. FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 193;

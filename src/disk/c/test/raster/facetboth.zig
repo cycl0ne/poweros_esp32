@@ -148,7 +148,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.57 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.58 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -2148,6 +2148,10 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped many ids", &manyIdsFragment, 4),
     shader.vertex("shipped vertex index", &vertexIndexVertex, 4),
     shader.vertex("shipped index place", &indexPlaceVertex, 4),
+    // A point size changes no triangle: what the cores draw of them is
+    // `asItIsVertex`'s (since 1.58).
+    shader.vertex("shipped point size", &asItIsVertex, 4),
+    shader.vertex("shipped point one", &asItIsVertex, 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2171,7 +2175,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_constant_signed),      shader.Spirv.of(&shipped_constant_modulus), shader.Spirv.of(&shipped_many_divisions),      shader.Spirv.of(&shipped_many_moduli),
     shader.Spirv.of(&shipped_flat_vertex),          shader.Spirv.of(&shipped_flat_colour),      shader.Spirv.of(&shipped_flat_integer_vertex), shader.Spirv.of(&shipped_flat_integer),
     shader.Spirv.of(&shipped_noperspective_vertex), shader.Spirv.of(&shipped_noperspective),    shader.Spirv.of(&shipped_many_ids),            shader.Spirv.of(&shipped_vertex_index),
-    shader.Spirv.of(&shipped_index_place),
+    shader.Spirv.of(&shipped_index_place),          shader.Spirv.of(&shipped_point_size),       shader.Spirv.of(&shipped_point_one),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -6165,6 +6169,150 @@ const shipped_index_place = [_]u32{
     0x0000002E, 0x00000038, 0x000100FD, 0x00010038,
 };
 
+/// glslc's own output, at -O, the V3D's host tests' glslc_point_size:
+/// `vertex_as_it_is` with gl_PointSize the colour's alpha times 8, which
+/// the V3D stores in the VPM's row after 1/Wc, the varyings a row later,
+/// and a triangle does not read (since 1.58).
+///
+/// ```glsl
+/// #version 450
+/// // glslc_vertex_as_it_is with a point size of the colour's alpha: the VPM's
+/// // row after 1/Wc and the record's bit 0, as v3dv has them for any vertex
+/// // shader that writes gl_PointSize (facet 1.193).
+/// layout(location = 0) in vec4 p;
+/// layout(location = 1) in vec4 c;
+/// layout(location = 3) in vec2 moved;
+/// layout(location = 0) out vec4 vcolor;
+/// void main() {
+///     gl_Position = vec4(p.xy + moved * p.w, p.z, p.w);
+///     gl_PointSize = c.a * 8.0;
+///     vcolor = c;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=vert point_size.vert -o point_size.spv   # 273 words
+/// spirv-val --target-env vulkan1.0 point_size.spv   # no output, and 0
+/// ```
+const shipped_point_size = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000032, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x000A000F, 0x00000000,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000011, 0x00000016,
+    0x00000029, 0x00000030, 0x00030047, 0x0000000B, 0x00000002, 0x00050048,
+    0x0000000B, 0x00000000, 0x0000000B, 0x00000000, 0x00050048, 0x0000000B,
+    0x00000001, 0x0000000B, 0x00000001, 0x00050048, 0x0000000B, 0x00000002,
+    0x0000000B, 0x00000003, 0x00050048, 0x0000000B, 0x00000003, 0x0000000B,
+    0x00000004, 0x00040047, 0x00000011, 0x0000001E, 0x00000000, 0x00040047,
+    0x00000016, 0x0000001E, 0x00000003, 0x00040047, 0x00000029, 0x0000001E,
+    0x00000001, 0x00040047, 0x00000030, 0x0000001E, 0x00000000, 0x00020013,
+    0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006,
+    0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040015,
+    0x00000008, 0x00000020, 0x00000000, 0x0004002B, 0x00000008, 0x00000009,
+    0x00000001, 0x0004001C, 0x0000000A, 0x00000006, 0x00000009, 0x0006001E,
+    0x0000000B, 0x00000007, 0x00000006, 0x0000000A, 0x0000000A, 0x00040020,
+    0x0000000C, 0x00000003, 0x0000000B, 0x0004003B, 0x0000000C, 0x0000000D,
+    0x00000003, 0x00040015, 0x0000000E, 0x00000020, 0x00000001, 0x0004002B,
+    0x0000000E, 0x0000000F, 0x00000000, 0x00040020, 0x00000010, 0x00000001,
+    0x00000007, 0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x00040017,
+    0x00000012, 0x00000006, 0x00000002, 0x00040020, 0x00000015, 0x00000001,
+    0x00000012, 0x0004003B, 0x00000015, 0x00000016, 0x00000001, 0x0004002B,
+    0x00000008, 0x00000018, 0x00000003, 0x00040020, 0x00000019, 0x00000001,
+    0x00000006, 0x0004002B, 0x00000008, 0x0000001E, 0x00000002, 0x00040020,
+    0x00000026, 0x00000003, 0x00000007, 0x0004002B, 0x0000000E, 0x00000028,
+    0x00000001, 0x0004003B, 0x00000010, 0x00000029, 0x00000001, 0x0004002B,
+    0x00000006, 0x0000002C, 0x41000000, 0x00040020, 0x0000002E, 0x00000003,
+    0x00000006, 0x0004003B, 0x00000026, 0x00000030, 0x00000003, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x0004003D, 0x00000007, 0x00000013, 0x00000011, 0x0007004F, 0x00000012,
+    0x00000014, 0x00000013, 0x00000013, 0x00000000, 0x00000001, 0x0004003D,
+    0x00000012, 0x00000017, 0x00000016, 0x00050041, 0x00000019, 0x0000001A,
+    0x00000011, 0x00000018, 0x0004003D, 0x00000006, 0x0000001B, 0x0000001A,
+    0x0005008E, 0x00000012, 0x0000001C, 0x00000017, 0x0000001B, 0x00050081,
+    0x00000012, 0x0000001D, 0x00000014, 0x0000001C, 0x00050041, 0x00000019,
+    0x0000001F, 0x00000011, 0x0000001E, 0x0004003D, 0x00000006, 0x00000020,
+    0x0000001F, 0x00050051, 0x00000006, 0x00000023, 0x0000001D, 0x00000000,
+    0x00050051, 0x00000006, 0x00000024, 0x0000001D, 0x00000001, 0x00070050,
+    0x00000007, 0x00000025, 0x00000023, 0x00000024, 0x00000020, 0x0000001B,
+    0x00050041, 0x00000026, 0x00000027, 0x0000000D, 0x0000000F, 0x0003003E,
+    0x00000027, 0x00000025, 0x00050041, 0x00000019, 0x0000002A, 0x00000029,
+    0x00000018, 0x0004003D, 0x00000006, 0x0000002B, 0x0000002A, 0x00050085,
+    0x00000006, 0x0000002D, 0x0000002B, 0x0000002C, 0x00050041, 0x0000002E,
+    0x0000002F, 0x0000000D, 0x00000028, 0x0003003E, 0x0000002F, 0x0000002D,
+    0x0004003D, 0x00000007, 0x00000031, 0x00000029, 0x0003003E, 0x00000030,
+    0x00000031, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, the V3D's host tests' glslc_point_one:
+/// `vertex_as_it_is` with gl_PointSize 1.0, as shaders write it whatever
+/// they draw (since 1.58).
+///
+/// ```glsl
+/// #version 450
+/// // glslc_vertex_as_it_is with a point size of 1.0, as many shaders write it
+/// // whatever they draw: nir_lower_point_size's fmax of it folded (facet 1.193).
+/// layout(location = 0) in vec4 p;
+/// layout(location = 1) in vec4 c;
+/// layout(location = 3) in vec2 moved;
+/// layout(location = 0) out vec4 vcolor;
+/// void main() {
+///     gl_Position = vec4(p.xy + moved * p.w, p.z, p.w);
+///     gl_PointSize = 1.0;
+///     vcolor = c;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=vert point_one.vert -o point_one.spv   # 259 words
+/// spirv-val --target-env vulkan1.0 point_one.spv   # no output, and 0
+/// ```
+const shipped_point_one = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000002F, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x000A000F, 0x00000000,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000011, 0x00000016,
+    0x0000002C, 0x0000002D, 0x00030047, 0x0000000B, 0x00000002, 0x00050048,
+    0x0000000B, 0x00000000, 0x0000000B, 0x00000000, 0x00050048, 0x0000000B,
+    0x00000001, 0x0000000B, 0x00000001, 0x00050048, 0x0000000B, 0x00000002,
+    0x0000000B, 0x00000003, 0x00050048, 0x0000000B, 0x00000003, 0x0000000B,
+    0x00000004, 0x00040047, 0x00000011, 0x0000001E, 0x00000000, 0x00040047,
+    0x00000016, 0x0000001E, 0x00000003, 0x00040047, 0x0000002C, 0x0000001E,
+    0x00000000, 0x00040047, 0x0000002D, 0x0000001E, 0x00000001, 0x00020013,
+    0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006,
+    0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040015,
+    0x00000008, 0x00000020, 0x00000000, 0x0004002B, 0x00000008, 0x00000009,
+    0x00000001, 0x0004001C, 0x0000000A, 0x00000006, 0x00000009, 0x0006001E,
+    0x0000000B, 0x00000007, 0x00000006, 0x0000000A, 0x0000000A, 0x00040020,
+    0x0000000C, 0x00000003, 0x0000000B, 0x0004003B, 0x0000000C, 0x0000000D,
+    0x00000003, 0x00040015, 0x0000000E, 0x00000020, 0x00000001, 0x0004002B,
+    0x0000000E, 0x0000000F, 0x00000000, 0x00040020, 0x00000010, 0x00000001,
+    0x00000007, 0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x00040017,
+    0x00000012, 0x00000006, 0x00000002, 0x00040020, 0x00000015, 0x00000001,
+    0x00000012, 0x0004003B, 0x00000015, 0x00000016, 0x00000001, 0x0004002B,
+    0x00000008, 0x00000018, 0x00000003, 0x00040020, 0x00000019, 0x00000001,
+    0x00000006, 0x0004002B, 0x00000008, 0x0000001E, 0x00000002, 0x00040020,
+    0x00000026, 0x00000003, 0x00000007, 0x0004002B, 0x0000000E, 0x00000028,
+    0x00000001, 0x0004002B, 0x00000006, 0x00000029, 0x3F800000, 0x00040020,
+    0x0000002A, 0x00000003, 0x00000006, 0x0004003B, 0x00000026, 0x0000002C,
+    0x00000003, 0x0004003B, 0x00000010, 0x0000002D, 0x00000001, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x0004003D, 0x00000007, 0x00000013, 0x00000011, 0x0007004F, 0x00000012,
+    0x00000014, 0x00000013, 0x00000013, 0x00000000, 0x00000001, 0x0004003D,
+    0x00000012, 0x00000017, 0x00000016, 0x00050041, 0x00000019, 0x0000001A,
+    0x00000011, 0x00000018, 0x0004003D, 0x00000006, 0x0000001B, 0x0000001A,
+    0x0005008E, 0x00000012, 0x0000001C, 0x00000017, 0x0000001B, 0x00050081,
+    0x00000012, 0x0000001D, 0x00000014, 0x0000001C, 0x00050041, 0x00000019,
+    0x0000001F, 0x00000011, 0x0000001E, 0x0004003D, 0x00000006, 0x00000020,
+    0x0000001F, 0x00050051, 0x00000006, 0x00000023, 0x0000001D, 0x00000000,
+    0x00050051, 0x00000006, 0x00000024, 0x0000001D, 0x00000001, 0x00070050,
+    0x00000007, 0x00000025, 0x00000023, 0x00000024, 0x00000020, 0x0000001B,
+    0x00050041, 0x00000026, 0x00000027, 0x0000000D, 0x0000000F, 0x0003003E,
+    0x00000027, 0x00000025, 0x00050041, 0x0000002A, 0x0000002B, 0x0000000D,
+    0x00000028, 0x0003003E, 0x0000002B, 0x00000029, 0x0004003D, 0x00000007,
+    0x0000002E, 0x0000002D, 0x0003003E, 0x0000002C, 0x0000002E, 0x000100FD,
+    0x00010038,
+};
+
 const shipped_noperspective = [_]u32{
     0x07230203, 0x00010000, 0x000D000B, 0x0000000D, 0x00000000, 0x00020011,
     0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
@@ -9265,6 +9413,8 @@ const cases = [_]Case{
     .{ .name = "shipped many ids", .run = Cases.shipped("as it is", "shipped many ids", false, clockwise_at) },
     .{ .name = "shipped vertex and instance index", .run = Cases.numbered("shipped vertex index") },
     .{ .name = "shipped index place", .run = Cases.numbered("shipped index place") },
+    .{ .name = "shipped point size", .run = Cases.shipped("shipped point size", "shipped smooth", false, clockwise_at) },
+    .{ .name = "shipped point one", .run = Cases.shipped("shipped point one", "shipped smooth", false, clockwise_at) },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },
