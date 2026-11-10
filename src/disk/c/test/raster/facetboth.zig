@@ -121,6 +121,12 @@
 //! textureQueryLevels, of the texture of levels, the array and the 3D
 //! texture, which the V3D reads as the draw's words of the view and
 //! shifts right by the level; the cores read them of the texture bound.
+//! The shipped fetches (since 1.47) are glslc's texelFetch of the texture
+//! of levels, an array's layer, a 3D texture's slice and a texel a
+//! constant offset away, which the V3D starts at TMUSF with no sampler
+//! state; the cores read the same texel (`texture.Texture.colorAt`). The
+//! shipped dependent fetch's texel moves a sample, so its helper pixels
+//! fetch too.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -135,7 +141,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.46 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.47 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -1289,6 +1295,68 @@ fn sizedFragment(comptime view: Through.View) shader.FragmentFn {
     }.run;
 }
 
+/// What the shipped fetches compute, for the cores: the texel of `layer`
+/// of the texture bound at set 0, binding 0 at `level`, at the place the
+/// two floats of varying 0 times `across` make integers towards zero,
+/// `moved` away - as texelFetch reads it, through no sampler and no
+/// filter (since 1.47).
+fn fetchedFragment(comptime across: f32, comptime level: u32, comptime layer: u32, comptime moved: [2]i32) shader.FragmentFn {
+    return &struct {
+        fn run(fragments: *const shader.Fragments) callconv(.c) void {
+            const given = fragments.resources.sampled(0, 0, 0) orelse return shader.fill(fragments, shader.missing);
+            @setRuntimeSafety(false);
+            var rows = shader.Rows(3).of(fragments);
+            for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+                const row = rows.at(quad);
+                const w = @as(shader.Pixels, @splat(1)) / row[0];
+                const us: [4]f32 = row[1] * w;
+                const vs: [4]f32 = row[2] * w;
+                var colors: [4]u32 = undefined;
+                for (&colors, us, vs) |*color, u, v| {
+                    const x: u32 = @bitCast(towardZero(u * across) + moved[0]);
+                    const y: u32 = @bitCast(towardZero(v * across) + moved[1]);
+                    color.* = given.colorAt(layer, level, x, y);
+                }
+                out.* = colors;
+            }
+        }
+    }.run;
+}
+
+/// What `shipped_fetch_dependent` computes, for the cores: the texture
+/// bound at set 0, binding 0 sampled through the sampler beside it at the
+/// centre of the texel of level 0 the two floats of varying 0 times 64
+/// make integers towards zero, moved by whole texels: the red and the
+/// green of the texel at level 1 that `fetchedFragment(32, 1, 0, ...)`
+/// reads, times 4 made integers downwards. The case's sampler is the
+/// nearest at level 0, so the level the quad's steps give is not read
+/// (since 1.47).
+fn dependentFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    const given = fragments.resources.sampled(0, 0, 0) orelse return shader.fill(fragments, shader.missing);
+    const with = fragments.resources.samplerOf(0, 0, 0) orelse return shader.fill(fragments, shader.missing);
+    @setRuntimeSafety(false);
+    var rows = shader.Rows(3).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const row = rows.at(quad);
+        const w = @as(shader.Pixels, @splat(1)) / row[0];
+        const us: [4]f32 = row[1] * w;
+        const vs: [4]f32 = row[2] * w;
+        var colors: [4]u32 = undefined;
+        for (&colors, us, vs) |*color, u, v| {
+            const x: u32 = @bitCast(towardZero(u * 32.0));
+            const y: u32 = @bitCast(towardZero(v * 32.0));
+            const texel = given.partsAt(0, 1, x, y);
+            // glslc's order: (the texel's corner + 0.5 + the move) / 64.
+            const point = facet.texture.Point{
+                .u = (@as(f32, @floatFromInt(towardZero(u * 64.0))) + 0.5 + @floor(texel[0] * 4.0)) * (1.0 / 64.0),
+                .v = (@as(f32, @floatFromInt(towardZero(v * 64.0))) + 0.5 + @floor(texel[1] * 4.0)) * (1.0 / 64.0),
+            };
+            color.* = facet.texture.sampleBy(given, with, 0, point);
+        }
+        out.* = colors;
+    }
+}
+
 /// What `store_writes` computes, for the cores, and in its order: by each
 /// pixel inside the triangle - a helper pixel writes nothing, as the
 /// V3D's lookup is a pixel's - the written buffer's count made 2 and its
@@ -1493,23 +1561,29 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped size", sizedFragment(.texture), 2),
     shader.fragment("shipped size layers", sizedFragment(.array), 2),
     shader.fragment("shipped size volume", sizedFragment(.volume), 2),
+    shader.fragment("shipped fetch", fetchedFragment(32, 1, 0, .{ 0, 0 }), 2),
+    shader.fragment("shipped fetch layers", fetchedFragment(16, 1, 2, .{ 0, 0 }), 2),
+    shader.fragment("shipped fetch volume", fetchedFragment(16, 0, 3, .{ 0, 0 }), 2),
+    shader.fragment("shipped fetch offset", fetchedFragment(28, 1, 0, .{ 3, 0 }), 2),
+    shader.fragment("shipped fetch dependent", &dependentFragment, 2),
 };
 const shipped_words = [_]shader.Spirv{
-    .{},                                   .{},                               .{},                                  .{},
-    Shipped.Smooth.spirv,                  Shipped.Flat.spirv,                Shipped.Dimmed.spirv,                 Shipped.Textured.spirv,
-    Shipped.Modulated.spirv,               Shipped.Pushed.spirv,              Shipped.Tinted.spirv,                 Shipped.Cutout.spirv,
-    Shipped.CutoutOther.spirv,             Shipped.Shadowed.spirv,            Shipped.Arithmetic.spirv,             Shipped.Called.spirv,
-    Shipped.Chosen.spirv,                  Shipped.Branched.spirv,            shader.Spirv.of(&branch_unoptimized), Shipped.Nested.spirv,
-    Shipped.Bools.spirv,                   Shipped.Nests.spirv,               Shipped.Joined.spirv,                 Shipped.Collapsed.spirv,
-    shader.Spirv.of(&nested_discard),      Shipped.Uniformed.spirv,           shader.Spirv.of(&uniform_nested),     shader.Spirv.of(&uniform_matrix),
-    shader.Spirv.of(&uniform_matrices),    shader.Spirv.of(&constant_matrix), shader.Spirv.of(&vertex_as_it_is),    shader.Spirv.of(&storage_buffer),
-    shader.Spirv.of(&integers),            shader.Spirv.of(&indexed),         shader.Spirv.of(&lanes),              shader.Spirv.of(&store_writes),
-    shader.Spirv.of(&store_reads),         shader.Spirv.of(&store_atomics),   shader.Spirv.of(&store_counted),      Shipped.Kept.spirv,
-    Shipped.KeptPushed.spirv,              shader.Spirv.of(&for_loop),        shader.Spirv.of(&do_while),           shader.Spirv.of(&float_loop),
-    Shipped.TwoTextures.spirv,             shader.Spirv.of(&four_samples),    shader.Spirv.of(&scratch_slots),      shader.Spirv.of(&tree_pair),
-    shader.Spirv.of(&shipped_layers),      shader.Spirv.of(&shipped_cube),    shader.Spirv.of(&shipped_volume),     shader.Spirv.of(&shipped_lod),
-    shader.Spirv.of(&shipped_bias),        Shipped.Offset.spirv,              shader.Spirv.of(&shipped_size),       shader.Spirv.of(&shipped_size_layers),
-    shader.Spirv.of(&shipped_size_volume),
+    .{},                                    .{},                                       .{},                                    .{},
+    Shipped.Smooth.spirv,                   Shipped.Flat.spirv,                        Shipped.Dimmed.spirv,                   Shipped.Textured.spirv,
+    Shipped.Modulated.spirv,                Shipped.Pushed.spirv,                      Shipped.Tinted.spirv,                   Shipped.Cutout.spirv,
+    Shipped.CutoutOther.spirv,              Shipped.Shadowed.spirv,                    Shipped.Arithmetic.spirv,               Shipped.Called.spirv,
+    Shipped.Chosen.spirv,                   Shipped.Branched.spirv,                    shader.Spirv.of(&branch_unoptimized),   Shipped.Nested.spirv,
+    Shipped.Bools.spirv,                    Shipped.Nests.spirv,                       Shipped.Joined.spirv,                   Shipped.Collapsed.spirv,
+    shader.Spirv.of(&nested_discard),       Shipped.Uniformed.spirv,                   shader.Spirv.of(&uniform_nested),       shader.Spirv.of(&uniform_matrix),
+    shader.Spirv.of(&uniform_matrices),     shader.Spirv.of(&constant_matrix),         shader.Spirv.of(&vertex_as_it_is),      shader.Spirv.of(&storage_buffer),
+    shader.Spirv.of(&integers),             shader.Spirv.of(&indexed),                 shader.Spirv.of(&lanes),                shader.Spirv.of(&store_writes),
+    shader.Spirv.of(&store_reads),          shader.Spirv.of(&store_atomics),           shader.Spirv.of(&store_counted),        Shipped.Kept.spirv,
+    Shipped.KeptPushed.spirv,               shader.Spirv.of(&for_loop),                shader.Spirv.of(&do_while),             shader.Spirv.of(&float_loop),
+    Shipped.TwoTextures.spirv,              shader.Spirv.of(&four_samples),            shader.Spirv.of(&scratch_slots),        shader.Spirv.of(&tree_pair),
+    shader.Spirv.of(&shipped_layers),       shader.Spirv.of(&shipped_cube),            shader.Spirv.of(&shipped_volume),       shader.Spirv.of(&shipped_lod),
+    shader.Spirv.of(&shipped_bias),         Shipped.Offset.spirv,                      shader.Spirv.of(&shipped_size),         shader.Spirv.of(&shipped_size_layers),
+    shader.Spirv.of(&shipped_size_volume),  shader.Spirv.of(&shipped_fetch),           shader.Spirv.of(&shipped_fetch_layers), shader.Spirv.of(&shipped_fetch_volume),
+    shader.Spirv.of(&shipped_fetch_offset), shader.Spirv.of(&shipped_fetch_dependent),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -3391,6 +3465,272 @@ const shipped_size_volume = [_]u32{
     0x0003003E, 0x0000001F, 0x0000002F, 0x000100FD, 0x00010038,
 };
 
+/// glslc's own output, at -O, for the texel of a 2D texture at level 1 at
+/// the place the two floats of varying 0 times 32 make integers:
+/// OpImageFetch with Lod, which the V3D writes to TMUT and TMUB and starts
+/// at TMUSF, with no sampler state (since 1.47).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2D tex;
+/// layout(location = 0) in vec2 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = texelFetch(tex, ivec2(at * 32.0), 1);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag fetch.frag -o fetch.spv   # 150 words
+/// spirv-val --target-env vulkan1.0 fetch.spv             # no output, and 0
+/// ```
+const shipped_fetch = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001B, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000011, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000011, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040017, 0x0000000F,
+    0x00000006, 0x00000002, 0x00040020, 0x00000010, 0x00000001, 0x0000000F,
+    0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x0004002B, 0x00000006,
+    0x00000013, 0x42000000, 0x00040015, 0x00000015, 0x00000020, 0x00000001,
+    0x00040017, 0x00000016, 0x00000015, 0x00000002, 0x0004002B, 0x00000015,
+    0x00000018, 0x00000001, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000E,
+    0x0000000D, 0x0004003D, 0x0000000F, 0x00000012, 0x00000011, 0x0005008E,
+    0x0000000F, 0x00000014, 0x00000012, 0x00000013, 0x0004006E, 0x00000016,
+    0x00000017, 0x00000014, 0x00040064, 0x0000000A, 0x00000019, 0x0000000E,
+    0x0007005F, 0x00000007, 0x0000001A, 0x00000019, 0x00000017, 0x00000002,
+    0x00000018, 0x0003003E, 0x00000009, 0x0000001A, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for the texel of layer 2 of a 2D array at
+/// level 1, at the place the two floats times 16 make integers: the layer
+/// to TMUI (since 1.47).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2DArray tex;
+/// layout(location = 0) in vec2 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = texelFetch(tex, ivec3(ivec2(at * 16.0), 2), 1);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag fetch_layers.frag -o fetch_layers.spv   # 174 words
+/// spirv-val --target-env vulkan1.0 fetch_layers.spv                    # no output, and 0
+/// ```
+const shipped_fetch_layers = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000020, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000011, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000011, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000001,
+    0x00000000, 0x00000001, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040017, 0x0000000F,
+    0x00000006, 0x00000002, 0x00040020, 0x00000010, 0x00000001, 0x0000000F,
+    0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x0004002B, 0x00000006,
+    0x00000013, 0x41800000, 0x00040015, 0x00000015, 0x00000020, 0x00000001,
+    0x00040017, 0x00000016, 0x00000015, 0x00000002, 0x0004002B, 0x00000015,
+    0x00000018, 0x00000002, 0x00040017, 0x00000019, 0x00000015, 0x00000003,
+    0x0004002B, 0x00000015, 0x0000001D, 0x00000001, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D, 0x0000000F, 0x00000012,
+    0x00000011, 0x0005008E, 0x0000000F, 0x00000014, 0x00000012, 0x00000013,
+    0x0004006E, 0x00000016, 0x00000017, 0x00000014, 0x00050051, 0x00000015,
+    0x0000001A, 0x00000017, 0x00000000, 0x00050051, 0x00000015, 0x0000001B,
+    0x00000017, 0x00000001, 0x00060050, 0x00000019, 0x0000001C, 0x0000001A,
+    0x0000001B, 0x00000018, 0x00040064, 0x0000000A, 0x0000001E, 0x0000000E,
+    0x0007005F, 0x00000007, 0x0000001F, 0x0000001E, 0x0000001C, 0x00000002,
+    0x0000001D, 0x0003003E, 0x00000009, 0x0000001F, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for the texel of slice 3 of a 3D texture at
+/// level 0, at the place the two floats times 16 make integers: the slice
+/// to TMUR (since 1.47).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler3D tex;
+/// layout(location = 0) in vec2 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = texelFetch(tex, ivec3(ivec2(at * 16.0), 3), 0);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag fetch_volume.frag -o fetch_volume.spv   # 174 words
+/// spirv-val --target-env vulkan1.0 fetch_volume.spv                    # no output, and 0
+/// ```
+const shipped_fetch_volume = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000020, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000011, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000011, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000002,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040017, 0x0000000F,
+    0x00000006, 0x00000002, 0x00040020, 0x00000010, 0x00000001, 0x0000000F,
+    0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x0004002B, 0x00000006,
+    0x00000013, 0x41800000, 0x00040015, 0x00000015, 0x00000020, 0x00000001,
+    0x00040017, 0x00000016, 0x00000015, 0x00000002, 0x0004002B, 0x00000015,
+    0x00000018, 0x00000003, 0x00040017, 0x00000019, 0x00000015, 0x00000003,
+    0x0004002B, 0x00000015, 0x0000001D, 0x00000000, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D, 0x0000000F, 0x00000012,
+    0x00000011, 0x0005008E, 0x0000000F, 0x00000014, 0x00000012, 0x00000013,
+    0x0004006E, 0x00000016, 0x00000017, 0x00000014, 0x00050051, 0x00000015,
+    0x0000001A, 0x00000017, 0x00000000, 0x00050051, 0x00000015, 0x0000001B,
+    0x00000017, 0x00000001, 0x00060050, 0x00000019, 0x0000001C, 0x0000001A,
+    0x0000001B, 0x00000018, 0x00040064, 0x0000000A, 0x0000001E, 0x0000000E,
+    0x0007005F, 0x00000007, 0x0000001F, 0x0000001E, 0x0000001C, 0x00000002,
+    0x0000001D, 0x0003003E, 0x00000009, 0x0000001F, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for the texel of a 2D texture at level 1,
+/// (1, -2) texels from the place the two floats times 28 make integers
+/// and 2 more: P2's offsets, after a P1 of the default bits. The place is
+/// held inside the level, where Vulkan has the texel defined (since
+/// 1.47).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2D tex;
+/// layout(location = 0) in vec2 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = texelFetchOffset(tex, ivec2(at * 28.0) + 2, 1, ivec2(1, -2));
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag fetch_offset.frag -o fetch_offset.spv   # 174 words
+/// spirv-val --target-env vulkan1.0 fetch_offset.spv                    # no output, and 0
+/// ```
+const shipped_fetch_offset = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000021, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000011, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000011, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040017, 0x0000000F,
+    0x00000006, 0x00000002, 0x00040020, 0x00000010, 0x00000001, 0x0000000F,
+    0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x0004002B, 0x00000006,
+    0x00000013, 0x41E00000, 0x00040015, 0x00000015, 0x00000020, 0x00000001,
+    0x00040017, 0x00000016, 0x00000015, 0x00000002, 0x0004002B, 0x00000015,
+    0x00000018, 0x00000002, 0x0004002B, 0x00000015, 0x0000001B, 0x00000001,
+    0x0004002B, 0x00000015, 0x0000001C, 0xFFFFFFFE, 0x0005002C, 0x00000016,
+    0x0000001D, 0x0000001B, 0x0000001C, 0x0005002C, 0x00000016, 0x00000020,
+    0x00000018, 0x00000018, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000E,
+    0x0000000D, 0x0004003D, 0x0000000F, 0x00000012, 0x00000011, 0x0005008E,
+    0x0000000F, 0x00000014, 0x00000012, 0x00000013, 0x0004006E, 0x00000016,
+    0x00000017, 0x00000014, 0x00050080, 0x00000016, 0x0000001A, 0x00000017,
+    0x00000020, 0x00040064, 0x0000000A, 0x0000001E, 0x0000000E, 0x0008005F,
+    0x00000007, 0x0000001F, 0x0000001E, 0x0000001A, 0x0000000A, 0x0000001B,
+    0x0000001D, 0x0003003E, 0x00000009, 0x0000001F, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for a sample of a 2D texture at the centre
+/// of the texel of level 0 the two floats of varying 0 fall in, moved by
+/// whole texels: the red and the green of the texel at level 1 the fetch
+/// reads, times 4 made integers downwards. The sample's coordinate wants
+/// the texel in the quad's helper pixels, so the V3D writes the fetch's
+/// P1, the per-pixel mask off; and a centre moved by whole texels is no
+/// nearer an edge than half a texel, so the V3D's rounding of the place
+/// and the cores' agree (since 1.47).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2D tex;
+/// layout(location = 0) in vec2 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     vec2 centre = (vec2(ivec2(at * 64.0)) + 0.5) / 64.0;
+///     vec2 moved = floor(texelFetch(tex, ivec2(at * 32.0), 1).xy * 4.0);
+///     outColor = texture(tex, centre + moved / 64.0);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag fetch_dependent.frag -o fetch_dependent.spv   # 231 words
+/// spirv-val --target-env vulkan1.0 fetch_dependent.spv                       # no output, and 0
+/// ```
+const shipped_fetch_dependent = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000038, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x0000002B, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000001C, 0x00000021, 0x00000000, 0x00040047, 0x0000001C,
+    0x00000022, 0x00000000, 0x00040047, 0x0000002B, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000002,
+    0x00040020, 0x0000000A, 0x00000001, 0x00000007, 0x0004003B, 0x0000000A,
+    0x0000000B, 0x00000001, 0x0004002B, 0x00000006, 0x0000000D, 0x42800000,
+    0x00040015, 0x0000000F, 0x00000020, 0x00000001, 0x00040017, 0x00000010,
+    0x0000000F, 0x00000002, 0x0004002B, 0x00000006, 0x00000013, 0x3F000000,
+    0x00090019, 0x00000019, 0x00000006, 0x00000001, 0x00000000, 0x00000000,
+    0x00000000, 0x00000001, 0x00000000, 0x0003001B, 0x0000001A, 0x00000019,
+    0x00040020, 0x0000001B, 0x00000000, 0x0000001A, 0x0004003B, 0x0000001B,
+    0x0000001C, 0x00000000, 0x0004002B, 0x00000006, 0x0000001F, 0x42000000,
+    0x0004002B, 0x0000000F, 0x00000022, 0x00000001, 0x00040017, 0x00000024,
+    0x00000006, 0x00000004, 0x0004002B, 0x00000006, 0x00000027, 0x40800000,
+    0x00040020, 0x0000002A, 0x00000003, 0x00000024, 0x0004003B, 0x0000002A,
+    0x0000002B, 0x00000003, 0x0005002C, 0x00000007, 0x00000033, 0x00000013,
+    0x00000013, 0x0004002B, 0x00000006, 0x00000035, 0x3C800000, 0x0005002C,
+    0x00000007, 0x00000036, 0x00000035, 0x00000035, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x00000007, 0x0000000C, 0x0000000B, 0x0005008E, 0x00000007, 0x0000000E,
+    0x0000000C, 0x0000000D, 0x0004006E, 0x00000010, 0x00000011, 0x0000000E,
+    0x0004006F, 0x00000007, 0x00000012, 0x00000011, 0x00050081, 0x00000007,
+    0x00000015, 0x00000012, 0x00000033, 0x0004003D, 0x0000001A, 0x0000001D,
+    0x0000001C, 0x0005008E, 0x00000007, 0x00000020, 0x0000000C, 0x0000001F,
+    0x0004006E, 0x00000010, 0x00000021, 0x00000020, 0x00040064, 0x00000019,
+    0x00000023, 0x0000001D, 0x0007005F, 0x00000024, 0x00000025, 0x00000023,
+    0x00000021, 0x00000002, 0x00000022, 0x0007004F, 0x00000007, 0x00000026,
+    0x00000025, 0x00000025, 0x00000000, 0x00000001, 0x0005008E, 0x00000007,
+    0x00000028, 0x00000026, 0x00000027, 0x0006000C, 0x00000007, 0x00000029,
+    0x00000001, 0x00000008, 0x00000028, 0x0004003D, 0x0000001A, 0x0000002C,
+    0x0000001C, 0x00050081, 0x00000007, 0x00000037, 0x00000015, 0x00000029,
+    0x00050085, 0x00000007, 0x00000031, 0x00000036, 0x00000037, 0x00050057,
+    0x00000024, 0x00000032, 0x0000002C, 0x00000031, 0x0003003E, 0x0000002B,
+    0x00000032, 0x000100FD, 0x00010038,
+};
+
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
 /// V3D's host tests hold to compile to the program of glslc's optimized
 /// module, word for word: `c` and `k` in variables of the function's own,
@@ -3786,7 +4126,53 @@ const sized_throughs = [_]Through{
     },
 };
 
-const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs ++ shipped_layered_throughs ++ levelled_throughs ++ sized_throughs;
+/// A texel at a level and a place the program gives: glslc's
+/// `shipped_fetch`, `shipped_fetch_layers`, `shipped_fetch_volume` and
+/// `shipped_fetch_offset`, the cores' `fetchedFragment`, which the
+/// sampler is read by none of; and `shipped_fetch_dependent`, the cores'
+/// `dependentFragment`, through the nearest sampler at level 0 (since
+/// 1.47).
+const fetched_throughs = [_]Through{
+    .{
+        .label = "shipped fetch",
+        .what = "level 1",
+        .fragment = "shipped fetch",
+        .info = .{ .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+    },
+    .{
+        .label = "shipped fetch",
+        .what = "an array's layer 2, level 1",
+        .fragment = "shipped fetch layers",
+        .info = .{ .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+        .view = .array,
+    },
+    .{
+        .label = "shipped fetch",
+        .what = "a 3D texture's slice 3",
+        .fragment = "shipped fetch volume",
+        .info = .{ .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+        .view = .volume,
+    },
+    .{
+        .label = "shipped fetch",
+        .what = "(1, -2) texels away, level 1",
+        .fragment = "shipped fetch offset",
+        .info = .{ .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+    },
+    .{
+        .label = "shipped fetch",
+        .what = "moving a sample, the nearest",
+        .fragment = "shipped fetch dependent",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .max_lod = 0 },
+        .vertex = "texture",
+    },
+};
+
+const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs ++ shipped_layered_throughs ++ levelled_throughs ++ sized_throughs ++ fetched_throughs;
 
 /// What the shadow-map cases compare with (`Cases.shadowed`): the
 /// reference less than the depth, and greater (since 1.14).

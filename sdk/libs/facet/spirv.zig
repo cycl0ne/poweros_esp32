@@ -112,6 +112,9 @@ pub const Op = enum(u16) {
     image_sample_explicit_lod = 88,
     image_sample_dref_implicit_lod = 89,
     image_sample_dref_explicit_lod = 90,
+    // A texel of an image of a sampled image at a level: NIR's txf
+    // (vtn_handle_texture, spirv_to_nir.c; since 1.182).
+    image_fetch = 95,
     image_write = 99,
     // An image of a sampled image, and its size and levels: NIR's txs and
     // query_levels (vtn_handle_texture, spirv_to_nir.c; since 1.181).
@@ -995,8 +998,10 @@ pub fn look(words: []const u32, profile: Profile) Outcome {
             // A Dref sample has a fifth before the optional ones, the
             // reference it compares with (since 1.143). An explicit
             // level's sample must carry its Lod or Grad, so its mask is
-            // no option there (since 1.180).
-            .image_sample_implicit_lod, .image_sample_dref_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_explicit_lod => {
+            // no option there (since 1.180). A fetch has the same four as
+            // a sample, its Image where a sample's SampledImage is, and
+            // its mask optional (since 1.182).
+            .image_sample_implicit_lod, .image_sample_dref_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_explicit_lod, .image_fetch => {
                 const dref = instruction.op == .image_sample_dref_implicit_lod or instruction.op == .image_sample_dref_explicit_lod;
                 const explicit = instruction.op == .image_sample_explicit_lod or instruction.op == .image_sample_dref_explicit_lod;
                 const fixed: u32 = if (dref) 5 else 4;

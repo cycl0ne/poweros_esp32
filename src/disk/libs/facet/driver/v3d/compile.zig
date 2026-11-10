@@ -430,61 +430,61 @@ pub const profile: spirv.Profile = .{
     // ImageQuery, which an image's size and levels need (since 1.181).
     .capabilities = &.{ .shader, .image_query },
     .opcodes = &.{
-        .capability,           .memory_model,        .entry_point,                    .execution_mode,
-        .decorate,             .type_void,           .type_float,                     .type_vector,
-        .type_pointer,         .type_function,       .constant,                       .constant_composite,
-        .variable,             .function,            .label,                          .load,
+        .capability,                     .memory_model,         .entry_point,                    .execution_mode,
+        .decorate,                       .type_void,            .type_float,                     .type_vector,
+        .type_pointer,                   .type_function,        .constant,                       .constant_composite,
+        .variable,                       .function,             .label,                          .load,
         // What a real toolchain writes around the instructions: an
         // extended set imported but not used (`ext_inst` is absent, so a
         // call into one is still refused) and the names and source
         // strings glslc always emits. None of them is computation.
-        .ext_inst_import,      .source,              .source_extension,               .name,
-        .member_name,          .store,               .composite_extract,              .composite_construct,
-        .f_add,                .f_mul,               .vector_times_scalar,            .returns,
-        .function_end,         .type_image,          .type_sampled_image,             .image_sample_implicit_lod,
+        .ext_inst_import,                .source,               .source_extension,               .name,
+        .member_name,                    .store,                .composite_extract,              .composite_construct,
+        .f_add,                          .f_mul,                .vector_times_scalar,            .returns,
+        .function_end,                   .type_image,           .type_sampled_image,             .image_sample_implicit_lod,
         // A pixel dropped where a float is less or greater than another,
         // in the one shape a conditional discard has in SPIR-V: the
         // comparison, a selection whose true block is `OpKill` alone, and
         // the merge block the body goes on in (since 1.139). An `OpKill`
         // in any other place is refused by name, `Error.Discards`.
-        .kill,                 .type_bool,           .f_ord_less_than,                .f_ord_greater_than,
-        .selection_merge,      .branch_conditional,
+        .kill,                           .type_bool,            .f_ord_less_than,                .f_ord_greater_than,
+        .selection_merge,                .branch_conditional,
         // The integer type a constant texel offset is declared with,
         // first taken so that such a module was refused for the operand
         // (`Error.Operands`) and since 1.180 read as the offset P2 carries
         // (`profile.image_operands`). Since 1.138 an integer is also what
         // an access chain into the push constants is indexed with, and
         // since 1.165 a value of its own.
-         .type_int,
+          .type_int,
         // The push constants: a block of floats and vectors of them, one
         // member read at a time through an access chain whose indexes
         // are constants (since 1.138); then arrays, structs and matrices
         // in a block, and the matrix arithmetic vtn lowers to columns of
         // vector arithmetic (since 1.161).
                               .type_struct,
-        .member_decorate,      .access_chain,        .type_array,                     .type_matrix,
-        .matrix_times_vector,  .vector_times_matrix, .matrix_times_matrix,            .matrix_times_scalar,
-        .transpose,            .outer_product,
+        .member_decorate,                .access_chain,         .type_array,                     .type_matrix,
+        .matrix_times_vector,            .vector_times_matrix,  .matrix_times_matrix,            .matrix_times_scalar,
+        .transpose,                      .outer_product,
         // A depth compared with a reference, the TMU told it through
         // TMUDREF (v3d_tex.c:155-157; since 1.143).
-              .image_sample_dref_implicit_lod,
+               .image_sample_dref_implicit_lod,
         // The float arithmetic, a call of GLSL.std.450 among it, lowered
         // as v3dv's NIR options have Mesa lower it; and a vector's floats
         // named by a shuffle, or a varying's one float by an access chain,
         // which compute nothing (since 1.152).
         .f_sub,
-        .f_negate,             .f_div,               .dot,                            .ext_inst,
+        .f_negate,                       .f_div,                .dot,                            .ext_inst,
         // The shuffle, then the other comparisons glslc writes and a float
         // chosen by one (since 1.153), then a selection's arms, their
         // values chosen at its merge and one float of a vector replaced
         // (since 1.154).
-        .vector_shuffle,       .f_unord_not_equal,   .f_ord_less_than_equal,          .f_ord_greater_than_equal,
-        .select,               .f_ord_equal,         .composite_insert,               .phi,
+        .vector_shuffle,                 .f_unord_not_equal,    .f_ord_less_than_equal,          .f_ord_greater_than_equal,
+        .select,                         .f_ord_equal,          .composite_insert,               .phi,
         .branch,
         // Then bools of bools and the unordered comparisons, as glslc
         // writes &&, || and ! (since 1.157).
-                      .logical_and,         .f_unord_greater_than_equal,     .f_unord_greater_than,
-        .logical_or,           .f_unord_less_than,   .f_unord_less_than_equal,        .logical_not,
+                                .logical_and,          .f_unord_greater_than_equal,     .f_unord_greater_than,
+        .logical_or,                     .f_unord_less_than,    .f_unord_less_than_equal,        .logical_not,
         // A storage buffer's last member, read at constant indexes
         // (since 1.164).
         .type_runtime_array,
@@ -493,31 +493,33 @@ pub const profile: spirv.Profile = .{
         // them (since 1.165). The divisions are not: v3dv has NIR lower
         // them to a sequence of float and integer steps
         // (nir_lower_idiv), which is not ported.
-          .i_add,               .i_sub,                          .i_mul,
-        .s_negate,             .shift_left_logical,  .shift_right_logical,            .shift_right_arithmetic,
-        .bitwise_and,          .bitwise_or,          .bitwise_xor,                    .not,
-        .bitcast,              .convert_f_to_s,      .convert_f_to_u,                 .convert_s_to_f,
-        .convert_u_to_f,       .i_equal,             .i_not_equal,                    .s_less_than,
-        .s_less_than_equal,    .s_greater_than,      .s_greater_than_equal,           .u_less_than,
-        .u_less_than_equal,    .u_greater_than,      .u_greater_than_equal,           .logical_equal,
+                    .i_add,                .i_sub,                          .i_mul,
+        .s_negate,                       .shift_left_logical,   .shift_right_logical,            .shift_right_arithmetic,
+        .bitwise_and,                    .bitwise_or,           .bitwise_xor,                    .not,
+        .bitcast,                        .convert_f_to_s,       .convert_f_to_u,                 .convert_s_to_f,
+        .convert_u_to_f,                 .i_equal,              .i_not_equal,                    .s_less_than,
+        .s_less_than_equal,              .s_greater_than,       .s_greater_than_equal,           .u_less_than,
+        .u_less_than_equal,              .u_greater_than,       .u_greater_than_equal,           .logical_equal,
         .logical_not_equal,
         // A storage buffer's atomics, as vtn makes them ssbo_atomic and
         // ssbo_atomic_swap, a load_ssbo and a store_ssbo, and the barriers
         // their memory semantics and OpMemoryBarrier ask for
         // (vtn_handle_atomics, spirv_to_nir.c:4288-4480; since 1.169).
-           .memory_barrier,      .atomic_load,                    .atomic_store,
-        .atomic_exchange,      .atomic_i_increment,  .atomic_compare_exchange,        .atomic_compare_exchange_weak,
-        .atomic_i_decrement,   .atomic_i_add,        .atomic_i_sub,                   .atomic_s_min,
-        .atomic_u_min,         .atomic_s_max,        .atomic_u_max,                   .atomic_and,
-        .atomic_or,            .atomic_xor,
+                     .memory_barrier,       .atomic_load,                    .atomic_store,
+        .atomic_exchange,                .atomic_i_increment,   .atomic_compare_exchange,        .atomic_compare_exchange_weak,
+        .atomic_i_decrement,             .atomic_i_add,         .atomic_i_sub,                   .atomic_s_min,
+        .atomic_u_min,                   .atomic_s_max,         .atomic_u_max,                   .atomic_and,
+        .atomic_or,                      .atomic_xor,
         // A loop, unrolled as nir_opt_loop_unroll unrolls it (since
         // 1.172).
-                 .loop_merge,
+                  .loop_merge,
         // A sample at a level the program gives, NIR's txl (since 1.180);
         // and a sampled image's image, its size at a level and its levels,
-        // NIR's txs and query_levels (since 1.181).
+        // NIR's txs and query_levels (since 1.181); and a texel of the
+        // image at a level, NIR's txf (since 1.182).
                             .image,
-        .image_query_size_lod, .image_query_levels,  .image_sample_explicit_lod,      .image_sample_dref_explicit_lod,
+        .image_fetch,                    .image_query_size_lod, .image_query_levels,             .image_sample_explicit_lod,
+        .image_sample_dref_explicit_lod,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform },
     .image_dims = &.{ .dim_2d, .dim_3d, .cube },
@@ -867,11 +869,15 @@ pub const Lookup = enum(u8) {
     implicit,
     bias,
     lod,
+    /// A texel of the image at a level, NIR's txf with its lod source: an
+    /// integer coordinate and level, and no sampler state
+    /// (nir_tex_instr_need_sampler, nir.c; since 1.182).
+    fetch,
 
     /// nir_tex_instr_has_implicit_derivative: whether the quad's helper
     /// pixels are needed for the coordinate.
     pub fn derived(lookup: Lookup) bool {
-        return lookup != .lod;
+        return lookup == .implicit or lookup == .bias;
     }
 };
 
@@ -1804,6 +1810,8 @@ const Units = struct {
     fn of(units: *Units, work: *const Work) Error!void {
         for (work.program()) |each| {
             if (each.tag != .sample and each.tag != .sample_compared) continue;
+            // A fetch reads no sampler state: it is the queries' below.
+            if (each.lookup == .fetch) continue;
             const compared = each.tag == .sample_compared;
             const declared = work.samplers[each.at];
             const unit: u8 = units.find(declared) orelse made: {
@@ -1819,9 +1827,11 @@ const Units = struct {
         }
         // A query of an image's reads its view and no sampler state, so
         // it takes the unit a sample made, or one of its own that no
-        // comparison is in (since 1.181).
+        // comparison is in (since 1.181); and so does a fetch, whose P1
+        // is a constant (v3d_tex.c:350-354; since 1.182).
         for (work.program()) |each| {
-            if (each.tag != .texture_size and each.tag != .texture_levels) continue;
+            const fetches = each.tag == .sample and each.lookup == .fetch;
+            if (each.tag != .texture_size and each.tag != .texture_levels and !fetches) continue;
             if (units.of_declared[each.at] != no_unit) continue;
             const declared = work.samplers[each.at];
             const unit: u8 = units.find(declared) orelse made: {
@@ -2905,7 +2915,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     .arm => switch (instruction.op) {
                         // A query of the image's is a tex instruction too
                         // (since 1.181).
-                        .image_sample_implicit_lod, .image_sample_dref_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_explicit_lod, .image_query_size_lod, .image_query_levels => try selection.keep(work, depth),
+                        .image_sample_implicit_lod, .image_sample_dref_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_explicit_lod, .image_fetch, .image_query_size_lod, .image_query_levels => try selection.keep(work, depth),
                         // An atomic or a barrier is neither either: it
                         // would run where the arm is not taken (since
                         // 1.169).
@@ -7443,7 +7453,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (work.glsl == none or try idOf(operands[2]) != work.glsl) return Error.Body;
             work.step_of[id] = try glslCall(work, operands[3], kind, operands[4..]);
         },
-        .image_sample_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_implicit_lod, .image_sample_dref_explicit_lod => try readSample(work, instruction.op, operands),
+        .image_sample_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_implicit_lod, .image_sample_dref_explicit_lod, .image_fetch => try readSample(work, instruction.op, operands),
         .image => {
             // ResultType, Result, SampledImage: the image of a sampled
             // image, which vtn reads as the same texture deref
@@ -8467,9 +8477,17 @@ fn isIntegerType(work: *const Work, type_id: u16) bool {
 /// image's coordinate names but a layer (since 1.180). `look` has held
 /// the operands to the profile's: no Grad, and no offset the program
 /// computes.
+///
+/// An OpImageFetch has an Image where a sample has its SampledImage, an
+/// integer coordinate, and its Lod: vtn's txf with the lod a source
+/// (spirv_to_nir.c:3069-3076, :3433-3438), which GLSL's texelFetch always
+/// gives and a fetch here must have. A fetch of a cube is no SPIR-V
+/// (OpImageFetch's Dim), and v3d_tex.c asserts it (:376). Its ConstOffset
+/// goes to P2 as a sample's does (handle_tex_src, :158-170; since 1.182).
 fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
     const compared = op == .image_sample_dref_implicit_lod or op == .image_sample_dref_explicit_lod;
-    const explicit = op == .image_sample_explicit_lod or op == .image_sample_dref_explicit_lod;
+    const fetch = op == .image_fetch;
+    const explicit = op == .image_sample_explicit_lod or op == .image_sample_dref_explicit_lod or fetch;
     const fixed: usize = if (compared) 5 else 4;
     if (operands.len < fixed) return Error.Body;
     const type_id = try idOf(operands[0]);
@@ -8478,6 +8496,7 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
     const which = work.sampler_of[try idOf(operands[2])];
     if (which == none) return Error.Body;
     const dim = work.samplers[which].dim;
+    if (fetch and dim == .cube) return Error.Body;
     var made: Step = .{
         .tag = if (compared) .sample_compared else .sample,
         .kind = if (compared) .f32x1 else .f32x4,
@@ -8499,7 +8518,7 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
             // A bias is an implicit level's and a level an explicit
             // one's (spirv_to_nir.c:3423-3438).
             if ((mask & bias != 0) == explicit or mask & bias != 0 and mask & lod != 0) return Error.Body;
-            made.lookup = if (mask & bias != 0) .bias else .lod;
+            made.lookup = if (mask & bias != 0) .bias else if (fetch) .fetch else .lod;
             made.from[0] = try operand(work, operands[next], .f32x1);
             next += 1;
         }
@@ -8510,8 +8529,9 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
         }
         if (next != operands.len) return Error.Body;
     }
-    // An explicit level's sample has its Lod, or a Grad `look` refuses.
-    if (explicit and made.lookup != .lod) return Error.Operands;
+    // An explicit level's sample has its Lod, or a Grad `look` refuses;
+    // a fetch its Lod (since 1.182).
+    if (explicit and made.lookup != if (fetch) Lookup.fetch else Lookup.lod) return Error.Operands;
     const at = try put(work, made);
     work.step_of[id] = at;
     if (work.sampled == none) work.sampled = at;
@@ -11147,6 +11167,145 @@ test "a query's level that nir_opt_cse makes an earlier step's is read from that
     for (work.program()) |each| if (each.tag == .texture_size) {
         try testing.expect(isIntegerOp(work.steps[each.from[0]], .f2i32));
     };
+}
+
+/// glslc_fetch's words with its OpImageFetch's Lod taken out, mask and
+/// all: a fetch of no level.
+const fetch_of_no_level = made: {
+    const words = reference.glslc_fetch;
+    const at = std.mem.indexOfScalar(u32, &words, 0x0007005F).?;
+    var cut: [words.len - 2]u32 = undefined;
+    for (0..at) |k| cut[k] = words[k];
+    cut[at] = 0x0005005F;
+    for (1..5) |k| cut[at + k] = words[at + k];
+    for (at + 7..words.len) |k| cut[k - 2] = words[k];
+    break :made cut;
+};
+
+test "a texel at a level is vtn's txf, its integers to TMUT and TMUB and its lookup started at TMUSF, as v3d_vir_emit_tex makes it" {
+    // OpImageFetch's txf with its lod (spirv_to_nir.c:3069-3076,
+    // :3433-3438): the coordinate's integers, T first and S last, the
+    // level to TMUB, and TMUSF (v3d_tex.c:85-150, :375-377). No sampler
+    // state is read: the fetch skips its helper pixels, so neither P1 nor
+    // P2 is written and the stream is P0's word alone (:312-371; since
+    // 1.182).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_fetch);
+    var fetches: usize = 0;
+    for (work.program()) |each| if (each.tag == .sample) {
+        try testing.expectEqual(Lookup.fetch, each.lookup);
+        try testing.expect(isIntegerOp(work.steps[each.a], .f2i32) or work.steps[each.a].tag == .construct);
+        fetches += 1;
+    };
+    try testing.expectEqual(@as(usize, 1), fetches);
+    try testing.expectEqualSlices(Word, &[_]Word{.{ .texture = 0 }}, code.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmub, 1"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmut, "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmusf, "));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "mov tmus, "));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "tmuslod"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ftoiz "));
+    try testing.expectEqual(@as(usize, 1), code.sampled().len);
+    // A txf has no implicit derivatives, as a txl has none
+    // (nir_tex_instr_has_implicit_derivative, nir.c).
+    try testing.expect(!Lookup.fetch.derived());
+    // Level 0 is written as any other.
+    var zero: Work = .{};
+    const zero_code = try throughMesa(&zero, &reference.glslc_fetch_zero);
+    try testing.expectEqual(@as(usize, 1), countOf(zero_code, "mov tmub, 0"));
+    try testing.expectEqual(@as(usize, 1), countOf(zero_code, "mov tmusf, "));
+    // A fetch with no Lod is refused, as an explicit level's sample with
+    // none is. The plan's programs compute no integer, so the FTOIZ of
+    // the coordinate is refused before the fetch is reached.
+    var bare: Work = .{};
+    try testing.expectError(Error.Operands, throughMesa(&bare, &fetch_of_no_level));
+    var plan: Work = .{};
+    try testing.expectError(Error.Body, compile(&plan, &reference.glslc_fetch));
+}
+
+test "a texel of an array's layer is the layer's integer to TMUI, and of a 3D texture's slice to TMUR" {
+    // handle_tex_src's coordinate (v3d_tex.c:99-127; since 1.182).
+    var layers: Work = .{};
+    const layers_code = try throughMesa(&layers, &reference.glslc_fetch_layers);
+    try testing.expectEqual(@as(usize, 1), countOf(layers_code, "mov tmui, 2"));
+    try testing.expectEqual(@as(usize, 1), countOf(layers_code, "mov tmub, 1"));
+    try testing.expectEqual(@as(usize, 1), countOf(layers_code, "mov tmusf, "));
+    try testing.expectEqual(@as(usize, 0), countOf(layers_code, "tmur"));
+    var volume: Work = .{};
+    const volume_code = try throughMesa(&volume, &reference.glslc_fetch_volume);
+    try testing.expectEqual(@as(usize, 1), countOf(volume_code, "mov tmur, 3"));
+    try testing.expectEqual(@as(usize, 1), countOf(volume_code, "mov tmub, 0"));
+    try testing.expectEqual(@as(usize, 0), countOf(volume_code, "tmui"));
+}
+
+test "a texel a constant offset away has P2 after the default P1, both constants, and no sampler state" {
+    // needs_p2_config with no sampler: P1 is p1_unpacked_default, the
+    // per-pixel mask, then P2 (v3d_tex.c:355-371; since 1.182).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_fetch_offset);
+    const p1: Word = .{ .float = @bitCast(per_pixel_mask) };
+    const p2: Word = .{ .float = @bitCast(@as(u32, 0x00F0E100)) };
+    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, p1, p2 }, code.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmusf, "));
+}
+
+test "a texel and a sample of one texture are one unit, the sample's P1 the sampler's and a shadow sample's too" {
+    // The fetch's P0 alone, beside the sample's P0 and P1
+    // (v3d_tex.c:340-348; since 1.182).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_fetch_sampled);
+    try testing.expectEqual(@as(usize, 1), code.sampled().len);
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
+    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, sampler, .{ .texture = 0 } }, code.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmus, "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmusf, "));
+    // A fetch reads no sampler state, so a comparison in the unit is no
+    // other sampler's: a shadow sample of one variable and a fetch of
+    // another at its binding are one unit that compares
+    // (descriptor_map_add, v3dv_pipeline.c:516-561).
+    var aliased: Work = .{};
+    const aliased_code = try throughMesa(&aliased, &reference.glslc_fetch_aliased);
+    try testing.expectEqual(@as(usize, 1), aliased_code.sampled().len);
+    try testing.expect(aliased_code.sampled()[0].compared);
+    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, sampler, .{ .texture = 0 } }, aliased_code.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(aliased_code, "tmudref"));
+}
+
+test "a texel the helper pixels need writes P1, the constant of the per-pixel mask off; a cube's texel and a MinLod are refused" {
+    // An implicit sample at the place the texel gives wants the texel in
+    // its helper pixels (nir_opt_load_skip_helpers.c:151-156), so the
+    // fetch does not skip them: non_default_p1_config, and with no
+    // sampler P1 is the constant of its own bits (v3d_tex.c:312-354;
+    // since 1.182).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_fetch_dependent);
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
+    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, .{ .float = 0 }, .{ .texture = 0 }, sampler }, code.stream());
+    // A cube is no image a texel is fetched of (OpImageFetch's Dim;
+    // v3d_tex.c:376): glslc_fetch's image made a cube.
+    var cube = reference.glslc_fetch;
+    const image = std.mem.indexOfScalar(u32, &cube, 0x00090019).?;
+    try testing.expectEqual(@as(u32, 1), cube[image + 3]);
+    cube[image + 3] = 3;
+    var cubed: Work = .{};
+    try testing.expectError(Error.Body, throughMesa(&cubed, &cube));
+    // `look` holds a fetch's image operands to the profile's, as a
+    // sample's: its Lod made a MinLod.
+    var min_lod = reference.glslc_fetch;
+    const fetch = std.mem.indexOfScalar(u32, &min_lod, 0x0007005F).?;
+    try testing.expectEqual(@as(u32, 2), min_lod[fetch + 5]);
+    min_lod[fetch + 5] = 0x80;
+    try testing.expectEqual(spirv.Fault.image_operand_refused, spirv.look(&min_lod, profile).fault);
+}
+
+test "a texel in a selection's arm keeps the arm, as any tex instruction does" {
+    // block_check_for_allowed_instrs (nir_opt_peephole_select.c:59-326;
+    // since 1.182).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_fetch_arm);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmusf, "));
 }
 
 test "through Mesa's back end, a texel times the colour reads the texel's halves in its products" {
