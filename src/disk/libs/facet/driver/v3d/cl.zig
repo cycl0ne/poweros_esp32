@@ -600,6 +600,9 @@ pub const CompiledVertex = struct {
     /// (since 1.192).
     vertex_ids: Ids = .{},
     coordinate_ids: Ids = .{},
+    /// The vertex program writes gl_PointSize, a row of the VPM's after
+    /// the fixed-function outputs (since 1.193).
+    point_size: bool = false,
 };
 
 /// The VPM's vertex id, instance id and base instance, which a program
@@ -619,6 +622,10 @@ const coordinate_values: u32 = 6;
 
 pub fn shaderRecord(list: *List, programs: Programs) void {
     const clipping: u32 = 1 << 1;
+    // The point size in the VPM's rows, where the vertex program writes
+    // one: prog_data_vs->writes_psiz (v3dvx_pipeline.c:379, :402; since
+    // 1.193).
+    const point_size: u32 = if (programs.compiled_vertex) |each| @intFromBool(each.point_size) else 0;
     const writes_z: u32 = @as(u32, @intFromBool(programs.writes_z)) << 12;
     const disable_ez: u32 = @as(u32, @intFromBool(programs.disable_ez)) << 13;
     const center_w: u32 = @as(u32, @intFromBool(programs.center_w)) << 15;
@@ -628,7 +635,7 @@ pub fn shaderRecord(list: *List, programs: Programs) void {
     // What v3dv's pack_shader_state_record sets of the programs' prog data
     // (v3dvx_pipeline.c:434-439; since 1.192).
     const ids: u32 = if (compiled) |each| idBits(each.coordinate_ids, 2) | idBits(each.vertex_ids, 7) else 0;
-    list.word(clipping | ids | writes_z | disable_ez | center_w | scoreboard_on_first | no_implicit_varyings | programs.varyings << 24);
+    list.word(point_size | clipping | ids | writes_z | disable_ez | center_w | scoreboard_on_first | no_implicit_varyings | programs.varyings << 24);
     // Size in sectors, the input's 0 for sharing the output's, and 1 less
     // than the 1 required in play.
     const coordinate_sectors = if (compiled) |each| each.coordinate_sectors else (coordinate_values + 7) / 8;
@@ -922,6 +929,16 @@ test "a compiled vertex program's and coordinate program's ids lie where the Dra
     list.used = 0;
     shaderRecord(&list, programs);
     try std.testing.expectEqual(@as(u32, 1 << 1 | 1 << 4 | 1 << 8 | 1 << 21 | 3 << 24), std.mem.readInt(u32, memory[0..4], .little));
+    // A vertex program that writes gl_PointSize: bit 0 (since 1.193).
+    programs.compiled_vertex.?.point_size = true;
+    list.used = 0;
+    shaderRecord(&list, programs);
+    try std.testing.expectEqual(@as(u32, 1 << 0 | 1 << 1 | 1 << 4 | 1 << 8 | 1 << 21 | 3 << 24), std.mem.readInt(u32, memory[0..4], .little));
+    // The vertex function's programs write none.
+    programs.compiled_vertex = null;
+    list.used = 0;
+    shaderRecord(&list, programs);
+    try std.testing.expectEqual(@as(u32, 1 << 1 | 1 << 21 | 3 << 24), std.mem.readInt(u32, memory[0..4], .little));
 
     list.used = 0;
     baseVertexBaseInstance(&list, 0, 7);

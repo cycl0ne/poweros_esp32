@@ -1342,6 +1342,7 @@ fn sendCompiledVertices(queue: *Queue, inputs: u32, locations: u32, stage: *cons
             .coordinate_single_seg = cs.single_seg,
             .vertex_ids = idsOf(vs.system_values),
             .coordinate_ids = idsOf(cs.system_values),
+            .point_size = vs.point_size,
         },
     });
     const stride = locations * @sizeOf([4]f32);

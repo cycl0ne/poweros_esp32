@@ -1278,6 +1278,10 @@ pub const VertexProgram = struct {
     /// telling the VPM to load one float of it (ntq_emit_load_input,
     /// nir_to_vir.c:2963-2973; v3dvx_cmd_buffer.c:2730-2740; since 1.192).
     first_row: bool = false,
+    /// It writes gl_PointSize, a row of the VPM's after the fixed-function
+    /// outputs: prog_data's writes_psiz (vir.c:901-902), which the shader
+    /// record's bit 0 says (v3dvx_pipeline.c:379, :402; since 1.193).
+    point_size: bool = false,
 };
 
 /// What a vertex program is compiled for beside its words: v3dv's
@@ -1556,6 +1560,10 @@ pub const Work = struct {
     varying_values: [most_varyings]u16 = undefined,
     varying_into: [most_varyings]u16 = undefined,
     varying_count: u32 = 0,
+    /// The point size stored, nir_lower_point_size's fmax of it and 1.0
+    /// (since 1.193), and how many varyings were stored before it.
+    point_size: u16 = none,
+    point_size_order: u32 = 0,
 
     steps: [most_steps]Step = undefined,
     step_count: u32 = 0,
@@ -1651,7 +1659,7 @@ pub const Work = struct {
     kept: [most_kept]Kept = undefined,
     kept_count: u8 = 0,
 
-    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value, constant_matrix, position_pointer, plain_struct, local_aggregate, aggregate_value, constant_aggregate, scratch_pointer, local_tree };
+    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value, constant_matrix, position_pointer, point_size_pointer, plain_struct, local_aggregate, aggregate_value, constant_aggregate, scratch_pointer, local_tree };
 
     /// `chain_part` of a pointer to a whole member.
     pub const whole: u8 = 0xFF;
@@ -1887,7 +1895,7 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
 /// its attributes' sizes, and its VPM segment, input and output shared,
 /// in sectors of eight floats.
 fn vertexProgram(work: *const Work, single_seg: bool) VertexProgram {
-    var made = VertexProgram{ .attribute_count = @intCast(work.attribute_count), .single_seg = single_seg, .system_values = work.system_values, .first_row = work.first_row };
+    var made = VertexProgram{ .attribute_count = @intCast(work.attribute_count), .single_seg = single_seg, .system_values = work.system_values, .first_row = work.first_row, .point_size = work.point_size != none };
     // A row each of the VPM's values it reads (vir.c:894-899), and none for
     // GFXH-1602's.
     var input_size: u32 = work.system_values.count();
@@ -1981,8 +1989,9 @@ fn readStage(work: *Work, words: []const u32, stage: spirv.ExecutionModel, key: 
         work.* = .{ .stage = stage, .vertex_key = key, .scratch = scratch, .scratch_size = scratch.size() };
         // The VPM's layout, v3d_nir_setup_vpm_layout_vs (v3d_nir_lower_io.c:
         // 400-435): the coordinate program's position first, then the place
-        // on screen; the vertex program's place, its Zs and 1/Wc. No point
-        // size: a pipeline that draws points is not drawn with these.
+        // on screen; the vertex program's place, its Zs and 1/Wc. A point
+        // size's row after them is added where the program writes one
+        // (`finishVertex`; since 1.193).
         if (stage == .vertex) work.varyings_vpm_offset = if (key.coordinate) 4 + 2 else 2 + 1 + 1;
         const seen = switch (spirv.look(words, profile)) {
             .seen => |each| each,
@@ -3143,9 +3152,18 @@ fn finishVertex(work: *Work) Error!void {
     for (work.system_ids) |id| {
         if (id != none and (work.thing[id] != .variable or work.class[id] != @intFromEnum(spirv.StorageClass.input))) return Error.Refused;
     }
-    for (work.varying_values[0..work.varying_count], work.varying_into[0..work.varying_count]) |value, into| {
+    // gl_PointSize's row after the fixed-function outputs, before the
+    // varyings: per_vertex_point_size, which v3dv sets of any vertex
+    // shader that writes it whatever the pipeline draws (v3dv_pipeline.c:
+    // 1375-1376, 1418-1419), and v3d_nir_setup_vpm_layout_vs's
+    // psiz_vpm_offset (v3d_nir_lower_io.c:427-428; since 1.193).
+    const point_size_at = work.varyings_vpm_offset;
+    if (work.point_size != none) work.varyings_vpm_offset += 1;
+    for (work.varying_values[0..work.varying_count], work.varying_into[0..work.varying_count], 0..) |value, into, k| {
+        if (work.point_size != none and k == work.point_size_order) try output(work, work.point_size, point_size_at);
         try storeVarying(work, value, work.location[into], work.wide[into]);
     }
+    if (work.point_size != none and work.point_size_order == work.varying_count) try output(work, work.point_size, point_size_at);
     try fixedOutputs(work);
     try algebraic(work);
     try attributes(work);
@@ -6791,6 +6809,17 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 work.position = try operand(work, operands[1], .f32x4);
                 return;
             }
+            if (work.thing[into] == .point_size_pointer) {
+                // gl_PointSize, at least 1.0: nir_lower_point_size's fmax,
+                // which v3d_nir_lower_vs_early runs where the program
+                // writes it (vir.c:1110-1111, nir_lower_point_size.c), and
+                // stored with the varyings, in the order of the stores
+                // (since 1.193). Once, as gl_Position is.
+                if (work.point_size != none) return Error.Outputs;
+                work.point_size = try binary(work, .max, try operand(work, operands[1], .f32x1), try immediate(work, 1.0));
+                work.point_size_order = work.varying_count;
+                return;
+            }
             if (work.stage == .vertex and work.thing[into] == .variable and work.class[into] == @intFromEnum(spirv.StorageClass.output)) {
                 // A varying, stored where the program ends
                 // (nir_move_output_stores_to_end), once: a second store
@@ -6995,18 +7024,20 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             const id = try idOf(operands[1]);
             const base = try idOf(operands[2]);
             if (base == work.per_vertex) {
-                // gl_PerVertex's gl_Position, the one member a program
-                // here may store (since 1.163). gl_PointSize would want
-                // the record's point size, and a pipeline that draws
-                // points is not drawn with these; the clip and cull
-                // distances, nir_lower_clip_vs.
+                // gl_PerVertex's gl_Position (since 1.163) and gl_PointSize
+                // (since 1.193), the members a program here may store. The
+                // clip and cull distances would want nir_lower_clip_vs.
                 if (operands.len != 4) return Error.Outputs;
                 const which = try indexOf(work, operands[3]);
                 const block = &work.blocks[work.points[base]];
-                if (which >= block.member_count or block.member_builtin[which] != @intFromEnum(spirv.BuiltIn.position)) return Error.Outputs;
+                if (which >= block.member_count) return Error.Outputs;
+                const builtin = block.member_builtin[which];
+                if (builtin != @intFromEnum(spirv.BuiltIn.position) and builtin != @intFromEnum(spirv.BuiltIn.point_size)) return Error.Outputs;
+                const position = builtin == @intFromEnum(spirv.BuiltIn.position);
+                const wanted: Kind = if (position) .f32x4 else .f32x1;
                 if (work.thing[type_id] != .pointer or work.points[type_id] != block.member_type[which]) return Error.Type;
-                if (try kindOf(work, block.member_type[which]) != .f32x4) return Error.Type;
-                work.thing[id] = .position_pointer;
+                if (try kindOf(work, block.member_type[which]) != wanted) return Error.Type;
+                work.thing[id] = if (position) .position_pointer else .point_size_pointer;
                 return;
             }
             if (work.thing[base] == .variable and work.class[base] == @intFromEnum(spirv.StorageClass.input)) {
@@ -16479,11 +16510,16 @@ test "a vertex program stores what the fragment program reads alone, 0 where not
     try testing.expectEqual(@as(u8, 1), code.vertex.vpm_output_sectors);
 }
 
-test "a vertex shader that writes other than gl_Position of gl_PerVertex, or is read as a fragment shader, is refused" {
+test "a vertex shader that writes other than gl_Position and gl_PointSize of gl_PerVertex, or is read as a fragment shader, is refused" {
     var work: Work = .{};
-    // The store's access chain at member 1, gl_PointSize: %9, a 1.
+    // The store's access chain at member 2, gl_ClipDistance: %30, a 2.
+    const clip_distance = comptime patched(&reference.glslc_vertex_as_it_is, .access_chain, 2, 3, 30);
+    try testing.expectError(Error.Outputs, vertexThroughMesa(&work, &clip_distance, .{}));
+    // At member 1, gl_PointSize, whose float is not the vec4 the chain's
+    // type points to.
+    work = .{};
     const point_size = comptime patched(&reference.glslc_vertex_as_it_is, .access_chain, 2, 3, 9);
-    try testing.expectError(Error.Outputs, vertexThroughMesa(&work, &point_size, .{}));
+    try testing.expectError(Error.Type, vertexThroughMesa(&work, &point_size, .{}));
     work = .{};
     try testing.expectError(Error.Stage, throughMesa(&work, &reference.glslc_vertex_as_it_is));
 }
@@ -17871,4 +17907,100 @@ test "VertexIndex and InstanceIndex are a vertex program's, of an input variable
     // And in a fragment program, as before.
     work = .{};
     try testing.expectError(Error.Refused, throughMesa(&work, &comptime patched(&reference.glslc_flat_color, .decorate, 0, 1, @intFromEnum(spirv.Decoration.built_in))));
+}
+
+/// The VPM rows a program's stores are of, in the order of its steps.
+fn outputRows(work: *const Work, into: []u32) []u32 {
+    var count: usize = 0;
+    for (work.steps[0..work.step_count]) |each| {
+        if (each.tag != .output) continue;
+        into[count] = each.at;
+        count += 1;
+    }
+    return into[0..count];
+}
+
+test "through Mesa's back end, a vertex program that writes gl_PointSize stores the larger of it and 1.0 in the VPM's row after the fixed-function outputs, and its varyings a row later" {
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const code = try vertexThroughMesa(&work, &reference.glslc_point_size, key);
+    try testing.expect(code.vertex.point_size);
+    try testing.expectEqualSlices(u8, &.{ 4, 4, 2 }, code.vertex.vattr_sizes[0..3]);
+    // Stored where the program stores it, before the colour, and the
+    // fixed-function outputs after both.
+    var rows: [16]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ 4, 5, 6, 7, 8, 0, 1, 2, 3 }, outputRows(&work, &rows));
+    // The four fixed, the point size and the colour's four.
+    try testing.expectEqual(@as(usize, 9), countOf(code, "stvpmv"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "fmax"));
+    try testing.expectEqual(@as(u8, 2), code.vertex.vpm_output_sectors);
+    // glslc_vertex_as_it_is's stream, which stores the colour at rows 4
+    // to 7 with the uniforms its loads read, and here the alpha's 8 and
+    // the fmax's 1.0, and the colour's last float at row 8: the point
+    // size at row 4 (v3d_nir_lower_io.c:427-428).
+    try testing.expectEqualSlices(Word, &.{
+        vpmIndex(0), vpmIndex(1),               vpmIndex(2),                vpmIndex(3),
+        vpmIndex(8), vpmIndex(9),               vpmIndex(4),                vpmIndex(5),
+        vpmIndex(6), vpmIndex(7),               .{ .float = 8 },            .{ .float = 1 },
+        vpmIndex(8), .{ .viewport = .x_scale }, vpmIndex(0),                .{ .viewport = .y_scale },
+        vpmIndex(1), .{ .viewport = .z_scale }, .{ .viewport = .z_offset }, vpmIndex(2),
+        vpmIndex(3),
+    }, code.stream());
+    const before = try vertexThroughMesa(&work, &reference.glslc_vertex_as_it_is, key);
+    try testing.expect(!before.vertex.point_size);
+    try testing.expectEqual(@as(usize, 8), countOf(before, "stvpmv"));
+    // The coordinate program writes it too, at row 6 after the position
+    // and the place on screen, and loads the alpha it is made of.
+    work = .{};
+    key.coordinate = true;
+    const coordinate = try vertexThroughMesa(&work, &reference.glslc_point_size, key);
+    try testing.expect(coordinate.vertex.point_size);
+    try testing.expectEqualSlices(u8, &.{ 4, 4, 2 }, coordinate.vertex.vattr_sizes[0..3]);
+    try testing.expectEqual(@as(usize, 7), countOf(coordinate, "stvpmv"));
+    try testing.expectEqual(@as(usize, 7), countOf(coordinate, "ldvpmv_in"));
+    try testing.expectEqualSlices(Word, &.{
+        vpmIndex(0),               vpmIndex(1),     vpmIndex(2),               vpmIndex(3), vpmIndex(8), vpmIndex(9), vpmIndex(7),
+        .{ .float = 8 },           .{ .float = 1 }, vpmIndex(6),               vpmIndex(0), vpmIndex(1), vpmIndex(2), vpmIndex(3),
+        .{ .viewport = .x_scale }, vpmIndex(4),     .{ .viewport = .y_scale }, vpmIndex(5),
+    }, coordinate.stream());
+}
+
+test "a point size of 1.0 is stored as it is, the fmax of it and 1.0 folded, as nir_opt_constant_folding folds it" {
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const code = try vertexThroughMesa(&work, &reference.glslc_point_one, key);
+    try testing.expect(code.vertex.point_size);
+    try testing.expectEqual(@as(usize, 0), countOf(code, "fmax"));
+    try testing.expectEqual(@as(usize, 9), countOf(code, "stvpmv"));
+    try testing.expectEqualSlices(Word, &.{
+        vpmIndex(0),     vpmIndex(1),               vpmIndex(2), vpmIndex(3),               vpmIndex(8),                vpmIndex(9),
+        .{ .float = 1 }, vpmIndex(4),               vpmIndex(5), vpmIndex(6),               vpmIndex(7),                .{ .viewport = .x_scale },
+        vpmIndex(0),     .{ .viewport = .y_scale }, vpmIndex(1), .{ .viewport = .z_scale }, .{ .viewport = .z_offset }, vpmIndex(2),
+        vpmIndex(3),
+    }, code.stream());
+    // A second store of it, the colour's made one of 1.0 into %43, is
+    // refused, as a second of gl_Position is.
+    work = .{};
+    const twice = comptime patched(&patched(&reference.glslc_point_one, .store, 2, 0, 43), .store, 2, 1, 41);
+    try testing.expectError(Error.Outputs, vertexThroughMesa(&work, &twice, key));
+}
+
+test "a point size stored after the varyings is stored after them, at its row all the same" {
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const code = try vertexThroughMesa(&work, &reference.glslc_point_last, key);
+    try testing.expect(code.vertex.point_size);
+    try testing.expectEqual(@as(usize, 9), countOf(code, "stvpmv"));
+    var rows: [16]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ 5, 6, 7, 8, 4, 0, 1, 2, 3 }, outputRows(&work, &rows));
+    // The colour at rows 5 to 8, then the point size at row 4, as
+    // nir_move_output_stores_to_end keeps the stores' order.
+    try testing.expectEqualSlices(Word, &.{
+        vpmIndex(4),               vpmIndex(5), vpmIndex(6),               vpmIndex(7),     vpmIndex(0),               vpmIndex(1),                vpmIndex(2), vpmIndex(3),
+        vpmIndex(8),               vpmIndex(9), .{ .float = 8 },           .{ .float = 1 }, vpmIndex(5),               vpmIndex(6),                vpmIndex(7), vpmIndex(4),
+        .{ .viewport = .x_scale }, vpmIndex(0), .{ .viewport = .y_scale }, vpmIndex(1),     .{ .viewport = .z_scale }, .{ .viewport = .z_offset }, vpmIndex(2), vpmIndex(3),
+    }, code.stream());
 }

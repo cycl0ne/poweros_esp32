@@ -2735,6 +2735,26 @@ Results:
 
 On the CM5, FacetBoth's 278 cases are each as they were at 1.191. Its two new ones draw glslc's two vertex shaders through "shipped smooth": the first triangle as instances 1 and 2, the second from vertex 3 as instance 2, and `indices_32` from vertex 6. They are 11 and 0 of 230400 pixels apart, at the triangles' edges. With the cores' pictures made wrong on purpose, a red an eighth higher and a place a sixteenth further right, they are 53,595 and 74,374 apart: the V3D draws them with its own programs, not with the vertex function. FacetProbe is 890 of 890.
 
+**Then gl_PointSize**, facet.library 1.193.
+
+A vertex program may store gl_PerVertex's gl_PointSize beside its gl_Position, once each. The clip and cull distances are still refused.
+
+- **Both programs store it.** v3dv sets per_vertex_point_size of any vertex shader that writes it, whatever the pipeline draws (v3dv_pipeline.c:1375-1376 for the vertex program, :1418-1419 for the coordinate program). v3d_nir_lower_vs_early's nir_remove_unused_io_vars keeps it, as it keeps every built-in (vir.c:1104; nir_linking_helpers.c:184).
+- **Its row** is after the fixed-function outputs, before the varyings: the vertex program's row 4, after its place, Zs and 1/Wc, and the coordinate program's 6, after its position and place (v3d_nir_setup_vpm_layout_vs, v3d_nir_lower_io.c:427-428). The varyings come a row later, and the store keeps its place among theirs (nir_move_output_stores_to_end).
+- **What is stored** is the larger of it and 1.0, nir_lower_point_size's fmax (vir.c:1110-1111). nir_opt_constant_folding folds it where the program writes 1.0.
+- **The shader record's bit 0** says the VPM holds it: writes_psiz (vir.c:901-902; v3dvx_pipeline.c:379, :402).
+
+A pipeline that draws points is still drawn with the vertex function, its points made triangles on the CPU, so a triangle is all the V3D draws of these; the point size is in its rows unread.
+
+Results:
+- glslc_point_size stores the alpha's eight times, at least 1.0, at row 4, and its colour at rows 5 to 8; its coordinate program stores it at row 6.
+- glslc_point_one stores 1.0, with no fmax.
+- glslc_point_last stores its colour first and the point size after it, at row 4 all the same.
+- A second store of it is refused, as is a store to gl_ClipDistance.
+- The V3D's tests are 324, three new. Of 12 mutations, all fail them. The draw's handing the record's bit on is the board's to test.
+
+On the CM5, FacetBoth's 280 cases are each as they were at 1.192. Its two new ones draw glslc_point_size and glslc_point_one through "shipped smooth"; each is 5 of 230400 pixels apart, the same 5, first pixel and worst as "shipped vertex shader", the same program without a point size. With the cores' picture made wrong on purpose they are 70,815 apart and the V3D's pixels as they were: the V3D draws them with its own programs, whose varyings it reads from the rows after the point size's. FacetProbe is 890 of 890.
+
 ### 61. Multisampling: 4 samples a pixel on both devices, with resolve attachments and CmdResolveImage's body **[critical path]**
 
 *rasterisation* &mdash; conformance-blocking, port, **sized 07.11.2026: 21 commits, about 1,590 lines of code, 1,340 of tests and 90 of docs**; **the cores' half done in 1.114**, the V3D's is steps V1 to V8
