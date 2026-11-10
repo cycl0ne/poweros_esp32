@@ -8,7 +8,9 @@
 //! before vector.library 1.0, to the bit; 1.2 flattens a curve to a tenth
 //! of a pixel rather than a quarter, joins a stroke round inside a curve,
 //! and lays a stroke's pieces edge to edge rather than over each other,
-//! and every stroked frame changed with that.
+//! and every stroked frame changed with that. Paints.json's hash, of
+//! lottie.datatype 1.3's gradients and dashes, has no older one: it is
+//! drawn as its pixel checks first said it should be.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -202,5 +204,59 @@ test "every join and cap, through a matrix that turns and stretches, as it was d
     try rig.close();
 }
 
+const paints = @embedFile("../../../../tests/datatypes/Paints.json");
+
+test "gradient fills and strokes, opacity stops, a highlight, dashes going round" {
+    const file = try File.parse(paints);
+    defer file.deinit();
+    const rig = try Rig.open(160, 120);
+    var pens: [160 * 120]Pen = undefined;
+    const at = struct {
+        fn at(all: []const Pen, x: usize, y: usize) Pen {
+            return all[y * 160 + x];
+        }
+    }.at;
+    const channel = struct {
+        fn of(pen: Pen, shift: u5) u32 {
+            return pen >> shift & 0xFF;
+        }
+    }.of;
+    @memset(&pens, 0);
+    rig.draw(file.tape, 0, 1, &pens);
+    // The linear fill: red and nearly whole at its start, blue and a
+    // fifth there at its end.
+    const start = at(&pens, 12, 30);
+    try testing.expect(channel(start, 16) > 200 and channel(start, 8) < 60 and channel(start, 24) > 230);
+    const end = at(&pens, 68, 30);
+    try testing.expect(channel(end, 0) > 200 and channel(end, 16) < 60);
+    try testing.expect(channel(end, 24) > 40 and channel(end, 24) < 80);
+    // The radial one white at its centre, while its highlight is there.
+    const centre = at(&pens, 115, 30);
+    try testing.expect(channel(centre, 16) > 240 and channel(centre, 8) > 240 and channel(centre, 0) > 240);
+    // The gradient stroke orange where it starts.
+    const stroke = at(&pens, 11, 79);
+    try testing.expect(channel(stroke, 16) > 200 and channel(stroke, 0) < 80);
+    // The rectangle's right side, from its top: a dash of 8, a gap of 4.
+    try testing.expectEqual(@as(u32, 0xFF), channel(at(&pens, 139, 103), 24));
+    try testing.expectEqual(@as(Pen, 0), at(&pens, 139, 110));
+    @memset(&pens, 0);
+    rig.draw(file.tape, 15, 1, &pens);
+    // A quarter of the way the dashes have gone round six units: a gap
+    // where a dash was.
+    try testing.expectEqual(@as(Pen, 0), at(&pens, 139, 103));
+    @memset(&pens, 0);
+    rig.draw(file.tape, 59, 1, &pens);
+    // The highlight gone out toward the top right, the centre darker.
+    try testing.expect(channel(at(&pens, 115, 30), 16) < 230);
+    const all = try testing.allocator.alloc(Pen, 320 * 240);
+    defer testing.allocator.free(all);
+    try rig.close();
+    const large = try Rig.open(320, 240);
+    try testing.expectEqual(@as(u64, paints_hash), hashFrames(large, file, 0, 59, 1, 2, all));
+    try large.close();
+}
+
 const spinner_hash = 0x5fcbceca335c37c2;
 const strokes_hash = 0x2c842b765d73af09;
+const paints_hash = 0x9cb68336e2200b46;
+

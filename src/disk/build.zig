@@ -382,13 +382,14 @@ const no_3d_files = [_][]const u8{
 };
 
 /// What goes with the programs only the 64-bit machines have
-/// (`rv64_only`) - what they are, in SYS:System/Docs, and the descriptor
-/// and the test picture of svg.datatype: left off the ESP32s' disks with
-/// them.
+/// (`rv64_only`) - what they are, in SYS:System/Docs, the descriptor
+/// and the test picture of svg.datatype, and Lottie's paints: left off
+/// the ESP32s' disks with them.
 const rv64_only_files = [_][]const u8{
     "System/Docs/Update.md",
     "devs/datatypes/SVG",
     "tests/datatypes/Drawing.svg",
+    "tests/datatypes/Paints.json",
 };
 
 /// Whether `program` is built for `chip`. The lists name a program by its
@@ -615,6 +616,7 @@ pub const files = [_]File{
     .{ .disk = "tests/datatypes/Weave.gif", .source = "tests/datatypes/Weave.gif" },
     .{ .disk = "tests/datatypes/Bounce.gif", .source = "tests/datatypes/Bounce.gif" },
     .{ .disk = "tests/datatypes/Spinner.json", .source = "tests/datatypes/Spinner.json" },
+    .{ .disk = "tests/datatypes/Paints.json", .source = "tests/datatypes/Paints.json" },
     .{ .disk = "tests/datatypes/Drawing.svg", .source = "tests/datatypes/Drawing.svg" },
     .{ .disk = "tests/datatypes/Crate.obj", .source = "tests/datatypes/Crate.obj" },
     .{ .disk = "tests/datatypes/Crate.mtl", .source = "tests/datatypes/Crate.mtl" },

@@ -19,17 +19,30 @@
 //! hole. A group's transform carries its own opacity to what is inside.
 //!
 //! Drawn: shape, solid and precomposition layers; groups, rectangles
-//! (rounded too), ellipses and paths; fills and strokes of one colour;
-//! transforms and parents; keyframes with their easing. Passed over:
-//! gradients, masks and mattes (a matte's source is not drawn, the layer
-//! it is for is drawn without it), text and image layers, expressions,
-//! trims, repeaters, stars, dashes, skew and 3D.
+//! (rounded too), ellipses and paths; fills and strokes of one colour
+//! and, since 1.3, of a linear or a radial gradient (`gf`, `gs`), and
+//! dashed strokes (`d`); transforms and parents; keyframes with their
+//! easing. Passed over: masks and mattes (a matte's source is not drawn,
+//! the layer it is for is drawn without it), text and image layers,
+//! expressions, trims, repeaters, stars, skew and 3D.
+//!
+//! **A gradient** is its stops - a flat array of colour stops (offset,
+//! red, green, blue) and after them, when it has them, opacity stops
+//! (offset, opacity) - with its start and end points in the units of the
+//! shapes it paints. Colour and opacity stops are made one list: a stop
+//! wherever either has one, its colour and its opacity each worked out
+//! there. A radial gradient is round its start out to its end; its
+//! highlight moves the focus that share of the radius from the centre,
+//! at the highlight's angle from the line to the end, as lottie-web
+//! places it. A dash's lengths and its offset are in those units too,
+//! scaled to pixels as the width is.
 //!
 //! **Drawn by vector.library.** The paths are built in pixels - every
 //! point through its layers' and groups' transforms - and filled or
 //! stroked on the frame with no matrix of the library's, a stroke's
 //! width scaled to pixels as Lottie scales it.
 
+const std = @import("std");
 const sdk = @import("sdk");
 const vector = sdk.vector;
 const VectorBase = sdk.interface.vector.VectorBase;
@@ -41,6 +54,11 @@ const P = vector.Point;
 
 /// The deepest nesting of precompositions, groups and parents followed.
 const max_depth = 16;
+/// The most colour stops and opacity stops a gradient is drawn with,
+/// each; more are left off its end.
+const max_gradient_stops = 32;
+/// The most dash and gap lengths a stroke is cut by.
+const max_dashes = 16;
 
 /// What a frame is drawn with: vector.library, the path every fill and
 /// stroke is built in, and the canvas over the frame's pens.
@@ -146,10 +164,10 @@ pub const Renderer = struct {
                 const transform = groupTransform(tape, inside);
                 const group_opacity = property.scalar(tape, tape.get(transform, "o"), time, 100) / 100;
                 renderer.items(inside, time, matrix.then(transformMatrix(tape, transform, time)), opacity * group_opacity, depth + 1);
-            } else if (same(kind, "fl") or same(kind, "st")) {
+            } else if (same(kind, "fl") or same(kind, "st") or same(kind, "gf") or same(kind, "gs")) {
                 renderer.vb.ClearPath(renderer.path);
                 renderer.paths(list.?, n, time, matrix, depth);
-                renderer.style(item, kind[0] == 's', time, matrix, opacity);
+                renderer.style(item, kind[1] == 't' or kind[1] == 's', kind[0] == 'g', time, matrix, opacity);
             }
         }
     }
@@ -179,21 +197,22 @@ pub const Renderer = struct {
         }
     }
 
-    /// The path painted by a fill or a stroke. What did not fit in memory
-    /// is left out: the frame is drawn as far as it went.
-    fn style(renderer: *Renderer, item: u32, stroked: bool, time: f32, matrix: Matrix, opacity: f32) void {
+    /// The path painted by a fill or a stroke, in a colour or a gradient.
+    /// What did not fit in memory is left out: the frame is drawn as far
+    /// as it went.
+    fn style(renderer: *Renderer, item: u32, stroked: bool, gradient: bool, time: f32, matrix: Matrix, opacity: f32) void {
         const tape = renderer.tape;
-        const colour_value = property.value(tape, tape.get(item, "c"), time, property.Value.of(&.{ 0, 0, 0 }));
-        var colour = vector.Colour{ .r = colour_value.at(0), .g = colour_value.at(1), .b = colour_value.at(2) };
-        // Files of the oldest kind give colours to 255.
-        if (colour.r > 1 or colour.g > 1 or colour.b > 1) colour = .{ .r = colour.r / 255, .g = colour.g / 255, .b = colour.b / 255 };
-        const paint = vector.Paint{
-            .colour = colour,
-            .opacity = opacity * property.scalar(tape, tape.get(item, "o"), time, 100) / 100,
-        };
+        const paint_opacity = opacity * property.scalar(tape, tape.get(item, "o"), time, 100) / 100;
+        var stops: [2 * max_gradient_stops]vector.Stop = undefined;
+        const paint = if (gradient)
+            gradientOf(tape, item, time, matrix, paint_opacity, &stops) orelse return
+        else
+            colourOf(tape, item, time, paint_opacity);
         if (stroked) {
-            const stroke = vector.Stroke{
-                .width = property.scalar(tape, tape.get(item, "w"), time, 1) * matrix.size(),
+            const scale = matrix.size();
+            var dashes: [max_dashes]f32 = undefined;
+            var stroke = vector.Stroke{
+                .width = property.scalar(tape, tape.get(item, "w"), time, 1) * scale,
                 .join = switch (@as(i32, @intFromFloat(tape.number(tape.get(item, "lj")) orelse 1))) {
                     2 => vector.JOIN_ROUND,
                     3 => vector.JOIN_BEVEL,
@@ -206,6 +225,7 @@ pub const Renderer = struct {
                 },
                 .miter_limit = tape.number(tape.get(item, "ml")) orelse 4,
             };
+            dashesOf(tape, item, time, scale, &dashes, &stroke);
             _ = renderer.vb.StrokePath(renderer.canvas, renderer.path, null, &paint, &stroke);
         } else {
             const rule: u32 = if ((tape.number(tape.get(item, "r")) orelse 1) == 2) vector.RULE_EVENODD else vector.RULE_NONZERO;
@@ -321,6 +341,133 @@ const Vertices = struct {
         writer.finish(true);
     }
 };
+
+/// A fill's or a stroke's one colour.
+fn colourOf(tape: Tape, item: u32, time: f32, opacity: f32) vector.Paint {
+    const colour_value = property.value(tape, tape.get(item, "c"), time, property.Value.of(&.{ 0, 0, 0 }));
+    var colour = vector.Colour{ .r = colour_value.at(0), .g = colour_value.at(1), .b = colour_value.at(2) };
+    // Files of the oldest kind give colours to 255.
+    if (colour.r > 1 or colour.g > 1 or colour.b > 1) colour = .{ .r = colour.r / 255, .g = colour.g / 255, .b = colour.b / 255 };
+    return .{ .colour = colour, .opacity = opacity };
+}
+
+/// A gradient fill's or stroke's paint, its points through `matrix`
+/// into pixels; null where it has no stops.
+fn gradientOf(tape: Tape, item: u32, time: f32, matrix: Matrix, opacity: f32, stops: *[2 * max_gradient_stops]vector.Stop) ?vector.Paint {
+    const g = tape.get(item, "g");
+    const colour_stops: u32 = @intFromFloat(@max(0, @min(tape.number(tape.get(g, "p")) orelse 0, 1e6)));
+    var numbers: [6 * max_gradient_stops]f32 = undefined;
+    const n = property.flat(tape, tape.get(g, "k"), time, &numbers);
+    const colours = @min(colour_stops, n / 4, max_gradient_stops);
+    if (colours == 0) return null;
+    // Opacity stops follow all the colour stops, the ones not read too.
+    const opacity_start = @min(colour_stops * 4, n);
+    const alphas = @min((n - opacity_start) / 2, max_gradient_stops);
+    const stop_count = mergeStops(numbers[0 .. colours * 4], numbers[opacity_start .. opacity_start + alphas * 2], stops);
+
+    const start = property.value(tape, tape.get(item, "s"), time, property.Value.of(&.{ 0, 0 }));
+    const end = property.value(tape, tape.get(item, "e"), time, property.Value.of(&.{ 0, 0 }));
+    var paint = vector.Paint{
+        .kind = vector.PAINT_LINEAR,
+        .opacity = opacity,
+        .stops = stops,
+        .stop_count = stop_count,
+        .matrix = matrix,
+        .x1 = start.at(0),
+        .y1 = start.at(1),
+        .x2 = end.at(0),
+        .y2 = end.at(1),
+    };
+    if ((tape.number(tape.get(item, "t")) orelse 1) == 2) {
+        const dx = end.at(0) - start.at(0);
+        const dy = end.at(1) - start.at(1);
+        const radius = @sqrt(dx * dx + dy * dy);
+        if (!(radius > 0)) return .{ .colour = stops[stop_count - 1].colour, .opacity = opacity };
+        // The focus a share of the radius out, kept inside the circle.
+        const share = @max(-0.99, @min(0.99, property.scalar(tape, tape.get(item, "h"), time, 0) / 100));
+        const angle = std.math.atan2(dy, dx) + property.scalar(tape, tape.get(item, "a"), time, 0) * std.math.pi / 180;
+        paint.kind = vector.PAINT_RADIAL;
+        paint.cx = start.at(0);
+        paint.cy = start.at(1);
+        paint.r = radius;
+        paint.fx = start.at(0) + @cos(angle) * radius * share;
+        paint.fy = start.at(1) + @sin(angle) * radius * share;
+    }
+    return paint;
+}
+
+/// Colour stops (offset, red, green, blue) and opacity stops (offset,
+/// opacity), both by offset rising, made one list onto `out`: a stop at
+/// every offset either has, its colour and its opacity worked out there.
+/// How many.
+fn mergeStops(colours: []const f32, alphas: []const f32, out: *[2 * max_gradient_stops]vector.Stop) u32 {
+    const colour_count = colours.len / 4;
+    const alpha_count = alphas.len / 2;
+    var i: usize = 0;
+    var j: usize = 0;
+    var n: u32 = 0;
+    while (i < colour_count or j < alpha_count) {
+        const colour_at = if (i < colour_count) colours[i * 4] else std.math.inf(f32);
+        const alpha_at = if (j < alpha_count) alphas[j * 2] else std.math.inf(f32);
+        const offset = @min(colour_at, alpha_at);
+        if (colour_at <= offset) i += 1;
+        if (alpha_at <= offset) j += 1;
+        var colour = colourAt(colours, offset);
+        colour.a = if (alpha_count == 0) 1 else alphaAt(alphas, offset);
+        out[n] = .{ .offset = @max(0, @min(1, offset)), .colour = colour };
+        n += 1;
+    }
+    return n;
+}
+
+/// The colour stops' colour at `offset`: the nearest end's beyond them.
+fn colourAt(colours: []const f32, offset: f32) vector.Colour {
+    const count = colours.len / 4;
+    var k: usize = 0;
+    while (k + 1 < count and colours[(k + 1) * 4] < offset) k += 1;
+    const a = colours[k * 4 ..][0..4];
+    if (k + 1 >= count or offset <= a[0]) return .{ .r = a[1], .g = a[2], .b = a[3] };
+    const b = colours[(k + 1) * 4 ..][0..4];
+    const t = if (b[0] > a[0]) @min(1, (offset - a[0]) / (b[0] - a[0])) else 1;
+    return .{ .r = a[1] + (b[1] - a[1]) * t, .g = a[2] + (b[2] - a[2]) * t, .b = a[3] + (b[3] - a[3]) * t };
+}
+
+/// The opacity stops' opacity at `offset`.
+fn alphaAt(alphas: []const f32, offset: f32) f32 {
+    const count = alphas.len / 2;
+    var k: usize = 0;
+    while (k + 1 < count and alphas[(k + 1) * 2] < offset) k += 1;
+    const a = alphas[k * 2 ..][0..2];
+    if (k + 1 >= count or offset <= a[0]) return a[1];
+    const b = alphas[(k + 1) * 2 ..][0..2];
+    const t = if (b[0] > a[0]) @min(1, (offset - a[0]) / (b[0] - a[0])) else 1;
+    return a[1] + (b[1] - a[1]) * t;
+}
+
+/// A stroke's dashes (`d`: dash `d`, gap `g` and offset `o` items, in
+/// turn), `scale` pixels a unit, onto the stroke. None when they add up
+/// to nothing.
+fn dashesOf(tape: Tape, item: u32, time: f32, scale: f32, dashes: *[max_dashes]f32, stroke: *vector.Stroke) void {
+    var walk = tape.items(tape.get(item, "d"));
+    var n: u32 = 0;
+    var total: f32 = 0;
+    var offset: f32 = 0;
+    while (walk.next()) |dash| {
+        const name = tape.string(tape.get(dash, "n")) orelse continue;
+        const length = property.scalar(tape, tape.get(dash, "v"), time, 0) * scale;
+        if (same(name, "o")) {
+            offset = length;
+        } else if ((same(name, "d") or same(name, "g")) and n < max_dashes) {
+            dashes[n] = @max(0, length);
+            total += dashes[n];
+            n += 1;
+        }
+    }
+    if (n == 0 or !(total > 0)) return;
+    stroke.dashes = dashes;
+    stroke.dash_count = n;
+    stroke.dash_offset = offset;
+}
 
 /// Whether a rectangle or an ellipse goes round the other way.
 fn reversed(tape: Tape, item: u32) bool {

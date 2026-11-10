@@ -197,6 +197,42 @@ pub fn scalar(tape: Tape, prop: ?u32, t: f32, default: f32) f32 {
     return value(tape, prop, t, Value.of(&.{default})).v[0];
 }
 
+/// A property of more numbers than a `Value` holds - a gradient's stops,
+/// one flat array - at `t`, into `out`: how many there are, at most
+/// `out.len`. Between two keyframes every number goes from the one to
+/// the other by the first keyframe's easing, as a whole.
+pub fn flat(tape: Tape, prop: ?u32, t: f32, out: []f32) u32 {
+    const object = prop orelse return 0;
+    const k = tape.get(object, "k") orelse return 0;
+    if (!keyframed(tape, k)) return numbersOf(tape, k, out);
+    const s = span(tape, k, t);
+    const range = ends(tape, s);
+    const n = numbersOf(tape, range.start, out);
+    const end_index = range.end orelse return n;
+    if (tape.kind(end_index) != .array) return n;
+    const p = eased(tape, s, 0);
+    var walk = tape.items(end_index);
+    var i: u32 = 0;
+    while (walk.next()) |item| : (i += 1) {
+        if (i >= n or tape.kind(item) != .number) break;
+        out[i] += (tape.nodes[item].number - out[i]) * p;
+    }
+    return n;
+}
+
+fn numbersOf(tape: Tape, index: ?u32, out: []f32) u32 {
+    const at = index orelse return 0;
+    if (tape.kind(at) != .array) return 0;
+    var walk = tape.items(at);
+    var n: u32 = 0;
+    while (walk.next()) |item| {
+        if (n == out.len or tape.kind(item) != .number) break;
+        out[n] = tape.nodes[item].number;
+        n += 1;
+    }
+    return n;
+}
+
 /// Where a path property stands at `t`: the shape (`{"c","v","i","o"}`)
 /// it starts from, the one it goes to, and how far between.
 pub const ShapeSpan = struct {
@@ -258,6 +294,24 @@ test "still and keyframed values" {
     try testing.expectEqual(@as(f32, 100), value(tape, moving, 15, .{}).v[0]);
     try testing.expectEqual(@as(f32, 50), value(tape, moving, 25, .{}).v[0]);
     try testing.expectEqual(@as(f32, 3), scalar(tape, tape.get(0, "missing"), 0, 3));
+}
+
+test "a property of many numbers, still and between keyframes" {
+    var nodes: [256]Node = undefined;
+    const tape = tapeOf(
+        \\{"still": {"a":0,"k":[0,1,0,0, 1,0,0,1, 0,1, 1,0.5]},
+        \\ "moving": {"a":1,"k":[
+        \\   {"t":0,"s":[0,0,0,0,0,0],"o":{"x":[0],"y":[0]},"i":{"x":[1],"y":[1]}},
+        \\   {"t":10,"s":[1,2,3,4,5,6]}]}}
+    , &nodes);
+    var out: [16]f32 = undefined;
+    try testing.expectEqual(@as(u32, 12), flat(tape, tape.get(0, "still"), 0, &out));
+    try testing.expectEqual(@as(f32, 0.5), out[11]);
+    try testing.expectEqual(@as(u32, 6), flat(tape, tape.get(0, "moving"), 5, &out));
+    try testing.expectApproxEqAbs(@as(f32, 3), out[5], 1e-4);
+    try testing.expectApproxEqAbs(@as(f32, 0.5), out[0], 1e-4);
+    // As many as there is room for.
+    try testing.expectEqual(@as(u32, 4), flat(tape, tape.get(0, "still"), 0, out[0..4]));
 }
 
 test "easing" {

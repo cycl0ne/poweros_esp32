@@ -391,10 +391,11 @@ own delay. A GIF with one picture is a still picture and goes to
 
 `lottie.datatype` plays a Lottie file, the JSON a design tool writes a
 vector animation as. It draws shape, solid and precomposition layers;
-groups, rectangles, ellipses and paths; fills and strokes of one colour;
+groups, rectangles, ellipses and paths; fills and strokes of one colour
+or of a linear or radial gradient, and dashed strokes (since 1.3);
 transforms, parents and keyframes with their easing - and passes over
-gradients, masks, mattes, text, images, expressions, trims and 3D,
-drawing the rest of the file without them. A frame is drawn in software
+masks, mattes, text, images, expressions, trims and 3D, drawing the
+rest of the file without them. A frame is drawn in software
 by vector.library, at the file's size made smaller to fit in 360 pixels
 each way, and at the file's rate up to 30 frames a second.
 
