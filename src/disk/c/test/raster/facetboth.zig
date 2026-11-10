@@ -150,7 +150,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.61 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.62 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -2205,6 +2205,35 @@ fn bitFindsOf(color: [4]f32) [4]f32 {
     return out;
 }
 
+/// What `shipped_modf_frexp` computes, by GLSL's definitions: modf's
+/// whole the value truncated, frexp and ldexp std.math's (since 1.62).
+fn modfFrexpOf(color: [4]f32) [4]f32 {
+    var c: [4]f32 = undefined;
+    for (&c, color) |*each, v| each.* = v * 8.0 - 4.0;
+    var whole: [4]f32 = undefined;
+    var part: [4]f32 = undefined;
+    var sig: [4]f32 = undefined;
+    var e: [4]i32 = undefined;
+    var by: [4]i32 = undefined;
+    var scaled: [4]f32 = undefined;
+    for (0..4) |k| {
+        whole[k] = @trunc(c[k]);
+        part[k] = c[k] - whole[k];
+        const split = std.math.frexp(c[k]);
+        sig[k] = split.significand;
+        e[k] = split.exponent;
+        by[k] = @as(i32, @intFromFloat(@max(color[k] * 7.0, -1.0))) - 3;
+        scaled[k] = std.math.ldexp(color[k], by[k]);
+    }
+    const exponent: f32 = @floatFromInt(std.math.clamp(e[2], -4, 3));
+    return .{
+        part[0] * 0.25 + 0.5 + whole[1] * 0.0625,
+        sig[2] * 0.25 + 0.5 + exponent * 0.0625,
+        (scaled[0] + scaled[1]) * 0.0625,
+        std.math.ldexp(scaled[2], -by[2]) * 0.5 + whole[0] * 0.0625 + 0.25,
+    };
+}
+
 /// The entries that ship words, after all the others, and the words of
 /// each in the same order: `shader.Module.spirv` is index for index.
 const shipped_entries = [_]shader.Entry{
@@ -2305,6 +2334,7 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped hyperbolic", curveFragment(hyperbolicOf), 4),
     shader.fragment("shipped geometry", curveFragment(geometryOf), 4),
     shader.fragment("shipped bit finds", curveFragment(bitFindsOf), 4),
+    shader.fragment("shipped modf and frexp", curveFragment(modfFrexpOf), 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2330,7 +2360,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_noperspective_vertex), shader.Spirv.of(&shipped_noperspective),    shader.Spirv.of(&shipped_many_ids),            shader.Spirv.of(&shipped_vertex_index),
     shader.Spirv.of(&shipped_index_place),          shader.Spirv.of(&shipped_point_size),       shader.Spirv.of(&shipped_point_one),           shader.Spirv.of(&shipped_vertices),
     shader.Spirv.of(&shipped_numbers),              shader.Spirv.of(&shipped_inverse_trig),     shader.Spirv.of(&shipped_hyperbolic),          shader.Spirv.of(&shipped_geometry),
-    shader.Spirv.of(&shipped_bit_finds),
+    shader.Spirv.of(&shipped_bit_finds),            shader.Spirv.of(&shipped_modf_frexp),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -5847,6 +5877,99 @@ const shipped_bit_finds = [_]u32{
     0x0000000B, 0x0000005A, 0x00000042, 0x0000004A, 0x00000052, 0x00000059,
     0x0005008E, 0x0000000B, 0x0000005C, 0x0000005A, 0x0000005B, 0x0003003E,
     0x00000038, 0x0000005C, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, the V3D's host tests' glslc_modf_frexp:
+/// what `modfFrexpOf` on the cores: ModfStruct, FrexpStruct and Ldexp
+/// (since 1.62).
+///
+/// ```glsl
+/// #version 450
+/// // facet 1.198: GLSL.std.450's ModfStruct and FrexpStruct of the colour
+/// // made -4 to 4, and Ldexp of it by powers of two it picks and back, as
+/// // vtn_glsl450.c, nir_lower_frexp and nir_opt_algebraic build them. The
+/// // exponent is z's and the whole number x's, as a picture's alpha is 1.
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     vec4 c = color * 8.0 - 4.0;
+///     vec4 whole;
+///     vec4 part = modf(c, whole);
+///     ivec4 e;
+///     vec4 sig = frexp(c, e);
+///     ivec4 by = ivec4(color * 7.0) - 3;
+///     vec4 scaled = ldexp(color, by);
+///     outColor = vec4(part.x * 0.25 + 0.5 + whole.y * 0.0625,
+///                     sig.z * 0.25 + 0.5 + clamp(float(e.z), -4.0, 3.0) * 0.0625,
+///                     (scaled.x + scaled.y) * 0.0625,
+///                     ldexp(scaled.z, -by.z) * 0.5 + whole.x * 0.0625 + 0.25);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag modf_frexp.frag -o modf_frexp.spv   # 352 words
+/// spirv-val --target-env vulkan1.0 modf_frexp.spv   # no output, and 0
+/// ```
+const shipped_modf_frexp = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000006C, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000030, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000030, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x0000000A,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001,
+    0x0004002B, 0x00000006, 0x0000000D, 0x41000000, 0x0004002B, 0x00000006,
+    0x0000000F, 0x40800000, 0x0004001E, 0x00000015, 0x00000007, 0x00000007,
+    0x00040015, 0x0000001B, 0x00000020, 0x00000001, 0x00040017, 0x0000001C,
+    0x0000001B, 0x00000004, 0x0004001E, 0x0000001F, 0x00000007, 0x0000001C,
+    0x0004002B, 0x00000006, 0x00000025, 0x40E00000, 0x0004002B, 0x0000001B,
+    0x00000028, 0x00000003, 0x00040020, 0x0000002F, 0x00000003, 0x00000007,
+    0x0004003B, 0x0000002F, 0x00000030, 0x00000003, 0x0004002B, 0x00000006,
+    0x00000036, 0x3E800000, 0x0004002B, 0x00000006, 0x00000038, 0x3F000000,
+    0x0004002B, 0x00000006, 0x0000003D, 0x3D800000, 0x0004002B, 0x00000006,
+    0x00000049, 0xC0800000, 0x0004002B, 0x00000006, 0x0000004A, 0x40400000,
+    0x0007002C, 0x00000007, 0x0000006A, 0x0000000F, 0x0000000F, 0x0000000F,
+    0x0000000F, 0x0007002C, 0x0000001C, 0x0000006B, 0x00000028, 0x00000028,
+    0x00000028, 0x00000028, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x00000007, 0x0000000C,
+    0x0000000B, 0x0005008E, 0x00000007, 0x0000000E, 0x0000000C, 0x0000000D,
+    0x00050083, 0x00000007, 0x00000011, 0x0000000E, 0x0000006A, 0x0006000C,
+    0x00000015, 0x00000016, 0x00000001, 0x00000024, 0x00000011, 0x00050051,
+    0x00000007, 0x00000017, 0x00000016, 0x00000001, 0x00050051, 0x00000007,
+    0x00000018, 0x00000016, 0x00000000, 0x0006000C, 0x0000001F, 0x00000020,
+    0x00000001, 0x00000034, 0x00000011, 0x00050051, 0x0000001C, 0x00000021,
+    0x00000020, 0x00000001, 0x00050051, 0x00000007, 0x00000022, 0x00000020,
+    0x00000000, 0x0005008E, 0x00000007, 0x00000026, 0x0000000C, 0x00000025,
+    0x0004006E, 0x0000001C, 0x00000027, 0x00000026, 0x00050082, 0x0000001C,
+    0x0000002A, 0x00000027, 0x0000006B, 0x0007000C, 0x00000007, 0x0000002E,
+    0x00000001, 0x00000035, 0x0000000C, 0x0000002A, 0x00050051, 0x00000006,
+    0x00000035, 0x00000018, 0x00000000, 0x00050085, 0x00000006, 0x00000037,
+    0x00000035, 0x00000036, 0x00050081, 0x00000006, 0x00000039, 0x00000037,
+    0x00000038, 0x00050051, 0x00000006, 0x0000003C, 0x00000017, 0x00000001,
+    0x00050085, 0x00000006, 0x0000003E, 0x0000003C, 0x0000003D, 0x00050081,
+    0x00000006, 0x0000003F, 0x00000039, 0x0000003E, 0x00050051, 0x00000006,
+    0x00000042, 0x00000022, 0x00000002, 0x00050085, 0x00000006, 0x00000043,
+    0x00000042, 0x00000036, 0x00050081, 0x00000006, 0x00000044, 0x00000043,
+    0x00000038, 0x00050051, 0x0000001B, 0x00000047, 0x00000021, 0x00000002,
+    0x0004006F, 0x00000006, 0x00000048, 0x00000047, 0x0008000C, 0x00000006,
+    0x0000004B, 0x00000001, 0x0000002B, 0x00000048, 0x00000049, 0x0000004A,
+    0x00050085, 0x00000006, 0x0000004C, 0x0000004B, 0x0000003D, 0x00050081,
+    0x00000006, 0x0000004D, 0x00000044, 0x0000004C, 0x00050051, 0x00000006,
+    0x0000004F, 0x0000002E, 0x00000000, 0x00050051, 0x00000006, 0x00000051,
+    0x0000002E, 0x00000001, 0x00050081, 0x00000006, 0x00000052, 0x0000004F,
+    0x00000051, 0x00050085, 0x00000006, 0x00000053, 0x00000052, 0x0000003D,
+    0x00050051, 0x00000006, 0x00000055, 0x0000002E, 0x00000002, 0x00050051,
+    0x0000001B, 0x00000057, 0x0000002A, 0x00000002, 0x0004007E, 0x0000001B,
+    0x00000058, 0x00000057, 0x0007000C, 0x00000006, 0x00000059, 0x00000001,
+    0x00000035, 0x00000055, 0x00000058, 0x00050085, 0x00000006, 0x0000005A,
+    0x00000059, 0x00000038, 0x00050051, 0x00000006, 0x0000005C, 0x00000017,
+    0x00000000, 0x00050085, 0x00000006, 0x0000005D, 0x0000005C, 0x0000003D,
+    0x00050081, 0x00000006, 0x0000005E, 0x0000005A, 0x0000005D, 0x00050081,
+    0x00000006, 0x0000005F, 0x0000005E, 0x00000036, 0x00070050, 0x00000007,
+    0x00000060, 0x0000003F, 0x0000004D, 0x00000053, 0x0000005F, 0x0003003E,
+    0x00000030, 0x00000060, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output, at -O, of the place times a W of 1 + 2 * the blue
@@ -10099,6 +10222,7 @@ const cases = [_]Case{
     .{ .name = "shipped hyperbolic functions", .run = Cases.shipped("as it is", "shipped hyperbolic", false, clockwise_at) },
     .{ .name = "shipped cross, reflect and refract", .run = Cases.shipped("as it is", "shipped geometry", false, clockwise_at) },
     .{ .name = "shipped bit finds", .run = Cases.shipped("as it is", "shipped bit finds", false, clockwise_at) },
+    .{ .name = "shipped modf, frexp and ldexp", .run = Cases.shipped("as it is", "shipped modf and frexp", false, clockwise_at) },
     .{ .name = "shipped flat varying", .run = Cases.shipped("shipped flat vertex", "shipped flat colour", false, clockwise_at) },
     .{ .name = "shipped flat integer", .run = Cases.shipped("shipped flat integer vertex", "shipped flat integer", false, clockwise_at) },
     .{ .name = "shipped noperspective", .run = Cases.shipped("shipped noperspective vertex", "shipped noperspective", false, clockwise_at) },

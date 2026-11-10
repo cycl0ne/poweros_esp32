@@ -2706,6 +2706,41 @@ The V3D's tests are 339, one new. Of 16 mutations, 14 fail them. The two left ch
 
 On the CM5 FacetBoth 1.61's new case, "shipped bit finds", is 56 of 230400 pixels apart: the 8 at the triangles' edge, and 48 that by every sign are pixels where the colour times 31 crosses a whole number between the cores' interpolation and the V3D's, so that the two take their bits a place apart. With 15 places in place of 31 they are 30. With the cores' function made wrong on purpose the case is 46,565 apart. The other 287 cases are each as they were at 1.196, and FacetProbe is 890 of 890.
 
+**Then Modf, Frexp and Ldexp**, facet.library 1.198.
+
+- **ModfStruct** is vtn's (vtn_glsl450.c:546-562). It takes x's sign bit alone, a signed zero, and makes two members with that sign: the fraction of |x|, or the signed zero where |x| is infinite, which an integer comparison with infinity tells; and the whole, ffloor(|x|). Its ffract is lowered (nir_opt_algebraic.py:546) and shares the whole's ffloor.
+- **FrexpStruct** is nir_frexp_sig and nir_frexp_exp (vtn_glsl450.c:575-581), as nir_lower_frexp lowers them at 32 bits (nir_lower_frexp.c:29-159), which v3d runs (vir.c:841).
+  - The significand is x's sign and mantissa under the exponent of [0.5, 1), where 0 < |x| and x is finite, and x itself otherwise. Its fisfinite is what the late rules make of one under fast math, feq(x, x) (nir_opt_algebraic.py:4233).
+  - The exponent is |x|'s bits shifted down 23, plus −126 where x is not 0, the fneu of |x| being that of x (:800).
+- **Ldexp** is nir_ldexp (vtn_glsl450.c:408-418). The V3D has no has_ldexp, so it is lowered (nir_opt_algebraic.py:3255-3327).
+  - The exponent is held to −254 to 254, and f is multiplied by 2 to its half and by 2 to the rest, so that 2^128 can be reached.
+  - Each power of two is made of its bits, (e + 127) << 23, which rule :729 makes (e << 23) + 1.0's bits. Mesa's lowering of the isub (:2402), its reassociations (:2423, :730) and the late isub (:3872) come to the same.
+- Both structs are held as a struct value is (since 1.176), and OpCompositeExtract reads their members.
+
+Still left out: Modf and Frexp of a pointer, which glslc does not make; Determinant and MatrixInverse; the packing functions; and the interpolation functions.
+
+Results:
+- glslc_modf_frexp is 352 words: ModfStruct and FrexpStruct of the colour made −4 to 4, and Ldexp of the colour by a power of two it picks and back. Frexp's exponent is z's and Modf's whole x's: the pictures' alpha is 1, so w would be 4 at every pixel, its exponent always 3.
+- Its program has a bcsel for each float of Modf's fraction, of Frexp's significand and of its exponent's bias. Each of Ldexp's four powers of two is an ishl and an iadd of 1.0's bits.
+- For eight colours, among them 0, whole numbers either side of it, −4 and 4, and values down to Frexp's clamp, it answers within 10^−6 what std.math's trunc, frexp and ldexp answer.
+- Ldexp of constants folds: 3 by −2 to 0.75; 0.75 by 128 to 0.75 × 2^128, which no one power of two of a float makes; 2^100 by −260, held to −254, to 0; and 1 by 300, held to 254, to infinity.
+
+The V3D's tests are 341, two new. Of 26 mutations, 25 fail them. The one left takes out the check that a struct's two members are of one width: no test hands in such a struct, and spirv-val refuses one.
+
+On the CM5 FacetBoth 1.62's new case, "shipped modf, frexp and ldexp", is 52 of 230400 pixels apart. Each was listed, and each is at the triangles' edge or on a step of the shader, where the cores' interpolation and the V3D's fall either side:
+
+| Pixels | Where | The step |
+|---|---|---|
+| 8 | The triangles' edge | |
+| 6 | c.x crosses a whole number | R by 64 (the fraction) and A by 16 (the whole) together |
+| 1 | c.y crosses a whole number | R by 16 |
+| 12 | x or y times 7 crosses a whole number | B by Ldexp's step there: 3.4, 9.1 or 22.8, seen as 3 or 4, 9 and 23 |
+| 2 | c.z crosses a power of two above 0 | G by 32 − 16: the significand halves, the exponent grows |
+| 6 | c.z crosses a power of two below 0 | G by 32 + 16; A puts these at c.z = −2^k |
+| 17 | c.z within an octave of 0, under the clamp of −4 | G by 32, or by under 8; A puts these at c.z = 0 |
+
+With the cores' function made wrong on purpose the case is 46,565 apart. The other 288 cases are each as they were at 1.197, and FacetProbe is 890 of 890.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim
