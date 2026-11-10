@@ -30,7 +30,9 @@
 //! **A table's columns are as wide as their widest cells**, narrowed in
 //! proportion when the table would not fit, a column never narrower than
 //! its longest word; a cell's lines are wrapped to its column, and a
-//! row is as tall as its tallest cell.
+//! row is as tall as its tallest cell. A cell that spans columns is as
+//! wide as they are together, with no line between them, and widens
+//! them alike when they are too narrow for it.
 //!
 //! Text without blocks is lines as they stand, wrapped when the object
 //! wraps, one step of indent for each of a line's first run's `indent`.
@@ -439,16 +441,30 @@ fn table(page: *Page, start: u32) u32 {
     const pad_x = m.part(13, 16);
     const pad_y = m.part(6, 16);
 
-    // Each column's widest cell, and its longest word.
+    // Each column's widest cell, and its longest word: the cells of one
+    // column first, then those that span several, each of which widens
+    // the columns it takes, alike, by what they lack of it - the room
+    // between them is the cell's too.
     var natural: [most_columns]i32 = @splat(0);
     var least: [most_columns]i32 = @splat(0);
     var columns: u32 = 1;
     for (blocks[start..end]) |*cell| {
-        const c = @min(cell.number, most_columns - 1);
-        columns = @max(columns, c + 1);
+        const c: u32 = @min(cell.number, most_columns - 1);
+        const across = spanOf(cell);
+        columns = @max(columns, c + across);
+        if (across > 1) continue;
         const got = flow(page, .{ .first = cell.first, .count = cell.count, .left = 0, .right = 0, .wrap = false, .tall = .prose, .dry = true });
         natural[c] = @max(natural[c], got.right);
         least[c] = @max(least[c], got.word);
+    }
+    for (blocks[start..end]) |*cell| {
+        const c: u32 = @min(cell.number, most_columns - 1);
+        const across = spanOf(cell);
+        if (across <= 1) continue;
+        const got = flow(page, .{ .first = cell.first, .count = cell.count, .left = 0, .right = 0, .wrap = false, .tall = .prose, .dry = true });
+        const between = @as(i32, @intCast(across - 1)) * (2 * pad_x + 1);
+        widen(natural[c..][0..across], got.right - between);
+        widen(least[c..][0..across], got.word - between);
     }
     var widths = natural;
     if (right > left) {
@@ -469,7 +485,12 @@ fn table(page: *Page, start: u32) u32 {
     // The rows, a cell at a time: each row's line over it, then its
     // cells, then - every other row of the body - its ground, which
     // stops short of the lines round it.
+    //
+    // The lines between the columns go from the table's top to its
+    // bottom but where a cell that spans columns stands across one: each
+    // is drawn as far as the row such a cell is in, and goes on under it.
     const top = page.y;
+    var line_from: [most_columns + 1]i32 = @splat(top);
     var body_row: u32 = 0;
     var cell_index = start;
     while (cell_index < end and page.ok) {
@@ -486,14 +507,18 @@ fn table(page: *Page, start: u32) u32 {
         while (row_end < end and blocks[row_end].flags & tdc.TDBF_ROW == 0) row_end += 1;
         var cell_lines: [most_columns]struct { first: u32, count: u32, height: i32 } = undefined;
         var tallest: i32 = 0;
+        // The lines between columns a cell of this row stands across.
+        var covered: u64 = 0;
         for (blocks[cell_index..row_end], 0..) |*cell, k| {
-            const c = @min(cell.number, most_columns - 1);
+            const c: u32 = @min(cell.number, most_columns - 1);
+            const across = spanOf(cell);
+            for (c + 1..c + across) |inner| covered |= @as(u64, 1) << @intCast(inner);
             page.y = row_top + 1 + pad_y;
             const got = flow(page, .{
                 .first = cell.first,
                 .count = cell.count,
                 .left = at[c] + 1 + pad_x,
-                .right = at[c] + 1 + pad_x + widths[c],
+                .right = at[c + across] - pad_x,
                 .wrap = true,
                 .tall = .prose,
                 .alignment = cell.alignment,
@@ -509,16 +534,43 @@ fn table(page: *Page, start: u32) u32 {
         }
         page.y = row_top + 1 + pad_y + tallest + pad_y;
         if (shaded and ground_at < page.own.deco_count) page.own.decos.?[ground_at].height = page.y - row_top - 1;
+        for (1..columns) |inner| {
+            if (covered & (@as(u64, 1) << @intCast(inner)) == 0) continue;
+            if (line_from[inner] < row_top) {
+                addDeco(page, .{ .kind = _text.DECO_FILL, .ink = _text.INK_BORDER, .x = at[inner], .y = line_from[inner], .width = 1, .height = row_top - line_from[inner] + 1 });
+            }
+            line_from[inner] = page.y;
+        }
         cell_index = row_end;
     }
     const bottom = page.y;
     page.y += 1;
     addDeco(page, .{ .kind = _text.DECO_FILL, .ink = _text.INK_BORDER, .x = left, .y = bottom, .width = table_width, .height = 1 });
     for (0..columns + 1) |c| {
-        addDeco(page, .{ .kind = _text.DECO_FILL, .ink = _text.INK_BORDER, .x = at[c], .y = top, .width = 1, .height = bottom - top + 1 });
+        if (line_from[c] > bottom) continue;
+        addDeco(page, .{ .kind = _text.DECO_FILL, .ink = _text.INK_BORDER, .x = at[c], .y = line_from[c], .width = 1, .height = bottom - line_from[c] + 1 });
     }
     page.widest = @max(page.widest, left + table_width);
     return end;
+}
+
+/// How many columns a cell takes, as far as the table's last.
+fn spanOf(cell: *const tdc.Block) u32 {
+    const c: u32 = @min(cell.number, most_columns - 1);
+    return @max(1, @min(@as(u32, cell.span), most_columns - c));
+}
+
+/// Columns widened, alike, until together they are `wanted` wide; left
+/// as they are when they already are.
+fn widen(widths: []i32, wanted: i32) void {
+    var have: i32 = 0;
+    for (widths) |w| have += w;
+    if (wanted <= have) return;
+    const count: i32 = @intCast(widths.len);
+    const lack = wanted - have;
+    for (widths, 0..) |*w, k| {
+        w.* += @divTrunc(lack, count) + @intFromBool(@as(i32, @intCast(k)) < @rem(lack, count));
+    }
 }
 
 // --- lines -------------------------------------------------------------------
@@ -852,4 +904,12 @@ pub fn lineAt(own: *const Data, x: i32, y: i32) u32 {
     }
     // Between lines: the next one down, or the last of all.
     return best orelse below orelse own.line_count - 1;
+}
+
+test "columns widened alike for a cell that spans them" {
+    var widths = [_]i32{ 10, 30, 0 };
+    widen(&widths, 50);
+    try std.testing.expectEqualSlices(i32, &.{ 14, 33, 3 }, &widths);
+    widen(&widths, 20);
+    try std.testing.expectEqualSlices(i32, &.{ 14, 33, 3 }, &widths);
 }

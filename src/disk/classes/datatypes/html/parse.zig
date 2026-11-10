@@ -21,8 +21,9 @@
 //! across, with no table inside. One that holds another table, or that
 //! is a single column, lays a page out, and its cells are read as blocks
 //! one under another. Inside a cell of a table drawn as one, what would
-//! be blocks are lines. A cell's `colspan` gives the next cell its
-//! column; a `rowspan` keeps its column taken in the rows below.
+//! be blocks are lines. A cell's `colspan` is the columns it is drawn
+//! across, and gives the next cell its column; a `rowspan` keeps its
+//! column taken in the rows below.
 //!
 //! **What is not shown is left out**: scripts and styles, an element
 //! marked `hidden`, `aria-hidden` or `display:none`, pictures drawn from
@@ -1010,6 +1011,7 @@ const Parser = struct {
         p.new_row = false;
         var block = p.blockOf(tdc.TDBLOCK_CELL);
         block.number = column;
+        block.span = @intCast(@min(across, most_columns - column));
         if (table.cells_in_row == 0) block.flags |= tdc.TDBF_ROW;
         if (!table.any_cell) {
             block.flags |= tdc.TDBF_TABLE;

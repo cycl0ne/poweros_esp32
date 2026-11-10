@@ -243,7 +243,9 @@ from then on. A document can hand over blocks too (`tdc.Block`): each
 a paragraph, a heading, a listing, a rule or a cell of a table, its
 runs, the lists and quotes it is inside, and its item's mark - a disc,
 a circle, a square, a number, a Roman numeral, a letter, or a task's
-box. With blocks the class lays the text out as GitHub lays out a
+box. A cell names its column (`number`) and how many it takes
+(`span`): one that spans several is drawn across them, and widens them
+alike when they are too narrow for it. With blocks the class lays the text out as GitHub lays out a
 README: the spaces between blocks, a rule under the first two levels of
 heading, a bar beside a quote, a ground round a listing and round code
 in a sentence (`TDSTYLE_CODE`), a table's lines and shaded rows, a
@@ -264,27 +266,29 @@ and hands over the text, the runs and the blocks. A picture is not
 fetched: what its text says it is stands in its place. `ascii.datatype`
 sets a plain file in `CODE`'s font, one run, no blocks.
 
-`html.datatype` reads a page for what its markup says and hands over the
-same three. Its elements are kept open as a browser keeps them - a `<p>`
-closed by the next block, an `<li>` by the next item, a cell by the next
-cell - and each becomes the block it is: a heading, a paragraph, a
-listing for `<pre>`, a rule, an item behind its disc or number, a quote,
-a `<dd>` set in. A table of rows two cells or more across with no table
-inside is drawn as a table, its `<th>` head row in bold; a cell after
-one with `colspan`, or under one with `rowspan`, is in the column it
-belongs in, though the spanning cell itself is drawn one column wide.
-Any other table lays a page out, and its cells are read one under
-another. Scripts, styles and what is marked `hidden`, `aria-hidden` or
-`display:none` are left out, a picture is its `alt` text in italic, a
-field or a button its label in brackets and a `<select>` its chosen
-option. The page's `<title>` is the object's `DTA_ObjName`, and a link's
-run carries the address it leads to, its spaces and what is past ASCII
-written as `%` and UTF-8's bytes. A style sheet is not read and a script
-is not run, so a page that lays itself out by its style sheet reads top
-to bottom. A page is UTF-8 unless its `<meta charset>` says Latin-1 or
-code page 1252; either way it is made Latin-1, typesetting's quotes,
-dashes, spaces and ellipsis plain ones, and any other character Latin-1
-has not - the euro sign, Greek, Cyrillic, CJK - is a `?`.
+`html.datatype` reads a page for what its markup says and hands over
+the same three. Its elements are kept open as a browser keeps them - a
+`<p>` closed by the next block, an `<li>` by the next item, a cell by
+the next cell - and each becomes the block it is: a heading, a
+paragraph, a listing for `<pre>`, a rule, an item behind its disc or
+number, a quote, a `<dd>` set in. A table of rows two cells or more
+across with no table inside is drawn as a table, its `<th>` head row in
+bold; a cell with `colspan` is drawn across its columns, and one after
+it, or under one with `rowspan`, is in the column it belongs in, though
+a cell with `rowspan` is drawn one row tall. Any other table lays a
+page out, and its cells are read one under another. Scripts, styles and
+what is marked `hidden`, `aria-hidden` or `display:none` are left out,
+a picture is its `alt` text in italic, a field or a button its label in
+brackets and a `<select>` its chosen option. The page's `<title>` is
+the object's `DTA_ObjName` and its `DTA_Title`, which a window showing
+it is called, and a link's run carries the address it leads to, its
+spaces and what is past ASCII written as `%` and UTF-8's bytes. A style
+sheet is not read and a script is not run, so a page that lays itself
+out by its style sheet reads top to bottom. A page is UTF-8 unless its
+`<meta charset>` says Latin-1 or code page 1252; either way it is made
+Latin-1, typesetting's quotes, dashes, spaces and ellipsis plain ones,
+and any other character Latin-1 has not - the euro sign, Greek,
+Cyrillic, CJK - is a `?`.
 
 ## Animations
 

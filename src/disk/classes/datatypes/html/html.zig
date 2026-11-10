@@ -5,7 +5,7 @@
 //! into the text a reader sees, the runs it is drawn as and the blocks
 //! they are in, and hands all three over with `TDTM_SETTEXT`; laying it
 //! out, drawing it, scrolling it, marking it and copying it are the
-//! superclass's. The page's `<title>` is the object's name.
+//! superclass's.
 //!
 //! It is drawn as text.datatype draws a document: headings in steps of
 //! size and in bold; paragraphs a line apart; lists under discs, circles
@@ -15,6 +15,10 @@
 //! code in a sentence on a ground of its own; a link in its own colour,
 //! underlined, with the address it leads to kept for the program to
 //! follow. How the page is read is parse.zig's.
+//!
+//! The page's `<title>` is the object's name (`DTA_ObjName`) and its
+//! title (`DTA_Title`), which is what a window it is shown in is called;
+//! a page without one keeps the title it was made with.
 //!
 //! **What is drawn is the markup's.** A style sheet is not read, a
 //! script is not run, and a picture is not fetched: what its `alt` text
@@ -53,8 +57,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "html.datatype",
     .version = 1,
-    .revision = 0,
-    .date = "09.11.2026",
+    .revision = 1,
+    .date = "10.11.2026",
     .super = tdc.TEXTDTCLASS,
     .opens = &.{tdc.TEXT_LIBRARY},
     .Instance = Data,
@@ -107,11 +111,14 @@ fn takeText(base: *Base, cl: *Class, o: *Object, document: []u8) i32 {
     };
     parse.build(from, &writing);
 
+    // The page's name, and what a window it is shown in is titled:
+    // what the page calls itself says more than its file's name does.
     const own = classes.instData(Data, cl, o);
     own.title = writing.title;
     if (writing.title_len > 0) {
         subclass.superTell(base.intuition_base, cl, o, &[_]TagItem{
             .{ .tag = dtc.DTA_ObjName, .data = @intFromPtr(&own.title) },
+            .{ .tag = dtc.DTA_Title, .data = @intFromPtr(&own.title) },
             .{},
         });
     }

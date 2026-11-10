@@ -141,7 +141,9 @@ pub const Block = extern struct {
     flags: u8 = 0,
     /// A cell's `TDALIGN_`.
     alignment: u8 = TDALIGN_LEFT,
-    pad: u8 = 0,
+    /// How many columns a cell takes, its own and those after it; 0 is
+    /// one, as 1 is (since 2.3).
+    span: u8 = 0,
     /// The number an item of a numbered list shows; a cell's column,
     /// from 0.
     number: u32 = 0,
@@ -157,7 +159,9 @@ pub const TDBLOCK_LISTING: u8 = 2;
 /// A line across, and nothing else.
 pub const TDBLOCK_RULE: u8 = 3;
 /// A cell of a table. A table is cells one after another, a row at a
-/// time; `TDBF_ROW` starts a row, and `TDBF_TABLE` the table.
+/// time; `TDBF_ROW` starts a row, and `TDBF_TABLE` the table. A cell
+/// stands in the column its `number` says, and as many after it as its
+/// `span` takes.
 pub const TDBLOCK_CELL: u8 = 4;
 
 /// What stands in front of an item.

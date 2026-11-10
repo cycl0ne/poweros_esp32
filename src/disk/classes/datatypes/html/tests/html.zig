@@ -198,7 +198,10 @@ test "a table drawn as one: its caption, head, cells, columns and row ends" {
     try testing.expectEqual(tdc.TDBF_ROW, b[3].flags);
     try testing.expectEqual(tdc.TDALIGN_RIGHT, b[4].alignment);
     try testing.expectEqual(@as(u32, 0), b[5].number);
-    // After a cell two columns wide, the next is in the third.
+    // A cell two columns wide is drawn across both, and the next is in
+    // the third.
+    try testing.expectEqual(@as(u8, 2), b[5].span);
+    try testing.expectEqual(@as(u8, 1), b[4].span);
     try testing.expectEqual(@as(u32, 2), b[6].number);
     // The wide cell takes its columns in the row below too.
     try testing.expectEqual(tdc.TDBF_ROW, b[7].flags);

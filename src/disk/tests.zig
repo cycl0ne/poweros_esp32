@@ -194,6 +194,7 @@ test {
     _ = @import("classes/datatypes/bmp/decode.zig");
     _ = @import("classes/datatypes/bmp/icon.zig");
     _ = @import("classes/datatypes/markdown/parse.zig");
+    _ = @import("classes/datatypes/text/layout.zig");
     _ = @import("classes/datatypes/html/elements.zig");
     _ = @import("classes/datatypes/html/tokens.zig");
     _ = @import("classes/datatypes/html/entities.zig");
