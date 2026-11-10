@@ -4,6 +4,7 @@
 const sdk = @import("sdk");
 const keymap = sdk.keymap;
 const ie = sdk.devices.inputevent;
+const utf8 = sdk.utility.utf8;
 const _base = @import("../commodities_base.zig");
 const CxBase = _base.CxBase;
 
@@ -20,10 +21,10 @@ fn prevKey(pair: keymap.KeyPair) i32 {
 /// fn InvertKeyMap(base: *CxBase, ansi_code: u32, event: *ie.InputEvent, key_map: ?*const keymap.KeyMap) bool
 /// ```
 ///
-/// SINCE: 1.0. LVO -112.
+/// SINCE: 1.0, any code point since 1.1. LVO -112.
 ///
 /// INPUTS:
-/// - `ansi_code` - the character, 0 to 255.
+/// - `ansi_code` - the character, a code point.
 /// - `event` - where the event goes.
 /// - `key_map` - the keymap, null for the default.
 ///
@@ -61,14 +62,15 @@ fn prevKey(pair: keymap.KeyPair) i32 {
 /// EXAMPLES:
 /// ```zig
 /// var key: ie.InputEvent = .{};
-/// if (cb.InvertKeyMap('a', &key, null)) cb.AddIEvents(&key);
+/// if (cb.InvertKeyMap('€', &key, null)) cb.AddIEvents(&key);
 /// ```
 pub fn InvertKeyMap(base: *CxBase, ansi_code: u32, event: *ie.InputEvent, key_map: ?*const keymap.KeyMap) bool {
     const kb = base.keymap_base orelse return false;
-    if (ansi_code > 0xFF) return false;
-    const character = [1]u8{@intCast(ansi_code)};
+    if (ansi_code > utf8.last) return false;
+    var character: [4]u8 = undefined;
+    const length = utf8.encode(ansi_code, &character);
     var pairs: [2]keymap.KeyPair = undefined;
-    const n = kb.MapANSI(&character, 1, &pairs, pairs.len, key_map);
+    const n = kb.MapANSI(&character, @intCast(length), &pairs, pairs.len, key_map);
     if (n != 1 and n != 2) return false;
     const key = pairs[@intCast(n - 1)];
     event.class = ie.IECLASS_RAWKEY;

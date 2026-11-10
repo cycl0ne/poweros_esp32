@@ -51,6 +51,7 @@ const exec = @import("../exec/exec.zig");
 const ie = @import("../../devices/inputevent.zig");
 const kbd = @import("../../devices/keyboard.zig");
 const keymap = @import("../keymap/keymap.zig");
+const utf8 = @import("../utility/utf8.zig");
 const InputEvent = ie.InputEvent;
 const ExecBase = @import("../../interface/exec.zig").ExecBase;
 
@@ -311,8 +312,8 @@ pub fn HotKey(cx: *CxBase, description: [*:0]const u8, port: *exec.MsgPort, id: 
     return filter;
 }
 
-/// The key events that type `string` through `key_map` (null: the
-/// default), in the string's order, from the caller's memory: each
+/// The key events that type `string`, UTF-8, through `key_map` (null:
+/// the default), in the string's order, from the caller's memory: each
 /// character by its key, `\n` and `\r` Return, `\t` Tab, `\\` a
 /// backslash, and `<description>` the event a ParseIX description names
 /// ("<alt f>"). Null for an empty string, when a character has no key or
@@ -353,9 +354,10 @@ pub fn InvertString(sys: *ExecBase, cx: *CxBase, string: [*:0]const u8, key_map:
                     event = .{ .class = ix.class, .code = ix.code, .qualifier = ix.qualifier };
                 } else made = false;
             },
-            else => |c| {
-                made = cx.InvertKeyMap(c, &event, key_map);
-                at += 1;
+            else => {
+                const typed = utf8.readZ(string + at);
+                made = cx.InvertKeyMap(typed.char, &event, key_map);
+                at += typed.length;
             },
         }
         const block = if (made) sys.AllocMem(@sizeOf(InputEvent), exec.MEMF_ANY | exec.MEMF_CLEAR) else null;

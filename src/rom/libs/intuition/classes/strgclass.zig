@@ -17,11 +17,19 @@
 //! the keymap in force is the one the rest of the machine uses, and a
 //! gadget may name another with `STRINGA_AltKeyMap`.
 //!
+//! **The text is UTF-8.** The buffer, its length and the cursor are
+//! counted in bytes - `STRINGA_MaxChars` is the room in bytes - and the
+//! cursor always stands where a character starts: it steps over a
+//! character whole, Backspace and Delete take one out whole, and a
+//! character goes in only when all of its bytes fit. A byte that is no
+//! UTF-8 is a character of its own, as graphics draws it.
+//!
 //! `STRINGA_Secret` makes it a password field: an asterisk is drawn for
 //! each character of the text, and where the line scrolls to and what a
 //! press lands on are measured on those asterisks rather than on the
-//! characters they stand for. The buffer holds what was typed as it
-//! always does.
+//! characters they stand for - the positions in the buffer turned into
+//! positions among the asterisks and back. The buffer holds what was
+//! typed as it always does.
 //!
 //! A key is edited in two steps (`sghooks.zig`): the text is copied into
 //! the work buffer, the global edit hook - `defaultEdit` here, until
@@ -42,6 +50,7 @@ const sg = intuition.sghooks;
 const sc = intuition.screens;
 const ie = sdk.devices.inputevent;
 const km = sdk.keymap;
+const utf8 = utility.utf8;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
@@ -55,11 +64,13 @@ const d = @import("draw.zig");
 
 /// strgclass's part of an object.
 pub const Data = extern struct {
-    /// What is being typed into, and how much room it has.
+    /// What is being typed into, and how much room it has in bytes.
     buffer: ?[*]u8 = null,
     undo: ?[*]u8 = null,
     max_chars: u32 = gc.SG_DEFAULTMAXCHARS,
-    /// Where the cursor is and which character is shown first.
+    /// Where the cursor is and which character is shown first, and the
+    /// text's length: bytes into the buffer, each where a character
+    /// starts.
     buffer_pos: u32 = 0,
     disp_pos: u32 = 0,
     num_chars: u32 = 0,
@@ -91,8 +102,9 @@ pub const Data = extern struct {
     /// `STRINGA_Font`: the font the text is drawn in, which the caller
     /// keeps open; null takes the RastPort's.
     font: ?*graphics.TextFont = null,
-    /// How many characters the last drawing showed, and how far in from
-    /// the box's left edge the text began: where a press is measured from.
+    /// How many bytes of the text drawn the last drawing showed - of the
+    /// asterisks, while it is secret - and how far in from the box's left
+    /// edge the text began: where a press is measured from.
     disp_count: u32 = 0,
     text_left: i32 = 2,
     /// `STRINGA_Secret`: what is typed is not shown.
@@ -150,6 +162,45 @@ fn textLen(s: [*]const u8, max: u32) u32 {
     return n;
 }
 
+/// The bytes the character at `at` of `text` (`len` bytes, `at` before
+/// its end) takes.
+fn charLength(text: [*]const u8, len: u32, at: u32) u32 {
+    return @intCast(utf8.read(text[at..len]).length);
+}
+
+/// Where the character before `at` (above 0) starts.
+fn charBefore(text: [*]const u8, at: u32) u32 {
+    return at - @as(u32, @intCast(utf8.readLast(text[0..at]).length));
+}
+
+/// How many characters the first `len` bytes of `text` hold.
+fn charCount(text: [*]const u8, len: u32) u32 {
+    var count: u32 = 0;
+    var at: u32 = 0;
+    while (at < len) : (count += 1) at += charLength(text, len, at);
+    return count;
+}
+
+/// Where the `index`th character of `text` (`len` bytes) starts, or `len`
+/// past its last.
+fn charStart(text: [*]const u8, len: u32, index: u32) u32 {
+    var at: u32 = 0;
+    var left = index;
+    while (left > 0 and at < len) : (left -= 1) at += charLength(text, len, at);
+    return at;
+}
+
+/// `from` copied into `into`, as much as fits in `max` bytes with the NUL
+/// and without ending inside a character; its length.
+fn copyText(into: [*]u8, from: [*]const u8, max: u32) u32 {
+    const len = textLen(from, max);
+    const kept: u32 = @intCast(utf8.cut(from[0..len], max -| 1));
+    var i: u32 = 0;
+    while (i < kept) : (i += 1) into[i] = from[i];
+    into[kept] = 0;
+    return kept;
+}
+
 /// The text as a number, which a gadget holding one is read by.
 fn numberOf(s: [*]const u8, len: u32) i32 {
     var i: u32 = 0;
@@ -180,32 +231,45 @@ fn textChanged(p: *Data) void {
 /// The tallest a line is measured against: TextFit asks for a height too.
 const any_height = 0x7FFF;
 
-/// Which character is shown first and how many are, in `room` pixels, so
-/// that the cursor is always one of them, measured in the RastPort's font
-/// a character at a time: a proportional font's narrow letters let more
-/// of the line show than its widest would. `extra` is kept free at the
-/// right for the cursor when it stands past the last character.
-fn scrollTo(gb: *GraphicsBase, rp: *graphics.RastPort, p: *Data, buffer: [*]const u8, room: i32, extra: i32) u32 {
+/// The text as it is drawn and measured: the buffer itself, or an
+/// asterisk for each of its characters while the field is secret. Its
+/// length, its cursor and its first shown byte, in its own bytes.
+const Shown = struct {
+    text: [*]const u8,
+    len: u32,
+    cursor: u32,
+    first: u32,
+};
+
+/// Which byte of the text drawn is shown first, kept in `view.first`, and
+/// how many are, in `room` pixels, so that the cursor is always among
+/// them, measured in the RastPort's font a character at a time: a
+/// proportional font's narrow letters let more of the line show than its
+/// widest would. `extra` is kept free at the right for the cursor when it
+/// stands past the last character.
+fn scrollTo(gb: *GraphicsBase, rp: *graphics.RastPort, view: *Shown, room: i32, extra: i32) u32 {
     var te: graphics.TextExtent = undefined;
     const avail = @max(room - extra, 1);
-    if (p.num_chars == 0) {
-        p.disp_pos = 0;
+    const text = view.text;
+    const len = view.len;
+    if (len == 0) {
+        view.first = 0;
         return 0;
     }
-    if (p.buffer_pos < p.disp_pos) p.disp_pos = p.buffer_pos;
-    p.disp_pos = @min(p.disp_pos, p.num_chars);
-    var shown = gb.TextFit(rp, buffer + p.disp_pos, p.num_chars - p.disp_pos, &te, null, 1, avail, any_height);
+    if (view.cursor < view.first) view.first = view.cursor;
+    view.first = @min(view.first, len);
+    var shown = gb.TextFit(rp, text + view.first, len - view.first, &te, null, 1, avail, any_height);
     // Everything up to the cursor, and the character under it, shows.
-    const needed = @min(p.buffer_pos + 1, p.num_chars);
-    if (p.disp_pos + shown < needed) {
-        const back = gb.TextFit(rp, buffer + needed - 1, needed, &te, null, -1, avail, any_height);
-        p.disp_pos = needed - @max(back, 1);
-        shown = gb.TextFit(rp, buffer + p.disp_pos, p.num_chars - p.disp_pos, &te, null, 1, avail, any_height);
-    } else if (p.disp_pos > 0 and p.disp_pos + shown >= p.num_chars) {
+    const needed = if (view.cursor < len) view.cursor + charLength(text, len, view.cursor) else len;
+    if (view.first + shown < needed) {
+        const back = gb.TextFit(rp, text + needed - 1, needed, &te, null, -1, avail, any_height);
+        view.first = if (back > 0) needed - back else charBefore(text, needed);
+        shown = gb.TextFit(rp, text + view.first, len - view.first, &te, null, 1, avail, any_height);
+    } else if (view.first > 0 and view.first + shown >= len) {
         // Scrolled further than the end needs: as much as fits is shown.
-        const back = gb.TextFit(rp, buffer + p.num_chars - 1, p.num_chars, &te, null, -1, avail, any_height);
-        p.disp_pos = p.num_chars - @max(back, 1);
-        shown = @max(back, 1);
+        const back = gb.TextFit(rp, text + len - 1, len, &te, null, -1, avail, any_height);
+        view.first = if (back > 0) len - back else charBefore(text, len);
+        shown = len - view.first;
     }
     return shown;
 }
@@ -223,43 +287,54 @@ const raw_help = 0x5F;
 /// keymap makes it a string (CSI Z), which is no one character.
 const raw_tab = 0x42;
 
-/// A character in at the cursor, or over the one there; false when there is
-/// no room, or a fixed field has none to replace.
-fn workPut(w: *sg.SGWork, c: u8) bool {
+/// A character in at the cursor, in UTF-8, or over the one there; false
+/// when its bytes do not all fit, or a fixed field has none to replace.
+fn workPut(w: *sg.SGWork, c: u32) bool {
+    var bytes: [4]u8 = undefined;
+    const length: u32 = @intCast(utf8.encode(c, &bytes));
     const replacing = w.modes & (sg.SGM_REPLACE | sg.SGM_FIXEDFIELD) != 0;
     if (replacing and w.buffer_pos < w.num_chars) {
-        w.work_buffer[w.buffer_pos] = c;
-        w.buffer_pos += 1;
+        const old = charLength(w.work_buffer, w.num_chars, w.buffer_pos);
+        if (w.num_chars - old + length >= w.max_chars) return false;
+        workTake(w, w.buffer_pos);
+        workInsert(w, bytes[0..length]);
         w.edit_op = sg.EO_REPLACECHAR;
         return true;
     }
     if (w.modes & sg.SGM_FIXEDFIELD != 0) return false;
-    if (w.num_chars + 1 >= w.max_chars) return false;
-    var i = w.num_chars;
-    while (i > w.buffer_pos) : (i -= 1) w.work_buffer[i] = w.work_buffer[i - 1];
-    w.work_buffer[w.buffer_pos] = c;
-    w.num_chars += 1;
-    w.work_buffer[w.num_chars] = 0;
-    w.buffer_pos += 1;
+    if (w.num_chars + length >= w.max_chars) return false;
+    workInsert(w, bytes[0..length]);
     w.edit_op = sg.EO_INSERTCHAR;
     return true;
 }
 
-/// The character at `at` taken out.
+/// `bytes` in at the cursor, which moves past them; there is room.
+fn workInsert(w: *sg.SGWork, bytes: []const u8) void {
+    const length: u32 = @intCast(bytes.len);
+    var i = w.num_chars;
+    while (i > w.buffer_pos) : (i -= 1) w.work_buffer[i - 1 + length] = w.work_buffer[i - 1];
+    for (bytes, 0..) |byte, k| w.work_buffer[w.buffer_pos + k] = byte;
+    w.num_chars += length;
+    w.work_buffer[w.num_chars] = 0;
+    w.buffer_pos += length;
+}
+
+/// The character at `at` taken out, all its bytes.
 fn workTake(w: *sg.SGWork, at: u32) void {
     if (at >= w.num_chars) return;
+    const length = charLength(w.work_buffer, w.num_chars, at);
     var i = at;
-    while (i < w.num_chars) : (i += 1) w.work_buffer[i] = w.work_buffer[i + 1];
-    w.num_chars -= 1;
+    while (i + length <= w.num_chars) : (i += 1) w.work_buffer[i] = w.work_buffer[i + length];
+    w.num_chars -= length;
 }
 
 /// Intuition's own editing: the global edit hook until `SetEditHook` puts
 /// another. It edits the work for `SGH_KEY` and answers 0 for anything
-/// else. What the keys do: the cursor keys, Home and End move, and a
-/// cursor key with Shift goes to the start or the end; Backspace and
-/// Delete take a character out, and with Shift everything before the
-/// cursor or after it; a character goes in, or over the one
-/// at the cursor in replace mode; Return ends the gadget, Tab ends it and
+/// else. What the keys do: the cursor keys, Home and End move a
+/// character at a time, and a cursor key with Shift goes to the start or
+/// the end; Backspace and Delete take a character out, all its bytes, and
+/// with Shift everything before the cursor or after it; a character goes
+/// in, in UTF-8, or over the one at the cursor in replace mode; Return ends the gadget, Tab ends it and
 /// moves on (Shift-Tab back), Escape puts back what was there when it was
 /// activated and ends it; Help ends it in `SGM_EXITHELP`. A fixed field
 /// keeps its length: characters only replace, Backspace only moves back.
@@ -275,8 +350,8 @@ pub fn defaultEdit(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaqu
     switch (e.code) {
         raw_left, raw_right, raw_home, raw_end => {
             w.buffer_pos = switch (e.code) {
-                raw_left => if (shifted) 0 else w.buffer_pos -| 1,
-                raw_right => if (shifted) w.num_chars else @min(w.buffer_pos + 1, w.num_chars),
+                raw_left => if (shifted or w.buffer_pos == 0) 0 else charBefore(w.work_buffer, w.buffer_pos),
+                raw_right => if (shifted or w.buffer_pos >= w.num_chars) w.num_chars else w.buffer_pos + charLength(w.work_buffer, w.num_chars, w.buffer_pos),
                 raw_home => 0,
                 else => w.num_chars,
             };
@@ -315,12 +390,11 @@ pub fn defaultEdit(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaqu
             w.actions |= sg.SGA_END;
         },
         0x1B => {
-            // Back to what it was when it was activated.
-            var i: u32 = 0;
-            while (i + 1 < w.max_chars and w.undo_buffer[i] != 0) : (i += 1) w.work_buffer[i] = w.undo_buffer[i];
-            w.work_buffer[i] = 0;
+            // Back to what it was when it was activated, the cursor at its
+            // end - where it was may be inside a character now.
+            const i = copyText(w.work_buffer, w.undo_buffer, w.max_chars);
             w.num_chars = i;
-            w.buffer_pos = @min(w.buffer_pos, i);
+            w.buffer_pos = i;
             w.edit_op = sg.EO_RESET;
             w.code = e.code;
             w.actions |= sg.SGA_END;
@@ -334,15 +408,14 @@ pub fn defaultEdit(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaqu
         },
         0x08 => {
             if (w.buffer_pos == 0) return 1;
-            const count: u32 = if (shifted) w.buffer_pos else 1;
+            const to: u32 = if (shifted) 0 else charBefore(w.work_buffer, w.buffer_pos);
             if (fixed) {
-                w.buffer_pos -= count;
+                w.buffer_pos = to;
                 w.edit_op = sg.EO_MOVECURSOR;
                 w.actions |= sg.SGA_REDISPLAY;
             } else {
-                var left = count;
-                while (left > 0) : (left -= 1) {
-                    w.buffer_pos -= 1;
+                while (w.buffer_pos > to) {
+                    w.buffer_pos = charBefore(w.work_buffer, w.buffer_pos);
                     workTake(w, w.buffer_pos);
                 }
                 w.edit_op = sg.EO_DELBACKWARD;
@@ -355,7 +428,7 @@ pub fn defaultEdit(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaqu
         },
         else => {
             if (c < 0x20 and w.modes & sg.SGM_NOFILTER == 0) return 1;
-            if (!workPut(w, @truncate(c))) w.actions |= sg.SGA_BEEP;
+            if (!workPut(w, c)) w.actions |= sg.SGA_BEEP;
         },
     }
     w.long_int = numberOf(w.work_buffer, w.num_chars);
@@ -471,11 +544,13 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     const space_w = gb.TextLength(rp, " ", 1);
     const past_end = p.buffer_pos >= p.num_chars;
     const extra: i32 = if (past_end) space_w else 0;
-    const shown = scrollTo(gb, rp, p, text, inner_w, extra);
+    var view = shownView(p, text);
+    const shown = scrollTo(gb, rp, &view, inner_w, extra);
+    p.disp_pos = bufferAt(p, view.first);
     p.disp_count = shown;
 
     const caret_w: i32 = if (p.active != 0 and past_end) space_w else 0;
-    const text_w: i32 = gb.TextLength(rp, text + p.disp_pos, shown) + caret_w;
+    const text_w: i32 = gb.TextLength(rp, text + view.first, shown) + caret_w;
     const left = switch (p.justification) {
         gc.GACT_STRINGCENTER => b.left + 2 + @divTrunc(inner_w - text_w, 2),
         gc.GACT_STRINGRIGHT => b.left + 2 + inner_w - text_w,
@@ -487,18 +562,19 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     if (shown > 0) {
         d.pen(gb, rp, ink);
         gb.Move(rp, left, top + @as(i32, @intCast(baseline)));
-        gb.Text(rp, text + p.disp_pos, shown);
+        gb.Text(rp, text + view.first, shown);
     }
     // The cursor, while it is being typed into: the cell the next
     // character goes in, the other way round.
     if (p.active == 0) return;
-    const cursor_x = left + gb.TextLength(rp, text + p.disp_pos, p.buffer_pos - p.disp_pos);
-    const cursor_w: i32 = if (past_end) space_w else gb.TextLength(rp, text + p.buffer_pos, 1);
+    const cursor_x = left + gb.TextLength(rp, text + view.first, view.cursor - view.first);
+    const under = if (past_end) 0 else charLength(text, view.len, view.cursor);
+    const cursor_w: i32 = if (past_end) space_w else gb.TextLength(rp, text + view.cursor, under);
     d.box(gb, rp, cursor_x, top, @max(cursor_w, 1), @intCast(height), ink);
-    if (p.buffer_pos < p.num_chars) {
+    if (!past_end) {
         d.pen(gb, rp, paper);
         gb.Move(rp, cursor_x, top + @as(i32, @intCast(baseline)));
-        gb.Text(rp, text + p.buffer_pos, 1);
+        gb.Text(rp, text + view.cursor, under);
     }
 }
 
@@ -536,9 +612,7 @@ fn keepUndo(p: *Data) void {
 fn restoreUndo(p: *Data) void {
     const buffer = p.buffer orelse return;
     const undo = p.undo orelse return;
-    var i: u32 = 0;
-    while (i + 1 < p.max_chars and undo[i] != 0) : (i += 1) buffer[i] = undo[i];
-    buffer[i] = 0;
+    _ = copyText(buffer, undo, p.max_chars);
     textChanged(p);
 }
 
@@ -566,9 +640,7 @@ fn takeTags(ib: *IntuitionBase, p: *Data, tags: ?[*]const TagItem, at_birth: boo
                     // The text itself, copied into whatever buffer there is.
                     const from: [*:0]const u8 = @ptrFromInt(item.data);
                     const into = p.buffer orelse continue;
-                    var i: u32 = 0;
-                    while (i + 1 < p.max_chars and from[i] != 0) : (i += 1) into[i] = from[i];
-                    into[i] = 0;
+                    _ = copyText(into, from, p.max_chars);
                     p.buffer_pos = 0;
                     p.disp_pos = 0;
                 }
@@ -586,11 +658,11 @@ fn takeTags(ib: *IntuitionBase, p: *Data, tags: ?[*]const TagItem, at_birth: boo
                 }
             },
             gc.STRINGA_BufferPos => {
-                p.buffer_pos = @min(@as(u32, @truncate(item.data)), p.num_chars);
+                p.buffer_pos = startAt(p, @truncate(item.data));
                 changed = true;
             },
             gc.STRINGA_DispPos => {
-                p.disp_pos = @truncate(item.data);
+                p.disp_pos = startAt(p, @truncate(item.data));
                 changed = true;
             },
             gc.STRINGA_AltKeyMap => {
@@ -673,17 +745,49 @@ fn cursorTo(ib: *IntuitionBase, p: *Data, gi: ?*classusr.GadgetInfo, x: i32) voi
     const port = it.ObtainGIRPort(gi) orelse return;
     defer it.ReleaseGIRPort(port);
     if (p.font) |font| graphics.SetFont(gb, port, font);
+    const view = shownView(p, text);
     const click = x - p.text_left;
-    var index: u32 = 0;
-    if (click > 0 and p.num_chars > p.disp_pos) {
+    var at = view.first;
+    if (click > 0 and view.len > view.first) {
         var te: graphics.TextExtent = undefined;
-        index = gb.TextFit(port, text + p.disp_pos, p.num_chars - p.disp_pos, &te, null, 1, click, any_height);
-        if (p.disp_count > 0 and index >= p.disp_count) {
-            index = p.disp_count - 1;
-            if (p.disp_pos + index == p.num_chars - 1) index += 1;
+        at += gb.TextFit(port, text + view.first, view.len - view.first, &te, null, 1, click, any_height);
+        // Past the last character shown: on it, or after it when it ends
+        // the text.
+        const shown_end = view.first + p.disp_count;
+        if (p.disp_count > 0 and at >= shown_end) {
+            at = if (shown_end >= view.len) view.len else charBefore(text, shown_end);
         }
     }
-    p.buffer_pos = @min(p.disp_pos + index, p.num_chars);
+    p.buffer_pos = bufferAt(p, @min(at, view.len));
+}
+
+/// The text drawn, with the cursor and the first byte shown in its
+/// bytes.
+fn shownView(p: *const Data, text: [*]const u8) Shown {
+    if (p.secret == 0) return .{ .text = text, .len = p.num_chars, .cursor = p.buffer_pos, .first = p.disp_pos };
+    const buffer = p.buffer.?;
+    return .{
+        .text = text,
+        .len = charCount(buffer, p.num_chars),
+        .cursor = charCount(buffer, p.buffer_pos),
+        .first = charCount(buffer, @min(p.disp_pos, p.num_chars)),
+    };
+}
+
+/// A byte of the text drawn as the byte of the buffer it stands for:
+/// itself, or while the field is secret the start of the character its
+/// asterisk stands for.
+fn bufferAt(p: *const Data, shown: u32) u32 {
+    if (p.secret == 0) return shown;
+    return charStart(p.buffer.?, p.num_chars, shown);
+}
+
+/// A position a program gave, as far as the text goes and moved back to
+/// where the character it falls in starts.
+fn startAt(p: *const Data, at: u32) u32 {
+    const buffer = p.buffer orelse return 0;
+    const within = @min(at, p.num_chars);
+    return @intCast(utf8.cut(buffer[0..p.num_chars], within));
 }
 
 fn setMode(p: *Data, bits: u32, on: bool) void {
@@ -722,7 +826,7 @@ fn textShown(ib: *IntuitionBase, p: *Data) ?[*]const u8 {
         p.mask = @ptrCast(memory);
     }
     const mask = p.mask.?;
-    const count = @min(p.num_chars, p.max_chars);
+    const count = @min(charCount(buffer, p.num_chars), p.max_chars);
     @memset(mask[0..count], mask_char);
     mask[count] = 0;
     return mask;
@@ -734,7 +838,7 @@ fn editKey(ib: *IntuitionBase, cl: *Class, o: *Object, p: *Data, in: *gc.GpInput
     var code: u32 = 0;
     if (ib.keymap_base) |kb| {
         var text: [16]u8 = undefined;
-        if (kb.MapRawKey(e, &text, text.len, p.key_map) == 1) code = text[0];
+        code = km.character(&text, kb.MapRawKey(e, &text, text.len, p.key_map)) orelse 0;
     }
     var w = startWork(o, p, e, code, in.gadget_info) orelse return gc.GMR_MEACTIVE;
     var command: u32 = sg.SGH_KEY;

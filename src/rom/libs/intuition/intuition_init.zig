@@ -239,7 +239,7 @@ pub const LIBRARY_VERSION = 0;
 /// while a flight has to be followed across the screen.
 /// 87: the mark of an item with subitems is written in UTF-8, as every
 /// text graphics draws.
-pub const LIBRARY_REVISION = 87;
+pub const LIBRARY_REVISION = 88;
 const BUILD_DATE = "10.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

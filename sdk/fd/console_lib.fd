@@ -16,9 +16,9 @@
 /// next on input.device's chain still sees them. The device's own handler
 /// is this call.
 ?*ie.InputEvent CDInputHandler(?*ie.InputEvent events)
-/// The characters a list of key events makes, into `buffer` (room for
-/// `length`): how many, or -1 when they did not fit. `key_map` null is
-/// keymap.library's default.
+/// The characters a list of key events makes, into `buffer` in UTF-8
+/// (room for `length` bytes): how many bytes, or -1 when they did not
+/// fit. `key_map` null is keymap.library's default.
 i32 RawKeyConvert(?*const ie.InputEvent events, [*]u8 buffer, i32 length, ?*const keymap.KeyMap key_map)
 /// A copy of what was last selected in a console window, NUL terminated
 /// and allocated with AllocVec - the caller frees it - or null when

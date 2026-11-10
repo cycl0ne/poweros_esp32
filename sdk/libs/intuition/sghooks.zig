@@ -21,8 +21,8 @@ const InputEvent = @import("../../devices/inputevent.zig").InputEvent;
 pub const SGWork = extern struct {
     /// The gadget.
     gadget: *Object,
-    /// The text as the edit would have it: change it here. As long as the
-    /// gadget's buffer, `max_chars` bytes, NUL included.
+    /// The text as the edit would have it, UTF-8: change it here. As long
+    /// as the gadget's buffer, `max_chars` bytes, NUL included.
     work_buffer: [*]u8,
     /// The text as it is, before this key.
     prev_buffer: [*]const u8,
@@ -34,11 +34,13 @@ pub const SGWork = extern struct {
     modes: u32,
     /// The key, as it came. Not to be changed.
     event: *const InputEvent,
-    /// The character the key makes, when it makes exactly one, else 0.
+    /// The character the key makes, its code point, when it makes exactly
+    /// one, else 0.
     /// When the edit ends the gadget (`SGA_END`), what the program is told
     /// as IDCMP_GADGETUP's code.
     code: u32,
-    /// The cursor and the length, as the edit would have them.
+    /// The cursor and the length, as the edit would have them: bytes, the
+    /// cursor where a character starts.
     buffer_pos: u32,
     num_chars: u32,
     /// `SGA_` bits: what is done with the work.

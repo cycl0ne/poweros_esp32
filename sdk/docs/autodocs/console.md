@@ -11,7 +11,7 @@ Generated from the source by `./zig build autodoc`.
 - [AddSnipHook](#addsniphook) - Call `hook` whenever a console window's selection is finished, so that a program can carry the text away - to a clipboard, say.
 - [CDInputHandler](#cdinputhandler) - Hand input events to the consoles: a key goes to the console of the window that is active, through that unit's keymap, and a window event (`IECLASS_EVENT`, `IECLASS_ACTIVEWINDOW`, `IECLASS_INACTIVEWINDOW`) to the console of the window it names.
 - [GetConSnip](#getconsnip) - A copy of what was last selected in a console window, NUL terminated and allocated with AllocVec - the caller frees it - or null when nothing is selected and nothing was put there.
-- [RawKeyConvert](#rawkeyconvert) - The characters a list of key events makes, into `buffer` (room for `length`): how many, or -1 when they did not fit.
+- [RawKeyConvert](#rawkeyconvert) - The characters a list of key events makes, into `buffer` in UTF-8 (room for `length` bytes): how many bytes, or -1 when they did not fit.
 - [RemSnipHook](#remsniphook) - Take a hook off again.
 - [SetConSnip](#setconsnip) - What a paste is to give from now on; it is copied.
 
@@ -60,7 +60,7 @@ A copy of what was last selected in a console window, NUL terminated and allocat
 
 ## RawKeyConvert
 
-The characters a list of key events makes, into `buffer` (room for `length`): how many, or -1 when they did not fit.
+The characters a list of key events makes, into `buffer` in UTF-8 (room for `length` bytes): how many bytes, or -1 when they did not fit.
 
 **SYNOPSIS**
 

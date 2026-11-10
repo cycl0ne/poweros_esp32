@@ -3710,6 +3710,15 @@ fn shiftedKey(ib: *IntuitionBase, code: u32) void {
     _input.handle(ib, &up);
 }
 
+/// A key pressed and let go with `qualifier` held.
+fn heldKey(ib: *IntuitionBase, code: u32, qualifier: u32) void {
+    const ie = sdk.devices.inputevent;
+    const down: ie.InputEvent = .{ .class = ie.IECLASS_RAWKEY, .code = code, .qualifier = qualifier };
+    _input.handle(ib, &down);
+    const up: ie.InputEvent = .{ .class = ie.IECLASS_RAWKEY, .code = code | ie.IECODE_UP_PREFIX, .qualifier = qualifier };
+    _input.handle(ib, &up);
+}
+
 fn getAttr(ib: *IntuitionBase, o: *Object, attr: utility.Tag) usize {
     var value: usize = 0;
     _ = ib.iface().GetAttr(attr, o, &value);
@@ -4047,6 +4056,84 @@ test "a string gadget: typed into, moved about - Shift to the ends - finished an
     _ = ib.iface().SetGadgetAttrsTagList(field, @ptrCast(@alignCast(w)), &set);
     try testing.expectEqualStrings("-42", std.mem.span(buffer));
     try testing.expectEqual(@as(isize, -42), @as(isize, @bitCast(getAttr(ib, field, gc.STRINGA_LongVal))));
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    ib.iface().CloseWindow(w);
+    try testing.expect(ib.iface().CloseScreen(screen));
+    it.DisposeObject(field);
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "a string gadget: UTF-8 in whole, stepped over and taken out whole, and only when it fits" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // Eight bytes, the NUL among them.
+    const field = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 4 },
+        .{ .tag = gc.GA_Top, .data = 4 },
+        .{ .tag = gc.GA_Width, .data = 50 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = 8 },
+        .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr("a") },
+        .{},
+    }).?;
+    const w = ib.iface().OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 28 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(field) },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+    const buffer: [*:0]const u8 = @ptrFromInt(getAttr(ib, field, gc.STRINGA_Buffer));
+    pointerEvent(ib, ie.IECODE_LBUTTON, 40, 12 + 8);
+    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 40, 12 + 8);
+
+    // ü has a key of its own on the default keymap, € is AltGr and e.
+    rawKey(ib, 0x1A);
+    heldKey(ib, 0x12, ie.IEQUALIFIER_RALT);
+    try testing.expectEqualStrings("aü€", std.mem.span(buffer));
+    try testing.expectEqual(@as(usize, 6), getAttr(ib, field, gc.STRINGA_BufferPos));
+
+    // Left steps over a character, all its bytes: twice is before the ü.
+    rawKey(ib, 0x4F);
+    rawKey(ib, 0x4F);
+    try testing.expectEqual(@as(usize, 1), getAttr(ib, field, gc.STRINGA_BufferPos));
+    rawKey(ib, 0x33); // c
+    try testing.expectEqualStrings("acü€", std.mem.span(buffer));
+
+    // Seven bytes: a € more would not fit with the NUL, and stays out.
+    heldKey(ib, 0x12, ie.IEQUALIFIER_RALT);
+    try testing.expectEqualStrings("acü€", std.mem.span(buffer));
+
+    // Delete takes the ü out whole, Backspace at the end the €.
+    rawKey(ib, 0x46);
+    try testing.expectEqualStrings("ac€", std.mem.span(buffer));
+    rawKey(ib, 0x4E);
+    try testing.expectEqual(@as(usize, 5), getAttr(ib, field, gc.STRINGA_BufferPos));
+    rawKey(ib, 0x41);
+    try testing.expectEqualStrings("ac", std.mem.span(buffer));
+
+    // A position set inside a character goes back to where it starts.
+    const set = [_]TagItem{
+        .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr("ü€") },
+        .{ .tag = gc.STRINGA_BufferPos, .data = 4 },
+        .{},
+    };
+    _ = ib.iface().SetGadgetAttrsTagList(field, @ptrCast(@alignCast(w)), &set);
+    try testing.expectEqual(@as(usize, 2), getAttr(ib, field, gc.STRINGA_BufferPos));
+    // A text longer than the room is cut where a character starts.
+    const long = [_]TagItem{ .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr("ab€€") }, .{} };
+    _ = ib.iface().SetGadgetAttrsTagList(field, @ptrCast(@alignCast(w)), &long);
+    try testing.expectEqualStrings("ab€", std.mem.span(buffer));
 
     const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
     ib.iface().CloseWindow(w);

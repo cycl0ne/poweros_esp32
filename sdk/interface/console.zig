@@ -53,9 +53,9 @@ pub const ConsoleBase = opaque {
         return libraries.call(self, LVO.CDInputHandler, Fn.CDInputHandler, .{events});
     }
 
-    /// The characters a list of key events makes, into `buffer` (room for
-    /// `length`): how many, or -1 when they did not fit. `key_map` null is
-    /// keymap.library's default.
+    /// The characters a list of key events makes, into `buffer` in UTF-8
+    /// (room for `length` bytes): how many bytes, or -1 when they did not
+    /// fit. `key_map` null is keymap.library's default.
     pub fn RawKeyConvert(self: *ConsoleBase, events: ?*const ie.InputEvent, buffer: [*]u8, length: i32, key_map: ?*const keymap.KeyMap) i32 {
         return libraries.call(self, LVO.RawKeyConvert, Fn.RawKeyConvert, .{ events, buffer, length, key_map });
     }

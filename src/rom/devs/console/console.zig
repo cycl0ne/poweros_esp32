@@ -4,8 +4,8 @@
 //! A unit is a window's console: `CMD_WRITE` is a stream of characters in
 //! UTF-8 and control sequences drawn into it (`term.zig` keeps the cells,
 //! `render.zig` draws them), `CMD_READ` the keys typed into that window,
-//! through keymap.library, in UTF-8 as well. `CONU_CHARMAP` keeps the text, so it puts it back itself
-//! when the window is uncovered or sized; `CONU_STANDARD` keeps none and
+//! in the UTF-8 keymap.library gives. `CONU_CHARMAP` keeps the text, so it
+//! puts it back itself when the window is uncovered or sized; `CONU_STANDARD` keeps none and
 //! leaves that to the program. A key typed with right-Amiga held is a
 //! command, never text: right-Amiga-C and -V copy and paste, and any other
 //! is left to intuition, which takes it for a menu shortcut of the
@@ -46,7 +46,7 @@ const render = @import("render.zig");
 
 pub const DEVICE_NAME = con.CONSOLENAME;
 const DEVICE_VERSION = 0;
-const DEVICE_REVISION = 5;
+const DEVICE_REVISION = 6;
 const BUILD_DATE = "10.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -403,25 +403,12 @@ fn unitOfWindow(cb: *ConsoleBase, window: ?*anyopaque) ?*Unit {
     return null;
 }
 
-/// A key's characters, in UTF-8, with the cursor keys in their application
-/// form when the terminal asked for it. `buf` holds twice what the keymap
-/// may give, since its characters are a byte each and one past 0x7F takes
-/// two in UTF-8.
+/// A key's characters, in UTF-8 as the keymap gives them, with the cursor
+/// keys in their application form when the terminal asked for it.
 fn keyBytes(cb: *ConsoleBase, u: *Unit, e: *const ie.InputEvent, buf: []u8) usize {
-    var mapped: [16]u8 = undefined;
-    const n = cb.keymap_base.MapRawKey(e, &mapped, @intCast(@min(mapped.len, buf.len / 2)), &u.key_map);
+    const n = cb.keymap_base.MapRawKey(e, buf.ptr, @intCast(buf.len), &u.key_map);
     if (n <= 0) return 0;
-    var len: usize = 0;
-    for (mapped[0..@intCast(n)]) |byte| {
-        if (byte < 0x80) {
-            buf[len] = byte;
-            len += 1;
-        } else {
-            buf[len] = 0xC0 | byte >> 6;
-            buf[len + 1] = 0x80 | (byte & 0x3F);
-            len += 2;
-        }
-    }
+    const len: usize = @intCast(n);
     if (u.grid.app_cursor and len == 3 and buf[0] == 0x1B and buf[1] == '[') {
         switch (buf[2]) {
             'A', 'B', 'C', 'D' => buf[1] = 'O',
@@ -726,8 +713,8 @@ fn handleEvents(cb: *ConsoleBase, events: ?*ie.InputEvent) void {
                     paste(cb, u);
                     continue;
                 }
-                if (e.qualifier & ie.IEQUALIFIER_RCOMMAND != 0 and n == 1) {
-                    switch (buf[0]) {
+                if (e.qualifier & ie.IEQUALIFIER_RCOMMAND != 0) {
+                    if (km.character(&buf, @intCast(n))) |typed| switch (typed) {
                         'v', 'V' => {
                             paste(cb, u);
                             continue;
@@ -738,7 +725,7 @@ fn handleEvents(cb: *ConsoleBase, events: ?*ie.InputEvent) void {
                             continue;
                         },
                         else => continue,
-                    }
+                    };
                 }
                 if (n == 0) continue;
                 sys.AcquireLock(&cb.lock);

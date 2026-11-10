@@ -14,10 +14,10 @@ const KeymapBase = @import("keymap_base.zig").KeymapBase;
 /// fn MapANSI(kb: *KeymapBase, string: [*]const u8, count: i32, buffer: [*]keymap.KeyPair, length: i32, key_map: ?*const keymap.KeyMap) i32
 /// ```
 ///
-/// SINCE: 0.1. LVO -32.
+/// SINCE: 0.1, UTF-8 since 0.2. LVO -32.
 ///
 /// INPUTS:
-/// - `string`, `count` - the characters.
+/// - `string`, `count` - the characters, in UTF-8, and how many bytes.
 /// - `buffer` - where the rawkey/qualifier pairs go.
 /// - `length` - how many pairs it has room for.
 /// - `key_map` - the keymap, or null for the default.
@@ -52,7 +52,7 @@ const KeymapBase = @import("keymap_base.zig").KeymapBase;
 /// EXAMPLES:
 /// ```zig
 /// var keys: [8]KeyPair = undefined;
-/// const n = kb.MapANSI("Hi", 2, &keys, keys.len, null);
+/// const n = kb.MapANSI("Hi €", 6, &keys, keys.len, null);
 /// ```
 pub fn MapANSI(kb: *KeymapBase, string: [*]const u8, count: i32, buffer: [*]keymap.KeyPair, length: i32, key_map: ?*const keymap.KeyMap) i32 {
     const n: usize = @intCast(@max(count, 0));

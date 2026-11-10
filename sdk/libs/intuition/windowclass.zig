@@ -172,48 +172,53 @@ pub const WmHandleInput = extern struct {
 
 /// Nothing more waiting.
 pub const WMHI_LASTMSG: usize = 0;
-pub const WMHI_CLASSMASK: usize = 0xFFFF_0000;
+/// The class, from bit 21 up: below it there is room for any code point.
+pub const WMHI_CLASSMASK: usize = 0xFFE0_0000;
 /// The gadget's `GA_ID`, for `WMHI_GADGETUP` and `WMHI_GADGETDOWN`.
 pub const WMHI_GADGETMASK: usize = 0x0000_FFFF;
-/// The menu number, for `WMHI_MENUPICK`; the key, for the key classes.
+/// The menu number, for `WMHI_MENUPICK`.
 pub const WMHI_MENUMASK: usize = 0x0000_FFFF;
-pub const WMHI_KEYMASK: usize = 0x0000_FFFF;
+/// The key: the character's code point for `WMHI_VANILLAKEY`, the rawkey
+/// for `WMHI_RAWKEY`.
+pub const WMHI_KEYMASK: usize = 0x001F_FFFF;
+/// How far up the class is.
+const class_shift = 21;
 
-pub const WMHI_CLOSEWINDOW: usize = 1 << 16;
-pub const WMHI_GADGETUP: usize = 2 << 16;
-pub const WMHI_GADGETDOWN: usize = 3 << 16;
-pub const WMHI_MENUPICK: usize = 4 << 16;
-pub const WMHI_VANILLAKEY: usize = 5 << 16;
-pub const WMHI_RAWKEY: usize = 6 << 16;
+pub const WMHI_CLOSEWINDOW: usize = 1 << class_shift;
+pub const WMHI_GADGETUP: usize = 2 << class_shift;
+pub const WMHI_GADGETDOWN: usize = 3 << class_shift;
+pub const WMHI_MENUPICK: usize = 4 << class_shift;
+pub const WMHI_VANILLAKEY: usize = 5 << class_shift;
+pub const WMHI_RAWKEY: usize = 6 << class_shift;
 /// The window was sized. The message is replied at the next
 /// `WM_HANDLEINPUT`, and a sizing goes on once it is: a program that draws
 /// here keeps the window from getting ahead of its drawing.
-pub const WMHI_NEWSIZE: usize = 7 << 16;
-pub const WMHI_ACTIVE: usize = 8 << 16;
-pub const WMHI_INACTIVE: usize = 9 << 16;
+pub const WMHI_NEWSIZE: usize = 7 << class_shift;
+pub const WMHI_ACTIVE: usize = 8 << class_shift;
+pub const WMHI_INACTIVE: usize = 9 << class_shift;
 /// A medium was put into a drive, or taken out of one. Neither says
 /// which drive: a window that shows what is mounted looks at the device
 /// list again.
-pub const WMHI_DISKINSERTED: usize = 10 << 16;
-pub const WMHI_DISKREMOVED: usize = 11 << 16;
+pub const WMHI_DISKINSERTED: usize = 10 << class_shift;
+pub const WMHI_DISKREMOVED: usize = 11 << class_shift;
 /// The settings changed (`SetPrefs`): a window that draws something they
 /// decide reads them again.
-pub const WMHI_NEWPREFS: usize = 12 << 16;
+pub const WMHI_NEWPREFS: usize = 12 << class_shift;
 /// A gadget whose `ICA_TARGET` is `ICTARGET_IDCMP` told the window that
 /// something about it changed. The low bits are what `ICSPECIAL_CODE`
 /// carried, and the attributes themselves are read from the gadget.
-pub const WMHI_IDCMPUPDATE: usize = 13 << 16;
+pub const WMHI_IDCMPUPDATE: usize = 13 << class_shift;
 /// The wheel turned over the window and no gadget took it (the window
 /// asked for `IDCMP_MOUSEWHEEL`). The low bits are the notches down, up
 /// negative, as an i16's bits; the message's whole code - both directions,
 /// `windows.wheelDown` and `wheelAcross` - goes where `code` points.
-pub const WMHI_MOUSEWHEEL: usize = 14 << 16;
+pub const WMHI_MOUSEWHEEL: usize = 14 << class_shift;
 /// A USB device was plugged in or pulled out (the window asked for
 /// `IDCMP_USBCHANGE`). The low bits are `inputevent.IESUBCLASS_USB_ATTACHED`
 /// or `IESUBCLASS_USB_DETACHED`; which device it was is read from
 /// usb.library's device list.
-pub const WMHI_USBCHANGE: usize = 15 << 16;
+pub const WMHI_USBCHANGE: usize = 15 << class_shift;
 /// The window was moved or sized (it asked for `IDCMP_CHANGEWINDOW`): a
 /// program that hands the display something by where the window is - a
 /// film on a video layer - looks again. Since intuition 0.75.
-pub const WMHI_CHANGEWINDOW: usize = 16 << 16;
+pub const WMHI_CHANGEWINDOW: usize = 16 << class_shift;

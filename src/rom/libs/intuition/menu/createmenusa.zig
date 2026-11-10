@@ -170,7 +170,11 @@ fn fill(ib: *IntuitionBase, table: [*]const NewMenu, bump: *Bump, header: *Heade
         var words = false;
         if (nm.comm_key) |key| {
             this.flags ^= mn.NM_COMMANDSTRING;
-            if (this.flags & mn.COMMSEQ != 0) this.command = key[0] else words = true;
+            if (this.flags & mn.COMMSEQ == 0) {
+                words = true;
+            } else if (key[0] != 0) {
+                this.command = utility.utf8.readZ(key).char;
+            }
         }
         this.mutual_exclude = nm.mutual_exclude;
         if (isBarLabel(nm)) {
@@ -422,7 +426,7 @@ test "CreateMenusA and LayoutMenusA: titles, items, subitems, separators, shortc
     const open = strip.first_item.?;
     try testing.expectEqualStrings("Open...", std.mem.span(textOf(ib, open)));
     try testing.expect(open.flags & mn.COMMSEQ != 0 and open.flags & mn.ITEMENABLED != 0 and open.flags & mn.ITEMTEXT != 0);
-    try testing.expectEqual(@as(u8, 'O'), open.command);
+    try testing.expectEqual(@as(u32, 'O'), open.command);
     try testing.expectEqual(@as(?*anyopaque, &marker), mn.GTMENUITEM_USERDATA(open));
     // An item with subitems shows the mark at its right.
     const export_item = open.next_item.?;

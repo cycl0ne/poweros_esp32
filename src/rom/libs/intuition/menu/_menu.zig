@@ -173,6 +173,13 @@ pub fn metric(ib: *IntuitionBase, w: *Window, font: ?*graphics.TextFont) Metric 
     return .{ .height = @intCast(height), .baseline = @intCast(baseline) };
 }
 
+/// An item's `command` as the text it is drawn as, in UTF-8.
+pub fn commandText(entry: *const MenuItem, into: *[4:0]u8) [*:0]const u8 {
+    const length = utility.utf8.encode(entry.command, into[0..4]);
+    into[length] = 0;
+    return into;
+}
+
 /// How wide a run is, in its own font or the screen's, and its style.
 pub fn textWidth(ib: *IntuitionBase, w: *Window, tags: [*]const TagItem) i32 {
     const run = runOf(ib.utility_base, tags);
@@ -391,8 +398,8 @@ fn aboutColumn(l: *const Layout, first: *MenuItem, max_height: i32) Column {
         const entry = item.?;
         defer item = entry.next_item;
         if (entry.flags & mn.COMMSEQ != 0) {
-            const chars = [2:0]u8{ entry.command, 0 };
-            right_trim = @max(right_trim, l.textWidth(&chars) + l.comm_width + l.font_x);
+            var chars: [4:0]u8 = undefined;
+            right_trim = @max(right_trim, l.textWidth(commandText(entry, &chars)) + l.comm_width + l.font_x);
         } else if (entry.flags & mn.ITEMTEXT != 0) {
             const run = runOf(l.ib.utility_base, @ptrCast(@alignCast(entry.item_fill.?)));
             if (run.next) |more| right_trim = @max(right_trim, l.textWidth(runOf(l.ib.utility_base, more).text) + l.font_x);

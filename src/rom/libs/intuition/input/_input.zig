@@ -1062,8 +1062,8 @@ fn screenKey(ib: *IntuitionBase, e: *const InputEvent) bool {
     plain.code &= ~ie.IECODE_UP_PREFIX;
     plain.qualifier &= ~(ie.IEQUALIFIER_RCOMMAND | ie.IEQUALIFIER_LCOMMAND | ie.IEQUALIFIER_REPEAT);
     var text: [8]u8 = undefined;
-    if (kb.MapRawKey(&plain, &text, text.len, null) != 1) return false;
-    const character = ib.utility_base.ToUpper(text[0]);
+    const typed = sdk.keymap.character(&text, kb.MapRawKey(&plain, &text, text.len, null)) orelse return false;
+    const character = ib.utility_base.ToUpper(typed);
     if (character != front_to_back and character != workbench_to_front) return false;
     if (e.code & ie.IECODE_UP_PREFIX != 0 or e.qualifier & ie.IEQUALIFIER_REPEAT != 0) return true;
     switch (stateOf(ib).mode) {
@@ -1113,8 +1113,8 @@ fn pressGadget(ib: *IntuitionBase, w: *Window, o: *Object, e: *const InputEvent)
 }
 
 /// A key to the active window: IDCMP_VANILLAKEY when it listens for that
-/// and the key makes one character through the default keymap, the
-/// character in `code`; IDCMP_RAWKEY otherwise.
+/// and the key makes one character through the default keymap, its code
+/// point in `code`; IDCMP_RAWKEY otherwise.
 fn key(ib: *IntuitionBase, w: *Window, e: *const InputEvent) void {
     // Escape takes a popup down. A requester up takes the keys from the
     // window - its shortcuts too - unless it is a noisy one, which passes
@@ -1126,8 +1126,8 @@ fn key(ib: *IntuitionBase, w: *Window, e: *const InputEvent) void {
     if (w.idcmp & wn.IDCMP_VANILLAKEY != 0) {
         if (ib.keymap_base) |kb| {
             var text: [8]u8 = undefined;
-            if (kb.MapRawKey(e, &text, text.len, null) == 1) {
-                _window.send(ib, w, wn.IDCMP_VANILLAKEY, text[0]);
+            if (sdk.keymap.character(&text, kb.MapRawKey(e, &text, text.len, null))) |typed| {
+                _window.send(ib, w, wn.IDCMP_VANILLAKEY, typed);
                 return;
             }
         }

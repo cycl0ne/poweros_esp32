@@ -41,7 +41,7 @@ console.device/SetConSnip
 console.device/RawKeyConvert                      console.device/RawKeyConvert
 
    NAME
-	RawKeyConvert -- The characters a list of key events makes, into `buffer` (room for `length`): how many, or -1 when they did not fit.
+	RawKeyConvert -- The characters a list of key events makes, into `buffer` in UTF-8 (room for `length` bytes): how many bytes, or -1 when they did not fit.
 
    SYNOPSIS
 	    i32 RawKeyConvert(?*const ie.InputEvent events, [*]u8 buffer, i32 length, ?*const keymap.KeyMap key_map)

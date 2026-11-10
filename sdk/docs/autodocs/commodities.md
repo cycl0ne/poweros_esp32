@@ -1321,11 +1321,11 @@ fn InvertKeyMap(base: *CxBase, ansi_code: u32, event: *ie.InputEvent, key_map: ?
 
 **SINCE**
 
-1.0. LVO -112.
+1.0, any code point since 1.1. LVO -112.
 
 **INPUTS**
 
-- `ansi_code` - the character, 0 to 255.
+- `ansi_code` - the character, a code point.
 - `event` - where the event goes.
 - `key_map` - the keymap, null for the default.
 
@@ -1371,7 +1371,7 @@ None known.
 
 ```zig
 var key: ie.InputEvent = .{};
-if (cb.InvertKeyMap('a', &key, null)) cb.AddIEvents(&key);
+if (cb.InvertKeyMap('€', &key, null)) cb.AddIEvents(&key);
 ```
 
 ## MatchIX

@@ -143,9 +143,10 @@ the words.
 - **The key:** `F1` to `F12`, `ESC`, `TAB`, `RETURN`, `ENTER` (the
   keypad's), `SPACE`, `BACKSPACE`, `DEL`, `HELP`, `INSERT`, `HOME`,
   `END`, `PAGE_UP`, `PAGE_DOWN`, `UP`, `DOWN`, `LEFT`, `RIGHT`, `COMMA`,
-  `BREAK` - or one character, the key that types it on the default
-  keymap with the qualifiers that takes (`ctrl A` is Control and shift
-  with A); with `NUMERICPAD`, a digit is the keypad's.
+  `BREAK` - or one character, in UTF-8, the key that types it on the
+  default keymap with the qualifiers that takes (`ctrl A` is Control
+  and shift with A, `€` on the German keymap AltGr with E); with
+  `NUMERICPAD`, a digit is the keypad's.
 - **The button**, for `RAWMOUSE`: `MOUSE_LEFTPRESS`,
   `MOUSE_MIDDLEPRESS`, `MOUSE_RIGHTPRESS`, `MOUSE_WHEEL`. The button's
   own qualifier - held on its press, not on its release - does not
@@ -248,9 +249,10 @@ from a custom function in the same round, after the events already in
 it.
 
 `cb.InvertKeyMap(character, &event, keymap)` makes the key event that
-types one character; a dead key and its key come as one event with the
-dead key as the key before (`event.x`). `cx.InvertString` makes a list
-from a string - each character by its key, `\n` and `\r` Return, `\t`
+types one character, a code point; a dead key and its key come as one
+event with the dead key as the key before (`event.x`).
+`cx.InvertString` makes a list from a string in UTF-8 - each character
+by its key, `\n` and `\r` Return, `\t`
 Tab, `\\` a backslash, and `<description>` the event a description
 names, `<alt f>`:
 

@@ -92,8 +92,8 @@ const LayersBase = sdk.interface.layers.LayersBase;
 pub const Library = gadgets.ClassLibrary(.{
     .name = rb.RIBBON_CLASS,
     .version = 1,
-    .revision = 4,
-    .date = "08.11.2026",
+    .revision = 5,
+    .date = "10.11.2026",
     .super = classusr.GROUPGCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -1193,7 +1193,7 @@ fn drawName(gb: *GraphicsBase, rp: *graphics.RastPort, left: i32, top: i32, text
         gb.Text(rp, text, mark - 1);
         x += gb.TextLength(rp, text, mark - 1);
     }
-    const letter_width = gb.TextLength(rp, text + mark, 1);
+    const letter_width = gb.TextLength(rp, text + mark, gc.markedLength(text, mark));
     gb.Move(rp, x, y);
     gb.Text(rp, text + mark, len - mark);
     const below: i32 = if (height > baseline + 1) @min(@as(i32, @intCast(height - baseline - 1)), 2) else 1;

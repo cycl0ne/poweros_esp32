@@ -101,7 +101,8 @@ test "usa: letters, shift, Caps Lock, control, alt, strings, dead keys" {
     try testing.expectEqualStrings("!", mapped(kb, key(0x01, S, &.{}), us, &buf));
     try testing.expectEqualStrings("\x01", mapped(kb, key(0x20, ie.IEQUALIFIER_CONTROL, &.{}), us, &buf));
     try testing.expectEqualStrings("\x11", mapped(kb, key(0x10, ie.IEQUALIFIER_CONTROL, &.{}), us, &buf));
-    try testing.expectEqualStrings("\xE6", mapped(kb, key(0x20, ie.IEQUALIFIER_LALT, &.{}), us, &buf));
+    try testing.expectEqualStrings("\x01", mapped(kb, key(0x20, ie.IEQUALIFIER_CONTROL | ie.IEQUALIFIER_LALT, &.{}), us, &buf));
+    try testing.expectEqualStrings("æ", mapped(kb, key(0x20, ie.IEQUALIFIER_LALT, &.{}), us, &buf));
     try testing.expectEqualStrings("z", mapped(kb, key(0x31, 0, &.{}), us, &buf));
     try testing.expectEqualStrings("7", mapped(kb, key(0x3D, 0, &.{}), us, &buf));
     try testing.expectEqualStrings("\r", mapped(kb, key(0x44, 0, &.{}), us, &buf));
@@ -122,19 +123,24 @@ test "usa: letters, shift, Caps Lock, control, alt, strings, dead keys" {
     // Alt+f is a dead acute: it sends nothing, and changes the e after it.
     try testing.expectEqualStrings("", mapped(kb, key(0x23, ie.IEQUALIFIER_LALT, &.{}), us, &buf));
     const acute = [_][2]u32{.{ 0x23, ie.IEQUALIFIER_LALT }};
-    try testing.expectEqualStrings("\xE9", mapped(kb, key(0x12, 0, &acute), us, &buf));
-    try testing.expectEqualStrings("\xC9", mapped(kb, key(0x12, S, &acute), us, &buf));
+    try testing.expectEqualStrings("é", mapped(kb, key(0x12, 0, &acute), us, &buf));
+    try testing.expectEqualStrings("É", mapped(kb, key(0x12, S, &acute), us, &buf));
     // The space after it is the accent itself; a key it does not change
     // is itself.
-    try testing.expectEqualStrings("\xB4", mapped(kb, key(0x40, 0, &acute), us, &buf));
+    try testing.expectEqualStrings("´", mapped(kb, key(0x40, 0, &acute), us, &buf));
     try testing.expectEqualStrings("s", mapped(kb, key(0x21, 0, &acute), us, &buf));
     // An e after an ordinary key is an e.
     try testing.expectEqualStrings("e", mapped(kb, key(0x12, 0, &.{.{ 0x21, 0 }}), us, &buf));
 
-    // Too little room: -1.
+    // Too little room: -1, for a string or a character of two bytes.
     var small: [1]u8 = undefined;
     const f1 = key(0x50, 0, &.{});
     try testing.expectEqual(@as(i32, -1), MapRawKey(kb, &f1, &small, 1, us));
+    const ae = key(0x20, ie.IEQUALIFIER_LALT, &.{});
+    try testing.expectEqual(@as(i32, -1), MapRawKey(kb, &ae, &small, 1, us));
+    // One character, whatever its length; a string is none.
+    try testing.expectEqual(@as(?u32, 0xE6), km.character(&buf, MapRawKey(kb, &ae, &buf, buf.len, us)));
+    try testing.expectEqual(@as(?u32, null), km.character(&buf, MapRawKey(kb, &f1, &buf, buf.len, us)));
     // Another class: nothing.
     const tick: ie.InputEvent = .{ .class = ie.IECLASS_TIMER };
     try testing.expectEqual(@as(i32, 0), MapRawKey(kb, &tick, &buf, buf.len, us));
@@ -152,11 +158,13 @@ test "deutsch, the default: y and z, the umlauts, AltGr, the dead keys" {
     try testing.expectEqualStrings("z", mapped(kb, key(0x15, 0, &.{}), null, &buf));
     try testing.expectEqualStrings("y", mapped(kb, key(0x31, 0, &.{}), null, &buf));
     try testing.expectEqualStrings("\"", mapped(kb, key(0x02, S, &.{}), null, &buf));
-    try testing.expectEqualStrings("\xA7", mapped(kb, key(0x03, S, &.{}), null, &buf));
-    try testing.expectEqualStrings("\xDF", mapped(kb, key(0x0B, 0, &.{}), null, &buf));
-    try testing.expectEqualStrings("\xFC", mapped(kb, key(0x1A, 0, &.{}), null, &buf));
-    try testing.expectEqualStrings("\xDC", mapped(kb, key(0x1A, ie.IEQUALIFIER_CAPSLOCK, &.{}), null, &buf));
+    try testing.expectEqualStrings("§", mapped(kb, key(0x03, S, &.{}), null, &buf));
+    try testing.expectEqualStrings("ß", mapped(kb, key(0x0B, 0, &.{}), null, &buf));
+    try testing.expectEqualStrings("ü", mapped(kb, key(0x1A, 0, &.{}), null, &buf));
+    try testing.expectEqualStrings("Ü", mapped(kb, key(0x1A, ie.IEQUALIFIER_CAPSLOCK, &.{}), null, &buf));
     try testing.expectEqualStrings("@", mapped(kb, key(0x10, ALTGR, &.{}), null, &buf));
+    try testing.expectEqualStrings("€", mapped(kb, key(0x12, ALTGR, &.{}), null, &buf));
+    try testing.expectEqualStrings("©", mapped(kb, key(0x12, ALTGR | S, &.{}), null, &buf));
     try testing.expectEqualStrings("{", mapped(kb, key(0x07, ALTGR, &.{}), null, &buf));
     try testing.expectEqualStrings("\\", mapped(kb, key(0x0B, ALTGR, &.{}), null, &buf));
     try testing.expectEqualStrings("|", mapped(kb, key(0x30, ALTGR, &.{}), null, &buf));
@@ -164,12 +172,12 @@ test "deutsch, the default: y and z, the umlauts, AltGr, the dead keys" {
 
     // ´ then e, ` (shift) then a, ^ then space and o.
     try testing.expectEqualStrings("", mapped(kb, key(0x0C, 0, &.{}), null, &buf));
-    try testing.expectEqualStrings("\xE9", mapped(kb, key(0x12, 0, &.{.{ 0x0C, 0 }}), null, &buf));
-    try testing.expectEqualStrings("\xE0", mapped(kb, key(0x20, 0, &.{.{ 0x0C, S }}), null, &buf));
+    try testing.expectEqualStrings("é", mapped(kb, key(0x12, 0, &.{.{ 0x0C, 0 }}), null, &buf));
+    try testing.expectEqualStrings("à", mapped(kb, key(0x20, 0, &.{.{ 0x0C, S }}), null, &buf));
     try testing.expectEqualStrings("^", mapped(kb, key(0x40, 0, &.{.{ 0x00, 0 }}), null, &buf));
-    try testing.expectEqualStrings("\xF4", mapped(kb, key(0x18, 0, &.{.{ 0x00, 0 }}), null, &buf));
+    try testing.expectEqualStrings("ô", mapped(kb, key(0x18, 0, &.{.{ 0x00, 0 }}), null, &buf));
     // Shift on the ^ key is °, not dead.
-    try testing.expectEqualStrings("\xB0", mapped(kb, key(0x00, S, &.{}), null, &buf));
+    try testing.expectEqualStrings("°", mapped(kb, key(0x00, S, &.{}), null, &buf));
 
     // The default can be changed, and back.
     SetKeyMapDefault(kb, FindKeyMap(kb, "usa").?);
@@ -190,14 +198,18 @@ test "MapANSI: the keys for a string, a dead key for an accent" {
     try testing.expectEqual(km.KeyPair{ .code = 0x31, .qualifier = 0 }, keys[1]);
 
     // é has no key of its own on "deutsch": the dead acute, then e.
-    const e_acute = "\xE9";
-    try testing.expectEqual(@as(i32, 2), MapANSI(kb, e_acute, 1, &keys, keys.len, null));
+    const e_acute = "é";
+    try testing.expectEqual(@as(i32, 2), MapANSI(kb, e_acute, e_acute.len, &keys, keys.len, null));
     try testing.expectEqual(km.KeyPair{ .code = 0x0C, .qualifier = 0 }, keys[0]);
     try testing.expectEqual(km.KeyPair{ .code = 0x12, .qualifier = 0 }, keys[1]);
+    // € is AltGr and e.
+    const euro = "€";
+    try testing.expectEqual(@as(i32, 1), MapANSI(kb, euro, euro.len, &keys, keys.len, null));
+    try testing.expectEqual(km.KeyPair{ .code = 0x12, .qualifier = ie.IEQUALIFIER_LALT }, keys[0]);
 
     // What no key makes - « has none on "deutsch" - and too little room.
-    const nothing = "\xAB";
-    try testing.expectEqual(@as(i32, 0), MapANSI(kb, nothing, 1, &keys, keys.len, null));
+    const nothing = "«";
+    try testing.expectEqual(@as(i32, 0), MapANSI(kb, nothing, nothing.len, &keys, keys.len, null));
     try testing.expectEqual(@as(i32, -1), MapANSI(kb, hi, hi.len, &keys, 1, null));
     try tearDown(kb);
 }

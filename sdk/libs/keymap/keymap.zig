@@ -13,28 +13,30 @@
 //!   - a key that depends on at most two of them keeps its characters in
 //!     the entry itself, `chars[index]`, the index made of the qualifier
 //!     bits it depends on, lowest first: plain, shift, alt, shift+alt;
-//!   - one that depends on three or more points (`data`) at one byte per
+//!   - one that depends on three or more points (`data`) at one word per
 //!     combination;
 //!   - `KC_VANILLA` (shift, alt and control) keeps four characters and
 //!     makes the control ones itself: a character from 0x40 to 0x7F with
-//!     control is that character & 0x1F, with alt as well | 0x80;
-//!   - `KCF_STRING`: `data` points at a pair of bytes per combination,
-//!     length and offset from `data`, of the bytes the key sends - the
-//!     cursor keys send a CSI sequence;
-//!   - `KCF_DEAD`: `data` points at a pair of bytes per combination. With
-//!     `DPF_DEAD` the key is a dead key and the second byte its index: it
+//!     control, alt held or not, is that character & 0x1F;
+//!   - `KCF_STRING`: `data` points at a pair of words per combination,
+//!     length and offset from `data`, of the characters the key sends -
+//!     the cursor keys send an `ESC [` sequence;
+//!   - `KCF_DEAD`: `data` points at a pair of words per combination. With
+//!     `DPF_DEAD` the key is a dead key and the second word its index: it
 //!     sends nothing and changes the next key. With `DPF_MOD` the key is
-//!     changed by a dead key before it, and the second byte is the offset
+//!     changed by a dead key before it, and the second word is the offset
 //!     from `data` of its characters - the plain one first, then one per
-//!     dead index. With neither, the second byte is the character;
+//!     dead index. With neither, the second word is the character;
 //!   - `KCF_NOP`: the key sends nothing.
 //!
 //! A capsable key is taken as shifted while Caps Lock is on; a key that is
 //! not repeatable sends nothing when input.device repeats it.
 //!
-//! The characters are Latin-1, the set the ROM's fonts draw.
+//! The characters are code points, a word each; `MapRawKey` gives them in
+//! UTF-8, and `character` says which one a key made when it made one.
 
 const exec = @import("../exec/exec.zig");
+const utf8 = @import("../utility/utf8.zig");
 
 /// The name to open it by.
 pub const KEYMAPNAME = "keymap.library";
@@ -43,8 +45,8 @@ pub const KEYMAP_VERSION = 0;
 /// One key's map entry: its characters, or where its data is.
 pub const KeyMapEntry = extern union {
     /// Indexed by the qualifier bits the key's type depends on.
-    chars: [4]u8,
-    data: [*]const u8,
+    chars: [4]u32,
+    data: [*]const u32,
 };
 
 /// km_*: the eight tables. The low ones have 64 entries (rawkeys
@@ -109,6 +111,18 @@ pub const KeyPair = extern struct {
     code: u32,
     qualifier: u32,
 };
+
+/// The character a key made, from what `MapRawKey` wrote into `bytes` and
+/// the count it answered: the code point when the key made exactly one
+/// character, null when it made none, a string (`ESC [ A`), or did not
+/// fit.
+pub fn character(bytes: []const u8, count: i32) ?u32 {
+    if (count <= 0) return null;
+    const made = bytes[0..@intCast(count)];
+    const step = utf8.decode(made);
+    if (step.kind != .char or step.length != made.len) return null;
+    return step.char;
+}
 
 /// The KeyMapBase, for the functions.
 pub const KeymapBase = @import("../../interface/keymap.zig").KeymapBase;

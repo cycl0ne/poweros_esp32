@@ -4,7 +4,8 @@
 //! The keys that differ from "usa" are the German ones: y and z change
 //! places; ü, ö, ä and ß have keys of their own; shift on the number row
 //! gives " § & / ( ) = and ?; alt - the key right of the space bar, AltGr -
-//! gives @ on q, { [ ] } on 7 to 0, \ on ß, ~ on +, | on < and µ on m.
+//! gives @ on q, € on e, { [ ] } on 7 to 0, \ on ß, ~ on +, | on < and
+//! µ on m.
 //! The key left of 1 is a dead circumflex (° with shift), the key right of
 //! ß a dead acute (grave with shift), and they change the vowels, y, n and
 //! the space bar as "usa"'s dead keys do. Alt with f to k is still a dead
@@ -17,6 +18,9 @@ const usa = @import("usa.zig");
 const e = t.chars;
 const one = t.one;
 const none = t.none;
+
+/// e: € with alt, © with shift and alt.
+const key_e = t.deadable(usa.e_changed, usa.e_changed_capital, '€', '©', 0x05);
 
 const lo_types = [64]u8{
     t.DEAD_SHIFT, t.SA, t.SA, t.SA, t.SA, t.SA, t.SA, t.SA, // 00
@@ -34,7 +38,7 @@ const lo_map = [64]km.KeyMapEntry{
     e('4', '$', 0xA4, '$'), e('5', '%', 0xBC, '%'), e('6', '&', 0xBD, '&'), e('7', '/', '{', '/'), // 4 5 6 7
     e('8', '(', '[', '('), e('9', ')', ']', ')'), e('0', '=', '}', '='), e(0xDF, '?', '\\', '?'), // 08 8 9 0 ß
     t.deadShift(t.ACUTE, 0, t.GRAVE, 0), e('#', '\'', '#', '\''), none, one('0'), // ´ #
-    e('q', 'Q', '@', '@'), e('w', 'W', 0xB0, 0xB0), usa.key_e, e('r', 'R', 0xAE, 0xAE), // 10 q w e r
+    e('q', 'Q', '@', '@'), e('w', 'W', 0xB0, 0xB0), key_e, e('r', 'R', 0xAE, 0xAE), // 10 q w e r
     e('t', 'T', 0xFE, 0xDE), e('z', 'Z', 0xB1, 0xAC), usa.key_u, usa.key_i, // t z u i
     usa.key_o, e('p', 'P', 0xB6, 0xB6), e(0xFC, 0xDC, 0xFC, 0xDC), e('+', '*', '~', '~'), // 18 o p ü +
     none,      one('1'),                one('2'),                  one('3'),

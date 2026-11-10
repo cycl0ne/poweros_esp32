@@ -35,6 +35,8 @@
 
 const graphics = @import("../graphics/graphics.zig");
 const utility = @import("../utility/utility.zig");
+const utf8 = utility.utf8;
+const unicode = utility.unicode;
 const classusr = @import("classusr.zig");
 const ie = @import("../../devices/inputevent.zig");
 const MethodID = classusr.MethodID;
@@ -168,8 +170,8 @@ pub const GA_TabCycle = GA_Dummy + 0x24;
 pub const GA_GadgetHelp = GA_Dummy + 0x25;
 /// The pens to draw with, for a class that wants them when it is made.
 pub const GA_DrawInfo = GA_Dummy + 0x21;
-/// The key that works the gadget from the keyboard: one character, which
-/// is matched whatever case it is typed in; 0 for none. It is set from
+/// The key that works the gadget from the keyboard: one character, a code
+/// point, which is matched whatever case it is typed in; 0 for none. It is set from
 /// the `_` of a `GA_Text` or of the `CHILDA_Label` a layout gives the
 /// gadget, and this tag names one where there is no label to mark - or a
 /// different one from the letter that is underlined. Made, set and read.
@@ -231,8 +233,8 @@ pub const Gadget = extern struct {
     text: ?[*:0]const u8 = null,
     itext: ?[*]const utility.TagItem = null,
     label_image: ?*classusr.Object = null,
-    /// `GA_Key`: the character that works it from the keyboard, in lower
-    /// case; 0 for none.
+    /// `GA_Key`: the character that works it from the keyboard, case
+    /// folded (`keyOf`); 0 for none.
     key: u32 = 0,
     /// `GFLG_GADGH*`.
     highlight: u32 = GFLG_GADGHCOMP,
@@ -595,9 +597,10 @@ pub const GMKR_VERIFY: usize = 1 << 1;
 /// would.
 pub const GMKR_ACTIVATE: usize = 1 << 2;
 
-/// The character a `GM_KEY` names, in lower case; 0 when it is none.
+/// The character a `GM_KEY` names, case folded, so that a key matches
+/// whatever case it is typed in; 0 when it is none.
 pub fn keyOf(key: u32) u32 {
-    return if (key >= 'A' and key <= 'Z') key + ('a' - 'A') else key;
+    return unicode.fold(key);
 }
 
 /// Whether a `GM_KEY` is this gadget's: the character is the one the
@@ -620,11 +623,17 @@ pub fn labelMark(text: ?[*:0]const u8) ?u32 {
     return null;
 }
 
-/// The key a label names: the character its `_` marks, in lower case, or
-/// 0 for none.
+/// How many bytes the character at `at` in a label takes: the one its `_`
+/// marks, which is underlined whole.
+pub fn markedLength(text: [*:0]const u8, at: u32) u32 {
+    return @intCast(utf8.readZ(text + at).length);
+}
+
+/// The key a label names: the character its `_` marks, case folded, or 0
+/// for none.
 pub fn labelKey(text: ?[*:0]const u8) u32 {
     const at = labelMark(text) orelse return 0;
-    return keyOf(text.?[at]);
+    return keyOf(utf8.readZ(text.? + at).char);
 }
 
 /// GM_LAYOUT: the room this gadget is measured against has changed.
@@ -648,8 +657,10 @@ pub const GpGoInactive = extern struct {
 // --- strgclass: a line of text a person types ---------------------------------
 
 pub const STRINGA_Dummy = utility.TAG_USER + 0x32000;
-/// How much room the buffer has, the terminating NUL counted. A gadget
-/// made with this and no buffer takes one of its own and gives it back.
+/// How much room the buffer has in bytes, the terminating NUL counted: the
+/// text is UTF-8, and a character goes in only when all its bytes fit. A
+/// gadget made with this and no buffer takes one of its own and gives it
+/// back.
 pub const STRINGA_MaxChars = STRINGA_Dummy + 0x01;
 /// The buffer itself, the caller's: what it holds is what the gadget
 /// starts with, and what it holds afterwards is what was typed.
@@ -660,9 +671,11 @@ pub const STRINGA_UndoBuffer = STRINGA_Dummy + 0x03;
 /// Open only: where an edit hook's work goes, as long as the buffer. The
 /// gadget takes its own when it is not given one.
 pub const STRINGA_WorkBuffer = STRINGA_Dummy + 0x04;
-/// Where the cursor is, counted in characters.
+/// Where the cursor is, in bytes; a position inside a character is moved
+/// back to where the character starts.
 pub const STRINGA_BufferPos = STRINGA_Dummy + 0x05;
-/// Which character is the first one shown, for a line longer than the box.
+/// Which character is the first one shown, for a line longer than the box,
+/// in bytes as `STRINGA_BufferPos` is.
 pub const STRINGA_DispPos = STRINGA_Dummy + 0x06;
 /// The keymap the keys are read through. Null is the default one.
 pub const STRINGA_AltKeyMap = STRINGA_Dummy + 0x07;

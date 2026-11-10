@@ -227,9 +227,9 @@ pub fn shortcut(ib: *IntuitionBase, w: *Window, e: *const InputEvent) bool {
     var plain = e.*;
     plain.qualifier &= ~(ie.IEQUALIFIER_RCOMMAND | ie.IEQUALIFIER_LCOMMAND);
     var text: [8]u8 = undefined;
-    if (kb.MapRawKey(&plain, &text, text.len, null) != 1) return false;
+    const typed = sdk.keymap.character(&text, kb.MapRawKey(&plain, &text, text.len, null)) orelse return false;
     const owner = w.menu_lend orelse w;
-    const number = findMenuKey(ib, owner.menu_strip, text[0]);
+    const number = findMenuKey(ib, owner.menu_strip, typed);
     if (number == mn.MENUNULL) return false;
     st.lending_return = null;
     if (owner != w) {
@@ -244,7 +244,7 @@ pub fn shortcut(ib: *IntuitionBase, w: *Window, e: *const InputEvent) bool {
 
 /// The menu number of the item whose `command` is `code`, ignoring case -
 /// an item with subitems by its subitems only - or MENUNULL.
-fn findMenuKey(ib: *IntuitionBase, strip: ?*Menu, code: u8) u32 {
+fn findMenuKey(ib: *IntuitionBase, strip: ?*Menu, code: u32) u32 {
     if (code == 0) return mn.MENUNULL;
     const ub = ib.utility_base;
     const want = ub.ToUpper(code);
@@ -773,8 +773,8 @@ fn paint(ib: *IntuitionBase, w: *Window, panel: *const Panel, first: ?*MenuItem,
     var item = first;
     while (item) |entry| : (item = entry.next_item) {
         if (entry.item_fill == null or entry.flags & mn.COMMSEQ == 0) continue;
-        const chars = [2:0]u8{ entry.command, 0 };
-        const key = intuition.text.plainRun(&chars, fontOf(ib, entry));
+        var chars: [4:0]u8 = undefined;
+        const key = intuition.text.plainRun(_menu.commandText(entry, &chars), fontOf(ib, entry));
         indent = @max(indent, _menu.textWidth(ib, w, &key));
     }
 
@@ -796,12 +796,13 @@ fn paint(ib: *IntuitionBase, w: *Window, panel: *const Panel, first: ?*MenuItem,
         if (entry.flags & mn.CHECKIT != 0 and entry.flags & mn.CHECKED != 0) it.DrawImage(rp, w.check_mark, left, fill_top);
         if (entry.flags & mn.COMMSEQ != 0) {
             const font = fontOf(ib, entry);
-            const chars = [2:0]u8{ entry.command, 0 };
+            var chars: [4:0]u8 = undefined;
+            const text = _menu.commandText(entry, &chars);
             const at = left + entry.width - indent - 2;
             const baseline = _menu.metric(ib, w, font).baseline;
             const key_height = _menu.imageHeight(ib, w.amiga_key);
             it.DrawImage(rp, w.amiga_key, at - _menu.imageWidth(ib, w.amiga_key) - 2, fill_top + @max(0, baseline - (key_height - 1)));
-            const key = _render.makeRun(&chars, detail, at, fill_top, font, null);
+            const key = _render.makeRun(text, detail, at, fill_top, font, null);
             it.PrintIText(rp, &key, 0, 0);
         }
         if (disabled or entry.flags & mn.ITEMENABLED == 0) d.ghost(gb, rp, left, top, entry.width, entry.height, block);

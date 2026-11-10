@@ -132,12 +132,13 @@ pub fn labelText(gb: *GraphicsBase, rp: *graphics.RastPort, x: i32, y: i32, text
         pen_x += gb.TextLength(rp, text, before);
     }
     const marked = text + at;
-    const width = gb.TextLength(rp, marked, 1);
+    const marked_len = gc.markedLength(text, at);
+    const width = gb.TextLength(rp, marked, marked_len);
     gb.Move(rp, pen_x, y);
-    gb.Text(rp, marked, 1);
-    if (len > at + 1) {
+    gb.Text(rp, marked, marked_len);
+    if (len > at + marked_len) {
         gb.Move(rp, pen_x + width, y);
-        gb.Text(rp, marked + 1, len - at - 1);
+        gb.Text(rp, marked + marked_len, len - at - marked_len);
     }
     // The line under the letter, not under the cell it sits in: a
     // character's width is its advance, which carries the gap to the next

@@ -2,7 +2,8 @@
 //! What keymap.library does with a KeyMap: a rawkey into characters
 //! (`mapRawKey`) and characters back into rawkeys (`mapANSI`). Pure, so the
 //! host tests hold it; the library's calls are this with the default map
-//! filled in.
+//! filled in. The map holds code points; what goes out and comes in is
+//! UTF-8.
 //!
 //! A key's characters are chosen by the qualifier bits its type depends on,
 //! compacted into an index: shift counts 1, alt 2, control 4, up 8, each
@@ -16,12 +17,13 @@
 const sdk = @import("sdk");
 const km = sdk.keymap;
 const ie = sdk.devices.inputevent;
+const utf8 = sdk.utility.utf8;
 const KeyMap = km.KeyMap;
 const InputEvent = ie.InputEvent;
 
 /// What converting one key came to.
 const Conv = struct {
-    /// Bytes written, or -1 when they did not fit.
+    /// Bytes of UTF-8 written, or -1 when they did not fit.
     n: i32 = 0,
     /// For a dead key, its index; 0 otherwise.
     dead: u8 = 0,
@@ -43,11 +45,24 @@ const Prev = struct {
     }
 };
 
-fn emit(out: ?[]u8, c: u8) Conv {
-    const o = out orelse return .{ .n = -1 };
-    if (o.len == 0) return .{ .n = -1 };
-    o[0] = c;
-    return .{ .n = 1 };
+/// The character `char` in UTF-8 into `out`.
+fn emit(out: ?[]u8, char: u32) Conv {
+    return emitAll(out, (&char)[0..1]);
+}
+
+/// The characters `chars` in UTF-8 into `out`, or -1 when they do not
+/// fit.
+fn emitAll(out: ?[]u8, chars: []const u32) Conv {
+    const into = out orelse return .{ .n = -1 };
+    var length: usize = 0;
+    for (chars) |char| {
+        var bytes: [4]u8 = undefined;
+        const taken = utf8.encode(char, &bytes);
+        if (length + taken > into.len) return .{ .n = -1 };
+        for (bytes[0..taken], 0..) |byte, at| into[length + at] = byte;
+        length += taken;
+    }
+    return .{ .n = @intCast(length) };
 }
 
 /// One key: `code` with IECODE_UP_PREFIX when it went up, its qualifiers,
@@ -91,7 +106,7 @@ fn convert(map: *const KeyMap, raw: u32, qualifier: u32, prev1: i32, prev2: i32,
 
     if (t & km.KCF_DEAD != 0) {
         const pair = entry.data[2 * index ..][0..2];
-        if (pair[0] & km.DPF_DEAD != 0) return .{ .dead = pair[1] };
+        if (pair[0] & km.DPF_DEAD != 0) return .{ .dead = @intCast(pair[1]) };
         if (pair[0] & km.DPF_MOD != 0) {
             // Changed by the dead keys before it, if there were any.
             if (out == null) return .{};
@@ -99,8 +114,8 @@ fn convert(map: *const KeyMap, raw: u32, qualifier: u32, prev1: i32, prev2: i32,
             const code1 = Prev.code(prev1) orelse return emit(out, table[0]);
             const d1 = convert(map, code1, Prev.qualifier(prev1), 0, 0, null).dead;
             if (d1 == 0) return emit(out, table[0]);
-            var at: u32 = d1 & km.DP_2DINDEXMASK;
-            const factor: u32 = d1 >> km.DP_2DFACSHIFT;
+            var at: usize = d1 & km.DP_2DINDEXMASK;
+            const factor: usize = d1 >> km.DP_2DFACSHIFT;
             if (factor == 0) return emit(out, table[at]);
             // A second dead key: it counts `factor` times as much.
             at *= factor;
@@ -115,25 +130,20 @@ fn convert(map: *const KeyMap, raw: u32, qualifier: u32, prev1: i32, prev2: i32,
     if (out == null) return .{};
 
     if (t & km.KCF_STRING != 0) {
-        const len = entry.data[2 * index];
-        const off = entry.data[2 * index + 1];
-        const o = out.?;
-        if (len > o.len) return .{ .n = -1 };
-        for (0..len) |k| o[k] = entry.data[off + k];
-        return .{ .n = len };
+        const length = entry.data[2 * index];
+        const offset = entry.data[2 * index + 1];
+        return emitAll(out, entry.data[offset..][0..length]);
     }
     if (t == km.KC_VANILLA) {
         const c = entry.chars[index & 3];
         if (combo & km.KCF_CONTROL == 0) return emit(out, c);
         // A control character from the first of the key's characters that
-        // makes one, from the one the other qualifiers chose onwards.
+        // makes one, from the one the other qualifiers chose onwards. The
+        // controls are 7-bit: alt held as well changes nothing.
         var k: u32 = 0;
         while (k < 4) : (k += 1) {
             const cand = entry.chars[(index + k) & 3];
-            if (cand & 0xC0 == 0x40) {
-                const ctrl = cand & 0x1F;
-                return emit(out, if (combo & km.KCF_ALT != 0) ctrl | 0x80 else ctrl);
-            }
+            if (cand >= 0x40 and cand <= 0x7F) return emit(out, cand & 0x1F);
         }
         return emit(out, c);
     }
@@ -165,23 +175,26 @@ fn prevWord(code: u32, qualifier: u32) i32 {
 }
 
 /// One key that makes exactly `c` on its own, if there is one.
-fn single(map: *const KeyMap, c: u8, prev: i32) ?km.KeyPair {
+fn single(map: *const KeyMap, c: u32, prev: i32) ?km.KeyPair {
     for (combos) |combo| {
         var code: u32 = 0;
         while (code <= km.KEY_LAST) : (code += 1) {
             var got: [8]u8 = undefined;
             const r = convert(map, code, qualifierOf(combo), prev, 0, &got);
-            if (r.n == 1 and got[0] == c) return .{ .code = code, .qualifier = qualifierOf(combo) };
+            if (km.character(&got, r.n) == c) return .{ .code = code, .qualifier = qualifierOf(combo) };
         }
     }
     return null;
 }
 
-/// MapANSI's work: the keys that make `string`, into `buffer`. How many
-/// pairs, 0 when a character cannot be made, -1 when they did not fit.
+/// MapANSI's work: the keys that make `string`, UTF-8, into `buffer`. How
+/// many pairs, 0 when a character cannot be made, -1 when they did not
+/// fit.
 pub fn mapANSI(map: *const KeyMap, string: []const u8, buffer: []km.KeyPair) i32 {
     var n: usize = 0;
-    for (string) |c| {
+    var at: usize = 0;
+    while (at < string.len) {
+        const c = utf8.next(string, &at);
         if (single(map, c, 0)) |pair| {
             if (n >= buffer.len) return -1;
             buffer[n] = pair;

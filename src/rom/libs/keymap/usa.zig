@@ -37,13 +37,17 @@ const lo_types = [64]u8{
 };
 
 /// The letters that dead keys change, shared with every ROM keymap.
-pub const key_a = t.deadable("a\xE1\xE0\xE2\xE3\xE4", "A\xC1\xC0\xC2\xC3\xC4", 0xE6, 0xC6, 0x01);
-pub const key_e = t.deadable("e\xE9\xE8\xEAe\xEB", "E\xC9\xC8\xCAE\xCB", 0xA9, 0xA9, 0x05);
-pub const key_i = t.deadable("i\xED\xEC\xEEi\xEF", "I\xCD\xCC\xCEI\xCF", 0xA1, 0xA6, 0x09);
-pub const key_n = t.deadable("nnnn\xF1n", "NNNN\xD1N", 0xAD, 0xAF, 0x0E);
-pub const key_o = t.deadable("o\xF3\xF2\xF4\xF5\xF6", "O\xD3\xD2\xD4\xD5\xD6", 0xF8, 0xD8, 0x0F);
-pub const key_u = t.deadable("u\xFA\xF9\xFBu\xFC", "U\xDA\xD9\xDBU\xDC", 0xB5, 0xB5, 0x15);
-pub const key_y = t.deadable("y\xFDyyy\xFF", "Y\xDDYYYY", 0xA4, 0xA5, 0x19);
+pub const key_a = t.deadable("aáàâãä", "AÁÀÂÃÄ", 'æ', 'Æ', 0x01);
+pub const key_e = t.deadable(e_changed, e_changed_capital, '©', '©', 0x05);
+pub const key_i = t.deadable("iíìîiï", "IÍÌÎIÏ", '¡', '¦', 0x09);
+pub const key_n = t.deadable("nnnnñn", "NNNNÑN", 0xAD, '¯', 0x0E);
+pub const key_o = t.deadable("oóòôõö", "OÓÒÔÕÖ", 'ø', 'Ø', 0x0F);
+pub const key_u = t.deadable("uúùûuü", "UÚÙÛUÜ", 'µ', 'µ', 0x15);
+pub const key_y = t.deadable("yýyyyÿ", "YÝYYYY", '¤', '¥', 0x19);
+/// What the dead keys make of e, for a keymap whose e has other alt
+/// characters.
+pub const e_changed = "eéèêeë";
+pub const e_changed_capital = "EÉÈÊEË";
 /// Alt with f, g, h, j and k: the five dead keys.
 pub const key_f = t.deadOnAlt('f', 'F', t.ACUTE, 0x06);
 pub const key_g = t.deadOnAlt('g', 'G', t.GRAVE, 0x07);

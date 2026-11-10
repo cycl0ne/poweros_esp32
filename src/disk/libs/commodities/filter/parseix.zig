@@ -4,6 +4,7 @@
 const sdk = @import("sdk");
 const cx = sdk.commodities;
 const ie = sdk.devices.inputevent;
+const utf8 = sdk.utility.utf8;
 const _base = @import("../commodities_base.zig");
 const _filter = @import("_filter.zig");
 const CxBase = _base.CxBase;
@@ -128,9 +129,9 @@ pub fn ParseIX(base: *CxBase, description: ?[*:0]const u8, ix: *cx.InputXpressio
                 ix.code |= key;
             } else if (word.len == 1 and ix.qualifier & ie.IEQUALIFIER_NUMERICPAD != 0) {
                 ix.code |= _filter.lookup(&_filter.keypad, word) orelse return -1;
-            } else if (word.len == 1) {
+            } else if (utf8.read(word).length == word.len) {
                 var event: ie.InputEvent = .{};
-                if (!base.iface().InvertKeyMap(word[0], &event, null)) return -1;
+                if (!base.iface().InvertKeyMap(utf8.read(word).char, &event, null)) return -1;
                 ix.code |= event.code;
                 ix.qualifier |= event.qualifier;
             } else return -1;

@@ -439,7 +439,7 @@ has closed.
 | `IDCMP_GADGETUP` | a `GA_RelVerify` gadget finished | its termination value; the gadget |
 | `IDCMP_GADGETDOWN` | a `GA_Immediate` gadget pressed | the gadget |
 | `IDCMP_MENUPICK` | the menus used | the first item's menu number |
-| `IDCMP_VANILLAKEY` | a key that makes one character | the character, Latin-1 |
+| `IDCMP_VANILLAKEY` | a key that makes one character | the character, its code point |
 | `IDCMP_RAWKEY` | a key down or up | the raw key |
 | `IDCMP_ACTIVEWINDOW`, `IDCMP_INACTIVEWINDOW` | it became, or stopped being, the active window | |
 | `IDCMP_IDCMPUPDATE` | a gadget told the window what changed | see [Telling the window](#telling-the-window) |
@@ -515,13 +515,16 @@ notes `WMHI_NEWSIZE` and draws after `WMHI_LASTMSG` has replied the step
 before drawing it: the next step begins meanwhile, and the step is shown
 without the program's drawing in it.
 
-| Word | What | Lower half |
+The class is in the word's high bits (`WMHI_CLASSMASK`, from bit 21
+up), what goes with it in the bits below.
+
+| Word | What | Low bits |
 |---|---|---|
 | `WMHI_CLOSEWINDOW` | the close gadget | |
 | `WMHI_GADGETUP` | a gadget finished; `code` is what it finished with - a box's state, a choice, a level, the key that ended a line | its `GA_ID` (`WMHI_GADGETMASK`) |
 | `WMHI_GADGETDOWN` | a `GA_Immediate` gadget pressed | its `GA_ID` |
 | `WMHI_MENUPICK` | the menus used | the first item's menu number (`WMHI_MENUMASK`) |
-| `WMHI_VANILLAKEY` | a character no gadget took | the character (`WMHI_KEYMASK`) |
+| `WMHI_VANILLAKEY` | a character no gadget took | its code point (`WMHI_KEYMASK`, 21 bits) |
 | `WMHI_RAWKEY` | a raw key, with `IDCMP_RAWKEY` | the key |
 | `WMHI_NEWSIZE` | sized, with `IDCMP_NEWSIZE` | |
 | `WMHI_ACTIVE`, `WMHI_INACTIVE` | active or not, with `IDCMP_ACTIVEWINDOW`, `IDCMP_INACTIVEWINDOW` | |
@@ -789,7 +792,9 @@ while (true) {
 
 An `_` in a gadget's `GA_Text`, or in the `CHILDA_Label` a layout gives
 it, marks the next character as its key (`GA_Key`): the `_` is not drawn
-and the character is underlined. A window object offers every character
+and the character is underlined. Any character can be a key - `_Ändern`
+answers to ä and Ä alike, as a key matches whatever case it is typed
+in. A window object offers every character
 typed to its layout first. The gadget whose key it is is worked as a
 press would work it and reports `WMHI_GADGETUP` in its own name; a line
 of text is given the keyboard instead; only a character no gadget
@@ -802,7 +807,10 @@ beside it or the menu button lets it go without a report, and the menu
 button then opens the menus. In a field, the cursor keys, Home and End
 move, and with Shift a cursor key goes to the start or the end;
 Shift-Backspace takes out everything before the cursor, Shift-Delete
-everything after it, and Escape puts back what was there.
+everything after it, and Escape puts back what was there. A field's
+text is UTF-8: the cursor steps over a character whole, Backspace and
+Delete take one out whole, and `STRINGA_MaxChars` is the room in bytes,
+so a character goes in only when all its bytes fit.
 `ActivateGadget` gives a gadget the keyboard without a press, and only in
 the active window; a window is not always active the moment it opens, so
 a program waits for `WMHI_ACTIVE` as above. A gadget that hands the
@@ -1007,7 +1015,8 @@ defer ib.ClearMenuStrip(window);
 ```
 
 `comm_key` is an item's shortcut: the right-Amiga key with that
-character picks it without the menus being shown, and the panel shows it
+character - its first, in UTF-8, matched whatever case it is typed in -
+picks it without the menus being shown, and the panel shows it
 at the item's right (`NM_COMMANDSTRING` shows `comm_key` as words
 there instead). `CHECKIT` makes an item that is checked or not, `CHECKED`
 checks it to begin with, `MENUTOGGLE` lets a second pick uncheck it, and

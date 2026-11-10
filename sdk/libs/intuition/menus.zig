@@ -82,9 +82,8 @@ pub const MenuItem = extern struct {
     /// `HIGHIMAGE`: the same kind of thing as `item_fill`.
     select_fill: ?*anyopaque = null,
     /// Command: the character that picks it with the right-Amiga key, for
-    /// `COMMSEQ`.
-    command: u8 = 0,
-    pad: [3]u8 = .{ 0, 0, 0 },
+    /// `COMMSEQ`: a code point, found by its case-folded form.
+    command: u32 = 0,
     /// SubItem: the first item of its own panel, or null. An item with
     /// subitems is not picked itself; one of them is.
     sub_item: ?*MenuItem = null,
