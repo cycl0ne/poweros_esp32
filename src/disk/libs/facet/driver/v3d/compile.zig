@@ -8697,6 +8697,20 @@ fn lanes(work: *Work) void {
         // A shared atomic's word too (:1006-1009); a load_shared differs
         // where its offset does (:674-679; since 1.203).
         if (each.tag == .shared_atomic) work.divergent[at] = true;
+        // The system values that differ from lane to lane (since 1.204):
+        // a vertex's id and its instance's (:975, :572-573: v3dv's
+        // options have no nir_divergence_vertex, v3dv_pipeline.c:
+        // 217-218), and the CS payload's two words, which the local
+        // invocation index and id are made of (:977-979) and the
+        // workgroup id, of v3dv's
+        // nir_divergence_multiple_workgroup_per_compute_subgroup
+        // (:611-615). The base instance, the first vertex, and the
+        // dispatch's count and base of workgroups are the same in every
+        // lane (:240-250, :342).
+        if (each.tag == .system) switch (@as(SystemValue, @enumFromInt(each.at))) {
+            .vertex_id, .instance_id, .cs_payload0, .cs_payload1 => work.divergent[at] = true,
+            .base_instance, .first_vertex, .work_group_base_x, .work_group_base_y, .work_group_base_z, .num_work_groups_x, .num_work_groups_y, .num_work_groups_z => {},
+        };
         for (readsOf(each)) |field| if (field) |of| {
             if (work.divergent[of]) work.divergent[at] = true;
         };
@@ -20735,4 +20749,56 @@ test "through Mesa's back end, a matrix in an array in shared memory: stored and
         .{ .tag = .shared, .kind = .f32x3, .shape = "ishl(isub(1, ushr(system, 26)), 5)" },
         .{ .tag = .shared, .kind = .f32x3, .shape = "iadd(ishl(isub(1, ushr(system, 26)), 5), 16)" },
     });
+}
+
+test "through Mesa's back end, a compute program's ids differ from lane to lane: its readonly buffer read at them through the TMU, and at the count of workgroups through unifa" {
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_compute_readonly);
+    // r.w[i], r.w[gl_WorkGroupID.x + 128u] and r.w[gl_LocalInvocationIndex
+    // + 256u] differ (nir_divergence_analysis.c:977-979, :611-615);
+    // r.w[gl_NumWorkGroups.x + 512u] does not (:240).
+    var divergent: [4]bool = undefined;
+    var found: usize = 0;
+    for (work.program(), 0..) |each, at| if (each.tag == .ssbo_indirect) {
+        try testing.expect(found < divergent.len);
+        divergent[found] = work.divergent[at];
+        found += 1;
+    };
+    try testing.expectEqual(divergent.len, found);
+    try testing.expectEqualSlices(bool, &.{ true, true, true, false }, &divergent);
+    // The CS payload's two words differ; the count of workgroups does not.
+    for (work.program(), 0..) |each, at| if (each.tag == .system) {
+        const which: SystemValue = @enumFromInt(each.at);
+        try testing.expectEqual(which == .cs_payload0 or which == .cs_payload1, work.divergent[at]);
+    };
+    // Three loads through the TMU (ntq_emit_tmu_general) and one through
+    // unifa (ntq_emit_load_unifa, nir_to_vir.c:3315-3317).
+    try testing.expectEqual(@as(usize, 3), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "ldunifa"));
+}
+
+test "through Mesa's back end, a vertex program's uniform buffer read at its vertex's and its instance's index goes through the TMU: neither is the same in every lane" {
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const code = try vertexThroughMesa(&work, &reference.glslc_vertex_tints, key);
+    // The vertex id and the instance id differ (:975, :572-573); the
+    // first vertex and the base instance, which VertexIndex and
+    // InstanceIndex add to them, do not (:246-249).
+    var reads: usize = 0;
+    for (work.program(), 0..) |each, at| switch (each.tag) {
+        .ubo_indirect => {
+            try testing.expect(work.divergent[at]);
+            reads += 1;
+        },
+        .system => {
+            const which: SystemValue = @enumFromInt(each.at);
+            try testing.expectEqual(which == .vertex_id or which == .instance_id, work.divergent[at]);
+        },
+        else => {},
+    };
+    try testing.expectEqual(@as(usize, 2), reads);
+    // Each tint's four floats an LDTMU, and no LDUNIFA.
+    try testing.expectEqual(@as(usize, 8), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "ldunifa"));
 }

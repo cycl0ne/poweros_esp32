@@ -3068,6 +3068,30 @@ Results:
 
 On the CM5, FacetBoth 1.67's new case, "shipped compute: shared memory and barriers", is 0 of 230400 pixels apart, 2 at worst. It is three groups of three invocations. Each invocation writes its corner's place into a vec2[3] in shared memory, and after a barrier reads the next corner's. Between two barriers each adds its corner's number to a shared uint, and the triangle's blue is that count, 6, in sixteenths. With the cores' function made wrong on purpose, the count in eighths, it is 62,940 apart: the V3D runs its own program, of shared memory and TSY barriers. The other 295 cases are each as they were at 1.202, and FacetProbe is 890 of 890.
 
+**Then the system values that differ from lane to lane**, facet.library 1.204. A fix: until now no system value counted as differing, so a buffer read at an offset made from one was read through unifa, one word for all the lanes, where v3d reads it through the TMU (ntq_emit_load_unifa, nir_to_vir.c:3315-3317, then ntq_emit_tmu_general). `lanes()` in compile.zig, nir_divergence_analysis's port, now has v3dv's answers for them (its options are nir_divergence_multiple_workgroup_per_compute_subgroup alone, v3dv_pipeline.c:217-218):
+- **They differ:**
+  - a vertex's id, which VertexIndex is made of (nir_divergence_analysis.c:974-975, :1154);
+  - its instance's id, which InstanceIndex is made of: it is the same in every lane only with nir_divergence_vertex, which v3dv does not pass (:572-573);
+  - the CS payload's two words, which LocalInvocationIndex and LocalInvocationId are made of (:977-979, :1154);
+  - and through them WorkgroupId, which v3dv's option makes differ (:611-615): a supergroup's lanes may be more than one workgroup's (v3d_csd_choose_workgroups_per_supergroup). GlobalInvocationId differs as its parts do.
+- **They are the same in every lane:** the first vertex and the base instance, which VertexIndex and InstanceIndex add, and the dispatch's count of workgroups and their base (:240-250, :342, falling through to :410).
+
+Which programs it was wrong for: since 1.192, a vertex program reading a uniform buffer, or a storage buffer, at an offset made from VertexIndex or InstanceIndex. Since 1.194, on the V3D since 1.195, a compute program reading a uniform buffer or a readonly storage buffer at an offset made from an invocation's or a workgroup's id. A buffer the program writes was read through the TMU anyway (1.168), and so is every store. No FacetBoth case did either, and none of their results changes.
+
+It matters for the next step too. A selection whose condition is made from an id is a branch under the execute mask, not a uniform branch (beginIf, to_vir.zig); with the ids counted the same in every lane it would have been the uniform one.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
+- **The system values after Vulkan 1.0:** DrawIndex, BaseVertex and BaseInstance as variables of their own (VK_KHR_shader_draw_parameters, Vulkan 1.1) and the subgroup's ids (Vulkan 1.1). *Facet-wide*, and after 1.0.
+- **The divergence analysis's options are v3dv's**, built into `lanes()`. *V3D-only*: a Radeon port takes radv's own, read from its sources (see the list below).
+
+Results:
+- **The references:**
+  - glslc_compute_readonly, 333 words, a workgroup of 16. A readonly storage buffer is read at the global id, at the workgroup id plus 128, at the local index plus 256 and at the count of workgroups plus 512. The first three go through the TMU, three ldtmus, and the last through unifa, one ldunifa. Before the fix none went through the TMU.
+  - glslc_vertex_tints, 266 words. A uniform buffer's vec4 is read at VertexIndex & 3 and at (InstanceIndex & 1) + 4: eight ldtmus and no ldunifa.
+- The V3D's tests are 361, two new. Of 9 mutations, all 9 fail them. Each of the four values that differ made the same in every lane is caught, and so is each of four that are the same made to differ (the first vertex, the base instance, the count of workgroups, their base), and the switch taken out.
+
+On the CM5, FacetBoth 1.68's new case, "shipped compute: reads a buffer at each invocation's id", is three groups of three invocations. Each reads its corner's place from a readonly buffer, which the case has written, at its global id, adds the push constants and writes the corner out for the draw. With 1.203's facet.library and v3d.fdriver it is 63,548 of 230,400 pixels apart, 122 at worst: the bug, on the V3D. With 1.204's it is 0 of 230,400 apart, 2 at worst. The other 296 cases are each as they were at 1.203, and FacetProbe is 890 of 890.
+
 ### 61. Multisampling: 4 samples a pixel on both devices, with resolve attachments and CmdResolveImage's body **[critical path]**
 
 *rasterisation* &mdash; conformance-blocking, port, **sized 07.11.2026: 21 commits, about 1,590 lines of code, 1,340 of tests and 90 of docs**; **the cores' half done in 1.114**, the V3D's is steps V1 to V8
@@ -4688,6 +4712,9 @@ After the V3D, facet's next device is a Radeon, ported from radv as the V3D is f
 - textureCompressionETC2, textureCompressionASTC_LDR.
 - inheritedQueries.
 - maxComputeSharedMemorySize: facet's 16 KiB, v3dv's 32 KiB (1.203).
+
+**What the compiler takes from v3dv's options, which a Radeon's takes from radv's:**
+- The divergence analysis's options: v3dv's are nir_divergence_multiple_workgroup_per_compute_subgroup alone (v3dv_pipeline.c:217-218), so the workgroup id differs from lane to lane, and with no nir_divergence_vertex the instance id does too. They are built into `lanes()` in compile.zig (1.204).
 
 ## Deferred by the decision, not out of reach
 
