@@ -50,7 +50,7 @@ const FileHandle = dos.FileHandle;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SSH";
-const VERSION_STRING = "\x00$VER: SSH 1.2 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SSH 1.3 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "HOST,PORT/K/N,USER/K,KEYGEN/S,COMMAND/F";
@@ -498,14 +498,10 @@ fn tellSize(st: *State) void {
 const SizeAnswer = struct { length: usize, columns: u32, rows: u32 };
 
 /// The console's answer to CSI 18 t at the start of `bytes`:
-/// `CSI 8 ; rows ; columns t`, CSI as ESC [ or the one byte.
+/// `ESC [ 8 ; rows ; columns t`.
 fn sizeAnswer(bytes: []const u8) ?SizeAnswer {
-    var at: usize = 0;
-    if (bytes.len >= 2 and bytes[0] == 0x1B and bytes[1] == '[') {
-        at = 2;
-    } else if (bytes.len >= 1 and bytes[0] == 0x9B) {
-        at = 1;
-    } else return null;
+    if (bytes.len < 2 or bytes[0] != 0x1B or bytes[1] != '[') return null;
+    var at: usize = 2;
     if (at + 2 > bytes.len or bytes[at] != '8' or bytes[at + 1] != ';') return null;
     at += 2;
     var numbers: [2]u32 = .{ 0, 0 };

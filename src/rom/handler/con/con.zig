@@ -124,8 +124,8 @@ pub const window = @import("window.zig");
 pub const HANDLER_NAME = "con-handler";
 const HANDLER_VERSION = 1;
 /// 1: Tab completes names.
-const HANDLER_REVISION = 6;
-const BUILD_DATE = "18.10.2026";
+const HANDLER_REVISION = 7;
+const BUILD_DATE = "10.11.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -1195,7 +1195,7 @@ test "typing, cursor keys and Enter: the echo and the line" {
     try testing.expectEqualStrings("lo\n", nextLine(&ed, &buffer));
 }
 
-test "editing keys: ^W ^A ^K ^Y, Delete, ^Z BS, ^U, ^X, Home/End, 0x9B" {
+test "editing keys: ^W ^A ^K ^Y, Delete, ^Z BS, ^U, ^X, Home/End, 1~" {
     var io: TestIo = .{};
     var ed = newEditor(&io);
     var buffer: [64]u8 = undefined;
@@ -1211,10 +1211,41 @@ test "editing keys: ^W ^A ^K ^Y, Delete, ^Z BS, ^U, ^X, Home/End, 0x9B" {
     try testing.expectEqualStrings("def\n", nextLine(&ed, &buffer));
     keys(&ed, "bc\x1b[HA\x1b[FD\r"); // Home, End
     try testing.expectEqualStrings("AbcD\n", nextLine(&ed, &buffer));
-    keys(&ed, "xy\x9bDz\x9b1~0\r"); // the 0x9B CSI: left; Home as 1~
+    keys(&ed, "xy\x1b[Dz\x1b[1~0\r"); // left; Home as 1~
     try testing.expectEqualStrings("0xzy\n", nextLine(&ed, &buffer));
     keys(&ed, "\x07\x0eok\r"); // other control characters are dropped
     try testing.expectEqualStrings("ok\n", nextLine(&ed, &buffer));
+}
+
+test "UTF-8: a character goes in whole, the cursor steps by character and moves by cells" {
+    var io: TestIo = .{};
+    var ed = newEditor(&io);
+    var buffer: [64]u8 = undefined;
+    // ä, €, Ω and an emoji, echoed as they came.
+    keys(&ed, "\xC3\xA4\xE2\x82\xAC\xCE\xA9\xF0\x9F\x98\x80");
+    try testing.expectEqualStrings("\xC3\xA4\xE2\x82\xAC\xCE\xA9\xF0\x9F\x98\x80", io.out[0..io.out_len]);
+    // Left over the emoji is two cells, over the omega one.
+    io.out_len = 0;
+    keys(&ed, "\x1b[D");
+    try testing.expectEqualStrings("\x1b[2D", io.out[0..io.out_len]);
+    io.out_len = 0;
+    keys(&ed, "\x1b[D");
+    try testing.expectEqualStrings("\x1b[1D", io.out[0..io.out_len]);
+    // Backspace takes the euro sign back, all of its bytes.
+    keys(&ed, "\x7f\r");
+    try testing.expectEqualStrings("\xC3\xA4\xCE\xA9\xF0\x9F\x98\x80\n", nextLine(&ed, &buffer));
+    // A mark of no width goes with its letter: one Backspace takes both.
+    keys(&ed, "e\xCC\x81\x7fx\r");
+    try testing.expectEqualStrings("x\n", nextLine(&ed, &buffer));
+    // A byte that is no UTF-8 goes in as it came, and so does a character
+    // broken off by the byte after it.
+    keys(&ed, "M\xFCll\xE2\x82!\r");
+    try testing.expectEqualStrings("M\xFCll\xE2\x82!\n", nextLine(&ed, &buffer));
+    // The history search matches in any case past ASCII.
+    keys(&ed, "\xC3\x84pfel\r");
+    _ = nextLine(&ed, &buffer);
+    keys(&ed, "\xC3\xA4p\x12\r");
+    try testing.expectEqualStrings("\xC3\x84pfel\n", nextLine(&ed, &buffer));
 }
 
 test "history: up and down, no duplicates, ^R search by prefix" {

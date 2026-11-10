@@ -208,7 +208,7 @@ from `LIBS:` when first opened. Every module, with its reference, is in
 
 | Area | Libraries |
 |---|---|
-| Kernel | `exec` tasks on every core, ports, memory, libraries and devices; `utility` tag lists, hooks, dates, the zone the clock keeps, UTF-8 strings with Unicode's case, text between UTF-8 and Latin-1, URLs and arrays sorted; `expansion` the board's parts |
+| Kernel | `exec` tasks on every core, ports, memory, libraries and devices; `utility` tag lists, hooks, dates, the zone the clock keeps, UTF-8 strings with Unicode's case and widths, text between UTF-8 and Latin-1, URLs and arrays sorted; `expansion` the board's parts |
 | Files | `dos` processes, files, handlers, the shell's `ReadArgs`, files read whole, trees made and deleted, passwords typed without their echo; `rdb` partitions on any drive; `compression` DEFLATE, zlib and gzip |
 | Languages | `locale` countries' dates, numbers and money, languages' words and order of letters, programs' texts translated in catalogs |
 | Displays | **`rtg`**; `graphics` drawing, text in UTF-8; `layers`; `intuition` screens, windows, gadgets, styles; `keymap`; `motion` animations and timers |
@@ -251,7 +251,8 @@ Beside them:
   commits and pushes over HTTPS and SSH (`C:net/Git`,
   [network guide](sdk/docs/guides/network.md#git-cnetgit)); scripts,
   output and errors redirected apart, line editing and file name
-  completion, files hashed and checked against a list of digests
+  completion in UTF-8 on a console that places each character in the
+  cells Unicode gives it, files hashed and checked against a list of digests
   ([dos guide](sdk/docs/guides/dos.md)).
 - **Languages:** 21 countries and 9 languages besides English in
   `LOCALE:`, the one chosen on Prefs' Region page with the time zone,

@@ -29,7 +29,7 @@ const KeymapBase = sdk.interface.keymap.KeymapBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Input";
-const VERSION_STRING = "\x00$VER: Input 1.3 (20.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Input 1.4 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TIMER/S,KEY/K/N";
@@ -147,7 +147,7 @@ fn show(dl: *DosBase, kb: ?*KeymapBase, e: *const InputEvent) void {
         ie.IECLASS_RAWKEY => {
             const up = e.code & ie.IECODE_UP_PREFIX != 0;
             const dir: [*:0]const u8 = if (up) "up" else "down";
-            // What it makes through the default keymap, CSI shown as such.
+            // What it makes through the default keymap, ESC shown as such.
             var text: [16:0]u8 = @splat(0);
             const n = if (kb) |k| k.MapRawKey(e, &text, 15, null) else 0;
             if (n > 0) {
@@ -155,7 +155,6 @@ fn show(dl: *DosBase, kb: ?*KeymapBase, e: *const InputEvent) void {
                 var at: usize = 0;
                 for (text[0..@intCast(n)]) |c| {
                     const word: []const u8 = switch (c) {
-                        0x9B => "CSI",
                         0x1B => "ESC",
                         '\r' => "\\r",
                         '\n' => "\\n",

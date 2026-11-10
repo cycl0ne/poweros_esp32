@@ -6,19 +6,32 @@
 //! device renders the cells (`render.zig`) and hands `takeReply` back to
 //! whoever is reading the console.
 //!
-//! It speaks VT100 with the parts of xterm a program expects today, and
-//! keeps what the older console had: an 8-bit `0x9B` opens a control
-//! sequence exactly as `ESC [` does, tab stops are the console's own, and a
-//! line that wrapped swallows the newline that follows it, so a program
-//! that fills the last column and then writes a newline does not leave a
-//! blank line behind.
+//! It speaks VT100 with the parts of xterm a program expects today: tab
+//! stops are the console's own, and a line that wrapped swallows the
+//! newline that follows it, so a program that fills the last column and
+//! then writes a newline does not leave a blank line behind.
 //!
-//! Characters are Latin-1 - the set the ROM fonts draw. The one exception
-//! is the line-drawing set (`ESC ( 0`), which Latin-1 has no characters
-//! for: those cells are marked `CELL_GRAPHIC` and the renderer draws the
-//! lines and corners itself.
+//! **Text is UTF-8, and decoded first.** A byte past 0x7F is always part
+//! of a character, so the controls are 7-bit: C0, DEL, and ESC starting a
+//! sequence (`ESC [` is the only CSI). A character's bytes may come in
+//! more than one write; they are held until it is whole. Bytes that are
+//! no UTF-8 read as `utf8.read` reads them. U+0080 to U+009F are
+//! characters with no glyph.
+//!
+//! **A character takes the cells Unicode says** (`unicode.width`): a mark
+//! of no width takes none and is not kept, a wide one - CJK, kana, an
+//! emoji - takes two, the second holding `WIDE_TAIL`. Writing over half
+//! of a wide character blanks its other half. A wide character that
+//! would start in the last column goes on the next row.
+//!
+//! The line-drawing set (`ESC ( 0`) is the one place a byte is not its
+//! character: those cells are marked `CELL_GRAPHIC` and the renderer
+//! draws the lines and corners itself.
 
 const std = @import("std");
+const utility = @import("sdk").utility;
+const utf8 = utility.utf8;
+const unicode = utility.unicode;
 
 /// A colour is an index: 0-7 the basic ones, 8-15 the bright ones, 16-255
 /// the rest of the 256-colour cube. `COLOR_DEFAULT` is the console's own.
@@ -43,15 +56,20 @@ pub const CELL_WRAP: u8 = 1 << 6;
 /// choice, so each clears the other and 22 clears both.
 pub const CELL_FAINT: u8 = 1 << 7;
 
+/// What the second cell of a wide character holds: no character has it.
+pub const WIDE_TAIL: u32 = 0x11_0001;
+
 pub const Cell = extern struct {
-    ch: u8 = ' ',
+    /// The character, a code point; `WIDE_TAIL` in a wide one's second
+    /// cell.
+    ch: u32 = ' ',
     flags: u8 = 0,
-    fg: u16 = COLOR_DEFAULT,
-    bg: u16 = COLOR_DEFAULT,
     /// Something was written here - a character, or a blank a line was
     /// opened up with - and not erased since. A selection is made of these
     /// cells and not of the empty room beside them.
     written: bool = false,
+    fg: u16 = COLOR_DEFAULT,
+    bg: u16 = COLOR_DEFAULT,
 };
 
 /// How much of a cell a selection covers. `half` is the empty cell just
@@ -126,6 +144,9 @@ pub const Term = struct {
     shift_out: bool = false,
 
     state: State = .ground,
+    /// The bytes of a character not yet whole, held across writes.
+    partial: [4]u8 = undefined,
+    partial_len: u8 = 0,
     params: [max_params]i32 = @splat(-1),
     param_count: u32 = 0,
     /// A `?`, `>` or `<` before the parameters.
@@ -186,6 +207,7 @@ pub const Term = struct {
         t.g1_graphic = false;
         t.shift_out = false;
         t.state = .ground;
+        t.partial_len = 0;
         t.lnm = true;
         t.scroll_lines = 0;
         t.sel_start = 0;
@@ -290,7 +312,10 @@ pub const Term = struct {
             var out_col: u32 = 0;
             var i: u32 = 0;
             while (i < len) : (i += 1) {
-                if (out_col == cols) {
+                // A wide character that would start in the last column
+                // goes on the next row whole.
+                const wide_head = i + 1 < (last - y + 1) * t.cols and t.cells[y * t.cols + i + 1].ch == WIDE_TAIL;
+                if (out_col == cols or (out_col > 0 and out_col + 1 == cols and wide_head)) {
                     if (into) |cells| if (out_row >= drop) {
                         cells[(out_row - drop) * cols + cols - 1].flags |= CELL_WRAP;
                     };
@@ -517,10 +542,11 @@ pub const Term = struct {
         return if (ends_row) .half else .no;
     }
 
-    /// The selected text, into `buf`: of each row, the written cells in
-    /// the span - an empty cell between two of them as a space - and a
-    /// newline where the span takes in a row's end, except after a row that
-    /// runs on into the next. How many bytes.
+    /// The selected text, into `buf`, in UTF-8: of each row, the written
+    /// cells in the span - an empty cell between two of them as a space,
+    /// a wide character once - and a newline where the span takes in a
+    /// row's end, except after a row that runs on into the next. How many
+    /// bytes; a character that does not fit is left out whole.
     pub fn selectionText(t: *const Term, buf: []u8) usize {
         if (t.sel_start == t.sel_end) return 0;
         var n: usize = 0;
@@ -534,10 +560,14 @@ pub const Term = struct {
             while (end > from and !t.at(end - 1, y).written) end -= 1;
             var x = from;
             while (x < end) : (x += 1) {
-                if (n >= buf.len) return n;
                 const c = t.at(x, y);
-                buf[n] = if (c.written) c.ch else ' ';
-                n += 1;
+                if (c.written and c.ch == WIDE_TAIL) continue;
+                const char: u32 = if (c.written) c.ch else ' ';
+                var bytes: [4]u8 = undefined;
+                const length = utf8.encode(char, &bytes);
+                if (n + length > buf.len) return n;
+                @memcpy(buf[n..][0..length], bytes[0..length]);
+                n += length;
             }
             const breaks = end < t.cols and t.selection(end, y) == .half;
             const runs_on = t.at(t.cols - 1, y).flags & CELL_WRAP != 0;
@@ -639,25 +669,70 @@ pub const Term = struct {
     }
 
     fn byte(t: *Term, c: u8) void {
+        if (t.state == .string) {
+            // OSC, DCS and the rest: swallowed to ST (ESC \) or BEL, a
+            // title's characters with them.
+            if (c == 0x07) t.state = .ground;
+            if (c == 0x1B) t.state = .esc;
+            return;
+        }
+        // A byte past 0x7F is part of a character, whatever came before
+        // it: a sequence it lands in is broken off.
+        if (c >= 0x80) {
+            t.state = .ground;
+            t.partial[t.partial_len] = c;
+            t.partial_len += 1;
+            t.decodePartial();
+            return;
+        }
+        // An ASCII byte ends a character that was begun: what was held is
+        // read as the bytes it is, and this byte after it.
+        if (t.partial_len > 0) t.flushPartial();
         // A control character is acted on wherever it arrives, as a
-        // terminal does - except inside a string, which swallows all it is
-        // given until its end.
-        if (t.state != .string and c < 0x20) {
+        // terminal does.
+        if (c < 0x20) {
             t.control(c);
             return;
         }
         switch (t.state) {
-            .ground => t.ground(c),
+            .ground => if (c != 0x7F) t.put(c),
             .esc => t.escByte(c),
             .esc_intermediate => t.escIntermediate(c),
             .csi_param => t.csiParam(c),
             .csi_intermediate => t.csiIntermediate(c),
-            .string => {
-                // OSC, DCS and the rest: swallowed to ST (ESC \) or BEL.
-                if (c == 0x07) t.state = .ground;
-                if (c == 0x1B) t.state = .esc;
-            },
+            .string => unreachable,
         }
+    }
+
+    /// The held bytes, as far as they make characters: each one put, a
+    /// sequence right so far kept for the next byte.
+    fn decodePartial(t: *Term) void {
+        while (t.partial_len > 0) {
+            const held = t.partial[0..t.partial_len];
+            const step = utf8.decode(held);
+            switch (step.kind) {
+                .short => return,
+                .char => {
+                    t.partial_len = 0;
+                    t.put(step.char);
+                },
+                .broken => t.putHeld(utf8.read(held)),
+            }
+        }
+    }
+
+    /// The held bytes of a character broken off, put as `utf8.read` reads
+    /// them.
+    fn flushPartial(t: *Term) void {
+        while (t.partial_len > 0) t.putHeld(utf8.read(t.partial[0..t.partial_len]));
+    }
+
+    /// What the held bytes start with put, and those bytes let go.
+    fn putHeld(t: *Term, found: utf8.Read) void {
+        const rest = t.partial_len - found.length;
+        for (0..rest) |place| t.partial[place] = t.partial[found.length + place];
+        t.partial_len = @intCast(rest);
+        t.put(found.char);
     }
 
     fn control(t: *Term, c: u8) void {
@@ -691,49 +766,70 @@ pub const Term = struct {
         }
     }
 
-    fn ground(t: *Term, c: u8) void {
-        // The 8-bit C1 controls. Five of the thirty-two mean something:
-        // the four `ESC D/E/H/M` also reach, and CSI.
-        switch (c) {
-            0x84 => t.index(), // IND
-            0x85 => t.nextLine(), // NEL
-            0x88 => t.setTab(t.x), // HTS
-            0x8D => t.reverseIndex(), // RI
-            0x9B => t.startCsi(), // CSI
-            0x80...0x83, 0x86...0x87, 0x89...0x8C, 0x8E...0x9A, 0x9C...0x9F => {},
-            else => t.put(c),
-        }
-    }
-
-    fn put(t: *Term, c: u8) void {
-        if (t.wrap_pending and t.autowrap) {
-            // The row filled up and there is more: it is one line with the
-            // row the text goes on in.
-            t.at(t.cols - 1, t.y).flags |= CELL_WRAP;
-            t.x = 0;
-            t.index();
-            t.wrap_pending = false;
-        }
+    /// A character into the cells it takes, at the cursor.
+    fn put(t: *Term, char: u32) void {
+        const takes: u32 = unicode.width(char);
+        if (takes == 0) return;
+        if (t.wrap_pending and t.autowrap) t.wrapRow();
         if (t.x >= t.cols or t.y >= t.rows) return;
+        if (takes == 2 and t.x + 1 >= t.cols) {
+            // A wide character never starts in the last column: it goes on
+            // the next row, or without autowrap over the last two cells.
+            if (t.cols < 2) return;
+            if (t.autowrap) t.wrapRow() else t.x = t.cols - 2;
+        }
         // What is selected is the text that was there, so a character
         // written over any of it ends the selection rather than leaving
         // the mark on whatever arrives next.
         const here = t.y * t.cols + t.x;
-        if (here >= t.sel_start and here < t.sel_end) t.clearSelection();
+        if (here + takes > t.sel_start and here < t.sel_end) t.clearSelection();
         if (t.insert) {
-            // The rest of the line moves right, and the last cell goes.
-            var x = t.cols - 1;
-            while (x > t.x) : (x -= 1) t.at(x, t.y).* = t.at(x - 1, t.y).*;
+            // The rest of the line moves right, and the last cells go.
+            var x = t.cols;
+            while (x > t.x + takes) {
+                x -= 1;
+                t.at(x, t.y).* = t.at(x - takes, t.y).*;
+            }
         }
+        t.unsplit(t.x, takes, t.y);
         const graphic = if (t.shift_out) t.g1_graphic else t.g0_graphic;
         const cell = t.at(t.x, t.y);
         cell.* = t.attr;
-        cell.ch = c;
+        cell.ch = char;
         cell.written = true;
         // The line-drawing set is 0x60-0x7E; anything else is itself.
-        if (graphic and c >= 0x60 and c <= 0x7E) cell.flags |= CELL_GRAPHIC;
+        if (graphic and char >= 0x60 and char <= 0x7E) cell.flags |= CELL_GRAPHIC;
+        if (takes == 2) {
+            const tail = t.at(t.x + 1, t.y);
+            tail.* = t.attr;
+            tail.ch = WIDE_TAIL;
+            tail.written = true;
+        }
         t.markDirty(t.y);
-        if (t.x + 1 >= t.cols) t.wrap_pending = true else t.x += 1;
+        if (t.x + takes >= t.cols) {
+            t.x = t.cols - 1;
+            t.wrap_pending = true;
+        } else {
+            t.x += takes;
+        }
+    }
+
+    /// The row filled up and there is more: it is one line with the row the
+    /// text goes on in.
+    fn wrapRow(t: *Term) void {
+        t.at(t.cols - 1, t.y).flags |= CELL_WRAP;
+        t.x = 0;
+        t.index();
+        t.wrap_pending = false;
+    }
+
+    /// Before `cells_n` cells from `x` on row `y` are written over: a wide
+    /// character only half of which is written over is blanked whole, so
+    /// no half of one is left beside something else.
+    fn unsplit(t: *Term, x: u32, cells_n: u32, y: u32) void {
+        if (x > 0 and t.at(x, y).ch == WIDE_TAIL) t.at(x - 1, y).ch = ' ';
+        const after = x + cells_n;
+        if (after < t.cols and t.at(after, y).ch == WIDE_TAIL) t.at(after, y).ch = ' ';
     }
 
     // --- escape sequences ----------------------------------------------------
@@ -1029,7 +1125,11 @@ pub const Term = struct {
 
     fn repeat(t: *Term, n: u32) void {
         if (t.x == 0 and !t.wrap_pending) return;
-        const last = if (t.wrap_pending) t.at(t.cols - 1, t.y).* else t.at(t.x - 1, t.y).*;
+        var from = if (t.wrap_pending) t.cols - 1 else t.x - 1;
+        // A wide character's second cell stands for the character.
+        if (t.at(from, t.y).ch == WIDE_TAIL and from > 0) from -= 1;
+        const last = t.at(from, t.y).*;
+        if (last.ch == WIDE_TAIL) return;
         var i: u32 = 0;
         while (i < n) : (i += 1) t.put(last.ch);
     }
@@ -1239,10 +1339,18 @@ fn scratch(cols: u32, rows: u32) struct { Term, []Cell } {
     return .{ Term.init(cells, cols, rows), cells };
 }
 
-/// A row as text, spaces and all.
+/// A row as text, spaces and all, in UTF-8; a wide character once.
 fn rowText(t: *const Term, y: u32, buf: []u8) []const u8 {
-    for (0..t.cols) |x| buf[x] = t.at(@intCast(x), y).ch;
-    return buf[0..t.cols];
+    var n: usize = 0;
+    for (0..t.cols) |x| {
+        const char = t.at(@intCast(x), y).ch;
+        if (char == WIDE_TAIL) continue;
+        var bytes: [4]u8 = undefined;
+        const length = utf8.encode(char, &bytes);
+        @memcpy(buf[n..][0..length], bytes[0..length]);
+        n += length;
+    }
+    return buf[0..n];
 }
 
 test "writing, wrapping, and the newline a wrapped line swallows" {
@@ -1271,15 +1379,14 @@ test "writing, wrapping, and the newline a wrapped line swallows" {
     try testing.expectEqualStrings("abcdefgj", rowText(&t, 0, &buf));
 }
 
-test "moving, erasing and the 8-bit CSI" {
+test "moving and erasing" {
     var t, const cells = scratch(10, 4);
     defer testing.allocator.free(cells);
     var buf: [10]u8 = undefined;
 
     t.write("\x1b[2;3Hhere");
     try testing.expectEqualStrings("  here    ", rowText(&t, 1, &buf));
-    // The same sequence with the one-byte CSI.
-    t.write("\x9b3;1Hthere");
+    t.write("\x1b[3;1Hthere");
     try testing.expectEqualStrings("there     ", rowText(&t, 2, &buf));
 
     // Erase to the end of the line, to its start, and all of it.
@@ -1395,7 +1502,7 @@ test "colours, attributes and the line-drawing set" {
     // back; the renderer draws those cells itself.
     t.write("\x1b[2;1H\x1b(0lqk\x1b(Bx");
     try testing.expectEqual(CELL_GRAPHIC, t.at(0, 1).flags & CELL_GRAPHIC);
-    try testing.expectEqual(@as(u8, 'q'), t.at(1, 1).ch);
+    try testing.expectEqual(@as(u32, 'q'), t.at(1, 1).ch);
     try testing.expectEqual(@as(u8, 0), t.at(3, 1).flags & CELL_GRAPHIC);
 }
 
@@ -1639,7 +1746,7 @@ test "blanks a line is opened up with are written; a wrapped row copies without 
     t.clearSelection();
     t.write("\x1b[1;2H\x1b[2@");
     try testing.expect(t.at(1, 0).written and t.at(2, 0).written);
-    try testing.expectEqual(@as(u8, 'b'), t.at(3, 0).ch);
+    try testing.expectEqual(@as(u32, 'b'), t.at(3, 0).ch);
 }
 
 test "a private prefix the terminal does not know makes the sequence nothing" {
@@ -1664,25 +1771,29 @@ test "a private prefix the terminal does not know makes the sequence nothing" {
     try testing.expect(!t.autowrap);
 }
 
-test "the 8-bit C1 controls, and CTC" {
+test "the controls are 7-bit, and CTC" {
     // Wide enough to have default tab stops: they go in every 8 columns
     // up to the width, so an 8-column terminal has none at all.
     var t, const cells = scratch(40, 4);
     defer testing.allocator.free(cells);
 
-    // 0x84 IND, 0x85 NEL, 0x8D RI - what ESC D, ESC E and ESC M reach.
-    t.write("ab\x84");
+    // ESC D, ESC E and ESC M; a C1 character is a character of no glyph,
+    // never a control, and DEL is nothing.
+    t.write("ab\x1bD");
     try testing.expectEqual(@as(u32, 1), t.y);
     try testing.expectEqual(@as(u32, 2), t.x);
-    t.write("\x85");
+    t.write("\x1bE");
     try testing.expectEqual(@as(u32, 2), t.y);
     try testing.expectEqual(@as(u32, 0), t.x);
-    t.write("\x8D");
+    t.write("\x1bM");
     try testing.expectEqual(@as(u32, 1), t.y);
+    t.write("\xC2\x9B2J\x7F");
+    try testing.expectEqual(@as(u32, 0x9B), t.at(0, 1).ch);
+    try testing.expectEqual(@as(u32, '2'), t.at(1, 1).ch);
+    try testing.expectEqual(@as(u32, 3), t.x);
 
-    // 0x88 HTS sets a stop where the cursor is; the rest of the C1s do
-    // nothing and print nothing.
-    t.write("\x1b[1;1H\x1b[3C\x88\x1b[1;1H\x89\x9C");
+    // ESC H sets a stop where the cursor is.
+    t.write("\x1b[1;1H\x1b[3C\x1bH\x1b[1;1H");
     try testing.expectEqual(@as(u32, 0), t.x);
     t.write("\t");
     try testing.expectEqual(@as(u32, 3), t.x);
@@ -1763,4 +1874,76 @@ test "mouse reporting: which events are wanted, and what is said" {
     t.write("\x1bc");
     try testing.expectEqual(MouseMode.off, t.mouse);
     try testing.expect(!t.mouse_sgr);
+}
+
+test "UTF-8: characters whole across writes, Latin-1 bytes as themselves" {
+    var t, const cells = scratch(10, 2);
+    defer testing.allocator.free(cells);
+    var buf: [40]u8 = undefined;
+
+    // a, ä, €, Ω - the euro sign's bytes in two writes.
+    t.write("a\xC3\xA4\xE2\x82");
+    try testing.expectEqual(@as(u32, 2), t.x);
+    t.write("\xAC\xCE\xA9");
+    try testing.expectEqualStrings("a\xC3\xA4\xE2\x82\xAC\xCE\xA9      ", rowText(&t, 0, &buf));
+    try testing.expectEqual(@as(u32, 0x20AC), t.at(2, 0).ch);
+    // A byte that is no UTF-8 reads as its Latin-1 character; a sequence
+    // broken off by an ASCII byte gives its bytes back and the byte after
+    // it is acted on: the CR goes back to the start.
+    t.write("\r\nM\xFCll\xE2\x82\rX");
+    try testing.expectEqual(@as(u32, 0xFC), t.at(1, 1).ch);
+    try testing.expectEqual(@as(u32, 0xE2), t.at(4, 1).ch);
+    try testing.expectEqual(@as(u32, 0x82), t.at(5, 1).ch);
+    try testing.expectEqual(@as(u32, 'X'), t.at(0, 1).ch);
+    // A sequence broken off by its ESC: the ESC still starts one.
+    t.write("\x1b[2;8H\xC3\x1b[1;1Hz");
+    try testing.expectEqual(@as(u32, 0xC3), t.at(7, 1).ch);
+    try testing.expectEqual(@as(u32, 'z'), t.at(0, 0).ch);
+}
+
+test "UTF-8: wide characters take two cells, marks none" {
+    var t, const cells = scratch(6, 3);
+    defer testing.allocator.free(cells);
+    var buf: [40]u8 = undefined;
+
+    // An emoji, then a letter and a combining acute that takes no cell.
+    t.write("\xF0\x9F\x98\x80e\xCC\x81x");
+    try testing.expectEqual(@as(u32, 0x1F600), t.at(0, 0).ch);
+    try testing.expectEqual(WIDE_TAIL, t.at(1, 0).ch);
+    try testing.expectEqual(@as(u32, 'e'), t.at(2, 0).ch);
+    try testing.expectEqual(@as(u32, 'x'), t.at(3, 0).ch);
+    try testing.expectEqual(@as(u32, 4), t.x);
+    try testing.expectEqualStrings("\xF0\x9F\x98\x80ex  ", rowText(&t, 0, &buf));
+
+    // Writing over either half blanks the other.
+    t.write("\x1b[1;2Hy");
+    try testing.expectEqualStrings(" yex  ", rowText(&t, 0, &buf));
+    t.write("\x1b[1;3H\xE6\x97\xA5");
+    try testing.expectEqualStrings(" y\xE6\x97\xA5  ", rowText(&t, 0, &buf));
+    t.write("\x1b[1;3Hq");
+    try testing.expectEqualStrings(" yq   ", rowText(&t, 0, &buf));
+
+    // In the last column a wide character goes on the next row, and the
+    // row runs on into it.
+    t.write("\x1b[2;1Habcde\xE6\x97\xA5");
+    try testing.expectEqualStrings("abcde ", rowText(&t, 1, &buf));
+    try testing.expect(t.at(5, 1).flags & CELL_WRAP != 0);
+    try testing.expectEqual(@as(u32, 0x65E5), t.at(0, 2).ch);
+    try testing.expectEqual(@as(u32, 2), t.x);
+
+    // Selected, a wide character is copied once.
+    t.select(2 * 6, 2 * 6 + 2);
+    try testing.expectEqualStrings("\xE6\x97\xA5", buf[0..t.selectionText(&buf)]);
+}
+
+test "UTF-8: a resize keeps a wide character on one row" {
+    var t, const cells = scratch(8, 2);
+    defer testing.allocator.free(cells);
+    var buf: [40]u8 = undefined;
+    t.write("abcd\xE6\x97\xA5\xE6\x97\xA5");
+    const narrow = testing.allocator.alloc(Cell, 5 * 3) catch unreachable;
+    defer testing.allocator.free(narrow);
+    t.resize(narrow, 5, 3);
+    try testing.expectEqualStrings("abcd ", rowText(&t, 0, &buf));
+    try testing.expectEqualStrings("\xE6\x97\xA5\xE6\x97\xA5 ", rowText(&t, 1, &buf));
 }

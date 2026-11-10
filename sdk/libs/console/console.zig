@@ -2,13 +2,16 @@
 //! console.device: a terminal in a window.
 //!
 //! A unit is bound to an intuition window: `CMD_WRITE` is a stream of
-//! characters and control sequences it draws (docs/console.md), `CMD_READ`
-//! the keys typed into that window, as the window's keymap makes them.
+//! characters in UTF-8 and control sequences it draws (docs/console.md),
+//! `CMD_READ` the keys typed into that window, as the window's keymap
+//! makes them, in UTF-8 as well.
 //!
 //! The terminal it speaks is VT100 with the parts of xterm a program
-//! expects: `ESC [` and the 8-bit `0x9B` both open a control sequence, and
-//! what it sends - for a cursor key, a function key, a report - is the
-//! 7-bit form.
+//! expects. Its controls are 7-bit: a byte past 0x7F is always part of a
+//! character, `ESC [` opens a control sequence, and what it sends - for a
+//! cursor key, a function key, a report - is the same form. A character
+//! takes the cells Unicode gives it: none for a mark written on the one
+//! before, two for a wide one (CJK, an emoji).
 
 const exec = @import("../exec/exec.zig");
 const devices = @import("../exec/devices.zig");

@@ -27,7 +27,7 @@
 //!   ; a comment, the English for one, say
 //!
 //! A string's text takes C's escapes - `\n \t \r \a \b \f \v \e` (escape)
-//! `\c` (CSI) `\\ \" \'`, `\xHH`, `\ooo` - and its least and most bound its
+//! `\c` (CSI, written as `ESC [`) `\\ \" \'`, `\xHH`, `\ooo` - and its least and most bound its
 //! length in characters in every translation. A translation may leave a
 //! string out, or leave its text empty: the one built in is used.
 //!
@@ -278,6 +278,11 @@ fn unescape(gpa: mem.Allocator, text: []const u8) ![]const u8 {
         if (at >= text.len) return error.Escape;
         const e = text[at];
         at += 1;
+        if (e == 'c') {
+            // CSI: ESC [, the one form a console takes.
+            try out.appendSlice(gpa, "\x1b[");
+            continue;
+        }
         const byte: u8 = switch (e) {
             'n' => '\n',
             't' => '\t',
@@ -287,7 +292,6 @@ fn unescape(gpa: mem.Allocator, text: []const u8) ![]const u8 {
             'f' => 0x0C,
             'v' => 0x0B,
             'e' => 0x1B,
-            'c' => 0x9B,
             '\\', '"', '\'' => e,
             'x' => hex: {
                 var value: u8 = 0;

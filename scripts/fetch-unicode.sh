@@ -11,11 +11,12 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 out="$root/toolchain/unicode/$version"
 mkdir -p "$out"
 cd "$out"
-for name in UnicodeData.txt CaseFolding.txt; do
+for name in UnicodeData.txt CaseFolding.txt EastAsianWidth.txt; do
     curl -sSfL -o "$name" "https://www.unicode.org/Public/$version/ucd/$name"
 done
 sha256sum -c --quiet <<EOF
 ff58e5823bd095166564a006e47d111130813dcf8bf234ef79fa51a870edb48f  UnicodeData.txt
 6f1f9c588eb4a5c718d9e8f93b782685e5c7fec872cf05e8e6878053599e09bb  CaseFolding.txt
+43adc76c0686a42cb370764eb8cfe2b2a45b10b855e5572a2db4a0eecce15d5b  EastAsianWidth.txt
 EOF
 echo "Unicode $version in $out"

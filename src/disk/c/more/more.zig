@@ -25,7 +25,9 @@
 //! What has been read is kept, so text from a pipe pages back as a file
 //! does. It is read only as far as the screen needs, so `>`, `%` and a
 //! search read on to the end. A line wider than the window goes on in the
-//! next row, and a search looks at one row at a time. The window's size
+//! next row - the text is UTF-8, each character as wide as the cells it
+//! takes, a wide one never split - and a search looks at one row at a
+//! time. The window's size
 //! comes from the console (`CSI 18 t`), 24 rows of 80 when it does not
 //! answer.
 //!
@@ -40,9 +42,11 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const FileHandle = dos.FileHandle;
 const rdargs = dos.rdargs;
+const utf8 = sdk.utility.utf8;
+const unicode = sdk.utility.unicode;
 
 const NAME = "More";
-const VERSION_STRING = "\x00$VER: More 1.0 (06.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: More 1.1 (10.11.2026)\r\n";
 
 /// How much is read at a time.
 const read_size = 4096;
@@ -97,6 +101,9 @@ const Text = struct {
     open_start: u32 = 0,
     open_width: u32 = 0,
     escape: Escape = .none,
+    /// How far the bytes have been made into rows: a character whose last
+    /// bytes are still to be read waits there.
+    scanned: u32 = 0,
     /// Everything has been read, or no more could be kept.
     ended: bool = false,
     /// Ctrl-C while reading.
@@ -166,14 +173,15 @@ const Text = struct {
             }
             const got = text.dl.Read(text.file, text.bytes.? + text.len, read_size);
             if (got <= 0) {
-                // A last line without a newline is a row all the same.
+                // A character cut off by the end is its bytes; a last line
+                // without a newline is a row all the same.
+                _ = text.split(true);
                 if (text.len > text.open_start) _ = text.closeRow(text.len, text.len);
                 text.ended = true;
                 return;
             }
-            const from = text.len;
             text.len += @intCast(got);
-            if (!text.split(from)) text.ended = true;
+            if (!text.split(false)) text.ended = true;
         }
     }
 
@@ -181,11 +189,14 @@ const Text = struct {
         text.readTo(0xFFFF_FFFF);
     }
 
-    /// The bytes from `from` to `len` made into rows.
-    fn split(text: *Text, from: u32) bool {
-        var at = from;
-        while (at < text.len) : (at += 1) {
+    /// The bytes from `scanned` to `len` made into rows. A character whose
+    /// bytes run past `len` waits for the next read, unless `at_end`: then
+    /// its bytes are what there is.
+    fn split(text: *Text, at_end: bool) bool {
+        while (text.scanned < text.len) {
+            const at = text.scanned;
             const byte = text.bytes.?[at];
+            text.scanned += 1;
             switch (text.escape) {
                 .esc => {
                     text.escape = if (byte == '[') .csi else .none;
@@ -200,7 +211,6 @@ const Text = struct {
             switch (byte) {
                 '\n' => if (!text.closeRow(at, at + 1)) return false,
                 0x1B => text.escape = .esc,
-                0x9B => text.escape = .csi,
                 '\t' => {
                     const width = (text.open_width / tab_width + 1) * tab_width;
                     if (width > text.cols) {
@@ -209,11 +219,19 @@ const Text = struct {
                     } else text.open_width = width;
                 },
                 else => {
-                    if (byte < 0x20) continue;
-                    if (text.open_width == text.cols) {
+                    if (byte < 0x20 or byte == 0x7F) continue;
+                    const rest = text.bytes.?[at..text.len];
+                    if (!at_end and utf8.decode(rest).kind == .short) {
+                        text.scanned = at;
+                        return true;
+                    }
+                    const found = utf8.read(rest);
+                    text.scanned = at + @as(u32, @intCast(found.length));
+                    const width = unicode.width(found.char);
+                    if (width > 0 and text.open_width + width > text.cols) {
                         if (!text.closeRow(at, at)) return false;
                     }
-                    text.open_width += 1;
+                    text.open_width += width;
                 },
             }
         }
@@ -354,7 +372,6 @@ const Pager = struct {
             0x08, 0x7F => 'b',
             0x0C => 0x0C,
             0x1B => if (dl.WaitForChar(pager.keys, 50_000) and pager.readByte() == '[') pager.sequence() else 'q',
-            0x9B => pager.sequence(),
             else => byte,
         };
     }
@@ -400,8 +417,9 @@ const Pager = struct {
 
     /// A line typed at the bottom after `lead`, still in raw mode, so what
     /// was typed ahead is kept and the Return scrolls nothing: echoed here,
-    /// Backspace takes back the last character, Return ends it, and Esc or
-    /// Ctrl-C give it up. Null when nothing was typed or it was given up.
+    /// Backspace takes back the last character - its bytes and its cells -,
+    /// Return ends it, and Esc or Ctrl-C give it up. Null when nothing was
+    /// typed or it was given up.
     fn ask(pager: *Pager, lead: []const u8, into: []u8) ?[]u8 {
         pager.clearPrompt();
         pager.put(lead);
@@ -414,10 +432,11 @@ const Pager = struct {
                     break;
                 },
                 0x08, 0x7F => if (len > 0) {
-                    len -= 1;
-                    pager.put("\x08 \x08");
+                    const last = utf8.readLast(into[0..len]);
+                    len -= last.length;
+                    for (0..unicode.width(last.char)) |_| pager.put("\x08 \x08");
                 },
-                0x03, 0x1B, 0x9B => return null,
+                0x03, 0x1B => return null,
                 else => if (byte >= 0x20 and len < into.len) {
                     into[len] = byte;
                     len += 1;

@@ -7,16 +7,20 @@
 //! to fill and text to shine, a blue block with a white letter on the
 //! default screen.
 //!
-//! The line-drawing set has no characters in Latin-1, so those cells are
-//! drawn rather than written: a horizontal line is a line across the middle
-//! of the cell, a corner is two half lines, and the few that Latin-1 does
-//! have - degree, plus-minus, pound, middle dot - are written as
-//! themselves.
+//! The cells' characters go to `Text` in UTF-8. A wide character is drawn
+//! on its own, in the middle of its two cells; its second cell is drawn
+//! with it, and one left without the first is drawn blank.
+//!
+//! The line-drawing set is drawn rather than written, so it needs nothing
+//! of the font: a horizontal line is a line across the middle of the cell,
+//! a corner is two half lines, and the few every font has - degree,
+//! plus-minus, pound, middle dot - are written as themselves.
 
 const sdk = @import("sdk");
 const graphics = sdk.graphics;
 const TagItem = sdk.utility.TagItem;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
+const utf8 = sdk.utility.utf8;
 const term = @import("term.zig");
 const Cell = term.Cell;
 const Term = term.Term;
@@ -181,12 +185,12 @@ fn drawGraphic(gb: *GraphicsBase, l: Layout, x: i32, y: i32, cell: Cell, fg: gra
         gb.DrawHLine(l.rp, left, row, l.cell_width);
         return;
     }
-    const latin: u8 = switch (cell.ch) {
+    const near: u32 = switch (cell.ch) {
         'f' => 0xB0, // degree
         'g' => 0xB1, // plus-minus
         '}' => 0xA3, // pound
         '~' => 0xB7, // middle dot
-        '`' => 0xB7, // diamond, as near as Latin-1 comes
+        '`' => 0xB7, // diamond, as near as every font comes
         'a' => 0xB0, // checkerboard
         'y' => '<',
         'z' => '>',
@@ -194,9 +198,35 @@ fn drawGraphic(gb: *GraphicsBase, l: Layout, x: i32, y: i32, cell: Cell, fg: gra
         '|' => '!', // not equal
         else => ' ',
     };
+    var bytes: [4]u8 = undefined;
     setPens(gb, l, fg, bg, cell);
     gb.Move(l.rp, left, top + l.baseline);
-    gb.Text(l.rp, &[1]u8{latin}, 1);
+    gb.Text(l.rp, &bytes, @intCast(utf8.encode(near, &bytes)));
+}
+
+/// Whether the cell at `x` is the first of a wide character whose second
+/// cell is still beside it.
+fn isWide(t: *const Term, x: u32, y: u32) bool {
+    return x + 1 < t.cols and t.at(x, y).ch != term.WIDE_TAIL and t.at(x + 1, y).ch == term.WIDE_TAIL;
+}
+
+/// What a cell's character is written as: a control or nothing as a
+/// blank.
+fn shownChar(cell: Cell) u32 {
+    return if (cell.ch < 0x20) ' ' else cell.ch;
+}
+
+/// A wide character over its two cells, from the cell at `x`: both cells'
+/// background, and the character in the middle of them.
+fn drawWide(gb: *GraphicsBase, l: Layout, x: i32, y: i32, cell: Cell, fg: graphics.Pen, bg: graphics.Pen) void {
+    fillCells(gb, l, x, y, 2, bg);
+    var bytes: [4]u8 = undefined;
+    const length: u32 = @intCast(utf8.encode(shownChar(cell), &bytes));
+    setPens(gb, l, fg, bg, cell);
+    const drawn: i32 = @intCast(gb.TextLength(l.rp, &bytes, length));
+    const left = l.origin_x + x * l.cell_width + @divTrunc(@max(2 * l.cell_width - drawn, 0), 2);
+    gb.Move(l.rp, left, l.origin_y + y * l.cell_height + l.baseline);
+    gb.Text(l.rp, &bytes, length);
 }
 
 /// Whether a cell is drawn selected: complemented, as the cursor is
@@ -231,8 +261,10 @@ fn drawHalves(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, t
 }
 
 /// One row of cells, `from` to `to` (both in cells, `to` not included).
+/// A wide character whose first cell is the last one asked for is drawn
+/// whole.
 pub fn drawRow(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, to: u32) void {
-    var run_text: [256]u8 = undefined;
+    var run_text: [512]u8 = undefined;
     var x = from;
     while (x < to) {
         const first = t.at(x, y).*;
@@ -243,18 +275,35 @@ pub fn drawRow(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, 
             x += 1;
             continue;
         }
-        // As many cells as share their colours and style.
+        if (first.ch == term.WIDE_TAIL) {
+            // The second half of a wide character drawn with its first,
+            // or left alone: blank.
+            _, const bg = pensAt(t, x, y, l);
+            fillCells(gb, l, @intCast(x), @intCast(y), 1, bg);
+            x += 1;
+            continue;
+        }
+        if (isWide(t, x, y)) {
+            const fg, const bg = pensAt(t, x, y, l);
+            drawWide(gb, l, @intCast(x), @intCast(y), first, fg, bg);
+            x += 2;
+            continue;
+        }
+        // As many cells as share their colours and style, up to a wide
+        // character.
         var n: u32 = 0;
-        while (x + n < to and n < run_text.len) : (n += 1) {
+        var length: usize = 0;
+        while (x + n < to and length + 4 <= run_text.len) : (n += 1) {
             const c = t.at(x + n, y).*;
             if (c.flags & term.CELL_GRAPHIC != 0 or !sameLook(first, c)) break;
+            if (c.ch == term.WIDE_TAIL or isWide(t, x + n, y)) break;
             if (isShownSelected(t, x + n, y) != selected) break;
-            run_text[n] = if (c.ch < 0x20) ' ' else c.ch;
+            length += utf8.encode(shownChar(c), run_text[length..][0..4]);
         }
         const fg, const bg = pensAt(t, x, y, l);
         setPens(gb, l, fg, bg, first);
         gb.Move(l.rp, l.origin_x + @as(i32, @intCast(x)) * l.cell_width, l.origin_y + @as(i32, @intCast(y)) * l.cell_height + l.baseline);
-        gb.Text(l.rp, &run_text, n);
+        gb.Text(l.rp, &run_text, @intCast(length));
         x += n;
     }
     drawHalves(gb, l, t, y, from, to);
@@ -272,18 +321,26 @@ pub const CursorLook = enum { off, solid, ghost };
 pub fn drawCursor(gb: *GraphicsBase, l: Layout, t: *const Term, look: CursorLook) void {
     const c = t.cursor();
     if (c.x >= t.cols or c.y >= t.rows) return;
-    const cell = t.at(c.x, c.y).*;
-    const plain_fg, const plain_bg = pensAt(t, c.x, c.y, l);
+    // On either half of a wide character the cursor is the whole of it.
+    const x = if (c.x > 0 and t.at(c.x, c.y).ch == term.WIDE_TAIL and isWide(t, c.x - 1, c.y)) c.x - 1 else c.x;
+    const wide = isWide(t, x, c.y);
+    const cell = t.at(x, c.y).*;
+    const plain_fg, const plain_bg = pensAt(t, x, c.y, l);
     const fg = if (look == .solid) complement(plain_fg, l) else plain_fg;
     const bg = if (look == .solid) complement(plain_bg, l) else plain_bg;
-    const px = l.origin_x + @as(i32, @intCast(c.x)) * l.cell_width;
+    const px = l.origin_x + @as(i32, @intCast(x)) * l.cell_width;
     const py = l.origin_y + @as(i32, @intCast(c.y)) * l.cell_height;
     if (cell.flags & term.CELL_GRAPHIC != 0) {
-        drawGraphic(gb, l, @intCast(c.x), @intCast(c.y), cell, fg, bg);
+        drawGraphic(gb, l, @intCast(x), @intCast(c.y), cell, fg, bg);
+    } else if (wide) {
+        drawWide(gb, l, @intCast(x), @intCast(c.y), cell, fg, bg);
+    } else if (cell.ch == term.WIDE_TAIL) {
+        fillCells(gb, l, @intCast(x), @intCast(c.y), 1, bg);
     } else {
+        var bytes: [4]u8 = undefined;
         setPens(gb, l, fg, bg, cell);
         gb.Move(l.rp, px, py + l.baseline);
-        gb.Text(l.rp, &[1]u8{if (cell.ch < 0x20) ' ' else cell.ch}, 1);
+        gb.Text(l.rp, &bytes, @intCast(utf8.encode(shownChar(cell), &bytes)));
     }
     // The outline goes round the cell the character was just drawn in, so
     // the character shows through it.
@@ -294,7 +351,7 @@ pub fn drawCursor(gb: *GraphicsBase, l: Layout, t: *const Term, look: CursorLook
         const box = graphics.Rect{
             .min_x = px,
             .min_y = py,
-            .max_x = px + l.cell_width,
+            .max_x = px + l.cell_width * @as(i32, if (wide) 2 else 1),
             .max_y = py + l.cell_height,
         };
         gb.DrawRect(l.rp, &box);

@@ -7,6 +7,7 @@
 //!   foldgen posfs <CaseFolding.txt> <out.zig>
 //!   foldgen case <CaseFolding.txt> <UnicodeData.txt> <out.zig>
 //!   foldgen base <CaseFolding.txt> <UnicodeData.txt> <out.zig>
+//!   foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig>
 //!
 //! `posfs` writes posfs's case fold table (sdk/libs/dos/posfs/fold1.zig):
 //! simple case folding, the file's C and S lines, one code point to one,
@@ -30,6 +31,16 @@
 //! letter. One step only: `Ǻ` is `Å`, whose base is `A`. The version is
 //! CaseFolding.txt's, as `case` takes it.
 //!
+//! `width` writes how many cells of a console a character takes
+//! (sdk/libs/utility/unicode_width.zig): none for the marks written on
+//! the character before (general categories Mn and Me), the format
+//! characters (Cf) but the soft hyphen, and the Hangul vowels and
+//! finals that join the syllable before them (U+1160 to U+11FF, U+D7B0
+//! to U+D7FF); two for what EastAsianWidth.txt calls wide (W) or full
+//! width (F), emoji among them; one for the rest. Both lists are ranges,
+//! sorted, a character of no width taken out of the wide ones. The
+//! version is EastAsianWidth.txt's.
+//!
 //! A case table is runs: code points one or two apart that all move by the same
 //! amount (A-Z by +32; Ā, Ă, Ą... by +1 every second one), each run packed
 //! into a u64 and found by a binary search - 210 runs for Unicode 16's 1484
@@ -47,7 +58,7 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(1);
 }
 
-const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig>";
+const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig>";
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -157,7 +168,127 @@ pub fn main(init: std.process.Init) !void {
         try cwd.writeFile(io, .{ .sub_path = args[4], .data = out.items });
         return;
     }
+
+    if (mem.eql(u8, args[1], "width")) {
+        if (args.len != 5) fatal(usage, .{});
+        const data = try cwd.readFileAlloc(io, args[2], arena, limit);
+        const widths = try cwd.readFileAlloc(io, args[3], arena, limit);
+        const version = try versionNamed(widths, "# EastAsianWidth-", args[3]);
+        const zero = try zeroWidth(arena, data);
+        const wide = try doubleWidth(arena, widths, zero);
+        try out.print(arena,
+            \\// SPDX-License-Identifier: MIT
+            \\//! The cells of a console a character takes, from Unicode {s}: none for
+            \\//! the marks written on the character before (Mn, Me), the format
+            \\//! characters (Cf) but the soft hyphen, and the Hangul vowels and
+            \\//! finals that join the syllable before them; two for what
+            \\//! EastAsianWidth.txt calls wide or full width, emoji among them; one
+            \\//! for the rest. Written by tools/foldgen (`foldgen width`) from the
+            \\//! files scripts/fetch-unicode.sh fetches; never edited by hand.
+            \\//!
+            \\//! {d} ranges of no width, {d} of two cells, each `.{{ first, last }}`,
+            \\//! sorted.
+            \\
+            \\/// The Unicode version the tables are from.
+            \\pub const unicode_version = "{s}";
+            \\
+            \\
+        , .{ version, zero.len, wide.len, version });
+        try writeRanges(arena, &out, "The characters that take no cell.", "zero", zero);
+        try out.appendSlice(arena, "\n");
+        try writeRanges(arena, &out, "The characters that take two cells.", "wide", wide);
+        try cwd.writeFile(io, .{ .sub_path = args[4], .data = out.items });
+        return;
+    }
     fatal(usage, .{});
+}
+
+const Range = struct { first: u21, last: u21 };
+
+/// The characters of no width UnicodeData.txt names, as sorted ranges.
+fn zeroWidth(arena: mem.Allocator, data: []const u8) ![]Range {
+    var codes: std.ArrayList(u21) = .empty;
+    var lines = mem.splitScalar(u8, data, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw, " \t\r");
+        if (line.len == 0) continue;
+        var fields = mem.splitScalar(u8, line, ';');
+        const code = try std.fmt.parseInt(u21, fields.next() orelse continue, 16);
+        _ = fields.next(); // the name
+        const category = fields.next() orelse continue;
+        const none = mem.eql(u8, category, "Mn") or mem.eql(u8, category, "Me") or
+            (mem.eql(u8, category, "Cf") and code != 0x00AD);
+        if (none) try codes.append(arena, code);
+    }
+    // The Hangul vowels and finals, which join the syllable before them.
+    var code: u21 = 0x1160;
+    while (code <= 0x11FF) : (code += 1) try codes.append(arena, code);
+    code = 0xD7B0;
+    while (code <= 0xD7FF) : (code += 1) try codes.append(arena, code);
+    mem.sort(u21, codes.items, {}, std.sort.asc(u21));
+    return rangesOf(arena, codes.items);
+}
+
+/// The wide and full-width characters of EastAsianWidth.txt, without
+/// those in `zero`, as sorted ranges.
+fn doubleWidth(arena: mem.Allocator, widths: []const u8, zero: []const Range) ![]Range {
+    var codes: std.ArrayList(u21) = .empty;
+    var lines = mem.splitScalar(u8, widths, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw[0 .. mem.indexOfScalar(u8, raw, '#') orelse raw.len], " \t\r");
+        if (line.len == 0) continue;
+        var fields = mem.splitScalar(u8, line, ';');
+        const span = mem.trim(u8, fields.next() orelse continue, " ");
+        const kind = mem.trim(u8, fields.next() orelse continue, " ");
+        if (!mem.eql(u8, kind, "W") and !mem.eql(u8, kind, "F")) continue;
+        const dots = mem.indexOf(u8, span, "..");
+        const first = try std.fmt.parseInt(u21, span[0 .. dots orelse span.len], 16);
+        const last = if (dots) |at| try std.fmt.parseInt(u21, span[at + 2 ..], 16) else first;
+        var code = first;
+        while (true) : (code += 1) {
+            if (!within(zero, code)) try codes.append(arena, code);
+            if (code == last) break;
+        }
+    }
+    mem.sort(u21, codes.items, {}, std.sort.asc(u21));
+    return rangesOf(arena, codes.items);
+}
+
+fn within(ranges: []const Range, code: u21) bool {
+    for (ranges) |range| {
+        if (code >= range.first and code <= range.last) return true;
+    }
+    return false;
+}
+
+/// Sorted code points, each once, as the runs of neighbours they make.
+fn rangesOf(arena: mem.Allocator, codes: []const u21) ![]Range {
+    var ranges: std.ArrayList(Range) = .empty;
+    for (codes) |code| {
+        if (ranges.items.len != 0) {
+            const last = &ranges.items[ranges.items.len - 1];
+            if (code == last.last) continue;
+            if (code == last.last + 1) {
+                last.last = code;
+                continue;
+            }
+        }
+        try ranges.append(arena, .{ .first = code, .last = code });
+    }
+    return ranges.items;
+}
+
+/// `ranges` as an array of `.{ first, last }` named `name`, four to a line.
+fn writeRanges(arena: mem.Allocator, out: *std.ArrayList(u8), doc: []const u8, name: []const u8, ranges: []const Range) !void {
+    try out.print(arena, "/// {s}\npub const {s} = [_][2]u32{{\n", .{ doc, name });
+    for (ranges, 0..) |range, at| {
+        if (at % 4 == 0) try out.appendSlice(arena, "   ");
+        // Five digits each, which every code point in the tables has room
+        // in: entries of one width are what zig fmt leaves as they are.
+        try out.print(arena, " .{{ 0x{X:0>5}, 0x{X:0>5} }},", .{ range.first, range.last });
+        if (at % 4 == 3 or at + 1 == ranges.len) try out.appendSlice(arena, "\n");
+    }
+    try out.appendSlice(arena, "};\n");
 }
 
 /// Every Latin, Greek and Cyrillic letter of the BMP that is another
@@ -226,12 +357,17 @@ fn writeColumn(arena: mem.Allocator, out: *std.ArrayList(u8), doc: []const u8, n
 
 /// The version CaseFolding.txt's first line names.
 fn versionOf(folding: []const u8, path: []const u8) ![]const u8 {
-    var lines = mem.splitScalar(u8, folding, '\n');
+    return versionNamed(folding, "# CaseFolding-", path);
+}
+
+/// The version a file's line starting with `prefix` names.
+fn versionNamed(text: []const u8, comptime prefix: []const u8, path: []const u8) ![]const u8 {
+    var lines = mem.splitScalar(u8, text, '\n');
     while (lines.next()) |raw| {
         const line = mem.trim(u8, raw, " \t\r");
-        if (mem.startsWith(u8, line, "# CaseFolding-")) return mem.trim(u8, line["# CaseFolding-".len..], " .txt");
+        if (mem.startsWith(u8, line, prefix)) return mem.trim(u8, line[prefix.len..], " .txt");
     }
-    fatal("{s}: no CaseFolding version line", .{path});
+    fatal("{s}: no version line", .{path});
 }
 
 /// CaseFolding.txt's C and S lines, sorted.

@@ -129,3 +129,12 @@ test "unicode.base: the letter a letter with marks is written on" {
     try testing.expectEqual(@as(?u32, 0x03B1), unicode.base(0x1F00)); // ἀ is α
     for ([_]u32{ 'A', 'z', 0xDF, 0x03B1, 0x3042, 0x1F600, 0x10FFFF }) |char| try testing.expectEqual(@as(?u32, null), unicode.base(char));
 }
+
+test "unicode.width: the cells a character takes" {
+    const unicode = @import("sdk").utility.unicode;
+    for ([_]u32{ 'A', ' ', 0xE4, 0xAD, 0x20AC, 0x03A9, 0x0416, 0x2500, 0xFFFD, 0x10FFFF }) |char| try testing.expectEqual(@as(u2, 1), unicode.width(char));
+    // Marks, format characters and the Hangul vowels: no cell.
+    for ([_]u32{ 0x0300, 0x0301, 0x20DD, 0x200B, 0x200D, 0xFE0F, 0x1160, 0xE0001 }) |char| try testing.expectEqual(@as(u2, 0), unicode.width(char));
+    // CJK, kana, Hangul syllables, full-width forms, emoji: two.
+    for ([_]u32{ 0x4E00, 0x3042, 0xAC00, 0xFF21, 0x1F600, 0x1F44D, 0x231A, 0x20000, 0x2A6E0 }) |char| try testing.expectEqual(@as(u2, 2), unicode.width(char));
+}

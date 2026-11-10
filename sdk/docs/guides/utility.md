@@ -408,6 +408,8 @@ it:
 |---|---|
 | `utf8.read(bytes)` | the first character: `.char`, the bytes it took (`.length`), and whether they were broken (`.broken`) |
 | `utf8.next(bytes, &at)` | the character at `at`, moving `at` past it |
+| `utf8.readLast(bytes)` | the character the bytes end with, as `read` reads it from its start: how text is walked back |
+| `utf8.cut(bytes, limit)` | how many of the bytes a cut to at most `limit` keeps without ending inside a character |
 | `utf8.readZ(text)` | `read` on a NUL-terminated string |
 | `utf8.encode(char, &four)` | a character into at most four bytes: the bytes written |
 | `utf8.lengthOf(char)` | the bytes `encode` writes for it |
@@ -429,14 +431,20 @@ writes U+FFFD (`utf8.replacement`) for a surrogate or a value past
 `sdk.utility.unicode` holds the case tables the calls above use:
 `unicode.fold(char)`, `unicode.upper(char)`, `unicode.lower(char)`, and
 `unicode.compareFolded(a, b)` and `unicode.equalFolded(a, b)` over two
-slices, what `Strnicmp` answers. `unicode.version` names the Unicode
-version the tables are made from.
+slices, what `Strnicmp` answers. `unicode.base(char)` is the letter a
+letter with marks is written on (`A` for `Ā`), what a font that lacks
+one draws instead. `unicode.width(char)` is the cells of a console a
+character takes: 0 for a mark written on the character before it or a
+format character, 2 for a wide one - CJK, kana, Hangul, emoji - and 1
+for the rest; the console and its line editor place text by it, and a
+program that lines text up in a console does too. `unicode.version`
+names the Unicode version the tables are made from.
 
 ## Text between UTF-8 and Latin-1
 
 The system's strings are UTF-8, and graphics.library draws them as such
-(`Text` and the calls that measure it); the console still holds a byte
-to a cell and draws it as Latin-1. What comes from elsewhere - a server's words, a file another system
+(`Text` and the calls that measure it); so does the console, each
+character in the cells `unicode.width` gives it. What comes from elsewhere - a server's words, a file another system
 wrote, a name in a repository, a song's tags - is mostly UTF-8. Latin-1's
 256 characters are Unicode's first 256, so a character up to U+00FF is
 one byte in Latin-1 and two at most in UTF-8; the rest is what a
@@ -460,7 +468,7 @@ character a `?`:
 | `UTF8F_PIECES` | the text comes a piece at a time; a character cut between two pieces is held for the next, and a call with no bytes ends the text |
 
 ```zig
-// A song's title for the console.
+// A song's title for an ID3v1 tag, which holds Latin-1.
 var typeset: utility.Utf8Conversion = .{ .flags = utility.UTF8F_TYPESET };
 const shown = ub.Utf8ToLatin1(&typeset, tag.ptr, tag.len, &title, title.len - 1);
 title[shown] = 0;
@@ -468,7 +476,8 @@ title[shown] = 0;
 // A file from another system: UTF-8 when the whole of it is.
 const utf8 = ub.Utf8Kind(text.ptr, text.len) != utility.UTF8KIND_NONE;
 
-// A dos name as UTF-8; twice its length always holds it.
+// A name an older file holds in Latin-1, as UTF-8; twice its length
+// always holds it.
 const length = ub.Latin1ToUtf8(name.ptr, name.len, &out, out.len);
 if (length > out.len) return null; // did not fit
 ```

@@ -38,6 +38,7 @@
 
 const std = @import("std");
 const sdk = @import("sdk");
+const utf8 = sdk.utility.utf8;
 const exec = sdk.exec;
 const dos = sdk.dos;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -760,10 +761,10 @@ pub fn cmdSet(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
             @memcpy(value[0..8], "[BINARY]");
             shown = 8;
         } else {
-            shown = @min(v.len, 255);
+            shown = utf8.cut(v.value[0..v.len], 255);
             @memcpy(value[0..shown], v.value[0..shown]);
             for (value[0..shown]) |*c| {
-                if (c.* == 0x1B or c.* == 0x9B) c.* = 127; // no escapes on the terminal
+                if (c.* == 0x1B) c.* = 127; // no escapes on the terminal
             }
         }
         value[shown] = 0;

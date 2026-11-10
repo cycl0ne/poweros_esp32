@@ -10,8 +10,15 @@
 //! history search (the text before the cursor as a prefix, any case), Tab
 //! completes a name (below), CR ends a line, ^S holds what programs write until the next character
 //! comes in (which is all ^Q is), Ctrl-\ ends the input; the terminal's
-//! ESC [ sequences (and
-//! the one-byte CSI, 0x9B): arrows, Home/End, Delete, shift-up (search).
+//! ESC [ sequences: arrows, Home/End, Delete, shift-up (search).
+//!
+//! **The line is UTF-8.** A byte past 0x7F is part of a character, which
+//! goes into the line when it is whole; bytes that are no UTF-8 go in as
+//! they came. The cursor, deleting and the history search go a character
+//! at a time - a character together with the marks of no width written on
+//! it - and the terminal's cursor is moved by the cells the characters
+//! take (`unicode.width`). The search and the completion match in any
+//! case by Unicode's simple case folding.
 //! History is a 2 KiB ring of lines, a line equal to the newest isn't
 //! added. Ctrl-C to Ctrl-F become break signals (swallowed in cooked mode,
 //! passed on in raw mode). A READ gets one line at most; the rest of it
@@ -47,6 +54,8 @@
 const std = @import("std");
 const exec = @import("sdk").exec;
 const dos = @import("sdk").dos;
+const utf8 = @import("sdk").utility.utf8;
+const unicode = @import("sdk").utility.unicode;
 
 /// The longest line (with room for its LF): a command with two whole
 /// paths in it, which is what a Copy or a Rename of two long names is.
@@ -67,8 +76,64 @@ const names_size = 2048;
 const names_kept = 128;
 
 const ESC = 0x1B;
-const CSI = 0x9B;
 const BEL = 0x07;
+
+/// How many cells of the terminal `text` takes.
+fn cellsOf(text: []const u8) usize {
+    var cells: usize = 0;
+    var at: usize = 0;
+    while (at < text.len) cells += unicode.width(utf8.next(text, &at));
+    return cells;
+}
+
+/// How many characters `text` holds.
+fn charsOf(text: []const u8) usize {
+    var chars: usize = 0;
+    var at: usize = 0;
+    while (at < text.len) : (chars += 1) _ = utf8.next(text, &at);
+    return chars;
+}
+
+/// Where the character before `at` in `text` starts, the marks of no
+/// width written on it included: where a step left lands.
+fn stepBack(text: []const u8, at: usize) usize {
+    var start = at;
+    while (start > 0) {
+        const found = utf8.readLast(text[0..start]);
+        start -= found.length;
+        if (unicode.width(found.char) != 0) break;
+    }
+    return start;
+}
+
+/// Where the character at `at` in `text` ends, the marks of no width
+/// after it included: where a step right lands.
+fn stepOver(text: []const u8, at: usize) usize {
+    if (at >= text.len) return at;
+    var end = at + utf8.read(text[at..]).length;
+    while (end < text.len) {
+        const found = utf8.read(text[end..]);
+        if (unicode.width(found.char) != 0) break;
+        end += found.length;
+    }
+    return end;
+}
+
+/// How many bytes of `text` match `prefix` character by character in any
+/// case; null when `text` does not start with it.
+fn foldedPrefix(text: []const u8, prefix: []const u8) ?usize {
+    var in_text: usize = 0;
+    var in_prefix: usize = 0;
+    while (in_prefix < prefix.len) {
+        if (in_text >= text.len) return null;
+        const one = utf8.read(text[in_text..]);
+        const other = utf8.read(prefix[in_prefix..]);
+        if (unicode.fold(one.char) != unicode.fold(other.char)) return null;
+        in_text += one.length;
+        in_prefix += other.length;
+    }
+    return in_text;
+}
 
 /// Where the terminal's bytes go.
 pub const Sink = struct {
@@ -157,17 +222,22 @@ pub const Matches = struct {
     /// A name in the directory: counted, and kept while there is room,
     /// when it starts with `start`.
     pub fn add(m: *Matches, name: []const u8, is_dir: bool) void {
-        if (name.len < m.start.len or name.len > m.common.len) return;
-        for (m.start, 0..) |c, at| {
-            if (lower(c) != lower(name[at])) return;
-        }
+        if (name.len > m.common.len or foldedPrefix(name, m.start) == null) return;
         if (m.count == 0) {
             @memcpy(m.common[0..name.len], name);
             m.common_len = name.len;
             m.dir = is_dir;
         } else {
+            // As many whole characters as the two share in any case.
             var shared: usize = 0;
-            while (shared < m.common_len and shared < name.len and lower(m.common[shared]) == lower(name[shared])) shared += 1;
+            var in_name: usize = 0;
+            while (shared < m.common_len and in_name < name.len) {
+                const one = utf8.read(m.common[shared..m.common_len]);
+                const other = utf8.read(name[in_name..]);
+                if (unicode.fold(one.char) != unicode.fold(other.char)) break;
+                shared += one.length;
+                in_name += other.length;
+            }
             m.common_len = shared;
         }
         m.count += 1;
@@ -193,13 +263,7 @@ pub const Matches = struct {
     }
 
     fn before(m: *const Matches, one: u16, two: u16) bool {
-        const a = m.nameAt(one);
-        const b = m.nameAt(two);
-        const shorter = if (a.len < b.len) a.len else b.len;
-        for (0..shorter) |at| {
-            if (lower(a[at]) != lower(b[at])) return lower(a[at]) < lower(b[at]);
-        }
-        return a.len < b.len;
+        return unicode.compareFolded(m.nameAt(one), m.nameAt(two)) < 0;
     }
 
     /// The kept names in order, in any case: few enough to insert each in
@@ -214,13 +278,6 @@ pub const Matches = struct {
         }
     }
 };
-
-/// A Latin-1 letter in lower case, as names are matched.
-fn lower(c: u8) u8 {
-    if (c >= 'A' and c <= 'Z') return c + ('a' - 'A');
-    if (c >= 0xC0 and c <= 0xDE and c != 0xD7) return c + 0x20;
-    return c;
-}
 
 /// Ctrl-\\: what has been typed goes to the reader, and the read after
 /// it ends. A window's close gadget is the same thing said with the
@@ -258,6 +315,9 @@ pub const Editor = struct {
     tabbed: bool = false,
 
     esc: enum { none, esc, csi, ss3 } = .none,
+    /// The bytes of a character not yet whole.
+    partial: [4]u8 = undefined,
+    partial_len: usize = 0,
     param: [8]u8 = undefined,
     param_len: usize = 0,
     intermediate: u8 = 0,
@@ -300,6 +360,7 @@ pub const Editor = struct {
         ed.cursor = 0;
         ed.scan = null;
         ed.esc = .none;
+        ed.partial_len = 0;
         ed.after_cr = false;
         ed.breaks = 0;
         ed.hold = false;
@@ -378,7 +439,7 @@ pub const Editor = struct {
             if (data.len > 0 and data[data.len - 1] != '\n') ed.emit("\r\n");
             ed.emit(ed.prompt[0..kept]);
             ed.emit(ed.line[0..ed.len]);
-            ed.moveLeft(ed.len - ed.cursor);
+            ed.moveLeft(cellsOf(ed.line[ed.cursor..ed.len]));
             return; // the line still reads as it did: the prompt is unchanged
         }
         ed.trackPrompt(data);
@@ -395,14 +456,17 @@ pub const Editor = struct {
         }
         if (fresh) ed.prompt_len = 0;
         if (tail.len >= ed.prompt.len) {
-            // Only the end of it can be on the line anyway.
-            const cut = tail[tail.len - ed.prompt.len ..];
-            @memcpy(&ed.prompt, cut);
-            ed.prompt_len = ed.prompt.len;
+            // Only the end of it can be on the line anyway, from where a
+            // character starts.
+            var cut = tail[tail.len - ed.prompt.len ..];
+            while (cut.len > 0 and cut[0] & 0xC0 == 0x80) cut = cut[1..];
+            @memcpy(ed.prompt[0..cut.len], cut);
+            ed.prompt_len = cut.len;
             return;
         }
         if (ed.prompt_len + tail.len > ed.prompt.len) {
-            const drop = ed.prompt_len + tail.len - ed.prompt.len;
+            var drop = ed.prompt_len + tail.len - ed.prompt.len;
+            while (drop < ed.prompt_len and ed.prompt[drop] & 0xC0 == 0x80) drop += 1;
             std.mem.copyForwards(u8, ed.prompt[0 .. ed.prompt_len - drop], ed.prompt[drop..ed.prompt_len]);
             ed.prompt_len -= drop;
         }
@@ -453,9 +517,10 @@ pub const Editor = struct {
         if (ed.pushed_len == 0) return null;
         if (ed.raw) {
             if (ed.ready_len == ready_size) return null;
-        } else if (ed.len + 1 >= max_line or ed.ready_len + ed.len + 2 > ready_size) {
+        } else if (ed.len + 4 >= max_line or ed.ready_len + ed.len + 5 > ready_size) {
             // The line being typed has to fit the queue whole, with the
-            // LF that ends it.
+            // LF that ends it - and room for a whole character, which may
+            // be what this byte starts.
             return null;
         }
         const c = ed.pushed[ed.pushed_start];
@@ -543,6 +608,18 @@ pub const Editor = struct {
         ed.after_cr = false;
         const tabbed = ed.tabbed;
         ed.tabbed = false;
+        // A byte past 0x7F is part of a character, and breaks off a
+        // sequence it lands in.
+        if (c >= 0x80) {
+            ed.esc = .none;
+            ed.partial[ed.partial_len] = c;
+            ed.partial_len += 1;
+            ed.takePartial();
+            return;
+        }
+        // Any other byte ends a character that was begun: its bytes go in
+        // as they came.
+        while (ed.partial_len > 0) ed.insertHeld(utf8.read(ed.partial[0..ed.partial_len]).length);
         switch (ed.esc) {
             .esc => {
                 ed.esc = switch (c) {
@@ -563,17 +640,12 @@ pub const Editor = struct {
         }
         switch (c) {
             ESC => ed.esc = .esc,
-            CSI => {
-                ed.esc = .csi;
-                ed.param_len = 0;
-                ed.intermediate = 0;
-            },
             '\r' => {
                 ed.commit();
                 ed.after_cr = true;
             },
             '\n' => if (!after_cr) ed.commit(),
-            0x08, 0x7F => if (ed.cursor > 0) ed.remove(ed.cursor - 1, ed.cursor),
+            0x08, 0x7F => if (ed.cursor > 0) ed.remove(stepBack(ed.line[0..ed.len], ed.cursor), ed.cursor),
             0x01 => ed.home(),
             0x1A => ed.end(),
             0x02 => {
@@ -603,9 +675,34 @@ pub const Editor = struct {
             0x11 => {},
             END_OF_INPUT => ed.endOfInput(),
             '\t' => ed.complete(tabbed),
-            0x20...0x7E, 0xA0...0xFF => ed.insert(&.{c}),
+            0x20...0x7E => ed.insert(&.{c}),
             else => {},
         }
+    }
+
+    /// The held bytes into the line, as far as they make characters: a
+    /// character whole, bytes that are no UTF-8 as `utf8.read` takes them,
+    /// a sequence right so far kept for the next byte.
+    fn takePartial(ed: *Editor) void {
+        while (ed.partial_len > 0) {
+            const held = ed.partial[0..ed.partial_len];
+            const step = utf8.decode(held);
+            switch (step.kind) {
+                .short => return,
+                .char => ed.insertHeld(step.length),
+                .broken => ed.insertHeld(utf8.read(held).length),
+            }
+        }
+    }
+
+    /// The first `length` held bytes into the line, and let go.
+    fn insertHeld(ed: *Editor, length: usize) void {
+        var piece: [4]u8 = undefined;
+        @memcpy(piece[0..length], ed.partial[0..length]);
+        const rest = ed.partial_len - length;
+        for (0..rest) |place| ed.partial[place] = ed.partial[length + place];
+        ed.partial_len = rest;
+        ed.insert(piece[0..length]);
     }
 
     /// A byte of an ESC [ (or CSI) sequence.
@@ -640,12 +737,14 @@ pub const Editor = struct {
             'A' => if (modifier == 2) ed.search() else ed.older(),
             'B' => ed.newer(),
             'C' => if (ed.cursor < ed.len) {
-                ed.cursor += 1;
-                ed.moveRight(1);
+                const to = stepOver(ed.line[0..ed.len], ed.cursor);
+                ed.moveRight(cellsOf(ed.line[ed.cursor..to]));
+                ed.cursor = to;
             },
             'D' => if (ed.cursor > 0) {
-                ed.cursor -= 1;
-                ed.moveLeft(1);
+                const to = stepBack(ed.line[0..ed.len], ed.cursor);
+                ed.moveLeft(cellsOf(ed.line[to..ed.cursor]));
+                ed.cursor = to;
             },
             'H' => ed.home(),
             'F' => ed.end(),
@@ -653,7 +752,7 @@ pub const Editor = struct {
             '~' => switch (first) {
                 1, 7 => ed.home(),
                 4, 8 => ed.end(),
-                3 => if (ed.cursor < ed.len) ed.remove(ed.cursor, ed.cursor + 1),
+                3 => if (ed.cursor < ed.len) ed.remove(ed.cursor, stepOver(ed.line[0..ed.len], ed.cursor)),
                 else => {},
             },
             else => {},
@@ -670,41 +769,42 @@ pub const Editor = struct {
         ed.len += text.len;
         ed.emit(ed.line[ed.cursor..ed.len]);
         ed.cursor += text.len;
-        ed.moveLeft(ed.len - ed.cursor);
+        ed.moveLeft(cellsOf(ed.line[ed.cursor..ed.len]));
     }
 
     /// line[from..to] out (from is at most the cursor), the cursor at
     /// `from`, the rest redrawn.
     fn remove(ed: *Editor, from: usize, to: usize) void {
         if (from == to) return;
-        ed.moveLeft(ed.cursor - from);
+        ed.moveLeft(cellsOf(ed.line[from..ed.cursor]));
         std.mem.copyForwards(u8, ed.line[from .. ed.len - (to - from)], ed.line[to..ed.len]);
         ed.len -= to - from;
         ed.cursor = from;
         ed.emit(ed.line[from..ed.len]);
         ed.emit("\x1b[K");
-        ed.moveLeft(ed.len - from);
+        ed.moveLeft(cellsOf(ed.line[from..ed.len]));
     }
 
-    /// The whole line becomes `text`, the cursor at `at`.
+    /// The whole line becomes `text`, the cursor at `at`, where a
+    /// character of it starts.
     fn replace(ed: *Editor, text: []const u8, at: usize) void {
-        ed.moveLeft(ed.cursor);
-        const n = @min(text.len, max_line - 1);
+        ed.moveLeft(cellsOf(ed.line[0..ed.cursor]));
+        const n = utf8.cut(text, max_line - 1);
         std.mem.copyForwards(u8, ed.line[0..n], text[0..n]);
         ed.len = n;
         ed.emit(ed.line[0..n]);
         ed.emit("\x1b[K");
         ed.cursor = @min(at, n);
-        ed.moveLeft(n - ed.cursor);
+        ed.moveLeft(cellsOf(ed.line[ed.cursor..n]));
     }
 
     fn home(ed: *Editor) void {
-        ed.moveLeft(ed.cursor);
+        ed.moveLeft(cellsOf(ed.line[0..ed.cursor]));
         ed.cursor = 0;
     }
 
     fn end(ed: *Editor) void {
-        ed.moveRight(ed.len - ed.cursor);
+        ed.moveRight(cellsOf(ed.line[ed.cursor..ed.len]));
         ed.cursor = ed.len;
     }
 
@@ -732,9 +832,9 @@ pub const Editor = struct {
         const prefix_len = ed.cursor;
         var i: usize = if (ed.scan) |s| s + 1 else 0;
         while (ed.history.entry(i)) |text| : (i += 1) {
-            if (text.len >= prefix_len and std.ascii.eqlIgnoreCase(text[0..prefix_len], ed.line[0..prefix_len])) {
+            if (foldedPrefix(text, ed.line[0..prefix_len])) |matched| {
                 ed.scan = i;
-                return ed.replace(text, prefix_len);
+                return ed.replace(text, matched);
             }
         }
         ed.emit(&.{BEL});
@@ -766,7 +866,7 @@ pub const Editor = struct {
         if (!completer.list(completer.ctx, ed.line[word..name], m) or m.count == 0) return ed.emit(&.{BEL});
         const common = m.common[0..m.common_len];
         const typed = ed.cursor - name;
-        if (m.count > 1 and common.len <= typed) {
+        if (m.count > 1 and charsOf(common) <= charsOf(ed.line[name..ed.cursor])) {
             ed.tabbed = true;
             if (again) return ed.listMatches(completer.columns(completer.ctx));
             return ed.emit(&.{BEL});
@@ -795,7 +895,7 @@ pub const Editor = struct {
         if (opens) {
             const after = ed.cursor + 1;
             ed.splice(word, word, "\"");
-            ed.moveRight(after - ed.cursor);
+            ed.moveRight(cellsOf(ed.line[ed.cursor..after]));
             ed.cursor = after;
         }
         ed.tabbed = m.count > 1;
@@ -808,7 +908,7 @@ pub const Editor = struct {
         const rest = ed.len - to;
         const was = ed.len;
         const at = from + text.len;
-        ed.moveLeft(ed.cursor - from);
+        ed.moveLeft(cellsOf(ed.line[from..ed.cursor]));
         if (at > to) {
             var moved = rest;
             while (moved > 0) {
@@ -823,7 +923,7 @@ pub const Editor = struct {
         ed.emit(ed.line[from..ed.len]);
         if (ed.len < was) ed.emit("\x1b[K");
         ed.cursor = at;
-        ed.moveLeft(ed.len - at);
+        ed.moveLeft(cellsOf(ed.line[at..ed.len]));
     }
 
     /// The names that matched, sorted, in columns under the line - those
@@ -834,13 +934,13 @@ pub const Editor = struct {
         m.sort();
         var widest: usize = 0;
         for (m.starts[0..m.kept]) |start| {
-            const shown = m.nameAt(start).len;
+            const shown = cellsOf(m.nameAt(start));
             if (shown > widest) widest = shown;
         }
         const cell = widest + 2;
         const across = if (columns / cell > 0) columns / cell else 1;
         const rows = (m.kept + across - 1) / across;
-        ed.moveRight(ed.len - ed.cursor);
+        ed.moveRight(cellsOf(ed.line[ed.cursor..ed.len]));
         ed.emit("\r\n");
         for (0..rows) |row| {
             for (0..across) |column| {
@@ -848,7 +948,7 @@ pub const Editor = struct {
                 if (index >= m.kept) break;
                 const shown = m.nameAt(m.starts[index]);
                 ed.emit(shown);
-                if (index + rows < m.kept) ed.spaces(cell - shown.len);
+                if (index + rows < m.kept) ed.spaces(cell - cellsOf(shown));
             }
             ed.emit("\r\n");
         }
@@ -860,7 +960,7 @@ pub const Editor = struct {
         }
         ed.emit(ed.prompt[0..ed.prompt_len]);
         ed.emit(ed.line[0..ed.len]);
-        ed.moveLeft(ed.len - ed.cursor);
+        ed.moveLeft(cellsOf(ed.line[ed.cursor..ed.len]));
     }
 
     fn spaces(ed: *Editor, count: usize) void {
@@ -875,7 +975,7 @@ pub const Editor = struct {
 
     /// Enter: the line (and a LF) for the readers, into the history.
     fn commit(ed: *Editor) void {
-        ed.moveRight(ed.len - ed.cursor);
+        ed.moveRight(cellsOf(ed.line[ed.cursor..ed.len]));
         ed.emit("\r\n");
         ed.history.add(ed.line[0..ed.len]);
         if (ed.ready_len + ed.len + 1 > ready_size) {
@@ -902,7 +1002,7 @@ pub const Editor = struct {
 
     /// Ctrl-\: what was typed goes to the reader without a LF, then the end.
     fn endOfInput(ed: *Editor) void {
-        ed.moveRight(ed.len - ed.cursor);
+        ed.moveRight(cellsOf(ed.line[ed.cursor..ed.len]));
         ed.emit("\r\n");
         ed.history.add(ed.line[0..ed.len]);
         _ = ed.push(ed.line[0..ed.len]);

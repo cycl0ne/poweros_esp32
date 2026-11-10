@@ -6727,7 +6727,7 @@ fn ReadPassword(db: *DosBase, file: ?*FileHandle, buffer: [*]u8, size: usize) is
 
 **SINCE**
 
-1.19. LVO -640.
+1.19, a character taken back whole since 1.22. LVO -640.
 
 **INPUTS**
 
@@ -6738,17 +6738,18 @@ fn ReadPassword(db: *DosBase, file: ?*FileHandle, buffer: [*]u8, size: usize) is
 
 **RESULT**
 
-The characters typed; -1 when nothing may be taken, the buffer then
+How many bytes were typed, UTF-8 as the console gives them; -1 when
+nothing may be taken, the buffer then
 wiped - IoErr() ERROR_BREAK for Ctrl-C, 0 when the input ended,
 ERROR_OBJECT_WRONG_TYPE for a `file` that is no console, Read's error.
 
 **BEHAVIOR**
 
 The console is put in raw mode, so nothing typed is echoed, and read
-a character at a time: Backspace and Delete take the last one back,
-Return or a line feed ends the line, Ctrl-C, Ctrl-\ and the input's
-end give it up. A control character else is passed over, and a
-character past `size` too. The console is put back in the mode it was
+a byte at a time: Backspace and Delete take the last character back,
+all of its bytes, Return or a line feed ends the line, Ctrl-C, Ctrl-\
+and the input's end give it up. A control character else is passed
+over, and a byte past `size` too. The console is put back in the mode it was
 in - a RAW: window stays raw - and a newline written to it, so what
 comes next starts a line of its own.
 

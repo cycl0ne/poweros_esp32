@@ -1254,7 +1254,10 @@ only ever opened for writing, such as the window a program started from
 the desktop prints into.
 
 A console starts cooked: it edits a line, with a history and copy and
-paste, and a read answers once Return is pressed. Tab completes the
+paste, and a read answers once Return is pressed. The line is UTF-8:
+the cursor, Backspace and Delete go a character at a time, a mark of no
+width going with the letter it is written on, and the history search
+and the completion match in any case past ASCII too. Tab completes the
 file or directory name before the cursor, looked up from the reading
 program's current directory; when several names fit, it goes as far as
 they agree, and a second Tab lists them - as wide as the window, or as
@@ -1268,8 +1271,13 @@ without reading it. Ctrl-C to Ctrl-F raise their signals in either mode,
 and when raw the byte comes as well; Ctrl-\ is the end of the input.
 
 A console window speaks VT100 and the parts of xterm programs use:
-the cursor, 256 colours, scroll regions, the other screen, the mouse;
-its characters are Latin-1. Asked `CSI 18 t`, it answers its size as
+the cursor, 256 colours, scroll regions, the other screen, the mouse.
+Its text is UTF-8 both ways, what is written and what is typed, and its
+controls are 7-bit: a byte past 0x7F is always part of a character, and
+`ESC [` is the one CSI. A character takes the cells Unicode gives it
+(`utility.unicode.width`): none for a mark written on the one before,
+two for a wide one - a CJK character, an emoji - which never starts in
+a row's last column. Asked `CSI 18 t`, it answers its size as
 `CSI 8 ; rows ; columns t` in its input, and `CSI 6 n` with the cursor's
 place; on a console over a device the terminal at the other end
 answers, if it can. A program that wants the size reads the answer in
