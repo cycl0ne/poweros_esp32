@@ -2816,6 +2816,31 @@ On the CM5 FacetBoth 1.64's new case, "shipped packing of halves", is 32 of 2304
 
 So VFPACK rounds to the nearest even. With the cores' halves rounded toward zero on purpose the case is 29,585 apart, and with the cores' function made wrong on purpose 46,565. The other 291 cases are each as they were at 1.199, and FacetProbe is 890 of 890.
 
+**Then Determinant and MatrixInverse**, facet.library 1.201.
+
+- **Determinant** is vtn's build_mat_det (vtn_glsl450.c:79-89, 634-637): build_det (:53-77) multiplies column 0 by the vector of its minors, each the determinant of the matrix without that row and column 0 (build_mat_subdet, :28-51), and adds the products' differences in pairs. A 2x2 matrix's minor is the one float left; a larger one's is each other column swizzled to all but the row, a construct of its parts as nir_swizzle makes one.
+- **MatrixInverse** is matrix_inverse (:91-121, 639-642): the adjugate, column c's row r the minor without row c and column r, negated where r + c is odd, times the frcp of the determinant. The inverse is held as a matrix value is, for OpCompositeExtract to read.
+- Both are of a square matrix alone, as SPIR-V has them; a Determinant that answers other than a float, a MatrixInverse other than its matrix, and either of a matrix not square are refused.
+- vtn builds the determinant again for the inverse, and builds the same minors more than once; on the V3D nir_opt_cse shares them (vir.c:2099). This compiler has no CSE, so each is steps of its own: the cost is steps, not values.
+
+Still left out:
+- MatrixInverse of a mat4. vtn's cofactors are its 16 minors, each a mat3's determinant, and the determinant again: past the 256 steps, so it is refused (`Error.Steps`). A mat4's determinant is four such minors, and they are most of glslc_determinant4's 160 steps; the inverse's 16 are four times as many, so not building the determinant twice would not be enough.
+- PackDouble2x32 and UnpackDouble2x32, which are of 64-bit floats, and facet has none (shaderFloat64 is false).
+- Modf and Frexp of a pointer.
+- The interpolation functions.
+
+Results:
+- **The references:**
+  - glslc_matrix_inverse, 450 words: Determinant and MatrixInverse of a mat2 and a mat3 of the colour made −1 to 1, far from singular, the inverses' floats weighted each its own way, so that a float of the wrong row or column shows. Its program is 180 steps and 59 instructions, with an frcp for each inverse.
+  - glslc_determinant4, 349 words: Determinant of a mat4, of its upper left mat2 and of the mat2's transpose, and a mat2x3 of it times a vec2. Its program is 160 steps and 56 instructions. One shader of the mat4's and two mat3s' determinants was past the 256 steps.
+  - glslc_inverse4, 223 words: MatrixInverse of the mat4, which is refused.
+- **The values.** For eight colours each answers within 10^−5 what the matrices answer by other means: the mat2's inverse its closed form, the mat3's the cross products of its columns over their triple product, and each determinant by elimination in f64.
+- The refusal test has the Determinants answer a vec4, then has one read the mat2x3, and has the MatrixInverses answer a float.
+
+The V3D's tests are 350, four new. Of 13 mutations, all 13 fail them.
+
+On the CM5 FacetBoth 1.65's new cases, "shipped matrix inverse" and "shipped determinant of a mat4", are each 8 of 230400 pixels apart, the 8 at the triangles' edge. With the cores' function made wrong on purpose each is 46,565 apart. The other 292 cases are each as they were at 1.200, and FacetProbe is 890 of 890.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim

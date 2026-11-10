@@ -150,7 +150,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.64 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.65 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -2332,6 +2332,90 @@ fn halfPackingOf(color: [4]f32) [4]f32 {
     };
 }
 
+/// The colour made -1 to 1 as the matrix shaders make it, in f32, then
+/// widened (since 1.65).
+fn matrixFloatsOf(color: [4]f32) [4]f64 {
+    var c: [4]f64 = undefined;
+    for (&c, color) |*each, v| each.* = v * 2.0 - 1.0;
+    return c;
+}
+
+/// The determinant of the square matrix `m` by elimination, the
+/// largest float of each column its pivot: not build_det's cofactors
+/// (since 1.65).
+fn eliminatedDeterminantOf(comptime n: usize, m: [n][n]f64) f64 {
+    var a = m;
+    var made: f64 = 1.0;
+    for (0..n) |k| {
+        var pivot = k;
+        for (k + 1..n) |i| {
+            if (@abs(a[i][k]) > @abs(a[pivot][k])) pivot = i;
+        }
+        if (pivot != k) {
+            std.mem.swap([n]f64, &a[pivot], &a[k]);
+            made = -made;
+        }
+        made *= a[k][k];
+        for (k + 1..n) |i| {
+            const factor = a[i][k] / a[k][k];
+            for (k..n) |j| a[i][j] -= factor * a[k][j];
+        }
+    }
+    return made;
+}
+
+/// a x b (since 1.65).
+fn crossOf(a: [3]f64, b: [3]f64) [3]f64 {
+    return .{ a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0] };
+}
+
+/// What `shipped_matrix_inverse` makes of `color`, the
+/// matrices `[column][row]` as GLSL holds them: the mat2's inverse its
+/// own closed form, and the mat3's the rows b x c, c x a and a x b of its
+/// columns a, b and c over a . (b x c) - neither cofactors as vtn builds
+/// them (since 1.65).
+fn matrixInverseOf(color: [4]f32) [4]f32 {
+    const c = matrixFloatsOf(color);
+    const m2 = [2][2]f64{ .{ c[0] + 3.0, c[1] }, .{ c[2], 3.0 - c[0] } };
+    const d2 = m2[0][0] * m2[1][1] - m2[1][0] * m2[0][1];
+    const inverse2 = [2][2]f64{ .{ m2[1][1] / d2, -m2[0][1] / d2 }, .{ -m2[1][0] / d2, m2[0][0] / d2 } };
+    const m3 = [3][3]f64{ .{ c[0] + 3.5, c[1], c[2] }, .{ c[2], 3.5 - c[1], c[0] }, .{ c[1], c[0], 3.5 + c[2] } };
+    const rows = [3][3]f64{ crossOf(m3[1], m3[2]), crossOf(m3[2], m3[0]), crossOf(m3[0], m3[1]) };
+    const d3 = m3[0][0] * rows[0][0] + m3[0][1] * rows[0][1] + m3[0][2] * rows[0][2];
+    var inverse3: [3][3]f64 = undefined;
+    for (0..3) |j| {
+        for (0..3) |i| inverse3[j][i] = rows[i][j] / d3;
+    }
+    const b = (inverse2[0][1] - 2.0 * inverse2[1][0]) * 1.5 + inverse2[0][0] + inverse2[1][1] * 0.5;
+    const a = inverse3[0][2] - 2.0 * inverse3[2][0] + inverse3[1][2] * 3.0 - inverse3[2][1] + inverse3[0][0] + inverse3[1][1] * 0.5 + inverse3[2][2] * 0.25;
+    return .{ @floatCast((d2 - 6.5) * 0.25), @floatCast(d3 / 128.0), @floatCast(b * 0.75 + 0.125), @floatCast(a * 0.5 + 0.05) };
+}
+
+/// What `shipped_determinant4` makes of `color`, each
+/// determinant by elimination (since 1.65).
+fn determinant4Of(color: [4]f32) [4]f32 {
+    const c = matrixFloatsOf(color);
+    const xy: f64 = @as(f32, @floatCast(c[0] * c[1]));
+    const xz: f64 = @as(f32, @floatCast(c[0] * c[2]));
+    const m4 = [4][4]f64{
+        .{ c[0] + 4.0, c[1], c[2], xy },
+        .{ c[2], 4.0 - c[1], c[0], c[1] },
+        .{ c[1], c[0], 4.0 + c[2], c[2] },
+        .{ c[0], c[2], c[1], 4.0 - xz },
+    };
+    const m2 = [2][2]f64{ .{ m4[0][0], m4[0][1] }, .{ m4[1][0], m4[1][1] } };
+    const t2 = [2][2]f64{ .{ m4[0][0], m4[1][0] }, .{ m4[0][1], m4[1][1] } };
+    // mat2x3(m4) times c.xy: column 0 times x and column 1 times y.
+    var n: [3]f64 = undefined;
+    for (&n, 0..) |*each, i| each.* = m4[0][i] * c[0] + m4[1][i] * c[1];
+    return .{
+        @floatCast(eliminatedDeterminantOf(4, m4) / 512.0),
+        @floatCast(eliminatedDeterminantOf(2, m2) / 32.0),
+        @floatCast(eliminatedDeterminantOf(2, t2) / 32.0 + n[2] * 0.0625),
+        @floatCast(n[0] * 0.0625 + 0.5),
+    };
+}
+
 /// The entries that ship words, after all the others, and the words of
 /// each in the same order: `shader.Module.spirv` is index for index.
 const shipped_entries = [_]shader.Entry{
@@ -2436,6 +2520,8 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped packing in bytes", curveFragment(packingBytesOf), 4),
     shader.fragment("shipped packing in halves", curveFragment(packingHalvesOf), 4),
     shader.fragment("shipped half packing", curveFragment(halfPackingOf), 4),
+    shader.fragment("shipped matrix inverse", curveFragment(matrixInverseOf), 4),
+    shader.fragment("shipped determinant of a mat4", curveFragment(determinant4Of), 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2462,7 +2548,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_index_place),          shader.Spirv.of(&shipped_point_size),       shader.Spirv.of(&shipped_point_one),           shader.Spirv.of(&shipped_vertices),
     shader.Spirv.of(&shipped_numbers),              shader.Spirv.of(&shipped_inverse_trig),     shader.Spirv.of(&shipped_hyperbolic),          shader.Spirv.of(&shipped_geometry),
     shader.Spirv.of(&shipped_bit_finds),            shader.Spirv.of(&shipped_modf_frexp),       shader.Spirv.of(&shipped_packing_bytes),       shader.Spirv.of(&shipped_packing_halves),
-    shader.Spirv.of(&shipped_packing_half),
+    shader.Spirv.of(&shipped_packing_half),         shader.Spirv.of(&shipped_matrix_inverse),   shader.Spirv.of(&shipped_determinant4),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -6327,6 +6413,204 @@ const shipped_packing_half = [_]u32{
     0x00000057, 0x00050081, 0x00000006, 0x00000059, 0x00000058, 0x0000003A,
     0x00070050, 0x00000007, 0x0000005A, 0x0000003B, 0x00000042, 0x0000004F,
     0x00000059, 0x0003003E, 0x00000034, 0x0000005A, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, the V3D's host tests' glslc_matrix_inverse:
+/// what `matrixInverseOf` on the cores: Determinant and MatrixInverse of a mat2 and
+/// a mat3
+/// (since 1.65).
+///
+/// ```glsl
+/// #version 450
+/// // facet 1.201: GLSL.std.450's Determinant and MatrixInverse of a mat2 and
+/// // a mat3, as vtn's build_mat_det and matrix_inverse expand them in
+/// // cofactors: matrices of the colour made -1 to 1, far from singular, their
+/// // determinants, and their inverses' floats weighted each its own way, so
+/// // that a float of the wrong row or column shows.
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     vec4 c = color * 2.0 - 1.0;
+///     mat2 m2 = mat2(c.x + 3.0, c.y, c.z, 3.0 - c.x);
+///     mat3 m3 = mat3(c.x + 3.5, c.y, c.z, c.z, 3.5 - c.y, c.x, c.y, c.x, 3.5 + c.z);
+///     mat2 i2 = inverse(m2);
+///     mat3 i3 = inverse(m3);
+///     float b = (i2[0][1] - 2.0 * i2[1][0]) * 1.5 + i2[0][0] + i2[1][1] * 0.5;
+///     float a = i3[0][2] - 2.0 * i3[2][0] + i3[1][2] * 3.0 - i3[2][1] + i3[0][0] + i3[1][1] * 0.5 + i3[2][2] * 0.25;
+///     outColor = vec4((determinant(m2) - 6.5) * 0.25, determinant(m3) / 128.0, b * 0.75 + 0.125, a * 0.5 + 0.05);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag matrix_inverse.frag -o matrix_inverse.spv   # 450 words
+/// spirv-val --target-env vulkan1.0 matrix_inverse.spv   # no output, and 0
+/// ```
+const shipped_matrix_inverse = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x000000AC, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x0000007E, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000007E, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x0000000A,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001,
+    0x0004002B, 0x00000006, 0x0000000D, 0x40000000, 0x0004002B, 0x00000006,
+    0x0000000F, 0x3F800000, 0x00040017, 0x00000012, 0x00000006, 0x00000002,
+    0x00040018, 0x00000013, 0x00000012, 0x00000002, 0x0004002B, 0x00000006,
+    0x0000001B, 0x40400000, 0x00040017, 0x0000002A, 0x00000006, 0x00000003,
+    0x00040018, 0x0000002B, 0x0000002A, 0x00000003, 0x0004002B, 0x00000006,
+    0x00000030, 0x40600000, 0x0004002B, 0x00000006, 0x00000058, 0x3FC00000,
+    0x0004002B, 0x00000006, 0x0000005F, 0x3F000000, 0x0004002B, 0x00000006,
+    0x0000007A, 0x3E800000, 0x00040020, 0x0000007D, 0x00000003, 0x00000007,
+    0x0004003B, 0x0000007D, 0x0000007E, 0x00000003, 0x0004002B, 0x00000006,
+    0x00000081, 0x40D00000, 0x0004002B, 0x00000006, 0x00000089, 0x3F400000,
+    0x0004002B, 0x00000006, 0x0000008B, 0x3E000000, 0x0004002B, 0x00000006,
+    0x0000008F, 0x3D4CCCCD, 0x0007002C, 0x00000007, 0x000000AA, 0x0000000F,
+    0x0000000F, 0x0000000F, 0x0000000F, 0x0004002B, 0x00000006, 0x000000AB,
+    0x3C000000, 0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003,
+    0x000200F8, 0x00000005, 0x0004003D, 0x00000007, 0x0000000C, 0x0000000B,
+    0x0005008E, 0x00000007, 0x0000000E, 0x0000000C, 0x0000000D, 0x00050083,
+    0x00000007, 0x00000011, 0x0000000E, 0x000000AA, 0x00050051, 0x00000006,
+    0x0000001A, 0x00000011, 0x00000000, 0x00050081, 0x00000006, 0x0000001C,
+    0x0000001A, 0x0000001B, 0x00050051, 0x00000006, 0x0000001F, 0x00000011,
+    0x00000001, 0x00050051, 0x00000006, 0x00000022, 0x00000011, 0x00000002,
+    0x00050083, 0x00000006, 0x00000025, 0x0000001B, 0x0000001A, 0x00050050,
+    0x00000012, 0x00000027, 0x0000001C, 0x0000001F, 0x00050050, 0x00000012,
+    0x00000028, 0x00000022, 0x00000025, 0x00050050, 0x00000013, 0x00000029,
+    0x00000027, 0x00000028, 0x00050081, 0x00000006, 0x00000031, 0x0000001A,
+    0x00000030, 0x00050083, 0x00000006, 0x0000003A, 0x00000030, 0x0000001F,
+    0x00050081, 0x00000006, 0x00000043, 0x00000030, 0x00000022, 0x00060050,
+    0x0000002A, 0x00000044, 0x00000031, 0x0000001F, 0x00000022, 0x00060050,
+    0x0000002A, 0x00000045, 0x00000022, 0x0000003A, 0x0000001A, 0x00060050,
+    0x0000002A, 0x00000046, 0x0000001F, 0x0000001A, 0x00000043, 0x00060050,
+    0x0000002B, 0x00000047, 0x00000044, 0x00000045, 0x00000046, 0x0006000C,
+    0x00000013, 0x0000004A, 0x00000001, 0x00000022, 0x00000029, 0x0006000C,
+    0x0000002B, 0x0000004D, 0x00000001, 0x00000022, 0x00000047, 0x00060051,
+    0x00000006, 0x00000052, 0x0000004A, 0x00000000, 0x00000001, 0x00060051,
+    0x00000006, 0x00000055, 0x0000004A, 0x00000001, 0x00000000, 0x00050085,
+    0x00000006, 0x00000056, 0x0000000D, 0x00000055, 0x00050083, 0x00000006,
+    0x00000057, 0x00000052, 0x00000056, 0x00050085, 0x00000006, 0x00000059,
+    0x00000057, 0x00000058, 0x00060051, 0x00000006, 0x0000005B, 0x0000004A,
+    0x00000000, 0x00000000, 0x00050081, 0x00000006, 0x0000005C, 0x00000059,
+    0x0000005B, 0x00060051, 0x00000006, 0x0000005E, 0x0000004A, 0x00000001,
+    0x00000001, 0x00050085, 0x00000006, 0x00000060, 0x0000005E, 0x0000005F,
+    0x00050081, 0x00000006, 0x00000061, 0x0000005C, 0x00000060, 0x00060051,
+    0x00000006, 0x00000064, 0x0000004D, 0x00000000, 0x00000002, 0x00060051,
+    0x00000006, 0x00000067, 0x0000004D, 0x00000002, 0x00000000, 0x00050085,
+    0x00000006, 0x00000068, 0x0000000D, 0x00000067, 0x00050083, 0x00000006,
+    0x00000069, 0x00000064, 0x00000068, 0x00060051, 0x00000006, 0x0000006B,
+    0x0000004D, 0x00000001, 0x00000002, 0x00050085, 0x00000006, 0x0000006C,
+    0x0000006B, 0x0000001B, 0x00050081, 0x00000006, 0x0000006D, 0x00000069,
+    0x0000006C, 0x00060051, 0x00000006, 0x0000006F, 0x0000004D, 0x00000002,
+    0x00000001, 0x00050083, 0x00000006, 0x00000070, 0x0000006D, 0x0000006F,
+    0x00060051, 0x00000006, 0x00000072, 0x0000004D, 0x00000000, 0x00000000,
+    0x00050081, 0x00000006, 0x00000073, 0x00000070, 0x00000072, 0x00060051,
+    0x00000006, 0x00000075, 0x0000004D, 0x00000001, 0x00000001, 0x00050085,
+    0x00000006, 0x00000076, 0x00000075, 0x0000005F, 0x00050081, 0x00000006,
+    0x00000077, 0x00000073, 0x00000076, 0x00060051, 0x00000006, 0x00000079,
+    0x0000004D, 0x00000002, 0x00000002, 0x00050085, 0x00000006, 0x0000007B,
+    0x00000079, 0x0000007A, 0x00050081, 0x00000006, 0x0000007C, 0x00000077,
+    0x0000007B, 0x0006000C, 0x00000006, 0x00000080, 0x00000001, 0x00000021,
+    0x00000029, 0x00050083, 0x00000006, 0x00000082, 0x00000080, 0x00000081,
+    0x00050085, 0x00000006, 0x00000083, 0x00000082, 0x0000007A, 0x0006000C,
+    0x00000006, 0x00000085, 0x00000001, 0x00000021, 0x00000047, 0x00050085,
+    0x00000006, 0x00000087, 0x00000085, 0x000000AB, 0x00050085, 0x00000006,
+    0x0000008A, 0x00000061, 0x00000089, 0x00050081, 0x00000006, 0x0000008C,
+    0x0000008A, 0x0000008B, 0x00050085, 0x00000006, 0x0000008E, 0x0000007C,
+    0x0000005F, 0x00050081, 0x00000006, 0x00000090, 0x0000008E, 0x0000008F,
+    0x00070050, 0x00000007, 0x00000091, 0x00000083, 0x00000087, 0x0000008C,
+    0x00000090, 0x0003003E, 0x0000007E, 0x00000091, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, the V3D's host tests' glslc_determinant4:
+/// what `determinant4Of` on the cores: Determinant of a mat4, of a mat2 and of its
+/// transpose
+/// (since 1.65).
+///
+/// ```glsl
+/// #version 450
+/// // facet 1.201: GLSL.std.450's Determinant of a mat4, build_det's
+/// // cofactors of column 0, each a mat3's; of its upper left mat2, and of
+/// // the transpose of that, which is the same; and a mat2x3 of it times a
+/// // vec2, for a matrix that is not square.
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     vec4 c = color * 2.0 - 1.0;
+///     mat4 m4 = mat4(c.x + 4.0, c.y, c.z, c.x * c.y,
+///                    c.z, 4.0 - c.y, c.x, c.y,
+///                    c.y, c.x, 4.0 + c.z, c.z,
+///                    c.x, c.z, c.y, 4.0 - c.x * c.z);
+///     vec3 n = mat2x3(m4) * c.xy;
+///     outColor = vec4(determinant(m4) / 512.0, determinant(mat2(m4)) / 32.0, determinant(transpose(mat2(m4))) / 32.0 + n.z * 0.0625, n.x * 0.0625 + 0.5);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag determinant4.frag -o determinant4.spv   # 349 words
+/// spirv-val --target-env vulkan1.0 determinant4.spv   # no output, and 0
+/// ```
+const shipped_determinant4 = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000094, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x0000005A, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000005A, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x0000000A,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001,
+    0x0004002B, 0x00000006, 0x0000000D, 0x40000000, 0x0004002B, 0x00000006,
+    0x0000000F, 0x3F800000, 0x00040018, 0x00000012, 0x00000007, 0x00000004,
+    0x0004002B, 0x00000006, 0x0000001A, 0x40800000, 0x00040017, 0x0000004B,
+    0x00000006, 0x00000003, 0x00040018, 0x0000004F, 0x0000004B, 0x00000002,
+    0x00040017, 0x00000055, 0x00000006, 0x00000002, 0x00040020, 0x00000059,
+    0x00000003, 0x00000007, 0x0004003B, 0x00000059, 0x0000005A, 0x00000003,
+    0x00040018, 0x00000060, 0x00000055, 0x00000002, 0x0004002B, 0x00000006,
+    0x00000074, 0x3D800000, 0x0004002B, 0x00000006, 0x0000007A, 0x3F000000,
+    0x0007002C, 0x00000007, 0x00000091, 0x0000000F, 0x0000000F, 0x0000000F,
+    0x0000000F, 0x0004002B, 0x00000006, 0x00000092, 0x3B000000, 0x0004002B,
+    0x00000006, 0x00000093, 0x3D000000, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x00000007,
+    0x0000000C, 0x0000000B, 0x0005008E, 0x00000007, 0x0000000E, 0x0000000C,
+    0x0000000D, 0x00050083, 0x00000007, 0x00000011, 0x0000000E, 0x00000091,
+    0x00050051, 0x00000006, 0x00000019, 0x00000011, 0x00000000, 0x00050081,
+    0x00000006, 0x0000001B, 0x00000019, 0x0000001A, 0x00050051, 0x00000006,
+    0x0000001E, 0x00000011, 0x00000001, 0x00050051, 0x00000006, 0x00000021,
+    0x00000011, 0x00000002, 0x00050085, 0x00000006, 0x00000026, 0x00000019,
+    0x0000001E, 0x00050083, 0x00000006, 0x0000002B, 0x0000001A, 0x0000001E,
+    0x00050081, 0x00000006, 0x00000036, 0x0000001A, 0x00000021, 0x00050085,
+    0x00000006, 0x00000043, 0x00000019, 0x00000021, 0x00050083, 0x00000006,
+    0x00000044, 0x0000001A, 0x00000043, 0x00070050, 0x00000007, 0x00000046,
+    0x0000001B, 0x0000001E, 0x00000021, 0x00000026, 0x00070050, 0x00000007,
+    0x00000047, 0x00000021, 0x0000002B, 0x00000019, 0x0000001E, 0x00070050,
+    0x00000007, 0x00000048, 0x0000001E, 0x00000019, 0x00000036, 0x00000021,
+    0x00070050, 0x00000007, 0x00000049, 0x00000019, 0x00000021, 0x0000001E,
+    0x00000044, 0x00070050, 0x00000012, 0x0000004A, 0x00000046, 0x00000047,
+    0x00000048, 0x00000049, 0x0008004F, 0x0000004B, 0x00000051, 0x00000046,
+    0x00000046, 0x00000000, 0x00000001, 0x00000002, 0x0008004F, 0x0000004B,
+    0x00000053, 0x00000047, 0x00000047, 0x00000000, 0x00000001, 0x00000002,
+    0x00050050, 0x0000004F, 0x00000054, 0x00000051, 0x00000053, 0x0007004F,
+    0x00000055, 0x00000057, 0x00000011, 0x00000011, 0x00000000, 0x00000001,
+    0x00050091, 0x0000004B, 0x00000058, 0x00000054, 0x00000057, 0x0006000C,
+    0x00000006, 0x0000005C, 0x00000001, 0x00000021, 0x0000004A, 0x00050085,
+    0x00000006, 0x0000005E, 0x0000005C, 0x00000092, 0x0007004F, 0x00000055,
+    0x00000062, 0x00000046, 0x00000046, 0x00000000, 0x00000001, 0x0007004F,
+    0x00000055, 0x00000064, 0x00000047, 0x00000047, 0x00000000, 0x00000001,
+    0x00050050, 0x00000060, 0x00000065, 0x00000062, 0x00000064, 0x0006000C,
+    0x00000006, 0x00000066, 0x00000001, 0x00000021, 0x00000065, 0x00050085,
+    0x00000006, 0x00000068, 0x00000066, 0x00000093, 0x00040054, 0x00000060,
+    0x0000006F, 0x00000065, 0x0006000C, 0x00000006, 0x00000070, 0x00000001,
+    0x00000021, 0x0000006F, 0x00050085, 0x00000006, 0x00000071, 0x00000070,
+    0x00000093, 0x00050051, 0x00000006, 0x00000073, 0x00000058, 0x00000002,
+    0x00050085, 0x00000006, 0x00000075, 0x00000073, 0x00000074, 0x00050081,
+    0x00000006, 0x00000076, 0x00000071, 0x00000075, 0x00050051, 0x00000006,
+    0x00000078, 0x00000058, 0x00000000, 0x00050085, 0x00000006, 0x00000079,
+    0x00000078, 0x00000074, 0x00050081, 0x00000006, 0x0000007B, 0x00000079,
+    0x0000007A, 0x00070050, 0x00000007, 0x0000007C, 0x0000005E, 0x00000068,
+    0x00000076, 0x0000007B, 0x0003003E, 0x0000005A, 0x0000007C, 0x000100FD,
+    0x00010038,
 };
 
 /// glslc's own output, at -O, of the place times a W of 1 + 2 * the blue
@@ -10583,6 +10867,8 @@ const cases = [_]Case{
     .{ .name = "shipped packing in bytes", .run = Cases.shipped("as it is", "shipped packing in bytes", false, clockwise_at) },
     .{ .name = "shipped packing in halves", .run = Cases.shipped("as it is", "shipped packing in halves", false, clockwise_at) },
     .{ .name = "shipped packing of halves", .run = Cases.shipped("as it is", "shipped half packing", false, clockwise_at) },
+    .{ .name = "shipped matrix inverse", .run = Cases.shipped("as it is", "shipped matrix inverse", false, clockwise_at) },
+    .{ .name = "shipped determinant of a mat4", .run = Cases.shipped("as it is", "shipped determinant of a mat4", false, clockwise_at) },
     .{ .name = "shipped flat varying", .run = Cases.shipped("shipped flat vertex", "shipped flat colour", false, clockwise_at) },
     .{ .name = "shipped flat integer", .run = Cases.shipped("shipped flat integer vertex", "shipped flat integer", false, clockwise_at) },
     .{ .name = "shipped noperspective", .run = Cases.shipped("shipped noperspective vertex", "shipped noperspective", false, clockwise_at) },
