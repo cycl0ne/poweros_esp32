@@ -6175,4 +6175,42 @@ pub const LIBRARY_VERSION = 1;
 /// steps, past the tables' 128, and right on the host with the tables
 /// raised: they are split into four of 88 to 117. FacetProbe passes its
 /// 890 checks.
-pub const LIBRARY_REVISION = 188;
+///
+/// 189: **Tables of 256 steps (docs/facet-vulkan10.md item 59).** A body
+/// may compute 256 values, where it might 128 since 1.152: 1.188's two
+/// programs of five divisions by constants and their checks were 142
+/// and 178 steps before their dead ones went, and FacetBoth split them in
+/// four. NIR has no such bound, its instructions and nir_from_ssa's sets
+/// being allocated as they grow; the port's tables are fixed, on the heap.
+/// The from-SSA walk's sets of where each float is read are a bit a step,
+/// a Mask of `most_steps` bits where they were a u128, and are Emit's on
+/// the heap: 32 KiB of them at 256 steps, the whole of the stack a
+/// command is given (CLI_DEFAULT_STACK, 4096 words). A web's number is a
+/// u16. Work is 70 KiB and Emit 54 KiB; the driver's deepest frames are
+/// the algebraic pass's 9.4 KiB, apart from the walk, and the walk's
+/// 4.7 KiB and the copies' 8 KiB within it, 12.7 KiB where they were
+/// 14.6.
+///
+/// Tests: the V3D's 308, two new. glslc_udiv_many and glslc_idiv_many,
+/// 1.188's two programs, are 18 and 13 32-bit products and no RECIP, each
+/// worked out on the host for all 65536 pairs of the colour's integers.
+/// glslc_selection_late is glslc_selection_early, a selection kept for
+/// its false arm's twelve sines, after six divisions by 7 that put its
+/// begin at step 133: the same copies and products under the mask,
+/// and one more copy of ~0 for each division's uadd_sat. 1.187's
+/// glslc_integers with its first OpIMul made an OpSDiv, a scalar where
+/// that test said a vector of four, is more than 128 steps and compiles:
+/// one RECIP and 11 products. Of 7 mutations, 4 fail the tests. A walk
+/// whose steps after one stop at the 127th fails the late selection.
+/// The three left: the steps after the 254th none and not the 255th,
+/// which only a program of all 256 steps tells; a web's no-web 0xFF, the
+/// same program, a web being a phi's and the steps' 256 holding fewer
+/// than 255 phis beside a selection's marks; and the set of the floats
+/// the colour reads left uncleared, the same in a Debug build, where it
+/// is 0xAA bytes, whose bool reads false. Set where it is not, it fails.
+///
+/// On the CM5 FacetBoth's 272 cases are each as they were at 1.188, and
+/// its two new ones, 1.188's programs whole, are 8 of 230400 pixels
+/// apart: the 8 at the triangles' edge every case of their geometry has.
+/// FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 189;

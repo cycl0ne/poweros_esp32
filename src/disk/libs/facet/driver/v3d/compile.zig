@@ -97,8 +97,9 @@ const allocate = @import("compiler/allocate.zig");
 /// not on the stack of the call that compiles.
 pub const most_ids = 256;
 /// The most values a body may compute. 128 since 1.152, where a call of
-/// GLSL.std.450 can lower to several.
-pub const most_steps = 128;
+/// GLSL.std.450 can lower to several; 256 since 1.189, where a program
+/// of several divisions by constants is more than 128.
+pub const most_steps = 256;
 /// The varyings the hardware carries
 /// (`PhysicalDeviceLimits.max_vertex_output_components`).
 pub const most_varyings = qpu.most_varyings;
@@ -12454,6 +12455,29 @@ test "Hacker's Delight's magic numbers are util_compute_fast_udiv_info's and _sd
     try testing.expectEqual(FastSdivInfo{ .multiplier = 0x6DB6_DB6D, .shift = 2 }, fastSdivInfo(-7, 32));
 }
 
+test "five divisions by constants and their checks are more steps than the tables of 128 held, and each program is right for every integer of the colour" {
+    // The programs FacetBoth 1.53 split in four, at 142 and 178 steps
+    // before their dead ones went (since 1.189).
+    const modules = [_]struct { words: []const u32, products: usize }{
+        .{ .words = &reference.glslc_udiv_many, .products = 18 },
+        .{ .words = &reference.glslc_idiv_many, .products = 13 },
+    };
+    for (modules) |module| {
+        var work: Work = .{};
+        const code = try throughMesa(&work, module.words);
+        try testing.expectEqual(@as(usize, 0), countOf(code, "recip "));
+        try testing.expectEqual(module.products, countOf(code, "umul24 "));
+        var x: u32 = 0;
+        while (x < 256) : (x += 1) {
+            var y: u32 = 0;
+            while (y < 256) : (y += 1) {
+                const color = [4]f32{ (@as(f32, @floatFromInt(x)) + 0.25) / 255.0, (@as(f32, @floatFromInt(y)) + 0.25) / 255.0, 0, 0 };
+                try testing.expectEqual([4]f32{ color[0], 1.0, color[1], 1.0 }, evaluatedOf(&work, work.stored, color, 0));
+            }
+        }
+    }
+}
+
 test "an unsigned division by a word above 2^31 is a b2i32 of whether the dividend is as large, or of the largest word that it is it: no multiply" {
     // build_udiv (nir_opt_idiv_const.c:36-39), the quotient 0 or 1
     // (since 1.188).
@@ -13901,6 +13925,28 @@ test "two floats of one varying, each one way of a phi, are two webs' and not on
     try testing.expectEqual(@as(usize, 3 + 2), opsOf(code, "mov.ifa"));
 }
 
+test "a kept selection past the 128th step is coalesced as it is before it: the same copies under the mask" {
+    // The walk's sets of where each float is read are a bit a step, and
+    // the steps after one all the bits above it (since 1.189).
+    var early: Work = .{};
+    const first = try throughMesa(&early, &reference.glslc_selection_early);
+    var late: Work = .{};
+    const second = try throughMesa(&late, &reference.glslc_selection_late);
+    var begin: usize = 0;
+    while (late.steps[begin].tag != .begin_if) begin += 1;
+    try testing.expect(begin > 128);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&late, .begin_if));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&late, .phi));
+    inline for (.{ "fmul.ifa", "fadd.ifa", "sin" }) |op| {
+        try testing.expectEqual(opsOf(first, op), opsOf(second, op));
+    }
+    try testing.expectEqual(@as(usize, 1 + 1 + 12), opsOf(second, "sin"));
+    // The selection's three copies under the mask, and each division's
+    // uadd_sat a bcsel of ~0, by 7 having an increment.
+    try testing.expectEqual(@as(usize, 3), opsOf(first, "mov.ifa"));
+    try testing.expectEqual(@as(usize, 3 + 6), opsOf(second, "mov.ifa"));
+}
+
 /// A selection kept for its true arm's cost on a push constant's
 /// condition, a product in its false arm, and the varying read past it.
 const PushedCostly = ir.Fragment(struct {
@@ -14752,7 +14798,7 @@ test "an integer operation of constants is folded as NIR's 32-bit arithmetic is:
     try testing.expectEqual(Tag.integer, work.steps[try integerOf(&work, .iadd, input, try of.word(&work, 1))].tag);
 }
 
-test "a 32-bit integer is computed, compared and converted, but no varying, no colour and no division is one" {
+test "a 32-bit integer is computed, compared and converted, but no varying and no colour is one, and a division of it fits the tables" {
     // The colour in made a vector of integers, the push constants' ivec4:
     // a varying of them would want flat interpolation, which is not
     // ported, and is refused by its type. The colour out the same: it
@@ -14760,9 +14806,16 @@ test "a 32-bit integer is computed, compared and converted, but no varying, no c
     var work: Work = .{};
     try testing.expectError(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_integers, .type_pointer, 0, 2, 7)));
     try testing.expectError(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_integers, .type_pointer, 5, 2, 7)));
-    // An OpIMul made OpSDiv of two ivec4s: nir_lower_idiv's four
-    // lowerings are more steps than the tables hold (since 1.187).
-    try testing.expectError(Error.Steps, throughMesa(&work, &comptime reopcoded(&reference.glslc_integers, .i_mul, 0, .s_div)));
+    // Its first OpIMul, the push constants' s.y times s.z, made OpSDiv:
+    // nir_lower_idiv's lowering of it on top of the program's other
+    // steps, more than the tables of 128 held (since 1.187) and fewer
+    // than 256 (since 1.189). Its RECIP and ten 32-bit products, beside
+    // the program's other one.
+    var divided: Work = .{};
+    const code = try throughMesa(&divided, &comptime reopcoded(&reference.glslc_integers, .i_mul, 0, .s_div));
+    try testing.expect(divided.step_count > 128);
+    try testing.expectEqual(@as(usize, 1), countOf(code, "recip "));
+    try testing.expectEqual(@as(usize, 11), countOf(code, "umul24 "));
 }
 
 /// `words` with the `at`th instruction of `op` made one of `into`, its
