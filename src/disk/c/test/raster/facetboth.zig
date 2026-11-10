@@ -131,7 +131,9 @@
 //! the V3D makes a level as lower_gradient does - the size of level 0,
 //! the longer derivative's length, its logarithm - and samples there; the
 //! cores sample at the level `texture.levelOf` finds of the same
-//! derivatives.
+//! derivatives. The shipped cube gradient (since 1.49) is glslc's
+//! textureGrad of the cube, which the V3D makes a level as
+//! lower_gradient_cube_map does, and the cores as its arithmetic reads.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -146,7 +148,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.48 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.49 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -1401,6 +1403,64 @@ fn gradedFragment(comptime skewed: bool, comptime layer: u32, comptime moved: [2
     }.run;
 }
 
+/// What `shipped_grad_cube` computes, for the cores: the cube bound at
+/// set 0, binding 0 sampled through the sampler beside it at the three
+/// floats of varying 0, at the level `cubeGradLevel` makes of the
+/// gradient (s / 4, 0, 0) and (0, t / 4, 0). The level is handed to
+/// `texture.sampleCubeBy` as a step of 2^level texels along u, which
+/// `texture.levelOf` reads back; the board's cube has one level, so what
+/// it says is whether the level is above 0, the sampler's minifying
+/// filter, or not, its magnifying one (since 1.49).
+fn cubeGradedFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    const given = fragments.resources.sampled(0, 0, 0) orelse return shader.fill(fragments, shader.missing);
+    const with = fragments.resources.samplerOf(0, 0, 0) orelse return shader.fill(fragments, shader.missing);
+    @setRuntimeSafety(false);
+    const across: f32 = @floatFromInt(given.width(0));
+    var rows = shader.Rows(4).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const row = rows.at(quad);
+        const w = @as(shader.Pixels, @splat(1)) / row[0];
+        const ss: [4]f32 = row[1] * w;
+        const ts: [4]f32 = row[2] * w;
+        const rs: [4]f32 = row[3] * w;
+        var colors: [4]u32 = undefined;
+        for (&colors, ss, ts, rs) |*color, s, t, r| {
+            const level = cubeGradLevel(.{ s, t, r }, .{ s * 0.25, 0, 0 }, .{ 0, t * 0.25, 0 }, across);
+            const hit = facet.texture.cubeHit(s, t, r);
+            const point = facet.texture.Point{ .u = hit.u, .v = hit.v, .du_dx = @exp2(level) / across };
+            color.* = facet.texture.sampleCubeBy(given, with, 0, hit.face, point);
+        }
+        out.* = colors;
+    }
+}
+
+/// lower_gradient_cube_map's level, worked out as it reads (Mesa's
+/// nir_lower_tex.c:783-848), of `direction` normalized as
+/// nir_normalize_cubemap_coords has it: the face the largest magnitude
+/// names, z before y before x; each derivative's two onto it by the
+/// quotient rule; and -1 plus half the log of L * (L * M), M the larger
+/// of the two's squared lengths and L the cube's width (since 1.49).
+fn cubeGradLevel(direction: [3]f32, ddx: [3]f32, ddy: [3]f32, width: f32) f32 {
+    const largest = @max(@max(@abs(direction[0]), @abs(direction[1])), @abs(direction[2]));
+    var p: [3]f32 = undefined;
+    for (&p, direction) |*each, d| each.* = d * (1.0 / largest);
+    const ax = @abs(p[0]);
+    const ay = @abs(p[1]);
+    const az = @abs(p[2]);
+    const face: [3]u8 = if (az >= @max(ax, ay)) .{ 0, 1, 2 } else if (ay >= @max(ax, az)) .{ 0, 2, 1 } else .{ 1, 2, 0 };
+    const recip = 1.0 / p[face[2]];
+    var most: f32 = 0;
+    for ([2][3]f32{ ddx, ddy }) |d| {
+        var length: f32 = 0;
+        for (0..2) |k| {
+            const onto = (d[face[k]] - p[face[k]] * recip * d[face[2]]) * recip;
+            length += onto * onto;
+        }
+        most = @max(most, length);
+    }
+    return -1.0 + 0.5 * @log2(width * (width * most));
+}
+
 /// What `store_writes` computes, for the cores, and in its order: by each
 /// pixel inside the triangle - a helper pixel writes nothing, as the
 /// V3D's lookup is a pixel's - the written buffer's count made 2 and its
@@ -1613,6 +1673,7 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped grad", gradedFragment(true, 0, .{ 0, 0 }), 2),
     shader.fragment("shipped grad layers", gradedFragment(false, 2, .{ 0, 0 }), 2),
     shader.fragment("shipped grad offset", gradedFragment(false, 0, .{ 1, -2 }), 2),
+    shader.fragment("shipped grad cube", &cubeGradedFragment, 3),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                    .{},                                       .{},                                    .{},
@@ -1631,7 +1692,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_bias),         Shipped.Offset.spirv,                      shader.Spirv.of(&shipped_size),         shader.Spirv.of(&shipped_size_layers),
     shader.Spirv.of(&shipped_size_volume),  shader.Spirv.of(&shipped_fetch),           shader.Spirv.of(&shipped_fetch_layers), shader.Spirv.of(&shipped_fetch_volume),
     shader.Spirv.of(&shipped_fetch_offset), shader.Spirv.of(&shipped_fetch_dependent), shader.Spirv.of(&shipped_grad),         shader.Spirv.of(&shipped_grad_layers),
-    shader.Spirv.of(&shipped_grad_offset),
+    shader.Spirv.of(&shipped_grad_offset),  shader.Spirv.of(&shipped_grad_cube),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -3946,6 +4007,60 @@ const shipped_grad_offset = [_]u32{
     0x000100FD, 0x00010038,
 };
 
+/// glslc's own output, at -O, for a sample of a cube at the three floats
+/// of varying 0 with a gradient of them: the first times a quarter along
+/// x, the second along y. The V3D makes it a level as
+/// lower_gradient_cube_map does, on the face the direction falls on
+/// (since 1.49).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform samplerCube sky;
+/// layout(location = 0) in vec3 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = textureGrad(sky, at, vec3(at.x * 0.25, 0.0, 0.0), vec3(0.0, at.y * 0.25, 0.0));
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag grad_cube.frag -o grad_cube.spv   # 186 words
+/// spirv-val --target-env vulkan1.0 grad_cube.spv                       # no output, and 0
+/// ```
+const shipped_grad_cube = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000022, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000011, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000011, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000003,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040017, 0x0000000F,
+    0x00000006, 0x00000003, 0x00040020, 0x00000010, 0x00000001, 0x0000000F,
+    0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x00040015, 0x00000013,
+    0x00000020, 0x00000000, 0x0004002B, 0x00000013, 0x00000014, 0x00000000,
+    0x00040020, 0x00000015, 0x00000001, 0x00000006, 0x0004002B, 0x00000006,
+    0x00000018, 0x3E800000, 0x0004002B, 0x00000006, 0x0000001A, 0x00000000,
+    0x0004002B, 0x00000013, 0x0000001C, 0x00000001, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D, 0x0000000F, 0x00000012,
+    0x00000011, 0x00050041, 0x00000015, 0x00000016, 0x00000011, 0x00000014,
+    0x0004003D, 0x00000006, 0x00000017, 0x00000016, 0x00050085, 0x00000006,
+    0x00000019, 0x00000017, 0x00000018, 0x00060050, 0x0000000F, 0x0000001B,
+    0x00000019, 0x0000001A, 0x0000001A, 0x00050041, 0x00000015, 0x0000001D,
+    0x00000011, 0x0000001C, 0x0004003D, 0x00000006, 0x0000001E, 0x0000001D,
+    0x00050085, 0x00000006, 0x0000001F, 0x0000001E, 0x00000018, 0x00060050,
+    0x0000000F, 0x00000020, 0x0000001A, 0x0000001F, 0x0000001A, 0x00080058,
+    0x00000007, 0x00000021, 0x0000000E, 0x00000012, 0x00000004, 0x0000001B,
+    0x00000020, 0x0003003E, 0x00000009, 0x00000021, 0x000100FD, 0x00010038,
+};
+
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
 /// V3D's host tests hold to compile to the program of glslc's optimized
 /// module, word for word: `c` and `k` in variables of the function's own,
@@ -4390,7 +4505,9 @@ const fetched_throughs = [_]Through{
 /// A gradient's sample: glslc's `shipped_grad` over the texture of
 /// levels, levels mixed and the nearest, `shipped_grad_layers` over the
 /// array and `shipped_grad_offset`, the cores' `gradedFragment` (since
-/// 1.48).
+/// 1.48); and `shipped_grad_cube`, the cores' `cubeGradedFragment`, on
+/// the cube's +z face with the two filters apart, so that the level's
+/// side of 0 shows (since 1.49).
 const graded_throughs = [_]Through{
     .{
         .label = "shipped grad",
@@ -4420,6 +4537,15 @@ const graded_throughs = [_]Through{
         .fragment = "shipped grad offset",
         .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .max_lod = facet.texture.lod_unclamped },
         .vertex = "texture",
+    },
+    .{
+        .label = "shipped grad",
+        .what = "a cube's +z, the nearest magnified and linear minified",
+        .fragment = "shipped grad cube",
+        .info = .{ .mag_filter = .nearest, .min_filter = .linear, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "cube",
+        .instance = 4,
+        .view = .cube,
     },
 };
 

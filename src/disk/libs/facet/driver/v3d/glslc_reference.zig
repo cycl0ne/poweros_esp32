@@ -18156,3 +18156,285 @@ pub const glslc_grad_twice = [_]u32{
     0x00000023, 0x00000018, 0x00000022, 0x0003003E, 0x00000009, 0x00000023,
     0x000100FD, 0x00010038,
 };
+
+/// A shadow sample of a cube with a gradient, glslc -O
+/// (`-fshader-stage=frag`), 189 words: OpImageSampleDrefExplicitLod with
+/// Grad (since 1.184).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform samplerCubeShadow tex;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = vec4(textureGrad(tex, vec4(color.xyz, color.w), color.xyz, color.zyx));
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 36
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %16
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %13 Binding 0
+///                OpDecorate %13 DescriptorSet 0
+///                OpDecorate %16 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 Cube 1 0 0 1 Unknown
+///          %11 = OpTypeSampledImage %10
+///          %12 = OpTypePointer UniformConstant %11
+///          %13 = OpVariable %12 UniformConstant
+///          %15 = OpTypePointer Input %7
+///          %16 = OpVariable %15 Input
+///          %17 = OpTypeVector %6 3
+///          %20 = OpTypeInt 32 0
+///          %21 = OpConstant %20 3
+///          %22 = OpTypePointer Input %6
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpLoad %11 %13
+///          %18 = OpLoad %7 %16
+///          %19 = OpVectorShuffle %17 %18 %18 0 1 2
+///          %23 = OpAccessChain %22 %16 %21
+///          %24 = OpLoad %6 %23
+///          %25 = OpCompositeExtract %6 %18 0
+///          %26 = OpCompositeExtract %6 %18 1
+///          %27 = OpCompositeExtract %6 %18 2
+///          %28 = OpCompositeConstruct %7 %25 %26 %27 %24
+///          %32 = OpVectorShuffle %17 %18 %18 2 1 0
+///          %34 = OpImageSampleDrefExplicitLod %6 %14 %28 %24 Grad %19 %32
+///          %35 = OpCompositeConstruct %7 %34 %34 %34 %34
+///                OpStore %9 %35
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_grad_cube_shadow = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000024, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000010, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000010, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000003,
+    0x00000001, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040020, 0x0000000F,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000F, 0x00000010, 0x00000001,
+    0x00040017, 0x00000011, 0x00000006, 0x00000003, 0x00040015, 0x00000014,
+    0x00000020, 0x00000000, 0x0004002B, 0x00000014, 0x00000015, 0x00000003,
+    0x00040020, 0x00000016, 0x00000001, 0x00000006, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D, 0x00000007, 0x00000012,
+    0x00000010, 0x0008004F, 0x00000011, 0x00000013, 0x00000012, 0x00000012,
+    0x00000000, 0x00000001, 0x00000002, 0x00050041, 0x00000016, 0x00000017,
+    0x00000010, 0x00000015, 0x0004003D, 0x00000006, 0x00000018, 0x00000017,
+    0x00050051, 0x00000006, 0x00000019, 0x00000012, 0x00000000, 0x00050051,
+    0x00000006, 0x0000001A, 0x00000012, 0x00000001, 0x00050051, 0x00000006,
+    0x0000001B, 0x00000012, 0x00000002, 0x00070050, 0x00000007, 0x0000001C,
+    0x00000019, 0x0000001A, 0x0000001B, 0x00000018, 0x0008004F, 0x00000011,
+    0x00000020, 0x00000012, 0x00000012, 0x00000002, 0x00000001, 0x00000000,
+    0x0009005A, 0x00000006, 0x00000022, 0x0000000E, 0x0000001C, 0x00000018,
+    0x00000004, 0x00000013, 0x00000020, 0x00070050, 0x00000007, 0x00000023,
+    0x00000022, 0x00000022, 0x00000022, 0x00000022, 0x0003003E, 0x00000009,
+    0x00000023, 0x000100FD, 0x00010038,
+};
+
+/// A sample of a cube with a constant gradient, a hundredth along x and
+/// along y, glslc -O (`-fshader-stage=frag`), 150 words (since 1.184).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform samplerCube tex;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = textureGrad(tex, color.xyz, vec3(0.01, 0.0, 0.0), vec3(0.0, 0.01, 0.0));
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 25
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %16
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %13 Binding 0
+///                OpDecorate %13 DescriptorSet 0
+///                OpDecorate %16 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 Cube 0 0 0 1 Unknown
+///          %11 = OpTypeSampledImage %10
+///          %12 = OpTypePointer UniformConstant %11
+///          %13 = OpVariable %12 UniformConstant
+///          %15 = OpTypePointer Input %7
+///          %16 = OpVariable %15 Input
+///          %17 = OpTypeVector %6 3
+///          %20 = OpConstant %6 0.00999999978
+///          %21 = OpConstant %6 0
+///          %22 = OpConstantComposite %17 %20 %21 %21
+///          %23 = OpConstantComposite %17 %21 %20 %21
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpLoad %11 %13
+///          %18 = OpLoad %7 %16
+///          %19 = OpVectorShuffle %17 %18 %18 0 1 2
+///          %24 = OpImageSampleExplicitLod %7 %14 %19 Grad %22 %23
+///                OpStore %9 %24
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_grad_cube_constant = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000019, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000010, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000010, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000003,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040020, 0x0000000F,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000F, 0x00000010, 0x00000001,
+    0x00040017, 0x00000011, 0x00000006, 0x00000003, 0x0004002B, 0x00000006,
+    0x00000014, 0x3C23D70A, 0x0004002B, 0x00000006, 0x00000015, 0x00000000,
+    0x0006002C, 0x00000011, 0x00000016, 0x00000014, 0x00000015, 0x00000015,
+    0x0006002C, 0x00000011, 0x00000017, 0x00000015, 0x00000014, 0x00000015,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003D, 0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D,
+    0x00000007, 0x00000012, 0x00000010, 0x0008004F, 0x00000011, 0x00000013,
+    0x00000012, 0x00000012, 0x00000000, 0x00000001, 0x00000002, 0x00080058,
+    0x00000007, 0x00000018, 0x0000000E, 0x00000013, 0x00000004, 0x00000016,
+    0x00000017, 0x0003003E, 0x00000009, 0x00000018, 0x000100FD, 0x00010038,
+};
+
+/// A sample of a cube with a gradient none of whose derivatives is along
+/// the direction: the colour's fourth and first and a quarter, and its
+/// third, first and second halved, glslc -O (`-fshader-stage=frag`), 191
+/// words (since 1.184).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform samplerCube tex;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = textureGrad(tex, color.xyz, vec3(color.w, color.x, 0.25), color.zxy * 0.5);
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 35
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %16
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %13 Binding 0
+///                OpDecorate %13 DescriptorSet 0
+///                OpDecorate %16 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 Cube 0 0 0 1 Unknown
+///          %11 = OpTypeSampledImage %10
+///          %12 = OpTypePointer UniformConstant %11
+///          %13 = OpVariable %12 UniformConstant
+///          %15 = OpTypePointer Input %7
+///          %16 = OpVariable %15 Input
+///          %17 = OpTypeVector %6 3
+///          %20 = OpTypeInt 32 0
+///          %21 = OpConstant %20 3
+///          %22 = OpTypePointer Input %6
+///          %25 = OpConstant %20 0
+///          %28 = OpConstant %6 0.25
+///          %32 = OpConstant %6 0.5
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpLoad %11 %13
+///          %18 = OpLoad %7 %16
+///          %19 = OpVectorShuffle %17 %18 %18 0 1 2
+///          %23 = OpAccessChain %22 %16 %21
+///          %24 = OpLoad %6 %23
+///          %26 = OpAccessChain %22 %16 %25
+///          %27 = OpLoad %6 %26
+///          %29 = OpCompositeConstruct %17 %24 %27 %28
+///          %31 = OpVectorShuffle %17 %18 %18 2 0 1
+///          %33 = OpVectorTimesScalar %17 %31 %32
+///          %34 = OpImageSampleExplicitLod %7 %14 %19 Grad %29 %33
+///                OpStore %9 %34
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_grad_cube_varied = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000023, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000010, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000010, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000003,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040020, 0x0000000F,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000F, 0x00000010, 0x00000001,
+    0x00040017, 0x00000011, 0x00000006, 0x00000003, 0x00040015, 0x00000014,
+    0x00000020, 0x00000000, 0x0004002B, 0x00000014, 0x00000015, 0x00000003,
+    0x00040020, 0x00000016, 0x00000001, 0x00000006, 0x0004002B, 0x00000014,
+    0x00000019, 0x00000000, 0x0004002B, 0x00000006, 0x0000001C, 0x3E800000,
+    0x0004002B, 0x00000006, 0x00000020, 0x3F000000, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D, 0x00000007, 0x00000012,
+    0x00000010, 0x0008004F, 0x00000011, 0x00000013, 0x00000012, 0x00000012,
+    0x00000000, 0x00000001, 0x00000002, 0x00050041, 0x00000016, 0x00000017,
+    0x00000010, 0x00000015, 0x0004003D, 0x00000006, 0x00000018, 0x00000017,
+    0x00050041, 0x00000016, 0x0000001A, 0x00000010, 0x00000019, 0x0004003D,
+    0x00000006, 0x0000001B, 0x0000001A, 0x00060050, 0x00000011, 0x0000001D,
+    0x00000018, 0x0000001B, 0x0000001C, 0x0008004F, 0x00000011, 0x0000001F,
+    0x00000012, 0x00000012, 0x00000002, 0x00000000, 0x00000001, 0x0005008E,
+    0x00000011, 0x00000021, 0x0000001F, 0x00000020, 0x00080058, 0x00000007,
+    0x00000022, 0x0000000E, 0x00000013, 0x00000004, 0x0000001D, 0x00000021,
+    0x0003003E, 0x00000009, 0x00000022, 0x000100FD, 0x00010038,
+};
