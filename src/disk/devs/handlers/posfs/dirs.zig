@@ -9,10 +9,9 @@
 //! a lookup reads that bucket only. A directory's items lie together and
 //! in position order, so going through it is a walk along the tree.
 //!
-//! **Names are UTF-8** here and on the medium. Names from dos are
-//! Latin-1 for now: `fromDos` makes one UTF-8, `lookupDos` finds a name
-//! by what dos was given for it - the name itself, or its stand-in,
-//! found in the run of buckets its tag says.
+//! **Names are UTF-8** here, on the medium and in dos. `fromDos` keeps a
+//! name from dos as the text it makes (`utf8.textOf`), which is what a
+//! lookup searches for too.
 //!
 //! What an entry's name points at is a node's bytes, good until the tree
 //! is next touched.
@@ -107,26 +106,14 @@ pub fn lookupIn(vol: *Volume, tree: *const btree.Tree, dir: u64, name: []const u
     return null;
 }
 
-/// The entry dos names `dos_name`: the name, or the stand-in it was given.
+/// The entry dos names `dos_name`.
 pub fn lookupDos(vol: *Volume, dir: u64, dos_name: []const u8) Error!?Entry {
     return lookupDosIn(vol, &vol.obj, dir, dos_name);
 }
 
 pub fn lookupDosIn(vol: *Volume, tree: *const btree.Tree, dir: u64, dos_name: []const u8) Error!?Entry {
     var buffer: [posfs.max_name]u8 = undefined;
-    const name = try fromDos(dos_name, &buffer);
-    if (try lookupIn(vol, tree, dir, name)) |entry| return entry;
-    const tag = fold.tagOf(dos_name) orelse return null;
-    const range = fold.tagRange(tag);
-    var key = entryKey(dir, range.first);
-    var shown: [posfs.max_name]u8 = undefined;
-    while (try btree.seek(vol, tree, key)) |item| {
-        if (item.key.offset > range.last) return null;
-        const entry = try entryOf(item, dir) orelse return null;
-        if (fold.sameLatin1(fold.toDos(entry.name, &shown), dos_name)) return entry;
-        key = btree.successor(item.key);
-    }
-    return null;
+    return lookupIn(vol, tree, dir, try fromDos(dos_name, &buffer));
 }
 
 /// A position for a new name: the lowest slot of its bucket that is

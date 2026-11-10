@@ -62,11 +62,9 @@ no validation and no scan of the whole volume, whatever its size.
 - **Names are UTF-8 on the medium**, up to 255 bytes, compared without
   regard to case by Unicode's simple case folding. A name is stored as
   it was given; two spellings that differ only in case are one name.
-- dos gives names in Latin-1: they are stored converted to UTF-8 and
-  given back as Latin-1. A name with a character past Latin-1 is shown
-  with `_` for that character and a tag of `=` and four hex digits before
-  its extension (`__=1A2B.txt`); that stand-in, typed back, names the
-  file.
+- dos's names are UTF-8 too, so a name goes back to dos as it is
+  stored. A name given with a byte that is no UTF-8 is stored as the
+  text it reads as: such a byte reads as its Latin-1 character.
 - **Comments** up to 79 bytes, the **volume name** up to 30.
 - **Protection:** `r` set stops a read, `w` a write (and `MODE_NEWFILE`
   over the file), `d` a delete (and `MODE_NEWFILE` over it). `e`, `s`

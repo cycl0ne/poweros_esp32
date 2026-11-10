@@ -161,10 +161,19 @@ fn sameName(a: []const u8, b: []const u8) bool {
     return sdk.utility.unicode.equalFolded(a, b);
 }
 
-/// A name a new entry may have.
-fn validName(name: []const u8) Error!void {
+/// The name a new entry is given, as it is kept: the text the name given
+/// makes (`utf8.textOf` - UTF-8 as it is, a byte that is no UTF-8 as its
+/// Latin-1 character while one reads as that), not empty, no control
+/// characters, no ':', and no longer than a name may be.
+fn newName(given: *const [max_name:0]u8) Error![max_name:0]u8 {
+    const name = std.mem.sliceTo(given, 0);
     if (name.len == 0) return error.InvalidName;
-    for (name) |c| if (c < 0x20 or c == ':') return error.InvalidName;
+    var buffer: [max_name]u8 = undefined;
+    const text = sdk.utility.utf8.textOf(name, &buffer) orelse return error.InvalidName;
+    for (text) |c| if (c < 0x20 or c == ':') return error.InvalidName;
+    var kept: [max_name:0]u8 = @splat(0);
+    @memcpy(kept[0..text.len], text);
+    return kept;
 }
 
 /// A piece of a file that is somewhere on the medium: `length` bytes at
@@ -997,13 +1006,12 @@ pub fn FileSystem(comptime Media: type) type {
         /// A new file or directory, written down and locked.
         fn create(fs: *Fs, dir_arg: isize, path: [*:0]const u8, kind: i32, access: i32) Error!*DiskLock {
             const spot = try fs.findDir(try fs.dirOf(dir_arg), path);
-            const name = std.mem.sliceTo(&spot.name, 0);
-            try validName(name);
-            if (try fs.child(spot.dir, name) != null) return error.Exists;
+            const name = try newName(&spot.name);
+            if (try fs.child(spot.dir, std.mem.sliceTo(&name, 0)) != null) return error.Exists;
             const n = try fs.newNode(fs.next_inode);
             n.kind = kind;
             n.date = fs.media.now();
-            n.name = spot.name;
+            n.name = name;
             n.parent = spot.dir;
             n.next = spot.dir.children;
             spot.dir.children = n;
@@ -1304,9 +1312,8 @@ pub fn FileSystem(comptime Media: type) type {
             if (from == fs.root) return error.WrongType;
             const spot = try fs.findDir(try fs.dirOf(lockValue(args.to_lock)), args.to_name orelse return error.InvalidName);
             if (!spot.dir.isDir()) return error.WrongType;
-            const name = std.mem.sliceTo(&spot.name, 0);
-            try validName(name);
-            if (try fs.child(spot.dir, name)) |there| {
+            const name = try newName(&spot.name);
+            if (try fs.child(spot.dir, std.mem.sliceTo(&name, 0))) |there| {
                 if (there != from) return error.Exists;
             }
             var up: ?*Node = spot.dir;
@@ -1322,7 +1329,7 @@ pub fn FileSystem(comptime Media: type) type {
             from.parent = spot.dir;
             from.next = spot.dir.children;
             spot.dir.children = from;
-            from.name = spot.name;
+            from.name = name;
             defer {
                 fs.appeared(from, true);
                 if (old_parent) |p| fs.changed(p);

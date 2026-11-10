@@ -138,34 +138,18 @@ test "a name's hash is pinned" {
     try testing.expectEqual(@as(u64, 0x873586_07), fold.position(fold.bucketOf(0x873586F3), 7));
 }
 
-test "a name from dos becomes UTF-8, and goes back" {
+test "a name from dos is kept as UTF-8" {
     var into: [posfs.max_name]u8 = undefined;
     // Latin-1 is converted, UTF-8 kept.
     try testing.expectEqualStrings("Caf\u{e9}", fold.fromDos("Caf\xE9", &into).?);
     try testing.expectEqualStrings("日本", fold.fromDos("日本", &into).?);
     // 255 Latin-1 letters past 0x7F are 510 bytes of UTF-8.
     try testing.expectEqual(@as(?[]const u8, null), fold.fromDos(&([_]u8{0xE9} ** 200), &into));
-    var back: [posfs.max_name]u8 = undefined;
-    try testing.expectEqualStrings("Caf\xE9", fold.toDos("Caf\u{e9}", &back));
     try testing.expect(fold.acceptable("ok"));
     try testing.expect(!fold.acceptable("a/b"));
     try testing.expect(!fold.acceptable("a:b"));
     try testing.expect(!fold.acceptable(""));
     try testing.expect(!fold.acceptable("\xE9"));
-}
-
-test "a name beyond Latin-1 goes to dos as a stand-in that finds it" {
-    var back: [posfs.max_name]u8 = undefined;
-    const tag: u16 = @intCast(fold.hash("日本.txt") >> 16);
-    try testing.expectEqual(@as(u16, 0x89B7), tag);
-    const shown = fold.toDos("日本.txt", &back);
-    try testing.expectEqualStrings("__=89B7.txt", shown);
-    try testing.expectEqual(@as(?u16, 0x89B7), fold.tagOf(shown));
-    const range = fold.tagRange(0x89B7);
-    const position = fold.position(fold.bucketOf(fold.hash("日本.txt")), 3);
-    try testing.expect(position >= range.first and position <= range.last);
-    try testing.expectEqual(@as(?u16, null), fold.tagOf("plain.txt"));
-    try testing.expectEqualStrings("_ Rechnung=", fold.toDos("€ Rechnung.pdf", &back)[0..11]);
 }
 
 test "a partition table: written for a volume, the volume found in it again" {

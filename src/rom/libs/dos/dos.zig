@@ -2885,14 +2885,15 @@ test "MatchFirst/MatchNext on a RAM: disk: patterns, levels, plain names, full p
     try testing.expectEqual(dos.ERROR_DEVICE_NOT_MOUNTED, dl.MatchFirst("FOO:#?", &a.ap));
 
     // A name in Latin-1 and in UTF-8: either finds it, a plain name comes
-    // back as it was written, a wild one as the entry is named.
+    // back as it was written, a wild one as the entry is named - in UTF-8,
+    // which the handler keeps a name given in Latin-1 as.
     try makeFile(dl, "RAMT:d/M\xFCll", 2);
     try expectFinds(dl, &a, "RAMT:d/M\xFCll", &.{"RAMT:d/M\xFCll"});
     try expectFinds(dl, &a, "RAMT:d/M\xDCLL", &.{"RAMT:d/M\xDCLL"});
     try expectFinds(dl, &a, "RAMT:d/m\xC3\xBCll", &.{"RAMT:d/m\xC3\xBCll"});
-    try expectFinds(dl, &a, "RAMT:d/#?\xFC#?", &.{"RAMT:d/M\xFCll"});
-    try expectFinds(dl, &a, "RAMT:d/#?\xC3\x9C#?", &.{"RAMT:d/M\xFCll"});
-    try expectFinds(dl, &a, "RAMT:d/?\xFCll", &.{"RAMT:d/M\xFCll"});
+    try expectFinds(dl, &a, "RAMT:d/#?\xFC#?", &.{"RAMT:d/M\xC3\xBCll"});
+    try expectFinds(dl, &a, "RAMT:d/#?\xC3\x9C#?", &.{"RAMT:d/M\xC3\xBCll"});
+    try expectFinds(dl, &a, "RAMT:d/?\xFCll", &.{"RAMT:d/M\xC3\xBCll"});
     try expectFinds(dl, &a, "RAMT:d/\xFF#?", &.{}); // a token's byte as a character
     try testing.expect(dl.DeleteFile("RAMT:d/M\xC3\xBCll"));
 

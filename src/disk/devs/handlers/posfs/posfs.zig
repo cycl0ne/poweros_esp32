@@ -106,7 +106,7 @@ const fs_core = @import("fs.zig");
 
 pub const HANDLER_NAME = posfs.HANDLER_NAME;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 8;
+const HANDLER_REVISION = 9;
 const BUILD_DATE = "10.11.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -915,21 +915,12 @@ fn renewVolume(dl: *DosBase, st: *State) void {
     st.renew = false;
 }
 
-/// The volume's name as dos shows it: Latin-1, with `_` for what dos
-/// cannot say yet.
+/// The volume's name for dos's list, NUL behind it.
 fn nodeName(st: *State, into: *[posfs.max_volume_name + 1:0]u8) [*:0]const u8 {
     into.* = @splat(0);
     const label = st.fs.volumeName();
-    var len: usize = 0;
-    var at: usize = 0;
-    while (at < label.len and len < posfs.max_volume_name) : (len += 1) {
-        const code = posfs.fold.decode(label, &at) orelse {
-            at += 1;
-            into[len] = '_';
-            continue;
-        };
-        into[len] = if (code <= 0xFF) @intCast(code) else '_';
-    }
+    const len = sdk.utility.utf8.cut(label, posfs.max_volume_name);
+    @memcpy(into[0..len], label[0..len]);
     return if (len == 0) DEFAULT_LABEL else into;
 }
 

@@ -384,39 +384,39 @@ test "the protection bits are kept to, and attributes come back" {
     var fib: FileInfoBlock = undefined;
     try testing.expectEqual(dos.DOSTRUE, sendArgs(&setup.fs, .examine_object, .{ .examine = .{ .lock = @ptrFromInt(@as(usize, @bitCast(lock.res1))), .fib = &fib } }).res1);
     try testing.expectEqual(dos.FIBF_DELETE | dos.FIBF_READ, fib.protection);
-    try testing.expectEqualStrings("a note, gr\xfcn", std.mem.sliceTo(&fib.comment, 0));
+    try testing.expectEqualStrings("a note, gr\xc3\xbcn", std.mem.sliceTo(&fib.comment, 0));
     try testing.expect(fib.date.eql(date));
     try testing.expectEqual(@as(u16, 7), fib.owner_uid);
     try testing.expectEqual(@as(u16, 9), fib.owner_gid);
     try testing.expectEqual(dos.DOSTRUE, send(&setup.fs, .free_lock, .{ lock.res1, 0, 0, 0 }).res1);
 }
 
-test "names: Latin-1 from dos, UTF-8 kept, folded without case, stand-ins found" {
+test "names: UTF-8 kept and given back, Latin-1 from dos made UTF-8, folded without case" {
     var setup: Setup = undefined;
     try setup.init(.sd, 1024 * 1024, 4096);
     defer setup.deinit();
     const fs = &setup.fs;
-    // Latin-1 as dos has it now, stored as UTF-8 and given back as Latin-1.
+    // A name in Latin-1 is kept as its UTF-8, found by either.
     try writeFile(fs, "B\xe4r", "bear");
     var back: [8]u8 = undefined;
     try testing.expectEqualStrings("bear", back[0..try readFile(fs, "B\xc4R", &back)]);
-    // UTF-8 from dos taken as it is; dos sees its stand-in, which finds it.
+    try testing.expectEqualStrings("bear", back[0..try readFile(fs, "b\xc3\xa4r", &back)]);
+    // UTF-8 from dos taken as it is, and listed as it is.
     try writeFile(fs, "\xe6\x97\xa5\xe6\x9c\xac.txt", "japan");
     const root = send(fs, .locate_object, .{ 0, arg(""), dos.SHARED_LOCK, 0 });
     var fib: FileInfoBlock = undefined;
     const root_lock: ?*dos.FileLock = @ptrFromInt(@as(usize, @bitCast(root.res1)));
     try testing.expectEqual(dos.DOSTRUE, sendArgs(fs, .examine_object, .{ .examine = .{ .lock = root_lock, .fib = &fib } }).res1);
-    var stand_in: [dos.name_max + 1]u8 = @splat(0);
-    var found_latin = false;
+    var found_bear = false;
+    var found_japan = false;
     while (sendArgs(fs, .examine_next, .{ .examine = .{ .lock = root_lock, .fib = &fib } }).res1 == dos.DOSTRUE) {
         const name = nameOf(&fib);
-        if (std.mem.eql(u8, name, "B\xe4r")) found_latin = true;
-        if (std.mem.endsWith(u8, name, ".txt")) @memcpy(stand_in[0..name.len], name);
+        if (std.mem.eql(u8, name, "B\xc3\xa4r")) found_bear = true;
+        if (std.mem.eql(u8, name, "\xe6\x97\xa5\xe6\x9c\xac.txt")) found_japan = true;
     }
     try testing.expectEqual(dos.DOSTRUE, send(fs, .free_lock, .{ root.res1, 0, 0, 0 }).res1);
-    try testing.expect(found_latin);
-    try testing.expect(std.mem.indexOfScalar(u8, &stand_in, '=') != null);
-    try testing.expectEqualStrings("japan", back[0..try readFile(fs, @ptrCast(&stand_in), &back)]);
+    try testing.expect(found_bear);
+    try testing.expect(found_japan);
     // Names posfs keeps, and ones that are none.
     try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, send(fs, .create_dir, .{ 0, arg(".snapshots"), 0, 0 }).res2);
     try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, send(fs, .create_dir, .{ 0, arg("a\x01b"), 0, 0 }).res2);
@@ -723,15 +723,17 @@ test "soft links: met in a path, resolved by READ_LINK, acted on themselves" {
         try testing.expectEqualStrings(":Drawer/file", std.mem.sliceTo(&path, 0));
         _ = readLink(fs, "Drawer/Sub/up", &path);
         try testing.expectEqualStrings("Drawer/Sub//file", std.mem.sliceTo(&path, 0));
+        // A target given in Latin-1 is kept, and read back, in UTF-8.
         _ = readLink(fs, "lat", &path);
-        try testing.expectEqualStrings("Drawer/\xe9t\xe9", std.mem.sliceTo(&path, 0));
+        try testing.expectEqualStrings("Drawer/\xc3\xa9t\xc3\xa9", std.mem.sliceTo(&path, 0));
         var back: [16]u8 = undefined;
         _ = readLink(fs, "lnk/file", &path);
         try testing.expectEqualStrings("content", back[0..try readFile(fs, @ptrCast(&path), &back)]);
         _ = readLink(fs, "Drawer/Sub/up", &path);
         try testing.expectEqualStrings("content", back[0..try readFile(fs, @ptrCast(&path), &back)]);
-        // A name past Latin-1 comes back as its stand-in, which opens it.
+        // A name past Latin-1 comes back as it is, and opens the file.
         _ = readLink(fs, "om", &path);
+        try testing.expectEqualStrings("Drawer/\xce\xa9", std.mem.sliceTo(&path, 0));
         try testing.expectEqualStrings("omega", back[0..try readFile(fs, @ptrCast(&path), &back)]);
         // No link on the way, a missing name, a buffer too small.
         const plain = readLink(fs, "Drawer/file", &path);

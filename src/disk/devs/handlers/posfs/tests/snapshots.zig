@@ -270,7 +270,7 @@ test "snapshots: listed only in .snapshots, which the root does not show, and ne
     _ = send(fs, .free_lock, .{ kept.res1, 0, 0, 0 });
     try testing.expectEqual(@as(i32, 0), drop(fs, "One"));
     try testing.expectEqual(dos.ERROR_OBJECT_NOT_FOUND, drop(fs, "One"));
-    try testing.expectEqualStrings("Two \xe9t\xe9", try listing(fs, ".snapshots", &text));
+    try testing.expectEqualStrings("Two \xc3\xa9t\xc3\xa9", try listing(fs, ".snapshots", &text));
     try expectClean(fs);
     try setup.remount();
 }

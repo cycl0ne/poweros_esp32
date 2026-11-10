@@ -23,7 +23,8 @@
 //! DIE is refused (it never ends); the rest are ERROR_ACTION_NOT_KNOWN.
 //! Packets about an open file carry its FileHandle, whose key is the lock.
 //!
-//! Names are C strings, and a path part over 30 characters is
+//! Names are C strings of UTF-8, a new one kept as the text it makes
+//! (`newName`), and a path part over `dos.name_max` bytes is
 //! ERROR_INVALID_COMPONENT_NAME; the root is ST_ROOT; deleting the root is
 //! ERROR_OBJECT_WRONG_TYPE; FINDOUTPUT empties an existing file in place
 //! and keeps its protection; an empty file has no piece; a piece there is
@@ -69,8 +70,8 @@ const pieces = @import("pieces.zig");
 
 pub const HANDLER_NAME = "ram-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 5;
-const BUILD_DATE = "28.10.2026";
+const HANDLER_REVISION = 6;
+const BUILD_DATE = "10.11.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -205,11 +206,19 @@ fn lockValue(l: ?*FileLock) isize {
     return @bitCast(@intFromPtr(l));
 }
 
-/// A name a new entry may have: not empty, no control
-/// characters, no ':'.
-fn validName(name: []const u8) Error!void {
+/// The name a new entry is given, as it is kept: the text the name given
+/// makes (`utf8.textOf` - UTF-8 as it is, a byte that is no UTF-8 as its
+/// Latin-1 character while one reads as that), not empty, no control
+/// characters, no ':', and no longer than a name may be.
+fn newName(given: *const [max_name:0]u8) Error![max_name:0]u8 {
+    const name = std.mem.sliceTo(given, 0);
     if (name.len == 0) return error.InvalidName;
-    for (name) |c| if (c < 0x20 or c == ':') return error.InvalidName;
+    var buffer: [max_name]u8 = undefined;
+    const text = sdk.utility.utf8.textOf(name, &buffer) orelse return error.InvalidName;
+    for (text) |c| if (c < 0x20 or c == ':') return error.InvalidName;
+    var kept: [max_name:0]u8 = @splat(0);
+    @memcpy(kept[0..text.len], text);
+    return kept;
 }
 
 /// A path's last part, checked for length.
@@ -493,11 +502,10 @@ pub const RamDisk = struct {
     /// A new file or directory, locked.
     fn create(disk: *RamDisk, dir_arg: isize, path: [*:0]const u8, kind: i32, access: i32) Error!*RamLock {
         const place = try disk.findDir(try disk.dirOf(dir_arg), path);
-        const name = std.mem.sliceTo(&place.name, 0);
-        try validName(name);
-        if (try disk.child(place.dir, &place.name) != null) return error.Exists;
+        const name = try newName(&place.name);
+        if (try disk.child(place.dir, &name) != null) return error.Exists;
         const n = disk.alloc(Node) orelse return error.NoMemory;
-        n.* = .{ .kind = kind, .parent = place.dir, .next = place.dir.children, .date = disk.now(), .name = place.name };
+        n.* = .{ .kind = kind, .parent = place.dir, .next = place.dir.children, .date = disk.now(), .name = name };
         const l = disk.getLock(n, access) catch |e| {
             disk.free(n);
             return e;
@@ -733,8 +741,8 @@ pub const RamDisk = struct {
         if (from == disk.root) return error.WrongType;
         const place = try disk.findDir(try disk.dirOf(lockValue(args.to_lock)), args.to_name orelse return error.InvalidName);
         if (!place.dir.isDir()) return error.WrongType;
-        try validName(std.mem.sliceTo(&place.name, 0));
-        if (try disk.child(place.dir, &place.name)) |there| {
+        const name = try newName(&place.name);
+        if (try disk.child(place.dir, &name)) |there| {
             if (there != from) return error.Exists;
         }
         var up: ?*Node = place.dir;
@@ -750,7 +758,7 @@ pub const RamDisk = struct {
         from.parent = place.dir;
         from.next = place.dir.children;
         place.dir.children = from;
-        from.name = place.name;
+        from.name = name;
         place.dir.date = disk.now();
         disk.appeared(from, true);
         disk.changed(old_parent);

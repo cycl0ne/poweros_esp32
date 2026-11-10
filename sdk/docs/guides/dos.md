@@ -298,10 +298,13 @@ directory, and `/Dir` in its parent, each further `/` one more level up.
 `*` and `CONSOLE:` are the process's console, and `PROGDIR:` the
 directory the running program was loaded from.
 
-Names are compared without regard to case. A file's or directory's name
-is at most `dos.name_max` (255) bytes, a whole path `dos.path_max`
-(1024), and a device, volume or assign name `dos.MAX_DEVICE_NAME` (30)
-characters.
+Names are UTF-8, compared without regard to case. A file's or
+directory's name is at most `dos.name_max` (255) bytes, a whole path
+`dos.path_max` (1024), and a device, volume or assign name
+`dos.MAX_DEVICE_NAME` (30) characters. Every file system keeps a new
+name as the text it makes (`sdk.utility.utf8.textOf`): UTF-8 as it is,
+a byte that is no UTF-8 as its Latin-1 character - `Gr\xFCn` is kept,
+and listed, as `Grün` in UTF-8 - and gives a name back as it keeps it.
 
 | Name | What it is |
 |---|---|
@@ -478,10 +481,11 @@ A pattern is read a character at a time, a byte that is no UTF-8 as its
 Latin-1 character, so a pattern written in Latin-1 finds a name in UTF-8
 and the other way round. A name without wildcards comes back as the
 pattern wrote it - in Latin-1 for a pattern in Latin-1 - and a name a
-wildcard found as the handler gives it. `C:test/Names DIR` makes, finds,
+wildcard found as the handler keeps it, in UTF-8. `C:test/Names DIR` makes, finds,
 matches and deletes names past ASCII - a letter past Latin-1, the euro
-sign, Greek, an emoji, an umlaut in UTF-8 and in Latin-1 - in a directory
-of its own under DIR, and says which steps of each passed; with `KEEP`
+sign, Greek, an emoji, an umlaut in UTF-8 and in Latin-1, which is
+listed in UTF-8 - in a directory of its own under DIR, and says which
+steps of each passed; with `KEEP`
 it leaves them there, to be looked at in a drawer or a listing.
 
 The `AnchorPath` is the search's state, cleared before `MatchFirst`

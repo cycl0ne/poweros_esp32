@@ -8,10 +8,11 @@
 //! each name of the list - a letter past Latin-1, the euro sign, a Greek
 //! word, an emoji, a German word in UTF-8 and one in Latin-1 - is made as
 //! a file holding its own name, then found by Lock, found again written
-//! in the other case, looked for in an ExNext listing under the bytes it
-//! was made with, matched by a pattern with `?` for its first character
-//! (one entry, that one), deleted by its name in the other case, and
-//! looked for once more, which must fail. The labels are ASCII, so the
+//! in the other case, looked for in an ExNext listing under the name it
+//! is kept as - in UTF-8, the one given in Latin-1 too - matched by a
+//! pattern with `?` for its first character (one entry, that one),
+//! deleted by its name in the other case, and looked for once more, which
+//! must fail. The labels are ASCII, so the
 //! report reads on any console. With KEEP each name is made once more at
 //! the end and the directory left, for a look at how the names show
 //! (`NamesTest` must then be gone before the next run). RETURN_OK when
@@ -27,7 +28,7 @@ const FileLock = dos.FileLock;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Names";
-const VERSION_STRING = "\x00$VER: Names 1.1 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Names 1.2 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DIR/A,KEEP/S";
@@ -43,11 +44,17 @@ const work_name = "NamesTest";
 /// Room for DIR, the work directory and a name.
 const path_max = 512;
 
-/// A name, the same name in the other case, and what to call it.
+/// A name, the same name in the other case, what to call it, and the
+/// name it is kept as when that is not the name itself.
 const Name = struct {
     label: [*:0]const u8,
     name: [:0]const u8,
     other_case: [:0]const u8,
+    kept_as: ?[:0]const u8 = null,
+
+    fn kept(name: *const Name) [:0]const u8 {
+        return name.kept_as orelse name.name;
+    }
 };
 
 const names = [_]Name{
@@ -56,7 +63,7 @@ const names = [_]Name{
     .{ .label = "Greek", .name = "\xCE\xA9\xCE\xBC\xCE\xAD\xCE\xB3\xCE\xB1", .other_case = "\xCF\x89\xCE\x9C\xCE\x88\xCE\x93\xCE\x91" },
     .{ .label = "emoji", .name = "\xF0\x9F\x98\x80smile", .other_case = "\xF0\x9F\x98\x80SMILE" },
     .{ .label = "UTF-8 umlaut", .name = "M\xC3\xBCll", .other_case = "m\xC3\x9CLL" },
-    .{ .label = "Latin-1 umlaut", .name = "Gr\xFCn", .other_case = "GR\xC3\x9CN" },
+    .{ .label = "Latin-1 umlaut", .name = "Gr\xFCn", .other_case = "GR\xC3\x9CN", .kept_as = "Gr\xC3\xBCn" },
 };
 
 /// How the steps went.
@@ -199,12 +206,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         tally.say(name, "found in the other case", found_other != null);
         dl.UnLock(found_other);
 
-        tally.say(name, "listed as it was written", listed(dl, work_lock, fib, name.name));
+        tally.say(name, "listed as it is kept", listed(dl, work_lock, fib, name.kept()));
 
         if (!join(dl, path, work, questionFirst(name.name, &pattern))) {
             tally.say(name, "the pattern fits", false);
         } else {
-            tally.say(name, "matched by ? for its first character", matchesOnly(dl, anchor, path, name.name));
+            tally.say(name, "matched by ? for its first character", matchesOnly(dl, anchor, path, name.kept()));
         }
 
         tally.say(name, "deleted in the other case", dl.DeleteFile(other));

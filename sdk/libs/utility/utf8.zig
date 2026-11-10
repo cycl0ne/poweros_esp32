@@ -209,3 +209,24 @@ pub fn valid(bytes: []const u8) bool {
     }
     return true;
 }
+
+/// The text `bytes` make, in UTF-8: what a file system keeps a name it is
+/// given as. Bytes that are UTF-8 are their own text, answered as they
+/// are; others are written out into `into` as `read` reads them while a
+/// byte that is no UTF-8 reads as its Latin-1 character, and refused
+/// (null) once it does not. Null too when what is written out does not
+/// fit `into`.
+pub fn textOf(bytes: []const u8, into: []u8) ?[]const u8 {
+    if (valid(bytes)) return bytes;
+    if (!broken_reads_latin1) return null;
+    var length: usize = 0;
+    var at: usize = 0;
+    while (at < bytes.len) {
+        var one: [4]u8 = undefined;
+        const taken = encode(next(bytes, &at), &one);
+        if (length + taken > into.len) return null;
+        @memcpy(into[length..][0..taken], one[0..taken]);
+        length += taken;
+    }
+    return into[0..length];
+}

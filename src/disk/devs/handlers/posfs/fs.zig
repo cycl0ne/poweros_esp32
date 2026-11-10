@@ -453,9 +453,9 @@ pub const FileSystem = struct {
         return false;
     }
 
-    /// A fresh volume over the medium, its name as dos gives it (Latin-1,
-    /// or UTF-8 already). A mounted volume stays as it is when the
-    /// options are refused.
+    /// A fresh volume over the medium, its name as dos gives it, kept as
+    /// the text it makes (`fold.fromDos`). A mounted volume stays as it
+    /// is when the options are refused.
     pub fn format(fs: *FileSystem, options: checkpoint.Options) Error!void {
         var buffer: [posfs.max_name]u8 = undefined;
         const utf8 = fold.fromDos(options.name, &buffer) orelse return error.BadName;
@@ -701,7 +701,7 @@ pub const FileSystem = struct {
             const index = snapshots.findDos(&fs.vol, name) orelse return null;
             return snapshotRoot(snapshots.all(&fs.vol)[index].id);
         }
-        if (dir.oid == posfs.root_oid and dir.view == 0 and fold.sameLatin1(name, posfs.snapshots_name)) return snapshots_object;
+        if (dir.oid == posfs.root_oid and dir.view == 0 and sdk.utility.unicode.equalFolded(name, posfs.snapshots_name)) return snapshots_object;
         var held: btree.Tree = undefined;
         const tree = try fs.viewTree(dir.view, &held);
         const entry = try dirs.lookupDosIn(&fs.vol, tree, dir.oid, name) orelse return null;
@@ -756,12 +756,11 @@ pub const FileSystem = struct {
     fn pathOf(fs: *FileSystem, object: Object, into: []u8) Error![]const u8 {
         var end = into.len;
         var at = object;
-        var shown: [posfs.max_name]u8 = undefined;
         var steps: u32 = 0;
         while (at.oid != posfs.root_oid) : (steps += 1) {
             if (steps > 256) return error.Corrupt;
             const entry = try dirs.at(&fs.vol, at.parent, at.pos) orelse return error.NotFound;
-            const name = fold.toDos(entry.name, &shown);
+            const name = entry.name;
             const need = name.len + @intFromBool(end != into.len);
             if (need > end) return error.BufferOverflow;
             if (end != into.len) {
@@ -885,10 +884,10 @@ pub const FileSystem = struct {
         switch (args.kind) {
             dos.LINK_SOFT => {
                 const given: ?[*:0]const u8 = @ptrFromInt(args.dest);
-                const latin = span(given orelse return error.BadName);
-                if (latin.len == 0) return error.BadName;
+                const named = span(given orelse return error.BadName);
+                if (named.len == 0) return error.BadName;
                 var stored: [posfs.max_link]u8 = undefined;
-                const target = fold.fromDos(latin, &stored) orelse return error.LineTooLong;
+                const target = fold.fromDos(named, &stored) orelse return error.LineTooLong;
                 const object = try fs.make(dir_arg, path, dos.ST_SOFTLINK, target);
                 fs.appeared(object, true);
                 fs.changed(object.parent);
@@ -977,7 +976,9 @@ pub const FileSystem = struct {
             @memcpy(into[0..before.len], before);
             len = before.len;
         }
-        len += pathToDos(target, into[len..]) orelse return error.BufferOverflow;
+        if (target.len > into.len - len) return error.BufferOverflow;
+        @memcpy(into[len..][0..target.len], target);
+        len += target.len;
         if (after.len != 0) {
             const ends = into[len - 1];
             if (ends != '/' and ends != ':') {
@@ -1118,9 +1119,9 @@ pub const FileSystem = struct {
             else => {
                 head.mask = layout.ATTR_COMMENT;
                 const given: ?[*:0]const u8 = @ptrFromInt(ptrArg(args.value));
-                const latin = if (given) |it| span(it) else "";
-                if (latin.len > posfs.max_comment) return error.CommentTooBig;
-                text = fold.fromDos(latin, &text_buffer) orelse return error.CommentTooBig;
+                const comment = if (given) |it| span(it) else "";
+                if (comment.len > posfs.max_comment) return error.CommentTooBig;
+                text = fold.fromDos(comment, &text_buffer) orelse return error.CommentTooBig;
                 if (text.len > posfs.max_comment) return error.CommentTooBig;
                 head.comment_len = @intCast(text.len);
             },
@@ -1317,8 +1318,7 @@ pub const FileSystem = struct {
         }
         var buffer: [dos.path_max]u8 = undefined;
         const path = try fs.pathOf(dir, &buffer);
-        var shown: [posfs.max_name]u8 = undefined;
-        const name = fold.toDos(from.name, &shown);
+        const name = from.name;
         const between = @intFromBool(path.len != 0);
         if (path.len + between + name.len + 1 > given.path_size) return error.BufferOverflow;
         @memcpy(into[0..path.len], path);
@@ -1600,7 +1600,6 @@ pub const FileSystem = struct {
     fn fill(fs: *FileSystem, fib: *FileInfoBlock, object: Object) Error!void {
         const vol = &fs.vol;
         const fixed = dos.FIBF_WRITE | dos.FIBF_DELETE;
-        var shown: [posfs.max_name]u8 = undefined;
         if (object.oid == snapshots.dir_oid) {
             const made = snapshots.all(vol);
             const time = if (made.len != 0) made[made.len - 1].created else (try objects.needInode(vol, posfs.root_oid)).mtime;
@@ -1633,26 +1632,24 @@ pub const FileSystem = struct {
         var name: []const u8 = undefined;
         if (object.oid == posfs.root_oid and object.view != 0) {
             const snapshot = snapshots.byId(vol, object.view) orelse return error.NotFound;
-            name = fold.toDos(snapshots.nameOf(snapshot), &shown);
+            name = snapshots.nameOf(snapshot);
             fib.dir_entry_type = dos.ST_USERDIR;
             fib.entry_type = dos.ST_USERDIR;
             fib.protection |= fixed;
             fib.date = layout.stampOf(snapshot.created);
         } else if (object.oid == posfs.root_oid) {
-            name = fold.toDos(fs.volumeName(), &shown);
+            name = fs.volumeName();
         } else {
             const entry = try dirs.atIn(vol, tree, object.parent, object.pos) orelse return error.NotFound;
             // A lock kept while its volume was away may come back to a
             // name that is another object's now.
             if (entry.oid != object.oid) return error.NotFound;
-            name = fold.toDos(entry.name, &shown);
+            name = entry.name;
         }
         @memcpy(fib.file_name[0..name.len], name);
         var text: [posfs.max_comment]u8 = undefined;
         const note = try objects.commentIn(vol, tree, object.oid, &text);
-        var latin: [posfs.max_comment]u8 = undefined;
-        const comment_shown = latinOf(note, &latin);
-        @memcpy(fib.comment[0..comment_shown.len], comment_shown);
+        @memcpy(fib.comment[0..note.len], note);
     }
 
     /// EXAMINE_OBJECT (`next` false) and EXAMINE_NEXT: the FileInfoBlock
@@ -1874,10 +1871,11 @@ pub const FileSystem = struct {
     }
 
     /// ACTION_POSFS_MAKE_SNAPSHOT: a snapshot of what is committed, under
-    /// the name given (Latin-1 or UTF-8): Exists for a name a snapshot has,
-    /// BadName for one a snapshot cannot have - empty, longer than
-    /// `posfs.max_snapshot_name` bytes as UTF-8, or with `/`, `:` or a
-    /// control character - and DiskFull past `posfs.max_snapshots`.
+    /// the name given, kept as `dirs.fromDos` keeps a name: Exists for a
+    /// name a snapshot has, BadName for one a snapshot cannot have -
+    /// empty, longer than `posfs.max_snapshot_name` bytes as UTF-8, or
+    /// with `/`, `:` or a control character - and DiskFull past
+    /// `posfs.max_snapshots`.
     fn makeSnapshot(fs: *FileSystem, args: *const packets.SnapshotArgs) Error!void {
         const given = try takeStruct(packets.SnapshotArgs, args);
         const dos_name = span(given.name orelse return error.BadName);
@@ -2297,43 +2295,4 @@ fn putNumber(into: []u8, len: *usize, value: u64) void {
         count -= 1;
         putText(into, len, digits[count..][0..1]);
     }
-}
-
-/// A soft link's target as dos takes it, in `into`: a part in Latin-1 as
-/// it is, one with characters past it as its stand-in, which names it
-/// here. Its length; null when it does not fit.
-fn pathToDos(target: []const u8, into: []u8) ?usize {
-    var len: usize = 0;
-    var at: usize = 0;
-    while (at <= target.len) {
-        var cut = at;
-        while (cut < target.len and target[cut] != '/' and target[cut] != ':') cut += 1;
-        const part = target[at..cut];
-        var shown: [posfs.max_name]u8 = undefined;
-        const text = if (part.len <= posfs.max_name) fold.toDos(part, &shown) else part;
-        if (text.len > into.len - len) return null;
-        @memcpy(into[len..][0..text.len], text);
-        len += text.len;
-        if (cut == target.len) break;
-        if (len == into.len) return null;
-        into[len] = target[cut];
-        len += 1;
-        at = cut + 1;
-    }
-    return len;
-}
-
-/// A UTF-8 text as dos sees it for now: Latin-1, other characters `_`.
-fn latinOf(text: []const u8, into: []u8) []const u8 {
-    var len: usize = 0;
-    var at: usize = 0;
-    while (at < text.len and len < into.len) : (len += 1) {
-        const code = fold.decode(text, &at) orelse {
-            at += 1;
-            into[len] = '_';
-            continue;
-        };
-        into[len] = if (code <= 0xFF) @intCast(code) else '_';
-    }
-    return into[0..len];
 }

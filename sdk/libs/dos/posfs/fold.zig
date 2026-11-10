@@ -13,13 +13,11 @@
 //! its names were hashed with, and a volume's new directories get the
 //! label's. There is one table so far.
 //!
-//! **dos's names are Latin-1.** A name from dos that is valid UTF-8 is
-//! taken as it is; any other is read as Latin-1 and stored converted. A
-//! stored name whose every character is in Latin-1 goes to dos converted
-//! back. Any other goes as a **stand-in**: its Latin-1 characters kept,
-//! the others `_`, and `=` with four hex digits of the name's hash before
-//! the extension - `日本.txt` is `__=4F2A.txt`. The stand-in is the same
-//! every time, and a lookup by it finds the name it stands for.
+//! **dos's names are UTF-8 too**, so a stored name goes to dos as it is.
+//! A name from dos is kept as the text it makes (`utf8.textOf`): bytes
+//! that are UTF-8 as they are, a byte that is no UTF-8 as its Latin-1
+//! character while such a byte reads as one, and refused once it does
+//! not.
 
 const layout = @import("layout.zig");
 const fold1 = @import("fold1.zig");
@@ -124,136 +122,11 @@ pub fn acceptable(name: []const u8) bool {
     return valid(name);
 }
 
-/// A name from dos as UTF-8: as it is when it is UTF-8, else read as
-/// Latin-1. Null when the result would be longer than `into`.
+/// A name from dos as the UTF-8 kept for it (`utf8.textOf`), written
+/// into `into` when it is not UTF-8 already. Null when it is refused or
+/// longer than `into`.
 pub fn fromDos(name: []const u8, into: []u8) ?[]const u8 {
-    if (valid(name)) {
-        if (name.len > into.len) return null;
-        @memcpy(into[0..name.len], name);
-        return into[0..name.len];
-    }
-    var len: usize = 0;
-    for (name) |byte| {
-        if (len + 2 > into.len) return null;
-        len += encode(byte, into[len..]);
-    }
-    return into[0..len];
-}
-
-/// Whether every character of a UTF-8 name is in Latin-1.
-pub fn latin1(name: []const u8) bool {
-    var at: usize = 0;
-    while (at < name.len) {
-        const code = decode(name, &at) orelse return false;
-        if (code > 0xFF) return false;
-    }
-    return true;
-}
-
-/// The longest extension a stand-in keeps, its dot included.
-const ext_max: usize = 16;
-/// `tag_mark` and four hex digits.
-const tag_len: usize = 5;
-/// What starts a stand-in's tag: no pattern character, so the stand-in
-/// typed back names the file.
-const tag_mark = '=';
-
-/// The name dos is given for a UTF-8 name: Latin-1 when it can be,
-/// else its stand-in.
-pub fn toDos(name: []const u8, into: *[posfs.max_name]u8) []const u8 {
-    if (latin1(name)) {
-        var len: usize = 0;
-        var at: usize = 0;
-        while (at < name.len) : (len += 1) {
-            into[len] = @intCast(decode(name, &at).?);
-        }
-        return into[0..len];
-    }
-    return standIn(name, @intCast(hash(name) >> 16), into);
-}
-
-/// The stand-in for a UTF-8 name whose hash's top 16 bits are `tag`.
-pub fn standIn(name: []const u8, tag: u16, into: *[posfs.max_name]u8) []const u8 {
-    // Its characters as dos sees them.
-    var shown: [posfs.max_name]u8 = undefined;
-    var count: usize = 0;
-    var at: usize = 0;
-    while (at < name.len) : (count += 1) {
-        const code = decode(name, &at) orelse '_';
-        shown[count] = if (code <= 0xFF) @intCast(code) else '_';
-    }
-    // The extension: from the last dot on, if it is not the first
-    // character and what follows it is short.
-    var ext_start = count;
-    var back = count;
-    while (back > 1) {
-        back -= 1;
-        if (shown[back] == '.') {
-            if (count - back <= ext_max and count - back > 1) ext_start = back;
-            break;
-        }
-    }
-    const ext = shown[ext_start..count];
-    const room = posfs.max_name - tag_len - ext.len;
-    const base_len = if (ext_start < room) ext_start else room;
-    var len: usize = 0;
-    for (shown[0..base_len]) |char| {
-        into[len] = char;
-        len += 1;
-    }
-    const digits = "0123456789ABCDEF";
-    into[len] = tag_mark;
-    for (0..4) |digit| into[len + 1 + digit] = digits[(tag >> @intCast(12 - digit * 4)) & 0xF];
-    len += tag_len;
-    for (ext) |char| {
-        into[len] = char;
-        len += 1;
-    }
-    return into[0..len];
-}
-
-/// The tag a dos name carries, if it has the shape of a stand-in: `=`
-/// and four hex digits before the extension, or at its end.
-pub fn tagOf(name: []const u8) ?u16 {
-    var end = name.len;
-    var at = name.len;
-    while (at > 0) {
-        at -= 1;
-        if (name[at] == '.') {
-            end = at;
-            break;
-        }
-    }
-    if (end < tag_len or name[end - tag_len] != tag_mark) {
-        end = name.len;
-        if (end < tag_len or name[end - tag_len] != tag_mark) return null;
-    }
-    var tag: u16 = 0;
-    for (name[end - 4 .. end]) |char| {
-        const value: u16 = switch (char) {
-            '0'...'9' => char - '0',
-            'A'...'F' => char - 'A' + 10,
-            'a'...'f' => char - 'a' + 10,
-            else => return null,
-        };
-        tag = (tag << 4) | value;
-    }
-    return tag;
-}
-
-/// The directory positions a stand-in's tag can be at: the buckets whose
-/// top 16 bits are the tag, one run of keys.
-pub fn tagRange(tag: u16) struct { first: u64, last: u64 } {
-    const first: u64 = @as(u64, tag) << 16;
-    return .{ .first = first, .last = first | 0xFFFF };
-}
-
-/// Whether a dos name is the same as another, Latin-1 against Latin-1,
-/// without regard to case.
-pub fn sameLatin1(a: []const u8, b: []const u8) bool {
-    if (a.len != b.len) return false;
-    for (a, b) |char_a, char_b| {
-        if (foldCode(char_a) != foldCode(char_b)) return false;
-    }
-    return true;
+    const text = utf8.textOf(name, into) orelse return null;
+    if (text.len > into.len) return null;
+    return text;
 }

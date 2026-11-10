@@ -301,13 +301,9 @@ position (in `fib_DiskKey`, `eac_LastKey`): entries made or deleted
 between calls are neither given twice nor stop the walk. A position fits
 32 bits.
 
-**dos's names are Latin-1.** A name from dos that is valid UTF-8 is taken
-as it is; any other is read as Latin-1 and stored converted. A stored
-name whose every character is in Latin-1 goes to dos converted back. Any
-other goes as a stand-in: its Latin-1 characters kept, the others `_`,
-and `=` with four hex digits of the name's hash before the extension
-(`日本.txt` is `__=4F2A.txt`). The stand-in is the same every time, and a
-lookup by it searches the run of buckets the tag names.
+**dos's names are UTF-8 too.** A name goes to dos as it is stored, and a
+name from dos is stored as the text it makes (`utf8.textOf`): UTF-8 as
+it is, a byte that is no UTF-8 as its Latin-1 character.
 
 ### File content
 

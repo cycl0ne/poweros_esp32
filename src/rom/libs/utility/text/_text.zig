@@ -92,6 +92,16 @@ test "utf8.cut: never inside a character, anywhere in what is no UTF-8" {
     try testing.expectEqual(@as(usize, 0), utf8.cut("", 0));
 }
 
+test "utf8.textOf: UTF-8 as it is, a byte that is no UTF-8 as its character" {
+    var into: [8]u8 = undefined;
+    const given = "M\xC3\xBCll";
+    try testing.expectEqual(@as([*]const u8, given), utf8.textOf(given, &into).?.ptr);
+    try testing.expectEqualStrings("Gr\xC3\xBCn", utf8.textOf("Gr\xFCn", &into).?);
+    // A byte that is no UTF-8 among characters that are, each read alone.
+    try testing.expectEqualStrings("\xC3\xBC\xC3\xA4", utf8.textOf("\xFC\xC3\xA4", &into).?);
+    try testing.expectEqual(@as(?[]const u8, null), utf8.textOf("\xFC\xFC\xFC\xFC\xFC", &into));
+}
+
 test "utf8.readLast: walking back reads what walking forward reads" {
     try testing.expectEqual(utf8.Read{ .char = 0xE4, .length = 2 }, utf8.readLast("a\xC3\xA4"));
     try testing.expectEqual(utf8.Read{ .char = 0x1F600, .length = 4 }, utf8.readLast("x\xF0\x9F\x98\x80"));
