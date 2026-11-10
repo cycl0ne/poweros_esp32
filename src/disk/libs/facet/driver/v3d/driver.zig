@@ -936,6 +936,9 @@ fn vertexStage(pipeline: *const Pipeline, work: *compile.Work, hardware: *Hardwa
     for (0..2) |k| {
         var key = reads;
         key.coordinate = k == 1;
+        // The vertex program's VPM values, which the coordinate program
+        // reads rows for (`compile.VertexKey.system_values`; since 1.192).
+        if (k == 1) key.system_values = made[0].program.system_values;
         const code = compile.compileVertexThroughMesa(work, pipeline.vertex_words, v3d.heap.of(sys), key) catch null;
         const usable = if (code) |each| readsDescribed(pipeline, &each.vertex) else false;
         const block: ?Block = if (usable) block: {

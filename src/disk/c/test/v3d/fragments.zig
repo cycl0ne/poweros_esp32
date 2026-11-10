@@ -917,11 +917,11 @@ fn compiled(back: Back, work: *compile.Work, words: []const u32, stream: *[compi
         // No scene here pushes constants or binds a uniform buffer: the
         // library's draws are where a program that reads them is held to
         // the cores (FacetBoth). Nor is a fragment program's stream ever
-        // of the viewport, which a vertex program's alone is, nor has
-        // one a spill buffer (the library's pipelines make it), nor
-        // does one ask a view's sizes, which the library's draws measure
-        // (since 1.181).
-        .push, .ubo, .ssbo, .viewport, .spill_offset, .spill_size_per_thread, .texture_size => return null,
+        // of the viewport or the first vertex, which a vertex program's
+        // alone is (since 1.192), nor has one a spill buffer (the
+        // library's pipelines make it), nor does one ask a view's sizes,
+        // which the library's draws measure (since 1.181).
+        .push, .ubo, .ssbo, .viewport, .first_vertex, .spill_offset, .spill_size_per_thread, .texture_size => return null,
     };
     return .{
         .{

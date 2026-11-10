@@ -2711,6 +2711,30 @@ program's stream with the viewport's words (v3dv_uniforms.c:526-552).
   (vir.c:2118-2140): the VIR is in the order of the steps.
 - The compute stage is the item's other half.
 
+**Then gl_VertexIndex and gl_InstanceIndex**, facet.library 1.192.
+
+A vertex program reads VertexIndex and InstanceIndex, which vtn reads as SYSTEM_VALUE_VERTEX_ID and _INSTANCE_INDEX (vtn_variables.c:908-921). Any other built-in of a variable is still refused, and so is either of them in a fragment program.
+
+- **The VPM's rows.** Before its attributes the program loads a row for each of its instance id, base instance and vertex id that it reads, in that order (ntq_setup_vs_inputs, nir_to_vir.c:2416-2438). Each attribute's first float comes after them (ntq_emit_load_input, :2948-2961), and the VPM's input is a float more for each (vir.c:894-899).
+- **InstanceIndex** is the instance id plus the base instance (nir_lower_system_values.c:202-208).
+- **The coordinate program reads the vertex program's rows.** v3dv compiles both of one NIR, whose system values pipeline_lower_nir gathers once the shaders are linked (v3dv_pipeline.c:1875, 1825-1860); a load the coordinate program does not use is dead code. The driver hands the vertex program's values to the coordinate program's compile in its key.
+- **GFXH-1602.** Where the coordinate program reads one of them and none of its first driver location, that location takes a row all the same (nir_to_vir.c:2963-2973), and the draw has the VPM load one float of it (v3dvx_cmd_buffer.c:2730-2737).
+- **The shader record** says what each program reads, in the Draw Index record's bits 2 to 4 and 7 to 9 (v3dvx_pipeline.c:434-439).
+
+Where it is not v3dv's:
+- The draw numbers its vertices from the lowest it draws, the attributes made floats on the CPU from there, so the VPM's vertex id counts from 0. VertexIndex is it plus a uniform of the first vertex: nir_lower_system_values' load_vertex_id where a driver's ids are zero based (:81-83), which v3dv's are not (v3dv_pipeline.c:212). The uniform, `first_vertex`, comes after Mesa's quniform_contents.
+- Each instance is a draw of its own, so its instance id is 0 and its base instance the instance, written with Base Vertex Base Instance before the draw (v3dvx_cmd_buffer.c:2821-2829).
+
+Results:
+- glslc_vertex_index reads all three rows and glslc_index_place the vertex id alone. Each program's stream says the rows it reads.
+- The coordinate program of glslc_index_place takes GFXH-1602's row.
+- A coordinate program told no rows reads its attributes a place sooner.
+- A coordinate program that reads none of the rows and not its first driver location takes no row: GFXH-1602's is the built-ins' alone.
+- VertexId, which Vulkan has not, is refused, and so is VertexIndex on two variables.
+- The V3D's tests are 321, six new. Of 19 mutations, 17 fail them. The check that the built-ins decorate an input variable is behind another: a decoration moved off its variable leaves that an integer attribute, refused first. The test of whether a row's value is read is the same as none: layOut has dropped an unread value's step before the rows are counted.
+
+On the CM5, FacetBoth's 278 cases are each as they were at 1.191. Its two new ones draw glslc's two vertex shaders through "shipped smooth": the first triangle as instances 1 and 2, the second from vertex 3 as instance 2, and `indices_32` from vertex 6. They are 11 and 0 of 230400 pixels apart, at the triangles' edges. With the cores' pictures made wrong on purpose, a red an eighth higher and a place a sixteenth further right, they are 53,595 and 74,374 apart: the V3D draws them with its own programs, not with the vertex function. FacetProbe is 890 of 890.
+
 ### 61. Multisampling: 4 samples a pixel on both devices, with resolve attachments and CmdResolveImage's body **[critical path]**
 
 *rasterisation* &mdash; conformance-blocking, port, **sized 07.11.2026: 21 commits, about 1,590 lines of code, 1,340 of tests and 90 of docs**; **the cores' half done in 1.114**, the V3D's is steps V1 to V8

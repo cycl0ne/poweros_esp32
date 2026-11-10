@@ -148,7 +148,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.56 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.57 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -311,6 +311,36 @@ fn asItIsVertex(vertices: *const shader.Vertices) callconv(.c) void {
 fn provokingColor(vertices: *const shader.Vertices, k: usize) [4]f32 {
     const n = vertices.first_vertex + @as(u32, @intCast(k));
     return geometry[n - n % 3].c;
+}
+
+/// What `shipped_vertex_index` computes, for the cores: the place moved by
+/// the instance, a quarter and an eighth of it less a quarter and an
+/// eighth; the colour's red an eighth of the vertex's number and a
+/// sixteenth, its green the colour's, its blue a quarter of the instance.
+/// The draw numbers its vertices from its first and hands over its
+/// instance, which are gl_VertexIndex and gl_InstanceIndex (since 1.57).
+fn vertexIndexVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    const i: f32 = @floatFromInt(vertices.instance);
+    for (0..vertices.count) |k| {
+        const p = vertices.input(@intCast(k), 0);
+        const c = vertices.input(@intCast(k), 1);
+        const n: f32 = @floatFromInt(vertices.first_vertex + @as(u32, @intCast(k)));
+        const quarter = i * 0.25;
+        vertices.output(@intCast(k))[0..8].* = .{ p[0] + quarter - 0.25, p[1] + i * 0.125 - 0.125, p[2], p[3], n * 0.125 + 0.0625, c[1], quarter, 1 };
+    }
+}
+
+/// What `shipped_index_place` computes, for the cores: the place the
+/// colour's red less its green and a sixteenth of the vertex's number,
+/// less a quarter, and its blue less half its green; the colour made of
+/// the place (since 1.57).
+fn indexPlaceVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = vertices.input(@intCast(k), 0);
+        const c = vertices.input(@intCast(k), 1);
+        const n: f32 = @floatFromInt(vertices.first_vertex + @as(u32, @intCast(k)));
+        vertices.output(@intCast(k))[0..8].* = .{ c[0] - c[1] + n * 0.0625 - 0.25, c[2] - c[1] * 0.5, 0.5, 1, p[0] * 0.5 + 0.5, p[1] * 0.5 + 0.5, 0.25, 1 };
+    }
 }
 
 /// `asItIsVertex` with the first vertex's colour at each corner, for the
@@ -2116,6 +2146,8 @@ const shipped_entries = [_]shader.Entry{
     shader.vertex("shipped noperspective vertex", &noperspectiveVertex, 4),
     shader.fragment("shipped noperspective", &noperspectiveFragment, 4),
     shader.fragment("shipped many ids", &manyIdsFragment, 4),
+    shader.vertex("shipped vertex index", &vertexIndexVertex, 4),
+    shader.vertex("shipped index place", &indexPlaceVertex, 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2138,7 +2170,8 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_division),             shader.Spirv.of(&shipped_modulus),          shader.Spirv.of(&shipped_constant_division),   shader.Spirv.of(&shipped_constant_remainder),
     shader.Spirv.of(&shipped_constant_signed),      shader.Spirv.of(&shipped_constant_modulus), shader.Spirv.of(&shipped_many_divisions),      shader.Spirv.of(&shipped_many_moduli),
     shader.Spirv.of(&shipped_flat_vertex),          shader.Spirv.of(&shipped_flat_colour),      shader.Spirv.of(&shipped_flat_integer_vertex), shader.Spirv.of(&shipped_flat_integer),
-    shader.Spirv.of(&shipped_noperspective_vertex), shader.Spirv.of(&shipped_noperspective),    shader.Spirv.of(&shipped_many_ids),
+    shader.Spirv.of(&shipped_noperspective_vertex), shader.Spirv.of(&shipped_noperspective),    shader.Spirv.of(&shipped_many_ids),            shader.Spirv.of(&shipped_vertex_index),
+    shader.Spirv.of(&shipped_index_place),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -5977,6 +6010,161 @@ const shipped_many_ids = [_]u32{
     0x00000193, 0x000100FD, 0x00010038,
 };
 
+/// glslc's own output, at -O, the V3D's host tests' glslc_vertex_index:
+/// the place moved by gl_InstanceIndex, and the colour's red
+/// gl_VertexIndex's (since 1.57).
+///
+/// ```glsl
+/// #version 450
+/// // The place moved by the instance, and the colour's red the vertex's
+/// // number: gl_InstanceIndex and gl_VertexIndex (facet 1.192).
+/// layout(location = 0) in vec4 p;
+/// layout(location = 1) in vec4 c;
+/// layout(location = 0) out vec4 color;
+/// void main() {
+///     float i = float(gl_InstanceIndex);
+///     gl_Position = vec4(p.x + i * 0.25 - 0.25, p.y + i * 0.125 - 0.125, p.z, p.w);
+///     color = vec4(float(gl_VertexIndex) * 0.125 + 0.0625, c.g, i * 0.25, 1.0);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=vert vertex_index.vert -o vertex_index.spv   # 315 words
+/// spirv-val --target-env vulkan1.0 vertex_index.spv   # no output, and 0
+/// ```
+const shipped_vertex_index = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000003F, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x000B000F, 0x00000000,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000014, 0x00000017,
+    0x00000031, 0x00000032, 0x00000038, 0x00040047, 0x0000000B, 0x0000000B,
+    0x0000002B, 0x00030047, 0x00000012, 0x00000002, 0x00050048, 0x00000012,
+    0x00000000, 0x0000000B, 0x00000000, 0x00050048, 0x00000012, 0x00000001,
+    0x0000000B, 0x00000001, 0x00050048, 0x00000012, 0x00000002, 0x0000000B,
+    0x00000003, 0x00050048, 0x00000012, 0x00000003, 0x0000000B, 0x00000004,
+    0x00040047, 0x00000017, 0x0000001E, 0x00000000, 0x00040047, 0x00000031,
+    0x0000001E, 0x00000000, 0x00040047, 0x00000032, 0x0000000B, 0x0000002A,
+    0x00040047, 0x00000038, 0x0000001E, 0x00000001, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040015, 0x00000009, 0x00000020, 0x00000001, 0x00040020, 0x0000000A,
+    0x00000001, 0x00000009, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001,
+    0x00040017, 0x0000000E, 0x00000006, 0x00000004, 0x00040015, 0x0000000F,
+    0x00000020, 0x00000000, 0x0004002B, 0x0000000F, 0x00000010, 0x00000001,
+    0x0004001C, 0x00000011, 0x00000006, 0x00000010, 0x0006001E, 0x00000012,
+    0x0000000E, 0x00000006, 0x00000011, 0x00000011, 0x00040020, 0x00000013,
+    0x00000003, 0x00000012, 0x0004003B, 0x00000013, 0x00000014, 0x00000003,
+    0x0004002B, 0x00000009, 0x00000015, 0x00000000, 0x00040020, 0x00000016,
+    0x00000001, 0x0000000E, 0x0004003B, 0x00000016, 0x00000017, 0x00000001,
+    0x0004002B, 0x0000000F, 0x00000018, 0x00000000, 0x00040020, 0x00000019,
+    0x00000001, 0x00000006, 0x0004002B, 0x00000006, 0x0000001D, 0x3E800000,
+    0x0004002B, 0x00000006, 0x00000024, 0x3E000000, 0x0004002B, 0x0000000F,
+    0x00000028, 0x00000002, 0x0004002B, 0x0000000F, 0x0000002B, 0x00000003,
+    0x00040020, 0x0000002F, 0x00000003, 0x0000000E, 0x0004003B, 0x0000002F,
+    0x00000031, 0x00000003, 0x0004003B, 0x0000000A, 0x00000032, 0x00000001,
+    0x0004002B, 0x00000006, 0x00000036, 0x3D800000, 0x0004003B, 0x00000016,
+    0x00000038, 0x00000001, 0x0004002B, 0x00000006, 0x0000003D, 0x3F800000,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003D, 0x00000009, 0x0000000C, 0x0000000B, 0x0004006F,
+    0x00000006, 0x0000000D, 0x0000000C, 0x00050041, 0x00000019, 0x0000001A,
+    0x00000017, 0x00000018, 0x0004003D, 0x00000006, 0x0000001B, 0x0000001A,
+    0x00050085, 0x00000006, 0x0000001E, 0x0000000D, 0x0000001D, 0x00050081,
+    0x00000006, 0x0000001F, 0x0000001B, 0x0000001E, 0x00050083, 0x00000006,
+    0x00000020, 0x0000001F, 0x0000001D, 0x00050041, 0x00000019, 0x00000021,
+    0x00000017, 0x00000010, 0x0004003D, 0x00000006, 0x00000022, 0x00000021,
+    0x00050085, 0x00000006, 0x00000025, 0x0000000D, 0x00000024, 0x00050081,
+    0x00000006, 0x00000026, 0x00000022, 0x00000025, 0x00050083, 0x00000006,
+    0x00000027, 0x00000026, 0x00000024, 0x00050041, 0x00000019, 0x00000029,
+    0x00000017, 0x00000028, 0x0004003D, 0x00000006, 0x0000002A, 0x00000029,
+    0x00050041, 0x00000019, 0x0000002C, 0x00000017, 0x0000002B, 0x0004003D,
+    0x00000006, 0x0000002D, 0x0000002C, 0x00070050, 0x0000000E, 0x0000002E,
+    0x00000020, 0x00000027, 0x0000002A, 0x0000002D, 0x00050041, 0x0000002F,
+    0x00000030, 0x00000014, 0x00000015, 0x0003003E, 0x00000030, 0x0000002E,
+    0x0004003D, 0x00000009, 0x00000033, 0x00000032, 0x0004006F, 0x00000006,
+    0x00000034, 0x00000033, 0x00050085, 0x00000006, 0x00000035, 0x00000034,
+    0x00000024, 0x00050081, 0x00000006, 0x00000037, 0x00000035, 0x00000036,
+    0x00050041, 0x00000019, 0x00000039, 0x00000038, 0x00000010, 0x0004003D,
+    0x00000006, 0x0000003A, 0x00000039, 0x00070050, 0x0000000E, 0x0000003E,
+    0x00000037, 0x0000003A, 0x0000001E, 0x0000003D, 0x0003003E, 0x00000031,
+    0x0000003E, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, the V3D's host tests' glslc_index_place:
+/// the place made of the colour and gl_VertexIndex, and the colour of
+/// the place, which the coordinate program does not read: GFXH-1602's
+/// row (since 1.57).
+///
+/// ```glsl
+/// #version 450
+/// // The colour made of location 0 and the place of location 1 and the
+/// // vertex's number: the coordinate program reads gl_VertexIndex and not its
+/// // first attribute (GFXH-1602; facet 1.192).
+/// layout(location = 0) in vec4 p;
+/// layout(location = 1) in vec4 c;
+/// layout(location = 0) out vec4 color;
+/// void main() {
+///     gl_Position = vec4(c.r - c.g + float(gl_VertexIndex) * 0.0625 - 0.25, c.b - c.g * 0.5, 0.5, 1.0);
+///     color = vec4(p.x * 0.5 + 0.5, p.y * 0.5 + 0.5, 0.25, 1.0);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=vert index_place.vert -o index_place.spv   # 304 words
+/// spirv-val --target-env vulkan1.0 index_place.spv   # no output, and 0
+/// ```
+const shipped_index_place = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000039, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x000A000F, 0x00000000,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000011, 0x0000001A,
+    0x0000002E, 0x0000002F, 0x00030047, 0x0000000B, 0x00000002, 0x00050048,
+    0x0000000B, 0x00000000, 0x0000000B, 0x00000000, 0x00050048, 0x0000000B,
+    0x00000001, 0x0000000B, 0x00000001, 0x00050048, 0x0000000B, 0x00000002,
+    0x0000000B, 0x00000003, 0x00050048, 0x0000000B, 0x00000003, 0x0000000B,
+    0x00000004, 0x00040047, 0x00000011, 0x0000001E, 0x00000001, 0x00040047,
+    0x0000001A, 0x0000000B, 0x0000002A, 0x00040047, 0x0000002E, 0x0000001E,
+    0x00000000, 0x00040047, 0x0000002F, 0x0000001E, 0x00000000, 0x00020013,
+    0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006,
+    0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040015,
+    0x00000008, 0x00000020, 0x00000000, 0x0004002B, 0x00000008, 0x00000009,
+    0x00000001, 0x0004001C, 0x0000000A, 0x00000006, 0x00000009, 0x0006001E,
+    0x0000000B, 0x00000007, 0x00000006, 0x0000000A, 0x0000000A, 0x00040020,
+    0x0000000C, 0x00000003, 0x0000000B, 0x0004003B, 0x0000000C, 0x0000000D,
+    0x00000003, 0x00040015, 0x0000000E, 0x00000020, 0x00000001, 0x0004002B,
+    0x0000000E, 0x0000000F, 0x00000000, 0x00040020, 0x00000010, 0x00000001,
+    0x00000007, 0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x0004002B,
+    0x00000008, 0x00000012, 0x00000000, 0x00040020, 0x00000013, 0x00000001,
+    0x00000006, 0x00040020, 0x00000019, 0x00000001, 0x0000000E, 0x0004003B,
+    0x00000019, 0x0000001A, 0x00000001, 0x0004002B, 0x00000006, 0x0000001D,
+    0x3D800000, 0x0004002B, 0x00000006, 0x00000020, 0x3E800000, 0x0004002B,
+    0x00000008, 0x00000022, 0x00000002, 0x0004002B, 0x00000006, 0x00000027,
+    0x3F000000, 0x0004002B, 0x00000006, 0x0000002A, 0x3F800000, 0x00040020,
+    0x0000002C, 0x00000003, 0x00000007, 0x0004003B, 0x0000002C, 0x0000002E,
+    0x00000003, 0x0004003B, 0x00000010, 0x0000002F, 0x00000001, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x00050041, 0x00000013, 0x00000014, 0x00000011, 0x00000012, 0x0004003D,
+    0x00000006, 0x00000015, 0x00000014, 0x00050041, 0x00000013, 0x00000016,
+    0x00000011, 0x00000009, 0x0004003D, 0x00000006, 0x00000017, 0x00000016,
+    0x00050083, 0x00000006, 0x00000018, 0x00000015, 0x00000017, 0x0004003D,
+    0x0000000E, 0x0000001B, 0x0000001A, 0x0004006F, 0x00000006, 0x0000001C,
+    0x0000001B, 0x00050085, 0x00000006, 0x0000001E, 0x0000001C, 0x0000001D,
+    0x00050081, 0x00000006, 0x0000001F, 0x00000018, 0x0000001E, 0x00050083,
+    0x00000006, 0x00000021, 0x0000001F, 0x00000020, 0x00050041, 0x00000013,
+    0x00000023, 0x00000011, 0x00000022, 0x0004003D, 0x00000006, 0x00000024,
+    0x00000023, 0x00050085, 0x00000006, 0x00000028, 0x00000017, 0x00000027,
+    0x00050083, 0x00000006, 0x00000029, 0x00000024, 0x00000028, 0x00070050,
+    0x00000007, 0x0000002B, 0x00000021, 0x00000029, 0x00000027, 0x0000002A,
+    0x00050041, 0x0000002C, 0x0000002D, 0x0000000D, 0x0000000F, 0x0003003E,
+    0x0000002D, 0x0000002B, 0x00050041, 0x00000013, 0x00000030, 0x0000002F,
+    0x00000012, 0x0004003D, 0x00000006, 0x00000031, 0x00000030, 0x00050085,
+    0x00000006, 0x00000032, 0x00000031, 0x00000027, 0x00050081, 0x00000006,
+    0x00000033, 0x00000032, 0x00000027, 0x00050041, 0x00000013, 0x00000034,
+    0x0000002F, 0x00000009, 0x0004003D, 0x00000006, 0x00000035, 0x00000034,
+    0x00050085, 0x00000006, 0x00000036, 0x00000035, 0x00000027, 0x00050081,
+    0x00000006, 0x00000037, 0x00000036, 0x00000027, 0x00070050, 0x00000007,
+    0x00000038, 0x00000033, 0x00000037, 0x00000020, 0x0000002A, 0x0003003E,
+    0x0000002E, 0x00000038, 0x000100FD, 0x00010038,
+};
+
 const shipped_noperspective = [_]u32{
     0x07230203, 0x00010000, 0x000D000B, 0x0000000D, 0x00000000, 0x00020011,
     0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
@@ -8423,6 +8611,23 @@ const Cases = struct {
     /// A fragment shader the module ships the words of, drawn with the
     /// vertex function `vertex` over the geometry at `first`; through the
     /// combined image sampler where it samples.
+    /// A shipped vertex shader that reads gl_VertexIndex and
+    /// gl_InstanceIndex, through "shipped smooth": the first triangle as
+    /// instances 1 and 2, the second, from vertex 3, as instance 2, and
+    /// `indices_32` from vertex 6, as instance 0 (since 1.57).
+    fn numbered(comptime vertex: [*:0]const u8) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                side.begin(.{});
+                try side.use(.{ .vertex = vertex, .fragment = "shipped smooth" });
+                side.fb.CmdDraw(side.commands.?, 3, 2, clockwise_at, 1);
+                side.fb.CmdDraw(side.commands.?, 3, 1, clockwise_at + 3, 2);
+                side.fb.CmdBindIndexBuffer(side.commands.?, side.indices.?, offset_32, .uint32);
+                side.fb.CmdDrawIndexed(side.commands.?, indices_32.len, 1, 0, 6, 0);
+                side.end();
+            }
+        }.run;
+    }
     fn shipped(comptime vertex: [*:0]const u8, comptime fragment: [*:0]const u8, comptime samples: bool, comptime first: u32) *const fn (side: *Side) Failure!void {
         return &struct {
             fn run(side: *Side) Failure!void {
@@ -9058,6 +9263,8 @@ const cases = [_]Case{
     .{ .name = "shipped flat integer", .run = Cases.shipped("shipped flat integer vertex", "shipped flat integer", false, clockwise_at) },
     .{ .name = "shipped noperspective", .run = Cases.shipped("shipped noperspective vertex", "shipped noperspective", false, clockwise_at) },
     .{ .name = "shipped many ids", .run = Cases.shipped("as it is", "shipped many ids", false, clockwise_at) },
+    .{ .name = "shipped vertex and instance index", .run = Cases.numbered("shipped vertex index") },
+    .{ .name = "shipped index place", .run = Cases.numbered("shipped index place") },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },

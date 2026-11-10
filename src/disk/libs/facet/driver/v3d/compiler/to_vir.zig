@@ -195,6 +195,9 @@ const Emit = struct {
     words: [compile.most_steps][4]Reg = undefined,
     words_defined: [compile.most_steps]bool = @splat(false),
     inputs: [compile.most_varyings]Reg = undefined,
+    /// A vertex program's loads of the VPM's instance id, base instance
+    /// and vertex id (c->iid, c->biid, c->vid; since 1.192).
+    system: [3]Reg = undefined,
     start_msf: Reg = .{},
     payload_w: Reg = .{},
     payload_w_centroid: Reg = .{},
@@ -346,11 +349,11 @@ fn attemptCompile(e: *Emit, strategy: Strategy) Error!u32 {
 /// moved out of the registers it comes in, the varyings, and the body.
 fn nirToVir(e: *Emit) Error!void {
     const c = e.c;
-    // A vertex program's inputs are loaded where the body reads them, and
-    // it reads no instance, base instance or vertex id
-    // (ntq_setup_vs_inputs, nir_to_vir.c:2385-2433; since 1.163).
+    // A vertex program's attributes are loaded where the body reads them
+    // (since 1.163), and the VPM's values it reads first.
     if (c.stage == .vertex) {
         try setupScratch(e);
+        try setupVsInputs(e);
         return emitBlock(e);
     }
     e.start_msf = try c.add(.msf, .{});
@@ -364,6 +367,22 @@ fn nirToVir(e: *Emit) Error!void {
     // ntq_setup_outputs: the colour is location 0, which needs nothing
     // emitted.
     try emitBlock(e);
+}
+
+/// ntq_setup_vs_inputs (nir_to_vir.c:2416-2438): an LDVPMV_IN of each of
+/// the VPM's values the program reads, in the VPM's order, the row the
+/// number loaded before it. Where the coordinate program uses one not,
+/// which it reads for the vertex program's sake (`VertexKey`), the load
+/// is dead code (since 1.192).
+fn setupVsInputs(e: *Emit) Error!void {
+    const c = e.c;
+    const values = e.work.system_values;
+    var vpm_components: u32 = 0;
+    for ([_]compile.SystemValue{ .instance_id, .base_instance, .vertex_id }) |which| {
+        if (!values.has(which)) continue;
+        e.system[@intFromEnum(which)] = try c.add(.ldvpmv_in, .{try c.uniformUi(vpm_components)});
+        vpm_components += 1;
+    }
 }
 
 /// Where the program keeps variables in scratch: spill_base worked out
@@ -481,6 +500,20 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         .output => {
             const value = try getSrc(e, each.a, 0);
             _ = try c.addNodst(.stvpmv, .{ try c.uniformUi(each.at), value });
+        },
+        // load_instance_id, load_base_instance and load_vertex_id, a MOV of
+        // what the program's start loaded (nir_to_vir.c:3760-3770), which
+        // copy propagation takes out unless it writes a phi's register;
+        // and load_first_vertex, a uniform (since 1.192).
+        .system => switch (@as(compile.SystemValue, @enumFromInt(each.at))) {
+            .first_vertex => try storeDef(e, at, 0, try c.uniform(.first_vertex, 0)),
+            else => |which| {
+                const loaded = e.system[@intFromEnum(which)];
+                if (e.web_of[at][0] != no_web)
+                    try storeDef(e, at, 0, try c.mul(.mov, .{loaded}))
+                else
+                    e.defs[at][0] = loaded;
+            },
         },
         // load_viewport_*_scale and _z_offset (nir_to_vir.c:3697-3715).
         .viewport => e.defs[at][0] = try c.uniform(switch (@as(compile.Viewport, @enumFromInt(each.at))) {

@@ -736,6 +736,10 @@ pub const Tag = enum {
     /// writes as the uniform stream is (v3dv_uniforms.c:526-552; since
     /// 1.163).
     viewport,
+    /// A vertex program's value of the draw's, `at` a `SystemValue`: one
+    /// of the VPM's three before the attributes, or the first vertex, a
+    /// uniform (since 1.192).
+    system,
     /// `a` rounded to the nearest whole number, the even one at a half,
     /// as a 32-bit integer: NIR's f2i32 of fround_even, which v3d emits
     /// as FTOIN (ntq_emit_alu, nir_to_vir.c:1465-1472; since 1.163).
@@ -1135,6 +1139,10 @@ pub const Word = union(enum) {
     ubo: UboAddress,
     /// A word of the draw's viewport (`Viewport`; since 1.163).
     viewport: Viewport,
+    /// The first vertex the draw numbers its vertices from, which the
+    /// VPM's vertex id counts from (`vir.Uniform.first_vertex`; since
+    /// 1.192).
+    first_vertex,
     /// Where a storage buffer is, bound at `set`, `binding`: Mesa's
     /// QUNIFORM_SSBO_OFFSET, which the draw writes as the buffer's address
     /// and its descriptor's offsets, the program adding the offset it
@@ -1180,6 +1188,36 @@ pub const per_pixel_mask: u32 = 1 << 2;
 /// viewport's half width and half height in the clipper's 1/64ths of a
 /// pixel, its minDepth, and maxDepth less minDepth.
 pub const Viewport = enum(u8) { x_scale, y_scale, z_offset, z_scale };
+
+/// What a `.system` step reads: the VPM's instance id, base instance or
+/// vertex id, which ntq_setup_vs_inputs loads at the program's start
+/// (nir_to_vir.c:2416-2438), or the first vertex, a uniform (since 1.192).
+pub const SystemValue = enum(u8) { instance_id, base_instance, vertex_id, first_vertex };
+
+/// Which of the VPM's three values a vertex program reads, each a row
+/// before the attributes, in this order: v3d_vs_prog_data's uses_iid,
+/// uses_biid and uses_vid (v3d_compiler.h:973), which the shader record
+/// says of each program (v3dvx_pipeline.c:434-439; since 1.192).
+pub const SystemValues = packed struct(u8) {
+    instance_id: bool = false,
+    base_instance: bool = false,
+    vertex_id: bool = false,
+    _: u5 = 0,
+
+    /// The rows they take, which the attributes come after.
+    pub fn count(values: SystemValues) u32 {
+        return @as(u32, @intFromBool(values.instance_id)) + @intFromBool(values.base_instance) + @intFromBool(values.vertex_id);
+    }
+
+    pub fn has(values: SystemValues, which: SystemValue) bool {
+        return switch (which) {
+            .instance_id => values.instance_id,
+            .base_instance => values.base_instance,
+            .vertex_id => values.vertex_id,
+            .first_vertex => false,
+        };
+    }
+};
 
 /// A uniform buffer's address as the stream holds it.
 pub const UboAddress = struct {
@@ -1233,6 +1271,13 @@ pub const VertexProgram = struct {
     attribute_count: u8 = 0,
     vpm_output_sectors: u8 = 0,
     single_seg: bool = false,
+    /// The VPM's values it reads before the attributes (since 1.192).
+    system_values: SystemValues = .{},
+    /// GFXH-1602: a coordinate program that reads one of them and not its
+    /// first driver location, which takes a row all the same, the draw
+    /// telling the VPM to load one float of it (ntq_emit_load_input,
+    /// nir_to_vir.c:2963-2973; v3dvx_cmd_buffer.c:2730-2740; since 1.192).
+    first_row: bool = false,
 };
 
 /// What a vertex program is compiled for beside its words: v3dv's
@@ -1249,6 +1294,12 @@ pub const VertexKey = struct {
     /// fragment program of this device reads its locations from 0 up with
     /// no gap (`order`).
     reads: [most_varyings]u8 = @splat(0),
+    /// The vertex program's `SystemValues`, which the coordinate program
+    /// reads rows for as well: v3dv compiles both of the one NIR, whose
+    /// system_values_read pipeline_lower_nir gathers before either
+    /// (v3dv_pipeline.c:1875), and the coordinate program's reads of what
+    /// it does not use are dead code (vir_opt_dead_code; since 1.192).
+    system_values: SystemValues = .{},
 };
 
 /// A vertex program's attributes, by location: how many floats of each it
@@ -1471,6 +1522,15 @@ pub const Work = struct {
     /// into it.
     per_vertex: u16 = none,
     position: u16 = none,
+    /// A vertex program's VertexIndex and InstanceIndex variables, the
+    /// value each loads, and the `.system` steps of each `SystemValue`,
+    /// each made once (since 1.192).
+    system_ids: [2]u16 = .{ none, none },
+    system_value: [2]u16 = .{ none, none },
+    system_step: [4]u16 = @splat(none),
+    /// What `attributes` found of them (`VertexProgram`).
+    system_values: SystemValues = .{},
+    first_row: bool = false,
     /// A vertex program's outputs at a location: each variable's
     /// `location` says where, and the fragment program's floats it has
     /// stored, a bit each, which the rest are stored 0 beside
@@ -1786,6 +1846,8 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
             .viewport_y_scale => .{ .viewport = .y_scale },
             .viewport_z_offset => .{ .viewport = .z_offset },
             .viewport_z_scale => .{ .viewport = .z_scale },
+            // The draw's first vertex (since 1.192).
+            .first_vertex => .first_vertex,
             // The spill buffer's (since 1.177).
             .spill_offset => .spill_offset,
             .spill_size_per_thread => .spill_size_per_thread,
@@ -1825,8 +1887,10 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
 /// its attributes' sizes, and its VPM segment, input and output shared,
 /// in sectors of eight floats.
 fn vertexProgram(work: *const Work, single_seg: bool) VertexProgram {
-    var made = VertexProgram{ .attribute_count = @intCast(work.attribute_count), .single_seg = single_seg };
-    var input_size: u32 = 0;
+    var made = VertexProgram{ .attribute_count = @intCast(work.attribute_count), .single_seg = single_seg, .system_values = work.system_values, .first_row = work.first_row };
+    // A row each of the VPM's values it reads (vir.c:894-899), and none for
+    // GFXH-1602's.
+    var input_size: u32 = work.system_values.count();
     for (0..work.attribute_count) |driver| {
         made.vattr_sizes[driver] = work.vattr_sizes[driver];
         made.attribute_location[driver] = work.attribute_location[driver];
@@ -2102,6 +2166,23 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     .flat, .no_perspective => {
                         if (operands.len != 2) return Error.Refused;
                         work.interpolation[id] = if (what == .flat) .flat else .noperspective;
+                        continue;
+                    },
+                    // A vertex program's VertexIndex or InstanceIndex,
+                    // which vtn reads as SYSTEM_VALUE_VERTEX_ID and
+                    // _INSTANCE_INDEX (vtn_variables.c:908-921; since
+                    // 1.192). Any other built-in of a variable, and either
+                    // of a fragment program, is still refused, and so is
+                    // either on two variables.
+                    .built_in => {
+                        if (operands.len != 3 or work.stage != .vertex) return Error.Refused;
+                        const which: usize = switch (operands[2]) {
+                            @intFromEnum(spirv.BuiltIn.vertex_index) => 0,
+                            @intFromEnum(spirv.BuiltIn.instance_index) => 1,
+                            else => return Error.Refused,
+                        };
+                        if (work.system_ids[which] != none) return Error.Refused;
+                        work.system_ids[which] = id;
                         continue;
                     },
                     .location, .descriptor_set, .binding => {},
@@ -2650,6 +2731,16 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.per_vertex = id;
                     continue;
                 }
+                if (class == .input and systemOf(work, id) != null) {
+                    // VertexIndex or InstanceIndex: a 32-bit integer, as
+                    // Vulkan has them, of no location (since 1.192).
+                    if (!isIntegerType(work, pointee) or try kindOf(work, pointee) != .f32x1) return Error.Type;
+                    if (operands.len != 3) return Error.Body;
+                    work.thing[id] = .variable;
+                    work.class[id] = @intCast(@intFromEnum(class));
+                    work.wide[id] = 1;
+                    continue;
+                }
                 const floats = try kindOf(work, pointee);
                 // An integer varying is a vertex program's to write, and a
                 // fragment program's to read where it is Flat, as Vulkan
@@ -3048,6 +3139,10 @@ fn interpolatedVaryings(work: *const Work) Error!void {
 /// what of its attributes it reads (since 1.163).
 fn finishVertex(work: *Work) Error!void {
     if (work.position == none) return Error.Outputs;
+    // VertexIndex and InstanceIndex decorate an input variable alone.
+    for (work.system_ids) |id| {
+        if (id != none and (work.thing[id] != .variable or work.class[id] != @intFromEnum(spirv.StorageClass.input))) return Error.Refused;
+    }
     for (work.varying_values[0..work.varying_count], work.varying_into[0..work.varying_count]) |value, into| {
         try storeVarying(work, value, work.location[into], work.wide[into]);
     }
@@ -3160,13 +3255,38 @@ fn liveFloats(work: *const Work) [most_steps]u8 {
 /// the VPM is given (ntq_setup_vs_inputs, nir_to_vir.c:2385-2410). Then
 /// the VPM's output, the fixed-function outputs and the varyings
 /// (v3d_nir_setup_vpm_layout_vs, :434).
+///
+/// Before the attributes, a row of each of the VPM's values the program
+/// reads (ntq_setup_vs_inputs, :2416-2438): what nir_opt_dce leaves of its
+/// loads, which pipeline_lower_nir gathers (v3dv_pipeline.c:1875) once the
+/// vertex shader is linked to the fragment shader (link_shaders,
+/// :1825-1860), so what the vertex program reads, and the coordinate
+/// program the vertex program's (`VertexKey.system_values`). An
+/// attribute's first float is after them (ntq_emit_load_input,
+/// nir_to_vir.c:2948-2961), and in the coordinate program GFXH-1602's row
+/// of the first driver location where it reads none of it (:2963-2973;
+/// since 1.192).
 fn attributes(work: *Work) Error!void {
     const inputs = work.inputs[0..work.input_count];
     for (inputs, 0..) |each, k| {
         for (inputs[0..k]) |before| if (before.location == each.location) return Error.Location;
     }
     const reads = liveFloats(work);
-    var first: u32 = 0;
+    const coordinate = work.vertex_key.coordinate;
+    var values: SystemValues = if (coordinate) work.vertex_key.system_values else .{};
+    for ([_]SystemValue{ .instance_id, .base_instance, .vertex_id }) |which| {
+        const at = work.system_step[@intFromEnum(which)];
+        if (at == none or reads[at] == 0) continue;
+        switch (which) {
+            .instance_id => values.instance_id = true,
+            .base_instance => values.base_instance = true,
+            .vertex_id => values.vertex_id = true,
+            .first_vertex => unreachable,
+        }
+    }
+    work.system_values = values;
+    const builtins = values.count();
+    var first: u32 = builtins;
     var driver: u32 = 0;
     for (0..most_attributes) |location| {
         const which = for (inputs, 0..) |each, k| {
@@ -3177,6 +3297,10 @@ fn attributes(work: *Work) Error!void {
         const size: u8 = if (each.live == 0) 0 else 8 - @clz(each.live);
         each.first = first;
         first += size;
+        if (driver == 0 and coordinate and size == 0 and builtins > 0) {
+            first += 1;
+            work.first_row = true;
+        }
         work.vattr_sizes[driver] = size;
         work.attribute_location[driver] = @intCast(location);
         driver += 1;
@@ -3842,7 +3966,7 @@ fn loopCost(work: *const Work, from: u16, to: u16) u32 {
                 cost += each.kind.parts();
                 continue;
             },
-            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .discard, .sample, .sample_compared, .output, .viewport => {
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .discard, .sample, .sample_compared, .output, .viewport, .system => {
                 cost += 1;
                 continue;
             },
@@ -6153,6 +6277,14 @@ const Order = struct {
         for (work.inputs[0..work.input_count]) |*each| {
             if (each.step != none) each.step = renamed[each.step];
         }
+        // A `.system` step dropped is a value the program does not read
+        // (since 1.192).
+        for (&work.system_step) |*each| {
+            if (each.* != none) each.* = renamed[each.*];
+        }
+        for (&work.system_value) |*each| {
+            if (each.* != none) each.* = renamed[each.*];
+        }
         for (&work.step_of) |*each| {
             if (each.* != none) each.* = renamed[each.*];
         }
@@ -6350,7 +6482,7 @@ fn oneFloat(work: *const Work, left: Float, right: Float) bool {
 /// component and a construct only name floats.
 fn computes(tag: Tag) bool {
     return switch (tag) {
-        .input, .constant, .push, .component, .construct, .discard, .output, .viewport, .ssbo_store, .ssbo_atomic, .barrier, .begin_if, .begin_else, .end_if, .phi, .scratch, .scratch_indirect, .scratch_store => false,
+        .input, .constant, .push, .component, .construct, .discard, .output, .viewport, .system, .ssbo_store, .ssbo_atomic, .barrier, .begin_if, .begin_else, .end_if, .phi, .scratch, .scratch_indirect, .scratch_store => false,
         else => true,
     };
 }
@@ -6426,7 +6558,7 @@ fn commutes(each: Step) bool {
 /// What a step reads, field by field.
 fn readsOf(each: Step) [4]?u16 {
     return switch (each.tag) {
-        .input, .constant, .push, .ubo, .ssbo, .viewport, .begin_else, .end_if, .scratch => .{ null, null, null, null },
+        .input, .constant, .push, .ubo, .ssbo, .viewport, .system, .begin_else, .end_if, .scratch => .{ null, null, null, null },
         // A phi reads its two floats where each way ends, which is where
         // nir_convert_from_ssa copies them (since 1.171); the condition
         // is the begin_if's.
@@ -6844,6 +6976,11 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 return;
             }
             if (work.class[from] != @intFromEnum(spirv.StorageClass.input)) return Error.Body;
+            if (systemOf(work, from)) |which| {
+                if (try kindOf(work, try idOf(operands[0])) != .f32x1) return Error.Type;
+                work.step_of[id] = try systemValueOf(work, which);
+                return;
+            }
             work.step_of[id] = try inputStep(work, work.points[from]);
         },
         .access_chain => {
@@ -8959,6 +9096,38 @@ fn inputStep(work: *Work, which: u16) Error!u16 {
     return work.inputs[which].step;
 }
 
+/// Which of VertexIndex (0) and InstanceIndex (1) the variable `id` is,
+/// or null (since 1.192).
+fn systemOf(work: *const Work, id: u16) ?usize {
+    for (work.system_ids, 0..) |each, which| if (each == id) return which;
+    return null;
+}
+
+/// A `.system` step of `which`, made the first time it is read.
+fn systemStep(work: *Work, which: SystemValue) Error!u16 {
+    const at = &work.system_step[@intFromEnum(which)];
+    if (at.* == none) at.* = try put(work, .{ .tag = .system, .kind = .f32x1, .at = @intFromEnum(which) });
+    return at.*;
+}
+
+/// What VertexIndex or InstanceIndex loads, made the first time it is
+/// read: as nir_lower_system_values lowers each (since 1.192).
+fn systemValueOf(work: *Work, which: usize) Error!u16 {
+    if (work.system_value[which] == none) work.system_value[which] = if (which == 0)
+        // load_vertex_id, where the ids are zero based: the VPM's id plus
+        // the first vertex (nir_lower_system_values.c:81-83). v3dv's are
+        // not zero based (v3dv_pipeline.c:212), the hardware counting from
+        // the draw's first vertex; this device's draws number their
+        // vertices from the lowest they draw (`_play.zig`).
+        try integerOf(work, .iadd, try systemStep(work, .vertex_id), try systemStep(work, .first_vertex))
+    else
+        // SYSTEM_VALUE_INSTANCE_INDEX: load_instance_id plus
+        // load_base_instance (nir_lower_system_values.c:202-208), each a
+        // row of the VPM's.
+        try integerOf(work, .iadd, try systemStep(work, .instance_id), try systemStep(work, .base_instance));
+    return work.system_value[which];
+}
+
 /// The kind of what an operand id names: its step's, or a constant's.
 fn kindOfValue(work: *const Work, word: u32) Error!Kind {
     const id = try idOf(word);
@@ -9401,7 +9570,7 @@ fn settle(work: *Work) Error!void {
             .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2 => return Error.Body,
             .select, .set_less, .sat, .sin, .cos, .sign, .logic, .integer => return Error.Body,
             // A vertex program's: `compile` reads a fragment program alone.
-            .output, .viewport, .round_to_int => return Error.Stage,
+            .output, .viewport, .system, .round_to_int => return Error.Stage,
             // A float of its own, read where it is first wanted rather
             // than at the top: a uniform is the next one in the stream
             // wherever the instruction sits, and holding them to the end
@@ -17575,4 +17744,131 @@ test "a module's bound is held to the tables: 4096 ids are read, and 4097 refuse
     // bound: the tables refuse it as they read it.
     work = .{};
     try testing.expectError(Error.Refused, throughMesa(&work, &comptime patched(&reference.glslc_flat_color, .load, 0, 1, most_ids)));
+}
+
+/// The instructions that add integers, on either side: Mesa prints the
+/// operation `add`, and a float's `fadd`.
+fn integerAdds(code: Code) usize {
+    var count: usize = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const printed = disasm.disasm(word, &buffer).?;
+        count += @intFromBool(std.mem.startsWith(u8, printed, "add ")) + std.mem.count(u8, printed, " add ");
+    }
+    return count;
+}
+
+const all_three = SystemValues{ .instance_id = true, .base_instance = true, .vertex_id = true };
+
+test "through Mesa's back end, a vertex program reads the VPM's instance id, base instance and vertex id before its attributes: InstanceIndex the first two summed, VertexIndex the id and the draw's first vertex" {
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const code = try vertexThroughMesa(&work, &reference.glslc_vertex_index, key);
+    try testing.expectEqual(all_three, code.vertex.system_values);
+    try testing.expect(!code.vertex.first_row);
+    // p whole and c as far as its green.
+    try testing.expectEqualSlices(u8, &.{ 4, 2 }, code.vertex.vattr_sizes[0..2]);
+    // Nine floats in, three of them the VPM's values (vir.c:894-899), and
+    // eight out: the input's two sectors, which the output shares.
+    try testing.expectEqual(@as(u8, 2), code.vertex.vpm_output_sectors);
+    // The three at rows 0 to 2, p at 3 to 6 and c's green at 8; the
+    // products' constants, the first vertex, the colour's 1; then what
+    // is stored where.
+    try testing.expectEqualSlices(Word, &.{
+        vpmIndex(0),         vpmIndex(1),               vpmIndex(2),                vpmIndex(3),
+        vpmIndex(4),         vpmIndex(5),               vpmIndex(6),                .{ .float = 0.25 },
+        .{ .float = 0.125 }, .first_vertex,             .{ .float = 0.0625 },       vpmIndex(8),
+        .{ .float = 1 },     vpmIndex(4),               vpmIndex(5),                vpmIndex(6),
+        vpmIndex(7),         .{ .viewport = .x_scale }, vpmIndex(0),                .{ .viewport = .y_scale },
+        vpmIndex(1),         .{ .viewport = .z_scale }, .{ .viewport = .z_offset }, vpmIndex(2),
+        vpmIndex(3),
+    }, code.stream());
+    try testing.expectEqual(@as(usize, 8), countOf(code, "ldvpmv_in"));
+    // InstanceIndex's sum and VertexIndex's, each made a float.
+    try testing.expectEqual(@as(usize, 2), integerAdds(code));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "itof"));
+}
+
+test "through Mesa's back end, the coordinate program reads the rows the vertex program does, and loads only what its position is made of" {
+    var work: Work = .{};
+    var key = VertexKey{ .coordinate = true, .system_values = all_three };
+    key.reads[0] = 4;
+    const code = try vertexThroughMesa(&work, &reference.glslc_vertex_index, key);
+    // The vertex id's row is the vertex program's (`VertexKey`), and its
+    // load dead code: p is rows 3 to 6, as it is there.
+    try testing.expectEqual(all_three, code.vertex.system_values);
+    try testing.expectEqualSlices(u8, &.{ 4, 0 }, code.vertex.vattr_sizes[0..2]);
+    try testing.expectEqualSlices(Word, &.{
+        vpmIndex(0),               vpmIndex(1),         vpmIndex(3),               vpmIndex(4), vpmIndex(5), vpmIndex(6),
+        .{ .float = 0.25 },        .{ .float = 0.125 }, vpmIndex(0),               vpmIndex(1), vpmIndex(2), vpmIndex(3),
+        .{ .viewport = .x_scale }, vpmIndex(4),         .{ .viewport = .y_scale }, vpmIndex(5),
+    }, code.stream());
+    try testing.expectEqual(@as(usize, 6), countOf(code, "ldvpmv_in"));
+    try testing.expectEqual(@as(usize, 1), integerAdds(code));
+    // Told none, it would read p from row 2, which the record of the
+    // vertex program's id puts the id in.
+    work = .{};
+    key.system_values = .{};
+    const alone = try vertexThroughMesa(&work, &reference.glslc_vertex_index, key);
+    try testing.expectEqual(SystemValues{ .instance_id = true, .base_instance = true }, alone.vertex.system_values);
+    try testing.expectEqualSlices(Word, &.{ vpmIndex(0), vpmIndex(1), vpmIndex(2), vpmIndex(3), vpmIndex(4), vpmIndex(5) }, alone.stream()[0..6]);
+}
+
+test "GFXH-1602: a coordinate program that reads the vertex id and not its first driver location reads past a row of it" {
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const vertex = try vertexThroughMesa(&work, &reference.glslc_index_place, key);
+    // The vertex program: the id at row 0, p's x and y at 1 and 2, and c
+    // as far as its blue at 3 to 5.
+    try testing.expectEqual(SystemValues{ .vertex_id = true }, vertex.vertex.system_values);
+    try testing.expect(!vertex.vertex.first_row);
+    try testing.expectEqualSlices(u8, &.{ 2, 3 }, vertex.vertex.vattr_sizes[0..2]);
+    try testing.expectEqualSlices(Word, &.{ vpmIndex(0), vpmIndex(3), vpmIndex(4), vpmIndex(5), .first_vertex }, vertex.stream()[0..5]);
+    try testing.expectEqual(@as(usize, 6), countOf(vertex, "ldvpmv_in"));
+    // The coordinate program reads no p: its first driver location takes
+    // a row all the same (ntq_emit_load_input, nir_to_vir.c:2963-2973),
+    // which the draw has the VPM load one float into, and c is 2 to 4.
+    work = .{};
+    key.coordinate = true;
+    key.system_values = vertex.vertex.system_values;
+    const coordinate = try vertexThroughMesa(&work, &reference.glslc_index_place, key);
+    try testing.expect(coordinate.vertex.first_row);
+    try testing.expectEqualSlices(u8, &.{ 0, 3 }, coordinate.vertex.vattr_sizes[0..2]);
+    try testing.expectEqualSlices(Word, &.{ vpmIndex(0), vpmIndex(2), vpmIndex(3), vpmIndex(4), .first_vertex }, coordinate.stream()[0..5]);
+    try testing.expectEqual(@as(usize, 4), countOf(coordinate, "ldvpmv_in"));
+    try testing.expectEqual(@as(usize, 1), integerAdds(coordinate));
+    // Its row is none of the input's (vir.c:860-899): one for the id and
+    // three for c, one sector.
+    try testing.expectEqual(@as(u8, 1), coordinate.vertex.vpm_output_sectors);
+}
+
+test "GFXH-1602 is the built-ins' alone: a coordinate program that reads neither them nor its first driver location reads its attributes from row 0" {
+    // vertex_flat with p and c swapped: c at location 0, which only the
+    // varying is made of, and p at 1.
+    const swapped = comptime patched(&patched(&reference.glslc_vertex_flat, .decorate, 1, 2, 1), .decorate, 5, 2, 0);
+    var work: Work = .{};
+    var key = VertexKey{ .coordinate = true };
+    key.reads[0] = 4;
+    const code = try vertexThroughMesa(&work, &swapped, key);
+    try testing.expectEqual(SystemValues{}, code.vertex.system_values);
+    try testing.expect(!code.vertex.first_row);
+    try testing.expectEqualSlices(u8, &.{ 0, 4, 2 }, code.vertex.vattr_sizes[0..3]);
+    try testing.expectEqual(@as(usize, 6), countOf(code, "ldvpmv_in"));
+    try testing.expectEqualSlices(Word, &.{ vpmIndex(0), vpmIndex(1), vpmIndex(2), vpmIndex(3), vpmIndex(4), vpmIndex(5) }, code.stream()[0..6]);
+}
+
+test "VertexIndex and InstanceIndex are a vertex program's, of an input variable each: any other built-in of a variable is refused" {
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    // InstanceIndex made VertexId, which Vulkan has not.
+    var work: Work = .{};
+    try testing.expectError(Error.Refused, vertexThroughMesa(&work, &comptime patched(&reference.glslc_vertex_index, .decorate, 0, 2, 5), key));
+    // Both variables VertexIndex.
+    work = .{};
+    try testing.expectError(Error.Refused, vertexThroughMesa(&work, &comptime patched(&reference.glslc_vertex_index, .decorate, 0, 2, @intFromEnum(spirv.BuiltIn.vertex_index)), key));
+    // And in a fragment program, as before.
+    work = .{};
+    try testing.expectError(Error.Refused, throughMesa(&work, &comptime patched(&reference.glslc_flat_color, .decorate, 0, 1, @intFromEnum(spirv.Decoration.built_in))));
 }
