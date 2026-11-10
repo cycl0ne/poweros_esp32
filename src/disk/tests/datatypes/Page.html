@@ -35,7 +35,9 @@ Bytes that are UTF-8: Grüße, naïve, Ærø.</p>
 <h2>Links</h2>
 <p>A <a href="Reading.md">link to the Markdown page beside this one</a>,
 one to <a href="https://example.com/a%20b?x=1&amp;y=2">a page on the
-net</a>, and an <a name="anchor">anchor that leads nowhere</a>.</p>
+net</a>, one <a href="#tables">down to the tables</a>, and an
+<a name="anchor">anchor</a> that <a href="#anchor">a link</a> leads
+back to. Backspace goes back the way the links came.</p>
 
 <h2>Lists</h2>
 <ul>
@@ -79,7 +81,7 @@ const answer = 42;	// a tab
 
 <hr>
 
-<h2>Tables</h2>
+<h2 id="tables">Tables</h2>
 <table>
   <caption>Planets</caption>
   <thead>

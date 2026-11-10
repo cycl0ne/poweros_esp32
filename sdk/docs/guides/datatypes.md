@@ -524,6 +524,7 @@ MultiView <file> SCALE          a picture at the size of the window
 MultiView SYS:Tests/datatypes/Spinner.json    an animation, played
 MultiView SYS:Tests/datatypes/Torus.obj       a model, turned by the pointer
 MultiView MEDIA:Films/Charlotte.mkv           a film, played with its sound
+MultiView https://en.wikipedia.org/wiki/HTML  a page on the web
 ```
 
 It knows no formats. It opens the file through the library, puts the
@@ -552,6 +553,23 @@ its update follows. The program takes every message waiting before it
 does this, once for the batch: one redraw per message would fall a
 message further behind with every step of a drag, since a redraw costs
 about what a step does.
+
+A link on a page is followed. A press let go on the object is reported
+(`GA_RelVerify`, which the window object answers with `WMHI_GADGETUP`
+and the object's `GA_ID`), and MultiView reads `TDTA_Link`: a place on
+the page is gone to with `DTM_GOTO`; another page - a file, named from
+the drawer this one is in, or an address on the web, read against this
+page's own - opens in the same window at the same size, and its place
+is gone to once it is laid out. Backspace goes back the way the links
+came, sixteen pages at the most, to where each page was left; a page
+gone back to is read again. A page on the web is fetched whole through
+`http.library`, which MultiView opens for the first such page and not
+before, and shown from memory (`DTST_MEMORY`), so that what it starts
+with says what it is; its address is its title until it names itself.
+`https:` checks the server's certificate, which needs the clock set. A
+link to a mail address or a script leads nowhere, and one that cannot
+be followed - no file, no page, no place of that name - flashes the
+screen.
 
 ## Writing a class
 

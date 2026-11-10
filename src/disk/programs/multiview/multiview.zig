@@ -16,9 +16,23 @@
 //! object holds, or goes on with it, when the object says it can be
 //! (`STM_PAUSE` among its trigger methods).
 //!
+//! **A link is followed.** A press on a link in a page of text - the
+//! object says which (`TDTA_Link`) - shows where it leads in place of
+//! the page, in a window where the last one was and as large: another
+//! file, read from the drawer the page is in, or a page on the web; a
+//! link to a place on the page scrolls there (`DTM_GOTO`), and one to a
+//! place on another page shows that page there. Backspace goes back the
+//! way the links came, to where each page was left. FILE may itself be
+//! an address on the web, `http://` or `https://`. A page on the web is
+//! fetched whole through http.library and shown from memory, and the
+//! network is opened for the first one and not before (fetch.zig); where
+//! a link leads is links.zig's.
+//!
 //! **MultiView knows no formats.** Everything it shows it shows by
 //! opening the object and adding it to a window; a new kind of file is a
-//! new class and a new descriptor, and this program does not change.
+//! new class and a new descriptor, and this program does not change. A
+//! page fetched from the web comes without a file's name, and its class
+//! knows it by what it holds.
 //!
 //! The bars are the window object's (`WINDOWA_VertScroller`,
 //! `WINDOWA_HorizScroller`), made with the program's tags: their
@@ -45,18 +59,22 @@ const asl = sdk.asl;
 const datatypes = sdk.datatypes;
 const dtc = datatypes.datatypesclass;
 const pic = datatypes.pictureclass;
+const tdc = datatypes.textclass;
+const links = @import("links.zig");
+const fetch = @import("fetch.zig");
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const DataTypesBase = sdk.interface.datatypes.DataTypesBase;
 const AslBase = sdk.interface.asl.AslBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const Object = intuition.Object;
 const TagItem = utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "MultiView";
-const VERSION = "1.4";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (20.10.2026)\r\n";
+const VERSION = "1.5";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -75,6 +93,11 @@ const MSG_NOOBJECT = "%s: %s\n";
 
 const ID_VERT = 1;
 const ID_HORIZ = 2;
+/// The object's, so that a press let go on it is told from the bars'.
+const ID_OBJECT = 3;
+
+/// The key that goes back.
+const KEY_BACK = 8;
 
 // --- what is connected to what ------------------------------------------------
 //
@@ -258,6 +281,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(asl_lib);
     const al: *AslBase = @ptrCast(asl_lib);
 
+    const utility_lib = sys.OpenLibrary(utility.UTILITYNAME, 0) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{utility.UTILITYNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(utility_lib);
+    const ub: *UtilityBase = @ptrCast(utility_lib);
+
     const screen_name: ?[*:0]const u8 = @ptrFromInt(argv[arg_pubscreen]);
     const screen = ib.LockPubScreen(screen_name) orelse {
         _ = Printf(dl, MSG_NOSCREEN, .{});
@@ -265,26 +295,51 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer ib.UnlockPubScreen(null, screen);
 
-    // The clipboard, or a file - named, or asked for.
+    // The pages shown and the way back through them, which are larger
+    // than a stack is to be asked for.
+    const session: *Session = @ptrCast(@alignCast(sys.AllocVec(@sizeOf(Session), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+        _ = Printf(dl, MSG_NOMEMORY, .{});
+        return dos.RETURN_FAIL;
+    }));
+    defer sys.FreeVec(session);
+    // Cleared, it is a session with nothing shown yet and no network.
+    session.web.sys = sys;
+    defer session.web.close();
+
+    const shown = Shown{ .sys = sys, .dl = dl, .ib = ib, .dt = dt, .ub = ub, .screen = screen, .scale = argv[arg_scale] != 0, .session = session };
+
+    // The clipboard, or a file or a page on the web - named, or asked
+    // for.
     var unit_name: [8]u8 = @splat(0);
     var chosen: [264]u8 = @splat(0);
-    var source: u32 = dtc.DTST_FILE;
-    var name: ?[*:0]const u8 = null;
+    var object: *Object = undefined;
     if (argv[arg_clip] != 0) {
         const unit: *const i32 = @ptrFromInt(argv[arg_clip]);
-        source = dtc.DTST_CLIPBOARD;
-        name = writeNumber(&unit_name, @max(unit.*, 0));
+        const name = writeNumber(&unit_name, @max(unit.*, 0));
+        object = makeObject(dl, dt, name, dtc.DTST_CLIPBOARD, shown.scale) orelse {
+            var why: [128]u8 = @splat(0);
+            _ = Printf(dl, MSG_NOOBJECT, .{ name, faultText(dl, &why) });
+            return dos.RETURN_FAIL;
+        };
     } else {
-        name = fileWanted(al, @ptrFromInt(argv[arg_file]), &chosen) orelse return dos.RETURN_WARN;
+        const name = fileWanted(al, @ptrFromInt(argv[arg_file]), &chosen) orelse return dos.RETURN_WARN;
+        var length: usize = 0;
+        while (name[length] != 0) length += 1;
+        if (!session.next.take(name[0..length])) {
+            _ = Printf(dl, MSG_NOOBJECT, .{ name, "the name is too long" });
+            return dos.RETURN_FAIL;
+        }
+        object = shown.load(&session.next) orelse {
+            if (session.next.web) {
+                _ = Printf(dl, MSG_NOOBJECT, .{ name, @as([*:0]const u8, @ptrCast(&session.web.why)) });
+            } else {
+                var why: [128]u8 = @splat(0);
+                _ = Printf(dl, MSG_NOOBJECT, .{ name, faultText(dl, &why) });
+            }
+            return dos.RETURN_FAIL;
+        };
+        session.now = session.next;
     }
-    var object = makeObject(dl, dt, name.?, source, argv[arg_scale] != 0) orelse {
-        var why: [128]u8 = @splat(0);
-        _ = Printf(dl, MSG_NOOBJECT, .{ name.?, faultText(dl, &why) });
-        return dos.RETURN_FAIL;
-    };
-    // A file dropped on the window takes the place of the one shown, in a
-    // window where the last one was.
-    const shown = Shown{ .sys = sys, .dl = dl, .ib = ib, .dt = dt, .screen = screen, .scale = argv[arg_scale] != 0 };
     var place: ?Place = null;
     while (true) {
         switch (shown.show(object, &place)) {
@@ -299,10 +354,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 fn makeObject(dl: *DosBase, dt: *DataTypesBase, name: [*:0]const u8, source: u32, scale: bool) ?*Object {
     // The window is titled with the file's own name, not the path it
     // was reached by: a drawer name that fills the title bar tells a
-    // person nothing they did not just type.
+    // person nothing they did not just type. A class whose contents name
+    // themselves - a page's title - says so instead.
     return dt.NewDTObjectA(@ptrCast(name), &[_]TagItem{
         .{ .tag = dtc.DTA_SourceType, .data = source },
         .{ .tag = dtc.DTA_Title, .data = @intFromPtr(dl.FilePart(name)) },
+        .{ .tag = gc.GA_ID, .data = ID_OBJECT },
         // The object lays itself out on a process of its own, so the
         // numbers the bars need are not right until it says so. It says
         // so as an IDCMP message, which is the only way a program hears
@@ -317,12 +374,80 @@ fn makeObject(dl: *DosBase, dt: *DataTypesBase, name: [*:0]const u8, source: u32
     });
 }
 
-/// Where the window was, for the next one.
-const Place = struct { left: i32, top: i32 };
+/// Bytes fetched from the web opened as a data type object: without a
+/// file's name, so that what they hold says what they are, and titled
+/// with their address until they name themselves.
+fn memoryObject(dt: *DataTypesBase, bytes: []const u8, address: [*:0]const u8, scale: bool) ?*Object {
+    return dt.NewDTObjectA(null, &[_]TagItem{
+        .{ .tag = dtc.DTA_SourceType, .data = dtc.DTST_MEMORY },
+        .{ .tag = dtc.DTA_Handle, .data = @intFromPtr(bytes.ptr) },
+        .{ .tag = dtc.DTA_SourceSize, .data = bytes.len },
+        .{ .tag = dtc.DTA_Title, .data = @intFromPtr(address) },
+        .{ .tag = gc.GA_ID, .data = ID_OBJECT },
+        .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{ .tag = if (scale) pic.PDTA_Scale else utility.TAG_IGNORE, .data = 1 },
+        .{ .tag = dtc.DTA_Immediate, .data = 1 },
+        .{},
+    });
+}
+
+/// Where the window was, for the next one, and how large when the next
+/// is a link's page, which takes the size it was read at.
+const Place = struct { left: i32, top: i32, width: i32 = 0, height: i32 = 0 };
 
 /// What showing an object came to: the program done, with its return
 /// code, or another object to show in its place.
 const Outcome = union(enum) { done: i32, next: *Object };
+
+/// How many pages back are kept.
+const back_most = 16;
+/// The longest name of a place on a page that is gone to.
+const place_most = 255;
+
+/// A page left by a link: where it came from, and how far down it was.
+const Visit = struct { where: links.Location, top: i32 };
+
+/// What is done once a page shown is laid out.
+const Arrival = enum { none, place, top };
+
+/// The pages a window shows, and the way back through them.
+const Session = struct {
+    /// The page shown, and the next one, while it is being opened.
+    now: links.Location = .{},
+    next: links.Location = .{},
+    /// The pages left, the last the most recent.
+    back: [back_most]Visit = undefined,
+    back_count: usize = 0,
+    /// Where on the page being shown it is to be: a place's name, or a
+    /// top it was left at.
+    arrival: Arrival = .none,
+    arrive_place: [place_most + 1]u8 = @splat(0),
+    arrive_top: i32 = 0,
+    web: fetch.Web,
+
+    /// The page shown remembered, `top` down, before another is gone to;
+    /// the oldest forgotten when there are as many as are kept.
+    fn remember(session: *Session, top: i32) void {
+        if (session.back_count == back_most) {
+            for (0..back_most - 1) |k| session.back[k] = session.back[k + 1];
+            session.back_count -= 1;
+        }
+        session.back[session.back_count] = .{ .where = session.now, .top = top };
+        session.back_count += 1;
+    }
+
+    /// The place on the next page to be gone to once it is laid out.
+    fn arriveAt(session: *Session, place: []const u8) void {
+        if (place.len == 0 or place.len > place_most) {
+            session.arrival = .none;
+            return;
+        }
+        @memcpy(session.arrive_place[0..place.len], place);
+        session.arrive_place[place.len] = 0;
+        session.arrival = .place;
+    }
+};
 
 /// What every window is shown with.
 const Shown = struct {
@@ -330,12 +455,15 @@ const Shown = struct {
     dl: *DosBase,
     ib: *IntuitionBase,
     dt: *DataTypesBase,
+    ub: *UtilityBase,
     screen: *intuition.Screen,
     scale: bool,
+    session: *Session,
 
     /// `object` in a window - where the last one was, when there was one
-    /// - until the window is closed, or a file dropped on it can be
-    /// shown instead. The object is the window's from here on.
+    /// - until the window is closed, or a link pressed or a file dropped
+    /// on it leads to something to be shown instead. The object is the
+    /// window's from here on.
     fn show(shown: *const Shown, object: *Object, place: *?Place) Outcome {
         const ib = shown.ib;
         const dl = shown.dl;
@@ -381,12 +509,15 @@ const Shown = struct {
         };
 
         const at = place.*;
+        const sized = if (at) |p| p.width > 0 and p.height > 0 else false;
         const window_object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
             .{ .tag = wn.WA_Title, .data = @intFromPtr(title) },
             .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr(SCREEN_TITLE) },
             .{ .tag = wn.WA_PubScreen, .data = @intFromPtr(shown.screen) },
             .{ .tag = if (at != null) wn.WA_Left else utility.TAG_IGNORE, .data = if (at) |p| @bitCast(@as(isize, p.left)) else 0 },
             .{ .tag = if (at != null) wn.WA_Top else utility.TAG_IGNORE, .data = if (at) |p| @bitCast(@as(isize, p.top)) else 0 },
+            .{ .tag = if (sized) wn.WA_Width else utility.TAG_IGNORE, .data = if (at) |p| @bitCast(@as(isize, p.width)) else 0 },
+            .{ .tag = if (sized) wn.WA_Height else utility.TAG_IGNORE, .data = if (at) |p| @bitCast(@as(isize, p.height)) else 0 },
             // A larger object than the last is moved in from the edge
             // rather than not shown.
             .{ .tag = wn.WA_AutoAdjust, .data = 1 },
@@ -423,8 +554,15 @@ const Shown = struct {
         _ = ib.GetAttr(wc.WINDOWA_VertScroller, window_object, &vert);
         _ = ib.GetAttr(wc.WINDOWA_HorizScroller, window_object, &horiz);
         const made = Bars{ .vert = @ptrFromInt(vert), .horiz = @ptrFromInt(horiz) };
-        // Where the window was, for the next one, while it is still open.
-        defer place.* = .{ .left = windowAttr(ib, window, wn.WA_Left), .top = windowAttr(ib, window, wn.WA_Top) };
+        // Where the window was, for the next one, while it is still open:
+        // and as large, for a page a link led to.
+        var keep_size = false;
+        defer place.* = .{
+            .left = windowAttr(ib, window, wn.WA_Left),
+            .top = windowAttr(ib, window, wn.WA_Top),
+            .width = if (keep_size) windowAttr(ib, window, wn.WA_Width) else 0,
+            .height = if (keep_size) windowAttr(ib, window, wn.WA_Height) else 0,
+        };
         // Files let go on the window, while the desktop runs; taken off
         // its list before the window closes.
         var target: sdk.anvil.DropTarget = .{};
@@ -440,7 +578,7 @@ const Shown = struct {
             const got = ib.WaitIMsg(window, target.signal() | exec.SIGBREAKF_CTRL_C);
             if (got & exec.SIGBREAKF_CTRL_C != 0) return .{ .done = dos.RETURN_WARN };
             if (got & target.signal() != 0) {
-                if (shown.dropped(&target, window)) |next| return .{ .next = next };
+                if (shown.dropped(&target, window, object)) |next| return .{ .next = next };
             }
             // Everything waiting is taken first and answered once.
             //
@@ -462,24 +600,148 @@ const Shown = struct {
                     // its own: its numbers are right only now, and what is
                     // on the screen was drawn from the layout before it.
                     wc.WMHI_IDCMPUPDATE => draw = true,
+                    // A press let go on the object: on a link, it is
+                    // followed.
+                    wc.WMHI_GADGETUP => if (word & wc.WMHI_GADGETMASK == ID_OBJECT) {
+                        if (shown.follow(object, window)) |next| {
+                            keep_size = true;
+                            return .{ .next = next };
+                        }
+                    },
                     wc.WMHI_VANILLAKEY => switch (word & wc.WMHI_KEYMASK) {
                         27 => return .{ .done = dos.RETURN_OK },
                         ' ' => pause(dt, object, window),
+                        KEY_BACK => if (shown.goBack(object, window, made)) |next| {
+                            keep_size = true;
+                            return .{ .next = next };
+                        },
                         else => {},
                     },
                     else => {},
                 }
             }
             if (draw) {
+                // A page that is to be shown somewhere down is put there
+                // once it has been laid out for the window: not before,
+                // as where anything is is not known until then.
+                if (shown.session.arrival != .none and laidOut(ib, object)) shown.arrive(object, window);
                 followObject(ib, made, object, window);
                 dt.RefreshDTObjectA(object, window, null, null);
             }
         }
     }
 
+    /// The page at `where` opened: a file, or a page fetched from the
+    /// web, after which `where` names where it came from. Null when it
+    /// could not be.
+    fn load(shown: *const Shown, where: *links.Location) ?*Object {
+        if (!where.web) return makeObject(shown.dl, shown.dt, where.name(), dtc.DTST_FILE, shown.scale);
+        const bytes = shown.session.web.fetch(shown.dl, where) orelse return null;
+        defer shown.sys.FreeVec(bytes.ptr);
+        return memoryObject(shown.dt, bytes, where.name(), shown.scale);
+    }
+
+    /// The page at `where` opened while the window waits, with the busy
+    /// pointer up; the screen flashed when it could not be.
+    fn loadWaiting(shown: *const Shown, window: *intuition.Window, where: *links.Location) ?*Object {
+        shown.ib.SetWindowPointerA(window, &[_]TagItem{ .{ .tag = wn.WA_BusyPointer, .data = 1 }, .{} });
+        const made = shown.load(where);
+        if (made == null) {
+            shown.ib.SetWindowPointerA(window, null);
+            shown.ib.DisplayBeep(shown.screen);
+        }
+        return made;
+    }
+
+    /// The link the press was let go on followed: a place on this page
+    /// scrolled to, or the page it leads to opened, to be shown in place
+    /// of this one.
+    fn follow(shown: *const Shown, object: *Object, window: *intuition.Window) ?*Object {
+        const session = shown.session;
+        var storage: usize = 0;
+        if (shown.ib.GetAttr(tdc.TDTA_Link, object, &storage) == 0 or storage == 0) return null;
+        const pressed: [*:0]const u8 = @ptrFromInt(storage);
+        var length: usize = 0;
+        while (pressed[length] != 0) length += 1;
+        if (length == 0) return null;
+        const top = ask(shown.ib, object, dtc.DTA_TopVert);
+        switch (links.resolve(shown.ub, &session.now, pressed[0..length], &session.next)) {
+            .nowhere => shown.ib.DisplayBeep(shown.screen),
+            .here => |name| {
+                var goto_name: [place_most + 1]u8 = @splat(0);
+                if (name.len > place_most) {
+                    shown.ib.DisplayBeep(shown.screen);
+                    return null;
+                }
+                @memcpy(goto_name[0..name.len], name);
+                session.remember(top);
+                var goto = dtc.DtGoto{ .node_name = @ptrCast(&goto_name) };
+                if (shown.dt.DoDTMethodA(object, window, null, @ptrCast(&goto)) == 0) {
+                    session.back_count -= 1;
+                    shown.ib.DisplayBeep(shown.screen);
+                }
+            },
+            .page => |name| {
+                // The place's name is the old object's, which goes with
+                // the window: kept before the next page is opened.
+                session.arriveAt(name);
+                const next = shown.loadWaiting(window, &session.next) orelse {
+                    session.arrival = .none;
+                    return null;
+                };
+                session.remember(top);
+                session.now = session.next;
+                return next;
+            },
+        }
+        return null;
+    }
+
+    /// Back where the last link was pressed: on this page, scrolled there;
+    /// on another, that page opened, to be shown where it was left.
+    fn goBack(shown: *const Shown, object: *Object, window: *intuition.Window, bars: Bars) ?*Object {
+        const session = shown.session;
+        if (session.back_count == 0) {
+            shown.ib.DisplayBeep(shown.screen);
+            return null;
+        }
+        const visit = &session.back[session.back_count - 1];
+        if (visit.where.same(&session.now)) {
+            session.back_count -= 1;
+            scrollTo(shown.ib, object, window, visit.top);
+            followObject(shown.ib, bars, object, window);
+            shown.dt.RefreshDTObjectA(object, window, null, null);
+            return null;
+        }
+        session.next = visit.where;
+        const next = shown.loadWaiting(window, &session.next) orelse return null;
+        session.back_count -= 1;
+        session.now = session.next;
+        session.arrival = .top;
+        session.arrive_top = visit.top;
+        return next;
+    }
+
+    /// The page just laid out put where it is to be: at a place on it, or
+    /// as far down as it was left.
+    fn arrive(shown: *const Shown, object: *Object, window: *intuition.Window) void {
+        const session = shown.session;
+        switch (session.arrival) {
+            .none => {},
+            .place => {
+                var goto = dtc.DtGoto{ .node_name = @ptrCast(&session.arrive_place) };
+                _ = shown.dt.DoDTMethodA(object, window, null, @ptrCast(&goto));
+            },
+            .top => scrollTo(shown.ib, object, window, session.arrive_top),
+        }
+        session.arrival = .none;
+    }
+
     /// The last file let go on the window opened as an object; null, and
-    /// the screen flashed, when none of them could be.
-    fn dropped(shown: *const Shown, target: *sdk.anvil.DropTarget, window: *intuition.Window) ?*Object {
+    /// the screen flashed, when none of them could be. It is gone to as a
+    /// link is: Backspace comes back.
+    fn dropped(shown: *const Shown, target: *sdk.anvil.DropTarget, window: *intuition.Window, object: *Object) ?*Object {
+        const session = shown.session;
         var name: [dos.path_max + 1]u8 = undefined;
         var next: ?*Object = null;
         while (target.next(shown.dl, &name)) |file| {
@@ -490,11 +752,35 @@ const Shown = struct {
             };
             if (next) |earlier| shown.dt.DisposeDTObject(earlier);
             next = made;
+            var length: usize = 0;
+            while (file.name[length] != 0) length += 1;
+            if (!session.next.take(file.name[0..length])) session.next = .{};
         }
-        if (next != null) shown.ib.ActivateWindow(window);
+        if (next != null) {
+            session.remember(ask(shown.ib, object, dtc.DTA_TopVert));
+            session.now = session.next;
+            session.arrival = .none;
+            shown.ib.ActivateWindow(window);
+        }
         return next;
     }
 };
+
+/// Whether the object has been laid out for its window: no process is
+/// laying it out any more.
+fn laidOut(ib: *IntuitionBase, object: *Object) bool {
+    var process: usize = 0;
+    _ = ib.GetAttr(dtc.DTA_LayoutProc, object, &process);
+    return process == 0;
+}
+
+/// The object's view moved to start `top` down.
+fn scrollTo(ib: *IntuitionBase, object: *Object, window: *intuition.Window, top: i32) void {
+    _ = ib.SetGadgetAttrsTagList(object, window, &[_]TagItem{
+        .{ .tag = dtc.DTA_TopVert, .data = @bitCast(@as(isize, top)) },
+        .{},
+    });
+}
 
 /// What the object holds paused, or gone on with, if it lists `STM_PAUSE`
 /// among what it can be told to do: a program offers what the object

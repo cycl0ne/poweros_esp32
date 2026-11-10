@@ -261,10 +261,11 @@ Beside them:
   checked by `sdk/tools/catcomp`: the desktop's, Notepad's, Sheet's,
   the Player's, Movie's and the Clock's in German
   ([locale guide](sdk/docs/guides/locale.md)).
-- **Programs:** in `SYS:Programs` MultiView, Notepad, Sheet, Terminal,
-  Player, FontView, Battery, Prefs and Volume; in `SYS:System` the Shell,
-  HDToolBox, Shares, Update, CPULoad, NetLoad, MemMap and Clock - the
-  time on a dial or in figures, which the dock's clock opens; in
+- **Programs:** in `SYS:Programs` MultiView - any file the datatypes
+  know, a page's links followed to files and to the web - Notepad,
+  Sheet, Terminal, Player, FontView, Battery, Prefs and Volume; in
+  `SYS:System` the Shell, HDToolBox, Shares, Update, CPULoad, NetLoad,
+  MemMap and Clock - the time on a dial or in figures, which the dock's clock opens; in
   `SYS:Commodities` Exchange, which lists the commodities running and
   makes each active or inactive, shows or hides its window, or ends it,
   and the commodities
