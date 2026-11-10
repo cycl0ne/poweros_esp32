@@ -62,6 +62,7 @@ const files = @import("../file/_file.zig");
 const DosBase = @import("../dos_base.zig").DosBase;
 const dos = sdk.dos;
 const exec = sdk.exec;
+const utf8 = sdk.utility.utf8;
 const rd = dos.rdargs;
 const RDArgs = rd.RDArgs;
 const CSource = rd.CSource;
@@ -735,15 +736,19 @@ pub fn text(code: i32) ?[*:0]const u8 {
 pub const Fill = struct {
     buffer: []u8,
     n: usize = 0,
+    /// Something was cut: nothing more goes in after it.
+    full: bool = false,
 
-    /// Appends as much of `bytes` as fits.
+    /// Appends as much of `bytes` as fits, cut where a character starts.
     ///
     /// INPUTS:
     /// - `f` - the buffer being filled.
     /// - `bytes` - what to append.
     pub fn put(f: *Fill, bytes: []const u8) void {
-        const count = @min(bytes.len, f.buffer.len - f.n);
+        if (f.full) return;
+        const count = utf8.cut(bytes, f.buffer.len - f.n);
         @memcpy(f.buffer[f.n..][0..count], bytes[0..count]);
         f.n += count;
+        f.full = count < bytes.len;
     }
 };

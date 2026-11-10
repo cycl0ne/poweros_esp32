@@ -562,7 +562,7 @@ pub fn noCli(db: *DosBase, buffer: [*]u8, size: u32) bool {
 /// it was cut or `size` is 0.
 pub fn copyOut(db: *DosBase, text: []const u8, buffer: [*]u8, size: u32) bool {
     if (size == 0) return fail(db, dos.ERROR_LINE_TOO_LONG);
-    const n = @min(text.len, size - 1);
+    const n = sdk.utility.utf8.cut(text, size - 1);
     if (n != 0) db.sys_base.CopyMem(text.ptr, buffer, n);
     buffer[n] = 0;
     if (n < text.len) return fail(db, dos.ERROR_LINE_TOO_LONG);
@@ -965,7 +965,9 @@ pub fn deliver(db: *DosBase, value: []const u8, whole: usize, buffer: [*]u8, roo
             }
         }
     }
-    n = @min(n, if (null_term) room - 1 else room);
+    const limit = if (null_term) room - 1 else room;
+    // Text is cut where a character starts; binary data anywhere.
+    n = if (binary) @min(n, limit) else sdk.utility.utf8.cut(value[0..n], limit);
     if (n != 0) db.sys_base.CopyMem(value.ptr, buffer, n);
     if (null_term) buffer[n] = 0;
     _ = dos_lib.SetIoErr(@intCast(whole));

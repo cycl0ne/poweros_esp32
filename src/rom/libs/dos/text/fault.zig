@@ -15,7 +15,7 @@ const Fill = _text.Fill;
 /// fn Fault(db: *DosBase, code: i32, header: ?[*:0]const u8, buffer: [*]u8, len: i32) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -484.
+/// SINCE: 1.0, cut by character since 1.21. LVO -484.
 ///
 /// INPUTS:
 /// - `code` - the error code: an IoErr code, or one of the shell's
@@ -31,7 +31,8 @@ const Fill = _text.Fill;
 /// BEHAVIOR:
 /// The text is "header: text", or the text alone for a null header; a code
 /// without a text gives "Error <code>". The whole is cut to `len - 1` bytes
-/// and ended with a NUL; nothing is written for a code of 0 but the NUL.
+/// at most, where a character starts, and ended with a NUL; nothing is
+/// written for a code of 0 but the NUL.
 /// IoErr is not touched.
 ///
 /// CONTEXT:

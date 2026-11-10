@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! SplitName: takes a path apart one component at a time.
 
+const utf8 = @import("sdk").utility.utf8;
 const DosBase = @import("../dos_base.zig").DosBase;
 
 /// Copies one component of a path into a buffer.
@@ -10,7 +11,7 @@ const DosBase = @import("../dos_base.zig").DosBase;
 /// fn SplitName(db: *DosBase, name: [*:0]const u8, separator: u8, buf: [*]u8, oldpos: i32, size: u32) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -116.
+/// SINCE: 1.0, cut by character since 1.21. LVO -116.
 ///
 /// INPUTS:
 /// - `name` - the path.
@@ -27,8 +28,9 @@ const DosBase = @import("../dos_base.zig").DosBase;
 ///
 /// BEHAVIOR:
 /// The text from `oldpos` up to the next `separator` (or the end) goes to
-/// `buf`, cut to `size` - 1 bytes and ended with a NUL. A cut component
-/// still returns the position after its separator, so the walk goes on.
+/// `buf`, cut to `size` - 1 bytes and ended with a NUL; a cut ends where a
+/// character starts, never inside one. A cut component still returns the
+/// position after its separator, so the walk goes on.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -62,7 +64,7 @@ pub fn SplitName(db: *DosBase, name: [*:0]const u8, separator: u8, buf: [*]u8, o
     if (oldpos < 0 or oldpos >= len) return -1;
     const start: usize = @intCast(oldpos);
     const end = if (utility_lib.Strchr(name + start, separator)) |at| @intFromPtr(at) - @intFromPtr(name) else len;
-    const n = @min(end - start, size - 1);
+    const n = utf8.cut(name[start..end], size - 1);
     @memcpy(buf[0..n], name[start..][0..n]);
     buf[n] = 0;
     return if (end == len) -1 else @intCast(end + 1);

@@ -17,7 +17,7 @@ const findFirst = _lock.findFirst;
 /// fn MatchFirst(db: *DosBase, pattern: [*:0]const u8, anchor: *dos.AnchorPath) i32
 /// ```
 ///
-/// SINCE: 1.0, names by character since 1.20. LVO -336.
+/// SINCE: 1.0, names by character since 1.20, cuts by character since 1.21. LVO -336.
 ///
 /// INPUTS:
 /// - `pattern` - the pattern, in utility.library's syntax after a literal
@@ -30,7 +30,8 @@ const findFirst = _lock.findFirst;
 /// 0 when an object was found: its FileInfoBlock is in ap_Info, and its
 /// full path in the buffer when ap_Strlen isn't 0. Otherwise an error, also
 /// in IoErr: ERROR_NO_MORE_ENTRIES when nothing matches,
-/// ERROR_BUFFER_OVERFLOW when the path was cut to fit (the search goes on),
+/// ERROR_BUFFER_OVERFLOW when the path was cut to fit, where a character
+/// starts (the search goes on),
 /// ERROR_BAD_TEMPLATE for a pattern that doesn't parse, ERROR_BREAK when
 /// one of ap_BreakBits came, or a handler's error.
 ///

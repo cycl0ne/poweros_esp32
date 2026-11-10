@@ -744,6 +744,11 @@ test "SplitName: part by part, a long part cut, past the end" {
     try testing.expectEqualStrings("ab", std.mem.sliceTo(&part, 0));
     try testing.expectEqual(@as(i32, -1), dl.SplitName(name, '/', &part, 20, part.len));
     try testing.expectEqualStrings("", std.mem.sliceTo(&part, 0));
+    // Cut where a character starts; Latin-1 is cut anywhere.
+    try testing.expectEqual(@as(i32, 6), dl.SplitName("a\xC3\xA4\xC3\xB6/x", '/', &part, 0, 3));
+    try testing.expectEqualStrings("a", std.mem.sliceTo(&part, 0));
+    try testing.expectEqual(@as(i32, 4), dl.SplitName("a\xE4\xF6/x", '/', &part, 0, 3));
+    try testing.expectEqualStrings("a\xE4", std.mem.sliceTo(&part, 0));
     try tearDown(db);
 }
 
@@ -2948,6 +2953,14 @@ test "MatchNext: DODIR and DIDDIR, a break, a full path too long, the single ent
     try testing.expectEqualStrings("RAMT:d/", small.path()); // cut, with its NUL
     try testing.expect(small.ap.base != null);
     dl.MatchEnd(&small.ap);
+    // A cut ends where a character starts.
+    try makeFile(dl, "RAMT:d/\xC3\xA4", 1);
+    small.ap.strlen = 9;
+    try testing.expectEqual(dos.ERROR_BUFFER_OVERFLOW, dl.MatchFirst("RAMT:d/\xC3\xA4", &small.ap));
+    try testing.expectEqualStrings("RAMT:d/", small.path());
+    dl.MatchEnd(&small.ap);
+    try testing.expect(dl.DeleteFile("RAMT:d/\xC3\xA4"));
+    small.ap.strlen = 8;
     try testing.expect(small.ap.base == null and small.ap.last == null);
 
     try testing.expectEqual(@as(i32, 0), dl.MatchFirst("*", &a.ap)); // the console: the name itself
@@ -4024,6 +4037,9 @@ test "Fault, PrintFault: texts, headers, cutting, the shell's texts" {
     try testing.expectEqualStrings("x: Error 999", std.mem.sliceTo(&buf, 0));
     try testing.expectEqual(@as(i32, 6), dl.Fault(dos.ERROR_OBJECT_NOT_FOUND, null, &buf, 7)); // cut
     try testing.expectEqualStrings("object", std.mem.sliceTo(&buf, 0));
+    // Where a character starts, and nothing after the cut.
+    try testing.expectEqual(@as(i32, 1), dl.Fault(dos.ERROR_OBJECT_NOT_FOUND, "M\xC3\xBCll", &buf, 3));
+    try testing.expectEqualStrings("M", std.mem.sliceTo(&buf, 0));
     try testing.expectEqual(@as(i32, 0), dl.Fault(0, "x", &buf, buf.len));
     try testing.expectEqualStrings("", std.mem.sliceTo(&buf, 0));
     try testing.expectEqual(@as(i32, 0), dl.Fault(205, null, &buf, 0));

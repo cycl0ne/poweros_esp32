@@ -80,3 +80,14 @@ test "utf8.encode and utf8.valid" {
     try testing.expect(!utf8.valid("a\x80b"));
     try testing.expect(!utf8.valid("\xE2\x82"));
 }
+
+test "utf8.cut: never inside a character, anywhere in what is no UTF-8" {
+    const text = "a\xC3\xA4\xE2\x82\xAC\xF0\x9F\x98\x80"; // a ä € and an emoji
+    const kept = [_]usize{ 0, 1, 1, 3, 3, 3, 6, 6, 6, 6, 10, 10 };
+    for (kept, 0..) |want, limit| try testing.expectEqual(want, utf8.cut(text, limit));
+    try testing.expectEqual(@as(usize, 1), utf8.cut("a\xB0b", 1)); // Latin-1 °
+    try testing.expectEqual(@as(usize, 1), utf8.cut("\xFC\xA4x", 1)); // ü¤ in Latin-1
+    try testing.expectEqual(@as(usize, 1), utf8.cut("a\xE2\x82", 2)); // right so far
+    try testing.expectEqual(@as(usize, 1), utf8.cut("\xE2\x82x", 1)); // broken off
+    try testing.expectEqual(@as(usize, 0), utf8.cut("", 0));
+}

@@ -478,7 +478,10 @@ A pattern is read a character at a time, a byte that is no UTF-8 as its
 Latin-1 character, so a pattern written in Latin-1 finds a name in UTF-8
 and the other way round. A name without wildcards comes back as the
 pattern wrote it - in Latin-1 for a pattern in Latin-1 - and a name a
-wildcard found as the handler gives it.
+wildcard found as the handler gives it. `C:test/Names DIR` makes, finds,
+matches and deletes names past ASCII - a letter past Latin-1, the euro
+sign, Greek, an emoji, an umlaut in UTF-8 and in Latin-1 - in a directory
+of its own under DIR, and says which steps of each passed.
 
 The `AnchorPath` is the search's state, cleared before `MatchFirst`
 apart from three fields. `break_bits` are signals that stop the search

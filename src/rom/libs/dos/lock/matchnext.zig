@@ -24,7 +24,7 @@ const finish = _lock.finish;
 /// fn MatchNext(db: *DosBase, anchor: *dos.AnchorPath) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -340.
+/// SINCE: 1.0, paths cut by character since 1.21. LVO -340.
 ///
 /// INPUTS:
 /// - `anchor` - the search MatchFirst started. Set APF_DODIR in ap_Flags
@@ -33,9 +33,9 @@ const finish = _lock.finish;
 /// RESULT:
 /// 0 when an object was found, as MatchFirst. Otherwise an error, also in
 /// IoErr: ERROR_NO_MORE_ENTRIES when the search is done,
-/// ERROR_BUFFER_OVERFLOW when the path was cut to fit, ERROR_BREAK when one
-/// of ap_BreakBits came (ap_FoundBreak says which), ERROR_NO_FREE_STORE, or
-/// a handler's error.
+/// ERROR_BUFFER_OVERFLOW when the path was cut to fit (where a character
+/// starts), ERROR_BREAK when one of ap_BreakBits came (ap_FoundBreak says
+/// which), ERROR_NO_FREE_STORE, or a handler's error.
 ///
 /// BEHAVIOR:
 /// With APF_DODIR the directory just found is gone into (a hard link to a

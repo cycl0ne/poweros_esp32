@@ -11,7 +11,7 @@ const _process = @import("_process.zig");
 /// fn GetPrompt(db: *DosBase, buffer: [*]u8, size: u32) bool
 /// ```
 ///
-/// SINCE: 1.0. LVO -300.
+/// SINCE: 1.0, cut by character since 1.21. LVO -300.
 ///
 /// INPUTS:
 /// - `buffer` - where the text goes, NUL-terminated.
@@ -26,7 +26,7 @@ const _process = @import("_process.zig");
 /// BEHAVIOR:
 /// The prompt is copied up to `size - 1` bytes and a NUL put after it,
 /// so the buffer always holds a string, even when the answer is false
-/// because it was cut. Without a CLI, or from a plain Task, the buffer
+/// because it was cut; a cut ends where a character starts. Without a CLI, or from a plain Task, the buffer
 /// is made empty.
 ///
 /// CONTEXT:

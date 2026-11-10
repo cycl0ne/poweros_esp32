@@ -15,7 +15,7 @@ const noCli = _process.noCli;
 /// fn GetCurrentDirName(db: *DosBase, buffer: [*]u8, size: u32) bool
 /// ```
 ///
-/// SINCE: 1.0. LVO -308.
+/// SINCE: 1.0, cut by character since 1.21. LVO -308.
 ///
 /// INPUTS:
 /// - `buffer` - where the name goes, NUL-terminated.
@@ -31,8 +31,8 @@ const noCli = _process.noCli;
 /// A CLI answers with the name it keeps (SetCurrentDirName), copied as
 /// GetProgramName copies. A process without a CLI has no such name, so
 /// the current directory's full name is asked of NameFromLock instead.
-/// The buffer holds a string after every call: the name, a cut one, or
-/// an empty one.
+/// The buffer holds a string after every call: the name, one cut where a
+/// character starts, or an empty one.
 ///
 /// CONTEXT:
 /// - Waits: yes, when there is no CLI: NameFromLock sends packets to

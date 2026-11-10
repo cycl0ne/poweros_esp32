@@ -171,6 +171,21 @@ pub fn encode(char: u32, into: *[4]u8) usize {
     return 4;
 }
 
+/// How many of `bytes` a cut to at most `limit` bytes keeps without ending
+/// inside a character: `limit`, or less when a UTF-8 character starts
+/// before it and ends after it - a whole one, or one right so far where
+/// `bytes` end. Bytes that are no UTF-8 are characters of one byte and
+/// are cut anywhere, so Latin-1 text is cut where it is asked to be.
+pub fn cut(bytes: []const u8, limit: usize) usize {
+    if (limit >= bytes.len) return bytes.len;
+    var start = limit;
+    while (start > 0 and limit - start < 3 and bytes[start] & 0xC0 == 0x80) start -= 1;
+    if (start == limit) return limit;
+    const step = decode(bytes[start..]);
+    if (step.kind != .broken and start + step.length > limit) return start;
+    return limit;
+}
+
 /// Whether `bytes` are UTF-8 from first to last.
 pub fn valid(bytes: []const u8) bool {
     var at: usize = 0;

@@ -835,7 +835,7 @@ fn put(buf: []u8, pos: *usize, c: u8) bool {
 /// Reports a match: the last level's entry into ap_Info, and, when
 /// ap_Strlen isn't 0, the full path from the levels' names into the buffer,
 /// with a '/' where one is needed. 0, or ERROR_BUFFER_OVERFLOW when the
-/// path was cut.
+/// path was cut - where a character starts.
 ///
 /// INPUTS:
 /// - `db` - the library's base.
@@ -851,10 +851,12 @@ pub fn report(db: *DosBase, ap: *AnchorPath) i32 {
             if (!put(buf, &pos, '/')) break false;
         }
         const entry = entryName(node);
-        for (entry[0..db.utility_base.Strlen(entry)]) |c| {
-            if (!put(buf, &pos, c)) break;
-        } else continue;
-        break false;
+        const name = entry[0..db.utility_base.Strlen(entry)];
+        // Cut, if it must be, where a character starts.
+        const kept = utility.utf8.cut(name, buf.len - 1 - pos);
+        @memcpy(buf[pos..][0..kept], name[0..kept]);
+        pos += kept;
+        if (kept < name.len) break false;
     } else true;
     buf[pos] = 0;
     return matchAnswer(db, if (full) 0 else dos.ERROR_BUFFER_OVERFLOW);
@@ -950,7 +952,7 @@ pub fn single(db: *DosBase, ap: *AnchorPath, text: []const u8) i32 {
     ap.base = node;
     ap.last = node;
     if (process.currentProcess(db.sys_base)) |proc| node.lock = dos_lib.DupLock(proc.current_dir);
-    const n = @min(text.len, node.info.file_name.len - 1);
+    const n = utility.utf8.cut(text, node.info.file_name.len - 1);
     @memcpy(node.info.file_name[0..n], text[0..n]);
     node.info.file_name[n] = 0;
     node.info.dir_entry_type = -1;
@@ -959,7 +961,7 @@ pub fn single(db: *DosBase, ap: *AnchorPath, text: []const u8) i32 {
     ap.flags |= dos.APF_DirChanged;
     if (ap.strlen != 0) {
         const buf = ap.buffer()[0..ap.strlen];
-        const m = @min(text.len, buf.len - 1);
+        const m = utility.utf8.cut(text, buf.len - 1);
         @memcpy(buf[0..m], text[0..m]);
         buf[m] = 0;
         if (m < text.len) return matchAnswer(db, dos.ERROR_BUFFER_OVERFLOW);

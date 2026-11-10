@@ -17,7 +17,7 @@ const fail = _process.fail;
 /// fn GetVar(db: *DosBase, name: [*:0]const u8, buffer: [*]u8, size: isize, flags: u32) isize
 /// ```
 ///
-/// SINCE: 1.0. LVO -496.
+/// SINCE: 1.0, cut by character since 1.21. LVO -496.
 ///
 /// INPUTS:
 /// - `name` - the variable's name.
@@ -38,8 +38,9 @@ const fail = _process.fail;
 /// The process's local variable of that name and type comes first (unless
 /// GVF_GLOBAL_ONLY), then the file ENV:name (unless GVF_LOCAL_ONLY; only
 /// for LV_VAR). A text value is cut at its first newline and ended with a
-/// NUL, which takes one byte of `size`. With GVF_BINARY_VAR the value is
-/// copied as it is, and with GVF_DONT_NULL_TERM as well, no NUL is added.
+/// NUL, which takes one byte of `size`; one too long for `size` is cut
+/// where a character starts. With GVF_BINARY_VAR the value is copied as it
+/// is, and with GVF_DONT_NULL_TERM as well, no NUL is added.
 ///
 /// CONTEXT:
 /// - Waits: yes, for a global variable (file system packets); not for a

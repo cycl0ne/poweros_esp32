@@ -3018,7 +3018,7 @@ fn Fault(db: *DosBase, code: i32, header: ?[*:0]const u8, buffer: [*]u8, len: i3
 
 **SINCE**
 
-1.0. LVO -484.
+1.0, cut by character since 1.21. LVO -484.
 
 **INPUTS**
 
@@ -3037,7 +3037,8 @@ code of 0 or a `len` of 0 or less.
 
 The text is "header: text", or the text alone for a null header; a code
 without a text gives "Error <code>". The whole is cut to `len - 1` bytes
-and ended with a NUL; nothing is written for a code of 0 but the NUL.
+at most, where a character starts, and ended with a NUL; nothing is
+written for a code of 0 but the NUL.
 IoErr is not touched.
 
 **CONTEXT**
@@ -4055,7 +4056,7 @@ fn GetCurrentDirName(db: *DosBase, buffer: [*]u8, size: u32) bool
 
 **SINCE**
 
-1.0. LVO -308.
+1.0, cut by character since 1.21. LVO -308.
 
 **INPUTS**
 
@@ -4074,8 +4075,8 @@ NameFromLock says.
 A CLI answers with the name it keeps (SetCurrentDirName), copied as
 GetProgramName copies. A process without a CLI has no such name, so
 the current directory's full name is asked of NameFromLock instead.
-The buffer holds a string after every call: the name, a cut one, or
-an empty one.
+The buffer holds a string after every call: the name, one cut where a
+character starts, or an empty one.
 
 **CONTEXT**
 
@@ -4307,7 +4308,7 @@ fn GetProgramName(db: *DosBase, buffer: [*]u8, size: u32) bool
 
 **SINCE**
 
-1.0. LVO -292.
+1.0, cut by character since 1.21. LVO -292.
 
 **INPUTS**
 
@@ -4325,7 +4326,7 @@ nothing written) or when there is no CLI (ERROR_OBJECT_WRONG_TYPE).
 
 The command name is copied up to `size - 1` bytes and a NUL put
 after it, so the buffer always holds a string, even when the answer
-is false because it was cut. Without a CLI, or from a plain Task,
+is false because it was cut; a cut ends where a character starts. Without a CLI, or from a plain Task,
 the buffer is made empty.
 
 **CONTEXT**
@@ -4367,7 +4368,7 @@ fn GetPrompt(db: *DosBase, buffer: [*]u8, size: u32) bool
 
 **SINCE**
 
-1.0. LVO -300.
+1.0, cut by character since 1.21. LVO -300.
 
 **INPUTS**
 
@@ -4385,7 +4386,7 @@ nothing written) or when there is no CLI (ERROR_OBJECT_WRONG_TYPE).
 
 The prompt is copied up to `size - 1` bytes and a NUL put after it,
 so the buffer always holds a string, even when the answer is false
-because it was cut. Without a CLI, or from a plain Task, the buffer
+because it was cut; a cut ends where a character starts. Without a CLI, or from a plain Task, the buffer
 is made empty.
 
 **CONTEXT**
@@ -4427,7 +4428,7 @@ fn GetVar(db: *DosBase, name: [*:0]const u8, buffer: [*]u8, size: isize, flags: 
 
 **SINCE**
 
-1.0. LVO -496.
+1.0, cut by character since 1.21. LVO -496.
 
 **INPUTS**
 
@@ -4451,8 +4452,9 @@ ERROR_LINE_TOO_LONG for a name that makes too long a path.
 The process's local variable of that name and type comes first (unless
 GVF_GLOBAL_ONLY), then the file ENV:name (unless GVF_LOCAL_ONLY; only
 for LV_VAR). A text value is cut at its first newline and ended with a
-NUL, which takes one byte of `size`. With GVF_BINARY_VAR the value is
-copied as it is, and with GVF_DONT_NULL_TERM as well, no NUL is added.
+NUL, which takes one byte of `size`; one too long for `size` is cut
+where a character starts. With GVF_BINARY_VAR the value is copied as it
+is, and with GVF_DONT_NULL_TERM as well, no NUL is added.
 
 **CONTEXT**
 
@@ -5450,7 +5452,7 @@ fn MatchFirst(db: *DosBase, pattern: [*:0]const u8, anchor: *dos.AnchorPath) i32
 
 **SINCE**
 
-1.0, names by character since 1.20. LVO -336.
+1.0, names by character since 1.20, cuts by character since 1.21. LVO -336.
 
 **INPUTS**
 
@@ -5465,7 +5467,8 @@ fn MatchFirst(db: *DosBase, pattern: [*:0]const u8, anchor: *dos.AnchorPath) i32
 0 when an object was found: its FileInfoBlock is in ap_Info, and its
 full path in the buffer when ap_Strlen isn't 0. Otherwise an error, also
 in IoErr: ERROR_NO_MORE_ENTRIES when nothing matches,
-ERROR_BUFFER_OVERFLOW when the path was cut to fit (the search goes on),
+ERROR_BUFFER_OVERFLOW when the path was cut to fit, where a character
+starts (the search goes on),
 ERROR_BAD_TEMPLATE for a pattern that doesn't parse, ERROR_BREAK when
 one of ap_BreakBits came, or a handler's error.
 
@@ -5526,7 +5529,7 @@ fn MatchNext(db: *DosBase, anchor: *dos.AnchorPath) i32
 
 **SINCE**
 
-1.0. LVO -340.
+1.0, paths cut by character since 1.21. LVO -340.
 
 **INPUTS**
 
@@ -5537,9 +5540,9 @@ fn MatchNext(db: *DosBase, anchor: *dos.AnchorPath) i32
 
 0 when an object was found, as MatchFirst. Otherwise an error, also in
 IoErr: ERROR_NO_MORE_ENTRIES when the search is done,
-ERROR_BUFFER_OVERFLOW when the path was cut to fit, ERROR_BREAK when one
-of ap_BreakBits came (ap_FoundBreak says which), ERROR_NO_FREE_STORE, or
-a handler's error.
+ERROR_BUFFER_OVERFLOW when the path was cut to fit (where a character
+starts), ERROR_BREAK when one of ap_BreakBits came (ap_FoundBreak says
+which), ERROR_NO_FREE_STORE, or a handler's error.
 
 **BEHAVIOR**
 
@@ -8641,7 +8644,7 @@ fn SplitName(db: *DosBase, name: [*:0]const u8, separator: u8, buf: [*]u8, oldpo
 
 **SINCE**
 
-1.0. LVO -116.
+1.0, cut by character since 1.21. LVO -116.
 
 **INPUTS**
 
@@ -8661,8 +8664,9 @@ component was the last one, when `oldpos` is outside `name`, or when
 **BEHAVIOR**
 
 The text from `oldpos` up to the next `separator` (or the end) goes to
-`buf`, cut to `size` - 1 bytes and ended with a NUL. A cut component
-still returns the position after its separator, so the walk goes on.
+`buf`, cut to `size` - 1 bytes and ended with a NUL; a cut ends where a
+character starts, never inside one. A cut component still returns the
+position after its separator, so the walk goes on.
 
 **CONTEXT**
 
