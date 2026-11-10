@@ -12,7 +12,8 @@ const UtilityBase = sdk.interface.utility.UtilityBase;
 const testing = std.testing;
 
 /// Where `link` on the page at `from` leads: the page's name, or `#` and
-/// the place's for a place on the page itself, or "nowhere".
+/// the place's for a place on the page itself, or "nowhere" or
+/// "unreadable" and why it leads nowhere.
 fn leads(ub: *UtilityBase, from: []const u8, link: []const u8, into: *[2048]u8) ![]const u8 {
     var base = links.Location{};
     try testing.expect(base.take(from));
@@ -23,7 +24,10 @@ fn leads(ub: *UtilityBase, from: []const u8, link: []const u8, into: *[2048]u8) 
             if (place.len == 0) return std.fmt.bufPrint(into, "{s}", .{target.slice()});
             return std.fmt.bufPrint(into, "{s} #{s}", .{ target.slice(), place });
         },
-        .nowhere => return "nowhere",
+        .nowhere => |why| return switch (why) {
+            .kind => "nowhere",
+            .unreadable => "unreadable",
+        },
     }
 }
 
@@ -72,6 +76,7 @@ test "links on a page from a disk" {
         .{ "https://example.com/", "https://example.com/" },
         .{ "mailto:x@y", "nowhere" },
         .{ "#anchor", "#anchor" },
+        .{ "broken%ZZ.html", "unreadable" },
     };
     for (cases[0..5]) |case| try testing.expectEqualStrings(case[1], try leads(ub, base, case[0], &into));
     try testing.expectEqualStrings("SYS:Tests/datatypes/Gr\xFC\xDFe.html", try leads(ub, base, cases[5][0], &into));
@@ -81,6 +86,8 @@ test "links on a page from a disk" {
     try testing.expectEqualStrings("/b.html", try leads(ub, "a.html", "../b.html", &into));
     try testing.expectEqualStrings("//b.html", try leads(ub, "/a.html", "../b.html", &into));
     try testing.expectEqualStrings(":b.html", try leads(ub, "a.html", "/b.html", &into));
+    // A link that would make a name too long.
+    try testing.expectEqualStrings("unreadable", try leads(ub, base, "x" ** links.location_most, &into));
     try host.utility.tearDown(rom_ub);
 }
 

@@ -573,9 +573,10 @@ of its address gives it: `README.md` is Markdown, and a page whose
 address names no kind of file is known by what it starts with. Its
 address is its title until it names itself.
 `https:` checks the server's certificate, which needs the clock set. A
-link to a mail address or a script leads nowhere, and one that cannot
-be followed - no file, no page, no place of that name - flashes the
-screen.
+link that leads nowhere - no such file, no such page, no place of that
+name, or a mail address or a script, which MultiView does not go to -
+says so in a requester, with why: what dos said of the file, or the
+server's answer.
 
 ## Writing a class
 

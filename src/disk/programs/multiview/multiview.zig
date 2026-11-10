@@ -22,7 +22,10 @@
 //! file, read from the drawer the page is in, or a page on the web; a
 //! link to a place on the page scrolls there (`DTM_GOTO`), and one to a
 //! place on another page shows that page there. Backspace goes back the
-//! way the links came, to where each page was left. FILE may itself be
+//! way the links came, to where each page was left. A link that leads
+//! nowhere - no such file, no such page, no such place, or a kind of
+//! address this program does not go to - says so in a requester, with
+//! why. FILE may itself be
 //! an address on the web, `http://` or `https://`. A page on the web is
 //! fetched whole through http.library and shown from memory, and the
 //! network is opened for the first one and not before (fetch.zig); where
@@ -74,7 +77,7 @@ const TagItem = utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "MultiView";
-const VERSION = "1.6";
+const VERSION = "1.7";
 /// What the program calls itself to a server on the web.
 const USER_AGENT = "PowerOS-" ++ COMMAND_NAME ++ "/" ++ VERSION;
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (10.11.2026)\r\n";
@@ -93,6 +96,13 @@ const MSG_NOSCREEN = "No screen - no display\n";
 const MSG_NOMEMORY = "No memory for the window\n";
 const MSG_NOWINDOW = "No window\n";
 const MSG_NOOBJECT = "%s: %s\n";
+/// A link, or a file let go on the window, that leads nowhere: where,
+/// and why.
+const MSG_NOWHERE = "%s:\n%s";
+const MSG_OK = "OK";
+const WHY_KIND = "MultiView does not go to this kind of address";
+const WHY_UNREADABLE = "the address is too long, or not written as one";
+const WHY_NO_PLACE = "there is no place of that name on the page";
 
 const ID_VERT = 1;
 const ID_HORIZ = 2;
@@ -649,15 +659,27 @@ const Shown = struct {
     }
 
     /// The page at `where` opened while the window waits, with the busy
-    /// pointer up; the screen flashed when it could not be.
+    /// pointer up; said why in a requester when it could not be.
     fn loadWaiting(shown: *const Shown, window: *intuition.Window, where: *links.Location) ?*Object {
         shown.ib.SetWindowPointerA(window, &[_]TagItem{ .{ .tag = wn.WA_BusyPointer, .data = 1 }, .{} });
         const made = shown.load(where);
         if (made == null) {
+            var why: [128]u8 = @splat(0);
+            const said: [*:0]const u8 = if (where.web) @ptrCast(&shown.session.web.why) else faultText(shown.dl, &why);
             shown.ib.SetWindowPointerA(window, null);
-            shown.ib.DisplayBeep(shown.screen);
+            shown.tell(window, where.slice(), said);
         }
         return made;
+    }
+
+    /// Where a link, or a file let go on the window, would have led, and
+    /// why it does not, in a requester on the window; it waits for OK.
+    fn tell(shown: *const Shown, window: *intuition.Window, where: []const u8, why: [*:0]const u8) void {
+        comptime exec.checkFormat(MSG_NOWHERE, struct { [*:0]const u8, [*:0]const u8 });
+        var short: [shown_most + 1]u8 = undefined;
+        const easy = intuition.requesters.EasyStruct{ .title = COMMAND_NAME, .text_format = MSG_NOWHERE, .gadget_format = MSG_OK };
+        const args = [_]usize{ @intFromPtr(shortened(where, &short)), @intFromPtr(why) };
+        _ = shown.ib.EasyRequestArgs(window, &easy, null, &args);
     }
 
     /// The link the press was let go on followed: a place on this page
@@ -671,21 +693,28 @@ const Shown = struct {
         var length: usize = 0;
         while (pressed[length] != 0) length += 1;
         if (length == 0) return null;
+        const link = pressed[0..length];
         const top = ask(shown.ib, object, dtc.DTA_TopVert);
-        switch (links.resolve(shown.ub, &session.now, pressed[0..length], &session.next)) {
-            .nowhere => shown.ib.DisplayBeep(shown.screen),
+        switch (links.resolve(shown.ub, &session.now, link, &session.next)) {
+            .nowhere => |why| shown.tell(window, link, switch (why) {
+                .kind => WHY_KIND,
+                .unreadable => WHY_UNREADABLE,
+            }),
             .here => |name| {
-                var goto_name: [place_most + 1]u8 = @splat(0);
+                // `#` and the name, as the requester shows it if there
+                // is no such place: the name is what DTM_GOTO is given.
+                var goto_name: [place_most + 2]u8 = @splat(0);
                 if (name.len > place_most) {
-                    shown.ib.DisplayBeep(shown.screen);
+                    shown.tell(window, link, WHY_NO_PLACE);
                     return null;
                 }
-                @memcpy(goto_name[0..name.len], name);
+                goto_name[0] = '#';
+                @memcpy(goto_name[1..][0..name.len], name);
                 session.remember(top);
-                var goto = dtc.DtGoto{ .node_name = @ptrCast(&goto_name) };
+                var goto = dtc.DtGoto{ .node_name = @ptrCast(&goto_name[1]) };
                 if (shown.dt.DoDTMethodA(object, window, null, @ptrCast(&goto)) == 0) {
                     session.back_count -= 1;
-                    shown.ib.DisplayBeep(shown.screen);
+                    shown.tell(window, goto_name[0 .. name.len + 1], WHY_NO_PLACE);
                 }
             },
             .page => |name| {
@@ -737,16 +766,21 @@ const Shown = struct {
             .none => {},
             .place => {
                 var goto = dtc.DtGoto{ .node_name = @ptrCast(&session.arrive_place) };
-                _ = shown.dt.DoDTMethodA(object, window, null, @ptrCast(&goto));
+                if (shown.dt.DoDTMethodA(object, window, null, @ptrCast(&goto)) == 0) {
+                    var length: usize = 0;
+                    while (session.arrive_place[length] != 0) length += 1;
+                    session.arrival = .none;
+                    shown.tell(window, session.arrive_place[0..length], WHY_NO_PLACE);
+                }
             },
             .top => scrollTo(shown.ib, object, window, session.arrive_top),
         }
         session.arrival = .none;
     }
 
-    /// The last file let go on the window opened as an object; null, and
-    /// the screen flashed, when none of them could be. It is gone to as a
-    /// link is: Backspace comes back.
+    /// The last file let go on the window opened as an object; null when
+    /// none of them could be, each of which says why in a requester. It
+    /// is gone to as a link is: Backspace comes back.
     fn dropped(shown: *const Shown, target: *sdk.anvil.DropTarget, window: *intuition.Window, object: *Object) ?*Object {
         const session = shown.session;
         var name: [dos.path_max + 1]u8 = undefined;
@@ -754,7 +788,10 @@ const Shown = struct {
         while (target.next(shown.dl, &name)) |file| {
             if (file.is_drawer) continue;
             const made = makeObject(shown.dl, shown.dt, file.name, dtc.DTST_FILE, shown.scale) orelse {
-                shown.ib.DisplayBeep(shown.screen);
+                var why: [128]u8 = @splat(0);
+                var length: usize = 0;
+                while (file.name[length] != 0) length += 1;
+                shown.tell(window, file.name[0..length], faultText(shown.dl, &why));
                 continue;
             };
             if (next) |earlier| shown.dt.DisposeDTObject(earlier);
@@ -843,6 +880,27 @@ fn withShrink(ib: *IntuitionBase, object: *Object, name: [*:0]const u8, into: *[
         at += 1;
     }
     into[at] = 0;
+    return @ptrCast(into);
+}
+
+/// The longest a name or an address is shown in a requester.
+const shown_most = 80;
+
+/// `text` as a requester shows it: whole when it is short, and otherwise
+/// its start and its end with `...` between - the end of an address or a
+/// name is what tells it from the others.
+fn shortened(text: []const u8, into: *[shown_most + 1]u8) [*:0]const u8 {
+    if (text.len <= shown_most) {
+        @memcpy(into[0..text.len], text);
+        into[text.len] = 0;
+        return @ptrCast(into);
+    }
+    const head = 40;
+    const tail = shown_most - head - 3;
+    @memcpy(into[0..head], text[0..head]);
+    @memcpy(into[head..][0..3], "...");
+    @memcpy(into[head + 3 ..][0..tail], text[text.len - tail ..]);
+    into[shown_most] = 0;
     return @ptrCast(into);
 }
 

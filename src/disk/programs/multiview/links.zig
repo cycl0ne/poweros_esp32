@@ -72,8 +72,17 @@ pub const Target = union(enum) {
     /// Another page, written where the caller said, and the place on it
     /// to go to - empty for none.
     page: []const u8,
-    /// Somewhere this program does not go.
-    nowhere,
+    /// Somewhere this program does not go, and why.
+    nowhere: Nowhere,
+};
+
+/// Why a link leads nowhere.
+pub const Nowhere = enum {
+    /// It is a kind of address this program does not go to: a mail
+    /// address, a script, a telephone number.
+    kind,
+    /// It is too long to be followed, or not written as an address is.
+    unreadable,
 };
 
 /// Where `link`, on the page that came from `from`, leads. A page it
@@ -88,18 +97,18 @@ pub fn resolve(ub: *UtilityBase, from: *const Location, link: []const u8, into: 
     into.* = .{};
     if (schemeOf(reference)) |scheme| {
         if (sameCase(scheme, "http") or sameCase(scheme, "https")) {
-            return if (into.take(reference)) .{ .page = place } else .nowhere;
+            return if (into.take(reference)) .{ .page = place } else .{ .nowhere = .unreadable };
         }
         // On the web anything else is not a page; on a disk a name with
         // a colon is a file on a volume, unless it is one of the kinds
         // of address no volume is called.
-        if (from.web or isNotVolume(scheme)) return .nowhere;
-        return if (fileName(ub, "", reference, into)) .{ .page = place } else .nowhere;
+        if (from.web or isNotVolume(scheme)) return .{ .nowhere = .kind };
+        return if (fileName(ub, "", reference, into)) .{ .page = place } else .{ .nowhere = .unreadable };
     }
     if (from.web) {
-        return if (onTheWeb(from.slice(), reference, into)) .{ .page = place } else .nowhere;
+        return if (onTheWeb(from.slice(), reference, into)) .{ .page = place } else .{ .nowhere = .unreadable };
     }
-    return if (fileName(ub, from.slice(), reference, into)) .{ .page = place } else .nowhere;
+    return if (fileName(ub, from.slice(), reference, into)) .{ .page = place } else .{ .nowhere = .unreadable };
 }
 
 /// Whether `text` is an address on the web.
