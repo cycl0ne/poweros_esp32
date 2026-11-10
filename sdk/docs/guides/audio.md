@@ -677,8 +677,13 @@ ID3v2 tag is read whole, frame by frame, however large; an ID3v1 tag at
 the end counts where it says nothing, and a WAV's INFO list says the
 same. A FLAC's and an Ogg Vorbis stream's Vorbis comments say it too
 (TITLE, ARTIST, ALBUM, ALBUMARTIST, COMPOSER, GENRE, DATE, TRACKNUMBER,
-TRACKTOTAL, COMMENT). Texts are Latin-1: quotes and dashes become their plain kin, an
-emoji is left out, anything else past Latin-1 is a `?`.
+TRACKTOTAL, COMMENT). Texts are UTF-8, whatever the tag is written in:
+ID3v2's Latin-1 and UTF-16 are converted, a character past U+FFFF from
+its surrogate pair, and a byte-order mark, a zero-width space or joiner
+and a variation selector are left out. An ID3v1 tag and a WAV's names,
+which do not say what they are written in, are taken as UTF-8 when the
+whole text is, else as Latin-1. A text too long is cut where a
+character starts.
 
 The picture the tags hold - a cover, the front one where there are
 several - is kept only for a stream opened with `ACA_KeepPicture`, so a

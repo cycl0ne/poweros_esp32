@@ -1394,9 +1394,9 @@ holds - a name with a `:`, `.git` in any case, one that differs from a
 path before it only in case, one longer than a name may be - is not
 written: it is named, and kept in the index as not checked out, so it
 is not taken for deleted. A submodule is an empty directory; its own
-repository is not cloned. Names are UTF-8 in the repository and Latin-1
-on the volume where Latin-1 has their characters, byte for byte where
-it does not. A file has changed when its size or date says so, and when
+repository is not cloned. Names are UTF-8 in the repository and on the
+volume alike; one a repository holds in another encoding - bytes that
+are no UTF-8 - is read as Latin-1. A file has changed when its size or date says so, and when
 those cannot tell, when its hash does.
 
 **Nothing is lost.** `clone`, `checkout` and `pull` leave a changed file

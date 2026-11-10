@@ -414,6 +414,11 @@ it:
 | `utf8.encode(char, &four)` | a character into at most four bytes: the bytes written |
 | `utf8.lengthOf(char)` | the bytes `encode` writes for it |
 | `utf8.valid(bytes)` | whether the whole is UTF-8 |
+| `utf8.readable(bytes)` | whether a name of these bytes can be kept: UTF-8, or - while a bad byte reads as Latin-1 - any |
+| `utf8.textOf(bytes, into)` | the bytes as a file system keeps a name: UTF-8 as it is, a bad byte as its character's UTF-8 in `into`; null when it cannot be kept or does not fit |
+| `utf8.copyCut(bytes, into)` | as many whole characters as `into` holds, copied: the length |
+| `utf8.fromLatin1(bytes, into)` | Latin-1 as UTF-8, as many whole characters as fit: the length |
+| `utf8.fromForeign(bytes, into)` | text that does not say what it is written in - an ID3v1 tag, an old list - as UTF-8: as it is when the whole is UTF-8, else read as Latin-1; the length |
 
 ```zig
 var at: usize = 0;
