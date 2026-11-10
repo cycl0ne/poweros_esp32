@@ -148,7 +148,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.53 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.54 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -1672,6 +1672,78 @@ fn constantModulusFragment(fragments: *const shader.Fragments) callconv(.c) void
     }
 }
 
+/// What `shipped_many_divisions` computes, for the cores: of the dividend
+/// `shipped_division`'s, the quotients by 7, 14, 1000 and 3000000000 and
+/// the remainder by 1000, and the green whether each leaves a remainder
+/// below its divisor and the remainder is the dividend less the quotient
+/// times 1000 (since 1.54).
+fn manyDivisionsFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    @setRuntimeSafety(false);
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const planes = rows.at(quad);
+        const over = @as(shader.Pixels, @splat(1)) / planes[0];
+        var v: [4]shader.Pixels = undefined;
+        inline for (&v, 0..) |*each, c| each.* = planes[1 + c] * over;
+        var exact: shader.Pixels = undefined;
+        inline for (0..4) |p| {
+            const x = unsignedTowardZero(v[0][p] * 255.0);
+            const y = unsignedTowardZero(v[1][p] * 255.0);
+            const n = x *% 16843009 +% y *% 2654435769;
+            const q7 = n / 7;
+            const q14 = n / 14;
+            const q1000 = n / 1000;
+            const m1000 = n % 1000;
+            const big = n / 3000000000;
+            const holds = n -% q7 *% 7 < 7 and n -% q14 *% 14 < 14 and m1000 < 1000 and n -% q1000 *% 1000 == m1000 and n -% big *% 3000000000 < 3000000000;
+            exact[p] = if (holds) 1.0 else 0.0;
+        }
+        const picked = [4]shader.Pixels{ v[0], exact, v[1], @splat(1.0) };
+        var bytes: [4]@Vector(4, u32) = undefined;
+        inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(picked[c]);
+        out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+    }
+}
+
+/// What `shipped_many_moduli` computes, for the cores: of the dividend
+/// `shipped_modulus`'s, the quotients by -5, 8 and 6 and the moduli by 6
+/// and -4, and the green whether each quotient leaves a remainder smaller
+/// than its divisor and of the dividend's sign, the modulus by 6 is that
+/// remainder made positive, and the one by -4 is not positive, above -4
+/// and leaves a multiple of 4 (since 1.54).
+fn manyModuliFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    @setRuntimeSafety(false);
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const planes = rows.at(quad);
+        const over = @as(shader.Pixels, @splat(1)) / planes[0];
+        var v: [4]shader.Pixels = undefined;
+        inline for (&v, 0..) |*each, c| each.* = planes[1 + c] * over;
+        var exact: shader.Pixels = undefined;
+        inline for (0..4) |p| {
+            const x = towardZero(v[0][p] * 255.0);
+            const y = towardZero(v[1][p] * 255.0);
+            const n = x *% 16843009 -% y *% 1640531527;
+            const negative = n < 0;
+            const r5 = n -% @divTrunc(n, -5) *% -5;
+            const r8 = n -% @divTrunc(n, 8) *% 8;
+            const r6 = n -% @divTrunc(n, 6) *% 6;
+            const m6 = modulusOf(n, 6);
+            const m4 = modulusOf(n, -4);
+            const holds = @abs(r5) < 5 and (r5 == 0 or (r5 < 0) == negative) and
+                @abs(r8) < 8 and (r8 == 0 or (r8 < 0) == negative) and
+                @abs(r6) < 6 and (r6 == 0 or (r6 < 0) == negative) and
+                m6 == r6 + 6 * @as(i32, @intFromBool(r6 < 0)) and
+                m4 <= 0 and m4 > -4 and (n -% m4) & 3 == 0;
+            exact[p] = if (holds) 1.0 else 0.0;
+        }
+        const picked = [4]shader.Pixels{ v[0], exact, v[1], @splat(1.0) };
+        var bytes: [4]@Vector(4, u32) = undefined;
+        inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(picked[c]);
+        out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+    }
+}
+
 /// NIR's imod (nir_opcodes.py:922-924): 0 by 0 and of the most negative
 /// by -1, else C's `%`, the magnitudes' remainder with the dividend's
 /// sign, and the divisor added where that is not 0 and the signs differ
@@ -1931,6 +2003,8 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped constant remainder", &constantRemainderFragment, 4),
     shader.fragment("shipped constant signed", &constantSignedFragment, 4),
     shader.fragment("shipped constant modulus", &constantModulusFragment, 4),
+    shader.fragment("shipped many divisions", &manyDivisionsFragment, 4),
+    shader.fragment("shipped many moduli", &manyModuliFragment, 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                       .{},                                        .{},                                         .{},
@@ -1951,7 +2025,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_fetch_offset),    shader.Spirv.of(&shipped_fetch_dependent),  shader.Spirv.of(&shipped_grad),              shader.Spirv.of(&shipped_grad_layers),
     shader.Spirv.of(&shipped_grad_offset),     shader.Spirv.of(&shipped_grad_cube),        shader.Spirv.of(&shipped_twice),             shader.Spirv.of(&shipped_cube_negated),
     shader.Spirv.of(&shipped_division),        shader.Spirv.of(&shipped_modulus),          shader.Spirv.of(&shipped_constant_division), shader.Spirv.of(&shipped_constant_remainder),
-    shader.Spirv.of(&shipped_constant_signed), shader.Spirv.of(&shipped_constant_modulus),
+    shader.Spirv.of(&shipped_constant_signed), shader.Spirv.of(&shipped_constant_modulus), shader.Spirv.of(&shipped_many_divisions),    shader.Spirv.of(&shipped_many_moduli),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -4954,6 +5028,226 @@ const shipped_constant_modulus = [_]u32{
     0x0000006B, 0x00070050, 0x0000000B, 0x0000006E, 0x00000068, 0x0000006A,
     0x0000006C, 0x0000006D, 0x0003003E, 0x00000065, 0x0000006E, 0x000100FD,
     0x00010038,
+};
+
+/// glslc's own output, at -O, for the five unsigned divisions and
+/// remainders by constants that `shipped_constant_division` and
+/// `shipped_constant_remainder` have apart, checked in the program: more
+/// steps than the tables of 128 held (since 1.54).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// void main() {
+///     uvec2 v = uvec2(vcolor.xy * 255.0);
+///     uint n = v.x * 16843009u + v.y * 2654435769u;
+///     uint q7 = n / 7u;
+///     uint q14 = n / 14u;
+///     uint q1000 = n / 1000u;
+///     uint m1000 = n % 1000u;
+///     uint big = n / 3000000000u;
+///     uint exact = uint(n - q7 * 7u < 7u) & uint(n - q14 * 14u < 14u)
+///                & uint(m1000 < 1000u) & uint(n - q1000 * 1000u == m1000)
+///                & uint(n - big * 3000000000u < 3000000000u);
+///     ocolor = vec4(vcolor.x, float(exact), vcolor.y, 1.0);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag udiv_many.frag -o udiv_many.spv   # 346 words
+/// spirv-val --target-env vulkan1.0 udiv_many.spv                  # no output, and 0
+/// ```
+const shipped_many_divisions = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000061, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000057, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000D, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000057, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006, 0x00000020,
+    0x00000000, 0x00040017, 0x00000007, 0x00000006, 0x00000002, 0x00030016,
+    0x0000000A, 0x00000020, 0x00040017, 0x0000000B, 0x0000000A, 0x00000004,
+    0x00040020, 0x0000000C, 0x00000001, 0x0000000B, 0x0004003B, 0x0000000C,
+    0x0000000D, 0x00000001, 0x00040017, 0x0000000E, 0x0000000A, 0x00000002,
+    0x0004002B, 0x0000000A, 0x00000011, 0x437F0000, 0x0004002B, 0x00000006,
+    0x00000016, 0x00000000, 0x0004002B, 0x00000006, 0x00000019, 0x01010101,
+    0x0004002B, 0x00000006, 0x0000001B, 0x00000001, 0x0004002B, 0x00000006,
+    0x0000001E, 0x9E3779B9, 0x0004002B, 0x00000006, 0x00000023, 0x00000007,
+    0x0004002B, 0x00000006, 0x00000027, 0x0000000E, 0x0004002B, 0x00000006,
+    0x0000002B, 0x000003E8, 0x0004002B, 0x00000006, 0x00000032, 0xB2D05E00,
+    0x00020014, 0x00000039, 0x00040020, 0x00000056, 0x00000003, 0x0000000B,
+    0x0004003B, 0x00000056, 0x00000057, 0x00000003, 0x00040020, 0x00000058,
+    0x00000001, 0x0000000A, 0x0004002B, 0x0000000A, 0x0000005F, 0x3F800000,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003D, 0x0000000B, 0x0000000F, 0x0000000D, 0x0007004F,
+    0x0000000E, 0x00000010, 0x0000000F, 0x0000000F, 0x00000000, 0x00000001,
+    0x0005008E, 0x0000000E, 0x00000012, 0x00000010, 0x00000011, 0x0004006D,
+    0x00000007, 0x00000013, 0x00000012, 0x00050051, 0x00000006, 0x00000018,
+    0x00000013, 0x00000000, 0x00050084, 0x00000006, 0x0000001A, 0x00000018,
+    0x00000019, 0x00050051, 0x00000006, 0x0000001D, 0x00000013, 0x00000001,
+    0x00050084, 0x00000006, 0x0000001F, 0x0000001D, 0x0000001E, 0x00050080,
+    0x00000006, 0x00000020, 0x0000001A, 0x0000001F, 0x00050086, 0x00000006,
+    0x00000024, 0x00000020, 0x00000023, 0x00050086, 0x00000006, 0x00000028,
+    0x00000020, 0x00000027, 0x00050086, 0x00000006, 0x0000002C, 0x00000020,
+    0x0000002B, 0x00050089, 0x00000006, 0x0000002F, 0x00000020, 0x0000002B,
+    0x00050086, 0x00000006, 0x00000033, 0x00000020, 0x00000032, 0x00050084,
+    0x00000006, 0x00000037, 0x00000024, 0x00000023, 0x00050082, 0x00000006,
+    0x00000038, 0x00000020, 0x00000037, 0x000500B0, 0x00000039, 0x0000003A,
+    0x00000038, 0x00000023, 0x000600A9, 0x00000006, 0x0000003B, 0x0000003A,
+    0x0000001B, 0x00000016, 0x00050084, 0x00000006, 0x0000003E, 0x00000028,
+    0x00000027, 0x00050082, 0x00000006, 0x0000003F, 0x00000020, 0x0000003E,
+    0x000500B0, 0x00000039, 0x00000040, 0x0000003F, 0x00000027, 0x000600A9,
+    0x00000006, 0x00000041, 0x00000040, 0x0000001B, 0x00000016, 0x000500C7,
+    0x00000006, 0x00000042, 0x0000003B, 0x00000041, 0x000500B0, 0x00000039,
+    0x00000044, 0x0000002F, 0x0000002B, 0x000600A9, 0x00000006, 0x00000045,
+    0x00000044, 0x0000001B, 0x00000016, 0x000500C7, 0x00000006, 0x00000046,
+    0x00000042, 0x00000045, 0x00050084, 0x00000006, 0x00000049, 0x0000002C,
+    0x0000002B, 0x00050082, 0x00000006, 0x0000004A, 0x00000020, 0x00000049,
+    0x000500AA, 0x00000039, 0x0000004C, 0x0000004A, 0x0000002F, 0x000600A9,
+    0x00000006, 0x0000004D, 0x0000004C, 0x0000001B, 0x00000016, 0x000500C7,
+    0x00000006, 0x0000004E, 0x00000046, 0x0000004D, 0x00050084, 0x00000006,
+    0x00000051, 0x00000033, 0x00000032, 0x00050082, 0x00000006, 0x00000052,
+    0x00000020, 0x00000051, 0x000500B0, 0x00000039, 0x00000053, 0x00000052,
+    0x00000032, 0x000600A9, 0x00000006, 0x00000054, 0x00000053, 0x0000001B,
+    0x00000016, 0x000500C7, 0x00000006, 0x00000055, 0x0000004E, 0x00000054,
+    0x00050041, 0x00000058, 0x00000059, 0x0000000D, 0x00000016, 0x0004003D,
+    0x0000000A, 0x0000005A, 0x00000059, 0x00040070, 0x0000000A, 0x0000005C,
+    0x00000055, 0x00050041, 0x00000058, 0x0000005D, 0x0000000D, 0x0000001B,
+    0x0004003D, 0x0000000A, 0x0000005E, 0x0000005D, 0x00070050, 0x0000000B,
+    0x00000060, 0x0000005A, 0x0000005C, 0x0000005E, 0x0000005F, 0x0003003E,
+    0x00000057, 0x00000060, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for the five signed divisions and moduli
+/// by constants of `shipped_constant_signed` and `shipped_constant_modulus`
+/// together, by -5 where they divide by -7 and 7, checked in the program:
+/// more steps than the tables of 128 held (since 1.54).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// void main() {
+///     ivec2 v = ivec2(vcolor.xy * 255.0);
+///     int n = v.x * 16843009 - v.y * 1640531527;
+///     uint negative = uint(n < 0);
+///     int q5 = n / -5;
+///     int r5 = n - q5 * -5;
+///     int q8 = n / 8;
+///     int r8 = n - q8 * 8;
+///     int q6 = n / 6;
+///     int r6 = n - q6 * 6;
+///     int m6 = n % 6;
+///     int m4 = n % -4;
+///     uint exact = uint(abs(r5) < 5) & (uint(r5 == 0) | uint(uint(r5 < 0) == negative))
+///                & uint(abs(r8) < 8) & (uint(r8 == 0) | uint(uint(r8 < 0) == negative))
+///                & uint(abs(r6) < 6) & (uint(r6 == 0) | uint(uint(r6 < 0) == negative))
+///                & uint(m6 == r6 + 6 * int(r6 < 0))
+///                & uint(m4 <= 0) & uint(m4 > -4) & uint(((n - m4) & 3) == 0);
+///     ocolor = vec4(vcolor.x, float(exact), vcolor.y, 1.0);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag idiv_many.frag -o idiv_many.spv   # 563 words
+/// spirv-val --target-env vulkan1.0 idiv_many.spv                  # no output, and 0
+/// ```
+const shipped_many_moduli = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x000000A2, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000098, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000D, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000098, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006, 0x00000020,
+    0x00000001, 0x00040017, 0x00000007, 0x00000006, 0x00000002, 0x00030016,
+    0x0000000A, 0x00000020, 0x00040017, 0x0000000B, 0x0000000A, 0x00000004,
+    0x00040020, 0x0000000C, 0x00000001, 0x0000000B, 0x0004003B, 0x0000000C,
+    0x0000000D, 0x00000001, 0x00040017, 0x0000000E, 0x0000000A, 0x00000002,
+    0x0004002B, 0x0000000A, 0x00000011, 0x437F0000, 0x00040015, 0x00000016,
+    0x00000020, 0x00000000, 0x0004002B, 0x00000016, 0x00000017, 0x00000000,
+    0x0004002B, 0x00000006, 0x0000001A, 0x01010101, 0x0004002B, 0x00000016,
+    0x0000001C, 0x00000001, 0x0004002B, 0x00000006, 0x0000001F, 0x61C88647,
+    0x0004002B, 0x00000006, 0x00000025, 0x00000000, 0x00020014, 0x00000026,
+    0x0004002B, 0x00000006, 0x0000002B, 0xFFFFFFFB, 0x0004002B, 0x00000006,
+    0x00000034, 0x00000008, 0x0004002B, 0x00000006, 0x0000003D, 0x00000006,
+    0x0004002B, 0x00000006, 0x00000049, 0xFFFFFFFC, 0x0004002B, 0x00000006,
+    0x0000004E, 0x00000005, 0x0004002B, 0x00000006, 0x00000092, 0x00000003,
+    0x00040020, 0x00000097, 0x00000003, 0x0000000B, 0x0004003B, 0x00000097,
+    0x00000098, 0x00000003, 0x00040020, 0x00000099, 0x00000001, 0x0000000A,
+    0x0004002B, 0x0000000A, 0x000000A0, 0x3F800000, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000B, 0x0000000F, 0x0000000D, 0x0007004F, 0x0000000E, 0x00000010,
+    0x0000000F, 0x0000000F, 0x00000000, 0x00000001, 0x0005008E, 0x0000000E,
+    0x00000012, 0x00000010, 0x00000011, 0x0004006E, 0x00000007, 0x00000013,
+    0x00000012, 0x00050051, 0x00000006, 0x00000019, 0x00000013, 0x00000000,
+    0x00050084, 0x00000006, 0x0000001B, 0x00000019, 0x0000001A, 0x00050051,
+    0x00000006, 0x0000001E, 0x00000013, 0x00000001, 0x00050084, 0x00000006,
+    0x00000020, 0x0000001E, 0x0000001F, 0x00050082, 0x00000006, 0x00000021,
+    0x0000001B, 0x00000020, 0x000500B1, 0x00000026, 0x00000027, 0x00000021,
+    0x00000025, 0x000600A9, 0x00000016, 0x00000028, 0x00000027, 0x0000001C,
+    0x00000017, 0x00050087, 0x00000006, 0x0000002C, 0x00000021, 0x0000002B,
+    0x00050084, 0x00000006, 0x00000030, 0x0000002C, 0x0000002B, 0x00050082,
+    0x00000006, 0x00000031, 0x00000021, 0x00000030, 0x00050087, 0x00000006,
+    0x00000035, 0x00000021, 0x00000034, 0x00050084, 0x00000006, 0x00000039,
+    0x00000035, 0x00000034, 0x00050082, 0x00000006, 0x0000003A, 0x00000021,
+    0x00000039, 0x00050087, 0x00000006, 0x0000003E, 0x00000021, 0x0000003D,
+    0x00050084, 0x00000006, 0x00000042, 0x0000003E, 0x0000003D, 0x00050082,
+    0x00000006, 0x00000043, 0x00000021, 0x00000042, 0x0005008B, 0x00000006,
+    0x00000046, 0x00000021, 0x0000003D, 0x0005008B, 0x00000006, 0x0000004A,
+    0x00000021, 0x00000049, 0x0006000C, 0x00000006, 0x0000004D, 0x00000001,
+    0x00000005, 0x00000031, 0x000500B1, 0x00000026, 0x0000004F, 0x0000004D,
+    0x0000004E, 0x000600A9, 0x00000016, 0x00000050, 0x0000004F, 0x0000001C,
+    0x00000017, 0x000500AA, 0x00000026, 0x00000052, 0x00000031, 0x00000025,
+    0x000600A9, 0x00000016, 0x00000053, 0x00000052, 0x0000001C, 0x00000017,
+    0x000500B1, 0x00000026, 0x00000055, 0x00000031, 0x00000025, 0x000600A9,
+    0x00000016, 0x00000056, 0x00000055, 0x0000001C, 0x00000017, 0x000500AA,
+    0x00000026, 0x00000058, 0x00000056, 0x00000028, 0x000600A9, 0x00000016,
+    0x00000059, 0x00000058, 0x0000001C, 0x00000017, 0x000500C5, 0x00000016,
+    0x0000005A, 0x00000053, 0x00000059, 0x000500C7, 0x00000016, 0x0000005B,
+    0x00000050, 0x0000005A, 0x0006000C, 0x00000006, 0x0000005D, 0x00000001,
+    0x00000005, 0x0000003A, 0x000500B1, 0x00000026, 0x0000005E, 0x0000005D,
+    0x00000034, 0x000600A9, 0x00000016, 0x0000005F, 0x0000005E, 0x0000001C,
+    0x00000017, 0x000500C7, 0x00000016, 0x00000060, 0x0000005B, 0x0000005F,
+    0x000500AA, 0x00000026, 0x00000062, 0x0000003A, 0x00000025, 0x000600A9,
+    0x00000016, 0x00000063, 0x00000062, 0x0000001C, 0x00000017, 0x000500B1,
+    0x00000026, 0x00000065, 0x0000003A, 0x00000025, 0x000600A9, 0x00000016,
+    0x00000066, 0x00000065, 0x0000001C, 0x00000017, 0x000500AA, 0x00000026,
+    0x00000068, 0x00000066, 0x00000028, 0x000600A9, 0x00000016, 0x00000069,
+    0x00000068, 0x0000001C, 0x00000017, 0x000500C5, 0x00000016, 0x0000006A,
+    0x00000063, 0x00000069, 0x000500C7, 0x00000016, 0x0000006B, 0x00000060,
+    0x0000006A, 0x0006000C, 0x00000006, 0x0000006D, 0x00000001, 0x00000005,
+    0x00000043, 0x000500B1, 0x00000026, 0x0000006E, 0x0000006D, 0x0000003D,
+    0x000600A9, 0x00000016, 0x0000006F, 0x0000006E, 0x0000001C, 0x00000017,
+    0x000500C7, 0x00000016, 0x00000070, 0x0000006B, 0x0000006F, 0x000500AA,
+    0x00000026, 0x00000072, 0x00000043, 0x00000025, 0x000600A9, 0x00000016,
+    0x00000073, 0x00000072, 0x0000001C, 0x00000017, 0x000500B1, 0x00000026,
+    0x00000075, 0x00000043, 0x00000025, 0x000600A9, 0x00000016, 0x00000076,
+    0x00000075, 0x0000001C, 0x00000017, 0x000500AA, 0x00000026, 0x00000078,
+    0x00000076, 0x00000028, 0x000600A9, 0x00000016, 0x00000079, 0x00000078,
+    0x0000001C, 0x00000017, 0x000500C5, 0x00000016, 0x0000007A, 0x00000073,
+    0x00000079, 0x000500C7, 0x00000016, 0x0000007B, 0x00000070, 0x0000007A,
+    0x000600A9, 0x00000006, 0x00000082, 0x00000075, 0x0000003D, 0x00000025,
+    0x00050080, 0x00000006, 0x00000083, 0x00000043, 0x00000082, 0x000500AA,
+    0x00000026, 0x00000084, 0x00000046, 0x00000083, 0x000600A9, 0x00000016,
+    0x00000085, 0x00000084, 0x0000001C, 0x00000017, 0x000500C7, 0x00000016,
+    0x00000086, 0x0000007B, 0x00000085, 0x000500B3, 0x00000026, 0x00000088,
+    0x0000004A, 0x00000025, 0x000600A9, 0x00000016, 0x00000089, 0x00000088,
+    0x0000001C, 0x00000017, 0x000500C7, 0x00000016, 0x0000008A, 0x00000086,
+    0x00000089, 0x000500AD, 0x00000026, 0x0000008C, 0x0000004A, 0x00000049,
+    0x000600A9, 0x00000016, 0x0000008D, 0x0000008C, 0x0000001C, 0x00000017,
+    0x000500C7, 0x00000016, 0x0000008E, 0x0000008A, 0x0000008D, 0x00050082,
+    0x00000006, 0x00000091, 0x00000021, 0x0000004A, 0x000500C7, 0x00000006,
+    0x00000093, 0x00000091, 0x00000092, 0x000500AA, 0x00000026, 0x00000094,
+    0x00000093, 0x00000025, 0x000600A9, 0x00000016, 0x00000095, 0x00000094,
+    0x0000001C, 0x00000017, 0x000500C7, 0x00000016, 0x00000096, 0x0000008E,
+    0x00000095, 0x00050041, 0x00000099, 0x0000009A, 0x0000000D, 0x00000017,
+    0x0004003D, 0x0000000A, 0x0000009B, 0x0000009A, 0x00040070, 0x0000000A,
+    0x0000009D, 0x00000096, 0x00050041, 0x00000099, 0x0000009E, 0x0000000D,
+    0x0000001C, 0x0004003D, 0x0000000A, 0x0000009F, 0x0000009E, 0x00070050,
+    0x0000000B, 0x000000A1, 0x0000009B, 0x0000009D, 0x0000009F, 0x000000A0,
+    0x0003003E, 0x00000098, 0x000000A1, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
@@ -8014,6 +8308,8 @@ const cases = [_]Case{
     .{ .name = "shipped constant remainder", .run = Cases.shipped("as it is", "shipped constant remainder", false, clockwise_at) },
     .{ .name = "shipped constant signed", .run = Cases.shipped("as it is", "shipped constant signed", false, clockwise_at) },
     .{ .name = "shipped constant modulus", .run = Cases.shipped("as it is", "shipped constant modulus", false, clockwise_at) },
+    .{ .name = "shipped many divisions", .run = Cases.shipped("as it is", "shipped many divisions", false, clockwise_at) },
+    .{ .name = "shipped many moduli", .run = Cases.shipped("as it is", "shipped many moduli", false, clockwise_at) },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },

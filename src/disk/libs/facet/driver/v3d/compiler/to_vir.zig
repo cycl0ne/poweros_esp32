@@ -222,13 +222,25 @@ const Emit = struct {
     /// a step was coalesced into, which it writes (since 1.171).
     webs: [compile.most_steps]Reg = undefined,
     web_count: u32 = 0,
-    web_of: [compile.most_steps][4]u8 = @splat(@splat(no_web)),
+    web_of: [compile.most_steps][4]Web = @splat(@splat(no_web)),
+    /// Where each float is read, a bit each step that reads it, and
+    /// whether the colour reads it: `fromSsa`'s, on the heap with the
+    /// rest, as nir_from_ssa's merge sets are ralloc'd
+    /// (nir_from_ssa.c:164-169, :938; since 1.189).
+    uses: [compile.most_steps][4]Mask = undefined,
+    at_end: [compile.most_steps][4]bool = undefined,
     /// The kept selection being emitted.
     branch: If = .{},
 };
 
+/// A bit for each step (since 1.189; a u128 of the 128 steps before).
+const Mask = std.meta.Int(.unsigned, compile.most_steps);
+
+/// A web's number, up to one a step (since 1.189; a u8 before).
+const Web = u16;
+
 /// A float coalesced into no web.
-const no_web: u8 = 0xFF;
+const no_web: Web = std.math.maxInt(Web);
 
 /// A kept selection as ntq_emit_if emits it (nir_to_vir.c:4562): its
 /// marks, its blocks, and how it is emitted (since 1.171).
@@ -1009,8 +1021,10 @@ fn fromSsa(e: *Emit) Error!void {
     // that only name it, and for a phi the end of the way it comes; and
     // whether the colour reads it. A step that computes reads each float
     // of what it reads.
-    var uses: [compile.most_steps][4]u128 = @splat(@splat(0));
-    var at_end: [compile.most_steps][4]bool = @splat(@splat(false));
+    const uses = &e.uses;
+    const at_end = &e.at_end;
+    @memset(uses, @splat(0));
+    @memset(at_end, @splat(false));
     var at = steps.len;
     while (at > 0) {
         at -= 1;
@@ -1031,7 +1045,7 @@ fn fromSsa(e: *Emit) Error!void {
         }
     }
     if (e.work.stored != compile.none) for (0..steps[e.work.stored].kind.parts()) |k| {
-        endRead(steps, &at_end, .{ .step = e.work.stored, .part = @intCast(k) });
+        endRead(steps, at_end, .{ .step = e.work.stored, .part = @intCast(k) });
     };
 
     var begin: u16 = 0;
@@ -1047,7 +1061,7 @@ fn fromSsa(e: *Emit) Error!void {
                 count += 1;
             }
         }
-        const kept = Branch{ .begin = branch.begin, .otherwise = branch.otherwise, .end = branch.end, .phis = phis[0..count], .first_web = @intCast(e.web_count), .uses = &uses, .at_end = &at_end, .steps = steps };
+        const kept = Branch{ .begin = branch.begin, .otherwise = branch.otherwise, .end = branch.end, .phis = phis[0..count], .first_web = @intCast(e.web_count), .uses = uses, .at_end = at_end, .steps = steps };
         for (kept.phis) |phi| {
             e.web_of[phi][0] = @intCast(e.web_count);
             e.web_count += 1;
@@ -1063,18 +1077,18 @@ fn fromSsa(e: *Emit) Error!void {
     }
 }
 
-fn bitOf(at: u16) u128 {
-    return @as(u128, 1) << @intCast(at);
+fn bitOf(at: u16) Mask {
+    return @as(Mask, 1) << @intCast(at);
 }
 
 /// The steps after `at`.
-fn above(at: u16) u128 {
-    if (at >= 127) return 0;
+fn above(at: u16) Mask {
+    if (at >= compile.most_steps - 1) return 0;
     return ~((bitOf(at) << 1) - 1);
 }
 
 /// The steps after `at`, to `to` and with it.
-fn span(at: u16, to: u16) u128 {
+fn span(at: u16, to: u16) Mask {
     return above(at) & ~above(to);
 }
 
@@ -1114,7 +1128,7 @@ fn branchOf(steps: []const Step, phi: u16) Marks {
 /// The float `of` put in the web `web`, and where it is in a web of a
 /// selection before, all that web with it (merge_merge_sets,
 /// nir_from_ssa.c:197-223).
-fn join(e: *Emit, of: compile.Float, web: u8) void {
+fn join(e: *Emit, of: compile.Float, web: Web) void {
     const was = e.web_of[of.step][of.part];
     if (was == no_web) {
         e.web_of[of.step][of.part] = web;
@@ -1139,8 +1153,8 @@ const Branch = struct {
     end: u16,
     phis: []const u16,
     /// Its first phi's web: the webs before it are of selections before.
-    first_web: u8,
-    uses: *const [compile.most_steps][4]u128,
+    first_web: Web,
+    uses: *const [compile.most_steps][4]Mask,
     at_end: *const [compile.most_steps][4]bool,
     steps: []const Step,
 
@@ -1187,7 +1201,7 @@ const Branch = struct {
     /// share the phi's web: it is live where something in the web it
     /// dominates is made, or something in the web that dominates it is
     /// live where it is made.
-    fn interferes(branch: *const Branch, e: *const Emit, of: compile.Float, side: usize, j: usize, web: u8) bool {
+    fn interferes(branch: *const Branch, e: *const Emit, of: compile.Float, side: usize, j: usize, web: Web) bool {
         const where_of = branch.where(of.step);
         const before = where_of == .before;
         // The copy at the end of its own way, and where it is made before
