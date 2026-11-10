@@ -2575,6 +2575,28 @@ On the CM5, FacetBoth's 266 cases are each as they were at 1.186. Its two new ca
 
 The cases check themselves because the two devices' interpolation can make an integer of the colour one apart where a float crosses one. Compared byte for byte, the quotient was 349 pixels apart, each device's right for its own operands: at 120,69 the cores read 210 and 41, the V3D 210 and 40.
 
+**Then a division or remainder by a constant**, facet.library 1.188.
+
+v3dv's preprocess_nir runs nir_opt_algebraic (v3dv_pipeline.c:413, :443) before v3d's nir_opt_idiv_const (vir.c:2018), and both are ported, a float at a time:
+- nir_opt_algebraic's divisor rules (nir_opt_algebraic.py:200-217): by 1 the dividend or 0, an imod or irem by -1 0, and by a power of two shifts and masks, v3d leaving `lower_bitops` unset. An idiv's isign is lowered to imin(imax(a, -1), 1) (`lower_isign`, v3dv_pipeline.c:200; nir_opt_algebraic.py:2836).
+- nir_opt_idiv_const for another divisor (nir_opt_idiv_const.c:29-152): by 0 a 0; an unsigned one above 2^31 a b2i32 of a comparison, an AND with 1 (nir_to_vir.c:1524-1528); the most negative its own cases; and else Hacker's Delight's multiply by util_compute_fast_udiv_info's or _sdiv_info's magic number (util/fast_idiv_by_const.c:46-237).
+- The multiply's uadd_sat is a bcsel (`lower_uadd_sat`, v3dv_pipeline.c:165; nir_opt_algebraic.py:2539), and its imul_high nir_lower_alu's, the high halves' shifts an ishr (nir_lower_alu.c:119-158).
+
+A float whose divisor is not a constant is nir_lower_idiv's, as at 1.187.
+
+Results:
+- glslc_udiv_constants (by 7, 4 and 16, and a remainder by 7) is five 32-bit products and no RECIP; glslc_idiv_constants (by -5, 8, 6 and -4) ten.
+- 1.187's refused modules compile: glslc_idiv_constant is four products, and glslc_udiv_part's constant float a multiply beside its other float's RECIP, 14 and one.
+- The magic numbers are pinned for 3, 5, 6, 7 and 641 unsigned and for 3, 5, 7, -5 and -7 signed.
+- Each of the five operations is worked out on the host for 21 dividends by 41 divisors of every sign and size, through the reading and through the builders alone.
+- An unsigned division by 2^31 + 1, 3000000000, 2^32 - 16 and 2^32 - 1 is a comparison's b2i32 with no multiply.
+
+Of 53 mutations of the port, 50 fail the tests. The round-up test made strict (fast_idiv_by_const.c:113) is the same program: a remainder half the divisor needs a divisor that is a power of two, which never comes there. The round-down test made strict (:134) and the signed test numerator one larger (:199) changed no divisor in the sweeps tried.
+
+On the CM5, FacetBoth's 268 cases are each as they were at 1.187. Its four new cases are glslc's unsigned divisions and remainders and its signed divisions and moduli by constants of an integer of the colour, each program checking its results against its own dividend: 8 of 230400 pixels apart, the 8 at the triangles' edge every case of their geometry has. FacetProbe is 890 of 890.
+
+Each case is worked out on the host for all 65536 pairs of the colour's integers, and a break of each of the lowering's paths shows in one of them. Two programs of all the checks were 142 and 178 steps, past the tables' 128, and right on the host with the tables raised: they are split into four of 88 to 117.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim
