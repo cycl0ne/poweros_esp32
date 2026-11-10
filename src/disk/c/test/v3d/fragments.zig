@@ -920,8 +920,9 @@ fn compiled(back: Back, work: *compile.Work, words: []const u32, stream: *[compi
         // of the viewport or the first vertex, which a vertex program's
         // alone is (since 1.192), nor has one a spill buffer (the
         // library's pipelines make it), nor does one ask a view's sizes,
-        // which the library's draws measure (since 1.181).
-        .push, .ubo, .ssbo, .viewport, .first_vertex, .spill_offset, .spill_size_per_thread, .texture_size => return null,
+        // which the library's draws measure (since 1.181), nor of a
+        // compute program's work groups (since 1.194).
+        .push, .ubo, .ssbo, .viewport, .first_vertex, .num_work_groups, .work_group_base, .spill_offset, .spill_size_per_thread, .texture_size => return null,
     };
     return .{
         .{

@@ -1162,6 +1162,9 @@ fn streamOf(queue: *Queue, stream: []const compile.Word, tmus: []const Configura
         // A vertex program's: the vertex its draw numbers its vertices
         // from, which the VPM's vertex id counts from (since 1.192).
         .first_vertex => first_vertex,
+        // A compute program's alone, which no draw's stream holds: the
+        // device's dispatches run on the cores (`_compute.dispatch`).
+        .num_work_groups, .work_group_base => 0,
         // The pipeline made the buffer where one of its programs needs it
         // (`driver.checkSpillSize`).
         .spill_offset => spill.address,

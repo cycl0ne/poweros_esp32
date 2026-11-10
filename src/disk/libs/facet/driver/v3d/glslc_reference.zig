@@ -24130,3 +24130,343 @@ pub const glslc_point_last = [_]u32{
     0x00000030, 0x00000031, 0x00000012, 0x0000002B, 0x0003003E, 0x00000031,
     0x0000002F, 0x000100FD, 0x00010038,
 };
+
+/// glslc -O -fshader-stage=comp, a 16x1x1 workgroup that writes its global
+/// id's x times 3 plus its local index into a storage buffer: the global id
+/// of the CS payload's workgroup id, the dispatch's base and the local
+/// index (since 1.194). 179 words.
+///
+/// ```glsl
+/// #version 450
+/// // Each invocation writes its global id three times and its local index:
+/// // gl_GlobalInvocationID of the CS payload's workgroup id and the local
+/// // index, as nir_lower_compute_system_values has it (facet 1.194).
+/// layout(local_size_x = 16, local_size_y = 1, local_size_z = 1) in;
+/// layout(std430, set = 0, binding = 0) buffer Out { uint data[]; } result;
+/// void main() {
+///     uint i = gl_GlobalInvocationID.x;
+///     result.data[i] = i * 3u + gl_LocalInvocationIndex;
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 34
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint GLCompute %4 "main" %11 %26
+///                OpExecutionMode %4 LocalSize 16 1 1
+///                OpDecorate %11 BuiltIn GlobalInvocationId
+///                OpDecorate %16 ArrayStride 4
+///                OpDecorate %17 BufferBlock
+///                OpMemberDecorate %17 0 Offset 0
+///                OpDecorate %19 Binding 0
+///                OpDecorate %19 DescriptorSet 0
+///                OpDecorate %26 BuiltIn LocalInvocationIndex
+///                OpDecorate %33 BuiltIn WorkgroupSize
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeInt 32 0
+///           %9 = OpTypeVector %6 3
+///          %10 = OpTypePointer Input %9
+///          %11 = OpVariable %10 Input
+///          %12 = OpConstant %6 0
+///          %13 = OpTypePointer Input %6
+///          %16 = OpTypeRuntimeArray %6
+///          %17 = OpTypeStruct %16
+///          %18 = OpTypePointer Uniform %17
+///          %19 = OpVariable %18 Uniform
+///          %20 = OpTypeInt 32 1
+///          %21 = OpConstant %20 0
+///          %24 = OpConstant %6 3
+///          %26 = OpVariable %13 Input
+///          %29 = OpTypePointer Uniform %6
+///          %31 = OpConstant %6 16
+///          %32 = OpConstant %6 1
+///          %33 = OpConstantComposite %9 %31 %32 %32
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpAccessChain %13 %11 %12
+///          %15 = OpLoad %6 %14
+///          %25 = OpIMul %6 %15 %24
+///          %27 = OpLoad %6 %26
+///          %28 = OpIAdd %6 %25 %27
+///          %30 = OpAccessChain %29 %19 %21 %15
+///                OpStore %30 %28
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_compute_ids = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000022, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x0000001A, 0x00060010,
+    0x00000004, 0x00000011, 0x00000010, 0x00000001, 0x00000001, 0x00040047,
+    0x0000000B, 0x0000000B, 0x0000001C, 0x00040047, 0x00000010, 0x00000006,
+    0x00000004, 0x00030047, 0x00000011, 0x00000003, 0x00050048, 0x00000011,
+    0x00000000, 0x00000023, 0x00000000, 0x00040047, 0x00000013, 0x00000021,
+    0x00000000, 0x00040047, 0x00000013, 0x00000022, 0x00000000, 0x00040047,
+    0x0000001A, 0x0000000B, 0x0000001D, 0x00040047, 0x00000021, 0x0000000B,
+    0x00000019, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00040015, 0x00000006, 0x00000020, 0x00000000, 0x00040017, 0x00000009,
+    0x00000006, 0x00000003, 0x00040020, 0x0000000A, 0x00000001, 0x00000009,
+    0x0004003B, 0x0000000A, 0x0000000B, 0x00000001, 0x0004002B, 0x00000006,
+    0x0000000C, 0x00000000, 0x00040020, 0x0000000D, 0x00000001, 0x00000006,
+    0x0003001D, 0x00000010, 0x00000006, 0x0003001E, 0x00000011, 0x00000010,
+    0x00040020, 0x00000012, 0x00000002, 0x00000011, 0x0004003B, 0x00000012,
+    0x00000013, 0x00000002, 0x00040015, 0x00000014, 0x00000020, 0x00000001,
+    0x0004002B, 0x00000014, 0x00000015, 0x00000000, 0x0004002B, 0x00000006,
+    0x00000018, 0x00000003, 0x0004003B, 0x0000000D, 0x0000001A, 0x00000001,
+    0x00040020, 0x0000001D, 0x00000002, 0x00000006, 0x0004002B, 0x00000006,
+    0x0000001F, 0x00000010, 0x0004002B, 0x00000006, 0x00000020, 0x00000001,
+    0x0006002C, 0x00000009, 0x00000021, 0x0000001F, 0x00000020, 0x00000020,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x00050041, 0x0000000D, 0x0000000E, 0x0000000B, 0x0000000C,
+    0x0004003D, 0x00000006, 0x0000000F, 0x0000000E, 0x00050084, 0x00000006,
+    0x00000019, 0x0000000F, 0x00000018, 0x0004003D, 0x00000006, 0x0000001B,
+    0x0000001A, 0x00050080, 0x00000006, 0x0000001C, 0x00000019, 0x0000001B,
+    0x00060041, 0x0000001D, 0x0000001E, 0x00000013, 0x00000015, 0x0000000F,
+    0x0003003E, 0x0000001E, 0x0000001C, 0x000100FD, 0x00010038,
+};
+
+/// glslc -O -fshader-stage=comp, a 4x4x2 workgroup that writes its local
+/// id and its workgroup's number among the dispatch's into a storage
+/// buffer: the local id of the local index by the workgroup's size, the
+/// workgroup id of the payload and the count of them of uniforms (since
+/// 1.194). 287 words.
+///
+/// ```glsl
+/// #version 450
+/// // A 4x4x2 workgroup: gl_LocalInvocationID made of the local index by
+/// // umod and udiv of the size, gl_WorkGroupID of the payload, and
+/// // gl_NumWorkGroups of the uniforms (facet 1.194).
+/// layout(local_size_x = 4, local_size_y = 4, local_size_z = 2) in;
+/// layout(std430, set = 0, binding = 0) buffer Out { uvec4 data[]; } result;
+/// void main() {
+///     uint flat_group = gl_WorkGroupID.x + gl_NumWorkGroups.x * (gl_WorkGroupID.y + gl_NumWorkGroups.y * gl_WorkGroupID.z);
+///     result.data[flat_group * 32u + gl_LocalInvocationIndex] = uvec4(gl_LocalInvocationID, flat_group);
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 55
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint GLCompute %4 "main" %11 %16 %41 %44
+///                OpExecutionMode %4 LocalSize 4 4 2
+///                OpDecorate %11 BuiltIn WorkgroupId
+///                OpDecorate %16 BuiltIn NumWorkgroups
+///                OpDecorate %32 ArrayStride 16
+///                OpDecorate %33 BufferBlock
+///                OpMemberDecorate %33 0 Offset 0
+///                OpDecorate %35 Binding 0
+///                OpDecorate %35 DescriptorSet 0
+///                OpDecorate %41 BuiltIn LocalInvocationIndex
+///                OpDecorate %44 BuiltIn LocalInvocationId
+///                OpDecorate %54 BuiltIn WorkgroupSize
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeInt 32 0
+///           %9 = OpTypeVector %6 3
+///          %10 = OpTypePointer Input %9
+///          %11 = OpVariable %10 Input
+///          %12 = OpConstant %6 0
+///          %13 = OpTypePointer Input %6
+///          %16 = OpVariable %10 Input
+///          %19 = OpConstant %6 1
+///          %24 = OpConstant %6 2
+///          %31 = OpTypeVector %6 4
+///          %32 = OpTypeRuntimeArray %31
+///          %33 = OpTypeStruct %32
+///          %34 = OpTypePointer Uniform %33
+///          %35 = OpVariable %34 Uniform
+///          %36 = OpTypeInt 32 1
+///          %37 = OpConstant %36 0
+///          %39 = OpConstant %6 32
+///          %41 = OpVariable %13 Input
+///          %44 = OpVariable %10 Input
+///          %51 = OpTypePointer Uniform %31
+///          %53 = OpConstant %6 4
+///          %54 = OpConstantComposite %9 %53 %53 %24
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpAccessChain %13 %11 %12
+///          %15 = OpLoad %6 %14
+///          %17 = OpAccessChain %13 %16 %12
+///          %18 = OpLoad %6 %17
+///          %20 = OpAccessChain %13 %11 %19
+///          %21 = OpLoad %6 %20
+///          %22 = OpAccessChain %13 %16 %19
+///          %23 = OpLoad %6 %22
+///          %25 = OpAccessChain %13 %11 %24
+///          %26 = OpLoad %6 %25
+///          %27 = OpIMul %6 %23 %26
+///          %28 = OpIAdd %6 %21 %27
+///          %29 = OpIMul %6 %18 %28
+///          %30 = OpIAdd %6 %15 %29
+///          %40 = OpIMul %6 %30 %39
+///          %42 = OpLoad %6 %41
+///          %43 = OpIAdd %6 %40 %42
+///          %45 = OpLoad %9 %44
+///          %47 = OpCompositeExtract %6 %45 0
+///          %48 = OpCompositeExtract %6 %45 1
+///          %49 = OpCompositeExtract %6 %45 2
+///          %50 = OpCompositeConstruct %31 %47 %48 %49 %30
+///          %52 = OpAccessChain %51 %35 %37 %43
+///                OpStore %52 %50
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_compute_grid = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000037, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0009000F, 0x00000005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000010, 0x00000029,
+    0x0000002C, 0x00060010, 0x00000004, 0x00000011, 0x00000004, 0x00000004,
+    0x00000002, 0x00040047, 0x0000000B, 0x0000000B, 0x0000001A, 0x00040047,
+    0x00000010, 0x0000000B, 0x00000018, 0x00040047, 0x00000020, 0x00000006,
+    0x00000010, 0x00030047, 0x00000021, 0x00000003, 0x00050048, 0x00000021,
+    0x00000000, 0x00000023, 0x00000000, 0x00040047, 0x00000023, 0x00000021,
+    0x00000000, 0x00040047, 0x00000023, 0x00000022, 0x00000000, 0x00040047,
+    0x00000029, 0x0000000B, 0x0000001D, 0x00040047, 0x0000002C, 0x0000000B,
+    0x0000001B, 0x00040047, 0x00000036, 0x0000000B, 0x00000019, 0x00020013,
+    0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006,
+    0x00000020, 0x00000000, 0x00040017, 0x00000009, 0x00000006, 0x00000003,
+    0x00040020, 0x0000000A, 0x00000001, 0x00000009, 0x0004003B, 0x0000000A,
+    0x0000000B, 0x00000001, 0x0004002B, 0x00000006, 0x0000000C, 0x00000000,
+    0x00040020, 0x0000000D, 0x00000001, 0x00000006, 0x0004003B, 0x0000000A,
+    0x00000010, 0x00000001, 0x0004002B, 0x00000006, 0x00000013, 0x00000001,
+    0x0004002B, 0x00000006, 0x00000018, 0x00000002, 0x00040017, 0x0000001F,
+    0x00000006, 0x00000004, 0x0003001D, 0x00000020, 0x0000001F, 0x0003001E,
+    0x00000021, 0x00000020, 0x00040020, 0x00000022, 0x00000002, 0x00000021,
+    0x0004003B, 0x00000022, 0x00000023, 0x00000002, 0x00040015, 0x00000024,
+    0x00000020, 0x00000001, 0x0004002B, 0x00000024, 0x00000025, 0x00000000,
+    0x0004002B, 0x00000006, 0x00000027, 0x00000020, 0x0004003B, 0x0000000D,
+    0x00000029, 0x00000001, 0x0004003B, 0x0000000A, 0x0000002C, 0x00000001,
+    0x00040020, 0x00000033, 0x00000002, 0x0000001F, 0x0004002B, 0x00000006,
+    0x00000035, 0x00000004, 0x0006002C, 0x00000009, 0x00000036, 0x00000035,
+    0x00000035, 0x00000018, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x00050041, 0x0000000D, 0x0000000E,
+    0x0000000B, 0x0000000C, 0x0004003D, 0x00000006, 0x0000000F, 0x0000000E,
+    0x00050041, 0x0000000D, 0x00000011, 0x00000010, 0x0000000C, 0x0004003D,
+    0x00000006, 0x00000012, 0x00000011, 0x00050041, 0x0000000D, 0x00000014,
+    0x0000000B, 0x00000013, 0x0004003D, 0x00000006, 0x00000015, 0x00000014,
+    0x00050041, 0x0000000D, 0x00000016, 0x00000010, 0x00000013, 0x0004003D,
+    0x00000006, 0x00000017, 0x00000016, 0x00050041, 0x0000000D, 0x00000019,
+    0x0000000B, 0x00000018, 0x0004003D, 0x00000006, 0x0000001A, 0x00000019,
+    0x00050084, 0x00000006, 0x0000001B, 0x00000017, 0x0000001A, 0x00050080,
+    0x00000006, 0x0000001C, 0x00000015, 0x0000001B, 0x00050084, 0x00000006,
+    0x0000001D, 0x00000012, 0x0000001C, 0x00050080, 0x00000006, 0x0000001E,
+    0x0000000F, 0x0000001D, 0x00050084, 0x00000006, 0x00000028, 0x0000001E,
+    0x00000027, 0x0004003D, 0x00000006, 0x0000002A, 0x00000029, 0x00050080,
+    0x00000006, 0x0000002B, 0x00000028, 0x0000002A, 0x0004003D, 0x00000009,
+    0x0000002D, 0x0000002C, 0x00050051, 0x00000006, 0x0000002F, 0x0000002D,
+    0x00000000, 0x00050051, 0x00000006, 0x00000030, 0x0000002D, 0x00000001,
+    0x00050051, 0x00000006, 0x00000031, 0x0000002D, 0x00000002, 0x00070050,
+    0x0000001F, 0x00000032, 0x0000002F, 0x00000030, 0x00000031, 0x0000001E,
+    0x00060041, 0x00000033, 0x00000034, 0x00000023, 0x00000025, 0x0000002B,
+    0x0003003E, 0x00000034, 0x00000032, 0x000100FD, 0x00010038,
+};
+
+/// glslc -O -fshader-stage=comp, a 64x1x1 workgroup each invocation of
+/// which adds its local index to the buffer's first word and keeps what
+/// it found there: a compute program's atomic (since 1.194). 165
+/// words.
+///
+/// ```glsl
+/// #version 450
+/// // Each invocation adds its local index to one word and keeps what it
+/// // found there: a TMU atomic of a compute program (facet 1.194).
+/// layout(local_size_x = 64) in;
+/// layout(std430, set = 0, binding = 0) buffer Out { uint total; uint seen[]; } result;
+/// void main() {
+///     result.seen[gl_LocalInvocationIndex] = atomicAdd(result.total, gl_LocalInvocationIndex);
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 27
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint GLCompute %4 "main" %14
+///                OpExecutionMode %4 LocalSize 64 1 1
+///                OpDecorate %7 ArrayStride 4
+///                OpDecorate %8 BufferBlock
+///                OpMemberDecorate %8 0 Offset 0
+///                OpMemberDecorate %8 1 Offset 4
+///                OpDecorate %10 Binding 0
+///                OpDecorate %10 DescriptorSet 0
+///                OpDecorate %14 BuiltIn LocalInvocationIndex
+///                OpDecorate %26 BuiltIn WorkgroupSize
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeInt 32 0
+///           %7 = OpTypeRuntimeArray %6
+///           %8 = OpTypeStruct %6 %7
+///           %9 = OpTypePointer Uniform %8
+///          %10 = OpVariable %9 Uniform
+///          %11 = OpTypeInt 32 1
+///          %12 = OpConstant %11 1
+///          %13 = OpTypePointer Input %6
+///          %14 = OpVariable %13 Input
+///          %16 = OpConstant %11 0
+///          %17 = OpTypePointer Uniform %6
+///          %20 = OpConstant %6 1
+///          %21 = OpConstant %6 0
+///          %24 = OpTypeVector %6 3
+///          %25 = OpConstant %6 64
+///          %26 = OpConstantComposite %24 %25 %20 %20
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %15 = OpLoad %6 %14
+///          %18 = OpAccessChain %17 %10 %16
+///          %22 = OpAtomicIAdd %6 %18 %20 %21 %15
+///          %23 = OpAccessChain %17 %10 %12 %15
+///                OpStore %23 %22
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_compute_atomic = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001B, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0006000F, 0x00000005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000E, 0x00060010, 0x00000004,
+    0x00000011, 0x00000040, 0x00000001, 0x00000001, 0x00040047, 0x00000007,
+    0x00000006, 0x00000004, 0x00030047, 0x00000008, 0x00000003, 0x00050048,
+    0x00000008, 0x00000000, 0x00000023, 0x00000000, 0x00050048, 0x00000008,
+    0x00000001, 0x00000023, 0x00000004, 0x00040047, 0x0000000A, 0x00000021,
+    0x00000000, 0x00040047, 0x0000000A, 0x00000022, 0x00000000, 0x00040047,
+    0x0000000E, 0x0000000B, 0x0000001D, 0x00040047, 0x0000001A, 0x0000000B,
+    0x00000019, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00040015, 0x00000006, 0x00000020, 0x00000000, 0x0003001D, 0x00000007,
+    0x00000006, 0x0004001E, 0x00000008, 0x00000006, 0x00000007, 0x00040020,
+    0x00000009, 0x00000002, 0x00000008, 0x0004003B, 0x00000009, 0x0000000A,
+    0x00000002, 0x00040015, 0x0000000B, 0x00000020, 0x00000001, 0x0004002B,
+    0x0000000B, 0x0000000C, 0x00000001, 0x00040020, 0x0000000D, 0x00000001,
+    0x00000006, 0x0004003B, 0x0000000D, 0x0000000E, 0x00000001, 0x0004002B,
+    0x0000000B, 0x00000010, 0x00000000, 0x00040020, 0x00000011, 0x00000002,
+    0x00000006, 0x0004002B, 0x00000006, 0x00000014, 0x00000001, 0x0004002B,
+    0x00000006, 0x00000015, 0x00000000, 0x00040017, 0x00000018, 0x00000006,
+    0x00000003, 0x0004002B, 0x00000006, 0x00000019, 0x00000040, 0x0006002C,
+    0x00000018, 0x0000001A, 0x00000019, 0x00000014, 0x00000014, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x0004003D, 0x00000006, 0x0000000F, 0x0000000E, 0x00050041, 0x00000011,
+    0x00000012, 0x0000000A, 0x00000010, 0x000700EA, 0x00000006, 0x00000016,
+    0x00000012, 0x00000014, 0x00000015, 0x0000000F, 0x00060041, 0x00000011,
+    0x00000017, 0x0000000A, 0x0000000C, 0x0000000F, 0x0003003E, 0x00000017,
+    0x00000016, 0x000100FD, 0x00010038,
+};

@@ -6395,4 +6395,67 @@ pub const LIBRARY_VERSION = 1;
 /// apart and the V3D's pixels as they were, so the V3D draws them with
 /// its own programs, and reads their varyings from the rows after the
 /// point size's. FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 193;
+///
+/// 194: **The V3D compiler's compute stage (docs/facet-vulkan10.md item
+/// 60).** A GLCompute module compiles as v3dv compiles a compute
+/// pipeline's shader (pipeline_compile_compute, v3dv_pipeline.c:3320):
+/// `compileComputeThroughMesa`, whose `Code.compute` says the workgroup's
+/// size and that workgroups may share a supergroup (v3d_cs_set_prog_data,
+/// vir.c:1024-1034). The device does not run it yet: its dispatches are
+/// still the cores' (`_compute.dispatch`).
+///
+/// The workgroup is LocalSize's, or the WorkgroupSize constant's, which
+/// takes its place (spirv_to_nir.c:5294-5299, 7424-7435), and is refused
+/// past 256 invocations (V3D_MAX_CSD_WG_SIZE, v3d_limits.h:82): v3dv runs
+/// a larger one as a loop of 256 (nir_lower_workgroup_size,
+/// v3dv_pipeline.c:3300-3311), which is not ported. The program reads
+/// NumWorkgroups, WorkgroupId, LocalInvocationId, GlobalInvocationId and
+/// LocalInvocationIndex (vtn_variables.c:1039-1062):
+/// - the CS payload's two words are rf3 and rf2 (nir_to_vir.c:4953-4954);
+/// - the workgroup id is the first word's two halves and the second's low
+///   half (:3885-3898), plus the dispatch's base, a uniform each
+///   (:3900-3910; nir_lower_system_values.c:215-218), and the count of
+///   workgroups a uniform each (:3877-3883), QUNIFORM_WORK_GROUP_BASE and
+///   QUNIFORM_NUM_WORK_GROUPS (v3dv_uniforms.c:645-656);
+/// - the local index is the second word's top bits
+///   (emit_load_local_invocation_index, :3509-3514): as many as the
+///   workgroup's size, or 64 if that is larger, rounded up to a power of
+///   two, needs (:4963-4964);
+/// - the local id is made of it (lower_cs_local_id_to_index,
+///   v3dv_pipeline.c:176): the index alone where the workgroup is a line
+///   (try_lower_id_to_index_1d, nir_lower_system_values.c:492-508), else
+///   its remainder and quotients by the size (lower_id_to_index,
+///   :456-483), masks and shifts of a power of two;
+/// - the global id is (workgroup id + base) * size + local id (:701-709).
+///
+/// A compute program writes its storage buffers and does atomics on
+/// them, as a fragment program does. Workgroup memory is refused, and so
+/// is OpControlBarrier, which the profile does not take.
+///
+/// Tests: the V3D's 330, six new. glslc_compute_ids, a 16x1x1 workgroup,
+/// reads its global id and local index; glslc_compute_grid, 4x4x2, its
+/// local id, workgroup id and count of workgroups; glslc_compute_atomic
+/// adds to a word. Their streams, the payload's registers and the masks,
+/// shifts and multiplies are tested, and a WorkgroupSize constant of
+/// (1, 1, 1), (1, 16, 1) and (16, 16, 1) overrides LocalSize. A workgroup
+/// of no invocation, of more than 256 or of no size said is refused, and
+/// so are Workgroup memory, a fragment program's built-in or execution
+/// mode, a vertex program's built-in and a built-in twice. A compute
+/// module is no fragment or vertex program, nor the other way round. Of
+/// 35 mutations, 33 fail the tests. The other two are checks behind
+/// others: a WorkgroupSize constant of other than three integers, which
+/// spirv-val refuses and glslc cannot write, and a built-in on something
+/// other than an input variable, which leaves that variable an integer
+/// input or a buffer without its binding, refused first. Four failed none
+/// at first, or only failed to compile: the local id of (1, 1, N) and of
+/// (1, N, 1), until those sizes were tested; and the payload's words
+/// swapped and the global id of another local id, until made mutations
+/// that compile. Two more found the workgroup id and the local id made
+/// once for the global id and for the program's own read no different
+/// from made twice: nir_opt_cse's port makes them one, so they are made
+/// anew, as NIR makes them.
+///
+/// On the CM5 nothing draws or dispatches differently: FacetBoth's 282
+/// cases are each as they were at 1.193, and FacetProbe passes its 890
+/// checks.
+pub const LIBRARY_REVISION = 194;
