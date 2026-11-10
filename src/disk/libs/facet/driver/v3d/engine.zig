@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! The V3D's lists started and their end heard of, from its two interrupts:
-//! the core's when the binner or the renderer finishes or the binner runs
-//! out of memory, and the hub's when the MMU faults.
+//! the core's when the binner, the renderer or the compute shader
+//! dispatcher finishes or the binner runs out of memory, and the hub's
+//! when the MMU faults.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -12,7 +13,7 @@ const spaces = @import("space.zig");
 const Block = spaces.Block;
 const Space = spaces.Space;
 
-const core_irqs = regs.INT_OUTOMEM | regs.INT_FLDONE | regs.INT_FRDONE;
+const core_irqs = regs.INT_OUTOMEM | regs.INT_FLDONE | regs.INT_FRDONE | regs.INT_CSDDONE;
 const hub_irqs = regs.HUB_INT_MMU_WRV | regs.HUB_INT_MMU_PTI | regs.HUB_INT_MMU_CAP;
 
 /// How much a job is given before it counts as lost.
@@ -41,6 +42,7 @@ pub const Engine = struct {
     hub_int: exec.Interrupt,
     bin_done: exec.Waitable = .{},
     render_done: exec.Waitable = .{},
+    dispatch_done: exec.Waitable = .{},
     faulted: exec.Waitable = .{},
     overflow: [overflow_blocks]Block,
     overflow_made: u32 = 0,
@@ -159,6 +161,23 @@ pub const Engine = struct {
         return engine.wait(&engine.bin_done);
     }
 
+    /// The compute shader dispatcher through the dispatch `cfg` says
+    /// (`csd.configuration`), until it is done: v3d_csd_job_run
+    /// (v3d_sched.c:329-383), the caches invalidated first, CFG1 to CFG6
+    /// written, CFG7 0 on 7.1, and the write of CFG0 what starts it. Its
+    /// end is INT_CSDDONE (v3d_irq.c:137-140; since 1.195).
+    pub fn dispatch(engine: *Engine, cfg: *const [7]u32) Finished {
+        const sys = engine.sys;
+        const gpu = engine.gpu;
+        sys.ResetWaitable(&engine.dispatch_done);
+        sys.ResetWaitable(&engine.faulted);
+        engine.invalidateCaches();
+        for (cfg[1..], 1..) |word, k| gpu.coreWrite(regs.CSD_QUEUED_CFG0 + 4 * k, word);
+        gpu.coreWrite(regs.CSD_QUEUED_CFG7, 0);
+        gpu.coreWrite(regs.CSD_QUEUED_CFG0, cfg[0]);
+        return engine.wait(&engine.dispatch_done);
+    }
+
     fn wait(engine: *Engine, done: *exec.Waitable) Finished {
         const waiting = [2]*exec.Waitable{ done, &engine.faulted };
         return switch (engine.sys.WaitForAny(&waiting, waiting.len, job_wait_us)) {
@@ -193,6 +212,7 @@ fn coreServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     }
     if (raised & regs.INT_FLDONE != 0) engine.sys.SignalWaitable(&engine.bin_done);
     if (raised & regs.INT_FRDONE != 0) engine.sys.SignalWaitable(&engine.render_done);
+    if (raised & regs.INT_CSDDONE != 0) engine.sys.SignalWaitable(&engine.dispatch_done);
     return 1;
 }
 

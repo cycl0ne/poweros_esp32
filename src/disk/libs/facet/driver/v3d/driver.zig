@@ -108,6 +108,11 @@ pub const Hardware = struct {
     /// (v3d_device_info.c:74), which a pipeline's spill buffer is made for
     /// (since 1.177).
     qpus: u32 = 0,
+    /// Its version, devinfo's ver (v3d_device_info.c:65-68), and
+    /// HUB_IDENT3's IP revision, devinfo's rev (:106), which a dispatch's
+    /// count of batches is written by (`csd.configuration`; since 1.195).
+    version: u32 = 0,
+    revision: u32 = 0,
 };
 
 fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
@@ -252,7 +257,11 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .own_fragment_functions = false,
         // The TMU reads a texture's format from the image it is given.
         .sampling_format = false,
-        // Both run on the cores, whichever device made the pipeline.
+        // A compute function runs on the cores, whichever device made the
+        // pipeline. A compute shader whose SPIR-V the module ships runs on
+        // the QPUs where the V3D makes a program of it (since 1.195), as
+        // a fragment shader's does; this says where the functions run.
+        // Tessellation runs on the cores.
         .compute_on_device = false,
         .tessellation_on_device = false,
         // No QPU program discards yet, so texture_cutout is refused above.
@@ -475,6 +484,8 @@ fn bringUp(sys: *ExecBase, hardware: *Hardware) bool {
     hardware.gpu.powerUp() catch return false;
     const ident = hardware.gpu.identify();
     hardware.qpus = ident.slices * ident.qpus_per_slice;
+    hardware.version = ident.version * 10 + ident.revision;
+    hardware.revision = ident.ip_revision;
     hardware.space = v3d.Space.open(&hardware.gpu) orelse return false;
     if (!hardware.engine.start(&hardware.gpu, &hardware.space, ident.virtual_bits)) {
         hardware.space.close();
@@ -700,6 +711,33 @@ pub const VertexShader = struct {
     }
 };
 
+/// A compute pipeline's program, where the V3D compiled the SPIR-V shipped
+/// beside its function: v3dv's compute variant and what its prog_data says
+/// (pipeline_compile_compute, v3dv_pipeline.c:3320; v3d_compute_prog_data,
+/// v3d_compiler.h:1069-1076), its code in a block of its own as a
+/// `Shader`'s is. Its dispatches run on the compute shader dispatcher
+/// (`_play.zig`'s `dispatchHere`; since 1.195).
+pub const ComputeShader = struct {
+    block: Block,
+    address: u32,
+    uniforms: [compile.most_uniforms]compile.Word,
+    uniform_count: u32,
+    threads: u8,
+    program: compile.ComputeProgram,
+    spill: ?Block = null,
+    spill_size_per_thread: u32 = 0,
+
+    pub fn stream(made: *const ComputeShader) []const compile.Word {
+        return made.uniforms[0..made.uniform_count];
+    }
+
+    /// What the stream's spill words are written as (`_play.streamOf`).
+    pub fn spillWords(made: *const ComputeShader) Spill {
+        const block = made.spill orelse return .{};
+        return .{ .address = block.address, .size_per_thread = made.spill_size_per_thread };
+    }
+};
+
 /// The stack a pipeline is made on. The back end's passes hold about
 /// 24 KiB of frames at once on the aarch64 build - to_vir's compileSteps
 /// alone 10.6 KiB - which with the application's own frames came to the
@@ -723,6 +761,7 @@ fn makePipelineHere(arg: ?*anyopaque) callconv(.c) i32 {
 }
 
 fn madePipeline(pipeline: *Pipeline) facet.Result {
+    if (pipeline.compute != null) return computePipeline(pipeline);
     // A pipeline that draws nothing - its rasterizer discarding, or every
     // face culled - has no program to make: a draw with it ends before one
     // is read (`_play.draw`), and this device counts no statistics a
@@ -971,6 +1010,90 @@ fn vertexStage(pipeline: *const Pipeline, work: *compile.Work, hardware: *Hardwa
     return true;
 }
 
+/// A compute pipeline's program, where it shipped SPIR-V beside its
+/// function and the back end makes code of it: compiled as v3dv compiles
+/// a compute pipeline's shader (pipeline_compile_compute,
+/// v3dv_pipeline.c:3320) and put where the V3D reads it, with a spill
+/// buffer where it spills (pipeline_check_spill_size, :1669-1708). Where
+/// it shipped none, or the back end refuses the words - a workgroup of
+/// more than 256 invocations, Workgroup memory, a barrier, a sampler -
+/// the pipeline is made all the same, and its function runs on the cores
+/// as every compute function did before (since 1.195). Out of memory is
+/// said.
+fn computePipeline(pipeline: *Pipeline) facet.Result {
+    if (pipeline.compute_words.len == 0) return .success;
+    const device = pipeline.device;
+    const base = device.base;
+    const sys = device.sys;
+    const work = _objects.create(sys, compile.Work) orelse return .error_out_of_host_memory;
+    defer _objects.destroy(sys, work);
+    const code = compile.compileComputeThroughMesa(work, pipeline.compute_words, v3d.heap.of(sys)) catch |err| return switch (err) {
+        error.OutOfMemory => .error_out_of_host_memory,
+        else => .success,
+    };
+    // The TMU's samplers are a draw's to configure (`tmuConfiguration`),
+    // and a dispatch has none bound yet.
+    if (code.sampler_count != 0) return .success;
+    // The library holds a group to what the entry declared; the words
+    // say it again, and a program of another size would run other groups.
+    const size = code.compute.local_size;
+    if (size[0] != pipeline.local[0] or size[1] != pipeline.local[1] or size[2] != pipeline.local[2]) return .success;
+    const made = _objects.create(sys, ComputeShader) orelse return .error_out_of_host_memory;
+    const hardware = holdAgain(base);
+    sys.ObtainSemaphore(&base.v3d_lock);
+    const block = hardware.space.alloc(@intCast(code.words.len * 8));
+    if (block) |each| {
+        const into: [*]u64 = @ptrCast(@alignCast(each.cpu));
+        @memcpy(into[0..code.words.len], code.words);
+        hardware.space.toGpu(&each);
+        hardware.stale = true;
+    }
+    // The thread index a program reads to find its share is
+    // (core << 6) | (qpu << 2) | thread, so four shares for each QPU
+    // (`checkSpillSize`).
+    var spill: ?Block = null;
+    if (block != null and code.spill_size != 0) {
+        if (std.math.mul(u32, 4 * hardware.qpus, code.spill_size)) |total| {
+            spill = hardware.space.alloc(total);
+            if (spill != null) hardware.stale = true;
+        } else |_| {}
+    }
+    sys.ReleaseSemaphore(&base.v3d_lock);
+    const kept = block orelse {
+        letGo(base, hardware);
+        _objects.destroy(sys, made);
+        return .error_out_of_device_memory;
+    };
+    made.* = .{
+        .block = kept,
+        .address = kept.address,
+        .uniforms = undefined,
+        .uniform_count = code.uniform_count,
+        .threads = code.threads,
+        .program = code.compute,
+        .spill = spill,
+        .spill_size_per_thread = code.spill_size,
+    };
+    @memcpy(made.uniforms[0..code.uniform_count], code.uniforms);
+    if (code.spill_size != 0 and spill == null) {
+        freeComputeShader(base, hardware, made);
+        letGo(base, hardware);
+        _objects.destroy(sys, made);
+        return .error_out_of_device_memory;
+    }
+    pipeline.driver = made;
+    return .success;
+}
+
+fn freeComputeShader(base: *FacetBase, hardware: *Hardware, made: *ComputeShader) void {
+    const sys = base.sys_base;
+    sys.ObtainSemaphore(&base.v3d_lock);
+    defer sys.ReleaseSemaphore(&base.v3d_lock);
+    hardware.space.free(&made.block);
+    if (made.spill) |*block| hardware.space.free(block);
+    hardware.stale = true;
+}
+
 /// Whether every attribute the program reads is at a location the
 /// pipeline describes, which `_vertices.readInputs` fills.
 fn readsDescribed(pipeline: *const Pipeline, program: *const compile.VertexProgram) bool {
@@ -989,9 +1112,18 @@ fn freeVertexShader(base: *FacetBase, hardware: *Hardware, made: *VertexShader) 
 }
 
 fn unmakePipeline(pipeline: *Pipeline) callconv(.c) void {
-    const kept: *Shader = @ptrCast(@alignCast(pipeline.driver orelse return));
     const base = pipeline.device.base;
     const sys = pipeline.device.sys;
+    if (pipeline.compute != null) {
+        const made: *ComputeShader = @ptrCast(@alignCast(pipeline.driver orelse return));
+        const hardware: *Hardware = @ptrCast(@alignCast(base.v3d.?));
+        freeComputeShader(base, hardware, made);
+        pipeline.driver = null;
+        _objects.destroy(sys, made);
+        letGo(base, hardware);
+        return;
+    }
+    const kept: *Shader = @ptrCast(@alignCast(pipeline.driver orelse return));
     const hardware: *Hardware = @ptrCast(@alignCast(base.v3d.?));
     freeShader(base, hardware, kept);
     pipeline.driver = null;

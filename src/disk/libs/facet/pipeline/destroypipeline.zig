@@ -52,6 +52,6 @@ const Pipeline = @import("_pipeline.zig").Pipeline;
 pub fn DestroyPipeline(base: *FacetBase, device: *facet.Device, pipeline: ?*facet.Pipeline) void {
     _ = device;
     const made = _objects.of(Pipeline, pipeline orelse return);
-    if (made.compute == null) made.device.physical.ops.unmake_pipeline(made);
+    made.device.physical.ops.unmake_pipeline(made);
     _objects.destroy(base.sys_base, made);
 }

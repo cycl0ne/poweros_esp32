@@ -158,7 +158,8 @@ pub const Program = struct {
     writes_z: bool,
     disable_ez: bool,
     /// It has no thread switch, and starts in its last thread section: a
-    /// vertex program's prog_data single_seg (since 1.163).
+    /// vertex program's prog_data single_seg (since 1.163), and a compute
+    /// program's (since 1.195).
     single_seg: bool,
     /// Its varyings that are flat and that are without perspective, a
     /// bit each, the first 24 of c->flat_shade_flags and

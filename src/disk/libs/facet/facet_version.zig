@@ -6458,4 +6458,59 @@ pub const LIBRARY_VERSION = 1;
 /// On the CM5 nothing draws or dispatches differently: FacetBoth's 282
 /// cases are each as they were at 1.193, and FacetProbe passes its 890
 /// checks.
-pub const LIBRARY_REVISION = 194;
+///
+/// 195: **The V3D runs compute shaders, through its compute shader
+/// dispatcher (docs/facet-vulkan10.md item 60).** CreateComputePipelines
+/// hands the driver the entry's SPIR-V beside its function
+/// (`Pipeline.compute_words`, `make_pipeline`), and DestroyPipeline calls
+/// `unmake_pipeline` for a compute pipeline too. The cores' driver leaves
+/// the function to run. The V3D's compiles the words
+/// (`compileComputeThroughMesa`) into its own memory, with a spill buffer
+/// where the program needs one. What it makes no program of runs on the
+/// cores as before: words the compiler refuses (past 256 invocations a
+/// group, Workgroup memory, a barrier), a sampler, or a workgroup other
+/// than the entry's.
+///
+/// A dispatch outside a render pass is then a CSD job, as v3dv's
+/// cmd_buffer_dispatch makes one (v3dv_cmd_buffer.c:4464-4487), run as it
+/// is played:
+/// - its uniforms are a draw's, of what compute pipelines bound, with
+///   NumWorkgroups the dispatch's counts and the base 0
+///   (v3dv_uniforms.c:645-656);
+/// - its seven words are cmd_buffer_create_csd_job's (:4344-4461) in
+///   `csd.configuration`: the counts, the workgroups a supergroup packs
+///   (v3d_csd_choose_workgroups_per_supergroup, v3d_util.c:32-99), the
+///   batches, less one before V3D 7.1.6, and the program with SINGLE_SEG,
+///   THREADING and, before 7.1, PROPAGATE_NANS;
+/// - the engine runs it as Linux's v3d_csd_job_run does
+///   (v3d_sched.c:329-383), CFG0 last, until INT_CSDDONE
+///   (v3d_irq.c:137-140), and cleans the caches after it, as Linux
+///   always does after a CSD job (v3d_submit.c:535-562); the storage
+///   buffers go out of the CPU's caches before and are dropped after;
+/// - an indirect dispatch reads its counts on the CPU as it is played, as
+///   v3dv's CPU job and the kernel read them (cmd_buffer_dispatch_indirect,
+///   v3dv_cmd_buffer.c:4508-4556; v3d_rewrite_csd_job_wg_counts_from_
+///   indirect, v3d_sched.c:393-436). A count past the CSD's 16 bits runs
+///   on the cores, as does a dispatch whose program reads a buffer it has
+///   not bound.
+///
+/// `compute_on_device` stays false: it says where compute functions run,
+/// and those are still the cores'. The V3D's tests are 335, five new, of
+/// the configuration. Of 24 mutations of it, 19 fail them. The other five
+/// are no different: Mesa's two shortcuts, a group of a multiple of 16
+/// alone and a supergroup of no lane unused, which the loop comes to as
+/// well; a tie of unused lanes, which no loop of at most 16 meets before
+/// it meets none unused; the workgroup size's mask, whose one size past
+/// 8 bits, 256, sets the bit a supergroup of one sets anyway; and Mesa's
+/// assert of a count of batches of all ones.
+///
+/// On the CM5 FacetBoth 1.59 has two new cases, "shipped compute: writes
+/// vertices" and "shipped compute: writes a draw's numbers", whose
+/// shaders the module ships the SPIR-V of. The first is 0 of 230400
+/// pixels apart. The second is 11 apart, the same 11 as "compute: writes
+/// a draw's numbers", whose draws it writes the same, from a buffer
+/// cleared first. With the cores' functions made wrong on purpose they
+/// are 85,628 and 64,296 apart: the V3D runs its own programs. The other
+/// 282 cases are each as they were at 1.194, and FacetProbe passes its
+/// 890 checks.
+pub const LIBRARY_REVISION = 195;

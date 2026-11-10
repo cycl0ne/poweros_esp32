@@ -37,12 +37,17 @@ const _shader = @import("../shader/_shader.zig");
 /// device's limits (VUID-RuntimeSpirv-x-06429, -y-06430, -z-06431,
 /// -x-06432, -Workgroup-06530; `error_feature_not_present` until 1.133);
 /// `error_feature_not_present` for a stage whose `specialization_info`
-/// names a constant (since 1.80); `error_out_of_host_memory`. Those made
-/// are made either way.
+/// names a constant (since 1.80); `error_out_of_host_memory`, and
+/// `error_out_of_device_memory` where the device found no memory for its
+/// program (since 1.195). Those made are made either way.
 ///
 /// BEHAVIOR:
-/// A compute function runs on the cores, whichever device it was made on: a
-/// CM5's V3D runs no program of the library's but its fragment programs.
+/// A compute function runs on the cores, whichever device it was made on,
+/// unless the device compiles the SPIR-V the module shipped beside it: a
+/// CM5's V3D runs a compute shader it makes code of on its QPUs, through
+/// its compute shader dispatcher, and the function of one it does not -
+/// past 256 invocations a group, of Workgroup memory, of a barrier - on
+/// the cores (since 1.195).
 ///
 /// A group of more than one invocation is still one call of the function:
 /// what the pipeline carries from the entry is the group's size and the bytes
@@ -106,10 +111,11 @@ pub fn CreateComputePipelines(base: *FacetBase, device: *facet.Device, cache: ?*
             }
         }
         const module = _objects.of(_shader.ShaderModule, info.stage.module);
-        const entry = (if (info.stage.stage == facet.SHADER_STAGE_COMPUTE) _shader.find(module, facet.SHADER_STAGE_COMPUTE, info.stage.name) else null) orelse {
+        const at = (if (info.stage.stage == facet.SHADER_STAGE_COMPUTE) _shader.findAt(module, facet.SHADER_STAGE_COMPUTE, info.stage.name) else null) orelse {
             if (result == .success) result = .error_invalid_shader_nv;
             continue;
         };
+        const entry = &module.entries()[at];
         // The workgroup the entry declares, as far as this device goes.
         const limits = &owner.physical.properties.limits;
         const local = entry.localSize();
@@ -133,6 +139,15 @@ pub fn CreateComputePipelines(base: *FacetBase, device: *facet.Device, cache: ?*
         made.compute = @ptrCast(@alignCast(entry.function));
         made.local = local;
         made.shared = shared;
+        // The words beside the function, which a device that compiles
+        // makes its program of (since 1.195).
+        made.compute_words = module.wordsAt(at);
+        const translated = owner.physical.ops.make_pipeline(made);
+        if (translated != .success) {
+            _objects.destroy(base.sys_base, made);
+            if (result == .success) result = translated;
+            continue;
+        }
         pipeline.* = _objects.handle(facet.Pipeline, made);
     }
     return result;

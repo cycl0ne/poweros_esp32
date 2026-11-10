@@ -2778,6 +2778,27 @@ Results:
 
 On the CM5 nothing draws or dispatches differently: FacetBoth's 282 cases are each as they were at 1.193, and FacetProbe is 890 of 890.
 
+**Then the compute stage on the V3D, through its dispatcher**, facet.library 1.195.
+
+A compute pipeline goes to the driver as a graphics pipeline does: CreateComputePipelines hands `make_pipeline` the entry's SPIR-V beside its function (`Pipeline.compute_words`), and DestroyPipeline calls `unmake_pipeline` for it. The cores' driver leaves the function to run. The V3D's compiles the words as v3dv compiles a compute pipeline's shader (pipeline_compile_compute, v3dv_pipeline.c:3320), into its own memory with a spill buffer where the program needs one. Where it cannot, the function runs on the cores as it did: words the compiler refuses (a workgroup of more than 256 invocations, Workgroup memory, a barrier), a sampler, which a dispatch has none bound for, or a workgroup other than the entry's.
+
+A dispatch outside a render pass runs on the QPUs where the pipeline has a program, and is a job of the compute shader dispatcher (CSD), as cmd_buffer_dispatch makes one (v3dv_cmd_buffer.c:4464-4487). It is run as it is played, as a frame is at its end.
+
+- **The uniforms** are a draw's, read from what compute pipelines bound: their storage and uniform buffers, and their push constants. NumWorkgroups is the dispatch's count along the axis (QUNIFORM_NUM_WORK_GROUPS, v3dv_uniforms.c:645-651), and the base is 0, the only one a dispatch of Vulkan 1.0 has (QUNIFORM_WORK_GROUP_BASE, :653-656). They go in the chunks a frame's do, which the next frame begins again.
+- **The seven words** are cmd_buffer_create_csd_job's (v3dv_cmd_buffer.c:4344-4461), in `csd.configuration`. CFG0 to CFG2 are the counts in their top halves. CFG3 is the workgroups a supergroup packs, v3d_csd_choose_workgroups_per_supergroup's (v3d_util.c:32-99), the batches each takes less one, and the workgroup's size, 0 for 256. CFG4 is the count of batches, less one before V3D 7.1.6. CFG5 is the program's address, with SINGLE_SEG for a program that never switches threads (!c->last_thrsw, vir.c:1041) and THREADING for one of four threads, and PROPAGATE_NANS before 7.1, which has made the bit reserved (:4430-4432). CFG6 is the uniforms' address.
+- **The job** is Linux's v3d_csd_job_run (v3d_sched.c:329-383): the caches invalidated, CFG1 to CFG6 and CFG7 written, and CFG0 last, which starts it. It is done at INT_CSDDONE (v3d_irq.c:137-140). After it the caches are cleaned, as Linux always cleans them after a CSD job (v3d_submit.c:535-562). The storage buffers go out of the CPU's caches before the job and are dropped from them after it, as a frame's are.
+- **An indirect dispatch** reads its counts on the CPU as it is played. v3dv records a CPU job that reads them (cmd_buffer_dispatch_indirect, v3dv_cmd_buffer.c:4508-4556), and the kernel rewrites the CSD job from them (v3d_rewrite_csd_job_wg_counts_from_indirect, v3d_sched.c:393-436). Here the job is made from them, as a direct dispatch's is. A count the CSD's 16 bits do not hold, which only an indirect buffer can give, runs on the cores.
+- **A buffer the program reads and the dispatch has not bound** leaves the dispatch to the function, as a draw leaves one to its vertex function.
+
+`compute_on_device` stays false: it says where compute functions run, and those are still the cores'.
+
+Results:
+- `csd.configuration` packs 16 workgroups of 4 invocations into a supergroup of 4, of 8 into one of 2, and of 1 into one of 16. 3 invocations take 16 of 100 workgroups, 5 of 12 and 3 of 3; 24 invocations take 2.
+- Its words are as above, one less before 7.1.6 or on a V3D before 7.1. No workgroup along an axis, a count past 16 bits, and a workgroup of no invocation or of more than 256 are no dispatch.
+- The V3D's tests are 335, five new. Of 24 mutations, 19 fail them. The other five change nothing: Mesa's two shortcuts, which the loop comes to as well; a tie of unused lanes, which no loop of at most 16 meets before it meets none unused; the mask of the workgroup's size, whose only size past 8 bits, 256, sets the bit a supergroup of one sets anyway; and Mesa's assert of a count of batches of all ones.
+
+On the CM5 FacetBoth 1.59 has two new cases, "shipped compute: writes vertices" and "shipped compute: writes a draw's numbers", whose compute shaders the module ships as SPIR-V. The first dispatches three groups of three invocations, and is 0 of 230400 pixels apart. The second dispatches indirectly into a buffer cleared first, and is 11 apart. Those are the same 11 pixels as "compute: writes a draw's numbers", whose draws it writes the same. With the cores' functions made wrong on purpose they are 85,628 and 64,296 apart: the V3D runs its own programs, not the functions. The other 282 cases are each as they were at 1.194, and FacetProbe is 890 of 890.
+
 ### 61. Multisampling: 4 samples a pixel on both devices, with resolve attachments and CmdResolveImage's body **[critical path]**
 
 *rasterisation* &mdash; conformance-blocking, port, **sized 07.11.2026: 21 commits, about 1,590 lines of code, 1,340 of tests and 90 of docs**; **the cores' half done in 1.114**, the V3D's is steps V1 to V8

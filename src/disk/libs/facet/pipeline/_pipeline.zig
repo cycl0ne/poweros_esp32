@@ -136,7 +136,11 @@ pub const Pipeline = struct {
     /// What its driver made of it (make_pipeline).
     driver: ?*anyopaque = null,
     /// A compute pipeline: nothing else here but `device`, `driver`,
-    /// `local` and `shared` is set, and no driver makes anything of it.
+    /// `local`, `shared` and `compute_words` is set. A driver that
+    /// compiles makes a program of the words in `make_pipeline`, and one
+    /// that does not, or finds none, leaves `driver` null and the function
+    /// runs on the cores (since 1.195; before it no driver made anything
+    /// of one).
     compute: ?shader.ComputeFn = null,
     tessellated: ?Tessellated = null,
     vertex: shader.VertexFn,
@@ -279,6 +283,9 @@ pub const Pipeline = struct {
     /// what a draw reads.
     local: [3]u32 = .{ 1, 1, 1 },
     shared: u32 = 0,
+    /// Its compute shader's SPIR-V, shipped beside the function, as
+    /// `fragment_words` is (since 1.195).
+    compute_words: []const u32 = &.{},
 };
 
 /// How the colour attachment a part draws is mixed with what is there:

@@ -1237,6 +1237,10 @@ const builtin_count = @typeInfo(Builtin).@"enum".fields.len;
 pub const ComputeProgram = struct {
     local_size: [3]u16 = .{ 1, 1, 1 },
     can_use_supergroups: bool = true,
+    /// It never switches threads, so it starts in its last segment:
+    /// prog_data's single_seg, !c->last_thrsw (vir.c:1041), CFG5's
+    /// SINGLE_SEG (since 1.195).
+    single_seg: bool = false,
 };
 
 /// Which of the VPM's three values a vertex program reads, each a row
@@ -1961,7 +1965,7 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
         .flat_shade_flags = program.flat_shade_flags,
         .noperspective_flags = program.noperspective_flags,
         .vertex = if (work.stage == .vertex) vertexProgram(work, program.single_seg) else .{},
-        .compute = if (work.stage == .gl_compute) .{ .local_size = .{ @intCast(work.local_size[0]), @intCast(work.local_size[1]), @intCast(work.local_size[2]) } } else .{},
+        .compute = if (work.stage == .gl_compute) .{ .local_size = .{ @intCast(work.local_size[0]), @intCast(work.local_size[1]), @intCast(work.local_size[2]) }, .single_seg = program.single_seg } else .{},
     };
 }
 
@@ -18329,6 +18333,8 @@ test "through Mesa's back end, a compute program's global id is its workgroup id
     const code = try computeThroughMesa(&work, &reference.glslc_compute_ids);
     try testing.expectEqualSlices(u16, &.{ 16, 1, 1 }, &code.compute.local_size);
     try testing.expect(code.compute.can_use_supergroups);
+    // Its store's thread switch is its last: not single_seg.
+    try testing.expect(!code.compute.single_seg);
     // The mask of x's half of the payload's first word, the base of x,
     // the shift of the local index - 32 less local_invocation_index_bits,
     // 6 of the 64 at least - and the buffer: y and z are dead code.
