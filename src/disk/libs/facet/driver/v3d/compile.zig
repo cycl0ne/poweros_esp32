@@ -126,8 +126,17 @@ pub const most_ubos = 16;
 /// nothing.
 pub const most_samplers = 16;
 /// The variables of the function's own a module may declare, each a
-/// float or a vector of them.
-pub const most_locals = 16;
+/// float or a vector of them; since 1.176 each float or vector of a
+/// struct, an array or a matrix of the function's own counts as one, as
+/// nir_split_struct_vars and nir_split_array_vars make each a variable of
+/// its own. `Work.used` has a bit for each.
+pub const most_locals = 32;
+/// The floats and vectors the aggregates the body holds as values come to
+/// all together, each held once (since 1.176).
+pub const most_leaves = 256;
+/// The members the structs a module declares that are no block may have
+/// all together (since 1.176).
+pub const most_struct_members = 64;
 /// How deep selections may be nested in each other's arms.
 pub const most_nesting = 8;
 /// One for each float a step answers.
@@ -180,9 +189,13 @@ pub const Error = error{
     /// flat interpolation and integer formats this back end has not got.
     Type,
     /// A variable in a storage class this back end has no answer for:
-    /// a uniform, a variable of the function's own that is not a float
-    /// or a vector of them, a sampler of anything but a 2D texture. Also the plan's answer to a module that
-    /// reads its push constants, which only Mesa's back end compiles.
+    /// a uniform, a variable of the function's own that is no float, no
+    /// integer, no bool, no vector of them and no array, struct or matrix
+    /// of those, a sampler of anything but a 2D texture. Since 1.176 also
+    /// an element of an aggregate of the function's own at an index the
+    /// body computes, and a load of the whole of one that holds a bool.
+    /// Also the plan's answer to a module that reads its push constants,
+    /// which only Mesa's back end compiles.
     Storage,
     /// Input locations that are not 0 upwards without a gap, or a colour
     /// out that is not location 0.
@@ -497,11 +510,6 @@ pub const Tag = enum {
     rsqrt,
     exp2,
     log2,
-    /// `a` and `b` multiplied float by float and summed: one float, NIR's
-    /// fdot as nir_lower_alu_width lowers it on a device that prefers
-    /// FMUL and FADD to an FMA, the last floats first (lower_fdot,
-    /// nir_lower_alu_width.c:161-173, lower_reduction, :96-127).
-    dot,
     /// A texel, read through the TMU. Its four floats are not four
     /// registers: the TMU hands back two words of two half-floats each,
     /// and `Work.slot_half` says which half of which word a float is.
@@ -1047,6 +1055,23 @@ pub const Work = struct {
     /// (since 1.161).
     length: [most_ids]u16 = @splat(0),
     array_stride: [most_ids]u16 = @splat(none),
+    /// The type of a `local_aggregate`, an `aggregate_value` or a
+    /// `constant_aggregate`: an array, a struct that is no block, or a
+    /// matrix of the function's own (since 1.176).
+    aggregate: [most_ids]u16 = @splat(none),
+    /// The floats and vectors of the aggregates the body holds, in the
+    /// order nir_split_struct_vars and nir_split_array_vars split them,
+    /// which is the order _vtn_variable_load_store walks them in
+    /// (vtn_variables.c:763-781): an `aggregate_value`'s `points` is its
+    /// first here, each a step, and a `constant_aggregate`'s, each the id
+    /// of a constant, made a step where it is read as a constant is
+    /// (since 1.176).
+    leaves: [most_leaves]u16 = undefined,
+    leaf_count: u32 = 0,
+    /// The members of the structs that are no block: a `plain_struct`'s
+    /// `points` is its first here and `wide` how many (since 1.176).
+    struct_members: [most_struct_members]u16 = undefined,
+    struct_member_count: u32 = 0,
     /// The matrices the body holds: a `matrix_value`'s `points` is its
     /// place here (since 1.161). A `constant_matrix`'s is too, its
     /// columns the ids of their constants until it is first read
@@ -1214,7 +1239,7 @@ pub const Work = struct {
     kept: [most_kept]Kept = undefined,
     kept_count: u8 = 0,
 
-    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value, constant_matrix, position_pointer };
+    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value, constant_matrix, position_pointer, plain_struct, local_aggregate, aggregate_value, constant_aggregate };
 
     /// `chain_part` of a pointer to a whole member.
     pub const whole: u8 = 0xFF;
@@ -1246,7 +1271,7 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
         .discard => return Error.Discards,
         .sample_compared => return Error.Samplers,
         // Nor does any compute beyond a sum and a product.
-        .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot => return Error.Body,
+        .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2 => return Error.Body,
         .select, .set_less, .sat, .sin, .cos, .sign, .logic, .integer => return Error.Body,
         // Nor branches.
         .begin_if, .begin_else, .end_if, .phi => return Error.Branches,
@@ -1758,14 +1783,38 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 work.thing[id] = .int;
             },
             .type_struct => {
-                // A block, or a struct in one, and no other struct: a
-                // value of one would be a step of many kinds, and none
-                // is. Each member is a float, a vector, a matrix, an
-                // array or a struct of offsets of its own (since 1.161),
-                // with an offset, and all of it inside the block.
+                // A block, or a struct in one. Each member is a float, a
+                // vector, a matrix, an array or a struct of offsets of its
+                // own (since 1.161), with an offset, and all of it inside
+                // the block.
                 if (operands.len < 1) return Error.Body;
                 const id = try idOf(operands[0]);
-                const block = findBlock(work, id) orelse return Error.Type;
+                const block = findBlock(work, id) orelse {
+                    // A struct of no offsets, which a variable of the
+                    // function's own may be of, or an array of those or a
+                    // struct of them: floats, integers, bools, vectors,
+                    // matrices, and arrays and structs of those (since
+                    // 1.176). A bool in a variable of one is a variable of
+                    // its own, as a float is, and a load of the whole of
+                    // one holding a bool is refused.
+                    const members = operands[1..];
+                    if (members.len == 0 or members.len > 0xFF) return Error.Storage;
+                    if (work.struct_member_count + members.len > work.struct_members.len) return Error.Storage;
+                    work.thing[id] = .plain_struct;
+                    work.points[id] = @intCast(work.struct_member_count);
+                    work.wide[id] = @intCast(members.len);
+                    for (members) |each| {
+                        const member = try idOf(each);
+                        switch (work.thing[member]) {
+                            .float, .int, .boolean, .vector, .matrix, .plain_struct => {},
+                            .array => if (isRuntime(work, member)) return Error.Type,
+                            else => return Error.Type,
+                        }
+                        work.struct_members[work.struct_member_count] = member;
+                        work.struct_member_count += 1;
+                    }
+                    continue;
+                };
                 const members = operands[1..];
                 if (members.len == 0 or members.len > most_members) return Error.Storage;
                 if (block.per_vertex) {
@@ -1841,6 +1890,10 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // An integer's too, a word as a float's (since 1.169).
                 switch (work.thing[element]) {
                     .float, .int, .vector, .matrix, .array, .structure => {},
+                    // Of bools, or of structs of no offsets, which a
+                    // variable of the function's own may be (since
+                    // 1.176).
+                    .boolean, .plain_struct => {},
                     else => return Error.Type,
                 }
                 if (isRuntime(work, element)) return Error.Type;
@@ -1951,6 +2004,29 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.wide[id] = made.count;
                     continue;
                 }
+                if (work.thing[type_id] == .array or work.thing[type_id] == .plain_struct) {
+                    // An array's or a struct's constant, which a variable
+                    // of the function's own may start with or be stored
+                    // from: the constants of its floats and vectors, in
+                    // order, each made a step where it is read, as
+                    // vtn_const_ssa_value builds the load_const of each
+                    // element (spirv_to_nir.c:526-563). A constant read
+                    // again is the step made the first time, the one
+                    // load_const nir_opt_cse makes of them (since 1.176).
+                    const members = operands[2..];
+                    const count: usize = if (work.thing[type_id] == .array) work.length[type_id] else work.wide[type_id];
+                    if (isRuntime(work, type_id) or members.len != count) return Error.Body;
+                    const first = work.leaf_count;
+                    for (members, 0..) |each, k| {
+                        const member = try idOf(each);
+                        const member_type = if (work.thing[type_id] == .array) work.points[type_id] else work.struct_members[work.points[type_id] + k];
+                        try constantLeaves(work, member, member_type);
+                    }
+                    work.thing[id] = .constant_aggregate;
+                    work.points[id] = @intCast(first);
+                    work.aggregate[id] = type_id;
+                    continue;
+                }
                 if (work.thing[type_id] != .vector) return Error.Type;
                 const parts = operands[2..];
                 if (parts.len != work.wide[type_id]) return Error.Body;
@@ -2032,12 +2108,49 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // values (nir_lower_vars_to_ssa, nir_to_vir.c:2240):
                     // a float or a vector of them, declared at the top of
                     // the first block as SPIR-V has it, and maybe given a
-                    // constant to start with (since 1.155). A struct or
-                    // an array would want a place to live, and there is
-                    // no stack on a QPU.
+                    // constant to start with (since 1.155).
                     // A bool too, which glslc -O0 keeps a comparison in
                     // (since 1.165).
                     if (!in_body or blocks != 1 or flow != .body) return Error.Body;
+                    switch (work.thing[pointee]) {
+                        .array, .plain_struct, .matrix => {
+                            // An array, a struct or a matrix: a variable of
+                            // each of its floats and vectors, as
+                            // nir_split_struct_vars splits a struct's
+                            // members (v3dv_pipeline.c:411) and
+                            // nir_split_array_vars an array's or a
+                            // matrix's elements where every index is a
+                            // constant (nir_to_vir.c:2236,
+                            // mark_array_deref_used, nir_split_vars.c:
+                            // 502-531), and nir_lower_vars_to_ssa makes
+                            // each a value (since 1.176). An unrolled
+                            // loop's counter is a constant by then, as
+                            // nir_opt_loop_unroll runs in the same loop of
+                            // passes.
+                            var leaves: [most_locals]Leaf = undefined;
+                            const count = try leafKinds(work, pointee, &leaves);
+                            if (work.local_count + count > most_locals) return Error.Storage;
+                            const first = work.local_count;
+                            for (leaves[0..count], first..) |leaf, local| {
+                                work.local_kind[local] = leaf.kind;
+                                work.local_bool[local] = leaf.is_bool;
+                                work.values[local] = @splat(unstored);
+                            }
+                            work.local_count += @intCast(count);
+                            work.thing[id] = .local_aggregate;
+                            work.class[id] = @intCast(@intFromEnum(class));
+                            work.points[id] = @intCast(first);
+                            work.aggregate[id] = pointee;
+                            if (operands.len == 4) {
+                                // nir_lower_variable_initializers' stores,
+                                // of each in order.
+                                if (work.thing[try idOf(operands[3])] != .constant_aggregate and work.thing[try idOf(operands[3])] != .constant_matrix) return Error.Body;
+                                try storeAggregate(work, id, operands[3]);
+                            } else if (operands.len != 3) return Error.Body;
+                            continue;
+                        },
+                        else => {},
+                    }
                     const is_bool = work.thing[pointee] == .boolean;
                     const kind = if (is_bool) .f32x1 else kindOf(work, pointee) catch return Error.Storage;
                     if (work.local_count == most_locals) return Error.Storage;
@@ -3030,8 +3143,15 @@ fn planLoop(work: *const Work, words: []const u32, loop: *Loop, continue_target:
                 if (isLocal(work, into)) {
                     const local = work.points[into];
                     if (open == 0) stored[local] = try idOf(operands[1]) else in_arm[local] = true;
+                } else if (work.thing[into] == .local_aggregate) {
+                    // The whole of an aggregate, or a chain into one whose
+                    // index the loop computes: none of its variables is
+                    // one an induction is found in (since 1.176).
+                    const first = work.points[into];
+                    for (first..first + try leafCount(work, work.aggregate[into])) |local| in_arm[local] = true;
                 } else if (defined[into].op == .access_chain and defined[into].a & local_bit != 0) {
-                    in_arm[defined[into].a & ~local_bit] = true;
+                    const first = defined[into].a & ~local_bit;
+                    for (first..first + @max(defined[into].b, 1)) |local| in_arm[local] = true;
                 } else if (defined[into].op == .nop and work.thing[into] == .local_part) {
                     in_arm[work.points[into]] = true;
                 }
@@ -3040,7 +3160,14 @@ fn planLoop(work: *const Work, words: []const u32, loop: *Loop, continue_target:
                 if (operands.len < 3) return Error.Body;
                 const id = try idOf(operands[1]);
                 const base = try idOf(operands[2]);
-                defined[id] = .{ .op = .access_chain, .a = if (isLocal(work, base)) local_bit | work.points[base] else 0, .order = place };
+                // Into an aggregate of the function's own, the variables
+                // it may come to: `b` of them from `a` (since 1.176).
+                defined[id] = if (work.thing[base] == .local_aggregate)
+                    .{ .op = .access_chain, .a = local_bit | work.points[base], .b = try leafCount(work, work.aggregate[base]), .order = place }
+                else if (defined[base].op == .access_chain and defined[base].a & local_bit != 0)
+                    .{ .op = .access_chain, .a = defined[base].a, .b = defined[base].b, .order = place }
+                else
+                    .{ .op = .access_chain, .a = if (isLocal(work, base)) local_bit | work.points[base] else 0, .order = place };
             },
             .returns, .return_value, .function_end => return Error.Branches,
             else => if (!makesNothing(instruction.op) and operands.len >= 2) {
@@ -3488,7 +3615,7 @@ fn sameFloats(a: Float, b: Float) bool {
 fn storesConstant(work: *const Work, operands: []const u32) bool {
     if (operands.len < 2) return false;
     const id = idOf(operands[1]) catch return false;
-    return work.thing[id] == .constant;
+    return work.thing[id] == .constant or work.thing[id] == .constant_aggregate;
 }
 
 /// Whether an instruction in an arm is one nir_lower_vars_to_ssa leaves
@@ -3512,7 +3639,7 @@ fn storesBuffer(work: *const Work, operands: []const u32) bool {
 
 fn pointsLocal(work: *const Work, word: u32) bool {
     const id = idOf(word) catch return false;
-    return isLocal(work, id) or work.thing[id] == .local_part;
+    return isLocal(work, id) or work.thing[id] == .local_part or work.thing[id] == .local_aggregate;
 }
 
 /// The limit v3d's optimization loop gives nir_opt_peephole_select
@@ -3663,6 +3790,254 @@ fn localOf(work: *Work, local: u16) Error!u16 {
     return put(work, made);
 }
 
+/// A float, an integer, a vector of them or a bool of an aggregate of
+/// the function's own: what kind of variable nir_split_struct_vars or
+/// nir_split_array_vars makes of it (since 1.176).
+const Leaf = struct { kind: Kind, is_bool: bool = false };
+
+/// The floats, vectors and bools of `type_id`, in order, into `out`, and
+/// how many: the variables nir_split_struct_vars and nir_split_array_vars
+/// make a variable of the function's own of an aggregate type, each of
+/// them a variable of its own, a matrix's columns among them as an
+/// array's elements (glsl_type_is_array_or_matrix, nir_split_vars.c:999).
+/// A struct or an array of more of them than `most_locals` is refused
+/// (since 1.176).
+fn leafKinds(work: *const Work, type_id: u16, out: []Leaf) Error!usize {
+    switch (work.thing[type_id]) {
+        .float, .int, .vector, .boolean => {
+            if (out.len == 0) return Error.Storage;
+            out[0] = if (work.thing[type_id] == .boolean) .{ .kind = .f32x1, .is_bool = true } else .{ .kind = try kindOf(work, type_id) };
+            return 1;
+        },
+        .matrix => {
+            const count = work.wide[type_id];
+            if (out.len < count) return Error.Storage;
+            @memset(out[0..count], .{ .kind = try kindOf(work, work.points[type_id]) });
+            return count;
+        },
+        .array => {
+            if (isRuntime(work, type_id)) return Error.Storage;
+            const each = try leafKinds(work, work.points[type_id], out);
+            const length = work.length[type_id];
+            if (each * length > out.len) return Error.Storage;
+            for (1..length) |e| @memcpy(out[e * each ..][0..each], out[0..each]);
+            return each * length;
+        },
+        .plain_struct => {
+            var at: usize = 0;
+            for (structMembers(work, type_id)) |member| at += try leafKinds(work, member, out[at..]);
+            return at;
+        },
+        else => return Error.Storage,
+    }
+}
+
+/// How many floats, vectors and bools `type_id` is of (`leafKinds`).
+fn leafCount(work: *const Work, type_id: u16) Error!u16 {
+    var kinds: [most_locals]Leaf = undefined;
+    return @intCast(try leafKinds(work, type_id, &kinds));
+}
+
+/// The members of a struct that is no block, by their types.
+fn structMembers(work: *const Work, type_id: u16) []const u16 {
+    return work.struct_members[work.points[type_id]..][0..work.wide[type_id]];
+}
+
+/// The type of element or member `k` of an array or a struct.
+fn memberType(work: *const Work, type_id: u16, k: usize) u16 {
+    if (work.thing[type_id] == .array) return work.points[type_id];
+    return work.struct_members[work.points[type_id] + k];
+}
+
+/// How many elements or members an array or a struct has.
+fn memberCount(work: *const Work, type_id: u16) u16 {
+    if (work.thing[type_id] == .array) return work.length[type_id];
+    return work.wide[type_id];
+}
+
+/// Element, member or column `index` of an aggregate type: the first of
+/// its floats and vectors among the aggregate's, and its type, as
+/// nir_split_struct_vars and nir_split_array_vars number the variables
+/// they make (since 1.176).
+const Within = struct { leaf: u16, type_id: u16 };
+
+fn within(work: *const Work, type_id: u16, index: u32) Error!Within {
+    switch (work.thing[type_id]) {
+        .array => {
+            if (index >= work.length[type_id]) return Error.Body;
+            const element = work.points[type_id];
+            return .{ .leaf = @intCast(index * try leafCount(work, element)), .type_id = element };
+        },
+        .plain_struct => {
+            const members = structMembers(work, type_id);
+            if (index >= members.len) return Error.Body;
+            var leaf: u16 = 0;
+            for (members[0..index]) |member| leaf += try leafCount(work, member);
+            return .{ .leaf = leaf, .type_id = members[index] };
+        },
+        .matrix => {
+            if (index >= work.wide[type_id]) return Error.Body;
+            return .{ .leaf = @intCast(index), .type_id = work.points[type_id] };
+        },
+        else => return Error.Body,
+    }
+}
+
+/// An index of an element or a column of a variable of the function's
+/// own: an integer constant, or a value the walk folded to one, which an
+/// unrolled loop's counter is (since 1.176). One the body computes would
+/// want the if-else tree nir_lower_indirect_derefs_to_if_else_trees
+/// builds of an array of two elements or fewer (v3dv_pipeline.c:435) or
+/// the scratch nir_lower_vars_to_scratch moves a longer one to (vir.c:
+/// 2041), neither of which is here: refused.
+fn localIndexOf(work: *const Work, word: u32) Error!u32 {
+    const id = try idOf(word);
+    if (work.thing[id] == .int_constant) return @bitCast(work.pool[work.points[id]]);
+    const of = work.step_of[id];
+    if (of == none or work.steps[of].tag != .constant or work.steps[of].kind != .f32x1) return Error.Storage;
+    return @bitCast(work.pool[work.steps[of].at]);
+}
+
+/// `leaf` put down after the aggregates' others.
+fn putLeaf(work: *Work, leaf: u16) Error!void {
+    if (work.leaf_count == most_leaves) return Error.Steps;
+    work.leaves[work.leaf_count] = leaf;
+    work.leaf_count += 1;
+}
+
+/// The constants of the floats and vectors of the constant `id`, of type
+/// `type_id`, put down after the others: a float's or a vector's own, a
+/// matrix's columns', or an array's or a struct's (since 1.176).
+fn constantLeaves(work: *Work, id: u16, type_id: u16) Error!void {
+    switch (work.thing[type_id]) {
+        .float, .int, .vector => {
+            if (!isConstant(work, id) or work.wide[id] != (try kindOf(work, type_id)).parts()) return Error.Type;
+            try putLeaf(work, id);
+        },
+        .matrix => {
+            if (work.thing[id] != .constant_matrix or work.wide[id] != work.wide[type_id]) return Error.Type;
+            const whole = work.matrices[work.points[id]];
+            for (whole.columns[0..whole.count]) |column| try putLeaf(work, column);
+        },
+        .array, .plain_struct => {
+            if (work.thing[id] != .constant_aggregate or work.aggregate[id] != type_id) return Error.Type;
+            const first = work.points[id];
+            for (0..try leafCount(work, type_id)) |k| try putLeaf(work, work.leaves[first + k]);
+        },
+        else => return Error.Type,
+    }
+}
+
+/// The steps of the floats and vectors of the value `word`, of type
+/// `type_id`, into `out`, and how many: a float's or a vector's, a
+/// matrix's columns, or an array's or a struct's in order, a constant's
+/// each made a step as `operand` makes one (since 1.176).
+fn leafSteps(work: *Work, word: u32, type_id: u16, out: []u16) Error!usize {
+    switch (work.thing[type_id]) {
+        .float, .int, .vector => {
+            if (out.len == 0) return Error.Storage;
+            out[0] = try operand(work, word, try kindOf(work, type_id));
+            return 1;
+        },
+        .matrix => {
+            const whole = work.matrices[try matrixOf(work, word)];
+            if (whole.count != work.wide[type_id] or out.len < whole.count) return Error.Type;
+            const rows = try kindOf(work, work.points[type_id]);
+            for (whole.columns[0..whole.count], 0..) |column, c| {
+                if (work.steps[column].kind != rows) return Error.Type;
+                out[c] = column;
+            }
+            return whole.count;
+        },
+        .array, .plain_struct => {
+            const id = try idOf(word);
+            if (work.aggregate[id] != type_id) return Error.Type;
+            var kinds: [most_locals]Leaf = undefined;
+            const count = try leafKinds(work, type_id, &kinds);
+            if (out.len < count) return Error.Storage;
+            const first = work.points[id];
+            switch (work.thing[id]) {
+                .aggregate_value => @memcpy(out[0..count], work.leaves[first..][0..count]),
+                .constant_aggregate => for (0..count) |k| {
+                    out[k] = try operand(work, work.leaves[first + k], kinds[k].kind);
+                },
+                else => return Error.Type,
+            }
+            return count;
+        },
+        else => return Error.Type,
+    }
+}
+
+/// `id` the value of type `type_id` whose floats and vectors are the
+/// steps `made`: an aggregate's, or a matrix's columns (since 1.176).
+fn holdAggregate(work: *Work, id: u16, type_id: u16, made: []const u16) Error!void {
+    if (work.thing[type_id] == .matrix) {
+        var whole = Matrix{ .count = @intCast(made.len) };
+        @memcpy(whole.columns[0..made.len], made);
+        return holdMatrix(work, id, whole);
+    }
+    if (work.leaf_count + made.len > most_leaves) return Error.Steps;
+    const first = work.leaf_count;
+    @memcpy(work.leaves[first..][0..made.len], made);
+    work.leaf_count += @intCast(made.len);
+    work.thing[id] = .aggregate_value;
+    work.points[id] = @intCast(first);
+    work.aggregate[id] = type_id;
+}
+
+/// The value `word` stored into the whole of the aggregate of the
+/// function's own `into`: each of its floats and vectors into the
+/// variable nir_split_struct_vars or nir_split_array_vars made of it, in
+/// order, as _vtn_variable_load_store stores an aggregate element by
+/// element (vtn_variables.c:763-781; since 1.176).
+fn storeAggregate(work: *Work, into: u16, word: u32) Error!void {
+    var made: [most_locals]u16 = undefined;
+    const count = try leafSteps(work, word, work.aggregate[into], &made);
+    for (made[0..count], 0..) |value, k| {
+        const local: u16 = @intCast(work.points[into] + k);
+        for (0..work.local_kind[local].parts()) |part| work.values[local][part] = partOf(work, value, @intCast(part));
+        touch(work, local);
+    }
+}
+
+/// OpCompositeInsert into an array, a struct or a matrix: ResultType,
+/// Result, Object, Composite, the indexes. vtn_composite_insert's copy of
+/// the composite with the element, the member, the column or the float the
+/// indexes say replaced (spirv_to_nir.c:4612-4650): a float of a vector, a
+/// vecN of the others and the one as nir_vector_insert_imm makes it (since
+/// 1.176). A matrix's shape is held to its type's by `leafSteps`.
+fn insertAggregate(work: *Work, operands: []const u32) Error!void {
+    const type_id = try idOf(operands[0]);
+    const id = try idOf(operands[1]);
+    const into = try idOf(operands[3]);
+    if (work.thing[type_id] != .matrix and work.aggregate[into] != type_id) return Error.Type;
+    var made: [most_locals]u16 = undefined;
+    const count = try leafSteps(work, operands[3], type_id, &made);
+    var leaf: u16 = 0;
+    var at = type_id;
+    const indexes = operands[4..];
+    for (indexes, 0..) |index, k| {
+        if (work.thing[at] == .vector) {
+            if (k != indexes.len - 1 or index >= work.wide[at]) return Error.Body;
+            const kind = try kindOf(work, at);
+            const object = try operand(work, operands[2], .f32x1);
+            var vector = Step{ .tag = .construct, .kind = kind };
+            for (0..kind.parts()) |p| {
+                vector.from[p] = if (p == index) object else made[leaf];
+                vector.part[p] = if (p == index) 0 else @intCast(p);
+            }
+            made[leaf] = try put(work, vector);
+            return holdAggregate(work, id, type_id, made[0..count]);
+        }
+        const next = try within(work, at, index);
+        leaf += next.leaf;
+        at = next.type_id;
+    }
+    _ = try leafSteps(work, operands[2], at, made[leaf..count]);
+    return holdAggregate(work, id, type_id, made[0..count]);
+}
+
 /// The variables at a flattened selection's merge. nir_lower_vars_to_ssa
 /// gives the merge block a phi of each variable two ways bring different
 /// values of, nir_lower_phis_to_scalar makes it a phi of each float, and
@@ -3808,7 +4183,7 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
         };
         if (!used) continue;
         if (each.tag == .mul and only_added) continue;
-        count += if (each.tag == .dot) work.steps[each.a].kind.parts() else each.kind.parts();
+        count += each.kind.parts();
     }
     return count;
 }
@@ -3905,7 +4280,8 @@ fn algebraic(work: *Work) Error!void {
         list.dce(work);
         const merged = list.cse(work);
         const rewrote = try list.run(work);
-        if (!merged and !rewrote) break;
+        const folded = try list.fold(work);
+        if (!merged and !rewrote and !folded) break;
     }
     list.layOut(work);
 }
@@ -3989,6 +4365,32 @@ const Order = struct {
     /// A new step, put in the program before `at`.
     fn before(list: *Order, work: *Work, at: u16, adding: Step) Error!u16 {
         return list.link(work, at, try put(work, adding));
+    }
+
+    /// One nir_opt_constant_folding, after each nir_opt_algebraic as
+    /// v3d's loop of passes has it (nir_to_vir.c:2280-2281): an operation
+    /// of floats whose operands are constants, through the vecs and the
+    /// components that name them, is the constant it makes (`foldedOf`),
+    /// and what read it reads that (since 1.176). The sum of two
+    /// constant factors the fadd rule of :246 builds is one, which the
+    /// next round's fmul of a one (:292) may take out.
+    fn fold(list: *Order, work: *Work) Error!bool {
+        var progress = false;
+        var at = list.first;
+        while (at != none) : (at = list.next[at]) {
+            if (!list.present(at)) continue;
+            const each = work.steps[at];
+            const b: ?u16 = switch (each.tag) {
+                .add, .sub, .mul, .min, .max, .set_less => each.b,
+                .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .sat, .sign => null,
+                else => continue,
+            };
+            if (work.steps[each.a].kind != each.kind) continue;
+            const constant = try foldedOf(work, each.tag, each.a, b) orelse continue;
+            _ = list.replaced(work, at, list.link(work, at, constant));
+            progress = true;
+        }
+        return progress;
     }
 
     /// `op` of `a` and `b`, which a rule builds, put before `at`: where
@@ -4876,7 +5278,7 @@ fn readsOf(each: Step) [4]?u16 {
         .logic => .{ each.a, if (each.at != @intFromEnum(Logic.inot)) each.b else null, null, null },
         .integer => .{ each.a, if (!@as(Integer, @enumFromInt(each.at)).unary()) each.b else null, null, null },
         .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .sample, .output, .round_to_int, .ubo_indirect, .ssbo_indirect => .{ each.a, null, null, null },
-        .compare, .set_less, .add, .mul, .sub, .min, .max, .dot, .sample_compared => .{ each.a, each.b, null, null },
+        .compare, .set_less, .add, .mul, .sub, .min, .max, .sample_compared => .{ each.a, each.b, null, null },
         .ssbo_store => .{ each.a, if (each.from[0] != none) each.from[0] else null, null, null },
         .ssbo_atomic => .{ each.a, if (each.from[0] != none) each.from[0] else null, if (each.from[1] != none) each.from[1] else null, null },
         .barrier => .{ null, null, null, null },
@@ -5025,6 +5427,11 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 touch(work, work.points[into]);
                 return;
             }
+            if (work.thing[into] == .local_aggregate) {
+                // The whole of an array, a struct or a matrix of the
+                // function's own (since 1.176).
+                return storeAggregate(work, into, operands[1]);
+            }
             if (isLocal(work, into)) {
                 // The whole of one: what it holds is the value stored
                 // (nir_lower_vars_to_ssa.c:723-733).
@@ -5169,6 +5576,26 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 touch(work, work.points[from]);
                 return;
             }
+            if (work.thing[from] == .local_aggregate) {
+                // The whole of an array, a struct or a matrix of the
+                // function's own: each of its floats and vectors loaded in
+                // order, as _vtn_variable_load_store loads an aggregate
+                // element by element (vtn_variables.c:763-781), each what
+                // its variable holds (since 1.176).
+                // One of bools would be a value of steps of no float,
+                // which an aggregate's are, and is refused.
+                const type_id = work.aggregate[from];
+                if (try idOf(operands[0]) != type_id) return Error.Type;
+                var made: [most_locals]u16 = undefined;
+                const count = try leafCount(work, type_id);
+                for (made[0..count], 0..) |*each, k| {
+                    const local: u16 = @intCast(work.points[from] + k);
+                    if (work.local_bool[local]) return Error.Storage;
+                    each.* = try localOf(work, local);
+                    touch(work, local);
+                }
+                return holdAggregate(work, id, type_id, made[0..count]);
+            }
             if (isLocal(work, from)) {
                 // The whole of one, nir_phi_builder_value_get_block_def's
                 // value where the walk has got to
@@ -5240,6 +5667,54 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 work.thing[id] = .input_part;
                 work.points[id] = work.points[base];
                 work.chain_part[id] = @intCast(which);
+                return;
+            }
+            if (work.thing[base] == .local_aggregate) {
+                // An element, a member or a column of an array, a struct
+                // or a matrix of the function's own, through as many as
+                // the indexes say: the variable nir_split_struct_vars or
+                // nir_split_array_vars made of a float or a vector, or of
+                // an aggregate the next chain or a load goes on from, or
+                // one float of a vector as below (since 1.176). A member's
+                // index is a constant, as SPIR-V has it; an element's or a
+                // column's may be a value the walk folded to one
+                // (`localIndexOf`).
+                if (work.thing[type_id] != .pointer) return Error.Type;
+                if (work.class[type_id] != @intFromEnum(spirv.StorageClass.function)) return Error.Body;
+                var leaf = work.points[base];
+                var at = work.aggregate[base];
+                const indexes = operands[3..];
+                for (indexes, 0..) |each, k| {
+                    if (work.thing[at] == .vector) {
+                        if (k != indexes.len - 1) return Error.Body;
+                        const which = try indexOf(work, each);
+                        if (which >= work.wide[at]) return Error.Body;
+                        if (try kindOf(work, work.points[type_id]) != .f32x1) return Error.Type;
+                        work.thing[id] = .local_part;
+                        work.points[id] = leaf;
+                        work.chain_part[id] = @intCast(which);
+                        return;
+                    }
+                    const index = if (work.thing[at] == .plain_struct) try indexOf(work, each) else try localIndexOf(work, each);
+                    const next = try within(work, at, index);
+                    leaf += next.leaf;
+                    at = next.type_id;
+                }
+                if (work.points[type_id] != at) return Error.Type;
+                switch (work.thing[at]) {
+                    .float, .int, .vector, .boolean => {
+                        work.thing[id] = .variable;
+                        work.class[id] = work.class[type_id];
+                        work.points[id] = leaf;
+                        work.wide[id] = @intCast(work.local_kind[leaf].parts());
+                    },
+                    else => {
+                        work.thing[id] = .local_aggregate;
+                        work.class[id] = work.class[type_id];
+                        work.points[id] = leaf;
+                        work.aggregate[id] = at;
+                    },
+                }
                 return;
             }
             if (isLocal(work, base)) {
@@ -5383,6 +5858,49 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (operands.len < 4) return Error.Body;
             const id = try idOf(operands[1]);
             const composite = try idOf(operands[2]);
+            if (work.thing[composite] == .aggregate_value or work.thing[composite] == .constant_aggregate) {
+                // An element or a member of an array or a struct, through
+                // as many as the indexes say, as vtn_composite_extract
+                // walks `elems` (spirv_to_nir.c:4655-4686): its floats
+                // and vectors among the aggregate's, a matrix of its
+                // columns, or one float of a vector of them (since 1.176).
+                const constant = work.thing[composite] == .constant_aggregate;
+                var leaf = work.points[composite];
+                var at = work.aggregate[composite];
+                const indexes = operands[3..];
+                for (indexes, 0..) |index, k| {
+                    if (work.thing[at] == .vector) {
+                        if (k != indexes.len - 1 or index >= work.wide[at]) return Error.Body;
+                        if (try kindOf(work, try idOf(operands[0])) != .f32x1) return Error.Type;
+                        const of = if (constant) try operand(work, work.leaves[leaf], try kindOf(work, at)) else work.leaves[leaf];
+                        work.step_of[id] = try put(work, .{ .tag = .component, .kind = .f32x1, .a = of, .at = index });
+                        return;
+                    }
+                    const next = try within(work, at, index);
+                    leaf += next.leaf;
+                    at = next.type_id;
+                }
+                if (try idOf(operands[0]) != at) return Error.Type;
+                var kinds: [most_locals]Leaf = undefined;
+                const count = try leafKinds(work, at, &kinds);
+                switch (work.thing[at]) {
+                    .float, .int, .vector => work.step_of[id] = if (constant) try operand(work, work.leaves[leaf], kinds[0].kind) else work.leaves[leaf],
+                    .matrix => {
+                        var whole = Matrix{ .count = @intCast(count) };
+                        for (whole.columns[0..count], 0..) |*column, c| {
+                            column.* = if (constant) try operand(work, work.leaves[leaf + c], kinds[c].kind) else work.leaves[leaf + c];
+                        }
+                        try holdMatrix(work, id, whole);
+                    },
+                    .array, .plain_struct => {
+                        work.thing[id] = work.thing[composite];
+                        work.points[id] = leaf;
+                        work.aggregate[id] = at;
+                    },
+                    else => return Error.Type,
+                }
+                return;
+            }
             if (work.thing[composite] == .constant_matrix) _ = try matrixOf(work, operands[2]);
             if (work.thing[composite] == .matrix_value) {
                 // A matrix's column, or one float of it: the column's
@@ -5415,6 +5933,16 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             // vector with that float replaced, nir_vector_insert_imm's
             // vecN of the others and the one (vtn_composite_insert,
             // spirv_to_nir.c:4612-4650).
+            if (operands.len >= 5) {
+                const into = try idOf(operands[3]);
+                switch (work.thing[into]) {
+                    // Into an array, a struct or a matrix: a copy of it
+                    // with an element, a member, a column or a float
+                    // replaced (since 1.176).
+                    .aggregate_value, .constant_aggregate, .matrix_value, .constant_matrix => return insertAggregate(work, operands),
+                    else => {},
+                }
+            }
             if (operands.len != 5) return Error.Body;
             const kind = try kindOf(work, try idOf(operands[0]));
             const id = try idOf(operands[1]);
@@ -5432,6 +5960,19 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (operands.len < 3) return Error.Body;
             const type_id = try idOf(operands[0]);
             const id = try idOf(operands[1]);
+            if (work.thing[type_id] == .array or work.thing[type_id] == .plain_struct) {
+                // An array or a struct of its elements or members, the
+                // vtn_ssa_value of `elems` vtn makes of them
+                // (vtn_handle_composite, spirv_to_nir.c:4744-4756): the
+                // floats and vectors of each, in order (since 1.176).
+                const parts = operands[2..];
+                if (isRuntime(work, type_id) or parts.len != memberCount(work, type_id)) return Error.Body;
+                var made: [most_locals]u16 = undefined;
+                var count: usize = 0;
+                for (parts, 0..) |each, k| count += try leafSteps(work, each, memberType(work, type_id, k), made[count..]);
+                if (count != try leafCount(work, type_id)) return Error.Type;
+                return holdAggregate(work, id, type_id, made[0..count]);
+            }
             if (work.thing[type_id] == .matrix) {
                 // A matrix of its columns, each a vector of its rows: the
                 // vtn_ssa_value of `elems` vtn makes of them
@@ -6479,19 +7020,24 @@ fn foldedOf(work: *Work, tag: Tag, a: u16, b: ?u16) Error!?u16 {
         .add, .sub, .mul, .min, .max, .set_less, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .sat, .sign => {},
         else => return null,
     }
-    const of_a = work.steps[a];
-    if (of_a.tag != .constant) return null;
-    var of_b: Step = of_a;
-    if (b) |at| {
-        of_b = work.steps[at];
-        if (of_b.tag != .constant) return null;
+    // Each float of a constant, or of a vec or a component of one, which
+    // nir_opt_constant_folding makes a load_const first (since 1.176).
+    const parts = work.steps[a].kind.parts();
+    var xs: [4]f32 = undefined;
+    var ys: [4]f32 = undefined;
+    for (0..parts) |k| {
+        xs[k] = @bitCast(floatBits(work, partOf(work, a, @intCast(k))) orelse return null);
+        ys[k] = xs[k];
+        if (b) |at| {
+            const j: u8 = if (work.steps[at].kind == .f32x1) 0 else @intCast(k);
+            ys[k] = @bitCast(floatBits(work, partOf(work, at, j)) orelse return null);
+        }
     }
-    const parts = of_a.kind.parts();
     if (work.pool_count + parts > work.pool.len) return Error.Uniforms;
     const out = work.pool_count;
     for (0..parts) |k| {
-        const x = work.pool[of_a.at + k];
-        const y = work.pool[of_b.at + if (of_b.kind == .f32x1) 0 else k];
+        const x = xs[k];
+        const y = ys[k];
         work.pool[out + k] = switch (tag) {
             .add => x + y,
             .sub => x - y,
@@ -6514,7 +7060,7 @@ fn foldedOf(work: *Work, tag: Tag, a: u16, b: ?u16) Error!?u16 {
         };
     }
     work.pool_count += parts;
-    return try put(work, .{ .tag = .constant, .kind = of_a.kind, .at = out });
+    return try put(work, .{ .tag = .constant, .kind = work.steps[a].kind, .at = out });
 }
 
 /// _mesa_roundevenf: to the nearest whole float, a half to the even one.
@@ -6524,10 +7070,24 @@ fn roundEven(x: f32) f32 {
 }
 
 /// The dot of two values of one kind; of one float each, their product,
-/// as nir_fdot builds it for one component.
+/// as nir_fdot builds it for one component. Of vectors, what
+/// nir_lower_alu_to_scalar lowers an fdot to before nir_opt_algebraic sees
+/// it (preprocess_nir, v3dv_pipeline.c:404): the product of each float,
+/// the last float's first, each summed onto those before it, as lower_fdot
+/// has it where the sum need not be exact and the device prefers no fused
+/// multiply-add (lower_reduction, nir_lower_alu_width.c:96-127 and
+/// :161-173), so that the rules take a product of a zero or a one out
+/// (since 1.176). Until then it was `to_vir`'s to lower, after the rules.
 fn dotOf(work: *Work, a: u16, b: u16) Error!u16 {
-    if (work.steps[a].kind == .f32x1) return binary(work, .mul, a, b);
-    return put(work, .{ .tag = .dot, .kind = .f32x1, .a = a, .b = b });
+    const parts = work.steps[a].kind.parts();
+    if (parts == 1) return binary(work, .mul, a, b);
+    var last: u16 = none;
+    for (0..parts) |i| {
+        const channel: u8 = @intCast(parts - 1 - i);
+        const product = try binary(work, .mul, try floatOf(work, partOf(work, a, channel)), try floatOf(work, partOf(work, b, channel)));
+        last = if (i == 0) product else try binary(work, .add, last, product);
+    }
+    return last;
 }
 
 /// `tag` of `a`, or the constant it folds to.
@@ -6821,7 +7381,7 @@ fn settle(work: *Work) Error!void {
             .compare, .discard => return Error.Discards,
             .sample_compared => return Error.Samplers,
             .begin_if, .begin_else, .end_if, .phi => return Error.Branches,
-            .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot => return Error.Body,
+            .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2 => return Error.Body,
             .select, .set_less, .sat, .sin, .cos, .sign, .logic, .integer => return Error.Body,
             // A vertex program's: `compile` reads a fragment program alone.
             .output, .viewport, .round_to_int => return Error.Stage,
@@ -7563,6 +8123,62 @@ fn retyped(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32,
             k += count;
         }
         @compileError("no such instruction to retype");
+    }
+}
+
+/// `words` with the first OpStore into the variable `id` taken out and
+/// what it stores made the variable's initializer, as a module glslc does
+/// not write would carry it: nir_lower_variable_initializers' work
+/// (vk_nir.c:301) undone. The OpVariable grows by a word and the
+/// store's three go.
+fn initialized(comptime words: []const u32, comptime id: u32) [words.len - 2]u32 {
+    comptime {
+        @setEvalBranchQuota(100_000);
+        var variable_at: usize = 0;
+        var store_at: usize = 0;
+        var value: u32 = 0;
+        var k: usize = 5;
+        while (k < words.len) {
+            const count = words[k] >> 16;
+            if (count == 0) @compileError("a word count of zero");
+            const op = words[k] & 0xFFFF;
+            if (op == @intFromEnum(spirv.Op.variable) and words[k + 2] == id) {
+                if (count != 4) @compileError("the variable has an initializer already");
+                variable_at = k;
+            }
+            if (op == @intFromEnum(spirv.Op.store) and words[k + 1] == id and store_at == 0) {
+                if (variable_at == 0) @compileError("a store before the variable");
+                store_at = k;
+                value = words[k + 2];
+            }
+            k += count;
+        }
+        if (variable_at == 0 or store_at == 0) @compileError("no such variable stored into");
+        var out: [words.len - 2]u32 = undefined;
+        var n: usize = 0;
+        k = 0;
+        while (k < words.len) {
+            if (k < 5) {
+                out[n] = words[k];
+                n += 1;
+                k += 1;
+                continue;
+            }
+            const count = words[k] >> 16;
+            if (k == store_at) {
+                k += count;
+                continue;
+            }
+            for (0..count) |i| out[n + i] = words[k + i];
+            if (k == variable_at) {
+                out[n] = ((count + 1) << 16) | (words[k] & 0xFFFF);
+                out[n + count] = value;
+                n += 1;
+            }
+            n += count;
+            k += count;
+        }
+        return out;
     }
 }
 
@@ -9125,10 +9741,10 @@ test "through Mesa's back end, glslc's float arithmetic: GLSL.std.450 lowered as
     try testing.expectEqual(@as(u8, 4), code.threads);
     // The walk's lowering: Normalize a dot and RSQRT, the dot of the
     // constant a second, Length a third, its square root RSQRT and RECIP
-    // as Sqrt's is; Pow LOG then EXP; FClamp to 0.0 and 1.0 an fsat, as
-    // the algebraic pass makes it (since 1.153), and the negated x the
-    // FMAX's other operand; Fract FFLOOR and FSUB.
-    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .dot));
+    // as Sqrt's is, each dot its products and sums (since 1.176); Pow LOG
+    // then EXP; FClamp to 0.0 and 1.0 an fsat, as the algebraic pass
+    // makes it (since 1.153), and the negated x the FMAX's other operand;
+    // Fract FFLOOR and FSUB.
     try testing.expectEqual(@as(usize, 3), stepsOf(&work, .rsqrt));
     try testing.expectEqual(@as(usize, 2), stepsOf(&work, .recip));
     try testing.expectEqual(@as(usize, 1), stepsOf(&work, .log2));
@@ -9853,7 +10469,7 @@ test "a variable of the function's own read before anything is stored into it is
     try testing.expectEqual(@as(usize, 3), stepsOf(&one_way, .select));
 }
 
-test "a variable of the function's own that is not a float, an integer, a vector of them or a bool is refused" {
+test "a variable of the function's own of a block's struct, or loaded as what it is not, is refused" {
     // The bools' pointer type made a pointer to the push constants'
     // struct.
     var work: Work = .{};
@@ -12076,10 +12692,14 @@ test "a loop that leaves at its first test is no run; one whose test is at its e
     try testing.expectEqual(@as(usize, 3), stepsOf(&work, .max));
     try testing.expectEqual(@as(usize, 3), stepsOf(&work, .mul));
     // A float from 0 by 0.25 while under 1: get_iteration's fsub and
-    // fdiv, 4, and test_iterations' check of 3 to 5.
+    // fdiv, 4, and test_iterations' check of 3 to 5. The first run's
+    // product is of 0.0, which (('fmul(nsz,nnan)', 'a', 0.0), 0.0)
+    // (nir_opt_algebraic.py:277) makes a zero, and its fmax of that and
+    // the sum's zero is the zero nir_opt_constant_folding makes of it
+    // (since 1.176): three.
     work = .{};
     _ = try throughMesa(&work, &reference.glslc_stepped);
-    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .max));
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .max));
 }
 
 test "a loop counted down, or by a product, is counted as nir_loop_analyze counts it" {
@@ -12240,4 +12860,220 @@ test "through Mesa's back end, a loop of four samples is four lookups of one uni
     try testing.expectEqual(@as(usize, 0), countOf(code, "bu"));
     work = .{};
     try testing.expectError(Error.Samplers, throughMesa(&work, MixedCompare.words));
+}
+
+test "an array of the function's own a loop Mesa unrolls indexes is a variable of each element, as nir_split_array_vars makes it" {
+    // weights[i] at the counter of each run, a constant once the loop is
+    // unrolled (since 1.176). The sum of color times each element is
+    // color times (0.25 + 0.5) + 0.25: the factor gathered (:246), the
+    // sum of constants the 1.0 nir_opt_constant_folding makes of it, and
+    // the product of a one taken out (:292). What is left is color times
+    // scale[0] and scale[1] added, an fmul and an fadd of each float
+    // besides each varying's six.
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_local_array);
+    try testing.expectEqual(@as(u32, 3), work.local_count);
+    try testing.expectEqual(@as(usize, 15), code.words.len);
+    try testing.expectEqual(@as(usize, 6 + 4), opsOf(code, "fmul"));
+    try testing.expectEqual(@as(usize, 6 + 4), opsOf(code, "fadd"));
+    try testing.expectEqual(@as(usize, 0), code.stream().len);
+    // At -O0 both arrays, the sum and the counter are variables, each
+    // element of `scale` stored and loaded through a chain: the same
+    // words.
+    var kept: Work = .{};
+    const same = try throughMesa(&kept, &reference.glslc_local_array_kept);
+    try testing.expectEqual(@as(u32, 3 + 2 + 1 + 1), kept.local_count);
+    try testing.expectEqualSlices(u64, code.words, same.words);
+}
+
+test "a struct of the function's own is a variable of each member, as nir_split_struct_vars makes it, a whole one loaded and stored member by member" {
+    // l and m, each a vec3 and a float; m stored from a load of the whole
+    // of l, member by member (vtn_variables.c:763-781; since 1.176).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_local_struct);
+    try testing.expectEqual(@as(u32, 4), work.local_count);
+    // The dot of m.dir and (0, 0, 1) its products and sums, as
+    // nir_lower_alu_to_scalar lowers it: 1.0 times 1.0, the constant 1.0,
+    // and the fmuls of 0.0 zeros (:277), each fadd of a zero the other
+    // (:236). Its fmax of 0.0 is the constant 1.0 too, and color.rgb times
+    // it color.rgb (:292): the operations of glslc -O's values, in which a
+    // product of 1.0 is all that is left of the dot, color's four
+    // varyings and m.power times color.rgb. spirv-opt has taken `uv` out
+    // of that module, whose two floats the walk still reads here, their
+    // interpolation unread (since 1.167).
+    try testing.expectEqual(@as(usize, 0), opsOf(code, "fmax"));
+    try testing.expectEqual(@as(usize, 4 + 4), opsOf(code, "fmul"));
+    try testing.expectEqual(@as(usize, 4), opsOf(code, "fadd"));
+    try testing.expectEqual(@as(usize, 14), code.words.len);
+    var values: Work = .{};
+    const same = try throughMesa(&values, &reference.glslc_local_struct_values);
+    try testing.expectEqual(@as(u32, 0), values.local_count);
+    try testing.expectEqual(@as(u32, 6), code.varyings);
+    try testing.expectEqual(@as(u32, 4), same.varyings);
+    inline for (.{ "fmax", "fmul", "fadd", "vfpack" }) |op| try testing.expectEqual(opsOf(same, op), opsOf(code, op));
+    try testing.expectEqual(same.words.len, code.words.len);
+}
+
+test "an array a loop stores into at its counter, and an array of structs from a constant of it, read through chains to a float of a member" {
+    // acc[i] stored in each run, its counter a constant there (since
+    // 1.176): color.x times 0.0, 1.0, 2.0 and 3.0. acc[0] + acc[1] is
+    // color.x, a zero (:277) and color.x (:292) summed (:236); the others
+    // an fmul of color.x each, acc[2]'s times taps[1].weight again, and
+    // acc[3] + taps[0].offset.y an fadd. Of color only its x is read, one
+    // varying's fmul and fadd.
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_local_taps);
+    try testing.expectEqual(@as(u32, 4), work.local_count);
+    try testing.expectEqual(@as(usize, 1 + 3), opsOf(code, "fmul"));
+    try testing.expectEqual(@as(usize, 1 + 1), opsOf(code, "fadd"));
+    // At -O0 the counter and the array of structs are variables too, the
+    // latter stored from a constant array of structs and read through
+    // chains of three indexes, the last a float of a vector: i, acc, and
+    // a vec2 and a float of each tap.
+    var kept: Work = .{};
+    const same = try throughMesa(&kept, &reference.glslc_local_taps_kept);
+    try testing.expectEqual(@as(u32, 1 + 4 + 2 * 2), kept.local_count);
+    try testing.expectEqualSlices(u64, code.words, same.words);
+    try testing.expectEqual(code.stream().len, same.stream().len);
+    for (code.stream(), same.stream()) |a, b| try testing.expectEqual(a, b);
+}
+
+test "an element of an aggregate of the function's own at an index the body computes, past its end, or a member at no constant, is refused" {
+    // weights[uv.x]: an index no unrolled loop's counter makes a
+    // constant, which wants an if-else tree or scratch (since 1.176).
+    var work: Work = .{};
+    const computed = comptime patched(&reference.glslc_local_array, .access_chain, 2, 3, 30);
+    try testing.expectError(Error.Storage, throughMesa(&work, &computed));
+    // acc[4], of an array of four.
+    work = .{};
+    const past = comptime patched(&reference.glslc_local_taps_kept, .access_chain, 2, 3, 16);
+    try testing.expectError(Error.Body, throughMesa(&work, &past));
+    // taps[1].(i): a member's index is a constant, as SPIR-V has it.
+    work = .{};
+    const member = comptime patched(&reference.glslc_local_taps_kept, .access_chain, 5, 4, 25);
+    try testing.expectError(Error.Body, throughMesa(&work, &member));
+}
+
+test "a matrix of the function's own is a variable of each column, a column stored through a chain and the whole loaded for a product" {
+    // m's two columns, and v (since 1.176).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_local_matrix);
+    try testing.expectEqual(@as(u32, 2 + 1), work.local_count);
+    // glslc -O's values: the column put into the matrix by an
+    // OpCompositeInsert, vtn_composite_insert's copy with the column
+    // replaced (since 1.176). The same words.
+    var values: Work = .{};
+    const same = try throughMesa(&values, &reference.glslc_local_matrix_values);
+    try testing.expectEqual(@as(u32, 0), values.local_count);
+    try testing.expectEqualSlices(u64, same.words, code.words);
+}
+
+test "an array of bools of the function's own is a variable of each, and a load of the whole of one is refused" {
+    // flags[1]'s comparison chooses the factor; flags[0]'s, which nothing
+    // reads, is taken out (since 1.176).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_local_bools);
+    try testing.expectEqual(@as(u32, 2), work.local_count);
+    try testing.expectEqual(@as(usize, 1), countOf(code, "fcmp"));
+    // The load of flags[1] made one of the whole array.
+    work = .{};
+    const whole = comptime patched(&patched(&reference.glslc_local_bools, .load, 3, 0, 9), .load, 3, 2, 11);
+    try testing.expectError(Error.Storage, throughMesa(&work, &whole));
+}
+
+test "an array of the function's own stored in selections' arms: an element in one, the whole array in the other, each float chosen at the merge" {
+    // pal and alt, two vec4s each. The arms store nothing but variables
+    // of the function's own, through a chain or whole, and are flattened
+    // (since 1.176): pal[1] is 1.0 where either comparison holds, the
+    // inner select folded into the outer on an ior of the two
+    // (nir_opt_algebraic.py:2514), and pal[0] alt[0]'s 0.25 where the
+    // second does; a select of each float.
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_local_palette);
+    try testing.expectEqual(@as(u32, 2 + 2), work.local_count);
+    try testing.expectEqual(@as(usize, 2), liveOf(&work, .compare));
+    try testing.expectEqual(@as(usize, 8), liveOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), liveLogicOf(&work, .ior));
+    try testing.expectEqual(@as(usize, 0), liveOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 31), code.words.len);
+}
+
+test "a struct of a matrix and a float, stored from one stored nowhere and made again in an arm, a float of its column read through three indexes" {
+    // p and unset, two columns and a float each, and k (since 1.176).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_local_pair);
+    try testing.expectEqual(@as(u32, 3 + 3 + 1), work.local_count);
+    // In the order they are first used, which is the order
+    // nir_lower_vars_to_ssa gives their values to the phi builder: unset,
+    // loaded whole before anything is stored, then p, then k.
+    try testing.expectEqualSlices(u8, &.{ 3, 4, 5, 0, 1, 2, 6 }, work.first_used[0..work.used_count]);
+    // p.m[1] is (z, w) either way, which no select chooses; p.w, p.m[0].x
+    // and k's four floats are chosen.
+    try testing.expectEqual(@as(usize, 1), liveOf(&work, .compare));
+    try testing.expectEqual(@as(usize, 6), liveOf(&work, .select));
+    try testing.expectEqual(@as(usize, 21), code.words.len);
+    // The first float out is color.w, the second of p.m[1], a chain of
+    // three indexes to it, plus a select.
+    const sum = liveStepOf(&work, .add);
+    const first = partOf(&work, work.steps[sum].a, 0);
+    try testing.expectEqual(Tag.input, work.steps[first.step].tag);
+    try testing.expectEqual(@as(u8, 3), first.part);
+}
+
+test "nir_opt_constant_folding after each round of rules: an fsub of constants, a vec of constants a rule leaves times one, and a dot's products the last float first" {
+    // color.x * 0.0 is a zero (:277), 0.0 + 0.5 0.5 (:236), and a - 0.25
+    // the 0.25 constant folding makes of it; vec2(color.y * 0.0 + 0.5,
+    // 0.25) * 3.0 a vec of two constants times 3.0, (1.5, 0.75), which no
+    // rule takes a float at a time (since 1.176).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_folds);
+    try testing.expectEqual(@as(usize, 0), liveOf(&work, .sub));
+    // What is left is the dot of color.xyz and (0.5, 0.25, 2.0): z's
+    // product first, y's added to it, then x's (lower_reduction,
+    // nir_lower_alu_width.c:96-127).
+    try testing.expectEqual(@as(usize, 3), liveOf(&work, .mul));
+    try testing.expectEqual(@as(usize, 2), liveOf(&work, .add));
+    const product = liveStepOf(&work, .mul);
+    try testing.expectEqual(@as(u8, 2), partOf(&work, work.steps[product].a, 0).part);
+    try testing.expectEqual(@as(usize, 13), code.words.len);
+}
+
+test "a struct or an array made by OpCompositeConstruct is read by OpCompositeExtract, down to a float of a member or an element" {
+    // y is (color.zw, 0.5)'s second float, p the struct's float member,
+    // e the first float of the second element, color.wzyx: color.w each
+    // (since 1.176), and 1.0.
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_aggregate_values);
+    try testing.expectEqual(@as(u32, 3), work.local_count);
+    const out = work.steps[work.stored];
+    for (0..3) |k| {
+        const float = partOf(&work, work.stored, @intCast(k));
+        try testing.expectEqual(Tag.input, work.steps[float.step].tag);
+        try testing.expectEqual(@as(u8, 3), float.part);
+    }
+    try testing.expectEqual(Tag.construct, out.tag);
+    try testing.expectEqual(@as(usize, 0), liveOf(&work, .mul));
+}
+
+test "a variable of the function's own given a constant to start with, an array's or a vector's, is stored at the top of the function as nir_lower_variable_initializers stores it" {
+    // weights and sum of glslc -O0's module, each stored first from a
+    // constant, given it as an initializer instead, which glslc does not
+    // write: the same words and stream. sum starts at 0.5: started at
+    // zero, it came out the same with the initializer lost.
+    const start = comptime patched(&reference.glslc_local_array_kept, .store, 3, 1, 16);
+    const words = comptime initialized(&initialized(&start, 12), 39);
+    var work: Work = .{};
+    const code = try throughMesa(&work, &words);
+    var kept: Work = .{};
+    const same = try throughMesa(&kept, &start);
+    try testing.expectEqual(kept.local_count, work.local_count);
+    try testing.expectEqualSlices(u64, same.words, code.words);
+    try testing.expectEqualSlices(Word, same.stream(), code.stream());
+    var zero: Work = .{};
+    const from_zero = try throughMesa(&zero, &reference.glslc_local_array_kept);
+    try testing.expect(!std.mem.eql(u64, from_zero.words, code.words));
+    // An initializer that is no constant is refused: the array's made
+    // the counter's zero.
+    var other: Work = .{};
+    try testing.expectError(Error.Body, throughMesa(&other, &comptime patched(&words, .variable, 3, 3, 23)));
 }

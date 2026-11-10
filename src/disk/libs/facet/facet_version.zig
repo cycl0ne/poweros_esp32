@@ -5580,4 +5580,58 @@ pub const LIBRARY_VERSION = 1;
 ///
 /// On the CM5 FacetBoth's 239 cases are each as they were at 1.174, and
 /// FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 175;
+///
+/// 176: **Arrays, structs and matrices of the function's own on the V3D,
+/// nir_opt_constant_folding in the loop of passes, and fdot lowered
+/// before the rules (docs/facet-vulkan10.md item 59).** A variable of the
+/// function's own that is an array, a struct or a matrix is a variable
+/// of each float and vector in it, as nir_split_struct_vars splits a
+/// struct's members (v3dv_pipeline.c:411) and nir_split_array_vars an
+/// array's or a matrix's elements where every index is a constant
+/// (nir_to_vir.c:2236; mark_array_deref_used, nir_split_vars.c:502-531;
+/// glsl_type_is_array_or_matrix, :999), each then a value
+/// (nir_lower_vars_to_ssa, nir_to_vir.c:2240). An unrolled loop's counter
+/// is a constant by then. A chain down to a float, a vector or a float of
+/// one is that variable; an array of bools is a variable of each. A load
+/// or a store of a whole aggregate is one of each element
+/// (_vtn_variable_load_store, vtn_variables.c:763-781). A constant
+/// composite of an array or a struct (vtn_const_ssa_value,
+/// spirv_to_nir.c:526-563), an OpCompositeConstruct of one (:4744-4756),
+/// an OpCompositeExtract from one (:4655-4686) and an OpCompositeInsert
+/// into one or into a matrix (:4612-4650) are a value of each float and
+/// vector. An initializer is stored element by element at the top of the
+/// function (nir_lower_variable_initializers, vk_nir.c:301).
+///
+/// nir_opt_constant_folding runs after each round of rules
+/// (nir_to_vir.c:2281; `Order.fold`), through the floats of a vec and a
+/// component. An fdot is its products and sums before the rules, as
+/// nir_lower_alu_to_scalar lowers it (v3dv_pipeline.c:404; lower_fdot,
+/// nir_lower_alu_width.c:161-173), the last float's product first and no
+/// fused multiply-add (lower_reduction, :96-127), so a rule sees each
+/// product. The `.dot` step is gone, and to_vir's emission of it.
+///
+/// Refused still: an index the body computes, which Mesa makes an
+/// if-else tree for two elements or fewer
+/// (nir_lower_indirect_derefs_to_if_else_trees, v3dv_pipeline.c:435) and
+/// scratch otherwise (nir_lower_vars_to_scratch, vir.c:2041); a load of
+/// a whole aggregate that holds a bool; more than 32 floats and vectors
+/// of the function's own (`most_locals`).
+///
+/// Tests: the V3D's 242, eleven new and two asserting what the folding
+/// leaves: glslc_stepped's three fmax, from four, and glslc_arith's dot,
+/// no step of its own now. 13 new modules of glslc's, -O and -O0.
+/// glslc_local_array, color times weights[i] summed over a loop of
+/// three, is 15 words at both; glslc_local_taps, an array stored at its
+/// counter and an array of structs read through chains of three indexes,
+/// the same words at both; a matrix stored a column through a chain the
+/// words of glslc -O's OpCompositeInsert; glslc_local_palette, an element
+/// stored in one arm and the whole array in the other, eight selects and
+/// an ior. glslc writes no initializer: a module patched to carry two is
+/// the words of the stores it had. Of 28 mutations of the port, 25 fail
+/// the tests; the three left guard against what glslc's modules never
+/// reach, a constant aggregate in a nested selection and a chain made
+/// before a loop and stored through in it.
+///
+/// On the CM5 FacetBoth's 239 cases are each as they were at 1.175, and
+/// FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 176;
