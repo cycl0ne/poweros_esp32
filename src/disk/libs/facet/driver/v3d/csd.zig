@@ -37,20 +37,35 @@ pub const Dispatch = struct {
     /// count of batches is written as it is, before it less one.
     version: u32,
     revision: u32,
+    /// The program waits at a barrier (prog_data's has_control_barrier),
+    /// and the QPUs, devinfo's qpu_count: a supergroup of a TSY barrier
+    /// takes no more than half their threads (since 1.203).
+    has_tsy_barrier: bool = false,
+    qpus: u32 = 0,
 };
 
 /// The workgroups a supergroup holds, of at most 16, the one that leaves
 /// the fewest of a batch's 16 lanes unused: v3d_csd_choose_workgroups_
-/// per_supergroup (v3d_util.c:32-99), of no TSY barrier, which no program
-/// here has (OpControlBarrier is refused).
-pub fn workgroupsPerSupergroup(can_use_supergroups: bool, num_wgs: u64, wg_size: u32) u32 {
+/// per_supergroup (v3d_util.c:32-99). A program that waits at a TSY
+/// barrier stalls its QPU threads until the whole supergroup has come to
+/// it, so its supergroup holds no more batches than half the QPUs'
+/// threads, that two at least run at once (:56-67; since 1.203).
+pub fn workgroupsPerSupergroup(can_use_supergroups: bool, has_tsy_barrier: bool, qpus: u32, threads: u32, num_wgs: u64, wg_size: u32) u32 {
     if (!can_use_supergroups) return 1;
     // A workgroup of a multiple of 16 fills its batches already.
     if (wg_size % 16 == 0) return 1;
+    // 16 workgroups at most, each of wg_size lanes, 16 to a batch.
+    var max_batches_per_sg: u32 = wg_size;
+    var max_wgs_per_sg: u32 = 16;
+    if (has_tsy_barrier) {
+        const max_qpu_threads = qpus * threads;
+        max_batches_per_sg = @min(max_batches_per_sg, max_qpu_threads / 2);
+        max_wgs_per_sg = max_batches_per_sg * 16 / wg_size;
+    }
     var best: u32 = 1;
     var best_unused: u32 = 16;
     var wgs_per_sg: u32 = 1;
-    while (wgs_per_sg <= 16) : (wgs_per_sg += 1) {
+    while (wgs_per_sg <= max_wgs_per_sg) : (wgs_per_sg += 1) {
         // No more than the dispatch has.
         if (wgs_per_sg > num_wgs) return best;
         const unused = (16 - ((wgs_per_sg * wg_size) % 16)) & 0x0f;
@@ -80,7 +95,7 @@ pub fn configuration(dispatch: Dispatch) ?[7]u32 {
     // (v3d_limits.h:82), v3dv's maxComputeWorkGroupInvocations
     // (v3dv_device.c:1146).
     if (wg_size == 0 or wg_size > most_invocations) return null;
-    const wgs_per_sg = workgroupsPerSupergroup(dispatch.can_use_supergroups, num_wgs, wg_size);
+    const wgs_per_sg = workgroupsPerSupergroup(dispatch.can_use_supergroups, dispatch.has_tsy_barrier, dispatch.qpus, dispatch.threads, num_wgs, wg_size);
     const batches_per_sg = std.math.divCeil(u32, wgs_per_sg * wg_size, 16) catch unreachable;
     const whole_sgs = num_wgs / wgs_per_sg;
     const rem_wgs = num_wgs - whole_sgs * wgs_per_sg;
@@ -110,23 +125,39 @@ pub fn configuration(dispatch: Dispatch) ?[7]u32 {
 const testing = std.testing;
 
 test "a workgroup of a multiple of 16 invocations is a supergroup alone, as is one of a program that may not share" {
-    try testing.expectEqual(@as(u32, 1), workgroupsPerSupergroup(true, 100, 16));
-    try testing.expectEqual(@as(u32, 1), workgroupsPerSupergroup(true, 100, 256));
-    try testing.expectEqual(@as(u32, 1), workgroupsPerSupergroup(false, 100, 3));
+    try testing.expectEqual(@as(u32, 1), workgroupsPerSupergroup(true, false, 0, 4, 100, 16));
+    try testing.expectEqual(@as(u32, 1), workgroupsPerSupergroup(true, false, 0, 4, 100, 256));
+    try testing.expectEqual(@as(u32, 1), workgroupsPerSupergroup(false, false, 0, 4, 100, 3));
 }
 
 test "smaller workgroups are packed until a batch's 16 lanes are full, or the fewest are left unused, and no more than the dispatch has" {
     // 4 of 4 fill 16 lanes; 2 of 8; 16 of 1.
-    try testing.expectEqual(@as(u32, 4), workgroupsPerSupergroup(true, 100, 4));
-    try testing.expectEqual(@as(u32, 2), workgroupsPerSupergroup(true, 100, 8));
-    try testing.expectEqual(@as(u32, 16), workgroupsPerSupergroup(true, 100, 1));
+    try testing.expectEqual(@as(u32, 4), workgroupsPerSupergroup(true, false, 0, 4, 100, 4));
+    try testing.expectEqual(@as(u32, 2), workgroupsPerSupergroup(true, false, 0, 4, 100, 8));
+    try testing.expectEqual(@as(u32, 16), workgroupsPerSupergroup(true, false, 0, 4, 100, 1));
     // 3 invocations: 16 of them fill three batches. Of a dispatch of 12,
     // 5, of 15 lanes, leave the fewest unused; of 3, 3 at most.
-    try testing.expectEqual(@as(u32, 16), workgroupsPerSupergroup(true, 100, 3));
-    try testing.expectEqual(@as(u32, 5), workgroupsPerSupergroup(true, 12, 3));
-    try testing.expectEqual(@as(u32, 3), workgroupsPerSupergroup(true, 3, 3));
+    try testing.expectEqual(@as(u32, 16), workgroupsPerSupergroup(true, false, 0, 4, 100, 3));
+    try testing.expectEqual(@as(u32, 5), workgroupsPerSupergroup(true, false, 0, 4, 12, 3));
+    try testing.expectEqual(@as(u32, 3), workgroupsPerSupergroup(true, false, 0, 4, 3, 3));
     // 24 invocations: 2 of them fill three batches.
-    try testing.expectEqual(@as(u32, 2), workgroupsPerSupergroup(true, 100, 24));
+    try testing.expectEqual(@as(u32, 2), workgroupsPerSupergroup(true, false, 0, 4, 100, 24));
+}
+
+test "a program that waits at a TSY barrier: its supergroup of no more batches than half the QPUs' threads, the rest as before" {
+    // 3 invocations on 2 QPUs of 2 threads: 2 batches, 10 workgroups at
+    // most, of which 5 leave 1 lane unused, where 16 would fill three.
+    try testing.expectEqual(@as(u32, 5), workgroupsPerSupergroup(true, true, 2, 2, 100, 3));
+    try testing.expectEqual(@as(u32, 16), workgroupsPerSupergroup(true, false, 2, 2, 100, 3));
+    // 8 QPUs of 4 threads leave the 3 batches 16 workgroups take.
+    try testing.expectEqual(@as(u32, 16), workgroupsPerSupergroup(true, true, 8, 4, 100, 3));
+    // 24 invocations on 1 QPU of 2 threads: one batch, no workgroup more
+    // than the first, where 2 would fill three.
+    try testing.expectEqual(@as(u32, 1), workgroupsPerSupergroup(true, true, 1, 2, 100, 24));
+    try testing.expectEqual(@as(u32, 2), workgroupsPerSupergroup(true, false, 1, 2, 100, 24));
+    // A program that may not share, or of a multiple of 16, alone still.
+    try testing.expectEqual(@as(u32, 1), workgroupsPerSupergroup(false, true, 8, 4, 100, 3));
+    try testing.expectEqual(@as(u32, 1), workgroupsPerSupergroup(true, true, 8, 4, 100, 32));
 }
 
 test "a dispatch's words: the counts in the top halves of the first three, the supergroups and batches, the program's address with its bits, and its uniforms'" {

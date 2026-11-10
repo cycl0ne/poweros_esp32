@@ -3011,6 +3011,63 @@ Results:
 
 On the CM5 FacetBoth 1.59 has two new cases, "shipped compute: writes vertices" and "shipped compute: writes a draw's numbers", whose compute shaders the module ships as SPIR-V. The first dispatches three groups of three invocations, and is 0 of 230400 pixels apart. The second dispatches indirectly into a buffer cleared first, and is 11 apart. Those are the same 11 pixels as "compute: writes a draw's numbers", whose draws it writes the same. With the cores' functions made wrong on purpose they are 85,628 and 64,296 apart: the V3D runs its own programs, not the functions. The other 282 cases are each as they were at 1.194, and FacetProbe is 890 of 890.
 
+**Then Workgroup memory and OpControlBarrier**, facet.library 1.203. A compute program may declare variables in Workgroup memory, GLSL's `shared`, and wait at OpControlBarrier, GLSL's barrier(). They are NIR's load_shared, store_shared and shared_atomic, and its barrier of an execution scope.
+
+- **The layout** is v3dv's: lower_compute lays the variables out with nir_lower_vars_to_explicit_types and shared_type_info (v3dv_pipeline.c:3273-3291), through glsl_get_explicit_type_for_size_align (glsl_types.c:2795-2885).
+  - A float or an integer is 4 bytes at 4. A vector of n is 4n bytes at 4n, except a vec3, whose 12 are at 16.
+  - An array's elements are its element's size, rounded up to its alignment, apart. Its size is that stride times one less than its length, plus the element's own: the last element is not padded.
+  - A struct's members follow one another, each at its alignment. The struct is at its widest member's, and its size is rounded up to it.
+  - A matrix is its columns, each a column's size rounded up to its alignment apart: a mat3's are 16 apart.
+- **The places.** Each variable is after the ones before it in the module, at its alignment (nir_lower_explicit_io.c:2042-2065). A variable nothing loads, stores or chains through takes no place: v3d_optimize_nir's nir_remove_dead_variables has taken it away (nir_to_vir.c:2253-2257). A pass over the words before they are read finds the pointers named.
+- **Loads, stores and atomics** go through the TMU, as a storage buffer's do (ntq_emit_tmu_general, nir_to_vir.c:587-588), from cs_shared_offset. A pointer into Workgroup memory is a chain's base, as a block's member is, and an atomic's barriers are of its semantics with WorkgroupMemory added (vtn_mode_to_memory_semantics, vtn_variables.c:2668-2687).
+- **cs_shared_offset** is worked out at the program's start (nir_to_vir.c:4967-4992):
+  - the payload's second word shifted down by 16, wg_in_mem;
+  - masked to the 16 bits the local index leaves, where the workgroup is more than one invocation;
+  - times the shared memory's size, and added to QUNIFORM_SHARED_OFFSET, the stream's new `shared_offset`.
+- **OpControlBarrier** is vtn_emit_scoped_control_barrier's (spirv_to_nir.c:2813-2845, :4821-4866).
+  - Its memory scope counts only where its semantics order memory of a storage class.
+  - Of neither memory nor execution wider than the invocation it is nothing (:2831-2832).
+  - Else it is the TMU flushed, BARRIERID into SYNCB, and a thread switch, at which the TSY op blocks (emit_compute_barrier, nir_to_vir.c:3563-3577, :3857-3870). Its execution scope counts wherever it is not NONE (:3863): one of the invocation's execution and the workgroup's memory is a TSY op as well.
+  - CrossDevice, QueueFamily and ShaderCallKHR scopes are refused (vtn_translate_scope, :2765-2797).
+- **The program says it has a barrier** (has_control_barrier, vir.c:1024-1034). Its supergroup then holds no more batches than half the QPUs' threads, so that two run at once while one waits at a barrier (v3d_csd_choose_workgroups_per_supergroup, v3d_util.c:56-67).
+- **The dispatch's shared memory** is the program's size times the dispatch's workgroups, as cmd_buffer_create_csd_job allocates it (v3dv_cmd_buffer.c:4435-4437). It is at 4096, in the frame's chunks.
+
+Where it is not v3dv's:
+- The shared memory is carved from the frame's chunks, not a buffer object of its own. A dispatch that cannot have it, or whose bytes are past 32 bits, runs on the cores.
+- A workgroup has 16 KiB of shared memory, facet's maxComputeSharedMemorySize (instance/_instance.zig), where v3dv's is 32 KiB (V3D_MAX_COMPUTE_SHARED_MEMORY_SIZE, v3d_limits.h:79). A pipeline past it is refused when it is made (createcomputepipelines.zig), and the compiler refuses it too.
+
+Still left out. Each is marked *facet-wide*, missing whatever the device, or *V3D-only*, left out because of the V3D, which a Radeon port has to do (see "What the V3D port leaves for the Radeon's" below):
+- **Kept selections in vertex and compute programs.** `keepSelection` keeps a branch in a fragment program alone (`Error.Branches`), so a conditional store, to shared memory or anywhere, refuses the program. *Facet-wide*: the rule is this port's, not Mesa's, and no feature gates it. It is the next step.
+- **A bool in shared memory.** shared_type_info makes it 4 bytes, and vtn and nir_lower_explicit_io load it as a comparison of its word. *Facet-wide*, of no feature.
+- **An initializer of a Workgroup variable.** It needs VK_KHR_zero_initialize_workgroup_memory (nir_zero_initialize_shared_memory, vir.c:817-829). *Facet-wide*, and after 1.0.
+- **Workgroups of more than 256 invocations.** v3dv runs one as a loop of 256 (nir_lower_workgroup_size, v3dv_pipeline.c:3300-3311); here it runs on the cores. *V3D-only*: 256 is the V3D's limit (V3D_MAX_CSD_WG_SIZE, v3d_limits.h:82), and facet's maxComputeWorkGroupInvocations is 1024.
+- **A barrier in another stage**, emit_barrier's TSY op (nir_to_vir.c:3580-3613). Vulkan 1.0 has OpControlBarrier in compute and tessellation control shaders alone. *V3D-only*: tessellationShader is off in v3dv (v3dv_device.c:334), and in facet (getphysicaldevicefeatures.zig:161).
+- **wa_glslang_cs_barrier** (spirv_to_nir.c:4828-4842), for a glslang older than glslc's, which wrote barrier() with no memory semantics. *Facet-wide*, of old modules alone.
+- **Shared memory past 16 KiB.** *Facet-wide*: facet's limit, where v3dv's is 32 KiB.
+
+Results:
+- **The references:**
+  - glslc_compute_shared, 420 words, an 8x2 workgroup. A uint at 0, a float[16] at 4, mirrored between two barriers, and a vec3[4] at 80, 16 apart: 140 bytes. A counter each invocation adds to by atomicAdd. Its program is 53 instructions, with two BARRIERIDs and ten thread switches. The first BARRIERID is after a TMUWT for the stores before it; the second is after the loads before it are read back.
+  - glslc_shared_layout, 468 words, of a workgroup of 4:
+    - a struct of a float, a vec3 and a vec2, at 0, 16 and 32, 48 apart;
+    - a mat3 at 192, loaded a column at a time at 192, 208 and 224;
+    - a counter at 240: 244 bytes.
+
+    Its program is 82 instructions.
+  - glslc_shared_matrices, 288 words: two mat2x3s stored and loaded whole, their columns 16 apart and the matrices 32: 64 bytes.
+- **The streams** begin 16, 0x3ff and the size, then `shared_offset`: wg_in_mem's shift, its mask of 10 bits, and its product.
+- **The layout's own test** has a vec3 at 16, a vec3[4] of 60 bytes, a vec2 at 8, a mat3 of 48 at 16, and a struct of 40 bytes made 48. It refuses a bool, an array of no length, and a float[4097]. A float[4096], 16 KiB, is laid out.
+- **The refusals:**
+  - Error.Storage: an initializer of total, a Block struct in Workgroup memory, and a Workgroup variable in a fragment program;
+  - Error.Refused: OpControlBarrier in a fragment program;
+  - Error.Body: a CrossDevice scope.
+- **What makes nothing.** A barrier of the invocation's execution and memory makes nothing. So does one of the invocation's execution and no semantics. One of the workgroup's execution and no semantics is still a TSY op.
+- **What takes no place.** A float[16] that nothing names takes none. A uint stored into and never read does, before what follows it. values made a float[4079] leaves 16380 bytes; a float[4080] puts places past 16 KiB and is refused.
+- **The supergroups** of 3 invocations on 2 QPUs of 2 threads are 5 workgroups with a barrier and 16 without; 24 invocations on 1 QPU of 2 threads are 1 and 2.
+- The V3D's tests are 359, six new. Of 34 mutations, 33 fail them. The other takes shared loads out of the loads a selection's phi may coalesce with (`coalescable`). No compute program reaches that while kept selections are a fragment program's.
+
+On the CM5, FacetBoth 1.67's new case, "shipped compute: shared memory and barriers", is 0 of 230400 pixels apart, 2 at worst. It is three groups of three invocations. Each invocation writes its corner's place into a vec2[3] in shared memory, and after a barrier reads the next corner's. Between two barriers each adds its corner's number to a shared uint, and the triangle's blue is that count, 6, in sixteenths. With the cores' function made wrong on purpose, the count in eighths, it is 62,940 apart: the V3D runs its own program, of shared memory and TSY barriers. The other 295 cases are each as they were at 1.202, and FacetProbe is 890 of 890.
+
 ### 61. Multisampling: 4 samples a pixel on both devices, with resolve attachments and CmdResolveImage's body **[critical path]**
 
 *rasterisation* &mdash; conformance-blocking, port, **sized 07.11.2026: 21 commits, about 1,590 lines of code, 1,340 of tests and 90 of docs**; **the cores' half done in 1.114**, the V3D's is steps V1 to V8
@@ -4603,6 +4660,34 @@ attachment.
 > instance/getphysicaldeviceimageformatproperties.zig; image/_image.zig
 > `laidOut`; the spec's VkImageFormatProperties, the query's body and
 > Required Format Support; 08.11.2026.
+
+## What the V3D port leaves for the Radeon's
+
+After the V3D, facet's next device is a Radeon, ported from radv as the V3D is from v3dv. Some of what the V3D port leaves out it leaves out because the V3D does not have it. A Radeon has much of it, and its port has to bring it, or it stays missing. This list keeps those together, so that the Radeon port misses nothing. Started at 1.203; each step's "Still left out" since marks its entries *facet-wide* or *V3D-only* the same way. What radv answers for each is still to be read from radv's sources, which the Mesa checkout here does not hold.
+
+**Features v3dv reports off, so the V3D port never does them** (v3dv_device.c:328-393; facet reports each off too, getphysicaldevicefeatures.zig:133-279):
+- tessellationShader, and with it OpControlBarrier outside compute shaders (1.203).
+- multiDrawIndirect, multiViewport, variableMultisampleRate.
+- textureCompressionBC, pipelineStatisticsQuery.
+- shaderStorageImageMultisample, shaderStorageImageWriteWithoutFormat.
+- shaderCullDistance.
+- shaderFloat64, and with it PackDouble2x32 and UnpackDouble2x32 (1.201). shaderInt64.
+- shaderResourceResidency, shaderResourceMinLod, and the sparse features.
+- The four ...ArrayDynamicIndexing features, which v3dv has only behind its WebGPU override (v3dv_device.c:313, 371-374).
+
+**Limits the V3D sets lower than Vulkan's:**
+- A workgroup of more than 256 invocations runs on the cores (V3D_MAX_CSD_WG_SIZE, v3d_limits.h:82; 1.194, 1.203).
+
+**Features v3dv has and facet reports off.** These are facet-wide: the V3D port may still do them from v3dv, and until it does, a Radeon port meets them too.
+- geometryShader, and shaderTessellationAndGeometryPointSize.
+- sampleRateShading, and with it the InterpolationFunction capability (Vulkan's SPIR-V capability table), so the interpolation functions (1.201). Mesa answers them with the plain varying where the draw is not multisampled (nir_to_vir.c:4075-4081).
+- dualSrcBlend, alphaToOne.
+- vertexPipelineStoresAndAtomics.
+- shaderImageGatherExtended, shaderStorageImageExtendedFormats, shaderStorageImageReadWithoutFormat.
+- shaderClipDistance; shaderInt16 on V3D 7.1.
+- textureCompressionETC2, textureCompressionASTC_LDR.
+- inheritedQueries.
+- maxComputeSharedMemorySize: facet's 16 KiB, v3dv's 32 KiB (1.203).
 
 ## Deferred by the decision, not out of reach
 
