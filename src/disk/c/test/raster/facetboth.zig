@@ -148,7 +148,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.54 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.55 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -301,6 +301,52 @@ fn asItIsVertex(vertices: *const shader.Vertices) callconv(.c) void {
         const p = place(vertices, k);
         const c = vertices.input(@intCast(k), 1);
         vertices.output(@intCast(k))[0..8].* = .{ p[0], p[1], p[2], p[3], c[0], c[1], c[2], c[3] };
+    }
+}
+
+/// The colour of the triangle's first vertex, of a list from vertex 0:
+/// what the V3D's flat varying is, Vulkan's first vertex provoking it,
+/// handed on at all three corners for the cores, which interpolate every
+/// varying (since 1.55).
+fn provokingColor(vertices: *const shader.Vertices, k: usize) [4]f32 {
+    const n = vertices.first_vertex + @as(u32, @intCast(k));
+    return geometry[n - n % 3].c;
+}
+
+/// `asItIsVertex` with the first vertex's colour at each corner, for the
+/// shipped vertex shader whose colour is flat (since 1.55).
+fn flatVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = place(vertices, k);
+        const c = provokingColor(vertices, k);
+        vertices.output(@intCast(k))[0..8].* = .{ p[0], p[1], p[2], p[3], c[0], c[1], c[2], c[3] };
+    }
+}
+
+/// The first vertex's colour as four integers of 0 to 255, as the shipped
+/// vertex shader makes them with FTOUZ, carried as floats for the cores'
+/// interpolation (since 1.55).
+fn flatIntegerVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = place(vertices, k);
+        const c = provokingColor(vertices, k);
+        var v: [4]f32 = undefined;
+        for (&v, c) |*each, channel| each.* = @floatFromInt(unsignedTowardZero(channel * 255.0 + 0.5));
+        vertices.output(@intCast(k))[0..8].* = .{ p[0], p[1], p[2], p[3], v[0], v[1], v[2], v[3] };
+    }
+}
+
+/// The place times a W of 1 + 2 * the blue, which moves no corner on the
+/// picture, and the colour times that W: the cores divide each varying by
+/// the W they interpolate, so the colour comes out of the plane
+/// interpolated on the picture, without perspective, as the V3D's is
+/// (since 1.55).
+fn noperspectiveVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = place(vertices, k);
+        const c = vertices.input(@intCast(k), 1);
+        const w = 1.0 + 2.0 * c[2];
+        vertices.output(@intCast(k))[0..8].* = .{ p[0] * w, p[1] * w, p[2] * w, p[3] * w, c[0] * w, c[1] * w, c[2] * w, c[3] * w };
     }
 }
 
@@ -1705,6 +1751,36 @@ fn manyDivisionsFragment(fragments: *const shader.Fragments) callconv(.c) void {
     }
 }
 
+/// What `shipped_flat_integer` computes, for the cores: the four integers,
+/// made whole again after the cores' interpolation, times 1/255 as the
+/// module's constant is (since 1.55).
+fn flatIntegerFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    @setRuntimeSafety(false);
+    const scale: shader.Pixels = @splat(@as(f32, @bitCast(@as(u32, 0x3B80_8081))));
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const planes = rows.at(quad);
+        const over = @as(shader.Pixels, @splat(1)) / planes[0];
+        var bytes: [4]@Vector(4, u32) = undefined;
+        inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(@round(planes[1 + c] * over) * scale);
+        out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+    }
+}
+
+/// What `shipped_noperspective` computes, for the cores: each plane as it
+/// is, not divided by 1/W, which `noperspectiveVertex`'s colour times W
+/// makes the colour interpolated on the picture (since 1.55).
+fn noperspectiveFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    @setRuntimeSafety(false);
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const planes = rows.at(quad);
+        var bytes: [4]@Vector(4, u32) = undefined;
+        inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(planes[1 + c]);
+        out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+    }
+}
+
 /// What `shipped_many_moduli` computes, for the cores: of the dividend
 /// `shipped_modulus`'s, the quotients by -5, 8 and 6 and the moduli by 6
 /// and -4, and the green whether each quotient leaves a remainder smaller
@@ -2005,27 +2081,35 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped constant modulus", &constantModulusFragment, 4),
     shader.fragment("shipped many divisions", &manyDivisionsFragment, 4),
     shader.fragment("shipped many moduli", &manyModuliFragment, 4),
+    shader.vertex("shipped flat vertex", &flatVertex, 4),
+    Shipped.Smooth.entry("shipped flat colour"),
+    shader.vertex("shipped flat integer vertex", &flatIntegerVertex, 4),
+    shader.fragment("shipped flat integer", &flatIntegerFragment, 4),
+    shader.vertex("shipped noperspective vertex", &noperspectiveVertex, 4),
+    shader.fragment("shipped noperspective", &noperspectiveFragment, 4),
 };
 const shipped_words = [_]shader.Spirv{
-    .{},                                       .{},                                        .{},                                         .{},
-    Shipped.Smooth.spirv,                      Shipped.Flat.spirv,                         Shipped.Dimmed.spirv,                        Shipped.Textured.spirv,
-    Shipped.Modulated.spirv,                   Shipped.Pushed.spirv,                       Shipped.Tinted.spirv,                        Shipped.Cutout.spirv,
-    Shipped.CutoutOther.spirv,                 Shipped.Shadowed.spirv,                     Shipped.Arithmetic.spirv,                    Shipped.Called.spirv,
-    Shipped.Chosen.spirv,                      Shipped.Branched.spirv,                     shader.Spirv.of(&branch_unoptimized),        Shipped.Nested.spirv,
-    Shipped.Bools.spirv,                       Shipped.Nests.spirv,                        Shipped.Joined.spirv,                        Shipped.Collapsed.spirv,
-    shader.Spirv.of(&nested_discard),          Shipped.Uniformed.spirv,                    shader.Spirv.of(&uniform_nested),            shader.Spirv.of(&uniform_matrix),
-    shader.Spirv.of(&uniform_matrices),        shader.Spirv.of(&constant_matrix),          shader.Spirv.of(&vertex_as_it_is),           shader.Spirv.of(&storage_buffer),
-    shader.Spirv.of(&integers),                shader.Spirv.of(&indexed),                  shader.Spirv.of(&lanes),                     shader.Spirv.of(&store_writes),
-    shader.Spirv.of(&store_reads),             shader.Spirv.of(&store_atomics),            shader.Spirv.of(&store_counted),             Shipped.Kept.spirv,
-    Shipped.KeptPushed.spirv,                  shader.Spirv.of(&for_loop),                 shader.Spirv.of(&do_while),                  shader.Spirv.of(&float_loop),
-    Shipped.TwoTextures.spirv,                 shader.Spirv.of(&four_samples),             shader.Spirv.of(&scratch_slots),             shader.Spirv.of(&tree_pair),
-    shader.Spirv.of(&shipped_layers),          shader.Spirv.of(&shipped_cube),             shader.Spirv.of(&shipped_volume),            shader.Spirv.of(&shipped_lod),
-    shader.Spirv.of(&shipped_bias),            Shipped.Offset.spirv,                       shader.Spirv.of(&shipped_size),              shader.Spirv.of(&shipped_size_layers),
-    shader.Spirv.of(&shipped_size_volume),     shader.Spirv.of(&shipped_fetch),            shader.Spirv.of(&shipped_fetch_layers),      shader.Spirv.of(&shipped_fetch_volume),
-    shader.Spirv.of(&shipped_fetch_offset),    shader.Spirv.of(&shipped_fetch_dependent),  shader.Spirv.of(&shipped_grad),              shader.Spirv.of(&shipped_grad_layers),
-    shader.Spirv.of(&shipped_grad_offset),     shader.Spirv.of(&shipped_grad_cube),        shader.Spirv.of(&shipped_twice),             shader.Spirv.of(&shipped_cube_negated),
-    shader.Spirv.of(&shipped_division),        shader.Spirv.of(&shipped_modulus),          shader.Spirv.of(&shipped_constant_division), shader.Spirv.of(&shipped_constant_remainder),
-    shader.Spirv.of(&shipped_constant_signed), shader.Spirv.of(&shipped_constant_modulus), shader.Spirv.of(&shipped_many_divisions),    shader.Spirv.of(&shipped_many_moduli),
+    .{},                                            .{},                                        .{},                                           .{},
+    Shipped.Smooth.spirv,                           Shipped.Flat.spirv,                         Shipped.Dimmed.spirv,                          Shipped.Textured.spirv,
+    Shipped.Modulated.spirv,                        Shipped.Pushed.spirv,                       Shipped.Tinted.spirv,                          Shipped.Cutout.spirv,
+    Shipped.CutoutOther.spirv,                      Shipped.Shadowed.spirv,                     Shipped.Arithmetic.spirv,                      Shipped.Called.spirv,
+    Shipped.Chosen.spirv,                           Shipped.Branched.spirv,                     shader.Spirv.of(&branch_unoptimized),          Shipped.Nested.spirv,
+    Shipped.Bools.spirv,                            Shipped.Nests.spirv,                        Shipped.Joined.spirv,                          Shipped.Collapsed.spirv,
+    shader.Spirv.of(&nested_discard),               Shipped.Uniformed.spirv,                    shader.Spirv.of(&uniform_nested),              shader.Spirv.of(&uniform_matrix),
+    shader.Spirv.of(&uniform_matrices),             shader.Spirv.of(&constant_matrix),          shader.Spirv.of(&vertex_as_it_is),             shader.Spirv.of(&storage_buffer),
+    shader.Spirv.of(&integers),                     shader.Spirv.of(&indexed),                  shader.Spirv.of(&lanes),                       shader.Spirv.of(&store_writes),
+    shader.Spirv.of(&store_reads),                  shader.Spirv.of(&store_atomics),            shader.Spirv.of(&store_counted),               Shipped.Kept.spirv,
+    Shipped.KeptPushed.spirv,                       shader.Spirv.of(&for_loop),                 shader.Spirv.of(&do_while),                    shader.Spirv.of(&float_loop),
+    Shipped.TwoTextures.spirv,                      shader.Spirv.of(&four_samples),             shader.Spirv.of(&scratch_slots),               shader.Spirv.of(&tree_pair),
+    shader.Spirv.of(&shipped_layers),               shader.Spirv.of(&shipped_cube),             shader.Spirv.of(&shipped_volume),              shader.Spirv.of(&shipped_lod),
+    shader.Spirv.of(&shipped_bias),                 Shipped.Offset.spirv,                       shader.Spirv.of(&shipped_size),                shader.Spirv.of(&shipped_size_layers),
+    shader.Spirv.of(&shipped_size_volume),          shader.Spirv.of(&shipped_fetch),            shader.Spirv.of(&shipped_fetch_layers),        shader.Spirv.of(&shipped_fetch_volume),
+    shader.Spirv.of(&shipped_fetch_offset),         shader.Spirv.of(&shipped_fetch_dependent),  shader.Spirv.of(&shipped_grad),                shader.Spirv.of(&shipped_grad_layers),
+    shader.Spirv.of(&shipped_grad_offset),          shader.Spirv.of(&shipped_grad_cube),        shader.Spirv.of(&shipped_twice),               shader.Spirv.of(&shipped_cube_negated),
+    shader.Spirv.of(&shipped_division),             shader.Spirv.of(&shipped_modulus),          shader.Spirv.of(&shipped_constant_division),   shader.Spirv.of(&shipped_constant_remainder),
+    shader.Spirv.of(&shipped_constant_signed),      shader.Spirv.of(&shipped_constant_modulus), shader.Spirv.of(&shipped_many_divisions),      shader.Spirv.of(&shipped_many_moduli),
+    shader.Spirv.of(&shipped_flat_vertex),          shader.Spirv.of(&shipped_flat_colour),      shader.Spirv.of(&shipped_flat_integer_vertex), shader.Spirv.of(&shipped_flat_integer),
+    shader.Spirv.of(&shipped_noperspective_vertex), shader.Spirv.of(&shipped_noperspective),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -5250,6 +5334,319 @@ const shipped_many_moduli = [_]u32{
     0x0003003E, 0x00000098, 0x000000A1, 0x000100FD, 0x00010038,
 };
 
+/// glslc's own output, at -O, of `vertex_as_it_is` with the colour handed
+/// on flat, the V3D's host tests' glslc_vertex_flat: the V3D compiles it to
+/// `vertex_as_it_is`'s words, the varying's interpolation the fragment
+/// program's to say (since 1.55).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 p;
+/// layout(location = 1) in vec4 c;
+/// layout(location = 3) in vec2 moved;
+/// layout(location = 0) flat out vec4 vcolor;
+/// void main() {
+///     gl_Position = vec4(p.xy + moved * p.w, p.z, p.w);
+///     vcolor = c;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=vert vertex_flat.vert -o vertex_flat.spv   # 242 words
+/// spirv-val --target-env vulkan1.0 vertex_flat.spv   # no output, and 0
+/// ```
+const shipped_flat_vertex = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000002B, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x000A000F, 0x00000000,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000011, 0x00000016,
+    0x00000028, 0x00000029, 0x00030047, 0x0000000B, 0x00000002, 0x00050048,
+    0x0000000B, 0x00000000, 0x0000000B, 0x00000000, 0x00050048, 0x0000000B,
+    0x00000001, 0x0000000B, 0x00000001, 0x00050048, 0x0000000B, 0x00000002,
+    0x0000000B, 0x00000003, 0x00050048, 0x0000000B, 0x00000003, 0x0000000B,
+    0x00000004, 0x00040047, 0x00000011, 0x0000001E, 0x00000000, 0x00040047,
+    0x00000016, 0x0000001E, 0x00000003, 0x00030047, 0x00000028, 0x0000000E,
+    0x00040047, 0x00000028, 0x0000001E, 0x00000000, 0x00040047, 0x00000029,
+    0x0000001E, 0x00000001, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007,
+    0x00000006, 0x00000004, 0x00040015, 0x00000008, 0x00000020, 0x00000000,
+    0x0004002B, 0x00000008, 0x00000009, 0x00000001, 0x0004001C, 0x0000000A,
+    0x00000006, 0x00000009, 0x0006001E, 0x0000000B, 0x00000007, 0x00000006,
+    0x0000000A, 0x0000000A, 0x00040020, 0x0000000C, 0x00000003, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000003, 0x00040015, 0x0000000E,
+    0x00000020, 0x00000001, 0x0004002B, 0x0000000E, 0x0000000F, 0x00000000,
+    0x00040020, 0x00000010, 0x00000001, 0x00000007, 0x0004003B, 0x00000010,
+    0x00000011, 0x00000001, 0x00040017, 0x00000012, 0x00000006, 0x00000002,
+    0x00040020, 0x00000015, 0x00000001, 0x00000012, 0x0004003B, 0x00000015,
+    0x00000016, 0x00000001, 0x0004002B, 0x00000008, 0x00000018, 0x00000003,
+    0x00040020, 0x00000019, 0x00000001, 0x00000006, 0x0004002B, 0x00000008,
+    0x0000001E, 0x00000002, 0x00040020, 0x00000026, 0x00000003, 0x00000007,
+    0x0004003B, 0x00000026, 0x00000028, 0x00000003, 0x0004003B, 0x00000010,
+    0x00000029, 0x00000001, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x00000007, 0x00000013,
+    0x00000011, 0x0007004F, 0x00000012, 0x00000014, 0x00000013, 0x00000013,
+    0x00000000, 0x00000001, 0x0004003D, 0x00000012, 0x00000017, 0x00000016,
+    0x00050041, 0x00000019, 0x0000001A, 0x00000011, 0x00000018, 0x0004003D,
+    0x00000006, 0x0000001B, 0x0000001A, 0x0005008E, 0x00000012, 0x0000001C,
+    0x00000017, 0x0000001B, 0x00050081, 0x00000012, 0x0000001D, 0x00000014,
+    0x0000001C, 0x00050041, 0x00000019, 0x0000001F, 0x00000011, 0x0000001E,
+    0x0004003D, 0x00000006, 0x00000020, 0x0000001F, 0x00050051, 0x00000006,
+    0x00000023, 0x0000001D, 0x00000000, 0x00050051, 0x00000006, 0x00000024,
+    0x0000001D, 0x00000001, 0x00070050, 0x00000007, 0x00000025, 0x00000023,
+    0x00000024, 0x00000020, 0x0000001B, 0x00050041, 0x00000026, 0x00000027,
+    0x0000000D, 0x0000000F, 0x0003003E, 0x00000027, 0x00000025, 0x0004003D,
+    0x00000007, 0x0000002A, 0x00000029, 0x0003003E, 0x00000028, 0x0000002A,
+    0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, of the colour read flat, the V3D's host
+/// tests' glslc_flat_color: the C coefficients of the triangle's first
+/// vertex, its FLAT_SHADE_FLAGS each float's (since 1.55).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) flat in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// void main() {
+///     ocolor = vcolor;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag flat_color.frag -o flat_color.spv   # 81 words
+/// spirv-val --target-env vulkan1.0 flat_color.spv   # no output, and 0
+/// ```
+const shipped_flat_colour = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000000D, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x0000000B, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00030047, 0x0000000B, 0x0000000E, 0x00040047, 0x0000000B, 0x0000001E,
+    0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006,
+    0x00000004, 0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B,
+    0x00000008, 0x00000009, 0x00000003, 0x00040020, 0x0000000A, 0x00000001,
+    0x00000007, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x0004003D, 0x00000007, 0x0000000C, 0x0000000B, 0x0003003E, 0x00000009,
+    0x0000000C, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, of the colour handed on as four integers of
+/// 0 to 255, the V3D's host tests' glslc_vertex_flat_integer (since
+/// 1.55).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 p;
+/// layout(location = 1) in vec4 c;
+/// layout(location = 3) in vec2 moved;
+/// layout(location = 0) flat out uvec4 v;
+/// void main() {
+///     gl_Position = vec4(p.xy + moved * p.w, p.z, p.w);
+///     v = uvec4(c * 255.0 + 0.5);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=vert vertex_flat_integer.vert -o vertex_flat_integer.spv   # 279 words
+/// spirv-val --target-env vulkan1.0 vertex_flat_integer.spv   # no output, and 0
+/// ```
+const shipped_flat_integer_vertex = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000034, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x000A000F, 0x00000000,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000011, 0x00000016,
+    0x0000002A, 0x0000002B, 0x00030047, 0x0000000B, 0x00000002, 0x00050048,
+    0x0000000B, 0x00000000, 0x0000000B, 0x00000000, 0x00050048, 0x0000000B,
+    0x00000001, 0x0000000B, 0x00000001, 0x00050048, 0x0000000B, 0x00000002,
+    0x0000000B, 0x00000003, 0x00050048, 0x0000000B, 0x00000003, 0x0000000B,
+    0x00000004, 0x00040047, 0x00000011, 0x0000001E, 0x00000000, 0x00040047,
+    0x00000016, 0x0000001E, 0x00000003, 0x00030047, 0x0000002A, 0x0000000E,
+    0x00040047, 0x0000002A, 0x0000001E, 0x00000000, 0x00040047, 0x0000002B,
+    0x0000001E, 0x00000001, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007,
+    0x00000006, 0x00000004, 0x00040015, 0x00000008, 0x00000020, 0x00000000,
+    0x0004002B, 0x00000008, 0x00000009, 0x00000001, 0x0004001C, 0x0000000A,
+    0x00000006, 0x00000009, 0x0006001E, 0x0000000B, 0x00000007, 0x00000006,
+    0x0000000A, 0x0000000A, 0x00040020, 0x0000000C, 0x00000003, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000003, 0x00040015, 0x0000000E,
+    0x00000020, 0x00000001, 0x0004002B, 0x0000000E, 0x0000000F, 0x00000000,
+    0x00040020, 0x00000010, 0x00000001, 0x00000007, 0x0004003B, 0x00000010,
+    0x00000011, 0x00000001, 0x00040017, 0x00000012, 0x00000006, 0x00000002,
+    0x00040020, 0x00000015, 0x00000001, 0x00000012, 0x0004003B, 0x00000015,
+    0x00000016, 0x00000001, 0x0004002B, 0x00000008, 0x00000018, 0x00000003,
+    0x00040020, 0x00000019, 0x00000001, 0x00000006, 0x0004002B, 0x00000008,
+    0x0000001E, 0x00000002, 0x00040020, 0x00000026, 0x00000003, 0x00000007,
+    0x00040017, 0x00000028, 0x00000008, 0x00000004, 0x00040020, 0x00000029,
+    0x00000003, 0x00000028, 0x0004003B, 0x00000029, 0x0000002A, 0x00000003,
+    0x0004003B, 0x00000010, 0x0000002B, 0x00000001, 0x0004002B, 0x00000006,
+    0x0000002D, 0x437F0000, 0x0004002B, 0x00000006, 0x0000002F, 0x3F000000,
+    0x0007002C, 0x00000007, 0x00000033, 0x0000002F, 0x0000002F, 0x0000002F,
+    0x0000002F, 0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003,
+    0x000200F8, 0x00000005, 0x0004003D, 0x00000007, 0x00000013, 0x00000011,
+    0x0007004F, 0x00000012, 0x00000014, 0x00000013, 0x00000013, 0x00000000,
+    0x00000001, 0x0004003D, 0x00000012, 0x00000017, 0x00000016, 0x00050041,
+    0x00000019, 0x0000001A, 0x00000011, 0x00000018, 0x0004003D, 0x00000006,
+    0x0000001B, 0x0000001A, 0x0005008E, 0x00000012, 0x0000001C, 0x00000017,
+    0x0000001B, 0x00050081, 0x00000012, 0x0000001D, 0x00000014, 0x0000001C,
+    0x00050041, 0x00000019, 0x0000001F, 0x00000011, 0x0000001E, 0x0004003D,
+    0x00000006, 0x00000020, 0x0000001F, 0x00050051, 0x00000006, 0x00000023,
+    0x0000001D, 0x00000000, 0x00050051, 0x00000006, 0x00000024, 0x0000001D,
+    0x00000001, 0x00070050, 0x00000007, 0x00000025, 0x00000023, 0x00000024,
+    0x00000020, 0x0000001B, 0x00050041, 0x00000026, 0x00000027, 0x0000000D,
+    0x0000000F, 0x0003003E, 0x00000027, 0x00000025, 0x0004003D, 0x00000007,
+    0x0000002C, 0x0000002B, 0x0005008E, 0x00000007, 0x0000002E, 0x0000002C,
+    0x0000002D, 0x00050081, 0x00000007, 0x00000031, 0x0000002E, 0x00000033,
+    0x0004006D, 0x00000028, 0x00000032, 0x00000031, 0x0003003E, 0x0000002A,
+    0x00000032, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, of four integers read flat and made floats
+/// over 255, the V3D's host tests' glslc_flat_integer: an integer varying,
+/// whose bits are its C coefficients (since 1.55).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) flat in uvec4 v;
+/// layout(location = 0) out vec4 ocolor;
+/// void main() {
+///     ocolor = vec4(v) / 255.0;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag flat_integer.frag -o flat_integer.spv   # 109 words
+/// spirv-val --target-env vulkan1.0 flat_integer.spv   # no output, and 0
+/// ```
+const shipped_flat_integer = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000016, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x0000000D, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00030047, 0x0000000D, 0x0000000E, 0x00040047, 0x0000000D, 0x0000001E,
+    0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006,
+    0x00000004, 0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B,
+    0x00000008, 0x00000009, 0x00000003, 0x00040015, 0x0000000A, 0x00000020,
+    0x00000000, 0x00040017, 0x0000000B, 0x0000000A, 0x00000004, 0x00040020,
+    0x0000000C, 0x00000001, 0x0000000B, 0x0004003B, 0x0000000C, 0x0000000D,
+    0x00000001, 0x0004002B, 0x00000006, 0x00000014, 0x3B808081, 0x0007002C,
+    0x00000007, 0x00000015, 0x00000014, 0x00000014, 0x00000014, 0x00000014,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003D, 0x0000000B, 0x0000000E, 0x0000000D, 0x00040070,
+    0x00000007, 0x0000000F, 0x0000000E, 0x00050085, 0x00000007, 0x00000012,
+    0x0000000F, 0x00000015, 0x0003003E, 0x00000009, 0x00000012, 0x000100FD,
+    0x00010038,
+};
+
+/// glslc's own output, at -O, of the place times a W of 1 + 2 * the blue
+/// and the colour handed on without perspective, the V3D's host tests'
+/// glslc_vertex_noperspective (since 1.55).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 p;
+/// layout(location = 1) in vec4 c;
+/// layout(location = 3) in vec2 moved;
+/// layout(location = 0) noperspective out vec4 vcolor;
+/// void main() {
+///     float w = 1.0 + 2.0 * c.b;
+///     gl_Position = vec4(p.xy + moved * p.w, p.z, p.w) * w;
+///     vcolor = c;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=vert vertex_noperspective.vert -o vertex_noperspective.spv   # 274 words
+/// spirv-val --target-env vulkan1.0 vertex_noperspective.spv   # no output, and 0
+/// ```
+const shipped_noperspective_vertex = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000035, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x000A000F, 0x00000000,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000019, 0x0000001C,
+    0x00000021, 0x00000033, 0x00040047, 0x0000000D, 0x0000001E, 0x00000001,
+    0x00030047, 0x00000017, 0x00000002, 0x00050048, 0x00000017, 0x00000000,
+    0x0000000B, 0x00000000, 0x00050048, 0x00000017, 0x00000001, 0x0000000B,
+    0x00000001, 0x00050048, 0x00000017, 0x00000002, 0x0000000B, 0x00000003,
+    0x00050048, 0x00000017, 0x00000003, 0x0000000B, 0x00000004, 0x00040047,
+    0x0000001C, 0x0000001E, 0x00000000, 0x00040047, 0x00000021, 0x0000001E,
+    0x00000003, 0x00030047, 0x00000033, 0x0000000D, 0x00040047, 0x00000033,
+    0x0000001E, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00030016, 0x00000006, 0x00000020, 0x0004002B, 0x00000006,
+    0x00000009, 0x3F800000, 0x0004002B, 0x00000006, 0x0000000A, 0x40000000,
+    0x00040017, 0x0000000B, 0x00000006, 0x00000004, 0x00040020, 0x0000000C,
+    0x00000001, 0x0000000B, 0x0004003B, 0x0000000C, 0x0000000D, 0x00000001,
+    0x00040015, 0x0000000E, 0x00000020, 0x00000000, 0x0004002B, 0x0000000E,
+    0x0000000F, 0x00000002, 0x00040020, 0x00000010, 0x00000001, 0x00000006,
+    0x0004002B, 0x0000000E, 0x00000015, 0x00000001, 0x0004001C, 0x00000016,
+    0x00000006, 0x00000015, 0x0006001E, 0x00000017, 0x0000000B, 0x00000006,
+    0x00000016, 0x00000016, 0x00040020, 0x00000018, 0x00000003, 0x00000017,
+    0x0004003B, 0x00000018, 0x00000019, 0x00000003, 0x00040015, 0x0000001A,
+    0x00000020, 0x00000001, 0x0004002B, 0x0000001A, 0x0000001B, 0x00000000,
+    0x0004003B, 0x0000000C, 0x0000001C, 0x00000001, 0x00040017, 0x0000001D,
+    0x00000006, 0x00000002, 0x00040020, 0x00000020, 0x00000001, 0x0000001D,
+    0x0004003B, 0x00000020, 0x00000021, 0x00000001, 0x0004002B, 0x0000000E,
+    0x00000023, 0x00000003, 0x00040020, 0x00000031, 0x00000003, 0x0000000B,
+    0x0004003B, 0x00000031, 0x00000033, 0x00000003, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x00050041,
+    0x00000010, 0x00000011, 0x0000000D, 0x0000000F, 0x0004003D, 0x00000006,
+    0x00000012, 0x00000011, 0x00050085, 0x00000006, 0x00000013, 0x0000000A,
+    0x00000012, 0x00050081, 0x00000006, 0x00000014, 0x00000009, 0x00000013,
+    0x0004003D, 0x0000000B, 0x0000001E, 0x0000001C, 0x0007004F, 0x0000001D,
+    0x0000001F, 0x0000001E, 0x0000001E, 0x00000000, 0x00000001, 0x0004003D,
+    0x0000001D, 0x00000022, 0x00000021, 0x00050041, 0x00000010, 0x00000024,
+    0x0000001C, 0x00000023, 0x0004003D, 0x00000006, 0x00000025, 0x00000024,
+    0x0005008E, 0x0000001D, 0x00000026, 0x00000022, 0x00000025, 0x00050081,
+    0x0000001D, 0x00000027, 0x0000001F, 0x00000026, 0x00050041, 0x00000010,
+    0x00000028, 0x0000001C, 0x0000000F, 0x0004003D, 0x00000006, 0x00000029,
+    0x00000028, 0x00050051, 0x00000006, 0x0000002C, 0x00000027, 0x00000000,
+    0x00050051, 0x00000006, 0x0000002D, 0x00000027, 0x00000001, 0x00070050,
+    0x0000000B, 0x0000002E, 0x0000002C, 0x0000002D, 0x00000029, 0x00000025,
+    0x0005008E, 0x0000000B, 0x00000030, 0x0000002E, 0x00000014, 0x00050041,
+    0x00000031, 0x00000032, 0x00000019, 0x0000001B, 0x0003003E, 0x00000032,
+    0x00000030, 0x0004003D, 0x0000000B, 0x00000034, 0x0000000D, 0x0003003E,
+    0x00000033, 0x00000034, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, of the colour read without perspective, the
+/// V3D's host tests' glslc_noperspective_color: each float its ldvary's
+/// value and C, not times W, its NON_PERSPECTIVE_FLAGS each float's (since
+/// 1.55).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) noperspective in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// void main() {
+///     ocolor = vcolor;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag noperspective_color.frag -o noperspective_color.spv   # 81 words
+/// spirv-val --target-env vulkan1.0 noperspective_color.spv   # no output, and 0
+/// ```
+const shipped_noperspective = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000000D, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x0000000B, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00030047, 0x0000000B, 0x0000000D, 0x00040047, 0x0000000B, 0x0000001E,
+    0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006,
+    0x00000004, 0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B,
+    0x00000008, 0x00000009, 0x00000003, 0x00040020, 0x0000000A, 0x00000001,
+    0x00000007, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x0004003D, 0x00000007, 0x0000000C, 0x0000000B, 0x0003003E, 0x00000009,
+    0x0000000C, 0x000100FD, 0x00010038,
+};
+
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
 /// V3D's host tests hold to compile to the program of glslc's optimized
 /// module, word for word: `c` and `k` in variables of the function's own,
@@ -8310,6 +8707,9 @@ const cases = [_]Case{
     .{ .name = "shipped constant modulus", .run = Cases.shipped("as it is", "shipped constant modulus", false, clockwise_at) },
     .{ .name = "shipped many divisions", .run = Cases.shipped("as it is", "shipped many divisions", false, clockwise_at) },
     .{ .name = "shipped many moduli", .run = Cases.shipped("as it is", "shipped many moduli", false, clockwise_at) },
+    .{ .name = "shipped flat varying", .run = Cases.shipped("shipped flat vertex", "shipped flat colour", false, clockwise_at) },
+    .{ .name = "shipped flat integer", .run = Cases.shipped("shipped flat integer vertex", "shipped flat integer", false, clockwise_at) },
+    .{ .name = "shipped noperspective", .run = Cases.shipped("shipped noperspective vertex", "shipped noperspective", false, clockwise_at) },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },

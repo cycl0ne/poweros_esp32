@@ -160,6 +160,12 @@ pub const Program = struct {
     /// It has no thread switch, and starts in its last thread section: a
     /// vertex program's prog_data single_seg (since 1.163).
     single_seg: bool,
+    /// Its varyings that are flat and that are without perspective, a
+    /// bit each, the first 24 of c->flat_shade_flags and
+    /// c->noperspective_flags (v3d_set_fs_prog_data_inputs, vir.c:
+    /// 985-1003; since 1.190).
+    flat_shade_flags: u32 = 0,
+    noperspective_flags: u32 = 0,
 
     pub fn destroy(program: Program) void {
         program.c.destroy();
@@ -231,6 +237,11 @@ const Emit = struct {
     at_end: [compile.most_steps][4]bool = undefined,
     /// The kept selection being emitted.
     branch: If = .{},
+    /// c->flat_shade_flags and c->noperspective_flags: the inputs that
+    /// emit_fragment_varying made flat and without perspective, by the
+    /// number it gave each (nir_to_vir.c:1085-1110; since 1.190).
+    flat_shade_flags: u32 = 0,
+    noperspective_flags: u32 = 0,
 };
 
 /// A bit for each step (since 1.189; a u128 of the 128 steps before).
@@ -305,6 +316,8 @@ pub fn compileSteps(allocator: std.mem.Allocator, compiler: *const vir.Compiler,
             .disable_ez = !e.early_fragment_tests,
             // !c->last_thrsw (v3d_set_prog_data, vir.c:1041).
             .single_seg = c.last_thrsw == null,
+            .flat_shade_flags = e.flat_shade_flags,
+            .noperspective_flags = e.noperspective_flags,
         };
     }
     return if (failed_register_allocation) Error.Registers else Error.Invalid;
@@ -368,26 +381,51 @@ fn setupScratch(e: *Emit) Error!void {
 fn setupFsInputs(e: *Emit) Error!void {
     var varying: u32 = 0;
     while (varying < e.work.varyings) : (varying += 1) {
-        e.inputs[varying] = try emitFragmentVarying(e);
+        e.inputs[varying] = try emitFragmentVarying(e, varying);
     }
 }
 
-/// emit_fragment_varying (nir_to_vir.c:1049), for a varying interpolated
-/// with perspective, which is all the profile has: the ldvary, and the
-/// value times W plus the C coefficient the ldvary leaves in rf0.
-fn emitFragmentVarying(e: *Emit) Error!Reg {
+/// emit_fragment_varying (nir_to_vir.c:1049-1121): the ldvary, and the C
+/// coefficient it leaves in rf0, of the varying's interpolation: with
+/// perspective the value times W plus it, without the value plus it, and
+/// flat it alone, the input's flag set for the draw (since 1.190; with
+/// perspective alone before). A centroid one is no decoration the reading
+/// takes.
+fn emitFragmentVarying(e: *Emit, varying: u32) Error!Reg {
     const c = e.c;
     const c_reg = vir.reg(.reg, 0);
     const ldvary = try c.addInst(.nop, c.undef, c.undef, c.undef);
     ldvary.qpu.sig.ldvary = true;
     const vary = try c.emitDef(ldvary);
+    const i = c.num_inputs;
     c.num_inputs += 1;
+    const bit = @as(u32, 1) << @intCast(varying);
+    if (e.work.flat_floats & bit != 0) {
+        e.flat_shade_flags |= @as(u32, 1) << @intCast(i);
+        return emitFlatVarying(c, vary, c_reg);
+    }
+    if (e.work.noperspective_floats & bit != 0) {
+        e.noperspective_flags |= @as(u32, 1) << @intCast(i);
+        return emitNoperspectiveVarying(c, vary, c_reg);
+    }
     return emitSmoothVarying(c, vary, e.payload_w, c_reg);
 }
 
 /// emit_smooth_varying (nir_to_vir.c:1027).
 fn emitSmoothVarying(c: *Compile, vary: Reg, w: Reg, c_reg: Reg) Error!Reg {
     return c.add(.fadd, .{ try c.mul(.fmul, .{ vary, w }), c_reg });
+}
+
+/// emit_noperspective_varying (nir_to_vir.c:1033-1037; since 1.190).
+fn emitNoperspectiveVarying(c: *Compile, vary: Reg, c_reg: Reg) Error!Reg {
+    return c.add(.fadd, .{ try c.mul(.mov, .{vary}), c_reg });
+}
+
+/// emit_flat_varying (nir_to_vir.c:1040-1046): the ldvary's value moved
+/// nowhere, and the C coefficient (since 1.190).
+fn emitFlatVarying(c: *Compile, vary: Reg, c_reg: Reg) Error!Reg {
+    _ = try c.mulDest(.mov, c.undef, .{vary});
+    return c.mul(.mov, .{c_reg});
 }
 
 /// ntq_emit_block (nir_to_vir.c:4677) for the one block there is: its
