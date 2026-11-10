@@ -150,7 +150,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.68 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.69 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -329,6 +329,25 @@ fn vertexIndexVertex(vertices: *const shader.Vertices) callconv(.c) void {
         const n: f32 = @floatFromInt(vertices.first_vertex + @as(u32, @intCast(k)));
         const quarter = i * 0.25;
         vertices.output(@intCast(k))[0..8].* = .{ p[0] + quarter - 0.25, p[1] + i * 0.125 - 0.125, p[2], p[3], n * 0.125 + 0.0625, c[1], quarter, 1 };
+    }
+}
+
+/// What `shipped_vertex_branch` computes, for the cores: the even
+/// vertices' place moved, and from the fourth vertex on another colour
+/// (since 1.69).
+fn vertexBranchVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = vertices.input(@intCast(k), 0);
+        const c = vertices.input(@intCast(k), 1);
+        const n = vertices.first_vertex + @as(u32, @intCast(k));
+        var moved = p;
+        if (n & 1 == 0) {
+            moved[0] = p[0] * 0.75 + 0.0625;
+            moved[1] = p[1] * 0.75 - 0.125;
+        }
+        var tint: [4]f32 = .{ c[0] * 0.5, c[1] * 0.5, c[2] * 0.5, 1 };
+        if (n >= 3) tint = .{ c[1], c[2] * 0.75 + 0.125, c[0] * 0.5 + 0.25, 1 };
+        vertices.output(@intCast(k))[0..8].* = .{ moved[0], moved[1], moved[2], moved[3], tint[0], tint[1], tint[2], tint[3] };
     }
 }
 
@@ -578,6 +597,30 @@ fn shippedReadonly(groups: *const shader.Groups) callconv(.c) void {
         into.* = .{
             .p = .{ p[0] + along[0], p[1] + along[1], 0.75 - 0.25 * t, 1 },
             .c = .{ 0.25 * (t + 1), 0.25 * @as(f32, @floatFromInt(corner + 1)), 0.5, 0.5 },
+            .uv = .{ 0, 0 },
+        };
+    }
+}
+
+/// `shipped_branches`' function, which the cores run and the V3D does not:
+/// each corner's place from the numbers buffer, its red from the second
+/// nine where the place is above -0.5, its green by the push constants'
+/// x and its alpha by their y (since 1.69).
+fn shippedBranches(groups: *const shader.Groups) callconv(.c) void {
+    const out = groups.resources.storage(Vertex, 0, 0) orelse return;
+    const places = groups.resources.storage([2]f32, 0, 1) orelse return;
+    const along = groups.resources.constants([2]f32).*;
+    const triangle = groups.group[0];
+    const t: f32 = @floatFromInt(triangle);
+    for (out[triangle * 3 ..][0..3], 0..) |*into, corner| {
+        const index = triangle * 3 + corner;
+        const p = places[index];
+        const r: f32 = if (p[1] > -0.5) places[index + 9][0] else 0.125;
+        const g: f32 = if (along[0] > 0) 0.25 * @as(f32, @floatFromInt(corner + 1)) else 0.5;
+        const a: f32 = if (along[1] > 0) 0 else 0.5;
+        into.* = .{
+            .p = .{ p[0] + along[0], p[1] + along[1], 0.75 - 0.25 * t, 1 },
+            .c = .{ r, g, 0.25 * (t + 1), a },
             .uv = .{ 0, 0 },
         };
     }
@@ -2640,6 +2683,9 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped matrix inverse", curveFragment(matrixInverseOf), 4),
     shader.fragment("shipped determinant of a mat4", curveFragment(determinant4Of), 4),
     shader.fragment("shipped bits", curveFragment(bitsOf), 4),
+    // Kept selections in a vertex and a compute program (since 1.69).
+    shader.vertex("shipped vertex branch", &vertexBranchVertex, 4),
+    shader.computeGroup("shipped branches", &shippedBranches, .{ 3, 1, 1 }, 0),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2667,7 +2713,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_numbers),              shader.Spirv.of(&shipped_shared),           shader.Spirv.of(&shipped_readonly),            shader.Spirv.of(&shipped_inverse_trig),
     shader.Spirv.of(&shipped_hyperbolic),           shader.Spirv.of(&shipped_geometry),         shader.Spirv.of(&shipped_bit_finds),           shader.Spirv.of(&shipped_modf_frexp),
     shader.Spirv.of(&shipped_packing_bytes),        shader.Spirv.of(&shipped_packing_halves),   shader.Spirv.of(&shipped_packing_half),        shader.Spirv.of(&shipped_matrix_inverse),
-    shader.Spirv.of(&shipped_determinant4),         shader.Spirv.of(&shipped_bits),
+    shader.Spirv.of(&shipped_determinant4),         shader.Spirv.of(&shipped_bits),             shader.Spirv.of(&shipped_vertex_branch),       shader.Spirv.of(&shipped_branches),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -8022,6 +8068,262 @@ const shipped_readonly = [_]u32{
     0x00010038,
 };
 
+/// glslc's own output, at -O: `shippedBranches`, three selections kept
+/// branches in a compute program, one under the execute mask and two the
+/// same in every lane (since 1.69).
+///
+/// ```glsl
+/// #version 450
+/// // FacetBoth's "shipped branches" (facet 1.205): three groups of three
+/// // invocations, each writing its corner of a triangle, with three kept
+/// // selections. Each corner's red is read and stored in an arm where its
+/// // own place says so, a branch under the execute mask. Its green is
+/// // stored where the push constants' x is above 0, and its alpha 0 where
+/// // their y is, which it is not: two branches the same in every lane, one
+/// // taken and one not.
+/// layout(local_size_x = 3) in;
+/// layout(std430, set = 0, binding = 0) buffer Computed { float f[]; } computed;
+/// layout(std430, set = 0, binding = 1) readonly buffer Places { vec2 place[]; } places;
+/// layout(push_constant) uniform Along { vec2 along; } pushed;
+/// void main() {
+///     uint at = gl_GlobalInvocationID.x;
+///     float t = float(gl_WorkGroupID.x);
+///     vec2 p = places.place[at];
+///     uint o = at * 10u;
+///     computed.f[o + 0u] = p.x + pushed.along.x;
+///     computed.f[o + 1u] = p.y + pushed.along.y;
+///     computed.f[o + 2u] = 0.75 - 0.25 * t;
+///     computed.f[o + 3u] = 1.0;
+///     computed.f[o + 4u] = 0.125;
+///     if (p.y > -0.5) computed.f[o + 4u] = places.place[at + 9u].x;
+///     computed.f[o + 5u] = 0.5;
+///     if (pushed.along.x > 0.0) computed.f[o + 5u] = 0.25 * float(gl_LocalInvocationIndex + 1u);
+///     computed.f[o + 6u] = 0.25 * (t + 1.0);
+///     computed.f[o + 7u] = 0.5;
+///     if (pushed.along.y > 0.0) computed.f[o + 7u] = 0.0;
+///     computed.f[o + 8u] = 0.0;
+///     computed.f[o + 9u] = 0.0;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=comp shipped_branches.comp -o shipped_branches.spv   # 618 words
+/// spirv-val --target-env vulkan1.0 shipped_branches.spv   # no output, and 0
+/// ```
+const shipped_branches = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000092, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0008000F, 0x00000005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000013, 0x00000071,
+    0x00060010, 0x00000004, 0x00000011, 0x00000003, 0x00000001, 0x00000001,
+    0x00040047, 0x0000000B, 0x0000000B, 0x0000001C, 0x00040047, 0x00000013,
+    0x0000000B, 0x0000001A, 0x00040047, 0x0000001A, 0x00000006, 0x00000008,
+    0x00030047, 0x0000001B, 0x00000003, 0x00040048, 0x0000001B, 0x00000000,
+    0x00000018, 0x00050048, 0x0000001B, 0x00000000, 0x00000023, 0x00000000,
+    0x00030047, 0x0000001D, 0x00000018, 0x00040047, 0x0000001D, 0x00000021,
+    0x00000001, 0x00040047, 0x0000001D, 0x00000022, 0x00000000, 0x00040047,
+    0x00000028, 0x00000006, 0x00000004, 0x00030047, 0x00000029, 0x00000003,
+    0x00050048, 0x00000029, 0x00000000, 0x00000023, 0x00000000, 0x00040047,
+    0x0000002B, 0x00000021, 0x00000000, 0x00040047, 0x0000002B, 0x00000022,
+    0x00000000, 0x00030047, 0x00000030, 0x00000002, 0x00050048, 0x00000030,
+    0x00000000, 0x00000023, 0x00000000, 0x00040047, 0x00000071, 0x0000000B,
+    0x0000001D, 0x00040047, 0x00000091, 0x0000000B, 0x00000019, 0x00020013,
+    0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006,
+    0x00000020, 0x00000000, 0x00040017, 0x00000009, 0x00000006, 0x00000003,
+    0x00040020, 0x0000000A, 0x00000001, 0x00000009, 0x0004003B, 0x0000000A,
+    0x0000000B, 0x00000001, 0x0004002B, 0x00000006, 0x0000000C, 0x00000000,
+    0x00040020, 0x0000000D, 0x00000001, 0x00000006, 0x00030016, 0x00000010,
+    0x00000020, 0x0004003B, 0x0000000A, 0x00000013, 0x00000001, 0x00040017,
+    0x00000017, 0x00000010, 0x00000002, 0x0003001D, 0x0000001A, 0x00000017,
+    0x0003001E, 0x0000001B, 0x0000001A, 0x00040020, 0x0000001C, 0x00000002,
+    0x0000001B, 0x0004003B, 0x0000001C, 0x0000001D, 0x00000002, 0x00040015,
+    0x0000001E, 0x00000020, 0x00000001, 0x0004002B, 0x0000001E, 0x0000001F,
+    0x00000000, 0x00040020, 0x00000021, 0x00000002, 0x00000017, 0x0004002B,
+    0x00000006, 0x00000026, 0x0000000A, 0x0003001D, 0x00000028, 0x00000010,
+    0x0003001E, 0x00000029, 0x00000028, 0x00040020, 0x0000002A, 0x00000002,
+    0x00000029, 0x0004003B, 0x0000002A, 0x0000002B, 0x00000002, 0x0003001E,
+    0x00000030, 0x00000017, 0x00040020, 0x00000031, 0x00000009, 0x00000030,
+    0x0004003B, 0x00000031, 0x00000032, 0x00000009, 0x00040020, 0x00000033,
+    0x00000009, 0x00000010, 0x00040020, 0x00000037, 0x00000002, 0x00000010,
+    0x0004002B, 0x00000006, 0x0000003A, 0x00000001, 0x0004002B, 0x00000006,
+    0x00000043, 0x00000002, 0x0004002B, 0x00000010, 0x00000045, 0x3F400000,
+    0x0004002B, 0x00000010, 0x00000046, 0x3E800000, 0x0004002B, 0x00000006,
+    0x0000004C, 0x00000003, 0x0004002B, 0x00000010, 0x0000004E, 0x3F800000,
+    0x0004002B, 0x00000006, 0x00000051, 0x00000004, 0x0004002B, 0x00000010,
+    0x00000053, 0x3E000000, 0x0004002B, 0x00000010, 0x00000057, 0xBF000000,
+    0x00020014, 0x00000058, 0x0004002B, 0x00000006, 0x0000005F, 0x00000009,
+    0x0004002B, 0x00000006, 0x00000065, 0x00000005, 0x0004002B, 0x00000010,
+    0x00000067, 0x3F000000, 0x0004002B, 0x00000010, 0x0000006B, 0x00000000,
+    0x0004003B, 0x0000000D, 0x00000071, 0x00000001, 0x0004002B, 0x00000006,
+    0x00000078, 0x00000006, 0x0004002B, 0x00000006, 0x0000007F, 0x00000007,
+    0x0004002B, 0x00000006, 0x0000008B, 0x00000008, 0x0006002C, 0x00000009,
+    0x00000091, 0x0000004C, 0x0000003A, 0x0000003A, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x00050041,
+    0x0000000D, 0x0000000E, 0x0000000B, 0x0000000C, 0x0004003D, 0x00000006,
+    0x0000000F, 0x0000000E, 0x00050041, 0x0000000D, 0x00000014, 0x00000013,
+    0x0000000C, 0x0004003D, 0x00000006, 0x00000015, 0x00000014, 0x00040070,
+    0x00000010, 0x00000016, 0x00000015, 0x00060041, 0x00000021, 0x00000022,
+    0x0000001D, 0x0000001F, 0x0000000F, 0x0004003D, 0x00000017, 0x00000023,
+    0x00000022, 0x00050084, 0x00000006, 0x00000027, 0x0000000F, 0x00000026,
+    0x00050051, 0x00000010, 0x0000002F, 0x00000023, 0x00000000, 0x00060041,
+    0x00000033, 0x00000034, 0x00000032, 0x0000001F, 0x0000000C, 0x0004003D,
+    0x00000010, 0x00000035, 0x00000034, 0x00050081, 0x00000010, 0x00000036,
+    0x0000002F, 0x00000035, 0x00060041, 0x00000037, 0x00000038, 0x0000002B,
+    0x0000001F, 0x00000027, 0x0003003E, 0x00000038, 0x00000036, 0x00050080,
+    0x00000006, 0x0000003B, 0x00000027, 0x0000003A, 0x00050051, 0x00000010,
+    0x0000003D, 0x00000023, 0x00000001, 0x00060041, 0x00000033, 0x0000003E,
+    0x00000032, 0x0000001F, 0x0000003A, 0x0004003D, 0x00000010, 0x0000003F,
+    0x0000003E, 0x00050081, 0x00000010, 0x00000040, 0x0000003D, 0x0000003F,
+    0x00060041, 0x00000037, 0x00000041, 0x0000002B, 0x0000001F, 0x0000003B,
+    0x0003003E, 0x00000041, 0x00000040, 0x00050080, 0x00000006, 0x00000044,
+    0x00000027, 0x00000043, 0x00050085, 0x00000010, 0x00000048, 0x00000046,
+    0x00000016, 0x00050083, 0x00000010, 0x00000049, 0x00000045, 0x00000048,
+    0x00060041, 0x00000037, 0x0000004A, 0x0000002B, 0x0000001F, 0x00000044,
+    0x0003003E, 0x0000004A, 0x00000049, 0x00050080, 0x00000006, 0x0000004D,
+    0x00000027, 0x0000004C, 0x00060041, 0x00000037, 0x0000004F, 0x0000002B,
+    0x0000001F, 0x0000004D, 0x0003003E, 0x0000004F, 0x0000004E, 0x00050080,
+    0x00000006, 0x00000052, 0x00000027, 0x00000051, 0x00060041, 0x00000037,
+    0x00000054, 0x0000002B, 0x0000001F, 0x00000052, 0x0003003E, 0x00000054,
+    0x00000053, 0x000500BA, 0x00000058, 0x00000059, 0x0000003D, 0x00000057,
+    0x000300F7, 0x0000005B, 0x00000000, 0x000400FA, 0x00000059, 0x0000005A,
+    0x0000005B, 0x000200F8, 0x0000005A, 0x00050080, 0x00000006, 0x00000060,
+    0x0000000F, 0x0000005F, 0x00070041, 0x00000037, 0x00000061, 0x0000001D,
+    0x0000001F, 0x00000060, 0x0000000C, 0x0004003D, 0x00000010, 0x00000062,
+    0x00000061, 0x0003003E, 0x00000054, 0x00000062, 0x000200F9, 0x0000005B,
+    0x000200F8, 0x0000005B, 0x00050080, 0x00000006, 0x00000066, 0x00000027,
+    0x00000065, 0x00060041, 0x00000037, 0x00000068, 0x0000002B, 0x0000001F,
+    0x00000066, 0x0003003E, 0x00000068, 0x00000067, 0x000500BA, 0x00000058,
+    0x0000006C, 0x00000035, 0x0000006B, 0x000300F7, 0x0000006E, 0x00000000,
+    0x000400FA, 0x0000006C, 0x0000006D, 0x0000006E, 0x000200F8, 0x0000006D,
+    0x0004003D, 0x00000006, 0x00000072, 0x00000071, 0x00050080, 0x00000006,
+    0x00000073, 0x00000072, 0x0000003A, 0x00040070, 0x00000010, 0x00000074,
+    0x00000073, 0x00050085, 0x00000010, 0x00000075, 0x00000046, 0x00000074,
+    0x0003003E, 0x00000068, 0x00000075, 0x000200F9, 0x0000006E, 0x000200F8,
+    0x0000006E, 0x00050080, 0x00000006, 0x00000079, 0x00000027, 0x00000078,
+    0x00050081, 0x00000010, 0x0000007B, 0x00000016, 0x0000004E, 0x00050085,
+    0x00000010, 0x0000007C, 0x00000046, 0x0000007B, 0x00060041, 0x00000037,
+    0x0000007D, 0x0000002B, 0x0000001F, 0x00000079, 0x0003003E, 0x0000007D,
+    0x0000007C, 0x00050080, 0x00000006, 0x00000080, 0x00000027, 0x0000007F,
+    0x00060041, 0x00000037, 0x00000081, 0x0000002B, 0x0000001F, 0x00000080,
+    0x0003003E, 0x00000081, 0x00000067, 0x000500BA, 0x00000058, 0x00000084,
+    0x0000003F, 0x0000006B, 0x000300F7, 0x00000086, 0x00000000, 0x000400FA,
+    0x00000084, 0x00000085, 0x00000086, 0x000200F8, 0x00000085, 0x0003003E,
+    0x00000081, 0x0000006B, 0x000200F9, 0x00000086, 0x000200F8, 0x00000086,
+    0x00050080, 0x00000006, 0x0000008C, 0x00000027, 0x0000008B, 0x00060041,
+    0x00000037, 0x0000008D, 0x0000002B, 0x0000001F, 0x0000008C, 0x0003003E,
+    0x0000008D, 0x0000006B, 0x00050080, 0x00000006, 0x0000008F, 0x00000027,
+    0x0000005F, 0x00060041, 0x00000037, 0x00000090, 0x0000002B, 0x0000001F,
+    0x0000008F, 0x0003003E, 0x00000090, 0x0000006B, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O: `vertexBranchVertex`, two selections kept
+/// branches by DontFlatten in a vertex program, the second of which the
+/// coordinate program has none of (since 1.69).
+///
+/// ```glsl
+/// #version 450
+/// #extension GL_EXT_control_flow_attributes : require
+/// // FacetBoth's "shipped vertex branch" (facet 1.205): two selections kept
+/// // branches by [[dont_flatten]], each under the execute mask, for the
+/// // vertex's number differs from lane to lane. The first moves the even
+/// // vertices' place, which the coordinate program has too; the second
+/// // gives the vertices from the fourth on another colour, which only the
+/// // vertex program has: nir_opt_dead_cf takes it out of the coordinate
+/// // program.
+/// layout(location = 0) in vec4 p;
+/// layout(location = 1) in vec4 c;
+/// layout(location = 0) out vec4 color;
+/// void main() {
+///     vec4 place = p;
+///     [[dont_flatten]] if ((gl_VertexIndex & 1) == 0) {
+///         place.xy = p.xy * 0.75 + vec2(0.0625, -0.125);
+///     }
+///     vec4 tint = vec4(c.rgb * 0.5, 1.0);
+///     [[dont_flatten]] if (gl_VertexIndex >= 3) {
+///         tint = vec4(c.g, c.b * 0.75 + 0.125, c.r * 0.5 + 0.25, 1.0);
+///     }
+///     gl_Position = place;
+///     color = tint;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=vert shipped_vertex_branch.vert -o shipped_vertex_branch.spv   # 417 words
+/// spirv-val --target-env vulkan1.0 shipped_vertex_branch.spv   # no output, and 0
+/// ```
+const shipped_vertex_branch = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000059, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x000A000F, 0x00000000,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x0000000F, 0x0000002A,
+    0x0000004C, 0x00000050, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000F, 0x0000000B, 0x0000002A, 0x00040047, 0x0000002A,
+    0x0000001E, 0x00000001, 0x00030047, 0x0000004A, 0x00000002, 0x00050048,
+    0x0000004A, 0x00000000, 0x0000000B, 0x00000000, 0x00050048, 0x0000004A,
+    0x00000001, 0x0000000B, 0x00000001, 0x00050048, 0x0000004A, 0x00000002,
+    0x0000000B, 0x00000003, 0x00050048, 0x0000004A, 0x00000003, 0x0000000B,
+    0x00000004, 0x00040047, 0x00000050, 0x0000001E, 0x00000000, 0x00020013,
+    0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006,
+    0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020,
+    0x0000000A, 0x00000001, 0x00000007, 0x0004003B, 0x0000000A, 0x0000000B,
+    0x00000001, 0x00040015, 0x0000000D, 0x00000020, 0x00000001, 0x00040020,
+    0x0000000E, 0x00000001, 0x0000000D, 0x0004003B, 0x0000000E, 0x0000000F,
+    0x00000001, 0x0004002B, 0x0000000D, 0x00000011, 0x00000001, 0x0004002B,
+    0x0000000D, 0x00000013, 0x00000000, 0x00020014, 0x00000014, 0x00040017,
+    0x00000018, 0x00000006, 0x00000002, 0x0004002B, 0x00000006, 0x0000001B,
+    0x3F400000, 0x0004002B, 0x00000006, 0x0000001D, 0x3D800000, 0x0004002B,
+    0x00000006, 0x0000001E, 0xBE000000, 0x0005002C, 0x00000018, 0x0000001F,
+    0x0000001D, 0x0000001E, 0x00040015, 0x00000021, 0x00000020, 0x00000000,
+    0x0004002B, 0x00000021, 0x00000022, 0x00000000, 0x0004002B, 0x00000021,
+    0x00000026, 0x00000001, 0x0004003B, 0x0000000A, 0x0000002A, 0x00000001,
+    0x00040017, 0x0000002B, 0x00000006, 0x00000003, 0x0004002B, 0x00000006,
+    0x0000002E, 0x3F000000, 0x0004002B, 0x00000006, 0x00000030, 0x3F800000,
+    0x0004002B, 0x0000000D, 0x00000036, 0x00000003, 0x00040020, 0x0000003A,
+    0x00000001, 0x00000006, 0x0004002B, 0x00000021, 0x0000003D, 0x00000002,
+    0x0004002B, 0x00000006, 0x00000041, 0x3E000000, 0x0004002B, 0x00000006,
+    0x00000046, 0x3E800000, 0x0004001C, 0x00000049, 0x00000006, 0x00000026,
+    0x0006001E, 0x0000004A, 0x00000007, 0x00000006, 0x00000049, 0x00000049,
+    0x00040020, 0x0000004B, 0x00000003, 0x0000004A, 0x0004003B, 0x0000004B,
+    0x0000004C, 0x00000003, 0x00040020, 0x0000004E, 0x00000003, 0x00000007,
+    0x0004003B, 0x0000004E, 0x00000050, 0x00000003, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x00000007, 0x0000000C, 0x0000000B, 0x0004003D, 0x0000000D, 0x00000010,
+    0x0000000F, 0x000500C7, 0x0000000D, 0x00000012, 0x00000010, 0x00000011,
+    0x000500AA, 0x00000014, 0x00000015, 0x00000012, 0x00000013, 0x000300F7,
+    0x00000017, 0x00000002, 0x000400FA, 0x00000015, 0x00000016, 0x00000017,
+    0x000200F8, 0x00000016, 0x0007004F, 0x00000018, 0x0000001A, 0x0000000C,
+    0x0000000C, 0x00000000, 0x00000001, 0x0005008E, 0x00000018, 0x0000001C,
+    0x0000001A, 0x0000001B, 0x00050081, 0x00000018, 0x00000020, 0x0000001C,
+    0x0000001F, 0x00050051, 0x00000006, 0x00000025, 0x00000020, 0x00000000,
+    0x00060052, 0x00000007, 0x00000053, 0x00000025, 0x0000000C, 0x00000000,
+    0x00050051, 0x00000006, 0x00000028, 0x00000020, 0x00000001, 0x00060052,
+    0x00000007, 0x00000055, 0x00000028, 0x00000053, 0x00000001, 0x000200F9,
+    0x00000017, 0x000200F8, 0x00000017, 0x000700F5, 0x00000007, 0x00000057,
+    0x0000000C, 0x00000005, 0x00000055, 0x00000016, 0x0004003D, 0x00000007,
+    0x0000002C, 0x0000002A, 0x0008004F, 0x0000002B, 0x0000002D, 0x0000002C,
+    0x0000002C, 0x00000000, 0x00000001, 0x00000002, 0x0005008E, 0x0000002B,
+    0x0000002F, 0x0000002D, 0x0000002E, 0x00050051, 0x00000006, 0x00000031,
+    0x0000002F, 0x00000000, 0x00050051, 0x00000006, 0x00000032, 0x0000002F,
+    0x00000001, 0x00050051, 0x00000006, 0x00000033, 0x0000002F, 0x00000002,
+    0x00070050, 0x00000007, 0x00000034, 0x00000031, 0x00000032, 0x00000033,
+    0x00000030, 0x000500AF, 0x00000014, 0x00000037, 0x00000010, 0x00000036,
+    0x000300F7, 0x00000039, 0x00000002, 0x000400FA, 0x00000037, 0x00000038,
+    0x00000039, 0x000200F8, 0x00000038, 0x00050041, 0x0000003A, 0x0000003B,
+    0x0000002A, 0x00000026, 0x0004003D, 0x00000006, 0x0000003C, 0x0000003B,
+    0x00050041, 0x0000003A, 0x0000003E, 0x0000002A, 0x0000003D, 0x0004003D,
+    0x00000006, 0x0000003F, 0x0000003E, 0x00050085, 0x00000006, 0x00000040,
+    0x0000003F, 0x0000001B, 0x00050081, 0x00000006, 0x00000042, 0x00000040,
+    0x00000041, 0x00050041, 0x0000003A, 0x00000043, 0x0000002A, 0x00000022,
+    0x0004003D, 0x00000006, 0x00000044, 0x00000043, 0x00050085, 0x00000006,
+    0x00000045, 0x00000044, 0x0000002E, 0x00050081, 0x00000006, 0x00000047,
+    0x00000045, 0x00000046, 0x00070050, 0x00000007, 0x00000048, 0x0000003C,
+    0x00000042, 0x00000047, 0x00000030, 0x000200F9, 0x00000039, 0x000200F8,
+    0x00000039, 0x000700F5, 0x00000007, 0x00000058, 0x00000034, 0x00000017,
+    0x00000048, 0x00000038, 0x00050041, 0x0000004E, 0x0000004F, 0x0000004C,
+    0x00000013, 0x0003003E, 0x0000004F, 0x00000057, 0x0003003E, 0x00000050,
+    0x00000058, 0x000100FD, 0x00010038,
+};
+
 /// glslc's own output, at -O, the V3D's host tests' glslc_inverse_trig: what
 /// `inverseTrigOf` on the cores: Asin and Acos of vec2s, Atan and Atan2,
 /// which the V3D lowers as Mesa does, to approximations of its own
@@ -9142,7 +9444,7 @@ const Side = struct {
     counters_set: ?*facet.DescriptorSet = null,
     compute_layout: ?*facet.PipelineLayout = null,
     /// The cores' functions, then the shipped ones' (since 1.59).
-    compute_pipelines: [6]?*facet.Pipeline = @splat(null),
+    compute_pipelines: [7]?*facet.Pipeline = @splat(null),
     /// The pipelines of the case being drawn.
     made: [8]?*facet.Pipeline = @splat(null),
     made_count: u32 = 0,
@@ -9286,13 +9588,14 @@ const Side = struct {
         fb.UpdateDescriptorSets(device, 2, &buffer_writes, 0, null);
         const compute_push = facet.PushConstantRange{ .stage_flags = facet.SHADER_STAGE_COMPUTE, .size = 8 };
         try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&side.compute_set_layout), .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&compute_push) }, &side.compute_layout), error.Refused);
-        const compute_infos = [6]facet.ComputePipelineCreateInfo{
+        const compute_infos = [7]facet.ComputePipelineCreateInfo{
             .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "vertices" }, .layout = side.compute_layout.? },
             .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "numbers" }, .layout = side.compute_layout.? },
             .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "shipped vertices" }, .layout = side.compute_layout.? },
             .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "shipped numbers" }, .layout = side.compute_layout.? },
             .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "shipped shared" }, .layout = side.compute_layout.? },
             .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "shipped readonly" }, .layout = side.compute_layout.? },
+            .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "shipped branches" }, .layout = side.compute_layout.? },
         };
         try expect(fb.CreateComputePipelines(device, null, compute_infos.len, &compute_infos, &side.compute_pipelines), error.Refused);
         try expect(fb.CreateFence(device, &.{}, &side.fence), error.Refused);
@@ -10459,6 +10762,25 @@ const Cases = struct {
         side.draw(0, 9);
         side.end();
     }
+    /// Triangles whose corners a compute shader writes through three
+    /// selections kept branches: the red where the corner's own place
+    /// says so, under the execute mask; the green and the alpha where the
+    /// push constants say so, the first taken and the second not. Its
+    /// places are `readonlyPlaces`, and the reds the next nine (since
+    /// 1.69).
+    fn shippedBranches(side: *Side) Failure!void {
+        var places: [18][2]f32 = undefined;
+        places[0..9].* = readonlyPlaces();
+        for (places[9..], 0..) |*each, k| each.* = .{ 0.25 + 0.0625 * @as(f32, @floatFromInt(k)), 0 };
+        @memcpy(side.number_bytes[0..@sizeOf(@TypeOf(places))], std.mem.asBytes(&places));
+        side.compute(6, .{ 0.03125, -0.0625 });
+        side.fb.CmdDispatch(side.commands.?, 3, 1, 1);
+        side.begin(.{});
+        try side.use(.{ .blend = true });
+        side.drawComputed();
+        side.draw(0, 9);
+        side.end();
+    }
     /// A draw's numbers written so, how many groups read from a buffer:
     /// what the case before left there cleared first, so a dispatch that
     /// wrote nothing draws nothing (since 1.59).
@@ -11447,6 +11769,8 @@ const cases = [_]Case{
     .{ .name = "shipped compute: writes a draw's numbers", .run = &Cases.shippedNumbers },
     .{ .name = "shipped compute: shared memory and barriers", .run = &Cases.shippedShared },
     .{ .name = "shipped compute: reads a buffer at each invocation's id", .run = &Cases.shippedReadonly },
+    .{ .name = "shipped compute: kept branches, under the mask and uniform", .run = &Cases.shippedBranches },
+    .{ .name = "shipped vertex branches", .run = Cases.numbered("shipped vertex branch") },
     .{ .name = "patches: triangles, even", .run = Cases.tessellated(.{ .patch_points = 3 }, 0, 3) },
     .{ .name = "patches: triangles, uneven", .run = Cases.tessellated(.{ .patch_points = 3, .control = "uneven" }, 0, 6) },
     .{ .name = "patches: triangles, edges", .run = Cases.tessellated(.{ .patch_points = 3, .control = "uneven", .polygon_mode = .line }, 0, 3) },

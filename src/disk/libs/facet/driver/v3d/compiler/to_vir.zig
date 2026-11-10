@@ -515,10 +515,10 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
                 // among the VPM's floats (since 1.163). One it does not
                 // read nir_opt_dce has taken out, and so is nothing here.
                 for (0..parts) |k| {
-                    e.defs[at][k] = if (input.live & @as(u8, 1) << @intCast(k) != 0)
-                        try c.add(.ldvpmv_in, .{try c.uniformUi(@intCast(input.first + k))})
+                    if (input.live & @as(u8, 1) << @intCast(k) != 0)
+                        try storeDef(e, at, k, try c.add(.ldvpmv_in, .{try c.uniformUi(@intCast(input.first + k))}))
                     else
-                        c.undef;
+                        e.defs[at][k] = c.undef;
                 }
             } else for (0..parts) |k| {
                 // load_input's MOV of the varying (ntq_emit_load_input,
