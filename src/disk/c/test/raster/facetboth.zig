@@ -148,7 +148,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.51 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.52 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -1475,6 +1475,87 @@ fn negatedCubeFragment(fragments: *const shader.Fragments) callconv(.c) void {
     }
 }
 
+/// What `shipped_division` computes, for the cores: of the colour's red
+/// and green made integers 0 to 255, a dividend that spans the word and
+/// an odd divisor below 2^31 of every size, the products wrapping and
+/// the shift by the red's low five bits; the green whether the quotient
+/// leaves a remainder below the divisor, which it does unless it is off,
+/// and the red and blue the colour's red and green. The two devices'
+/// interpolation can make an integer one apart where a float of the
+/// colour crosses one, and the quotient with it: each device checks its
+/// own (since 1.52).
+fn divisionFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    @setRuntimeSafety(false);
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const planes = rows.at(quad);
+        const over = @as(shader.Pixels, @splat(1)) / planes[0];
+        var v: [4]shader.Pixels = undefined;
+        inline for (&v, 0..) |*each, c| each.* = planes[1 + c] * over;
+        var exact: shader.Pixels = undefined;
+        inline for (0..4) |p| {
+            const x = unsignedTowardZero(v[0][p] * 255.0);
+            const y = unsignedTowardZero(v[1][p] * 255.0);
+            const n = x *% 16843009 +% y *% 2654435769;
+            const d = (((y *% 16777619) >> @as(u5, @truncate(x))) >> 1) | 1;
+            const q = n / d;
+            exact[p] = if (n -% q *% d < d) 1.0 else 0.0;
+        }
+        const picked = [4]shader.Pixels{ v[0], exact, v[1], @splat(1.0) };
+        var bytes: [4]@Vector(4, u32) = undefined;
+        inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(picked[c]);
+        out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+    }
+}
+
+/// What `shipped_modulus` computes, for the cores: the same of signed
+/// integers, the dividend of both signs, the divisor of the shift's sign
+/// and at least 1025 in size, and the green whether NIR's imod of them
+/// has the divisor's sign, is smaller, and leaves the dividend within one
+/// divisor of the float quotient's floor times it: as it does unless it
+/// is off, the float quotient within one of the integers' at that size
+/// (since 1.52).
+fn modulusFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    @setRuntimeSafety(false);
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const planes = rows.at(quad);
+        const over = @as(shader.Pixels, @splat(1)) / planes[0];
+        var v: [4]shader.Pixels = undefined;
+        inline for (&v, 0..) |*each, c| each.* = planes[1 + c] * over;
+        var exact: shader.Pixels = undefined;
+        inline for (0..4) |p| {
+            const x = towardZero(v[0][p] * 255.0);
+            const y = towardZero(v[1][p] * 255.0);
+            const n = x *% 16843009 -% y *% 1640531527;
+            const s = (y *% 16777619) >> @as(u5, @truncate(@as(u32, @bitCast(x))));
+            const sign: i32 = if (s < 0) -1 else 1;
+            const d = ((s ^ (s >> 31)) | 1025) *% sign;
+            const m = modulusOf(n, d);
+            const floored: i32 = @intFromFloat(@floor(@as(f32, @floatFromInt(n)) / @as(f32, @floatFromInt(d))));
+            const t = n -% m -% floored *% d;
+            const ranged = @as(u32, @bitCast(m *% sign)) < @as(u32, @bitCast(d *% sign));
+            const multiple = t == 0 or t == d or t == 0 -% d;
+            exact[p] = if (ranged and multiple) 1.0 else 0.0;
+        }
+        const picked = [4]shader.Pixels{ v[0], exact, v[1], @splat(1.0) };
+        var bytes: [4]@Vector(4, u32) = undefined;
+        inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(picked[c]);
+        out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+    }
+}
+
+/// NIR's imod (nir_opcodes.py:922-924): 0 by 0 and of the most negative
+/// by -1, else C's `%`, the magnitudes' remainder with the dividend's
+/// sign, and the divisor added where that is not 0 and the signs differ
+/// (since 1.52).
+fn modulusOf(n: i32, d: i32) i32 {
+    if (d == 0 or (n == std.math.minInt(i32) and d == -1)) return 0;
+    const magnitude: u32 = @abs(n) % @abs(d);
+    const r: i32 = if (n < 0) -@as(i32, @intCast(magnitude)) else @intCast(magnitude);
+    return if (r == 0 or (n >= 0) == (d >= 0)) r else r + d;
+}
+
 /// lower_gradient_cube_map's level, worked out as it reads (Mesa's
 /// nir_lower_tex.c:783-848), of `direction` normalized as
 /// nir_normalize_cubemap_coords has it: the face the largest magnitude
@@ -1717,6 +1798,8 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped grad cube", &cubeGradedFragment, 3),
     Shipped.Twice.entry("shipped twice"),
     shader.fragment("shipped cube negated", &negatedCubeFragment, 3),
+    shader.fragment("shipped division", &divisionFragment, 4),
+    shader.fragment("shipped modulus", &modulusFragment, 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                    .{},                                       .{},                                    .{},
@@ -1736,6 +1819,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_size_volume),  shader.Spirv.of(&shipped_fetch),           shader.Spirv.of(&shipped_fetch_layers), shader.Spirv.of(&shipped_fetch_volume),
     shader.Spirv.of(&shipped_fetch_offset), shader.Spirv.of(&shipped_fetch_dependent), shader.Spirv.of(&shipped_grad),         shader.Spirv.of(&shipped_grad_layers),
     shader.Spirv.of(&shipped_grad_offset),  shader.Spirv.of(&shipped_grad_cube),       shader.Spirv.of(&shipped_twice),        shader.Spirv.of(&shipped_cube_negated),
+    shader.Spirv.of(&shipped_division),     shader.Spirv.of(&shipped_modulus),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -4216,6 +4300,170 @@ const shipped_cube_negated = [_]u32{
     0x0000001F, 0x00000017, 0x0000001A, 0x0000001E, 0x00050057, 0x00000007,
     0x00000020, 0x0000000E, 0x0000001F, 0x0003003E, 0x00000009, 0x00000020,
     0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for an unsigned division of two integers
+/// of the colour that span the word, checked in the program: the V3D
+/// lowers it as nir_lower_idiv does, a reciprocal of the SFU's made an
+/// integer, a Newton step of it and two of the remainder (since 1.52).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// void main() {
+///     uvec2 v = uvec2(vcolor.xy * 255.0);
+///     uint n = v.x * 16843009u + v.y * 2654435769u;
+///     uint d = (((v.y * 16777619u) >> (v.x & 31u)) >> 1) | 1u;
+///     uint q = n / d;
+///     bool exact = n - q * d < d;
+///     ocolor = vec4(vcolor.x, exact ? 1.0 : 0.0, vcolor.y, 1.0);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag division.frag -o division.spv   # 257 words
+/// spirv-val --target-env vulkan1.0 division.spv                 # no output, and 0
+/// ```
+const shipped_division = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000049, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x0000003E, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000D, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000003E, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006, 0x00000020,
+    0x00000000, 0x00040017, 0x00000007, 0x00000006, 0x00000002, 0x00030016,
+    0x0000000A, 0x00000020, 0x00040017, 0x0000000B, 0x0000000A, 0x00000004,
+    0x00040020, 0x0000000C, 0x00000001, 0x0000000B, 0x0004003B, 0x0000000C,
+    0x0000000D, 0x00000001, 0x00040017, 0x0000000E, 0x0000000A, 0x00000002,
+    0x0004002B, 0x0000000A, 0x00000011, 0x437F0000, 0x0004002B, 0x00000006,
+    0x00000016, 0x00000000, 0x0004002B, 0x00000006, 0x00000019, 0x01010101,
+    0x0004002B, 0x00000006, 0x0000001B, 0x00000001, 0x0004002B, 0x00000006,
+    0x0000001E, 0x9E3779B9, 0x0004002B, 0x00000006, 0x00000024, 0x01000193,
+    0x0004002B, 0x00000006, 0x00000028, 0x0000001F, 0x00040015, 0x0000002B,
+    0x00000020, 0x00000001, 0x0004002B, 0x0000002B, 0x0000002C, 0x00000001,
+    0x00020014, 0x00000033, 0x00040020, 0x0000003D, 0x00000003, 0x0000000B,
+    0x0004003B, 0x0000003D, 0x0000003E, 0x00000003, 0x00040020, 0x0000003F,
+    0x00000001, 0x0000000A, 0x0004002B, 0x0000000A, 0x00000043, 0x3F800000,
+    0x0004002B, 0x0000000A, 0x00000044, 0x00000000, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000B, 0x0000000F, 0x0000000D, 0x0007004F, 0x0000000E, 0x00000010,
+    0x0000000F, 0x0000000F, 0x00000000, 0x00000001, 0x0005008E, 0x0000000E,
+    0x00000012, 0x00000010, 0x00000011, 0x0004006D, 0x00000007, 0x00000013,
+    0x00000012, 0x00050051, 0x00000006, 0x00000018, 0x00000013, 0x00000000,
+    0x00050084, 0x00000006, 0x0000001A, 0x00000018, 0x00000019, 0x00050051,
+    0x00000006, 0x0000001D, 0x00000013, 0x00000001, 0x00050084, 0x00000006,
+    0x0000001F, 0x0000001D, 0x0000001E, 0x00050080, 0x00000006, 0x00000020,
+    0x0000001A, 0x0000001F, 0x00050084, 0x00000006, 0x00000025, 0x0000001D,
+    0x00000024, 0x000500C7, 0x00000006, 0x00000029, 0x00000018, 0x00000028,
+    0x000500C2, 0x00000006, 0x0000002A, 0x00000025, 0x00000029, 0x000500C2,
+    0x00000006, 0x0000002D, 0x0000002A, 0x0000002C, 0x000500C5, 0x00000006,
+    0x0000002E, 0x0000002D, 0x0000001B, 0x00050086, 0x00000006, 0x00000032,
+    0x00000020, 0x0000002E, 0x00050084, 0x00000006, 0x00000039, 0x00000032,
+    0x0000002E, 0x00050082, 0x00000006, 0x0000003A, 0x00000020, 0x00000039,
+    0x000500B0, 0x00000033, 0x0000003C, 0x0000003A, 0x0000002E, 0x00050041,
+    0x0000003F, 0x00000040, 0x0000000D, 0x00000016, 0x0004003D, 0x0000000A,
+    0x00000041, 0x00000040, 0x000600A9, 0x0000000A, 0x00000045, 0x0000003C,
+    0x00000043, 0x00000044, 0x00050041, 0x0000003F, 0x00000046, 0x0000000D,
+    0x0000001B, 0x0004003D, 0x0000000A, 0x00000047, 0x00000046, 0x00070050,
+    0x0000000B, 0x00000048, 0x00000041, 0x00000045, 0x00000047, 0x00000043,
+    0x0003003E, 0x0000003E, 0x00000048, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for GLSL's `%` of two signed integers of
+/// the colour, an OpSMod, checked in the program: nir_lower_idiv's
+/// emit_idiv of the magnitudes, the dividend's sign and the divisor
+/// added where the signs differ (since 1.52).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 vcolor;
+/// layout(location = 0) out vec4 ocolor;
+/// void main() {
+///     ivec2 v = ivec2(vcolor.xy * 255.0);
+///     int n = v.x * 16843009 - v.y * 1640531527;
+///     int s = (v.y * 16777619) >> (v.x & 31);
+///     int sign = s < 0 ? -1 : 1;
+///     int d = ((s ^ (s >> 31)) | 1025) * sign;
+///     int m = n % d;
+///     int t = n - m - int(floor(float(n) / float(d))) * d;
+///     uint ranged = uint(uint(m * sign) < uint(d * sign));
+///     uint multiple = uint(t == 0) | uint(t == d) | uint(t == -d);
+///     ocolor = vec4(vcolor.x, float(ranged & multiple), vcolor.y, 1.0);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag modulus.frag -o modulus.spv   # 388 words
+/// spirv-val --target-env vulkan1.0 modulus.spv                # no output, and 0
+/// ```
+const shipped_modulus = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000077, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x0000006B, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000D, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000006B, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006, 0x00000020,
+    0x00000001, 0x00040017, 0x00000007, 0x00000006, 0x00000002, 0x00030016,
+    0x0000000A, 0x00000020, 0x00040017, 0x0000000B, 0x0000000A, 0x00000004,
+    0x00040020, 0x0000000C, 0x00000001, 0x0000000B, 0x0004003B, 0x0000000C,
+    0x0000000D, 0x00000001, 0x00040017, 0x0000000E, 0x0000000A, 0x00000002,
+    0x0004002B, 0x0000000A, 0x00000011, 0x437F0000, 0x00040015, 0x00000016,
+    0x00000020, 0x00000000, 0x0004002B, 0x00000016, 0x00000017, 0x00000000,
+    0x0004002B, 0x00000006, 0x0000001A, 0x01010101, 0x0004002B, 0x00000016,
+    0x0000001C, 0x00000001, 0x0004002B, 0x00000006, 0x0000001F, 0x61C88647,
+    0x0004002B, 0x00000006, 0x00000025, 0x01000193, 0x0004002B, 0x00000006,
+    0x00000029, 0x0000001F, 0x0004002B, 0x00000006, 0x0000002E, 0x00000000,
+    0x00020014, 0x0000002F, 0x0004002B, 0x00000006, 0x00000031, 0xFFFFFFFF,
+    0x0004002B, 0x00000006, 0x00000032, 0x00000001, 0x0004002B, 0x00000006,
+    0x00000039, 0x00000401, 0x00040020, 0x0000006A, 0x00000003, 0x0000000B,
+    0x0004003B, 0x0000006A, 0x0000006B, 0x00000003, 0x00040020, 0x0000006C,
+    0x00000001, 0x0000000A, 0x0004002B, 0x0000000A, 0x00000075, 0x3F800000,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003D, 0x0000000B, 0x0000000F, 0x0000000D, 0x0007004F,
+    0x0000000E, 0x00000010, 0x0000000F, 0x0000000F, 0x00000000, 0x00000001,
+    0x0005008E, 0x0000000E, 0x00000012, 0x00000010, 0x00000011, 0x0004006E,
+    0x00000007, 0x00000013, 0x00000012, 0x00050051, 0x00000006, 0x00000019,
+    0x00000013, 0x00000000, 0x00050084, 0x00000006, 0x0000001B, 0x00000019,
+    0x0000001A, 0x00050051, 0x00000006, 0x0000001E, 0x00000013, 0x00000001,
+    0x00050084, 0x00000006, 0x00000020, 0x0000001E, 0x0000001F, 0x00050082,
+    0x00000006, 0x00000021, 0x0000001B, 0x00000020, 0x00050084, 0x00000006,
+    0x00000026, 0x0000001E, 0x00000025, 0x000500C7, 0x00000006, 0x0000002A,
+    0x00000019, 0x00000029, 0x000500C3, 0x00000006, 0x0000002B, 0x00000026,
+    0x0000002A, 0x000500B1, 0x0000002F, 0x00000030, 0x0000002B, 0x0000002E,
+    0x000600A9, 0x00000006, 0x00000033, 0x00000030, 0x00000031, 0x00000032,
+    0x000500C3, 0x00000006, 0x00000037, 0x0000002B, 0x00000029, 0x000500C6,
+    0x00000006, 0x00000038, 0x0000002B, 0x00000037, 0x000500C5, 0x00000006,
+    0x0000003A, 0x00000038, 0x00000039, 0x00050084, 0x00000006, 0x0000003C,
+    0x0000003A, 0x00000033, 0x0005008B, 0x00000006, 0x00000040, 0x00000021,
+    0x0000003C, 0x00050082, 0x00000006, 0x00000044, 0x00000021, 0x00000040,
+    0x0004006F, 0x0000000A, 0x00000046, 0x00000021, 0x0004006F, 0x0000000A,
+    0x00000048, 0x0000003C, 0x00050088, 0x0000000A, 0x00000049, 0x00000046,
+    0x00000048, 0x0006000C, 0x0000000A, 0x0000004A, 0x00000001, 0x00000008,
+    0x00000049, 0x0004006E, 0x00000006, 0x0000004B, 0x0000004A, 0x00050084,
+    0x00000006, 0x0000004D, 0x0000004B, 0x0000003C, 0x00050082, 0x00000006,
+    0x0000004E, 0x00000044, 0x0000004D, 0x00050084, 0x00000006, 0x00000053,
+    0x00000040, 0x00000033, 0x0004007C, 0x00000016, 0x00000054, 0x00000053,
+    0x00050084, 0x00000006, 0x00000057, 0x0000003C, 0x00000033, 0x0004007C,
+    0x00000016, 0x00000058, 0x00000057, 0x000500B0, 0x0000002F, 0x00000059,
+    0x00000054, 0x00000058, 0x000600A9, 0x00000016, 0x0000005A, 0x00000059,
+    0x0000001C, 0x00000017, 0x000500AA, 0x0000002F, 0x0000005D, 0x0000004E,
+    0x0000002E, 0x000600A9, 0x00000016, 0x0000005E, 0x0000005D, 0x0000001C,
+    0x00000017, 0x000500AA, 0x0000002F, 0x00000061, 0x0000004E, 0x0000003C,
+    0x000600A9, 0x00000016, 0x00000062, 0x00000061, 0x0000001C, 0x00000017,
+    0x000500C5, 0x00000016, 0x00000063, 0x0000005E, 0x00000062, 0x0004007E,
+    0x00000006, 0x00000066, 0x0000003C, 0x000500AA, 0x0000002F, 0x00000067,
+    0x0000004E, 0x00000066, 0x000600A9, 0x00000016, 0x00000068, 0x00000067,
+    0x0000001C, 0x00000017, 0x000500C5, 0x00000016, 0x00000069, 0x00000063,
+    0x00000068, 0x00050041, 0x0000006C, 0x0000006D, 0x0000000D, 0x00000017,
+    0x0004003D, 0x0000000A, 0x0000006E, 0x0000006D, 0x000500C7, 0x00000016,
+    0x00000071, 0x0000005A, 0x00000069, 0x00040070, 0x0000000A, 0x00000072,
+    0x00000071, 0x00050041, 0x0000006C, 0x00000073, 0x0000000D, 0x0000001C,
+    0x0004003D, 0x0000000A, 0x00000074, 0x00000073, 0x00070050, 0x0000000B,
+    0x00000076, 0x0000006E, 0x00000072, 0x00000074, 0x00000075, 0x0003003E,
+    0x0000006B, 0x00000076, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
@@ -7270,6 +7518,8 @@ const cases = [_]Case{
     .{ .name = "shipped twice", .run = Cases.shipped("texture", "shipped twice", true, quad_at) },
     .{ .name = "shipped scratch", .run = Cases.shipped("as it is", "shipped scratch", false, clockwise_at) },
     .{ .name = "shipped trees", .run = Cases.shipped("as it is", "shipped trees", false, clockwise_at) },
+    .{ .name = "shipped division", .run = Cases.shipped("as it is", "shipped division", false, clockwise_at) },
+    .{ .name = "shipped modulus", .run = Cases.shipped("as it is", "shipped modulus", false, clockwise_at) },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },

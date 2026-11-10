@@ -2554,6 +2554,27 @@ Of 6 mutations of the port, 5 fail the tests. The sixth gives the scalar fabs a 
 
 On the CM5, FacetBoth's 265 cases are each as they were at 1.185. Its new case is glslc's sample of the cube at the direction with its first and third negated, the nearest, on the +z instance and so of the -z face: 0 of 230400 pixels apart. FacetProbe is 890 of 890.
 
+**Then the 32-bit integers' divisions and remainders**, facet.library 1.187.
+
+nir_lower_idiv, not ported at 1.165, now is (vir.c:2019-2022; nir_lower_idiv.c:32-94). OpUDiv, OpSDiv, OpUMod, OpSRem and OpSMod are vtn's udiv, idiv, umod, irem and imod (vtn_alu.c:304-310), a float each once nir_lower_alu_to_scalar has run (v3dv_pipeline.c:404):
+- an unsigned one is emit_udiv's: the SFU's RECIP of the divisor's u2f32, made an integer of 2^32 less 512 times it; one Newton step of it; the quotient the high word of the dividend times it; and two steps that each take the divisor off the remainder where it is still as large;
+- a signed one is emit_idiv's, of the magnitudes: the quotient negated where the operands' XOR is negative, the remainder where the dividend is, and an imod's divisor added where the signs differ and the remainder is not 0;
+- each umul_high is nir_lower_alu's (`lower_mul_high`, v3dv_pipeline.c:201; nir_lower_alu.c:119-158): Hacker's Delight's four 16-bit products of the words' halves, each 32-bit product an UMUL24 and a MULTOP.
+
+The lowering's constants are made once for all the floats of an instruction, as nir_opt_cse makes NIR's one. A lowering is 52 to 65 steps: the tables of 128 hold a vector of two divisions, not one of four, and raising most_steps is a step of its own. A divisor that is a constant, or of whose floats one is, is nir_opt_idiv_const's first (vir.c:2018), which is not ported: refused.
+
+Results:
+- glslc_udiv, _idiv, _umod and _imod, and an OpSRem of glslc_imod's, are each ten 32-bit products and one RECIP, worked out on the host for every pair of -100 to 100, or 0 to 100.
+- glslc_udiv_swapped and glslc_udiv_vector, two divisions each, are worked out the same.
+- glslc_idiv_constant and glslc_udiv_part are refused.
+- The lowering of two words is worked out for 19 values each way, of every sign and size, the most negative by -1 wrapping.
+
+Of 58 mutations of the port, 57 fail the tests. The 58th makes a lone float's result a construct of one: the same program for glslc_udiv, _idiv and _imod.
+
+On the CM5, FacetBoth's 266 cases are each as they were at 1.186. Its two new cases are glslc's unsigned division and signed modulus of two integers of the colour that span the word, each program checking its result against its own operands: 8 of 230400 pixels apart, the 8 at the triangles' edge every case of their geometry has. FacetProbe is 890 of 890.
+
+The cases check themselves because the two devices' interpolation can make an integer of the colour one apart where a float crosses one. Compared byte for byte, the quotient was 349 pixels apart, each device's right for its own operands: at 120,69 the cores read 210 and 41, the V3D 210 and 40.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim
