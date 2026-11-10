@@ -6551,4 +6551,28 @@ pub const LIBRARY_VERSION = 1;
 /// functions made wrong on purpose they are 46,565 apart each. The other
 /// 284 cases are each as they were at 1.195, and FacetProbe passes its
 /// 890 checks.
-pub const LIBRARY_REVISION = 196;
+/// 197: **GLSL.std.450's bit finds (docs/facet-vulkan10.md item 59).**
+/// FindILsb, FindSMsb and FindUMsb are vtn's find_lsb, ifind_msb and
+/// ufind_msb (vtn_glsl450.c:178-180), lowered as the V3D's options have
+/// them (lower_find_lsb, lower_ifind_msb, lower_ufind_msb, has_uclz;
+/// v3dv_pipeline.c:194-211): 31 - uclz of x & -x, of x ^ (x >> 31) and
+/// of x (nir_opt_algebraic.py:2717-2738), each -1 for a word with no bit
+/// to find. uclz is a new integer step, the V3D's CLZ
+/// (nir_to_vir.c:1696-1697), folded where its word is a constant.
+///
+/// glslc_bit_finds, of 334 words, answers for eight colours exactly what
+/// GLSL's definitions of the finds answer, among them words of bit 31,
+/// of none, and of none turned, which is -1. The V3D's tests are 339,
+/// one new. Of 16 mutations, 14 fail them; the other two change nothing:
+/// FindSMsb's shift made 30, which leaves every word's highest bit unlike
+/// the sign where it was, and a uclz counted as reading step 0, which is
+/// read anyway.
+///
+/// On the CM5 FacetBoth 1.61's "shipped bit finds" is 56 of 230400
+/// pixels apart: the 8 at the triangles' edge, and 48 where, by every
+/// sign, the colour times 31 crosses a whole number between the two
+/// devices' interpolations; with 15 places they are 30. With the cores'
+/// function made wrong on purpose it is 46,565 apart. The other 287
+/// cases are each as they were at 1.196, and FacetProbe passes its 890
+/// checks.
+pub const LIBRARY_REVISION = 197;
