@@ -56,3 +56,16 @@ pub const Connection = connection.Connection;
 /// allocates this much through exec's `NewStackRun` and does the work
 /// there.
 pub const stack_bytes: u32 = 48 * 1024;
+
+// The files' own tests, for the module's test run; those that need
+// crypto.library are in tests/.
+test {
+    _ = commands;
+    _ = names;
+    _ = place;
+    _ = rpc;
+    _ = sharefile;
+    _ = shares;
+    _ = spnego;
+    _ = wire;
+}

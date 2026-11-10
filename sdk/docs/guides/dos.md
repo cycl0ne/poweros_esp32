@@ -474,6 +474,12 @@ text, `?` one character, `(a|b)`, `~`, `[a-z]`; see the
 [utility guide](utility.md#patterns)), matched without regard to case, one
 directory level after another: `SYS:c/#?`, `RAM:#?/#?.txt`.
 
+A pattern is read a character at a time, a byte that is no UTF-8 as its
+Latin-1 character, so a pattern written in Latin-1 finds a name in UTF-8
+and the other way round. A name without wildcards comes back as the
+pattern wrote it - in Latin-1 for a pattern in Latin-1 - and a name a
+wildcard found as the handler gives it.
+
 The `AnchorPath` is the search's state, cleared before `MatchFirst`
 apart from three fields. `break_bits` are signals that stop the search
 with `ERROR_BREAK`. `strlen` is the size of a buffer that follows the

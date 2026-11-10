@@ -13,24 +13,25 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// fn ParsePatternNoCase(ub: *UtilityBase, source: [*:0]const u8, dest: [*]u8, size: usize) isize
 /// ```
 ///
-/// SINCE: 1.0. LVO -204.
+/// SINCE: 1.0, UTF-8 since 1.7. LVO -204.
 ///
 /// INPUTS:
-/// - `source` - the pattern.
+/// - `source` - the pattern, in UTF-8.
 /// - `dest` - where the tokens go.
 /// - `size` - the bytes at `dest`. `sdk.utility.parsedSize(len)` for a
-///   pattern of `len` characters is always enough.
+///   pattern of `len` bytes is always enough.
 ///
 /// RESULT:
 /// 1 if the pattern has wildcards, 0 if it is a plain name (the escapes
 /// resolved), -1 on failure. On failure IoErr is `ERROR_BAD_TEMPLATE` for
 /// a pattern that does not parse - unbalanced groups, a class without its
-/// `]`, a byte 0x80-0x8B - or `ERROR_LINE_TOO_LONG` when `dest` is too
-/// small, and `dest` holds an empty pattern.
+/// `]` - or `ERROR_LINE_TOO_LONG` when `dest` is too small, and `dest`
+/// holds an empty pattern.
 ///
 /// BEHAVIOR:
-/// `ParsePattern` with every character and class of the pattern put
-/// through `ToUpper`, which is what `MatchPatternNoCase` compares against.
+/// `ParsePattern` with every character and class of the pattern folded
+/// by Unicode's simple case folding - the same whatever language is set,
+/// what names are compared by everywhere.
 ///
 /// The syntax:
 ///

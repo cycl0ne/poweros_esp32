@@ -17,7 +17,7 @@ const findFirst = _lock.findFirst;
 /// fn MatchFirst(db: *DosBase, pattern: [*:0]const u8, anchor: *dos.AnchorPath) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -336.
+/// SINCE: 1.0, names by character since 1.20. LVO -336.
 ///
 /// INPUTS:
 /// - `pattern` - the pattern, in utility.library's syntax after a literal
@@ -40,6 +40,13 @@ const findFirst = _lock.findFirst;
 /// has a wildcard. "*" and the name of a handler that isn't a file system
 /// (NIL:, CON:) give one entry, the name itself. An error other than
 /// ERROR_BUFFER_OVERFLOW frees the chain.
+///
+/// Names are compared without case, character by character, a byte that
+/// is no UTF-8 read as its Latin-1 character: a pattern in Latin-1 finds a
+/// name in UTF-8 and the other way round. A name without wildcards comes
+/// back in ap_Info and the full path as the pattern wrote it - in Latin-1
+/// for a pattern written in Latin-1 - a name a wildcard found as the
+/// handler gives it.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the handlers' answers.

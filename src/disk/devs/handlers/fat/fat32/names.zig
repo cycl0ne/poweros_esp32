@@ -42,20 +42,20 @@ pub const short_max: usize = 12;
 /// The name an entry's eleven bytes spell, with its case flags applied:
 /// the base with its trailing spaces cut, then a dot and the extension if
 /// it has one.
-pub fn shortName(ub: *UtilityBase, entry: []const u8, into: *[short_max]u8) []const u8 {
+pub fn shortName(_: *UtilityBase, entry: []const u8, into: *[short_max]u8) []const u8 {
     const case = entry[fat.ent_case];
     var len: usize = 0;
     for (0..8) |at| {
         var char = entry[at];
         if (at == 0) char = _fat.firstStored(char);
-        into[len] = if (case & case_lower_base != 0) ub.ToLower(char) else char;
+        into[len] = if (case & case_lower_base != 0) _fat.lower(char) else char;
         len += 1;
     }
     while (len > 0 and into[len - 1] == ' ') len -= 1;
     const base_len = len;
     for (8..11) |at| {
         const char = entry[at];
-        into[len + 1 + at - 8] = if (case & case_lower_ext != 0) ub.ToLower(char) else char;
+        into[len + 1 + at - 8] = if (case & case_lower_ext != 0) _fat.lower(char) else char;
     }
     var ext_len: usize = 3;
     while (ext_len > 0 and entry[8 + ext_len - 1] == ' ') ext_len -= 1;
@@ -93,7 +93,7 @@ fn caseOf(part: []const u8) Case {
 /// or null if it needs a long name.
 pub const Short = struct { bytes: [fat.ent_name_bytes]u8, case: u8 };
 
-pub fn asShort(ub: *UtilityBase, name: []const u8) ?Short {
+pub fn asShort(_: *UtilityBase, name: []const u8) ?Short {
     var dot: ?usize = null;
     for (name, 0..) |char, at| if (char == '.') {
         // A second dot is not a name eight and three can hold.
@@ -111,8 +111,8 @@ pub fn asShort(ub: *UtilityBase, name: []const u8) ?Short {
     if (base_case == .mixed or ext_case == .mixed) return null;
 
     var short: Short = .{ .bytes = @splat(' '), .case = 0 };
-    for (base, 0..) |char, at| short.bytes[at] = ub.ToUpper(char);
-    for (ext, 0..) |char, at| short.bytes[8 + at] = ub.ToUpper(char);
+    for (base, 0..) |char, at| short.bytes[at] = _fat.upper(char);
+    for (ext, 0..) |char, at| short.bytes[8 + at] = _fat.upper(char);
     short.bytes[0] = _fat.firstToStore(short.bytes[0]);
     if (base_case == .lower) short.case |= case_lower_base;
     if (ext_case == .lower) short.case |= case_lower_ext;
@@ -128,7 +128,7 @@ pub const Basis = struct {
     ext: [3]u8 = @splat(' '),
 };
 
-pub fn basisOf(ub: *UtilityBase, name: []const u8) Basis {
+pub fn basisOf(_: *UtilityBase, name: []const u8) Basis {
     var basis: Basis = .{};
     var start: usize = 0;
     while (start < name.len and (name[start] == '.' or name[start] == ' ')) start += 1;
@@ -146,7 +146,7 @@ pub fn basisOf(ub: *UtilityBase, name: []const u8) Basis {
     for (name[start..stem_end]) |char| {
         if (char == ' ' or char == '.') continue;
         if (basis.base_len == 8) break;
-        basis.base[basis.base_len] = if (shortChar(char)) ub.ToUpper(char) else '_';
+        basis.base[basis.base_len] = if (shortChar(char)) _fat.upper(char) else '_';
         basis.base_len += 1;
     }
     if (basis.base_len == 0) {
@@ -158,7 +158,7 @@ pub fn basisOf(ub: *UtilityBase, name: []const u8) Basis {
         for (name[stem_end + 1 ..]) |char| {
             if (char == ' ') continue;
             if (ext_len == 3) break;
-            basis.ext[ext_len] = if (shortChar(char)) ub.ToUpper(char) else '_';
+            basis.ext[ext_len] = if (shortChar(char)) _fat.upper(char) else '_';
             ext_len += 1;
         }
     }

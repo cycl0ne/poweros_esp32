@@ -102,7 +102,7 @@ pub fn Utf8ToLatin1(_: *UtilityBase, conversion: ?*Utf8Conversion, from: [*]cons
             const position = at + index;
             byte.* = if (position < held_length) held[position] else from[position - held_length];
         }
-        var step = _text.decode(window[0..window_length]);
+        var step = utility.utf8.decode(window[0..window_length]);
         if (step.kind == .short) {
             // More of the character may come with the next piece.
             if (pieces and !ending) {

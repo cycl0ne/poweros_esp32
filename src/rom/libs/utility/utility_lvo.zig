@@ -261,10 +261,10 @@ fn lvoStricmp(ub: *UtilityBase, string1: [*:0]const u8, string2: [*:0]const u8) 
 fn lvoStrnicmp(ub: *UtilityBase, string1: [*:0]const u8, string2: [*:0]const u8, length: i32) callconv(.c) i32 {
     return Strnicmp(ub, string1, string2, length);
 }
-fn lvoToUpper(ub: *UtilityBase, character: u32) callconv(.c) u8 {
+fn lvoToUpper(ub: *UtilityBase, character: u32) callconv(.c) u32 {
     return ToUpper(ub, character);
 }
-fn lvoToLower(ub: *UtilityBase, character: u32) callconv(.c) u8 {
+fn lvoToLower(ub: *UtilityBase, character: u32) callconv(.c) u32 {
     return ToLower(ub, character);
 }
 fn lvoApplyTagChanges(ub: *UtilityBase, list: ?[*]TagItem, change_list: ?[*]const TagItem) callconv(.c) void {

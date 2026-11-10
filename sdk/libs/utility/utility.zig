@@ -10,7 +10,9 @@ pub const pack = @import("pack.zig");
 pub const pattern = @import("pattern.zig");
 pub const setting = @import("setting.zig");
 pub const text = @import("text.zig");
+pub const unicode = @import("unicode.zig");
 pub const url = @import("url.zig");
+pub const utf8 = @import("utf8.zig");
 
 /// The name to open it by.
 pub const UTILITYNAME = "utility.library";
@@ -72,7 +74,7 @@ pub const P_NOTCLASS = pattern.P_NOTCLASS;
 pub const P_CLASS = pattern.P_CLASS;
 pub const P_REPBEG = pattern.P_REPBEG;
 pub const P_REPEND = pattern.P_REPEND;
-pub const P_STOP = pattern.P_STOP;
+pub const isToken = pattern.isToken;
 pub const parsedSize = pattern.parsedSize;
 
 pub const NamedObject = name.NamedObject;

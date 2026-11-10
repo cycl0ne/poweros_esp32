@@ -371,12 +371,11 @@ pub fn lastStamp() Stamp {
 pub const fib_name_max: usize = dos.name_max;
 
 /// Whether two names are the same name: compared without regard to case,
-/// over Latin-1, as dos compares them, through utility.library so a name
-/// is cased here exactly as everywhere else.
-pub fn same(ub: *UtilityBase, one: []const u8, other: []const u8) bool {
-    if (one.len != other.len) return false;
-    for (one, other) |mine, theirs| if (ub.ToUpper(mine) != ub.ToUpper(theirs)) return false;
-    return true;
+/// a character at a time by Unicode's simple folding - the compare every
+/// file system and utility.library's `Stricmp` make (sdk.utility.unicode),
+/// so a name is cased here exactly as everywhere else.
+pub fn same(_: *UtilityBase, one: []const u8, other: []const u8) bool {
+    return sdk.utility.unicode.equalFolded(one, other);
 }
 
 /// Whether a watch's request is for this volume: the volume part of its
@@ -450,8 +449,13 @@ pub fn firstToStore(byte: u8) u8 {
     return if (byte == entry_erased) entry_escaped else byte;
 }
 
-/// A character upper-cased, for the case rules of a name. Only the
-/// letters this system can express in one byte.
+/// A character of a short name upper-cased, for the case rules of a name:
+/// ASCII's letters, the only ones a short name's case flags cover.
 pub fn upper(char: u8) u8 {
     return if (char >= 'a' and char <= 'z') char - ('a' - 'A') else char;
+}
+
+/// A character of a short name lower-cased, as its case flags ask.
+pub fn lower(char: u8) u8 {
+    return if (char >= 'A' and char <= 'Z') char + ('a' - 'A') else char;
 }

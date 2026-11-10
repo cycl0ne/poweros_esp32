@@ -12,11 +12,11 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// fn MatchPattern(ub: *UtilityBase, pattern: [*:0]const u8, string: [*:0]const u8) bool
 /// ```
 ///
-/// SINCE: 1.0. LVO -208.
+/// SINCE: 1.0, UTF-8 since 1.7. LVO -208.
 ///
 /// INPUTS:
 /// - `pattern` - the tokens from `ParsePattern`, not the pattern's text.
-/// - `string` - the string to match.
+/// - `string` - the string to match, in UTF-8.
 ///
 /// RESULT:
 /// True if the whole string matches. False if it does not, and also on
@@ -25,11 +25,15 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// memory for them.
 ///
 /// BEHAVIOR:
+/// The string is matched a character at a time, not a byte at a time; a
+/// byte of it that is no UTF-8 is the character the system reads it as
+/// (sdk.utility.utf8).
+///
 /// Every way the pattern can match is tried, backtracking on a stack of
 /// frames rather than the machine's: 16 on the caller's stack, then chunks
 /// of 64 from `AllocVec`, all given back before it returns. A repeated
 /// group takes at most three frames a character, so a name of 255
-/// characters always fits.
+/// bytes always fits.
 ///
 /// CONTEXT:
 /// - Waits: no.

@@ -6,7 +6,6 @@ const sdk = @import("sdk");
 const utility = sdk.utility;
 
 const UtilityBase = @import("../utility.zig").UtilityBase;
-const _text = @import("_text.zig");
 
 /// Says whether a text is UTF-8, and whether every character of it is
 /// one Latin-1 has.
@@ -67,7 +66,7 @@ pub fn Utf8Kind(_: *UtilityBase, bytes: [*]const u8, length: usize) u32 {
     if (text.len >= 3 and text[0] == 0xEF and text[1] == 0xBB and text[2] == 0xBF) at = 3;
     var kind = utility.text.UTF8KIND_ASCII;
     while (at < text.len) {
-        const step = _text.decode(text[at..]);
+        const step = utility.utf8.decode(text[at..]);
         if (step.kind != .char) return utility.text.UTF8KIND_NONE;
         if (step.char > 0xFF) {
             kind = utility.text.UTF8KIND_WIDE;

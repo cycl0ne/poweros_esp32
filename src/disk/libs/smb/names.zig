@@ -13,7 +13,10 @@
 //! stand-in opens what it stands for: a path the server does not know
 //! that has a name of a stand-in's shape in it is looked for again, each
 //! such name compared with the stand-ins of the entries in its directory
-//! (`fs.zig`).
+//! (`fs.zig`). A name dos hands over is read as text is read
+//! (sdk.utility.utf8): UTF-8 as its characters, a byte that is no UTF-8
+//! as its Latin-1 character, so a Latin-1 name and the same name in UTF-8
+//! name one file.
 //!
 //! **A path** is the share's: the names from the share's root, `\`
 //! between them, in UTF-16LE. A dos path is taken from the lock it is
@@ -25,6 +28,7 @@
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
+const utf8 = sdk.utility.utf8;
 
 /// The longest name dos is given, and the longest path a lock holds, in
 /// UTF-16 units.
@@ -145,11 +149,11 @@ pub fn upper(char: u8) u8 {
     };
 }
 
-/// Whether two dos names are the same name, case aside.
+/// Whether two dos names are the same name, case aside: by Unicode's
+/// simple case folding, as every name is compared, a byte that is no UTF-8
+/// read as its Latin-1 character.
 pub fn same(one: []const u8, other: []const u8) bool {
-    if (one.len != other.len) return false;
-    for (one, other) |mine, theirs| if (upper(mine) != upper(theirs)) return false;
-    return true;
+    return sdk.utility.unicode.equalFolded(one, other);
 }
 
 /// Whether a server's name (UTF-16LE) is a stand-in's original: one that
@@ -185,7 +189,10 @@ pub const Path = struct {
         path.len = from.len;
     }
 
-    /// A name added at the end, Latin-1 widened.
+    /// A name added at the end, in UTF-16LE: its characters read as text
+    /// is read (sdk.utility.utf8), UTF-8 as its characters and a byte that
+    /// is no UTF-8 as its Latin-1 character, one past U+FFFF as its
+    /// surrogate pair. Never more than two bytes for each of the name's.
     pub fn push(path: *Path, name: []const u8) Error!void {
         const separator: usize = if (path.len > 0) 2 else 0;
         if (path.len + separator + 2 * name.len > path.bytes.len) return error.InvalidName;
@@ -194,11 +201,21 @@ pub const Path = struct {
             path.bytes[path.len + 1] = 0;
             path.len += 2;
         }
-        for (name) |char| {
-            path.bytes[path.len] = char;
-            path.bytes[path.len + 1] = 0;
-            path.len += 2;
+        var at: usize = 0;
+        while (at < name.len) {
+            const char = utf8.next(name, &at);
+            if (char > 0xFFFF) {
+                const above = char - 0x10000;
+                path.putUnit(@intCast(0xD800 + (above >> 10)));
+                path.putUnit(@intCast(0xDC00 + (above & 0x3FF)));
+            } else path.putUnit(@intCast(char));
         }
+    }
+
+    fn putUnit(path: *Path, unit: u16) void {
+        path.bytes[path.len] = @truncate(unit);
+        path.bytes[path.len + 1] = @intCast(unit >> 8);
+        path.len += 2;
     }
 
     /// UTF-16LE bytes added at the end, as they are.
@@ -396,6 +413,19 @@ test "a name in a path replaced, longer and shorter; parents and last names" {
     try testing.expectEqualSlices(u8, utf16("x"), lastName(utf16("x")));
     try testing.expect(samePath(utf16("Ab\\ä"), utf16("aB\\Ä")));
     try testing.expect(!samePath(utf16("ab"), utf16("abc")));
+}
+
+test "a dos name pushed: UTF-8 and Latin-1 alike, past U+FFFF as a pair" {
+    var path: Path = .{};
+    try path.push("Gr\xFCn");
+    try testing.expectEqualSlices(u8, utf16("Grün"), path.slice());
+    path = .{};
+    try path.push("Grün");
+    try testing.expectEqualSlices(u8, utf16("Grün"), path.slice());
+    try path.push("\u{1F600}€");
+    try testing.expectEqualSlices(u8, utf16("Grün\\\u{1F600}€"), path.slice());
+    try testing.expect(same("Gr\xFCn", "GRÜN"));
+    try testing.expect(!same("Grün", "Grun"));
 }
 
 test "a path within a directory, and one added to" {

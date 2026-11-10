@@ -1,20 +1,29 @@
 // SPDX-License-Identifier: MPL-2.0
-//! foldgen <CaseFolding.txt> <out.zig>: writes posfs's case fold table
-//! (sdk/libs/dos/posfs/fold1.zig) from the Unicode Character Database's
-//! CaseFolding.txt.
+//! foldgen: the system's character tables from the Unicode Character
+//! Database, which scripts/fetch-unicode.sh fetches into
+//! toolchain/unicode/<version>. Run by hand; the tables it writes are
+//! committed, and the build never runs it.
 //!
-//! The table is simple case folding: the file's C and S lines, one code
-//! point to one, without the full (F) and the Turkic (T) ones. It is part
-//! of the format - a name's hash is the hash of its folded form - so a
-//! table once written is never written again: a later Unicode version
-//! becomes a table of its own (`fold2.zig`), and a directory says which it
-//! was made with. This tool is run once per table, by hand; the build
-//! does not run it.
+//!   foldgen posfs <CaseFolding.txt> <out.zig>
+//!   foldgen case <CaseFolding.txt> <UnicodeData.txt> <out.zig>
 //!
-//! The mappings come in runs: code points one or two apart that all move
-//! by the same amount (A-Z by +32; Ā, Ă, Ą... by +1 every second one).
-//! The table is those runs, 210 for Unicode 16 against 1484 mappings, each
-//! one packed into a u64, found by a binary search.
+//! `posfs` writes posfs's case fold table (sdk/libs/dos/posfs/fold1.zig):
+//! simple case folding, the file's C and S lines, one code point to one,
+//! without the full (F) and the Turkic (T) ones. It is part of posfs's
+//! format - a name's hash is the hash of its folded form - so a table once
+//! written is never written again: a later Unicode version becomes a table
+//! of its own (`fold2.zig`), and a directory says which it was made with.
+//!
+//! `case` writes the system's case tables (sdk/libs/utility/unicode_case.zig),
+//! which utility.library's case calls and every name compare use: the same
+//! simple folding, and the simple upper and lower case - UnicodeData.txt's
+//! thirteenth and fourteenth fields. These follow the Unicode version the
+//! system is at, and are written again for a new one.
+//!
+//! A table is runs: code points one or two apart that all move by the same
+//! amount (A-Z by +32; Ā, Ă, Ą... by +1 every second one), each run packed
+//! into a u64 and found by a binary search - 210 runs for Unicode 16's 1484
+//! foldings.
 
 const std = @import("std");
 const mem = std.mem;
@@ -28,22 +37,105 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(1);
 }
 
+const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case <CaseFolding.txt> <UnicodeData.txt> <out.zig>";
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len != 3) fatal("usage: foldgen <CaseFolding.txt> <out.zig>", .{});
+    if (args.len < 2) fatal(usage, .{});
     const cwd = Io.Dir.cwd();
-    const text = try cwd.readFileAlloc(io, args[1], arena, .limited(4 * 1024 * 1024));
+    const limit: Io.Limit = .limited(8 * 1024 * 1024);
+    var out: std.ArrayList(u8) = .empty;
 
-    var version: []const u8 = "";
-    var mappings: std.ArrayList(Mapping) = .empty;
-    var lines = mem.splitScalar(u8, text, '\n');
+    if (mem.eql(u8, args[1], "posfs")) {
+        if (args.len != 4) fatal(usage, .{});
+        const folding = try cwd.readFileAlloc(io, args[2], arena, limit);
+        const version = try versionOf(folding, args[2]);
+        const mappings = try foldings(arena, folding);
+        const runs = try runsOf(arena, mappings);
+        try out.print(arena,
+            \\// SPDX-License-Identifier: MIT
+            \\//! posfs's case fold 1: Unicode {s} simple case folding (the C and S
+            \\//! lines of CaseFolding.txt), as runs of code points that fold by the
+            \\//! same amount. Written by tools/foldgen and frozen: it is part of the
+            \\//! format, and a later table is a file of its own.
+            \\//!
+            \\//! {d} mappings in {d} runs, sorted by their first code point.
+            \\
+            \\/// The Unicode version the table is from.
+            \\pub const unicode_version = "{s}";
+            \\
+            \\/// Code points `first`, `first + stride`, ... (`count` of them) each
+            \\/// fold to themselves plus `delta`.
+            \\
+        , .{ version, mappings.len, runs.len, version });
+        try writeRunType(arena, &out);
+        try out.appendSlice(arena, "\n");
+        try writeRuns(arena, &out, "runs", runs);
+        try cwd.writeFile(io, .{ .sub_path = args[3], .data = out.items });
+        return;
+    }
+
+    if (mem.eql(u8, args[1], "case")) {
+        if (args.len != 5) fatal(usage, .{});
+        const folding = try cwd.readFileAlloc(io, args[2], arena, limit);
+        const data = try cwd.readFileAlloc(io, args[3], arena, limit);
+        const version = try versionOf(folding, args[2]);
+        const fold = try foldings(arena, folding);
+        const upper = try caseMappings(arena, data, 12);
+        const lower = try caseMappings(arena, data, 13);
+        const fold_runs = try runsOf(arena, fold);
+        const upper_runs = try runsOf(arena, upper);
+        const lower_runs = try runsOf(arena, lower);
+        try out.print(arena,
+            \\// SPDX-License-Identifier: MIT
+            \\//! The system's case tables, from Unicode {s}: simple case folding (the
+            \\//! C and S lines of CaseFolding.txt) and simple upper and lower case
+            \\//! (UnicodeData.txt's thirteenth and fourteenth fields), each as runs
+            \\//! of code points that move by the same amount, sorted by their first
+            \\//! code point. Written by tools/foldgen (`foldgen case`) from the files
+            \\//! scripts/fetch-unicode.sh fetches; never edited by hand.
+            \\//!
+            \\//! Folding: {d} mappings in {d} runs. Upper case: {d} in {d}. Lower
+            \\//! case: {d} in {d}.
+            \\
+            \\/// The Unicode version the tables are from.
+            \\pub const unicode_version = "{s}";
+            \\
+            \\/// Code points `first`, `first + stride`, ... (`count` of them) each
+            \\/// map to themselves plus `delta`.
+            \\
+        , .{ version, fold.len, fold_runs.len, upper.len, upper_runs.len, lower.len, lower_runs.len, version });
+        try writeRunType(arena, &out);
+        try out.appendSlice(arena, "\n/// What a character folds to, for comparing without regard to case.\n");
+        try writeRuns(arena, &out, "fold", fold_runs);
+        try out.appendSlice(arena, "\n/// A character's upper case.\n");
+        try writeRuns(arena, &out, "upper", upper_runs);
+        try out.appendSlice(arena, "\n/// A character's lower case.\n");
+        try writeRuns(arena, &out, "lower", lower_runs);
+        try cwd.writeFile(io, .{ .sub_path = args[4], .data = out.items });
+        return;
+    }
+    fatal(usage, .{});
+}
+
+/// The version CaseFolding.txt's first line names.
+fn versionOf(folding: []const u8, path: []const u8) ![]const u8 {
+    var lines = mem.splitScalar(u8, folding, '\n');
     while (lines.next()) |raw| {
         const line = mem.trim(u8, raw, " \t\r");
-        if (version.len == 0 and mem.startsWith(u8, line, "# CaseFolding-")) {
-            version = mem.trim(u8, line["# CaseFolding-".len..], " .txt");
-        }
+        if (mem.startsWith(u8, line, "# CaseFolding-")) return mem.trim(u8, line["# CaseFolding-".len..], " .txt");
+    }
+    fatal("{s}: no CaseFolding version line", .{path});
+}
+
+/// CaseFolding.txt's C and S lines, sorted.
+fn foldings(arena: mem.Allocator, folding: []const u8) ![]Mapping {
+    var mappings: std.ArrayList(Mapping) = .empty;
+    var lines = mem.splitScalar(u8, folding, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw, " \t\r");
         const data = mem.trim(u8, line[0 .. mem.indexOfScalar(u8, line, '#') orelse line.len], " \t");
         if (data.len == 0) continue;
         var fields = mem.splitScalar(u8, data, ';');
@@ -56,15 +148,49 @@ pub fn main(init: std.process.Init) !void {
             .to = try std.fmt.parseInt(u21, to, 16),
         });
     }
-    if (version.len == 0) fatal("{s}: no CaseFolding version line", .{args[1]});
-    std.mem.sort(Mapping, mappings.items, {}, struct {
+    sortMappings(mappings.items);
+    return mappings.items;
+}
+
+/// UnicodeData.txt's simple case mapping in field `field` (12 upper case,
+/// 13 lower case), for every character that has one, sorted.
+fn caseMappings(arena: mem.Allocator, data: []const u8, field: usize) ![]Mapping {
+    var mappings: std.ArrayList(Mapping) = .empty;
+    var lines = mem.splitScalar(u8, data, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw, " \t\r");
+        if (line.len == 0) continue;
+        var fields = mem.splitScalar(u8, line, ';');
+        const from = fields.next() orelse continue;
+        var index: usize = 1;
+        var value: []const u8 = "";
+        while (fields.next()) |each| : (index += 1) {
+            if (index == field) {
+                value = each;
+                break;
+            }
+        }
+        if (value.len == 0) continue;
+        try mappings.append(arena, .{
+            .from = try std.fmt.parseInt(u21, from, 16),
+            .to = try std.fmt.parseInt(u21, value, 16),
+        });
+    }
+    sortMappings(mappings.items);
+    return mappings.items;
+}
+
+fn sortMappings(mappings: []Mapping) void {
+    std.mem.sort(Mapping, mappings, {}, struct {
         fn lessThan(_: void, a: Mapping, b: Mapping) bool {
             return a.from < b.from;
         }
     }.lessThan);
+}
 
+/// The mappings as runs.
+fn runsOf(arena: mem.Allocator, all: []const Mapping) ![]Run {
     var runs: std.ArrayList(Run) = .empty;
-    const all = mappings.items;
     var at: usize = 0;
     while (at < all.len) {
         const delta: i32 = @as(i32, all[at].to) - @as(i32, all[at].from);
@@ -86,37 +212,26 @@ pub fn main(init: std.process.Init) !void {
         try runs.append(arena, .{ .first = all[at].from, .count = @intCast(count), .stride = @intCast(stride), .delta = delta });
         at += count;
     }
+    return runs.items;
+}
 
-    var out: std.ArrayList(u8) = .empty;
-    const writer = &out;
-    try writer.print(arena,
-        \\// SPDX-License-Identifier: MIT
-        \\//! posfs's case fold 1: Unicode {s} simple case folding (the C and S
-        \\//! lines of CaseFolding.txt), as runs of code points that fold by the
-        \\//! same amount. Written by tools/foldgen and frozen: it is part of the
-        \\//! format, and a later table is a file of its own.
-        \\//!
-        \\//! {d} mappings in {d} runs, sorted by their first code point.
-        \\
-        \\/// The Unicode version the table is from.
-        \\pub const unicode_version = "{s}";
-        \\
-        \\/// Code points `first`, `first + stride`, ... (`count` of them) each
-        \\/// fold to themselves plus `delta`.
-        \\pub const Run = packed struct(u64) {{
+fn writeRunType(arena: mem.Allocator, out: *std.ArrayList(u8)) !void {
+    try out.appendSlice(arena,
+        \\pub const Run = packed struct(u64) {
         \\    first: u21,
         \\    count: u8,
         \\    stride: u2,
         \\    delta: i32,
         \\    reserved: u1 = 0,
-        \\}};
+        \\};
         \\
-        \\pub const runs = [_]Run{{
-        \\
-    , .{ version, all.len, runs.items.len, version });
-    for (runs.items) |run| {
-        try writer.print(arena, "    .{{ .first = 0x{X:0>4}, .count = {d}, .stride = {d}, .delta = {d} }},\n", .{ run.first, run.count, run.stride, run.delta });
+    );
+}
+
+fn writeRuns(arena: mem.Allocator, out: *std.ArrayList(u8), name: []const u8, runs: []const Run) !void {
+    try out.print(arena, "pub const {s} = [_]Run{{\n", .{name});
+    for (runs) |run| {
+        try out.print(arena, "    .{{ .first = 0x{X:0>4}, .count = {d}, .stride = {d}, .delta = {d} }},\n", .{ run.first, run.count, run.stride, run.delta });
     }
-    try writer.appendSlice(arena, "};\n");
-    try cwd.writeFile(io, .{ .sub_path = args[2], .data = out.items });
+    try out.appendSlice(arena, "};\n");
 }

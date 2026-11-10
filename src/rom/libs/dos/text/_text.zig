@@ -345,7 +345,7 @@ pub fn initKeys(st: *State) i32 {
         while (true) {
             len -= 1;
             if (len < 0) return 0;
-            var c = keys[0];
+            var c: u32 = keys[0];
             keys += 1;
             if (c == '/') {
                 c = ub.ToUpper(keys[0]);

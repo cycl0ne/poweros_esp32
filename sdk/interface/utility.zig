@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! utility.library's jump table: tag lists, hooks, dates, 32- and 64-bit
-//! multiplication and division, Latin-1 case, pack tables, named objects,
+//! multiplication and division, case, pack tables, named objects,
 //! unique IDs, pattern matching, strings, alignment, lines of settings,
 //! the zone the system clock keeps, text between UTF-8 and Latin-1, and
 //! URLs.
@@ -111,8 +111,8 @@ pub const Fn = struct {
     pub const UDivMod32 = *const fn (*UtilityBase, u32, u32) callconv(.c) utility.UDivMod32Result;
     pub const Stricmp = *const fn (*UtilityBase, [*:0]const u8, [*:0]const u8) callconv(.c) i32;
     pub const Strnicmp = *const fn (*UtilityBase, [*:0]const u8, [*:0]const u8, i32) callconv(.c) i32;
-    pub const ToUpper = *const fn (*UtilityBase, u32) callconv(.c) u8;
-    pub const ToLower = *const fn (*UtilityBase, u32) callconv(.c) u8;
+    pub const ToUpper = *const fn (*UtilityBase, u32) callconv(.c) u32;
+    pub const ToLower = *const fn (*UtilityBase, u32) callconv(.c) u32;
     pub const ApplyTagChanges = *const fn (*UtilityBase, ?[*]utility.TagItem, ?[*]const utility.TagItem) callconv(.c) void;
     pub const SMult64 = *const fn (*UtilityBase, i32, i32) callconv(.c) i64;
     pub const UMult64 = *const fn (*UtilityBase, u32, u32) callconv(.c) u64;
@@ -251,11 +251,11 @@ pub const UtilityBase = opaque {
         return libraries.call(self, LVO.Strnicmp, Fn.Strnicmp, .{ string1, string2, length });
     }
 
-    pub fn ToUpper(self: *UtilityBase, character: u32) u8 {
+    pub fn ToUpper(self: *UtilityBase, character: u32) u32 {
         return libraries.call(self, LVO.ToUpper, Fn.ToUpper, .{character});
     }
 
-    pub fn ToLower(self: *UtilityBase, character: u32) u8 {
+    pub fn ToLower(self: *UtilityBase, character: u32) u32 {
         return libraries.call(self, LVO.ToLower, Fn.ToLower, .{character});
     }
 

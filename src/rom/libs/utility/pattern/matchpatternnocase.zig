@@ -14,11 +14,11 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// fn MatchPatternNoCase(ub: *UtilityBase, pattern: [*:0]const u8, string: [*:0]const u8) bool
 /// ```
 ///
-/// SINCE: 1.0. LVO -212.
+/// SINCE: 1.0, UTF-8 since 1.7. LVO -212.
 ///
 /// INPUTS:
-/// - `pattern` - the tokens from `ParsePatternNoCase`.
-/// - `string` - the string to match.
+/// - `pattern` - the tokens from `ParsePatternNoCase` or `ParsePattern`.
+/// - `string` - the string to match, in UTF-8.
 ///
 /// RESULT:
 /// True if the whole string matches. False if it does not, and also on
@@ -27,15 +27,17 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// memory for them.
 ///
 /// BEHAVIOR:
-/// Each character of the string goes through `ToUpper` before it is
-/// compared, so the pattern must be upper case as well, which is what
-/// `ParsePatternNoCase` makes it.
+/// A character of the string matches one of the pattern when the two
+/// fold to the same by Unicode's simple case folding: `Ä` matches `ä`,
+/// `Σ` matches `ς`. Both sides are folded, so the tokens of `ParsePattern`
+/// match without case as well as those of `ParsePatternNoCase`. The
+/// string is matched a character at a time, as `MatchPattern` says.
 ///
 /// Every way the pattern can match is tried, backtracking on a stack of
 /// frames rather than the machine's: 16 on the caller's stack, then chunks
 /// of 64 from `AllocVec`, all given back before it returns. A repeated
 /// group takes at most three frames a character, so a name of 255
-/// characters always fits.
+/// bytes always fits.
 ///
 /// CONTEXT:
 /// - Waits: no.

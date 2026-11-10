@@ -171,7 +171,7 @@ test "utility.library: made from its ROM tag, opened by name, never expunged" {
     defer kexec.deinit();
     try testing.expectEqual(&ub.lib, kexec.OpenLibrary(kexec.SysBase, LIBRARY_NAME, 1).?);
     try testing.expectEqual(@as(u16, 1), ub.lib.version);
-    try testing.expectEqual(@as(u16, 6), ub.lib.revision);
+    try testing.expectEqual(@as(u16, 7), ub.lib.revision);
     try testing.expect(kexec.OpenLibrary(kexec.SysBase, LIBRARY_NAME, 2) == null);
     kexec.CloseLibrary(kexec.SysBase, &ub.lib);
     _ = kexec.RemLibrary(kexec.SysBase, &ub.lib);
@@ -228,8 +228,9 @@ test "hooks, dates, math, strings and GetUniqueID through the jump table" {
 
     try testing.expectEqual(@as(i32, 0), call(ub, "Stricmp", .{ "utility.LIBRARY", "Utility.library" }));
     try testing.expectEqual(@as(i32, 0), call(ub, "Strnicmp", .{ "abc", "xyz", 0 }));
-    try testing.expectEqual(@as(u8, 'Q'), call(ub, "ToUpper", .{'q'}));
-    try testing.expectEqual(@as(u8, 0xE9), call(ub, "ToLower", .{0xC9})); // É
+    try testing.expectEqual(@as(u32, 'Q'), call(ub, "ToUpper", .{'q'}));
+    try testing.expectEqual(@as(u32, 0xE9), call(ub, "ToLower", .{0xC9})); // É
+    try testing.expectEqual(@as(u32, 0x3A9), call(ub, "ToUpper", .{0x3C9})); // ω
 
     const line = "VIEW=NAME PICTURE=\"Sea Side.png\"";
     var scan: sdk.utility.SettingScan = .{ .text = line.ptr, .length = line.len };
@@ -381,19 +382,26 @@ test "ParsePattern: wildcards or not, the tokens, errors, the buffer, WildStar" 
     const Case = struct { source: [:0]const u8, result: isize, tokens: []const u8, nocase: bool = false };
     const cases = [_]Case{
         .{ .source = "abc", .result = 0, .tokens = "abc" },
-        .{ .source = "#?.txt", .result = 1, .tokens = "\x80.txt" },
+        .{ .source = "#?.txt", .result = 1, .tokens = "\xf5.txt" },
         .{ .source = "a'?", .result = 0, .tokens = "a?" }, // escaped: not a wildcard
         .{ .source = "a'b", .result = 0, .tokens = "a'b" },
-        .{ .source = "(a|b)", .result = 1, .tokens = "\x82a\x83b\x84" },
-        .{ .source = "#a", .result = 1, .tokens = "\x89a\x8a" },
-        .{ .source = "#(ab)c", .result = 1, .tokens = "\x89\x82ab\x84\x8ac" },
-        .{ .source = "~a", .result = 1, .tokens = "\x85a\x86" },
+        .{ .source = "(a|b)", .result = 1, .tokens = "\xf7a\xf8b\xf9" },
+        .{ .source = "#a", .result = 1, .tokens = "\xfea\xff" },
+        .{ .source = "#(ab)c", .result = 1, .tokens = "\xfe\xf7ab\xf9\xffc" },
+        .{ .source = "~a", .result = 1, .tokens = "\xfaa\xfb" },
         .{ .source = "a~", .result = 0, .tokens = "a~" }, // a trailing ~ is itself
-        .{ .source = "[~a-c]", .result = 1, .tokens = "\x87a-c\x88" },
+        .{ .source = "[~a-c]", .result = 1, .tokens = "\xfca-c\xfd" },
         .{ .source = "a%b", .result = 0, .tokens = "ab" },
         .{ .source = "*", .result = 0, .tokens = "*" }, // WildStar off
-        .{ .source = "a#?[b-c]", .result = 1, .tokens = "A\x80\x88B-C\x88", .nocase = true },
-        .{ .source = "\xe9t\xe9", .result = 0, .tokens = "\xc9T\xc9", .nocase = true },
+        .{ .source = "A#?[B-c]", .result = 1, .tokens = "a\xf5\xfdb-c\xfd", .nocase = true }, // folded
+        // UTF-8 stays UTF-8; Ā is C4 80, whose 80 was once a token.
+        .{ .source = "\xc4\x80?", .result = 1, .tokens = "\xc4\x80\xf6" },
+        .{ .source = "\xce\xa3\xce\x91\xce\xa3", .result = 0, .tokens = "\xcf\x83\xce\xb1\xcf\x83", .nocase = true }, // ΣΑΣ
+        // A byte that is no UTF-8 goes in as its Latin-1 character.
+        .{ .source = "\xe9t\xe9", .result = 0, .tokens = "\xc3\xa9t\xc3\xa9", .nocase = true },
+        .{ .source = "M\xfcll", .result = 0, .tokens = "M\xc3\xbcll" },
+        .{ .source = "x\x80", .result = 0, .tokens = "x\xc2\x80" },
+        .{ .source = "[\xe4-\xf6]", .result = 1, .tokens = "\xfd\xc3\xa4-\xc3\xb6\xfd" },
     };
     for (cases) |c| {
         tp.proc.result2 = 42;
@@ -401,7 +409,7 @@ test "ParsePattern: wildcards or not, the tokens, errors, the buffer, WildStar" 
         try testing.expectEqualSlices(u8, c.tokens, std.mem.sliceTo(&buf, 0));
         try testing.expectEqual(@as(i32, 42), tp.proc.result2); // IoErr left alone
     }
-    for ([_][:0]const u8{ "(a", "a)", "a|b", "#", "#|", "~)", "[ab", "x\x80" }) |bad| {
+    for ([_][:0]const u8{ "(a", "a)", "a|b", "#", "#|", "~)", "[ab" }) |bad| {
         try testing.expectEqual(@as(isize, -1), parsed(ub, bad, &buf, false));
         try testing.expectEqual(sdk.dos.ERROR_BAD_TEMPLATE, tp.proc.result2);
         try testing.expectEqual(@as(u8, 0), buf[0]); // an empty pattern
@@ -410,6 +418,9 @@ test "ParsePattern: wildcards or not, the tokens, errors, the buffer, WildStar" 
     const nest = "~~~a"; // the most tokens per character
     var exact: [sdk.utility.parsedSize(nest.len)]u8 = undefined;
     try testing.expectEqual(@as(isize, 1), parsed(ub, nest, &exact, false));
+    const widened = "~#\xff"; // a Latin-1 byte takes two
+    var room: [sdk.utility.parsedSize(widened.len)]u8 = undefined;
+    try testing.expectEqual(@as(isize, 1), parsed(ub, widened, &room, false));
     try testing.expectEqual(@as(isize, -1), parsed(ub, "abcdef", buf[0..4], false));
     try testing.expectEqual(sdk.dos.ERROR_LINE_TOO_LONG, tp.proc.result2);
     try testing.expectEqual(@as(u8, 0), buf[0]);
@@ -422,11 +433,55 @@ test "ParsePattern: wildcards or not, the tokens, errors, the buffer, WildStar" 
     try tearDown(ub);
 }
 
+/// A pattern, a string, and whether the one matches the other.
+const MatchCase = struct { []const u8, []const u8, bool };
+
+/// Parses each case's pattern with ParsePattern and matches its string
+/// with MatchPattern; a pattern that does not parse must be a case that
+/// does not match.
+fn expectMatches(ub: *UtilityBase, cases: []const MatchCase) !void {
+    var buf: [64]u8 = undefined;
+    for (cases) |c| {
+        var source: [32:0]u8 = @splat(0);
+        var string: [32:0]u8 = @splat(0);
+        @memcpy(source[0..c[0].len], c[0]);
+        @memcpy(string[0..c[1].len], c[1]);
+        if (parsed(ub, &source, &buf, false) < 0) {
+            try testing.expect(!c[2]); // "#?[" doesn't parse
+            continue;
+        }
+        const got = call(ub, "MatchPattern", .{ @as([*:0]const u8, @ptrCast(&buf)), &string });
+        if (got != c[2]) {
+            std.debug.print("MatchPattern(\"{s}\", \"{s}\") = {}\n", .{ c[0], c[1], got });
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
+test "MatchPattern: characters, not bytes; a Latin-1 byte is its character" {
+    const ub = try setUp();
+    defer kexec.deinit();
+    try expectMatches(ub, &.{
+        .{ "?", "\xc3\xa4", true },
+        .{ "??", "\xc3\xa4", false },
+        .{ "a?c", "a\xe2\x82\xacc", true },
+        .{ "#?\xc4\x80", "x\xc4\x80", true },
+        .{ "\xc4\x80", "\xc4\x81", false },
+        .{ "[\xce\xb1-\xcf\x89]", "\xce\xb2", true },
+        .{ "[\xce\xb1-\xcf\x89]", "b", false },
+        .{ "#?\xf0\x9f\x98\x80", "x\xf0\x9f\x98\x80", true },
+        .{ "#[\xc3\xa4\xc3\xb6]x", "\xc3\xb6\xc3\xa4x", true },
+        .{ "~\xc3\xa4", "\xc3\xb6", true },
+        .{ "M\xfcll", "M\xc3\xbcll", true },
+        .{ "M\xc3\xbcll", "M\xfcll", true },
+    });
+    try tearDown(ub);
+}
+
 test "MatchPattern: the syntax, backtracking, NoCase" {
     const ub = try setUp();
     defer kexec.deinit();
-    const Case = struct { []const u8, []const u8, bool };
-    const cases = [_]Case{
+    try expectMatches(ub, &.{
         .{ "abc", "abc", true },       .{ "abc", "abd", false },           .{ "abc", "ab", false },
         .{ "", "", true },             .{ "", "a", false },                .{ "a?c", "abc", true },
         .{ "a?c", "ac", false },       .{ "#?", "", true },                .{ "#?", "anything", true },
@@ -446,28 +501,20 @@ test "MatchPattern: the syntax, backtracking, NoCase" {
         .{ "a%b", "ab", true },        .{ "*", "*", true },                .{ "*", "x", false },
         .{ "#(%)x", "x", true },       .{ "#(#?)", "abc", true },          .{ "#(a#?)b", "axxab", true },
         .{ "a~", "a~", true },         .{ "#?[", "x", false },
-    };
+    });
     var buf: [64]u8 = undefined;
-    for (cases) |c| {
-        var source: [32:0]u8 = @splat(0);
-        var string: [32:0]u8 = @splat(0);
-        @memcpy(source[0..c[0].len], c[0]);
-        @memcpy(string[0..c[1].len], c[1]);
-        if (parsed(ub, &source, &buf, false) < 0) {
-            try testing.expect(!c[2]); // "#?[" doesn't parse
-            continue;
-        }
-        const got = call(ub, "MatchPattern", .{ @as([*:0]const u8, @ptrCast(&buf)), &string });
-        if (got != c[2]) {
-            std.debug.print("MatchPattern(\"{s}\", \"{s}\") = {}\n", .{ c[0], c[1], got });
-            return error.TestUnexpectedResult;
-        }
-    }
     try testing.expectEqual(@as(isize, 1), parsed(ub, "#?.TXT", &buf, true));
     try testing.expect(call(ub, "MatchPatternNoCase", .{ @as([*:0]const u8, @ptrCast(&buf)), "readme.txt" }));
-    try testing.expect(!call(ub, "MatchPattern", .{ @as([*:0]const u8, @ptrCast(&buf)), "readme.txt" }));
+    try testing.expect(!call(ub, "MatchPattern", .{ @as([*:0]const u8, @ptrCast(&buf)), "README.TXT" }));
     try testing.expectEqual(@as(isize, 1), parsed(ub, "\xe9#?", &buf, true));
     try testing.expect(call(ub, "MatchPatternNoCase", .{ @as([*:0]const u8, @ptrCast(&buf)), "\xc9clair" }));
+    try testing.expect(call(ub, "MatchPatternNoCase", .{ @as([*:0]const u8, @ptrCast(&buf)), "\xc3\x89clair" }));
+    // Both sides fold: ParsePattern's tokens match without case too.
+    try testing.expectEqual(@as(isize, 1), parsed(ub, "#?\xce\xa3", &buf, false)); // Σ
+    try testing.expect(call(ub, "MatchPatternNoCase", .{ @as([*:0]const u8, @ptrCast(&buf)), "\xce\xbf\xce\xb4\xcf\x8c\xcf\x82" })); // οδός
+    try testing.expectEqual(@as(isize, 1), parsed(ub, "[A-Z]", &buf, false));
+    try testing.expect(call(ub, "MatchPatternNoCase", .{ @as([*:0]const u8, @ptrCast(&buf)), "q" }));
+    try testing.expect(!call(ub, "MatchPattern", .{ @as([*:0]const u8, @ptrCast(&buf)), "q" }));
     try tearDown(ub);
 }
 

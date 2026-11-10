@@ -15,10 +15,12 @@
 //! lookup compares a dos name against each entry's stand-in when the
 //! entry's own name does not fit.
 //!
-//! **A name from dos becomes UTF-16 one character for one**: Latin-1 is
-//! the first 256 characters of UTF-16. Such a name is compared against an
-//! entry's through the volume's up-case table (`upcase.zig`), which is what
-//! makes two names the same on exFAT.
+//! **A name from dos becomes UTF-16 a character at a time**, read as text
+//! is read (sdk.utility.utf8): UTF-8 as its characters, a byte that is no
+//! UTF-8 as its Latin-1 character - Latin-1 is the first 256 characters of
+//! UTF-16 - so a Latin-1 name and the same name in UTF-8 are one. Such a
+//! name is compared against an entry's through the volume's up-case table
+//! (`upcase.zig`), which is what makes two names the same on exFAT.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -92,10 +94,25 @@ pub fn standIn(name: []const u16, hash: u16, into: *[_fat.fib_name_max]u8) []con
     return into[0..len];
 }
 
-/// A dos name as UTF-16, one character for one.
+/// A dos name as UTF-16: its characters, read as text is read, a
+/// character past U+FFFF as its surrogate pair. Never more units than the
+/// name has bytes.
 pub fn fromDos(name: []const u8, into: *[fat.name_max]u16) []const u16 {
-    for (name, 0..) |char, at| into[at] = char;
-    return into[0..name.len];
+    var at: usize = 0;
+    var len: usize = 0;
+    while (at < name.len and len < into.len) {
+        const char = sdk.utility.utf8.next(name, &at);
+        if (char > 0xFFFF and len + 1 < into.len) {
+            const above = char - 0x10000;
+            into[len] = @intCast(0xD800 + (above >> 10));
+            into[len + 1] = @intCast(0xDC00 + (above & 0x3FF));
+            len += 2;
+        } else {
+            into[len] = if (char > 0xFFFF) 0xFFFD else @intCast(char);
+            len += 1;
+        }
+    }
+    return into[0..len];
 }
 
 /// The hash a stand-in carries, if `name` has the shape of one: `=` and
@@ -169,6 +186,13 @@ const testing = std.testing;
 
 fn utf16(comptime text: []const u8) []const u16 {
     return comptime std.unicode.utf8ToUtf16LeStringLiteral(text);
+}
+
+test "a dos name as UTF-16: UTF-8 and Latin-1 alike, past U+FFFF as a pair" {
+    var units: [fat.name_max]u16 = undefined;
+    try testing.expectEqualSlices(u16, utf16("Grün"), fromDos("Gr\xFCn", &units));
+    try testing.expectEqualSlices(u16, utf16("Grün"), fromDos("Grün", &units));
+    try testing.expectEqualSlices(u16, utf16("\u{1F600}.Ω"), fromDos("\u{1F600}.Ω", &units));
 }
 
 test "a name that fits is given as it is" {

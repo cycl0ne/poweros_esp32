@@ -3,11 +3,22 @@
 //! tokens, the matcher that backtracks on a stack of frames, and the IoErr
 //! they set on failure.
 //!
-//! A parsed pattern is the source's characters with every wildcard turned
-//! into a token byte (`P_ANY` 0x80 to `P_STOP` 0x8B, sdk/libs/utility/
-//! pattern.zig), NUL-terminated. The parser keeps the groups still open on
-//! a stack at the far end of the output buffer, so it needs no memory of
-//! its own; a pattern of `len` characters takes at most 2*len+2 bytes.
+//! A parsed pattern is the source's characters in UTF-8 with every
+//! wildcard turned into a token byte (`P_ANY` 0xF5 to `P_REPEND` 0xFF,
+//! sdk/libs/utility/pattern.zig), NUL-terminated. A token is a byte UTF-8
+//! never holds, so the pattern's structure is found byte by byte and a
+//! literal is never taken for a token. The source is read as text is
+//! read (sdk.utility.utf8), and a byte that is no UTF-8 goes in as the
+//! character it reads as, in UTF-8. The parser keeps
+//! the groups still open on a stack at the far end of the output buffer,
+//! so it needs no memory of its own; a pattern of `len` bytes takes at
+//! most 2*len+2.
+//!
+//! Both sides are characters: `?` takes one character of the string, a
+//! class's range is a range of code points, and without case
+//! (`ParsePatternNoCase`, `MatchPatternNoCase`) a character matches when
+//! it folds to what the pattern's does - Unicode's simple case folding,
+//! the same whatever language is set, as names are compared everywhere.
 //!
 //! The matcher runs the tokens forward and leaves a frame for every
 //! choice it makes - how far `#?` reaches, which alternative, how many
@@ -21,6 +32,8 @@
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
+const utf8 = sdk.utility.utf8;
+const unicode = sdk.utility.unicode;
 const ExecBase = sdk.interface.exec.ExecBase;
 
 const UtilityBase = @import("../utility.zig").UtilityBase;
@@ -36,7 +49,7 @@ const P_NOTCLASS = sdk.utility.pattern.P_NOTCLASS;
 const P_CLASS = sdk.utility.pattern.P_CLASS;
 const P_REPBEG = sdk.utility.pattern.P_REPBEG;
 const P_REPEND = sdk.utility.pattern.P_REPEND;
-const P_STOP = sdk.utility.pattern.P_STOP;
+const isToken = sdk.utility.pattern.isToken;
 
 /// What parsing and matching can fail with.
 const Error = error{ BadTemplate, LineTooLong, TooManyLevels, NoFreeStore };
@@ -54,14 +67,6 @@ fn code(e: Error) i32 {
     };
 }
 
-/// Whether a byte is a token. A pattern's source may not hold one.
-///
-/// INPUTS:
-/// - `c` - the byte.
-fn isToken(c: u8) bool {
-    return c >= P_ANY and c <= P_STOP;
-}
-
 /// Whether `'` escapes a character: the wildcards and `'` itself.
 ///
 /// INPUTS:
@@ -71,6 +76,15 @@ fn isWild(c: u8) bool {
         '*', '~', '[', ']', '#', '?', '(', ')', '|', '%', '\'' => true,
         else => false,
     };
+}
+
+/// The character at a place in a NUL-terminated string or parsed
+/// pattern, and the bytes it takes; the NUL is the character 0.
+///
+/// INPUTS:
+/// - `at` - the place.
+fn charAt(at: [*]const u8) utf8.Read {
+    return utf8.readZ(@ptrCast(at));
 }
 
 // --- parsing ---
@@ -84,9 +98,8 @@ const Parser = struct {
     /// The open groups are dest[top..end]; top == end: none.
     top: usize,
     end: usize,
+    /// The characters go in folded.
     nocase: bool,
-    /// The library, to put characters through `ToUpper` for `nocase`.
-    utility: *sdk.interface.utility.UtilityBase,
 
     /// Adds a byte to the output.
     ///
@@ -139,14 +152,25 @@ const Parser = struct {
         }
     }
 
-    /// A character that stands for itself, through `ToUpper` for `nocase`, as
-    /// a complete item.
+    /// Adds a character to the output in UTF-8, folded for `nocase`.
     ///
     /// INPUTS:
     /// - `p` - the parse.
     /// - `c` - the character.
-    fn literal(p: *Parser, c: u8) Error!void {
-        try p.store(if (p.nocase) p.utility.ToUpper(c) else c);
+    fn put(p: *Parser, c: u32) Error!void {
+        var bytes: [4]u8 = undefined;
+        const length = utf8.encode(if (p.nocase) unicode.fold(c) else c, &bytes);
+        for (bytes[0..length]) |byte| try p.store(byte);
+    }
+
+    /// A character that stands for itself, folded for `nocase`, as a
+    /// complete item.
+    ///
+    /// INPUTS:
+    /// - `p` - the parse.
+    /// - `c` - the character.
+    fn literal(p: *Parser, c: u32) Error!void {
+        try p.put(c);
         try p.close();
     }
 
@@ -168,7 +192,7 @@ const Parser = struct {
     /// - `src` - the source position, moved past the `]`.
     ///
     /// RESULT:
-    /// `error.BadTemplate` for a class without its `]` or with a token byte.
+    /// `error.BadTemplate` for a class without its `]`.
     fn class(p: *Parser, src: *[*]const u8) Error!void {
         var first = P_CLASS;
         if (src.*[0] == '~') {
@@ -177,17 +201,14 @@ const Parser = struct {
         }
         try p.store(first);
         while (true) {
-            var c = src.*[0];
-            src.* += 1;
+            var c = try take(src);
             if (c == 0) return error.BadTemplate;
             if (c == ']') break;
             if (c == '\'') {
-                c = src.*[0];
-                src.* += 1;
+                c = try take(src);
                 if (c == 0) return error.BadTemplate;
             }
-            if (isToken(c)) return error.BadTemplate;
-            try p.store(if (p.nocase) p.utility.ToUpper(c) else c);
+            try p.put(c);
         }
         try p.token(P_CLASS);
     }
@@ -205,10 +226,8 @@ const Parser = struct {
         var wild = false;
         var src: [*]const u8 = source;
         while (true) {
-            const c = src[0];
-            src += 1;
+            const c = try take(&src);
             if (c == 0) break;
-            if (isToken(c)) return error.BadTemplate;
             switch (c) {
                 '?' => {
                     wild = true;
@@ -262,22 +281,36 @@ const Parser = struct {
     }
 };
 
+/// The source's next character, `src` moved past it; the NUL is 0.
+///
+/// INPUTS:
+/// - `src` - the source position.
+///
+/// RESULT:
+/// `error.BadTemplate` for bytes that are no UTF-8 when such a byte reads
+/// as no character (sdk.utility.utf8).
+fn take(src: *[*]const u8) Error!u32 {
+    const found = charAt(src.*);
+    if (found.broken and !utf8.broken_reads_latin1) return error.BadTemplate;
+    src.* += found.length;
+    return found.char;
+}
+
 /// Parses a pattern into tokens. On failure `dest` holds an empty pattern,
 /// when it has a byte.
 ///
 /// INPUTS:
-/// - `ub` - the library, called through for `ToUpper`.
 /// - `source` - the pattern.
 /// - `dest` - the output buffer.
-/// - `nocase` - puts the pattern's characters through `ToUpper`.
+/// - `nocase` - writes the pattern's characters folded.
 /// - `wild_star` - whether `*` is a wildcard.
 ///
 /// RESULT:
 /// Whether the pattern has wildcards, or `error.BadTemplate` or
 /// `error.LineTooLong`.
-fn parse(ub: *UtilityBase, source: [*:0]const u8, dest: []u8, nocase: bool, wild_star: bool) Error!bool {
+fn parse(source: [*:0]const u8, dest: []u8, nocase: bool, wild_star: bool) Error!bool {
     if (dest.len == 0) return error.LineTooLong;
-    var p: Parser = .{ .dest = dest, .top = dest.len - 1, .end = dest.len - 1, .nocase = nocase, .utility = ub.iface() };
+    var p: Parser = .{ .dest = dest, .top = dest.len - 1, .end = dest.len - 1, .nocase = nocase };
     return p.run(source, wild_star) catch |e| {
         dest[0] = 0;
         return e;
@@ -432,17 +465,24 @@ const Stack = struct {
 /// - `class` - the class, after its P_CLASS or P_NOTCLASS.
 /// - `c` - the character; 0 is never taken.
 /// - `negate` - true for P_NOTCLASS.
-fn inClass(class: [*]const u8, c: u8, negate: bool) bool {
+/// - `nocase` - a character is also taken when it folds into the class
+///   folded.
+fn inClass(class: [*]const u8, c: u32, negate: bool, nocase: bool) bool {
     if (c == 0) return false;
+    const folded = if (nocase) unicode.fold(c) else c;
     var p = class;
     var found = false;
     while (p[0] != P_CLASS and p[0] != 0) {
-        if (p[1] == '-' and p[2] != P_CLASS and p[2] != 0) {
-            if (c >= p[0] and c <= p[2]) found = true;
-            p += 3;
+        const first = charAt(p);
+        p += first.length;
+        if (p[0] == '-' and p[1] != P_CLASS and p[1] != 0) {
+            const last = charAt(p + 1);
+            p += 1 + last.length;
+            if (c >= first.char and c <= last.char) found = true;
+            if (nocase and folded >= unicode.fold(first.char) and folded <= unicode.fold(last.char)) found = true;
         } else {
-            if (c == p[0]) found = true;
-            p += 1;
+            if (c == first.char) found = true;
+            if (nocase and folded == unicode.fold(first.char)) found = true;
         }
     }
     return found != negate;
@@ -553,25 +593,26 @@ fn repEnd(body: [*]const u8) ?[*]const u8 {
 fn isSingle(body: [*]const u8, end: [*]const u8) bool {
     const t = body[0];
     if (t == P_CLASS or t == P_NOTCLASS) return classEnd(body + 1) == end;
-    return !isToken(t) and body + 1 == end;
+    return !isToken(t) and body + charAt(body).length == end;
 }
 
 /// One match: the frames, and the repeat an instance is running in.
 const Matcher = struct {
     stack: Stack,
+    /// Characters match when they fold to the same.
     nocase: bool,
-    /// The library, to put characters through `ToUpper` for `nocase`.
-    utility: *sdk.interface.utility.UtilityBase,
     /// The repeat whose P_REPEND ends an instance now.
     rep: ?*Frame = null,
 
-    /// A character of the string, through `ToUpper` for `nocase`.
+    /// Whether a character of the string is the pattern's: the same, or
+    /// for `nocase` the same once folded.
     ///
     /// INPUTS:
     /// - `m` - the match.
-    /// - `c` - the character.
-    fn fold(m: *const Matcher, c: u8) u8 {
-        return if (m.nocase) m.utility.ToUpper(c) else c;
+    /// - `wanted` - the pattern's character.
+    /// - `c` - the string's.
+    fn same(m: *const Matcher, wanted: u32, c: u32) bool {
+        return wanted == c or (m.nocase and unicode.fold(wanted) == unicode.fold(c));
     }
 
     /// Whether a one-character item - a literal or a class - takes a
@@ -581,10 +622,10 @@ const Matcher = struct {
     /// - `m` - the match.
     /// - `item` - the item.
     /// - `c` - the character of the string.
-    fn takes(m: *const Matcher, item: [*]const u8, c: u8) bool {
+    fn takes(m: *const Matcher, item: [*]const u8, c: u32) bool {
         const t = item[0];
-        if (t == P_CLASS or t == P_NOTCLASS) return inClass(item + 1, m.fold(c), t == P_NOTCLASS);
-        return c != 0 and m.fold(c) == t;
+        if (t == P_CLASS or t == P_NOTCLASS) return inClass(item + 1, c, t == P_NOTCLASS, m.nocase);
+        return c != 0 and m.same(charAt(item).char, c);
     }
 
     /// Moves a frame's string position on to where the rest of the pattern
@@ -599,9 +640,9 @@ const Matcher = struct {
     fn skip(m: *const Matcher, f: *Frame) bool {
         const t = f.pat[0];
         if (t == 0 or (isToken(t) and t != P_CLASS and t != P_NOTCLASS)) return true;
-        while (!m.takes(f.pat, f.str[0])) {
+        while (!m.takes(f.pat, charAt(f.str).char)) {
             if (f.str[0] == 0) return false;
-            f.str += 1;
+            f.str += charAt(f.str).length;
         }
         return true;
     }
@@ -621,17 +662,21 @@ const Matcher = struct {
         var str = from_str;
         while (true) {
             const t = pat[0];
-            pat += 1;
             if (!isToken(t)) {
                 if (t == 0) return str[0] == 0;
-                if (str[0] == 0 or m.fold(str[0]) != t) return false;
-                str += 1;
+                const wanted = charAt(pat);
+                pat += wanted.length;
+                if (str[0] == 0) return false;
+                const here = charAt(str);
+                if (!m.same(wanted.char, here.char)) return false;
+                str += here.length;
                 continue;
             }
+            pat += 1;
             switch (t) {
                 P_SINGLE => {
                     if (str[0] == 0) return false;
-                    str += 1;
+                    str += charAt(str).length;
                 },
                 P_ANY => {
                     if (pat[0] == 0) return true;
@@ -643,9 +688,10 @@ const Matcher = struct {
                     str = f.str;
                 },
                 P_CLASS, P_NOTCLASS => {
-                    if (!inClass(pat, m.fold(str[0]), t == P_NOTCLASS)) return false;
+                    const here = charAt(str);
+                    if (!inClass(pat, here.char, t == P_NOTCLASS, m.nocase)) return false;
                     pat = classEnd(pat);
-                    str += 1;
+                    str += here.length;
                 },
                 P_NOT => _ = try m.stack.push(.{ .kind = .not, .pat = pat, .str = str }),
                 P_ORSTART => _ = try m.stack.push(.{ .kind = .alt, .pat = pat, .str = str }),
@@ -670,7 +716,7 @@ const Matcher = struct {
                     m.rep = active.outer;
                     pat = active.pat - 1; // the repeat again, from here
                 },
-                else => return true, // P_STOP, which the parser never makes
+                else => unreachable,
             }
         }
     }
@@ -696,7 +742,7 @@ const Matcher = struct {
                             m.stack.pop();
                             continue;
                         }
-                        f.str += 1;
+                        f.str += charAt(f.str).length;
                         if (!m.skip(f)) {
                             m.stack.pop();
                             continue;
@@ -706,11 +752,12 @@ const Matcher = struct {
                         continue :next;
                     },
                     .single => {
-                        if (ok or !m.takes(f.aux, f.str[0])) {
+                        const here = charAt(f.str);
+                        if (ok or !m.takes(f.aux, here.char)) {
                             m.stack.pop();
                             continue;
                         }
-                        f.str += 1;
+                        f.str += here.length;
                         pat = f.pat;
                         str = f.str;
                         continue :next;
@@ -777,11 +824,10 @@ const Matcher = struct {
 /// Matches a string against parsed tokens.
 ///
 /// INPUTS:
-/// - `ub` - the library: its `sys_base` for the frames' memory, and itself
-///   for `ToUpper`.
+/// - `ub` - the library: its `sys_base` for the frames' memory.
 /// - `pattern` - the tokens.
 /// - `string` - the string.
-/// - `nocase` - puts the string's characters through `ToUpper`.
+/// - `nocase` - characters match when they fold to the same.
 ///
 /// RESULT:
 /// Whether the whole string matches, or `error.TooManyLevels` or
@@ -790,7 +836,7 @@ const Matcher = struct {
 /// OWNERSHIP:
 /// The chunks taken are given back before it returns.
 fn match(ub: *UtilityBase, pattern: [*:0]const u8, string: [*:0]const u8, nocase: bool) Error!bool {
-    var m: Matcher = .{ .stack = .{ .sys = ub.sys_base }, .nocase = nocase, .utility = ub.iface() };
+    var m: Matcher = .{ .stack = .{ .sys = ub.sys_base }, .nocase = nocase };
     defer m.stack.deinit();
     return m.run(pattern, string);
 }
@@ -803,12 +849,12 @@ fn match(ub: *UtilityBase, pattern: [*:0]const u8, string: [*:0]const u8, nocase
 /// - `source` - the pattern.
 /// - `dest` - the output buffer.
 /// - `size` - its bytes.
-/// - `nocase` - puts the pattern's characters through `ToUpper`.
+/// - `nocase` - writes the pattern's characters folded.
 ///
 /// RESULT:
 /// 1 with wildcards, 0 without, -1 on failure.
 pub fn parseWith(ub: *UtilityBase, source: [*:0]const u8, dest: [*]u8, size: usize, nocase: bool) isize {
-    const wild = parse(ub, source, dest[0..size], nocase, ub.wild_star) catch |e| {
+    const wild = parse(source, dest[0..size], nocase, ub.wild_star) catch |e| {
         setIoErr(ub, code(e));
         return -1;
     };
@@ -822,7 +868,7 @@ pub fn parseWith(ub: *UtilityBase, source: [*:0]const u8, dest: [*]u8, size: usi
 /// - `ub` - the library.
 /// - `pattern` - the tokens.
 /// - `string` - the string.
-/// - `nocase` - puts the string's characters through `ToUpper`.
+/// - `nocase` - characters match when they fold to the same.
 ///
 /// RESULT:
 /// Whether the string matches; false also on failure.

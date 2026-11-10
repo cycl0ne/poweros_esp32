@@ -12,20 +12,20 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// fn ParsePattern(ub: *UtilityBase, source: [*:0]const u8, dest: [*]u8, size: usize) isize
 /// ```
 ///
-/// SINCE: 1.0. LVO -200.
+/// SINCE: 1.0, UTF-8 since 1.7. LVO -200.
 ///
 /// INPUTS:
-/// - `source` - the pattern.
+/// - `source` - the pattern, in UTF-8.
 /// - `dest` - where the tokens go.
 /// - `size` - the bytes at `dest`. `sdk.utility.parsedSize(len)` for a
-///   pattern of `len` characters is always enough.
+///   pattern of `len` bytes is always enough.
 ///
 /// RESULT:
 /// 1 if the pattern has wildcards, 0 if it is a plain name (the escapes
 /// resolved), -1 on failure. On failure IoErr is `ERROR_BAD_TEMPLATE` for
 /// a pattern that does not parse - unbalanced groups, a class without its
-/// `]`, a byte 0x80-0x8B - or `ERROR_LINE_TOO_LONG` when `dest` is too
-/// small, and `dest` holds an empty pattern.
+/// `]` - or `ERROR_LINE_TOO_LONG` when `dest` is too small, and `dest`
+/// holds an empty pattern.
 ///
 /// BEHAVIOR:
 /// The syntax:
@@ -40,6 +40,13 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// - `[abc]`, `[a-z]`, `[~a-z]` - a class. A `-` first or last is itself.
 /// - `%` - nothing, the empty string.
 /// - `'x` - `x` itself.
+///
+/// A character is a character, not a byte: `?` takes one however many
+/// bytes it is, and a class's range `[α-ω]` is a range of code points.
+/// The tokens are bytes UTF-8 never holds (sdk/libs/utility/pattern.zig)
+/// and the pattern's characters are written in UTF-8; a byte of the
+/// source that is no UTF-8 is written as the character the system reads
+/// it as (sdk.utility.utf8).
 ///
 /// A pattern that parses leaves IoErr as it was.
 ///

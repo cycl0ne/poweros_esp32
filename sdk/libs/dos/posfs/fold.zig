@@ -24,6 +24,8 @@
 const layout = @import("layout.zig");
 const fold1 = @import("fold1.zig");
 const posfs = @import("posfs.zig");
+const utf8 = @import("../../utility/utf8.zig");
+const unicode = @import("../../utility/unicode.zig");
 
 // --- UTF-8 ------------------------------------------------------------------------
 
@@ -31,69 +33,24 @@ const posfs = @import("posfs.zig");
 /// that are not UTF-8 there: a stray continuation byte, a sequence cut
 /// short, an overlong form, a surrogate, or past U+10FFFF.
 pub fn decode(bytes: []const u8, at: *usize) ?u21 {
-    const first = bytes[at.*];
-    if (first < 0x80) {
-        at.* += 1;
-        return first;
-    }
-    var need: usize = 0;
-    var value: u21 = 0;
-    var least: u21 = 0;
-    if (first & 0xE0 == 0xC0) {
-        need = 1;
-        value = first & 0x1F;
-        least = 0x80;
-    } else if (first & 0xF0 == 0xE0) {
-        need = 2;
-        value = first & 0x0F;
-        least = 0x800;
-    } else if (first & 0xF8 == 0xF0) {
-        need = 3;
-        value = first & 0x07;
-        least = 0x10000;
-    } else return null;
-    if (bytes.len - at.* <= need) return null;
-    for (bytes[at.* + 1 .. at.* + 1 + need]) |byte| {
-        if (byte & 0xC0 != 0x80) return null;
-        value = (value << 6) | (byte & 0x3F);
-    }
-    if (value < least or value > 0x10FFFF) return null;
-    if (value >= 0xD800 and value <= 0xDFFF) return null;
-    at.* += 1 + need;
-    return value;
+    const step = utf8.decode(bytes[at.*..]);
+    if (step.kind != .char) return null;
+    at.* += step.length;
+    return @intCast(step.char);
 }
 
 /// Whether `bytes` are UTF-8 from first to last.
 pub fn valid(bytes: []const u8) bool {
-    var at: usize = 0;
-    while (at < bytes.len) {
-        _ = decode(bytes, &at) orelse return false;
-    }
-    return true;
+    return utf8.valid(bytes);
 }
 
-/// A code point as UTF-8 into `into`; the bytes it took.
+/// A code point as UTF-8 into `into`, which has room for it; the bytes
+/// it took.
 pub fn encode(code: u21, into: []u8) usize {
-    if (code < 0x80) {
-        into[0] = @intCast(code);
-        return 1;
-    }
-    if (code < 0x800) {
-        into[0] = @intCast(0xC0 | (code >> 6));
-        into[1] = @intCast(0x80 | (code & 0x3F));
-        return 2;
-    }
-    if (code < 0x10000) {
-        into[0] = @intCast(0xE0 | (code >> 12));
-        into[1] = @intCast(0x80 | ((code >> 6) & 0x3F));
-        into[2] = @intCast(0x80 | (code & 0x3F));
-        return 3;
-    }
-    into[0] = @intCast(0xF0 | (code >> 18));
-    into[1] = @intCast(0x80 | ((code >> 12) & 0x3F));
-    into[2] = @intCast(0x80 | ((code >> 6) & 0x3F));
-    into[3] = @intCast(0x80 | (code & 0x3F));
-    return 4;
+    var bytes: [4]u8 = undefined;
+    const length = utf8.encode(code, &bytes);
+    @memcpy(into[0..length], bytes[0..length]);
+    return length;
 }
 
 // --- folding ------------------------------------------------------------------------
@@ -108,21 +65,7 @@ pub fn foldCode(code: u21) u21 {
     if (code < 0x41) return code;
     if (code <= 0x5A) return code + 32;
     if (code < 0xB5) return code;
-    const runs = &fold1.runs;
-    // The last run that starts at or before the code point.
-    var low: usize = 0;
-    var high: usize = runs.len;
-    while (low < high) {
-        const middle = low + (high - low) / 2;
-        if (runs[middle].first <= code) low = middle + 1 else high = middle;
-    }
-    if (low == 0) return code;
-    const run = runs[low - 1];
-    const distance: u32 = code - run.first;
-    const stride: u32 = run.stride;
-    if (distance % stride != 0 or distance / stride >= run.count) return code;
-    const folded: i32 = @as(i32, code) + run.delta;
-    return @intCast(folded);
+    return @intCast(unicode.mapped(&fold1.runs, code));
 }
 
 /// The hash of a UTF-8 name: the crc32 of its folded form's UTF-8.

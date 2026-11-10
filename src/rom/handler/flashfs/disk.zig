@@ -153,21 +153,12 @@ fn lockValue(l: ?*FileLock) isize {
     return @bitCast(@intFromPtr(l));
 }
 
-/// ToUpper as utility.library has it (Latin-1), so names compare the same
-/// way here as in RAM:, without the library the tests don't have.
-fn upper(c: u8) u8 {
-    return switch (c) {
-        'a'...'z', 0xE0...0xF6, 0xF8...0xFE => c - 0x20,
-        else => c,
-    };
-}
-
+/// Whether two names are the same name: without regard to case, by
+/// Unicode's simple folding (sdk.utility.unicode), the compare RAM: and
+/// every other file system make, and one the tests have without the
+/// library.
 fn sameName(a: []const u8, b: []const u8) bool {
-    if (a.len != b.len) return false;
-    for (a, b) |x, y| {
-        if (upper(x) != upper(y)) return false;
-    }
-    return true;
+    return sdk.utility.unicode.equalFolded(a, b);
 }
 
 /// A name a new entry may have.

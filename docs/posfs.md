@@ -281,7 +281,7 @@ and content.
 A name is the UTF-8 bytes it was given, 1 to 255 of them, never `/`, `:`
 or NUL. Two names are the same when their code points agree after
 Unicode's simple case folding (fold table 1, generated from
-CaseFolding.txt of Unicode 16.0.0 by `tools/foldgen` into
+CaseFolding.txt of Unicode 16.0.0 by `tools/foldgen` (`foldgen posfs`) into
 `sdk/libs/dos/posfs/fold1.zig`). Nothing is normalized: the two ways of
 writing é are two names. Which table a directory's names were hashed
 with is part of the format - each directory's inode names its fold, and

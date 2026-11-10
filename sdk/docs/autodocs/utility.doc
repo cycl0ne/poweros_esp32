@@ -1404,11 +1404,11 @@ utility.library/ZoneOffset
 	    fn MatchPattern(ub: *UtilityBase, pattern: [*:0]const u8, string: [*:0]const u8) bool
 
    SINCE
-	1.0. LVO -208.
+	1.0, UTF-8 since 1.7. LVO -208.
 
    INPUTS
 	- `pattern` - the tokens from `ParsePattern`, not the pattern's text.
-	- `string` - the string to match.
+	- `string` - the string to match, in UTF-8.
 
    RESULT
 	True if the whole string matches. False if it does not, and also on
@@ -1417,11 +1417,15 @@ utility.library/ZoneOffset
 	memory for them.
 
    BEHAVIOR
+	The string is matched a character at a time, not a byte at a time; a
+	byte of it that is no UTF-8 is the character the system reads it as
+	(sdk.utility.utf8).
+
 	Every way the pattern can match is tried, backtracking on a stack of
 	frames rather than the machine's: 16 on the caller's stack, then chunks
 	of 64 from `AllocVec`, all given back before it returns. A repeated
 	group takes at most three frames a character, so a name of 255
-	characters always fits.
+	bytes always fits.
 
    CONTEXT
 	- Waits: no.
@@ -1450,11 +1454,11 @@ utility.library/ZoneOffset
 	    fn MatchPatternNoCase(ub: *UtilityBase, pattern: [*:0]const u8, string: [*:0]const u8) bool
 
    SINCE
-	1.0. LVO -212.
+	1.0, UTF-8 since 1.7. LVO -212.
 
    INPUTS
-	- `pattern` - the tokens from `ParsePatternNoCase`.
-	- `string` - the string to match.
+	- `pattern` - the tokens from `ParsePatternNoCase` or `ParsePattern`.
+	- `string` - the string to match, in UTF-8.
 
    RESULT
 	True if the whole string matches. False if it does not, and also on
@@ -1463,15 +1467,17 @@ utility.library/ZoneOffset
 	memory for them.
 
    BEHAVIOR
-	Each character of the string goes through `ToUpper` before it is
-	compared, so the pattern must be upper case as well, which is what
-	`ParsePatternNoCase` makes it.
+	A character of the string matches one of the pattern when the two
+	fold to the same by Unicode's simple case folding: `Ä` matches `ä`,
+	`Σ` matches `ς`. Both sides are folded, so the tokens of `ParsePattern`
+	match without case as well as those of `ParsePatternNoCase`. The
+	string is matched a character at a time, as `MatchPattern` says.
 
 	Every way the pattern can match is tried, backtracking on a stack of
 	frames rather than the machine's: 16 on the caller's stack, then chunks
 	of 64 from `AllocVec`, all given back before it returns. A repeated
 	group takes at most three frames a character, so a name of 255
-	characters always fits.
+	bytes always fits.
 
    CONTEXT
 	- Waits: no.
@@ -1774,20 +1780,20 @@ utility.library/ZoneOffset
 	    fn ParsePattern(ub: *UtilityBase, source: [*:0]const u8, dest: [*]u8, size: usize) isize
 
    SINCE
-	1.0. LVO -200.
+	1.0, UTF-8 since 1.7. LVO -200.
 
    INPUTS
-	- `source` - the pattern.
+	- `source` - the pattern, in UTF-8.
 	- `dest` - where the tokens go.
 	- `size` - the bytes at `dest`. `sdk.utility.parsedSize(len)` for a
-	  pattern of `len` characters is always enough.
+	  pattern of `len` bytes is always enough.
 
    RESULT
 	1 if the pattern has wildcards, 0 if it is a plain name (the escapes
 	resolved), -1 on failure. On failure IoErr is `ERROR_BAD_TEMPLATE` for
 	a pattern that does not parse - unbalanced groups, a class without its
-	`]`, a byte 0x80-0x8B - or `ERROR_LINE_TOO_LONG` when `dest` is too
-	small, and `dest` holds an empty pattern.
+	`]` - or `ERROR_LINE_TOO_LONG` when `dest` is too small, and `dest`
+	holds an empty pattern.
 
    BEHAVIOR
 	The syntax:
@@ -1802,6 +1808,13 @@ utility.library/ZoneOffset
 	- `[abc]`, `[a-z]`, `[~a-z]` - a class. A `-` first or last is itself.
 	- `%` - nothing, the empty string.
 	- `'x` - `x` itself.
+
+	A character is a character, not a byte: `?` takes one however many
+	bytes it is, and a class's range `[α-ω]` is a range of code points.
+	The tokens are bytes UTF-8 never holds (sdk/libs/utility/pattern.zig)
+	and the pattern's characters are written in UTF-8; a byte of the
+	source that is no UTF-8 is written as the character the system reads
+	it as (sdk.utility.utf8).
 
 	A pattern that parses leaves IoErr as it was.
 
@@ -1835,24 +1848,25 @@ utility.library/ZoneOffset
 	    fn ParsePatternNoCase(ub: *UtilityBase, source: [*:0]const u8, dest: [*]u8, size: usize) isize
 
    SINCE
-	1.0. LVO -204.
+	1.0, UTF-8 since 1.7. LVO -204.
 
    INPUTS
-	- `source` - the pattern.
+	- `source` - the pattern, in UTF-8.
 	- `dest` - where the tokens go.
 	- `size` - the bytes at `dest`. `sdk.utility.parsedSize(len)` for a
-	  pattern of `len` characters is always enough.
+	  pattern of `len` bytes is always enough.
 
    RESULT
 	1 if the pattern has wildcards, 0 if it is a plain name (the escapes
 	resolved), -1 on failure. On failure IoErr is `ERROR_BAD_TEMPLATE` for
 	a pattern that does not parse - unbalanced groups, a class without its
-	`]`, a byte 0x80-0x8B - or `ERROR_LINE_TOO_LONG` when `dest` is too
-	small, and `dest` holds an empty pattern.
+	`]` - or `ERROR_LINE_TOO_LONG` when `dest` is too small, and `dest`
+	holds an empty pattern.
 
    BEHAVIOR
-	`ParsePattern` with every character and class of the pattern put
-	through `ToUpper`, which is what `MatchPatternNoCase` compares against.
+	`ParsePattern` with every character and class of the pattern folded
+	by Unicode's simple case folding - the same whatever language is set,
+	what names are compared by everywhere.
 
 	The syntax:
 
@@ -2420,22 +2434,25 @@ utility.library/ZoneOffset
 	    fn Stricmp(ub: *UtilityBase, string1: [*:0]const u8, string2: [*:0]const u8) i32
 
    SINCE
-	1.0. LVO -108.
+	1.0, UTF-8 since 1.7. LVO -108.
 
    INPUTS
-	- `string1` - a Latin-1 string.
+	- `string1` - a UTF-8 string.
 	- `string2` - the string to compare it with.
 
    RESULT
 	Less than 0, 0 or more than 0 as `string1` sorts before, the same as or
 	after `string2` - the difference of the first two characters that
-	differ, after `ToUpper`.
+	differ once folded, the end of a string counting as 0.
 
    BEHAVIOR
-	Each character goes through `ToUpper` before the comparison, so the
-	order is that of the upper-case codes: `_` (0x5F) sorts after `Z`, and
-	the Latin-1 letters after all of ASCII. There is no locale: `ß` has no
-	upper case and compares as itself.
+	Each character is folded by Unicode's simple case folding before the
+	comparison - the same whatever language is set, and what names are
+	compared by everywhere: `Ä` and `ä` are one, `Σ`, `σ` and `ς` are one,
+	`ß` is itself. The order is that of the folded code points: `_`
+	(0x5F) before the letters, the letters past ASCII after all of it. A
+	byte that is no UTF-8 compares as its Latin-1 character, as
+	`Strnicmp` says.
 
    CONTEXT
 	- Waits: no.
@@ -2540,30 +2557,35 @@ utility.library/ZoneOffset
 utility.library/Strnicmp                              utility.library/Strnicmp
 
    NAME
-	Strnicmp -- Compares at most a given number of characters of two strings without regard to case.
+	Strnicmp -- Compares at most a given number of bytes of two strings without regard to case.
 
    SYNOPSIS
 	    fn Strnicmp(_: *UtilityBase, string1: [*:0]const u8, string2: [*:0]const u8, length: i32) i32
 
    SINCE
-	1.0. LVO -112.
+	1.0, UTF-8 since 1.7. LVO -112.
 
    INPUTS
-	- `string1` - a Latin-1 string.
+	- `string1` - a UTF-8 string.
 	- `string2` - the string to compare it with.
-	- `length` - how many characters at most. 0 or less compares nothing.
+	- `length` - how many bytes of each at most. 0 or less compares
+	  nothing.
 
    RESULT
-	Less than 0, 0 or more than 0 as the first `length` characters of
-	`string1` sort before, the same as or after those of `string2`; 0 for a
-	`length` of 0 or less.
+	Less than 0, 0 or more than 0 as the first `length` bytes of `string1`
+	sort before, the same as or after those of `string2` - the difference
+	of the first two characters that differ once folded, the end of a
+	string counting as 0; 0 for a `length` of 0 or less.
 
    BEHAVIOR
-	Each character goes through `ToUpper` before the comparison, so the
-	order is that of the upper-case codes: `_` (0x5F) sorts after `Z`, and
-	the Latin-1 letters after all of ASCII. There is no locale: `ß` has no
-	upper case and compares as itself. The comparison also ends at the end
-	of either string.
+	Each string is read as UTF-8, up to its NUL or `length` bytes, and
+	each character folded by Unicode's simple case folding before the
+	comparison - the same whatever language is set, and what names are
+	compared by everywhere: `Ä` and `ä` are one, `Σ`, `σ` and `ς` are one,
+	`ß` is itself. The order is that of the folded code points: `_`
+	(0x5F) before the letters, the letters past ASCII after all of it.
+	Because characters are compared, not bytes, two strings of different
+	lengths in bytes can be the same.
 
    CONTEXT
 	- Waits: no.
@@ -2573,6 +2595,12 @@ utility.library/ZoneOffset
 
    OWNERSHIP
 	Nothing is allocated.
+
+   NOTES
+	A byte that is no UTF-8 compares as the character the system reads it
+	as (sdk.utility.utf8): its Latin-1 character, so a Latin-1 `\xE4` and
+	a UTF-8 `ä` are the same. A character `length` cuts in two is read as
+	its bytes are.
 
    BUGS
 	None known.
@@ -2667,24 +2695,25 @@ utility.library/ZoneOffset
 utility.library/ToLower                                utility.library/ToLower
 
    NAME
-	ToLower -- Turns a Latin-1 character into lower case.
+	ToLower -- Turns a character into lower case.
 
    SYNOPSIS
-	    fn ToLower(_: *UtilityBase, character: u32) u8
+	    fn ToLower(_: *UtilityBase, character: u32) u32
 
    SINCE
-	1.0. LVO -120.
+	1.0, any code point since 1.7. LVO -120.
 
    INPUTS
-	- `character` - the character, in the low 8 bits; the rest is ignored.
+	- `character` - the character, a code point.
 
    RESULT
-	The lower case of `A`-`Z` and of the Latin-1 upper-case letters
-	0xC0-0xDE but for `×` (0xD7); every other character as it is.
+	Its lower case by Unicode's simple case mapping (one code point to
+	one), or the character itself when it has none - a character that is
+	no letter, one already in lower case, a value past U+10FFFF.
 
    BEHAVIOR
-	The inverse of `ToUpper` on the letters. `×` is not a letter and stays
-	as it is.
+	The mapping is the same whatever language is set: `I` is `i`
+	everywhere. `ẞ` (U+1E9E) is `ß`.
 
    CONTEXT
 	- Waits: no.
@@ -2694,36 +2723,42 @@ utility.library/ZoneOffset
 
    OWNERSHIP
 	Nothing is allocated.
+
+   NOTES
+	Names are compared by folding, not by lower case (`Stricmp`).
 
    BUGS
 	None known.
 
    SEE ALSO
-	`ToUpper`
+	`ToUpper`, `Stricmp`
 
    EXAMPLES
-	    const c = ub.ToLower(key);
+	    const shown = ub.ToLower(key);
 utility.library/ToUpper                                utility.library/ToUpper
 
    NAME
-	ToUpper -- Turns a Latin-1 character into upper case.
+	ToUpper -- Turns a character into upper case.
 
    SYNOPSIS
-	    fn ToUpper(_: *UtilityBase, character: u32) u8
+	    fn ToUpper(_: *UtilityBase, character: u32) u32
 
    SINCE
-	1.0. LVO -116.
+	1.0, any code point since 1.7. LVO -116.
 
    INPUTS
-	- `character` - the character, in the low 8 bits; the rest is ignored.
+	- `character` - the character, a code point.
 
    RESULT
-	The upper case of `a`-`z` and of the Latin-1 lower-case letters
-	0xE0-0xFE but for `÷` (0xF7); every other character as it is.
+	Its upper case by Unicode's simple case mapping (one code point to
+	one), or the character itself when it has none - a character that is
+	no letter, one already in upper case, a value past U+10FFFF.
 
    BEHAVIOR
-	`ß` and `ÿ` have no upper case in Latin-1 and stay as they are. Pattern
-	matching without case and the string compares use the same mapping.
+	The mapping is the same whatever language is set. A letter whose
+	upper case is more than one character keeps itself: `ß` stays `ß`.
+	`ÿ` is `Ÿ` (U+0178) and `µ` is `Μ` (U+039C), so the upper case of a
+	Latin-1 character need not be one.
 
    CONTEXT
 	- Waits: no.
@@ -2733,6 +2768,9 @@ utility.library/ZoneOffset
 
    OWNERSHIP
 	Nothing is allocated.
+
+   NOTES
+	Names are compared by folding, not by upper case (`Stricmp`).
 
    BUGS
 	None known.
@@ -2741,7 +2779,7 @@ utility.library/ZoneOffset
 	`ToLower`, `Stricmp`
 
    EXAMPLES
-	    const c = ub.ToUpper(key);
+	    if (ub.ToUpper(key) == 'Q') return quit();
 utility.library/UDivMod32                            utility.library/UDivMod32
 
    NAME

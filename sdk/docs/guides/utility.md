@@ -3,8 +3,8 @@
 `utility.library`, in the ROM, holds the small, general calls the other
 modules lean on: tag lists, the way options are handed to almost every
 call in the system; hooks, the way a library calls a program back; dates;
-32- and 64-bit multiplication and division; strings and Latin-1 case;
-text between UTF-8 and Latin-1; URLs taken apart and their escapes; the
+32- and 64-bit multiplication and division; strings, characters and
+case; text between UTF-8 and Latin-1; URLs taken apart and their escapes; the
 patterns names are matched against; named objects; unique numbers; pack
 tables; comparing records and sorting arrays; and reading the lines of
 settings files. This guide goes through them by what a program wants to
@@ -359,24 +359,35 @@ checks it.
 
 ## Strings and case
 
-Strings are NUL-terminated, `[*:0]const u8`, and Latin-1: a character is
-a byte.
+Strings are NUL-terminated, `[*:0]const u8`, and UTF-8: a character is
+one to four bytes, and every length is counted in bytes.
 
 | Call | |
 |---|---|
-| `Strcmp(a, b)` | below 0, 0 or above 0 as `a` sorts before, with or after `b` |
-| `Stricmp(a, b)`, `Strnicmp(a, b, n)` | the same without case; `Strnicmp` at most `n` characters |
+| `Strcmp(a, b)` | below 0, 0 or above 0 as `a` sorts before, with or after `b`, byte by byte |
+| `Stricmp(a, b)`, `Strnicmp(a, b, n)` | the same without case, a character at a time; `Strnicmp` at most `n` bytes |
 | `Strlen(s)` | the bytes before the NUL |
 | `Strlcpy(dest, size, s)` | `s` into `dest`, cut to `size - 1` bytes and always ended with a NUL; answers the length of `s` |
-| `Strchr(s, c)`, `Strrchr(s, c)` | a pointer to the first or last `c` in `s`, or null |
-| `ToUpper(c)`, `ToLower(c)` | one character in the other case |
+| `Strchr(s, c)`, `Strrchr(s, c)` | a pointer to the first or last byte `c` in `s`, or null |
+| `ToUpper(c)`, `ToLower(c)` | one character, a code point (`u32`), in the other case |
 
-Case is Latin-1's, with no locale: `ToUpper` turns `a`-`z` and the
-letters 0xE0-0xFE but `÷` (0xF7) into capitals, and `ß` and `ÿ`, which
-have none, stay as they are. The comparisons without case, the patterns
-without case and the name spaces without `NSF_CASE` all go through this
-one mapping, so they agree on what the same name is. Without case,
-strings sort by their upper-case codes: `_` (0x5F) after `Z`.
+Case is Unicode's simple case mapping, one character to one, with no
+locale: `ToUpper` turns `ä` into `Ä`, `ж` into `Ж` and `ÿ` into `Ÿ`
+(U+0178); `ß`, whose capital is two letters, stays as it is. A character
+with no other case, and a value past U+10FFFF, is itself.
+
+Without case, strings are compared by Unicode's simple case folding:
+`Ä` and `ä` are one, `Σ`, `σ` and `ς` are one, and `ß` and `ẞ` are one.
+The comparisons without case, the patterns without case, the name spaces
+without `NSF_CASE` and the file systems' names all go through this one
+folding, so they agree on what the same name is. Strings sort by their
+folded code points: `_` (0x5F) before the letters, and what lies past
+ASCII after all of ASCII. Two strings of different lengths in bytes can
+be the same.
+
+A byte that is no UTF-8 is read as its Latin-1 character, so a name
+written in Latin-1 and the same name in UTF-8 are one: `Stricmp` finds
+`M\xFCll` and `Müll` the same.
 
 `Strlcpy` reads all of its source, so a cut copy shows in its answer:
 
@@ -387,13 +398,48 @@ const dot = ub.Strrchr(@ptrCast(&name), '.') orelse return dos.RETURN_WARN; // n
 const extension = dot + 1;
 ```
 
+## Characters in a program
+
+The SDK reads and writes UTF-8 itself, with no library call, in
+`sdk.utility.utf8`; a program walks a string a character at a time with
+it:
+
+| | |
+|---|---|
+| `utf8.read(bytes)` | the first character: `.char`, the bytes it took (`.length`), and whether they were broken (`.broken`) |
+| `utf8.next(bytes, &at)` | the character at `at`, moving `at` past it |
+| `utf8.readZ(text)` | `read` on a NUL-terminated string |
+| `utf8.encode(char, &four)` | a character into at most four bytes: the bytes written |
+| `utf8.lengthOf(char)` | the bytes `encode` writes for it |
+| `utf8.valid(bytes)` | whether the whole is UTF-8 |
+
+```zig
+var at: usize = 0;
+var count: usize = 0;
+while (at < name.len) : (count += 1) _ = utility.utf8.next(name, &at);
+```
+
+A byte that is no UTF-8 - one that starts no character, or a sequence
+broken off - reads as its Latin-1 character, one byte long, with
+`.broken` set: so text written in Latin-1 still reads right. An overlong
+form, a surrogate and a value past U+10FFFF are no UTF-8. `encode`
+writes U+FFFD (`utf8.replacement`) for a surrogate or a value past
+`utf8.last`.
+
+`sdk.utility.unicode` holds the case tables the calls above use:
+`unicode.fold(char)`, `unicode.upper(char)`, `unicode.lower(char)`, and
+`unicode.compareFolded(a, b)` and `unicode.equalFolded(a, b)` over two
+slices, what `Strnicmp` answers. `unicode.version` names the Unicode
+version the tables are made from.
+
 ## Text between UTF-8 and Latin-1
 
-The system's names, its fonts and its console are Latin-1; what comes
-from elsewhere - a server's words, a file another system wrote, a name
-in a repository, a song's tags - is mostly UTF-8. Latin-1's 256
-characters are Unicode's first 256, so a character up to U+00FF is one
-byte either way round; the rest is what a conversion decides.
+The system's fonts and its console draw Latin-1; its strings are UTF-8,
+and what comes from elsewhere - a server's words, a file another system
+wrote, a name in a repository, a song's tags - is mostly UTF-8. Latin-1's
+256 characters are Unicode's first 256, so a character up to U+00FF is
+one byte in Latin-1 and two at most in UTF-8; the rest is what a
+conversion decides.
 
 | Call | |
 |---|---|
@@ -555,27 +601,35 @@ dos.library's `MatchFirst` and `MatchNext` (see the
 
 **`~` is a pattern character**, and so is `'`: a name with a `~` in it is
 matched by writing `'~` (a `~` at the very end of a pattern is itself),
-and `''` is one `'`. Bytes 0x80 to 0x8B are refused in a pattern; they
-are the tokens.
+and `''` is one `'`.
+
+**Both sides are characters.** A pattern and the strings it matches are
+UTF-8: `?` takes one character, however many bytes it is, and a class's
+range is a range of code points, so `[α-ω]` takes the Greek small
+letters. The tokens are the bytes 0xF5 to 0xFF, which UTF-8 never holds
+(`utility.isToken(byte)`), so a parsed pattern can be scanned byte by
+byte. A byte of a pattern that is no UTF-8 goes in as its Latin-1
+character, so a Latin-1 pattern matches the UTF-8 name.
 
 `ParsePattern` answers 1 for a pattern with wildcards and 0 for a plain
 name - whose tokens are the name, its escapes resolved, for a program to
 use as it is. -1 is a failure with the reason in IoErr:
 `ERROR_BAD_TEMPLATE` for a pattern that does not parse,
 `ERROR_LINE_TOO_LONG` for a buffer too small; the tokens then hold an
-empty pattern. `utility.parsedSize(len)` bytes are always enough for
-`len` characters.
+empty pattern. `utility.parsedSize(len)` bytes are always enough for a
+pattern of `len` bytes.
 
-**Case belongs to the pair.** `ParsePatternNoCase` puts the pattern
-through `ToUpper` and `MatchPatternNoCase` each character of the string;
-tokens are matched by the partner of the call that made them. Names on
-the disk compare without case, so a pattern for them is parsed with
-`ParsePatternNoCase` - the form `ExAllControl.match_string` takes.
+**Without case**, a character matches when it folds to what the
+pattern's does, by the folding `Stricmp` uses. `ParsePatternNoCase`
+writes the pattern's characters folded and `MatchPatternNoCase` folds
+both sides, so it also matches tokens `ParsePattern` made; `MatchPattern`
+on the tokens of `ParsePatternNoCase` matches only names already folded.
+Names on the disk compare without case, so a pattern for them is parsed
+with `ParsePatternNoCase` - the form `ExAllControl.match_string` takes.
 
 The tokens are only read, so any number of tasks match against one
 parsed pattern at once. Matching backtracks on frames of its own, given
-back before it answers, up to 1024: a name of 255 characters always
-fits. A match that needs more answers false, with `ERROR_TOO_MANY_LEVELS`
+back before it answers, up to 1024: a name of 255 bytes always fits. A match that needs more answers false, with `ERROR_TOO_MANY_LEVELS`
 in IoErr (`ERROR_NO_FREE_STORE` without memory).
 
 `SetWildStar` changes `*` for every task's patterns parsed from then on,

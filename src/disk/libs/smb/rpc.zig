@@ -397,8 +397,8 @@ test "a PDU is read when all of it is there, and a stream of them ends at the la
 
 test "NDR: numbers and the strings after them" {
     // Two numbers, then a string of three characters with its NUL, then a
-    // number after the boundary it takes up.
-    var bytes: [40]u8 = @splat(0);
+    // number after the boundary it takes up, and the stub ends there.
+    var bytes: [32]u8 = @splat(0);
     wire.put32(&bytes, 0, 1);
     wire.put32(&bytes, 4, 0x20000);
     wire.put32(&bytes, 8, 4); // the room

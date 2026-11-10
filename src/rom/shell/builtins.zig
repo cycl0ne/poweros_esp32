@@ -989,13 +989,9 @@ fn eatLine(dl: *DosBase) i32 {
 }
 
 /// If compares strings without case, the difference of the first
-/// characters that differ (the shorter one's end counts).
+/// characters that differ (the shorter one's end counts): `Stricmp`.
 fn compare(ub: *UtilityBase, a: [*:0]const u8, b: [*:0]const u8) i32 {
-    var i: usize = 0;
-    while (true) : (i += 1) {
-        const d = @as(i32, ub.ToUpper(a[i])) - @as(i32, ub.ToUpper(b[i]));
-        if (d != 0 or a[i] == 0 or b[i] == 0) return d;
-    }
+    return ub.Stricmp(a, b);
 }
 
 /// IF [NOT] [WARN] [ERROR] [FAIL] [a EQ|GT|GE b [VAL]] [EXISTS name]: when

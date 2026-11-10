@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Stricmp: compares two strings without case, as `Strnicmp` with no
-//! limit that matters.
+//! Stricmp: compares two strings without regard to case, as `Strnicmp`
+//! with no limit that matters.
 
 const std = @import("std");
 
@@ -13,22 +13,25 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// fn Stricmp(ub: *UtilityBase, string1: [*:0]const u8, string2: [*:0]const u8) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -108.
+/// SINCE: 1.0, UTF-8 since 1.7. LVO -108.
 ///
 /// INPUTS:
-/// - `string1` - a Latin-1 string.
+/// - `string1` - a UTF-8 string.
 /// - `string2` - the string to compare it with.
 ///
 /// RESULT:
 /// Less than 0, 0 or more than 0 as `string1` sorts before, the same as or
 /// after `string2` - the difference of the first two characters that
-/// differ, after `ToUpper`.
+/// differ once folded, the end of a string counting as 0.
 ///
 /// BEHAVIOR:
-/// Each character goes through `ToUpper` before the comparison, so the
-/// order is that of the upper-case codes: `_` (0x5F) sorts after `Z`, and
-/// the Latin-1 letters after all of ASCII. There is no locale: `ß` has no
-/// upper case and compares as itself.
+/// Each character is folded by Unicode's simple case folding before the
+/// comparison - the same whatever language is set, and what names are
+/// compared by everywhere: `Ä` and `ä` are one, `Σ`, `σ` and `ς` are one,
+/// `ß` is itself. The order is that of the folded code points: `_`
+/// (0x5F) before the letters, the letters past ASCII after all of it. A
+/// byte that is no UTF-8 compares as its Latin-1 character, as
+/// `Strnicmp` says.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -68,7 +71,15 @@ test "Stricmp" {
     try testing.expect(Stricmp(ub, "abc", "abd") < 0);
     try testing.expect(Stricmp(ub, "b", "A") > 0);
     try testing.expect(Stricmp(ub, "a", "ab") < 0);
-    try testing.expect(Stricmp(ub, "_", "a") > 0); // after ToUpper: '_' > 'A'
-    try testing.expect(Stricmp(ub, "a", "\xE4") < 0); // 'A' < 'Ä'
+    try testing.expect(Stricmp(ub, "_", "a") < 0); // folded: '_' < 'a'
+    try testing.expect(Stricmp(ub, "a", "\xE4") < 0); // 'a' < 'ä'
+    // UTF-8 against UTF-8, and against the same letter in Latin-1.
+    try testing.expectEqual(@as(i32, 0), Stricmp(ub, "M\xC3\xBCll", "M\xC3\x9CLL")); // Müll, MÜLL
+    try testing.expectEqual(@as(i32, 0), Stricmp(ub, "M\xFCll", "m\xC3\x9Cll"));
+    try testing.expectEqual(@as(i32, 0), Stricmp(ub, "\xCE\x9F\xCE\xB4\xCF\x8C\xCF\x82", "\xCE\xBF\xCE\xB4\xCF\x8C\xCF\x83")); // Οδός, οδόσ
+    try testing.expectEqual(@as(i32, 0), Stricmp(ub, "\xE1\xBA\x9E", "\xC3\x9F")); // ẞ, ß
+    try testing.expect(Stricmp(ub, "stra\xC3\x9Fe", "strasse") != 0); // no full folding
+    try testing.expectEqual(@as(i32, 0), Stricmp(ub, "\xF0\x9F\x98\x80", "\xF0\x9F\x98\x80"));
+    try testing.expect(Stricmp(ub, "\xC3\xA4", "\xC3\xA4b") < 0);
     try library.tearDown(ub);
 }

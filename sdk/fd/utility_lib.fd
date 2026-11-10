@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! utility.library's jump table: tag lists, hooks, dates, 32- and 64-bit
-//! multiplication and division, Latin-1 case, pack tables, named objects,
+//! multiplication and division, case, pack tables, named objects,
 //! unique IDs, pattern matching, strings, alignment, lines of settings,
 //! the zone the system clock keeps, text between UTF-8 and Latin-1, and
 //! URLs.
@@ -41,8 +41,8 @@ utility.UDivMod32Result UDivMod32(u32 dividend, u32 divisor)
 // Case
 i32 Stricmp([*:0]const u8 string1, [*:0]const u8 string2)
 i32 Strnicmp([*:0]const u8 string1, [*:0]const u8 string2, i32 length)
-u8 ToUpper(u32 character)
-u8 ToLower(u32 character)
+u32 ToUpper(u32 character)
+u32 ToLower(u32 character)
 // More tag lists
 void ApplyTagChanges(?[*]utility.TagItem list, ?[*]const utility.TagItem change_list)
 // Reserved
