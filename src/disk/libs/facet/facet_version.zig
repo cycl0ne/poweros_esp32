@@ -6815,4 +6815,44 @@ pub const LIBRARY_VERSION = 1;
 /// functions made wrong on purpose they are 53,998 and 71,907 apart. The
 /// other 297 cases are each as they were at 1.204, and FacetProbe passes
 /// its 890 checks.
-pub const LIBRARY_REVISION = 205;
+///
+/// 206: **Outputs as variables of the function's own (docs/
+/// facet-vulkan10.md item 60).** Each output was the one value stored into
+/// it, once for a vertex program's, and a store into one in an arm refused
+/// the program. v3dv runs nir_lower_io_vars_to_temporaries on the outputs
+/// (v3dv_pipeline.c:399-400): each is a variable of the function's own,
+/// which a copy at its end stores into the output
+/// (emit_output_copies_impl, nir_lower_io_vars_to_temporaries.c:133-144).
+/// So now: a varying, the colour, and gl_PerVertex's gl_Position and
+/// gl_PointSize, which nir_split_per_member_structs makes variables of
+/// their own (vk_nir.c:321-325), are variables; stored in an arm, stored
+/// twice, stored a float at a time through a chain, and loaded, as
+/// glslang writes them without optimization. `copyOutputs` stores what
+/// they hold where the walk ends: a float stored nowhere is an undef whose
+/// store nir_opt_undef takes out (opt_undef_store, nir_opt_undef.c:
+/// 143-179), and an output stored whole is the value stored
+/// (nir_lower_vars_to_ssa.c:723-733).
+///
+/// A fix to 1.193: nir_move_output_stores_to_end stores in the order of
+/// the slots (nir_move_output_stores_to_end.c:86-93), so a point size's
+/// store is before the varyings', VARYING_SLOT_PSIZ being before
+/// VARYING_SLOT_VAR0 (shader_enums.h:350, :381), and the varyings are in
+/// the order of their locations; 1.193 kept the OpStores' order. The rows
+/// were right either way.
+///
+/// Eight references: glslc_outputs_arms_frag, glslc_outputs_kept_frag,
+/// glslc_outputs_arms_vert, glslc_outputs_part_vert,
+/// glslc_outputs_kept_vert, glslc_outputs_unstored_vert,
+/// glslc_shipped_outputs and glslc_shipped_vertex_outputs, each without
+/// -O. The V3D's tests are 377, ten new and three changed. Of 12
+/// mutations, all 12 fail them.
+///
+/// On the CM5 FacetBoth 1.70's "shipped outputs in arms", a fragment
+/// shader's colour stored in both arms and again after the merge, is 8 of
+/// 230400 pixels apart, at the selection's edge, and "shipped vertex
+/// outputs in arms", a vertex shader's place and colour stored again in a
+/// flattened arm and the place's x in a kept one, is 6 apart, the
+/// triangles' edges. With the cores' functions made wrong on purpose they
+/// are 12,423 and 37,922 apart. The other 299 cases are each as they were
+/// at 1.205, and FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 206;

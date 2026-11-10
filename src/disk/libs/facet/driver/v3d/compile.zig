@@ -1684,17 +1684,29 @@ pub const Work = struct {
     vattr_sizes: [most_attributes]u8 = @splat(0),
     attribute_location: [most_attributes]u8 = @splat(0),
     attribute_count: u32 = 0,
-    /// The varyings stored, in the order of their OpStores, which
-    /// nir_move_output_stores_to_end keeps at the end of the program
-    /// (v3d_nir_lower_vs_early, vir.c:1121): each the value's step and
-    /// the variable it went into.
+    /// The varyings stored, in the order nir_move_output_stores_to_end
+    /// puts them at the end of the program, of their locations
+    /// (v3d_nir_lower_vs_early, vir.c:1124; since 1.206): each the value's
+    /// step, the variable it went into, and a bit for each float stored.
     varying_values: [most_varyings]u16 = undefined,
     varying_into: [most_varyings]u16 = undefined,
+    varying_mask: [most_varyings]u8 = undefined,
     varying_count: u32 = 0,
     /// The point size stored, nir_lower_point_size's fmax of it and 1.0
-    /// (since 1.193), and how many varyings were stored before it.
+    /// (since 1.193).
     point_size: u16 = none,
-    point_size_order: u32 = 0,
+    /// The outputs as nir_lower_io_vars_to_temporaries makes them,
+    /// variables of the function's own (v3dv_pipeline.c:399-400): the
+    /// variable of each, gl_PerVertex's position and point size apart,
+    /// in the order they are declared (since 1.206).
+    output_vars: [most_locals]u16 = undefined,
+    output_var_count: u32 = 0,
+    /// How many of the variables are outputs', and the value last stored
+    /// into each output's whole.
+    output_local_count: u32 = 0,
+    output_whole: [most_locals]u16 = @splat(none),
+    position_local: u16 = none,
+    point_size_local: u16 = none,
 
     steps: [most_steps]Step = undefined,
     step_count: u32 = 0,
@@ -1790,7 +1802,7 @@ pub const Work = struct {
     kept: [most_kept]Kept = undefined,
     kept_count: u8 = 0,
 
-    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value, constant_matrix, position_pointer, point_size_pointer, system_part, plain_struct, local_aggregate, aggregate_value, constant_aggregate, scratch_pointer, local_tree };
+    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value, constant_matrix, system_part, plain_struct, local_aggregate, aggregate_value, constant_aggregate, scratch_pointer, local_tree };
 
     /// `chain_part` of a pointer to a whole member.
     pub const whole: u8 = 0xFF;
@@ -2979,6 +2991,14 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.class[id] = @intCast(@intFromEnum(class));
                     work.points[id] = @intCast(block - &work.blocks[0]);
                     work.per_vertex = id;
+                    // nir_split_per_member_structs makes each member a
+                    // variable (vk_nir.c:321-325), and
+                    // nir_lower_io_vars_to_temporaries each of those a
+                    // variable of the function's own (since 1.206).
+                    for (block.member_builtin[0..block.member_count]) |builtin| {
+                        if (builtin == @intFromEnum(spirv.BuiltIn.position)) work.position_local = try outputLocal(work, .f32x4);
+                        if (builtin == @intFromEnum(spirv.BuiltIn.point_size)) work.point_size_local = try outputLocal(work, .f32x1);
+                    }
                     continue;
                 }
                 if (class == .input and systemOf(work, id) != null) {
@@ -3022,8 +3042,14 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // A vertex program's varying: at a location, which
                     // says where the fragment program reads it (since
                     // 1.163).
+                    // A variable of the function's own, which the body may
+                    // store into and load from anywhere, copied out where
+                    // it ends (`copyOutputs`; since 1.206).
                     .output => if (work.stage == .vertex) {
                         if (work.location[id] == none) return Error.Location;
+                        work.points[id] = try outputLocal(work, floats);
+                        work.output_vars[work.output_var_count] = id;
+                        work.output_var_count += 1;
                     } else {
                         // One colour out, at location 0, of four floats:
                         // what the tile buffer takes without a
@@ -3033,6 +3059,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         if (floats != .f32x4) return Error.Type;
                         work.output = id;
                         work.output_count = 1;
+                        work.points[id] = try outputLocal(work, floats);
                     },
                     else => return Error.Storage,
                 }
@@ -3374,6 +3401,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
         }
     }
     if (loop.active or jumped != 0) return Error.Branches;
+    try copyOutputs(work);
     try interpolatedVaryings(work);
     if (work.stage == .vertex) return finishVertex(work);
     if (work.stage == .gl_compute) return finishCompute(work);
@@ -3406,13 +3434,18 @@ fn finishVertex(work: *Work) Error!void {
     // shader that writes it whatever the pipeline draws (v3dv_pipeline.c:
     // 1375-1376, 1418-1419), and v3d_nir_setup_vpm_layout_vs's
     // psiz_vpm_offset (v3d_nir_lower_io.c:427-428; since 1.193).
+    // Its store is before the varyings', as VARYING_SLOT_PSIZ is before
+    // VARYING_SLOT_VAR0 (shader_enums.h:350, :381) and
+    // nir_move_output_stores_to_end puts them in the order of their
+    // slots (since 1.206).
     const point_size_at = work.varyings_vpm_offset;
-    if (work.point_size != none) work.varyings_vpm_offset += 1;
-    for (work.varying_values[0..work.varying_count], work.varying_into[0..work.varying_count], 0..) |value, into, k| {
-        if (work.point_size != none and k == work.point_size_order) try output(work, work.point_size, point_size_at);
-        try storeVarying(work, value, work.location[into], work.wide[into]);
+    if (work.point_size != none) {
+        work.varyings_vpm_offset += 1;
+        try output(work, work.point_size, point_size_at);
     }
-    if (work.point_size != none and work.point_size_order == work.varying_count) try output(work, work.point_size, point_size_at);
+    for (work.varying_values[0..work.varying_count], work.varying_into[0..work.varying_count], work.varying_mask[0..work.varying_count]) |value, into, mask| {
+        try storeVarying(work, value, work.location[into], work.wide[into], mask);
+    }
     try fixedOutputs(work);
     try algebraic(work);
     try attributes(work);
@@ -3457,8 +3490,9 @@ fn usedOutputs(key: *const VertexKey) u32 {
 
 /// One varying's stores, a float each where the fragment program reads it
 /// (v3d_nir_lower_vpm_output, v3d_nir_lower_io.c:194-217).
-fn storeVarying(work: *Work, value: u16, location: u32, floats: u32) Error!void {
+fn storeVarying(work: *Work, value: u16, location: u32, floats: u32, mask: u8) Error!void {
     for (0..floats) |k| {
+        if (mask & @as(u8, 1) << @intCast(k) == 0) continue;
         const slot = slotOf(&work.vertex_key, location, @intCast(k)) orelse continue;
         const bit = @as(u32, 1) << @intCast(slot);
         work.varyings_stored |= bit;
@@ -4698,7 +4732,98 @@ const Values = [most_locals][4]Float;
 const unstored: Float = .{ .step = none, .part = 0 };
 
 fn isLocal(work: *const Work, id: u16) bool {
-    return work.thing[id] == .variable and work.class[id] == @intFromEnum(spirv.StorageClass.function);
+    if (work.thing[id] != .variable) return false;
+    if (work.class[id] == @intFromEnum(spirv.StorageClass.function)) return true;
+    // An output, nir_lower_io_vars_to_temporaries' variable of the
+    // function's own (since 1.206); gl_PerVertex's members are each one.
+    return work.class[id] == @intFromEnum(spirv.StorageClass.output) and id != work.per_vertex;
+}
+
+/// An output's variable of the function's own, which
+/// nir_lower_io_vars_to_temporaries makes it (create_shadow_temp,
+/// nir_lower_io_vars_to_temporaries.c:347-376), declared before the
+/// function's own (since 1.206).
+fn outputLocal(work: *Work, kind: Kind) Error!u16 {
+    if (work.local_count == most_locals) return Error.Storage;
+    const local = work.local_count;
+    work.local_kind[local] = kind;
+    work.local_bool[local] = false;
+    work.values[local] = @splat(unstored);
+    work.local_count += 1;
+    work.output_local_count += 1;
+    return @intCast(local);
+}
+
+/// What the copy of an output loads: the value last stored into its
+/// whole where its variable still holds that value's floats, which is
+/// nir_lower_vars_to_ssa's def of the store (nir_lower_vars_to_ssa.c:
+/// 723-733), else the floats it holds (since 1.206).
+fn outputValue(work: *Work, local: u16) Error!u16 {
+    const whole = work.output_whole[local];
+    if (whole != none) {
+        const same = for (0..work.local_kind[local].parts()) |k| {
+            const holds = work.values[local][k];
+            const was = partOf(work, whole, @intCast(k));
+            if (holds.step != was.step or holds.part != was.part) break false;
+        } else true;
+        if (same) return whole;
+    }
+    return localOf(work, local);
+}
+
+/// The floats of an output's variable stored into, a bit each: one of
+/// none is an undef, whose store nir_opt_undef takes out (opt_undef_store,
+/// nir_opt_undef.c:143-179).
+fn storedMask(work: *const Work, local: u16) u8 {
+    var mask: u8 = 0;
+    for (0..work.local_kind[local].parts()) |k| {
+        if (work.values[local][k].step != none) mask |= @as(u8, 1) << @intCast(k);
+    }
+    return mask;
+}
+
+/// nir_lower_io_vars_to_temporaries' copies, where the function ends
+/// (emit_output_copies_impl, nir_lower_io_vars_to_temporaries.c:133-144):
+/// each output the value its variable holds there, so it may be stored
+/// in an arm, or more than once, or loaded (since 1.206). An output of no
+/// float stored is not stored, and a float of one not stored is not
+/// either. A vertex program's position is kept for the fixed-function
+/// outputs, as v3d_nir_lower_vpm_output keeps state->pos
+/// (v3d_nir_lower_io.c:146-153); its point size is at least 1.0,
+/// nir_lower_point_size's fmax, which v3d_nir_lower_vs_early runs on the
+/// copy's store (vir.c:1110-1111); and its varyings are in the order of
+/// their locations, which nir_move_output_stores_to_end stores them in
+/// (nir_move_output_stores_to_end.c:86-93).
+fn copyOutputs(work: *Work) Error!void {
+    switch (work.stage) {
+        .fragment => if (work.output != none and storedMask(work, work.points[work.output]) != 0) {
+            work.stored = try outputValue(work, work.points[work.output]);
+        },
+        .vertex => {
+            if (work.position_local != none and storedMask(work, work.position_local) != 0) work.position = try outputValue(work, work.position_local);
+            if (work.point_size_local != none and storedMask(work, work.point_size_local) != 0) {
+                const size = try floatOf(work, work.values[work.point_size_local][0]);
+                work.point_size = try binary(work, .max, size, try immediate(work, 1.0));
+            }
+            var sorted: [most_locals]u16 = undefined;
+            var count: usize = 0;
+            for (work.output_vars[0..work.output_var_count]) |id| {
+                if (storedMask(work, work.points[id]) == 0) continue;
+                var at = count;
+                while (at > 0 and work.location[sorted[at - 1]] > work.location[id]) : (at -= 1) sorted[at] = sorted[at - 1];
+                sorted[at] = id;
+                count += 1;
+            }
+            for (sorted[0..count]) |id| {
+                if (work.varying_count == most_varyings) return Error.Outputs;
+                work.varying_values[work.varying_count] = try outputValue(work, work.points[id]);
+                work.varying_into[work.varying_count] = id;
+                work.varying_mask[work.varying_count] = storedMask(work, work.points[id]);
+                work.varying_count += 1;
+            }
+        },
+        else => {},
+    }
 }
 
 /// Whether an OpStore's pointer is a variable of the function's own, or
@@ -7161,39 +7286,8 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 const kind = work.local_kind[local];
                 const value = if (work.local_bool[local]) try boolOf(work, operands[1]) else try operand(work, operands[1], kind);
                 for (0..kind.parts()) |k| work.values[local][k] = partOf(work, value, @intCast(k));
+                if (work.class[into] == @intFromEnum(spirv.StorageClass.output)) work.output_whole[local] = value;
                 touch(work, local);
-                return;
-            }
-            if (work.thing[into] == .position_pointer) {
-                // gl_Position: kept for the fixed-function outputs, as
-                // v3d_nir_lower_vpm_output keeps state->pos and stores
-                // nothing for it (v3d_nir_lower_io.c:146-153; since
-                // 1.163).
-                if (work.position != none) return Error.Outputs;
-                work.position = try operand(work, operands[1], .f32x4);
-                return;
-            }
-            if (work.thing[into] == .point_size_pointer) {
-                // gl_PointSize, at least 1.0: nir_lower_point_size's fmax,
-                // which v3d_nir_lower_vs_early runs where the program
-                // writes it (vir.c:1110-1111, nir_lower_point_size.c), and
-                // stored with the varyings, in the order of the stores
-                // (since 1.193). Once, as gl_Position is.
-                if (work.point_size != none) return Error.Outputs;
-                work.point_size = try binary(work, .max, try operand(work, operands[1], .f32x1), try immediate(work, 1.0));
-                work.point_size_order = work.varying_count;
-                return;
-            }
-            if (work.stage == .vertex and work.thing[into] == .variable and work.class[into] == @intFromEnum(spirv.StorageClass.output)) {
-                // A varying, stored where the program ends
-                // (nir_move_output_stores_to_end), once: a second store
-                // into one would want nir_opt_dead_write_vars.
-                const kind = std.enums.fromInt(Kind, work.wide[into]) orelse return Error.Type;
-                for (work.varying_into[0..work.varying_count]) |each| if (each == into) return Error.Outputs;
-                if (work.varying_count == most_varyings) return Error.Outputs;
-                work.varying_values[work.varying_count] = try operand(work, operands[1], kind);
-                work.varying_into[work.varying_count] = into;
-                work.varying_count += 1;
                 return;
             }
             if (work.thing[into] == .member_pointer) {
@@ -7223,8 +7317,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 try blockStore(work, base, work.chain_dynamic[into], offset, work.non_writable[into], value, kind);
                 return;
             }
-            if (into != work.output) return Error.Body;
-            work.stored = try operand(work, operands[1], .f32x4);
+            return Error.Body;
         },
         // OpAtomicLoad and OpAtomicStore: a load_deref and a store_deref,
         // ACCESS_ATOMIC and COHERENT, which v3d reads and writes as any
@@ -7417,7 +7510,10 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 // gl_PerVertex's gl_Position (since 1.163) and gl_PointSize
                 // (since 1.193), the members a program here may store. The
                 // clip and cull distances would want nir_lower_clip_vs.
-                if (operands.len != 4) return Error.Outputs;
+                // Each is the variable of the function's own
+                // nir_lower_io_vars_to_temporaries makes it, and a float
+                // of gl_Position one of its (since 1.206).
+                if (operands.len != 4 and operands.len != 5) return Error.Outputs;
                 const which = try indexOf(work, operands[3]);
                 const block = &work.blocks[work.points[base]];
                 if (which >= block.member_count) return Error.Outputs;
@@ -7425,9 +7521,24 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 if (builtin != @intFromEnum(spirv.BuiltIn.position) and builtin != @intFromEnum(spirv.BuiltIn.point_size)) return Error.Outputs;
                 const position = builtin == @intFromEnum(spirv.BuiltIn.position);
                 const wanted: Kind = if (position) .f32x4 else .f32x1;
-                if (work.thing[type_id] != .pointer or work.points[type_id] != block.member_type[which]) return Error.Type;
                 if (try kindOf(work, block.member_type[which]) != wanted) return Error.Type;
-                work.thing[id] = if (position) .position_pointer else .point_size_pointer;
+                if (work.thing[type_id] != .pointer or work.class[type_id] != @intFromEnum(spirv.StorageClass.output)) return Error.Type;
+                const local = if (position) work.position_local else work.point_size_local;
+                if (operands.len == 5) {
+                    if (!position) return Error.Outputs;
+                    const part = try indexOf(work, operands[4]);
+                    if (part >= 4) return Error.Body;
+                    if (try kindOf(work, work.points[type_id]) != .f32x1) return Error.Type;
+                    work.thing[id] = .local_part;
+                    work.points[id] = local;
+                    work.chain_part[id] = @intCast(part);
+                    return;
+                }
+                if (work.points[type_id] != block.member_type[which]) return Error.Type;
+                work.thing[id] = .variable;
+                work.class[id] = @intFromEnum(spirv.StorageClass.output);
+                work.points[id] = local;
+                work.wide[id] = @intCast(wanted.parts());
                 return;
             }
             if (work.thing[base] == .variable and work.class[base] == @intFromEnum(spirv.StorageClass.input) and systemOf(work, base) != null) {
@@ -7618,7 +7729,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 const which = try indexOf(work, operands[3]);
                 if (work.wide[base] == 1 or which >= work.wide[base]) return Error.Body;
                 if (work.thing[type_id] != .pointer) return Error.Type;
-                if (work.class[type_id] != @intFromEnum(spirv.StorageClass.function)) return Error.Body;
+                if (work.class[type_id] != work.class[base]) return Error.Body;
                 if (try kindOf(work, work.points[type_id]) != .f32x1) return Error.Type;
                 work.thing[id] = .local_part;
                 work.points[id] = work.points[base];
@@ -15703,7 +15814,7 @@ test "through Mesa's back end, glslc's if and else without -O: its variables mad
     defer testing.allocator.free(stream_kept);
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_branch_unoptimized);
-    try testing.expectEqual(@as(u32, 3), work.local_count);
+    try testing.expectEqual(@as(u32, 3), work.local_count - work.output_local_count);
     try testing.expectEqual(@as(usize, 4), stepsOf(&work, .select));
     try testing.expectEqualSlices(u64, kept, code.words);
     try testing.expectEqual(stream_kept.len, code.stream().len);
@@ -15754,8 +15865,6 @@ test "a variable of the function's own of a block's struct, or loaded as what it
     // `texel`'s pointer type made a pointer to a bool: a variable there
     // may be (since 1.165), but the vector loaded from it is no bool.
     try testing.expectError(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_cutout_unoptimized, .type_pointer, 0, 2, 26)));
-    // The colour out stored in an arm is still a store Mesa leaves there.
-    try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_branch_unoptimized, .store, 1, 0, 71)));
 }
 
 test "through Mesa's back end, glslc's nested selections: the inner flattened first, the outer's phis naming the inner merge block" {
@@ -18885,7 +18994,7 @@ test "a loop of a constant trip count is unrolled as nir_opt_loop_unroll unrolls
     // of its own and the update in the continue block.
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_looped_plain);
-    try testing.expectEqual(@as(u32, 2), work.local_count);
+    try testing.expectEqual(@as(u32, 2), work.local_count - work.output_local_count);
     try testing.expectEqualSlices(u64, kept, code.words);
     try testing.expectEqual(stream_kept.len, code.stream().len);
     for (stream_kept, code.stream()) |a, b| try testing.expectEqual(a, b);
@@ -19086,7 +19195,7 @@ test "an array of the function's own a loop Mesa unrolls indexes is a variable o
     // besides each varying's six.
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_local_array);
-    try testing.expectEqual(@as(u32, 3), work.local_count);
+    try testing.expectEqual(@as(u32, 3), work.local_count - work.output_local_count);
     try testing.expectEqual(@as(usize, 15), code.words.len);
     try testing.expectEqual(@as(usize, 6 + 4), opsOf(code, "fmul"));
     try testing.expectEqual(@as(usize, 6 + 4), opsOf(code, "fadd"));
@@ -19096,7 +19205,7 @@ test "an array of the function's own a loop Mesa unrolls indexes is a variable o
     // words.
     var kept: Work = .{};
     const same = try throughMesa(&kept, &reference.glslc_local_array_kept);
-    try testing.expectEqual(@as(u32, 3 + 2 + 1 + 1), kept.local_count);
+    try testing.expectEqual(@as(u32, 3 + 2 + 1 + 1), kept.local_count - kept.output_local_count);
     try testing.expectEqualSlices(u64, code.words, same.words);
 }
 
@@ -19105,7 +19214,7 @@ test "a struct of the function's own is a variable of each member, as nir_split_
     // of l, member by member (vtn_variables.c:763-781; since 1.176).
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_local_struct);
-    try testing.expectEqual(@as(u32, 4), work.local_count);
+    try testing.expectEqual(@as(u32, 4), work.local_count - work.output_local_count);
     // The dot of m.dir and (0, 0, 1) its products and sums, as
     // nir_lower_alu_to_scalar lowers it: 1.0 times 1.0, the constant 1.0,
     // and the fmuls of 0.0 zeros (:277), each fadd of a zero the other
@@ -19121,7 +19230,7 @@ test "a struct of the function's own is a variable of each member, as nir_split_
     try testing.expectEqual(@as(usize, 14), code.words.len);
     var values: Work = .{};
     const same = try throughMesa(&values, &reference.glslc_local_struct_values);
-    try testing.expectEqual(@as(u32, 0), values.local_count);
+    try testing.expectEqual(@as(u32, 0), values.local_count - values.output_local_count);
     try testing.expectEqual(@as(u32, 6), code.varyings);
     try testing.expectEqual(@as(u32, 4), same.varyings);
     inline for (.{ "fmax", "fmul", "fadd", "vfpack" }) |op| try testing.expectEqual(opsOf(same, op), opsOf(code, op));
@@ -19137,7 +19246,7 @@ test "an array a loop stores into at its counter, and an array of structs from a
     // varying's fmul and fadd.
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_local_taps);
-    try testing.expectEqual(@as(u32, 4), work.local_count);
+    try testing.expectEqual(@as(u32, 4), work.local_count - work.output_local_count);
     try testing.expectEqual(@as(usize, 1 + 3), opsOf(code, "fmul"));
     try testing.expectEqual(@as(usize, 1 + 1), opsOf(code, "fadd"));
     // At -O0 the counter and the array of structs are variables too, the
@@ -19146,7 +19255,7 @@ test "an array a loop stores into at its counter, and an array of structs from a
     // a vec2 and a float of each tap.
     var kept: Work = .{};
     const same = try throughMesa(&kept, &reference.glslc_local_taps_kept);
-    try testing.expectEqual(@as(u32, 1 + 4 + 2 * 2), kept.local_count);
+    try testing.expectEqual(@as(u32, 1 + 4 + 2 * 2), kept.local_count - kept.output_local_count);
     try testing.expectEqualSlices(u64, code.words, same.words);
     try testing.expectEqual(code.stream().len, same.stream().len);
     for (code.stream(), same.stream()) |a, b| try testing.expectEqual(a, b);
@@ -19175,13 +19284,13 @@ test "a matrix of the function's own is a variable of each column, a column stor
     // m's two columns, and v (since 1.176).
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_local_matrix);
-    try testing.expectEqual(@as(u32, 2 + 1), work.local_count);
+    try testing.expectEqual(@as(u32, 2 + 1), work.local_count - work.output_local_count);
     // glslc -O's values: the column put into the matrix by an
     // OpCompositeInsert, vtn_composite_insert's copy with the column
     // replaced (since 1.176). The same words.
     var values: Work = .{};
     const same = try throughMesa(&values, &reference.glslc_local_matrix_values);
-    try testing.expectEqual(@as(u32, 0), values.local_count);
+    try testing.expectEqual(@as(u32, 0), values.local_count - values.output_local_count);
     try testing.expectEqualSlices(u64, same.words, code.words);
 }
 
@@ -19190,7 +19299,7 @@ test "an array of bools of the function's own is a variable of each, and a load 
     // reads, is taken out (since 1.176).
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_local_bools);
-    try testing.expectEqual(@as(u32, 2), work.local_count);
+    try testing.expectEqual(@as(u32, 2), work.local_count - work.output_local_count);
     try testing.expectEqual(@as(usize, 1), countOf(code, "fcmp"));
     // The load of flags[1] made one of the whole array.
     work = .{};
@@ -19207,7 +19316,7 @@ test "an array of the function's own stored in selections' arms: an element in o
     // second does; a select of each float.
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_local_palette);
-    try testing.expectEqual(@as(u32, 2 + 2), work.local_count);
+    try testing.expectEqual(@as(u32, 2 + 2), work.local_count - work.output_local_count);
     try testing.expectEqual(@as(usize, 2), liveOf(&work, .compare));
     try testing.expectEqual(@as(usize, 8), liveOf(&work, .select));
     try testing.expectEqual(@as(usize, 1), liveLogicOf(&work, .ior));
@@ -19219,11 +19328,13 @@ test "a struct of a matrix and a float, stored from one stored nowhere and made 
     // p and unset, two columns and a float each, and k (since 1.176).
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_local_pair);
-    try testing.expectEqual(@as(u32, 3 + 3 + 1), work.local_count);
+    try testing.expectEqual(@as(u32, 3 + 3 + 1), work.local_count - work.output_local_count);
     // In the order they are first used, which is the order
     // nir_lower_vars_to_ssa gives their values to the phi builder: unset,
     // loaded whole before anything is stored, then p, then k.
-    try testing.expectEqualSlices(u8, &.{ 3, 4, 5, 0, 1, 2, 6 }, work.first_used[0..work.used_count]);
+    // Each one past the colour's, variable 0, which its store at the end
+    // uses last (since 1.206).
+    try testing.expectEqualSlices(u8, &.{ 4, 5, 6, 1, 2, 3, 7, 0 }, work.first_used[0..work.used_count]);
     // p.m[1] is (z, w) either way, which no select chooses; p.w, p.m[0].x
     // and k's four floats are chosen.
     try testing.expectEqual(@as(usize, 1), liveOf(&work, .compare));
@@ -19261,7 +19372,7 @@ test "a struct or an array made by OpCompositeConstruct is read by OpCompositeEx
     // (since 1.176), and 1.0.
     var work: Work = .{};
     _ = try throughMesa(&work, &reference.glslc_aggregate_values);
-    try testing.expectEqual(@as(u32, 3), work.local_count);
+    try testing.expectEqual(@as(u32, 3), work.local_count - work.output_local_count);
     const out = work.steps[work.stored];
     for (0..3) |k| {
         const float = partOf(&work, work.stored, @intCast(k));
@@ -19283,7 +19394,7 @@ test "a variable of the function's own given a constant to start with, an array'
     const code = try throughMesa(&work, &words);
     var kept: Work = .{};
     const same = try throughMesa(&kept, &start);
-    try testing.expectEqual(kept.local_count, work.local_count);
+    try testing.expectEqual(kept.local_count - kept.output_local_count, work.local_count - work.output_local_count);
     try testing.expectEqualSlices(u64, same.words, code.words);
     try testing.expectEqualSlices(Word, same.stream(), code.stream());
     var zero: Work = .{};
@@ -20309,20 +20420,29 @@ test "a point size of 1.0 is stored as it is, the fmax of it and 1.0 folded, as 
     try testing.expect(code.vertex.point_size);
     try testing.expectEqual(@as(usize, 0), countOf(code, "fmax"));
     try testing.expectEqual(@as(usize, 9), countOf(code, "stvpmv"));
+    var rows: [16]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ 4, 5, 6, 7, 8, 0, 1, 2, 3 }, outputRows(&work, &rows));
     try testing.expectEqualSlices(Word, &.{
-        vpmIndex(0),     vpmIndex(1),               vpmIndex(2), vpmIndex(3),               vpmIndex(8),                vpmIndex(9),
-        .{ .float = 1 }, vpmIndex(4),               vpmIndex(5), vpmIndex(6),               vpmIndex(7),                .{ .viewport = .x_scale },
-        vpmIndex(0),     .{ .viewport = .y_scale }, vpmIndex(1), .{ .viewport = .z_scale }, .{ .viewport = .z_offset }, vpmIndex(2),
+        vpmIndex(0), vpmIndex(1),               vpmIndex(2), vpmIndex(3),               vpmIndex(8),                vpmIndex(9),
+        vpmIndex(4), vpmIndex(5),               vpmIndex(6), vpmIndex(7),               .{ .float = 1 },            .{ .viewport = .x_scale },
+        vpmIndex(0), .{ .viewport = .y_scale }, vpmIndex(1), .{ .viewport = .z_scale }, .{ .viewport = .z_offset }, vpmIndex(2),
         vpmIndex(3),
     }, code.stream());
-    // A second store of it, the colour's made one of 1.0 into %43, is
-    // refused, as a second of gl_Position is.
+    // A second store of it, the colour's made one of 1.0 into %43: the
+    // variable nir_lower_io_vars_to_temporaries makes of it holds the
+    // second, which the copy at the end stores, and the colour, stored
+    // nowhere, is the 0s of what the fragment program reads and nothing
+    // stored (since 1.206; refused before, as a second gl_Position was).
     work = .{};
     const twice = comptime patched(&patched(&reference.glslc_point_one, .store, 2, 0, 43), .store, 2, 1, 41);
-    try testing.expectError(Error.Outputs, vertexThroughMesa(&work, &twice, key));
+    const second = try vertexThroughMesa(&work, &twice, key);
+    try testing.expect(second.vertex.point_size);
+    try testing.expectEqual(@as(usize, 0), countOf(second, "fmax"));
+    try testing.expectEqual(@as(usize, 9), countOf(second, "stvpmv"));
+    try testing.expectEqualSlices(u32, &.{ 4, 0, 1, 2, 3, 5, 6, 7, 8 }, outputRows(&work, &rows));
 }
 
-test "a point size stored after the varyings is stored after them, at its row all the same" {
+test "a point size stored after the varyings is stored before them, as nir_move_output_stores_to_end stores in the order of the slots, at its row all the same" {
     var work: Work = .{};
     var key = VertexKey{};
     key.reads[0] = 4;
@@ -20330,12 +20450,15 @@ test "a point size stored after the varyings is stored after them, at its row al
     try testing.expect(code.vertex.point_size);
     try testing.expectEqual(@as(usize, 9), countOf(code, "stvpmv"));
     var rows: [16]u32 = undefined;
-    try testing.expectEqualSlices(u32, &.{ 5, 6, 7, 8, 4, 0, 1, 2, 3 }, outputRows(&work, &rows));
-    // The colour at rows 5 to 8, then the point size at row 4, as
-    // nir_move_output_stores_to_end keeps the stores' order.
+    // The point size at row 4, then the colour at rows 5 to 8:
+    // nir_move_output_stores_to_end puts the stores in the order of their
+    // slots (nir_move_output_stores_to_end.c:86-93), and VARYING_SLOT_PSIZ
+    // is before VARYING_SLOT_VAR0 (shader_enums.h:350, :381). 1.193 kept
+    // the stores' order, which it does not (since 1.206).
+    try testing.expectEqualSlices(u32, &.{ 4, 5, 6, 7, 8, 0, 1, 2, 3 }, outputRows(&work, &rows));
     try testing.expectEqualSlices(Word, &.{
         vpmIndex(4),               vpmIndex(5), vpmIndex(6),               vpmIndex(7),     vpmIndex(0),               vpmIndex(1),                vpmIndex(2), vpmIndex(3),
-        vpmIndex(8),               vpmIndex(9), .{ .float = 8 },           .{ .float = 1 }, vpmIndex(5),               vpmIndex(6),                vpmIndex(7), vpmIndex(4),
+        vpmIndex(8),               vpmIndex(9), .{ .float = 8 },           .{ .float = 1 }, vpmIndex(4),               vpmIndex(5),                vpmIndex(6), vpmIndex(7),
         .{ .viewport = .x_scale }, vpmIndex(0), .{ .viewport = .y_scale }, vpmIndex(1),     .{ .viewport = .z_scale }, .{ .viewport = .z_offset }, vpmIndex(2), vpmIndex(3),
     }, code.stream());
 }
@@ -21032,4 +21155,200 @@ test "through Mesa's back end, a kept selection whose arm the coordinate program
         selects += 1;
     };
     try testing.expectEqual(@as(usize, 4), selects);
+}
+
+/// The tag of the step a vertex program's output at `row` stores the
+/// float of, else `.output`.
+fn storedAt(work: *const Work, row: u32) Tag {
+    for (work.program()) |each| if (each.tag == .output and each.at == row) return work.steps[partOf(work, each.a, 0).step].tag;
+    return .output;
+}
+
+test "through Mesa's back end, a fragment program's colour stored in both arms without -O is a variable of the function's own, the merge's bcsels" {
+    // nir_lower_io_vars_to_temporaries makes the colour a variable
+    // (v3dv_pipeline.c:399-400), nir_lower_vars_to_ssa gives the merge a
+    // phi of it, and nir_opt_peephole_select a bcsel of each float; the
+    // copy at the end stores them (since 1.206).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_outputs_arms_frag);
+    try testing.expect(!hasBranch(&work));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .select));
+    for (0..4) |k| {
+        const chosen = work.steps[partOf(&work, work.stored, @intCast(k)).step];
+        try testing.expectEqual(Tag.select, chosen.tag);
+        // The false way's v * 0.5.
+        try testing.expectEqual(Tag.mul, work.steps[partOf(&work, chosen.from[0], 0).step].tag);
+    }
+    // The true way's x and y are v's y and z.
+    try testing.expect(isInputFloat(&work, work.steps[partOf(&work, work.stored, 0).step].b, 1));
+    try testing.expect(isInputFloat(&work, work.steps[partOf(&work, work.stored, 1).step].b, 2));
+    try testing.expectEqual(@as(usize, 19), code.words.len);
+}
+
+test "through Mesa's back end, a fragment program's colour stored, then again in an arm that samples, is the kept selection's phis" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_outputs_kept_frag);
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
+    for (0..4) |k| try testing.expectEqual(Tag.phi, work.steps[partOf(&work, work.stored, @intCast(k)).step].tag);
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 35), code.words.len);
+}
+
+test "through Mesa's back end, a vertex program's outputs stored in an arm, through a chain, loaded and stored again, and in one arm alone, without -O" {
+    // gl_Position = p, and its y -p.y in the arm; vcolor = c, its rgb
+    // c.bgr in the arm, and its a loaded and halved after the merge;
+    // vplace = p.xy in the other arm alone (since 1.206).
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    key.reads[1] = 2;
+    const code = try vertexThroughMesa(&work, &reference.glslc_outputs_arms_vert, key);
+    try testing.expect(!hasBranch(&work));
+    // The position's y, and the colour's r and b: its g is c's g both
+    // ways, which nir_opt_remove_phis leaves without a phi.
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .select));
+    var rows: [16]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ 4, 5, 6, 7, 8, 9, 0, 1, 2, 3 }, outputRows(&work, &rows));
+    try testing.expectEqual(@as(usize, 10), countOf(code, "stvpmv"));
+    try testing.expectEqual(Tag.select, storedAt(&work, 4));
+    try testing.expectEqual(Tag.input, storedAt(&work, 5));
+    try testing.expectEqual(Tag.select, storedAt(&work, 6));
+    try testing.expectEqual(Tag.mul, storedAt(&work, 7));
+    // vplace's phi of an undef and p.xy is p.xy (nir_opt_remove_phis.c:
+    // 105-175).
+    try testing.expectEqual(Tag.input, storedAt(&work, 8));
+    try testing.expectEqual(Tag.input, storedAt(&work, 9));
+    try testing.expectEqual(@as(usize, 32), code.words.len);
+    // The coordinate program has the position's select alone.
+    work = .{};
+    key.coordinate = true;
+    const coordinate = try vertexThroughMesa(&work, &reference.glslc_outputs_arms_vert, key);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 6), countOf(coordinate, "stvpmv"));
+    try testing.expectEqual(@as(usize, 20), coordinate.words.len);
+}
+
+test "through Mesa's back end, a vertex program's varying of which two floats are stored stores those two, the others the 0 of what nothing stored" {
+    // vcolor.x = p.z and vcolor.w = 1.0: the copy's stores of y and z are
+    // an undef's, which nir_opt_undef takes out (opt_undef_store,
+    // nir_opt_undef.c:143-179), and the rows the fragment program reads
+    // are given 0 after the fixed-function outputs (since 1.206).
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const code = try vertexThroughMesa(&work, &reference.glslc_outputs_part_vert, key);
+    var rows: [16]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ 4, 7, 0, 1, 2, 3, 5, 6 }, outputRows(&work, &rows));
+    try testing.expectEqual(Tag.input, storedAt(&work, 4));
+    for ([_]u32{ 5, 6 }) |row| {
+        const zero = for (work.program()) |each| {
+            if (each.tag == .output and each.at == row) break work.steps[each.a];
+        } else unreachable;
+        try testing.expectEqual(Tag.constant, zero.tag);
+        try testing.expectEqual(@as(f32, 0), work.pool[zero.at]);
+    }
+    try testing.expectEqual(@as(usize, 8), countOf(code, "stvpmv"));
+    try testing.expectEqual(@as(usize, 23), code.words.len);
+}
+
+test "through Mesa's back end, a vertex program's position and varying stored in the arms of a kept selection are its phis, in both programs" {
+    // A uniform buffer read at VertexIndex & 3 in the arm keeps the
+    // selection a branch (1.205); the position's four floats and the
+    // colour's are each a phi, and the coordinate program has the
+    // position's (since 1.206).
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const code = try vertexThroughMesa(&work, &reference.glslc_outputs_kept_vert, key);
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 8), stepsOf(&work, .phi));
+    for (4..8) |row| try testing.expectEqual(Tag.phi, storedAt(&work, @intCast(row)));
+    var rows: [16]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ 4, 5, 6, 7, 0, 1, 2, 3 }, outputRows(&work, &rows));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 67), code.words.len);
+    work = .{};
+    key.coordinate = true;
+    const coordinate = try vertexThroughMesa(&work, &reference.glslc_outputs_kept_vert, key);
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 6), countOf(coordinate, "stvpmv"));
+    try testing.expectEqual(@as(usize, 53), coordinate.words.len);
+}
+
+test "an output's float through a chain is gl_Position's alone, and gl_PerVertex's other members are still refused" {
+    // gl_Position.y's chain made one into gl_PointSize's member, %9 the
+    // uint 1, which is one float: refused (since 1.206). So is one to the
+    // whole of gl_ClipDistance, member 2 (%45), as before.
+    var work: Work = .{};
+    try testing.expectError(Error.Outputs, vertexThroughMesa(&work, &comptime patched(&reference.glslc_outputs_arms_vert, .access_chain, 3, 3, 9), .{}));
+    try testing.expectError(Error.Outputs, vertexThroughMesa(&work, &comptime patched(&reference.glslc_outputs_arms_vert, .access_chain, 0, 3, 45), .{}));
+}
+
+test "through Mesa's back end, FacetBoth's shipped outputs: the colour stored in both arms, a float again in one, and its alpha loaded and stored after the merge" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_shipped_outputs);
+    try testing.expect(!hasBranch(&work));
+    // r, g, b and the alpha before its fma: each a bcsel (since 1.206).
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .select));
+    try testing.expectEqual(Tag.select, work.steps[partOf(&work, work.stored, 2).step].tag);
+    try testing.expectEqual(@as(usize, 19), code.words.len);
+}
+
+test "through Mesa's back end, FacetBoth's shipped vertex outputs: floats of the place and the colour stored again in a flattened arm, the place's x in a kept one" {
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const code = try vertexThroughMesa(&work, &reference.glslc_shipped_vertex_outputs, key);
+    // The place's y and the colour's r and b, bcsels; the place's x the
+    // kept selection's phi (since 1.206).
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.allna"));
+    var rows: [16]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ 4, 5, 6, 7, 0, 1, 2, 3 }, outputRows(&work, &rows));
+    try testing.expectEqual(@as(usize, 44), code.words.len);
+    work = .{};
+    key.coordinate = true;
+    const coordinate = try vertexThroughMesa(&work, &reference.glslc_shipped_vertex_outputs, key);
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 34), coordinate.words.len);
+}
+
+test "a vertex program's varyings are stored in the order of their locations, not of their declarations, as nir_move_output_stores_to_end stores them" {
+    // vcolor declared first made location 1 and vplace location 0: the
+    // copies' stores in the order of the slots (nir_move_output_stores_to_end.c:
+    // 86-93), vplace's two floats at rows 4 and 5 before vcolor's four
+    // (since 1.206).
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 2;
+    key.reads[1] = 4;
+    const swapped = comptime patched(&patched(&reference.glslc_outputs_arms_vert, .decorate, 2, 2, 1), .decorate, 4, 2, 0);
+    _ = try vertexThroughMesa(&work, &swapped, key);
+    var rows: [16]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ 4, 5, 6, 7, 8, 9, 0, 1, 2, 3 }, outputRows(&work, &rows));
+    try testing.expectEqual(Tag.input, storedAt(&work, 4));
+    try testing.expectEqual(Tag.select, storedAt(&work, 6));
+}
+
+test "a vertex program's varying declared and never stored takes none of the eight a program may store" {
+    // Its copy stores an undef, which nir_opt_undef takes out
+    // (opt_undef_store, nir_opt_undef.c:143-179): nine declared, eight
+    // stored, is eight (since 1.206).
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    key.reads[7] = 4;
+    const code = try vertexThroughMesa(&work, &reference.glslc_outputs_unstored_vert, key);
+    try testing.expectEqual(@as(u32, 8), work.varying_count);
+    var rows: [16]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ 4, 5, 6, 7, 8, 9, 10, 11, 0, 1, 2, 3 }, outputRows(&work, &rows));
+    try testing.expectEqual(@as(usize, 12), countOf(code, "stvpmv"));
 }
