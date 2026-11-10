@@ -62,8 +62,7 @@ const chunk_bytes: u32 = 1024 * 1024;
 const most_chunks = 64;
 /// Of the binner's list at a time; a list in several parts branches on.
 const list_part_bytes: u32 = 64 * 1024;
-/// What is kept free in a part: a draw's packets, then the branch out.
-const packets_bytes: u32 = 192;
+const packets_bytes = frames.packets_bytes;
 /// The memory for the binner's lists: its first block of each tile, and what
 /// it goes on into before it asks for more.
 const tile_list_bytes: u32 = 128;
@@ -1669,7 +1668,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         return noRoom(queue, "a frame of no attachment started again at four samples");
     }
     const viewport = pipeline.viewport orelse player.viewport;
-    const state = drawStateOf(player, pipeline, &viewport) orelse return;
+    var state = drawStateOf(player, pipeline, &viewport) orelse return;
     const indices = _vertices.indicesOf(player, pipeline, first, count, vertex_offset) orelse return;
     const lowest, const highest = _vertices.range(indices) orelse return;
     if (highest - lowest >= most_vertices) return noRoom(queue, "a draw of more vertices than one works");
@@ -1844,6 +1843,13 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         .offset = viewport.min_depth,
     };
     const record_bytes = recordStride(varyings);
+    // How the program's varyings are interpolated, which a fixed form's
+    // and the colour that says what has gone wrong are with perspective
+    // (since 1.190).
+    if (own) |made| {
+        state.flat_shade_flags = made.flat_shade_flags;
+        state.noperspective_flags = made.noperspective_flags;
+    }
     if (!roomOnList(queue)) return noRoom(queue, "a draw with no memory for the binner's list");
     countSamples(queue);
     frames.writeDrawState(&player.bin, &player.frame, &state);

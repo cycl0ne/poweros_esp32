@@ -237,7 +237,16 @@ pub const DrawState = struct {
     /// mask where the pipeline has four, as v3dv's
     /// `pipeline_set_sample_mask` keeps it (v3dv_pipeline.c:2903-2913).
     sample_mask: u4 = 0xF,
+    /// The fragment program's varyings that are flat and those without
+    /// perspective, a bit each (`compile.Code.flat_shade_flags`; since
+    /// 1.190).
+    flat_shade_flags: u32 = 0,
+    noperspective_flags: u32 = 0,
 };
+
+/// What is kept free in a part of the binner's list: a draw's packets,
+/// then the branch out (`_play.roomOnList`; here since 1.190).
+pub const packets_bytes: u32 = 192;
 
 /// The start of the binner's list for a frame: what stays the same for all
 /// its draws.
@@ -248,8 +257,6 @@ pub fn beginBin(list: *List, frame: *const Frame) void {
     list.byte(cl.START_TILE_BINNING);
     cl.colorWriteMasks(list, 0xF);
     cl.sampleState(list, 0xF);
-    list.byte(cl.ZERO_ALL_FLAT_SHADE_FLAGS);
-    list.byte(cl.ZERO_ALL_NON_PERSPECTIVE_FLAGS);
     list.byte(cl.ZERO_ALL_CENTROID_FLAGS);
     cl.pointSize(list, 1.0);
     cl.lineWidth(list, 1.0);
@@ -262,7 +269,11 @@ pub fn beginBin(list: *List, frame: *const Frame) void {
 /// are triangles, so the line rasterization that rules it out never
 /// applies), and every draw writes its sample mask, as v3dv writes it with
 /// each pipeline (v3dv_cmd_buffer.c:3017-3018; v3dvx_cmd_buffer.c:1615-1618).
-/// A frame of one sample keeps `beginBin`'s mask of four bits.
+/// A frame of one sample keeps `beginBin`'s mask of four bits. The flat
+/// and non-perspective flags are the fragment program's, written with
+/// each draw as v3dv writes them with each pipeline
+/// (cmd_buffer_emit_varyings_state, v3dvx_cmd_buffer.c:1791-1831; since
+/// 1.190, `beginBin`'s zeroes before).
 pub fn writeDrawState(list: *List, frame: *const Frame, state: *const DrawState) void {
     const clip = state.clip;
     cl.clipWindow(list, clip.left, clip.top, clip.right - clip.left, clip.bottom - clip.top);
@@ -282,6 +293,8 @@ pub fn writeDrawState(list: *List, frame: *const Frame, state: *const DrawState)
     cl.clipperZ(list, state.max_depth - state.min_depth, state.min_depth);
     cl.clipperZLimits(list, @min(state.min_depth, state.max_depth), @max(state.min_depth, state.max_depth));
     cl.viewportOffset(list, state.x + state.width * 0.5, state.y + state.height * 0.5);
+    cl.varyingFlags(list, cl.FLAT_SHADE_FLAGS, cl.ZERO_ALL_FLAT_SHADE_FLAGS, state.flat_shade_flags);
+    cl.varyingFlags(list, cl.NON_PERSPECTIVE_FLAGS, cl.ZERO_ALL_NON_PERSPECTIVE_FLAGS, state.noperspective_flags);
 }
 
 /// The end of the binner's list.
@@ -484,6 +497,44 @@ test "a frame of four takes its tile, its multisample bit, and a mask and oversa
     try std.testing.expectEqual(@as(u8, 121), memory[9]);
     const target = std.mem.readInt(u64, memory[10..18], .little);
     try std.testing.expectEqual(@as(u64, 15), target >> 18 & 0x7F);
+}
+
+test "a draw's state writes its program's flat and non-perspective flags, or zeroes them, and at its most fits what a part of the list keeps" {
+    var memory: [256]u8 = undefined;
+    var list = List{ .at = &memory, .address = 0x1000 };
+    var frame = Frame{ .width = 100, .height = 40, .image = 0x10_0000, .stride = 400, .swap_rb = false, .clear = 0, .tile_lists = 0x20_0000, .binned = false };
+    const plain = DrawState{ .clip = .{ .left = 0, .top = 0, .right = 100, .bottom = 40 }, .x = 0, .y = 0, .width = 100, .height = 40 };
+    writeDrawState(&list, &frame, &plain);
+    // ZERO_ALL of each last, as v3dv writes them for a program of none
+    // (since 1.190).
+    try std.testing.expectEqual(cl.ZERO_ALL_FLAT_SHADE_FLAGS, memory[list.used - 2]);
+    try std.testing.expectEqual(cl.ZERO_ALL_NON_PERSPECTIVE_FLAGS, memory[list.used - 1]);
+    const plain_bytes = list.used;
+    var flagged = plain;
+    flagged.flat_shade_flags = 0x30;
+    flagged.noperspective_flags = 0xC0;
+    list.used = 0;
+    writeDrawState(&list, &frame, &flagged);
+    try std.testing.expectEqual(plain_bytes + 8, list.used);
+    try std.testing.expectEqual(cl.FLAT_SHADE_FLAGS, memory[list.used - 10]);
+    try std.testing.expectEqual(@as(u32, 0x30 << 8 | 1 << 6), std.mem.readInt(u32, memory[list.used - 9 ..][0..4], .little));
+    try std.testing.expectEqual(cl.NON_PERSPECTIVE_FLAGS, memory[list.used - 5]);
+    try std.testing.expectEqual(@as(u32, 0xC0 << 8 | 1 << 6), std.mem.readInt(u32, memory[list.used - 4 ..][0..4], .little));
+
+    // Every packet a draw's state can have, the occlusion query's that
+    // `_play.countSamples` may write after the room was asked for, and
+    // the branch to the next part: inside what `roomOnList` keeps.
+    frame.four = true;
+    frame.tile = chooseTile(8, true);
+    var most = flagged;
+    most.cfg = .{ .biased = true, .bounded = true, .blend = true, .stencil = true, .clamped = true, .depth_write = true };
+    const face = cl.StencilFace{ .fail = 1, .pass = 2, .depth_fail = 1, .compare = cl.COMPARE_ALWAYS, .compare_mask = 0xFF, .write_mask = 0xFF, .reference = 1 };
+    most.stencil = .{ face, face };
+    list.used = 0;
+    writeDrawState(&list, &frame, &most);
+    cl.occlusionQuery(&list, 0x4000);
+    cl.branch(&list, 0x5000);
+    try std.testing.expect(list.used <= packets_bytes);
 }
 
 test "a frame of four samples loads and stores all of them, the colour where its level lies and the depth where it is kept" {

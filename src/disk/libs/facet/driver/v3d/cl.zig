@@ -293,6 +293,11 @@ pub const Cfg = struct {
     /// lines drawn with end caps as facet's are (v3dvx_pipeline.c:173-174,
     /// 193-196).
     oversample: bool = false,
+    /// "Direct3D Provoking Vertex", at bit 21: a flat varying is the
+    /// triangle's first vertex's, Vulkan's provoking vertex, as v3dv sets
+    /// it for a pipeline that does not ask for the last
+    /// (v3dvx_pipeline.c:200-210; since 1.190).
+    first_provoking: bool = true,
 };
 
 pub fn cfgBits(list: *List, cfg: Cfg) void {
@@ -307,6 +312,7 @@ pub fn cfgBits(list: *List, cfg: Cfg) void {
         @as(u32, @intFromBool(cfg.depth_write)) << 15 |
         @as(u32, @intFromBool(cfg.stencil)) << 18 |
         @as(u32, @intFromBool(cfg.blend)) << 19 |
+        @as(u32, @intFromBool(cfg.first_provoking)) << 21 |
         (if (cfg.clamped) Z_CLIP_NONE else Z_CLIP_ZERO_TO_ONE) << 22;
     list.byte(96);
     list.byte(@truncate(value));
@@ -416,7 +422,29 @@ pub fn sampleState(list: *List, mask: u4) void {
 
 pub const ZERO_ALL_CENTROID_FLAGS: u8 = 88;
 pub const ZERO_ALL_FLAT_SHADE_FLAGS: u8 = 97;
+pub const FLAT_SHADE_FLAGS: u8 = 98;
 pub const ZERO_ALL_NON_PERSPECTIVE_FLAGS: u8 = 99;
+pub const NON_PERSPECTIVE_FLAGS: u8 = 100;
+/// "Varying Flags Action" (v3d_packet.xml:102-106).
+const VARYING_FLAGS_UNCHANGED: u32 = 0;
+const VARYING_FLAGS_ZEROED: u32 = 1;
+
+/// A fragment program's flags of one kind, a bit for each of its first 24
+/// varyings, as v3dv writes them for a pipeline: `packet` with the flags
+/// of the first 24, those of the higher numbered zeroed, or `zero_all`
+/// where none is set (emit_varying_flags, v3dvx_cmd_buffer.c:1756-1789;
+/// cmd_buffer_emit_varyings_state, :1791-1831). The packets are
+/// FLAT_SHADE_FLAGS and NON_PERSPECTIVE_FLAGS, both "Varying offset V0"
+/// at 0, the two actions at 4 and 6 and the flags at 8
+/// (v3d_packet.xml:873-887). A program
+/// here reads at most `compile.most_varyings`, so the one packet of the
+/// first 24 is all v3dv would write (since 1.190).
+pub fn varyingFlags(list: *List, packet: u8, zero_all: u8, flags: u32) void {
+    std.debug.assert(flags < 1 << 24);
+    if (flags == 0) return list.byte(zero_all);
+    list.byte(packet);
+    list.word(flags << 8 | VARYING_FLAGS_ZEROED << 6 | VARYING_FLAGS_UNCHANGED << 4);
+}
 
 pub fn pointSize(list: *List, size: f32) void {
     list.byte(104);
@@ -735,6 +763,25 @@ test "the 4x fields lie where v3d_packet.xml has them, and one sample's packets 
     try std.testing.expectEqual(@as(u32, 4), list.used);
     const over = std.mem.readInt(u24, memory[1..4], .little);
     try std.testing.expectEqual(plain | 1 << 6, over);
+    // A triangle's first vertex provokes, at 21, unless told otherwise
+    // (since 1.190).
+    try std.testing.expect(plain & 1 << 21 != 0);
+    list.used = 0;
+    cfgBits(&list, .{ .first_provoking = false });
+    try std.testing.expectEqual(plain & ~@as(u24, 1 << 21), std.mem.readInt(u24, memory[1..4], .little));
+
+    // The flags of the first 24 varyings: the higher numbered zeroed, the
+    // lower left (there are none), at offset 0; ZERO_ALL where there are
+    // none (since 1.190).
+    list.used = 0;
+    varyingFlags(&list, FLAT_SHADE_FLAGS, ZERO_ALL_FLAT_SHADE_FLAGS, 0x30);
+    try std.testing.expectEqual(@as(u32, 5), list.used);
+    try std.testing.expectEqual(@as(u8, 98), memory[0]);
+    try std.testing.expectEqual(@as(u32, 0x30 << 8 | 1 << 6), std.mem.readInt(u32, memory[1..5], .little));
+    list.used = 0;
+    varyingFlags(&list, NON_PERSPECTIVE_FLAGS, ZERO_ALL_NON_PERSPECTIVE_FLAGS, 0);
+    try std.testing.expectEqual(@as(u32, 1), list.used);
+    try std.testing.expectEqual(@as(u8, 99), memory[0]);
 
     // SAMPLE_STATE: the mask in the low 4 bits, coverage 1.0 as f187 at 16.
     list.used = 0;

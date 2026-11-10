@@ -6213,4 +6213,56 @@ pub const LIBRARY_VERSION = 1;
 /// its two new ones, 1.188's programs whole, are 8 of 230400 pixels
 /// apart: the 8 at the triangles' edge every case of their geometry has.
 /// FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 189;
+///
+/// 190: **Flat and non-perspective varyings, and integer ones
+/// (docs/facet-vulkan10.md item 59).** The reading takes `Flat` and
+/// `NoPerspective` of a fragment program's inputs and a vertex program's
+/// outputs, as vtn sets var->data.interpolation of them
+/// (vtn_variables.c:1370-1374), and refuses either of anything else, or
+/// with a literal. A fragment program's integer input is read where it is
+/// flat, and a vertex program's integer output written; an integer
+/// attribute is still not ported. emit_fragment_varying is ported whole
+/// (nir_to_vir.c:1049-1121): with perspective the ldvary's value times W
+/// plus the C coefficient, without it the value plus C, and flat C alone,
+/// the value moved nowhere (emit_flat_varying, :1040-1046), each input's
+/// flag set by the number it was given, as v3d_set_fs_prog_data_inputs
+/// gives prog_data its flags of the first 24 (vir.c:985-1003). The
+/// compiled program carries them, and every draw of it writes
+/// FLAT_SHADE_FLAGS and NON_PERSPECTIVE_FLAGS, the higher numbered
+/// zeroed, or the ZERO_ALL of either where it has none, as v3dv writes
+/// them for a pipeline (cmd_buffer_emit_varyings_state,
+/// v3dvx_cmd_buffer.c:1756-1831); the binner's list no longer zeroes them
+/// once at its start. CFG_BITS sets "Direct3D Provoking Vertex", so that
+/// a triangle's first vertex provokes it, Vulkan's, as v3dv sets it for a
+/// pipeline that does not ask for the last (v3dvx_pipeline.c:200-210),
+/// where the V3D took the last. A strip's every other triangle is
+/// (v_i, v_i+2, v_i+1), Vulkan's, where it was (v_i+1, v_i, v_i+2): the
+/// same face, the first vertex the one that provokes it, on the cores'
+/// fixed flat form as on the V3D. The plan, which interpolates with
+/// perspective alone, refuses a program of either. A draw's state at
+/// its most, the occlusion query and the branch out are 125 bytes of the
+/// 192 a part of the list keeps.
+///
+/// Tests: the V3D's 313, five new, and the driver's one of the strip and
+/// the fan. glslc_interpolations, a varying of each kind, eight floats, is
+/// flags 0x30 and 0xC0, eight ldvarys, six FADDs of C and two moves of
+/// it. glslc_flat_integer is flags 0xF, four moves of C, four UTOFs and
+/// four products, and every byte of its varying is worked out on the
+/// host. The integers made NoPerspective are refused as a type, Flat on
+/// the colour written or on a vertex program's attribute refused, and a
+/// vertex program's flat colour is glslc_vertex_as_it_is's words. Of 28
+/// mutations, 25 fail the tests, the strip's old order the driver's
+/// alone, and the three that only failed to compile fail them made to
+/// compile.
+///
+/// On the CM5 FacetBoth's 274 cases are each as they were at 1.189, and
+/// its three new ones, glslc's vertex and fragment shaders of a flat
+/// colour, of the colour as four flat integers and of the colour without
+/// perspective under a W of 1 + 2 * the blue, are 5 of 230400 pixels
+/// apart: the 5 at the triangles' edge that "shipped vertex shader", the
+/// same geometry through a compiled vertex program, has. The cores carry
+/// the first vertex's colour at all three corners, and the colour times
+/// W read without dividing; the picture without perspective is the
+/// smooth one of a W of 1, as it is to be. FacetProbe passes its 890
+/// checks.
+pub const LIBRARY_REVISION = 190;

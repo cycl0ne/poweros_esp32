@@ -191,8 +191,11 @@ pub fn assemble(topology: facet.PrimitiveTopology, indices: Indices, lowest: u32
                         .{ previous[0], previous[1], here }
                     else
                         // Every other triangle of a strip turned back, so
-                        // that all face the same way.
-                        .{ previous[1], previous[0], here };
+                        // that all face the same way: (v_i, v_i+2, v_i+1),
+                        // its first vertex still the one that provokes, as
+                        // Vulkan orders a strip's (since 1.190; v_i+1 first
+                        // before).
+                        .{ previous[0], here, previous[1] };
                     @memcpy(into[made..][0..3], &three);
                     made += 3;
                 }
@@ -344,6 +347,20 @@ pub fn cornersPerPrimitive(topology: facet.PrimitiveTopology, patch_points: u32)
         .patch_list => @max(1, patch_points),
         else => 3,
     };
+}
+
+test "a strip's and a fan's triangles are Vulkan's, each first corner the vertex that provokes it" {
+    const testing = @import("std").testing;
+    // A strip's triangle i is (v_i, v_i+1, v_i+2), and every other one
+    // (v_i, v_i+2, v_i+1); a fan's (v_i+1, v_i+2, v_0) - the Vulkan
+    // specification's "Triangle Strips" and "Triangle Fans" - from the
+    // vertices numbered from 3 (since 1.190).
+    const five = Indices{ .bytes = null, .wide = false, .base = 3, .count = 5, .restart = false };
+    var into: [9]u32 = undefined;
+    try testing.expectEqual(@as(usize, 9), assemble(.triangle_strip, five, 3, &into));
+    try testing.expectEqualSlices(u32, &.{ 0, 1, 2, 1, 3, 2, 2, 3, 4 }, &into);
+    try testing.expectEqual(@as(usize, 9), assemble(.triangle_fan, five, 3, &into));
+    try testing.expectEqualSlices(u32, &.{ 1, 2, 0, 2, 3, 0, 3, 4, 0 }, &into);
 }
 
 test "the corners a primitive takes: what assemble writes, divided back" {

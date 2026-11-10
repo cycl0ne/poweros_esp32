@@ -635,6 +635,11 @@ pub const Shader = struct {
     /// It writes through the TMU, so the job's caches are cleaned after
     /// (`compile.Code.tmu_dirty_rcl`; since 1.168).
     tmu_dirty_rcl: bool = false,
+    /// Its varyings that are flat and those without perspective, a bit
+    /// each, which every draw of it writes (`compile.Code.flat_shade_flags`,
+    /// `frame.DrawState`; since 1.190).
+    flat_shade_flags: u32 = 0,
+    noperspective_flags: u32 = 0,
     /// The pipeline's vertex shader compiled for the QPU, where it shipped
     /// one that Mesa's back end compiles and the draw can run it: the
     /// vertex function is not called then (since 1.163).
@@ -860,6 +865,8 @@ fn compiled(pipeline: *Pipeline) facet.Result {
         .writes_z = code.writes_z,
         .disable_ez = code.disable_ez,
         .tmu_dirty_rcl = code.tmu_dirty_rcl,
+        .flat_shade_flags = code.flat_shade_flags,
+        .noperspective_flags = code.noperspective_flags,
     };
     kept.vertex = vertexStage(pipeline, work, hardware, reads);
     if (!checkSpillSize(base, hardware, kept, code.spill_size)) {

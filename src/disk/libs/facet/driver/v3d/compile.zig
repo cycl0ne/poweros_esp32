@@ -906,9 +906,16 @@ pub const Kept = struct {
 pub const most_kept = 8;
 
 /// A varying the module declares.
+/// How a fragment program's varying is interpolated: vtn's
+/// var->data.interpolation of its decoration (vtn_variables.c:1370-1374),
+/// none of either smooth. Since 1.190.
+pub const Interpolation = enum(u2) { smooth, flat, noperspective };
+
 pub const Input = struct {
     location: u32,
     kind: Kind,
+    /// Its `Flat` or `NoPerspective`, a fragment program's (since 1.190).
+    interpolation: Interpolation = .smooth,
     /// Which varying its first float is: the floats of every lower
     /// location, summed. The vertex function writes them in that order,
     /// and `ldvary` reads them in it (`_play.zig`'s `writeRecord`). A
@@ -1054,6 +1061,14 @@ pub const Code = struct {
     /// vir.c:1033): what the pipeline's buffer is made for
     /// (pipeline_check_spill_size, v3dv_pipeline.c:1669-1708; since 1.177).
     spill_size: u32 = 0,
+    /// The varyings that are flat and that are interpolated without
+    /// perspective, a bit each: prog_data's flat_shade_flags and
+    /// noperspective_flags of the first 24 (v3d_set_fs_prog_data_inputs,
+    /// vir.c:985-1003), which the draw writes as v3dv does
+    /// (cmd_buffer_emit_varyings_state, v3dvx_cmd_buffer.c:1793-1831;
+    /// since 1.190).
+    flat_shade_flags: u32 = 0,
+    noperspective_flags: u32 = 0,
     /// A vertex program's, for its shader record and its attribute
     /// records (`v3d_vs_prog_data`, v3d_vs_set_prog_data, vir.c:860-936;
     /// since 1.163): the floats of each attribute it reads by driver
@@ -1267,6 +1282,8 @@ pub const Work = struct {
     class: [most_ids]u8 = @splat(0),
     /// From OpDecorate Location, or `none`.
     location: [most_ids]u16 = @splat(none),
+    /// From OpDecorate Flat and NoPerspective (since 1.190).
+    interpolation: [most_ids]Interpolation = @splat(.smooth),
     /// From OpDecorate DescriptorSet and Binding, or `none`.
     set: [most_ids]u16 = @splat(none),
     binding: [most_ids]u16 = @splat(none),
@@ -1491,6 +1508,10 @@ pub const Work = struct {
     /// The first step that samples, where there is one: the plan's one.
     sampled: u16 = none,
     varyings: u32 = 0,
+    /// The varyings, a bit each, that are flat and that are interpolated
+    /// without perspective, as `order` numbers them (since 1.190).
+    flat_floats: u8 = 0,
+    noperspective_floats: u8 = 0,
 
     // The plan.
     /// Which float of which step each slot is, and what reads it last.
@@ -1571,6 +1592,9 @@ pub const Work = struct {
 /// already been turned down by `CreateShaderModule`.
 pub fn compile(work: *Work, words: []const u32) Error!Code {
     try readModule(work, words);
+    // Every hand-written program's varyings are `qpu.varying`'s, with
+    // perspective (since 1.190, where the reading takes the others).
+    if (work.flat_floats != 0 or work.noperspective_floats != 0) return Error.Refused;
     // No hand-written program reads a push constant or a uniform buffer,
     // drops a pixel or compares, so the plan has nothing to hold any of
     // them to: only Mesa's back end compiles them.
@@ -1771,6 +1795,8 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
         .disable_ez = program.disable_ez,
         .tmu_dirty_rcl = c.tmu_dirty_rcl,
         .spill_size = c.spill_size,
+        .flat_shade_flags = program.flat_shade_flags,
+        .noperspective_flags = program.noperspective_flags,
         .vertex = if (work.stage == .vertex) vertexProgram(work, program.single_seg) else .{},
     };
 }
@@ -2038,20 +2064,26 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 const id = try idOf(operands[0]);
                 const what = std.enums.fromInt(spirv.Decoration, operands[1]) orelse return Error.Refused;
                 // A Location, a DescriptorSet and a Binding are read;
-                // every other decoration is refused rather than ignored.
-                // `Flat` and `NoPerspective` are the reason: a varying
-                // decorated either way is not the perspective-correct one
-                // `qpu.varying` interpolates, and taking the decoration
-                // and dropping it would draw the wrong pixels and say
-                // nothing.
+                // every other decoration is refused rather than ignored,
+                // as taking one and dropping it would draw the wrong
+                // pixels and say nothing.
                 //
                 // Which decoration it is is read before how many
                 // operands it has, because the three that are taken
-                // carry a literal and the ones that are refused do not:
-                // a real `OpDecorate %x Flat` is two words of operands,
-                // so demanding three would answer `Body` for the one
-                // decoration this is here to turn down by name.
+                // carry a literal and others do not: a real `OpDecorate
+                // %x Flat` is two words of operands, so demanding three
+                // would answer `Body` for a decoration that is refused
+                // by name, or taken.
                 switch (what) {
+                    // How a varying is interpolated, which is its own
+                    // and no literal: one with a literal is no decoration
+                    // vtn reads (since 1.190; refused before, as
+                    // `qpu.varying` does not, and the plan still is).
+                    .flat, .no_perspective => {
+                        if (operands.len != 2) return Error.Refused;
+                        work.interpolation[id] = if (what == .flat) .flat else .noperspective;
+                        continue;
+                    },
                     .location, .descriptor_set, .binding => {},
                     // How far an array's elements are apart in a block
                     // (since 1.161).
@@ -2599,10 +2631,14 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     continue;
                 }
                 const floats = try kindOf(work, pointee);
-                // An integer varying is Flat, which `qpu.varying` does not
-                // interpolate, an integer attribute is not ported, and the
-                // tile buffer takes floats (since 1.165).
-                if (isIntegerType(work, pointee) and class != .function) return Error.Type;
+                // An integer varying is a vertex program's to write, and a
+                // fragment program's to read where it is Flat, as Vulkan
+                // has it (since 1.190). An integer attribute is not
+                // ported, and the tile buffer takes floats (since 1.165).
+                if (isIntegerType(work, pointee) and class != .function) {
+                    const varying = if (work.stage == .vertex) class == .output else class == .input and work.interpolation[id] == .flat;
+                    if (!varying) return Error.Type;
+                }
                 work.thing[id] = .variable;
                 work.class[id] = @intCast(@intFromEnum(class));
                 work.wide[id] = @intCast(floats.parts());
@@ -2613,7 +2649,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         if (at == none) return Error.Location;
                         if (work.stage == .vertex and at >= most_attributes) return Error.Location;
                         work.points[id] = @intCast(work.input_count);
-                        work.inputs[work.input_count] = .{ .location = at, .kind = floats, .first = 0 };
+                        work.inputs[work.input_count] = .{ .location = at, .kind = floats, .first = 0, .interpolation = work.interpolation[id] };
                         work.input_count += 1;
                     },
                     // A vertex program's varying: at a location, which
@@ -2967,11 +3003,24 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
         }
     }
     if (loop.active or jumped != 0) return Error.Branches;
+    try interpolatedVaryings(work);
     if (work.stage == .vertex) return finishVertex(work);
     if (work.output_count == 0) return Error.Outputs;
     if (work.stored == none) return Error.NoColor;
     try algebraic(work);
     try order(work);
+}
+
+/// A `Flat` or a `NoPerspective` decorates a fragment program's input or a
+/// vertex program's output, the varyings vtn reads it of
+/// (vtn_variables.c:1370-1374); of anything else it is refused, not
+/// dropped (since 1.190).
+fn interpolatedVaryings(work: *const Work) Error!void {
+    const varying: spirv.StorageClass = if (work.stage == .vertex) .output else .input;
+    for (work.interpolation, 0..) |each, id| {
+        if (each == .smooth) continue;
+        if (work.thing[id] != .variable or work.class[id] != @intFromEnum(varying)) return Error.Refused;
+    }
 }
 
 /// A vertex program's end: its varyings stored where the fragment program
@@ -6525,6 +6574,19 @@ fn order(work: *Work) Error!void {
     }
     if (total > most_varyings) return Error.Varyings;
     work.varyings = total;
+    // Which of them are flat and which are without perspective, as
+    // emit_fragment_varying sets the program's flags of them
+    // (nir_to_vir.c:1103-1110; since 1.190).
+    work.flat_floats = 0;
+    work.noperspective_floats = 0;
+    for (inputs) |each| {
+        const floats: u8 = @intCast(((@as(u32, 1) << @intCast(each.kind.parts())) - 1) << @intCast(each.first));
+        switch (each.interpolation) {
+            .smooth => {},
+            .flat => work.flat_floats |= floats,
+            .noperspective => work.noperspective_floats |= floats,
+        }
+    }
 }
 
 /// One instruction of the body.
@@ -10992,7 +11054,9 @@ test "a decoration this back end does not take is refused by name, whatever its 
     // A real `OpDecorate %in Flat` is two words of operands and no
     // literal. Reading how many operands there are before reading which
     // decoration it is answered `Body` for exactly the decoration this
-    // is here to turn down by name.
+    // was here to turn down by name; the reading takes it since 1.190,
+    // and the plan, which interpolates with perspective alone, still
+    // refuses it.
     try testing.expectError(Error.Refused, compile(&work, comptime built(.{ .bare_flat = true })));
     // And the three-operand shape a patch makes, which is the one the
     // suite tested before.
@@ -17353,4 +17417,99 @@ test "a load_scratch in a selection's arm keeps the arm, the float it loads move
         }
     }
     try testing.expect(moved.len > 0);
+}
+
+test "a varying of each interpolation is emit_fragment_varying's: with perspective times W plus C, without it plus C, flat C alone, and the program's flags say which" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_interpolations);
+    // The ldvarys in the varyings' order: the colour 0 to 3, the flat pair
+    // 4 and 5, the pair without perspective 6 and 7 (nir_to_vir.c:
+    // 1085-1110, vir.c:985-1003; since 1.190).
+    try testing.expectEqual(@as(u32, 8), code.varyings);
+    try testing.expectEqual(@as(u32, 0x30), code.flat_shade_flags);
+    try testing.expectEqual(@as(u32, 0xC0), code.noperspective_flags);
+    try testing.expectEqual(@as(usize, 8), countOf(code, "ldvary"));
+    // The colour's four times W and the four products; an fadd of C for
+    // each of the colour and the pair without perspective, whose MOV is
+    // copied into it; the flat pair's C moved out of rf0, its ldvary's
+    // value moved nowhere and dropped.
+    try testing.expectEqual(@as(usize, 8), countOf(code, "fmul"));
+    try testing.expectEqual(@as(usize, 6), countOf(code, "fadd"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "mov "));
+    // The plan interpolates with perspective alone, and refuses it.
+    work = .{};
+    try testing.expectError(Error.Refused, compile(&work, &reference.glslc_interpolations));
+}
+
+test "an integer varying is read flat, its bits the C coefficient, and its floats are made of them" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_flat_integer);
+    try testing.expectEqual(@as(u32, 0xF), code.flat_shade_flags);
+    try testing.expectEqual(@as(u32, 0), code.noperspective_flags);
+    // Each C moved out and made a float, then times 1/255: no W.
+    try testing.expectEqual(@as(usize, 4), countOf(code, "mov "));
+    try testing.expectEqual(@as(usize, 4), countOf(code, "utof"));
+    try testing.expectEqual(@as(usize, 4), countOf(code, "fmul"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "fadd"));
+    // The steps of every byte, the varying's floats its bits (since 1.190).
+    const scale: f32 = @bitCast(@as(u32, 0x3B80_8081));
+    for (0..256) |v| {
+        const bits: f32 = @bitCast(@as(u32, @intCast(v)));
+        const other: f32 = @bitCast(@as(u32, @intCast(255 - v)));
+        const made = evaluatedOf(&work, work.stored, .{ bits, other, bits, other }, 0);
+        const value = @as(f32, @floatFromInt(v)) * scale;
+        const rest = @as(f32, @floatFromInt(255 - v)) * scale;
+        try testing.expectEqual([4]f32{ value, rest, value, rest }, made);
+    }
+}
+
+test "the reading takes Flat and NoPerspective of a fragment program's inputs and a vertex program's outputs alone, and an integer input that is flat" {
+    var work: Work = .{};
+    // The flat integers interpolated without perspective instead, which a
+    // fragment program's integer input may not be.
+    try testing.expectError(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_flat_integer, .decorate, 1, 1, @intFromEnum(spirv.Decoration.no_perspective))));
+    // The colour's Flat moved to the output it writes, `%9`.
+    work = .{};
+    try testing.expectError(Error.Refused, throughMesa(&work, &comptime patched(&reference.glslc_flat_color, .decorate, 1, 0, 9)));
+    // A vertex program's Flat moved from its varying to the attribute p,
+    // `%17`.
+    work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    try testing.expectError(Error.Refused, vertexThroughMesa(&work, &comptime patched(&reference.glslc_vertex_flat, .decorate, 3, 0, 17), key));
+    // Flat and NoPerspective alone are taken.
+    work = .{};
+    const flat = try throughMesa(&work, &reference.glslc_flat_color);
+    try testing.expectEqual(@as(u32, 0xF), flat.flat_shade_flags);
+    work = .{};
+    const straight = try throughMesa(&work, &reference.glslc_noperspective_color);
+    try testing.expectEqual(@as(u32, 0xF), straight.noperspective_flags);
+    try testing.expectEqual(@as(usize, 0), countOf(straight, "fmul"));
+}
+
+test "a vertex program hands on a flat varying, integers and a varying without perspective as it hands on any, and its coordinate program too" {
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    // Flat changes nothing of a vertex program: the words are
+    // glslc_vertex_as_it_is's (since 1.190).
+    var work: Work = .{};
+    const as_it_is = try vertexThroughMesa(&work, &reference.glslc_vertex_as_it_is, key);
+    const plain_words = try testing.allocator.dupe(u64, as_it_is.words);
+    defer testing.allocator.free(plain_words);
+    work = .{};
+    const flat = try vertexThroughMesa(&work, &reference.glslc_vertex_flat, key);
+    try testing.expectEqualSlices(u64, plain_words, flat.words);
+    // The colour made four integers, FTOUZ's, stored as they are.
+    work = .{};
+    const integers = try vertexThroughMesa(&work, &reference.glslc_vertex_flat_integer, key);
+    try testing.expectEqual(@as(usize, 4), countOf(integers, "ftouz"));
+    try testing.expectEqual(@as(usize, 8), countOf(integers, "stvpmv"));
+    work = .{};
+    const straight = try vertexThroughMesa(&work, &reference.glslc_vertex_noperspective, key);
+    try testing.expectEqual(@as(usize, 8), countOf(straight, "stvpmv"));
+    try testing.expectEqual(@as(usize, 1), countOf(straight, "recip"));
+    for ([_][]const u32{ &reference.glslc_vertex_flat, &reference.glslc_vertex_flat_integer, &reference.glslc_vertex_noperspective }) |words| {
+        work = .{};
+        _ = try vertexThroughMesa(&work, words, .{ .coordinate = true });
+    }
 }
