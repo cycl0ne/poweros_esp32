@@ -641,6 +641,7 @@ flowchart TB
     m_sound_datatype --> m_dos_library
     m_sound_datatype --> m_timer_device
     m_spinner_gadget --> m_motion_library
+    m_svg_datatype --> m_compression_library
     m_svg_datatype --> m_dos_library
     m_svg_datatype --> m_picture_datatype
     m_svg_datatype --> m_vector_library

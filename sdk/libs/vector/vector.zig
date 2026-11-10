@@ -29,6 +29,12 @@
 //! at its edges, and inside a curve a stroke turns round whatever its
 //! join - so a picture drawn by 1.1 and by 1.2 differs at its edges.
 //!
+//! Since 1.3 what is drawn may be clipped: to a path's inside
+//! (`PushClip`), or through a mask drawn first - its coverage or its
+//! colours' luminance saying how much shows (`BeginMask`, `EndMask`) -
+//! until `PopClip`. SVG's `clipPath` and `mask` and Lottie's mattes are
+//! these.
+//!
 //! Open it with OpenLibrary(VECTORNAME, VECTOR_VERSION); its functions
 //! are in sdk/interface/vector.zig. A path and a canvas are one task's at
 //! a time: the library holds no lock, and two tasks drawing on two
@@ -269,8 +275,25 @@ pub const VECTORERR_NOMEM: i32 = -1;
 /// Path data that is not SVG's: the path is kept up to where it went
 /// wrong, as SVG draws it.
 pub const VECTORERR_SYNTAX: i32 = -2;
-/// Layers nested deeper than a canvas holds.
+/// Layers nested deeper than a canvas holds, or clips; or `EndMask`
+/// with no mask begun.
 pub const VECTORERR_DEPTH: i32 = -3;
 
-/// The most layers a canvas holds one inside another (`PushLayer`).
+/// The most layers a canvas holds one inside another (`PushLayer`,
+/// `BeginMask`).
 pub const MAX_LAYERS = 16;
+
+// --- clips and masks (since 1.3) ----------------------------------------------
+
+/// The most clips and masks a canvas holds one inside another
+/// (`PushClip`, `EndMask`).
+pub const MAX_CLIPS = 16;
+
+/// `EndMask`'s kinds: how much of what is drawn shows where the mask was
+/// drawn - its coverage alone, SVG's `mask-type: alpha` and Lottie's
+/// alpha matte; or its colours' luminance times it, SVG's mask and
+/// Lottie's luma matte. `MASK_INVERT` with either shows what the mask
+/// does not: Lottie's inverted mattes, and its subtracting masks.
+pub const MASK_ALPHA: u32 = 0;
+pub const MASK_LUMINANCE: u32 = 1;
+pub const MASK_INVERT: u32 = 0x10;

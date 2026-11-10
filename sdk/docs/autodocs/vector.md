@@ -13,6 +13,7 @@ Generated from the source by `./zig build autodoc`.
 - [AddRect](#addrect) - A closed rectangle, its corners rounded rx across and ry down; SVG's rect.
 - [AddSegments](#addsegments) - Segments onto the path in one call: a verb each (SEG_*) and the points they take, in order; VECTORERR_SYNTAX at a verb it does not know or short of points, the path kept up to it.
 - [ArcTo](#arcto) - SVG's elliptical arc from the current point to (x, y): the radii, the ellipse's angle in degrees, ARC_LARGE and ARC_SWEEP.
+- [BeginMask](#beginmask) - What is drawn until EndMask makes a mask rather than being seen.
 - [ClearPath](#clearpath) - The path emptied, its memory kept for the next one built in it.
 - [ClosePath](#closepath) - The contour closed back to where it started.
 - [CreateCanvasTagList](#createcanvastaglist) - A canvas over the caller's pens (VCA_*); null without a size or the memory.
@@ -20,11 +21,14 @@ Generated from the source by `./zig build autodoc`.
 - [CubicTo](#cubicto) - A cubic curve from the current point to (x, y), leaving toward (x1, y1) and arriving from (x2, y2).
 - [DisposeCanvas](#disposecanvas) - A canvas given back; its pens stay the caller's. Null does nothing.
 - [DisposePath](#disposepath) - A path given back. Null does nothing.
+- [EndMask](#endmask) - The drawing since BeginMask made a mask (MASK_*) that clips what is drawn until PopClip.
 - [FillPath](#fillpath) - The path filled through the matrix (null: the identity) in the paint, by the rule (RULE_*).
 - [LineTo](#lineto) - A line from the current point to (x, y).
 - [MoveTo](#moveto) - A new contour started at (x, y).
 - [PathBounds](#pathbounds) - The bounds of the path's curves through the matrix (null: the identity); false for an empty path.
+- [PopClip](#popclip) - The last clip or mask pushed taken off.
 - [PopLayer](#poplayer) - The last layer pushed put down on what is under it.
+- [PushClip](#pushclip) - What is drawn until PopClip shows only inside the path, through the matrix (null: the identity), by the rule (RULE_*).
 - [PushLayer](#pushlayer) - What is drawn until PopLayer goes onto a layer of its own, put down at the opacity.
 - [QuadTo](#quadto) - A quadratic curve from the current point to (x, y), pulled toward (x1, y1).
 - [SetCanvasPens](#setcanvaspens) - The pens the canvas draws on from now on; null draws nothing.
@@ -371,6 +375,77 @@ None known.
 // A half circle of radius 10 over the top from (0, 10) to (20, 10).
 vb.MoveTo(path, 0, 10);
 vb.ArcTo(path, 10, 10, 0, vector.ARC_SWEEP, 20, 10);
+```
+
+## BeginMask
+
+What is drawn until EndMask makes a mask rather than being seen.
+
+**SYNOPSIS**
+
+```zig
+fn BeginMask(vb: *VectorBase, canvas: *vector.Canvas) i32
+```
+
+**SINCE**
+
+1.3. LVO -112.
+
+**INPUTS**
+
+- `canvas` - the canvas.
+
+**RESULT**
+
+`VECTOR_OK`; `VECTORERR_NOMEM` without the memory for the mask's
+layer; `VECTORERR_DEPTH` past `MAX_LAYERS` layers one inside another.
+Whatever it answers, an `EndMask` goes with it, and a `PopClip` with
+that.
+
+**BEHAVIOR**
+
+A layer is pushed, clear, that is never put down: every fill and
+stroke until the `EndMask` that goes with it is drawn onto it, not
+clipped by the clips already pushed, and `EndMask` turns it into a
+clip. Layers, clips and masks may be pushed and popped inside it, as
+anywhere.
+
+Without the layer's memory, or past the most layers, what is drawn
+until `EndMask` is drawn nowhere, and the mask clips nothing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The layer is the canvas's, given back by `EndMask` or by
+`DisposeCanvas`.
+
+**NOTES**
+
+The layer is four bytes a pixel of the whole canvas until it ends,
+and the mask then one.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`EndMask`, `PopClip`, `PushClip`, `PushLayer`
+
+**EXAMPLES**
+
+```zig
+_ = vb.BeginMask(canvas);
+_ = vb.FillPath(canvas, fade, null, &white_to_black, vector.RULE_NONZERO);
+_ = vb.EndMask(canvas, vector.MASK_LUMINANCE);
+_ = vb.FillPath(canvas, picture, null, &red, vector.RULE_NONZERO);
+vb.PopClip(canvas);
 ```
 
 ## ClearPath
@@ -792,6 +867,76 @@ None known.
 vb.DisposePath(path);
 ```
 
+## EndMask
+
+The drawing since BeginMask made a mask (MASK_*) that clips what is drawn until PopClip.
+
+**SYNOPSIS**
+
+```zig
+fn EndMask(vb: *VectorBase, canvas: *vector.Canvas, kind: u32) i32
+```
+
+**SINCE**
+
+1.3. LVO -116.
+
+**INPUTS**
+
+- `canvas` - the canvas.
+- `kind` - `MASK_ALPHA`, how much was drawn at each pixel;
+  `MASK_LUMINANCE`, that times the luminance of its colour - white
+  shows all, black nothing, as SVG's `mask`. With `MASK_INVERT`,
+  either the other way round.
+
+**RESULT**
+
+`VECTOR_OK`; `VECTORERR_NOMEM` when the mask's layer or the mask had
+no memory, when it clips nothing more than the clip it is in;
+`VECTORERR_DEPTH` past `MAX_CLIPS` clips one inside another, or with
+no mask begun - nothing is then pushed for it. Otherwise, whatever it
+answers, a `PopClip` goes with it.
+
+**BEHAVIOR**
+
+The layer `BeginMask` pushed is ended and given back; what was drawn
+on it becomes a clip, a byte a pixel - its coverage, or its
+luminance (0.2125 red, 0.7154 green, 0.0721 blue) times that - inside
+the clip pushed already on the layer under it. It is then pushed as
+`PushClip` pushes a path's: what is drawn from now on shows through
+it until the `PopClip`. Layers pushed inside the mask and not popped
+are popped first; the clips pushed inside it are taken off.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The mask is the canvas's, given back by the pop or by
+`DisposeCanvas`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`BeginMask`, `PopClip`, `PushClip`
+
+**EXAMPLES**
+
+```zig
+_ = vb.BeginMask(canvas);
+_ = vb.FillPath(canvas, letters, null, &white, vector.RULE_NONZERO);
+_ = vb.EndMask(canvas, vector.MASK_ALPHA | vector.MASK_INVERT);
+_ = vb.FillPath(canvas, plate, null, &grey, vector.RULE_NONZERO);
+vb.PopClip(canvas);
+```
+
 ## FillPath
 
 The path filled through the matrix (null: the identity) in the paint, by the rule (RULE_*).
@@ -1062,6 +1207,60 @@ if (vb.PathBounds(path, null, &box)) {
 }
 ```
 
+## PopClip
+
+The last clip or mask pushed taken off.
+
+**SYNOPSIS**
+
+```zig
+fn PopClip(vb: *VectorBase, canvas: *vector.Canvas) void
+```
+
+**SINCE**
+
+1.3. LVO -108.
+
+**INPUTS**
+
+- `canvas` - the canvas.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The clip pushed last, by `PushClip` or `EndMask`, is given back, and
+what is drawn from then on is clipped by the one it was in, if any.
+A clip that had no memory, or was past the most, is only ended. With
+no clip pushed it does nothing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The clip's memory goes back to the canvas's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`PushClip`, `EndMask`
+
+**EXAMPLES**
+
+```zig
+vb.PopClip(canvas);
+```
+
 ## PopLayer
 
 The last layer pushed put down on what is under it.
@@ -1120,6 +1319,86 @@ None known.
 
 ```zig
 vb.PopLayer(canvas);
+```
+
+## PushClip
+
+What is drawn until PopClip shows only inside the path, through the matrix (null: the identity), by the rule (RULE_*).
+
+**SYNOPSIS**
+
+```zig
+fn PushClip(vb: *VectorBase, canvas: *vector.Canvas, path: *const vector.Path, matrix: ?*const vector.Matrix, rule: u32) i32
+```
+
+**SINCE**
+
+1.3. LVO -104.
+
+**INPUTS**
+
+- `canvas` - the canvas.
+- `path` - the clip's outline, in its own units.
+- `matrix` - its units into pixels; null for the identity.
+- `rule` - `RULE_NONZERO` or `RULE_EVENODD`: which of its inside is
+  inside, as `FillPath` has it - SVG's `clip-rule`.
+
+**RESULT**
+
+`VECTOR_OK`; `VECTORERR_NOMEM` without the memory for the clip, which
+then clips nothing more than the clip it is in; `VECTORERR_DEPTH`
+past `MAX_CLIPS` clips one inside another, when it is nothing.
+Whatever it answers, a `PopClip` goes with it.
+
+**BEHAVIOR**
+
+The path's coverage is made, a byte a pixel, the edge smooth as a
+fill's is - inside the clip already pushed on this layer, if there is
+one. Every fill and stroke onto the layer drawn on now, and every
+layer put down on it, shows from then on only as much as the clip
+covers there, until the `PopClip` that goes with it.
+
+A layer pushed after the clip is not clipped while it is drawn on,
+only when it is put down: a group with its opacity on a layer goes
+through the clip as a whole. A clip pushed on a layer goes with it
+and is taken off by its `PopLayer` if not before.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The path and the matrix are the caller's and only read; the clip is
+the canvas's, given back by the pop or by `DisposeCanvas`.
+
+**NOTES**
+
+A clip is a byte a pixel of the whole canvas.
+
+**BUGS**
+
+An edge the clip and what is drawn through it share is drawn by the
+two coverages multiplied - a pixel half covered by both shows a
+quarter, not a half - so a shape clipped by its own outline has a
+fainter edge than unclipped. A browser draws it so; cairo, which cuts
+one outline by the other first, does not.
+
+**SEE ALSO**
+
+`PopClip`, `BeginMask`, `EndMask`, `PushLayer`, `FillPath`
+
+**EXAMPLES**
+
+```zig
+vb.ClearPath(round);
+vb.AddEllipse(round, 50, 50, 40, 40);
+_ = vb.PushClip(canvas, round, null, vector.RULE_NONZERO);
+_ = vb.FillPath(canvas, stripes, null, &red, vector.RULE_NONZERO);
+vb.PopClip(canvas);
 ```
 
 ## PushLayer

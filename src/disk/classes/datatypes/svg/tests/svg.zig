@@ -22,6 +22,7 @@ const VectorBase = sdk.interface.vector.VectorBase;
 test {
     _ = @import("../xml.zig");
     _ = @import("../values.zig");
+    _ = @import("../css.zig");
     _ = document;
     _ = drawing;
 }
@@ -223,5 +224,143 @@ test "the disk's test picture draws, its sky blue at the top and the house's wal
     // A window, the wall's even-odd hole: the sky behind it shows.
     const window = pens[(52 + 28) * 160 + 32];
     try testing.expect((window & 0xFF) > ((window >> 16) & 0xFF));
+    try rig.close();
+}
+
+// --- since 1.2 -------------------------------------------------------------------
+
+test "clipPath: one shape, its clip-rule, two shapes as one, the box's units, a missing one" {
+    const rig = try Rig.open();
+    var pens: [20 * 20]Pen = undefined;
+    try rig.draw(
+        \\<svg width="20" height="20">
+        \\  <clipPath id="left"><rect width="10" height="20"/></clipPath>
+        \\  <clipPath id="ring" clip-rule="evenodd"><path d="M0 0H20V20H0Z M5 5H15V15H5Z"/></clipPath>
+        \\  <clipPath id="two"><rect width="5" height="5"/><rect x="15" y="15" width="5" height="5"/></clipPath>
+        \\  <clipPath id="half" clipPathUnits="objectBoundingBox"><rect width="1" height="0.5"/></clipPath>
+        \\  <rect width="20" height="10" fill="#f00" clip-path="url(#left)"/>
+        \\  <g clip-path="url(#ring)"><rect y="10" width="20" height="10" fill="#00f"/></g>
+        \\</svg>
+    , 20, 20, &pens);
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[5 * 20 + 2]);
+    try testing.expectEqual(@as(Pen, 0), pens[5 * 20 + 15]);
+    try testing.expectEqual(@as(Pen, 0xFF0000FF), pens[18 * 20 + 10]);
+    try testing.expectEqual(@as(Pen, 0), pens[12 * 20 + 10]);
+    try rig.draw(
+        \\<svg width="20" height="20">
+        \\  <clipPath id="two"><rect width="5" height="5"/><rect x="15" y="15" width="5" height="5"/></clipPath>
+        \\  <clipPath id="half" clipPathUnits="objectBoundingBox"><rect width="1" height="0.5"/></clipPath>
+        \\  <g clip-path="url(#two)"><rect width="20" height="20" fill="#0f0"/></g>
+        \\  <circle cx="10" cy="10" r="4" fill="#fff" clip-path="url(#half)"/>
+        \\  <rect x="8" y="17" width="2" height="2" fill="#fff" clip-path="url(#gone)"/>
+        \\</svg>
+    , 20, 20, &pens);
+    try testing.expectEqual(@as(Pen, 0xFF00FF00), pens[2 * 20 + 2]);
+    try testing.expectEqual(@as(Pen, 0xFF00FF00), pens[17 * 20 + 17]);
+    try testing.expectEqual(@as(Pen, 0), pens[2 * 20 + 17]);
+    // The circle's top half, from 6 to 10.
+    try testing.expectEqual(@as(Pen, 0xFFFFFFFF), pens[8 * 20 + 10]);
+    try testing.expectEqual(@as(Pen, 0), pens[12 * 20 + 10]);
+    try testing.expectEqual(@as(Pen, 0xFFFFFFFF), pens[18 * 20 + 9]);
+    try rig.close();
+}
+
+test "mask: its luminance, mask-type alpha, its region, a group under it whole" {
+    const rig = try Rig.open();
+    var pens: [20 * 20]Pen = undefined;
+    try rig.draw(
+        \\<svg width="20" height="20">
+        \\  <mask id="m" maskUnits="userSpaceOnUse" x="0" y="0" width="20" height="20">
+        \\    <rect width="10" height="20" fill="#fff"/><rect x="10" width="10" height="20" fill="#808080"/>
+        \\  </mask>
+        \\  <mask id="a" style="mask-type:alpha"><rect width="20" height="20" fill="#000"/></mask>
+        \\  <g mask="url(#m)">
+        \\    <rect width="20" height="10" fill="#f00"/>
+        \\    <rect y="5" width="20" height="5" fill="#00f"/>
+        \\  </g>
+        \\  <rect y="10" width="20" height="10" fill="#0f0" mask="url(#a)"/>
+        \\</svg>
+    , 20, 20, &pens);
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[2 * 20 + 5]);
+    try testing.expectEqual(@as(Pen, 0x80FF0000), pens[2 * 20 + 15]);
+    // The blue over the red, the group put down whole: no red under it.
+    try testing.expectEqual(@as(Pen, 0x800000FF), pens[7 * 20 + 15]);
+    // By its coverage, black is all of it.
+    try testing.expectEqual(@as(Pen, 0xFF00FF00), pens[15 * 20 + 5]);
+    // The region by default: the box - of the shape, not its stroke - a
+    // tenth more each way, 4 to 16 here; the stroke reaches 2 to 18 and
+    // is cut at it.
+    try rig.draw(
+        \\<svg width="20" height="20">
+        \\  <mask id="r"><rect x="-10" y="-10" width="40" height="40" fill="#fff"/></mask>
+        \\  <rect x="5" y="5" width="10" height="10" fill="#fff" stroke="#00f" stroke-width="6" mask="url(#r)"/>
+        \\</svg>
+    , 20, 20, &pens);
+    try testing.expectEqual(@as(Pen, 0xFFFFFFFF), pens[10 * 20 + 10]);
+    try testing.expectEqual(@as(Pen, 0xFF0000FF), pens[10 * 20 + 4]);
+    try testing.expectEqual(@as(Pen, 0), pens[10 * 20 + 3]);
+    try testing.expectEqual(@as(Pen, 0), pens[10 * 20 + 17]);
+    try rig.close();
+}
+
+test "use: moved by x and y, styled from the use, a symbol in its viewBox, one naming itself not drawn" {
+    const rig = try Rig.open();
+    var pens: [20 * 20]Pen = undefined;
+    try rig.draw(
+        \\<svg width="20" height="20" xmlns:xlink="http://www.w3.org/1999/xlink">
+        \\  <defs>
+        \\    <rect id="r" width="5" height="5"/>
+        \\    <symbol id="s" viewBox="0 0 2 2"><rect width="1" height="1" fill="#0f0"/><rect x="1" y="1" width="3" height="3" fill="#f0f"/></symbol>
+        \\    <g id="loop"><rect x="18" width="2" height="2" fill="#fff"/><use href="#loop" x="-4"/></g>
+        \\  </defs>
+        \\  <use xlink:href="#r" x="2" y="2" fill="#f00"/>
+        \\  <use href="#s" x="10" y="10" width="10" height="10"/>
+        \\  <use href="#loop"/>
+        \\</svg>
+    , 20, 20, &pens);
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[4 * 20 + 4]);
+    try testing.expectEqual(@as(Pen, 0), pens[1 * 20 + 1]);
+    // The symbol's 2 by 2 drawn 10 by 10 at (10, 10): its first quarter
+    // green, the rest of it magenta and cut at its edge.
+    try testing.expectEqual(@as(Pen, 0xFF00FF00), pens[12 * 20 + 12]);
+    try testing.expectEqual(@as(Pen, 0xFFFF00FF), pens[18 * 20 + 18]);
+    // The group drawn once, the use inside it naming it not at all.
+    try testing.expectEqual(@as(Pen, 0xFFFFFFFF), pens[1 * 20 + 19]);
+    try testing.expectEqual(@as(Pen, 0), pens[1 * 20 + 15]);
+    try rig.close();
+}
+
+test "a style element's rules: over the attributes, under the style attribute, the more specific last" {
+    const rig = try Rig.open();
+    var pens: [20 * 20]Pen = undefined;
+    try rig.draw(
+        \\<svg width="20" height="20">
+        \\  <style><![CDATA[ .st0{fill:#00f} rect.st0.big{fill:#0f0} #me{fill:#fff} .gone{display:none} ]]></style>
+        \\  <rect width="10" height="10" class="st0" fill="#f00"/>
+        \\  <rect x="10" width="10" height="10" class="big st0"/>
+        \\  <rect y="10" width="10" height="10" class="big st0" id="me" style="fill:#ff0"/>
+        \\  <rect x="10" y="10" width="10" height="10" id="me" class="st0"/>
+        \\  <rect width="20" height="20" class="gone"/>
+        \\</svg>
+    , 20, 20, &pens);
+    try testing.expectEqual(@as(Pen, 0xFF0000FF), pens[5 * 20 + 5]);
+    try testing.expectEqual(@as(Pen, 0xFF00FF00), pens[5 * 20 + 15]);
+    try testing.expectEqual(@as(Pen, 0xFFFFFF00), pens[15 * 20 + 5]);
+    try testing.expectEqual(@as(Pen, 0xFFFFFFFF), pens[15 * 20 + 15]);
+    try rig.close();
+}
+
+test "a nested svg clips what it draws to its viewport, unless its overflow is visible" {
+    const rig = try Rig.open();
+    var pens: [20 * 20]Pen = undefined;
+    try rig.draw(
+        \\<svg width="20" height="20">
+        \\  <svg x="0" y="0" width="10" height="10"><rect width="20" height="10" fill="#f00"/></svg>
+        \\  <svg x="0" y="10" width="10" height="10" overflow="visible"><rect width="20" height="10" fill="#00f"/></svg>
+        \\</svg>
+    , 20, 20, &pens);
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[5 * 20 + 5]);
+    try testing.expectEqual(@as(Pen, 0), pens[5 * 20 + 15]);
+    try testing.expectEqual(@as(Pen, 0xFF0000FF), pens[15 * 20 + 15]);
     try rig.close();
 }

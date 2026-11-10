@@ -236,15 +236,26 @@ or 300 by 150. It draws paths, rectangles, circles, ellipses, lines,
 polylines and polygons, in groups, links, `switch`es and nested `svg`
 elements; fills and strokes in colours and in linear and radial
 gradients, with their joins, caps, miter limits and dashes; `transform`s
-and `viewBox`es; and opacity, a group's put down from a layer. A style
-attribute's declarations are read over the presentation attributes.
-Text, images, `use`, patterns, markers and `<style>` sheets are not
-drawn, clip paths and masks are passed over - what they would cut is
-drawn whole - and an element with a filter is left out with all that
-is in it. A picture too large to keep is drawn smaller, as any is, and
-one wanted at a size (above) is drawn at it.
+and `viewBox`es; and opacity, a group's put down from a layer. Since
+1.2 it draws clip paths and masks - by luminance or, with `mask-type:
+alpha`, by coverage, in the user's units or the box's - through
+vector.library 1.3's clips, `use` and `symbol`, and a nested `svg`'s
+or a symbol's viewport clips what is in it. The presentation attributes
+are read first, then the rules of the file's `<style>` sheets that are
+for the element - selectors of a type, classes and an id, as
+Illustrator writes them - then its style attribute's declarations. A
+file packed with gzip, an `.svgz`, is unpacked by compression.library
+and drawn the same (the SVGZ descriptor). Text, images, patterns and
+markers are not drawn, and an element with a filter is left out with
+all that is in it. A picture too large to keep is drawn smaller, as any
+is, and one wanted at a size (above) is drawn at it.
 `scripts/svg-compare.sh` draws the Tango icons both ways - here and by
-rsvg-convert - and says how far apart each pair is. `C:test/DTTime
+rsvg-convert - and says how far apart each pair is; given files, it
+compares those. An edge a clip shares with what is drawn through it -
+an Illustrator avatar's circle clipped by the same circle - comes out
+a little fainter than rsvg-convert draws it: the two coverages are
+multiplied, as a browser does, where cairo cuts one outline by the
+other first. `C:test/DTTime
 <file> ...` times how long any file takes to be made into its object,
 and for an animation - a Lottie file's among them - how long each frame
 takes its class to draw; the 64-bit machines' disks have it. `WIDTH`

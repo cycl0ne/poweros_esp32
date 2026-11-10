@@ -22,6 +22,19 @@
 //! opacity, so shapes in it that overlap are not seen through each
 //! other. Without the memory for one, its opacity goes into every paint
 //! drawn until it is popped instead - wrong only where those overlap.
+//!
+//! **Clips and masks** (since 1.3). A clip is a byte a pixel, the
+//! canvas's size: how much of what is drawn shows there. One made from a
+//! path is the path's coverage (`pushClip`); a mask is a layer drawn on
+//! and then turned into one - its coverage, or its colours' luminance
+//! times it, or either the other way round (`beginMask`, `endMask`).
+//! Either is made inside the clip under it, multiplied by it, and goes
+//! with the layer it was pushed on: what is drawn on that layer shows
+//! through it, and so does a layer put down on it, once. What is drawn
+//! on a layer pushed after the clip is not clipped until that layer is
+//! put down - so a group drawn on a layer of its own goes through a mask
+//! as a whole, as SVG has it. A clip with no memory clips nothing more
+//! than the one under it: drawn whole rather than not at all.
 
 const sdk = @import("sdk");
 const vector = sdk.vector;
@@ -68,6 +81,14 @@ pub const Canvas = struct {
     layers: [vector.MAX_LAYERS]Layer = undefined,
     depth: u32 = 0,
     beyond: u32 = 0,
+    /// Masks begun past the most layers: what is drawn until they end is
+    /// not seen.
+    muted: u32 = 0,
+    /// The clips pushed, the innermost last, and the pushes past the
+    /// most.
+    clips: [vector.MAX_CLIPS]Clip = undefined,
+    clip_depth: u32 = 0,
+    clip_beyond: u32 = 0,
 
     /// A canvas `width` by `height`, its band cleared; null without the
     /// memory, or for a size of nothing.
@@ -90,6 +111,10 @@ pub const Canvas = struct {
         while (canvas.depth > 0) {
             canvas.depth -= 1;
             if (canvas.layers[canvas.depth].pens) |pens| memory.free(Pen, pens);
+        }
+        while (canvas.clip_depth > 0) {
+            canvas.clip_depth -= 1;
+            if (canvas.clips[canvas.clip_depth].cover) |cover| memory.free(u8, cover);
         }
         memory.free(f32, canvas.acc);
         canvas.points.deinit(memory);
@@ -167,7 +192,7 @@ pub const Canvas = struct {
         }
         const pens = canvas.memory.alloc(Pen, @as(usize, canvas.width) * canvas.height);
         if (pens) |all| @memset(all, 0);
-        canvas.layers[canvas.depth] = .{ .pens = pens, .opacity = if (opacity > 0) @min(opacity, 1) else 0 };
+        canvas.layers[canvas.depth] = .{ .pens = pens, .opacity = if (opacity > 0) @min(opacity, 1) else 0, .mask = false };
         canvas.depth += 1;
         return if (pens == null) vector.VECTORERR_NOMEM else vector.VECTOR_OK;
     }
@@ -180,23 +205,30 @@ pub const Canvas = struct {
         }
         if (canvas.depth == 0) return;
         canvas.depth -= 1;
+        canvas.dropClipsAbove(canvas.depth);
         const layer = &canvas.layers[canvas.depth];
         const own = layer.pens orelse return;
         defer canvas.memory.free(Pen, own);
         layer.pens = null;
+        // A mask ended by a pop rather than `endMask` is no mask.
+        if (layer.mask) return;
         if (layer.top >= layer.bottom) return;
         const under = canvas.targetAt(canvas.depth);
         if (under.pens == null) return;
         const opacity = layer.opacity * under.fade;
         if (under.layer) |below| below.mark(layer.top, layer.bottom, layer.left, layer.right);
+        var through: [vector.MAX_LAYERS + 1][]const u8 = undefined;
+        const clip_count = canvas.clipsFor(under.level, canvas.depth, &through);
         var y = layer.top;
         while (y < layer.bottom) : (y += 1) {
             const from = own[@as(usize, y) * canvas.width ..];
             const to = rowOf(under, y);
+            const at = @as(usize, y) * canvas.width;
             var x = layer.left;
             while (x < layer.right) : (x += 1) {
                 const pen = from[x];
-                const a = @as(f32, @floatFromInt(pen >> 24)) / 255 * opacity;
+                var a = @as(f32, @floatFromInt(pen >> 24)) / 255 * opacity;
+                for (through[0..clip_count]) |clip| a *= @as(f32, @floatFromInt(clip[at + x])) * (1.0 / 255.0);
                 if (a < 1.0 / 512.0) continue;
                 const r: f32 = @floatFromInt((pen >> 16) & 0xFF);
                 const g: f32 = @floatFromInt((pen >> 8) & 0xFF);
@@ -204,6 +236,201 @@ pub const Canvas = struct {
                 to[x] = over(to[x], r, g, b, a);
             }
         }
+    }
+
+    /// What is drawn from now on shows only inside the path through
+    /// `matrix`, by `rule`, and inside the clip it is in, until `popClip`.
+    pub fn pushClip(canvas: *Canvas, path: *const Path, matrix: Matrix, rule: u32) i32 {
+        const all = switch (canvas.newClip()) {
+            .made => |cover| cover,
+            .failed => |result| return result,
+        };
+        var result: i32 = if (path.failed) vector.VECTORERR_NOMEM else vector.VECTOR_OK;
+        if (canvas.rowsOf(path, matrix, 0)) |span| {
+            var top = span.first;
+            while (top < span.end) : (top += canvas.band_rows) {
+                var coverage = canvas.band(top);
+                if (!flatten.contours(path, flatten.Flatten.fill(matrix), &canvas.points, &canvas.smooth, canvas.memory, &coverage, filled)) result = vector.VECTORERR_NOMEM;
+                canvas.layCover(&coverage, rule == vector.RULE_EVENODD, all);
+            }
+        }
+        canvas.combineWithBelow(all);
+        return result;
+    }
+
+    /// The last clip or mask pushed taken off.
+    pub fn popClip(canvas: *Canvas) void {
+        if (canvas.clip_beyond > 0) {
+            canvas.clip_beyond -= 1;
+            return;
+        }
+        if (canvas.clip_depth == 0) return;
+        canvas.clip_depth -= 1;
+        if (canvas.clips[canvas.clip_depth].cover) |cover| canvas.memory.free(u8, cover);
+    }
+
+    /// What is drawn from now on, until `endMask`, makes a mask rather
+    /// than being seen: a layer of its own, clear and not clipped.
+    pub fn beginMask(canvas: *Canvas) i32 {
+        if (canvas.depth == vector.MAX_LAYERS) {
+            canvas.beyond += 1;
+            canvas.muted += 1;
+            return vector.VECTORERR_DEPTH;
+        }
+        const result = canvas.pushLayer(1);
+        canvas.layers[canvas.depth - 1].mask = true;
+        return result;
+    }
+
+    /// The drawing since `beginMask` made a mask (`MASK_*`) and pushed as
+    /// a clip is, inside the clip under it; `popClip` takes it off.
+    pub fn endMask(canvas: *Canvas, kind: u32) i32 {
+        if (canvas.muted > 0) {
+            canvas.muted -= 1;
+            canvas.beyond -= 1;
+            _ = canvas.newClipOf(null);
+            return vector.VECTORERR_DEPTH;
+        }
+        // The layers pushed inside it and not popped put down on it: those
+        // past the most first, which hold nothing - none can be under a
+        // mask that is not.
+        var mask_at = canvas.depth;
+        while (mask_at > 0 and !canvas.layers[mask_at - 1].mask) mask_at -= 1;
+        if (mask_at == 0) return vector.VECTORERR_DEPTH;
+        canvas.beyond = 0;
+        while (canvas.depth > mask_at) canvas.popLayer();
+        canvas.depth -= 1;
+        canvas.dropClipsAbove(canvas.depth);
+        const layer = &canvas.layers[canvas.depth];
+        const own = layer.pens;
+        layer.pens = null;
+        defer if (own) |pens| canvas.memory.free(Pen, pens);
+        // Without the layer nothing was drawn on it: no mask, drawn whole.
+        if (own == null) {
+            _ = canvas.newClipOf(null);
+            return vector.VECTORERR_NOMEM;
+        }
+        const all = switch (canvas.newClip()) {
+            .made => |cover| cover,
+            .failed => |result| return result,
+        };
+        const luminance = kind & 0xF == vector.MASK_LUMINANCE;
+        const invert: u8 = if (kind & vector.MASK_INVERT != 0) 0xFF else 0;
+        if (invert != 0) @memset(all, 0xFF);
+        var y = layer.top;
+        while (y < layer.bottom) : (y += 1) {
+            const at = @as(usize, y) * canvas.width;
+            var x = layer.left;
+            while (x < layer.right) : (x += 1) {
+                const pen = own.?[at + x];
+                var value: f32 = @floatFromInt(pen >> 24);
+                if (luminance) {
+                    const r: f32 = @floatFromInt((pen >> 16) & 0xFF);
+                    const g: f32 = @floatFromInt((pen >> 8) & 0xFF);
+                    const b: f32 = @floatFromInt(pen & 0xFF);
+                    value *= (0.2125 * r + 0.7154 * g + 0.0721 * b) / 255;
+                }
+                all[at + x] = byte(value) ^ invert;
+            }
+        }
+        canvas.combineWithBelow(all);
+        return vector.VECTOR_OK;
+    }
+
+    const NewClip = union(enum) { made: []u8, failed: i32 };
+
+    /// A clip pushed on the layer drawn on now, cleared; what to answer
+    /// when it holds nothing.
+    fn newClip(canvas: *Canvas) NewClip {
+        if (canvas.clip_depth == vector.MAX_CLIPS) {
+            canvas.clip_beyond += 1;
+            return .{ .failed = vector.VECTORERR_DEPTH };
+        }
+        const cover = canvas.memory.alloc(u8, @as(usize, canvas.width) * canvas.height);
+        if (cover) |all| @memset(all, 0);
+        if (!canvas.newClipOf(cover)) return .{ .failed = vector.VECTORERR_DEPTH };
+        return if (cover) |all| .{ .made = all } else .{ .failed = vector.VECTORERR_NOMEM };
+    }
+
+    fn newClipOf(canvas: *Canvas, cover: ?[]u8) bool {
+        if (canvas.clip_depth == vector.MAX_CLIPS) {
+            if (cover) |all| canvas.memory.free(u8, all);
+            canvas.clip_beyond += 1;
+            return false;
+        }
+        canvas.clips[canvas.clip_depth] = .{ .cover = cover, .level = canvas.depth };
+        canvas.clip_depth += 1;
+        return true;
+    }
+
+    /// The newest clip made inside the one under it on its layer.
+    fn combineWithBelow(canvas: *Canvas, all: []u8) void {
+        const newest = canvas.clip_depth - 1;
+        const under = canvas.clipAt(newest, canvas.clips[newest].level) orelse return;
+        for (all, under) |*c, u| c.* = @intCast((@as(u32, c.*) * u + 127) / 255);
+    }
+
+    /// The clips pushed on layers since given back: what was clipped is
+    /// drawn and gone.
+    fn dropClipsAbove(canvas: *Canvas, level: u32) void {
+        while (canvas.clip_depth > 0 and canvas.clips[canvas.clip_depth - 1].level > level) {
+            canvas.clip_depth -= 1;
+            if (canvas.clips[canvas.clip_depth].cover) |cover| canvas.memory.free(u8, cover);
+        }
+    }
+
+    /// The innermost clip among the first `below` that holds something,
+    /// pushed on layer `level`; null for none.
+    fn clipAt(canvas: *const Canvas, below: u32, level: u32) ?[]const u8 {
+        var i = below;
+        while (i > 0) {
+            i -= 1;
+            const clip = canvas.clips[i];
+            if (clip.level < level) return null;
+            if (clip.level == level) if (clip.cover) |cover| return cover;
+        }
+        return null;
+    }
+
+    /// The clips what is drawn on layer `from` goes through, when drawing
+    /// is at `depth`: the one on each layer from there up - more than one
+    /// only where layers had no memory and drawing fell to the one under.
+    fn clipsFor(canvas: *const Canvas, from: u32, depth: u32, into: *[vector.MAX_LAYERS + 1][]const u8) usize {
+        var n: usize = 0;
+        var level = from;
+        while (level <= depth) : (level += 1) {
+            if (canvas.clipAt(canvas.clip_depth, level)) |cover| {
+                into[n] = cover;
+                n += 1;
+            }
+        }
+        return n;
+    }
+
+    /// What the band holds put into a clip, a byte a pixel, and the band
+    /// cleared where it was.
+    fn layCover(canvas: *Canvas, coverage: *Coverage, even_odd: bool, cover: []u8) void {
+        if (!coverage.touched()) return coverage.forget();
+        const stride_width = coverage.stride();
+        var y = coverage.top;
+        while (y < coverage.bottom) : (y += 1) {
+            const row = coverage.row(y);
+            const at = @as(usize, y) * canvas.width;
+            var sum: f32 = 0;
+            var x = coverage.left;
+            while (x < stride_width) : (x += 1) {
+                sum += row[x];
+                row[x] = 0;
+                if (x >= canvas.width) continue;
+                var c = @abs(sum);
+                if (even_odd) {
+                    c -= 2 * @floor(c / 2);
+                    if (c > 1) c = 2 - c;
+                } else if (c > 1) c = 1;
+                cover[at + x] = byte(c * 255);
+            }
+        }
+        coverage.forget();
     }
 
     fn band(canvas: *Canvas, top: u32) Coverage {
@@ -285,10 +512,13 @@ pub const Canvas = struct {
             .none => unreachable,
         }
         const ramp = canvas.ramp;
+        var through: [vector.MAX_LAYERS + 1][]const u8 = undefined;
+        const clip_count = canvas.clipsFor(target.level, canvas.depth, &through);
         var y = coverage.top;
         while (y < coverage.bottom) : (y += 1) {
             const row = coverage.row(y);
             const pens = rowOf(target, y);
+            const at = @as(usize, y) * canvas.width;
             var sum: f32 = 0;
             var x = coverage.left;
             while (x < stride_width) : (x += 1) {
@@ -300,7 +530,8 @@ pub const Canvas = struct {
                     cover -= 2 * @floor(cover / 2);
                     if (cover > 1) cover = 2 - cover;
                 } else if (cover > 1) cover = 1;
-                const a = cover * opacity;
+                var a = cover * opacity;
+                for (through[0..clip_count]) |clip| a *= @as(f32, @floatFromInt(clip[at + x])) * (1.0 / 255.0);
                 if (a < 1.0 / 512.0) continue;
                 if (sampler) |s| {
                     const entry = ramp.?[s.index(x, y) orelse continue];
@@ -321,16 +552,20 @@ pub const Canvas = struct {
     /// Where drawing went with `depth` layers pushed: the innermost of
     /// them that has pens, the opacities of those inside it that have
     /// none going into the paint; or the caller's pens.
+    /// A mask with no memory, or one begun past the most layers, is
+    /// drawn on nowhere: what makes it is not to be seen.
     fn targetAt(canvas: *Canvas, depth: u32) Target {
+        if (canvas.muted > 0) return .{ .pens = null, .bytes_per_row = 0, .fade = 0, .layer = null, .level = depth };
         var fade: f32 = 1;
         var i = depth;
         while (i > 0) {
             i -= 1;
             const layer = &canvas.layers[i];
-            if (layer.pens) |pens| return .{ .pens = pens.ptr, .bytes_per_row = canvas.width * 4, .fade = fade, .layer = layer };
+            if (layer.pens) |pens| return .{ .pens = pens.ptr, .bytes_per_row = canvas.width * 4, .fade = fade, .layer = layer, .level = i + 1 };
+            if (layer.mask) return .{ .pens = null, .bytes_per_row = 0, .fade = 0, .layer = null, .level = i + 1 };
             fade *= layer.opacity;
         }
-        return .{ .pens = canvas.pens, .bytes_per_row = canvas.bytes_per_row, .fade = fade, .layer = null };
+        return .{ .pens = canvas.pens, .bytes_per_row = canvas.bytes_per_row, .fade = fade, .layer = null, .level = 0 };
     }
 };
 
@@ -345,6 +580,8 @@ const Layer = struct {
     /// Its pens, the canvas's size; null when there was not the memory.
     pens: ?[]Pen,
     opacity: f32,
+    /// Drawn on to make a mask (`beginMask`), never put down.
+    mask: bool = false,
     /// The rows and columns drawn on.
     top: u32 = 0xFFFF_FFFF,
     bottom: u32 = 0,
@@ -366,6 +603,18 @@ const Target = struct {
     fade: f32,
     /// The layer they are, to mark what is drawn on it.
     layer: ?*Layer,
+    /// How many layers down they are: 0 for the caller's pens, 1 for the
+    /// first layer's - which clips they are drawn through.
+    level: u32,
+};
+
+/// A clip or a mask: how much shows of what is drawn, a byte a pixel of
+/// the canvas, and the layer it goes with.
+const Clip = struct {
+    /// Null when there was not the memory: it clips nothing.
+    cover: ?[]u8,
+    /// How many layers were pushed when it was.
+    level: u32,
 };
 
 fn rowOf(target: Target, y: u32) [*]Pen {
@@ -660,4 +909,212 @@ test "layers nested past the most hold nothing, and pops still match pushes" {
     // back with the canvas.
     canvas.popLayer();
     _ = canvas.pushLayer(0.3);
+}
+
+// --- tests: since 1.3 ------------------------------------------------------------
+
+test "a clip: what is drawn shows inside it, inside the one it is in, and not after it is popped" {
+    const canvas = Canvas.create(test_memory, 10, 10).?;
+    defer canvas.destroy();
+    var pens: [100]Pen = @splat(0);
+    canvas.setPens(&pens, 0);
+    const all = Path.create(test_memory).?;
+    defer all.destroy();
+    addSquare(all, 0, 0, 10);
+    const left = Path.create(test_memory).?;
+    defer left.destroy();
+    addSquare(left, 0, 0, 6);
+    const lower = Path.create(test_memory).?;
+    defer lower.destroy();
+    addSquare(lower, 4, 4, 6);
+    try testing.expectEqual(vector.VECTOR_OK, canvas.pushClip(left, .{}, vector.RULE_NONZERO));
+    try testing.expectEqual(vector.VECTOR_OK, canvas.pushClip(lower, .{}, vector.RULE_NONZERO));
+    _ = canvas.fill(all, .{}, &solid(1, 0, 0), vector.RULE_NONZERO);
+    // Only where the two meet.
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[5 * 10 + 5]);
+    try testing.expectEqual(@as(Pen, 0), pens[1 * 10 + 1]);
+    try testing.expectEqual(@as(Pen, 0), pens[8 * 10 + 8]);
+    canvas.popClip();
+    _ = canvas.fill(all, .{}, &solid(0, 0, 1), vector.RULE_NONZERO);
+    try testing.expectEqual(@as(Pen, 0xFF0000FF), pens[1 * 10 + 1]);
+    try testing.expectEqual(@as(Pen, 0), pens[8 * 10 + 8]);
+    canvas.popClip();
+    try testing.expectEqual(@as(u32, 0), canvas.clip_depth);
+    // Even-odd: a square inside a square is a hole in the clip.
+    @memset(&pens, 0);
+    const ring = Path.create(test_memory).?;
+    defer ring.destroy();
+    addSquare(ring, 0, 0, 10);
+    addSquare(ring, 3, 3, 4);
+    _ = canvas.pushClip(ring, .{}, vector.RULE_EVENODD);
+    _ = canvas.fill(all, .{}, &solid(0, 1, 0), vector.RULE_NONZERO);
+    canvas.popClip();
+    try testing.expectEqual(@as(Pen, 0xFF00FF00), pens[1 * 10 + 1]);
+    try testing.expectEqual(@as(Pen, 0), pens[5 * 10 + 5]);
+}
+
+test "a clip under a layer: the layer's shapes go through it once, at its opacity; one pushed on a layer goes with it" {
+    const canvas = Canvas.create(test_memory, 10, 10).?;
+    defer canvas.destroy();
+    var pens: [100]Pen = @splat(0);
+    canvas.setPens(&pens, 0);
+    const left = Path.create(test_memory).?;
+    defer left.destroy();
+    addSquare(left, 0, 0, 5);
+    const first = Path.create(test_memory).?;
+    defer first.destroy();
+    addSquare(first, 0, 0, 7);
+    const second = Path.create(test_memory).?;
+    defer second.destroy();
+    addSquare(second, 3, 3, 7);
+    _ = canvas.pushClip(left, Matrix.scale(1, 2), vector.RULE_NONZERO);
+    _ = canvas.pushLayer(0.5);
+    _ = canvas.fill(first, .{}, &solid(1, 0, 0), vector.RULE_NONZERO);
+    _ = canvas.fill(second, .{}, &solid(1, 0, 0), vector.RULE_NONZERO);
+    canvas.popLayer();
+    canvas.popClip();
+    try testing.expectEqual(@as(Pen, 0x80FF0000), pens[4 * 10 + 4]);
+    try testing.expectEqual(@as(Pen, 0x80FF0000), pens[8 * 10 + 4]);
+    try testing.expectEqual(@as(Pen, 0), pens[4 * 10 + 6]);
+    // A clip pushed on a layer and not popped: popped with the layer.
+    @memset(&pens, 0);
+    _ = canvas.pushLayer(1);
+    _ = canvas.pushClip(left, .{}, vector.RULE_NONZERO);
+    canvas.popLayer();
+    try testing.expectEqual(@as(u32, 0), canvas.clip_depth);
+    _ = canvas.fill(first, .{}, &solid(1, 0, 0), vector.RULE_NONZERO);
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[6 * 10 + 6]);
+}
+
+test "masks: by luminance, by coverage, the other way round, inside a clip, and one with nothing drawn" {
+    const canvas = Canvas.create(test_memory, 10, 10).?;
+    defer canvas.destroy();
+    var pens: [100]Pen = @splat(0);
+    canvas.setPens(&pens, 0);
+    const all = Path.create(test_memory).?;
+    defer all.destroy();
+    addSquare(all, 0, 0, 10);
+    const left = Path.create(test_memory).?;
+    defer left.destroy();
+    addSquare(left, 0, 0, 5);
+    const right = Path.create(test_memory).?;
+    defer right.destroy();
+    addSquare(right, 5, 0, 5);
+    // White on the left, grey on the right: all of it, half of it.
+    try testing.expectEqual(vector.VECTOR_OK, canvas.beginMask());
+    _ = canvas.fill(left, Matrix.scale(1, 2), &solid(1, 1, 1), vector.RULE_NONZERO);
+    _ = canvas.fill(right, Matrix.scale(1, 2), &solid(128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0), vector.RULE_NONZERO);
+    // Nothing of the mask is seen.
+    try testing.expectEqual(@as(Pen, 0), pens[5 * 10 + 2]);
+    try testing.expectEqual(vector.VECTOR_OK, canvas.endMask(vector.MASK_LUMINANCE));
+    _ = canvas.fill(all, .{}, &solid(0, 0, 1), vector.RULE_NONZERO);
+    canvas.popClip();
+    try testing.expectEqual(@as(Pen, 0xFF0000FF), pens[5 * 10 + 2]);
+    try testing.expectEqual(@as(Pen, 0x800000FF), pens[5 * 10 + 7]);
+    // By coverage, the grey is all of it; the other way round, none, and
+    // the rest of the canvas all.
+    for ([_]u32{ vector.MASK_ALPHA, vector.MASK_ALPHA | vector.MASK_INVERT }) |kind| {
+        @memset(&pens, 0);
+        _ = canvas.beginMask();
+        _ = canvas.fill(right, .{}, &solid(0.5, 0.5, 0.5), vector.RULE_NONZERO);
+        try testing.expectEqual(vector.VECTOR_OK, canvas.endMask(kind));
+        _ = canvas.fill(all, .{}, &solid(0, 1, 0), vector.RULE_NONZERO);
+        canvas.popClip();
+        const inverted = kind & vector.MASK_INVERT != 0;
+        try testing.expectEqual(@as(Pen, if (inverted) 0 else 0xFF00FF00), pens[2 * 10 + 7]);
+        try testing.expectEqual(@as(Pen, if (inverted) 0xFF00FF00 else 0), pens[2 * 10 + 2]);
+        try testing.expectEqual(@as(Pen, if (inverted) 0xFF00FF00 else 0), pens[7 * 10 + 7]);
+    }
+    // A mask inside a clip, drawn without it, made inside it.
+    @memset(&pens, 0);
+    _ = canvas.pushClip(left, Matrix.scale(2, 1), vector.RULE_NONZERO);
+    _ = canvas.beginMask();
+    _ = canvas.fill(all, .{}, &solid(1, 1, 1), vector.RULE_NONZERO);
+    try testing.expectEqual(vector.VECTOR_OK, canvas.endMask(vector.MASK_LUMINANCE));
+    _ = canvas.fill(all, .{}, &solid(1, 0, 0), vector.RULE_NONZERO);
+    canvas.popClip();
+    canvas.popClip();
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[2 * 10 + 2]);
+    try testing.expectEqual(@as(Pen, 0), pens[7 * 10 + 2]);
+    // Nothing drawn on a mask: nothing shows through it.
+    @memset(&pens, 0);
+    _ = canvas.beginMask();
+    _ = canvas.endMask(vector.MASK_LUMINANCE);
+    _ = canvas.fill(all, .{}, &solid(1, 0, 0), vector.RULE_NONZERO);
+    canvas.popClip();
+    try testing.expectEqual(@as(Pen, 0), pens[5 * 10 + 5]);
+    // No mask begun.
+    try testing.expectEqual(vector.VECTORERR_DEPTH, canvas.endMask(vector.MASK_ALPHA));
+    try testing.expectEqual(@as(u32, 0), canvas.clip_depth);
+    try testing.expectEqual(@as(u32, 0), canvas.depth);
+}
+
+test "a group on a layer goes through a mask whole; a layer left pushed in a mask is put down on it" {
+    const canvas = Canvas.create(test_memory, 10, 10).?;
+    defer canvas.destroy();
+    var pens: [100]Pen = @splat(0);
+    canvas.setPens(&pens, 0);
+    const all = Path.create(test_memory).?;
+    defer all.destroy();
+    addSquare(all, 0, 0, 10);
+    const left = Path.create(test_memory).?;
+    defer left.destroy();
+    addSquare(left, 0, 0, 5);
+    _ = canvas.beginMask();
+    _ = canvas.pushLayer(1);
+    _ = canvas.fill(left, Matrix.scale(1, 2), &solid(1, 1, 1), vector.RULE_NONZERO);
+    try testing.expectEqual(vector.VECTOR_OK, canvas.endMask(vector.MASK_LUMINANCE));
+    try testing.expectEqual(@as(u32, 0), canvas.depth);
+    _ = canvas.pushLayer(0.5);
+    _ = canvas.fill(all, .{}, &solid(1, 0, 0), vector.RULE_NONZERO);
+    _ = canvas.fill(all, .{}, &solid(1, 0, 0), vector.RULE_NONZERO);
+    canvas.popLayer();
+    canvas.popClip();
+    try testing.expectEqual(@as(Pen, 0x80FF0000), pens[5 * 10 + 2]);
+    try testing.expectEqual(@as(Pen, 0), pens[5 * 10 + 7]);
+}
+
+test "a clip or a mask without the memory: drawn as if it were not there, pops still matching" {
+    for ([_]usize{ 10 * 10, 10 * 10 * @sizeOf(Pen) }) |size| {
+        refused_size = size;
+        const canvas = Canvas.create(refusing, 10, 10).?;
+        defer canvas.destroy();
+        var pens: [100]Pen = @splat(0);
+        canvas.setPens(&pens, 0);
+        const all = Path.create(test_memory).?;
+        defer all.destroy();
+        addSquare(all, 0, 0, 10);
+        const left = Path.create(test_memory).?;
+        defer left.destroy();
+        addSquare(left, 0, 0, 5);
+        if (size == 10 * 10) {
+            try testing.expectEqual(vector.VECTORERR_NOMEM, canvas.pushClip(left, .{}, vector.RULE_NONZERO));
+        } else {
+            // No layer for the mask: what is drawn on it is not seen.
+            try testing.expectEqual(vector.VECTORERR_NOMEM, canvas.beginMask());
+            _ = canvas.fill(left, .{}, &solid(1, 1, 1), vector.RULE_NONZERO);
+            try testing.expectEqual(@as(Pen, 0), pens[1 * 10 + 1]);
+            try testing.expectEqual(vector.VECTORERR_NOMEM, canvas.endMask(vector.MASK_LUMINANCE));
+        }
+        try testing.expectEqual(@as(u32, 1), canvas.clip_depth);
+        _ = canvas.fill(all, .{}, &solid(1, 0, 0), vector.RULE_NONZERO);
+        canvas.popClip();
+        try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[8 * 10 + 8]);
+        try testing.expectEqual(@as(u32, 0), canvas.clip_depth);
+    }
+    refused_size = 0;
+    // Past the most clips: nothing more is clipped; pops still match.
+    const canvas = Canvas.create(test_memory, 4, 4).?;
+    defer canvas.destroy();
+    const path = Path.create(test_memory).?;
+    defer path.destroy();
+    addSquare(path, 0, 0, 4);
+    for (0..vector.MAX_CLIPS) |_| try testing.expectEqual(vector.VECTOR_OK, canvas.pushClip(path, .{}, vector.RULE_NONZERO));
+    try testing.expectEqual(vector.VECTORERR_DEPTH, canvas.pushClip(path, .{}, vector.RULE_NONZERO));
+    _ = canvas.beginMask();
+    try testing.expectEqual(vector.VECTORERR_DEPTH, canvas.endMask(vector.MASK_ALPHA));
+    canvas.popClip();
+    canvas.popClip();
+    try testing.expectEqual(@as(u32, vector.MAX_CLIPS), canvas.clip_depth);
+    // The rest left pushed, given back with the canvas.
 }

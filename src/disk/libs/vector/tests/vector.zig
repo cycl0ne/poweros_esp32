@@ -238,7 +238,7 @@ test "shapes on a layer overlap once at its opacity, and one left pushed goes wi
 test "revision 2: a path handed over whole fills as the same path built a segment at a time" {
     const rig = try Rig.open();
     const vb = rig.vb;
-    try testing.expectEqual(@as(u16, 2), rig.library.revision);
+    try testing.expect(rig.library.revision >= 2);
     var whole_pens: [12 * 12]Pen = @splat(0);
     var one_pens: [12 * 12]Pen = @splat(0);
     const whole_canvas = try canvasOver(vb, &whole_pens, 12, 12);
@@ -285,5 +285,43 @@ test "revision 2: a path handed over whole fills as the same path built a segmen
     vb.DisposePath(one);
     vb.DisposeCanvas(whole_canvas);
     vb.DisposeCanvas(one_canvas);
+    try rig.close();
+}
+
+// --- since 1.3 ---------------------------------------------------------------------
+
+test "revision 3: a clip and a mask through the jump table, and both left pushed go with the canvas" {
+    const rig = try Rig.open();
+    const vb = rig.vb;
+    try testing.expectEqual(@as(u16, 3), rig.library.revision);
+    var pens: [10 * 10]Pen = @splat(0);
+    const canvas = try canvasOver(vb, &pens, 10, 10);
+    const all = vb.CreatePath() orelse return error.NoPath;
+    const round = vb.CreatePath() orelse return error.NoPath;
+    vb.AddRect(all, &.{ .width = 10, .height = 10 }, 0, 0);
+    vb.AddEllipse(round, 0.5, 0.5, 0.4, 0.4);
+    const twice = vector.Matrix.scale(10, 10);
+    const red = vector.Paint{ .colour = .{ .r = 1 } };
+    try testing.expectEqual(vector.VECTOR_OK, vb.PushClip(canvas, round, &twice, vector.RULE_NONZERO));
+    _ = vb.FillPath(canvas, all, null, &red, vector.RULE_NONZERO);
+    vb.PopClip(canvas);
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[5 * 10 + 5]);
+    try testing.expectEqual(@as(Pen, 0), pens[0]);
+
+    // Half a grey: a mask by luminance lets half through.
+    @memset(&pens, 0);
+    const grey = vector.Paint{ .colour = .{ .r = 0.5, .g = 0.5, .b = 0.5 } };
+    try testing.expectEqual(vector.VECTOR_OK, vb.BeginMask(canvas));
+    _ = vb.FillPath(canvas, all, null, &grey, vector.RULE_NONZERO);
+    try testing.expectEqual(vector.VECTOR_OK, vb.EndMask(canvas, vector.MASK_LUMINANCE));
+    _ = vb.FillPath(canvas, all, null, &red, vector.RULE_NONZERO);
+    vb.PopClip(canvas);
+    try testing.expectEqual(@as(Pen, 0x80FF0000), pens[5 * 10 + 5]);
+
+    _ = vb.PushClip(canvas, round, &twice, vector.RULE_NONZERO);
+    _ = vb.BeginMask(canvas);
+    vb.DisposePath(all);
+    vb.DisposePath(round);
+    vb.DisposeCanvas(canvas);
     try rig.close();
 }

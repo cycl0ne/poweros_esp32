@@ -99,6 +99,18 @@ const Direct = struct {
     pub fn PopLayer(_: *Direct, canvas: *vector.Canvas) void {
         canvasOf(canvas).popLayer();
     }
+    pub fn PushClip(_: *Direct, canvas: *vector.Canvas, path: *const vector.Path, matrix: ?*const vector.Matrix, rule: u32) i32 {
+        return canvasOf(canvas).pushClip(pathOf(path), if (matrix) |m| m.* else .{}, rule);
+    }
+    pub fn PopClip(_: *Direct, canvas: *vector.Canvas) void {
+        canvasOf(canvas).popClip();
+    }
+    pub fn BeginMask(_: *Direct, canvas: *vector.Canvas) i32 {
+        return canvasOf(canvas).beginMask();
+    }
+    pub fn EndMask(_: *Direct, canvas: *vector.Canvas, kind: u32) i32 {
+        return canvasOf(canvas).endMask(kind);
+    }
 };
 
 /// The module's memory from the host's.

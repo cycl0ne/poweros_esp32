@@ -15,6 +15,11 @@
 //! attribute's names both `href` and `xlink:href` are known; one in
 //! another namespace is not.
 //!
+//! **A `style` element's text** - its CSS, a CDATA section's as it is,
+//! the rest with its references undone - is kept as attributes of it
+//! named `text`, one for each piece between tags, in the order they
+//! come (since 1.2): an attribute of no other element has that name.
+//!
 //! **A file that is not well formed** is read as far as it is: closing
 //! tags close the element open, whatever they name, and the file's end
 //! closes them all. Its first element has to be `svg`.
@@ -103,6 +108,16 @@ pub const Name = enum(u8) {
     filter,
     @"clip-path",
     mask,
+    // Since 1.2.
+    class,
+    @"clip-rule",
+    clipPathUnits,
+    maskUnits,
+    maskContentUnits,
+    @"mask-type",
+    overflow,
+    /// A `style` element's text, not an attribute.
+    @"#text",
 };
 
 pub const none: u32 = std.math.maxInt(u32);
@@ -182,6 +197,7 @@ pub const Document = struct {
 /// is `svg`.
 pub fn count(text: []u8) ?Counts {
     var counts = Counts{};
+    var in_style = false;
     var r = xml.Reader{ .text = text };
     while (r.next() catch return null) |event| switch (event) {
         .open => |open| {
@@ -195,8 +211,12 @@ pub fn count(text: []u8) ?Counts {
                 counts.attributes += 1;
                 if (name == .id) counts.ids += 1;
             }
+            in_style = !open.empty and tagOf(open.name) == .style;
         },
-        else => {},
+        .close => in_style = false,
+        .text => if (in_style) {
+            counts.attributes += 1;
+        },
     };
     if (counts.nodes == 0) return null;
     return counts;
@@ -226,6 +246,9 @@ pub fn build(text: []u8, counts: Counts, block: []align(8) u8) Document {
     // The element open, and the last child of each open one.
     var open_node: u32 = none;
     var last_child: u32 = none;
+    // A `style` element open, its text to be kept: right after its
+    // attributes, nothing between.
+    var in_style = false;
     var r = xml.Reader{ .text = text };
     while (r.next() catch null) |event| switch (event) {
         .open => |open| {
@@ -256,15 +279,25 @@ pub fn build(text: []u8, counts: Counts, block: []align(8) u8) Document {
                 open_node = node;
                 last_child = none;
             }
+            in_style = !open.empty and nodes[node].tag == .style;
             if (open_node == none) break; // the root closed itself
         },
         .close => {
+            in_style = false;
             if (open_node == none) break;
             last_child = open_node;
             open_node = nodes[open_node].parent;
             if (open_node == none) break; // past the root: the rest is not the picture's
         },
-        .text => {},
+        .text => |piece| if (in_style and a < counts.attributes) {
+            // A CDATA section's is its text as it is; it starts after the
+            // `[` that opens it, where any other starts after a `>`.
+            const at = @intFromPtr(piece.ptr) - @intFromPtr(text.ptr);
+            const cdata = at > 0 and text[at - 1] == '[';
+            attributes[a] = .{ .name = .@"#text", .value = if (cdata) piece else xml.decode(piece) };
+            a += 1;
+            nodes[open_node].attribute_count += 1;
+        },
     };
     doc.nodes = nodes[0..n];
     doc.attributes = attributes[0..a];
@@ -401,6 +434,24 @@ test "a tree of elements, namespaced ones of no kind, ids looked up" {
     try testing.expectEqual(doc.byId("a").?, doc.byHref("#a").?);
     try testing.expect(doc.byId("nothing") == null);
     try testing.expect(doc.byHref("other.svg#a") == null);
+}
+
+test "a style element's text kept as its own, CDATA as it is" {
+    var text =
+        \\<svg><style type="text/css">.a{fill:red} b&gt;c{}<![CDATA[ .b>.c{fill:&amp;} ]]></style><rect class="a"/></svg>
+    .*;
+    var block: [4096]u8 align(8) = undefined;
+    const doc = try parse(&text, &block);
+    const style = doc.nodes[0].first_child;
+    try testing.expectEqual(Tag.style, doc.nodes[style].tag);
+    const kept = doc.attributesOf(style);
+    try testing.expectEqual(@as(usize, 2), kept.len);
+    try testing.expectEqual(Name.@"#text", kept[0].name);
+    try testing.expectEqualStrings(".a{fill:red} b>c{}", kept[0].value);
+    try testing.expectEqualStrings(" .b>.c{fill:&amp;} ", kept[1].value);
+    const rect = doc.nodes[style].next;
+    try testing.expectEqualStrings("a", doc.get(rect, .class).?);
+    try testing.expectEqual(none, doc.nodes[rect].first_child);
 }
 
 test "not an SVG file, and one that is cut short" {

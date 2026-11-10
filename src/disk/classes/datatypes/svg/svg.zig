@@ -19,14 +19,19 @@
 //! What is not drawn on is clear, so the picture is shown over what is
 //! under it.
 //!
-//! **What is drawn** is SVG 1.1's static pictures, without what needs
-//! more than one pass - filters, clips, masks, patterns - and without
-//! text, images and `use`: see `draw.zig`. A picture reads no other
-//! file and goes to no address on a network: an `href` is followed only
-//! within the file, and only to a gradient.
+//! **What is drawn** is SVG 1.1's static pictures, without filters and
+//! patterns, and without text and images: see `draw.zig`. Since 1.2
+//! clips and masks are drawn, `use` and `symbol`, and the rules of the
+//! file's `style` elements. A picture reads no other file and goes to no
+//! address on a network: an `href` is followed only within the file.
+//!
+//! **.svgz** (since 1.2): a file packed with gzip is unpacked whole by
+//! compression.library first, into as much memory as gzip's trailer
+//! says it holds - one that holds more is not an SVG file.
 //!
 //! The library's recognise call accepts a file whose first element,
-//! after the declaration, comments and a DOCTYPE, is `svg`.
+//! after the declaration, comments and a DOCTYPE, is `svg` - unpacked
+//! first, as far as `recognise_most` bytes, for one packed with gzip.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -41,12 +46,14 @@ const datatypes = sdk.datatypes;
 const subclass = datatypes.subclass;
 const pic = datatypes.pictureclass;
 const vector = sdk.vector;
+const compression = sdk.compression;
 const xml = @import("xml.zig");
 const document = @import("document.zig");
 const draw = @import("draw.zig");
 const DosBase = sdk.interface.dos.DosBase;
 const ExecBase = sdk.interface.exec.ExecBase;
 const VectorBase = sdk.interface.vector.VectorBase;
+const CompressionBase = sdk.interface.compression.CompressionBase;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
@@ -59,10 +66,10 @@ const Pen = graphics.Pen;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "svg.datatype",
     .version = 1,
-    .revision = 1,
+    .revision = 2,
     .date = "10.11.2026",
     .super = pic.PICTUREDTCLASS,
-    .opens = &.{ pic.PICTURE_LIBRARY, vector.VECTORNAME },
+    .opens = &.{ pic.PICTURE_LIBRARY, vector.VECTORNAME, compression.COMPRESSIONNAME },
     .Instance = Data,
     .dispatch = dispatch,
     .functions = &.{exec.libraries.vec(recognise)},
@@ -76,9 +83,14 @@ fn vectorBase(base: *const Base) *VectorBase {
     return @ptrCast(base.opened[1].?);
 }
 
-/// The vector.library revision the class needs: `AddSegments`, which a
-/// polygon is handed over with, is 1.2's.
-const vector_revision = 2;
+/// compression.library, opened by the library's init (the third).
+fn compressionBase(base: *const Base) *CompressionBase {
+    return @ptrCast(base.opened[2].?);
+}
+
+/// The vector.library revision the class needs: clips and masks are
+/// 1.3's.
+const vector_revision = 3;
 
 /// How much of a file recognise reads to find its first element.
 const recognise_most = 16 << 10;
@@ -99,11 +111,22 @@ const Wanted = struct {
 };
 
 /// The file read, drawn and handed over. What went wrong, or 0.
-fn readFile(base: *Base, cl: *Class, o: *Object, bytes: []u8, wanted: Wanted) i32 {
+fn readFile(base: *Base, cl: *Class, o: *Object, file_bytes: []u8, wanted: Wanted) i32 {
     const sys = base.sys_base;
     const vb = vectorBase(base);
     const vector_lib = vb.lib();
     if (vector_lib.version == 1 and vector_lib.revision < vector_revision) return dos.ERROR_INVALID_RESIDENT_LIBRARY;
+    var bytes = file_bytes;
+    var unpacked: ?[]u8 = null;
+    defer if (unpacked) |text| sys.FreeVec(text.ptr);
+    if (isGzip(file_bytes)) {
+        unpacked = switch (gunzip(base, file_bytes)) {
+            .got => |text| text,
+            .too_large => return datatypes.DTERROR_TOO_LARGE,
+            .bad => return datatypes.DTERROR_INVALID_DATA,
+        };
+        bytes = unpacked.?;
+    }
     const counts = document.count(bytes) orelse return datatypes.DTERROR_INVALID_DATA;
     const doc_bytes = document.bytesFor(counts);
     const block_memory = sys.AllocVec(@max(doc_bytes, 8), exec.MEMF_ANY) orelse return datatypes.DTERROR_NOT_ENOUGH_DATA;
@@ -177,8 +200,54 @@ fn readFile(base: *Base, cl: *Class, o: *Object, bytes: []u8, wanted: Wanted) i3
     return 0;
 }
 
+/// gzip's first two bytes, and room for its header and trailer.
+fn isGzip(bytes: []const u8) bool {
+    return bytes.len >= 18 and bytes[0] == 0x1F and bytes[1] == 0x8B;
+}
+
+const Unpacked = union(enum) { got: []u8, too_large, bad };
+
+/// A file packed with gzip unpacked whole into memory of its own, as
+/// much as its trailer says it holds.
+fn gunzip(base: *Base, bytes: []const u8) Unpacked {
+    const sys = base.sys_base;
+    const size = @as(u32, bytes[bytes.len - 4]) | @as(u32, bytes[bytes.len - 3]) << 8 |
+        @as(u32, bytes[bytes.len - 2]) << 16 | @as(u32, bytes[bytes.len - 1]) << 24;
+    if (size == 0) return .bad;
+    if (!subclass.roomFor(sys, size)) return .too_large;
+    const memory = sys.AllocVec(size, exec.MEMF_ANY) orelse return .too_large;
+    const text: [*]u8 = @ptrCast(memory);
+    var stream = compression.Stream{ .next_in = bytes.ptr, .avail_in = @intCast(bytes.len), .next_out = text, .avail_out = size };
+    if (compressionBase(base).Uncompress(&stream, compression.FORMAT_GZIP) != compression.COMPRESS_OK or stream.total_out != size) {
+        sys.FreeVec(memory);
+        return .bad;
+    }
+    return .{ .got = text[0..size] };
+}
+
+/// Whether the start of a file packed with gzip, unpacked as far as
+/// `recognise_most` bytes, is an SVG file's.
+fn packedStartsSvg(base: *Base, bytes: []const u8) bool {
+    const sys = base.sys_base;
+    const cb = compressionBase(base);
+    const memory = sys.AllocVec(recognise_most, exec.MEMF_ANY) orelse return false;
+    defer sys.FreeVec(memory);
+    const text: [*]u8 = @ptrCast(memory);
+    var stream = compression.Stream{ .next_in = bytes.ptr, .avail_in = @intCast(bytes.len), .next_out = text, .avail_out = recognise_most };
+    if (cb.InitInflate(&stream, compression.FORMAT_GZIP) != compression.COMPRESS_OK) return false;
+    defer cb.EndInflate(&stream);
+    if (cb.Inflate(&stream, compression.FLUSH_NONE) < 0) return false;
+    return document.startsSvg(text[0 .. recognise_most - stream.avail_out]);
+}
+
+/// The start of a file: an SVG file's, or one packed with gzip whose is.
+fn startsSvg(base: *Base, bytes: []const u8) bool {
+    if (bytes.len >= 2 and bytes[0] == 0x1F and bytes[1] == 0x8B) return packedStartsSvg(base, bytes);
+    return document.startsSvg(bytes);
+}
+
 /// datatypes.library's question: whether the file's first element is
-/// `svg`.
+/// `svg`, once it is unpacked when it is packed.
 fn recognise(base: *Base, context: *datatypes.DTHookContext) callconv(.c) bool {
     const sys = base.sys_base;
     const dl: *DosBase = @ptrCast(@alignCast(context.dos_base));
@@ -187,7 +256,7 @@ fn recognise(base: *Base, context: *datatypes.DTHookContext) callconv(.c) bool {
     // Bytes in memory are in the buffer, whole.
     const file = context.file orelse {
         const whole = context.buffer orelse return false;
-        return document.startsSvg(whole[0..@min(context.buffer_length, recognise_most)]);
+        return startsSvg(base, whole[0..@min(context.buffer_length, recognise_most)]);
     };
     const length: usize = @intCast(@min(fib.size, recognise_most));
     const memory = sys.AllocVec(length, exec.MEMF_ANY) orelse return false;
@@ -195,7 +264,7 @@ fn recognise(base: *Base, context: *datatypes.DTHookContext) callconv(.c) bool {
     const text: [*]u8 = @ptrCast(memory);
     const got = dl.Read(file, text, @intCast(length));
     if (got <= 0) return false;
-    return document.startsSvg(text[0..@intCast(got)]);
+    return startsSvg(base, text[0..@intCast(got)]);
 }
 
 fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {

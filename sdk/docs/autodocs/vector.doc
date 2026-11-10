@@ -5,6 +5,7 @@ vector.library/AddPathData
 vector.library/AddRect
 vector.library/AddSegments
 vector.library/ArcTo
+vector.library/BeginMask
 vector.library/ClearPath
 vector.library/ClosePath
 vector.library/CreateCanvasTagList
@@ -12,11 +13,14 @@ vector.library/CreatePath
 vector.library/CubicTo
 vector.library/DisposeCanvas
 vector.library/DisposePath
+vector.library/EndMask
 vector.library/FillPath
 vector.library/LineTo
 vector.library/MoveTo
 vector.library/PathBounds
+vector.library/PopClip
 vector.library/PopLayer
+vector.library/PushClip
 vector.library/PushLayer
 vector.library/QuadTo
 vector.library/SetCanvasPens
@@ -290,6 +294,62 @@ vector.library/StrokePath
 	    // A half circle of radius 10 over the top from (0, 10) to (20, 10).
 	    vb.MoveTo(path, 0, 10);
 	    vb.ArcTo(path, 10, 10, 0, vector.ARC_SWEEP, 20, 10);
+vector.library/BeginMask                              vector.library/BeginMask
+
+   NAME
+	BeginMask -- What is drawn until EndMask makes a mask rather than being seen.
+
+   SYNOPSIS
+	    fn BeginMask(vb: *VectorBase, canvas: *vector.Canvas) i32
+
+   SINCE
+	1.3. LVO -112.
+
+   INPUTS
+	- `canvas` - the canvas.
+
+   RESULT
+	`VECTOR_OK`; `VECTORERR_NOMEM` without the memory for the mask's
+	layer; `VECTORERR_DEPTH` past `MAX_LAYERS` layers one inside another.
+	Whatever it answers, an `EndMask` goes with it, and a `PopClip` with
+	that.
+
+   BEHAVIOR
+	A layer is pushed, clear, that is never put down: every fill and
+	stroke until the `EndMask` that goes with it is drawn onto it, not
+	clipped by the clips already pushed, and `EndMask` turns it into a
+	clip. Layers, clips and masks may be pushed and popped inside it, as
+	anywhere.
+
+	Without the layer's memory, or past the most layers, what is drawn
+	until `EndMask` is drawn nowhere, and the mask clips nothing.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The layer is the canvas's, given back by `EndMask` or by
+	`DisposeCanvas`.
+
+   NOTES
+	The layer is four bytes a pixel of the whole canvas until it ends,
+	and the mask then one.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`EndMask`, `PopClip`, `PushClip`, `PushLayer`
+
+   EXAMPLES
+	    _ = vb.BeginMask(canvas);
+	    _ = vb.FillPath(canvas, fade, null, &white_to_black, vector.RULE_NONZERO);
+	    _ = vb.EndMask(canvas, vector.MASK_LUMINANCE);
+	    _ = vb.FillPath(canvas, picture, null, &red, vector.RULE_NONZERO);
+	    vb.PopClip(canvas);
 vector.library/ClearPath                              vector.library/ClearPath
 
    NAME
@@ -609,6 +669,62 @@ vector.library/StrokePath
 
    EXAMPLES
 	    vb.DisposePath(path);
+vector.library/EndMask                                  vector.library/EndMask
+
+   NAME
+	EndMask -- The drawing since BeginMask made a mask (MASK_*) that clips what is drawn until PopClip.
+
+   SYNOPSIS
+	    fn EndMask(vb: *VectorBase, canvas: *vector.Canvas, kind: u32) i32
+
+   SINCE
+	1.3. LVO -116.
+
+   INPUTS
+	- `canvas` - the canvas.
+	- `kind` - `MASK_ALPHA`, how much was drawn at each pixel;
+	  `MASK_LUMINANCE`, that times the luminance of its colour - white
+	  shows all, black nothing, as SVG's `mask`. With `MASK_INVERT`,
+	  either the other way round.
+
+   RESULT
+	`VECTOR_OK`; `VECTORERR_NOMEM` when the mask's layer or the mask had
+	no memory, when it clips nothing more than the clip it is in;
+	`VECTORERR_DEPTH` past `MAX_CLIPS` clips one inside another, or with
+	no mask begun - nothing is then pushed for it. Otherwise, whatever it
+	answers, a `PopClip` goes with it.
+
+   BEHAVIOR
+	The layer `BeginMask` pushed is ended and given back; what was drawn
+	on it becomes a clip, a byte a pixel - its coverage, or its
+	luminance (0.2125 red, 0.7154 green, 0.0721 blue) times that - inside
+	the clip pushed already on the layer under it. It is then pushed as
+	`PushClip` pushes a path's: what is drawn from now on shows through
+	it until the `PopClip`. Layers pushed inside the mask and not popped
+	are popped first; the clips pushed inside it are taken off.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The mask is the canvas's, given back by the pop or by
+	`DisposeCanvas`.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`BeginMask`, `PopClip`, `PushClip`
+
+   EXAMPLES
+	    _ = vb.BeginMask(canvas);
+	    _ = vb.FillPath(canvas, letters, null, &white, vector.RULE_NONZERO);
+	    _ = vb.EndMask(canvas, vector.MASK_ALPHA | vector.MASK_INVERT);
+	    _ = vb.FillPath(canvas, plate, null, &grey, vector.RULE_NONZERO);
+	    vb.PopClip(canvas);
 vector.library/FillPath                                vector.library/FillPath
 
    NAME
@@ -821,6 +937,46 @@ vector.library/StrokePath
 	    if (vb.PathBounds(path, null, &box)) {
 	        paint.matrix = vector.Matrix.translate(box.x, box.y).then(vector.Matrix.scale(box.width, box.height));
 	    }
+vector.library/PopClip                                  vector.library/PopClip
+
+   NAME
+	PopClip -- The last clip or mask pushed taken off.
+
+   SYNOPSIS
+	    fn PopClip(vb: *VectorBase, canvas: *vector.Canvas) void
+
+   SINCE
+	1.3. LVO -108.
+
+   INPUTS
+	- `canvas` - the canvas.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	The clip pushed last, by `PushClip` or `EndMask`, is given back, and
+	what is drawn from then on is clipped by the one it was in, if any.
+	A clip that had no memory, or was past the most, is only ended. With
+	no clip pushed it does nothing.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The clip's memory goes back to the canvas's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`PushClip`, `EndMask`
+
+   EXAMPLES
+	    vb.PopClip(canvas);
 vector.library/PopLayer                                vector.library/PopLayer
 
    NAME
@@ -866,6 +1022,71 @@ vector.library/StrokePath
 
    EXAMPLES
 	    vb.PopLayer(canvas);
+vector.library/PushClip                                vector.library/PushClip
+
+   NAME
+	PushClip -- What is drawn until PopClip shows only inside the path, through the matrix (null: the identity), by the rule (RULE_*).
+
+   SYNOPSIS
+	    fn PushClip(vb: *VectorBase, canvas: *vector.Canvas, path: *const vector.Path, matrix: ?*const vector.Matrix, rule: u32) i32
+
+   SINCE
+	1.3. LVO -104.
+
+   INPUTS
+	- `canvas` - the canvas.
+	- `path` - the clip's outline, in its own units.
+	- `matrix` - its units into pixels; null for the identity.
+	- `rule` - `RULE_NONZERO` or `RULE_EVENODD`: which of its inside is
+	  inside, as `FillPath` has it - SVG's `clip-rule`.
+
+   RESULT
+	`VECTOR_OK`; `VECTORERR_NOMEM` without the memory for the clip, which
+	then clips nothing more than the clip it is in; `VECTORERR_DEPTH`
+	past `MAX_CLIPS` clips one inside another, when it is nothing.
+	Whatever it answers, a `PopClip` goes with it.
+
+   BEHAVIOR
+	The path's coverage is made, a byte a pixel, the edge smooth as a
+	fill's is - inside the clip already pushed on this layer, if there is
+	one. Every fill and stroke onto the layer drawn on now, and every
+	layer put down on it, shows from then on only as much as the clip
+	covers there, until the `PopClip` that goes with it.
+
+	A layer pushed after the clip is not clipped while it is drawn on,
+	only when it is put down: a group with its opacity on a layer goes
+	through the clip as a whole. A clip pushed on a layer goes with it
+	and is taken off by its `PopLayer` if not before.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The path and the matrix are the caller's and only read; the clip is
+	the canvas's, given back by the pop or by `DisposeCanvas`.
+
+   NOTES
+	A clip is a byte a pixel of the whole canvas.
+
+   BUGS
+	An edge the clip and what is drawn through it share is drawn by the
+	two coverages multiplied - a pixel half covered by both shows a
+	quarter, not a half - so a shape clipped by its own outline has a
+	fainter edge than unclipped. A browser draws it so; cairo, which cuts
+	one outline by the other first, does not.
+
+   SEE ALSO
+	`PopClip`, `BeginMask`, `EndMask`, `PushLayer`, `FillPath`
+
+   EXAMPLES
+	    vb.ClearPath(round);
+	    vb.AddEllipse(round, 50, 50, 40, 40);
+	    _ = vb.PushClip(canvas, round, null, vector.RULE_NONZERO);
+	    _ = vb.FillPath(canvas, stripes, null, &red, vector.RULE_NONZERO);
+	    vb.PopClip(canvas);
 vector.library/PushLayer                              vector.library/PushLayer
 
    NAME

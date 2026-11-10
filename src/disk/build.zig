@@ -382,13 +382,15 @@ const no_3d_files = [_][]const u8{
 };
 
 /// What goes with the programs only the 64-bit machines have
-/// (`rv64_only`) - what they are, in SYS:System/Docs, the descriptor
-/// and the test picture of svg.datatype, and Lottie's paints: left off
-/// the ESP32s' disks with them.
+/// (`rv64_only`) - what they are, in SYS:System/Docs, the descriptors
+/// and the test pictures of svg.datatype, plain and packed, and
+/// Lottie's paints: left off the ESP32s' disks with them.
 const rv64_only_files = [_][]const u8{
     "System/Docs/Update.md",
     "devs/datatypes/SVG",
+    "devs/datatypes/SVGZ",
     "tests/datatypes/Drawing.svg",
+    "tests/datatypes/Drawing.svgz",
     "tests/datatypes/Paints.json",
 };
 
@@ -520,6 +522,7 @@ pub const files = [_]File{
     .{ .disk = "devs/datatypes/GIFAnim", .source = "devs/datatypes/GIFAnim" },
     .{ .disk = "devs/datatypes/Lottie", .source = "devs/datatypes/Lottie" },
     .{ .disk = "devs/datatypes/SVG", .source = "devs/datatypes/SVG" },
+    .{ .disk = "devs/datatypes/SVGZ", .source = "devs/datatypes/SVGZ" },
     .{ .disk = "devs/datatypes/JPEG", .source = "devs/datatypes/JPEG" },
     .{ .disk = "devs/datatypes/Markdown", .source = "devs/datatypes/Markdown" },
     .{ .disk = "devs/datatypes/HTML", .source = "devs/datatypes/HTML" },
@@ -618,6 +621,7 @@ pub const files = [_]File{
     .{ .disk = "tests/datatypes/Spinner.json", .source = "tests/datatypes/Spinner.json" },
     .{ .disk = "tests/datatypes/Paints.json", .source = "tests/datatypes/Paints.json" },
     .{ .disk = "tests/datatypes/Drawing.svg", .source = "tests/datatypes/Drawing.svg" },
+    .{ .disk = "tests/datatypes/Drawing.svgz", .source = "tests/datatypes/Drawing.svgz" },
     .{ .disk = "tests/datatypes/Crate.obj", .source = "tests/datatypes/Crate.obj" },
     .{ .disk = "tests/datatypes/Crate.mtl", .source = "tests/datatypes/Crate.mtl" },
     .{ .disk = "tests/datatypes/Crate.png", .source = "tests/datatypes/Crate.png" },

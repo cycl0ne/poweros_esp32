@@ -35,6 +35,10 @@ const PathBounds = @import("path/pathbounds.zig").PathBounds;
 const PushLayer = @import("canvas/pushlayer.zig").PushLayer;
 const PopLayer = @import("canvas/poplayer.zig").PopLayer;
 const AddSegments = @import("path/addsegments.zig").AddSegments;
+const PushClip = @import("canvas/pushclip.zig").PushClip;
+const PopClip = @import("canvas/popclip.zig").PopClip;
+const BeginMask = @import("canvas/beginmask.zig").BeginMask;
+const EndMask = @import("canvas/endmask.zig").EndMask;
 
 /// vector.library's interface, as the SDK generates it from
 /// sdk/fd/vector_lib.fd.
@@ -81,6 +85,10 @@ const contract_files = [_][]const u8{
     @embedFile("canvas/pushlayer.zig"),
     @embedFile("canvas/poplayer.zig"),
     @embedFile("path/addsegments.zig"),
+    @embedFile("canvas/pushclip.zig"),
+    @embedFile("canvas/popclip.zig"),
+    @embedFile("canvas/beginmask.zig"),
+    @embedFile("canvas/endmask.zig"),
 };
 
 fn lvoCreatePath(vb: *VectorBase) callconv(.c) ?*vector.Path {
@@ -146,6 +154,18 @@ fn lvoPopLayer(vb: *VectorBase, canvas: *vector.Canvas) callconv(.c) void {
 fn lvoAddSegments(vb: *VectorBase, path: *vector.Path, verbs: [*]const u8, verb_count: u32, points: [*]const vector.Point, point_count: u32) callconv(.c) i32 {
     return AddSegments(vb, path, verbs, verb_count, points, point_count);
 }
+fn lvoPushClip(vb: *VectorBase, canvas: *vector.Canvas, path: *const vector.Path, matrix: ?*const vector.Matrix, rule: u32) callconv(.c) i32 {
+    return PushClip(vb, canvas, path, matrix, rule);
+}
+fn lvoPopClip(vb: *VectorBase, canvas: *vector.Canvas) callconv(.c) void {
+    return PopClip(vb, canvas);
+}
+fn lvoBeginMask(vb: *VectorBase, canvas: *vector.Canvas) callconv(.c) i32 {
+    return BeginMask(vb, canvas);
+}
+fn lvoEndMask(vb: *VectorBase, canvas: *vector.Canvas, kind: u32) callconv(.c) i32 {
+    return EndMask(vb, canvas, kind);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -173,6 +193,10 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoPushLayer),
     vec(lvoPopLayer),
     vec(lvoAddSegments),
+    vec(lvoPushClip),
+    vec(lvoPopClip),
+    vec(lvoBeginMask),
+    vec(lvoEndMask),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

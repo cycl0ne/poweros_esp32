@@ -37,6 +37,10 @@ pub const LVO = struct {
     pub const PushLayer = libraries.lvo(22);
     pub const PopLayer = libraries.lvo(23);
     pub const AddSegments = libraries.lvo(24);
+    pub const PushClip = libraries.lvo(25);
+    pub const PopClip = libraries.lvo(26);
+    pub const BeginMask = libraries.lvo(27);
+    pub const EndMask = libraries.lvo(28);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -63,6 +67,10 @@ pub const Fn = struct {
     pub const PushLayer = *const fn (*VectorBase, *vector.Canvas, f32) callconv(.c) i32;
     pub const PopLayer = *const fn (*VectorBase, *vector.Canvas) callconv(.c) void;
     pub const AddSegments = *const fn (*VectorBase, *vector.Path, [*]const u8, u32, [*]const vector.Point, u32) callconv(.c) i32;
+    pub const PushClip = *const fn (*VectorBase, *vector.Canvas, *const vector.Path, ?*const vector.Matrix, u32) callconv(.c) i32;
+    pub const PopClip = *const fn (*VectorBase, *vector.Canvas) callconv(.c) void;
+    pub const BeginMask = *const fn (*VectorBase, *vector.Canvas) callconv(.c) i32;
+    pub const EndMask = *const fn (*VectorBase, *vector.Canvas, u32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -176,5 +184,25 @@ pub const VectorBase = opaque {
     /// Segments onto the path in one call: a verb each (SEG_*) and the points they take, in order; VECTORERR_SYNTAX at a verb it does not know or short of points, the path kept up to it.
     pub fn AddSegments(self: *VectorBase, path: *vector.Path, verbs: [*]const u8, verb_count: u32, points: [*]const vector.Point, point_count: u32) i32 {
         return libraries.call(self, LVO.AddSegments, Fn.AddSegments, .{ path, verbs, verb_count, points, point_count });
+    }
+
+    /// What is drawn until PopClip shows only inside the path, through the matrix (null: the identity), by the rule (RULE_*).
+    pub fn PushClip(self: *VectorBase, canvas: *vector.Canvas, path: *const vector.Path, matrix: ?*const vector.Matrix, rule: u32) i32 {
+        return libraries.call(self, LVO.PushClip, Fn.PushClip, .{ canvas, path, matrix, rule });
+    }
+
+    /// The last clip or mask pushed taken off.
+    pub fn PopClip(self: *VectorBase, canvas: *vector.Canvas) void {
+        return libraries.call(self, LVO.PopClip, Fn.PopClip, .{canvas});
+    }
+
+    /// What is drawn until EndMask makes a mask rather than being seen.
+    pub fn BeginMask(self: *VectorBase, canvas: *vector.Canvas) i32 {
+        return libraries.call(self, LVO.BeginMask, Fn.BeginMask, .{canvas});
+    }
+
+    /// The drawing since BeginMask made a mask (MASK_*) that clips what is drawn until PopClip.
+    pub fn EndMask(self: *VectorBase, canvas: *vector.Canvas, kind: u32) i32 {
+        return libraries.call(self, LVO.EndMask, Fn.EndMask, .{ canvas, kind });
     }
 };
