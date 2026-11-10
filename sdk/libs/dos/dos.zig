@@ -129,6 +129,24 @@ pub fn isDirectory(entry_type: i32) bool {
 pub const LINK_HARD: isize = 0;
 pub const LINK_SOFT: isize = 1;
 
+// DeleteTree's flags.
+/// The directory itself stays, emptied.
+pub const DELF_KEEP: u32 = 1 << 0;
+/// A delete-protected object's protection taken off, and deleted.
+pub const DELF_FORCE: u32 = 1 << 1;
+/// On past an object that will not go, to delete all that will; the
+/// answer is false at the end.
+pub const DELF_ONWARD: u32 = 1 << 2;
+
+/// What DeleteTree's hook is handed as its message for each object, once
+/// it has been tried; the object is its name, as `name` here.
+pub const DeleteMsg = extern struct {
+    /// DeleteTree's `name` and the parts below it.
+    name: [*:0]const u8,
+    /// 0 when it went, or why it would not (an IoErr code).
+    failure: i32 = 0,
+};
+
 // FileInfoBlock's protection bits (the low four are set to forbid).
 pub const FIBF_DELETE: u32 = 1 << 0;
 pub const FIBF_EXECUTE: u32 = 1 << 1;

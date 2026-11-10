@@ -1,0 +1,79 @@
+## version $VER: sys/http.catalog 1.0 (09.11.2026)
+## language deutsch
+## codeset 106
+; http.library's words for a request that failed, in German: a clause
+; that starts in lower case, without its full stop.
+;
+; What each HTTPERR_* means.
+MSG_NOMEM
+kein Speicher frei
+MSG_IO
+die Verbindung ist gescheitert
+MSG_IO_BECAUSE
+die Verbindung ist gescheitert: %s
+MSG_STOPPED
+abgebrochen
+MSG_TIMEOUT
+der Server hat nicht rechtzeitig geantwortet
+MSG_URL
+keine http://- oder https://-URL, oder eine zu lange
+MSG_HOST
+der Rechner hat keine Adresse
+MSG_HOST_NAMED
+%s hat keine Adresse
+MSG_TLS
+die TLS-Sitzung ist gescheitert
+MSG_TLS_CERTIFICATE
+dem Zertifikat des Servers wird nicht vertraut: %s
+MSG_TLS_CLOCK
+die Uhr ist nicht gestellt, also lässt sich kein Zertifikat prüfen (TimeSync)
+MSG_TLS_ALERT
+der Server hat die TLS-Sitzung abgelehnt (Alert %u)
+MSG_TLS_HANDSHAKE
+der TLS-Handshake ist gescheitert
+MSG_PROTOCOL
+die Antwort ist kein HTTP
+MSG_REDIRECT
+mehr Weiterleitungen als erlaubt, oder eine ins Leere
+MSG_TRUNCATED
+die Verbindung endete vor der Antwort
+MSG_STATE
+ein Aufruf zur falschen Zeit, oder eine Anfrage, die sich nicht stellen lässt
+MSG_LIBRARY
+eine Bibliothek, die die Anfrage braucht, ist nicht da
+MSG_LIBRARY_NAMED
+%s ist nicht da
+MSG_DATA
+die gepackte Antwort des Servers lässt sich nicht entpacken
+MSG_CLOSED
+der Server hat die Verbindung ohne Antwort geschlossen
+MSG_UNKNOWN
+die Anfrage ist gescheitert (%d)
+;
+; Why a server's certificate is not trusted.
+MSG_VERDICT_MALFORMED
+eines seiner Zertifikate lässt sich nicht lesen
+MSG_VERDICT_UNKNOWN_ISSUER
+keine vertraute Wurzel hat es signiert
+MSG_VERDICT_BAD_SIGNATURE
+eine Signatur in seiner Kette ist falsch
+MSG_VERDICT_UNSUPPORTED
+es ist auf eine Weise signiert, die sich nicht prüfen lässt
+MSG_VERDICT_EXPIRED
+es ist abgelaufen
+MSG_VERDICT_NOT_YET_VALID
+es ist noch nicht gültig
+MSG_VERDICT_NOT_CA
+es wurde von einem Zertifikat ausgestellt, das nicht ausstellen darf
+MSG_VERDICT_PATH_LENGTH
+seine Kette ist länger, als ihre CAs erlauben
+MSG_VERDICT_NAME_CONSTRAINTS
+eine CA in seiner Kette hat Namensbeschränkungen
+MSG_VERDICT_WRONG_USAGE
+es ist nicht für einen Server
+MSG_VERDICT_WRONG_NAME
+es ist für einen anderen Rechner
+MSG_VERDICT_TOO_LONG
+seine Kette ist zu lang
+MSG_VERDICT_OTHER
+ohne angegebenen Grund

@@ -138,7 +138,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "RDB";
-const VERSION_STRING = "\x00$VER: RDB 1.8 (01.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: RDB 1.9 (09.11.2026)\r\n";
 
 const template = "DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K,BOOTPRI/K/N,GPT/S,MOUNT/S,ADDGPT/K,REMGPT/K,SIZE/K,NOMOUNT/S,MOUNTGPT/K";
 const arg_device = 0;
@@ -1363,31 +1363,19 @@ fn fileSystemFor(run: *Run, dos_type: u32) ?*rdb.RDBFileSystem {
 /// and why printed, when it cannot be.
 fn loadFile(run: *Run, path: [*:0]const u8, size: *u32) ?[*]u8 {
     const dl = run.dl;
-    const fh = dl.Open(path, dos.MODE_OLDFILE) orelse {
-        _ = dl.PrintFault(dl.IoErr(), path);
+    var file_size: usize = 0;
+    const block = dl.ReadFile(path, 0xFFFF_FFFF, exec.MEMF_ANY, &file_size) orelse {
+        if (dl.IoErr() == dos.ERROR_OBJECT_TOO_LARGE) {
+            _ = Printf(dl, "ADDFS: %s is empty or too large\n", .{path});
+        } else _ = dl.PrintFault(dl.IoErr(), path);
         return null;
     };
-    defer _ = dl.Close(fh);
-    var fib: dos.FileInfoBlock = .{};
-    if (!dl.ExamineFH(fh, &fib)) {
-        _ = dl.PrintFault(dl.IoErr(), path);
-        return null;
-    }
-    if (fib.size == 0 or fib.size > 0xFFFF_FFFF) {
+    if (file_size == 0) {
+        run.sys.FreeVec(block);
         _ = Printf(dl, "ADDFS: %s is empty or too large\n", .{path});
         return null;
     }
-    const bytes: u32 = @intCast(fib.size);
-    const block: [*]u8 = @ptrCast(run.sys.AllocVec(bytes, exec.MEMF_ANY) orelse {
-        _ = dl.PrintFault(dos.ERROR_NO_FREE_STORE, path);
-        return null;
-    });
-    if (dl.Read(fh, block, @intCast(bytes)) != bytes) {
-        _ = dl.PrintFault(dl.IoErr(), path);
-        run.sys.FreeVec(block);
-        return null;
-    }
-    size.* = bytes;
+    size.* = @intCast(file_size);
     return block;
 }
 

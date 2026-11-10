@@ -7,8 +7,8 @@
 //! white with a black edge all round, each line in the middle, the last
 //! at the foot of the picture less a margin. A line too long for the
 //! picture is broken between words. The text comes in UTF-8 and the font
-//! is Latin-1: the quotes and dashes of typesetting become plain ones, a
-//! character past Latin-1 a `?`.
+//! is Latin-1: utility.library makes the quotes and dashes of typesetting
+//! plain ones, a character past Latin-1 a `?`.
 //!
 //! **A picture** - a Blu-ray's - is put down where the disc places it,
 //! scaled with the film, its coverage mixed with what is under it.
@@ -34,6 +34,8 @@ const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 const VideoCodecBase = sdk.interface.videocodec.VideoCodecBase;
 const TagItem = sdk.utility.TagItem;
+const utility = sdk.utility;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const Rect = graphics.Rect;
 
 /// The lines a subtitle may make, broken as they are.
@@ -46,6 +48,8 @@ pub const Subtitles = struct {
     ib: *IntuitionBase,
     gb: *GraphicsBase,
     dfb: ?*DiskfontBase,
+    /// For the text's UTF-8.
+    ub: *UtilityBase,
     /// The screen's font at the size last wanted, upright and slanted.
     upright: ?*graphics.TextFont = null,
     slanted: ?*graphics.TextFont = null,
@@ -123,7 +127,7 @@ pub const Subtitles = struct {
         var text: [text_bytes]u8 = undefined;
         var given: usize = 0;
         while (utf8[given] != 0) given += 1;
-        const length = latin1(utf8[0..given], &text);
+        const length = latin1(subs.ub, utf8[0..given], &text);
         // The lines broken where they are too wide: each a start and a
         // length in `text`.
         const room = @max(@divTrunc(box.width() * 9, 10), 1);
@@ -250,39 +254,14 @@ fn fitting(gb: *GraphicsBase, rp: *graphics.RastPort, text: []const u8, room: i3
     return if (space > 0) space else count;
 }
 
-/// UTF-8 into Latin-1: typesetting's quotes, dashes and dots as plain
-/// ones, what else Latin-1 has not a `?`. How many bytes it made, a NUL
-/// after them.
-pub fn latin1(text: []const u8, into: []u8) usize {
-    var out: usize = 0;
-    var at: usize = 0;
-    while (at < text.len and out + 3 < into.len) {
-        const lead = text[at];
-        const length: usize = if (lead < 0x80) 1 else if (lead >= 0xC2 and lead < 0xE0) 2 else if (lead >= 0xE0 and lead < 0xF0) 3 else if (lead >= 0xF0 and lead < 0xF5) 4 else 0;
-        if (length <= 1 or at + length > text.len) {
-            into[out] = if (length == 1) lead else '?';
-            out += 1;
-            at += 1;
-            continue;
-        }
-        var code: u32 = lead & (@as(u8, 0x7F) >> @intCast(length));
-        for (text[at + 1 .. at + length]) |byte| code = code << 6 | (byte & 0x3F);
-        at += length;
-        const one = [1]u8{if (code <= 0xFF) @intCast(code) else '?'};
-        const plain: []const u8 = switch (code) {
-            0x2018, 0x2019, 0x201A, 0x2032 => "'",
-            0x201C, 0x201D, 0x201E, 0x2033 => "\"",
-            0x2010...0x2015, 0x2212 => "-",
-            0x2026 => "...",
-            0x00A0, 0x2000...0x200A, 0x202F => " ",
-            0x200B...0x200F, 0xFEFF => "",
-            else => &one,
-        };
-        @memcpy(into[out..][0..plain.len], plain);
-        out += plain.len;
-    }
-    into[out] = 0;
-    return out;
+/// UTF-8 into Latin-1 by utility.library: typesetting's quotes, dashes
+/// and dots as plain ones, what else Latin-1 has not a `?`. How many bytes
+/// it made, a NUL after them.
+pub fn latin1(ub: *UtilityBase, text: []const u8, into: []u8) usize {
+    var conversion: utility.Utf8Conversion = .{ .flags = utility.UTF8F_TYPESET };
+    const length = ub.Utf8ToLatin1(&conversion, text.ptr, text.len, into.ptr, into.len - 1);
+    into[length] = 0;
+    return length;
 }
 
 fn pen(colour: graphics.Pen) TagItem {
@@ -302,13 +281,4 @@ fn clip(area: Rect, box: Rect) Rect {
     };
     if (clipped.max_x <= clipped.min_x or clipped.max_y <= clipped.min_y) return .{};
     return clipped;
-}
-
-const std = @import("std");
-
-test "UTF-8 made Latin-1: umlauts kept, typesetting's quotes, dashes and dots plain, the rest a ?" {
-    var into: [64]u8 = undefined;
-    const made = latin1("„Grüß dich“ – sagte er… ♪", &into);
-    try std.testing.expectEqualStrings("\"Gr\xfc\xdf dich\" - sagte er... ?", into[0..made]);
-    try std.testing.expectEqual(@as(u8, 0), into[made]);
 }

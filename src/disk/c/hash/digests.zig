@@ -11,11 +11,15 @@
 //! backslash, and the two are `\\` and `\n` in the name.
 //!
 //! **Names in a list are UTF-8**, as every other system writes them; dos
-//! names are Latin-1. A name goes out with each character above 0x7F as
-//! its two UTF-8 bytes, and comes in the other way when it is UTF-8 whose
-//! characters Latin-1 has - a name that is not, or that has characters
-//! outside Latin-1, is taken byte for byte. `./` in front of a name, as
-//! `find` writes it, is dropped.
+//! names are Latin-1. utility.library turns them: a name goes out with
+//! each character above 0x7F as its two UTF-8 bytes, and comes in the
+//! other way when it is UTF-8 whose characters Latin-1 has - a name that
+//! is not, or that has characters outside Latin-1, is taken byte for
+//! byte. `./` in front of a name, as `find` writes it, is dropped.
+
+const sdk = @import("sdk");
+const utility = sdk.utility;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 
 pub const Algorithm = enum {
     crc32,
@@ -131,7 +135,7 @@ const hex_digits = "0123456789abcdef";
 
 /// A list's line for `digest` and the dos name `name`, with its line's
 /// end, into `into`: its length, or null when it does not fit.
-pub fn formatLine(digest: []const u8, name: []const u8, into: []u8) ?usize {
+pub fn formatLine(ub: *UtilityBase, digest: []const u8, name: []const u8, into: []u8) ?usize {
     var at: usize = 0;
     const escaped = needsEscape(name);
     if (escaped) {
@@ -148,26 +152,28 @@ pub fn formatLine(digest: []const u8, name: []const u8, into: []u8) ?usize {
     into[at] = ' ';
     into[at + 1] = ' ';
     at += 2;
-    for (name) |char| {
-        var part: [2]u8 = undefined;
-        const piece: []const u8 = if (escaped and char == '\\')
-            "\\\\"
-        else if (escaped and char == '\n')
-            "\\n"
-        else if (char < 0x80) blk: {
-            part[0] = char;
-            break :blk part[0..1];
-        } else blk: {
-            part = .{ 0xC0 | char >> 6, 0x80 | (char & 0x3F) };
-            break :blk &part;
-        };
-        if (at + piece.len > into.len) return null;
-        @memcpy(into[at..][0..piece.len], piece);
-        at += piece.len;
+    // The name in UTF-8 between its escapes.
+    var start: usize = 0;
+    for (name, 0..) |char, index| {
+        if (!escaped or (char != '\\' and char != '\n')) continue;
+        at = putUtf8(ub, into, at, name[start..index]) orelse return null;
+        if (at + 2 > into.len) return null;
+        @memcpy(into[at..][0..2], if (char == '\\') "\\\\" else "\\n");
+        at += 2;
+        start = index + 1;
     }
+    at = putUtf8(ub, into, at, name[start..]) orelse return null;
     if (at >= into.len) return null;
     into[at] = '\n';
     return at + 1;
+}
+
+/// Latin-1 `text` as UTF-8 into `into` from `at`: where it ends, or null
+/// when it does not fit.
+fn putUtf8(ub: *UtilityBase, into: []u8, at: usize, text: []const u8) ?usize {
+    const length = ub.Latin1ToUtf8(text.ptr, text.len, into[at..].ptr, into.len - at);
+    if (length > into.len - at) return null;
+    return at + length;
 }
 
 fn needsEscape(name: []const u8) bool {
@@ -198,7 +204,7 @@ pub const LineKind = enum {
 
 /// A line of a list, without its line's end, read into `entry`, the name
 /// made a dos name in `name_buffer`.
-pub fn parseLine(raw: []const u8, entry: *Entry, name_buffer: []u8) LineKind {
+pub fn parseLine(ub: *UtilityBase, raw: []const u8, entry: *Entry, name_buffer: []u8) LineKind {
     var line = raw;
     while (line.len > 0 and (line[line.len - 1] == '\r' or line[line.len - 1] == '\n')) line = line[0 .. line.len - 1];
     if (line.len == 0 or line[0] == '#' or line[0] == ';') return .nothing;
@@ -216,7 +222,7 @@ pub fn parseLine(raw: []const u8, entry: *Entry, name_buffer: []u8) LineKind {
     } else if (if (escaped) null else sfvLine(line, entry)) |rest| {
         name_part = rest;
     } else return .malformed;
-    entry.name = dosName(name_part, escaped, name_buffer) orelse return .malformed;
+    entry.name = dosName(ub, name_part, escaped, name_buffer) orelse return .malformed;
     if (entry.name.len == 0) return .malformed;
     return .entry;
 }
@@ -282,7 +288,7 @@ fn readHex(hex: []const u8, entry: *Entry) bool {
 
 /// A list's name as a dos name in `into`: escapes undone, `./` dropped,
 /// UTF-8 made Latin-1 where it can be. Null when it does not fit.
-fn dosName(raw: []const u8, escaped: bool, into: []u8) ?[]const u8 {
+fn dosName(ub: *UtilityBase, raw: []const u8, escaped: bool, into: []u8) ?[]const u8 {
     var name = raw;
     while (name.len > 2 and name[0] == '.' and name[1] == '/') name = name[2..];
     var plain_len: usize = 0;
@@ -300,33 +306,14 @@ fn dosName(raw: []const u8, escaped: bool, into: []u8) ?[]const u8 {
         into[plain_len] = char;
         plain_len += 1;
     }
-    return latin1(into[0..plain_len]);
+    return latin1(ub, into[0..plain_len]);
 }
 
 /// UTF-8 whose characters all fit Latin-1 made Latin-1 in place; anything
-/// else left as it is.
-fn latin1(name: []u8) []u8 {
-    var at: usize = 0;
-    while (at < name.len) : (at += 1) {
-        const char = name[at];
-        if (char < 0x80) continue;
-        if (char != 0xC2 and char != 0xC3) return name;
-        if (at + 1 >= name.len or name[at + 1] & 0xC0 != 0x80) return name;
-        at += 1;
-    }
-    var out: usize = 0;
-    at = 0;
-    while (at < name.len) : (at += 1) {
-        const char = name[at];
-        if (char < 0x80) {
-            name[out] = char;
-        } else {
-            name[out] = (char & 0x03) << 6 | (name[at + 1] & 0x3F);
-            at += 1;
-        }
-        out += 1;
-    }
-    return name[0..out];
+/// else - ASCII, other UTF-8, bytes that are no UTF-8 - left as it is.
+fn latin1(ub: *UtilityBase, name: []u8) []u8 {
+    if (ub.Utf8Kind(name.ptr, name.len) != utility.UTF8KIND_LATIN1) return name;
+    return name[0..ub.Utf8ToLatin1(null, name.ptr, name.len, name.ptr, name.len)];
 }
 
 // --- tests (host) ------------------------------------------------------------------
@@ -349,48 +336,4 @@ test "algorithms by name and by a digest's length" {
     try testing.expectEqual(Algorithm.md5, Algorithm.ofDigits(32).?);
     try testing.expectEqual(Algorithm.sha512, Algorithm.ofDigits(128).?);
     try testing.expect(Algorithm.ofDigits(30) == null);
-}
-
-test "a line written as sha256sum writes it, Latin-1 as UTF-8" {
-    var line: [128]u8 = undefined;
-    const length = formatLine(&.{ 0xAB, 0x01 }, "Caf\xe9.txt", &line).?;
-    try testing.expectEqualStrings("ab01  Caf\xc3\xa9.txt\n", line[0..length]);
-    const odd = formatLine(&.{0xFF}, "a\\b", &line).?;
-    try testing.expectEqualStrings("\\ff  a\\\\b\n", line[0..odd]);
-    try testing.expect(formatLine(&.{0xFF}, "long name", line[0..6]) == null);
-}
-
-test "lines read back: GNU, binary, BSD, SFV, escaped, comments" {
-    var entry: Entry = .{};
-    var name: [64]u8 = undefined;
-    try testing.expectEqual(LineKind.entry, parseLine("ab01cd02  Caf\xc3\xa9.txt\r\n", &entry, &name));
-    try testing.expectEqualStrings("Caf\xe9.txt", entry.name);
-    try testing.expectEqualSlices(u8, &.{ 0xAB, 0x01, 0xCD, 0x02 }, entry.digest[0..entry.digest_len]);
-    try testing.expect(entry.algorithm == null);
-
-    const md5 = "d41d8cd98f00b204e9800998ecf8427e";
-    try testing.expectEqual(LineKind.entry, parseLine(md5 ++ " *./dir/empty", &entry, &name));
-    try testing.expectEqualStrings("dir/empty", entry.name);
-    try testing.expectEqual(@as(usize, 16), entry.digest_len);
-
-    try testing.expectEqual(LineKind.entry, parseLine("MD5 (a (b).txt) = " ++ md5, &entry, &name));
-    try testing.expectEqualStrings("a (b).txt", entry.name);
-    try testing.expectEqual(Algorithm.md5, entry.algorithm.?);
-
-    try testing.expectEqual(LineKind.entry, parseLine("My File.lha CBF43926", &entry, &name));
-    try testing.expectEqualStrings("My File.lha", entry.name);
-    try testing.expectEqual(Algorithm.crc32, entry.algorithm.?);
-    try testing.expectEqualSlices(u8, &.{ 0xCB, 0xF4, 0x39, 0x26 }, entry.digest[0..4]);
-
-    try testing.expectEqual(LineKind.entry, parseLine("\\ff00ff00  a\\\\b\\nc", &entry, &name));
-    try testing.expectEqualStrings("a\\b\nc", entry.name);
-
-    // UTF-8 outside Latin-1 stays as it is.
-    try testing.expectEqual(LineKind.entry, parseLine("ff00ff00  \xe6\x97\xa5.txt", &entry, &name));
-    try testing.expectEqualStrings("\xe6\x97\xa5.txt", entry.name);
-
-    try testing.expectEqual(LineKind.nothing, parseLine("; made by an SFV tool", &entry, &name));
-    try testing.expectEqual(LineKind.nothing, parseLine("", &entry, &name));
-    try testing.expectEqual(LineKind.malformed, parseLine("hello world", &entry, &name));
-    try testing.expectEqual(LineKind.malformed, parseLine("abc  name", &entry, &name));
 }

@@ -7,7 +7,7 @@
 //! the first line has most of outside quotes - a comma, a semicolon or a
 //! tab - and a file that begins with UTF-8's byte order mark, or is UTF-8
 //! throughout, has its characters turned into the system's Latin-1 ones
-//! (a character Latin-1 has not is a `?`).
+//! by utility.library (a character Latin-1 has not is a `?`).
 //!
 //! A semicolon file is how a spreadsheet writes CSV where the comma is the
 //! decimal point, so a field that reads as a number once its one comma is
@@ -16,7 +16,9 @@
 //! the file is saved the same way.
 
 const sdk = @import("sdk");
+const utility = sdk.utility;
 const ExecBase = sdk.interface.exec.ExecBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const cells = @import("cells.zig");
 const formula = @import("formula.zig");
 const number = @import("number.zig");
@@ -58,56 +60,6 @@ pub fn separatorOf(bytes: []const u8) u8 {
     return ',';
 }
 
-/// The length of the UTF-8 character starting with `lead` when the bytes
-/// after it continue it, else 0.
-fn utf8Length(bytes: []const u8, at: usize) usize {
-    const lead = bytes[at];
-    const length: usize = if (lead & 0xE0 == 0xC0) 2 else if (lead & 0xF0 == 0xE0) 3 else if (lead & 0xF8 == 0xF0) 4 else return 0;
-    if (at + length > bytes.len) return 0;
-    for (bytes[at + 1 .. at + length]) |follow| {
-        if (follow & 0xC0 != 0x80) return 0;
-    }
-    return length;
-}
-
-/// Whether `bytes` are UTF-8 with at least one character past ASCII.
-fn isUtf8(bytes: []const u8) bool {
-    var wide = false;
-    var at: usize = 0;
-    while (at < bytes.len) {
-        if (bytes[at] < 0x80) {
-            at += 1;
-            continue;
-        }
-        const length = utf8Length(bytes, at);
-        if (length == 0) return false;
-        wide = true;
-        at += length;
-    }
-    return wide;
-}
-
-/// UTF-8 turned into Latin-1 where it lies, in place; the shorter text.
-fn toLatin1(bytes: []u8) []u8 {
-    var used: usize = 0;
-    var at: usize = 0;
-    while (at < bytes.len) {
-        const length = if (bytes[at] < 0x80) 0 else utf8Length(bytes, at);
-        if (length == 0) {
-            bytes[used] = bytes[at];
-            used += 1;
-            at += 1;
-            continue;
-        }
-        var code: u32 = bytes[at] & (@as(u8, 0x7F) >> @intCast(length));
-        for (bytes[at + 1 .. at + length]) |follow| code = code << 6 | (follow & 0x3F);
-        bytes[used] = if (code <= 0xFF) @intCast(code) else '?';
-        used += 1;
-        at += length;
-    }
-    return bytes[0..used];
-}
-
 /// A field that reads as a number with its one comma as the point,
 /// written that way into `out`; null for any other.
 fn commaNumber(field: []const u8, out: *[64]u8) ?[]const u8 {
@@ -125,17 +77,21 @@ fn commaNumber(field: []const u8, out: *[64]u8) ?[]const u8 {
 
 /// The CSV in `bytes` read into `sheet` from its first cell on, each field
 /// as typed into its cell; the sheet emptied first and worked out after.
-/// `bytes` is changed where its characters are made Latin-1.
-pub fn read(sheet: *cells.Sheet, given: []u8) ReadResult {
+/// `bytes` is changed where utility.library (`ub`) makes its characters
+/// Latin-1; without it they are taken as they are.
+pub fn read(ub: ?*UtilityBase, sheet: *cells.Sheet, given: []u8) ReadResult {
     var result = ReadResult{};
     sheet.clearAll();
     var bytes = given;
-    var utf8 = false;
-    if (bytes.len >= 3 and bytes[0] == 0xEF and bytes[1] == 0xBB and bytes[2] == 0xBF) {
-        bytes = bytes[3..];
-        utf8 = true;
+    if (ub) |utility_base| {
+        const marked = bytes.len >= 3 and bytes[0] == 0xEF and bytes[1] == 0xBB and bytes[2] == 0xBF;
+        const kind = utility_base.Utf8Kind(bytes.ptr, bytes.len);
+        if (marked or kind == utility.UTF8KIND_LATIN1 or kind == utility.UTF8KIND_WIDE) {
+            // In place; a byte that is no UTF-8 stays the byte it is.
+            var conversion: utility.Utf8Conversion = .{ .flags = utility.UTF8F_LATIN1 };
+            bytes = bytes[0..utility_base.Utf8ToLatin1(&conversion, bytes.ptr, bytes.len, bytes.ptr, bytes.len)];
+        }
     }
-    if (utf8 or isUtf8(bytes)) bytes = toLatin1(bytes);
     const separator = separatorOf(bytes);
     result.form.separator = separator;
 

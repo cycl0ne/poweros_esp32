@@ -56,7 +56,7 @@ const Rig = struct {
         rig.proc.pkt_wait = &Disk.wait;
 
         rig.server = try testing.allocator.create(Server);
-        rig.server.init(kexec.SysBase.iface(), dl, "admin", "/WORK");
+        rig.server.init(kexec.SysBase.iface(), dl, rig.db.utility_base, "admin", "/WORK");
         rig.client = .{ .server = rig.server };
     }
 

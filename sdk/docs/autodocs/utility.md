@@ -2,7 +2,9 @@
 
 utility.library's jump table: tag lists, hooks, dates, 32- and 64-bit
 multiplication and division, Latin-1 case, pack tables, named objects,
-unique IDs, pattern matching, strings, alignment and lines of settings.
+unique IDs, pattern matching, strings, alignment, lines of settings,
+the zone the system clock keeps, text between UTF-8 and Latin-1, and
+URLs.
 The reserved slots are kept free so that the slots after them stay
 where they are.
 
@@ -25,6 +27,9 @@ Generated from the source by `./zig build autodoc`.
 - [Date2Amiga](#date2amiga) - Turns a date into seconds since 1 January 1978.
 - [DateJoin](#datejoin) - The day number a date falls on.
 - [DateSplit](#datesplit) - A day number as the date it falls on.
+- [DateToUtc](#datetoutc) - A DateStamp, kept in the zone the system clock keeps, as seconds since 1970 in UTC.
+- [DecodeUrl](#decodeurl) - Undoes the `%XX` escapes of a part of a URL: a user, a password, a path's segment, a query's value.
+- [EncodeUrl](#encodeurl) - Writes bytes as a part of a URL can hold them: the characters that need no escape as they are, every other byte as `%XX`.
 - [FilterTagChanges](#filtertagchanges) - Drops the changes in a change list that change nothing, and can apply the rest.
 - [FilterTagItems](#filtertagitems) - Keeps the items of a list whose tags are, or are not, in an array.
 - [FindNamedObject](#findnamedobject) - Finds the next object of a name space with a given name.
@@ -33,6 +38,7 @@ Generated from the source by `./zig build autodoc`.
 - [FreeTagItems](#freetagitems) - Gives back an array from `AllocateTagItems` or `CloneTagItems`.
 - [GetTagData](#gettagdata) - Returns the data of the first item with a given tag, or a default.
 - [GetUniqueID](#getuniqueid) - Returns a number no earlier call has returned.
+- [Latin1ToUtf8](#latin1toutf8) - Turns Latin-1, the system's characters, into UTF-8.
 - [MapTags](#maptags) - Renames the tags of a list through a map.
 - [MatchPattern](#matchpattern) - Tells whether a string matches a pattern made by `ParsePattern`.
 - [MatchPatternNoCase](#matchpatternnocase) - Tells whether a string matches a pattern made by `ParsePatternNoCase`, without regard to case.
@@ -43,6 +49,7 @@ Generated from the source by `./zig build autodoc`.
 - [PackStructureTags](#packstructuretags) - Copies the data of a tag list into the fields of a structure, as a pack table lays them out.
 - [ParsePattern](#parsepattern) - Turns a pattern into the tokens `MatchPattern` works on.
 - [ParsePatternNoCase](#parsepatternnocase) - Turns a pattern into the tokens `MatchPatternNoCase` works on.
+- [ParseUrl](#parseurl) - Takes a URL apart in place: its scheme, user, password, host, port and path, each where it lies in the text.
 - [RefreshTagItemClones](#refreshtagitemclones) - Copies a tag list into an earlier clone of it again.
 - [ReleaseNamedObject](#releasenamedobject) - Gives back one use of an object.
 - [RemNamedObject](#remnamedobject) - Takes an object out of its name space, and reports when its last user has let go.
@@ -50,6 +57,7 @@ Generated from the source by `./zig build autodoc`.
 - [SMult32](#smult32) - Multiplies two signed 32-bit numbers and keeps the low 32 bits.
 - [SMult64](#smult64) - Multiplies two signed 32-bit numbers into their whole 64-bit product.
 - [SetWildStar](#setwildstar) - Makes `*` a wildcard, or a plain character again, for the patterns parsed from now on.
+- [SortArray](#sortarray) - Puts the elements of an array in order, in place, as a hook compares them.
 - [Strchr](#strchr) - Finds the first occurrence of a character in a string.
 - [Strcmp](#strcmp) - Compares two strings, case included.
 - [Stricmp](#stricmp) - Compares two strings without regard to case.
@@ -64,6 +72,10 @@ Generated from the source by `./zig build autodoc`.
 - [UMult32](#umult32) - Multiplies two unsigned 32-bit numbers and keeps the low 32 bits.
 - [UMult64](#umult64) - Multiplies two unsigned 32-bit numbers into their whole 64-bit product.
 - [UnpackStructureTags](#unpackstructuretags) - Copies the fields of a structure out to where the items of a tag list point, as a pack table lays them out.
+- [UtcToDate](#utctodate) - Seconds since 1970 in UTC as a DateStamp in the zone the system clock keeps.
+- [Utf8Kind](#utf8kind) - Says whether a text is UTF-8, and whether every character of it is one Latin-1 has.
+- [Utf8ToLatin1](#utf8tolatin1) - Turns UTF-8 into Latin-1, the system's characters: a whole text, or one piece of it after another.
+- [ZoneOffset](#zoneoffset) - The seconds the zone the system clock keeps is east of UTC at a moment.
 
 ## AddNamedObject
 
@@ -979,6 +991,221 @@ var cd: ClockData = .{};
 ub.DateSplit(17_790, &cd); // 16 September 2026, a Wednesday
 ```
 
+## DateToUtc
+
+A DateStamp, kept in the zone the system clock keeps, as seconds since 1970 in UTC.
+
+**SYNOPSIS**
+
+```zig
+fn DateToUtc(ub: *UtilityBase, date: *const dos.DateStamp, nanoseconds: ?*u32) i64
+```
+
+**SINCE**
+
+1.3. LVO -268.
+
+**INPUTS**
+
+- `date` - the stamp: what `DateStamp` answers, or a file's date from
+  `Examine`. Its days count from 1 January 1978, its minutes from
+  midnight, its ticks (50 a second) from the start of the minute.
+- `nanoseconds` - where the fraction of the second goes, in
+  nanoseconds (a tick is 20 000 000); null when it is not wanted.
+
+**RESULT**
+
+The moment in seconds since 1 January 1970, UTC.
+
+**BEHAVIOR**
+
+The stamp is read as local time in the system's zone (see
+`ZoneOffset`). The offset is the one at the moment in UTC, which is
+what is being found: the offset at the local time read as if it were
+UTC gives a moment near enough to look it up at, but within the hour
+summer time starts or ends. A local time in the hour the clocks skip
+is answered as if the clocks had not changed yet; one in the hour they
+go through twice, as the second time.
+
+The zone is read once for the call, so both offsets are the same rule.
+While nobody wrote the zone, the stamp is UTC already.
+
+**CONTEXT**
+
+- Waits: yes, for battmem.resource's semaphore while another task
+  holds it.
+- Interrupts: no.
+- Locks: none needed; battmem.resource takes its own for the read.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. `date` and `nanoseconds` are the caller's.
+
+**NOTES**
+
+It sends no packet and reads no file, so a file system handler may ask
+it for a date on the volume that holds the zone file.
+
+`UtcToDate` is the inverse, but for the fraction of the second, which
+a count of seconds does not hold.
+
+**BUGS**
+
+A stamp whose fields are out of their ranges carries into the next
+field rather than being refused: 25 hours' worth of minutes is a day
+and an hour.
+
+**SEE ALSO**
+
+`UtcToDate`, `ZoneOffset`, `DateSplit`
+
+**EXAMPLES**
+
+```zig
+var now: dos.DateStamp = .{};
+_ = dl.DateStamp(&now);
+const seconds = ub.DateToUtc(&now, null); // what a server or a certificate counts in
+```
+
+## DecodeUrl
+
+Undoes the `%XX` escapes of a part of a URL: a user, a password, a path's segment, a query's value.
+
+**SYNOPSIS**
+
+```zig
+fn DecodeUrl(ub: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize) usize
+```
+
+**SINCE**
+
+1.5. LVO -292.
+
+**INPUTS**
+
+- `from`, `from_length` - the part as the URL writes it.
+- `into`, `into_length` - where its bytes go; it may be `from`.
+
+**RESULT**
+
+The bytes the whole part comes to, written or not; URL_BROKEN for a
+`%` that is not followed by two hex digits.
+
+**BEHAVIOR**
+
+Each `%` and the two hex digits after it, in either case, are the
+byte they give; every other byte is itself, a `+` too. As many bytes
+are written as `into` holds, no NUL after them: the whole is there
+when the answer is no more than `into_length`. A length of 0 for
+`into` only counts.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads its input and writes `into`.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. Everything given is the caller's.
+
+**NOTES**
+
+A part never grows as it is decoded: `into` as long as `from` holds
+it. What the bytes are - UTF-8, mostly - is the caller's to say;
+`Utf8ToLatin1` makes them the system's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ParseUrl`, `EncodeUrl`, `Utf8ToLatin1`
+
+**EXAMPLES**
+
+```zig
+// The user a URL gives, for a login.
+const user = parts.user.of(text);
+const length = ub.DecodeUrl(user.ptr, user.len, &name, name.len - 1);
+if (length == utility.URL_BROKEN or length > name.len - 1) return false;
+name[length] = 0;
+```
+
+## EncodeUrl
+
+Writes bytes as a part of a URL can hold them: the characters that need no escape as they are, every other byte as `%XX`.
+
+**SYNOPSIS**
+
+```zig
+fn EncodeUrl(ub: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize, flags: u32) usize
+```
+
+**SINCE**
+
+1.5. LVO -296.
+
+**INPUTS**
+
+- `from`, `from_length` - the bytes: a user, a password, a query's
+  value, a path.
+- `into`, `into_length` - where the part goes; not `from`.
+- `flags` - URLF_SLASH keeps `/` as it is, for a whole path;
+  URLF_LATIN1 takes the bytes as Latin-1 and encodes each character
+  past ASCII as its UTF-8.
+
+**RESULT**
+
+The bytes the whole part takes, written or not.
+
+**BEHAVIOR**
+
+A letter, a digit, `-`, `.`, `_` and `~` stay as they are - what no
+part of a URL needs escaped - and with URLF_SLASH a `/`; every other
+byte is `%` and two upper-case hex digits, a space `%20`. As many
+whole characters are written as `into` holds, no NUL after them: the
+whole is there when the answer is no more than `into_length`. A
+length of 0 for `into` only counts.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads its input and writes `into`.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. Everything given is the caller's.
+
+**NOTES**
+
+The part grows to three times its bytes at most - six times a Latin-1
+character's with URLF_LATIN1. What is escaped is what a part's own
+separators would take for theirs (`:` and `@` in a user, `&` and `=`
+in a query, `/` in a segment), and more besides, which a server takes
+the same.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DecodeUrl`, `ParseUrl`, `Latin1ToUtf8`
+
+**EXAMPLES**
+
+```zig
+// Words typed for a search, as a query's value.
+const length = ub.EncodeUrl(words.ptr, words.len, address[at..].ptr, address.len - at, utility.URLF_LATIN1);
+if (length > address.len - at) return null; // too long
+```
+
 ## FilterTagChanges
 
 Drops the changes in a change list that change nothing, and can apply the rest.
@@ -1456,6 +1683,69 @@ After 2^32 calls the counter wraps to 0 and the numbers repeat.
 
 ```zig
 const id = ub.GetUniqueID();
+```
+
+## Latin1ToUtf8
+
+Turns Latin-1, the system's characters, into UTF-8.
+
+**SYNOPSIS**
+
+```zig
+fn Latin1ToUtf8(ub: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize) usize
+```
+
+**SINCE**
+
+1.4. LVO -280.
+
+**INPUTS**
+
+- `from`, `from_length` - the Latin-1.
+- `into`, `into_length` - where the UTF-8 goes; not `from`.
+
+**RESULT**
+
+The bytes the whole text takes in UTF-8, written or not.
+
+**BEHAVIOR**
+
+An ASCII byte stays as it is; a byte from 0x80 on, the character of
+that number, is its two bytes of UTF-8. As many whole characters are
+written as `into` holds, no NUL after them: the whole is there when the
+answer is no more than `into_length`. A length of 0 for `into` only
+counts.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads its input and writes `into`.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. Everything given is the caller's.
+
+**NOTES**
+
+The text grows by a byte for each character past ASCII: twice its
+length always holds it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Utf8ToLatin1`, `Utf8Kind`
+
+**EXAMPLES**
+
+```zig
+// A dos name as a repository keeps it; refused when it is too long.
+const length = ub.Latin1ToUtf8(name.ptr, name.len, &path, path.len);
+if (length > path.len) return null;
 ```
 
 ## MapTags
@@ -2147,6 +2437,91 @@ if (ub.ParsePatternNoCase(pattern, &tokens, tokens.len) < 0) return error.BadPat
 if (ub.MatchPatternNoCase(@ptrCast(&tokens), name)) list(name);
 ```
 
+## ParseUrl
+
+Takes a URL apart in place: its scheme, user, password, host, port and path, each where it lies in the text.
+
+**SYNOPSIS**
+
+```zig
+fn ParseUrl(ub: *UtilityBase, text: [*]const u8, length: usize, parts: *utility.UrlParts, flags: u32) bool
+```
+
+**SINCE**
+
+1.5. LVO -288.
+
+**INPUTS**
+
+- `text`, `length` - the URL; no NUL is looked for.
+- `parts` - filled in: each part's offset in `text` and its length,
+  the port, and what `flags` says of them.
+- `flags` - URLF_SCP takes `[user@]host:path` too.
+
+**RESULT**
+
+True when `text` is a URL - `parts` then holds it - false when it is
+none, and `parts` holds nothing of use.
+
+**BEHAVIOR**
+
+A URL is `scheme://[user[:password]@]host[:port][/path][?query]`
+and a `#fragment` after it. The scheme is a letter and then letters,
+digits, `+`, `-` and `.`; it is taken in any case and handed out as it
+is written. The authority runs to the first `/`, `?` or `#`: what is
+before its last `@` is the user, up to a first `:`, and the password
+after it (URLF_USER, URLF_PASSWORD). The host is a name, an IPv4
+address, or an IPv6 address in brackets (URLF_BRACKETS, the host
+without them); a `:` after it gives the port, 1 to 65535. The path
+runs from the authority's end to a `#` or the end, its query with it.
+
+With URLF_SCP, a text with no scheme is read as `[user@]host:path`:
+the first colon outside brackets ends the host, there is no `/` before
+it and no `//` after it, and all after it is the path, which may be
+empty. URLF_SCP is set in `parts.flags` when this form was read.
+
+A text is none when its host is empty, its brackets are not closed,
+its port is not one, or a byte in it is a control character or a
+space - but for spaces in the scp form's path, which names a file.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads its input and writes `parts`.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated, copied or decoded: the parts are the text's
+bytes as the URL writes them, escapes and all (`DecodeUrl`).
+
+**NOTES**
+
+`UrlPart.of(text)` hands a part out as a slice. An authority the
+caller sends on - a Host header - is the text from the host, with its
+bracket, to `parts.path.offset`.
+
+**BUGS**
+
+A text longer than 4 GiB is no URL.
+
+**SEE ALSO**
+
+`DecodeUrl`, `EncodeUrl`
+
+**EXAMPLES**
+
+```zig
+var parts: utility.UrlParts = .{};
+if (!ub.ParseUrl(text.ptr, text.len, &parts, 0)) return error_url;
+const host = parts.host.of(text);
+const port: u32 = if (parts.port != 0) parts.port else 443;
+
+// A copy's remote end, or a local name: `user@host:path`.
+if (ub.ParseUrl(name.ptr, name.len, &parts, utility.URLF_SCP) and parts.flags & utility.URLF_SCP != 0) ...
+```
+
 ## RefreshTagItemClones
 
 Copies a tag list into an earlier clone of it again.
@@ -2549,6 +2924,84 @@ None known.
 ```zig
 const old = ub.SetWildStar(true);
 defer _ = ub.SetWildStar(old);
+```
+
+## SortArray
+
+Puts the elements of an array in order, in place, as a hook compares them.
+
+**SYNOPSIS**
+
+```zig
+fn SortArray(ub: *UtilityBase, array: ?*anyopaque, count: usize, size: usize, hook: *Hook) void
+```
+
+**SINCE**
+
+1.6. LVO -300.
+
+**INPUTS**
+
+- `array` - the first element.
+- `count` - how many elements there are.
+- `size` - the bytes of one element, from its start to the next's.
+- `hook` - what compares two elements: called with one as the object
+  and another as the message, it answers - read as an `isize` - below
+  0 when the object goes before the message, 0 or above when not.
+
+**RESULT**
+
+None; the elements are in order.
+
+**BEHAVIOR**
+
+A heap sort: the elements are made a heap with the one that goes last
+on top, the top swapped to the end and the rest made a heap again,
+until one is left. That takes about 2 n log2 n comparisons at most,
+whatever order the elements come in, and no memory. Elements are
+swapped a word at a time when `array` and `size` are a word's
+multiple, a byte at a time else. A `count` below 2 or a `size` of 0
+calls the hook not at all.
+
+**CONTEXT**
+
+- Waits: only when the hook does.
+- Interrupts: safe when the hook is.
+- Locks: none taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The array and the hook are the caller's; the
+elements the hook is handed are in the array, moved between calls.
+
+**NOTES**
+
+The sort is not stable: elements that compare alike end up in no
+order of their own. An answer of Stricmp or CompareMem may be handed
+back as it is. The hook's `data` carries what the comparison needs
+besides the two elements - a table they index, a library to call.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CallHookPkt`, `CompareMem`, `Stricmp`
+
+**EXAMPLES**
+
+```zig
+fn byName(hook: *utility.Hook, first: ?*anyopaque, second: ?*anyopaque) callconv(.c) usize {
+    const ub: *UtilityBase = @ptrCast(@alignCast(hook.data.?));
+    const a: *const Entry = @ptrCast(@alignCast(first.?));
+    const b: *const Entry = @ptrCast(@alignCast(second.?));
+    return @bitCast(@as(isize, ub.Stricmp(a.name, b.name)));
+}
+
+var by_name: utility.Hook = .{ .entry = byName, .data = ub };
+ub.SortArray(entries.ptr, entries.len, @sizeOf(Entry), &by_name);
 ```
 
 ## Strchr
@@ -3336,4 +3789,305 @@ None known.
 var width: u32 = 0;
 const query = [_]TagItem{ .{ .tag = MY_Width, .data = @intFromPtr(&width) }, .{} };
 _ = ub.UnpackStructureTags(&box, &table, &query);
+```
+
+## UtcToDate
+
+Seconds since 1970 in UTC as a DateStamp in the zone the system clock keeps.
+
+**SYNOPSIS**
+
+```zig
+fn UtcToDate(ub: *UtilityBase, utc: i64, date: *dos.DateStamp) void
+```
+
+**SINCE**
+
+1.3. LVO -272.
+
+**INPUTS**
+
+- `utc` - the moment, in seconds since 1 January 1970, UTC: what a
+  time server, a file server or a certificate gives.
+- `date` - filled in with the stamp.
+
+**RESULT**
+
+Nothing. `date` is always written.
+
+**BEHAVIOR**
+
+The moment is moved into the system's zone by the offset it has then
+(see `ZoneOffset`) and written as days since 1 January 1978, minutes
+since midnight and ticks into the minute - whole seconds, the ticks a
+multiple of 50. A moment whose local time is before 1978 is the
+stamp's first moment, all fields 0; one past what its days hold is its
+last.
+
+While nobody wrote the zone, the stamp is UTC.
+
+**CONTEXT**
+
+- Waits: yes, for battmem.resource's semaphore while another task
+  holds it.
+- Interrupts: no.
+- Locks: none needed; battmem.resource takes its own for the read.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. `date` is the caller's.
+
+**NOTES**
+
+It sends no packet and reads no file, so a file system handler may ask
+it for a date on the volume that holds the zone file.
+
+A fraction of a second is the caller's to add to `tick` (a tick is a
+fiftieth): the count of seconds holds none.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DateToUtc`, `ZoneOffset`, `DateSplit`
+
+**EXAMPLES**
+
+```zig
+// A file's date as an SFTP server sends it, made the volume's.
+var date: dos.DateStamp = .{};
+ub.UtcToDate(attributes.mtime, &date);
+_ = dl.SetFileDate(name, &date);
+```
+
+## Utf8Kind
+
+Says whether a text is UTF-8, and whether every character of it is one Latin-1 has.
+
+**SYNOPSIS**
+
+```zig
+fn Utf8Kind(ub: *UtilityBase, bytes: [*]const u8, length: usize) u32
+```
+
+**SINCE**
+
+1.4. LVO -284.
+
+**INPUTS**
+
+- `bytes`, `length` - the text.
+
+**RESULT**
+
+- UTF8KIND_ASCII: ASCII alone, UTF-8 and Latin-1 alike - and an empty
+  text.
+- UTF8KIND_LATIN1: UTF-8 with characters past ASCII, all of them
+  Latin-1's.
+- UTF8KIND_WIDE: UTF-8 with a character Latin-1 has not.
+- UTF8KIND_NONE: bytes that are no UTF-8 - Latin-1, most likely.
+
+**BEHAVIOR**
+
+UTF-8 is read as `Utf8ToLatin1` reads it: an overlong form, a
+surrogate, a character past U+10FFFF, a byte that starts no character
+and a sequence broken off make the text none. A byte order mark at the
+start is passed over.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It only reads its input.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The text is the caller's.
+
+**NOTES**
+
+Latin-1 that is not ASCII is almost never UTF-8 by chance: a letter
+past 0x7F followed by one that is not a continuation byte breaks it.
+A file is told by the whole of it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Utf8ToLatin1`, `Latin1ToUtf8`
+
+**EXAMPLES**
+
+```zig
+// A file another system wrote: UTF-8 when the whole of it is.
+const kind = ub.Utf8Kind(text.ptr, text.len);
+const flags: u32 = if (kind == utility.UTF8KIND_NONE) ... else 0;
+```
+
+## Utf8ToLatin1
+
+Turns UTF-8 into Latin-1, the system's characters: a whole text, or one piece of it after another.
+
+**SYNOPSIS**
+
+```zig
+fn Utf8ToLatin1(ub: *UtilityBase, conversion: ?*utility.Utf8Conversion, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize) usize
+```
+
+**SINCE**
+
+1.4. LVO -276.
+
+**INPUTS**
+
+- `conversion` - what is done with a character Latin-1 has not
+  (`flags`), and with UTF8F_PIECES a character the last piece ended
+  inside; null for no flags.
+- `from`, `from_length` - the UTF-8. With UTF8F_PIECES a length of 0
+  ends the text: what the conversion holds is given as the broken
+  bytes it is.
+- `into`, `into_length` - where the Latin-1 goes. It may be `from`
+  itself when nothing is held from an earlier piece.
+
+**RESULT**
+
+The bytes written into `into`, no NUL after them; UTF8_REFUSED when
+UTF8F_REFUSE refused.
+
+**BEHAVIOR**
+
+Each character up to U+00FF is its one Latin-1 byte. One past it is a
+`?`, or with UTF8F_TYPESET the plain characters a quote, a dash, the
+ellipsis or a space of typesetting stands for, nothing for a mark of
+no width. A byte that is no UTF-8 - one that starts no character, or
+a sequence broken off - is a `?` too, or the Latin-1 byte it is with
+UTF8F_LATIN1. UTF8F_REFUSE refuses instead where a `?` would be: the
+answer is UTF8_REFUSED, at the first such character. A byte order mark
+at the text's start is left out.
+
+With UTF8F_PIECES, a piece that ends inside a character keeps its
+bytes, and the next call goes on with them; without it the text is
+whole, and such bytes are broken. Writing stops where `into` is full,
+before a character that does not fit: `into` as long as `from` holds
+the whole of a whole text, and two bytes more a piece after one that
+ended inside a character.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads its inputs and writes `into` and the
+  conversion.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. Everything given is the caller's.
+
+**NOTES**
+
+Latin-1's characters are Unicode's first 256, so U+0080 to U+009F,
+the C1 controls, come through as the bytes 0x80 to 0x9F.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Latin1ToUtf8`, `Utf8Kind`
+
+**EXAMPLES**
+
+```zig
+// A server's line for the console, a piece at a time as it comes.
+var conversion: utility.Utf8Conversion = .{ .flags = utility.UTF8F_PIECES | utility.UTF8F_LATIN1 };
+const shown = ub.Utf8ToLatin1(&conversion, piece.ptr, piece.len, &line, line.len);
+_ = dl.Write(output, &line, @intCast(shown));
+
+// A name kept as it is unless every character of it is Latin-1's.
+var refuse: utility.Utf8Conversion = .{ .flags = utility.UTF8F_REFUSE };
+const length = ub.Utf8ToLatin1(&refuse, name.ptr, name.len, &local, local.len);
+```
+
+## ZoneOffset
+
+The seconds the zone the system clock keeps is east of UTC at a moment.
+
+**SYNOPSIS**
+
+```zig
+fn ZoneOffset(ub: *UtilityBase, utc: i64) i32
+```
+
+**SINCE**
+
+1.3. LVO -264.
+
+**INPUTS**
+
+- `utc` - the moment, in seconds since 1 January 1970, UTC.
+
+**RESULT**
+
+The seconds to add to `utc` for the local time then: 3600 for Central
+European Time, 7200 for its summer time, -18000 for US Eastern; 0 in
+UTC.
+
+**BEHAVIOR**
+
+The zone is the rule battmem.resource holds (BATTMEM_ZONE), which the
+boot's `C:SetClock ZONE` writes from ENV:Sys/timezone and Prefs writes
+again when the zone is changed there. It is read for each call, so a
+zone changed while a program runs is the one its next call uses. A
+rule with summer time gives the summer offset between the changes the
+rule names, in the year of the moment.
+
+While nobody wrote the zone, and on a system without the resource, the
+clock keeps UTC and the answer is 0.
+
+**CONTEXT**
+
+- Waits: yes, for battmem.resource's semaphore while another task
+  holds it.
+- Interrupts: no.
+- Locks: none needed; battmem.resource takes its own for the read.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated or changes hands.
+
+**NOTES**
+
+It sends no packet and reads no file, so a file system handler may ask
+it about a volume that holds the zone file itself.
+
+The offset is that of the moment, not of now: a date in July answers
+with summer time in December. A file's date written with the offset it
+had (`+0200`) takes the moment the file was written.
+
+**BUGS**
+
+A rule whose offsets or changes are not whole quarter hours is not
+kept by battmem.resource (`C:SetClock ZONE` says so), and the clock
+then keeps UTC. Every zone in use today is whole quarter hours.
+
+**SEE ALSO**
+
+`DateToUtc`, `UtcToDate`, sdk.dos.timezone
+
+**EXAMPLES**
+
+```zig
+// A commit's date as git writes it: `1762686000 +0100`.
+const offset = ub.ZoneOffset(seconds);
+const minutes = @divTrunc(if (offset < 0) -offset else offset, 60);
+_ = dos.stdio.Printf(dl, "%ld %c%02d%02d\n", .{ seconds, @as(u8, if (offset < 0) '-' else '+'), @divTrunc(minutes, 60), @mod(minutes, 60) });
 ```

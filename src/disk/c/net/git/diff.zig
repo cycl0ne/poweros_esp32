@@ -43,7 +43,7 @@ fn show(opaque_git: *anyopaque, kind: Kind, path: []const u8) bool {
     const git: *Git = @ptrCast(@alignCast(opaque_git));
     const line = [2]u8{ kind.letter(), '\t' };
     git.put(&line);
-    git.put(path);
+    git.putPath(path);
     git.put("\n");
     return !git.stopped();
 }

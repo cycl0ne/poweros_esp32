@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>A page to read &ndash; html.datatype</title>
+<style>
+  body { font-family: sans-serif; }
+  .hidden { display: none; }
+</style>
+<script>
+  document.title = "never seen";
+</script>
+</head>
+<body>
+<h1>A page to read</h1>
+
+<p>This file is here so that <code>html.datatype</code> can be tried on the
+machine itself. It uses the elements the class knows, so that what is
+drawn can be looked at, and set beside the same file in a browser.
+
+<h2>Text</h2>
+<p>A word in <em>italic</em>, a word in <strong>bold</strong>, both at
+once in <b><i>both</i></b>, one <del>struck through</del>, one
+<u>underlined</u>, and a name in <code>fixed pitch</code>. A key to
+press: <kbd>Ctrl</kbd>+<kbd>C</kbd>.
+Text <small>in small</small> and <big>in big</big>, H<sub>2</sub>O and
+E=mc<sup>2</sup>.<br>
+A line broken with <code>&lt;br&gt;</code>, and a quote:
+<q>to be is to do</q>.</p>
+
+<p>Characters by name and number: caf&eacute;, &Auml;rger, 3&nbsp;&euro;,
+&copy; 2026, &#x263A;, &#8220;quoted&#8221; &mdash; and an ellipsis&hellip;
+Bytes that are UTF-8: Grüße, naïve, Ærø.</p>
+
+<h2>Links</h2>
+<p>A <a href="Reading.md">link to the Markdown page beside this one</a>,
+one to <a href="https://example.com/a%20b?x=1&amp;y=2">a page on the
+net</a>, one <a href="#tables">down to the tables</a>, and an
+<a name="anchor">anchor</a> that <a href="#anchor">a link</a> leads
+back to. Backspace goes back the way the links came.</p>
+<p>These lead nowhere, and say why: <a href="Missing.html">a file that is
+not there</a>, <a href="mailto:someone@example.com">a mail address</a>
+and <a href="#nowhere">a place the page does not have</a>.</p>
+
+<h2>Lists</h2>
+<ul>
+  <li>The first item.
+  <li>The second, which is long enough that it has to be wrapped, so that
+      the indent of a wrapped item can be seen.
+    <ul>
+      <li>An item one level in.
+        <ul><li>And one two levels in.</li></ul>
+    </ul>
+  <li>The last.
+</ul>
+
+<ol start="3">
+  <li>A numbered list that starts at three.</li>
+  <li>And goes on.</li>
+</ol>
+
+<ol type="i">
+  <li>Roman numerals.</li>
+  <li>Two.</li>
+</ol>
+
+<dl>
+  <dt>Term</dt>
+  <dd>What the term means, set in.</dd>
+  <dt>Another</dt>
+  <dd>And what that one means.</dd>
+</dl>
+
+<h2>Quotes and listings</h2>
+<blockquote>
+  <p>A quote stands behind a bar.</p>
+  <blockquote><p>A quote in a quote stands behind two.</p></blockquote>
+</blockquote>
+
+<pre>
+const answer = 42;	// a tab
+    indented   as it stands
+</pre>
+
+<hr>
+
+<h2 id="tables">Tables</h2>
+<table>
+  <caption>Planets</caption>
+  <thead>
+    <tr><th>Name</th><th align="right">Moons</th><th>Rings</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Mercury</td><td align="right">0</td><td>no</td></tr>
+    <tr><td>Earth</td><td align="right">1</td><td>no</td></tr>
+    <tr><td>Saturn</td><td align="right">146</td><td>yes</td></tr>
+    <tr><td rowspan="2">Jupiter<br>in two rows,<br>three lines tall</td><td align="right">95</td><td>yes</td></tr>
+    <tr><td align="right">Io, Europa</td><td>faint</td></tr>
+    <tr><td>Uranus</td><td colspan="2" rowspan="2">Two columns and two rows</td></tr>
+    <tr><td>Neptune</td></tr>
+    <tr><td colspan="2">Two columns</td><td>one</td></tr>
+    <tr><td colspan="3">One cell across all three columns, wider than the three together</td></tr>
+  </tbody>
+</table>
+
+<table width="100%"><tr><td>
+  <table><tr><td>A table that lays a page out</td></tr></table>
+  <p>is read as blocks one under another.</p>
+</td></tr></table>
+
+<h2>Pictures and forms</h2>
+<p><img src="logo.png" alt="The logo"> stands for a picture, as its text
+says.</p>
+<form>
+  <p>Name: <input type="text" placeholder="your name">
+  <input type="checkbox" checked> Remember me
+  <input type="radio"> One <input type="radio" checked> Two
+  <select><option>Red<option selected>Green<option>Blue</select>
+  <button>Send</button> <input type="submit" value="Go"></p>
+</form>
+
+<h2>What is not shown</h2>
+<p>Nothing <span hidden>hidden</span><span style="display: none">or
+styled away</span><span aria-hidden="true">or kept from readers</span>
+comes between these words.</p>
+<svg width="10" height="10"><text>svg text</text></svg>
+<template><p>A template's copy.</p></template>
+<!-- A comment. -->
+<details><summary>Details</summary><p>are shown whole.</p></details>
+</body>
+</html>

@@ -5,7 +5,9 @@
 
 const sdk = @import("sdk");
 const crypto = sdk.crypto;
+const utility = sdk.utility;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 
 /// An object's id: the SHA-1 of its header and body.
 pub const Id = [20]u8;
@@ -216,37 +218,21 @@ pub fn same(a: []const u8, b: []const u8) bool {
     return true;
 }
 
-/// `items` sorted in place by `before` (a heap sort: no memory, and no
-/// worst case to fear).
-pub fn heapSort(comptime T: type, items: []T, context: anytype, comptime before: fn (@TypeOf(context), *const T, *const T) bool) void {
-    if (items.len < 2) return;
-    var start = items.len / 2;
-    while (start > 0) {
-        start -= 1;
-        siftDown(T, items, start, items.len, context, before);
-    }
-    var end = items.len;
-    while (end > 1) {
-        end -= 1;
-        const top = items[0];
-        items[0] = items[end];
-        items[end] = top;
-        siftDown(T, items, 0, end, context, before);
-    }
-}
-
-fn siftDown(comptime T: type, items: []T, first: usize, end: usize, context: anytype, comptime before: fn (@TypeOf(context), *const T, *const T) bool) void {
-    var root = first;
-    while (true) {
-        var child = root * 2 + 1;
-        if (child >= end) return;
-        if (child + 1 < end and before(context, &items[child], &items[child + 1])) child += 1;
-        if (!before(context, &items[root], &items[child])) return;
-        const held = items[root];
-        items[root] = items[child];
-        items[child] = held;
-        root = child;
-    }
+/// `items` put in order in place by `before`, which says whether its
+/// first item goes before its second, `context` handed to it as well:
+/// utility.library's SortArray, a heap sort that takes no memory.
+pub fn sort(ub: *UtilityBase, comptime T: type, items: []T, context: anytype, comptime before: fn (@TypeOf(context), *const T, *const T) bool) void {
+    const Context = @TypeOf(context);
+    const Compare = struct {
+        fn compare(hook: *utility.Hook, first: ?*anyopaque, second: ?*anyopaque) callconv(.c) usize {
+            const held: Context = if (@sizeOf(Context) == 0) undefined else @as(*const Context, @ptrCast(@alignCast(hook.data.?))).*;
+            const answer: isize = if (before(held, @ptrCast(@alignCast(first.?)), @ptrCast(@alignCast(second.?)))) -1 else 0;
+            return @bitCast(answer);
+        }
+    };
+    var held = context;
+    var hook: utility.Hook = .{ .entry = Compare.compare, .data = if (@sizeOf(Context) == 0) null else @ptrCast(&held) };
+    ub.SortArray(@ptrCast(items.ptr), items.len, @sizeOf(T), &hook);
 }
 
 /// How `a` sorts against `b`, byte by byte, the shorter first when one

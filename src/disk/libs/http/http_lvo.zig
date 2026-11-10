@@ -22,6 +22,7 @@ const ReadRequest = @import("request/readrequest.zig").ReadRequest;
 const WriteRequest = @import("request/writerequest.zig").WriteRequest;
 const GetRequestAttr = @import("request/getrequestattr.zig").GetRequestAttr;
 const GetHeader = @import("request/getheader.zig").GetHeader;
+const Fault = @import("client/fault.zig").Fault;
 
 /// http.library's interface, as the SDK generates it from
 /// sdk/fd/http_lib.fd.
@@ -55,6 +56,7 @@ const contract_files = [_][]const u8{
     @embedFile("request/writerequest.zig"),
     @embedFile("request/getrequestattr.zig"),
     @embedFile("request/getheader.zig"),
+    @embedFile("client/fault.zig"),
 };
 
 fn lvoCreateClient(base: *HttpBase, socket_base: *SocketBase, tags: ?[*]const utility.TagItem) callconv(.c) ?*http.Client {
@@ -81,6 +83,9 @@ fn lvoGetRequestAttr(base: *HttpBase, request: *http.Request, attr: utility.Tag)
 fn lvoGetHeader(base: *HttpBase, request: *http.Request, name: [*:0]const u8) callconv(.c) ?[*:0]const u8 {
     return GetHeader(base, request, name);
 }
+fn lvoFault(base: *HttpBase, client: ?*http.Client, code: i32, header: ?[*:0]const u8, buffer: [*]u8, length: u32) callconv(.c) i32 {
+    return Fault(base, client, code, header, buffer, length);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -97,6 +102,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoWriteRequest),
     vec(lvoGetRequestAttr),
     vec(lvoGetHeader),
+    vec(lvoFault),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

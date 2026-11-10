@@ -7,6 +7,7 @@ const exec = sdk.exec;
 
 const ExecBase = sdk.interface.exec.ExecBase;
 const NamedObject = sdk.utility.NamedObject;
+const BattMemBase = sdk.resources.battmem.BattMemBase;
 
 /// struct UtilityBase: `ub_LibNode`, `ub_Language` and `ub_Reserved` are
 /// public; the rest is the library's own.
@@ -29,6 +30,9 @@ pub const UtilityBase = extern struct {
     /// message a removal waits on: changed by finders that share the name
     /// space's semaphore, so under this - a spinlock, a few lines.
     object_lock: exec.Lock,
+    /// battmem.resource, where the zone the clock keeps is, once a zone
+    /// call has found it. It is made after the library at cold start.
+    batt_mem: ?*BattMemBase,
 
     /// This library as a caller sees it, to call its own functions through the
     /// jump table.

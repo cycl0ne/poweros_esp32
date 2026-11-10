@@ -9,6 +9,12 @@
 //! may close an idle connection whenever it likes, and a request finds
 //! that out only by trying it, so a request on a kept connection that
 //! fails before any of the answer has come is sent again on a fresh one.
+//!
+//! **Its last failure** is kept for Fault: OpenRequest, ReadRequest and
+//! WriteRequest put each one there (`remember`), with bsdsocket's Errno
+//! that the socket calls left in `errno` for HTTPERR_IO. Each of those
+//! calls starts with `errno` cleared, so a failure is never told by an
+//! earlier one's.
 
 const sdk = @import("sdk");
 const http = sdk.http;
@@ -43,11 +49,22 @@ pub const Client = struct {
     idle: [pool_most]?*Connection = @splat(null),
     /// How a connection is made: the socket's, or a test's.
     connect: *const fn (client: *Client, url: Url, failure: *Failure) ?*Connection = _connection.connect,
+    /// The last failure of a call of the client's, for Fault.
+    last: Failure = .{},
+    /// bsdsocket's Errno, as the socket call that failed last left it.
+    errno: i32 = 0,
 
     pub fn userAgent(client: *const Client) []const u8 {
         return client.agent[0..client.agent_length];
     }
 };
+
+/// `failure` kept as the client's last, with the Errno the socket calls
+/// left for HTTPERR_IO.
+pub fn remember(client: *Client, failure: *const Failure) void {
+    client.last = failure.*;
+    client.last.errno = if (failure.code == http.HTTPERR_IO) client.errno else 0;
+}
 
 /// The client behind a program's handle; null for one not made here.
 pub fn of(handle: *http.Client) ?*Client {

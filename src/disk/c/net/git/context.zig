@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! One run of Git: the libraries open for it, where it writes, how it
-//! says what went wrong, and the zone the clock keeps - handed to every
-//! verb - and an arena, memory
+//! says what went wrong, and a file's date as git keeps time - handed to
+//! every verb - and an arena, memory
 //! taken in blocks and given back at once, for what a verb collects as
 //! it goes (a remote's refs, paths).
 
@@ -10,13 +10,14 @@ const exec = sdk.exec;
 const dos = sdk.dos;
 const bsd = sdk.bsdsocket;
 const http = sdk.http;
+const utility = sdk.utility;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
 const CompressionBase = sdk.interface.compression.CompressionBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const HttpBase = sdk.interface.http.HttpBase;
-const timezone = dos.timezone;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Git";
@@ -28,6 +29,8 @@ pub const Git = struct {
     dl: *DosBase,
     cb: *CryptoBase,
     zb: *CompressionBase,
+    /// The zone the clock keeps, and dates in it turned into UTC.
+    ub: *UtilityBase,
     /// Opened by `network`, the first time a verb needs a remote.
     sb: ?*SocketBase = null,
     hb: ?*HttpBase = null,
@@ -37,9 +40,6 @@ pub const Git = struct {
     /// A progress line ended by a carriage return is on the screen: the
     /// next message starts a new line first.
     progress_open: bool = false,
-    /// The zone in ENV:Sys/timezone, read the first time a date is
-    /// turned into git's time.
-    zone: ?timezone.Zone = null,
 
     /// `format` said on the output after the command's name.
     pub fn say(git: *Git, comptime format: [:0]const u8, args: anytype) void {
@@ -50,6 +50,23 @@ pub const Git = struct {
     /// Bytes as they are onto the output.
     pub fn put(git: *Git, text: []const u8) void {
         if (text.len != 0) _ = git.dl.Write(git.output, text.ptr, @intCast(text.len));
+    }
+
+    /// A repository's path onto the output, its UTF-8 made the console's
+    /// Latin-1 a piece at a time by utility.library: a character Latin-1
+    /// has not a `?`, a byte that is no UTF-8 the Latin-1 byte it is. The
+    /// empty piece at the end gives what is held.
+    pub fn putPath(git: *Git, path: []const u8) void {
+        var conversion: utility.Utf8Conversion = .{ .flags = utility.UTF8F_PIECES | utility.UTF8F_LATIN1 };
+        var taken: usize = 0;
+        while (true) {
+            const piece = path[taken..@min(taken + 126, path.len)];
+            taken += piece.len;
+            var latin: [128]u8 = undefined;
+            const length = git.ub.Utf8ToLatin1(&conversion, piece.ptr, piece.len, &latin, latin.len);
+            git.put(latin[0..length]);
+            if (piece.len == 0) return;
+        }
     }
 
     /// A progress line, overwritten by the next: `format` ended by a
@@ -103,14 +120,9 @@ pub const Git = struct {
     /// A dos date - the local time - as git keeps time: seconds since
     /// 1970 UTC, and the nanoseconds past them.
     pub fn unixTime(git: *Git, date: dos.DateStamp) struct { seconds: i64, nanoseconds: u32 } {
-        if (git.zone == null) git.zone = readZone(git.dl);
-        const zone = &git.zone.?;
-        const ticks_per_second = 50;
-        const local = @as(i64, date.days) * 86400 + @as(i64, date.minute) * 60 + @divFloor(date.tick, ticks_per_second) + timezone.datestamp_epoch;
-        const guess = local - zone.offsetAt(local);
-        const utc = local - zone.offsetAt(guess);
-        const ticks: u32 = @intCast(@mod(date.tick, ticks_per_second));
-        return .{ .seconds = utc, .nanoseconds = ticks * (1_000_000_000 / ticks_per_second) };
+        var nanoseconds: u32 = 0;
+        const seconds = git.ub.DateToUtc(&date, &nanoseconds);
+        return .{ .seconds = seconds, .nanoseconds = nanoseconds };
     }
 
     /// `size` bytes of memory, cleared; null, said, when there are none.
@@ -133,58 +145,27 @@ pub const Git = struct {
     }
 };
 
-/// The zone the system clock keeps: the rule on the zone file's first
-/// line that is not a comment, however long the comments before it; UTC
-/// without one.
-fn readZone(dl: *DosBase) timezone.Zone {
-    const file = dl.Open(timezone.zone_file, dos.MODE_OLDFILE) orelse return .{};
-    defer _ = dl.Close(file);
-    var text: [256]u8 = undefined;
-    // A line longer than the buffer comes in pieces; only the first
-    // piece of a line is looked at.
-    var line_start = true;
-    while (dl.FGets(file, &text, text.len) != null) {
-        var length: usize = 0;
-        while (length < text.len and text[length] != 0) length += 1;
-        const starts = line_start;
-        line_start = length > 0 and text[length - 1] == '\n';
-        if (!starts) continue;
-        var line: []const u8 = text[0..length];
-        while (line.len > 0 and (line[line.len - 1] == '\n' or line[line.len - 1] == '\r' or line[line.len - 1] == ' ' or line[line.len - 1] == '\t')) line = line[0 .. line.len - 1];
-        while (line.len > 0 and (line[0] == ' ' or line[0] == '\t')) line = line[1..];
-        if (line.len == 0 or line[0] == '#') continue;
-        return timezone.parse(line) orelse .{};
-    }
-    return .{};
-}
-
-/// Memory handed out from blocks taken as needed, all given back by
-/// `free`.
+/// Memory handed out from an exec pool, made at the first `take` and
+/// given back whole by `free`.
 pub const Arena = struct {
     sys: *ExecBase,
-    /// The newest block; each holds the one before it.
-    block: ?*Block = null,
-    at: usize = 0,
-    end: usize = 0,
+    pool: ?*anyopaque = null,
 
-    const Block = struct { older: ?*Block };
-    const block_bytes = 16 * 1024;
+    const puddle_bytes = 16 * 1024;
+    /// A request this big gets memory of its own, back to the system with
+    /// the pool.
+    const alone_bytes = 4 * 1024;
 
     /// `size` bytes aligned to `alignment`; null when there is no memory.
+    /// A pool's blocks are aligned to MEM_BLOCKSIZE, more than any of
+    /// Git's types asks for.
     pub fn take(arena: *Arena, size: usize, alignment: usize) ?[*]u8 {
-        var start = (arena.at + alignment - 1) & ~(alignment - 1);
-        if (arena.block == null or start + size > arena.end) {
-            const wanted = @max(block_bytes, size + @sizeOf(Block) + alignment);
-            const memory = arena.sys.AllocVec(wanted, exec.MEMF_ANY) orelse return null;
-            const block: *Block = @ptrCast(@alignCast(memory));
-            block.older = arena.block;
-            arena.block = block;
-            arena.at = @intFromPtr(block) + @sizeOf(Block);
-            arena.end = @intFromPtr(block) + wanted;
-            start = (arena.at + alignment - 1) & ~(alignment - 1);
-        }
-        arena.at = start + size;
-        return @ptrFromInt(start);
+        if (alignment > exec.MEM_BLOCKSIZE) return null;
+        const pool = arena.pool orelse made: {
+            arena.pool = arena.sys.CreatePool(exec.MEMF_ANY, puddle_bytes, alone_bytes) orelse return null;
+            break :made arena.pool;
+        };
+        return @ptrCast(arena.sys.AllocPooled(pool, @max(size, 1)) orelse return null);
     }
 
     /// A `T`, set to `value`.
@@ -204,11 +185,7 @@ pub const Arena = struct {
     }
 
     pub fn free(arena: *Arena) void {
-        var block = arena.block;
-        while (block) |each| {
-            block = each.older;
-            arena.sys.FreeVec(each);
-        }
-        arena.* = .{ .sys = arena.sys };
+        if (arena.pool) |pool| arena.sys.DeletePool(pool);
+        arena.pool = null;
     }
 };

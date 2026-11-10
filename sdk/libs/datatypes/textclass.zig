@@ -16,6 +16,11 @@
 //! several. Everything that differs between formats is in the runs, and
 //! everything that does not is here.
 //!
+//! **A link leads somewhere by name.** A run that is a link names where
+//! it leads; the program reads what was pressed (`TDTA_Link`) and
+//! follows it, and a name the text itself holds - one of its anchors
+//! (since 2.4) - is followed with `DTM_GOTO`, which scrolls to it.
+//!
 //! **A document is blocks of runs** (since 2): a paragraph, a heading,
 //! an item of a list, a listing, a rule, a cell of a table - each with
 //! the space round it, its indent among the lists and quotes it is in,
@@ -56,8 +61,9 @@ pub const TDTA_MarkEnd = TDTA_Dummy + 7;
 /// How many lines the text came to once it was laid out. Read only.
 pub const TDTA_NumLines = TDTA_Dummy + 8;
 /// The link the pointer was last let go on (`[*:0]const u8`), which is
-/// what a program follows. Read only, and only good until the next
-/// press.
+/// what a program follows; empty when the press was not on one, or on
+/// one longer than 1023 bytes (127 before 2.4). Read only, and only good
+/// until the next press.
 pub const TDTA_Link = TDTA_Dummy + 9;
 /// How many pixels a run's indent step is. Made and set.
 pub const TDTA_IndentWidth = TDTA_Dummy + 10;
@@ -128,7 +134,8 @@ pub const Block = extern struct {
     count: u32 = 0,
     /// `TDBLOCK_`.
     kind: u8 = TDBLOCK_PARAGRAPH,
-    /// A heading's level, 1 to 6.
+    /// A heading's level, 1 to 6. A cell's rows: how many it takes, its
+    /// own and those under it; 0 is one, as 1 is (since 2.5).
     level: u8 = 0,
     /// How many lists and quotes it is inside, the outermost first, and
     /// which of them are quotes: bit n for the n-th.
@@ -141,7 +148,9 @@ pub const Block = extern struct {
     flags: u8 = 0,
     /// A cell's `TDALIGN_`.
     alignment: u8 = TDALIGN_LEFT,
-    pad: u8 = 0,
+    /// How many columns a cell takes, its own and those after it; 0 is
+    /// one, as 1 is (since 2.3).
+    span: u8 = 0,
     /// The number an item of a numbered list shows; a cell's column,
     /// from 0.
     number: u32 = 0,
@@ -157,7 +166,10 @@ pub const TDBLOCK_LISTING: u8 = 2;
 /// A line across, and nothing else.
 pub const TDBLOCK_RULE: u8 = 3;
 /// A cell of a table. A table is cells one after another, a row at a
-/// time; `TDBF_ROW` starts a row, and `TDBF_TABLE` the table.
+/// time; `TDBF_ROW` starts a row, and `TDBF_TABLE` the table. A cell
+/// stands in the column its `number` says, and as many after it as its
+/// `span` takes, in its row and as many under it as its `level` takes.
+/// A row's cells skip the columns a cell from a row above still takes.
 pub const TDBLOCK_CELL: u8 = 4;
 
 /// What stands in front of an item.
@@ -186,6 +198,18 @@ pub const TDBF_HEAD: u8 = 8;
 /// another one stands as far from what was before it as a paragraph.
 pub const TDBF_START: u8 = 16;
 
+/// A place in the text a link may lead to by name (since 2.4): a
+/// heading, a note, anything a document names so that it can be pointed
+/// at. `DTM_GOTO` with its name scrolls the text to it.
+pub const Anchor = extern struct {
+    /// Where in the text it stands.
+    offset: u32 = 0,
+    /// Its name: where in the text it is, and how many bytes - past the
+    /// end of what is drawn, as a link's target is.
+    name_offset: u32 = 0,
+    name_length: u32 = 0,
+};
+
 /// Where a cell's lines stand in its column.
 pub const TDALIGN_LEFT: u8 = 0;
 pub const TDALIGN_CENTRE: u8 = 1;
@@ -196,6 +220,13 @@ pub const TDALIGN_RIGHT: u8 = 2;
 pub const TDTM_Dummy: classusr.MethodID = 0x710;
 /// The text and its runs given to the object, which takes them over.
 pub const TDTM_SETTEXT: classusr.MethodID = 0x711;
+
+// `DTM_GOTO` (since 2.4): the view scrolled to the anchor the message
+// names, its line at the top - or as near it as the end of the text lets
+// it be; an empty name is the text's start. The answer is 1, or 0 when
+// the text has no anchor of that name, and then nothing moves. With a
+// window (`DoDTMethodA`) the object is drawn there and its target told
+// the new `DTA_TopVert`.
 
 /// `TDTM_SETTEXT`: what a format's class hands over.
 ///
@@ -218,4 +249,9 @@ pub const TdtSetText = extern struct {
     /// text that is plain lines (since 2).
     blocks: ?[*]Block = null,
     block_count: u32 = 0,
+    /// The places in it a link may lead to by name, from `AllocVec` too,
+    /// and how many; null for none (since 2.4). Where two have one name,
+    /// the first counts.
+    anchors: ?[*]Anchor = null,
+    anchor_count: u32 = 0,
 };

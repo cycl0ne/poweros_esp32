@@ -130,7 +130,7 @@ pub const Repository = struct {
         for ([_][]const u8{ "objects/pack/", "objects/info/", "refs/heads/", "refs/tags/" }) |dir| {
             var into: files.Path = undefined;
             const name = repo.path(&into, &.{dir}) orelse return false;
-            if (!files.makeDirs(git, name)) {
+            if (!git.dl.CreateDirs(name, false)) {
                 _ = git.dl.PrintFault(git.dl.IoErr(), name);
                 return false;
             }
@@ -187,7 +187,7 @@ pub const Repository = struct {
             }
         }
         while (rest.len > 0 and rest[rest.len - 1] == '/') rest = rest[0 .. rest.len - 1];
-        return files.gitName(into, rest) orelse repo.outside(given);
+        return files.gitName(repo.git.ub, into, rest) orelse repo.outside(given);
     }
 
     fn outside(repo: *const Repository, given: [*:0]const u8) ?[]const u8 {

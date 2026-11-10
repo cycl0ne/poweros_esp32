@@ -61,12 +61,11 @@ const exec = sdk.exec;
 const smb = dos.smb;
 const crypto = sdk.crypto;
 const bsd = sdk.bsdsocket;
-const battmem = sdk.resources.battmem;
-const battmembits = sdk.resources.battmembits;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const DosPacket = dos.DosPacket;
 const Process = dos.Process;
 const timer = sdk.devices.timer;
@@ -88,8 +87,8 @@ const FileSystem = fs_area.FileSystem;
 
 pub const HANDLER_NAME = smb.SMB_HANDLER;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 19;
-const BUILD_DATE = "08.11.2026";
+const HANDLER_REVISION = 20;
+const BUILD_DATE = "09.11.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -170,6 +169,9 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     const socket_lib = sys.OpenLibrary(bsd.SOCKETNAME, 0) orelse
         return refuse(dl, startup_packet, startup, smb.SMBSTAGE_NETWORK);
     defer sys.CloseLibrary(socket_lib);
+    const utility_lib = sys.OpenLibrary(sdk.utility.UTILITYNAME, 1) orelse
+        return refuse(dl, startup_packet, startup, smb.SMBSTAGE_MEMORY);
+    defer sys.CloseLibrary(utility_lib);
 
     const send_buffer = sys.AllocVec(session_area.send_size, exec.MEMF_ANY) orelse
         return refuse(dl, startup_packet, startup, smb.SMBSTAGE_MEMORY);
@@ -211,7 +213,7 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
         .dl = dl,
         .session = &st.session,
         .port = &me.msg_port,
-        .zone = timeZone(sys),
+        .ub = @ptrCast(utility_lib),
         .reconnect = &reconnect,
         .now = &clockSeconds,
     };
@@ -509,15 +511,6 @@ fn failed(result: *smb.SmbResult, stage: u32, err: session_area.Error) bool {
 fn cString(bytes: []const u8) []const u8 {
     for (bytes, 0..) |byte, at| if (byte == 0) return bytes[0..at];
     return bytes;
-}
-
-/// The zone the system clock keeps, as battmem.resource holds it; UTC
-/// while nobody wrote it.
-fn timeZone(sys: *ExecBase) dos.timezone.Zone {
-    const base: *battmem.BattMemBase = @ptrCast(sys.OpenResource(battmem.BATTMEMNAME) orelse return .{});
-    var bits: u64 = 0;
-    if (base.ReadBattMem(@ptrCast(&bits), battmembits.BATTMEM_ZONE_ADDR, battmembits.BATTMEM_ZONE_LEN) != 0) return .{};
-    return dos.timezone.unpack(bits) orelse .{};
 }
 
 /// The volume on the device list, named after the share or as the

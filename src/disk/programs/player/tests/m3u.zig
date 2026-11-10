@@ -7,8 +7,20 @@
 const std = @import("std");
 const m3u = @import("../m3u.zig");
 const icy = @import("sdk").http.icy;
+const host = @import("host_rom");
+const UtilityBase = @import("sdk").interface.utility.UtilityBase;
 
 const testing = std.testing;
+
+/// utility.library on the host: the lists' text goes through it.
+fn utilityUp() !*UtilityBase {
+    return @ptrCast(try host.utility.setUp());
+}
+
+fn utilityDown(ub: *UtilityBase) !void {
+    try host.utility.tearDown(@ptrCast(@alignCast(ub)));
+    try host.exec.expectNoLeaks();
+}
 
 fn expectItem(item: ?m3u.Item, location: []const u8, title: []const u8, seconds: ?u32) !void {
     const got = item orelse return error.TestExpectedItem;
@@ -26,13 +38,15 @@ test "Player's lists: the kind by the ending, in any case" {
 }
 
 test "Player's lists: M3U, plain and extended" {
-    var plain = m3u.Reader.init("Fire.mp3\r\n\r\n# a comment\r\nMore/Rise.flac\r\n");
+    const ub = try utilityUp();
+    defer host.exec.deinit();
+    var plain = m3u.Reader.init(ub, "Fire.mp3\r\n\r\n# a comment\r\nMore/Rise.flac\r\n");
     try testing.expectEqual(m3u.Kind.m3u, plain.form);
     try expectItem(plain.next(), "Fire.mp3", "", null);
     try expectItem(plain.next(), "More/Rise.flac", "", null);
     try testing.expect(plain.next() == null);
 
-    var extended = m3u.Reader.init(
+    var extended = m3u.Reader.init(ub,
         \\#EXTM3U
         \\#EXTINF:238,Daft Punk - Around the World
         \\Music/World.mp3
@@ -50,26 +64,32 @@ test "Player's lists: M3U, plain and extended" {
     // An #EXTINF says nothing of the song after the one it is before.
     try expectItem(extended.next(), "Plain.ogg", "", null);
     try testing.expect(extended.next() == null);
+    try utilityDown(ub);
 }
 
 test "Player's lists: UTF-8 found for the whole file, its mark passed over" {
-    var marked = m3u.Reader.init("\xEF\xBB\xBF#EXTINF:1,Caf\xC3\xA9\nCaf\xC3\xA9.mp3\n");
+    const ub = try utilityUp();
+    defer host.exec.deinit();
+    var marked = m3u.Reader.init(ub, "\xEF\xBB\xBF#EXTINF:1,Caf\xC3\xA9\nCaf\xC3\xA9.mp3\n");
     try testing.expect(marked.utf8);
     const item = marked.next().?;
     try testing.expectEqualStrings("Caf\xC3\xA9.mp3", item.location);
     var title: [16]u8 = undefined;
-    icy.latin1As(item.title, marked.utf8, &title);
+    icy.latin1As(ub, item.title, marked.utf8, &title);
     try testing.expectEqualStrings("Caf\xE9", std.mem.sliceTo(&title, 0));
 
     // A byte past ASCII that is no UTF-8 makes the file Latin-1.
-    var old = m3u.Reader.init("#EXTINF:1,Caf\xE9\nx.mp3\n");
+    var old = m3u.Reader.init(ub, "#EXTINF:1,Caf\xE9\nx.mp3\n");
     try testing.expect(!old.utf8);
-    icy.latin1As(old.next().?.title, old.utf8, &title);
+    icy.latin1As(ub, old.next().?.title, old.utf8, &title);
     try testing.expectEqualStrings("Caf\xE9", std.mem.sliceTo(&title, 0));
+    try utilityDown(ub);
 }
 
 test "Player's lists: PLS, its keys in any order and case" {
-    var pls = m3u.Reader.init(
+    const ub = try utilityUp();
+    defer host.exec.deinit();
+    var pls = m3u.Reader.init(ub,
         \\
         \\[playlist]
         \\NumberOfEntries=2
@@ -85,6 +105,7 @@ test "Player's lists: PLS, its keys in any order and case" {
     try expectItem(pls.next(), "http://radio.example:8000/live", "First station", null);
     try expectItem(pls.next(), "Songs\\Two.mp3", "Second", 181);
     try testing.expect(pls.next() == null);
+    try utilityDown(ub);
 }
 
 test "Player's lists: a location from the list's drawer" {
@@ -117,6 +138,8 @@ test "Player's lists: a path relative to the list's drawer, when it lies within"
 }
 
 test "Player's lists: what is written read back the same" {
+    const ub = try utilityUp();
+    defer host.exec.deinit();
     const items = [_]m3u.Item{
         .{ .location = "Fire.mp3", .title = "Arcade Fire - Caf\xE9", .seconds = 241 },
         .{ .location = "http://radio.example/live", .title = "A station", .logo = "http://radio.example/l.png" },
@@ -126,7 +149,7 @@ test "Player's lists: what is written read back the same" {
     @memcpy(text[0..m3u.header.len], m3u.header);
     var length: usize = m3u.header.len;
     for (items) |item| {
-        const written = m3u.itemLines(item, text[length..]);
+        const written = m3u.itemLines(ub, item, text[length..]);
         try testing.expect(written <= m3u.itemLength(item));
         length += written;
     }
@@ -136,30 +159,34 @@ test "Player's lists: what is written read back the same" {
         "#EXTINF:-1 tvg-logo=\"http://radio.example/l.png\",A station\n" ++
         "http://radio.example/live\n" ++
         "Plain.ogg\n", text[0..length]);
-    var reader = m3u.Reader.init(text[0..length]);
+    var reader = m3u.Reader.init(ub, text[0..length]);
     try testing.expect(reader.utf8);
     for (items) |item| {
         const got = reader.next().?;
         var title: [64]u8 = undefined;
-        icy.latin1As(got.title, reader.utf8, &title);
+        icy.latin1As(ub, got.title, reader.utf8, &title);
         try testing.expectEqualStrings(item.title, std.mem.sliceTo(&title, 0));
         try testing.expectEqualStrings(item.location, got.location);
         try testing.expectEqualStrings(item.logo, got.logo);
         try testing.expectEqual(item.seconds, got.seconds);
     }
     try testing.expect(reader.next() == null);
+    try utilityDown(ub);
 }
 
 test "Player's lists: the station a station's list stands for" {
+    const ub = try utilityUp();
+    defer host.exec.deinit();
     try testing.expect(m3u.namesList("http://radio.example/listen.pls"));
     try testing.expect(m3u.namesList("http://radio.example/live.M3U?sid=1"));
     try testing.expect(!m3u.namesList("http://radio.example/live.mp3"));
     try testing.expect(!m3u.namesList("http://radio.example/stream?file=a.pls"));
     const pls = "[playlist]\nNumberOfEntries=2\nFile1=http://one.example:8000/\nTitle1=One\nFile2=http://two.example/\n";
-    try testing.expectEqualStrings("http://one.example:8000/", m3u.firstAddress(pls).?);
-    try testing.expectEqualStrings("https://b.example/live", m3u.firstAddress("#EXTM3U\nlocal.mp3\nhttps://b.example/live\n").?);
-    try testing.expect(m3u.firstAddress("#EXTM3U\nlocal.mp3\n") == null);
+    try testing.expectEqualStrings("http://one.example:8000/", m3u.firstAddress(ub, pls).?);
+    try testing.expectEqualStrings("https://b.example/live", m3u.firstAddress(ub, "#EXTM3U\nlocal.mp3\nhttps://b.example/live\n").?);
+    try testing.expect(m3u.firstAddress(ub, "#EXTM3U\nlocal.mp3\n") == null);
     const hls = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=128000\nhttp://c.example/chunks.m3u8\n";
     try testing.expect(m3u.isHls(hls));
     try testing.expect(!m3u.isHls(pls));
+    try utilityDown(ub);
 }

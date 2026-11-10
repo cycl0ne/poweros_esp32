@@ -27,6 +27,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const lb = sdk.gadgets.listbrowser;
 const ExecBase = sdk.interface.exec.ExecBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const m3u = @import("m3u.zig");
 const csv = @import("csv.zig");
 const icy = sdk.http.icy;
@@ -214,12 +215,12 @@ pub const Stations = struct {
     /// The stations an M3U names added, a station for each address: its
     /// name from `#EXTINF` - the end of its address without one - and its
     /// picture. A file's name in it is passed over.
-    pub fn readKept(list: *Stations, sys: *ExecBase, text: []const u8) void {
-        var reader = m3u.Reader.init(text);
+    pub fn readKept(list: *Stations, sys: *ExecBase, ub: *UtilityBase, text: []const u8) void {
+        var reader = m3u.Reader.init(ub, text);
         var name: [name_room + 1]u8 = undefined;
         while (reader.next()) |item| {
             if (!isUrl(item.location)) continue;
-            icy.latin1As(item.title, reader.utf8, &name);
+            icy.latin1As(ub, item.title, reader.utf8, &name);
             const shown = tidy(&name);
             _ = list.add(sys, .{
                 .name = if (shown.len > 0) shown else lastPart(item.location),
@@ -231,7 +232,7 @@ pub const Stations = struct {
 
     /// The list as M3U after `kept_header`, in memory of its own the
     /// caller gives back with `FreeVec`; null without the memory.
-    pub fn keptText(list: *Stations, sys: *ExecBase) ?[]u8 {
+    pub fn keptText(list: *Stations, sys: *ExecBase, ub: *UtilityBase) ?[]u8 {
         var length: usize = kept_header.len;
         var at_station = list.first();
         while (at_station) |each| : (at_station = each.next()) length += m3u.itemLength(each.item());
@@ -240,14 +241,14 @@ pub const Stations = struct {
         @memcpy(text[0..kept_header.len], kept_header);
         var written: usize = kept_header.len;
         at_station = list.first();
-        while (at_station) |each| : (at_station = each.next()) written += m3u.itemLines(each.item(), text[written..length]);
+        while (at_station) |each| : (at_station = each.next()) written += m3u.itemLines(ub, each.item(), text[written..length]);
         return text[0..written];
     }
 
     /// The stations a search's CSV answer names, put in by how often they
     /// were listened to: how many. The text is changed - its quotes taken
     /// off - as it is read.
-    pub fn readFound(list: *Stations, sys: *ExecBase, text: []u8) usize {
+    pub fn readFound(list: *Stations, sys: *ExecBase, ub: *UtilityBase, text: []u8) usize {
         var reader = csv.Reader.init(text);
         var names: [field_most][]const u8 = undefined;
         const named = @min(reader.next(&names) orelse return 0, field_most);
@@ -263,9 +264,9 @@ pub const Stations = struct {
             const seen = @min(count, field_most);
             const url = fieldOf(fields[0..seen], places[field_url]);
             if (!isUrl(url)) continue;
-            icy.latin1As(fieldOf(fields[0..seen], places[field_name]), true, &name);
-            icy.latin1As(fieldOf(fields[0..seen], places[field_country]), true, &country);
-            icy.latin1As(fieldOf(fields[0..seen], places[field_tags]), true, &tags);
+            icy.latin1As(ub, fieldOf(fields[0..seen], places[field_name]), true, &name);
+            icy.latin1As(ub, fieldOf(fields[0..seen], places[field_country]), true, &country);
+            icy.latin1As(ub, fieldOf(fields[0..seen], places[field_tags]), true, &tags);
             const shown = tidy(&name);
             _ = tidy(&tags);
             const made = Made{

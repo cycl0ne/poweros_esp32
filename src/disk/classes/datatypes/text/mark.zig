@@ -106,9 +106,11 @@ pub fn release(own: *Data, x: i32, y: i32) void {
     own.mark_start = 0;
     own.mark_end = 0;
     const piece = pieceAt(own, x, y) orelse return;
-    if (piece.link_length == 0) return;
+    // One too long to keep is not left cut short: it would lead
+    // somewhere else.
+    if (piece.link_length == 0 or piece.link_length >= own.link.len) return;
     const buffer = own.buffer orelse return;
-    const length = @min(piece.link_length, own.link.len - 1);
+    const length = piece.link_length;
     @memcpy(own.link[0..length], (buffer + piece.link_offset)[0..length]);
     own.link[length] = 0;
 }

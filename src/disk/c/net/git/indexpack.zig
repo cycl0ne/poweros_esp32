@@ -21,6 +21,7 @@ const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const CompressionBase = sdk.interface.compression.CompressionBase;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const _git = @import("_git.zig");
 const object = @import("object.zig");
 const pack = @import("pack.zig");
@@ -81,6 +82,7 @@ const scratch_bytes = 32 * 1024;
 
 pub const Indexer = struct {
     sys: *ExecBase,
+    ub: *UtilityBase,
     cb: *CryptoBase,
     reading: packread.Pack,
     progress: ?Progress = null,
@@ -92,8 +94,9 @@ pub const Indexer = struct {
     ofs_kids: []u32 = &.{},
     ref_kids: []u32 = &.{},
 
-    pub fn init(indexer: *Indexer, sys: *ExecBase, zb: *CompressionBase, cb: *CryptoBase, source: packread.Source) void {
+    pub fn init(indexer: *Indexer, sys: *ExecBase, ub: *UtilityBase, zb: *CompressionBase, cb: *CryptoBase, source: packread.Source) void {
         indexer.sys = sys;
+        indexer.ub = ub;
         indexer.cb = cb;
         indexer.reading.init(sys, zb, source);
         indexer.progress = null;
@@ -124,7 +127,7 @@ pub const Indexer = struct {
         const list = indexer.take(idx.Entry, count) orelse return false;
         defer indexer.release(list);
         for (indexer.entries, list) |*entry, *out| out.* = .{ .id = entry.id, .crc = entry.crc, .offset = entry.offset };
-        idx.sort(list);
+        idx.sort(indexer.ub, list);
         if (!idx.write(indexer.cb, list, checksum, sink)) return indexer.fail(.sink);
         return true;
     }
@@ -205,8 +208,8 @@ pub const Indexer = struct {
                 ref_count += 1;
             }
         }
-        _git.heapSort(u32, indexer.ofs_kids, entries, byBaseOffset);
-        _git.heapSort(u32, indexer.ref_kids, entries, byBaseId);
+        _git.sort(indexer.ub, u32, indexer.ofs_kids, entries, byBaseOffset);
+        _git.sort(indexer.ub, u32, indexer.ref_kids, entries, byBaseId);
 
         const frames = indexer.take(Frame, indexer.deltas + 1) orelse return false;
         defer indexer.release(frames);

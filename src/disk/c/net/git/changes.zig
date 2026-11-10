@@ -182,7 +182,7 @@ pub const Changes = struct {
     pub fn untracked(changes: *Changes, each: UntrackedFn, each_context: *anyopaque) bool {
         if (!changes.sortPaths()) return false;
         const found = changes.findUntracked() orelse return false;
-        _git.heapSort([]const u8, found, {}, pathBefore);
+        _git.sort(changes.git.ub, []const u8, found, {}, pathBefore);
         for (found) |path| {
             if (!each(each_context, path)) return true;
         }
@@ -260,7 +260,7 @@ pub const Changes = struct {
                 continue;
             }
             const local_name = files.span(@ptrCast(&level.fib.file_name));
-            const git_name = files.gitName(&state.name, local_name) orelse continue;
+            const git_name = files.gitName(git.ub, &state.name, local_name) orelse continue;
             if (level.git_length == 0 and git_name.len == 4 and isDotGit(git_name)) continue;
             if (level.git_length + git_name.len + 2 > files.path_most or level.local_length + local_name.len + 2 > files.path_most) continue;
             @memcpy(state.git_path[level.git_length..][0..git_name.len], git_name);

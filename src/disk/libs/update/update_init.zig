@@ -13,7 +13,7 @@ const update_lvo = @import("update_lvo.zig");
 
 pub const LIBRARY_NAME = update.UPDATENAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 3;
+pub const LIBRARY_REVISION = 4;
 const BUILD_DATE = "09.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

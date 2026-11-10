@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! utility.library's jump table: tag lists, hooks, dates, 32- and 64-bit
 //! multiplication and division, Latin-1 case, pack tables, named objects,
-//! unique IDs, pattern matching, strings, alignment and lines of settings.
+//! unique IDs, pattern matching, strings, alignment, lines of settings,
+//! the zone the system clock keeps, text between UTF-8 and Latin-1, and
+//! URLs.
 //! The reserved slots are kept free so that the slots after them stay
 //! where they are.
 //!
@@ -11,6 +13,7 @@
 const libraries = @import("../libs/exec/libraries.zig");
 const exec = @import("../libs/exec/exec.zig");
 const utility = @import("../libs/utility/utility.zig");
+const dos = @import("../libs/dos/dos.zig");
 
 /// The name to open it by (OpenLibrary, OpenDevice).
 pub const NAME = "utility.library";
@@ -71,6 +74,16 @@ pub const LVO = struct {
     pub const DateJoin = libraries.lvo(62);
     pub const CompareMem = libraries.lvo(63);
     pub const NextSetting = libraries.lvo(64);
+    pub const ZoneOffset = libraries.lvo(65);
+    pub const DateToUtc = libraries.lvo(66);
+    pub const UtcToDate = libraries.lvo(67);
+    pub const Utf8ToLatin1 = libraries.lvo(68);
+    pub const Latin1ToUtf8 = libraries.lvo(69);
+    pub const Utf8Kind = libraries.lvo(70);
+    pub const ParseUrl = libraries.lvo(71);
+    pub const DecodeUrl = libraries.lvo(72);
+    pub const EncodeUrl = libraries.lvo(73);
+    pub const SortArray = libraries.lvo(74);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -130,6 +143,16 @@ pub const Fn = struct {
     pub const DateJoin = *const fn (*UtilityBase, *const utility.ClockData) callconv(.c) i32;
     pub const CompareMem = *const fn (*UtilityBase, *const anyopaque, *const anyopaque, usize) callconv(.c) i32;
     pub const NextSetting = *const fn (*UtilityBase, *utility.SettingScan) callconv(.c) i32;
+    pub const ZoneOffset = *const fn (*UtilityBase, i64) callconv(.c) i32;
+    pub const DateToUtc = *const fn (*UtilityBase, *const dos.DateStamp, ?*u32) callconv(.c) i64;
+    pub const UtcToDate = *const fn (*UtilityBase, i64, *dos.DateStamp) callconv(.c) void;
+    pub const Utf8ToLatin1 = *const fn (*UtilityBase, ?*utility.Utf8Conversion, [*]const u8, usize, [*]u8, usize) callconv(.c) usize;
+    pub const Latin1ToUtf8 = *const fn (*UtilityBase, [*]const u8, usize, [*]u8, usize) callconv(.c) usize;
+    pub const Utf8Kind = *const fn (*UtilityBase, [*]const u8, usize) callconv(.c) u32;
+    pub const ParseUrl = *const fn (*UtilityBase, [*]const u8, usize, *utility.UrlParts, u32) callconv(.c) bool;
+    pub const DecodeUrl = *const fn (*UtilityBase, [*]const u8, usize, [*]u8, usize) callconv(.c) usize;
+    pub const EncodeUrl = *const fn (*UtilityBase, [*]const u8, usize, [*]u8, usize, u32) callconv(.c) usize;
+    pub const SortArray = *const fn (*UtilityBase, ?*anyopaque, usize, usize, *utility.Hook) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -387,5 +410,67 @@ pub const UtilityBase = opaque {
     /// text's end, -1 for a value whose quote is not closed.
     pub fn NextSetting(self: *UtilityBase, scan: *utility.SettingScan) i32 {
         return libraries.call(self, LVO.NextSetting, Fn.NextSetting, .{scan});
+    }
+
+    /// The seconds the system's zone is east of UTC at the moment `utc`
+    /// (seconds since 1970, UTC): the rule battmem.resource holds, 0 while
+    /// nobody wrote one.
+    pub fn ZoneOffset(self: *UtilityBase, utc: i64) i32 {
+        return libraries.call(self, LVO.ZoneOffset, Fn.ZoneOffset, .{utc});
+    }
+
+    /// A DateStamp in the system's zone as seconds since 1970, UTC; the
+    /// fraction of the second into `nanoseconds` unless it is null.
+    pub fn DateToUtc(self: *UtilityBase, date: *const dos.DateStamp, nanoseconds: ?*u32) i64 {
+        return libraries.call(self, LVO.DateToUtc, Fn.DateToUtc, .{ date, nanoseconds });
+    }
+
+    /// Seconds since 1970, UTC, as a DateStamp in the system's zone.
+    pub fn UtcToDate(self: *UtilityBase, utc: i64, date: *dos.DateStamp) void {
+        return libraries.call(self, LVO.UtcToDate, Fn.UtcToDate, .{ utc, date });
+    }
+
+    /// UTF-8 at `from` into `into` as Latin-1, as `conversion` says - null
+    /// for a whole text, `?` for what Latin-1 has not: the bytes written, or
+    /// UTF8_REFUSED.
+    pub fn Utf8ToLatin1(self: *UtilityBase, conversion: ?*utility.Utf8Conversion, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize) usize {
+        return libraries.call(self, LVO.Utf8ToLatin1, Fn.Utf8ToLatin1, .{ conversion, from, from_length, into, into_length });
+    }
+
+    /// Latin-1 at `from` into `into` as UTF-8: the bytes the whole takes,
+    /// written as far as whole characters fit.
+    pub fn Latin1ToUtf8(self: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize) usize {
+        return libraries.call(self, LVO.Latin1ToUtf8, Fn.Latin1ToUtf8, .{ from, from_length, into, into_length });
+    }
+
+    /// Whether `bytes` are UTF-8, and Latin-1's characters alone:
+    /// UTF8KIND_NONE, UTF8KIND_ASCII, UTF8KIND_LATIN1 or UTF8KIND_WIDE.
+    pub fn Utf8Kind(self: *UtilityBase, bytes: [*]const u8, length: usize) u32 {
+        return libraries.call(self, LVO.Utf8Kind, Fn.Utf8Kind, .{ bytes, length });
+    }
+
+    /// `text` taken apart into `parts` in place - scheme, user, password,
+    /// host, port, path - and with URLF_SCP `[user@]host:path` too: false
+    /// when it is no URL.
+    pub fn ParseUrl(self: *UtilityBase, text: [*]const u8, length: usize, parts: *utility.UrlParts, flags: u32) bool {
+        return libraries.call(self, LVO.ParseUrl, Fn.ParseUrl, .{ text, length, parts, flags });
+    }
+
+    /// A URL's part with its `%XX` undone into `into`: the bytes the whole
+    /// comes to, or URL_BROKEN.
+    pub fn DecodeUrl(self: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize) usize {
+        return libraries.call(self, LVO.DecodeUrl, Fn.DecodeUrl, .{ from, from_length, into, into_length });
+    }
+
+    /// Bytes as a URL's part, `%XX` for what needs it - URLF_SLASH keeps
+    /// `/`, URLF_LATIN1 encodes Latin-1 as UTF-8: the bytes the whole takes.
+    pub fn EncodeUrl(self: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize, flags: u32) usize {
+        return libraries.call(self, LVO.EncodeUrl, Fn.EncodeUrl, .{ from, from_length, into, into_length, flags });
+    }
+
+    /// `count` elements of `size` bytes at `array` put in order, in place:
+    /// `hook` answers below 0 when its object goes before its message.
+    pub fn SortArray(self: *UtilityBase, array: ?*anyopaque, count: usize, size: usize, hook: *utility.Hook) void {
+        return libraries.call(self, LVO.SortArray, Fn.SortArray, .{ array, count, size, hook });
     }
 };

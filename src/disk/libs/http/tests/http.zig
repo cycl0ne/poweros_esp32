@@ -12,10 +12,13 @@ const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const http = sdk.http;
+const tls = sdk.tls;
+const bsd = sdk.bsdsocket;
 const utility = sdk.utility;
 const compression = sdk.compression;
 const ExecBase = sdk.interface.exec.ExecBase;
 const HttpBase = sdk.interface.http.HttpBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const CompressionBase = sdk.interface.compression.CompressionBase;
 const http_init = @import("../http_init.zig");
 const compression_init = @import("../../compression/compression_init.zig");
@@ -36,29 +39,36 @@ test {
 // --- HTTP's text ----------------------------------------------------------------
 
 test "URLs taken apart" {
-    const plain = _protocol.parseUrl("http://example.org").?;
+    const rom_ub = try host.utility.setUp();
+    defer kexec.deinit();
+    const ub: *UtilityBase = @ptrCast(rom_ub);
+    const plain = _protocol.parseUrl(ub, "http://example.org").?;
     try testing.expectEqualStrings("example.org", plain.host);
     try testing.expectEqual(@as(u16, 80), plain.port);
     try testing.expectEqualStrings("/", plain.path);
-    const full = _protocol.parseUrl("HTTP://10.0.2.2:8000/dir/file.txt?a=1#top").?;
+    const full = _protocol.parseUrl(ub, "HTTP://10.0.2.2:8000/dir/file.txt?a=1#top").?;
     try testing.expectEqualStrings("10.0.2.2", full.host);
     try testing.expectEqual(@as(u16, 8000), full.port);
     try testing.expectEqualStrings("/dir/file.txt?a=1", full.path);
-    try testing.expect(_protocol.parseUrl("https://example.org/").?.secure);
-    try testing.expectEqual(@as(u16, 443), _protocol.parseUrl("https://example.org/").?.port);
-    try testing.expectEqualStrings("?q=1", _protocol.parseUrl("http://h?q=1").?.path);
-    const six = _protocol.parseUrl("http://[fec0::2]:8080/x").?;
+    try testing.expect(_protocol.parseUrl(ub, "https://example.org/").?.secure);
+    try testing.expectEqual(@as(u16, 443), _protocol.parseUrl(ub, "https://example.org/").?.port);
+    try testing.expectEqualStrings("?q=1", _protocol.parseUrl(ub, "http://h?q=1").?.path);
+    const six = _protocol.parseUrl(ub, "http://[fec0::2]:8080/x").?;
     try testing.expectEqualStrings("[fec0::2]", six.host);
     try testing.expectEqualStrings("fec0::2", six.hostName());
     try testing.expectEqual(@as(u16, 8080), six.port);
-    try testing.expectEqual(@as(u16, 80), _protocol.parseUrl("http://[::1]/").?.port);
+    try testing.expectEqual(@as(u16, 80), _protocol.parseUrl(ub, "http://[::1]/").?.port);
     for ([_][]const u8{ "ftp://x/", "http://", "http://:80/", "http://h:0/", "http://h:65536/", "http://h:8a/", "example.org", "http://[::1/", "http://[]/", "http://h/a b", "http://h/a\r\nX: y", "http://user@h/", "http://h\x01/" }) |text| {
-        try testing.expectEqual(@as(?Url, null), _protocol.parseUrl(text));
+        try testing.expectEqual(@as(?Url, null), _protocol.parseUrl(ub, text));
     }
+    try host.utility.tearDown(rom_ub);
 }
 
 test "a redirect's Location made into a URL" {
-    const base = _protocol.parseUrl("http://h:8000/a/b/c.html?q=1").?;
+    const rom_ub = try host.utility.setUp();
+    defer kexec.deinit();
+    const ub: *UtilityBase = @ptrCast(rom_ub);
+    const base = _protocol.parseUrl(ub, "http://h:8000/a/b/c.html?q=1").?;
     var into: [128]u8 = undefined;
     const cases = [_][2][]const u8{
         .{ "http://other/x", "http://other/x" },
@@ -78,12 +88,13 @@ test "a redirect's Location made into a URL" {
         const length = _protocol.resolve(base, case[0], &into).?;
         try testing.expectEqualStrings(case[1], into[0..length]);
     }
-    const secure = _protocol.parseUrl("https://h/").?;
+    const secure = _protocol.parseUrl(ub, "https://h/").?;
     const length = _protocol.resolve(secure, "//other/z", &into).?;
     try testing.expectEqualStrings("https://other/z", into[0..length]);
     var small: [8]u8 = undefined;
     try testing.expectEqual(@as(?usize, null), _protocol.resolve(base, "/a-long-way", &small));
     try testing.expectEqual(@as(?usize, null), _protocol.resolve(base, "", &into));
+    try host.utility.tearDown(rom_ub);
 }
 
 test "the head of an answer, read in place" {
@@ -235,6 +246,7 @@ fn fakeConnect(client: *_client.Client, url: Url, failure: *_connection.Failure)
     server.made += 1;
     if (script.refuse != http.HTTPERR_OK) {
         failure.code = script.refuse;
+        if (script.refuse == http.HTTPERR_HOST) failure.setHost(url.hostName());
         return null;
     }
     fake.* = .{
@@ -797,6 +809,65 @@ test "what is refused, and why" {
     var err: i32 = 0;
     try testing.expectEqual(@as(?*http.Request, null), rig.hb.OpenRequest(@ptrCast(&stranger), "GET", "http://h/", null, &err));
     try testing.expectEqual(http.HTTPERR_STATE, err);
+    try rig.deinit();
+}
+
+/// What Fault says for `code`, checked against `expected`, its length too.
+fn expectFault(rig: *Rig, client: ?*http.Client, code: i32, header: ?[*:0]const u8, expected: []const u8) !void {
+    var why: [256]u8 = @splat(0xAA);
+    const length = rig.hb.Fault(client, code, header, &why, why.len);
+    try testing.expectEqualStrings(expected, std.mem.sliceTo(&why, 0));
+    try testing.expectEqual(@as(i32, @intCast(expected.len)), length);
+}
+
+test "a failure in words: the code's alone, and the client's last with what it kept" {
+    var rig = try Rig.init(&.{
+        .{ .refuse = http.HTTPERR_HOST },
+    }, null);
+    // The code's words, with a header and without.
+    try expectFault(&rig, null, http.HTTPERR_HOST, null, "the host has no address");
+    try expectFault(&rig, null, http.HTTPERR_HOST, "HttpGet", "HttpGet: the host has no address");
+    try expectFault(&rig, null, http.HTTPERR_TLS, null, "the TLS session failed");
+    try expectFault(&rig, null, -99, null, "the request failed (-99)");
+    var why: [16]u8 = @splat(0xAA);
+    try testing.expectEqual(@as(i32, 0), rig.hb.Fault(null, http.HTTPERR_OK, "x", &why, why.len));
+    try testing.expectEqual(@as(u8, 0), why[0]);
+    try testing.expectEqual(@as(i32, 0), rig.hb.Fault(null, http.HTTPERR_HOST, null, &why, 0));
+
+    // The client's last failure: the host it could not find, named.
+    try testing.expectEqual(http.HTTPERR_HOST, rig.refused("GET", "http://nowhere.example/", null));
+    try expectFault(&rig, rig.client, http.HTTPERR_HOST, null, "nowhere.example has no address");
+    // Another code than the last has its words alone.
+    try expectFault(&rig, rig.client, http.HTTPERR_IO, null, "the connection failed");
+    // Cut to the buffer, the NUL always there.
+    var small: [12]u8 = @splat(0xAA);
+    try testing.expectEqual(@as(i32, 11), rig.hb.Fault(rig.client, http.HTTPERR_HOST, "Git", &small, small.len));
+    try testing.expectEqualStrings("Git: nowher", std.mem.sliceTo(&small, 0));
+    try testing.expectEqual(@as(i32, 11), rig.hb.Fault(rig.client, http.HTTPERR_HOST, "a header too long for it", &small, small.len));
+    try testing.expectEqualStrings("a header to", std.mem.sliceTo(&small, 0));
+    // A failure before any connection is the last one now.
+    try testing.expectEqual(http.HTTPERR_URL, rig.refused("GET", "ftp://h/", null));
+    try expectFault(&rig, rig.client, http.HTTPERR_HOST, null, "the host has no address");
+    try expectFault(&rig, rig.client, http.HTTPERR_URL, null, "not an http:// or https:// URL, or one too long");
+
+    // What a TLS session, a socket and a missing library leave.
+    const own = _client.of(rig.client).?;
+    _client.remember(own, &.{ .code = http.HTTPERR_TLS, .tls_error = tls.TLSERR_CERTIFICATE, .verdict = tls.TLSV_EXPIRED });
+    try expectFault(&rig, rig.client, http.HTTPERR_TLS, "Git", "Git: the server's certificate is not trusted: it has expired");
+    _client.remember(own, &.{ .code = http.HTTPERR_TLS, .tls_error = tls.TLSERR_ALERT, .alert = 40 });
+    try expectFault(&rig, rig.client, http.HTTPERR_TLS, null, "the server refused the TLS session (alert 40)");
+    _client.remember(own, &.{ .code = http.HTTPERR_TLS, .tls_error = tls.TLSERR_CLOCK });
+    try expectFault(&rig, rig.client, http.HTTPERR_TLS, null, "the clock is not set, so no certificate can be checked (TimeSync)");
+    own.errno = bsd.EINTR;
+    _client.remember(own, &.{ .code = http.HTTPERR_IO });
+    try expectFault(&rig, rig.client, http.HTTPERR_IO, null, "stopped");
+    own.errno = bsd.EWOULDBLOCK;
+    _client.remember(own, &.{ .code = http.HTTPERR_IO });
+    try expectFault(&rig, rig.client, http.HTTPERR_IO, null, "the server did not answer in time");
+    // The Errno goes with HTTPERR_IO alone.
+    _client.remember(own, &.{ .code = http.HTTPERR_LIBRARY, .library = tls.TLSNAME });
+    try testing.expectEqual(@as(i32, 0), own.last.errno);
+    try expectFault(&rig, rig.client, http.HTTPERR_LIBRARY, null, "tls.library is not there");
     try rig.deinit();
 }
 

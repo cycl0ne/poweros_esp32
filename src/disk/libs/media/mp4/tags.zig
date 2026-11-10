@@ -62,13 +62,13 @@ pub fn read(file: *File, index: []const u8) void {
             const value = valueOf(item.body) orelse continue;
             const bytes = value.bytes;
             switch (item.kind) {
-                kind("\xA9nam") => _file.copyUtf8(&t.title, bytes),
-                kind("\xA9ART") => _file.copyUtf8(&t.artist, bytes),
-                kind("\xA9alb") => _file.copyUtf8(&t.album, bytes),
-                kind("aART") => _file.copyUtf8(&t.album_artist, bytes),
-                kind("\xA9wrt") => _file.copyUtf8(&t.composer, bytes),
-                kind("\xA9gen") => _file.copyUtf8(&t.genre, bytes),
-                kind("\xA9cmt") => _file.copyUtf8(&t.comment, bytes),
+                kind("\xA9nam") => _file.copyUtf8(file, &t.title, bytes),
+                kind("\xA9ART") => _file.copyUtf8(file, &t.artist, bytes),
+                kind("\xA9alb") => _file.copyUtf8(file, &t.album, bytes),
+                kind("aART") => _file.copyUtf8(file, &t.album_artist, bytes),
+                kind("\xA9wrt") => _file.copyUtf8(file, &t.composer, bytes),
+                kind("\xA9gen") => _file.copyUtf8(file, &t.genre, bytes),
+                kind("\xA9cmt") => _file.copyUtf8(file, &t.comment, bytes),
                 kind("\xA9day") => t.year = yearOf(bytes),
                 kind("gnre") => if (bytes.len >= 2) {
                     const number = be16(bytes[0..2]);
@@ -169,7 +169,7 @@ fn neroChapters(file: *File, chpl: []const u8) void {
         at += 9;
         if (at + length > chpl.len) break;
         list[n].start = @intCast(@min(start, std.math.maxInt(u32)));
-        _file.copyUtf8(&list[n].title, chpl[at..][0..length]);
+        _file.copyUtf8(file, &list[n].title, chpl[at..][0..length]);
         at += length;
     }
     finishChapters(file, list, n);
@@ -202,7 +202,7 @@ fn trackChapters(file: *File) void {
         const take = @min(size, buffer.len);
         if (take >= 2 and _file.readAt(file, at.offset, buffer[0..take])) {
             const length = @min(be16(buffer[0..2]), take - 2);
-            sampleText(&list[n].title, buffer[2..][0..length]);
+            sampleText(file, &list[n].title, buffer[2..][0..length]);
         }
         cursor.step(t, &at, size);
     }
@@ -212,7 +212,7 @@ fn trackChapters(file: *File) void {
 }
 
 /// A text sample's text: UTF-16 behind its byte-order mark, else UTF-8.
-fn sampleText(into: *[96]u8, bytes: []const u8) void {
+fn sampleText(file: *const File, into: *[96]u8, bytes: []const u8) void {
     if (bytes.len >= 2 and bytes[0] == 0xFE and bytes[1] == 0xFF) {
         var out: usize = 0;
         var at: usize = 2;
@@ -224,7 +224,7 @@ fn sampleText(into: *[96]u8, bytes: []const u8) void {
         into[out] = 0;
         return;
     }
-    _file.copyUtf8(into, bytes);
+    _file.copyUtf8(file, into, bytes);
 }
 
 /// The chapters kept: each one ends where the next starts, the last one

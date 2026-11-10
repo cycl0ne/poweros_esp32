@@ -30,6 +30,7 @@ const ExecBase = @import("../../interface/exec.zig").ExecBase;
 const DosBase = @import("../../interface/dos.zig").DosBase;
 const SocketBase = @import("../../interface/bsdsocket.zig").SocketBase;
 const CryptoBase = @import("../../interface/crypto.zig").CryptoBase;
+const UtilityBase = @import("../../interface/utility.zig").UtilityBase;
 const FileHandle = dos.FileHandle;
 const Printf = dos.stdio.Printf;
 
@@ -63,6 +64,8 @@ pub const Client = struct {
     dl: *DosBase,
     sb: *SocketBase,
     cb: *CryptoBase,
+    /// The banner's UTF-8 made Latin-1.
+    ub: *UtilityBase,
     /// The program's name, in front of every message.
     program: [*:0]const u8,
     /// Where the console's answers come from - the host key's question,
@@ -372,25 +375,24 @@ pub const Client = struct {
     }
 
     /// The banner the last SSHCMD_LOGIN brought, if any, shown as the
-    /// console can show it: UTF-8 taken to Latin-1, a character Latin-1
-    /// has not as `?`, the control characters left out but for tabs and
-    /// line ends.
+    /// console can show it: UTF-8 made Latin-1 by utility.library, a
+    /// character Latin-1 has not as `?`, the control characters left out
+    /// but for tabs and line ends.
     fn showBanner(client: *Client) void {
         const dl = client.dl;
-        const text = sliceTo(&client.login.banner);
+        const banner = &client.login.banner;
+        const text = sliceTo(banner);
         if (text.len == 0) return;
         _ = dl.Flush(client.output);
+        // In place: Latin-1 is never longer than the UTF-8 it comes from.
+        const latin_length = client.ub.Utf8ToLatin1(null, text.ptr, text.len, banner, text.len);
         var shown: [256]u8 = undefined;
         var length: usize = 0;
         var last: u8 = '\n';
-        var at: usize = 0;
-        while (at < text.len) {
-            const decoded = decodeUtf8(text[at..]);
-            at += decoded.length;
-            const char = decoded.char;
+        for (banner[0..latin_length]) |char| {
             if (char != '\t' and char != '\n' and (char < 0x20 or (char >= 0x7F and char < 0xA0))) continue;
-            last = if (char <= 0xFF) @intCast(char) else '?';
-            shown[length] = last;
+            last = char;
+            shown[length] = char;
             length += 1;
             if (length == shown.len) {
                 _ = dl.Write(client.output, &shown, @intCast(length));
@@ -413,26 +415,10 @@ pub const Client = struct {
         if (!dl.IsInteractive(input)) return false;
         _ = Printf(dl, MSG_PASSWORD, .{ @as([*:0]const u8, @ptrCast(&client.user)), @as([*:0]const u8, &client.host) });
         _ = dl.Flush(client.output);
-        _ = dl.SetMode(input, 1);
-        defer _ = dl.SetMode(input, 0);
+        // Without its echo, a newline after it; wiped by dos when given up.
         const login = &client.login;
-        var length: usize = 0;
-        while (true) {
-            var char: [1]u8 = undefined;
-            if (dl.Read(input, &char, 1) != 1 or char[0] == 3 or char[0] == 0x1C) {
-                wipe(&login.password);
-                _ = dl.Write(client.output, "\n", 1);
-                return false;
-            }
-            if (char[0] == '\r' or char[0] == '\n') break;
-            if (char[0] == 8 or char[0] == 127) {
-                if (length > 0) length -= 1;
-            } else if (length < login.password.len and char[0] >= ' ') {
-                login.password[length] = char[0];
-                length += 1;
-            }
-        }
-        _ = dl.Write(client.output, "\n", 1);
+        const length = dl.ReadPassword(input, &login.password, login.password.len);
+        if (length < 0) return false;
         login.password_length = @intCast(length);
         return true;
     }
@@ -480,28 +466,6 @@ fn hasMethod(methods: []const u8, method: []const u8) bool {
         start = end + 1;
     }
     return false;
-}
-
-const Decoded = struct { char: u32, length: usize };
-
-/// The character UTF-8 starts `bytes` with, and how many bytes it takes;
-/// `?` for a byte that starts none.
-fn decodeUtf8(bytes: []const u8) Decoded {
-    const lead = bytes[0];
-    const extra: usize = switch (lead) {
-        0x00...0x7F => return .{ .char = lead, .length = 1 },
-        0xC2...0xDF => 1,
-        0xE0...0xEF => 2,
-        0xF0...0xF4 => 3,
-        else => return .{ .char = '?', .length = 1 },
-    };
-    if (bytes.len <= extra) return .{ .char = '?', .length = 1 };
-    var char: u32 = lead & (@as(u8, 0x3F) >> @intCast(extra));
-    for (bytes[1 .. 1 + extra]) |byte| {
-        if (byte & 0xC0 != 0x80) return .{ .char = '?', .length = 1 };
-        char = char << 6 | (byte & 0x3F);
-    }
-    return .{ .char = char, .length = 1 + extra };
 }
 
 const Lines = struct {

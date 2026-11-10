@@ -170,6 +170,10 @@ pub const LVO = struct {
     pub const StartWrite = libraries.lvo(153);
     pub const CheckRequest = libraries.lvo(154);
     pub const WaitRequest = libraries.lvo(155);
+    pub const ReadFile = libraries.lvo(156);
+    pub const CreateDirs = libraries.lvo(157);
+    pub const DeleteTree = libraries.lvo(158);
+    pub const ReadPassword = libraries.lvo(159);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -327,6 +331,10 @@ pub const Fn = struct {
     pub const StartWrite = *const fn (*DosBase, ?*dos.FileHandle, [*]const u8, isize, ?*dos.DosRequest) callconv(.c) bool;
     pub const CheckRequest = *const fn (*DosBase, ?*dos.DosRequest) callconv(.c) bool;
     pub const WaitRequest = *const fn (*DosBase, ?*dos.DosRequest) callconv(.c) isize;
+    pub const ReadFile = *const fn (*DosBase, [*:0]const u8, usize, u32, *usize) callconv(.c) ?[*]u8;
+    pub const CreateDirs = *const fn (*DosBase, [*:0]const u8, bool) callconv(.c) bool;
+    pub const DeleteTree = *const fn (*DosBase, [*:0]const u8, u32, ?*utility.Hook) callconv(.c) bool;
+    pub const ReadPassword = *const fn (*DosBase, ?*dos.FileHandle, [*]u8, usize) callconv(.c) isize;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1276,5 +1284,34 @@ pub const DosBase = opaque {
     /// with IoErr.
     pub fn WaitRequest(self: *DosBase, request: ?*dos.DosRequest) isize {
         return libraries.call(self, LVO.WaitRequest, Fn.WaitRequest, .{request});
+    }
+
+    /// The file `name` read whole into memory of its own (AllocVec with
+    /// `requirements`, freed with FreeVec), a NUL after its bytes, their
+    /// number in `length`: null with IoErr - ERROR_OBJECT_TOO_LARGE past
+    /// `most` bytes.
+    pub fn ReadFile(self: *DosBase, name: [*:0]const u8, most: usize, requirements: u32, length: *usize) ?[*]u8 {
+        return libraries.call(self, LVO.ReadFile, Fn.ReadFile, .{ name, most, requirements, length });
+    }
+
+    /// Every directory on the path `name` that is not there made, from the
+    /// volume down - its last part too when `last`: true, or false with IoErr.
+    pub fn CreateDirs(self: *DosBase, name: [*:0]const u8, last: bool) bool {
+        return libraries.call(self, LVO.CreateDirs, Fn.CreateDirs, .{ name, last });
+    }
+
+    /// `name` deleted, a directory with all it holds (DELF_KEEP: only that),
+    /// `hook` told of each object (a DeleteMsg) and able to stop the walk:
+    /// true, or false with IoErr.
+    pub fn DeleteTree(self: *DosBase, name: [*:0]const u8, flags: u32, hook: ?*utility.Hook) bool {
+        return libraries.call(self, LVO.DeleteTree, Fn.DeleteTree, .{ name, flags, hook });
+    }
+
+    /// A password typed on the console `file` without its echo into `buffer`
+    /// (a NUL after it when there is room), a newline written after: its
+    /// length, or -1 with the buffer wiped - IoErr ERROR_BREAK for Ctrl-C, 0
+    /// when the input ended.
+    pub fn ReadPassword(self: *DosBase, file: ?*dos.FileHandle, buffer: [*]u8, size: usize) isize {
+        return libraries.call(self, LVO.ReadPassword, Fn.ReadPassword, .{ file, buffer, size });
     }
 };

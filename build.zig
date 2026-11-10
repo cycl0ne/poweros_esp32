@@ -1608,9 +1608,11 @@ pub fn build(b: *std.Build) void {
     });
     disk_test_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("host_rom", host_rom);
-    // anvil.library's strings, which its files import as `strings`: the
-    // only module of the disk's tests that has a catalog.
+    // anvil.library's strings, which its files import as `strings`, and
+    // http.library's, which its own import as `http_strings`: the modules
+    // of the disk's tests that have a catalog.
     disk_test_mod.addImport("strings", poweros_sdk.addStrings(b, sdk_dep, disk_dep.path("libs/anvil/anvil.cd"), "sys/anvil.catalog"));
+    disk_test_mod.addImport("http_strings", poweros_sdk.addStrings(b, sdk_dep, disk_dep.path("libs/http/http.cd"), "sys/http.catalog"));
     // The rasterizer core: its own tests, and the module its test programs
     // import, for the scenes they draw (c/test/raster/reference.zig). A
     // file belongs to one module, so the core is tested on its own.

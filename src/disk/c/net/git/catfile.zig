@@ -63,7 +63,7 @@ pub fn run(git: *Git, argv: []const usize) i32 {
         out.hex(&entry.id);
         out.byte('\t');
         git.put(out.written());
-        git.put(entry.name);
+        git.putPath(entry.name);
         git.put("\n");
     }
     if (entries.bad) {

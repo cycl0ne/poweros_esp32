@@ -22,8 +22,8 @@ pub const LIBRARY_NAME = "utility.library";
 /// The version programs ask `OpenLibrary` for.
 const LIBRARY_VERSION = 1;
 /// The revision within the version, set by `init`.
-const LIBRARY_REVISION = 2;
-const BUILD_DATE = "27.10.2026";
+const LIBRARY_REVISION = 6;
+const BUILD_DATE = "09.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -52,6 +52,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ub.sys_base = sys_base;
     sys_base.InitLock(&ub.object_lock, "utility objects", exec.LOCKORDER_DRIVER, 0);
     ub.wild_star = false;
+    ub.batt_mem = null;
     const tags = [_]TagItem{ .{ .tag = ANO_NameSpace, .data = 1 }, .{} };
     ub.master_space = ub.iface().AllocNamedObjectA("", &tags) orelse return null;
     return lib;

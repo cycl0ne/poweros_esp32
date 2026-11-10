@@ -19,7 +19,6 @@ const dos = sdk.dos;
 const exec = sdk.exec;
 const bsd = sdk.bsdsocket;
 const http = sdk.http;
-const tls = sdk.tls;
 const utility = sdk.utility;
 const _git = @import("_git.zig");
 const url = @import("url.zig");
@@ -28,19 +27,8 @@ const credentials = @import("credentials.zig");
 const transport = @import("transport.zig");
 const Git = @import("context.zig").Git;
 
-const MSG_TLS_CERTIFICATE = "the server's certificate is not trusted: %s\n";
-const MSG_TLS_CLOCK = "the clock is not set, so no certificate can be checked (TimeSync)\n";
-const MSG_TLS_ALERT = "the server refused the TLS session (alert %u)\n";
-const MSG_TLS_HANDSHAKE = "the TLS handshake failed\n";
-const MSG_TLS_FAILED = "TLS failed (%d)\n";
-const MSG_NOHOST = "the host of %s has no address\n";
-const MSG_FAILED = "the connection failed: %s (errno %d)\n";
 const MSG_STOPPED = "stopped\n";
-const MSG_NOTHTTP = "the server's answer is not HTTP\n";
-const MSG_CLOSED = "the server closed the connection without answering\n";
-const MSG_EARLY = "the connection ended before the answer did\n";
-const MSG_REDIRECTS = "more than %u redirects, or one to nowhere\n";
-const MSG_HTTP_FAILED = "the request failed (%d)\n";
+const MSG_FAULT = "%s\n";
 const MSG_STATUS = "%s: %s\n";
 const MSG_NOTFOUND = "%s: no repository there\n";
 const MSG_DENIED = "%s: the server wants credentials it was not given\n";
@@ -61,9 +49,6 @@ pub const HttpLink = struct {
     login: credentials.Credentials = .{},
     /// The URL of the request being made.
     target: [url.url_most + 1]u8 = undefined,
-    tls_error: i32 = tls.TLSERR_OK,
-    verdict: u32 = tls.TLSV_TRUSTED,
-    alert: u32 = 0,
 
     /// The service at `remote` asked for its advertisement: the link, or
     /// null when it did not answer (said).
@@ -134,7 +119,7 @@ pub const HttpLink = struct {
             const ending = out.written();
             if (final.len > ending.len and _git.same(final[final.len - ending.len ..], ending)) {
                 const base = final[0 .. final.len - ending.len];
-                if (!_git.same(base, link.remote.text())) _ = url.parse(base, &link.remote);
+                if (!_git.same(base, link.remote.text())) _ = url.parse(link.git.ub, base, &link.remote);
             }
             credentials.offer(git, &link.remote, &link.login);
             return true;
@@ -219,10 +204,7 @@ pub const HttpLink = struct {
             count += 2;
         }
         tags[count] = .{ .tag = http.HTTP_Redirects, .data = redirects };
-        tags[count + 1] = .{ .tag = http.HTTP_GetTLSError, .data = @intFromPtr(&link.tls_error) };
-        tags[count + 2] = .{ .tag = http.HTTP_GetVerdict, .data = @intFromPtr(&link.verdict) };
-        tags[count + 3] = .{ .tag = http.HTTP_GetAlert, .data = @intFromPtr(&link.alert) };
-        tags[count + 4] = .{};
+        tags[count + 1] = .{};
         var err: i32 = http.HTTPERR_OK;
         link.request = hb.OpenRequest(link.client, method, @ptrCast(&link.target), &tags, &err) orelse {
             link.failed(err);
@@ -298,35 +280,18 @@ pub const HttpLink = struct {
         return got;
     }
 
-    /// A failed request said, by its HTTPERR_*.
+    /// A failed request said: a URL Git cannot reach, or Ctrl-C's stop,
+    /// in Git's words, anything else in http.library's (Fault) - what
+    /// was wrong with a certificate, the host without an address, why
+    /// the connection failed.
     fn failed(link: *HttpLink, code: i32) void {
         const git = link.git;
         const sb = git.sb.?;
-        switch (code) {
-            http.HTTPERR_URL => git.say(MSG_BADURL, .{link.remoteText()}),
-            http.HTTPERR_HOST => git.say(MSG_NOHOST, .{link.remoteText()}),
-            http.HTTPERR_TLS => switch (link.tls_error) {
-                tls.TLSERR_CERTIFICATE => git.say(MSG_TLS_CERTIFICATE, .{verdictText(link.verdict)}),
-                tls.TLSERR_CLOCK => git.say(MSG_TLS_CLOCK, .{}),
-                tls.TLSERR_ALERT => git.say(MSG_TLS_ALERT, .{link.alert}),
-                tls.TLSERR_HANDSHAKE => git.say(MSG_TLS_HANDSHAKE, .{}),
-                else => git.say(MSG_TLS_FAILED, .{link.tls_error}),
-            },
-            http.HTTPERR_PROTOCOL => git.say(MSG_NOTHTTP, .{}),
-            http.HTTPERR_TRUNCATED => git.say(MSG_EARLY, .{}),
-            http.HTTPERR_CLOSED => git.say(MSG_CLOSED, .{}),
-            http.HTTPERR_REDIRECT => git.say(MSG_REDIRECTS, .{@as(u32, redirects_most)}),
-            http.HTTPERR_LIBRARY => git.say("can't open %s\n", .{@as([*:0]const u8, tls.TLSNAME)}),
-            http.HTTPERR_NOMEM => git.say("no memory\n", .{}),
-            http.HTTPERR_IO => {
-                if (sb.Errno() == bsd.EINTR) {
-                    git.say(MSG_STOPPED, .{});
-                } else {
-                    git.say(MSG_FAILED, .{ bsd.errnoText(sb, sb.Errno()), sb.Errno() });
-                }
-            },
-            else => git.say(MSG_HTTP_FAILED, .{code}),
-        }
+        if (code == http.HTTPERR_URL) return git.say(MSG_BADURL, .{link.remoteText()});
+        if (code == http.HTTPERR_IO and sb.Errno() == bsd.EINTR) return git.say(MSG_STOPPED, .{});
+        var why: [256]u8 = undefined;
+        _ = git.hb.?.Fault(link.client, code, null, &why, why.len);
+        git.say(MSG_FAULT, .{@as([*:0]const u8, @ptrCast(&why))});
     }
 };
 
@@ -344,23 +309,4 @@ fn header(into: *[64]u8, parts: []const []const u8) [*:0]const u8 {
     for (parts) |part| out.put(part);
     into[out.at] = 0;
     return @ptrCast(into);
-}
-
-/// What the certificate check said, in words.
-fn verdictText(verdict: u32) [*:0]const u8 {
-    return switch (verdict) {
-        tls.TLSV_MALFORMED => "one of its certificates cannot be read",
-        tls.TLSV_UNKNOWN_ISSUER => "no trusted root signed it",
-        tls.TLSV_BAD_SIGNATURE => "a signature in its chain is wrong",
-        tls.TLSV_UNSUPPORTED => "it is signed in a way that cannot be checked",
-        tls.TLSV_EXPIRED => "it has expired",
-        tls.TLSV_NOT_YET_VALID => "it is not valid yet",
-        tls.TLSV_NOT_CA => "it was issued by a certificate that may not issue",
-        tls.TLSV_PATH_LENGTH => "its chain is longer than its CAs allow",
-        tls.TLSV_NAME_CONSTRAINTS => "a CA in its chain has name constraints",
-        tls.TLSV_WRONG_USAGE => "it is not for a server",
-        tls.TLSV_WRONG_NAME => "it is for another host",
-        tls.TLSV_TOO_LONG => "its chain is too long",
-        else => "for no reason given",
-    };
 }

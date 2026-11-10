@@ -42,7 +42,7 @@ const timer = sdk.devices.timer;
 const TimerBase = timer.TimerBase;
 
 pub const COMMAND_NAME = "Fonts";
-const VERSION_STRING = "\x00$VER: Fonts 1.2 (28.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Fonts 1.3 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K/N,NOWINDOW/S,TIMES/S,FILE/K";
@@ -178,29 +178,14 @@ fn nameLine(out: *[48:0]u8, height: u32) void {
 
 /// A size file read whole into memory of its own, or null with the reason
 /// said. The block and its size go to `block` and `size`.
-fn loadFile(sys: *ExecBase, dl: *DosBase, path: [*:0]const u8, size: *u32) ?[*]align(4) u8 {
-    const fh = dl.Open(path, dos.MODE_OLDFILE) orelse {
+fn loadFile(dl: *DosBase, path: [*:0]const u8, size: *u32) ?[*]align(4) u8 {
+    var length: usize = 0;
+    const block = dl.ReadFile(path, 0xFFFF_FFFF, exec.MEMF_ANY, &length) orelse {
         _ = dl.PrintFault(dl.IoErr(), path);
         return null;
     };
-    defer _ = dl.Close(fh);
-    var fib: dos.FileInfoBlock = .{};
-    if (!dl.ExamineFH(fh, &fib)) {
-        _ = dl.PrintFault(dl.IoErr(), path);
-        return null;
-    }
-    const bytes: u32 = @intCast(fib.size);
-    const block: [*]align(4) u8 = @ptrCast(@alignCast(sys.AllocVec(@max(bytes, 4), exec.MEMF_ANY) orelse {
-        _ = dl.PrintFault(dos.ERROR_NO_FREE_STORE, path);
-        return null;
-    }));
-    if (dl.Read(fh, block, @intCast(bytes)) != bytes) {
-        _ = dl.PrintFault(dl.IoErr(), path);
-        sys.FreeVec(block);
-        return null;
-    }
-    size.* = bytes;
-    return block;
+    size.* = @intCast(length);
+    return @alignCast(block);
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
@@ -253,7 +238,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     if (rdargs.string(argv[arg_file])) |path| {
         var size: u32 = 0;
-        const block = loadFile(sys, dl, path, &size) orelse return dos.RETURN_FAIL;
+        const block = loadFile(dl, path, &size) orelse return dos.RETURN_FAIL;
         loaded = block;
         if (!fontimage.check(block, size) or !fontimage.sound(block, size)) {
             _ = Printf(dl, MSG_NOTFONT, .{path});

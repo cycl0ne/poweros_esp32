@@ -52,12 +52,18 @@ const cover = dt.NewDTObjectA(null, &.{
 defer dt.DisposeDTObject(cover);
 ```
 
-The bytes are recognised as a file's are, by what they start with; a
-name handed to `NewDTObjectA` is matched against the descriptors'
-patterns too, and without one the patterns are not asked. The object
+The bytes are recognised as a file's are, by what they start with.
+Without a name the descriptors' patterns are not asked, and a kind of
+file known by its name alone is not known at all (datatypes.library
+1.3): an HTML page is known by what it starts with, which
+`html.datatype` is asked about, and Markdown without a name is plain
+text. A name handed to `NewDTObjectA` is tried first, against the
+patterns, and when none matches it the bytes are tried as bytes without
+one (1.4) - so `README.md`, the end of an address, says what the bytes
+are, and `HTML` or `index.php` leaves it to them. The object
 reads the bytes while it is made: when the call returns they are the
-program's again. JPEG, PNG, GIF, BMP, ICO, SVG, text, models, Markdown
-and Lottie read from memory; ILBM, 8SVX and a codec's sound read a file as they go,
+program's again. JPEG, PNG, GIF, BMP, ICO, SVG, text, models, Markdown,
+HTML and Lottie read from memory; ILBM, 8SVX and a codec's sound read a file as they go,
 a film is read as it is played, and a font's sizes are files beside its
 contents file, so these refuse bytes in memory with
 `DTERROR_COULDNT_OPEN`.
@@ -250,9 +256,23 @@ _ = dt.GetDTAttrsA(object, &.{
 });
 ```
 
-`TDTA_WordWrap` turns wrapping off, `TDTA_Link` is the name the pointer
-was last let go on, for a program that follows links, and `DTM_COPY`
-puts what is marked on the clipboard.
+`TDTA_WordWrap` turns wrapping off, `TDTA_Link` is where the link the
+pointer was last let go on leads, for a program that follows links,
+and `DTM_COPY` puts what is marked on the clipboard.
+
+A document names places in it, for a link to lead to (`tdc.Anchor`,
+text.datatype 2.4): where in the text each stands, and its name. A
+program goes to one by its name with `DTM_GOTO` - an empty name is the
+top - and the object scrolls there, draws itself and tells its target
+the new `DTA_TopVert`, as a bar's scroll does. It answers 0 when the
+document has no place of that name, and nothing moves.
+
+```zig
+var goto = dtc.DtGoto{ .node_name = "History" };
+if (dt.DoDTMethodA(object, window, null, @ptrCast(&goto)) == 0) {
+    ib.DisplayBeep(screen); // no such place
+}
+```
 
 A format's class reads its file and hands the text and the runs over
 with `TDTM_SETTEXT`; they come from `AllocVec` and are the object's
@@ -260,7 +280,11 @@ from then on. A document can hand over blocks too (`tdc.Block`): each
 a paragraph, a heading, a listing, a rule or a cell of a table, its
 runs, the lists and quotes it is inside, and its item's mark - a disc,
 a circle, a square, a number, a Roman numeral, a letter, or a task's
-box. With blocks the class lays the text out as GitHub lays out a
+box. A cell names its column (`number`), how many columns it takes
+(`span`) and how many rows (`level`, text.datatype 2.5): one that spans
+columns is drawn across them, and widens them alike when they are too
+narrow for it; one that spans rows is drawn down them, in their middle,
+and makes the last of them taller when it needs more. With blocks the class lays the text out as GitHub lays out a
 README: the spaces between blocks, a rule under the first two levels of
 heading, a bar beside a quote, a ground round a listing and round code
 in a sentence (`TDSTYLE_CODE`), a table's lines and shaded rows, a
@@ -280,6 +304,32 @@ links, autolinks, entities and the HTML tags that say how text looks -
 and hands over the text, the runs and the blocks. A picture is not
 fetched: what its text says it is stands in its place. `ascii.datatype`
 sets a plain file in `CODE`'s font, one run, no blocks.
+
+`html.datatype` reads a page for what its markup says and hands over
+the same three. Its elements are kept open as a browser keeps them - a
+`<p>` closed by the next block, an `<li>` by the next item, a cell by
+the next cell - and each becomes the block it is: a heading, a
+paragraph, a listing for `<pre>`, a rule, an item behind its disc or
+number, a quote, a `<dd>` set in. A table of rows two cells or more
+across with no table inside is drawn as a table, its `<th>` head row in
+bold; a cell with `colspan` is drawn across its columns and one with
+`rowspan` down its rows, and the cells after and under them are in the
+columns they belong in. Any other table lays a
+page out, and its cells are read one under another. Scripts, styles and
+what is marked `hidden`, `aria-hidden` or `display:none` are left out,
+a picture is its `alt` text in italic, a field or a button its label in
+brackets and a `<select>` its chosen option. The page's `<title>` is
+the object's `DTA_ObjName` and its `DTA_Title`, which a window showing
+it is called, and a link's run carries the address it leads to, its
+spaces and what is past ASCII written as `%` and UTF-8's bytes. An
+element's `id` and an `<a>`'s `name` are the page's places, where they
+start, and `top` is its first line. A style
+sheet is not read and a script is not run, so a page that lays itself
+out by its style sheet reads top to bottom. A page is UTF-8 unless its
+`<meta charset>` says Latin-1 or code page 1252; either way it is made
+Latin-1, typesetting's quotes, dashes, spaces and ellipsis plain ones,
+and any other character Latin-1 has not - the euro sign, Greek,
+Cyrillic, CJK - is a `?`.
 
 ## Animations
 
@@ -495,6 +545,7 @@ MultiView <file> SCALE          a picture at the size of the window
 MultiView SYS:Tests/datatypes/Spinner.json    an animation, played
 MultiView SYS:Tests/datatypes/Torus.obj       a model, turned by the pointer
 MultiView MEDIA:Films/Charlotte.mkv           a film, played with its sound
+MultiView https://en.wikipedia.org/wiki/HTML  a page on the web
 ```
 
 It knows no formats. It opens the file through the library, puts the
@@ -523,6 +574,26 @@ its update follows. The program takes every message waiting before it
 does this, once for the batch: one redraw per message would fall a
 message further behind with every step of a drag, since a redraw costs
 about what a step does.
+
+A link on a page is followed. A press let go on the object is reported
+(`GA_RelVerify`, which the window object answers with `WMHI_GADGETUP`
+and the object's `GA_ID`), and MultiView reads `TDTA_Link`: a place on
+the page is gone to with `DTM_GOTO`; another page - a file, named from
+the drawer this one is in, or an address on the web, read against this
+page's own - opens in the same window at the same size, and its place
+is gone to once it is laid out. Backspace goes back the way the links
+came, sixteen pages at the most, to where each page was left; a page
+gone back to is read again. A page on the web is fetched whole through
+`http.library`, which MultiView opens for the first such page and not
+before, and shown from memory (`DTST_MEMORY`) under the name the end
+of its address gives it: `README.md` is Markdown, and a page whose
+address names no kind of file is known by what it starts with. Its
+address is its title until it names itself.
+`https:` checks the server's certificate, which needs the clock set. A
+link that leads nowhere - no such file, no such page, no place of that
+name, or a mail address or a script, which MultiView does not go to -
+says so in a requester, with why: what dos said of the file, or the
+server's answer.
 
 ## Writing a class
 

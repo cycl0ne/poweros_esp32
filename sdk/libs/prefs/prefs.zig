@@ -90,20 +90,13 @@ pub fn number(value: u32, into: []u8) usize {
 /// explanation, so a file read only in part would lose the line as soon
 /// as the explanation grew.
 pub fn loadWhole(sys: *ExecBase, dl: *DosBase, path: [*:0]const u8) ?[]u8 {
-    const fh = dl.Open(path, dos.MODE_OLDFILE) orelse return null;
-    defer _ = dl.Close(fh);
-    var fib: dos.FileInfoBlock = .{};
-    if (!dl.ExamineFH(fh, &fib)) return null;
-    if (fib.size == 0 or fib.size > ~@as(usize, 0)) return null;
-    const length: usize = @intCast(fib.size);
-    const memory = sys.AllocVec(length, exec.MEMF_ANY) orelse return null;
-    const bytes: [*]u8 = @ptrCast(memory);
-    const got = dl.Read(fh, bytes, @intCast(length));
-    if (got <= 0) {
-        sys.FreeVec(memory);
+    var length: usize = 0;
+    const bytes = dl.ReadFile(path, ~@as(usize, 0), exec.MEMF_ANY, &length) orelse return null;
+    if (length == 0) {
+        sys.FreeVec(bytes);
         return null;
     }
-    return bytes[0..@intCast(got)];
+    return bytes[0..length];
 }
 
 /// A file read whole into `buffer`; what was read, or null when it is not

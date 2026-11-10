@@ -27,12 +27,7 @@ pub fn run(git: *Git, argv: []const usize) i32 {
         if (dl.Lock(given, dos.SHARED_LOCK)) |there| {
             dl.UnLock(there);
         } else {
-            var with_slash: files.Path = undefined;
-            const path = files.join(&with_slash, &.{ files.span(given), "/" }) orelse {
-                git.say("the path is too long\n", .{});
-                return dos.RETURN_ERROR;
-            };
-            if (!files.makeDirs(git, path)) {
+            if (!dl.CreateDirs(given, true)) {
                 _ = dl.PrintFault(dl.IoErr(), given);
                 return dos.RETURN_ERROR;
             }

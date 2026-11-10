@@ -100,7 +100,7 @@ fn lookUp(git: *Git, remote: *const url.RemoteUrl, credentials: *Credentials) bo
         var line = text[at..end];
         at = end + 1;
         while (line.len > 0 and (line[line.len - 1] == '\r' or line[line.len - 1] == ' ')) line = line[0 .. line.len - 1];
-        if (!url.parse(line, line_url) or !line_url.has_user or !line_url.has_password) continue;
+        if (!url.parse(git.ub, line, line_url) or !line_url.has_user or !line_url.has_password) continue;
         if (!sameOrigin(line_url.origin(), remote.origin())) continue;
         if (credentials.user_length != 0 and !_git.same(line_url.user[0..line_url.user_length], credentials.user[0..credentials.user_length])) continue;
         @memcpy(credentials.user[0..line_url.user_length], line_url.user[0..line_url.user_length]);
@@ -160,27 +160,14 @@ fn ask(git: *Git, remote: *const url.RemoteUrl, credentials: *Credentials) bool 
     git.put(remote.origin()[scheme_end..]);
     git.put("': ");
     _ = dl.Flush(git.output);
-    _ = dl.SetMode(input, 1);
-    defer _ = dl.SetMode(input, 0);
-    var length: usize = 0;
-    while (true) {
-        var char: [1]u8 = undefined;
-        if (dl.Read(input, &char, 1) != 1 or char[0] == 3 or char[0] == 0x1C) {
-            credentials.wipe();
-            git.put("\n");
-            return false;
-        }
-        if (char[0] == '\r' or char[0] == '\n') break;
-        if (char[0] == 8 or char[0] == 127) {
-            if (length > 0) length -= 1;
-        } else if (length < url.secret_most and char[0] >= ' ') {
-            credentials.password[length] = char[0];
-            length += 1;
-        }
+    // Without its echo, a newline after it, by dos.
+    const length = dl.ReadPassword(input, &credentials.password, url.secret_most);
+    if (length < 0) {
+        credentials.wipe();
+        return false;
     }
-    git.put("\n");
-    credentials.password[length] = 0;
-    credentials.password_length = length;
+    credentials.password[@intCast(length)] = 0;
+    credentials.password_length = @intCast(length);
     credentials.have = true;
     return true;
 }
@@ -208,9 +195,9 @@ pub fn offer(git: *Git, remote: *const url.RemoteUrl, credentials: *const Creden
     const origin = remote.origin();
     const scheme_end = (indexOf(origin, "://") orelse 0) + 3;
     out.put(origin[0..scheme_end]);
-    url.encode(&out, credentials.user[0..credentials.user_length]);
+    url.encode(git.ub, &out, credentials.user[0..credentials.user_length]);
     out.byte(':');
-    url.encode(&out, credentials.password[0..credentials.password_length]);
+    url.encode(git.ub, &out, credentials.password[0..credentials.password_length]);
     out.byte('@');
     out.put(origin[scheme_end..]);
     out.byte('\n');

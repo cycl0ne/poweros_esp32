@@ -26,11 +26,12 @@ test {
     _ = @import("programs/player/tests/remembered.zig");
     _ = @import("programs/player/tests/one.zig");
     _ = @import("programs/player/tests/m3u.zig");
-    _ = @import("programs/movie/subtitles.zig");
+    _ = @import("programs/movie/tests/subtitles.zig");
     _ = @import("programs/player/tests/csv.zig");
     _ = @import("programs/player/tests/stations.zig");
     _ = @import("c/screendump/tests/png.zig");
     _ = @import("c/hash/digests.zig");
+    _ = @import("c/hash/tests/digests.zig");
     _ = @import("classes/datatypes/8svx/body.zig");
     _ = @import("devs/sdcard/card.zig");
     _ = @import("prefs/tests/prefs.zig");
@@ -197,6 +198,12 @@ test {
     _ = @import("classes/datatypes/bmp/decode.zig");
     _ = @import("classes/datatypes/bmp/icon.zig");
     _ = @import("classes/datatypes/markdown/parse.zig");
+    _ = @import("classes/datatypes/text/layout.zig");
+    _ = @import("programs/multiview/tests/links.zig");
+    _ = @import("classes/datatypes/html/elements.zig");
+    _ = @import("classes/datatypes/html/tokens.zig");
+    _ = @import("classes/datatypes/html/entities.zig");
+    _ = @import("classes/datatypes/html/tests/html.zig");
     _ = @import("classes/datatypes/font/sheet.zig");
     _ = @import("classes/gadgets/tests/classes.zig");
     _ = @import("classes/docklets/tests/docklets.zig");

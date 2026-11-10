@@ -24,9 +24,9 @@
 //! NextSetting reads them - a value with blanks in double quotes - with
 //! `#` or `;` starting a line that is a comment; a key the library does
 //! not know is passed over. A file is UTF-8, a mark at its start allowed,
-//! and its text is converted to the locale's code set as it is kept: a
-//! character the code set lacks becomes `?`, and a file that is not UTF-8
-//! is taken as Latin-1, byte for byte.
+//! and its text is converted to the locale's code set by utility.library
+//! as it is kept: a character the code set lacks becomes `?`, and a file
+//! that is not UTF-8 is taken as Latin-1, byte for byte.
 //!
 //! What a file says is kept in the locale's own text, so the file is
 //! given back as soon as it is read; no lock is held while it is, because
@@ -38,6 +38,7 @@ const dos = sdk.dos;
 const locale = sdk.locale;
 const prefs = sdk.prefs;
 const style = prefs.style;
+const utility = sdk.utility;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const DosBase = sdk.interface.dos.DosBase;
 const _base = @import("../locale_base.zig");
@@ -197,7 +198,7 @@ const File = struct {
         const whole = prefs.loadWhole(lb.sys_base, lb.dos_base, path) orelse return null;
         var text = whole;
         if (text.len >= 3 and text[0] == 0xEF and text[1] == 0xBB and text[2] == 0xBF) text = text[3..];
-        return .{ .whole = whole, .text = text, .latin1 = !isUtf8(text) };
+        return .{ .whole = whole, .text = text, .latin1 = !isUtf8(lb, text) };
     }
 
     fn free(file: *const File, lb: *LocaleBase) void {
@@ -252,7 +253,7 @@ fn readSettings(lb: *LocaleBase, ext: *ExtLocale, name: [*:0]const u8) bool {
         if (!readCountry(lb, ext, country_name, file.latin1, &country_language)) return false;
     }
     const list = languages orelse country_language orelse english;
-    if (!keepLanguages(ext, list, file.latin1)) return fail(dl, dos.ERROR_OBJECT_TOO_LARGE);
+    if (!keepLanguages(lb, ext, list, file.latin1)) return fail(dl, dos.ERROR_OBJECT_TOO_LARGE);
     if (!pickLanguage(lb, ext)) return false;
     readTimeZone(lb, ext);
     return true;
@@ -265,7 +266,7 @@ fn readCountry(lb: *LocaleBase, ext: *ExtLocale, name: []const u8, latin1: bool,
     var path: [256]u8 = undefined;
     const file_name = pathOf(&path, locale.countries_dir, name, ".country") orelse
         return fail(dl, dos.ERROR_INVALID_COMPONENT_NAME);
-    ext.public.locale_name = keep(ext, withoutSuffix(name, ".country"), latin1) orelse
+    ext.public.locale_name = keep(lb, ext, withoutSuffix(name, ".country"), latin1) orelse
         return fail(dl, dos.ERROR_OBJECT_TOO_LARGE);
 
     const file = File.read(lb, file_name) orelse return false;
@@ -273,11 +274,11 @@ fn readCountry(lb: *LocaleBase, ext: *ExtLocale, name: []const u8, latin1: bool,
     var settings = Settings.init(lb.utility_base, file.text);
     while (settings.next() catch return fail(dl, dos.ERROR_UNMATCHED_QUOTES)) |pair| {
         if (style.same(pair.key, "LANGUAGE")) {
-            const kept = keep(ext, pair.value, file.latin1) orelse return fail(dl, dos.ERROR_OBJECT_TOO_LARGE);
+            const kept = keep(lb, ext, pair.value, file.latin1) orelse return fail(dl, dos.ERROR_OBJECT_TOO_LARGE);
             language.* = kept[0..length(kept)];
             continue;
         }
-        switch (setCountry(ext, pair.key, pair.value, file.latin1)) {
+        switch (setCountry(lb, ext, pair.key, pair.value, file.latin1)) {
             .taken, .unknown => {},
             .wrong => return fail(dl, dos.ERROR_OBJECT_WRONG_TYPE),
             .full => return fail(dl, dos.ERROR_OBJECT_TOO_LARGE),
@@ -287,7 +288,7 @@ fn readCountry(lb: *LocaleBase, ext: *ExtLocale, name: []const u8, latin1: bool,
 }
 
 /// The list of languages, comma by comma, kept as the locale's preferred.
-fn keepLanguages(ext: *ExtLocale, list: []const u8, latin1: bool) bool {
+fn keepLanguages(lb: *LocaleBase, ext: *ExtLocale, list: []const u8, latin1: bool) bool {
     ext.public.pref_languages = @splat(null);
     var count: usize = 0;
     var start: usize = 0;
@@ -298,7 +299,7 @@ fn keepLanguages(ext: *ExtLocale, list: []const u8, latin1: bool) bool {
         start = at + 1;
         if (word.len == 0) continue;
         if (count == ext.public.pref_languages.len) break;
-        ext.public.pref_languages[count] = keep(ext, withoutSuffix(word, ".language"), latin1) orelse return false;
+        ext.public.pref_languages[count] = keep(lb, ext, withoutSuffix(word, ".language"), latin1) orelse return false;
         count += 1;
     }
     if (count == 0) ext.public.pref_languages[0] = english;
@@ -339,7 +340,7 @@ fn readLanguage(lb: *LocaleBase, ext: *ExtLocale, file: File) bool {
     next_pair: while (settings.next() catch return fail(dl, dos.ERROR_UNMATCHED_QUOTES)) |pair| {
         for (locale.string_names[1..], 1..) |string_name, string_num| {
             if (!style.same(pair.key, string_name)) continue;
-            ext.strings[string_num] = keep(ext, pair.value, file.latin1) orelse return fail(dl, dos.ERROR_OBJECT_TOO_LARGE);
+            ext.strings[string_num] = keep(lb, ext, pair.value, file.latin1) orelse return fail(dl, dos.ERROR_OBJECT_TOO_LARGE);
             continue :next_pair;
         }
         const key = pair.key;
@@ -349,7 +350,7 @@ fn readLanguage(lb: *LocaleBase, ext: *ExtLocale, file: File) bool {
             var letters: [64]u8 = undefined;
             if (pair.value.len > letters.len) return fail(dl, dos.ERROR_OBJECT_WRONG_TYPE);
             @memcpy(letters[0..pair.value.len], pair.value);
-            const count = if (file.latin1) pair.value.len else toLatin1(letters[0..pair.value.len]);
+            const count = if (file.latin1) pair.value.len else toLatin1(lb, letters[0..pair.value.len]);
             if (!placeAfter(&weights, letter - 'A', letters[0..count])) return fail(dl, dos.ERROR_OBJECT_WRONG_TYPE);
         }
     }
@@ -364,7 +365,7 @@ fn readTimeZone(lb: *LocaleBase, ext: *ExtLocale) void {
     defer file.free(lb);
     const line = trimmed(prefs.firstLine(file.text) orelse return);
     if (dos.timezone.parse(line) == null) return;
-    ext.public.time_zone = keep(ext, line, true);
+    ext.public.time_zone = keep(lb, ext, line, true);
 }
 
 // --- a country's keys ----------------------------------------------------------------------
@@ -443,12 +444,12 @@ const currencies_at = [_]style.Name{
 const Taken = enum { taken, unknown, wrong, full };
 
 /// A country key's value set in `ext`.
-fn setCountry(ext: *ExtLocale, key: []const u8, value: []const u8, latin1: bool) Taken {
+fn setCountry(lb: *LocaleBase, ext: *ExtLocale, key: []const u8, value: []const u8, latin1: bool) Taken {
     inline for (country_keys) |entry| {
         if (style.same(key, entry.key)) {
             const field = &@field(ext.public, entry.field);
             switch (entry.kind) {
-                .text => field.* = keep(ext, value, latin1) orelse return .full,
+                .text => field.* = keep(lb, ext, value, latin1) orelse return .full,
                 .grouping => field.* = keepGrouping(ext, value) orelse return .wrong,
                 .number => field.* = number(value) orelse return .wrong,
                 .digits => {
@@ -503,61 +504,26 @@ fn keepByte(ext: *ExtLocale, byte: u8) bool {
 
 /// `bytes` kept in the locale's text, converted to its code set and ended
 /// with a NUL; null when the text is full.
-pub fn keep(ext: *ExtLocale, bytes: []const u8, latin1: bool) ?[*:0]const u8 {
+pub fn keep(lb: *LocaleBase, ext: *ExtLocale, bytes: []const u8, latin1: bool) ?[*:0]const u8 {
     if (ext.text.len - ext.used < bytes.len + 1) return null;
     const into = ext.text[ext.used..][0..bytes.len];
     @memcpy(into, bytes);
-    const count = if (latin1) bytes.len else toLatin1(into);
+    const count = if (latin1) bytes.len else toLatin1(lb, into);
     ext.text[ext.used + count] = 0;
     const kept: [*:0]const u8 = @ptrCast(&ext.text[ext.used]);
     ext.used += @intCast(count + 1);
     return kept;
 }
 
-/// Whether `bytes` are well-formed UTF-8.
-pub fn isUtf8(bytes: []const u8) bool {
-    var at: usize = 0;
-    while (at < bytes.len) {
-        const lead = bytes[at];
-        const count: usize = if (lead < 0x80)
-            1
-        else if (lead >= 0xC2 and lead <= 0xDF)
-            2
-        else if (lead >= 0xE0 and lead <= 0xEF)
-            3
-        else if (lead >= 0xF0 and lead <= 0xF4)
-            4
-        else
-            return false;
-        if (at + count > bytes.len) return false;
-        for (bytes[at + 1 .. at + count]) |follow| {
-            if (follow & 0xC0 != 0x80) return false;
-        }
-        at += count;
-    }
-    return true;
+/// Whether `bytes` are well-formed UTF-8, as utility.library reads it.
+pub fn isUtf8(lb: *LocaleBase, bytes: []const u8) bool {
+    return lb.utility_base.Utf8Kind(bytes.ptr, bytes.len) != utility.UTF8KIND_NONE;
 }
 
-/// Well-formed UTF-8 turned into Latin-1 where it stands, a character
-/// Latin-1 lacks as `?`; how many bytes it is now.
-pub fn toLatin1(bytes: []u8) usize {
-    var from: usize = 0;
-    var to: usize = 0;
-    while (from < bytes.len) {
-        const lead = bytes[from];
-        const count: usize = if (lead < 0x80) 1 else if (lead >= 0xF0) 4 else if (lead >= 0xE0) 3 else 2;
-        var code: u32 = switch (count) {
-            1 => lead,
-            2 => lead & 0x1F,
-            3 => lead & 0x0F,
-            else => lead & 0x07,
-        };
-        for (bytes[from + 1 .. @min(from + count, bytes.len)]) |follow| code = code << 6 | (follow & 0x3F);
-        from += count;
-        bytes[to] = if (code <= 0xFF) @intCast(code) else '?';
-        to += 1;
-    }
-    return to;
+/// UTF-8 turned into Latin-1 where it stands by utility.library, a
+/// character Latin-1 lacks as `?`; how many bytes it is now.
+pub fn toLatin1(lb: *LocaleBase, bytes: []u8) usize {
+    return lb.utility_base.Utf8ToLatin1(null, bytes.ptr, bytes.len, bytes.ptr, bytes.len);
 }
 
 /// The length of a NUL-ended string.

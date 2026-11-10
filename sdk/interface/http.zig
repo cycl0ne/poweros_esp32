@@ -24,6 +24,7 @@ pub const LVO = struct {
     pub const WriteRequest = libraries.lvo(9);
     pub const GetRequestAttr = libraries.lvo(10);
     pub const GetHeader = libraries.lvo(11);
+    pub const Fault = libraries.lvo(12);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -37,6 +38,7 @@ pub const Fn = struct {
     pub const WriteRequest = *const fn (*HttpBase, *http.Request, ?*const anyopaque, u32) callconv(.c) i32;
     pub const GetRequestAttr = *const fn (*HttpBase, *http.Request, utility.Tag) callconv(.c) usize;
     pub const GetHeader = *const fn (*HttpBase, *http.Request, [*:0]const u8) callconv(.c) ?[*:0]const u8;
+    pub const Fault = *const fn (*HttpBase, ?*http.Client, i32, ?[*:0]const u8, [*]u8, u32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -92,5 +94,11 @@ pub const HttpBase = opaque {
     /// none.
     pub fn GetHeader(self: *HttpBase, request: *http.Request, name: [*:0]const u8) ?[*:0]const u8 {
         return libraries.call(self, LVO.GetHeader, Fn.GetHeader, .{ request, name });
+    }
+
+    /// What `code` means, in words, into `buffer` - with the client's last
+    /// failure's own details when it was this one: the length written.
+    pub fn Fault(self: *HttpBase, client: ?*http.Client, code: i32, header: ?[*:0]const u8, buffer: [*]u8, length: u32) i32 {
+        return libraries.call(self, LVO.Fault, Fn.Fault, .{ client, code, header, buffer, length });
     }
 };

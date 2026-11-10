@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const http = sdk.http;
 const HttpBase = @import("../http_base.zig").HttpBase;
 const _request = @import("_request.zig");
+const _client = @import("../client/_client.zig");
 
 /// Reads the next bytes of the answer's body.
 ///
@@ -38,7 +39,8 @@ const _request = @import("_request.zig");
 /// the connection; the answer to HEAD, a 204 and a 304 have none.
 ///
 /// An error breaks the request: every read after it answers the same
-/// error, and the connection is not kept.
+/// error, and the connection is not kept. The client keeps it as its
+/// last failure, for `Fault` to say in words.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the server, as long as HTTP_Timeout allows; Ctrl-C
@@ -57,7 +59,7 @@ const _request = @import("_request.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `OpenRequest`, `GetRequestAttr`, `CloseRequest`
+/// `OpenRequest`, `GetRequestAttr`, `CloseRequest`, `Fault`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -73,5 +75,8 @@ pub fn ReadRequest(_: *HttpBase, request: *http.Request, buffer: *anyopaque, len
     const own = _request.of(request) orelse return http.HTTPERR_STATE;
     const bytes: [*]u8 = @ptrCast(buffer);
     const most: u32 = @min(length, 0x7FFF_0000);
-    return _request.read(own, bytes[0..most]);
+    own.client.errno = 0;
+    const got = _request.read(own, bytes[0..most]);
+    if (got < 0) _client.remember(own.client, &.{ .code = got });
+    return got;
 }

@@ -1,0 +1,83 @@
+; http.library's words for a request that failed, as Fault writes them:
+; a clause without its full stop, to stand after "Program: " or inside
+; a program's own sentence, so it starts in lower case. http.library is
+; built with these, and a translation in
+; LOCALE:Catalogs/<language>/sys/http.catalog stands in for them. The
+; values are put in by RawDoFmt, which takes them in order: a
+; translation keeps them so.
+#version 1
+;
+; What each HTTPERR_* means.
+MSG_NOMEM (1//)
+no memory
+MSG_IO (//)
+the connection failed
+MSG_IO_BECAUSE (//)
+the connection failed: %s
+MSG_STOPPED (//)
+stopped
+MSG_TIMEOUT (//)
+the server did not answer in time
+MSG_URL (//)
+not an http:// or https:// URL, or one too long
+MSG_HOST (//)
+the host has no address
+MSG_HOST_NAMED (//)
+%s has no address
+MSG_TLS (//)
+the TLS session failed
+MSG_TLS_CERTIFICATE (//)
+the server's certificate is not trusted: %s
+MSG_TLS_CLOCK (//)
+the clock is not set, so no certificate can be checked (TimeSync)
+MSG_TLS_ALERT (//)
+the server refused the TLS session (alert %u)
+MSG_TLS_HANDSHAKE (//)
+the TLS handshake failed
+MSG_PROTOCOL (//)
+the answer is not HTTP
+MSG_REDIRECT (//)
+more redirects than were allowed, or one to nowhere
+MSG_TRUNCATED (//)
+the connection ended before the answer did
+MSG_STATE (//)
+a call out of its turn, or a request that cannot be made
+MSG_LIBRARY (//)
+a library the request needs is not there
+MSG_LIBRARY_NAMED (//)
+%s is not there
+MSG_DATA (//)
+the server's packed answer does not unpack
+MSG_CLOSED (//)
+the server closed the connection without answering
+MSG_UNKNOWN (//)
+the request failed (%d)
+;
+; Why a server's certificate is not trusted: what MSG_TLS_CERTIFICATE
+; puts after its colon.
+MSG_VERDICT_MALFORMED (//)
+one of its certificates cannot be read
+MSG_VERDICT_UNKNOWN_ISSUER (//)
+no trusted root signed it
+MSG_VERDICT_BAD_SIGNATURE (//)
+a signature in its chain is wrong
+MSG_VERDICT_UNSUPPORTED (//)
+it is signed in a way that cannot be checked
+MSG_VERDICT_EXPIRED (//)
+it has expired
+MSG_VERDICT_NOT_YET_VALID (//)
+it is not valid yet
+MSG_VERDICT_NOT_CA (//)
+it was issued by a certificate that may not issue
+MSG_VERDICT_PATH_LENGTH (//)
+its chain is longer than its CAs allow
+MSG_VERDICT_NAME_CONSTRAINTS (//)
+a CA in its chain has name constraints
+MSG_VERDICT_WRONG_USAGE (//)
+it is not for a server
+MSG_VERDICT_WRONG_NAME (//)
+it is for another host
+MSG_VERDICT_TOO_LONG (//)
+its chain is too long
+MSG_VERDICT_OTHER (//)
+for no reason given

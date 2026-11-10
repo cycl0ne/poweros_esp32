@@ -21,7 +21,9 @@
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ac = sdk.audiocodec;
+const utility = sdk.utility;
 const ExecBase = sdk.interface.exec.ExecBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const ogg = @import("../ogg/_ogg.zig");
 const Bits = ogg.Bits;
 
@@ -120,11 +122,11 @@ pub fn ilog(value: u32) u32 {
 
 /// The setup header's body, after its type and name: ACERR_* when it is
 /// none, or asks for what is not decoded.
-pub fn read(bits: *Bits, sys: *ExecBase, pool: *anyopaque, channels: u32, out: *Setup) i32 {
+pub fn read(bits: *Bits, sys: *ExecBase, ub: *UtilityBase, pool: *anyopaque, channels: u32, out: *Setup) i32 {
     out.codebook_count = bits.read(8) + 1;
     out.codebooks = allocate(sys, pool, Codebook, out.codebook_count) orelse return ac.ACERR_NOMEMORY;
     for (out.codebooks[0..out.codebook_count]) |*book| {
-        const result = codebook(bits, sys, pool, book);
+        const result = codebook(bits, sys, ub, pool, book);
         if (result != ac.ACERR_OK) return result;
     }
     // Time-domain transforms: placeholders, each 0.
@@ -171,7 +173,7 @@ pub fn read(bits: *Bits, sys: *ExecBase, pool: *anyopaque, channels: u32, out: *
 
 // --- codebooks --------------------------------------------------------------------
 
-fn codebook(bits: *Bits, sys: *ExecBase, pool: *anyopaque, book: *Codebook) i32 {
+fn codebook(bits: *Bits, sys: *ExecBase, ub: *UtilityBase, pool: *anyopaque, book: *Codebook) i32 {
     if (bits.read(24) != 0x564342) return ac.ACERR_CORRUPT;
     const dimensions = bits.read(16);
     const entries = bits.read(24);
@@ -236,7 +238,7 @@ fn codebook(bits: *Bits, sys: *ExecBase, pool: *anyopaque, book: *Codebook) i32 
         .fast = undefined,
         .vectors = null,
     };
-    const built = codewords(sys, pool, book, lengths[0..entries]);
+    const built = codewords(sys, ub, pool, book, lengths[0..entries]);
     if (built != ac.ACERR_OK) return built;
 
     if (multiplicand_memory) |memory| {
@@ -265,7 +267,7 @@ fn codebook(bits: *Bits, sys: *ExecBase, pool: *anyopaque, book: *Codebook) i32 
 
 /// The codewords given by the lengths: the used entries sorted by them,
 /// and the table for the short ones.
-fn codewords(sys: *ExecBase, pool: *anyopaque, book: *Codebook, lengths: []const u8) i32 {
+fn codewords(sys: *ExecBase, ub: *UtilityBase, pool: *anyopaque, book: *Codebook, lengths: []const u8) i32 {
     var used: u32 = 0;
     var longest: u32 = 0;
     for (lengths) |length| {
@@ -307,7 +309,8 @@ fn codewords(sys: *ExecBase, pool: *anyopaque, book: *Codebook, lengths: []const
             if (left != 0) return ac.ACERR_CORRUPT;
         }
     }
-    heapSort(keys[0..used]);
+    var smaller_first: utility.Hook = .{ .entry = smallerFirst };
+    ub.SortArray(keys, used, @sizeOf(u64), &smaller_first);
 
     book.used = used;
     book.codes = allocate(sys, pool, u32, used) orelse return ac.ACERR_NOMEMORY;
@@ -338,35 +341,12 @@ fn codewords(sys: *ExecBase, pool: *anyopaque, book: *Codebook, lengths: []const
     return ac.ACERR_OK;
 }
 
-/// Keys sorted, smallest first.
-fn heapSort(keys: []u64) void {
-    const count = keys.len;
-    var start = count / 2;
-    while (start > 0) {
-        start -= 1;
-        siftDown(keys, start, count);
-    }
-    var end = count;
-    while (end > 1) {
-        end -= 1;
-        const top = keys[0];
-        keys[0] = keys[end];
-        keys[end] = top;
-        siftDown(keys, 0, end);
-    }
-}
-
-fn siftDown(keys: []u64, from: usize, end: usize) void {
-    var root = from;
-    while (2 * root + 1 < end) {
-        var child = 2 * root + 1;
-        if (child + 1 < end and keys[child] < keys[child + 1]) child += 1;
-        if (keys[root] >= keys[child]) return;
-        const held = keys[root];
-        keys[root] = keys[child];
-        keys[child] = held;
-        root = child;
-    }
+/// How two keys sort: the smaller first.
+fn smallerFirst(_: *utility.Hook, first: ?*anyopaque, second: ?*anyopaque) callconv(.c) usize {
+    const a: *const u64 = @ptrCast(@alignCast(first.?));
+    const b: *const u64 = @ptrCast(@alignCast(second.?));
+    const answer: isize = if (a.* < b.*) -1 else if (a.* > b.*) 1 else 0;
+    return @bitCast(answer);
 }
 
 /// A codebook's packed float: a 21-bit mantissa, its sign, and a 10-bit

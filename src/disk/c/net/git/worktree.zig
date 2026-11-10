@@ -277,7 +277,7 @@ pub const Work = struct {
     /// The dos path of the tree's `path`, in the work tree: null when it
     /// is too long.
     pub fn localPath(work: *Work, into: *files.Path, path: []const u8) ?[*:0]const u8 {
-        const name = files.localName(&work.local, path) orelse return null;
+        const name = files.localName(work.git.ub, &work.local, path) orelse return null;
         return work.repo.workPathQuiet(into, name);
     }
 
@@ -762,7 +762,7 @@ pub fn switchTrees(repo: *Repository, from: ?*const Id, to: *const Id) bool {
                     refuse(git, action.entry.path, "is too long a path here");
                     skip = true;
                 }
-                if (!skip and !files.makeDirs(git, local.?)) {
+                if (!skip and !git.dl.CreateDirs(local.?, false)) {
                     _ = git.dl.PrintFault(git.dl.IoErr(), local.?);
                     refuse(git, action.entry.path, "could not be made");
                     skip = true;

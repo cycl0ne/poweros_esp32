@@ -259,7 +259,7 @@ fn makeTrack(file: *File, trak: []const u8, track: *Track) bool {
                 else => media.MTRACK_OTHER,
             };
         }
-        if (hdlr.len > 24) handlerName(hdlr[24..], &out.name);
+        if (hdlr.len > 24) handlerName(file, hdlr[24..], &out.name);
     }
     const minf = child(mdia, kind("minf")) orelse return false;
     const stbl = child(minf, kind("stbl")) orelse return false;
@@ -364,10 +364,10 @@ const macintosh_languages = [_]*const [3]u8{
 };
 
 /// A handler's name: NUL-terminated in an MP4, a counted string in a MOV.
-fn handlerName(bytes: []const u8, into: *[64]u8) void {
+fn handlerName(file: *const File, bytes: []const u8, into: *[64]u8) void {
     var text = bytes;
     if (text.len > 0 and text[0] == text.len - 1) text = text[1..];
-    _file.copyUtf8(into, text);
+    _file.copyUtf8(file, into, text);
 }
 
 /// The sample tables of a track's `stbl`, where they lie.

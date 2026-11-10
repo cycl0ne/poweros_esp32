@@ -21,8 +21,8 @@ pub const LIBRARY_VERSION = 1;
 /// 4: GetDiskObjectNew locks a name without an icon once, for what it is
 /// and for its group.
 /// 5: a drawer's order, `DDFLAGS_REVERSED`, kept as ORDER.
-pub const LIBRARY_REVISION = 5;
-const BUILD_DATE = "08.11.2026";
+pub const LIBRARY_REVISION = 6;
+const BUILD_DATE = "09.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

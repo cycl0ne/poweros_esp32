@@ -37,12 +37,12 @@ const dos = sdk.dos;
 const ac = sdk.audiocodec;
 const bsd = sdk.bsdsocket;
 const http = sdk.http;
-const tls = sdk.tls;
 const utility = sdk.utility;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const HttpBase = sdk.interface.http.HttpBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const TagItem = utility.TagItem;
 const icy = http.icy;
 
@@ -296,6 +296,9 @@ pub const Station = struct {
         const http_lib = sys.OpenLibrary(http.HTTPNAME, 1) orelse return station.because("no " ++ http.HTTPNAME, null);
         defer sys.CloseLibrary(http_lib);
         const hb: *HttpBase = @ptrCast(http_lib);
+        const utility_lib = sys.OpenLibrary(utility.UTILITYNAME, 1) orelse return station.because("no " ++ utility.UTILITYNAME, null);
+        defer sys.CloseLibrary(utility_lib);
+        const ub: *UtilityBase = @ptrCast(utility_lib);
         const client = hb.CreateClient(sb, &[_]TagItem{
             .{ .tag = http.HTTP_UserAgent, .data = @intFromPtr(user_agent) },
             .{ .tag = http.HTTP_Timeout, .data = quiet_seconds },
@@ -304,13 +307,11 @@ pub const Station = struct {
         defer hb.DeleteClient(client);
 
         var err: i32 = http.HTTPERR_OK;
-        var tls_error: i32 = tls.TLSERR_OK;
         const request = hb.OpenRequest(client, "GET", &station.url, &[_]TagItem{
             .{ .tag = http.HTTP_Header, .data = @intFromPtr("Icy-MetaData: 1") },
             .{ .tag = http.HTTP_Header, .data = @intFromPtr("Accept: */*") },
-            .{ .tag = http.HTTP_GetTLSError, .data = @intFromPtr(&tls_error) },
             .{},
-        }, &err) orelse return station.lostBy(sb, err, tls_error, true);
+        }, &err) orelse return station.lostBy(hb, client, err, true);
         defer hb.CloseRequest(request);
         const status = hb.GetRequestAttr(request, http.HTTP_Status);
         if (status < 200 or status > 299) return station.because("the station answered", @ptrFromInt(hb.GetRequestAttr(request, http.HTTP_StatusLine)));
@@ -318,7 +319,7 @@ pub const Station = struct {
         if (kind == .list) return station.because("the address names a list of stations, not one", null);
         if (kind == .aac) return station.because("the station sends AAC, which is not played", null);
         station.strip = icy.Strip.init(number(hb.GetHeader(request, "icy-metaint")));
-        station.heardOf(hb, request, kind);
+        station.heardOf(hb, ub, request, kind);
         while (true) {
             if (station.isHalted()) return;
             const got = hb.ReadRequest(request, &station.piece, piece_bytes);
@@ -326,35 +327,25 @@ pub const Station = struct {
                 if (station.isHalted()) return;
                 // Its end: the station's own, nothing to say.
                 if (got == 0) return;
-                return station.lostBy(sb, got, tls.TLSERR_OK, false);
+                return station.lostBy(hb, client, got, false);
             }
             const sound = station.strip.take(station.piece[0..@intCast(got)]);
-            if (station.strip.takeBlock()) |block| station.titled(block);
+            if (station.strip.takeBlock()) |block| station.titled(ub, block);
             if (!station.put(station.piece[0..sound])) return;
         }
     }
 
-    /// A connection that could not be made, or failed, by http.library's
-    /// error - and tls.library's, `tls_error`, for a secure one: `opening`
-    /// while it was being made.
-    fn lostBy(station: *Station, sb: *SocketBase, err: i32, tls_error: i32, opening: bool) void {
+    /// A connection that could not be made, or failed: in http.library's
+    /// words (Fault) - what was wrong with a certificate, the host without
+    /// an address, why the connection failed - but for an answer that
+    /// stops making sense once the stream has begun (`opening` false),
+    /// which is the station's.
+    fn lostBy(station: *Station, hb: *HttpBase, client: *http.Client, err: i32, opening: bool) void {
         if (station.isHalted()) return;
-        switch (err) {
-            http.HTTPERR_URL => station.because("not an http:// or https:// address", null),
-            http.HTTPERR_HOST => station.because("the host has no address", null),
-            http.HTTPERR_TLS => station.because(switch (tls_error) {
-                tls.TLSERR_CLOCK => "the clock is not set, so no certificate can be checked (TimeSync)",
-                tls.TLSERR_CERTIFICATE => "the station's certificate is not trusted",
-                else => "the secure connection failed",
-            }, null),
-            http.HTTPERR_LIBRARY => station.because("no " ++ tls.TLSNAME, null),
-            http.HTTPERR_CLOSED => station.because("the station closed the connection", null),
-            http.HTTPERR_PROTOCOL => station.because(if (opening) "the answer is not HTTP" else "the stream makes no sense", null),
-            http.HTTPERR_REDIRECT => station.because("the address redirects in circles", null),
-            http.HTTPERR_NOMEM => station.because("no memory for the connection", null),
-            http.HTTPERR_IO => station.because(if (opening) "the station cannot be reached" else "the connection failed", bsd.errnoText(sb, sb.Errno())),
-            else => station.because("the connection failed", null),
-        }
+        if (err == http.HTTPERR_PROTOCOL and !opening) return station.because("the stream makes no sense", null);
+        var why: [128]u8 = undefined;
+        _ = hb.Fault(client, err, null, &why, why.len);
+        station.because(@ptrCast(&why), null);
     }
 
     /// Why the connection ended: `first`, and after a colon `then` when
@@ -379,7 +370,7 @@ pub const Station = struct {
 
     /// What the answer says of the station, for the command; the command
     /// told it is streaming.
-    fn heardOf(station: *Station, hb: *HttpBase, request: *http.Request, kind: icy.Kind) void {
+    fn heardOf(station: *Station, hb: *HttpBase, ub: *UtilityBase, request: *http.Request, kind: icy.Kind) void {
         const kbps = number(hb.GetHeader(request, "icy-br"));
         @atomicStore(u32, &station.bytes_per_second, (if (kbps != 0) kbps else assumed_kbps) * 125, .seq_cst);
         const codec: u32 = switch (kind) {
@@ -390,7 +381,7 @@ pub const Station = struct {
         @atomicStore(u32, &station.codec, codec, .seq_cst);
         const sys = station.sys;
         sys.ObtainSemaphore(&station.lock);
-        icy.latin1(textOf(hb.GetHeader(request, "icy-name")), &station.shown.name);
+        icy.latin1(ub, textOf(hb.GetHeader(request, "icy-name")), &station.shown.name);
         station.shown.kbps = kbps;
         station.shown.kind = kind;
         station.shown.phase = .streaming;
@@ -400,10 +391,10 @@ pub const Station = struct {
 
     /// A metadata block's title, when it names another than the one
     /// before, for the command.
-    fn titled(station: *Station, block: []const u8) void {
+    fn titled(station: *Station, ub: *UtilityBase, block: []const u8) void {
         const named = icy.streamTitle(block) orelse return;
         var title: [160:0]u8 = @splat(0);
-        icy.latin1(named, &title);
+        icy.latin1(ub, named, &title);
         const sys = station.sys;
         sys.ObtainSemaphore(&station.lock);
         const same = sameText(&title, &station.shown.title);

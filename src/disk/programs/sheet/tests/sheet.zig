@@ -7,6 +7,7 @@
 const std = @import("std");
 const host = @import("host_rom");
 const kexec = host.exec;
+const UtilityBase = @import("sdk").interface.utility.UtilityBase;
 const number = @import("../number.zig");
 const formula = @import("../formula.zig");
 const eval = @import("../eval.zig");
@@ -147,16 +148,19 @@ test "Sheet: references moved as a formula is copied, rows put in and taken out"
 /// A sheet on the host's exec, its cells given in one step.
 const Fixture = struct {
     sheet: *cells.Sheet,
+    /// utility.library, for the CSV files' UTF-8.
+    rom_ub: *host.utility.UtilityBase,
+    ub: *UtilityBase,
 
     fn init() !Fixture {
-        try kexec.setUp();
+        const rom_ub = try host.utility.setUp();
         const sheet = cells.Sheet.create(kexec.SysBase.iface()) orelse return error.OutOfMemory;
-        return .{ .sheet = sheet };
+        return .{ .sheet = sheet, .rom_ub = rom_ub, .ub = @ptrCast(rom_ub) };
     }
 
     fn deinit(fixture: *Fixture) !void {
         fixture.sheet.destroy();
-        try kexec.expectNoLeaks();
+        try host.utility.tearDown(fixture.rom_ub);
         kexec.deinit();
     }
 
@@ -400,7 +404,7 @@ test "Sheet: filling, copying and pasting" {
 test "Sheet: CSV read and written" {
     var fixture = try Fixture.init();
     var file = "name,value\r\n\"Smith, J.\",12\n\"say \"\"hi\"\"\",=B2*2\n".*;
-    const read = csv.read(fixture.sheet, &file);
+    const read = csv.read(fixture.ub, fixture.sheet, &file);
     try testing.expectEqual(@as(u8, ','), read.form.separator);
     try testing.expectEqualStrings("Smith, J.", fixture.text("A2"));
     try testing.expectEqualStrings("say \"hi\"", fixture.text("A3"));
@@ -412,7 +416,7 @@ test "Sheet: CSV read and written" {
 
     // Semicolons and decimal commas, read so and written back so.
     var german = "\xEF\xBB\xBFPreis;1,5\nM\xC3\xBCller;=B1*2\n".*;
-    const second = csv.read(fixture.sheet, &german);
+    const second = csv.read(fixture.ub, fixture.sheet, &german);
     try testing.expectEqual(@as(u8, ';'), second.form.separator);
     try testing.expect(second.form.decimal_comma);
     try fixture.expectNumber("B1", 1.5);

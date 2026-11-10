@@ -430,8 +430,8 @@ fn doJob(work: *Work, job: *Job) void {
         if (work.stopped) break;
         switch (job.kind) {
             .copy => copyOne(work, source),
-            .delete => _ = deleteAll(work, source, 0),
-            .empty => emptyDrawer(work, source, 0),
+            .delete => _ = deleteAll(work, source),
+            .empty => emptyDrawer(work, source),
         }
     }
 }
@@ -952,73 +952,37 @@ fn ask(work: *Work, target: [*:0]const u8) Answer {
 
 // --- deleting ------------------------------------------------------------------------
 
-/// What is in the drawer `path` deleted, and the drawer kept.
-fn emptyDrawer(work: *Work, path: [*:0]const u8, depth: usize) void {
-    const dl = work.dl;
-    const lock = dl.Lock(path, dos.SHARED_LOCK) orelse return;
-    defer dl.UnLock(lock);
-    const fib = newFib(work) orelse return;
-    defer work.sys.FreeVec(fib);
-    var below: [dos.path_max + 1:0]u8 = @splat(0);
-    var skipped: usize = 0;
-    outer: while (!work.stopped) {
-        if (!dl.Examine(lock, fib)) return;
-        var n: usize = 0;
-        while (dl.ExNext(lock, fib)) : (n += 1) {
-            if (n < skipped) continue;
-            _ = drawer_path.join(&below, textOf(path), textOf(@ptrCast(&fib.file_name))) orelse continue;
-            if (!deleteAll(work, &below, depth + 1)) skipped += 1;
-            continue :outer;
-        }
-        return;
-    }
+/// What is in the drawer `path` deleted, and the drawer kept: by dos's
+/// DeleteTree, on past what will not go.
+fn emptyDrawer(work: *Work, path: [*:0]const u8) void {
+    if (work.stopped) return;
+    var hook: utility.Hook = .{ .entry = deleted, .data = work };
+    _ = work.dl.DeleteTree(path, dos.DELF_KEEP | dos.DELF_ONWARD, &hook);
 }
 
-/// `path` deleted, a drawer after all that is in it, and its icon; false
-/// when something in it could not be. The name is deleted first, and only
-/// a drawer that is not empty is gone into: so a soft link goes itself,
-/// never what it names.
-fn deleteAll(work: *Work, path: [*:0]const u8, depth: usize) bool {
+/// `path` deleted by dos's DeleteTree, a drawer with all that is in it,
+/// and its icon; false when something in it could not be, which is
+/// passed over and the rest deleted. A soft link goes itself, never what
+/// it names.
+fn deleteAll(work: *Work, path: [*:0]const u8) bool {
     if (work.stopped) return false;
     const dl = work.dl;
     show(work, textOf(dl.FilePart(path)));
-    if (!dl.DeleteFile(path)) {
-        if (dl.IoErr() != dos.ERROR_DIRECTORY_NOT_EMPTY or depth >= depth_max) return false;
-        if (!deleteInside(work, path, depth)) return false;
-        if (!dl.DeleteFile(path)) return false;
-    }
-    work.done += 1;
+    var hook: utility.Hook = .{ .entry = deleted, .data = work };
+    if (!dl.DeleteTree(path, dos.DELF_ONWARD, &hook)) return false;
     // Its icon goes with it.
     var info: [dos.path_max + 6:0]u8 = @splat(0);
     if (withInfo(&info, textOf(path))) _ = dl.DeleteFile(&info);
     return true;
 }
 
-/// Everything in the drawer `path` deleted; false when something could
-/// not be. The walk starts again after each, since a drawer changes under
-/// ExNext as it is emptied.
-fn deleteInside(work: *Work, path: [*:0]const u8, depth: usize) bool {
-    const dl = work.dl;
-    const lock = dl.Lock(path, dos.SHARED_LOCK) orelse return false;
-    defer dl.UnLock(lock);
-    const fib = newFib(work) orelse return false;
-    defer work.sys.FreeVec(fib);
-    var below: [dos.path_max + 1:0]u8 = @splat(0);
-    var whole = true;
-    var skipped: usize = 0;
-    outer: while (!work.stopped) {
-        if (!dl.Examine(lock, fib)) return false;
-        var n: usize = 0;
-        while (dl.ExNext(lock, fib)) : (n += 1) {
-            if (n < skipped) continue;
-            _ = drawer_path.join(&below, textOf(path), textOf(@ptrCast(&fib.file_name))) orelse continue;
-            if (!deleteAll(work, &below, depth + 1)) {
-                skipped += 1;
-                whole = false;
-            }
-            continue :outer;
-        }
-        break;
-    }
-    return whole and !work.stopped;
+/// DeleteTree's hook: each object tried counted when it went, and shown;
+/// Stop ends the walk.
+fn deleted(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    _ = object;
+    const work: *Work = @ptrCast(@alignCast(hook.data.?));
+    const told: *const dos.DeleteMsg = @ptrCast(@alignCast(message.?));
+    if (told.failure == 0) work.done += 1;
+    show(work, textOf(work.dl.FilePart(told.name)));
+    return @intFromBool(work.stopped);
 }

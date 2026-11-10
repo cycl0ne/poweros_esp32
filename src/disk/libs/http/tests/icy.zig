@@ -5,6 +5,8 @@
 
 const std = @import("std");
 const icy = @import("sdk").http.icy;
+const host = @import("host_rom");
+const UtilityBase = @import("sdk").interface.utility.UtilityBase;
 
 const testing = std.testing;
 
@@ -129,14 +131,23 @@ test "what a stream is by its Content-Type" {
 }
 
 test "UTF-8 brought to Latin-1, Latin-1 kept, cut to fit" {
+    const rom_ub = try host.utility.setUp();
+    defer host.exec.deinit();
+    const ub: *UtilityBase = @ptrCast(rom_ub);
     var into: [32]u8 = undefined;
-    icy.latin1("Bj\xc3\xb6rk \xe2\x80\x93 J\xc3\xb3ga", &into);
-    try testing.expectEqualStrings("Bj\xf6rk ? J\xf3ga", std.mem.sliceTo(&into, 0));
-    icy.latin1("Bj\xf6rk", &into);
+    icy.latin1(ub, "Bj\xc3\xb6rk \xe2\x80\x93 J\xc3\xb3ga \xe2\x82\xac", &into);
+    try testing.expectEqualStrings("Bj\xf6rk - J\xf3ga ?", std.mem.sliceTo(&into, 0));
+    icy.latin1(ub, "Bj\xf6rk", &into);
     try testing.expectEqualStrings("Bj\xf6rk", std.mem.sliceTo(&into, 0));
-    icy.latin1("plain", &into);
+    icy.latin1(ub, "plain", &into);
     try testing.expectEqualStrings("plain", std.mem.sliceTo(&into, 0));
     var small: [4]u8 = undefined;
-    icy.latin1("\xc3\xa9t\xc3\xa9s", &small);
+    icy.latin1(ub, "\xc3\xa9t\xc3\xa9s", &small);
     try testing.expectEqualStrings("\xe9t\xe9", std.mem.sliceTo(&small, 0));
+    // A file's word: its lines as it says, even one that alone looks other.
+    icy.latin1As(ub, "Caf\xc3\xa9", false, &into);
+    try testing.expectEqualStrings("Caf\xc3\xa9", std.mem.sliceTo(&into, 0));
+    icy.latin1As(ub, "Caf\xe9", true, &into);
+    try testing.expectEqualStrings("Caf\xe9", std.mem.sliceTo(&into, 0));
+    try host.utility.tearDown(rom_ub);
 }

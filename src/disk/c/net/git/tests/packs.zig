@@ -73,7 +73,7 @@ test "both packs indexed: git's idx, byte for byte" {
     for ([_][]const u8{ ofs_pack, ref_pack }, [_][]const u8{ ofs_idx, ref_idx }) |bytes, expected| {
         var memory: Memory = .{ .bytes = bytes };
         const indexer = &indexer_store;
-        indexer.init(rig.sys, rig.zb, rig.cb, memory.source());
+        indexer.init(rig.sys, rig.ub, rig.zb, rig.cb, memory.source());
         var steps: Steps = .{};
         indexer.progress = .{ .context = &steps, .step = Steps.step };
         var buffer: BufferSink = .{ .out = .{ .into = &idx_out } };
@@ -135,7 +135,7 @@ test "a broken entry, a delta without its base, a pack cut short" {
     var broken: [ofs_pack.len]u8 = ofs_pack.*;
     broken[pack.header_bytes + 4] ^= 0x55;
     var memory: Memory = .{ .bytes = &broken };
-    indexer.init(rig.sys, rig.zb, rig.cb, memory.source());
+    indexer.init(rig.sys, rig.ub, rig.zb, rig.cb, memory.source());
     var buffer: BufferSink = .{ .out = .{ .into = &idx_out } };
     try testing.expect(!indexer.run(broken.len, 20, broken[broken.len - 20 ..][0..20], buffer.sink()));
     try testing.expectEqual(indexpack.Failure.entry, indexer.failure);
@@ -165,7 +165,7 @@ test "a broken entry, a delta without its base, a pack cut short" {
     @memcpy(thin[length..][0..20], &sum);
     length += 20;
     memory = .{ .bytes = thin[0..length] };
-    indexer.init(rig.sys, rig.zb, rig.cb, memory.source());
+    indexer.init(rig.sys, rig.ub, rig.zb, rig.cb, memory.source());
     buffer = .{ .out = .{ .into = &idx_out } };
     try testing.expect(!indexer.run(length, count, &sum, buffer.sink()));
     try testing.expectEqual(indexpack.Failure.base, indexer.failure);
@@ -173,7 +173,7 @@ test "a broken entry, a delta without its base, a pack cut short" {
 
     // Fewer bytes than the entries need.
     memory = .{ .bytes = ofs_pack[0 .. ofs_pack.len - 100] };
-    indexer.init(rig.sys, rig.zb, rig.cb, memory.source());
+    indexer.init(rig.sys, rig.ub, rig.zb, rig.cb, memory.source());
     buffer = .{ .out = .{ .into = &idx_out } };
     try testing.expect(!indexer.run(ofs_pack.len - 100, 20, ofs_pack[ofs_pack.len - 20 ..][0..20], buffer.sink()));
     try testing.expectEqual(indexpack.Failure.entry, indexer.failure);

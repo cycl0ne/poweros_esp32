@@ -115,6 +115,22 @@ if (copied < 0 and dl.IoErr() == dos.ERROR_ACTION_NOT_KNOWN) {
 }
 ```
 
+**A file whole**: `ReadFile(name, most, requirements, &length)` reads
+it into memory of its own - `AllocVec` with `requirements`, given back
+with `FreeVec` - with a NUL after its bytes, so a text comes as a C
+string, and their number in `length`. A file of more than `most` bytes
+is refused (`ERROR_OBJECT_TOO_LARGE`), so a settings file that has grown
+wild cannot take all the memory there is. An empty file is the NUL
+alone, `length` 0.
+
+```zig
+var length: usize = 0;
+const bytes = dl.ReadFile("ENV:Sys/locale.prefs", 64 * 1024, exec.MEMF_ANY, &length) orelse
+    return dl.IoErr();
+defer sys.FreeVec(bytes);
+const text = bytes[0..length];
+```
+
 ### Reading and writing without waiting
 
 `Read` and `Write` wait for the handler's answer. `StartRead(fh, buffer,
@@ -338,6 +354,46 @@ directory, `Rename(from, to)` renames or moves within one volume
 `FIBF_WRITE`, `FIBF_READ`) forbid what they name when set; `FIBF_SCRIPT`
 marks a file the shell runs as a script. `Info(lock, &data)` fills an
 `InfoData` about the volume: block counts, block size, state.
+
+`CreateDirs(name, last)` makes every directory on a path that is not
+there, from the volume down: with `last` false the directories a file
+is to go into (`RAM:a/b/file` makes `RAM:a` and `RAM:a/b`), with it true
+the last part too. `DeleteTree(name, flags, hook)` deletes a file, a
+link, or a directory with all it holds, innermost first:
+
+| Flag | |
+|---|---|
+| `DELF_KEEP` | the directory itself stays, emptied |
+| `DELF_FORCE` | a delete-protected object's protection is taken off and it is deleted |
+| `DELF_ONWARD` | an object that will not go is passed over and all else deleted; the answer is false at the end |
+
+Without `DELF_ONWARD` it stops at the first object that will not go,
+`IoErr()` saying why. Each name is deleted first, and only a directory
+that is not empty is gone into: a soft link goes itself, never what it
+names. The hook, when there is one, is called for every object once it
+has been tried, with its name as the object and a `dos.DeleteMsg` - the
+name and its `failure`, 0 when it went - as the message; an answer other
+than 0 stops the walk (`ERROR_BREAK`). C:Delete's `ALL` names each object
+from it and stops at Ctrl-C there; the desktop moves its progress bar.
+
+```zig
+fn deleted(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    _ = object;
+    const dl: *DosBase = @ptrCast(@alignCast(hook.data));
+    const told: *const dos.DeleteMsg = @ptrCast(@alignCast(message));
+    if (told.failure != 0) _ = dl.PrintFault(told.failure, told.name);
+    return dl.CheckSignal(exec.SIGBREAKF_CTRL_C);
+}
+
+var hook: sdk.utility.Hook = .{ .entry = deleted, .data = dl };
+if (!dl.DeleteTree("RAM:old", 0, &hook)) return dl.IoErr();
+```
+
+A directory's names are read a batch at a time under one lock, which is
+let go before the first of them is deleted, and the directory is listed
+again after each batch: no listing goes on over a name taken from it,
+and a directory of a thousand on a network share is listed a few times,
+not a thousand.
 
 `Examine(lock, &fib)` fills a `FileInfoBlock` about the locked object.
 On a directory, `ExNext` with the same lock and block then gives each
@@ -1220,4 +1276,23 @@ while (dl.CheckSignal(exec.SIGBREAKF_CTRL_C) == 0) {
     if (key < 0 or key == 'q') break;
     _ = Printf(dl, "key %x\n", .{key});
 }
+```
+
+**A password** is typed without its echo: `ReadPassword(fh, buffer,
+size)` puts the console raw, reads what is typed - Backspace and Delete
+take back, Return ends - puts the console back in the mode it was in,
+and writes a newline, so what comes next starts a line of its own. It
+answers the characters' number, a NUL after them when there is room, or
+-1 when Ctrl-C, Ctrl-\ or the input's end gave it up, with the buffer
+wiped and `IoErr()` `ERROR_BREAK` for Ctrl-C. The prompt before it is
+the program's. `C:net/Git` asks for a token this way, `C:net/SSH` and
+`C:net/SCP` for a password, and `C:net/ShellServer` at a Telnet
+session's start.
+
+```zig
+_ = dl.PutStr("Password: ");
+_ = dl.Flush(dl.Output());
+var password: [128]u8 = undefined;
+const length = dl.ReadPassword(dl.Input(), &password, password.len);
+if (length < 0) return dos.RETURN_WARN;
 ```

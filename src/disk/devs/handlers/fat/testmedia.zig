@@ -50,7 +50,7 @@ pub const TestMedia = struct {
     /// everything back.
     live: usize = 0,
     clock: u32 = 0,
-    /// The zone the system clock keeps, as `timeZone` answers it.
+    /// The zone the system clock keeps, whose offset `zoneOffset` answers.
     time_zone: dos.timezone.Zone = .{},
 
     pub fn init(block_bytes: u32, block_count: u64) TestMedia {
@@ -180,8 +180,8 @@ pub const TestMedia = struct {
         return .{ .days = 1, .minute = 2, .tick = @intCast(m.clock) };
     }
 
-    pub fn timeZone(m: *TestMedia) dos.timezone.Zone {
-        return m.time_zone;
+    pub fn zoneOffset(m: *TestMedia, utc: i64) i32 {
+        return m.time_zone.offsetAt(utc);
     }
 
     // --- what the tests reach for -----------------------------------------

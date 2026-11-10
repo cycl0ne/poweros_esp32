@@ -44,13 +44,13 @@ const dos = sdk.dos;
 const ac = sdk.audiocodec;
 const bsd = sdk.bsdsocket;
 const http = sdk.http;
-const tls = sdk.tls;
 const timer = sdk.devices.timer;
 const utility = sdk.utility;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const HttpBase = sdk.interface.http.HttpBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const TagItem = utility.TagItem;
 const icy = http.icy;
 const m3u = @import("m3u.zig");
@@ -177,15 +177,17 @@ pub const Radio = struct {
     agent: [*:0]const u8,
     /// The window's strings: why a connection ended is said in them.
     text: *const Text,
+    /// The window's utility.library: the station's words made Latin-1.
+    ub: *UtilityBase,
     url: [dos.path_max + 1:0]u8 = @splat(0),
 
     // --- the window's calls ------------------------------------------------------
 
     /// The station at `url` listened to, its reader started; `agent` the
-    /// name the requests give and `text` the strings it says why in, both
-    /// the window's until `free`. Null without the memory, a signal or the
+    /// name the requests give, `text` the strings it says why in and `ub`
+    /// what makes its words Latin-1, all the window's until `free`. Null without the memory, a signal or the
     /// process.
-    pub fn start(sys: *ExecBase, dl: *DosBase, url: [*:0]const u8, agent: [*:0]const u8, text: *const Text) ?*Radio {
+    pub fn start(sys: *ExecBase, dl: *DosBase, ub: *UtilityBase, url: [*:0]const u8, agent: [*:0]const u8, text: *const Text) ?*Radio {
         const memory = sys.AllocVec(@sizeOf(Radio), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
         const ring = sys.AllocVec(ring_bytes, exec.MEMF_ANY);
         const end_port = sys.CreateMsgPort();
@@ -206,6 +208,7 @@ pub const Radio = struct {
             .ring = @ptrCast(ring.?),
             .agent = agent,
             .text = text,
+            .ub = ub,
         };
         station.ended = .{ .reply_port = station.end_port, .length = @sizeOf(exec.Message) };
         sys.InitSemaphore(&station.lock);
@@ -390,7 +393,7 @@ pub const Radio = struct {
         var lists: usize = 0;
         while (true) {
             station.heard = false;
-            const outcome = station.listen(hb, sb, client);
+            const outcome = station.listen(hb, client);
             if (outcome == .halted) return;
             if (outcome == .moved) {
                 if (lists < lists_most) {
@@ -413,15 +416,13 @@ pub const Radio = struct {
     /// One connection, read until it ends: the station's facts from its
     /// answer, the sound into the ring, the titles to the window. `reason`
     /// says why it was lost.
-    fn listen(station: *Radio, hb: *HttpBase, sb: *SocketBase, client: *http.Client) Outcome {
+    fn listen(station: *Radio, hb: *HttpBase, client: *http.Client) Outcome {
         var err: i32 = http.HTTPERR_OK;
-        var tls_error: i32 = tls.TLSERR_OK;
         const request = hb.OpenRequest(client, "GET", &station.url, &[_]TagItem{
             .{ .tag = http.HTTP_Header, .data = @intFromPtr("Icy-MetaData: 1") },
             .{ .tag = http.HTTP_Header, .data = @intFromPtr("Accept: */*") },
-            .{ .tag = http.HTTP_GetTLSError, .data = @intFromPtr(&tls_error) },
             .{},
-        }, &err) orelse return station.lostBy(sb, err, tls_error, true);
+        }, &err) orelse return station.lostBy(hb, client, err, true);
         defer hb.CloseRequest(request);
         const status = hb.GetRequestAttr(request, http.HTTP_Status);
         if (status < 200 or status > 299) {
@@ -429,7 +430,7 @@ pub const Radio = struct {
             return .lost;
         }
         const kind = icy.kindOf(textOf(hb.GetHeader(request, "Content-Type")));
-        if (kind == .list or (kind == .unknown and m3u.namesList(textOf(&station.url)))) return station.followList(hb, sb, request);
+        if (kind == .list or (kind == .unknown and m3u.namesList(textOf(&station.url)))) return station.followList(hb, client, request);
         if (kind == .aac) {
             station.because(.MSG_SENDS_AAC, null);
             return .lost;
@@ -445,7 +446,7 @@ pub const Radio = struct {
                     station.because(.MSG_STATION_ENDED, null);
                     return .lost;
                 }
-                return station.lostBy(sb, got, tls.TLSERR_OK, false);
+                return station.lostBy(hb, client, got, false);
             }
             const sound = station.strip.take(station.piece[0..@intCast(got)]);
             if (station.strip.takeBlock()) |block| station.titled(block);
@@ -456,13 +457,13 @@ pub const Radio = struct {
     /// An answer that lists addresses read - its first `piece_bytes`, more
     /// than a station's list holds - and the first station it names made
     /// the one to call: `moved`. HLS is refused.
-    fn followList(station: *Radio, hb: *HttpBase, sb: *SocketBase, request: *http.Request) Outcome {
+    fn followList(station: *Radio, hb: *HttpBase, client: *http.Client, request: *http.Request) Outcome {
         var length: usize = 0;
         while (length < piece_bytes) {
             if (station.isHalted()) return .halted;
             const got = hb.ReadRequest(request, &station.piece[length], @intCast(piece_bytes - length));
             if (got == 0) break;
-            if (got < 0) return station.lostBy(sb, got, tls.TLSERR_OK, false);
+            if (got < 0) return station.lostBy(hb, client, got, false);
             length += @intCast(got);
         }
         const text = station.piece[0..length];
@@ -470,7 +471,7 @@ pub const Radio = struct {
             station.because(.MSG_SENDS_HLS, null);
             return .lost;
         }
-        const address = m3u.firstAddress(text) orelse {
+        const address = m3u.firstAddress(station.ub, text) orelse {
             station.because(.MSG_LIST_EMPTY, null);
             return .lost;
         };
@@ -483,26 +484,25 @@ pub const Radio = struct {
         return .moved;
     }
 
-    /// A connection that could not be made, or failed, by http.library's
-    /// error - and tls.library's, `tls_error`, for a secure one: `opening`
-    /// while it was being made. Halted when Ctrl-C ended it.
-    fn lostBy(station: *Radio, sb: *SocketBase, err: i32, tls_error: i32, opening: bool) Outcome {
+    /// A connection that could not be made, or failed: in http.library's
+    /// words (Fault) - what was wrong with a certificate, the host without
+    /// an address, why the connection failed - but for what is the
+    /// station's own: an address that is none to listen to, and an answer
+    /// that stops making sense once the stream has begun (`opening`
+    /// false). Halted when Ctrl-C ended it.
+    fn lostBy(station: *Radio, hb: *HttpBase, client: *http.Client, err: i32, opening: bool) Outcome {
         if (station.isHalted()) return .halted;
-        switch (err) {
-            http.HTTPERR_URL => station.because(.MSG_NOT_AN_ADDRESS, null),
-            http.HTTPERR_HOST => station.because(.MSG_HOST_NO_ADDRESS, null),
-            http.HTTPERR_TLS => station.because(switch (tls_error) {
-                tls.TLSERR_CLOCK => .MSG_CLOCK_NOT_SET,
-                tls.TLSERR_CERTIFICATE => .MSG_CERTIFICATE,
-                else => .MSG_SECURE_FAILED,
-            }, null),
-            http.HTTPERR_LIBRARY => station.because(.MSG_NO_TLS, null),
-            http.HTTPERR_CLOSED => station.because(.MSG_CLOSED, null),
-            http.HTTPERR_PROTOCOL => station.because(if (opening) .MSG_NOT_HTTP else .MSG_NONSENSE, null),
-            http.HTTPERR_REDIRECT => station.because(.MSG_CIRCLES, null),
-            http.HTTPERR_NOMEM => station.because(.MSG_NO_MEMORY_CONNECTION, null),
-            http.HTTPERR_IO => station.because(if (opening) .MSG_UNREACHED else .MSG_CONNECTION_FAILED, bsd.errnoText(sb, sb.Errno())),
-            else => station.because(.MSG_CONNECTION_FAILED, null),
+        if (err == http.HTTPERR_URL) {
+            station.because(.MSG_NOT_AN_ADDRESS, null);
+        } else if (err == http.HTTPERR_PROTOCOL and !opening) {
+            station.because(.MSG_NONSENSE, null);
+        } else {
+            var why: [128:0]u8 = @splat(0);
+            _ = hb.Fault(client, err, null, &why, why.len);
+            join(&station.cause, &why, null);
+            // The window's line starts as a sentence does.
+            if (why[0] >= 'a' and why[0] <= 'z') why[0] -= 'a' - 'A';
+            join(&station.reason, &why, null);
         }
         return .lost;
     }
@@ -520,8 +520,8 @@ pub const Radio = struct {
         @atomicStore(u32, &station.codec, codec, .seq_cst);
         const sys = station.sys;
         sys.ObtainSemaphore(&station.lock);
-        icy.latin1(textOf(hb.GetHeader(request, "icy-name")), &station.shown.name);
-        icy.latin1(textOf(hb.GetHeader(request, "icy-genre")), &station.shown.genre);
+        icy.latin1(station.ub, textOf(hb.GetHeader(request, "icy-name")), &station.shown.name);
+        icy.latin1(station.ub, textOf(hb.GetHeader(request, "icy-genre")), &station.shown.genre);
         station.shown.kbps = kbps;
         station.shown.kind = kind;
         station.shown.phase = .streaming;
@@ -534,7 +534,7 @@ pub const Radio = struct {
     fn titled(station: *Radio, block: []const u8) void {
         const named = icy.streamTitle(block) orelse return;
         var title: [160:0]u8 = @splat(0);
-        icy.latin1(named, &title);
+        icy.latin1(station.ub, named, &title);
         var picture: [picture_room:0]u8 = @splat(0);
         if (icy.streamUrl(block)) |address| {
             if (icy.isPictureAddress(address) and address.len <= picture_room) @memcpy(picture[0..address.len], address);

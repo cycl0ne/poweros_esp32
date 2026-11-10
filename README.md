@@ -208,14 +208,14 @@ from `LIBS:` when first opened. Every module, with its reference, is in
 
 | Area | Libraries |
 |---|---|
-| Kernel | `exec` tasks on every core, ports, memory, libraries and devices; `utility` tag lists, hooks, dates; `expansion` the board's parts |
-| Files | `dos` processes, files, handlers, the shell's `ReadArgs`; `rdb` partitions on any drive; `compression` DEFLATE, zlib and gzip |
+| Kernel | `exec` tasks on every core, ports, memory, libraries and devices; `utility` tag lists, hooks, dates, the zone the clock keeps, text between UTF-8 and Latin-1, URLs and arrays sorted; `expansion` the board's parts |
+| Files | `dos` processes, files, handlers, the shell's `ReadArgs`, files read whole, trees made and deleted, passwords typed without their echo; `rdb` partitions on any drive; `compression` DEFLATE, zlib and gzip |
 | Languages | `locale` countries' dates, numbers and money, languages' words and order of letters, programs' texts translated in catalogs |
 | Displays | **`rtg`**; `graphics` drawing; `layers`; `intuition` screens, windows, gadgets, styles; `keymap`; `motion` animations and timers |
 | Sound | **`rta`**; `audiocodec` WAV, MP3, FLAC, Ogg Vorbis |
 | Video | `videocodec` films - their pictures, sound and subtitles; `media` MP4, MOV and Matroska; `videoparse` H.264, H.265, VP9 and AV1 streams read for a decoder |
-| Desktop | `anvil` the desktop; `asl` requesters; `commodities` hotkeys and filters on the input stream; `icon`; `datatypes` pictures, text, animations and sounds by what is in them, from a file or from memory; `iffparse`; `diskfont` and `truetype` fonts; `facet` 3D in Vulkan's model, on the cores or a GPU - on every disk but the ESP32-S3's, whose 14 MB of flash the rest of the system has |
-| Network | `bsdsocket` TCP/IP, IPv4 and IPv6; `tls` 1.3 and 1.2; `http` HTTP/1.1 requests, connections kept; `crypto`; `wpa` WPA2; `filter` a packet filter |
+| Desktop | `anvil` the desktop; `asl` requesters; `commodities` hotkeys and filters on the input stream; `icon`; `datatypes` pictures, text (plain, Markdown, HTML), animations and sounds by what is in them, from a file or from memory; `iffparse`; `diskfont` and `truetype` fonts; `facet` 3D in Vulkan's model, on the cores or a GPU - on every disk but the ESP32-S3's, whose 14 MB of flash the rest of the system has |
+| Network | `bsdsocket` TCP/IP, IPv4 and IPv6; `tls` 1.3 and 1.2; `http` HTTP/1.1 requests, connections kept, a failure said in the user's language; `crypto`; `wpa` WPA2; `filter` a packet filter |
 | Buses | `usb` the USB host stack; `pci` PCI Express; `modbus` RTU and TCP |
 
 Beside them:
@@ -261,10 +261,11 @@ Beside them:
   checked by `sdk/tools/catcomp`: the desktop's, Notepad's, Sheet's,
   the Player's, Movie's and the Clock's in German
   ([locale guide](sdk/docs/guides/locale.md)).
-- **Programs:** in `SYS:Programs` MultiView, Notepad, Sheet, Terminal,
-  Player, FontView, Battery, Prefs and Volume; in `SYS:System` the Shell,
-  HDToolBox, Shares, Update, CPULoad, NetLoad, MemMap and Clock - the
-  time on a dial or in figures, which the dock's clock opens; in
+- **Programs:** in `SYS:Programs` MultiView - any file the datatypes
+  know, a page's links followed to files and to the web - Notepad,
+  Sheet, Terminal, Player, FontView, Battery, Prefs and Volume; in
+  `SYS:System` the Shell, HDToolBox, Shares, Update, CPULoad, NetLoad,
+  MemMap and Clock - the time on a dial or in figures, which the dock's clock opens; in
   `SYS:Commodities` Exchange, which lists the commodities running and
   makes each active or inactive, shows or hides its window, or ends it,
   and the commodities

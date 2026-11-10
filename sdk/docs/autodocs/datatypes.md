@@ -610,10 +610,10 @@ The object is the caller's, to give back with `DisposeDTObject`.
 - The object is a gadget: it is not shown until `AddDTObject` puts it
   in a window, or until a layout it was put in is laid out.
 - The classes that read the whole of their source at once read from
-  memory: JPEG, PNG, GIF, BMP, text, models, Markdown, Lottie. ILBM,
-  8SVX and the sound of an audio codec read a file as they go, and a
-  font's sizes are files beside its contents file: they refuse bytes
-  in memory with `DTERROR_COULDNT_OPEN`.
+  memory: JPEG, PNG, GIF, BMP, text, models, Markdown, HTML, Lottie.
+  ILBM, 8SVX and the sound of an audio codec read a file as they go,
+  and a font's sizes are files beside its contents file: they refuse
+  bytes in memory with `DTERROR_COULDNT_OPEN`.
 
 **SEE ALSO**
 
@@ -746,10 +746,19 @@ says has already matched.
 The file is opened and read once and every descriptor is tried
 against that one reading.
 
-Bytes in memory are looked at as a file's would be. With a name, a
-descriptor's pattern is matched against it; without one, the pattern
-is not asked and what the bytes start with decides - a JPEG is known
-by its first bytes whether or not it is called `.jpg`.
+Bytes in memory are looked at as a file's would be. Without a name,
+a descriptor's pattern is not asked and the bytes decide - what they
+start with, or the class, asked: a JPEG is known by its first bytes
+whether or not it is called `.jpg`, a page fetched from the network
+by its markup. A descriptor that knows its files by their name and
+nothing else does not know bytes without one (since 1.3).
+
+With a name, the descriptors whose pattern it matches are tried
+first, and the first of them that matches wins; when none does, the
+bytes are tried again as bytes without a name (since 1.4). The name
+a document had where it came from - `README.md` at the end of an
+address - says what it is, and one that says nothing - `HTML`, or
+`index.php` - leaves it to the bytes.
 
 **CONTEXT**
 

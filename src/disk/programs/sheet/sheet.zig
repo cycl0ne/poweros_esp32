@@ -188,8 +188,8 @@ const max_rows = formula.max_rows;
 const max_cols = formula.max_cols;
 
 pub const COMMAND_NAME = "Sheet";
-const VERSION = "1.6";
-const VERSION_STRING = "\x00$VER: Sheet " ++ VERSION ++ " (29.10.2026)\r\n";
+const VERSION = "1.7";
+const VERSION_STRING = "\x00$VER: Sheet " ++ VERSION ++ " (09.11.2026)\r\n";
 /// What the screen's title bar says while the window is the active one.
 const SCREEN_TITLE = "Sheet " ++ VERSION;
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
@@ -455,6 +455,9 @@ const Bars = struct { vert: ?*Object, horiz: ?*Object };
 const App = struct {
     sys: *ExecBase,
     dl: *DosBase,
+    /// utility.library, which makes a CSV file's UTF-8 Latin-1; null
+    /// without it.
+    ub: ?*UtilityBase,
     /// The texts, in the language the user prefers.
     text: *const Text,
     ib: *IntuitionBase,
@@ -1355,7 +1358,7 @@ const App = struct {
             app.tell(.MSG_CANNOT_READ, name);
             return false;
         }
-        const result = csv.read(app.sheet, memory[0..size]);
+        const result = csv.read(app.ub, app.sheet, memory[0..size]);
         app.form = result.form;
         app.keepPath(name);
         app.resetView();
@@ -2430,6 +2433,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     app.* = .{
         .sys = sys,
         .dl = dl,
+        .ub = ub,
         .text = &text,
         .ib = ib,
         .gb = gb,

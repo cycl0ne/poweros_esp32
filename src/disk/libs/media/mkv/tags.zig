@@ -61,17 +61,17 @@ pub fn read(file: *File, tags_body: []const u8, chapters_body: []const u8, title
             }
             const whole = level >= 50;
             if (same(name, "TITLE")) {
-                _file.copyUtf8(if (whole) &album_title else &t.title, text);
+                _file.copyUtf8(file, if (whole) &album_title else &t.title, text);
             } else if (same(name, "ARTIST")) {
-                _file.copyUtf8(if (whole) &t.album_artist else &t.artist, text);
+                _file.copyUtf8(file, if (whole) &t.album_artist else &t.artist, text);
             } else if (same(name, "ALBUM")) {
-                _file.copyUtf8(&t.album, text);
+                _file.copyUtf8(file, &t.album, text);
             } else if (same(name, "COMPOSER")) {
-                _file.copyUtf8(&t.composer, text);
+                _file.copyUtf8(file, &t.composer, text);
             } else if (same(name, "GENRE")) {
-                _file.copyUtf8(&t.genre, text);
+                _file.copyUtf8(file, &t.genre, text);
             } else if (same(name, "COMMENT") or same(name, "DESCRIPTION")) {
-                if (t.comment[0] == 0) _file.copyUtf8(&t.comment, text);
+                if (t.comment[0] == 0) _file.copyUtf8(file, &t.comment, text);
             } else if (same(name, "DATE_RELEASED") or same(name, "DATE_RECORDED") or same(name, "DATE")) {
                 if (t.year == 0) t.year = mp4_tags.yearOf(text);
             } else if (same(name, "PART_NUMBER")) {
@@ -185,7 +185,7 @@ fn chapters(file: *File, body: []const u8) void {
             ebml.ChapterTimeStart => chapter.start = milliseconds(item.body),
             ebml.ChapterTimeEnd => chapter.end = milliseconds(item.body),
             ebml.ChapterDisplay => if (chapter.title[0] == 0) {
-                if (ebml.child(item.body, ebml.ChapString)) |text| _file.copyUtf8(&chapter.title, ebml.string(text));
+                if (ebml.child(item.body, ebml.ChapString)) |text| _file.copyUtf8(file, &chapter.title, ebml.string(text));
             },
             else => {},
         };

@@ -119,7 +119,7 @@ pub fn run(git: *Git, argv: []const usize) i32 {
         git.put("\nUntracked files:\n");
         for (untracked.all()) |*noted| {
             git.put("\t");
-            git.put(noted.path);
+            git.putPath(noted.path);
             git.put("\n");
         }
     }
@@ -143,7 +143,7 @@ fn showChange(git: *Git, noted: *const Noted, staged: bool) void {
         .modified => "modified:   ",
         .deleted => "deleted:    ",
     });
-    git.put(noted.path);
+    git.putPath(noted.path);
     git.put("\n");
 }
 
@@ -173,12 +173,12 @@ fn showShort(git: *Git, staged: []const Noted, unstaged: []const Noted, untracke
         }
         git.put(&letters);
         git.put(" ");
-        git.put(path);
+        git.putPath(path);
         git.put("\n");
     }
     for (untracked) |*noted| {
         git.put("?? ");
-        git.put(noted.path);
+        git.putPath(noted.path);
         git.put("\n");
     }
 }

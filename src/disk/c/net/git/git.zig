@@ -55,6 +55,7 @@ const dos = sdk.dos;
 const exec = sdk.exec;
 const crypto = sdk.crypto;
 const compression = sdk.compression;
+const utility = sdk.utility;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const context = @import("context.zig");
@@ -78,7 +79,7 @@ const Git = context.Git;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = context.COMMAND_NAME;
-const VERSION_STRING = "\x00$VER: Git 1.3 (29.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Git 1.10 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "VERB,ARGS/F";
@@ -180,12 +181,18 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     };
     defer sys.CloseLibrary(compression_lib);
+    const utility_lib = sys.OpenLibrary(utility.UTILITYNAME, 1) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{ @as([*:0]const u8, COMMAND_NAME), @as([*:0]const u8, utility.UTILITYNAME) });
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(utility_lib);
 
     var git: Git = .{
         .sys = sys,
         .dl = dl,
         .cb = @ptrCast(crypto_lib),
         .zb = @ptrCast(compression_lib),
+        .ub = @ptrCast(utility_lib),
         .output = dl.Output(),
     };
     defer git.close();

@@ -39,6 +39,7 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const HttpBase = sdk.interface.http.HttpBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const TagItem = utility.TagItem;
 const strings = @import("strings");
 const Text = sdk.locale.Strings(strings);
@@ -143,14 +144,17 @@ pub const Finder = struct {
     agent: [*:0]const u8,
     /// The window's strings: why a search failed is said in them.
     text: *const Text,
+    /// The window's utility.library: the words of a search as a query.
+    ub: *UtilityBase,
     address: [dos.path_max:0]u8 = @splat(0),
 
     // --- the window's calls ------------------------------------------------------
 
-    /// The finder started, `agent` the name its requests give and `text`
-    /// the strings it says why in, both the window's until `free`; null
-    /// without the memory, a signal or the process.
-    pub fn start(sys: *ExecBase, dl: *DosBase, agent: [*:0]const u8, text: *const Text) ?*Finder {
+    /// The finder started, `agent` the name its requests give, `text` the
+    /// strings it says why in and `ub` what makes a query of the words,
+    /// all the window's until `free`; null without the memory, a signal or
+    /// the process.
+    pub fn start(sys: *ExecBase, dl: *DosBase, ub: *UtilityBase, agent: [*:0]const u8, text: *const Text) ?*Finder {
         const memory = sys.AllocVec(@sizeOf(Finder), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
         const answer = sys.AllocVec(kind_count * answer_bytes, exec.MEMF_ANY);
         const logo = sys.AllocVec(logo_bytes, exec.MEMF_ANY);
@@ -174,6 +178,7 @@ pub const Finder = struct {
             .logo = @ptrCast(logo.?),
             .agent = agent,
             .text = text,
+            .ub = ub,
         };
         finder.ended = .{ .reply_port = finder.end_port, .length = @sizeOf(exec.Message) };
         sys.InitSemaphore(&finder.lock);
@@ -438,7 +443,7 @@ pub const Finder = struct {
 
     /// The address of one kind's search on the server asked now.
     fn searchAddress(finder: *Finder, words: []const u8, by: By, kind: []const u8) void {
-        var line = Builder{ .into = &finder.address };
+        var line = Builder{ .ub = finder.ub, .into = &finder.address };
         line.add("http://");
         line.add(finder.servers[finder.current][0..lengthOf(&finder.servers[finder.current])]);
         line.add("/csv/stations/search?");
@@ -470,7 +475,7 @@ pub const Finder = struct {
         finder.sys.ObtainSemaphore(&finder.lock);
         uuid = finder.uuid;
         finder.sys.ReleaseSemaphore(&finder.lock);
-        var line = Builder{ .into = &finder.address };
+        var line = Builder{ .ub = finder.ub, .into = &finder.address };
         line.add("http://");
         line.add(finder.servers[finder.current][0..lengthOf(&finder.servers[finder.current])]);
         line.add("/json/url/");
@@ -553,6 +558,7 @@ fn wholeLines(answer: []const u8, cut: bool) u32 {
 
 /// An address built in pieces, cut where it is full.
 const Builder = struct {
+    ub: *UtilityBase,
     into: *[dos.path_max:0]u8,
     length: usize = 0,
 
@@ -561,27 +567,19 @@ const Builder = struct {
         builder.into[builder.length] = 0;
     }
 
-    /// Latin-1 words as a query's value: UTF-8, each byte that is not a
-    /// letter, a digit or one of `-_.~` written `%XX`.
+    /// Latin-1 words as a query's value, by utility.library: UTF-8, each
+    /// byte that is not a letter, a digit or one of `-_.~` written `%XX`.
+    /// Words too long for the address cut it where they begin.
     fn encoded(builder: *Builder, words: []const u8) void {
-        for (words) |char| {
-            if (isLetter(char) or (char >= '0' and char <= '9') or char == '-' or char == '_' or char == '.' or char == '~') {
-                builder.put(char);
-            } else if (char < 0x80) {
-                builder.percent(char);
-            } else {
-                builder.percent(0xC0 | (char >> 6));
-                builder.percent(0x80 | (char & 0x3F));
-            }
+        const room = builder.into.len - builder.length;
+        const length = builder.ub.EncodeUrl(words.ptr, words.len, builder.into[builder.length..].ptr, room, utility.URLF_LATIN1);
+        if (length > room) {
+            @memset(builder.into[builder.length..], 0);
+            builder.length = builder.into.len;
+            return;
         }
+        builder.length += length;
         builder.into[builder.length] = 0;
-    }
-
-    fn percent(builder: *Builder, byte: u8) void {
-        const digits = "0123456789ABCDEF";
-        builder.put('%');
-        builder.put(digits[byte >> 4]);
-        builder.put(digits[byte & 0x0F]);
     }
 
     fn put(builder: *Builder, char: u8) void {

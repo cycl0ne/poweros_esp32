@@ -192,8 +192,6 @@ MSG_NO_NETWORK
 Kein Netz: bsdsocket.library fehlt
 MSG_NO_HTTP
 http.library fehlt
-MSG_NO_TLS
-tls.library fehlt
 MSG_NO_MEMORY_CONNECTION
 Kein Speicher für die Verbindung
 MSG_SERVICE_NO_ADDRESS
@@ -228,26 +226,8 @@ MSG_LIST_TOO_LONG
 Die Liste des Senders nennt eine zu lange Adresse
 MSG_NOT_AN_ADDRESS
 Das ist keine Adresse, die sich anhören lässt
-MSG_HOST_NO_ADDRESS
-Der Rechner des Senders hat keine Adresse
-MSG_CLOCK_NOT_SET
-Die Uhr ist nicht gestellt, darum kann das Zertifikat des Senders nicht geprüft werden (TimeSync)
-MSG_CERTIFICATE
-Das Zertifikat des Senders wurde nicht angenommen
-MSG_SECURE_FAILED
-Die sichere Verbindung ist fehlgeschlagen
-MSG_CLOSED
-Der Sender hat die Verbindung ohne Antwort geschlossen
-MSG_NOT_HTTP
-Der Sender antwortet nicht in HTTP
 MSG_NONSENSE
 Die Antwort des Senders ergibt keinen Sinn
-MSG_CIRCLES
-Der Sender schickt die Anfrage im Kreis
-MSG_UNREACHED
-Der Sender war nicht erreichbar
-MSG_CONNECTION_FAILED
-Die Verbindung ist fehlgeschlagen
 MSG_NOLIBRARY
 %s: %s lässt sich nicht öffnen\n
 MSG_NOMEMORY

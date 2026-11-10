@@ -312,7 +312,7 @@ fn readInfo(file: *File, info: []const u8, duration: *f64, title: *[_file.name_b
             if (scale != 0) blocks.fileOf(file).scale = scale;
         },
         ebml.Duration => duration.* = ebml.float(element.body),
-        ebml.Title => _file.copyUtf8(title, ebml.string(element.body)),
+        ebml.Title => _file.copyUtf8(file, title, ebml.string(element.body)),
         else => {},
     };
 }
@@ -400,7 +400,7 @@ fn makeTrack(file: *File, entry: []const u8, track: *Track, duration: f64) bool 
         ebml.FlagDefault => own.default = ebml.uint(element.body) != 0,
         ebml.FlagForced => own.forced = ebml.uint(element.body) != 0,
         ebml.DefaultDuration => own.frame_ns = ebml.uint(element.body),
-        ebml.Name => _file.copyUtf8(&out.name, ebml.string(element.body)),
+        ebml.Name => _file.copyUtf8(file, &out.name, ebml.string(element.body)),
         ebml.Language => language = ebml.string(element.body),
         ebml.CodecID => codec = ebml.string(element.body),
         ebml.CodecPrivate => private = element.body,

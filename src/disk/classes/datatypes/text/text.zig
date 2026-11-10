@@ -11,7 +11,10 @@
 //! the clipboard.
 //!
 //! **Text is runs, not characters.** A run is a stretch drawn one way: a
-//! font, a style, a pen, and where it leads when it is pressed. Plain
+//! font, a style, a pen, and where it leads when it is pressed - which
+//! the program reads (`TDTA_Link`) and follows. Where it leads may be a
+//! place in the text itself, one of the anchors a format's class names,
+//! and `DTM_GOTO` scrolls to one. Plain
 //! text is one run a line; a marked-up document is several, in blocks -
 //! paragraphs, headings, items of lists, listings, rules, cells of
 //! tables. Everything that differs between formats is in the runs and
@@ -62,8 +65,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = tdc.TEXTDTCLASS,
     .version = 2,
-    .revision = 2,
-    .date = "27.10.2026",
+    .revision = 5,
+    .date = "10.11.2026",
     .super = dtc.DATATYPESCLASS,
     .opens = &.{ datatypes.DATATYPESNAME, iffparse.IFFPARSENAME, sdk.diskfont.DISKFONTNAME, sdk.dos.DOSNAME },
     .Instance = _text.Data,
@@ -131,6 +134,8 @@ fn takeText(base: *Base, cl: *Class, o: *Object, msg: *tdc.TdtSetText) usize {
     own.piece_count = msg.piece_count;
     own.blocks = msg.blocks;
     own.block_count = if (msg.blocks != null) msg.block_count else 0;
+    own.anchors = msg.anchors;
+    own.anchor_count = if (msg.anchors != null) msg.anchor_count else 0;
     own.mark_start = 0;
     own.mark_end = 0;
     if (msg.text_attr) |attr| {
@@ -235,6 +240,44 @@ fn askSuper(base: *Base, cl: *Class, o: *Object, attr: utility.Tag) i32 {
     return @truncate(@as(isize, @bitCast(subclass.superAsk(base.intuition_base, cl, o, attr))));
 }
 
+/// Where in the text the anchor `name` stands; null when there is none
+/// of that name.
+fn anchorOf(own: *const Data, name: [*:0]const u8) ?u32 {
+    const anchors = own.anchors orelse return null;
+    const buffer = own.buffer orelse return null;
+    var length: u32 = 0;
+    while (name[length] != 0) length += 1;
+    for (anchors[0..own.anchor_count]) |anchor| {
+        if (anchor.name_length != length) continue;
+        const named = buffer[anchor.name_offset..][0..length];
+        var k: u32 = 0;
+        while (k < length and named[k] == name[k]) k += 1;
+        if (k == length) return anchor.offset;
+    }
+    return null;
+}
+
+/// `DTM_GOTO`: the view scrolled to the anchor the message names, as the
+/// object's own update - so that it is drawn, where it has a window -
+/// and its target told the new top, so that its bars follow.
+fn goTo(base: *Base, cl: *Class, o: *Object, msg: *dtc.DtGoto) usize {
+    const own = classes.instData(Data, cl, o);
+    const name = msg.node_name orelse return 0;
+    const offset: u32 = if (name[0] == 0) 0 else anchorOf(own, name) orelse return 0;
+    const height = layout.totalHeight(own);
+    const seen = askSuper(base, cl, o, dtc.DTA_VisibleVert);
+    const top = if (offset == 0) 0 else @max(0, @min(layout.topOf(own, offset), height - seen));
+    const tags = [_]TagItem{
+        .{ .tag = dtc.DTA_TopVert, .data = @bitCast(@as(isize, top)) },
+        .{},
+    };
+    const ib = base.intuition_base;
+    var update = classusr.OpUpdate{ .method_id = classusr.OM_UPDATE, .attr_list = &tags, .gadget_info = msg.gadget_info, .flags = 0 };
+    _ = ib.SendMessage(o, @ptrCast(&update));
+    support.notify(ib, o, msg.gadget_info, &tags, 0);
+    return 1;
+}
+
 fn draw(base: *Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const info = r.gadget_info orelse return;
     const own = classes.instData(Data, cl, o);
@@ -262,7 +305,10 @@ fn handleInput(base: *Base, cl: *Class, o: *Object, input: *gc.GpInput) u32 {
     const event = input.event orelse return gc.GMR_MEACTIVE;
     const at = placeIn(base, cl, o, input.mouse);
 
-    if (event.class == ie.IECLASS_RAWMOUSE and event.code == ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX) {
+    // The button let go: intuition tells a gadget with the input where
+    // the pointer is with every button change.
+    const pointer = event.class == ie.IECLASS_NEWPOINTERPOS or event.class == ie.IECLASS_RAWMOUSE;
+    if (pointer and event.code == ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX) {
         mark.release(own, at.x, at.y);
         support.redraw(base.intuition_base, o, info);
         input.termination.* = 0;
@@ -322,6 +368,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             return ib.SendSuperMessage(cl, o, msg);
         },
         tdc.TDTM_SETTEXT => return takeText(base, cl, o.?, @ptrCast(@alignCast(msg))),
+        dtc.DTM_GOTO => return goTo(base, cl, o.?, @ptrCast(@alignCast(msg))),
         gc.GM_RENDER => {
             draw(base, cl, o.?, @ptrCast(@alignCast(msg)));
             return 0;

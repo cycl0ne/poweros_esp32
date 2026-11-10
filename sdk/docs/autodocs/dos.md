@@ -28,12 +28,14 @@ Generated from the source by `./zig build autodoc`.
 - [CompareDates](#comparedates) - Compares two DateStamps.
 - [CopyFH](#copyfh) - Copies bytes from one open file into another on the same handler, without passing them through the caller.
 - [CreateDir](#createdir) - Makes a directory and returns an exclusive lock on it.
+- [CreateDirs](#createdirs) - Makes every directory on the path `name` that is not there, from the volume down: the directories a file is to go into, or a directory with all those above it.
 - [CreateNewProc](#createnewproc) - Starts a new process, set up from a tag list.
 - [CurrentDir](#currentdir) - Makes a lock the calling process's current directory and returns the one before.
 - [DateStamp](#datestamp) - Reads the time now into a DateStamp.
 - [DateToStr](#datetostr) - Writes a DateStamp out as text.
 - [Delay](#delay) - Waits a number of fiftieths of a second.
 - [DeleteFile](#deletefile) - Deletes a file or an empty directory.
+- [DeleteTree](#deletetree) - Deletes `name`: a file, a link, or a directory and everything in it, innermost first - or with DELF_KEEP only what the directory holds.
 - [DeleteVar](#deletevar) - Deletes a local variable or alias, or a global variable.
 - [DoPkt](#dopkt) - Sends a packet to a handler and waits for it to come back.
 - [DupLock](#duplock) - Makes another shared lock on the object a lock is on.
@@ -109,8 +111,10 @@ Generated from the source by `./zig build autodoc`.
 - [PutStr](#putstr) - Writes a string to the process's output.
 - [Read](#read) - Reads up to `length` bytes from a file.
 - [ReadArgs](#readargs) - Parses a command line by a template into the caller's slots.
+- [ReadFile](#readfile) - Reads the file `name` whole into memory of its own, a NUL after its bytes.
 - [ReadItem](#readitem) - Reads the next item of a command line into a buffer.
 - [ReadLink](#readlink) - Asks a handler for the path a soft link gives, in place of the name that met it.
+- [ReadPassword](#readpassword) - Reads a password, a passphrase or a token as it is typed on the console `file`, nothing of it shown.
 - [Relabel](#relabel) - Gives the volume in a drive a new name, when its file system can.
 - [RemAssignList](#remassignlist) - Removes one directory from an assign.
 - [RemDosEntry](#remdosentry) - Takes a node off the device list.
@@ -1246,6 +1250,72 @@ None known.
 dos_lib.UnLock(dos_lib.CreateDir("RAM:T") orelse return false);
 ```
 
+## CreateDirs
+
+Makes every directory on the path `name` that is not there, from the volume down: the directories a file is to go into, or a directory with all those above it.
+
+**SYNOPSIS**
+
+```zig
+fn CreateDirs(db: *DosBase, name: [*:0]const u8, last: bool) bool
+```
+
+**SINCE**
+
+1.18. LVO -632.
+
+**INPUTS**
+
+- `name` - the path, as for Lock.
+- `last` - its last part is a directory too, and made; false for the
+  name of a file whose directories are wanted.
+
+**RESULT**
+
+True when every directory on the path is there; false with IoErr()
+(CreateDir's errors, ERROR_OBJECT_WRONG_TYPE for a file in the way,
+ERROR_NO_FREE_STORE, ERROR_LINE_TOO_LONG past dos.path_max).
+
+**BEHAVIOR**
+
+The path is taken a part at a time, from the first after the device's
+colon: each directory that does not lock is made with CreateDir, and
+one that does - Examine says it is a directory - is gone on from. A `/` at the start or after another
+stands for the directory above, as in any name, and is passed. With
+`last` false the part after the last `/` is left alone.
+
+**CONTEXT**
+
+- Waits: yes, for the handler.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do; a process gets IoErr().
+
+**OWNERSHIP**
+
+No lock is kept. The directories made stay when a later one fails.
+
+**NOTES**
+
+A path the volume holds already answers true with nothing made. A
+soft link to a directory is gone through, as Lock goes.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateDir`, `Lock`, `DeleteTree`
+
+**EXAMPLES**
+
+```zig
+// The directories of a file about to be written.
+if (!dl.CreateDirs("RAM:a/b/c/file", false)) return dl.PrintFault(dl.IoErr(), "RAM:a/b/c");
+const file = dl.Open("RAM:a/b/c/file", dos.MODE_NEWFILE);
+```
+
 ## CreateNewProc
 
 Starts a new process, set up from a tag list.
@@ -1654,6 +1724,101 @@ None known.
 
 ```zig
 if (!dos_lib.DeleteFile("T:work")) _ = dos_lib.PrintFault(dos_lib.IoErr(), "Delete");
+```
+
+## DeleteTree
+
+Deletes `name`: a file, a link, or a directory and everything in it, innermost first - or with DELF_KEEP only what the directory holds.
+
+**SYNOPSIS**
+
+```zig
+fn DeleteTree(db: *DosBase, name: [*:0]const u8, flags: u32, hook: ?*utility.Hook) bool
+```
+
+**SINCE**
+
+1.18. LVO -636.
+
+**INPUTS**
+
+- `name` - the object, as for DeleteFile.
+- `flags` - DELF_KEEP leaves the directory `name` itself, emptied;
+  DELF_FORCE takes a delete-protected object's protection off and
+  deletes it; DELF_ONWARD goes on past an object that will not go.
+- `hook` - called for each object once it has been tried, with its
+  name as the object and a `dos.DeleteMsg` as the message; an answer
+  other than 0 stops the walk. Null for none.
+
+**RESULT**
+
+True when everything went; false with IoErr() - the failure of the
+object that would not go (with DELF_ONWARD the last one), ERROR_BREAK
+when the hook stopped the walk, ERROR_OBJECT_WRONG_TYPE for DELF_KEEP
+on a file, ERROR_NO_FREE_STORE, ERROR_LINE_TOO_LONG for a name below
+`name` longer than dos.path_max.
+
+**BEHAVIOR**
+
+Each object is deleted by its name, `name` and the parts below it. A
+directory that is not empty is gone into, emptied, and deleted after
+what it held. A soft link is deleted itself, never what it names. The
+names of a directory are read a batch at a time - some hundred - and
+the directory listed again after each batch and after each directory
+below it, until it is empty.
+
+Without DELF_ONWARD the walk ends at the first object that will not go,
+what it was in left as it is. With it, such an object is passed over -
+its directory then will not go either - and all else is deleted.
+
+The hook hears of every object, a directory after what it held, its
+`failure` 0 when it went; a directory that is not empty is not told
+of until it has been emptied.
+
+**CONTEXT**
+
+- Waits: yes, for the handler, and in the hook.
+- Interrupts: no.
+- Locks: no spinlock may be held; no lock on anything inside `name`
+  may be held, or that object will not go.
+- Process: a Task will do; a process gets IoErr().
+
+**OWNERSHIP**
+
+What went is gone. The hook's name and message are DeleteTree's,
+for the call.
+
+**NOTES**
+
+A hook that checks for Ctrl-C (`CheckSignal`) makes a long walk
+stoppable. With DELF_ONWARD, the names that would not go are passed
+over by their place in a new listing: a handler that lists a
+directory in a new order each time may have one tried again.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DeleteFile`, `SetProtection`, `CreateDirs`, utility's `CallHookPkt`
+
+**EXAMPLES**
+
+```zig
+// A directory emptied, kept.
+if (!dl.DeleteTree("RAM:cache", dos.DELF_KEEP, null)) _ = dl.PrintFault(dl.IoErr(), "RAM:cache");
+
+// A tree deleted, each name said, Ctrl-C to stop.
+fn said(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const dl: *DosBase = @ptrCast(@alignCast(hook.data));
+    const deleted: *const dos.DeleteMsg = @ptrCast(@alignCast(message));
+    _ = object;
+    if (deleted.failure != 0) _ = dl.PrintFault(deleted.failure, deleted.name);
+    return dl.CheckSignal(exec.SIGBREAKF_CTRL_C);
+}
+var hook: utility.Hook = .{ .entry = said, .data = dl };
+_ = dl.DeleteTree("RAM:old", 0, &hook);
 ```
 
 ## DeleteVar
@@ -6326,6 +6491,78 @@ defer dos_lib.FreeArgs(rda);
 const from: [*]const ?[*:0]const u8 = @ptrFromInt(argv[0]);
 ```
 
+## ReadFile
+
+Reads the file `name` whole into memory of its own, a NUL after its bytes.
+
+**SYNOPSIS**
+
+```zig
+fn ReadFile(db: *DosBase, name: [*:0]const u8, most: usize, requirements: u32, length: *usize) ?[*]u8
+```
+
+**SINCE**
+
+1.18. LVO -628.
+
+**INPUTS**
+
+- `name` - the file, as for Open.
+- `most` - the most bytes it may have.
+- `requirements` - what AllocVec is asked for: MEMF_ANY, or
+  MEMF_SYSTEM for bytes that outlive the task, MEMF_INTERNAL for bytes
+  an interrupt reads.
+- `length` - set to the number of bytes.
+
+**RESULT**
+
+The bytes, `length` of them and a NUL after them; null with IoErr()
+(ERROR_OBJECT_TOO_LARGE for a file of more than `most` bytes,
+ERROR_NO_FREE_STORE, Open's, Seek's and Read's errors).
+
+**BEHAVIOR**
+
+The file is opened MODE_OLDFILE, its size taken from a Seek to its
+end, and the memory allocated a byte longer than that. Its bytes are
+read to the end; a file that grew past its size meanwhile is too large
+for that memory and refused. An empty file is a NUL alone, `length` 0.
+
+**CONTEXT**
+
+- Waits: yes, for the handler.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do; a process gets IoErr().
+
+**OWNERSHIP**
+
+The memory is the caller's, given back with FreeVec. The file is
+closed before ReadFile returns.
+
+**NOTES**
+
+The NUL makes a text file a C string as it comes; it is not counted
+in `length`. A file whose handler cannot seek - a console, a pipe - is
+not read this way: Seek's error comes back.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Open`, `Read`, `Seek`, exec's `AllocVec`
+
+**EXAMPLES**
+
+```zig
+var length: usize = 0;
+const bytes = dl.ReadFile("S:Startup-Sequence", 64 * 1024, exec.MEMF_ANY, &length) orelse
+    return dl.PrintFault(dl.IoErr(), "S:Startup-Sequence");
+defer sys.FreeVec(bytes);
+const text = bytes[0..length];
+```
+
 ## ReadItem
 
 Reads the next item of a command line into a buffer.
@@ -6465,6 +6702,83 @@ None known.
 var path: [sdk.dos.path_max + 1]u8 = undefined;
 if (dos_lib.ReadLink(port, dir, name, &path, path.len) >= 0) {
     _ = dos_lib.PutStr(@ptrCast(&path));
+}
+```
+
+## ReadPassword
+
+Reads a password, a passphrase or a token as it is typed on the console `file`, nothing of it shown.
+
+**SYNOPSIS**
+
+```zig
+fn ReadPassword(db: *DosBase, file: ?*FileHandle, buffer: [*]u8, size: usize) isize
+```
+
+**SINCE**
+
+1.19. LVO -640.
+
+**INPUTS**
+
+- `file` - the console it is typed on: a process's Input(), or a
+  session's console.
+- `buffer`, `size` - where the characters go; a NUL after them when
+  there is room.
+
+**RESULT**
+
+The characters typed; -1 when nothing may be taken, the buffer then
+wiped - IoErr() ERROR_BREAK for Ctrl-C, 0 when the input ended,
+ERROR_OBJECT_WRONG_TYPE for a `file` that is no console, Read's error.
+
+**BEHAVIOR**
+
+The console is put in raw mode, so nothing typed is echoed, and read
+a character at a time: Backspace and Delete take the last one back,
+Return or a line feed ends the line, Ctrl-C, Ctrl-\ and the input's
+end give it up. A control character else is passed over, and a
+character past `size` too. The console is put back in the mode it was
+in - a RAW: window stays raw - and a newline written to it, so what
+comes next starts a line of its own.
+
+**CONTEXT**
+
+- Waits: yes, for each character typed.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a process, or a task with a console handle of its own.
+
+**OWNERSHIP**
+
+The buffer is the caller's, to wipe once the secret is used.
+
+**NOTES**
+
+The prompt is the caller's to write and flush before. Bytes typed
+ahead past the Return stay in the handle's buffer for the next read.
+A key that sends an escape sequence - an arrow - gives the characters
+after its escape.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetMode`, `Read`, `IsInteractive`, `FGets`
+
+**EXAMPLES**
+
+```zig
+_ = dl.PutStr("Password: ");
+_ = dl.Flush(dl.Output());
+var password: [128]u8 = undefined;
+const length = dl.ReadPassword(dl.Input(), &password, password.len);
+if (length < 0) return dos.RETURN_WARN;
+defer {
+    const wiped: [*]volatile u8 = &password;
+    for (0..password.len) |at| wiped[at] = 0;
 }
 ```
 

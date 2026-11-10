@@ -57,7 +57,7 @@ const reg = sdk.hardware.mmio.reg;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Gpu";
-const VERSION_STRING = "\x00$VER: Gpu 1.1 (08.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gpu 1.2 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TOC/K,FIRMWARE/K,FRAMES/S,FLIP/S,PIPE/K/N,FETCHER/K/N,WATCHDOG/A/K/N";
@@ -124,18 +124,17 @@ const Name = struct {
 /// The file `name` read whole into memory of its own (FreeVec), or null
 /// with why said.
 fn readFile(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8) ?[]u8 {
-    const lock = dl.Lock(name, dos.SHARED_LOCK) orelse {
-        _ = Printf(dl, "%s: cannot be found\n", .{name});
+    var length: usize = 0;
+    const bytes = dl.ReadFile(name, ~@as(usize, 0), exec.MEMF_ANY, &length) orelse {
+        _ = Printf(dl, "%s: cannot be %s\n", .{ name, @as([*:0]const u8, if (dl.IoErr() == dos.ERROR_OBJECT_NOT_FOUND) "found" else "read") });
         return null;
     };
-    defer dl.UnLock(lock);
-    return switch (datatypes.subclass.readWhole(sys, dl, lock)) {
-        .got => |bytes| bytes,
-        else => {
-            _ = Printf(dl, "%s: cannot be read\n", .{name});
-            return null;
-        },
-    };
+    if (length == 0) {
+        sys.FreeVec(bytes);
+        _ = Printf(dl, "%s: cannot be read\n", .{name});
+        return null;
+    }
+    return bytes[0..length];
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {

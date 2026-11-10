@@ -256,7 +256,7 @@ fn setupFrom(stream: *Stream, v: *Vorbis, bits: *ogg.Bits) i32 {
     v.pool = null;
     const pool = sys.CreatePool(exec.MEMF_ANY | exec.MEMF_CLEAR, 32 * 1024, 8 * 1024) orelse return ac.ACERR_NOMEMORY;
     v.pool = pool;
-    const result = setup.read(bits, sys, pool, channels, &v.setup);
+    const result = setup.read(bits, sys, stream.base.utility_base, pool, channels, &v.setup);
     if (result != ac.ACERR_OK) return result;
 
     // The tables and the buffers.

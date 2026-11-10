@@ -9,6 +9,8 @@ pub const name = @import("name.zig");
 pub const pack = @import("pack.zig");
 pub const pattern = @import("pattern.zig");
 pub const setting = @import("setting.zig");
+pub const text = @import("text.zig");
+pub const url = @import("url.zig");
 
 /// The name to open it by.
 pub const UTILITYNAME = "utility.library";
@@ -37,6 +39,27 @@ pub const HookFn = hooks.HookFn;
 pub const ClockData = date.ClockData;
 
 pub const SettingScan = setting.SettingScan;
+
+pub const Utf8Conversion = text.Utf8Conversion;
+pub const UTF8F_REFUSE = text.UTF8F_REFUSE;
+pub const UTF8F_TYPESET = text.UTF8F_TYPESET;
+pub const UTF8F_LATIN1 = text.UTF8F_LATIN1;
+pub const UTF8F_PIECES = text.UTF8F_PIECES;
+pub const UTF8_REFUSED = text.UTF8_REFUSED;
+pub const UTF8KIND_NONE = text.UTF8KIND_NONE;
+pub const UTF8KIND_ASCII = text.UTF8KIND_ASCII;
+pub const UTF8KIND_LATIN1 = text.UTF8KIND_LATIN1;
+pub const UTF8KIND_WIDE = text.UTF8KIND_WIDE;
+
+pub const UrlPart = url.UrlPart;
+pub const UrlParts = url.UrlParts;
+pub const URLF_SCP = url.URLF_SCP;
+pub const URLF_USER = url.URLF_USER;
+pub const URLF_PASSWORD = url.URLF_PASSWORD;
+pub const URLF_BRACKETS = url.URLF_BRACKETS;
+pub const URLF_SLASH = url.URLF_SLASH;
+pub const URLF_LATIN1 = url.URLF_LATIN1;
+pub const URL_BROKEN = url.URL_BROKEN;
 
 pub const P_ANY = pattern.P_ANY;
 pub const P_SINGLE = pattern.P_SINGLE;

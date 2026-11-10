@@ -11,9 +11,13 @@ const transport = @import("transport.zig");
 const http_link = @import("http.zig");
 const ssh_link = @import("ssh.zig");
 const files = @import("files.zig");
+const utility = @import("sdk").utility;
 const Git = @import("context.zig").Git;
 
 const MSG_BADURL = "%s is no URL Git can reach\n";
+
+/// How much of a server's text is made Latin-1 at a time.
+const latin_piece = 126;
 
 const Link = union(url.Kind) {
     http: *http_link.HttpLink,
@@ -28,7 +32,7 @@ pub const Connection = struct {
     /// The server's progress is at a line's start.
     line_start: bool = true,
     /// Its text, UTF-8, made Latin-1.
-    latin: files.Latin1 = .{},
+    latin: utility.Utf8Conversion = files.serverText(),
 
     /// The remote at `text`, its `service` asked for its advertisement:
     /// null when it cannot be reached (said).
@@ -36,8 +40,8 @@ pub const Connection = struct {
         const connection = git.create(Connection) orelse return null;
         connection.git = git;
         connection.line_start = true;
-        connection.latin = .{};
-        if (!url.parse(spanOf(text), &connection.remote_url)) {
+        connection.latin = files.serverText();
+        if (!url.parse(git.ub, spanOf(text), &connection.remote_url)) {
             git.say(MSG_BADURL, .{text});
             git.free(connection);
             return null;
@@ -103,24 +107,37 @@ pub const Connection = struct {
         git.endProgress();
         var clean: [128]u8 = undefined;
         var length: usize = 0;
-        for (text) |byte| {
-            const char = connection.latin.take(byte) orelse continue;
-            if (connection.line_start) {
-                git.put(clean[0..length]);
-                length = 0;
-                git.put("remote: ");
-                connection.line_start = false;
-            }
-            clean[length] = if (char == '\n' or char == '\r') char else if (char < ' ' or (char >= 0x7F and char < 0xA0)) '?' else char;
-            length += 1;
-            if (char == '\n' or char == '\r') connection.line_start = true;
-            if (length == clean.len) {
-                git.put(&clean);
-                length = 0;
-            }
+        var at: usize = 0;
+        while (at < text.len) {
+            // A piece at a time, two bytes short of the buffer for a
+            // character the last piece ended inside.
+            const piece = text[at..@min(at + latin_piece, text.len)];
+            at += piece.len;
+            var latin: [latin_piece + 2]u8 = undefined;
+            const latin_length = git.ub.Utf8ToLatin1(&connection.latin, piece.ptr, piece.len, &latin, latin.len);
+            for (latin[0..latin_length]) |char| connection.show(&clean, &length, char);
         }
         git.put(clean[0..length]);
         return !git.stopped();
+    }
+
+    /// One character of the server's text onto the output, `remote: `
+    /// before each line, a control character as `?`.
+    fn show(connection: *Connection, clean: *[128]u8, length: *usize, char: u8) void {
+        const git = connection.git;
+        if (connection.line_start) {
+            git.put(clean[0..length.*]);
+            length.* = 0;
+            git.put("remote: ");
+            connection.line_start = false;
+        }
+        clean[length.*] = if (char == '\n' or char == '\r') char else if (char < ' ' or (char >= 0x7F and char < 0xA0)) '?' else char;
+        length.* += 1;
+        if (char == '\n' or char == '\r') connection.line_start = true;
+        if (length.* == clean.len) {
+            git.put(clean);
+            length.* = 0;
+        }
     }
 
     fn received(context: *anyopaque, bytes: u64) bool {

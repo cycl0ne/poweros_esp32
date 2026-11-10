@@ -4,10 +4,9 @@
 //!
 //!   Delete FILE/M/A,ALL/S,QUIET/S,FORCE/S
 //!
-//! Each name may be a pattern (MatchFirst/MatchNext). ALL goes into a
-//! directory and deletes what is in it first, then the directory itself:
-//! a batch of its names read under one lock, then deleted, until it is
-//! empty.
+//! Each name may be a pattern (MatchFirst/MatchNext). ALL deletes a
+//! directory with all it holds, innermost first, by dos's DeleteTree,
+//! and stops at the first object that will not go.
 //! FORCE clears the delete-protect bit rather than stopping at it. QUIET
 //! keeps it from naming what it deleted.
 //!
@@ -23,13 +22,14 @@
 const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
+const utility = sdk.utility;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Delete";
-const VERSION_STRING = "\x00$VER: Delete 1.1 (28.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Delete 1.2 (09.11.2026)\r\n";
 
 const template = "FILE/M/A,ALL/S,QUIET/S,FORCE/S";
 const arg_file = 0;
@@ -37,15 +37,8 @@ const arg_all = 1;
 const arg_quiet = 2;
 const arg_force = 3;
 
-/// The longest path it builds, dos's limit: a name of the full length in
-/// a drawer several deep.
+/// The longest name a pattern matches, dos's limit.
 const max_path = dos.path_max;
-/// How deep ALL goes.
-const max_depth = 15;
-/// The names ALL reads from a directory before it deletes them: some
-/// hundred, so that a directory of a thousand is read a few times rather
-/// than once for each of its entries.
-const batch_bytes = 16 * 1024;
 
 const MSG_NO_FILES = "No file to delete\n";
 const MSG_DELETED = "  Deleted\n";
@@ -53,17 +46,6 @@ const MSG_DELETED = "  Deleted\n";
 const Anchor = extern struct {
     ap: dos.AnchorPath = .{},
     buf: [max_path]u8 = @splat(0),
-};
-
-/// What one level of the walk through a directory needs. It is allocated
-/// rather than kept on the stack: a whole path, a FileInfoBlock and a
-/// batch of names, `max_depth` times over, is more than a command's stack
-/// holds.
-const Level = struct {
-    fib: dos.FileInfoBlock = .{},
-    path: [max_path:0]u8 = @splat(0),
-    /// Names read from the directory, each ended by a NUL.
-    names: [batch_bytes]u8 = @splat(0),
 };
 
 const Run = struct {
@@ -113,7 +95,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         var found = false;
         while (err == 0) : (err = dl.MatchNext(&anchor.ap)) {
             found = true;
-            remove(&run, @ptrCast(&anchor.buf), 0);
+            remove(&run, @ptrCast(&anchor.buf));
             if (run.stopped) break;
         }
         dl.MatchEnd(&anchor.ap);
@@ -130,25 +112,35 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 }
 
 /// One object: the file, or with ALL a whole directory, innermost first.
-fn remove(run: *Run, name: [*:0]const u8, depth: u32) void {
+fn remove(run: *Run, name: [*:0]const u8) void {
     if (breakNow(run)) return;
     const dl = run.dl;
-    if (dl.DeleteFile(name)) return say(run, name);
-
-    const why = dl.IoErr();
-    if (why == dos.ERROR_DELETE_PROTECTED and run.force) {
-        if (dl.SetProtection(name, 0) and dl.DeleteFile(name)) return say(run, name);
+    if (run.all) {
+        var hook: utility.Hook = .{ .entry = told, .data = run };
+        if (!dl.DeleteTree(name, if (run.force) dos.DELF_FORCE else 0, &hook)) run.failed = true;
+        return;
     }
-    if (why == dos.ERROR_DIRECTORY_NOT_EMPTY and run.all) {
-        if (depth >= max_depth) {
-            _ = dl.PrintFault(dos.ERROR_TOO_MANY_LEVELS, name);
-            run.failed = true;
-            return;
-        }
-        if (emptyDir(run, name, depth) and dl.DeleteFile(name)) return say(run, name);
+    if (dl.DeleteFile(name)) return say(run, name);
+    if (dl.IoErr() == dos.ERROR_DELETE_PROTECTED and run.force) {
+        if (dl.SetProtection(name, 0) and dl.DeleteFile(name)) return say(run, name);
     }
     _ = dl.PrintFault(dl.IoErr(), name);
     run.failed = true;
+}
+
+/// DeleteTree's hook: each object named as it goes, or why it would not;
+/// Ctrl-C stops the walk.
+fn told(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    _ = object;
+    const run: *Run = @ptrCast(@alignCast(hook.data.?));
+    const deleted: *const dos.DeleteMsg = @ptrCast(@alignCast(message.?));
+    if (deleted.failure == 0) {
+        say(run, deleted.name);
+    } else {
+        _ = run.dl.PrintFault(deleted.failure, deleted.name);
+        run.failed = true;
+    }
+    return @intFromBool(breakNow(run));
 }
 
 fn say(run: *Run, name: [*:0]const u8) void {
@@ -166,80 +158,6 @@ fn breakNow(run: *Run) bool {
     run.stopped = true;
     run.failed = true;
     return true;
-}
-
-/// Everything inside a directory. Each entry is deleted by name, so this
-/// asks a handler for nothing that every one of them cannot do. The names
-/// are read a batch at a time and the lock let go before the first is
-/// deleted: a handler is free to give the entries in any order, and no
-/// scan goes on past one that has gone. The walk starts again after each
-/// batch. It once started again after each entry, and a directory of a
-/// thousand on a share was listed a thousand times - 4.75 ms an entry.
-fn emptyDir(run: *Run, name: [*:0]const u8, depth: u32) bool {
-    const dl = run.dl;
-    const block = run.sys.AllocVec(@sizeOf(Level), exec.MEMF_CLEAR) orelse {
-        _ = dl.PrintFault(dos.ERROR_NO_FREE_STORE, name);
-        run.failed = true;
-        return false;
-    };
-    defer run.sys.FreeVec(block);
-    const level: *Level = @ptrCast(@alignCast(block));
-    while (true) {
-        if (breakNow(run)) return false;
-        const count = collect(dl, name, level) orelse return false;
-        if (count == 0) return true; // nothing left in it
-        var at: usize = 0;
-        for (0..count) |_| {
-            const entry: [*:0]const u8 = @ptrCast(&level.names[at]);
-            at += length(entry) + 1;
-            if (!join(dl, &level.path, name, entry)) {
-                _ = dl.PrintFault(dos.ERROR_LINE_TOO_LONG, name);
-                run.failed = true;
-                return false;
-            }
-            const was = run.failed;
-            remove(run, @ptrCast(&level.path), depth + 1);
-            if (run.failed != was or run.stopped) return false; // it will not go; stop here
-        }
-    }
-}
-
-/// A batch of the names in the directory `name`, read into `level.names`
-/// under one lock: how many, 0 when it is empty, null when it cannot be
-/// looked into.
-fn collect(dl: *DosBase, name: [*:0]const u8, level: *Level) ?usize {
-    const lock = dl.Lock(name, dos.SHARED_LOCK) orelse return null;
-    defer dl.UnLock(lock);
-    if (!dl.Examine(lock, &level.fib)) return null;
-    var count: usize = 0;
-    var at: usize = 0;
-    while (dl.ExNext(lock, &level.fib)) {
-        const entry: [*:0]const u8 = @ptrCast(&level.fib.file_name);
-        const len = length(entry);
-        if (at + len + 1 > level.names.len) break; // the next batch's
-        @memcpy(level.names[at..][0..len], entry[0..len]);
-        level.names[at + len] = 0;
-        at += len + 1;
-        count += 1;
-    }
-    return count;
-}
-
-fn length(name: [*:0]const u8) usize {
-    var i: usize = 0;
-    while (name[i] != 0) : (i += 1) {}
-    return i;
-}
-
-/// A directory and a name into one path, through dos's AddPart.
-fn join(dl: *DosBase, into: *[max_path:0]u8, dir: [*:0]const u8, name: [*:0]const u8) bool {
-    var i: usize = 0;
-    while (dir[i] != 0) : (i += 1) {
-        if (i + 1 >= into.len) return false;
-        into[i] = dir[i];
-    }
-    into[i] = 0;
-    return dl.AddPart(@ptrCast(into), name, into.len);
 }
 
 /// The "$VER:" string every PowerOS module carries, which `Version <file>`

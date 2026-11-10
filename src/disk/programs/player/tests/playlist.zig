@@ -9,6 +9,8 @@ const std = @import("std");
 const sdk = @import("sdk");
 const ac = sdk.audiocodec;
 const kexec = @import("host_rom").exec;
+const utility_library = @import("host_rom").utility;
+const UtilityBase = @import("sdk").interface.utility.UtilityBase;
 const playlist = @import("../playlist.zig");
 
 const testing = std.testing;
@@ -62,11 +64,11 @@ test "Player's playlist: the endings of sound, a file's name, a station's addres
 }
 
 test "Player's playlist: songs added and numbered, filled from their tags, numbered again after a move, taken out" {
-    try kexec.setUp();
+    const ub: *UtilityBase = @ptrCast(try utility_library.setUp());
     defer kexec.deinit();
     const sys = kexec.SysBase.iface();
     var list: playlist.Playlist = undefined;
-    list.init();
+    list.init(ub);
     const one = list.add(sys, "DH0:Music/One.mp3").?;
     const two = list.add(sys, "DH0:Music/Two.mp3").?;
     const three = list.add(sys, "Three.ogg").?;
@@ -112,15 +114,16 @@ test "Player's playlist: songs added and numbered, filled from their tags, numbe
     list.clear(sys);
     try testing.expectEqual(@as(usize, 0), list.count);
     try testing.expectEqual(@as(?*playlist.Entry, null), list.first());
+    try utility_library.tearDown(@ptrCast(@alignCast(ub)));
     try kexec.expectNoLeaks();
 }
 
 test "Player's playlist: written as M3U, from the drawer it is saved in" {
-    try kexec.setUp();
+    const ub: *UtilityBase = @ptrCast(try utility_library.setUp());
     defer kexec.deinit();
     const sys = kexec.SysBase.iface();
     var list: playlist.Playlist = undefined;
-    list.init();
+    list.init(ub);
     const fire = list.add(sys, "DH0:Music/Fire.mp3").?;
     _ = list.add(sys, "SD0:Other/Rise.flac").?;
     const station = list.add(sys, "http://radio.example/live").?;
@@ -140,5 +143,6 @@ test "Player's playlist: written as M3U, from the drawer it is saved in" {
         "http://radio.example/live\n", text);
     sys.FreeVec(text.ptr);
     list.clear(sys);
+    try utility_library.tearDown(@ptrCast(@alignCast(ub)));
     try kexec.expectNoLeaks();
 }

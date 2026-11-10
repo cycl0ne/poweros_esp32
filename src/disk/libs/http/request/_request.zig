@@ -227,6 +227,7 @@ pub fn open(client: *Client, method: [*:0]const u8, url_text: [*:0]const u8, set
     if (settings.unzip) {
         cb = _base.compressionOf(base) orelse {
             failure.code = http.HTTPERR_LIBRARY;
+            failure.library = compression.COMPRESSIONNAME;
             return null;
         };
     }
@@ -273,7 +274,7 @@ fn run(request: *Request, settings: Settings, failure: *Failure) i32 {
     var body = settings.body;
     var redirects_left = settings.redirects;
     while (true) {
-        const url = _protocol.parseUrl(request.url[0..request.url_length]) orelse return http.HTTPERR_URL;
+        const url = _protocol.parseUrl(request.client.base.utility_base, request.url[0..request.url_length]) orelse return http.HTTPERR_URL;
         request.secure = url.secure;
         const code = exchange(request, url, settings, body, failure);
         if (code != http.HTTPERR_OK) return code;
@@ -304,7 +305,7 @@ fn run(request: *Request, settings: Settings, failure: *Failure) i32 {
             body = null;
         }
         discard(request);
-        const next = _protocol.parseUrl(request.next_url[0..next_length]) orelse return http.HTTPERR_REDIRECT;
+        const next = _protocol.parseUrl(request.client.base.utility_base, request.next_url[0..next_length]) orelse return http.HTTPERR_REDIRECT;
         if (next.secure != url.secure or next.port != url.port or !_protocol.same(next.host, url.host)) request.foreign = true;
         @memcpy(request.url[0..next_length], request.next_url[0..next_length]);
         request.url[next_length] = 0;
