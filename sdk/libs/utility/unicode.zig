@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MIT
 //! Characters by Unicode's tables: a character's folding, upper case and
-//! lower case, and names compared without regard to case.
+//! lower case, names compared without regard to case, and the letter a
+//! letter with marks is written on.
 //!
-//! The tables are runs of code points that move by the same amount
+//! The case tables are runs of code points that move by the same amount
 //! (`unicode_case.zig`, written by tools/foldgen); a character is looked
-//! up by a binary search over them, ASCII without one. Folding is simple
+//! up by a binary search over them, ASCII without one. The base letters
+//! (`unicode_base.zig`, the same tool's) are a sorted list searched the
+//! same way. Folding is simple
 //! case folding - one code point to one, the same whatever language is
 //! set - which is what every name is compared by: `ß` stays `ß`, `ẞ` folds
 //! to it, `Σ`, `σ` and `ς` are one letter.
@@ -14,6 +17,7 @@
 
 const utf8 = @import("utf8.zig");
 const unicode_case = @import("unicode_case.zig");
+const unicode_base = @import("unicode_base.zig");
 
 /// The Unicode version the tables are from.
 pub const version = unicode_case.unicode_version;
@@ -56,6 +60,28 @@ pub fn upper(char: u32) u32 {
 pub fn lower(char: u32) u32 {
     if (char < 0x80) return if (char >= 'A' and char <= 'Z') char + 32 else char;
     return mapped(&unicode_case.lower, char);
+}
+
+/// The letter `char` is written on with marks - `A` for `Ā`, `α` for
+/// `ἀ`, `Å` for `Ǻ` - or null for a character that is no Latin, Greek or
+/// Cyrillic letter with marks. What a font that lacks a letter draws
+/// instead; asked again of the answer, it goes on to the bare letter.
+pub fn base(char: u32) ?u32 {
+    const letters = &unicode_base.letters;
+    if (char < letters[0] or char > letters[letters.len - 1]) return null;
+    var low: usize = 0;
+    var high: usize = letters.len;
+    while (low < high) {
+        const middle = low + (high - low) / 2;
+        if (letters[middle] < char) {
+            low = middle + 1;
+        } else if (letters[middle] > char) {
+            high = middle;
+        } else {
+            return unicode_base.bases[middle];
+        }
+    }
+    return null;
 }
 
 /// How two texts compare without regard to case: less than 0, 0 or more

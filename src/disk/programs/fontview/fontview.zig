@@ -10,8 +10,8 @@
 //! was drawn at, or, for a family with an outline, a range of heights to
 //! render it at. Choosing a size opens that font with OpenDiskFont; a line
 //! under the lists says what it is - rows, where it came from, whether it
-//! was drawn or made, its kind of pixels - and a sample line is drawn in
-//! it below. A font's file (`Name.font`) dragged from the desktop and let
+//! was drawn or made, its kind of pixels - and two sample lines are drawn
+//! in it below. A font's file (`Name.font`) dragged from the desktop and let
 //! go on the window chooses that family. The close gadget or Ctrl-C ends
 //! it.
 
@@ -41,8 +41,8 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FontView";
-const VERSION = "1.2";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.10.2026)\r\n";
+const VERSION = "1.3";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -69,8 +69,10 @@ const project_menu = [_]intuition.menus.NewMenu{
     .{ .type = intuition.menus.NM_END },
 };
 
-/// The line drawn in the chosen font.
-const sample = "The quick brown fox jumps over the lazy dog - 0123456789 - \xc4\xd6\xdc\xe4\xf6\xfc\xdf";
+/// The lines drawn in the chosen font: English and digits; German, the
+/// euro and typographic quotes, a Greek, a Russian and a Polish word, and
+/// two letters most fonts draw as their base letter.
+const sample = "The quick brown fox jumps over the lazy dog - 0123456789\nÄÖÜäöüß €„“” – Ωμέγα Ёжик Łódź Ħ ἀ";
 
 /// The heights an outline is offered at.
 const outline_sizes = [_]u16{ 8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64 };
@@ -395,6 +397,8 @@ fn build(ib: *IntuitionBase, state: *State) ?Parts {
     const preview = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
         .{ .tag = tx.TEXT_Text, .data = @intFromPtr("") },
         .{ .tag = tx.TEXT_Border, .data = 1 },
+        // As markup, whose lines end at a `\n`; the sample has no `<`.
+        .{ .tag = tx.TEXT_Markup, .data = 1 },
         .{ .tag = tx.TEXT_Clipped, .data = 1 },
         .{},
     });

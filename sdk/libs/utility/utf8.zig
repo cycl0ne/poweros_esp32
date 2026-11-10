@@ -123,6 +123,19 @@ pub fn readAs(bytes: []const u8, latin1: bool) Read {
     return .{ .char = replacement, .length = length, .broken = true };
 }
 
+/// The character `bytes` end with (at least one byte), read as `read`
+/// reads it from its start: how text is walked back from its end. The
+/// UTF-8 character ending there, when its bytes are all there and whole;
+/// else the last byte alone, read as a byte that is no UTF-8 - or, while
+/// broken bytes read as U+FFFD, the broken sequence it ends.
+pub fn readLast(bytes: []const u8) Read {
+    var start = bytes.len - 1;
+    while (start > 0 and bytes.len - start < 4 and bytes[start] & 0xC0 == 0x80) start -= 1;
+    const found = read(bytes[start..]);
+    if (found.length == bytes.len - start) return found;
+    return read(bytes[bytes.len - 1 ..]);
+}
+
 /// `read` at the start of a NUL-terminated string that is not at its end.
 pub fn readZ(text: [*:0]const u8) Read {
     var length: usize = 1;

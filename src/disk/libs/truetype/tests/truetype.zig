@@ -226,15 +226,22 @@ test "a TrueType file rendered: squares full, a curve smooth, a composite moved,
     try testing.expect(tb.OpenOutline(&out.bytes, 8) == null);
     const outline = tb.OpenOutline(&out.bytes, out.len) orelse return error.NotRead;
 
+    // Ranges out of order, or past the last code point: refused.
+    const backwards = [_]truetype.CodeRange{ .{ .first = 'B', .last = 'C' }, .{ .first = 'A', .last = 'A' } };
+    try testing.expect(tb.RenderFontImage(outline, 20, &backwards, backwards.len) == null);
+    const past = [_]truetype.CodeRange{.{ .first = 0x10FFFF, .last = 0x110000 }};
+    try testing.expect(tb.RenderFontImage(outline, 20, &past, past.len) == null);
+
     // 20 rows: 1000 units to 20 pixels, 0.02 a unit; the baseline 16 down.
-    const image = tb.RenderFontImage(outline, 20, 32, 126) orelse return error.NoImage;
+    const printable = [_]truetype.CodeRange{ .{ .first = 32, .last = 126 }, .{ .first = 0x100, .last = 0x17F } };
+    const image = tb.RenderFontImage(outline, 20, &printable, printable.len) orelse return error.NoImage;
     const block: [*]const u8 = @ptrCast(image);
     try testing.expect(fontimage.check(block, image.size));
     try testing.expect(fontimage.sound(block, image.size));
     try testing.expectEqual(@as(u16, 20), image.height);
     try testing.expectEqual(@as(u16, 16), image.baseline);
     try testing.expectEqual(fontimage.Kind.alpha4, image.kind);
-    try testing.expectEqual(@as(u32, 127), image.default_char);
+    try testing.expectEqual(fontimage.MISSING, image.default_char);
     try testing.expectEqual(graphics.FS_NORMAL, image.style);
 
     // 'A': 10 by 14 pixels, two down from the top, every pixel covered.
@@ -265,9 +272,16 @@ test "a TrueType file rendered: squares full, a curve smooth, a composite moved,
     try testing.expectEqual(@as(i16, 2), c.left);
     try testing.expectEqual(a.width, c.width);
 
-    // A code the font has no glyph for, and the default: the empty glyph.
-    try testing.expectEqual(@as(u16, 0), fontimage.find(image, 'z').?.width);
+    // Only what the font has is in the image: 'A' to 'C' in one range,
+    // and the missing glyph, the default, which is empty here. A code the
+    // font lacks is drawn as that, or a letter with marks as its base
+    // letter: Ā as A.
+    try testing.expectEqual(@as(u32, 2), image.range_count);
+    try testing.expectEqual(@as(u32, 4), image.glyph_count);
+    try testing.expect(fontimage.find(image, 'z') == null);
+    try testing.expectEqual(@as(u16, 0), fontimage.glyphFor(image, 'z').width);
     try testing.expectEqual(@as(u16, 0), fontimage.glyphFor(image, 300).width);
+    try testing.expectEqual(a, fontimage.glyphFor(image, 0x100));
 
     sys.FreeVec(image);
     tb.CloseOutline(outline);
@@ -296,7 +310,8 @@ test "a face says what it is: its styles read from the file, and every size rend
     out = .{};
     buildFace(&out, 1);
     const outline = tb.OpenOutline(&out.bytes, out.len) orelse return error.NotRead;
-    const image = tb.RenderFontImage(outline, 20, 32, 126) orelse return error.NoImage;
+    const ascii = [_]truetype.CodeRange{.{ .first = 32, .last = 126 }};
+    const image = tb.RenderFontImage(outline, 20, &ascii, ascii.len) orelse return error.NoImage;
     try testing.expectEqual(graphics.FSF_BOLD, image.style);
     const block: [*]const u8 = @ptrCast(image);
     try testing.expect(fontimage.sound(block, image.size));

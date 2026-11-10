@@ -481,7 +481,8 @@ pattern wrote it - in Latin-1 for a pattern in Latin-1 - and a name a
 wildcard found as the handler gives it. `C:test/Names DIR` makes, finds,
 matches and deletes names past ASCII - a letter past Latin-1, the euro
 sign, Greek, an emoji, an umlaut in UTF-8 and in Latin-1 - in a directory
-of its own under DIR, and says which steps of each passed.
+of its own under DIR, and says which steps of each passed; with `KEEP`
+it leaves them there, to be looked at in a drawer or a listing.
 
 The `AnchorPath` is the search's state, cleared before `MatchFirst`
 apart from three fields. `break_bits` are signals that stop the search

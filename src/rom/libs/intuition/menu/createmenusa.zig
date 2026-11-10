@@ -39,7 +39,7 @@ pub fn headerOf(first: *anyopaque) *Header {
 }
 
 /// "»": what an item with subitems shows at its right.
-const more_mark: [*:0]const u8 = "\xbb";
+const more_mark: [*:0]const u8 = "\xC2\xBB";
 
 fn trueType(nm: *const NewMenu) u8 {
     return nm.type & ~mn.MENU_IMAGE;
@@ -427,7 +427,7 @@ test "CreateMenusA and LayoutMenusA: titles, items, subitems, separators, shortc
     // An item with subitems shows the mark at its right.
     const export_item = open.next_item.?;
     const export_tags: [*]const TagItem = @ptrCast(@alignCast(export_item.item_fill.?));
-    try testing.expectEqualStrings("\xbb", std.mem.span(runOf(ib, runOf(ib, export_tags).next).text.?));
+    try testing.expectEqualStrings("\xC2\xBB", std.mem.span(runOf(ib, runOf(ib, export_tags).next).text.?));
     try testing.expectEqualStrings("Text", std.mem.span(textOf(ib, export_item.sub_item.?)));
     try testing.expectEqualStrings("Picture", std.mem.span(textOf(ib, export_item.sub_item.?.next_item.?)));
     // A separator is an image, neither picked nor highlighted; the entry

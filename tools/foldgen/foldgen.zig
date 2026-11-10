@@ -6,6 +6,7 @@
 //!
 //!   foldgen posfs <CaseFolding.txt> <out.zig>
 //!   foldgen case <CaseFolding.txt> <UnicodeData.txt> <out.zig>
+//!   foldgen base <CaseFolding.txt> <UnicodeData.txt> <out.zig>
 //!
 //! `posfs` writes posfs's case fold table (sdk/libs/dos/posfs/fold1.zig):
 //! simple case folding, the file's C and S lines, one code point to one,
@@ -20,7 +21,16 @@
 //! thirteenth and fourteenth fields. These follow the Unicode version the
 //! system is at, and are written again for a new one.
 //!
-//! A table is runs: code points one or two apart that all move by the same
+//! `base` writes the base letters (sdk/libs/utility/unicode_base.zig):
+//! for each Latin, Greek and Cyrillic letter of the BMP that is another
+//! letter with marks, that letter - `Ā` is `A`, `ἀ` is `α` - which a
+//! font that lacks the one draws instead. The base is the first code
+//! point of a canonical decomposition; a letter with none whose name is
+//! another letter's name followed by " WITH ..." (`Ħ`, `ł`, `Ґ`) has that
+//! letter. One step only: `Ǻ` is `Å`, whose base is `A`. The version is
+//! CaseFolding.txt's, as `case` takes it.
+//!
+//! A case table is runs: code points one or two apart that all move by the same
 //! amount (A-Z by +32; Ā, Ă, Ą... by +1 every second one), each run packed
 //! into a u64 and found by a binary search - 210 runs for Unicode 16's 1484
 //! foldings.
@@ -37,7 +47,7 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(1);
 }
 
-const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case <CaseFolding.txt> <UnicodeData.txt> <out.zig>";
+const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig>";
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -117,7 +127,101 @@ pub fn main(init: std.process.Init) !void {
         try cwd.writeFile(io, .{ .sub_path = args[4], .data = out.items });
         return;
     }
+
+    if (mem.eql(u8, args[1], "base")) {
+        if (args.len != 5) fatal(usage, .{});
+        const folding = try cwd.readFileAlloc(io, args[2], arena, limit);
+        const data = try cwd.readFileAlloc(io, args[3], arena, limit);
+        const version = try versionOf(folding, args[2]);
+        const bases = try baseLetters(arena, data);
+        try out.print(arena,
+            \\// SPDX-License-Identifier: MIT
+            \\//! The base letters, from Unicode {s}: each Latin, Greek and Cyrillic
+            \\//! letter of the BMP that is another letter with marks, and that
+            \\//! letter - the first code point of its canonical decomposition, or for
+            \\//! a letter with none, the letter its name is followed by " WITH ...".
+            \\//! One step: a letter with two marks has the letter with the first.
+            \\//! Written by tools/foldgen (`foldgen base`) from the files
+            \\//! scripts/fetch-unicode.sh fetches; never edited by hand.
+            \\//!
+            \\//! {d} letters, sorted; `bases[i]` is the base of `letters[i]`.
+            \\
+            \\/// The Unicode version the table is from.
+            \\pub const unicode_version = "{s}";
+            \\
+            \\
+        , .{ version, bases.len, version });
+        try writeColumn(arena, &out, "The letters with marks, sorted.", "letters", bases, .from);
+        try out.appendSlice(arena, "\n");
+        try writeColumn(arena, &out, "The letter each is written on.", "bases", bases, .to);
+        try cwd.writeFile(io, .{ .sub_path = args[4], .data = out.items });
+        return;
+    }
     fatal(usage, .{});
+}
+
+/// Every Latin, Greek and Cyrillic letter of the BMP that is another
+/// letter with marks, and that letter, sorted.
+fn baseLetters(arena: mem.Allocator, data: []const u8) ![]Mapping {
+    const Entry = struct { code: u21, name: []const u8, category: []const u8, decomposition: []const u8 };
+    var entries: std.ArrayList(Entry) = .empty;
+    var by_name: std.StringHashMapUnmanaged(usize) = .empty;
+    var lines = mem.splitScalar(u8, data, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw, " \t\r");
+        if (line.len == 0) continue;
+        var fields = mem.splitScalar(u8, line, ';');
+        const code = try std.fmt.parseInt(u21, fields.next() orelse continue, 16);
+        const name = fields.next() orelse continue;
+        const category = fields.next() orelse continue;
+        _ = fields.next(); // the combining class
+        _ = fields.next(); // the bidirectional class
+        const decomposition = fields.next() orelse continue;
+        try by_name.put(arena, name, entries.items.len);
+        try entries.append(arena, .{ .code = code, .name = name, .category = category, .decomposition = decomposition });
+    }
+    var codes: std.AutoHashMapUnmanaged(u21, usize) = .empty;
+    for (entries.items, 0..) |entry, index| try codes.put(arena, entry.code, index);
+    const isLetter = struct {
+        fn of(all: []const Entry, at: ?usize) bool {
+            const index = at orelse return false;
+            return all[index].category.len != 0 and all[index].category[0] == 'L';
+        }
+    }.of;
+
+    var mappings: std.ArrayList(Mapping) = .empty;
+    for (entries.items, 0..) |entry, index| {
+        if (entry.code > 0xFFFF or !isLetter(entries.items, index)) continue;
+        if (!mem.startsWith(u8, entry.name, "LATIN ") and !mem.startsWith(u8, entry.name, "GREEK ") and
+            !mem.startsWith(u8, entry.name, "CYRILLIC ")) continue;
+        var base: ?u21 = null;
+        if (entry.decomposition.len != 0) {
+            // A tagged decomposition is a compatibility one: no base.
+            if (entry.decomposition[0] != '<') {
+                const first_text = entry.decomposition[0 .. mem.indexOfScalar(u8, entry.decomposition, ' ') orelse entry.decomposition.len];
+                const first = try std.fmt.parseInt(u21, first_text, 16);
+                if (isLetter(entries.items, codes.get(first))) base = first;
+            }
+        } else if (mem.indexOf(u8, entry.name, " WITH ")) |with| {
+            const stem = by_name.get(entry.name[0..with]);
+            if (isLetter(entries.items, stem)) base = entries.items[stem.?].code;
+        }
+        if (base) |letter| try mappings.append(arena, .{ .from = entry.code, .to = letter });
+    }
+    sortMappings(mappings.items);
+    return mappings.items;
+}
+
+/// One side of `mappings` as a `u16` array named `name`, twelve to a line.
+fn writeColumn(arena: mem.Allocator, out: *std.ArrayList(u8), doc: []const u8, name: []const u8, mappings: []const Mapping, comptime side: enum { from, to }) !void {
+    try out.print(arena, "/// {s}\npub const {s} = [_]u16{{\n", .{ doc, name });
+    for (mappings, 0..) |mapping, at| {
+        const value = if (side == .from) mapping.from else mapping.to;
+        if (at % 12 == 0) try out.appendSlice(arena, "   ");
+        try out.print(arena, " 0x{X:0>4},", .{value});
+        if (at % 12 == 11 or at + 1 == mappings.len) try out.appendSlice(arena, "\n");
+    }
+    try out.appendSlice(arena, "};\n");
 }
 
 /// The version CaseFolding.txt's first line names.

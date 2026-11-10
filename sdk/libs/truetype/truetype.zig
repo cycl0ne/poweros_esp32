@@ -31,6 +31,13 @@ pub const TRUETYPE_VERSION = 1;
 /// last until `CloseOutline`.
 pub const Outline = opaque {};
 
+/// Codes `first` to `last`, both in: a part of what `RenderFontImage`
+/// renders. Since 1.3.
+pub const CodeRange = extern struct {
+    first: u32,
+    last: u32,
+};
+
 // --- glyphs as outlines (since 1.2) ---------------------------------------------
 
 /// A glyph's measures, in the font's units, y up from the baseline.

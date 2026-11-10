@@ -17,8 +17,11 @@ arguments.
   be rendered at.
 - Choosing a size opens that font. A line under the lists says what it
   is - how many rows, where it came from, whether it was drawn or made
-  from an outline, and its kind of pixels - and a sample line is drawn in
-  it below.
+  from an outline, and its kind of pixels - and two sample lines are
+  drawn in it below: English, German umlauts, the euro and typographic
+  quotes, a Greek, a Russian and a Polish word, so what the font has of
+  each script shows at a glance (a letter it lacks as its base letter, or
+  as a box).
 - A font's file (`Name.font`) dragged from the desktop and dropped on the
   window chooses that family.
 

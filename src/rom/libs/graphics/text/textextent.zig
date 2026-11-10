@@ -17,12 +17,12 @@ const _text = @import("_text.zig");
 /// fn TextExtent(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, out: *graphics.TextExtent) void
 /// ```
 ///
-/// SINCE: 0.14. LVO -168.
+/// SINCE: 0.14, UTF-8 since 0.38. LVO -168.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. Its font and text style decide the answer.
-/// - `string` - the characters.
-/// - `count` - how many.
+/// - `string` - the text, UTF-8, as `Text` takes it.
+/// - `count` - its length in bytes.
 /// - `out` - where the answer goes. All zeroes with no font set, and the
 ///   error is then `GERR_NO_FONT`.
 ///

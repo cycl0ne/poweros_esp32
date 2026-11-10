@@ -2,7 +2,7 @@
 //! Names: makes, finds, matches and deletes files whose names go past
 //! ASCII, each step printed with PASS or FAIL. Built against the SDK only.
 //!
-//!   Names DIR/A
+//!   Names DIR/A,KEEP/S
 //!
 //! In a directory of its own under DIR (`NamesTest`, removed at the end),
 //! each name of the list - a letter past Latin-1, the euro sign, a Greek
@@ -12,8 +12,10 @@
 //! was made with, matched by a pattern with `?` for its first character
 //! (one entry, that one), deleted by its name in the other case, and
 //! looked for once more, which must fail. The labels are ASCII, so the
-//! report reads on any console. RETURN_OK when every step passed,
-//! RETURN_ERROR when one failed.
+//! report reads on any console. With KEEP each name is made once more at
+//! the end and the directory left, for a look at how the names show
+//! (`NamesTest` must then be gone before the next run). RETURN_OK when
+//! every step passed, RETURN_ERROR when one failed.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -25,11 +27,12 @@ const FileLock = dos.FileLock;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Names";
-const VERSION_STRING = "\x00$VER: Names 1.0 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Names 1.1 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "DIR/A";
+const template = "DIR/A,KEEP/S";
 const arg_dir = 0;
+const arg_keep = 1;
 
 const MSG_PASS = "PASS  %s: %s\n";
 const MSG_FAIL = "FAIL  %s: %s (error %ld)\n";
@@ -141,7 +144,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [1]usize = @splat(0);
+    var argv: [2]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -212,7 +215,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
 
     dl.UnLock(work_lock);
-    if (!dl.DeleteFile(work)) _ = dl.PrintFault(dl.IoErr(), work);
+    if (argv[arg_keep] != 0) {
+        for (&names) |*name| {
+            if (!join(dl, path, work, name.name)) continue;
+            const file = dl.Open(path, dos.MODE_NEWFILE) orelse {
+                _ = dl.PrintFault(dl.IoErr(), path);
+                continue;
+            };
+            _ = dl.Write(file, name.name.ptr, @intCast(name.name.len));
+            _ = dl.Close(file);
+        }
+    } else if (!dl.DeleteFile(work)) _ = dl.PrintFault(dl.IoErr(), work);
     _ = Printf(dl, MSG_RESULT, .{ tally.passed, tally.steps });
     return if (tally.passed == tally.steps) dos.RETURN_OK else dos.RETURN_ERROR;
 }

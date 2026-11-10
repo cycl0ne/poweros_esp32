@@ -3019,10 +3019,29 @@ test "fonts: two Pospaz in the ROM, told apart by height" {
         try testing.expectEqual(eight_rows[row], sixteen_rows[2 * row]);
         try testing.expectEqual(eight_rows[row], sixteen_rows[2 * row + 1]);
     }
-    // A code the font has no glyph for is drawn as the default, the
-    // stand-in after 255; so is one above 255 once text can carry it.
-    try testing.expectEqual(fontimage.glyphFor(eight_image, 256), fontimage.glyphFor(eight_image, 7));
-    try testing.expectEqual(fontimage.glyphFor(eight_image, 256), fontimage.glyphFor(eight_image, 0x20AC));
+    // A code the font has no glyph for is drawn as the default, the box
+    // under MISSING: a control, a C1 code, a character of a script the
+    // font does not have. The extras of code page 1252 are its own, in
+    // both sizes; a letter with marks it lacks is drawn as the first
+    // letter down its chain of base letters that it has.
+    const box = fontimage.find(eight_image, fontimage.MISSING).?;
+    try testing.expectEqual(eight_image.default_char, fontimage.MISSING);
+    for ([_]u32{ 7, 0x85, 0x9F, 0x3042, 0xFFFD, 0x1F600 }) |code| try testing.expectEqual(box, fontimage.glyphFor(eight_image, code));
+    for ([_]u32{ 0x0152, 0x0153, 0x0160, 0x0161, 0x0178, 0x017D, 0x017E, 0x0192, 0x02C6, 0x02DC, 0x2013, 0x2014, 0x2018, 0x2019, 0x201A, 0x201C, 0x201D, 0x201E, 0x2020, 0x2021, 0x2022, 0x2026, 0x2030, 0x2039, 0x203A, 0x20AC, 0x2122 }) |code| {
+        try testing.expect(fontimage.find(eight_image, code) != null);
+        try testing.expect(fontimage.find(sixteen_image, code) != null);
+    }
+    try testing.expectEqual(fontimage.find(eight_image, 'A').?, fontimage.glyphFor(eight_image, 0x0100)); // Ā
+    try testing.expectEqual(fontimage.find(eight_image, 'h').?, fontimage.glyphFor(eight_image, 0x0127)); // ħ
+    try testing.expectEqual(fontimage.find(eight_image, 0xC5).?, fontimage.glyphFor(eight_image, 0x01FA)); // Ǻ as Å
+    try testing.expectEqual(fontimage.find(eight_image, 'a').?, fontimage.glyphFor(eight_image, 0x1EAD)); // ậ as ạ, then a
+    try testing.expectEqual(box, fontimage.glyphFor(eight_image, 0x03B1)); // α: no Greek here
+    // UTF-8: a character is one glyph, whatever its bytes; a byte that
+    // is no UTF-8 is its Latin-1 character.
+    base(gb).SetRPAttrs(rp, &use);
+    try testing.expectEqual(@as(i32, 16), base(gb).TextLength(rp, "\xC4\x80\xE2\x82\xAC", 5)); // Ā€
+    try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, "\xF0\x9F\x98\x80", 4)); // an emoji, the box
+    try testing.expectEqual(@as(i32, 24), base(gb).TextLength(rp, "M\xFCl", 3)); // Mül in Latin-1
     // A height that is not there gets the nearest, and a shorter font
     // before a taller one: 12 is 8, 15 is 16.
     for ([_]u16{ 9, 10, 11, 12 }) |rows| {
@@ -3743,6 +3762,14 @@ test "text in any shape: proportional, large, coverage and colour" {
     try testing.expectEqual(@as(i32, 8), room.width);
     try testing.expectEqual(@as(u32, 2), base(gb).TextFit(rp, text, 3, &room, null, graphics.TEXT_FORWARD, 9, 0));
     try testing.expectEqual(@as(u32, 1), base(gb).TextFit(rp, text, 3, &room, null, graphics.TEXT_FORWARD, 7, 0));
+    // A fit ends where a character does, forward and backward: "m€m" is
+    // five bytes, the € drawn as the default '?', and 12 columns hold
+    // "m€" or "€m"; 11 hold one "m", never part of the €.
+    const euro = "m\xE2\x82\xACm";
+    try testing.expectEqual(@as(u32, 4), base(gb).TextFit(rp, euro, 5, &room, null, graphics.TEXT_FORWARD, 12, 0));
+    try testing.expectEqual(@as(u32, 1), base(gb).TextFit(rp, euro, 5, &room, null, graphics.TEXT_FORWARD, 11, 0));
+    try testing.expectEqual(@as(u32, 4), base(gb).TextFit(rp, euro[4..].ptr, 5, &room, null, graphics.TEXT_BACKWARD, 12, 0));
+    try testing.expectEqual(@as(u32, 1), base(gb).TextFit(rp, euro[4..].ptr, 5, &room, null, graphics.TEXT_BACKWARD, 11, 0));
 
     // Coverage: the pen at full and at 7/15 over black.
     var alpha = fonts.TextFont{ .node = .{ .name = "alpha.font" }, .image = @ptrCast(&alpha_font) };

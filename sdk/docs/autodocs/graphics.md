@@ -83,7 +83,7 @@ Generated from the source by `./zig build autodoc`.
 - [SubRegionRegion](#subregionregion) - Takes everything in `source` out of `dest`.
 - [Text](#text) - Draws text at the current point.
 - [TextExtent](#textextent) - How much room some text would take.
-- [TextFit](#textfit) - How many characters fit in the room given.
+- [TextFit](#textfit) - How much of a text fits in the room given.
 - [TextFitted](#textfitted) - Draws as much of a string as fits in a width, and dots where it had to stop.
 - [TextLength](#textlength) - How wide some text would be, without drawing it.
 - [UnlockFonts](#unlockfonts) - Lets the font list go again.
@@ -4849,15 +4849,18 @@ fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) void
 
 **SINCE**
 
-0.11. LVO -132.
+0.11, UTF-8 since 0.38. LVO -132.
 
 **INPUTS**
 
 - `rp` - the RastPort. Its font, pens, draw mode, style and clip decide
   the result, and its current point is where the text starts.
-- `string` - the characters: bytes, each a Latin-1 code. A character
-  the font has no glyph for is drawn as the font's default character.
-- `count` - how many.
+- `string` - the text, UTF-8; a byte that is no UTF-8 is drawn as the
+  character it reads as (`utility.utf8.read`). A character the font
+  has no glyph for is drawn as its base letter - `Ā` as `A` - when it
+  is a letter with marks and the font has that letter, and otherwise
+  as the font's default character.
+- `count` - its length in bytes.
 
 **RESULT**
 
@@ -4931,13 +4934,13 @@ fn TextExtent(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, 
 
 **SINCE**
 
-0.14. LVO -168.
+0.14, UTF-8 since 0.38. LVO -168.
 
 **INPUTS**
 
 - `rp` - the RastPort. Its font and text style decide the answer.
-- `string` - the characters.
-- `count` - how many.
+- `string` - the text, UTF-8, as `Text` takes it.
+- `count` - its length in bytes.
 - `out` - where the answer goes. All zeroes with no font set, and the
   error is then `GERR_NO_FONT`.
 
@@ -4995,7 +4998,7 @@ gb.Text(rp, msg.ptr, msg.len);
 
 ## TextFit
 
-How many characters fit in the room given.
+How much of a text fits in the room given.
 
 **SYNOPSIS**
 
@@ -5005,14 +5008,15 @@ fn TextFit(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, ou
 
 **SINCE**
 
-0.14. LVO -172.
+0.14, UTF-8 since 0.38. LVO -172.
 
 **INPUTS**
 
 - `rp` - the RastPort. Its font and text style decide the answer.
-- `string` - the characters; with `TEXT_BACKWARD`, the **last** of them.
-- `count` - how many there are.
-- `out` - the room the characters that fit take, as `TextExtent` gives
+- `string` - the text, UTF-8, as `Text` takes it; with
+  `TEXT_BACKWARD`, its **last** byte.
+- `count` - its length in bytes.
+- `out` - the room the part that fits takes, as `TextExtent` gives
   it.
 - `constraining` - a box to fit inside, or null.
 - `direction` - `TEXT_FORWARD`, or `TEXT_BACKWARD`, which is how a line
@@ -5022,15 +5026,17 @@ fn TextFit(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, ou
 
 **RESULT**
 
-How many characters fit, and `out` filled for those. 0 when the font is
+How many bytes fit - whole characters, never part of one - and `out`
+filled for those. 0 when the font is
 taller than the room - a character cut off across the middle is not a
 character that fits - and 0 with no font set, where the error is
 `GERR_NO_FONT`.
 
 **BEHAVIOR**
 
-The string is walked a character at a time, from its start forward or
-from its end back, and a character fits while everything up to it -
+The text is walked a character at a time, from its start forward or
+from its end back (a byte that is no UTF-8 a character of its own, as
+`Text` draws it), and a character fits while everything up to it -
 ink and paper, as `TextExtent` measures it - is no wider than the
 room. Backward, what fits is the tail of the string, and `out` is the
 extent of that tail.
@@ -5079,20 +5085,21 @@ fn TextFitted(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8,
 
 **SINCE**
 
-0.21. LVO -336.
+0.21, UTF-8 since 0.38. LVO -336.
 
 **INPUTS**
 
 - `rp` - the RastPort. It draws from the current point, in its font,
   its pens and its draw mode, and leaves the point after what it drew.
-- `string` - the characters.
-- `count` - how many of them.
+- `string` - the text, UTF-8, as `Text` takes it.
+- `count` - its length in bytes.
 - `width` - how much room there is, in pixels.
 
 **RESULT**
 
-How many characters of `string` were drawn - not counting the dots.
-`count` means all of it fitted and nothing was added.
+How many bytes of `string` were drawn - whole characters, not
+counting the dots. `count` means all of it fitted and nothing was
+added.
 
 **BEHAVIOR**
 
@@ -5151,13 +5158,13 @@ fn TextLength(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) 
 
 **SINCE**
 
-0.11. LVO -136.
+0.11, UTF-8 since 0.38. LVO -136.
 
 **INPUTS**
 
 - `rp` - the RastPort. Its font and text style decide the answer.
-- `string` - the characters.
-- `count` - how many.
+- `string` - the text, UTF-8, as `Text` takes it.
+- `count` - its length in bytes.
 
 **RESULT**
 
@@ -5169,7 +5176,8 @@ and the error is `GERR_NO_FONT`.
 
 The characters' advances added up, each as its glyph gives it, so a
 proportional font measures as it draws. A character the font has no
-glyph for counts as the default character it is drawn as. Ink a kern
+glyph for counts as the glyph it is drawn as: its base letter's or the
+default character's. Ink a kern
 or a lean puts outside that is not counted: `TextExtent` says where
 the ink goes.
 

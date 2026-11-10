@@ -91,3 +91,41 @@ test "utf8.cut: never inside a character, anywhere in what is no UTF-8" {
     try testing.expectEqual(@as(usize, 1), utf8.cut("\xE2\x82x", 1)); // broken off
     try testing.expectEqual(@as(usize, 0), utf8.cut("", 0));
 }
+
+test "utf8.readLast: walking back reads what walking forward reads" {
+    try testing.expectEqual(utf8.Read{ .char = 0xE4, .length = 2 }, utf8.readLast("a\xC3\xA4"));
+    try testing.expectEqual(utf8.Read{ .char = 0x1F600, .length = 4 }, utf8.readLast("x\xF0\x9F\x98\x80"));
+    try testing.expectEqual(utf8.Read{ .char = 'x', .length = 1 }, utf8.readLast("\xE2\x82x"));
+    // Bytes that are no character end with one that reads alone, as the
+    // walk forward reads it.
+    try testing.expectEqual(utf8.Read{ .char = 0x82, .length = 1, .broken = true }, utf8.readLast("\xE2\x82"));
+    try testing.expectEqual(utf8.Read{ .char = 0xA4, .length = 1, .broken = true }, utf8.readLast("\xC3\xA4\xA4"));
+    try testing.expectEqual(utf8.Read{ .char = 0xFC, .length = 1, .broken = true }, utf8.readLast("M\xFC"));
+    // Forward and back, the same characters.
+    const text = "a\xC3\xA4\xE2\x82x\xFC\xF0\x9F\x98\x80\x80";
+    var forward: [16]u32 = undefined;
+    var count: usize = 0;
+    var at: usize = 0;
+    while (at < text.len) : (count += 1) forward[count] = utf8.next(text, &at);
+    var end: usize = text.len;
+    while (end > 0) {
+        const found = utf8.readLast(text[0..end]);
+        count -= 1;
+        try testing.expectEqual(forward[count], found.char);
+        end -= found.length;
+    }
+    try testing.expectEqual(@as(usize, 0), count);
+}
+
+test "unicode.base: the letter a letter with marks is written on" {
+    const unicode = @import("sdk").utility.unicode;
+    try testing.expectEqual(@as(?u32, 'A'), unicode.base(0x0100)); // Ā
+    try testing.expectEqual(@as(?u32, 'h'), unicode.base(0x0127)); // ħ, by its name
+    try testing.expectEqual(@as(?u32, 'l'), unicode.base(0x0142)); // ł
+    try testing.expectEqual(@as(?u32, 0xC5), unicode.base(0x01FA)); // Ǻ is Å
+    try testing.expectEqual(@as(?u32, 'A'), unicode.base(0xC5)); // Å is A
+    try testing.expectEqual(@as(?u32, 0x0415), unicode.base(0x0401)); // Ё is Е
+    try testing.expectEqual(@as(?u32, 0x0413), unicode.base(0x0490)); // Ґ is Г
+    try testing.expectEqual(@as(?u32, 0x03B1), unicode.base(0x1F00)); // ἀ is α
+    for ([_]u32{ 'A', 'z', 0xDF, 0x03B1, 0x3042, 0x1F600, 0x10FFFF }) |char| try testing.expectEqual(@as(?u32, null), unicode.base(char));
+}

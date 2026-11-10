@@ -12,6 +12,7 @@ const _text = @import("_text.zig");
 const RastPort = rastport.RastPort;
 const drawing = @import("../draw/_draw.zig");
 const blits = @import("../blit/_blit.zig");
+const utf8 = sdk.utility.utf8;
 const BeginDraw = @import("../draw/begindraw.zig").BeginDraw;
 const EndDraw = @import("../draw/enddraw.zig").EndDraw;
 const fontimage = graphics.fontimage;
@@ -29,14 +30,17 @@ const Piece = drawing.Piece;
 /// fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) void
 /// ```
 ///
-/// SINCE: 0.11. LVO -132.
+/// SINCE: 0.11, UTF-8 since 0.38. LVO -132.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. Its font, pens, draw mode, style and clip decide
 ///   the result, and its current point is where the text starts.
-/// - `string` - the characters: bytes, each a Latin-1 code. A character
-///   the font has no glyph for is drawn as the font's default character.
-/// - `count` - how many.
+/// - `string` - the text, UTF-8; a byte that is no UTF-8 is drawn as the
+///   character it reads as (`utility.utf8.read`). A character the font
+///   has no glyph for is drawn as its base letter - `Ā` as `A` - when it
+///   is a letter with marks and the font has that letter, and otherwise
+///   as the font's default character.
+/// - `count` - its length in bytes.
 ///
 /// RESULT:
 /// Nothing. With no font set nothing is drawn and the error is
@@ -165,6 +169,7 @@ const Look = struct {
 
 /// As many characters as are drawn in one go, and the room they take.
 const Run = struct {
+    /// Their bytes.
     count: u32,
     room: Measure,
 };
@@ -177,16 +182,18 @@ const Run = struct {
 /// characters either side of it is not ORed together, which only
 /// kerning and italics can make overlap.
 fn takeRun(look: Look, string: [*]const u8, left: u32) Run {
+    const bytes = string[0..left];
     var room = Measure{};
-    var count: u32 = 0;
-    while (count < left) {
-        const glyph = glyphOf(look.font, string[count]);
+    var count: usize = 0;
+    while (count < bytes.len) {
+        var after = count;
+        const glyph = glyphOf(look.font, utf8.next(bytes, &after));
         const next = _text.grow(room, glyph, look.extra, look.smear, look.lean);
         if (count != 0 and next.max_x - next.min_x > strip_bytes * 8) break;
         room = next;
-        count += 1;
+        count = after;
     }
-    return .{ .count = count, .room = room };
+    return .{ .count = @intCast(count), .room = room };
 }
 
 /// A run of one-bit glyphs: assembled into a strip a band of rows at a
@@ -203,9 +210,10 @@ fn stencilRun(gb: *GraphicsBase, rp: *RastPort, look: Look, string: [*]const u8,
         // Where the point is in the strip: the strip starts at the room's
         // left, which a kern back can put before the point.
         var at: i32 = -run.room.min_x;
-        var i: u32 = 0;
-        while (i < run.count) : (i += 1) {
-            const glyph = glyphOf(look.font, string[i]);
+        const bytes = string[0..run.count];
+        var i: usize = 0;
+        while (i < bytes.len) {
+            const glyph = glyphOf(look.font, utf8.next(bytes, &i));
             placeGlyph(&strip, look, glyph, at, band, band_rows);
             at += glyph.advance + look.extra;
         }
@@ -285,9 +293,10 @@ fn composeRun(gb: *GraphicsBase, rp: *RastPort, look: Look, string: [*]const u8,
             while (y < r.max_y) : (y += 1) ground.run(drawing.address(piece, r.min_x, y), ground.bytes, @intCast(r.width()));
         }
         var at: i32 = area.min_x - run.room.min_x;
-        var i: u32 = 0;
-        while (i < run.count) : (i += 1) {
-            const glyph = glyphOf(look.font, string[i]);
+        const bytes = string[0..run.count];
+        var i: usize = 0;
+        while (i < bytes.len) {
+            const glyph = glyphOf(look.font, utf8.next(bytes, &i));
             composeGlyph(rp, piece, look, glyph, at, top);
             at += glyph.advance + look.extra;
         }

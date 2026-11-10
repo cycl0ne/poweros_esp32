@@ -29,7 +29,7 @@ pub const LVO = struct {
 /// library's base.
 pub const Fn = struct {
     pub const OpenOutline = *const fn (*TrueTypeBase, [*]const u8, u32) callconv(.c) ?*truetype.Outline;
-    pub const RenderFontImage = *const fn (*TrueTypeBase, *truetype.Outline, u32, u32, u32) callconv(.c) ?*graphics.fontimage.FontImage;
+    pub const RenderFontImage = *const fn (*TrueTypeBase, *truetype.Outline, u32, [*]const truetype.CodeRange, u32) callconv(.c) ?*graphics.fontimage.FontImage;
     pub const CloseOutline = *const fn (*TrueTypeBase, ?*truetype.Outline) callconv(.c) void;
     pub const GlyphIndex = *const fn (*TrueTypeBase, *truetype.Outline, u32) callconv(.c) u32;
     pub const GlyphMetrics = *const fn (*TrueTypeBase, *truetype.Outline, u32, *truetype.GlyphMetrics) callconv(.c) bool;
@@ -53,11 +53,12 @@ pub const TrueTypeBase = opaque {
         return libraries.call(self, LVO.OpenOutline, Fn.OpenOutline, .{ file, size });
     }
 
-    /// The outline rendered `rows` rows tall, codes `first` to `last` and a
-    /// default glyph, as a font image; the caller frees it with FreeVec. Null
-    /// for a height of 0 or no memory.
-    pub fn RenderFontImage(self: *TrueTypeBase, outline: *truetype.Outline, rows: u32, first: u32, last: u32) ?*graphics.fontimage.FontImage {
-        return libraries.call(self, LVO.RenderFontImage, Fn.RenderFontImage, .{ outline, rows, first, last });
+    /// The outline rendered `rows` rows tall as a font image: the characters
+    /// it has in the `count` sorted `ranges`, and its missing glyph as the
+    /// default; the caller frees it with FreeVec. Null for a height of 0,
+    /// ranges out of order, or no memory. Ranges since 1.3.
+    pub fn RenderFontImage(self: *TrueTypeBase, outline: *truetype.Outline, rows: u32, ranges: [*]const truetype.CodeRange, count: u32) ?*graphics.fontimage.FontImage {
+        return libraries.call(self, LVO.RenderFontImage, Fn.RenderFontImage, .{ outline, rows, ranges, count });
     }
 
     /// What OpenOutline made, given back. Null does nothing.

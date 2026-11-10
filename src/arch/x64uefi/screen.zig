@@ -49,12 +49,6 @@ const exec = @import("../../rom/libs/exec/exec.zig");
 const font = @import("../../rom/libs/graphics/fonts/pospaz8.zig");
 const handover = @import("../../boot/uefi/handover.zig");
 
-/// The first character the font holds, and the one it ends with that
-/// stands in for anything outside it.
-const first_glyph = 32;
-const last_glyph = 255;
-const stand_in = font.font_data.len - 1;
-
 /// A character's cell, in pixels. The font is eight wide and eight tall,
 /// and a row of pixels between lines keeps them apart.
 const cell_wide = 8;
@@ -280,11 +274,7 @@ fn clearAll() void {
 /// One character's glyph, its left edge at `x` and its top at `y`.
 fn draw(character: u8, x: u32, y: u32) void {
     const at = pixels orelse return;
-    const which: usize = if (character >= first_glyph and character <= last_glyph)
-        character - first_glyph
-    else
-        stand_in;
-    const glyph = &font.font_data[which];
+    const glyph = font.find(character) orelse &font.missing;
     var row: u32 = 0;
     while (row < font.FONT_HEIGHT) : (row += 1) {
         // A row of the glyph holds its leftmost pixel in the highest bit.

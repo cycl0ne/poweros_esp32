@@ -67,13 +67,17 @@ pub const LIBRARY_VERSION = 0;
 /// circles, not by samples, and runs through what is surely in without
 /// asking each pixel; a fill's colour is made ready once a shape. 36:
 /// `WriteYUVPixelArray` and `ScaleYUVPixelArray`, a video decoder's YUV
-/// frames put down as colours. The version stays 0 until there is
-/// something to demand of it.
-pub const LIBRARY_REVISION = 37;
+/// frames put down as colours. 38: text is UTF-8 - `Text` and the calls
+/// that measure and fit it read characters, `TextFit` never stops inside
+/// one, and a letter with marks a font lacks is drawn as its base letter;
+/// the ROM fonts gain the punctuation, currency and letters of code page
+/// 1252 past Latin-1. The version stays 0 until there is something to
+/// demand of it.
+pub const LIBRARY_REVISION = 38;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.
-const BUILD_DATE = "04.11.2026";
+const BUILD_DATE = "10.11.2026";
 
 /// The `$VER:` string, NUL first so that a scan of the image finds it and
 /// `id_string` can start one byte in as a plain C string.

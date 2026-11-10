@@ -434,8 +434,9 @@ version the tables are made from.
 
 ## Text between UTF-8 and Latin-1
 
-The system's fonts and its console draw Latin-1; its strings are UTF-8,
-and what comes from elsewhere - a server's words, a file another system
+The system's strings are UTF-8, and graphics.library draws them as such
+(`Text` and the calls that measure it); the console still holds a byte
+to a cell and draws it as Latin-1. What comes from elsewhere - a server's words, a file another system
 wrote, a name in a repository, a song's tags - is mostly UTF-8. Latin-1's
 256 characters are Unicode's first 256, so a character up to U+00FF is
 one byte in Latin-1 and two at most in UTF-8; the rest is what a
@@ -459,7 +460,7 @@ character a `?`:
 | `UTF8F_PIECES` | the text comes a piece at a time; a character cut between two pieces is held for the next, and a call with no bytes ends the text |
 
 ```zig
-// A song's title for the screen.
+// A song's title for the console.
 var typeset: utility.Utf8Conversion = .{ .flags = utility.UTF8F_TYPESET };
 const shown = ub.Utf8ToLatin1(&typeset, tag.ptr, tag.len, &title, title.len - 1);
 title[shown] = 0;

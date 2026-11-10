@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! TextFit: how many characters fit in the room given.
+//! TextFit: how much of a text fits in the room given.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -11,21 +11,23 @@ const rastport = @import("../rastport/_rastport.zig");
 const _text = @import("_text.zig");
 const RastPort = rastport.RastPort;
 const softStyles = _text.softStyles;
+const utf8 = sdk.utility.utf8;
 
-/// How many characters fit in the room given.
+/// How much of a text fits in the room given.
 ///
 /// SYNOPSIS:
 /// ```zig
 /// fn TextFit(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, out: *graphics.TextExtent, constraining: ?*const graphics.TextExtent, direction: i32, width: i32, height: i32) u32
 /// ```
 ///
-/// SINCE: 0.14. LVO -172.
+/// SINCE: 0.14, UTF-8 since 0.38. LVO -172.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. Its font and text style decide the answer.
-/// - `string` - the characters; with `TEXT_BACKWARD`, the **last** of them.
-/// - `count` - how many there are.
-/// - `out` - the room the characters that fit take, as `TextExtent` gives
+/// - `string` - the text, UTF-8, as `Text` takes it; with
+///   `TEXT_BACKWARD`, its **last** byte.
+/// - `count` - its length in bytes.
+/// - `out` - the room the part that fits takes, as `TextExtent` gives
 ///   it.
 /// - `constraining` - a box to fit inside, or null.
 /// - `direction` - `TEXT_FORWARD`, or `TEXT_BACKWARD`, which is how a line
@@ -34,14 +36,16 @@ const softStyles = _text.softStyles;
 /// - `height` - above 0, overrides the box's height.
 ///
 /// RESULT:
-/// How many characters fit, and `out` filled for those. 0 when the font is
+/// How many bytes fit - whole characters, never part of one - and `out`
+/// filled for those. 0 when the font is
 /// taller than the room - a character cut off across the middle is not a
 /// character that fits - and 0 with no font set, where the error is
 /// `GERR_NO_FONT`.
 ///
 /// BEHAVIOR:
-/// The string is walked a character at a time, from its start forward or
-/// from its end back, and a character fits while everything up to it -
+/// The text is walked a character at a time, from its start forward or
+/// from its end back (a byte that is no UTF-8 a character of its own, as
+/// `Text` draws it), and a character fits while everything up to it -
 /// ink and paper, as `TextExtent` measures it - is no wider than the
 /// room. Backward, what fits is the tail of the string, and `out` is the
 /// extent of that tail.
@@ -101,22 +105,27 @@ pub fn TextFit(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32
     const smear = _text.smearOf(font, style);
     const lean = _text.leanOf(font, style);
     const backward = direction < 0;
+    if (count == 0) {
+        graphics_lib.TextExtent(@ptrCast(rp), string, 0, out);
+        return 0;
+    }
+    // Backward, the string points at the last byte and the walk goes down
+    // from the end.
+    const bytes = if (backward) (string - (count - 1))[0..count] else string[0..count];
     var room = _text.Measure{};
     var fits: u32 = 0;
     while (fits < count) {
-        // Backward, the string points at the last character and the walk
-        // goes down from there.
-        const ch = if (backward) (string - fits)[0] else string[fits];
-        const glyph = _text.glyphOf(font, ch);
+        const char = if (backward) utf8.readLast(bytes[0 .. count - fits]) else utf8.read(bytes[fits..]);
+        const glyph = _text.glyphOf(font, char.char);
         const next = if (backward)
             _text.growBack(room, glyph, extra, smear, lean)
         else
             _text.grow(room, glyph, extra, smear, lean);
         if (room_w >= 0 and next.max_x - next.min_x > room_w) break;
         room = next;
-        fits += 1;
+        fits += @intCast(char.length);
     }
-    const first = if (backward and fits != 0) string - (fits - 1) else string;
+    const first = if (backward) bytes.ptr + (count - fits) else string;
     graphics_lib.TextExtent(@ptrCast(rp), first, fits, out);
     return fits;
 }

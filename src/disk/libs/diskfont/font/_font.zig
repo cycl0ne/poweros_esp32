@@ -136,10 +136,28 @@ pub fn loadSize(dfb: *DiskfontBase, dir: ?*dos.FileLock, path: [*:0]const u8, na
     return addAndOpen(dfb, record);
 }
 
+/// What a size made from an outline holds: the characters the font has
+/// of Latin, Greek and Cyrillic - with IPA and the spacing modifiers (`ˆ`
+/// `˜` `ˇ`) - general punctuation, currency, the letterlike symbols
+/// (`™`, `№`), box drawing and blocks, and U+FFFD. A Latin, Greek or
+/// Cyrillic letter the font lacks is then drawn as its base letter, and
+/// anything else as the font's missing glyph.
+const outline_ranges = [_]sdk.truetype.CodeRange{
+    .{ .first = 0x0020, .last = 0x007E }, // ASCII
+    .{ .first = 0x00A0, .last = 0x02FF }, // Latin-1, Latin Extended-A and -B, IPA, spacing modifiers
+    .{ .first = 0x0370, .last = 0x052F }, // Greek, Cyrillic and its supplement
+    .{ .first = 0x1E00, .last = 0x1FFF }, // Latin Extended Additional, Greek Extended
+    .{ .first = 0x2000, .last = 0x206F }, // general punctuation
+    .{ .first = 0x20A0, .last = 0x20CF }, // currency
+    .{ .first = 0x2100, .last = 0x214F }, // letterlike symbols
+    .{ .first = 0x2500, .last = 0x259F }, // box drawing, blocks
+    .{ .first = 0xFFFD, .last = 0xFFFD }, // the replacement character
+};
+
 /// A size made from a family's outline, `rows` tall: the TrueType file
 /// at `path` beside the contents file read, rendered by truetype.library
-/// (opened on first use), added and opened. The caller holds the load
-/// lock.
+/// (opened on first use) with the characters of `outline_ranges`, added
+/// and opened. The caller holds the load lock.
 ///
 /// INPUTS:
 /// - `dfb` - the library.
@@ -158,7 +176,7 @@ pub fn renderOutline(dfb: *DiskfontBase, dir: ?*dos.FileLock, path: [*:0]const u
 
     const outline = tb.OpenOutline(data.ptr, @intCast(data.len)) orelse return null;
     defer tb.CloseOutline(outline);
-    const image = tb.RenderFontImage(outline, rows, 32, 255) orelse return null;
+    const image = tb.RenderFontImage(outline, rows, &outline_ranges, outline_ranges.len) orelse return null;
     defer sys.FreeVec(image);
     const image_bytes: [*]const u8 = @ptrCast(image);
     const record = newRecord(dfb, name, image.size) orelse return null;

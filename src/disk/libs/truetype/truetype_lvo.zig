@@ -59,8 +59,8 @@ const contract_files = [_][]const u8{
 fn lvoOpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32) callconv(.c) ?*truetype.Outline {
     return OpenOutline(tb, file, size);
 }
-fn lvoRenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32, first: u32, last: u32) callconv(.c) ?*graphics.fontimage.FontImage {
-    return RenderFontImage(tb, outline, rows, first, last);
+fn lvoRenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32, ranges: [*]const truetype.CodeRange, count: u32) callconv(.c) ?*graphics.fontimage.FontImage {
+    return RenderFontImage(tb, outline, rows, ranges, count);
 }
 fn lvoCloseOutline(tb: *TrueTypeBase, outline: ?*truetype.Outline) callconv(.c) void {
     return CloseOutline(tb, outline);

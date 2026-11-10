@@ -237,8 +237,10 @@ pub const LIBRARY_VERSION = 0;
 /// 86: a flight takes three times as long as a fade, which is what the
 /// preference times: a fade is taken in where the window already is,
 /// while a flight has to be followed across the screen.
-pub const LIBRARY_REVISION = 86;
-const BUILD_DATE = "03.11.2026";
+/// 87: the mark of an item with subitems is written in UTF-8, as every
+/// text graphics draws.
+pub const LIBRARY_REVISION = 87;
+const BUILD_DATE = "10.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

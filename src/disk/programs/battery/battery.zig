@@ -65,8 +65,8 @@ const tx = sdk.gadgets.text;
 const cr = sdk.gadgets.chart;
 
 pub const COMMAND_NAME = "Battery";
-const VERSION = "1.1";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.10.2026)\r\n";
+const VERSION = "1.2";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -113,7 +113,7 @@ const readings = [_]Reading{
     .{ .address = 258, .signed = true, .decimals = 0, .unit = " W", .label = "Power" },
     .{ .address = 266, .signed = false, .decimals = 1, .unit = " %", .label = "Charge" },
     .{ .address = 304, .signed = false, .decimals = 1, .unit = " %", .label = "Health" },
-    .{ .address = 262, .signed = true, .decimals = 1, .unit = " \xB0C", .label = "Temperature" },
+    .{ .address = 262, .signed = true, .decimals = 1, .unit = " \xC2\xB0C", .label = "Temperature" },
     .{ .address = 305, .signed = false, .decimals = 1, .unit = " V", .label = "Charge voltage" },
     .{ .address = 306, .signed = false, .decimals = 1, .unit = " A", .label = "Charge current" },
     .{ .address = 307, .signed = false, .decimals = 1, .unit = " A", .label = "Discharge current" },

@@ -6,8 +6,8 @@
 //! an ENCODING, a DWIDTH - how far it moves the point - a BBX - its box's
 //! size and where its lower left corner sits from the point on the
 //! baseline - and BITMAP rows in hex, the leftmost pixel in the highest
-//! bit. Codes 32 to 255 are kept, the Latin-1 a string of bytes can name,
-//! and the default character whatever its code.
+//! bit. Every code from 32 up is kept, Unicode's code points as BDF's
+//! fonts number their characters.
 
 const std = @import("std");
 const font_mod = @import("font.zig");
@@ -68,15 +68,6 @@ pub fn read(gpa: Allocator, text: []const u8) Error!Font {
     };
     font.default_char = pickDefault(glyphs.items, default_char) orelse return error.NoDefault;
     font.x_size = typicalAdvance(glyphs.items);
-    // A default character outside Latin-1 was kept for being the default;
-    // anything else outside it goes.
-    var kept: usize = 0;
-    for (glyphs.items) |glyph| {
-        if (glyph.code > 255 and glyph.code != font.default_char) continue;
-        glyphs.items[kept] = glyph;
-        kept += 1;
-    }
-    font.glyphs = glyphs.items[0..kept];
     font_mod.tidy(&font);
     return font;
 }

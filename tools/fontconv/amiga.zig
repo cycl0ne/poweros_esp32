@@ -26,6 +26,7 @@
 const std = @import("std");
 const sdk = @import("sdk");
 const graphics = sdk.graphics;
+const fontimage = graphics.fontimage;
 const font_mod = @import("font.zig");
 const Font = font_mod.Font;
 const Glyph = font_mod.Glyph;
@@ -155,9 +156,9 @@ pub fn read(gpa: Allocator, bytes: []const u8) Error!Font {
             pixels[y * width + x] = value;
         };
         glyph.* = .{
-            // The one after the last character is the stand-in, which a
-            // string of bytes cannot name.
-            .code = if (i == count - 1) 256 else lo + @as(u32, @intCast(i)),
+            // The one after the last character is the stand-in, which no
+            // text names.
+            .code = if (i == count - 1) fontimage.MISSING else lo + @as(u32, @intCast(i)),
             .advance = kern + space,
             .left = kern,
             .top = 0,
@@ -177,7 +178,7 @@ pub fn read(gpa: Allocator, bytes: []const u8) Error!Font {
         .flags = graphics.FPF_DESIGNED | (flags & graphics.FPF_PROPORTIONAL),
         .kind = if (colour) .indexed8 else .mono1,
         .bold_smear = @intCast(@max(bold_smear, 1)),
-        .default_char = 256,
+        .default_char = fontimage.MISSING,
         .palette = palette,
         .pen_index = pen_index,
         .glyphs = glyphs,

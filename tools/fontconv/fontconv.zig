@@ -16,7 +16,9 @@
 //! square that is ink. `--shadow` makes colour fonts: the letter in the
 //! pen and a translucent shadow one pixel down and right.
 //!
-//! Characters 32 to 255 are kept: text is bytes, each a Latin-1 code.
+//! Every character a source has from 32 up is kept, under its Unicode
+//! code point: text is UTF-8, and graphics draws a letter with marks a
+//! font lacks as its base letter.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -157,9 +159,9 @@ fn writeFamily(gpa: Allocator, family: []const u8, fonts: []Font, outlines: []co
 
 const testing = std.testing;
 
-/// A BDF of three characters at 6 rows, ascent 5: 'A' 3 wide, 'i' one
-/// column set one in with an advance of 2, and '?'; plus a character 0
-/// and one past Latin-1, which are dropped.
+/// A BDF of four characters at 6 rows, ascent 5: 'A' 3 wide, 'i' one
+/// column set one in with an advance of 2, '?' and the euro sign; plus a
+/// character 0, which is dropped.
 const small_bdf =
     \\STARTFONT 2.1
     \\FONT -test-small
@@ -221,7 +223,7 @@ const small_bdf =
     \\
 ;
 
-test "BDF: glyphs, boxes cropped to ink, advances, and only Latin-1 kept" {
+test "BDF: glyphs, boxes cropped to ink, advances, every character from 32 up" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const gpa = arena.allocator();
@@ -229,7 +231,7 @@ test "BDF: glyphs, boxes cropped to ink, advances, and only Latin-1 kept" {
     try testing.expectEqual(@as(u32, 6), font.height);
     try testing.expectEqual(@as(u32, 5), font.baseline);
     try testing.expectEqual(@as(u32, '?'), font.default_char);
-    try testing.expectEqual(@as(usize, 3), font.glyphs.len);
+    try testing.expectEqual(@as(usize, 4), font.glyphs.len);
 
     const image = try font_mod.encode(gpa, &font);
     try testing.expect(fontimage.check(image.ptr, @intCast(image.len)));
@@ -251,7 +253,7 @@ test "BDF: glyphs, boxes cropped to ink, advances, and only Latin-1 kept" {
     try testing.expectEqual(@as(u16, 4), i.rows);
     try testing.expectEqual(@as(i16, 2), i.advance);
     try testing.expect(fontimage.find(header, 0) == null);
-    try testing.expect(fontimage.find(header, 8364) == null);
+    try testing.expectEqual(@as(u16, 1), fontimage.find(header, 0x20AC).?.width);
 }
 
 test "coverage from a font drawn twice as large" {
@@ -405,7 +407,7 @@ test "an Amiga size file: the strike, kerning, spacing and the stand-in" {
     const font = try amiga.read(gpa, &amigaFont(false));
     try testing.expectEqual(@as(u32, 2), font.height);
     try testing.expectEqual(sdk.graphics.FSF_BOLD, font.style);
-    try testing.expectEqual(@as(u32, 256), font.default_char);
+    try testing.expectEqual(fontimage.MISSING, font.default_char);
     const image = try font_mod.encode(gpa, &font);
     try testing.expect(fontimage.check(image.ptr, @intCast(image.len)));
     const header: *const fontimage.FontImage = @ptrCast(image.ptr);
@@ -419,7 +421,7 @@ test "an Amiga size file: the strike, kerning, spacing and the stand-in" {
     const b = fontimage.find(header, 'b').?;
     try testing.expectEqual(@as(i16, -1), b.left);
     try testing.expectEqual(@as(i16, 3), b.advance);
-    try testing.expectEqual(fontimage.find(header, 256).?, fontimage.glyphFor(header, 'z'));
+    try testing.expectEqual(fontimage.find(header, fontimage.MISSING).?, fontimage.glyphFor(header, 'z'));
 }
 
 test "an Amiga colour font: planes into indices, the table into the palette" {

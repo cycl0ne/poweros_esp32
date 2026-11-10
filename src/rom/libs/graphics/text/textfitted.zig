@@ -21,18 +21,19 @@ const dots = "...";
 ///     count: u32, width: i32) u32
 /// ```
 ///
-/// SINCE: 0.21. LVO -336.
+/// SINCE: 0.21, UTF-8 since 0.38. LVO -336.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. It draws from the current point, in its font,
 ///   its pens and its draw mode, and leaves the point after what it drew.
-/// - `string` - the characters.
-/// - `count` - how many of them.
+/// - `string` - the text, UTF-8, as `Text` takes it.
+/// - `count` - its length in bytes.
 /// - `width` - how much room there is, in pixels.
 ///
 /// RESULT:
-/// How many characters of `string` were drawn - not counting the dots.
-/// `count` means all of it fitted and nothing was added.
+/// How many bytes of `string` were drawn - whole characters, not
+/// counting the dots. `count` means all of it fitted and nothing was
+/// added.
 ///
 /// BEHAVIOR:
 /// All of it fits: all of it is drawn, and nothing is added. It does not:

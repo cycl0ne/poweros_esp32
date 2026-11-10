@@ -344,39 +344,46 @@ truetype.library/RenderFontImage
 	RenderFontImage -- One size of an outline, as a font image.
 
    SYNOPSIS
-	    fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32, first: u32, last: u32) ?*FontImage
+	    fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32, ranges: [*]const truetype.CodeRange, count: u32) ?*FontImage
 
    SINCE
-	1.0. LVO -24.
+	1.0, ranges since 1.3. LVO -24.
 
    INPUTS
 	- `outline` - what `OpenOutline` answered.
 	- `rows` - how tall a line is: the font's ascender to its descender
 	  is scaled to this.
-	- `first`, `last` - the codes to render: 32 and 255 for the text a
-	  string of bytes can be.
+	- `ranges` - the characters to render, as code points: `count` ranges,
+	  sorted, none overlapping another.
+	- `count` - how many ranges.
 
    RESULT
 	A font image of coverage (`alpha4`), sound and ready for `AddFont`:
-	the codes asked for and the font's missing glyph as the default
-	character, `last + 1`. Null for a height of 0, `last` below `first`, or
-	no memory.
+	every character of the ranges the font has a glyph for, and the
+	font's missing glyph as the default character, under
+	`fontimage.MISSING`. Null for a height of 0, ranges out of order or
+	past the last code point, or no memory.
 
    BEHAVIOR
+	A character the font's character map gives no glyph is left out, so
+	that graphics draws it as its base letter where the image has that
+	(`Ā` as `A`) and as the missing glyph otherwise; the image's own
+	ranges are the runs of characters it has.
+
 	Every glyph is its outline scaled so that the line is `rows` tall and
 	the baseline sits the ascender's share of it down, the curves made
 	lines within a third of a pixel, and each pixel given how much of it
 	the outline covers, in fifteenths. The advances are rounded to whole
-	pixels. A code the font has no glyph for is its missing glyph. The
-	font is `FPF_DESIGNED` - drawn at its size from the outline, not
-	scaled from another size - and `FPF_PROPORTIONAL` when its advances
-	differ. Its styles are the ones the file says it is drawn in
-	(`truetype.styleOf`): a bold face renders as `FSF_BOLD`, so graphics
+	pixels. The font is `FPF_DESIGNED` - drawn at its size from the
+	outline, not scaled from another size - and `FPF_PROPORTIONAL` when
+	its advances differ. Its styles are the ones the file says it is drawn
+	in (`truetype.styleOf`): a bold face renders as `FSF_BOLD`, so graphics
 	draws no bold over it.
 
    CONTEXT
 	- Waits: no.
-	- Interrupts: no. The work is a few hundred glyphs.
+	- Interrupts: no. The work is a glyph rendered for each character the
+	  font has in the ranges: hundreds for a European font's scripts.
 	- Locks: none needed.
 	- Process: a Task will do.
 
@@ -391,5 +398,6 @@ truetype.library/RenderFontImage
 	`OpenOutline`, `graphics.library/AddFont`, `diskfont.library/OpenDiskFont`
 
    EXAMPLES
-	    const image = tb.RenderFontImage(outline, 24, 32, 255) orelse return;
+	    const latin1 = [_]truetype.CodeRange{ .{ .first = 0x20, .last = 0x7E }, .{ .first = 0xA0, .last = 0xFF } };
+	    const image = tb.RenderFontImage(outline, 24, &latin1, latin1.len) orelse return;
 	    defer sys.FreeVec(image);

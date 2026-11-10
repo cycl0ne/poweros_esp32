@@ -36,9 +36,13 @@
 //! with the entry's own alpha, so a font with a coloured shadow still
 //! takes the caller's text colour for its body.
 //!
-//! Codes are 32 bits, so a font can carry any character set; text drawn
-//! today is bytes, each a Latin-1 code. A code the font has no glyph for
-//! is drawn as `default_char`, which every image must have.
+//! Codes are Unicode code points, so a font carries any of them; text is
+//! drawn from UTF-8. A code the font has no glyph for is drawn as its
+//! base letter's when it is a letter with marks and the font has that
+//! letter (`Ā` as `A`, by `utility.unicode.base`), and otherwise as
+//! `default_char`, which every image must have. A font whose stand-in is
+//! no character of its own gives it the code `MISSING`, past every code
+//! point, so that no text draws it except as the stand-in.
 //!
 //! Multi-byte fields are little-endian, which is how this machine reads
 //! them in place. The block is a whole number of longwords, and the last
@@ -46,6 +50,7 @@
 //! a byte on the way is known before anything draws from it.
 
 const graphics = @import("graphics.zig");
+const unicode = @import("../utility/unicode.zig");
 
 /// The first four bytes of every image: "PFNT".
 pub const MAGIC: u32 = 0x544E_4650;
@@ -63,6 +68,10 @@ pub const Kind = enum(u8) {
     indexed8 = 2,
     _,
 };
+
+/// The code of a font's missing glyph when it is no character's: one
+/// past the last code point, which no text decodes to.
+pub const MISSING: u32 = 0x11_0000;
 
 /// `pen_index` when no palette entry is drawn in the pen.
 pub const NO_PEN: u32 = 0xFFFF_FFFF;
@@ -211,13 +220,21 @@ pub fn find(image: *const FontImage, code: u32) ?*const Glyph {
     return null;
 }
 
-/// The glyph `code` is drawn with: its own, or the default character's.
+/// The glyph `code` is drawn with: its own; for a letter with marks the
+/// font lacks, its base letter's, the first of the letters it is written
+/// on that the font has (`Ǻ`, then `Å`, then `A`); or the default
+/// character's.
 ///
 /// INPUTS:
 /// - `image` - a block `check` has passed, which guarantees the default.
 /// - `code` - the character.
 pub fn glyphFor(image: *const FontImage, code: u32) *const Glyph {
-    return find(image, code) orelse find(image, image.default_char).?;
+    if (find(image, code)) |own| return own;
+    var letter = code;
+    while (unicode.base(letter)) |under| : (letter = under) {
+        if (find(image, under)) |drawn| return drawn;
+    }
+    return find(image, image.default_char).?;
 }
 
 /// Whether `size` bytes at `block` are an image that can be drawn from

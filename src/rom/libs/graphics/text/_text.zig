@@ -8,9 +8,11 @@
 //! the ROM and read from a file.
 //!
 //! Characters are found through the ranges, so a font may start and stop
-//! anywhere and leave gaps, and any code it has no glyph for is drawn as
-//! its default character. Text arrives as bytes; each byte is a Latin-1
-//! code.
+//! anywhere and leave gaps; a code it has no glyph for is drawn as its
+//! base letter, when it is a letter with marks the font has the letter
+//! of, and otherwise as its default character (`fontimage.glyphFor`).
+//! Text arrives as UTF-8, read with the SDK's `utf8`, so a byte that is
+//! no UTF-8 is drawn as the character it reads as; counts are bytes.
 //!
 //! **Each character has its own width.** The point moves by the glyph's
 //! advance, and its ink is drawn `left` columns from the point - less
@@ -53,6 +55,7 @@ const rastport = @import("../rastport/_rastport.zig");
 pub const RastPort = rastport.RastPort;
 const drawing = @import("../draw/_draw.zig");
 const blits = @import("../blit/_blit.zig");
+const utf8 = sdk.utility.utf8;
 
 const fontimage = graphics.fontimage;
 pub const FontImage = fontimage.FontImage;
@@ -139,13 +142,14 @@ pub fn takeOff(gb: *GraphicsBase, font: *TextFont) bool {
     return true;
 }
 
-/// The glyph a character is drawn with: its own, or the font's default.
+/// The glyph a character is drawn with: its own, its base letter's, or
+/// the font's default.
 ///
 /// INPUTS:
 /// - `font` - the font.
-/// - `ch` - the character, a Latin-1 code.
-pub fn glyphOf(font: *const TextFont, ch: u8) *const Glyph {
-    return fontimage.glyphFor(font.image, ch);
+/// - `code` - the character, a code point.
+pub fn glyphOf(font: *const TextFont, code: u32) *const Glyph {
+    return fontimage.glyphFor(font.image, code);
 }
 
 /// What the styles add to every character's advance: bold and extended
@@ -237,21 +241,22 @@ pub fn growBack(m: Measure, glyph: *const Glyph, extra: i32, smear: i32, lean: i
     };
 }
 
-/// What `count` characters of `string` take in `font` with `style`.
+/// What the `count` bytes of `string` take in `font` with `style`.
 ///
 /// INPUTS:
 /// - `font` - the font.
 /// - `style` - the RastPort's style; what the font already is is left out.
-/// - `string` - the characters.
-/// - `count` - how many.
+/// - `string` - the text, UTF-8.
+/// - `count` - its length in bytes.
 pub fn measure(font: *const TextFont, style: graphics.FontStyle, string: [*]const u8, count: u32) Measure {
     const drawn = style & softStyles(font);
     const extra = extraAdvance(drawn);
     const smear = smearOf(font, drawn);
     const lean = leanOf(font, drawn);
     var m = Measure{};
-    var i: u32 = 0;
-    while (i < count) : (i += 1) m = grow(m, glyphOf(font, string[i]), extra, smear, lean);
+    const bytes = string[0..count];
+    var at: usize = 0;
+    while (at < bytes.len) m = grow(m, glyphOf(font, utf8.next(bytes, &at)), extra, smear, lean);
     return m;
 }
 

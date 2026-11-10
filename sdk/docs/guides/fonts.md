@@ -53,14 +53,18 @@ The header's measures:
 | `flags` | `FPF_PROPORTIONAL` when advances differ, `FPF_DESIGNED` when the size was drawn rather than scaled |
 | `kind` | what a pixel is (below) |
 | `bold_smear` | how far right bold draws a glyph again |
-| `default_char` | the code drawn for any code the font has no glyph for |
+| `default_char` | the code drawn for a code the font has no glyph for, nor a base letter of |
 | `checksum` | makes the longwords of the whole block add up to zero |
 
 **Characters are found through ranges.** A range says "codes `first` to
-`last` are glyphs `glyph` onwards". A font may start and stop anywhere and
-leave gaps; a code in no range is drawn as `default_char`, which every
-image must have. Codes are 32 bits, so a font can hold any character set;
-text passed to `Text` is bytes, each a Latin-1 code (32 to 255).
+`last` are glyphs `glyph` onwards". Codes are Unicode code points, and a
+font may start and stop anywhere and leave gaps. A code in no range that
+is a Latin, Greek or Cyrillic letter with marks is drawn as its base
+letter when the font has that - `Ā` as `A`, `Ǻ` as `Å` or else `A`, `ἀ`
+as `α` (`utility.unicode.base`) - and anything else as `default_char`,
+which every image must have. A font whose stand-in is no character of
+its own, a box or the outline's missing glyph, gives it the code
+`fontimage.MISSING`, one past the last code point, so no text names it.
 
 **A glyph is a box of ink.** Its box holds only the pixels it draws: a
 space has none, an `x` only the rows the x fills. `top` is how far down
@@ -83,7 +87,8 @@ with a coloured shadow still takes the caller's text colour for its body.
 `fontimage.check(block, size)` says whether a block holds together (every
 table inside it, ranges sorted, the default character there);
 `fontimage.sound(block, size)` whether its checksum is right.
-`fontimage.find` and `glyphFor` look a code up; `pixelsOf` finds a glyph's
+`fontimage.find` looks a code up, `glyphFor` the glyph it is drawn with
+(its own, a base letter's, or the default); `pixelsOf` finds a glyph's
 rows.
 
 ## Drawing text
@@ -102,11 +107,14 @@ gb.Text(rp, "Hello", 5);
 - **The point is the left end of the baseline.** Letters sit above it,
   tails hang below. After `Text` the point is just past the last letter,
   so one `Text` follows another.
+- **Text is UTF-8, and its counts are bytes.** `Text(rp, "Grüße", 7)`
+  draws five characters. A byte that is no UTF-8 is drawn as the
+  character it reads as (`utility.utf8.read`).
 - **Each character has its own width.** `TextLength` adds the advances up;
   `TextExtent` also says where the ink goes (a kern back makes
   `extent.min_x` negative, bold and italic can carry it past `width`);
-  `TextFit` says how many characters fit a width, from the start or from
-  the end.
+  `TextFit` says how many bytes fit a width, from the start or from the
+  end - whole characters, never part of one.
 - **The draw mode is the draw mode.** `DRMD_JAM1` puts ink down,
   `DRMD_JAM2` lays the background pen behind each character's cell first,
   `DRMD_COMPLEMENT` inverts. A font of coverage lays the pen over what is
@@ -267,6 +275,14 @@ The 64-bit machines' disks also carry the Liberation families - `sans`,
 Courier New, under the SIL Open Font License (`FONTS:liberation.licence`)
 - for the text of SVG pictures, which names those fonts more than any.
 
+**What a font holds is what its source has**, under each character's
+code point: Spleen's sizes from 16 rows up have Latin with its
+extensions, Greek, Cyrillic, box drawing, blocks and Braille, close to
+a thousand characters, its 8 and 12 rows a few hundred; the Go faces
+Latin-1 and Latin Extended-A, Greek and Cyrillic, about 600 in what
+diskfont renders; Liberation's nearly three times that. A letter with marks a
+font lacks is drawn as its base letter, anything else as its stand-in.
+
 **A size file is a FontImage, byte for byte.** It is read with one `Read`
 into one allocation, checked (`check` and `sound`), and drawn from where
 it lies; nothing in it is fixed up.
@@ -364,20 +380,25 @@ the family's directory; `DisposeFontContents` frees it.
 
 `truetype.library` reads a TrueType file and renders a size of it into a
 FontImage of coverage: `OpenOutline(bytes, size)` checks the file and
-keeps what rendering needs, `RenderFontImage(outline, rows, first, last)`
-makes a size, `CloseOutline` gives the outline back. The file's bytes stay
+keeps what rendering needs, `RenderFontImage(outline, rows, ranges,
+count)` makes a size of the characters it has in the ranges asked for,
+`CloseOutline` gives the outline back. The file's bytes stay
 the caller's until then. The line is the font's ascender to its
 descender, scaled to `rows`; each glyph's curves are flattened and the
 area of each pixel inside the outline measured, kept in four bits. There
-is no hinting. The image has the codes asked for and the font's missing
-glyph as its default character, and the styles the file says it is drawn
+is no hinting. The image has the characters of the ranges the font has a
+glyph for - one it lacks is left out, so that graphics draws its base
+letter - and the font's missing glyph as its default character, under
+`fontimage.MISSING`, and the styles the file says it is drawn
 in - `truetype.styleOf` reads them, bold and italic, from its `head`
 table.
 
 diskfont.library does all of this for a family whose contents file lists
-an outline: a program only asks `OpenDiskFont` for a height. Rendering a
-size of the Go faces takes some tens of milliseconds at text sizes, more
-at display sizes, once; the result is kept like a loaded font.
+an outline: a program only asks `OpenDiskFont` for a height. It renders
+what the font has of Latin (with IPA and the spacing modifiers), Greek,
+Cyrillic, general punctuation, currency, the letterlike symbols, box
+drawing and blocks, and U+FFFD. A size costs a glyph rendered for each of
+those the font has, once; the result is kept like a loaded font.
 
 **Glyphs as outlines** (truetype.library 1.2): a program that draws text
 itself - at any size, turned, filled with a gradient - takes the glyphs
@@ -419,7 +440,10 @@ intuition.library holds three fonts, by `SYSFONT_*`:
 | `SYSFONT_DEFAULT` | text in windows and gadgets that name no font |
 | `SYSFONT_FIXED` | consoles; always a fixed-width font |
 
-Each is pospaz from the ROM until set. `SetSystemFonts(screen, default,
+Each is pospaz from the ROM until set. Pospaz has ASCII, Latin-1 and
+what code page 1252 adds to it - `€`, the curly quotes, dashes, `…`,
+`™`, `Œ œ Š š Ž ž Ÿ` and a few more; another letter with marks is drawn as
+its base letter, and anything else as a box. `SetSystemFonts(screen, default,
 fixed)` sets them for everything opened from then on (a proportional fixed
 font is refused); `OpenSystemFont(which)` opens one for a program that
 wants to match them. A screen takes the screen font unless given
