@@ -2402,6 +2402,35 @@ Results:
 
 Of 18 mutations of the port, 18 fail the tests, one of them by not compiling. On the CM5, FacetBoth's 241 cases are each as they were at 1.178. Its six new cases are the layered cases again, through glslc's samples rather than the fixed forms. Each is as far apart as the fixed form's (9, 0, 0, 14, 0 and 0 of 230400 pixels), with the same first pixels. FacetProbe is 890 of 890.
 
+**Then a sample at a level, with a bias, and a constant texel offset away, by a compiled program**, facet.library 1.180.
+
+- **What is read.** The profile takes OpImageSampleExplicitLod and OpImageSampleDrefExplicitLod, and the image operands Bias, Lod and ConstOffset. `look` has an explicit level's sample carry its mask.
+- **The lookup.** A sample's `Lookup` is a nir_tex_instr's op as vtn makes it (spirv_to_nir.c:3423-3438): tex, txb with the bias, txl with the level. The bias or the level is one float, a source the passes read, rename and replace as any other.
+- **The offset.** A ConstOffset is a constant integer vector of as many as the image's coordinate names but a layer (non_array_components, v3d_tex.c:212-214), each -8 to 7. One past that is refused rather than cut to four bits.
+- **The TMU writes.** v3d_tex.c writes the bias or the level to TMUB after the comparator (handle_tex_src, :129-150), and counts it among the writes the threads have room for (:222, :265-266). It packs the offsets into P2 and sets P2's disable_autolod for a cube at a level (:142-170), and writes P2 after P1, as a constant, where it is not the default (:349-352, :372-373; V3D42_TMU_CONFIG_PARAMETER_2, v3d_packet.xml:1578-1593). A lookup at a level starts at TMUSLOD, a cube's at TMUSCM still (:380-385).
+- **Helper pixels and arms.** A sample at a level wants no helper pixels for its coordinate (nir_tex_instr_has_implicit_derivative, nir_opt_load_skip_helpers.c:151-156), so a read its coordinate comes from may skip them. In a selection's arm it keeps the arm, as any tex does (nir_opt_peephole_select.c:59-326).
+- **The plan.** Its `compile` refuses a bias, a level and an offset, which its programs do not write.
+
+Refused still: a gradient (nir_lower_tex's lower_txd, vir.c:802, not ported), an offset the program computes, ConstOffsets and MinLod.
+
+Results:
+- glslc_lod writes TMUT, TMUB from an fmul, and TMUSLOD, with no P2; glslc_bias writes TMUB from an fsub, and TMUS.
+- P2 is 0x00F0E100 for glslc_offset, 0x00F07800 for glslc_lod_offset, 0x00F00300 for glslc_bias_offset, 0x00FD2100 for glslc_volume_offset and 0x00F0F300 for glslc_layers_offset, each after P1. facet's own `Offset` gives glslc_offset's.
+- glslc_cube_lod's P2 is 0x00F00002, and it starts at TMUSCM. glslc_shadow_lod writes TMUDREF and TMUB, then TMUSLOD.
+- glslc_cube_shadow_bias makes five TMU writes, and runs at two threads.
+- glslc_dependent's first sample skips its helper pixels.
+- glslc_divided's level and bias are renamed by nir_opt_cse's pass.
+- glslc_lod_arm is glslc_branched's program with TMUB and TMUSLOD.
+- glslc_grad is refused, and so are glslc_offset's -2 made -9, glslc_lod_offset's 7 made 8, a Lod and a Bias swapped onto the other sample, and an explicit level's sample with no mask.
+
+Of 28 mutations of the port, 28 fail the tests; two of them first did only by not compiling, and then by a test as variants. On the CM5, FacetBoth's 249 cases are each as they were at 1.179, and four are new:
+- glslc's textureLod over levels 0 to 3 is 0 of 230400 pixels apart with the levels mixed.
+- At the nearest level it is 270 apart: one column in the middle of the quad, where the level is within a few thousandths of 1.5 and the two round it to different levels.
+- glslc's bias from -1 to 1 is 3660 apart, at most 5 a channel: apart in how two levels are mixed, not in which are read.
+- The IR's offset of (1, -2) texels is 0 apart.
+
+FacetProbe is 890 of 890. The board's cube has one level, so P2's disable_autolod is checked in the host tests alone.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim

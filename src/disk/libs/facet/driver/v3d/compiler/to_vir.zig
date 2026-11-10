@@ -1460,9 +1460,10 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     const return_words = texel_words;
 
     // get_required_tex_tmu_writes (v3d_tex.c:222): S and T, R or I where
-    // the image has a third float, and the comparator's TMUDREF. The
-    // input FIFO has 16 slots across all threads.
-    const tmu_writes: u32 = 2 + @as(u32, @intFromBool(dim != .flat)) + @intFromBool(compared);
+    // the image has a third float, the comparator's TMUDREF, and a bias's
+    // or a level's TMUB (since 1.180). The input FIFO has 16 slots across
+    // all threads.
+    const tmu_writes: u32 = 2 + @as(u32, @intFromBool(dim != .flat)) + @intFromBool(compared) + @intFromBool(each.lookup != .implicit);
     while (tmu_writes > 16 / @as(u32, c.threads)) c.threads /= 2;
 
     // Pipelining it would overflow the TMU's FIFOs: flush what waits.
@@ -1483,6 +1484,10 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // The comparator after the coordinate, as NIR's sources come
     // (v3d_tex.c:155-157).
     if (compared) _ = try tmuWrite(c, .tmudref, try getSrc(e, each.b, 0));
+    // A bias, or a level, after it, as vtn orders the sources
+    // (spirv_to_nir.c:3420-3438): each one float to TMUB (v3d_tex.c:
+    // 129-150; since 1.180).
+    if (each.lookup != .implicit) _ = try tmuWrite(c, .tmub, try getSrc(e, each.from[0], 0));
 
     // The texture's number in the high bits of the address, for the
     // driver to put the texture's state there (v3d_tex.c:297-301): here
@@ -1500,13 +1505,40 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     const p1_packed: u32 = if (c.stage != .fragment or e.work.skip_helpers[at]) compile.per_pixel_mask else 0;
     try wrtmuc(c, .tmu_config_p1, p1_packed | @as(u32, each.at) << 24);
 
-    // A cube's lookup is started at TMUSCM (v3d_tex.c:380-381).
-    const retiring = try tmuWrite(c, if (dim == .cube) .tmuscm else .tmus, s);
+    // P2 after it where it is not the default (v3d_tex.c:349-352, :372-
+    // 373), a constant the uniform stream carries: a ConstOffset's texels
+    // in its offset fields, as many as the image's coordinate names but
+    // a layer (:158-170), and a cube's level disabling the automatic one,
+    // which TMUSLOD does for every other image (:135-150; since 1.180).
+    const p2_packed = texConfigP2(each.offsets, each.lookup == .lod and dim == .cube);
+    if (p2_packed != p2_default) try wrtmuc(c, .constant, p2_packed);
+
+    // A cube's lookup is started at TMUSCM (v3d_tex.c:380-381), and one
+    // at a level the program gives at TMUSLOD (:382-383).
+    const retiring = try tmuWrite(c, if (dim == .cube) .tmuscm else if (each.lookup == .lod) .tmuslod else .tmus, s);
     // Mesa's own count, which is the mask of the words rather than how
     // many: the scheduler only holds a lookup back for it.
     retiring.ldtmu_count = return_words;
     try addPendingTmuFlush(e, at, return_words);
 }
+
+/// TMU configuration parameter 2 as V3D42_TMU_CONFIG_PARAMETER_2_pack
+/// packs it (v3d_packet.xml:1578-1593): the operation in bits 20-23, the
+/// offsets along r, t and s four bits each at 16, 12 and 8, the automatic
+/// level disabled at bit 1. A sample's is V3D_TMU_OP_REGULAR and the
+/// fields it sets, a gather's, a gradient's and a level query's fields
+/// not taken here (since 1.180).
+fn texConfigP2(offsets: [3]i8, disable_autolod: bool) u32 {
+    var packed_word: u32 = tmu_op_regular << 20 | @as(u32, @intFromBool(disable_autolod)) << 1;
+    for (offsets, 0..) |offset, k| {
+        const nibble: u32 = @as(u4, @bitCast(@as(i4, @intCast(offset))));
+        packed_word |= nibble << @intCast(8 + 4 * k);
+    }
+    return packed_word;
+}
+
+/// p2_unpacked_default (v3d_tex.c:35-37) packed: a regular lookup.
+const p2_default: u32 = tmu_op_regular << 20;
 
 /// The TMU's general lookup, as its configuration word has it
 /// (nir_to_vir.c:43-52): the lookup a quad's or a pixel's, and what it
