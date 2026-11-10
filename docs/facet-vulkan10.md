@@ -2455,6 +2455,28 @@ Two things came up on the board first:
 - Before the pipeline had a stack of its own, FacetBoth 1.46 ran past the end of its 32 KiB stack in the shipped kept branches, which 1.45 had drawn on the same stack.
 - Its 3D case read no varying. The V3D's pipeline refuses that where the vertex function writes two, so the case reads its level of the first float.
 
+**Then a texel at a level, by a compiled program**, facet.library 1.182.
+
+- **What is read.** The profile takes OpImageFetch. vtn makes it a txf with its lod (spirv_to_nir.c:3069-3076, :3433-3438).
+- **The step.** A `sample` step of the lookup `fetch`: its coordinate is integers, and its level is required, as an explicit level's is. It has no implicit derivatives. A cube is no image a texel is fetched of (v3d_tex.c:376).
+- **The code.** handle_tex_src writes the integers to TMUT, TMUR or TMUI as the image has them, S last, and the level to TMUB (v3d_tex.c:85-150). TMUSF starts the lookup (:375-377).
+- **The configuration.** A fetch reads no sampler state (nir_tex_instr_need_sampler), so P1 is written only where non_default_p1_config says so (v3d_tex.c:312-354). Where the fetch does not skip its helper pixels, because an implicit sample's coordinate it feeds wants them (nir_opt_load_skip_helpers.c:151-156), P1 is the constant of its own bits, the per-pixel mask off. With an offset it is the default constant, the mask on, before P2 (:355-371).
+- **The unit.** A fetch's unit is the unit of its set and binding, a comparison in it or not. In a selection's arm it keeps the arm, as any tex does.
+- **The plan.** Its `compile` refuses it.
+
+Results:
+- glslc_fetch's stream is P0's word alone, with its level to TMUB, TMUSF and two FTOIZ. glslc_fetch_zero writes level 0.
+- glslc_fetch_layers' layer goes to TMUI, and glslc_fetch_volume's slice to TMUR.
+- glslc_fetch_offset has the default P1 and P2 0x00F0E100. glslc_fetch_dependent's P1 is the constant 0.
+- glslc_fetch_sampled's fetch and sample are of one unit; glslc_fetch_aliased is one unit that compares. glslc_fetch_arm keeps its arm.
+- A fetch of no level, a cube's, and a MinLod are refused.
+
+Of 18 mutations of the port, 18 fail the tests.
+
+On the CM5, FacetBoth's 254 cases are each as they were at 1.181. Its five new cases are glslc's texelFetch at level 1, of an array's layer 2, of a 3D texture's slice 3, (1, -2) texels away, and a sample at a place the fetched texel moves by whole texels; each is 0 of 230400 pixels apart. FacetProbe is 890 of 890.
+
+The last case first moved its sample by a 4096th of the texel, and was 136 pixels apart. Moved to the centres of texels, where no rounding of the place crosses an edge, it is 0. So the 136 were places near an edge that the V3D and the cores rounded to either side, not the fetch.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim

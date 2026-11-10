@@ -1522,19 +1522,31 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // sampler's number above it. P2 is the default, so neither it nor
     // the P1 a P2 would need is written.
     const p1_packed: u32 = if (c.stage != .fragment or e.work.skip_helpers[at]) compile.per_pixel_mask else 0;
-    try wrtmuc(c, .tmu_config_p1, p1_packed | @as(u32, each.at) << 24);
-
     // P2 after it where it is not the default (v3d_tex.c:349-352, :372-
     // 373), a constant the uniform stream carries: a ConstOffset's texels
     // in its offset fields, as many as the image's coordinate names but
     // a layer (:158-170), and a cube's level disabling the automatic one,
     // which TMUSLOD does for every other image (:135-150; since 1.180).
     const p2_packed = texConfigP2(each.offsets, each.lookup == .lod and dim == .cube);
-    if (p2_packed != p2_default) try wrtmuc(c, .constant, p2_packed);
+    const needs_p2 = p2_packed != p2_default;
+    if (each.lookup != .fetch) {
+        try wrtmuc(c, .tmu_config_p1, p1_packed | @as(u32, each.at) << 24);
+    } else if (c.stage == .fragment and !e.work.skip_helpers[at]) {
+        // A fetch needs no sampler, so its P1 is the constant of its own
+        // bits where they are not the default, a fragment program's
+        // fetch that reads its helper pixels: the per-pixel mask off
+        // (v3d_tex.c:312-354) - or, where P2 is written, the default's,
+        // which a P2 needs before it (:355-368; since 1.182).
+        try wrtmuc(c, .constant, p1_packed);
+    } else if (needs_p2) {
+        try wrtmuc(c, .constant, compile.per_pixel_mask);
+    }
+    if (needs_p2) try wrtmuc(c, .constant, p2_packed);
 
-    // A cube's lookup is started at TMUSCM (v3d_tex.c:380-381), and one
-    // at a level the program gives at TMUSLOD (:382-383).
-    const retiring = try tmuWrite(c, if (dim == .cube) .tmuscm else if (each.lookup == .lod) .tmuslod else .tmus, s);
+    // A fetch's lookup is started at TMUSF (v3d_tex.c:375-377; since
+    // 1.182), a cube's at TMUSCM (:378-379), and one at a level the
+    // program gives at TMUSLOD (:380-381).
+    const retiring = try tmuWrite(c, if (each.lookup == .fetch) .tmusf else if (dim == .cube) .tmuscm else if (each.lookup == .lod) .tmuslod else .tmus, s);
     // Mesa's own count, which is the mask of the words rather than how
     // many: the scheduler only holds a lookup back for it.
     retiring.ldtmu_count = return_words;
