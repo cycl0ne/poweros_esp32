@@ -6305,4 +6305,58 @@ pub const LIBRARY_VERSION = 1;
 /// new one, glslc_many_ids on the V3D beside its products and sums worked
 /// out on the cores, is 8 of 230400 pixels apart: the 8 at the triangles'
 /// edge every case of its geometry has. FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 191;
+///
+/// 192: **gl_VertexIndex and gl_InstanceIndex (docs/facet-vulkan10.md item
+/// 60).** A vertex program reads VertexIndex and InstanceIndex, which vtn
+/// reads as SYSTEM_VALUE_VERTEX_ID and _INSTANCE_INDEX
+/// (vtn_variables.c:908-921): any other built-in of a variable is still
+/// refused. Before its attributes it loads a row of the VPM for each of
+/// its instance id, base instance and vertex id that it reads, in that
+/// order (ntq_setup_vs_inputs, nir_to_vir.c:2416-2438), each attribute's
+/// first float after them (ntq_emit_load_input, :2948-2961), and its VPM
+/// input is a float more for each (vir.c:894-899). InstanceIndex is the
+/// instance id and the base instance summed (nir_lower_system_values.c:
+/// 202-208). The coordinate program reads the vertex program's rows: v3dv
+/// compiles both of one NIR, whose system values it gathers once
+/// (v3dv_pipeline.c:1875), and its loads of what it does not use are dead
+/// code. Where it reads one and none of its first driver location, that
+/// location takes a row all the same, which the draw has the VPM load a
+/// float into: GFXH-1602 (nir_to_vir.c:2963-2973,
+/// v3dvx_cmd_buffer.c:2730-2737). The shader record says what each
+/// program reads, the Draw Index record's bits 2 to 4 and 7 to 9
+/// (v3dvx_pipeline.c:434-439).
+///
+/// Where it is not v3dv's: the draw numbers its vertices from the lowest
+/// it draws, the attributes made floats on the CPU from there, so the
+/// VPM's vertex id counts from 0 there, and VertexIndex is it plus a
+/// uniform of the first vertex. That is nir_lower_system_values'
+/// load_vertex_id where a driver's ids are zero based (:81-83), which
+/// v3dv's are not (v3dv_pipeline.c:212). Each instance is a draw of its
+/// own, its instance id 0 and its base instance the instance, written
+/// with Base Vertex Base Instance (v3dvx_cmd_buffer.c:2821-2829).
+///
+/// Tests: the V3D's 321, six new. glslc_vertex_index reads all three
+/// rows and glslc_index_place the vertex id alone, its coordinate program
+/// GFXH-1602's row; a coordinate program that reads none of the rows and
+/// not its first driver location takes no row; each program's stream says
+/// the rows it reads, and a coordinate program told no rows reads its
+/// attributes a place sooner. VertexId, which Vulkan has not, is refused,
+/// and VertexIndex twice; the Draw Index record's bits are each tested
+/// alone. Of 19 mutations, 17 fail the tests. Of the other two, the check
+/// that the built-ins decorate an input variable is behind another: a
+/// decoration moved off its variable leaves that an integer attribute,
+/// refused first; and the test of a row's value being read is the same
+/// as none, since layOut has dropped an unread value's step before the
+/// rows are counted. Four failed none at first, or only failed to
+/// compile: the instance id's bit and the base instance's swapped, until
+/// each was tested alone; GFXH-1602's row taken without a built-in, until
+/// vertex_flat with p and c swapped; and the rows not counted, or every
+/// one loaded, until made mutations that compile.
+///
+/// On the CM5, FacetBoth's 278 cases are each as they were at 1.191. Its
+/// two new ones, glslc's two vertex shaders through "shipped smooth", are
+/// 11 and 0 of 230400 pixels apart, at the triangles' edges. With the
+/// cores' models made wrong on purpose they are 53,595 and 74,374 apart,
+/// so the V3D draws them with its own programs. FacetProbe passes its 890
+/// checks.
+pub const LIBRARY_REVISION = 192;

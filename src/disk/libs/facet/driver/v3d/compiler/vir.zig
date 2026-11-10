@@ -152,6 +152,13 @@ pub const Uniform = enum(u8) {
     blend_constant_g,
     blend_constant_b,
     blend_constant_a,
+    /// Not Mesa's: the first vertex a draw numbers its vertices from,
+    /// which the VPM's vertex id counts from 0. NIR's load_first_vertex,
+    /// which nir_lower_system_values adds to it where a driver's ids are
+    /// zero based (nir_lower_system_values.c:81-83); v3dv's are not
+    /// (vertex_id_zero_based, v3dv_pipeline.c:212), and neither are facet's
+    /// draws numbered from 0 (`_play.zig`'s `lowest`; since 1.192).
+    first_vertex,
 };
 
 /// A unit and an offset in one uniform word (v3d_unit_data_create,

@@ -920,7 +920,7 @@ fn clearRectangle(queue: *Queue, clip: frames.Area, color: u32, channels: u32, d
     };
     const hardware = player.hardware;
     const uniforms = if (no_color)
-        streamOf(queue, hardware.no_color.stream(), &.{}, null, .{}) orelse return noRoom(queue, "a clear with no memory for its uniforms")
+        streamOf(queue, hardware.no_color.stream(), &.{}, null, 0, .{}) orelse return noRoom(queue, "a clear with no memory for its uniforms")
     else
         (carve(queue, 4, 4) orelse return noRoom(queue, "a clear with no memory for its uniforms")).address;
     if (!roomOnList(queue)) return noRoom(queue, "a clear with no memory for the binner's list");
@@ -1138,7 +1138,7 @@ fn writeRecord(into: [*]u8, output: [*]const f32, viewport: *const ViewportScale
 /// 1.163), and a program that spills the pipeline's spill buffer's
 /// (`driver.Spill`, since 1.177). Its address, or null with no memory
 /// for it.
-fn streamOf(queue: *Queue, stream: []const compile.Word, tmus: []const Configuration, scale: ?*const ViewportScale, spill: driver.Spill) ?u32 {
+fn streamOf(queue: *Queue, stream: []const compile.Word, tmus: []const Configuration, scale: ?*const ViewportScale, first_vertex: u32, spill: driver.Spill) ?u32 {
     const bytes: u32 = @max(4, @as(u32, @intCast(stream.len * 4)));
     const place = carve(queue, bytes, 4) orelse return null;
     const words: [*]u32 = @ptrCast(@alignCast(place.cpu));
@@ -1159,6 +1159,9 @@ fn streamOf(queue: *Queue, stream: []const compile.Word, tmus: []const Configura
         .ssbo => |each| storageAddress(queue, each, true) orelse 0,
         // A vertex program's alone, which the draw gives `scale` to.
         .viewport => |which| @bitCast(if (scale) |each| viewportWord(each, which) else 0),
+        // A vertex program's: the vertex its draw numbers its vertices
+        // from, which the VPM's vertex id counts from (since 1.192).
+        .first_vertex => first_vertex,
         // The pipeline made the buffer where one of its programs needs it
         // (`driver.checkSpillSize`).
         .spill_offset => spill.address,
@@ -1308,9 +1311,12 @@ fn sendCompiledVertices(queue: *Queue, inputs: u32, locations: u32, stage: *cons
     const cs = &stage.coordinate.program;
     // va_count: the attributes the vertex program still has after
     // nir_remove_dead_variables (driver_location_map,
-    // v3dvx_pipeline.c:694-721).
+    // v3dvx_pipeline.c:694-721), and the first driver location where the
+    // coordinate program takes GFXH-1602's row of it, which v3dv's always
+    // has, the vertex program reading it (`compile.VertexProgram.first_row`;
+    // since 1.192).
     var va_count: u32 = 0;
-    for (vs.vattr_sizes[0..vs.attribute_count]) |size| va_count += @intFromBool(size != 0);
+    for (vs.vattr_sizes[0..vs.attribute_count], 0..) |size, driver_location| va_count += @intFromBool(size != 0 or (driver_location == 0 and cs.first_row));
     const attributes = @max(va_count, 1);
     const record = carve(queue, cl.shader_record_bytes + 16 * attributes, 32) orelse return false;
     var list = cl.List{ .at = record.cpu, .address = record.address };
@@ -1334,18 +1340,26 @@ fn sendCompiledVertices(queue: *Queue, inputs: u32, locations: u32, stage: *cons
             .coordinate_threads = stage.coordinate.threads,
             .vertex_single_seg = vs.single_seg,
             .coordinate_single_seg = cs.single_seg,
+            .vertex_ids = idsOf(vs.system_values),
+            .coordinate_ids = idsOf(cs.system_values),
         },
     });
     const stride = locations * @sizeOf([4]f32);
     var cs_loaded_any = false;
     for (0..vs.attribute_count) |driver_location| {
-        if (vs.vattr_sizes[driver_location] == 0) continue;
+        const gfxh1602 = driver_location == 0 and cs.first_row;
+        if (vs.vattr_sizes[driver_location] == 0 and !gfxh1602) continue;
         var by_coordinate: u32 = cs.vattr_sizes[driver_location];
         if (by_coordinate != 0) cs_loaded_any = true;
-        // GFXH-930: the coordinate program reads at least one attribute,
-        // the last where it reads none, tested as v3dv tests it, against
-        // the driver location.
-        if (driver_location == va_count - 1 and !cs_loaded_any) {
+        // GFXH-1602: where the coordinate program reads the VPM's values,
+        // its first attribute is loaded, a float of it where it reads
+        // none (v3dvx_cmd_buffer.c:2730-2737). GFXH-930: the coordinate
+        // program reads at least one attribute, the last where it reads
+        // none, tested as v3dv tests it, against the driver location.
+        if (gfxh1602) {
+            by_coordinate = 1;
+            cs_loaded_any = true;
+        } else if (driver_location == va_count - 1 and !cs_loaded_any) {
             by_coordinate = 1;
             cs_loaded_any = true;
         }
@@ -1356,6 +1370,11 @@ fn sendCompiledVertices(queue: *Queue, inputs: u32, locations: u32, stage: *cons
     if (va_count == 0) cl.floatAttribute(&list, record.address, 1, 1, 1, 0);
     cl.glShaderState(&player.bin, record.address, attributes);
     return true;
+}
+
+/// What the shader record says a program reads of the VPM's values.
+fn idsOf(values: compile.SystemValues) cl.Ids {
+    return .{ .vertex_id = values.vertex_id, .instance_id = values.instance_id, .base_instance = values.base_instance };
 }
 
 /// The two words a program that samples reads as the TMU's
@@ -1807,7 +1826,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
                 fragment = made.address;
                 own = made;
                 carried = .as_they_are;
-                uniforms = streamOf(queue, made.stream(), tmus[0..found], null, made.spillWords()) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+                uniforms = streamOf(queue, made.stream(), tmus[0..found], null, 0, made.spillWords()) orelse return noRoom(queue, "a draw with no memory for its uniforms");
             }
         },
         // Refused when the pipeline was made (driver.zig): no fixed form's
@@ -1821,7 +1840,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         carried = .as_they_are;
         fragment = made.address;
         own = made;
-        uniforms = streamOf(queue, made.stream(), &.{}, null, .{}) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+        uniforms = streamOf(queue, made.stream(), &.{}, null, 0, .{}) orelse return noRoom(queue, "a draw with no memory for its uniforms");
     }
 
     // The pipeline's vertex shader on the QPU, where it was compiled for
@@ -1862,10 +1881,17 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             const place = carve(queue, @intCast(@max(inputs_bytes, 16)), 16) orelse return noRoom(queue, "a draw with no memory for its attributes");
             const into: [*][4]f32 = @ptrCast(@alignCast(place.cpu));
             _vertices.readInputs(player, pipeline, lowest, vertices, instance, into[0 .. @as(usize, vertices) * locations]);
-            const vertex_uniforms = streamOf(queue, stage.vertex.stream(), &.{}, &scale, own.?.spillWords()) orelse return noRoom(queue, "a draw with no memory for its uniforms");
-            const coordinate_uniforms = streamOf(queue, stage.coordinate.stream(), &.{}, &scale, own.?.spillWords()) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+            const vertex_uniforms = streamOf(queue, stage.vertex.stream(), &.{}, &scale, lowest, own.?.spillWords()) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+            const coordinate_uniforms = streamOf(queue, stage.coordinate.stream(), &.{}, &scale, lowest, own.?.spillWords()) orelse return noRoom(queue, "a draw with no memory for its uniforms");
             if (!roomOnList(queue)) return noRoom(queue, "a draw with no memory for the binner's list");
             if (!sendCompiledVertices(queue, place.address, locations, stage, vertex_uniforms, coordinate_uniforms, fragment, uniforms, own.?)) return noRoom(queue, "a draw with no memory for its shader record");
+            // Each instance is a draw of its own here, of its attributes
+            // made floats, so its instance id is 0: its base instance is
+            // the instance, and InstanceIndex their sum, as v3dv's draw
+            // of a first instance has the base be (v3dvx_cmd_buffer.c:
+            // 2821-2829; since 1.192). Indices are kept from `lowest`, so
+            // no base vertex: the first vertex is a uniform.
+            if (stage.vertex.program.system_values.base_instance or stage.coordinate.program.system_values.base_instance) cl.baseVertexBaseInstance(&player.bin, 0, instance);
             cl.indexBufferSetup(&player.bin, index_place.address, kept * 4);
             cl.indexedPrimList(&player.bin, cl.PRIM_TRIANGLES, kept);
             player.binned = true;

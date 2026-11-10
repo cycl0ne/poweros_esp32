@@ -526,6 +526,16 @@ pub fn indexedPrimList(list: *List, mode: u8, count: u32) void {
     list.word(0);
 }
 
+/// Base Vertex Base Instance (v3d_packet.xml:641-645): what the next draw
+/// adds to its indices, and the base instance a vertex program reads,
+/// which v3dv writes before a draw of a first instance or a vertex offset
+/// (v3dvx_cmd_buffer.c:2821-2829, 2931-2939; since 1.192).
+pub fn baseVertexBaseInstance(list: *List, base_vertex: u32, base_instance: u32) void {
+    list.byte(43);
+    list.word(base_vertex);
+    list.word(base_instance);
+}
+
 /// On to the list at `address`.
 pub fn branch(list: *List, address: u32) void {
     list.byte(16);
@@ -586,7 +596,23 @@ pub const CompiledVertex = struct {
     coordinate_threads: u8,
     vertex_single_seg: bool,
     coordinate_single_seg: bool,
+    /// The VPM's values each program reads before its attributes
+    /// (since 1.192).
+    vertex_ids: Ids = .{},
+    coordinate_ids: Ids = .{},
 };
+
+/// The VPM's vertex id, instance id and base instance, which a program
+/// reads where the record says so (since 1.192).
+pub const Ids = struct { vertex_id: bool = false, instance_id: bool = false, base_instance: bool = false };
+
+/// The record's bits of `ids` for the program whose vertex id's bit is
+/// `at`: in the Draw Index record the coordinate program's are bits 2 to
+/// 4 and the vertex program's 7 to 9, each base vertex and draw index
+/// after them (v3d_packet.xml, "GL Shader State Record Draw Index").
+fn idBits(ids: Ids, comptime at: u5) u32 {
+    return @as(u32, @intFromBool(ids.vertex_id)) << at | @as(u32, @intFromBool(ids.instance_id)) << (at + 1) | @as(u32, @intFromBool(ids.base_instance)) << (at + 2);
+}
 
 /// Values a program writes: its segment's size in sectors of 8.
 const coordinate_values: u32 = 6;
@@ -598,10 +624,13 @@ pub fn shaderRecord(list: *List, programs: Programs) void {
     const center_w: u32 = @as(u32, @intFromBool(programs.center_w)) << 15;
     const scoreboard_on_first: u32 = @as(u32, @intFromBool(programs.lock_scoreboard_on_first_thrsw)) << 20;
     const no_implicit_varyings: u32 = 1 << 21;
-    list.word(clipping | writes_z | disable_ez | center_w | scoreboard_on_first | no_implicit_varyings | programs.varyings << 24);
+    const compiled = programs.compiled_vertex;
+    // What v3dv's pack_shader_state_record sets of the programs' prog data
+    // (v3dvx_pipeline.c:434-439; since 1.192).
+    const ids: u32 = if (compiled) |each| idBits(each.coordinate_ids, 2) | idBits(each.vertex_ids, 7) else 0;
+    list.word(clipping | ids | writes_z | disable_ez | center_w | scoreboard_on_first | no_implicit_varyings | programs.varyings << 24);
     // Size in sectors, the input's 0 for sharing the output's, and 1 less
     // than the 1 required in play.
-    const compiled = programs.compiled_vertex;
     const coordinate_sectors = if (compiled) |each| each.coordinate_sectors else (coordinate_values + 7) / 8;
     const vertex_sectors = if (compiled) |each| each.vertex_sectors else (4 + programs.varyings + 7) / 8;
     list.word(coordinate_sectors | vertex_sectors << 16);
@@ -853,4 +882,51 @@ test "a program compiled through Mesa's back end says its threads, its W and its
     list.used = 0;
     shaderRecord(&list, drops);
     try std.testing.expectEqual(@as(u32, 1 << 1 | 1 << 12 | 1 << 13 | 1 << 21 | 3 << 24), std.mem.readInt(u32, memory[0..4], .little));
+}
+
+test "a compiled vertex program's and coordinate program's ids lie where the Draw Index record has them, and the base instance is Mesa's packet" {
+    var memory: [64]u8 = undefined;
+    var list = List{ .at = &memory, .address = 0x2000 };
+    var programs: Programs = .{
+        .fragment = 0x100,
+        .fragment_uniforms = 0x200,
+        .vertex = 0x300,
+        .vertex_uniforms = 0x400,
+        .coordinate = 0x500,
+        .coordinate_uniforms = 0x600,
+        .varyings = 3,
+        .compiled_vertex = .{
+            .vertex_sectors = 2,
+            .coordinate_sectors = 1,
+            .vertex_threads = 4,
+            .coordinate_threads = 4,
+            .vertex_single_seg = true,
+            .coordinate_single_seg = true,
+            .vertex_ids = .{ .vertex_id = true, .instance_id = true, .base_instance = true },
+            .coordinate_ids = .{ .instance_id = true, .base_instance = true },
+        },
+    };
+    shaderRecord(&list, programs);
+    // The coordinate program's instance id and base instance at 3 and 4,
+    // the vertex program's three at 7 to 9; base vertex and draw index,
+    // 5, 6, 10 and 11, none.
+    try std.testing.expectEqual(@as(u32, 1 << 1 | 1 << 3 | 1 << 4 | 1 << 7 | 1 << 8 | 1 << 9 | 1 << 21 | 3 << 24), std.mem.readInt(u32, memory[0..4], .little));
+    programs.compiled_vertex.?.vertex_ids = .{ .vertex_id = true };
+    programs.compiled_vertex.?.coordinate_ids = .{ .vertex_id = true };
+    list.used = 0;
+    shaderRecord(&list, programs);
+    try std.testing.expectEqual(@as(u32, 1 << 1 | 1 << 2 | 1 << 7 | 1 << 21 | 3 << 24), std.mem.readInt(u32, memory[0..4], .little));
+    // The base instance alone and the instance id alone, each at its own bit.
+    programs.compiled_vertex.?.vertex_ids = .{ .instance_id = true };
+    programs.compiled_vertex.?.coordinate_ids = .{ .base_instance = true };
+    list.used = 0;
+    shaderRecord(&list, programs);
+    try std.testing.expectEqual(@as(u32, 1 << 1 | 1 << 4 | 1 << 8 | 1 << 21 | 3 << 24), std.mem.readInt(u32, memory[0..4], .little));
+
+    list.used = 0;
+    baseVertexBaseInstance(&list, 0, 7);
+    try std.testing.expectEqual(@as(u32, 9), list.used);
+    try std.testing.expectEqual(@as(u8, 43), memory[0]);
+    try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, memory[1..5], .little));
+    try std.testing.expectEqual(@as(u32, 7), std.mem.readInt(u32, memory[5..9], .little));
 }
