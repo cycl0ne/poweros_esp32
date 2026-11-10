@@ -6667,4 +6667,28 @@ pub const LIBRARY_VERSION = 1;
 /// rounded toward zero on purpose the case is 29,585 apart, and with the
 /// cores' function made wrong on purpose 46,565. The other 291 cases are
 /// each as they were at 1.199, and FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 200;
+/// 201: **GLSL.std.450's Determinant and MatrixInverse
+/// (docs/facet-vulkan10.md item 59).** Determinant is vtn's
+/// build_mat_det (vtn_glsl450.c:79-89, 634-637): build_det's column 0
+/// times the vector of its minors (:53-77), each build_mat_subdet's
+/// determinant of the matrix without that row and column 0, a larger
+/// one's columns swizzled to all but the row (:28-51). MatrixInverse is
+/// matrix_inverse (:91-121, 639-642): the adjugate of the signed minors
+/// times the frcp of the determinant, held as a matrix value. Both are
+/// of square matrices alone. The minors vtn builds more than once,
+/// which nir_opt_cse shares on the V3D (vir.c:2099), are each steps of
+/// their own here, so MatrixInverse of a mat4 is past the 256 steps
+/// and refused.
+///
+/// glslc_matrix_inverse, of 450 words, and glslc_determinant4, of 349,
+/// answer for eight colours within 10^-5 what the matrices answer by
+/// other means: closed forms, cross products, and elimination in f64.
+/// They are 180 and 160 steps. glslc_inverse4 is refused. The V3D's
+/// tests are 350, four new. Of 13 mutations, all 13 fail them.
+///
+/// On the CM5 FacetBoth 1.65's "shipped matrix inverse" and "shipped
+/// determinant of a mat4" are each 8 of 230400 pixels apart, the 8 at
+/// the triangles' edge. With the cores' function made wrong on purpose
+/// each is 46,565 apart. The other 292 cases are each as they were at
+/// 1.200, and FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 201;

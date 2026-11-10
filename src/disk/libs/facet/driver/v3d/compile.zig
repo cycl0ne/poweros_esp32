@@ -8023,6 +8023,9 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             // 1.198).
             if (operands[3] == @intFromEnum(spirv.Glsl.modf_struct) or operands[3] == @intFromEnum(spirv.Glsl.frexp_struct))
                 return glslStructCall(work, operands[3], try idOf(operands[0]), id, operands[4..]);
+            // Determinant and MatrixInverse read a matrix (since 1.201).
+            if (operands[3] == @intFromEnum(spirv.Glsl.determinant) or operands[3] == @intFromEnum(spirv.Glsl.matrix_inverse))
+                return glslMatrixCall(work, operands[3], try idOf(operands[0]), id, operands[4..]);
             const kind = try kindOf(work, try idOf(operands[0]));
             work.step_of[id] = try glslCall(work, operands[3], kind, operands[4..]);
         },
@@ -8631,10 +8634,10 @@ fn multiplied(work: *Work, left: Matrix, right: Matrix) Error!Matrix {
 /// v3dv_pipeline.c:203). The bit finds are here since 1.197, of uclz,
 /// and Ldexp since 1.198, with ModfStruct and FrexpStruct
 /// (`glslStructCall`); the packing and unpacking of snorms and unorms
-/// since 1.199, and of halves since 1.200. What is left out - Modf and
-/// Frexp of a pointer, the determinant and the inverse, the doubles'
-/// packing and the interpolation - is refused by name, `Error.Body`
-/// (since 1.152).
+/// since 1.199, and of halves since 1.200; Determinant and
+/// MatrixInverse since 1.201 (`glslMatrixCall`). What is left out -
+/// Modf and Frexp of a pointer, the doubles' packing and the
+/// interpolation - is refused by name, `Error.Body` (since 1.152).
 fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) Error!u16 {
     const which = std.enums.fromInt(spirv.Glsl, instruction) orelse return Error.Body;
     switch (which) {
@@ -8858,6 +8861,83 @@ fn glslStructCall(work: *Work, instruction: u32, type_id: u16, id: u16, argument
     const x = try operand(work, arguments[0], kind);
     const made = if (instruction == @intFromEnum(spirv.Glsl.modf_struct)) try modfOf(work, x) else try frexpOf(work, x);
     try holdAggregate(work, id, type_id, &made);
+}
+
+/// Determinant and MatrixInverse (vtn_glsl450.c:634-641; since 1.201),
+/// of a matrix the body holds as its columns: build_mat_det's
+/// (:79-89) and matrix_inverse's (:91-121) cofactors, the inverse held
+/// as a matrix value is (`holdShaped`). SPIR-V has them of square
+/// matrices alone; another is refused.
+fn glslMatrixCall(work: *Work, instruction: u32, type_id: u16, id: u16, arguments: []const u32) Error!void {
+    if (arguments.len != 1) return Error.Body;
+    const of = work.matrices[try matrixOf(work, arguments[0])];
+    const columns = of.columns[0..of.count];
+    for (columns) |column| if (work.steps[column].kind.parts() != of.count) return Error.Type;
+    if (instruction == @intFromEnum(spirv.Glsl.determinant)) {
+        if (try kindOf(work, type_id) != .f32x1) return Error.Type;
+        work.step_of[id] = try determinantOf(work, columns);
+    } else try holdShaped(work, id, type_id, try inverseOf(work, columns));
+}
+
+/// The determinant of the square matrix of `columns`: build_det
+/// (vtn_glsl450.c:53-77), column 0 times the vector of its cofactors'
+/// minors, each the determinant of the matrix without its row and
+/// column 0, the products then taken and given alternately.
+fn determinantOf(work: *Work, columns: []const u16) Error!u16 {
+    var minors: [4]u16 = undefined;
+    for (minors[0..columns.len], 0..) |*minor, i| minor.* = try minorOf(work, columns, @intCast(i), 0);
+    const product = try binary(work, .mul, columns[0], try vectorOf(work, minors[0..columns.len]));
+    var made: ?u16 = null;
+    var i: u8 = 0;
+    while (i < columns.len) : (i += 2) {
+        // Each pair a difference, added to what the pairs before made
+        // (:66-74).
+        const term = if (i + 1 < columns.len) try binary(work, .sub, try channelOf(work, product, i), try channelOf(work, product, i + 1)) else try channelOf(work, product, i);
+        made = if (made) |sum| try binary(work, .add, sum, term) else term;
+    }
+    return made.?;
+}
+
+/// The determinant of the matrix of `columns` without its `row` and its
+/// `column`: build_mat_subdet (vtn_glsl450.c:28-51). Of a 2x2 matrix it
+/// is the float left; else each other column swizzled to all but the
+/// row, a construct of its parts as nir_swizzle makes one.
+fn minorOf(work: *Work, columns: []const u16, row: u8, column: u8) Error!u16 {
+    const size: u8 = @intCast(columns.len);
+    if (size == 2) return channelOf(work, columns[1 - column], 1 - row);
+    const kind = std.enums.fromInt(Kind, size - 1) orelse return Error.Type;
+    var rest: [3]u16 = undefined;
+    for (columns, 0..) |each, j| {
+        if (j == column) continue;
+        var made = Step{ .tag = .construct, .kind = kind };
+        for (0..size - 1) |r| {
+            made.from[r] = each;
+            made.part[r] = @intCast(r + @intFromBool(r >= row));
+        }
+        rest[j - @intFromBool(j > column)] = try put(work, made);
+    }
+    return determinantOf(work, rest[0 .. size - 1]);
+}
+
+/// The inverse of the square matrix of `columns`: matrix_inverse
+/// (vtn_glsl450.c:91-121), the adjugate, column c's row r the minor
+/// without row c and column r, negated where r + c is odd, times the
+/// frcp of the determinant. Its determinant is built again, as vtn
+/// builds it, for nir_opt_cse (vir.c:2099) to share; this does not.
+fn inverseOf(work: *Work, columns: []const u16) Error!Matrix {
+    var made = Matrix{ .count = @intCast(columns.len) };
+    var adjugate: [4]u16 = undefined;
+    for (adjugate[0..columns.len], 0..) |*each, c| {
+        var elements: [4]u16 = undefined;
+        for (elements[0..columns.len], 0..) |*element, r| {
+            element.* = try minorOf(work, columns, @intCast(c), @intCast(r));
+            if ((r + c) % 2 == 1) element.* = try unary(work, .negate, element.*);
+        }
+        each.* = try vectorOf(work, elements[0..columns.len]);
+    }
+    const reciprocal = try unary(work, .recip, try determinantOf(work, columns));
+    for (adjugate[0..columns.len], 0..) |each, i| made.columns[i] = try binary(work, .mul, each, reciprocal);
+    return made;
 }
 
 /// ModfStruct (vtn_glsl450.c:546-562): x's sign bit alone, the signed
@@ -16722,6 +16802,159 @@ test "packings of halves of constants fold as pack_half_2x16_split does: the nea
     const high = try integerOf(&work, .half_float, try integerOf(&work, .ushr, word, try integerSplat(&work, .f32x1, 16)), null);
     try testing.expectEqual(@as(f32, -2.0), work.pool[work.steps[low].at]);
     try testing.expectEqual(@as(f32, 1.0), work.pool[work.steps[high].at]);
+}
+
+/// The colour made -1 to 1 as the matrix shaders make it, in f32, then
+/// widened.
+fn matrixFloatsOf(color: [4]f32) [4]f64 {
+    var c: [4]f64 = undefined;
+    for (&c, color) |*each, v| each.* = v * 2.0 - 1.0;
+    return c;
+}
+
+/// The determinant of the square matrix `m` by elimination, the
+/// largest float of each column its pivot: not build_det's cofactors.
+fn eliminatedDeterminantOf(comptime n: usize, m: [n][n]f64) f64 {
+    var a = m;
+    var made: f64 = 1.0;
+    for (0..n) |k| {
+        var pivot = k;
+        for (k + 1..n) |i| {
+            if (@abs(a[i][k]) > @abs(a[pivot][k])) pivot = i;
+        }
+        if (pivot != k) {
+            std.mem.swap([n]f64, &a[pivot], &a[k]);
+            made = -made;
+        }
+        made *= a[k][k];
+        for (k + 1..n) |i| {
+            const factor = a[i][k] / a[k][k];
+            for (k..n) |j| a[i][j] -= factor * a[k][j];
+        }
+    }
+    return made;
+}
+
+fn crossOf(a: [3]f64, b: [3]f64) [3]f64 {
+    return .{ a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0] };
+}
+
+/// What `reference.glslc_matrix_inverse` makes of `color`, the
+/// matrices `[column][row]` as GLSL holds them: the mat2's inverse its
+/// own closed form, and the mat3's the rows b x c, c x a and a x b of its
+/// columns a, b and c over a . (b x c) - neither cofactors as vtn builds
+/// them.
+fn matrixInverseOf(color: [4]f32) [4]f32 {
+    const c = matrixFloatsOf(color);
+    const m2 = [2][2]f64{ .{ c[0] + 3.0, c[1] }, .{ c[2], 3.0 - c[0] } };
+    const d2 = m2[0][0] * m2[1][1] - m2[1][0] * m2[0][1];
+    const inverse2 = [2][2]f64{ .{ m2[1][1] / d2, -m2[0][1] / d2 }, .{ -m2[1][0] / d2, m2[0][0] / d2 } };
+    const m3 = [3][3]f64{ .{ c[0] + 3.5, c[1], c[2] }, .{ c[2], 3.5 - c[1], c[0] }, .{ c[1], c[0], 3.5 + c[2] } };
+    const rows = [3][3]f64{ crossOf(m3[1], m3[2]), crossOf(m3[2], m3[0]), crossOf(m3[0], m3[1]) };
+    const d3 = m3[0][0] * rows[0][0] + m3[0][1] * rows[0][1] + m3[0][2] * rows[0][2];
+    var inverse3: [3][3]f64 = undefined;
+    for (0..3) |j| {
+        for (0..3) |i| inverse3[j][i] = rows[i][j] / d3;
+    }
+    const b = (inverse2[0][1] - 2.0 * inverse2[1][0]) * 1.5 + inverse2[0][0] + inverse2[1][1] * 0.5;
+    const a = inverse3[0][2] - 2.0 * inverse3[2][0] + inverse3[1][2] * 3.0 - inverse3[2][1] + inverse3[0][0] + inverse3[1][1] * 0.5 + inverse3[2][2] * 0.25;
+    return .{ @floatCast((d2 - 6.5) * 0.25), @floatCast(d3 / 128.0), @floatCast(b * 0.75 + 0.125), @floatCast(a * 0.5 + 0.05) };
+}
+
+/// What `reference.glslc_determinant4` makes of `color`, each
+/// determinant by elimination.
+fn determinant4Of(color: [4]f32) [4]f32 {
+    const c = matrixFloatsOf(color);
+    const xy: f64 = @as(f32, @floatCast(c[0] * c[1]));
+    const xz: f64 = @as(f32, @floatCast(c[0] * c[2]));
+    const m4 = [4][4]f64{
+        .{ c[0] + 4.0, c[1], c[2], xy },
+        .{ c[2], 4.0 - c[1], c[0], c[1] },
+        .{ c[1], c[0], 4.0 + c[2], c[2] },
+        .{ c[0], c[2], c[1], 4.0 - xz },
+    };
+    const m2 = [2][2]f64{ .{ m4[0][0], m4[0][1] }, .{ m4[1][0], m4[1][1] } };
+    const t2 = [2][2]f64{ .{ m4[0][0], m4[1][0] }, .{ m4[0][1], m4[1][1] } };
+    // mat2x3(m4) times c.xy: column 0 times x and column 1 times y.
+    var n: [3]f64 = undefined;
+    for (&n, 0..) |*each, i| each.* = m4[0][i] * c[0] + m4[1][i] * c[1];
+    return .{
+        @floatCast(eliminatedDeterminantOf(4, m4) / 512.0),
+        @floatCast(eliminatedDeterminantOf(2, m2) / 32.0),
+        @floatCast(eliminatedDeterminantOf(2, t2) / 32.0 + n[2] * 0.0625),
+        @floatCast(n[0] * 0.0625 + 0.5),
+    };
+}
+
+test "Determinant and MatrixInverse of a mat2 and a mat3 are build_det's and matrix_inverse's cofactors, and answer as the matrices' own" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_matrix_inverse);
+    // An frcp of the determinant for each inverse (vtn_glsl450.c:113);
+    // the program's divisions are by constants, and fold.
+    try testing.expectEqual(@as(usize, 2), countOf(code, "recip "));
+    for (packing_colors) |color| {
+        const expected = matrixInverseOf(color);
+        const found = evaluatedOf(&work, work.stored, color, 0);
+        for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-5);
+    }
+}
+
+test "Determinant of a mat4 is build_det's cofactors of column 0, each a mat3's, and of a transpose the same as of its matrix" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_determinant4);
+    try testing.expectEqual(@as(usize, 0), countOf(code, "recip "));
+    for (packing_colors) |color| {
+        const expected = determinant4Of(color);
+        const found = evaluatedOf(&work, work.stored, color, 0);
+        for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-5);
+    }
+}
+
+test "MatrixInverse of a mat4 is past the 256 steps, as vtn's cofactors build it without nir_opt_cse, and is refused" {
+    var work: Work = .{};
+    try testing.expectError(Error.Steps, throughMesa(&work, &reference.glslc_inverse4));
+}
+
+test "a Determinant that answers other than a float, a MatrixInverse other than its matrix, and a Determinant of a matrix not square, are refused" {
+    const Change = enum { determinant_type, inverse_type, not_square };
+    inline for (.{ Change.determinant_type, Change.inverse_type, Change.not_square }) |change| {
+        var words = if (change == .inverse_type) reference.glslc_matrix_inverse else reference.glslc_determinant4;
+        // The ids of a float, a vector type and a matrix not square.
+        var float_type: u32 = 0;
+        var vector_type: u32 = 0;
+        var not_square: u32 = 0;
+        var at: usize = spirv.header_words;
+        while (at < words.len) : (at += words[at] >> 16) {
+            const op = words[at] & 0xFFFF;
+            if (op == @intFromEnum(spirv.Op.type_float)) float_type = words[at + 1];
+            if (op == @intFromEnum(spirv.Op.type_vector) and vector_type == 0) vector_type = words[at + 1];
+            if (op == @intFromEnum(spirv.Op.matrix_times_vector)) not_square = words[at + 3];
+        }
+        try testing.expect(float_type != 0 and vector_type != 0);
+        at = spirv.header_words;
+        var made: usize = 0;
+        while (at < words.len) : (at += words[at] >> 16) {
+            if (words[at] & 0xFFFF != @intFromEnum(spirv.Op.ext_inst)) continue;
+            switch (change) {
+                .determinant_type => if (words[at + 4] == @intFromEnum(spirv.Glsl.determinant)) {
+                    words[at + 1] = vector_type;
+                    made += 1;
+                },
+                .inverse_type => if (words[at + 4] == @intFromEnum(spirv.Glsl.matrix_inverse)) {
+                    words[at + 1] = float_type;
+                    made += 1;
+                },
+                .not_square => if (words[at + 4] == @intFromEnum(spirv.Glsl.determinant) and made == 0) {
+                    try testing.expect(not_square != 0);
+                    words[at + 5] = not_square;
+                    made += 1;
+                },
+            }
+        }
+        try testing.expect(made != 0);
+        var work: Work = .{};
+        try testing.expectError(Error.Type, throughMesa(&work, &words));
+    }
 }
 
 /// A constant of the floats `values`.
