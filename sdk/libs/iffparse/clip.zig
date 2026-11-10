@@ -3,9 +3,14 @@
 //! does with iffparse.library.
 //!
 //! A text on the clipboard is a `FORM FTXT` holding the characters in
-//! `CHRS` chunks. `writeText` puts one there, in one chunk; `readText`
-//! hands back the characters of every `CHRS` chunk of the clip, one after
-//! another, in memory of the caller's. Both work the primary clip
+//! `CHRS` chunks. `writeText` puts one there, in one chunk, after a
+//! `CSET` chunk that says it is UTF-8 (106, IANA's number for it, as a
+//! big-endian u32 and seven of 0 after it). `readText` hands back the
+//! characters of every `CHRS` chunk of the clip, one after another, in
+//! memory of the caller's, and always in UTF-8: a clip whose `CSET` says
+//! Latin-1 (4) or code page 1252 (2252) is converted, and one with no
+//! `CSET` is taken as UTF-8 when the whole of it is, else read as code
+//! page 1252. Both work the primary clip
 //! (`clipboard.PRIMARY_CLIP`) through `OpenClipboard` and wait for
 //! clipboard.device, so they run on a task that may wait - a program's
 //! own, or a method a program sent, as a datatype's `DTM_COPY` - and never
@@ -40,14 +45,22 @@ const iffparse = @import("iffparse.zig");
 const exec = @import("../exec/exec.zig");
 const clipboard = @import("../../devices/clipboard.zig");
 const utility = @import("../utility/utility.zig");
+const utf8 = @import("../utility/utf8.zig");
 const ExecBase = @import("../../interface/exec.zig").ExecBase;
 const IFFParseBase = @import("../../interface/iffparse.zig").IFFParseBase;
 
 pub const ID_FTXT = iffparse.MakeID("FTXT");
 pub const ID_CHRS = iffparse.MakeID("CHRS");
+pub const ID_CSET = iffparse.MakeID("CSET");
 
-/// `text` put on the clipboard as a `FORM FTXT` of one `CHRS` chunk.
-/// Whether it went; an empty text is not put there.
+/// The code sets a `CSET` names, by IANA's numbers.
+pub const CSET_LATIN1: u32 = 4;
+pub const CSET_UTF8: u32 = 106;
+pub const CSET_CP1252: u32 = 2252;
+
+/// `text`, UTF-8, put on the clipboard as a `FORM FTXT` of a `CSET`
+/// that says so and one `CHRS` chunk. Whether it went; an empty text is
+/// not put there.
 pub fn writeText(ip: *IFFParseBase, text: []const u8) bool {
     if (text.len == 0) return false;
     const iff = ip.AllocIFF() orelse return false;
@@ -59,6 +72,11 @@ pub fn writeText(ip: *IFFParseBase, text: []const u8) bool {
     if (ip.OpenIFF(iff, iffparse.IFFF_WRITE) != 0) return false;
     defer ip.CloseIFF(iff);
     if (ip.PushChunk(iff, ID_FTXT, iffparse.ID_FORM, iffparse.IFFSIZE_UNKNOWN) != 0) return false;
+    var code_set: [32]u8 = @splat(0);
+    code_set[3] = CSET_UTF8;
+    if (ip.PushChunk(iff, 0, ID_CSET, code_set.len) != 0) return false;
+    if (ip.WriteChunkBytes(iff, &code_set, code_set.len) < 0) return false;
+    _ = ip.PopChunk(iff);
     if (ip.PushChunk(iff, 0, ID_CHRS, @intCast(text.len)) != 0) return false;
     if (ip.WriteChunkBytes(iff, text.ptr, @intCast(text.len)) < 0) return false;
     _ = ip.PopChunk(iff);
@@ -67,8 +85,9 @@ pub fn writeText(ip: *IFFParseBase, text: []const u8) bool {
 }
 
 /// The characters of every `CHRS` chunk of the clipboard's `FORM FTXT`,
-/// one after another, in memory of their own for the caller to FreeVec;
-/// null when the clip holds no text, or there was no memory for it.
+/// one after another, in UTF-8 - converted from what its `CSET` names -
+/// in memory of their own for the caller to FreeVec; null when the clip
+/// holds no text, or there was no memory for it.
 pub fn readText(sys: *ExecBase, ip: *IFFParseBase) ?[]u8 {
     const iff = ip.AllocIFF() orelse return null;
     defer ip.FreeIFF(iff);
@@ -78,13 +97,20 @@ pub fn readText(sys: *ExecBase, ip: *IFFParseBase) ?[]u8 {
     ip.InitIFFasClip(iff);
     if (ip.OpenIFF(iff, iffparse.IFFF_READ) != 0) return null;
     defer ip.CloseIFF(iff);
-    if (ip.StopChunk(iff, ID_FTXT, ID_CHRS) != 0) return null;
+    const stops = [_]u32{ ID_FTXT, ID_CSET, ID_FTXT, ID_CHRS };
+    if (ip.StopChunks(iff, &stops, 2) != 0) return null;
     var length: usize = 0;
     var gathered: ?[*]u8 = null;
+    var code_set: ?u32 = null;
     // A clip is read once, front to back, so the text grows as the chunks
     // come.
     while (ip.ParseIFF(iff, iffparse.IFFPARSE_SCAN) == 0) {
         const chunk = ip.CurrentChunk(iff) orelse continue;
+        if (chunk.id == ID_CSET and chunk.size >= 4) {
+            var word: [4]u8 = undefined;
+            if (ip.ReadChunkBytes(iff, &word, 4) == 4) code_set = @as(u32, word[0]) << 24 | @as(u32, word[1]) << 16 | @as(u32, word[2]) << 8 | word[3];
+            continue;
+        }
         if (chunk.id != ID_CHRS or chunk.size <= 0) continue;
         const size: usize = @intCast(chunk.size);
         const bigger: [*]u8 = @ptrCast(sys.AllocVec(length + size, exec.MEMF_ANY) orelse break);
@@ -101,7 +127,25 @@ pub fn readText(sys: *ExecBase, ip: *IFFParseBase) ?[]u8 {
         sys.FreeVec(text);
         return null;
     }
-    return text[0..length];
+    return asUtf8(sys, text[0..length], code_set);
+}
+
+/// A text of `CHRS` chunks in UTF-8, by the code set its `CSET` named
+/// (null for none), in memory of its own: `text` itself when it is UTF-8
+/// already, else a converted copy and `text` freed. Null, and `text`
+/// freed, without memory for the copy. `text` is memory from AllocVec.
+pub fn asUtf8(sys: *ExecBase, text: []u8, code_set: ?u32) ?[]u8 {
+    const latin1 = code_set == CSET_LATIN1;
+    if (code_set == CSET_UTF8) return text;
+    if (!latin1 and code_set != CSET_CP1252 and utf8.valid(text)) return text;
+    defer sys.FreeVec(text.ptr);
+    // Latin-1 is code page 1252 but for 0x80 to 0x9F, which it has as
+    // controls.
+    var size: usize = 0;
+    for (text) |byte| size += if (latin1) @as(usize, if (byte < 0x80) 1 else 2) else utf8.lengthOf(utf8.cp1252(byte));
+    const into: [*]u8 = @ptrCast(sys.AllocVec(size, exec.MEMF_ANY) orelse return null);
+    const written = if (latin1) utf8.fromLatin1(text, into[0..size]) else utf8.fromCp1252(text, into[0..size]);
+    return into[0..written];
 }
 
 /// Told when the clipboard changes, to show whether it holds text: a

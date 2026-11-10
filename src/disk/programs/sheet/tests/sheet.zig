@@ -434,10 +434,14 @@ test "Sheet: CSV read and written" {
     const back = csv.write(fixture.sheet, second.form).?;
     try testing.expectEqualStrings("Preis;1,5\nM\xC3\xBCller;=B1*2\n", back);
     fixture.sheet.sys.FreeVec(@constCast(back.ptr));
-    // A file that is no UTF-8, read as Latin-1.
-    var old = "Name;Ort\nM\xFCller;K\xF6ln\n".*;
+    // A file that is no UTF-8, read as code page 1252.
+    var old = "Name;Ort\nM\xFCller;K\xF6ln \x80\n".*;
     _ = csv.read(fixture.sheet, &old);
-    try testing.expectEqualStrings("K\xC3\xB6ln", fixture.text("B2"));
+    try testing.expectEqualStrings("Köln €", fixture.text("B2"));
+    // A field longer than a cell holds is cut where a character starts.
+    var long = ("a" ** 1023 ++ "€\n").*;
+    _ = csv.read(fixture.sheet, &long);
+    try testing.expectEqualStrings("a" ** 1023, fixture.text("A1"));
     try fixture.deinit();
 }
 

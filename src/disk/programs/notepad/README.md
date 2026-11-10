@@ -16,7 +16,8 @@ Notepad [FILE]
 ```
 
 `FILE` is opened at the start. A name that does not exist yet is the file
-the text is saved to.
+the text is saved to. A file that is not UTF-8 from first to last is read
+as code page 1252, the Western code page of Windows, and saved in UTF-8.
 
 ## Using it
 

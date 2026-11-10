@@ -503,8 +503,12 @@ worked in.
 
 A program that copies or pastes text does it with iffparse.library, on
 its own task: `iffparse.clip.writeText(ip, text)` puts a text on the
-clipboard as a `FORM FTXT`, and `iffparse.clip.readText(sys, ip)` hands
-back the text there, in memory of the caller's to `FreeVec`.
+clipboard as a `FORM FTXT` - a `CSET` chunk that says UTF-8 (106), then
+the text in a `CHRS` - and `iffparse.clip.readText(sys, ip)` hands back
+the text there in UTF-8, in memory of the caller's to `FreeVec`. A clip
+whose `CSET` names Latin-1 (4) or code page 1252 (2252) is converted,
+and one without a `CSET` is taken as UTF-8 when the whole of it is and
+as code page 1252 when it is not.
 textedit.gadget's `copy`, `cut` and `paste`, the text datatype's
 `DTM_COPY` and `SYS:Programs/Sheet` all go through them, so text copied in
 one is pasted in any of the others:

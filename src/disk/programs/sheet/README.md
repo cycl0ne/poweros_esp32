@@ -288,7 +288,9 @@ Values are not saved; they are worked out again when the file is read.
 Reading takes whichever of comma, semicolon or tab the first line is
 split by. In a file split by semicolons, a number written with a decimal
 comma (`1,5`) is read as that number, and saved back the same way. A file
-in UTF-8 has its characters turned into the system's Latin-1 ones.
+is read as UTF-8, a byte order mark at its start passed over; one that
+is not UTF-8 from first to last is read as code page 1252, the Western
+code page of Windows. A sheet is always saved in UTF-8.
 
 The columns' widths and the cells' formats are not saved. New, Open, Quit, the close gadget and
 Ctrl-C ask whether to save a sheet that has changed.

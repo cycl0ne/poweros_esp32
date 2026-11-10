@@ -108,8 +108,8 @@ pub const Library = gadgets.ClassLibrary(.{
     // follows the one before by place and time (DoubleTap). 3:
     // highlighting (TEXTEDIT_HighlightHook). 4: TEXTEDIT_CanUndo and
     // TEXTEDIT_CanRedo. 5: the text is UTF-8.
-    .revision = 5,
-    .date = "10.11.2026",
+    .revision = 6,
+    .date = "11.11.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,

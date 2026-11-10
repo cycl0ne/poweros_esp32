@@ -10,6 +10,11 @@
 //! sdk/libs/gadgets/textedit.zig). FILE is opened at the start; a name
 //! that is not there yet is the file the text is saved to.
 //!
+//! The text is UTF-8, and is saved so. A file that is not UTF-8 from
+//! first to last is read as code page 1252, the Western code page of
+//! Windows, which a text written elsewhere is most often in; saving it
+//! writes it in UTF-8.
+//!
 //! The scroll bars are in the window's border, one down the right and one
 //! along the bottom, the sizing gadget in the corner between them; the
 //! window object makes them (`WINDOWA_VertScroller`,
@@ -111,8 +116,8 @@ const Window = intuition.Window;
 const TagItem = sdk.utility.TagItem;
 
 pub const COMMAND_NAME = "Notepad";
-const VERSION = "1.8";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (10.11.2026)\r\n";
+const VERSION = "1.9";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -432,7 +437,19 @@ const Notepad = struct {
             np.tell(.MSG_CANNOT_READ, name);
             return false;
         }
-        np.setText(memory, size);
+        const utf8 = sdk.utility.utf8;
+        const read = memory[0..size];
+        if (utf8.valid(read)) {
+            np.setText(memory, size);
+        } else {
+            const wide = utf8.cp1252Length(read);
+            const converted: [*]u8 = @ptrCast(sys.AllocVec(@max(wide, 1), exec.MEMF_ANY) orelse {
+                np.tell(.MSG_NO_MEMORY_FOR, name);
+                return false;
+            });
+            defer sys.FreeVec(converted);
+            np.setText(converted, @intCast(utf8.fromCp1252(read, converted[0..wide])));
+        }
         np.keepPath(name);
         np.showTitle();
         return true;

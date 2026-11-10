@@ -47,6 +47,7 @@ const sdk = @import("sdk");
 const gadgets = sdk.gadgets;
 const datatypes = sdk.datatypes;
 const tdc = datatypes.textclass;
+const utf8 = sdk.utility.utf8;
 const _text = @import("_text.zig");
 const Data = _text.Data;
 const Line = _text.Line;
@@ -791,7 +792,7 @@ fn flow(page: *Page, f: Flow) Flowed {
                     line.wrapped = true;
                     continue;
                 }
-                length = @max(fits, cur.at + 1) - cur.at;
+                length = @max(fits, cur.at + charBytes(page, wp, cur.at, stop)) - cur.at;
             }
             place(page, f, &line, cur.p, cur.at, length, true);
             cur.at += length;
@@ -835,7 +836,8 @@ fn segmentWidth(page: *const Page, piece: *const tdc.Piece, from: u32, length: u
     return width;
 }
 
-/// How much of a run from `from` fits in `room` pixels.
+/// How much of a run from `from` fits in `room` pixels: whole
+/// characters, never part of one.
 fn fitting(page: *const Page, piece: *const tdc.Piece, from: u32, to: u32, room: i32) u32 {
     if (room <= 0) return from;
     var low = from;
@@ -844,7 +846,15 @@ fn fitting(page: *const Page, piece: *const tdc.Piece, from: u32, to: u32, room:
         const middle = low + (high - low + 1) / 2;
         if (segmentWidth(page, piece, from, middle - from) <= room) low = middle else high = middle - 1;
     }
-    return low;
+    const text = page.own.buffer.?[piece.offset + from .. piece.offset + to];
+    return from + @as(u32, @intCast(utf8.cut(text, low - from)));
+}
+
+/// The bytes of the character a run has at `at`, no more than there are
+/// before `stop`: what a line takes at least, however narrow it is.
+fn charBytes(page: *const Page, piece: *const tdc.Piece, at: u32, stop: u32) u32 {
+    const text = page.own.buffer.?[piece.offset + at .. piece.offset + stop];
+    return @intCast(utf8.decode(text).length);
 }
 
 /// A line started where `cur` is: as far in as its first run's indent,

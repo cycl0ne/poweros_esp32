@@ -5,9 +5,12 @@
 //! the text over with `TDTM_SETTEXT`; laying it out, drawing it,
 //! scrolling it, marking it and copying it are the superclass's.
 //!
-//! **Both kinds come out as one stretch of text.** A plain file is its
-//! bytes; an `FTXT` is its `CHRS` chunks one after another, which is
-//! what that form means. Neither says anything about how it is drawn, so
+//! **Both kinds come out as one stretch of text**, in UTF-8. A plain
+//! file is its bytes when the whole of it is UTF-8, and is read as code
+//! page 1252 - the Western one of Windows, which a text written elsewhere
+//! is most often in - when it is not; an `FTXT` is its `CHRS` chunks one
+//! after another, which is what that form means, in the code set its
+//! `CSET` names (`iffparse.clip.asUtf8`). Neither says anything about how it is drawn, so
 //! the whole of it is one run in the fixed-width font of documents
 //! (`font.prefs`'s CODE), where columns line up as they were typed, and
 //! a document whose looks matter is a format of its own.
@@ -15,8 +18,8 @@
 //! What the file holds is tidied as it is read: a carriage return before
 //! a newline is dropped, so that a file written on another machine does
 //! not show a stray character at the end of every line, and a tab is
-//! spread to the next multiple of eight, because a font has no tab stops
-//! of its own.
+//! spread to the next multiple of eight characters, because a font has no
+//! tab stops of its own.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -41,8 +44,8 @@ const Base = gadgets.Base;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "ascii.datatype",
     .version = 1,
-    .revision = 2,
-    .date = "28.10.2026",
+    .revision = 3,
+    .date = "11.11.2026",
     .super = tdc.TEXTDTCLASS,
     .opens = &.{ tdc.TEXT_LIBRARY, iffparse.IFFPARSENAME },
     .Instance = Data,
@@ -89,7 +92,9 @@ fn tidy(from: []const u8, into: ?[*]u8) u32 {
             else => {
                 if (into) |it| it[out] = byte;
                 out += 1;
-                column += 1;
+                // A character's first byte counts a column, the bytes
+                // that go on with it none.
+                if (byte & 0xC0 != 0x80) column += 1;
             },
         }
     }
@@ -108,12 +113,13 @@ fn word(from: []const u8) u32 {
 }
 
 /// The `CHRS` chunks of a form joined: how many bytes they come to, and,
-/// when `into` is given, written there.
+/// when `into` is given, written there; the code set its `CSET` names
+/// into `code_set`.
 ///
 /// The chunks are walked by hand rather than through iffparse's
 /// collection handler, because what is wanted is one stretch of text and
 /// not a list of pieces, and the walk is four lines either way.
-fn gatherChrs(from: []const u8, into: ?[*]u8) u32 {
+fn gatherChrs(from: []const u8, into: ?[*]u8, code_set: *?u32) u32 {
     var at: usize = 12; // past FORM, its length and the form's type
     var out: u32 = 0;
     while (at + 8 <= from.len) {
@@ -122,8 +128,10 @@ fn gatherChrs(from: []const u8, into: ?[*]u8) u32 {
         if (at + 8 + length > from.len) break;
         if (id == ID_CHRS) {
             const body = from[at + 8 ..][0..length];
-            out += tidy(body, if (into) |it| it + out else null);
+            if (into) |it| @memcpy(it[out..][0..length], body);
+            out += length;
         }
+        if (id == iffparse.clip.ID_CSET and length >= 4) code_set.* = word(from[at + 8 ..]);
         // A chunk's length is rounded up to an even number of bytes.
         at += 8 + length + (length & 1);
     }
@@ -131,16 +139,39 @@ fn gatherChrs(from: []const u8, into: ?[*]u8) u32 {
 }
 
 /// The text read and given to the superclass. What went wrong, or 0.
-fn takeText(base: *Base, cl: *Class, o: *Object, from: []const u8) i32 {
+/// `utf8_already` when `from` is a clip's text, which `readClip` has
+/// made UTF-8.
+fn takeText(base: *Base, cl: *Class, o: *Object, from: []const u8, utf8_already: bool) i32 {
     const sys = base.sys_base;
-    const form = isForm(from);
-    const length = if (form) gatherChrs(from, null) else tidy(from, null);
+    // The characters in UTF-8, in memory of their own when they had to
+    // be joined or converted.
+    var owned: ?[]u8 = null;
+    defer if (owned) |it| sys.FreeVec(it.ptr);
+    var chars = from;
+    if (isForm(from)) {
+        var code_set: ?u32 = null;
+        const joined_length = gatherChrs(from, null, &code_set);
+        if (joined_length == 0) return datatypes.DTERROR_NOT_ENOUGH_DATA;
+        const joined: [*]u8 = @ptrCast(sys.AllocVec(joined_length, exec.MEMF_ANY) orelse
+            return datatypes.DTERROR_NOT_ENOUGH_DATA);
+        _ = gatherChrs(from, joined, &code_set);
+        owned = iffparse.clip.asUtf8(sys, joined[0..joined_length], code_set) orelse
+            return datatypes.DTERROR_NOT_ENOUGH_DATA;
+        chars = owned.?;
+    } else if (!utf8_already and !utility.utf8.valid(from)) {
+        const size = utility.utf8.cp1252Length(from);
+        const converted: [*]u8 = @ptrCast(sys.AllocVec(@max(size, 1), exec.MEMF_ANY) orelse
+            return datatypes.DTERROR_NOT_ENOUGH_DATA);
+        owned = converted[0..utility.utf8.fromCp1252(from, converted[0..size])];
+        chars = owned.?;
+    }
+    const length = tidy(chars, null);
     if (length == 0) return datatypes.DTERROR_NOT_ENOUGH_DATA;
 
     const text = sys.AllocVec(length, exec.MEMF_ANY) orelse
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
     const buffer: [*]u8 = @ptrCast(text);
-    _ = if (form) gatherChrs(from, buffer) else tidy(from, buffer);
+    _ = tidy(chars, buffer);
 
     const runs = sys.AllocVec(@sizeOf(tdc.Piece), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
         sys.FreeVec(text);
@@ -163,18 +194,26 @@ fn takeText(base: *Base, cl: *Class, o: *Object, from: []const u8) i32 {
     return 0;
 }
 
-/// What is on a clipboard unit, read into memory of its own.
+/// What is on a clipboard unit, read into memory of its own, in UTF-8
+/// by the code set its `CSET` names.
 fn readClip(base: *Base, ip: *IFFParseBase, handle: ?*anyopaque) ?[]u8 {
     const sys = base.sys_base;
     const iff: *iffparse.IFFHandle = @ptrCast(@alignCast(handle orelse return null));
     // The library opened the clip and walked as far as its first form.
-    if (ip.StopChunk(iff, ID_FTXT, ID_CHRS) != 0) return null;
+    const stops = [_]u32{ ID_FTXT, iffparse.clip.ID_CSET, ID_FTXT, ID_CHRS };
+    if (ip.StopChunks(iff, &stops, 2) != 0) return null;
     var length: usize = 0;
     var gathered: ?[*]u8 = null;
+    var code_set: ?u32 = null;
     // Two walks are not possible on a clip that is read once, so the
     // text grows as the chunks come.
     while (ip.ParseIFF(iff, iffparse.IFFPARSE_SCAN) == 0) {
         const chunk = ip.CurrentChunk(iff) orelse continue;
+        if (chunk.id == iffparse.clip.ID_CSET and chunk.size >= 4) {
+            var set: [4]u8 = undefined;
+            if (ip.ReadChunkBytes(iff, &set, 4) == 4) code_set = word(&set);
+            continue;
+        }
         if (chunk.id != ID_CHRS or chunk.size <= 0) continue;
         const size: usize = @intCast(chunk.size);
         const bigger = sys.AllocVec(length + size, exec.MEMF_ANY) orelse break;
@@ -191,7 +230,7 @@ fn readClip(base: *Base, ip: *IFFParseBase, handle: ?*anyopaque) ?[]u8 {
         length += size;
     }
     const text = gathered orelse return null;
-    return text[0..length];
+    return iffparse.clip.asUtf8(sys, text[0..length], code_set);
 }
 
 fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
@@ -235,7 +274,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                     return 0;
                 },
             };
-            const failure = takeText(base, cl, obj, read);
+            const failure = takeText(base, cl, obj, read, source == dtc.DTST_CLIPBOARD);
             base.sys_base.FreeVec(read.ptr);
             if (failure != 0) {
                 _ = dl.SetIoErr(failure);

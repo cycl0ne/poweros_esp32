@@ -6,8 +6,10 @@
 //! quotes, and a quote in it doubled. Reading takes whichever separator
 //! the first line has most of outside quotes - a comma, a semicolon or a
 //! tab. The text is UTF-8, a byte order mark at its start passed over; a
-//! file that is no UTF-8 is an older spreadsheet's, and read as Latin-1.
-//! A sheet is written in UTF-8.
+//! file that is no UTF-8 is one a spreadsheet wrote in code page 1252,
+//! the Western code page of Windows, and read as that. A sheet is written
+//! in UTF-8. A field longer than a cell holds is cut where a character
+//! starts.
 //!
 //! A semicolon file is how a spreadsheet writes CSV where the comma is the
 //! decimal point, so a field that reads as a number once its one comma is
@@ -81,38 +83,38 @@ pub fn read(sheet: *cells.Sheet, given: []const u8) ReadResult {
     sheet.clearAll();
     var bytes = given;
     if (bytes.len >= 3 and bytes[0] == 0xEF and bytes[1] == 0xBB and bytes[2] == 0xBF) bytes = bytes[3..];
-    const latin = !utf8.valid(bytes);
+    const foreign = !utf8.valid(bytes);
     const separator = separatorOf(bytes);
     result.form.separator = separator;
 
-    var field: [cells.max_text]u8 = undefined;
+    var field: Field = .{};
     var row: u32 = 0;
     var col: u32 = 0;
     var at: usize = 0;
     while (at < bytes.len) {
         // One field, quoted or not, up to its separator or line's end.
-        var length: usize = 0;
+        field = .{};
         if (bytes[at] == '"') {
             at += 1;
             while (at < bytes.len) {
                 if (bytes[at] == '"') {
                     if (at + 1 < bytes.len and bytes[at + 1] == '"') {
-                        take(&field, &length, '"', latin);
+                        field.take('"', foreign);
                         at += 2;
                         continue;
                     }
                     at += 1;
                     break;
                 }
-                take(&field, &length, bytes[at], latin);
+                field.take(bytes[at], foreign);
                 at += 1;
             }
         }
         while (at < bytes.len and bytes[at] != separator and bytes[at] != '\n') : (at += 1) {
             if (bytes[at] == '\r') continue;
-            take(&field, &length, bytes[at], latin);
+            field.take(bytes[at], foreign);
         }
-        var text: []const u8 = field[0..@min(length, field.len)];
+        var text: []const u8 = field.bytes[0..field.length];
         if (text.len > 0) {
             var point: [64]u8 = undefined;
             if (separator == ';' and text[0] != '=') {
@@ -137,20 +139,36 @@ pub fn read(sheet: *cells.Sheet, given: []const u8) ReadResult {
     return result;
 }
 
-/// One byte of the file into a field: a Latin-1 file's byte past ASCII
-/// as its two bytes of UTF-8. What does not fit is counted, not kept.
-fn take(field: *[cells.max_text]u8, length: *usize, byte: u8, latin: bool) void {
-    if (latin and byte >= 0x80) {
-        if (length.* + 2 <= field.len) {
-            field[length.*] = 0xC0 | byte >> 6;
-            field[length.* + 1] = 0x80 | (byte & 0x3F);
+/// A field as it is read, as much of it as a cell holds: whole
+/// characters, the first that does not fit and all after it left out.
+const Field = struct {
+    bytes: [cells.max_text]u8 = undefined,
+    length: usize = 0,
+    full: bool = false,
+
+    /// One byte of the file: a code page 1252 file's byte past ASCII as
+    /// its character's UTF-8; in a UTF-8 file, a character's first byte
+    /// kept only when the whole of it fits.
+    fn take(field: *Field, byte: u8, foreign: bool) void {
+        if (field.full) return;
+        var bytes: [4]u8 = undefined;
+        var taken: usize = 1;
+        bytes[0] = byte;
+        var needs: usize = 1;
+        if (foreign and byte >= 0x80) {
+            taken = utf8.encode(utf8.cp1252(byte), &bytes);
+            needs = taken;
+        } else if (byte >= 0xC0) {
+            needs = if (byte >= 0xF0) 4 else if (byte >= 0xE0) 3 else 2;
         }
-        length.* += 2;
-        return;
+        if (field.length + needs > field.bytes.len) {
+            field.full = true;
+            return;
+        }
+        @memcpy(field.bytes[field.length..][0..taken], bytes[0..taken]);
+        field.length += taken;
     }
-    if (length.* < field.len) field[length.*] = byte;
-    length.* += 1;
-}
+};
 
 const Out = struct {
     sys: *ExecBase,

@@ -112,6 +112,20 @@ test "utf8.copyCut, fromLatin1, fromForeign: whole characters as fit" {
     try testing.expectEqualStrings("\xC3\xA2\xC2\x82", into[0..utf8.fromForeign("\xE2\x82", &into)]);
 }
 
+test "utf8.cp1252, fromCp1252, cp1252Length: Windows' Western code page as UTF-8" {
+    try testing.expectEqual(@as(u32, 0x20AC), utf8.cp1252(0x80));
+    try testing.expectEqual(@as(u32, 0x201C), utf8.cp1252(0x93));
+    try testing.expectEqual(@as(u32, 0x81), utf8.cp1252(0x81));
+    try testing.expectEqual(@as(u32, 0xFC), utf8.cp1252(0xFC));
+    try testing.expectEqual(@as(u32, 'a'), utf8.cp1252('a'));
+    const given = "\x93Gr\xFCn\x94 \x80";
+    var into: [16]u8 = undefined;
+    try testing.expectEqual(@as(usize, 15), utf8.cp1252Length(given));
+    try testing.expectEqualStrings("“Grün” €", into[0..utf8.fromCp1252(given, &into)]);
+    // Only whole characters: the euro sign's three bytes do not fit.
+    try testing.expectEqualStrings("“Grün” ", into[0..utf8.fromCp1252(given, into[0..13])]);
+}
+
 test "utf8.readLast: walking back reads what walking forward reads" {
     try testing.expectEqual(utf8.Read{ .char = 0xE4, .length = 2 }, utf8.readLast("a\xC3\xA4"));
     try testing.expectEqual(utf8.Read{ .char = 0x1F600, .length = 4 }, utf8.readLast("x\xF0\x9F\x98\x80"));

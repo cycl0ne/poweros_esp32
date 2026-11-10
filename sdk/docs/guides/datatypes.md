@@ -362,6 +362,13 @@ and hands over the text, the runs and the blocks. A picture is not
 fetched: what its text says it is stands in its place. `ascii.datatype`
 sets a plain file in `CODE`'s font, one run, no blocks.
 
+Text is UTF-8 inside the object, and a stretch is wrapped, marked and
+copied in whole characters. A plain file that is not UTF-8 from first to
+last is read as code page 1252, the Western code page of Windows, which
+a text written elsewhere is most often in; an IFF `FTXT` is read in the
+code set its `CSET` chunk names - UTF-8 (106), Latin-1 (4) or code page
+1252 (2252) - and one without a `CSET` as a plain file is.
+
 `html.datatype` reads a page for what its markup says and hands over
 the same three. Its elements are kept open as a browser keeps them - a
 `<p>` closed by the next block, an `<li>` by the next item, a cell by

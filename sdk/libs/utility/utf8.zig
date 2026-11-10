@@ -226,6 +226,41 @@ pub fn fromLatin1(bytes: []const u8, into: []u8) usize {
     return length;
 }
 
+/// The character a byte is in code page 1252, the Western code page of
+/// Windows: Latin-1's, but for 0x80 to 0x9F, where it has typesetting's
+/// quotes and dashes, the euro sign and a few letters. The five it
+/// leaves out are the C1 controls of their value, as Latin-1 has them.
+pub fn cp1252(byte: u8) u32 {
+    const table = [32]u16{
+        0x20AC, 0x81,   0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x8D, 0x017D, 0x8F,
+        0x90,   0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x9D, 0x017E, 0x0178,
+    };
+    if (byte < 0x80 or byte > 0x9F) return byte;
+    return table[byte - 0x80];
+}
+
+/// Code page 1252 `bytes` as UTF-8 into `into`, as many whole characters
+/// as fit: the length written.
+pub fn fromCp1252(bytes: []const u8, into: []u8) usize {
+    var length: usize = 0;
+    for (bytes) |byte| {
+        var one: [4]u8 = undefined;
+        const taken = encode(cp1252(byte), &one);
+        if (length + taken > into.len) break;
+        @memcpy(into[length..][0..taken], one[0..taken]);
+        length += taken;
+    }
+    return length;
+}
+
+/// The bytes code page 1252 `bytes` take as UTF-8: what `fromCp1252`
+/// needs room for.
+pub fn cp1252Length(bytes: []const u8) usize {
+    var length: usize = 0;
+    for (bytes) |byte| length += lengthOf(cp1252(byte));
+    return length;
+}
+
 /// Text from elsewhere that does not say what it is written in, as UTF-8
 /// into `into`: as it is when the whole of it is UTF-8, else read as
 /// Latin-1, which older text from such places is in. As many whole
