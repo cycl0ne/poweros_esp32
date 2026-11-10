@@ -8533,7 +8533,7 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
             if (next + 1 >= operands.len) return Error.Body;
             if (!explicit or fetch or mask & (bias | lod) != 0) return Error.Body;
             made.lookup = .lod;
-            made.from[0] = try gradientLevel(work, which, dim, operands[next], operands[next + 1]);
+            made.from[0] = try gradientLevel(work, which, dim, made.a, operands[next], operands[next + 1]);
             next += 2;
         }
         if (mask & const_offset != 0) {
@@ -8562,11 +8562,9 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
 /// its dot with itself; and that length's logarithm to 2. A derivative
 /// has as many floats as the coordinate names but a layer.
 ///
-/// A cube's gradient is lower_gradient_cube_map's (:707-852), its
-/// derivatives through the quotient rule onto the face: not ported
-/// (since 1.183).
-fn gradientLevel(work: *Work, which: u16, dim: SamplerDim, dx: u32, dy: u32) Error!u16 {
-    if (dim == .cube) return Error.Operands;
+/// A cube's is `cubeGradientLevel` (since 1.184; refused at 1.183).
+fn gradientLevel(work: *Work, which: u16, dim: SamplerDim, coordinate: u16, dx: u32, dy: u32) Error!u16 {
+    if (dim == .cube) return cubeGradientLevel(work, which, coordinate, dx, dy);
     const count: u8 = if (dim == .layers) 2 else dim.components();
     const kind = std.enums.fromInt(Kind, count) orelse return Error.Type;
     const ddx = try operand(work, dx, kind);
@@ -8590,6 +8588,69 @@ fn gradientLevel(work: *Work, which: u16, dim: SamplerDim, dx: u32, dy: u32) Err
     const down = try binary(work, .mul, ddy, floats);
     const rho = try binary(work, .max, try lengthOf(work, across), try lengthOf(work, down));
     return unary(work, .log2, rho);
+}
+
+/// lower_gradient_cube_map (nir_lower_tex.c:707-852): a cube's gradient
+/// made a level, the derivatives taken onto the face the coordinate falls
+/// on through the quotient rule. The coordinate is the one
+/// nir_normalize_cubemap_coords made (v3dv_pipeline.c:406), which comes
+/// before v3d's nir_lower_tex, as `normalizedCube` comes before this.
+///
+/// - The face: cond_z, the magnitude of z at least the larger of x's
+///   and y's, and cond_y, of y at least the larger of x's and z's; each
+///   float of Q, dQdx and dQdy the bcsel on cond_z of the coordinate's, or
+///   of a derivative's, and of the bcsel on cond_y of its xzy and yzx
+///   swizzles (:783-813), which nir_lower_alu_to_scalar makes a bcsel a
+///   float (nir_to_vir.c:2259). Q's second is z either way under cond_z,
+///   which (('bcsel', a, b, b), b) takes out.
+/// - The quotient rule: the reciprocal of Q's z; Q's first two times it;
+///   and each derivative's first two less those times its z, times the
+///   reciprocal (:815-834).
+/// - The level: fadd(-1.0, fmul(0.5, flog2(L * (L * M)))), M the fmax of
+///   the two derivatives' fdot with themselves and L the cube's width at
+///   level 0 made a float (:713-715, :836-848), which
+///   replace_gradient_with_lod makes the txl's lod (:690-704, :851).
+fn cubeGradientLevel(work: *Work, which: u16, coordinate: u16, dx: u32, dy: u32) Error!u16 {
+    const size = try put(work, .{ .tag = .texture_size, .kind = .f32x2, .at = which, .from = .{ try immediate(work, 0.0), 0, 0, 0 } });
+    const floats = try integerOf(work, .i2f32, size, null);
+    const ddx = try operand(work, dx, .f32x3);
+    const ddy = try operand(work, dy, .f32x3);
+    const magnitudes = try put(work, .{ .tag = .abs, .kind = .f32x3, .a = coordinate });
+    var abs_p: [3]u16 = undefined;
+    for (&abs_p, 0..) |*each, k| each.* = try floatOf(work, partOf(work, magnitudes, @intCast(k)));
+    const on_z = try put(work, .{ .tag = .compare, .kind = .f32x1, .a = abs_p[2], .b = try binary(work, .max, abs_p[0], abs_p[1]), .at = @intFromEnum(Comparison.greater_equal) });
+    const on_y = try put(work, .{ .tag = .compare, .kind = .f32x1, .a = abs_p[1], .b = try binary(work, .max, abs_p[0], abs_p[2]), .at = @intFromEnum(Comparison.greater_equal) });
+    const yzx = [3]u8{ 1, 2, 0 };
+    const xzy = [3]u8{ 0, 2, 1 };
+    var faced: [3][3]u16 = undefined;
+    for (&faced, [3]u16{ coordinate, ddx, ddy }) |*each, vector| {
+        var parts: [3]u16 = undefined;
+        for (&parts, 0..) |*part, k| part.* = try floatOf(work, partOf(work, vector, @intCast(k)));
+        var inner: [3]u16 = undefined;
+        for (&inner, 0..) |*chosen, k| chosen.* = try put(work, selectOf(on_y, parts[xzy[k]], parts[yzx[k]]));
+        for (&each.*, 0..) |*chosen, k| chosen.* = try put(work, selectOf(on_z, parts[k], inner[k]));
+    }
+    const rcp_q_z = try unary(work, .recip, faced[0][2]);
+    const q_xy = try pairOf(work, faced[0][0], faced[0][1]);
+    const tmp = try binary(work, .mul, q_xy, rcp_q_z);
+    var onto: [2]u16 = undefined;
+    for (&onto, faced[1..]) |*each, d| {
+        const moved = try binary(work, .sub, try pairOf(work, d[0], d[1]), try binary(work, .mul, tmp, d[2]));
+        each.* = try binary(work, .mul, moved, rcp_q_z);
+    }
+    const most = try binary(work, .max, try dotOf(work, onto[0], onto[0]), try dotOf(work, onto[1], onto[1]));
+    const across = try floatOf(work, partOf(work, floats, 0));
+    const scaled = try binary(work, .mul, across, try binary(work, .mul, across, most));
+    const halved = try binary(work, .mul, try immediate(work, 0.5), try unary(work, .log2, scaled));
+    return binary(work, .add, try immediate(work, -1.0), halved);
+}
+
+/// Two floats as a vector of two: nir_trim_vector's, of floats each a step.
+fn pairOf(work: *Work, first: u16, second: u16) Error!u16 {
+    var made: Step = .{ .tag = .construct, .kind = .f32x2 };
+    made.from[0] = first;
+    made.from[1] = second;
+    return put(work, made);
 }
 
 /// A ConstOffset: a constant integer, or vector of them, of as many as
@@ -11053,24 +11114,27 @@ test "a sample at a level the program gives wants no helper pixels for its coord
     try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmus,"));
 }
 
-test "a sample's image operands are refused for what the device does not take, and for what SPIR-V forbids" {
-    // A cube's gradient: lower_gradient_cube_map (nir_lower_tex.c:
-    // 707-852), not ported (since 1.183; until then any gradient).
-    var work: Work = .{};
-    try testing.expectError(Error.Operands, throughMesa(&work, &reference.glslc_grad_cube));
-    // An offset past V3D_MAX_TEXEL_OFFSET, which P2's four bits would
-    // wrap: the -2 of glslc_offset made -9 is refused, not cut.
+/// glslc_offset's -2 made -9: an offset past V3D_MAX_TEXEL_OFFSET, which
+/// P2's four bits would wrap, and the reading refuses rather than cuts.
+/// Until 1.184 the tests' operand refused was a cube's gradient, and
+/// until 1.183 any gradient.
+const offset_too_far = made: {
     var far = reference.glslc_offset;
     var rewritten: usize = 0;
     for (far[5..], 5..) |word, k| if (word == 0x0004002B and far[k + 3] == @as(u32, @bitCast(@as(i32, -2)))) {
         far[k + 3] = @bitCast(@as(i32, -9));
         rewritten += 1;
     };
-    try testing.expectEqual(@as(usize, 1), rewritten);
-    try testing.expectError(Error.Operands, throughMesa(&work, &far));
+    if (rewritten != 1) @compileError("glslc_offset's -2 is not where it was");
+    break :made far;
+};
+
+test "a sample's image operands are refused for what the device does not take, and for what SPIR-V forbids" {
+    var work: Work = .{};
+    try testing.expectError(Error.Operands, throughMesa(&work, &offset_too_far));
     // And glslc_lod_offset's 7 made 8.
     var past = reference.glslc_lod_offset;
-    rewritten = 0;
+    var rewritten: usize = 0;
     for (past[5..], 5..) |word, k| if (word == 0x0004002B and past[k + 3] == 7) {
         past[k + 3] = 8;
         rewritten += 1;
@@ -11489,10 +11553,224 @@ test "two gradients of one texture read its size once, the two txs one by nir_op
     try testing.expectEqual(@as(usize, 2), countOf(code, "mov tmuslod, "));
 }
 
-test "a gradient is refused on a cube, on an implicit level's sample and on a fetch" {
-    // lower_gradient_cube_map is not ported (since 1.183).
+test "a cube's gradient is lower_gradient_cube_map's level: the face's quotient rule, -1 plus half the LOG of L times L times M, to TMUB and TMUSCM" {
+    // nir_lower_tex.c:707-852 of the coordinate
+    // nir_normalize_cubemap_coords made (v3dv_pipeline.c:406; since
+    // 1.184).
     var work: Work = .{};
-    try testing.expectError(Error.Operands, throughMesa(&work, &reference.glslc_grad_cube));
+    const code = try throughMesa(&work, &reference.glslc_grad_cube);
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
+    const width: Word = .{ .texture_size = .{ .field = .width } };
+    const minus_one: Word = .{ .float = -1.0 };
+    const p2: Word = .{ .float = @bitCast(@as(u32, 0x00F00002)) };
+    // L is the width alone: the height the i2f32 makes is read by
+    // nothing (:840).
+    try testing.expectEqualSlices(Word, &[_]Word{ width, minus_one, .{ .texture = 0 }, sampler, p2 }, code.stream());
+    var levels: usize = 0;
+    for (work.program()) |each| if (each.tag == .sample) {
+        try testing.expectEqual(Lookup.lod, each.lookup);
+        const lod = work.steps[each.from[0]];
+        try testing.expectEqual(Tag.add, lod.tag);
+        try testing.expect(isSplat(&work, lod.a, -1.0));
+        const halved = work.steps[lod.b];
+        try testing.expectEqual(Tag.mul, halved.tag);
+        try testing.expect(isSplat(&work, halved.a, 0.5));
+        try testing.expectEqual(Tag.log2, work.steps[halved.b].tag);
+        levels += 1;
+    };
+    try testing.expectEqual(@as(usize, 1), levels);
+    try testing.expectEqual(@as(usize, 1), countOf(code, "shr "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "itof "));
+    // The normalization's reciprocal and Q's z's.
+    try testing.expectEqual(@as(usize, 2), countOf(code, "recip "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "log "));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "rsqrt "));
+    // The two derivatives' first two, each less tmp times its z.
+    try testing.expectEqual(@as(usize, 4), countOf(code, "fsub "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmub, "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmuscm, "));
+    // A shadow cube's gradient is lowered as any (:1833-1847), and
+    // compares at the level.
+    var shadow: Work = .{};
+    const shadow_code = try throughMesa(&shadow, &reference.glslc_grad_cube_shadow);
+    try testing.expect(shadow_code.sampled()[0].compared);
+    try testing.expectEqual(@as(usize, 1), countOf(shadow_code, "mov tmudref, "));
+    try testing.expectEqual(@as(usize, 1), countOf(shadow_code, "mov tmuscm, "));
+    try testing.expectEqual(@as(usize, 1), countOf(shadow_code, "log "));
+}
+
+/// The floats a step comes to, worked out on the host for a test: of a
+/// program whose one varying is `color` and whose texture is `width`
+/// texels wide at level 0, as far as a gradient's level reads them. A
+/// bool is 1.0 or 0.0, an integer its bits (since 1.184).
+fn evaluatedOf(work: *const Work, at: u16, color: [4]f32, width: i32) [4]f32 {
+    const each = work.steps[at];
+    const parts = each.kind.parts();
+    var out: [4]f32 = @splat(0);
+    switch (each.tag) {
+        .input => out = color,
+        .constant => for (0..parts) |k| {
+            out[k] = work.pool[each.at + k];
+        },
+        .component => out[0] = evaluatedOf(work, each.a, color, width)[each.at],
+        .construct => for (0..parts) |k| {
+            out[k] = evaluatedOf(work, each.from[k], color, width)[each.part[k]];
+        },
+        .texture_size => for (0..parts) |k| {
+            out[k] = @bitCast(width);
+        },
+        .integer => {
+            if (each.at != @intFromEnum(Integer.i2f32)) @panic("an integer the level does not read");
+            const x = evaluatedOf(work, each.a, color, width);
+            for (0..parts) |k| out[k] = @floatFromInt(@as(i32, @bitCast(x[k])));
+        },
+        .abs, .negate, .recip, .log2 => {
+            const x = evaluatedOf(work, each.a, color, width);
+            for (0..parts) |k| out[k] = switch (each.tag) {
+                .abs => @abs(x[k]),
+                .negate => -x[k],
+                .recip => 1.0 / x[k],
+                else => @log2(x[k]),
+            };
+        },
+        .add, .sub, .mul, .max => {
+            const x = evaluatedOf(work, each.a, color, width);
+            const y = evaluatedOf(work, each.b, color, width);
+            const single = work.steps[each.b].kind == .f32x1;
+            for (0..parts) |k| {
+                const b = y[if (single) 0 else k];
+                out[k] = switch (each.tag) {
+                    .add => x[k] + b,
+                    .sub => x[k] - b,
+                    .mul => x[k] * b,
+                    else => @max(x[k], b),
+                };
+            }
+        },
+        .compare => {
+            const x = evaluatedOf(work, each.a, color, width)[0];
+            const y = evaluatedOf(work, each.b, color, width)[0];
+            const holds = switch (@as(Comparison, @enumFromInt(each.at))) {
+                .less => x < y,
+                .greater => x > y,
+                .equal => x == y,
+                .not_equal => x != y,
+                .greater_equal => x >= y,
+                .less_equal => x <= y,
+                else => @panic("an integer comparison the level does not make"),
+            };
+            out[0] = if (holds) 1.0 else 0.0;
+        },
+        .logic => {
+            const x = evaluatedOf(work, each.a, color, width)[0] != 0;
+            const y = evaluatedOf(work, each.b, color, width)[0] != 0;
+            out[0] = if (switch (@as(Logic, @enumFromInt(each.at))) {
+                .iand => x and y,
+                .ior => x or y,
+                .inot => !x,
+            }) 1.0 else 0.0;
+        },
+        .select => {
+            const chosen = if (evaluatedOf(work, each.a, color, width)[0] != 0) each.b else each.from[0];
+            out[0] = evaluatedOf(work, chosen, color, width)[0];
+        },
+        else => @panic(@tagName(each.tag)),
+    }
+    return out;
+}
+
+/// lower_gradient_cube_map's level worked out as it reads, of `direction`
+/// normalized as nir_normalize_cubemap_coords has it: the face, the
+/// quotient rule, -1 plus half the log of L * (L * M) (nir_lower_tex.c:
+/// 783-848; since 1.184).
+fn cubeLevel(direction: [3]f32, ddx: [3]f32, ddy: [3]f32, width: f32) f32 {
+    const largest = @max(@max(@abs(direction[0]), @abs(direction[1])), @abs(direction[2]));
+    var p: [3]f32 = undefined;
+    for (&p, direction) |*each, d| each.* = d * (1.0 / largest);
+    const ax = @abs(p[0]);
+    const ay = @abs(p[1]);
+    const az = @abs(p[2]);
+    const face: [3]u8 = if (az >= @max(ax, ay)) .{ 0, 1, 2 } else if (ay >= @max(ax, az)) .{ 0, 2, 1 } else .{ 1, 2, 0 };
+    const recip = 1.0 / p[face[2]];
+    var most: f32 = 0;
+    for ([2][3]f32{ ddx, ddy }) |d| {
+        var length: f32 = 0;
+        for (0..2) |k| {
+            const onto = (d[face[k]] - p[face[k]] * recip * d[face[2]]) * recip;
+            length += onto * onto;
+        }
+        most = @max(most, length);
+    }
+    return -1.0 + 0.5 * @log2(width * (width * most));
+}
+
+test "a cube's gradient is the level lower_gradient_cube_map makes, on each face of each sign" {
+    // The steps after the passes, worked out for colours whose direction
+    // falls on z, y and x, each way, against the level the lowering's own
+    // arithmetic gives (since 1.184).
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_grad_cube_varied);
+    var lod: u16 = none;
+    for (work.program()) |each| if (each.tag == .sample) {
+        lod = each.from[0];
+    };
+    try testing.expect(lod != none);
+    var sizes: usize = 0;
+    for (work.program()) |each| if (each.tag == .texture_size) {
+        // A cube's txs is two integers, of level 0.
+        try testing.expectEqual(Kind.f32x2, each.kind);
+        try testing.expect(isSplat(&work, each.from[0], 0.0));
+        sizes += 1;
+    };
+    try testing.expectEqual(@as(usize, 1), sizes);
+    const colors = [_][4]f32{
+        .{ 0.2, -0.3, 0.9, 0.7 },
+        .{ 0.3, 0.2, -0.7, -0.4 },
+        .{ 0.1, -0.95, 0.4, 0.6 },
+        .{ -0.5, 0.8, 0.3, 0.2 },
+        .{ -0.8, 0.3, 0.5, -0.9 },
+        .{ 0.9, -0.6, -0.1, 0.3 },
+        // Ties: z's magnitude x's, which fge puts on z, and x's y's,
+        // which it puts on y.
+        .{ 0.5, -0.3, -0.5, 0.4 },
+        .{ 0.4, -0.4, 0.2, -0.3 },
+    };
+    for (colors) |color| {
+        const direction = [3]f32{ color[0], color[1], color[2] };
+        const ddx = [3]f32{ color[3], color[0], 0.25 };
+        const ddy = [3]f32{ color[2] * 0.5, color[0] * 0.5, color[1] * 0.5 };
+        const expected = cubeLevel(direction, ddx, ddy, 64.0);
+        const found = evaluatedOf(&work, lod, color, 64)[0];
+        try testing.expectApproxEqAbs(expected, found, 1e-4);
+    }
+    // Each derivative's two onto the face are times rcp_Q_z although the
+    // normalized coordinate's Q.z is 1 or -1 (:828-834): 27 FMULs, the
+    // varyings' 4, the normalization's 3, dPdy's halves 3, tmp's 2, tmp
+    // times each z 4, rcp_Q_z's 4, the dots' 4, L * (L * M) 2 and the
+    // half 1.
+    var code_work: Work = .{};
+    const code = try throughMesa(&code_work, &reference.glslc_grad_cube_varied);
+    try testing.expectEqual(@as(usize, 27), countOf(code, "fmul "));
+    // And 5 FMAXes: the normalization's 2, cond_z's of x and y, cond_y's
+    // of x and z - which a cond_y of x and y would make the same
+    // value, and one fewer - and M's (:791-792, :837).
+    try testing.expectEqual(@as(usize, 5), countOf(code, "fmax "));
+}
+
+test "a cube's constant gradient keeps its zeros' selections, the fsub of a zero an fneg" {
+    // dPdx (0.01, 0, 0) and dPdy (0, 0.01, 0): each float of dQdx and
+    // dQdy a bcsel of the constants, and a zero less tmp times its z the
+    // fadd of the zero and the fneg (nir_opt_algebraic.py:2401), the zero
+    // taken out (:236) and the fneg v3d's XOR of the sign bit
+    // (nir_to_vir.c:1412-1419; since 1.184).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_grad_cube_constant);
+    try testing.expectEqual(@as(usize, 1), countOf(code, "log "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmuscm, "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "xor "));
+}
+
+test "a gradient is refused on an implicit level's sample and on a fetch" {
     // vtn asserts a txd is a txl (spirv_to_nir.c:3442): glslc_grad_varying's
     // OpImageSampleExplicitLod made OpImageSampleImplicitLod.
     var implicit = reference.glslc_grad_varying;
@@ -11603,7 +11881,7 @@ test "through Mesa's back end, what does not fit 4 threads is compiled at 2, whe
 
 test "through Mesa's back end, a module is refused for what the reading refuses, by the same name" {
     var work: Work = .{};
-    try testing.expectError(Error.Operands, throughMesa(&work, &reference.glslc_grad_cube));
+    try testing.expectError(Error.Operands, throughMesa(&work, &offset_too_far));
     try testing.expectError(Error.Stage, throughMesa(&work, &vertex_words));
     try testing.expectError(Error.Varyings, throughMesa(&work, Wide.words));
     try testing.expectError(Error.Refused, throughMesa(&work, &flat_words));
@@ -11934,7 +12212,7 @@ test "compileThroughMesa makes what compileVir does, its memory given back" {
     }
     // And a refusal gives back the register sets it was made after.
     var work: Work = .{};
-    try testing.expectError(Error.Operands, compileThroughMesa(&work, &reference.glslc_grad_cube, testing.allocator, .{}));
+    try testing.expectError(Error.Operands, compileThroughMesa(&work, &offset_too_far, testing.allocator, .{}));
 }
 
 /// glslc's float arithmetic (`reference.glslc_arith`) as facet's emitter

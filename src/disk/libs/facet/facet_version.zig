@@ -5980,4 +5980,45 @@ pub const LIBRARY_VERSION = 1;
 /// in a pixel or two, as textureLod's nearest is apart, of an exact
 /// level, where it is within a few thousandths of 1.5. FacetProbe passes
 /// its 890 checks.
-pub const LIBRARY_REVISION = 183;
+///
+/// 184: **A cube's sample with a gradient, on the V3D by a compiled
+/// program (docs/facet-vulkan10.md item 59).** lower_gradient_cube_map
+/// (nir_lower_tex.c:707-852) is ported as it reads, of the coordinate
+/// nir_normalize_cubemap_coords made, which v3dv's preprocess_nir does
+/// before v3d's nir_lower_tex (v3dv_pipeline.c:406), as `normalizedCube`
+/// comes before it here. The face: cond_z, z's magnitude at least the
+/// larger of x's and y's, and cond_y, y's at least the larger of x's and
+/// z's; each float of Q, dQdx and dQdy the bcsel on cond_z of the
+/// coordinate's or a derivative's and of the bcsel on cond_y of its xzy
+/// and yzx swizzles (:783-813), a bcsel a float. The quotient rule: the
+/// reciprocal of Q's z, Q's first two times it, and each derivative's
+/// first two less those times its z, times the reciprocal (:815-834).
+/// The level: fadd(-1.0, fmul(0.5, flog2(L * (L * M)))), M the fmax of
+/// the two fdots and L the cube's width at level 0 (:713-715, :836-848),
+/// the txl's lod to TMUB and TMUSCM. The rules then do what they do: two
+/// nested bcsels sharing a value are one on the ior of the conditions,
+/// and a constant derivative's zero less a product is its fneg, v3d's
+/// XOR of the sign.
+///
+/// Tests: the V3D's 294, three new, one of them working the steps out on
+/// the host (`evaluatedOf`) for directions on each face of each sign and
+/// on ties, against the lowering's arithmetic. 3 new modules of glslc's:
+/// glslc_grad_cube_shadow's TMUDREF, glslc_grad_cube_constant's XOR and
+/// glslc_grad_cube_varied's derivatives none along the direction;
+/// glslc_grad_cube, refused at 1.183, compiles. Of 20 mutations of the
+/// port, 20 fail the tests: four only once the ties, the txs's level and
+/// the counts of FMUL and FMAX were tested. Two of those four are the
+/// same value either way - the multiply by a reciprocal of 1 or -1, and
+/// a cond_y of x and y - and fail only on Mesa's count of instructions.
+///
+/// On the CM5 FacetBoth's 263 cases are each as they were at 1.183, and
+/// its new one, glslc's textureGrad of the cube's +z face, the nearest
+/// magnified and linear minified, is 67 of 230400 pixels apart, 52 at
+/// worst. The board's cube has one level, so the level says which of the
+/// two filters is read: at or below 0 inside the square where the larger
+/// of the face's two is at most 0.25, above it outside, and the two
+/// regions agree. The first pixel apart, at 265,150, is where the face's
+/// two are about -0.253 and -0.249, on that square's edge, some 365
+/// pixels long; the run draws no map of the rest. FacetProbe passes its
+/// 890 checks.
+pub const LIBRARY_REVISION = 184;
