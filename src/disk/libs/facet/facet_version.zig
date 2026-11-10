@@ -6021,4 +6021,39 @@ pub const LIBRARY_VERSION = 1;
 /// two are about -0.253 and -0.249, on that square's edge, some 365
 /// pixels long; the run draws no map of the rest. FacetProbe passes its
 /// 890 checks.
-pub const LIBRARY_REVISION = 184;
+///
+/// 185: **Two samples of one texture at one coordinate are one, on the V3D
+/// (docs/facet-vulkan10.md item 59).** nir_opt_cse takes tex instructions
+/// (instr_can_rewrite, nir_instr_set.c:47-52), and v3d's loop runs it
+/// (nir_to_vir.c:2265); glslc -O leaves the two. A sample is now a value
+/// the port's nir_opt_cse merges, where its unit, its sources, its
+/// lookup - tex, txb, txl or txf - and its texel offset are another's
+/// that dominates it, as nir_instrs_equal's tex compares pack_tex and the
+/// sources (:297-327, :695-723). Two variables at one binding are two
+/// units until the passes are done, and their samples are not merged,
+/// where v3dv lowers the derefs to one index before v3d's nir_opt_cse:
+/// not ported. The loop runs nir_opt_cse before nir_opt_peephole_select
+/// (:2265, :2269-2279), so a tex an arm repeats of one before the
+/// selection is gone from the arm when it is counted: a sample, a size or
+/// a count of levels read in an arm keeps the selection a branch only
+/// where no earlier one outside a kept selection's arms is the same, and
+/// counts nothing in the arm's cost. One in an arm of a kept selection,
+/// or in the other arm, is not the same, as it does not dominate.
+///
+/// Tests: the V3D's 298, four new. 15 new modules of glslc's: one sample
+/// of glslc_sample_twice, _twice_lod, _twice_fetch and _twice_shadow, and
+/// of _twice_one once the times 1.0 is taken out; two of _swapped and of
+/// _bias_lod, three of _twice_apart; _twice_arm's arm flattened to four
+/// selects of the one sample, _twice_nested's two arms, and the three
+/// arms of glslc_tex_arms_dont_flatten under DontFlatten's limit of 0;
+/// glslc_sample_kept_then_arm, _both_arms, _arm_offset and
+/// glslc_tex_arms_kept kept. Of 21 mutations of the port, 21 fail the
+/// tests: two first did only once a test had a count of levels and a
+/// shadow sample alone in an arm, and one only in a variant that
+/// compiles.
+///
+/// On the CM5 FacetBoth's 264 cases are each as they were at 1.184, and
+/// its new one, glslc's sample of the texture with the same sample read
+/// twice more in an arm, its blue, green, red and alpha times its red, is
+/// 0 of 230400 pixels apart. FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 185;

@@ -2903,6 +2903,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // (nir_to_vir.c:2344-2347). Neither is here: refused (since
                 // 1.178).
                 if ((flow != .body or loop.active) and accessesTree(work, instruction)) return Error.Branches;
+                var texture = false;
                 switch (flow) {
                     .body => {},
                     // An arm Mesa flattens holds ALU work and loads it may
@@ -2914,8 +2915,12 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // Such a selection is kept a branch (since 1.171).
                     .arm => switch (instruction.op) {
                         // A query of the image's is a tex instruction too
-                        // (since 1.181).
-                        .image_sample_implicit_lod, .image_sample_dref_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_explicit_lod, .image_fetch, .image_query_size_lod, .image_query_levels => try selection.keep(work, depth),
+                        // (since 1.181). One the arm repeats of a tex
+                        // before the selection is not: v3d's loop runs
+                        // nir_opt_cse before nir_opt_peephole_select
+                        // (nir_to_vir.c:2265, :2269-2279), which finds
+                        // the arm without it (since 1.185).
+                        .image_sample_implicit_lod, .image_sample_dref_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_explicit_lod, .image_fetch, .image_query_size_lod, .image_query_levels => texture = true,
                         // An atomic or a barrier is neither either: it
                         // would run where the arm is not taken (since
                         // 1.169).
@@ -2952,6 +2957,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     else => return Error.Branches,
                 }
                 try step(work, instruction);
+                if (texture and !takenBefore(work, work.step_of[try idOf(operands[1])])) try selection.keep(work, depth);
             },
         }
     }
@@ -3921,6 +3927,21 @@ const Selection = struct {
         selection.lone = false;
     }
 };
+
+/// Whether the tex step `at`, read in an arm, is one nir_opt_cse takes for
+/// one before it that `oneValue` finds the same and that is there wherever
+/// the arm is (`dominates`): in no arm of a kept selection, nor of one
+/// still being read, whose arms are each a region of their own until the
+/// merge (since 1.171). The steps of the arm itself are in its region
+/// (since 1.185).
+fn takenBefore(work: *const Work, at: u16) bool {
+    for (0..at) |k| {
+        const earlier: u16 = @intCast(k);
+        if (work.region[earlier] != 0) continue;
+        if (oneValue(work, .{ .step = earlier, .part = 0 }, .{ .step = at, .part = 0 }, most_value_depth)) return true;
+    }
+    return false;
+}
 
 /// What a selection nested in an arm leaves the one it is in, for
 /// nir_opt_collapse_if: its iand and condition, the selects its merge
@@ -4941,7 +4962,7 @@ fn oneValue(work: *const Work, x: Float, y: Float, depth: u32) bool {
     const q = work.steps[y.step];
     if (p.tag != q.tag or p.kind != q.kind) return false;
     if (p.tag == .constant or p.tag == .push) return equalSteps(work, p, q);
-    if (!computes(p.tag) or p.at != q.at) return false;
+    if (!computes(p.tag) or p.at != q.at or !sameLookup(p, q)) return false;
     if (sameOperands(work, readsOf(p), readsOf(q), depth)) return true;
     if (!commutes(p)) return false;
     return sameOperands(work, .{ readsOf(p)[1], readsOf(p)[0], null, null }, readsOf(q), depth);
@@ -5121,6 +5142,10 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
         const each = work.steps[at];
         switch (each.tag) {
             .input, .constant, .push, .component, .construct, .negate, .abs, .sat => continue,
+            // A tex in an arm that is flattened is one nir_opt_cse took
+            // for one before the selection (`takenBefore`), which is not
+            // in the arm when it is counted (since 1.185).
+            .sample, .sample_compared, .texture_size, .texture_levels => continue,
             // A load_ubo is let through only where it may be speculated
             // (nir_opt_peephole_select.c:132-141), which none from vtn
             // may: no limit flattens its arm (since 1.160). A load_ssbo
@@ -5476,8 +5501,11 @@ const Order = struct {
     /// glslc -O0 loads one through an access chain each time it is read
     /// (since 1.165). Two constants of the same words are one load_const
     /// (nir_instrs_equal, nir_instr_set.c), which the constants a lowering
-    /// makes are as much as the module's (since 1.166). Varyings and
-    /// samples are each one step already, and a discard is no value.
+    /// makes are as much as the module's (since 1.166). Two samples of one
+    /// unit, lookup, offset and sources are one tex (`sameLookup`;
+    /// instr_can_rewrite, nir_instr_set.c:47-52), which spirv-opt leaves
+    /// two (since 1.185). Varyings are each one step already, and a
+    /// discard is no value.
     fn cse(list: *Order, work: *Work) bool {
         var progress = false;
         var at = list.first;
@@ -6240,7 +6268,7 @@ fn oneFloat(work: *const Work, left: Float, right: Float) bool {
 /// component and a construct only name floats.
 fn computes(tag: Tag) bool {
     return switch (tag) {
-        .input, .constant, .push, .component, .construct, .sample, .sample_compared, .discard, .output, .viewport, .ssbo_store, .ssbo_atomic, .barrier, .begin_if, .begin_else, .end_if, .phi, .scratch, .scratch_indirect, .scratch_store => false,
+        .input, .constant, .push, .component, .construct, .discard, .output, .viewport, .ssbo_store, .ssbo_atomic, .barrier, .begin_if, .begin_else, .end_if, .phi, .scratch, .scratch_indirect, .scratch_store => false,
         else => true,
     };
 }
@@ -6260,6 +6288,7 @@ fn equalSteps(work: *const Work, a: Step, b: Step) bool {
         return true;
     }
     if (a.tag != b.tag or a.kind != b.kind or a.at != b.at) return false;
+    if (!sameLookup(a, b)) return false;
     // A load_ssbo of memory the program may write is no CAN_REORDER,
     // which nir_opt_access gives only memory it may not
     // (nir_opt_access.c:289-290), so nir_opt_cse leaves it be (since
@@ -6282,6 +6311,19 @@ fn equalSteps(work: *const Work, a: Step, b: Step) bool {
     }
     if (straight) return true;
     return commutes(a) and sameValue(work, a.a, b.b) and sameValue(work, a.b, b.a);
+}
+
+/// Whether two steps of one tag and unit look the same up, where they are
+/// samples: nir_instrs_equal's tex has one op - tex, txb, txl or txf -
+/// and one texel offset, which pack_tex and the sources hold
+/// (nir_instr_set.c:297-327, :695-723), besides the sources `readsOf`
+/// gives. Two variables at one binding are two units here until `Units`
+/// makes them one, after the passes, and their samples are not merged,
+/// where v3dv's lowering of the derefs to one index before v3d's
+/// nir_opt_cse would merge them: not ported (since 1.185).
+fn sameLookup(a: Step, b: Step) bool {
+    if (a.tag != .sample and a.tag != .sample_compared) return true;
+    return a.lookup == b.lookup and std.mem.eql(i8, &a.offsets, &b.offsets);
 }
 
 /// Whether a step's two operands may be either way about
@@ -11551,6 +11593,184 @@ test "two gradients of one texture read its size once, the two txs one by nir_op
     try testing.expectEqual(@as(usize, 2), countOf(code, "shr "));
     try testing.expectEqual(@as(usize, 2), countOf(code, "log "));
     try testing.expectEqual(@as(usize, 2), countOf(code, "mov tmuslod, "));
+}
+
+/// How many of a stream's words are a texture's first word: one for each
+/// sample the program takes.
+fn texturesOf(code: Code) usize {
+    var count: usize = 0;
+    for (code.stream()) |word| if (word == .texture) {
+        count += 1;
+    };
+    return count;
+}
+
+test "two samples of one unit, lookup and coordinate are one tex, at an implicit level, at an explicit one, of a texel and of a shadow" {
+    // nir_opt_cse (nir_to_vir.c:2265) of tex instructions
+    // (instr_can_rewrite, nir_instr_set.c:47-52), whose op, texel offset
+    // and sources nir_instrs_equal compares (:695-723; pack_tex,
+    // :297-327), and which spirv-opt leaves two (since 1.185).
+    const cases = .{
+        .{ &reference.glslc_sample_twice, "mov tmus, ", Lookup.implicit, Tag.sample },
+        .{ &reference.glslc_sample_twice_lod, "mov tmuslod, ", Lookup.lod, Tag.sample },
+        .{ &reference.glslc_sample_twice_fetch, "mov tmusf, ", Lookup.fetch, Tag.sample },
+        .{ &reference.glslc_sample_twice_shadow, "mov tmudref, ", Lookup.implicit, Tag.sample_compared },
+    };
+    inline for (cases) |case| {
+        var work: Work = .{};
+        const code = try throughMesa(&work, case[0]);
+        try testing.expectEqual(@as(usize, 1), stepsOf(&work, .sample) + stepsOf(&work, .sample_compared));
+        try testing.expectEqual(@as(u32, 1), work.sample_count);
+        try testing.expectEqual(@as(usize, 1), texturesOf(code));
+        try testing.expectEqual(@as(usize, 1), countOf(code, case[1]));
+        for (work.program()) |each| if (each.tag == case[3]) {
+            try testing.expectEqual(case[2], each.lookup);
+        };
+    }
+    // The shadow's coordinate goes in TMUS after its reference.
+    var shadow: Work = .{};
+    try testing.expectEqual(@as(usize, 1), countOf(try throughMesa(&shadow, &reference.glslc_sample_twice_shadow), "mov tmus, "));
+    // A coordinate times 1.0 is the coordinate once nir_opt_algebraic has
+    // made the fmul an fcanonicalize and taken that out
+    // (nir_opt_algebraic.py:292, :161-163), and the two samples one in the
+    // loop's next nir_opt_cse.
+    var unit: Work = .{};
+    const code = try throughMesa(&unit, &reference.glslc_sample_twice_one);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&unit, .sample));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&unit, .mul));
+    try testing.expectEqual(@as(usize, 1), texturesOf(code));
+}
+
+test "samples whose coordinate, texel offset or lookup are not another's are each a tex of their own" {
+    // nir_instrs_equal's tex (nir_instr_set.c:695-723): the colour's
+    // first two either way about are two coordinates; a texel away, and
+    // at level 0, the same coordinate in a txb, a tex with an offset and
+    // a txl (since 1.185).
+    var swapped: Work = .{};
+    const two = try throughMesa(&swapped, &reference.glslc_sample_swapped);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&swapped, .sample));
+    try testing.expectEqual(@as(usize, 2), texturesOf(two));
+    try testing.expectEqual(@as(usize, 2), countOf(two, "mov tmus, "));
+    var apart: Work = .{};
+    const three = try throughMesa(&apart, &reference.glslc_sample_twice_apart);
+    try testing.expectEqual(@as(usize, 3), stepsOf(&apart, .sample));
+    try testing.expectEqual(@as(u32, 3), apart.sample_count);
+    try testing.expectEqual(@as(usize, 3), texturesOf(three));
+    try testing.expectEqual(@as(usize, 2), countOf(three, "mov tmus, "));
+    try testing.expectEqual(@as(usize, 1), countOf(three, "mov tmuslod, "));
+    var moved: usize = 0;
+    for (apart.program()) |each| if (each.tag == .sample) {
+        if (each.offsets[0] == 1) {
+            try testing.expectEqual(Lookup.implicit, each.lookup);
+            try testing.expectEqualSlices(i8, &.{ 1, 0, 0 }, &each.offsets);
+            moved += 1;
+        } else try testing.expectEqualSlices(i8, &.{ 0, 0, 0 }, &each.offsets);
+    };
+    try testing.expectEqual(@as(usize, 1), moved);
+    // A bias and a level of the same value are a txb and a txl.
+    var biased: Work = .{};
+    const lookups = try throughMesa(&biased, &reference.glslc_sample_bias_lod);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&biased, .sample));
+    try testing.expectEqual(@as(usize, 2), texturesOf(lookups));
+    var seen: [2]bool = @splat(false);
+    for (biased.program()) |each| if (each.tag == .sample) switch (each.lookup) {
+        .bias => seen[0] = true,
+        .lod => seen[1] = true,
+        else => return error.TestUnexpectedResult,
+    };
+    try testing.expectEqual([2]bool{ true, true }, seen);
+}
+
+test "a sample an arm repeats of one before the selection is gone from the arm nir_opt_peephole_select counts: the selection is flattened" {
+    // v3d's loop runs nir_opt_cse before nir_opt_peephole_select
+    // (nir_to_vir.c:2265, :2269-2279): the arm's tex is the one before
+    // it, and the arm's fmuls are bcsels (since 1.185).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_sample_twice_arm);
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(u8, 0), work.kept_count);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .sample));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), texturesOf(code));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "bu."));
+    // Each float is the product where the colour's blue is under 0.5, the
+    // sample where it is not: the product of the one sample and its red.
+    var taken_at: u16 = none;
+    for (work.program(), 0..) |each, k| if (each.tag == .sample) {
+        taken_at = @intCast(k);
+    };
+    var parts: [4]bool = @splat(false);
+    for (work.program()) |each| if (each.tag == .select) {
+        const taken = work.steps[each.b];
+        const not = work.steps[each.from[0]];
+        try testing.expectEqual(Tag.component, taken.tag);
+        try testing.expectEqual(Tag.component, not.tag);
+        try testing.expectEqual(taken_at, not.a);
+        try testing.expectEqual(taken.at, not.at);
+        const product = work.steps[taken.a];
+        try testing.expectEqual(Tag.mul, product.tag);
+        try testing.expectEqual(taken_at, product.a);
+        try testing.expectEqual(Tag.component, work.steps[product.b].tag);
+        try testing.expectEqual(taken_at, work.steps[product.b].a);
+        try testing.expectEqual(@as(u32, 0), work.steps[product.b].at);
+        try testing.expectEqual(Tag.compare, work.steps[each.a].tag);
+        parts[taken.at] = true;
+    };
+    try testing.expectEqual([4]bool{ true, true, true, true }, parts);
+    // In an arm of an arm too: both are flattened, the outer arm's
+    // product by 2.0 and the inner's by the green of the one sample.
+    var nested: Work = .{};
+    const flat = try throughMesa(&nested, &reference.glslc_sample_twice_nested);
+    try testing.expectEqual(@as(usize, 0), stepsOf(&nested, .begin_if));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&nested, .sample));
+    try testing.expectEqual(@as(usize, 8), stepsOf(&nested, .select));
+    try testing.expectEqual(@as(usize, 0), countOf(flat, "bu."));
+    // A selection that asks not to be flattened is flattened under a
+    // limit of 0 (get_options_for_if, nir_opt_peephole_select.c:329-345),
+    // which an arm of moves alone is under (:251-264): the arms' sample,
+    // size and levels are the ones before them, and none is left.
+    var unflat: Work = .{};
+    const asked = try throughMesa(&unflat, &reference.glslc_tex_arms_dont_flatten);
+    try testing.expectEqual(@as(usize, 0), stepsOf(&unflat, .begin_if));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&unflat, .sample));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&unflat, .texture_size));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&unflat, .texture_levels));
+    try testing.expectEqual(@as(usize, 0), countOf(asked, "bu."));
+}
+
+test "a sample an arm repeats of one in an arm of another selection, or of the other arm, keeps the selection a branch" {
+    // nir_instr_set takes only an equal instruction that dominates
+    // (nir_instr_set_add_or_rewrite, nir_instr_set.c): one in an arm of
+    // a kept selection does not dominate the next selection's arm, nor
+    // one arm's the other's, and each arm keeps its tex (since 1.185).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_sample_kept_then_arm);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(u8, 2), work.kept_count);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .sample));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "mov tmus, "));
+    var both: Work = .{};
+    const arms = try throughMesa(&both, &reference.glslc_sample_both_arms);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&both, .begin_if));
+    try testing.expectEqual(@as(u8, 1), both.kept_count);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&both, .sample));
+    try testing.expectEqual(@as(usize, 2), countOf(arms, "mov tmus, "));
+    // An arm's sample a texel away from the one before is another tex.
+    var away: Work = .{};
+    const offset = try throughMesa(&away, &reference.glslc_sample_arm_offset);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&away, .begin_if));
+    try testing.expectEqual(@as(u8, 1), away.kept_count);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&away, .sample));
+    try testing.expectEqual(@as(usize, 2), texturesOf(offset));
+    // A shadow sample, one at a level and a query of the levels alone in
+    // an arm are each a tex there, and each arm is kept.
+    var alone: Work = .{};
+    const kept = try throughMesa(&alone, &reference.glslc_tex_arms_kept);
+    try testing.expectEqual(@as(usize, 3), stepsOf(&alone, .begin_if));
+    try testing.expectEqual(@as(u8, 3), alone.kept_count);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&alone, .sample_compared));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&alone, .texture_levels));
+    try testing.expectEqual(@as(usize, 2), countOf(kept, "mov tmudref, "));
 }
 
 test "a cube's gradient is lower_gradient_cube_map's level: the face's quotient rule, -1 plus half the LOG of L times L times M, to TMUB and TMUSCM" {
