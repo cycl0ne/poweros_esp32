@@ -251,6 +251,10 @@ test "datatypes: bytes in memory are known by what they start with, and by a nam
         .{},
     }));
     try testing.expect(!_type.matches(db, jpeg.ptr(), &misnamed));
+    // A name that no pattern matches is forgotten, and then the bytes
+    // decide.
+    _type.forgetName(&misnamed);
+    try testing.expect(_type.matches(db, jpeg.ptr(), &misnamed));
 
     // Other bytes are not a JPEG, and bytes without their size are not
     // a source at all.
@@ -297,6 +301,12 @@ test "datatypes: bytes in memory are known by what they start with, and by a nam
         .{},
     }));
     try testing.expect(_type.matches(db, markdown.ptr(), &readme));
+    // With a name, a descriptor with no pattern is not asked; without
+    // it, it is.
+    try testing.expect(!_type.matches(db, ascii.ptr(), &readme));
+    _type.forgetName(&readme);
+    try testing.expect(!_type.matches(db, markdown.ptr(), &readme));
+    try testing.expect(_type.matches(db, ascii.ptr(), &readme));
     try rig.down();
 }
 

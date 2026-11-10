@@ -31,8 +31,9 @@
 //! **MultiView knows no formats.** Everything it shows it shows by
 //! opening the object and adding it to a window; a new kind of file is a
 //! new class and a new descriptor, and this program does not change. A
-//! page fetched from the web comes without a file's name, and its class
-//! knows it by what it holds.
+//! page fetched from the web is called what the end of its address says
+//! - `README.md` - and when that names no kind of file, its class knows
+//! it by what it holds.
 //!
 //! The bars are the window object's (`WINDOWA_VertScroller`,
 //! `WINDOWA_HorizScroller`), made with the program's tags: their
@@ -73,7 +74,9 @@ const TagItem = utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "MultiView";
-const VERSION = "1.5";
+const VERSION = "1.6";
+/// What the program calls itself to a server on the web.
+const USER_AGENT = "PowerOS-" ++ COMMAND_NAME ++ "/" ++ VERSION;
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
@@ -304,6 +307,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.FreeVec(session);
     // Cleared, it is a session with nothing shown yet and no network.
     session.web.sys = sys;
+    session.web.agent = USER_AGENT;
     defer session.web.close();
 
     const shown = Shown{ .sys = sys, .dl = dl, .ib = ib, .dt = dt, .ub = ub, .screen = screen, .scale = argv[arg_scale] != 0, .session = session };
@@ -374,11 +378,12 @@ fn makeObject(dl: *DosBase, dt: *DataTypesBase, name: [*:0]const u8, source: u32
     });
 }
 
-/// Bytes fetched from the web opened as a data type object: without a
-/// file's name, so that what they hold says what they are, and titled
-/// with their address until they name themselves.
-fn memoryObject(dt: *DataTypesBase, bytes: []const u8, address: [*:0]const u8, scale: bool) ?*Object {
-    return dt.NewDTObjectA(null, &[_]TagItem{
+/// Bytes fetched from the web opened as a data type object, titled with
+/// their address until they name themselves. `file` is what they would
+/// be called as a file, the end of their address: when it says what they
+/// are - `README.md` - it decides, and otherwise what they hold does.
+fn memoryObject(dt: *DataTypesBase, bytes: []const u8, file: ?[*:0]const u8, address: [*:0]const u8, scale: bool) ?*Object {
+    return dt.NewDTObjectA(@ptrCast(file), &[_]TagItem{
         .{ .tag = dtc.DTA_SourceType, .data = dtc.DTST_MEMORY },
         .{ .tag = dtc.DTA_Handle, .data = @intFromPtr(bytes.ptr) },
         .{ .tag = dtc.DTA_SourceSize, .data = bytes.len },
@@ -638,7 +643,9 @@ const Shown = struct {
         if (!where.web) return makeObject(shown.dl, shown.dt, where.name(), dtc.DTST_FILE, shown.scale);
         const bytes = shown.session.web.fetch(shown.dl, where) orelse return null;
         defer shown.sys.FreeVec(bytes.ptr);
-        return memoryObject(shown.dt, bytes, where.name(), shown.scale);
+        var called: [dos.path_max + 1]u8 = undefined;
+        const file = links.fileOf(shown.ub, where.slice(), &called);
+        return memoryObject(shown.dt, bytes, if (file.len > 0) file.ptr else null, where.name(), shown.scale);
     }
 
     /// The page at `where` opened while the window waits, with the busy

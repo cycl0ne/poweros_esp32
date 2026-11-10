@@ -31,11 +31,12 @@ const page_most: usize = 16 << 20;
 /// What a page's memory starts at when its length is not known.
 const first_room: usize = 64 << 10;
 const redirects_most = 5;
-const user_agent = "PowerOS-MultiView/1.5";
 
 /// The network, as far as it has been needed.
 pub const Web = struct {
     sys: *ExecBase,
+    /// What the program calls itself to a server.
+    agent: [*:0]const u8 = "PowerOS",
     socket_lib: ?*exec.Library = null,
     http_lib: ?*exec.Library = null,
     client: ?*http.Client = null,
@@ -53,7 +54,7 @@ pub const Web = struct {
         const http_lib = web.http_lib orelse return web.say(http.HTTPNAME ++ " is not there");
         const hb: *HttpBase = @ptrCast(http_lib);
         web.client = hb.CreateClient(@ptrCast(socket_lib), &[_]utility.TagItem{
-            .{ .tag = http.HTTP_UserAgent, .data = @intFromPtr(user_agent) },
+            .{ .tag = http.HTTP_UserAgent, .data = @intFromPtr(web.agent) },
             .{},
         }) orelse return web.say("there is no memory for the network");
         return true;

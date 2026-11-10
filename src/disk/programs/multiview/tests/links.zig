@@ -84,6 +84,27 @@ test "links on a page from a disk" {
     try host.utility.tearDown(rom_ub);
 }
 
+test "what a page on the web would be called as a file" {
+    const rom_ub = try host.utility.setUp();
+    defer host.exec.deinit();
+    const ub: *UtilityBase = @ptrCast(rom_ub);
+    var into: [64]u8 = undefined;
+    const cases = [_][2][]const u8{
+        .{ "https://github.com/a/b/blob/main/README.md", "README.md" },
+        .{ "https://host/raw/Notes.markdown?plain=1#top", "Notes.markdown" },
+        .{ "https://en.wikipedia.org/wiki/HTML", "HTML" },
+        .{ "http://host/Gr%C3%BC%C3%9Fe.md", "Gr\xFC\xDFe.md" },
+        .{ "http://host/drawer/", "" },
+        .{ "http://host", "" },
+        .{ "http://host?q=/x.md", "" },
+        .{ "http://host/%ZZ.md", "" },
+    };
+    for (cases) |case| try testing.expectEqualStrings(case[1], links.fileOf(ub, case[0], &into));
+    var small: [4]u8 = undefined;
+    try testing.expectEqualStrings("", links.fileOf(ub, "http://host/long.md", &small));
+    try host.utility.tearDown(rom_ub);
+}
+
 test "a location knows the web from a disk" {
     var where = links.Location{};
     try testing.expect(where.take("https://example.com/x"));

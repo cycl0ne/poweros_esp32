@@ -52,13 +52,15 @@ const cover = dt.NewDTObjectA(null, &.{
 defer dt.DisposeDTObject(cover);
 ```
 
-The bytes are recognised as a file's are, by what they start with; a
-name handed to `NewDTObjectA` is matched against the descriptors'
-patterns too. Without one the patterns are not asked, and a kind of
+The bytes are recognised as a file's are, by what they start with.
+Without a name the descriptors' patterns are not asked, and a kind of
 file known by its name alone is not known at all (datatypes.library
 1.3): an HTML page is known by what it starts with, which
 `html.datatype` is asked about, and Markdown without a name is plain
-text. The object
+text. A name handed to `NewDTObjectA` is tried first, against the
+patterns, and when none matches it the bytes are tried as bytes without
+one (1.4) - so `README.md`, the end of an address, says what the bytes
+are, and `HTML` or `index.php` leaves it to them. The object
 reads the bytes while it is made: when the call returns they are the
 program's again. JPEG, PNG, GIF, BMP, ICO, text, models, Markdown, HTML
 and Lottie read from memory; ILBM, 8SVX and a codec's sound read a file as they go,
@@ -566,8 +568,10 @@ is gone to once it is laid out. Backspace goes back the way the links
 came, sixteen pages at the most, to where each page was left; a page
 gone back to is read again. A page on the web is fetched whole through
 `http.library`, which MultiView opens for the first such page and not
-before, and shown from memory (`DTST_MEMORY`), so that what it starts
-with says what it is; its address is its title until it names itself.
+before, and shown from memory (`DTST_MEMORY`) under the name the end
+of its address gives it: `README.md` is Markdown, and a page whose
+address names no kind of file is known by what it starts with. Its
+address is its title until it names itself.
 `https:` checks the server's certificate, which needs the clock set. A
 link to a mail address or a script leads nowhere, and one that cannot
 be followed - no file, no page, no place of that name - flashes the

@@ -8,7 +8,9 @@
 //! memory is the same reading made from the bytes, with the name it was
 //! given - or none, and then a descriptor's pattern is not asked and its
 //! bytes decide, or its class: one that knows its files by their name
-//! alone does not know them. A
+//! alone does not know them. Bytes with a name are tried by it first,
+//! where only a descriptor with a pattern has anything to say, and then,
+//! their name forgotten (`forgetName`), as bytes without one. A
 //! descriptor that names a `RECOGNISE` class is asked last, and only
 //! when whatever else it says has already matched, so that opening a
 //! class library is the rare case and not the rule.
@@ -171,6 +173,10 @@ pub fn matches(db: *DataTypesBase, dt: *datatypes.DataType, source: *Source) boo
     const is_dir = source.kind == dtc.DTST_FILE and source.fib.dir_entry_type > 0;
     if (is_dir != (header.flags & datatypes.DTF_DIRECTORY != 0)) return false;
 
+    // Bytes in memory are tried by their name first, and a descriptor
+    // with no pattern has nothing to say about a name.
+    if (source.kind == dtc.DTST_MEMORY and source.named != 0 and header.pattern == null) return false;
+
     var said_something = false;
     if (kind == datatypes.DTF_IFF) {
         if (source.form_type == 0 or source.form_type != header.id) return false;
@@ -209,6 +215,13 @@ pub fn matches(db: *DataTypesBase, dt: *datatypes.DataType, source: *Source) boo
 
     if (header.flags & datatypes.DTF_RECOGNISE != 0) return asksTheClass(db, dt, source);
     return true;
+}
+
+/// A source in memory made one without a name, for what it holds to
+/// decide when no descriptor knew it by its name.
+pub fn forgetName(source: *Source) void {
+    source.named = 0;
+    source.fib.file_name[0] = 0;
 }
 
 /// Whether what was read is text: printable characters, tabs and line

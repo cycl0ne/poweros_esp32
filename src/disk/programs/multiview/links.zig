@@ -109,6 +109,33 @@ pub fn isWeb(text: []const u8) bool {
     return text.len > scheme.len + 3 and text[scheme.len + 1] == '/' and text[scheme.len + 2] == '/';
 }
 
+/// What the page at `address` on the web would be called as a file: the
+/// last part of its path, its escapes undone and made Latin-1 as a name
+/// on a disk is - `README.md` of `https://host/a/README.md?plain=1`.
+/// Empty when its path ends in a `/` or has nothing in it, or the part
+/// is not written as an address's is. Written into `into`, with a NUL
+/// after it.
+pub fn fileOf(ub: *UtilityBase, address: []const u8, into: []u8) [:0]const u8 {
+    into[0] = 0;
+    const nothing = into[0..0 :0];
+    const scheme = schemeOf(address) orelse return nothing;
+    var at = scheme.len + 1;
+    if (startsWith(address[at..], "//")) at += 2;
+    while (at < address.len and address[at] != '/' and address[at] != '?' and address[at] != '#') at += 1;
+    var end = at;
+    while (end < address.len and address[end] != '?' and address[end] != '#') end += 1;
+    const path = address[at..end];
+    const slash = lastIndexOf(path, '/') orelse return nothing;
+    const part = path[slash + 1 ..];
+    if (part.len == 0) return nothing;
+    const room = into.len - 1;
+    const length = ub.DecodeUrl(part.ptr, part.len, into.ptr, room);
+    if (length == utility.URL_BROKEN or length > room) return nothing;
+    const latin = ub.Utf8ToLatin1(null, into.ptr, length, into.ptr, room);
+    into[latin] = 0;
+    return into[0..latin :0];
+}
+
 // --- on the web ---------------------------------------------------------------
 
 /// `reference` read against the page at `base`, as a browser reads it.
