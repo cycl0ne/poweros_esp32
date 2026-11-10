@@ -6513,4 +6513,42 @@ pub const LIBRARY_VERSION = 1;
 /// are 85,628 and 64,296 apart: the V3D runs its own programs. The other
 /// 282 cases are each as they were at 1.194, and FacetProbe passes its
 /// 890 checks.
-pub const LIBRARY_REVISION = 195;
+/// 196: **GLSL.std.450's inverse and hyperbolic trigonometry, Fma,
+/// Cross, FaceForward, Reflect and Refract (docs/facet-vulkan10.md item
+/// 59).** The V3D's compiler takes fifteen more of GLSL.std.450's
+/// functions, each built as vtn_glsl450.c builds it:
+/// - Asin is nir_asin's, build_asin's formula of Abramowitz and Stegun
+///   with Taylor's below 0.21502245 (nir_builtin_builder.c:184-237), and
+///   Acos pi/2 less build_asin without it (:239-248);
+/// - Atan is nir_atan's polynomial (:250-298), Atan2 nir_atan2's quarter
+///   turn (:300-393), and their sign nir_copysign's IOR of IANDs
+///   (nir_builtin_builder.h:150-168);
+/// - Sinh, Cosh, Asinh, Acosh and Atanh are vtn's of fexp, flog and fsqrt
+///   (vtn_glsl450.c:352-366, 375-390), and Tanh nir_tanh_emulated's
+///   (nir_builtin_builder.c:480-512), the V3D having no has_tanh;
+/// - Fma is ffma_weak as an FMUL and an FADD (vtn_glsl450.c:152-155;
+///   nir_opt_algebraic.py:424), Cross nir_cross3's
+///   (nir_builtin_builder.c:38-48), and FaceForward, Reflect and Refract
+///   vtn's (vtn_glsl450.c:304-350);
+/// - a comparison or bcsel of vectors is one of each float.
+///
+/// Still left out are Modf, Frexp, Ldexp, Determinant, MatrixInverse,
+/// the bit finds, the packing functions and the interpolation functions.
+///
+/// glslc_inverse_trig, glslc_hyperbolic and glslc_geometry, of 269, 305
+/// and 300 words, are each worked out on the host for eight colours,
+/// within 1e-4 of std.math's functions or 1e-5 of the same sums. The
+/// V3D's tests are 338, three new. Of 51 mutations, 46 fail them; the
+/// other five change nothing they can see: a copysign mask clearing an
+/// exponent bit no value below 2 sets, Taylor's part begun at 0.015,
+/// Atan's |u| <= 1 made <, Atan2's x <= 0 made <, and Cross's refusal of
+/// vectors other than vec3s, which spirv-val refuses too.
+///
+/// On the CM5 FacetBoth 1.60's three new cases, glslc's modules on the
+/// V3D beside the same functions on the cores, are 8, 8 and 12 of 230400
+/// pixels apart: the 8 at the triangles' edge, and 4 on the line where
+/// Refract's k is 0, which an eta of 0.66 takes away. With the cores'
+/// functions made wrong on purpose they are 46,565 apart each. The other
+/// 284 cases are each as they were at 1.195, and FacetProbe passes its
+/// 890 checks.
+pub const LIBRARY_REVISION = 196;

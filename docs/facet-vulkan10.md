@@ -2657,6 +2657,34 @@ Of 6 mutations, all fail the tests. One failed none at first: the test of an id 
 
 On the CM5, FacetBoth's 277 cases are each as they were at 1.190. Its new one, glslc_many_ids on the V3D beside its products and sums worked out on the cores, is 8 of 230400 pixels apart: the 8 at the triangles' edge every case of its geometry has. FacetProbe is 890 of 890.
 
+**Then GLSL.std.450's curves and geometry**, facet.library 1.196.
+
+The compiler takes fifteen more of GLSL.std.450's functions, each built as vtn_glsl450.c builds it and lowered as NIR lowers it for the V3D:
+
+- **Asin** is nir_asin's: build_asin, Abramowitz and Stegun's formula 4.4.45 (nir_builtin_builder.c:184-226), and below |x| = 0.21502245 Taylor's x(x²/6 + 1) (:228-237). **Acos** is π/2 less build_asin without Taylor's part (:239-248).
+- **Atan** is nir_atan's polynomial of u², u the value or its reciprocal, whichever is at most 1 (:250-298). **Atan2** is nir_atan2's: the point turned a quarter where x ≤ 0, both coordinates scaled by a quarter where the denominator is 1e18 or more, and the angle negated where the smaller of y and the scaled denominator's reciprocal is below 0 (:300-393). The sign of both is nir_copysign's on a device with integers, an IOR of two IANDs (nir_builtin_builder.h:150-168).
+- **Sinh, Cosh, Asinh, Acosh and Atanh** are vtn_glsl450.c's sums of fexp, flog and fsqrt (vtn_glsl450.c:352-366, 375-390), fexp and flog being exp2 and log2 scaled (nir_builtin_builder.h:112-121). **Tanh** is nir_tanh_emulated's (nir_builtin_builder.c:480-512), as the V3D's options leave has_tanh false (vtn_glsl450.c:368-373).
+- **Fma** is ffma_weak (vtn_glsl450.c:152-155), an FMUL and an FADD, as nir_opt_algebraic splits it for a back end that sets no float_mul_add, as the V3D's sets none (nir_opt_algebraic.py:424).
+- **Cross** is nir_cross3's (nir_builtin_builder.c:38-48), and **FaceForward**, **Reflect** and **Refract** are vtn's (vtn_glsl450.c:304-350). Refract's eta is one float, whatever I and N are.
+- A comparison or a bcsel of vectors is one of each float, as nir_lower_alu_to_scalar splits it.
+
+Still left out: Modf and Frexp, which give back two values; Ldexp; Determinant and MatrixInverse; FindILsb, FindSMsb and FindUMsb; the packing and unpacking functions; and InterpolateAtCentroid, InterpolateAtSample and InterpolateAtOffset. Integer attributes, which this item also lacks, wait on integer vertex formats: the library reads an attribute in four float32 formats and two unorm8 ones only (`attributeFormat`, pipeline/_pipeline.zig).
+
+Results:
+- glslc_inverse_trig, Asin and Acos of vec2s, Atan of a float and Atan2 of two, is 269 words. Its program has 11 bcsels, 8 comparisons, the copysigns' 4 IANDs and 2 IORs, and the B2F32 of Atan2's quarter turn.
+- glslc_hyperbolic, the six of the colour, is 305 words: 6 EXP2s, 3 LOG2s, Tanh's FMIN and IOR, and Asinh's SIGN.
+- glslc_geometry, Cross, Reflect, FaceForward, Refract and Fma of a normal and a direction the colour turns, is 300 words. FaceForward's and Refract's bcsels are 6, a float each, of 2 comparisons.
+- Each is worked out on the host for eight colours, the first two within 1e-4 of std.math's functions and the third within 1e-5 of the same sums. Of the eight colours, 4 face each way and 5 have Refract's k below 0.
+
+The V3D's tests are 338, three new. Of 51 mutations, 46 fail them. Two of those failed none at first: Fma's addend made its multiplier, which was 0.5 as well, and FaceForward's Nref made N, when every colour faced the same way. They fail since the program's Fma multiplies by 0.375 and its Nref is the colour's blue and alpha. The five left change nothing the tests can see:
+- copysign's mask made 0x3FFFFFFF, which clears an exponent bit no value below 2 sets: Atan's are at most π/2 and Tanh's at most 1;
+- Taylor's part made to begin at 0.015, both formulas being within 7e-5 of asin below 0.215, under the tests' 1e-4;
+- Atan's test of |u| ≤ 1 made <, which changes only an Atan of 1, and that by 6.5e-6;
+- Atan2's x ≤ 0 made x < 0, which gives the same ±π/2 at x = 0, but at 0 over 0;
+- Cross's refusal of vectors other than vec3s, which spirv-val refuses as well and glslc makes none of.
+
+On the CM5 FacetBoth 1.60 has three new cases, "shipped inverse trigonometry", "shipped hyperbolic functions" and "shipped cross, reflect and refract": the colour through glslc's module on the V3D, and through the same functions on the cores. The first two are 8 of 230400 pixels apart, the 8 at the triangles' edge every case of their geometry has. The third is 12: the 8, and 4 on the line where Refract's k is 0, where the picture jumps from the refracted direction to 0 and the two devices' interpolated colours can fall on either side of it. With an eta of 0.66, under which k is never below 0, it is 8. With the cores' functions made wrong on purpose the three are 46,565 apart each, and with the cores' FaceForward always N the third is 1,965: the V3D's program faces both ways where the cores' does. The other 284 cases are each as they were at 1.195, and FacetProbe is 890 of 890.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim
