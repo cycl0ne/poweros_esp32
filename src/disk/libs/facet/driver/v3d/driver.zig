@@ -695,7 +695,29 @@ pub const VertexShader = struct {
     }
 };
 
+/// The stack a pipeline is made on. The back end's passes hold about
+/// 24 KiB of frames at once on the aarch64 build - to_vir's compileSteps
+/// alone 10.6 KiB - which with the application's own frames came to the
+/// end of the stack FacetBoth ran on as a shell command (at least
+/// `dos.CLI_DEFAULT_STACK`, 32 KiB) at 1.181. Mesa compiles on the application's thread
+/// (v3dv_CreateGraphicsPipelines, v3dv_pipeline.c:3229), on whatever
+/// stack the platform gave it; a task here has the one its creator asked
+/// for, so the driver takes its own through exec's NewStackRun, as
+/// smbclient does for its logon (since 1.181).
+const pipeline_stack_bytes: u32 = 128 * 1024;
+
 fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
+    // NewStackRun's -1, no memory for the stack, is
+    // VK_ERROR_OUT_OF_HOST_MEMORY's.
+    return @enumFromInt(pipeline.device.sys.NewStackRun(&makePipelineHere, pipeline, pipeline_stack_bytes));
+}
+
+fn makePipelineHere(arg: ?*anyopaque) callconv(.c) i32 {
+    const pipeline: *Pipeline = @ptrCast(@alignCast(arg.?));
+    return @intFromEnum(madePipeline(pipeline));
+}
+
+fn madePipeline(pipeline: *Pipeline) facet.Result {
     // A pipeline that draws nothing - its rasterizer discarding, or every
     // face culled - has no program to make: a draw with it ends before one
     // is read (`_play.draw`), and this device counts no statistics a

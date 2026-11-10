@@ -918,8 +918,10 @@ fn compiled(back: Back, work: *compile.Work, words: []const u32, stream: *[compi
         // library's draws are where a program that reads them is held to
         // the cores (FacetBoth). Nor is a fragment program's stream ever
         // of the viewport, which a vertex program's alone is, nor has
-        // one a spill buffer (the library's pipelines make it).
-        .push, .ubo, .ssbo, .viewport, .spill_offset, .spill_size_per_thread => return null,
+        // one a spill buffer (the library's pipelines make it), nor
+        // does one ask a view's sizes, which the library's draws measure
+        // (since 1.181).
+        .push, .ubo, .ssbo, .viewport, .spill_offset, .spill_size_per_thread, .texture_size => return null,
     };
     return .{
         .{

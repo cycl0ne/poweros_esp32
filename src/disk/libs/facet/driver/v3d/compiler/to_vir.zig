@@ -526,6 +526,25 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
             vir.setUnpack(c.defs[float.index].?, 0, .l);
             e.defs[at][0] = float;
         },
+        // ntq_emit_txs (nir_to_vir.c:914-960): the level first, then each
+        // size the draw writes of the view as a uniform of its own,
+        // minified to the level but an array's layers (since 1.181).
+        .texture_size => {
+            const level = try getSrc(e, each.from[0], 0);
+            const layers = e.work.samplers[each.at].dim == .layers;
+            for (0..parts) |k| {
+                const array = layers and k == parts - 1;
+                const contents: vir.Uniform = if (array) .texture_array_size else switch (k) {
+                    0 => .texture_width,
+                    1 => .texture_height,
+                    else => .texture_depth,
+                };
+                const size = try c.uniform(contents, each.at);
+                try storeDef(e, at, k, if (array) size else try minify(c, size, level));
+            }
+        },
+        // ntq_emit_tex's query_levels (nir_to_vir.c:972-975; since 1.181).
+        .texture_levels => try storeDef(e, at, 0, try c.uniform(.texture_levels, each.at)),
         // ntq_emit_alu's comparisons (nir_to_vir.c:1727): the comparison
         // into the flags, and the bool made of them.
         .compare => {
@@ -1520,6 +1539,13 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // many: the scheduler only holds a lookup back for it.
     retiring.ldtmu_count = return_words;
     try addPendingTmuFlush(e, at, return_words);
+}
+
+/// ntq_minify (nir_to_vir.c:895-912): a size at a level, the level 0
+/// size shifted right by it and at least 1. v3dv gives no null
+/// descriptor here, so a size of 0 is not kept (since 1.181).
+fn minify(c: *Compile, size: Reg, level: Reg) Error!Reg {
+    return c.add(.max, .{ try c.add(.shr, .{ size, level }), try c.uniformUi(1) });
 }
 
 /// TMU configuration parameter 2 as V3D42_TMU_CONFIG_PARAMETER_2_pack
