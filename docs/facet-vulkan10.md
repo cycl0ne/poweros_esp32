@@ -2779,6 +2779,43 @@ The V3D's tests are 344, three new. PackDouble2x32 is now the call the refusal t
 
 On the CM5 FacetBoth 1.63's new cases, "shipped packing in bytes" and "shipped packing in halves", are each 8 of 230400 pixels apart, the 8 at the triangles' edge. With the cores' functions made wrong on purpose they are 46,171 and 46,482 apart, fewer than 46,565 where red is already at 1. The other 289 cases are each as they were at 1.198, and FacetProbe is 890 of 890.
 
+**Then the packing of halves**, facet.library 1.200.
+
+- **PackHalf2x16** is NIR's pack_half_2x16 (vtn_glsl450.c:610). lower_pack_half_2x16 (v3dv_pipeline.c:187) has nir_lower_alu_width lower it to pack_half_2x16_split of the vector's two floats (nir_lower_alu_width.c:246-252): the first float's half in the low 16 bits, each half the nearest, a tie to the even (nir_opcodes.py:1059-1060). On the V3D that is one VFPACK (nir_to_vir.c:1809-1811).
+- **UnpackHalf2x16** is unpack_half_2x16 (vtn_glsl450.c:616), which lower_unpack_half_2x16 (v3dv_pipeline.c:188) has lowered to the vec2 of f2f32 of each half of unpack_32_2x16 (nir_lower_alu_width.c:267-274).
+  - nir_lower_pack (vir.c:2051) makes that unpack_32_2x16_split_x and split_y (nir_lower_packing.c:61-62), which lower_unpack_32_2x16_split (v3dv_pipeline.c:191) makes u2u16 of the word and of the word shifted down by 16 (nir_opt_algebraic.py:2271-2272).
+  - u2u16 of a 32-bit value is a MOV (nir_to_vir.c:1599-1611), and f2f32 of a 16-bit one an FMOV of its low half (:1575-1578).
+  - Copy propagation puts each FMOV's unpack into what reads it, and try_opt_extract_h16 (vir_opt_alu.c:62) makes the low half of the shifted word the high half of the word, so the shift goes.
+- Two new integer operations, pack_half and half_float. The host's evaluator and its folding of constants work them out with Zig's f16, which rounds to the nearest even.
+
+Still left out: PackDouble2x32 and UnpackDouble2x32, which are of 64-bit floats, and facet has none (shaderFloat64 is false); Modf and Frexp of a pointer; Determinant and MatrixInverse; and the interpolation functions. Of GLSL.std.450's packing functions, only the doubles' are missing.
+
+Results:
+- **The reference**, glslc_packing_half, 360 words:
+  - PackHalf2x16 of the colour made −3 to 3, unpacked again, and its halves' bits read as integers, which tells the halves' order;
+  - and 1 + k/4096, with k = floor(16 · colour) of z, and the negative of it of x, packed and unpacked. 1 + k/4096 lies on a half, or a quarter, a half or three quarters of the way to the next, so how far each moves, in 4096ths, e, says how VFPACK rounds. To the nearest, a tie to the even, that is 0, −1, ±2 by the half's last bit, and +1; toward zero it would be 0, −1, −2 and −3.
+
+  A first shader measured instead how far x = c.z · 100 rounds, relative to x, in 2048ths. That term moves by 2048/|x| times any difference between the two devices' interpolated values of x, and the case was 45,693 pixels apart, most of them by 5 to 9 steps of a channel, the same way.
+- **The program.** Two pack_half, each a VFPACK, beside the two that write the colour to the tile buffer. Four half_float, each an `.l` or `.h` unpack of what reads it. One SHR is left, of `xy >> 16`, which the shader reads as an integer.
+- **The values.** For eight colours, each answers within 10^−6 what GLSL's definitions answer. Their values of k take all four places, and ties both ways: k = 6, 10 and 14.
+- **Constants** fold:
+  - (1, −2) packs to 0xC000_3C00;
+  - 1 + 2^−11 and 1 + 3 · 2^−11, each halfway between two halves, pack to the even of their two, 0x3C00 and 0x3C02;
+  - 65520 packs to infinity, 0x7C00, the even, and 65519 to 65504, 0x7BFF;
+  - 0x3C00_C000 unpacks to −2 and 1.
+- A PackHalf2x16 that answers other than a uint, or an UnpackHalf2x16 other than a vec2, is refused, as the other packings are. Without that check the walk crashes on one.
+
+The V3D's tests are 346, two new. Of 13 mutations, 11 fail them. Of the other two:
+- one takes half_float out of the unary operations, which changes nothing: a unary step's second operand is 0, and nothing reads it;
+- the other swaps VFPACK's operands, which only the board sees. With that driver on the CM5 the new case is 46,565 pixels apart.
+
+On the CM5 FacetBoth 1.64's new case, "shipped packing of halves", is 32 of 230400 pixels apart, each listed:
+- the 8 at the triangles' edge;
+- 21 on a step of k that the two devices' interpolations fall either side of, each 1 or 3 4096ths, the size of e's step there;
+- 3 on c.x = 0, by 3 or 4, where a half's bits go with the logarithm of a small value.
+
+So VFPACK rounds to the nearest even. With the cores' halves rounded toward zero on purpose the case is 29,585 apart, and with the cores' function made wrong on purpose 46,565. The other 291 cases are each as they were at 1.199, and FacetProbe is 890 of 890.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim

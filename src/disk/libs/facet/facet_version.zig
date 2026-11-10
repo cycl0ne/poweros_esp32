@@ -6636,4 +6636,35 @@ pub const LIBRARY_VERSION = 1;
 /// triangles' edge. With the cores' functions made wrong on purpose they
 /// are 46,171 and 46,482 apart. The other 289 cases are each as they
 /// were at 1.198, and FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 199;
+/// 200: **GLSL.std.450's PackHalf2x16 and UnpackHalf2x16
+/// (docs/facet-vulkan10.md item 59).** PackHalf2x16 is NIR's
+/// pack_half_2x16 (vtn_glsl450.c:610), which lower_pack_half_2x16
+/// (v3dv_pipeline.c:187) has nir_lower_alu_width lower to
+/// pack_half_2x16_split of its two floats (nir_lower_alu_width.c:246-252),
+/// the V3D's VFPACK (nir_to_vir.c:1809-1811). UnpackHalf2x16 is the vec2
+/// of f2f32 of each half of unpack_32_2x16 (nir_lower_alu_width.c:267-274),
+/// the halves u2u16 of the word and of it shifted down by 16
+/// (nir_lower_packing.c:61-62; nir_opt_algebraic.py:2271-2272), each an
+/// FMOV of a low half (nir_to_vir.c:1575-1578, 1599-1611), the shift then
+/// taken out (vir_opt_alu.c:62). The new integer operations pack_half and
+/// half_float are worked out on the host with f16, the nearest even.
+///
+/// glslc_packing_half, of 360 words, answers for eight colours within
+/// 10^-6 what GLSL's definitions answer; 1 + k/4096 and its negative,
+/// a quarter, a half or three quarters of the way between two halves,
+/// say how VFPACK rounds. Packings of constants fold, ties to the even
+/// and 65520 to infinity. The V3D's tests are 346, two new. Of 13
+/// mutations, 11 fail them; of the other two, one takes half_float out
+/// of the unary operations, which changes nothing, as a unary step's
+/// second operand is 0 and nothing reads it, and the other swaps
+/// VFPACK's operands, which on the CM5 makes the new case 46,565 apart.
+///
+/// On the CM5 FacetBoth 1.64's "shipped packing of halves" is 32 of
+/// 230400 pixels apart, each listed: the 8 at the triangles' edge, 21 on
+/// a step of k that the two devices' interpolations fall either side of,
+/// and 3 on c.x = 0, where a half's bits go with the logarithm of a small
+/// value. So VFPACK rounds to the nearest even: with the cores' halves
+/// rounded toward zero on purpose the case is 29,585 apart, and with the
+/// cores' function made wrong on purpose 46,565. The other 291 cases are
+/// each as they were at 1.199, and FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 200;

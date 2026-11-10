@@ -821,11 +821,21 @@ pub const Integer = enum(u32) {
     /// device of has_uclz (nir_opt_algebraic.py:2717-2738), the V3D's
     /// CLZ (nir_to_vir.c:1696-1697; since 1.197).
     uclz,
+    /// Two floats made halves of a word, the first the low half:
+    /// pack_half_2x16_split (nir_opcodes.py:1059-1060), each half
+    /// _mesa_float_to_half's, the nearest even. It is what PackHalf2x16
+    /// is lowered to (nir_lower_alu_width.c:246-252), the V3D's VFPACK
+    /// (nir_to_vir.c:1809-1811; since 1.200).
+    pack_half,
+    /// The float of a word's low half: u2u16 of the word, a MOV, and
+    /// f2f32 of that, an FMOV of the low half (nir_to_vir.c:1575-1578,
+    /// 1599-1611; since 1.200).
+    half_float,
 
     /// Whether it reads one value, not two.
     pub fn unary(op: Integer) bool {
         return switch (op) {
-            .ineg, .iabs, .inot, .f2i32, .f2u32, .i2f32, .u2f32, .b2f32, .b2i32, .uclz => true,
+            .ineg, .iabs, .inot, .f2i32, .f2u32, .i2f32, .u2f32, .b2f32, .b2i32, .uclz, .half_float => true,
             else => false,
         };
     }
@@ -8621,9 +8631,10 @@ fn multiplied(work: *Work, left: Matrix, right: Matrix) Error!Matrix {
 /// v3dv_pipeline.c:203). The bit finds are here since 1.197, of uclz,
 /// and Ldexp since 1.198, with ModfStruct and FrexpStruct
 /// (`glslStructCall`); the packing and unpacking of snorms and unorms
-/// since 1.199. What is left out - Modf and Frexp of a pointer, the
-/// determinant and the inverse, the halves' and the doubles' packing and
-/// the interpolation - is refused by name, `Error.Body` (since 1.152).
+/// since 1.199, and of halves since 1.200. What is left out - Modf and
+/// Frexp of a pointer, the determinant and the inverse, the doubles'
+/// packing and the interpolation - is refused by name, `Error.Body`
+/// (since 1.152).
 fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) Error!u16 {
     const which = std.enums.fromInt(spirv.Glsl, instruction) orelse return Error.Body;
     switch (which) {
@@ -8643,6 +8654,8 @@ fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) E
         // Since 1.199.
         .pack_snorm_4x8, .pack_unorm_4x8, .pack_snorm_2x16, .pack_unorm_2x16 => {},
         .unpack_snorm_4x8, .unpack_unorm_4x8, .unpack_snorm_2x16, .unpack_unorm_2x16 => {},
+        // Since 1.200.
+        .pack_half_2x16, .unpack_half_2x16 => {},
         else => return Error.Body,
     }
     const wanted: usize = switch (which) {
@@ -8661,15 +8674,15 @@ fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) E
     const of_kind: Kind = switch (which) {
         .length, .distance => try kindOfValue(work, arguments[0]),
         .pack_snorm_4x8, .pack_unorm_4x8 => .f32x4,
-        .pack_snorm_2x16, .pack_unorm_2x16 => .f32x2,
-        .unpack_snorm_4x8, .unpack_unorm_4x8, .unpack_snorm_2x16, .unpack_unorm_2x16 => .f32x1,
+        .pack_snorm_2x16, .pack_unorm_2x16, .pack_half_2x16 => .f32x2,
+        .unpack_snorm_4x8, .unpack_unorm_4x8, .unpack_snorm_2x16, .unpack_unorm_2x16, .unpack_half_2x16 => .f32x1,
         else => kind,
     };
     if ((which == .length or which == .distance) and kind != .f32x1) return Error.Type;
     const answers: ?Kind = switch (which) {
-        .pack_snorm_4x8, .pack_unorm_4x8, .pack_snorm_2x16, .pack_unorm_2x16 => .f32x1,
+        .pack_snorm_4x8, .pack_unorm_4x8, .pack_snorm_2x16, .pack_unorm_2x16, .pack_half_2x16 => .f32x1,
         .unpack_snorm_4x8, .unpack_unorm_4x8 => .f32x4,
-        .unpack_snorm_2x16, .unpack_unorm_2x16 => .f32x2,
+        .unpack_snorm_2x16, .unpack_unorm_2x16, .unpack_half_2x16 => .f32x2,
         else => null,
     };
     if (answers != null and answers.? != kind) return Error.Type;
@@ -8740,6 +8753,21 @@ fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) E
         .ldexp => ldexpOf(work, x[0], x[1]),
         .pack_snorm_4x8, .pack_unorm_4x8, .pack_snorm_2x16, .pack_unorm_2x16 => packOf(work, which, x[0]),
         .unpack_snorm_4x8, .unpack_unorm_4x8, .unpack_snorm_2x16, .unpack_unorm_2x16 => unpackOf(work, which, x[0]),
+        // pack_half_2x16 (vtn_glsl450.c:610) as lower_pack_half_2x16 has
+        // nir_lower_alu_width make it (v3dv_pipeline.c:187;
+        // nir_lower_alu_width.c:246-252): pack_half_2x16_split of v's two
+        // floats, the first the low half.
+        .pack_half_2x16 => integerOf(work, .pack_half, try channelOf(work, x[0], 0), try channelOf(work, x[0], 1)),
+        // unpack_half_2x16 (vtn_glsl450.c:616) as lower_unpack_half_2x16
+        // has it (v3dv_pipeline.c:188; nir_lower_alu_width.c:267-274): the
+        // vec2 of f2f32 of each half of unpack_32_2x16, which nir_lower_pack
+        // makes its split_x and split_y (vir.c:2051;
+        // nir_lower_packing.c:61-62), and lower_unpack_32_2x16_split
+        // (v3dv_pipeline.c:191) u2u16 of v and of v >> 16
+        // (nir_opt_algebraic.py:2271-2272). The FMOV of the shift's low
+        // half is then one of v's high half (try_opt_extract_h16,
+        // vir_opt_alu.c:62).
+        .unpack_half_2x16 => vectorOf(work, &.{ try integerOf(work, .half_float, x[0], null), try integerOf(work, .half_float, try integerOf(work, .ushr, x[0], try integerSplat(work, .f32x1, 16)), null) }),
         .sin => unary(work, .sin, x[0]),
         .cos => unary(work, .cos, x[0]),
         .tan => tan: {
@@ -9746,11 +9774,26 @@ fn foldedInteger(work: *Work, op: Integer, a: u16, b: ?u16) Error!?u16 {
             .b2f32 => if (x != 0) @as(u32, @bitCast(@as(f32, 1.0))) else 0,
             .b2i32 => if (x != 0) 1 else 0,
             .uclz => @clz(x),
+            .pack_half => halvesOf(f, @bitCast(y)),
+            .half_float => @bitCast(floatOfHalf(x)),
         };
         work.pool[out + k] = @bitCast(word);
     }
     work.pool_count += parts;
     return try put(work, .{ .tag = .constant, .kind = of_a.kind, .at = out });
+}
+
+/// pack_half_2x16_split's word of `low` and `high`, each the half
+/// nearest it, the even of two as near (_mesa_float_to_half).
+fn halvesOf(low: f32, high: f32) u32 {
+    const l: u16 = @bitCast(@as(f16, @floatCast(low)));
+    const h: u16 = @bitCast(@as(f16, @floatCast(high)));
+    return @as(u32, h) << 16 | l;
+}
+
+/// The float of the half in `word`'s low 16 bits, exactly.
+fn floatOfHalf(word: u32) f32 {
+    return @floatCast(@as(f16, @bitCast(@as(u16, @truncate(word)))));
 }
 
 fn binary(work: *Work, tag: Tag, a: u16, b: u16) Error!u16 {
@@ -13682,6 +13725,8 @@ fn evaluatedStep(work: *const Work, values: *const [most_steps]?[4]f32, at: u16,
                     .b2f32 => if (x[k] != 0) 1.0 else 0.0,
                     .b2i32 => @bitCast(@as(u32, if (x[k] != 0) 1 else 0)),
                     .uclz => @bitCast(@as(u32, @clz(u))),
+                    .pack_half => @bitCast(halvesOf(x[k], y[if (single) 0 else k])),
+                    .half_float => floatOfHalf(u),
                     else => @bitCast(switch (op) {
                         .iadd => u +% v,
                         .isub => u -% v,
@@ -16600,6 +16645,85 @@ test "the packings of snorms and unorms are nir_opt_algebraic's and nir_lower_al
     }
 }
 
+/// GLSL's packHalf2x16 of one float: the half nearest it, the even of
+/// two as near, as Mesa's pack_half_1x16 rounds.
+fn halfBitsOf(x: f32) u32 {
+    return @as(u16, @bitCast(@as(f16, @floatCast(x))));
+}
+
+/// unpackHalf2x16 of a word's low 16 bits.
+fn floatOfBits(bits: u32) f32 {
+    return @floatCast(@as(f16, @bitCast(@as(u16, @truncate(bits)))));
+}
+
+/// What `reference.glslc_packing_half` makes of `color`, by GLSL's
+/// definitions of the packings of halves.
+fn halfPackingOf(color: [4]f32) [4]f32 {
+    var c: [4]f32 = undefined;
+    for (&c, color) |*each, v| each.* = v * 6.0 - 3.0;
+    const xy = halfBitsOf(c[0]) | halfBitsOf(c[1]) << 16;
+    const a = [2]f32{ floatOfBits(xy), floatOfBits(xy >> 16) };
+    const x = [2]f32{ 1.0 + @floor(color[2] * 16.0) / 4096.0, -(1.0 + @floor(color[0] * 16.0) / 4096.0) };
+    var e: [2]f32 = undefined;
+    for (&e, x) |*each, v| each.* = (floatOfBits(halfBitsOf(v)) - v) * 4096.0;
+    return .{
+        a[0] / 6.0 + 0.5,
+        @as(f32, @floatFromInt(xy >> 16)) / 65536.0,
+        e[0] * 0.0625 + @as(f32, @floatFromInt(xy & 0xFFFF)) / 131072.0 + 0.25,
+        e[1] * 0.0625 + a[1] / 12.0 + 0.5,
+    };
+}
+
+test "PackHalf2x16 is a VFPACK of its two floats and UnpackHalf2x16 an FMOV of each half, the high half's shift taken out, and both answer as GLSL defines them" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_packing_half);
+    // Two packings, each a pack_half and a VFPACK, beside the two that
+    // write the colour to the tile buffer; two unpackings, each two
+    // half_floats.
+    try testing.expectEqual(@as(usize, 2), liveIntegerOf(&work, .pack_half));
+    try testing.expectEqual(@as(usize, 4), liveIntegerOf(&work, .half_float));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "vfpack rf"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "vfpack tlb"));
+    // Each FMOV of a half is copied into what reads it as an unpack of
+    // the word, the high half's FMOV of the shift by 16 one of the
+    // word's high half, a first or a second operand; the one SHR left is
+    // of the word the program reads as an integer, shifted.
+    try testing.expectEqual(@as(usize, 2), countOf(code, ".l"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, ".h"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "shr"));
+    for (packing_colors) |color| {
+        const expected = halfPackingOf(color);
+        const found = evaluatedOf(&work, work.stored, color, 0);
+        for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-6);
+    }
+}
+
+test "packings of halves of constants fold as pack_half_2x16_split does: the nearest half, the even of two as near, and unpacked exactly" {
+    var work: Work = .{};
+    const Case = struct { low: f32, high: f32, word: u32 };
+    const cases = [_]Case{
+        .{ .low = 1.0, .high = -2.0, .word = 0xC000_3C00 },
+        // 1 + 2^-11 is halfway between 1 and the next half, and goes to
+        // 1, the even; 1 + 3 * 2^-11 halfway between that and the one
+        // after, and goes up to the even.
+        .{ .low = 1.0 + 1.0 / 2048.0, .high = 1.0 + 3.0 / 2048.0, .word = 0x3C02_3C00 },
+        // 65520 is halfway between the largest half, 65504, and what
+        // would be 65536: infinity, the even.
+        .{ .low = 65520.0, .high = 65519.0, .word = 0x7BFF_7C00 },
+    };
+    for (cases) |case| {
+        const made = try integerOf(&work, .pack_half, try immediate(&work, case.low), try immediate(&work, case.high));
+        try testing.expectEqual(Tag.constant, work.steps[made].tag);
+        try testing.expectEqual(case.word, @as(u32, @bitCast(work.pool[work.steps[made].at])));
+    }
+    // And back: 0x3C00_C000 is -2 in the low half and 1 in the high.
+    const word = try integerSplat(&work, .f32x1, 0x3C00_C000);
+    const low = try integerOf(&work, .half_float, word, null);
+    const high = try integerOf(&work, .half_float, try integerOf(&work, .ushr, word, try integerSplat(&work, .f32x1, 16)), null);
+    try testing.expectEqual(@as(f32, -2.0), work.pool[work.steps[low].at]);
+    try testing.expectEqual(@as(f32, 1.0), work.pool[work.steps[high].at]);
+}
+
 /// A constant of the floats `values`.
 fn floatsConstant(work: *Work, values: []const f32) Error!u16 {
     const kind = std.enums.fromInt(Kind, values.len) orelse return Error.Type;
@@ -16613,27 +16737,34 @@ fn floatsConstant(work: *Work, values: []const f32) Error!u16 {
 test "a packing that answers other than a uint, or an unpacking other than its vector, is refused" {
     // PackUnorm4x8's result made UnpackUnorm4x8's vec4, and then
     // UnpackUnorm4x8's made PackUnorm4x8's uint, each of which
-    // spirv-val refuses.
-    inline for (.{ spirv.Glsl.pack_unorm_4x8, spirv.Glsl.unpack_unorm_4x8 }) |changed| {
-        var words = reference.glslc_packing_bytes;
-        var types: [2]u32 = .{ 0, 0 };
-        var at: usize = spirv.header_words;
-        while (at < words.len) : (at += words[at] >> 16) {
-            if (words[at] & 0xFFFF != @intFromEnum(spirv.Op.ext_inst)) continue;
-            if (words[at + 4] == @intFromEnum(spirv.Glsl.pack_unorm_4x8)) types[0] = words[at + 1];
-            if (words[at + 4] == @intFromEnum(spirv.Glsl.unpack_unorm_4x8)) types[1] = words[at + 1];
+    // spirv-val refuses; and the same of PackHalf2x16 and
+    // UnpackHalf2x16's uint and vec2 (since 1.200).
+    const Pair = struct { words: []const u32, pack: spirv.Glsl, unpack: spirv.Glsl };
+    inline for (.{
+        Pair{ .words = &reference.glslc_packing_bytes, .pack = .pack_unorm_4x8, .unpack = .unpack_unorm_4x8 },
+        Pair{ .words = &reference.glslc_packing_half, .pack = .pack_half_2x16, .unpack = .unpack_half_2x16 },
+    }) |pair| {
+        inline for (.{ pair.pack, pair.unpack }) |changed| {
+            var words = pair.words[0..pair.words.len].*;
+            var types: [2]u32 = .{ 0, 0 };
+            var at: usize = spirv.header_words;
+            while (at < words.len) : (at += words[at] >> 16) {
+                if (words[at] & 0xFFFF != @intFromEnum(spirv.Op.ext_inst)) continue;
+                if (words[at + 4] == @intFromEnum(pair.pack)) types[0] = words[at + 1];
+                if (words[at + 4] == @intFromEnum(pair.unpack)) types[1] = words[at + 1];
+            }
+            try testing.expect(types[0] != 0 and types[1] != 0);
+            at = spirv.header_words;
+            var made: usize = 0;
+            while (at < words.len) : (at += words[at] >> 16) {
+                if (words[at] & 0xFFFF != @intFromEnum(spirv.Op.ext_inst) or words[at + 4] != @intFromEnum(changed)) continue;
+                words[at + 1] = if (changed == pair.pack) types[1] else types[0];
+                made += 1;
+            }
+            try testing.expect(made != 0);
+            var work: Work = .{};
+            try testing.expectError(Error.Type, throughMesa(&work, &words));
         }
-        try testing.expect(types[0] != 0 and types[1] != 0);
-        at = spirv.header_words;
-        var made: usize = 0;
-        while (at < words.len) : (at += words[at] >> 16) {
-            if (words[at] & 0xFFFF != @intFromEnum(spirv.Op.ext_inst) or words[at + 4] != @intFromEnum(changed)) continue;
-            words[at + 1] = if (changed == .pack_unorm_4x8) types[1] else types[0];
-            made += 1;
-        }
-        try testing.expect(made != 0);
-        var work: Work = .{};
-        try testing.expectError(Error.Type, throughMesa(&work, &words));
     }
 }
 

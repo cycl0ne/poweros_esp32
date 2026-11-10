@@ -715,6 +715,16 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
                     .b2i32 => try c.add(.@"and", .{ a, try c.uniformUi(1) }),
                     // uclz, CLZ (:1696-1697; since 1.197).
                     .uclz => try c.add(.clz, .{a}),
+                    // pack_half_2x16_split, VFPACK (:1809-1811), and
+                    // f2f32 of a word's u2u16, an FMOV of its low half
+                    // (:1575-1578), the MOV of the u2u16 (:1599-1611)
+                    // what copy propagation takes out (since 1.200).
+                    .pack_half => try c.add(.vfpack, .{ a, b }),
+                    .half_float => half: {
+                        const float = try c.mul(.fmov, .{a});
+                        vir.setUnpack(c.defs[float.index].?, 0, .l);
+                        break :half float;
+                    },
                 });
             }
         },
