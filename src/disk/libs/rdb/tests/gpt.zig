@@ -116,7 +116,7 @@ test "a fresh table on 512-byte blocks: 32 blocks of entries each side, read bac
     const found = gpt.containerIn(&primary, entries) orelse return error.NoContainer;
     try testing.expectEqual(@as(u32, 1), found.index);
     try testing.expectEqual(@as(u64, 4096), found.entry.starting_lba);
-    var name: [gpt.name_units:0]u8 = undefined;
+    var name: [gpt.name_bytes:0]u8 = undefined;
     try testing.expectEqualStrings("PowerOS", gpt.nameText(&found.entry, &name));
     const efi = gpt.entryAt(&primary, entries, 0);
     try testing.expectEqualStrings("EFI", gpt.nameText(&efi, &name));
@@ -180,15 +180,30 @@ test "a protective MBR, a hybrid one, and a PC's table that is neither" {
     try testing.expect(!gpt.protective(&block));
 }
 
-test "a name: ASCII kept, anything else a question mark, as much as fits" {
+test "a name: UTF-8 both ways, a pair past U+FFFF, a control a question mark, whole characters as fit" {
     var made: gpt.Entry = .{};
     gpt.setName(&made, "Work");
-    var name: [gpt.name_units:0]u8 = undefined;
+    var name: [gpt.name_bytes:0]u8 = undefined;
     try testing.expectEqualStrings("Work", gpt.nameText(&made, &name));
     made.partition_name[1] = 0x00E9;
+    try testing.expectEqualStrings("Wérk", gpt.nameText(&made, &name));
+    made.partition_name[1] = 0x0007;
     try testing.expectEqualStrings("W?rk", gpt.nameText(&made, &name));
+    made.partition_name[1] = 0xD800;
+    try testing.expectEqualStrings("W?rk", gpt.nameText(&made, &name));
+    gpt.setName(&made, "Daten \u{1F600} 日本");
+    try testing.expectEqual(@as(u16, 0xD83D), made.partition_name[6]);
+    try testing.expectEqual(@as(u16, 0xDE00), made.partition_name[7]);
+    try testing.expectEqualStrings("Daten \u{1F600} 日本", gpt.nameText(&made, &name));
+    gpt.setName(&made, "Gr\xFCn");
+    try testing.expectEqualStrings("Grün", gpt.nameText(&made, &name));
     gpt.setName(&made, "a name of more than thirty-six characters, cut");
     try testing.expectEqual(@as(usize, gpt.name_units), gpt.nameText(&made, &name).len);
+    // A pair that would end past the field is left out whole.
+    gpt.setName(&made, "x" ** 35 ++ "\u{1F600}");
+    try testing.expectEqualStrings("x" ** 35, gpt.nameText(&made, &name));
+    @memset(&made.partition_name, 0x65E5);
+    try testing.expectEqual(@as(usize, gpt.name_bytes), gpt.nameText(&made, &name).len);
 }
 
 /// A disk as `sdk.expansion.bootdisk` reads it.

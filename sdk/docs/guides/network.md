@@ -1262,13 +1262,16 @@ next start. Its own page is `SYS:System/Docs/Shares.md`.
   encrypted while another on the same server is not. Encryption on 3.0
   and 3.0.2 is AES-128-CCM, which is not here: a server that asks for it
   there is not mounted, nor is a guest whom encryption is asked of.
-- **Names** are Latin-1, as every name dos has. A server's name with a
-  character outside Latin-1 is given as a stand-in, as fat-handler gives
-  one on exFAT: its Latin-1 characters kept, `_` for the others, and `=`
-  with four hex digits of the name's hash before the extension -
-  `日本語.txt` is `___=0206.txt`. The stand-in opens the file. ReadArgs
+- **Names** are UTF-8, as every name dos has: a server's name is given
+  as it is, `日本語.txt` as `日本語.txt`, and the user, the domain, the
+  share and the password go to the server in UTF-16 from what was typed.
+  A name dos cannot hold - one longer than 255 bytes in UTF-8, or one the
+  server spells with a broken surrogate - is given as a stand-in, as
+  fat-handler gives one on exFAT: its characters kept, `_` for a broken
+  one, the name cut to make room, and `=` with four hex digits of the
+  name's hash before the extension. The stand-in opens the file. ReadArgs
   ends an unquoted argument at `=`, so on a command line a stand-in goes
-  in quotes: `Type "NAS:___=0206.txt"`.
+  in quotes.
 - **Writing**: a file opened to be read is opened again with write access
   at its first write, so a file that is only read never asks for more.
   A new file (`MODE_NEWFILE`) is exclusive, and refused while anything

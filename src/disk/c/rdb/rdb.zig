@@ -138,7 +138,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "RDB";
-const VERSION_STRING = "\x00$VER: RDB 1.9 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: RDB 1.10 (10.11.2026)\r\n";
 
 const template = "DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K,BOOTPRI/K/N,GPT/S,MOUNT/S,ADDGPT/K,REMGPT/K,SIZE/K,NOMOUNT/S,MOUNTGPT/K";
 const arg_device = 0;
@@ -336,7 +336,7 @@ fn mountAll(run: *Run) i32 {
             // Under its entry's name, when that is a drive's; a new
             // partition for FAT with an older library's MountGPTPartition
             // stays as it is.
-            var drive: [gpt.name_units:0]u8 = @splat(0);
+            var drive: [gpt.name_bytes:0]u8 = @splat(0);
             if (!driveName(gpt.nameText(&p.entry, &drive))) continue;
             const flags = rdb.RDBMF_START | if (mountsFat(rb)) rdb.RDBMF_FAT else 0;
             var name: rdb.MountName = @splat(0);
@@ -379,7 +379,7 @@ fn mountOne(run: *Run, name: [*:0]const u8) i32 {
         _ = dl.PutStr("MOUNTGPT: the container holds the table, and MOUNT mounts what is in it\n");
         return dos.RETURN_ERROR;
     }
-    var drive: [gpt.name_units:0]u8 = @splat(0);
+    var drive: [gpt.name_bytes:0]u8 = @splat(0);
     if (!driveName(gpt.nameText(&part.entry, &drive))) {
         _ = Printf(dl, "MOUNTGPT: %s is no drive's name\n", .{name});
         return dos.RETURN_ERROR;
@@ -770,7 +770,7 @@ fn addGpt(run: *Run, argv: *const [arg_count]usize, name: [*:0]const u8) i32 {
 /// handler started, so that C:Format can give it a volume.
 fn mountMade(run: *Run, part: *rdb.GPTPartition) i32 {
     const dl = run.dl;
-    var text: [gpt.name_units:0]u8 = @splat(0);
+    var text: [gpt.name_bytes:0]u8 = @splat(0);
     _ = gpt.nameText(&part.entry, &text);
     var name: rdb.MountName = @splat(0);
     const flags = rdb.RDBMF_START | rdb.RDBMF_FAT | rdb.mountFormat(dos.fat.formatOfType(run.made_type));
@@ -875,7 +875,7 @@ fn remGpt(run: *Run, name: [*:0]const u8) i32 {
 fn gptPartitionNamed(run: *Run, name: [*:0]const u8) ?*rdb.GPTPartition {
     var part = run.rb.NextGPTPartition(run.handle, null);
     while (part) |p| : (part = run.rb.NextGPTPartition(run.handle, p)) {
-        var text: [gpt.name_units:0]u8 = @splat(0);
+        var text: [gpt.name_bytes:0]u8 = @splat(0);
         if (sameText(name, gpt.nameText(&p.entry, &text))) return p;
     }
     return null;
@@ -1319,7 +1319,7 @@ fn gptRow(run: *Run, part: *const rdb.GPTPartition) void {
         gpt.formatGuid(&entry.partition_type_guid, &guid);
         break :kind @ptrCast(&guid);
     };
-    var name: [gpt.name_units:0]u8 = @splat(0);
+    var name: [gpt.name_bytes:0]u8 = @splat(0);
     if (gpt.nameText(entry, &name).len == 0) _ = copy(&name, "-");
 
     var flags: [48:0]u8 = @splat(0);

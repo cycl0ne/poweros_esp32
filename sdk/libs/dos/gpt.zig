@@ -44,6 +44,7 @@
 
 const fat = @import("fat.zig");
 const flashfs = @import("flashfs.zig");
+const utf8 = @import("../utility/utf8.zig");
 
 /// A GUID, as its 16 bytes lie on the medium.
 pub const Guid = [16]u8;
@@ -67,6 +68,10 @@ pub const max_entries_bytes: u64 = 1 << 16;
 pub const header_block: u64 = 1;
 /// The UTF-16 code units of an entry's name.
 pub const name_units = 36;
+
+/// The most bytes an entry's name takes in UTF-8: three a unit, as a
+/// character past U+FFFF takes four for its two.
+pub const name_bytes = 3 * name_units;
 
 /// The MBR partition type that says a GPT is on the medium.
 pub const PROTECTIVE_TYPE: u8 = 0xEE;
@@ -259,32 +264,61 @@ pub fn isContainer(entry: *const Entry) bool {
 
 // --- names ----------------------------------------------------------------------
 
-/// An entry's name as text, into `into`: a character outside printable
-/// ASCII becomes `?`. The text, without the NUL after it.
+/// An entry's name as text, in UTF-8, into `into`: a character past
+/// U+FFFF from its surrogate pair; a control, or a surrogate without its
+/// pair, as `?`. The text, without the NUL after it.
 ///
 /// INPUTS:
 /// - `entry` - the entry.
 /// - `into` - where the text goes, NUL-terminated.
-pub fn nameText(entry: *const Entry, into: *[name_units:0]u8) []const u8 {
+pub fn nameText(entry: *const Entry, into: *[name_bytes:0]u8) []const u8 {
+    const units = entry.partition_name;
     var length: usize = 0;
-    for (entry.partition_name) |unit| {
-        if (unit == 0) break;
-        into[length] = if (unit >= 0x20 and unit < 0x7F) @intCast(unit) else '?';
-        length += 1;
+    var index: usize = 0;
+    while (index < units.len and units[index] != 0) {
+        var char: u32 = units[index];
+        index += 1;
+        if (char >= 0xD800 and char <= 0xDBFF and index < units.len and units[index] >= 0xDC00 and units[index] <= 0xDFFF) {
+            char = 0x10000 + ((char - 0xD800) << 10) + (units[index] - 0xDC00);
+            index += 1;
+        } else if ((char >= 0xD800 and char <= 0xDFFF) or char < 0x20 or (char >= 0x7F and char < 0xA0)) {
+            char = '?';
+        }
+        var bytes: [4]u8 = undefined;
+        const taken = utf8.encode(char, &bytes);
+        @memcpy(into[length..][0..taken], bytes[0..taken]);
+        length += taken;
     }
     @memset(into[length..], 0);
     return into[0..length];
 }
 
-/// An entry's name set from text: as much of it as fits, the rest of the
-/// field zeroes.
+/// An entry's name set from text: as many whole characters as fit, one
+/// past U+FFFF as its surrogate pair, the rest of the field zeroes.
 ///
 /// INPUTS:
 /// - `entry` - the entry, changed.
-/// - `text` - the name, in ASCII.
+/// - `text` - the name, in UTF-8; a byte that is no UTF-8 is read as its
+///   Latin-1 character, as text is read (sdk.utility.utf8).
 pub fn setName(entry: *Entry, text: []const u8) void {
-    entry.partition_name = @splat(0);
-    for (text[0..@min(text.len, name_units)], 0..) |char, index| entry.partition_name[index] = char;
+    var units: [name_units]u16 = @splat(0);
+    var index: usize = 0;
+    var at: usize = 0;
+    while (at < text.len) {
+        const char = utf8.next(text, &at);
+        if (char > 0xFFFF) {
+            if (index + 2 > units.len) break;
+            const above = char - 0x10000;
+            units[index] = @intCast(0xD800 + (above >> 10));
+            units[index + 1] = @intCast(0xDC00 + (above & 0x3FF));
+            index += 2;
+        } else {
+            if (index == units.len) break;
+            units[index] = @intCast(char);
+            index += 1;
+        }
+    }
+    entry.partition_name = units;
 }
 
 // --- reading ----------------------------------------------------------------------

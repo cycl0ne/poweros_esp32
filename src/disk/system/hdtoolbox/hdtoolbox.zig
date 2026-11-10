@@ -122,8 +122,8 @@ const drives = @import("drives.zig");
 const Span = model.Span;
 
 pub const COMMAND_NAME = "HDToolBox";
-const VERSION = "1.4";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (09.11.2026)\r\n";
+const VERSION = "1.5";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -266,7 +266,7 @@ const Before = struct {
 const GptBefore = struct {
     /// The partition on the handle's list; null once it is removed.
     part: ?*rdb.GPTPartition,
-    name: [gpt.name_units:0]u8,
+    name: [gpt.name_bytes:0]u8,
 };
 
 /// What is picked on the bar.
@@ -902,7 +902,7 @@ const App = struct {
         // The GPT's partitions after the table's: no cylinders, and their
         // type for a file system.
         for (app.gpt_parts[0..app.gpt_count], 0..) |part, index| {
-            var name: [gpt.name_units:0]u8 = @splat(0);
+            var name: [gpt.name_bytes:0]u8 = @splat(0);
             _ = gptLabel(part, &name);
             var size: [model.size_room + 1]u8 = @splat(0);
             const size_text = model.sizeText(gptBytes(part, app.blockBytes()), size[0..model.size_room]);
@@ -938,7 +938,7 @@ const App = struct {
         const rom = if (app.unit()) |shown| shown.rom else false;
 
         const empty: [1:0]u8 = @splat(0);
-        var gpt_name: [gpt.name_units:0]u8 = @splat(0);
+        var gpt_name: [gpt.name_bytes:0]u8 = @splat(0);
         var start: Line(12) = .{};
         var end: Line(12) = .{};
         app.size_text.clear();
@@ -1277,7 +1277,7 @@ const App = struct {
                 app.fill(left, 0, right, height, if (picked) app.pens.picked else app.pens.foreign);
                 app.fill(left, 0, left + 1, height, app.pens.edge);
                 app.fill(right - 1, 0, right, height, app.pens.edge);
-                var name: [gpt.name_units:0]u8 = @splat(0);
+                var name: [gpt.name_bytes:0]u8 = @splat(0);
                 app.label(gptLabel(part, &name), left, right, if (picked) app.pens.picked_ink else app.pens.ink);
             }
         } else {
@@ -2361,7 +2361,7 @@ fn fieldText(field: []const u8) []const u8 {
 
 /// What a partition of the GPT is called on the bar and in the list: its
 /// own name, or its type's where it has none, into `into`.
-fn gptLabel(part: *const rdb.GPTPartition, into: *[gpt.name_units:0]u8) []const u8 {
+fn gptLabel(part: *const rdb.GPTPartition, into: *[gpt.name_bytes:0]u8) []const u8 {
     const own = gpt.nameText(&part.entry, into);
     if (own.len != 0) return own;
     const kind = gpt.typeName(&part.entry.partition_type_guid) orelse "Partition";

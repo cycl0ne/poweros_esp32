@@ -79,7 +79,6 @@ const session_area = client.session;
 const negotiate_area = client.negotiate;
 const logon_area = client.logon;
 const ntlm = client.ntlm;
-const names = client.names;
 const commands = client.commands;
 const fs_area = @import("fs.zig");
 const Session = session_area.Session;
@@ -87,7 +86,7 @@ const FileSystem = fs_area.FileSystem;
 
 pub const HANDLER_NAME = smb.SMB_HANDLER;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 21;
+const HANDLER_REVISION = 22;
 const BUILD_DATE = "10.11.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -342,16 +341,12 @@ fn connect(st: *State) bool {
     }
     result.dialect = session.dialect;
 
-    // Who logs on: the user in capitals as NTLMv2 hashes it, and this
-    // machine's name for the server's logs.
+    // Who logs on, and this machine's name for the server's logs.
     const user = cString(&startup.user);
-    var user_upper: [smb.SMB_USER_MAX + 1]u8 = undefined;
-    for (user, 0..) |char, at| user_upper[at] = names.upper(char);
     var host: [64]u8 = @splat(0);
     _ = st.sb.GetHostName(&host, host.len - 1);
     const identity: ntlm.Identity = .{
         .user = user,
-        .user_upper = user_upper[0..user.len],
         .domain = cString(&startup.domain),
         .workstation = cString(&host),
         .nt_hash = if (startup.flags & smb.SMBF_HASH != 0) startup.nt_hash else null,

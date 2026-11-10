@@ -259,7 +259,7 @@ pub fn named(run: *Run, rb: *RDBBase, handle: *rdb.RDBHandle, name: [*:0]const u
     const wanted = name[0..run.ub.Strlen(name)];
     var part = rb.NextGPTPartition(handle, null);
     while (part) |one| : (part = rb.NextGPTPartition(handle, one)) {
-        var text: [gpt.name_units:0]u8 = @splat(0);
+        var text: [gpt.name_bytes:0]u8 = @splat(0);
         _ = gpt.nameText(&one.entry, &text);
         const got: [*:0]const u8 = @ptrCast(&text);
         if (manifest.samePath(got[0..run.ub.Strlen(got)], wanted)) return one;
@@ -271,7 +271,7 @@ pub fn named(run: *Run, rb: *RDBBase, handle: *rdb.RDBHandle, name: [*:0]const u
 /// colon in `slot.drive`.
 pub fn mount(run: *Run, rb: *RDBBase, handle: *rdb.RDBHandle, slot: *Slot) ?i32 {
     if (slot.mounted()) return null;
-    var text: [gpt.name_units:0]u8 = @splat(0);
+    var text: [gpt.name_bytes:0]u8 = @splat(0);
     _ = gpt.nameText(&slot.part.entry, &text);
     const wanted: [*:0]const u8 = @ptrCast(&text);
 

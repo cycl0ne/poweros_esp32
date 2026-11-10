@@ -721,9 +721,8 @@ pub const FileSystem = struct {
         var start: usize = 0;
         while (start < path.len) {
             const end = names.nameEnd(path.slice(), start);
-            var narrow: [names.name_max]u8 = undefined;
-            const latin = narrowed(path.slice()[start..end], &narrow);
-            if (latin) |name| if (names.looksStandIn(name)) {
+            var text: [names.name_max]u8 = undefined;
+            if (names.textOf(path.slice()[start..end], &text)) |name| if (names.looksStandIn(name)) {
                 var found: [2 * names.name_max]u8 = undefined;
                 const dir = path.slice()[0..if (start == 0) 0 else start - 2];
                 if (try fs.findStandIn(dir, name, &found)) |real| {
@@ -2525,19 +2524,6 @@ fn endsIn(path: []const u8, name: []const u8) bool {
 
 /// The `*` a QUERY_DIRECTORY lists everything with.
 const star: []const u8 = &.{ '*', 0 };
-
-/// A server's name (UTF-16LE) as Latin-1, or null when it has another
-/// character or is too long.
-fn narrowed(name: []const u8, into: *[names.name_max]u8) ?[]const u8 {
-    const count = name.len / 2;
-    if (count > into.len) return null;
-    for (0..count) |index| {
-        const unit = names.unitAt(name, index);
-        if (unit > 0xFF) return null;
-        into[index] = @intCast(unit);
-    }
-    return into[0..count];
-}
 
 /// The protection bits for a file's attributes: a read-only file may not
 /// be written or deleted, and A is the archive bit inverted.

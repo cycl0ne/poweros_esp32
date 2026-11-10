@@ -6,7 +6,8 @@
 //!
 //! **The proof.** The response key is HMAC-MD5 over the user's name in
 //! capitals and the domain, keyed with the password's NT hash (MD4 over
-//! its UTF-16). The proof is HMAC-MD5 over the server's challenge and a
+//! its UTF-16). Every name and the password are given in UTF-8 and go
+//! out as UTF-16 (`wire.utf16`). The proof is HMAC-MD5 over the server's challenge and a
 //! blob of the client's own - a time, eight random bytes and the server's
 //! target info - keyed with the response key; the session's base key is
 //! HMAC-MD5 over the proof with the same key.
@@ -109,9 +110,8 @@ pub const Challenge = struct {
 
 /// Who logs on.
 pub const Identity = struct {
-    /// The user as given, and in capitals; both empty for anonymous.
+    /// The user as given; empty for anonymous.
     user: []const u8 = &.{},
-    user_upper: []const u8 = &.{},
     domain: []const u8 = &.{},
     workstation: []const u8 = &.{},
     /// The password's NT hash; null with no user is anonymous.
@@ -167,13 +167,13 @@ pub fn authenticate(cb: *CryptoBase, writer: *Writer, identity: *const Identity,
     };
 
     var from = Payload.begin(writer);
-    wire.latin1(writer, identity.domain);
+    wire.utf16(writer, identity.domain);
     Payload.end(writer, start, fields_at, .domain, from);
     from = Payload.begin(writer);
-    wire.latin1(writer, identity.user);
+    wire.utf16(writer, identity.user);
     Payload.end(writer, start, fields_at, .user, from);
     from = Payload.begin(writer);
-    wire.latin1(writer, identity.workstation);
+    wire.utf16(writer, identity.workstation);
     Payload.end(writer, start, fields_at, .workstation, from);
 
     if (identity.anonymous()) {
@@ -193,7 +193,7 @@ pub fn authenticate(cb: *CryptoBase, writer: *Writer, identity: *const Identity,
         return null;
     }
 
-    const response_key = responseKey(cb, identity.nt_hash orelse emptyPassword(cb), identity.user_upper, identity.domain);
+    const response_key = responseKey(cb, identity.nt_hash orelse emptyPassword(cb), identity.user, identity.domain);
     const time = challenge.timestamp orelse inventions.time;
 
     // LM: 24 zeros when the server sent its time, else LMv2.
@@ -250,13 +250,13 @@ fn writeBlob(writer: *Writer, time: u64, client_challenge: *const [8]u8, target_
 /// INPUTS:
 /// - `cb` - crypto.library.
 /// - `nt_hash` - the password's.
-/// - `user_upper` - the user's name in capitals, Latin-1.
-/// - `domain` - the domain as given, Latin-1.
-pub fn responseKey(cb: *CryptoBase, nt_hash: [16]u8, user_upper: []const u8, domain: []const u8) [16]u8 {
+/// - `user` - the user's name as given, put in capitals here.
+/// - `domain` - the domain as given.
+pub fn responseKey(cb: *CryptoBase, nt_hash: [16]u8, user: []const u8, domain: []const u8) [16]u8 {
     var text: [2 * (sdk.dos.smb.SMB_USER_MAX + sdk.dos.smb.SMB_DOMAIN_MAX)]u8 = undefined;
     var writer: Writer = .{ .bytes = &text };
-    wire.latin1(&writer, user_upper);
-    wire.latin1(&writer, domain);
+    wire.utf16Upper(&writer, user);
+    wire.utf16(&writer, domain);
     return hmacMd5(cb, &nt_hash, &.{writer.written()});
 }
 
@@ -264,11 +264,16 @@ pub fn responseKey(cb: *CryptoBase, nt_hash: [16]u8, user_upper: []const u8, dom
 ///
 /// INPUTS:
 /// - `cb` - crypto.library.
-/// - `password` - Latin-1.
+/// - `password` - as typed, read as `wire.utf16` reads text.
 pub fn ntHash(cb: *CryptoBase, password: []const u8) [16]u8 {
     var context: crypto.HashContext = .{};
     _ = cb.InitHash(&context, crypto.HASH_MD4);
-    for (password) |char| cb.UpdateHash(&context, &[2]u8{ char, 0 }, 2);
+    var at: usize = 0;
+    while (at < password.len) {
+        var units: [2]u16 = undefined;
+        const count = wire.unitsOf(sdk.utility.utf8.next(password, &at), &units);
+        for (units[0..count]) |unit| cb.UpdateHash(&context, &[2]u8{ @truncate(unit), @intCast(unit >> 8) }, 2);
+    }
     var digest: [crypto.DIGEST_MAX]u8 = undefined;
     _ = cb.FinishHash(&context, &digest);
     return digest[0..16].*;

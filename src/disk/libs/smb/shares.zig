@@ -121,22 +121,17 @@ pub const question_max: usize = 16 + 2 * (smb.SMB_SERVER_MAX + 3) + 2 + 28;
 pub fn question(into: []u8, server: []const u8) []u8 {
     var at: usize = 0;
     // The server's name, `\\server`, as a pointer to a string.
-    const units = 2 + server.len + 1;
+    const units = 2 + wire.utf16Length(server) + 1;
     wire.put32(into, at, 0x0002_0000); // it is there
     wire.put32(into, at + 4, @intCast(units)); // the room there is
     wire.put32(into, at + 8, 0); // the characters start at its front
     wire.put32(into, at + 12, @intCast(units)); // and there are this many
     at += 16;
-    for ("\\\\") |char| {
-        wire.put16(into, at, char);
-        at += 2;
-    }
-    for (server) |char| {
-        wire.put16(into, at, char);
-        at += 2;
-    }
-    wire.put16(into, at, 0);
-    at += 2;
+    var name: wire.Writer = .{ .bytes = into[at..] };
+    wire.utf16(&name, "\\\\");
+    wire.utf16(&name, server);
+    name.uint16(0);
+    at += name.at;
     at = (at + 3) & ~@as(usize, 3);
     // The level, twice - once as the structure's own field, once as what
     // the container after it is - then the container, empty.
@@ -207,7 +202,7 @@ pub fn answer(stub: []const u8, into: []Share) Listing {
 ///
 /// INPUTS:
 /// - `session` - logged on, with no tree connected.
-/// - `server` - the server's name as it was logged on to, Latin-1.
+/// - `server` - the server's name as it was logged on to.
 /// - `into` - the shares, as many as there is room for.
 /// - `gather` - where the answer is read; the shares' names point into
 ///   it, so it is the caller's until it has done with them.

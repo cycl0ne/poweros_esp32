@@ -52,7 +52,7 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "DiskTest";
-const VERSION_STRING = "\x00$VER: DiskTest 1.2 (19.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: DiskTest 1.3 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DEVICE/A,UNIT/N,SPEED/K/N,BUFFER/K/N,ALIGN/K/N,AT/K/N,WRITE/S,COMPARE/S,TRIM/S";
@@ -379,7 +379,7 @@ fn showGpt(disk: *Disk, buffer: [*]u8) void {
         }) {
             const entry = gpt.entryAt(&header, block, slot);
             if (!gpt.used(&entry)) continue;
-            var name: [gpt.name_units:0]u8 = @splat(0);
+            var name: [gpt.name_bytes:0]u8 = @splat(0);
             _ = gpt.nameText(&entry, &name);
             const kind: [*:0]const u8 = gpt.typeName(&entry.partition_type_guid) orelse kind: {
                 gpt.formatGuid(&entry.partition_type_guid, &guid);

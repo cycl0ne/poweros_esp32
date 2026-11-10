@@ -885,7 +885,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-var name: [gpt.name_units:0]u8 = undefined;
+var name: [gpt.name_bytes:0]u8 = undefined;
 var part = rb.NextGPTPartition(handle, null);
 while (part) |p| : (part = rb.NextGPTPartition(handle, p)) {
     _ = Printf(dl, "%u: %s\n", .{ p.number, gpt.nameText(&p.entry, &name).ptr });

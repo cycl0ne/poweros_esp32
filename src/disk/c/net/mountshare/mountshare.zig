@@ -69,7 +69,7 @@ const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const ShareFile = sharefile.ShareFile;
 
 pub const COMMAND_NAME = "MountShare";
-const VERSION_STRING = "\x00$VER: MountShare 1.2 (02.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: MountShare 1.3 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "NAME/M,ALL/S,SHARE/K,USER/K,PASSWORD/K,DOMAIN/K,VOLUME/K,PORT/K/N,READONLY/S,ENCRYPT/S,SAVE/S,QUIET/S,DISMOUNT/S,LIST/S,SERVER/K";
@@ -185,16 +185,6 @@ fn deviceName(name: [*:0]const u8, into: *[device_max + 1]u8) ?[*:0]const u8 {
     for (text, 0..) |char, at| into[at] = upper(char);
     into[text.len] = 0;
     return @ptrCast(into);
-}
-
-/// The password's NT hash: MD4 over its UTF-16.
-fn ntHash(cb: *CryptoBase, password: []const u8) [16]u8 {
-    var context: crypto.HashContext = .{};
-    _ = cb.InitHash(&context, crypto.HASH_MD4);
-    for (password) |char| cb.UpdateHash(&context, &[2]u8{ char, 0 }, 2);
-    var digest: [crypto.DIGEST_MAX]u8 = undefined;
-    _ = cb.FinishHash(&context, &digest);
-    return digest[0..16].*;
 }
 
 /// The names of the dialects, ciphers and signing algorithms, as they
@@ -490,7 +480,7 @@ fn mountOne(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8, options: *const G
             _ = Printf(dl, MSG_NOCRYPTO, .{ COMMAND_NAME, @as(u32, CRYPTO_VERSION), @as(u32, CRYPTO_REVISION) });
             return dos.RETURN_FAIL;
         }
-        startup.nt_hash = ntHash(@ptrCast(crypto_lib.?), password);
+        startup.nt_hash = client.ntlm.ntHash(@ptrCast(crypto_lib.?), password);
         startup.flags |= smb.SMBF_HASH;
         sys.CloseLibrary(crypto_lib.?);
     }
@@ -825,7 +815,7 @@ fn listShares(sys: *ExecBase, dl: *DosBase, typed: []const u8, options: *const G
     };
     var hash: [16]u8 = undefined;
     if (given(options.password)) |password| {
-        hash = ntHash(cb, password);
+        hash = client.ntlm.ntHash(cb, password);
         account.nt_hash = hash;
     }
     var result: smb.SmbResult = .{};

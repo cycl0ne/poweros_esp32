@@ -97,7 +97,7 @@ pub const SmbResult = extern struct {
 };
 
 /// The startup message of a share's device node. Every string is
-/// Latin-1 and ends in a NUL.
+/// UTF-8 and ends in a NUL.
 pub const SmbStartup = extern struct {
     /// What every reader of the device list takes it for: no device, and
     /// `environ` at `env`.

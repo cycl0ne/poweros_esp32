@@ -1426,7 +1426,7 @@ test "a fresh GPT: a partition and a container added, the GPT written before the
     try testing.expectEqual(primary.disk_guid, backup.disk_guid);
     try testing.expectEqual(primary.partition_entry_array_crc32, backup.partition_entry_array_crc32);
     try testing.expect(gpt.isContainer(&large.entryOf(&primary, 1)));
-    var name: [gpt.name_units:0]u8 = undefined;
+    var name: [gpt.name_bytes:0]u8 = undefined;
     try testing.expectEqualStrings("Shared", gpt.nameText(&large.entryOf(&backup, 0), &name));
     const table = rig.block(hardblocks.RigidDiskBlock, 4096).*;
     try testing.expect(hardblocks.sound(&table, hardblocks.IDNAME_RIGIDDISK));

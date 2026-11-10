@@ -28,13 +28,12 @@ const negotiate_area = @import("negotiate.zig");
 const logon_area = @import("logon.zig");
 const shares_area = @import("shares.zig");
 const ntlm = @import("ntlm.zig");
-const names = @import("names.zig");
 const Session = session_area.Session;
 const Error = session_area.Error;
 
 /// Who logs on: nothing in it is an anonymous logon.
 pub const Account = struct {
-    /// Latin-1, as the share file and the startup hold them.
+    /// UTF-8, as the share file and the startup hold them.
     user: []const u8 = &.{},
     domain: []const u8 = &.{},
     /// The password's NT hash - MD4 over its UTF-16 - which is all the
@@ -96,16 +95,12 @@ pub fn open(session: *Session, server: [*:0]const u8, port: u16, account: *const
     }
     result.dialect = session.dialect;
 
-    // The user in capitals as NTLMv2 hashes it, and this machine's name
-    // for the server's logs.
-    var user_upper: [smb.SMB_USER_MAX + 1]u8 = undefined;
+    // Who logs on, and this machine's name for the server's logs.
     const user = account.user[0..@min(account.user.len, smb.SMB_USER_MAX)];
-    for (user, 0..) |char, at| user_upper[at] = names.upper(char);
     var host: [64]u8 = @splat(0);
     _ = session.connection.sb.GetHostName(&host, host.len - 1);
     const identity: ntlm.Identity = .{
         .user = user,
-        .user_upper = user_upper[0..user.len],
         .domain = account.domain,
         .workstation = untilNul(&host),
         .nt_hash = account.nt_hash,

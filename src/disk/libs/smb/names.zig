@@ -2,14 +2,15 @@
 //! Names and paths: what dos is given for a server's names, and the
 //! share's path for a dos one.
 //!
-//! **A server's name is UTF-16; a dos name is Latin-1**, up to
-//! `dos.name_max` bytes. A name of Latin-1 characters that fits is given
-//! as it is. Any other is given as a **stand-in**: its Latin-1 characters
-//! kept, every other made `_`, the part before the extension cut to make
-//! room, and `=` and four hex digits of the name's hash put before the
-//! extension - `日本.txt` is `__=4F2A.txt`, as fat-handler shows a name on
-//! exFAT. The hash is exFAT's NameHash over the name as the server spells
-//! it, so the stand-in is the same each time the directory is listed. A
+//! **A server's name is UTF-16; a dos name is UTF-8**, up to
+//! `dos.name_max` bytes. A name that is whole UTF-16 - no surrogate
+//! without its pair - and whose UTF-8 fits is given as it is. Any other
+//! is given as a **stand-in**: its characters in UTF-8, a broken one or
+//! a control `_`, the part before the extension cut where a character
+//! starts to make room, and `=` and four hex digits of the name's hash
+//! put before the extension, as fat-handler shows such a name on exFAT.
+//! The hash is exFAT's NameHash over the name as the server spells it,
+//! so the stand-in is the same each time the directory is listed. A
 //! stand-in opens what it stands for: a path the server does not know
 //! that has a name of a stand-in's shape in it is looked for again, each
 //! such name compared with the stand-ins of the entries in its directory
@@ -48,12 +49,43 @@ pub fn unitAt(name: []const u8, index: usize) u16 {
     return @as(u16, name[2 * index]) | @as(u16, name[2 * index + 1]) << 8;
 }
 
+/// A server's name (UTF-16LE) in UTF-8 onto `into` from `len`: a
+/// character past U+FFFF from its surrogate pair, as many whole ones as
+/// fit before `end`; the new length, or null for a surrogate without its
+/// pair when `strict`, which a stand-in shows as `_` instead, as it does
+/// a control.
+fn written(name: []const u8, into: []u8, len: usize, end: usize, strict: bool) ?usize {
+    const count = name.len / 2;
+    var index: usize = 0;
+    var at = len;
+    while (index < count) {
+        var char: u32 = unitAt(name, index);
+        index += 1;
+        if (char >= 0xD800 and char <= 0xDBFF and index < count and unitAt(name, index) >= 0xDC00 and unitAt(name, index) <= 0xDFFF) {
+            char = 0x10000 + ((char - 0xD800) << 10) + (unitAt(name, index) - 0xDC00);
+            index += 1;
+        } else if (char >= 0xD800 and char <= 0xDFFF) {
+            if (strict) return null;
+            char = '_';
+        } else if (char < 0x20 and !strict) {
+            char = '_';
+        }
+        var bytes: [4]u8 = undefined;
+        const taken = utf8.encode(char, &bytes);
+        if (at + taken > end) {
+            if (strict) return null;
+            break;
+        }
+        @memcpy(into[at..][0..taken], bytes[0..taken]);
+        at += taken;
+    }
+    return at;
+}
+
 /// Whether a server's name can be given to dos as it is.
 pub fn fits(name: []const u8) bool {
-    const count = name.len / 2;
-    if (count == 0 or count > name_max) return false;
-    for (0..count) |index| if (unitAt(name, index) > 0xFF) return false;
-    return true;
+    var buffer: [name_max]u8 = undefined;
+    return name.len >= 2 and written(name, &buffer, 0, buffer.len, true) != null;
 }
 
 /// The hash a stand-in carries: exFAT's NameHash over the name's units.
@@ -64,20 +96,13 @@ pub fn hashOf(name: []const u8) u16 {
     return dos.fat.exfatNameHash(units[0..count]);
 }
 
-/// The name dos is given for a server's name (UTF-16LE): the name if it
-/// fits, else its stand-in.
+/// The name dos is given for a server's name (UTF-16LE): the name in
+/// UTF-8 if it fits, else its stand-in.
 pub fn toDos(name: []const u8, into: *[name_max]u8) []const u8 {
-    const count = name.len / 2;
-    if (fits(name)) {
-        for (0..count) |index| into[index] = @intCast(unitAt(name, index));
-        return into[0..count];
+    if (name.len >= 2) {
+        if (written(name, into, 0, into.len, true)) |len| return into[0..len];
     }
     return standIn(name, into);
-}
-
-/// A character as dos sees it in a stand-in.
-fn shown(unit: u16) u8 {
-    return if (unit <= 0xFF and unit >= 0x20) @intCast(unit) else '_';
 }
 
 /// The stand-in for a name: see the file's header.
@@ -94,24 +119,24 @@ pub fn standIn(name: []const u8, into: *[name_max]u8) []const u8 {
             break;
         }
     }
-    const ext_count = count - ext_start;
-    const room = name_max - tag_len - ext_count;
-    const base_count = @min(ext_start, room);
-
-    var len: usize = 0;
-    for (0..base_count) |index| {
-        into[len] = shown(unitAt(name, index));
-        len += 1;
-    }
+    // The extension's bytes first, to know the room the rest has: at
+    // most four a unit.
+    var ext_bytes: [ext_max * 4]u8 = undefined;
+    const ext_len = written(name[2 * ext_start ..], &ext_bytes, 0, ext_bytes.len, false).?;
+    var len = written(name[0 .. 2 * ext_start], into, 0, name_max - tag_len - ext_len, false).?;
     const hash = hashOf(name);
     const digits = "0123456789ABCDEF";
     into[len] = tag_mark;
     for (0..4) |digit| into[len + 1 + digit] = digits[(hash >> @intCast(12 - digit * 4)) & 0xF];
     len += tag_len;
-    for (ext_start..count) |index| {
-        into[len] = shown(unitAt(name, index));
-        len += 1;
-    }
+    @memcpy(into[len..][0..ext_len], ext_bytes[0..ext_len]);
+    return into[0 .. len + ext_len];
+}
+
+/// A name of a share's path (UTF-16LE) in UTF-8, as dos would be given
+/// it, or null when it is no whole UTF-16 or does not fit.
+pub fn textOf(name: []const u8, into: *[name_max]u8) ?[]const u8 {
+    const len = written(name, into, 0, into.len, true) orelse return null;
     return into[0..len];
 }
 
@@ -138,15 +163,6 @@ fn tagAt(name: []const u8, end: usize) bool {
         else => return false,
     };
     return true;
-}
-
-/// A Latin-1 character in capitals, as dos compares names.
-pub fn upper(char: u8) u8 {
-    return switch (char) {
-        'a'...'z' => char - 0x20,
-        0xE0...0xF6, 0xF8...0xFE => char - 0x20,
-        else => char,
-    };
 }
 
 /// Whether two dos names are the same name, case aside: by Unicode's
@@ -316,15 +332,16 @@ fn pushName(path: *Path, name: []const u8) Error!void {
     try path.push(name);
 }
 
-/// Whether two share paths are the same, case aside over Latin-1.
+/// Whether two share paths are the same, case aside: unit by unit
+/// through Unicode's simple folding, a surrogate as it is.
 pub fn samePath(one: []const u8, other: []const u8) bool {
     if (one.len != other.len) return false;
-    var at: usize = 0;
-    while (at + 1 < one.len) : (at += 2) {
-        if (one[at + 1] != other[at + 1]) return false;
-        if (one[at + 1] == 0) {
-            if (upper(one[at]) != upper(other[at])) return false;
-        } else if (one[at] != other[at]) return false;
+    for (0..one.len / 2) |index| {
+        const unit_one = unitAt(one, index);
+        const unit_other = unitAt(other, index);
+        if (unit_one == unit_other) continue;
+        if (unit_one >= 0xD800 and unit_one <= 0xDFFF) return false;
+        if (sdk.utility.unicode.fold(unit_one) != sdk.utility.unicode.fold(unit_other)) return false;
     }
     return true;
 }
@@ -347,29 +364,29 @@ fn utf16(comptime text: []const u8) []const u8 {
     return std.mem.sliceAsBytes(units);
 }
 
-test "a name that fits is given as it is, another as its stand-in" {
+test "a name is given in UTF-8, one that is no whole UTF-16 as its stand-in" {
     var into: [name_max]u8 = undefined;
-    try testing.expectEqualStrings("Caf\xe9.txt", toDos(utf16("Café.txt"), &into));
-    const shown_name = toDos(utf16("日本.txt"), &into);
-    try testing.expectEqual(@as(usize, 2 + tag_len + 4), shown_name.len);
-    try testing.expect(std.mem.startsWith(u8, shown_name, "__="));
+    try testing.expectEqualStrings("Café.txt", toDos(utf16("Café.txt"), &into));
+    try testing.expectEqualStrings("日本.txt", toDos(utf16("日本.txt"), &into));
+    try testing.expectEqualStrings("\u{1F600}x", toDos(utf16("\u{1F600}x"), &into));
+    const broken = [_]u8{ 'a', 0, 0x00, 0xD8, '.', 0, 't', 0, 'x', 0, 't', 0 };
+    try testing.expect(!fits(&broken));
+    const shown_name = toDos(&broken, &into);
+    try testing.expect(std.mem.startsWith(u8, shown_name, "a_="));
     try testing.expect(std.mem.endsWith(u8, shown_name, ".txt"));
     try testing.expect(looksStandIn(shown_name));
-    try testing.expect(standsFor(utf16("日本.txt"), shown_name));
-    try testing.expect(!standsFor(utf16("日本.doc"), shown_name));
+    try testing.expect(standsFor(&broken, shown_name));
+    try testing.expect(!standsFor(utf16("a.txt"), shown_name));
     // The hash is exFAT's over the units as they are.
-    const units = comptime std.unicode.utf8ToUtf16LeStringLiteral("日本.txt");
+    const units = [_]u16{ 'a', 0xD800, '.', 't', 'x', 't' };
     var expected: [name_max]u8 = undefined;
-    const hash = dos.fat.exfatNameHash(units);
-    _ = std.fmt.bufPrint(&expected, "__={X:0>4}.txt", .{hash}) catch unreachable;
+    const hash = dos.fat.exfatNameHash(&units);
+    _ = std.fmt.bufPrint(&expected, "a_={X:0>4}.txt", .{hash}) catch unreachable;
     try testing.expectEqualStrings(expected[0..shown_name.len], shown_name);
 }
 
-test "stand-ins: no extension, and a name too long for dos" {
+test "stand-ins: a name too long for dos, cut where a character starts" {
     var into: [name_max]u8 = undefined;
-    const plain = toDos(utf16("日本語"), &into);
-    try testing.expectEqual(@as(usize, 3 + tag_len), plain.len);
-    try testing.expect(looksStandIn(plain));
     var long: [2 * 300]u8 = undefined;
     for (0..300) |index| {
         long[2 * index] = 'L';
@@ -378,6 +395,16 @@ test "stand-ins: no extension, and a name too long for dos" {
     const given = toDos(&long, &into);
     try testing.expectEqual(name_max, given.len);
     try testing.expect(looksStandIn(given));
+    // 100 characters of three bytes: 83 fit before the tag.
+    var wide: [2 * 100]u8 = undefined;
+    for (0..100) |index| {
+        wide[2 * index] = 0xE5;
+        wide[2 * index + 1] = 0x65;
+    }
+    const cut = toDos(&wide, &into);
+    try testing.expect(utf8.valid(cut));
+    try testing.expectEqual(@as(usize, 83 * 3 + tag_len), cut.len);
+    try testing.expect(looksStandIn(cut));
     try testing.expect(!looksStandIn("plain.txt"));
     try testing.expect(!looksStandIn("x=12G4.txt"));
 }
@@ -412,6 +439,7 @@ test "a name in a path replaced, longer and shorter; parents and last names" {
     try testing.expectEqualSlices(u8, utf16("three"), lastName(path.slice()));
     try testing.expectEqualSlices(u8, utf16("x"), lastName(utf16("x")));
     try testing.expect(samePath(utf16("Ab\\ä"), utf16("aB\\Ä")));
+    try testing.expect(samePath(utf16("Ωμέγα"), utf16("ΩΜΈΓΑ")));
     try testing.expect(!samePath(utf16("ab"), utf16("abc")));
 }
 

@@ -259,7 +259,7 @@ fn gptVolumes(arena: mem.Allocator, image: []const u8, into: *std.ArrayList(Plac
             continue;
         }
         if (mem.readInt(u32, image[@intCast(start)..][0..4], .little) != layout.label_magic) continue;
-        var name: [gpt.name_units:0]u8 = undefined;
+        var name: [gpt.name_bytes:0]u8 = undefined;
         const text = gpt.nameText(&entry, &name);
         const shown = if (text.len != 0) try arena.dupe(u8, text) else try std.fmt.allocPrint(arena, "partition {d}", .{index + 1});
         try into.append(arena, .{ .offset = start, .length = length, .name = shown });

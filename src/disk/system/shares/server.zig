@@ -16,7 +16,6 @@ const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
 const smb = dos.smb;
-const crypto = sdk.crypto;
 const bsd = sdk.bsdsocket;
 const client = @import("smbclient");
 const browse = client.browse;
@@ -68,12 +67,7 @@ pub const Account = struct {
     /// The password hashed and forgotten: the hash is all a logon needs,
     /// and all that is ever written down.
     pub fn takePassword(account: *const Account, cb: *CryptoBase) [16]u8 {
-        var context: crypto.HashContext = .{};
-        _ = cb.InitHash(&context, crypto.HASH_MD4);
-        for (words.untilNul(&account.password)) |char| cb.UpdateHash(&context, &[2]u8{ char, 0 }, 2);
-        var digest: [crypto.DIGEST_MAX]u8 = undefined;
-        _ = cb.FinishHash(&context, &digest);
-        return digest[0..16].*;
+        return client.ntlm.ntHash(cb, words.untilNul(&account.password));
     }
 
     pub fn forgetPassword(account: *Account) void {

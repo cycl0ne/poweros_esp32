@@ -342,7 +342,7 @@ fn gptPartitionNamed(run: *Run, handle: *rdb.RDBHandle, name: [*:0]const u8) ?*r
     const wanted = name[0..shared.length(name)];
     var part = run.rb.NextGPTPartition(handle, null);
     while (part) |one| : (part = run.rb.NextGPTPartition(handle, one)) {
-        var text: [gpt.name_units:0]u8 = @splat(0);
+        var text: [gpt.name_bytes:0]u8 = @splat(0);
         _ = gpt.nameText(&one.entry, &text);
         const got: [*:0]const u8 = @ptrCast(&text);
         if (sameText(got, wanted)) return one;

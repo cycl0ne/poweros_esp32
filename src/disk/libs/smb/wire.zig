@@ -12,6 +12,14 @@
 //! **A reader or a writer that runs off its bytes** reads zeros or writes
 //! nothing from then on and remembers it, so a message is checked once,
 //! at its end, instead of field by field.
+//!
+//! **Text goes out as UTF-16**, read as text is read (sdk.utility.utf8):
+//! UTF-8 as its characters, a byte that is no UTF-8 as its Latin-1
+//! character, one past U+FFFF as its surrogate pair.
+
+const sdk = @import("sdk");
+const utf8 = sdk.utility.utf8;
+const unicode = sdk.utility.unicode;
 
 /// The header's size, which is where every command's own fields begin.
 pub const header_size: usize = 64;
@@ -278,13 +286,62 @@ pub const Writer = struct {
 
 // --- names ---------------------------------------------------------------------
 
-/// `text` (Latin-1) as UTF-16 - which for Latin-1 is each byte widened -
-/// written little-endian.
-pub fn latin1(writer: *Writer, text: []const u8) void {
-    for (text) |char| writer.uint16(char);
+/// `text` as UTF-16, written little-endian.
+pub fn utf16(writer: *Writer, text: []const u8) void {
+    writeText(writer, text, false);
+}
+
+/// `text` in capitals as UTF-16, each character by Unicode's simple
+/// upper case: how NTLMv2 hashes a user's name.
+pub fn utf16Upper(writer: *Writer, text: []const u8) void {
+    writeText(writer, text, true);
+}
+
+fn writeText(writer: *Writer, text: []const u8, capitals: bool) void {
+    var at: usize = 0;
+    while (at < text.len) {
+        var char = utf8.next(text, &at);
+        if (capitals) char = unicode.upper(char);
+        var units: [2]u16 = undefined;
+        for (units[0..unitsOf(char, &units)]) |unit| writer.uint16(unit);
+    }
+}
+
+/// How many UTF-16 units `text` takes.
+pub fn utf16Length(text: []const u8) usize {
+    var count: usize = 0;
+    var at: usize = 0;
+    while (at < text.len) count += if (utf8.next(text, &at) > 0xFFFF) 2 else 1;
+    return count;
+}
+
+/// A character's UTF-16 units: one, or a surrogate pair past U+FFFF.
+pub fn unitsOf(char: u32, into: *[2]u16) usize {
+    if (char <= 0xFFFF) {
+        into[0] = @intCast(char);
+        return 1;
+    }
+    const above = char - 0x10000;
+    into[0] = @intCast(0xD800 + (above >> 10));
+    into[1] = @intCast(0xDC00 + (above & 0x3FF));
+    return 2;
 }
 
 const testing = @import("std").testing;
+
+test "text goes out in UTF-16: UTF-8 and Latin-1 alike, past U+FFFF as a pair, capitals by Unicode" {
+    var room: [64]u8 = undefined;
+    var writer: Writer = .{ .bytes = &room };
+    utf16(&writer, "Gr\xC3\xBCn\xE2\x82\xAC\xF0\x9F\x98\x80");
+    try testing.expectEqualSlices(u8, &.{ 'G', 0, 'r', 0, 0xFC, 0, 'n', 0, 0xAC, 0x20, 0x3D, 0xD8, 0x00, 0xDE }, writer.written());
+    var latin: Writer = .{ .bytes = &room };
+    utf16(&latin, "Gr\xFCn");
+    try testing.expectEqualSlices(u8, &.{ 'G', 0, 'r', 0, 0xFC, 0, 'n', 0 }, latin.written());
+    var capitals: Writer = .{ .bytes = &room };
+    utf16Upper(&capitals, "j\xC3\xBCrgen\xCF\x89");
+    try testing.expectEqualSlices(u8, &.{ 'J', 0, 0xDC, 0, 'R', 0, 'G', 0, 'E', 0, 'N', 0, 0xA9, 0x03 }, capitals.written());
+    try testing.expectEqual(@as(usize, 6), utf16Length("Gr\xC3\xBCn\xF0\x9F\x98\x80"));
+}
 
 test "a header written and read back is the same, sync and async" {
     var bytes: [header_size]u8 = undefined;

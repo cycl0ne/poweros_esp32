@@ -217,8 +217,8 @@ pub fn connectPipes(session: *Session, server: []const u8) session_area.Error!Ou
 ///
 /// INPUTS:
 /// - `session` - logged on.
-/// - `server` - the server's name as the mount gives it, Latin-1.
-/// - `share` - the share's, Latin-1.
+/// - `server` - the server's name as the mount gives it.
+/// - `share` - the share's, in UTF-8.
 /// - `want` - SHARE_TYPE_DISK or SHARE_TYPE_PIPE.
 pub fn connectShare(session: *Session, server: []const u8, share: []const u8, want: u8) session_area.Error!Outcome {
     var request = session.begin(.tree_connect);
@@ -227,11 +227,11 @@ pub fn connectShare(session: *Session, server: []const u8, share: []const u8, wa
     writer.uint16(9);
     writer.uint16(0); // Flags
     writer.uint16(@intCast(wire.header_size + 8)); // PathOffset
-    writer.uint16(@intCast(2 * (3 + server.len + share.len)));
-    wire.latin1(writer, "\\\\");
-    wire.latin1(writer, server);
-    wire.latin1(writer, "\\");
-    wire.latin1(writer, share);
+    writer.uint16(@intCast(2 * (3 + wire.utf16Length(server) + wire.utf16Length(share))));
+    wire.utf16(writer, "\\\\");
+    wire.utf16(writer, server);
+    wire.utf16(writer, "\\");
+    wire.utf16(writer, share);
     var replies = session_area.noReplies();
     try session.exchange(&request, &replies);
     const reply = &replies[0];

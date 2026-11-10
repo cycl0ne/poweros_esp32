@@ -18,7 +18,7 @@
 //! | `ntlm.zig`, `spnego.zig` | NTLMv2 and the token it is carried in |
 //! | `logon.zig` | SESSION_SETUP and TREE_CONNECT |
 //! | `commands.zig` | CREATE, READ, WRITE, QUERY_DIRECTORY, QUERY_INFO, SET_INFO, IOCTL, ECHO, CLOSE |
-//! | `names.zig` | names between Latin-1 and the UTF-16 the protocol speaks |
+//! | `names.zig` | names between UTF-8 and the UTF-16 the protocol speaks |
 //! | `rpc.zig` | DCE/RPC over a named pipe, and the NDR its arguments are in |
 //! | `shares.zig` | the shares a server has, asked of `srvsvc` |
 //! | `browse.zig` | a session brought up from nothing: connect, negotiate, log on, and the share or the shares |

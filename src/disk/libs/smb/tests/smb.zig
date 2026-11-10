@@ -88,13 +88,13 @@ test "NTLMv2: MS-NLMP 4.2.4's keys and responses" {
 
     const nt_hash = ntlm.ntHash(cb, "Password");
     try testing.expectEqualSlices(u8, &hex("a4f49c406510bdcab6824ee7c30fd852"), &nt_hash);
-    const key = ntlm.responseKey(cb, nt_hash, "USER", "Domain");
+    const key = ntlm.responseKey(cb, nt_hash, "User", "Domain");
     try testing.expectEqualSlices(u8, &hex("0c868a403bfd7a93a3001ef22ef02e3f"), &key);
 
     var challenge_bytes: [128]u8 = undefined;
     const challenge = ntlm.Challenge.parse(exampleChallenge(&challenge_bytes)).?;
     try testing.expectEqual(@as(?u64, null), challenge.timestamp);
-    const identity: ntlm.Identity = .{ .user = "User", .user_upper = "USER", .domain = "Domain", .workstation = "COMPUTER", .nt_hash = nt_hash };
+    const identity: ntlm.Identity = .{ .user = "User", .domain = "Domain", .workstation = "COMPUTER", .nt_hash = nt_hash };
     const inventions: ntlm.Inventions = .{
         .client_challenge = @splat(0xAA),
         .random_session_key = @splat(0x55),
@@ -146,7 +146,7 @@ test "NTLMv2: a server's time in the target info, and an anonymous logon" {
     const inventions: ntlm.Inventions = .{ .client_challenge = @splat(0xAA), .random_session_key = @splat(0x55), .time = 0 };
     var room: [512]u8 = undefined;
     var out: wire.Writer = .{ .bytes = &room };
-    const identity: ntlm.Identity = .{ .user = "User", .user_upper = "USER", .domain = "Domain", .nt_hash = ntlm.ntHash(cb, "Password") };
+    const identity: ntlm.Identity = .{ .user = "User", .domain = "Domain", .nt_hash = ntlm.ntHash(cb, "Password") };
     _ = ntlm.authenticate(cb, &out, &identity, &challenge, &inventions).?;
     // With the server's time, LM is 24 zeros and the blob has that time.
     try testing.expectEqualSlices(u8, &([_]u8{0} ** 24), fieldOf(out.written(), 12));
