@@ -524,10 +524,10 @@ pub const profile: spirv.Profile = .{
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform },
     .image_dims = &.{ .dim_2d, .dim_3d, .cube },
     // A bias, a level and a constant texel offset, TMUB's and P2's
-    // (handle_tex_src, v3d_tex.c:129-170; since 1.180). A gradient is
-    // nir_lower_tex's lower_txd (vir.c:802), not ported, and an offset
-    // the program computes wants ImageGatherExtended.
-    .image_operands = &.{ .bias, .lod, .const_offset },
+    // (handle_tex_src, v3d_tex.c:129-170; since 1.180); and a gradient,
+    // which nir_lower_tex's lower_txd makes a level (vir.c:802; since
+    // 1.183). An offset the program computes wants ImageGatherExtended.
+    .image_operands = &.{ .bias, .lod, .grad, .const_offset },
     // The vertex stage since 1.163 (docs/facet-vulkan10.md item 60).
     .stages = &.{ .fragment, .vertex },
     .most_ids = most_ids,
@@ -8475,8 +8475,12 @@ fn isIntegerType(work: *const Work, type_id: u16) bool {
 /// the one float a source of its own (`Lookup`); a ConstOffset is the
 /// texels a constant integer vector moves the sample by, as many as the
 /// image's coordinate names but a layer (since 1.180). `look` has held
-/// the operands to the profile's: no Grad, and no offset the program
-/// computes.
+/// the operands to the profile's: no offset the program computes.
+///
+/// A Grad is vtn's txd, its two derivatives sources of their own
+/// (spirv_to_nir.c:3441-3448), of an explicit level's sample with no Bias
+/// or Lod. v3d lowers every txd (`lower_txd`, vir.c:802; nir_lower_tex.c:
+/// 1833-1847), so it is the txl `gradientLevel` makes here (since 1.183).
 ///
 /// An OpImageFetch has an Image where a sample has its SampledImage, an
 /// integer coordinate, and its Lod: vtn's txf with the lod a source
@@ -8511,8 +8515,9 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
         var next = fixed + 1;
         const bias = @intFromEnum(spirv.ImageOperands.bias);
         const lod = @intFromEnum(spirv.ImageOperands.lod);
+        const grad = @intFromEnum(spirv.ImageOperands.grad);
         const const_offset = @intFromEnum(spirv.ImageOperands.const_offset);
-        if (mask & ~(bias | lod | const_offset) != 0) return Error.Operands;
+        if (mask & ~(bias | lod | grad | const_offset) != 0) return Error.Operands;
         if (mask & (bias | lod) != 0) {
             if (next >= operands.len) return Error.Body;
             // A bias is an implicit level's and a level an explicit
@@ -8522,6 +8527,15 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
             made.from[0] = try operand(work, operands[next], .f32x1);
             next += 1;
         }
+        if (mask & grad != 0) {
+            // A txd is a txl's (spirv_to_nir.c:3442), not a fetch's, and
+            // SPIR-V gives a sample one of Bias, Lod and Grad.
+            if (next + 1 >= operands.len) return Error.Body;
+            if (!explicit or fetch or mask & (bias | lod) != 0) return Error.Body;
+            made.lookup = .lod;
+            made.from[0] = try gradientLevel(work, which, dim, operands[next], operands[next + 1]);
+            next += 2;
+        }
         if (mask & const_offset != 0) {
             if (next >= operands.len) return Error.Body;
             made.offsets = try texelOffsets(work, operands[next], dim);
@@ -8529,13 +8543,53 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
         }
         if (next != operands.len) return Error.Body;
     }
-    // An explicit level's sample has its Lod, or a Grad `look` refuses;
-    // a fetch its Lod (since 1.182).
+    // An explicit level's sample has its Lod or its Grad (since 1.183); a
+    // fetch its Lod (since 1.182).
     if (explicit and made.lookup != if (fetch) Lookup.fetch else Lookup.lod) return Error.Operands;
     const at = try put(work, made);
     work.step_of[id] = at;
     if (work.sampled == none) work.sampled = at;
     work.sample_count += 1;
+}
+
+/// lower_gradient (nir_lower_tex.c:855-912): the level a gradient's
+/// sample is taken at, which replace_gradient_with_lod makes the txl's
+/// lod (:690-704). The size of level 0, a txs at the integer 0
+/// (build_texture_size, :112-118; nir_get_texture_size,
+/// nir_builtin_builder.c:459-466), of nir_tex_instr_dest_size's integers,
+/// the first two of an array's (`component_mask`), made floats; each
+/// derivative times it; the longer of the two, each the square root of
+/// its dot with itself; and that length's logarithm to 2. A derivative
+/// has as many floats as the coordinate names but a layer.
+///
+/// A cube's gradient is lower_gradient_cube_map's (:707-852), its
+/// derivatives through the quotient rule onto the face: not ported
+/// (since 1.183).
+fn gradientLevel(work: *Work, which: u16, dim: SamplerDim, dx: u32, dy: u32) Error!u16 {
+    if (dim == .cube) return Error.Operands;
+    const count: u8 = if (dim == .layers) 2 else dim.components();
+    const kind = std.enums.fromInt(Kind, count) orelse return Error.Type;
+    const ddx = try operand(work, dx, kind);
+    const ddy = try operand(work, dy, kind);
+    const sizes: Kind = if (dim == .flat) .f32x2 else .f32x3;
+    const size = try put(work, .{ .tag = .texture_size, .kind = sizes, .at = which, .from = .{ try immediate(work, 0.0), 0, 0, 0 } });
+    // nir_channels of the i2f32 (:881-884): an array's layers are read
+    // by nothing, and nir_opt_dce takes them out once
+    // nir_lower_alu_to_scalar has made each float its own
+    // (nir_to_vir.c:2259).
+    var floats = try integerOf(work, .i2f32, size, null);
+    if (sizes.parts() != count) {
+        var first: Step = .{ .tag = .construct, .kind = kind };
+        for (0..count) |k| {
+            first.from[k] = floats;
+            first.part[k] = @intCast(k);
+        }
+        floats = try put(work, first);
+    }
+    const across = try binary(work, .mul, ddx, floats);
+    const down = try binary(work, .mul, ddy, floats);
+    const rho = try binary(work, .max, try lengthOf(work, across), try lengthOf(work, down));
+    return unary(work, .log2, rho);
 }
 
 /// A ConstOffset: a constant integer, or vector of them, of as many as
@@ -11000,9 +11054,10 @@ test "a sample at a level the program gives wants no helper pixels for its coord
 }
 
 test "a sample's image operands are refused for what the device does not take, and for what SPIR-V forbids" {
-    // A gradient: nir_lower_tex's lower_txd (vir.c:802), not ported.
+    // A cube's gradient: lower_gradient_cube_map (nir_lower_tex.c:
+    // 707-852), not ported (since 1.183; until then any gradient).
     var work: Work = .{};
-    try testing.expectError(Error.Operands, throughMesa(&work, &reference.glslc_grad));
+    try testing.expectError(Error.Operands, throughMesa(&work, &reference.glslc_grad_cube));
     // An offset past V3D_MAX_TEXEL_OFFSET, which P2's four bits would
     // wrap: the -2 of glslc_offset made -9 is refused, not cut.
     var far = reference.glslc_offset;
@@ -11308,6 +11363,163 @@ test "a texel in a selection's arm keeps the arm, as any tex instruction does" {
     try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmusf, "));
 }
 
+test "a gradient is lower_gradient's level: the size of level 0 made floats, the longer derivative's length, its LOG to TMUB and TMUSLOD" {
+    // vtn's txd (spirv_to_nir.c:3441-3448) lowered by lower_txd
+    // (vir.c:802; nir_lower_tex.c:855-912): a txs at the integer 0, its
+    // i2f32, each derivative times it, fmax of the two fsqrt of fdot -
+    // frcp of frsq (`lower_fsqrt`) - and flog2, the txl's lod (:690-704;
+    // since 1.183).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_grad_varying);
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
+    const width: Word = .{ .texture_size = .{ .field = .width } };
+    const height: Word = .{ .texture_size = .{ .field = .height } };
+    try testing.expectEqualSlices(Word, &[_]Word{ width, height, .{ .texture = 0 }, sampler }, code.stream());
+    var sizes: usize = 0;
+    for (work.program()) |each| switch (each.tag) {
+        .texture_size => {
+            // nir_tex_instr_dest_size's two of a 2D image.
+            try testing.expectEqual(Kind.f32x2, each.kind);
+            try testing.expect(isSplat(&work, each.from[0], 0.0));
+            sizes += 1;
+        },
+        .sample => {
+            try testing.expectEqual(Lookup.lod, each.lookup);
+            try testing.expectEqual(Tag.log2, work.steps[each.from[0]].tag);
+            try testing.expectEqual(Tag.max, work.steps[work.steps[each.from[0]].a].tag);
+        },
+        else => {},
+    };
+    try testing.expectEqual(@as(usize, 1), sizes);
+    try testing.expectEqual(@as(usize, 2), countOf(code, "shr "));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "itof "));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "rsqrt "));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "recip "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "fmax "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "log "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmub, "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmuslod, "));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "mov tmus, "));
+    // Four FADDs of the varyings, and one of each dot.
+    try testing.expectEqual(@as(usize, 6), countOf(code, "fadd "));
+    // glslc_grad's constant derivatives each have a zero, whose product
+    // the rules take out: no FADD in either dot, and the 0.01 a uniform.
+    var constant: Work = .{};
+    const constant_code = try throughMesa(&constant, &reference.glslc_grad);
+    const hundredth: Word = .{ .float = @bitCast(@as(f32, 0.01)) };
+    try testing.expectEqualSlices(Word, &[_]Word{ width, height, hundredth, .{ .texture = 0 }, sampler }, constant_code.stream());
+    try testing.expectEqual(@as(usize, 2), countOf(constant_code, "fadd "));
+    try testing.expectEqual(@as(usize, 2), countOf(constant_code, "rsqrt "));
+    // The plan's programs compute no size, and refuse the txs.
+    var plan: Work = .{};
+    try testing.expectError(Error.Samplers, compile(&plan, &reference.glslc_grad_varying));
+}
+
+test "a gradient of an array's layer reads the first two sizes, of a 3D texture three, and one with an offset has P2" {
+    // lower_gradient's component_mask (nir_lower_tex.c:868-884): an
+    // array's layers are no axis a derivative has (since 1.183).
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
+    const width: Word = .{ .texture_size = .{ .field = .width } };
+    const height: Word = .{ .texture_size = .{ .field = .height } };
+    var layers: Work = .{};
+    const layers_code = try throughMesa(&layers, &reference.glslc_grad_layers);
+    try testing.expectEqualSlices(Word, &[_]Word{ width, height, .{ .texture = 0 }, sampler }, layers_code.stream());
+    // The array's three integers made three floats, and two of them
+    // taken: every product of a derivative is of one kind.
+    var converted: usize = 0;
+    for (layers.program()) |each| switch (each.tag) {
+        .texture_size => try testing.expectEqual(Kind.f32x3, each.kind),
+        .integer => if (each.at == @intFromEnum(Integer.i2f32)) {
+            try testing.expectEqual(Kind.f32x3, each.kind);
+            converted += 1;
+        },
+        .mul => {
+            const b = layers.steps[each.b].kind;
+            try testing.expect(b == each.kind or b == .f32x1);
+        },
+        else => {},
+    };
+    try testing.expectEqual(@as(usize, 1), converted);
+    try testing.expectEqual(@as(usize, 1), countOf(layers_code, "mov tmui, "));
+    try testing.expectEqual(@as(usize, 1), countOf(layers_code, "mov tmuslod, "));
+    var volume: Work = .{};
+    const volume_code = try throughMesa(&volume, &reference.glslc_grad_volume);
+    const depth: Word = .{ .texture_size = .{ .field = .depth } };
+    try testing.expectEqualSlices(Word, &[_]Word{ width, height, depth, .{ .texture = 0 }, sampler }, volume_code.stream());
+    try testing.expectEqual(@as(usize, 3), countOf(volume_code, "shr "));
+    try testing.expectEqual(@as(usize, 1), countOf(volume_code, "mov tmur, "));
+    try testing.expectEqual(@as(usize, 1), countOf(volume_code, "mov tmuslod, "));
+    // The txl keeps the txd's offset (replace_gradient_with_lod, :690-704).
+    var offset: Work = .{};
+    const offset_code = try throughMesa(&offset, &reference.glslc_grad_offset);
+    const p2: Word = .{ .float = @bitCast(@as(u32, 0x00F0E100)) };
+    try testing.expectEqualSlices(Word, &[_]Word{ width, height, .{ .texture = 0 }, sampler, p2 }, offset_code.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(offset_code, "mov tmuslod, "));
+}
+
+test "a shadow sample with a gradient compares at the level the gradient gives" {
+    // lower_txd lowers a shadow txd as any (nir_lower_tex.c:1833-1847):
+    // TMUDREF, the level to TMUB, TMUSLOD (since 1.183).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_grad_shadow);
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
+    const width: Word = .{ .texture_size = .{ .field = .width } };
+    const height: Word = .{ .texture_size = .{ .field = .height } };
+    try testing.expectEqualSlices(Word, &[_]Word{ width, height, .{ .texture = 0 }, sampler }, code.stream());
+    try testing.expectEqual(@as(usize, 1), code.sampled().len);
+    try testing.expect(code.sampled()[0].compared);
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmudref, "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmub, "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmuslod, "));
+}
+
+test "two gradients of one texture read its size once, the two txs one by nir_opt_cse" {
+    // Each txd's lowering makes a txs at level 0 of its texture
+    // (nir_get_texture_size, nir_builtin_builder.c:459-466), and
+    // nir_opt_cse makes the second the first (nir_to_vir.c:2265; since
+    // 1.183).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_grad_twice);
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
+    const width: Word = .{ .texture_size = .{ .field = .width } };
+    const height: Word = .{ .texture_size = .{ .field = .height } };
+    try testing.expectEqualSlices(Word, &[_]Word{ width, height, .{ .texture = 0 }, sampler, .{ .texture = 0 }, sampler }, code.stream());
+    try testing.expectEqual(@as(usize, 2), countOf(code, "shr "));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "log "));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "mov tmuslod, "));
+}
+
+test "a gradient is refused on a cube, on an implicit level's sample and on a fetch" {
+    // lower_gradient_cube_map is not ported (since 1.183).
+    var work: Work = .{};
+    try testing.expectError(Error.Operands, throughMesa(&work, &reference.glslc_grad_cube));
+    // vtn asserts a txd is a txl (spirv_to_nir.c:3442): glslc_grad_varying's
+    // OpImageSampleExplicitLod made OpImageSampleImplicitLod.
+    var implicit = reference.glslc_grad_varying;
+    var rewritten: usize = 0;
+    for (&implicit) |*word| if (word.* & 0xFFFF == 88) {
+        word.* = word.* & 0xFFFF0000 | 87;
+        rewritten += 1;
+    };
+    try testing.expectEqual(@as(usize, 1), rewritten);
+    var made: Work = .{};
+    try testing.expectError(Error.Body, throughMesa(&made, &implicit));
+    // And glslc_fetch's Lod made a Grad of the level and the coordinate.
+    var fetch = reference.glslc_fetch;
+    const at = std.mem.indexOfScalar(u32, &fetch, 0x0007005F).?;
+    try testing.expectEqual(@as(u32, 2), fetch[at + 5]);
+    var grad: [fetch.len + 1]u32 = undefined;
+    for (0..at) |k| grad[k] = fetch[k];
+    grad[at] = 0x0008005F;
+    for (1..5) |k| grad[at + k] = fetch[at + k];
+    grad[at + 5] = 4;
+    grad[at + 6] = fetch[at + 6];
+    grad[at + 7] = fetch[at + 4];
+    for (at + 7..fetch.len) |k| grad[k + 1] = fetch[k];
+    var fetched: Work = .{};
+    try testing.expectError(Error.Body, throughMesa(&fetched, &grad));
+}
+
 test "through Mesa's back end, a texel times the colour reads the texel's halves in its products" {
     var work: Work = .{};
     const code = try throughMesa(&work, Modulated.words);
@@ -11391,7 +11603,7 @@ test "through Mesa's back end, what does not fit 4 threads is compiled at 2, whe
 
 test "through Mesa's back end, a module is refused for what the reading refuses, by the same name" {
     var work: Work = .{};
-    try testing.expectError(Error.Operands, throughMesa(&work, &reference.glslc_grad));
+    try testing.expectError(Error.Operands, throughMesa(&work, &reference.glslc_grad_cube));
     try testing.expectError(Error.Stage, throughMesa(&work, &vertex_words));
     try testing.expectError(Error.Varyings, throughMesa(&work, Wide.words));
     try testing.expectError(Error.Refused, throughMesa(&work, &flat_words));
@@ -11722,7 +11934,7 @@ test "compileThroughMesa makes what compileVir does, its memory given back" {
     }
     // And a refusal gives back the register sets it was made after.
     var work: Work = .{};
-    try testing.expectError(Error.Operands, compileThroughMesa(&work, &reference.glslc_grad, testing.allocator, .{}));
+    try testing.expectError(Error.Operands, compileThroughMesa(&work, &reference.glslc_grad_cube, testing.allocator, .{}));
 }
 
 /// glslc's float arithmetic (`reference.glslc_arith`) as facet's emitter

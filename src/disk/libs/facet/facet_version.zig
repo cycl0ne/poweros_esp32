@@ -5939,4 +5939,45 @@ pub const LIBRARY_VERSION = 1;
 /// the centres of texels, where no rounding of the place crosses an edge,
 /// it is 0, so the 136 were places near an edge that the V3D and the
 /// cores rounded to either side, not the fetch.
-pub const LIBRARY_REVISION = 182;
+///
+/// 183: **A sample with a gradient, on the V3D by a compiled program
+/// (docs/facet-vulkan10.md item 59).** The profile takes the image
+/// operand Grad: vtn's txd, its two derivatives sources of their own
+/// (spirv_to_nir.c:3441-3448), of an explicit level's sample with no Bias
+/// or Lod. v3d lowers every txd (`lower_txd`, vir.c:802;
+/// nir_lower_tex.c:1833-1847), and lower_gradient (:855-912) is ported as
+/// it reads: a txs at the integer 0 (build_texture_size, :112-118;
+/// nir_get_texture_size, nir_builtin_builder.c:459-466) of
+/// nir_tex_instr_dest_size's integers, their i2f32, the first two of an
+/// array's (`component_mask`, :868-884); each derivative times it; fmax
+/// of the two fsqrt of the fdot of each with itself, frcp of frsq by
+/// `lower_fsqrt`; and flog2, the txl's lod (replace_gradient_with_lod,
+/// :690-704), which v3d writes to TMUB and starts at TMUSLOD as any
+/// explicit level's. A shadow sample's gradient is lowered as any, and an
+/// offset kept. Two gradients of one texture read its size once, the two
+/// txs one by nir_opt_cse. A cube's gradient, lower_gradient_cube_map's
+/// (:707-852), is refused, not ported; and so is a gradient on an
+/// implicit level's sample or a fetch.
+///
+/// Tests: the V3D's 291, five new. 7 new modules of glslc's:
+/// glslc_grad_varying's two sizes, SHR and MAX, two ITOF, two RSQRT and
+/// RECIP, an FMAX and a LOG to TMUB; glslc_grad_layers' first two sizes
+/// of three, glslc_grad_volume's three; glslc_grad_shadow's TMUDREF;
+/// glslc_grad_offset's P2; glslc_grad_twice's one size; glslc_grad_cube
+/// refused. glslc_grad, refused until now, has its zero products taken
+/// out. Of 18 mutations of the port, 18 fail the tests: three first did
+/// only since a test checks the width of the txs, every product's kind,
+/// and a variant that compiles.
+///
+/// On the CM5 FacetBoth's 259 cases are each as they were at 1.182, and
+/// its four new are glslc's textureGrad of the texture of levels, levels
+/// 0 to 3 mixed, 6 of 230400 pixels apart, 3 at worst, and the nearest,
+/// 429 apart; of the array's layer 2, mixed, 2 apart, 3 at worst; and
+/// textureGradOffset (1, -2) texels away, the nearest, 191 apart. Where
+/// the nearest are apart is thin lines, the contours where the level is
+/// a half: there the V3D's level - its RSQRT, RECIP and LOG, and the
+/// TMU's own rounding of it - and the cores' exact one fall either side
+/// in a pixel or two, as textureLod's nearest is apart, of an exact
+/// level, where it is within a few thousandths of 1.5. FacetProbe passes
+/// its 890 checks.
+pub const LIBRARY_REVISION = 183;

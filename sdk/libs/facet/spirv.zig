@@ -339,8 +339,8 @@ pub const ImageOperands = enum(u32) {
     min_lod = 128,
     _,
 
-    /// How many ids follow the mask for this one. Every operand a profile
-    /// here takes carries one; `grad` carries two, and is not taken.
+    /// How many ids follow the mask for this one: `grad` two, the
+    /// derivatives along x and along y, and every other one id.
     pub fn ids(operand: ImageOperands) u32 {
         return switch (operand) {
             .grad => 2,
