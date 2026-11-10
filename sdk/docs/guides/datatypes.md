@@ -226,7 +226,10 @@ drawn, clip paths and masks are passed over - what they would cut is
 drawn whole - and an element with a filter is left out with all that
 is in it. A picture too large to keep is drawn smaller, as any is.
 `scripts/svg-compare.sh` draws the Tango icons both ways - here and by
-rsvg-convert - and says how far apart each pair is.
+rsvg-convert - and says how far apart each pair is. `C:test/DTTime
+<file> ...` times how long any file takes to be made into its object,
+and for an animation - a Lottie file's among them - how long each frame
+takes its class to draw; the 64-bit machines' disks have it.
 
 `PDTM_READPIXELARRAY` hands a rectangle of it back in whichever
 shape the program wants - `PBPAFMT_RGB`, `PBPAFMT_RGBA`, `PBPAFMT_ARGB`
