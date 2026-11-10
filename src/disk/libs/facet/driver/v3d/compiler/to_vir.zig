@@ -249,6 +249,9 @@ const If = struct {
 /// ldunifas that read nothing (MAX_UNIFA_SKIP_DISTANCE,
 /// v3d_compiler.h:69).
 const max_unifa_skip_distance = 16;
+/// V3D_CHANNELS (v3d_limits.h): the lanes of a QPU, each a word of every
+/// float in scratch (since 1.177).
+const vir_channels = 16;
 
 /// v3d_compile (vir.c:2605): the steps compiled under each strategy in
 /// turn until one gives every temporary a register. Each attempt starts
@@ -321,17 +324,30 @@ fn nirToVir(e: *Emit) Error!void {
     // A vertex program's inputs are loaded where the body reads them, and
     // it reads no instance, base instance or vertex id
     // (ntq_setup_vs_inputs, nir_to_vir.c:2385-2433; since 1.163).
-    if (c.stage == .vertex) return emitBlock(e);
+    if (c.stage == .vertex) {
+        try setupScratch(e);
+        return emitBlock(e);
+    }
     e.start_msf = try c.add(.msf, .{});
     // W is rf3 on 7.1, and rf0 before it.
     e.payload_w = try c.mul(.mov, .{vir.reg(.reg, 3)});
     e.payload_w_centroid = try c.mul(.mov, .{vir.reg(.reg, 1)});
     e.payload_z = try c.mul(.mov, .{vir.reg(.reg, 2)});
     // No primitive id, point or line coordinate is in the profile.
+    try setupScratch(e);
     try setupFsInputs(e);
     // ntq_setup_outputs: the colour is location 0, which needs nothing
     // emitted.
     try emitBlock(e);
+}
+
+/// Where the program keeps variables in scratch: spill_base worked out
+/// at its start, and the scratch's bytes of each lane in the spill buffer
+/// before any spill's (nir_to_vir.c:4997-5000; since 1.177).
+fn setupScratch(e: *Emit) Error!void {
+    if (e.work.scratch_size == 0) return;
+    try allocate.setupSpillBase(e.c);
+    e.c.spill_size += vir_channels * e.work.scratch_size;
 }
 
 /// ntq_setup_fs_inputs (nir_to_vir.c:2503): each varying in the order of
@@ -633,6 +649,9 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         // ssbo_atomic and ssbo_atomic_swap, through the TMU too
         // (:3645-3649; since 1.169), whose LDTMU defines the word.
         .ssbo_atomic => return emitTmuGeneral(e, each, at),
+        // load_scratch and store_scratch, through the TMU from
+        // spill_base (:3657-3668; since 1.177).
+        .scratch, .scratch_indirect, .scratch_store => return emitTmuGeneral(e, each, at),
         // A barrier: what the TMU holds flushed (:3857-3861; since 1.169).
         .barrier => try flushTmu(e),
         // A kept selection (since 1.171).
@@ -1183,7 +1202,7 @@ fn coalescable(e: *const Emit, branch: *const Branch, of: compile.Float, side: u
     const made = switch (each.tag) {
         .add, .mul, .sub, .min, .max, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .set_less, .integer, .round_to_int, .input => true,
         .select => !compile.isBool(e.work, of.step),
-        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_atomic => scalar,
+        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_atomic, .scratch, .scratch_indirect => scalar,
         else => false,
     };
     if (!made) return false;
@@ -1559,7 +1578,7 @@ fn writable(e: *const Emit, each: Step) bool {
 /// caches to be cleaned (tmu_dirty_rcl, :532-533).
 fn emitTmuGeneral(e: *Emit, each: Step, at: u16) Error!void {
     const c = e.c;
-    const is_store = each.tag == .ssbo_store;
+    const is_store = each.tag == .ssbo_store or each.tag == .scratch_store;
     const is_atomic = each.tag == .ssbo_atomic;
     const tmu_op = if (is_atomic) atomicTmuOp(e, each) else tmu_op_regular;
     // An iadd made an increment or a decrement writes no operand
@@ -1569,13 +1588,18 @@ fn emitTmuGeneral(e: *Emit, each: Step, at: u16) Error!void {
     if (is_store or is_atomic) c.tmu_dirty_rcl = true;
     // The offset's step where it is computed, and else the constant one.
     const offset_src: u16 = switch (each.tag) {
-        .ubo_indirect, .ssbo_indirect => each.a,
-        .ssbo_store, .ssbo_atomic => each.from[0],
+        .ubo_indirect, .ssbo_indirect, .scratch_indirect => each.a,
+        .ssbo_store, .ssbo_atomic, .scratch_store => each.from[0],
         else => compile.none,
     };
     const dynamic_src = offset_src != compile.none;
     const const_offset: u32 = if (dynamic_src) 0 else each.at;
-    const base_offset = if (each.tag == .ubo_indirect)
+    // Scratch has no buffer: its base is spill_base, which the program
+    // worked out at its start (:578-586; since 1.177).
+    const is_scratch = each.tag == .scratch or each.tag == .scratch_indirect or each.tag == .scratch_store;
+    const base_offset = if (is_scratch)
+        c.spill_base
+    else if (each.tag == .ubo_indirect)
         try c.uniform(.ubo_addr, vir.unitDataCreate(@as(u32, each.b) + 1, 0))
     else
         try c.uniform(.ssbo_offset, each.b);
@@ -1661,7 +1685,7 @@ fn flushTmu(e: *Emit) Error!void {
         if (pending.component_mask > 0) {
             const tag = e.work.steps[pending.step].tag;
             const general = switch (tag) {
-                .ubo, .ubo_indirect, .ssbo, .ssbo_indirect, .ssbo_atomic => true,
+                .ubo, .ubo_indirect, .ssbo, .ssbo_indirect, .ssbo_atomic, .scratch, .scratch_indirect => true,
                 else => false,
             };
             for (0..4) |j| {

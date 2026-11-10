@@ -921,7 +921,7 @@ fn clearRectangle(queue: *Queue, clip: frames.Area, color: u32, channels: u32, d
     };
     const hardware = player.hardware;
     const uniforms = if (no_color)
-        streamOf(queue, hardware.no_color.stream(), &.{}, null) orelse return noRoom(queue, "a clear with no memory for its uniforms")
+        streamOf(queue, hardware.no_color.stream(), &.{}, null, .{}) orelse return noRoom(queue, "a clear with no memory for its uniforms")
     else
         (carve(queue, 4, 4) orelse return noRoom(queue, "a clear with no memory for its uniforms")).address;
     if (!roomOnList(queue)) return noRoom(queue, "a clear with no memory for the binner's list");
@@ -1136,8 +1136,10 @@ fn writeRecord(into: [*]u8, output: [*]const f32, viewport: *const ViewportScale
 /// the command buffer last set them before this draw (`CmdPushConstants`),
 /// read as v3dv reads QUNIFORM_UNIFORM (v3dv_uniforms.c:513). A vertex
 /// program's has the viewport's words in it too, from `scale` (since
-/// 1.163). Its address, or null with no memory for it.
-fn streamOf(queue: *Queue, stream: []const compile.Word, tmus: []const Configuration, scale: ?*const ViewportScale) ?u32 {
+/// 1.163), and a program that spills the pipeline's spill buffer's
+/// (`driver.Spill`, since 1.177). Its address, or null with no memory
+/// for it.
+fn streamOf(queue: *Queue, stream: []const compile.Word, tmus: []const Configuration, scale: ?*const ViewportScale, spill: driver.Spill) ?u32 {
     const bytes: u32 = @max(4, @as(u32, @intCast(stream.len * 4)));
     const place = carve(queue, bytes, 4) orelse return null;
     const words: [*]u32 = @ptrCast(@alignCast(place.cpu));
@@ -1158,6 +1160,10 @@ fn streamOf(queue: *Queue, stream: []const compile.Word, tmus: []const Configura
         .ssbo => |each| storageAddress(queue, each, true) orelse 0,
         // A vertex program's alone, which the draw gives `scale` to.
         .viewport => |which| @bitCast(if (scale) |each| viewportWord(each, which) else 0),
+        // The pipeline made the buffer where one of its programs needs it
+        // (`driver.checkSpillSize`).
+        .spill_offset => spill.address,
+        .spill_size_per_thread => spill.size_per_thread,
     };
     return place.address;
 }
@@ -1782,7 +1788,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
                 fragment = made.address;
                 own = made;
                 carried = .as_they_are;
-                uniforms = streamOf(queue, made.stream(), tmus[0..found], null) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+                uniforms = streamOf(queue, made.stream(), tmus[0..found], null, made.spillWords()) orelse return noRoom(queue, "a draw with no memory for its uniforms");
             }
         },
         // Refused when the pipeline was made (driver.zig): no fixed form's
@@ -1796,7 +1802,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         carried = .as_they_are;
         fragment = made.address;
         own = made;
-        uniforms = streamOf(queue, made.stream(), &.{}, null) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+        uniforms = streamOf(queue, made.stream(), &.{}, null, .{}) orelse return noRoom(queue, "a draw with no memory for its uniforms");
     }
 
     // The pipeline's vertex shader on the QPU, where it was compiled for
@@ -1830,8 +1836,8 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             const place = carve(queue, @intCast(@max(inputs_bytes, 16)), 16) orelse return noRoom(queue, "a draw with no memory for its attributes");
             const into: [*][4]f32 = @ptrCast(@alignCast(place.cpu));
             _vertices.readInputs(player, pipeline, lowest, vertices, instance, into[0 .. @as(usize, vertices) * locations]);
-            const vertex_uniforms = streamOf(queue, stage.vertex.stream(), &.{}, &scale) orelse return noRoom(queue, "a draw with no memory for its uniforms");
-            const coordinate_uniforms = streamOf(queue, stage.coordinate.stream(), &.{}, &scale) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+            const vertex_uniforms = streamOf(queue, stage.vertex.stream(), &.{}, &scale, own.?.spillWords()) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+            const coordinate_uniforms = streamOf(queue, stage.coordinate.stream(), &.{}, &scale, own.?.spillWords()) orelse return noRoom(queue, "a draw with no memory for its uniforms");
             if (!roomOnList(queue)) return noRoom(queue, "a draw with no memory for the binner's list");
             if (!sendCompiledVertices(queue, place.address, locations, stage, vertex_uniforms, coordinate_uniforms, fragment, uniforms, own.?)) return noRoom(queue, "a draw with no memory for its shader record");
             cl.indexBufferSetup(&player.bin, index_place.address, kept * 4);

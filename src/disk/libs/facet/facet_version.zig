@@ -5634,4 +5634,73 @@ pub const LIBRARY_VERSION = 1;
 ///
 /// On the CM5 FacetBoth's 239 cases are each as they were at 1.175, and
 /// FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 176;
+///
+/// 177: **Scratch on the V3D, the pipeline's spill buffer, and
+/// nir_opt_copy_prop_vars, nir_opt_dead_write_vars and
+/// nir_remove_dead_variables over what is in it (docs/facet-vulkan10.md
+/// item 59).** A variable of the function's own that an access chain
+/// reaches at an index the body computes, of more than two elements, is
+/// in scratch, as nir_lower_vars_to_scratch moves it (vir.c:2041-2044):
+/// placed where its first such index is found (nir_lower_scratch.c:
+/// 155-185, :247-258) in the natural layout, every float four bytes
+/// (glsl_get_natural_size_align_bytes, glsl_types.c:3809-3880), the walk
+/// begun again with it there (`Scratch`). Each float of a load or a store
+/// is a load_scratch or a store_scratch of its own (v3d_size_align_cb,
+/// v3d_nir_lower_load_store_bitsize.c:135-143) at the chain's byte offset
+/// (nir_build_deref_offset, nir_deref.c:346-380) times V3D_CHANNELS
+/// (v3d_nir_scratch_offset, v3d_nir_lower_scratch.c:31-43), each a
+/// general TMU access from spill_base (ntq_emit_tmu_general,
+/// nir_to_vir.c:578-586), which v3d_setup_spill_base works out at the
+/// program's start, its scratch bytes for sixteen lanes added to the
+/// spill size (:4997-5000). A load_scratch is divergent
+/// (nir_divergence_analysis.c:989), skips the helper invocations
+/// (vir.c:1937-1951), is no CAN_REORDER for nir_opt_cse
+/// (nir_intrinsics.py:1429), and keeps a selection's arm a branch, as a
+/// store_scratch does (nir_opt_peephole_select.c:109-129).
+///
+/// While the variable is still one of derefs, v3d's loop of passes runs
+/// nir_opt_copy_prop_vars and nir_opt_dead_write_vars over it
+/// (nir_to_vir.c:2249-2250). Each access's deref is its `Path`, compared
+/// as nir_compare_deref_paths does (nir_deref.c:513-640), an index the
+/// body computes the same where nir_opt_cse would make it one SSA value
+/// (`oneValue`). A load of a float the copies have a value for is that
+/// value (nir_opt_copy_prop_vars.c:1124-1229); a store of the value there
+/// is none (:1268-1276); a store takes the copies it may be of
+/// (:1311-1317); each arm starts from the copies where the selection
+/// branched, and its merge keeps none an arm may have stored over
+/// (:1531-1566, :966-1001). A store written over in its block with no
+/// load between that may read it goes (update_unused_writes,
+/// clear_unused_for_read, nir_opt_dead_write_vars.c); a kept selection's
+/// arms and merge are blocks of their own, a flattened one's in the block
+/// it is in. A variable left with no load is dead, its stores with it
+/// (nir_remove_dead_variables.c:66-90, :110-170), and what is left is
+/// placed without it. These run as the module is read, since the
+/// decision to keep an arm is made at its merge.
+///
+/// The pipeline has a spill buffer for the most any of its programs needs,
+/// four shares for each QPU (pipeline_check_spill_size, v3dv_pipeline.c:
+/// 1669-1708), and a draw gives its address and each thread's share
+/// (QUNIFORM_SPILL_OFFSET, QUNIFORM_SPILL_SIZE_PER_THREAD,
+/// v3dv_uniforms.c:663-672). The same two words are what a program the
+/// register allocator spills reads, which was refused before for want of
+/// a buffer.
+///
+/// Refused still: two elements or fewer at an index the body computes,
+/// which Mesa makes an if-else tree (v3dv_pipeline.c:435-436); a bool in
+/// scratch; scratch in a nested arm.
+///
+/// Tests: the V3D's 255, thirteen new. 16 new modules of glslc's.
+/// glslc_scratch_table, four vec4s read at a computed index, is 60 words
+/// at -O and -O0, 16 stores and 4 loads; glslc_scratch_reread's acc[0]
+/// before the store is the initializer's 0.25; glslc_scratch_copies
+/// keeps 5 stores of 7 and 2 loads of 4; glslc_scratch_dead's b is dead
+/// and a placed at 0; glslc_scratch_twice, an index computed twice at
+/// -O0, leaves nothing in scratch. The disassembly is followed register
+/// by register: an address in an arm is spill_base, worked out from the
+/// thread's index, plus the index shifted by two and then four. Of 37
+/// mutations of the port, 37 fail the tests.
+///
+/// On the CM5 FacetBoth's 239 cases are each as they were at 1.176, and
+/// its new `shipped scratch` is 18 of 230400 pixels apart; FacetProbe
+/// passes its 890 checks.
+pub const LIBRARY_REVISION = 177;
