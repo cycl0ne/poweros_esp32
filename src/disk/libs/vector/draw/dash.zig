@@ -20,6 +20,7 @@ const P = vector.Point;
 const memory_ = @import("memory.zig");
 const Memory = memory_.Memory;
 const List = memory_.List;
+const flatten = @import("flatten.zig");
 
 pub const max_cuts = 1 << 16;
 
@@ -69,15 +70,18 @@ pub const Pattern = struct {
 pub const Dasher = struct {
     pattern: Pattern,
     memory: Memory,
-    /// The dash being made, and a closed contour's first.
+    /// The dash being made, and a closed contour's first, each with its
+    /// points' smoothness: a point where a dash is cut is an end.
     dash: *List(P),
+    dash_smooth: *List(bool),
     first: *List(P),
+    first_smooth: *List(bool),
     cuts: u32 = 0,
     /// Something did not fit.
     failed: bool = false,
 
     /// One contour's dashes handed to `emit`.
-    pub fn contour(d: *Dasher, points: []const P, closed: bool, context: anytype, comptime emit: fn (@TypeOf(context), []const P, bool) void) void {
+    pub fn contour(d: *Dasher, points: []const P, smooth: []const bool, closed: bool, context: anytype, comptime emit: flatten.Emit(@TypeOf(context))) void {
         if (points.len == 0) return;
         const pattern = &d.pattern;
         var i = pattern.first;
@@ -88,13 +92,16 @@ pub const Dasher = struct {
         var held = false;
         var cut = false;
         d.dash.clear();
+        d.dash_smooth.clear();
         d.first.clear();
-        if (on and !d.add(points[0])) return;
+        d.first_smooth.clear();
+        if (on and !d.add(points[0], smooth[0])) return;
         const segments = if (closed) points.len else points.len - 1;
         var k: usize = 0;
         while (k < segments) : (k += 1) {
             const a = points[k];
-            const b = points[(k + 1) % points.len];
+            const next = (k + 1) % points.len;
+            const b = points[next];
             const length = @sqrt((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y));
             if (!(length > 0)) continue;
             var pos: f32 = 0;
@@ -103,16 +110,21 @@ pub const Dasher = struct {
                 const t = pos / length;
                 const q = P{ .x = a.x + (b.x - a.x) * t, .y = a.y + (b.y - a.y) * t };
                 if (on) {
-                    if (!d.add(q)) return;
+                    if (!d.add(q, false)) return;
                     if (hold and !held) {
                         held = true;
-                        if (!d.first.reserve(d.memory, d.dash.len)) return d.fail();
-                        for (d.dash.items()) |p| _ = d.first.append(d.memory, p);
-                    } else emit(context, d.dash.items(), false);
+                        if (!d.first.reserve(d.memory, d.dash.len) or !d.first_smooth.reserve(d.memory, d.dash.len)) return d.fail();
+                        for (d.dash.items(), d.dash_smooth.items()) |p, inside| {
+                            _ = d.first.append(d.memory, p);
+                            _ = d.first_smooth.append(d.memory, inside);
+                        }
+                    } else emit(context, d.dash.items(), d.dash_smooth.items(), false);
                     d.dash.clear();
+                    d.dash_smooth.clear();
                 } else {
                     d.dash.clear();
-                    if (!d.add(q)) return;
+                    d.dash_smooth.clear();
+                    if (!d.add(q, false)) return;
                 }
                 cut = true;
                 d.cuts += 1;
@@ -127,26 +139,35 @@ pub const Dasher = struct {
                 on = !on;
             }
             if (left != @import("std").math.inf(f32)) left -= length - pos;
-            if (on and !d.add(b)) return;
+            if (on and !d.add(b, smooth[next])) return;
         }
         if (!cut) {
-            if (on) emit(context, points, closed);
+            if (on) emit(context, points, smooth, closed);
             return;
         }
         if (on) {
             if (held) {
                 const rest = d.first.items();
+                const rest_smooth = d.first_smooth.items();
                 if (rest.len > 1) {
-                    if (!d.dash.reserve(d.memory, rest.len - 1)) return d.fail();
-                    for (rest[1..]) |p| _ = d.dash.append(d.memory, p);
+                    if (!d.dash.reserve(d.memory, rest.len - 1) or !d.dash_smooth.reserve(d.memory, rest.len - 1)) return d.fail();
+                    for (rest[1..], rest_smooth[1..]) |p, inside| {
+                        _ = d.dash.append(d.memory, p);
+                        _ = d.dash_smooth.append(d.memory, inside);
+                    }
                 }
             }
-            emit(context, d.dash.items(), false);
-        } else if (held) emit(context, d.first.items(), false);
+            emit(context, d.dash.items(), d.dash_smooth.items(), false);
+        } else if (held) emit(context, d.first.items(), d.first_smooth.items(), false);
     }
 
-    fn add(d: *Dasher, p: P) bool {
-        if (d.dash.append(d.memory, p)) return true;
+    /// A point and its smoothness onto the dash, both or neither.
+    fn add(d: *Dasher, p: P, inside: bool) bool {
+        if (d.dash.reserve(d.memory, 1) and d.dash_smooth.reserve(d.memory, 1)) {
+            _ = d.dash.append(d.memory, p);
+            _ = d.dash_smooth.append(d.memory, inside);
+            return true;
+        }
         d.fail();
         return false;
     }
@@ -166,8 +187,10 @@ const Seen = struct {
     closed: u32 = 0,
     starts: [16]P = undefined,
     ends: [16]P = undefined,
+    mismatched: bool = false,
 
-    fn emit(seen: *Seen, points: []const P, closed: bool) void {
+    fn emit(seen: *Seen, points: []const P, smooth: []const bool, closed: bool) void {
+        if (smooth.len != points.len) seen.mismatched = true;
         if (seen.dashes < 16) {
             seen.starts[seen.dashes] = points[0];
             seen.ends[seen.dashes] = points[points.len - 1];
@@ -180,12 +203,18 @@ const Seen = struct {
 fn cutUp(points: []const P, closed: bool, stroke: vector.Stroke) !Seen {
     var dash: List(P) = .{};
     defer dash.deinit(test_memory);
+    var dash_smooth: List(bool) = .{};
+    defer dash_smooth.deinit(test_memory);
     var first: List(P) = .{};
     defer first.deinit(test_memory);
-    var d = Dasher{ .pattern = Pattern.of(&stroke).?, .memory = test_memory, .dash = &dash, .first = &first };
+    var first_smooth: List(bool) = .{};
+    defer first_smooth.deinit(test_memory);
+    var d = Dasher{ .pattern = Pattern.of(&stroke).?, .memory = test_memory, .dash = &dash, .dash_smooth = &dash_smooth, .first = &first, .first_smooth = &first_smooth };
     var seen: Seen = .{};
-    d.contour(points, closed, &seen, Seen.emit);
+    const smooth = [_]bool{false} ** 8;
+    d.contour(points, smooth[0..points.len], closed, &seen, Seen.emit);
     try testing.expect(!d.failed);
+    try testing.expect(!seen.mismatched);
     return seen;
 }
 

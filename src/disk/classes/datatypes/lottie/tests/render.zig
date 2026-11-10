@@ -3,9 +3,12 @@
 //! vector.library - made from its ROM tag on the ROM's exec, as the
 //! datatype's init opens it - and their pens checked.
 //!
-//! The hashes are of every frame of a file as raster.zig, Lottie's own
-//! rasterizer before vector.library 1.0, drew it: the library draws them
-//! the same to the bit.
+//! The hashes are of every frame of a file as vector.library 1.2 draws
+//! it. Until 1.2 they were those of raster.zig, Lottie's own rasterizer
+//! before vector.library 1.0, to the bit; 1.2 flattens a curve to a tenth
+//! of a pixel rather than a quarter, joins a stroke round inside a curve,
+//! and lays a stroke's pieces edge to edge rather than over each other,
+//! and every stroked frame changed with that.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -179,7 +182,7 @@ test "a shape layer: a red square in a group, moved by its layer" {
     try rig.close();
 }
 
-test "Spinner.json's sixty frames come out as raster.zig drew them" {
+test "Spinner.json's sixty frames come out as they did" {
     const file = try File.parse(spinner);
     defer file.deinit();
     const rig = try Rig.open(200, 200);
@@ -189,7 +192,7 @@ test "Spinner.json's sixty frames come out as raster.zig drew them" {
     try rig.close();
 }
 
-test "every join and cap, through a matrix that turns and stretches, as raster.zig drew them" {
+test "every join and cap, through a matrix that turns and stretches, as it was drawn" {
     const file = try File.parse(strokes);
     defer file.deinit();
     const rig = try Rig.open(240, 180);
@@ -199,5 +202,5 @@ test "every join and cap, through a matrix that turns and stretches, as raster.z
     try rig.close();
 }
 
-const spinner_hash = 0xf520902e707de506;
-const strokes_hash = 0x9000feb96c950c2a;
+const spinner_hash = 0x5fcbceca335c37c2;
+const strokes_hash = 0x2c842b765d73af09;

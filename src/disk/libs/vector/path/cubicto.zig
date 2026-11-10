@@ -28,7 +28,8 @@ const VectorBase = _base.VectorBase;
 /// A Bézier curve, as SVG's `C` and Lottie's vertices draw: (x, y) is the
 /// current point from then on. It is kept as a curve and broken into
 /// lines only when drawn, enough of them that none strays from it by
-/// more than a quarter of a pixel at the size it is drawn at. Without a
+/// more than a tenth of a pixel at the size it is drawn at (a quarter
+/// before 1.2). Without a
 /// current point it is passed over, and after a `ClosePath` it starts a
 /// new contour, as `LineTo` does.
 ///

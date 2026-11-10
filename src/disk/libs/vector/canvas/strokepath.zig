@@ -30,13 +30,21 @@ const VectorBase = _base.VectorBase;
 /// `VECTOR_OK`, or `VECTORERR_NOMEM` as `FillPath` answers it.
 ///
 /// BEHAVIOR:
-/// The stroke is made of pieces in the path's units - a quadrilateral a
-/// line, a piece at each corner, a cap at each open end - and those are
+/// The stroke is made of pieces in the path's units - one a line, the
+/// corner's on its outer side, a cap at each open end - and those are
 /// drawn through the matrix, so a stroke drawn through one that stretches
 /// a way is stretched with it, as SVG draws one. A miter longer than the
-/// limit is bevelled. A contour of one point is a dot when the caps are
-/// round, and nothing otherwise; a stroke under a fiftieth of a pixel
-/// wide is not drawn.
+/// limit is bevelled. Where a curve was broken into lines, they are
+/// joined round whatever the join, as the curve turns. A contour of one
+/// point is a dot when the caps are round, and nothing otherwise; a
+/// stroke under a fiftieth of a pixel wide is not drawn.
+///
+/// Since 1.2 the pieces meet edge to edge: a line's is cut on the inside
+/// of a corner where the next one's begins, so no pixel at the stroke's
+/// edge is painted by two (1.1's overlapped there, and came out a little
+/// heavy). A corner whose lines are too short for that - a curve tighter
+/// than the stroke is wide, a sharp turn between short lines - still
+/// overlaps.
 ///
 /// Dashes are cut from each contour in the path's units, from
 /// `dash_offset` along it, before it is stroked, so each dash has its

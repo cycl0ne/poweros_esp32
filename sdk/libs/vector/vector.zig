@@ -8,8 +8,8 @@
 //! 0xAARRGGBB, which the library only writes - through a matrix that
 //! takes the path's units to pixels (`FillPath`, `StrokePath`). Curves
 //! stay curves until they are drawn, so one path is drawn at any size,
-//! each time broken into lines that keep within a quarter of a pixel of
-//! it.
+//! each time broken into lines that keep within a tenth of a pixel of it
+//! (a quarter before 1.2).
 //!
 //! **Coverage, not samples**: every pixel a shape's edge crosses is
 //! painted by how much of it the shape covers, so an edge is smooth
@@ -23,7 +23,11 @@
 //!
 //! Since 1.2 a path can be handed over whole, its segments' verbs in one
 //! array and their points in another (`AddSegments`): one call for a
-//! path a program keeps as data, rather than one a segment.
+//! path a program keeps as data, rather than one a segment. 1.2 also
+//! draws closer to what SVG's renderers draw: curves are broken finer, a
+//! stroke's pieces meet edge to edge rather than lying over each other
+//! at its edges, and inside a curve a stroke turns round whatever its
+//! join - so a picture drawn by 1.1 and by 1.2 differs at its edges.
 //!
 //! Open it with OpenLibrary(VECTORNAME, VECTOR_VERSION); its functions
 //! are in sdk/interface/vector.zig. A path and a canvas are one task's at

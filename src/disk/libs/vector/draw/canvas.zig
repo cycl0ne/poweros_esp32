@@ -51,14 +51,18 @@ pub const Canvas = struct {
     /// A band's coverage, cleared between draws.
     acc: []f32,
     band_rows: u32,
-    /// The points of the contour being drawn.
+    /// The points of the contour being drawn, and whether each is inside
+    /// a curve.
     points: List(P) = .{},
+    smooth: List(bool) = .{},
     /// A gradient's colours, made for every fill or stroke it paints; the
     /// room for them taken the first time.
     ramp: ?*gradient.Ramp = null,
     /// The dash being cut, and a closed contour's first.
     dash: List(P) = .{},
+    dash_smooth: List(bool) = .{},
     dash_first: List(P) = .{},
+    dash_first_smooth: List(bool) = .{},
     /// The layers pushed, the innermost last, and the pushes past the
     /// most, which hold nothing.
     layers: [vector.MAX_LAYERS]Layer = undefined,
@@ -89,8 +93,11 @@ pub const Canvas = struct {
         }
         memory.free(f32, canvas.acc);
         canvas.points.deinit(memory);
+        canvas.smooth.deinit(memory);
         canvas.dash.deinit(memory);
+        canvas.dash_smooth.deinit(memory);
         canvas.dash_first.deinit(memory);
+        canvas.dash_first_smooth.deinit(memory);
         if (canvas.ramp) |ramp| memory.destroy(gradient.Ramp, ramp);
         memory.destroy(Canvas, canvas);
     }
@@ -110,7 +117,7 @@ pub const Canvas = struct {
         var top = span.first;
         while (top < span.end) : (top += canvas.band_rows) {
             var coverage = canvas.band(top);
-            if (!flatten.contours(path, flatten.Flatten.fill(matrix), &canvas.points, canvas.memory, &coverage, filled)) result = vector.VECTORERR_NOMEM;
+            if (!flatten.contours(path, flatten.Flatten.fill(matrix), &canvas.points, &canvas.smooth, canvas.memory, &coverage, filled)) result = vector.VECTORERR_NOMEM;
             canvas.lay(&coverage, &look, rule == vector.RULE_EVENODD, target);
         }
         return result;
@@ -134,8 +141,15 @@ pub const Canvas = struct {
         while (top < span.end) : (top += canvas.band_rows) {
             var coverage = canvas.band(top);
             var stroker = Stroker{ .sink = stroke_.Sink.of(&coverage, matrix), .how = pieces };
-            if (pattern) |dashes| stroker.dasher = .{ .pattern = dashes, .memory = canvas.memory, .dash = &canvas.dash, .first = &canvas.dash_first };
-            if (!flatten.contours(path, flatten.Flatten.stroke(matrix), &canvas.points, canvas.memory, &stroker, Stroker.emit)) result = vector.VECTORERR_NOMEM;
+            if (pattern) |dashes| stroker.dasher = .{
+                .pattern = dashes,
+                .memory = canvas.memory,
+                .dash = &canvas.dash,
+                .dash_smooth = &canvas.dash_smooth,
+                .first = &canvas.dash_first,
+                .first_smooth = &canvas.dash_first_smooth,
+            };
+            if (!flatten.contours(path, flatten.Flatten.stroke(matrix), &canvas.points, &canvas.smooth, canvas.memory, &stroker, Stroker.emit)) result = vector.VECTORERR_NOMEM;
             if (stroker.dasher) |d| if (d.failed) {
                 result = vector.VECTORERR_NOMEM;
             };
@@ -364,7 +378,8 @@ fn stretch(m: Matrix) f32 {
     return @sqrt(m.a * m.a + m.b * m.b + m.c * m.c + m.d * m.d);
 }
 
-fn filled(coverage: *Coverage, points: []const P, closed: bool) void {
+fn filled(coverage: *Coverage, points: []const P, smooth: []const bool, closed: bool) void {
+    _ = smooth;
     _ = closed;
     coverage.polygon(points);
 }
@@ -374,13 +389,13 @@ const Stroker = struct {
     how: stroke_.How,
     dasher: ?dash_.Dasher = null,
 
-    fn emit(stroker: *Stroker, points: []const P, closed: bool) void {
-        if (stroker.dasher) |*dasher| return dasher.contour(points, closed, stroker, piece);
-        piece(stroker, points, closed);
+    fn emit(stroker: *Stroker, points: []const P, smooth: []const bool, closed: bool) void {
+        if (stroker.dasher) |*dasher| return dasher.contour(points, smooth, closed, stroker, piece);
+        piece(stroker, points, smooth, closed);
     }
 
-    fn piece(stroker: *Stroker, points: []const P, closed: bool) void {
-        stroke_.contour(&stroker.sink, points, closed, stroker.how);
+    fn piece(stroker: *Stroker, points: []const P, smooth: []const bool, closed: bool) void {
+        stroke_.contour(&stroker.sink, points, smooth, closed, stroker.how);
     }
 };
 
