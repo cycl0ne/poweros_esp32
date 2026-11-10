@@ -150,7 +150,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.69 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.70 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -347,6 +347,28 @@ fn vertexBranchVertex(vertices: *const shader.Vertices) callconv(.c) void {
         }
         var tint: [4]f32 = .{ c[0] * 0.5, c[1] * 0.5, c[2] * 0.5, 1 };
         if (n >= 3) tint = .{ c[1], c[2] * 0.75 + 0.125, c[0] * 0.5 + 0.25, 1 };
+        vertices.output(@intCast(k))[0..8].* = .{ moved[0], moved[1], moved[2], moved[3], tint[0], tint[1], tint[2], tint[3] };
+    }
+}
+
+/// What `shipped_vertex_outputs` computes, for the cores: where the place's
+/// x is above 0 its y moved and the colour's red and blue swapped, the even
+/// vertices' x moved, and the alpha halved and raised a quarter (since
+/// 1.70).
+fn vertexOutputsVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = vertices.input(@intCast(k), 0);
+        const c = vertices.input(@intCast(k), 1);
+        const n = vertices.first_vertex + @as(u32, @intCast(k));
+        var moved = p;
+        var tint = c;
+        if (p[0] > 0) {
+            moved[1] = p[1] * 0.75 - 0.125;
+            tint[0] = c[2];
+            tint[2] = c[0];
+        }
+        if (n & 1 == 0) moved[0] = p[0] * 0.75 + 0.0625;
+        tint[3] = tint[3] * 0.5 + 0.25;
         vertices.output(@intCast(k))[0..8].* = .{ moved[0], moved[1], moved[2], moved[3], tint[0], tint[1], tint[2], tint[3] };
     }
 }
@@ -1423,6 +1445,35 @@ fn treesFragment(fragments: *const shader.Fragments) callconv(.c) void {
         }
         var bytes: [4]@Vector(4, u32) = undefined;
         inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(picked[c]);
+        out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+    }
+}
+
+/// What `shipped_outputs` computes, for the cores: where the colour's red
+/// is below 0.5 its green, its blue times its alpha, 0.25 and 1, else
+/// half of it but the blue; then the alpha times 0.75 and an eighth more
+/// (since 1.70).
+fn outputsFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    @setRuntimeSafety(false);
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const planes = rows.at(quad);
+        const over = @as(shader.Pixels, @splat(1)) / planes[0];
+        var v: [4]shader.Pixels = undefined;
+        inline for (&v, 0..) |*each, c| each.* = planes[1 + c] * over;
+        var chosen: [4]shader.Pixels = undefined;
+        inline for (0..4) |p| {
+            const o: [4]f32 = if (v[0][p] < 0.5)
+                .{ v[1][p], v[2][p] * v[3][p], 0.25, 1 }
+            else
+                .{ v[0][p] * 0.5, v[1][p] * 0.5, v[2][p], v[3][p] * 0.5 };
+            chosen[0][p] = o[0];
+            chosen[1][p] = o[1];
+            chosen[2][p] = o[2];
+            chosen[3][p] = o[3] * 0.75 + 0.125;
+        }
+        var bytes: [4]@Vector(4, u32) = undefined;
+        inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(chosen[c]);
         out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
     }
 }
@@ -2686,6 +2737,9 @@ const shipped_entries = [_]shader.Entry{
     // Kept selections in a vertex and a compute program (since 1.69).
     shader.vertex("shipped vertex branch", &vertexBranchVertex, 4),
     shader.computeGroup("shipped branches", &shippedBranches, .{ 3, 1, 1 }, 0),
+    // Outputs stored in arms, without -O (since 1.70).
+    shader.fragment("shipped outputs", &outputsFragment, 4),
+    shader.vertex("shipped vertex outputs", &vertexOutputsVertex, 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2714,6 +2768,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_hyperbolic),           shader.Spirv.of(&shipped_geometry),         shader.Spirv.of(&shipped_bit_finds),           shader.Spirv.of(&shipped_modf_frexp),
     shader.Spirv.of(&shipped_packing_bytes),        shader.Spirv.of(&shipped_packing_halves),   shader.Spirv.of(&shipped_packing_half),        shader.Spirv.of(&shipped_matrix_inverse),
     shader.Spirv.of(&shipped_determinant4),         shader.Spirv.of(&shipped_bits),             shader.Spirv.of(&shipped_vertex_branch),       shader.Spirv.of(&shipped_branches),
+    shader.Spirv.of(&shipped_outputs),              shader.Spirv.of(&shipped_vertex_outputs),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -8324,6 +8379,200 @@ const shipped_vertex_branch = [_]u32{
     0x00000058, 0x000100FD, 0x00010038,
 };
 
+/// glslc's own output, without -O: `outputsFragment`, the colour stored
+/// in both arms of a selection and loaded and stored again after it
+/// (since 1.70).
+///
+/// ```glsl
+/// #version 450
+/// // FacetBoth's "shipped outputs" (facet 1.206), without -O: the colour
+/// // stored in both arms of a selection, a float of it again in one, and its
+/// // alpha loaded and stored after the merge.
+/// layout(location = 0) in vec4 v;
+/// layout(location = 0) out vec4 o;
+/// void main() {
+///     if (v.x < 0.5) {
+///         o = vec4(v.y, v.z * v.w, 0.25, 1.0);
+///     } else {
+///         o = v * 0.5;
+///         o.b = v.z;
+///     }
+///     o.a = o.a * 0.75 + 0.125;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -fshader-stage=frag shipped_outputs.frag -o shipped_outputs.spv   # 281 words
+/// spirv-val --target-env vulkan1.0 shipped_outputs.spv   # no output, and 0
+/// ```
+const shipped_outputs = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000031, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000015, 0x00030010,
+    0x00000004, 0x00000007, 0x00030003, 0x00000002, 0x000001C2, 0x000A0004,
+    0x475F4C47, 0x4C474F4F, 0x70635F45, 0x74735F70, 0x5F656C79, 0x656E696C,
+    0x7269645F, 0x69746365, 0x00006576, 0x00080004, 0x475F4C47, 0x4C474F4F,
+    0x6E695F45, 0x64756C63, 0x69645F65, 0x74636572, 0x00657669, 0x00040005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00030005, 0x00000009, 0x00000076,
+    0x00030005, 0x00000015, 0x0000006F, 0x00040047, 0x00000009, 0x0000001E,
+    0x00000000, 0x00040047, 0x00000015, 0x0000001E, 0x00000000, 0x00020013,
+    0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006,
+    0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020,
+    0x00000008, 0x00000001, 0x00000007, 0x0004003B, 0x00000008, 0x00000009,
+    0x00000001, 0x00040015, 0x0000000A, 0x00000020, 0x00000000, 0x0004002B,
+    0x0000000A, 0x0000000B, 0x00000000, 0x00040020, 0x0000000C, 0x00000001,
+    0x00000006, 0x0004002B, 0x00000006, 0x0000000F, 0x3F000000, 0x00020014,
+    0x00000010, 0x00040020, 0x00000014, 0x00000003, 0x00000007, 0x0004003B,
+    0x00000014, 0x00000015, 0x00000003, 0x0004002B, 0x0000000A, 0x00000016,
+    0x00000001, 0x0004002B, 0x0000000A, 0x00000019, 0x00000002, 0x0004002B,
+    0x0000000A, 0x0000001C, 0x00000003, 0x0004002B, 0x00000006, 0x00000020,
+    0x3E800000, 0x0004002B, 0x00000006, 0x00000021, 0x3F800000, 0x00040020,
+    0x00000028, 0x00000003, 0x00000006, 0x0004002B, 0x00000006, 0x0000002C,
+    0x3F400000, 0x0004002B, 0x00000006, 0x0000002E, 0x3E000000, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x00050041, 0x0000000C, 0x0000000D, 0x00000009, 0x0000000B, 0x0004003D,
+    0x00000006, 0x0000000E, 0x0000000D, 0x000500B8, 0x00000010, 0x00000011,
+    0x0000000E, 0x0000000F, 0x000300F7, 0x00000013, 0x00000000, 0x000400FA,
+    0x00000011, 0x00000012, 0x00000023, 0x000200F8, 0x00000012, 0x00050041,
+    0x0000000C, 0x00000017, 0x00000009, 0x00000016, 0x0004003D, 0x00000006,
+    0x00000018, 0x00000017, 0x00050041, 0x0000000C, 0x0000001A, 0x00000009,
+    0x00000019, 0x0004003D, 0x00000006, 0x0000001B, 0x0000001A, 0x00050041,
+    0x0000000C, 0x0000001D, 0x00000009, 0x0000001C, 0x0004003D, 0x00000006,
+    0x0000001E, 0x0000001D, 0x00050085, 0x00000006, 0x0000001F, 0x0000001B,
+    0x0000001E, 0x00070050, 0x00000007, 0x00000022, 0x00000018, 0x0000001F,
+    0x00000020, 0x00000021, 0x0003003E, 0x00000015, 0x00000022, 0x000200F9,
+    0x00000013, 0x000200F8, 0x00000023, 0x0004003D, 0x00000007, 0x00000024,
+    0x00000009, 0x0005008E, 0x00000007, 0x00000025, 0x00000024, 0x0000000F,
+    0x0003003E, 0x00000015, 0x00000025, 0x00050041, 0x0000000C, 0x00000026,
+    0x00000009, 0x00000019, 0x0004003D, 0x00000006, 0x00000027, 0x00000026,
+    0x00050041, 0x00000028, 0x00000029, 0x00000015, 0x00000019, 0x0003003E,
+    0x00000029, 0x00000027, 0x000200F9, 0x00000013, 0x000200F8, 0x00000013,
+    0x00050041, 0x00000028, 0x0000002A, 0x00000015, 0x0000001C, 0x0004003D,
+    0x00000006, 0x0000002B, 0x0000002A, 0x00050085, 0x00000006, 0x0000002D,
+    0x0000002B, 0x0000002C, 0x00050081, 0x00000006, 0x0000002F, 0x0000002D,
+    0x0000002E, 0x00050041, 0x00000028, 0x00000030, 0x00000015, 0x0000001C,
+    0x0003003E, 0x00000030, 0x0000002F, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, without -O: `vertexOutputsVertex`, floats of the
+/// place and the colour stored again in arms, one of them kept a branch by
+/// DontFlatten (since 1.70).
+///
+/// ```glsl
+/// #version 450
+/// #extension GL_EXT_control_flow_attributes : require
+/// // FacetBoth's "shipped vertex outputs" (facet 1.206), without -O: the
+/// // place and the colour stored, then floats of each again in an arm the
+/// // back end flattens, the place's x in one [[dont_flatten]] keeps a branch,
+/// // and the colour's alpha loaded and stored after the merges.
+/// layout(location = 0) in vec4 p;
+/// layout(location = 1) in vec4 c;
+/// layout(location = 0) out vec4 color;
+/// void main() {
+///     gl_Position = p;
+///     color = c;
+///     if (p.x > 0.0) {
+///         gl_Position.y = p.y * 0.75 - 0.125;
+///         color.rgb = c.bgr;
+///     }
+///     [[dont_flatten]] if ((gl_VertexIndex & 1) == 0) {
+///         gl_Position.x = p.x * 0.75 + 0.0625;
+///     }
+///     color.a = color.a * 0.5 + 0.25;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -fshader-stage=vert shipped_vertex_outputs.vert -o shipped_vertex_outputs.spv   # 495 words
+/// spirv-val --target-env vulkan1.0 shipped_vertex_outputs.spv   # no output, and 0
+/// ```
+const shipped_vertex_outputs = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000049, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x000A000F, 0x00000000,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000011, 0x00000015,
+    0x00000016, 0x00000034, 0x00030003, 0x00000002, 0x000001C2, 0x00090004,
+    0x455F4C47, 0x635F5458, 0x72746E6F, 0x665F6C6F, 0x5F776F6C, 0x72747461,
+    0x74756269, 0x00007365, 0x000A0004, 0x475F4C47, 0x4C474F4F, 0x70635F45,
+    0x74735F70, 0x5F656C79, 0x656E696C, 0x7269645F, 0x69746365, 0x00006576,
+    0x00080004, 0x475F4C47, 0x4C474F4F, 0x6E695F45, 0x64756C63, 0x69645F65,
+    0x74636572, 0x00657669, 0x00040005, 0x00000004, 0x6E69616D, 0x00000000,
+    0x00060005, 0x0000000B, 0x505F6C67, 0x65567265, 0x78657472, 0x00000000,
+    0x00060006, 0x0000000B, 0x00000000, 0x505F6C67, 0x7469736F, 0x006E6F69,
+    0x00070006, 0x0000000B, 0x00000001, 0x505F6C67, 0x746E696F, 0x657A6953,
+    0x00000000, 0x00070006, 0x0000000B, 0x00000002, 0x435F6C67, 0x4470696C,
+    0x61747369, 0x0065636E, 0x00070006, 0x0000000B, 0x00000003, 0x435F6C67,
+    0x446C6C75, 0x61747369, 0x0065636E, 0x00030005, 0x0000000D, 0x00000000,
+    0x00030005, 0x00000011, 0x00000070, 0x00040005, 0x00000015, 0x6F6C6F63,
+    0x00000072, 0x00030005, 0x00000016, 0x00000063, 0x00060005, 0x00000034,
+    0x565F6C67, 0x65747265, 0x646E4978, 0x00007865, 0x00030047, 0x0000000B,
+    0x00000002, 0x00050048, 0x0000000B, 0x00000000, 0x0000000B, 0x00000000,
+    0x00050048, 0x0000000B, 0x00000001, 0x0000000B, 0x00000001, 0x00050048,
+    0x0000000B, 0x00000002, 0x0000000B, 0x00000003, 0x00050048, 0x0000000B,
+    0x00000003, 0x0000000B, 0x00000004, 0x00040047, 0x00000011, 0x0000001E,
+    0x00000000, 0x00040047, 0x00000015, 0x0000001E, 0x00000000, 0x00040047,
+    0x00000016, 0x0000001E, 0x00000001, 0x00040047, 0x00000034, 0x0000000B,
+    0x0000002A, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006,
+    0x00000004, 0x00040015, 0x00000008, 0x00000020, 0x00000000, 0x0004002B,
+    0x00000008, 0x00000009, 0x00000001, 0x0004001C, 0x0000000A, 0x00000006,
+    0x00000009, 0x0006001E, 0x0000000B, 0x00000007, 0x00000006, 0x0000000A,
+    0x0000000A, 0x00040020, 0x0000000C, 0x00000003, 0x0000000B, 0x0004003B,
+    0x0000000C, 0x0000000D, 0x00000003, 0x00040015, 0x0000000E, 0x00000020,
+    0x00000001, 0x0004002B, 0x0000000E, 0x0000000F, 0x00000000, 0x00040020,
+    0x00000010, 0x00000001, 0x00000007, 0x0004003B, 0x00000010, 0x00000011,
+    0x00000001, 0x00040020, 0x00000013, 0x00000003, 0x00000007, 0x0004003B,
+    0x00000013, 0x00000015, 0x00000003, 0x0004003B, 0x00000010, 0x00000016,
+    0x00000001, 0x0004002B, 0x00000008, 0x00000018, 0x00000000, 0x00040020,
+    0x00000019, 0x00000001, 0x00000006, 0x0004002B, 0x00000006, 0x0000001C,
+    0x00000000, 0x00020014, 0x0000001D, 0x0004002B, 0x00000006, 0x00000023,
+    0x3F400000, 0x0004002B, 0x00000006, 0x00000025, 0x3E000000, 0x00040020,
+    0x00000027, 0x00000003, 0x00000006, 0x00040017, 0x00000029, 0x00000006,
+    0x00000003, 0x0004002B, 0x00000008, 0x00000030, 0x00000002, 0x00040020,
+    0x00000033, 0x00000001, 0x0000000E, 0x0004003B, 0x00000033, 0x00000034,
+    0x00000001, 0x0004002B, 0x0000000E, 0x00000036, 0x00000001, 0x0004002B,
+    0x00000006, 0x0000003E, 0x3D800000, 0x0004002B, 0x00000008, 0x00000041,
+    0x00000003, 0x0004002B, 0x00000006, 0x00000044, 0x3F000000, 0x0004002B,
+    0x00000006, 0x00000046, 0x3E800000, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x00000007,
+    0x00000012, 0x00000011, 0x00050041, 0x00000013, 0x00000014, 0x0000000D,
+    0x0000000F, 0x0003003E, 0x00000014, 0x00000012, 0x0004003D, 0x00000007,
+    0x00000017, 0x00000016, 0x0003003E, 0x00000015, 0x00000017, 0x00050041,
+    0x00000019, 0x0000001A, 0x00000011, 0x00000018, 0x0004003D, 0x00000006,
+    0x0000001B, 0x0000001A, 0x000500BA, 0x0000001D, 0x0000001E, 0x0000001B,
+    0x0000001C, 0x000300F7, 0x00000020, 0x00000000, 0x000400FA, 0x0000001E,
+    0x0000001F, 0x00000020, 0x000200F8, 0x0000001F, 0x00050041, 0x00000019,
+    0x00000021, 0x00000011, 0x00000009, 0x0004003D, 0x00000006, 0x00000022,
+    0x00000021, 0x00050085, 0x00000006, 0x00000024, 0x00000022, 0x00000023,
+    0x00050083, 0x00000006, 0x00000026, 0x00000024, 0x00000025, 0x00060041,
+    0x00000027, 0x00000028, 0x0000000D, 0x0000000F, 0x00000009, 0x0003003E,
+    0x00000028, 0x00000026, 0x0004003D, 0x00000007, 0x0000002A, 0x00000016,
+    0x0008004F, 0x00000029, 0x0000002B, 0x0000002A, 0x0000002A, 0x00000002,
+    0x00000001, 0x00000000, 0x00050041, 0x00000027, 0x0000002C, 0x00000015,
+    0x00000018, 0x00050051, 0x00000006, 0x0000002D, 0x0000002B, 0x00000000,
+    0x0003003E, 0x0000002C, 0x0000002D, 0x00050041, 0x00000027, 0x0000002E,
+    0x00000015, 0x00000009, 0x00050051, 0x00000006, 0x0000002F, 0x0000002B,
+    0x00000001, 0x0003003E, 0x0000002E, 0x0000002F, 0x00050041, 0x00000027,
+    0x00000031, 0x00000015, 0x00000030, 0x00050051, 0x00000006, 0x00000032,
+    0x0000002B, 0x00000002, 0x0003003E, 0x00000031, 0x00000032, 0x000200F9,
+    0x00000020, 0x000200F8, 0x00000020, 0x0004003D, 0x0000000E, 0x00000035,
+    0x00000034, 0x000500C7, 0x0000000E, 0x00000037, 0x00000035, 0x00000036,
+    0x000500AA, 0x0000001D, 0x00000038, 0x00000037, 0x0000000F, 0x000300F7,
+    0x0000003A, 0x00000002, 0x000400FA, 0x00000038, 0x00000039, 0x0000003A,
+    0x000200F8, 0x00000039, 0x00050041, 0x00000019, 0x0000003B, 0x00000011,
+    0x00000018, 0x0004003D, 0x00000006, 0x0000003C, 0x0000003B, 0x00050085,
+    0x00000006, 0x0000003D, 0x0000003C, 0x00000023, 0x00050081, 0x00000006,
+    0x0000003F, 0x0000003D, 0x0000003E, 0x00060041, 0x00000027, 0x00000040,
+    0x0000000D, 0x0000000F, 0x00000018, 0x0003003E, 0x00000040, 0x0000003F,
+    0x000200F9, 0x0000003A, 0x000200F8, 0x0000003A, 0x00050041, 0x00000027,
+    0x00000042, 0x00000015, 0x00000041, 0x0004003D, 0x00000006, 0x00000043,
+    0x00000042, 0x00050085, 0x00000006, 0x00000045, 0x00000043, 0x00000044,
+    0x00050081, 0x00000006, 0x00000047, 0x00000045, 0x00000046, 0x00050041,
+    0x00000027, 0x00000048, 0x00000015, 0x00000041, 0x0003003E, 0x00000048,
+    0x00000047, 0x000100FD, 0x00010038,
+};
+
 /// glslc's own output, at -O, the V3D's host tests' glslc_inverse_trig: what
 /// `inverseTrigOf` on the cores: Asin and Acos of vec2s, Atan and Atan2,
 /// which the V3D lowers as Mesa does, to approximations of its own
@@ -11771,6 +12020,8 @@ const cases = [_]Case{
     .{ .name = "shipped compute: reads a buffer at each invocation's id", .run = &Cases.shippedReadonly },
     .{ .name = "shipped compute: kept branches, under the mask and uniform", .run = &Cases.shippedBranches },
     .{ .name = "shipped vertex branches", .run = Cases.numbered("shipped vertex branch") },
+    .{ .name = "shipped outputs in arms", .run = Cases.shipped("as it is", "shipped outputs", false, clockwise_at) },
+    .{ .name = "shipped vertex outputs in arms", .run = Cases.numbered("shipped vertex outputs") },
     .{ .name = "patches: triangles, even", .run = Cases.tessellated(.{ .patch_points = 3 }, 0, 3) },
     .{ .name = "patches: triangles, uneven", .run = Cases.tessellated(.{ .patch_points = 3, .control = "uneven" }, 0, 6) },
     .{ .name = "patches: triangles, edges", .run = Cases.tessellated(.{ .patch_points = 3, .control = "uneven", .polygon_mode = .line }, 0, 3) },

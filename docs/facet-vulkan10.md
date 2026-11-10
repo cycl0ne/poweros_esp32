@@ -3123,6 +3123,53 @@ On the CM5, FacetBoth 1.69 has two new cases.
 
 The other 297 cases are each as they were at 1.204, and FacetProbe is 890 of 890.
 
+**Then outputs as variables of the function's own**, facet.library 1.206. Until now each output was the one value stored into it. gl_Position, gl_PointSize and a varying were stored once each, and the colour where the body stored it last. A store into any of them in an arm refused the program (Error.Branches), and so did a second store into a vertex output (Error.Outputs). Mesa has none of these rules. v3dv runs nir_lower_io_vars_to_temporaries on the outputs (v3dv_pipeline.c:399-400), which makes each a variable of the function's own. A copy at the function's end stores what it holds into the real output (emit_output_copies_impl, nir_lower_io_vars_to_temporaries.c:133-144). nir_lower_global_vars_to_local and nir_lower_vars_to_ssa then make it values, as any other variable (v3dv_pipeline.c:408, nir_to_vir.c:2240). So an output may be:
+- stored in an arm;
+- stored more than once;
+- stored a float at a time, through a chain;
+- and loaded.
+
+glslang without optimization writes all of these, and the CTS's shaders are glslang's.
+- **The walk** gives each output a variable when it is declared: a varying, the colour, and gl_PerVertex's gl_Position and gl_PointSize. nir_split_per_member_structs makes each of those two a variable of its own (vk_nir.c:321-325). A store into one, or a load of one, is a variable's: in an arm, a phi at the merge, and a bcsel where the selection is flattened. A chain to a float of gl_Position, or of a varying, is a float of a variable (deref_vec_component, nir_lower_vars_to_ssa.c:586-602).
+- **The copies.** `copyOutputs` reads the variables where the walk ends.
+  - A float nothing was stored into is an undef, and nir_opt_undef takes its store out (opt_undef_store, nir_opt_undef.c:143-179). So an output never stored is not stored, and of a varying stored in part only those floats are. The rows the fragment program reads and nothing stored are 0, as before. A varying declared and never stored takes none of the eight places.
+  - Where an output's variable still holds the value last stored into its whole, the copy stores that value. nir_lower_vars_to_ssa gives the copy's load the store's def (nir_lower_vars_to_ssa.c:723-733).
+- **The order of the stores, a fix to 1.193.** nir_move_output_stores_to_end puts them in the order of their slots, the position last (nir_move_output_stores_to_end.c:86-93), and VARYING_SLOT_PSIZ is before VARYING_SLOT_VAR0 (shader_enums.h:350, :381). 1.193 kept the order of the OpStores, which put a point size stored after the varyings after them. It is before them now, and the varyings are in the order of their locations. Each float was at its right row either way, so no picture changes; the order of the instructions does.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
+- **gl_ClipDistance and gl_CullDistance** are still refused (Error.Outputs). They need nir_lower_clip_vs. Both are on the list below already: shaderClipDistance is *facet-wide*, and shaderCullDistance is *V3D-only*.
+- **An output of an array or a struct**, such as `out vec4 colours[2]` or an output block, is refused, as before. *Facet-wide*: nir_lower_io_vars_to_scalar and nir_lower_io take them apart (vir.c:1096-1097, :1114-1116), and no feature gates them.
+- **The outputs' variables are among the 32** a program may have (`most_locals`): a vertex program of eight varyings has 22 left for its own. *Facet-wide*: Mesa has no such limit.
+
+Nothing here is the V3D's alone, so the list for the Radeon's has nothing new.
+
+Results:
+- **The references**, each compiled without -O:
+  - glslc_outputs_arms_frag, 207 words: the colour stored in both arms. Four bcsels and no branch, 19 instructions.
+  - glslc_outputs_kept_frag, 230 words: the colour stored, then sampled into in an arm, which keeps the selection a branch. The colour is its four phis: the sample's floats are written into their registers under the mask.
+  - glslc_outputs_arms_vert, 420 words:
+    - gl_Position stored, and its y again through a chain in an arm;
+    - a varying stored, three of its floats again in the arm, and its alpha loaded and halved after the merge;
+    - a second varying stored in the other arm alone.
+
+    That is three bcsels: the y, and the red and blue of the colour, whose green is c's green both ways. The second varying is p.xy, its phi of an undef taken out. The coordinate program has the y's bcsel alone.
+  - glslc_outputs_part_vert, 255 words: two of a varying's floats stored. The other two rows are given 0 after the fixed-function outputs.
+  - glslc_outputs_kept_vert, 383 words: gl_Position and a varying stored in the arms of a selection a uniform buffer's read keeps. The vertex program has eight phis, and the coordinate program has the position's four.
+  - glslc_outputs_unstored_vert, 421 words: nine varyings declared and eight stored.
+  - glslc_shipped_outputs and glslc_shipped_vertex_outputs: FacetBoth's two new shaders, word for word.
+- **The tests.** The V3D's tests are 377, ten new. Three changed:
+  - the point size's stores are before the varyings';
+  - a second store of it is the value the copy stores, where it was refused;
+  - the tests that count a program's variables count the function's own, without the outputs'.
+
+  Of 12 mutations, all 12 fail them.
+
+On the CM5, FacetBoth 1.70 has two new cases, each a shader glslc compiled without -O:
+- **"shipped outputs in arms"** is 8 of 230400 pixels apart, 204 at worst: pixels where the colour's red is near 0.5, on whichever side of the selection each device's interpolation puts it. "shipped variables", of the same kind, is 8 apart too. Its fragment shader stores the colour in both arms of a selection, a float of it again in the second, and its alpha after the merge. With the cores' function losing the arm's second store, it is 12,423 apart.
+- **"shipped vertex outputs in arms"** is 6 apart, 192 at worst, the triangles' edges. Its vertex shader stores the place and the colour, then stores floats of each again in an arm the back end flattens, where the place's x is above 0. On the vertex's number it stores the place's x again in an arm that DontFlatten keeps a branch, and the colour's alpha after the merges. With the cores' function losing the arm's swap of red and blue, it is 37,922 apart.
+
+The other 299 cases are each as they were at 1.205, and FacetProbe is 890 of 890.
+
 ### 61. Multisampling: 4 samples a pixel on both devices, with resolve attachments and CmdResolveImage's body **[critical path]**
 
 *rasterisation* &mdash; conformance-blocking, port, **sized 07.11.2026: 21 commits, about 1,590 lines of code, 1,340 of tests and 90 of docs**; **the cores' half done in 1.114**, the V3D's is steps V1 to V8
