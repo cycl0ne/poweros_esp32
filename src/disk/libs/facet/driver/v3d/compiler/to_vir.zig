@@ -197,7 +197,7 @@ const Emit = struct {
     inputs: [compile.most_varyings]Reg = undefined,
     /// A vertex program's loads of the VPM's instance id, base instance
     /// and vertex id (c->iid, c->biid, c->vid; since 1.192).
-    system: [3]Reg = undefined,
+    system: [6]Reg = undefined,
     start_msf: Reg = .{},
     payload_w: Reg = .{},
     payload_w_centroid: Reg = .{},
@@ -293,7 +293,11 @@ pub fn compileSteps(allocator: std.mem.Allocator, compiler: *const vir.Compiler,
         defer if (!kept) c.destroy();
         // vir_compile_init (vir.c:573), what of it is the strategy's.
         c.compiler = compiler;
-        c.stage = if (work.stage == .vertex) .vertex else .fragment;
+        c.stage = switch (work.stage) {
+            .vertex => .vertex,
+            .gl_compute => .compute,
+            else => .fragment,
+        };
         c.threads = strategy.max_threads;
         c.max_tmu_spills = strategy.max_tmu_spills;
         e.* = .{ .c = c, .work = work, .key = key };
@@ -354,6 +358,15 @@ fn nirToVir(e: *Emit) Error!void {
     if (c.stage == .vertex) {
         try setupScratch(e);
         try setupVsInputs(e);
+        return emitBlock(e);
+    }
+    if (c.stage == .compute) {
+        // The payload's two words, rf3 and rf2 on 7.1 (nir_to_vir.c:
+        // 4953-4954). No shared memory, so no wg_in_mem of it (:4967-4992;
+        // since 1.194).
+        e.system[@intFromEnum(compile.SystemValue.cs_payload0)] = try c.mul(.mov, .{vir.reg(.reg, 3)});
+        e.system[@intFromEnum(compile.SystemValue.cs_payload1)] = try c.mul(.mov, .{vir.reg(.reg, 2)});
+        try setupScratch(e);
         return emitBlock(e);
     }
     e.start_msf = try c.add(.msf, .{});
@@ -507,6 +520,15 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         // and load_first_vertex, a uniform (since 1.192).
         .system => switch (@as(compile.SystemValue, @enumFromInt(each.at))) {
             .first_vertex => try storeDef(e, at, 0, try c.uniform(.first_vertex, 0)),
+            // load_base_workgroup_id and load_num_workgroups, a uniform
+            // of each word (nir_to_vir.c:3877-3883, :3900-3910; since
+            // 1.194).
+            .work_group_base_x => try storeDef(e, at, 0, try c.uniform(.work_group_base, 0)),
+            .work_group_base_y => try storeDef(e, at, 0, try c.uniform(.work_group_base, 1)),
+            .work_group_base_z => try storeDef(e, at, 0, try c.uniform(.work_group_base, 2)),
+            .num_work_groups_x => try storeDef(e, at, 0, try c.uniform(.num_work_groups, 0)),
+            .num_work_groups_y => try storeDef(e, at, 0, try c.uniform(.num_work_groups, 1)),
+            .num_work_groups_z => try storeDef(e, at, 0, try c.uniform(.num_work_groups, 2)),
             else => |which| {
                 const loaded = e.system[@intFromEnum(which)];
                 if (e.web_of[at][0] != no_web)

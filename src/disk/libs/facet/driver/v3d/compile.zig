@@ -546,7 +546,7 @@ pub const profile: spirv.Profile = .{
     // 1.183). An offset the program computes wants ImageGatherExtended.
     .image_operands = &.{ .bias, .lod, .grad, .const_offset },
     // The vertex stage since 1.163 (docs/facet-vulkan10.md item 60).
-    .stages = &.{ .fragment, .vertex },
+    .stages = &.{ .fragment, .vertex, .gl_compute },
     .most_ids = most_ids,
 };
 
@@ -1097,6 +1097,8 @@ pub const Code = struct {
     /// thread section, which one that has no thread switch does
     /// (single_seg, !c->last_thrsw).
     vertex: VertexProgram = .{},
+    /// A compute program's (`ComputeProgram`; since 1.194).
+    compute: ComputeProgram = .{},
 
     /// The uniform stream, in the order the program reads it.
     pub fn stream(code: *const Code) []const Word {
@@ -1143,6 +1145,12 @@ pub const Word = union(enum) {
     /// VPM's vertex id counts from (`vir.Uniform.first_vertex`; since
     /// 1.192).
     first_vertex,
+    /// The dispatch's count of workgroups and its first workgroup, each
+    /// of x, y and z: QUNIFORM_NUM_WORK_GROUPS and QUNIFORM_WORK_GROUP_BASE,
+    /// which v3dv writes of the dispatch (v3dv_uniforms.c:645-656; since
+    /// 1.194).
+    num_work_groups: u2,
+    work_group_base: u2,
     /// Where a storage buffer is, bound at `set`, `binding`: Mesa's
     /// QUNIFORM_SSBO_OFFSET, which the draw writes as the buffer's address
     /// and its descriptor's offsets, the program adding the offset it
@@ -1192,7 +1200,44 @@ pub const Viewport = enum(u8) { x_scale, y_scale, z_offset, z_scale };
 /// What a `.system` step reads: the VPM's instance id, base instance or
 /// vertex id, which ntq_setup_vs_inputs loads at the program's start
 /// (nir_to_vir.c:2416-2438), or the first vertex, a uniform (since 1.192).
-pub const SystemValue = enum(u8) { instance_id, base_instance, vertex_id, first_vertex };
+/// A compute program's: the two words of its payload, which the
+/// program's start moves out of rf3 and rf2 (nir_to_vir.c:4953-4954), and
+/// the dispatch's first workgroup and count of them, a uniform each of x,
+/// y and z (:3877-3910; since 1.194).
+pub const SystemValue = enum(u8) {
+    instance_id,
+    base_instance,
+    vertex_id,
+    first_vertex,
+    cs_payload0,
+    cs_payload1,
+    work_group_base_x,
+    work_group_base_y,
+    work_group_base_z,
+    num_work_groups_x,
+    num_work_groups_y,
+    num_work_groups_z,
+};
+
+/// How many there are.
+const system_value_count = @typeInfo(SystemValue).@"enum".fields.len;
+
+/// The built-in variables a program may read, where `Work.system_ids`
+/// holds each: a vertex program's two (since 1.192) and a compute
+/// program's five (since 1.194).
+const Builtin = enum(u8) { vertex_index, instance_index, num_workgroups, workgroup_id, local_invocation_id, global_invocation_id, local_invocation_index };
+const builtin_count = @typeInfo(Builtin).@"enum".fields.len;
+
+/// What v3d_cs_set_prog_data says of a compute program (vir.c:1024-1034;
+/// v3d_compute_prog_data, v3d_compiler.h:1069-1076): its workgroup's size,
+/// which the dispatch's configuration is made of, and whether workgroups
+/// may share a supergroup, which a program of no subgroup operation may
+/// (v3d_nir_lower_subgroup_intrinsics, vir.c:1842, :1855). No shared
+/// memory: a Workgroup variable is refused (since 1.194).
+pub const ComputeProgram = struct {
+    local_size: [3]u16 = .{ 1, 1, 1 },
+    can_use_supergroups: bool = true,
+};
 
 /// Which of the VPM's three values a vertex program reads, each a row
 /// before the attributes, in this order: v3d_vs_prog_data's uses_iid,
@@ -1214,7 +1259,7 @@ pub const SystemValues = packed struct(u8) {
             .instance_id => values.instance_id,
             .base_instance => values.base_instance,
             .vertex_id => values.vertex_id,
-            .first_vertex => false,
+            else => false,
         };
     }
 };
@@ -1526,12 +1571,19 @@ pub const Work = struct {
     /// into it.
     per_vertex: u16 = none,
     position: u16 = none,
-    /// A vertex program's VertexIndex and InstanceIndex variables, the
-    /// value each loads, and the `.system` steps of each `SystemValue`,
-    /// each made once (since 1.192).
-    system_ids: [2]u16 = .{ none, none },
-    system_value: [2]u16 = .{ none, none },
-    system_step: [4]u16 = @splat(none),
+    /// A vertex program's VertexIndex and InstanceIndex variables (since
+    /// 1.192), or a compute program's NumWorkgroups, WorkgroupId,
+    /// LocalInvocationId, GlobalInvocationId and LocalInvocationIndex
+    /// (since 1.194), in that order (`Builtin`); the value each loads, and
+    /// the `.system` steps of each `SystemValue`, each made once.
+    system_ids: [builtin_count]u16 = @splat(none),
+    system_value: [builtin_count]u16 = @splat(none),
+    system_step: [system_value_count]u16 = @splat(none),
+    /// A compute program's workgroup, LocalSize's or the WorkgroupSize
+    /// constant's, which SPIR-V has go before it (vtn_constants.c:144-157;
+    /// since 1.194), and the constant.
+    local_size: [3]u32 = .{ 0, 0, 0 },
+    workgroup_size_id: u16 = none,
     /// What `attributes` found of them (`VertexProgram`).
     system_values: SystemValues = .{},
     first_row: bool = false,
@@ -1659,7 +1711,7 @@ pub const Work = struct {
     kept: [most_kept]Kept = undefined,
     kept_count: u8 = 0,
 
-    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value, constant_matrix, position_pointer, point_size_pointer, plain_struct, local_aggregate, aggregate_value, constant_aggregate, scratch_pointer, local_tree };
+    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value, constant_matrix, position_pointer, point_size_pointer, system_part, plain_struct, local_aggregate, aggregate_value, constant_aggregate, scratch_pointer, local_tree };
 
     /// `chain_part` of a pointer to a whole member.
     pub const whole: u8 = 0xFF;
@@ -1762,6 +1814,24 @@ pub fn compileVertexVir(work: *Work, words: []const u32, allocator: std.mem.Allo
     return compileRead(work, allocator, compiler, .{});
 }
 
+/// A compute program's words compiled through Mesa's back end, as v3dv
+/// compiles a compute pipeline's shader (pipeline_compile_compute,
+/// v3dv_pipeline.c:3320), its working memory `compileThroughMesa`'s
+/// (since 1.194).
+pub fn compileComputeThroughMesa(work: *Work, words: []const u32, child: std.mem.Allocator) (Error || std.mem.Allocator.Error)!Code {
+    var arena = std.heap.ArenaAllocator.init(child);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const compiler = allocate.initRegSets(allocator) catch return error.OutOfMemory;
+    return compileComputeVir(work, words, allocator, &compiler);
+}
+
+/// `compileComputeThroughMesa` with the register sets the caller's.
+pub fn compileComputeVir(work: *Work, words: []const u32, allocator: std.mem.Allocator, compiler: *const vir.Compiler) (Error || std.mem.Allocator.Error)!Code {
+    try readStage(work, words, .gl_compute, .{});
+    return compileRead(work, allocator, compiler, .{});
+}
+
 /// `compile` reads them, then made VIR, given registers, scheduled and
 /// packed as Mesa's v3d_compile does (compiler/to_vir.zig). V3DTest's
 /// MESA draws with what it makes, and the library compiles with it
@@ -1856,6 +1926,9 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
             .viewport_z_scale => .{ .viewport = .z_scale },
             // The draw's first vertex (since 1.192).
             .first_vertex => .first_vertex,
+            // The dispatch's workgroups (since 1.194).
+            .num_work_groups => if (data < 3) .{ .num_work_groups = @intCast(data) } else return Error.Invalid,
+            .work_group_base => if (data < 3) .{ .work_group_base = @intCast(data) } else return Error.Invalid,
             // The spill buffer's (since 1.177).
             .spill_offset => .spill_offset,
             .spill_size_per_thread => .spill_size_per_thread,
@@ -1888,6 +1961,7 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
         .flat_shade_flags = program.flat_shade_flags,
         .noperspective_flags = program.noperspective_flags,
         .vertex = if (work.stage == .vertex) vertexProgram(work, program.single_seg) else .{},
+        .compute = if (work.stage == .gl_compute) .{ .local_size = .{ @intCast(work.local_size[0]), @intCast(work.local_size[1]), @intCast(work.local_size[2]) } } else .{},
     };
 }
 
@@ -2150,7 +2224,17 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // one facet emits is taken.
                 if (operands.len < 2) return Error.Body;
                 const mode = std.enums.fromInt(spirv.ExecutionMode, operands[1]) orelse return Error.Refused;
-                if (mode != .origin_upper_left) return Error.Refused;
+                if (mode == .local_size and work.stage == .gl_compute) {
+                    // A compute program's workgroup, which vtn reads into
+                    // info.workgroup_size (spirv_to_nir.c:5294-5299;
+                    // since 1.194). One of more than 256 invocations
+                    // v3dv runs as a loop of 256 (nir_lower_workgroup_size,
+                    // v3dv_pipeline.c:3300-3311), which is not ported.
+                    if (operands.len != 5) return Error.Body;
+                    try localSize(work, operands[2..5].*);
+                    continue;
+                }
+                if (mode != .origin_upper_left or work.stage == .gl_compute) return Error.Refused;
             },
             .decorate => {
                 if (operands.len < 2) return Error.Body;
@@ -2183,15 +2267,41 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // 1.192). Any other built-in of a variable, and either
                     // of a fragment program, is still refused, and so is
                     // either on two variables.
+                    //
+                    // A compute program's NumWorkgroups, WorkgroupId,
+                    // LocalInvocationId, GlobalInvocationId and
+                    // LocalInvocationIndex, vtn's SYSTEM_VALUE_NUM_WORKGROUPS,
+                    // _WORKGROUP_ID, _LOCAL_INVOCATION_ID,
+                    // _GLOBAL_INVOCATION_ID and _LOCAL_INVOCATION_INDEX
+                    // (vtn_variables.c:1039-1062), and the WorkgroupSize of
+                    // a constant, which is the workgroup's size where it is
+                    // (vtn_constants.c:144-157, spirv_to_nir.c:7424-7435;
+                    // since 1.194).
                     .built_in => {
-                        if (operands.len != 3 or work.stage != .vertex) return Error.Refused;
-                        const which: usize = switch (operands[2]) {
-                            @intFromEnum(spirv.BuiltIn.vertex_index) => 0,
-                            @intFromEnum(spirv.BuiltIn.instance_index) => 1,
+                        if (operands.len != 3) return Error.Refused;
+                        const which: Builtin = switch (work.stage) {
+                            .vertex => switch (operands[2]) {
+                                @intFromEnum(spirv.BuiltIn.vertex_index) => .vertex_index,
+                                @intFromEnum(spirv.BuiltIn.instance_index) => .instance_index,
+                                else => return Error.Refused,
+                            },
+                            .gl_compute => switch (operands[2]) {
+                                @intFromEnum(spirv.BuiltIn.num_workgroups) => .num_workgroups,
+                                @intFromEnum(spirv.BuiltIn.workgroup_id) => .workgroup_id,
+                                @intFromEnum(spirv.BuiltIn.local_invocation_id) => .local_invocation_id,
+                                @intFromEnum(spirv.BuiltIn.global_invocation_id) => .global_invocation_id,
+                                @intFromEnum(spirv.BuiltIn.local_invocation_index) => .local_invocation_index,
+                                @intFromEnum(spirv.BuiltIn.workgroup_size) => {
+                                    if (work.workgroup_size_id != none) return Error.Refused;
+                                    work.workgroup_size_id = id;
+                                    continue;
+                                },
+                                else => return Error.Refused,
+                            },
                             else => return Error.Refused,
                         };
-                        if (work.system_ids[which] != none) return Error.Refused;
-                        work.system_ids[which] = id;
+                        if (work.system_ids[@intFromEnum(which)] != none) return Error.Refused;
+                        work.system_ids[@intFromEnum(which)] = id;
                         continue;
                     },
                     .location, .descriptor_set, .binding => {},
@@ -2571,6 +2681,14 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.pool[work.pool_count] = work.pool[work.points[member]];
                     work.pool_count += 1;
                 }
+                if (id == work.workgroup_size_id) {
+                    // The workgroup's size, which takes LocalSize's place
+                    // (spirv_to_nir.c:7424-7435), of three integers, as
+                    // vtn asserts (vtn_constants.c:155; since 1.194).
+                    if (!isIntegerType(work, type_id) or parts.len != 3) return Error.Type;
+                    const at = work.points[id];
+                    try localSize(work, .{ @bitCast(work.pool[at]), @bitCast(work.pool[at + 1]), @bitCast(work.pool[at + 2]) });
+                }
             },
             .variable => {
                 if (operands.len < 3) return Error.Body;
@@ -2742,12 +2860,18 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 }
                 if (class == .input and systemOf(work, id) != null) {
                     // VertexIndex or InstanceIndex: a 32-bit integer, as
-                    // Vulkan has them, of no location (since 1.192).
-                    if (!isIntegerType(work, pointee) or try kindOf(work, pointee) != .f32x1) return Error.Type;
+                    // Vulkan has them, of no location (since 1.192). A
+                    // compute program's three of each and its index
+                    // (since 1.194).
+                    const wanted: Kind = switch (@as(Builtin, @enumFromInt(systemOf(work, id).?))) {
+                        .vertex_index, .instance_index, .local_invocation_index => .f32x1,
+                        else => .f32x3,
+                    };
+                    if (!isIntegerType(work, pointee) or try kindOf(work, pointee) != wanted) return Error.Type;
                     if (operands.len != 3) return Error.Body;
                     work.thing[id] = .variable;
                     work.class[id] = @intCast(@intFromEnum(class));
-                    work.wide[id] = 1;
+                    work.wide[id] = @intCast(wanted.parts());
                     continue;
                 }
                 const floats = try kindOf(work, pointee);
@@ -2798,6 +2922,10 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (operands.len < 2) return Error.Body;
                 if (in_body) return Error.Body;
                 if (try idOf(operands[1]) != seen.entry) return Error.Body;
+                // A compute program's workgroup is said before its
+                // function: LocalSize or the WorkgroupSize constant
+                // (since 1.194).
+                if (work.stage == .gl_compute and work.local_size[0] == 0) return Error.Refused;
                 in_body = true;
             },
             .label => {
@@ -3125,6 +3253,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
     if (loop.active or jumped != 0) return Error.Branches;
     try interpolatedVaryings(work);
     if (work.stage == .vertex) return finishVertex(work);
+    if (work.stage == .gl_compute) return finishCompute(work);
     if (work.output_count == 0) return Error.Outputs;
     if (work.stored == none) return Error.NoColor;
     try algebraic(work);
@@ -3148,10 +3277,7 @@ fn interpolatedVaryings(work: *const Work) Error!void {
 /// what of its attributes it reads (since 1.163).
 fn finishVertex(work: *Work) Error!void {
     if (work.position == none) return Error.Outputs;
-    // VertexIndex and InstanceIndex decorate an input variable alone.
-    for (work.system_ids) |id| {
-        if (id != none and (work.thing[id] != .variable or work.class[id] != @intFromEnum(spirv.StorageClass.input))) return Error.Refused;
-    }
+    try builtinVariables(work);
     // gl_PointSize's row after the fixed-function outputs, before the
     // varyings: per_vertex_point_size, which v3dv sets of any vertex
     // shader that writes it whatever the pipeline draws (v3dv_pipeline.c:
@@ -3167,6 +3293,22 @@ fn finishVertex(work: *Work) Error!void {
     try fixedOutputs(work);
     try algebraic(work);
     try attributes(work);
+}
+
+/// A built-in decorates an input variable alone.
+fn builtinVariables(work: *const Work) Error!void {
+    for (work.system_ids) |id| {
+        if (id != none and (work.thing[id] != .variable or work.class[id] != @intFromEnum(spirv.StorageClass.input))) return Error.Refused;
+    }
+}
+
+/// A compute program's end: nothing past its body, whose writes are its
+/// output (v3d_nir_to_vir's MESA_SHADER_COMPUTE, nir_to_vir.c:5165-5166),
+/// then optimized (since 1.194).
+fn finishCompute(work: *Work) Error!void {
+    if (work.workgroup_size_id != none and work.thing[work.workgroup_size_id] != .constant) return Error.Refused;
+    try builtinVariables(work);
+    try algebraic(work);
 }
 
 /// Where the fragment program reads `component` of `location` among the
@@ -3299,7 +3441,7 @@ fn attributes(work: *Work) Error!void {
             .instance_id => values.instance_id = true,
             .base_instance => values.base_instance = true,
             .vertex_id => values.vertex_id = true,
-            .first_vertex => unreachable,
+            else => unreachable,
         }
     }
     work.system_values = values;
@@ -6931,6 +7073,13 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 if (try idOf(operands[0]) != work.points[from]) return Error.Type;
                 return loadScratch(work, id, from);
             }
+            if (work.thing[from] == .system_part) {
+                // One word of a built-in: its value's (since 1.194).
+                if (try kindOf(work, try idOf(operands[0])) != .f32x1) return Error.Type;
+                const of = try systemValueOf(work, systemOf(work, work.points[from]).?);
+                work.step_of[id] = try floatStep(work, partOf(work, of, work.chain_part[from]));
+                return;
+            }
             if (work.thing[from] == .input_part) {
                 // One float of a varying, which an access chain named:
                 // the varying's step, and the float of it, as Mesa's
@@ -7006,7 +7155,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             }
             if (work.class[from] != @intFromEnum(spirv.StorageClass.input)) return Error.Body;
             if (systemOf(work, from)) |which| {
-                if (try kindOf(work, try idOf(operands[0])) != .f32x1) return Error.Type;
+                if (try kindOf(work, try idOf(operands[0])) != std.enums.fromInt(Kind, work.wide[from]).?) return Error.Type;
                 work.step_of[id] = try systemValueOf(work, which);
                 return;
             }
@@ -7038,6 +7187,19 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 if (work.thing[type_id] != .pointer or work.points[type_id] != block.member_type[which]) return Error.Type;
                 if (try kindOf(work, block.member_type[which]) != wanted) return Error.Type;
                 work.thing[id] = if (position) .position_pointer else .point_size_pointer;
+                return;
+            }
+            if (work.thing[base] == .variable and work.class[base] == @intFromEnum(spirv.StorageClass.input) and systemOf(work, base) != null) {
+                // One word of a compute program's built-in, as glslc
+                // writes `gl_GlobalInvocationID.x` (since 1.194).
+                if (operands.len != 4) return Error.Body;
+                const which = try indexOf(work, operands[3]);
+                if (work.wide[base] == 1 or which >= work.wide[base]) return Error.Body;
+                if (work.thing[type_id] != .pointer or work.class[type_id] != @intFromEnum(spirv.StorageClass.input)) return Error.Body;
+                if (try kindOf(work, work.points[type_id]) != .f32x1) return Error.Type;
+                work.thing[id] = .system_part;
+                work.points[id] = base;
+                work.chain_part[id] = @intCast(which);
                 return;
             }
             if (work.thing[base] == .variable and work.class[base] == @intFromEnum(spirv.StorageClass.input)) {
@@ -7940,12 +8102,13 @@ fn blockLoad(work: *Work, variable: u16, dynamic: u16, offset: u32, kind: Kind, 
 /// (v3dv_pipeline.c:415-425; since 1.168). The push constants and a
 /// uniform buffer are not the program's to write, nor is what is
 /// NonWritable. A vertex program's is refused: v3dv runs it twice, as
-/// the coordinate program too.
+/// the coordinate program too. A compute program's is taken (since
+/// 1.194).
 fn blockStore(work: *Work, variable: u16, dynamic: u16, offset: u32, non_writable: bool, value: u16, kind: Kind) Error!void {
     if (offset >= none or variable == work.push_variable) return Error.Storage;
     const slot = work.points[variable];
     if (!work.ubos[slot].storage or non_writable) return Error.Storage;
-    if (work.stage != .fragment) return Error.Storage;
+    if (work.stage == .vertex) return Error.Storage;
     const at = if (dynamic == none or offset == 0) dynamic else try integerOf(work, .iadd, dynamic, try integerSplat(work, .f32x1, @intCast(offset)));
     work.buffers_written = true;
     _ = try put(work, .{ .tag = .ssbo_store, .kind = kind, .a = value, .b = slot, .at = if (dynamic == none) offset else 0, .from = .{ at, 0, 0, 0 } });
@@ -8016,7 +8179,7 @@ fn blockAtomic(work: *Work, variable: u16, dynamic: u16, offset: u32, non_writab
     if (offset >= none or variable == work.push_variable) return Error.Storage;
     const slot = work.points[variable];
     if (!work.ubos[slot].storage or non_writable) return Error.Storage;
-    if (work.stage != .fragment) return Error.Storage;
+    if (work.stage == .vertex) return Error.Storage;
     const at = if (dynamic == none or offset == 0) dynamic else try integerOf(work, .iadd, dynamic, try integerSplat(work, .f32x1, @intCast(offset)));
     work.buffers_written = true;
     return put(work, .{ .tag = .ssbo_atomic, .kind = .f32x1, .a = first, .b = slot, .at = if (dynamic == none) offset else 0, .from = .{ at, second, 0, 0 }, .atomic = atomic });
@@ -9142,8 +9305,14 @@ fn systemStep(work: *Work, which: SystemValue) Error!u16 {
 }
 
 /// What VertexIndex or InstanceIndex loads, made the first time it is
-/// read: as nir_lower_system_values lowers each (since 1.192).
+/// read: as nir_lower_system_values lowers each (since 1.192). A compute
+/// program's built-ins as nir_to_vir reads them and
+/// nir_lower_compute_system_values lowers them (since 1.194).
 fn systemValueOf(work: *Work, which: usize) Error!u16 {
+    if (which > @intFromEnum(Builtin.instance_index)) {
+        if (work.system_value[which] == none) work.system_value[which] = try computeValueOf(work, @enumFromInt(which));
+        return work.system_value[which];
+    }
     if (work.system_value[which] == none) work.system_value[which] = if (which == 0)
         // load_vertex_id, where the ids are zero based: the VPM's id plus
         // the first vertex (nir_lower_system_values.c:81-83). v3dv's are
@@ -9157,6 +9326,119 @@ fn systemValueOf(work: *Work, which: usize) Error!u16 {
         // row of the VPM's.
         try integerOf(work, .iadd, try systemStep(work, .instance_id), try systemStep(work, .base_instance));
     return work.system_value[which];
+}
+
+/// A compute program's workgroup size, `LocalSize`'s or the WorkgroupSize
+/// constant's: each of x, y and z at least 1, and 256 invocations at most,
+/// V3D_MAX_CSD_WG_SIZE (v3d_limits.h:82). v3dv runs more as a loop of 256
+/// (nir_lower_workgroup_size, v3dv_pipeline.c:3300-3311), which is not
+/// ported (since 1.194).
+fn localSize(work: *Work, size: [3]u32) Error!void {
+    var invocations: u64 = 1;
+    for (size) |each| {
+        if (each == 0) return Error.Refused;
+        invocations *= each;
+    }
+    if (invocations > 256) return Error.Refused;
+    work.local_size = size;
+}
+
+/// Three words as a vector, a step each.
+fn wordVector(work: *Work, parts: [3]u16) Error!u16 {
+    var made = Step{ .tag = .construct, .kind = .f32x3 };
+    for (parts, 0..) |each, k| {
+        made.from[k] = each;
+        made.part[k] = 0;
+    }
+    return put(work, made);
+}
+
+/// A compute program's built-in, made the first time it is read
+/// (since 1.194).
+fn computeValueOf(work: *Work, which: Builtin) Error!u16 {
+    const size = work.local_size;
+    return switch (which) {
+        // load_num_workgroups: a uniform each (nir_to_vir.c:3877-3883).
+        .num_workgroups => wordVector(work, .{ try systemStep(work, .num_work_groups_x), try systemStep(work, .num_work_groups_y), try systemStep(work, .num_work_groups_z) }),
+        // SYSTEM_VALUE_WORKGROUP_ID: load_workgroup_id plus
+        // load_base_workgroup_id (nir_lower_system_values.c:215-218,
+        // v3dv_pipeline.c:402).
+        .workgroup_id => wordVector(work, try groupIdOf(work)),
+        // load_local_invocation_index: the top bits of the second word
+        // (emit_load_local_invocation_index, :3509-3514), as many as
+        // the program start says (:4959-4965).
+        .local_invocation_index => invocationIndexOf(work),
+        .local_invocation_id => wordVector(work, try localIdOf(work)),
+        // nir_lower_compute_system_values, where the device has no global
+        // id and has a base workgroup id (v3dv_pipeline.c:3313-3316):
+        // (group id + base) * size + local id
+        // (nir_lower_system_values.c:701-709), a word at a time once
+        // nir_lower_alu_to_scalar has run.
+        .global_invocation_id => global: {
+            const group = try groupIdOf(work);
+            const local = try localIdOf(work);
+            var parts: [3]u16 = undefined;
+            for (&parts, 0..) |*each, k| each.* = try integerOf(work, .iadd, try integerOf(work, .imul, group[k], try wordConstant(work, size[k])), local[k]);
+            break :global wordVector(work, parts);
+        },
+        .vertex_index, .instance_index => unreachable,
+    };
+}
+
+/// The workgroup id plus the base the dispatch gives (nir_to_vir.c:
+/// 3900-3910), as the program reads it and the global id is made of it;
+/// load_workgroup_id the payload's two halves of its first word and the
+/// low half of its second (:3885-3898). Made anew for each, as NIR makes
+/// them, and one again where nir_opt_cse's port finds them the same.
+fn groupIdOf(work: *Work) Error![3]u16 {
+    const first = try systemStep(work, .cs_payload0);
+    const second = try systemStep(work, .cs_payload1);
+    const group = [3]u16{
+        try integerOf(work, .iand, first, try wordConstant(work, 0xffff)),
+        try integerOf(work, .ushr, first, try wordConstant(work, 16)),
+        try integerOf(work, .iand, second, try wordConstant(work, 0xffff)),
+    };
+    const bases = [3]SystemValue{ .work_group_base_x, .work_group_base_y, .work_group_base_z };
+    var based: [3]u16 = undefined;
+    for (group, bases, &based) |each, base, *into| into.* = try integerOf(work, .iadd, each, try systemStep(work, base));
+    return based;
+}
+
+/// How many of the payload's second word's top bits the local index is:
+/// local_invocation_index_bits, of the next power of two of the
+/// workgroup's size and 64 (nir_to_vir.c:4959-4965).
+fn localIndexBits(work: *const Work) u5 {
+    const invocations = work.local_size[0] * work.local_size[1] * work.local_size[2];
+    return @intCast(std.math.log2_int_ceil(u32, @max(invocations, 64)));
+}
+
+/// The local index (`computeValueOf`), made once.
+fn invocationIndexOf(work: *Work) Error!u16 {
+    if (work.system_value[@intFromEnum(Builtin.local_invocation_index)] == none)
+        work.system_value[@intFromEnum(Builtin.local_invocation_index)] = try integerOf(work, .ushr, try systemStep(work, .cs_payload1), try wordConstant(work, 32 - @as(u32, localIndexBits(work))));
+    return work.system_value[@intFromEnum(Builtin.local_invocation_index)];
+}
+
+/// load_local_invocation_id, which v3dv has made of the local index
+/// (lower_cs_local_id_to_index, v3dv_pipeline.c:176;
+/// nir_lower_system_values.c:525-549): the index alone where the
+/// workgroup is a line (try_lower_id_to_index_1d, :492-508), else the
+/// index's remainder by x, its quotient by x's remainder by y, and its
+/// quotient by x times y (lower_id_to_index, :456-483), each size a
+/// constant (load_workgroup_size, :683-698). Made anew, as
+/// `groupIdOf` is.
+fn localIdOf(work: *Work) Error![3]u16 {
+    const size = work.local_size;
+    const index = try invocationIndexOf(work);
+    const zero = try wordConstant(work, 0);
+    if (size[0] == 1 and size[1] == 1) return .{ zero, zero, index };
+    if (size[0] == 1 and size[2] == 1) return .{ zero, index, zero };
+    if (size[1] == 1 and size[2] == 1) return .{ index, zero, zero };
+    return .{
+        try constantDividedOf(work, .umod, index, size[0]),
+        try constantDividedOf(work, .umod, try constantDividedOf(work, .udiv, index, size[0]), size[1]),
+        try constantDividedOf(work, .udiv, index, size[0] * size[1]),
+    };
 }
 
 /// The kind of what an operand id names: its step's, or a constant's.
@@ -15126,6 +15408,32 @@ fn reopcoded(comptime words: []const u32, comptime op: spirv.Op, comptime at: u3
     }
 }
 
+/// `words` without the `at`th instruction of `op`.
+fn withoutOp(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32) [words.len - (words[opStart(words, op, at)] >> 16)]u32 {
+    comptime {
+        const start = opStart(words, op, at);
+        return (words[0..start] ++ words[start + (words[start] >> 16) ..]).*;
+    }
+}
+
+/// Where the `at`th instruction of `op` starts.
+fn opStart(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32) usize {
+    comptime {
+        var seen: u32 = 0;
+        var k: usize = 5;
+        while (k < words.len) {
+            const count = words[k] >> 16;
+            if (count == 0) @compileError("a word count of zero");
+            if (words[k] & 0xFFFF == @intFromEnum(op)) {
+                if (seen == at) return k;
+                seen += 1;
+            }
+            k += count;
+        }
+        @compileError("no such instruction to drop");
+    }
+}
+
 fn liveLogicOf(work: *const Work, which: Logic) usize {
     const reached = liveMask(work);
     var count: usize = 0;
@@ -18003,4 +18311,185 @@ test "a point size stored after the varyings is stored after them, at its row al
         vpmIndex(8),               vpmIndex(9), .{ .float = 8 },           .{ .float = 1 }, vpmIndex(5),               vpmIndex(6),                vpmIndex(7), vpmIndex(4),
         .{ .viewport = .x_scale }, vpmIndex(0), .{ .viewport = .y_scale }, vpmIndex(1),     .{ .viewport = .z_scale }, .{ .viewport = .z_offset }, vpmIndex(2), vpmIndex(3),
     }, code.stream());
+}
+
+fn computeThroughMesa(work: *Work, words: []const u32) !Code {
+    var compiler = try allocate.initRegSets(testing.allocator);
+    defer compiler.deinit();
+    return compileComputeVir(work, words, testing.allocator, &compiler);
+}
+
+/// A word of the stream that is a constant's bits.
+fn wordOf(value: u32) Word {
+    return .{ .float = @bitCast(value) };
+}
+
+test "through Mesa's back end, a compute program's global id is its workgroup id of the CS payload plus the dispatch's base, times the workgroup's size, plus its local id, which a line of a workgroup has the local index for" {
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_compute_ids);
+    try testing.expectEqualSlices(u16, &.{ 16, 1, 1 }, &code.compute.local_size);
+    try testing.expect(code.compute.can_use_supergroups);
+    // The mask of x's half of the payload's first word, the base of x,
+    // the shift of the local index - 32 less local_invocation_index_bits,
+    // 6 of the 64 at least - and the buffer: y and z are dead code.
+    try expectStream(&.{ wordOf(0xffff), .{ .work_group_base = 0 }, wordOf(26), .{ .ssbo = .{ .set = 0, .binding = 0, .reach = 0 } } }, code.stream());
+    // The payload read where the thread starts with it, its first word in
+    // rf3 and its second in rf2 (nir_to_vir.c:4953-4954), the moves of it
+    // coalesced.
+    try testing.expectEqual(@as(usize, 1), addReads(code, "and", "rf3"));
+    try testing.expectEqual(@as(usize, 1), addReads(code, "shr", "rf2"));
+    try testing.expectEqual(@as(usize, 1), opsOf(code, "and"));
+    try testing.expectEqual(@as(usize, 1), opsOf(code, "shr"));
+    // The workgroup's size of 16 a shift (nir_opt_algebraic), and the
+    // buffer's index another; i times 3 the one multiply.
+    try testing.expectEqual(@as(usize, 2), opsOf(code, "shl"));
+    try testing.expectEqual(@as(usize, 1), opsOf(code, "umul24"));
+    // i times 3 plus i, the local index unread: its shift is the global
+    // id's.
+    work = .{};
+    const alone = try computeThroughMesa(&work, &comptime patched(&reference.glslc_compute_ids, .i_add, 0, 3, 25));
+    try testing.expectEqual(@as(usize, 1), opsOf(alone, "shr"));
+    try testing.expectEqual(@as(usize, 2), opsOf(alone, "shl"));
+}
+
+/// How many of a program's add-side `op`s read `register` first.
+fn addReads(code: Code, comptime op: []const u8, comptime register: []const u8) usize {
+    var count: usize = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        if (!std.mem.startsWith(u8, line, op ++ " ")) continue;
+        const cut = std.mem.indexOf(u8, line, ";") orelse line.len;
+        count += @intFromBool(std.mem.indexOf(u8, line[0..cut], ", " ++ register ++ ",") != null);
+    }
+    return count;
+}
+
+test "through Mesa's back end, a compute program's local id is the local index's remainder and quotients by the workgroup's size, and its workgroup id and count of them are the payload's and uniforms" {
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_compute_grid);
+    try testing.expectEqualSlices(u16, &.{ 4, 4, 2 }, &code.compute.local_size);
+    // The payload's masks and shift; the three bases; x's and y's counts
+    // of workgroups, z's unread; the local index's shift of 32
+    // invocations, 64 all the same; the buffer and the TMU's
+    // configuration of a write of four words.
+    try expectStream(&.{
+        wordOf(0xffff),                                       wordOf(16),                .{ .work_group_base = 0 }, .{ .work_group_base = 1 },
+        .{ .work_group_base = 2 },                            .{ .num_work_groups = 0 }, .{ .num_work_groups = 1 }, wordOf(26),
+        .{ .ssbo = .{ .set = 0, .binding = 0, .reach = 0 } }, wordOf(0xffff_fffc),
+    }, code.stream());
+    // x's and y's halves of the payload's first word, z's and the local
+    // index of its second.
+    try testing.expectEqual(@as(usize, 1), addReads(code, "and", "rf3"));
+    try testing.expectEqual(@as(usize, 1), addReads(code, "shr", "rf3"));
+    try testing.expectEqual(@as(usize, 1), addReads(code, "and", "rf2"));
+    try testing.expectEqual(@as(usize, 1), addReads(code, "shr", "rf2"));
+    // Of 4 a mask of 3 and a shift of 2, of 16 a shift of 4: two masks of
+    // the payload and two of the local index, the payload's y, the local
+    // index, its y and its z.
+    try testing.expectEqual(@as(usize, 4), opsOf(code, "and"));
+    try testing.expectEqual(@as(usize, 4), opsOf(code, "shr"));
+    try testing.expectEqual(@as(usize, 2), opsOf(code, "umul24"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, ", 3 "));
+    // y's shift of 2 and z's of 4, by x times y; and the buffer's index
+    // times 16.
+    try testing.expectEqual(@as(usize, 1), countOf(code, ", 2 "));
+    try testing.expectEqual(@as(usize, 2), countOf(code, ", 4 "));
+}
+
+test "a WorkgroupSize constant is the workgroup's size, whatever LocalSize said: one invocation's local id is none, and 256 invocations take 8 bits of the payload" {
+    var work: Work = .{};
+    // compute_ids's (16, 1, 1) made (1, 1, 1).
+    const single = try computeThroughMesa(&work, &comptime patched(&reference.glslc_compute_ids, .constant_composite, 0, 2, 32));
+    try testing.expectEqualSlices(u16, &.{ 1, 1, 1 }, &single.compute.local_size);
+    // The group id times 1 and plus 0 folded: the buffer's index the one
+    // shift.
+    try testing.expectEqual(@as(usize, 1), opsOf(single, "shl"));
+    // Its local id is (0, 0, the index): x's 0 added to nothing. The
+    // adds are the base's, the index's and the buffer's.
+    try testing.expectEqual(@as(usize, 3), integerAdds(single));
+    try expectStream(&.{ wordOf(0xffff), .{ .work_group_base = 0 }, wordOf(26), .{ .ssbo = .{ .set = 0, .binding = 0, .reach = 0 } } }, single.stream());
+    // Made (16, 16, 1): the local index 32 less 8 bits, and x its mask.
+    work = .{};
+    const square = try computeThroughMesa(&work, &comptime patched(&patched(&reference.glslc_compute_ids, .constant_composite, 0, 3, 31), .constant_composite, 0, 2, 31));
+    try testing.expectEqualSlices(u16, &.{ 16, 16, 1 }, &square.compute.local_size);
+    try testing.expectEqual(wordOf(24), square.stream()[2]);
+    try testing.expectEqual(@as(usize, 1), countOf(square, ", 15"));
+    // Made (1, 16, 1): the local id (0, the index, 0), x's 0 added to
+    // nothing again.
+    work = .{};
+    const column = try computeThroughMesa(&work, &comptime patched(&patched(&reference.glslc_compute_ids, .constant_composite, 0, 2, 32), .constant_composite, 0, 3, 31));
+    try testing.expectEqualSlices(u16, &.{ 1, 16, 1 }, &column.compute.local_size);
+    try testing.expectEqual(@as(usize, 3), integerAdds(column));
+}
+
+test "the workgroup id or the local id a compute program reads beside its global id is the one the global id is made of, as nir_opt_cse makes them one" {
+    // compute_grid's LocalInvocationId made GlobalInvocationId: the
+    // payload's two masks and the local id's two, each once.
+    var work: Work = .{};
+    const group = try computeThroughMesa(&work, &comptime patched(&reference.glslc_compute_grid, .decorate, 7, 2, @intFromEnum(spirv.BuiltIn.global_invocation_id)));
+    try testing.expectEqual(@as(usize, 4), opsOf(group, "and"));
+    // And its WorkgroupId made GlobalInvocationId.
+    work = .{};
+    const local = try computeThroughMesa(&work, &comptime patched(&reference.glslc_compute_grid, .decorate, 0, 2, @intFromEnum(spirv.BuiltIn.global_invocation_id)));
+    try testing.expectEqual(@as(usize, 4), opsOf(local, "and"));
+    try testing.expectEqual(@as(usize, 4), opsOf(local, "shr"));
+}
+
+test "a compute program says its workgroup's size, of 256 invocations at most and none of 0, of a constant of three integers; its built-ins are its own and each of an input variable" {
+    const ids = &reference.glslc_compute_ids;
+    const refused = [_][]const u32{
+        // LocalSize of 0 and of 257 invocations.
+        &comptime patched(ids, .execution_mode, 0, 2, 0),
+        &comptime patched(ids, .execution_mode, 0, 2, 257),
+        // The WorkgroupSize constant made (16, 16, 16).
+        &comptime patched(&patched(ids, .constant_composite, 0, 3, 31), .constant_composite, 0, 4, 31),
+        // WorkgroupSize of the scalar 16, and of a variable besides the
+        // constant.
+        &comptime patched(ids, .decorate, 6, 0, 31),
+        &comptime patched(ids, .decorate, 5, 2, @intFromEnum(spirv.BuiltIn.workgroup_size)),
+        // The local index made VertexIndex, which a vertex program's is,
+        // and a second global id.
+        &comptime patched(ids, .decorate, 5, 2, @intFromEnum(spirv.BuiltIn.vertex_index)),
+        &comptime patched(ids, .decorate, 5, 2, @intFromEnum(spirv.BuiltIn.global_invocation_id)),
+        // The buffer in Workgroup memory, which is not ported.
+        &comptime patched(&patched(&patched(ids, .type_pointer, 2, 1, 4), .variable, 1, 2, 4), .type_pointer, 3, 1, 4),
+        // OriginUpperLeft, a fragment program's.
+        &comptime patched(ids, .execution_mode, 0, 1, @intFromEnum(spirv.ExecutionMode.origin_upper_left)),
+        // Neither LocalSize nor the WorkgroupSize constant.
+        &comptime withoutOp(&withoutOp(ids, .execution_mode, 0), .decorate, 6),
+    };
+    for (refused) |module| {
+        var work: Work = .{};
+        try testing.expectError(Error.Refused, computeThroughMesa(&work, module));
+    }
+    var work: Work = .{};
+    // The local index's built-in on the buffer, which is no integer, and
+    // the local id's on the uint the local index was.
+    try testing.expectError(Error.Type, computeThroughMesa(&work, &comptime patched(ids, .decorate, 5, 0, 19)));
+    work = .{};
+    try testing.expectError(Error.Type, computeThroughMesa(&work, &comptime patched(ids, .decorate, 5, 2, @intFromEnum(spirv.BuiltIn.local_invocation_id))));
+    // The global id's fourth word.
+    work = .{};
+    try testing.expectError(Error.Body, computeThroughMesa(&work, &comptime patched(ids, .access_chain, 0, 3, 24)));
+    // A compute module is no fragment program, nor a vertex module a
+    // compute program, and a vertex program has no global id.
+    work = .{};
+    try testing.expectError(Error.Stage, throughMesa(&work, ids));
+    work = .{};
+    try testing.expectError(Error.Stage, computeThroughMesa(&work, &reference.glslc_vertex_index));
+    work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    try testing.expectError(Error.Refused, vertexThroughMesa(&work, &comptime patched(&reference.glslc_vertex_index, .decorate, 0, 2, @intFromEnum(spirv.BuiltIn.global_invocation_id)), key));
+}
+
+test "through Mesa's back end, a compute program's atomic is the TMU's: its operand and the word's address, the operation's configuration a uniform, and the word read back stored" {
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_compute_atomic);
+    try testing.expectEqualSlices(u16, &.{ 64, 1, 1 }, &code.compute.local_size);
+    try expectStream(&.{ wordOf(26), .{ .ssbo = .{ .set = 0, .binding = 0, .reach = 4 } }, wordOf(0xffff_ff87) }, code.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(code, "tmuau"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 1), addReads(code, "shr", "rf2"));
 }
