@@ -329,7 +329,7 @@ row of tabs along the top of pages of gadgets, framed together),
 `getfile`, `getfont` and
 `getdevice` (a field with a button beside it that opens asl.library's
 requester), and
-`textedit` (text of many lines to edit, with undo, the clipboard,
+`textedit` (text of many lines to edit, in UTF-8, with undo, the clipboard,
 finding, line numbers and highlighting through a hook that labels each
 line - what `SYS:Programs/Notepad` is made of), and
 `scrollgroup` (a layout larger than the window, scrolled; `C:test/Scroll`),

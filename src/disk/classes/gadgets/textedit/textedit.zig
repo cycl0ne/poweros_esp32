@@ -24,20 +24,26 @@
 //! column the cursor was last put in by anything else (`goal_x`), so it
 //! goes back there past short lines.
 //!
+//! **The text is UTF-8.** The cursor and the anchor stand where a
+//! character starts: the cursor keys step over a character whole,
+//! Backspace and Delete take one out whole, and a key's character goes in
+//! as its bytes.
+//!
 //! **Drawing** is always the whole gadget, which intuition does aside and
 //! puts on in one copy (`support.redraw`), so a change never shows half
-//! made. A row is drawn in runs of bytes that share a pen, each placed
-//! where the width table puts it, so the text, the cursor and the
-//! selection agree to the pixel. Nothing is drawn past the field: a byte
-//! that does not fit whole is left out, and a line feed or a control
-//! character takes no room.
+//! made. A row is drawn in runs of characters that share a pen, each
+//! placed where the widths put it, so the text, the cursor and the
+//! selection agree to the pixel. Nothing is drawn past the field: a
+//! character that does not fit whole is left out, and a line feed or a
+//! control character takes no room.
 //!
-//! **The cursor** is a block over the byte it stands before, in the fill
-//! pen with the byte in the fill's text pen, as a console's is, and shows
-//! only while the gadget has the keyboard. That is what shows the field is
-//! active: its frame is never drawn focused. A wrapped row keeps an
-//! `n`'s width free at its end, and the view across reaches that far
-//! past the widest line, so the block after a row's last byte always fits.
+//! **The cursor** is a block over the character it stands before, in the
+//! fill pen with the character in the fill's text pen, as a console's is,
+//! and shows only while the gadget has the keyboard. That is what shows
+//! the field is active: its frame is never drawn focused. A wrapped row
+//! keeps an `n`'s width free at its end, and the view across reaches that
+//! far past the widest line, so the block after a row's last character
+//! always fits.
 //!
 //! **The keyboard** is the gadget's from a press in it, or from
 //! `ActivateGadget`, until a press elsewhere. The keys a program answers -
@@ -51,8 +57,10 @@
 //! its first row. The text starts after them and a line between, and the
 //! rows wrap at what is left of the width.
 //!
-//! **Widths** come from the window's font, a byte at a time, measured once
-//! for each font (`IntuiTextLength`); a tab stops every eight spaces.
+//! **Widths** come from the window's font, a character at a time
+//! (`IntuiTextLength`): the first 256 measured once for each font, the
+//! others as the text has them, the last 64 kept (`Wide`); a tab stops
+//! every eight spaces.
 //!
 //! **Highlighting** (`TEXTEDIT_HighlightHook`): before a line's first row
 //! is drawn its bytes are copied out of the gap buffer, the first
@@ -83,6 +91,8 @@ const support = gadgets.support;
 const sr = gadgets.scroller;
 const te = gadgets.textedit;
 const KeymapBase = sdk.interface.keymap.KeymapBase;
+const IntuitionBase = sdk.interface.intuition.IntuitionBase;
+const utf8 = utility.utf8;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
@@ -97,9 +107,9 @@ pub const Library = gadgets.ClassLibrary(.{
     // 1: the wheel, a third press, indent, line numbers. 2: a press
     // follows the one before by place and time (DoubleTap). 3:
     // highlighting (TEXTEDIT_HighlightHook). 4: TEXTEDIT_CanUndo and
-    // TEXTEDIT_CanRedo.
-    .revision = 4,
-    .date = "29.10.2026",
+    // TEXTEDIT_CanRedo. 5: the text is UTF-8.
+    .revision = 5,
+    .date = "10.11.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -113,17 +123,54 @@ comptime {
 const text_margin = 3;
 const scroll_size = 16;
 
-/// The cursor's width: a block over the byte it stands before, as wide as
-/// that byte; before a line feed or a tab, at the end, or before a byte
-/// that takes no room, as wide as an `n` - a space is too thin to read as
-/// a block.
+/// The cursor's width: a block over the character it stands before, as
+/// wide as that character; before a line feed or a tab, at the end, or
+/// before a character that takes no room, as wide as an `n` - a space is
+/// too thin to read as a block.
 fn cursorWidth(text: *const Text, pos: u32) u32 {
     const room = cursorRoom(text);
     if (pos >= text.length()) return room;
-    const byte = text.byteAt(pos);
-    if (byte == '\n' or byte == '\t') return room;
-    const width = text.layout.widths[byte];
+    const char = text.charAt(pos).char;
+    if (char == '\n' or char == '\t') return room;
+    const width = text.layout.widthOf(char);
     return if (width == 0) room else width;
+}
+
+/// The widths of the characters past U+00FF, measured in the font as
+/// the layout asks for them: the last 64 kept, each with its character in
+/// one word - the character in the low 21 bits, the width above - so a
+/// reader never sees one without the other.
+const Wide = struct {
+    ib: ?*IntuitionBase = null,
+    font: ?*graphics.TextFont = null,
+    kept: [64]u32 = @splat(0),
+
+    const width_shift = 21;
+
+    /// Everything kept forgotten, for the font `font`.
+    fn reset(wide: *Wide, ib: *IntuitionBase, font: *graphics.TextFont) void {
+        wide.ib = ib;
+        wide.font = font;
+        wide.kept = @splat(0);
+    }
+};
+
+/// `Layout.measure`: a character's width in the font, from what is kept
+/// or measured now. 1 while there is no font yet, as the widths table
+/// starts.
+fn measureWide(context: ?*anyopaque, char: u32) u16 {
+    const wide: *Wide = @ptrCast(@alignCast(context.?));
+    const slot = (char *% 0x9E37_79B1) >> 26;
+    const kept = wide.kept[slot];
+    if (kept != 0 and kept & 0x1F_FFFF == char) return @intCast(kept >> Wide.width_shift);
+    const ib = wide.ib orelse return 1;
+    const font = wide.font orelse return 1;
+    var one: [4:0]u8 = @splat(0);
+    _ = utf8.encode(char, one[0..4]);
+    const run = intuition.text.plainRun(&one, font);
+    const width: u32 = @min(@as(u32, @intCast(@max(ib.IntuiTextLength(&run), 0))), 0x7FF);
+    wide.kept[slot] = char | width << Wide.width_shift;
+    return @intCast(width);
 }
 
 /// The room kept at a row's end, so the cursor after its last byte fits:
@@ -214,6 +261,9 @@ pub const Data = struct {
     /// The font the widths were measured in, and its line's height.
     font: ?*graphics.TextFont = null,
     line_height: i32 = 8,
+    /// The widths of the characters past U+00FF, which the layout asks
+    /// for (`Layout.measure`).
+    wide: Wide = .{},
     /// The last press, when and where, for the ones that follow it; and
     /// the position the run of presses began at.
     last_tap: intuition.Tap = .{},
@@ -307,13 +357,15 @@ fn syncLayout(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*const classusr.
     if (measure.font) |font| {
         if (font != own.font) {
             own.font = font;
-            var one: [2:0]u8 = .{ 0, 0 };
-            for (&own.text.layout.widths, 0..) |*width, byte| {
-                if (byte < 0x20 or (byte >= 0x7F and byte < 0xA0)) {
+            own.wide.reset(ib, font);
+            var one: [4:0]u8 = @splat(0);
+            for (&own.text.layout.widths, 0..) |*width, char| {
+                if (char < 0x20 or (char >= 0x7F and char < 0xA0)) {
                     width.* = 0;
                     continue;
                 }
-                one[0] = @intCast(byte);
+                one = @splat(0);
+                _ = utf8.encode(@intCast(char), one[0..4]);
                 const run = intuition.text.plainRun(&one, font);
                 width.* = @intCast(@max(ib.IntuiTextLength(&run), 0));
             }
@@ -484,13 +536,14 @@ fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, area: 
     var run_pen: u32 = pens.text;
     var x: u32 = 0;
     var at = start;
-    while (at < end) : (at += 1) {
-        const byte = text.byteAt(at);
-        const width = text.widthAt(byte, x);
+    while (at < end) {
+        const found = text.charAt(at);
+        const length: u32 = @intCast(found.length);
+        const width = text.widthAt(found.char, x);
         const selected = at >= sel.from and at < sel.to;
         const pen = if (selected) pens.fill_text else pens.ofKind(kindAt(labels, at));
-        const shows = byte != '\t' and width != 0 and @as(i64, x) >= view_left and @as(i64, x) + width <= view_right;
-        if (used != 0 and (!shows or pen != run_pen or used == run.len)) {
+        const shows = found.char != '\t' and width != 0 and @as(i64, x) >= view_left and @as(i64, x) + width <= view_right;
+        if (used != 0 and (!shows or pen != run_pen or used + length > run.len)) {
             drawRun(gb, rp, run[0..used], area.left + @as(i32, @intCast(run_left - view_left)), baseline, run_pen);
             used = 0;
         }
@@ -499,10 +552,11 @@ fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, area: 
                 run_left = x;
                 run_pen = pen;
             }
-            run[used] = byte;
-            used += 1;
+            text.copyOut(at, at + length, run[used..].ptr);
+            used += length;
         }
         x += width;
+        at += length;
         if (@as(i64, x) > view_right and !own.wrap) break;
     }
     drawRun(gb, rp, run[0..used], area.left + @as(i32, @intCast(run_left - view_left)), baseline, run_pen);
@@ -524,12 +578,15 @@ fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, area: 
                 .width = @intCast(right - left - 1),
                 .height = own.line_height - 1,
             }, if (selected) pens.ground else pens.fill);
-            // The byte itself, when it is one that is drawn and all of it
-            // is in the field.
+            // The character itself, when it is one that is drawn and all
+            // of it is in the field.
             if (own.cursor < text.length() and left == cursor_x and right == cursor_x + block) {
-                const byte = text.byteAt(own.cursor);
-                if (byte != '\n' and byte != '\t' and text.layout.widths[byte] != 0) {
-                    drawRun(gb, rp, &[1]u8{byte}, area.left + @as(i32, @intCast(cursor_x)), baseline, if (selected) pens.text else pens.fill_text);
+                const found = text.charAt(own.cursor);
+                if (found.char != '\n' and found.char != '\t' and text.layout.widthOf(found.char) != 0) {
+                    var bytes: [4]u8 = undefined;
+                    const length: u32 = @intCast(found.length);
+                    text.copyOut(own.cursor, own.cursor + length, &bytes);
+                    drawRun(gb, rp, bytes[0..length], area.left + @as(i32, @intCast(cursor_x)), baseline, if (selected) pens.text else pens.fill_text);
                 }
             }
         }
@@ -669,7 +726,7 @@ fn nowTold(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*const classu
     const width: u32 = @intCast(@max(parts.area.width, 1));
     return .{
         .line = line,
-        .column = own.cursor - own.text.lineStart(line),
+        .column = own.text.charsBetween(own.text.lineStart(line), own.cursor),
         .changed = @intFromBool(own.changed),
         .top = @min(own.top, lastTop(own, parts.visible)),
         .total = own.text.rowCount(),
@@ -791,12 +848,12 @@ fn replaceAll(base: *gadgets.Base, own: *Data, needle: []const u8, with: []const
     own.text.copyOut(0, length, before);
     var count: u32 = 0;
     var at: u32 = 0;
-    while (at + needle.len <= own.text.length()) {
-        if (!own.text.matchAt(at, needle, any_case)) {
-            at += 1;
+    while (at < own.text.length()) {
+        const end = own.text.matchAt(at, needle, any_case) orelse {
+            at = own.text.charAfter(at);
             continue;
-        }
-        own.text.remove(at, at + @as(u32, @intCast(needle.len)));
+        };
+        own.text.remove(at, end);
         if (!own.text.insert(at, with)) break;
         at += @intCast(with.len);
         count += 1;
@@ -811,7 +868,7 @@ fn replaceAll(base: *gadgets.Base, own: *Data, needle: []const u8, with: []const
     defer sys.FreeVec(after);
     own.text.copyOut(0, after_length, after);
     own.history.record(0, before[0..length], after[0..after_length], own.cursor, own.anchor, false);
-    own.cursor = @min(own.cursor, after_length);
+    own.cursor = own.text.charStartOf(@min(own.cursor, after_length));
     own.anchor = own.cursor;
     own.changed = true;
     return count;
@@ -822,9 +879,9 @@ fn findNext(own: *Data, needle: []const u8, flags: u32) bool {
     const backwards = flags & te.TEFF_BACKWARDS != 0;
     const sel = selection(own);
     const from = if (backwards) sel.from else sel.to;
-    const at = own.text.find(from, needle, backwards, flags & te.TEFF_ANYCASE != 0) orelse return false;
-    own.anchor = at;
-    own.cursor = at + @as(u32, @intCast(needle.len));
+    const found = own.text.find(from, needle, backwards, flags & te.TEFF_ANYCASE != 0) orelse return false;
+    own.anchor = found.from;
+    own.cursor = found.to;
     own.goal_x = null;
     own.history.seal();
     return true;
@@ -859,10 +916,10 @@ fn moveKey(own: *Data, code: u32, qualifier: u32, page: u32) bool {
     const sel = selection(own);
     switch (code) {
         RAW_LEFT => {
-            if (sel.from != sel.to and !extend) moveTo(own, sel.from, false, false) else if (control) moveTo(own, text.wordBefore(own.cursor), extend, false) else moveTo(own, own.cursor -| 1, extend, false);
+            if (sel.from != sel.to and !extend) moveTo(own, sel.from, false, false) else if (control) moveTo(own, text.wordBefore(own.cursor), extend, false) else moveTo(own, if (own.cursor > 0) text.charBefore(own.cursor) else 0, extend, false);
         },
         RAW_RIGHT => {
-            if (sel.from != sel.to and !extend) moveTo(own, sel.to, false, false) else if (control) moveTo(own, text.wordAfter(own.cursor), extend, false) else moveTo(own, own.cursor + 1, extend, false);
+            if (sel.from != sel.to and !extend) moveTo(own, sel.to, false, false) else if (control) moveTo(own, text.wordAfter(own.cursor), extend, false) else moveTo(own, text.charAfter(own.cursor), extend, false);
         },
         RAW_UP => if (control) moveTo(own, 0, extend, false) else moveRows(own, false, 1, extend),
         RAW_DOWN => if (control) moveTo(own, text.length(), extend, false) else moveRows(own, true, 1, extend),
@@ -900,7 +957,7 @@ fn key(base: *gadgets.Base, own: *Data, o: *Object, in: *gc.GpInput, e: *const i
             if (sel.from != sel.to) {
                 did = replace(base, own, sel.from, sel.to, "", false);
             } else if (own.cursor > 0) {
-                const from = if (e.qualifier & ie.IEQUALIFIER_CONTROL != 0) own.text.wordBefore(own.cursor) else own.cursor - 1;
+                const from = if (e.qualifier & ie.IEQUALIFIER_CONTROL != 0) own.text.wordBefore(own.cursor) else own.text.charBefore(own.cursor);
                 did = replace(base, own, from, own.cursor, "", true);
             }
         },
@@ -908,7 +965,7 @@ fn key(base: *gadgets.Base, own: *Data, o: *Object, in: *gc.GpInput, e: *const i
             if (sel.from != sel.to) {
                 did = replace(base, own, sel.from, sel.to, "", false);
             } else if (own.cursor < own.text.length()) {
-                const to = if (e.qualifier & ie.IEQUALIFIER_CONTROL != 0) own.text.wordAfter(own.cursor) else own.cursor + 1;
+                const to = if (e.qualifier & ie.IEQUALIFIER_CONTROL != 0) own.text.wordAfter(own.cursor) else own.text.charAfter(own.cursor);
                 did = replace(base, own, own.cursor, to, "", true);
             }
         },
@@ -921,8 +978,7 @@ fn key(base: *gadgets.Base, own: *Data, o: *Object, in: *gc.GpInput, e: *const i
         else => {
             const kb: *KeymapBase = @ptrCast(base.opened[1] orelse return gc.GMR_MEACTIVE);
             var mapped: [8]u8 = undefined;
-            if (kb.MapRawKey(e, &mapped, mapped.len, null) != 1) return gc.GMR_MEACTIVE;
-            var char = mapped[0];
+            var char = sdk.keymap.character(&mapped, kb.MapRawKey(e, &mapped, mapped.len, null)) orelse return gc.GMR_MEACTIVE;
             if (e.qualifier & ie.IEQUALIFIER_CONTROL != 0) {
                 // Control with a letter, whatever the keymap made of it.
                 if ((char | 0x20) >= 'a' and (char | 0x20) <= 'z') char = (char | 0x20) - 'a' + 1;
@@ -939,8 +995,9 @@ fn key(base: *gadgets.Base, own: *Data, o: *Object, in: *gc.GpInput, e: *const i
                     0x03, 0x18, 0x16 => return giveBack(base, own, o, in.gadget_info),
                     else => return gc.GMR_MEACTIVE,
                 }
-            } else if (char >= 0x20 and char != 0x7F and !(char >= 0x80 and char < 0xA0)) {
-                did = typeIn(base, own, mapped[0..1], true);
+            } else if (char >= 0x20 and char != 0x7F) {
+                var bytes: [4]u8 = undefined;
+                did = typeIn(base, own, bytes[0..utf8.encode(char, &bytes)], true);
             } else return gc.GMR_MEACTIVE;
         },
     }
@@ -1115,6 +1172,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             own.history = undo.History.init(memory);
             if (Text.init(memory)) |text| {
                 own.text = text;
+                own.text.layout.measure = measureWide;
+                own.text.layout.context = &own.wide;
                 own.ready = true;
             }
             own.scrollers = base.utility_base.GetTagData(te.TEXTEDIT_Scrollers, 1, new.attr_list) != 0;
@@ -1230,7 +1289,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 te.TEXTEDIT_ReadOnly => @intFromBool(own.read_only),
                 te.TEXTEDIT_Changed => @intFromBool(own.changed),
                 te.TEXTEDIT_CursorLine => line,
-                te.TEXTEDIT_CursorColumn => own.cursor - own.text.lineStart(line),
+                te.TEXTEDIT_CursorColumn => own.text.charsBetween(own.text.lineStart(line), own.cursor),
                 te.TEXTEDIT_Lines => own.text.lineCount(),
                 te.TEXTEDIT_TopVert => nowTold(base, own, o.?, null).top,
                 te.TEXTEDIT_TotalVert => own.text.rowCount(),
@@ -1445,7 +1504,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 te.TEM_FIND => answer = @intFromBool(findNext(own, needle, find.flags)),
                 te.TEM_REPLACE => {
                     const sel = selection(own);
-                    if (sel.to - sel.from == needle.len and own.text.matchAt(sel.from, needle, any_case)) {
+                    const end = own.text.matchAt(sel.from, needle, any_case);
+                    if (end != null and end.? == sel.to) {
                         own.history.seal();
                         if (replace(base, own, sel.from, sel.to, with, false)) answer = 1;
                     }

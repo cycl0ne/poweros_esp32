@@ -20,7 +20,8 @@ the text is saved to.
 
 ## Using it
 
-Type where the cursor is. Along the top is the ribbon, under it the
+Type where the cursor is; the text is UTF-8, and the cursor, Backspace
+and Delete step over a character whole. Along the top is the ribbon, under it the
 text. The scroll bars on the right and at the bottom move the text; the
 sizing gadget is in the corner between them. The window's title shows
 the file's name, with a `*` before it while the text has changed.
@@ -40,7 +41,7 @@ built-in functions (`@import`), strings, numbers and comments each in
 their own, on a light field or a dark one. Each line is coloured from
 what it says itself, which is all Zig needs: none of its comments or
 strings goes on past the end of a line. The colours stop after a line's
-first 1024 characters.
+first 1024 bytes.
 
 Ctrl-X, Ctrl-C and Ctrl-V cut, copy and paste as the menu does. Open and
 Save As ask for the file with a file requester. A file dragged from the

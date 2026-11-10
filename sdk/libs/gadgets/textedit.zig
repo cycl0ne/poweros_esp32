@@ -2,7 +2,7 @@
 //! textedit.gadget: text of many lines, to read and to edit - the inside
 //! of a notepad.
 //!
-//! The text is Latin-1, its lines ended by line feeds, in a sunk field
+//! The text is UTF-8, its lines ended by line feeds, in a sunk field
 //! with a scroller at the right; without `TEXTEDIT_WordWrap` a line wider
 //! than the field scrolls sideways under a scroller along the bottom, and
 //! with it a line goes on in the next row, broken after a space where it
@@ -24,8 +24,9 @@
 //! the keyboard, until a press somewhere else. Characters go in at the
 //! cursor in place of what is selected; the cursor keys, Home and End,
 //! Page Up and Page Down move it - with Control, by a word and to the
-//! text's ends - and with Shift they select as they go. Backspace and Del
-//! take a character out, or what is selected; Return starts a line,
+//! text's ends - and with Shift they select as they go; the cursor steps
+//! over a character whole, whatever its bytes. Backspace and Del take a
+//! character out, all its bytes, or what is selected; Return starts a line,
 //! indented with the spaces and tabs the line before starts with, and Tab
 //! puts in a tab. A drag selects, scrolling the text when it goes past an
 //! edge; Shift with a press selects to there; a double press selects a
@@ -117,7 +118,8 @@ pub const TEXTEDIT_ReadOnly = TEXTEDIT_Dummy + 0x05;
 /// last set to false - which is what a program does when it has saved it.
 /// Set and read; told to the target when it turns true.
 pub const TEXTEDIT_Changed = TEXTEDIT_Dummy + 0x06;
-/// The cursor's line and column, both from 0, the column counting bytes.
+/// The cursor's line and column, both from 0, the column counting
+/// characters.
 /// Read only; told to the target as the cursor moves.
 pub const TEXTEDIT_CursorLine = TEXTEDIT_Dummy + 0x07;
 pub const TEXTEDIT_CursorColumn = TEXTEDIT_Dummy + 0x08;
@@ -205,8 +207,9 @@ pub const TEM_UNDO: classusr.MethodID = 0x804;
 pub const TEM_REDO: classusr.MethodID = 0x805;
 pub const TEM_SELECTALL: classusr.MethodID = 0x806;
 /// `TepFind`: the next match of `text` after the cursor - before it with
-/// `TEFF_BACKWARDS`, in any case with `TEFF_ANYCASE` - selected and
-/// brought into view, going round from the end. 1 when there is one.
+/// `TEFF_BACKWARDS`, in any case with `TEFF_ANYCASE`, which compares the
+/// characters by Unicode's simple case folding - selected and brought
+/// into view, going round from the end. 1 when there is one.
 pub const TEM_FIND: classusr.MethodID = 0x807;
 /// `TepFind`: what is selected, if it is a match of `text`, replaced with
 /// `with`, and then the next match found as `TEM_FIND` does. 1 when one
