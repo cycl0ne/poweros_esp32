@@ -537,6 +537,10 @@ pub const profile: spirv.Profile = .{
         // image at a level, NIR's txf (since 1.182).
         .image,                        .image_fetch,                    .image_query_size_lod,           .image_query_levels,
         .image_sample_explicit_lod,    .image_sample_dref_explicit_lod,
+        // The bit operations, as nir_lower_alu and nir_opt_algebraic lower
+        // them for a device of no BFE, BFM or BFI (since 1.202).
+        .bit_field_insert,               .bit_field_s_extract,
+        .bit_field_u_extract,          .bit_reverse,                    .bit_count,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform },
     .image_dims = &.{ .dim_2d, .dim_3d, .cube },
@@ -7872,6 +7876,46 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             };
             work.step_of[id] = try integerOf(work, op, a, b);
         },
+        .bit_count, .bit_reverse => {
+            // ResultType, Result, an integer or a vector of them: vtn's
+            // bit_count, whose u2uN to the result's 32 bits is nothing
+            // (vtn_alu.c:1074-1080), and bitfield_reverse (:330), which
+            // lower_bit_count and lower_bitfield_reverse
+            // (v3dv_pipeline.c:174-175) have nir_lower_alu lower
+            // (nir_lower_alu.c:49-112; since 1.202).
+            if (operands.len != 3) return Error.Body;
+            const type_id = try idOf(operands[0]);
+            if (!isIntegerType(work, type_id)) return Error.Type;
+            const kind = try kindOf(work, type_id);
+            const id = try idOf(operands[1]);
+            const x = try operand(work, operands[2], kind);
+            work.step_of[id] = if (instruction.op == .bit_count) try bitCountOf(work, x) else try bitReverseOf(work, x);
+        },
+        .bit_field_insert, .bit_field_s_extract, .bit_field_u_extract => {
+            // ResultType, Result, Base, an insert's Insert, then Offset
+            // and Count, each one integer whatever Base is: vtn's
+            // bitfield_insert, ibitfield_extract and ubitfield_extract
+            // (vtn_alu.c:327-329, 1028-1060), whose one offset and count
+            // nir_build_alu reads in every float of Base, as a construct
+            // of the one repeated reads it here; lowered as a device of no
+            // BFE, BFM or BFI has them (v3dv_pipeline.c:172-173; since
+            // 1.202).
+            const inserting = instruction.op == .bit_field_insert;
+            if (operands.len != @as(usize, if (inserting) 6 else 5)) return Error.Body;
+            const type_id = try idOf(operands[0]);
+            if (!isIntegerType(work, type_id)) return Error.Type;
+            const kind = try kindOf(work, type_id);
+            const id = try idOf(operands[1]);
+            const base = try operand(work, operands[2], kind);
+            const rest = operands[if (inserting) 4 else 3..];
+            const offset = try repeatedOf(work, try operand(work, rest[0], .f32x1), kind);
+            const count = try repeatedOf(work, try operand(work, rest[1], .f32x1), kind);
+            work.step_of[id] = switch (instruction.op) {
+                .bit_field_insert => try bitfieldInsertOf(work, base, try operand(work, operands[3], kind), offset, count),
+                .bit_field_s_extract => try bitfieldExtractOf(work, base, offset, count, true),
+                else => try bitfieldExtractOf(work, base, offset, count, false),
+            };
+        },
         .u_div, .s_div, .u_mod, .s_rem, .s_mod => {
             // ResultType, Result, two integers or vectors of them: vtn's
             // udiv, idiv, umod, irem and imod (vtn_alu.c:304-310), each
@@ -8923,7 +8967,9 @@ fn minorOf(work: *Work, columns: []const u16, row: u8, column: u8) Error!u16 {
 /// (vtn_glsl450.c:91-121), the adjugate, column c's row r the minor
 /// without row c and column r, negated where r + c is odd, times the
 /// frcp of the determinant. Its determinant is built again, as vtn
-/// builds it, for nir_opt_cse (vir.c:2099) to share; this does not.
+/// builds it; nir_opt_cse (`Order.cse`; vir.c:2099) takes what is built
+/// twice for the first, but only once it is built, and the 256 steps are
+/// counted as steps are made (corrected at 1.202).
 fn inverseOf(work: *Work, columns: []const u16) Error!Matrix {
     var made = Matrix{ .count = @intCast(columns.len) };
     var adjugate: [4]u16 = undefined;
@@ -9405,6 +9451,109 @@ fn unary(work: *Work, tag: Tag, a: u16) Error!u16 {
 fn integerOf(work: *Work, op: Integer, a: u16, b: ?u16) Error!u16 {
     if (try foldedInteger(work, op, a, b)) |constant| return constant;
     return put(work, .{ .tag = .integer, .kind = work.steps[a].kind, .a = a, .b = b orelse 0, .at = @intFromEnum(op) });
+}
+
+/// The one float `x` in each of `kind`'s: a construct of it repeated, as
+/// a NIR ALU source of one component is read by each of a vector
+/// instruction's, and of a constant the constant (since 1.202).
+fn repeatedOf(work: *Work, x: u16, kind: Kind) Error!u16 {
+    if (kind == .f32x1) return x;
+    if (constantWordOf(work, x)) |word| return integerSplat(work, kind, @bitCast(word));
+    var made = Step{ .tag = .construct, .kind = kind };
+    for (0..kind.parts()) |k| made.from[k] = x;
+    return put(work, made);
+}
+
+/// The word of a constant step every float of which is it, as
+/// `repeatedOf` and `integerSplat` make them (since 1.202).
+fn constantWordOf(work: *const Work, at: u16) ?u32 {
+    const each = work.steps[at];
+    if (each.tag != .constant) return null;
+    const words = work.pool[each.at..][0..each.kind.parts()];
+    for (words[1..]) |word| if (@as(u32, @bitCast(word)) != @as(u32, @bitCast(words[0]))) return null;
+    return @bitCast(words[0]);
+}
+
+/// bit_count of each word: lower_bit_count's count of the bits in
+/// parallel (nir_lower_alu.c:96-112), the last shift by 32 - 8. Each
+/// immediate is the vector of it that nir_build_alu reads (since 1.202).
+fn bitCountOf(work: *Work, x: u16) Error!u16 {
+    const kind = work.steps[x].kind;
+    var v = try integerOf(work, .isub, x, try integerOf(work, .iand, try integerOf(work, .ushr, x, try integerSplat(work, kind, 1)), try integerSplat(work, kind, 0x55555555)));
+    v = try integerOf(work, .iadd, try integerOf(work, .iand, v, try integerSplat(work, kind, 0x33333333)), try integerOf(work, .iand, try integerOf(work, .ushr, v, try integerSplat(work, kind, 2)), try integerSplat(work, kind, 0x33333333)));
+    v = try integerOf(work, .iadd, v, try integerOf(work, .ushr, v, try integerSplat(work, kind, 4)));
+    v = try integerOf(work, .iand, v, try integerSplat(work, kind, 0x0f0f0f0f));
+    v = try integerOf(work, .imul, v, try integerSplat(work, kind, 0x01010101));
+    return integerOf(work, .ushr, v, try integerSplat(work, kind, 24));
+}
+
+/// bitfield_reverse of each word: lower_bitfield_reverse's swaps of odd
+/// and even bits, of pairs, nibbles and bytes, then of the halves
+/// (nir_lower_alu.c:49-91; since 1.202).
+fn bitReverseOf(work: *Work, x: u16) Error!u16 {
+    const kind = work.steps[x].kind;
+    const swaps = [_]struct { by: i32, mask: u32 }{
+        .{ .by = 1, .mask = 0x55555555 },
+        .{ .by = 2, .mask = 0x33333333 },
+        .{ .by = 4, .mask = 0x0f0f0f0f },
+        .{ .by = 8, .mask = 0x00ff00ff },
+    };
+    var v = x;
+    for (swaps) |swap| {
+        const down = try integerOf(work, .iand, try integerOf(work, .ushr, v, try integerSplat(work, kind, swap.by)), try integerSplat(work, kind, @bitCast(swap.mask)));
+        const up = try integerOf(work, .ishl, try integerOf(work, .iand, v, try integerSplat(work, kind, @bitCast(swap.mask))), try integerSplat(work, kind, swap.by));
+        v = try integerOf(work, .ior, down, up);
+    }
+    return integerOf(work, .ior, try integerOf(work, .ushr, v, try integerSplat(work, kind, 16)), try integerOf(work, .ishl, v, try integerSplat(work, kind, 16)));
+}
+
+/// ibitfield_extract or ubitfield_extract of each word, as a device of no
+/// BFE has them (nir_opt_algebraic.py:2927-2946): the signed the word
+/// shifted up to the top of the field and arithmetically down to its
+/// width, 0 where the width is 0; the unsigned shifted down and masked,
+/// the mask all ones where the width is 32, as a shift is by its amount's
+/// low five bits alone. `offset` and `bits` are of the word's kind. A
+/// constant width's comparison is nir_opt_constant_folding's bool, and
+/// the bcsel of it its arm (nir_opt_algebraic.py:1933-1934), the other
+/// not made (since 1.202).
+fn bitfieldExtractOf(work: *Work, value: u16, offset: u16, bits: u16, signed: bool) Error!u16 {
+    const kind = work.steps[value].kind;
+    const constant = constantWordOf(work, bits);
+    if (signed) {
+        if (constant == 0) return integerSplat(work, kind, 0);
+        const width = try integerOf(work, .isub, try integerSplat(work, kind, 32), bits);
+        const shifted = try integerOf(work, .ishr, try integerOf(work, .ishl, value, try integerOf(work, .isub, width, offset)), width);
+        if (constant != null) return shifted;
+        const empty = try comparedFloats(work, .int_equal, try integerSplat(work, kind, 0), bits);
+        return selectedFloats(work, empty, try integerSplat(work, kind, 0), shifted);
+    }
+    const mask = if (constant == 32) try integerSplat(work, kind, -1) else mask: {
+        const ones = try integerOf(work, .isub, try integerOf(work, .ishl, try integerSplat(work, kind, 1), bits), try integerSplat(work, kind, 1));
+        if (constant != null) break :mask ones;
+        const whole = try comparedFloats(work, .int_equal, bits, try integerSplat(work, kind, 32));
+        break :mask try selectedFloats(work, whole, try integerSplat(work, kind, -1), ones);
+    };
+    return integerOf(work, .iand, try integerOf(work, .ushr, value, offset), mask);
+}
+
+/// bitfield_insert of each word, as a device of no BFM or BFI has it
+/// (nir_opt_algebraic.py:2963-2970): the base's bits outside the field,
+/// or'ed with the insert shifted to it and masked, and the insert itself
+/// where the width is past 31. The rule builds the field's mask twice,
+/// and nir_opt_cse leaves one; so does this. A constant width chooses as
+/// `bitfieldExtractOf`'s does (since 1.202).
+fn bitfieldInsertOf(work: *Work, base: u16, insert: u16, offset: u16, bits: u16) Error!u16 {
+    const kind = work.steps[base].kind;
+    const constant = constantWordOf(work, bits);
+    if (constant != null and constant.? > 31) return insert;
+    const ones = try integerOf(work, .isub, try integerOf(work, .ishl, try integerSplat(work, kind, 1), bits), try integerSplat(work, kind, 1));
+    const mask = try integerOf(work, .ishl, ones, offset);
+    const kept = try integerOf(work, .iand, base, try integerOf(work, .inot, mask, null));
+    const placed = try integerOf(work, .iand, try integerOf(work, .ishl, insert, offset), mask);
+    const field = try integerOf(work, .ior, kept, placed);
+    if (constant != null) return field;
+    const past = try comparedFloats(work, .uint_less, try integerSplat(work, kind, 31), bits);
+    return selectedFloats(work, past, insert, field);
 }
 
 /// The divisions and remainders of 32-bit integers nir_lower_idiv lowers
@@ -16954,6 +17103,126 @@ test "a Determinant that answers other than a float, a MatrixInverse other than 
         try testing.expect(made != 0);
         var work: Work = .{};
         try testing.expectError(Error.Type, throughMesa(&work, &words));
+    }
+}
+
+/// GLSL's bitfieldExtract of a word, by its definition: the `bits` bits
+/// from `offset` up, 0 of none, the signed with the field's top bit
+/// extended.
+fn fieldOf(value: u32, offset: u32, bits: u32, signed: bool) u32 {
+    if (bits == 0) return 0;
+    const ones = (@as(u64, 1) << @intCast(bits)) - 1;
+    const field: u32 = @intCast((@as(u64, value) >> @intCast(offset)) & ones);
+    if (signed and field >> @intCast(bits - 1) & 1 == 1) return field | @as(u32, @truncate(~ones));
+    return field;
+}
+
+/// GLSL's bitfieldInsert of a word, by its definition.
+fn insertedOf(base: u32, insert: u32, offset: u32, bits: u32) u32 {
+    const mask: u32 = @truncate(((@as(u64, 1) << @intCast(bits)) - 1) << @intCast(offset));
+    return (base & ~mask) | (@as(u32, @truncate(@as(u64, insert) << @intCast(offset))) & mask);
+}
+
+/// What `reference.glslc_bits` makes of `color`, by GLSL's definitions:
+/// @popCount and @bitReverse, and the field's bits worked out in 64.
+fn bitsOf(color: [4]f32) [4]f32 {
+    var q: [3]u32 = undefined;
+    for (&q, color[0..3]) |*each, v| each.* = @intFromFloat(v * 15.0);
+    const u = (q[0] *% 0x01010101) ^ (q[1] *% 0x00102041) ^ (q[2] << 27) ^ 0x6A09E667;
+    const v = [2]u32{ u, ~u ^ (q[0] << 9) };
+    const count = q[1] * 32 / 15;
+    const offset: u32 = @intCast((@as(i32, @intCast(q[0])) * (32 - @as(i32, @intCast(count)))) >> 4);
+    var e: [2]u32 = undefined;
+    var signed: [2]u32 = undefined;
+    var inserted: [2]u32 = undefined;
+    for (0..2) |k| {
+        e[k] = fieldOf(v[k], offset, count, false);
+        signed[k] = fieldOf(v[k], offset, count, true);
+        inserted[k] = insertedOf(v[k], v[1 - k], offset, count);
+    }
+    const c = @popCount(v[0]) + @popCount(v[1]);
+    const r = @bitReverse(u);
+    const hashes = [3]u32{
+        (r *% 0x9E3779B1) >> 24,
+        ((e[0] ^ signed[1]) *% 0x9E3779B1 +% e[1] *% 0x85EBCA6B) >> 24,
+        (((inserted[0] *% 0x85EBCA6B) ^ inserted[1]) *% 0x9E3779B1) >> 24,
+    };
+    var made: [4]f32 = .{ @as(f32, @floatFromInt(c)) / 64.0, 0, 0, 0 };
+    for (hashes, 1..) |hash, k| made[k] = @as(f32, @floatFromInt(hash)) / 255.0;
+    return made;
+}
+
+test "OpBitCount, OpBitReverse, OpBitFieldInsert, OpBitFieldSExtract and OpBitFieldUExtract are nir_lower_alu's and nir_opt_algebraic's, and answer as GLSL defines them" {
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_bits);
+    // Every q of 0, 7 and 15 in each channel: fields of 0, 14 and 32
+    // bits, at offsets from 0 to 31 less the width.
+    const steps = [_]f32{ 0.0, 0.5, 1.0 };
+    for (steps) |x| for (steps) |y| for (steps) |z| {
+        const color = [4]f32{ x, y, z, 1.0 };
+        const expected = bitsOf(color);
+        const found = evaluatedOf(&work, work.stored, color, 0);
+        for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-6);
+    };
+    for (packing_colors) |color| {
+        const expected = bitsOf(color);
+        const found = evaluatedOf(&work, work.stored, color, 0);
+        for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-6);
+    }
+}
+
+test "a constant Count takes the bit fields' guards away, as nir_opt_constant_folding and the bcsel rules do" {
+    // Of glslc_bits as it is, the guards' comparisons: the signed
+    // extract's and the unsigned's ieq, and the insert's ult, each one,
+    // as nir_opt_cse (`Order.cse`) takes each float's comparison of the
+    // one count for the first's.
+    var as_is: Work = .{};
+    _ = try throughMesa(&as_is, &reference.glslc_bits);
+    try testing.expectEqual(@as(usize, 2), liveCompareOf(&as_is, .int_equal));
+    try testing.expectEqual(@as(usize, 1), liveCompareOf(&as_is, .uint_less));
+    // Each Count made the module's int 4: no guard is left.
+    var words = reference.glslc_bits;
+    var signed_int: u32 = 0;
+    var four: u32 = 0;
+    var at: usize = spirv.header_words;
+    while (at < words.len) : (at += words[at] >> 16) {
+        const op = words[at] & 0xFFFF;
+        if (op == @intFromEnum(spirv.Op.type_int) and words[at + 3] == 1) signed_int = words[at + 1];
+        if (op == @intFromEnum(spirv.Op.constant) and signed_int != 0 and words[at + 1] == signed_int and words[at + 3] == 4) four = words[at + 2];
+    }
+    try testing.expect(four != 0);
+    at = spirv.header_words;
+    var made: usize = 0;
+    while (at < words.len) : (at += words[at] >> 16) {
+        const op = words[at] & 0xFFFF;
+        if (op < @intFromEnum(spirv.Op.bit_field_insert) or op > @intFromEnum(spirv.Op.bit_field_u_extract)) continue;
+        words[at + (words[at] >> 16) - 1] = four;
+        made += 1;
+    }
+    try testing.expectEqual(@as(usize, 3), made);
+    var work: Work = .{};
+    _ = try throughMesa(&work, &words);
+    try testing.expectEqual(@as(usize, 0), liveCompareOf(&work, .int_equal));
+    try testing.expectEqual(@as(usize, 0), liveCompareOf(&work, .uint_less));
+}
+
+test "the bit operations of constants fold, and a constant width takes its guard's arm" {
+    var work: Work = .{};
+    const word = try integerSplat(&work, .f32x2, @bitCast(@as(u32, 0xF00D_1234)));
+    const counted = try bitCountOf(&work, word);
+    try testing.expectEqual(@as(?u32, @popCount(@as(u32, 0xF00D_1234))), constantWordOf(&work, counted));
+    const reversed = try bitReverseOf(&work, word);
+    try testing.expectEqual(@as(?u32, @bitReverse(@as(u32, 0xF00D_1234))), constantWordOf(&work, reversed));
+    const Case = struct { offset: u32, bits: u32 };
+    for ([_]Case{ .{ .offset = 0, .bits = 0 }, .{ .offset = 4, .bits = 8 }, .{ .offset = 20, .bits = 12 }, .{ .offset = 0, .bits = 32 } }) |case| {
+        const offset = try integerSplat(&work, .f32x2, @intCast(case.offset));
+        const bits = try integerSplat(&work, .f32x2, @intCast(case.bits));
+        const signed = try bitfieldExtractOf(&work, word, offset, bits, true);
+        const unsigned = try bitfieldExtractOf(&work, word, offset, bits, false);
+        const inserted = try bitfieldInsertOf(&work, word, reversed, offset, bits);
+        try testing.expectEqual(@as(?u32, fieldOf(0xF00D_1234, case.offset, case.bits, true)), constantWordOf(&work, signed));
+        try testing.expectEqual(@as(?u32, fieldOf(0xF00D_1234, case.offset, case.bits, false)), constantWordOf(&work, unsigned));
+        try testing.expectEqual(@as(?u32, insertedOf(0xF00D_1234, @bitReverse(@as(u32, 0xF00D_1234)), case.offset, case.bits)), constantWordOf(&work, inserted));
     }
 }
 

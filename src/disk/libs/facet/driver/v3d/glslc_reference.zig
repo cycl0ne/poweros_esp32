@@ -26198,3 +26198,225 @@ pub const glslc_inverse4 = [_]u32{
     0x00000052, 0x00000069, 0x0003003E, 0x0000004C, 0x00000055, 0x000100FD,
     0x00010038,
 };
+
+/// glslc -O -fshader-stage=frag, OpBitCount, OpBitReverse,
+/// OpBitFieldInsert, OpBitFieldSExtract and OpBitFieldUExtract of the
+/// colour's bits spread over two words, a field of 0 to 32 bits, and each
+/// result hashed into a channel's top 8 bits (since 1.202). 460 words.
+///
+/// ```glsl
+/// #version 450
+/// // facet 1.202: SPIR-V's OpBitCount, OpBitReverse, OpBitFieldInsert,
+/// // OpBitFieldSExtract and OpBitFieldUExtract, as nir_lower_alu and
+/// // nir_opt_algebraic lower them for the V3D, which has no BFE, BFM or BFI:
+/// // the colour made 16 steps a channel, its bits spread over two words, a
+/// // field of 0 to 32 bits at an offset that keeps it in the word, and each
+/// // result's bits hashed into a channel's top 8, so that a wrong bit shows.
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     uvec3 q = uvec3(color.xyz * 15.0);
+///     uint u = (q.x * 0x01010101u) ^ (q.y * 0x00102041u) ^ (q.z << 27) ^ 0x6A09E667u;
+///     uvec2 v = uvec2(u, ~u ^ (q.x << 9));
+///     int count = int(q.y * 32u / 15u);
+///     int offset = (int(q.x) * (32 - count)) >> 4;
+///     uvec2 c = bitCount(v);
+///     uint r = bitfieldReverse(u);
+///     uvec2 e = bitfieldExtract(v, offset, count);
+///     ivec2 s = bitfieldExtract(ivec2(v), offset, count);
+///     uvec2 i = bitfieldInsert(v, v.yx, offset, count);
+///     outColor = vec4(float(c.x + c.y) / 64.0,
+///                     float((r * 0x9E3779B1u) >> 24) / 255.0,
+///                     float(((e.x ^ uint(s.y)) * 0x9E3779B1u + e.y * 0x85EBCA6Bu) >> 24) / 255.0,
+///                     float(((i.x * 0x85EBCA6Bu) ^ i.y) * 0x9E3779B1u >> 24) / 255.0);
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 159
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %13 %101
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %13 Location 0
+///                OpDecorate %101 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeInt 32 0
+///           %7 = OpTypeVector %6 3
+///          %10 = OpTypeFloat 32
+///          %11 = OpTypeVector %10 4
+///          %12 = OpTypePointer Input %11
+///          %13 = OpVariable %12 Input
+///          %14 = OpTypeVector %10 3
+///          %17 = OpConstant %10 15
+///          %25 = OpConstant %6 16843009
+///          %30 = OpConstant %6 1056833
+///          %36 = OpTypeInt 32 1
+///          %37 = OpConstant %36 27
+///          %40 = OpConstant %6 1779033703
+///          %42 = OpTypeVector %6 2
+///          %50 = OpConstant %36 9
+///          %58 = OpConstant %6 32
+///          %60 = OpConstant %6 15
+///          %67 = OpConstant %36 32
+///          %71 = OpConstant %36 4
+///          %75 = OpTypeVector %36 2
+///         %100 = OpTypePointer Output %11
+///         %101 = OpVariable %100 Output
+///         %111 = OpConstant %6 2654435761
+///         %113 = OpConstant %36 24
+///         %127 = OpConstant %6 2246822507
+///         %157 = OpConstant %10 0.015625
+///         %158 = OpConstant %10 0.00392156886
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %15 = OpLoad %11 %13
+///          %16 = OpVectorShuffle %14 %15 %15 0 1 2
+///          %18 = OpVectorTimesScalar %14 %16 %17
+///          %19 = OpConvertFToU %7 %18
+///          %24 = OpCompositeExtract %6 %19 0
+///          %26 = OpIMul %6 %24 %25
+///          %29 = OpCompositeExtract %6 %19 1
+///          %31 = OpIMul %6 %29 %30
+///          %32 = OpBitwiseXor %6 %26 %31
+///          %35 = OpCompositeExtract %6 %19 2
+///          %38 = OpShiftLeftLogical %6 %35 %37
+///          %39 = OpBitwiseXor %6 %32 %38
+///          %41 = OpBitwiseXor %6 %39 %40
+///          %47 = OpNot %6 %41
+///          %51 = OpShiftLeftLogical %6 %24 %50
+///          %52 = OpBitwiseXor %6 %47 %51
+///          %53 = OpCompositeConstruct %42 %41 %52
+///          %59 = OpIMul %6 %29 %58
+///          %61 = OpUDiv %6 %59 %60
+///          %62 = OpBitcast %36 %61
+///          %66 = OpBitcast %36 %24
+///          %69 = OpISub %36 %67 %62
+///          %70 = OpIMul %36 %66 %69
+///          %72 = OpShiftRightArithmetic %36 %70 %71
+///          %76 = OpBitCount %75 %53
+///          %77 = OpBitcast %42 %76
+///          %80 = OpBitReverse %6 %41
+///          %85 = OpBitFieldUExtract %42 %53 %72 %62
+///          %89 = OpBitcast %75 %53
+///          %92 = OpBitFieldSExtract %75 %89 %72 %62
+///          %96 = OpVectorShuffle %42 %53 %53 1 0
+///          %99 = OpBitFieldInsert %42 %53 %96 %72 %62
+///         %103 = OpCompositeExtract %6 %77 0
+///         %105 = OpCompositeExtract %6 %77 1
+///         %106 = OpIAdd %6 %103 %105
+///         %107 = OpConvertUToF %10 %106
+///         %109 = OpFMul %10 %107 %157
+///         %112 = OpIMul %6 %80 %111
+///         %114 = OpShiftRightLogical %6 %112 %113
+///         %115 = OpConvertUToF %10 %114
+///         %117 = OpFMul %10 %115 %158
+///         %119 = OpCompositeExtract %6 %85 0
+///         %121 = OpCompositeExtract %36 %92 1
+///         %122 = OpBitcast %6 %121
+///         %123 = OpBitwiseXor %6 %119 %122
+///         %124 = OpIMul %6 %123 %111
+///         %126 = OpCompositeExtract %6 %85 1
+///         %128 = OpIMul %6 %126 %127
+///         %129 = OpIAdd %6 %124 %128
+///         %130 = OpShiftRightLogical %6 %129 %113
+///         %131 = OpConvertUToF %10 %130
+///         %132 = OpFMul %10 %131 %158
+///         %134 = OpCompositeExtract %6 %99 0
+///         %135 = OpIMul %6 %134 %127
+///         %137 = OpCompositeExtract %6 %99 1
+///         %138 = OpBitwiseXor %6 %135 %137
+///         %139 = OpIMul %6 %138 %111
+///         %140 = OpShiftRightLogical %6 %139 %113
+///         %141 = OpConvertUToF %10 %140
+///         %142 = OpFMul %10 %141 %158
+///         %143 = OpCompositeConstruct %11 %109 %117 %132 %142
+///                OpStore %101 %143
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_bits = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000009F, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000065, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000D, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000065, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006, 0x00000020,
+    0x00000000, 0x00040017, 0x00000007, 0x00000006, 0x00000003, 0x00030016,
+    0x0000000A, 0x00000020, 0x00040017, 0x0000000B, 0x0000000A, 0x00000004,
+    0x00040020, 0x0000000C, 0x00000001, 0x0000000B, 0x0004003B, 0x0000000C,
+    0x0000000D, 0x00000001, 0x00040017, 0x0000000E, 0x0000000A, 0x00000003,
+    0x0004002B, 0x0000000A, 0x00000011, 0x41700000, 0x0004002B, 0x00000006,
+    0x00000019, 0x01010101, 0x0004002B, 0x00000006, 0x0000001E, 0x00102041,
+    0x00040015, 0x00000024, 0x00000020, 0x00000001, 0x0004002B, 0x00000024,
+    0x00000025, 0x0000001B, 0x0004002B, 0x00000006, 0x00000028, 0x6A09E667,
+    0x00040017, 0x0000002A, 0x00000006, 0x00000002, 0x0004002B, 0x00000024,
+    0x00000032, 0x00000009, 0x0004002B, 0x00000006, 0x0000003A, 0x00000020,
+    0x0004002B, 0x00000006, 0x0000003C, 0x0000000F, 0x0004002B, 0x00000024,
+    0x00000043, 0x00000020, 0x0004002B, 0x00000024, 0x00000047, 0x00000004,
+    0x00040017, 0x0000004B, 0x00000024, 0x00000002, 0x00040020, 0x00000064,
+    0x00000003, 0x0000000B, 0x0004003B, 0x00000064, 0x00000065, 0x00000003,
+    0x0004002B, 0x00000006, 0x0000006F, 0x9E3779B1, 0x0004002B, 0x00000024,
+    0x00000071, 0x00000018, 0x0004002B, 0x00000006, 0x0000007F, 0x85EBCA6B,
+    0x0004002B, 0x0000000A, 0x0000009D, 0x3C800000, 0x0004002B, 0x0000000A,
+    0x0000009E, 0x3B808081, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000F,
+    0x0000000D, 0x0008004F, 0x0000000E, 0x00000010, 0x0000000F, 0x0000000F,
+    0x00000000, 0x00000001, 0x00000002, 0x0005008E, 0x0000000E, 0x00000012,
+    0x00000010, 0x00000011, 0x0004006D, 0x00000007, 0x00000013, 0x00000012,
+    0x00050051, 0x00000006, 0x00000018, 0x00000013, 0x00000000, 0x00050084,
+    0x00000006, 0x0000001A, 0x00000018, 0x00000019, 0x00050051, 0x00000006,
+    0x0000001D, 0x00000013, 0x00000001, 0x00050084, 0x00000006, 0x0000001F,
+    0x0000001D, 0x0000001E, 0x000500C6, 0x00000006, 0x00000020, 0x0000001A,
+    0x0000001F, 0x00050051, 0x00000006, 0x00000023, 0x00000013, 0x00000002,
+    0x000500C4, 0x00000006, 0x00000026, 0x00000023, 0x00000025, 0x000500C6,
+    0x00000006, 0x00000027, 0x00000020, 0x00000026, 0x000500C6, 0x00000006,
+    0x00000029, 0x00000027, 0x00000028, 0x000400C8, 0x00000006, 0x0000002F,
+    0x00000029, 0x000500C4, 0x00000006, 0x00000033, 0x00000018, 0x00000032,
+    0x000500C6, 0x00000006, 0x00000034, 0x0000002F, 0x00000033, 0x00050050,
+    0x0000002A, 0x00000035, 0x00000029, 0x00000034, 0x00050084, 0x00000006,
+    0x0000003B, 0x0000001D, 0x0000003A, 0x00050086, 0x00000006, 0x0000003D,
+    0x0000003B, 0x0000003C, 0x0004007C, 0x00000024, 0x0000003E, 0x0000003D,
+    0x0004007C, 0x00000024, 0x00000042, 0x00000018, 0x00050082, 0x00000024,
+    0x00000045, 0x00000043, 0x0000003E, 0x00050084, 0x00000024, 0x00000046,
+    0x00000042, 0x00000045, 0x000500C3, 0x00000024, 0x00000048, 0x00000046,
+    0x00000047, 0x000400CD, 0x0000004B, 0x0000004C, 0x00000035, 0x0004007C,
+    0x0000002A, 0x0000004D, 0x0000004C, 0x000400CC, 0x00000006, 0x00000050,
+    0x00000029, 0x000600CB, 0x0000002A, 0x00000055, 0x00000035, 0x00000048,
+    0x0000003E, 0x0004007C, 0x0000004B, 0x00000059, 0x00000035, 0x000600CA,
+    0x0000004B, 0x0000005C, 0x00000059, 0x00000048, 0x0000003E, 0x0007004F,
+    0x0000002A, 0x00000060, 0x00000035, 0x00000035, 0x00000001, 0x00000000,
+    0x000700C9, 0x0000002A, 0x00000063, 0x00000035, 0x00000060, 0x00000048,
+    0x0000003E, 0x00050051, 0x00000006, 0x00000067, 0x0000004D, 0x00000000,
+    0x00050051, 0x00000006, 0x00000069, 0x0000004D, 0x00000001, 0x00050080,
+    0x00000006, 0x0000006A, 0x00000067, 0x00000069, 0x00040070, 0x0000000A,
+    0x0000006B, 0x0000006A, 0x00050085, 0x0000000A, 0x0000006D, 0x0000006B,
+    0x0000009D, 0x00050084, 0x00000006, 0x00000070, 0x00000050, 0x0000006F,
+    0x000500C2, 0x00000006, 0x00000072, 0x00000070, 0x00000071, 0x00040070,
+    0x0000000A, 0x00000073, 0x00000072, 0x00050085, 0x0000000A, 0x00000075,
+    0x00000073, 0x0000009E, 0x00050051, 0x00000006, 0x00000077, 0x00000055,
+    0x00000000, 0x00050051, 0x00000024, 0x00000079, 0x0000005C, 0x00000001,
+    0x0004007C, 0x00000006, 0x0000007A, 0x00000079, 0x000500C6, 0x00000006,
+    0x0000007B, 0x00000077, 0x0000007A, 0x00050084, 0x00000006, 0x0000007C,
+    0x0000007B, 0x0000006F, 0x00050051, 0x00000006, 0x0000007E, 0x00000055,
+    0x00000001, 0x00050084, 0x00000006, 0x00000080, 0x0000007E, 0x0000007F,
+    0x00050080, 0x00000006, 0x00000081, 0x0000007C, 0x00000080, 0x000500C2,
+    0x00000006, 0x00000082, 0x00000081, 0x00000071, 0x00040070, 0x0000000A,
+    0x00000083, 0x00000082, 0x00050085, 0x0000000A, 0x00000084, 0x00000083,
+    0x0000009E, 0x00050051, 0x00000006, 0x00000086, 0x00000063, 0x00000000,
+    0x00050084, 0x00000006, 0x00000087, 0x00000086, 0x0000007F, 0x00050051,
+    0x00000006, 0x00000089, 0x00000063, 0x00000001, 0x000500C6, 0x00000006,
+    0x0000008A, 0x00000087, 0x00000089, 0x00050084, 0x00000006, 0x0000008B,
+    0x0000008A, 0x0000006F, 0x000500C2, 0x00000006, 0x0000008C, 0x0000008B,
+    0x00000071, 0x00040070, 0x0000000A, 0x0000008D, 0x0000008C, 0x00050085,
+    0x0000000A, 0x0000008E, 0x0000008D, 0x0000009E, 0x00070050, 0x0000000B,
+    0x0000008F, 0x0000006D, 0x00000075, 0x00000084, 0x0000008E, 0x0003003E,
+    0x00000065, 0x0000008F, 0x000100FD, 0x00010038,
+};

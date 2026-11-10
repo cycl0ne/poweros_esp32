@@ -2821,7 +2821,7 @@ So VFPACK rounds to the nearest even. With the cores' halves rounded toward zero
 - **Determinant** is vtn's build_mat_det (vtn_glsl450.c:79-89, 634-637): build_det (:53-77) multiplies column 0 by the vector of its minors, each the determinant of the matrix without that row and column 0 (build_mat_subdet, :28-51), and adds the products' differences in pairs. A 2x2 matrix's minor is the one float left; a larger one's is each other column swizzled to all but the row, a construct of its parts as nir_swizzle makes one.
 - **MatrixInverse** is matrix_inverse (:91-121, 639-642): the adjugate, column c's row r the minor without row c and column r, negated where r + c is odd, times the frcp of the determinant. The inverse is held as a matrix value is, for OpCompositeExtract to read.
 - Both are of a square matrix alone, as SPIR-V has them; a Determinant that answers other than a float, a MatrixInverse other than its matrix, and either of a matrix not square are refused.
-- vtn builds the determinant again for the inverse, and builds the same minors more than once; on the V3D nir_opt_cse shares them (vir.c:2099). This compiler has no CSE, so each is steps of its own: the cost is steps, not values.
+- vtn builds the determinant again for the inverse, and builds the same minors more than once; on the V3D nir_opt_cse shares them (vir.c:2099). This compiler's nir_opt_cse (`Order.cse`, in the algebraic pass since 1.157) shares them too, but only once they are built: until then each is a step of its own, and the 256 steps are counted as steps are made. (Corrected at 1.202: this said the compiler has no CSE.)
 
 Still left out:
 - MatrixInverse of a mat4. vtn's cofactors are its 16 minors, each a mat3's determinant, and the determinant again: past the 256 steps, so it is refused (`Error.Steps`). A mat4's determinant is four such minors, and they are most of glslc_determinant4's 160 steps; the inverse's 16 are four times as many, so not building the determinant twice would not be enough.
@@ -2840,6 +2840,34 @@ Results:
 The V3D's tests are 350, four new. Of 13 mutations, all 13 fail them.
 
 On the CM5 FacetBoth 1.65's new cases, "shipped matrix inverse" and "shipped determinant of a mat4", are each 8 of 230400 pixels apart, the 8 at the triangles' edge. With the cores' function made wrong on purpose each is 46,565 apart. The other 292 cases are each as they were at 1.200, and FacetProbe is 890 of 890.
+
+**Then SPIR-V's bit operations**, facet.library 1.202: OpBitCount, OpBitReverse, OpBitFieldInsert, OpBitFieldSExtract and OpBitFieldUExtract, GLSL's bitCount, bitfieldReverse, bitfieldInsert and bitfieldExtract. They are NIR's bit_count (vtn_alu.c:1074-1080), bitfield_reverse (:330), bitfield_insert, ibitfield_extract and ubitfield_extract (:327-329), which v3dv has lowered (v3dv_pipeline.c:172-175). The V3D has no BFE, BFM or BFI, so:
+
+- **bit_count** is lower_bit_count's count in parallel (nir_lower_alu.c:96-112): pairs, nibbles and bytes summed with masks, then multiplied by 0x01010101 and shifted down by 24.
+- **bitfield_reverse** is lower_bitfield_reverse's five swaps (nir_lower_alu.c:49-91): of odd and even bits, of pairs, nibbles and bytes, and of the halves.
+- **ibitfield_extract** shifts the word up to the top of the field and arithmetically down by 32 − bits, and is 0 where bits is 0 (nir_opt_algebraic.py:2932-2938). **ubitfield_extract** shifts it down and masks it with (1 << bits) − 1, all ones where bits is 32 (:2940-2946): a shift is by its amount's low five bits.
+- **bitfield_insert** is the base's bits outside the mask ((1 << bits) − 1) << offset, or'ed with the insert shifted and masked, and the insert itself where bits is past 31 (:2963-2970). The rule builds the mask twice, and nir_opt_cse leaves one; so does this.
+- Offset and Count are one integer whatever Base is. nir_build_alu reads a one-component source in every component, and a construct of the one integer repeated reads it here.
+- A constant Count's comparisons are nir_opt_constant_folding's bools, and the bcsel of one its arm (nir_opt_algebraic.py:1933-1934), so the guard is not made; a repeated constant is a constant.
+
+Results:
+- **The reference**, glslc_bits, 460 words:
+  - the colour made 16 steps a channel, its bits spread over a uvec2 by multiplying;
+  - a field of 0 to 32 bits at an offset that keeps it in the word;
+  - each result's bits hashed into a channel's top 8, so that a wrong bit shows.
+
+  Its program is 182 steps and 107 instructions.
+- **The values.** For 27 colours, of 0, 7 and 15 in each channel (fields of 0, 14 and 32 bits at every offset they allow), and the eight packing colours, each answers within 10^−6 what GLSL's definitions answer: @popCount, @bitReverse, and each field worked out in 64 bits.
+- **Constants** fold: bitCount and bitfieldReverse of 0xF00D_1234, and either extract and the insert of fields of 0, 8, 12 and 32 bits.
+- **A constant Count** takes the guards away. glslc_bits keeps two ieq and one ult, one for each guard, as nir_opt_cse takes each float's comparison of the one count for the first's. With each Count made the module's int 4, none is left.
+
+The V3D's tests are 353, three new. Of 16 mutations, all 16 fail them.
+
+On the CM5 FacetBoth 1.66's new case, "shipped bit operations", is 42 of 230400 pixels apart, each listed:
+- the 8 at the triangles' edge;
+- 34 where the two devices' interpolations fall either side of a step of q: 14 of q.x, 8 of q.y and 12 of q.z. Each GPU pixel there is exactly the shader's answer for a q one step away in that channel. The answers of all 4,096 q were worked out to tell.
+
+With the cores' function made wrong on purpose it is 46,565 apart. The other 294 cases are each as they were at 1.201, and FacetProbe is 890 of 890.
 
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 

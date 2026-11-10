@@ -180,6 +180,12 @@ pub const Op = enum(u16) {
     bitwise_xor = 198,
     bitwise_and = 199,
     not = 200,
+    // The bit operations (since 1.202).
+    bit_field_insert = 201,
+    bit_field_s_extract = 202,
+    bit_field_u_extract = 203,
+    bit_reverse = 204,
+    bit_count = 205,
     dpdx = 207,
     dpdy = 208,
     fwidth = 209,
