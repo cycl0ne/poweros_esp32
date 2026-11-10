@@ -15,7 +15,7 @@ Generated from the source by `./zig build autodoc`.
 - [DoUSBControl](#dousbcontrol) - Makes a control transfer on a device's endpoint 0, and waits for it.
 - [FindUSBEndpoint](#findusbendpoint) - Finds an interface's first endpoint of a direction and transfer type.
 - [FindUSBInterface](#findusbinterface) - Finds a device's next interface of a class, subclass and protocol.
-- [GetUSBString](#getusbstring) - Reads one of a device's strings, as Latin-1.
+- [GetUSBString](#getusbstring) - Reads one of a device's strings, in UTF-8.
 - [NextUSBDescriptor](#nextusbdescriptor) - Finds the next descriptor of a kind in a device's configuration.
 - [ObtainUSBDeviceList](#obtainusbdevicelist) - Takes the list of every device on every bus, for reading.
 - [OpenUSBPipe](#openusbpipe) - Opens a pipe to one endpoint of a device: a request already filled in for it.
@@ -431,7 +431,7 @@ const hid = ub.FindUSBInterface(device, null, d.USB_CLASS_HID, -1, -1) orelse re
 
 ## GetUSBString
 
-Reads one of a device's strings, as Latin-1.
+Reads one of a device's strings, in UTF-8.
 
 **SYNOPSIS**
 
@@ -456,8 +456,10 @@ not answer, or `size` is 0.
 
 **BEHAVIOR**
 
-The device is asked in the language it listed first. A character
-Latin-1 has not is `?`; what does not fit is cut off.
+The device is asked in the language it listed first. Its UTF-16 is
+given in UTF-8, a character past U+FFFF from its surrogate pair; a
+control, or a surrogate without its pair, is `?`. What does not fit
+is cut off where a character starts.
 
 **CONTEXT**
 

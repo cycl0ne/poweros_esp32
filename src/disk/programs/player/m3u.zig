@@ -20,10 +20,9 @@
 //! pieces are not played.
 //!
 //! `Reader` hands out each `Item` in turn as slices of the text as it
-//! stands, not yet brought to Latin-1. `locate` joins a location to the
+//! stands, not yet brought to UTF-8. `locate` joins a location to the
 //! drawer of the list it came from, `relative` is the other way, and
-//! `itemLines` writes an item as M3U, in UTF-8 (utility.library's
-//! Latin1ToUtf8), after `header`.
+//! `itemLines` writes an item as M3U, in UTF-8, after `header`.
 //! `firstAddress` is the station a list a station's address answered with
 //! names, and `namesList` whether an address ends as a list does. Nothing
 //! here opens a file: the host tests hold all of it.
@@ -93,7 +92,7 @@ pub const Item = struct {
 pub const Reader = struct {
     text: []const u8,
     form: Kind,
-    /// The text is UTF-8: its names are brought to Latin-1 as such.
+    /// The text is UTF-8: its names are read as such, else as Latin-1.
     utf8: bool,
     at: usize = 0,
 
@@ -298,39 +297,33 @@ pub fn relative(drawer: []const u8, path: []const u8) ?[]const u8 {
 
 /// The bytes `itemLines` writes for `item` at most.
 pub fn itemLength(item: Item) usize {
-    return "#EXTINF:4294967295 tvg-logo=\"\",\n\n".len + 2 * (item.title.len + item.logo.len + item.location.len);
+    return "#EXTINF:4294967295 tvg-logo=\"\",\n\n".len + item.title.len + item.logo.len + item.location.len;
 }
 
-/// `item` as M3U into `into` (`itemLength` bytes will do), its Latin-1
-/// in UTF-8: an `#EXTINF` line when it has a name, a length or a
+/// `item` as M3U into `into` (`itemLength` bytes will do), its text in
+/// UTF-8 as it is: an `#EXTINF` line when it has a name, a length or a
 /// picture, then its location. How many bytes.
-pub fn itemLines(ub: *UtilityBase, item: Item, into: []u8) usize {
+pub fn itemLines(item: Item, into: []u8) usize {
     var at: usize = 0;
     if (item.title.len > 0 or item.seconds != null or item.logo.len > 0) {
         at = put(into, at, "#EXTINF:");
         if (item.seconds) |count| at = putNumber(into, at, count) else at = put(into, at, "-1");
         if (item.logo.len > 0) {
             at = put(into, at, " tvg-logo=\"");
-            at = putUtf8(ub, into, at, item.logo);
+            at = put(into, at, item.logo);
             at = put(into, at, "\"");
         }
         at = put(into, at, ",");
-        at = putUtf8(ub, into, at, item.title);
+        at = put(into, at, item.title);
         at = put(into, at, "\n");
     }
-    at = putUtf8(ub, into, at, item.location);
+    at = put(into, at, item.location);
     return put(into, at, "\n");
 }
 
 fn put(into: []u8, at: usize, text: []const u8) usize {
     @memcpy(into[at..][0..text.len], text);
     return at + text.len;
-}
-
-/// Latin-1 `text` as UTF-8: a byte past ASCII as two, which
-/// `itemLength` makes room for.
-fn putUtf8(ub: *UtilityBase, into: []u8, at: usize, text: []const u8) usize {
-    return at + ub.Latin1ToUtf8(text.ptr, text.len, into[at..].ptr, into.len - at);
 }
 
 fn putNumber(into: []u8, at: usize, number: u32) usize {

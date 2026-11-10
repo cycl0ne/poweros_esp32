@@ -78,7 +78,8 @@ const _modules = @import("../modules/_modules.zig");
 /// read them again when `ACA_Link` rises.
 ///
 /// NOTES:
-/// Texts are Latin-1; a character past it is a `?`.
+/// Texts are UTF-8, as the tags have them whatever they are written in;
+/// one too long is cut where a character starts.
 ///
 /// BUGS:
 /// None known.

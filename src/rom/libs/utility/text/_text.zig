@@ -102,6 +102,16 @@ test "utf8.textOf: UTF-8 as it is, a byte that is no UTF-8 as its character" {
     try testing.expectEqual(@as(?[]const u8, null), utf8.textOf("\xFC\xFC\xFC\xFC\xFC", &into));
 }
 
+test "utf8.copyCut, fromLatin1, fromForeign: whole characters as fit" {
+    var into: [6]u8 = undefined;
+    try testing.expectEqualStrings("Grüß", into[0..utf8.copyCut("Grüße", &into)]);
+    try testing.expectEqualStrings("Grü", into[0..utf8.copyCut("Grüße", into[0..5])]);
+    try testing.expectEqualStrings("Gr\xC3\xBCn", into[0..utf8.fromLatin1("Gr\xFCn", &into)]);
+    try testing.expectEqual(@as(usize, 1), utf8.fromLatin1("a\xFC", into[0..2]));
+    try testing.expectEqualStrings("€ab", into[0..utf8.fromForeign("€ab", &into)]);
+    try testing.expectEqualStrings("\xC3\xA2\xC2\x82", into[0..utf8.fromForeign("\xE2\x82", &into)]);
+}
+
 test "utf8.readLast: walking back reads what walking forward reads" {
     try testing.expectEqual(utf8.Read{ .char = 0xE4, .length = 2 }, utf8.readLast("a\xC3\xA4"));
     try testing.expectEqual(utf8.Read{ .char = 0x1F600, .length = 4 }, utf8.readLast("x\xF0\x9F\x98\x80"));

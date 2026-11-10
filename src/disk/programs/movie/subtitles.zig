@@ -6,9 +6,8 @@
 //! asks for - an eighteenth of it - in italics where the subtitle says,
 //! white with a black edge all round, each line in the middle, the last
 //! at the foot of the picture less a margin. A line too long for the
-//! picture is broken between words. The text comes in UTF-8 and the font
-//! is Latin-1: utility.library makes the quotes and dashes of typesetting
-//! plain ones, a character past Latin-1 a `?`.
+//! picture is broken between words, or where a character starts. The text
+//! comes in UTF-8 and is drawn so.
 //!
 //! **A picture** - a Blu-ray's - is put down where the disc places it,
 //! scaled with the film, its coverage mixed with what is under it.
@@ -34,13 +33,11 @@ const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 const VideoCodecBase = sdk.interface.videocodec.VideoCodecBase;
 const TagItem = sdk.utility.TagItem;
-const utility = sdk.utility;
-const UtilityBase = sdk.interface.utility.UtilityBase;
 const Rect = graphics.Rect;
 
 /// The lines a subtitle may make, broken as they are.
 const most_lines = 8;
-/// The text's bytes as Latin-1.
+/// The text's bytes, UTF-8.
 const text_bytes = 1024;
 
 pub const Subtitles = struct {
@@ -48,8 +45,6 @@ pub const Subtitles = struct {
     ib: *IntuitionBase,
     gb: *GraphicsBase,
     dfb: ?*DiskfontBase,
-    /// For the text's UTF-8.
-    ub: *UtilityBase,
     /// The screen's font at the size last wanted, upright and slanted.
     upright: ?*graphics.TextFont = null,
     slanted: ?*graphics.TextFont = null,
@@ -127,7 +122,7 @@ pub const Subtitles = struct {
         var text: [text_bytes]u8 = undefined;
         var given: usize = 0;
         while (utf8[given] != 0) given += 1;
-        const length = latin1(subs.ub, utf8[0..given], &text);
+        const length = textOf(utf8[0..given], &text);
         // The lines broken where they are too wide: each a start and a
         // length in `text`.
         const room = @max(@divTrunc(box.width() * 9, 10), 1);
@@ -242,24 +237,24 @@ pub const Subtitles = struct {
 };
 
 /// How many of `text`'s bytes go in `room` pixels: up to a space where
-/// the whole does not - or as many as fit, when no space does - and one
-/// at least.
+/// the whole does not - or as many whole characters as fit, when no
+/// space does - and one character at least.
 fn fitting(gb: *GraphicsBase, rp: *graphics.RastPort, text: []const u8, room: i32) usize {
     if (text.len == 0) return 0;
     if (gb.TextLength(rp, text.ptr, @intCast(text.len)) <= room) return text.len;
+    var first: usize = 0;
+    _ = sdk.utility.utf8.next(text, &first);
     var count = text.len;
-    while (count > 1 and gb.TextLength(rp, text.ptr, @intCast(count)) > room) count -= 1;
+    while (count > first and gb.TextLength(rp, text.ptr, @intCast(count)) > room) count = sdk.utility.utf8.cut(text, count - 1);
     var space = count;
     while (space > 0 and text[space] != ' ') space -= 1;
     return if (space > 0) space else count;
 }
 
-/// UTF-8 into Latin-1 by utility.library: typesetting's quotes, dashes
-/// and dots as plain ones, what else Latin-1 has not a `?`. How many bytes
-/// it made, a NUL after them.
-pub fn latin1(ub: *UtilityBase, text: []const u8, into: []u8) usize {
-    var conversion: utility.Utf8Conversion = .{ .flags = utility.UTF8F_TYPESET };
-    const length = ub.Utf8ToLatin1(&conversion, text.ptr, text.len, into.ptr, into.len - 1);
+/// UTF-8 `text` into `into`, cut where a character no longer fits: how
+/// many bytes, a NUL after them.
+pub fn textOf(text: []const u8, into: []u8) usize {
+    const length = sdk.utility.utf8.copyCut(text, into[0 .. into.len - 1]);
     into[length] = 0;
     return length;
 }

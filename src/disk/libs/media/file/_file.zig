@@ -212,14 +212,9 @@ pub fn be64(bytes: []const u8) u64 {
 }
 
 /// A NUL-terminated copy of `text` - UTF-8, up to a NUL in it - into
-/// `into`, in Latin-1 by the file's utility.library: typesetting's quotes
-/// and dashes plain ones, another character past Latin-1 and a byte that
-/// is no UTF-8 a `?`. Cut where it no longer fits.
-pub fn copyUtf8(file: *const File, into: []u8, text: []const u8) void {
-    const whole = upToNul(text);
-    var conversion: utility.Utf8Conversion = .{ .flags = utility.UTF8F_TYPESET };
-    const length = file.base.utility_base.Utf8ToLatin1(&conversion, whole.ptr, whole.len, into.ptr, into.len - 1);
-    into[length] = 0;
+/// `into`, cut where a character no longer fits.
+pub fn copyUtf8(_: *const File, into: []u8, text: []const u8) void {
+    into[utility.utf8.copyCut(upToNul(text), into[0 .. into.len - 1])] = 0;
 }
 
 /// A string's bytes up to its NUL.
@@ -231,9 +226,7 @@ pub fn upToNul(text: []const u8) []const u8 {
 
 /// A NUL-terminated copy of a name, cut where it no longer fits.
 pub fn copyName(into: []u8, text: []const u8) void {
-    const length = @min(upToNul(text).len, into.len - 1);
-    @memcpy(into[0..length], text[0..length]);
-    into[length] = 0;
+    into[utility.utf8.copyCut(upToNul(text), into[0 .. into.len - 1])] = 0;
 }
 
 /// `ticks` of `timescale` in microseconds.

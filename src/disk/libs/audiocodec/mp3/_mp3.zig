@@ -37,6 +37,7 @@ const _media = @import("../stream/_media.zig");
 const layer3 = @import("layer3.zig");
 const genres = @import("genres.zig");
 const exec = sdk.exec;
+const utf8 = sdk.utility.utf8;
 
 pub const Mp3 = struct {
     dec: layer3.Decoder,
@@ -720,13 +721,15 @@ fn picture(reader: *TagReader, version: u8, size: u64, unsync: bool) void {
     tags.picture = .{ .data = image.ptr, .size = @intCast(image.len), .kind = kind, .mime = mime };
 }
 
-/// A text frame's words into a name, Latin-1: its encoding byte says
+/// A text frame's words into a name, in UTF-8: its encoding byte says
 /// whether they are Latin-1 (0), UTF-16 with a byte-order mark (1),
-/// UTF-16 big-endian (2) or UTF-8 (3). What Latin-1 lacks is narrowed by
-/// `narrow`; spaces that come together are one.
+/// UTF-16 big-endian (2) or UTF-8 (3). A byte-order mark, a zero-width
+/// space or joiner and a variation selector, which only decorate, are
+/// left out, a surrogate without its pair is U+FFFD; spaces that come
+/// together are one. Cut where a character no longer fits.
 pub fn text(into: []u8, body: []const u8) void {
     if (body.len < 1) return;
-    var out: usize = 0;
+    var name: Name = .{ .into = into };
     const words = body[1..];
     switch (body[0]) {
         1, 2 => {
@@ -737,103 +740,78 @@ pub fn text(into: []u8, body: []const u8) void {
                 i = 2;
             }
             while (i + 1 < words.len) : (i += 2) {
-                const unit: u32 = if (big) @as(u32, words[i]) << 8 | words[i + 1] else @as(u32, words[i + 1]) << 8 | words[i];
+                var unit = unitAt(words, i, big);
                 if (unit == 0) break;
-                // A pair of surrogates is one character past 0xFFFF; a
-                // second byte-order mark, before a later value, is none.
-                if (unit >= 0xD800 and unit < 0xDC00) {
-                    i += 2;
-                    put(into, &out, 0x10000);
-                    continue;
+                if (unit >= 0xD800 and unit < 0xDC00 and i + 3 < words.len) {
+                    const low = unitAt(words, i + 2, big);
+                    if (low >= 0xDC00 and low < 0xE000) {
+                        unit = 0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00);
+                        i += 2;
+                    }
                 }
-                if (unit == 0xFEFF) continue;
-                put(into, &out, unit);
+                name.put(unit);
             }
         },
         3 => {
+            const whole = _stream.upToNul(words);
             var i: usize = 0;
-            while (i < words.len) {
-                const lead = words[i];
-                if (lead == 0) break;
-                var point: u32 = lead;
-                var length: usize = 1;
-                if (lead >= 0xC0 and lead < 0xE0 and i + 1 < words.len) {
-                    point = (@as(u32, lead & 0x1F) << 6) | (words[i + 1] & 0x3F);
-                    length = 2;
-                } else if (lead >= 0xE0 and lead < 0xF0 and i + 2 < words.len) {
-                    point = (@as(u32, lead & 0x0F) << 12) | (@as(u32, words[i + 1] & 0x3F) << 6) | (words[i + 2] & 0x3F);
-                    length = 3;
-                } else if (lead >= 0xF0) {
-                    point = 0x10000;
-                    length = 4;
-                }
-                put(into, &out, point);
-                i += length;
-            }
+            while (i < whole.len) name.put(utf8.next(whole, &i));
         },
-        else => {
-            for (words) |char| {
-                if (char == 0) break;
-                put(into, &out, char);
-            }
-        },
+        else => for (_stream.upToNul(words)) |char| name.put(char),
     }
-    while (out > 0 and into[out - 1] == ' ') out -= 1;
-    into[out] = 0;
+    name.end();
 }
 
-/// One character into a name at `out`, narrowed to Latin-1, while there
-/// is room before the NUL.
-fn put(into: []u8, out: *usize, point: u32) void {
-    for (narrow(point)) |char| {
-        if (out.* >= into.len - 1) return;
-        if (char == ' ' and (out.* == 0 or into[out.* - 1] == ' ')) continue;
-        into[out.*] = char;
-        out.* += 1;
-    }
+fn unitAt(words: []const u8, at: usize, big: bool) u32 {
+    return if (big) @as(u32, words[at]) << 8 | words[at + 1] else @as(u32, words[at + 1]) << 8 | words[at];
 }
 
-/// A character as Latin-1 has it: as it is below 0x100; typographic
-/// quotes, dashes, the ellipsis and the bullet as their plain kin; a
-/// full-width form as the one it is wide for; nothing for what only
-/// decorates - a character past 0xFFFF (an emoji), a variation selector,
-/// a joiner; `?` for anything else.
-fn narrow(point: u32) []const u8 {
-    const latin = struct {
-        const all = blk: {
-            var table: [256]u8 = undefined;
-            for (&table, 0..) |*entry, i| entry.* = i;
-            break :blk table;
+/// A name being written in UTF-8, the room for its NUL kept.
+const Name = struct {
+    into: []u8,
+    out: usize = 0,
+    full: bool = false,
+
+    /// One character, while it fits.
+    fn put(name: *Name, given: u32) void {
+        if (name.full) return;
+        const char: u32 = switch (given) {
+            0xFEFF, 0x200B...0x200F, 0xFE00...0xFE0F => return,
+            0xD800...0xDFFF => 0xFFFD,
+            else => given,
         };
-    };
-    if (point < 0x100) return latin.all[point..][0..1];
-    return switch (point) {
-        0x2018, 0x2019, 0x201A, 0x2032 => "'",
-        0x201C, 0x201D, 0x201E, 0x2033 => "\"",
-        0x2010...0x2015, 0x2212 => "-",
-        0x2026 => "...",
-        0x2022 => "\xB7",
-        0x3000 => " ",
-        0xFF01...0xFF5E => latin.all[point - 0xFEE0 ..][0..1],
-        0x200B...0x200F, 0xFE00...0xFE0F => "",
-        else => if (point >= 0x10000) "" else "?",
-    };
-}
+        if (char == ' ' and (name.out == 0 or name.into[name.out - 1] == ' ')) return;
+        var bytes: [4]u8 = undefined;
+        const taken = utf8.encode(char, &bytes);
+        if (name.out + taken > name.into.len - 1) {
+            name.full = true;
+            return;
+        }
+        @memcpy(name.into[name.out..][0..taken], bytes[0..taken]);
+        name.out += taken;
+    }
 
-/// An ID3v1 tag: the title, artist and album, thirty characters each,
-/// Latin-1, filled out with blanks or NULs; the year in four digits; a
+    /// The blanks at its end dropped, the NUL after it.
+    fn end(name: *Name) void {
+        while (name.out > 0 and name.into[name.out - 1] == ' ') name.out -= 1;
+        name.into[name.out] = 0;
+    }
+};
+
+/// An ID3v1 tag: the title, artist and album, thirty bytes each, Latin-1
+/// or - as newer taggers write it - UTF-8, filled out with blanks or NULs; the year in four digits; a
 /// comment of thirty - or twenty-eight and the track's number after a
 /// NUL (ID3v1.1); and the genre's number.
 pub fn id3v1(tag: *const [128]u8, tags: *_stream.Tags) void {
-    _stream.copyName(&tags.title, tag[3..33]);
-    _stream.copyName(&tags.artist, tag[33..63]);
-    _stream.copyName(&tags.album, tag[63..93]);
+    _stream.copyForeign(&tags.title, tag[3..33]);
+    _stream.copyForeign(&tags.artist, tag[33..63]);
+    _stream.copyForeign(&tags.album, tag[63..93]);
     tags.year = _stream.yearOf(tag[93..97]);
     if (tag[125] == 0 and tag[126] != 0) {
-        _stream.copyName(&tags.comment, tag[97..125]);
+        _stream.copyForeign(&tags.comment, tag[97..125]);
         tags.track = tag[126];
     } else {
-        _stream.copyName(&tags.comment, tag[97..127]);
+        _stream.copyForeign(&tags.comment, tag[97..127]);
     }
     if (genres.named(tag[127])) |name| _stream.copyName(&tags.genre, _stream.upToNul(name));
 }

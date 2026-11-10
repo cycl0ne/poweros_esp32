@@ -75,14 +75,14 @@ test "Player's lists: UTF-8 found for the whole file, its mark passed over" {
     const item = marked.next().?;
     try testing.expectEqualStrings("Caf\xC3\xA9.mp3", item.location);
     var title: [16]u8 = undefined;
-    icy.latin1As(ub, item.title, marked.utf8, &title);
-    try testing.expectEqualStrings("Caf\xE9", std.mem.sliceTo(&title, 0));
+    icy.utf8As(item.title, marked.utf8, &title);
+    try testing.expectEqualStrings("Caf\xC3\xA9", std.mem.sliceTo(&title, 0));
 
     // A byte past ASCII that is no UTF-8 makes the file Latin-1.
     var old = m3u.Reader.init(ub, "#EXTINF:1,Caf\xE9\nx.mp3\n");
     try testing.expect(!old.utf8);
-    icy.latin1As(ub, old.next().?.title, old.utf8, &title);
-    try testing.expectEqualStrings("Caf\xE9", std.mem.sliceTo(&title, 0));
+    icy.utf8As(old.next().?.title, old.utf8, &title);
+    try testing.expectEqualStrings("Caf\xC3\xA9", std.mem.sliceTo(&title, 0));
     try utilityDown(ub);
 }
 
@@ -141,7 +141,7 @@ test "Player's lists: what is written read back the same" {
     const ub = try utilityUp();
     defer host.exec.deinit();
     const items = [_]m3u.Item{
-        .{ .location = "Fire.mp3", .title = "Arcade Fire - Caf\xE9", .seconds = 241 },
+        .{ .location = "Fire.mp3", .title = "Arcade Fire - Caf\xC3\xA9", .seconds = 241 },
         .{ .location = "http://radio.example/live", .title = "A station", .logo = "http://radio.example/l.png" },
         .{ .location = "Plain.ogg" },
     };
@@ -149,7 +149,7 @@ test "Player's lists: what is written read back the same" {
     @memcpy(text[0..m3u.header.len], m3u.header);
     var length: usize = m3u.header.len;
     for (items) |item| {
-        const written = m3u.itemLines(ub, item, text[length..]);
+        const written = m3u.itemLines(item, text[length..]);
         try testing.expect(written <= m3u.itemLength(item));
         length += written;
     }
@@ -164,7 +164,7 @@ test "Player's lists: what is written read back the same" {
     for (items) |item| {
         const got = reader.next().?;
         var title: [64]u8 = undefined;
-        icy.latin1As(ub, got.title, reader.utf8, &title);
+        icy.utf8As(got.title, reader.utf8, &title);
         try testing.expectEqualStrings(item.title, std.mem.sliceTo(&title, 0));
         try testing.expectEqualStrings(item.location, got.location);
         try testing.expectEqualStrings(item.logo, got.logo);

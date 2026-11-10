@@ -8,15 +8,14 @@
 //! `Strip` takes the blocks out of the pieces as they come, the sound
 //! moved together in place, and keeps the last whole block; `streamTitle`
 //! finds the title in one, `split` the artist and the title in that, and
-//! `latin1` brings UTF-8 to the screen's Latin-1 through utility.library. `streamUrl` finds the
+//! `utf8Of` brings a station's words to UTF-8, whatever it sent them in. `streamUrl` finds the
 //! address a block names beside its title - some stations name the cover
 //! of the song there, some their own picture, some a page or a number -
 //! and `isPictureAddress` tells a picture's from the rest. `kindOf` reads
 //! a Content-Type. Nothing here touches the network: the host tests hold
 //! all of it.
 
-const utility = @import("../utility/utility.zig");
-const UtilityBase = @import("../../interface/utility.zig").UtilityBase;
+const utf8 = @import("../utility/utf8.zig");
 
 /// The longest a block can be: 255 sixteens.
 pub const block_most = 255 * 16;
@@ -165,30 +164,21 @@ pub fn kindOf(content_type: []const u8) Kind {
     return .unknown;
 }
 
-/// `text` into `into` as Latin-1 through utility.library, NUL after it:
-/// UTF-8 read as such when the whole of it is, anything else taken as
-/// Latin-1 already, as older stations send it. Cut to fit.
-pub fn latin1(ub: *UtilityBase, text: []const u8, into: []u8) void {
-    latin1As(ub, text, ub.Utf8Kind(text.ptr, text.len) != utility.UTF8KIND_NONE, into);
+/// `text` into `into` in UTF-8, NUL after it: as it is when the whole
+/// of it is UTF-8, else read as Latin-1, as older stations send it. Cut
+/// where a character starts.
+pub fn utf8Of(text: []const u8, into: []u8) void {
+    if (into.len == 0) return;
+    into[utf8.fromForeign(text, into[0 .. into.len - 1])] = 0;
 }
 
-/// `text` into `into` as Latin-1 through utility.library, NUL after it,
-/// read as UTF-8 when `utf8` says - a whole file's word for each of its
-/// lines - and as Latin-1 already otherwise. Typesetting's quotes and
-/// dashes become plain ones, another character Latin-1 has not a `?`, a
-/// byte that is no UTF-8 the Latin-1 byte it is. Cut to fit.
-pub fn latin1As(ub: *UtilityBase, text: []const u8, utf8: bool, into: []u8) void {
+/// `text` into `into` in UTF-8, NUL after it: read as UTF-8 when
+/// `is_utf8` says - a whole file's word for each of its lines - and as
+/// Latin-1 otherwise. Cut where a character starts.
+pub fn utf8As(text: []const u8, is_utf8: bool, into: []u8) void {
     if (into.len == 0) return;
-    const room = into.len - 1;
-    var length: usize = 0;
-    if (utf8) {
-        var conversion: utility.Utf8Conversion = .{ .flags = utility.UTF8F_TYPESET | utility.UTF8F_LATIN1 };
-        length = ub.Utf8ToLatin1(&conversion, text.ptr, text.len, into.ptr, room);
-    } else {
-        length = @min(text.len, room);
-        @memcpy(into[0..length], text[0..length]);
-    }
-    into[length] = 0;
+    const room = into[0 .. into.len - 1];
+    into[if (is_utf8) utf8.copyCut(text, room) else utf8.fromLatin1(text, room)] = 0;
 }
 
 fn lower(char: u8) u8 {

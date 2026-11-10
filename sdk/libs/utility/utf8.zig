@@ -199,6 +199,41 @@ pub fn cut(bytes: []const u8, limit: usize) usize {
     return limit;
 }
 
+/// `bytes` into `into`, as many whole characters as fit: the length
+/// copied.
+pub fn copyCut(bytes: []const u8, into: []u8) usize {
+    const length = cut(bytes, into.len);
+    @memcpy(into[0..length], bytes[0..length]);
+    return length;
+}
+
+/// Latin-1 `bytes` as UTF-8 into `into`, as many whole characters as
+/// fit: the length written.
+pub fn fromLatin1(bytes: []const u8, into: []u8) usize {
+    var length: usize = 0;
+    for (bytes) |char| {
+        if (char < 0x80) {
+            if (length + 1 > into.len) break;
+            into[length] = char;
+            length += 1;
+        } else {
+            if (length + 2 > into.len) break;
+            into[length] = 0xC0 | char >> 6;
+            into[length + 1] = 0x80 | (char & 0x3F);
+            length += 2;
+        }
+    }
+    return length;
+}
+
+/// Text from elsewhere that does not say what it is written in, as UTF-8
+/// into `into`: as it is when the whole of it is UTF-8, else read as
+/// Latin-1, which older text from such places is in. As many whole
+/// characters as fit; the length written.
+pub fn fromForeign(bytes: []const u8, into: []u8) usize {
+    return if (valid(bytes)) copyCut(bytes, into) else fromLatin1(bytes, into);
+}
+
 /// Whether `bytes` are UTF-8 from first to last.
 pub fn valid(bytes: []const u8) bool {
     var at: usize = 0;

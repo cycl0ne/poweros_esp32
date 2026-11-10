@@ -83,7 +83,7 @@ pub const MContainerLibs = extern struct {
     utility_base: *interface_utility.UtilityBase,
 };
 
-/// What the tags say, at full length, NUL-terminated, Latin-1.
+/// What the tags say, at full length, NUL-terminated, UTF-8.
 pub const MContainerTags = extern struct {
     title: [MCONTAINER_NAME_BYTES]u8,
     artist: [MCONTAINER_NAME_BYTES]u8,

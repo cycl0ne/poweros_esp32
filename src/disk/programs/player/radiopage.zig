@@ -79,7 +79,7 @@ pub const Logo = struct {
 pub const Page = struct {
     sys: *ExecBase,
     dl: *DosBase,
-    /// The lists' text, between UTF-8 and Latin-1.
+    /// What reads the lists' text.
     ub: *UtilityBase,
     ib: *IntuitionBase,
     /// The name the finder's requests give.
@@ -139,7 +139,7 @@ pub const Page = struct {
     /// changed them, their drawers made first where they are not there.
     pub fn keepFiles(page: *Page) void {
         if (!page.kept.changed) return;
-        const text = page.kept.keptText(page.sys, page.ub) orelse return;
+        const text = page.kept.keptText(page.sys) orelse return;
         defer page.sys.FreeVec(text.ptr);
         for ([_][*:0]const u8{ stations.KEPT_ENV_DRAWER, stations.KEPT_ENVARC_DRAWER }) |drawer| {
             if (page.dl.Lock(drawer, dos.SHARED_LOCK)) |lock| {
@@ -308,7 +308,7 @@ pub const Page = struct {
                     page.search_read = page.search_round;
                     page.detach(view_found);
                     page.found.clear(page.sys);
-                    for (finder.answers()) |answer| _ = page.found.readFound(page.sys, page.ub, answer);
+                    for (finder.answers()) |answer| _ = page.found.readFound(page.sys, answer);
                     page.giveBack(view_found, if (page.found.count > 0) 0 else lb.LISTBROWSER_NONE);
                     page.sayCount(page.found.count);
                 },

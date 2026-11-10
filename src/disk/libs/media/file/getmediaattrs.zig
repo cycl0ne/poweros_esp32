@@ -57,7 +57,7 @@ const _file = @import("_file.zig");
 /// `CloseMedia`.
 ///
 /// NOTES:
-/// Texts are Latin-1; a character past it is a `?`.
+/// Texts are UTF-8; one too long is cut where a character starts.
 ///
 /// BUGS:
 /// None known.

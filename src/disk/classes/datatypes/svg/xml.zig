@@ -75,7 +75,7 @@ pub const Reader = struct {
                 }
                 if (i >= r.text.len) return error.Malformed;
                 const empty = i > start and r.text[i - 1] == '/';
-                const attributes = r.text[start .. if (empty) i - 1 else i];
+                const attributes = r.text[start..if (empty) i - 1 else i];
                 r.at = i + 1;
                 return .{ .open = .{ .name = name, .attributes = attributes, .empty = empty } };
             }

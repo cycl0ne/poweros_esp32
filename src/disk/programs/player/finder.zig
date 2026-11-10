@@ -228,7 +228,7 @@ pub const Finder = struct {
         return @as(u32, 1) << @intCast(finder.news_bit);
     }
 
-    /// Stations searched for whose `by` holds `words`, Latin-1: the
+    /// Stations searched for whose `by` holds `words`, UTF-8: the
     /// search's number, which its news carry.
     pub fn search(finder: *Finder, words: []const u8, by: By) u32 {
         const sys = finder.sys;
@@ -567,12 +567,12 @@ const Builder = struct {
         builder.into[builder.length] = 0;
     }
 
-    /// Latin-1 words as a query's value, by utility.library: UTF-8, each
-    /// byte that is not a letter, a digit or one of `-_.~` written `%XX`.
+    /// Words (UTF-8) as a query's value, by utility.library: each byte
+    /// that is not a letter, a digit or one of `-_.~` written `%XX`.
     /// Words too long for the address cut it where they begin.
     fn encoded(builder: *Builder, words: []const u8) void {
         const room = builder.into.len - builder.length;
-        const length = builder.ub.EncodeUrl(words.ptr, words.len, builder.into[builder.length..].ptr, room, utility.URLF_LATIN1);
+        const length = builder.ub.EncodeUrl(words.ptr, words.len, builder.into[builder.length..].ptr, room, 0);
         if (length > room) {
             @memset(builder.into[builder.length..], 0);
             builder.length = builder.into.len;

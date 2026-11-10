@@ -42,7 +42,6 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const HttpBase = sdk.interface.http.HttpBase;
-const UtilityBase = sdk.interface.utility.UtilityBase;
 const TagItem = utility.TagItem;
 const icy = http.icy;
 
@@ -296,9 +295,6 @@ pub const Station = struct {
         const http_lib = sys.OpenLibrary(http.HTTPNAME, 1) orelse return station.because("no " ++ http.HTTPNAME, null);
         defer sys.CloseLibrary(http_lib);
         const hb: *HttpBase = @ptrCast(http_lib);
-        const utility_lib = sys.OpenLibrary(utility.UTILITYNAME, 1) orelse return station.because("no " ++ utility.UTILITYNAME, null);
-        defer sys.CloseLibrary(utility_lib);
-        const ub: *UtilityBase = @ptrCast(utility_lib);
         const client = hb.CreateClient(sb, &[_]TagItem{
             .{ .tag = http.HTTP_UserAgent, .data = @intFromPtr(user_agent) },
             .{ .tag = http.HTTP_Timeout, .data = quiet_seconds },
@@ -319,7 +315,7 @@ pub const Station = struct {
         if (kind == .list) return station.because("the address names a list of stations, not one", null);
         if (kind == .aac) return station.because("the station sends AAC, which is not played", null);
         station.strip = icy.Strip.init(number(hb.GetHeader(request, "icy-metaint")));
-        station.heardOf(hb, ub, request, kind);
+        station.heardOf(hb, request, kind);
         while (true) {
             if (station.isHalted()) return;
             const got = hb.ReadRequest(request, &station.piece, piece_bytes);
@@ -330,7 +326,7 @@ pub const Station = struct {
                 return station.lostBy(hb, client, got, false);
             }
             const sound = station.strip.take(station.piece[0..@intCast(got)]);
-            if (station.strip.takeBlock()) |block| station.titled(ub, block);
+            if (station.strip.takeBlock()) |block| station.titled(block);
             if (!station.put(station.piece[0..sound])) return;
         }
     }
@@ -370,7 +366,7 @@ pub const Station = struct {
 
     /// What the answer says of the station, for the command; the command
     /// told it is streaming.
-    fn heardOf(station: *Station, hb: *HttpBase, ub: *UtilityBase, request: *http.Request, kind: icy.Kind) void {
+    fn heardOf(station: *Station, hb: *HttpBase, request: *http.Request, kind: icy.Kind) void {
         const kbps = number(hb.GetHeader(request, "icy-br"));
         @atomicStore(u32, &station.bytes_per_second, (if (kbps != 0) kbps else assumed_kbps) * 125, .seq_cst);
         const codec: u32 = switch (kind) {
@@ -381,7 +377,7 @@ pub const Station = struct {
         @atomicStore(u32, &station.codec, codec, .seq_cst);
         const sys = station.sys;
         sys.ObtainSemaphore(&station.lock);
-        icy.latin1(ub, textOf(hb.GetHeader(request, "icy-name")), &station.shown.name);
+        icy.utf8Of(textOf(hb.GetHeader(request, "icy-name")), &station.shown.name);
         station.shown.kbps = kbps;
         station.shown.kind = kind;
         station.shown.phase = .streaming;
@@ -391,10 +387,10 @@ pub const Station = struct {
 
     /// A metadata block's title, when it names another than the one
     /// before, for the command.
-    fn titled(station: *Station, ub: *UtilityBase, block: []const u8) void {
+    fn titled(station: *Station, block: []const u8) void {
         const named = icy.streamTitle(block) orelse return;
         var title: [160:0]u8 = @splat(0);
-        icy.latin1(ub, named, &title);
+        icy.utf8Of(named, &title);
         const sys = station.sys;
         sys.ObtainSemaphore(&station.lock);
         const same = sameText(&title, &station.shown.title);

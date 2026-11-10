@@ -116,12 +116,10 @@ const Subtitles = subtitles.Subtitles;
 const media = sdk.media;
 const diskfont = sdk.diskfont;
 const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
-const UtilityBase = sdk.interface.utility.UtilityBase;
-const utility = sdk.utility;
 
 pub const COMMAND_NAME = "Movie";
-const VERSION = "1.3";
-const DATE = "09.11.2026";
+const VERSION = "1.4";
+const DATE = "10.11.2026";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
@@ -1179,7 +1177,7 @@ const App = struct {
         const language = track.language[0..language_length];
         const said = language.len != 0 and !(language.len == 3 and language[0] == 'u' and language[1] == 'n' and language[2] == 'd');
         if (name_length != 0) {
-            used = subtitles.latin1(app.subs.ub, track.name[0..name_length], into[0 .. into.len - 8]);
+            used = subtitles.textOf(track.name[0..name_length], into[0 .. into.len - 8]);
             if (said) {
                 for (" (") |byte| {
                     into[used] = byte;
@@ -1450,7 +1448,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var text = Text.open(sys);
     defer text.close();
 
-    var libraries: [8]?*exec.Library = @splat(null);
+    var libraries: [7]?*exec.Library = @splat(null);
     defer for (libraries) |lib| sys.CloseLibrary(lib);
     const wanted = [_]struct { name: [*:0]const u8, version: u32 }{
         .{ .name = intuition.INTUITIONNAME, .version = 0 },
@@ -1460,7 +1458,6 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .name = sl.SLIDER_LIBRARY, .version = 0 },
         .{ .name = td.TDECK_LIBRARY, .version = 0 },
         .{ .name = cv.CANVAS_LIBRARY, .version = 0 },
-        .{ .name = utility.UTILITYNAME, .version = 1 },
     };
     for (wanted, 0..) |library, i| {
         libraries[i] = sys.OpenLibrary(library.name, library.version) orelse {
@@ -1471,7 +1468,6 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const ib: *IntuitionBase = @ptrCast(libraries[0].?);
     const gb: *GraphicsBase = @ptrCast(libraries[1].?);
     const vcb: *VideoCodecBase = @ptrCast(libraries[2].?);
-    const ub: *UtilityBase = @ptrCast(libraries[7].?);
     // Wanted for Open... - and for the film, when none is named.
     const asl_lib = sys.OpenLibrary(asl.ASLNAME, 1);
     defer if (asl_lib) |lib| sys.CloseLibrary(lib);
@@ -1506,7 +1502,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .al = al,
         .level = percent,
         .tracks_known = vcb.lib().version > 1 or vcb.lib().revision >= 3,
-        .subs = .{ .sys = sys, .ib = ib, .gb = gb, .dfb = @ptrCast(diskfont_lib), .ub = ub },
+        .subs = .{ .sys = sys, .ib = ib, .gb = gb, .dfb = @ptrCast(diskfont_lib) },
     };
     defer app.subs.close();
 

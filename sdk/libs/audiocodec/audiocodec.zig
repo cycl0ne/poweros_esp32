@@ -127,7 +127,7 @@ pub const ACA_MediaTrack = ACA_Dummy + 0x08;
 // --- GetAudioStreamAttrs's tags ---------------------------------------------------
 
 // Each tag's data is where the answer goes. A text is the stream's own,
-// NUL-terminated, Latin-1 - a character past it is a `?` - and empty when
+// NUL-terminated, UTF-8 - cut where a character starts - and empty when
 // the tags do not say; it is good until the stream is closed, and in a
 // chain says the link being decoded.
 
@@ -183,7 +183,7 @@ pub const AudioChapter = extern struct {
     /// Milliseconds from the start of the sound.
     start: u32,
     end: u32,
-    /// NUL-terminated, Latin-1; empty when it has none.
+    /// NUL-terminated, UTF-8; empty when it has none.
     title: [96]u8,
 };
 

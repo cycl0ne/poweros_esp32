@@ -659,8 +659,7 @@ fn linkTakenBack(bus: *Bus, device: *const Device) void {
     }
 }
 
-/// The device's language and its three strings, as far as Latin-1 holds
-/// them.
+/// The device's language and its three strings, in UTF-8.
 fn readStrings(bus: *Bus, device: *Device) void {
     var languages: [4]u8 = undefined;
     const got = getDescriptor(bus, device, d.USB_DT_STRING, 0, 0, &languages) orelse return;
@@ -680,7 +679,9 @@ fn readStrings(bus: *Bus, device: *Device) void {
     device.public.serial = if (device.strings[2][0] != 0) @ptrCast(&device.strings[2]) else null;
 }
 
-/// String `index` of the device as Latin-1 into `into`, NUL-ended: its
+/// String `index` of the device in UTF-8 into `into`, NUL-ended - a
+/// character past U+FFFF from its surrogate pair, a control or a
+/// surrogate without its pair `?`, as many whole characters as fit: its
 /// length, or null if the device has none. Replies to `port`.
 pub fn readString(sys: *ExecBase, device: *const Device, port: *exec.MsgPort, index: u8, into: []u8) ?u32 {
     if (into.len == 0) return null;
@@ -691,10 +692,21 @@ pub fn readString(sys: *ExecBase, device: *const Device, port: *exec.MsgPort, in
     const length = @min(got, raw[0]);
     var count: u32 = 0;
     var at: u32 = 2;
-    while (at + 1 < length and count + 1 < into.len) : (at += 2) {
-        const char = @as(u16, raw[at]) | @as(u16, raw[at + 1]) << 8;
-        into[count] = if (char < 0x100) @truncate(char) else '?';
-        count += 1;
+    while (at + 1 < length) : (at += 2) {
+        var char: u32 = @as(u16, raw[at]) | @as(u16, raw[at + 1]) << 8;
+        if (char >= 0xD800 and char < 0xDC00 and at + 3 < length) {
+            const low: u32 = @as(u16, raw[at + 2]) | @as(u16, raw[at + 3]) << 8;
+            if (low >= 0xDC00 and low < 0xE000) {
+                char = 0x10000 + ((char - 0xD800) << 10) + (low - 0xDC00);
+                at += 2;
+            }
+        }
+        if ((char >= 0xD800 and char < 0xE000) or char < 0x20 or (char >= 0x7F and char < 0xA0)) char = '?';
+        var bytes: [4]u8 = undefined;
+        const taken = sdk.utility.utf8.encode(char, &bytes);
+        if (count + taken + 1 > into.len) break;
+        @memcpy(into[count..][0..taken], bytes[0..taken]);
+        count += @intCast(taken);
     }
     into[count] = 0;
     return count;

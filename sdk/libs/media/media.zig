@@ -274,7 +274,7 @@ pub const MDA_KeepPicture = MDA_Dummy + 0x06;
 
 // --- GetMediaAttrs's tags ---------------------------------------------------------
 // Each tag's data is where the answer goes. A text is the file's own,
-// NUL-terminated, Latin-1 - a character past it is a `?` - and empty when
+// NUL-terminated, UTF-8 - cut where a character starts - and empty when
 // the tags do not say; it is good until the file is closed.
 
 /// `*[*:0]const u8`: the title, the artist, the album at full length, the
@@ -308,7 +308,7 @@ pub const MediaChapter = extern struct {
     /// Milliseconds from the start of what the file presents.
     start: u32,
     end: u32,
-    /// NUL-terminated, Latin-1; empty when it has none.
+    /// NUL-terminated, UTF-8; empty when it has none.
     title: [96]u8,
 };
 

@@ -41,7 +41,7 @@ test "Player's stations: kept ones read from M3U and written back" {
     try testing.expectEqual(b, kept.find("http://b.example/stream/").?);
     try testing.expect(kept.find("http://c.example/") == null);
 
-    const text = kept.keptText(sys, ub).?;
+    const text = kept.keptText(sys).?;
     try testing.expectEqualStrings(stations.kept_header ++
         "#EXTINF:-1 tvg-logo=\"http://a.example/a.png\",Station A\n" ++
         "http://a.example/live\n" ++
@@ -69,8 +69,8 @@ test "Player's stations: two answers found, the most heard first" {
         "u-4, \tOgg\tStation\t,http://four.example/ogg,25,96, Austria,jazz\n";
     var first_answer: [mp3.len]u8 = mp3.*;
     var second_answer: [ogg.len]u8 = ogg.*;
-    try testing.expectEqual(@as(usize, 2), found.readFound(sys, ub, &first_answer));
-    try testing.expectEqual(@as(usize, 1), found.readFound(sys, ub, &second_answer));
+    try testing.expectEqual(@as(usize, 2), found.readFound(sys, &first_answer));
+    try testing.expectEqual(@as(usize, 1), found.readFound(sys, &second_answer));
     const one = found.first().?;
     try testing.expectEqualStrings("Jazz One", cell(one, 0));
     try testing.expectEqualStrings("Germany", cell(one, 1));
@@ -83,7 +83,7 @@ test "Player's stations: two answers found, the most heard first" {
     try testing.expectEqualStrings("Ogg Station", cell(four, 0));
     try testing.expectEqualStrings("Austria", cell(four, 1));
     const two = four.next().?;
-    try testing.expectEqualStrings("Caf\xE9 Radio", cell(two, 0));
+    try testing.expectEqualStrings("Caf\xC3\xA9 Radio", cell(two, 0));
     try testing.expect(two.logo() == null);
     try testing.expect(two.next() == null);
     found.clear(sys);

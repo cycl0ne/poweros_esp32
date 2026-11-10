@@ -112,12 +112,12 @@ fn names(list: []const u8, tags: *_stream.Tags) void {
         const body_end = @min(at + 8 + size, list.len);
         const body = list[at + 8 .. body_end];
         const id = list[at..];
-        if (_stream.same(id, "INAM")) _stream.copyName(&tags.title, body);
-        if (_stream.same(id, "IART")) _stream.copyName(&tags.artist, body);
-        if (_stream.same(id, "IPRD")) _stream.copyName(&tags.album, body);
-        if (_stream.same(id, "IGNR")) _stream.copyName(&tags.genre, body);
+        if (_stream.same(id, "INAM")) _stream.copyForeign(&tags.title, body);
+        if (_stream.same(id, "IART")) _stream.copyForeign(&tags.artist, body);
+        if (_stream.same(id, "IPRD")) _stream.copyForeign(&tags.album, body);
+        if (_stream.same(id, "IGNR")) _stream.copyForeign(&tags.genre, body);
         if (_stream.same(id, "ICMT")) {
-            _stream.copyName(&tags.comment, body);
+            _stream.copyForeign(&tags.comment, body);
             tags.plain_comment = true;
         }
         if (_stream.same(id, "ICRD")) tags.year = _stream.yearOf(body);

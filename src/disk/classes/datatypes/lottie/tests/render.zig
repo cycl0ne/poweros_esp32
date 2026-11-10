@@ -260,7 +260,6 @@ const spinner_hash = 0x5fcbceca335c37c2;
 const strokes_hash = 0x2c842b765d73af09;
 const paints_hash = 0x9cb68336e2200b46;
 
-
 test "masks added and taken away, one that starts from the whole frame, an alpha matte, an inverted luma matte" {
     const text =
         \\{"w":40,"h":40,"fr":10,"ip":0,"op":10,"layers":[

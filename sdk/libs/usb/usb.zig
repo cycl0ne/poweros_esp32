@@ -68,7 +68,7 @@ pub const USBDevice = extern struct {
     /// while it has none.
     config: ?[*]const u8 = null,
     config_length: u32 = 0,
-    /// Its strings, as far as Latin-1 holds them; null where it has none.
+    /// Its strings, in UTF-8; null where it has none.
     manufacturer: ?[*:0]const u8 = null,
     product: ?[*:0]const u8 = null,
     serial: ?[*:0]const u8 = null,

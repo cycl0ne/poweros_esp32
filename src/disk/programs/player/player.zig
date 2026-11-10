@@ -313,8 +313,8 @@ const Text = sdk.locale.Strings(strings);
 const Id = strings.Id;
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.31";
-const DATE = "09.11.2026";
+const VERSION = "1.32";
+const DATE = "10.11.2026";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
@@ -701,8 +701,8 @@ const App = struct {
     preset_shown: usize = 0,
     preset_off: bool = true,
     preset_picked: bool = false,
-    /// utility.library: the settings' lines, and the lists' text between
-    /// UTF-8 and Latin-1.
+    /// utility.library: the settings' lines, and what reads the lists'
+    /// text.
     ub: *UtilityBase,
 
     /// The picture as drawn, and the canvas it is put into.

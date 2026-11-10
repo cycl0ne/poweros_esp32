@@ -989,7 +989,7 @@ test "ID3v2.3: every name, the year, the track, the genre, a comment, chapters, 
     const stream = openTagged(acb, &memory, true, &err) orelse return error.NoStream;
     const got = attrs(acb, stream);
     try testing.expectEqual(@as(u32, 13), got.answered);
-    try testing.expectEqualStrings("Mix Vol.2", std.mem.span(got.title));
+    try testing.expectEqualStrings("Mix \u{1F50A} Vol.2", std.mem.span(got.title));
     try testing.expectEqualStrings("Trance Hub", std.mem.span(got.artist));
     try testing.expectEqualStrings("Mixes", std.mem.span(got.album));
     try testing.expectEqualStrings("Various", std.mem.span(got.album_artist));
@@ -1013,7 +1013,7 @@ test "ID3v2.3: every name, the year, the track, the genre, a comment, chapters, 
     // there.
     var info: ac.AudioStreamInfo = .{};
     acb.GetAudioStreamInfo(stream, &info);
-    try testing.expectEqualStrings("Mix Vol.2", textOf(&info.title));
+    try testing.expectEqualStrings("Mix \u{1F50A} Vol.2", textOf(&info.title));
     try testing.expectEqual(@as(u32, mono_frames), try decodeAll(acb, stream, 1, 1000, &.{}));
     acb.CloseAudioStream(stream);
 
@@ -1054,7 +1054,7 @@ test "ID3v2.4 in UTF-8 with a cover unsynchronised; ID3v2.3 unsynchronised whole
     var memory: Memory = .{ .bytes = file4 };
     const four = openTagged(acb, &memory, true, &err) orelse return error.NoStream;
     const got4 = attrs(acb, four);
-    try testing.expectEqualStrings("Caf\xe9 - \"Live\" | ?", std.mem.span(got4.title));
+    try testing.expectEqualStrings("Caf\xc3\xa9 \xe2\x80\x93 \xe2\x80\x9cLive\xe2\x80\x9d \xf0\x9f\x92\xab \xef\xbd\x9c \xe4\xb8\xad", std.mem.span(got4.title));
     try testing.expectEqual(@as(u32, 2001), got4.year);
     try testing.expectEqualStrings("Jazz", std.mem.span(got4.genre));
     const picture4 = got4.picture orelse return error.NoPicture;

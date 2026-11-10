@@ -137,7 +137,7 @@ Every text, the picture and the chapters are the file's, good until
 
 **NOTES**
 
-Texts are Latin-1; a character past it is a `?`.
+Texts are UTF-8; one too long is cut where a character starts.
 
 **BUGS**
 

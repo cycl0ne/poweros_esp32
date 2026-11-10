@@ -42,6 +42,7 @@
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
+const utf8 = sdk.utility.utf8;
 const dos = sdk.dos;
 const ac = sdk.audiocodec;
 const acodec = sdk.acodec;
@@ -323,13 +324,22 @@ pub fn le16(bytes: []const u8) u16 {
     return @as(u16, bytes[0]) | @as(u16, bytes[1]) << 8;
 }
 
-/// A NUL-terminated copy of `text` into a name, cut at its first NUL or
-/// where it no longer fits, trailing blanks dropped: Latin-1 as it is.
+/// A NUL-terminated copy of `text`, UTF-8, into a name, cut at its first
+/// NUL or where a character no longer fits, trailing blanks dropped.
 pub fn copyName(into: []u8, text: []const u8) void {
-    var length: usize = 0;
-    while (length < text.len and length < into.len - 1 and text[length] != 0) length += 1;
-    while (length > 0 and text[length - 1] == ' ') length -= 1;
-    @memcpy(into[0..length], text[0..length]);
+    endName(into, utf8.copyCut(upToNul(text), into[0 .. into.len - 1]));
+}
+
+/// The same for text that does not say what it is written in - an ID3v1
+/// tag, a WAV file's names: UTF-8 when the whole of it is, else read as
+/// Latin-1.
+pub fn copyForeign(into: []u8, text: []const u8) void {
+    endName(into, utf8.fromForeign(upToNul(text), into[0 .. into.len - 1]));
+}
+
+fn endName(into: []u8, written: usize) void {
+    var length = written;
+    while (length > 0 and into[length - 1] == ' ') length -= 1;
     into[length] = 0;
 }
 

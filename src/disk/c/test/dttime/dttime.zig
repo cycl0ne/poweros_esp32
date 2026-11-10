@@ -163,9 +163,9 @@ fn time(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, dt: *DataTypesBase, tb
         }
     }
     _ = Printf(dl, MSG_MADE, .{
-        name,                     if (count != 0) "animation" else "picture",
-        @as(u64, width),          @as(u64, height),
-        best,                     total / rounds,
+        name,                  if (count != 0) "animation" else "picture",
+        @as(u64, width),       @as(u64, height),
+        best,                  total / rounds,
         @as(u64, kept / 1024),
     });
     const pixels = attribute(dt, made, pic.PDTA_Pixels);

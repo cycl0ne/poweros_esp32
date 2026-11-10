@@ -152,7 +152,7 @@ pub const Entry = extern struct {
 };
 
 pub const Playlist = struct {
-    /// What reads a list's text and writes it, between UTF-8 and Latin-1.
+    /// What reads a list's text.
     ub: *UtilityBase = undefined,
     rows: exec.List = .{},
     count: usize = 0,
@@ -253,7 +253,7 @@ pub const Playlist = struct {
         var title: [name_room + 1]u8 = undefined;
         var added: usize = 0;
         while (reader.next()) |item| {
-            icy.latin1As(list.ub, item.location, reader.utf8, &location);
+            icy.utf8As(item.location, reader.utf8, &location);
             const found = m3u.locate(drawer[0..lengthOf(&drawer)], location[0..lengthOf(&location)], path[0..dos.path_max]) orelse continue;
             path[found.len] = 0;
             const count = list.addAt(sys, dl, &path, depth + 1);
@@ -261,7 +261,7 @@ pub const Playlist = struct {
             // One song: the one at the end, which the list may name.
             if (count != 1 or m3u.kindOf(found) != null) continue;
             const entry = Entry.ofNode(list.rows.last() orelse continue);
-            icy.latin1As(list.ub, item.title, reader.utf8, &title);
+            icy.utf8As(item.title, reader.utf8, &title);
             if (title[0] != 0) entry.retitle(@ptrCast(&title));
             if (item.seconds) |seconds| {
                 entry.seconds = seconds;
@@ -289,7 +289,7 @@ pub const Playlist = struct {
         entry = list.first();
         while (entry) |song| : (entry = song.next()) {
             var named: [2 * name_room + 4]u8 = undefined;
-            written += m3u.itemLines(list.ub, song.item(drawer, &named), text[written..length]);
+            written += m3u.itemLines(song.item(drawer, &named), text[written..length]);
         }
         return text[0..written];
     }

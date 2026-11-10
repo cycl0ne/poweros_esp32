@@ -177,7 +177,8 @@ pub const Radio = struct {
     agent: [*:0]const u8,
     /// The window's strings: why a connection ended is said in them.
     text: *const Text,
-    /// The window's utility.library: the station's words made Latin-1.
+    /// The window's utility.library: the list a station's address
+    /// answers with read.
     ub: *UtilityBase,
     url: [dos.path_max + 1:0]u8 = @splat(0),
 
@@ -185,7 +186,7 @@ pub const Radio = struct {
 
     /// The station at `url` listened to, its reader started; `agent` the
     /// name the requests give, `text` the strings it says why in and `ub`
-    /// what makes its words Latin-1, all the window's until `free`. Null without the memory, a signal or the
+    /// what reads the list an address answers with, all the window's until `free`. Null without the memory, a signal or the
     /// process.
     pub fn start(sys: *ExecBase, dl: *DosBase, ub: *UtilityBase, url: [*:0]const u8, agent: [*:0]const u8, text: *const Text) ?*Radio {
         const memory = sys.AllocVec(@sizeOf(Radio), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
@@ -520,8 +521,8 @@ pub const Radio = struct {
         @atomicStore(u32, &station.codec, codec, .seq_cst);
         const sys = station.sys;
         sys.ObtainSemaphore(&station.lock);
-        icy.latin1(station.ub, textOf(hb.GetHeader(request, "icy-name")), &station.shown.name);
-        icy.latin1(station.ub, textOf(hb.GetHeader(request, "icy-genre")), &station.shown.genre);
+        icy.utf8Of(textOf(hb.GetHeader(request, "icy-name")), &station.shown.name);
+        icy.utf8Of(textOf(hb.GetHeader(request, "icy-genre")), &station.shown.genre);
         station.shown.kbps = kbps;
         station.shown.kind = kind;
         station.shown.phase = .streaming;
@@ -534,7 +535,7 @@ pub const Radio = struct {
     fn titled(station: *Radio, block: []const u8) void {
         const named = icy.streamTitle(block) orelse return;
         var title: [160:0]u8 = @splat(0);
-        icy.latin1(station.ub, named, &title);
+        icy.utf8Of(named, &title);
         var picture: [picture_room:0]u8 = @splat(0);
         if (icy.streamUrl(block)) |address| {
             if (icy.isPictureAddress(address) and address.len <= picture_room) @memcpy(picture[0..address.len], address);

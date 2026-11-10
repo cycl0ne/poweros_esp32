@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
-//! GetUSBString: one of a device's strings, as Latin-1.
+//! GetUSBString: one of a device's strings, in UTF-8.
 
 const sdk = @import("sdk");
 const usb = sdk.usb;
 const UsbBase = @import("../usb_base.zig").UsbBase;
 const _bus = @import("../bus/_bus.zig");
 
-/// Reads one of a device's strings, as Latin-1.
+/// Reads one of a device's strings, in UTF-8.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -25,8 +25,10 @@ const _bus = @import("../bus/_bus.zig");
 /// not answer, or `size` is 0.
 ///
 /// BEHAVIOR:
-/// The device is asked in the language it listed first. A character
-/// Latin-1 has not is `?`; what does not fit is cut off.
+/// The device is asked in the language it listed first. Its UTF-16 is
+/// given in UTF-8, a character past U+FFFF from its surrogate pair; a
+/// control, or a surrogate without its pair, is `?`. What does not fit
+/// is cut off where a character starts.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the device to answer: a control transfer.
