@@ -261,9 +261,11 @@ from then on. A document can hand over blocks too (`tdc.Block`): each
 a paragraph, a heading, a listing, a rule or a cell of a table, its
 runs, the lists and quotes it is inside, and its item's mark - a disc,
 a circle, a square, a number, a Roman numeral, a letter, or a task's
-box. A cell names its column (`number`) and how many it takes
-(`span`): one that spans several is drawn across them, and widens them
-alike when they are too narrow for it. With blocks the class lays the text out as GitHub lays out a
+box. A cell names its column (`number`), how many columns it takes
+(`span`) and how many rows (`level`, text.datatype 2.5): one that spans
+columns is drawn across them, and widens them alike when they are too
+narrow for it; one that spans rows is drawn down them, in their middle,
+and makes the last of them taller when it needs more. With blocks the class lays the text out as GitHub lays out a
 README: the spaces between blocks, a rule under the first two levels of
 heading, a bar beside a quote, a ground round a listing and round code
 in a sentence (`TDSTYLE_CODE`), a table's lines and shaded rows, a
@@ -291,9 +293,9 @@ the next cell - and each becomes the block it is: a heading, a
 paragraph, a listing for `<pre>`, a rule, an item behind its disc or
 number, a quote, a `<dd>` set in. A table of rows two cells or more
 across with no table inside is drawn as a table, its `<th>` head row in
-bold; a cell with `colspan` is drawn across its columns, and one after
-it, or under one with `rowspan`, is in the column it belongs in, though
-a cell with `rowspan` is drawn one row tall. Any other table lays a
+bold; a cell with `colspan` is drawn across its columns and one with
+`rowspan` down its rows, and the cells after and under them are in the
+columns they belong in. Any other table lays a
 page out, and its cells are read one under another. Scripts, styles and
 what is marked `hidden`, `aria-hidden` or `display:none` are left out,
 a picture is its `alt` text in italic, a field or a button its label in

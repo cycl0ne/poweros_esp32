@@ -32,7 +32,9 @@
 //! its longest word; a cell's lines are wrapped to its column, and a
 //! row is as tall as its tallest cell. A cell that spans columns is as
 //! wide as they are together, with no line between them, and widens
-//! them alike when they are too narrow for it.
+//! them alike when they are too narrow for it. A cell that spans rows is
+//! as tall as they are together, with no line between them, stood in
+//! their middle, and makes the last of them taller when it needs more.
 //!
 //! Text without blocks is lines as they stand, wrapped when the object
 //! wraps, one step of indent for each of a line's first run's `indent`.
@@ -489,30 +491,49 @@ fn table(page: *Page, start: u32) u32 {
     // The lines between the columns go from the table's top to its
     // bottom but where a cell that spans columns stands across one: each
     // is drawn as far as the row such a cell is in, and goes on under it.
+    // A cell that spans rows is laid out in its first and stood in the
+    // middle of them all once its last is laid out; the lines over the
+    // rows under its first, and their ground, leave its columns alone,
+    // and its ground is its first row's.
+    var row_count: u32 = 0;
+    var counted = start;
+    while (counted < end) : (row_count += 1) {
+        counted += 1;
+        while (counted < end and blocks[counted].flags & tdc.TDBF_ROW == 0) counted += 1;
+    }
     const top = page.y;
     var line_from: [most_columns + 1]i32 = @splat(top);
+    var tall: [most_columns]Spanning = undefined;
+    var tall_count: u32 = 0;
     var body_row: u32 = 0;
+    var row: u32 = 0;
     var cell_index = start;
-    while (cell_index < end and page.ok) {
+    while (cell_index < end and page.ok) : (row += 1) {
         const row_top = page.y;
         const head = blocks[cell_index].flags & tdc.TDBF_HEAD != 0;
         const shaded = !head and body_row % 2 == 1;
         if (!head) body_row += 1;
-        addDeco(page, .{ .kind = _text.DECO_FILL, .ink = _text.INK_BORDER, .x = left, .y = row_top, .width = table_width, .height = 1 });
-        const ground_at = page.own.deco_count;
-        if (shaded) addDeco(page, .{ .kind = _text.DECO_FILL, .ink = _text.INK_SUBTLE, .x = left + 1, .y = row_top + 1, .width = table_width - 2 });
+        // The columns a cell of a row above still stands in, and the
+        // lines between columns a cell of this row stands across.
+        var from_above: u64 = 0;
+        var covered: u64 = 0;
+        for (tall[0..tall_count]) |cell| {
+            from_above |= columnsOf(cell.column, cell.across);
+            covered |= columnsOf(cell.column + 1, cell.across - 1);
+        }
+        acrossColumns(page, &at, columns, from_above, .{ .y = row_top, .height = 1, .ink = _text.INK_BORDER });
         // The row's cells, each laid out from the row's top; then each
         // stood in the middle of the row's height.
         var row_end = cell_index + 1;
         while (row_end < end and blocks[row_end].flags & tdc.TDBF_ROW == 0) row_end += 1;
         var cell_lines: [most_columns]struct { first: u32, count: u32, height: i32 } = undefined;
         var tallest: i32 = 0;
-        // The lines between columns a cell of this row stands across.
-        var covered: u64 = 0;
+        // The columns of the cells that start here and go on down.
+        var going_down: u64 = 0;
         for (blocks[cell_index..row_end], 0..) |*cell, k| {
             const c: u32 = @min(cell.number, most_columns - 1);
             const across = spanOf(cell);
-            for (c + 1..c + across) |inner| covered |= @as(u64, 1) << @intCast(inner);
+            covered |= columnsOf(c + 1, across - 1);
             page.y = row_top + 1 + pad_y;
             const got = flow(page, .{
                 .first = cell.first,
@@ -524,16 +545,47 @@ fn table(page: *Page, start: u32) u32 {
                 .alignment = cell.alignment,
             });
             const height = got.bottom - (row_top + 1 + pad_y);
+            const down = @min(rowsOf(cell), row_count - row);
+            if (down > 1 and tall_count < tall.len) {
+                tall[tall_count] = .{ .column = c, .across = across, .last_row = row + down - 1, .top = row_top, .height = height, .first_line = got.first_line, .lines = got.lines, .shaded = shaded };
+                tall_count += 1;
+                going_down |= columnsOf(c, across);
+                if (k < most_columns) cell_lines[k] = .{ .first = got.first_line, .count = 0, .height = 0 };
+                continue;
+            }
             if (k < most_columns) cell_lines[k] = .{ .first = got.first_line, .count = got.lines, .height = height };
             tallest = @max(tallest, height);
         }
+        // A cell whose rows end here, and which needs more than they
+        // give it, makes this one as much taller.
+        for (tall[0..tall_count]) |cell| {
+            if (cell.last_row != row) continue;
+            tallest = @max(tallest, cell.height - (row_top - cell.top));
+        }
         for (cell_lines[0..@min(row_end - cell_index, most_columns)]) |cell| {
             const down = @divTrunc(tallest - cell.height, 2);
-            if (down == 0 or own.lines == null) continue;
+            if (down == 0 or cell.count == 0 or own.lines == null) continue;
             for (own.lines.?[cell.first..][0..cell.count]) |*line| line.top += down;
         }
         page.y = row_top + 1 + pad_y + tallest + pad_y;
-        if (shaded and ground_at < page.own.deco_count) page.own.decos.?[ground_at].height = page.y - row_top - 1;
+        if (shaded) acrossColumns(page, &at, columns, from_above | going_down, .{ .y = row_top + 1, .height = page.y - row_top - 1, .ink = _text.INK_SUBTLE, .ground = true });
+        // The cells whose rows end here, stood in the middle of them.
+        var kept: u32 = 0;
+        for (tall[0..tall_count]) |cell| {
+            if (cell.last_row != row) {
+                tall[kept] = cell;
+                kept += 1;
+                continue;
+            }
+            const down = @divTrunc(row_top + tallest - cell.top - cell.height, 2);
+            if (down > 0 and own.lines != null) {
+                for (own.lines.?[cell.first_line..][0..cell.lines]) |*line| line.top += down;
+            }
+            if (cell.shaded) {
+                addDeco(page, .{ .kind = _text.DECO_FILL, .ink = _text.INK_SUBTLE, .x = at[cell.column] + 1, .y = cell.top + 1, .width = at[cell.column + cell.across] - at[cell.column] - 1, .height = page.y - cell.top - 1 });
+            }
+        }
+        tall_count = kept;
         for (1..columns) |inner| {
             if (covered & (@as(u64, 1) << @intCast(inner)) == 0) continue;
             if (line_from[inner] < row_top) {
@@ -558,6 +610,61 @@ fn table(page: *Page, start: u32) u32 {
 fn spanOf(cell: *const tdc.Block) u32 {
     const c: u32 = @min(cell.number, most_columns - 1);
     return @max(1, @min(@as(u32, cell.span), most_columns - c));
+}
+
+/// How many rows a cell takes, its own and those under it.
+fn rowsOf(cell: *const tdc.Block) u32 {
+    return @max(1, @as(u32, cell.level));
+}
+
+/// A cell that stands in rows under its own, while they are laid out.
+const Spanning = struct {
+    /// Its columns.
+    column: u32,
+    across: u32,
+    /// The table's row it ends in.
+    last_row: u32,
+    /// Its first row's top, and how tall its lines came out.
+    top: i32,
+    height: i32,
+    /// Its lines.
+    first_line: u32,
+    lines: u32,
+    /// Its first row has a ground, which goes on down under it.
+    shaded: bool,
+};
+
+/// The bits of `count` columns from `first` on.
+fn columnsOf(first: u32, count: u32) u64 {
+    var bits: u64 = 0;
+    for (first..first + count) |column| bits |= @as(u64, 1) << @intCast(column);
+    return bits;
+}
+
+/// What is drawn across a row's columns: its line, or its ground.
+const Across = struct {
+    y: i32,
+    height: i32,
+    ink: u8,
+    /// Between the lines either side, not over them.
+    ground: bool = false,
+};
+
+/// A fill across each run of the columns `skipped` leaves out.
+fn acrossColumns(page: *Page, at: *const [most_columns + 1]i32, columns: u32, skipped: u64, what: Across) void {
+    var c: u32 = 0;
+    while (c < columns) {
+        if (skipped & (@as(u64, 1) << @intCast(c)) != 0) {
+            c += 1;
+            continue;
+        }
+        var stop = c + 1;
+        while (stop < columns and skipped & (@as(u64, 1) << @intCast(stop)) == 0) stop += 1;
+        const x = if (what.ground) at[c] + 1 else at[c];
+        const width = if (what.ground) at[stop] - at[c] - 1 else at[stop] - at[c] + 1;
+        addDeco(page, .{ .kind = _text.DECO_FILL, .ink = what.ink, .x = x, .y = what.y, .width = width, .height = what.height });
+        c = stop;
+    }
 }
 
 /// Columns widened, alike, until together they are `wanted` wide; left

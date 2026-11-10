@@ -134,7 +134,8 @@ pub const Block = extern struct {
     count: u32 = 0,
     /// `TDBLOCK_`.
     kind: u8 = TDBLOCK_PARAGRAPH,
-    /// A heading's level, 1 to 6.
+    /// A heading's level, 1 to 6. A cell's rows: how many it takes, its
+    /// own and those under it; 0 is one, as 1 is (since 2.5).
     level: u8 = 0,
     /// How many lists and quotes it is inside, the outermost first, and
     /// which of them are quotes: bit n for the n-th.
@@ -167,7 +168,8 @@ pub const TDBLOCK_RULE: u8 = 3;
 /// A cell of a table. A table is cells one after another, a row at a
 /// time; `TDBF_ROW` starts a row, and `TDBF_TABLE` the table. A cell
 /// stands in the column its `number` says, and as many after it as its
-/// `span` takes.
+/// `span` takes, in its row and as many under it as its `level` takes.
+/// A row's cells skip the columns a cell from a row above still takes.
 pub const TDBLOCK_CELL: u8 = 4;
 
 /// What stands in front of an item.

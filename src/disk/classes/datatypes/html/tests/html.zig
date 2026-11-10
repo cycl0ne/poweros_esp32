@@ -208,7 +208,10 @@ test "a table drawn as one: its caption, head, cells, columns and row ends" {
     try testing.expectEqual(@as(u8, 2), b[5].span);
     try testing.expectEqual(@as(u8, 1), b[4].span);
     try testing.expectEqual(@as(u32, 2), b[6].number);
-    // The wide cell takes its columns in the row below too.
+    // The wide cell takes its columns in the row below too, and is
+    // drawn down both rows.
+    try testing.expectEqual(@as(u8, 2), b[5].level);
+    try testing.expectEqual(@as(u8, 1), b[6].level);
     try testing.expectEqual(tdc.TDBF_ROW, b[7].flags);
     try testing.expectEqual(@as(u32, 2), b[7].number);
     try testing.expectEqual(bold, (try runOf(got, "A")).style);
