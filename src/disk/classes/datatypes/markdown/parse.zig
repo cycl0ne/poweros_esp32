@@ -23,11 +23,11 @@
 //! Its own line ends are spaces; two spaces or a backslash at the end of
 //! a line break it there.
 //!
-//! **Text is Latin-1**, which is what graphics draws: UTF-8 is read into
-//! it, a character it has not written as the nearest it has - quotes and
-//! dashes as their plain forms, an arrow as `->` - and pictures of
-//! faces and things left out. HTML's entities are read too, and of its
-//! tags the ones that say how text looks; the rest are left out.
+//! **Text is UTF-8**, which is what graphics draws, every character as
+//! it is written but the controls and the marks of no width - joiners,
+//! selectors, the byte order mark - which are left out. HTML's entities
+//! are read too, and of its tags the ones that say how text looks; the
+//! rest are left out.
 //!
 //! **A picture is not fetched.** What its text says it is stands in its
 //! place, set back in italic.
@@ -43,6 +43,7 @@
 //! draws them.
 
 const datatypes = @import("sdk").datatypes;
+const utf8 = @import("sdk").utility.utf8;
 const tdc = datatypes.textclass;
 
 /// graphics.FSF_: the styles a run may be drawn with.
@@ -80,47 +81,21 @@ pub const Build = struct {
         self.text_len += 1;
     }
 
-    /// One character, as Latin-1 has it or its nearest.
+    /// One character, in UTF-8; a control but a line end, and a mark of
+    /// no width, left out.
     fn putCode(self: *Build, code: u32) void {
         if (code == '\n') return self.put('\n');
         if (code < 0x20 or (code >= 0x7F and code < 0xA0)) return;
-        if (code < 0x100) {
-            if (code != ' ') self.inked = true;
-            return self.put(@intCast(code));
+        switch (code) {
+            0x200B...0x200F, 0x2060, 0xFE00...0xFE0F, 0xFEFF => return,
+            else => {},
         }
-        const near: []const u8 = switch (code) {
-            0x2010...0x2015, 0x2212 => "-",
-            0x2018, 0x2019, 0x201A, 0x2032 => "'",
-            0x201C, 0x201D, 0x201E, 0x2033 => "\"",
-            0x2026 => "...",
-            0x2022, 0x2023, 0x2043, 0x25CF, 0x25E6, 0x2219 => "\xB7",
-            0x2190 => "<-",
-            0x2192 => "->",
-            0x2194 => "<->",
-            0x21D2 => "=>",
-            0x2191 => "^",
-            0x2193 => "v",
-            0x2264 => "<=",
-            0x2265 => ">=",
-            0x2260 => "!=",
-            0x2248 => "~",
-            0x20AC => "EUR",
-            0x2122 => "TM",
-            0x2713, 0x2714, 0x2705, 0x2611 => "v",
-            0x2717, 0x2718, 0x274C, 0x2612 => "x",
-            // Joiners, selectors and the byte-order mark: nothing.
-            0x200B...0x200F, 0x2060, 0xFE00...0xFE0F, 0xFEFF => "",
-            // Pictures of faces and things.
-            0x2600...0x2610, 0x2613...0x2704, 0x2706...0x2712, 0x2715...0x2716, 0x2719...0x274B, 0x274D...0x27BF, 0x1F000...0x1FAFF => "",
-            else => "?",
-        };
-        for (near) |byte| {
-            if (byte != ' ') self.inked = true;
-            self.put(byte);
-        }
+        if (code != ' ') self.inked = true;
+        var bytes: [4]u8 = undefined;
+        for (bytes[0..utf8.encode(code, &bytes)]) |byte| self.put(byte);
     }
 
-    /// UTF-8 put as Latin-1.
+    /// UTF-8 put a character at a time.
     fn putText(self: *Build, bytes: []const u8) void {
         var at: usize = 0;
         while (at < bytes.len) {
@@ -1141,7 +1116,12 @@ const Inline = struct {
                 '`' => if (codeSpan(text, at)) |span| {
                     it.tag_code += 1;
                     it.wearNow();
-                    for (span.content) |byte| it.out.putCode(if (byte == '\n') ' ' else byte);
+                    var in_span: usize = 0;
+                    while (in_span < span.content.len) {
+                        const decoded = decode(span.content, in_span);
+                        it.out.putCode(if (decoded.code == '\n') ' ' else decoded.code);
+                        in_span += decoded.length;
+                    }
                     it.tag_code -= 1;
                     it.wearNow();
                     at = span.end;
@@ -1170,7 +1150,7 @@ const Inline = struct {
                     continue;
                 },
                 '&' => if (entity(text, at)) |found| {
-                    if (found.text.len > 0) it.out.putText(found.text) else it.out.putCode(found.code);
+                    it.out.putCode(found.code);
                     at = found.end;
                     continue;
                 },
@@ -1569,9 +1549,8 @@ fn bareLink(text: []const u8, at: usize) ?usize {
     return end;
 }
 
-/// `&name;`, `&#number;` and `&#xhex;`: the character, or text for one
-/// Latin-1 has not; and where it ends.
-const Entity = struct { code: u32 = 0, text: []const u8 = "", end: usize };
+/// `&name;`, `&#number;` and `&#xhex;`: the character, and where it ends.
+const Entity = struct { code: u32 = 0, end: usize };
 
 fn entity(text: []const u8, at: usize) ?Entity {
     var end = at + 1;
@@ -1594,27 +1573,27 @@ fn entity(text: []const u8, at: usize) ?Entity {
         }
         return .{ .code = code, .end = end + 1 };
     }
-    const Named = struct { name: []const u8, code: u32 = 0, text: []const u8 = "" };
+    const Named = struct { name: []const u8, code: u32 };
     const names = [_]Named{
-        .{ .name = "amp", .code = '&' },      .{ .name = "lt", .code = '<' },      .{ .name = "gt", .code = '>' },
-        .{ .name = "quot", .code = '"' },     .{ .name = "apos", .code = '\'' },   .{ .name = "nbsp", .code = 0xA0 },
-        .{ .name = "copy", .code = 0xA9 },    .{ .name = "reg", .code = 0xAE },    .{ .name = "deg", .code = 0xB0 },
-        .{ .name = "middot", .code = 0xB7 },  .{ .name = "times", .code = 0xD7 },  .{ .name = "divide", .code = 0xF7 },
-        .{ .name = "plusmn", .code = 0xB1 },  .{ .name = "sect", .code = 0xA7 },   .{ .name = "para", .code = 0xB6 },
-        .{ .name = "laquo", .code = 0xAB },   .{ .name = "raquo", .code = 0xBB },  .{ .name = "pound", .code = 0xA3 },
-        .{ .name = "yen", .code = 0xA5 },     .{ .name = "cent", .code = 0xA2 },   .{ .name = "frac12", .code = 0xBD },
-        .{ .name = "frac14", .code = 0xBC },  .{ .name = "frac34", .code = 0xBE }, .{ .name = "auml", .code = 0xE4 },
-        .{ .name = "ouml", .code = 0xF6 },    .{ .name = "uuml", .code = 0xFC },   .{ .name = "Auml", .code = 0xC4 },
-        .{ .name = "Ouml", .code = 0xD6 },    .{ .name = "Uuml", .code = 0xDC },   .{ .name = "szlig", .code = 0xDF },
-        .{ .name = "eacute", .code = 0xE9 },  .{ .name = "egrave", .code = 0xE8 }, .{ .name = "agrave", .code = 0xE0 },
-        .{ .name = "ccedil", .code = 0xE7 },  .{ .name = "mdash", .text = "-" },   .{ .name = "ndash", .text = "-" },
-        .{ .name = "hellip", .text = "..." }, .{ .name = "lsquo", .text = "'" },   .{ .name = "rsquo", .text = "'" },
-        .{ .name = "ldquo", .text = "\"" },   .{ .name = "rdquo", .text = "\"" },  .{ .name = "trade", .text = "TM" },
-        .{ .name = "euro", .text = "EUR" },   .{ .name = "larr", .text = "<-" },   .{ .name = "rarr", .text = "->" },
-        .{ .name = "bull", .code = 0xB7 },    .{ .name = "ensp", .code = ' ' },    .{ .name = "emsp", .code = ' ' },
+        .{ .name = "amp", .code = '&' },       .{ .name = "lt", .code = '<' },       .{ .name = "gt", .code = '>' },
+        .{ .name = "quot", .code = '"' },      .{ .name = "apos", .code = '\'' },    .{ .name = "nbsp", .code = 0xA0 },
+        .{ .name = "copy", .code = 0xA9 },     .{ .name = "reg", .code = 0xAE },     .{ .name = "deg", .code = 0xB0 },
+        .{ .name = "middot", .code = 0xB7 },   .{ .name = "times", .code = 0xD7 },   .{ .name = "divide", .code = 0xF7 },
+        .{ .name = "plusmn", .code = 0xB1 },   .{ .name = "sect", .code = 0xA7 },    .{ .name = "para", .code = 0xB6 },
+        .{ .name = "laquo", .code = 0xAB },    .{ .name = "raquo", .code = 0xBB },   .{ .name = "pound", .code = 0xA3 },
+        .{ .name = "yen", .code = 0xA5 },      .{ .name = "cent", .code = 0xA2 },    .{ .name = "frac12", .code = 0xBD },
+        .{ .name = "frac14", .code = 0xBC },   .{ .name = "frac34", .code = 0xBE },  .{ .name = "auml", .code = 0xE4 },
+        .{ .name = "ouml", .code = 0xF6 },     .{ .name = "uuml", .code = 0xFC },    .{ .name = "Auml", .code = 0xC4 },
+        .{ .name = "Ouml", .code = 0xD6 },     .{ .name = "Uuml", .code = 0xDC },    .{ .name = "szlig", .code = 0xDF },
+        .{ .name = "eacute", .code = 0xE9 },   .{ .name = "egrave", .code = 0xE8 },  .{ .name = "agrave", .code = 0xE0 },
+        .{ .name = "ccedil", .code = 0xE7 },   .{ .name = "mdash", .code = 0x2014 }, .{ .name = "ndash", .code = 0x2013 },
+        .{ .name = "hellip", .code = 0x2026 }, .{ .name = "lsquo", .code = 0x2018 }, .{ .name = "rsquo", .code = 0x2019 },
+        .{ .name = "ldquo", .code = 0x201C },  .{ .name = "rdquo", .code = 0x201D }, .{ .name = "trade", .code = 0x2122 },
+        .{ .name = "euro", .code = 0x20AC },   .{ .name = "larr", .code = 0x2190 },  .{ .name = "rarr", .code = 0x2192 },
+        .{ .name = "bull", .code = 0x2022 },   .{ .name = "ensp", .code = ' ' },     .{ .name = "emsp", .code = ' ' },
     };
     for (names) |n| {
-        if (std.mem.eql(u8, n.name, name)) return .{ .code = n.code, .text = n.text, .end = end + 1 };
+        if (std.mem.eql(u8, n.name, name)) return .{ .code = n.code, .end = end + 1 };
     }
     return null;
 }
@@ -1779,13 +1758,13 @@ test "a table is a block a cell, with its head and its columns' alignment" {
     try testing.expectEqualStrings("b | c", textOf(got, got.blocks[4]));
 }
 
-test "UTF-8, entities and tags come out as Latin-1" {
+test "UTF-8, entities and tags come out as UTF-8" {
     const source = "Gr\xc3\xbc\xc3\x9fe \xe2\x80\x9cso\xe2\x80\x9d \xe2\x80\x94 &amp; &copy; <b>fett</b>\xf0\x9f\x9a\x80<br>~~weg~~\n";
     var text: [128]u8 = undefined;
     var pieces: [32]tdc.Piece = undefined;
     var blocks: [8]tdc.Block = undefined;
     const got = readTwice(source, &text, &pieces, &blocks);
-    try testing.expectEqualStrings("Gr\xfc\xdfe \"so\" - & \xa9 fett\nweg\n", got.text);
+    try testing.expectEqualStrings("Grüße “so” — & © fett🚀\nweg\n", got.text);
     var found_bold = false;
     var found_struck = false;
     for (got.pieces) |piece| {

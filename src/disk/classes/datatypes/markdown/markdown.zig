@@ -17,6 +17,10 @@
 //! leads to kept for the program to follow. The fonts are the ones
 //! font.prefs names for documents and for code.
 //!
+//! A document that is not UTF-8 from first to last is read as code page
+//! 1252, the Western code page of Windows, which a text written
+//! elsewhere is most often in.
+//!
 //! **A picture is not fetched.** What its text says it is stands in its
 //! place, in italic. A document that reads one picture out of a drawer
 //! beside it would have to open a second file, and what is being shown
@@ -49,8 +53,8 @@ const Base = gadgets.Base;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "markdown.datatype",
     .version = 2,
-    .revision = 1,
-    .date = "28.10.2026",
+    .revision = 2,
+    .date = "11.11.2026",
     .super = tdc.TEXTDTCLASS,
     .opens = &.{tdc.TEXT_LIBRARY},
     .Instance = Data,
@@ -67,8 +71,19 @@ pub const Data = extern struct {
 };
 
 /// The document read and given to the superclass. What went wrong, or 0.
-fn takeText(base: *Base, cl: *Class, o: *Object, from: []const u8) i32 {
+fn takeText(base: *Base, cl: *Class, o: *Object, document: []const u8) i32 {
     const sys = base.sys_base;
+    const utf8 = sdk.utility.utf8;
+    var from = document;
+    var converted: ?[*]u8 = null;
+    defer if (converted) |it| sys.FreeVec(it);
+    if (!utf8.valid(document)) {
+        const size = utf8.cp1252Length(document);
+        const into: [*]u8 = @ptrCast(sys.AllocVec(@max(size, 1), exec.MEMF_ANY) orelse
+            return datatypes.DTERROR_NOT_ENOUGH_DATA);
+        converted = into;
+        from = into[0..utf8.fromCp1252(document, into[0..size])];
+    }
 
     // Room for a paragraph's lines put together, which is never more
     // than the document.

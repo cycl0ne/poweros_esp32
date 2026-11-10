@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: MIT
 //! Host tests of html.datatype's reading: a page read twice, as the class
-//! reads it, and its text, runs and blocks looked at. utility.library is
-//! the ROM's, made on the ROM's exec, for the characters past Latin-1.
+//! reads it, and its text, runs and blocks looked at.
 
 const std = @import("std");
 const sdk = @import("sdk");
-const host = @import("host_rom");
 const parse = @import("../parse.zig");
 const tdc = sdk.datatypes.textclass;
-const UtilityBase = sdk.interface.utility.UtilityBase;
 
 const testing = std.testing;
 
@@ -35,15 +32,17 @@ const Read = struct {
     title: []const u8,
 };
 
-/// The page made Latin-1 and read twice, as the class does; both passes
+/// The page made UTF-8 and read twice, as the class does; both passes
 /// agree on how much there is.
-fn readTwice(ub: *UtilityBase, page: []const u8, store: *Store) !Read {
-    @memcpy(store.source[0..page.len], page);
-    const from = store.source[0..parse.toLatin1(ub, store.source[0..page.len])];
-    var counting = parse.Build{ .ub = ub };
+fn readTwice(page: []const u8, store: *Store) !Read {
+    const utf8 = sdk.utility.utf8;
+    const from = if (parse.foreign(page))
+        store.source[0..utf8.fromCp1252(page, &store.source)]
+    else
+        page;
+    var counting = parse.Build{};
     parse.build(from, &counting);
     var writing = parse.Build{
-        .ub = ub,
         .text = &store.text,
         .pieces = &store.pieces,
         .blocks = &store.blocks,
@@ -106,11 +105,8 @@ fn targetOf(read: Read, piece: tdc.Piece) []const u8 {
 }
 
 test "a page: its title, headings, paragraphs and the runs of its words" {
-    const rom_ub = try host.utility.setUp();
-    defer host.exec.deinit();
-    const ub: *UtilityBase = @ptrCast(rom_ub);
     var store: Store = .{};
-    const got = try readTwice(ub,
+    const got = try readTwice(
         \\<html><head><title> A  &amp;
         \\ B </title><style>p { color: red }</style><script>x = "<p>no</p>";</script></head>
         \\<body><h1>Title</h1><p>Some <em>words</em>  here.<h3>Third</h3>Next</body></html>
@@ -128,15 +124,11 @@ test "a page: its title, headings, paragraphs and the runs of its words" {
     try testing.expectEqual(tdc.TDFONT_BIG, (try runOf(got, "Third")).font);
     try testing.expectEqual(italic, (try runOf(got, "words")).style);
     try testing.expectEqual(@as(u16, 0), (try runOf(got, " here.")).style);
-    try host.utility.tearDown(rom_ub);
 }
 
 test "what an element's start and end close, and an end with nothing to close" {
-    const rom_ub = try host.utility.setUp();
-    defer host.exec.deinit();
-    const ub: *UtilityBase = @ptrCast(rom_ub);
     var store: Store = .{};
-    const got = try readTwice(ub, "<p>one<p>two<div>three</div>four<ul><li>a<li>b</ul>five<my-box>six</my-box></div><p>se</span>ven", &store);
+    const got = try readTwice("<p>one<p>two<div>three</div>four<ul><li>a<li>b</ul>five<my-box>six</my-box></div><p>se</span>ven", &store);
     try testing.expectEqualStrings("one\ntwo\nthree\nfour\na\nb\nfivesix\nseven\n", got.text);
     try testing.expectEqual(@as(usize, 8), got.blocks.len);
     try testing.expectEqual(tdc.TDMARK_DISC, got.blocks[4].mark);
@@ -144,15 +136,11 @@ test "what an element's start and end close, and an end with nothing to close" {
     try testing.expect(got.blocks[5].flags & tdc.TDBF_START == 0);
     try testing.expectEqual(@as(u8, 1), got.blocks[5].depth);
     try testing.expectEqual(@as(u8, 0), got.blocks[6].depth);
-    try host.utility.tearDown(rom_ub);
 }
 
 test "lists: their marks by depth, numbers, and an item with a list first" {
-    const rom_ub = try host.utility.setUp();
-    defer host.exec.deinit();
-    const ub: *UtilityBase = @ptrCast(rom_ub);
     var store: Store = .{};
-    const got = try readTwice(ub,
+    const got = try readTwice(
         \\<ul><li>one<ul><li>in</ul><li><ul><li>deep</ul></ul>
         \\<ol start="4"><li>four<li value="9">nine<li><p>ten</ol>
         \\<ol type="a"><li>letter</ol><dl><dt>term<dd>meaning</dl>
@@ -179,15 +167,11 @@ test "lists: their marks by depth, numbers, and an item with a list first" {
     try testing.expectEqual(@as(u8, 0), b[9].quotes);
     try testing.expectEqual(@as(u8, 1), b[10].quotes);
     try testing.expectEqual(tdc.TDPEN_MUTED, (try runOf(got, "said")).pen);
-    try host.utility.tearDown(rom_ub);
 }
 
 test "a table drawn as one: its caption, head, cells, columns and row ends" {
-    const rom_ub = try host.utility.setUp();
-    defer host.exec.deinit();
-    const ub: *UtilityBase = @ptrCast(rom_ub);
     var store: Store = .{};
-    const got = try readTwice(ub,
+    const got = try readTwice(
         \\<table><caption>Cap</caption><tr><th>A</th><th>B</th></tr>
         \\<tr><td>1</td><td align=right>2</td></tr> lost
         \\<tr><td colspan=2 rowspan=2>wide</td><td>x</td></tr><tr><td>y<br>z</td></table><p>after
@@ -216,26 +200,18 @@ test "a table drawn as one: its caption, head, cells, columns and row ends" {
     try testing.expectEqual(@as(u32, 2), b[7].number);
     try testing.expectEqual(bold, (try runOf(got, "A")).style);
     try testing.expectEqual(tdc.TDBLOCK_PARAGRAPH, b[8].kind);
-    try host.utility.tearDown(rom_ub);
 }
 
 test "a table that lays a page out is read as blocks" {
-    const rom_ub = try host.utility.setUp();
-    defer host.exec.deinit();
-    const ub: *UtilityBase = @ptrCast(rom_ub);
     var store: Store = .{};
-    const got = try readTwice(ub, "<table><tr><td>one</td><td>two</td></tr><tr><td><table><tr><td>in</td></tr></table></td></tr></table><table><tr><td>a</td></tr><tr><td>b</td></tr></table>", &store);
+    const got = try readTwice("<table><tr><td>one</td><td>two</td></tr><tr><td><table><tr><td>in</td></tr></table></td></tr></table><table><tr><td>a</td></tr><tr><td>b</td></tr></table>", &store);
     try testing.expectEqualStrings("one\ntwo\nin\na\nb\n", got.text);
     for (got.blocks) |block| try testing.expectEqual(tdc.TDBLOCK_PARAGRAPH, block.kind);
-    try host.utility.tearDown(rom_ub);
 }
 
 test "what is not shown, and fields and pictures as their text" {
-    const rom_ub = try host.utility.setUp();
-    defer host.exec.deinit();
-    const ub: *UtilityBase = @ptrCast(rom_ub);
     var store: Store = .{};
-    const got = try readTwice(ub,
+    const got = try readTwice(
         \\<p>a<span hidden>x</span> b<script>c</script><style>d</style><svg><text>e</text></svg> f<select><option>r<option selected>g</select>
         \\<input type=checkbox checked><input value="v"><button> go </button><img alt="pic"><input type=hidden value=h>
         \\<span style="color: red; DISPLAY : none">no</span><span aria-hidden="true">no</span><q>said</q></p>
@@ -246,34 +222,32 @@ test "what is not shown, and fields and pictures as their text" {
     try testing.expectEqual(italic, pic.style);
     try testing.expectEqual(tdc.TDPEN_MUTED, pic.pen);
     try testing.expect(got.blocks[1].flags & tdc.TDBF_START != 0);
-    try host.utility.tearDown(rom_ub);
 }
 
-test "characters: references, code page 1252, UTF-8 and what Latin-1 has not" {
-    const rom_ub = try host.utility.setUp();
-    defer host.exec.deinit();
-    const ub: *UtilityBase = @ptrCast(rom_ub);
+test "characters: references, code page 1252 and UTF-8" {
     var store: Store = .{};
-    const got = try readTwice(ub, "<title>T&ndash;x</title><p>caf&eacute; &#150; &#x263A; “q” Grüße&hellip;&nbsp;€ &amp; &lt;b&gt; &copy &notit;</p>", &store);
-    try testing.expectEqualStrings("T-x", got.title);
-    try testing.expectEqualStrings("caf\xE9 - ? \"q\" Gr\xFC\xDFe...\xA0? & <b> \xA9 \xACit;\n", got.text);
+    const got = try readTwice("<title>T&ndash;x</title><p>caf&eacute; &#150; &#x263A; “q” Grüße&hellip;&nbsp;€ &amp; &lt;b&gt; &copy &notit;</p>", &store);
+    try testing.expectEqualStrings("T–x", got.title);
+    try testing.expectEqualStrings("café – ☺ “q” Grüße…\u{A0}€ & <b> © ¬it;\n", got.text);
 
-    // A page that says it is Latin-1 is read byte for byte, and 1252's
+    // A page that says it is Latin-1 is read as code page 1252, whose
     // quotes are quotes.
-    const latin = try readTwice(ub, "<meta charset=\"ISO-8859-1\"><p>\xE9 \x93q\x94</p>", &store);
-    try testing.expectEqualStrings("\xE9 \"q\"\n", latin.text);
-    // A page in UTF-8 with a Latin-1 byte in it keeps the byte.
-    const mixed = try readTwice(ub, "<p>\xE9t\xC3\xA9</p>", &store);
-    try testing.expectEqualStrings("\xE9t\xE9\n", mixed.text);
-    try host.utility.tearDown(rom_ub);
+    const latin = try readTwice("<meta charset=\"ISO-8859-1\"><p>\xE9 \x93q\x94</p>", &store);
+    try testing.expectEqualStrings("é “q”\n", latin.text);
+    // So is a page that is not UTF-8 from first to last, the whole of it.
+    const mixed = try readTwice("<p>\xE9t\xC3\xA9</p>", &store);
+    try testing.expectEqualStrings("étÃ©\n", mixed.text);
+    // A title is cut where a character starts.
+    const long = try readTwice("<title>" ++ "a" ** 126 ++ "€</title><p>x</p>", &store);
+    try testing.expectEqualStrings("a" ** 126, long.title);
+    // A listing's tab counts characters, not bytes.
+    const listing = try readTwice("<pre>ä\tb</pre>", &store);
+    try testing.expectEqualStrings("ä       b\n", listing.text);
 }
 
 test "links: their runs, and their targets after the text" {
-    const rom_ub = try host.utility.setUp();
-    defer host.exec.deinit();
-    const ub: *UtilityBase = @ptrCast(rom_ub);
     var store: Store = .{};
-    const got = try readTwice(ub, "<p><a href=\" a b&amp;c \">one</a> <a href='/wiki/Stra%C3%9Fe'>two</a> <A HREF=ü>three <b>bold</b></a><a name=x>none</a></p>", &store);
+    const got = try readTwice("<p><a href=\" a b&amp;c \">one</a> <a href='/wiki/Stra%C3%9Fe'>two</a> <A HREF=ü>three <b>bold</b></a><a name=x>none</a></p>", &store);
     try testing.expectEqualStrings("one two three boldnone\n", got.text);
     const one = try runOf(got, "one");
     try testing.expectEqual(tdc.TDPEN_LINK, one.pen);
@@ -287,15 +261,11 @@ test "links: their runs, and their targets after the text" {
     try testing.expectEqual(underlined | bold, in_bold.style);
     try testing.expectEqualStrings("%C3%BC", targetOf(got, in_bold));
     try testing.expectEqual(@as(u32, 0), (try runOf(got, "none")).link_length);
-    try host.utility.tearDown(rom_ub);
 }
 
 test "anchors: ids and names, where they start, and the page's top" {
-    const rom_ub = try host.utility.setUp();
-    defer host.exec.deinit();
-    const ub: *UtilityBase = @ptrCast(rom_ub);
     var store: Store = .{};
-    const got = try readTwice(ub,
+    const got = try readTwice(
         \\<h2 id="Gr&uuml;&szlig;e">Head</h2><p>Text <span id=" note ">here</span><a name=n>x</a><a href="#Gr%C3%BC%C3%9Fe">up</a>
         \\<div hidden><p id=no>gone</div><p id=top>last
     , &store);
@@ -312,7 +282,6 @@ test "anchors: ids and names, where they start, and the page's top" {
     try testing.expectEqual(@as(u32, 0), got.anchors[4].offset);
     // A link to the heading names it as its anchor is named.
     try testing.expectEqualStrings("#Gr%C3%BC%C3%9Fe", targetOf(got, try runOf(got, "up")));
-    try host.utility.tearDown(rom_ub);
 }
 
 test "bytes without a name are a page by what they start with" {
@@ -331,42 +300,29 @@ test "bytes without a name are a page by what they start with" {
 }
 
 test "a listing as it stands, and line ends in a paragraph" {
-    const rom_ub = try host.utility.setUp();
-    defer host.exec.deinit();
-    const ub: *UtilityBase = @ptrCast(rom_ub);
     var store: Store = .{};
-    const got = try readTwice(ub, "<pre>\n  a\tb &lt;\n\n</pre><p>  one <br> two<br></p><xmp><b>&amp;</b></xmp>", &store);
+    const got = try readTwice("<pre>\n  a\tb &lt;\n\n</pre><p>  one <br> two<br></p><xmp><b>&amp;</b></xmp>", &store);
     try testing.expectEqualStrings("  a     b <\none\ntwo\n<b>&amp;</b>\n", got.text);
     try testing.expectEqual(@as(usize, 3), got.blocks.len);
     try testing.expectEqual(tdc.TDBLOCK_LISTING, got.blocks[0].kind);
     try testing.expectEqual(tdc.TDFONT_FIXED, got.pieces[0].font);
     try testing.expectEqualStrings("one\ntwo", textOf(got, got.blocks[1]));
     try testing.expectEqual(tdc.TDBLOCK_LISTING, got.blocks[2].kind);
-    try host.utility.tearDown(rom_ub);
 }
 
 test "a page with nothing to show has no text" {
-    const rom_ub = try host.utility.setUp();
-    defer host.exec.deinit();
-    const ub: *UtilityBase = @ptrCast(rom_ub);
     var store: Store = .{};
-    const got = try readTwice(ub, "<!DOCTYPE html><html><head><title>Empty</title></head><body>\n  <p> </p><div></div>\n</body></html>", &store);
+    const got = try readTwice("<!DOCTYPE html><html><head><title>Empty</title></head><body>\n  <p> </p><div></div>\n</body></html>", &store);
     try testing.expectEqual(@as(usize, 0), got.text.len);
     try testing.expectEqual(@as(usize, 0), got.blocks.len);
     try testing.expectEqualStrings("Empty", got.title);
-    try host.utility.tearDown(rom_ub);
 }
 
 test "the sample page on the disk reads" {
-    const rom_ub = try host.utility.setUp();
-    defer host.exec.deinit();
-    const ub: *UtilityBase = @ptrCast(rom_ub);
     const page = @embedFile("../../../../tests/datatypes/Page.html");
-    var source: [page.len]u8 = page.*;
-    const from = source[0..parse.toLatin1(ub, &source)];
-    var counting = parse.Build{ .ub = ub };
-    parse.build(from, &counting);
-    try testing.expectEqualStrings("A page to read - html.datatype", counting.title[0..counting.title_len]);
+    try testing.expect(!parse.foreign(page));
+    var counting = parse.Build{};
+    parse.build(page, &counting);
+    try testing.expectEqualStrings("A page to read – html.datatype", counting.title[0..counting.title_len]);
     try testing.expect(counting.block_count > 40);
-    try host.utility.tearDown(rom_ub);
 }

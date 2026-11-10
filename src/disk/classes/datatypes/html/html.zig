@@ -31,9 +31,9 @@
 //! without one - a page fetched from the network - by what they start
 //! with, which this library's recognise call looks at.
 //!
-//! **Its characters are Latin-1**: a page in UTF-8 is made Latin-1 before
-//! it is read, and a character Latin-1 has not - one of typesetting's
-//! aside, which come out plain - is a `?`.
+//! **Its characters are UTF-8**: a page in UTF-8 is read as it is, and
+//! one that says it is Latin-1 or code page 1252, or that is not UTF-8,
+//! is made UTF-8 from code page 1252 first.
 //!
 //! The file is read in two passes: the first counts how much text, how
 //! many runs and how many blocks there will be, the second writes them.
@@ -65,8 +65,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "html.datatype",
     .version = 1,
-    .revision = 3,
-    .date = "10.11.2026",
+    .revision = 4,
+    .date = "11.11.2026",
     .super = tdc.TEXTDTCLASS,
     .opens = &.{tdc.TEXT_LIBRARY},
     .Instance = Data,
@@ -87,10 +87,18 @@ pub const Data = extern struct {
 /// The page read and given to the superclass. What went wrong, or 0.
 fn takeText(base: *Base, cl: *Class, o: *Object, document: []u8) i32 {
     const sys = base.sys_base;
-    const ub = base.utility_base;
-    const from = document[0..parse.toLatin1(ub, document)];
+    var from: []const u8 = document;
+    var converted: ?[*]u8 = null;
+    defer if (converted) |it| sys.FreeVec(it);
+    if (parse.foreign(document)) {
+        const size = utility.utf8.cp1252Length(document);
+        const into: [*]u8 = @ptrCast(sys.AllocVec(@max(size, 1), exec.MEMF_ANY) orelse
+            return datatypes.DTERROR_NOT_ENOUGH_DATA);
+        converted = into;
+        from = into[0..utility.utf8.fromCp1252(document, into[0..size])];
+    }
 
-    var counting = parse.Build{ .ub = ub };
+    var counting = parse.Build{};
     parse.build(from, &counting);
     if (counting.text_len == 0 or counting.piece_count == 0 or counting.block_count == 0)
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
@@ -120,7 +128,6 @@ fn takeText(base: *Base, cl: *Class, o: *Object, document: []u8) i32 {
     };
 
     var writing = parse.Build{
-        .ub = ub,
         .text = @ptrCast(text),
         .pieces = @ptrCast(@alignCast(runs)),
         .blocks = @ptrCast(@alignCast(blocks)),

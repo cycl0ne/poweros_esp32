@@ -32,12 +32,14 @@
 //! text, set back in italic; a field and a button are their label in
 //! brackets; `<q>` is in quotes.
 //!
-//! **Text is Latin-1**, which is what graphics draws. The document is
-//! made Latin-1 before it is read (`toLatin1`); a reference to a
-//! character past it, and a byte of code page 1252 that Latin-1 has as a
-//! control, is written as utility.library writes typesetting's
-//! characters - plain quotes, dashes, `...` - or a `?`. A link's target
-//! is written with its spaces and what is past ASCII as `%` and UTF-8's
+//! **Text is UTF-8**, which is what graphics draws. A page is read as
+//! UTF-8 when it is that from first to last and does not say otherwise;
+//! one whose `<meta charset>` names Latin-1 or code page 1252, or that
+//! is not UTF-8, is made UTF-8 from code page 1252 first (`foreign`),
+//! the Western code page of Windows, which such a page is most often
+//! really in. A reference is the character it names, one from 0x80 to
+//! 0x9F code page 1252's; a control is left out. A link's target is
+//! written with its spaces and what is past ASCII as `%` and UTF-8's
 //! bytes, which is how an address carries them.
 //!
 //! **An element's `id` is an anchor**, and so is an `<a>`'s `name`: the
@@ -52,9 +54,8 @@
 //! nothing draws them.
 
 const sdk = @import("sdk");
-const utility = sdk.utility;
+const utf8 = sdk.utility.utf8;
 const tdc = sdk.datatypes.textclass;
-const UtilityBase = sdk.interface.utility.UtilityBase;
 const tokens = @import("tokens.zig");
 const entities = @import("entities.zig");
 const elements = @import("elements.zig");
@@ -71,8 +72,6 @@ pub const title_most = 127;
 
 /// What is being written, or counted when nothing is being written.
 pub const Build = struct {
-    /// What a character past Latin-1 is written as.
-    ub: *UtilityBase,
     /// Where the text goes, and how much of it there is so far.
     text: ?[*]u8 = null,
     text_len: u32 = 0,
@@ -211,9 +210,9 @@ pub fn looksLikePage(bytes: []const u8) bool {
     return false;
 }
 
-/// Whether the document says it is Latin-1 or code page 1252, which it
-/// is then read as byte for byte; UTF-8 else. Only its first kilobyte is
-/// looked at, where a `<meta charset>` has to be.
+/// Whether the document says it is Latin-1 or code page 1252; UTF-8
+/// else. Only its first kilobyte is looked at, where a `<meta charset>`
+/// has to be.
 pub fn declaredLatin1(source: []const u8) bool {
     if (source.len >= 3 and source[0] == 0xEF and source[1] == 0xBB and source[2] == 0xBF) return false;
     const head = source[0..@min(source.len, 1024)];
@@ -238,17 +237,14 @@ fn isNameChar(char: u8) bool {
     return tokens.isLetter(char) or (char >= '0' and char <= '9') or char == '-' or char == '_';
 }
 
-/// The document made Latin-1 where it is: UTF-8 by utility.library,
-/// typesetting's characters made plain and a byte that is no UTF-8 taken
-/// as Latin-1; a document that says it is Latin-1 left as it is. Its
-/// length afterwards, never more than before.
-pub fn toLatin1(ub: *UtilityBase, document: []u8) usize {
-    if (declaredLatin1(document)) return document.len;
-    var conversion: utility.Utf8Conversion = .{ .flags = utility.UTF8F_TYPESET | utility.UTF8F_LATIN1 };
-    return ub.Utf8ToLatin1(&conversion, document.ptr, document.len, document.ptr, document.len);
+/// Whether the document is read as code page 1252, made UTF-8 by
+/// `utf8.fromCp1252` before `build` reads it: it says it is Latin-1 or
+/// code page 1252, or it is not UTF-8 from first to last.
+pub fn foreign(document: []const u8) bool {
+    return declaredLatin1(document) or !utf8.valid(document);
 }
 
-/// The whole document, Latin-1, read. Called once to count and once to
+/// The whole document, UTF-8, read. Called once to count and once to
 /// write.
 pub fn build(from: []const u8, out: *Build) void {
     var p = Parser{ .out = out, .reader = .{ .source = from } };
@@ -849,15 +845,14 @@ const Parser = struct {
         const trimmed = value[first..last];
         var at: usize = 0;
         while (at < trimmed.len) {
-            const char = trimmed[at];
-            if (char == '&') {
+            if (trimmed[at] == '&') {
                 if (entities.reference(trimmed, at, true)) |found| {
                     p.targetCode(found.code);
                     at = found.end;
                     continue;
                 }
             }
-            at += 1;
+            const char = utf8.next(trimmed, &at);
             if (char == '\t' or char == '\n' or char == '\r') continue;
             p.targetCode(char);
         }
@@ -869,8 +864,8 @@ const Parser = struct {
     fn targetCode(p: *Parser, value: u32) void {
         if (value > ' ' and value < 0x7F) return p.out.putTarget(@intCast(value));
         const hex = "0123456789ABCDEF";
-        var utf8: [4]u8 = undefined;
-        for (utf8Of(value, &utf8)) |byte_of| {
+        var bytes: [4]u8 = undefined;
+        for (bytes[0..utf8.encode(value, &bytes)]) |byte_of| {
             p.out.putTarget('%');
             p.out.putTarget(hex[byte_of >> 4]);
             p.out.putTarget(hex[byte_of & 15]);
@@ -975,7 +970,7 @@ const Parser = struct {
                 for (decimal(number, &digits)) |digit| p.ink(digit);
                 p.ink('.');
             } else {
-                p.ink(0xB7);
+                p.inkAll("·");
             }
             p.whiteSpace();
             open.effects |= E_CONTAINER;
@@ -1364,41 +1359,21 @@ const Parser = struct {
         p.column += 1;
     }
 
-    /// A byte of the Latin-1 text: one of code page 1252's that Latin-1
-    /// has as a control as what it stands for, any other control as
-    /// nothing.
+    /// A byte of the UTF-8 text: a 7-bit control left out, any other
+    /// byte - a character's, or one of the bytes past ASCII that make
+    /// one - inked as it is.
     fn byte(p: *Parser, char: u8) void {
-        if (char >= 0x80 and char <= 0x9F) return p.code(entities.fromCp1252(char));
         if (char < 0x20 or char == 0x7F) return;
         p.ink(char);
     }
 
-    /// A character by its number: Latin-1's as it is, any other as
-    /// utility.library writes it.
+    /// A character by its number, as a reference names it: a space as
+    /// white space, a control left out, any other character in UTF-8.
     fn code(p: *Parser, value: u32) void {
-        if (value == 0) return;
-        var near: [8]u8 = undefined;
-        for (p.nearest(value, &near)) |char| {
-            if (char == ' ') {
-                if (p.pres > 0) p.listingSpace() else p.whiteSpace();
-            } else if (char >= 0x20 and !(char >= 0x7F and char < 0xA0)) {
-                p.ink(char);
-            }
-        }
-    }
-
-    /// What a character is written as in Latin-1: itself, typesetting's
-    /// plain characters for it, or `?`.
-    fn nearest(p: *Parser, value: u32, into: *[8]u8) []const u8 {
-        if (value < 0x100) {
-            into[0] = @intCast(value);
-            return into[0..1];
-        }
-        var utf8: [4]u8 = undefined;
-        const bytes = utf8Of(value, &utf8);
-        var conversion: utility.Utf8Conversion = .{ .flags = utility.UTF8F_TYPESET };
-        const written = p.out.ub.Utf8ToLatin1(&conversion, bytes.ptr, bytes.len, into, into.len);
-        return into[0..@min(written, into.len)];
+        if (value == ' ') return if (p.pres > 0) p.listingSpace() else p.whiteSpace();
+        if (value < 0x20 or (value >= 0x7F and value < 0xA0)) return;
+        var bytes: [4]u8 = undefined;
+        p.inkAll(bytes[0..utf8.encode(value, &bytes)]);
     }
 
     /// White space outside a listing: one space before the next
@@ -1443,7 +1418,9 @@ const Parser = struct {
         p.glue = false;
         p.putIn(look, char);
         p.out.inked = true;
-        p.column += 1;
+        // A character's first byte counts a column, the bytes that go on
+        // with it none.
+        if (char & 0xC0 != 0x80) p.column += 1;
     }
 
     fn inkAll(p: *Parser, chars: []const u8) void {
@@ -1489,43 +1466,41 @@ const Parser = struct {
         p.look_dirty = true;
     }
 
-    /// The `<title>`'s text kept, the first one's only.
+    /// The `<title>`'s text kept, the first one's only: its white space
+    /// single spaces, its references read, as many whole characters as
+    /// there is room for.
     fn takeTitle(p: *Parser, bytes: []const u8) void {
         const out = p.out;
         if (out.title_len > 0) return;
         var space = false;
         var at: usize = 0;
         while (at < bytes.len) {
-            var near: [8]u8 = undefined;
-            var some: []const u8 = bytes[at .. at + 1];
+            var char: u32 = undefined;
             if (bytes[at] == '&') {
                 if (entities.reference(bytes, at, false)) |found| {
-                    some = p.nearest(found.code, &near);
+                    char = found.code;
                     at = found.end;
-                } else at += 1;
-            } else {
-                if (bytes[at] >= 0x80 and bytes[at] <= 0x9F) some = p.nearest(entities.fromCp1252(bytes[at]), &near);
-                at += 1;
+                } else {
+                    char = '&';
+                    at += 1;
+                }
+            } else char = utf8.next(bytes, &at);
+            if (char < 0x80 and tokens.isSpace(@intCast(char))) {
+                space = out.title_len > 0;
+                continue;
             }
-            for (some) |char| {
-                if (tokens.isSpace(char)) {
-                    space = out.title_len > 0;
-                    continue;
-                }
-                if (char < 0x20 or (char >= 0x7F and char < 0xA0)) continue;
-                const room: usize = if (space) 2 else 1;
-                if (out.title_len + room > title_most) {
-                    out.title[out.title_len] = 0;
-                    return;
-                }
-                if (space) {
-                    out.title[out.title_len] = ' ';
-                    out.title_len += 1;
-                    space = false;
-                }
-                out.title[out.title_len] = char;
+            if (char < 0x20 or (char >= 0x7F and char < 0xA0)) continue;
+            var encoded: [4]u8 = undefined;
+            const length = utf8.encode(char, &encoded);
+            const room = length + @intFromBool(space);
+            if (out.title_len + room > title_most) break;
+            if (space) {
+                out.title[out.title_len] = ' ';
                 out.title_len += 1;
+                space = false;
             }
+            @memcpy(out.title[out.title_len..][0..length], encoded[0..length]);
+            out.title_len += length;
         }
         out.title[out.title_len] = 0;
     }
@@ -1534,30 +1509,6 @@ const Parser = struct {
 fn sameLook(a: tdc.Piece, b: tdc.Piece) bool {
     return a.font == b.font and a.indent == b.indent and a.style == b.style and a.pen == b.pen and
         a.link_offset == b.link_offset and a.link_length == b.link_length;
-}
-
-/// A character's UTF-8, into `into`.
-fn utf8Of(value: u32, into: *[4]u8) []const u8 {
-    if (value < 0x80) {
-        into[0] = @intCast(value);
-        return into[0..1];
-    }
-    if (value < 0x800) {
-        into[0] = @intCast(0xC0 | value >> 6);
-        into[1] = @intCast(0x80 | (value & 0x3F));
-        return into[0..2];
-    }
-    if (value < 0x1_0000) {
-        into[0] = @intCast(0xE0 | value >> 12);
-        into[1] = @intCast(0x80 | (value >> 6 & 0x3F));
-        into[2] = @intCast(0x80 | (value & 0x3F));
-        return into[0..3];
-    }
-    into[0] = @intCast(0xF0 | value >> 18);
-    into[1] = @intCast(0x80 | (value >> 12 & 0x3F));
-    into[2] = @intCast(0x80 | (value >> 6 & 0x3F));
-    into[3] = @intCast(0x80 | (value & 0x3F));
-    return into[0..4];
 }
 
 /// Whether an element is marked as not shown: `hidden`, `aria-hidden`,

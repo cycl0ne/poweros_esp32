@@ -389,11 +389,12 @@ spaces and what is past ASCII written as `%` and UTF-8's bytes. An
 element's `id` and an `<a>`'s `name` are the page's places, where they
 start, and `top` is its first line. A style
 sheet is not read and a script is not run, so a page that lays itself
-out by its style sheet reads top to bottom. A page is UTF-8 unless its
-`<meta charset>` says Latin-1 or code page 1252; either way it is made
-Latin-1, typesetting's quotes, dashes, spaces and ellipsis plain ones,
-and any other character Latin-1 has not - the euro sign, Greek,
-Cyrillic, CJK - is a `?`.
+out by its style sheet reads top to bottom. A page is read as UTF-8
+unless its `<meta charset>` says Latin-1 or code page 1252 or it is not
+UTF-8 from first to last; then it is read as code page 1252. A
+reference is the character it names, whatever it is - the euro sign,
+Greek, Cyrillic, CJK - and a character a font has not is drawn as the
+nearest letter it has, or its box.
 
 ## Animations
 

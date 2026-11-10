@@ -19,8 +19,9 @@
 //! everything up to the tag that ends that element is one stretch of
 //! text, and after `<plaintext>` the rest of the document is.
 //!
-//! The document is Latin-1 by the time it is read here. Nothing of the
-//! markup is past ASCII, so a tag is found the same in either.
+//! The document is UTF-8 by the time it is read here. Nothing of the
+//! markup is past ASCII, and no byte of a character past it is an ASCII
+//! one, so a tag is found the same whatever the text holds.
 
 const elements = @import("elements.zig");
 
