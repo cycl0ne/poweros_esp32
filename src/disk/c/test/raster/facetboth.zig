@@ -104,7 +104,10 @@
 //! textures in two sets, and a loop of four samples of one. The shipped
 //! scratch (since 1.42) is an array of the function's own stored into and
 //! read at indexes the colour gives, which the V3D keeps in scratch as
-//! Mesa does, in the pipeline's spill buffer.
+//! Mesa does, in the pipeline's spill buffer. The shipped trees (since
+//! 1.43) are an array of two vec2s of the function's own, one float
+//! stored and one read at indexes the colour gives, which the V3D turns
+//! into if-else trees as Mesa does, and those into bcsels.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -119,7 +122,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.42 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.43 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -1128,6 +1131,41 @@ fn scratchFragment(fragments: *const shader.Fragments) callconv(.c) void {
     }
 }
 
+/// What `tree_pair` computes, for the cores: of two vec2s, the red's and
+/// the green's and the blue's and the alpha's, the y of the one the red
+/// times 1.99 made an integer gives stored half the alpha, and the colour
+/// the x of the one the green gives, both ys, and 1 for the first (since
+/// 1.43).
+fn treesFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    @setRuntimeSafety(false);
+    var rows = shader.Rows(5).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const planes = rows.at(quad);
+        const over = @as(shader.Pixels, @splat(1)) / planes[0];
+        var v: [4]shader.Pixels = undefined;
+        inline for (&v, 0..) |*each, c| each.* = planes[1 + c] * over;
+        const by_red = v[0] * @as(shader.Pixels, @splat(1.99));
+        const by_green = v[1] * @as(shader.Pixels, @splat(1.99));
+        var picked: [4]shader.Pixels = undefined;
+        inline for (0..4) |p| {
+            var two = [2][2]f32{ .{ v[0][p], v[1][p] }, .{ v[2][p], v[3][p] } };
+            // An index past the two is the program's fault: the colour's
+            // floats are 0 to 1, and it is none. Below 1 is the first, as
+            // the V3D's tree has it.
+            const i: usize = if (towardZero(by_red[p]) < 1) 0 else 1;
+            const j: usize = if (towardZero(by_green[p]) < 1) 0 else 1;
+            two[i][1] = v[3][p] * 0.5;
+            picked[0][p] = two[j][0];
+            picked[1][p] = two[0][1];
+            picked[2][p] = two[1][1];
+            picked[3][p] = if (i == 0) 1.0 else 0.0;
+        }
+        var bytes: [4]@Vector(4, u32) = undefined;
+        inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(picked[c]);
+        out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+    }
+}
+
 /// What `store_writes` computes, for the cores, and in its order: by each
 /// pixel inside the triangle - a helper pixel writes nothing, as the
 /// V3D's lookup is a pixel's - the written buffer's count made 2 and its
@@ -1322,6 +1360,7 @@ const shipped_entries = [_]shader.Entry{
     Shipped.TwoTextures.entry("shipped two textures"),
     Shipped.FourSamples.entry("shipped four samples"),
     shader.fragment("shipped scratch", &scratchFragment, 4),
+    shader.fragment("shipped trees", &treesFragment, 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                .{},                               .{},                                  .{},
@@ -1335,7 +1374,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&integers),         shader.Spirv.of(&indexed),         shader.Spirv.of(&lanes),              shader.Spirv.of(&store_writes),
     shader.Spirv.of(&store_reads),      shader.Spirv.of(&store_atomics),   shader.Spirv.of(&store_counted),      Shipped.Kept.spirv,
     Shipped.KeptPushed.spirv,           shader.Spirv.of(&for_loop),        shader.Spirv.of(&do_while),           shader.Spirv.of(&float_loop),
-    Shipped.TwoTextures.spirv,          shader.Spirv.of(&four_samples),    shader.Spirv.of(&scratch_slots),
+    Shipped.TwoTextures.spirv,          shader.Spirv.of(&four_samples),    shader.Spirv.of(&scratch_slots),      shader.Spirv.of(&tree_pair),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -2733,6 +2772,81 @@ const scratch_slots = [_]u32{
     0x0000003D, 0x0000003C, 0x00070050, 0x00000018, 0x0000003E, 0x00000032,
     0x00000035, 0x0000003A, 0x0000003D, 0x0003003E, 0x0000002F, 0x0000003E,
     0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for an array of two vec2s of the
+/// function's own, a float of one stored at an index the colour's red
+/// gives and a float of one read at an index the green gives: the V3D
+/// turns each access into an if-else tree
+/// (nir_lower_indirect_derefs_to_if_else_trees, at v3dv_pipeline.c:432-436)
+/// and the trees into bcsels, with no scratch (since 1.43).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     vec2 two[2] = vec2[](color.xy, color.zw);
+///     int i = int(color.x * 1.99);
+///     int j = int(color.y * 1.99);
+///     two[i].y = color.w * 0.5;
+///     float pick = two[j].x;
+///     outColor = vec4(pick, two[0].y, two[1].y, i < 1 ? 1.0 : 0.0);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag trees.frag -o trees.spv   # 281 words
+/// spirv-val --target-env vulkan1.0 trees.spv            # no output, and 0
+/// ```
+const tree_pair = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000041, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000F, 0x00000032, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000F, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000032, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000002, 0x00040015, 0x00000008,
+    0x00000020, 0x00000000, 0x0004002B, 0x00000008, 0x00000009, 0x00000002,
+    0x0004001C, 0x0000000A, 0x00000007, 0x00000009, 0x00040020, 0x0000000B,
+    0x00000007, 0x0000000A, 0x00040017, 0x0000000D, 0x00000006, 0x00000004,
+    0x00040020, 0x0000000E, 0x00000001, 0x0000000D, 0x0004003B, 0x0000000E,
+    0x0000000F, 0x00000001, 0x00040015, 0x00000015, 0x00000020, 0x00000001,
+    0x0004002B, 0x00000008, 0x00000018, 0x00000000, 0x00040020, 0x00000019,
+    0x00000001, 0x00000006, 0x0004002B, 0x00000006, 0x0000001C, 0x3FFEB852,
+    0x0004002B, 0x00000008, 0x00000020, 0x00000001, 0x0004002B, 0x00000008,
+    0x00000026, 0x00000003, 0x0004002B, 0x00000006, 0x00000029, 0x3F000000,
+    0x00040020, 0x0000002B, 0x00000007, 0x00000006, 0x00040020, 0x00000031,
+    0x00000003, 0x0000000D, 0x0004003B, 0x00000031, 0x00000032, 0x00000003,
+    0x0004002B, 0x00000015, 0x00000034, 0x00000000, 0x0004002B, 0x00000015,
+    0x00000037, 0x00000001, 0x00020014, 0x0000003B, 0x0004002B, 0x00000006,
+    0x0000003D, 0x3F800000, 0x0004002B, 0x00000006, 0x0000003E, 0x00000000,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003B, 0x0000000B, 0x0000000C, 0x00000007, 0x0004003D,
+    0x0000000D, 0x00000010, 0x0000000F, 0x0007004F, 0x00000007, 0x00000011,
+    0x00000010, 0x00000010, 0x00000000, 0x00000001, 0x0007004F, 0x00000007,
+    0x00000013, 0x00000010, 0x00000010, 0x00000002, 0x00000003, 0x00050050,
+    0x0000000A, 0x00000014, 0x00000011, 0x00000013, 0x0003003E, 0x0000000C,
+    0x00000014, 0x00050041, 0x00000019, 0x0000001A, 0x0000000F, 0x00000018,
+    0x0004003D, 0x00000006, 0x0000001B, 0x0000001A, 0x00050085, 0x00000006,
+    0x0000001D, 0x0000001B, 0x0000001C, 0x0004006E, 0x00000015, 0x0000001E,
+    0x0000001D, 0x00050041, 0x00000019, 0x00000021, 0x0000000F, 0x00000020,
+    0x0004003D, 0x00000006, 0x00000022, 0x00000021, 0x00050085, 0x00000006,
+    0x00000023, 0x00000022, 0x0000001C, 0x0004006E, 0x00000015, 0x00000024,
+    0x00000023, 0x00050041, 0x00000019, 0x00000027, 0x0000000F, 0x00000026,
+    0x0004003D, 0x00000006, 0x00000028, 0x00000027, 0x00050085, 0x00000006,
+    0x0000002A, 0x00000028, 0x00000029, 0x00060041, 0x0000002B, 0x0000002C,
+    0x0000000C, 0x0000001E, 0x00000020, 0x0003003E, 0x0000002C, 0x0000002A,
+    0x00060041, 0x0000002B, 0x0000002F, 0x0000000C, 0x00000024, 0x00000018,
+    0x0004003D, 0x00000006, 0x00000030, 0x0000002F, 0x00060041, 0x0000002B,
+    0x00000035, 0x0000000C, 0x00000034, 0x00000020, 0x0004003D, 0x00000006,
+    0x00000036, 0x00000035, 0x00060041, 0x0000002B, 0x00000038, 0x0000000C,
+    0x00000037, 0x00000020, 0x0004003D, 0x00000006, 0x00000039, 0x00000038,
+    0x000500B1, 0x0000003B, 0x0000003C, 0x0000001E, 0x00000037, 0x000600A9,
+    0x00000006, 0x0000003F, 0x0000003C, 0x0000003D, 0x0000003E, 0x00070050,
+    0x0000000D, 0x00000040, 0x00000030, 0x00000036, 0x00000039, 0x0000003F,
+    0x0003003E, 0x00000032, 0x00000040, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
@@ -5589,6 +5703,7 @@ const cases = [_]Case{
     .{ .name = "shipped two textures", .run = Cases.twoTextures },
     .{ .name = "shipped four samples", .run = Cases.shipped("texture", "shipped four samples", true, quad_at) },
     .{ .name = "shipped scratch", .run = Cases.shipped("as it is", "shipped scratch", false, clockwise_at) },
+    .{ .name = "shipped trees", .run = Cases.shipped("as it is", "shipped trees", false, clockwise_at) },
 } ++ throughCases() ++ [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },
