@@ -150,7 +150,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.63 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.64 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -2303,6 +2303,35 @@ fn packingHalvesOf(color: [4]f32) [4]f32 {
     };
 }
 
+/// GLSL's packHalf2x16 of one float: the half nearest it, the even of
+/// two as near (since 1.64).
+fn halfBitsOf(x: f32) u32 {
+    return @as(u16, @bitCast(@as(f16, @floatCast(x))));
+}
+
+/// unpackHalf2x16 of a word's low 16 bits (since 1.64).
+fn floatOfHalfBits(bits: u32) f32 {
+    return @floatCast(@as(f16, @bitCast(@as(u16, @truncate(bits)))));
+}
+
+/// What `shipped_packing_half` computes, by GLSL's definitions of the
+/// packings of halves (since 1.64).
+fn halfPackingOf(color: [4]f32) [4]f32 {
+    var c: [4]f32 = undefined;
+    for (&c, color) |*each, v| each.* = v * 6.0 - 3.0;
+    const xy = halfBitsOf(c[0]) | halfBitsOf(c[1]) << 16;
+    const a = [2]f32{ floatOfHalfBits(xy), floatOfHalfBits(xy >> 16) };
+    const x = [2]f32{ 1.0 + @floor(color[2] * 16.0) / 4096.0, -(1.0 + @floor(color[0] * 16.0) / 4096.0) };
+    var e: [2]f32 = undefined;
+    for (&e, x) |*each, v| each.* = (floatOfHalfBits(halfBitsOf(v)) - v) * 4096.0;
+    return .{
+        a[0] / 6.0 + 0.5,
+        @as(f32, @floatFromInt(xy >> 16)) / 65536.0,
+        e[0] * 0.0625 + @as(f32, @floatFromInt(xy & 0xFFFF)) / 131072.0 + 0.25,
+        e[1] * 0.0625 + a[1] / 12.0 + 0.5,
+    };
+}
+
 /// The entries that ship words, after all the others, and the words of
 /// each in the same order: `shader.Module.spirv` is index for index.
 const shipped_entries = [_]shader.Entry{
@@ -2406,6 +2435,7 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped modf and frexp", curveFragment(modfFrexpOf), 4),
     shader.fragment("shipped packing in bytes", curveFragment(packingBytesOf), 4),
     shader.fragment("shipped packing in halves", curveFragment(packingHalvesOf), 4),
+    shader.fragment("shipped half packing", curveFragment(halfPackingOf), 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2432,6 +2462,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_index_place),          shader.Spirv.of(&shipped_point_size),       shader.Spirv.of(&shipped_point_one),           shader.Spirv.of(&shipped_vertices),
     shader.Spirv.of(&shipped_numbers),              shader.Spirv.of(&shipped_inverse_trig),     shader.Spirv.of(&shipped_hyperbolic),          shader.Spirv.of(&shipped_geometry),
     shader.Spirv.of(&shipped_bit_finds),            shader.Spirv.of(&shipped_modf_frexp),       shader.Spirv.of(&shipped_packing_bytes),       shader.Spirv.of(&shipped_packing_halves),
+    shader.Spirv.of(&shipped_packing_half),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -6201,6 +6232,101 @@ const shipped_packing_halves = [_]u32{
     0x0000004A, 0x00000049, 0x0000002A, 0x00070050, 0x00000007, 0x0000004B,
     0x00000031, 0x0000003A, 0x00000042, 0x0000004A, 0x0003003E, 0x00000025,
     0x0000004B, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, the V3D's host tests' glslc_packing_half:
+/// what `halfPackingOf` on the cores: PackHalf2x16 and UnpackHalf2x16
+/// (since 1.64).
+///
+/// ```glsl
+/// #version 450
+/// // facet 1.200: GLSL.std.450's PackHalf2x16 and UnpackHalf2x16, as
+/// // nir_lower_alu_width and nir_lower_pack lower them for the V3D's VFPACK
+/// // and its unpacking of a half: the colour made -3 to 3, packed and
+/// // unpacked again, and its halves' bits read as integers; and 1 + k/4096,
+/// // k whole, a quarter, half or three quarters of the way between two
+/// // halves, and its negative, packed and unpacked, how far each moved in
+/// // 4096ths saying how VFPACK rounds: to the nearest, a tie to the even.
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     vec4 c = color * 6.0 - 3.0;
+///     uint xy = packHalf2x16(c.xy);
+///     vec2 a = unpackHalf2x16(xy);
+///     vec2 x = (1.0 + floor(color.zx * 16.0) / 4096.0) * vec2(1.0, -1.0);
+///     vec2 e = (unpackHalf2x16(packHalf2x16(x)) - x) * 4096.0;
+///     outColor = vec4(a.x / 6.0 + 0.5,
+///                     float(xy >> 16) / 65536.0,
+///                     e.x * 0.0625 + float(xy & 0xFFFFu) / 131072.0 + 0.25,
+///                     e.y * 0.0625 + a.y / 12.0 + 0.5);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag packing_half.frag -o packing_half.spv   # 360 words
+/// spirv-val --target-env vulkan1.0 packing_half.spv   # no output, and 0
+/// ```
+const shipped_packing_half = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000068, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000034, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000034, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x0000000A,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001,
+    0x0004002B, 0x00000006, 0x0000000D, 0x40C00000, 0x0004002B, 0x00000006,
+    0x0000000F, 0x40400000, 0x00040015, 0x00000012, 0x00000020, 0x00000000,
+    0x00040017, 0x00000015, 0x00000006, 0x00000002, 0x0004002B, 0x00000006,
+    0x0000001E, 0x3F800000, 0x0004002B, 0x00000006, 0x00000021, 0x41800000,
+    0x0004002B, 0x00000006, 0x00000024, 0x45800000, 0x0004002B, 0x00000006,
+    0x00000029, 0xBF800000, 0x0005002C, 0x00000015, 0x0000002A, 0x0000001E,
+    0x00000029, 0x00040020, 0x00000033, 0x00000003, 0x00000007, 0x0004003B,
+    0x00000033, 0x00000034, 0x00000003, 0x0004002B, 0x00000006, 0x0000003A,
+    0x3F000000, 0x00040015, 0x0000003D, 0x00000020, 0x00000001, 0x0004002B,
+    0x0000003D, 0x0000003E, 0x00000010, 0x0004002B, 0x00000006, 0x00000045,
+    0x3D800000, 0x0004002B, 0x00000012, 0x00000048, 0x0000FFFF, 0x0004002B,
+    0x00000006, 0x0000004E, 0x3E800000, 0x0007002C, 0x00000007, 0x0000005F,
+    0x0000000F, 0x0000000F, 0x0000000F, 0x0000000F, 0x0005002C, 0x00000015,
+    0x00000061, 0x0000001E, 0x0000001E, 0x0004002B, 0x00000006, 0x00000062,
+    0x39800000, 0x0005002C, 0x00000015, 0x00000063, 0x00000062, 0x00000062,
+    0x0004002B, 0x00000006, 0x00000064, 0x3E2AAAAB, 0x0004002B, 0x00000006,
+    0x00000065, 0x37800000, 0x0004002B, 0x00000006, 0x00000066, 0x37000000,
+    0x0004002B, 0x00000006, 0x00000067, 0x3DAAAAAB, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x00000007, 0x0000000C, 0x0000000B, 0x0005008E, 0x00000007, 0x0000000E,
+    0x0000000C, 0x0000000D, 0x00050083, 0x00000007, 0x00000011, 0x0000000E,
+    0x0000005F, 0x0007004F, 0x00000015, 0x00000017, 0x00000011, 0x00000011,
+    0x00000000, 0x00000001, 0x0006000C, 0x00000012, 0x00000018, 0x00000001,
+    0x0000003A, 0x00000017, 0x0006000C, 0x00000015, 0x0000001C, 0x00000001,
+    0x0000003E, 0x00000018, 0x0007004F, 0x00000015, 0x00000020, 0x0000000C,
+    0x0000000C, 0x00000002, 0x00000000, 0x0005008E, 0x00000015, 0x00000022,
+    0x00000020, 0x00000021, 0x0006000C, 0x00000015, 0x00000023, 0x00000001,
+    0x00000008, 0x00000022, 0x00050085, 0x00000015, 0x00000026, 0x00000023,
+    0x00000063, 0x00050081, 0x00000015, 0x00000028, 0x00000061, 0x00000026,
+    0x00050085, 0x00000015, 0x0000002B, 0x00000028, 0x0000002A, 0x0006000C,
+    0x00000012, 0x0000002E, 0x00000001, 0x0000003A, 0x0000002B, 0x0006000C,
+    0x00000015, 0x0000002F, 0x00000001, 0x0000003E, 0x0000002E, 0x00050083,
+    0x00000015, 0x00000031, 0x0000002F, 0x0000002B, 0x0005008E, 0x00000015,
+    0x00000032, 0x00000031, 0x00000024, 0x00050051, 0x00000006, 0x00000038,
+    0x0000001C, 0x00000000, 0x00050085, 0x00000006, 0x00000039, 0x00000038,
+    0x00000064, 0x00050081, 0x00000006, 0x0000003B, 0x00000039, 0x0000003A,
+    0x000500C2, 0x00000012, 0x0000003F, 0x00000018, 0x0000003E, 0x00040070,
+    0x00000006, 0x00000040, 0x0000003F, 0x00050085, 0x00000006, 0x00000042,
+    0x00000040, 0x00000065, 0x00050051, 0x00000006, 0x00000044, 0x00000032,
+    0x00000000, 0x00050085, 0x00000006, 0x00000046, 0x00000044, 0x00000045,
+    0x000500C7, 0x00000012, 0x00000049, 0x00000018, 0x00000048, 0x00040070,
+    0x00000006, 0x0000004A, 0x00000049, 0x00050085, 0x00000006, 0x0000004C,
+    0x0000004A, 0x00000066, 0x00050081, 0x00000006, 0x0000004D, 0x00000046,
+    0x0000004C, 0x00050081, 0x00000006, 0x0000004F, 0x0000004D, 0x0000004E,
+    0x00050051, 0x00000006, 0x00000052, 0x00000032, 0x00000001, 0x00050085,
+    0x00000006, 0x00000053, 0x00000052, 0x00000045, 0x00050051, 0x00000006,
+    0x00000055, 0x0000001C, 0x00000001, 0x00050085, 0x00000006, 0x00000057,
+    0x00000055, 0x00000067, 0x00050081, 0x00000006, 0x00000058, 0x00000053,
+    0x00000057, 0x00050081, 0x00000006, 0x00000059, 0x00000058, 0x0000003A,
+    0x00070050, 0x00000007, 0x0000005A, 0x0000003B, 0x00000042, 0x0000004F,
+    0x00000059, 0x0003003E, 0x00000034, 0x0000005A, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output, at -O, of the place times a W of 1 + 2 * the blue
@@ -10456,6 +10582,7 @@ const cases = [_]Case{
     .{ .name = "shipped modf, frexp and ldexp", .run = Cases.shipped("as it is", "shipped modf and frexp", false, clockwise_at) },
     .{ .name = "shipped packing in bytes", .run = Cases.shipped("as it is", "shipped packing in bytes", false, clockwise_at) },
     .{ .name = "shipped packing in halves", .run = Cases.shipped("as it is", "shipped packing in halves", false, clockwise_at) },
+    .{ .name = "shipped packing of halves", .run = Cases.shipped("as it is", "shipped half packing", false, clockwise_at) },
     .{ .name = "shipped flat varying", .run = Cases.shipped("shipped flat vertex", "shipped flat colour", false, clockwise_at) },
     .{ .name = "shipped flat integer", .run = Cases.shipped("shipped flat integer vertex", "shipped flat integer", false, clockwise_at) },
     .{ .name = "shipped noperspective", .run = Cases.shipped("shipped noperspective vertex", "shipped noperspective", false, clockwise_at) },
