@@ -294,6 +294,8 @@ fn freeMemory(device: *Device, memory: *DeviceMemory) callconv(.c) void {
 }
 
 fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
+    // A compute pipeline's function is called as it is (`_compute.dispatch`).
+    if (pipeline.compute != null) return .success;
     const made = _objects.create(pipeline.device.sys, _draw.RasterState) orelse return .error_out_of_host_memory;
     made.* = .{
         .cull = switch (pipeline.cull) {

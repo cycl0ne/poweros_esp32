@@ -15,6 +15,7 @@ pub const Block = @import("space.zig").Block;
 pub const Space = @import("space.zig").Space;
 pub const Engine = @import("engine.zig").Engine;
 pub const cl = @import("cl.zig");
+pub const csd = @import("csd.zig");
 pub const frame = @import("frame.zig");
 pub const qpu = @import("qpu.zig");
 pub const compile = @import("compile.zig");
@@ -31,6 +32,7 @@ test {
     _ = qpu;
     _ = compile;
     _ = cl;
+    _ = csd;
     _ = frame;
     _ = tiling;
     _ = heap;

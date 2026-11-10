@@ -51,6 +51,7 @@ const regs = v3d.regs;
 const cl = v3d.cl;
 const qpu = v3d.qpu;
 const compile = v3d.compile;
+const csd = v3d.csd;
 const tiling = v3d.tiling;
 const frames = v3d.frame;
 const Frame = frames.Frame;
@@ -123,6 +124,12 @@ pub const Player = struct {
     /// What compute functions have bound, apart from what draws have.
     compute_pipeline: ?*Pipeline = null,
     compute_resources: shader.Resources = .{},
+    /// Whether a dispatch's uniforms are being written, whose words read
+    /// what compute pipelines bound (`compute_resources`) and not what
+    /// draws did, and its groups along each axis (`dispatch`, since
+    /// 1.195).
+    computing: bool = false,
+    groups: [3]u32 = .{ 0, 0, 0 },
     /// The frame being made.
     frame: Frame = undefined,
     area: Area = undefined,
@@ -408,8 +415,18 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
             }
         },
         .bind_compute_pipeline => player.compute_pipeline = _stream.as(_command.BindComputePipeline, head).pipeline,
-        .dispatch => if (!player.drawing) _compute.dispatch(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.Dispatch, head).count, &_query.none),
-        .dispatch_indirect => if (!player.drawing) _compute.dispatchIndirect(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.DispatchIndirect, head), &_query.none),
+        .dispatch => if (!player.drawing) dispatch(queue, _stream.as(_command.Dispatch, head).count),
+        // The groups read on the CPU as the command is played, as v3dv's
+        // CPU job reads them for a dispatch whose buffer the CPU can see
+        // (V3DV_JOB_TYPE_CPU_CSD_INDIRECT, v3dv_queue.c:487-524; since
+        // 1.195).
+        .dispatch_indirect => if (!player.drawing) {
+            const command = _stream.as(_command.DispatchIndirect, head);
+            if (_buffer.bytes(command.buffer, command.offset, @sizeOf(facet.DispatchIndirectCommand))) |bytes| {
+                const given = std.mem.bytesToValue(facet.DispatchIndirectCommand, bytes);
+                dispatch(queue, .{ given.x, given.y, given.z });
+            }
+        },
         // The V3D counts nothing of its work: it has neither the occlusion
         // query nor the statistics (its features say so, and CreateQueryPool
         // refuses both on it), so only a timestamp pool is ever here. A
@@ -1076,6 +1093,89 @@ fn lost(player: *const Player, sys: *ExecBase, finished: v3d.Engine.Finished, wh
     hardware.broken = true;
 }
 
+// --- a dispatch -------------------------------------------------------------
+
+/// A dispatch of `count` groups (CmdDispatch): on the QPUs, through the
+/// compute shader dispatcher, where the pipeline's driver made a program
+/// of its words (`driver.ComputeShader`), and its function on the cores
+/// where not (`_compute.dispatch`), as before 1.195. Mesa's
+/// cmd_buffer_dispatch and cmd_buffer_create_csd_job
+/// (v3dv_cmd_buffer.c:4344-4472) make the job; here it is run as it is
+/// played, as a frame is at its end, outside a render pass alone.
+///
+/// The uniforms go into the chunks the next frame begins again, read
+/// from what compute pipelines bound; the storage buffers the program
+/// writes are kept, out of the CPU's caches before the job and dropped
+/// from them after, as a frame's are (since 1.168); and after the job the
+/// cache clean Linux runs after every one of the CSD's (CACHE_CLEAN,
+/// v3d_submit.c:535-562). A buffer the program reads and the dispatch has
+/// not bound leaves it to the function, as a draw leaves its vertex
+/// function to make of one (since 1.164).
+fn dispatch(queue: *Queue, count: [3]u32) void {
+    const player = playerOf(queue);
+    const sys = queue.device.sys;
+    const pipeline = player.compute_pipeline orelse return;
+    const hardware = player.hardware;
+    const made: *const driver.ComputeShader = @ptrCast(@alignCast(pipeline.driver orelse
+        return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none)));
+    if (hardware.broken) return;
+    if (count[0] == 0 or count[1] == 0 or count[2] == 0) return;
+    player.computing = true;
+    defer player.computing = false;
+    if (!buffersBound(queue, made.stream())) return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none);
+    // No frame is being made, so its memory is free to use.
+    for (player.chunks[0..player.chunk_count]) |*chunk| chunk.used = 0;
+    player.chunk_at = 0;
+    player.storage_count = 0;
+    player.storage_over = false;
+    player.groups = count;
+    const program = &made.program;
+    const uniforms = streamOf(queue, made.stream(), &.{}, null, 0, made.spillWords()) orelse {
+        exec.kprintf(sys, "v3d: no memory for a dispatch's uniforms: its function runs on the cores\n", .{});
+        return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none);
+    };
+    // A count the CSD cannot take, which an indirect dispatch can give:
+    // on the cores, which take any.
+    const cfg = csd.configuration(.{
+        .count = count,
+        .local_size = program.local_size,
+        .can_use_supergroups = program.can_use_supergroups,
+        .threads = made.threads,
+        .single_seg = program.single_seg,
+        .program = made.address,
+        .uniforms = uniforms,
+        .version = hardware.version,
+        .revision = hardware.revision,
+    }) orelse return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none);
+    const space = &hardware.space;
+    for (player.chunks[0..player.chunk_count]) |*chunk| {
+        if (chunk.used != 0) space.rangeToGpu(chunk.block.cpu, chunk.used);
+    }
+    sys.ObtainSemaphore(&queue.device.base.v3d_lock);
+    defer sys.ReleaseSemaphore(&queue.device.base.v3d_lock);
+    if (hardware.stale) {
+        if (!space.flush()) {
+            exec.kprintf(sys, "v3d: its MMU's caches did not empty\n", .{});
+            hardware.broken = true;
+            return;
+        }
+        hardware.stale = false;
+    }
+    const engine = &hardware.engine;
+    const finished = engine.dispatch(&cfg);
+    if (finished == .done) {
+        if (!engine.cleanCaches()) exec.kprintf(sys, "v3d: the TMU's writes did not go out\n", .{});
+    }
+    for (player.storage[0..player.storage_count]) |each| space.rangeFromGpu(each.at, each.bytes);
+    if (player.storage_over) exec.kprintf(sys, "v3d: a dispatch bound more than %lu storage buffers, and the CPU may read the rest stale\n", .{@as(u64, most_storage)});
+    if (finished == .done) return;
+    switch (finished) {
+        .fault => exec.kprintf(sys, "v3d: a dispatch: MMU fault %lx from client %lx at %lx\n", .{ @as(u64, engine.last_fault.status), @as(u64, engine.last_fault.client), engine.last_fault.address }),
+        else => exec.kprintf(sys, "v3d: a dispatch did not finish, %ld core interrupt(s), %ld hub; the CSD's status %lx\n", .{ @as(u64, engine.core_interrupts), @as(u64, engine.hub_interrupts), @as(u64, hardware.gpu.coreRead(regs.CSD_STATUS)) }),
+    }
+    hardware.broken = true;
+}
+
 // --- a draw -----------------------------------------------------------------
 
 /// What takes a vertex function's outputs to the record the programs read.
@@ -1142,7 +1242,8 @@ fn streamOf(queue: *Queue, stream: []const compile.Word, tmus: []const Configura
     const bytes: u32 = @max(4, @as(u32, @intCast(stream.len * 4)));
     const place = carve(queue, bytes, 4) orelse return null;
     const words: [*]u32 = @ptrCast(@alignCast(place.cpu));
-    const pushed = &playerOf(queue).resources.push;
+    const player = playerOf(queue);
+    const pushed = &resourcesOf(player).push;
     for (stream, 0..) |word, k| words[k] = switch (word) {
         .float => |each| @bitCast(each),
         // `Code.sampled` names every unit these do, and the draw found
@@ -1163,8 +1264,12 @@ fn streamOf(queue: *Queue, stream: []const compile.Word, tmus: []const Configura
         // from, which the VPM's vertex id counts from (since 1.192).
         .first_vertex => first_vertex,
         // A compute program's alone, which no draw's stream holds: the
-        // device's dispatches run on the cores (`_compute.dispatch`).
-        .num_work_groups, .work_group_base => 0,
+        // dispatch's groups along the axis, as v3dv writes
+        // QUNIFORM_NUM_WORK_GROUPS (v3dv_uniforms.c:604-606), and the
+        // first, which a dispatch of Vulkan 1.0 has no other of than 0
+        // (QUNIFORM_WORK_GROUP_BASE, :608-610; since 1.195).
+        .num_work_groups => |axis| player.groups[axis],
+        .work_group_base => 0,
         // The pipeline made the buffer where one of its programs needs it
         // (`driver.checkSpillSize`).
         .spill_offset => spill.address,
@@ -1199,7 +1304,7 @@ fn viewportWord(scale: *const ViewportScale, which: compile.Viewport) f32 {
 /// (`shader.SHIFTED_OUT`): the range moves with a dynamic offset, as in
 /// v3dv, and stays as long as the write gave it.
 fn bufferAddress(queue: *Queue, at: compile.UboAddress, out: bool) ?u32 {
-    const resources = &playerOf(queue).resources;
+    const resources = resourcesOf(playerOf(queue));
     const found = resources.slot(at.set, at.binding, 0) orelse return null;
     const bytes: [*]const u8 = @ptrCast(found.pointer orelse return null);
     const shift = resources.shiftOf(at.set, found);
@@ -1218,7 +1323,7 @@ fn bufferAddress(queue: *Queue, at: compile.UboAddress, out: bool) ?u32 {
 /// range, or where the bind shifted that range past its buffer (since
 /// 1.164).
 fn storageAddress(queue: *Queue, at: compile.StorageAddress, out: bool) ?u32 {
-    const resources = &playerOf(queue).resources;
+    const resources = resourcesOf(playerOf(queue));
     const found = resources.slot(at.set, at.binding, 0) orelse return null;
     const bytes: [*]const u8 = @ptrCast(found.pointer orelse return null);
     const shift = resources.shiftOf(at.set, found);
@@ -1230,6 +1335,12 @@ fn storageAddress(queue: *Queue, at: compile.StorageAddress, out: bool) ?u32 {
         keepStorage(player, .{ .at = bytes + shift, .bytes = found.range });
     }
     return address;
+}
+
+/// What a program's uniforms read: what draws bound, or a dispatch's what
+/// compute pipelines did (since 1.195).
+fn resourcesOf(player: *Player) *shader.Resources {
+    return if (player.computing) &player.compute_resources else &player.resources;
 }
 
 /// A storage buffer a draw binds, kept for after the job, once.

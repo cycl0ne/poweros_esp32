@@ -5,7 +5,9 @@
 //! of draw, a piece of a pipeline's state, a render area, a format - in
 //! pictures the program reads back. The cases called "shipped" draw with
 //! fragment shaders whose SPIR-V the module ships beside the functions:
-//! the cores run the functions, and the V3D compiles the words.
+//! the cores run the functions, and the V3D compiles the words. The
+//! shipped compute cases (since 1.59) write a draw's vertices and its
+//! numbers the same way, the V3D through its compute shader dispatcher.
 //!
 //!   FacetBoth SIZE/K,ONLY/K
 //!
@@ -148,7 +150,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.58 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.59 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -495,6 +497,31 @@ fn computeVertices(groups: *const shader.Groups) callconv(.c) void {
         into.p[0] += along[0];
         into.p[1] += along[1];
     }
+}
+
+/// `shipped_vertices`' function, which the cores run and the V3D does not:
+/// three triangles, one a group, their corners and colours multiples of
+/// 1/16, moved along by the push constants (since 1.59).
+fn shippedVertices(groups: *const shader.Groups) callconv(.c) void {
+    const out = groups.resources.storage(Vertex, 0, 0) orelse return;
+    const along = groups.resources.constants([2]f32).*;
+    const triangle = groups.group[0];
+    const t: f32 = @floatFromInt(triangle);
+    for (out[triangle * 3 ..][0..3], 0..) |*into, corner| {
+        const second: f32 = if (corner == 1) 1 else 0;
+        const third: f32 = if (corner == 2) 1 else 0;
+        into.* = .{
+            .p = .{ -0.75 + 0.25 * t + 0.75 * second + 0.375 * third + along[0], -0.625 + 0.25 * t + 1.25 * third + along[1], 0.75 - 0.25 * t, 1 },
+            .c = .{ 0.25 * (t + 1), 0.25 * @as(f32, @floatFromInt(corner + 1)), 0.5, 0.5 },
+            .uv = .{ 0, 0 },
+        };
+    }
+}
+
+/// `shipped_numbers`' function: `computeNumbers`' draws (since 1.59).
+fn shippedNumbers(groups: *const shader.Groups) callconv(.c) void {
+    const out = groups.resources.storage(facet.DrawIndirectCommand, 0, 1) orelse return;
+    out[groups.group[0]] = .{ .vertex_count = 3, .instance_count = 1, .first_vertex = far_at + groups.group[0] * 3, .first_instance = 0 };
 }
 
 /// How many triangles draw, and the first left to the draw after it: the
@@ -2152,6 +2179,9 @@ const shipped_entries = [_]shader.Entry{
     // `asItIsVertex`'s (since 1.58).
     shader.vertex("shipped point size", &asItIsVertex, 4),
     shader.vertex("shipped point one", &asItIsVertex, 4),
+    // A group of three, as the words' local_size_x is (since 1.59).
+    shader.computeGroup("shipped vertices", &shippedVertices, .{ 3, 1, 1 }, 0),
+    shader.compute("shipped numbers", &shippedNumbers),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2175,7 +2205,8 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_constant_signed),      shader.Spirv.of(&shipped_constant_modulus), shader.Spirv.of(&shipped_many_divisions),      shader.Spirv.of(&shipped_many_moduli),
     shader.Spirv.of(&shipped_flat_vertex),          shader.Spirv.of(&shipped_flat_colour),      shader.Spirv.of(&shipped_flat_integer_vertex), shader.Spirv.of(&shipped_flat_integer),
     shader.Spirv.of(&shipped_noperspective_vertex), shader.Spirv.of(&shipped_noperspective),    shader.Spirv.of(&shipped_many_ids),            shader.Spirv.of(&shipped_vertex_index),
-    shader.Spirv.of(&shipped_index_place),          shader.Spirv.of(&shipped_point_size),       shader.Spirv.of(&shipped_point_one),
+    shader.Spirv.of(&shipped_index_place),          shader.Spirv.of(&shipped_point_size),       shader.Spirv.of(&shipped_point_one),           shader.Spirv.of(&shipped_vertices),
+    shader.Spirv.of(&shipped_numbers),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -6313,6 +6344,188 @@ const shipped_point_one = [_]u32{
     0x00010038,
 };
 
+/// glslc's own output, at -O: `shippedVertices`, a triangle a group and a
+/// corner an invocation, which the V3D runs through its compute shader
+/// dispatcher (since 1.59).
+///
+/// ```glsl
+/// #version 450
+/// // FacetBoth's "shipped vertices" (facet 1.195): a triangle a group, a
+/// // corner an invocation, each vertex FacetBoth's Vertex of ten floats (its
+/// // position, its colour, its texture coordinates), moved by the push
+/// // constants. Every value but the push constants' is a multiple of 1/16.
+/// layout(local_size_x = 3) in;
+/// layout(std430, set = 0, binding = 0) buffer Computed { float f[]; } computed;
+/// layout(push_constant) uniform Along { vec2 along; } pushed;
+/// void main() {
+///     uint triangle = gl_WorkGroupID.x;
+///     uint corner = gl_LocalInvocationID.x;
+///     uint at = gl_GlobalInvocationID.x * 10u;
+///     float t = float(triangle);
+///     float second = corner == 1u ? 1.0 : 0.0;
+///     float third = corner == 2u ? 1.0 : 0.0;
+///     computed.f[at + 0u] = -0.75 + 0.25 * t + 0.75 * second + 0.375 * third + pushed.along.x;
+///     computed.f[at + 1u] = -0.625 + 0.25 * t + 1.25 * third + pushed.along.y;
+///     computed.f[at + 2u] = 0.75 - 0.25 * t;
+///     computed.f[at + 3u] = 1.0;
+///     computed.f[at + 4u] = 0.25 * (t + 1.0);
+///     computed.f[at + 5u] = 0.25 * float(corner + 1u);
+///     computed.f[at + 6u] = 0.5;
+///     computed.f[at + 7u] = 0.5;
+///     computed.f[at + 8u] = 0.0;
+///     computed.f[at + 9u] = 0.0;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=comp shipped_vertices.comp -o shipped_vertices.spv   # 540 words
+/// spirv-val --target-env vulkan1.0 shipped_vertices.spv   # no output, and 0
+/// ```
+const shipped_vertices = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000084, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0008000F, 0x00000005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000011, 0x00000015,
+    0x00060010, 0x00000004, 0x00000011, 0x00000003, 0x00000001, 0x00000001,
+    0x00040047, 0x0000000B, 0x0000000B, 0x0000001A, 0x00040047, 0x00000011,
+    0x0000000B, 0x0000001B, 0x00040047, 0x00000015, 0x0000000B, 0x0000001C,
+    0x00040047, 0x0000002C, 0x00000006, 0x00000004, 0x00030047, 0x0000002D,
+    0x00000003, 0x00050048, 0x0000002D, 0x00000000, 0x00000023, 0x00000000,
+    0x00040047, 0x0000002F, 0x00000021, 0x00000000, 0x00040047, 0x0000002F,
+    0x00000022, 0x00000000, 0x00030047, 0x00000042, 0x00000002, 0x00050048,
+    0x00000042, 0x00000000, 0x00000023, 0x00000000, 0x00040047, 0x00000083,
+    0x0000000B, 0x00000019, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00040015, 0x00000006, 0x00000020, 0x00000000, 0x00040017,
+    0x00000009, 0x00000006, 0x00000003, 0x00040020, 0x0000000A, 0x00000001,
+    0x00000009, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001, 0x0004002B,
+    0x00000006, 0x0000000C, 0x00000000, 0x00040020, 0x0000000D, 0x00000001,
+    0x00000006, 0x0004003B, 0x0000000A, 0x00000011, 0x00000001, 0x0004003B,
+    0x0000000A, 0x00000015, 0x00000001, 0x0004002B, 0x00000006, 0x00000018,
+    0x0000000A, 0x00030016, 0x0000001A, 0x00000020, 0x0004002B, 0x00000006,
+    0x00000021, 0x00000001, 0x00020014, 0x00000022, 0x0004002B, 0x0000001A,
+    0x00000024, 0x3F800000, 0x0004002B, 0x0000001A, 0x00000025, 0x00000000,
+    0x0004002B, 0x00000006, 0x00000029, 0x00000002, 0x0003001D, 0x0000002C,
+    0x0000001A, 0x0003001E, 0x0000002D, 0x0000002C, 0x00040020, 0x0000002E,
+    0x00000002, 0x0000002D, 0x0004003B, 0x0000002E, 0x0000002F, 0x00000002,
+    0x00040015, 0x00000030, 0x00000020, 0x00000001, 0x0004002B, 0x00000030,
+    0x00000031, 0x00000000, 0x0004002B, 0x0000001A, 0x00000034, 0xBF400000,
+    0x0004002B, 0x0000001A, 0x00000035, 0x3E800000, 0x0004002B, 0x0000001A,
+    0x00000039, 0x3F400000, 0x0004002B, 0x0000001A, 0x0000003D, 0x3EC00000,
+    0x00040017, 0x00000041, 0x0000001A, 0x00000002, 0x0003001E, 0x00000042,
+    0x00000041, 0x00040020, 0x00000043, 0x00000009, 0x00000042, 0x0004003B,
+    0x00000043, 0x00000044, 0x00000009, 0x00040020, 0x00000045, 0x00000009,
+    0x0000001A, 0x00040020, 0x00000049, 0x00000002, 0x0000001A, 0x0004002B,
+    0x0000001A, 0x0000004D, 0xBF200000, 0x0004002B, 0x0000001A, 0x00000051,
+    0x3FA00000, 0x0004002B, 0x00000006, 0x00000060, 0x00000003, 0x0004002B,
+    0x00000006, 0x00000064, 0x00000004, 0x0004002B, 0x00000006, 0x0000006B,
+    0x00000005, 0x0004002B, 0x00000006, 0x00000073, 0x00000006, 0x0004002B,
+    0x0000001A, 0x00000075, 0x3F000000, 0x0004002B, 0x00000006, 0x00000078,
+    0x00000007, 0x0004002B, 0x00000006, 0x0000007C, 0x00000008, 0x0004002B,
+    0x00000006, 0x00000080, 0x00000009, 0x0006002C, 0x00000009, 0x00000083,
+    0x00000060, 0x00000021, 0x00000021, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x00050041, 0x0000000D,
+    0x0000000E, 0x0000000B, 0x0000000C, 0x0004003D, 0x00000006, 0x0000000F,
+    0x0000000E, 0x00050041, 0x0000000D, 0x00000012, 0x00000011, 0x0000000C,
+    0x0004003D, 0x00000006, 0x00000013, 0x00000012, 0x00050041, 0x0000000D,
+    0x00000016, 0x00000015, 0x0000000C, 0x0004003D, 0x00000006, 0x00000017,
+    0x00000016, 0x00050084, 0x00000006, 0x00000019, 0x00000017, 0x00000018,
+    0x00040070, 0x0000001A, 0x0000001E, 0x0000000F, 0x000500AA, 0x00000022,
+    0x00000023, 0x00000013, 0x00000021, 0x000500AA, 0x00000022, 0x0000002A,
+    0x00000013, 0x00000029, 0x00050085, 0x0000001A, 0x00000037, 0x00000035,
+    0x0000001E, 0x00050081, 0x0000001A, 0x00000038, 0x00000034, 0x00000037,
+    0x000600A9, 0x0000001A, 0x0000003B, 0x00000023, 0x00000039, 0x00000025,
+    0x00050081, 0x0000001A, 0x0000003C, 0x00000038, 0x0000003B, 0x000600A9,
+    0x0000001A, 0x0000003F, 0x0000002A, 0x0000003D, 0x00000025, 0x00050081,
+    0x0000001A, 0x00000040, 0x0000003C, 0x0000003F, 0x00060041, 0x00000045,
+    0x00000046, 0x00000044, 0x00000031, 0x0000000C, 0x0004003D, 0x0000001A,
+    0x00000047, 0x00000046, 0x00050081, 0x0000001A, 0x00000048, 0x00000040,
+    0x00000047, 0x00060041, 0x00000049, 0x0000004A, 0x0000002F, 0x00000031,
+    0x00000019, 0x0003003E, 0x0000004A, 0x00000048, 0x00050080, 0x00000006,
+    0x0000004C, 0x00000019, 0x00000021, 0x00050081, 0x0000001A, 0x00000050,
+    0x0000004D, 0x00000037, 0x000600A9, 0x0000001A, 0x00000053, 0x0000002A,
+    0x00000051, 0x00000025, 0x00050081, 0x0000001A, 0x00000054, 0x00000050,
+    0x00000053, 0x00060041, 0x00000045, 0x00000055, 0x00000044, 0x00000031,
+    0x00000021, 0x0004003D, 0x0000001A, 0x00000056, 0x00000055, 0x00050081,
+    0x0000001A, 0x00000057, 0x00000054, 0x00000056, 0x00060041, 0x00000049,
+    0x00000058, 0x0000002F, 0x00000031, 0x0000004C, 0x0003003E, 0x00000058,
+    0x00000057, 0x00050080, 0x00000006, 0x0000005A, 0x00000019, 0x00000029,
+    0x00050083, 0x0000001A, 0x0000005D, 0x00000039, 0x00000037, 0x00060041,
+    0x00000049, 0x0000005E, 0x0000002F, 0x00000031, 0x0000005A, 0x0003003E,
+    0x0000005E, 0x0000005D, 0x00050080, 0x00000006, 0x00000061, 0x00000019,
+    0x00000060, 0x00060041, 0x00000049, 0x00000062, 0x0000002F, 0x00000031,
+    0x00000061, 0x0003003E, 0x00000062, 0x00000024, 0x00050080, 0x00000006,
+    0x00000065, 0x00000019, 0x00000064, 0x00050081, 0x0000001A, 0x00000067,
+    0x0000001E, 0x00000024, 0x00050085, 0x0000001A, 0x00000068, 0x00000035,
+    0x00000067, 0x00060041, 0x00000049, 0x00000069, 0x0000002F, 0x00000031,
+    0x00000065, 0x0003003E, 0x00000069, 0x00000068, 0x00050080, 0x00000006,
+    0x0000006C, 0x00000019, 0x0000006B, 0x00050080, 0x00000006, 0x0000006E,
+    0x00000013, 0x00000021, 0x00040070, 0x0000001A, 0x0000006F, 0x0000006E,
+    0x00050085, 0x0000001A, 0x00000070, 0x00000035, 0x0000006F, 0x00060041,
+    0x00000049, 0x00000071, 0x0000002F, 0x00000031, 0x0000006C, 0x0003003E,
+    0x00000071, 0x00000070, 0x00050080, 0x00000006, 0x00000074, 0x00000019,
+    0x00000073, 0x00060041, 0x00000049, 0x00000076, 0x0000002F, 0x00000031,
+    0x00000074, 0x0003003E, 0x00000076, 0x00000075, 0x00050080, 0x00000006,
+    0x00000079, 0x00000019, 0x00000078, 0x00060041, 0x00000049, 0x0000007A,
+    0x0000002F, 0x00000031, 0x00000079, 0x0003003E, 0x0000007A, 0x00000075,
+    0x00050080, 0x00000006, 0x0000007D, 0x00000019, 0x0000007C, 0x00060041,
+    0x00000049, 0x0000007E, 0x0000002F, 0x00000031, 0x0000007D, 0x0003003E,
+    0x0000007E, 0x00000025, 0x00050080, 0x00000006, 0x00000081, 0x00000019,
+    0x00000080, 0x00060041, 0x00000049, 0x00000082, 0x0000002F, 0x00000031,
+    0x00000081, 0x0003003E, 0x00000082, 0x00000025, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O: `shippedNumbers`, a draw's numbers a group
+/// (since 1.59).
+///
+/// ```glsl
+/// #version 450
+/// // FacetBoth's "shipped numbers" (facet 1.195): computeNumbers' draw a
+/// // group, three vertices from 16 on, three a group: a DrawIndirectCommand.
+/// layout(local_size_x = 1) in;
+/// layout(std430, set = 0, binding = 1) buffer Numbers { uvec4 draws[]; } numbers;
+/// void main() {
+///     uint g = gl_WorkGroupID.x;
+///     numbers.draws[g] = uvec4(3u, 1u, 16u + g * 3u, 0u);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=comp shipped_numbers.comp -o shipped_numbers.spv   # 177 words
+/// spirv-val --target-env vulkan1.0 shipped_numbers.spv   # no output, and 0
+/// ```
+const shipped_numbers = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000022, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0006000F, 0x00000005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00060010, 0x00000004,
+    0x00000011, 0x00000001, 0x00000001, 0x00000001, 0x00040047, 0x0000000B,
+    0x0000000B, 0x0000001A, 0x00040047, 0x00000011, 0x00000006, 0x00000010,
+    0x00030047, 0x00000012, 0x00000003, 0x00050048, 0x00000012, 0x00000000,
+    0x00000023, 0x00000000, 0x00040047, 0x00000014, 0x00000021, 0x00000001,
+    0x00040047, 0x00000014, 0x00000022, 0x00000000, 0x00040047, 0x00000021,
+    0x0000000B, 0x00000019, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00040015, 0x00000006, 0x00000020, 0x00000000, 0x00040017,
+    0x00000009, 0x00000006, 0x00000003, 0x00040020, 0x0000000A, 0x00000001,
+    0x00000009, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001, 0x0004002B,
+    0x00000006, 0x0000000C, 0x00000000, 0x00040020, 0x0000000D, 0x00000001,
+    0x00000006, 0x00040017, 0x00000010, 0x00000006, 0x00000004, 0x0003001D,
+    0x00000011, 0x00000010, 0x0003001E, 0x00000012, 0x00000011, 0x00040020,
+    0x00000013, 0x00000002, 0x00000012, 0x0004003B, 0x00000013, 0x00000014,
+    0x00000002, 0x00040015, 0x00000015, 0x00000020, 0x00000001, 0x0004002B,
+    0x00000015, 0x00000016, 0x00000000, 0x0004002B, 0x00000006, 0x00000018,
+    0x00000003, 0x0004002B, 0x00000006, 0x00000019, 0x00000001, 0x0004002B,
+    0x00000006, 0x0000001A, 0x00000010, 0x00040020, 0x0000001F, 0x00000002,
+    0x00000010, 0x0006002C, 0x00000009, 0x00000021, 0x00000019, 0x00000019,
+    0x00000019, 0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003,
+    0x000200F8, 0x00000005, 0x00050041, 0x0000000D, 0x0000000E, 0x0000000B,
+    0x0000000C, 0x0004003D, 0x00000006, 0x0000000F, 0x0000000E, 0x00050084,
+    0x00000006, 0x0000001C, 0x0000000F, 0x00000018, 0x00050080, 0x00000006,
+    0x0000001D, 0x0000001A, 0x0000001C, 0x00070050, 0x00000010, 0x0000001E,
+    0x00000018, 0x00000019, 0x0000001D, 0x0000000C, 0x00060041, 0x0000001F,
+    0x00000020, 0x00000014, 0x00000016, 0x0000000F, 0x0003003E, 0x00000020,
+    0x0000001E, 0x000100FD, 0x00010038,
+};
+
 const shipped_noperspective = [_]u32{
     0x07230203, 0x00010000, 0x000D000B, 0x0000000D, 0x00000000, 0x00020011,
     0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
@@ -7197,7 +7410,8 @@ const Side = struct {
     counters_bytes: [*]u8 = undefined,
     counters_set: ?*facet.DescriptorSet = null,
     compute_layout: ?*facet.PipelineLayout = null,
-    compute_pipelines: [2]?*facet.Pipeline = @splat(null),
+    /// The cores' functions, then the shipped ones' (since 1.59).
+    compute_pipelines: [4]?*facet.Pipeline = @splat(null),
     /// The pipelines of the case being drawn.
     made: [8]?*facet.Pipeline = @splat(null),
     made_count: u32 = 0,
@@ -7341,11 +7555,13 @@ const Side = struct {
         fb.UpdateDescriptorSets(device, 2, &buffer_writes, 0, null);
         const compute_push = facet.PushConstantRange{ .stage_flags = facet.SHADER_STAGE_COMPUTE, .size = 8 };
         try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&side.compute_set_layout), .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&compute_push) }, &side.compute_layout), error.Refused);
-        const compute_infos = [2]facet.ComputePipelineCreateInfo{
+        const compute_infos = [4]facet.ComputePipelineCreateInfo{
             .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "vertices" }, .layout = side.compute_layout.? },
             .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "numbers" }, .layout = side.compute_layout.? },
+            .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "shipped vertices" }, .layout = side.compute_layout.? },
+            .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "shipped numbers" }, .layout = side.compute_layout.? },
         };
-        try expect(fb.CreateComputePipelines(device, null, 2, &compute_infos, &side.compute_pipelines), error.Refused);
+        try expect(fb.CreateComputePipelines(device, null, compute_infos.len, &compute_infos, &side.compute_pipelines), error.Refused);
         try expect(fb.CreateFence(device, &.{}, &side.fence), error.Refused);
         try side.upUniforms();
         try side.stageTextures();
@@ -8469,6 +8685,33 @@ const Cases = struct {
         side.fb.CmdDrawIndirect(side.commands.?, side.numbers.?, 0, 3, @sizeOf(facet.DrawIndirectCommand));
         side.end();
     }
+    /// The triangles written by groups of a compute shader whose SPIR-V
+    /// the module ships: on the V3D its own program, through the compute
+    /// shader dispatcher, three invocations a group, moved along by
+    /// multiples of 1/32 (since 1.59).
+    fn shippedVertices(side: *Side) Failure!void {
+        side.compute(2, .{ 0.0625, -0.09375 });
+        side.fb.CmdDispatch(side.commands.?, 3, 1, 1);
+        side.begin(.{});
+        try side.use(.{ .blend = true });
+        side.drawComputed();
+        side.draw(0, 9);
+        side.end();
+    }
+    /// A draw's numbers written so, how many groups read from a buffer:
+    /// what the case before left there cleared first, so a dispatch that
+    /// wrote nothing draws nothing (since 1.59).
+    fn shippedNumbers(side: *Side) Failure!void {
+        @memset(side.number_bytes[0 .. 3 * @sizeOf(facet.DrawIndirectCommand)], 0);
+        const dispatch = facet.DispatchIndirectCommand{ .x = 3, .y = 1, .z = 1 };
+        side.number_bytes[200..][0..@sizeOf(@TypeOf(dispatch))].* = std.mem.toBytes(dispatch);
+        side.compute(3, .{ 0, 0 });
+        side.fb.CmdDispatchIndirect(side.commands.?, side.numbers.?, 200);
+        side.begin(.{});
+        try side.use(.{ .blend = true });
+        side.fb.CmdDrawIndirect(side.commands.?, side.numbers.?, 0, 3, @sizeOf(facet.DrawIndirectCommand));
+        side.end();
+    }
     fn tessellated(comptime options: Options, comptime first: u32, comptime count: u32) *const fn (side: *Side) Failure!void {
         return &struct {
             fn run(side: *Side) Failure!void {
@@ -9428,6 +9671,8 @@ const cases = [_]Case{
     .{ .name = "secondary: with its own passes", .run = &Cases.wholeSecondary },
     .{ .name = "compute: writes vertices", .run = &Cases.computedVertices },
     .{ .name = "compute: writes a draw's numbers", .run = &Cases.computedNumbers },
+    .{ .name = "shipped compute: writes vertices", .run = &Cases.shippedVertices },
+    .{ .name = "shipped compute: writes a draw's numbers", .run = &Cases.shippedNumbers },
     .{ .name = "patches: triangles, even", .run = Cases.tessellated(.{ .patch_points = 3 }, 0, 3) },
     .{ .name = "patches: triangles, uneven", .run = Cases.tessellated(.{ .patch_points = 3, .control = "uneven" }, 0, 6) },
     .{ .name = "patches: triangles, edges", .run = Cases.tessellated(.{ .patch_points = 3, .control = "uneven", .polygon_mode = .line }, 0, 3) },

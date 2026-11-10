@@ -108,6 +108,16 @@ pub const CLE_CT1QEA: usize = 0x0016c;
 pub const CLE_CT0QMA: usize = 0x00170;
 pub const CLE_CT0QMS: usize = 0x00174;
 
+/// The compute shader dispatcher's queued dispatch on 7.1: six words of
+/// its configuration, a seventh it leaves unused, and the first, whose
+/// write starts it (V3D_CSD_QUEUED_CFG0..6 and V3D_V7_CSD_QUEUED_CFG7,
+/// v3d_regs.h:415-454; since 1.195).
+pub const CSD_QUEUED_CFG0: usize = 0x00930;
+pub const CSD_QUEUED_CFG7: usize = 0x0094c;
+/// 11:4 dispatches completed; 3:2 active; 1 a current one; 0 a queued one
+/// (V3D_CSD_STATUS, :407-413).
+pub const CSD_STATUS: usize = 0x00900;
+
 /// The binner's memory: the address and the bytes it has, and the overflow
 /// it is given as it runs out.
 pub const PTB_BPCA: usize = 0x00300;

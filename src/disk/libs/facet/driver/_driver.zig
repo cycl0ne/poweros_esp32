@@ -96,7 +96,11 @@ pub const Ops = extern struct {
     allocate_memory: *const fn (device: *Device, memory: *DeviceMemory) callconv(.c) facet.Result,
     free_memory: *const fn (device: *Device, memory: *DeviceMemory) callconv(.c) void,
     /// A pipeline the library has checked put in the device's terms, kept
-    /// in its `driver`; or the error CreateGraphicsPipelines answers with.
+    /// in its `driver`; or the error CreateGraphicsPipelines or
+    /// CreateComputePipelines answers with. A compute pipeline's too
+    /// (`Pipeline.compute`), whose `driver` may be left null (since
+    /// 1.195). `unmake_pipeline` is called for each, a null `driver` as
+    /// well.
     make_pipeline: *const fn (pipeline: *Pipeline) callconv(.c) facet.Result,
     unmake_pipeline: *const fn (pipeline: *Pipeline) callconv(.c) void,
     /// What the driver keeps for a queue made, in its `driver`: false when
