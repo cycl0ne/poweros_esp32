@@ -791,11 +791,15 @@ pub const Integer = enum(u32) {
     /// a bcsel of the two (:2080-2083), which v3d emits as the AND of the
     /// bool's ~0 or 0 and 1.0 (nir_to_vir.c:1521-1523; since 1.178).
     b2f32,
+    /// A bool made an integer, 1 or 0: nir_opt_idiv_const's nir_b2iN
+    /// (nir_opt_idiv_const.c:37-39, :75), the AND of the bool's ~0 or 0
+    /// and 1 (nir_to_vir.c:1524-1528; since 1.188).
+    b2i32,
 
     /// Whether it reads one value, not two.
     pub fn unary(op: Integer) bool {
         return switch (op) {
-            .ineg, .iabs, .inot, .f2i32, .f2u32, .i2f32, .u2f32, .b2f32 => true,
+            .ineg, .iabs, .inot, .f2i32, .f2u32, .i2f32, .u2f32, .b2f32, .b2i32 => true,
             else => false,
         };
     }
@@ -7394,9 +7398,10 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             // udiv, idiv, umod, irem and imod (vtn_alu.c:304-310), each
             // float an instruction of its own once nir_lower_alu_to_scalar
             // has run (v3dv_pipeline.c:404), which nir_lower_idiv lowers
-            // (vir.c:2019-2022; `dividedOf`). A divisor that is a constant
-            // is nir_opt_idiv_const's first (vir.c:2018), which is not
-            // ported: refused (since 1.187).
+            // (vir.c:2019-2022; `dividedOf`; since 1.187). A float whose
+            // divisor is a constant is nir_opt_algebraic's and
+            // nir_opt_idiv_const's first (`constantDividedOf`; since
+            // 1.188).
             if (operands.len != 4) return Error.Body;
             const type_id = try idOf(operands[0]);
             if (!isIntegerType(work, type_id)) return Error.Type;
@@ -7411,13 +7416,17 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 .s_rem => .irem,
                 else => .imod,
             };
-            for (0..kind.parts()) |k| {
-                if (floatBits(work, partOf(work, b, @intCast(k))) != null) return Error.Body;
-            }
-            const words = try DivisionWords.of(work, op);
+            var words: ?DivisionWords = null;
             var made = Step{ .tag = .construct, .kind = kind };
             for (0..kind.parts()) |k| {
-                made.from[k] = try dividedOf(work, op, try floatStep(work, partOf(work, a, @intCast(k))), try floatStep(work, partOf(work, b, @intCast(k))), words);
+                const numer = try floatStep(work, partOf(work, a, @intCast(k)));
+                const divisor = partOf(work, b, @intCast(k));
+                if (floatBits(work, divisor)) |d| {
+                    made.from[k] = try constantDividedOf(work, op, numer, d);
+                    continue;
+                }
+                if (words == null) words = try DivisionWords.of(work, op);
+                made.from[k] = try dividedOf(work, op, numer, try floatStep(work, divisor), words.?);
             }
             work.step_of[id] = if (kind == .f32x1) made.from[0] else try put(work, made);
         },
@@ -8472,9 +8481,9 @@ fn unsignedDivided(work: *Work, numer: u16, denom: u16, modulo: bool, words: Div
     var rcp = try unary(work, .recip, try integerOf(work, .u2f32, denom, null));
     rcp = try integerOf(work, .f2u32, try binary(work, .mul, rcp, words.scale), null);
     const neg_rcp_times_denom = try integerOf(work, .imul, rcp, try integerOf(work, .ineg, denom, null));
-    rcp = try integerOf(work, .iadd, rcp, try mulHigh(work, rcp, neg_rcp_times_denom, words));
+    rcp = try integerOf(work, .iadd, rcp, try mulHigh(work, rcp, neg_rcp_times_denom, false, words.shift, words.mask));
     // An estimate of the quotient and the remainder, then two steps.
-    var quotient = try mulHigh(work, numer, rcp, words);
+    var quotient = try mulHigh(work, numer, rcp, false, words.shift, words.mask);
     const num_s_remainder = try integerOf(work, .imul, quotient, denom);
     var remainder = try integerOf(work, .isub, numer, num_s_remainder);
     var remainder_ge_den = try put(work, compareOf(.uint_greater_equal, remainder, denom));
@@ -8485,27 +8494,306 @@ fn unsignedDivided(work: *Work, numer: u16, denom: u16, modulo: bool, words: Div
     return put(work, selectOf(remainder_ge_den, try integerOf(work, .iadd, quotient, words.one), quotient));
 }
 
-/// The umul_high nir_lower_alu makes four 16-bit products of, v3d asking
-/// it to (`lower_mul_high`, v3dv_pipeline.c:201): Hacker's Delight's
-/// Figure 8-2 of the two words' halves (nir_lower_alu.c:119-158), the
-/// unsigned one's shifts each a ushr.
-fn mulHigh(work: *Work, src0: u16, src1: u16, words: DivisionWords) Error!u16 {
-    const cshift = words.shift;
-    const cmask = words.mask;
+/// The umul_high or imul_high nir_lower_alu makes four 16-bit products
+/// of, v3d asking it to (`lower_mul_high`, v3dv_pipeline.c:201):
+/// Hacker's Delight's Figure 8-2 of the two words' halves
+/// (nir_lower_alu.c:119-158), `signed` one's shifts of a high half an
+/// ishr, the unsigned one's a ushr (since 1.187; signed since 1.188).
+fn mulHigh(work: *Work, src0: u16, src1: u16, signed: bool, cshift: u16, cmask: u16) Error!u16 {
+    const shr: Integer = if (signed) .ishr else .ushr;
     const src0l = try integerOf(work, .iand, src0, cmask);
     const src1l = try integerOf(work, .iand, src1, cmask);
-    const src0h = try integerOf(work, .ushr, src0, cshift);
-    const src1h = try integerOf(work, .ushr, src1, cshift);
+    const src0h = try integerOf(work, shr, src0, cshift);
+    const src1h = try integerOf(work, shr, src1, cshift);
     const lo = try integerOf(work, .imul, src0l, src1l);
     const m1 = try integerOf(work, .imul, src0l, src1h);
     const m2 = try integerOf(work, .imul, src0h, src1l);
     var hi = try integerOf(work, .imul, src0h, src1h);
     const t = try integerOf(work, .iadd, m2, try integerOf(work, .ushr, lo, cshift));
     var w1 = try integerOf(work, .iand, t, cmask);
-    const w2 = try integerOf(work, .ushr, t, cshift);
+    const w2 = try integerOf(work, shr, t, cshift);
     w1 = try integerOf(work, .iadd, m1, w1);
-    hi = try integerOf(work, .iadd, hi, try integerOf(work, .iadd, try integerOf(work, .ushr, w1, cshift), w2));
+    hi = try integerOf(work, .iadd, hi, try integerOf(work, .iadd, try integerOf(work, shr, w1, cshift), w2));
     return hi;
+}
+
+/// A high word of a product with a constant, its 16 and 0xFFFF made
+/// for it as nir_lower_alu makes them (nir_lower_alu.c:134-135; since
+/// 1.188).
+fn constantMulHigh(work: *Work, n: u16, multiplier: u32, signed: bool) Error!u16 {
+    const cshift = try wordConstant(work, 16);
+    const cmask = try wordConstant(work, 0xFFFF);
+    return mulHigh(work, n, try wordConstant(work, multiplier), signed, cshift, cmask);
+}
+
+/// A bool step of `which` of two integers.
+fn comparisonStep(work: *Work, which: Comparison, a: u16, b: u16) Error!u16 {
+    return put(work, compareOf(which, a, b));
+}
+
+/// A bcsel of two integers.
+fn selectStep(work: *Work, condition: u16, yes: u16, no: u16) Error!u16 {
+    return put(work, selectOf(condition, yes, no));
+}
+
+/// A division or remainder of a float by a constant word. v3dv's
+/// preprocess_nir runs nir_opt_algebraic (v3dv_pipeline.c:413, :443)
+/// before v3d's nir_opt_idiv_const (vir.c:2018): a divisor of 1, -1 or
+/// a power of two is the algebraic rules' (`algebraicDivided`), the rest
+/// nir_opt_idiv_const's (nir_opt_idiv_const.c:155-221), the divisor a
+/// word of the unsigned operations, sign-extended of the signed
+/// (:183-194; since 1.188).
+fn constantDividedOf(work: *Work, op: Division, n: u16, d: u32) Error!u16 {
+    if (try algebraicDivided(work, op, n, d)) |made| return made;
+    return switch (op) {
+        .udiv => udivByConstant(work, n, d),
+        .umod => umodByConstant(work, n, d),
+        .idiv => idivByConstant(work, n, @bitCast(d)),
+        .irem => iremByConstant(work, n, @bitCast(d)),
+        .imod => imodByConstant(work, n, @bitCast(d)),
+    };
+}
+
+/// nir_opt_algebraic's rules of a division or remainder by a constant
+/// (nir_opt_algebraic.py:200-217), v3d leaving `lower_bitops` unset:
+/// by 1 the dividend or 0, an imod or irem by -1 0, and by a power of
+/// two a shift or a mask. is_pos_power_of_two is of the word for udiv
+/// and umod and of a positive integer for the others, and
+/// is_neg_power_of_two of a negative one but the most negative
+/// (nir_search_helpers.h:39-93). find_lsb of the constant folds; the
+/// isign of idiv's is lowered (`lower_isign`, v3dv_pipeline.c:200;
+/// nir_opt_algebraic.py:2836): imin(imax(a, -1), 1). Null for another
+/// divisor (since 1.188).
+fn algebraicDivided(work: *Work, op: Division, n: u16, d: u32) Error!?u16 {
+    const signed: i32 = @bitCast(d);
+    if (d == 1) return switch (op) {
+        .udiv, .idiv => n,
+        else => try wordConstant(work, 0),
+    };
+    if (signed == -1 and (op == .imod or op == .irem)) return try wordConstant(work, 0);
+    const word_power = d != 0 and d & (d - 1) == 0;
+    const positive_power = signed > 0 and word_power;
+    const negative_power = signed < 0 and signed != std.math.minInt(i32) and std.math.isPowerOfTwo(@abs(signed));
+    const magnitude: u32 = @abs(signed);
+    switch (op) {
+        .udiv => if (word_power) return try integerOf(work, .ushr, n, try wordConstant(work, @ctz(d))),
+        .umod => if (word_power) return try integerOf(work, .iand, n, try wordConstant(work, d - 1)),
+        .idiv => if (positive_power or negative_power) {
+            const sign = try integerOf(work, .imin, try integerOf(work, .imax, n, try wordConstant(work, 0xFFFF_FFFF)), try wordConstant(work, 1));
+            const quotient = try integerOf(work, .imul, sign, try integerOf(work, .ushr, try integerOf(work, .iabs, n, null), try wordConstant(work, @ctz(magnitude))));
+            return if (negative_power) try integerOf(work, .ineg, quotient, null) else quotient;
+        },
+        .imod => {
+            if (positive_power) return try integerOf(work, .iand, n, try wordConstant(work, d - 1));
+            if (negative_power) {
+                const b = try wordConstant(work, d);
+                const either = try integerOf(work, .ior, n, b);
+                return try selectStep(work, try comparisonStep(work, .int_equal, either, b), try wordConstant(work, 0), either);
+            }
+        },
+        // irem(a, b) = a - ((a < 0 ? (a + b - 1) : a) & -b), of a
+        // negative power of two that of its iabs (:213-217).
+        .irem => if (positive_power or negative_power) {
+            const negative = try comparisonStep(work, .int_less, n, try wordConstant(work, 0));
+            const rounded = try selectStep(work, negative, try integerOf(work, .iadd, n, try wordConstant(work, magnitude - 1)), n);
+            return try integerOf(work, .isub, n, try integerOf(work, .iand, rounded, try wordConstant(work, 0 -% magnitude)));
+        },
+    }
+    return null;
+}
+
+/// build_udiv (nir_opt_idiv_const.c:29-56): by 0 a 0; by the largest
+/// word whether the dividend is it, by one above the largest integer
+/// whether it is as large, by a power of two a ushr; else Hacker's
+/// Delight's multiply of `fastUdivInfo`, a uadd_sat as v3d lowers it
+/// (`lower_uadd_sat`, v3dv_pipeline.c:165; nir_opt_algebraic.py:2539):
+/// the sum, or ~0 where it is less than the dividend (since 1.188).
+fn udivByConstant(work: *Work, n: u16, d: u32) Error!u16 {
+    if (d == 0) return wordConstant(work, 0);
+    if (d == 0xFFFF_FFFF) return integerOf(work, .b2i32, try comparisonStep(work, .int_equal, n, try wordConstant(work, d)), null);
+    if (d > 0x7FFF_FFFF) return integerOf(work, .b2i32, try comparisonStep(work, .uint_greater_equal, n, try wordConstant(work, d)), null);
+    if (d & (d - 1) == 0) return integerOf(work, .ushr, n, try wordConstant(work, @ctz(d)));
+    const m = fastUdivInfo(d, 32, 32);
+    var q = n;
+    if (m.pre_shift != 0) q = try integerOf(work, .ushr, q, try wordConstant(work, m.pre_shift));
+    if (m.increment != 0) {
+        const sum = try integerOf(work, .iadd, q, try wordConstant(work, m.increment));
+        q = try selectStep(work, try comparisonStep(work, .uint_less, sum, q), try wordConstant(work, 0xFFFF_FFFF), sum);
+    }
+    q = try constantMulHigh(work, q, @truncate(m.multiplier), false);
+    if (m.post_shift != 0) q = try integerOf(work, .ushr, q, try wordConstant(work, m.post_shift));
+    return q;
+}
+
+/// build_umod (nir_opt_idiv_const.c:58-68): by 0 a 0, by a power of two
+/// a mask, else the dividend less the quotient times the divisor (since
+/// 1.188).
+fn umodByConstant(work: *Work, n: u16, d: u32) Error!u16 {
+    if (d == 0) return wordConstant(work, 0);
+    if (d & (d - 1) == 0) return integerOf(work, .iand, n, try wordConstant(work, d - 1));
+    return integerOf(work, .isub, n, try integerOf(work, .imul, try udivByConstant(work, n, d), try wordConstant(work, d)));
+}
+
+/// build_idiv (nir_opt_idiv_const.c:70-106): by the most negative
+/// whether the dividend is it; by 0 a 0, by 1 the dividend, by -1 its
+/// ineg; by a power of two's size the shifted magnitude, negated where
+/// the signs differ; else the imul_high of `fastSdivInfo`'s multiplier,
+/// the dividend added or taken off where the two signs differ, the
+/// shift, and 1 more where it is negative (since 1.188).
+fn idivByConstant(work: *Work, n: u16, d: i32) Error!u16 {
+    if (d == std.math.minInt(i32)) return integerOf(work, .b2i32, try comparisonStep(work, .int_equal, n, try wordConstant(work, @bitCast(d))), null);
+    if (d == 0) return wordConstant(work, 0);
+    if (d == 1) return n;
+    if (d == -1) return integerOf(work, .ineg, n, null);
+    const abs_d: u32 = @abs(d);
+    if (abs_d & (abs_d - 1) == 0) {
+        const uq = try integerOf(work, .ushr, try integerOf(work, .iabs, n, null), try wordConstant(work, @ctz(abs_d)));
+        const n_neg = try comparisonStep(work, .int_less, n, try wordConstant(work, 0));
+        const neg = if (d < 0) try put(work, logicOf(.inot, n_neg, 0)) else n_neg;
+        return selectStep(work, neg, try integerOf(work, .ineg, uq, null), uq);
+    }
+    const m = fastSdivInfo(d, 32);
+    var res = try constantMulHigh(work, n, @truncate(@as(u64, @bitCast(m.multiplier))), true);
+    if (d > 0 and m.multiplier < 0) res = try integerOf(work, .iadd, res, n);
+    if (d < 0 and m.multiplier > 0) res = try integerOf(work, .isub, res, n);
+    if (m.shift != 0) res = try integerOf(work, .ishr, res, try wordConstant(work, m.shift));
+    return integerOf(work, .iadd, res, try integerOf(work, .ushr, res, try wordConstant(work, 31)));
+}
+
+/// build_irem (nir_opt_idiv_const.c:108-126): by 0 a 0; by the most
+/// negative the dividend, or 0 where it is it; else of the divisor's
+/// size, by a power of two the algebraic rule's mask, by another the
+/// dividend less the quotient times it (since 1.188).
+fn iremByConstant(work: *Work, n: u16, d: i32) Error!u16 {
+    if (d == 0) return wordConstant(work, 0);
+    if (d == std.math.minInt(i32)) return selectStep(work, try comparisonStep(work, .int_equal, n, try wordConstant(work, @bitCast(d))), try wordConstant(work, 0), n);
+    const abs_d: u32 = @abs(d);
+    if (abs_d & (abs_d - 1) == 0) {
+        const rounded = try selectStep(work, try comparisonStep(work, .int_less, n, try wordConstant(work, 0)), try integerOf(work, .iadd, n, try wordConstant(work, abs_d - 1)), n);
+        return integerOf(work, .isub, n, try integerOf(work, .iand, rounded, try wordConstant(work, 0 -% abs_d)));
+    }
+    return integerOf(work, .isub, n, try integerOf(work, .imul, try idivByConstant(work, n, @intCast(abs_d)), try wordConstant(work, abs_d)));
+}
+
+/// build_imod (nir_opt_idiv_const.c:128-152): by 0 a 0; by the most
+/// negative the dividend where it is negative but not it or is 0, else
+/// it plus the most negative; by a power of two the algebraic rules'
+/// mask or bcsel; else the irem, with the divisor added where it is not
+/// 0 and the dividend's sign is not the divisor's (since 1.188).
+fn imodByConstant(work: *Work, n: u16, d: i32) Error!u16 {
+    if (d == 0) return wordConstant(work, 0);
+    if (d == std.math.minInt(i32)) {
+        const int_min = try wordConstant(work, @bitCast(d));
+        const is_neg_not_int_min = try comparisonStep(work, .uint_less, int_min, n);
+        const is_zero = try comparisonStep(work, .int_equal, n, try wordConstant(work, 0));
+        return selectStep(work, try put(work, logicOf(.ior, is_neg_not_int_min, is_zero)), n, try integerOf(work, .iadd, int_min, n));
+    }
+    if (d > 0 and std.math.isPowerOfTwo(@as(u32, @intCast(d)))) return integerOf(work, .iand, n, try wordConstant(work, @as(u32, @intCast(d)) - 1));
+    if (d < 0 and std.math.isPowerOfTwo(@abs(d))) {
+        const d_def = try wordConstant(work, @bitCast(d));
+        const res = try integerOf(work, .ior, n, d_def);
+        return selectStep(work, try comparisonStep(work, .int_equal, res, d_def), try wordConstant(work, 0), res);
+    }
+    const rem = try iremByConstant(work, n, d);
+    const zero = try wordConstant(work, 0);
+    const sign_same = if (d < 0) try comparisonStep(work, .int_less, n, zero) else try comparisonStep(work, .int_greater_equal, n, zero);
+    const rem_zero = try comparisonStep(work, .int_equal, rem, zero);
+    return selectStep(work, try put(work, logicOf(.ior, rem_zero, sign_same)), rem, try integerOf(work, .iadd, rem, try wordConstant(work, @bitCast(d))));
+}
+
+/// util_fast_udiv_info: the multiplier, the shifts before and after it
+/// and the increment of an unsigned division by a constant.
+const FastUdivInfo = struct { multiplier: u64, pre_shift: u32, post_shift: u32, increment: u32 };
+
+/// util_compute_fast_udiv_info (util/fast_idiv_by_const.c:46-170):
+/// Hacker's Delight's round-up multiplier of the first power of two that
+/// works, or of an odd divisor the round-down one and an increment, or
+/// of an even one that of its odd part after a shift (since 1.188).
+fn fastUdivInfo(d: u64, num_bits: u32, uint_bits: u32) FastUdivInfo {
+    if (d & (d -% 1) == 0) {
+        const div_shift: u32 = 63 - @clz(d);
+        if (div_shift != 0) return .{ .multiplier = @as(u64, 1) << @intCast(uint_bits - div_shift), .pre_shift = 0, .post_shift = 0, .increment = 0 };
+        return .{ .multiplier = @as(u64, std.math.maxInt(u64)) >> @intCast(64 - uint_bits), .pre_shift = 0, .post_shift = 0, .increment = 1 };
+    }
+    const extra_shift = uint_bits - num_bits;
+    const initial_power_of_2 = @as(u64, 1) << @intCast(uint_bits - 1);
+    var quotient = initial_power_of_2 / d;
+    var remainder = initial_power_of_2 % d;
+    var ceil_log_2_d: u32 = 0;
+    var tmp = d;
+    while (tmp > 0) : (tmp >>= 1) ceil_log_2_d += 1;
+    var down_multiplier: u64 = 0;
+    var down_exponent: u32 = 0;
+    var has_magic_down = false;
+    var exponent: u32 = 0;
+    while (true) : (exponent += 1) {
+        if (remainder >= d - remainder) {
+            quotient = quotient *% 2 +% 1;
+            remainder = remainder *% 2 -% d;
+        } else {
+            quotient = quotient *% 2;
+            remainder = remainder *% 2;
+        }
+        if (exponent + extra_shift >= ceil_log_2_d or (d - remainder) <= (@as(u64, 1) << @intCast(exponent + extra_shift))) break;
+        if (!has_magic_down and remainder <= (@as(u64, 1) << @intCast(exponent + extra_shift))) {
+            has_magic_down = true;
+            down_multiplier = quotient;
+            down_exponent = exponent;
+        }
+    }
+    if (exponent < ceil_log_2_d) return .{ .multiplier = quotient +% 1, .pre_shift = 0, .post_shift = exponent, .increment = 0 };
+    if (d & 1 != 0) return .{ .multiplier = down_multiplier, .pre_shift = 0, .post_shift = down_exponent, .increment = 1 };
+    var pre_shift: u32 = 0;
+    var shifted_d = d;
+    while (shifted_d & 1 == 0) {
+        shifted_d >>= 1;
+        pre_shift += 1;
+    }
+    var result = fastUdivInfo(shifted_d, num_bits - pre_shift, uint_bits);
+    result.pre_shift = pre_shift;
+    return result;
+}
+
+/// util_fast_sdiv_info: the multiplier and the shift of a signed division
+/// by a constant.
+const FastSdivInfo = struct { multiplier: i64, shift: u32 };
+
+/// util_compute_fast_sdiv_info (util/fast_idiv_by_const.c:172-237):
+/// Hacker's Delight's magic number of a signed divisor of neither 0, 1
+/// nor -1, the first exponent at which the test numerator's quotient is
+/// not less than the divisor's remainder's complement (since 1.188).
+fn fastSdivInfo(d: i64, sint_bits: u32) FastSdivInfo {
+    const abs_d: u64 = @abs(d);
+    var exponent: u32 = sint_bits - 1;
+    const initial_power_of_2 = @as(u64, 1) << @intCast(exponent);
+    const tmp = initial_power_of_2 + @intFromBool(d < 0);
+    const abs_test_numer = tmp - 1 - tmp % abs_d;
+    var quotient1 = initial_power_of_2 / abs_test_numer;
+    var remainder1 = initial_power_of_2 % abs_test_numer;
+    var quotient2 = initial_power_of_2 / abs_d;
+    var remainder2 = initial_power_of_2 % abs_d;
+    while (true) {
+        exponent += 1;
+        quotient1 *%= 2;
+        remainder1 *%= 2;
+        if (remainder1 >= abs_test_numer) {
+            quotient1 += 1;
+            remainder1 -= abs_test_numer;
+        }
+        quotient2 *%= 2;
+        remainder2 *%= 2;
+        if (remainder2 >= abs_d) {
+            quotient2 += 1;
+            remainder2 -= abs_d;
+        }
+        const delta = abs_d - remainder2;
+        if (!(quotient1 < delta or (quotient1 == delta and remainder1 == 0))) break;
+    }
+    // util_sign_extend of the low sint_bits.
+    const low = (quotient2 +% 1) << @intCast(64 - sint_bits);
+    var multiplier: i64 = @as(i64, @bitCast(low)) >> @intCast(64 - sint_bits);
+    if (d < 0) multiplier = -multiplier;
+    return .{ .multiplier = multiplier, .shift = exponent - sint_bits };
 }
 
 /// nir_opt_constant_folding of an integer operation whose operands are
@@ -8552,6 +8840,7 @@ fn foldedInteger(work: *Work, op: Integer, a: u16, b: ?u16) Error!?u16 {
             .i2f32 => @bitCast(@as(f32, @floatFromInt(sx))),
             .u2f32 => @bitCast(@as(f32, @floatFromInt(x))),
             .b2f32 => if (x != 0) @as(u32, @bitCast(@as(f32, 1.0))) else 0,
+            .b2i32 => if (x != 0) 1 else 0,
         };
         work.pool[out + k] = @bitCast(word);
     }
@@ -12031,7 +12320,8 @@ test "nir_lower_idiv's lowering of two words is the quotient or remainder of eve
     // integers' bits, worked out on the host with an exact reciprocal:
     // the integer arithmetic of emit_udiv and emit_idiv alone
     // (nir_lower_idiv.c:32-94; since 1.187). INT_MIN over -1 wraps, as
-    // NIR's idiv of it does.
+    // emit_idiv makes it: SPIR-V leaves it undefined, and NIR's opcode
+    // folds it to 0 (nir_opcodes.py:869).
     const values = [_]u32{ 0, 1, 2, 3, 7, 10, 255, 256, 65535, 65536, 65537, 1 << 24, 0x7FFF_FFFF, 0x8000_0000, 0x8000_0001, 0xFFFF_FFFE, 0xFFFF_FFFF, 123456789, 0xDEAD_BEEF };
     const ops = [_]Division{ .udiv, .umod, .idiv, .irem, .imod };
     for (ops) |op| for (values) |numer| for (values) |denom| {
@@ -12085,13 +12375,130 @@ test "a division of two vectors of two is a lowering a float, of one set of cons
     }
 }
 
-test "a division by a constant is nir_opt_idiv_const's, not ported, and refused, of a vector too where one float of the divisor is" {
-    // nir_opt_idiv_const runs first (vir.c:2018), on a divisor that is
-    // a constant (since 1.187).
-    var work: Work = .{};
-    try testing.expectError(Error.Body, throughMesa(&work, &reference.glslc_idiv_constant));
-    // Of a vector, a divisor of whose floats one alone is a constant.
-    try testing.expectError(Error.Body, throughMesa(&work, &reference.glslc_udiv_part));
+/// What Mesa's lowerings make of a division or remainder of two words,
+/// SPIR-V's undefined ones included: 0 by 0 (nir_opt_idiv_const.c:33,
+/// :61, :79, :112, :132), and the most negative by -1 itself, an
+/// overflow's wrap.
+fn dividedWord(op: Division, numer: u32, denom: u32) u32 {
+    if (denom == 0) return 0;
+    const n: i32 = @bitCast(numer);
+    const d: i32 = @bitCast(denom);
+    return switch (op) {
+        .udiv => numer / denom,
+        .umod => numer % denom,
+        .idiv => if (n == std.math.minInt(i32) and d == -1) numer else @bitCast(@divTrunc(n, d)),
+        .irem => if (d == -1) 0 else @bitCast(@rem(n, d)),
+        .imod => if (d == -1) 0 else @bitCast(@mod(n, d)),
+    };
+}
+
+test "glslc's divisions by constants are multiplies by magic numbers, shifts and masks, no reciprocal, worked out on the host" {
+    // nir_opt_idiv_const's (vir.c:2018) and nir_opt_algebraic's
+    // (nir_opt_algebraic.py:200-217), nir_opt_cse making the two
+    // quotients by 7 one (since 1.188).
+    const Case = struct { module: []const u32, products: usize, signed: bool };
+    const cases = [_]Case{
+        // By 7, its remainder the quotient times 7; by 4 and 16 a shift
+        // and a mask.
+        .{ .module = &reference.glslc_udiv_constants, .products = 5, .signed = false },
+        // By -5, 6 (an irem of the quotient by 6) and 8 (an imul by the
+        // isign), and -4 a bcsel of an ior.
+        .{ .module = &reference.glslc_idiv_constants, .products = 10, .signed = true },
+        .{ .module = &reference.glslc_idiv_constant, .products = 4, .signed = true },
+        // Of glslc_udiv_part's two divisions the first lowered by
+        // nir_lower_idiv, the second by 3.
+        .{ .module = &reference.glslc_udiv_part, .products = 14, .signed = false },
+    };
+    for (cases, 0..) |case, which| {
+        var work: Work = .{};
+        const code = try throughMesa(&work, case.module);
+        try testing.expectEqual(case.products, countOf(code, "umul24 "));
+        try testing.expectEqual(@as(usize, if (which == 3) 1 else 0), countOf(code, "recip "));
+        const low: i32 = if (case.signed) -100 else 0;
+        var x: i32 = low;
+        while (x <= 100) : (x += 1) {
+            var y: i32 = 1;
+            while (y <= (if (which == 3) @as(i32, 100) else 1)) : (y += 1) {
+                const color: [4]f32 = if (case.signed)
+                    .{ (quarterOff(x) + 100.0) / 200.0, 0.5, 0, 0 }
+                else
+                    .{ quarterOff(x) / 100.0, quarterOff(y) / 100.0, 0, 0 };
+                const n: i32 = @intFromFloat(if (case.signed) color[0] * 200.0 - 100.0 else color[0] * 100.0);
+                const m: i32 = @intFromFloat(color[1] * 100.0);
+                const expected: [4]f32 = switch (which) {
+                    0 => .{ @floatFromInt(@divTrunc(n, 7)), @floatFromInt(@rem(n, 7)), @floatFromInt(@divTrunc(n, 4)), @floatFromInt(@rem(n, 16)) },
+                    1 => .{ @floatFromInt(@divTrunc(n, -5)), @floatFromInt(@mod(n, 6)), @floatFromInt(@divTrunc(n, 8)), @floatFromInt(-@mod(-n, 4)) },
+                    2 => .{ @floatFromInt(@divTrunc(n, 3)), 0, 0, 1 },
+                    else => .{ @floatFromInt(@divTrunc(n, m)), @floatFromInt(@divTrunc(m, 3)), 0, 1 },
+                };
+                try testing.expectEqual(expected, evaluatedOf(&work, work.stored, color, 0));
+            }
+        }
+    }
+}
+
+test "Hacker's Delight's magic numbers are util_compute_fast_udiv_info's and _sdiv_info's" {
+    // Hacker's Delight, figures 10-1 and 10-2, of 32 bits; an odd divisor
+    // whose round-up multiplier would take 33 bits is the round-down one
+    // and an increment (util/fast_idiv_by_const.c:146-151; since 1.188).
+    try testing.expectEqual(FastUdivInfo{ .multiplier = 0xAAAA_AAAB, .pre_shift = 0, .post_shift = 1, .increment = 0 }, fastUdivInfo(3, 32, 32));
+    try testing.expectEqual(FastUdivInfo{ .multiplier = 0xCCCC_CCCD, .pre_shift = 0, .post_shift = 2, .increment = 0 }, fastUdivInfo(5, 32, 32));
+    try testing.expectEqual(FastUdivInfo{ .multiplier = 0xAAAA_AAAB, .pre_shift = 0, .post_shift = 2, .increment = 0 }, fastUdivInfo(6, 32, 32));
+    try testing.expectEqual(@as(u32, 1), fastUdivInfo(7, 32, 32).increment);
+    // 641 divides 2^32 + 1: 6700417, of no shift, the first exponent's.
+    try testing.expectEqual(FastUdivInfo{ .multiplier = 6700417, .pre_shift = 0, .post_shift = 0, .increment = 0 }, fastUdivInfo(641, 32, 32));
+    try testing.expectEqual(FastSdivInfo{ .multiplier = 0x5555_5556, .shift = 0 }, fastSdivInfo(3, 32));
+    try testing.expectEqual(FastSdivInfo{ .multiplier = 0x6666_6667, .shift = 1 }, fastSdivInfo(5, 32));
+    try testing.expectEqual(FastSdivInfo{ .multiplier = @as(i32, @bitCast(@as(u32, 0x9249_2493))), .shift = 2 }, fastSdivInfo(7, 32));
+    try testing.expectEqual(FastSdivInfo{ .multiplier = @as(i32, @bitCast(@as(u32, 0x9999_9999))), .shift = 1 }, fastSdivInfo(-5, 32));
+    try testing.expectEqual(FastSdivInfo{ .multiplier = 0x6DB6_DB6D, .shift = 2 }, fastSdivInfo(-7, 32));
+}
+
+test "an unsigned division by a word above 2^31 is a b2i32 of whether the dividend is as large, or of the largest word that it is it: no multiply" {
+    // build_udiv (nir_opt_idiv_const.c:36-39), the quotient 0 or 1
+    // (since 1.188).
+    for ([_]u32{ 0x8000_0001, 3000000000, 0xFFFF_FFF0, 0xFFFF_FFFF }) |d| {
+        var work: Work = .{};
+        const varying = try put(&work, .{ .tag = .input, .kind = .f32x4 });
+        const n = try floatStep(&work, partOf(&work, varying, 0));
+        const result = try constantDividedOf(&work, .udiv, n, d);
+        try testing.expect(isIntegerOp(work.steps[result], .b2i32));
+        try testing.expectEqual(@as(usize, 0), integerOpsOf(&work, .imul));
+        const which = work.steps[work.steps[result].a];
+        try testing.expectEqual(if (d == 0xFFFF_FFFF) Comparison.int_equal else Comparison.uint_greater_equal, @as(Comparison, @enumFromInt(which.at)));
+    }
+}
+
+test "a division or remainder by a constant word is nir_opt_algebraic's or nir_opt_idiv_const's, worked out for every sign and size of both" {
+    // constantDividedOf of a component of the varying, its float the
+    // dividend's bits: the rules of 1, -1 and powers of two, and
+    // nir_opt_idiv_const's multiply by the magic number and its cases of
+    // 0, the largest word and the most negative. nir_opt_idiv_const's own
+    // build_ of each divisor too, its cases of 1, -1 and powers of two
+    // those the rules leave it none of (since 1.188).
+    const numers = [_]u32{ 0, 1, 2, 3, 6, 7, 10, 255, 1000, 65535, 65536, 1 << 24, 123456789, 0x7FFF_FFFE, 0x7FFF_FFFF, 0x8000_0000, 0x8000_0001, 0xDEAD_BEEF, 0xFFFF_FFF0, 0xFFFF_FFFE, 0xFFFF_FFFF };
+    const denoms = [_]u32{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 25, 100, 641, 1000, 65535, 65536, 65537, 0x7FFF_FFFF, 0x8000_0000, 0x8000_0001, 0xFFFF_FFF0, 0xFFFF_FFFE, 0xFFFF_FFFF, 0xFFFF_FFFD, 0xFFFF_FFFC, 0xFFFF_FFFB, 0xFFFF_FFFA, 0xFFFF_FFF9, 0xFFFF_FFF8, 0xFFFF_FF9C, 0xFFFF_0000, 0xC000_0000, 0x4000_0000, 0x5555_5555, 14, 28, 56, 0x8000_0002, 0xFFFF_FFF2 };
+    const ops = [_]Division{ .udiv, .umod, .idiv, .irem, .imod };
+    for (ops) |op| for (denoms) |denom| for (0..2) |alone| {
+        var work: Work = .{};
+        const varying = try put(&work, .{ .tag = .input, .kind = .f32x4 });
+        const n = try floatStep(&work, partOf(&work, varying, 0));
+        const result = if (alone == 0) try constantDividedOf(&work, op, n, denom) else switch (op) {
+            .udiv => try udivByConstant(&work, n, denom),
+            .umod => try umodByConstant(&work, n, denom),
+            .idiv => try idivByConstant(&work, n, @bitCast(denom)),
+            .irem => try iremByConstant(&work, n, @bitCast(denom)),
+            .imod => try imodByConstant(&work, n, @bitCast(denom)),
+        };
+        for (numers) |numer| {
+            const color = [4]f32{ @bitCast(numer), 0, 0, 0 };
+            const found: u32 = @bitCast(evaluatedOf(&work, result, color, 0)[0]);
+            testing.expectEqual(dividedWord(op, numer, denom), found) catch |err| {
+                std.debug.print("{s} of {x} by {x}, alone {d}\n", .{ @tagName(op), numer, denom, alone });
+                return err;
+            };
+        }
+    };
 }
 
 test "a cube's gradient is lower_gradient_cube_map's level: the face's quotient rule, -1 plus half the LOG of L times L times M, to TMUB and TMUSCM" {
@@ -12192,6 +12599,7 @@ fn evaluatedStep(work: *const Work, values: *const [most_steps]?[4]f32, at: u16,
                     .f2u32 => @bitCast(std.math.lossyCast(u32, x[k])),
                     // A bool here is 1.0 or 0.0, the V3D's ~0 or 0.
                     .b2f32 => if (x[k] != 0) 1.0 else 0.0,
+                    .b2i32 => @bitCast(@as(u32, if (x[k] != 0) 1 else 0)),
                     else => @bitCast(switch (op) {
                         .iadd => u +% v,
                         .isub => u -% v,

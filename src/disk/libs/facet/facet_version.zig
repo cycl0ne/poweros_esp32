@@ -6125,4 +6125,54 @@ pub const LIBRARY_VERSION = 1;
 /// two devices' interpolation makes an integer one apart, each quotient
 /// right for its own: at 120,69 the cores' 210 and 41, the V3D's 210 and
 /// 40. FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 187;
+///
+/// 188: **A division or remainder by a constant, on the V3D
+/// (docs/facet-vulkan10.md item 59).** v3dv's preprocess_nir runs
+/// nir_opt_algebraic (v3dv_pipeline.c:413, :443) before v3d's
+/// nir_opt_idiv_const (vir.c:2018), a float at a time: by 1 the dividend
+/// or 0, an imod or irem by -1 0, and by a power of two the rules'
+/// shifts and masks (nir_opt_algebraic.py:200-217), v3d leaving
+/// `lower_bitops` unset. An idiv's isign is lowered to imin(imax(a, -1),
+/// 1) (`lower_isign`, v3dv_pipeline.c:200; nir_opt_algebraic.py:2836).
+/// Another divisor is nir_opt_idiv_const's (nir_opt_idiv_const.c:29-152):
+/// by 0 a 0, an unsigned one above 2^31 a b2i32 of a comparison (an AND
+/// with 1, nir_to_vir.c:1524-1528), the most negative its own cases, and
+/// else Hacker's Delight's multiply by util_compute_fast_udiv_info's or
+/// _sdiv_info's magic number (util/fast_idiv_by_const.c:46-237), its
+/// uadd_sat a bcsel (`lower_uadd_sat`, v3dv_pipeline.c:165;
+/// nir_opt_algebraic.py:2539) and its imul_high nir_lower_alu's, the
+/// high halves' shifts an ishr (nir_lower_alu.c:119-158). A float whose
+/// divisor is not a constant is nir_lower_idiv's, as at 1.187.
+///
+/// Tests: the V3D's 306, four new, and 1.187's refusal of a constant
+/// divisor gone. Two new modules of glslc's: glslc_udiv_constants, by 7,
+/// 4 and 16 and a remainder by 7, five 32-bit products and no RECIP, and
+/// glslc_idiv_constants, by -5, 8, 6 and -4, ten. 1.187's
+/// glslc_idiv_constant is four, and glslc_udiv_part's constant float a
+/// multiply beside its other float's RECIP: 14 and one. The magic numbers
+/// are pinned for 3, 5, 6, 7 and 641 unsigned and for 3, 5, 7, -5 and -7
+/// signed; each of the five operations is worked out on the host for 21
+/// dividends by 41 divisors of every sign and size, among them 14, 28, 56
+/// and 2^31 + 2, through the reading and through the builders alone; and
+/// an unsigned division by 2^31 + 1, 3000000000, 2^32 - 16 and 2^32 - 1
+/// is a comparison's b2i32 with no multiply. Of 53 mutations of the port,
+/// 50 fail the tests, one only in a variant that compiles. Of the three
+/// left, the round-up test made strict (fast_idiv_by_const.c:113) is the
+/// same: a remainder half the divisor needs a divisor that is a power of
+/// two, which never comes there. The round-down test made strict (:134)
+/// changed no divisor of random ones, of 2^n - 1 or of their multiples by
+/// 2^k, and the signed test numerator one larger (:199) none up to 300000
+/// or of random ones.
+///
+/// On the CM5 FacetBoth's 268 cases are each as they were at 1.187, and
+/// its four new ones, glslc's unsigned divisions and remainders and its
+/// signed divisions and moduli by constants of an integer of the colour,
+/// each program checking its results against its own dividend, are 8 of
+/// 230400 pixels apart: the 8 at the triangles' edge every case of their
+/// geometry has. Each is worked out on the host for all 65536 pairs of
+/// the colour's integers, and a break of each of the lowering's paths
+/// shows in one of them. Two programs of all the checks were 142 and 178
+/// steps, past the tables' 128, and right on the host with the tables
+/// raised: they are split into four of 88 to 117. FacetProbe passes its
+/// 890 checks.
+pub const LIBRARY_REVISION = 188;
