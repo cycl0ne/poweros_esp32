@@ -497,20 +497,6 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
             };
             try storeDef(e, at, k, try c.add(op, .{try getSrc(e, each.a, k)}));
         },
-        // fdot lowered for a device of no FMA: the products the last
-        // float first, each summed onto those before it (lower_reduction,
-        // nir_lower_alu_width.c:96-127, reversed as lower_fdot has it where
-        // the sum need not be exact, :161-173).
-        .dot => {
-            const n = e.work.steps[each.a].kind.parts();
-            var last: Reg = undefined;
-            for (0..n) |i| {
-                const channel = n - 1 - i;
-                const product = try c.mul(.fmul, .{ try getSrc(e, each.a, channel), try getSrc(e, each.b, channel) });
-                last = if (i == 0) product else try c.add(.fadd, .{ last, product });
-            }
-            try storeDef(e, at, 0, last);
-        },
         .sample => {
             try emitTex(e, each, at);
             try unpackTexel(e, at);
@@ -882,7 +868,6 @@ fn armCost(e: *const Emit, from: u16, to: u16, side: usize) u32 {
             .component, .construct => 0,
             .constant => 1,
             .add, .mul, .sub, .min, .max, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .set_less, .integer, .round_to_int, .select, .compare, .logic => @intCast(each.kind.parts()),
-            .dot => @intCast(e.work.steps[each.a].kind.parts() * 2 - 1),
             else => return std.math.maxInt(u32),
         };
     }
@@ -1196,7 +1181,7 @@ fn coalescable(e: *const Emit, branch: *const Branch, of: compile.Float, side: u
     const each = e.work.steps[of.step];
     const scalar = each.kind == .f32x1;
     const made = switch (each.tag) {
-        .add, .mul, .sub, .min, .max, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .dot, .set_less, .integer, .round_to_int, .input => true,
+        .add, .mul, .sub, .min, .max, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .set_less, .integer, .round_to_int, .input => true,
         .select => !compile.isBool(e.work, of.step),
         .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_atomic => scalar,
         else => false,

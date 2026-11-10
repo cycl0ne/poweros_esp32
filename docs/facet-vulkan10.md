@@ -2309,6 +2309,29 @@ glslc_looped is 36 words, from 45: its first run is no instruction. glslc_cheap'
 
 glslc_looped's second run adds v * 0.0625 to a sum of it read once (:275): five fadds and five fmuls, from six and four. Of 15 mutations of the port and the fix, 15 fail the tests. On the CM5, FacetBoth's 239 cases are each as they were at 1.174, and FacetProbe is 890 of 890.
 
+**Then arrays, structs and matrices of the function's own, nir_opt_constant_folding in the loop of passes, and fdot lowered before the rules**, facet.library 1.176.
+
+- **Split variables.** A variable of the function's own that is an array, a struct or a matrix is a variable of each float and vector in it. nir_split_struct_vars splits a struct's members (v3dv_pipeline.c:411), and nir_split_array_vars an array's or a matrix's elements where every index is a constant (nir_to_vir.c:2236; mark_array_deref_used, nir_split_vars.c:502-531; glsl_type_is_array_or_matrix, :999). nir_lower_vars_to_ssa then makes each a value (nir_to_vir.c:2240). An unrolled loop's counter is a constant by then, since nir_opt_loop_unroll runs in the same loop of passes. A chain down to a float, a vector or a float of one is that variable, through as many indexes as the type has. An array of bools is a variable of each.
+- **Whole aggregates.** A load or a store of a whole array, struct or matrix is one of each element, as _vtn_variable_load_store makes it (vtn_variables.c:763-781). A constant composite of an array or a struct is a value of each float and vector (vtn_const_ssa_value, spirv_to_nir.c:526-563). So are an OpCompositeConstruct of one (:4744-4756), an OpCompositeExtract from one (:4655-4686), and an OpCompositeInsert into one or into a matrix (:4612-4650). An initializer is stored element by element at the top of the function, as nir_lower_variable_initializers stores it (vk_nir.c:301). glslc does not write one; a module patched to carry two is tested.
+- **nir_opt_constant_folding.** It runs after each round of rules (nir_to_vir.c:2281; `Order.fold`), through the floats of a vec and a component. An fsub of constants is a constant, and so is a vec of constants that a rule leaves times one.
+- **fdot.** An fdot is its products and sums before the rules, as nir_lower_alu_to_scalar lowers it (v3dv_pipeline.c:404; lower_fdot, nir_lower_alu_width.c:161-173). The last float's product comes first, and no fused multiply-add is made (lower_reduction, :96-127). A rule sees each product: in glslc_local_struct the dot of a member stored (0, 0, 1) and (0, 0, 1) is the constant 1.0, and the fmax of it goes. The `.dot` step is gone, and to_vir's emission of it with it.
+
+Refused still:
+- an index the body computes. Mesa makes it an if-else tree for two elements or fewer (nir_lower_indirect_derefs_to_if_else_trees, v3dv_pipeline.c:435) and scratch otherwise (nir_lower_vars_to_scratch, vir.c:2041);
+- a load of a whole aggregate that holds a bool;
+- more than 32 floats and vectors of the function's own (`most_locals`).
+
+Results:
+- glslc_local_array, color times weights[i] summed over a loop of three, is 15 words at -O and at -O0.
+- glslc_local_struct is the same operations as glslc -O's values of it.
+- glslc_local_taps, an array stored at its counter and an array of structs read through chains of three indexes, is the same words at -O0.
+- A matrix stored a column through a chain is the words of glslc -O's OpCompositeInsert.
+- glslc_local_palette stores an element in one arm and the whole array in the other: 8 selects and one ior, flattened.
+- glslc_stepped has three fmax, from four, since the folding takes a max of two zeros.
+- glslc_arith has no dot step.
+
+Of 28 mutations of the port, 25 fail the tests. The three left guard against what glslc's modules never reach: a constant aggregate in a nested selection, and a chain made before a loop and stored through in it. On the CM5, FacetBoth's 239 cases are each as they were at 1.175, and FacetProbe is 890 of 890.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim
