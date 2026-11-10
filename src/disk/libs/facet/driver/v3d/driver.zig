@@ -855,7 +855,7 @@ fn compiled(pipeline: *Pipeline) facet.Result {
         .block = made,
         .address = made.address,
         .varyings = code.varyings,
-        .uniforms = code.uniforms,
+        .uniforms = undefined,
         .uniform_count = code.uniform_count,
         .samplers = code.samplers,
         .sampler_count = code.sampler_count,
@@ -868,7 +868,11 @@ fn compiled(pipeline: *Pipeline) facet.Result {
         .flat_shade_flags = code.flat_shade_flags,
         .noperspective_flags = code.noperspective_flags,
     };
-    kept.vertex = vertexStage(pipeline, work, hardware, reads);
+    // The stream out of `work` before it is compiled through again
+    // (`compile.Code.uniforms`; since 1.191).
+    @memcpy(kept.uniforms[0..code.uniform_count], code.uniforms);
+    kept.vertex = @as(VertexStage, undefined);
+    if (!vertexStage(pipeline, work, hardware, reads, &kept.vertex.?)) kept.vertex = null;
     if (!checkSpillSize(base, hardware, kept, code.spill_size)) {
         freeShader(base, hardware, kept);
         letGo(base, hardware);
@@ -921,11 +925,14 @@ fn freeShader(base: *FacetBase, hardware: *Hardware, kept: *Shader) void {
 /// the program reads an attribute the pipeline does not describe, or
 /// there is no memory for it. None of that refuses the pipeline: its
 /// vertex function is the vertex shader too (since 1.163).
-fn vertexStage(pipeline: *const Pipeline, work: *compile.Work, hardware: *Hardware, reads: compile.VertexKey) ?VertexStage {
-    if (pipeline.vertex_words.len == 0 or pipeline.tessellated != null or _vertices.widens(pipeline)) return null;
+/// Into `stage`, the shader's own, and not by value: each of the two holds
+/// its stream of `compile.most_uniforms` words (since 1.191). False where
+/// the vertex function is to run instead.
+fn vertexStage(pipeline: *const Pipeline, work: *compile.Work, hardware: *Hardware, reads: compile.VertexKey, stage: *VertexStage) bool {
+    if (pipeline.vertex_words.len == 0 or pipeline.tessellated != null or _vertices.widens(pipeline)) return false;
     const sys = pipeline.device.sys;
     const base = pipeline.device.base;
-    var made: [2]VertexShader = undefined;
+    const made = [2]*VertexShader{ &stage.vertex, &stage.coordinate };
     for (0..2) |k| {
         var key = reads;
         key.coordinate = k == 1;
@@ -943,21 +950,22 @@ fn vertexStage(pipeline: *const Pipeline, work: *compile.Work, hardware: *Hardwa
             break :block each;
         } else null;
         const kept = block orelse {
-            if (k == 1) freeVertexShader(base, hardware, &made[0]);
-            return null;
+            if (k == 1) freeVertexShader(base, hardware, made[0]);
+            return false;
         };
-        made[k] = .{
+        made[k].* = .{
             .block = kept,
             .address = kept.address,
-            .uniforms = code.?.uniforms,
+            .uniforms = undefined,
             .uniform_count = code.?.uniform_count,
             .threads = code.?.threads,
             .program = code.?.vertex,
             .tmu_dirty_rcl = code.?.tmu_dirty_rcl,
             .spill_size = code.?.spill_size,
         };
+        @memcpy(made[k].uniforms[0..code.?.uniform_count], code.?.uniforms);
     }
-    return .{ .vertex = made[0], .coordinate = made[1] };
+    return true;
 }
 
 /// Whether every attribute the program reads is at a location the

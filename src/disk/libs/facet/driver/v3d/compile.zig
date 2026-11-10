@@ -42,8 +42,10 @@
 //! **`Work` is one block, and `Code.words` points into it.** A driver
 //! compiles every pipeline through the one `Work`, so the words have to
 //! be copied into the block the V3D reads before anything else is
-//! compiled. `Code.uniforms` is by value for that reason: a pipeline
-//! keeps its floats for as long as it lives.
+//! compiled. `Code.uniforms` points into it too, and the driver keeps the
+//! floats by value in its own `Shader` for as long as the pipeline lives
+//! (since 1.191: a Code held its 32 by value before, and at 256 the
+//! frames that hold a Code would be kilobytes more).
 //!
 //! **Where the splice goes.** `settle` does not lay the program out as
 //! straight-line phases, although a program that does not sample reads
@@ -94,8 +96,13 @@ const allocate = @import("compiler/allocate.zig");
 
 /// The most ids a module may use. A back end carries its own bound
 /// because its tables are one word an id and it holds them on the heap,
-/// not on the stack of the call that compiles.
-pub const most_ids = 256;
+/// not on the stack of the call that compiles. vtn has none, its values
+/// allocated by the module's bound (vtn_builder's `values`,
+/// spirv_to_nir.c); the port's tables are fixed, 40 bytes an id, and 4096
+/// since 1.191, where it was 256 and ran out before the steps did: a
+/// GLSL operation is several ids, its loads, constants and vectors
+/// beside it.
+pub const most_ids = 4096;
 /// The most values a body may compute. 128 since 1.152, where a call of
 /// GLSL.std.450 can lower to several; 256 since 1.189, where a program
 /// of several divisions by constants is more than 128.
@@ -103,10 +110,16 @@ pub const most_steps = 256;
 /// The varyings the hardware carries
 /// (`PhysicalDeviceLimits.max_vertex_output_components`).
 pub const most_varyings = qpu.most_varyings;
-/// The floats a program may read as uniforms of its own.
-pub const most_uniforms = 32;
-/// The constants a module may declare, read or not.
-pub const most_constants = 32;
+/// The floats a program may read as uniforms of its own. Mesa's grow as
+/// they are added (vir_get_uniform_index, vir.c:2771); a Code and a
+/// Shader hold them by value, 12 bytes each. 32 until 1.191, where a
+/// module of more ids and constants came to read more; 256 since, as
+/// many as the steps.
+pub const most_uniforms = 256;
+/// The constants a module may declare, read or not, each of up to four
+/// floats in `Work.pool`. vtn allocates each nir_constant as it is read;
+/// 32 until 1.191, 256 since.
+pub const most_constants = 256;
 /// The members a block may have: one float each fills
 /// `shader.MAX_PUSH_CONSTANTS_SIZE`, and a uniform buffer's are held to
 /// as many.
@@ -272,8 +285,11 @@ pub const most_nesting = 8;
 pub const most_slots = 4 * most_steps;
 /// Instructions chosen, before they are words.
 pub const most_acts = 160;
-/// The words a program may come to.
-pub const most_words = 256;
+/// The words a program may come to. Mesa's qpu_insts grow as the
+/// program is packed (v3d_vir_to_qpu, vir_to_qpu.c); 256 until 1.191,
+/// where 256 steps lowered and their uniforms' loads came to more, and
+/// 4096 since, 32 KiB of `Work.code`.
+pub const most_words = 4096;
 
 /// The instructions a program waits between an `ldunifrf` and a read of
 /// the register it wrote. The source says nothing either way, and the one
@@ -1020,10 +1036,10 @@ pub const Code = struct {
     /// program issues exactly this many `ldvary`, as the hand-written
     /// programs do.
     varyings: u32,
-    /// The uniform stream, in the order the program reads it. By value,
-    /// not a slice: a pipeline keeps it for as long as it lives, and
-    /// `Work` is one block a driver compiles everything through.
-    uniforms: [most_uniforms]Word,
+    /// The uniform stream, in the order the program reads it: `Work`'s, as
+    /// the words are, for the driver to copy before it compiles again
+    /// (since 1.191; by value before).
+    uniforms: []const Word,
     uniform_count: u32,
     /// The combined image samplers the program reads, by unit. The draw
     /// looks each up in its descriptor sets and writes the `.texture` and
@@ -1360,6 +1376,10 @@ pub const Work = struct {
     /// `chain_part` (since 1.178).
     tree_index: [most_ids]u16 = @splat(none),
     tree_apart: [most_ids]u16 = @splat(0),
+    /// `planLoop`'s reading of what each id of a loop is, which at 4096
+    /// ids is more than the stack a command is given (since 1.191; the
+    /// call's own before).
+    loop_defined: [most_ids]Defined = undefined,
     pointer_paths: [most_pointer_paths]Path = undefined,
     pointer_path_count: u32 = 0,
     /// The deref of the float a load_scratch or a store_scratch step is
@@ -1627,7 +1647,7 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
     var made: Code = .{
         .words = work.code[0..work.word_count],
         .varyings = work.varyings,
-        .uniforms = work.stream,
+        .uniforms = work.stream[0..work.stream_count],
         .uniform_count = work.stream_count,
         .registers = work.high_water,
     };
@@ -1783,7 +1803,7 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
     return .{
         .words = work.code[0..work.word_count],
         .varyings = work.varyings,
-        .uniforms = work.stream,
+        .uniforms = work.stream[0..work.stream_count],
         .uniform_count = work.stream_count,
         .samplers = units.samplers,
         .sampler_count = units.count,
@@ -3512,8 +3532,9 @@ fn constantBits(work: *const Work, id: u16) ?u32 {
 /// conditional branch out, a loop in it - is one nir_loop_analyze finds
 /// no exact count of, or complex_loop, and Mesa keeps it a loop:
 /// `Error.Branches`.
-fn planLoop(work: *const Work, words: []const u32, loop: *Loop, continue_target: u32, entry: *const Values) Error!void {
-    var defined: [most_ids]Defined = @splat(.{});
+fn planLoop(work: *Work, words: []const u32, loop: *Loop, continue_target: u32, entry: *const Values) Error!void {
+    const defined = &work.loop_defined;
+    @memset(defined, .{});
     var reader = spirv.Reader{ .words = words, .at = loop.header_at };
     var merges: [most_nesting]u32 = undefined;
     var open: u32 = 0;
@@ -3677,14 +3698,14 @@ fn planLoop(work: *const Work, words: []const u32, loop: *Loop, continue_target:
     for (phis[0..phi_count]) |phi| {
         const in_side: usize = if (phi.parents[0] == loop.entered_from) 0 else if (phi.parents[1] == loop.entered_from) 1 else return Error.Branches;
         if (phi.parents[1 - in_side] != back_from) return Error.Branches;
-        candidates[count] = .{ .basis = phi.id, .init = constantBits(work, phi.values[in_side]), .back = resolved(&defined, phi.values[1 - in_side]) };
+        candidates[count] = .{ .basis = phi.id, .init = constantBits(work, phi.values[in_side]), .back = resolved(defined, phi.values[1 - in_side]) };
         count += 1;
     }
     for (0..most_locals) |local| {
         if (stored[local] == 0 or in_arm[local]) continue;
         const entering = entry[local][0];
         const init: ?u32 = if (work.local_kind[local] == .f32x1 and entering.step != none) floatBits(work, entering) else null;
-        candidates[count] = .{ .basis = local_bit | @as(u16, @intCast(local)), .init = init, .back = resolved(&defined, stored[local]) };
+        candidates[count] = .{ .basis = local_bit | @as(u16, @intCast(local)), .init = init, .back = resolved(defined, stored[local]) };
         count += 1;
     }
     // compute_induction_information: the way back an Update of the phi
@@ -3712,12 +3733,12 @@ fn planLoop(work: *const Work, words: []const u32, loop: *Loop, continue_target:
         };
         const sub = of.op == .i_sub or of.op == .f_sub;
         var made: ?Induction = null;
-        if (of.a != 0 and resolved(&defined, of.a) == candidate.basis and of.b != 0 and defined[of.b].op == .nop) {
+        if (of.a != 0 and resolved(defined, of.a) == candidate.basis and of.b != 0 and defined[of.b].op == .nop) {
             if (constantBits(work, of.b)) |stride| {
                 const by = if (!sub) stride else if (update == .iadd) 0 -% stride else stride ^ 0x8000_0000;
                 made = .{ .init = init, .update = update, .step = by, .phi_first = true };
             }
-        } else if (!sub and of.b != 0 and resolved(&defined, of.b) == candidate.basis and of.a != 0 and defined[of.a].op == .nop) {
+        } else if (!sub and of.b != 0 and resolved(defined, of.b) == candidate.basis and of.a != 0 and defined[of.a].op == .nop) {
             if (constantBits(work, of.a)) |stride| made = .{ .init = init, .update = update, .step = stride, .phi_first = false };
         }
         candidate.induction = made;
@@ -3728,10 +3749,10 @@ fn planLoop(work: *const Work, words: []const u32, loop: *Loop, continue_target:
     // constant (get_induction_and_limit_vars, :1050-1077, the left side
     // first).
     var invert = test_branch.no == loop.merge;
-    var at = resolved(&defined, test_branch.condition);
+    var at = resolved(defined, test_branch.condition);
     if (at & local_bit != 0) return Error.Branches;
     if (defined[at].op == .logical_not and defined[at].top) {
-        at = resolved(&defined, defined[at].a);
+        at = resolved(defined, defined[at].a);
         if (at & local_bit != 0) return Error.Branches;
         invert = !invert;
     }
@@ -3744,7 +3765,7 @@ fn planLoop(work: *const Work, words: []const u32, loop: *Loop, continue_target:
     var found: [2]?Side = .{ null, null };
     for (sides, &found) |side, *each| {
         if (side == 0) continue;
-        const value = resolved(&defined, side);
+        const value = resolved(defined, side);
         for (candidates[0..count], 0..) |candidate, k| {
             if (candidate.induction == null) continue;
             if (value == candidate.basis) each.* = .{ .candidate = @intCast(k), .on_def = false };
@@ -3755,7 +3776,7 @@ fn planLoop(work: *const Work, words: []const u32, loop: *Loop, continue_target:
     const ind = found[0] orelse found[1] orelse return Error.Branches;
     const limit_id = sides[if (limit_rhs) 1 else 0];
     if (limit_id == 0) return Error.Branches;
-    const limit_at = resolved(&defined, limit_id);
+    const limit_at = resolved(defined, limit_id);
     if (limit_at & local_bit != 0 or defined[limit_at].op != .nop) return Error.Branches;
     const limit = constantBits(work, limit_at) orelse return Error.Branches;
     const induction = candidates[ind.candidate].induction.?;
@@ -17512,4 +17533,46 @@ test "a vertex program hands on a flat varying, integers and a varying without p
         work = .{};
         _ = try vertexThroughMesa(&work, words, .{ .coordinate = true });
     }
+}
+
+test "a module of more than 256 ids, 32 constants and 256 words is read, its loop planned of ids past 256, and worked out as its products and sums are" {
+    // 404 ids (since 1.191; refused before, as more than the tables).
+    try testing.expectEqual(@as(u32, 404), reference.glslc_many_ids[3]);
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_many_ids);
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+    // And past every table it would have filled before: 224 uniforms, one
+    // for each constant, where there were 32; 460 floats of constants,
+    // where there were 128; 257 words, where there were 256.
+    try testing.expectEqual(@as(u32, 224), code.uniform_count);
+    try testing.expectEqual(@as(u32, 460), work.pool_count);
+    try testing.expect(code.words.len > 256);
+    const colors = [_][4]f32{ .{ 0, 0, 0, 0 }, .{ 0.25, 0.5, 0.75, 1 }, .{ 1, 0.125, 0.0625, 0.5 } };
+    for (colors) |color| {
+        var a = color;
+        for (0..28) |k| {
+            for (&a, 0..) |*each, c| {
+                const j: f32 = @floatFromInt(4 * k + c + 1);
+                each.* = each.* * (1.0 + j / 1024.0) + -(j / 2048.0);
+            }
+        }
+        for (0..3) |_| {
+            for (&a) |*each| each.* = each.* * 0.5 + 0.25;
+        }
+        try testing.expectEqual(a, evaluatedOf(&work, work.stored, color, 0));
+    }
+}
+
+test "a module's bound is held to the tables: 4096 ids are read, and 4097 refused, and so is an id of 4096 the bound does not say" {
+    var words = reference.glslc_flat_color;
+    words[3] = most_ids;
+    var work: Work = .{};
+    _ = try throughMesa(&work, &words);
+    words[3] = most_ids + 1;
+    work = .{};
+    try testing.expectError(Error.Refused, throughMesa(&work, &words));
+    // An OpLoad's result id of 4096, which `look` does not hold to the
+    // bound: the tables refuse it as they read it.
+    work = .{};
+    try testing.expectError(Error.Refused, throughMesa(&work, &comptime patched(&reference.glslc_flat_color, .load, 0, 1, most_ids)));
 }

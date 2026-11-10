@@ -6265,4 +6265,44 @@ pub const LIBRARY_VERSION = 1;
 /// W read without dividing; the picture without perspective is the
 /// smooth one of a W of 1, as it is to be. FacetProbe passes its 890
 /// checks.
-pub const LIBRARY_REVISION = 190;
+///
+/// 191: **Tables for longer modules (docs/facet-vulkan10.md item 59).** A
+/// module may use 4096 ids, where it might 256, declare 256 constants,
+/// where it might 32, and come to 4096 words, where it might 256; a
+/// program may read 256 uniforms, where it might 32. None of the four is
+/// Mesa's: vtn allocates its values by the module's bound and each
+/// nir_constant as it is read (spirv_to_nir.c), and the uniform stream
+/// and the packed instructions grow as they are added
+/// (vir_get_uniform_index, vir.c:2771; v3d_vir_to_qpu). The ids ran out
+/// first, a GLSL operation being several of them, its loads, constants
+/// and vectors beside it: at 1.189 a chain of 70 operations was refused
+/// at 310. The port's tables are fixed and on the heap: Work is 296 KiB,
+/// where it was 70, 40 bytes an id. A Code's uniforms are Work's, as its
+/// words are, and the driver copies them into the program it keeps,
+/// which holds 256 of 12 bytes. planLoop's reading of each id is Work's,
+/// at 40 KiB more than the stack a command is given, where it was 2.5
+/// KiB of the call's own. A pipeline is compiled on the driver's own
+/// stack of 128 KiB (since 1.181): makePipelineHere's frame is 2.3 KiB,
+/// where it was 6.1, and V3DTest's fragments.compiled 0.6 KiB, where it
+/// was 3.1. A first draft held a Code's 256 uniforms by value, and came
+/// to 32.2 and 13.9 KiB: V3DTest's chain past the 32 KiB its command is
+/// given. An id of 4096 an instruction defines,
+/// which `spirv.look` does not hold to the bound, is refused as it is
+/// read. Facet's own profile keeps its 1024: a module of more is still
+/// a module, and the pipeline takes it to discard, as it takes any
+/// module `look` cannot read to its end.
+///
+/// Tests: the V3D's 315, two new. glslc_many_ids, the colour through 28
+/// products and sums by constants of their own and a loop of three, is
+/// 404 ids, 224 uniforms, 460 floats of constants and 257 words, and
+/// worked out on the host for three colours as its f32 products and sums
+/// are; and a bound of 4096 is read, of 4097 refused. Of 6 mutations,
+/// all fail the tests. One failed none at first: the test of an id
+/// against the tables made `>`, where `look` refuses the bound past 4096
+/// before it, until an OpLoad was given the id 4096.
+///
+/// On the CM5, FacetBoth's 277 cases are each as they were at 1.190. Its
+/// new one, glslc_many_ids on the V3D beside its products and sums worked
+/// out on the cores, is 8 of 230400 pixels apart: the 8 at the triangles'
+/// edge every case of its geometry has. FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 191;
