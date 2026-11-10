@@ -2741,6 +2741,44 @@ On the CM5 FacetBoth 1.62's new case, "shipped modf, frexp and ldexp", is 52 of 
 
 With the cores' function made wrong on purpose the case is 46,565 apart. The other 288 cases are each as they were at 1.197, and FacetProbe is 890 of 890.
 
+**Then the packing of snorms and unorms**, facet.library 1.199.
+
+- **The packings**, PackUnorm4x8, PackSnorm4x8, PackUnorm2x16 and PackSnorm2x16, are NIR's pack_unorm_4x8 and the others (vtn_glsl450.c:606-609). The V3D's lower_pack_* have them lowered (v3dv_pipeline.c:179-180, 183-184; nir_opt_algebraic.py:2757-2780, the forms of no has_pack_32_4x8):
+  - v is held to 0 to 1 by an fsat, or to −1 to 1 by an fmin of an fmax; multiplied by 255, 65535, 127 or 32767; rounded to even; and made an integer, f2u32 or f2i32.
+  - Then pack_uvec4_to_uint or pack_uvec2_to_uint, which lower_to_scalar (:203) has nir_lower_alu_width lower (nir_lower_alu_width.c:276-298): each float's low byte or half, extract_u8 or extract_u16 at 0, shifted to its place and or'ed, the first float's lowest.
+- **The unpackings**, unpack_unorm_4x8 and the others (vtn_glsl450.c:612-615), are lowered by lower_unpack_* (v3dv_pipeline.c:181-182, 185-186; nir_opt_algebraic.py:2787-2813). The vector of the word's places is made floats by u2f32 or i2f32 and divided by the same numbers, the fdiv a times the frcp of b, which folds. The signed are then held to −1 to 1, as −128 and −32768 would be past it.
+- **The extracts** are lower_extract_byte's and lower_extract_word's (v3dv_pipeline.c:168-169; nir_opt_algebraic.py:2740-2754): unsigned, shifted down and masked; signed, shifted up to the top and arithmetically down. Their constants are worked out as they are made, and a shift of 0 is not made. Either would be a step made only for the rules to take out, and the 256 steps would not hold the shaders.
+- **New rules**, for i in 1, 2, 16 and 24 (nir_opt_algebraic.py:702-714): an ishl of an iand of the bits the shift keeps is the ishl alone, and an iand of an ishl or a ushr by the bits the shift leaves is the shift alone. ishr and ushr by 0 are their operand (:1803, :1805). So a packing's last place is shifted without its mask, and an unsigned unpacking's last place is shifted down without one.
+- A float of a constant is a constant of its own, and a vector of constants one constant, as nir_opt_constant_folding makes them, so that a packing or an unpacking of constants folds.
+- On the V3D, f2i32 of an fround_even is one FTOIN, and f2u32 of one an FROUND and an FTOUZ (nir_to_vir.c:1466-1482).
+- The host's evaluator works out fsat (nir_opcodes.py:265) and fround_even.
+- Rules :2820-2828, which fold an unpacking packed again without rounding, are not ported: what the packing functions make is rounded.
+
+Still left out: PackHalf2x16 and UnpackHalf2x16, next; PackDouble2x32 and UnpackDouble2x32, which are of 64-bit floats, and facet has none (shaderFloat64 is false); Modf and Frexp of a pointer; Determinant and MatrixInverse; and the interpolation functions.
+
+Results:
+- **The references.** One shader of all eight is 298 steps, past the 256, so there are two:
+  - glslc_packing_bytes, 308 words: PackUnorm4x8 and PackSnorm4x8 of the colour made −1.5 to 1.5, each unpacked again, and PackUnorm2x16 of it unpacked in bytes;
+  - glslc_packing_halves, 285 words: PackUnorm2x16 and PackSnorm2x16, each unpacked again, and PackSnorm4x8 unpacked in halves.
+
+  The packing of one width read in the other tells the places' order.
+- **The programs:**
+
+  | | iand | ishl | ishr | ushr | ior | f2u32, f2i32 | u2f32, i2f32 | FTOIN | FROUND, FTOUZ |
+  |---|---|---|---|---|---|---|---|---|---|
+  | Bytes | 13 | 10 | 4 | 6 | 7 | 2, 1 | 2, 1 | 4 | 6, 6 |
+  | Halves | 6 | 7 | 4 | 1 | 5 | 1, 2 | 1, 2 | 6 | 2, 2 |
+
+  Each packing of four is three iands, three ishls and three iors, and of two one of each. Each unsigned unpacking of four is three iands and three ushrs, and of two one of each. Each signed unpacking of four is three ishls and four ishrs, and of two one ishl and two ishrs.
+- **The values.** For eight colours, among them 0, both ends and past them, and negatives and positives in every place, each answers within 10^−6 what GLSL's definitions answer, rounded to even.
+- **Constants** fold, among them 2.5/255, which times 255 is 2.5 and packs to 2; 0.5, which times 255 is 127.5 and packs to 128; and 0x80, which unpacks to −1.
+- A packing that answers other than a uint, or an unpacking other than its vector, is refused. Without that check the walk crashes on one.
+- The rules' test has 13 cases more: each rule, the constant either side, and shifts and masks it must leave alone.
+
+The V3D's tests are 344, three new. PackDouble2x32 is now the call the refusal test turns Fract into. Of 38 mutations, all 38 fail them.
+
+On the CM5 FacetBoth 1.63's new cases, "shipped packing in bytes" and "shipped packing in halves", are each 8 of 230400 pixels apart, the 8 at the triangles' edge. With the cores' functions made wrong on purpose they are 46,171 and 46,482 apart, fewer than 46,565 where red is already at 1. The other 289 cases are each as they were at 1.198, and FacetProbe is 890 of 890.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim
