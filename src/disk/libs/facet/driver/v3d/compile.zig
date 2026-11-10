@@ -3336,7 +3336,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         // An atomic or a barrier is neither either: it
                         // would run where the arm is not taken (since
                         // 1.169).
-                        .atomic_load, .atomic_store, .atomic_exchange, .atomic_compare_exchange, .atomic_compare_exchange_weak, .atomic_i_increment, .atomic_i_decrement, .atomic_i_add, .atomic_i_sub, .atomic_s_min, .atomic_u_min, .atomic_s_max, .atomic_u_max, .atomic_and, .atomic_or, .atomic_xor, .memory_barrier, .control_barrier => try selection.keep(work, depth),
+                        .atomic_load, .atomic_store, .atomic_exchange, .atomic_compare_exchange, .atomic_compare_exchange_weak, .atomic_i_increment, .atomic_i_decrement, .atomic_i_add, .atomic_i_sub, .atomic_s_min, .atomic_u_min, .atomic_s_max, .atomic_u_max, .atomic_and, .atomic_or, .atomic_xor, .memory_barrier, .control_barrier => try selection.keep(depth),
                         // A store into a variable of the function's own
                         // is a value the merge chooses, a load and a store
                         // nir_lower_vars_to_ssa leaves none of (since
@@ -3356,7 +3356,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                             // intrinsic block_check_for_allowed_instrs lets
                             // none of through (nir_opt_peephole_select.c:109-129;
                             // scratch since 1.177).
-                            try selection.keep(work, depth);
+                            try selection.keep(depth);
                         } else return Error.Branches,
                         else => {
                             selection.empty = false;
@@ -3369,7 +3369,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     else => return Error.Branches,
                 }
                 try step(work, instruction);
-                if (texture and !takenBefore(work, work.step_of[try idOf(operands[1])])) try selection.keep(work, depth);
+                if (texture and !takenBefore(work, work.step_of[try idOf(operands[1])])) try selection.keep(depth);
             },
         }
     }
@@ -3502,21 +3502,28 @@ fn fixedOutputs(work: *Work) Error!void {
 
 /// The floats of each step something live reads, a bit each: what
 /// nir_opt_dce leaves of a program nir_lower_alu_to_scalar has made a
-/// float an instruction. An output and a discard are live, and so is
-/// what a live float is computed from: the same float of an operand of
-/// an operation float by float, the one of a scalar, and every float of
-/// what anything else reads.
+/// float an instruction. An output and a discard are live, and so is a
+/// kept selection's begin_if, its nir_if, whose condition nir_opt_dce
+/// keeps (since 1.205): one nir_opt_dead_cf took out is not here any
+/// more. What a live float is computed from is live: the same float of
+/// an operand of an operation float by float, the one of a scalar, the
+/// float a phi chooses of each way, as nir_lower_phis_to_scalar leaves it
+/// (since 1.205), and every float of what anything else reads.
 fn liveFloats(work: *const Work) [most_steps]u8 {
     var reads: [most_steps]u8 = @splat(0);
     var at = work.step_count;
     while (at > 0) {
         at -= 1;
         const each = work.steps[at];
-        if (each.tag == .output or each.tag == .discard) reads[at] = 1;
+        if (each.tag == .output or each.tag == .discard or each.tag == .begin_if) reads[at] = 1;
         const floats = reads[at];
         if (floats == 0) continue;
         switch (each.tag) {
             .component => reads[each.a] |= @as(u8, 1) << @intCast(each.at),
+            .phi => {
+                reads[each.a] |= @as(u8, 1) << @intCast(each.part[0]);
+                reads[each.b] |= @as(u8, 1) << @intCast(each.part[1]);
+            },
             .construct => for (0..each.kind.parts()) |k| {
                 if (floats & @as(u8, 1) << @intCast(k) != 0) reads[each.from[k]] |= @as(u8, 1) << @intCast(each.part[k]);
             },
@@ -4370,10 +4377,10 @@ const Selection = struct {
     one_way: bool = false,
 
     /// An arm holds what is not flattened: the selection is kept a branch,
-    /// where it is in no other (since 1.171). A vertex program's are not
-    /// yet.
-    fn keep(selection: *Selection, work: *const Work, depth: u32) Error!void {
-        if (depth != 1 or work.stage != .fragment) return Error.Branches;
+    /// where it is in no other (since 1.171), in a program of any stage
+    /// (since 1.205).
+    fn keep(selection: *Selection, depth: u32) Error!void {
+        if (depth != 1) return Error.Branches;
         selection.kept = true;
         selection.empty = false;
         selection.quiet = false;
@@ -5581,9 +5588,12 @@ fn phiStep(condition: u16, yes: Float, no: Float) Step {
 /// nir_opt_peephole_select does not flatten, or whose arms are over its
 /// limit. Its selects are its phis, where it was kept for the limit, and
 /// its marks are put down. Only one in no other selection, of no other
-/// in it, is kept.
+/// in it, is kept. In a vertex or a compute program as in a fragment
+/// program: ntq_emit_if and the passes before it have nothing of the
+/// stage's (nir_to_vir.c:4355-4573; since 1.205), and 1.204 has the ids
+/// that tell a branch under the execute mask from a uniform one.
 fn keepSelection(work: *Work, selection: *const Selection, depth: u32) Error!void {
-    if (depth != 1 or work.stage != .fragment) return Error.Branches;
+    if (depth != 1) return Error.Branches;
     if (selection.inner != 0 or selection.collapsed or selection.killed) return Error.Branches;
     if (work.kept_count == most_kept) return Error.Branches;
     if (!selection.kept) {
@@ -5766,10 +5776,11 @@ fn algebraic(work: *Work) Error!void {
     try list.rematerialize(work);
     while (true) {
         list.dce(work);
+        const flattened = try list.flattenEmptied(work);
         const merged = list.cse(work);
         const rewrote = try list.run(work);
         const folded = try list.fold(work);
-        if (!merged and !rewrote and !folded) break;
+        if (!merged and !rewrote and !folded and !flattened) break;
     }
     list.layOut(work);
 }
@@ -5964,8 +5975,9 @@ const Order = struct {
             if (each.tag == .discard or each.tag == .output or each.tag == .ssbo_store or each.tag == .ssbo_atomic or each.tag == .barrier or each.tag == .scratch_store) reached[at] = true;
             // Shared memory's too (since 1.203).
             if (each.tag == .shared_store or each.tag == .shared_atomic or each.tag == .control_barrier) reached[at] = true;
-            // A kept selection's marks are its nir_if, which no pass but
-            // nir_opt_dead_cf takes out (since 1.171).
+            // A kept selection's marks are its nir_if, which nir_opt_dce
+            // does not take out (since 1.171): `flattenEmptied` does, once
+            // its arms are empty.
             if (each.tag == .begin_if or each.tag == .begin_else or each.tag == .end_if) reached[at] = true;
             if (!reached[at]) continue;
             for (readsOf(each)) |field| if (field) |operand_at| {
@@ -5975,6 +5987,42 @@ const Order = struct {
         for (0..work.step_count) |k| {
             if (!reached[k]) list.gone[k] = true;
         }
+    }
+
+    /// A kept selection nir_opt_dce has left nothing in, which v3d's loop
+    /// takes out next (nir_to_vir.c:2263-2279; since 1.205): the
+    /// coordinate program's arms that only made a varying, or a vertex
+    /// program's whose fragment program does not read it
+    /// (nir_remove_unused_io_vars, vir.c:1097-1105). nir_opt_dead_cf
+    /// takes out one with no phi after it (node_is_dead,
+    /// nir_opt_dead_cf.c:171-271; dead_cf_block, :293-296), and
+    /// nir_opt_peephole_select_block flattens one whose phis are read,
+    /// for arms of no instruction are under any limit, DontFlatten's 0
+    /// among them (nir_opt_peephole_select.c:336-341, :548-553): each
+    /// phi a bcsel of the condition, the true way's float and the false
+    /// way's (:577-603). Both come to this: the phis still read made
+    /// selects, the marks taken out, and what only the begin_if read
+    /// left to the next round's nir_opt_dce.
+    fn flattenEmptied(list: *Order, work: *Work) Error!bool {
+        var progress = false;
+        for (work.kept[0..work.kept_count]) |kept| {
+            if (!list.present(kept.marks[0])) continue;
+            var at = list.next[kept.marks[0]];
+            const empty = while (at != none and at != kept.marks[2]) : (at = list.next[at]) {
+                if (at != kept.marks[1] and list.present(at)) break false;
+            } else true;
+            if (!empty) continue;
+            for (kept.to..kept.marks[0]) |phi| {
+                const each = work.steps[phi];
+                if (each.tag != .phi or !list.present(@intCast(phi))) continue;
+                var made = Step{ .tag = .select, .kind = .f32x1, .a = each.from[0], .b = try list.floatBefore(work, @intCast(phi), .{ .step = each.a, .part = each.part[0] }) };
+                made.from[0] = try list.floatBefore(work, @intCast(phi), .{ .step = each.b, .part = each.part[1] });
+                work.steps[phi] = made;
+            }
+            for (kept.marks) |mark| list.removed[mark] = true;
+            progress = true;
+        }
+        return progress;
     }
 
     /// nir_opt_cse: a step equal to one before it - the same operation of
@@ -20801,4 +20849,187 @@ test "through Mesa's back end, a vertex program's uniform buffer read at its ver
     // Each tint's four floats an LDTMU, and no LDUNIFA.
     try testing.expectEqual(@as(usize, 8), countOf(code, "ldtmu"));
     try testing.expectEqual(@as(usize, 0), countOf(code, "ldunifa"));
+}
+
+/// The registers the add side of `code`'s instructions writes where its
+/// operation is `op`, in order, as the disassembler names them `rfN`
+/// (since 1.205).
+fn addDestsOf(code: Code, op: []const u8, into: []u8) []u8 {
+    var count: usize = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        if (!std.mem.startsWith(u8, line, op) or line.len < op.len + 3) continue;
+        if (!std.mem.eql(u8, line[op.len .. op.len + 3], " rf")) continue;
+        const digits = line[op.len + 3 ..];
+        const end = std.mem.indexOfScalar(u8, digits, ',') orelse continue;
+        into[count] = std.fmt.parseInt(u8, digits[0..end], 10) catch continue;
+        count += 1;
+    }
+    return into[0..count];
+}
+
+/// Whether the program `work` was left holding has a kept selection's
+/// begin_if (since 1.205).
+fn hasBranch(work: *const Work) bool {
+    for (work.program()) |each| if (each.tag == .begin_if) return true;
+    return false;
+}
+
+test "through Mesa's back end, a compute program's store in an arm whose condition differs from lane to lane is a branch under the execute mask" {
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_compute_branch);
+    // ntq_emit_nonuniform_if (nir_to_vir.c:4455-4562), as in a fragment
+    // program: the execute mask set where a lane does not take the arm,
+    // the arm jumped over where none does, and the TMU's addresses in it,
+    // the load's and the store's, written under the mask
+    // (ntq_emit_tmu_general). The condition is a value read at the
+    // global id, which differs (1.204).
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov.ifna"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "bu.anyna"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "add.ifa tmua"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
+}
+
+test "through Mesa's back end, a compute program's store in an arm whose condition is the same in every lane is a uniform branch" {
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_compute_uniform_branch);
+    // ntq_emit_uniform_if (nir_to_vir.c:4355-4400): a jump past the arm
+    // where any lane, of those dispatched, does not take it (msfign P),
+    // and no execute mask: the store in the arm is no lane's alone.
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.anynap"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "mov.ifna"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, ".ifa"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "tmua"));
+}
+
+test "through Mesa's back end, one invocation's store into shared memory is in its arm under the execute mask, and the barrier after the merge is every lane's" {
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_compute_shared_branch);
+    // The read of r.f[] and the store into total, each address under the
+    // mask; the barrier, its TMUWT before it, at the top level after the
+    // arm (emit_compute_barrier, nir_to_vir.c:3563-3577); then total read
+    // back by every lane.
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "add.ifa tmua"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov.ifa tmua"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "barrierid"));
+    var branch_at: ?usize = null;
+    var barrier_at: ?usize = null;
+    for (code.words, 0..) |word, k| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        if (std.mem.indexOf(u8, line, "bu.allna") != null) branch_at = k;
+        if (std.mem.indexOf(u8, line, "barrierid") != null) barrier_at = k;
+    }
+    try testing.expect(branch_at.? < barrier_at.?);
+}
+
+test "through Mesa's back end, a vertex program's uniform buffer read in an arm keeps the selection a branch, which nir_opt_dead_cf takes out of the coordinate program" {
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const vertex = try vertexThroughMesa(&work, &reference.glslc_vertex_branch, key);
+    // The vertex program: the read in the arm, its address under the
+    // mask, and the false arm's copies of vec4(0.5) jumped over where
+    // every lane took the true one.
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 1), countOf(vertex, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(vertex, "bu.alla"));
+    try testing.expectEqual(@as(usize, 1), countOf(vertex, "add.ifa tmuau"));
+    try testing.expectEqual(@as(usize, 4), countOf(vertex, "ldtmu"));
+    // The coordinate program has no use for the colour: nir_opt_dce
+    // leaves the arm empty and the phi unread, and nir_opt_dead_cf takes
+    // the nir_if out (node_is_dead, nir_opt_dead_cf.c:171-271), its
+    // comparison and execute mask with it.
+    work = .{};
+    key.coordinate = true;
+    key.system_values = vertex.vertex.system_values;
+    const coordinate = try vertexThroughMesa(&work, &reference.glslc_vertex_branch, key);
+    try testing.expect(!hasBranch(&work));
+    try testing.expectEqual(@as(usize, 0), countOf(coordinate, "push"));
+    try testing.expectEqual(@as(usize, 0), countOf(coordinate, "bu."));
+    try testing.expectEqual(@as(usize, 0), countOf(coordinate, "ldtmu"));
+    // The id's row, which it reads for the vertex program's sake, and
+    // p's four, read and stored again; the place on screen.
+    try testing.expectEqual(@as(usize, 16), coordinate.words.len);
+    // Nor has a vertex program whose fragment program reads no colour
+    // (nir_remove_unused_io_vars, vir.c:1097-1105).
+    work = .{};
+    const unread = try vertexThroughMesa(&work, &reference.glslc_vertex_branch, .{});
+    try testing.expect(!hasBranch(&work));
+    try testing.expectEqual(@as(usize, 0), countOf(unread, "bu."));
+}
+
+test "through Mesa's back end, a vertex program's two selections kept by DontFlatten: the place's in both programs, the colour's in the vertex program alone" {
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const vertex = try vertexThroughMesa(&work, &reference.glslc_vertex_kept, key);
+    // Both on the vertex's number, which differs: two branches under the
+    // execute mask. The id is read by the two conditions alone, which
+    // nir_opt_dce keeps for their nir_ifs, and the VPM has it.
+    try testing.expectEqual(@as(usize, 2), countOf(vertex, "bu.allna"));
+    try testing.expectEqual(SystemValues{ .vertex_id = true }, vertex.vertex.system_values);
+    // p whole; of c, the red, the green and the blue the two ways read,
+    // each phi its own float of each (nir_lower_phis_to_scalar).
+    try testing.expectEqualSlices(u8, &.{ 4, 3 }, vertex.vertex.vattr_sizes[0..2]);
+    // The place's x and y are the false way's values: each LDVPMV_IN
+    // writes the phi's register itself, as ntq_store_def does
+    // (nir_to_vir.c:2980-2982), which the arm then writes under the mask.
+    var loaded_buffer: [16]u8 = undefined;
+    var masked_buffer: [16]u8 = undefined;
+    const loaded = addDestsOf(vertex, "ldvpmv_in", &loaded_buffer);
+    const masked = addDestsOf(vertex, "fadd.ifa", &masked_buffer);
+    try testing.expect(masked.len >= 2);
+    for (masked[0..2]) |reg| try testing.expect(std.mem.indexOfScalar(u8, loaded, reg) != null);
+    // The coordinate program: the place's branch, and nothing of the
+    // colour's.
+    work = .{};
+    key.coordinate = true;
+    key.system_values = vertex.vertex.system_values;
+    const coordinate = try vertexThroughMesa(&work, &reference.glslc_vertex_kept, key);
+    try testing.expectEqual(@as(usize, 1), countOf(coordinate, "bu.allna"));
+    try testing.expectEqual(@as(usize, 2), countOf(coordinate, "fadd.ifa"));
+    try testing.expectEqual(@as(u8, 0), coordinate.vertex.vattr_sizes[1]);
+}
+
+test "through Mesa's back end, a kept selection whose arm the coordinate program leaves empty is flattened where its phi is read" {
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const vertex = try vertexThroughMesa(&work, &reference.glslc_vertex_kept_phi, key);
+    // The vertex program reads the colour in the arm: a branch.
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 4), countOf(vertex, "ldtmu"));
+    // The coordinate program has no use for the read. The place's phi
+    // follows the nir_if, which nir_opt_dead_cf leaves
+    // (nir_opt_dead_cf.c:178-183), but its arms are empty, which even
+    // DontFlatten's limit of 0 lets nir_opt_peephole_select flatten
+    // (nir_opt_peephole_select.c:339-341, :548-553): each of the
+    // place's four floats a bcsel of the condition, q's and p's.
+    work = .{};
+    key.coordinate = true;
+    key.system_values = vertex.vertex.system_values;
+    const coordinate = try vertexThroughMesa(&work, &reference.glslc_vertex_kept_phi, key);
+    try testing.expect(!hasBranch(&work));
+    try testing.expectEqual(@as(usize, 0), countOf(coordinate, "ldtmu"));
+    try testing.expectEqual(@as(usize, 0), countOf(coordinate, "bu."));
+    var selects: usize = 0;
+    const program = work.program();
+    for (program) |each| if (each.tag == .select) {
+        // The true way's float is q's, p times a half; the false way's
+        // is p's own: each a component of the vector, or the vector.
+        const yes = program[each.b];
+        const no = program[each.from[0]];
+        try testing.expectEqual(Tag.mul, (if (yes.tag == .component) program[yes.a] else yes).tag);
+        try testing.expectEqual(Tag.input, (if (no.tag == .component) program[no.a] else no).tag);
+        selects += 1;
+    };
+    try testing.expectEqual(@as(usize, 4), selects);
 }

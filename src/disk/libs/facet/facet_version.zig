@@ -6777,4 +6777,42 @@ pub const LIBRARY_VERSION = 1;
 /// corner from a readonly buffer at its global id, is 63,548 of 230400
 /// pixels apart with 1.203 and 0 apart with 1.204. The other 296 cases
 /// are each as they were at 1.203, and FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 204;
+///
+/// 205: **Kept selections in vertex and compute programs (docs/
+/// facet-vulkan10.md item 60).** Since 1.171 only a fragment program kept
+/// a selection a branch, and `keepSelection` answered another stage's
+/// with Error.Branches, a rule of this port's: ntq_emit_if and the passes
+/// before it have nothing of the stage's (nir_to_vir.c:4355-4573), and
+/// 1.204 has the ids that tell a branch under the execute mask from a
+/// uniform one. A store in an arm, to a storage buffer or to shared
+/// memory, a buffer read in one, and arms DontFlatten or the limit keeps
+/// are branches in any stage now: ntq_emit_nonuniform_if's execute mask
+/// (:4455-4561), or ntq_emit_uniform_if's msfign P jump (:4396-4400).
+///
+/// What a vertex program needed besides. `flattenEmptied` does in v3d's
+/// loop what nir_opt_dead_cf and nir_opt_peephole_select do with an if
+/// nir_opt_dce has emptied (nir_to_vir.c:2263-2279): one with no phi is
+/// dead (node_is_dead, nir_opt_dead_cf.c:171-271, :293-296), one whose
+/// phis are read is under any limit, DontFlatten's 0 among them, and
+/// flattened (nir_opt_peephole_select.c:336-341, :548-553, :577-603). It
+/// is the coordinate program's arm that only made a varying.
+/// `liveFloats` counted only an output or a discard as live, so a vertex
+/// id only a condition read was never loaded; a begin_if is live now, and
+/// a phi reads only the float it chooses of each way. An attribute's
+/// LDVPMV_IN goes through `storeDef`, as ntq_emit_load_input's does
+/// (nir_to_vir.c:2980-2982), for a phi's way coalesced into its register.
+///
+/// Six references, glslc_compute_branch, glslc_compute_uniform_branch,
+/// glslc_compute_shared_branch, glslc_vertex_branch, glslc_vertex_kept
+/// and glslc_vertex_kept_phi. The V3D's tests are 367, six new. Of 9
+/// mutations, all 9 fail them.
+///
+/// On the CM5 FacetBoth 1.69's "shipped compute: kept branches, under
+/// the mask and uniform", three groups of three invocations storing their
+/// corners through three kept selections, is 0 of 230400 pixels apart,
+/// and "shipped vertex branches", two DontFlatten branches on the
+/// vertex's number, is 12 apart, the triangles' edges. With the cores'
+/// functions made wrong on purpose they are 53,998 and 71,907 apart. The
+/// other 297 cases are each as they were at 1.204, and FacetProbe passes
+/// its 890 checks.
+pub const LIBRARY_REVISION = 205;
