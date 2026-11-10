@@ -2355,6 +2355,35 @@ Results:
 
 Of 37 mutations of the port, 37 fail the tests. On the CM5, FacetBoth's 239 cases are each as they were at 1.176, and its new `shipped scratch` has 18 of 230400 pixels apart. The first of them is at 154,70, where 40 other cases also first differ, the plain `triangles` among them. FacetProbe is 890 of 890.
 
+**Then if-else trees for an index the body computes into two elements or fewer, nir_lower_indirect_derefs_to_if_else_trees for function_temp**, facet.library 1.178.
+
+- **Which accesses.** An access chain into a variable of the function's own is a tree when the arrays its computed indexes index have two elements or fewer between them, the product of their lengths (indirect_array_len, nir_lower_indirect_derefs_to_if_else_trees.c:138-153; v3dv_pipeline.c:432-436). More than two is scratch, as at 1.177.
+- **The tree.** Each load and store splits at ilt(index, 1) (emit_indirect_load_store_deref, :35-66), each leaf the element at a constant index (:42-46), and a load's value is the phi of its two arms (:63). A float of a vector is loaded through the tree of the whole vector and extracted; it is stored by loading the vector, inserting the float and storing the vector back (vtn_local_load, vtn_local_store, vtn_variables.c:616-667).
+- **The phis.** nir_lower_vars_to_ssa takes the variable in the loop of passes after the trees. nir_phi_builder puts its phis before the block's first instruction (nir_phi_builder.c:272-297), so at a merge they come before those of the variables made SSA earlier (`local_late`).
+- **The bcsels.** nir_opt_peephole_select makes each tree one bcsel a float. nir_opt_remove_phis takes a phi of an undef and another source as the other (nir_opt_remove_phis.c:105-175), and one of two equal constants as the constant (:31-58). Constants are equal by their bits, since nir_lower_load_const_to_scalar (v3dv_pipeline.c:427) and nir_opt_cse have made each float one value (`oneFloat`).
+- **b2f.** A bcsel of 1.0 and 0.0 is the b2f of its bool, of 0.0 and 1.0 the b2f of its inot, and of -1.0 and -0.0, or of -0.0 and -1.0, the fneg of those (nir_opt_algebraic.py:2080-2083; the zeros by their sign, nir_search.c:278-290). to_vir emits b2f32 as an AND with the uniform 1.0 (nir_to_vir.c:1521-1523).
+
+Refused still:
+- a tree in a selection's arm or in a loop, whose flattening nir_opt_peephole_select and the unroll would have to see;
+- a tree into a variable that is in scratch;
+- a load of a whole aggregate that holds a bool through a tree.
+
+Not ported yet:
+- the nsz rules beside the b2f ones (nir_opt_algebraic.py:2084-2087);
+- the ilt of an imin or an imax with a constant (:1519, :1527), so a clamped index keeps its clamp in the tree's condition;
+- the trees of shader_in (v3dv_pipeline.c:432-433), with no input arrays yet;
+- the order of scratch and the unroll in a fragment shader. Mesa moves the variables to scratch (vir.c:2041-2044) before v3d_optimize_nir(c) unrolls (vir.c:2077; the unroll only with c, nir_to_vir.c:2344-2347), and the fragment shader has no early v3d_optimize_nir as the vertex and geometry shaders have (vir.c:1107, :1150). There, an array of more than two elements a loop's counter indexes is in scratch, where facet's walk unrolls first and finds the index constant. A later step.
+
+Results:
+- glslc_tree_store, a vec2 stored at a computed index, is three bcsels and no scratch.
+- glslc_tree_bools is two b2f and two fneg.
+- glslc_tree_late, at -O0, has the two arrays' bcsels in the order Mesa puts their phis.
+- glslc_tree_single has one element, and an element never stored that is what the other arm's was.
+- glslc_tree_members takes a member, a struct and a matrix's column through a tree.
+- glslc_tree_arm and glslc_tree_mixed are refused.
+
+Of 22 mutations of the port, 22 fail the tests. On the CM5, FacetBoth's 240 cases are each as they were at 1.177, and its new `shipped trees` has 11 of 230400 pixels apart. The first of them is at 154,70, the edge pixel where 110 cases first differ. FacetProbe is 890 of 890.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim

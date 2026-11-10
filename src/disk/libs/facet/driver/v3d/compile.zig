@@ -164,6 +164,17 @@ pub const Scratch = struct {
     /// dropped (since 1.177).
     dead: [most_scratch_variables]bool = undefined,
     count: u32 = 0,
+    /// The variables of the function's own an access chain reaches at
+    /// indexes the body computes of two or fewer elements, of whose loads
+    /// and stores nir_lower_indirect_derefs_to_if_else_trees makes if-else
+    /// trees (`local_tree`): nir_lower_vars_to_ssa takes them in the loop
+    /// of passes v3dv runs after it (v3dv_pipeline.c:432-439), not in the
+    /// one before, and puts the phis it gives them at a merge before those
+    /// the first gave the others there (`merge`). The walk finds one where
+    /// it reaches a load or a store of it through such an index, and is
+    /// begun again with it here (since 1.178).
+    trees: [most_scratch_variables]u16 = undefined,
+    tree_count: u32 = 0,
 
     /// Where the variable `id` is in scratch, or null where it is not.
     fn placeOf(scratch: *const Scratch, id: u16) ?u16 {
@@ -192,11 +203,16 @@ pub const Scratch = struct {
     }
 
     fn same(scratch: *const Scratch, other: *const Scratch) bool {
-        if (scratch.count != other.count) return false;
+        if (scratch.count != other.count or scratch.tree_count != other.tree_count) return false;
         for (0..scratch.count) |k| {
             if (scratch.ids[k] != other.ids[k] or scratch.dead[k] != other.dead[k]) return false;
         }
-        return true;
+        return std.mem.eql(u16, scratch.trees[0..scratch.tree_count], other.trees[0..other.tree_count]);
+    }
+
+    /// Whether `id` is one of `trees`.
+    fn isTree(scratch: *const Scratch, id: u16) bool {
+        return std.mem.indexOfScalar(u16, scratch.trees[0..scratch.tree_count], id) != null;
     }
 };
 
@@ -725,11 +741,15 @@ pub const Integer = enum(u32) {
     f2u32,
     i2f32,
     u2f32,
+    /// A bool made a float, 1.0 or 0.0: what nir_opt_algebraic makes of
+    /// a bcsel of the two (:2080-2083), which v3d emits as the AND of the
+    /// bool's ~0 or 0 and 1.0 (nir_to_vir.c:1521-1523; since 1.178).
+    b2f32,
 
     /// Whether it reads one value, not two.
     pub fn unary(op: Integer) bool {
         return switch (op) {
-            .ineg, .iabs, .inot, .f2i32, .f2u32, .i2f32, .u2f32 => true,
+            .ineg, .iabs, .inot, .f2i32, .f2u32, .i2f32, .u2f32, .b2f32 => true,
             else => false,
         };
     }
@@ -1215,6 +1235,19 @@ pub const Work = struct {
     /// A `scratch_pointer`'s deref: its `Path`'s place in `pointer_paths`
     /// (since 1.177).
     chain_path: [most_ids]u8 = @splat(0),
+    /// A `scratch_pointer`: how many elements, columns and floats the
+    /// indexes the body computes count together down its chain,
+    /// nir_lower_indirect_derefs_to_if_else_trees's indirect_array_len
+    /// (:138-146; since 1.178).
+    chain_elements: [most_ids]u16 = @splat(1),
+    /// A `local_tree`: the step of the index the body computes, which the
+    /// if of nir_lower_indirect_derefs_to_if_else_trees tests, and how
+    /// many of the variables nir_split_array_vars makes the element the
+    /// else arm names is past the one the then arm does, which is
+    /// `points`; the rest of the chain from there `aggregate` and
+    /// `chain_part` (since 1.178).
+    tree_index: [most_ids]u16 = @splat(none),
+    tree_apart: [most_ids]u16 = @splat(0),
     pointer_paths: [most_pointer_paths]Path = undefined,
     pointer_path_count: u32 = 0,
     /// The deref of the float a load_scratch or a store_scratch step is
@@ -1346,6 +1379,9 @@ pub const Work = struct {
     /// Whether a variable of the function's own holds a bool (since
     /// 1.165).
     local_bool: [most_locals]bool = undefined,
+    /// Whether a variable of the function's own is one of an aggregate an
+    /// if-else tree reaches (`Scratch.trees`; since 1.178).
+    local_late: [most_locals]bool = @splat(false),
     local_count: u32 = 0,
     values: Values = undefined,
     before: [most_nesting]Values = undefined,
@@ -1419,7 +1455,7 @@ pub const Work = struct {
     kept: [most_kept]Kept = undefined,
     kept_count: u8 = 0,
 
-    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value, constant_matrix, position_pointer, plain_struct, local_aggregate, aggregate_value, constant_aggregate, scratch_pointer };
+    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value, constant_matrix, position_pointer, plain_struct, local_aggregate, aggregate_value, constant_aggregate, scratch_pointer, local_tree };
 
     /// `chain_part` of a pointer to a whole member.
     pub const whole: u8 = 0xFF;
@@ -2335,6 +2371,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                             work.chain_base[id] = id;
                             work.chain_offset[id] = place;
                             work.chain_dynamic[id] = none;
+                            work.chain_elements[id] = 1;
                             work.chain_path[id] = try pointerPath(work, .{ .variable = work.scratch.indexOf(id).? });
                             if (operands.len == 4) {
                                 const initial = try idOf(operands[3]);
@@ -2363,6 +2400,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                             for (leaves[0..count], first..) |leaf, local| {
                                 work.local_kind[local] = leaf.kind;
                                 work.local_bool[local] = leaf.is_bool;
+                                work.local_late[local] = work.scratch.isTree(id);
                                 work.values[local] = @splat(unstored);
                             }
                             work.local_count += @intCast(count);
@@ -2714,6 +2752,17 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             .function_end => {},
             else => {
                 if (!in_body or blocks == 0) return Error.Body;
+                // A load or a store through an if-else tree in an arm or a
+                // loop. The selection it is in stays a branch through the
+                // loop of passes before the trees are made, where the
+                // variable's loads and stores are still derefs
+                // (nir_opt_peephole_select.c:109-129), and is flattened in
+                // the one after with the tree's own; a loop has the tree's
+                // instructions in its body when nir_opt_loop_unroll, in the
+                // compile's own loop of passes, counts its cost
+                // (nir_to_vir.c:2344-2347). Neither is here: refused (since
+                // 1.178).
+                if ((flow != .body or loop.active) and accessesTree(work, instruction)) return Error.Branches;
                 switch (flow) {
                     .body => {},
                     // An arm Mesa flattens holds ALU work and loads it may
@@ -3892,7 +3941,7 @@ fn storesScratch(work: *const Work, operands: []const u32) bool {
 
 fn pointsLocal(work: *const Work, word: u32) bool {
     const id = idOf(word) catch return false;
-    return isLocal(work, id) or work.thing[id] == .local_part or work.thing[id] == .local_aggregate;
+    return isLocal(work, id) or work.thing[id] == .local_part or work.thing[id] == .local_aggregate or work.thing[id] == .local_tree;
 }
 
 /// The limit v3d's optimization loop gives nir_opt_peephole_select
@@ -4030,6 +4079,11 @@ fn localOf(work: *Work, local: u16) Error!u16 {
     const kind = work.local_kind[local];
     var holds: [4]Float = undefined;
     for (0..kind.parts()) |k| holds[k] = try heldOf(work, work.values[local][k]);
+    return valueOf(work, kind, holds);
+}
+
+/// The value of `kind` whose floats are `holds`, as `localOf` makes it.
+fn valueOf(work: *Work, kind: Kind, holds: [4]Float) Error!u16 {
     if (kind == .f32x1) return floatOf(work, holds[0]);
     const whole = for (0..kind.parts()) |k| {
         if (holds[k].step != holds[0].step or holds[k].part != k) break false;
@@ -4257,23 +4311,38 @@ fn storeAggregate(work: *Work, into: u16, word: u32) Error!void {
     }
 }
 
-/// An access chain into an aggregate of the function's own come to an
-/// index the body computes, `indexes` from that one on into the type
-/// `at`, of the variable `root`. Where the elements and columns the
-/// computed indexes count come to two or fewer,
-/// nir_lower_indirect_derefs_to_if_else_trees makes an if-else tree of
-/// the access (v3dv_pipeline.c:435-436,
-/// nir_lower_indirect_derefs_to_if_else_trees.c:141-153), which is not
-/// here: refused. Else the variable goes into scratch memory
+/// An access chain into an aggregate of the function's own, of the
+/// variable `root`, come to indexes the body computes that count more
+/// elements and columns than nir_lower_indirect_derefs_to_if_else_trees
+/// makes an if-else tree of (v3dv_pipeline.c:435-436,
+/// nir_lower_indirect_derefs_to_if_else_trees.c:138-153; `local_tree`,
+/// since 1.178): the variable goes into scratch memory
 /// (nir_lower_vars_to_scratch, vir.c:2041-2044), and the walk stops to be
 /// begun again with it there (`Scratch`, `readStage`; since 1.177).
-fn wantScratch(work: *Work, root: u16, from: u16, indexes: []const u32) Error!void {
+fn wantScratch(work: *Work, root: u16) Error!void {
+    if (work.scratch.count == most_scratch_variables) return Error.Storage;
+    const bytes = 4 * try scratchFloats(work, work.aggregate[root]);
+    if (work.scratch.size() + bytes > most_scratch) return Error.Storage;
+    work.scratch.ids[work.scratch.count] = root;
+    work.scratch.bytes[work.scratch.count] = @intCast(bytes);
+    work.scratch.dead[work.scratch.count] = false;
+    work.scratch.count += 1;
+    return Error.Storage;
+}
+
+/// How many elements and columns the indexes the body computes count
+/// together, down the chain `indexes` from the type `from`:
+/// nir_lower_indirect_derefs_to_if_else_trees's indirect_array_len, each
+/// such index's array's or matrix's glsl_get_length
+/// (nir_lower_indirect_derefs_to_if_else_trees.c:138-146; since 1.178).
+/// A vector's float the chain itself takes, at a constant index.
+fn computedElements(work: *const Work, from: u16, indexes: []const u32) Error!u32 {
     var at = from;
     var elements: u32 = 1;
     for (indexes) |each| {
         switch (work.thing[at]) {
             .array, .matrix => {
-                if (try localIndexOrNull(work, each) == null) elements *= if (work.thing[at] == .array) work.length[at] else work.wide[at];
+                if (try localIndexOrNull(work, each) == null) elements *|= elementsOf(work, at);
                 at = work.points[at];
             },
             .plain_struct => {
@@ -4286,15 +4355,196 @@ fn wantScratch(work: *Work, root: u16, from: u16, indexes: []const u32) Error!vo
             else => return Error.Body,
         }
     }
-    if (elements <= 2) return Error.Storage;
-    if (work.scratch.count == most_scratch_variables) return Error.Storage;
-    const bytes = 4 * try scratchFloats(work, work.aggregate[root]);
-    if (work.scratch.size() + bytes > most_scratch) return Error.Storage;
-    work.scratch.ids[work.scratch.count] = root;
-    work.scratch.bytes[work.scratch.count] = @intCast(bytes);
-    work.scratch.dead[work.scratch.count] = false;
-    work.scratch.count += 1;
+    return elements;
+}
+
+/// An array's elements, or a matrix's columns.
+fn elementsOf(work: *const Work, type_id: u16) u32 {
+    return if (work.thing[type_id] == .array) work.length[type_id] else work.wide[type_id];
+}
+
+/// A load or a store of a variable in scratch through indexes the body
+/// computes that count two or fewer elements, columns and floats
+/// together: nir_lower_indirect_derefs_to_if_else_trees makes an if-else
+/// tree of it before nir_lower_vars_to_scratch moves the variable
+/// (v3dv_pipeline.c:432-436, vir.c:2041-2044), whose arms are then a
+/// load_scratch or a store_scratch at a constant offset each, a branch
+/// Mesa keeps. That is not here: refused (since 1.178).
+fn checkScratchTree(work: *const Work, pointer: u16) Error!void {
+    if (work.pointer_paths[work.chain_path[pointer]].computed != 0 and work.chain_elements[pointer] <= 2) return Error.Storage;
+}
+
+/// `id` a pointer through an if-else tree (`local_tree`), its chain on
+/// from `base` come to the type `at`, `points` and `chain_part` set:
+/// `index` is the step of the index into two the tree's if tests, and
+/// `apart` how many variables the element it names in the else arm is
+/// past the one in the then arm (since 1.178).
+fn holdTree(work: *Work, id: u16, base: u16, at: u16, index: u16, apart: u16) void {
+    work.thing[id] = .local_tree;
+    work.class[id] = @intCast(@intFromEnum(spirv.StorageClass.function));
+    work.aggregate[id] = at;
+    work.chain_base[id] = work.chain_base[base];
+    work.tree_index[id] = index;
+    work.tree_apart[id] = apart;
+}
+
+/// The variable `root` is one an if-else tree reaches: where the walk did
+/// not know it, it is begun again knowing it (`Scratch.trees`; since
+/// 1.178).
+fn lateTree(work: *Work, root: u16) Error!void {
+    if (work.scratch.isTree(root)) return;
+    if (work.scratch.tree_count == most_scratch_variables) return Error.Storage;
+    work.scratch.trees[work.scratch.tree_count] = root;
+    work.scratch.tree_count += 1;
     return Error.Storage;
+}
+
+/// The ilt an if-else tree's if tests, of the index and the middle of
+/// the two elements, 1 (nir_ilt_imm,
+/// nir_lower_indirect_derefs_to_if_else_trees.c:47-54): one of each tree,
+/// which nir_opt_cse makes one (since 1.178).
+fn treeCondition(work: *Work, pointer: u16) Error!u16 {
+    const middle = try integerSplat(work, .f32x1, 1);
+    return put(work, .{ .tag = .compare, .kind = .f32x1, .a = work.tree_index[pointer], .b = middle, .at = @intFromEnum(Comparison.int_less) });
+}
+
+/// The float a phi of `yes` and `no` on `condition` comes to where its
+/// if's arms are left empty, as nir_lower_vars_to_ssa leaves an if-else
+/// tree's: one both bring, or one where the other brings an undef,
+/// nir_opt_remove_phis takes (nir_opt_remove_phis.c:105-175), else
+/// nir_opt_peephole_select makes it a bcsel, the then arm's first, as at a
+/// selection's merge (`merge`; since 1.178).
+fn chosenOf(work: *Work, condition: u16, yes: Float, no: Float) Error!Float {
+    if (sameFloats(yes, no) or no.step == none) return yes;
+    if (yes.step == none) return no;
+    var made = Step{ .tag = .select, .kind = .f32x1, .a = condition, .b = try floatOf(work, yes) };
+    made.from[0] = try floatOf(work, no);
+    return .{ .step = try put(work, made), .part = 0 };
+}
+
+/// A load through an if-else tree (`local_tree`): of each of the floats,
+/// vectors and matrix columns it names, vtn's load of one at a time
+/// (_vtn_local_load_store, vtn_variables.c:763-781), the tree
+/// nir_lower_indirect_derefs_to_if_else_trees makes, its ilt, a load of
+/// the element of each arm and the phi of the two (:35-108). Of one float
+/// of a vector, the vector's, of which the float is the
+/// nir_vector_extract (vtn_local_load, vtn_variables.c:616-641).
+/// nir_lower_vars_to_ssa gives each load what the element holds, and the
+/// phi is chosen a float at a time (`chosenOf`). One of bools is refused,
+/// as an aggregate's is (since 1.178).
+fn loadTree(work: *Work, id: u16, from: u16, type_id: u16) Error!void {
+    try lateTree(work, work.chain_base[from]);
+    const at = work.aggregate[from];
+    const first = work.points[from];
+    const apart = work.tree_apart[from];
+    if (work.chain_part[from] != Work.whole) {
+        if (try kindOf(work, type_id) != .f32x1) return Error.Type;
+        const other = first + apart;
+        const condition = try treeCondition(work, from);
+        touch(work, first);
+        touch(work, other);
+        const k = work.chain_part[from];
+        work.step_of[id] = try floatOf(work, try heldOf(work, try chosenOf(work, condition, work.values[first][k], work.values[other][k])));
+        return;
+    }
+    if (type_id != at) return Error.Type;
+    if (work.thing[at] == .boolean) return Error.Storage;
+    var made: [most_locals]u16 = undefined;
+    const count = try leafCount(work, at);
+    for (made[0..count], 0..) |*each, l| {
+        const then: u16 = @intCast(first + l);
+        const other = then + apart;
+        if (work.local_bool[then]) return Error.Storage;
+        const condition = try treeCondition(work, from);
+        touch(work, then);
+        touch(work, other);
+        const kind = work.local_kind[then];
+        var holds: [4]Float = undefined;
+        for (0..kind.parts()) |k| holds[k] = try heldOf(work, try chosenOf(work, condition, work.values[then][k], work.values[other][k]));
+        each.* = try valueOf(work, kind, holds);
+    }
+    switch (work.thing[at]) {
+        .float, .int, .vector => work.step_of[id] = made[0],
+        else => try holdAggregate(work, id, at, made[0..count]),
+    }
+}
+
+/// A store through an if-else tree (`local_tree`): of each of the
+/// floats, vectors and matrix columns it names, vtn's store of one at a
+/// time (vtn_variables.c:763-781), the tree of a store into the element
+/// of each arm (nir_lower_indirect_derefs_to_if_else_trees.c:35-110). Of
+/// one float of a vector, vtn loads the vector, inserts the float and
+/// stores the vector (vtn_local_store, vtn_variables.c:644-667), a tree
+/// each. At each store's tree's merge nir_lower_vars_to_ssa gives the
+/// two elements their phis (`storeChosen`). One of bools is refused (since
+/// 1.178).
+fn storeTree(work: *Work, into: u16, word: u32) Error!void {
+    try lateTree(work, work.chain_base[into]);
+    const at = work.aggregate[into];
+    const first = work.points[into];
+    const apart = work.tree_apart[into];
+    if (work.thing[at] == .boolean) return Error.Storage;
+    if (work.chain_part[into] != Work.whole) {
+        if (work.local_bool[first]) return Error.Storage;
+        const stored = try operand(work, word, .f32x1);
+        const other = first + apart;
+        const loaded = try treeCondition(work, into);
+        touch(work, first);
+        touch(work, other);
+        var floats: [4]Float = undefined;
+        for (0..work.local_kind[first].parts()) |k| {
+            floats[k] = if (k == work.chain_part[into]) partOf(work, stored, 0) else try chosenOf(work, loaded, work.values[first][k], work.values[other][k]);
+        }
+        return storeChosen(work, try treeCondition(work, into), first, apart, floats);
+    }
+    var made: [most_locals]u16 = undefined;
+    const count = try leafSteps(work, word, at, &made);
+    for (made[0..count], 0..) |value, l| {
+        const then: u16 = @intCast(first + l);
+        if (work.local_bool[then]) return Error.Storage;
+        var floats: [4]Float = undefined;
+        for (0..work.local_kind[then].parts()) |k| floats[k] = partOf(work, value, @intCast(k));
+        try storeChosen(work, try treeCondition(work, into), then, apart, floats);
+    }
+}
+
+/// The merge of an if-else tree of a store of `floats` into the element
+/// `then` in its then arm and the one `apart` past it in its else arm:
+/// nir_lower_vars_to_ssa gives each a phi of what was stored and what it
+/// held, the then arm's first, each chosen a float at a time
+/// (`chosenOf`), and the phi builder puts the two down in the reverse of
+/// the order the elements were first used in (`merge`; since 1.178).
+fn storeChosen(work: *Work, condition: u16, then: u16, apart: u16, floats: [4]Float) Error!void {
+    const other = then + apart;
+    touch(work, then);
+    touch(work, other);
+    const phis: [2]u16 = if (usedAt(work, then) < usedAt(work, other)) .{ other, then } else .{ then, other };
+    for (phis) |local| {
+        for (0..work.local_kind[local].parts()) |k| {
+            const was = work.values[local][k];
+            work.values[local][k] = if (local == then) try chosenOf(work, condition, floats[k], was) else try chosenOf(work, condition, was, floats[k]);
+        }
+    }
+}
+
+/// Where a variable `touch` was given is in the order they were first
+/// used in.
+fn usedAt(work: *const Work, local: u16) usize {
+    return std.mem.indexOfScalar(u8, work.first_used[0..work.used_count], @intCast(local)).?;
+}
+
+/// Whether an instruction loads or stores through an if-else tree
+/// (`local_tree`; since 1.178).
+fn accessesTree(work: *const Work, instruction: spirv.Instruction) bool {
+    const operands = instruction.operands();
+    const at: usize = switch (instruction.op) {
+        .load => 2,
+        .store => 0,
+        else => return false,
+    };
+    if (operands.len <= at) return false;
+    const id = idOf(operands[at]) catch return false;
+    return work.thing[id] == .local_tree;
 }
 
 /// The floats of `type_id` in scratch, a quarter of the bytes
@@ -4344,6 +4594,7 @@ fn scratchAt(work: *Work, pointer: u16, bytes: u32) Error!struct { dynamic: u16,
 /// _vtn_variable_load_store loads one element by element
 /// (vtn_variables.c:763-781; since 1.177).
 fn loadScratch(work: *Work, id: u16, from: u16) Error!void {
+    try checkScratchTree(work, from);
     const type_id = work.points[from];
     var kinds: [most_leaves]Leaf = undefined;
     const count = try leafKinds(work, type_id, &kinds);
@@ -4369,6 +4620,7 @@ fn loadScratch(work: *Work, id: u16, from: u16) Error!void {
 /// float on its own (`storeScratchFloat`), an aggregate's floats and
 /// vectors in order (vtn_variables.c:763-781; since 1.177).
 fn storeScratch(work: *Work, into: u16, word: u32) Error!void {
+    try checkScratchTree(work, into);
     var made: [most_leaves]u16 = undefined;
     const count = try leafSteps(work, word, work.points[into], &made);
     var floats: u32 = 0;
@@ -4618,7 +4870,9 @@ fn insertAggregate(work: *Work, operands: []const u32) Error!void {
 /// the reverse of the order they were first used in, and each one's
 /// floats in order after
 /// nir_lower_phis_to_scalar, which puts each before the vector's
-/// (nir_lower_phis_to_scalar.c:195-218; since 1.156).
+/// (nir_lower_phis_to_scalar.c:195-218; since 1.156). Those of the
+/// variables an if-else tree reaches come before the others' (since
+/// 1.178).
 ///
 /// A kept selection's merge has a phi of each float instead (since
 /// 1.171), and one way that brings nothing brings nir_lower_undef_to_zero's
@@ -4626,35 +4880,42 @@ fn insertAggregate(work: *Work, operands: []const u32) Error!void {
 /// (nir_opt_remove_phis.c:133-140).
 fn merge(work: *Work, selection: *Selection, level: u32) Error!void {
     const condition = selection.condition;
-    var at = work.used_count;
-    while (at > 0) {
-        at -= 1;
-        const local = work.first_used[at];
-        for (0..work.local_kind[local].parts()) |k| {
-            const yes = work.ends[level][0][local][k];
-            const no = work.ends[level][1][local][k];
-            if (yes.step != none and no.step != none and !(yes.step == no.step and yes.part == no.part)) {
-                if (work.local_bool[local] and selection.kept) return Error.Branches;
+    // Those of the variables an if-else tree reaches first: the loop of
+    // passes after the trees gives them their phis, each put before the
+    // merge block's first instruction, which is then a phi the loop before
+    // gave one of the others (since 1.178).
+    for ([2]bool{ true, false }) |late| {
+        var at = work.used_count;
+        while (at > 0) {
+            at -= 1;
+            const local = work.first_used[at];
+            if (work.local_late[local] != late) continue;
+            for (0..work.local_kind[local].parts()) |k| {
+                const yes = work.ends[level][0][local][k];
+                const no = work.ends[level][1][local][k];
+                if (yes.step != none and no.step != none and !(yes.step == no.step and yes.part == no.part)) {
+                    if (work.local_bool[local] and selection.kept) return Error.Branches;
+                }
+                if ((yes.step == none) != (no.step == none)) {
+                    if (work.local_bool[local] and selection.kept) return Error.Branches;
+                    selection.one_way = true;
+                }
+                work.values[local][k] = if (yes.step == no.step and yes.part == no.part)
+                    yes
+                else if (selection.kept)
+                    .{ .step = try put(work, phiStep(condition, try heldOf(work, yes), try heldOf(work, no))), .part = 0 }
+                else if (yes.step == none)
+                    no
+                else if (no.step == none)
+                    yes
+                else if (dropped(work, selection, yes, no))
+                    yes
+                else chosen: {
+                    var made = Step{ .tag = .select, .kind = .f32x1, .a = condition, .b = try floatOf(work, yes) };
+                    made.from[0] = try floatOf(work, no);
+                    break :chosen .{ .step = try put(work, made), .part = 0 };
+                };
             }
-            if ((yes.step == none) != (no.step == none)) {
-                if (work.local_bool[local] and selection.kept) return Error.Branches;
-                selection.one_way = true;
-            }
-            work.values[local][k] = if (yes.step == no.step and yes.part == no.part)
-                yes
-            else if (selection.kept)
-                .{ .step = try put(work, phiStep(condition, try heldOf(work, yes), try heldOf(work, no))), .part = 0 }
-            else if (yes.step == none)
-                no
-            else if (no.step == none)
-                yes
-            else if (dropped(work, selection, yes, no))
-                yes
-            else chosen: {
-                var made = Step{ .tag = .select, .kind = .f32x1, .a = condition, .b = try floatOf(work, yes) };
-                made.from[0] = try floatOf(work, no);
-                break :chosen .{ .step = try put(work, made), .part = 0 };
-            };
         }
     }
 }
@@ -5204,6 +5465,7 @@ const Order = struct {
                 if (yes == condition) return try list.rebuilt(work, at, logicOf(.ior, condition, no));
                 if (no == condition) return try list.rebuilt(work, at, logicOf(.iand, condition, yes));
                 if (sameFloat(work, yes, no)) return list.replaced(work, at, yes);
+                if (try list.boolFloatRule(work, at, condition, yes, no)) |left| return left;
                 if (yes_select and list.usesOf(work, yes) == 1) {
                     if (sameFloat(work, y.from[0], no)) {
                         const both = try list.before(work, at, logicOf(.iand, condition, y.a));
@@ -5574,6 +5836,29 @@ const Order = struct {
         return null;
     }
 
+    /// A bcsel of 1.0 and 0.0, the b2f of its bool; of 0.0 and 1.0, the
+    /// b2f of the inot; of -1.0 and -0.0, and of -0.0 and -1.0, the fneg
+    /// of those (nir_opt_algebraic.py:2075-2083), each constant matched by
+    /// its value and a zero by its sign too (match_value, nir_search.c:
+    /// 278-290; since 1.178). Not ported: the four that want the bcsel
+    /// used as nothing but a float (`is_only_used_as_float_nsz`,
+    /// :2084-2087).
+    fn boolFloatRule(list: *Order, work: *Work, at: u16, condition: u16, yes: u16, no: u16) Error!?u16 {
+        const plus_one: u32 = @bitCast(@as(f32, 1.0));
+        const minus_one: u32 = @bitCast(@as(f32, -1.0));
+        const minus_zero: u32 = @bitCast(@as(f32, -0.0));
+        const left = floatBits(work, partOf(work, yes, 0)) orelse return null;
+        const right = floatBits(work, partOf(work, no, 0)) orelse return null;
+        const straight = (left == plus_one and right == 0) or (left == minus_one and right == minus_zero);
+        const turned = (left == 0 and right == plus_one) or (left == minus_zero and right == minus_one);
+        if (!straight and !turned) return null;
+        const of = if (turned) try list.before(work, at, logicOf(.inot, condition, 0)) else condition;
+        const made = integerStep(.b2f32, .f32x1, of, 0);
+        if (left != minus_one and right != minus_one) return try list.rebuilt(work, at, made);
+        const float = try list.before(work, at, made);
+        return try list.rebuilt(work, at, .{ .tag = .negate, .kind = .f32x1, .a = float });
+    }
+
     /// The rule's last new step put before `at`, and `at` out.
     fn rebuilt(list: *Order, work: *Work, at: u16, last: Step) Error!u16 {
         return list.replaced(work, at, try list.before(work, at, last));
@@ -5787,17 +6072,24 @@ fn sameValue(work: *const Work, a: u16, b: u16) bool {
     const kind = work.steps[a].kind;
     if (kind != work.steps[b].kind) return false;
     for (0..kind.parts()) |k| {
-        const left = partOf(work, a, @intCast(k));
-        const right = partOf(work, b, @intCast(k));
-        if (left.step != right.step or left.part != right.part) return false;
+        if (!oneFloat(work, partOf(work, a, @intCast(k)), partOf(work, b, @intCast(k)))) return false;
     }
     return true;
 }
 
 fn sameFloat(work: *const Work, a: u16, b: u16) bool {
-    const left = partOf(work, a, 0);
-    const right = partOf(work, b, 0);
-    return left.step == right.step and left.part == right.part;
+    return oneFloat(work, partOf(work, a, 0), partOf(work, b, 0));
+}
+
+/// Whether two floats are one SSA value: the same float of one step, or
+/// two constants of the same bits, which nir_lower_load_const_to_scalar
+/// has made load_consts of one float each (v3dv_pipeline.c:427) and
+/// nir_opt_cse then makes one, as it makes one of a vector's floats and
+/// another's (since 1.178).
+fn oneFloat(work: *const Work, left: Float, right: Float) bool {
+    if (left.step == right.step and left.part == right.part) return true;
+    const x = floatBits(work, left) orelse return false;
+    return floatBits(work, right) == x;
 }
 
 /// Whether a step is an ALU instruction in NIR, which nir_opt_algebraic
@@ -6038,6 +6330,10 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 // function's own (since 1.176).
                 return storeAggregate(work, into, operands[1]);
             }
+            if (work.thing[into] == .local_tree) {
+                // Through an if-else tree (since 1.178).
+                return storeTree(work, into, operands[1]);
+            }
             if (work.thing[into] == .scratch_pointer) {
                 // Into a variable in scratch, each float its own
                 // store_scratch (since 1.177).
@@ -6183,6 +6479,10 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 work.step_of[id] = try put(work, .{ .tag = .component, .kind = .f32x1, .a = of, .at = work.chain_part[from] });
                 return;
             }
+            if (work.thing[from] == .local_tree) {
+                // Through an if-else tree (since 1.178).
+                return loadTree(work, id, from, try idOf(operands[0]));
+            }
             if (work.thing[from] == .local_part) {
                 // One float of a variable of the function's own: what it
                 // holds, nir_vector_extract of the value
@@ -6286,7 +6586,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 work.chain_part[id] = @intCast(which);
                 return;
             }
-            if (work.thing[base] == .local_aggregate) {
+            if (work.thing[base] == .local_aggregate or work.thing[base] == .local_tree) {
                 // An element, a member or a column of an array, a struct
                 // or a matrix of the function's own, through as many as
                 // the indexes say: the variable nir_split_struct_vars or
@@ -6296,33 +6596,58 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 // index is a constant, as SPIR-V has it; an element's or a
                 // column's may be a value the walk folded to one
                 // (`localIndexOf`).
+                // Or one the body computes. Where those from the variable
+                // on count two or fewer elements and columns together,
+                // nir_lower_indirect_derefs_to_if_else_trees makes an
+                // if-else tree of each load and store through the chain,
+                // one into an array or a matrix of two its two arms
+                // (`local_tree`) and one into one of a single element
+                // that element (v3dv_pipeline.c:435-436,
+                // nir_lower_indirect_derefs_to_if_else_trees.c:35-66,
+                // :138-153; since 1.178). Where they count more, the
+                // variable goes into scratch (since 1.177).
                 if (work.thing[type_id] != .pointer) return Error.Type;
                 if (work.class[type_id] != @intFromEnum(spirv.StorageClass.function)) return Error.Body;
+                const tree = work.thing[base] == .local_tree;
                 var leaf = work.points[base];
                 var at = work.aggregate[base];
+                var index_step: u16 = if (tree) work.tree_index[base] else none;
+                var apart: u16 = if (tree) work.tree_apart[base] else 0;
                 const indexes = operands[3..];
+                const elements = (if (tree) @as(u32, 2) else 1) *| try computedElements(work, at, indexes);
+                if (elements > 2) return wantScratch(work, work.chain_base[base]);
                 for (indexes, 0..) |each, k| {
-                    if (work.thing[at] != .plain_struct and work.thing[at] != .vector and try localIndexOrNull(work, each) == null) {
-                        // An element or a column at an index the body
-                        // computes (since 1.177).
-                        return wantScratch(work, work.chain_base[base], at, indexes[k..]);
-                    }
                     if (work.thing[at] == .vector) {
                         if (k != indexes.len - 1) return Error.Body;
                         const which = try indexOf(work, each);
                         if (which >= work.wide[at]) return Error.Body;
                         if (try kindOf(work, work.points[type_id]) != .f32x1) return Error.Type;
-                        work.thing[id] = .local_part;
                         work.points[id] = leaf;
                         work.chain_part[id] = @intCast(which);
+                        if (index_step != none) {
+                            holdTree(work, id, base, at, index_step, apart);
+                            return;
+                        }
+                        work.thing[id] = .local_part;
                         return;
                     }
-                    const index = if (work.thing[at] == .plain_struct) try indexOf(work, each) else try localIndexOf(work, each);
+                    const computed = work.thing[at] != .plain_struct and try localIndexOrNull(work, each) == null;
+                    if (computed and elementsOf(work, at) == 2) {
+                        index_step = try operand(work, each, .f32x1);
+                        apart = (try within(work, at, 1)).leaf;
+                    }
+                    const index = if (work.thing[at] == .plain_struct) try indexOf(work, each) else if (computed) 0 else try localIndexOf(work, each);
                     const next = try within(work, at, index);
                     leaf += next.leaf;
                     at = next.type_id;
                 }
                 if (work.points[type_id] != at) return Error.Type;
+                if (index_step != none) {
+                    work.points[id] = leaf;
+                    work.chain_part[id] = Work.whole;
+                    holdTree(work, id, base, at, index_step, apart);
+                    return;
+                }
                 switch (work.thing[at]) {
                     .float, .int, .vector, .boolean => {
                         work.thing[id] = .variable;
@@ -6359,6 +6684,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 var offset: u32 = work.chain_offset[base];
                 var dynamic = work.chain_dynamic[base];
                 var path = work.pointer_paths[work.chain_path[base]];
+                var elements: u32 = work.chain_elements[base];
                 for (operands[3..]) |each| {
                     const index = try localIndexOrNull(work, each);
                     var apart: u32 = 4;
@@ -6394,6 +6720,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                     }
                     const computed = try operand(work, each, .f32x1);
                     try path.push(computed, true);
+                    elements *|= count;
                     const term = try strideTimes(work, computed, apart);
                     dynamic = if (dynamic != none) try integerOf(work, .iadd, dynamic, term) else term;
                 }
@@ -6405,6 +6732,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 work.chain_base[id] = work.chain_base[base];
                 work.chain_offset[id] = @intCast(offset);
                 work.chain_dynamic[id] = dynamic;
+                work.chain_elements[id] = @intCast(@min(elements, std.math.maxInt(u16)));
                 work.chain_path[id] = try pointerPath(work, path);
                 return;
             }
@@ -7840,6 +8168,7 @@ fn foldedInteger(work: *Work, op: Integer, a: u16, b: ?u16) Error!?u16 {
             .f2u32 => if (std.math.isNan(f)) 0 else @as(u32, @intFromFloat(@min(@max(@trunc(f), 0.0), 4294967040.0))),
             .i2f32 => @bitCast(@as(f32, @floatFromInt(sx))),
             .u2f32 => @bitCast(@as(f32, @floatFromInt(x))),
+            .b2f32 => if (x != 0) @as(u32, @bitCast(@as(f32, 1.0))) else 0,
         };
         work.pool[out + k] = @bitCast(word);
     }
@@ -11509,7 +11838,12 @@ test "through Mesa's back end, the integer comparisons are XOR, MIN and SUB push
     // The level: FTOUZ, and UTOF back.
     try testing.expectEqual(@as(usize, 1), countOf(code, "ftouz"));
     try testing.expectEqual(@as(usize, 1), countOf(code, "utof"));
-    try testing.expectEqual(@as(usize, 43), code.words.len);
+    // same ? 1.0 : 0.0: the b2f of the bool nir_opt_algebraic makes of
+    // the bcsel (:2080), the AND of its ~0 or 0 and 1.0
+    // (nir_to_vir.c:1521-1523), and no select (since 1.178).
+    try testing.expectEqual(@as(usize, 1), integerOpsOf(&work, .b2f32));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 41), code.words.len);
 }
 
 test "through Mesa's back end, the not of an integer comparison read once is the opposite comparison" {
@@ -14171,7 +14505,7 @@ test "FacetBoth's scratch case: eight floats in scratch, one stored at a compute
     try testing.expectEqual(@as(u8, 2), second.part);
 }
 
-test "two arrays in scratch are placed in the order an index is first computed into each, and one of two elements wants an if-else tree" {
+test "two arrays in scratch are placed in the order an index is first computed into each" {
     // b, declared after a, is indexed first: nir_lower_vars_to_scratch
     // places b at 0 and a after its sixteen bytes (nir_lower_scratch.c:
     // 155-185, :247-258; since 1.177). The stores of a's three floats come
@@ -14186,10 +14520,218 @@ test "two arrays in scratch are placed in the order an index is first computed i
         count += 1;
     };
     try testing.expectEqualSlices(u32, &.{ 16, 20, 24, 0, 4, 8, 12 }, offsets[0..count]);
-    // two[i], two vec4s: nir_lower_indirect_derefs_to_if_else_trees's
-    // (v3dv_pipeline.c:435-436), which is not here.
+}
+
+/// Whether the float `at` names is float `k` of the varyings' input.
+fn isInputFloat(work: *const Work, at: u16, k: u8) bool {
+    return isInputPart(work, at, 0, k);
+}
+
+/// Whether float `part` of the step `at` is float `k` of the varyings'
+/// input.
+fn isInputPart(work: *const Work, at: u16, part: u8, k: u8) bool {
+    const float = partOf(work, at, part);
+    return work.steps[float.step].tag == .input and float.part == k;
+}
+
+/// How many of a program's integer operations are `op`.
+fn integerOpsOf(work: *const Work, op: Integer) usize {
+    var count: usize = 0;
+    for (work.program()) |each| {
+        if (isIntegerOp(each, op)) count += 1;
+    }
+    return count;
+}
+
+/// The program's selects, in order, into `out`, and how many.
+fn selectsOf(work: *const Work, out: []u16) usize {
+    var count: usize = 0;
+    for (work.program(), 0..) |each, at| if (each.tag == .select) {
+        if (count < out.len) out[count] = @intCast(at);
+        count += 1;
+    };
+    return count;
+}
+
+/// The ilt an if-else tree's if tests: of the index and the integer 1.
+fn expectTreeCondition(work: *const Work, at: u16) !void {
+    const each = work.steps[at];
+    try testing.expectEqual(Tag.compare, each.tag);
+    try testing.expectEqual(@as(u32, @intFromEnum(Comparison.int_less)), each.at);
+    try testing.expectEqual(@as(?u32, 1), floatBits(work, partOf(work, each.b, 0)));
+}
+
+test "a load at an index the body computes into an array of two of the function's own is an if-else tree, a bcsel of each float, of two constants the constant or the b2f nir_opt_algebraic makes" {
+    // two[i], two vec4s: nir_lower_indirect_derefs_to_if_else_trees makes
+    // if (i < 1) two[0] else two[1] of the load (v3dv_pipeline.c:435-436,
+    // nir_lower_indirect_derefs_to_if_else_trees.c:35-66),
+    // nir_lower_vars_to_ssa each arm's load the constant the element holds,
+    // and nir_opt_peephole_select each float's phi a bcsel on the ilt: of
+    // 1.0 and 0.0 the b2f of the ilt and of 0.0 and 1.0 the b2f of its
+    // inot (nir_opt_algebraic.py:2080-2081), of 0.0 and 0.0 and of 1.0 and
+    // 1.0 the constant, the two load_consts one to nir_opt_remove_phis
+    // (nir_opt_remove_phis.c:31-58). Nothing in scratch (since 1.178).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_scratch_pair);
+    try testing.expectEqual(@as(u32, 0), work.scratch_size);
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .scratch));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .compare));
+    try testing.expectEqual(@as(usize, 2), integerOpsOf(&work, .b2f32));
+    const x = work.steps[partOf(&work, work.stored, 0).step];
+    try testing.expect(isIntegerOp(x, .b2f32));
+    try expectTreeCondition(&work, x.a);
+    try testing.expectEqual(@as(?u32, 0), floatBits(&work, partOf(&work, work.stored, 1)));
+    const z = work.steps[partOf(&work, work.stored, 2).step];
+    try testing.expect(isIntegerOp(z, .b2f32));
+    try testing.expectEqual(Tag.logic, work.steps[z.a].tag);
+    try testing.expectEqual(x.a, work.steps[z.a].a);
+    try testing.expectEqual(@as(?u32, @bitCast(@as(f32, 1.0))), floatBits(&work, partOf(&work, work.stored, 3)));
+    // Each b2f the AND of the bool and 1.0, and the inot a NOT
+    // (nir_to_vir.c:1521-1523, :1683-1694).
+    try testing.expectEqual(@as(usize, 2), countOf(code, "and "));
+    try testing.expectEqual(@as(usize, 2), countOf(code, ", 0x3f800000    ;"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "not "));
+}
+
+test "a store at an index the body computes into an array of two of the function's own is an if-else tree whose merge chooses each element, the one first used later first" {
+    // two[0] = y, two[1] = z, two[i] = w; then two[0], two[1], two[j] and
+    // two[i]. The store's tree has a phi of each element at its merge, of
+    // two[1] then of two[0], the reverse of the order they were first
+    // stored into (nir_phi_builder.c:272-297): bcsel(i < 1, z, w) and
+    // bcsel(i < 1, w, y). two[j] is a bcsel of the two on j < 1; two[i]
+    // one of them on i < 1, which nir_opt_algebraic takes to w
+    // (:979-980, :1936), the two ilts of i one to nir_opt_cse (since
+    // 1.178).
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_tree_store);
+    try testing.expectEqual(@as(u32, 0), work.scratch_size);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .compare));
+    var selects: [4]u16 = undefined;
+    try testing.expectEqual(@as(usize, 3), selectsOf(&work, &selects));
+    const program = work.program();
+    const by_i = program[selects[0]].a;
+    try expectTreeCondition(&work, by_i);
+    try testing.expect(isInputFloat(&work, program[selects[0]].b, 2));
+    try testing.expect(isInputFloat(&work, program[selects[0]].from[0], 3));
+    try testing.expectEqual(by_i, program[selects[1]].a);
+    try testing.expect(isInputFloat(&work, program[selects[1]].b, 3));
+    try testing.expect(isInputFloat(&work, program[selects[1]].from[0], 1));
+    const by_j = program[selects[2]].a;
+    try expectTreeCondition(&work, by_j);
+    try testing.expect(by_j != by_i);
+    try testing.expectEqual(selects[1], program[selects[2]].b);
+    try testing.expectEqual(selects[0], program[selects[2]].from[0]);
+    try testing.expectEqual(selects[1], partOf(&work, work.stored, 0).step);
+    try testing.expectEqual(selects[0], partOf(&work, work.stored, 1).step);
+    try testing.expectEqual(selects[2], partOf(&work, work.stored, 2).step);
+    try testing.expect(isInputPart(&work, work.stored, 3, 3));
+}
+
+test "a member, a struct and a matrix's column through an if-else tree, and a float of a vector stored through one is the vector loaded, the float inserted and the vector stored" {
+    // S pair[2], mat2 m: picked = pair[i] is a tree of each of S's two
+    // members, m[i] one of the column, its bcsels nir_opt_cse makes those
+    // of picked.a; pair[i].b = y one of the member, pair[1].b of it the
+    // bcsel(i < 1, x, y) its merge chose (vtn_variables.c:763-781; since
+    // 1.178).
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_tree_members);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .compare));
+    var selects: [6]u16 = undefined;
+    try testing.expectEqual(@as(usize, 4), selectsOf(&work, &selects));
+    const program = work.program();
+    const expected = [4][2]u8{ .{ 0, 2 }, .{ 1, 3 }, .{ 2, 0 }, .{ 0, 1 } };
+    for (selects[0..4], expected) |at, pair| {
+        try expectTreeCondition(&work, program[at].a);
+        try testing.expect(isInputFloat(&work, program[at].b, pair[0]));
+        try testing.expect(isInputFloat(&work, program[at].from[0], pair[1]));
+    }
+    for (selects[0..4], 0..) |at, k| try testing.expectEqual(at, partOf(&work, work.stored, @intCast(k)).step);
+    // two[i].y = w * 0.5, two vec2s: the tree of the vector's load, its
+    // x then nir_opt_algebraic's; the store's merge two[1] first, then
+    // two[0] (vtn_local_store, vtn_variables.c:644-667).
     work = .{};
-    try testing.expectError(Error.Storage, throughMesa(&work, &reference.glslc_scratch_pair));
+    _ = try throughMesa(&work, &reference.glslc_tree_part);
+    try testing.expectEqual(@as(usize, 2), selectsOf(&work, &selects));
+    const half = work.program()[selects[0]].from[0];
+    try testing.expectEqual(Tag.mul, work.steps[half].tag);
+    try testing.expect(isInputFloat(&work, work.program()[selects[0]].b, 3));
+    try testing.expectEqual(half, work.program()[selects[1]].b);
+    try testing.expect(isInputFloat(&work, work.program()[selects[1]].from[0], 1));
+    try testing.expect(isInputPart(&work, work.stored, 0, 0));
+    try testing.expectEqual(selects[1], partOf(&work, work.stored, 1).step);
+    try testing.expect(isInputPart(&work, work.stored, 2, 2));
+    try testing.expectEqual(selects[0], partOf(&work, work.stored, 3).step);
+}
+
+test "an index the body computes into one element is that element, a float of a vector loaded through a tree its bcsel, and an element nothing was stored into takes what the other arm's was" {
+    // single[i] is single[0], color.z (nir_lower_indirect_derefs_to_if_else_trees.c:
+    // 42-46); two[j].y the bcsel(j < 1, y, w) of the vector's tree
+    // (vtn_local_load, vtn_variables.c:616-641). unset[i] = yx leaves each
+    // element yx, its phis' undefs taken by nir_opt_remove_phis
+    // (nir_opt_remove_phis.c:117-120): unset[j].x is y and unset[1].y x,
+    // with no bcsel, and i's ilt read by nothing (since 1.178).
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_tree_single);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .compare));
+    var selects: [2]u16 = undefined;
+    try testing.expectEqual(@as(usize, 1), selectsOf(&work, &selects));
+    const chosen = work.program()[selects[0]];
+    try expectTreeCondition(&work, chosen.a);
+    try testing.expect(isInputFloat(&work, chosen.b, 1));
+    try testing.expect(isInputFloat(&work, chosen.from[0], 3));
+    try testing.expect(isInputPart(&work, work.stored, 0, 2));
+    try testing.expectEqual(selects[0], partOf(&work, work.stored, 1).step);
+    try testing.expect(isInputPart(&work, work.stored, 2, 1));
+    try testing.expect(isInputPart(&work, work.stored, 3, 0));
+}
+
+test "the phis of an array an if-else tree reaches are put down at a merge before the others', and a tree in an arm or one into scratch is refused" {
+    // glslc -O0 keeps two and other variables, each stored into in the
+    // arm: other was first used after two[0], but two's phis are given in
+    // the loop of passes after the trees, before the block's first
+    // instruction, so two[0]'s bcsel comes first (since 1.178).
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_tree_late);
+    var selects: [4]u16 = undefined;
+    try testing.expectEqual(@as(usize, 3), selectsOf(&work, &selects));
+    const program = work.program();
+    try testing.expectEqual(Tag.mul, work.steps[program[selects[0]].b].tag);
+    try testing.expect(isInputFloat(&work, program[selects[0]].from[0], 1));
+    try testing.expect(isInputFloat(&work, program[selects[1]].from[0], 0));
+    try expectTreeCondition(&work, program[selects[2]].a);
+    try testing.expectEqual(selects[0], program[selects[2]].b);
+    try testing.expectEqual(selects[1], partOf(&work, work.stored, 1).step);
+    // A load through a tree in an arm, which Mesa flattens with the
+    // tree's only in the loop of passes after it.
+    work = .{};
+    try testing.expectError(Error.Branches, throughMesa(&work, &reference.glslc_tree_arm));
+    // big[2][j] is a tree of scratch loads at constant offsets in kept
+    // arms, once big[i][j] has put the array in scratch.
+    work = .{};
+    try testing.expectError(Error.Storage, throughMesa(&work, &reference.glslc_tree_mixed));
+}
+
+test "a bcsel of 1.0 and 0.0 is the b2f of its bool, of 0.0 and 1.0 the b2f of the inot, and of -1.0 and -0.0 the fneg of those" {
+    // nir_opt_algebraic.py:2080-2083, the b2fs and the inot one each to
+    // nir_opt_cse (since 1.178).
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_tree_bools);
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 2), integerOpsOf(&work, .b2f32));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .negate));
+    const straight = partOf(&work, work.stored, 0).step;
+    const turned = partOf(&work, work.stored, 1).step;
+    try testing.expect(isIntegerOp(work.steps[straight], .b2f32));
+    try testing.expectEqual(Tag.compare, work.steps[work.steps[straight].a].tag);
+    try testing.expect(isIntegerOp(work.steps[turned], .b2f32));
+    try testing.expectEqual(Tag.logic, work.steps[work.steps[turned].a].tag);
+    const minus = work.steps[partOf(&work, work.stored, 2).step];
+    try testing.expectEqual(Tag.negate, minus.tag);
+    try testing.expectEqual(straight, minus.a);
+    const minus_turned = work.steps[partOf(&work, work.stored, 3).step];
+    try testing.expectEqual(Tag.negate, minus_turned.tag);
+    try testing.expectEqual(turned, minus_turned.a);
 }
 
 test "a store_scratch in a selection's arm keeps the arm, and is written under the execute mask" {

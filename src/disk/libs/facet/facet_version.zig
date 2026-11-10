@@ -5703,4 +5703,55 @@ pub const LIBRARY_VERSION = 1;
 /// On the CM5 FacetBoth's 239 cases are each as they were at 1.176, and
 /// its new `shipped scratch` is 18 of 230400 pixels apart; FacetProbe
 /// passes its 890 checks.
-pub const LIBRARY_REVISION = 177;
+///
+/// 178: **If-else trees on the V3D for an index the body computes into
+/// two elements or fewer, nir_lower_indirect_derefs_to_if_else_trees for
+/// function_temp (docs/facet-vulkan10.md item 59).** An access chain into
+/// a variable of the function's own whose indexes the body computes reach
+/// two elements or fewer, the product of the lengths of the arrays they
+/// index (indirect_array_len, nir_lower_indirect_derefs_to_if_else_trees.c:
+/// 138-153), is a tree (v3dv_pipeline.c:432-436): each load and store
+/// splits at ilt(index, 1) (emit_indirect_load_store_deref, :35-66), each
+/// leaf the element at a constant index (:42-46), a load's value the phi
+/// of its arms (:63). nir_lower_vars_to_ssa takes the variable in the
+/// loop of passes after the trees; its phis, which nir_phi_builder puts
+/// before the block's first instruction (nir_phi_builder.c:272-297), come
+/// at a merge before those of the variables made SSA before the trees
+/// (`local_late`). nir_opt_peephole_select makes each tree a bcsel of
+/// each float; nir_opt_remove_phis takes a phi of an undef and another
+/// source as the other (nir_opt_remove_phis.c:105-175) and one of two
+/// equal constants as the constant (:31-58), constants equal by their
+/// bits since nir_lower_load_const_to_scalar (v3dv_pipeline.c:427) and
+/// nir_opt_cse have made each float one value (`oneFloat`). A float of a
+/// vector is loaded through the tree of the whole vector and extracted,
+/// and stored by loading the vector, inserting the float and storing it
+/// back (vtn_local_load, vtn_local_store, vtn_variables.c:616-667).
+///
+/// A bcsel of 1.0 and 0.0 is the b2f of its bool, of 0.0 and 1.0 the b2f
+/// of its inot, and of -1.0 and -0.0 or -0.0 and -1.0 the fneg of those
+/// (nir_opt_algebraic.py:2080-2083, the zeros by their sign as
+/// match_value has them, nir_search.c:278-290); to_vir emits b2f32 as
+/// an AND with the uniform 1.0 (nir_to_vir.c:1521-1523).
+///
+/// Refused still: a tree in a selection's arm or a loop, whose flattening
+/// nir_opt_peephole_select and the unroll would have to see; a tree into
+/// a variable that is in scratch; a load of a whole aggregate through a
+/// tree that holds a bool. Not ported: the nsz rules beside those
+/// (nir_opt_algebraic.py:2084-2087) and the ilt of an imin or imax with a
+/// constant (:1519, :1527), so a clamped index keeps its clamp in the
+/// tree's condition; the trees of shader_in (v3dv_pipeline.c:432-433),
+/// with no input arrays yet.
+///
+/// Tests: the V3D's 261, six new and one split. 8 new modules of
+/// glslc's, -O and -O0. glslc_tree_store, a vec2 stored at a computed
+/// index, is three bcsels; glslc_tree_bools, two b2f and two fneg;
+/// glslc_tree_late, at -O0, the two arrays' bcsels in the order Mesa puts
+/// their phis; glslc_tree_single, one element and an element never
+/// stored that is what the other arm's was; glslc_tree_arm and
+/// glslc_tree_mixed refused. Of 22 mutations of the port, 22 fail the
+/// tests.
+///
+/// On the CM5 FacetBoth's 240 cases are each as they were at 1.177, and
+/// its new `shipped trees` is 11 of 230400 pixels apart, the first the
+/// edge pixel the others have; FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 178;

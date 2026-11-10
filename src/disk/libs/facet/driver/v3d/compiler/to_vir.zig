@@ -583,6 +583,9 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
                     .f2u32 => try c.add(.ftouz, .{a}),
                     .i2f32 => try c.add(.itof, .{a}),
                     .u2f32 => try c.add(.utof, .{a}),
+                    // b2f32, the bool's ~0 or 0 ANDed with 1.0
+                    // (nir_to_vir.c:1521-1523; since 1.178).
+                    .b2f32 => try c.add(.@"and", .{ a, try c.uniformF(1.0) }),
                 });
             }
         },
