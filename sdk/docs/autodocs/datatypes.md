@@ -748,8 +748,11 @@ against that one reading.
 
 Bytes in memory are looked at as a file's would be. With a name, a
 descriptor's pattern is matched against it; without one, the pattern
-is not asked and what the bytes start with decides - a JPEG is known
-by its first bytes whether or not it is called `.jpg`.
+is not asked and the bytes decide - what they start with, or the
+class, asked: a JPEG is known by its first bytes whether or not it is
+called `.jpg`, a page fetched from the network by its markup. A
+descriptor that knows its files by their name and nothing else does
+not know bytes without one (since 1.3).
 
 **CONTEXT**
 

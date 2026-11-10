@@ -54,7 +54,11 @@ defer dt.DisposeDTObject(cover);
 
 The bytes are recognised as a file's are, by what they start with; a
 name handed to `NewDTObjectA` is matched against the descriptors'
-patterns too, and without one the patterns are not asked. The object
+patterns too. Without one the patterns are not asked, and a kind of
+file known by its name alone is not known at all (datatypes.library
+1.3): an HTML page is known by what it starts with, which
+`html.datatype` is asked about, and Markdown without a name is plain
+text. The object
 reads the bytes while it is made: when the call returns they are the
 program's again. JPEG, PNG, GIF, BMP, ICO, text, models, Markdown, HTML
 and Lottie read from memory; ILBM, 8SVX and a codec's sound read a file as they go,
@@ -233,9 +237,23 @@ _ = dt.GetDTAttrsA(object, &.{
 });
 ```
 
-`TDTA_WordWrap` turns wrapping off, `TDTA_Link` is the name the pointer
-was last let go on, for a program that follows links, and `DTM_COPY`
-puts what is marked on the clipboard.
+`TDTA_WordWrap` turns wrapping off, `TDTA_Link` is where the link the
+pointer was last let go on leads, for a program that follows links,
+and `DTM_COPY` puts what is marked on the clipboard.
+
+A document names places in it, for a link to lead to (`tdc.Anchor`,
+text.datatype 2.4): where in the text each stands, and its name. A
+program goes to one by its name with `DTM_GOTO` - an empty name is the
+top - and the object scrolls there, draws itself and tells its target
+the new `DTA_TopVert`, as a bar's scroll does. It answers 0 when the
+document has no place of that name, and nothing moves.
+
+```zig
+var goto = dtc.DtGoto{ .node_name = "History" };
+if (dt.DoDTMethodA(object, window, null, @ptrCast(&goto)) == 0) {
+    ib.DisplayBeep(screen); // no such place
+}
+```
 
 A format's class reads its file and hands the text and the runs over
 with `TDTM_SETTEXT`; they come from `AllocVec` and are the object's
@@ -282,7 +300,9 @@ a picture is its `alt` text in italic, a field or a button its label in
 brackets and a `<select>` its chosen option. The page's `<title>` is
 the object's `DTA_ObjName` and its `DTA_Title`, which a window showing
 it is called, and a link's run carries the address it leads to, its
-spaces and what is past ASCII written as `%` and UTF-8's bytes. A style
+spaces and what is past ASCII written as `%` and UTF-8's bytes. An
+element's `id` and an `<a>`'s `name` are the page's places, where they
+start, and `top` is its first line. A style
 sheet is not read and a script is not run, so a page that lays itself
 out by its style sheet reads top to bottom. A page is UTF-8 unless its
 `<meta charset>` says Latin-1 or code page 1252; either way it is made

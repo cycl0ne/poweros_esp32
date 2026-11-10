@@ -40,10 +40,16 @@
 //! is written with its spaces and what is past ASCII as `%` and UTF-8's
 //! bytes, which is how an address carries them.
 //!
+//! **An element's `id` is an anchor**, and so is an `<a>`'s `name`: the
+//! place its text starts, by a name written as a link's target is, so
+//! that `#name` in a link names it alike. `top` is the page's start,
+//! unless something on it is called that.
+//!
 //! **It is read twice.** The first pass counts how much text, how many
 //! runs and how many blocks there will be, the second writes them, and
 //! both run the same code with the writing switched off. A link's target
-//! is written past the end of the text, where nothing draws it.
+//! and an anchor's name are written past the end of the text, where
+//! nothing draws them.
 
 const sdk = @import("sdk");
 const utility = sdk.utility;
@@ -76,9 +82,13 @@ pub const Build = struct {
     /// Where the blocks go, and how many there are so far.
     blocks: ?[*]tdc.Block = null,
     block_count: u32 = 0,
-    /// Where the link targets go, which is past the end of the text.
+    /// Where the link targets and the anchors' names go, which is past
+    /// the end of the text.
     link_base: u32 = 0,
     link_len: u32 = 0,
+    /// Where the anchors go, and how many there are so far.
+    anchors: ?[*]tdc.Anchor = null,
+    anchor_count: u32 = 0,
     /// The run being written, and whether one is open.
     current: tdc.Piece = .{},
     open: bool = false,
@@ -155,12 +165,51 @@ pub const Build = struct {
         out.link_len += 1;
     }
 
+    fn putAnchor(out: *Build, anchor: tdc.Anchor) void {
+        if (out.anchors) |it| it[out.anchor_count] = anchor;
+        out.anchor_count += 1;
+    }
+
     /// `flags` added to a block written already: a table's first row
     /// turned out to be its head.
     fn flag(out: *Build, index: u32, flags: u8) void {
         if (out.blocks) |it| it[index].flags |= flags;
     }
 };
+
+/// Whether bytes that come without a name to say what they are - a page
+/// fetched from the network - are a page: what they start with, after a
+/// byte order mark, white space and an XML declaration, is a document
+/// type of `html`, a comment, or one of the elements browsers take for
+/// the start of a page when they are not told.
+pub fn looksLikePage(bytes: []const u8) bool {
+    var at: usize = 0;
+    if (bytes.len >= 3 and bytes[0] == 0xEF and bytes[1] == 0xBB and bytes[2] == 0xBF) at = 3;
+    while (true) {
+        while (at < bytes.len and tokens.isSpace(bytes[at])) at += 1;
+        if (at + 2 > bytes.len or bytes[at] != '<' or bytes[at + 1] != '?') break;
+        // An XML declaration, up to its `?>`.
+        while (at + 2 <= bytes.len and !(bytes[at] == '?' and bytes[at + 1] == '>')) at += 1;
+        if (at + 2 > bytes.len) return false;
+        at += 2;
+    }
+    const rest = bytes[at..];
+    if (rest.len < 2 or rest[0] != '<') return false;
+    if (rest.len >= 4 and rest[1] == '!' and rest[2] == '-' and rest[3] == '-') return true;
+    if (rest.len >= 9 and elements.sameName(rest[1..9], "!doctype")) {
+        var name: usize = 9;
+        while (name < rest.len and tokens.isSpace(rest[name])) name += 1;
+        return rest.len >= name + 4 and elements.sameName(rest[name..][0..4], "html");
+    }
+    const starts = [_][]const u8{ "html", "head", "body", "title", "meta", "link", "style", "script", "iframe", "h1", "div", "font", "table", "p", "a", "b", "br" };
+    for (starts) |start_name| {
+        if (rest.len < start_name.len + 2) continue;
+        if (!elements.sameName(rest[1..][0..start_name.len], start_name)) continue;
+        const after = rest[1 + start_name.len];
+        if (after == '>' or after == '/' or tokens.isSpace(after)) return true;
+    }
+    return false;
+}
 
 /// Whether the document says it is Latin-1 or code page 1252, which it
 /// is then read as byte for byte; UTF-8 else. Only its first kilobyte is
@@ -217,9 +266,16 @@ pub fn build(from: []const u8, out: *Build) void {
     if (p.cell_end_pending) p.finishCell('\n');
     p.boundary();
     out.close();
+    // `#top` leads to the page's start, unless something on it is called
+    // that, which then comes first.
+    p.anchorAt(0, "top");
 }
 
 const most_open = 128;
+
+/// Where a link's target, or an anchor's name, is past the text, and how
+/// long; length 0 for none.
+const Link = struct { offset: u32 = 0, length: u32 = 0 };
 const most_containers = 8;
 const most_lists = 8;
 const most_tables = 8;
@@ -345,7 +401,7 @@ const Parser = struct {
     pres: u32 = 0,
     paragraphs: u32 = 0,
     captions: u32 = 0,
-    link: struct { offset: u32 = 0, length: u32 = 0 } = .{},
+    link: Link = .{},
     /// The look worked out from all of that, and whether it has to be
     /// worked out again.
     look_now: tdc.Piece = .{},
@@ -486,6 +542,11 @@ const Parser = struct {
         if (elements.isBlock(tag)) {
             p.boundary();
             effects |= E_BLOCK;
+        }
+        // Where it starts, for a link to lead to by its name.
+        if (attribute(attributes, "id")) |name| p.anchorAt(p.out.text_len, name);
+        if (tag == .a) {
+            if (attribute(attributes, "name")) |name| p.anchorAt(p.out.text_len, name);
         }
         const index = p.depth;
         p.push(tag, token.text, effects);
@@ -763,18 +824,34 @@ const Parser = struct {
         open.effects |= E_LINK;
         open.saved = p.link.offset;
         open.saved_length = p.link.length;
+        p.link = p.target(href);
+        p.look_dirty = true;
+    }
+
+    /// An anchor: a place in the text, by its name. The name is written
+    /// as a link's target is, so that a link to it names it alike.
+    fn anchorAt(p: *Parser, offset: u32, name: []const u8) void {
+        const written = p.target(name);
+        if (written.length == 0) return;
+        p.out.putAnchor(.{ .offset = offset, .name_offset = written.offset, .name_length = written.length });
+    }
+
+    /// An attribute's value written past the end of the text as an
+    /// address carries it: without the white space round it, its
+    /// references undone, and what is not ASCII as `%` and UTF-8's bytes.
+    fn target(p: *Parser, value: []const u8) Link {
         const out = p.out;
         const offset = out.link_base + out.link_len;
         var first: usize = 0;
-        var last = href.len;
-        while (first < last and tokens.isSpace(href[first])) first += 1;
-        while (last > first and tokens.isSpace(href[last - 1])) last -= 1;
-        const target = href[first..last];
+        var last = value.len;
+        while (first < last and tokens.isSpace(value[first])) first += 1;
+        while (last > first and tokens.isSpace(value[last - 1])) last -= 1;
+        const trimmed = value[first..last];
         var at: usize = 0;
-        while (at < target.len) {
-            const char = target[at];
+        while (at < trimmed.len) {
+            const char = trimmed[at];
             if (char == '&') {
-                if (entities.reference(target, at, true)) |found| {
+                if (entities.reference(trimmed, at, true)) |found| {
                     p.targetCode(found.code);
                     at = found.end;
                     continue;
@@ -784,8 +861,7 @@ const Parser = struct {
             if (char == '\t' or char == '\n' or char == '\r') continue;
             p.targetCode(char);
         }
-        p.link = .{ .offset = offset, .length = out.link_base + out.link_len - offset };
-        p.look_dirty = true;
+        return .{ .offset = offset, .length = out.link_base + out.link_len - offset };
     }
 
     /// A character of a link's target: ASCII as it is, a space and what

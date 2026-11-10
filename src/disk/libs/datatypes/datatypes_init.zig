@@ -28,8 +28,10 @@ pub const LIBRARY_VERSION = 1;
 /// 1: `GID_MODEL`, a model in three dimensions, named by GetDTString.
 /// 2: `DTST_MEMORY`, an object made from bytes in memory, `DTA_SourceSize`
 /// how many.
-pub const LIBRARY_REVISION = 2;
-const BUILD_DATE = "28.10.2026";
+/// 3: bytes in memory without a name are not known by a descriptor that
+/// knows its files by their name alone.
+pub const LIBRARY_REVISION = 3;
+const BUILD_DATE = "10.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

@@ -14,7 +14,9 @@
 //! and columns in lines, its head in bold and every other row shaded;
 //! code in a sentence on a ground of its own; a link in its own colour,
 //! underlined, with the address it leads to kept for the program to
-//! follow. How the page is read is parse.zig's.
+//! follow, and each element's `id` - an `<a>`'s `name` too - as an
+//! anchor, which a link to `#name` scrolls to. How the page is read is
+//! parse.zig's.
 //!
 //! The page's `<title>` is the object's name (`DTA_ObjName`) and its
 //! title (`DTA_Title`), which is what a window it is shown in is called;
@@ -24,6 +26,10 @@
 //! script is not run, and a picture is not fetched: what its `alt` text
 //! says it is stands in its place, in italic. A page that lays itself out
 //! by its style sheet reads top to bottom, its parts one under another.
+//!
+//! A file is a page by its name (`#?.html` and its kin); bytes that come
+//! without one - a page fetched from the network - by what they start
+//! with, which this library's recognise call looks at.
 //!
 //! **Its characters are Latin-1**: a page in UTF-8 is made Latin-1 before
 //! it is read, and a character Latin-1 has not - one of typesetting's
@@ -54,15 +60,18 @@ const Base = gadgets.Base;
 const TagItem = utility.TagItem;
 
 /// The library the class is in; its ROM tag is `Library.resident_tag`.
+/// Its one call, after the standard four, is the recognise function
+/// datatypes.library asks.
 pub const Library = gadgets.ClassLibrary(.{
     .name = "html.datatype",
     .version = 1,
-    .revision = 1,
+    .revision = 2,
     .date = "10.11.2026",
     .super = tdc.TEXTDTCLASS,
     .opens = &.{tdc.TEXT_LIBRARY},
     .Instance = Data,
     .dispatch = dispatch,
+    .functions = &.{exec.libraries.vec(recognise)},
 });
 comptime {
     _ = Library;
@@ -86,9 +95,10 @@ fn takeText(base: *Base, cl: *Class, o: *Object, document: []u8) i32 {
     if (counting.text_len == 0 or counting.piece_count == 0 or counting.block_count == 0)
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
 
-    // The text, and the link targets after it: they are in the same
-    // block because a run says where its target is as an offset into
-    // it, and past the end is where nothing draws them.
+    // The text, and the link targets and anchors' names after it: they
+    // are in the same block because a run and an anchor say where theirs
+    // is as an offset into it, and past the end is where nothing draws
+    // them.
     const whole = counting.text_len + counting.link_len;
     const text = sys.AllocVec(whole, exec.MEMF_ANY) orelse
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
@@ -101,12 +111,20 @@ fn takeText(base: *Base, cl: *Class, o: *Object, document: []u8) i32 {
         sys.FreeVec(runs);
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
     };
+    // There is always one: the page's top.
+    const anchors = sys.AllocVec(counting.anchor_count * @sizeOf(tdc.Anchor), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+        sys.FreeVec(text);
+        sys.FreeVec(runs);
+        sys.FreeVec(blocks);
+        return datatypes.DTERROR_NOT_ENOUGH_DATA;
+    };
 
     var writing = parse.Build{
         .ub = ub,
         .text = @ptrCast(text),
         .pieces = @ptrCast(@alignCast(runs)),
         .blocks = @ptrCast(@alignCast(blocks)),
+        .anchors = @ptrCast(@alignCast(anchors)),
         .link_base = counting.text_len,
     };
     parse.build(from, &writing);
@@ -130,14 +148,28 @@ fn takeText(base: *Base, cl: *Class, o: *Object, document: []u8) i32 {
         .piece_count = writing.piece_count,
         .blocks = @ptrCast(@alignCast(blocks)),
         .block_count = writing.block_count,
+        .anchors = @ptrCast(@alignCast(anchors)),
+        .anchor_count = writing.anchor_count,
     };
     if (base.intuition_base.SendSuperMessage(cl, o, @ptrCast(&msg)) == 0) {
         sys.FreeVec(text);
         sys.FreeVec(runs);
         sys.FreeVec(blocks);
+        sys.FreeVec(anchors);
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
     }
     return 0;
+}
+
+/// datatypes.library's question, asked once the name has matched or when
+/// there is none: whether the bytes are a page. A file named as a page is
+/// one, whatever it starts with; bytes without a name - a page fetched
+/// from the network - are one when they start as a page does.
+fn recognise(_: *Base, context: *datatypes.DTHookContext) callconv(.c) bool {
+    const fib = context.fib orelse return false;
+    if (fib.file_name[0] != 0) return true;
+    const buffer = context.buffer orelse return false;
+    return parse.looksLikePage(buffer[0..context.buffer_length]);
 }
 
 fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {

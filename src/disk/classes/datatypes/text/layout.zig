@@ -880,6 +880,20 @@ pub fn totalHeight(own: *const Data) i32 {
     return own.total;
 }
 
+/// How far down the text the line `offset` is in stands, less the space
+/// the page has above its first line: the first line whose text reaches
+/// past it. How tall the whole text is when none does.
+pub fn topOf(own: *const Data, offset: u32) i32 {
+    const lines = own.lines orelse return 0;
+    const fragments = own.fragments orelse return 0;
+    for (lines[0..own.line_count]) |line| {
+        if (line.count == 0) continue;
+        const last = fragments[line.first + line.count - 1];
+        if (last.offset + last.length > offset) return @max(line.top - Metrics.of(own).page(), 0);
+    }
+    return own.total;
+}
+
 /// Which line a place `x` across and `y` down the text is in: of the
 /// lines across `y` - a table's row has one a cell - the one `x` is in,
 /// or the nearest.

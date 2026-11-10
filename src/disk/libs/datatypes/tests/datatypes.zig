@@ -262,6 +262,41 @@ test "datatypes: bytes in memory are known by what they start with, and by a nam
     try testing.expect(!_type.matches(db, jpeg.ptr(), &other));
     var sizeless: _type.Source = undefined;
     try testing.expect(!_type.open(db, &sizeless, dtc.DTST_MEMORY, @constCast(&picture), null));
+
+    // Text without a name is not known by a descriptor that knows its
+    // files by their name alone; what is left over still takes it.
+    var md_tokens: [64]u8 = @splat(0);
+    try testing.expect(ub.ParsePatternNoCase("#?.md", &md_tokens, md_tokens.len) >= 0);
+    var markdown = Kind.of(.{
+        .name = "Markdown",
+        .base_name = "markdown",
+        .group_id = datatypes.GID_TEXT,
+        .id = ID("MD  "),
+        .flags = datatypes.DTF_ASCII,
+        .pattern = @ptrCast(&md_tokens),
+    });
+    var ascii = Kind.of(.{
+        .name = "ASCII",
+        .base_name = "ascii",
+        .group_id = datatypes.GID_TEXT,
+        .id = ID("TEXT"),
+        .flags = datatypes.DTF_ASCII,
+    });
+    const words = "# Title\n";
+    var bare: _type.Source = undefined;
+    try testing.expect(_type.open(db, &bare, dtc.DTST_MEMORY, @constCast(words), &[_]utility.TagItem{
+        .{ .tag = dtc.DTA_SourceSize, .data = words.len },
+        .{},
+    }));
+    try testing.expect(!_type.matches(db, markdown.ptr(), &bare));
+    try testing.expect(_type.matches(db, ascii.ptr(), &bare));
+    var readme: _type.Source = undefined;
+    try testing.expect(_type.open(db, &readme, dtc.DTST_MEMORY, @constCast(words), &[_]utility.TagItem{
+        .{ .tag = dtc.DTA_SourceSize, .data = words.len },
+        .{ .tag = dtc.DTA_Name, .data = @intFromPtr("README.md") },
+        .{},
+    }));
+    try testing.expect(_type.matches(db, markdown.ptr(), &readme));
     try rig.down();
 }
 

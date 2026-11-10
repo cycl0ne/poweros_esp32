@@ -146,6 +146,9 @@ pub const Data = extern struct {
     piece_count: u32 = 0,
     blocks: ?[*]tdc.Block = null,
     block_count: u32 = 0,
+    /// The places in it a link may lead to by name; the object's too.
+    anchors: ?[*]tdc.Anchor = null,
+    anchor_count: u32 = 0,
     /// What it came to when it was laid out.
     lines: ?[*]Line = null,
     line_count: u32 = 0,
@@ -188,7 +191,7 @@ pub const Data = extern struct {
     /// Where the press that is being dragged started.
     mark_from: u32 = 0,
     /// The link the pointer was last let go on, as a string of its own.
-    link: [128]u8 = @splat(0),
+    link: [1024]u8 = @splat(0),
 };
 
 /// How many fragments, lines and decorations are made room for at a
@@ -427,18 +430,21 @@ pub fn freeText(base: *Base, own: *Data) void {
     if (own.buffer) |it| sys.FreeVec(it);
     if (own.pieces) |it| sys.FreeVec(it);
     if (own.blocks) |it| sys.FreeVec(it);
+    if (own.anchors) |it| sys.FreeVec(it);
     if (own.lines) |it| sys.FreeVec(it);
     if (own.fragments) |it| sys.FreeVec(it);
     if (own.decos) |it| sys.FreeVec(it);
     own.buffer = null;
     own.pieces = null;
     own.blocks = null;
+    own.anchors = null;
     own.lines = null;
     own.fragments = null;
     own.decos = null;
     own.buffer_len = 0;
     own.piece_count = 0;
     own.block_count = 0;
+    own.anchor_count = 0;
     own.line_count = 0;
     own.line_room = 0;
     own.fragment_count = 0;

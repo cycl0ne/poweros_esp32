@@ -22,6 +22,7 @@ const Store = struct {
     text: [4096]u8 = undefined,
     pieces: [256]tdc.Piece = undefined,
     blocks: [64]tdc.Block = undefined,
+    anchors: [16]tdc.Anchor = undefined,
 };
 
 const Read = struct {
@@ -30,6 +31,7 @@ const Read = struct {
     whole: []const u8,
     pieces: []const tdc.Piece,
     blocks: []const tdc.Block,
+    anchors: []const tdc.Anchor,
     title: []const u8,
 };
 
@@ -45,6 +47,7 @@ fn readTwice(ub: *UtilityBase, page: []const u8, store: *Store) !Read {
         .text = &store.text,
         .pieces = &store.pieces,
         .blocks = &store.blocks,
+        .anchors = &store.anchors,
         .link_base = counting.text_len,
     };
     parse.build(from, &writing);
@@ -52,6 +55,7 @@ fn readTwice(ub: *UtilityBase, page: []const u8, store: *Store) !Read {
     try testing.expectEqual(counting.link_len, writing.link_len);
     try testing.expectEqual(counting.piece_count, writing.piece_count);
     try testing.expectEqual(counting.block_count, writing.block_count);
+    try testing.expectEqual(counting.anchor_count, writing.anchor_count);
     // Every run in its place, one after another, and every block's runs
     // ending with its terminator.
     var next: u32 = 0;
@@ -76,6 +80,7 @@ fn readTwice(ub: *UtilityBase, page: []const u8, store: *Store) !Read {
         .whole = store.text[0 .. writing.text_len + writing.link_len],
         .pieces = store.pieces[0..writing.piece_count],
         .blocks = store.blocks[0..writing.block_count],
+        .anchors = store.anchors[0..writing.anchor_count],
         .title = writing.title[0..writing.title_len],
     };
 }
@@ -280,6 +285,46 @@ test "links: their runs, and their targets after the text" {
     try testing.expectEqualStrings("%C3%BC", targetOf(got, in_bold));
     try testing.expectEqual(@as(u32, 0), (try runOf(got, "none")).link_length);
     try host.utility.tearDown(rom_ub);
+}
+
+test "anchors: ids and names, where they start, and the page's top" {
+    const rom_ub = try host.utility.setUp();
+    defer host.exec.deinit();
+    const ub: *UtilityBase = @ptrCast(rom_ub);
+    var store: Store = .{};
+    const got = try readTwice(ub,
+        \\<h2 id="Gr&uuml;&szlig;e">Head</h2><p>Text <span id=" note ">here</span><a name=n>x</a><a href="#Gr%C3%BC%C3%9Fe">up</a>
+        \\<div hidden><p id=no>gone</div><p id=top>last
+    , &store);
+    try testing.expectEqualStrings("Head\nText herexup\nlast\n", got.text);
+    const names = [_][]const u8{ "Gr%C3%BC%C3%9Fe", "note", "n", "top", "top" };
+    try testing.expectEqual(names.len, got.anchors.len);
+    for (names, got.anchors) |name, anchor| {
+        try testing.expectEqualStrings(name, got.whole[anchor.name_offset..][0..anchor.name_length]);
+    }
+    try testing.expectEqual(@as(u32, 0), got.anchors[0].offset);
+    try testing.expectEqual(@as(u32, 9), got.anchors[1].offset);
+    try testing.expectEqual(@as(u32, 14), got.anchors[2].offset);
+    try testing.expectEqual(@as(u32, 18), got.anchors[3].offset);
+    try testing.expectEqual(@as(u32, 0), got.anchors[4].offset);
+    // A link to the heading names it as its anchor is named.
+    try testing.expectEqualStrings("#Gr%C3%BC%C3%9Fe", targetOf(got, try runOf(got, "up")));
+    try host.utility.tearDown(rom_ub);
+}
+
+test "bytes without a name are a page by what they start with" {
+    const pages = [_][]const u8{
+        "<!DOCTYPE html><html>",
+        "\xEF\xBB\xBF \n<html lang=en>",
+        "<?xml version=\"1.0\"?>\n<!doctype HTML PUBLIC \"-//W3C//DTD XHTML 1.0//EN\">",
+        "<!-- made by hand --><p>",
+        "<a href=x>",
+        "<BODY>",
+        "<br/>",
+    };
+    for (pages) |page| try testing.expect(parse.looksLikePage(page));
+    const others = [_][]const u8{ "# Title", "<svg xmlns=\"x\">", "<abbr>", "{\"v\": 1}", "<!DOCTYPE svg>", "<?xml version=\"1.0\"?>", "" };
+    for (others) |other| try testing.expect(!parse.looksLikePage(other));
 }
 
 test "a listing as it stands, and line ends in a paragraph" {
