@@ -2431,6 +2431,30 @@ Of 28 mutations of the port, 28 fail the tests; two of them first did only by no
 
 FacetProbe is 890 of 890. The board's cube has one level, so P2's disable_autolod is checked in the host tests alone.
 
+**Then a texture's size at a level and its levels, by a compiled program**, facet.library 1.181.
+
+- **What is read.** The profile takes the capability ImageQuery, and OpImage, OpImageQuerySizeLod and OpImageQueryLevels. vtn makes them txs with its lod and query_levels (spirv_to_nir.c:3089-3096, :3119-3135, :3384-3386).
+- **The steps.** A `texture_size` step has as many integers as nir_tex_instr_dest_size gives the image: two for a 2D image and a cube, three for a 3D one and a 2D array. A `texture_levels` step has one. The level is a source the passes read, rename and replace as any other.
+- **The code.** ntq_emit_txs reads the draw's word of each axis, QUNIFORM_TEXTURE_WIDTH, _HEIGHT and _DEPTH. ntq_minify makes each the MAX of its SHR by the level and 1. An array's last is QUNIFORM_TEXTURE_ARRAY_SIZE, not minified (nir_to_vir.c:895-960). query_levels is QUNIFORM_TEXTURE_LEVELS (:972-975).
+- **The words.** `compile.Word.texture_size` is a unit and a field. The draw answers it as get_texture_size_from_image_view does (v3dv_uniforms.c:378-414): the view's first level's sides, a 3D image's slices as its depth, its layers and its levels.
+- **The unit.** A query reads no sampler state. It takes the unit a sample of its set and binding has, a comparison in it or not, or one of its own (descriptor_map_add, v3dv_pipeline.c:516-561). In a selection's arm it keeps the arm, as any tex does.
+- **The plan.** Its `compile` refuses both.
+- **The stack.** A pipeline is made on a stack of its own, 128 KiB from exec's NewStackRun. The back end holds about 24 KiB of frames at once, and with FacetBoth's own frames that came to the end of the stack it ran on as a shell command.
+
+Results:
+- glslc_size reads two uniforms, each SHR by the immediate 0 and MAX 1, and no P0 or P1. glslc_size_lod's SHRs are by the FTOIZ of the red times 4.0.
+- glslc_size_layers' layers are not shifted; glslc_size_volume's depth is shifted by 2; glslc_size_cube has two words. glslc_levels is one word and no SHR.
+- glslc_size_sampled's sizes and the sample's P0 and P1 are of one unit. glslc_size_shadow reads the width of a unit a comparison is in, and its height is dead.
+- glslc_size_arm keeps its arm. glslc_size_merged's level is the FTOIZ nir_opt_cse keeps. glslc_size_aliased is one unit for two variables at one binding.
+
+Of 25 mutations of the port, 25 fail the tests: one only by not compiling, whose variant a test fails, and two only since glslc_size_merged and glslc_size_aliased.
+
+On the CM5, FacetBoth's 253 cases are each as they were at 1.180. Its three new cases are glslc's textureSize and textureQueryLevels of the texture of levels at levels 0 to 3, of the array at levels 0 to 2, and of the 3D texture; each is 0 of 230400 pixels apart. FacetProbe is 890 of 890.
+
+Two things came up on the board first:
+- Before the pipeline had a stack of its own, FacetBoth 1.46 ran past the end of its 32 KiB stack in the shipped kept branches, which 1.45 had drawn on the same stack.
+- Its 3D case read no varying. The V3D's pipeline refuses that where the vertex function writes two, so the case reads its level of the first float.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim

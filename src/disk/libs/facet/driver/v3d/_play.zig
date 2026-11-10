@@ -1164,6 +1164,8 @@ fn streamOf(queue: *Queue, stream: []const compile.Word, tmus: []const Configura
         // (`driver.checkSpillSize`).
         .spill_offset => spill.address,
         .spill_size_per_thread => spill.size_per_thread,
+        // The unit's view, as `tmuConfiguration` measured it (since 1.181).
+        .texture_size => |each| if (each.unit < tmus.len) tmus[each.unit].sizes[@intFromEnum(each.field)] else 0,
     };
     return place.address;
 }
@@ -1361,7 +1363,15 @@ fn sendCompiledVertices(queue: *Queue, inputs: u32, locations: u32, stage: *cons
 /// configuration. A fixed form has them in a place of their own; a
 /// generated program has them among the floats it holds, where its own
 /// `wrtmuc` fall - so this answers the words and the caller places them.
-const Configuration = struct { texture: u32, sampler: u32 };
+const Configuration = struct {
+    texture: u32,
+    sampler: u32,
+    /// The view's width, height and depth at its first level, its layers
+    /// and its levels, in `compile.TextureSize.Field`'s order: what
+    /// get_texture_size_from_image_view answers (v3dv_uniforms.c:378-414),
+    /// a 3D image's slices its depth (since 1.181).
+    sizes: [5]u32 = @splat(0),
+};
 
 /// Where a channel of a view's swizzle comes from, as the TMU's state names
 /// it (since 1.120).
@@ -1406,7 +1416,17 @@ fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, how: tiling.Sampled, 
     tiling.writeTextureState(state.cpu[0..tiling.texture_state_bytes], &layout, texels, picks, @intCast(@intFromPtr(image.data) + first_layer), view.base_level, view.base_level + view.level_count - 1, view.layer_count, @intCast(image.layer_bytes));
     const sampler = carve(queue, tiling.sampler_state_bytes, tiling.sampler_state_alignment) orelse return null;
     tiling.writeSamplerState(sampler.cpu[0..tiling.sampler_state_bytes], how.state);
-    return .{ .texture = tiling.parameter0(state.address), .sampler = tiling.parameter1(sampler.address, how.unnormalized) };
+    // vk_image_view's extent is its first level's (vk_image.c), which v3dv
+    // does not minify again (v3dv_uniforms.c:388-393).
+    const level = @min(view.base_level, 31);
+    const sizes = [5]u32{
+        @max(image.width >> @intCast(level), 1),
+        @max(image.height >> @intCast(level), 1),
+        if (image.volume) @max(image.layers >> @intCast(level), 1) else 1,
+        view.layer_count,
+        view.level_count,
+    };
+    return .{ .texture = tiling.parameter0(state.address), .sampler = tiling.parameter1(sampler.address, how.unnormalized), .sizes = sizes };
 }
 
 /// The two uniforms of a fixed form that samples, in a place of their

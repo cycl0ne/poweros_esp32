@@ -427,27 +427,28 @@ pub const SamplerDim = enum(u8) {
 /// and this list is what *this* device can run today. It grows a family
 /// at a time - discard and samplers first.
 pub const profile: spirv.Profile = .{
-    .capabilities = &.{.shader},
+    // ImageQuery, which an image's size and levels need (since 1.181).
+    .capabilities = &.{ .shader, .image_query },
     .opcodes = &.{
-        .capability,                     .memory_model,        .entry_point,                    .execution_mode,
-        .decorate,                       .type_void,           .type_float,                     .type_vector,
-        .type_pointer,                   .type_function,       .constant,                       .constant_composite,
-        .variable,                       .function,            .label,                          .load,
+        .capability,           .memory_model,        .entry_point,                    .execution_mode,
+        .decorate,             .type_void,           .type_float,                     .type_vector,
+        .type_pointer,         .type_function,       .constant,                       .constant_composite,
+        .variable,             .function,            .label,                          .load,
         // What a real toolchain writes around the instructions: an
         // extended set imported but not used (`ext_inst` is absent, so a
         // call into one is still refused) and the names and source
         // strings glslc always emits. None of them is computation.
-        .ext_inst_import,                .source,              .source_extension,               .name,
-        .member_name,                    .store,               .composite_extract,              .composite_construct,
-        .f_add,                          .f_mul,               .vector_times_scalar,            .returns,
-        .function_end,                   .type_image,          .type_sampled_image,             .image_sample_implicit_lod,
+        .ext_inst_import,      .source,              .source_extension,               .name,
+        .member_name,          .store,               .composite_extract,              .composite_construct,
+        .f_add,                .f_mul,               .vector_times_scalar,            .returns,
+        .function_end,         .type_image,          .type_sampled_image,             .image_sample_implicit_lod,
         // A pixel dropped where a float is less or greater than another,
         // in the one shape a conditional discard has in SPIR-V: the
         // comparison, a selection whose true block is `OpKill` alone, and
         // the merge block the body goes on in (since 1.139). An `OpKill`
         // in any other place is refused by name, `Error.Discards`.
-        .kill,                           .type_bool,           .f_ord_less_than,                .f_ord_greater_than,
-        .selection_merge,                .branch_conditional,
+        .kill,                 .type_bool,           .f_ord_less_than,                .f_ord_greater_than,
+        .selection_merge,      .branch_conditional,
         // The integer type a constant texel offset is declared with,
         // first taken so that such a module was refused for the operand
         // (`Error.Operands`) and since 1.180 read as the offset P2 carries
@@ -461,9 +462,9 @@ pub const profile: spirv.Profile = .{
         // in a block, and the matrix arithmetic vtn lowers to columns of
         // vector arithmetic (since 1.161).
                               .type_struct,
-        .member_decorate,                .access_chain,        .type_array,                     .type_matrix,
-        .matrix_times_vector,            .vector_times_matrix, .matrix_times_matrix,            .matrix_times_scalar,
-        .transpose,                      .outer_product,
+        .member_decorate,      .access_chain,        .type_array,                     .type_matrix,
+        .matrix_times_vector,  .vector_times_matrix, .matrix_times_matrix,            .matrix_times_scalar,
+        .transpose,            .outer_product,
         // A depth compared with a reference, the TMU told it through
         // TMUDREF (v3d_tex.c:155-157; since 1.143).
               .image_sample_dref_implicit_lod,
@@ -472,18 +473,18 @@ pub const profile: spirv.Profile = .{
         // named by a shuffle, or a varying's one float by an access chain,
         // which compute nothing (since 1.152).
         .f_sub,
-        .f_negate,                       .f_div,               .dot,                            .ext_inst,
+        .f_negate,             .f_div,               .dot,                            .ext_inst,
         // The shuffle, then the other comparisons glslc writes and a float
         // chosen by one (since 1.153), then a selection's arms, their
         // values chosen at its merge and one float of a vector replaced
         // (since 1.154).
-        .vector_shuffle,                 .f_unord_not_equal,   .f_ord_less_than_equal,          .f_ord_greater_than_equal,
-        .select,                         .f_ord_equal,         .composite_insert,               .phi,
+        .vector_shuffle,       .f_unord_not_equal,   .f_ord_less_than_equal,          .f_ord_greater_than_equal,
+        .select,               .f_ord_equal,         .composite_insert,               .phi,
         .branch,
         // Then bools of bools and the unordered comparisons, as glslc
         // writes &&, || and ! (since 1.157).
-                                .logical_and,         .f_unord_greater_than_equal,     .f_unord_greater_than,
-        .logical_or,                     .f_unord_less_than,   .f_unord_less_than_equal,        .logical_not,
+                      .logical_and,         .f_unord_greater_than_equal,     .f_unord_greater_than,
+        .logical_or,           .f_unord_less_than,   .f_unord_less_than_equal,        .logical_not,
         // A storage buffer's last member, read at constant indexes
         // (since 1.164).
         .type_runtime_array,
@@ -492,29 +493,31 @@ pub const profile: spirv.Profile = .{
         // them (since 1.165). The divisions are not: v3dv has NIR lower
         // them to a sequence of float and integer steps
         // (nir_lower_idiv), which is not ported.
-                    .i_add,               .i_sub,                          .i_mul,
-        .s_negate,                       .shift_left_logical,  .shift_right_logical,            .shift_right_arithmetic,
-        .bitwise_and,                    .bitwise_or,          .bitwise_xor,                    .not,
-        .bitcast,                        .convert_f_to_s,      .convert_f_to_u,                 .convert_s_to_f,
-        .convert_u_to_f,                 .i_equal,             .i_not_equal,                    .s_less_than,
-        .s_less_than_equal,              .s_greater_than,      .s_greater_than_equal,           .u_less_than,
-        .u_less_than_equal,              .u_greater_than,      .u_greater_than_equal,           .logical_equal,
+          .i_add,               .i_sub,                          .i_mul,
+        .s_negate,             .shift_left_logical,  .shift_right_logical,            .shift_right_arithmetic,
+        .bitwise_and,          .bitwise_or,          .bitwise_xor,                    .not,
+        .bitcast,              .convert_f_to_s,      .convert_f_to_u,                 .convert_s_to_f,
+        .convert_u_to_f,       .i_equal,             .i_not_equal,                    .s_less_than,
+        .s_less_than_equal,    .s_greater_than,      .s_greater_than_equal,           .u_less_than,
+        .u_less_than_equal,    .u_greater_than,      .u_greater_than_equal,           .logical_equal,
         .logical_not_equal,
         // A storage buffer's atomics, as vtn makes them ssbo_atomic and
         // ssbo_atomic_swap, a load_ssbo and a store_ssbo, and the barriers
         // their memory semantics and OpMemoryBarrier ask for
         // (vtn_handle_atomics, spirv_to_nir.c:4288-4480; since 1.169).
-                     .memory_barrier,      .atomic_load,                    .atomic_store,
-        .atomic_exchange,                .atomic_i_increment,  .atomic_compare_exchange,        .atomic_compare_exchange_weak,
-        .atomic_i_decrement,             .atomic_i_add,        .atomic_i_sub,                   .atomic_s_min,
-        .atomic_u_min,                   .atomic_s_max,        .atomic_u_max,                   .atomic_and,
-        .atomic_or,                      .atomic_xor,
+           .memory_barrier,      .atomic_load,                    .atomic_store,
+        .atomic_exchange,      .atomic_i_increment,  .atomic_compare_exchange,        .atomic_compare_exchange_weak,
+        .atomic_i_decrement,   .atomic_i_add,        .atomic_i_sub,                   .atomic_s_min,
+        .atomic_u_min,         .atomic_s_max,        .atomic_u_max,                   .atomic_and,
+        .atomic_or,            .atomic_xor,
         // A loop, unrolled as nir_opt_loop_unroll unrolls it (since
         // 1.172).
                  .loop_merge,
-        // A sample at a level the program gives, NIR's txl (since 1.180).
-                            .image_sample_explicit_lod,
-        .image_sample_dref_explicit_lod,
+        // A sample at a level the program gives, NIR's txl (since 1.180);
+        // and a sampled image's image, its size at a level and its levels,
+        // NIR's txs and query_levels (since 1.181).
+                            .image,
+        .image_query_size_lod, .image_query_levels,  .image_sample_explicit_lod,      .image_sample_dref_explicit_lod,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform },
     .image_dims = &.{ .dim_2d, .dim_3d, .cube },
@@ -695,6 +698,15 @@ pub const Tag = enum {
     /// passed, the first half of the TMU's first word. Mesa's back end
     /// alone compiles it (`compileVir`; since 1.143).
     sample_compared,
+    /// The size of the image `at` samples at the level `from[0]`, an
+    /// integer: NIR's txs, which v3d computes from the uniforms the draw
+    /// writes of the view (ntq_emit_txs, nir_to_vir.c:914-960). `kind` is
+    /// nir_tex_instr_dest_size's (since 1.181).
+    texture_size,
+    /// How many levels the view `at` samples has, NIR's query_levels: a
+    /// uniform the draw writes (ntq_emit_tex, nir_to_vir.c:972-975; since
+    /// 1.181).
+    texture_levels,
     /// A vertex program's float `a` written to the VPM at `at`, one
     /// float as v3d_nir_store_output stores each (v3d_nir_lower_io.c:
     /// 72-92): a varying where the fragment program reads it, or one of
@@ -1095,6 +1107,20 @@ pub const Word = union(enum) {
     /// since 1.177).
     spill_offset,
     spill_size_per_thread,
+    /// A size of the view a unit samples, or its levels: Mesa's
+    /// QUNIFORM_TEXTURE_WIDTH, _HEIGHT, _DEPTH, _ARRAY_SIZE and _LEVELS,
+    /// which v3dv writes from the view's extent, layers and levels
+    /// (get_texture_size_from_image_view, v3dv_uniforms.c:378-414; since
+    /// 1.181).
+    texture_size: TextureSize,
+};
+
+/// A `.texture_size` word: the unit, and which of its view's sizes.
+pub const TextureSize = struct {
+    unit: u8 = 0,
+    field: Field = .width,
+
+    pub const Field = enum(u8) { width, height, depth, array_size, levels };
 };
 
 /// A `.sampler` word: the unit, and the bits the program sets of the
@@ -1552,6 +1578,8 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
         } else if (each.lookup != .implicit or !std.mem.eql(i8, &each.offsets, &.{ 0, 0, 0 })) {
             return Error.Operands;
         },
+        // Nor does one ask for an image's size (since 1.181).
+        .texture_size, .texture_levels => return Error.Samplers,
         // Nor does any compute beyond a sum and a product.
         .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2 => return Error.Body,
         .select, .set_less, .sat, .sin, .cos, .sign, .logic, .integer => return Error.Body,
@@ -1706,6 +1734,12 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
             // The spill buffer's (since 1.177).
             .spill_offset => .spill_offset,
             .spill_size_per_thread => .spill_size_per_thread,
+            // A size of a unit's view, or its levels (since 1.181).
+            .texture_width => .{ .texture_size = .{ .unit = try units.at(data), .field = .width } },
+            .texture_height => .{ .texture_size = .{ .unit = try units.at(data), .field = .height } },
+            .texture_depth => .{ .texture_size = .{ .unit = try units.at(data), .field = .depth } },
+            .texture_array_size => .{ .texture_size = .{ .unit = try units.at(data), .field = .array_size } },
+            .texture_levels => .{ .texture_size = .{ .unit = try units.at(data), .field = .levels } },
             else => return Error.Invalid,
         };
     }
@@ -1748,7 +1782,7 @@ fn vertexProgram(work: *const Work, single_seg: bool) VertexProgram {
 }
 
 /// The units of the samplers the program's samples read, as
-/// descriptor_map_add gives them (v3dv_pipeline.c:516-560): a set and
+/// descriptor_map_add gives them (v3dv_pipeline.c:516-561): a set and
 /// binding a unit, the one it already has where an earlier sample read
 /// it, in the program's order; and whether each compares (since 1.173).
 const Units = struct {
@@ -1759,14 +1793,20 @@ const Units = struct {
 
     const no_unit: u8 = 0xFF;
 
+    /// The unit of a set and binding, if an earlier step gave it one.
+    fn find(units: *const Units, declared: Sampler) ?u8 {
+        for (units.samplers[0..units.count], 0..) |known, k| {
+            if (known.set == declared.set and known.binding == declared.binding) return @intCast(k);
+        }
+        return null;
+    }
+
     fn of(units: *Units, work: *const Work) Error!void {
         for (work.program()) |each| {
             if (each.tag != .sample and each.tag != .sample_compared) continue;
             const compared = each.tag == .sample_compared;
             const declared = work.samplers[each.at];
-            const unit: u8 = for (units.samplers[0..units.count], 0..) |known, k| {
-                if (known.set == declared.set and known.binding == declared.binding) break @intCast(k);
-            } else made: {
+            const unit: u8 = units.find(declared) orelse made: {
                 units.samplers[units.count] = declared;
                 units.samplers[units.count].compared = compared;
                 units.count += 1;
@@ -1775,6 +1815,20 @@ const Units = struct {
             // One sampler state for the unit: a comparison is in it or
             // not, and a sample of the other kind would read it wrongly.
             if (units.samplers[unit].compared != compared) return Error.Samplers;
+            units.of_declared[each.at] = unit;
+        }
+        // A query of an image's reads its view and no sampler state, so
+        // it takes the unit a sample made, or one of its own that no
+        // comparison is in (since 1.181).
+        for (work.program()) |each| {
+            if (each.tag != .texture_size and each.tag != .texture_levels) continue;
+            if (units.of_declared[each.at] != no_unit) continue;
+            const declared = work.samplers[each.at];
+            const unit: u8 = units.find(declared) orelse made: {
+                units.samplers[units.count] = declared;
+                units.count += 1;
+                break :made @intCast(units.count - 1);
+            };
             units.of_declared[each.at] = unit;
         }
     }
@@ -2849,7 +2903,9 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // neither, and the selection stays a branch.
                     // Such a selection is kept a branch (since 1.171).
                     .arm => switch (instruction.op) {
-                        .image_sample_implicit_lod, .image_sample_dref_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_explicit_lod => try selection.keep(work, depth),
+                        // A query of the image's is a tex instruction too
+                        // (since 1.181).
+                        .image_sample_implicit_lod, .image_sample_dref_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_explicit_lod, .image_query_size_lod, .image_query_levels => try selection.keep(work, depth),
                         // An atomic or a barrier is neither either: it
                         // would run where the arm is not taken (since
                         // 1.169).
@@ -6256,6 +6312,9 @@ fn readsOf(each: Step) [4]?u16 {
         // A sample's bias or level too (since 1.180).
         .sample => .{ each.a, null, if (each.lookup != .implicit) each.from[0] else null, null },
         .sample_compared => .{ each.a, each.b, if (each.lookup != .implicit) each.from[0] else null, null },
+        // A size's level (since 1.181).
+        .texture_size => .{ each.from[0], null, null, null },
+        .texture_levels => .{ null, null, null, null },
         .ssbo_store, .scratch_store => .{ each.a, if (each.from[0] != none) each.from[0] else null, null, null },
         .ssbo_atomic => .{ each.a, if (each.from[0] != none) each.from[0] else null, if (each.from[1] != none) each.from[1] else null, null },
         .barrier => .{ null, null, null, null },
@@ -6309,6 +6368,8 @@ fn renameReads(each: *Step, renamed: *const [most_steps]u16) void {
             if (each.tag == .sample_compared) each.b = renamed[each.b];
             if (each.lookup != .implicit) each.from[0] = renamed[each.from[0]];
         },
+        .texture_size => each.from[0] = renamed[each.from[0]],
+        .texture_levels => {},
         else => {
             if (reads[0] != null) each.a = renamed[each.a];
             if (reads[1] != null) each.b = renamed[each.b];
@@ -6351,6 +6412,10 @@ fn replaceUses(work: *Work, from: u16, to: u16) void {
                 if (user.tag == .sample_compared and user.b == from) user.b = to;
                 if (user.lookup != .implicit and user.from[0] == from) user.from[0] = to;
             },
+            .texture_size => if (user.from[0] == from) {
+                user.from[0] = to;
+            },
+            .texture_levels => {},
             else => {
                 const reads = readsOf(user.*);
                 if (reads[0] != null and user.a == from) user.a = to;
@@ -7379,6 +7444,49 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             work.step_of[id] = try glslCall(work, operands[3], kind, operands[4..]);
         },
         .image_sample_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_implicit_lod, .image_sample_dref_explicit_lod => try readSample(work, instruction.op, operands),
+        .image => {
+            // ResultType, Result, SampledImage: the image of a sampled
+            // image, which vtn reads as the same texture deref
+            // (vtn_handle_texture, spirv_to_nir.c:2996-3004), and so the
+            // same unit here. Nothing to compute (since 1.181).
+            if (operands.len != 3) return Error.Body;
+            const id = try idOf(operands[1]);
+            const which = work.sampler_of[try idOf(operands[2])];
+            if (which == none) return Error.Body;
+            work.sampler_of[id] = which;
+        },
+        .image_query_size_lod => {
+            // ResultType, Result, Image, Level of Detail: vtn's txs with
+            // its lod source (spirv_to_nir.c:3384-3386), as many integers
+            // as nir_tex_instr_dest_size gives the image (nir.c): two for
+            // a 2D image and a cube, three for a 3D one and a 2D array,
+            // the array's layers last (since 1.181).
+            if (operands.len != 4) return Error.Body;
+            const type_id = try idOf(operands[0]);
+            if (!isIntegerType(work, type_id)) return Error.Type;
+            const id = try idOf(operands[1]);
+            const which = work.sampler_of[try idOf(operands[2])];
+            if (which == none) return Error.Body;
+            const kind = try kindOf(work, type_id);
+            const sizes: u32 = switch (work.samplers[which].dim) {
+                .flat, .cube => 2,
+                .layers, .volume => 3,
+            };
+            if (kind.parts() != sizes) return Error.Type;
+            const level = try operand(work, operands[3], .f32x1);
+            work.step_of[id] = try put(work, .{ .tag = .texture_size, .kind = kind, .at = which, .from = .{ level, 0, 0, 0 } });
+        },
+        .image_query_levels => {
+            // ResultType, Result, Image: vtn's query_levels, one integer
+            // (spirv_to_nir.c:3119-3135; since 1.181).
+            if (operands.len != 3) return Error.Body;
+            const type_id = try idOf(operands[0]);
+            if (!isIntegerType(work, type_id) or try kindOf(work, type_id) != .f32x1) return Error.Type;
+            const id = try idOf(operands[1]);
+            const which = work.sampler_of[try idOf(operands[2])];
+            if (which == none) return Error.Body;
+            work.step_of[id] = try put(work, .{ .tag = .texture_levels, .kind = .f32x1, .at = which });
+        },
         .vector_times_scalar => {
             if (operands.len != 4) return Error.Body;
             const type_id = try idOf(operands[0]);
@@ -8577,7 +8685,7 @@ fn settle(work: *Work) Error!void {
             // Refused by `compile` before the plan is laid out.
             .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store => return Error.Storage,
             .compare, .discard => return Error.Discards,
-            .sample_compared => return Error.Samplers,
+            .sample_compared, .texture_size, .texture_levels => return Error.Samplers,
             .begin_if, .begin_else, .end_if, .phi => return Error.Branches,
             .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2 => return Error.Body,
             .select, .set_less, .sat, .sin, .cos, .sign, .logic, .integer => return Error.Body,
@@ -10920,6 +11028,125 @@ test "a sample's image operands are refused for what the device does not take, a
     // refused there before its sample is).
     var plan: Work = .{};
     try testing.expectError(Error.Operands, compile(&plan, &reference.glslc_lod));
+}
+
+/// The words a program asks of the view `unit` samples, in order.
+fn sizesOf(comptime fields: []const TextureSize.Field) [fields.len]Word {
+    var made: [fields.len]Word = undefined;
+    for (&made, fields) |*each, field| each.* = .{ .texture_size = .{ .field = field } };
+    return made;
+}
+
+test "a texture's size at a level is the draw's word of each axis, shifted right by the level and at least 1, as ntq_emit_txs and ntq_minify make it" {
+    // vtn's txs of the image of the sampled image, with its lod
+    // (spirv_to_nir.c:3089-3096, :3119-3135, :3384-3386); ntq_emit_txs reads a
+    // QUNIFORM_TEXTURE_WIDTH and _HEIGHT of the unit, and ntq_minify
+    // makes each the MAX of its SHR by the level and 1
+    // (nir_to_vir.c:895-960). The level 0 is a small immediate; no
+    // sampler state is read, so the stream has no P0 or P1 (since 1.181).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_size);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .texture_size));
+    try testing.expectEqualSlices(Word, &sizesOf(&.{ .width, .height }), code.stream());
+    try testing.expectEqual(@as(usize, 2), countOf(code, "shr "));
+    try testing.expectEqual(@as(usize, 2), countOf(code, ", 0 "));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "max "));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "itof "));
+    // The unit is the program's, for the draw to find its view.
+    try testing.expectEqual(@as(usize, 1), code.sampled().len);
+    // A level that differs from pixel to pixel: the FTOIZ of the red
+    // times 4.0 is what both sizes are shifted by.
+    var lod: Work = .{};
+    const lod_code = try throughMesa(&lod, &reference.glslc_size_lod);
+    try testing.expectEqualSlices(Word, &sizesOf(&.{ .width, .height }), lod_code.stream());
+    for (lod.program()) |each| if (each.tag == .texture_size) {
+        try testing.expect(isIntegerOp(lod.steps[each.from[0]], .f2i32));
+    };
+    try testing.expectEqual(@as(usize, 1), countOf(lod_code, "ftoiz "));
+    try testing.expectEqual(@as(usize, 2), countOf(lod_code, "shr "));
+    // The plan has no program for it.
+    var plan: Work = .{};
+    try testing.expectError(Error.Samplers, compile(&plan, &reference.glslc_size));
+}
+
+test "a 2D array's layers are its size's last integer, not minified; a 3D texture's depth is, and a cube's size is two" {
+    // ntq_emit_txs takes QUNIFORM_TEXTURE_ARRAY_SIZE for an array's last
+    // and leaves it as it is (nir_to_vir.c:929-930, :944-947), and _DEPTH for a 3D
+    // texture's third (since 1.181).
+    var layers: Work = .{};
+    const layers_code = try throughMesa(&layers, &reference.glslc_size_layers);
+    try testing.expectEqualSlices(Word, &sizesOf(&.{ .width, .height, .array_size }), layers_code.stream());
+    try testing.expectEqual(@as(usize, 2), countOf(layers_code, "shr "));
+    try testing.expectEqual(@as(usize, 2), countOf(layers_code, "max "));
+    var volume: Work = .{};
+    const volume_code = try throughMesa(&volume, &reference.glslc_size_volume);
+    try testing.expectEqualSlices(Word, &sizesOf(&.{ .width, .height, .depth }), volume_code.stream());
+    try testing.expectEqual(@as(usize, 3), countOf(volume_code, "shr "));
+    try testing.expectEqual(@as(usize, 3), countOf(volume_code, ", 2 "));
+    var cube: Work = .{};
+    const cube_code = try throughMesa(&cube, &reference.glslc_size_cube);
+    try testing.expectEqualSlices(Word, &sizesOf(&.{ .width, .height }), cube_code.stream());
+    try testing.expectEqual(@as(usize, 2), countOf(cube_code, "shr "));
+}
+
+test "a texture's levels are the draw's word of them, as ntq_emit_tex reads query_levels" {
+    // QUNIFORM_TEXTURE_LEVELS (nir_to_vir.c:972-975), v3dv's view's
+    // level count (v3dv_uniforms.c:408-409; since 1.181).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_levels);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .texture_levels));
+    try testing.expectEqualSlices(Word, &sizesOf(&.{.levels}), code.stream());
+    try testing.expectEqual(@as(usize, 0), countOf(code, "shr "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "itof "));
+}
+
+test "a query and a sample of one texture are one unit, a comparison in it or not, and a size nothing reads is no word" {
+    // The query's unit is the sample's; the sample's P0 and P1 and the
+    // sizes are the stream's in the order the program reads them.
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_size_sampled);
+    try testing.expectEqual(@as(usize, 1), code.sampled().len);
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
+    try testing.expectEqualSlices(Word, &(sizesOf(&.{ .width, .height }) ++ [_]Word{ .{ .texture = 0 }, sampler }), code.stream());
+    // A unit a comparison is in: the query reads no sampler state, so it
+    // is no other sampler's. The width alone is read, and the height's
+    // SHR, MAX and uniform are dead (vir_opt_dead_code).
+    var shadow: Work = .{};
+    const shadow_code = try throughMesa(&shadow, &reference.glslc_size_shadow);
+    try testing.expectEqual(@as(usize, 1), shadow_code.sampled().len);
+    try testing.expect(shadow_code.sampled()[0].compared);
+    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, sampler, .{ .texture_size = .{ .field = .width } } }, shadow_code.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(shadow_code, "shr "));
+    // Two variables at one set and binding are one unit, the query's
+    // the sample's (descriptor_map_add, v3dv_pipeline.c:516-561).
+    var aliased: Work = .{};
+    const aliased_code = try throughMesa(&aliased, &reference.glslc_size_aliased);
+    try testing.expectEqual(@as(usize, 1), aliased_code.sampled().len);
+    try testing.expectEqualSlices(Word, &[_]Word{ .{ .texture = 0 }, sampler, .{ .texture_size = .{ .field = .width } } }, aliased_code.stream());
+}
+
+test "a query in a selection's arm keeps the arm, as any tex instruction does" {
+    // block_check_for_allowed_instrs lets no tex instruction through
+    // (nir_opt_peephole_select.c:59-326; since 1.181).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_size_arm);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "shr "));
+}
+
+test "a query's level that nir_opt_cse makes an earlier step's is read from that step" {
+    // glslc -O0 computes the level twice; nir_opt_cse rewrites the
+    // query's source to the first FTOIZ (nir_instr_set.c), and the one
+    // left is what both the SHRs and the float read (since 1.181).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_size_merged);
+    try testing.expectEqualSlices(Word, &sizesOf(&.{ .width, .height }), code.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(code, "ftoiz "));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "shr "));
+    for (work.program()) |each| if (each.tag == .texture_size) {
+        try testing.expect(isIntegerOp(work.steps[each.from[0]], .f2i32));
+    };
 }
 
 test "through Mesa's back end, a texel times the colour reads the texel's halves in its products" {

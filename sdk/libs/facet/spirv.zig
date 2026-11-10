@@ -113,6 +113,11 @@ pub const Op = enum(u16) {
     image_sample_dref_implicit_lod = 89,
     image_sample_dref_explicit_lod = 90,
     image_write = 99,
+    // An image of a sampled image, and its size and levels: NIR's txs and
+    // query_levels (vtn_handle_texture, spirv_to_nir.c; since 1.181).
+    image = 100,
+    image_query_size_lod = 103,
+    image_query_levels = 106,
     convert_f_to_u = 109,
     convert_f_to_s = 110,
     convert_s_to_f = 111,
@@ -205,7 +210,7 @@ pub const Op = enum(u16) {
     _,
 };
 
-pub const Capability = enum(u32) { shader = 1, geometry = 2, tessellation = 3, float16 = 9, float64 = 10, int64 = 11, int16 = 22, int8 = 39, derivative_control = 51, variable_pointers = 4442, _ };
+pub const Capability = enum(u32) { shader = 1, geometry = 2, tessellation = 3, float16 = 9, float64 = 10, int64 = 11, int16 = 22, int8 = 39, image_query = 50, derivative_control = 51, variable_pointers = 4442, _ };
 pub const AddressingModel = enum(u32) { logical = 0, _ };
 pub const MemoryModel = enum(u32) { simple = 0, glsl450 = 1, _ };
 pub const ExecutionModel = enum(u32) { vertex = 0, tessellation_control = 1, tessellation_evaluation = 2, geometry = 3, fragment = 4, gl_compute = 5, _ };
@@ -830,9 +835,10 @@ pub const facet_profile: Profile = .{
     .capabilities = &.{.shader},
     .opcodes = facet_opcodes,
     // A constant texel offset, which the cores apply (`ir.Op.offset`,
-    // since 1.87) and the V3D refuses. Every other image operand is a
-    // different write to a sampler than any device here makes, so none
-    // of them is in this list and the library turns them away.
+    // since 1.87) and the V3D puts in P2 (since 1.180). Every other image
+    // operand is outside facet's own format; a module asking for one is
+    // kept for a device that takes it, and the V3D's profile takes a bias
+    // and a level.
     .image_operands = &.{.const_offset},
     .most_ids = 1024,
 };

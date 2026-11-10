@@ -116,7 +116,11 @@
 //! bias that runs down it, which the V3D writes to TMUB and starts at
 //! TMUSLOD and TMUS; the cores sample at the same level through
 //! `texture.sampleBy`. The shipped offset is `ir.Build.sampleOffset`'s,
-//! which the V3D puts in P2.
+//! which the V3D puts in P2. The shipped sizes (since 1.46) are glslc's
+//! textureSize at a level that runs across the quad, and its
+//! textureQueryLevels, of the texture of levels, the array and the 3D
+//! texture, which the V3D reads as the draw's words of the view and
+//! shifts right by the level; the cores read them of the texture bound.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -131,7 +135,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.45 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.46 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -1242,6 +1246,49 @@ fn levelledFragment(comptime biased: bool) shader.FragmentFn {
     }.run;
 }
 
+/// What `shipped_size`, `shipped_size_layers` and `shipped_size_volume`
+/// compute, for the cores: the sides of the texture bound at set 0,
+/// binding 0 at the level the first float of varying 0 times 4 (times 3
+/// for the array, and a half for the 3D texture, which is 0) makes an
+/// integer towards zero, each its level 0 side shifted right by the level and at least
+/// 1, as textureSize gives it; and its layers, a 3D texture's slices,
+/// and its levels (since 1.46).
+fn sizedFragment(comptime view: Through.View) shader.FragmentFn {
+    return &struct {
+        fn run(fragments: *const shader.Fragments) callconv(.c) void {
+            const given = fragments.resources.sampled(0, 0, 0) orelse return shader.fill(fragments, shader.missing);
+            @setRuntimeSafety(false);
+            const levels: f32 = @floatFromInt(given.levels);
+            const layers: f32 = @floatFromInt(given.layer_count);
+            var rows = shader.Rows(3).of(fragments);
+            for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+                const row = rows.at(quad);
+                const us = row[1] * (@as(shader.Pixels, @splat(1)) / row[0]);
+                var made: [4]shader.Pixels = undefined;
+                inline for (0..4) |i| {
+                    const by: f32 = switch (view) {
+                        .texture => 4.0,
+                        .array => 3.0,
+                        else => 0.5,
+                    };
+                    const level: u5 = @intCast(std.math.clamp(towardZero(us[i] * by), 0, 31));
+                    const across: f32 = @floatFromInt(@max(given.width(0) >> level, 1));
+                    const down: f32 = @floatFromInt(@max(given.height(0) >> level, 1));
+                    const color: [4]f32 = switch (view) {
+                        .texture => .{ across / 64.0, down / 64.0, levels / 8.0, 1.0 },
+                        .array => .{ across / 32.0, down / 32.0, layers / 8.0, levels / 4.0 },
+                        else => .{ across / 16.0, down / 16.0, layers / 16.0, levels / 4.0 },
+                    };
+                    inline for (0..4) |c| made[c][i] = color[c];
+                }
+                var bytes: [4]@Vector(4, u32) = undefined;
+                inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(made[c]);
+                out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+            }
+        }
+    }.run;
+}
+
 /// What `store_writes` computes, for the cores, and in its order: by each
 /// pixel inside the triangle - a helper pixel writes nothing, as the
 /// V3D's lookup is a pixel's - the written buffer's count made 2 and its
@@ -1443,22 +1490,26 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped lod", levelledFragment(false), 2),
     shader.fragment("shipped bias", levelledFragment(true), 2),
     Shipped.Offset.entry("shipped offset"),
+    shader.fragment("shipped size", sizedFragment(.texture), 2),
+    shader.fragment("shipped size layers", sizedFragment(.array), 2),
+    shader.fragment("shipped size volume", sizedFragment(.volume), 2),
 };
 const shipped_words = [_]shader.Spirv{
-    .{},                                .{},                               .{},                                  .{},
-    Shipped.Smooth.spirv,               Shipped.Flat.spirv,                Shipped.Dimmed.spirv,                 Shipped.Textured.spirv,
-    Shipped.Modulated.spirv,            Shipped.Pushed.spirv,              Shipped.Tinted.spirv,                 Shipped.Cutout.spirv,
-    Shipped.CutoutOther.spirv,          Shipped.Shadowed.spirv,            Shipped.Arithmetic.spirv,             Shipped.Called.spirv,
-    Shipped.Chosen.spirv,               Shipped.Branched.spirv,            shader.Spirv.of(&branch_unoptimized), Shipped.Nested.spirv,
-    Shipped.Bools.spirv,                Shipped.Nests.spirv,               Shipped.Joined.spirv,                 Shipped.Collapsed.spirv,
-    shader.Spirv.of(&nested_discard),   Shipped.Uniformed.spirv,           shader.Spirv.of(&uniform_nested),     shader.Spirv.of(&uniform_matrix),
-    shader.Spirv.of(&uniform_matrices), shader.Spirv.of(&constant_matrix), shader.Spirv.of(&vertex_as_it_is),    shader.Spirv.of(&storage_buffer),
-    shader.Spirv.of(&integers),         shader.Spirv.of(&indexed),         shader.Spirv.of(&lanes),              shader.Spirv.of(&store_writes),
-    shader.Spirv.of(&store_reads),      shader.Spirv.of(&store_atomics),   shader.Spirv.of(&store_counted),      Shipped.Kept.spirv,
-    Shipped.KeptPushed.spirv,           shader.Spirv.of(&for_loop),        shader.Spirv.of(&do_while),           shader.Spirv.of(&float_loop),
-    Shipped.TwoTextures.spirv,          shader.Spirv.of(&four_samples),    shader.Spirv.of(&scratch_slots),      shader.Spirv.of(&tree_pair),
-    shader.Spirv.of(&shipped_layers),   shader.Spirv.of(&shipped_cube),    shader.Spirv.of(&shipped_volume),     shader.Spirv.of(&shipped_lod),
-    shader.Spirv.of(&shipped_bias),     Shipped.Offset.spirv,
+    .{},                                   .{},                               .{},                                  .{},
+    Shipped.Smooth.spirv,                  Shipped.Flat.spirv,                Shipped.Dimmed.spirv,                 Shipped.Textured.spirv,
+    Shipped.Modulated.spirv,               Shipped.Pushed.spirv,              Shipped.Tinted.spirv,                 Shipped.Cutout.spirv,
+    Shipped.CutoutOther.spirv,             Shipped.Shadowed.spirv,            Shipped.Arithmetic.spirv,             Shipped.Called.spirv,
+    Shipped.Chosen.spirv,                  Shipped.Branched.spirv,            shader.Spirv.of(&branch_unoptimized), Shipped.Nested.spirv,
+    Shipped.Bools.spirv,                   Shipped.Nests.spirv,               Shipped.Joined.spirv,                 Shipped.Collapsed.spirv,
+    shader.Spirv.of(&nested_discard),      Shipped.Uniformed.spirv,           shader.Spirv.of(&uniform_nested),     shader.Spirv.of(&uniform_matrix),
+    shader.Spirv.of(&uniform_matrices),    shader.Spirv.of(&constant_matrix), shader.Spirv.of(&vertex_as_it_is),    shader.Spirv.of(&storage_buffer),
+    shader.Spirv.of(&integers),            shader.Spirv.of(&indexed),         shader.Spirv.of(&lanes),              shader.Spirv.of(&store_writes),
+    shader.Spirv.of(&store_reads),         shader.Spirv.of(&store_atomics),   shader.Spirv.of(&store_counted),      Shipped.Kept.spirv,
+    Shipped.KeptPushed.spirv,              shader.Spirv.of(&for_loop),        shader.Spirv.of(&do_while),           shader.Spirv.of(&float_loop),
+    Shipped.TwoTextures.spirv,             shader.Spirv.of(&four_samples),    shader.Spirv.of(&scratch_slots),      shader.Spirv.of(&tree_pair),
+    shader.Spirv.of(&shipped_layers),      shader.Spirv.of(&shipped_cube),    shader.Spirv.of(&shipped_volume),     shader.Spirv.of(&shipped_lod),
+    shader.Spirv.of(&shipped_bias),        Shipped.Offset.spirv,              shader.Spirv.of(&shipped_size),       shader.Spirv.of(&shipped_size_layers),
+    shader.Spirv.of(&shipped_size_volume),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -3149,6 +3200,197 @@ const shipped_bias = [_]u32{
     0x00000009, 0x0000001C, 0x000100FD, 0x00010038,
 };
 
+/// glslc's own output, at -O, for the size of a 2D texture at the level
+/// the first of the two floats of varying 0 times 4 makes an integer, over
+/// 64, and its levels over 8: OpImageQuerySizeLod and OpImageQueryLevels,
+/// which the V3D reads as the draw's words of the view's sizes, each
+/// shifted right by the level and at least 1, and of its levels (since
+/// 1.46).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2D tex;
+/// layout(location = 0) in vec2 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     ivec2 size = textureSize(tex, int(at.x * 4.0));
+///     outColor = vec4(vec2(size) / 64.0, float(textureQueryLevels(tex)) / 8.0, 1.0);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag size.frag -o size.spv   # 227 words
+/// spirv-val --target-env vulkan1.0 size.spv            # no output, and 0
+/// ```
+const shipped_size = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000033, 0x00000000, 0x00020011,
+    0x00000001, 0x00020011, 0x00000032, 0x0006000B, 0x00000001, 0x4C534C47,
+    0x6474732E, 0x3035342E, 0x00000000, 0x0003000E, 0x00000000, 0x00000001,
+    0x0007000F, 0x00000004, 0x00000004, 0x6E69616D, 0x00000000, 0x00000012,
+    0x0000001F, 0x00030010, 0x00000004, 0x00000007, 0x00040047, 0x0000000E,
+    0x00000021, 0x00000000, 0x00040047, 0x0000000E, 0x00000022, 0x00000000,
+    0x00040047, 0x00000012, 0x0000001E, 0x00000000, 0x00040047, 0x0000001F,
+    0x0000001E, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00040015, 0x00000006, 0x00000020, 0x00000001, 0x00040017,
+    0x00000007, 0x00000006, 0x00000002, 0x00030016, 0x0000000A, 0x00000020,
+    0x00090019, 0x0000000B, 0x0000000A, 0x00000001, 0x00000000, 0x00000000,
+    0x00000000, 0x00000001, 0x00000000, 0x0003001B, 0x0000000C, 0x0000000B,
+    0x00040020, 0x0000000D, 0x00000000, 0x0000000C, 0x0004003B, 0x0000000D,
+    0x0000000E, 0x00000000, 0x00040017, 0x00000010, 0x0000000A, 0x00000002,
+    0x00040020, 0x00000011, 0x00000001, 0x00000010, 0x0004003B, 0x00000011,
+    0x00000012, 0x00000001, 0x00040015, 0x00000013, 0x00000020, 0x00000000,
+    0x0004002B, 0x00000013, 0x00000014, 0x00000000, 0x00040020, 0x00000015,
+    0x00000001, 0x0000000A, 0x0004002B, 0x0000000A, 0x00000018, 0x40800000,
+    0x00040017, 0x0000001D, 0x0000000A, 0x00000004, 0x00040020, 0x0000001E,
+    0x00000003, 0x0000001D, 0x0004003B, 0x0000001E, 0x0000001F, 0x00000003,
+    0x0004002B, 0x0000000A, 0x0000002B, 0x3F800000, 0x0004002B, 0x0000000A,
+    0x00000030, 0x3C800000, 0x0005002C, 0x00000010, 0x00000031, 0x00000030,
+    0x00000030, 0x0004002B, 0x0000000A, 0x00000032, 0x3E000000, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x0004003D, 0x0000000C, 0x0000000F, 0x0000000E, 0x00050041, 0x00000015,
+    0x00000016, 0x00000012, 0x00000014, 0x0004003D, 0x0000000A, 0x00000017,
+    0x00000016, 0x00050085, 0x0000000A, 0x00000019, 0x00000017, 0x00000018,
+    0x0004006E, 0x00000006, 0x0000001A, 0x00000019, 0x00040064, 0x0000000B,
+    0x0000001B, 0x0000000F, 0x00050067, 0x00000007, 0x0000001C, 0x0000001B,
+    0x0000001A, 0x0004006F, 0x00000010, 0x00000021, 0x0000001C, 0x00050085,
+    0x00000010, 0x00000024, 0x00000021, 0x00000031, 0x0004003D, 0x0000000C,
+    0x00000025, 0x0000000E, 0x00040064, 0x0000000B, 0x00000026, 0x00000025,
+    0x0004006A, 0x00000006, 0x00000027, 0x00000026, 0x0004006F, 0x0000000A,
+    0x00000028, 0x00000027, 0x00050085, 0x0000000A, 0x0000002A, 0x00000028,
+    0x00000032, 0x00050051, 0x0000000A, 0x0000002C, 0x00000024, 0x00000000,
+    0x00050051, 0x0000000A, 0x0000002D, 0x00000024, 0x00000001, 0x00070050,
+    0x0000001D, 0x0000002E, 0x0000002C, 0x0000002D, 0x0000002A, 0x0000002B,
+    0x0003003E, 0x0000001F, 0x0000002E, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for the size of a 2D array at the level the
+/// first float times 3 makes an integer, over 32, its layers over 8 and
+/// its levels over 4: the layers are the view's, which the V3D does not
+/// shift (since 1.46).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2DArray tex;
+/// layout(location = 0) in vec2 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     ivec3 size = textureSize(tex, int(at.x * 3.0));
+///     outColor = vec4(vec2(size.xy) / 32.0, float(size.z) / 8.0, float(textureQueryLevels(tex)) / 4.0);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag size_layers.frag -o size_layers.spv   # 252 words
+/// spirv-val --target-env vulkan1.0 size_layers.spv                   # no output, and 0
+/// ```
+const shipped_size_layers = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000003D, 0x00000000, 0x00020011,
+    0x00000001, 0x00020011, 0x00000032, 0x0006000B, 0x00000001, 0x4C534C47,
+    0x6474732E, 0x3035342E, 0x00000000, 0x0003000E, 0x00000000, 0x00000001,
+    0x0007000F, 0x00000004, 0x00000004, 0x6E69616D, 0x00000000, 0x00000012,
+    0x0000001F, 0x00030010, 0x00000004, 0x00000007, 0x00040047, 0x0000000E,
+    0x00000021, 0x00000000, 0x00040047, 0x0000000E, 0x00000022, 0x00000000,
+    0x00040047, 0x00000012, 0x0000001E, 0x00000000, 0x00040047, 0x0000001F,
+    0x0000001E, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00040015, 0x00000006, 0x00000020, 0x00000001, 0x00040017,
+    0x00000007, 0x00000006, 0x00000003, 0x00030016, 0x0000000A, 0x00000020,
+    0x00090019, 0x0000000B, 0x0000000A, 0x00000001, 0x00000000, 0x00000001,
+    0x00000000, 0x00000001, 0x00000000, 0x0003001B, 0x0000000C, 0x0000000B,
+    0x00040020, 0x0000000D, 0x00000000, 0x0000000C, 0x0004003B, 0x0000000D,
+    0x0000000E, 0x00000000, 0x00040017, 0x00000010, 0x0000000A, 0x00000002,
+    0x00040020, 0x00000011, 0x00000001, 0x00000010, 0x0004003B, 0x00000011,
+    0x00000012, 0x00000001, 0x00040015, 0x00000013, 0x00000020, 0x00000000,
+    0x0004002B, 0x00000013, 0x00000014, 0x00000000, 0x00040020, 0x00000015,
+    0x00000001, 0x0000000A, 0x0004002B, 0x0000000A, 0x00000018, 0x40400000,
+    0x00040017, 0x0000001D, 0x0000000A, 0x00000004, 0x00040020, 0x0000001E,
+    0x00000003, 0x0000001D, 0x0004003B, 0x0000001E, 0x0000001F, 0x00000003,
+    0x00040017, 0x00000020, 0x00000006, 0x00000002, 0x0004002B, 0x0000000A,
+    0x00000039, 0x3D000000, 0x0005002C, 0x00000010, 0x0000003A, 0x00000039,
+    0x00000039, 0x0004002B, 0x0000000A, 0x0000003B, 0x3E000000, 0x0004002B,
+    0x0000000A, 0x0000003C, 0x3E800000, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000C,
+    0x0000000F, 0x0000000E, 0x00050041, 0x00000015, 0x00000016, 0x00000012,
+    0x00000014, 0x0004003D, 0x0000000A, 0x00000017, 0x00000016, 0x00050085,
+    0x0000000A, 0x00000019, 0x00000017, 0x00000018, 0x0004006E, 0x00000006,
+    0x0000001A, 0x00000019, 0x00040064, 0x0000000B, 0x0000001B, 0x0000000F,
+    0x00050067, 0x00000007, 0x0000001C, 0x0000001B, 0x0000001A, 0x0007004F,
+    0x00000020, 0x00000022, 0x0000001C, 0x0000001C, 0x00000000, 0x00000001,
+    0x0004006F, 0x00000010, 0x00000023, 0x00000022, 0x00050085, 0x00000010,
+    0x00000026, 0x00000023, 0x0000003A, 0x00050051, 0x00000006, 0x0000002A,
+    0x0000001C, 0x00000002, 0x0004006F, 0x0000000A, 0x0000002B, 0x0000002A,
+    0x00050085, 0x0000000A, 0x0000002D, 0x0000002B, 0x0000003B, 0x0004003D,
+    0x0000000C, 0x0000002E, 0x0000000E, 0x00040064, 0x0000000B, 0x0000002F,
+    0x0000002E, 0x0004006A, 0x00000006, 0x00000030, 0x0000002F, 0x0004006F,
+    0x0000000A, 0x00000031, 0x00000030, 0x00050085, 0x0000000A, 0x00000033,
+    0x00000031, 0x0000003C, 0x00050051, 0x0000000A, 0x00000034, 0x00000026,
+    0x00000000, 0x00050051, 0x0000000A, 0x00000035, 0x00000026, 0x00000001,
+    0x00070050, 0x0000001D, 0x00000036, 0x00000034, 0x00000035, 0x0000002D,
+    0x00000033, 0x0003003E, 0x0000001F, 0x00000036, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for the size of a 3D texture at the level
+/// half the first float makes an integer, which is 0, over 16, and its
+/// levels over 4: the depth is the draw's word of it. The level is read
+/// of the varying so that the program reads the two floats the vertex
+/// function writes, as the V3D's pipeline asks (since 1.46).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler3D tex;
+/// layout(location = 0) in vec2 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     ivec3 size = textureSize(tex, int(at.x * 0.5));
+///     outColor = vec4(vec3(size) / 16.0, float(textureQueryLevels(tex)) / 4.0);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag size_volume.frag -o size_volume.spv   # 233 words
+/// spirv-val --target-env vulkan1.0 size_volume.spv                   # no output, and 0
+/// ```
+const shipped_size_volume = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000034, 0x00000000, 0x00020011,
+    0x00000001, 0x00020011, 0x00000032, 0x0006000B, 0x00000001, 0x4C534C47,
+    0x6474732E, 0x3035342E, 0x00000000, 0x0003000E, 0x00000000, 0x00000001,
+    0x0007000F, 0x00000004, 0x00000004, 0x6E69616D, 0x00000000, 0x00000012,
+    0x0000001F, 0x00030010, 0x00000004, 0x00000007, 0x00040047, 0x0000000E,
+    0x00000021, 0x00000000, 0x00040047, 0x0000000E, 0x00000022, 0x00000000,
+    0x00040047, 0x00000012, 0x0000001E, 0x00000000, 0x00040047, 0x0000001F,
+    0x0000001E, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00040015, 0x00000006, 0x00000020, 0x00000001, 0x00040017,
+    0x00000007, 0x00000006, 0x00000003, 0x00030016, 0x0000000A, 0x00000020,
+    0x00090019, 0x0000000B, 0x0000000A, 0x00000002, 0x00000000, 0x00000000,
+    0x00000000, 0x00000001, 0x00000000, 0x0003001B, 0x0000000C, 0x0000000B,
+    0x00040020, 0x0000000D, 0x00000000, 0x0000000C, 0x0004003B, 0x0000000D,
+    0x0000000E, 0x00000000, 0x00040017, 0x00000010, 0x0000000A, 0x00000002,
+    0x00040020, 0x00000011, 0x00000001, 0x00000010, 0x0004003B, 0x00000011,
+    0x00000012, 0x00000001, 0x00040015, 0x00000013, 0x00000020, 0x00000000,
+    0x0004002B, 0x00000013, 0x00000014, 0x00000000, 0x00040020, 0x00000015,
+    0x00000001, 0x0000000A, 0x0004002B, 0x0000000A, 0x00000018, 0x3F000000,
+    0x00040017, 0x0000001D, 0x0000000A, 0x00000004, 0x00040020, 0x0000001E,
+    0x00000003, 0x0000001D, 0x0004003B, 0x0000001E, 0x0000001F, 0x00000003,
+    0x00040017, 0x00000021, 0x0000000A, 0x00000003, 0x0004002B, 0x0000000A,
+    0x00000031, 0x3D800000, 0x0006002C, 0x00000021, 0x00000032, 0x00000031,
+    0x00000031, 0x00000031, 0x0004002B, 0x0000000A, 0x00000033, 0x3E800000,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003D, 0x0000000C, 0x0000000F, 0x0000000E, 0x00050041,
+    0x00000015, 0x00000016, 0x00000012, 0x00000014, 0x0004003D, 0x0000000A,
+    0x00000017, 0x00000016, 0x00050085, 0x0000000A, 0x00000019, 0x00000017,
+    0x00000018, 0x0004006E, 0x00000006, 0x0000001A, 0x00000019, 0x00040064,
+    0x0000000B, 0x0000001B, 0x0000000F, 0x00050067, 0x00000007, 0x0000001C,
+    0x0000001B, 0x0000001A, 0x0004006F, 0x00000021, 0x00000022, 0x0000001C,
+    0x00050085, 0x00000021, 0x00000025, 0x00000022, 0x00000032, 0x0004003D,
+    0x0000000C, 0x00000026, 0x0000000E, 0x00040064, 0x0000000B, 0x00000027,
+    0x00000026, 0x0004006A, 0x00000006, 0x00000028, 0x00000027, 0x0004006F,
+    0x0000000A, 0x00000029, 0x00000028, 0x00050085, 0x0000000A, 0x0000002B,
+    0x00000029, 0x00000033, 0x00050051, 0x0000000A, 0x0000002C, 0x00000025,
+    0x00000000, 0x00050051, 0x0000000A, 0x0000002D, 0x00000025, 0x00000001,
+    0x00050051, 0x0000000A, 0x0000002E, 0x00000025, 0x00000002, 0x00070050,
+    0x0000001D, 0x0000002F, 0x0000002C, 0x0000002D, 0x0000002E, 0x0000002B,
+    0x0003003E, 0x0000001F, 0x0000002F, 0x000100FD, 0x00010038,
+};
+
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
 /// V3D's host tests hold to compile to the program of glslc's optimized
 /// module, word for word: `c` and `k` in variables of the function's own,
@@ -3513,7 +3755,38 @@ const levelled_throughs = [_]Through{
     },
 };
 
-const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs ++ shipped_layered_throughs ++ levelled_throughs;
+/// A texture's sides at a level the program gives, and its levels:
+/// glslc's `shipped_size`, `shipped_size_layers` and
+/// `shipped_size_volume`, the cores' `sizedFragment`. "texture" runs the
+/// level from 0 at the quad's left to 3 at its right, the array's to 2;
+/// the 3D texture's is 0. The sampler is read by no query (since 1.46).
+const sized_throughs = [_]Through{
+    .{
+        .label = "shipped size",
+        .what = "levels 0 to 3, of 7",
+        .fragment = "shipped size",
+        .info = .{ .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+    },
+    .{
+        .label = "shipped size",
+        .what = "an array's, levels 0 to 2",
+        .fragment = "shipped size layers",
+        .info = .{ .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+        .view = .array,
+    },
+    .{
+        .label = "shipped size",
+        .what = "a 3D texture's",
+        .fragment = "shipped size volume",
+        .info = .{ .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+        .view = .volume,
+    },
+};
+
+const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs ++ shipped_layered_throughs ++ levelled_throughs ++ sized_throughs;
 
 /// What the shadow-map cases compare with (`Cases.shadowed`): the
 /// reference less than the depth, and greater (since 1.14).
