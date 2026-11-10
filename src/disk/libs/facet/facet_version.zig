@@ -6056,4 +6056,28 @@ pub const LIBRARY_VERSION = 1;
 /// its new one, glslc's sample of the texture with the same sample read
 /// twice more in an arm, its blue, green, red and alpha times its red, is
 /// 0 of 230400 pixels apart. FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 185;
+///
+/// 186: **An fabs of an fneg is the fabs of what it negates, on the V3D
+/// (docs/facet-vulkan10.md item 59).** (('fabs', ('fneg', a)), ('fabs',
+/// a)) (nir_opt_algebraic.py:232) is a rule of the port's
+/// nir_opt_algebraic, of the floats nir_lower_alu_to_scalar makes an
+/// instruction each of (nir_to_vir.c:2259): an fabs of a vector fneg is
+/// the fabs of the vector, and one of a vector with a negated float is an
+/// fabs a float, that float's of what it negates. The fneg's XOR and its
+/// uniform of -0.0 go where nothing else reads it; the fabs
+/// nir_normalize_cubemap_coords takes of a negated direction's floats
+/// reads the floats, and only the direction keeps its fnegs.
+///
+/// Tests: the V3D's 299, one new, working glslc_abs_negated's colour out
+/// on the host. 2 new modules of glslc's: glslc_abs_negated, of no XOR
+/// and no uniform, and glslc_cube_negated, its fabs each of the input.
+/// Of 6 mutations of the port, 5 fail the tests; the sixth, a second
+/// operand given the scalar fabs a split makes, is the same program, the
+/// fabs reading none.
+///
+/// On the CM5 FacetBoth's 265 cases are each as they were at 1.185, and
+/// its new one, glslc's sample of the cube at the direction with its
+/// first and third negated, on the +z instance and so of the -z face,
+/// the nearest, is 0 of 230400 pixels apart. FacetProbe passes its 890
+/// checks.
+pub const LIBRARY_REVISION = 186;

@@ -5228,7 +5228,8 @@ fn boolOf(work: *const Work, word: u32) Error!u16 {
 ///   folds to, there, a round before nir_opt_constant_folding would make
 ///   it.
 /// - Of floats (`Order.floatRule`; since 1.174), which a Vulkan 1.0
-///   module leaves fast math: (('fneg', ('fneg', a)), a) (:230); an fadd
+///   module leaves fast math: (('fneg', ('fneg', a)), a) (:230);
+///   (('fabs', ('fneg', a)), ('fabs', a)) (:232; since 1.186); an fadd
 ///   of a zero, the other operand (:236-237); of two fmuls sharing a
 ///   factor, the fmul of it and the fadd of the others (:246; since
 ///   1.175); of an fneg and what it negates, a zero (:266-267); of an
@@ -5659,16 +5660,16 @@ const Order = struct {
                     }
                 }
             },
-            .negate, .add, .sub, .mul => if (try list.floatRule(work, at)) |left| return left,
+            .negate, .abs, .add, .sub, .mul => if (try list.floatRule(work, at)) |left| return left,
             else => {},
         }
         return null;
     }
 
     /// The identities of float arithmetic (since 1.174): `at`, an fneg,
-    /// an fadd, an fsub or an fmul, rewritten by the first that matches
-    /// it, in the list's order, its operands either way about where it
-    /// commutes, and the step it leaves in its place, or null.
+    /// an fabs, an fadd, an fsub or an fmul, rewritten by the first that
+    /// matches it, in the list's order, its operands either way about
+    /// where it commutes, and the step it leaves in its place, or null.
     ///
     /// A Vulkan 1.0 module has no float controls and decorates nothing
     /// FPFastMathMode, so vtn leaves every float operation
@@ -5693,6 +5694,8 @@ const Order = struct {
         switch (each.tag) {
             // (('fneg', ('fneg', a)), ('fcanonicalize', a)) (:230).
             .negate => if (try list.negatedBefore(work, at, each.a)) |inner| return list.replaced(work, at, inner),
+            // (('fabs', ('fneg', a)), ('fabs', a)) (:232; since 1.186).
+            .abs => if (try list.negatedBefore(work, at, each.a)) |inner| return try list.rebuilt(work, at, .{ .tag = .abs, .kind = each.kind, .a = inner }),
             .add => {
                 // (('fadd(nsz)', a, 0.0), ('fcanonicalize', a)) and
                 // (('fadd', a, -0.0), ('fcanonicalize', a)) (:236-237).
@@ -5836,8 +5839,8 @@ const Order = struct {
         return list.before(work, at, .{ .tag = .negate, .kind = work.steps[of.at].kind, .a = of.at });
     }
 
-    /// A vector fneg, fadd, fsub or fmul a rule above would rewrite a
-    /// float of and not the whole: nir_lower_alu_to_scalar has made it an
+    /// A vector fneg, fabs, fadd, fsub or fmul a rule above would rewrite
+    /// a float of and not the whole: nir_lower_alu_to_scalar has made it an
     /// instruction a float before nir_opt_algebraic sees it
     /// (v3d_optimize_nir, nir_to_vir.c:2259; preprocess_nir,
     /// v3dv_pipeline.c:404), so the rule rewrites that float alone. It is
@@ -5855,7 +5858,7 @@ const Order = struct {
         var made = Step{ .tag = .construct, .kind = each.kind };
         for (0..parts) |k| {
             var scalar = Step{ .tag = each.tag, .kind = .f32x1, .a = try list.floatBefore(work, at, operandPart(work, each.a, @intCast(k))) };
-            if (each.tag != .negate) scalar.b = try list.floatBefore(work, at, operandPart(work, each.b, @intCast(k)));
+            if (each.tag != .negate and each.tag != .abs) scalar.b = try list.floatBefore(work, at, operandPart(work, each.b, @intCast(k)));
             made.from[k] = try list.before(work, at, scalar);
             made.part[k] = 0;
         }
@@ -6224,7 +6227,7 @@ fn isFactorBits(bits: ?u32) bool {
 /// vector operation `each`, taken alone (since 1.174).
 fn floatFolds(work: *const Work, each: Step, k: u8) bool {
     const a = operandPart(work, each.a, k);
-    if (each.tag == .negate) return work.steps[a.step].tag == .negate;
+    if (each.tag == .negate or each.tag == .abs) return work.steps[a.step].tag == .negate;
     const b = operandPart(work, each.b, k);
     const left = floatBits(work, a);
     const right = floatBits(work, b);
@@ -11771,6 +11774,39 @@ test "a sample an arm repeats of one in an arm of another selection, or of the o
     try testing.expectEqual(@as(usize, 2), stepsOf(&alone, .sample_compared));
     try testing.expectEqual(@as(usize, 1), stepsOf(&alone, .texture_levels));
     try testing.expectEqual(@as(usize, 2), countOf(kept, "mov tmudref, "));
+}
+
+test "an fabs of an fneg is the fabs of what it negates, a float or a vector at a time: the V3D's ABS unpack of it, and no XOR" {
+    // (('fabs', ('fneg', a)), ('fabs', a)) (nir_opt_algebraic.py:232), of
+    // each float nir_lower_alu_to_scalar makes an instruction of
+    // (nir_to_vir.c:2259; since 1.186). The vector of the negated alpha
+    // and the red is two fabs, the second the red's own.
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_abs_negated);
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .negate));
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .abs));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "xor "));
+    try testing.expectEqual(@as(usize, 0), code.stream().len);
+    for (work.program()) |each| if (each.tag == .abs) {
+        for (0..work.steps[each.a].kind.parts()) |k| {
+            try testing.expectEqual(Tag.input, work.steps[partOf(&work, each.a, @intCast(k)).step].tag);
+        }
+    };
+    const color = [4]f32{ -0.25, 0.5, -0.75, 1.0 };
+    try testing.expectEqual([4]f32{ 0.25, 0.75, 1.0, 0.75 }, evaluatedOf(&work, work.stored, color, 0));
+    // The fabs nir_normalize_cubemap_coords takes of each float of a
+    // direction (nir_normalize_cubemap_coords.c:30-55) is of the float
+    // itself where the direction negates it, and the two fnegs are the
+    // direction's alone.
+    var cube: Work = .{};
+    const sky = try throughMesa(&cube, &reference.glslc_cube_negated);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&cube, .negate));
+    try testing.expectEqual(@as(usize, 3), stepsOf(&cube, .abs));
+    try testing.expectEqual(@as(usize, 2), countOf(sky, "xor "));
+    for (cube.program()) |each| if (each.tag == .abs) {
+        try testing.expectEqual(Kind.f32x1, each.kind);
+        try testing.expectEqual(Tag.input, cube.steps[partOf(&cube, each.a, 0).step].tag);
+    };
 }
 
 test "a cube's gradient is lower_gradient_cube_map's level: the face's quotient rule, -1 plus half the LOG of L times L times M, to TMUB and TMUSCM" {
