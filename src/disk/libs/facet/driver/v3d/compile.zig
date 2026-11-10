@@ -816,11 +816,16 @@ pub const Integer = enum(u32) {
     /// (nir_opt_idiv_const.c:37-39, :75), the AND of the bool's ~0 or 0
     /// and 1 (nir_to_vir.c:1524-1528; since 1.188).
     b2i32,
+    /// The count of zeros above a word's highest 1, 32 for 0
+    /// (nir_opcodes.py:594-601): what the bit finds are lowered to on a
+    /// device of has_uclz (nir_opt_algebraic.py:2717-2738), the V3D's
+    /// CLZ (nir_to_vir.c:1696-1697; since 1.197).
+    uclz,
 
     /// Whether it reads one value, not two.
     pub fn unary(op: Integer) bool {
         return switch (op) {
-            .ineg, .iabs, .inot, .f2i32, .f2u32, .i2f32, .u2f32, .b2f32, .b2i32 => true,
+            .ineg, .iabs, .inot, .f2i32, .f2u32, .i2f32, .u2f32, .b2f32, .b2i32, .uclz => true,
             else => false,
         };
     }
@@ -8539,9 +8544,10 @@ fn multiplied(work: *Work, left: Matrix, right: Matrix) Error!Matrix {
 /// split into an fmul and an fadd as the algebraic rules split it on a
 /// device of no FMA (nir_opt_algebraic.py:420-424), each bcsel and
 /// comparison of a vector one of each float (`lower_to_scalar`,
-/// v3dv_pipeline.c:203). What is left out - Modf, Frexp, Ldexp, the
-/// determinant and the inverse, the bit finds, the packing and the
-/// interpolation - is refused by name, `Error.Body` (since 1.152).
+/// v3dv_pipeline.c:203). The bit finds are here since 1.197, of uclz.
+/// What is left out - Modf, Frexp, Ldexp, the determinant and the
+/// inverse, the packing and the interpolation - is refused by name,
+/// `Error.Body` (since 1.152).
 fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) Error!u16 {
     const which = std.enums.fromInt(spirv.Glsl, instruction) orelse return Error.Body;
     switch (which) {
@@ -8554,6 +8560,8 @@ fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) E
         // Since 1.196.
         .asin, .acos, .atan, .atan2, .sinh, .cosh, .tanh, .asinh, .acosh, .atanh => {},
         .fma, .cross, .face_forward, .reflect, .refract => {},
+        // Since 1.197.
+        .find_i_lsb, .find_s_msb, .find_u_msb => {},
         else => return Error.Body,
     }
     const wanted: usize = switch (which) {
@@ -8624,6 +8632,16 @@ fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) E
             .s_clamp => integerOf(work, .imin, try integerOf(work, .imax, x[0], x[1]), x[2]),
             else => integerOf(work, .umin, try integerOf(work, .umax, x[0], x[1]), x[2]),
         },
+        // find_lsb, ifind_msb and ufind_msb (vtn_glsl450.c:178-180), as
+        // the V3D's lower_find_lsb, lower_ifind_msb, lower_ufind_msb and
+        // has_uclz have them (v3dv_pipeline.c:194-211): 31 - uclz of
+        // x & -x, find_lsb's u2u32 of a word nothing; of x ^ (x >> 31),
+        // which is ~x where x is below 0; and of x
+        // (nir_opt_algebraic.py:2717-2738). Each answers -1 for a word of
+        // no bit to find, uclz's 32.
+        .find_i_lsb => findOf(work, try integerOf(work, .iand, x[0], try integerOf(work, .ineg, x[0], null))),
+        .find_s_msb => findOf(work, try integerOf(work, .ixor, x[0], try integerOf(work, .ishr, x[0], try integerSplat(work, kind, 31)))),
+        .find_u_msb => findOf(work, x[0]),
         .sin => unary(work, .sin, x[0]),
         .cos => unary(work, .cos, x[0]),
         .tan => tan: {
@@ -8698,6 +8716,11 @@ fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) E
         .refract => refractOf(work, x[0], x[1], x[2]),
         else => unreachable,
     };
+}
+
+/// 31 - uclz(x), what each bit find is lowered to.
+fn findOf(work: *Work, x: u16) Error!u16 {
+    return integerOf(work, .isub, try integerSplat(work, work.steps[x].kind, 31), try integerOf(work, .uclz, x, null));
 }
 
 /// fexp of `x`: fexp2(x * M_LOG2E) (nir_fexp, nir_builtin_builder.h:
@@ -9466,6 +9489,7 @@ fn foldedInteger(work: *Work, op: Integer, a: u16, b: ?u16) Error!?u16 {
             .u2f32 => @bitCast(@as(f32, @floatFromInt(x))),
             .b2f32 => if (x != 0) @as(u32, @bitCast(@as(f32, 1.0))) else 0,
             .b2i32 => if (x != 0) 1 else 0,
+            .uclz => @clz(x),
         };
         work.pool[out + k] = @bitCast(word);
     }
@@ -13401,6 +13425,7 @@ fn evaluatedStep(work: *const Work, values: *const [most_steps]?[4]f32, at: u16,
                     // A bool here is 1.0 or 0.0, the V3D's ~0 or 0.
                     .b2f32 => if (x[k] != 0) 1.0 else 0.0,
                     .b2i32 => @bitCast(@as(u32, if (x[k] != 0) 1 else 0)),
+                    .uclz => @bitCast(@as(u32, @clz(u))),
                     else => @bitCast(switch (op) {
                         .iadd => u +% v,
                         .isub => u -% v,
@@ -15565,6 +15590,10 @@ test "an integer operation of constants is folded as NIR's 32-bit arithmetic is:
     try testing.expectEqual(@as(u32, 0xFF), try of.folded(&work, .ior, 0xF0, 0x0F));
     try testing.expectEqual(@as(u32, 0xF0), try of.folded(&work, .ixor, 0xFF, 0x0F));
     try testing.expectEqual(@as(u32, 0xFFFFFF00), try of.folded(&work, .inot, 0xFF, null));
+    // The zeros above the highest 1, 32 for none (since 1.197).
+    try testing.expectEqual(@as(u32, 24), try of.folded(&work, .uclz, 0xFF, null));
+    try testing.expectEqual(@as(u32, 0), try of.folded(&work, .uclz, 0x80000000, null));
+    try testing.expectEqual(@as(u32, 32), try of.folded(&work, .uclz, 0, null));
     // Towards zero, as FTOIZ and FTOUZ are.
     try testing.expectEqual(minus(-3), try of.folded(&work, .f2i32, bits(-3.75), null));
     try testing.expectEqual(@as(u32, 3), try of.folded(&work, .f2u32, bits(3.75), null));
@@ -16030,6 +16059,72 @@ test "Cross, Reflect, FaceForward, Refract and Fma are vtn_glsl450.c's, Refract'
     // Both of FaceForward's ways and both of Refract's are worked out.
     try testing.expectEqual(@as(usize, 4), faces);
     try testing.expectEqual(@as(usize, 5), whole);
+}
+
+/// GLSL's findLSB: the lowest bit set, -1 where there is none.
+fn lsbOf(x: u32) i32 {
+    return if (x == 0) -1 else @ctz(x);
+}
+
+/// GLSL's findMSB of a uint: the highest bit set, -1 where there is none.
+fn umsbOf(x: u32) i32 {
+    return if (x == 0) -1 else 31 - @as(i32, @clz(x));
+}
+
+/// GLSL's findMSB of an int: the highest bit unlike the sign, -1 for 0
+/// and for -1.
+fn smsbOf(x: i32) i32 {
+    return umsbOf(@bitCast(if (x < 0) ~x else x));
+}
+
+/// What `reference.glslc_bit_finds` makes of `color`, by GLSL's
+/// definitions of the three finds.
+fn bitFindsOf(color: [4]f32) [4]f32 {
+    var at: [4]u32 = undefined;
+    for (&at, color) |*each, v| each.* = @intFromFloat(v * 31.0);
+    var a: [4]i32 = undefined;
+    var b: [4]i32 = undefined;
+    var c: [4]i32 = undefined;
+    var d: [4]i32 = undefined;
+    for (0..4) |k| {
+        const u = ((@as(u32, 1) << @intCast(at[k])) | (@as(u32, 1) << @intCast(at[(k + 1) % 4]))) * @min(at[(k + 3) % 4], 1);
+        const s: i32 = @as(i32, @bitCast(u)) ^ -@as(i32, @intCast(at[(k + 2) % 4] & 1));
+        a[k] = lsbOf(u);
+        b[k] = umsbOf(u);
+        c[k] = smsbOf(s);
+        d[k] = lsbOf(@bitCast(s));
+    }
+    const sums = [4]i32{ a[0] + c[1] + 2, b[1] + d[2] + 2, c[3] + a[2] + 2, d[0] + b[3] + 2 };
+    var out: [4]f32 = undefined;
+    for (&out, sums) |*each, sum| each.* = @as(f32, @floatFromInt(sum)) * 0.015625;
+    return out;
+}
+
+/// Colours that make the words of `reference.glslc_bit_finds` of bit 31,
+/// of bit 0, of one bit twice, of none, and of none turned, which is -1.
+const find_colors = [_][4]f32{
+    .{ 1.0, 0.0, 0.5, 0.9 },
+    .{ 0.02, 0.5, 0.2, 0.36 },
+    .{ 0.5, 0.5, 0.5, 0.5 },
+    .{ 0.13, 0.87, 0.0, 0.66 },
+    .{ 0.99, 0.24, 0.41, 1.0 },
+    .{ 0.0, 0.0, 0.0, 0.0 },
+    .{ 1.0, 1.0, 1.0, 1.0 },
+    .{ 0.56, 0.0, 0.2, 0.36 },
+};
+
+test "FindILsb, FindSMsb and FindUMsb are 31 - uclz of x & -x, of x ^ (x >> 31) and of x, as nir_opt_algebraic lowers them for the V3D, and answer as GLSL defines them" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_bit_finds);
+    // A uclz of each of the four finds of vectors, and a CLZ of each of
+    // the eight floats of them the colour reads.
+    try testing.expectEqual(@as(usize, 4), liveIntegerOf(&work, .uclz));
+    try testing.expectEqual(@as(usize, 8), countOf(code, "clz"));
+    for (find_colors) |color| {
+        const expected = bitFindsOf(color);
+        const found = evaluatedOf(&work, work.stored, color, 0);
+        try testing.expectEqualSlices(f32, &expected, &found);
+    }
 }
 
 /// `reference.glslc_uniform_buffer`'s shader as facet's emitter writes it:

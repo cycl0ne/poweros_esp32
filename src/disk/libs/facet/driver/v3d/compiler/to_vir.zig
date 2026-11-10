@@ -713,6 +713,8 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
                     .b2f32 => try c.add(.@"and", .{ a, try c.uniformF(1.0) }),
                     // b2i32, the AND with 1 (:1524-1528; since 1.188).
                     .b2i32 => try c.add(.@"and", .{ a, try c.uniformUi(1) }),
+                    // uclz, CLZ (:1696-1697; since 1.197).
+                    .uclz => try c.add(.clz, .{a}),
                 });
             }
         },

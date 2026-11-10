@@ -2685,6 +2685,27 @@ The V3D's tests are 338, three new. Of 51 mutations, 46 fail them. Two of those 
 
 On the CM5 FacetBoth 1.60 has three new cases, "shipped inverse trigonometry", "shipped hyperbolic functions" and "shipped cross, reflect and refract": the colour through glslc's module on the V3D, and through the same functions on the cores. The first two are 8 of 230400 pixels apart, the 8 at the triangles' edge every case of their geometry has. The third is 12: the 8, and 4 on the line where Refract's k is 0, where the picture jumps from the refracted direction to 0 and the two devices' interpolated colours can fall on either side of it. With an eta of 0.66, under which k is never below 0, it is 8. With the cores' functions made wrong on purpose the three are 46,565 apart each, and with the cores' FaceForward always N the third is 1,965: the V3D's program faces both ways where the cores' does. The other 284 cases are each as they were at 1.195, and FacetProbe is 890 of 890.
 
+**Then GLSL.std.450's bit finds**, facet.library 1.197.
+
+FindILsb, FindSMsb and FindUMsb are vtn's find_lsb, ifind_msb and ufind_msb (vtn_glsl450.c:178-180). The V3D lowers all three and has a count of leading zeros (lower_find_lsb, lower_ifind_msb, lower_ufind_msb and has_uclz, v3dv_pipeline.c:194-211), so nir_opt_algebraic makes each 31 − uclz of a word (nir_opt_algebraic.py:2717-2738):
+
+- FindUMsb of x itself;
+- FindSMsb of x ^ (x >> 31), which is ~x where x is below 0, so that −1 and the negative powers of two come out right;
+- FindILsb of x & −x, its lowest bit alone, find_lsb's u2u32 of a 32-bit word being nothing.
+
+uclz of 0 is 32, so each answers −1 for a word with no bit to find, as GLSL wants. uclz is a new integer step, emitted as CLZ (nir_to_vir.c:1696-1697), which the QPU encoder already had. It is folded where its word is a constant, and worked out on the host.
+
+Results:
+- glslc_bit_finds is 334 words: words of two bits the colour sets at 31 places, of none where it says, and signed and turned where it says, and the three finds of them. Its program has a uclz for each of the four finds of vectors, and a CLZ for each of the eight floats of them the colour reads.
+- For eight colours, among them words of bit 31, of bit 0, of one bit twice, of none, and of none turned, which is −1, it answers exactly what GLSL's definitions of the finds answer.
+- uclz of constants folds to 24 for 0xFF, 0 for 0x80000000 and 32 for 0.
+
+The V3D's tests are 339, one new. Of 16 mutations, 14 fail them. The two left change nothing:
+- FindSMsb's shift made 30, which leaves every word's highest bit unlike the sign where it was;
+- a uclz counted as reading a second operand, which is step 0, the colour, read anyway.
+
+On the CM5 FacetBoth 1.61's new case, "shipped bit finds", is 56 of 230400 pixels apart: the 8 at the triangles' edge, and 48 that by every sign are pixels where the colour times 31 crosses a whole number between the cores' interpolation and the V3D's, so that the two take their bits a place apart. With 15 places in place of 31 they are 30. With the cores' function made wrong on purpose the case is 46,565 apart. The other 287 cases are each as they were at 1.196, and FacetProbe is 890 of 890.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim

@@ -150,7 +150,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.60 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.61 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -2165,6 +2165,46 @@ fn geometryOf(color: [4]f32) [4]f32 {
     return .{ x[0] * 0.5 + 0.5, r[1] * 0.25 + f[2] * 0.25 + 0.5, t[0] * 0.375 + 0.5, t[2] * 0.25 + x[2] * 0.25 + 0.5 };
 }
 
+/// GLSL's findLSB: the lowest bit set, -1 where there is none.
+fn lsbOf(x: u32) i32 {
+    return if (x == 0) -1 else @ctz(x);
+}
+
+/// GLSL's findMSB of a uint: the highest bit set, -1 where there is none.
+fn umsbOf(x: u32) i32 {
+    return if (x == 0) -1 else 31 - @as(i32, @clz(x));
+}
+
+/// GLSL's findMSB of an int: the highest bit unlike the sign, -1 for 0
+/// and for -1.
+fn smsbOf(x: i32) i32 {
+    return umsbOf(@bitCast(if (x < 0) ~x else x));
+}
+
+/// What `shipped_bit_finds` computes, by GLSL's definitions of the three
+/// finds, its places held to 0 to 31 as FTOUZ holds a float below 0
+/// (since 1.61).
+fn bitFindsOf(color: [4]f32) [4]f32 {
+    var places: [4]u32 = undefined;
+    for (&places, color) |*each, v| each.* = @intFromFloat(@min(@max(v * 31.0, 0.0), 31.0));
+    var a: [4]i32 = undefined;
+    var b: [4]i32 = undefined;
+    var c: [4]i32 = undefined;
+    var d: [4]i32 = undefined;
+    for (0..4) |k| {
+        const u = ((@as(u32, 1) << @intCast(places[k])) | (@as(u32, 1) << @intCast(places[(k + 1) % 4]))) * @min(places[(k + 3) % 4], 1);
+        const s: i32 = @as(i32, @bitCast(u)) ^ -@as(i32, @intCast(places[(k + 2) % 4] & 1));
+        a[k] = lsbOf(u);
+        b[k] = umsbOf(u);
+        c[k] = smsbOf(s);
+        d[k] = lsbOf(@bitCast(s));
+    }
+    const sums = [4]i32{ a[0] + c[1] + 2, b[1] + d[2] + 2, c[3] + a[2] + 2, d[0] + b[3] + 2 };
+    var out: [4]f32 = undefined;
+    for (&out, sums) |*each, sum| each.* = @as(f32, @floatFromInt(sum)) * 0.015625;
+    return out;
+}
+
 /// The entries that ship words, after all the others, and the words of
 /// each in the same order: `shader.Module.spirv` is index for index.
 const shipped_entries = [_]shader.Entry{
@@ -2264,6 +2304,7 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped inverse trig", curveFragment(inverseTrigOf), 4),
     shader.fragment("shipped hyperbolic", curveFragment(hyperbolicOf), 4),
     shader.fragment("shipped geometry", curveFragment(geometryOf), 4),
+    shader.fragment("shipped bit finds", curveFragment(bitFindsOf), 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2289,6 +2330,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_noperspective_vertex), shader.Spirv.of(&shipped_noperspective),    shader.Spirv.of(&shipped_many_ids),            shader.Spirv.of(&shipped_vertex_index),
     shader.Spirv.of(&shipped_index_place),          shader.Spirv.of(&shipped_point_size),       shader.Spirv.of(&shipped_point_one),           shader.Spirv.of(&shipped_vertices),
     shader.Spirv.of(&shipped_numbers),              shader.Spirv.of(&shipped_inverse_trig),     shader.Spirv.of(&shipped_hyperbolic),          shader.Spirv.of(&shipped_geometry),
+    shader.Spirv.of(&shipped_bit_finds),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -5719,6 +5761,92 @@ const shipped_flat_integer = [_]u32{
     0x00000007, 0x0000000F, 0x0000000E, 0x00050085, 0x00000007, 0x00000012,
     0x0000000F, 0x00000015, 0x0003003E, 0x00000009, 0x00000012, 0x000100FD,
     0x00010038,
+};
+
+/// glslc's own output, at -O, the V3D's host tests' glslc_bit_finds: what
+/// `bitFindsOf` on the cores: FindILsb, FindSMsb and FindUMsb (since
+/// 1.61).
+///
+/// ```glsl
+/// #version 450
+/// // facet 1.197: GLSL.std.450's FindILsb, FindSMsb and FindUMsb, of words
+/// // of two bits the colour sets at 31 places, and of them signed and
+/// // turned where the colour says, as v3d lowers them to uclz.
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     uvec4 at = uvec4(color * 31.0);
+///     uvec4 u = ((uvec4(1u) << at) | (uvec4(1u) << at.yzwx)) * min(at.wxyz, uvec4(1u));
+///     ivec4 s = ivec4(u) ^ -ivec4(at.zwxy & uvec4(1u));
+///     ivec4 a = findLSB(u);
+///     ivec4 b = findMSB(u);
+///     ivec4 c = findMSB(s);
+///     ivec4 d = findLSB(s);
+///     outColor = vec4(a.x + c.y + 2, b.y + d.z + 2, c.w + a.z + 2, d.x + b.w + 2) * 0.015625;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag bit_finds.frag -o bit_finds.spv   # 334 words
+/// spirv-val --target-env vulkan1.0 bit_finds.spv   # no output, and 0
+/// ```
+const shipped_bit_finds = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000005D, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000038, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000D, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000038, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006, 0x00000020,
+    0x00000000, 0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00030016,
+    0x0000000A, 0x00000020, 0x00040017, 0x0000000B, 0x0000000A, 0x00000004,
+    0x00040020, 0x0000000C, 0x00000001, 0x0000000B, 0x0004003B, 0x0000000C,
+    0x0000000D, 0x00000001, 0x0004002B, 0x0000000A, 0x0000000F, 0x41F80000,
+    0x0004002B, 0x00000006, 0x00000013, 0x00000001, 0x0007002C, 0x00000007,
+    0x00000014, 0x00000013, 0x00000013, 0x00000013, 0x00000013, 0x00040015,
+    0x0000001F, 0x00000020, 0x00000001, 0x00040017, 0x00000020, 0x0000001F,
+    0x00000004, 0x00040020, 0x00000037, 0x00000003, 0x0000000B, 0x0004003B,
+    0x00000037, 0x00000038, 0x00000003, 0x0004002B, 0x0000001F, 0x00000040,
+    0x00000002, 0x0004002B, 0x0000000A, 0x0000005B, 0x3C800000, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x0004003D, 0x0000000B, 0x0000000E, 0x0000000D, 0x0005008E, 0x0000000B,
+    0x00000010, 0x0000000E, 0x0000000F, 0x0004006D, 0x00000007, 0x00000011,
+    0x00000010, 0x000500C4, 0x00000007, 0x00000016, 0x00000014, 0x00000011,
+    0x0009004F, 0x00000007, 0x00000018, 0x00000011, 0x00000011, 0x00000001,
+    0x00000002, 0x00000003, 0x00000000, 0x000500C4, 0x00000007, 0x00000019,
+    0x00000014, 0x00000018, 0x000500C5, 0x00000007, 0x0000001A, 0x00000016,
+    0x00000019, 0x0009004F, 0x00000007, 0x0000001C, 0x00000011, 0x00000011,
+    0x00000003, 0x00000000, 0x00000001, 0x00000002, 0x0007000C, 0x00000007,
+    0x0000001D, 0x00000001, 0x00000026, 0x0000001C, 0x00000014, 0x00050084,
+    0x00000007, 0x0000001E, 0x0000001A, 0x0000001D, 0x0004007C, 0x00000020,
+    0x00000024, 0x0000001E, 0x0009004F, 0x00000007, 0x00000026, 0x00000011,
+    0x00000011, 0x00000002, 0x00000003, 0x00000000, 0x00000001, 0x000500C7,
+    0x00000007, 0x00000027, 0x00000026, 0x00000014, 0x0004007C, 0x00000020,
+    0x00000028, 0x00000027, 0x0004007E, 0x00000020, 0x00000029, 0x00000028,
+    0x000500C6, 0x00000020, 0x0000002A, 0x00000024, 0x00000029, 0x0006000C,
+    0x00000020, 0x0000002D, 0x00000001, 0x00000049, 0x0000001E, 0x0006000C,
+    0x00000020, 0x00000030, 0x00000001, 0x0000004B, 0x0000001E, 0x0006000C,
+    0x00000020, 0x00000033, 0x00000001, 0x0000004A, 0x0000002A, 0x0006000C,
+    0x00000020, 0x00000036, 0x00000001, 0x00000049, 0x0000002A, 0x00050051,
+    0x0000001F, 0x0000003C, 0x0000002D, 0x00000000, 0x00050051, 0x0000001F,
+    0x0000003E, 0x00000033, 0x00000001, 0x00050080, 0x0000001F, 0x0000003F,
+    0x0000003C, 0x0000003E, 0x00050080, 0x0000001F, 0x00000041, 0x0000003F,
+    0x00000040, 0x0004006F, 0x0000000A, 0x00000042, 0x00000041, 0x00050051,
+    0x0000001F, 0x00000044, 0x00000030, 0x00000001, 0x00050051, 0x0000001F,
+    0x00000047, 0x00000036, 0x00000002, 0x00050080, 0x0000001F, 0x00000048,
+    0x00000044, 0x00000047, 0x00050080, 0x0000001F, 0x00000049, 0x00000048,
+    0x00000040, 0x0004006F, 0x0000000A, 0x0000004A, 0x00000049, 0x00050051,
+    0x0000001F, 0x0000004D, 0x00000033, 0x00000003, 0x00050051, 0x0000001F,
+    0x0000004F, 0x0000002D, 0x00000002, 0x00050080, 0x0000001F, 0x00000050,
+    0x0000004D, 0x0000004F, 0x00050080, 0x0000001F, 0x00000051, 0x00000050,
+    0x00000040, 0x0004006F, 0x0000000A, 0x00000052, 0x00000051, 0x00050051,
+    0x0000001F, 0x00000054, 0x00000036, 0x00000000, 0x00050051, 0x0000001F,
+    0x00000056, 0x00000030, 0x00000003, 0x00050080, 0x0000001F, 0x00000057,
+    0x00000054, 0x00000056, 0x00050080, 0x0000001F, 0x00000058, 0x00000057,
+    0x00000040, 0x0004006F, 0x0000000A, 0x00000059, 0x00000058, 0x00070050,
+    0x0000000B, 0x0000005A, 0x00000042, 0x0000004A, 0x00000052, 0x00000059,
+    0x0005008E, 0x0000000B, 0x0000005C, 0x0000005A, 0x0000005B, 0x0003003E,
+    0x00000038, 0x0000005C, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output, at -O, of the place times a W of 1 + 2 * the blue
@@ -9970,6 +10098,7 @@ const cases = [_]Case{
     .{ .name = "shipped inverse trigonometry", .run = Cases.shipped("as it is", "shipped inverse trig", false, clockwise_at) },
     .{ .name = "shipped hyperbolic functions", .run = Cases.shipped("as it is", "shipped hyperbolic", false, clockwise_at) },
     .{ .name = "shipped cross, reflect and refract", .run = Cases.shipped("as it is", "shipped geometry", false, clockwise_at) },
+    .{ .name = "shipped bit finds", .run = Cases.shipped("as it is", "shipped bit finds", false, clockwise_at) },
     .{ .name = "shipped flat varying", .run = Cases.shipped("shipped flat vertex", "shipped flat colour", false, clockwise_at) },
     .{ .name = "shipped flat integer", .run = Cases.shipped("shipped flat integer vertex", "shipped flat integer", false, clockwise_at) },
     .{ .name = "shipped noperspective", .run = Cases.shipped("shipped noperspective vertex", "shipped noperspective", false, clockwise_at) },
