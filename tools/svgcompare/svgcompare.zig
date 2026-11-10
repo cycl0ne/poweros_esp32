@@ -3,7 +3,7 @@
 //! and compared with what another renderer drew - rsvg-convert's, which
 //! is what the disk's icons are made with.
 //!
-//!   svgcompare [--size N] [--detail] [--out DIR [--zoom Z]] <file.svg> <drawn.png> ...
+//!   svgcompare [--size N] [--detail] [--hash] [--out DIR [--zoom Z]] <file.svg> <drawn.png> ...
 //!
 //! Each SVG file is drawn N by N pixels (48 if not given), stretched to
 //! that as `rsvg-convert -w N -h N` stretches it, with svg.datatype's
@@ -20,7 +20,10 @@
 //! a quarter apart; the others are listed again at the end.
 //!
 //! --detail says where a file's largest difference is, and the two
-//! colours there. With --out, every file's comparison is written there as a PNG, the
+//! colours there. --hash prints the pens of each drawing hashed as
+//! `C:test/DTTime` hashes a picture's (FNV-1a, 64 bits, over the pens as
+//! little-endian words), so a picture made on a machine can be held
+//! against this drawing to the bit. With --out, every file's comparison is written there as a PNG, the
 //! three side by side: this drawing, the other one, and the difference
 //! four times over, each pixel Z by Z (1 if not given) to be seen.
 //!
@@ -145,6 +148,20 @@ fn drawSvg(gpa: std.mem.Allocator, text: []u8, size: u32) !?Picture {
         rgba[i * 4 + 3] = @truncate(pen >> 24);
     }
     return .{ .width = size, .height = size, .rgba = rgba };
+}
+
+/// FNV-1a, 64 bits, over the pens - 0xAARRGGBB - as little-endian
+/// words: `C:test/DTTime`'s hash of a picture.
+fn pensHash(rgba: []const u8) u64 {
+    var h: u64 = 0xcbf29ce484222325;
+    var i: usize = 0;
+    while (i < rgba.len) : (i += 4) {
+        for ([4]u8{ rgba[i + 2], rgba[i + 1], rgba[i], rgba[i + 3] }) |byte| {
+            h ^= byte;
+            h *%= 0x100000001b3;
+        }
+    }
+    return h;
 }
 
 /// A PNG of one pass - what rsvg-convert writes - as RGBA.
@@ -320,6 +337,7 @@ pub fn main(init: std.process.Init) !void {
     var out_dir: ?[]const u8 = null;
     var zoom: u32 = 1;
     var detail = false;
+    var hash = false;
     var files: std.ArrayList([]const u8) = .empty;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -328,6 +346,8 @@ pub fn main(init: std.process.Init) !void {
             size = std.fmt.parseInt(u32, args[i], 10) catch fatal("{s}: not a size", .{args[i]});
         } else if (std.mem.eql(u8, args[i], "--detail")) {
             detail = true;
+        } else if (std.mem.eql(u8, args[i], "--hash")) {
+            hash = true;
         } else if (std.mem.eql(u8, args[i], "--zoom") and i + 1 < args.len) {
             i += 1;
             zoom = std.fmt.parseInt(u32, args[i], 10) catch fatal("{s}: not a zoom", .{args[i]});
@@ -378,6 +398,7 @@ pub fn main(init: std.process.Init) !void {
             d.far,
             if (ok) "close" else "FAR",
         });
+        if (hash) std.debug.print("    pens {x:0>16}\n", .{pensHash(ours.rgba)});
         if (detail and d.largest > 64) {
             const x = d.at % size;
             const y = d.at / size;

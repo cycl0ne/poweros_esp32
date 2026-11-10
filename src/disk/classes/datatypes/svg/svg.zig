@@ -8,7 +8,11 @@
 //! after that is the superclass's, and nothing of the file is kept.
 //!
 //! **The size** is the root's `width` and `height`; what it leaves out
-//! comes from its `viewBox`, and without that from CSS's 300 by 150. A
+//! comes from its `viewBox`, and without that from CSS's 300 by 150.
+//! Since 1.1 a program may want another (`PDTA_WantedWidth`,
+//! `PDTA_WantedHeight` at `OM_NEW`): the picture is drawn to fit inside
+//! it, its shape kept, so an icon is as sharp at 40 pixels as at the 48
+//! its file gives. A
 //! picture larger than `draw.max_side` either way is drawn smaller to fit,
 //! and one larger than memory holds is drawn at a half, a quarter or an
 //! eighth of its size: drawn small, rather than drawn large and thinned.
@@ -55,7 +59,7 @@ const Pen = graphics.Pen;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "svg.datatype",
     .version = 1,
-    .revision = 0,
+    .revision = 1,
     .date = "10.11.2026",
     .super = pic.PICTUREDTCLASS,
     .opens = &.{ pic.PICTURE_LIBRARY, vector.VECTORNAME },
@@ -87,8 +91,15 @@ pub const Data = extern struct {
     unused: u32 = 0,
 };
 
+/// The size a program wants the picture at, from `OM_NEW`'s tags; 0
+/// for a side not given.
+const Wanted = struct {
+    width: u32 = 0,
+    height: u32 = 0,
+};
+
 /// The file read, drawn and handed over. What went wrong, or 0.
-fn readFile(base: *Base, cl: *Class, o: *Object, bytes: []u8) i32 {
+fn readFile(base: *Base, cl: *Class, o: *Object, bytes: []u8, wanted: Wanted) i32 {
     const sys = base.sys_base;
     const vb = vectorBase(base);
     const vector_lib = vb.lib();
@@ -100,7 +111,7 @@ fn readFile(base: *Base, cl: *Class, o: *Object, bytes: []u8) i32 {
     const block: [*]align(8) u8 = @ptrCast(@alignCast(block_memory));
     const doc = document.build(bytes, counts, block[0..doc_bytes]);
     const intrinsic = draw.intrinsic(&doc);
-    const full = draw.fullSize(intrinsic);
+    const full = draw.wantedSize(intrinsic, wanted.width, wanted.height);
 
     // Drawn the size it is, or smaller where there is no room for its
     // pens twice - the canvas's and the superclass's - and a band.
@@ -197,6 +208,12 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
 
     switch (msg.method_id) {
         classusr.OM_NEW => {
+            const new: *classusr.OpSet = @ptrCast(@alignCast(msg));
+            const ub = base.utility_base;
+            const wanted = Wanted{
+                .width = @truncate(ub.GetTagData(pic.PDTA_WantedWidth, 0, new.attr_list)),
+                .height = @truncate(ub.GetTagData(pic.PDTA_WantedHeight, 0, new.attr_list)),
+            };
             const made = ib.SendSuperMessage(cl, o, msg);
             if (made == 0) return 0;
             const obj: *Object = @ptrFromInt(made);
@@ -209,7 +226,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const failure = switch (subclass.readSource(sys, dl, ib, cl, obj)) {
                 .got => |bytes| failed: {
                     defer sys.FreeVec(bytes.ptr);
-                    break :failed readFile(base, cl, obj, bytes);
+                    break :failed readFile(base, cl, obj, bytes, wanted);
                 },
                 .too_large => datatypes.DTERROR_TOO_LARGE,
                 .no_file => datatypes.DTERROR_COULDNT_OPEN,

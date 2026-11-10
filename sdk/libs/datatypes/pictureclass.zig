@@ -76,6 +76,19 @@ pub const PDTA_SourceHeight = PDTA_Dummy + 25;
 /// How much smaller than the file the kept picture is: 1, 2, 4 or 8.
 /// Read only.
 pub const PDTA_ShrunkBy = PDTA_Dummy + 26;
+/// u32: the size, in pixels, a program wants the picture made at, given
+/// to `OM_NEW` (since 1.1 of the classes that take them). A class that
+/// draws its picture rather than decoding one - svg.datatype - draws it
+/// to fit inside them, its shape kept: an icon wanted at 40 pixels is
+/// drawn at 40, not drawn at the 48 its file gives and scaled. Either
+/// alone fits that side and the other follows from the shape. The
+/// classes that decode pixels pass them by - their pictures are the
+/// size they are, and `PDTA_Scale` draws them at another. A picture
+/// made at a size wanted has that size as its source size
+/// (`PDTA_SourceWidth`, `PDTA_SourceHeight`); one there is no memory
+/// for is still kept smaller (`PDTA_ShrunkBy`).
+pub const PDTA_WantedWidth = PDTA_Dummy + 27;
+pub const PDTA_WantedHeight = PDTA_Dummy + 28;
 
 // --- what the pixels look like ----------------------------------------------
 

@@ -204,8 +204,26 @@ pub const max_side = 16384;
 /// The size the file gives, in whole pixels, made smaller to fit in
 /// `max_side` either way.
 pub fn fullSize(size: Intrinsic) [2]u32 {
-    var w = size.width;
-    var h = size.height;
+    return wantedSize(size, 0, 0);
+}
+
+/// The size a program wants (`PDTA_WantedWidth`, `PDTA_WantedHeight`; 0
+/// for not given): the file's shape fitted inside both, or scaled to the
+/// one given, or the file's own size without either - in whole pixels,
+/// and made smaller to fit in `max_side` either way.
+pub fn wantedSize(size: Intrinsic, wanted_width: u32, wanted_height: u32) [2]u32 {
+    const ww: f32 = @floatFromInt(@min(wanted_width, max_side));
+    const wh: f32 = @floatFromInt(@min(wanted_height, max_side));
+    const by: f32 = if (wanted_width != 0 and wanted_height != 0)
+        @min(ww / size.width, wh / size.height)
+    else if (wanted_width != 0)
+        ww / size.width
+    else if (wanted_height != 0)
+        wh / size.height
+    else
+        1;
+    var w = size.width * by;
+    var h = size.height * by;
     const side = @max(w, h);
     if (side > max_side) {
         w = w * max_side / side;

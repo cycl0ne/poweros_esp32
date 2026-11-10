@@ -112,6 +112,20 @@ test "a picture's size: its width and height, from its viewBox, or CSS's" {
     try testing.expectEqual(vector.Point{ .x = 0, .y = 5 }, size.view.apply(.{}));
 }
 
+test "the size a program wants: the shape fitted inside it, one side alone, the file's own without" {
+    const icon = try intrinsicOf("<svg width='48px' height='48px'/>");
+    try testing.expectEqual([2]u32{ 40, 40 }, drawing.wantedSize(icon, 40, 40));
+    try testing.expectEqual([2]u32{ 256, 256 }, drawing.wantedSize(icon, 256, 0));
+    try testing.expectEqual([2]u32{ 48, 48 }, drawing.wantedSize(icon, 0, 0));
+    try testing.expectEqual([2]u32{ 16384, 16384 }, drawing.wantedSize(icon, 100000, 100000));
+    const wide = try intrinsicOf("<svg viewBox='0 0 300 150'/>");
+    try testing.expectEqual([2]u32{ 100, 50 }, drawing.wantedSize(wide, 100, 100));
+    try testing.expectEqual([2]u32{ 600, 300 }, drawing.wantedSize(wide, 600, 0));
+    try testing.expectEqual([2]u32{ 60, 30 }, drawing.wantedSize(wide, 0, 30));
+    // Never less than a pixel.
+    try testing.expectEqual([2]u32{ 2, 1 }, drawing.wantedSize(wide, 2, 2));
+}
+
 test "shapes filled and stroked: a style over its attributes, inherited from a group, scaled by a viewBox" {
     const rig = try Rig.open();
     var pens: [20 * 20]Pen = undefined;

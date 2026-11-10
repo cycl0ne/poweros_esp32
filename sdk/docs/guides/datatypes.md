@@ -170,6 +170,23 @@ draws, scrolls, reads back or saves it works in; `PDTA_SourceWidth` and
 `PDTA_SourceHeight` say what the file held and `PDTA_ShrunkBy` by how
 much the two differ, so a program that must know can ask.
 
+**A picture can be wanted at a size**: `PDTA_WantedWidth` and
+`PDTA_WantedHeight`, in pixels, given to `NewDTObjectA`. A class that
+draws its picture rather than decoding one - svg.datatype, since 1.1 -
+draws it to fit inside them with its shape kept, so an icon wanted at
+40 pixels is drawn at 40 rather than drawn at the 48 its file gives
+and scaled; either alone sets that side and the other follows. A class
+that decodes pixels passes them by: its picture is the size it is, and
+`PDTA_Scale` draws it at another. Ask the header for the size made.
+
+```zig
+const object = dt.NewDTObjectA("SYS:Tests/datatypes/Drawing.svg", &.{
+    .{ .tag = pic.PDTA_WantedWidth, .data = 40 },
+    .{ .tag = pic.PDTA_WantedHeight, .data = 40 },
+    .{},
+});
+```
+
 **A JPEG on a machine with a codec** (the ESP32-P4's, the JH7110's,
 an AMD graphics device's - as jpeg.resource) is decoded by the codec
 when it takes the file - a
@@ -224,12 +241,16 @@ attribute's declarations are read over the presentation attributes.
 Text, images, `use`, patterns, markers and `<style>` sheets are not
 drawn, clip paths and masks are passed over - what they would cut is
 drawn whole - and an element with a filter is left out with all that
-is in it. A picture too large to keep is drawn smaller, as any is.
+is in it. A picture too large to keep is drawn smaller, as any is, and
+one wanted at a size (above) is drawn at it.
 `scripts/svg-compare.sh` draws the Tango icons both ways - here and by
 rsvg-convert - and says how far apart each pair is. `C:test/DTTime
 <file> ...` times how long any file takes to be made into its object,
 and for an animation - a Lottie file's among them - how long each frame
-takes its class to draw; the 64-bit machines' disks have it.
+takes its class to draw; the 64-bit machines' disks have it. `WIDTH`
+and `HEIGHT` are the size wanted, and a picture's pens are hashed as
+`tools/svgcompare --hash` hashes its drawing, so the two can be held
+against each other to the bit.
 
 `PDTM_READPIXELARRAY` hands a rectangle of it back in whichever
 shape the program wants - `PBPAFMT_RGB`, `PBPAFMT_RGBA`, `PBPAFMT_ARGB`
