@@ -150,7 +150,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.59 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.60 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -2087,6 +2087,84 @@ fn channelOf(value: shader.Pixels) @Vector(4, u32) {
     return @intFromFloat(@min(@max(value * @as(shader.Pixels, @splat(255)) + @as(shader.Pixels, @splat(0.5)), @as(shader.Pixels, @splat(0))), @as(shader.Pixels, @splat(255.5))));
 }
 
+/// A fragment function of `of`, a pixel at a time, of the colour as it is
+/// interpolated: the cores' twins of the shipped cases of GLSL.std.450's
+/// curves, of std.math's where the V3D's are Mesa's approximations
+/// (since 1.60).
+fn curveFragment(comptime of: fn ([4]f32) [4]f32) shader.FragmentFn {
+    return &struct {
+        fn run(fragments: *const shader.Fragments) callconv(.c) void {
+            @setRuntimeSafety(false);
+            var rows = shader.Rows(5).of(fragments);
+            for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+                const planes = rows.at(quad);
+                const over = @as(shader.Pixels, @splat(1)) / planes[0];
+                var v: [4]shader.Pixels = undefined;
+                inline for (&v, 0..) |*each, c| each.* = planes[1 + c] * over;
+                var made: [4]shader.Pixels = undefined;
+                inline for (0..4) |p| {
+                    const result = of(.{ v[0][p], v[1][p], v[2][p], v[3][p] });
+                    inline for (&made, 0..) |*each, c| each.*[p] = result[c];
+                }
+                var bytes: [4]@Vector(4, u32) = undefined;
+                inline for (&bytes, 0..) |*channel, c| channel.* = channelOf(made[c]);
+                out.* = bytes[3] << @splat(24) | bytes[0] << @splat(16) | bytes[1] << @splat(8) | bytes[2];
+            }
+        }
+    }.run;
+}
+
+/// The colour made -1 to 1, as the shaders of 1.60 make it.
+fn signedColor(color: [4]f32) [4]f32 {
+    var c: [4]f32 = undefined;
+    for (&c, color) |*each, v| each.* = v * 2.0 - 1.0;
+    return c;
+}
+
+/// What `shipped_inverse_trig` computes (since 1.60).
+fn inverseTrigOf(color: [4]f32) [4]f32 {
+    const c = signedColor(color);
+    const s = [2]f32{ std.math.asin(c[0]) * 0.3183099 + 0.5, std.math.asin(c[1]) * 0.3183099 + 0.5 };
+    const o = [2]f32{ std.math.acos(c[1]) * 0.3183099, std.math.acos(c[2]) * 0.3183099 };
+    return .{ s[0] * 0.5 + o[1] * 0.5, s[1] * 0.5 + o[0] * 0.5, std.math.atan(c[2] * 4.0) * 0.3183099 + 0.5, std.math.atan2(c[3], c[0]) * 0.1591549 + 0.5 };
+}
+
+/// What `shipped_hyperbolic` computes (since 1.60).
+fn hyperbolicOf(color: [4]f32) [4]f32 {
+    const c = signedColor(color);
+    const s = std.math.sinh(c[0]) * 0.4 + 0.5;
+    const h = std.math.cosh(c[1]) * 0.5 - 0.25;
+    const t = std.math.tanh(c[2] * 3.0) * 0.5 + 0.5;
+    const a = std.math.asinh(c[3] * 2.0) * 0.3 + 0.5;
+    const b = std.math.acosh(color[0] + 1.0) * 0.7;
+    const d = std.math.atanh(c[1] * 0.9) * 0.3 + 0.5;
+    return .{ s * 0.5 + h * 0.5, t, a * 0.5 + b * 0.5, d };
+}
+
+/// What `shipped_geometry` computes, GLSL's formulas of each (since
+/// 1.60).
+fn geometryOf(color: [4]f32) [4]f32 {
+    const V3 = @Vector(3, f32);
+    const dot = struct {
+        fn of(a: V3, b: V3) f32 {
+            return @reduce(.Add, a * b);
+        }
+    }.of;
+    const c = signedColor(color);
+    const n0 = V3{ c[0], c[1], 1.0 };
+    const n = n0 / @as(V3, @splat(@sqrt(dot(n0, n0))));
+    const i_0 = V3{ c[3], -0.5, -1.0 };
+    const i = i_0 / @as(V3, @splat(@sqrt(dot(i_0, i_0))));
+    const x = V3{ n[1] * i[2] - n[2] * i[1], n[2] * i[0] - n[0] * i[2], n[0] * i[1] - n[1] * i[0] };
+    const r = i - @as(V3, @splat(2.0 * dot(n, i))) * n;
+    const f = if (dot(V3{ c[2], c[3], 0.0 }, i) < 0) n else -n;
+    const eta: f32 = 1.5;
+    const ndi = dot(n, i);
+    const k = 1.0 - eta * eta * (1.0 - ndi * ndi);
+    const t: V3 = if (k < 0) @splat(0) else @as(V3, @splat(eta)) * i - @as(V3, @splat(eta * ndi + @sqrt(k))) * n;
+    return .{ x[0] * 0.5 + 0.5, r[1] * 0.25 + f[2] * 0.25 + 0.5, t[0] * 0.375 + 0.5, t[2] * 0.25 + x[2] * 0.25 + 0.5 };
+}
+
 /// The entries that ship words, after all the others, and the words of
 /// each in the same order: `shader.Module.spirv` is index for index.
 const shipped_entries = [_]shader.Entry{
@@ -2182,6 +2260,10 @@ const shipped_entries = [_]shader.Entry{
     // A group of three, as the words' local_size_x is (since 1.59).
     shader.computeGroup("shipped vertices", &shippedVertices, .{ 3, 1, 1 }, 0),
     shader.compute("shipped numbers", &shippedNumbers),
+    // GLSL.std.450's curves (since 1.60).
+    shader.fragment("shipped inverse trig", curveFragment(inverseTrigOf), 4),
+    shader.fragment("shipped hyperbolic", curveFragment(hyperbolicOf), 4),
+    shader.fragment("shipped geometry", curveFragment(geometryOf), 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2206,7 +2288,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_flat_vertex),          shader.Spirv.of(&shipped_flat_colour),      shader.Spirv.of(&shipped_flat_integer_vertex), shader.Spirv.of(&shipped_flat_integer),
     shader.Spirv.of(&shipped_noperspective_vertex), shader.Spirv.of(&shipped_noperspective),    shader.Spirv.of(&shipped_many_ids),            shader.Spirv.of(&shipped_vertex_index),
     shader.Spirv.of(&shipped_index_place),          shader.Spirv.of(&shipped_point_size),       shader.Spirv.of(&shipped_point_one),           shader.Spirv.of(&shipped_vertices),
-    shader.Spirv.of(&shipped_numbers),
+    shader.Spirv.of(&shipped_numbers),              shader.Spirv.of(&shipped_inverse_trig),     shader.Spirv.of(&shipped_hyperbolic),          shader.Spirv.of(&shipped_geometry),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -6526,6 +6608,241 @@ const shipped_numbers = [_]u32{
     0x0000001E, 0x000100FD, 0x00010038,
 };
 
+/// glslc's own output, at -O, the V3D's host tests' glslc_inverse_trig: what
+/// `inverseTrigOf` on the cores: Asin and Acos of vec2s, Atan and Atan2,
+/// which the V3D lowers as Mesa does, to approximations of its own
+/// (since 1.60).
+///
+/// ```glsl
+/// #version 450
+/// // facet 1.196: GLSL.std.450's Asin and Acos of a vec2, Atan and Atan2 of
+/// // the colour made -1 to 1, as vtn_glsl450.c builds them (nir_asin,
+/// // nir_acos, nir_atan, nir_atan2), each mapped back into 0 to 1.
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     vec4 c = color * 2.0 - 1.0;
+///     vec2 s = asin(c.xy) * 0.3183099 + 0.5;
+///     vec2 o = acos(c.yz) * 0.3183099;
+///     outColor = vec4(s.x * 0.5 + o.y * 0.5, s.y * 0.5 + o.x * 0.5, atan(c.z * 4.0) * 0.3183099 + 0.5, atan(c.w, c.x) * 0.1591549 + 0.5);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag inverse_trig.frag -o inverse_trig.spv   # 269 words
+/// spirv-val --target-env vulkan1.0 inverse_trig.spv   # no output, and 0
+/// ```
+const shipped_inverse_trig = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000053, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000023, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000023, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x0000000A,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001,
+    0x0004002B, 0x00000006, 0x0000000D, 0x40000000, 0x0004002B, 0x00000006,
+    0x0000000F, 0x3F800000, 0x00040017, 0x00000012, 0x00000006, 0x00000002,
+    0x0004002B, 0x00000006, 0x00000018, 0x3EA2F984, 0x0004002B, 0x00000006,
+    0x0000001A, 0x3F000000, 0x00040020, 0x00000022, 0x00000003, 0x00000007,
+    0x0004003B, 0x00000022, 0x00000023, 0x00000003, 0x0004002B, 0x00000006,
+    0x00000039, 0x40800000, 0x0004002B, 0x00000006, 0x00000044, 0x3E22F981,
+    0x0007002C, 0x00000007, 0x0000004F, 0x0000000F, 0x0000000F, 0x0000000F,
+    0x0000000F, 0x0005002C, 0x00000012, 0x00000050, 0x0000001A, 0x0000001A,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003D, 0x00000007, 0x0000000C, 0x0000000B, 0x0005008E,
+    0x00000007, 0x0000000E, 0x0000000C, 0x0000000D, 0x00050083, 0x00000007,
+    0x00000011, 0x0000000E, 0x0000004F, 0x0007004F, 0x00000012, 0x00000016,
+    0x00000011, 0x00000011, 0x00000000, 0x00000001, 0x0006000C, 0x00000012,
+    0x00000017, 0x00000001, 0x00000010, 0x00000016, 0x0005008E, 0x00000012,
+    0x00000019, 0x00000017, 0x00000018, 0x00050081, 0x00000012, 0x0000001C,
+    0x00000019, 0x00000050, 0x0007004F, 0x00000012, 0x0000001F, 0x00000011,
+    0x00000011, 0x00000001, 0x00000002, 0x0006000C, 0x00000012, 0x00000020,
+    0x00000001, 0x00000011, 0x0000001F, 0x0005008E, 0x00000012, 0x00000021,
+    0x00000020, 0x00000018, 0x00050051, 0x00000006, 0x00000028, 0x0000001C,
+    0x00000000, 0x00050051, 0x00000006, 0x0000002C, 0x00000021, 0x00000001,
+    0x00050081, 0x00000006, 0x00000051, 0x00000028, 0x0000002C, 0x00050085,
+    0x00000006, 0x0000002E, 0x0000001A, 0x00000051, 0x00050051, 0x00000006,
+    0x00000030, 0x0000001C, 0x00000001, 0x00050051, 0x00000006, 0x00000033,
+    0x00000021, 0x00000000, 0x00050081, 0x00000006, 0x00000052, 0x00000030,
+    0x00000033, 0x00050085, 0x00000006, 0x00000035, 0x0000001A, 0x00000052,
+    0x00050051, 0x00000006, 0x00000038, 0x00000011, 0x00000002, 0x00050085,
+    0x00000006, 0x0000003A, 0x00000038, 0x00000039, 0x0006000C, 0x00000006,
+    0x0000003B, 0x00000001, 0x00000012, 0x0000003A, 0x00050085, 0x00000006,
+    0x0000003C, 0x0000003B, 0x00000018, 0x00050081, 0x00000006, 0x0000003D,
+    0x0000003C, 0x0000001A, 0x00050051, 0x00000006, 0x00000040, 0x00000011,
+    0x00000003, 0x00050051, 0x00000006, 0x00000042, 0x00000011, 0x00000000,
+    0x0007000C, 0x00000006, 0x00000043, 0x00000001, 0x00000019, 0x00000040,
+    0x00000042, 0x00050085, 0x00000006, 0x00000045, 0x00000043, 0x00000044,
+    0x00050081, 0x00000006, 0x00000046, 0x00000045, 0x0000001A, 0x00070050,
+    0x00000007, 0x00000047, 0x0000002E, 0x00000035, 0x0000003D, 0x00000046,
+    0x0003003E, 0x00000023, 0x00000047, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, the V3D's host tests' glslc_hyperbolic: what
+/// `hyperbolicOf` on the cores: Sinh, Cosh, Tanh, Asinh, Acosh and Atanh
+/// (since 1.60).
+///
+/// ```glsl
+/// #version 450
+/// // facet 1.196: GLSL.std.450's Sinh, Cosh, Tanh, Asinh, Acosh and Atanh
+/// // of the colour made -1 to 1, as vtn_glsl450.c builds them, each mapped
+/// // back into 0 to 1 and two to a channel.
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     vec4 c = color * 2.0 - 1.0;
+///     float s = sinh(c.x) * 0.4 + 0.5;
+///     float h = cosh(c.y) * 0.5 - 0.25;
+///     float t = tanh(c.z * 3.0) * 0.5 + 0.5;
+///     float a = asinh(c.w * 2.0) * 0.3 + 0.5;
+///     float b = acosh(color.x + 1.0) * 0.7;
+///     float d = atanh(c.y * 0.9) * 0.3 + 0.5;
+///     outColor = vec4(s * 0.5 + h * 0.5, t, a * 0.5 + b * 0.5, d);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag hyperbolic.frag -o hyperbolic.spv   # 305 words
+/// spirv-val --target-env vulkan1.0 hyperbolic.spv   # no output, and 0
+/// ```
+const shipped_hyperbolic = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000060, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000048, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000048, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x0000000A,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001,
+    0x0004002B, 0x00000006, 0x0000000D, 0x40000000, 0x0004002B, 0x00000006,
+    0x0000000F, 0x3F800000, 0x00040015, 0x00000014, 0x00000020, 0x00000000,
+    0x0004002B, 0x00000014, 0x00000015, 0x00000000, 0x0004002B, 0x00000006,
+    0x00000019, 0x3ECCCCCD, 0x0004002B, 0x00000006, 0x0000001B, 0x3F000000,
+    0x0004002B, 0x00000006, 0x00000023, 0x3E800000, 0x0004002B, 0x00000006,
+    0x00000029, 0x40400000, 0x0004002B, 0x00000006, 0x00000034, 0x3E99999A,
+    0x00040020, 0x00000038, 0x00000001, 0x00000006, 0x0004002B, 0x00000006,
+    0x00000042, 0x3F666666, 0x00040020, 0x00000047, 0x00000003, 0x00000007,
+    0x0004003B, 0x00000047, 0x00000048, 0x00000003, 0x0007002C, 0x00000007,
+    0x0000005B, 0x0000000F, 0x0000000F, 0x0000000F, 0x0000000F, 0x0004002B,
+    0x00000006, 0x0000005D, 0x3EB33333, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x00000007,
+    0x0000000C, 0x0000000B, 0x0005008E, 0x00000007, 0x0000000E, 0x0000000C,
+    0x0000000D, 0x00050083, 0x00000007, 0x00000011, 0x0000000E, 0x0000005B,
+    0x00050051, 0x00000006, 0x00000017, 0x00000011, 0x00000000, 0x0006000C,
+    0x00000006, 0x00000018, 0x00000001, 0x00000013, 0x00000017, 0x00050085,
+    0x00000006, 0x0000001A, 0x00000018, 0x00000019, 0x00050051, 0x00000006,
+    0x00000020, 0x00000011, 0x00000001, 0x0006000C, 0x00000006, 0x00000021,
+    0x00000001, 0x00000014, 0x00000020, 0x00050085, 0x00000006, 0x00000022,
+    0x00000021, 0x0000001B, 0x00050051, 0x00000006, 0x00000028, 0x00000011,
+    0x00000002, 0x00050085, 0x00000006, 0x0000002A, 0x00000028, 0x00000029,
+    0x0006000C, 0x00000006, 0x0000002B, 0x00000001, 0x00000015, 0x0000002A,
+    0x00050085, 0x00000006, 0x0000002C, 0x0000002B, 0x0000001B, 0x00050081,
+    0x00000006, 0x0000002D, 0x0000002C, 0x0000001B, 0x00050051, 0x00000006,
+    0x00000031, 0x00000011, 0x00000003, 0x00050085, 0x00000006, 0x00000032,
+    0x00000031, 0x0000000D, 0x0006000C, 0x00000006, 0x00000033, 0x00000001,
+    0x00000016, 0x00000032, 0x00050085, 0x00000006, 0x00000035, 0x00000033,
+    0x00000034, 0x00050081, 0x00000006, 0x00000036, 0x00000035, 0x0000001B,
+    0x00050041, 0x00000038, 0x00000039, 0x0000000B, 0x00000015, 0x0004003D,
+    0x00000006, 0x0000003A, 0x00000039, 0x00050081, 0x00000006, 0x0000003B,
+    0x0000003A, 0x0000000F, 0x0006000C, 0x00000006, 0x0000003C, 0x00000001,
+    0x00000017, 0x0000003B, 0x00050085, 0x00000006, 0x00000043, 0x00000020,
+    0x00000042, 0x0006000C, 0x00000006, 0x00000044, 0x00000001, 0x00000018,
+    0x00000043, 0x00050085, 0x00000006, 0x00000045, 0x00000044, 0x00000034,
+    0x00050081, 0x00000006, 0x00000046, 0x00000045, 0x0000001B, 0x00050081,
+    0x00000006, 0x0000005F, 0x0000001A, 0x00000022, 0x00050081, 0x00000006,
+    0x0000005C, 0x00000023, 0x0000005F, 0x00050085, 0x00000006, 0x0000004D,
+    0x0000001B, 0x0000005C, 0x00050085, 0x00000006, 0x00000050, 0x00000036,
+    0x0000001B, 0x00050085, 0x00000006, 0x00000052, 0x0000003C, 0x0000005D,
+    0x00050081, 0x00000006, 0x00000053, 0x00000050, 0x00000052, 0x00070050,
+    0x00000007, 0x00000055, 0x0000004D, 0x0000002D, 0x00000053, 0x00000046,
+    0x0003003E, 0x00000048, 0x00000055, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, the V3D's host tests' glslc_geometry: what
+/// `geometryOf` on the cores: Cross, Reflect, FaceForward, Refract and Fma
+/// (since 1.60).
+///
+/// ```glsl
+/// #version 450
+/// // facet 1.196: GLSL.std.450's Cross, Reflect, FaceForward, Refract and
+/// // Fma, of a normal and a direction the colour turns, as vtn_glsl450.c
+/// // builds them; FaceForward's Nref the colour's blue and alpha, so that
+/// // some pixels face each way, and Refract's eta 1.5, so that some reflect
+/// // whole.
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     vec4 c = color * 2.0 - 1.0;
+///     vec3 n = normalize(vec3(c.x, c.y, 1.0));
+///     vec3 i = normalize(vec3(c.w, -0.5, -1.0));
+///     vec3 x = cross(n, i);
+///     vec3 r = reflect(i, n);
+///     vec3 f = faceforward(n, i, vec3(c.z, c.w, 0.0));
+///     vec3 t = refract(i, n, 1.5);
+///     outColor = vec4(x.x * 0.5 + 0.5, r.y * 0.25 + f.z * 0.25 + 0.5, fma(t.x, 0.375, 0.5), t.z * 0.25 + x.z * 0.25 + 0.5);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag geometry.frag -o geometry.spv   # 300 words
+/// spirv-val --target-env vulkan1.0 geometry.spv   # no output, and 0
+/// ```
+const shipped_geometry = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000006A, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000040, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000040, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x0000000A,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001,
+    0x0004002B, 0x00000006, 0x0000000D, 0x40000000, 0x0004002B, 0x00000006,
+    0x0000000F, 0x3F800000, 0x00040017, 0x00000012, 0x00000006, 0x00000003,
+    0x0004002B, 0x00000006, 0x00000023, 0xBF000000, 0x0004002B, 0x00000006,
+    0x00000024, 0xBF800000, 0x0004002B, 0x00000006, 0x00000037, 0x00000000,
+    0x0004002B, 0x00000006, 0x0000003D, 0x3FC00000, 0x00040020, 0x0000003F,
+    0x00000003, 0x00000007, 0x0004003B, 0x0000003F, 0x00000040, 0x00000003,
+    0x0004002B, 0x00000006, 0x00000043, 0x3F000000, 0x0004002B, 0x00000006,
+    0x00000048, 0x3E800000, 0x0004002B, 0x00000006, 0x00000051, 0x3EC00000,
+    0x0007002C, 0x00000007, 0x00000067, 0x0000000F, 0x0000000F, 0x0000000F,
+    0x0000000F, 0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003,
+    0x000200F8, 0x00000005, 0x0004003D, 0x00000007, 0x0000000C, 0x0000000B,
+    0x0005008E, 0x00000007, 0x0000000E, 0x0000000C, 0x0000000D, 0x00050083,
+    0x00000007, 0x00000011, 0x0000000E, 0x00000067, 0x00050051, 0x00000006,
+    0x00000019, 0x00000011, 0x00000000, 0x00050051, 0x00000006, 0x0000001C,
+    0x00000011, 0x00000001, 0x00060050, 0x00000012, 0x0000001D, 0x00000019,
+    0x0000001C, 0x0000000F, 0x0006000C, 0x00000012, 0x0000001E, 0x00000001,
+    0x00000045, 0x0000001D, 0x00050051, 0x00000006, 0x00000022, 0x00000011,
+    0x00000003, 0x00060050, 0x00000012, 0x00000025, 0x00000022, 0x00000023,
+    0x00000024, 0x0006000C, 0x00000012, 0x00000026, 0x00000001, 0x00000045,
+    0x00000025, 0x0007000C, 0x00000012, 0x0000002A, 0x00000001, 0x00000044,
+    0x0000001E, 0x00000026, 0x0007000C, 0x00000012, 0x0000002E, 0x00000001,
+    0x00000047, 0x00000026, 0x0000001E, 0x00050051, 0x00000006, 0x00000034,
+    0x00000011, 0x00000002, 0x00060050, 0x00000012, 0x00000038, 0x00000034,
+    0x00000022, 0x00000037, 0x0008000C, 0x00000012, 0x00000039, 0x00000001,
+    0x00000046, 0x0000001E, 0x00000026, 0x00000038, 0x0008000C, 0x00000012,
+    0x0000003E, 0x00000001, 0x00000048, 0x00000026, 0x0000001E, 0x0000003D,
+    0x00050051, 0x00000006, 0x00000042, 0x0000002A, 0x00000000, 0x00050085,
+    0x00000006, 0x00000044, 0x00000042, 0x00000043, 0x00050081, 0x00000006,
+    0x00000045, 0x00000044, 0x00000043, 0x00050051, 0x00000006, 0x00000047,
+    0x0000002E, 0x00000001, 0x00050051, 0x00000006, 0x0000004B, 0x00000039,
+    0x00000002, 0x00050081, 0x00000006, 0x00000068, 0x00000047, 0x0000004B,
+    0x00050085, 0x00000006, 0x0000004D, 0x00000048, 0x00000068, 0x00050081,
+    0x00000006, 0x0000004E, 0x0000004D, 0x00000043, 0x00050051, 0x00000006,
+    0x00000050, 0x0000003E, 0x00000000, 0x0008000C, 0x00000006, 0x00000052,
+    0x00000001, 0x00000032, 0x00000050, 0x00000051, 0x00000043, 0x00050051,
+    0x00000006, 0x00000054, 0x0000003E, 0x00000002, 0x00050051, 0x00000006,
+    0x00000057, 0x0000002A, 0x00000002, 0x00050081, 0x00000006, 0x00000069,
+    0x00000054, 0x00000057, 0x00050085, 0x00000006, 0x00000059, 0x00000048,
+    0x00000069, 0x00050081, 0x00000006, 0x0000005A, 0x00000059, 0x00000043,
+    0x00070050, 0x00000007, 0x0000005B, 0x00000045, 0x0000004E, 0x00000052,
+    0x0000005A, 0x0003003E, 0x00000040, 0x0000005B, 0x000100FD, 0x00010038,
+};
+
 const shipped_noperspective = [_]u32{
     0x07230203, 0x00010000, 0x000D000B, 0x0000000D, 0x00000000, 0x00020011,
     0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
@@ -9650,6 +9967,9 @@ const cases = [_]Case{
     .{ .name = "shipped constant modulus", .run = Cases.shipped("as it is", "shipped constant modulus", false, clockwise_at) },
     .{ .name = "shipped many divisions", .run = Cases.shipped("as it is", "shipped many divisions", false, clockwise_at) },
     .{ .name = "shipped many moduli", .run = Cases.shipped("as it is", "shipped many moduli", false, clockwise_at) },
+    .{ .name = "shipped inverse trigonometry", .run = Cases.shipped("as it is", "shipped inverse trig", false, clockwise_at) },
+    .{ .name = "shipped hyperbolic functions", .run = Cases.shipped("as it is", "shipped hyperbolic", false, clockwise_at) },
+    .{ .name = "shipped cross, reflect and refract", .run = Cases.shipped("as it is", "shipped geometry", false, clockwise_at) },
     .{ .name = "shipped flat varying", .run = Cases.shipped("shipped flat vertex", "shipped flat colour", false, clockwise_at) },
     .{ .name = "shipped flat integer", .run = Cases.shipped("shipped flat integer vertex", "shipped flat integer", false, clockwise_at) },
     .{ .name = "shipped noperspective", .run = Cases.shipped("shipped noperspective vertex", "shipped noperspective", false, clockwise_at) },

@@ -8533,9 +8533,15 @@ fn multiplied(work: *Work, left: Matrix, right: Matrix) Error!Matrix {
 /// and then v3dv's NIR options (v3dv_pipeline.c:177-198): fdiv, fsqrt,
 /// fpow, ffract and flrp lowered, fsat not at 7.1 (:225), fsub kept
 /// (:207). Sin, Cos, Tan, FSign, Step and SmoothStep are here since
-/// 1.153. What is left out - the inverse and hyperbolic trigonometry, the
-/// integers, Cross, the packing and interpolation - is refused by name,
-/// `Error.Body` (since 1.152).
+/// 1.153; the integers' since 1.165. The inverse and hyperbolic
+/// trigonometry, Fma, Cross, FaceForward, Reflect and Refract are here
+/// since 1.196, as vtn_glsl450.c:294-407 builds them, each ffma_weak
+/// split into an fmul and an fadd as the algebraic rules split it on a
+/// device of no FMA (nir_opt_algebraic.py:420-424), each bcsel and
+/// comparison of a vector one of each float (`lower_to_scalar`,
+/// v3dv_pipeline.c:203). What is left out - Modf, Frexp, Ldexp, the
+/// determinant and the inverse, the bit finds, the packing and the
+/// interpolation - is refused by name, `Error.Body` (since 1.152).
 fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) Error!u16 {
     const which = std.enums.fromInt(spirv.Glsl, instruction) orelse return Error.Body;
     switch (which) {
@@ -8545,24 +8551,32 @@ fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) E
         .sin, .cos, .tan, .f_sign, .step, .smooth_step => {},
         // Of integers (since 1.165).
         .s_abs, .s_sign, .s_min, .u_min, .s_max, .u_max, .s_clamp, .u_clamp => {},
+        // Since 1.196.
+        .asin, .acos, .atan, .atan2, .sinh, .cosh, .tanh, .asinh, .acosh, .atanh => {},
+        .fma, .cross, .face_forward, .reflect, .refract => {},
         else => return Error.Body,
     }
     const wanted: usize = switch (which) {
         .f_min, .f_max, .n_min, .n_max, .pow, .distance, .step => 2,
         .s_min, .u_min, .s_max, .u_max => 2,
+        .atan2, .cross, .reflect => 2,
         .f_clamp, .n_clamp, .f_mix, .smooth_step, .s_clamp, .u_clamp => 3,
+        .fma, .face_forward, .refract => 3,
         else => 1,
     };
     if (arguments.len != wanted) return Error.Body;
     // Length and Distance answer one float of vectors; every other takes
-    // operands of the kind it answers.
+    // operands of the kind it answers, but Refract's eta, which is one
+    // float whatever I and N are.
     const of_kind = switch (which) {
         .length, .distance => try kindOfValue(work, arguments[0]),
         else => kind,
     };
     if ((which == .length or which == .distance) and kind != .f32x1) return Error.Type;
+    // Cross is of two vec3s alone.
+    if (which == .cross and kind != .f32x3) return Error.Type;
     var x: [3]u16 = undefined;
-    for (arguments, 0..) |each, k| x[k] = try operand(work, each, of_kind);
+    for (arguments, 0..) |each, k| x[k] = try operand(work, each, if (which == .refract and k == 2) .f32x1 else of_kind);
     return switch (which) {
         .round, .round_even => unary(work, .round, x[0]),
         .trunc => unary(work, .trunc, x[0]),
@@ -8644,8 +8658,200 @@ fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) E
         // frcp(frcp(frsq(d))), the two frcp one fcanonicalize
         // (nir_opt_algebraic.py:1919), which folds away (:161-171).
         .normalize => binary(work, .mul, x[0], try unary(work, .rsqrt, try dotOf(work, x[0], x[0]))),
+        // nir_op_ffma_weak (vtn_glsl450.c:152-155), split.
+        .fma => binary(work, .add, try binary(work, .mul, x[0], x[1]), x[2]),
+        .asin => asinOf(work, x[0], true),
+        // M_PI_2f less the asin without its Taylor series (nir_acos,
+        // nir_builtin_builder.c:239-248).
+        .acos => binary(work, .sub, try immediateOf(work, double(std.math.pi / 2.0), kind), try asinOf(work, x[0], false)),
+        .atan => atanOf(work, x[0]),
+        .atan2 => atan2Of(work, x[0], x[1]),
+        // 0.5 * (e^x - e^(-x)) and 0.5 * (e^x + e^(-x)), each nir_fexp
+        // (vtn_glsl450.c:352-366).
+        .sinh, .cosh => hyperbolic: {
+            const up = try expOf(work, x[0]);
+            const down = try expOf(work, try unary(work, .negate, x[0]));
+            const both = try binary(work, if (which == .sinh) .sub else .add, up, down);
+            break :hyperbolic binary(work, .mul, both, try immediate(work, 0.5));
+        },
+        .tanh => tanhOf(work, x[0]),
+        // fsign(x) * flog(|x| + fsqrt(x * x + 1)) (:375-379).
+        .asinh => binary(work, .mul, try unary(work, .sign, x[0]), try logOf(work, try binary(work, .add, try unary(work, .abs, x[0]), try sqrtOf(work, try binary(work, .add, try binary(work, .mul, x[0], x[0]), try immediate(work, 1.0)))))),
+        // flog(x + fsqrt(x * x - 1)) (:380-383).
+        .acosh => logOf(work, try binary(work, .add, x[0], try sqrtOf(work, try binary(work, .add, try binary(work, .mul, x[0], x[0]), try immediate(work, -1.0))))),
+        // 0.5 * flog((x + 1) / (1 - x)) (:384-390), the fdiv lowered.
+        .atanh => atanh: {
+            const over = try binary(work, .mul, try binary(work, .add, x[0], try immediate(work, 1.0)), try unary(work, .recip, try binary(work, .sub, try immediateOf(work, 1.0, kind), x[0])));
+            break :atanh binary(work, .mul, try logOf(work, over), try immediate(work, 0.5));
+        },
+        // x.yzx * y.zxy - x.zxy * y.yzx, its ffma_weak split and the
+        // fadd of an fneg an fsub (nir_cross3, nir_builtin_builder.c:38-48;
+        // nir_opt_algebraic.py:3868).
+        .cross => binary(work, .sub, try binary(work, .mul, try swizzleOf(work, x[0], .{ 1, 2, 0 }), try swizzleOf(work, x[1], .{ 2, 0, 1 })), try binary(work, .mul, try swizzleOf(work, x[0], .{ 2, 0, 1 }), try swizzleOf(work, x[1], .{ 1, 2, 0 }))),
+        // N where dot(Nref, I) < 0, else -N (vtn_glsl450.c:304-309).
+        .face_forward => face: {
+            const facing = try put(work, compareOf(.less, try dotOf(work, x[2], x[1]), try immediate(work, 0.0)));
+            break :face selectedFloats(work, @splat(facing), x[0], try unary(work, .negate, x[0]));
+        },
+        // I - N * (dot(I, N) * 2), nir_a_minus_bc's (:311-318).
+        .reflect => binary(work, .sub, x[0], try binary(work, .mul, x[1], try binary(work, .mul, try dotOf(work, x[0], x[1]), try immediate(work, 2.0)))),
+        .refract => refractOf(work, x[0], x[1], x[2]),
         else => unreachable,
     };
+}
+
+/// fexp of `x`: fexp2(x * M_LOG2E) (nir_fexp, nir_builtin_builder.h:
+/// 112-115), as Exp is.
+fn expOf(work: *Work, x: u16) Error!u16 {
+    return unary(work, .exp2, try binary(work, .mul, x, try immediate(work, double(std.math.log2e))));
+}
+
+/// flog of `x`: flog2(x) * (1 / M_LOG2E) (nir_flog,
+/// nir_builtin_builder.h:118-121), as Log is.
+fn logOf(work: *Work, x: u16) Error!u16 {
+    return binary(work, .mul, try unary(work, .log2, x), try immediate(work, double(@as(f64, 1.0) / std.math.log2e)));
+}
+
+/// fsqrt of `x`, lowered as Sqrt's: frcp(frsq(x)).
+fn sqrtOf(work: *Work, x: u16) Error!u16 {
+    return unary(work, .recip, try unary(work, .rsqrt, x));
+}
+
+/// The vec3 of `v`'s floats `which`: nir_swizzle's.
+fn swizzleOf(work: *Work, v: u16, which: [3]u8) Error!u16 {
+    var holds: [4]Float = undefined;
+    for (which, 0..) |from, k| holds[k] = partOf(work, v, from);
+    return valueOf(work, .f32x3, holds);
+}
+
+/// One bool for each float of `a`: `which` of it and the same float of
+/// `b`, or of `b` itself where that is one float, as
+/// nir_lower_alu_to_scalar splits a comparison of vectors.
+fn comparedFloats(work: *Work, which: Comparison, a: u16, b: u16) Error![4]u16 {
+    var out: [4]u16 = @splat(none);
+    const single = work.steps[b].kind == .f32x1;
+    for (0..work.steps[a].kind.parts()) |k| {
+        const x = try floatOf(work, partOf(work, a, @intCast(k)));
+        const y = if (single) b else try floatOf(work, partOf(work, b, @intCast(k)));
+        out[k] = try put(work, compareOf(which, x, y));
+    }
+    return out;
+}
+
+/// Each float of `yes` where its bool of `conditions` holds, and of `no`
+/// where it does not: a bcsel of vectors split as `comparedFloats` splits
+/// a comparison. `yes` and `no` are of one kind.
+fn selectedFloats(work: *Work, conditions: [4]u16, yes: u16, no: u16) Error!u16 {
+    const kind = work.steps[yes].kind;
+    if (kind == .f32x1) return selectStep(work, conditions[0], yes, no);
+    var holds: [4]Float = undefined;
+    for (0..kind.parts()) |k| {
+        const y = try floatOf(work, partOf(work, yes, @intCast(k)));
+        const n = try floatOf(work, partOf(work, no, @intCast(k)));
+        holds[k] = .{ .step = try selectStep(work, conditions[k], y, n), .part = 0 };
+    }
+    return valueOf(work, kind, holds);
+}
+
+/// `x`'s magnitude with `y`'s sign, nir_copysign of a device with
+/// integers: the IOR of x's bits less the sign bit and y's sign bit alone
+/// (nir_builtin_builder.h:150-168). The rules that make an IAND of the
+/// sign bit an fabs want it read as a float alone
+/// (nir_opt_algebraic.py:438-442), and the IOR reads this one.
+fn copySign(work: *Work, x: u16, y: u16) Error!u16 {
+    const kind = work.steps[x].kind;
+    const magnitude = try integerOf(work, .iand, x, try integerSplat(work, kind, 0x7FFF_FFFF));
+    const sign = try integerOf(work, .iand, y, try integerSplat(work, kind, std.math.minInt(i32)));
+    return integerOf(work, .ior, magnitude, sign);
+}
+
+/// build_asin (nir_builtin_builder.c:184-226): Abramowitz and Stegun's
+/// formula 4.45, sign(x) * (pi/2 - sqrt(1 - |x|) * (a0 + |x| * (a1 + |x|
+/// * (a2 + |x| * a3)))), its ffma_weaks split; and where `piecewise`, as
+/// nir_asin has it (:228-237), x * (x * x / 6 + 1) where |x| < 0.21502245.
+fn asinOf(work: *Work, x: u16, piecewise: bool) Error!u16 {
+    const kind = work.steps[x].kind;
+    const abs_x = try unary(work, .abs, x);
+    const p0_plus_xp1 = try binary(work, .add, try binary(work, .mul, abs_x, try immediate(work, double(-0.0187293))), try immediate(work, double(0.0742610)));
+    const inner = try binary(work, .add, try binary(work, .mul, abs_x, p0_plus_xp1), try immediate(work, double(-0.2121144)));
+    const expr_tail = try binary(work, .add, try binary(work, .mul, abs_x, inner), try immediate(work, double(1.5707288)));
+    const root = try sqrtOf(work, try binary(work, .sub, try immediateOf(work, 1.0, kind), abs_x));
+    const result0 = try binary(work, .mul, try unary(work, .sign, x), try binary(work, .sub, try immediateOf(work, double(std.math.pi / 2.0), kind), try binary(work, .mul, root, expr_tail)));
+    if (!piecewise) return result0;
+    const x2 = try binary(work, .mul, x, x);
+    const result1 = try binary(work, .mul, x, try binary(work, .add, try binary(work, .mul, x2, try immediate(work, double(1.0 / 6.0))), try immediate(work, 1.0)));
+    return selectedFloats(work, try comparedFloats(work, .less, abs_x, try immediate(work, double(0.21502245))), result1, result0);
+}
+
+/// nir_atan (nir_builtin_builder.c:250-298): u the value or its
+/// reciprocal, whichever is at most 1 in magnitude; Horner's polynomial of
+/// u * u to the 11th power, its ffma_weaks split; |u| times it, less pi/2
+/// where u is the reciprocal; and the value's sign.
+fn atanOf(work: *Work, v: u16) Error!u16 {
+    const kind = work.steps[v].kind;
+    const abs_v = try unary(work, .abs, v);
+    const le_1 = try comparedFloats(work, .less_equal, abs_v, try immediate(work, 1.0));
+    const u = try selectedFloats(work, le_1, v, try unary(work, .recip, v));
+    const coefficients = [_]f32{ -0.0121323213173444, 0.0536813784310406, -0.1173503194786851, 0.1938924977115610, -0.3326756418091246, 0.9999793128310355 };
+    const x_2 = try binary(work, .mul, u, u);
+    var res = try immediateOf(work, coefficients[0], kind);
+    for (coefficients[1..]) |each| res = try binary(work, .add, try binary(work, .mul, res, x_2), try immediate(work, each));
+    const bias = try selectedFloats(work, le_1, try immediateOf(work, 0.0, kind), try immediateOf(work, double(-std.math.pi / 2.0), kind));
+    const tmp = try binary(work, .add, try binary(work, .mul, try unary(work, .abs, u), res), bias);
+    return copySign(work, tmp, v);
+}
+
+/// nir_atan2 (nir_builtin_builder.c:300-393): the coordinates turned a
+/// quarter clockwise where x <= 0, both scaled by a quarter where the
+/// denominator's magnitude is 1e18 or more, the tangent 1 where |x| = |y|,
+/// the atan of it plus pi/2 where turned, and negated where the smaller
+/// of y and the scaled denominator's reciprocal is below 0. fge(0, x) is
+/// fle(x, 0).
+fn atan2Of(work: *Work, y: u16, x: u16) Error!u16 {
+    const kind = work.steps[x].kind;
+    const zero = try immediate(work, 0.0);
+    const ones = try immediateOf(work, 1.0, kind);
+    const abs_x = try unary(work, .abs, x);
+    const flip = try comparedFloats(work, .less_equal, x, zero);
+    const s = try selectedFloats(work, flip, abs_x, y);
+    const t = try selectedFloats(work, flip, y, abs_x);
+    const huge = try comparedFloats(work, .greater_equal, try unary(work, .abs, t), try immediate(work, 1e18));
+    const scale = try selectedFloats(work, huge, try immediateOf(work, 0.25, kind), ones);
+    const rcp_scaled_t = try unary(work, .recip, try binary(work, .mul, t, scale));
+    const abs_s_over_t = try binary(work, .mul, try unary(work, .abs, try binary(work, .mul, s, scale)), try unary(work, .abs, rcp_scaled_t));
+    const tan = try selectedFloats(work, try comparedFloats(work, .equal, abs_x, try unary(work, .abs, y)), ones, abs_s_over_t);
+    // b2f(flip) * M_PI_2 + atan(tan), nir_ffma_weak_imm1 split.
+    var turned: [4]Float = undefined;
+    for (0..kind.parts()) |k| turned[k] = .{ .step = try integerOf(work, .b2f32, flip[k], null), .part = 0 };
+    const quarter = try binary(work, .mul, try valueOf(work, kind, turned), try immediate(work, double(std.math.pi / 2.0)));
+    const arc = try binary(work, .add, quarter, try atanOf(work, tan));
+    const below = try comparedFloats(work, .less, try binary(work, .min, y, rcp_scaled_t), zero);
+    return selectedFloats(work, below, try unary(work, .negate, arc), arc);
+}
+
+/// nir_tanh_emulated (nir_builtin_builder.c:480-512): of |x| times
+/// M_LOG2E, 2 to it at most 16 and 2 to its negation, their difference
+/// over their sum, the fdiv lowered, and x's sign.
+fn tanhOf(work: *Work, src: u16) Error!u16 {
+    const x = try binary(work, .mul, try unary(work, .abs, src), try immediate(work, double(std.math.log2e)));
+    const exp_x = try unary(work, .exp2, try binary(work, .min, x, try immediate(work, 16.0)));
+    const exp_neg_x = try unary(work, .exp2, try unary(work, .negate, x));
+    const abs_tanh = try binary(work, .mul, try binary(work, .sub, exp_x, exp_neg_x), try unary(work, .recip, try binary(work, .add, exp_x, exp_neg_x)));
+    return copySign(work, abs_tanh, src);
+}
+
+/// Refract (vtn_glsl450.c:320-350): k = 1 - eta * (eta * (1 - dot(N, I)
+/// ^ 2)), and eta * I - (eta * dot(N, I) + sqrt(k)) * N where k is not
+/// below 0, else 0, each nir_a_minus_bc and ffma_weak split.
+fn refractOf(work: *Work, i: u16, n: u16, eta: u16) Error!u16 {
+    const kind = work.steps[i].kind;
+    const n_dot_i = try dotOf(work, n, i);
+    const unit = try immediate(work, 1.0);
+    const k = try binary(work, .sub, unit, try binary(work, .mul, eta, try binary(work, .mul, eta, try binary(work, .sub, unit, try binary(work, .mul, n_dot_i, n_dot_i)))));
+    const along = try binary(work, .add, try binary(work, .mul, eta, n_dot_i), try sqrtOf(work, k));
+    const result = try binary(work, .sub, try binary(work, .mul, i, eta), try binary(work, .mul, n, along));
+    const below = try put(work, compareOf(.less, k, try immediate(work, 0.0)));
+    return selectedFloats(work, @splat(below), try immediateOf(work, 0.0, kind), result);
 }
 
 /// A constant of C's doubles, as nir_imm_floatN_t takes one to 32 bits.
@@ -13217,17 +13423,21 @@ fn evaluatedStep(work: *const Work, values: *const [most_steps]?[4]f32, at: u16,
                 };
             }
         },
-        .abs, .negate, .recip, .log2, .floor => {
+        .abs, .negate, .recip, .log2, .floor, .rsqrt, .exp2, .sign => {
             const x = of(values, each.a);
             for (0..parts) |k| out[k] = switch (each.tag) {
                 .abs => @abs(x[k]),
                 .negate => -x[k],
                 .recip => 1.0 / x[k],
                 .floor => @floor(x[k]),
+                // The SFU's, exact on the host (since 1.196).
+                .rsqrt => 1.0 / @sqrt(x[k]),
+                .exp2 => @exp2(x[k]),
+                .sign => if (x[k] > 0) 1.0 else if (x[k] < 0) -1.0 else x[k],
                 else => @log2(x[k]),
             };
         },
-        .add, .sub, .mul, .max => {
+        .add, .sub, .mul, .max, .min => {
             const x = of(values, each.a);
             const y = of(values, each.b);
             const single = work.steps[each.b].kind == .f32x1;
@@ -13237,6 +13447,7 @@ fn evaluatedStep(work: *const Work, values: *const [most_steps]?[4]f32, at: u16,
                     .add => x[k] + b,
                     .sub => x[k] - b,
                     .mul => x[k] * b,
+                    .min => @min(x[k], b),
                     else => @max(x[k], b),
                 };
             }
@@ -15678,14 +15889,15 @@ test "through Mesa's back end, selects of selects: what nir_opt_algebraic and ni
 
 test "a call the walk does not lower, or into a set that is not GLSL.std.450, is refused" {
     var work: Work = .{};
-    // Fract (10) made Asin (16), which the walk leaves out: one operand
-    // each, so it is the call that is refused and not its operands.
+    // Fract (10) made PackUnorm4x8 (55), which the walk leaves out: one
+    // operand each, so it is the call that is refused and not its
+    // operands. Asin was this test's until 1.196.
     var sine = reference.glslc_arith;
     var calls: usize = 0;
     var at: usize = spirv.header_words;
     while (at < sine.len) : (at += sine[at] >> 16) {
         if (sine[at] & 0xFFFF == @intFromEnum(spirv.Op.ext_inst) and sine[at + 4] == @intFromEnum(spirv.Glsl.fract)) {
-            sine[at + 4] = @intFromEnum(spirv.Glsl.asin);
+            sine[at + 4] = @intFromEnum(spirv.Glsl.pack_unorm_4x8);
             calls += 1;
         }
     }
@@ -15698,6 +15910,126 @@ test "a call the walk does not lower, or into a set that is not GLSL.std.450, is
         if (other[at] & 0xFFFF == @intFromEnum(spirv.Op.ext_inst_import)) other[at + 2] ^= 0x20;
     }
     try testing.expectError(Error.Body, throughMesa(&work, &other));
+}
+
+/// The colour made -1 to 1, as the references of 1.196 make it.
+fn signedOf(color: [4]f32) [4]f32 {
+    var c: [4]f32 = undefined;
+    for (&c, color) |*each, v| each.* = v * 2.0 - 1.0;
+    return c;
+}
+
+/// Colours the tests of 1.196 work out on the host: each channel from
+/// near 0 to near 1, so that the colour made -1 to 1 crosses 0 and comes
+/// near both ends, and its red never 0.5, which Atan2 of 0 over 0 would
+/// read, where GLSL leaves it undefined.
+const curve_colors = [_][4]f32{
+    .{ 0.55, 0.5, 0.5, 0.45 },
+    .{ 0.02, 0.97, 0.31, 0.75 },
+    .{ 0.95, 0.04, 0.6, 0.1 },
+    .{ 0.45, 0.58, 0.99, 0.0 },
+    .{ 0.6, 0.4, 0.05, 1.0 },
+    .{ 0.25, 0.75, 0.52, 0.3 },
+    .{ 0.7, 0.2, 0.85, 0.65 },
+    .{ 0.1, 0.35, 0.15, 0.9 },
+};
+
+/// Whether a step is an `integer` of `op` the program reads.
+fn liveIntegerOf(work: *const Work, op: Integer) usize {
+    const reached = liveMask(work);
+    var count: usize = 0;
+    for (work.program(), 0..) |each, at| {
+        if (each.tag == .integer and each.at == @intFromEnum(op) and reached[at]) count += 1;
+    }
+    return count;
+}
+
+test "Asin, Acos, Atan and Atan2 are nir_asin's, nir_acos's, nir_atan's and nir_atan2's, a bcsel and a comparison of each float, and come within 1e-4 of std.math's" {
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_inverse_trig);
+    // Asin's Taylor series chosen for each of its two floats; Atan's u
+    // and bias; Atan2's s, t, scale, tangent and sign, and its Atan's u
+    // and bias: a bcsel each, each of a comparison of its own but the
+    // two of a range reduction's one.
+    try testing.expectEqual(@as(usize, 11), liveOf(&work, .select));
+    try testing.expectEqual(@as(usize, 8), liveOf(&work, .compare));
+    // Each Atan's copysign: two IANDs and an IOR; Atan2's quarter turn
+    // a b2f of its flip.
+    try testing.expectEqual(@as(usize, 2), liveIntegerOf(&work, .ior));
+    try testing.expectEqual(@as(usize, 4), liveIntegerOf(&work, .iand));
+    try testing.expectEqual(@as(usize, 1), liveIntegerOf(&work, .b2f32));
+    for (curve_colors) |color| {
+        const c = signedOf(color);
+        const s = [2]f32{ std.math.asin(c[0]) * 0.3183099 + 0.5, std.math.asin(c[1]) * 0.3183099 + 0.5 };
+        const o = [2]f32{ std.math.acos(c[1]) * 0.3183099, std.math.acos(c[2]) * 0.3183099 };
+        const expected = [4]f32{ s[0] * 0.5 + o[1] * 0.5, s[1] * 0.5 + o[0] * 0.5, std.math.atan(c[2] * 4.0) * 0.3183099 + 0.5, std.math.atan2(c[3], c[0]) * 0.1591549 + 0.5 };
+        const found = evaluatedOf(&work, work.stored, color, 0);
+        for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-4);
+    }
+}
+
+test "Sinh, Cosh, Tanh, Asinh, Acosh and Atanh are vtn_glsl450.c's of fexp, flog and fsqrt, Tanh nir_tanh_emulated's, and come within 1e-4 of std.math's" {
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_hyperbolic);
+    // Two fexp each of Sinh, Cosh and Tanh; an flog each of the three
+    // inverses; Tanh's clamp at 16 and its copysign; Asinh's fsign.
+    try testing.expectEqual(@as(usize, 6), liveOf(&work, .exp2));
+    try testing.expectEqual(@as(usize, 3), liveOf(&work, .log2));
+    try testing.expectEqual(@as(usize, 1), liveOf(&work, .min));
+    try testing.expectEqual(@as(usize, 1), liveIntegerOf(&work, .ior));
+    try testing.expectEqual(@as(usize, 1), liveOf(&work, .sign));
+    for (curve_colors) |color| {
+        const c = signedOf(color);
+        const s = std.math.sinh(c[0]) * 0.4 + 0.5;
+        const h = std.math.cosh(c[1]) * 0.5 - 0.25;
+        const t = std.math.tanh(c[2] * 3.0) * 0.5 + 0.5;
+        const a = std.math.asinh(c[3] * 2.0) * 0.3 + 0.5;
+        const b = std.math.acosh(color[0] + 1.0) * 0.7;
+        const d = std.math.atanh(c[1] * 0.9) * 0.3 + 0.5;
+        const expected = [4]f32{ s * 0.5 + h * 0.5, t, a * 0.5 + b * 0.5, d };
+        const found = evaluatedOf(&work, work.stored, color, 0);
+        for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-4);
+    }
+}
+
+test "Cross, Reflect, FaceForward, Refract and Fma are vtn_glsl450.c's, Refract's 0 where k is below 0, and come within 1e-5 of the same sums on the host" {
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_geometry);
+    // FaceForward's N or -N and Refract's 0 or its sum, a bcsel of each
+    // float, of one comparison each.
+    try testing.expectEqual(@as(usize, 6), liveOf(&work, .select));
+    try testing.expectEqual(@as(usize, 2), liveOf(&work, .compare));
+    var whole: usize = 0;
+    var faces: usize = 0;
+    for (curve_colors) |color| {
+        const c = signedOf(color);
+        const V3 = @Vector(3, f32);
+        const dot = struct {
+            fn of(a: V3, b: V3) f32 {
+                return @reduce(.Add, a * b);
+            }
+        }.of;
+        const n0 = V3{ c[0], c[1], 1.0 };
+        const n = n0 / @as(V3, @splat(@sqrt(dot(n0, n0))));
+        const i_0 = V3{ c[3], -0.5, -1.0 };
+        const i = i_0 / @as(V3, @splat(@sqrt(dot(i_0, i_0))));
+        const x = V3{ n[1] * i[2] - n[2] * i[1], n[2] * i[0] - n[0] * i[2], n[0] * i[1] - n[1] * i[0] };
+        const r = i - @as(V3, @splat(2.0 * dot(n, i))) * n;
+        const facing = dot(V3{ c[2], c[3], 0.0 }, i) < 0;
+        const f = if (facing) n else -n;
+        if (facing) faces += 1;
+        const eta: f32 = 1.5;
+        const ndi = dot(n, i);
+        const k = 1.0 - eta * eta * (1.0 - ndi * ndi);
+        const t: V3 = if (k < 0) @splat(0) else @as(V3, @splat(eta)) * i - @as(V3, @splat(eta * ndi + @sqrt(k))) * n;
+        if (k < 0) whole += 1;
+        const expected = [4]f32{ x[0] * 0.5 + 0.5, r[1] * 0.25 + f[2] * 0.25 + 0.5, t[0] * 0.375 + 0.5, t[2] * 0.25 + x[2] * 0.25 + 0.5 };
+        const found = evaluatedOf(&work, work.stored, color, 0);
+        for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-5);
+    }
+    // Both of FaceForward's ways and both of Refract's are worked out.
+    try testing.expectEqual(@as(usize, 4), faces);
+    try testing.expectEqual(@as(usize, 5), whole);
 }
 
 /// `reference.glslc_uniform_buffer`'s shader as facet's emitter writes it:
