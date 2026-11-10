@@ -126,7 +126,12 @@
 //! constant offset away, which the V3D starts at TMUSF with no sampler
 //! state; the cores read the same texel (`texture.Texture.colorAt`). The
 //! shipped dependent fetch's texel moves a sample, so its helper pixels
-//! fetch too.
+//! fetch too. The shipped gradients (since 1.48) are glslc's textureGrad
+//! of the texture of levels and the array, and textureGradOffset, which
+//! the V3D makes a level as lower_gradient does - the size of level 0,
+//! the longer derivative's length, its logarithm - and samples there; the
+//! cores sample at the level `texture.levelOf` finds of the same
+//! derivatives.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -141,7 +146,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.47 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.48 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -1357,6 +1362,45 @@ fn dependentFragment(fragments: *const shader.Fragments) callconv(.c) void {
     }
 }
 
+/// What the shipped gradients compute, for the cores: the texture bound
+/// at set 0, binding 0 sampled at `layer` through the sampler beside it,
+/// at the two floats of varying 0, `moved` texels away, at the level a
+/// gradient of them gives - `texture.levelOf` of the point's derivatives,
+/// which is lower_gradient's longer length - `shipped_grad`'s where
+/// `skewed` says so and `shipped_grad_layers`' where it does not (since
+/// 1.48).
+fn gradedFragment(comptime skewed: bool, comptime layer: u32, comptime moved: [2]i32) shader.FragmentFn {
+    return &struct {
+        fn run(fragments: *const shader.Fragments) callconv(.c) void {
+            const given = fragments.resources.sampled(0, 0, 0) orelse return shader.fill(fragments, shader.missing);
+            const with = fragments.resources.samplerOf(0, 0, 0) orelse return shader.fill(fragments, shader.missing);
+            @setRuntimeSafety(false);
+            var rows = shader.Rows(3).of(fragments);
+            for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+                const row = rows.at(quad);
+                const w = @as(shader.Pixels, @splat(1)) / row[0];
+                const us: [4]f32 = row[1] * w;
+                const vs: [4]f32 = row[2] * w;
+                var colors: [4]u32 = undefined;
+                for (&colors, us, vs) |*color, u, v| {
+                    var point = facet.texture.Point{ .u = u, .v = v, .offset = moved };
+                    if (skewed) {
+                        point.du_dx = u * 0.125;
+                        point.dv_dx = v * 0.0625;
+                        point.du_dy = v * -0.03125;
+                        point.dv_dy = u * 0.0625;
+                    } else {
+                        point.du_dx = u * 0.125;
+                        point.dv_dy = v * 0.125;
+                    }
+                    color.* = facet.texture.sampleBy(given, with, layer, point);
+                }
+                out.* = colors;
+            }
+        }
+    }.run;
+}
+
 /// What `store_writes` computes, for the cores, and in its order: by each
 /// pixel inside the triangle - a helper pixel writes nothing, as the
 /// V3D's lookup is a pixel's - the written buffer's count made 2 and its
@@ -1566,6 +1610,9 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped fetch volume", fetchedFragment(16, 0, 3, .{ 0, 0 }), 2),
     shader.fragment("shipped fetch offset", fetchedFragment(28, 1, 0, .{ 3, 0 }), 2),
     shader.fragment("shipped fetch dependent", &dependentFragment, 2),
+    shader.fragment("shipped grad", gradedFragment(true, 0, .{ 0, 0 }), 2),
+    shader.fragment("shipped grad layers", gradedFragment(false, 2, .{ 0, 0 }), 2),
+    shader.fragment("shipped grad offset", gradedFragment(false, 0, .{ 1, -2 }), 2),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                    .{},                                       .{},                                    .{},
@@ -1583,7 +1630,8 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_layers),       shader.Spirv.of(&shipped_cube),            shader.Spirv.of(&shipped_volume),       shader.Spirv.of(&shipped_lod),
     shader.Spirv.of(&shipped_bias),         Shipped.Offset.spirv,                      shader.Spirv.of(&shipped_size),         shader.Spirv.of(&shipped_size_layers),
     shader.Spirv.of(&shipped_size_volume),  shader.Spirv.of(&shipped_fetch),           shader.Spirv.of(&shipped_fetch_layers), shader.Spirv.of(&shipped_fetch_volume),
-    shader.Spirv.of(&shipped_fetch_offset), shader.Spirv.of(&shipped_fetch_dependent),
+    shader.Spirv.of(&shipped_fetch_offset), shader.Spirv.of(&shipped_fetch_dependent), shader.Spirv.of(&shipped_grad),         shader.Spirv.of(&shipped_grad_layers),
+    shader.Spirv.of(&shipped_grad_offset),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -3731,6 +3779,173 @@ const shipped_fetch_dependent = [_]u32{
     0x00000032, 0x000100FD, 0x00010038,
 };
 
+/// glslc's own output, at -O, for a sample of a 2D texture at the two
+/// floats of varying 0 with a gradient of them: along x the first times
+/// an eighth and the second times a sixteenth, along y the second times
+/// -1/32 and the first times a sixteenth. The V3D makes it a level,
+/// lower_gradient's, and samples there (since 1.48).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2D tex;
+/// layout(location = 0) in vec2 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = textureGrad(tex, at, vec2(at.x * 0.125, at.y * 0.0625), vec2(at.y * -0.03125, at.x * 0.0625));
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag grad.frag -o grad.spv   # 198 words
+/// spirv-val --target-env vulkan1.0 grad.spv                       # no output, and 0
+/// ```
+const shipped_grad = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000029, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000011, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000011, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040017, 0x0000000F,
+    0x00000006, 0x00000002, 0x00040020, 0x00000010, 0x00000001, 0x0000000F,
+    0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x00040015, 0x00000013,
+    0x00000020, 0x00000000, 0x0004002B, 0x00000013, 0x00000014, 0x00000000,
+    0x00040020, 0x00000015, 0x00000001, 0x00000006, 0x0004002B, 0x00000006,
+    0x00000018, 0x3E000000, 0x0004002B, 0x00000013, 0x0000001A, 0x00000001,
+    0x0004002B, 0x00000006, 0x0000001D, 0x3D800000, 0x0004002B, 0x00000006,
+    0x00000022, 0xBD000000, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000E,
+    0x0000000D, 0x0004003D, 0x0000000F, 0x00000012, 0x00000011, 0x00050041,
+    0x00000015, 0x00000016, 0x00000011, 0x00000014, 0x0004003D, 0x00000006,
+    0x00000017, 0x00000016, 0x00050085, 0x00000006, 0x00000019, 0x00000017,
+    0x00000018, 0x00050041, 0x00000015, 0x0000001B, 0x00000011, 0x0000001A,
+    0x0004003D, 0x00000006, 0x0000001C, 0x0000001B, 0x00050085, 0x00000006,
+    0x0000001E, 0x0000001C, 0x0000001D, 0x00050050, 0x0000000F, 0x0000001F,
+    0x00000019, 0x0000001E, 0x00050085, 0x00000006, 0x00000023, 0x0000001C,
+    0x00000022, 0x00050085, 0x00000006, 0x00000026, 0x00000017, 0x0000001D,
+    0x00050050, 0x0000000F, 0x00000027, 0x00000023, 0x00000026, 0x00080058,
+    0x00000007, 0x00000028, 0x0000000E, 0x00000012, 0x00000004, 0x0000001F,
+    0x00000027, 0x0003003E, 0x00000009, 0x00000028, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for a sample of layer 2 of a 2D array with
+/// a gradient: the first float times an eighth along x, the second along
+/// y (since 1.48).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2DArray tex;
+/// layout(location = 0) in vec2 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = textureGrad(tex, vec3(at, 2.0), vec2(at.x * 0.125, 0.0), vec2(0.0, at.y * 0.125));
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag grad_layers.frag -o grad_layers.spv   # 208 words
+/// spirv-val --target-env vulkan1.0 grad_layers.spv                       # no output, and 0
+/// ```
+const shipped_grad_layers = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000027, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000011, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000011, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000001,
+    0x00000000, 0x00000001, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040017, 0x0000000F,
+    0x00000006, 0x00000002, 0x00040020, 0x00000010, 0x00000001, 0x0000000F,
+    0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x0004002B, 0x00000006,
+    0x00000013, 0x40000000, 0x00040017, 0x00000014, 0x00000006, 0x00000003,
+    0x00040015, 0x00000018, 0x00000020, 0x00000000, 0x0004002B, 0x00000018,
+    0x00000019, 0x00000000, 0x00040020, 0x0000001A, 0x00000001, 0x00000006,
+    0x0004002B, 0x00000006, 0x0000001D, 0x3E000000, 0x0004002B, 0x00000006,
+    0x0000001F, 0x00000000, 0x0004002B, 0x00000018, 0x00000021, 0x00000001,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003D, 0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D,
+    0x0000000F, 0x00000012, 0x00000011, 0x00050051, 0x00000006, 0x00000015,
+    0x00000012, 0x00000000, 0x00050051, 0x00000006, 0x00000016, 0x00000012,
+    0x00000001, 0x00060050, 0x00000014, 0x00000017, 0x00000015, 0x00000016,
+    0x00000013, 0x00050041, 0x0000001A, 0x0000001B, 0x00000011, 0x00000019,
+    0x0004003D, 0x00000006, 0x0000001C, 0x0000001B, 0x00050085, 0x00000006,
+    0x0000001E, 0x0000001C, 0x0000001D, 0x00050050, 0x0000000F, 0x00000020,
+    0x0000001E, 0x0000001F, 0x00050041, 0x0000001A, 0x00000022, 0x00000011,
+    0x00000021, 0x0004003D, 0x00000006, 0x00000023, 0x00000022, 0x00050085,
+    0x00000006, 0x00000024, 0x00000023, 0x0000001D, 0x00050050, 0x0000000F,
+    0x00000025, 0x0000001F, 0x00000024, 0x00080058, 0x00000007, 0x00000026,
+    0x0000000E, 0x00000017, 0x00000004, 0x00000020, 0x00000025, 0x0003003E,
+    0x00000009, 0x00000026, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for `shipped_grad_layers`' gradient of a 2D
+/// texture, (1, -2) texels away: Grad and ConstOffset (since 1.48).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2D tex;
+/// layout(location = 0) in vec2 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = textureGradOffset(tex, at, vec2(at.x * 0.125, 0.0), vec2(0.0, at.y * 0.125), ivec2(1, -2));
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag grad_offset.frag -o grad_offset.spv   # 206 words
+/// spirv-val --target-env vulkan1.0 grad_offset.spv                       # no output, and 0
+/// ```
+const shipped_grad_offset = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000027, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000011, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000011, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040017, 0x0000000F,
+    0x00000006, 0x00000002, 0x00040020, 0x00000010, 0x00000001, 0x0000000F,
+    0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x00040015, 0x00000013,
+    0x00000020, 0x00000000, 0x0004002B, 0x00000013, 0x00000014, 0x00000000,
+    0x00040020, 0x00000015, 0x00000001, 0x00000006, 0x0004002B, 0x00000006,
+    0x00000018, 0x3E000000, 0x0004002B, 0x00000006, 0x0000001A, 0x00000000,
+    0x0004002B, 0x00000013, 0x0000001C, 0x00000001, 0x00040015, 0x00000021,
+    0x00000020, 0x00000001, 0x00040017, 0x00000022, 0x00000021, 0x00000002,
+    0x0004002B, 0x00000021, 0x00000023, 0x00000001, 0x0004002B, 0x00000021,
+    0x00000024, 0xFFFFFFFE, 0x0005002C, 0x00000022, 0x00000025, 0x00000023,
+    0x00000024, 0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003,
+    0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000E, 0x0000000D,
+    0x0004003D, 0x0000000F, 0x00000012, 0x00000011, 0x00050041, 0x00000015,
+    0x00000016, 0x00000011, 0x00000014, 0x0004003D, 0x00000006, 0x00000017,
+    0x00000016, 0x00050085, 0x00000006, 0x00000019, 0x00000017, 0x00000018,
+    0x00050050, 0x0000000F, 0x0000001B, 0x00000019, 0x0000001A, 0x00050041,
+    0x00000015, 0x0000001D, 0x00000011, 0x0000001C, 0x0004003D, 0x00000006,
+    0x0000001E, 0x0000001D, 0x00050085, 0x00000006, 0x0000001F, 0x0000001E,
+    0x00000018, 0x00050050, 0x0000000F, 0x00000020, 0x0000001A, 0x0000001F,
+    0x00090058, 0x00000007, 0x00000026, 0x0000000E, 0x00000012, 0x0000000C,
+    0x0000001B, 0x00000020, 0x00000025, 0x0003003E, 0x00000009, 0x00000026,
+    0x000100FD, 0x00010038,
+};
+
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
 /// V3D's host tests hold to compile to the program of glslc's optimized
 /// module, word for word: `c` and `k` in variables of the function's own,
@@ -4172,7 +4387,43 @@ const fetched_throughs = [_]Through{
     },
 };
 
-const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs ++ shipped_layered_throughs ++ levelled_throughs ++ sized_throughs ++ fetched_throughs;
+/// A gradient's sample: glslc's `shipped_grad` over the texture of
+/// levels, levels mixed and the nearest, `shipped_grad_layers` over the
+/// array and `shipped_grad_offset`, the cores' `gradedFragment` (since
+/// 1.48).
+const graded_throughs = [_]Through{
+    .{
+        .label = "shipped grad",
+        .what = "levels from 0 to 3, mixed",
+        .fragment = "shipped grad",
+        .info = .{ .mipmap_mode = .linear, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+    },
+    .{
+        .label = "shipped grad",
+        .what = "levels from 0 to 3, the nearest",
+        .fragment = "shipped grad",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+    },
+    .{
+        .label = "shipped grad",
+        .what = "an array's layer 2, mixed",
+        .fragment = "shipped grad layers",
+        .info = .{ .mipmap_mode = .linear, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+        .view = .array,
+    },
+    .{
+        .label = "shipped grad",
+        .what = "(1, -2) texels away, the nearest",
+        .fragment = "shipped grad offset",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+    },
+};
+
+const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs ++ shipped_layered_throughs ++ levelled_throughs ++ sized_throughs ++ fetched_throughs ++ graded_throughs;
 
 /// What the shadow-map cases compare with (`Cases.shadowed`): the
 /// reference less than the depth, and greater (since 1.14).

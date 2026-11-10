@@ -17549,3 +17549,610 @@ pub const glslc_fetch_dependent = [_]u32{
     0x00050057, 0x00000007, 0x0000001D, 0x0000000E, 0x0000001C, 0x0003003E,
     0x00000009, 0x0000001D, 0x000100FD, 0x00010038,
 };
+
+/// A sample of a 2D texture at the two floats of the colour, its
+/// derivatives the colour's last two and the same swizzled, scaled, glslc
+/// -O (`-fshader-stage=frag`), 161 words: OpImageSampleExplicitLod with
+/// Grad (since 1.183).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2D tex;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = textureGrad(tex, color.xy, color.zw * 0.125, color.wz * 0.0625);
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 29
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %16
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %13 Binding 0
+///                OpDecorate %13 DescriptorSet 0
+///                OpDecorate %16 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 2D 0 0 0 1 Unknown
+///          %11 = OpTypeSampledImage %10
+///          %12 = OpTypePointer UniformConstant %11
+///          %13 = OpVariable %12 UniformConstant
+///          %15 = OpTypePointer Input %7
+///          %16 = OpVariable %15 Input
+///          %17 = OpTypeVector %6 2
+///          %22 = OpConstant %6 0.125
+///          %26 = OpConstant %6 0.0625
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpLoad %11 %13
+///          %18 = OpLoad %7 %16
+///          %19 = OpVectorShuffle %17 %18 %18 0 1
+///          %21 = OpVectorShuffle %17 %18 %18 2 3
+///          %23 = OpVectorTimesScalar %17 %21 %22
+///          %25 = OpVectorShuffle %17 %18 %18 3 2
+///          %27 = OpVectorTimesScalar %17 %25 %26
+///          %28 = OpImageSampleExplicitLod %7 %14 %19 Grad %23 %27
+///                OpStore %9 %28
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_grad_varying = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001D, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000010, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000010, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040020, 0x0000000F,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000F, 0x00000010, 0x00000001,
+    0x00040017, 0x00000011, 0x00000006, 0x00000002, 0x0004002B, 0x00000006,
+    0x00000016, 0x3E000000, 0x0004002B, 0x00000006, 0x0000001A, 0x3D800000,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003D, 0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D,
+    0x00000007, 0x00000012, 0x00000010, 0x0007004F, 0x00000011, 0x00000013,
+    0x00000012, 0x00000012, 0x00000000, 0x00000001, 0x0007004F, 0x00000011,
+    0x00000015, 0x00000012, 0x00000012, 0x00000002, 0x00000003, 0x0005008E,
+    0x00000011, 0x00000017, 0x00000015, 0x00000016, 0x0007004F, 0x00000011,
+    0x00000019, 0x00000012, 0x00000012, 0x00000003, 0x00000002, 0x0005008E,
+    0x00000011, 0x0000001B, 0x00000019, 0x0000001A, 0x00080058, 0x00000007,
+    0x0000001C, 0x0000000E, 0x00000013, 0x00000004, 0x00000017, 0x0000001B,
+    0x0003003E, 0x00000009, 0x0000001C, 0x000100FD, 0x00010038,
+};
+
+/// A sample of layer 2 of a 2D array with a gradient, glslc -O
+/// (`-fshader-stage=frag`), 160 words: two floats each derivative
+/// (since 1.183).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2DArray tex;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = textureGrad(tex, vec3(color.xy, 2.0), color.zw, color.wz);
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 30
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %16
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %13 Binding 0
+///                OpDecorate %13 DescriptorSet 0
+///                OpDecorate %16 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 2D 0 1 0 1 Unknown
+///          %11 = OpTypeSampledImage %10
+///          %12 = OpTypePointer UniformConstant %11
+///          %13 = OpVariable %12 UniformConstant
+///          %15 = OpTypePointer Input %7
+///          %16 = OpVariable %15 Input
+///          %17 = OpTypeVector %6 2
+///          %20 = OpConstant %6 2
+///          %21 = OpTypeVector %6 3
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpLoad %11 %13
+///          %18 = OpLoad %7 %16
+///          %22 = OpCompositeExtract %6 %18 0
+///          %23 = OpCompositeExtract %6 %18 1
+///          %24 = OpCompositeConstruct %21 %22 %23 %20
+///          %26 = OpVectorShuffle %17 %18 %18 2 3
+///          %28 = OpVectorShuffle %17 %18 %18 3 2
+///          %29 = OpImageSampleExplicitLod %7 %14 %24 Grad %26 %28
+///                OpStore %9 %29
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_grad_layers = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001E, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000010, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000010, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000001,
+    0x00000000, 0x00000001, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040020, 0x0000000F,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000F, 0x00000010, 0x00000001,
+    0x00040017, 0x00000011, 0x00000006, 0x00000002, 0x0004002B, 0x00000006,
+    0x00000014, 0x40000000, 0x00040017, 0x00000015, 0x00000006, 0x00000003,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003D, 0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D,
+    0x00000007, 0x00000012, 0x00000010, 0x00050051, 0x00000006, 0x00000016,
+    0x00000012, 0x00000000, 0x00050051, 0x00000006, 0x00000017, 0x00000012,
+    0x00000001, 0x00060050, 0x00000015, 0x00000018, 0x00000016, 0x00000017,
+    0x00000014, 0x0007004F, 0x00000011, 0x0000001A, 0x00000012, 0x00000012,
+    0x00000002, 0x00000003, 0x0007004F, 0x00000011, 0x0000001C, 0x00000012,
+    0x00000012, 0x00000003, 0x00000002, 0x00080058, 0x00000007, 0x0000001D,
+    0x0000000E, 0x00000018, 0x00000004, 0x0000001A, 0x0000001C, 0x0003003E,
+    0x00000009, 0x0000001D, 0x000100FD, 0x00010038,
+};
+
+/// A sample of a 3D texture with a gradient, glslc -O
+/// (`-fshader-stage=frag`), 147 words: three floats each derivative
+/// (since 1.183).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler3D tex;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = textureGrad(tex, color.xyz, color.xyz * 0.5, color.zyx);
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 27
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %16
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %13 Binding 0
+///                OpDecorate %13 DescriptorSet 0
+///                OpDecorate %16 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 3D 0 0 0 1 Unknown
+///          %11 = OpTypeSampledImage %10
+///          %12 = OpTypePointer UniformConstant %11
+///          %13 = OpVariable %12 UniformConstant
+///          %15 = OpTypePointer Input %7
+///          %16 = OpVariable %15 Input
+///          %17 = OpTypeVector %6 3
+///          %22 = OpConstant %6 0.5
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpLoad %11 %13
+///          %18 = OpLoad %7 %16
+///          %19 = OpVectorShuffle %17 %18 %18 0 1 2
+///          %23 = OpVectorTimesScalar %17 %19 %22
+///          %25 = OpVectorShuffle %17 %18 %18 2 1 0
+///          %26 = OpImageSampleExplicitLod %7 %14 %19 Grad %23 %25
+///                OpStore %9 %26
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_grad_volume = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001B, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000010, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000010, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000002,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040020, 0x0000000F,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000F, 0x00000010, 0x00000001,
+    0x00040017, 0x00000011, 0x00000006, 0x00000003, 0x0004002B, 0x00000006,
+    0x00000016, 0x3F000000, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000E,
+    0x0000000D, 0x0004003D, 0x00000007, 0x00000012, 0x00000010, 0x0008004F,
+    0x00000011, 0x00000013, 0x00000012, 0x00000012, 0x00000000, 0x00000001,
+    0x00000002, 0x0005008E, 0x00000011, 0x00000017, 0x00000013, 0x00000016,
+    0x0008004F, 0x00000011, 0x00000019, 0x00000012, 0x00000012, 0x00000002,
+    0x00000001, 0x00000000, 0x00080058, 0x00000007, 0x0000001A, 0x0000000E,
+    0x00000013, 0x00000004, 0x00000017, 0x00000019, 0x0003003E, 0x00000009,
+    0x0000001A, 0x000100FD, 0x00010038,
+};
+
+/// A shadow sample of a 2D texture with a gradient, glslc -O
+/// (`-fshader-stage=frag`), 161 words: OpImageSampleDrefExplicitLod with
+/// Grad (since 1.183).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2DShadow tex;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = vec4(textureGrad(tex, color.xyz, color.zw, color.wz));
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 28
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %16
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %13 Binding 0
+///                OpDecorate %13 DescriptorSet 0
+///                OpDecorate %16 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 2D 1 0 0 1 Unknown
+///          %11 = OpTypeSampledImage %10
+///          %12 = OpTypePointer UniformConstant %11
+///          %13 = OpVariable %12 UniformConstant
+///          %15 = OpTypePointer Input %7
+///          %16 = OpVariable %15 Input
+///          %17 = OpTypeVector %6 3
+///          %20 = OpTypeVector %6 2
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpLoad %11 %13
+///          %18 = OpLoad %7 %16
+///          %19 = OpVectorShuffle %17 %18 %18 0 1 2
+///          %22 = OpVectorShuffle %20 %18 %18 2 3
+///          %24 = OpVectorShuffle %20 %18 %18 3 2
+///          %25 = OpCompositeExtract %6 %18 2
+///          %26 = OpImageSampleDrefExplicitLod %6 %14 %19 %25 Grad %22 %24
+///          %27 = OpCompositeConstruct %7 %26 %26 %26 %26
+///                OpStore %9 %27
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_grad_shadow = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001C, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000010, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000010, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000001,
+    0x00000001, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040020, 0x0000000F,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000F, 0x00000010, 0x00000001,
+    0x00040017, 0x00000011, 0x00000006, 0x00000003, 0x00040017, 0x00000014,
+    0x00000006, 0x00000002, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000E,
+    0x0000000D, 0x0004003D, 0x00000007, 0x00000012, 0x00000010, 0x0008004F,
+    0x00000011, 0x00000013, 0x00000012, 0x00000012, 0x00000000, 0x00000001,
+    0x00000002, 0x0007004F, 0x00000014, 0x00000016, 0x00000012, 0x00000012,
+    0x00000002, 0x00000003, 0x0007004F, 0x00000014, 0x00000018, 0x00000012,
+    0x00000012, 0x00000003, 0x00000002, 0x00050051, 0x00000006, 0x00000019,
+    0x00000012, 0x00000002, 0x0009005A, 0x00000006, 0x0000001A, 0x0000000E,
+    0x00000013, 0x00000019, 0x00000004, 0x00000016, 0x00000018, 0x00070050,
+    0x00000007, 0x0000001B, 0x0000001A, 0x0000001A, 0x0000001A, 0x0000001A,
+    0x0003003E, 0x00000009, 0x0000001B, 0x000100FD, 0x00010038,
+};
+
+/// A sample of a 2D texture with a gradient, (1, -2) texels away, glslc
+/// -O (`-fshader-stage=frag`), 165 words: Grad and ConstOffset (since
+/// 1.183).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2D tex;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = textureGradOffset(tex, color.xy, color.zw, color.wz, ivec2(1, -2));
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 30
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %16
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %13 Binding 0
+///                OpDecorate %13 DescriptorSet 0
+///                OpDecorate %16 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 2D 0 0 0 1 Unknown
+///          %11 = OpTypeSampledImage %10
+///          %12 = OpTypePointer UniformConstant %11
+///          %13 = OpVariable %12 UniformConstant
+///          %15 = OpTypePointer Input %7
+///          %16 = OpVariable %15 Input
+///          %17 = OpTypeVector %6 2
+///          %24 = OpTypeInt 32 1
+///          %25 = OpTypeVector %24 2
+///          %26 = OpConstant %24 1
+///          %27 = OpConstant %24 -2
+///          %28 = OpConstantComposite %25 %26 %27
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpLoad %11 %13
+///          %18 = OpLoad %7 %16
+///          %19 = OpVectorShuffle %17 %18 %18 0 1
+///          %21 = OpVectorShuffle %17 %18 %18 2 3
+///          %23 = OpVectorShuffle %17 %18 %18 3 2
+///          %29 = OpImageSampleExplicitLod %7 %14 %19 Grad|ConstOffset %21 %23 %28
+///                OpStore %9 %29
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_grad_offset = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001E, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000010, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000010, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040020, 0x0000000F,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000F, 0x00000010, 0x00000001,
+    0x00040017, 0x00000011, 0x00000006, 0x00000002, 0x00040015, 0x00000018,
+    0x00000020, 0x00000001, 0x00040017, 0x00000019, 0x00000018, 0x00000002,
+    0x0004002B, 0x00000018, 0x0000001A, 0x00000001, 0x0004002B, 0x00000018,
+    0x0000001B, 0xFFFFFFFE, 0x0005002C, 0x00000019, 0x0000001C, 0x0000001A,
+    0x0000001B, 0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003,
+    0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000E, 0x0000000D,
+    0x0004003D, 0x00000007, 0x00000012, 0x00000010, 0x0007004F, 0x00000011,
+    0x00000013, 0x00000012, 0x00000012, 0x00000000, 0x00000001, 0x0007004F,
+    0x00000011, 0x00000015, 0x00000012, 0x00000012, 0x00000002, 0x00000003,
+    0x0007004F, 0x00000011, 0x00000017, 0x00000012, 0x00000012, 0x00000003,
+    0x00000002, 0x00090058, 0x00000007, 0x0000001D, 0x0000000E, 0x00000013,
+    0x0000000C, 0x00000015, 0x00000017, 0x0000001C, 0x0003003E, 0x00000009,
+    0x0000001D, 0x000100FD, 0x00010038,
+};
+
+/// A sample of a cube with a gradient, glslc -O (`-fshader-stage=frag`),
+/// 138 words (since 1.183).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform samplerCube tex;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = textureGrad(tex, color.xyz, color.xyz, color.zyx);
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 25
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %16
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %13 Binding 0
+///                OpDecorate %13 DescriptorSet 0
+///                OpDecorate %16 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 Cube 0 0 0 1 Unknown
+///          %11 = OpTypeSampledImage %10
+///          %12 = OpTypePointer UniformConstant %11
+///          %13 = OpVariable %12 UniformConstant
+///          %15 = OpTypePointer Input %7
+///          %16 = OpVariable %15 Input
+///          %17 = OpTypeVector %6 3
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpLoad %11 %13
+///          %18 = OpLoad %7 %16
+///          %19 = OpVectorShuffle %17 %18 %18 0 1 2
+///          %23 = OpVectorShuffle %17 %18 %18 2 1 0
+///          %24 = OpImageSampleExplicitLod %7 %14 %19 Grad %19 %23
+///                OpStore %9 %24
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_grad_cube = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000019, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000010, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000010, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000003,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040020, 0x0000000F,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000F, 0x00000010, 0x00000001,
+    0x00040017, 0x00000011, 0x00000006, 0x00000003, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D, 0x00000007, 0x00000012,
+    0x00000010, 0x0008004F, 0x00000011, 0x00000013, 0x00000012, 0x00000012,
+    0x00000000, 0x00000001, 0x00000002, 0x0008004F, 0x00000011, 0x00000017,
+    0x00000012, 0x00000012, 0x00000002, 0x00000001, 0x00000000, 0x00080058,
+    0x00000007, 0x00000018, 0x0000000E, 0x00000013, 0x00000004, 0x00000013,
+    0x00000017, 0x0003003E, 0x00000009, 0x00000018, 0x000100FD, 0x00010038,
+};
+
+/// The sum of two samples of one 2D texture, each with a gradient of its
+/// own, glslc -O (`-fshader-stage=frag`), 176 words (since 1.183).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2D tex;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = textureGrad(tex, color.xy, color.zw, color.wz) + textureGrad(tex, color.yx, color.wz * 2.0, color.zw);
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 36
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %16
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %13 Binding 0
+///                OpDecorate %13 DescriptorSet 0
+///                OpDecorate %16 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 2D 0 0 0 1 Unknown
+///          %11 = OpTypeSampledImage %10
+///          %12 = OpTypePointer UniformConstant %11
+///          %13 = OpVariable %12 UniformConstant
+///          %15 = OpTypePointer Input %7
+///          %16 = OpVariable %15 Input
+///          %17 = OpTypeVector %6 2
+///          %30 = OpConstant %6 2
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpLoad %11 %13
+///          %18 = OpLoad %7 %16
+///          %19 = OpVectorShuffle %17 %18 %18 0 1
+///          %21 = OpVectorShuffle %17 %18 %18 2 3
+///          %23 = OpVectorShuffle %17 %18 %18 3 2
+///          %24 = OpImageSampleExplicitLod %7 %14 %19 Grad %21 %23
+///          %25 = OpLoad %11 %13
+///          %27 = OpVectorShuffle %17 %18 %18 1 0
+///          %31 = OpVectorTimesScalar %17 %23 %30
+///          %34 = OpImageSampleExplicitLod %7 %25 %27 Grad %31 %21
+///          %35 = OpFAdd %7 %24 %34
+///                OpStore %9 %35
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_grad_twice = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000024, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000010, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000010, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040020, 0x0000000F,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000F, 0x00000010, 0x00000001,
+    0x00040017, 0x00000011, 0x00000006, 0x00000002, 0x0004002B, 0x00000006,
+    0x0000001E, 0x40000000, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000E,
+    0x0000000D, 0x0004003D, 0x00000007, 0x00000012, 0x00000010, 0x0007004F,
+    0x00000011, 0x00000013, 0x00000012, 0x00000012, 0x00000000, 0x00000001,
+    0x0007004F, 0x00000011, 0x00000015, 0x00000012, 0x00000012, 0x00000002,
+    0x00000003, 0x0007004F, 0x00000011, 0x00000017, 0x00000012, 0x00000012,
+    0x00000003, 0x00000002, 0x00080058, 0x00000007, 0x00000018, 0x0000000E,
+    0x00000013, 0x00000004, 0x00000015, 0x00000017, 0x0004003D, 0x0000000B,
+    0x00000019, 0x0000000D, 0x0007004F, 0x00000011, 0x0000001B, 0x00000012,
+    0x00000012, 0x00000001, 0x00000000, 0x0005008E, 0x00000011, 0x0000001F,
+    0x00000017, 0x0000001E, 0x00080058, 0x00000007, 0x00000022, 0x00000019,
+    0x0000001B, 0x00000004, 0x0000001F, 0x00000015, 0x00050081, 0x00000007,
+    0x00000023, 0x00000018, 0x00000022, 0x0003003E, 0x00000009, 0x00000023,
+    0x000100FD, 0x00010038,
+};
