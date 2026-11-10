@@ -6080,4 +6080,49 @@ pub const LIBRARY_VERSION = 1;
 /// first and third negated, on the +z instance and so of the -z face,
 /// the nearest, is 0 of 230400 pixels apart. FacetProbe passes its 890
 /// checks.
-pub const LIBRARY_REVISION = 186;
+///
+/// 187: **The 32-bit integers' divisions and remainders, on the V3D
+/// (docs/facet-vulkan10.md item 59).** OpUDiv, OpSDiv, OpUMod, OpSRem and
+/// OpSMod are vtn's udiv, idiv, umod, irem and imod (vtn_alu.c:304-310),
+/// a float each once nir_lower_alu_to_scalar has run
+/// (v3dv_pipeline.c:404), and nir_lower_idiv's lowering of them is ported
+/// (vir.c:2019-2022; nir_lower_idiv.c:32-94): the SFU's RECIP of the
+/// divisor's u2f32 made an integer of 2^32 less 512 times it, one Newton
+/// step of it, the quotient the high word of the dividend times it, and
+/// two steps that each take the divisor off the remainder where it is
+/// still as large. A signed one is of the magnitudes, the quotient of the
+/// sign of the operands' XOR, the remainder of the dividend's, and an
+/// imod's the divisor added where the signs differ and it is not 0. Each
+/// umul_high is nir_lower_alu's (`lower_mul_high`, v3dv_pipeline.c:201;
+/// nir_lower_alu.c:119-158), Hacker's Delight's four 16-bit products of
+/// the words' halves, each 32-bit product an UMUL24 and a MULTOP. The
+/// constants the lowering is of are made once for an instruction's
+/// floats, which nir_opt_cse makes of NIR's anyway: the tables of 128
+/// steps hold a vector of two divisions, and not one of four. A divisor
+/// that is a constant, or of whose floats one is, is nir_opt_idiv_const's
+/// first (vir.c:2018), which is not ported: refused.
+///
+/// Tests: the V3D's 303, four new, with a host evaluation of the integer
+/// steps. 8 new modules of glslc's: glslc_udiv, _idiv, _umod and _imod,
+/// and an OpSRem of glslc_imod's, each ten 32-bit products and one RECIP,
+/// worked out on the host for every pair of -100 to 100, or 0 to 100;
+/// glslc_udiv_swapped and glslc_udiv_vector, two divisions each, worked
+/// out the same; glslc_idiv_constant and glslc_udiv_part refused. The
+/// lowering of two words is worked out for 19 values each way of every
+/// sign and size, the most negative by -1 wrapping. Of 58 mutations of
+/// the port, 57 fail the tests: the first numerator divided for every
+/// float did only once a vector of two divisions fitted the tables, and
+/// two only in variants that compile. The 58th, a lone float's result
+/// made a construct of one, as the OpSelect reading does not, is the same
+/// program for glslc_udiv, _idiv and _imod.
+///
+/// On the CM5 FacetBoth's 266 cases are each as they were at 1.186, and
+/// its two new ones, glslc's unsigned division and its signed modulus of
+/// two integers of the colour that span the word, each program checking
+/// its result against its own operands, are 8 of 230400 pixels apart:
+/// the 8 at the triangles' edge every case of their geometry has.
+/// Compared byte for byte, the quotient was 349 pixels apart where the
+/// two devices' interpolation makes an integer one apart, each quotient
+/// right for its own: at 120,69 the cores' 210 and 41, the V3D's 210 and
+/// 40. FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 187;

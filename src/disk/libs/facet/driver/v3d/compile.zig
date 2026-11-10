@@ -430,96 +430,96 @@ pub const profile: spirv.Profile = .{
     // ImageQuery, which an image's size and levels need (since 1.181).
     .capabilities = &.{ .shader, .image_query },
     .opcodes = &.{
-        .capability,                     .memory_model,         .entry_point,                    .execution_mode,
-        .decorate,                       .type_void,            .type_float,                     .type_vector,
-        .type_pointer,                   .type_function,        .constant,                       .constant_composite,
-        .variable,                       .function,             .label,                          .load,
+        .capability,                   .memory_model,                   .entry_point,                    .execution_mode,
+        .decorate,                     .type_void,                      .type_float,                     .type_vector,
+        .type_pointer,                 .type_function,                  .constant,                       .constant_composite,
+        .variable,                     .function,                       .label,                          .load,
         // What a real toolchain writes around the instructions: an
         // extended set imported but not used (`ext_inst` is absent, so a
         // call into one is still refused) and the names and source
         // strings glslc always emits. None of them is computation.
-        .ext_inst_import,                .source,               .source_extension,               .name,
-        .member_name,                    .store,                .composite_extract,              .composite_construct,
-        .f_add,                          .f_mul,                .vector_times_scalar,            .returns,
-        .function_end,                   .type_image,           .type_sampled_image,             .image_sample_implicit_lod,
+        .ext_inst_import,              .source,                         .source_extension,               .name,
+        .member_name,                  .store,                          .composite_extract,              .composite_construct,
+        .f_add,                        .f_mul,                          .vector_times_scalar,            .returns,
+        .function_end,                 .type_image,                     .type_sampled_image,             .image_sample_implicit_lod,
         // A pixel dropped where a float is less or greater than another,
         // in the one shape a conditional discard has in SPIR-V: the
         // comparison, a selection whose true block is `OpKill` alone, and
         // the merge block the body goes on in (since 1.139). An `OpKill`
         // in any other place is refused by name, `Error.Discards`.
-        .kill,                           .type_bool,            .f_ord_less_than,                .f_ord_greater_than,
-        .selection_merge,                .branch_conditional,
+        .kill,                         .type_bool,                      .f_ord_less_than,                .f_ord_greater_than,
+        .selection_merge,              .branch_conditional,
         // The integer type a constant texel offset is declared with,
         // first taken so that such a module was refused for the operand
         // (`Error.Operands`) and since 1.180 read as the offset P2 carries
         // (`profile.image_operands`). Since 1.138 an integer is also what
         // an access chain into the push constants is indexed with, and
         // since 1.165 a value of its own.
-          .type_int,
+                    .type_int,
         // The push constants: a block of floats and vectors of them, one
         // member read at a time through an access chain whose indexes
         // are constants (since 1.138); then arrays, structs and matrices
         // in a block, and the matrix arithmetic vtn lowers to columns of
         // vector arithmetic (since 1.161).
                               .type_struct,
-        .member_decorate,                .access_chain,         .type_array,                     .type_matrix,
-        .matrix_times_vector,            .vector_times_matrix,  .matrix_times_matrix,            .matrix_times_scalar,
-        .transpose,                      .outer_product,
+        .member_decorate,              .access_chain,                   .type_array,                     .type_matrix,
+        .matrix_times_vector,          .vector_times_matrix,            .matrix_times_matrix,            .matrix_times_scalar,
+        .transpose,                    .outer_product,
         // A depth compared with a reference, the TMU told it through
         // TMUDREF (v3d_tex.c:155-157; since 1.143).
-               .image_sample_dref_implicit_lod,
+                         .image_sample_dref_implicit_lod,
         // The float arithmetic, a call of GLSL.std.450 among it, lowered
         // as v3dv's NIR options have Mesa lower it; and a vector's floats
         // named by a shuffle, or a varying's one float by an access chain,
         // which compute nothing (since 1.152).
         .f_sub,
-        .f_negate,                       .f_div,                .dot,                            .ext_inst,
+        .f_negate,                     .f_div,                          .dot,                            .ext_inst,
         // The shuffle, then the other comparisons glslc writes and a float
         // chosen by one (since 1.153), then a selection's arms, their
         // values chosen at its merge and one float of a vector replaced
         // (since 1.154).
-        .vector_shuffle,                 .f_unord_not_equal,    .f_ord_less_than_equal,          .f_ord_greater_than_equal,
-        .select,                         .f_ord_equal,          .composite_insert,               .phi,
+        .vector_shuffle,               .f_unord_not_equal,              .f_ord_less_than_equal,          .f_ord_greater_than_equal,
+        .select,                       .f_ord_equal,                    .composite_insert,               .phi,
         .branch,
         // Then bools of bools and the unordered comparisons, as glslc
         // writes &&, || and ! (since 1.157).
-                                .logical_and,          .f_unord_greater_than_equal,     .f_unord_greater_than,
-        .logical_or,                     .f_unord_less_than,    .f_unord_less_than_equal,        .logical_not,
+                              .logical_and,                    .f_unord_greater_than_equal,     .f_unord_greater_than,
+        .logical_or,                   .f_unord_less_than,              .f_unord_less_than_equal,        .logical_not,
         // A storage buffer's last member, read at constant indexes
         // (since 1.164).
         .type_runtime_array,
         // 32-bit integers: their arithmetic, bits and comparisons, and
         // their conversions to and from floats, as ntq_emit_alu emits
-        // them (since 1.165). The divisions are not: v3dv has NIR lower
-        // them to a sequence of float and integer steps
-        // (nir_lower_idiv), which is not ported.
-                    .i_add,                .i_sub,                          .i_mul,
-        .s_negate,                       .shift_left_logical,   .shift_right_logical,            .shift_right_arithmetic,
-        .bitwise_and,                    .bitwise_or,           .bitwise_xor,                    .not,
-        .bitcast,                        .convert_f_to_s,       .convert_f_to_u,                 .convert_s_to_f,
-        .convert_u_to_f,                 .i_equal,              .i_not_equal,                    .s_less_than,
-        .s_less_than_equal,              .s_greater_than,       .s_greater_than_equal,           .u_less_than,
-        .u_less_than_equal,              .u_greater_than,       .u_greater_than_equal,           .logical_equal,
-        .logical_not_equal,
+        // them (since 1.165). The divisions and remainders v3d has
+        // nir_lower_idiv lower to a sequence of float and integer steps
+        // (since 1.187).
+                  .i_add,                          .i_sub,                          .i_mul,
+        .u_div,                        .s_div,                          .u_mod,                          .s_rem,
+        .s_mod,                        .s_negate,                       .shift_left_logical,             .shift_right_logical,
+        .shift_right_arithmetic,       .bitwise_and,                    .bitwise_or,                     .bitwise_xor,
+        .not,                          .bitcast,                        .convert_f_to_s,                 .convert_f_to_u,
+        .convert_s_to_f,               .convert_u_to_f,                 .i_equal,                        .i_not_equal,
+        .s_less_than,                  .s_less_than_equal,              .s_greater_than,                 .s_greater_than_equal,
+        .u_less_than,                  .u_less_than_equal,              .u_greater_than,                 .u_greater_than_equal,
+        .logical_equal,                .logical_not_equal,
         // A storage buffer's atomics, as vtn makes them ssbo_atomic and
         // ssbo_atomic_swap, a load_ssbo and a store_ssbo, and the barriers
         // their memory semantics and OpMemoryBarrier ask for
         // (vtn_handle_atomics, spirv_to_nir.c:4288-4480; since 1.169).
-                     .memory_barrier,       .atomic_load,                    .atomic_store,
-        .atomic_exchange,                .atomic_i_increment,   .atomic_compare_exchange,        .atomic_compare_exchange_weak,
-        .atomic_i_decrement,             .atomic_i_add,         .atomic_i_sub,                   .atomic_s_min,
-        .atomic_u_min,                   .atomic_s_max,         .atomic_u_max,                   .atomic_and,
-        .atomic_or,                      .atomic_xor,
+                     .memory_barrier,                 .atomic_load,
+        .atomic_store,                 .atomic_exchange,                .atomic_i_increment,             .atomic_compare_exchange,
+        .atomic_compare_exchange_weak, .atomic_i_decrement,             .atomic_i_add,                   .atomic_i_sub,
+        .atomic_s_min,                 .atomic_u_min,                   .atomic_s_max,                   .atomic_u_max,
+        .atomic_and,                   .atomic_or,                      .atomic_xor,
         // A loop, unrolled as nir_opt_loop_unroll unrolls it (since
         // 1.172).
-                  .loop_merge,
+                            .loop_merge,
         // A sample at a level the program gives, NIR's txl (since 1.180);
         // and a sampled image's image, its size at a level and its levels,
         // NIR's txs and query_levels (since 1.181); and a texel of the
         // image at a level, NIR's txf (since 1.182).
-                            .image,
-        .image_fetch,                    .image_query_size_lod, .image_query_levels,             .image_sample_explicit_lod,
-        .image_sample_dref_explicit_lod,
+        .image,                        .image_fetch,                    .image_query_size_lod,           .image_query_levels,
+        .image_sample_explicit_lod,    .image_sample_dref_explicit_lod,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform },
     .image_dims = &.{ .dim_2d, .dim_3d, .cube },
@@ -6164,6 +6164,10 @@ fn selectOf(condition: u16, yes: u16, no: u16) Step {
     return made;
 }
 
+fn compareOf(which: Comparison, a: u16, b: u16) Step {
+    return .{ .tag = .compare, .kind = .f32x1, .a = a, .b = b, .at = @intFromEnum(which) };
+}
+
 fn logicOf(which: Logic, a: u16, b: u16) Step {
     return .{ .tag = .logic, .kind = .f32x1, .a = a, .b = b, .at = @intFromEnum(which) };
 }
@@ -7385,6 +7389,38 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             };
             work.step_of[id] = try integerOf(work, op, a, b);
         },
+        .u_div, .s_div, .u_mod, .s_rem, .s_mod => {
+            // ResultType, Result, two integers or vectors of them: vtn's
+            // udiv, idiv, umod, irem and imod (vtn_alu.c:304-310), each
+            // float an instruction of its own once nir_lower_alu_to_scalar
+            // has run (v3dv_pipeline.c:404), which nir_lower_idiv lowers
+            // (vir.c:2019-2022; `dividedOf`). A divisor that is a constant
+            // is nir_opt_idiv_const's first (vir.c:2018), which is not
+            // ported: refused (since 1.187).
+            if (operands.len != 4) return Error.Body;
+            const type_id = try idOf(operands[0]);
+            if (!isIntegerType(work, type_id)) return Error.Type;
+            const kind = try kindOf(work, type_id);
+            const id = try idOf(operands[1]);
+            const a = try operand(work, operands[2], kind);
+            const b = try operand(work, operands[3], kind);
+            const op: Division = switch (instruction.op) {
+                .u_div => .udiv,
+                .s_div => .idiv,
+                .u_mod => .umod,
+                .s_rem => .irem,
+                else => .imod,
+            };
+            for (0..kind.parts()) |k| {
+                if (floatBits(work, partOf(work, b, @intCast(k))) != null) return Error.Body;
+            }
+            const words = try DivisionWords.of(work, op);
+            var made = Step{ .tag = .construct, .kind = kind };
+            for (0..kind.parts()) |k| {
+                made.from[k] = try dividedOf(work, op, try floatStep(work, partOf(work, a, @intCast(k))), try floatStep(work, partOf(work, b, @intCast(k))), words);
+            }
+            work.step_of[id] = if (kind == .f32x1) made.from[0] else try put(work, made);
+        },
         .s_negate, .not => {
             if (operands.len != 3) return Error.Body;
             const type_id = try idOf(operands[0]);
@@ -8348,6 +8384,128 @@ fn unary(work: *Work, tag: Tag, a: u16) Error!u16 {
 fn integerOf(work: *Work, op: Integer, a: u16, b: ?u16) Error!u16 {
     if (try foldedInteger(work, op, a, b)) |constant| return constant;
     return put(work, .{ .tag = .integer, .kind = work.steps[a].kind, .a = a, .b = b orelse 0, .at = @intFromEnum(op) });
+}
+
+/// The divisions and remainders of 32-bit integers nir_lower_idiv lowers
+/// (inst_is_idiv, nir_lower_idiv.c:155-176).
+const Division = enum { udiv, idiv, umod, irem, imod };
+
+/// A float as a step of one, read while the module is: the step itself
+/// where it is one float, else a component of it.
+fn floatStep(work: *Work, of: Float) Error!u16 {
+    if (work.steps[of.step].kind == .f32x1) return of.step;
+    return put(work, .{ .tag = .component, .kind = .f32x1, .a = of.step, .at = of.part });
+}
+
+/// An integer constant of one word.
+fn wordConstant(work: *Work, value: u32) Error!u16 {
+    return immediate(work, @bitCast(value));
+}
+
+/// The constants nir_lower_idiv's lowering is of (its nir_imm_int and
+/// nir_imm_float, nir_lower_idiv.c:32-94, and umul_high's,
+/// nir_lower_alu.c:119-158), made once for all the floats of an
+/// instruction. NIR makes each anew and nir_opt_cse makes them one again;
+/// here the tables would not hold a vector of two divisions while they
+/// were apart (since 1.187).
+const DivisionWords = struct {
+    /// 2^32 less 512, the float the reciprocal is scaled by.
+    scale: u16,
+    /// The 1 a refinement step adds to the quotient.
+    one: u16,
+    /// umul_high's 16, the shift of a word's high half.
+    shift: u16,
+    /// umul_high's 0xFFFF, the mask of a word's low half.
+    mask: u16,
+    /// The 0 the signs are compared with, of a signed operation alone.
+    zero: ?u16,
+
+    fn of(work: *Work, op: Division) Error!DivisionWords {
+        return .{
+            .scale = try immediate(work, 4294966784.0),
+            .one = try wordConstant(work, 1),
+            .shift = try wordConstant(work, 16),
+            .mask = try wordConstant(work, 0xFFFF),
+            .zero = if (op == .udiv or op == .umod) null else try wordConstant(work, 0),
+        };
+    }
+};
+
+/// nir_lower_idiv's lowering of a 32-bit division or remainder of one
+/// float each (lower_idiv, nir_lower_idiv.c:137-153): an unsigned one
+/// emit_udiv's (:32-65), a signed one emit_idiv's of the magnitudes
+/// (:69-94). The floats it builds are nir_fp_exact (:145), which no float
+/// rule here would touch anyway: an frcp of a u2f32 and an fmul of it by
+/// a constant of no rule's (since 1.187).
+fn dividedOf(work: *Work, op: Division, numer: u16, denom: u16, words: DivisionWords) Error!u16 {
+    switch (op) {
+        .udiv, .umod => return unsignedDivided(work, numer, denom, op == .umod, words),
+        else => {},
+    }
+    const zero = words.zero.?;
+    const lhs = try integerOf(work, .iabs, numer, null);
+    const rhs = try integerOf(work, .iabs, denom, null);
+    if (op == .idiv) {
+        // (numer < 0) ^ (denom < 0), the sign bit of their XOR.
+        const d_sign = try put(work, compareOf(.int_less, try integerOf(work, .ixor, numer, denom), zero));
+        const res = try unsignedDivided(work, lhs, rhs, false, words);
+        return put(work, selectOf(d_sign, try integerOf(work, .ineg, res, null), res));
+    }
+    const lh_sign = try put(work, compareOf(.int_less, numer, zero));
+    const rh_sign = try put(work, compareOf(.int_less, denom, zero));
+    var res = try unsignedDivided(work, lhs, rhs, true, words);
+    res = try put(work, selectOf(lh_sign, try integerOf(work, .ineg, res, null), res));
+    if (op == .imod) {
+        var cond = try put(work, compareOf(.int_equal, res, zero));
+        cond = try put(work, logicOf(.ior, try put(work, compareOf(.int_equal, lh_sign, rh_sign)), cond));
+        res = try put(work, selectOf(cond, res, try integerOf(work, .iadd, res, denom)));
+    }
+    return res;
+}
+
+/// emit_udiv (nir_lower_idiv.c:32-65): the reciprocal of the divisor made
+/// an integer of 2^32 less 512 times it, one Newton step of it, the
+/// quotient the high word of the dividend times it, and two steps that
+/// each take the divisor off the remainder where it is still as large;
+/// the quotient, or with `modulo` the remainder.
+fn unsignedDivided(work: *Work, numer: u16, denom: u16, modulo: bool, words: DivisionWords) Error!u16 {
+    var rcp = try unary(work, .recip, try integerOf(work, .u2f32, denom, null));
+    rcp = try integerOf(work, .f2u32, try binary(work, .mul, rcp, words.scale), null);
+    const neg_rcp_times_denom = try integerOf(work, .imul, rcp, try integerOf(work, .ineg, denom, null));
+    rcp = try integerOf(work, .iadd, rcp, try mulHigh(work, rcp, neg_rcp_times_denom, words));
+    // An estimate of the quotient and the remainder, then two steps.
+    var quotient = try mulHigh(work, numer, rcp, words);
+    const num_s_remainder = try integerOf(work, .imul, quotient, denom);
+    var remainder = try integerOf(work, .isub, numer, num_s_remainder);
+    var remainder_ge_den = try put(work, compareOf(.uint_greater_equal, remainder, denom));
+    if (!modulo) quotient = try put(work, selectOf(remainder_ge_den, try integerOf(work, .iadd, quotient, words.one), quotient));
+    remainder = try put(work, selectOf(remainder_ge_den, try integerOf(work, .isub, remainder, denom), remainder));
+    remainder_ge_den = try put(work, compareOf(.uint_greater_equal, remainder, denom));
+    if (modulo) return put(work, selectOf(remainder_ge_den, try integerOf(work, .isub, remainder, denom), remainder));
+    return put(work, selectOf(remainder_ge_den, try integerOf(work, .iadd, quotient, words.one), quotient));
+}
+
+/// The umul_high nir_lower_alu makes four 16-bit products of, v3d asking
+/// it to (`lower_mul_high`, v3dv_pipeline.c:201): Hacker's Delight's
+/// Figure 8-2 of the two words' halves (nir_lower_alu.c:119-158), the
+/// unsigned one's shifts each a ushr.
+fn mulHigh(work: *Work, src0: u16, src1: u16, words: DivisionWords) Error!u16 {
+    const cshift = words.shift;
+    const cmask = words.mask;
+    const src0l = try integerOf(work, .iand, src0, cmask);
+    const src1l = try integerOf(work, .iand, src1, cmask);
+    const src0h = try integerOf(work, .ushr, src0, cshift);
+    const src1h = try integerOf(work, .ushr, src1, cshift);
+    const lo = try integerOf(work, .imul, src0l, src1l);
+    const m1 = try integerOf(work, .imul, src0l, src1h);
+    const m2 = try integerOf(work, .imul, src0h, src1l);
+    var hi = try integerOf(work, .imul, src0h, src1h);
+    const t = try integerOf(work, .iadd, m2, try integerOf(work, .ushr, lo, cshift));
+    var w1 = try integerOf(work, .iand, t, cmask);
+    const w2 = try integerOf(work, .ushr, t, cshift);
+    w1 = try integerOf(work, .iadd, m1, w1);
+    hi = try integerOf(work, .iadd, hi, try integerOf(work, .iadd, try integerOf(work, .ushr, w1, cshift), w2));
+    return hi;
 }
 
 /// nir_opt_constant_folding of an integer operation whose operands are
@@ -11809,6 +11967,133 @@ test "an fabs of an fneg is the fabs of what it negates, a float or a vector at 
     };
 }
 
+/// glslc_imod's OpSMod made OpSRem, which glslc makes of no GLSL.
+const glslc_irem = reopcoded(&reference.glslc_imod, .s_mod, 0, .s_rem);
+
+/// An integer a quarter off, away from zero: what a float of the colour
+/// is made, scaled, for the conversion towards zero to give the integer.
+fn quarterOff(x: i32) f32 {
+    return @as(f32, @floatFromInt(x)) + if (x < 0) @as(f32, -0.25) else 0.25;
+}
+
+test "a 32-bit division or remainder is nir_lower_idiv's: a Newton step of the reciprocal, the high words of four 16-bit products, two steps of the remainder, worked out on the host for every pair the colour gives" {
+    // emit_udiv and emit_idiv (nir_lower_idiv.c:32-94; vir.c:2019-2022)
+    // and the umul_high nir_lower_alu lowers (nir_lower_alu.c:119-158;
+    // `lower_mul_high`, v3dv_pipeline.c:201; since 1.187).
+    const cases = .{
+        .{ &reference.glslc_udiv, Division.udiv },
+        .{ &reference.glslc_umod, Division.umod },
+        .{ &reference.glslc_idiv, Division.idiv },
+        .{ &reference.glslc_imod, Division.imod },
+        .{ &glslc_irem, Division.irem },
+    };
+    inline for (cases) |case| {
+        var work: Work = .{};
+        const code = try throughMesa(&work, case[0]);
+        // Ten 32-bit multiplies, each MULTOP and UMUL24 (vir_UMUL): four
+        // in each umul_high, the reciprocal's times the negated divisor,
+        // and the quotient's times the divisor.
+        try testing.expectEqual(@as(usize, 10), countOf(code, "umul24 "));
+        try testing.expectEqual(@as(usize, 10), countOf(code, "multop "));
+        try testing.expectEqual(@as(usize, 1), countOf(code, "recip "));
+        const signed = case[1] == .idiv or case[1] == .imod or case[1] == .irem;
+        const low: i32 = if (signed) -100 else 0;
+        var n: i32 = low;
+        while (n <= 100) : (n += 1) {
+            var d: i32 = low;
+            while (d <= 100) : (d += 1) {
+                if (d == 0) continue;
+                const color: [4]f32 = if (signed)
+                    .{ (quarterOff(n) + 100.0) / 200.0, (quarterOff(d) + 100.0) / 200.0, 0, 0 }
+                else
+                    .{ quarterOff(n) / 100.0, quarterOff(d) / 100.0, 0, 0 };
+                const x: f32 = if (signed) color[0] * 200.0 - 100.0 else color[0] * 100.0;
+                const y: f32 = if (signed) color[1] * 200.0 - 100.0 else color[1] * 100.0;
+                const numer: i32 = @intFromFloat(x);
+                const denom: i32 = @intFromFloat(y);
+                if (denom == 0) continue;
+                const expected: i32 = switch (case[1]) {
+                    .udiv => @intCast(@as(u32, @intCast(numer)) / @as(u32, @intCast(denom))),
+                    .umod => @intCast(@as(u32, @intCast(numer)) % @as(u32, @intCast(denom))),
+                    .idiv => @divTrunc(numer, denom),
+                    .irem => @rem(numer, denom),
+                    .imod => @mod(numer, denom),
+                };
+                const found = evaluatedOf(&work, work.stored, color, 0)[0];
+                try testing.expectEqual(@as(f32, @floatFromInt(expected)), found);
+            }
+        }
+    }
+}
+
+test "nir_lower_idiv's lowering of two words is the quotient or remainder of every sign and size, the largest and the most negative too" {
+    // dividedOf of two components of the varying, its floats the
+    // integers' bits, worked out on the host with an exact reciprocal:
+    // the integer arithmetic of emit_udiv and emit_idiv alone
+    // (nir_lower_idiv.c:32-94; since 1.187). INT_MIN over -1 wraps, as
+    // NIR's idiv of it does.
+    const values = [_]u32{ 0, 1, 2, 3, 7, 10, 255, 256, 65535, 65536, 65537, 1 << 24, 0x7FFF_FFFF, 0x8000_0000, 0x8000_0001, 0xFFFF_FFFE, 0xFFFF_FFFF, 123456789, 0xDEAD_BEEF };
+    const ops = [_]Division{ .udiv, .umod, .idiv, .irem, .imod };
+    for (ops) |op| for (values) |numer| for (values) |denom| {
+        if (denom == 0) continue;
+        var work: Work = .{};
+        const varying = try put(&work, .{ .tag = .input, .kind = .f32x4 });
+        const a = try floatStep(&work, partOf(&work, varying, 0));
+        const b = try floatStep(&work, partOf(&work, varying, 1));
+        const result = try dividedOf(&work, op, a, b, try DivisionWords.of(&work, op));
+        const color = [4]f32{ @bitCast(numer), @bitCast(denom), 0, 0 };
+        const found: u32 = @bitCast(evaluatedOf(&work, result, color, 0)[0]);
+        const n: i32 = @bitCast(numer);
+        const d: i32 = @bitCast(denom);
+        const expected: u32 = switch (op) {
+            .udiv => numer / denom,
+            .umod => numer % denom,
+            .idiv => if (n == std.math.minInt(i32) and d == -1) numer else @bitCast(@divTrunc(n, d)),
+            .irem => if (d == -1) 0 else @bitCast(@rem(n, d)),
+            .imod => if (d == -1) 0 else @bitCast(@mod(n, d)),
+        };
+        testing.expectEqual(expected, found) catch |err| {
+            std.debug.print("{s} of {x} and {x}\n", .{ @tagName(op), numer, denom });
+            return err;
+        };
+    };
+}
+
+test "a division of two vectors of two is a lowering a float, of one set of constants: each float its own quotient" {
+    // The OpUDiv of uvec2s nir_lower_alu_to_scalar splits
+    // (v3dv_pipeline.c:404), each float lowered (since 1.187).
+    // glslc_udiv_swapped's v / v.yx, and glslc_udiv_vector's v.xy / v.zw
+    // of a uvec4, its blue and alpha here its green and red.
+    inline for (.{ &reference.glslc_udiv_swapped, &reference.glslc_udiv_vector }) |module| {
+        var work: Work = .{};
+        const code = try throughMesa(&work, module);
+        try testing.expectEqual(@as(usize, 20), countOf(code, "umul24 "));
+        try testing.expectEqual(@as(usize, 2), countOf(code, "recip "));
+        var n: i32 = 1;
+        while (n <= 100) : (n += 1) {
+            var d: i32 = 1;
+            while (d <= 100) : (d += 1) {
+                const color = [4]f32{ quarterOff(n) / 100.0, quarterOff(d) / 100.0, quarterOff(d) / 100.0, quarterOff(n) / 100.0 };
+                const x: u32 = @intFromFloat(color[0] * 100.0);
+                const y: u32 = @intFromFloat(color[1] * 100.0);
+                if (x == 0 or y == 0) continue;
+                const found = evaluatedOf(&work, work.stored, color, 0);
+                try testing.expectEqual(@as(f32, @floatFromInt(x / y)), found[0]);
+                try testing.expectEqual(@as(f32, @floatFromInt(y / x)), found[1]);
+            }
+        }
+    }
+}
+
+test "a division by a constant is nir_opt_idiv_const's, not ported, and refused, of a vector too where one float of the divisor is" {
+    // nir_opt_idiv_const runs first (vir.c:2018), on a divisor that is
+    // a constant (since 1.187).
+    var work: Work = .{};
+    try testing.expectError(Error.Body, throughMesa(&work, &reference.glslc_idiv_constant));
+    // Of a vector, a divisor of whose floats one alone is a constant.
+    try testing.expectError(Error.Body, throughMesa(&work, &reference.glslc_udiv_part));
+}
+
 test "a cube's gradient is lower_gradient_cube_map's level: the face's quotient rule, -1 plus half the LOG of L times L times M, to TMUB and TMUSCM" {
     // nir_lower_tex.c:707-852 of the coordinate
     // nir_normalize_cubemap_coords made (v3dv_pipeline.c:406; since
@@ -11857,41 +12142,91 @@ test "a cube's gradient is lower_gradient_cube_map's level: the face's quotient 
 
 /// The floats a step comes to, worked out on the host for a test: of a
 /// program whose one varying is `color` and whose texture is `width`
-/// texels wide at level 0, as far as a gradient's level reads them. A
-/// bool is 1.0 or 0.0, an integer its bits (since 1.184).
+/// texels wide at level 0, as far as a gradient's level and a division
+/// read them. A bool is 1.0 or 0.0, an integer its bits (since 1.184).
+/// The steps are worked out once each, in the program's order, as a
+/// division reads its values many times over (since 1.187).
 fn evaluatedOf(work: *const Work, at: u16, color: [4]f32, width: i32) [4]f32 {
+    var values: [most_steps]?[4]f32 = @splat(null);
+    for (0..at + 1) |k| values[k] = evaluatedStep(work, &values, @intCast(k), color, width);
+    return values[at] orelse @panic("a step the host does not work out");
+}
+
+/// One step's floats, of the steps before it in `values`: none where
+/// the host has no rule for its tag, which a step read panics on.
+fn evaluatedStep(work: *const Work, values: *const [most_steps]?[4]f32, at: u16, color: [4]f32, width: i32) ?[4]f32 {
     const each = work.steps[at];
     const parts = each.kind.parts();
+    const of = struct {
+        fn read(all: *const [most_steps]?[4]f32, step_at: u16) [4]f32 {
+            return all[step_at] orelse @panic("a step read before it is worked out");
+        }
+    }.read;
     var out: [4]f32 = @splat(0);
     switch (each.tag) {
         .input => out = color,
         .constant => for (0..parts) |k| {
             out[k] = work.pool[each.at + k];
         },
-        .component => out[0] = evaluatedOf(work, each.a, color, width)[each.at],
+        .component => out[0] = of(values, each.a)[each.at],
         .construct => for (0..parts) |k| {
-            out[k] = evaluatedOf(work, each.from[k], color, width)[each.part[k]];
+            out[k] = of(values, each.from[k])[each.part[k]];
         },
         .texture_size => for (0..parts) |k| {
             out[k] = @bitCast(width);
         },
         .integer => {
-            if (each.at != @intFromEnum(Integer.i2f32)) @panic("an integer the level does not read");
-            const x = evaluatedOf(work, each.a, color, width);
-            for (0..parts) |k| out[k] = @floatFromInt(@as(i32, @bitCast(x[k])));
+            const x = of(values, each.a);
+            const op: Integer = @enumFromInt(each.at);
+            const y = if (op.unary()) x else of(values, each.b);
+            const single = !op.unary() and work.steps[each.b].kind == .f32x1;
+            for (0..parts) |k| {
+                const u: u32 = @bitCast(x[k]);
+                const v: u32 = @bitCast(y[if (single) 0 else k]);
+                const i: i32 = @bitCast(u);
+                const j: i32 = @bitCast(v);
+                out[k] = switch (op) {
+                    .i2f32 => @floatFromInt(i),
+                    .u2f32 => @floatFromInt(u),
+                    .f2i32 => @bitCast(std.math.lossyCast(i32, x[k])),
+                    .f2u32 => @bitCast(std.math.lossyCast(u32, x[k])),
+                    // A bool here is 1.0 or 0.0, the V3D's ~0 or 0.
+                    .b2f32 => if (x[k] != 0) 1.0 else 0.0,
+                    else => @bitCast(switch (op) {
+                        .iadd => u +% v,
+                        .isub => u -% v,
+                        .imul => u *% v,
+                        .ineg => 0 -% u,
+                        .iabs => @as(u32, @bitCast(if (i < 0) 0 -% i else i)),
+                        .imin => @as(u32, @bitCast(@min(i, j))),
+                        .imax => @as(u32, @bitCast(@max(i, j))),
+                        .umin => @min(u, v),
+                        .umax => @max(u, v),
+                        .ishl => u << @intCast(v & 31),
+                        .ishr => @as(u32, @bitCast(i >> @intCast(v & 31))),
+                        .ushr => u >> @intCast(v & 31),
+                        .iand => u & v,
+                        .ior => u | v,
+                        .ixor => u ^ v,
+                        .inot => ~u,
+                        else => @panic("an integer operation the host does not work out"),
+                    }),
+                };
+            }
         },
-        .abs, .negate, .recip, .log2 => {
-            const x = evaluatedOf(work, each.a, color, width);
+        .abs, .negate, .recip, .log2, .floor => {
+            const x = of(values, each.a);
             for (0..parts) |k| out[k] = switch (each.tag) {
                 .abs => @abs(x[k]),
                 .negate => -x[k],
                 .recip => 1.0 / x[k],
+                .floor => @floor(x[k]),
                 else => @log2(x[k]),
             };
         },
         .add, .sub, .mul, .max => {
-            const x = evaluatedOf(work, each.a, color, width);
-            const y = evaluatedOf(work, each.b, color, width);
+            const x = of(values, each.a);
+            const y = of(values, each.b);
             const single = work.steps[each.b].kind == .f32x1;
             for (0..parts) |k| {
                 const b = y[if (single) 0 else k];
@@ -11904,8 +12239,10 @@ fn evaluatedOf(work: *const Work, at: u16, color: [4]f32, width: i32) [4]f32 {
             }
         },
         .compare => {
-            const x = evaluatedOf(work, each.a, color, width)[0];
-            const y = evaluatedOf(work, each.b, color, width)[0];
+            const x = of(values, each.a)[0];
+            const y = of(values, each.b)[0];
+            const u: u32 = @bitCast(x);
+            const v: u32 = @bitCast(y);
             const holds = switch (@as(Comparison, @enumFromInt(each.at))) {
                 .less => x < y,
                 .greater => x > y,
@@ -11913,13 +12250,18 @@ fn evaluatedOf(work: *const Work, at: u16, color: [4]f32, width: i32) [4]f32 {
                 .not_equal => x != y,
                 .greater_equal => x >= y,
                 .less_equal => x <= y,
-                else => @panic("an integer comparison the level does not make"),
+                .int_equal => u == v,
+                .int_not_equal => u != v,
+                .int_less => @as(i32, @bitCast(u)) < @as(i32, @bitCast(v)),
+                .int_greater_equal => @as(i32, @bitCast(u)) >= @as(i32, @bitCast(v)),
+                .uint_less => u < v,
+                .uint_greater_equal => u >= v,
             };
             out[0] = if (holds) 1.0 else 0.0;
         },
         .logic => {
-            const x = evaluatedOf(work, each.a, color, width)[0] != 0;
-            const y = evaluatedOf(work, each.b, color, width)[0] != 0;
+            const x = of(values, each.a)[0] != 0;
+            const y = of(values, each.b)[0] != 0;
             out[0] = if (switch (@as(Logic, @enumFromInt(each.at))) {
                 .iand => x and y,
                 .ior => x or y,
@@ -11927,10 +12269,10 @@ fn evaluatedOf(work: *const Work, at: u16, color: [4]f32, width: i32) [4]f32 {
             }) 1.0 else 0.0;
         },
         .select => {
-            const chosen = if (evaluatedOf(work, each.a, color, width)[0] != 0) each.b else each.from[0];
-            out[0] = evaluatedOf(work, chosen, color, width)[0];
+            const chosen = if (of(values, each.a)[0] != 0) each.b else each.from[0];
+            out[0] = of(values, chosen)[0];
         },
-        else => @panic(@tagName(each.tag)),
+        else => return null,
     }
     return out;
 }
@@ -14010,9 +14352,9 @@ test "a 32-bit integer is computed, compared and converted, but no varying, no c
     var work: Work = .{};
     try testing.expectError(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_integers, .type_pointer, 0, 2, 7)));
     try testing.expectError(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_integers, .type_pointer, 5, 2, 7)));
-    // An OpIMul made OpSDiv, which v3dv has nir_lower_idiv lower and
-    // which is not ported: refused as an opcode of no profile.
-    try testing.expectError(Error.Refused, throughMesa(&work, &comptime reopcoded(&reference.glslc_integers, .i_mul, 0, .s_div)));
+    // An OpIMul made OpSDiv of two ivec4s: nir_lower_idiv's four
+    // lowerings are more steps than the tables hold (since 1.187).
+    try testing.expectError(Error.Steps, throughMesa(&work, &comptime reopcoded(&reference.glslc_integers, .i_mul, 0, .s_div)));
 }
 
 /// `words` with the `at`th instruction of `op` made one of `into`, its
