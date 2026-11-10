@@ -2332,6 +2332,29 @@ Results:
 
 Of 28 mutations of the port, 25 fail the tests. The three left guard against what glslc's modules never reach: a constant aggregate in a nested selection, and a chain made before a loop and stored through in it. On the CM5, FacetBoth's 239 cases are each as they were at 1.175, and FacetProbe is 890 of 890.
 
+**Then scratch, the pipeline's spill buffer, and nir_opt_copy_prop_vars, nir_opt_dead_write_vars and nir_remove_dead_variables over what is in scratch**, facet.library 1.177.
+
+- **Scratch.** A variable of the function's own that an access chain reaches at an index the body computes, of more than two elements, is in scratch, as nir_lower_vars_to_scratch moves it (vir.c:2041-2044). It is placed where its first such index is found (nir_lower_scratch.c:155-185, :247-258), in the natural layout of four bytes a float (glsl_types.c:3809-3880), and the module is read again with it there (`Scratch`).
+- **load_scratch and store_scratch.** Each float of a load or a store is one of its own (v3d_size_align_cb, v3d_nir_lower_load_store_bitsize.c:135-143), at the chain's byte offset (nir_build_deref_offset, nir_deref.c:346-380) times V3D_CHANNELS (v3d_nir_lower_scratch.c:31-43). Each is a general TMU access from spill_base (nir_to_vir.c:578-586), which v3d_setup_spill_base works out at the program's start; the scratch bytes for sixteen lanes are added to the spill size (:4997-5000). A load_scratch is divergent (nir_divergence_analysis.c:989), skips the helper invocations (vir.c:1937-1951), and is no CAN_REORDER for nir_opt_cse (nir_intrinsics.py:1429). It keeps a selection's arm a branch, as a store_scratch does (nir_opt_peephole_select.c:109-129).
+- **The copies.** While the variable is still one of derefs, v3d's loop of passes runs nir_opt_copy_prop_vars and nir_opt_dead_write_vars over it (nir_to_vir.c:2249-2250). Each access's deref is a `Path`, compared as nir_compare_deref_paths compares two (nir_deref.c:513-640). An index the body computes counts as the same where nir_opt_cse would make it one SSA value. A load the copies have a value for is that value (nir_opt_copy_prop_vars.c:1124-1229). A store of the value already there is none (:1268-1276). A store takes away the copies it may be of (:1311-1317). Each arm starts from the copies where the selection branched, and its merge keeps none an arm may have stored over (:1531-1566, :966-1001).
+- **Dead writes and dead variables.** A store written over in its block, with no load between that may read it, goes (nir_opt_dead_write_vars.c). A kept selection's arms and merge are blocks of their own; a flattened one is in the block around it. A variable left with no load is dead and goes with its stores (nir_remove_dead_variables.c:66-90, :110-170); what is left is placed without it. All three run as the module is read, because whether an arm is kept is decided at its merge, from what the arm still holds.
+- **The spill buffer.** A pipeline has one for the most any of its programs needs, four shares for each QPU (pipeline_check_spill_size, v3dv_pipeline.c:1669-1708). A draw gives its address and each thread's share (v3dv_uniforms.c:663-672). These are also the two words a program the register allocator spills reads, which was refused before for want of a buffer.
+
+Refused still:
+- two elements or fewer at an index the body computes, which Mesa makes an if-else tree (v3dv_pipeline.c:435-436);
+- a bool in scratch;
+- scratch in a nested arm.
+
+Results:
+- glslc_scratch_table, four vec4s read at a computed index, is 60 words at -O and at -O0: 16 stores and 4 loads.
+- glslc_scratch_reread's acc[0] before the store is the initializer's 0.25, no load.
+- glslc_scratch_copies keeps 5 of its 7 stores and 2 of its 4 loads.
+- glslc_scratch_dead's b is dead, and a is placed at 0.
+- glslc_scratch_twice, an index computed twice at -O0, leaves nothing in scratch.
+- The disassembly is followed register by register. An address in an arm is spill_base, worked out from the thread's index, plus the index shifted by two and then by four.
+
+Of 37 mutations of the port, 37 fail the tests. On the CM5, FacetBoth's 239 cases are each as they were at 1.176, and its new `shipped scratch` has 18 of 230400 pixels apart. The first of them is at 154,70, where 40 other cases also first differ, the plain `triangles` among them. FacetProbe is 890 of 890.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim

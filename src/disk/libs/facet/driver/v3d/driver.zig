@@ -104,6 +104,10 @@ pub const Hardware = struct {
     /// A job faulted or never ended. Nothing more is sent: what comes after
     /// it would be drawn over what it left.
     broken: bool = false,
+    /// Its QPUs, the slices times the QPUs of each: devinfo's qpu_count
+    /// (v3d_device_info.c:74), which a pipeline's spill buffer is made for
+    /// (since 1.177).
+    qpus: u32 = 0,
 };
 
 fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
@@ -470,6 +474,7 @@ fn bringUp(sys: *ExecBase, hardware: *Hardware) bool {
     hardware.gpu = v3d.Gpu.find(sys) orelse return false;
     hardware.gpu.powerUp() catch return false;
     const ident = hardware.gpu.identify();
+    hardware.qpus = ident.slices * ident.qpus_per_slice;
     hardware.space = v3d.Space.open(&hardware.gpu) orelse return false;
     if (!hardware.engine.start(&hardware.gpu, &hardware.space, ident.virtual_bits)) {
         hardware.space.close();
@@ -634,15 +639,33 @@ pub const Shader = struct {
     /// one that Mesa's back end compiles and the draw can run it: the
     /// vertex function is not called then (since 1.163).
     vertex: ?VertexStage = null,
+    /// The spill buffer of its programs, where one spills or keeps an
+    /// array in scratch, and the bytes of it each thread has
+    /// (pipeline->spill, pipeline_check_spill_size, v3dv_pipeline.c:
+    /// 1669-1708; since 1.177).
+    spill: ?Block = null,
+    spill_size_per_thread: u32 = 0,
 
     pub fn stream(made: *const Shader) []const compile.Word {
         return made.uniforms[0..made.uniform_count];
+    }
+
+    /// What the stream's spill words are written as (`_play.streamOf`).
+    pub fn spillWords(made: *const Shader) Spill {
+        const block = made.spill orelse return .{};
+        return .{ .address = block.address, .size_per_thread = made.spill_size_per_thread };
     }
 
     pub fn sampled(made: *const Shader) []const compile.Sampler {
         return made.samplers[0..made.sampler_count];
     }
 };
+
+/// The address of a pipeline's spill buffer and the bytes of it each
+/// thread has, as v3dv writes QUNIFORM_SPILL_OFFSET and
+/// QUNIFORM_SPILL_SIZE_PER_THREAD (v3dv_uniforms.c:663-672); none where
+/// no program of it spills (since 1.177).
+pub const Spill = struct { address: u32 = 0, size_per_thread: u32 = 0 };
 
 /// A vertex shader as v3dv compiles it, twice: the program the renderer
 /// runs, and the coordinate program the binner runs, of the position
@@ -663,6 +686,9 @@ pub const VertexShader = struct {
     program: compile.VertexProgram,
     /// It writes through the TMU, as a spill does (since 1.168).
     tmu_dirty_rcl: bool = false,
+    /// The bytes of the pipeline's spill buffer each thread of it needs
+    /// (`compile.Code.spill_size`; since 1.177).
+    spill_size: u32 = 0,
 
     pub fn stream(made: *const VertexShader) []const compile.Word {
         return made.uniforms[0..made.uniform_count];
@@ -814,8 +840,48 @@ fn compiled(pipeline: *Pipeline) facet.Result {
         .tmu_dirty_rcl = code.tmu_dirty_rcl,
     };
     kept.vertex = vertexStage(pipeline, work, hardware, reads);
+    if (!checkSpillSize(base, hardware, kept, code.spill_size)) {
+        freeShader(base, hardware, kept);
+        letGo(base, hardware);
+        _objects.destroy(sys, kept);
+        return .error_out_of_device_memory;
+    }
     pipeline.driver = kept;
     return .success;
+}
+
+/// pipeline_check_spill_size (v3dv_pipeline.c:1669-1708): a spill buffer
+/// for the most any of the pipeline's programs needs, the fragment
+/// program's `fragment` bytes or a vertex program's. The thread index a
+/// program reads to find its share is (core << 6) | (qpu << 2) | thread,
+/// so even at fewer threads there are four shares for each QPU. False
+/// where there is no memory for it (since 1.177).
+fn checkSpillSize(base: *FacetBase, hardware: *Hardware, kept: *Shader, fragment: u32) bool {
+    var most = fragment;
+    if (kept.vertex) |stage| most = @max(most, @max(stage.vertex.spill_size, stage.coordinate.spill_size));
+    if (most == 0) return true;
+    const total = std.math.mul(u32, 4 * hardware.qpus, most) catch return false;
+    const sys = base.sys_base;
+    sys.ObtainSemaphore(&base.v3d_lock);
+    defer sys.ReleaseSemaphore(&base.v3d_lock);
+    kept.spill = hardware.space.alloc(total) orelse return false;
+    kept.spill_size_per_thread = most;
+    hardware.stale = true;
+    return true;
+}
+
+/// The blocks of `kept`'s programs and of its spill buffer given back.
+fn freeShader(base: *FacetBase, hardware: *Hardware, kept: *Shader) void {
+    const sys = base.sys_base;
+    sys.ObtainSemaphore(&base.v3d_lock);
+    defer sys.ReleaseSemaphore(&base.v3d_lock);
+    hardware.space.free(&kept.block);
+    if (kept.vertex) |*stage| {
+        hardware.space.free(&stage.vertex.block);
+        hardware.space.free(&stage.coordinate.block);
+    }
+    if (kept.spill) |*block| hardware.space.free(block);
+    hardware.stale = true;
 }
 
 /// The pipeline's vertex shader compiled for the QPU and put where the V3D
@@ -859,6 +925,7 @@ fn vertexStage(pipeline: *const Pipeline, work: *compile.Work, hardware: *Hardwa
             .threads = code.?.threads,
             .program = code.?.vertex,
             .tmu_dirty_rcl = code.?.tmu_dirty_rcl,
+            .spill_size = code.?.spill_size,
         };
     }
     return .{ .vertex = made[0], .coordinate = made[1] };
@@ -886,14 +953,7 @@ fn unmakePipeline(pipeline: *Pipeline) callconv(.c) void {
     const base = pipeline.device.base;
     const sys = pipeline.device.sys;
     const hardware: *Hardware = @ptrCast(@alignCast(base.v3d.?));
-    sys.ObtainSemaphore(&base.v3d_lock);
-    hardware.space.free(&kept.block);
-    if (kept.vertex) |*stage| {
-        hardware.space.free(&stage.vertex.block);
-        hardware.space.free(&stage.coordinate.block);
-    }
-    hardware.stale = true;
-    sys.ReleaseSemaphore(&base.v3d_lock);
+    freeShader(base, hardware, kept);
     pipeline.driver = null;
     _objects.destroy(sys, kept);
     letGo(base, hardware);

@@ -137,6 +137,118 @@ pub const most_leaves = 256;
 /// The members the structs a module declares that are no block may have
 /// all together (since 1.176).
 pub const most_struct_members = 64;
+/// The variables of the function's own that may live in scratch memory,
+/// and the bytes of it a program may have: each lane's, of which the
+/// spill buffer holds sixteen for each thread (since 1.177).
+pub const most_scratch_variables = 8;
+pub const most_scratch = 1024;
+
+/// The variables of the function's own an access chain reaches at an
+/// index the body computes, of more elements than
+/// nir_lower_indirect_derefs_to_if_else_trees takes (v3dv_pipeline.c:
+/// 435-436): nir_lower_vars_to_scratch moves each into scratch memory,
+/// every load and store of it a load_scratch and a store_scratch
+/// (vir.c:2041-2044). Each is given its place in the order an index was
+/// first computed into it, as the pass finds them (nir_lower_scratch.c:
+/// 155-185) and places them (:247-258), its bytes the natural layout's
+/// (`scratchFloats`). The walk finds one where it reaches such an index,
+/// and is begun again with it here (`readStage`; since 1.177).
+pub const Scratch = struct {
+    ids: [most_scratch_variables]u16 = undefined,
+    bytes: [most_scratch_variables]u16 = undefined,
+    /// One the program is found to load nothing of, once
+    /// nir_opt_copy_prop_vars has taken what it can: nir_remove_dead_variables
+    /// takes it out, and its stores (nir_remove_dead_variables.c:66-90,
+    /// :110-170), before nir_lower_vars_to_scratch places what is left
+    /// (`deadScratch`). It has no bytes, and its stores are made and then
+    /// dropped (since 1.177).
+    dead: [most_scratch_variables]bool = undefined,
+    count: u32 = 0,
+
+    /// Where the variable `id` is in scratch, or null where it is not.
+    fn placeOf(scratch: *const Scratch, id: u16) ?u16 {
+        var at: u16 = 0;
+        for (scratch.ids[0..scratch.count], scratch.bytes[0..scratch.count], scratch.dead[0..scratch.count]) |each, bytes, dead| {
+            if (each == id) return if (dead) 0 else at;
+            if (!dead) at += bytes;
+        }
+        return null;
+    }
+
+    /// Which of the variables `id` is.
+    fn indexOf(scratch: *const Scratch, id: u16) ?u8 {
+        for (scratch.ids[0..scratch.count], 0..) |each, k| {
+            if (each == id) return @intCast(k);
+        }
+        return null;
+    }
+
+    fn size(scratch: *const Scratch) u32 {
+        var bytes: u32 = 0;
+        for (scratch.bytes[0..scratch.count], scratch.dead[0..scratch.count]) |each, dead| {
+            if (!dead) bytes += each;
+        }
+        return bytes;
+    }
+
+    fn same(scratch: *const Scratch, other: *const Scratch) bool {
+        if (scratch.count != other.count) return false;
+        for (0..scratch.count) |k| {
+            if (scratch.ids[k] != other.ids[k] or scratch.dead[k] != other.dead[k]) return false;
+        }
+        return true;
+    }
+};
+
+/// The levels a deref of a float in scratch may have below its variable.
+pub const most_levels = 8;
+/// The scratch pointers a program may make.
+pub const most_pointer_paths = 64;
+
+/// A deref of one float of a variable in scratch, as
+/// nir_opt_copy_prop_vars and nir_opt_dead_write_vars compare two
+/// (`comparePaths`): the variable, then each array's element, matrix's
+/// column, struct's member and vector's float on the way down, a constant
+/// or the step of the index the body computes. Both passes run in v3d's
+/// loop of passes (nir_to_vir.c:2249-2250) while the variable is still
+/// one of derefs, before nir_lower_vars_to_scratch (since 1.177).
+pub const Path = struct {
+    variable: u8 = 0,
+    count: u8 = 0,
+    /// The levels that are an index the body computes, a bit each.
+    computed: u8 = 0,
+    levels: [most_levels]u16 = undefined,
+
+    fn push(path: *Path, level: u16, computed: bool) Error!void {
+        if (path.count == most_levels) return Error.Storage;
+        path.levels[path.count] = level;
+        if (computed) path.computed |= @as(u8, 1) << @intCast(path.count);
+        path.count += 1;
+    }
+
+    fn isComputed(path: *const Path, k: usize) bool {
+        return path.computed >> @intCast(k) & 1 != 0;
+    }
+};
+
+/// nir_opt_copy_prop_vars's copies (nir_opt_copy_prop_vars.c:1063-1457)
+/// of the floats of the variables in scratch: each one a load or a store
+/// has given a value, by the step whose `Path` names it, and the float
+/// that is its value. Mesa's entry is a vector's, its floats each a
+/// component of it, and a load of one takes what of it there is
+/// (load_from_ssa_entry_value, :747-850): one of each float is the same
+/// (since 1.177).
+pub const Copies = struct {
+    paths: [most_steps]u16 = undefined,
+    values: [most_steps]u16 = undefined,
+    count: u16 = 0,
+
+    fn remove(copies: *Copies, k: usize) void {
+        copies.count -= 1;
+        copies.paths[k] = copies.paths[copies.count];
+        copies.values[k] = copies.values[copies.count];
+    }
+};
 /// How deep selections may be nested in each other's arms.
 pub const most_nesting = 8;
 /// One for each float a step answers.
@@ -226,9 +338,10 @@ pub const Error = error{
     Steps,
     /// More floats of its own than the uniform stream holds here.
     Uniforms,
-    /// More values live at once than there are registers. There is no
-    /// stack on a QPU, so there is no spilling: the pipeline is refused
-    /// and the cores draw it.
+    /// More values live at once than there are registers. The plan does
+    /// not spill; Mesa's back end spills through the TMU into the
+    /// pipeline's spill buffer (vir_register_allocate.c:761-1018; the
+    /// buffer since 1.177), and answers this where even that fails.
     Registers,
     /// More instructions than the code buffer holds.
     TooLong,
@@ -460,6 +573,22 @@ pub const Tag = enum {
     /// the word back (ntq_emit_tmu_general, nir_to_vir.c:502-725; since
     /// 1.169).
     ssbo_atomic,
+    /// NIR's load_scratch, a float of a variable of the function's own
+    /// that nir_lower_vars_to_scratch moved into scratch memory (vir.c:
+    /// 2041-2044; since 1.177), at `at`: the byte offset already times
+    /// V3D_CHANNELS, as v3d_nir_lower_scratch makes it
+    /// (v3d_nir_lower_scratch.c:31-43), from spill_base, the lane's own
+    /// place in the spill buffer. v3d reads it through the TMU
+    /// (ntq_emit_tmu_general, nir_to_vir.c:583-586). One load of it is
+    /// never taken for another, which load_scratch's flags do not let
+    /// nir_opt_cse do (no CAN_REORDER, nir_intrinsics.py:1429).
+    scratch,
+    /// The same at the offset the step `a` computes.
+    scratch_indirect,
+    /// NIR's store_scratch: the float `a` written at `at`, or at the
+    /// offset `from[0]` computes where it is no `none`, as `scratch`
+    /// reads it. It makes no value.
+    scratch_store,
     /// NIR's barrier, of memory: what the TMU has been given is flushed
     /// before anything after it is (nir_to_vir.c:3857-3861; since 1.169).
     /// It makes no value.
@@ -822,6 +951,11 @@ pub const Code = struct {
     /// tmu_dirty_rcl (vir.c:1048), which v3dv gathers into the job's
     /// (v3dvx_cmd_buffer.c:2559-2564; since 1.168).
     tmu_dirty_rcl: bool = false,
+    /// The bytes of the spill buffer each thread of each QPU needs, its
+    /// spills' and its scratch's (prog_data's spill_size, v3d_set_prog_data,
+    /// vir.c:1033): what the pipeline's buffer is made for
+    /// (pipeline_check_spill_size, v3dv_pipeline.c:1669-1708; since 1.177).
+    spill_size: u32 = 0,
     /// A vertex program's, for its shader record and its attribute
     /// records (`v3d_vs_prog_data`, v3d_vs_set_prog_data, vir.c:860-936;
     /// since 1.163): the floats of each attribute it reads by driver
@@ -878,6 +1012,14 @@ pub const Word = union(enum) {
     /// reads at (write_ubo_ssbo_uniforms, v3dv_uniforms.c:235-350; since
     /// 1.164).
     ssbo: StorageAddress,
+    /// Where the pipeline's spill buffer is, and the bytes of it each
+    /// thread has: QUNIFORM_SPILL_OFFSET and QUNIFORM_SPILL_SIZE_PER_THREAD,
+    /// which v3dv writes as the buffer's address and the size it was made
+    /// for (v3dv_uniforms.c:663-672). The program works out its lanes'
+    /// place in it from them (v3d_setup_spill_base, `allocate.setupSpillBase`;
+    /// since 1.177).
+    spill_offset,
+    spill_size_per_thread,
 };
 
 /// A `.sampler` word: the unit, and the bits the program sets of the
@@ -1027,16 +1169,22 @@ pub const Work = struct {
     chain_part: [most_ids]u8 = @splat(whole),
 
     /// `member_pointer`: the variable of the block it is a member of,
-    /// the push constants' or a uniform buffer's (since 1.160).
+    /// the push constants' or a uniform buffer's (since 1.160). A
+    /// `local_aggregate` or a `scratch_pointer`: the variable of the
+    /// function's own it is of, or is (since 1.177).
     chain_base: [most_ids]u16 = @splat(none),
     /// `member_pointer`: the byte offset of what it names in the block,
     /// and the MatrixStride of the matrices it is in or names, `none`
-    /// where there are none (since 1.161).
+    /// where there are none (since 1.161). A `scratch_pointer`: the byte
+    /// offset in scratch, its variable's place there added in, and no
+    /// stride (since 1.177).
     chain_offset: [most_ids]u16 = @splat(0),
     chain_stride: [most_ids]u16 = @splat(none),
     /// `member_pointer`: where an index of the chain is no constant, the
     /// step of the byte offset, which `chain_offset` is then not; `none`
-    /// where every index is one (since 1.166).
+    /// where every index is one (since 1.166). A `scratch_pointer`: the
+    /// step of the bytes the computed indexes add, `chain_offset` the
+    /// constant ones' (since 1.177).
     chain_dynamic: [most_ids]u16 = @splat(none),
     /// A variable decorated NonWritable, and a `member_pointer` through
     /// such a variable or a member decorated so: vtn's access, gathered
@@ -1059,6 +1207,38 @@ pub const Work = struct {
     /// `constant_aggregate`: an array, a struct that is no block, or a
     /// matrix of the function's own (since 1.176).
     aggregate: [most_ids]u16 = @splat(none),
+    /// The variables of the function's own that live in scratch memory
+    /// (`Scratch`), and the bytes of it the program has: the shader's
+    /// scratch_size (nir_lower_scratch.c:247-258; since 1.177).
+    scratch: Scratch = .{},
+    scratch_size: u32 = 0,
+    /// A `scratch_pointer`'s deref: its `Path`'s place in `pointer_paths`
+    /// (since 1.177).
+    chain_path: [most_ids]u8 = @splat(0),
+    pointer_paths: [most_pointer_paths]Path = undefined,
+    pointer_path_count: u32 = 0,
+    /// The deref of the float a load_scratch or a store_scratch step is
+    /// of, until the program is laid out (since 1.177).
+    step_path: [most_steps]Path = undefined,
+    /// nir_opt_copy_prop_vars's copies where the walk is (`Copies`), and
+    /// those where each selection it is in branched, which each arm starts
+    /// from as copy_prop_vars_cf_node clones them for it, and its merge
+    /// is left with less what may be what the arms stored
+    /// (nir_opt_copy_prop_vars.c:1531-1566, invalidate_copies_for_cf_node,
+    /// :966-1001; since 1.177).
+    copies: Copies = .{},
+    copies_before: [most_nesting]Copies = undefined,
+    /// nir_opt_dead_write_vars's unused writes in the block the walk is in
+    /// (remove_dead_write_vars_local, nir_opt_dead_write_vars.c): the
+    /// store_scratch steps nothing has read what they stored since, and
+    /// those where each selection branched, a block that goes on past its
+    /// merge where nir_opt_peephole_select flattens it. A store found
+    /// written over is `unwritten` (since 1.177).
+    unused: [most_steps]u16 = undefined,
+    unused_count: u16 = 0,
+    unused_before: [most_nesting][most_steps]u16 = undefined,
+    unused_before_count: [most_nesting]u16 = undefined,
+    unwritten: [most_steps]bool = @splat(false),
     /// The floats and vectors of the aggregates the body holds, in the
     /// order nir_split_struct_vars and nir_split_array_vars split them,
     /// which is the order _vtn_variable_load_store walks them in
@@ -1239,7 +1419,7 @@ pub const Work = struct {
     kept: [most_kept]Kept = undefined,
     kept_count: u8 = 0,
 
-    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value, constant_matrix, position_pointer, plain_struct, local_aggregate, aggregate_value, constant_aggregate };
+    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value, constant_matrix, position_pointer, plain_struct, local_aggregate, aggregate_value, constant_aggregate, scratch_pointer };
 
     /// `chain_part` of a pointer to a whole member.
     pub const whole: u8 = 0xFF;
@@ -1267,7 +1447,7 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
     // reads it once.
     if (work.sample_count > 1) return Error.Samplers;
     for (work.program()) |each| switch (each.tag) {
-        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier => return Error.Storage,
+        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store => return Error.Storage,
         .discard => return Error.Discards,
         .sample_compared => return Error.Samplers,
         // Nor does any compute beyond a sum and a product.
@@ -1421,8 +1601,10 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
             .viewport_y_scale => .{ .viewport = .y_scale },
             .viewport_z_offset => .{ .viewport = .z_offset },
             .viewport_z_scale => .{ .viewport = .z_scale },
-            // A spill's offset or size: a draw has no memory to spill to.
-            else => return Error.Registers,
+            // The spill buffer's (since 1.177).
+            .spill_offset => .spill_offset,
+            .spill_size_per_thread => .spill_size_per_thread,
+            else => return Error.Invalid,
         };
     }
     work.stream_count = c.num_uniforms;
@@ -1441,6 +1623,7 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
         .writes_z = program.writes_z,
         .disable_ez = program.disable_ez,
         .tmu_dirty_rcl = c.tmu_dirty_rcl,
+        .spill_size = c.spill_size,
         .vertex = if (work.stage == .vertex) vertexProgram(work, program.single_seg) else .{},
     };
 }
@@ -1510,27 +1693,39 @@ fn readModule(work: *Work, words: []const u32) Error!void {
 /// The words of a program of `stage`, read into `work`; a vertex program
 /// for `key` (since 1.163).
 fn readStage(work: *Work, words: []const u32, stage: spirv.ExecutionModel, key: VertexKey) Error!void {
-    work.* = .{ .stage = stage, .vertex_key = key };
-    // The VPM's layout, v3d_nir_setup_vpm_layout_vs (v3d_nir_lower_io.c:
-    // 400-435): the coordinate program's position first, then the place
-    // on screen; the vertex program's place, its Zs and 1/Wc. No point
-    // size: a pipeline that draws points is not drawn with these.
-    if (stage == .vertex) work.varyings_vpm_offset = if (key.coordinate) 4 + 2 else 2 + 1 + 1;
-    const seen = switch (spirv.look(words, profile)) {
-        .seen => |each| each,
-        .fault => |fault| return switch (fault) {
-            .stage_refused => Error.Stage,
-            // An image operand, which this device's profile takes none of:
-            // said by name so that it can be told from a word the walk
-            // simply did not know (since 1.87).
-            .image_operand_refused => Error.Operands,
-            else => Error.Refused,
-        },
-    };
-    if (seen.stage != stage) return Error.Stage;
-    // A discard is read in the body: where it is the one shape taken, it
-    // is a step, and anywhere else `read` answers `Error.Discards`.
-    try read(work, words, seen);
+    // The variables found to live in scratch so far, each a walk of its
+    // own (since 1.177).
+    var scratch: Scratch = .{};
+    while (true) {
+        work.* = .{ .stage = stage, .vertex_key = key, .scratch = scratch, .scratch_size = scratch.size() };
+        // The VPM's layout, v3d_nir_setup_vpm_layout_vs (v3d_nir_lower_io.c:
+        // 400-435): the coordinate program's position first, then the place
+        // on screen; the vertex program's place, its Zs and 1/Wc. No point
+        // size: a pipeline that draws points is not drawn with these.
+        if (stage == .vertex) work.varyings_vpm_offset = if (key.coordinate) 4 + 2 else 2 + 1 + 1;
+        const seen = switch (spirv.look(words, profile)) {
+            .seen => |each| each,
+            .fault => |fault| return switch (fault) {
+                .stage_refused => Error.Stage,
+                // An image operand, which this device's profile takes none of:
+                // said by name so that it can be told from a word the walk
+                // simply did not know (since 1.87).
+                .image_operand_refused => Error.Operands,
+                else => Error.Refused,
+            },
+        };
+        if (seen.stage != stage) return Error.Stage;
+        // A discard is read in the body: where it is the one shape taken, it
+        // is a step, and anywhere else `read` answers `Error.Discards`.
+        read(work, words, seen) catch |err| {
+            // A variable the walk found to want scratch: the walk again,
+            // with it there.
+            if (err != Error.Storage or work.scratch.same(&scratch)) return err;
+            scratch = work.scratch;
+            continue;
+        };
+        return;
+    }
 }
 
 // --- reading the words -------------------------------------------------------
@@ -1608,10 +1803,23 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             // One over the limit is kept a branch, as one whose arm holds
             // what is not flattened (since 1.171); the arms of one
             // flattened are in the block it is in.
-            if (inner.kept or (!inner.collapsed and armCost(work, inner.arms_from, inner.arms_to) > limitOf(inner.control, peephole_limit)))
+            const kept = inner.kept or (!inner.collapsed and armCost(work, inner.arms_from, inner.arms_to) > limitOf(inner.control, peephole_limit));
+            if (kept)
                 try keepSelection(work, &inner, depth)
             else if (depth == 1)
                 @memset(work.region[inner.arms_from..inner.arms_to], 0);
+            // To nir_opt_dead_write_vars the merge of one kept is a block
+            // of its own; one flattened is in the block before it, which
+            // its arms are in too, and which goes on (since 1.177).
+            if (inner.seen_yes or inner.seen_no) {
+                if (kept) {
+                    work.unused_count = 0;
+                } else {
+                    const before = work.unused_before_count[depth - 1];
+                    @memcpy(work.unused[0..before], work.unused_before[depth - 1][0..before]);
+                    work.unused_count = before;
+                }
+            }
             flow = inner.outside;
             depth -= 1;
             if (depth > 0) {
@@ -2113,7 +2321,28 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // (since 1.165).
                     if (!in_body or blocks != 1 or flow != .body) return Error.Body;
                     switch (work.thing[pointee]) {
-                        .array, .plain_struct, .matrix => {
+                        .array, .plain_struct, .matrix => if (work.scratch.placeOf(id)) |place| {
+                            // One an access chain reaches at an index the
+                            // body computes: in scratch memory at its
+                            // place, each load and store of it a
+                            // load_scratch and a store_scratch
+                            // (nir_lower_vars_to_scratch, vir.c:2041-2044;
+                            // `Scratch`), its initializer stored there at
+                            // the top of the function (since 1.177).
+                            work.thing[id] = .scratch_pointer;
+                            work.class[id] = @intCast(@intFromEnum(class));
+                            work.points[id] = pointee;
+                            work.chain_base[id] = id;
+                            work.chain_offset[id] = place;
+                            work.chain_dynamic[id] = none;
+                            work.chain_path[id] = try pointerPath(work, .{ .variable = work.scratch.indexOf(id).? });
+                            if (operands.len == 4) {
+                                const initial = try idOf(operands[3]);
+                                if (work.thing[initial] != .constant_aggregate and work.thing[initial] != .constant_matrix) return Error.Body;
+                                try storeScratch(work, id, operands[3]);
+                            } else if (operands.len != 3) return Error.Body;
+                            continue;
+                        } else {
                             // An array, a struct or a matrix: a variable of
                             // each of its floats and vectors, as
                             // nir_split_struct_vars splits a struct's
@@ -2141,6 +2370,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                             work.class[id] = @intCast(@intFromEnum(class));
                             work.points[id] = @intCast(first);
                             work.aggregate[id] = pointee;
+                            work.chain_base[id] = id;
                             if (operands.len == 4) {
                                 // nir_lower_variable_initializers' stores,
                                 // of each in order.
@@ -2290,6 +2520,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                             }
                         }
                         selection.arms_to = @intCast(work.step_count);
+                        mergeCopies(work, selection, depth);
                         try merge(work, selection, level);
                         flow = .merging;
                     } else if (id == selection.yes and !selection.seen_yes) {
@@ -2308,6 +2539,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     .killed => {
                         if (id != selection.merge) return Error.Branches;
                         selection.arms_to = @intCast(work.step_count);
+                        mergeCopies(work, selection, depth);
                         flow = .merging;
                     },
                     .branch, .arm, .merging => return Error.Branches,
@@ -2511,7 +2743,11 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                                 selection.constant = true;
                                 if (selection.held.iand != none) selection.held.constant_after = true;
                             }
-                        } else if (storesBuffer(work, operands)) {
+                        } else if (storesBuffer(work, operands) or storesScratch(work, operands)) {
+                            // A store_ssbo or a store_scratch is an
+                            // intrinsic block_check_for_allowed_instrs lets
+                            // none of through (nir_opt_peephole_select.c:109-129;
+                            // scratch since 1.177).
                             try selection.keep(work, depth);
                         } else return Error.Branches,
                         else => {
@@ -3334,7 +3570,7 @@ fn loopCost(work: *const Work, from: u16, to: u16) u32 {
                 cost += each.kind.parts();
                 continue;
             },
-            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .discard, .sample, .sample_compared, .output, .viewport => {
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .discard, .sample, .sample_compared, .output, .viewport => {
                 cost += 1;
                 continue;
             },
@@ -3467,11 +3703,21 @@ const Selection = struct {
 
     /// An arm's first block: the step its steps start at, where it is the
     /// second arm, and the region they are in.
+    /// Each arm starts from the copies where the selection branched, as
+    /// copy_prop_vars_cf_node clones them for it (nir_opt_copy_prop_vars.c:
+    /// 1531-1557), and is a block of its own to nir_opt_dead_write_vars
+    /// (since 1.177).
     fn armed(selection: *Selection, work: *Work, arm: u32, depth: u32) void {
-        if (selection.seen_yes or selection.seen_no)
-            selection.split = @intCast(work.step_count)
-        else
+        if (selection.seen_yes or selection.seen_no) {
+            selection.split = @intCast(work.step_count);
+        } else {
             selection.false_first = arm == selection.no;
+            work.copies_before[depth - 1] = work.copies;
+            @memcpy(work.unused_before[depth - 1][0..work.unused_count], work.unused[0..work.unused_count]);
+            work.unused_before_count[depth - 1] = work.unused_count;
+        }
+        work.copies = work.copies_before[depth - 1];
+        work.unused_count = 0;
         if (depth == 1) work.current_region = selection.region + @intFromBool(arm != selection.yes);
     }
 
@@ -3635,6 +3881,13 @@ fn storesBuffer(work: *const Work, operands: []const u32) bool {
     if (operands.len < 1) return false;
     const id = idOf(operands[0]) catch return false;
     return work.thing[id] == .member_pointer;
+}
+
+/// Whether an OpStore's pointer is into scratch (since 1.177).
+fn storesScratch(work: *const Work, operands: []const u32) bool {
+    if (operands.len < 1) return false;
+    const id = idOf(operands[0]) catch return false;
+    return work.thing[id] == .scratch_pointer;
 }
 
 fn pointsLocal(work: *const Work, word: u32) bool {
@@ -3885,17 +4138,20 @@ fn within(work: *const Work, type_id: u16, index: u32) Error!Within {
 
 /// An index of an element or a column of a variable of the function's
 /// own: an integer constant, or a value the walk folded to one, which an
-/// unrolled loop's counter is (since 1.176). One the body computes would
-/// want the if-else tree nir_lower_indirect_derefs_to_if_else_trees
-/// builds of an array of two elements or fewer (v3dv_pipeline.c:435) or
-/// the scratch nir_lower_vars_to_scratch moves a longer one to (vir.c:
-/// 2041), neither of which is here: refused.
+/// unrolled loop's counter is (since 1.176). One the body computes is
+/// refused; `localIndexOrNull` says it is one.
 fn localIndexOf(work: *const Work, word: u32) Error!u32 {
+    return try localIndexOrNull(work, word) orelse Error.Storage;
+}
+
+/// `localIndexOf`'s constant, or null where the body computes the index
+/// (since 1.177).
+fn localIndexOrNull(work: *const Work, word: u32) Error!?u32 {
     const id = try idOf(word);
-    if (work.thing[id] == .int_constant) return @bitCast(work.pool[work.points[id]]);
+    if (work.thing[id] == .int_constant) return @as(u32, @bitCast(work.pool[work.points[id]]));
     const of = work.step_of[id];
-    if (of == none or work.steps[of].tag != .constant or work.steps[of].kind != .f32x1) return Error.Storage;
-    return @bitCast(work.pool[work.steps[of].at]);
+    if (of == none or work.steps[of].tag != .constant or work.steps[of].kind != .f32x1) return null;
+    return @as(u32, @bitCast(work.pool[work.steps[of].at]));
 }
 
 /// `leaf` put down after the aggregates' others.
@@ -3952,7 +4208,7 @@ fn leafSteps(work: *Work, word: u32, type_id: u16, out: []u16) Error!usize {
         .array, .plain_struct => {
             const id = try idOf(word);
             if (work.aggregate[id] != type_id) return Error.Type;
-            var kinds: [most_locals]Leaf = undefined;
+            var kinds: [most_leaves]Leaf = undefined;
             const count = try leafKinds(work, type_id, &kinds);
             if (out.len < count) return Error.Storage;
             const first = work.points[id];
@@ -3999,6 +4255,316 @@ fn storeAggregate(work: *Work, into: u16, word: u32) Error!void {
         for (0..work.local_kind[local].parts()) |part| work.values[local][part] = partOf(work, value, @intCast(part));
         touch(work, local);
     }
+}
+
+/// An access chain into an aggregate of the function's own come to an
+/// index the body computes, `indexes` from that one on into the type
+/// `at`, of the variable `root`. Where the elements and columns the
+/// computed indexes count come to two or fewer,
+/// nir_lower_indirect_derefs_to_if_else_trees makes an if-else tree of
+/// the access (v3dv_pipeline.c:435-436,
+/// nir_lower_indirect_derefs_to_if_else_trees.c:141-153), which is not
+/// here: refused. Else the variable goes into scratch memory
+/// (nir_lower_vars_to_scratch, vir.c:2041-2044), and the walk stops to be
+/// begun again with it there (`Scratch`, `readStage`; since 1.177).
+fn wantScratch(work: *Work, root: u16, from: u16, indexes: []const u32) Error!void {
+    var at = from;
+    var elements: u32 = 1;
+    for (indexes) |each| {
+        switch (work.thing[at]) {
+            .array, .matrix => {
+                if (try localIndexOrNull(work, each) == null) elements *= if (work.thing[at] == .array) work.length[at] else work.wide[at];
+                at = work.points[at];
+            },
+            .plain_struct => {
+                const which = try indexOf(work, each);
+                const members = structMembers(work, at);
+                if (which >= members.len) return Error.Body;
+                at = members[which];
+            },
+            .vector => break,
+            else => return Error.Body,
+        }
+    }
+    if (elements <= 2) return Error.Storage;
+    if (work.scratch.count == most_scratch_variables) return Error.Storage;
+    const bytes = 4 * try scratchFloats(work, work.aggregate[root]);
+    if (work.scratch.size() + bytes > most_scratch) return Error.Storage;
+    work.scratch.ids[work.scratch.count] = root;
+    work.scratch.bytes[work.scratch.count] = @intCast(bytes);
+    work.scratch.dead[work.scratch.count] = false;
+    work.scratch.count += 1;
+    return Error.Storage;
+}
+
+/// The floats of `type_id` in scratch, a quarter of the bytes
+/// glsl_get_natural_size_align_bytes gives it, the layout v3d moves
+/// variables to scratch in (vir.c:2041-2044; glsl_types.c:3809-3880):
+/// each float and integer four bytes aligned to four, a vector's and a
+/// matrix's one after another, and so an array's elements and a struct's
+/// members with nothing between them. A bool would be a 32-bit one there
+/// (nir_b2b32, nir_lower_scratch.c:57-58), which no step here makes of a
+/// condition: refused, as is a runtime array (since 1.177).
+fn scratchFloats(work: *const Work, type_id: u16) Error!u32 {
+    return switch (work.thing[type_id]) {
+        .float, .int => 1,
+        .vector => if (work.thing[work.points[type_id]] == .boolean) Error.Storage else work.wide[type_id],
+        .matrix => work.wide[type_id] * try scratchFloats(work, work.points[type_id]),
+        .array => if (isRuntime(work, type_id)) Error.Storage else work.length[type_id] * try scratchFloats(work, work.points[type_id]),
+        .plain_struct => sum: {
+            var floats: u32 = 0;
+            for (structMembers(work, type_id)) |member| floats += try scratchFloats(work, member);
+            break :sum floats;
+        },
+        else => Error.Storage,
+    };
+}
+
+/// Where a float `bytes` past what the scratch pointer `pointer` names is,
+/// as v3d's TMU is given it: the variable's place, the chain's offset and
+/// the float's (nir_iadd_imm, nir_lower_scratch.c:39-41, and the
+/// component's chunk, nir_lower_mem_access_bit_sizes, since v3d keeps
+/// one float to each load_scratch, v3d_size_align_cb,
+/// v3d_nir_lower_load_store_bitsize.c:135-143), times V3D_CHANNELS, each
+/// lane's word of a float one after another from spill_base
+/// (v3d_nir_scratch_offset, v3d_nir_lower_scratch.c:31-43), as
+/// nir_imul_imm builds it, a shift by four. A constant where every index
+/// was one, else the step (since 1.177).
+fn scratchAt(work: *Work, pointer: u16, bytes: u32) Error!struct { dynamic: u16, offset: u32 } {
+    const offset = @as(u32, work.chain_offset[pointer]) + bytes;
+    const dynamic = work.chain_dynamic[pointer];
+    if (dynamic == none) return .{ .dynamic = none, .offset = offset * 16 };
+    const sum = if (offset == 0) dynamic else try integerOf(work, .iadd, dynamic, try integerSplat(work, .f32x1, @intCast(offset)));
+    return .{ .dynamic = try strideTimes(work, sum, 16), .offset = 0 };
+}
+
+/// What the scratch pointer `from` names, loaded into `id`: each float
+/// one of its own (`loadScratchFloat`), a vector's put together again,
+/// and an aggregate's floats and vectors in order, as
+/// _vtn_variable_load_store loads one element by element
+/// (vtn_variables.c:763-781; since 1.177).
+fn loadScratch(work: *Work, id: u16, from: u16) Error!void {
+    const type_id = work.points[from];
+    var kinds: [most_leaves]Leaf = undefined;
+    const count = try leafKinds(work, type_id, &kinds);
+    var made: [most_leaves]u16 = undefined;
+    var floats: u32 = 0;
+    for (kinds[0..count], 0..) |leaf, k| {
+        if (leaf.is_bool) return Error.Storage;
+        var vector = Step{ .tag = .construct, .kind = leaf.kind };
+        for (0..leaf.kind.parts()) |part| {
+            vector.from[part] = try loadScratchFloat(work, from, floats);
+            vector.part[part] = 0;
+            floats += 1;
+        }
+        made[k] = if (leaf.kind == .f32x1) vector.from[0] else try put(work, vector);
+    }
+    switch (work.thing[type_id]) {
+        .float, .int, .vector => work.step_of[id] = made[0],
+        else => try holdAggregate(work, id, type_id, made[0..count]),
+    }
+}
+
+/// The value `word` stored where the scratch pointer `into` names, each
+/// float on its own (`storeScratchFloat`), an aggregate's floats and
+/// vectors in order (vtn_variables.c:763-781; since 1.177).
+fn storeScratch(work: *Work, into: u16, word: u32) Error!void {
+    var made: [most_leaves]u16 = undefined;
+    const count = try leafSteps(work, word, work.points[into], &made);
+    var floats: u32 = 0;
+    for (made[0..count]) |value| {
+        for (0..work.steps[value].kind.parts()) |part| {
+            try storeScratchFloat(work, into, floats, try floatOf(work, partOf(work, value, @intCast(part))));
+            floats += 1;
+        }
+    }
+}
+
+/// The `float`th float of what the scratch pointer `from` names: the
+/// value nir_opt_copy_prop_vars has for its deref, where it has one
+/// (nir_opt_copy_prop_vars.c:1124-1229), and else a load_scratch of it
+/// (`scratchAt`), which is then the copy's value (:1206-1228) and reads
+/// what an unused write of its block that may be of it stored
+/// (clear_unused_for_read, nir_opt_dead_write_vars.c; since 1.177).
+fn loadScratchFloat(work: *Work, from: u16, float: u32) Error!u16 {
+    const path = try floatPath(work, from, float);
+    if (copyOf(work, &path)) |k| return work.copies.values[k];
+    const at = try scratchAt(work, from, 4 * float);
+    const made = if (at.dynamic == none)
+        try put(work, .{ .tag = .scratch, .kind = .f32x1, .at = at.offset })
+    else
+        try put(work, .{ .tag = .scratch_indirect, .kind = .f32x1, .a = at.dynamic });
+    work.step_path[made] = path;
+    try addCopy(work, made, made);
+    var k: usize = 0;
+    while (k < work.unused_count) {
+        if (comparePaths(work, &path, &work.step_path[work.unused[k]]) != .disjoint) {
+            work.unused_count -= 1;
+            work.unused[k] = work.unused[work.unused_count];
+        } else k += 1;
+    }
+    return made;
+}
+
+/// `value` stored as the `float`th float of what the scratch pointer
+/// `into` names. Where nir_opt_copy_prop_vars's copy of its deref is the
+/// value, the store is none (nir_opt_copy_prop_vars.c:1268-1276). Else it
+/// is a store_scratch (`scratchAt`): the copies that may be of the float
+/// and are not of it go, and its own is the value
+/// (get_entry_and_kill_aliases, :1311-1317); and an unused write of its
+/// block of the same float is written over, and dropped
+/// (update_unused_writes, nir_opt_dead_write_vars.c; since 1.177).
+fn storeScratchFloat(work: *Work, into: u16, float: u32, value: u16) Error!void {
+    const path = try floatPath(work, into, float);
+    if (copyOf(work, &path)) |k| if (sameFloat(work, work.copies.values[k], value)) return;
+    const at = try scratchAt(work, into, 4 * float);
+    const made = try put(work, .{ .tag = .scratch_store, .kind = .f32x1, .a = value, .at = at.offset, .from = .{ at.dynamic, 0, 0, 0 } });
+    work.step_path[made] = path;
+    var k: usize = 0;
+    while (k < work.unused_count) {
+        const earlier = work.unused[k];
+        if (comparePaths(work, &path, &work.step_path[earlier]) == .equal) {
+            work.unwritten[earlier] = true;
+            work.unused_count -= 1;
+            work.unused[k] = work.unused[work.unused_count];
+        } else k += 1;
+    }
+    work.unused[work.unused_count] = made;
+    work.unused_count += 1;
+    k = 0;
+    while (k < work.copies.count) {
+        if (comparePaths(work, &path, &work.step_path[work.copies.paths[k]]) == .may_alias) work.copies.remove(k) else k += 1;
+    }
+    if (copyOf(work, &path)) |equal| work.copies.values[equal] = value else try addCopy(work, made, value);
+}
+
+/// The copy of the deref `path`, where there is one.
+fn copyOf(work: *const Work, path: *const Path) ?usize {
+    for (work.copies.paths[0..work.copies.count], 0..) |of, k| {
+        if (comparePaths(work, path, &work.step_path[of]) == .equal) return k;
+    }
+    return null;
+}
+
+fn addCopy(work: *Work, path: u16, value: u16) Error!void {
+    if (work.copies.count == most_steps) return Error.Steps;
+    work.copies.paths[work.copies.count] = path;
+    work.copies.values[work.copies.count] = value;
+    work.copies.count += 1;
+}
+
+/// A selection's merge: the copies where it branched, less those that may
+/// be of a float an arm stored (invalidate_copies_for_cf_node,
+/// nir_opt_copy_prop_vars.c:966-1001; since 1.177).
+fn mergeCopies(work: *Work, selection: *const Selection, depth: u32) void {
+    if (!selection.seen_yes and !selection.seen_no) return;
+    work.copies = work.copies_before[depth - 1];
+    for (work.steps[selection.arms_from..work.step_count], selection.arms_from..) |each, at| {
+        if (each.tag != .scratch_store) continue;
+        var k: usize = 0;
+        while (k < work.copies.count) {
+            if (comparePaths(work, &work.step_path[at], &work.step_path[work.copies.paths[k]]) != .disjoint) work.copies.remove(k) else k += 1;
+        }
+    }
+}
+
+/// A scratch pointer's deref, kept for those made from it.
+fn pointerPath(work: *Work, path: Path) Error!u8 {
+    if (work.pointer_path_count == most_pointer_paths) return Error.Storage;
+    work.pointer_paths[work.pointer_path_count] = path;
+    work.pointer_path_count += 1;
+    return @intCast(work.pointer_path_count - 1);
+}
+
+/// The deref of the `float`th float of what the scratch pointer `pointer`
+/// names: the pointer's, then the element, column, member or float of
+/// each level below it the float is in, in the natural layout's order
+/// (`scratchFloats`; since 1.177).
+fn floatPath(work: *const Work, pointer: u16, float: u32) Error!Path {
+    var path = work.pointer_paths[work.chain_path[pointer]];
+    var at = work.points[pointer];
+    var left = float;
+    while (true) switch (work.thing[at]) {
+        .float, .int => return path,
+        .vector => {
+            try path.push(@intCast(left), false);
+            return path;
+        },
+        .array, .matrix => {
+            const next = work.points[at];
+            const floats = try scratchFloats(work, next);
+            try path.push(@intCast(left / floats), false);
+            left %= floats;
+            at = next;
+        },
+        .plain_struct => for (structMembers(work, at), 0..) |member, m| {
+            const floats = try scratchFloats(work, member);
+            if (left < floats) {
+                try path.push(@intCast(m), false);
+                at = member;
+                break;
+            }
+            left -= floats;
+        } else return Error.Storage,
+        else => return Error.Storage,
+    };
+}
+
+const Aliasing = enum { disjoint, may_alias, equal };
+
+/// nir_compare_deref_paths of the derefs of two floats in scratch
+/// (nir_deref.c:513-640, :643-720): of two variables, they do not alias;
+/// a level of two constants that differ, two elements, members or floats
+/// apart, neither; and they are the same deref where every level is, an
+/// index the body computes where it is the one SSA value (`oneValue`;
+/// since 1.177).
+fn comparePaths(work: *const Work, a: *const Path, b: *const Path) Aliasing {
+    if (a.variable != b.variable) return .disjoint;
+    var equal = a.count == b.count;
+    for (0..@min(a.count, b.count)) |k| {
+        const left = a.isComputed(k);
+        const right = b.isComputed(k);
+        if (!left and !right) {
+            if (a.levels[k] != b.levels[k]) return .disjoint;
+        } else if (!left or !right or !oneValue(work, partOf(work, a.levels[k], 0), partOf(work, b.levels[k], 0), most_value_depth)) {
+            equal = false;
+        }
+    }
+    return if (equal) .equal else .may_alias;
+}
+
+/// How deep `oneValue` looks into the operands of two steps.
+const most_value_depth = 8;
+
+/// Whether two floats are one SSA value once nir_opt_cse has run in the
+/// loop of passes (nir_to_vir.c:2264), which it does before the next
+/// nir_opt_copy_prop_vars: the same float, or two equalSteps would take for
+/// one were their operands each the one value already (since 1.177).
+fn oneValue(work: *const Work, x: Float, y: Float, depth: u32) bool {
+    if (x.step == y.step and x.part == y.part) return true;
+    if (depth == 0 or x.part != y.part) return false;
+    const p = work.steps[x.step];
+    const q = work.steps[y.step];
+    if (p.tag != q.tag or p.kind != q.kind) return false;
+    if (p.tag == .constant or p.tag == .push) return equalSteps(work, p, q);
+    if (!computes(p.tag) or p.at != q.at) return false;
+    if (sameOperands(work, readsOf(p), readsOf(q), depth)) return true;
+    if (!commutes(p)) return false;
+    return sameOperands(work, .{ readsOf(p)[1], readsOf(p)[0], null, null }, readsOf(q), depth);
+}
+
+fn sameOperands(work: *const Work, left: [4]?u16, right: [4]?u16, depth: u32) bool {
+    for (left, right) |l, r| {
+        if ((l == null) != (r == null)) return false;
+        const a = l orelse continue;
+        const b = r.?;
+        const kind = work.steps[a].kind;
+        if (kind != work.steps[b].kind) return false;
+        for (0..kind.parts()) |k| {
+            if (!oneValue(work, partOf(work, a, @intCast(k)), partOf(work, b, @intCast(k)), depth - 1)) return false;
+        }
+    }
+    return true;
 }
 
 /// OpCompositeInsert into an array, a struct or a matrix: ResultType,
@@ -4155,8 +4721,12 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
             // A load_ubo is let through only where it may be speculated
             // (nir_opt_peephole_select.c:132-141), which none from vtn
             // may: no limit flattens its arm (since 1.160). A load_ssbo
-            // is held to the same (since 1.164).
-            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier => return std.math.maxInt(u32),
+            // is held to the same (since 1.164). A load_deref of a
+            // variable of the function's own that is still one, which a
+            // load_scratch is made of later, is let through by none
+            // (nir_opt_peephole_select.c:109-129), nor is a store_deref
+            // (since 1.177).
+            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store => return std.math.maxInt(u32),
             // ineg and iabs are move-like, as fneg and fabs are
             // (nir_opt_peephole_select.c:251-264; since 1.165).
             .integer => switch (@as(Integer, @enumFromInt(each.at))) {
@@ -4274,7 +4844,13 @@ fn boolOf(work: *const Work, word: u32) Error!u16 {
 /// fsat and fmulz, which are not steps here, and every other rule of a
 /// float operation.
 fn algebraic(work: *Work) Error!void {
+    try deadScratch(work);
     var list = Order.start(work);
+    // The stores nir_opt_dead_write_vars found written over, and those of
+    // a variable nir_remove_dead_variables takes out (since 1.177).
+    for (work.unwritten[0..work.step_count], 0..) |unwritten, at| {
+        if (unwritten) list.removed[at] = true;
+    }
     try list.rematerialize(work);
     while (true) {
         list.dce(work);
@@ -4284,6 +4860,31 @@ fn algebraic(work: *Work) Error!void {
         if (!merged and !rewrote and !folded) break;
     }
     list.layOut(work);
+}
+
+/// nir_remove_dead_variables over the variables in scratch, which v3d's
+/// loop of passes runs after nir_opt_copy_prop_vars (nir_to_vir.c:
+/// 2253-2257): one the program loads nothing of, once the copies are
+/// taken, is used for no load and is dead, its stores taken out with it
+/// (add_var_use_deref, nir_remove_dead_variables.c:66-90;
+/// remove_dead_var_writes, :110-170). nir_lower_vars_to_scratch then
+/// places what is left, so the walk is begun again with it marked
+/// (`Scratch.dead`; since 1.177).
+fn deadScratch(work: *Work) Error!void {
+    var loaded: [most_scratch_variables]bool = @splat(false);
+    for (work.program(), 0..) |each, at| {
+        if (each.tag == .scratch or each.tag == .scratch_indirect) loaded[work.step_path[at].variable] = true;
+    }
+    var found = false;
+    for (0..work.scratch.count) |k| {
+        if (loaded[k] or work.scratch.dead[k]) continue;
+        work.scratch.dead[k] = true;
+        found = true;
+    }
+    if (found) return Error.Storage;
+    for (work.program(), 0..) |each, at| {
+        if (each.tag == .scratch_store and work.scratch.dead[work.step_path[at].variable]) work.unwritten[at] = true;
+    }
 }
 
 /// The steps in the list of the program, which a rule's new steps are
@@ -4448,7 +5049,7 @@ const Order = struct {
             const each = work.steps[at];
             // What writes memory, or orders it, is kept whatever reads it
             // (nir_instr_can_remove, nir_opt_dce.c; since 1.168 and 1.169).
-            if (each.tag == .discard or each.tag == .output or each.tag == .ssbo_store or each.tag == .ssbo_atomic or each.tag == .barrier) reached[at] = true;
+            if (each.tag == .discard or each.tag == .output or each.tag == .ssbo_store or each.tag == .ssbo_atomic or each.tag == .barrier or each.tag == .scratch_store) reached[at] = true;
             // A kept selection's marks are its nir_if, which no pass but
             // nir_opt_dead_cf takes out (since 1.171).
             if (each.tag == .begin_if or each.tag == .begin_else or each.tag == .end_if) reached[at] = true;
@@ -5205,7 +5806,7 @@ fn sameFloat(work: *const Work, a: u16, b: u16) bool {
 /// component and a construct only name floats.
 fn computes(tag: Tag) bool {
     return switch (tag) {
-        .input, .constant, .push, .component, .construct, .sample, .sample_compared, .discard, .output, .viewport, .ssbo_store, .ssbo_atomic, .barrier, .begin_if, .begin_else, .end_if, .phi => false,
+        .input, .constant, .push, .component, .construct, .sample, .sample_compared, .discard, .output, .viewport, .ssbo_store, .ssbo_atomic, .barrier, .begin_if, .begin_else, .end_if, .phi, .scratch, .scratch_indirect, .scratch_store => false,
         else => true,
     };
 }
@@ -5246,23 +5847,28 @@ fn equalSteps(work: *const Work, a: Step, b: Step) bool {
         };
     }
     if (straight) return true;
-    const commutes = switch (a.tag) {
+    return commutes(a) and sameValue(work, a.a, b.b) and sameValue(work, a.b, b.a);
+}
+
+/// Whether a step's two operands may be either way about
+/// (NIR_OP_IS_2SRC_COMMUTATIVE).
+fn commutes(each: Step) bool {
+    return switch (each.tag) {
         .add, .mul, .min, .max => true,
-        .logic => a.at != @intFromEnum(Logic.inot),
-        .compare => switch (@as(Comparison, @enumFromInt(a.at))) {
+        .logic => each.at != @intFromEnum(Logic.inot),
+        .compare => switch (@as(Comparison, @enumFromInt(each.at))) {
             .equal, .not_equal, .int_equal, .int_not_equal => true,
             else => false,
         },
-        .integer => @as(Integer, @enumFromInt(a.at)).commutes(),
+        .integer => @as(Integer, @enumFromInt(each.at)).commutes(),
         else => false,
     };
-    return commutes and sameValue(work, a.a, b.b) and sameValue(work, a.b, b.a);
 }
 
 /// What a step reads, field by field.
 fn readsOf(each: Step) [4]?u16 {
     return switch (each.tag) {
-        .input, .constant, .push, .ubo, .ssbo, .viewport, .begin_else, .end_if => .{ null, null, null, null },
+        .input, .constant, .push, .ubo, .ssbo, .viewport, .begin_else, .end_if, .scratch => .{ null, null, null, null },
         // A phi reads its two floats where each way ends, which is where
         // nir_convert_from_ssa copies them (since 1.171); the condition
         // is the begin_if's.
@@ -5277,9 +5883,9 @@ fn readsOf(each: Step) [4]?u16 {
         .select => .{ each.a, each.b, each.from[0], null },
         .logic => .{ each.a, if (each.at != @intFromEnum(Logic.inot)) each.b else null, null, null },
         .integer => .{ each.a, if (!@as(Integer, @enumFromInt(each.at)).unary()) each.b else null, null, null },
-        .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .sample, .output, .round_to_int, .ubo_indirect, .ssbo_indirect => .{ each.a, null, null, null },
+        .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .sample, .output, .round_to_int, .ubo_indirect, .ssbo_indirect, .scratch_indirect => .{ each.a, null, null, null },
         .compare, .set_less, .add, .mul, .sub, .min, .max, .sample_compared => .{ each.a, each.b, null, null },
-        .ssbo_store => .{ each.a, if (each.from[0] != none) each.from[0] else null, null, null },
+        .ssbo_store, .scratch_store => .{ each.a, if (each.from[0] != none) each.from[0] else null, null, null },
         .ssbo_atomic => .{ each.a, if (each.from[0] != none) each.from[0] else null, if (each.from[1] != none) each.from[1] else null, null },
         .barrier => .{ null, null, null, null },
     };
@@ -5322,7 +5928,7 @@ fn renameReads(each: *Step, renamed: *const [most_steps]u16) void {
             each.b = renamed[each.b];
             each.from[0] = renamed[each.from[0]];
         },
-        .ssbo_store, .ssbo_atomic => {
+        .ssbo_store, .ssbo_atomic, .scratch_store => {
             each.a = renamed[each.a];
             if (each.from[0] != none) each.from[0] = renamed[each.from[0]];
             if (each.tag == .ssbo_atomic and each.from[1] != none) each.from[1] = renamed[each.from[1]];
@@ -5350,7 +5956,7 @@ fn replaceUses(work: *Work, from: u16, to: u16) void {
     if (work.stored == from) work.stored = to;
     for (work.steps[0..work.step_count]) |*user| {
         switch (user.tag) {
-            .input, .constant, .push, .ubo, .ssbo, .barrier => {},
+            .input, .constant, .push, .ubo, .ssbo, .barrier, .scratch => {},
             .construct => for (user.from[0..user.kind.parts()]) |*of| {
                 if (of.* == from) of.* = to;
             },
@@ -5359,7 +5965,7 @@ fn replaceUses(work: *Work, from: u16, to: u16) void {
                 if (user.b == from) user.b = to;
                 if (user.from[0] == from) user.from[0] = to;
             },
-            .ssbo_store, .ssbo_atomic => {
+            .ssbo_store, .ssbo_atomic, .scratch_store => {
                 if (user.a == from) user.a = to;
                 if (user.from[0] == from) user.from[0] = to;
                 if (user.tag == .ssbo_atomic and user.from[1] == from) user.from[1] = to;
@@ -5431,6 +6037,11 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 // The whole of an array, a struct or a matrix of the
                 // function's own (since 1.176).
                 return storeAggregate(work, into, operands[1]);
+            }
+            if (work.thing[into] == .scratch_pointer) {
+                // Into a variable in scratch, each float its own
+                // store_scratch (since 1.177).
+                return storeScratch(work, into, operands[1]);
             }
             if (isLocal(work, into)) {
                 // The whole of one: what it holds is the value stored
@@ -5555,6 +6166,12 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 }
                 work.step_of[id] = try blockLoad(work, base, dynamic, offset, try kindOf(work, pointee), work.non_writable[from]);
                 return;
+            }
+            if (work.thing[from] == .scratch_pointer) {
+                // What a variable in scratch holds where the chain came
+                // to, each float its own load_scratch (since 1.177).
+                if (try idOf(operands[0]) != work.points[from]) return Error.Type;
+                return loadScratch(work, id, from);
             }
             if (work.thing[from] == .input_part) {
                 // One float of a varying, which an access chain named:
@@ -5685,6 +6302,11 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 var at = work.aggregate[base];
                 const indexes = operands[3..];
                 for (indexes, 0..) |each, k| {
+                    if (work.thing[at] != .plain_struct and work.thing[at] != .vector and try localIndexOrNull(work, each) == null) {
+                        // An element or a column at an index the body
+                        // computes (since 1.177).
+                        return wantScratch(work, work.chain_base[base], at, indexes[k..]);
+                    }
                     if (work.thing[at] == .vector) {
                         if (k != indexes.len - 1) return Error.Body;
                         const which = try indexOf(work, each);
@@ -5713,8 +6335,77 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                         work.class[id] = work.class[type_id];
                         work.points[id] = leaf;
                         work.aggregate[id] = at;
+                        work.chain_base[id] = work.chain_base[base];
                     },
                 }
+                return;
+            }
+            if (work.thing[base] == .scratch_pointer) {
+                // Into a variable in scratch memory: the byte offset of
+                // what the chain comes to, as nir_build_deref_offset adds
+                // it up for nir_lower_vars_to_scratch (nir_deref.c:
+                // 346-380, nir_lower_scratch.c:39-41) in the natural
+                // layout (`scratchFloats`): an element or a column its
+                // floats times four on from the one before, a float of a
+                // vector four bytes, and a member after the floats of
+                // those before it. An index the body computes is a step
+                // of the offset, the index times the stride as
+                // nir_amul_imm makes it (`strideTimes`), the constant ones
+                // added up apart from it, as the UBO's chains keep them
+                // (since 1.177).
+                if (work.thing[type_id] != .pointer) return Error.Type;
+                if (work.class[type_id] != @intFromEnum(spirv.StorageClass.function)) return Error.Body;
+                var at = work.points[base];
+                var offset: u32 = work.chain_offset[base];
+                var dynamic = work.chain_dynamic[base];
+                var path = work.pointer_paths[work.chain_path[base]];
+                for (operands[3..]) |each| {
+                    const index = try localIndexOrNull(work, each);
+                    var apart: u32 = 4;
+                    var count: u32 = 0;
+                    var next: u16 = undefined;
+                    switch (work.thing[at]) {
+                        .array, .matrix => {
+                            next = work.points[at];
+                            apart = 4 * try scratchFloats(work, next);
+                            count = if (work.thing[at] == .array) work.length[at] else work.wide[at];
+                        },
+                        .vector => {
+                            next = work.points[at];
+                            count = work.wide[at];
+                        },
+                        .plain_struct => {
+                            const which = index orelse return Error.Body;
+                            const members = structMembers(work, at);
+                            if (which >= members.len) return Error.Body;
+                            for (members[0..which]) |member| offset += 4 * try scratchFloats(work, member);
+                            try path.push(@intCast(which), false);
+                            at = members[which];
+                            continue;
+                        },
+                        else => return Error.Body,
+                    }
+                    at = next;
+                    if (index) |which| {
+                        if (which >= count) return Error.Body;
+                        offset += which * apart;
+                        try path.push(@intCast(which), false);
+                        continue;
+                    }
+                    const computed = try operand(work, each, .f32x1);
+                    try path.push(computed, true);
+                    const term = try strideTimes(work, computed, apart);
+                    dynamic = if (dynamic != none) try integerOf(work, .iadd, dynamic, term) else term;
+                }
+                if (work.points[type_id] != at) return Error.Type;
+                if (offset >= most_scratch) return Error.Storage;
+                work.thing[id] = .scratch_pointer;
+                work.class[id] = work.class[type_id];
+                work.points[id] = at;
+                work.chain_base[id] = work.chain_base[base];
+                work.chain_offset[id] = @intCast(offset);
+                work.chain_dynamic[id] = dynamic;
+                work.chain_path[id] = try pointerPath(work, path);
                 return;
             }
             if (isLocal(work, base)) {
@@ -6584,7 +7275,8 @@ fn lanes(work: *Work) void {
     for (steps, 0..) |each, at| {
         // An atomic's word differs too, whatever its operands
         // (nir_divergence_analysis.c:994-1010; since 1.169).
-        if (each.tag == .input or each.tag == .ssbo_atomic) work.divergent[at] = true;
+        // As does a load_scratch, whatever its offset (:989; since 1.177).
+        if (each.tag == .input or each.tag == .ssbo_atomic or each.tag == .scratch or each.tag == .scratch_indirect) work.divergent[at] = true;
         for (readsOf(each)) |field| if (field) |of| {
             if (work.divergent[of]) work.divergent[at] = true;
         };
@@ -6601,7 +7293,7 @@ fn lanes(work: *Work) void {
         const each = steps[at];
         switch (each.tag) {
             .sample, .sample_compared => needs[each.a] = true,
-            .ubo_indirect, .ssbo_indirect => if (!work.divergent[at]) {
+            .ubo_indirect, .ssbo_indirect, .scratch_indirect => if (!work.divergent[at]) {
                 needs[each.a] = true;
             },
             else => {},
@@ -6612,7 +7304,9 @@ fn lanes(work: *Work) void {
         };
     }
     for (steps, 0..) |each, k| switch (each.tag) {
-        .sample, .sample_compared, .ubo_indirect, .ssbo_indirect => work.skip_helpers[k] = work.divergent[k] and !needs[k],
+        // v3d's callback lets a load_scratch skip them too
+        // (intrinsic_try_skip_helpers, vir.c:1937-1951; since 1.177).
+        .sample, .sample_compared, .ubo_indirect, .ssbo_indirect, .scratch, .scratch_indirect => work.skip_helpers[k] = work.divergent[k] and !needs[k],
         else => {},
     };
 }
@@ -7377,7 +8071,7 @@ fn settle(work: *Work) Error!void {
             // are already in registers, so neither costs an instruction.
             .input, .component, .construct => {},
             // Refused by `compile` before the plan is laid out.
-            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier => return Error.Storage,
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store => return Error.Storage,
             .compare, .discard => return Error.Discards,
             .sample_compared => return Error.Samplers,
             .begin_if, .begin_else, .end_if, .phi => return Error.Branches,
@@ -9342,8 +10036,8 @@ test "through Mesa's back end, what does not fit 4 threads is compiled at 2, whe
     try testing.expectError(Error.Registers, compile(&work, Crowded.words));
     const code = try throughMesa(&work, Crowded.words);
     // Strategy 0 failed to allocate; strategy 2's two threads have all 64
-    // registers, and it fits them without a spill: a spill would have
-    // put the spill's uniforms in the stream, which a draw cannot fill.
+    // registers, and it fits them without a spill (a spill's uniforms a
+    // draw fills since 1.177, from the pipeline's spill buffer).
     try testing.expectEqual(@as(u8, 2), code.threads);
     try testing.expectEqual(@as(u32, 64), code.registers);
     try testing.expectEqual(@as(u32, 8), code.varyings);
@@ -12938,12 +13632,15 @@ test "an array a loop stores into at its counter, and an array of structs from a
     for (code.stream(), same.stream()) |a, b| try testing.expectEqual(a, b);
 }
 
-test "an element of an aggregate of the function's own at an index the body computes, past its end, or a member at no constant, is refused" {
+test "an element of an aggregate of the function's own at an index the body computes is in scratch, and one past its end, or a member at no constant, is refused" {
     // weights[uv.x]: an index no unrolled loop's counter makes a
-    // constant, which wants an if-else tree or scratch (since 1.176).
+    // constant (since 1.176), of three vec4s, which no if-else tree
+    // takes: in scratch, 48 bytes of each lane (since 1.177).
     var work: Work = .{};
     const computed = comptime patched(&reference.glslc_local_array, .access_chain, 2, 3, 30);
-    try testing.expectError(Error.Storage, throughMesa(&work, &computed));
+    const code = try throughMesa(&work, &computed);
+    try testing.expectEqual(@as(u32, 48), work.scratch_size);
+    try testing.expectEqual(@as(u32, 16 * 48), code.spill_size);
     // acc[4], of an array of four.
     work = .{};
     const past = comptime patched(&reference.glslc_local_taps_kept, .access_chain, 2, 3, 16);
@@ -13076,4 +13773,481 @@ test "a variable of the function's own given a constant to start with, an array'
     // the counter's zero.
     var other: Work = .{};
     try testing.expectError(Error.Body, throughMesa(&other, &comptime patched(&words, .variable, 3, 3, 23)));
+}
+
+/// How many of the stream's words are `tag`'s.
+fn streamWordsOf(code: Code, tag: std.meta.Tag(Word)) usize {
+    var count: usize = 0;
+    for (code.stream()) |word| {
+        if (word == tag) count += 1;
+    }
+    return count;
+}
+
+/// A program's disassembly, a line of each instruction, for the tests
+/// that follow a register back to the instruction that wrote it.
+const Lines = struct {
+    bytes: [most_lines][disasm.most_text]u8 = undefined,
+    len: [most_lines]usize = undefined,
+    count: usize = 0,
+
+    const most_lines = 128;
+
+    fn of(code: Code) !Lines {
+        var lines: Lines = .{};
+        try testing.expect(code.words.len <= most_lines);
+        for (code.words) |word| {
+            const made = disasm.disasm(word, &lines.bytes[lines.count]).?;
+            lines.len[lines.count] = made.len;
+            lines.count += 1;
+        }
+        return lines;
+    }
+
+    fn line(lines: *const Lines, k: usize) []const u8 {
+        return lines.bytes[k][0..lines.len[k]];
+    }
+
+    /// The `which`th of an instruction's halves, the add's, the mul's or
+    /// its signals', each trimmed.
+    fn half(lines: *const Lines, k: usize, which: usize) []const u8 {
+        var parts = std.mem.splitScalar(u8, lines.line(k), ';');
+        var n: usize = 0;
+        while (parts.next()) |part| : (n += 1) {
+            if (n == which) return std.mem.trim(u8, part, " ");
+        }
+        return "";
+    }
+
+    /// A half's operation, with its condition: `add.ifa` of
+    /// `add.ifa tmua, rf10, rf26`.
+    fn opOf(said: []const u8) []const u8 {
+        return said[0 .. std.mem.indexOfScalar(u8, said, ' ') orelse said.len];
+    }
+
+    /// A half's `n`th register named, its destination first.
+    fn operandOf(said: []const u8, n: usize) []const u8 {
+        const space = std.mem.indexOfScalar(u8, said, ' ') orelse return "";
+        var each = std.mem.splitSequence(u8, said[space + 1 ..], ", ");
+        var k: usize = 0;
+        while (each.next()) |named| : (k += 1) {
+            if (k == n) return std.mem.trim(u8, named, " ");
+        }
+        return "";
+    }
+
+    /// The instruction before `before` whose add or mul writes `register`.
+    fn writerOf(lines: *const Lines, before: usize, register: []const u8) ?struct { line: usize, half: []const u8 } {
+        var k = before;
+        while (k > 0) {
+            k -= 1;
+            for (0..2) |which| {
+                const said = lines.half(k, which);
+                if (!std.mem.eql(u8, opOf(said), "nop") and std.mem.eql(u8, operandOf(said, 0), register)) return .{ .line = k, .half = said };
+            }
+        }
+        return null;
+    }
+
+    /// Whether `register` before `before` is worked out from the thread's
+    /// index, as spill_base is (v3d_setup_spill_base,
+    /// vir_register_allocate.c:438-492).
+    fn fromTidx(lines: *const Lines, before: usize, register: []const u8, depth: u32) bool {
+        if (depth == 0) return false;
+        const writer = lines.writerOf(before, register) orelse return false;
+        if (std.mem.eql(u8, opOf(writer.half), "tidx")) return true;
+        for (1..3) |n| {
+            const named = operandOf(writer.half, n);
+            if (std.mem.startsWith(u8, named, "rf") and lines.fromTidx(writer.line, named, depth - 1)) return true;
+        }
+        return false;
+    }
+
+    /// The one TMU address written under the execute mask, the access an
+    /// arm kept makes: its base must be spill_base, and its offset the
+    /// index the body computes, a float's four bytes apart, sixteen times
+    /// that (v3d_nir_scratch_offset, v3d_nir_lower_scratch.c:31-43); every
+    /// other address the program writes from the same base.
+    fn expectArmedScratch(lines: *const Lines) !void {
+        var armed: ?usize = null;
+        var base: []const u8 = "";
+        for (0..lines.count) |k| for (0..2) |which| {
+            const said = lines.half(k, which);
+            if (!std.mem.eql(u8, operandOf(said, 0), "tmua")) continue;
+            if (base.len == 0) base = operandOf(said, 1);
+            try testing.expectEqualStrings(base, operandOf(said, 1));
+            if (std.mem.endsWith(u8, opOf(said), ".ifa")) {
+                try testing.expectEqual(@as(?usize, null), armed);
+                armed = k;
+            }
+        };
+        try testing.expect(lines.fromTidx(armed.?, base, 6));
+        const said = lines.half(armed.?, 0);
+        const times16 = lines.writerOf(armed.?, operandOf(said, 2)).?;
+        try testing.expectEqualStrings("shl", opOf(times16.half));
+        try testing.expectEqualStrings("4", operandOf(times16.half, 2));
+        const stride = lines.writerOf(times16.line, operandOf(times16.half, 1)).?;
+        try testing.expectEqualStrings("shl", opOf(stride.half));
+        try testing.expectEqualStrings("2", operandOf(stride.half, 2));
+    }
+};
+
+test "an array of the function's own read at an index the body computes, of more than two elements, lives in scratch, each float a load_scratch or a store_scratch through the TMU from spill_base" {
+    // table[i], four vec4s stored whole from a constant: 64 bytes of each
+    // lane's, nir_lower_vars_to_scratch's (vir.c:2041-2044; since 1.177),
+    // and sixteen times that of each thread's share of the spill buffer.
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_scratch_table);
+    try testing.expectEqual(@as(u32, 64), work.scratch_size);
+    try testing.expectEqual(@as(u32, 16 * 64), code.spill_size);
+    try testing.expect(code.tmu_dirty_rcl);
+    // The constant a store_scratch each float, at its byte offset times
+    // the sixteen lanes (v3d_nir_lower_scratch.c:31-43); table[i] a
+    // load_scratch each float, at i times the vec4's sixteen bytes, times
+    // the lanes again, plus the float's four bytes times them.
+    try testing.expectEqual(@as(usize, 16), stepsOf(&work, .scratch_store));
+    try testing.expectEqual(@as(usize, 4), liveOf(&work, .scratch_indirect));
+    var expected: u32 = 0;
+    for (work.program()) |each| if (each.tag == .scratch_store) {
+        try testing.expectEqual(expected, each.at);
+        try testing.expectEqual(none, each.from[0]);
+        expected += 4 * 16;
+    };
+    // An address of each, spill_base plus the offset, every one a pixel's
+    // 32-bit word: a load that helper pixels skip (vir.c:1937-1951) and a
+    // store, the TMU's default configuration.
+    try testing.expectEqual(@as(usize, 16 + 4), countOf(code, "tmua"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "tmuau"));
+    // spill_base, worked out once at the start from the thread's index,
+    // the lane's and the stream's two words (v3d_setup_spill_base).
+    try testing.expectEqual(@as(usize, 1), countOf(code, "tidx"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "eidx"));
+    try testing.expectEqual(@as(usize, 1), streamWordsOf(code, .spill_offset));
+    try testing.expectEqual(@as(usize, 1), streamWordsOf(code, .spill_size_per_thread));
+    // glslc -O0: i a variable of the function's own as well, the same
+    // words.
+    var kept: Work = .{};
+    const same = try throughMesa(&kept, &reference.glslc_scratch_table_kept);
+    try testing.expectEqualSlices(u64, code.words, same.words);
+}
+
+test "a load_scratch before a kept selection, the value its phi takes where the arm is not, is coalesced into the phi's float" {
+    // ramp[i] before the selection and ramp[j] in its arm: the block
+    // before ends with its TMU flushed in uniform control flow
+    // (ntq_emit_block, nir_to_vir.c:4676-4689), its MOV writing the phi's
+    // register whole, and the arm's under the execute mask (:809-838);
+    // the empty else is no block of copies (since 1.177).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_scratch_merge);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .scratch_indirect));
+    const lines = try Lines.of(code);
+    try lines.expectArmedScratch();
+    var loaded: [2][]const u8 = .{ "", "" };
+    var moves: [2][]const u8 = .{ "", "" };
+    var into: [2][]const u8 = .{ "", "" };
+    var count: usize = 0;
+    var colour: []const u8 = "";
+    for (0..lines.count) |k| {
+        for (0..2) |which| {
+            const said = lines.half(k, which);
+            for (0..count) |n| {
+                if (std.mem.eql(u8, Lines.operandOf(said, 1), loaded[n]) and std.mem.startsWith(u8, Lines.opOf(said), "mov")) {
+                    moves[n] = Lines.opOf(said);
+                    into[n] = Lines.operandOf(said, 0);
+                }
+            }
+            if (colour.len == 0 and std.mem.eql(u8, Lines.opOf(said), "vfpack")) colour = Lines.operandOf(said, 1);
+        }
+        const signals = lines.half(k, 2);
+        if (std.mem.indexOf(u8, signals, "ldtmu.")) |at| {
+            const rest = signals[at + "ldtmu.".len ..];
+            try testing.expect(count < 2);
+            loaded[count] = rest[0 .. std.mem.indexOfAny(u8, rest, "; ") orelse rest.len];
+            count += 1;
+        }
+    }
+    try testing.expectEqual(@as(usize, 2), count);
+    try testing.expectEqualStrings("mov", moves[0]);
+    try testing.expectEqualStrings("mov.ifa", moves[1]);
+    try testing.expectEqualStrings(colour, into[0]);
+    try testing.expectEqualStrings(colour, into[1]);
+    for (0..lines.count) |k| try testing.expect(std.mem.indexOf(u8, lines.line(k), "xor.pushz") == null);
+}
+
+test "an array in scratch stored into at an index the body computes, and an element of it loaded before and after, each its own load_scratch" {
+    // acc's four floats stored from 0.25 each, acc[i] stored color.y, and
+    // each float read at its constant offset (since 1.177).
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_scratch_slots);
+    try testing.expectEqual(@as(u32, 16), work.scratch_size);
+    try testing.expectEqual(@as(usize, 4 + 1), stepsOf(&work, .scratch_store));
+    try testing.expectEqual(@as(usize, 4), liveOf(&work, .scratch));
+    var computed: usize = 0;
+    for (work.program()) |each| if (each.tag == .scratch_store and each.from[0] != none) {
+        computed += 1;
+        const value = partOf(&work, each.a, 0);
+        try testing.expectEqual(Tag.input, work.steps[value.step].tag);
+        try testing.expectEqual(@as(u8, 1), value.part);
+    };
+    try testing.expectEqual(@as(usize, 1), computed);
+    // acc[0] before the store is the initializer's 0.25, the value
+    // nir_opt_copy_prop_vars has for it (nir_opt_copy_prop_vars.c:
+    // 1124-1229); after the store at an index the body computes, which
+    // may be any of them, acc[0], acc[1] and acc[3] are loads.
+    work = .{};
+    _ = try throughMesa(&work, &reference.glslc_scratch_reread);
+    try testing.expectEqual(@as(usize, 3), liveOf(&work, .scratch));
+    const before = partOf(&work, work.stored, 0);
+    try testing.expectEqual(Tag.constant, work.steps[before.step].tag);
+    try testing.expectEqual(@as(f32, 0.25), work.pool[work.steps[before.step].at + before.part]);
+    var stored: ?usize = null;
+    for (work.program(), 0..) |each, at| {
+        if (each.tag == .scratch_store and each.from[0] != none) stored = at;
+        if (each.tag == .scratch) try testing.expect(stored != null);
+    }
+    // A load_scratch is divergent whatever its offset
+    // (nir_divergence_analysis.c:989), and v3d's callback lets it skip
+    // the helper invocations (intrinsic_try_skip_helpers, vir.c:
+    // 1937-1951), no derivative reading it.
+    for (work.program(), 0..) |each, at| if (each.tag == .scratch) {
+        try testing.expect(work.divergent[at]);
+        try testing.expect(work.skip_helpers[at]);
+    };
+}
+
+test "nir_opt_copy_prop_vars takes a load of a float in scratch whose value it has and a store of the value there, and nir_opt_dead_write_vars a store written over unread" {
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_scratch_copies);
+    // The initializer's a[2] written over by color.z, nothing read
+    // between (update_unused_writes, nir_opt_dead_write_vars.c); a[i] = q
+    // the value a[i] has (nir_opt_copy_prop_vars.c:1268-1276; since
+    // 1.177).
+    var offsets: [8]u32 = undefined;
+    var count: usize = 0;
+    var computed: usize = 0;
+    for (work.program()) |each| if (each.tag == .scratch_store) {
+        if (each.from[0] != none) {
+            computed += 1;
+            continue;
+        }
+        offsets[count] = each.at / 16;
+        count += 1;
+    };
+    try testing.expectEqualSlices(u32, &.{ 0, 4, 12, 8 }, offsets[0..count]);
+    try testing.expectEqual(@as(usize, 1), computed);
+    // p the initializer's a[1], and q color.y as a[i] was stored; r and
+    // a[3] loads, the store at an index the body computes having taken
+    // the copies of a[2] and a[3], which it may be of.
+    const p = partOf(&work, work.stored, 0);
+    try testing.expectEqual(Tag.constant, work.steps[p.step].tag);
+    try testing.expectEqual(@as(f32, 0.375), work.pool[work.steps[p.step].at + p.part]);
+    const q = partOf(&work, work.stored, 1);
+    try testing.expectEqual(Tag.input, work.steps[q.step].tag);
+    try testing.expectEqual(@as(u8, 1), q.part);
+    for ([_]u8{ 2, 3 }, [_]u32{ 8, 12 }) |part, bytes| {
+        const loaded = partOf(&work, work.stored, part);
+        try testing.expectEqual(Tag.scratch, work.steps[loaded.step].tag);
+        try testing.expectEqual(bytes * 16, work.steps[loaded.step].at);
+    }
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .scratch));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .scratch_indirect));
+}
+
+test "a variable in scratch every load of which nir_opt_copy_prop_vars takes is dead, its stores with it, and the one left is placed alone" {
+    // b[i] read back as stored, in the block and in the arm: no load of
+    // b is left, nir_remove_dead_variables takes b and its stores
+    // (nir_remove_dead_variables.c:66-90, :110-170), and
+    // nir_lower_vars_to_scratch places a at 0. The arm left only an fmul,
+    // nir_opt_peephole_select flattens it (since 1.177).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_scratch_dead);
+    try testing.expectEqual(@as(usize, 2), work.scratch.count);
+    try testing.expect(work.scratch.dead[0] and !work.scratch.dead[1]);
+    try testing.expectEqual(@as(u32, 16), work.scratch_size);
+    try testing.expectEqual(@as(u32, 16 * 16), code.spill_size);
+    var offsets: [8]u32 = undefined;
+    var count: usize = 0;
+    for (work.program()) |each| if (each.tag == .scratch_store) {
+        try testing.expectEqual(none, each.from[0]);
+        offsets[count] = each.at / 16;
+        count += 1;
+    };
+    try testing.expectEqualSlices(u32, &.{ 0, 4, 8, 12 }, offsets[0..count]);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .scratch_indirect));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .scratch));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .begin_if));
+}
+
+test "a load of a float in scratch at an index the body computes reads every store before it, and a store written over in a block a flattened selection is in goes" {
+    // s = a[i] may be a[1], so the initializer's store of it stays
+    // (clear_unused_for_read, nir_opt_dead_write_vars.c); a[1] = color.y
+    // is written over by a[1] = t with the selection between flattened,
+    // in one block (update_unused_writes). a[1] and a[2] are then the
+    // copies' t and 0.625 (since 1.177).
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_scratch_blocks);
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .begin_if));
+    var offsets: [8]u32 = undefined;
+    var count: usize = 0;
+    for (work.program()) |each| if (each.tag == .scratch_store) {
+        try testing.expectEqual(none, each.from[0]);
+        offsets[count] = each.at / 16;
+        count += 1;
+    };
+    try testing.expectEqualSlices(u32, &.{ 0, 4, 8, 12, 4 }, offsets[0..count]);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .scratch_indirect));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .scratch));
+    const third = partOf(&work, work.stored, 2);
+    try testing.expectEqual(Tag.constant, work.steps[third.step].tag);
+    try testing.expectEqual(@as(f32, 0.625), work.pool[work.steps[third.step].at + third.part]);
+}
+
+test "each arm of a selection starts from the copies before it, and its merge keeps none a store in an arm may be of" {
+    // a[2] = color.y in the true arm is no copy to the false arm, whose
+    // a[2] is a load; past the merge, a[i] = color.w may have been
+    // written over, and a[2] and a[i] are loads
+    // (copy_prop_vars_cf_node, nir_opt_copy_prop_vars.c:1531-1566;
+    // since 1.177).
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_scratch_arms);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 6), stepsOf(&work, .scratch_store));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .scratch));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .scratch_indirect));
+}
+
+test "an index computed twice is one value to nir_opt_copy_prop_vars once nir_opt_cse has made it one, and an array only read back as stored is in no scratch" {
+    // glslc -O0 computes int(color.x * 3.99) for the store and again for
+    // the load: one SSA value after nir_opt_cse (nir_to_vir.c:2264), the
+    // load the copy's color.y, and a, loaded nowhere, dead
+    // (nir_remove_dead_variables.c:66-90; since 1.177).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_scratch_twice);
+    try testing.expectEqual(@as(u32, 0), work.scratch_size);
+    try testing.expectEqual(@as(u32, 0), code.spill_size);
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .scratch_store));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .scratch_indirect));
+    const first = partOf(&work, work.stored, 0);
+    try testing.expectEqual(Tag.input, work.steps[first.step].tag);
+    try testing.expectEqual(@as(u8, 1), first.part);
+    try testing.expectEqual(@as(usize, 0), streamWordsOf(code, .spill_offset));
+}
+
+test "an array of structs in scratch: members two floats apart, and a kept selection's merge a block of its own to nir_opt_dead_write_vars" {
+    // p[0].x stored in the false arm and again after the merge: two
+    // blocks, and the arm's store stays (remove_dead_write_vars_local,
+    // nir_opt_dead_write_vars.c). p[2].x is the initializer's, no store
+    // since of a float it may be (since 1.177).
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_scratch_pairs);
+    try testing.expectEqual(@as(u32, 24), work.scratch_size);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    var offsets: [10]u32 = undefined;
+    var count: usize = 0;
+    for (work.program()) |each| if (each.tag == .scratch_store) {
+        try testing.expectEqual(none, each.from[0]);
+        offsets[count] = each.at / 16;
+        count += 1;
+    };
+    try testing.expectEqualSlices(u32, &.{ 0, 4, 8, 12, 16, 20, 12, 0, 0 }, offsets[0..count]);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .scratch_indirect));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .scratch));
+    const third = partOf(&work, work.stored, 2);
+    try testing.expectEqual(Tag.constant, work.steps[third.step].tag);
+    try testing.expectEqual(@as(f32, 0.625), work.pool[work.steps[third.step].at + third.part]);
+}
+
+test "FacetBoth's scratch case: eight floats in scratch, one stored at a computed index, read back as stored and at three others" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_scratch_both);
+    try testing.expectEqual(@as(u32, 32), work.scratch_size);
+    try testing.expectEqual(@as(u32, 16 * 32), code.spill_size);
+    try testing.expectEqual(@as(usize, 8 + 1), stepsOf(&work, .scratch_store));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .scratch_indirect));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .scratch));
+    const second = partOf(&work, work.stored, 1);
+    try testing.expectEqual(Tag.input, work.steps[second.step].tag);
+    try testing.expectEqual(@as(u8, 2), second.part);
+}
+
+test "two arrays in scratch are placed in the order an index is first computed into each, and one of two elements wants an if-else tree" {
+    // b, declared after a, is indexed first: nir_lower_vars_to_scratch
+    // places b at 0 and a after its sixteen bytes (nir_lower_scratch.c:
+    // 155-185, :247-258; since 1.177). The stores of a's three floats come
+    // first, as the module stores a first.
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_scratch_order);
+    try testing.expectEqual(@as(u32, 16 + 12), work.scratch_size);
+    var offsets: [7]u32 = undefined;
+    var count: usize = 0;
+    for (work.program()) |each| if (each.tag == .scratch_store) {
+        offsets[count] = each.at / 16;
+        count += 1;
+    };
+    try testing.expectEqualSlices(u32, &.{ 16, 20, 24, 0, 4, 8, 12 }, offsets[0..count]);
+    // two[i], two vec4s: nir_lower_indirect_derefs_to_if_else_trees's
+    // (v3dv_pipeline.c:435-436), which is not here.
+    work = .{};
+    try testing.expectError(Error.Storage, throughMesa(&work, &reference.glslc_scratch_pair));
+}
+
+test "a store_scratch in a selection's arm keeps the arm, and is written under the execute mask" {
+    // nir_opt_peephole_select lets no load_deref or store_deref of a
+    // variable of the function's own through (nir_opt_peephole_select.c:
+    // 109-129), so the arm is kept (since 1.177).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_scratch_armed);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 4 + 1), stepsOf(&work, .scratch_store));
+    // The arm's address written for the lanes that run
+    // (emit_tmu_general_address_write, nir_to_vir.c:457-459, :490-491).
+    var conditioned: usize = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        if (std.mem.indexOf(u8, line, "tmua") != null and std.mem.indexOf(u8, line, ".ifa") != null) conditioned += 1;
+    }
+    try testing.expectEqual(@as(usize, 1), conditioned);
+    const lines = try Lines.of(code);
+    try lines.expectArmedScratch();
+}
+
+test "a load_scratch in a selection's arm keeps the arm, the float it loads moved into the phi's under the execute mask" {
+    // Neither a load_deref of a variable of the function's own nor a
+    // load_scratch is an instruction nir_opt_peephole_select lets through
+    // (nir_opt_peephole_select.c:109-129), so the arm is kept (since
+    // 1.177).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_scratch_lookup);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .scratch_store));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .scratch_indirect));
+    const lines = try Lines.of(code);
+    try lines.expectArmedScratch();
+    // The phi's float in a register of its own, which nir_from_ssa
+    // coalesces the load into: the flush moves each float the TMU
+    // returns (vir_MOV(c, vir_LDTMU(c)), nir_to_vir.c:280-281), and
+    // ntq_store_def makes that MOV write the phi's register, under the
+    // execute mask in the arm (:809-838).
+    var loaded: []const u8 = "";
+    var moved: []const u8 = "";
+    for (0..lines.count) |k| {
+        const signals = lines.half(k, 2);
+        if (std.mem.indexOf(u8, signals, "ldtmu.")) |at| {
+            const rest = signals[at + "ldtmu.".len ..];
+            try testing.expectEqual(@as(usize, 0), loaded.len);
+            loaded = rest[0 .. std.mem.indexOfAny(u8, rest, "; ") orelse rest.len];
+        }
+        for (0..2) |which| {
+            const said = lines.half(k, which);
+            if (loaded.len > 0 and std.mem.eql(u8, Lines.opOf(said), "mov.ifa") and std.mem.eql(u8, Lines.operandOf(said, 1), loaded)) {
+                moved = Lines.operandOf(said, 0);
+            }
+            if (std.mem.eql(u8, Lines.opOf(said), "vfpack") and moved.len > 0) {
+                try testing.expectEqualStrings(moved, Lines.operandOf(said, 1));
+            }
+        }
+    }
+    try testing.expect(moved.len > 0);
 }
