@@ -6605,4 +6605,35 @@ pub const LIBRARY_VERSION = 1;
 /// function made wrong on purpose it is 46,565 apart. The other 288
 /// cases are each as they were at 1.197, and FacetProbe passes its 890
 /// checks.
-pub const LIBRARY_REVISION = 198;
+/// 199: **GLSL.std.450's packing of snorms and unorms
+/// (docs/facet-vulkan10.md item 59).** PackUnorm4x8, PackSnorm4x8,
+/// PackUnorm2x16 and PackSnorm2x16 are NIR's pack_unorm_4x8 and the
+/// others (vtn_glsl450.c:606-609) as the V3D's lower_pack_* lower them
+/// (v3dv_pipeline.c:179-180, 183-184; nir_opt_algebraic.py:2757-2780):
+/// held, scaled, rounded to even and made integers, then each float's
+/// low byte or half shifted to its place and or'ed
+/// (nir_lower_alu_width.c:276-298). The four unpackings
+/// (vtn_glsl450.c:612-615) are the places extracted, made floats and
+/// divided, the signed held to -1 (nir_opt_algebraic.py:2787-2813), the
+/// extracts lower_extract_byte's and lower_extract_word's (:2740-2754).
+/// New rules: an ishl of an iand, and an iand of an ishl or a ushr,
+/// whose mask is what the shift keeps, is the shift alone (:702-714),
+/// and a shift right by 0 its operand (:1803, :1805). A float of a
+/// constant, and a vector of constants, are constants, so that the
+/// packings of constants fold; and the host's evaluator works out fsat
+/// and fround_even.
+///
+/// glslc_packing_bytes and glslc_packing_halves, of 308 and 285 words,
+/// answer for eight colours within 10^-6 what GLSL's definitions
+/// answer; one shader of all eight would be past the 256 steps. Their
+/// programs' iands, shifts and iors are what Mesa's lowering and rules
+/// leave, and FTOIN, FROUND and FTOUZ are nir_to_vir's. The V3D's tests
+/// are 344, three new, and the rules' test has 13 cases more. Of 38
+/// mutations, all 38 fail them.
+///
+/// On the CM5 FacetBoth 1.63's "shipped packing in bytes" and "shipped
+/// packing in halves" are each 8 of 230400 pixels apart, the 8 at the
+/// triangles' edge. With the cores' functions made wrong on purpose they
+/// are 46,171 and 46,482 apart. The other 289 cases are each as they
+/// were at 1.198, and FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 199;

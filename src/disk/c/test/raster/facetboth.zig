@@ -150,7 +150,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.62 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.63 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -2234,6 +2234,75 @@ fn modfFrexpOf(color: [4]f32) [4]f32 {
     };
 }
 
+/// GLSL's round to the nearest, the even of two as near, which is how
+/// a packing rounds (since 1.63).
+fn roundToEven(x: f32) f32 {
+    if (@abs(x - @trunc(x)) != 0.5) return @round(x);
+    return 2.0 * @round(x / 2.0);
+}
+
+/// GLSL's packUnorm4x8 and the others: each float held to 0 to 1, or to
+/// -1 to 1, times the largest number of `bits` it can be, rounded, and
+/// placed from the lowest bits, the first float's lowest (since 1.63).
+fn packedWord(v: []const f32, bits: u5, signed: bool) u32 {
+    const top: f32 = @floatFromInt((@as(u32, 1) << (bits - @intFromBool(signed))) - 1);
+    const mask = (@as(u32, 1) << bits) - 1;
+    var word: u32 = 0;
+    for (v, 0..) |each, k| {
+        const clamped = if (signed) std.math.clamp(each, -1.0, 1.0) else std.math.clamp(each, 0.0, 1.0);
+        const whole: i32 = @intFromFloat(roundToEven(clamped * top));
+        word |= (@as(u32, @bitCast(whole)) & mask) << @intCast(k * bits);
+    }
+    return word;
+}
+
+/// GLSL's unpackUnorm4x8 and the others: each place of `bits` from the
+/// lowest, unsigned or signed, over that largest number, the signed held
+/// to -1 (since 1.63).
+fn unpackedFloats(comptime n: usize, word: u32, bits: u5, signed: bool) [n]f32 {
+    const top: f32 = @floatFromInt((@as(u32, 1) << (bits - @intFromBool(signed))) - 1);
+    const mask = (@as(u32, 1) << bits) - 1;
+    var out: [n]f32 = undefined;
+    for (&out, 0..) |*each, k| {
+        const field = (word >> @intCast(k * bits)) & mask;
+        const up: u5 = @intCast(32 - @as(u32, bits));
+        const value: f32 = if (signed) @floatFromInt(@as(i32, @bitCast(field << up)) >> up) else @floatFromInt(field);
+        each.* = if (signed) @max(value / top, -1.0) else value / top;
+    }
+    return out;
+}
+
+/// What `shipped_packing_bytes` computes, by GLSL's definitions of the
+/// packings (since 1.63).
+fn packingBytesOf(color: [4]f32) [4]f32 {
+    var c: [4]f32 = undefined;
+    for (&c, color) |*each, v| each.* = v * 3.0 - 1.5;
+    const u = unpackedFloats(4, packedWord(&c, 8, false), 8, false);
+    const s = unpackedFloats(4, packedWord(&.{ c[3], c[2], c[1], c[0] }, 8, true), 8, true);
+    const across = unpackedFloats(4, packedWord(&.{ color[0], color[1] }, 16, false), 8, false);
+    return .{
+        u[0] * 0.5 + s[3] * 0.25 + 0.25,
+        u[1] * 0.5 + s[2] * 0.25 + 0.25,
+        u[2] * 0.25 + s[1] * 0.25 + across[1] * 0.25 + 0.25,
+        u[3] * 0.25 + s[0] * 0.25 + across[3] * 0.25 + 0.25,
+    };
+}
+
+/// What `shipped_packing_halves` computes (since 1.63).
+fn packingHalvesOf(color: [4]f32) [4]f32 {
+    var c: [4]f32 = undefined;
+    for (&c, color) |*each, v| each.* = v * 3.0 - 1.5;
+    const uh = unpackedFloats(2, packedWord(&.{ c[1], c[2] }, 16, false), 16, false);
+    const sh = unpackedFloats(2, packedWord(&.{ c[2], c[0] }, 16, true), 16, true);
+    const back = unpackedFloats(2, packedWord(&.{ c[1], c[0], c[3], c[2] }, 8, true), 16, true);
+    return .{
+        uh[0] * 0.5 + back[0] * 0.25 + 0.25,
+        uh[1] * 0.5 + back[1] * 0.25 + 0.25,
+        sh[0] * 0.25 + uh[0] * 0.25 + 0.5,
+        sh[1] * 0.25 + uh[1] * 0.25 + 0.5,
+    };
+}
+
 /// The entries that ship words, after all the others, and the words of
 /// each in the same order: `shader.Module.spirv` is index for index.
 const shipped_entries = [_]shader.Entry{
@@ -2335,6 +2404,8 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped geometry", curveFragment(geometryOf), 4),
     shader.fragment("shipped bit finds", curveFragment(bitFindsOf), 4),
     shader.fragment("shipped modf and frexp", curveFragment(modfFrexpOf), 4),
+    shader.fragment("shipped packing in bytes", curveFragment(packingBytesOf), 4),
+    shader.fragment("shipped packing in halves", curveFragment(packingHalvesOf), 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2360,7 +2431,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_noperspective_vertex), shader.Spirv.of(&shipped_noperspective),    shader.Spirv.of(&shipped_many_ids),            shader.Spirv.of(&shipped_vertex_index),
     shader.Spirv.of(&shipped_index_place),          shader.Spirv.of(&shipped_point_size),       shader.Spirv.of(&shipped_point_one),           shader.Spirv.of(&shipped_vertices),
     shader.Spirv.of(&shipped_numbers),              shader.Spirv.of(&shipped_inverse_trig),     shader.Spirv.of(&shipped_hyperbolic),          shader.Spirv.of(&shipped_geometry),
-    shader.Spirv.of(&shipped_bit_finds),            shader.Spirv.of(&shipped_modf_frexp),
+    shader.Spirv.of(&shipped_bit_finds),            shader.Spirv.of(&shipped_modf_frexp),       shader.Spirv.of(&shipped_packing_bytes),       shader.Spirv.of(&shipped_packing_halves),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -5970,6 +6041,166 @@ const shipped_modf_frexp = [_]u32{
     0x00000006, 0x0000005F, 0x0000005E, 0x00000036, 0x00070050, 0x00000007,
     0x00000060, 0x0000003F, 0x0000004D, 0x00000053, 0x0000005F, 0x0003003E,
     0x00000030, 0x00000060, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, the V3D's host tests' glslc_packing_bytes:
+/// what `packingBytesOf` on the cores: PackUnorm4x8 and PackSnorm4x8 each unpacked again, and PackUnorm2x16 unpacked in bytes (since 1.63).
+///
+/// ```glsl
+/// #version 450
+/// // facet 1.199: GLSL.std.450's packing and unpacking of snorms and
+/// // unorms in bytes, as nir_opt_algebraic and nir_lower_alu_width lower
+/// // them: the colour made -1.5 to 1.5, packed and unpacked again, and a
+/// // packing of halves unpacked in bytes, which tells the places' order.
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     vec4 c = color * 3.0 - 1.5;
+///     vec4 u = unpackUnorm4x8(packUnorm4x8(c));
+///     vec4 s = unpackSnorm4x8(packSnorm4x8(c.wzyx));
+///     vec4 across = unpackUnorm4x8(packUnorm2x16(color.xy));
+///     outColor = vec4(u.x * 0.5 + s.w * 0.25 + 0.25,
+///                     u.y * 0.5 + s.z * 0.25 + 0.25,
+///                     u.z * 0.25 + s.y * 0.25 + across.y * 0.25 + 0.25,
+///                     u.w * 0.25 + s.x * 0.25 + across.w * 0.25 + 0.25);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag packing_bytes.frag -o packing_bytes.spv   # 308 words
+/// spirv-val --target-env vulkan1.0 packing_bytes.spv   # no output, and 0
+/// ```
+const shipped_packing_bytes = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000063, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000023, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000023, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x0000000A,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001,
+    0x0004002B, 0x00000006, 0x0000000D, 0x40400000, 0x0004002B, 0x00000006,
+    0x0000000F, 0x3FC00000, 0x00040015, 0x00000014, 0x00000020, 0x00000000,
+    0x00040017, 0x0000001D, 0x00000006, 0x00000002, 0x00040020, 0x00000022,
+    0x00000003, 0x00000007, 0x0004003B, 0x00000022, 0x00000023, 0x00000003,
+    0x0004002B, 0x00000006, 0x00000028, 0x3F000000, 0x0004002B, 0x00000006,
+    0x0000002D, 0x3E800000, 0x0007002C, 0x00000007, 0x0000005E, 0x0000000F,
+    0x0000000F, 0x0000000F, 0x0000000F, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x00000007,
+    0x0000000C, 0x0000000B, 0x0005008E, 0x00000007, 0x0000000E, 0x0000000C,
+    0x0000000D, 0x00050083, 0x00000007, 0x00000011, 0x0000000E, 0x0000005E,
+    0x0006000C, 0x00000014, 0x00000015, 0x00000001, 0x00000037, 0x00000011,
+    0x0006000C, 0x00000007, 0x00000016, 0x00000001, 0x00000040, 0x00000015,
+    0x0009004F, 0x00000007, 0x00000019, 0x00000011, 0x00000011, 0x00000003,
+    0x00000002, 0x00000001, 0x00000000, 0x0006000C, 0x00000014, 0x0000001A,
+    0x00000001, 0x00000036, 0x00000019, 0x0006000C, 0x00000007, 0x0000001B,
+    0x00000001, 0x0000003F, 0x0000001A, 0x0007004F, 0x0000001D, 0x0000001F,
+    0x0000000C, 0x0000000C, 0x00000000, 0x00000001, 0x0006000C, 0x00000014,
+    0x00000020, 0x00000001, 0x00000039, 0x0000001F, 0x0006000C, 0x00000007,
+    0x00000021, 0x00000001, 0x00000040, 0x00000020, 0x00050051, 0x00000006,
+    0x00000027, 0x00000016, 0x00000000, 0x00050085, 0x00000006, 0x00000029,
+    0x00000027, 0x00000028, 0x00050051, 0x00000006, 0x0000002C, 0x0000001B,
+    0x00000003, 0x00050085, 0x00000006, 0x0000002E, 0x0000002C, 0x0000002D,
+    0x00050081, 0x00000006, 0x0000002F, 0x00000029, 0x0000002E, 0x00050081,
+    0x00000006, 0x00000030, 0x0000002F, 0x0000002D, 0x00050051, 0x00000006,
+    0x00000033, 0x00000016, 0x00000001, 0x00050085, 0x00000006, 0x00000034,
+    0x00000033, 0x00000028, 0x00050051, 0x00000006, 0x00000037, 0x0000001B,
+    0x00000002, 0x00050085, 0x00000006, 0x00000038, 0x00000037, 0x0000002D,
+    0x00050081, 0x00000006, 0x00000039, 0x00000034, 0x00000038, 0x00050081,
+    0x00000006, 0x0000003A, 0x00000039, 0x0000002D, 0x00050051, 0x00000006,
+    0x0000003C, 0x00000016, 0x00000002, 0x00050051, 0x00000006, 0x0000003F,
+    0x0000001B, 0x00000001, 0x00050081, 0x00000006, 0x0000005F, 0x0000003C,
+    0x0000003F, 0x00050051, 0x00000006, 0x00000043, 0x00000021, 0x00000001,
+    0x00050081, 0x00000006, 0x00000060, 0x0000005F, 0x00000043, 0x00050085,
+    0x00000006, 0x00000045, 0x0000002D, 0x00000060, 0x00050081, 0x00000006,
+    0x00000046, 0x00000045, 0x0000002D, 0x00050051, 0x00000006, 0x00000048,
+    0x00000016, 0x00000003, 0x00050051, 0x00000006, 0x0000004B, 0x0000001B,
+    0x00000000, 0x00050081, 0x00000006, 0x00000061, 0x00000048, 0x0000004B,
+    0x00050051, 0x00000006, 0x0000004F, 0x00000021, 0x00000003, 0x00050081,
+    0x00000006, 0x00000062, 0x00000061, 0x0000004F, 0x00050085, 0x00000006,
+    0x00000051, 0x0000002D, 0x00000062, 0x00050081, 0x00000006, 0x00000052,
+    0x00000051, 0x0000002D, 0x00070050, 0x00000007, 0x00000053, 0x00000030,
+    0x0000003A, 0x00000046, 0x00000052, 0x0003003E, 0x00000023, 0x00000053,
+    0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, the V3D's host tests' glslc_packing_halves:
+/// what `packingHalvesOf` on the cores: PackUnorm2x16 and PackSnorm2x16 each unpacked again, and PackSnorm4x8 unpacked in halves (since 1.63).
+///
+/// ```glsl
+/// #version 450
+/// // facet 1.199: GLSL.std.450's packing and unpacking of snorms and
+/// // unorms in halves, as nir_opt_algebraic and nir_lower_alu_width lower
+/// // them: the colour made -1.5 to 1.5, packed and unpacked again, and a
+/// // packing of bytes unpacked in halves, which tells the places' order.
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     vec4 c = color * 3.0 - 1.5;
+///     vec2 uh = unpackUnorm2x16(packUnorm2x16(c.yz));
+///     vec2 sh = unpackSnorm2x16(packSnorm2x16(c.zx));
+///     vec2 back = unpackSnorm2x16(packSnorm4x8(c.yxwz));
+///     outColor = vec4(uh.x * 0.5 + back.x * 0.25 + 0.25,
+///                     uh.y * 0.5 + back.y * 0.25 + 0.25,
+///                     sh.x * 0.25 + uh.x * 0.25 + 0.5,
+///                     sh.y * 0.25 + uh.y * 0.25 + 0.5);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag packing_halves.frag -o packing_halves.spv   # 285 words
+/// spirv-val --target-env vulkan1.0 packing_halves.spv   # no output, and 0
+/// ```
+const shipped_packing_halves = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000057, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000025, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000B, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000025, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00030016, 0x00000006, 0x00000020,
+    0x00040017, 0x00000007, 0x00000006, 0x00000004, 0x00040020, 0x0000000A,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001,
+    0x0004002B, 0x00000006, 0x0000000D, 0x40400000, 0x0004002B, 0x00000006,
+    0x0000000F, 0x3FC00000, 0x00040017, 0x00000012, 0x00000006, 0x00000002,
+    0x00040015, 0x00000017, 0x00000020, 0x00000000, 0x00040020, 0x00000024,
+    0x00000003, 0x00000007, 0x0004003B, 0x00000024, 0x00000025, 0x00000003,
+    0x0004002B, 0x00000006, 0x0000002A, 0x3F000000, 0x0004002B, 0x00000006,
+    0x0000002E, 0x3E800000, 0x0007002C, 0x00000007, 0x00000054, 0x0000000F,
+    0x0000000F, 0x0000000F, 0x0000000F, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x00000007,
+    0x0000000C, 0x0000000B, 0x0005008E, 0x00000007, 0x0000000E, 0x0000000C,
+    0x0000000D, 0x00050083, 0x00000007, 0x00000011, 0x0000000E, 0x00000054,
+    0x0007004F, 0x00000012, 0x00000016, 0x00000011, 0x00000011, 0x00000001,
+    0x00000002, 0x0006000C, 0x00000017, 0x00000018, 0x00000001, 0x00000039,
+    0x00000016, 0x0006000C, 0x00000012, 0x00000019, 0x00000001, 0x0000003D,
+    0x00000018, 0x0007004F, 0x00000012, 0x0000001C, 0x00000011, 0x00000011,
+    0x00000002, 0x00000000, 0x0006000C, 0x00000017, 0x0000001D, 0x00000001,
+    0x00000038, 0x0000001C, 0x0006000C, 0x00000012, 0x0000001E, 0x00000001,
+    0x0000003C, 0x0000001D, 0x0009004F, 0x00000007, 0x00000021, 0x00000011,
+    0x00000011, 0x00000001, 0x00000000, 0x00000003, 0x00000002, 0x0006000C,
+    0x00000017, 0x00000022, 0x00000001, 0x00000036, 0x00000021, 0x0006000C,
+    0x00000012, 0x00000023, 0x00000001, 0x0000003C, 0x00000022, 0x00050051,
+    0x00000006, 0x00000029, 0x00000019, 0x00000000, 0x00050085, 0x00000006,
+    0x0000002B, 0x00000029, 0x0000002A, 0x00050051, 0x00000006, 0x0000002D,
+    0x00000023, 0x00000000, 0x00050085, 0x00000006, 0x0000002F, 0x0000002D,
+    0x0000002E, 0x00050081, 0x00000006, 0x00000030, 0x0000002B, 0x0000002F,
+    0x00050081, 0x00000006, 0x00000031, 0x00000030, 0x0000002E, 0x00050051,
+    0x00000006, 0x00000034, 0x00000019, 0x00000001, 0x00050085, 0x00000006,
+    0x00000035, 0x00000034, 0x0000002A, 0x00050051, 0x00000006, 0x00000037,
+    0x00000023, 0x00000001, 0x00050085, 0x00000006, 0x00000038, 0x00000037,
+    0x0000002E, 0x00050081, 0x00000006, 0x00000039, 0x00000035, 0x00000038,
+    0x00050081, 0x00000006, 0x0000003A, 0x00000039, 0x0000002E, 0x00050051,
+    0x00000006, 0x0000003C, 0x0000001E, 0x00000000, 0x00050081, 0x00000006,
+    0x00000055, 0x0000003C, 0x00000029, 0x00050085, 0x00000006, 0x00000041,
+    0x0000002E, 0x00000055, 0x00050081, 0x00000006, 0x00000042, 0x00000041,
+    0x0000002A, 0x00050051, 0x00000006, 0x00000044, 0x0000001E, 0x00000001,
+    0x00050081, 0x00000006, 0x00000056, 0x00000044, 0x00000034, 0x00050085,
+    0x00000006, 0x00000049, 0x0000002E, 0x00000056, 0x00050081, 0x00000006,
+    0x0000004A, 0x00000049, 0x0000002A, 0x00070050, 0x00000007, 0x0000004B,
+    0x00000031, 0x0000003A, 0x00000042, 0x0000004A, 0x0003003E, 0x00000025,
+    0x0000004B, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output, at -O, of the place times a W of 1 + 2 * the blue
@@ -10223,6 +10454,8 @@ const cases = [_]Case{
     .{ .name = "shipped cross, reflect and refract", .run = Cases.shipped("as it is", "shipped geometry", false, clockwise_at) },
     .{ .name = "shipped bit finds", .run = Cases.shipped("as it is", "shipped bit finds", false, clockwise_at) },
     .{ .name = "shipped modf, frexp and ldexp", .run = Cases.shipped("as it is", "shipped modf and frexp", false, clockwise_at) },
+    .{ .name = "shipped packing in bytes", .run = Cases.shipped("as it is", "shipped packing in bytes", false, clockwise_at) },
+    .{ .name = "shipped packing in halves", .run = Cases.shipped("as it is", "shipped packing in halves", false, clockwise_at) },
     .{ .name = "shipped flat varying", .run = Cases.shipped("shipped flat vertex", "shipped flat colour", false, clockwise_at) },
     .{ .name = "shipped flat integer", .run = Cases.shipped("shipped flat integer vertex", "shipped flat integer", false, clockwise_at) },
     .{ .name = "shipped noperspective", .run = Cases.shipped("shipped noperspective vertex", "shipped noperspective", false, clockwise_at) },

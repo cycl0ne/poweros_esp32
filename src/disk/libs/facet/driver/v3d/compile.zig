@@ -6305,11 +6305,37 @@ const Order = struct {
             // ('iadd', a, '#b'), c), '#d'), ('iadd', ('ishl', ('iadd', a,
             // c), d), ('ishl', b, d))) (:730-731), which takes the
             // ishl twin of :739 (:741-742) as well.
-            // Then (('ishl', a, 0), a) (:1800).
+            // Then (('ishl', a, 0), a) (:1800). Before those, for i in
+            // [1, 2, 16, 24], (('ishl@32', ('iand', 'a@32', lo_mask), i),
+            // ('ishl', a, i)) (:702-708), the mask's bits all those the
+            // shift keeps (since 1.199).
             .ishl => if (isConstantStep(work, each.b)) {
+                if (maskedShift(work, each.b)) |i| {
+                    const inner = work.steps[each.a];
+                    if (isIntegerOp(inner, .iand)) for ([2][2]u16{ .{ inner.a, inner.b }, .{ inner.b, inner.a } }) |in| {
+                        if (splatWordOf(work, in[1]) != @as(u32, 0xffffffff) >> i) continue;
+                        return try list.rebuilt(work, at, integerStep(.ishl, each.kind, in[0], each.b));
+                    };
+                }
                 if (try list.distributed(work, at, .ishl, each.a, each.b, false)) |left| return left;
                 if (isZero(work, each.b)) return list.replaced(work, at, each.a);
             },
+            // For i in [1, 2, 16, 24], (('iand', ('ishl', 'a@32', i),
+            // hi_mask), ('ishl', a, i)) and (('iand', ('ushr', 'a@32',
+            // i), lo_mask), ('ushr', a, i)) (:702-714): a mask of every
+            // bit the shift leaves (since 1.199).
+            .iand => for (pairs) |pair| {
+                const mask = splatWordOf(work, pair[1]) orelse continue;
+                const inner = work.steps[pair[0]];
+                const up = isIntegerOp(inner, .ishl);
+                if (!up and !isIntegerOp(inner, .ushr)) continue;
+                const i = maskedShift(work, inner.b) orelse continue;
+                const kept = if (up) (@as(u32, 0xffffffff) << i) else (@as(u32, 0xffffffff) >> i);
+                if (mask == kept) return list.replaced(work, at, pair[0]);
+            },
+            // (('ishr', a, 0), a) and (('ushr', a, 0), a) (:1803, :1805;
+            // since 1.199).
+            .ishr, .ushr => if (isZero(work, each.b)) return list.replaced(work, at, each.a),
             .imul => for (pairs) |pair| {
                 const by = pair[1];
                 if (!isConstantStep(work, by)) continue;
@@ -6462,6 +6488,26 @@ const Order = struct {
 
 fn integerStep(op: Integer, kind: Kind, a: u16, b: u16) Step {
     return .{ .tag = .integer, .kind = kind, .a = a, .b = b, .at = @intFromEnum(op) };
+}
+
+/// The word of the constant `at` where every float of it is that word.
+fn splatWordOf(work: *const Work, at: u16) ?u32 {
+    const each = work.steps[at];
+    if (each.tag != .constant) return null;
+    const words = work.pool[each.at..][0..each.kind.parts()];
+    const first: u32 = @bitCast(words[0]);
+    for (words) |word| if (@as(u32, @bitCast(word)) != first) return null;
+    return first;
+}
+
+/// The shift of the constant `at` where it is one nir_opt_algebraic's
+/// masked shifts are of, 1, 2, 16 or 24 (nir_opt_algebraic.py:702).
+fn maskedShift(work: *const Work, at: u16) ?u5 {
+    const word = splatWordOf(work, at) orelse return null;
+    return switch (word) {
+        1, 2, 16, 24 => @intCast(word),
+        else => null,
+    };
 }
 
 fn isIntegerOp(each: Step, op: Integer) bool {
@@ -8463,10 +8509,34 @@ fn wrapped(work: *Work, word: u32) Error!Matrix {
     return made;
 }
 
-/// Float `k` of `of`: nir_channel, which of one float is that float.
+/// Float `k` of `of`: nir_channel, which of one float is that float,
+/// and of a constant a constant of that float, which
+/// nir_opt_constant_folding folds what reads it with (since 1.199).
 fn channelOf(work: *Work, of: u16, k: u8) Error!u16 {
-    if (work.steps[of].kind == .f32x1) return of;
+    const each = work.steps[of];
+    if (each.kind == .f32x1) return of;
+    if (each.tag == .constant) return immediate(work, work.pool[each.at + k]);
     return put(work, .{ .tag = .component, .kind = .f32x1, .a = of, .at = k });
+}
+
+/// The vector of the floats `parts`, each a step of one: nir_vec, and of
+/// constants the constant nir_opt_constant_folding makes of it (since
+/// 1.199).
+fn vectorOf(work: *Work, parts: []const u16) Error!u16 {
+    const kind = std.enums.fromInt(Kind, parts.len) orelse return Error.Type;
+    for (parts) |each| if (!isConstantStep(work, each)) {
+        var made = Step{ .tag = .construct, .kind = kind };
+        for (parts, 0..) |part, k| {
+            made.from[k] = part;
+            made.part[k] = 0;
+        }
+        return put(work, made);
+    };
+    if (work.pool_count + parts.len > work.pool.len) return Error.Uniforms;
+    const at = work.pool_count;
+    for (parts, 0..) |part, k| work.pool[at + k] = work.pool[work.steps[part].at];
+    work.pool_count += @intCast(parts.len);
+    return put(work, .{ .tag = .constant, .kind = kind, .at = at });
 }
 
 /// The transpose of matrix `of`, by its place among the matrices:
@@ -8550,9 +8620,10 @@ fn multiplied(work: *Work, left: Matrix, right: Matrix) Error!Matrix {
 /// comparison of a vector one of each float (`lower_to_scalar`,
 /// v3dv_pipeline.c:203). The bit finds are here since 1.197, of uclz,
 /// and Ldexp since 1.198, with ModfStruct and FrexpStruct
-/// (`glslStructCall`). What is left out - Modf and Frexp of a pointer,
-/// the determinant and the inverse, the packing and the interpolation -
-/// is refused by name, `Error.Body` (since 1.152).
+/// (`glslStructCall`); the packing and unpacking of snorms and unorms
+/// since 1.199. What is left out - Modf and Frexp of a pointer, the
+/// determinant and the inverse, the halves' and the doubles' packing and
+/// the interpolation - is refused by name, `Error.Body` (since 1.152).
 fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) Error!u16 {
     const which = std.enums.fromInt(spirv.Glsl, instruction) orelse return Error.Body;
     switch (which) {
@@ -8569,6 +8640,9 @@ fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) E
         .find_i_lsb, .find_s_msb, .find_u_msb => {},
         // Since 1.198.
         .ldexp => {},
+        // Since 1.199.
+        .pack_snorm_4x8, .pack_unorm_4x8, .pack_snorm_2x16, .pack_unorm_2x16 => {},
+        .unpack_snorm_4x8, .unpack_unorm_4x8, .unpack_snorm_2x16, .unpack_unorm_2x16 => {},
         else => return Error.Body,
     }
     const wanted: usize = switch (which) {
@@ -8582,12 +8656,23 @@ fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) E
     if (arguments.len != wanted) return Error.Body;
     // Length and Distance answer one float of vectors; every other takes
     // operands of the kind it answers, but Refract's eta, which is one
-    // float whatever I and N are.
-    const of_kind = switch (which) {
+    // float whatever I and N are, and the packings: a vec4 or a vec2 into
+    // a uint, and back.
+    const of_kind: Kind = switch (which) {
         .length, .distance => try kindOfValue(work, arguments[0]),
+        .pack_snorm_4x8, .pack_unorm_4x8 => .f32x4,
+        .pack_snorm_2x16, .pack_unorm_2x16 => .f32x2,
+        .unpack_snorm_4x8, .unpack_unorm_4x8, .unpack_snorm_2x16, .unpack_unorm_2x16 => .f32x1,
         else => kind,
     };
     if ((which == .length or which == .distance) and kind != .f32x1) return Error.Type;
+    const answers: ?Kind = switch (which) {
+        .pack_snorm_4x8, .pack_unorm_4x8, .pack_snorm_2x16, .pack_unorm_2x16 => .f32x1,
+        .unpack_snorm_4x8, .unpack_unorm_4x8 => .f32x4,
+        .unpack_snorm_2x16, .unpack_unorm_2x16 => .f32x2,
+        else => null,
+    };
+    if (answers != null and answers.? != kind) return Error.Type;
     // Cross is of two vec3s alone.
     if (which == .cross and kind != .f32x3) return Error.Type;
     var x: [3]u16 = undefined;
@@ -8653,6 +8738,8 @@ fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) E
         // (vtn_glsl450.c:408-418), lowered as the V3D, of no has_ldexp,
         // has it (`ldexpOf`).
         .ldexp => ldexpOf(work, x[0], x[1]),
+        .pack_snorm_4x8, .pack_unorm_4x8, .pack_snorm_2x16, .pack_unorm_2x16 => packOf(work, which, x[0]),
+        .unpack_snorm_4x8, .unpack_unorm_4x8, .unpack_snorm_2x16, .unpack_unorm_2x16 => unpackOf(work, which, x[0]),
         .sin => unary(work, .sin, x[0]),
         .cos => unary(work, .cos, x[0]),
         .tan => tan: {
@@ -8806,6 +8893,85 @@ fn ldexpOf(work: *Work, f: u16, exp: u16) Error!u16 {
 fn powerOfTwo(work: *Work, e: u16) Error!u16 {
     const kind = work.steps[e].kind;
     return integerOf(work, .ishl, try integerOf(work, .iadd, e, try integerSplat(work, kind, 127)), try integerSplat(work, kind, 23));
+}
+
+/// PackSnorm4x8, PackUnorm4x8, PackSnorm2x16 and PackUnorm2x16, NIR's
+/// pack_snorm_4x8 and the others (vtn_glsl450.c:606-609), lowered as the
+/// V3D's lower_pack_* have it (v3dv_pipeline.c:179-180, 183-184;
+/// nir_opt_algebraic.py:2757-2780, of no has_pack_32_4x8): v held to 0
+/// to 1, an fsat, or to -1 to 1, an fmin of an fmax; times 255, 65535,
+/// 127 or 32767; rounded to even and made an integer, f2u32 or f2i32.
+/// Then pack_uvec4_to_uint or pack_uvec2_to_uint as lower_to_scalar
+/// (:203) has nir_lower_alu_width lower it
+/// (nir_lower_alu_width.c:276-298): each float's low byte or half,
+/// extract_u8 or extract_u16 at 0, shifted to its place and or'ed, the
+/// first float's lowest.
+fn packOf(work: *Work, which: spirv.Glsl, v: u16) Error!u16 {
+    const kind = work.steps[v].kind;
+    const bytes = kind == .f32x4;
+    const signed = which == .pack_snorm_4x8 or which == .pack_snorm_2x16;
+    const top: f32 = if (bytes) (if (signed) 127.0 else 255.0) else (if (signed) 32767.0 else 65535.0);
+    const clamped = if (signed)
+        try minOf(work, try immediateOf(work, 1.0, kind), try binary(work, .max, try immediateOf(work, -1.0, kind), v))
+    else
+        try unary(work, .sat, v);
+    const rounded = try unary(work, .round, try binary(work, .mul, clamped, try immediateOf(work, top, kind)));
+    const whole = try integerOf(work, if (signed) .f2i32 else .f2u32, rounded, null);
+    const width: i32 = if (bytes) 8 else 16;
+    var low: [4]u16 = undefined;
+    for (0..kind.parts()) |k| low[k] = try extractOf(work, try channelOf(work, whole, @intCast(k)), 0, width, false);
+    if (!bytes) return integerOf(work, .ior, try shiftedUp(work, low[1], 16), low[0]);
+    const high = try integerOf(work, .ior, try shiftedUp(work, low[3], 24), try shiftedUp(work, low[2], 16));
+    return integerOf(work, .ior, high, try integerOf(work, .ior, try shiftedUp(work, low[1], 8), low[0]));
+}
+
+/// `x` << `by`, of one word.
+fn shiftedUp(work: *Work, x: u16, by: i32) Error!u16 {
+    return integerOf(work, .ishl, x, try integerSplat(work, work.steps[x].kind, by));
+}
+
+/// UnpackSnorm4x8, UnpackUnorm4x8, UnpackSnorm2x16 and
+/// UnpackUnorm2x16, NIR's unpack_snorm_4x8 and the others
+/// (vtn_glsl450.c:612-615), lowered as the V3D's lower_unpack_* have it
+/// (v3dv_pipeline.c:181-182, 185-186; nir_opt_algebraic.py:2787-2813):
+/// the vector of v's bytes or halves, extract_u8, extract_i8, extract_u16
+/// or extract_i16 of each place, made floats by u2f32 or i2f32 and
+/// divided by 255, 65535, 127 or 32767, the fdiv lowered (`lower_fdiv`,
+/// a times the frcp of b, which folds); the signed then held to -1 to 1,
+/// as -128 and -32768 would be past it.
+fn unpackOf(work: *Work, which: spirv.Glsl, v: u16) Error!u16 {
+    const bytes = which == .unpack_snorm_4x8 or which == .unpack_unorm_4x8;
+    const signed = which == .unpack_snorm_4x8 or which == .unpack_snorm_2x16;
+    const kind: Kind = if (bytes) .f32x4 else .f32x2;
+    const width: i32 = if (bytes) 8 else 16;
+    var places: [4]u16 = undefined;
+    for (0..kind.parts()) |k| places[k] = try extractOf(work, v, @intCast(k), width, signed);
+    const floats = try integerOf(work, if (signed) .i2f32 else .u2f32, try vectorOf(work, places[0..kind.parts()]), null);
+    const top: f32 = if (bytes) (if (signed) 127.0 else 255.0) else (if (signed) 32767.0 else 65535.0);
+    const scaled = try binary(work, .mul, floats, try unary(work, .recip, try immediateOf(work, top, kind)));
+    if (!signed) return scaled;
+    return minOf(work, try immediateOf(work, 1.0, kind), try binary(work, .max, try immediateOf(work, -1.0, kind), scaled));
+}
+
+/// extract_u8, extract_i8, extract_u16 or extract_i16 of `v` at place
+/// `b`, as the V3D's lower_extract_byte and lower_extract_word have them
+/// (v3dv_pipeline.c:168-169; nir_opt_algebraic.py:2740-2754): unsigned,
+/// v shifted down b places and masked; signed, shifted up to the top and
+/// arithmetically down. The places' imul and isub, of constants, are
+/// worked out here, as nir_opt_constant_folding works them out, and a
+/// shift of 0 is not made, which :1800 and :1805 would take out: a step
+/// made only to be taken out holds a place in the steps until the rules
+/// run. The masks a shift leaves nothing past are the rules' (:702-714).
+fn extractOf(work: *Work, v: u16, b: i32, width: i32, signed: bool) Error!u16 {
+    const kind = work.steps[v].kind;
+    if (signed) {
+        const up = (@divExact(32, width) - 1 - b) * width;
+        const high = if (up == 0) v else try integerOf(work, .ishl, v, try integerSplat(work, kind, up));
+        return integerOf(work, .ishr, high, try integerSplat(work, kind, 32 - width));
+    }
+    const down = b * width;
+    const low = if (down == 0) v else try integerOf(work, .ushr, v, try integerSplat(work, kind, down));
+    return integerOf(work, .iand, low, try integerSplat(work, kind, (@as(i32, 1) << @intCast(width)) - 1));
 }
 
 /// 31 - uclz(x), what each bit find is lowered to.
@@ -13538,13 +13704,17 @@ fn evaluatedStep(work: *const Work, values: *const [most_steps]?[4]f32, at: u16,
                 };
             }
         },
-        .abs, .negate, .recip, .log2, .floor, .rsqrt, .exp2, .sign => {
+        .abs, .negate, .recip, .log2, .floor, .rsqrt, .exp2, .sign, .sat, .round => {
             const x = of(values, each.a);
             for (0..parts) |k| out[k] = switch (each.tag) {
                 .abs => @abs(x[k]),
                 .negate => -x[k],
                 .recip => 1.0 / x[k],
                 .floor => @floor(x[k]),
+                // fsat's util_min_num(util_max_num(src0, 0.0), 1.0)
+                // (nir_opcodes.py:265) and fround_even (since 1.199).
+                .sat => @min(@max(x[k], 0.0), 1.0),
+                .round => roundEven(x[k]),
                 // The SFU's, exact on the host (since 1.196).
                 .rsqrt => 1.0 / @sqrt(x[k]),
                 .exp2 => @exp2(x[k]),
@@ -16008,15 +16178,16 @@ test "through Mesa's back end, selects of selects: what nir_opt_algebraic and ni
 
 test "a call the walk does not lower, or into a set that is not GLSL.std.450, is refused" {
     var work: Work = .{};
-    // Fract (10) made PackUnorm4x8 (55), which the walk leaves out: one
-    // operand each, so it is the call that is refused and not its
-    // operands. Asin was this test's until 1.196.
+    // Fract (10) made PackDouble2x32 (59), which the walk leaves out, a
+    // double being of the Float64 capability: one operand each, so it
+    // is the call that is refused and not its operands. Asin was this
+    // test's until 1.196, PackUnorm4x8 until 1.199.
     var sine = reference.glslc_arith;
     var calls: usize = 0;
     var at: usize = spirv.header_words;
     while (at < sine.len) : (at += sine[at] >> 16) {
         if (sine[at] & 0xFFFF == @intFromEnum(spirv.Op.ext_inst) and sine[at + 4] == @intFromEnum(spirv.Glsl.fract)) {
-            sine[at + 4] = @intFromEnum(spirv.Glsl.pack_unorm_4x8);
+            sine[at + 4] = @intFromEnum(spirv.Glsl.pack_double_2x32);
             calls += 1;
         }
     }
@@ -16306,6 +16477,200 @@ test "Ldexp of constants folds to f times 2 to the exponent, held to -254 to 254
         const made = try ldexpOf(&work, try immediate(&work, each.f), try integerSplat(&work, .f32x1, each.e));
         try testing.expectEqual(Tag.constant, work.steps[made].tag);
         try testing.expectEqual(each.want, @as(f32, @bitCast(work.pool[work.steps[made].at])));
+    }
+}
+
+/// GLSL's packUnorm4x8, packSnorm4x8, packUnorm2x16 and packSnorm2x16
+/// (GLSL 4.50, 8.4): each float held to 0 to 1, or to -1 to 1, times
+/// the largest number of `bits` it can be, rounded, and placed from the
+/// lowest bits, the first float's lowest.
+fn packedOf(v: []const f32, bits: u5, signed: bool) u32 {
+    const top: f32 = @floatFromInt((@as(u32, 1) << (bits - @intFromBool(signed))) - 1);
+    const mask = (@as(u32, 1) << bits) - 1;
+    var word: u32 = 0;
+    for (v, 0..) |each, k| {
+        const clamped = if (signed) std.math.clamp(each, -1.0, 1.0) else std.math.clamp(each, 0.0, 1.0);
+        const whole: i32 = @intFromFloat(roundEven(clamped * top));
+        word |= (@as(u32, @bitCast(whole)) & mask) << @intCast(k * bits);
+    }
+    return word;
+}
+
+/// GLSL's unpackUnorm4x8 and the others: each place of `bits` from the
+/// lowest, unsigned or signed, over that largest number, the signed held
+/// to -1.
+fn unpackedOf(comptime n: usize, word: u32, bits: u5, signed: bool) [n]f32 {
+    const top: f32 = @floatFromInt((@as(u32, 1) << (bits - @intFromBool(signed))) - 1);
+    const mask = (@as(u32, 1) << bits) - 1;
+    var out: [n]f32 = undefined;
+    for (&out, 0..) |*each, k| {
+        const place = (word >> @intCast(k * bits)) & mask;
+        const up: u5 = @intCast(32 - @as(u32, bits));
+        const value: f32 = if (signed) @floatFromInt(@as(i32, @bitCast(place << up)) >> up) else @floatFromInt(place);
+        each.* = if (signed) @max(value / top, -1.0) else value / top;
+    }
+    return out;
+}
+
+/// The colour made -1.5 to 1.5, as `reference.glslc_packing_bytes` and
+/// `glslc_packing_halves` make it.
+fn packedColor(color: [4]f32) [4]f32 {
+    var c: [4]f32 = undefined;
+    for (&c, color) |*each, v| each.* = v * 3.0 - 1.5;
+    return c;
+}
+
+/// What `reference.glslc_packing_bytes` makes of `color`, by GLSL's
+/// definitions of the packings.
+fn packingBytesOf(color: [4]f32) [4]f32 {
+    const c = packedColor(color);
+    const u = unpackedOf(4, packedOf(&c, 8, false), 8, false);
+    const s = unpackedOf(4, packedOf(&.{ c[3], c[2], c[1], c[0] }, 8, true), 8, true);
+    const across = unpackedOf(4, packedOf(&.{ color[0], color[1] }, 16, false), 8, false);
+    return .{
+        u[0] * 0.5 + s[3] * 0.25 + 0.25,
+        u[1] * 0.5 + s[2] * 0.25 + 0.25,
+        u[2] * 0.25 + s[1] * 0.25 + across[1] * 0.25 + 0.25,
+        u[3] * 0.25 + s[0] * 0.25 + across[3] * 0.25 + 0.25,
+    };
+}
+
+/// What `reference.glslc_packing_halves` makes of `color`.
+fn packingHalvesOf(color: [4]f32) [4]f32 {
+    const c = packedColor(color);
+    const uh = unpackedOf(2, packedOf(&.{ c[1], c[2] }, 16, false), 16, false);
+    const sh = unpackedOf(2, packedOf(&.{ c[2], c[0] }, 16, true), 16, true);
+    const back = unpackedOf(2, packedOf(&.{ c[1], c[0], c[3], c[2] }, 8, true), 16, true);
+    return .{
+        uh[0] * 0.5 + back[0] * 0.25 + 0.25,
+        uh[1] * 0.5 + back[1] * 0.25 + 0.25,
+        sh[0] * 0.25 + uh[0] * 0.25 + 0.5,
+        sh[1] * 0.25 + uh[1] * 0.25 + 0.5,
+    };
+}
+
+/// Colours of the packings' references: of 0, of both ends and past
+/// them, of negatives and positives in every place, and small ones.
+const packing_colors = [_][4]f32{
+    .{ 0.5, 0.5, 0.5, 0.5 },
+    .{ 0.0, 1.0, 0.0, 1.0 },
+    .{ 0.1, 0.9, 0.3, 0.7 },
+    .{ 0.45, 0.55, 0.4, 0.6 },
+    .{ 0.2, 0.35, 0.65, 0.8 },
+    .{ 0.9, 0.1, 0.75, 0.25 },
+    .{ 0.333, 0.666, 0.123, 0.987 },
+    .{ 0.51, 0.49, 0.52, 0.48 },
+};
+
+test "the packings of snorms and unorms are nir_opt_algebraic's and nir_lower_alu_width's, their masks and shifts left as the rules leave them, and answer as GLSL defines them" {
+    const Reference = struct {
+        words: []const u32,
+        of: *const fn ([4]f32) [4]f32,
+        counts: [9]usize,
+        ftoin: usize,
+        fround: usize,
+    };
+    // Each packing of four three iands, three ishls and three iors, its
+    // last place's iand taken out by :708, and of two one of each, its
+    // second place's taken out. Each unsigned unpacking of four three
+    // iands and three ushrs, its last place a ushr alone (:713), and of
+    // two one of each; each signed of four three ishls and four ishrs,
+    // its last place an ishr alone, and of two one ishl and two ishrs.
+    // Bytes: Unorm4x8 and Snorm4x8 both ways, and Unorm2x16 into
+    // Unorm4x8; halves: Unorm2x16 and Snorm2x16 both ways, and Snorm4x8
+    // into Snorm2x16. f2i32 of an fround_even is one FTOIN a float, and
+    // f2u32 of one an FROUND and an FTOUZ (nir_to_vir.c:1466-1482).
+    const references = [_]Reference{
+        .{ .words = &reference.glslc_packing_bytes, .of = &packingBytesOf, .counts = .{ 13, 10, 4, 6, 7, 2, 1, 2, 1 }, .ftoin = 4, .fround = 6 },
+        .{ .words = &reference.glslc_packing_halves, .of = &packingHalvesOf, .counts = .{ 6, 7, 4, 1, 5, 1, 2, 1, 2 }, .ftoin = 6, .fround = 2 },
+    };
+    for (references) |each| {
+        var work: Work = .{};
+        const code = try throughMesa(&work, each.words);
+        const counts = [_]usize{ liveIntegerOf(&work, .iand), liveIntegerOf(&work, .ishl), liveIntegerOf(&work, .ishr), liveIntegerOf(&work, .ushr), liveIntegerOf(&work, .ior), liveIntegerOf(&work, .f2u32), liveIntegerOf(&work, .f2i32), liveIntegerOf(&work, .u2f32), liveIntegerOf(&work, .i2f32) };
+        try testing.expectEqualSlices(usize, &each.counts, &counts);
+        try testing.expectEqual(each.ftoin, countOf(code, "ftoin"));
+        try testing.expectEqual(each.fround, countOf(code, "fround"));
+        try testing.expectEqual(each.fround, countOf(code, "ftouz"));
+        for (packing_colors) |color| {
+            const expected = each.of(color);
+            const found = evaluatedOf(&work, work.stored, color, 0);
+            for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-6);
+        }
+    }
+}
+
+/// A constant of the floats `values`.
+fn floatsConstant(work: *Work, values: []const f32) Error!u16 {
+    const kind = std.enums.fromInt(Kind, values.len) orelse return Error.Type;
+    if (work.pool_count + values.len > work.pool.len) return Error.Uniforms;
+    const at = work.pool_count;
+    @memcpy(work.pool[at..][0..values.len], values);
+    work.pool_count += @intCast(values.len);
+    return put(work, .{ .tag = .constant, .kind = kind, .at = at });
+}
+
+test "a packing that answers other than a uint, or an unpacking other than its vector, is refused" {
+    // PackUnorm4x8's result made UnpackUnorm4x8's vec4, and then
+    // UnpackUnorm4x8's made PackUnorm4x8's uint, each of which
+    // spirv-val refuses.
+    inline for (.{ spirv.Glsl.pack_unorm_4x8, spirv.Glsl.unpack_unorm_4x8 }) |changed| {
+        var words = reference.glslc_packing_bytes;
+        var types: [2]u32 = .{ 0, 0 };
+        var at: usize = spirv.header_words;
+        while (at < words.len) : (at += words[at] >> 16) {
+            if (words[at] & 0xFFFF != @intFromEnum(spirv.Op.ext_inst)) continue;
+            if (words[at + 4] == @intFromEnum(spirv.Glsl.pack_unorm_4x8)) types[0] = words[at + 1];
+            if (words[at + 4] == @intFromEnum(spirv.Glsl.unpack_unorm_4x8)) types[1] = words[at + 1];
+        }
+        try testing.expect(types[0] != 0 and types[1] != 0);
+        at = spirv.header_words;
+        var made: usize = 0;
+        while (at < words.len) : (at += words[at] >> 16) {
+            if (words[at] & 0xFFFF != @intFromEnum(spirv.Op.ext_inst) or words[at + 4] != @intFromEnum(changed)) continue;
+            words[at + 1] = if (changed == .pack_unorm_4x8) types[1] else types[0];
+            made += 1;
+        }
+        try testing.expect(made != 0);
+        var work: Work = .{};
+        try testing.expectError(Error.Type, throughMesa(&work, &words));
+    }
+}
+
+test "packings and unpackings of constants fold to GLSL's words and floats: rounded to even, held at both ends, and -128 unpacked held to -1" {
+    // 2.5 / 255 times 255 is 2.5, which rounds to 2, and 0.5 times 255
+    // 127.5, which rounds to 128; 1.5 past the end is 255. 0.5 times
+    // 32767 is 16383.5, which rounds to 16384, and -2 is held to -32767.
+    // -128 over 127 is held to -1, and 127, -127 and 65535 over theirs
+    // are 1 and -1 exactly. A float's component and a vec of constants
+    // are folded by nir_opt_constant_folding, a round on.
+    const Case = struct { which: spirv.Glsl, floats: []const f32 = &.{}, word: u32 = 0 };
+    const cases = [_]Case{
+        .{ .which = .pack_unorm_4x8, .floats = &.{ 2.5 / 255.0, 1.5, -0.5, 0.5 }, .word = 0x80_00_FF_02 },
+        .{ .which = .pack_snorm_2x16, .floats = &.{ -2.0, 0.5 }, .word = 0x4000_8001 },
+        .{ .which = .pack_snorm_4x8, .floats = &.{ -1.0, 1.0, 0.25, -0.25 }, .word = 0xE0_20_7F_81 },
+        .{ .which = .pack_unorm_2x16, .floats = &.{ 1.0, 0.25 }, .word = 0x4000_FFFF },
+        .{ .which = .unpack_snorm_4x8, .floats = &.{ 0.0, -1.0, -1.0, 1.0 }, .word = 0x7F_81_80_00 },
+        .{ .which = .unpack_unorm_2x16, .floats = &.{ 0.0, 1.0 }, .word = 0xFFFF_0000 },
+        .{ .which = .unpack_unorm_4x8, .floats = &.{ 1.0, 0.0, 128.0 / 255.0, 1.0 / 255.0 }, .word = 0x01_80_00_FF },
+        .{ .which = .unpack_snorm_2x16, .floats = &.{ -1.0, 0.5 / 32767.0 * 2.0 }, .word = 0x0001_8000 },
+    };
+    for (cases) |case| {
+        var work: Work = .{};
+        const packing = @intFromEnum(case.which) <= @intFromEnum(spirv.Glsl.pack_unorm_2x16);
+        work.stored = if (packing)
+            try packOf(&work, case.which, try floatsConstant(&work, case.floats))
+        else
+            try unpackOf(&work, case.which, try integerSplat(&work, .f32x1, @bitCast(case.word)));
+        try algebraic(&work);
+        const made = work.steps[work.stored];
+        try testing.expectEqual(Tag.constant, made.tag);
+        if (packing) {
+            try testing.expectEqual(packedOf(case.floats, if (case.which == .pack_unorm_4x8 or case.which == .pack_snorm_4x8) 8 else 16, case.which == .pack_snorm_4x8 or case.which == .pack_snorm_2x16), case.word);
+            try testing.expectEqual(case.word, @as(u32, @bitCast(work.pool[made.at])));
+        } else {
+            try testing.expectEqualSlices(f32, case.floats, work.pool[made.at..][0..case.floats.len]);
+        }
     }
 }
 
@@ -17199,7 +17564,7 @@ test "an index computed into the push constants is refused, and the plan holds n
     try testing.expectError(Error.Storage, compile(&plan, &reference.glslc_indexed));
 }
 
-test "nir_opt_algebraic's rules of an address's arithmetic, each on the integer operations it matches" {
+test "nir_opt_algebraic's rules of an address's arithmetic, and of masks and shifts, each on the integer operations it matches" {
     const Case = struct {
         shape: []const u8,
         build: *const fn (*Work) Error!u16,
@@ -17267,6 +17632,50 @@ test "nir_opt_algebraic's rules of an address's arithmetic, each on the integer 
             const sum = try op(work, .iadd, try push(work, 0), try int(work, 1));
             return op(work, .iadd, try op(work, .imul, sum, try int(work, 3)), sum);
         }
+        // :708 for 16, 24, 1 and 2, the mask either side; not of a
+        // mask the shift does not match, nor of a shift past the list.
+        fn half_up(work: *Work) Error!u16 {
+            return op(work, .ishl, try op(work, .iand, try push(work, 0), try int(work, 0xffff)), try int(work, 16));
+        }
+        fn byte_up(work: *Work) Error!u16 {
+            return op(work, .ishl, try op(work, .iand, try int(work, 0xff), try push(work, 0)), try int(work, 24));
+        }
+        fn one_up(work: *Work) Error!u16 {
+            return op(work, .ishl, try op(work, .iand, try push(work, 0), try int(work, 0x7fffffff)), try int(work, 1));
+        }
+        fn two_up(work: *Work) Error!u16 {
+            return op(work, .ishl, try op(work, .iand, try push(work, 0), try int(work, 0x3fffffff)), try int(work, 2));
+        }
+        fn byte_half_up(work: *Work) Error!u16 {
+            return op(work, .ishl, try op(work, .iand, try push(work, 0), try int(work, 0xff)), try int(work, 16));
+        }
+        fn byte_one_up(work: *Work) Error!u16 {
+            return op(work, .ishl, try op(work, .iand, try push(work, 0), try int(work, 0xffffff)), try int(work, 8));
+        }
+        // :712 and :713, the mask either side; not of a mask past what
+        // the shift leaves.
+        fn top_kept(work: *Work) Error!u16 {
+            return op(work, .iand, try op(work, .ishl, try push(work, 0), try int(work, 24)), try int(work, @bitCast(@as(u32, 0xff000000))));
+        }
+        fn half_down(work: *Work) Error!u16 {
+            return op(work, .iand, try op(work, .ushr, try push(work, 0), try int(work, 16)), try int(work, 0xffff));
+        }
+        fn byte_down(work: *Work) Error!u16 {
+            return op(work, .iand, try int(work, 0xff), try op(work, .ushr, try push(work, 0), try int(work, 24)));
+        }
+        fn half_byte_down(work: *Work) Error!u16 {
+            return op(work, .iand, try op(work, .ushr, try push(work, 0), try int(work, 16)), try int(work, 0xff));
+        }
+        fn signed_down(work: *Work) Error!u16 {
+            return op(work, .iand, try op(work, .ishr, try push(work, 0), try int(work, 24)), try int(work, 0xff));
+        }
+        // :1803 and :1805.
+        fn none_down(work: *Work) Error!u16 {
+            return op(work, .ishr, try push(work, 0), try int(work, 0));
+        }
+        fn none_down_unsigned(work: *Work) Error!u16 {
+            return op(work, .ushr, try push(work, 0), try int(work, 0));
+        }
     };
     const cases = [_]Case{
         .{ .shape = "ishl(p0, 3)", .build = &of.eight },
@@ -17283,6 +17692,19 @@ test "nir_opt_algebraic's rules of an address's arithmetic, each on the integer 
         .{ .shape = "iadd(imul(iadd(p0, p1), 3), 6)", .build = &of.multiplied_sum },
         .{ .shape = "iadd(imul(p0, 3), 3)", .build = &of.multiplied },
         .{ .shape = "iadd(imul(iadd(p0, 1), 3), iadd(p0, 1))", .build = &of.multiplied_twice },
+        .{ .shape = "ishl(p0, 16)", .build = &of.half_up },
+        .{ .shape = "ishl(p0, 24)", .build = &of.byte_up },
+        .{ .shape = "ishl(p0, 1)", .build = &of.one_up },
+        .{ .shape = "ishl(p0, 2)", .build = &of.two_up },
+        .{ .shape = "ishl(iand(p0, 255), 16)", .build = &of.byte_half_up },
+        .{ .shape = "ishl(iand(p0, 16777215), 8)", .build = &of.byte_one_up },
+        .{ .shape = "ishl(p0, 24)", .build = &of.top_kept },
+        .{ .shape = "ushr(p0, 16)", .build = &of.half_down },
+        .{ .shape = "ushr(p0, 24)", .build = &of.byte_down },
+        .{ .shape = "iand(ushr(p0, 16), 255)", .build = &of.half_byte_down },
+        .{ .shape = "iand(ishr(p0, 24), 255)", .build = &of.signed_down },
+        .{ .shape = "p0", .build = &of.none_down },
+        .{ .shape = "p0", .build = &of.none_down_unsigned },
     };
     for (cases) |case| {
         var work: Work = .{};
