@@ -18,22 +18,26 @@
 const sdk = @import("sdk");
 const vector = sdk.vector;
 const Matrix = vector.Matrix;
+const image = @import("image.zig");
 
 /// A colour of the ramp: red, green and blue 0 to 255, alpha 0 to 1.
 pub const Entry = struct { r: f32, g: f32, b: f32, a: f32 };
 pub const Ramp = [256]Entry;
 
-/// What a paint paints: nothing, one colour, or a gradient.
+/// What a paint paints: nothing, one colour, a gradient, or an image
+/// (since 1.4, `image.zig`).
 pub const Kind = union(enum) {
     none,
     solid: vector.Colour,
     gradient: Sampler,
+    image: image.Sampler,
 };
 
 /// What `paint` comes to drawn through `matrix`, as SVG has it: one stop
 /// a colour, a gradient of no length or no radius its last stop's colour,
-/// no stops nothing.
+/// no stops nothing; an image of no pixels nothing.
 pub fn kindOf(paint: *const vector.Paint, matrix: Matrix) Kind {
+    if (paint.kind == vector.PAINT_IMAGE) return if (image.Sampler.of(paint, matrix)) |s| .{ .image = s } else .none;
     if (paint.kind != vector.PAINT_LINEAR and paint.kind != vector.PAINT_RADIAL) return .{ .solid = paint.colour };
     const stops = paint.stops orelse return .none;
     if (paint.stop_count == 0) return .none;

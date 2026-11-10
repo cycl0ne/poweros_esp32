@@ -19,6 +19,8 @@ const AvailFonts = @import("font/availfonts.zig").AvailFonts;
 const NewFontContents = @import("contents/newfontcontents.zig").NewFontContents;
 const DisposeFontContents = @import("contents/disposefontcontents.zig").DisposeFontContents;
 const NewScaledDiskFont = @import("font/newscaleddiskfont.zig").NewScaledDiskFont;
+const OpenOutlineFont = @import("outline/openoutlinefont.zig").OpenOutlineFont;
+const CloseOutlineFont = @import("outline/closeoutlinefont.zig").CloseOutlineFont;
 
 /// diskfont.library's interface, as the SDK generates it from
 /// sdk/fd/diskfont_lib.fd.
@@ -49,6 +51,8 @@ const contract_files = [_][]const u8{
     @embedFile("contents/newfontcontents.zig"),
     @embedFile("contents/disposefontcontents.zig"),
     @embedFile("font/newscaleddiskfont.zig"),
+    @embedFile("outline/openoutlinefont.zig"),
+    @embedFile("outline/closeoutlinefont.zig"),
 };
 
 fn lvoOpenDiskFont(dfb: *DiskfontBase, text_attr: *const graphics.TextAttr) callconv(.c) ?*graphics.TextFont {
@@ -66,6 +70,12 @@ fn lvoDisposeFontContents(dfb: *DiskfontBase, contents: ?*fontfile.ContentsHeade
 fn lvoNewScaledDiskFont(dfb: *DiskfontBase, font: *graphics.TextFont, text_attr: *const graphics.TextAttr) callconv(.c) ?*graphics.TextFont {
     return NewScaledDiskFont(dfb, font, text_attr);
 }
+fn lvoOpenOutlineFont(dfb: *DiskfontBase, name: [*:0]const u8, style: graphics.FontStyle) callconv(.c) ?*sdk.diskfont.OutlineFont {
+    return OpenOutlineFont(dfb, name, style);
+}
+fn lvoCloseOutlineFont(dfb: *DiskfontBase, font: ?*sdk.diskfont.OutlineFont) callconv(.c) void {
+    return CloseOutlineFont(dfb, font);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -77,6 +87,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoNewFontContents),
     vec(lvoDisposeFontContents),
     vec(lvoNewScaledDiskFont),
+    vec(lvoOpenOutlineFont),
+    vec(lvoCloseOutlineFont),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

@@ -14,8 +14,8 @@ const diskfont_lvo = @import("diskfont_lvo.zig");
 
 pub const LIBRARY_NAME = diskfont.DISKFONTNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 3;
-const BUILD_DATE = "29.10.2026";
+pub const LIBRARY_REVISION = 4;
+const BUILD_DATE = "10.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -49,6 +49,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     };
     lib.revision = LIBRARY_REVISION;
     dfb.fonts.init(.unknown);
+    dfb.outlines.init(.unknown);
     sys_base.InitSemaphore(&dfb.load_lock);
     dfb.flusher = .{
         .node = .{ .type = .interrupt, .pri = flusher_priority, .name = LIBRARY_NAME },
@@ -59,9 +60,9 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     return lib;
 }
 
-/// Gone once nobody has it open and every font it made has gone - which
-/// it tries first, freeing each that nobody holds. A font still held
-/// keeps it: its memory is the library's.
+/// Gone once nobody has it open and every font and outline it made has
+/// gone - which it tries first, freeing each that nobody holds. One still
+/// held keeps it: its memory is the library's.
 fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     const dfb = _base.diskfontBase(lib);
     const sys = dfb.sys_base;
@@ -76,7 +77,7 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
         return null;
     }
     while (_font.freeOne(dfb)) {}
-    const empty = dfb.fonts.isEmpty();
+    const empty = dfb.fonts.isEmpty() and dfb.outlines.isEmpty();
     sys.ReleaseSemaphore(&dfb.load_lock);
     if (!empty) {
         lib.flags |= exec.LIBF_DELEXP;

@@ -550,6 +550,7 @@ flowchart TB
     m_textedit_gadget["textedit.gadget"]
     m_timer_device["timer.device"]
     m_toolbutton_gadget["toolbutton.gadget"]
+    m_truetype_library["truetype.library"]
     m_vector_library["vector.library"]
     m_videocodec_datatype["videocodec.datatype"]
     m_videocodec_library["videocodec.library"]
@@ -642,8 +643,11 @@ flowchart TB
     m_sound_datatype --> m_timer_device
     m_spinner_gadget --> m_motion_library
     m_svg_datatype --> m_compression_library
+    m_svg_datatype --> m_datatypes_library
+    m_svg_datatype --> m_diskfont_library
     m_svg_datatype --> m_dos_library
     m_svg_datatype --> m_picture_datatype
+    m_svg_datatype --> m_truetype_library
     m_svg_datatype --> m_vector_library
     m_tapedeck_gadget --> m_media_image
     m_text_datatype --> m_datatypes_library
@@ -662,7 +666,7 @@ flowchart TB
     m_videocodec_datatype --> m_videocodec_library
 
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
-    class m_anvil_library,m_asl_library,m_audiocodec_library,m_command_image,m_compression_library,m_datatypes_library,m_diskfont_library,m_facet_library,m_icon_library,m_iffparse_library,m_media_image,m_vector_library,m_videocodec_library lib
+    class m_anvil_library,m_asl_library,m_audiocodec_library,m_command_image,m_compression_library,m_datatypes_library,m_diskfont_library,m_facet_library,m_icon_library,m_iffparse_library,m_media_image,m_truetype_library,m_vector_library,m_videocodec_library lib
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827
     class m_8svx_datatype,m_animation_datatype,m_ascii_datatype,m_audiocodec_datatype,m_bmp_datatype,m_calendar_gadget,m_checkbox_gadget,m_chooser_gadget,m_cycle_gadget,m_font_datatype,m_fuelgauge_gadget,m_gif_datatype,m_gifanim_datatype,m_html_datatype,m_ico_datatype,m_ilbm_datatype,m_integer_gadget,m_jpeg_datatype,m_keyboard_gadget,m_listbrowser_gadget,m_listview_gadget,m_lottie_datatype,m_markdown_datatype,m_model_datatype,m_obj_datatype,m_palette_gadget,m_picture_datatype,m_png_datatype,m_ribbon_gadget,m_scroller_gadget,m_scrollgroup_gadget,m_sound_datatype,m_spinner_gadget,m_string_gadget,m_svg_datatype,m_tapedeck_gadget,m_text_datatype,m_text_gadget,m_textedit_gadget,m_toolbutton_gadget,m_videocodec_datatype cls
     classDef rom fill:#f3f4f6,stroke:#9ca3af,color:#374151

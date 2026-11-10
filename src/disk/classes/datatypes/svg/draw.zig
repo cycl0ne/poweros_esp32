@@ -41,24 +41,54 @@
 //! height. A `use` that names one of the elements it is drawn inside is
 //! not drawn, and no more than `max_uses` are drawn in all.
 //!
+//! **Text** (since 1.3) is drawn in the disk's outline fonts
+//! (`text.zig`): a `text` and its `tspan`s laid out a character at a time
+//! from where `x`, `y`, `dx` and `dy` put them, each glyph's outline from
+//! truetype.library filled and stroked as a shape is, kerned by the
+//! font's pairs, moved by `letter-spacing` and `word-spacing`, and each
+//! piece that starts at a place of its own moved by its `text-anchor`.
+//! The white space is SVG's. A family without a bold or an italic face
+//! is drawn thicker or leaned for it, and `text-decoration` draws its
+//! lines from the font's measures. Not drawn: `textPath`.
+//!
+//! **Images** (since 1.3): an `image` whose `href` is a `data:` address
+//! of a picture in base64 (`data.zig`) is drawn in its place as
+//! `preserveAspectRatio` says, through vector.library's image paint,
+//! read smoothly. One at any other address is not drawn: a picture reads
+//! no other file.
+//!
+//! **Filters** (since 1.3) that come to a blur of what an element draws
+//! (`filter.zig`) are drawn so: the element on a layer of its own,
+//! blurred by `BlurLayer`, put down inside the filter's region. One that
+//! comes to nothing draws nothing. Any other is one this reader cannot
+//! make, and the element is drawn without it, rather than not at all.
+//!
 //! **Not drawn**, nor anything in it: `defs` and what is in no `defs`
 //! but is not drawn either - gradients, `symbol`, `clipPath`, `mask`,
-//! `pattern`, `marker`, `style` - `image` and `text`, an element of
-//! another namespace, and one with a `filter`, which this reader does
-//! not have. In a `switch` the first element that can be drawn is.
+//! `pattern`, `marker`, `style`, `filter` - and an element of another
+//! namespace. In a `switch` the first element that can be drawn is.
 //!
 //! Elements nested deeper than `max_depth` are not drawn, and clips and
 //! masks inside one another deeper than `max_references` clip nothing.
 //!
 //! `vb` is anything with vector.library's calls by their names: the
 //! library itself on the machine, its module straight on the host.
+//! `ext` is what the picture reads besides: fonts by their families and
+//! their glyphs, and the pictures of `data:` addresses (`Without` has
+//! neither).
 
 const std = @import("std");
 const sdk = @import("sdk");
 const vector = sdk.vector;
 pub const document = @import("document.zig");
+/// An `image`'s `data:` address read: for an `ext` to decode a picture.
+pub const data = @import("data.zig");
 const values = @import("values.zig");
 const css = @import("css.zig");
+const filter_ = @import("filter.zig");
+const text_ = @import("text.zig");
+const truetype = sdk.truetype;
+const graphics = sdk.graphics;
 const Document = document.Document;
 const Name = document.Name;
 const Tag = document.Tag;
@@ -78,6 +108,52 @@ pub const max_references = 8;
 pub const max_uses = 16384;
 /// Points of a `polyline` or a `polygon` handed over at a time.
 const chunk = 128;
+/// The most characters of one `text` laid out; the rest are not drawn.
+pub const max_glyphs = 1024;
+/// The most `tspan`s of one `text` drawn, and how deep they nest.
+pub const max_runs = 32;
+pub const max_span_depth = 8;
+/// The most fonts one picture draws in.
+pub const max_faces = 8;
+/// The most verbs and points of one glyph's outline.
+pub const glyph_verbs = 1024;
+pub const glyph_points = 2048;
+
+/// A picture an `image` draws, as `ext.OpenImage` gives it: its pens,
+/// 0xAARRGGBB and not premultiplied, and whatever its giver needs back
+/// to free it.
+pub const Image = struct {
+    pens: [*]const sdk.graphics.Pen,
+    width: u32,
+    height: u32,
+    bytes_per_row: u32,
+    handle: ?*anyopaque = null,
+};
+
+/// An `ext` of no fonts and no pictures: text and images are not drawn.
+pub const Without = struct {
+    pub fn OpenFace(_: *Without, _: [*:0]const u8, _: sdk.graphics.FontStyle) ?*sdk.diskfont.OutlineFont {
+        return null;
+    }
+    pub fn CloseFace(_: *Without, _: *sdk.diskfont.OutlineFont) void {}
+    pub fn GlyphIndex(_: *Without, _: *sdk.truetype.Outline, _: u32) u32 {
+        return 0;
+    }
+    pub fn GlyphMetrics(_: *Without, _: *sdk.truetype.Outline, _: u32, _: *sdk.truetype.GlyphMetrics) bool {
+        return false;
+    }
+    pub fn GlyphSegments(_: *Without, _: *sdk.truetype.Outline, _: u32, _: *sdk.truetype.Segments) i32 {
+        return sdk.truetype.TRUETYPEERR_GLYPH;
+    }
+    pub fn FontMetrics(_: *Without, _: *sdk.truetype.Outline, _: *sdk.truetype.FontMetrics) void {}
+    pub fn Kerning(_: *Without, _: *sdk.truetype.Outline, _: u32, _: u32) i32 {
+        return 0;
+    }
+    pub fn OpenImage(_: *Without, _: []const u8) ?Image {
+        return null;
+    }
+    pub fn CloseImage(_: *Without, _: Image) void {}
+};
 
 /// What drawing needs besides the document, in one block of the
 /// caller's: it is too much for a stack.
@@ -89,6 +165,53 @@ pub const Work = struct {
     verbs: [chunk]u8 = undefined,
     /// The rules of the file's `style` elements, in the order they apply.
     rules: [css.max_rules]css.Rule = undefined,
+    /// A `text` laid out: its characters' glyphs and the spans they are in.
+    glyphs: [max_glyphs]Glyph = undefined,
+    runs: [max_runs]Run = undefined,
+    /// The fonts opened, closed when the picture is drawn.
+    faces: [max_faces]Face = undefined,
+    /// One glyph's outline, as truetype.library gives it and moved.
+    glyph_verbs: [glyph_verbs]u8 = undefined,
+    glyph_points: [glyph_points]vector.Point = undefined,
+};
+
+/// A character laid out: its glyph, the span it is in, where it is on
+/// the line in the text's units, and how far it moves the next.
+const Glyph = struct {
+    glyph: u32,
+    run: u8,
+    x: f32,
+    y: f32,
+    advance: f32,
+    /// It starts a piece of text at a place of its own, which its
+    /// `text-anchor` moves.
+    starts: bool,
+};
+
+/// A span of a `text` - the text itself, or a `tspan` - as its glyphs
+/// are drawn: its style and its font.
+const Run = struct {
+    style: Style,
+    /// Into the work's faces; `no_face` for none.
+    face: u8,
+    /// Font units into the text's.
+    scale: f32,
+    /// The lean an italic is drawn with, and the stroke a bold, where the
+    /// font has no face of its own for them.
+    lean: f32,
+    thicken: f32,
+};
+
+const no_face: u8 = 0xFF;
+
+/// A font opened for the picture: its family's file, the styles asked,
+/// and what it is.
+const Face = struct {
+    font: [:0]const u8,
+    style: sdk.graphics.FontStyle,
+    /// Null for one that could not be opened, remembered as such.
+    opened: ?*sdk.diskfont.OutlineFont,
+    metrics: sdk.truetype.FontMetrics,
 };
 
 /// A group being drawn: its element, its style, its matrix.
@@ -107,6 +230,9 @@ const Frame = struct {
     use: u32 = none,
     /// Clips and masks pushed for it, to be popped when it ends.
     clips: u8 = 0,
+    /// Its layer blurred before it is put down, by these pixels across
+    /// and down: a filter's.
+    blur: ?[2]f32 = null,
 };
 
 const Style = struct {
@@ -126,10 +252,25 @@ const Style = struct {
     colour: Colour = .{},
     visible: bool = true,
     clip_rule: u32 = vector.RULE_NONZERO,
+    /// `paint-order` puts the stroke under the fill (SVG 2; since 1.3).
+    stroke_first: bool = false,
+    // Text's (since 1.3), inherited.
+    font_family: []const u8 = "",
+    font_size: f32 = 16,
+    bold: bool = false,
+    italic: bool = false,
+    anchor: Anchor = .start,
+    letter_spacing: Length = .{ .value = 0 },
+    word_spacing: Length = .{ .value = 0 },
+    /// `decoration_*`: lines drawn with the text.
+    decoration: u8 = 0,
+    /// White space kept as it is.
+    preserve: bool = false,
     // Not inherited.
     opacity: f32 = 1,
     shown: bool = true,
-    filtered: bool = false,
+    /// The `filter`, its `url(#...)`; empty for none.
+    filter: []const u8 = "",
     /// The `clip-path` and the `mask` it is drawn through, their
     /// `url(#...)`; empty for none.
     clip: []const u8 = "",
@@ -145,7 +286,7 @@ const Style = struct {
         var s = parent.*;
         s.opacity = 1;
         s.shown = true;
-        s.filtered = false;
+        s.filter = "";
         s.clip = "";
         s.mask = "";
         s.mask_alpha = false;
@@ -153,6 +294,12 @@ const Style = struct {
         return s;
     }
 };
+
+const Anchor = enum { start, middle, end };
+
+const decoration_under: u8 = 1;
+const decoration_through: u8 = 2;
+const decoration_over: u8 = 4;
 
 /// The size an SVG file gives its picture, in pixels, and what takes its
 /// units into them.
@@ -290,16 +437,18 @@ pub fn baseMatrix(size: Intrinsic, width: u32, height: u32) Matrix {
 /// The document drawn onto `canvas`, `path` the one every shape is built
 /// in. `base` takes the root's units to pixels: the picture's size over
 /// its intrinsic one, then `Intrinsic.view`.
-pub fn draw(vb: anytype, doc: *const Document, canvas: *vector.Canvas, path: *vector.Path, work: *Work, base: Matrix, viewport: [2]f32) void {
-    var p = Painter(@TypeOf(vb)){ .vb = vb, .doc = doc, .canvas = canvas, .path = path, .work = work };
+pub fn draw(vb: anytype, ext: anytype, doc: *const Document, canvas: *vector.Canvas, path: *vector.Path, work: *Work, base: Matrix, viewport: [2]f32) void {
+    var p = Painter(@TypeOf(vb), @TypeOf(ext)){ .vb = vb, .ext = ext, .doc = doc, .canvas = canvas, .path = path, .work = work };
     p.walk(base, viewport);
+    p.closeFaces();
 }
 
-fn Painter(comptime VB: type) type {
+fn Painter(comptime VB: type, comptime EXT: type) type {
     return struct {
         const P = @This();
 
         vb: VB,
+        ext: EXT,
         doc: *const Document,
         canvas: *vector.Canvas,
         path: *vector.Path,
@@ -312,23 +461,27 @@ fn Painter(comptime VB: type) type {
         references: u32 = 0,
         /// `use` elements drawn so far.
         uses: u32 = 0,
+        /// How many of the work's faces are open.
+        face_count: u32 = 0,
 
         fn walk(p: *P, base: Matrix, viewport: [2]f32) void {
             p.readRules();
             const frames = &p.work.frames;
             const root_default = Style{};
             const root_style = p.styleOf(0, &root_default);
-            if (!root_style.shown or root_style.filtered) return;
+            if (!root_style.shown) return;
+            const filtered = p.filterBy(root_style.filter, 0, base, viewport);
+            if (filtered == .hidden) return;
             frames[0] = .{ .node = 0, .style = root_style, .matrix = base, .viewport = viewport };
             p.depth = 0;
-            p.enter(&frames[0], base, viewport, null);
-            p.run(0);
+            p.enter(&frames[0], base, viewport, null, filtered);
+            p.drawFrom(0);
         }
 
         /// The children of the frame at `base` drawn, and it ended. A
         /// mask's content is drawn the same way, in the frames above the
         /// one it is for.
-        fn run(p: *P, base: usize) void {
+        fn drawFrom(p: *P, base: usize) void {
             const frames = &p.work.frames;
             var depth = base;
             p.depth = depth;
@@ -362,7 +515,7 @@ fn Painter(comptime VB: type) type {
                             target = p.useTarget(node, depth) orelse continue;
                         }
                         const style = p.styleOf(node, &top.style);
-                        if (!style.shown or style.filtered) continue;
+                        if (!style.shown) continue;
                         const space = top.matrix.then(p.ownTransform(node, top.viewport));
                         var matrix = space;
                         var inner = top.viewport;
@@ -374,14 +527,18 @@ fn Painter(comptime VB: type) type {
                             inner = view.inner;
                             if (!(style.overflow_visible orelse false)) overflow = view.rect;
                         }
+                        const filtered = p.filterBy(style.filter, node, space, top.viewport);
+                        if (filtered == .hidden) continue;
                         if (tag == .use) p.uses += 1;
                         depth += 1;
                         p.depth = depth;
                         frames[depth] = .{ .node = node, .style = style, .matrix = matrix, .viewport = inner, .choosing = tag == .@"switch", .use = target };
-                        p.enter(&frames[depth], space, top.viewport, overflow);
+                        p.enter(&frames[depth], space, top.viewport, overflow, filtered);
                         child = if (target != none) target else p.doc.nodes[node].first_child;
                     },
                     .path, .rect, .circle, .ellipse, .line, .polyline, .polygon => p.shape(node, top),
+                    .text => p.drawText(node, top),
+                    .image => p.drawImage(node, top),
                     else => {},
                 }
             }
@@ -389,9 +546,10 @@ fn Painter(comptime VB: type) type {
 
         /// What a group needs before its children: its clip and its mask,
         /// in `space` - its own units into pixels - its viewport's clip,
-        /// and a layer for its opacity. One under a mask always has a
-        /// layer, so it goes through the mask whole.
-        fn enter(p: *P, frame: *Frame, space: Matrix, viewport: [2]f32, overflow: ?vector.Rect) void {
+        /// its filter's region, and a layer for its opacity. One under a
+        /// mask always has a layer, so it goes through the mask whole, and
+        /// so does one blurred.
+        fn enter(p: *P, frame: *Frame, space: Matrix, viewport: [2]f32, overflow: ?vector.Rect, filtered: Filtered) void {
             const style = &frame.style;
             if (style.clip.len != 0) frame.clips += p.clipBy(style.clip, frame.node, space, viewport);
             var masked = false;
@@ -406,14 +564,24 @@ fn Painter(comptime VB: type) type {
                 _ = p.vb.PushClip(p.canvas, p.path, &space, vector.RULE_NONZERO);
                 frame.clips += 1;
             }
+            switch (filtered) {
+                .through => |t| {
+                    frame.clips += t.clips;
+                    frame.blur = t.blur;
+                },
+                else => {},
+            }
             // One the canvas had no room for is still pushed, its opacity
             // going into every paint, and is put down the same.
-            frame.layered = masked or style.opacity < 1;
+            frame.layered = masked or style.opacity < 1 or frame.blur != null;
             if (frame.layered) _ = p.vb.PushLayer(p.canvas, style.opacity);
         }
 
         fn leave(p: *P, frame: *const Frame) void {
-            if (frame.layered) p.vb.PopLayer(p.canvas);
+            if (frame.layered) {
+                if (frame.blur) |b| _ = p.vb.BlurLayer(p.canvas, b[0], b[1]);
+                p.vb.PopLayer(p.canvas);
+            }
             for (0..frame.clips) |_| p.vb.PopClip(p.canvas);
         }
 
@@ -481,42 +649,75 @@ fn Painter(comptime VB: type) type {
             return view;
         }
 
+        /// What an element is drawn through, pushed: its filter's region,
+        /// its clip and its mask, in `space`; and whether it is to be drawn
+        /// at all.
+        const Through = struct {
+            clips: u8 = 0,
+            masked: bool = false,
+            blur: ?[2]f32 = null,
+            hidden: bool = false,
+        };
+
+        fn through(p: *P, node: u32, style: *const Style, space: Matrix, viewport: [2]f32) Through {
+            var t = Through{};
+            switch (p.filterBy(style.filter, node, space, viewport)) {
+                .none => {},
+                .hidden => {
+                    t.hidden = true;
+                    return t;
+                },
+                .through => |f| {
+                    t.clips += f.clips;
+                    t.blur = f.blur;
+                },
+            }
+            if (style.clip.len != 0) t.clips += p.clipBy(style.clip, node, space, viewport);
+            if (style.mask.len != 0) {
+                const owed = p.maskBy(style.mask, node, space, viewport);
+                t.clips += owed;
+                t.masked = owed != 0;
+            }
+            return t;
+        }
+
         fn shape(p: *P, node: u32, top: *const Frame) void {
             const style = p.styleOf(node, &top.style);
-            if (!style.shown or style.filtered or !style.visible) return;
+            if (!style.shown or !style.visible) return;
             const vb = p.vb;
             const viewport = top.viewport;
             const matrix = top.matrix.then(p.transformOf(node, .transform));
-            var clips: u8 = 0;
-            defer for (0..clips) |_| vb.PopClip(p.canvas);
-            var masked = false;
-            if (style.clip.len != 0) clips += p.clipBy(style.clip, node, matrix, viewport);
-            if (style.mask.len != 0) {
-                const owed = p.maskBy(style.mask, node, matrix, viewport);
-                clips += owed;
-                masked = owed != 0;
-            }
+            const t = p.through(node, &style, matrix, viewport);
+            defer for (0..t.clips) |_| vb.PopClip(p.canvas);
+            if (t.hidden) return;
             if (!p.buildShape(node, viewport)) return;
             const path = p.path;
             const filled = p.doc.nodes[node].tag != .line and style.fill != .none;
             const stroked = style.stroke != .none and style.stroke_width.resolve(.other, viewport) > 0;
             // Both ways at once, the opacity - and a mask - on a layer over
-            // them both; one way, in the paint.
-            const layered = filled and stroked and (style.opacity < 1 or masked);
+            // them both; one way, in the paint. Blurred, on a layer.
+            const layered = t.blur != null or (filled and stroked and (style.opacity < 1 or t.masked));
             const paint_opacity: f32 = if (layered) 1 else style.opacity;
             if (layered) _ = vb.PushLayer(p.canvas, style.opacity);
+            if (stroked and style.stroke_first) p.strokeShape(&style, &matrix, paint_opacity, viewport);
             if (filled) {
                 if (p.paintOf(style.fill, style.fill_opacity * paint_opacity, &style, viewport)) |paint| {
                     _ = vb.FillPath(p.canvas, path, &matrix, &paint, style.fill_rule);
                 }
             }
-            if (stroked) {
-                if (p.paintOf(style.stroke, style.stroke_opacity * paint_opacity, &style, viewport)) |paint| {
-                    const stroke = p.strokeOf(&style, viewport);
-                    _ = vb.StrokePath(p.canvas, path, &matrix, &paint, &stroke);
-                }
+            if (stroked and !style.stroke_first) p.strokeShape(&style, &matrix, paint_opacity, viewport);
+            if (layered) {
+                if (t.blur) |b| _ = vb.BlurLayer(p.canvas, b[0], b[1]);
+                vb.PopLayer(p.canvas);
             }
-            if (layered) vb.PopLayer(p.canvas);
+        }
+
+        /// The path stroked as `style` says.
+        fn strokeShape(p: *P, style: *const Style, matrix: *const Matrix, opacity: f32, viewport: [2]f32) void {
+            if (p.paintOf(style.stroke, style.stroke_opacity * opacity, style, viewport)) |paint| {
+                const stroke = p.strokeOf(style, viewport);
+                _ = p.vb.StrokePath(p.canvas, p.path, matrix, &paint, &stroke);
+            }
         }
 
         /// A shape element's outline built into the path, in its own
@@ -563,6 +764,471 @@ fn Painter(comptime VB: type) type {
                 else => return false,
             }
             return true;
+        }
+
+        // --- filters -----------------------------------------------------------------
+
+        /// The `filter` `text` names, for `node` drawn through `space`: its
+        /// region pushed as a clip, and the blur it comes to in pixels.
+        fn filterBy(p: *P, text: []const u8, node: u32, space: Matrix, viewport: [2]f32) Filtered {
+            if (text.len == 0) return .none;
+            const filter = p.referenced(text, .filter) orelse return .none;
+            const effect = filter_.effectOf(p.doc, filter);
+            switch (effect) {
+                .unknown => return .none,
+                .clear => return .hidden,
+                else => {},
+            }
+            const box_units = p.boxUnits(filter, .filterUnits, true);
+            const primitive_box = p.boxUnits(filter, .primitiveUnits, false);
+            var box: vector.Rect = .{};
+            // What has no box this reader knows is drawn as it is.
+            if (box_units or primitive_box) box = p.boundsOf(node, viewport) orelse return .none;
+            const region = p.regionOf(filter, box_units, box, viewport);
+            if (!(region.width > 0) or !(region.height > 0)) return .hidden;
+            p.vb.ClearPath(p.path);
+            p.vb.AddRect(p.path, &region, 0, 0);
+            _ = p.vb.PushClip(p.canvas, p.path, &space, vector.RULE_NONZERO);
+            var blur: ?[2]f32 = null;
+            if (effect == .blur) {
+                var d = effect.blur;
+                if (primitive_box) {
+                    d[0] *= box.width;
+                    d[1] *= box.height;
+                }
+                // In the element's units, into pixels each way.
+                const across = @sqrt(space.a * space.a + space.b * space.b);
+                const down = @sqrt(space.c * space.c + space.d * space.d);
+                blur = .{ d[0] * across, d[1] * down };
+            }
+            return .{ .through = .{ .clips = 1, .blur = blur } };
+        }
+
+        /// A `filter`'s or a `mask`'s region: in the box's units, by default
+        /// a tenth of the box more each way; or the user's, a tenth of the
+        /// viewport.
+        fn regionOf(p: *P, element: u32, box_units: bool, box: vector.Rect, viewport: [2]f32) vector.Rect {
+            if (box_units) {
+                return .{
+                    .x = box.x + boxFraction(p.doc.get(element, .x), -0.1) * box.width,
+                    .y = box.y + boxFraction(p.doc.get(element, .y), -0.1) * box.height,
+                    .width = boxFraction(p.doc.get(element, .width), 1.2) * box.width,
+                    .height = boxFraction(p.doc.get(element, .height), 1.2) * box.height,
+                };
+            }
+            const tenth = Length{ .value = -10, .percent = true };
+            const more = Length{ .value = 120, .percent = true };
+            return .{
+                .x = p.lengthOr(element, .x, .x, viewport, tenth),
+                .y = p.lengthOr(element, .y, .y, viewport, tenth),
+                .width = p.lengthOr(element, .width, .x, viewport, more),
+                .height = p.lengthOr(element, .height, .y, viewport, more),
+            };
+        }
+
+        // --- text ---------------------------------------------------------------------
+
+        fn drawText(p: *P, node: u32, top: *const Frame) void {
+            const style = p.styleOf(node, &top.style);
+            if (!style.shown) return;
+            const viewport = top.viewport;
+            const matrix = top.matrix.then(p.transformOf(node, .transform));
+            const t = p.through(node, &style, matrix, viewport);
+            defer for (0..t.clips) |_| p.vb.PopClip(p.canvas);
+            if (t.hidden) return;
+            const count = p.layOut(node, &style, viewport);
+            if (count == 0) return;
+            // Its glyphs may overlap, and its spans: its opacity on a layer.
+            const layered = t.blur != null or t.masked or style.opacity < 1;
+            if (layered) _ = p.vb.PushLayer(p.canvas, style.opacity);
+            const glyphs = p.work.glyphs[0..count];
+            var start: u32 = 0;
+            while (start < count) {
+                var end = start + 1;
+                while (end < count and glyphs[end].run == glyphs[start].run) end += 1;
+                p.drawGlyphs(start, end, &matrix, viewport);
+                start = end;
+            }
+            if (layered) {
+                if (t.blur) |b| _ = p.vb.BlurLayer(p.canvas, b[0], b[1]);
+                p.vb.PopLayer(p.canvas);
+            }
+        }
+
+        /// A `text` being laid out: where the next character goes, the
+        /// spans it is in, the white space.
+        const Layout = struct {
+            viewport: [2]f32,
+            count: u32 = 0,
+            run_count: u32 = 0,
+            x: f32 = 0,
+            y: f32 = 0,
+            spaces: text_.Spaces = .{},
+            stack: [max_span_depth]Span = undefined,
+            depth: u32 = 0,
+            /// The glyph before, for kerning, and its font.
+            last_glyph: u32 = 0,
+            last_face: u8 = no_face,
+        };
+
+        /// A span being laid out: its element, its run, and how many of its
+        /// characters have been, which is which of its `x`, `y`, `dx` and
+        /// `dy` the next takes.
+        const Span = struct { node: u32, run: u8, chars: u32 = 0 };
+
+        /// The `text` `node`, its style `style`, laid out into the work's
+        /// glyphs, each piece moved by its anchor; how many.
+        fn layOut(p: *P, node: u32, style: *const Style, viewport: [2]f32) u32 {
+            var l = Layout{ .viewport = viewport };
+            p.work.runs[0] = p.runOf(style);
+            l.run_count = 1;
+            l.stack[0] = .{ .node = node, .run = 0 };
+            l.depth = 1;
+            p.layChildren(&l, node);
+            p.anchor(&l);
+            return l.count;
+        }
+
+        fn layChildren(p: *P, l: *Layout, element: u32) void {
+            var child = p.doc.nodes[element].first_child;
+            while (child != none) : (child = p.doc.nodes[child].next) {
+                switch (p.doc.nodes[child].tag) {
+                    .@"#text" => p.layCharacters(l, p.doc.get(child, .@"#text") orelse ""),
+                    .tspan, .a => {
+                        if (l.depth == max_span_depth or l.run_count == max_runs) continue;
+                        const parent = &p.work.runs[l.stack[l.depth - 1].run].style;
+                        const style = p.styleOf(child, parent);
+                        if (!style.shown) continue;
+                        p.work.runs[l.run_count] = p.runOf(&style);
+                        l.stack[l.depth] = .{ .node = child, .run = @intCast(l.run_count) };
+                        l.run_count += 1;
+                        l.depth += 1;
+                        p.layChildren(l, child);
+                        l.depth -= 1;
+                    },
+                    // A `textPath`'s characters follow a path: not drawn.
+                    else => {},
+                }
+            }
+        }
+
+        fn layCharacters(p: *P, l: *Layout, characters: []const u8) void {
+            const run = l.stack[l.depth - 1].run;
+            const preserve = p.work.runs[run].style.preserve;
+            var i: usize = 0;
+            while (i < characters.len) {
+                const code = text_.nextCode(characters, &i);
+                var out: [2]u21 = undefined;
+                const n = l.spaces.take(code, preserve, &out);
+                for (out[0..n]) |c| p.layOne(l, c, run);
+            }
+        }
+
+        /// One character laid out where its span's positions say, after the
+        /// one before.
+        fn layOne(p: *P, l: *Layout, code: u21, run_index: u8) void {
+            if (l.count == max_glyphs) return;
+            var starts = l.count == 0;
+            if (p.positionOf(l, .x, .x)) |x| {
+                l.x = x;
+                starts = true;
+            }
+            if (p.positionOf(l, .y, .y)) |y| {
+                l.y = y;
+                starts = true;
+            }
+            l.x += p.positionOf(l, .dx, .x) orelse 0;
+            l.y += p.positionOf(l, .dy, .y) orelse 0;
+            for (l.stack[0..l.depth]) |*span| span.chars += 1;
+            const run = &p.work.runs[run_index];
+            if (run.face == no_face) return;
+            const outline = p.work.faces[run.face].opened.?.outline;
+            const glyph = p.ext.GlyphIndex(outline, code);
+            if (!starts and l.last_face == run.face) {
+                l.x += @as(f32, @floatFromInt(p.ext.Kerning(outline, l.last_glyph, glyph))) * run.scale;
+            }
+            var m: truetype.GlyphMetrics = .{};
+            _ = p.ext.GlyphMetrics(outline, glyph, &m);
+            const advance = @as(f32, @floatFromInt(m.advance)) * run.scale;
+            p.work.glyphs[l.count] = .{ .glyph = glyph, .run = run_index, .x = l.x, .y = l.y, .advance = advance, .starts = starts };
+            l.count += 1;
+            l.last_glyph = glyph;
+            l.last_face = run.face;
+            l.x += advance + run.style.letter_spacing.resolve(.x, l.viewport);
+            if (code == ' ') l.x += run.style.word_spacing.resolve(.x, l.viewport);
+        }
+
+        /// The next character's `x`, `y`, `dx` or `dy`: the innermost span's
+        /// that has one for it.
+        fn positionOf(p: *P, l: *const Layout, name: Name, axis: values.Axis) ?f32 {
+            var i = l.depth;
+            while (i > 0) {
+                i -= 1;
+                const span = l.stack[i];
+                const list = p.doc.get(span.node, name) orelse continue;
+                var s = values.Scanner{ .text = list };
+                var n: u32 = 0;
+                while (true) : (n += 1) {
+                    s.skipSeparator();
+                    const one = values.lengthAt(&s) orelse break;
+                    if (n == span.chars) return one.resolve(axis, l.viewport);
+                }
+            }
+            return null;
+        }
+
+        /// Each piece that starts at a place of its own moved by the anchor
+        /// of the span its first character is in.
+        fn anchor(p: *P, l: *const Layout) void {
+            const glyphs = p.work.glyphs[0..l.count];
+            var start: u32 = 0;
+            while (start < l.count) {
+                var end = start + 1;
+                while (end < l.count and !glyphs[end].starts) end += 1;
+                const how = p.work.runs[glyphs[start].run].style.anchor;
+                if (how != .start) {
+                    const last = glyphs[end - 1];
+                    const width = last.x + last.advance - glyphs[start].x;
+                    const shift = if (how == .middle) -width / 2 else -width;
+                    for (glyphs[start..end]) |*g| g.x += shift;
+                }
+                start = end;
+            }
+        }
+
+        /// A span as its glyphs are drawn: its font, and what it draws
+        /// itself of the styles the font has no face for.
+        fn runOf(p: *P, style: *const Style) Run {
+            var want: graphics.FontStyle = graphics.FS_NORMAL;
+            if (style.bold) want |= graphics.FSF_BOLD;
+            if (style.italic) want |= graphics.FSF_ITALIC;
+            const face = p.faceFor(style.font_family, &want);
+            var run = Run{ .style = style.*, .face = face, .scale = 0, .lean = 0, .thicken = 0 };
+            if (face == no_face) return run;
+            const f = &p.work.faces[face];
+            run.scale = style.font_size / @as(f32, @floatFromInt(f.metrics.units_per_em));
+            const drawn = f.opened.?.style;
+            // About twelve degrees.
+            if (want & graphics.FSF_ITALIC != 0 and drawn & graphics.FSF_ITALIC == 0) run.lean = 0.21;
+            if (want & graphics.FSF_BOLD != 0 and drawn & graphics.FSF_BOLD == 0) run.thicken = style.font_size / 24;
+            return run;
+        }
+
+        /// The font for a `font-family` list and the styles wanted, which
+        /// a name of a font the disk has not may add to; `no_face` for none.
+        fn faceFor(p: *P, family: []const u8, want: *graphics.FontStyle) u8 {
+            var names = text_.Names{ .list = family };
+            var look: ?text_.Generic = null;
+            while (names.next()) |name| {
+                switch (text_.familyOf(name)) {
+                    .generic => |g| {
+                        const at = p.faceOf(g.font(), want.*);
+                        if (at != no_face) return at;
+                    },
+                    .own => |font| {
+                        const at = p.faceOf(font, want.*);
+                        if (at != no_face) return at;
+                    },
+                    .like => |g| if (look == null) {
+                        look = g;
+                        if (text_.nameSaysBold(name)) want.* |= graphics.FSF_BOLD;
+                        if (text_.nameSaysItalic(name)) want.* |= graphics.FSF_ITALIC;
+                    },
+                }
+            }
+            const fallback: text_.Generic = look orelse if (family.len == 0) .serif else .sans;
+            const at = p.faceOf(fallback.font(), want.*);
+            if (at != no_face) return at;
+            // A disk without that one: sans, then Go's.
+            if (fallback != .sans) {
+                const sans = p.faceOf(text_.Generic.sans.font(), want.*);
+                if (sans != no_face) return sans;
+            }
+            return p.faceOf("go.font", want.*);
+        }
+
+        /// A font of the picture's, opened the first time it is asked for;
+        /// `no_face` when it cannot be - which is remembered too.
+        fn faceOf(p: *P, font: [:0]const u8, style: graphics.FontStyle) u8 {
+            const faces = p.work.faces[0..p.face_count];
+            for (faces, 0..) |f, i| {
+                if (f.style == style and std.mem.eql(u8, f.font, font)) return if (f.opened != null) @intCast(i) else no_face;
+            }
+            if (p.face_count == max_faces) return no_face;
+            var face = Face{ .font = font, .style = style, .opened = p.ext.OpenFace(font.ptr, style), .metrics = .{} };
+            if (face.opened) |opened| {
+                p.ext.FontMetrics(opened.outline, &face.metrics);
+                if (face.metrics.units_per_em == 0) {
+                    p.ext.CloseFace(opened);
+                    face.opened = null;
+                }
+            }
+            p.work.faces[p.face_count] = face;
+            p.face_count += 1;
+            return if (face.opened != null) @intCast(p.face_count - 1) else no_face;
+        }
+
+        fn closeFaces(p: *P) void {
+            for (p.work.faces[0..p.face_count]) |f| if (f.opened) |opened| p.ext.CloseFace(opened);
+            p.face_count = 0;
+        }
+
+        /// The glyphs `start` to `end`, of one span, as one shape: filled,
+        /// and stroked, as a shape of the span's style is.
+        fn drawGlyphs(p: *P, start: u32, end: u32, matrix: *const Matrix, viewport: [2]f32) void {
+            const work = p.work;
+            const run = &work.runs[work.glyphs[start].run];
+            const style = &run.style;
+            if (!style.visible) return;
+            const face = &work.faces[run.face];
+            const outline = face.opened.?.outline;
+            const glyphs = work.glyphs[start..end];
+            // The lines under and over first, then the glyphs, then the
+            // line through, as SVG 2 has it - each a shape of its own, so
+            // a line crossing a glyph the other way round is no hole.
+            const before = style.decoration & (decoration_under | decoration_over);
+            if (before != 0 and p.decorate(run, &face.metrics, glyphs, before)) p.paintRun(run, matrix, false, viewport);
+            p.vb.ClearPath(p.path);
+            for (glyphs) |g| {
+                var segments = truetype.Segments{ .verbs = &work.glyph_verbs, .points = &work.glyph_points, .verb_room = glyph_verbs, .point_room = glyph_points };
+                if (p.ext.GlyphSegments(outline, g.glyph, &segments) != truetype.TRUETYPE_OK) continue;
+                // Font units, y up, into the text's: scaled, leaned, turned over.
+                for (work.glyph_points[0..segments.point_count]) |*q| {
+                    q.* = .{ .x = g.x + (q.x + run.lean * q.y) * run.scale, .y = g.y - q.y * run.scale };
+                }
+                _ = p.vb.AddSegments(p.path, &work.glyph_verbs, segments.verb_count, &work.glyph_points, segments.point_count);
+            }
+            p.paintRun(run, matrix, true, viewport);
+            const after = style.decoration & decoration_through;
+            if (after != 0 and p.decorate(run, &face.metrics, glyphs, after)) p.paintRun(run, matrix, false, viewport);
+        }
+
+        /// The path filled and stroked as a span's style says, in its
+        /// `paint-order`; `glyphs` thickened where the font has no bold.
+        fn paintRun(p: *P, run: *const Run, matrix: *const Matrix, glyphs: bool, viewport: [2]f32) void {
+            const style = &run.style;
+            const stroked = style.stroke != .none and style.stroke_width.resolve(.other, viewport) > 0;
+            if (stroked and style.stroke_first) p.strokeShape(style, matrix, 1, viewport);
+            if (style.fill != .none) {
+                if (p.paintOf(style.fill, style.fill_opacity, style, viewport)) |paint| {
+                    _ = p.vb.FillPath(p.canvas, p.path, matrix, &paint, vector.RULE_NONZERO);
+                    if (glyphs and run.thicken > 0) {
+                        const thicker = vector.Stroke{ .width = run.thicken, .join = vector.JOIN_ROUND };
+                        _ = p.vb.StrokePath(p.canvas, p.path, matrix, &paint, &thicker);
+                    }
+                }
+            }
+            if (stroked and !style.stroke_first) p.strokeShape(style, matrix, 1, viewport);
+        }
+
+        /// The lines of `bits` - `decoration_*` - under the glyphs, through
+        /// them or over them, as the path: where the font says, or where
+        /// most fonts have them when it does not. False for none.
+        fn decorate(p: *P, run: *const Run, m: *const truetype.FontMetrics, glyphs: []const Glyph, bits: u8) bool {
+            const em: f32 = @floatFromInt(m.units_per_em);
+            const thick = if (m.underline_thickness > 0) @as(f32, @floatFromInt(m.underline_thickness)) else em / 14;
+            const under = if (m.underline_position != 0) @as(f32, @floatFromInt(m.underline_position)) else -em / 10;
+            const strike_thick = if (m.strikeout_thickness > 0) @as(f32, @floatFromInt(m.strikeout_thickness)) else thick;
+            const strike = if (m.strikeout_position != 0) @as(f32, @floatFromInt(m.strikeout_position)) else em * 0.3;
+            const lines = [_]struct { bit: u8, top: f32, height: f32 }{
+                .{ .bit = decoration_under, .top = under, .height = thick },
+                .{ .bit = decoration_through, .top = strike, .height = strike_thick },
+                .{ .bit = decoration_over, .top = @floatFromInt(m.ascender), .height = thick },
+            };
+            p.vb.ClearPath(p.path);
+            var any = false;
+            for (lines) |line| {
+                if (bits & line.bit == 0) continue;
+                for (glyphs) |g| {
+                    const rect = vector.Rect{ .x = g.x, .y = g.y - line.top * run.scale, .width = g.advance, .height = line.height * run.scale };
+                    if (!(rect.width > 0) or !(rect.height > 0)) continue;
+                    p.vb.AddRect(p.path, &rect, 0, 0);
+                    any = true;
+                }
+            }
+            return any;
+        }
+
+        /// The box of a `text`'s glyphs in its units, through `m`.
+        fn textBounds(p: *P, node: u32, m: Matrix, style: *const Style, viewport: [2]f32) ?vector.Rect {
+            const count = p.layOut(node, style, viewport);
+            var all: ?vector.Rect = null;
+            for (p.work.glyphs[0..count]) |g| {
+                const run = &p.work.runs[g.run];
+                var gm: truetype.GlyphMetrics = .{};
+                if (!p.ext.GlyphMetrics(p.work.faces[run.face].opened.?.outline, g.glyph, &gm)) continue;
+                if (gm.x_max <= gm.x_min) continue;
+                const left = g.x + @as(f32, @floatFromInt(gm.x_min)) * run.scale;
+                const right = g.x + @as(f32, @floatFromInt(gm.x_max)) * run.scale;
+                const top = g.y - @as(f32, @floatFromInt(gm.y_max)) * run.scale;
+                const bottom = g.y - @as(f32, @floatFromInt(gm.y_min)) * run.scale;
+                all = unite(all, boxThrough(m, .{ .x = left, .y = top, .width = right - left, .height = bottom - top }));
+            }
+            return all;
+        }
+
+        // --- images -------------------------------------------------------------------
+
+        /// An `image` of a `data:` address drawn in its place.
+        fn drawImage(p: *P, node: u32, top: *const Frame) void {
+            const style = p.styleOf(node, &top.style);
+            if (!style.shown or !style.visible) return;
+            const href = p.doc.get(node, .href) orelse return;
+            const picture = p.ext.OpenImage(href) orelse return;
+            defer p.ext.CloseImage(picture);
+            const viewport = top.viewport;
+            const iw: f32 = @floatFromInt(picture.width);
+            const ih: f32 = @floatFromInt(picture.height);
+            // Without a width or a height, the picture's own (SVG 2).
+            const place = p.imageRect(node, viewport, iw, ih) orelse return;
+            const matrix = top.matrix.then(p.transformOf(node, .transform));
+            const t = p.through(node, &style, matrix, viewport);
+            defer for (0..t.clips) |_| p.vb.PopClip(p.canvas);
+            if (t.hidden) return;
+            const fit = Matrix.translate(place.x, place.y).then(viewBoxMatrix(.{ .width = iw, .height = ih }, p.doc.get(node, .preserveAspectRatio) orelse "", place.width, place.height));
+            // Where it lands, inside its place: a sliced one is cut to it.
+            const landed = boxThrough(fit, .{ .width = iw, .height = ih });
+            const left = @max(landed.x, place.x);
+            const right = @min(landed.x + landed.width, place.x + place.width);
+            const upper = @max(landed.y, place.y);
+            const lower = @min(landed.y + landed.height, place.y + place.height);
+            if (!(right > left) or !(lower > upper)) return;
+            p.vb.ClearPath(p.path);
+            p.vb.AddRect(p.path, &.{ .x = left, .y = upper, .width = right - left, .height = lower - upper }, 0, 0);
+            const layered = t.blur != null;
+            const paint = vector.Paint{
+                .kind = vector.PAINT_IMAGE,
+                .opacity = if (layered) 1 else style.opacity,
+                .image = picture.pens,
+                .image_width = picture.width,
+                .image_height = picture.height,
+                .image_bytes_per_row = picture.bytes_per_row,
+                .matrix = fit,
+            };
+            if (layered) _ = p.vb.PushLayer(p.canvas, style.opacity);
+            _ = p.vb.FillPath(p.canvas, p.path, &matrix, &paint, vector.RULE_NONZERO);
+            if (layered) {
+                _ = p.vb.BlurLayer(p.canvas, t.blur.?[0], t.blur.?[1]);
+                p.vb.PopLayer(p.canvas);
+            }
+        }
+
+        /// An `image`'s place: its `x`, `y`, `width` and `height`, a side not
+        /// given the picture's own, or the other's in its shape. Null for
+        /// one of no size.
+        fn imageRect(p: *P, node: u32, viewport: [2]f32, iw: f32, ih: f32) ?vector.Rect {
+            var w = p.optionalLength(node, .width, .x, viewport);
+            var h = p.optionalLength(node, .height, .y, viewport);
+            if (w == null and h == null) {
+                w = iw;
+                h = ih;
+            } else if (w == null) {
+                w = h.? * iw / ih;
+            } else if (h == null) {
+                h = w.? * ih / iw;
+            }
+            if (!(w.? > 0) or !(h.? > 0)) return null;
+            return .{ .x = p.lengthOf(node, .x, .x, viewport, 0), .y = p.lengthOf(node, .y, .y, viewport, 0), .width = w.?, .height = h.? };
         }
 
         // --- clips and masks ------------------------------------------------------
@@ -680,24 +1346,7 @@ fn Painter(comptime VB: type) type {
                 box = p.boundsOf(node, viewport) orelse return p.clipAll();
             }
             // Its region: by default a tenth of the box more each way.
-            var region: vector.Rect = undefined;
-            if (box_units) {
-                region = .{
-                    .x = box.x + boxFraction(p.doc.get(mask, .x), -0.1) * box.width,
-                    .y = box.y + boxFraction(p.doc.get(mask, .y), -0.1) * box.height,
-                    .width = boxFraction(p.doc.get(mask, .width), 1.2) * box.width,
-                    .height = boxFraction(p.doc.get(mask, .height), 1.2) * box.height,
-                };
-            } else {
-                const tenth = Length{ .value = -10, .percent = true };
-                const more = Length{ .value = 120, .percent = true };
-                region = .{
-                    .x = p.lengthOr(mask, .x, .x, viewport, tenth),
-                    .y = p.lengthOr(mask, .y, .y, viewport, tenth),
-                    .width = p.lengthOr(mask, .width, .x, viewport, more),
-                    .height = p.lengthOr(mask, .height, .y, viewport, more),
-                };
-            }
+            const region = p.regionOf(mask, box_units, box, viewport);
             if (!(region.width > 0) or !(region.height > 0)) return p.clipAll();
             _ = p.vb.BeginMask(p.canvas);
             p.vb.ClearPath(p.path);
@@ -708,14 +1357,14 @@ fn Painter(comptime VB: type) type {
             const alpha = style.mask_alpha;
             style.opacity = 1;
             style.shown = true;
-            style.filtered = false;
+            style.filter = "";
             style.clip = "";
             style.mask = "";
             const content = if (content_box) space.then(boxMatrix(box)) else space;
             const saved = p.depth;
             const frames = &p.work.frames;
             frames[saved + 1] = .{ .node = mask, .style = style, .matrix = content, .viewport = viewport };
-            p.run(saved + 1);
+            p.drawFrom(saved + 1);
             p.depth = saved;
             for (0..inner) |_| p.vb.PopClip(p.canvas);
             p.vb.PopClip(p.canvas);
@@ -743,6 +1392,14 @@ fn Painter(comptime VB: type) type {
                 if (!p.buildShape(node, viewport)) return null;
                 var box: vector.Rect = undefined;
                 return if (p.vb.PathBounds(p.path, &m, &box)) box else null;
+            }
+            if (tag == .text) return p.textBounds(node, m, style, viewport);
+            if (tag == .image) {
+                // Its place, as a picture of its shape, unknown here, has it.
+                const w = p.optionalLength(node, .width, .x, viewport) orelse return null;
+                const h = p.optionalLength(node, .height, .y, viewport) orelse return null;
+                if (!(w > 0) or !(h > 0)) return null;
+                return boxThrough(m, .{ .x = p.lengthOf(node, .x, .x, viewport, 0), .y = p.lengthOf(node, .y, .y, viewport, 0), .width = w, .height = h });
             }
             var content = m;
             var inner = viewport;
@@ -1140,6 +1797,59 @@ const Cascade = struct {
     }
 };
 
+/// Whether a `paint-order` puts the stroke before the fill: what it
+/// names first comes first, what it leaves out after in the usual order
+/// - fill, stroke, markers. Null for one in error.
+fn paintOrder(text: []const u8) ?bool {
+    if (std.mem.eql(u8, text, "normal")) return false;
+    var words = std.mem.tokenizeAny(u8, text, " \t\r\n");
+    var fill_at: ?u32 = null;
+    var stroke_at: ?u32 = null;
+    var n: u32 = 0;
+    while (words.next()) |word| : (n += 1) {
+        if (std.mem.eql(u8, word, "fill")) {
+            fill_at = n;
+        } else if (std.mem.eql(u8, word, "stroke")) {
+            stroke_at = n;
+        } else if (!std.mem.eql(u8, word, "markers")) return null;
+    }
+    if (n == 0 or n > 3) return null;
+    const stroke = stroke_at orelse return false;
+    const fill = fill_at orelse return true;
+    return stroke < fill;
+}
+
+/// What a filter comes to for the element it is on.
+const Filtered = union(enum) {
+    /// No filter, or one this reader cannot make: drawn as it is.
+    none,
+    /// One that comes to nothing: not drawn.
+    hidden,
+    /// Its region pushed as a clip, and the blur it is, in pixels.
+    through: struct { clips: u8, blur: ?[2]f32 },
+};
+
+/// The box round a rectangle through a matrix.
+fn boxThrough(m: Matrix, r: vector.Rect) vector.Rect {
+    const corners = [_]vector.Point{
+        m.apply(.{ .x = r.x, .y = r.y }),
+        m.apply(.{ .x = r.x + r.width, .y = r.y }),
+        m.apply(.{ .x = r.x, .y = r.y + r.height }),
+        m.apply(.{ .x = r.x + r.width, .y = r.y + r.height }),
+    };
+    var left = corners[0].x;
+    var right = left;
+    var top = corners[0].y;
+    var bottom = top;
+    for (corners[1..]) |c| {
+        left = @min(left, c.x);
+        right = @max(right, c.x);
+        top = @min(top, c.y);
+        bottom = @max(bottom, c.y);
+    }
+    return .{ .x = left, .y = top, .width = right - left, .height = bottom - top };
+}
+
 fn isShape(tag: Tag) bool {
     return switch (tag) {
         .path, .rect, .circle, .ellipse, .line, .polyline, .polygon => true,
@@ -1197,6 +1907,16 @@ fn property(s: *Style, parent: *const Style, name: Name, text_in: []const u8) vo
             .visibility => s.visible = parent.visible,
             .opacity => s.opacity = parent.opacity,
             .@"clip-rule" => s.clip_rule = parent.clip_rule,
+            .@"paint-order" => s.stroke_first = parent.stroke_first,
+            .@"font-family" => s.font_family = parent.font_family,
+            .@"font-size" => s.font_size = parent.font_size,
+            .@"font-weight" => s.bold = parent.bold,
+            .@"font-style" => s.italic = parent.italic,
+            .@"text-anchor" => s.anchor = parent.anchor,
+            .@"letter-spacing" => s.letter_spacing = parent.letter_spacing,
+            .@"word-spacing" => s.word_spacing = parent.word_spacing,
+            .@"text-decoration" => s.decoration = parent.decoration,
+            .@"white-space", .@"xml:space" => s.preserve = parent.preserve,
             else => {},
         }
         return;
@@ -1246,7 +1966,7 @@ fn property(s: *Style, parent: *const Style, name: Name, text_in: []const u8) vo
         },
         .display => s.shown = !std.mem.eql(u8, text, "none"),
         .visibility => s.visible = std.mem.eql(u8, text, "visible"),
-        .filter => s.filtered = text.len != 0 and !std.mem.eql(u8, text, "none"),
+        .filter => s.filter = if (std.mem.eql(u8, text, "none")) "" else text,
         .@"clip-path" => s.clip = if (std.mem.eql(u8, text, "none")) "" else text,
         .mask => s.mask = if (std.mem.eql(u8, text, "none")) "" else text,
         .@"clip-rule" => {
@@ -1260,6 +1980,60 @@ fn property(s: *Style, parent: *const Style, name: Name, text_in: []const u8) vo
         .overflow => {
             if (std.mem.eql(u8, text, "visible") or std.mem.eql(u8, text, "auto")) s.overflow_visible = true;
             if (std.mem.eql(u8, text, "hidden") or std.mem.eql(u8, text, "scroll")) s.overflow_visible = false;
+        },
+        .@"font-family" => if (text.len != 0) {
+            s.font_family = text;
+        },
+        .@"font-size" => if (text_.fontSize(text, parent.font_size)) |size| {
+            s.font_size = size;
+        },
+        .@"font-weight" => if (text_.weightIsBold(text, parent.bold)) |bold| {
+            s.bold = bold;
+        },
+        .@"font-style" => if (text_.styleIsItalic(text)) |italic| {
+            s.italic = italic;
+        },
+        .font => if (text_.shorthand(text, parent.font_size)) |f| {
+            s.font_family = f.family;
+            s.font_size = f.size;
+            s.bold = f.bold;
+            s.italic = f.italic;
+        },
+        .@"paint-order" => if (paintOrder(text)) |first| {
+            s.stroke_first = first;
+        },
+        .@"text-anchor" => {
+            if (std.mem.eql(u8, text, "start")) s.anchor = .start;
+            if (std.mem.eql(u8, text, "middle")) s.anchor = .middle;
+            if (std.mem.eql(u8, text, "end")) s.anchor = .end;
+        },
+        .@"letter-spacing" => {
+            if (std.mem.eql(u8, text, "normal")) s.letter_spacing = .{ .value = 0 } else if (values.length(text)) |l| {
+                s.letter_spacing = l;
+            }
+        },
+        .@"word-spacing" => {
+            if (std.mem.eql(u8, text, "normal")) s.word_spacing = .{ .value = 0 } else if (values.length(text)) |l| {
+                s.word_spacing = l;
+            }
+        },
+        .@"text-decoration" => {
+            var bits: u8 = 0;
+            var words = std.mem.tokenizeAny(u8, text, " \t\r\n");
+            while (words.next()) |word| {
+                if (std.mem.eql(u8, word, "underline")) bits |= decoration_under;
+                if (std.mem.eql(u8, word, "line-through")) bits |= decoration_through;
+                if (std.mem.eql(u8, word, "overline")) bits |= decoration_over;
+            }
+            s.decoration = bits;
+        },
+        .@"xml:space" => {
+            if (std.mem.eql(u8, text, "preserve")) s.preserve = true;
+            if (std.mem.eql(u8, text, "default")) s.preserve = false;
+        },
+        .@"white-space" => {
+            if (std.mem.startsWith(u8, text, "pre") or std.mem.eql(u8, text, "break-spaces")) s.preserve = true;
+            if (std.mem.eql(u8, text, "normal") or std.mem.eql(u8, text, "nowrap")) s.preserve = false;
         },
         else => {},
     }

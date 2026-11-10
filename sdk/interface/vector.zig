@@ -41,6 +41,7 @@ pub const LVO = struct {
     pub const PopClip = libraries.lvo(26);
     pub const BeginMask = libraries.lvo(27);
     pub const EndMask = libraries.lvo(28);
+    pub const BlurLayer = libraries.lvo(29);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -71,6 +72,7 @@ pub const Fn = struct {
     pub const PopClip = *const fn (*VectorBase, *vector.Canvas) callconv(.c) void;
     pub const BeginMask = *const fn (*VectorBase, *vector.Canvas) callconv(.c) i32;
     pub const EndMask = *const fn (*VectorBase, *vector.Canvas, u32) callconv(.c) i32;
+    pub const BlurLayer = *const fn (*VectorBase, *vector.Canvas, f32, f32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -204,5 +206,12 @@ pub const VectorBase = opaque {
     /// The drawing since BeginMask made a mask (MASK_*) that clips what is drawn until PopClip.
     pub fn EndMask(self: *VectorBase, canvas: *vector.Canvas, kind: u32) i32 {
         return libraries.call(self, LVO.EndMask, Fn.EndMask, .{ canvas, kind });
+    }
+
+    /// What is drawn on the last layer pushed blurred, as SVG's
+    /// feGaussianBlur, `deviation_x` across and `deviation_y` down in pixels:
+    /// VECTOR_OK, or VECTORERR_DEPTH with no layer. Since 1.4.
+    pub fn BlurLayer(self: *VectorBase, canvas: *vector.Canvas, deviation_x: f32, deviation_y: f32) i32 {
+        return libraries.call(self, LVO.BlurLayer, Fn.BlurLayer, .{ canvas, deviation_x, deviation_y });
     }
 };

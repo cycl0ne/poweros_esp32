@@ -186,9 +186,9 @@ first time something opens it.
 | rdb.library | `LIBS:` | a disk's RigidDiskBlock and partitions | [md](autodocs/rdb.md) · [doc](autodocs/rdb.doc) |
 | modbus.library | `LIBS:` | Modbus over RTU and TCP, as a client and as a server | [md](autodocs/modbus.md) · [doc](autodocs/modbus.doc) |
 | tls.library | `LIBS:` | TLS 1.3 and 1.2 sessions over a connected socket, the server's certificates checked | [md](autodocs/tls.md) · [doc](autodocs/tls.doc) |
-| truetype.library | `LIBS:` | TrueType outlines into glyphs | [md](autodocs/truetype.md) · [doc](autodocs/truetype.doc) |
+| truetype.library | `LIBS:` | TrueType outlines into glyphs: sizes of a font, or each glyph's outline, measures and kerning for drawing it as a shape | [md](autodocs/truetype.md) · [doc](autodocs/truetype.doc) |
 | usb.library | `LIBS:` | USB buses: their devices, descriptors, pipes to endpoints, class drivers | [md](autodocs/usb.md) · [doc](autodocs/usb.doc), [`usb.zig`](../libs/usb/usb.zig), [`descriptors.zig`](../libs/usb/descriptors.zig) |
-| vector.library | `LIBS:` | shapes with smooth edges: paths of lines and curves in a program's own units - SVG's arcs and path data too, or handed over whole - filled or stroked onto its pens through a matrix, in colours or gradients, dashed, on layers, clipped to a path or through a mask | [md](autodocs/vector.md) · [doc](autodocs/vector.doc), [`vector.zig`](../libs/vector/vector.zig) |
+| vector.library | `LIBS:` | shapes with smooth edges: paths of lines and curves in a program's own units - SVG's arcs and path data too, or handed over whole - filled or stroked onto its pens through a matrix, in colours, gradients or a picture's pens, dashed, on layers - blurred too - clipped to a path or through a mask | [md](autodocs/vector.md) · [doc](autodocs/vector.doc), [`vector.zig`](../libs/vector/vector.zig) |
 | wpa.library | `LIBS:` | WPA2-Personal for a Wi-Fi driver: a network's key from its passphrase, the station's RSN element, the key handshakes | [md](autodocs/wpa.md) · [doc](autodocs/wpa.doc), [`wpa.zig`](../libs/wpa/wpa.zig) |
 
 ## Devices
@@ -393,7 +393,7 @@ object, whatever format it came out of; see the
 | gif.datatype | GIF | [`pictureclass.zig`](../libs/datatypes/pictureclass.zig) |
 | jpeg.datatype | baseline JPEG | [`pictureclass.zig`](../libs/datatypes/pictureclass.zig) |
 | font.datatype | font families, as a sheet of their characters and sizes | [`pictureclass.zig`](../libs/datatypes/pictureclass.zig) |
-| svg.datatype | SVG pictures, drawn by vector.library when read (the 64-bit machines' disks) | [`pictureclass.zig`](../libs/datatypes/pictureclass.zig) |
+| svg.datatype | SVG pictures, drawn by vector.library when read - text in `FONTS:`'s outlines, blurs, pictures in the file (the 64-bit machines' disks) | [`pictureclass.zig`](../libs/datatypes/pictureclass.zig) |
 | animation.datatype | every animation: frames drawn ahead on a process of its own, played in time | [`animationclass.zig`](../libs/datatypes/animationclass.zig) |
 | gifanim.datatype | GIF with more than one picture | [`animationclass.zig`](../libs/datatypes/animationclass.zig) |
 | lottie.datatype | Lottie vector animations | [`animationclass.zig`](../libs/datatypes/animationclass.zig) |

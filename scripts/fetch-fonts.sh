@@ -3,8 +3,11 @@
 # Fetch the fonts the disk carries in FONTS:: Spleen, by Frederic Cambus,
 # under the BSD 2-Clause licence, as bitmap sources (BDF) at a pinned
 # release; and the Go fonts, by Bigelow & Holmes, under the Go project's
-# BSD licence, as TrueType outlines at a pinned commit. Each is checked
-# against its sha256. Nothing of it is committed: it lands in
+# BSD licence, as TrueType outlines at a pinned commit; and the
+# Liberation fonts, by Red Hat, under the SIL Open Font Licence 1.1, as
+# TrueType outlines at a pinned release - Sans, Serif and Mono, drawn to
+# the widths of Arial, Times New Roman and Courier New, which is what
+# SVG files most often ask for. Each is checked against its sha256. Nothing of it is committed: it lands in
 # toolchain/fonts, which the build looks for; without it the disk has no
 # fonts beyond the ROM's.
 set -eu
@@ -39,3 +42,14 @@ b165f1a142dc88d3c388de2c89d3ab62dd04620ef21ad07f43fb51f77857edc3  Go-Mono-Bold.t
 dc588a7ba9130043b67c2380cc03cc6644ed3557f6d5e8589b96acba1c64e343  README
 EOF
 echo "fonts in $out/go"
+
+liberation=2.1.5
+liberation_sha256=7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0
+cd "$out"
+tarball="liberation-fonts-ttf-$liberation.tar.gz"
+# The release's files are attached to its notes, not to the release.
+curl -sSfL -o "$tarball" "https://github.com/liberationfonts/liberation-fonts/files/7261482/$tarball"
+echo "$liberation_sha256  $tarball" | sha256sum -c --quiet
+tar xzf "$tarball"
+rm "$tarball"
+echo "fonts in $out/liberation-fonts-ttf-$liberation"

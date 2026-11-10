@@ -19,11 +19,16 @@
 //! What is not drawn on is clear, so the picture is shown over what is
 //! under it.
 //!
-//! **What is drawn** is SVG 1.1's static pictures, without filters and
-//! patterns, and without text and images: see `draw.zig`. Since 1.2
-//! clips and masks are drawn, `use` and `symbol`, and the rules of the
-//! file's `style` elements. A picture reads no other file and goes to no
-//! address on a network: an `href` is followed only within the file.
+//! **What is drawn** is SVG 1.1's static pictures, without patterns:
+//! see `draw.zig`. Since 1.2 clips and masks are drawn, `use` and
+//! `symbol`, and the rules of the file's `style` elements. Since 1.3
+//! text is, in the fonts of `FONTS:` - diskfont.library's outlines,
+//! drawn by truetype.library's glyphs - and blurs, and pictures in the
+//! file: an `image` of a `data:` address is made a picture by
+//! datatypes.library from its bytes. Without those libraries, or a
+//! font, the text or the picture is left out and the rest is drawn. A
+//! picture reads no other file and goes to no address on a network: an
+//! `href` is followed only within the file.
 //!
 //! **.svgz** (since 1.2): a file packed with gzip is unpacked whole by
 //! compression.library first, into as much memory as gzip's trailer
@@ -33,6 +38,7 @@
 //! after the declaration, comments and a DOCTYPE, is `svg` - unpacked
 //! first, as far as `recognise_most` bytes, for one packed with gzip.
 
+const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const dos = sdk.dos;
@@ -47,13 +53,20 @@ const subclass = datatypes.subclass;
 const pic = datatypes.pictureclass;
 const vector = sdk.vector;
 const compression = sdk.compression;
+const truetype = sdk.truetype;
+const diskfont = sdk.diskfont;
+const dtc = datatypes.datatypesclass;
 const xml = @import("xml.zig");
 const document = @import("document.zig");
 const draw = @import("draw.zig");
+const data = @import("data.zig");
 const DosBase = sdk.interface.dos.DosBase;
 const ExecBase = sdk.interface.exec.ExecBase;
 const VectorBase = sdk.interface.vector.VectorBase;
 const CompressionBase = sdk.interface.compression.CompressionBase;
+const TrueTypeBase = sdk.interface.truetype.TrueTypeBase;
+const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
+const DataTypesBase = sdk.interface.datatypes.DataTypesBase;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
@@ -66,7 +79,7 @@ const Pen = graphics.Pen;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "svg.datatype",
     .version = 1,
-    .revision = 2,
+    .revision = 3,
     .date = "10.11.2026",
     .super = pic.PICTUREDTCLASS,
     .opens = &.{ pic.PICTURE_LIBRARY, vector.VECTORNAME, compression.COMPRESSIONNAME },
@@ -88,9 +101,13 @@ fn compressionBase(base: *const Base) *CompressionBase {
     return @ptrCast(base.opened[2].?);
 }
 
-/// The vector.library revision the class needs: clips and masks are
-/// 1.3's.
-const vector_revision = 3;
+/// The vector.library revision the class needs: blurs and pictures are
+/// 1.4's.
+const vector_revision = 4;
+/// The revisions text needs: truetype.library's glyphs, diskfont's
+/// outlines.
+const truetype_revision = 2;
+const diskfont_revision = 4;
 
 /// How much of a file recognise reads to find its first element.
 const recognise_most = 16 << 10;
@@ -168,7 +185,9 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file_bytes: []u8, wanted: Wante
     const work_memory = sys.AllocVec(@sizeOf(draw.Work), exec.MEMF_ANY) orelse return datatypes.DTERROR_NOT_ENOUGH_DATA;
     defer sys.FreeVec(work_memory);
     const work: *draw.Work = @ptrCast(@alignCast(work_memory));
-    draw.draw(vb, &doc, canvas, path, work, draw.baseMatrix(intrinsic, width, height), intrinsic.viewport);
+    var sources = Sources.open(base);
+    defer sources.close();
+    draw.draw(vb, &sources, &doc, canvas, path, work, draw.baseMatrix(intrinsic, width, height), intrinsic.viewport);
 
     const header = pic.BitMapHeader{
         .width = @intCast(width),
@@ -199,6 +218,119 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file_bytes: []u8, wanted: Wante
     }
     return 0;
 }
+
+/// Where text's fonts and an `image`'s pictures come from: the libraries
+/// opened for one picture, each null when it is not there or too old.
+const Sources = struct {
+    base: *Base,
+    tb: ?*TrueTypeBase = null,
+    dfb: ?*DiskfontBase = null,
+    dt: ?*DataTypesBase = null,
+
+    fn open(base: *Base) Sources {
+        const sys = base.sys_base;
+        var s = Sources{ .base = base };
+        s.tb = @ptrCast(openAt(sys, truetype.TRUETYPENAME, truetype_revision));
+        if (s.tb != null) s.dfb = @ptrCast(openAt(sys, diskfont.DISKFONTNAME, diskfont_revision));
+        s.dt = @ptrCast(sys.OpenLibrary(datatypes.DATATYPESNAME, 0));
+        return s;
+    }
+
+    fn close(s: *Sources) void {
+        const sys = s.base.sys_base;
+        if (s.dfb) |l| sys.CloseLibrary(l.lib());
+        if (s.tb) |l| sys.CloseLibrary(l.lib());
+        if (s.dt) |l| sys.CloseLibrary(l.lib());
+    }
+
+    /// A library of version 1 at `revision` at least, or a later version.
+    fn openAt(sys: *ExecBase, name: [*:0]const u8, revision: u16) ?*exec.Library {
+        const lib = sys.OpenLibrary(name, 1) orelse return null;
+        if (lib.version == 1 and lib.revision < revision) {
+            sys.CloseLibrary(lib);
+            return null;
+        }
+        return lib;
+    }
+
+    pub fn OpenFace(s: *Sources, name: [*:0]const u8, style: graphics.FontStyle) ?*diskfont.OutlineFont {
+        const dfb = s.dfb orelse return null;
+        return dfb.OpenOutlineFont(name, style);
+    }
+    pub fn CloseFace(s: *Sources, font: *diskfont.OutlineFont) void {
+        s.dfb.?.CloseOutlineFont(font);
+    }
+    pub fn GlyphIndex(s: *Sources, outline: *truetype.Outline, code: u32) u32 {
+        return s.tb.?.GlyphIndex(outline, code);
+    }
+    pub fn GlyphMetrics(s: *Sources, outline: *truetype.Outline, glyph: u32, metrics: *truetype.GlyphMetrics) bool {
+        return s.tb.?.GlyphMetrics(outline, glyph, metrics);
+    }
+    pub fn GlyphSegments(s: *Sources, outline: *truetype.Outline, glyph: u32, segments: *truetype.Segments) i32 {
+        return s.tb.?.GlyphSegments(outline, glyph, segments);
+    }
+    pub fn FontMetrics(s: *Sources, outline: *truetype.Outline, metrics: *truetype.FontMetrics) void {
+        s.tb.?.FontMetrics(outline, metrics);
+    }
+    pub fn Kerning(s: *Sources, outline: *truetype.Outline, left: u32, right: u32) i32 {
+        return s.tb.?.Kerning(outline, left, right);
+    }
+
+    /// The picture of a `data:` address: its bytes decoded, made a
+    /// picture of their own by datatypes.library, and its pixels taken
+    /// into pens. Null for an address of another kind, bytes no
+    /// datatype reads, an SVG file - a picture is not drawn inside
+    /// another - or no memory.
+    pub fn OpenImage(s: *Sources, href: []const u8) ?draw.Image {
+        const dt = s.dt orelse return null;
+        const sys = s.base.sys_base;
+        const ib = s.base.intuition_base;
+        const text = data.base64Of(href) orelse return null;
+        const most = data.decodedMost(text);
+        const bytes_memory = sys.AllocVec(@max(most, 1), exec.MEMF_ANY) orelse return null;
+        defer sys.FreeVec(bytes_memory);
+        const bytes = data.decode(text, @as([*]u8, @ptrCast(bytes_memory))[0..most]) orelse return null;
+        if (bytes.len == 0 or isGzip(bytes) or document.startsSvg(bytes)) return null;
+        const picture = dt.NewDTObjectA(null, &[_]TagItem{
+            .{ .tag = dtc.DTA_SourceType, .data = dtc.DTST_MEMORY },
+            .{ .tag = dtc.DTA_Handle, .data = @intFromPtr(bytes.ptr) },
+            .{ .tag = dtc.DTA_SourceSize, .data = bytes.len },
+            .{ .tag = dtc.DTA_GroupID, .data = datatypes.GID_PICTURE },
+            .{},
+        }) orelse return null;
+        defer dt.DisposeDTObject(picture);
+        var shape: usize = 0;
+        _ = dt.GetDTAttrsA(picture, &[_]TagItem{ .{ .tag = pic.PDTA_BitMapHeader, .data = @intFromPtr(&shape) }, .{} });
+        if (shape == 0) return null;
+        const header: *const pic.BitMapHeader = @ptrFromInt(shape);
+        const width: u32 = header.width;
+        const height: u32 = header.height;
+        if (width == 0 or height == 0) return null;
+        const size = @as(usize, width) * height * @sizeOf(Pen);
+        if (!subclass.roomFor(sys, size)) return null;
+        const pens_memory = sys.AllocVec(size, exec.MEMF_ANY) orelse return null;
+        const pens: [*]Pen = @ptrCast(@alignCast(pens_memory));
+        var read = pic.PdtBlitPixelArray{
+            .method_id = pic.PDTM_READPIXELARRAY,
+            .pixel_data = @ptrCast(pens),
+            .format = pic.PBPAFMT_ARGB,
+            .bytes_per_row = width * @sizeOf(Pen),
+            .top = 0,
+            .width = width,
+            .height = height,
+        };
+        if (ib.SendMessage(picture, @ptrCast(&read)) == 0) {
+            sys.FreeVec(pens_memory);
+            return null;
+        }
+        // A, R, G, B in memory: a pen as the machine reads one.
+        for (pens[0 .. @as(usize, width) * height]) |*pen| pen.* = std.mem.bigToNative(u32, pen.*);
+        return .{ .pens = pens, .width = width, .height = height, .bytes_per_row = width * @sizeOf(Pen), .handle = pens_memory };
+    }
+    pub fn CloseImage(s: *Sources, image: draw.Image) void {
+        s.base.sys_base.FreeVec(image.handle);
+    }
+};
 
 /// gzip's first two bytes, and room for its header and trailer.
 fn isGzip(bytes: []const u8) bool {

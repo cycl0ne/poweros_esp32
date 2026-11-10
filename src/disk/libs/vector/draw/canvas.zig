@@ -14,7 +14,9 @@
 //! **Laid down by coverage**: a pixel's share of the shape times the
 //! paint's opacity is how much of the paint goes over what the pen held,
 //! the pens being 0xAARRGGBB and not premultiplied. A gradient's colour
-//! comes from a ramp of 256 made once a fill (`gradient.zig`).
+//! comes from a ramp of 256 made once a fill (`gradient.zig`), and an
+//! image's from its pixels round where the pixel falls in it (`image.zig`,
+//! since 1.4).
 //!
 //! **Layers** (since 1.1). A layer is pens of its own, the canvas's size
 //! and clear, that everything drawn goes onto until it is popped; then
@@ -35,6 +37,10 @@
 //! put down - so a group drawn on a layer of its own goes through a mask
 //! as a whole, as SVG has it. A clip with no memory clips nothing more
 //! than the one under it: drawn whole rather than not at all.
+//!
+//! **Blurs** (since 1.4). A layer's pens can be blurred before it is put
+//! down (`blurLayer`, `blur.zig`): SVG's `feGaussianBlur` of what a group
+//! drew.
 
 const sdk = @import("sdk");
 const vector = sdk.vector;
@@ -50,6 +56,8 @@ const coverage_ = @import("coverage.zig");
 const Coverage = coverage_.Coverage;
 const stroke_ = @import("stroke.zig");
 const gradient = @import("gradient.zig");
+const image = @import("image.zig");
+const blur = @import("blur.zig");
 const dash_ = @import("dash.zig");
 
 /// The most floats a band of coverage holds.
@@ -236,6 +244,21 @@ pub const Canvas = struct {
                 to[x] = over(to[x], r, g, b, a);
             }
         }
+    }
+
+    /// The innermost layer's pens blurred, `deviation_x` across and
+    /// `deviation_y` down in pixels (since 1.4, `blur.zig`).
+    pub fn blurLayer(canvas: *Canvas, deviation_x: f32, deviation_y: f32) i32 {
+        // A layer past the most, or a mask begun past them: nowhere drawn.
+        if (canvas.beyond > 0 or canvas.muted > 0) return vector.VECTOR_OK;
+        if (canvas.depth == 0) return vector.VECTORERR_DEPTH;
+        const layer = &canvas.layers[canvas.depth - 1];
+        const pens = layer.pens orelse return vector.VECTORERR_NOMEM;
+        if (layer.top >= layer.bottom or layer.left >= layer.right) return vector.VECTOR_OK;
+        const drawn = blur.Region{ .left = layer.left, .top = layer.top, .right = @min(layer.right, canvas.width), .bottom = @min(layer.bottom, canvas.height) };
+        const now = blur.blur(pens, canvas.width, canvas.height, drawn, deviation_x, deviation_y, canvas.memory) orelse return vector.VECTORERR_NOMEM;
+        layer.mark(now.top, now.bottom, now.left, now.right);
+        return vector.VECTOR_OK;
     }
 
     /// What is drawn from now on shows only inside the path through
@@ -471,7 +494,7 @@ pub const Canvas = struct {
         const kind = gradient.kindOf(paint, matrix);
         switch (kind) {
             .none => return null,
-            .solid => {},
+            .solid, .image => {},
             .gradient => {
                 const ramp = canvas.ramp orelse made: {
                     const made = canvas.memory.create(gradient.Ramp) orelse {
@@ -498,6 +521,7 @@ pub const Canvas = struct {
         var blue: f32 = 0;
         var opacity: f32 = undefined;
         var sampler: ?*const gradient.Sampler = null;
+        var picture: ?*const image.Sampler = null;
         switch (look.kind) {
             .solid => |colour| {
                 red = colour.r * 255;
@@ -507,6 +531,10 @@ pub const Canvas = struct {
             },
             .gradient => |*s| {
                 sampler = s;
+                opacity = @min(@max(look.opacity, 0), 1);
+            },
+            .image => |*s| {
+                picture = s;
                 opacity = @min(@max(look.opacity, 0), 1);
             },
             .none => unreachable,
@@ -538,6 +566,12 @@ pub const Canvas = struct {
                     const shown = a * entry.a;
                     if (shown < 1.0 / 512.0) continue;
                     pens[x] = over(pens[x], entry.r, entry.g, entry.b, shown);
+                } else if (picture) |s| {
+                    const read = s.sample(x, y) orelse continue;
+                    const shown = a * read.a;
+                    if (shown < 1.0 / 512.0) continue;
+                    const k = 1 / read.a;
+                    pens[x] = over(pens[x], read.r * k, read.g * k, read.b * k, shown);
                 } else pens[x] = over(pens[x], red, green, blue, a);
             }
         }

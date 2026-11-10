@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: MIT
+//! GlyphMetrics: a glyph's advance, left side bearing and box.
+
+const sdk = @import("sdk");
+const truetype = sdk.truetype;
+const _base = @import("../truetype_base.zig");
+const TrueTypeBase = _base.TrueTypeBase;
+const _outline = @import("../outline/_outline.zig");
+
+/// A glyph's advance, left side bearing and box.
+///
+/// SYNOPSIS:
+/// ```zig
+/// fn GlyphMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, metrics: *truetype.GlyphMetrics) bool
+/// ```
+///
+/// SINCE: 1.2. LVO -36.
+///
+/// INPUTS:
+/// - `outline` - what `OpenOutline` answered.
+/// - `glyph` - the glyph's number, from `GlyphIndex`.
+/// - `metrics` - where they go.
+///
+/// RESULT:
+/// True, and `metrics` filled in, in the font's units, y up; false - and
+/// `metrics` all 0 - for a number past the font's glyphs.
+///
+/// BEHAVIOR:
+/// The advance and the left side bearing are the font's horizontal
+/// metrics (`hmtx`); the box is the one the glyph's data gives, which
+/// holds its points on the curve and off it. A glyph of no outline, a
+/// space, has a box of 0s and its advance.
+///
+/// CONTEXT:
+/// - Waits: no.
+/// - Interrupts: no.
+/// - Locks: none needed.
+/// - Process: a Task will do.
+///
+/// OWNERSHIP:
+/// `metrics` is the caller's.
+///
+/// BUGS:
+/// No vertical metrics: text set down the page is not read.
+///
+/// SEE ALSO:
+/// `GlyphIndex`, `FontMetrics`, `GlyphSegments`
+///
+/// EXAMPLES:
+/// ```zig
+/// var m: sdk.truetype.GlyphMetrics = .{};
+/// if (tb.GlyphMetrics(outline, glyph, &m)) x += m.advance;
+/// ```
+pub fn GlyphMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, metrics: *truetype.GlyphMetrics) bool {
+    _ = tb;
+    const font: *const _outline.Font = @ptrCast(@alignCast(outline));
+    metrics.* = .{};
+    if (glyph >= font.glyph_count) return false;
+    const box = _outline.boxOf(font, glyph);
+    metrics.* = .{
+        .advance = _outline.advanceOf(font, glyph),
+        .left_bearing = _outline.leftBearingOf(font, glyph),
+        .x_min = box[0],
+        .y_min = box[1],
+        .x_max = box[2],
+        .y_max = box[3],
+    };
+    return true;
+}

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! truetype.library's functions: a TrueType file rendered into font
-//! images, one size at a time. Open it with
-//! OpenLibrary("truetype.library", 1).
+//! images, one size at a time, and since 1.2 its glyphs as outlines.
+//! Open it with OpenLibrary("truetype.library", 1).
 ##include libs/graphics/graphics as graphics
 ##include libs/truetype/truetype as truetype
 ##basetype TrueTypeBase
@@ -18,4 +18,19 @@
 ?*graphics.fontimage.FontImage RenderFontImage(*truetype.Outline outline, u32 rows, u32 first, u32 last)
 /// What OpenOutline made, given back. Null does nothing.
 void CloseOutline(?*truetype.Outline outline)
+/// The glyph a character is (a Unicode code point), from the font's
+/// character map; 0, the missing glyph, when it has none. Since 1.2.
+u32 GlyphIndex(*truetype.Outline outline, u32 code)
+/// A glyph's advance, left side bearing and box into `metrics`, in the
+/// font's units; false for no glyph of that number. Since 1.2.
+bool GlyphMetrics(*truetype.Outline outline, u32 glyph, *truetype.GlyphMetrics metrics)
+/// A glyph's outline as verbs and points into `segments`' arrays, in the
+/// font's units, y up: TRUETYPE_OK, or TRUETYPEERR_ROOM with the counts
+/// it needs. Since 1.2.
+i32 GlyphSegments(*truetype.Outline outline, u32 glyph, *truetype.Segments segments)
+/// The font's measures into `metrics`. Since 1.2.
+void FontMetrics(*truetype.Outline outline, *truetype.FontMetrics metrics)
+/// How much further apart the font draws `left` and `right` side by
+/// side, in its units: negative for closer. Since 1.2.
+i32 Kerning(*truetype.Outline outline, u32 left, u32 right)
 ##end

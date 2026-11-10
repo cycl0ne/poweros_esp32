@@ -245,17 +245,39 @@ are read first, then the rules of the file's `<style>` sheets that are
 for the element - selectors of a type, classes and an id, as
 Illustrator writes them - then its style attribute's declarations. A
 file packed with gzip, an `.svgz`, is unpacked by compression.library
-and drawn the same (the SVGZ descriptor). Text, images, patterns and
-markers are not drawn, and an element with a filter is left out with
-all that is in it. A picture too large to keep is drawn smaller, as any
-is, and one wanted at a size (above) is drawn at it.
+and drawn the same (the SVGZ descriptor). Since 1.3 it draws text, in
+the families of `FONTS:` through diskfont.library's outlines and
+truetype.library's glyphs: `font-family` lists, the generic families and
+the common names (Arial, Helvetica, Times, Courier and their kind) on
+the Liberation families, any other name on the one it looks like, and
+serif without one, as browsers have it; sizes, bold and italic - leaned
+or thickened where a family has no such face - `tspan`s with their own
+style and place, `x`, `y`, `dx` and `dy` lists a character each,
+`text-anchor`, kerning, letter and word spacing, underlines, lines
+through and over, and `xml:space`. A `textPath` is not drawn. It draws a
+filter's blur - `feGaussianBlur` alone, or as Inkscape and Figma write
+one - in its region, through vector.library 1.4's `BlurLayer`; a filter
+of nothing leaves its element out, and one it cannot make - a drop
+shadow, lighting - is passed over and the element drawn without it. An
+`image` of a `data:` address is made a picture by datatypes.library from
+its bytes - PNG, JPEG, GIF, BMP, whatever the disk reads, but not another
+SVG - and drawn in its place with its `preserveAspectRatio`, through
+vector.library 1.4's `PAINT_IMAGE`; an `image` of a file or an address
+is not followed. `paint-order` puts a stroke under its fill. Without
+truetype.library 1.2 and diskfont.library 1.4 - the ESP32s' disks - text
+is left out and the rest drawn. Patterns and markers are not drawn. A
+picture too large to keep is drawn smaller, as any is, and one wanted
+at a size (above) is drawn at it.
 `scripts/svg-compare.sh` draws the Tango icons both ways - here and by
 rsvg-convert - and says how far apart each pair is; given files, it
 compares those. An edge a clip shares with what is drawn through it -
 an Illustrator avatar's circle clipped by the same circle - comes out
 a little fainter than rsvg-convert draws it: the two coverages are
 multiplied, as a browser does, where cairo cuts one outline by the
-other first. `C:test/DTTime
+other first. Text is compared in the Liberation fonts when
+`scripts/fetch-fonts.sh` fetched them; rsvg-convert finds a family's own
+font where the PC has it, and draws a list of `x` or `dx` as one value.
+`C:test/DTTime
 <file> ...` times how long any file takes to be made into its object,
 and for an animation - a Lottie file's among them - how long each frame
 takes its class to draw; the 64-bit machines' disks have it. `WIDTH`

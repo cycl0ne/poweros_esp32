@@ -12,6 +12,10 @@
 //! row have an implied point on the curve halfway between them. A
 //! composite glyph is other glyphs, each moved and possibly scaled; they
 //! are read into the same list, to a limited depth.
+//!
+//! Since 1.2 the measures a program drawing the outlines itself needs are
+//! kept as well - the line gap, the x and capital heights, the underline
+//! and the strike-out - and the `kern` table, if the font has one, found.
 
 const sdk = @import("sdk");
 
@@ -36,7 +40,25 @@ pub const Font = struct {
     cmap_format: u32,
     /// The styles the file says it is drawn in (`FSF_BOLD`, `FSF_ITALIC`).
     style: sdk.graphics.FontStyle,
+    /// From `hhea`, `OS/2` and `post` (since 1.2); 0 where not given.
+    line_gap: i32,
+    x_height: i32,
+    cap_height: i32,
+    underline_position: i32,
+    underline_thickness: i32,
+    strikeout_position: i32,
+    strikeout_thickness: i32,
+    /// The most points and contours of a glyph, simple or composite, from
+    /// `maxp`; `default_points` and `default_contours` when it has none.
+    max_points: u32,
+    max_contours: u32,
+    /// The `kern` table; of no length when the font has none.
+    kern: Table,
 };
+
+/// What a glyph is read with when `maxp` does not say how large one is.
+pub const default_points = 1024;
+pub const default_contours = 128;
 
 /// Where a table is in the file.
 pub const Table = struct {
@@ -113,8 +135,45 @@ pub fn open(font: *Font, data: [*]const u8, size: u32) bool {
     font.descender = i16At(font, hhea.at + 6);
     font.hmetric_count = u16At(font, hhea.at + 34);
     font.style = sdk.truetype.styleOf(data[0..size]);
+    font.line_gap = i16At(font, hhea.at + 8);
+    readMeasures(font, maxp);
+    font.kern = findTable(font, "kern") orelse .{};
     if (font.units_per_em == 0 or font.hmetric_count == 0 or font.ascender <= font.descender) return false;
     return pickCmap(font, cmap);
+}
+
+/// The measures `OS/2` and `post` give, and how large `maxp` says a glyph
+/// may be.
+fn readMeasures(font: *Font, maxp: Table) void {
+    font.x_height = 0;
+    font.cap_height = 0;
+    font.underline_position = 0;
+    font.underline_thickness = 0;
+    font.strikeout_position = 0;
+    font.strikeout_thickness = 0;
+    if (findTable(font, "OS/2")) |os2| {
+        if (os2.len >= 30) {
+            font.strikeout_thickness = i16At(font, os2.at + 26);
+            font.strikeout_position = i16At(font, os2.at + 28);
+        }
+        if (u16At(font, os2.at) >= 2 and os2.len >= 90) {
+            font.x_height = i16At(font, os2.at + 86);
+            font.cap_height = i16At(font, os2.at + 88);
+        }
+    }
+    if (findTable(font, "post")) |post| {
+        if (post.len >= 12) {
+            font.underline_position = i16At(font, post.at + 8);
+            font.underline_thickness = i16At(font, post.at + 10);
+        }
+    }
+    font.max_points = default_points;
+    font.max_contours = default_contours;
+    // Version 1.0 says: the simple glyphs' most and the composites'.
+    if (u32At(font, maxp.at) == 0x0001_0000 and maxp.len >= 14) {
+        font.max_points = @max(u16At(font, maxp.at + 6), u16At(font, maxp.at + 10));
+        font.max_contours = @max(u16At(font, maxp.at + 8), u16At(font, maxp.at + 12));
+    }
 }
 
 /// The character map's subtable to read: Unicode, full (format 12) before
@@ -184,6 +243,71 @@ pub fn glyphIndex(font: *const Font, code: u32) u32 {
 pub fn advanceOf(font: *const Font, glyph: u32) i32 {
     const index = @min(glyph, font.hmetric_count - 1);
     return u16At(font, font.hmtx.at + index * 4);
+}
+
+/// From a glyph's origin to the left of its box, in units.
+pub fn leftBearingOf(font: *const Font, glyph: u32) i32 {
+    if (glyph < font.hmetric_count) return i16At(font, font.hmtx.at + glyph * 4 + 2);
+    const at = font.hmtx.at + font.hmetric_count * 4 + (glyph - font.hmetric_count) * 2;
+    if (at + 2 > font.hmtx.at + font.hmtx.len) return 0;
+    return i16At(font, at);
+}
+
+/// A glyph's box, as its data's header gives it: x min, y min, x max, y
+/// max; all 0 for a glyph of no outline.
+pub fn boxOf(font: *const Font, glyph: u32) [4]i32 {
+    const data = glyphData(font, glyph) orelse return .{ 0, 0, 0, 0 };
+    if (data.len < 10) return .{ 0, 0, 0, 0 };
+    return .{ i16At(font, data.at + 2), i16At(font, data.at + 4), i16At(font, data.at + 6), i16At(font, data.at + 8) };
+}
+
+/// How much further apart `left` and `right` are drawn side by side, in
+/// units: what the `kern` table's horizontal pairs say, summed over its
+/// subtables (one that overrides putting the sum aside first). 0 for a
+/// font without one, and for Apple's version of the table.
+pub fn kerningOf(font: *const Font, left: u32, right: u32) i32 {
+    const kern = font.kern;
+    if (kern.len < 4 or u16At(font, kern.at) != 0) return 0;
+    if (left > 0xFFFF or right > 0xFFFF) return 0;
+    const end = kern.at + kern.len;
+    const key = left << 16 | right;
+    var total: i32 = 0;
+    var at = kern.at + 4;
+    var n = u16At(font, kern.at + 2);
+    while (n > 0 and at + 14 <= end) : (n -= 1) {
+        const length = u16At(font, at + 2);
+        const coverage = u16At(font, at + 4);
+        const pairs: u32 = u16At(font, at + 6);
+        // Format 0, horizontal, not a minimum, not across the line.
+        if (coverage >> 8 == 0 and coverage & 0x7 == 0x1) {
+            const first = at + 14;
+            if (first + pairs * 6 <= end) {
+                if (pairValue(font, first, pairs, key)) |value| {
+                    total = if (coverage & 0x8 != 0) value else total + value;
+                }
+            }
+        }
+        // A table of many pairs overflows its 16-bit length: its pairs say
+        // how long it is.
+        const span = @max(@as(u32, length), 14 + pairs * 6);
+        at += span;
+    }
+    return total;
+}
+
+/// The value of the pair `key` (left << 16 | right) among `count` pairs
+/// sorted by it at `first`; null if it is not there.
+fn pairValue(font: *const Font, first: u32, count: u32, key: u32) ?i32 {
+    var low: u32 = 0;
+    var high: u32 = count;
+    while (low < high) {
+        const mid = low + (high - low) / 2;
+        const at = first + mid * 6;
+        const here = u32At(font, at);
+        if (here == key) return i16At(font, at + 4);
+        if (here < key) low = mid + 1 else high = mid;
+    }
+    return null;
 }
 
 /// Where a glyph's data is in `glyf`, and how long; empty for a glyph of

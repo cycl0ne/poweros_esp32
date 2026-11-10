@@ -17,6 +17,7 @@ const TrueTypeBase = sdk.interface.truetype.TrueTypeBase;
 
 test {
     _ = @import("../truetype_lvo.zig");
+    _ = @import("../glyph/_segments.zig");
 }
 
 /// A file being written, big-endian.
@@ -49,7 +50,8 @@ pub const Out = struct {
 
 /// A font of 1000 units, ascender 800, descender -200: glyph 0 empty (the
 /// missing glyph), 1 'A' a square 0..500 by 0..700, 2 'B' a square with a
-/// curved top, 3 'C' glyph 1 moved 100 right. Advances 600.
+/// curved top, 3 'C' glyph 1 moved 100 right. Advances 600. Kerned: 'A'
+/// then 'B' 50 closer, 'B' then 'C' 20 further.
 pub fn buildFont(out: *Out) void {
     buildFace(out, 0);
 }
@@ -57,7 +59,7 @@ pub fn buildFont(out: *Out) void {
 /// The same font saying it is drawn in `style_bits`, its `head` table's
 /// style bits: 1 bold, 2 italic.
 pub fn buildFace(out: *Out, style_bits: u8) void {
-    const tags = [_]*const [4]u8{ "cmap", "glyf", "head", "hhea", "hmtx", "loca", "maxp" };
+    const tags = [_]*const [4]u8{ "cmap", "glyf", "head", "hhea", "hmtx", "kern", "loca", "maxp" };
     out.u32be(0x0001_0000);
     out.u16be(tags.len);
     out.u16be(0);
@@ -172,16 +174,36 @@ pub fn buildFace(out: *Out, style_bits: u8) void {
     ends[4] = out.len;
     out.pad();
 
-    // loca, long.
+    // kern: version 0, one horizontal subtable of format 0, two pairs.
     starts[5] = out.len;
-    for (loca) |offset| out.u32be(offset);
+    out.u16be(0);
+    out.u16be(1);
+    out.u16be(0);
+    out.u16be(14 + 2 * 6);
+    out.u16be(0x0001);
+    out.u16be(2);
+    out.u16be(12);
+    out.u16be(1);
+    out.u16be(0);
+    out.u16be(1);
+    out.u16be(2);
+    out.i16be(-50);
+    out.u16be(2);
+    out.u16be(3);
+    out.i16be(20);
     ends[5] = out.len;
+    out.pad();
+
+    // loca, long.
+    starts[6] = out.len;
+    for (loca) |offset| out.u32be(offset);
+    ends[6] = out.len;
 
     // maxp: four glyphs.
-    starts[6] = out.len;
+    starts[7] = out.len;
     out.u32be(0x0000_5000);
     out.u16be(4);
-    ends[6] = out.len;
+    ends[7] = out.len;
     out.pad();
 
     for (tags, 0..) |tag, i| {
@@ -280,6 +302,82 @@ test "a face says what it is: its styles read from the file, and every size rend
     try testing.expect(fontimage.sound(block, image.size));
 
     sys.FreeVec(image);
+    tb.CloseOutline(outline);
+    sys.CloseLibrary(tb.lib());
+    _ = sys.RemLibrary(library);
+    try kexec.expectNoLeaks();
+    kexec.deinit();
+}
+
+test "revision 2: glyphs by character, as outlines in the font's units, their measures, the font's, a kerned pair" {
+    try kexec.setUp();
+    const sys = kexec.SysBase.iface();
+    const made = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoLibrary;
+    const library: *sdk.exec.Library = @ptrCast(@alignCast(made));
+    const tb: *TrueTypeBase = @ptrCast(sys.OpenLibrary(truetype.TRUETYPENAME, 1) orelse return error.NoBase);
+    try testing.expect(tb.lib().revision >= 2);
+
+    var out: Out = .{};
+    buildFont(&out);
+    const outline = tb.OpenOutline(&out.bytes, out.len) orelse return error.NotRead;
+
+    try testing.expectEqual(@as(u32, 1), tb.GlyphIndex(outline, 'A'));
+    try testing.expectEqual(@as(u32, 3), tb.GlyphIndex(outline, 'C'));
+    try testing.expectEqual(@as(u32, 0), tb.GlyphIndex(outline, 'z'));
+    try testing.expectEqual(@as(u32, 0), tb.GlyphIndex(outline, 0x1F600));
+
+    var fm: truetype.FontMetrics = .{};
+    tb.FontMetrics(outline, &fm);
+    try testing.expectEqual(@as(u32, 1000), fm.units_per_em);
+    try testing.expectEqual(@as(u32, 4), fm.glyph_count);
+    try testing.expectEqual(@as(i32, 800), fm.ascender);
+    try testing.expectEqual(@as(i32, -200), fm.descender);
+    // No maxp 1.0, OS/2 or post: room as for the default glyph, no lines.
+    try testing.expectEqual(@as(u32, 1024 + 2 * 128), fm.most_verbs);
+    try testing.expectEqual(@as(u32, 2 * 1024 + 128), fm.most_points);
+    try testing.expectEqual(@as(i32, 0), fm.x_height);
+
+    var gm: truetype.GlyphMetrics = .{};
+    try testing.expect(tb.GlyphMetrics(outline, 3, &gm));
+    try testing.expectEqual(truetype.GlyphMetrics{ .advance = 600, .x_min = 100, .x_max = 600, .y_max = 700 }, gm);
+    try testing.expect(tb.GlyphMetrics(outline, 0, &gm));
+    try testing.expectEqual(truetype.GlyphMetrics{ .advance = 600 }, gm);
+    try testing.expect(!tb.GlyphMetrics(outline, 4, &gm));
+
+    var verbs: [16]u8 = undefined;
+    var points: [16]sdk.vector.Point = undefined;
+    var segments = truetype.Segments{ .verbs = &verbs, .points = &points, .verb_room = 16, .point_room = 16 };
+    const M = sdk.vector.SEG_MOVE;
+    const L = sdk.vector.SEG_LINE;
+    const Q = sdk.vector.SEG_QUAD;
+    const C = sdk.vector.SEG_CLOSE;
+    // The square, y up as the font has it.
+    try testing.expectEqual(truetype.TRUETYPE_OK, tb.GlyphSegments(outline, 1, &segments));
+    try testing.expectEqualSlices(u8, &.{ M, L, L, L, C }, verbs[0..segments.verb_count]);
+    try testing.expectEqual(sdk.vector.Point{ .x = 0, .y = 700 }, points[1]);
+    // The curved one: a line up, the curve over, a line down.
+    try testing.expectEqual(truetype.TRUETYPE_OK, tb.GlyphSegments(outline, 2, &segments));
+    try testing.expectEqualSlices(u8, &.{ M, L, Q, L, C }, verbs[0..segments.verb_count]);
+    try testing.expectEqual(sdk.vector.Point{ .x = 250, .y = 800 }, points[2]);
+    // The composite: the square 100 to the right.
+    try testing.expectEqual(truetype.TRUETYPE_OK, tb.GlyphSegments(outline, 3, &segments));
+    try testing.expectEqual(@as(u32, 5), segments.verb_count);
+    try testing.expectEqual(sdk.vector.Point{ .x = 100, .y = 0 }, points[0]);
+    try testing.expectEqual(sdk.vector.Point{ .x = 600, .y = 700 }, points[2]);
+    // No outline, no glyph, no room.
+    try testing.expectEqual(truetype.TRUETYPE_OK, tb.GlyphSegments(outline, 0, &segments));
+    try testing.expectEqual(@as(u32, 0), segments.verb_count);
+    try testing.expectEqual(truetype.TRUETYPEERR_GLYPH, tb.GlyphSegments(outline, 9, &segments));
+    var short = truetype.Segments{ .verbs = &verbs, .points = &points, .verb_room = 3, .point_room = 16 };
+    try testing.expectEqual(truetype.TRUETYPEERR_ROOM, tb.GlyphSegments(outline, 1, &short));
+    try testing.expectEqual(@as(u32, 5), short.verb_count);
+    try testing.expectEqual(@as(u32, 4), short.point_count);
+
+    try testing.expectEqual(@as(i32, -50), tb.Kerning(outline, 1, 2));
+    try testing.expectEqual(@as(i32, 20), tb.Kerning(outline, 2, 3));
+    try testing.expectEqual(@as(i32, 0), tb.Kerning(outline, 2, 1));
+    try testing.expectEqual(@as(i32, 0), tb.Kerning(outline, 0x10000, 1));
+
     tb.CloseOutline(outline);
     sys.CloseLibrary(tb.lib());
     _ = sys.RemLibrary(library);

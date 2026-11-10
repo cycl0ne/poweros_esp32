@@ -12,7 +12,7 @@
 //! Fonts nobody holds stay loaded, for the next OpenDiskFont to find in
 //! memory, until memory runs short: the library's low-memory handler then
 //! frees one at a time, for as long as the allocation that ran short
-//! needs.
+//! needs - and then the outlines nobody holds (`outline/_outline.zig`).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -23,6 +23,7 @@ const fontfile = sdk.diskfont.fontfile;
 const TextFont = graphics.TextFont;
 const _base = @import("../diskfont_base.zig");
 const DiskfontBase = _base.DiskfontBase;
+const _outline = @import("../outline/_outline.zig");
 
 /// How long a family's name may be, ".font" and the NUL included.
 pub const MAXFONTNAME = 32;
@@ -151,26 +152,11 @@ pub fn loadSize(dfb: *DiskfontBase, dir: ?*dos.FileLock, path: [*:0]const u8, na
 /// The font, open, or null if the file cannot be read or rendered.
 pub fn renderOutline(dfb: *DiskfontBase, dir: ?*dos.FileLock, path: [*:0]const u8, name: [*:0]const u8, rows: u32) ?*TextFont {
     const sys = dfb.sys_base;
-    const dl = dfb.dos_base;
-    const tb = dfb.truetype_base orelse blk: {
-        const lib = sys.OpenLibrary(sdk.truetype.TRUETYPENAME, sdk.truetype.TRUETYPE_VERSION) orelse return null;
-        dfb.truetype_base = @ptrCast(lib);
-        break :blk dfb.truetype_base.?;
-    };
-    const was = dl.CurrentDir(dir);
-    const fh = dl.Open(path, dos.MODE_OLDFILE);
-    _ = dl.CurrentDir(was);
-    const file = fh orelse return null;
-    defer _ = dl.Close(file);
-    var fib: dos.FileInfoBlock = .{};
-    if (!dl.ExamineFH(file, &fib) or fib.size > max_size_file) return null;
-    const size: u32 = @intCast(fib.size);
-    const bytes = sys.AllocVec(@max(size, 4), exec.MEMF_ANY) orelse return null;
-    defer sys.FreeVec(bytes);
-    const data: [*]u8 = @ptrCast(bytes);
-    if (dl.Read(file, data, @intCast(size)) != size) return null;
+    const tb = trueType(dfb) orelse return null;
+    const data = readWhole(dfb, dir, path, exec.MEMF_ANY) orelse return null;
+    defer sys.FreeVec(data.ptr);
 
-    const outline = tb.OpenOutline(data, size) orelse return null;
+    const outline = tb.OpenOutline(data.ptr, @intCast(data.len)) orelse return null;
     defer tb.CloseOutline(outline);
     const image = tb.RenderFontImage(outline, rows, 32, 255) orelse return null;
     defer sys.FreeVec(image);
@@ -179,6 +165,38 @@ pub fn renderOutline(dfb: *DiskfontBase, dir: ?*dos.FileLock, path: [*:0]const u
     @memcpy(imageArea(record)[0..image.size], image_bytes[0..image.size]);
     record.font.flags = graphics.FPF_DISKFONT;
     return addAndOpen(dfb, record);
+}
+
+/// truetype.library, opened the first time it is needed and kept until
+/// expunge; null if it cannot be opened.
+pub fn trueType(dfb: *DiskfontBase) ?*sdk.interface.truetype.TrueTypeBase {
+    if (dfb.truetype_base) |tb| return tb;
+    const lib = dfb.sys_base.OpenLibrary(sdk.truetype.TRUETYPENAME, sdk.truetype.TRUETYPE_VERSION) orelse return null;
+    dfb.truetype_base = @ptrCast(lib);
+    return dfb.truetype_base;
+}
+
+/// The file at `path` relative to `dir`, read whole into memory of
+/// `flags`, which the caller frees with FreeVec; null if it cannot be read
+/// or is larger than a size file may be.
+pub fn readWhole(dfb: *DiskfontBase, dir: ?*dos.FileLock, path: [*:0]const u8, flags: u32) ?[]u8 {
+    const sys = dfb.sys_base;
+    const dl = dfb.dos_base;
+    const was = dl.CurrentDir(dir);
+    const fh = dl.Open(path, dos.MODE_OLDFILE);
+    _ = dl.CurrentDir(was);
+    const file = fh orelse return null;
+    defer _ = dl.Close(file);
+    var fib: dos.FileInfoBlock = .{};
+    if (!dl.ExamineFH(file, &fib) or fib.size > max_size_file) return null;
+    const size: u32 = @intCast(fib.size);
+    const bytes = sys.AllocVec(@max(size, 4), flags) orelse return null;
+    const data: [*]u8 = @ptrCast(bytes);
+    if (dl.Read(file, data, @intCast(size)) != size) {
+        sys.FreeVec(bytes);
+        return null;
+    }
+    return data[0..size];
 }
 
 /// The largest size file read: a font of hundreds of large glyphs in
@@ -271,5 +289,6 @@ pub fn freeOne(dfb: *DiskfontBase) bool {
         dfb.sys_base.FreeVec(record);
         return true;
     }
-    return false;
+    // Then an outline nobody holds (since 1.4).
+    return _outline.freeOne(dfb);
 }

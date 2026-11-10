@@ -258,7 +258,14 @@ FONTS:go.font            a contents file listing an outline
 FONTS:go/Go-Regular.ttf  the outline, rendered at any height
 FONTS:go-bold.font       the same family's bold face, a family of its own
 FONTS:go-bold/Go-Bold.ttf
+FONTS:sans.font          Liberation Sans, and its faces sans-bold, -italic
+FONTS:sans/LiberationSans-Regular.ttf   and -bolditalic; serif and mono the same
 ```
+
+The 64-bit machines' disks also carry the Liberation families - `sans`,
+`serif` and `mono`, drawn to the widths of Arial, Times New Roman and
+Courier New, under the SIL Open Font License (`FONTS:liberation.licence`)
+- for the text of SVG pictures, which names those fonts more than any.
 
 **A size file is a FontImage, byte for byte.** It is read with one `Read`
 into one allocation, checked (`check` and `sound`), and drawn from where
@@ -372,6 +379,36 @@ an outline: a program only asks `OpenDiskFont` for a height. Rendering a
 size of the Go faces takes some tens of milliseconds at text sizes, more
 at display sizes, once; the result is kept like a loaded font.
 
+**Glyphs as outlines** (truetype.library 1.2): a program that draws text
+itself - at any size, turned, filled with a gradient - takes the glyphs
+as shapes. `GlyphIndex(outline, code)` is a character's glyph, 0 for the
+font's missing one; `GlyphMetrics` its advance, left side bearing and
+box; `GlyphSegments` its outline as vector.library's verbs and points, in
+the font's units with y up, ready for `AddSegments` through a matrix that
+scales them and turns them over; `FontMetrics` the font's units per em,
+ascender, descender, line gap, x and cap height, underline and strikeout
+lines, and the most verbs and points one glyph takes; `Kerning(outline,
+left, right)` what the `kern` table says of a pair.
+
+```zig
+const of = dfb.OpenOutlineFont("sans.font", sdk.graphics.FSF_BOLD) orelse return;
+defer dfb.CloseOutlineFont(of);
+var fm: sdk.truetype.FontMetrics = .{};
+tb.FontMetrics(of.outline, &fm);
+const glyph = tb.GlyphIndex(of.outline, 'A');
+var segments = sdk.truetype.Segments{ .verbs = &verbs, .points = &points, .verb_room = verbs.len, .point_room = points.len };
+if (tb.GlyphSegments(of.outline, glyph, &segments) == sdk.truetype.TRUETYPE_OK) {
+    _ = vb.AddSegments(path, &verbs, segments.verb_count, &points, segments.point_count);
+}
+```
+
+**`OpenOutlineFont(name, style)`** (diskfont.library 1.4) finds the
+outline as `OpenDiskFont` finds a size: the family's faces for the styles
+asked, then the family. Its `style` says which of them the face draws -
+what it does not, the program draws itself. The outline is read once and
+shared by everyone who opens it; `CloseOutlineFont` gives it back, and
+it is freed when memory runs low and nobody holds it.
+
 ## The system's fonts
 
 intuition.library holds three fonts, by `SYSFONT_*`:
@@ -458,7 +495,7 @@ if (gb.RemFont(&mine.font)) sys.FreeVec(mine); // true once nobody holds it
 | | |
 |---|---|
 | `tools/fontconv` | on the host: BDF, Amiga font files (colour too) and TrueType files into size files and a contents file; `--alpha N` for coverage from a larger drawing, `--shadow` for a shadowed colour font |
-| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF) and the Go faces (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts` |
+| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces and Liberation's (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation only onto the 64-bit machines' disks |
 | `C:ListFonts` | every font by family, size and where it is; `SAMPLE` draws them |
 | `C:FixFonts` | writes every family's contents file again |
 | `C:SetPrefs` | sets the system's fonts, with the rest of its settings, from `ENV:Sys`; `SHOW` prints them |

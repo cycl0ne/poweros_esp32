@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
-//! diskfont.library's functions: fonts from FONTS:, any size of them.
-//! A font opened here is closed with graphics' CloseFont. Open it with
+//! diskfont.library's functions: fonts from FONTS:, any size of them,
+//! and since 1.4 a family's outline itself. A font opened here is closed
+//! with graphics' CloseFont. Open it with
 //! OpenLibrary("diskfont.library", 1).
 ##include libs/utility/utility as utility
 ##include libs/graphics/graphics as graphics
@@ -26,4 +27,10 @@ void DisposeFontContents(?*diskfont.fontfile.ContentsHeader contents)
 /// A new font of `text_attr`'s height from `font`, every glyph scaled.
 /// Nobody else's: FreeVec frees it, after RemFont if it was added.
 ?*graphics.TextFont NewScaledDiskFont(*graphics.TextFont font, *const graphics.TextAttr text_attr)
+/// A family's outline for truetype.library's calls: the face drawn in the
+/// styles asked where the family has one, else the family's own. Null if
+/// it has no outline. Since 1.4.
+?*diskfont.OutlineFont OpenOutlineFont([*:0]const u8 name, graphics.FontStyle style)
+/// What OpenOutlineFont gave, given back. Null does nothing. Since 1.4.
+void CloseOutlineFont(?*diskfont.OutlineFont font)
 ##end

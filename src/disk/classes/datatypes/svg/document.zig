@@ -20,6 +20,13 @@
 //! named `text`, one for each piece between tags, in the order they
 //! come (since 1.2): an attribute of no other element has that name.
 //!
+//! **A `text` element's characters** (since 1.3) are nodes of their own
+//! among its children and its `tspan`s', a node of the kind `#text` for
+//! each piece between tags, holding it - decoded, or a CDATA section's as
+//! it is - as its one attribute, `#text`. They are in the tree where
+//! they are in the file, so a `tspan` is between the pieces before and
+//! after it.
+//!
 //! **A file that is not well formed** is read as far as it is: closing
 //! tags close the element open, whatever they name, and the file's end
 //! closes them all. Its first element has to be `svg`.
@@ -55,6 +62,16 @@ pub const Tag = enum(u8) {
     text,
     style,
     filter,
+    // Since 1.3.
+    tspan,
+    textPath,
+    feGaussianBlur,
+    feFlood,
+    feBlend,
+    /// A filter primitive of any other kind.
+    feOther,
+    /// A piece of a `text` element's characters, not an element.
+    @"#text",
 };
 
 /// The attributes and properties read, by number.
@@ -116,8 +133,32 @@ pub const Name = enum(u8) {
     maskContentUnits,
     @"mask-type",
     overflow,
-    /// A `style` element's text, not an attribute.
+    /// A `style` element's text, or a piece of a `text` element's: not an
+    /// attribute.
     @"#text",
+    // Since 1.3.
+    font,
+    @"font-family",
+    @"font-size",
+    @"font-weight",
+    @"font-style",
+    @"text-anchor",
+    @"letter-spacing",
+    @"word-spacing",
+    @"text-decoration",
+    @"white-space",
+    @"xml:space",
+    dx,
+    dy,
+    filterUnits,
+    primitiveUnits,
+    stdDeviation,
+    in,
+    in2,
+    result,
+    mode,
+    @"flood-opacity",
+    @"paint-order",
 };
 
 pub const none: u32 = std.math.maxInt(u32);
@@ -198,6 +239,7 @@ pub const Document = struct {
 pub fn count(text: []u8) ?Counts {
     var counts = Counts{};
     var in_style = false;
+    var texts = Texts{};
     var r = xml.Reader{ .text = text };
     while (r.next() catch return null) |event| switch (event) {
         .open => |open| {
@@ -212,15 +254,45 @@ pub fn count(text: []u8) ?Counts {
                 if (name == .id) counts.ids += 1;
             }
             in_style = !open.empty and tagOf(open.name) == .style;
+            texts.open(tagOf(open.name), open.empty);
         },
-        .close => in_style = false,
+        .close => {
+            in_style = false;
+            texts.close();
+        },
         .text => if (in_style) {
             counts.attributes += 1;
+        } else if (texts.inside()) {
+            counts.nodes += 1;
+            counts.attributes += 1;
+            if (counts.nodes == none) return null;
         },
     };
     if (counts.nodes == 0) return null;
     return counts;
 }
+
+/// Whether the reader is inside a `text` element: how deep it is in the
+/// tree, and how deep the `text` element it is in starts.
+const Texts = struct {
+    depth: u32 = 0,
+    text_at: u32 = none,
+
+    fn open(t: *Texts, tag: Tag, empty: bool) void {
+        if (empty) return;
+        t.depth += 1;
+        if (tag == .text and t.text_at == none) t.text_at = t.depth;
+    }
+
+    fn close(t: *Texts) void {
+        if (t.depth == t.text_at) t.text_at = none;
+        t.depth -|= 1;
+    }
+
+    fn inside(t: *const Texts) bool {
+        return t.text_at != none;
+    }
+};
 
 /// The bytes a document of these counts takes.
 pub fn bytesFor(counts: Counts) usize {
@@ -249,6 +321,7 @@ pub fn build(text: []u8, counts: Counts, block: []align(8) u8) Document {
     // A `style` element open, its text to be kept: right after its
     // attributes, nothing between.
     var in_style = false;
+    var texts = Texts{};
     var r = xml.Reader{ .text = text };
     while (r.next() catch null) |event| switch (event) {
         .open => |open| {
@@ -280,23 +353,31 @@ pub fn build(text: []u8, counts: Counts, block: []align(8) u8) Document {
                 last_child = none;
             }
             in_style = !open.empty and nodes[node].tag == .style;
+            texts.open(nodes[node].tag, open.empty);
             if (open_node == none) break; // the root closed itself
         },
         .close => {
             in_style = false;
+            texts.close();
             if (open_node == none) break;
             last_child = open_node;
             open_node = nodes[open_node].parent;
             if (open_node == none) break; // past the root: the rest is not the picture's
         },
         .text => |piece| if (in_style and a < counts.attributes) {
-            // A CDATA section's is its text as it is; it starts after the
-            // `[` that opens it, where any other starts after a `>`.
-            const at = @intFromPtr(piece.ptr) - @intFromPtr(text.ptr);
-            const cdata = at > 0 and text[at - 1] == '[';
-            attributes[a] = .{ .name = .@"#text", .value = if (cdata) piece else xml.decode(piece) };
+            attributes[a] = .{ .name = .@"#text", .value = textOf(text, piece) };
             a += 1;
             nodes[open_node].attribute_count += 1;
+        } else if (texts.inside() and open_node != none and n < counts.nodes and a < counts.attributes) {
+            // A piece of a text's characters: a node of its own, after
+            // the last child.
+            const node = n;
+            n += 1;
+            nodes[node] = .{ .tag = .@"#text", .parent = open_node, .first_attribute = a, .attribute_count = 1 };
+            attributes[a] = .{ .name = .@"#text", .value = textOf(text, piece) };
+            a += 1;
+            if (last_child == none) nodes[open_node].first_child = node else nodes[last_child].next = node;
+            last_child = node;
         },
     };
     doc.nodes = nodes[0..n];
@@ -304,6 +385,15 @@ pub fn build(text: []u8, counts: Counts, block: []align(8) u8) Document {
     doc.ids = ids[0..i];
     std.mem.sort(Id, doc.ids, {}, idBefore);
     return doc;
+}
+
+/// A piece of text between tags: a CDATA section's as it is - it starts
+/// after the `[` that opens it, where any other starts after a `>` - and
+/// any other with its references undone.
+fn textOf(text: []u8, piece: []u8) []const u8 {
+    const at = @intFromPtr(piece.ptr) - @intFromPtr(text.ptr);
+    const cdata = at > 0 and text[at - 1] == '[';
+    return if (cdata) piece else xml.decode(piece);
 }
 
 fn idBefore(_: void, x: Id, y: Id) bool {
@@ -318,12 +408,16 @@ fn idBefore(_: void, x: Id, y: Id) bool {
 pub fn tagOf(full: []const u8) Tag {
     const name = if (std.mem.startsWith(u8, full, "svg:")) full[4..] else full;
     if (std.mem.indexOfScalar(u8, name, ':') != null) return .other;
-    return std.meta.stringToEnum(Tag, name) orelse .other;
+    if (std.meta.stringToEnum(Tag, name)) |tag| return if (tag == .@"#text") .other else tag;
+    // A filter primitive this reader does not make.
+    if (name.len > 2 and name[0] == 'f' and name[1] == 'e' and std.ascii.isUpper(name[2])) return .feOther;
+    return .other;
 }
 
 /// An attribute's or a property's name by number.
 pub fn nameOf(full: []const u8) Name {
     if (std.mem.eql(u8, full, "xlink:href")) return .href;
+    if (std.mem.eql(u8, full, "xml:space")) return .@"xml:space";
     if (std.mem.indexOfScalar(u8, full, ':') != null) return .other;
     return std.meta.stringToEnum(Name, full) orelse .other;
 }
@@ -452,6 +546,35 @@ test "a style element's text kept as its own, CDATA as it is" {
     const rect = doc.nodes[style].next;
     try testing.expectEqualStrings("a", doc.get(rect, .class).?);
     try testing.expectEqual(none, doc.nodes[rect].first_child);
+}
+
+test "a text's characters as nodes among its tspans, in the order they come" {
+    var text =
+        \\<svg><text x="1">Hello, <tspan font-weight="bold">big</tspan> <![CDATA[w<o>rld]]> &amp; you</text><g>no</g><text/><feTile/></svg>
+    .*;
+    var block: [4096]u8 align(8) = undefined;
+    const doc = try parse(&text, &block);
+    const t = doc.nodes[0].first_child;
+    try testing.expectEqual(Tag.text, doc.nodes[t].tag);
+    const first = doc.nodes[t].first_child;
+    try testing.expectEqual(Tag.@"#text", doc.nodes[first].tag);
+    try testing.expectEqualStrings("Hello, ", doc.get(first, .@"#text").?);
+    const span = doc.nodes[first].next;
+    try testing.expectEqual(Tag.tspan, doc.nodes[span].tag);
+    try testing.expectEqualStrings("big", doc.get(doc.nodes[span].first_child, .@"#text").?);
+    const space = doc.nodes[span].next;
+    try testing.expectEqualStrings(" ", doc.get(space, .@"#text").?);
+    try testing.expectEqualStrings("w<o>rld", doc.get(doc.nodes[space].next, .@"#text").?);
+    const last = doc.nodes[doc.nodes[space].next].next;
+    try testing.expectEqualStrings(" & you", doc.get(last, .@"#text").?);
+    try testing.expectEqual(none, doc.nodes[last].next);
+    // Text outside a text element is no node; nor is an empty text's.
+    const g = doc.nodes[t].next;
+    try testing.expectEqual(none, doc.nodes[g].first_child);
+    const empty = doc.nodes[g].next;
+    try testing.expectEqual(none, doc.nodes[empty].first_child);
+    try testing.expectEqual(Tag.feOther, doc.nodes[doc.nodes[empty].next].tag);
+    try testing.expectEqual(Tag.other, tagOf("#text"));
 }
 
 test "not an SVG file, and one that is cut short" {

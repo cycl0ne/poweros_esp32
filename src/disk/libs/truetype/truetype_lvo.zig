@@ -16,6 +16,11 @@ const truetype_init = @import("truetype_init.zig");
 const OpenOutline = @import("outline/openoutline.zig").OpenOutline;
 const RenderFontImage = @import("render/renderfontimage.zig").RenderFontImage;
 const CloseOutline = @import("outline/closeoutline.zig").CloseOutline;
+const GlyphIndex = @import("glyph/glyphindex.zig").GlyphIndex;
+const GlyphMetrics = @import("glyph/glyphmetrics.zig").GlyphMetrics;
+const GlyphSegments = @import("glyph/glyphsegments.zig").GlyphSegments;
+const FontMetrics = @import("outline/fontmetrics.zig").FontMetrics;
+const Kerning = @import("glyph/kerning.zig").Kerning;
 
 /// truetype.library's interface, as the SDK generates it from
 /// sdk/fd/truetype_lib.fd.
@@ -44,6 +49,11 @@ const contract_files = [_][]const u8{
     @embedFile("outline/openoutline.zig"),
     @embedFile("render/renderfontimage.zig"),
     @embedFile("outline/closeoutline.zig"),
+    @embedFile("glyph/glyphindex.zig"),
+    @embedFile("glyph/glyphmetrics.zig"),
+    @embedFile("glyph/glyphsegments.zig"),
+    @embedFile("outline/fontmetrics.zig"),
+    @embedFile("glyph/kerning.zig"),
 };
 
 fn lvoOpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32) callconv(.c) ?*truetype.Outline {
@@ -55,6 +65,21 @@ fn lvoRenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32, 
 fn lvoCloseOutline(tb: *TrueTypeBase, outline: ?*truetype.Outline) callconv(.c) void {
     return CloseOutline(tb, outline);
 }
+fn lvoGlyphIndex(tb: *TrueTypeBase, outline: *truetype.Outline, code: u32) callconv(.c) u32 {
+    return GlyphIndex(tb, outline, code);
+}
+fn lvoGlyphMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, metrics: *truetype.GlyphMetrics) callconv(.c) bool {
+    return GlyphMetrics(tb, outline, glyph, metrics);
+}
+fn lvoGlyphSegments(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, segments: *truetype.Segments) callconv(.c) i32 {
+    return GlyphSegments(tb, outline, glyph, segments);
+}
+fn lvoFontMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, metrics: *truetype.FontMetrics) callconv(.c) void {
+    return FontMetrics(tb, outline, metrics);
+}
+fn lvoKerning(tb: *TrueTypeBase, outline: *truetype.Outline, left: u32, right: u32) callconv(.c) i32 {
+    return Kerning(tb, outline, left, right);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -64,6 +89,11 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoOpenOutline),
     vec(lvoRenderFontImage),
     vec(lvoCloseOutline),
+    vec(lvoGlyphIndex),
+    vec(lvoGlyphMetrics),
+    vec(lvoGlyphSegments),
+    vec(lvoFontMetrics),
+    vec(lvoKerning),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

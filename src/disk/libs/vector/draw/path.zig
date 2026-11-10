@@ -228,8 +228,8 @@ test "a path handed over whole: as built a segment at a time, and cut short wher
     const points = [_]P{
         .{ .x = 1, .y = 2 }, .{ .x = 5, .y = 2 },
         .{ .x = 6, .y = 4 }, .{ .x = 5, .y = 6 },
-        .{ .x = 4, .y = 7 }, .{ .x = 2, .y = 7 }, .{ .x = 1, .y = 6 },
-        .{ .x = 3, .y = 3 },
+        .{ .x = 4, .y = 7 }, .{ .x = 2, .y = 7 },
+        .{ .x = 1, .y = 6 }, .{ .x = 3, .y = 3 },
     };
     try testing.expectEqual(vector.VECTOR_OK, whole.addSegments(&verbs, &points));
     const one = Path.create(test_memory).?;

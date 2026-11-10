@@ -11,6 +11,11 @@
 //! kept in four bits. No hinting: at the panels' 165 DPI and more the
 //! coverage alone draws a clean letter.
 //!
+//! Since 1.2 the glyphs are given as outlines too (`glyph/`): a
+//! character's glyph, its contours as the segments vector.library takes,
+//! its measures and the font's, and the `kern` table's pairs - for a
+//! program that draws text at any size and angle itself.
+//!
 //! The jump table is truetype_lvo.zig, the ROM tag, init and expunge
 //! truetype_init.zig, the base truetype_base.zig.
 

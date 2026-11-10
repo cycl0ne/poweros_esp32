@@ -619,6 +619,8 @@ pub fn build(b: *std.Build) void {
     svgcompare_vector.addImport("sdk", sdk);
     const svgcompare_svg = b.createModule(.{ .root_source_file = disk_dep.path("classes/datatypes/svg/draw.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
     svgcompare_svg.addImport("sdk", sdk);
+    const svgcompare_truetype = b.createModule(.{ .root_source_file = disk_dep.path("libs/truetype/outlines.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
+    svgcompare_truetype.addImport("sdk", sdk);
     const svgcompare = b.addExecutable(.{
         .name = "svgcompare",
         .root_module = b.createModule(.{
@@ -630,7 +632,13 @@ pub fn build(b: *std.Build) void {
     svgcompare.root_module.addImport("sdk", sdk);
     svgcompare.root_module.addImport("vector", svgcompare_vector);
     svgcompare.root_module.addImport("svg", svgcompare_svg);
+    svgcompare.root_module.addImport("truetype", svgcompare_truetype);
     const run_svgcompare = b.addRunArtifact(svgcompare);
+    // Text in the disk's Liberation fonts, when scripts/fetch-fonts.sh
+    // fetched them.
+    if (fontsDir(b)) |dir| {
+        if (hasFontSources(b, dir, liberation_dir)) run_svgcompare.addArgs(&.{ "--fonts", b.pathJoin(&.{ dir, liberation_dir }) });
+    }
     if (b.args) |args| run_svgcompare.addArgs(args);
     b.step("svgcompare", "Draw SVG files as svg.datatype does and compare them with PNGs of them: svgcompare [--size N] [--out DIR] <file.svg> <drawn.png> ...").dependOn(&run_svgcompare.step);
 
@@ -792,25 +800,32 @@ pub fn build(b: *std.Build) void {
             }),
         });
         fontconv.root_module.addImport("sdk", sdk);
+        const liberation = hasFontSources(b, dir, liberation_dir);
+        if (!liberation) std.log.info("no Liberation fonts (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:sans, serif or mono", .{});
         for (disk_fonts) |family| {
+            if (family.wide and !liberation) continue;
+            // The 64-bit disks take every family; the ESP32s' the ones
+            // that are not `wide`.
+            const onto = disks.some(family.wide);
             const run = b.addRunArtifact(fontconv);
             const out = run.addOutputDirectoryArg(family.name);
             run.addArg(family.name);
             run.addArgs(family.options);
             for (family.sources) |source| run.addFileArg(.{ .cwd_relative = b.pathJoin(&.{ dir, source }) });
-            disks.addArg(b.fmt("fonts/{s}", .{family.name}));
-            disks.addPrefixedFileArg(b.fmt("fonts/{s}.font=", .{family.name}), out.path(b, b.fmt("{s}.font", .{family.name})));
+            onto.addArg(b.fmt("fonts/{s}", .{family.name}));
+            onto.addPrefixedFileArg(b.fmt("fonts/{s}.font=", .{family.name}), out.path(b, b.fmt("{s}.font", .{family.name})));
             for (family.sizes) |rows| {
                 const size = b.fmt("{s}/{d}", .{ family.name, rows });
-                disks.addPrefixedFileArg(b.fmt("fonts/{s}=", .{size}), out.path(b, size));
+                onto.addPrefixedFileArg(b.fmt("fonts/{s}=", .{size}), out.path(b, size));
             }
             for (family.outlines) |file| {
                 const at = b.fmt("{s}/{s}", .{ family.name, file });
-                disks.addPrefixedFileArg(b.fmt("fonts/{s}=", .{at}), out.path(b, at));
+                onto.addPrefixedFileArg(b.fmt("fonts/{s}=", .{at}), out.path(b, at));
             }
         }
         disks.addPrefixedFileArg("fonts/spleen.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "spleen-2.2.0/LICENSE" }) });
         disks.addPrefixedFileArg("fonts/go.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "go/README" }) });
+        if (liberation) disks.some(true).addPrefixedFileArg("fonts/liberation.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, liberation_dir ++ "/LICENSE" }) });
     }
     // SYS:Certificates/Roots - Mozilla's roots, which
     // scripts/fetch-certs.sh fetched, as the trust store tools/anchors
@@ -2486,13 +2501,33 @@ const DiskFont = struct {
     sizes: []const u32 = &.{},
     /// TrueType files among the sources, copied beside the sizes.
     outlines: []const []const u8 = &.{},
+    /// On the 64-bit disks only: the ESP32s' flash has not the room.
+    wide: bool = false,
 };
+
+/// Where scripts/fetch-fonts.sh puts the Liberation fonts, in
+/// toolchain/fonts.
+const liberation_dir = "liberation-fonts-ttf-2.1.5";
+
+/// A Liberation family and its faces: `name`, `name`-bold, -italic and
+/// -bolditalic, from Liberation`file`-Regular.ttf and the rest.
+fn liberationFamily(comptime name: []const u8, comptime file: []const u8) [4]DiskFont {
+    var faces: [4]DiskFont = undefined;
+    for (.{ "", "-bold", "-italic", "-bolditalic" }, .{ "Regular", "Bold", "Italic", "BoldItalic" }, 0..) |suffix, style, i| {
+        const ttf = "Liberation" ++ file ++ "-" ++ style ++ ".ttf";
+        faces[i] = .{ .name = name ++ suffix, .sources = &.{liberation_dir ++ "/" ++ ttf}, .outlines = &.{ttf}, .wide = true };
+    }
+    return faces;
+}
 
 /// FONTS: as the disk has it. Spleen at every size a panel wants; the
 /// same at 16 rows smoothed from its 32-row drawing, whose coverage shows
 /// how an alpha font looks on a panel; at 16 with a shadow, a colour font
-/// drawn partly in the pen; and the Go faces as outlines, at any size.
-const disk_fonts = [_]DiskFont{
+/// drawn partly in the pen; the Go faces as outlines, at any size; and on
+/// the 64-bit disks the Liberation fonts as outlines - sans, serif and
+/// mono, each with its bold, italic and bold italic faces - which SVG's
+/// text is drawn in.
+const disk_fonts = liberationFamily("sans", "Sans") ++ liberationFamily("serif", "Serif") ++ liberationFamily("mono", "Mono") ++ [_]DiskFont{
     .{
         .name = "spleen",
         .sources = &.{ "spleen-2.2.0/spleen-5x8.bdf", "spleen-2.2.0/spleen-6x12.bdf", "spleen-2.2.0/spleen-8x16.bdf", "spleen-2.2.0/spleen-12x24.bdf", "spleen-2.2.0/spleen-16x32.bdf" },
@@ -2506,6 +2541,14 @@ const disk_fonts = [_]DiskFont{
     .{ .name = "go-mono", .sources = &.{"go/Go-Mono.ttf"}, .outlines = &.{"Go-Mono.ttf"} },
     .{ .name = "go-mono-bold", .sources = &.{"go/Go-Mono-Bold.ttf"}, .outlines = &.{"Go-Mono-Bold.ttf"} },
 };
+
+/// Whether scripts/fetch-fonts.sh has fetched `sub` into the fonts' `dir`.
+fn hasFontSources(b: *std.Build, dir: []const u8, sub: []const u8) bool {
+    const io = b.graph.io;
+    var found = std.Io.Dir.cwd().openDir(io, b.pathJoin(&.{ dir, sub }), .{}) catch return false;
+    found.close(io);
+    return true;
+}
 
 /// Where scripts/fetch-fonts.sh put the fonts' sources, if it has.
 fn fontsDir(b: *std.Build) ?[]const u8 {
@@ -2848,6 +2891,23 @@ const DiskImages = struct {
     fn addPrefixedFileArg(images: DiskImages, prefix: []const u8, path: std.Build.LazyPath) void {
         for (images.runs) |run| run.addPrefixedFileArg(prefix, path);
     }
+
+    /// The runs of every disk, or of the 64-bit machines' only.
+    fn some(images: *const DiskImages, wide_only: bool) Some {
+        return .{ .runs = if (wide_only) images.runs[2..5] else &images.runs };
+    }
+
+    const Some = struct {
+        runs: []const *std.Build.Step.Run,
+
+        fn addArg(images: Some, arg: []const u8) void {
+            for (images.runs) |run| run.addArg(arg);
+        }
+
+        fn addPrefixedFileArg(images: Some, prefix: []const u8, path: std.Build.LazyPath) void {
+            for (images.runs) |run| run.addPrefixedFileArg(prefix, path);
+        }
+    };
 };
 
 /// The two NVMe SSDs of a virt machine: the system disk the build made,

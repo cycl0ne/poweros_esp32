@@ -39,6 +39,7 @@ const PushClip = @import("canvas/pushclip.zig").PushClip;
 const PopClip = @import("canvas/popclip.zig").PopClip;
 const BeginMask = @import("canvas/beginmask.zig").BeginMask;
 const EndMask = @import("canvas/endmask.zig").EndMask;
+const BlurLayer = @import("canvas/blurlayer.zig").BlurLayer;
 
 /// vector.library's interface, as the SDK generates it from
 /// sdk/fd/vector_lib.fd.
@@ -89,6 +90,7 @@ const contract_files = [_][]const u8{
     @embedFile("canvas/popclip.zig"),
     @embedFile("canvas/beginmask.zig"),
     @embedFile("canvas/endmask.zig"),
+    @embedFile("canvas/blurlayer.zig"),
 };
 
 fn lvoCreatePath(vb: *VectorBase) callconv(.c) ?*vector.Path {
@@ -166,6 +168,9 @@ fn lvoBeginMask(vb: *VectorBase, canvas: *vector.Canvas) callconv(.c) i32 {
 fn lvoEndMask(vb: *VectorBase, canvas: *vector.Canvas, kind: u32) callconv(.c) i32 {
     return EndMask(vb, canvas, kind);
 }
+fn lvoBlurLayer(vb: *VectorBase, canvas: *vector.Canvas, deviation_x: f32, deviation_y: f32) callconv(.c) i32 {
+    return BlurLayer(vb, canvas, deviation_x, deviation_y);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -197,6 +202,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoPopClip),
     vec(lvoBeginMask),
     vec(lvoEndMask),
+    vec(lvoBlurLayer),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

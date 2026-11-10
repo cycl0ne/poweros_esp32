@@ -223,7 +223,7 @@ test "Illustrator's classes, a group of selectors, an id, a type; what is passed
         \\/* by hand */ .st0{fill:#FFFFFF;} .st1,.st2 { stroke : #000 }
         \\@media print { .st0 { fill: black } } @import url(x.css);
         \\rect.big.red{opacity:.5} #logo{display:none} g > path{fill:red} a:hover{fill:blue}
-        \\*{stroke-width:2} tspan{fill:red}
+        \\*{stroke-width:2} foreignObject{fill:red}
     ;
     var rules: [max_rules]Rule = undefined;
     var n: u32 = 0;

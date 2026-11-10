@@ -18,6 +18,8 @@
 //! - `bounds.zig` - a path's bounds, of its curves.
 //! - `gradient.zig` - where a pixel is along a gradient, and its colour.
 //! - `dash.zig` - a stroke's contours cut into dashes.
+//! - `image.zig` - where a pixel is in an image painted, and its colour.
+//! - `blur.zig` - a layer's pens blurred.
 //!
 //! lottie.datatype drew with the coverage, the flattening and the stroker
 //! before vector.library 1.0 (in its raster.zig); they were moved here
@@ -42,4 +44,6 @@ test {
     _ = @import("bounds.zig");
     _ = @import("gradient.zig");
     _ = @import("dash.zig");
+    _ = @import("image.zig");
+    _ = @import("blur.zig");
 }

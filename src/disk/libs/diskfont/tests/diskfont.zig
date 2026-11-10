@@ -423,3 +423,58 @@ test "NewScaledDiskFont: the caller's, freed with FreeVec" {
     try testing.expect(rig.dfb.NewScaledDiskFont(pospaz, &.{ .name = "", .y_size = 0 }) == null);
     rig.sysLib().FreeVec(double);
 }
+
+fn outlinesLoaded(rig: *Rig) usize {
+    const real: *_base.DiskfontBase = @ptrCast(@alignCast(rig.dfb));
+    var n: usize = 0;
+    var at = real.outlines.first();
+    while (at) |node| : (at = node.next()) n += 1;
+    return n;
+}
+
+test "revision 4: an outline opened by its family, the face for the styles, shared, kept until memory runs short" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    try testing.expect(rig.dfb.lib().revision >= 4);
+    const truetype_init = @import("../../truetype/truetype_init.zig");
+    const lib = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoTrueType;
+    const truetype_lib: *exec.Library = @ptrCast(@alignCast(lib));
+    defer _ = rig.sysLib().RemLibrary(truetype_lib);
+    try writeOutlineFamily(&rig, "tt", 0);
+    try writeOutlineFamily(&rig, "tt-italic", 2);
+    try rig.writeFamily();
+    const dfb = rig.dfb;
+    const tb: *sdk.interface.truetype.TrueTypeBase = @ptrCast(rig.sysLib().OpenLibrary(sdk.truetype.TRUETYPENAME, 1).?);
+    defer rig.sysLib().CloseLibrary(tb.lib());
+
+    // The family's own, plain; read by truetype.library's calls.
+    const plain = dfb.OpenOutlineFont("tt.font", graphics.FS_NORMAL) orelse return error.NoOutline;
+    try testing.expectEqual(graphics.FS_NORMAL, plain.style);
+    try testing.expectEqual(@as(u32, 1), tb.GlyphIndex(plain.outline, 'A'));
+    // Italic: its face. Bold italic: no face draws both, so the italic one.
+    const italic = dfb.OpenOutlineFont("FONTS:tt.font", graphics.FSF_ITALIC) orelse return error.NoOutline;
+    try testing.expectEqual(graphics.FSF_ITALIC, italic.style);
+    const both = dfb.OpenOutlineFont("tt.font", graphics.FSF_BOLD | graphics.FSF_ITALIC) orelse return error.NoOutline;
+    try testing.expectEqual(italic, both);
+    // Bold: no face, the family's own - the same one, shared.
+    const bold = dfb.OpenOutlineFont("TT.font", graphics.FSF_BOLD) orelse return error.NoOutline;
+    try testing.expectEqual(plain, bold);
+    try testing.expectEqual(@as(usize, 2), outlinesLoaded(&rig));
+
+    // A family of bitmaps only, and none at all.
+    try testing.expect(dfb.OpenOutlineFont("test.font", graphics.FS_NORMAL) == null);
+    try testing.expect(dfb.OpenOutlineFont("none.font", graphics.FS_NORMAL) == null);
+
+    // Closed, they stay; short of memory, those nobody holds go.
+    dfb.CloseOutlineFont(both);
+    dfb.CloseOutlineFont(italic);
+    dfb.CloseOutlineFont(bold);
+    dfb.CloseOutlineFont(null);
+    try testing.expectEqual(@as(usize, 2), outlinesLoaded(&rig));
+    try testing.expect(rig.sysLib().AllocMem(1 << 30, exec.MEMF_ANY) == null);
+    try testing.expectEqual(@as(usize, 1), outlinesLoaded(&rig));
+    try testing.expectEqual(@as(u32, 3), tb.GlyphIndex(plain.outline, 'C'));
+    dfb.CloseOutlineFont(plain);
+    // The expunge at the end frees the last.
+}

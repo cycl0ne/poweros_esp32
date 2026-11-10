@@ -35,12 +35,18 @@
 //! until `PopClip`. SVG's `clipPath` and `mask` and Lottie's mattes are
 //! these.
 //!
+//! Since 1.4 a paint is an image too (`PAINT_IMAGE`): a program's pixels,
+//! placed by the paint's matrix and read smoothly between them - SVG's
+//! `image`. And a layer can be blurred before it is put down
+//! (`BlurLayer`): SVG's `feGaussianBlur`.
+//!
 //! Open it with OpenLibrary(VECTORNAME, VECTOR_VERSION); its functions
 //! are in sdk/interface/vector.zig. A path and a canvas are one task's at
 //! a time: the library holds no lock, and two tasks drawing on two
 //! canvases never wait for each other.
 
 const utility = @import("../utility/utility.zig");
+const graphics = @import("../graphics/graphics.zig");
 
 /// The name to open it by.
 pub const VECTORNAME = "vector.library";
@@ -180,11 +186,17 @@ pub const PAINT_LINEAR: u32 = 1;
 /// 1.0 paints its colour).
 pub const PAINT_RADIAL: u32 = 2;
 
-/// Past a gradient's ends: its end colours go on.
+/// The image `Paint.image` (since 1.4; 1.3 and before paint its colour).
+pub const PAINT_IMAGE: u32 = 3;
+
+/// Past a gradient's ends: its end colours go on. Past an image's edges:
+/// its edge pixels do.
 pub const SPREAD_PAD: u32 = 0;
-/// Past a gradient's ends: it comes back the other way, and again.
+/// Past a gradient's ends: it comes back the other way, and again; past
+/// an image's edges, it is mirrored.
 pub const SPREAD_REFLECT: u32 = 1;
-/// Past a gradient's ends: it starts again.
+/// Past a gradient's ends: it starts again; past an image's edges, it is
+/// tiled.
 pub const SPREAD_REPEAT: u32 = 2;
 
 /// What a fill or a stroke paints. The caller's, read by the call it is
@@ -215,7 +227,17 @@ pub const Paint = extern struct {
     /// The focus's own radius (SVG 2's `fr`), 0 for a point.
     fr: f32 = 0,
     /// The gradient's units into the path's: SVG's `gradientTransform`.
+    /// An image's units - a pixel each, (0, 0) its top left corner - into
+    /// the path's.
     matrix: Matrix = .{},
+    /// An image paint's pixels (since 1.4): `image_width` by
+    /// `image_height` pens, 0xAARRGGBB and not premultiplied,
+    /// `image_bytes_per_row` from one row to the next. Read by the call
+    /// the paint is given to, and not kept.
+    image: ?[*]const graphics.Pen = null,
+    image_width: u32 = 0,
+    image_height: u32 = 0,
+    image_bytes_per_row: u32 = 0,
 };
 
 // --- how a fill covers, and a stroke -------------------------------------
@@ -276,7 +298,7 @@ pub const VECTORERR_NOMEM: i32 = -1;
 /// wrong, as SVG draws it.
 pub const VECTORERR_SYNTAX: i32 = -2;
 /// Layers nested deeper than a canvas holds, or clips; or `EndMask`
-/// with no mask begun.
+/// with no mask begun, or `BlurLayer` with no layer pushed.
 pub const VECTORERR_DEPTH: i32 = -3;
 
 /// The most layers a canvas holds one inside another (`PushLayer`,

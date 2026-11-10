@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! diskfont.library's base: exec's Library header, the libraries it works
-//! through, the fonts it has loaded, the lock that loads them one at a
-//! time, and the low-memory handler that frees the ones nobody holds.
+//! through, the fonts and outlines it has loaded, the lock that loads them
+//! one at a time, and the low-memory handler that frees the ones nobody
+//! holds.
 //! There is one base, shared by every opener.
 
 const sdk = @import("sdk");
@@ -24,8 +25,11 @@ pub const DiskfontBase = extern struct {
     load_lock: exec.SignalSemaphore = .{},
     /// On exec's low-memory list from init to expunge.
     flusher: exec.Interrupt = .{},
-    /// truetype.library, opened the first time an outline is rendered and
-    /// kept until expunge.
+    /// The outlines it opened (since 1.4): their records
+    /// (`outline/_outline.zig`), linked by `link`.
+    outlines: exec.List = .{},
+    /// truetype.library, opened the first time an outline is rendered or
+    /// opened, and kept until expunge.
     truetype_base: ?*sdk.interface.truetype.TrueTypeBase = null,
 };
 

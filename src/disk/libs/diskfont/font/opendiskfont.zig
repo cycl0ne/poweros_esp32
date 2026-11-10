@@ -119,12 +119,12 @@ pub fn OpenDiskFont(dfb: *DiskfontBase, text_attr: *const TextAttr) ?*TextFont {
 }
 
 /// The styles a family may have faces of its own for.
-const face_styles = graphics.FSF_BOLD | graphics.FSF_ITALIC;
+pub const face_styles = graphics.FSF_BOLD | graphics.FSF_ITALIC;
 
 /// A face of a family: what its name has after the family's, and the
 /// styles it is drawn in. The one drawing the most styles first.
-const Face = struct { suffix: []const u8, style: graphics.FontStyle };
-const faces = [_]Face{
+pub const Face = struct { suffix: []const u8, style: graphics.FontStyle };
+pub const faces = [_]Face{
     .{ .suffix = "-bolditalic", .style = graphics.FSF_BOLD | graphics.FSF_ITALIC },
     .{ .suffix = "-bold", .style = graphics.FSF_BOLD },
     .{ .suffix = "-italic", .style = graphics.FSF_ITALIC },
@@ -147,7 +147,7 @@ fn openFace(dfb: *DiskfontBase, want: *const TextAttr, name: [*:0]const u8) ?*Te
 /// `name` with `suffix` before its ".font": "FONTS:go.font" and "-bold"
 /// make "FONTS:go-bold.font". False when it does not end in ".font" or
 /// the result does not fit.
-fn faceName(name: [*:0]const u8, suffix: []const u8, into: *[256:0]u8) bool {
+pub fn faceName(name: [*:0]const u8, suffix: []const u8, into: *[256:0]u8) bool {
     const ending = ".font";
     var len: usize = 0;
     while (name[len] != 0) len += 1;
@@ -223,7 +223,7 @@ fn weightOf(dfb: *DiskfontBase, want: *const TextAttr, font: ?*TextFont) i32 {
 }
 
 /// "FONTS:<name>", or the name itself when it names a place.
-fn contentsPath(dfb: *DiskfontBase, name: [*:0]const u8, path: *[256:0]u8) void {
+pub fn contentsPath(dfb: *DiskfontBase, name: [*:0]const u8, path: *[256:0]u8) void {
     var i: usize = 0;
     var placed = false;
     while (name[i] != 0) : (i += 1) {
@@ -267,7 +267,7 @@ fn openExact(dfb: *DiskfontBase, want: *const TextAttr, contents: *Contents, sca
 }
 
 /// The family's outline entry, if it has one.
-fn outlineOf(contents: *const Contents) ?*const fontfile.FontContents {
+pub fn outlineOf(contents: *const Contents) ?*const fontfile.FontContents {
     for (contents.entries()) |*entry| {
         if (entry.outline != 0) return entry;
     }

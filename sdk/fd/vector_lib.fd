@@ -59,4 +59,8 @@ void PopClip(*vector.Canvas canvas)
 i32 BeginMask(*vector.Canvas canvas)
 /// The drawing since BeginMask made a mask (MASK_*) that clips what is drawn until PopClip.
 i32 EndMask(*vector.Canvas canvas, u32 kind)
+/// What is drawn on the last layer pushed blurred, as SVG's
+/// feGaussianBlur, `deviation_x` across and `deviation_y` down in pixels:
+/// VECTOR_OK, or VECTORERR_DEPTH with no layer. Since 1.4.
+i32 BlurLayer(*vector.Canvas canvas, f32 deviation_x, f32 deviation_y)
 ##end

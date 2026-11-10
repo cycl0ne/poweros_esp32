@@ -3,13 +3,18 @@
 //! and compared with what another renderer drew - rsvg-convert's, which
 //! is what the disk's icons are made with.
 //!
-//!   svgcompare [--size N] [--detail] [--hash] [--out DIR [--zoom Z]] <file.svg> <drawn.png> ...
+//!   svgcompare [--size N] [--detail] [--hash] [--fonts DIR] [--out DIR [--zoom Z]] <file.svg> <drawn.png> ...
 //!
 //! Each SVG file is drawn N by N pixels (48 if not given), stretched to
 //! that as `rsvg-convert -w N -h N` stretches it, with svg.datatype's
 //! own reading and drawing (`classes/datatypes/svg/`) and vector.library's
 //! module: the same code as on the machine, the library's jump table
 //! left out. The PNG beside it is the other renderer's picture.
+//!
+//! Text is drawn in the fonts of --fonts, Liberation's directory, as
+//! the disk's `FONTS:sans`, `serif` and `mono` are made from it - read
+//! by truetype.library's own code - and without it is left out. A
+//! picture of a `data:` address is drawn when it is a PNG.
 //!
 //! The two are compared premultiplied - a channel times its coverage -
 //! so that the colour of what is nearly clear does not count for more
@@ -35,6 +40,10 @@ const sdk = @import("sdk");
 const vector = sdk.vector;
 const module = @import("vector");
 const svg = @import("svg");
+const tt = @import("truetype");
+const truetype = sdk.truetype;
+const diskfont = sdk.diskfont;
+const graphics = sdk.graphics;
 const document = svg.document;
 const decode = sdk.datatypes.png.decode;
 const Io = std.Io;
@@ -111,6 +120,149 @@ const Direct = struct {
     pub fn EndMask(_: *Direct, canvas: *vector.Canvas, kind: u32) i32 {
         return canvasOf(canvas).endMask(kind);
     }
+    pub fn BlurLayer(_: *Direct, canvas: *vector.Canvas, deviation_x: f32, deviation_y: f32) i32 {
+        return canvasOf(canvas).blurLayer(deviation_x, deviation_y);
+    }
+};
+
+/// Fonts and pictures for `svg.draw`, as svg.datatype has them from
+/// diskfont.library, truetype.library and datatypes.library: the faces
+/// of Liberation's files, read by truetype.library's code, and PNGs.
+const Sources = struct {
+    io: Io,
+    /// Liberation's directory; null for no text.
+    fonts: ?[]const u8,
+    opened: [12]?Opened = @splat(null),
+
+    const Opened = struct {
+        font: [:0]const u8,
+        style: graphics.FontStyle,
+        face: ?*diskfont.OutlineFont,
+    };
+
+    const families = [_]struct { font: []const u8, file: []const u8 }{
+        .{ .font = "sans.font", .file = "Sans" },
+        .{ .font = "serif.font", .file = "Serif" },
+        .{ .font = "mono.font", .file = "Mono" },
+    };
+
+    fn fontOf(outline: *truetype.Outline) *const tt.outline.Font {
+        return @ptrCast(@alignCast(outline));
+    }
+
+    /// A family's face as diskfont.library picks it: the one of the
+    /// styles asked for. Opened once, and kept.
+    pub fn OpenFace(s: *Sources, name: [*:0]const u8, style: graphics.FontStyle) ?*diskfont.OutlineFont {
+        const n = std.mem.span(name);
+        for (&s.opened) |*slot| {
+            if (slot.*) |o| {
+                if (o.style == style and std.mem.eql(u8, o.font, n)) return o.face;
+                continue;
+            }
+            slot.* = .{ .font = std.heap.page_allocator.dupeZ(u8, n) catch return null, .style = style, .face = s.load(n, style) };
+            return slot.*.?.face;
+        }
+        return null;
+    }
+
+    fn load(s: *Sources, name: []const u8, style: graphics.FontStyle) ?*diskfont.OutlineFont {
+        const dir = s.fonts orelse return null;
+        const gpa = std.heap.page_allocator;
+        for (families) |family| {
+            if (!std.mem.eql(u8, family.font, name)) continue;
+            const bold = style & graphics.FSF_BOLD != 0;
+            const italic = style & graphics.FSF_ITALIC != 0;
+            const face = if (bold and italic) "BoldItalic" else if (bold) "Bold" else if (italic) "Italic" else "Regular";
+            const path = std.fmt.allocPrint(gpa, "{s}/Liberation{s}-{s}.ttf", .{ dir, family.file, face }) catch return null;
+            const bytes = Io.Dir.cwd().readFileAlloc(s.io, path, gpa, .limited(16 << 20)) catch return null;
+            const font = gpa.create(tt.outline.Font) catch return null;
+            if (!tt.outline.open(font, bytes.ptr, @intCast(bytes.len))) return null;
+            const opened = gpa.create(diskfont.OutlineFont) catch return null;
+            opened.* = .{ .outline = @ptrCast(font), .style = font.style };
+            return opened;
+        }
+        return null;
+    }
+
+    pub fn CloseFace(_: *Sources, _: *diskfont.OutlineFont) void {}
+    pub fn GlyphIndex(_: *Sources, outline: *truetype.Outline, code: u32) u32 {
+        return tt.outline.glyphIndex(fontOf(outline), code);
+    }
+    pub fn GlyphMetrics(_: *Sources, outline: *truetype.Outline, glyph: u32, metrics: *truetype.GlyphMetrics) bool {
+        const font = fontOf(outline);
+        metrics.* = .{};
+        if (glyph >= font.glyph_count) return false;
+        const box = tt.outline.boxOf(font, glyph);
+        metrics.* = .{
+            .advance = tt.outline.advanceOf(font, glyph),
+            .left_bearing = tt.outline.leftBearingOf(font, glyph),
+            .x_min = box[0],
+            .y_min = box[1],
+            .x_max = box[2],
+            .y_max = box[3],
+        };
+        return true;
+    }
+    pub fn GlyphSegments(_: *Sources, outline: *truetype.Outline, glyph: u32, out: *truetype.Segments) i32 {
+        const font = fontOf(outline);
+        out.verb_count = 0;
+        out.point_count = 0;
+        if (glyph >= font.glyph_count) return truetype.TRUETYPEERR_GLYPH;
+        const gpa = std.heap.page_allocator;
+        const points = gpa.alloc(tt.outline.Point, font.max_points + 1) catch return truetype.TRUETYPEERR_NOMEM;
+        defer gpa.free(points);
+        const ends = gpa.alloc(u32, font.max_contours + 1) catch return truetype.TRUETYPEERR_NOMEM;
+        defer gpa.free(ends);
+        const flags = gpa.alloc(u8, font.max_points + 1) catch return truetype.TRUETYPEERR_NOMEM;
+        defer gpa.free(flags);
+        var c = tt.outline.Contours{ .points = points, .ends = ends, .flags = flags };
+        if (!tt.outline.contours(font, glyph, &c, .{ 1, 0, 0, 1, 0, 0 }, 0)) return truetype.TRUETYPEERR_GLYPH;
+        return tt.segments.write(&c, out);
+    }
+    pub fn FontMetrics(_: *Sources, outline: *truetype.Outline, metrics: *truetype.FontMetrics) void {
+        const font = fontOf(outline);
+        const most = tt.segments.mostOf(font);
+        metrics.* = .{
+            .units_per_em = font.units_per_em,
+            .glyph_count = font.glyph_count,
+            .ascender = font.ascender,
+            .descender = font.descender,
+            .line_gap = font.line_gap,
+            .x_height = font.x_height,
+            .cap_height = font.cap_height,
+            .underline_position = font.underline_position,
+            .underline_thickness = font.underline_thickness,
+            .strikeout_position = font.strikeout_position,
+            .strikeout_thickness = font.strikeout_thickness,
+            .most_verbs = most[0],
+            .most_points = most[1],
+            .style = font.style,
+        };
+    }
+    pub fn Kerning(_: *Sources, outline: *truetype.Outline, left: u32, right: u32) i32 {
+        return tt.outline.kerningOf(fontOf(outline), left, right);
+    }
+
+    /// A PNG of a `data:` address, as pens.
+    pub fn OpenImage(_: *Sources, href: []const u8) ?svg.Image {
+        const gpa = std.heap.page_allocator;
+        const text = svg.data.base64Of(href) orelse return null;
+        const room = gpa.alloc(u8, svg.data.decodedMost(text)) catch return null;
+        defer gpa.free(room);
+        const bytes = svg.data.decode(text, room) orelse return null;
+        const picture = readPng(gpa, bytes) catch return null;
+        defer gpa.free(picture.rgba);
+        const pens = gpa.alloc(graphics.Pen, @as(usize, picture.width) * picture.height) catch return null;
+        for (pens, 0..) |*pen, i| {
+            const p = picture.rgba[i * 4 ..][0..4];
+            pen.* = @as(u32, p[3]) << 24 | @as(u32, p[0]) << 16 | @as(u32, p[1]) << 8 | p[2];
+        }
+        return .{ .pens = pens.ptr, .width = picture.width, .height = picture.height, .bytes_per_row = picture.width * 4, .handle = @ptrCast(pens.ptr) };
+    }
+    pub fn CloseImage(_: *Sources, image: svg.Image) void {
+        const pens: [*]graphics.Pen = @ptrCast(@alignCast(image.handle.?));
+        std.heap.page_allocator.free(pens[0 .. @as(usize, image.width) * image.height]);
+    }
 };
 
 /// The module's memory from the host's.
@@ -133,7 +285,7 @@ const Picture = struct {
 };
 
 /// `text` drawn `size` by `size`; null when it is not SVG.
-fn drawSvg(gpa: std.mem.Allocator, text: []u8, size: u32) !?Picture {
+fn drawSvg(gpa: std.mem.Allocator, sources: *Sources, text: []u8, size: u32) !?Picture {
     const counts = document.count(text) orelse return null;
     const bytes = document.bytesFor(counts);
     const block = try gpa.alignedAlloc(u8, .@"8", @max(bytes, 8));
@@ -151,7 +303,7 @@ fn drawSvg(gpa: std.mem.Allocator, text: []u8, size: u32) !?Picture {
     defer gpa.destroy(work);
     const intrinsic = svg.intrinsic(&doc);
     var direct = Direct{};
-    svg.draw(&direct, &doc, @ptrCast(canvas), @ptrCast(path), work, svg.baseMatrix(intrinsic, size, size), intrinsic.viewport);
+    svg.draw(&direct, sources, &doc, @ptrCast(canvas), @ptrCast(path), work, svg.baseMatrix(intrinsic, size, size), intrinsic.viewport);
     const rgba = try gpa.alloc(u8, pens.len * 4);
     for (pens, 0..) |pen, i| {
         rgba[i * 4 + 0] = @truncate(pen >> 16);
@@ -350,6 +502,7 @@ pub fn main(init: std.process.Init) !void {
     var zoom: u32 = 1;
     var detail = false;
     var hash = false;
+    var fonts: ?[]const u8 = null;
     var files: std.ArrayList([]const u8) = .empty;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -360,6 +513,9 @@ pub fn main(init: std.process.Init) !void {
             detail = true;
         } else if (std.mem.eql(u8, args[i], "--hash")) {
             hash = true;
+        } else if (std.mem.eql(u8, args[i], "--fonts") and i + 1 < args.len) {
+            i += 1;
+            fonts = args[i];
         } else if (std.mem.eql(u8, args[i], "--zoom") and i + 1 < args.len) {
             i += 1;
             zoom = std.fmt.parseInt(u32, args[i], 10) catch fatal("{s}: not a zoom", .{args[i]});
@@ -373,6 +529,7 @@ pub fn main(init: std.process.Init) !void {
         fatal("usage: svgcompare [--size N] [--out DIR] <file.svg> <drawn.png> ...", .{});
     }
     const cwd = Io.Dir.cwd();
+    var sources = Sources{ .io = io, .fonts = fonts };
     var close: u32 = 0;
     var failed: std.ArrayList([]const u8) = .empty;
     var mean_sum: f64 = 0;
@@ -383,7 +540,7 @@ pub fn main(init: std.process.Init) !void {
         const name = std.fs.path.stem(svg_path);
         const text = cwd.readFileAlloc(io, svg_path, gpa, .limited(16 << 20)) catch |e| fatal("{s}: {t}", .{ svg_path, e });
         defer gpa.free(text);
-        const ours = (try drawSvg(gpa, text, size)) orelse {
+        const ours = (try drawSvg(gpa, &sources, text, size)) orelse {
             std.debug.print("{s:<40} not SVG to this reader\n", .{name});
             try failed.append(arena, name);
             continue;

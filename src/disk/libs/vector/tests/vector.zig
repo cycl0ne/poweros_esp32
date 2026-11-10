@@ -249,8 +249,9 @@ test "revision 2: a path handed over whole fills as the same path built a segmen
     const verbs = [_]u8{ vector.SEG_MOVE, vector.SEG_LINE, vector.SEG_CUBIC, vector.SEG_QUAD, vector.SEG_CLOSE };
     const points = [_]vector.Point{
         .{ .x = 1, .y = 1 },  .{ .x = 10, .y = 1 },
-        .{ .x = 12, .y = 5 }, .{ .x = 8, .y = 11 }, .{ .x = 5, .y = 10 },
-        .{ .x = 0, .y = 9 },  .{ .x = 2, .y = 5 },
+        .{ .x = 12, .y = 5 }, .{ .x = 8, .y = 11 },
+        .{ .x = 5, .y = 10 }, .{ .x = 0, .y = 9 },
+        .{ .x = 2, .y = 5 },
     };
     try testing.expectEqual(vector.VECTOR_OK, vb.AddSegments(whole, &verbs, verbs.len, &points, points.len));
     vb.MoveTo(one, 1, 1);
@@ -293,7 +294,7 @@ test "revision 2: a path handed over whole fills as the same path built a segmen
 test "revision 3: a clip and a mask through the jump table, and both left pushed go with the canvas" {
     const rig = try Rig.open();
     const vb = rig.vb;
-    try testing.expectEqual(@as(u16, 3), rig.library.revision);
+    try testing.expect(rig.library.revision >= 3);
     var pens: [10 * 10]Pen = @splat(0);
     const canvas = try canvasOver(vb, &pens, 10, 10);
     const all = vb.CreatePath() orelse return error.NoPath;
@@ -322,6 +323,55 @@ test "revision 3: a clip and a mask through the jump table, and both left pushed
     _ = vb.BeginMask(canvas);
     vb.DisposePath(all);
     vb.DisposePath(round);
+    vb.DisposeCanvas(canvas);
+    try rig.close();
+}
+
+// --- since 1.4 ---------------------------------------------------------------------
+
+test "revision 4: an image painted, placed by its matrix; a layer blurred; neither without what it needs" {
+    const rig = try Rig.open();
+    const vb = rig.vb;
+    try testing.expectEqual(@as(u16, 4), rig.library.revision);
+    var pens: [16 * 16]Pen = @splat(0);
+    const canvas = try canvasOver(vb, &pens, 16, 16);
+    const square = vb.CreatePath() orelse return error.NoPath;
+    vb.AddRect(square, &.{ .x = 4, .y = 4, .width = 8, .height = 8 }, 0, 0);
+
+    // Two by two pixels spread over the square: each a quarter of it.
+    const image = [_]Pen{ 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFFFF };
+    const paint = vector.Paint{
+        .kind = vector.PAINT_IMAGE,
+        .image = &image,
+        .image_width = 2,
+        .image_height = 2,
+        .image_bytes_per_row = 8,
+        .matrix = (vector.Matrix.translate(4, 4)).then(vector.Matrix.scale(4, 4)),
+    };
+    try testing.expectEqual(vector.VECTOR_OK, vb.FillPath(canvas, square, null, &paint, vector.RULE_NONZERO));
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[4 * 16 + 4]);
+    try testing.expectEqual(@as(Pen, 0xFF00FF00), pens[4 * 16 + 11]);
+    try testing.expectEqual(@as(Pen, 0xFF0000FF), pens[11 * 16 + 4]);
+    try testing.expectEqual(@as(Pen, 0xFFFFFFFF), pens[11 * 16 + 11]);
+    // Between them, a mix; outside the square, nothing.
+    const between = pens[4 * 16 + 8];
+    try testing.expect((between >> 16) & 0xFF > 0 and (between >> 8) & 0xFF > 0);
+    try testing.expectEqual(@as(Pen, 0), pens[2 * 16 + 2]);
+
+    // A layer blurred: the square spreads past its edge, softer inside.
+    @memset(&pens, 0);
+    try testing.expectEqual(vector.VECTORERR_DEPTH, vb.BlurLayer(canvas, 1, 1));
+    const red = vector.Paint{ .colour = .{ .r = 1 } };
+    _ = vb.PushLayer(canvas, 1);
+    _ = vb.FillPath(canvas, square, null, &red, vector.RULE_NONZERO);
+    try testing.expectEqual(vector.VECTOR_OK, vb.BlurLayer(canvas, 1.5, 1.5));
+    vb.PopLayer(canvas);
+    try testing.expect(pens[8 * 16 + 2] >> 24 > 0);
+    try testing.expect(pens[4 * 16 + 4] >> 24 < 0xFF);
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[8 * 16 + 8]);
+    try testing.expectEqual(@as(u32, 0xFF0000), pens[8 * 16 + 2] & 0xFFFFFF);
+
+    vb.DisposePath(square);
     vb.DisposeCanvas(canvas);
     try rig.close();
 }

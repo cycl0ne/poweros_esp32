@@ -7,8 +7,15 @@
 //! file of its own, `FONTS:spleen/16`. A size file is a font image
 //! (`graphics.fontimage`) byte for byte, so it is read with one Read and
 //! drawn from where it lies. The contents file is `fontfile`.
+//!
+//! Since 1.4 a family with an outline is opened as the outline itself
+//! (`OpenOutlineFont`): its TrueType file read, for a program that draws
+//! its glyphs at any size and angle with truetype.library's calls. A
+//! program that needs this looks for revision 4 or later in the library
+//! it opened.
 
 const graphics = @import("../graphics/graphics.zig");
+const truetype = @import("../truetype/truetype.zig");
 
 /// The name to open it by.
 pub const DISKFONTNAME = "diskfont.library";
@@ -57,6 +64,19 @@ pub fn availEntries(header: *const AvailFontsHeader) []const AvailFonts {
     const at: [*]const AvailFonts = @ptrCast(@alignCast(bytes + avail_entries_at));
     return at[0..header.count];
 }
+
+/// A family's outline, opened by `OpenOutlineFont` (since 1.4): the face
+/// of the styles asked, its TrueType file read and opened. The library's,
+/// shared by everyone who opened it, until `CloseOutlineFont`.
+pub const OutlineFont = extern struct {
+    /// For truetype.library's calls: `GlyphIndex`, `GlyphSegments`,
+    /// `FontMetrics` and the rest. Not to be closed by the caller.
+    outline: *truetype.Outline,
+    /// The styles the face is drawn in, `FSF_BOLD` and `FSF_ITALIC`: what
+    /// was asked and the family has a face for. What it is not drawn in
+    /// a program draws itself, if it will - leaning it for italic.
+    style: graphics.FontStyle,
+};
 
 /// The layout of a family's contents file.
 pub const fontfile = @import("fontfile.zig");

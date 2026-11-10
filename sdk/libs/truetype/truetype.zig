@@ -7,10 +7,19 @@
 //! bits. The image is then a font like any other - diskfont.library puts
 //! it on graphics' list and frees it when nobody holds it.
 //!
+//! Since 1.2 a font is read for drawing at any size and angle as well:
+//! a character's glyph (`GlyphIndex`), its outline as lines and curves
+//! in the font's units (`GlyphSegments`) - verbs and points as
+//! vector.library's `AddSegments` takes them - its measures
+//! (`GlyphMetrics`), the font's (`FontMetrics`), and how much two glyphs
+//! are moved together (`Kerning`). SVG's text is drawn so. A program that
+//! needs these looks for revision 2 or later in the library it opened.
+//!
 //! Open it with OpenLibrary(TRUETYPENAME, 1); its functions are in
 //! sdk/interface/truetype.zig.
 
 const graphics = @import("../graphics/graphics.zig");
+const vector = @import("../vector/vector.zig");
 
 /// The name to open it by.
 pub const TRUETYPENAME = "truetype.library";
@@ -21,6 +30,77 @@ pub const TRUETYPE_VERSION = 1;
 /// it holds is the library's; the file's bytes stay the caller's, and must
 /// last until `CloseOutline`.
 pub const Outline = opaque {};
+
+// --- glyphs as outlines (since 1.2) ---------------------------------------------
+
+/// A glyph's measures, in the font's units, y up from the baseline.
+pub const GlyphMetrics = extern struct {
+    /// How far the glyph moves the point along the line.
+    advance: i32 = 0,
+    /// From the point to the left of the glyph's box.
+    left_bearing: i32 = 0,
+    /// The box of its outline; all 0 for a glyph of none, a space.
+    x_min: i32 = 0,
+    y_min: i32 = 0,
+    x_max: i32 = 0,
+    y_max: i32 = 0,
+};
+
+/// A font's measures, in its units, y up from the baseline. A measure
+/// the file does not give is 0.
+pub const FontMetrics = extern struct {
+    /// The units of an em: the font drawn n pixels tall scales them by n
+    /// over this.
+    units_per_em: u32 = 0,
+    glyph_count: u32 = 0,
+    /// Above the baseline, below it (negative), and the gap between one
+    /// line's descender and the next's ascender.
+    ascender: i32 = 0,
+    descender: i32 = 0,
+    line_gap: i32 = 0,
+    /// How tall a lower-case x is, and a capital.
+    x_height: i32 = 0,
+    cap_height: i32 = 0,
+    /// The top of an underline (negative below the baseline), and how
+    /// thick it is.
+    underline_position: i32 = 0,
+    underline_thickness: i32 = 0,
+    /// The bottom of a line struck through, and how thick it is.
+    strikeout_position: i32 = 0,
+    strikeout_thickness: i32 = 0,
+    /// The most verbs and points `GlyphSegments` gives for any glyph of
+    /// the font: arrays this long hold every one.
+    most_verbs: u32 = 0,
+    most_points: u32 = 0,
+    /// The styles the file says it is drawn in, as `styleOf`.
+    style: graphics.FontStyle = graphics.FS_NORMAL,
+};
+
+/// A glyph's outline, as `GlyphSegments` gives it: in the caller's
+/// arrays, and how much of them it took.
+pub const Segments = extern struct {
+    /// The verbs, a byte each: vector.library's `SEG_MOVE`, `SEG_LINE`,
+    /// `SEG_QUAD` and `SEG_CLOSE`.
+    verbs: [*]u8,
+    /// Their points, in the font's units, y up from the glyph's origin
+    /// on the baseline.
+    points: [*]vector.Point,
+    /// How many each array holds.
+    verb_room: u32,
+    point_room: u32,
+    /// How many the glyph took - or, when they did not fit, needs.
+    verb_count: u32 = 0,
+    point_count: u32 = 0,
+};
+
+/// What `GlyphSegments` answers.
+pub const TRUETYPE_OK: i32 = 0;
+/// The arrays are too short: the counts say how long they must be.
+pub const TRUETYPEERR_ROOM: i32 = -1;
+/// No glyph of that number, or its data is damaged.
+pub const TRUETYPEERR_GLYPH: i32 = -2;
+/// There was not the memory to read it.
+pub const TRUETYPEERR_NOMEM: i32 = -3;
 
 /// Whether `bytes` start as a TrueType file: version 1.0 or 'true'.
 ///

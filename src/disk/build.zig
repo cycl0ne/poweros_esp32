@@ -383,7 +383,7 @@ const no_3d_files = [_][]const u8{
 
 /// What goes with the programs only the 64-bit machines have
 /// (`rv64_only`) - what they are, in SYS:System/Docs, the descriptors
-/// and the test pictures of svg.datatype, plain and packed, and
+/// and the test pictures of svg.datatype, plain, packed and of text, and
 /// Lottie's paints: left off the ESP32s' disks with them.
 const rv64_only_files = [_][]const u8{
     "System/Docs/Update.md",
@@ -391,6 +391,7 @@ const rv64_only_files = [_][]const u8{
     "devs/datatypes/SVGZ",
     "tests/datatypes/Drawing.svg",
     "tests/datatypes/Drawing.svgz",
+    "tests/datatypes/Text.svg",
     "tests/datatypes/Paints.json",
 };
 
@@ -622,6 +623,7 @@ pub const files = [_]File{
     .{ .disk = "tests/datatypes/Paints.json", .source = "tests/datatypes/Paints.json" },
     .{ .disk = "tests/datatypes/Drawing.svg", .source = "tests/datatypes/Drawing.svg" },
     .{ .disk = "tests/datatypes/Drawing.svgz", .source = "tests/datatypes/Drawing.svgz" },
+    .{ .disk = "tests/datatypes/Text.svg", .source = "tests/datatypes/Text.svg" },
     .{ .disk = "tests/datatypes/Crate.obj", .source = "tests/datatypes/Crate.obj" },
     .{ .disk = "tests/datatypes/Crate.mtl", .source = "tests/datatypes/Crate.mtl" },
     .{ .disk = "tests/datatypes/Crate.png", .source = "tests/datatypes/Crate.png" },
