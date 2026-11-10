@@ -51,7 +51,7 @@ const Pen = graphics.Pen;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "lottie.datatype",
     .version = 1,
-    .revision = 3,
+    .revision = 4,
     .date = "10.11.2026",
     .super = adt.ANIMATIONDTCLASS,
     .opens = &.{ adt.ANIMATION_LIBRARY, vector.VECTORNAME },
@@ -115,9 +115,14 @@ fn loadFrame(vb: *VectorBase, own: *Data, msg: *adt.AdtFrame) void {
         .path = path,
         .canvas = canvas,
         .assets = tape.get(0, "assets"),
+        .masks = vb.lib().revision >= masks_revision,
     };
     renderer.frame(0, own.in_point + @as(f32, @floatFromInt(msg.frame)) * own.step, own.scale);
 }
+
+/// The vector.library revision with masks, which masks and mattes are
+/// drawn through.
+const masks_revision = 3;
 
 /// The numbers an animation needs from the outermost object, or null
 /// when it is not a Lottie file.

@@ -260,3 +260,53 @@ const spinner_hash = 0x5fcbceca335c37c2;
 const strokes_hash = 0x2c842b765d73af09;
 const paints_hash = 0x9cb68336e2200b46;
 
+
+test "masks added and taken away, one that starts from the whole frame, an alpha matte, an inverted luma matte" {
+    const text =
+        \\{"w":40,"h":40,"fr":10,"ip":0,"op":10,"layers":[
+        \\ {"ty":4,"ind":3,"td":1,"ip":0,"op":10,"st":0,"ks":{},"shapes":[
+        \\  {"ty":"rc","p":{"a":0,"k":[30,10]},"s":{"a":0,"k":[10,20]},"r":{"a":0,"k":0}},
+        \\  {"ty":"fl","c":{"a":0,"k":[1,1,1,1]},"o":{"a":0,"k":100}}]},
+        \\ {"ty":4,"ind":2,"tt":1,"ip":0,"op":10,"st":0,"ks":{},"shapes":[
+        \\  {"ty":"rc","p":{"a":0,"k":[30,10]},"s":{"a":0,"k":[20,20]},"r":{"a":0,"k":0}},
+        \\  {"ty":"fl","c":{"a":0,"k":[0,1,0,1]},"o":{"a":0,"k":100}}]},
+        \\ {"ty":4,"ind":1,"ip":0,"op":10,"st":0,"ks":{},"hasMask":true,"masksProperties":[
+        \\  {"mode":"a","inv":false,"o":{"a":0,"k":100},"pt":{"a":0,"k":{"c":true,"v":[[2,2],[10,2],[10,18],[2,18]],"i":[[0,0],[0,0],[0,0],[0,0]],"o":[[0,0],[0,0],[0,0],[0,0]]}}},
+        \\  {"mode":"s","inv":false,"o":{"a":0,"k":100},"pt":{"a":0,"k":{"c":true,"v":[[5,5],[7,5],[7,15],[5,15]],"i":[[0,0],[0,0],[0,0],[0,0]],"o":[[0,0],[0,0],[0,0],[0,0]]}}}],
+        \\  "shapes":[
+        \\  {"ty":"rc","p":{"a":0,"k":[10,10]},"s":{"a":0,"k":[20,20]},"r":{"a":0,"k":0}},
+        \\  {"ty":"fl","c":{"a":0,"k":[1,0,0,1]},"o":{"a":0,"k":100}}]},
+        \\ {"ty":4,"ind":9,"td":1,"ip":0,"op":10,"st":0,"ks":{},"shapes":[
+        \\  {"ty":"rc","p":{"a":0,"k":[10,30]},"s":{"a":0,"k":[20,20]},"r":{"a":0,"k":0}},
+        \\  {"ty":"fl","c":{"a":0,"k":[1,1,1,1]},"o":{"a":0,"k":100}},
+        \\  {"ty":"rc","p":{"a":0,"k":[30,30]},"s":{"a":0,"k":[20,20]},"r":{"a":0,"k":0}},
+        \\  {"ty":"fl","c":{"a":0,"k":[0,0,0,1]},"o":{"a":0,"k":100}}]},
+        \\ {"ty":4,"ind":4,"tt":4,"tp":9,"ip":0,"op":10,"st":0,"ks":{},"shapes":[
+        \\  {"ty":"rc","p":{"a":0,"k":[20,30]},"s":{"a":0,"k":[40,20]},"r":{"a":0,"k":0}},
+        \\  {"ty":"fl","c":{"a":0,"k":[0,0,1,1]},"o":{"a":0,"k":100}}]},
+        \\ {"ty":4,"ind":5,"ip":0,"op":10,"st":0,"ks":{},"masksProperties":[
+        \\  {"mode":"s","inv":false,"o":{"a":0,"k":100},"pt":{"a":0,"k":{"c":true,"v":[[0,0],[38,0],[38,38],[0,38]],"i":[[0,0],[0,0],[0,0],[0,0]],"o":[[0,0],[0,0],[0,0],[0,0]]}}}],
+        \\  "shapes":[
+        \\  {"ty":"rc","p":{"a":0,"k":[20,20]},"s":{"a":0,"k":[40,40]},"r":{"a":0,"k":0}},
+        \\  {"ty":"fl","c":{"a":0,"k":[1,1,0,1]},"o":{"a":0,"k":100}}]}]}
+    ;
+    const file = try File.parse(text);
+    defer file.deinit();
+    const rig = try Rig.open(40, 40);
+    var pens: [1600]Pen = @splat(0);
+    rig.draw(file.tape, 0, 1, &pens);
+    // Added, then a strip taken out of it; outside what was added.
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[10 * 40 + 3]);
+    try testing.expectEqual(@as(Pen, 0), pens[10 * 40 + 6]);
+    try testing.expectEqual(@as(Pen, 0), pens[10 * 40 + 15]);
+    // Through the white rectangle before it, which is not drawn itself.
+    try testing.expectEqual(@as(Pen, 0xFF00FF00), pens[10 * 40 + 30]);
+    try testing.expectEqual(@as(Pen, 0), pens[10 * 40 + 22]);
+    // Inverted luma: none under the white, all under the black.
+    try testing.expectEqual(@as(Pen, 0), pens[30 * 40 + 10]);
+    try testing.expectEqual(@as(Pen, 0xFF0000FF), pens[30 * 40 + 30]);
+    // The whole frame less a square: the yellow's edge at the right.
+    try testing.expectEqual(@as(Pen, 0xFFFFFF00), pens[10 * 40 + 39]);
+    try testing.expectEqual(@as(Pen, 0), pens[10 * 40 + 37]);
+    try rig.close();
+}

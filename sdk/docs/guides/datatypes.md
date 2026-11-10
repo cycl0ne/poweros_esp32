@@ -404,9 +404,11 @@ own delay. A GIF with one picture is a still picture and goes to
 vector animation as. It draws shape, solid and precomposition layers;
 groups, rectangles, ellipses and paths; fills and strokes of one colour
 or of a linear or radial gradient, and dashed strokes (since 1.3);
+masks - added, taken away, kept, inverted, at their opacity - and
+alpha and luma mattes, through vector.library 1.3's masks (since 1.4);
 transforms, parents and keyframes with their easing - and passes over
-masks, mattes, text, images, expressions, trims and 3D, drawing the
-rest of the file without them. A frame is drawn in software
+text, images, expressions, trims, a mask's expansion and 3D, drawing
+the rest of the file without them. A frame is drawn in software
 by vector.library, at the file's size made smaller to fit in 360 pixels
 each way, and at the file's rate up to 30 frames a second.
 

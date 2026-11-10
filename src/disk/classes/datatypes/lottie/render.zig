@@ -22,9 +22,21 @@
 //! (rounded too), ellipses and paths; fills and strokes of one colour
 //! and, since 1.3, of a linear or a radial gradient (`gf`, `gs`), and
 //! dashed strokes (`d`); transforms and parents; keyframes with their
-//! easing. Passed over: masks and mattes (a matte's source is not drawn,
-//! the layer it is for is drawn without it), text and image layers,
-//! expressions, trims, repeaters, stars, skew and 3D.
+//! easing; since 1.4, masks and track mattes. Passed over: text and
+//! image layers, expressions, trims, repeaters, stars, skew, 3D, and a
+//! mask's expansion.
+//!
+//! **Masks and mattes** (since 1.4) are vector.library's masks. A
+//! layer's masks are made one, in order: each adds its shape to what
+//! the ones before it made, takes it away (`s`), or keeps only what is
+//! inside it (`i`), at its opacity, inverted when it says (`inv`); a
+//! first that takes away or keeps starts from the whole frame. Lighten
+//! adds and darken keeps; difference adds. A matte is the layer before
+//! it - or the one `tp` names - drawn into a mask by its coverage (`tt`
+//! 1, 2 the other way round) or its luminance (3, 4), and not drawn
+//! itself. A layer with either is drawn on a layer of its own and put
+//! down through them at its opacity. Under a vector.library older than
+//! 1.3, which has no masks, they are passed over (`Renderer.masks`).
 //!
 //! **A gradient** is its stops - a flat array of colour stops (offset,
 //! red, green, blue) and after them, when it has them, opacity stops
@@ -59,6 +71,8 @@ const max_depth = 16;
 const max_gradient_stops = 32;
 /// The most dash and gap lengths a stroke is cut by.
 const max_dashes = 16;
+/// The most masks of a layer made into its one; the rest are left out.
+const max_masks = 8;
 
 /// What a frame is drawn with: vector.library, the path every fill and
 /// stroke is built in, and the canvas over the frame's pens.
@@ -69,10 +83,19 @@ pub const Renderer = struct {
     canvas: *vector.Canvas,
     /// The file's assets, where precompositions are.
     assets: ?u32,
+    /// The frame's size in pixels, for a mask that starts from all of it.
+    width: f32 = 0,
+    height: f32 = 0,
+    /// Whether the library has masks (1.3): without them, masks and
+    /// mattes are passed over.
+    masks: bool = true,
 
     /// The animation at time `time`, in its frames, `scale` pixels a unit.
     pub fn frame(renderer: *Renderer, root: u32, time: f32, scale: f32) void {
-        renderer.composition(renderer.tape.get(root, "layers"), time, Matrix.scale(scale, scale), 1, 0);
+        const tape = renderer.tape;
+        renderer.width = (tape.number(tape.get(root, "w")) orelse 0) * scale;
+        renderer.height = (tape.number(tape.get(root, "h")) orelse 0) * scale;
+        renderer.composition(tape.get(root, "layers"), time, Matrix.scale(scale, scale), 1, 0);
     }
 
     fn composition(renderer: *Renderer, layers: ?u32, time: f32, matrix: Matrix, opacity: f32, depth: u32) void {
@@ -81,15 +104,17 @@ pub const Renderer = struct {
         var n = tape.count(layers);
         while (n > 0) {
             n -= 1;
-            renderer.layer(layers.?, tape.item(layers, n).?, time, matrix, opacity, depth);
+            renderer.layer(layers.?, tape.item(layers, n).?, time, matrix, opacity, depth, false);
         }
     }
 
-    fn layer(renderer: *Renderer, layers: u32, layer_index: u32, time: f32, outer: Matrix, outer_opacity: f32, depth: u32) void {
+    /// A layer, through its matte and its masks. A matte's source is
+    /// drawn only `as_matte`, into the matte of the layer it is for.
+    fn layer(renderer: *Renderer, layers: u32, layer_index: u32, time: f32, outer: Matrix, outer_opacity: f32, depth: u32, as_matte: bool) void {
         const tape = renderer.tape;
+        if (depth > max_depth) return;
         if (tape.flag(tape.get(layer_index, "hd"))) return;
-        // A matte's source.
-        if (tape.flag(tape.get(layer_index, "td"))) return;
+        if (!as_matte and tape.flag(tape.get(layer_index, "td"))) return;
         const in_point = tape.number(tape.get(layer_index, "ip")) orelse 0;
         const out_point = tape.number(tape.get(layer_index, "op")) orelse 1e9;
         if (time < in_point or time >= out_point) return;
@@ -99,6 +124,22 @@ pub const Renderer = struct {
         const opacity = outer_opacity * property.scalar(tape, tape.get(transform, "o"), local, 100) / 100;
         if (opacity <= 0) return;
         const kind = tape.number(tape.get(layer_index, "ty")) orelse return;
+        const vb = renderer.vb;
+        const canvas = renderer.canvas;
+        var clips: u32 = 0;
+        defer for (0..clips) |_| vb.PopClip(canvas);
+        if (!as_matte and renderer.masks) if (matteOf(tape, layers, layer_index)) |matte| {
+            _ = vb.BeginMask(canvas);
+            renderer.layer(layers, matte.source, time, outer, 1, depth + 1, true);
+            _ = vb.EndMask(canvas, matte.kind);
+            clips += 1;
+        };
+        if (renderer.masks and renderer.masked(layer_index, local, matrix, depth)) clips += 1;
+        // Through them, the layer goes down whole at its opacity.
+        const layered = clips > 0;
+        const inner = if (layered) 1 else opacity;
+        if (layered) _ = vb.PushLayer(canvas, opacity);
+        defer if (layered) vb.PopLayer(canvas);
         switch (@as(i32, @intFromFloat(kind))) {
             0 => {
                 const id = tape.string(tape.get(layer_index, "refId")) orelse return;
@@ -106,14 +147,95 @@ pub const Renderer = struct {
                 while (walk.next()) |asset| {
                     const asset_id = tape.string(tape.get(asset, "id")) orelse continue;
                     if (!same(asset_id, id)) continue;
-                    renderer.composition(tape.get(asset, "layers"), local, matrix, opacity, depth + 1);
+                    renderer.composition(tape.get(asset, "layers"), local, matrix, inner, depth + 1);
                     return;
                 }
             },
-            1 => renderer.solid(layer_index, matrix, opacity),
-            4 => renderer.items(tape.get(layer_index, "shapes"), local, matrix, opacity, depth),
+            1 => renderer.solid(layer_index, matrix, inner),
+            4 => renderer.items(tape.get(layer_index, "shapes"), local, matrix, inner, depth),
             else => {},
         }
+    }
+
+    /// A layer's masks made one and pushed as a mask; false when it has
+    /// none that does anything.
+    fn masked(renderer: *Renderer, layer_index: u32, time: f32, matrix: Matrix, depth: u32) bool {
+        const tape = renderer.tape;
+        const masks = tape.get(layer_index, "masksProperties") orelse return false;
+        const count = @min(tape.count(masks), max_masks);
+        var first: ?u8 = null;
+        for (0..count) |i| {
+            const mode = maskMode(tape, tape.item(masks, @intCast(i)).?);
+            if (mode != 'n') {
+                first = mode;
+                break;
+            }
+        }
+        const start = first orelse return false;
+        _ = renderer.vb.BeginMask(renderer.canvas);
+        renderer.maskOf(masks, count, start == 's' or start == 'i' or start == 'd', time, matrix, depth);
+        _ = renderer.vb.EndMask(renderer.canvas, vector.MASK_ALPHA);
+        return true;
+    }
+
+    /// What the first `n` masks make, drawn white by its coverage. One
+    /// that takes away or keeps is a mask itself, what came before drawn
+    /// through it on a layer; `whole` is what there is before the first.
+    fn maskOf(renderer: *Renderer, masks: u32, n: u32, whole: bool, time: f32, matrix: Matrix, depth: u32) void {
+        const vb = renderer.vb;
+        const canvas = renderer.canvas;
+        if (n == 0) {
+            if (whole) {
+                vb.ClearPath(renderer.path);
+                renderer.frameRect();
+                _ = vb.FillPath(canvas, renderer.path, null, &white, vector.RULE_NONZERO);
+            }
+            return;
+        }
+        const tape = renderer.tape;
+        const mask = tape.item(masks, n - 1).?;
+        const mode = maskMode(tape, mask);
+        const inverted = tape.flag(tape.get(mask, "inv"));
+        const opacity = property.scalar(tape, tape.get(mask, "o"), time, 100) / 100;
+        switch (mode) {
+            'n' => renderer.maskOf(masks, n - 1, whole, time, matrix, depth),
+            's', 'i', 'd' => {
+                _ = vb.BeginMask(canvas);
+                renderer.maskShape(mask, time, matrix, opacity, false);
+                const outside = (mode == 's') != inverted;
+                _ = vb.EndMask(canvas, if (outside) vector.MASK_ALPHA | vector.MASK_INVERT else vector.MASK_ALPHA);
+                _ = vb.PushLayer(canvas, 1);
+                renderer.maskOf(masks, n - 1, whole, time, matrix, depth + 1);
+                vb.PopLayer(canvas);
+                vb.PopClip(canvas);
+            },
+            else => {
+                renderer.maskOf(masks, n - 1, whole, time, matrix, depth);
+                renderer.maskShape(mask, time, matrix, opacity, inverted);
+            },
+        }
+    }
+
+    /// A mask's shape filled white at its opacity; everything else in
+    /// the frame instead when it is inverted.
+    fn maskShape(renderer: *Renderer, mask: u32, time: f32, matrix: Matrix, opacity: f32, inverted: bool) void {
+        const vb = renderer.vb;
+        vb.ClearPath(renderer.path);
+        if (inverted) renderer.frameRect();
+        renderer.shapeOf(renderer.tape.get(mask, "pt"), time, matrix);
+        const paint = vector.Paint{ .colour = .{ .r = 1, .g = 1, .b = 1 }, .opacity = opacity };
+        _ = vb.FillPath(renderer.canvas, renderer.path, null, &paint, if (inverted) vector.RULE_EVENODD else vector.RULE_NONZERO);
+    }
+
+    /// The frame and a pixel round it, onto the path.
+    fn frameRect(renderer: *Renderer) void {
+        const vb = renderer.vb;
+        const path = renderer.path;
+        vb.MoveTo(path, -1, -1);
+        vb.LineTo(path, renderer.width + 1, -1);
+        vb.LineTo(path, renderer.width + 1, renderer.height + 1);
+        vb.LineTo(path, -1, renderer.height + 1);
+        vb.ClosePath(path);
     }
 
     /// A layer's transform after its parents'.
@@ -286,8 +408,13 @@ pub const Renderer = struct {
 
     /// A path's vertices, between two keyframes' as far as it has come.
     fn shape(renderer: *Renderer, item: u32, time: f32, matrix: Matrix) void {
+        renderer.shapeOf(renderer.tape.get(item, "ks"), time, matrix);
+    }
+
+    /// A shape property's vertices onto the path - a path's or a mask's.
+    fn shapeOf(renderer: *Renderer, prop: ?u32, time: f32, matrix: Matrix) void {
         const tape = renderer.tape;
-        const at = property.shape(tape, tape.get(item, "ks"), time) orelse return;
+        const at = property.shape(tape, prop, time) orelse return;
         const closed = tape.flag(tape.get(at.from, "c"));
         var from = Cursor.of(tape, at.from);
         var to: ?Cursor = if (at.to) |other| Cursor.of(tape, other) else null;
@@ -306,6 +433,44 @@ pub const Renderer = struct {
         writer.finish(closed);
     }
 };
+
+const white = vector.Paint{ .colour = .{ .r = 1, .g = 1, .b = 1 } };
+
+/// A mask's mode, its letter: `a` adds, `s` takes away, `i` keeps what
+/// is inside, `n` does nothing; lighten, darken and difference are `l`,
+/// `d` and `f`.
+fn maskMode(tape: Tape, mask: u32) u8 {
+    const mode = tape.string(tape.get(mask, "mode")) orelse return 'a';
+    return if (mode.len == 1) mode[0] else 'a';
+}
+
+const Matte = struct { source: u32, kind: u32 };
+
+/// The matte a layer is drawn through: `tt`'s kind, and the layer `tp`
+/// names or else the one before it.
+fn matteOf(tape: Tape, layers: u32, layer_index: u32) ?Matte {
+    const tt = tape.number(tape.get(layer_index, "tt")) orelse return null;
+    const kind: u32 = switch (@as(i32, @intFromFloat(tt))) {
+        1 => vector.MASK_ALPHA,
+        2 => vector.MASK_ALPHA | vector.MASK_INVERT,
+        3 => vector.MASK_LUMINANCE,
+        4 => vector.MASK_LUMINANCE | vector.MASK_INVERT,
+        else => return null,
+    };
+    var walk = tape.items(layers);
+    if (tape.number(tape.get(layer_index, "tp"))) |wanted| {
+        while (walk.next()) |other| {
+            if (other != layer_index and tape.number(tape.get(other, "ind")) == wanted) return .{ .source = other, .kind = kind };
+        }
+        return null;
+    }
+    var before: ?u32 = null;
+    while (walk.next()) |other| {
+        if (other == layer_index) return .{ .source = before orelse return null, .kind = kind };
+        before = other;
+    }
+    return null;
+}
 
 /// The control point distance that makes four cubic curves a circle.
 const kappa: f32 = 0.5522848;
