@@ -5795,4 +5795,59 @@ pub const LIBRARY_VERSION = 1;
 /// fixed forms, are each as apart as the fixed form's: 9, 0, 0, 14, 0 and
 /// 0 of 230400 pixels, the same first pixels. FacetProbe passes its 890
 /// checks.
-pub const LIBRARY_REVISION = 179;
+///
+/// 180: **A sample at a level the program gives, with a bias, and a
+/// constant texel offset away, on the V3D by a compiled program
+/// (docs/facet-vulkan10.md item 59).** The profile takes
+/// OpImageSampleExplicitLod and OpImageSampleDrefExplicitLod and the
+/// image operands Bias, Lod and ConstOffset; `look` has an explicit
+/// level's sample carry its mask. A sample's `Lookup` is a
+/// nir_tex_instr's op as vtn makes it (spirv_to_nir.c:3423-3438): tex,
+/// txb with the bias, txl with the level, either one float `from[0]`,
+/// which the passes read, rename and replace as any other source. A
+/// ConstOffset is a constant integer vector of as many as the image's
+/// coordinate names but a layer (non_array_components, v3d_tex.c:
+/// 212-214), each -8 to 7, past which it is refused rather than cut.
+/// v3d_tex.c writes the bias or the level to TMUB after the comparator
+/// (handle_tex_src, :129-150), counts it among the TMU writes the
+/// threads have room for (:222, :265-266), packs the offsets into P2 and
+/// sets its disable_autolod for a cube at a level (:142-170), writes P2
+/// after P1 as a constant where it is not the default (:349-352,
+/// :372-373; V3D42_TMU_CONFIG_PARAMETER_2, v3d_packet.xml:1578-1593),
+/// and starts a lookup at a level at TMUSLOD, a cube's at TMUSCM still
+/// (:380-385). A sample at a level wants no helper pixels for its
+/// coordinate (nir_tex_instr_has_implicit_derivative,
+/// nir_opt_load_skip_helpers.c:151-156), so a read its coordinate comes
+/// from may skip them; in a selection's arm it keeps the arm, as any tex
+/// does (nir_opt_peephole_select.c:59-326). The plan's `compile` refuses
+/// a bias, a level and an offset, which its programs do not write.
+///
+/// Refused still: a gradient (nir_lower_tex's lower_txd, vir.c:802, not
+/// ported), an offset the program computes, ConstOffsets, MinLod.
+///
+/// Tests: the V3D's 274, nine new. 15 new modules of glslc's: glslc_lod
+/// TMUT, TMUB from an fmul, TMUSLOD, no P2; glslc_bias TMUB from an fsub,
+/// TMUS; glslc_offset's P2 0x00F0E100, glslc_lod_offset's 0x00F07800,
+/// glslc_bias_offset's 0x00F00300, glslc_volume_offset's 0x00FD2100 and
+/// glslc_layers_offset's 0x00F0F300, each after P1; glslc_cube_lod's
+/// P2 0x00F00002 and TMUSCM; glslc_shadow_lod TMUDREF and TMUB, then
+/// TMUSLOD; glslc_cube_shadow_bias five TMU writes and two threads;
+/// glslc_dependent's first sample skips its helper pixels;
+/// glslc_divided's level and bias renamed by nir_opt_cse; glslc_lod_arm
+/// glslc_branched's program with TMUB and TMUSLOD; glslc_grad refused,
+/// and glslc_offset's -2 made -9, glslc_lod_offset's 7 made 8, a Lod and
+/// a Bias swapped onto the other sample, and an explicit level's sample
+/// with no mask. facet's own `Offset` gives glslc_offset's P2. Of 28
+/// mutations of the port, 28 fail the tests, two of them first only by
+/// not compiling and then by a test as variants.
+///
+/// On the CM5 FacetBoth's 249 cases are each as they were at 1.179, and
+/// its four new: glslc's textureLod over levels 0 to 3 is 0 of 230400
+/// pixels apart with the levels mixed, and 270 at the nearest level, one
+/// column in the middle of the quad, where the level is within a few
+/// thousandths of 1.5 and the two round it to different levels; glslc's
+/// bias from -1 to 1 is 3660 apart, at most 5 a channel, apart in how two
+/// levels are mixed and not in which are read; the IR's offset of (1, -2)
+/// texels is 0 apart. FacetProbe passes its 890 checks. The board's cube
+/// has one level, so P2's disable_autolod is the host tests' alone.
+pub const LIBRARY_REVISION = 180;

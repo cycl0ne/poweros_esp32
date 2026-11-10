@@ -111,7 +111,12 @@
 //! layers, cube and 3D texture (since 1.44) are glslc's samples of each
 //! at a coordinate of three floats, through the sampler bound beside
 //! it, drawn as the fixed forms that read a sampler are; the cores read
-//! them as those forms do.
+//! them as those forms do. The shipped levels (since 1.45) are glslc's
+//! sample at a level that runs across the quad and its sample with a
+//! bias that runs down it, which the V3D writes to TMUB and starts at
+//! TMUSLOD and TMUS; the cores sample at the same level through
+//! `texture.sampleBy`. The shipped offset is `ir.Build.sampleOffset`'s,
+//! which the V3D puts in P2.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -126,7 +131,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.44 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.45 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -961,6 +966,14 @@ const Shipped = struct {
             b.color(b.scale(sum, b.scalar(0.25)));
         }
     });
+    /// The texel one right and two up of where the coordinate falls, a
+    /// ConstOffset of (1, -2) the V3D puts in P2's offset fields and the
+    /// cores add to the texel (`texture.Point.offset`; since 1.45).
+    const Offset = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.sampleOffset(0, 0, b.input(0, .f32x2), .{ 1, -2 }));
+        }
+    });
 };
 
 /// What `integers` computes, for the cores, and in its order: the colour
@@ -1183,6 +1196,52 @@ fn layeredFragment(comptime kind: shader.FixedKind) shader.FragmentFn {
     }.run;
 }
 
+/// What `shipped_lod` and `shipped_bias` compute, for the cores: the
+/// texture bound at set 0, binding 0, through the sampler beside it, at
+/// the two floats of varying 0 - at the level three times the first, or
+/// at the level the quad's steps give biased by the second times a
+/// quarter less one. A level is the steps that make it, 2^L texels a
+/// pixel along both axes, so that `texture.levelOf` finds L, the
+/// sampler's bias and clamp then put over it as over any; a bias scales
+/// the quad's own steps by 2^B, which adds B to the level they give
+/// (since 1.45).
+fn levelledFragment(comptime biased: bool) shader.FragmentFn {
+    return &struct {
+        fn run(fragments: *const shader.Fragments) callconv(.c) void {
+            const given = fragments.resources.sampled(0, 0, 0) orelse return shader.fill(fragments, shader.missing);
+            const with = fragments.resources.samplerOf(0, 0, 0) orelse return shader.fill(fragments, shader.missing);
+            @setRuntimeSafety(false);
+            const across: f32 = @floatFromInt(given.width(0));
+            const down: f32 = @floatFromInt(given.height(0));
+            var rows = shader.Rows(3).of(fragments);
+            for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+                const row = rows.at(quad);
+                const w = @as(shader.Pixels, @splat(1)) / row[0];
+                const us: [4]f32 = row[1] * w;
+                const vs: [4]f32 = row[2] * w;
+                var colors: [4]u32 = @splat(0);
+                for (&colors, 0..) |*color, i| {
+                    if (quad.covered >> @intCast(i) & 1 == 0) continue;
+                    var point = facet.texture.Point{ .u = us[i], .v = vs[i] };
+                    if (biased) {
+                        const scale = @exp2(vs[i] * 0.25 - 1.0);
+                        point.du_dx = (us[1] - us[0]) * scale;
+                        point.dv_dx = (vs[1] - vs[0]) * scale;
+                        point.du_dy = (us[2] - us[0]) * scale;
+                        point.dv_dy = (vs[2] - vs[0]) * scale;
+                    } else {
+                        const texels = @exp2(us[i] * 3.0);
+                        point.du_dx = texels / across;
+                        point.dv_dy = texels / down;
+                    }
+                    color.* = facet.texture.sampleBy(given, with, 0, point);
+                }
+                out.* = colors;
+            }
+        }
+    }.run;
+}
+
 /// What `store_writes` computes, for the cores, and in its order: by each
 /// pixel inside the triangle - a helper pixel writes nothing, as the
 /// V3D's lookup is a pixel's - the written buffer's count made 2 and its
@@ -1381,6 +1440,9 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped layers", layeredFragment(.texture_array_sampled), 3),
     shader.fragment("shipped cube", layeredFragment(.texture_cube_sampled), 3),
     shader.fragment("shipped volume", layeredFragment(.texture_3d_sampled), 3),
+    shader.fragment("shipped lod", levelledFragment(false), 2),
+    shader.fragment("shipped bias", levelledFragment(true), 2),
+    Shipped.Offset.entry("shipped offset"),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                .{},                               .{},                                  .{},
@@ -1395,7 +1457,8 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&store_reads),      shader.Spirv.of(&store_atomics),   shader.Spirv.of(&store_counted),      Shipped.Kept.spirv,
     Shipped.KeptPushed.spirv,           shader.Spirv.of(&for_loop),        shader.Spirv.of(&do_while),           shader.Spirv.of(&float_loop),
     Shipped.TwoTextures.spirv,          shader.Spirv.of(&four_samples),    shader.Spirv.of(&scratch_slots),      shader.Spirv.of(&tree_pair),
-    shader.Spirv.of(&shipped_layers),   shader.Spirv.of(&shipped_cube),    shader.Spirv.of(&shipped_volume),
+    shader.Spirv.of(&shipped_layers),   shader.Spirv.of(&shipped_cube),    shader.Spirv.of(&shipped_volume),     shader.Spirv.of(&shipped_lod),
+    shader.Spirv.of(&shipped_bias),     Shipped.Offset.spirv,
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -2990,6 +3053,102 @@ const shipped_volume = [_]u32{
     0x0003003E, 0x00000009, 0x00000013, 0x000100FD, 0x00010038,
 };
 
+/// glslc's own output, at -O, for a 2D texture at the level three times
+/// the first of the two floats of varying 0, OpImageSampleExplicitLod with
+/// Lod, which the V3D writes to TMUB and starts at TMUSLOD (since 1.45).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2D tex;
+/// layout(location = 0) in vec2 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = textureLod(tex, at, at.x * 3.0);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag lod.frag -o lod.spv   # 151 words
+/// spirv-val --target-env vulkan1.0 lod.spv         # no output, and 0
+/// ```
+const shipped_lod = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001B, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000011, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000011, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040017, 0x0000000F,
+    0x00000006, 0x00000002, 0x00040020, 0x00000010, 0x00000001, 0x0000000F,
+    0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x00040015, 0x00000013,
+    0x00000020, 0x00000000, 0x0004002B, 0x00000013, 0x00000014, 0x00000000,
+    0x00040020, 0x00000015, 0x00000001, 0x00000006, 0x0004002B, 0x00000006,
+    0x00000018, 0x40400000, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000E,
+    0x0000000D, 0x0004003D, 0x0000000F, 0x00000012, 0x00000011, 0x00050041,
+    0x00000015, 0x00000016, 0x00000011, 0x00000014, 0x0004003D, 0x00000006,
+    0x00000017, 0x00000016, 0x00050085, 0x00000006, 0x00000019, 0x00000017,
+    0x00000018, 0x00070058, 0x00000007, 0x0000001A, 0x0000000E, 0x00000012,
+    0x00000002, 0x00000019, 0x0003003E, 0x00000009, 0x0000001A, 0x000100FD,
+    0x00010038,
+};
+
+/// glslc's own output, at -O, for a 2D texture at the two floats of
+/// varying 0, its level biased by the second times a quarter less one:
+/// OpImageSampleImplicitLod with Bias, which the V3D writes to TMUB
+/// (since 1.45).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2D tex;
+/// layout(location = 0) in vec2 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = texture(tex, at, at.y * 0.25 - 1.0);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag bias.frag -o bias.spv   # 160 words
+/// spirv-val --target-env vulkan1.0 bias.spv         # no output, and 0
+/// ```
+const shipped_bias = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001D, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000011, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000011, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040017, 0x0000000F,
+    0x00000006, 0x00000002, 0x00040020, 0x00000010, 0x00000001, 0x0000000F,
+    0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x00040015, 0x00000013,
+    0x00000020, 0x00000000, 0x0004002B, 0x00000013, 0x00000014, 0x00000001,
+    0x00040020, 0x00000015, 0x00000001, 0x00000006, 0x0004002B, 0x00000006,
+    0x00000018, 0x3E800000, 0x0004002B, 0x00000006, 0x0000001A, 0x3F800000,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003D, 0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D,
+    0x0000000F, 0x00000012, 0x00000011, 0x00050041, 0x00000015, 0x00000016,
+    0x00000011, 0x00000014, 0x0004003D, 0x00000006, 0x00000017, 0x00000016,
+    0x00050085, 0x00000006, 0x00000019, 0x00000017, 0x00000018, 0x00050083,
+    0x00000006, 0x0000001B, 0x00000019, 0x0000001A, 0x00070057, 0x00000007,
+    0x0000001C, 0x0000000E, 0x00000012, 0x00000001, 0x0000001B, 0x0003003E,
+    0x00000009, 0x0000001C, 0x000100FD, 0x00010038,
+};
+
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
 /// V3D's host tests hold to compile to the program of glslc's optimized
 /// module, word for word: `c` and `k` in variables of the function's own,
@@ -3316,7 +3475,45 @@ const shipped_layered_throughs = shipped: {
     break :shipped made;
 };
 
-const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs ++ shipped_layered_throughs;
+/// A texture of levels at a level the program gives, with a bias it
+/// gives and a texel offset away: glslc's `shipped_lod` and
+/// `shipped_bias`, the cores' `levelledFragment`, and the IR's
+/// `Shipped.Offset`. "texture" puts the texture once over the quad, so
+/// the level runs from 0 at its left to 3 at its right; "tiled" reads it
+/// at about level 1, and the bias runs from -1 at the top to 1 at the
+/// bottom (since 1.45).
+const levelled_throughs = [_]Through{
+    .{
+        .label = "shipped lod",
+        .what = "a level from 0 to 3, mixed",
+        .fragment = "shipped lod",
+        .info = .{ .mipmap_mode = .linear, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+    },
+    .{
+        .label = "shipped lod",
+        .what = "a level from 0 to 3, the nearest",
+        .fragment = "shipped lod",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+    },
+    .{
+        .label = "shipped bias",
+        .what = "-1 to 1, levels mixed",
+        .fragment = "shipped bias",
+        .info = .{ .mipmap_mode = .linear, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "tiled",
+    },
+    .{
+        .label = "shipped offset",
+        .what = "(1, -2) texels, the nearest",
+        .fragment = "shipped offset",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "texture",
+    },
+};
+
+const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs ++ shipped_layered_throughs ++ levelled_throughs;
 
 /// What the shadow-map cases compare with (`Cases.shadowed`): the
 /// reference less than the depth, and greater (since 1.14).

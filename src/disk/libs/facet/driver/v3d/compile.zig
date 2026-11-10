@@ -429,35 +429,31 @@ pub const SamplerDim = enum(u8) {
 pub const profile: spirv.Profile = .{
     .capabilities = &.{.shader},
     .opcodes = &.{
-        .capability,          .memory_model,        .entry_point,                    .execution_mode,
-        .decorate,            .type_void,           .type_float,                     .type_vector,
-        .type_pointer,        .type_function,       .constant,                       .constant_composite,
-        .variable,            .function,            .label,                          .load,
+        .capability,                     .memory_model,        .entry_point,                    .execution_mode,
+        .decorate,                       .type_void,           .type_float,                     .type_vector,
+        .type_pointer,                   .type_function,       .constant,                       .constant_composite,
+        .variable,                       .function,            .label,                          .load,
         // What a real toolchain writes around the instructions: an
         // extended set imported but not used (`ext_inst` is absent, so a
         // call into one is still refused) and the names and source
         // strings glslc always emits. None of them is computation.
-        .ext_inst_import,     .source,              .source_extension,               .name,
-        .member_name,         .store,               .composite_extract,              .composite_construct,
-        .f_add,               .f_mul,               .vector_times_scalar,            .returns,
-        .function_end,        .type_image,          .type_sampled_image,             .image_sample_implicit_lod,
+        .ext_inst_import,                .source,              .source_extension,               .name,
+        .member_name,                    .store,               .composite_extract,              .composite_construct,
+        .f_add,                          .f_mul,               .vector_times_scalar,            .returns,
+        .function_end,                   .type_image,          .type_sampled_image,             .image_sample_implicit_lod,
         // A pixel dropped where a float is less or greater than another,
         // in the one shape a conditional discard has in SPIR-V: the
         // comparison, a selection whose true block is `OpKill` alone, and
         // the merge block the body goes on in (since 1.139). An `OpKill`
         // in any other place is refused by name, `Error.Discards`.
-        .kill,                .type_bool,           .f_ord_less_than,                .f_ord_greater_than,
-        .selection_merge,     .branch_conditional,
-        // The same: taken here so that a module carrying a constant texel
-        // offset is refused for the operand and not for the integer type
-        // the offset's constant is declared with. `profile.image_operands`
-        // is empty, so `look` turns the operand away and `compile` answers
-        // `Error.Operands`; this list taking `.type_int` is what lets the
-        // walk get that far. Since 1.138 an integer is also what an
-        // access chain into the push constants is indexed with, and that
-        // is the only place one is read: a value of it anywhere else is
-        // refused in the body, this back end computing with 32-bit
-        // floats and their vectors alone.
+        .kill,                           .type_bool,           .f_ord_less_than,                .f_ord_greater_than,
+        .selection_merge,                .branch_conditional,
+        // The integer type a constant texel offset is declared with,
+        // first taken so that such a module was refused for the operand
+        // (`Error.Operands`) and since 1.180 read as the offset P2 carries
+        // (`profile.image_operands`). Since 1.138 an integer is also what
+        // an access chain into the push constants is indexed with, and
+        // since 1.165 a value of its own.
          .type_int,
         // The push constants: a block of floats and vectors of them, one
         // member read at a time through an access chain whose indexes
@@ -465,9 +461,9 @@ pub const profile: spirv.Profile = .{
         // in a block, and the matrix arithmetic vtn lowers to columns of
         // vector arithmetic (since 1.161).
                               .type_struct,
-        .member_decorate,     .access_chain,        .type_array,                     .type_matrix,
-        .matrix_times_vector, .vector_times_matrix, .matrix_times_matrix,            .matrix_times_scalar,
-        .transpose,           .outer_product,
+        .member_decorate,                .access_chain,        .type_array,                     .type_matrix,
+        .matrix_times_vector,            .vector_times_matrix, .matrix_times_matrix,            .matrix_times_scalar,
+        .transpose,                      .outer_product,
         // A depth compared with a reference, the TMU told it through
         // TMUDREF (v3d_tex.c:155-157; since 1.143).
               .image_sample_dref_implicit_lod,
@@ -476,18 +472,18 @@ pub const profile: spirv.Profile = .{
         // named by a shuffle, or a varying's one float by an access chain,
         // which compute nothing (since 1.152).
         .f_sub,
-        .f_negate,            .f_div,               .dot,                            .ext_inst,
+        .f_negate,                       .f_div,               .dot,                            .ext_inst,
         // The shuffle, then the other comparisons glslc writes and a float
         // chosen by one (since 1.153), then a selection's arms, their
         // values chosen at its merge and one float of a vector replaced
         // (since 1.154).
-        .vector_shuffle,      .f_unord_not_equal,   .f_ord_less_than_equal,          .f_ord_greater_than_equal,
-        .select,              .f_ord_equal,         .composite_insert,               .phi,
+        .vector_shuffle,                 .f_unord_not_equal,   .f_ord_less_than_equal,          .f_ord_greater_than_equal,
+        .select,                         .f_ord_equal,         .composite_insert,               .phi,
         .branch,
         // Then bools of bools and the unordered comparisons, as glslc
         // writes &&, || and ! (since 1.157).
-                     .logical_and,         .f_unord_greater_than_equal,     .f_unord_greater_than,
-        .logical_or,          .f_unord_less_than,   .f_unord_less_than_equal,        .logical_not,
+                                .logical_and,         .f_unord_greater_than_equal,     .f_unord_greater_than,
+        .logical_or,                     .f_unord_less_than,   .f_unord_less_than_equal,        .logical_not,
         // A storage buffer's last member, read at constant indexes
         // (since 1.164).
         .type_runtime_array,
@@ -496,29 +492,37 @@ pub const profile: spirv.Profile = .{
         // them (since 1.165). The divisions are not: v3dv has NIR lower
         // them to a sequence of float and integer steps
         // (nir_lower_idiv), which is not ported.
-         .i_add,               .i_sub,                          .i_mul,
-        .s_negate,            .shift_left_logical,  .shift_right_logical,            .shift_right_arithmetic,
-        .bitwise_and,         .bitwise_or,          .bitwise_xor,                    .not,
-        .bitcast,             .convert_f_to_s,      .convert_f_to_u,                 .convert_s_to_f,
-        .convert_u_to_f,      .i_equal,             .i_not_equal,                    .s_less_than,
-        .s_less_than_equal,   .s_greater_than,      .s_greater_than_equal,           .u_less_than,
-        .u_less_than_equal,   .u_greater_than,      .u_greater_than_equal,           .logical_equal,
+                    .i_add,               .i_sub,                          .i_mul,
+        .s_negate,                       .shift_left_logical,  .shift_right_logical,            .shift_right_arithmetic,
+        .bitwise_and,                    .bitwise_or,          .bitwise_xor,                    .not,
+        .bitcast,                        .convert_f_to_s,      .convert_f_to_u,                 .convert_s_to_f,
+        .convert_u_to_f,                 .i_equal,             .i_not_equal,                    .s_less_than,
+        .s_less_than_equal,              .s_greater_than,      .s_greater_than_equal,           .u_less_than,
+        .u_less_than_equal,              .u_greater_than,      .u_greater_than_equal,           .logical_equal,
         .logical_not_equal,
         // A storage buffer's atomics, as vtn makes them ssbo_atomic and
         // ssbo_atomic_swap, a load_ssbo and a store_ssbo, and the barriers
         // their memory semantics and OpMemoryBarrier ask for
         // (vtn_handle_atomics, spirv_to_nir.c:4288-4480; since 1.169).
-          .memory_barrier,      .atomic_load,                    .atomic_store,
-        .atomic_exchange,     .atomic_i_increment,  .atomic_compare_exchange,        .atomic_compare_exchange_weak,
-        .atomic_i_decrement,  .atomic_i_add,        .atomic_i_sub,                   .atomic_s_min,
-        .atomic_u_min,        .atomic_s_max,        .atomic_u_max,                   .atomic_and,
-        .atomic_or,           .atomic_xor,
+                     .memory_barrier,      .atomic_load,                    .atomic_store,
+        .atomic_exchange,                .atomic_i_increment,  .atomic_compare_exchange,        .atomic_compare_exchange_weak,
+        .atomic_i_decrement,             .atomic_i_add,        .atomic_i_sub,                   .atomic_s_min,
+        .atomic_u_min,                   .atomic_s_max,        .atomic_u_max,                   .atomic_and,
+        .atomic_or,                      .atomic_xor,
         // A loop, unrolled as nir_opt_loop_unroll unrolls it (since
         // 1.172).
                  .loop_merge,
+        // A sample at a level the program gives, NIR's txl (since 1.180).
+                            .image_sample_explicit_lod,
+        .image_sample_dref_explicit_lod,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform },
     .image_dims = &.{ .dim_2d, .dim_3d, .cube },
+    // A bias, a level and a constant texel offset, TMUB's and P2's
+    // (handle_tex_src, v3d_tex.c:129-170; since 1.180). A gradient is
+    // nir_lower_tex's lower_txd (vir.c:802), not ported, and an offset
+    // the program computes wants ImageGatherExtended.
+    .image_operands = &.{ .bias, .lod, .const_offset },
     // The vertex stage since 1.163 (docs/facet-vulkan10.md item 60).
     .stages = &.{ .fragment, .vertex },
     .most_ids = most_ids,
@@ -834,6 +838,29 @@ pub const Step = struct {
     non_writeable: bool = false,
     /// An `ssbo_atomic`'s operation (since 1.169).
     atomic: Atomic = .iadd,
+    /// A `sample`'s or a `sample_compared`'s level of detail, its bias or
+    /// its level `from[0]` (since 1.180).
+    lookup: Lookup = .implicit,
+    /// A sample's ConstOffset, in texels along s, t and r, each -8 to 7
+    /// (since 1.180).
+    offsets: [3]i8 = @splat(0),
+};
+
+/// How a sample's level of detail is found, a nir_tex_instr's op: from
+/// the quad's derivatives, NIR's tex; from them and a bias, txb
+/// (nir_tex_src_bias); or at a level the program gives, txl
+/// (nir_tex_src_lod). vtn makes each of the image operands Bias and Lod
+/// (vtn_handle_texture, spirv_to_nir.c:3423-3438; since 1.180).
+pub const Lookup = enum(u8) {
+    implicit,
+    bias,
+    lod,
+
+    /// nir_tex_instr_has_implicit_derivative: whether the quad's helper
+    /// pixels are needed for the coordinate.
+    pub fn derived(lookup: Lookup) bool {
+        return lookup != .lod;
+    }
 };
 
 /// Where a step is: in no arm of a kept selection, 0, or in one of its
@@ -1517,8 +1544,14 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
         .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store => return Error.Storage,
         .discard => return Error.Discards,
         .sample_compared => return Error.Samplers,
-        // Every one reads a 2D texture at s and t (since 1.179).
-        .sample => if (work.samplers[each.at].dim != .flat) return Error.Samplers,
+        // Every one reads a 2D texture at s and t (since 1.179), at the
+        // level the quad gives and at no offset: a bias, a level and an
+        // offset are operands no hand-written program takes.
+        .sample => if (work.samplers[each.at].dim != .flat) {
+            return Error.Samplers;
+        } else if (each.lookup != .implicit or !std.mem.eql(i8, &each.offsets, &.{ 0, 0, 0 })) {
+            return Error.Operands;
+        },
         // Nor does any compute beyond a sum and a product.
         .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2 => return Error.Body,
         .select, .set_less, .sat, .sin, .cos, .sign, .logic, .integer => return Error.Body,
@@ -2816,7 +2849,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // neither, and the selection stays a branch.
                     // Such a selection is kept a branch (since 1.171).
                     .arm => switch (instruction.op) {
-                        .image_sample_implicit_lod, .image_sample_dref_implicit_lod => try selection.keep(work, depth),
+                        .image_sample_implicit_lod, .image_sample_dref_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_explicit_lod => try selection.keep(work, depth),
                         // An atomic or a barrier is neither either: it
                         // would run where the arm is not taken (since
                         // 1.169).
@@ -6218,8 +6251,11 @@ fn readsOf(each: Step) [4]?u16 {
         .select => .{ each.a, each.b, each.from[0], null },
         .logic => .{ each.a, if (each.at != @intFromEnum(Logic.inot)) each.b else null, null, null },
         .integer => .{ each.a, if (!@as(Integer, @enumFromInt(each.at)).unary()) each.b else null, null, null },
-        .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .sample, .output, .round_to_int, .ubo_indirect, .ssbo_indirect, .scratch_indirect => .{ each.a, null, null, null },
-        .compare, .set_less, .add, .mul, .sub, .min, .max, .sample_compared => .{ each.a, each.b, null, null },
+        .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .output, .round_to_int, .ubo_indirect, .ssbo_indirect, .scratch_indirect => .{ each.a, null, null, null },
+        .compare, .set_less, .add, .mul, .sub, .min, .max => .{ each.a, each.b, null, null },
+        // A sample's bias or level too (since 1.180).
+        .sample => .{ each.a, null, if (each.lookup != .implicit) each.from[0] else null, null },
+        .sample_compared => .{ each.a, each.b, if (each.lookup != .implicit) each.from[0] else null, null },
         .ssbo_store, .scratch_store => .{ each.a, if (each.from[0] != none) each.from[0] else null, null, null },
         .ssbo_atomic => .{ each.a, if (each.from[0] != none) each.from[0] else null, if (each.from[1] != none) each.from[1] else null, null },
         .barrier => .{ null, null, null, null },
@@ -6268,6 +6304,11 @@ fn renameReads(each: *Step, renamed: *const [most_steps]u16) void {
             if (each.from[0] != none) each.from[0] = renamed[each.from[0]];
             if (each.tag == .ssbo_atomic and each.from[1] != none) each.from[1] = renamed[each.from[1]];
         },
+        .sample, .sample_compared => {
+            each.a = renamed[each.a];
+            if (each.tag == .sample_compared) each.b = renamed[each.b];
+            if (each.lookup != .implicit) each.from[0] = renamed[each.from[0]];
+        },
         else => {
             if (reads[0] != null) each.a = renamed[each.a];
             if (reads[1] != null) each.b = renamed[each.b];
@@ -6304,6 +6345,11 @@ fn replaceUses(work: *Work, from: u16, to: u16) void {
                 if (user.a == from) user.a = to;
                 if (user.from[0] == from) user.from[0] = to;
                 if (user.tag == .ssbo_atomic and user.from[1] == from) user.from[1] = to;
+            },
+            .sample, .sample_compared => {
+                if (user.a == from) user.a = to;
+                if (user.tag == .sample_compared and user.b == from) user.b = to;
+                if (user.lookup != .implicit and user.from[0] == from) user.from[0] = to;
             },
             else => {
                 const reads = readsOf(user.*);
@@ -7332,40 +7378,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (work.glsl == none or try idOf(operands[2]) != work.glsl) return Error.Body;
             work.step_of[id] = try glslCall(work, operands[3], kind, operands[4..]);
         },
-        .image_sample_implicit_lod => {
-            // ResultType, Result, SampledImage, Coordinate. An image
-            // operand past those would be a bias, an offset or a lod,
-            // each of which is a different TMU write: none is emitted
-            // here, so a module that asks for one is refused.
-            if (operands.len != 4) return Error.Body;
-            const type_id = try idOf(operands[0]);
-            const id = try idOf(operands[1]);
-            if (try kindOf(work, type_id) != .f32x4) return Error.Type;
-            const which = work.sampler_of[try idOf(operands[2])];
-            if (which == none) return Error.Body;
-            const where = try sampledAt(work, operands[3], work.samplers[which].dim);
-            const made = try put(work, .{ .tag = .sample, .kind = .f32x4, .a = where, .at = which });
-            work.step_of[id] = made;
-            if (work.sampled == none) work.sampled = made;
-            work.sample_count += 1;
-        },
-        .image_sample_dref_implicit_lod => {
-            // ResultType, Result, SampledImage, Coordinate, Dref: one
-            // float, compared with the reference (since 1.143). An image
-            // operand past them is refused as it is for a plain sample.
-            if (operands.len != 5) return Error.Body;
-            const type_id = try idOf(operands[0]);
-            const id = try idOf(operands[1]);
-            if (try kindOf(work, type_id) != .f32x1) return Error.Type;
-            const which = work.sampler_of[try idOf(operands[2])];
-            if (which == none) return Error.Body;
-            const where = try sampledAt(work, operands[3], work.samplers[which].dim);
-            const against = try operand(work, operands[4], .f32x1);
-            const made = try put(work, .{ .tag = .sample_compared, .kind = .f32x1, .a = where, .b = against, .at = which });
-            work.step_of[id] = made;
-            if (work.sampled == none) work.sampled = made;
-            work.sample_count += 1;
-        },
+        .image_sample_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_implicit_lod, .image_sample_dref_explicit_lod => try readSample(work, instruction.op, operands),
         .vector_times_scalar => {
             if (operands.len != 4) return Error.Body;
             const type_id = try idOf(operands[0]);
@@ -7663,7 +7676,13 @@ fn lanes(work: *Work) void {
         at -= 1;
         const each = steps[at];
         switch (each.tag) {
-            .sample, .sample_compared => needs[each.a] = true,
+            // The coordinate of a sample whose level the quad's
+            // derivatives give (nir_tex_instr_has_implicit_derivative,
+            // nir_opt_load_skip_helpers.c:151-156); a bias, a level and
+            // a reference need none (since 1.180).
+            .sample, .sample_compared => if (each.lookup.derived()) {
+                needs[each.a] = true;
+            },
             .ubo_indirect, .ssbo_indirect, .scratch_indirect => if (!work.divergent[at]) {
                 needs[each.a] = true;
             },
@@ -8330,6 +8349,87 @@ fn isIntegerType(work: *const Work, type_id: u16) bool {
 
 /// An operand id as a step of `kind`. A constant becomes a step of its
 /// own the first time it is read, which is one uniform a float.
+/// An OpImageSample: ResultType, Result, SampledImage, Coordinate, a
+/// Dref sample's reference (since 1.143), and then the image operands, a
+/// mask and an id for each bit set, in the order the bits run. vtn makes
+/// a nir_tex_instr of it (vtn_handle_texture, spirv_to_nir.c:3420-3465):
+/// a Bias makes the tex a txb and a Lod is an explicit level's txl, each
+/// the one float a source of its own (`Lookup`); a ConstOffset is the
+/// texels a constant integer vector moves the sample by, as many as the
+/// image's coordinate names but a layer (since 1.180). `look` has held
+/// the operands to the profile's: no Grad, and no offset the program
+/// computes.
+fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
+    const compared = op == .image_sample_dref_implicit_lod or op == .image_sample_dref_explicit_lod;
+    const explicit = op == .image_sample_explicit_lod or op == .image_sample_dref_explicit_lod;
+    const fixed: usize = if (compared) 5 else 4;
+    if (operands.len < fixed) return Error.Body;
+    const type_id = try idOf(operands[0]);
+    const id = try idOf(operands[1]);
+    if (try kindOf(work, type_id) != if (compared) Kind.f32x1 else Kind.f32x4) return Error.Type;
+    const which = work.sampler_of[try idOf(operands[2])];
+    if (which == none) return Error.Body;
+    const dim = work.samplers[which].dim;
+    var made: Step = .{
+        .tag = if (compared) .sample_compared else .sample,
+        .kind = if (compared) .f32x1 else .f32x4,
+        .a = try sampledAt(work, operands[3], dim),
+        // One float, compared with the reference (since 1.143).
+        .b = if (compared) try operand(work, operands[4], .f32x1) else 0,
+        .at = which,
+        .from = .{ none, 0, 0, 0 },
+    };
+    if (operands.len > fixed) {
+        const mask = operands[fixed];
+        var next = fixed + 1;
+        const bias = @intFromEnum(spirv.ImageOperands.bias);
+        const lod = @intFromEnum(spirv.ImageOperands.lod);
+        const const_offset = @intFromEnum(spirv.ImageOperands.const_offset);
+        if (mask & ~(bias | lod | const_offset) != 0) return Error.Operands;
+        if (mask & (bias | lod) != 0) {
+            if (next >= operands.len) return Error.Body;
+            // A bias is an implicit level's and a level an explicit
+            // one's (spirv_to_nir.c:3423-3438).
+            if ((mask & bias != 0) == explicit or mask & bias != 0 and mask & lod != 0) return Error.Body;
+            made.lookup = if (mask & bias != 0) .bias else .lod;
+            made.from[0] = try operand(work, operands[next], .f32x1);
+            next += 1;
+        }
+        if (mask & const_offset != 0) {
+            if (next >= operands.len) return Error.Body;
+            made.offsets = try texelOffsets(work, operands[next], dim);
+            next += 1;
+        }
+        if (next != operands.len) return Error.Body;
+    }
+    // An explicit level's sample has its Lod, or a Grad `look` refuses.
+    if (explicit and made.lookup != .lod) return Error.Operands;
+    const at = try put(work, made);
+    work.step_of[id] = at;
+    if (work.sampled == none) work.sampled = at;
+    work.sample_count += 1;
+}
+
+/// A ConstOffset: a constant integer, or vector of them, of as many as
+/// the image's coordinate names but a layer (non_array_components,
+/// v3d_tex.c:212-214), each -8 to 7, V3D_MIN_TEXEL_OFFSET and
+/// V3D_MAX_TEXEL_OFFSET, which handle_tex_src packs into P2 (:158-170).
+/// SPIR-V gives a cube none; one past the device's limits is refused
+/// rather than cut to its four bits (since 1.180).
+fn texelOffsets(work: *const Work, word: u32, dim: SamplerDim) Error![3]i8 {
+    const id = try idOf(word);
+    const count: u8 = if (dim == .layers) 2 else dim.components();
+    if (dim == .cube) return Error.Body;
+    if (!isConstant(work, id) or work.wide[id] != count) return Error.Type;
+    var made: [3]i8 = @splat(0);
+    for (made[0..count], 0..) |*each, k| {
+        const value: i32 = @bitCast(work.pool[work.points[id] + k]);
+        if (value < -8 or value > 7) return Error.Operands;
+        each.* = @intCast(value);
+    }
+    return made;
+}
+
 /// A sample's coordinate: the floats its image's `SamplerDim` names, or
 /// more, the TMU given those. SPIR-V lets a coordinate be wider than its
 /// image needs, the floats it does not use after those it does, and vtn
@@ -9081,7 +9181,8 @@ const Cutout = ir.Fragment(struct {
 });
 
 /// The texel a constant offset away, which the cores read (item 28, since
-/// 1.87) and this device refuses: `Error.Operands`.
+/// 1.87) and the plan refuses, `Error.Operands`; Mesa's back end puts it
+/// in P2 since 1.180.
 const Offset = ir.Fragment(struct {
     pub fn body(b: *ir.Build) void {
         b.color(b.sampleOffset(0, 0, b.input(0, .f32x2), .{ 1, -2 }));
@@ -9786,8 +9887,9 @@ test "what this back end has no program for is refused by name, and nothing is m
     // which family it is.
     try testing.expectError(Error.Discards, compile(&work, Cutout.words));
     // A constant texel offset on the sample: the cores apply one, and no
-    // program here writes the configuration parameter that carries it,
-    // the sampler's own state being all the TMU is told. Said by
+    // hand-written program here writes the configuration parameter that
+    // carries it, the sampler's own state being all the TMU is told
+    // (Mesa's back end writes it since 1.180). Said by
     // name, which is what tells it from a word this walk simply did not
     // know - and this is also the only test in the tree that proves the
     // operand reached the *words* at all: the cores read the offset from
@@ -10380,7 +10482,7 @@ const TmuWrite = struct {
 
 /// The TMU writes of `code` in the order it makes them, their names in
 /// `names`.
-fn tmuWrites(code: Code, names: *[8][2][8]u8, into: *[8]TmuWrite) []TmuWrite {
+fn tmuWrites(code: Code, names: *[8][2][16]u8, into: *[8]TmuWrite) []TmuWrite {
     var buffer: [disasm.most_text]u8 = undefined;
     var count: usize = 0;
     for (code.words) |word| {
@@ -10405,7 +10507,7 @@ fn tmuWrites(code: Code, names: *[8][2][8]u8, into: *[8]TmuWrite) []TmuWrite {
 /// That `code` writes the TMU registers `expected` in that order, each
 /// from a register of its own.
 fn expectTmuWrites(code: Code, expected: []const []const u8) !void {
-    var names: [8][2][8]u8 = undefined;
+    var names: [8][2][16]u8 = undefined;
     var into: [8]TmuWrite = undefined;
     const writes = tmuWrites(code, &names, &into);
     try testing.expectEqual(expected.len, writes.len);
@@ -10416,7 +10518,7 @@ fn expectTmuWrites(code: Code, expected: []const []const u8) !void {
 }
 
 /// The register `code` moves to the TMU register `name`.
-fn tmuSource(code: Code, name: []const u8, names: *[8][2][8]u8, into: *[8]TmuWrite) ?[]const u8 {
+fn tmuSource(code: Code, name: []const u8, names: *[8][2][16]u8, into: *[8]TmuWrite) ?[]const u8 {
     for (tmuWrites(code, names, into)) |each| {
         if (std.mem.eql(u8, each.name, name)) return each.source;
     }
@@ -10470,7 +10572,7 @@ test "a cube is sampled at its direction made as long as its largest magnitude, 
     // takes the fmov's abs unpack into the fmax that reads it.
     try expectTmuWrites(code, &.{ "tmut", "tmur", "tmuscm" });
     // Each of the three is a float of the direction times the reciprocal.
-    var names: [8][2][8]u8 = undefined;
+    var names: [8][2][16]u8 = undefined;
     var into: [8]TmuWrite = undefined;
     for ([_][]const u8{ "tmut", "tmur", "tmuscm" }) |name| try testing.expect(writtenWith(code, "fmul", tmuSource(code, name, &names, &into).?));
     var buffer: [disasm.most_text]u8 = undefined;
@@ -10497,7 +10599,7 @@ test "a 3D texture's third float is written to TMUR and a layer of an array to T
     try testing.expectEqual(SamplerDim.layers, layers_code.sampled()[0].dim);
     try testing.expectEqual(@as(usize, 0), stepsOf(&layers, .recip));
     try expectTmuWrites(layers_code, &.{ "tmut", "tmui", "tmus" });
-    var names: [8][2][8]u8 = undefined;
+    var names: [8][2][16]u8 = undefined;
     var into: [8]TmuWrite = undefined;
     try testing.expect(writtenWith(layers_code, "fmul", tmuSource(layers_code, "tmui", &names, &into).?));
     const sampled = for (layers.program()) |each| {
@@ -10534,7 +10636,7 @@ test "a cube or an array of depths compared takes the floats its image names of 
     try testing.expectEqual(Kind.f32x3, normalized.kind);
     for (0..3) |k| try testing.expect(isInputPart(&cube, normalized.a, @intCast(k), @intCast(k)));
     try testing.expect(isInputPart(&cube, compared.b, 0, 3));
-    var names: [8][2][8]u8 = undefined;
+    var names: [8][2][16]u8 = undefined;
     var into: [8]TmuWrite = undefined;
     const writes = tmuWrites(cube_code, &names, &into);
     try testing.expectEqual(@as(usize, 4), writes.len);
@@ -10551,6 +10653,273 @@ test "a cube or an array of depths compared takes the floats its image names of 
 test "a cube of an array is refused, which needs SampledCubeArray" {
     var work: Work = .{};
     try testing.expectError(Error.Refused, throughMesa(&work, &reference.glslc_cube_array));
+}
+
+/// The uniform stream of a sample whose P2 is `p2`: its texture, its
+/// sampler with the per-pixel mask, and the constant P2 after them.
+fn sampledStream(p2: ?u32) [3]Word {
+    return .{ .{ .texture = 0 }, .{ .sampler = .{ .bits = per_pixel_mask } }, .{ .float = @bitCast(p2 orelse 0) } };
+}
+
+/// That `code` writes the TMU registers `expected`, each once, in any
+/// order but the one that starts the lookup, `last`, last: v3d's
+/// scheduler reorders every TMU write but S (can_reorder_tmu_write,
+/// qpu_schedule.c:225-235).
+fn expectTmuWritesEnding(code: Code, expected: []const []const u8, last: []const u8) !void {
+    var names: [8][2][16]u8 = undefined;
+    var into: [8]TmuWrite = undefined;
+    const writes = tmuWrites(code, &names, &into);
+    try testing.expectEqual(expected.len + 1, writes.len);
+    try testing.expectEqualStrings(last, writes[writes.len - 1].name);
+    for (expected) |want| {
+        var seen: usize = 0;
+        for (writes[0 .. writes.len - 1]) |got| seen += @intFromBool(std.mem.eql(u8, want, got.name));
+        try testing.expectEqual(@as(usize, 1), seen);
+    }
+}
+
+/// The one sample of `work`'s program.
+fn onlySample(work: *const Work) !Step {
+    var found: ?Step = null;
+    for (work.program()) |each| if (each.tag == .sample or each.tag == .sample_compared) {
+        if (found != null) return error.TestUnexpectedResult;
+        found = each;
+    };
+    return found orelse error.TestUnexpectedResult;
+}
+
+test "a sample at a level the program gives writes the level to TMUB and starts the lookup at TMUSLOD, which disables the automatic level, P2 its default and not written" {
+    // vtn's txl, the Lod a source of its own (spirv_to_nir.c:3434-3439);
+    // handle_tex_src writes it to TMUB (v3d_tex.c:135-150) and
+    // v3d_vir_emit_tex starts the lookup at TMUSLOD (:382-383). P2 is
+    // the default, so the stream is P0 and P1 alone (:349-352; since
+    // 1.180).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_lod);
+    const sampled = try onlySample(&work);
+    try testing.expectEqual(Lookup.lod, sampled.lookup);
+    const level = work.steps[sampled.from[0]];
+    try testing.expectEqual(Tag.mul, level.tag);
+    try testing.expect(isInputPart(&work, level.a, 0, 2));
+    try testing.expectEqual(Tag.constant, work.steps[level.b].tag);
+    try testing.expectEqual(@as(f32, 4.0), work.pool[work.steps[level.b].at]);
+    try expectTmuWrites(code, &.{ "tmut", "tmub", "tmuslod" });
+    var names: [8][2][16]u8 = undefined;
+    var into: [8]TmuWrite = undefined;
+    try testing.expect(writtenWith(code, "fmul", tmuSource(code, "tmub", &names, &into).?));
+    try testing.expectEqualSlices(Word, sampledStream(null)[0..2], code.stream());
+    // A depth compared at a level: the reference to TMUDREF beside it.
+    var shadow: Work = .{};
+    const shadow_code = try throughMesa(&shadow, &reference.glslc_shadow_lod);
+    const compared = try onlySample(&shadow);
+    try testing.expectEqual(Tag.sample_compared, compared.tag);
+    try testing.expectEqual(Lookup.lod, compared.lookup);
+    try testing.expectEqual(Tag.constant, shadow.steps[compared.from[0]].tag);
+    try testing.expectEqual(@as(f32, 1.0), shadow.pool[shadow.steps[compared.from[0]].at]);
+    try expectTmuWritesEnding(shadow_code, &.{ "tmut", "tmudref", "tmub" }, "tmuslod");
+    try testing.expectEqualSlices(Word, sampledStream(null)[0..2], shadow_code.stream());
+}
+
+test "a bias is written to TMUB, the level the quad gives biased by it, and the lookup started at TMUS" {
+    // vtn's txb (spirv_to_nir.c:3424-3432), the bias to TMUB
+    // (v3d_tex.c:129-133); the lookup is a regular one, TMUS (:384-385;
+    // since 1.180).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_bias);
+    const sampled = try onlySample(&work);
+    try testing.expectEqual(Lookup.bias, sampled.lookup);
+    try testing.expectEqual(Tag.sub, work.steps[sampled.from[0]].tag);
+    try expectTmuWrites(code, &.{ "tmut", "tmub", "tmus" });
+    var names: [8][2][16]u8 = undefined;
+    var into: [8]TmuWrite = undefined;
+    try testing.expect(writtenWith(code, "fsub", tmuSource(code, "tmub", &names, &into).?));
+    try testing.expectEqualSlices(Word, sampledStream(null)[0..2], code.stream());
+}
+
+test "a constant offset is P2's, written after P1 as a constant of the uniform stream, four bits for each axis the image's coordinate names but a layer" {
+    // handle_tex_src (v3d_tex.c:158-170) packs the offset's components
+    // into P2's offset_s, offset_t and offset_r, as many as
+    // non_array_components; the P2 is no longer the default, so it is
+    // written, as a constant (:349-352, :372-373). V3D42_TMU_CONFIG_
+    // PARAMETER_2: the op 15 at bit 20, r at 16, t at 12, s at 8
+    // (v3d_packet.xml:1578-1593; since 1.180).
+    const cases = .{
+        .{ "glslc_offset", [3]i8{ 1, -2, 0 }, 0x00F0E100, Lookup.implicit, &[_][]const u8{ "tmut", "tmus" } },
+        .{ "glslc_lod_offset", [3]i8{ -8, 7, 0 }, 0x00F07800, Lookup.lod, &[_][]const u8{ "tmut", "tmub", "tmuslod" } },
+        .{ "glslc_bias_offset", [3]i8{ 3, 0, 0 }, 0x00F00300, Lookup.bias, &[_][]const u8{ "tmut", "tmub", "tmus" } },
+        .{ "glslc_volume_offset", [3]i8{ 1, 2, -3 }, 0x00FD2100, Lookup.implicit, &[_][]const u8{ "tmut", "tmur", "tmus" } },
+        .{ "glslc_layers_offset", [3]i8{ 3, -1, 0 }, 0x00F0F300, Lookup.implicit, &[_][]const u8{ "tmut", "tmui", "tmus" } },
+    };
+    inline for (cases) |case| {
+        var work: Work = .{};
+        const code = try throughMesa(&work, &@field(reference, case[0]));
+        const sampled = try onlySample(&work);
+        try testing.expectEqual(case[1], sampled.offsets);
+        try testing.expectEqual(case[3], sampled.lookup);
+        const stream = code.stream();
+        const expected = sampledStream(case[2]);
+        // A layer's scale may come before the sample's words.
+        try testing.expectEqualSlices(Word, &expected, stream[stream.len - 3 ..]);
+        const last = case[4][case[4].len - 1];
+        try expectTmuWritesEnding(code, case[4][0 .. case[4].len - 1], last);
+    }
+    // facet's own emitter writes the offset as glslc does.
+    var emitted: Work = .{};
+    const emitted_code = try throughMesa(&emitted, Offset.words);
+    try testing.expectEqualSlices(Word, &sampledStream(0x00F0E100), emitted_code.stream());
+    // The plan writes no P2: a hand-written program has no offset.
+    var plan: Work = .{};
+    try testing.expectError(Error.Operands, compile(&plan, &reference.glslc_offset));
+}
+
+test "a cube at a level the program gives has P2 disable the automatic level, as TMUSCM does not, and is started at TMUSCM" {
+    // handle_tex_src (v3d_tex.c:142-148) sets disable_autolod for a
+    // cube's txl, which TMUSLOD would otherwise imply; the cube's own
+    // lookup is TMUSCM (:380-381), and the level goes to TMUB after the
+    // coordinate (since 1.180).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_cube_lod);
+    const sampled = try onlySample(&work);
+    try testing.expectEqual(Lookup.lod, sampled.lookup);
+    try testing.expectEqual(Tag.mul, work.steps[sampled.from[0]].tag);
+    try expectTmuWritesEnding(code, &.{ "tmut", "tmur", "tmub" }, "tmuscm");
+    const stream = code.stream();
+    try testing.expectEqualSlices(Word, &sampledStream(0x00F00002), stream[stream.len - 3 ..]);
+}
+
+test "a cube of depths compared with a bias is five TMU writes, which two threads have room for and four do not" {
+    // get_required_tex_tmu_writes (v3d_tex.c:222) counts T, R, the
+    // reference, the bias and S; v3d_vir_emit_tex halves the threads
+    // while they are more than 16 over the threads (:265-266; since
+    // 1.180).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_cube_shadow_bias);
+    const sampled = try onlySample(&work);
+    try testing.expectEqual(Tag.sample_compared, sampled.tag);
+    try testing.expectEqual(Lookup.bias, sampled.lookup);
+    // The bias is the second varying, its one float.
+    try testing.expectEqual(Tag.input, work.steps[sampled.from[0]].tag);
+    try testing.expectEqual(@as(u16, 1), work.steps[sampled.from[0]].at);
+    try expectTmuWritesEnding(code, &.{ "tmut", "tmur", "tmudref", "tmub" }, "tmuscm");
+    try testing.expectEqual(@as(u8, 2), code.threads);
+    try testing.expectEqualSlices(Word, sampledStream(null)[0..2], code.stream());
+}
+
+test "a level and a bias are reads the passes rename as any other: nir_opt_cse's takes the level computed again and renumbers the bias after it" {
+    // glslc -O0 keeps color.z / 4.0 three times; v3dv's lower_fdiv
+    // makes each the multiplication by the constant's reciprocal
+    // (v3dv_pipeline.c:193; nir_opt_algebraic.py:1918), and nir_opt_cse
+    // leaves one of the three, which the level reads: the bias's
+    // quotient, after the second, moves down a place (since 1.180).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_divided);
+    var lookups: [2]Lookup = undefined;
+    var count: usize = 0;
+    for (work.program()) |each| if (each.tag == .sample) {
+        lookups[count] = each.lookup;
+        const quotient = work.steps[each.from[0]];
+        try testing.expectEqual(Tag.mul, quotient.tag);
+        try testing.expectEqual(Kind.f32x1, quotient.kind);
+        const part: u8 = if (each.lookup == .lod) 2 else 3;
+        try testing.expect(isInputPart(&work, quotient.a, 0, part));
+        try testing.expectEqual(@as(f32, if (each.lookup == .lod) 0.25 else 0.5), work.pool[work.steps[quotient.b].at]);
+        count += 1;
+    };
+    try testing.expectEqual(@as(usize, 2), count);
+    try testing.expectEqual([2]Lookup{ .lod, .bias }, lookups);
+    try testing.expectEqual(@as(usize, 1), countOf(code, "tmuslod"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "mov tmub"));
+}
+
+test "a sample at a level in a selection's arm keeps the arm, as an implicit level's does: glslc_branched's program, the level to TMUB and the lookup at TMUSLOD" {
+    // A tex instruction is none that block_check_for_allowed_instrs lets
+    // through (nir_opt_peephole_select.c:59-326), whatever its op (since
+    // 1.180).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_lod_arm);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.alla"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmub, 0x3f800000"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "tmuslod"));
+    var branched: Work = .{};
+    const implicit = try throughMesa(&branched, &reference.glslc_branched);
+    try testing.expectEqualSlices(Word, implicit.stream(), code.stream());
+}
+
+test "a sample at a level the program gives wants no helper pixels for its coordinate, so the read its coordinate comes from skips them too" {
+    // nir_opt_load_skip_helpers (:151-156): only a sample whose level the
+    // quad's derivatives give, nir_tex_instr_has_implicit_derivative,
+    // needs its coordinate in the helper pixels. A txl's coordinate the
+    // texel of another sample: that sample's result wanted in no helper
+    // pixel, its P1 has the per-pixel mask (v3d_tex.c:311-321; since
+    // 1.180).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_dependent);
+    var samples: usize = 0;
+    for (work.program(), 0..) |each, at| if (each.tag == .sample) {
+        try testing.expect(work.skip_helpers[at]);
+        try testing.expectEqual(if (samples == 0) Lookup.implicit else Lookup.lod, each.lookup);
+        samples += 1;
+    };
+    try testing.expectEqual(@as(usize, 2), samples);
+    const sampler: Word = .{ .sampler = .{ .bits = per_pixel_mask } };
+    try testing.expectEqualSlices(Word, &.{ .{ .texture = 0 }, sampler, .{ .texture = 0 }, sampler }, code.stream());
+    try testing.expectEqual(@as(usize, 1), countOf(code, "tmuslod"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmus,"));
+}
+
+test "a sample's image operands are refused for what the device does not take, and for what SPIR-V forbids" {
+    // A gradient: nir_lower_tex's lower_txd (vir.c:802), not ported.
+    var work: Work = .{};
+    try testing.expectError(Error.Operands, throughMesa(&work, &reference.glslc_grad));
+    // An offset past V3D_MAX_TEXEL_OFFSET, which P2's four bits would
+    // wrap: the -2 of glslc_offset made -9 is refused, not cut.
+    var far = reference.glslc_offset;
+    var rewritten: usize = 0;
+    for (far[5..], 5..) |word, k| if (word == 0x0004002B and far[k + 3] == @as(u32, @bitCast(@as(i32, -2)))) {
+        far[k + 3] = @bitCast(@as(i32, -9));
+        rewritten += 1;
+    };
+    try testing.expectEqual(@as(usize, 1), rewritten);
+    try testing.expectError(Error.Operands, throughMesa(&work, &far));
+    // And glslc_lod_offset's 7 made 8.
+    var past = reference.glslc_lod_offset;
+    rewritten = 0;
+    for (past[5..], 5..) |word, k| if (word == 0x0004002B and past[k + 3] == 7) {
+        past[k + 3] = 8;
+        rewritten += 1;
+    };
+    try testing.expectEqual(@as(usize, 1), rewritten);
+    try testing.expectError(Error.Operands, throughMesa(&work, &past));
+    // An explicit level's sample with no image operands: SPIR-V has it
+    // carry a Lod or a Grad, and `look` finds it cut short.
+    var short = reference.glslc_lod;
+    rewritten = 0;
+    for (&short) |*word| if (word.* == (7 << 16 | 88)) {
+        word.* = 5 << 16 | 88;
+        rewritten += 1;
+    };
+    try testing.expectEqual(@as(usize, 1), rewritten);
+    try testing.expectEqual(spirv.Fault.truncated_instruction, spirv.look(&short, profile).fault);
+    // A Lod on an implicit level's sample, and a Bias on an explicit
+    // one's: vtn asserts neither (spirv_to_nir.c:3425-3427, :3435-3436).
+    inline for (.{ .{ "glslc_lod", 88, 87 }, .{ "glslc_bias", 87, 88 } }) |case| {
+        var swapped = @field(reference, case[0]);
+        var changed: usize = 0;
+        for (&swapped) |*word| if (word.* & 0xffff == case[1] and word.* >> 16 >= 5) {
+            word.* = word.* & 0xffff0000 | case[2];
+            changed += 1;
+        };
+        try testing.expectEqual(@as(usize, 1), changed);
+        try testing.expectError(Error.Body, throughMesa(&work, &swapped));
+    }
+    // A level is read by the plan nowhere (glslc_bias's arithmetic is
+    // refused there before its sample is).
+    var plan: Work = .{};
+    try testing.expectError(Error.Operands, compile(&plan, &reference.glslc_lod));
 }
 
 test "through Mesa's back end, a texel times the colour reads the texel's halves in its products" {
@@ -10636,7 +11005,7 @@ test "through Mesa's back end, what does not fit 4 threads is compiled at 2, whe
 
 test "through Mesa's back end, a module is refused for what the reading refuses, by the same name" {
     var work: Work = .{};
-    try testing.expectError(Error.Operands, throughMesa(&work, Offset.words));
+    try testing.expectError(Error.Operands, throughMesa(&work, &reference.glslc_grad));
     try testing.expectError(Error.Stage, throughMesa(&work, &vertex_words));
     try testing.expectError(Error.Varyings, throughMesa(&work, Wide.words));
     try testing.expectError(Error.Refused, throughMesa(&work, &flat_words));
@@ -10967,7 +11336,7 @@ test "compileThroughMesa makes what compileVir does, its memory given back" {
     }
     // And a refusal gives back the register sets it was made after.
     var work: Work = .{};
-    try testing.expectError(Error.Operands, compileThroughMesa(&work, Offset.words, testing.allocator, .{}));
+    try testing.expectError(Error.Operands, compileThroughMesa(&work, &reference.glslc_grad, testing.allocator, .{}));
 }
 
 /// glslc's float arithmetic (`reference.glslc_arith`) as facet's emitter

@@ -987,10 +987,14 @@ pub fn look(words: []const u32, profile: Profile) Outcome {
             // through `look` untouched and was sampled without it.
             //
             // A Dref sample has a fifth before the optional ones, the
-            // reference it compares with (since 1.143).
-            .image_sample_implicit_lod, .image_sample_dref_implicit_lod => {
-                const fixed: u32 = if (instruction.op == .image_sample_dref_implicit_lod) 5 else 4;
-                if (operands.len < fixed) return .{ .fault = .truncated_instruction };
+            // reference it compares with (since 1.143). An explicit
+            // level's sample must carry its Lod or Grad, so its mask is
+            // no option there (since 1.180).
+            .image_sample_implicit_lod, .image_sample_dref_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_explicit_lod => {
+                const dref = instruction.op == .image_sample_dref_implicit_lod or instruction.op == .image_sample_dref_explicit_lod;
+                const explicit = instruction.op == .image_sample_explicit_lod or instruction.op == .image_sample_dref_explicit_lod;
+                const fixed: u32 = if (dref) 5 else 4;
+                if (operands.len < fixed + @intFromBool(explicit)) return .{ .fault = .truncated_instruction };
                 if (operands.len > fixed) {
                     var mask = operands[fixed];
                     var ids: u32 = 0;
