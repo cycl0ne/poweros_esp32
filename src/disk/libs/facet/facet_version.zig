@@ -5754,4 +5754,45 @@ pub const LIBRARY_VERSION = 1;
 /// On the CM5 FacetBoth's 240 cases are each as they were at 1.177, and
 /// its new `shipped trees` is 11 of 230400 pixels apart, the first the
 /// edge pixel the others have; FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 178;
+///
+/// 179: **A layer of a 2D array, a 3D texture and a cube sampled on the
+/// V3D by a compiled program (docs/facet-vulkan10.md item 59).** The
+/// profile takes Dim 3D and Cube beside 2D, and an arrayed 2D image; a
+/// sampled image's `SamplerDim` is a nir_tex_instr's sampler_dim and
+/// is_array, carried with its unit. A sample's coordinate is the floats
+/// its image names, of a vector that may be wider (vtn trims it,
+/// spirv_to_nir.c:3280-3296). A cube's direction is normalized before
+/// the sample as nir_normalize_cubemap_coords puts it (v3dv_pipeline.c:
+/// 406; nir_normalize_cubemap_coords.c:30-55): the fabs of its three
+/// floats, the fmax of the first two and then the third
+/// (nir_fmax_abs_vec_comp, nir_builtin_builder.h:84-91), its frcp and
+/// the direction times it. v3d_tex.c writes T, then R for a 3D texture
+/// and a cube (handle_tex_src, :110-120) and I for a layer, as a float
+/// (:122-127), the comparator's TMUDREF after them (:155-157), and starts
+/// a cube's lookup at TMUSCM rather than TMUS (:380-381); v3d's scheduler
+/// may reorder the first of them but not S (can_reorder_tmu_write,
+/// qpu_schedule.c:225-235). The draw's texture state is the one the fixed
+/// forms of a layer, a cube and a 3D texture read since 1.141. The
+/// plan's `compile` refuses a sample of any but a 2D texture, as its
+/// programs read s and t alone.
+///
+/// Refused still: a cube of an array, which needs SampledCubeArray; a
+/// sample with a bias, a level or an offset. Not ported: (('fabs',
+/// ('fneg', a)), ('fabs', a)) (nir_opt_algebraic.py:232), so a direction
+/// with a negated float keeps the fneg under the fabs.
+///
+/// Tests: the V3D's 265, four new. 6 new modules of glslc's: glslc_cube's
+/// three fabs are `.abs` unpacks of its two fmax, then a recip, three
+/// fmul, and TMUT, TMUR and TMUSCM, each from an fmul;
+/// glslc_volume TMUT, TMUR, TMUS; glslc_layers the blue times 3.0 to
+/// TMUI; glslc_cube_shadow's TMUDREF before T, TMUSCM last;
+/// glslc_layers_shadow TMUT, TMUI, TMUDREF, TMUS; glslc_cube_array
+/// refused. Of 18 mutations of the port, 18 fail the tests, one of them
+/// by not compiling.
+///
+/// On the CM5 FacetBoth's 241 cases are each as they were at 1.178, and
+/// its six new, the layered cases through glslc's samples rather than the
+/// fixed forms, are each as apart as the fixed form's: 9, 0, 0, 14, 0 and
+/// 0 of 230400 pixels, the same first pixels. FacetProbe passes its 890
+/// checks.
+pub const LIBRARY_REVISION = 179;

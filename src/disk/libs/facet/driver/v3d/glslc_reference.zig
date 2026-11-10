@@ -13720,3 +13720,504 @@ pub const glslc_tree_single = [_]u32{
     0x00000036, 0x00000039, 0x0000003C, 0x0000003F, 0x0003003E, 0x00000032,
     0x00000040, 0x000100FD, 0x00010038,
 };
+
+/// A cube sampled at a direction the colour gives, glslc -O
+/// (`-fshader-stage=frag`), 127 words (since 1.179).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform samplerCube sky;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = texture(sky, color.xyz);
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 21
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %16
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %13 Binding 0
+///                OpDecorate %13 DescriptorSet 0
+///                OpDecorate %16 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 Cube 0 0 0 1 Unknown
+///          %11 = OpTypeSampledImage %10
+///          %12 = OpTypePointer UniformConstant %11
+///          %13 = OpVariable %12 UniformConstant
+///          %15 = OpTypePointer Input %7
+///          %16 = OpVariable %15 Input
+///          %17 = OpTypeVector %6 3
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpLoad %11 %13
+///          %18 = OpLoad %7 %16
+///          %19 = OpVectorShuffle %17 %18 %18 0 1 2
+///          %20 = OpImageSampleImplicitLod %7 %14 %19
+///                OpStore %9 %20
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_cube = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000015, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000010, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000010, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000003,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040020, 0x0000000F,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000F, 0x00000010, 0x00000001,
+    0x00040017, 0x00000011, 0x00000006, 0x00000003, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D, 0x00000007, 0x00000012,
+    0x00000010, 0x0008004F, 0x00000011, 0x00000013, 0x00000012, 0x00000012,
+    0x00000000, 0x00000001, 0x00000002, 0x00050057, 0x00000007, 0x00000014,
+    0x0000000E, 0x00000013, 0x0003003E, 0x00000009, 0x00000014, 0x000100FD,
+    0x00010038,
+};
+
+/// A 3D texture sampled at the colour's first three floats, glslc -O
+/// (`-fshader-stage=frag`), 127 words (since 1.179).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler3D volume;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = texture(volume, color.xyz);
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 21
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %16
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %13 Binding 0
+///                OpDecorate %13 DescriptorSet 0
+///                OpDecorate %16 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 3D 0 0 0 1 Unknown
+///          %11 = OpTypeSampledImage %10
+///          %12 = OpTypePointer UniformConstant %11
+///          %13 = OpVariable %12 UniformConstant
+///          %15 = OpTypePointer Input %7
+///          %16 = OpVariable %15 Input
+///          %17 = OpTypeVector %6 3
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpLoad %11 %13
+///          %18 = OpLoad %7 %16
+///          %19 = OpVectorShuffle %17 %18 %18 0 1 2
+///          %20 = OpImageSampleImplicitLod %7 %14 %19
+///                OpStore %9 %20
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_volume = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000015, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000010, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000010, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000002,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040020, 0x0000000F,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000F, 0x00000010, 0x00000001,
+    0x00040017, 0x00000011, 0x00000006, 0x00000003, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D, 0x00000007, 0x00000012,
+    0x00000010, 0x0008004F, 0x00000011, 0x00000013, 0x00000012, 0x00000012,
+    0x00000000, 0x00000001, 0x00000002, 0x00050057, 0x00000007, 0x00000014,
+    0x0000000E, 0x00000013, 0x0003003E, 0x00000009, 0x00000014, 0x000100FD,
+    0x00010038,
+};
+
+/// A layer of a 2D array, the blue times 3.0, sampled at the red and the
+/// green, glslc -O (`-fshader-stage=frag`), 165 words (since 1.179).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2DArray layers;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = texture(layers, vec3(color.xy, color.z * 3.0));
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 32
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %16
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %13 Binding 0
+///                OpDecorate %13 DescriptorSet 0
+///                OpDecorate %16 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 2D 0 1 0 1 Unknown
+///          %11 = OpTypeSampledImage %10
+///          %12 = OpTypePointer UniformConstant %11
+///          %13 = OpVariable %12 UniformConstant
+///          %15 = OpTypePointer Input %7
+///          %16 = OpVariable %15 Input
+///          %20 = OpTypeInt 32 0
+///          %21 = OpConstant %20 2
+///          %22 = OpTypePointer Input %6
+///          %25 = OpConstant %6 3
+///          %27 = OpTypeVector %6 3
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpLoad %11 %13
+///          %18 = OpLoad %7 %16
+///          %23 = OpAccessChain %22 %16 %21
+///          %24 = OpLoad %6 %23
+///          %26 = OpFMul %6 %24 %25
+///          %28 = OpCompositeExtract %6 %18 0
+///          %29 = OpCompositeExtract %6 %18 1
+///          %30 = OpCompositeConstruct %27 %28 %29 %26
+///          %31 = OpImageSampleImplicitLod %7 %14 %30
+///                OpStore %9 %31
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_layers = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000020, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000010, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000010, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000001,
+    0x00000000, 0x00000001, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040020, 0x0000000F,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000F, 0x00000010, 0x00000001,
+    0x00040015, 0x00000014, 0x00000020, 0x00000000, 0x0004002B, 0x00000014,
+    0x00000015, 0x00000002, 0x00040020, 0x00000016, 0x00000001, 0x00000006,
+    0x0004002B, 0x00000006, 0x00000019, 0x40400000, 0x00040017, 0x0000001B,
+    0x00000006, 0x00000003, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000E,
+    0x0000000D, 0x0004003D, 0x00000007, 0x00000012, 0x00000010, 0x00050041,
+    0x00000016, 0x00000017, 0x00000010, 0x00000015, 0x0004003D, 0x00000006,
+    0x00000018, 0x00000017, 0x00050085, 0x00000006, 0x0000001A, 0x00000018,
+    0x00000019, 0x00050051, 0x00000006, 0x0000001C, 0x00000012, 0x00000000,
+    0x00050051, 0x00000006, 0x0000001D, 0x00000012, 0x00000001, 0x00060050,
+    0x0000001B, 0x0000001E, 0x0000001C, 0x0000001D, 0x0000001A, 0x00050057,
+    0x00000007, 0x0000001F, 0x0000000E, 0x0000001E, 0x0003003E, 0x00000009,
+    0x0000001F, 0x000100FD, 0x00010038,
+};
+
+/// A cube of depths compared at a direction, the colour's first three
+/// floats, with its alpha as the reference: the coordinate is the whole
+/// vec4, the Dref its fourth float. glslc -O (`-fshader-stage=frag`),
+/// 128 words (since 1.179).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform samplerCubeShadow sky;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = vec4(texture(sky, color));
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 21
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %16
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %13 Binding 0
+///                OpDecorate %13 DescriptorSet 0
+///                OpDecorate %16 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 Cube 1 0 0 1 Unknown
+///          %11 = OpTypeSampledImage %10
+///          %12 = OpTypePointer UniformConstant %11
+///          %13 = OpVariable %12 UniformConstant
+///          %15 = OpTypePointer Input %7
+///          %16 = OpVariable %15 Input
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpLoad %11 %13
+///          %17 = OpLoad %7 %16
+///          %18 = OpCompositeExtract %6 %17 3
+///          %19 = OpImageSampleDrefImplicitLod %6 %14 %17 %18
+///          %20 = OpCompositeConstruct %7 %19 %19 %19 %19
+///                OpStore %9 %20
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_cube_shadow = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000015, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000010, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000010, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000003,
+    0x00000001, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040020, 0x0000000F,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000F, 0x00000010, 0x00000001,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003D, 0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D,
+    0x00000007, 0x00000011, 0x00000010, 0x00050051, 0x00000006, 0x00000012,
+    0x00000011, 0x00000003, 0x00060059, 0x00000006, 0x00000013, 0x0000000E,
+    0x00000011, 0x00000012, 0x00070050, 0x00000007, 0x00000014, 0x00000013,
+    0x00000013, 0x00000013, 0x00000013, 0x0003003E, 0x00000009, 0x00000014,
+    0x000100FD, 0x00010038,
+};
+
+/// A layer of an array of depths compared, the coordinate a vec4 of the
+/// place, the layer and the reference. glslc -O (`-fshader-stage=frag`),
+/// 183 words (since 1.179).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2DArrayShadow layers;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = vec4(texture(layers, vec4(color.xy, color.z * 3.0, color.w)));
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 36
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %16
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %13 Binding 0
+///                OpDecorate %13 DescriptorSet 0
+///                OpDecorate %16 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 2D 1 1 0 1 Unknown
+///          %11 = OpTypeSampledImage %10
+///          %12 = OpTypePointer UniformConstant %11
+///          %13 = OpVariable %12 UniformConstant
+///          %15 = OpTypePointer Input %7
+///          %16 = OpVariable %15 Input
+///          %20 = OpTypeInt 32 0
+///          %21 = OpConstant %20 2
+///          %22 = OpTypePointer Input %6
+///          %25 = OpConstant %6 3
+///          %27 = OpConstant %20 3
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpLoad %11 %13
+///          %18 = OpLoad %7 %16
+///          %23 = OpAccessChain %22 %16 %21
+///          %24 = OpLoad %6 %23
+///          %26 = OpFMul %6 %24 %25
+///          %28 = OpAccessChain %22 %16 %27
+///          %29 = OpLoad %6 %28
+///          %30 = OpCompositeExtract %6 %18 0
+///          %31 = OpCompositeExtract %6 %18 1
+///          %32 = OpCompositeConstruct %7 %30 %31 %26 %29
+///          %34 = OpImageSampleDrefImplicitLod %6 %14 %32 %29
+///          %35 = OpCompositeConstruct %7 %34 %34 %34 %34
+///                OpStore %9 %35
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_layers_shadow = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000024, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000010, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000010, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000001,
+    0x00000001, 0x00000001, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040020, 0x0000000F,
+    0x00000001, 0x00000007, 0x0004003B, 0x0000000F, 0x00000010, 0x00000001,
+    0x00040015, 0x00000014, 0x00000020, 0x00000000, 0x0004002B, 0x00000014,
+    0x00000015, 0x00000002, 0x00040020, 0x00000016, 0x00000001, 0x00000006,
+    0x0004002B, 0x00000006, 0x00000019, 0x40400000, 0x0004002B, 0x00000014,
+    0x0000001B, 0x00000003, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000E,
+    0x0000000D, 0x0004003D, 0x00000007, 0x00000012, 0x00000010, 0x00050041,
+    0x00000016, 0x00000017, 0x00000010, 0x00000015, 0x0004003D, 0x00000006,
+    0x00000018, 0x00000017, 0x00050085, 0x00000006, 0x0000001A, 0x00000018,
+    0x00000019, 0x00050041, 0x00000016, 0x0000001C, 0x00000010, 0x0000001B,
+    0x0004003D, 0x00000006, 0x0000001D, 0x0000001C, 0x00050051, 0x00000006,
+    0x0000001E, 0x00000012, 0x00000000, 0x00050051, 0x00000006, 0x0000001F,
+    0x00000012, 0x00000001, 0x00070050, 0x00000007, 0x00000020, 0x0000001E,
+    0x0000001F, 0x0000001A, 0x0000001D, 0x00060059, 0x00000006, 0x00000022,
+    0x0000000E, 0x00000020, 0x0000001D, 0x00070050, 0x00000007, 0x00000023,
+    0x00000022, 0x00000022, 0x00000022, 0x00000022, 0x0003003E, 0x00000009,
+    0x00000023, 0x000100FD, 0x00010038,
+};
+
+/// A cube of an array, which needs SampledCubeArray, glslc -O
+/// (`-fshader-stage=frag`), 143 words (since 1.179).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform samplerCubeArray skies;
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = texture(skies, vec4(color.xyz, 1.0));
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 26
+/// ; Schema: 0
+///                OpCapability Shader
+///                OpCapability SampledCubeArray
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %9 %16
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %9 Location 0
+///                OpDecorate %13 Binding 0
+///                OpDecorate %13 DescriptorSet 0
+///                OpDecorate %16 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypePointer Output %7
+///           %9 = OpVariable %8 Output
+///          %10 = OpTypeImage %6 Cube 0 1 0 1 Unknown
+///          %11 = OpTypeSampledImage %10
+///          %12 = OpTypePointer UniformConstant %11
+///          %13 = OpVariable %12 UniformConstant
+///          %15 = OpTypePointer Input %7
+///          %16 = OpVariable %15 Input
+///          %20 = OpConstant %6 1
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpLoad %11 %13
+///          %18 = OpLoad %7 %16
+///          %21 = OpCompositeExtract %6 %18 0
+///          %22 = OpCompositeExtract %6 %18 1
+///          %23 = OpCompositeExtract %6 %18 2
+///          %24 = OpCompositeConstruct %7 %21 %22 %23 %20
+///          %25 = OpImageSampleImplicitLod %7 %14 %24
+///                OpStore %9 %25
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_cube_array = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001A, 0x00000000, 0x00020011,
+    0x00000001, 0x00020011, 0x0000002D, 0x0006000B, 0x00000001, 0x4C534C47,
+    0x6474732E, 0x3035342E, 0x00000000, 0x0003000E, 0x00000000, 0x00000001,
+    0x0007000F, 0x00000004, 0x00000004, 0x6E69616D, 0x00000000, 0x00000009,
+    0x00000010, 0x00030010, 0x00000004, 0x00000007, 0x00040047, 0x00000009,
+    0x0000001E, 0x00000000, 0x00040047, 0x0000000D, 0x00000021, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000022, 0x00000000, 0x00040047, 0x00000010,
+    0x0000001E, 0x00000000, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007,
+    0x00000006, 0x00000004, 0x00040020, 0x00000008, 0x00000003, 0x00000007,
+    0x0004003B, 0x00000008, 0x00000009, 0x00000003, 0x00090019, 0x0000000A,
+    0x00000006, 0x00000003, 0x00000000, 0x00000001, 0x00000000, 0x00000001,
+    0x00000000, 0x0003001B, 0x0000000B, 0x0000000A, 0x00040020, 0x0000000C,
+    0x00000000, 0x0000000B, 0x0004003B, 0x0000000C, 0x0000000D, 0x00000000,
+    0x00040020, 0x0000000F, 0x00000001, 0x00000007, 0x0004003B, 0x0000000F,
+    0x00000010, 0x00000001, 0x0004002B, 0x00000006, 0x00000014, 0x3F800000,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8,
+    0x00000005, 0x0004003D, 0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D,
+    0x00000007, 0x00000012, 0x00000010, 0x00050051, 0x00000006, 0x00000015,
+    0x00000012, 0x00000000, 0x00050051, 0x00000006, 0x00000016, 0x00000012,
+    0x00000001, 0x00050051, 0x00000006, 0x00000017, 0x00000012, 0x00000002,
+    0x00070050, 0x00000007, 0x00000018, 0x00000015, 0x00000016, 0x00000017,
+    0x00000014, 0x00050057, 0x00000007, 0x00000019, 0x0000000E, 0x00000018,
+    0x0003003E, 0x00000009, 0x00000019, 0x000100FD, 0x00010038,
+};
