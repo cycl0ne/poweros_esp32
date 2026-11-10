@@ -6749,4 +6749,32 @@ pub const LIBRARY_VERSION = 1;
 /// function made wrong on purpose it is 62,940 apart. The other 295
 /// cases are each as they were at 1.202, and FacetProbe passes its 890
 /// checks.
-pub const LIBRARY_REVISION = 203;
+///
+/// 204: **The system values that differ from lane to lane (docs/
+/// facet-vulkan10.md item 60).** A fix. No system value counted as
+/// differing, so a buffer read at an offset made from one went through
+/// unifa, one word for all the lanes, where v3d reads it through the TMU
+/// (ntq_emit_load_unifa, nir_to_vir.c:3315-3317). `lanes()` now has
+/// nir_divergence_analysis's answers under v3dv's options
+/// (v3dv_pipeline.c:217-218): a vertex's id and its instance's differ
+/// (nir_divergence_analysis.c:974-975, :572-573), and so do the CS
+/// payload's two words, which the local index and id are made of
+/// (:977-979) and the workgroup id, of
+/// nir_divergence_multiple_workgroup_per_compute_subgroup (:611-615);
+/// the first vertex, the base instance and the dispatch's count and base
+/// of workgroups do not (:240-250, :342). It was wrong since 1.192 for a
+/// vertex program reading a buffer at VertexIndex or InstanceIndex, and
+/// since 1.194 for a compute program reading a uniform or readonly
+/// buffer at an id.
+///
+/// glslc_compute_readonly, of 333 words, reads three times through the
+/// TMU and once, at the count of workgroups, through unifa;
+/// glslc_vertex_tints, of 266, reads twice through the TMU. The V3D's
+/// tests are 361, two new. Of 9 mutations, all 9 fail them.
+///
+/// On the CM5 FacetBoth 1.68's "shipped compute: reads a buffer at each
+/// invocation's id", three groups of three invocations each reading its
+/// corner from a readonly buffer at its global id, is 63,548 of 230400
+/// pixels apart with 1.203 and 0 apart with 1.204. The other 296 cases
+/// are each as they were at 1.203, and FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 204;

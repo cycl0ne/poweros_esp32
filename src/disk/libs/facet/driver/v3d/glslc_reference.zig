@@ -26998,3 +26998,304 @@ pub const glslc_shared_matrices = [_]u32{
     0x0000004A, 0x00060041, 0x0000004C, 0x0000004D, 0x0000003A, 0x0000003C,
     0x0000000B, 0x0003003E, 0x0000004D, 0x0000004B, 0x000100FD, 0x00010038,
 };
+
+/// glslc -O -fshader-stage=comp, a readonly storage buffer read at the
+/// global id, the workgroup id and the local index, each of which differs
+/// from lane to lane, and at the count of workgroups, which does not
+/// (since 1.204). 333 words.
+///
+/// ```glsl
+/// #version 450
+/// // facet 1.204: a compute program's readonly buffer read at its global
+/// // id, its workgroup's id and its local index, which differ from lane to
+/// // lane, and at the count of workgroups, which does not.
+/// layout(local_size_x = 16) in;
+/// layout(std430, set = 0, binding = 0) buffer B { uint w[]; } b;
+/// layout(std430, set = 0, binding = 1) readonly buffer R { uint w[]; } r;
+/// void main() {
+///     uint i = gl_GlobalInvocationID.x;
+///     b.w[i] = r.w[i] * 3u + r.w[gl_WorkGroupID.x + 128u] + r.w[gl_LocalInvocationIndex + 256u] + r.w[gl_NumWorkGroups.x + 512u];
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 60
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint GLCompute %4 "main" %11 %33 %41 %48
+///                OpExecutionMode %4 LocalSize 16 1 1
+///                OpDecorate %11 BuiltIn GlobalInvocationId
+///                OpDecorate %16 ArrayStride 4
+///                OpDecorate %17 BufferBlock
+///                OpMemberDecorate %17 0 Offset 0
+///                OpDecorate %19 Binding 0
+///                OpDecorate %19 DescriptorSet 0
+///                OpDecorate %23 ArrayStride 4
+///                OpDecorate %24 BufferBlock
+///                OpMemberDecorate %24 0 NonWritable
+///                OpMemberDecorate %24 0 Offset 0
+///                OpDecorate %26 NonWritable
+///                OpDecorate %26 Binding 1
+///                OpDecorate %26 DescriptorSet 0
+///                OpDecorate %33 BuiltIn WorkgroupId
+///                OpDecorate %41 BuiltIn LocalInvocationIndex
+///                OpDecorate %48 BuiltIn NumWorkgroups
+///                OpDecorate %59 BuiltIn WorkgroupSize
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeInt 32 0
+///           %9 = OpTypeVector %6 3
+///          %10 = OpTypePointer Input %9
+///          %11 = OpVariable %10 Input
+///          %12 = OpConstant %6 0
+///          %13 = OpTypePointer Input %6
+///          %16 = OpTypeRuntimeArray %6
+///          %17 = OpTypeStruct %16
+///          %18 = OpTypePointer Uniform %17
+///          %19 = OpVariable %18 Uniform
+///          %20 = OpTypeInt 32 1
+///          %21 = OpConstant %20 0
+///          %23 = OpTypeRuntimeArray %6
+///          %24 = OpTypeStruct %23
+///          %25 = OpTypePointer Uniform %24
+///          %26 = OpVariable %25 Uniform
+///          %28 = OpTypePointer Uniform %6
+///          %31 = OpConstant %6 3
+///          %33 = OpVariable %10 Input
+///          %36 = OpConstant %6 128
+///          %41 = OpVariable %13 Input
+///          %43 = OpConstant %6 256
+///          %48 = OpVariable %10 Input
+///          %51 = OpConstant %6 512
+///          %57 = OpConstant %6 16
+///          %58 = OpConstant %6 1
+///          %59 = OpConstantComposite %9 %57 %58 %58
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %14 = OpAccessChain %13 %11 %12
+///          %15 = OpLoad %6 %14
+///          %29 = OpAccessChain %28 %26 %21 %15
+///          %30 = OpLoad %6 %29
+///          %32 = OpIMul %6 %30 %31
+///          %34 = OpAccessChain %13 %33 %12
+///          %35 = OpLoad %6 %34
+///          %37 = OpIAdd %6 %35 %36
+///          %38 = OpAccessChain %28 %26 %21 %37
+///          %39 = OpLoad %6 %38
+///          %40 = OpIAdd %6 %32 %39
+///          %42 = OpLoad %6 %41
+///          %44 = OpIAdd %6 %42 %43
+///          %45 = OpAccessChain %28 %26 %21 %44
+///          %46 = OpLoad %6 %45
+///          %47 = OpIAdd %6 %40 %46
+///          %49 = OpAccessChain %13 %48 %12
+///          %50 = OpLoad %6 %49
+///          %52 = OpIAdd %6 %50 %51
+///          %53 = OpAccessChain %28 %26 %21 %52
+///          %54 = OpLoad %6 %53
+///          %55 = OpIAdd %6 %47 %54
+///          %56 = OpAccessChain %28 %19 %21 %15
+///                OpStore %56 %55
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_compute_readonly = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000003C, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0009000F, 0x00000005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000021, 0x00000029,
+    0x00000030, 0x00060010, 0x00000004, 0x00000011, 0x00000010, 0x00000001,
+    0x00000001, 0x00040047, 0x0000000B, 0x0000000B, 0x0000001C, 0x00040047,
+    0x00000010, 0x00000006, 0x00000004, 0x00030047, 0x00000011, 0x00000003,
+    0x00050048, 0x00000011, 0x00000000, 0x00000023, 0x00000000, 0x00040047,
+    0x00000013, 0x00000021, 0x00000000, 0x00040047, 0x00000013, 0x00000022,
+    0x00000000, 0x00040047, 0x00000017, 0x00000006, 0x00000004, 0x00030047,
+    0x00000018, 0x00000003, 0x00040048, 0x00000018, 0x00000000, 0x00000018,
+    0x00050048, 0x00000018, 0x00000000, 0x00000023, 0x00000000, 0x00030047,
+    0x0000001A, 0x00000018, 0x00040047, 0x0000001A, 0x00000021, 0x00000001,
+    0x00040047, 0x0000001A, 0x00000022, 0x00000000, 0x00040047, 0x00000021,
+    0x0000000B, 0x0000001A, 0x00040047, 0x00000029, 0x0000000B, 0x0000001D,
+    0x00040047, 0x00000030, 0x0000000B, 0x00000018, 0x00040047, 0x0000003B,
+    0x0000000B, 0x00000019, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00040015, 0x00000006, 0x00000020, 0x00000000, 0x00040017,
+    0x00000009, 0x00000006, 0x00000003, 0x00040020, 0x0000000A, 0x00000001,
+    0x00000009, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001, 0x0004002B,
+    0x00000006, 0x0000000C, 0x00000000, 0x00040020, 0x0000000D, 0x00000001,
+    0x00000006, 0x0003001D, 0x00000010, 0x00000006, 0x0003001E, 0x00000011,
+    0x00000010, 0x00040020, 0x00000012, 0x00000002, 0x00000011, 0x0004003B,
+    0x00000012, 0x00000013, 0x00000002, 0x00040015, 0x00000014, 0x00000020,
+    0x00000001, 0x0004002B, 0x00000014, 0x00000015, 0x00000000, 0x0003001D,
+    0x00000017, 0x00000006, 0x0003001E, 0x00000018, 0x00000017, 0x00040020,
+    0x00000019, 0x00000002, 0x00000018, 0x0004003B, 0x00000019, 0x0000001A,
+    0x00000002, 0x00040020, 0x0000001C, 0x00000002, 0x00000006, 0x0004002B,
+    0x00000006, 0x0000001F, 0x00000003, 0x0004003B, 0x0000000A, 0x00000021,
+    0x00000001, 0x0004002B, 0x00000006, 0x00000024, 0x00000080, 0x0004003B,
+    0x0000000D, 0x00000029, 0x00000001, 0x0004002B, 0x00000006, 0x0000002B,
+    0x00000100, 0x0004003B, 0x0000000A, 0x00000030, 0x00000001, 0x0004002B,
+    0x00000006, 0x00000033, 0x00000200, 0x0004002B, 0x00000006, 0x00000039,
+    0x00000010, 0x0004002B, 0x00000006, 0x0000003A, 0x00000001, 0x0006002C,
+    0x00000009, 0x0000003B, 0x00000039, 0x0000003A, 0x0000003A, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x00050041, 0x0000000D, 0x0000000E, 0x0000000B, 0x0000000C, 0x0004003D,
+    0x00000006, 0x0000000F, 0x0000000E, 0x00060041, 0x0000001C, 0x0000001D,
+    0x0000001A, 0x00000015, 0x0000000F, 0x0004003D, 0x00000006, 0x0000001E,
+    0x0000001D, 0x00050084, 0x00000006, 0x00000020, 0x0000001E, 0x0000001F,
+    0x00050041, 0x0000000D, 0x00000022, 0x00000021, 0x0000000C, 0x0004003D,
+    0x00000006, 0x00000023, 0x00000022, 0x00050080, 0x00000006, 0x00000025,
+    0x00000023, 0x00000024, 0x00060041, 0x0000001C, 0x00000026, 0x0000001A,
+    0x00000015, 0x00000025, 0x0004003D, 0x00000006, 0x00000027, 0x00000026,
+    0x00050080, 0x00000006, 0x00000028, 0x00000020, 0x00000027, 0x0004003D,
+    0x00000006, 0x0000002A, 0x00000029, 0x00050080, 0x00000006, 0x0000002C,
+    0x0000002A, 0x0000002B, 0x00060041, 0x0000001C, 0x0000002D, 0x0000001A,
+    0x00000015, 0x0000002C, 0x0004003D, 0x00000006, 0x0000002E, 0x0000002D,
+    0x00050080, 0x00000006, 0x0000002F, 0x00000028, 0x0000002E, 0x00050041,
+    0x0000000D, 0x00000031, 0x00000030, 0x0000000C, 0x0004003D, 0x00000006,
+    0x00000032, 0x00000031, 0x00050080, 0x00000006, 0x00000034, 0x00000032,
+    0x00000033, 0x00060041, 0x0000001C, 0x00000035, 0x0000001A, 0x00000015,
+    0x00000034, 0x0004003D, 0x00000006, 0x00000036, 0x00000035, 0x00050080,
+    0x00000006, 0x00000037, 0x0000002F, 0x00000036, 0x00060041, 0x0000001C,
+    0x00000038, 0x00000013, 0x00000015, 0x0000000F, 0x0003003E, 0x00000038,
+    0x00000037, 0x000100FD, 0x00010038,
+};
+
+/// glslc -O -fshader-stage=vert, a uniform buffer read at the vertex's
+/// index and the instance's, which differ from lane to lane (since 1.204).
+/// 266 words.
+///
+/// ```glsl
+/// #version 450
+/// // facet 1.204: a vertex program's uniform buffer read at its vertex's
+/// // and its instance's index, which differ from lane to lane; the first
+/// // vertex and the base instance they count from do not.
+/// layout(location = 0) in vec4 p;
+/// layout(location = 0) out vec4 colour;
+/// layout(set = 0, binding = 0) uniform Tints { vec4 tint[8]; } tints;
+/// void main() {
+///     gl_Position = p;
+///     colour = tints.tint[gl_VertexIndex & 3] + tints.tint[(gl_InstanceIndex & 1) + 4];
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 44
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Vertex %4 "main" %13 %17 %21 %28 %35
+///                OpDecorate %11 Block
+///                OpMemberDecorate %11 0 BuiltIn Position
+///                OpMemberDecorate %11 1 BuiltIn PointSize
+///                OpMemberDecorate %11 2 BuiltIn ClipDistance
+///                OpMemberDecorate %11 3 BuiltIn CullDistance
+///                OpDecorate %17 Location 0
+///                OpDecorate %21 Location 0
+///                OpDecorate %23 ArrayStride 16
+///                OpDecorate %24 Block
+///                OpMemberDecorate %24 0 Offset 0
+///                OpDecorate %26 Binding 0
+///                OpDecorate %26 DescriptorSet 0
+///                OpDecorate %28 BuiltIn VertexIndex
+///                OpDecorate %35 BuiltIn InstanceIndex
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeFloat 32
+///           %7 = OpTypeVector %6 4
+///           %8 = OpTypeInt 32 0
+///           %9 = OpConstant %8 1
+///          %10 = OpTypeArray %6 %9
+///          %11 = OpTypeStruct %7 %6 %10 %10
+///          %12 = OpTypePointer Output %11
+///          %13 = OpVariable %12 Output
+///          %14 = OpTypeInt 32 1
+///          %15 = OpConstant %14 0
+///          %16 = OpTypePointer Input %7
+///          %17 = OpVariable %16 Input
+///          %19 = OpTypePointer Output %7
+///          %21 = OpVariable %19 Output
+///          %22 = OpConstant %8 8
+///          %23 = OpTypeArray %7 %22
+///          %24 = OpTypeStruct %23
+///          %25 = OpTypePointer Uniform %24
+///          %26 = OpVariable %25 Uniform
+///          %27 = OpTypePointer Input %14
+///          %28 = OpVariable %27 Input
+///          %30 = OpConstant %14 3
+///          %32 = OpTypePointer Uniform %7
+///          %35 = OpVariable %27 Input
+///          %37 = OpConstant %14 1
+///          %39 = OpConstant %14 4
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %18 = OpLoad %7 %17
+///          %20 = OpAccessChain %19 %13 %15
+///                OpStore %20 %18
+///          %29 = OpLoad %14 %28
+///          %31 = OpBitwiseAnd %14 %29 %30
+///          %33 = OpAccessChain %32 %26 %15 %31
+///          %34 = OpLoad %7 %33
+///          %36 = OpLoad %14 %35
+///          %38 = OpBitwiseAnd %14 %36 %37
+///          %40 = OpIAdd %14 %38 %39
+///          %41 = OpAccessChain %32 %26 %15 %40
+///          %42 = OpLoad %7 %41
+///          %43 = OpFAdd %7 %34 %42
+///                OpStore %21 %43
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_vertex_tints = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000002C, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x000A000F, 0x00000000,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000011, 0x00000015,
+    0x0000001C, 0x00000023, 0x00030047, 0x0000000B, 0x00000002, 0x00050048,
+    0x0000000B, 0x00000000, 0x0000000B, 0x00000000, 0x00050048, 0x0000000B,
+    0x00000001, 0x0000000B, 0x00000001, 0x00050048, 0x0000000B, 0x00000002,
+    0x0000000B, 0x00000003, 0x00050048, 0x0000000B, 0x00000003, 0x0000000B,
+    0x00000004, 0x00040047, 0x00000011, 0x0000001E, 0x00000000, 0x00040047,
+    0x00000015, 0x0000001E, 0x00000000, 0x00040047, 0x00000017, 0x00000006,
+    0x00000010, 0x00030047, 0x00000018, 0x00000002, 0x00050048, 0x00000018,
+    0x00000000, 0x00000023, 0x00000000, 0x00040047, 0x0000001A, 0x00000021,
+    0x00000000, 0x00040047, 0x0000001A, 0x00000022, 0x00000000, 0x00040047,
+    0x0000001C, 0x0000000B, 0x0000002A, 0x00040047, 0x00000023, 0x0000000B,
+    0x0000002B, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006,
+    0x00000004, 0x00040015, 0x00000008, 0x00000020, 0x00000000, 0x0004002B,
+    0x00000008, 0x00000009, 0x00000001, 0x0004001C, 0x0000000A, 0x00000006,
+    0x00000009, 0x0006001E, 0x0000000B, 0x00000007, 0x00000006, 0x0000000A,
+    0x0000000A, 0x00040020, 0x0000000C, 0x00000003, 0x0000000B, 0x0004003B,
+    0x0000000C, 0x0000000D, 0x00000003, 0x00040015, 0x0000000E, 0x00000020,
+    0x00000001, 0x0004002B, 0x0000000E, 0x0000000F, 0x00000000, 0x00040020,
+    0x00000010, 0x00000001, 0x00000007, 0x0004003B, 0x00000010, 0x00000011,
+    0x00000001, 0x00040020, 0x00000013, 0x00000003, 0x00000007, 0x0004003B,
+    0x00000013, 0x00000015, 0x00000003, 0x0004002B, 0x00000008, 0x00000016,
+    0x00000008, 0x0004001C, 0x00000017, 0x00000007, 0x00000016, 0x0003001E,
+    0x00000018, 0x00000017, 0x00040020, 0x00000019, 0x00000002, 0x00000018,
+    0x0004003B, 0x00000019, 0x0000001A, 0x00000002, 0x00040020, 0x0000001B,
+    0x00000001, 0x0000000E, 0x0004003B, 0x0000001B, 0x0000001C, 0x00000001,
+    0x0004002B, 0x0000000E, 0x0000001E, 0x00000003, 0x00040020, 0x00000020,
+    0x00000002, 0x00000007, 0x0004003B, 0x0000001B, 0x00000023, 0x00000001,
+    0x0004002B, 0x0000000E, 0x00000025, 0x00000001, 0x0004002B, 0x0000000E,
+    0x00000027, 0x00000004, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x00000007, 0x00000012,
+    0x00000011, 0x00050041, 0x00000013, 0x00000014, 0x0000000D, 0x0000000F,
+    0x0003003E, 0x00000014, 0x00000012, 0x0004003D, 0x0000000E, 0x0000001D,
+    0x0000001C, 0x000500C7, 0x0000000E, 0x0000001F, 0x0000001D, 0x0000001E,
+    0x00060041, 0x00000020, 0x00000021, 0x0000001A, 0x0000000F, 0x0000001F,
+    0x0004003D, 0x00000007, 0x00000022, 0x00000021, 0x0004003D, 0x0000000E,
+    0x00000024, 0x00000023, 0x000500C7, 0x0000000E, 0x00000026, 0x00000024,
+    0x00000025, 0x00050080, 0x0000000E, 0x00000028, 0x00000026, 0x00000027,
+    0x00060041, 0x00000020, 0x00000029, 0x0000001A, 0x0000000F, 0x00000028,
+    0x0004003D, 0x00000007, 0x0000002A, 0x00000029, 0x00050081, 0x00000007,
+    0x0000002B, 0x00000022, 0x0000002A, 0x0003003E, 0x00000015, 0x0000002B,
+    0x000100FD, 0x00010038,
+};
