@@ -285,6 +285,7 @@ const modules = [_]Program{
     .{ .disk = "classes/datatypes/gif.datatype", .source = "classes/datatypes/gif/gif.zig", .name = "gif.datatype" },
     .{ .disk = "classes/datatypes/gifanim.datatype", .source = "classes/datatypes/gif/gifanim.zig", .name = "gifanim.datatype" },
     .{ .disk = "classes/datatypes/lottie.datatype", .source = "classes/datatypes/lottie/lottie.zig", .name = "lottie.datatype" },
+    .{ .disk = "classes/datatypes/svg.datatype", .source = "classes/datatypes/svg/svg.zig", .name = "svg.datatype" },
     .{ .disk = "classes/datatypes/jpeg.datatype", .source = "classes/datatypes/jpeg/jpeg.zig", .name = "jpeg.datatype", .imports = &.{"jpegdecode"} },
     .{ .disk = "classes/datatypes/text.datatype", .source = "classes/datatypes/text/text.zig", .name = "text.datatype" },
     .{ .disk = "classes/datatypes/ascii.datatype", .source = "classes/datatypes/ascii/ascii.zig", .name = "ascii.datatype" },
@@ -342,8 +343,10 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// disks nor the speed, and the 64-bit machines' disks are RAM.
 /// chip.vcodec goes with them: it drives videodec.resource, which no
 /// ESP32 has, and carries the parameter-set readers it reads a stream's
-/// colours with - 60 KB for a chip that is not there.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "update.library", "System/Update", "WBStartup/Dock", "videodec", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec" };
+/// colours with - 60 KB for a chip that is not there. svg.datatype as
+/// well: what goes on an ESP32's flash disk is what that board is meant
+/// to do, and showing SVG files is not among it.
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "update.library", "System/Update", "WBStartup/Dock", "videodec", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec", "svg.datatype" };
 /// Drivers of what only the Raspberry Pi CM5 has among the AArch64
 /// machines and no other chip does: its radio, a CYW43455 on the
 /// BCM2712's SD host.
@@ -372,10 +375,14 @@ const no_3d_files = [_][]const u8{
     "programs/Docs/Cobra.md",
 };
 
-/// What the programs only the 64-bit machines have (`rv64_only`) are, in
-/// SYS:System/Docs: left off the ESP32s' disks with them.
+/// What goes with the programs only the 64-bit machines have
+/// (`rv64_only`) - what they are, in SYS:System/Docs, and the descriptor
+/// and the test picture of svg.datatype: left off the ESP32s' disks with
+/// them.
 const rv64_only_files = [_][]const u8{
     "System/Docs/Update.md",
+    "devs/datatypes/SVG",
+    "tests/datatypes/Drawing.svg",
 };
 
 /// Whether `program` is built for `chip`. The lists name a program by its
@@ -505,6 +512,7 @@ pub const files = [_]File{
     .{ .disk = "devs/datatypes/GIF", .source = "devs/datatypes/GIF" },
     .{ .disk = "devs/datatypes/GIFAnim", .source = "devs/datatypes/GIFAnim" },
     .{ .disk = "devs/datatypes/Lottie", .source = "devs/datatypes/Lottie" },
+    .{ .disk = "devs/datatypes/SVG", .source = "devs/datatypes/SVG" },
     .{ .disk = "devs/datatypes/JPEG", .source = "devs/datatypes/JPEG" },
     .{ .disk = "devs/datatypes/Markdown", .source = "devs/datatypes/Markdown" },
     .{ .disk = "devs/datatypes/OBJ", .source = "devs/datatypes/OBJ" },
@@ -600,6 +608,7 @@ pub const files = [_]File{
     .{ .disk = "tests/datatypes/Weave.gif", .source = "tests/datatypes/Weave.gif" },
     .{ .disk = "tests/datatypes/Bounce.gif", .source = "tests/datatypes/Bounce.gif" },
     .{ .disk = "tests/datatypes/Spinner.json", .source = "tests/datatypes/Spinner.json" },
+    .{ .disk = "tests/datatypes/Drawing.svg", .source = "tests/datatypes/Drawing.svg" },
     .{ .disk = "tests/datatypes/Crate.obj", .source = "tests/datatypes/Crate.obj" },
     .{ .disk = "tests/datatypes/Crate.mtl", .source = "tests/datatypes/Crate.mtl" },
     .{ .disk = "tests/datatypes/Crate.png", .source = "tests/datatypes/Crate.png" },

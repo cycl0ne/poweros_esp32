@@ -56,8 +56,8 @@ The bytes are recognised as a file's are, by what they start with; a
 name handed to `NewDTObjectA` is matched against the descriptors'
 patterns too, and without one the patterns are not asked. The object
 reads the bytes while it is made: when the call returns they are the
-program's again. JPEG, PNG, GIF, BMP, ICO, text, models, Markdown and
-Lottie read from memory; ILBM, 8SVX and a codec's sound read a file as they go,
+program's again. JPEG, PNG, GIF, BMP, ICO, SVG, text, models, Markdown
+and Lottie read from memory; ILBM, 8SVX and a codec's sound read a file as they go,
 a film is read as it is played, and a font's sizes are files beside its
 contents file, so these refuse bytes in memory with
 `DTERROR_COULDNT_OPEN`.
@@ -204,6 +204,23 @@ and one line of text at each size it was drawn at - an outline's at 12
 to 64 rows. The sizes are opened through diskfont.library, so the
 picture is the font as every program gets it, and MultiView shows a font
 as it shows any picture.
+
+**An SVG picture is drawn when it is read.** svg.datatype - on the
+64-bit machines' disks - reads the file's elements and draws them with
+vector.library onto the picture's pens, at the size the file gives:
+its `width` and `height`, made from its `viewBox` when it has not both,
+or 300 by 150. It draws paths, rectangles, circles, ellipses, lines,
+polylines and polygons, in groups, links, `switch`es and nested `svg`
+elements; fills and strokes in colours and in linear and radial
+gradients, with their joins, caps, miter limits and dashes; `transform`s
+and `viewBox`es; and opacity, a group's put down from a layer. A style
+attribute's declarations are read over the presentation attributes.
+Text, images, `use`, patterns, markers and `<style>` sheets are not
+drawn, clip paths and masks are passed over - what they would cut is
+drawn whole - and an element with a filter is left out with all that
+is in it. A picture too large to keep is drawn smaller, as any is.
+`scripts/svg-compare.sh` draws the Tango icons both ways - here and by
+rsvg-convert - and says how far apart each pair is.
 
 `PDTM_READPIXELARRAY` hands a rectangle of it back in whichever
 shape the program wants - `PBPAFMT_RGB`, `PBPAFMT_RGBA`, `PBPAFMT_ARGB`

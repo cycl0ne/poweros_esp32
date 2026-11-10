@@ -612,6 +612,28 @@ pub fn build(b: *std.Build) void {
     run_gfxbench.has_side_effects = true;
     b.step("gfx-bench", "Time graphics.library's software drawing on the host, in RGB565 and BGRA32").dependOn(&run_gfxbench.step);
 
+    // tools/svgcompare: SVG files drawn on the host with svg.datatype's
+    // code and vector.library's module, against another renderer's
+    // pictures of them (scripts/svg-compare.sh, rsvg-convert's).
+    const svgcompare_vector = b.createModule(.{ .root_source_file = disk_dep.path("libs/vector/draw/draw.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
+    svgcompare_vector.addImport("sdk", sdk);
+    const svgcompare_svg = b.createModule(.{ .root_source_file = disk_dep.path("classes/datatypes/svg/draw.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
+    svgcompare_svg.addImport("sdk", sdk);
+    const svgcompare = b.addExecutable(.{
+        .name = "svgcompare",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/svgcompare/svgcompare.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    svgcompare.root_module.addImport("sdk", sdk);
+    svgcompare.root_module.addImport("vector", svgcompare_vector);
+    svgcompare.root_module.addImport("svg", svgcompare_svg);
+    const run_svgcompare = b.addRunArtifact(svgcompare);
+    if (b.args) |args| run_svgcompare.addArgs(args);
+    b.step("svgcompare", "Draw SVG files as svg.datatype does and compare them with PNGs of them: svgcompare [--size N] [--out DIR] <file.svg> <drawn.png> ...").dependOn(&run_svgcompare.step);
+
     // tools/mkicon, which makes the disk's icons from pictures.
     const mkicon = b.addExecutable(.{
         .name = "mkicon",

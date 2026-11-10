@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- svg.datatype's test picture: a gradient of each kind, chained by
+     href, every shape, dashes, joins and caps, a group's opacity and
+     an even-odd hole. -->
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="320" height="240" viewBox="0 0 160 120">
+  <defs>
+    <linearGradient id="sky-stops">
+      <stop offset="0" stop-color="#3465a4"/>
+      <stop offset="1" style="stop-color:#babdb6"/>
+    </linearGradient>
+    <linearGradient id="sky" xlink:href="#sky-stops" x1="0" y1="0" x2="0" y2="1"/>
+    <radialGradient id="sun" cx="0.4" cy="0.4" r="0.6">
+      <stop offset="0%" stop-color="#fce94f"/>
+      <stop offset="70%" stop-color="#f57900"/>
+      <stop offset="100%" stop-color="#ce5c00" stop-opacity="0.6"/>
+    </radialGradient>
+    <linearGradient id="grass" gradientUnits="userSpaceOnUse" x1="0" y1="80" x2="0" y2="120"
+                    gradientTransform="rotate(10 80 100)" spreadMethod="reflect">
+      <stop offset="0" stop-color="#8ae234"/>
+      <stop offset="0.5" stop-color="#4e9a06"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="160" height="120" fill="url(#sky)"/>
+  <circle cx="122" cy="30" r="16" fill="url(#sun)"/>
+  <path d="M0 88 C 30 72 60 96 90 84 S 140 70 160 82 V 120 H 0 z" fill="url(#grass)"/>
+
+  <!-- A house: a rounded wall with an even-odd window, a roof. -->
+  <g transform="translate(20 52)" stroke="#2e3436" stroke-width="1.5" stroke-linejoin="round">
+    <path fill="#eeeeec" fill-rule="evenodd"
+          d="M0 16 h40 v32 h-40 z M8 24 h10 v10 h-10 z M24 24 h10 v10 h-10 z"/>
+    <polygon points="-4,17 20,0 44,17" fill="#a40000" stroke-linejoin="miter"/>
+    <rect x="15" y="36" width="10" height="12" rx="2" fill="#8f5902"/>
+  </g>
+
+  <!-- A fence, dashed, and a path of every cap. -->
+  <polyline points="70,100 90,96 110,100 130,96 150,100" fill="none" stroke="#fff"
+            stroke-width="3" stroke-dasharray="6 3" stroke-linecap="round"/>
+  <g stroke="#204a87" stroke-width="4">
+    <line x1="76" y1="62" x2="76" y2="76" stroke-linecap="butt"/>
+    <line x1="86" y1="62" x2="86" y2="76" stroke-linecap="round"/>
+    <line x1="96" y1="62" x2="96" y2="76" stroke-linecap="square"/>
+  </g>
+
+  <!-- Clouds on a layer: where they overlap, no darker. -->
+  <g fill="#fff" opacity="0.7">
+    <ellipse cx="40" cy="22" rx="18" ry="8"/>
+    <ellipse cx="54" cy="18" rx="14" ry="9"/>
+    <circle cx="28" cy="18" r="7"/>
+  </g>
+
+  <!-- An arc of a rainbow, by arcs in the path data. -->
+  <path d="M104 62 a 20 20 0 0 1 40 0" fill="none" stroke="#75507b" stroke-width="2.5"
+        style="stroke-opacity:0.8;stroke-dasharray:none"/>
+  <path d="M108 62 A 16 16 0 0 1 140 62" fill="none" stroke="rgb(52,101,164)" stroke-width="2.5"/>
+</svg>
