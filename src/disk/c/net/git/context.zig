@@ -52,23 +52,6 @@ pub const Git = struct {
         if (text.len != 0) _ = git.dl.Write(git.output, text.ptr, @intCast(text.len));
     }
 
-    /// A repository's path onto the output, its UTF-8 made the console's
-    /// Latin-1 a piece at a time by utility.library: a character Latin-1
-    /// has not a `?`, a byte that is no UTF-8 the Latin-1 byte it is. The
-    /// empty piece at the end gives what is held.
-    pub fn putPath(git: *Git, path: []const u8) void {
-        var conversion: utility.Utf8Conversion = .{ .flags = utility.UTF8F_PIECES | utility.UTF8F_LATIN1 };
-        var taken: usize = 0;
-        while (true) {
-            const piece = path[taken..@min(taken + 126, path.len)];
-            taken += piece.len;
-            var latin: [128]u8 = undefined;
-            const length = git.ub.Utf8ToLatin1(&conversion, piece.ptr, piece.len, &latin, latin.len);
-            git.put(latin[0..length]);
-            if (piece.len == 0) return;
-        }
-    }
-
     /// A progress line, overwritten by the next: `format` ended by a
     /// carriage return.
     pub fn progress(git: *Git, comptime format: [:0]const u8, args: anytype) void {

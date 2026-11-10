@@ -79,8 +79,8 @@ const tx = sdk.gadgets.text;
 const cb_class = sdk.gadgets.checkbox;
 
 pub const COMMAND_NAME = "Shares";
-const VERSION = "1.2";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (10.11.2026)\r\n";
+const VERSION = "1.3";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
@@ -278,7 +278,7 @@ const App = struct {
             const shown = client.names.toDos(share.name, @ptrCast(&name));
             name[shown.len] = 0;
             var comment: [comment_max + 1:0]u8 = @splat(0);
-            _ = latin1Of(share.comment, &comment);
+            _ = client.names.shown(share.comment, &comment);
             var mounted: [known.device_max + 2:0]u8 = @splat(0);
             if (app.mountedAs(shown)) |device| {
                 const length = @min(device.len, known.device_max);
@@ -748,18 +748,6 @@ const App = struct {
 /// An empty text is no text at all: a share file leaves the keyword out.
 fn given(text: []const u8) ?[]const u8 {
     return if (text.len == 0) null else text;
-}
-
-/// A server's text as Latin-1, what it holds that Latin-1 does not made a
-/// question mark: a comment, which is read and not used for anything.
-fn latin1Of(utf16: []const u8, into: []u8) []const u8 {
-    const count = @min(utf16.len / 2, into.len - 1);
-    for (0..count) |index| {
-        const unit = client.names.unitAt(utf16, index);
-        into[index] = if (unit >= 0x20 and unit <= 0xFF) @intCast(unit) else '?';
-    }
-    into[count] = 0;
-    return into[0..count];
 }
 
 fn countOf(list: *exec.List) usize {

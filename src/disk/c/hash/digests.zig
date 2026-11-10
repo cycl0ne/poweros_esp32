@@ -10,16 +10,13 @@
 //! it is written as sha256sum writes it: the line begins with a
 //! backslash, and the two are `\\` and `\n` in the name.
 //!
-//! **Names in a list are UTF-8**, as every other system writes them; dos
-//! names are Latin-1. utility.library turns them: a name goes out with
-//! each character above 0x7F as its two UTF-8 bytes, and comes in the
-//! other way when it is UTF-8 whose characters Latin-1 has - a name that
-//! is not, or that has characters outside Latin-1, is taken byte for
-//! byte. `./` in front of a name, as `find` writes it, is dropped.
+//! **Names in a list are UTF-8**, as every other system writes them and
+//! as dos names are: a name goes out and comes in as it is. One that is
+//! no UTF-8 - a list a system with another encoding wrote - is read as
+//! Latin-1. `./` in front of a name, as `find` writes it, is dropped.
 
 const sdk = @import("sdk");
-const utility = sdk.utility;
-const UtilityBase = sdk.interface.utility.UtilityBase;
+const utf8 = sdk.utility.utf8;
 
 pub const Algorithm = enum {
     crc32,
@@ -135,7 +132,7 @@ const hex_digits = "0123456789abcdef";
 
 /// A list's line for `digest` and the dos name `name`, with its line's
 /// end, into `into`: its length, or null when it does not fit.
-pub fn formatLine(ub: *UtilityBase, digest: []const u8, name: []const u8, into: []u8) ?usize {
+pub fn formatLine(digest: []const u8, name: []const u8, into: []u8) ?usize {
     var at: usize = 0;
     const escaped = needsEscape(name);
     if (escaped) {
@@ -152,28 +149,28 @@ pub fn formatLine(ub: *UtilityBase, digest: []const u8, name: []const u8, into: 
     into[at] = ' ';
     into[at + 1] = ' ';
     at += 2;
-    // The name in UTF-8 between its escapes.
+    // The name between its escapes.
     var start: usize = 0;
     for (name, 0..) |char, index| {
         if (!escaped or (char != '\\' and char != '\n')) continue;
-        at = putUtf8(ub, into, at, name[start..index]) orelse return null;
+        at = put(into, at, name[start..index]) orelse return null;
         if (at + 2 > into.len) return null;
         @memcpy(into[at..][0..2], if (char == '\\') "\\\\" else "\\n");
         at += 2;
         start = index + 1;
     }
-    at = putUtf8(ub, into, at, name[start..]) orelse return null;
+    at = put(into, at, name[start..]) orelse return null;
     if (at >= into.len) return null;
     into[at] = '\n';
     return at + 1;
 }
 
-/// Latin-1 `text` as UTF-8 into `into` from `at`: where it ends, or null
-/// when it does not fit.
-fn putUtf8(ub: *UtilityBase, into: []u8, at: usize, text: []const u8) ?usize {
-    const length = ub.Latin1ToUtf8(text.ptr, text.len, into[at..].ptr, into.len - at);
-    if (length > into.len - at) return null;
-    return at + length;
+/// `text` into `into` from `at`: where it ends, or null when it does not
+/// fit.
+fn put(into: []u8, at: usize, text: []const u8) ?usize {
+    if (text.len > into.len - at) return null;
+    @memcpy(into[at..][0..text.len], text);
+    return at + text.len;
 }
 
 fn needsEscape(name: []const u8) bool {
@@ -204,7 +201,7 @@ pub const LineKind = enum {
 
 /// A line of a list, without its line's end, read into `entry`, the name
 /// made a dos name in `name_buffer`.
-pub fn parseLine(ub: *UtilityBase, raw: []const u8, entry: *Entry, name_buffer: []u8) LineKind {
+pub fn parseLine(raw: []const u8, entry: *Entry, name_buffer: []u8) LineKind {
     var line = raw;
     while (line.len > 0 and (line[line.len - 1] == '\r' or line[line.len - 1] == '\n')) line = line[0 .. line.len - 1];
     if (line.len == 0 or line[0] == '#' or line[0] == ';') return .nothing;
@@ -222,7 +219,7 @@ pub fn parseLine(ub: *UtilityBase, raw: []const u8, entry: *Entry, name_buffer: 
     } else if (if (escaped) null else sfvLine(line, entry)) |rest| {
         name_part = rest;
     } else return .malformed;
-    entry.name = dosName(ub, name_part, escaped, name_buffer) orelse return .malformed;
+    entry.name = dosName(name_part, escaped, name_buffer) orelse return .malformed;
     if (entry.name.len == 0) return .malformed;
     return .entry;
 }
@@ -287,8 +284,8 @@ fn readHex(hex: []const u8, entry: *Entry) bool {
 }
 
 /// A list's name as a dos name in `into`: escapes undone, `./` dropped,
-/// UTF-8 made Latin-1 where it can be. Null when it does not fit.
-fn dosName(ub: *UtilityBase, raw: []const u8, escaped: bool, into: []u8) ?[]const u8 {
+/// a name that is no UTF-8 read as Latin-1. Null when it does not fit.
+fn dosName(raw: []const u8, escaped: bool, into: []u8) ?[]const u8 {
     var name = raw;
     while (name.len > 2 and name[0] == '.' and name[1] == '/') name = name[2..];
     var plain_len: usize = 0;
@@ -306,14 +303,32 @@ fn dosName(ub: *UtilityBase, raw: []const u8, escaped: bool, into: []u8) ?[]cons
         into[plain_len] = char;
         plain_len += 1;
     }
-    return latin1(ub, into[0..plain_len]);
+    if (utf8.valid(into[0..plain_len])) return into[0..plain_len];
+    return fromLatin1InPlace(into, plain_len);
 }
 
-/// UTF-8 whose characters all fit Latin-1 made Latin-1 in place; anything
-/// else - ASCII, other UTF-8, bytes that are no UTF-8 - left as it is.
-fn latin1(ub: *UtilityBase, name: []u8) []u8 {
-    if (ub.Utf8Kind(name.ptr, name.len) != utility.UTF8KIND_LATIN1) return name;
-    return name[0..ub.Utf8ToLatin1(null, name.ptr, name.len, name.ptr, name.len)];
+/// The first `length` bytes of `into`, Latin-1, made UTF-8 where they
+/// are, from the end back so that nothing is read after it is written;
+/// null when the UTF-8 does not fit.
+fn fromLatin1InPlace(into: []u8, length: usize) ?[]const u8 {
+    var needed = length;
+    for (into[0..length]) |char| needed += char >> 7;
+    if (needed > into.len) return null;
+    var from = length;
+    var to = needed;
+    while (from > 0) {
+        from -= 1;
+        const char = into[from];
+        if (char < 0x80) {
+            to -= 1;
+            into[to] = char;
+        } else {
+            to -= 2;
+            into[to] = 0xC0 | char >> 6;
+            into[to + 1] = 0x80 | (char & 0x3F);
+        }
+    }
+    return into[0..needed];
 }
 
 // --- tests (host) ------------------------------------------------------------------

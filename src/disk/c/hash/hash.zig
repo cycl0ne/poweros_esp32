@@ -46,8 +46,6 @@ const crypto = sdk.crypto;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
-const UtilityBase = sdk.interface.utility.UtilityBase;
-const utility = sdk.utility;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 const FPrintf = dos.stdio.FPrintf;
@@ -55,7 +53,7 @@ const digests = @import("digests.zig");
 const Algorithm = digests.Algorithm;
 
 pub const COMMAND_NAME = "Hash";
-const VERSION_STRING = "\x00$VER: Hash 1.2 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Hash 1.3 (10.11.2026)\r\n";
 
 const template = "FILE/M,ALGO/K,CHECK/S,TO/K,ALL/S,QUIET/S";
 const arg_file = 0;
@@ -93,8 +91,6 @@ const Anchor = extern struct {
 const Run = struct {
     sys: *ExecBase,
     dl: *DosBase,
-    /// The names between dos's Latin-1 and a list's UTF-8.
-    ub: *UtilityBase,
     /// crypto.library once an algorithm of its has been asked for.
     crypto_lib: ?*exec.Library,
     /// ALGO, or null when it was not given.
@@ -154,12 +150,6 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         };
     }
 
-    const utility_lib = sys.OpenLibrary(utility.UTILITYNAME, 1) orelse {
-        _ = Printf(dl, MSG_NOLIBRARY, .{ COMMAND_NAME, utility.UTILITYNAME });
-        return dos.RETURN_FAIL;
-    };
-    defer sys.CloseLibrary(utility_lib);
-
     const memory = sys.AllocVec(@sizeOf(Run), exec.MEMF_ANY) orelse {
         _ = dl.PrintFault(dos.ERROR_NO_FREE_STORE, COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -168,7 +158,6 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const run: *Run = @ptrCast(@alignCast(memory));
     run.sys = sys;
     run.dl = dl;
-    run.ub = @ptrCast(utility_lib);
     run.crypto_lib = null;
     run.algorithm = algorithm;
     run.quiet = argv[arg_quiet] != 0;
@@ -313,20 +302,10 @@ fn isList(run: *Run, ap: *dos.AnchorPath) bool {
     return run.dl.SameLock(parent, directory) == dos.LOCK_SAME;
 }
 
-/// Two dos names alike, case aside.
+/// Two dos names alike, case aside, by Unicode's folding as dos
+/// compares them.
 fn sameName(left: [*:0]const u8, right: [*:0]const u8) bool {
-    var at: usize = 0;
-    while (true) : (at += 1) {
-        if (upperLatin1(left[at]) != upperLatin1(right[at])) return false;
-        if (left[at] == 0) return true;
-    }
-}
-
-fn upperLatin1(char: u8) u8 {
-    return switch (char) {
-        'a'...'z', 0xE0...0xF6, 0xF8...0xFE => char - 0x20,
-        else => char,
-    };
+    return sdk.utility.unicode.equalFolded(spanOf(left), spanOf(right));
 }
 
 /// One file's line, into the list.
@@ -338,7 +317,7 @@ fn hashFile(run: *Run, file: ?*dos.FileHandle, path: [*:0]const u8) void {
         reportFault(run, run.dl.IoErr(), path);
         return;
     };
-    const line_length = digests.formatLine(run.ub, digest[0..length], spanOf(path), &run.line) orelse {
+    const line_length = digests.formatLine(digest[0..length], spanOf(path), &run.line) orelse {
         run.unread += 1;
         reportFault(run, dos.ERROR_LINE_TOO_LONG, path);
         return;
@@ -365,7 +344,7 @@ fn checkList(run: *Run, file: ?*dos.FileHandle, list_name: [*:0]const u8) void {
             continue;
         }
         var entry: digests.Entry = .{};
-        switch (digests.parseLine(run.ub, raw, &entry, run.name[0 .. run.name.len - 1])) {
+        switch (digests.parseLine(raw, &entry, run.name[0 .. run.name.len - 1])) {
             .nothing => continue,
             .malformed => {
                 run.malformed += 1;

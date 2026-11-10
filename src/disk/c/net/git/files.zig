@@ -4,14 +4,13 @@
 //! paths put together - each path a NUL-terminated buffer of `path_most`
 //! bytes.
 //!
-//! **Names**: git's paths are UTF-8, a dos name Latin-1. A path whose
-//! characters Latin-1 all has is written as Latin-1 (`ä` one byte), any
-//! other byte for byte.
+//! **Names**: git's paths are UTF-8, and so is a dos name: a path is
+//! the name as it is. One that is no UTF-8 - a repository made where
+//! names were in another encoding - is read as Latin-1.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
-const utility = sdk.utility;
-const UtilityBase = sdk.interface.utility.UtilityBase;
+const utf8 = sdk.utility.utf8;
 const _git = @import("_git.zig");
 const Git = @import("context.zig").Git;
 
@@ -132,40 +131,33 @@ pub const Window = struct {
     }
 };
 
-/// The dos name for a git path, in `into`: Latin-1 when every character
-/// of it is one Latin-1 has, else its bytes as they are; null when it is
-/// too long.
-pub fn localName(ub: *UtilityBase, into: []u8, name: []const u8) ?[]u8 {
-    if (name.len > into.len) return null;
-    var refuse: utility.Utf8Conversion = .{ .flags = utility.UTF8F_REFUSE };
-    const length = ub.Utf8ToLatin1(&refuse, name.ptr, name.len, into.ptr, into.len);
-    if (length != utility.UTF8_REFUSED) return into[0..length];
-    @memcpy(into[0..name.len], name);
-    return into[0..name.len];
-}
-
-/// The git path for a dos name, in `into` - what `localName` made
-/// Latin-1 made UTF-8 again: a name that is UTF-8 with a character
-/// Latin-1 has not is taken as it is, any other read as Latin-1. Null
-/// when it is too long.
-pub fn gitName(ub: *UtilityBase, into: []u8, name: []const u8) ?[]u8 {
-    if (ub.Utf8Kind(name.ptr, name.len) == utility.UTF8KIND_WIDE) {
+/// The dos name for a git path, in `into`: the path as it is, or read
+/// as Latin-1 when it is no UTF-8; null when it is too long.
+pub fn localName(into: []u8, name: []const u8) ?[]u8 {
+    if (utf8.valid(name)) {
         if (name.len > into.len) return null;
         @memcpy(into[0..name.len], name);
         return into[0..name.len];
     }
-    const length = ub.Latin1ToUtf8(name.ptr, name.len, into.ptr, into.len);
-    if (length > into.len) return null;
-    return into[0..length];
+    var needed = name.len;
+    for (name) |char| needed += char >> 7;
+    if (needed > into.len) return null;
+    return into[0..utf8.fromLatin1(name, into)];
 }
 
-/// A server's UTF-8 text for the console, as utility.library makes it
-/// Latin-1 a piece at a time: a character Latin-1 has not a `?`, a byte
-/// that starts no UTF-8 character taken as it is. One for each text:
-/// the sideband's messages carry theirs (`connect.zig`), each line an
-/// SSH server writes has its own (`ssh.zig`).
-pub fn serverText() utility.Utf8Conversion {
-    return .{ .flags = utility.UTF8F_PIECES | utility.UTF8F_LATIN1 };
+/// The git path for a dos name, in `into`: the name as it is. Null when
+/// it is too long.
+pub fn gitName(into: []u8, name: []const u8) ?[]u8 {
+    if (name.len > into.len) return null;
+    @memcpy(into[0..name.len], name);
+    return into[0..name.len];
+}
+
+/// A byte of a server's text as the console is given it: a 7-bit control
+/// as `?`, the rest - UTF-8's bytes among them - as it is. The line ends
+/// are the caller's.
+pub fn shown(char: u8) u8 {
+    return if (char < ' ' or char == 0x7F) '?' else char;
 }
 
 /// The length of a NUL-terminated string.

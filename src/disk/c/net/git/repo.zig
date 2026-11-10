@@ -187,7 +187,7 @@ pub const Repository = struct {
             }
         }
         while (rest.len > 0 and rest[rest.len - 1] == '/') rest = rest[0 .. rest.len - 1];
-        return files.gitName(repo.git.ub, into, rest) orelse repo.outside(given);
+        return files.gitName(into, rest) orelse repo.outside(given);
     }
 
     fn outside(repo: *const Repository, given: [*:0]const u8) ?[]const u8 {

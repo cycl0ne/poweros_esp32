@@ -119,8 +119,8 @@ pub fn isWeb(text: []const u8) bool {
 }
 
 /// What the page at `address` on the web would be called as a file: the
-/// last part of its path, its escapes undone and made Latin-1 as a name
-/// on a disk is - `README.md` of `https://host/a/README.md?plain=1`.
+/// last part of its path, its escapes undone - `README.md` of
+/// `https://host/a/README.md?plain=1`.
 /// Empty when its path ends in a `/` or has nothing in it, or the part
 /// is not written as an address's is. Written into `into`, with a NUL
 /// after it.
@@ -140,9 +140,8 @@ pub fn fileOf(ub: *UtilityBase, address: []const u8, into: []u8) [:0]const u8 {
     const room = into.len - 1;
     const length = ub.DecodeUrl(part.ptr, part.len, into.ptr, room);
     if (length == utility.URL_BROKEN or length > room) return nothing;
-    const latin = ub.Utf8ToLatin1(null, into.ptr, length, into.ptr, room);
-    into[latin] = 0;
-    return into[0..latin :0];
+    into[length] = 0;
+    return into[0..length :0];
 }
 
 // --- on the web ---------------------------------------------------------------
@@ -231,13 +230,12 @@ fn removeDots(into: *Location, from: usize) void {
 /// file's name, read from the drawer the file `base` is in.
 fn fileName(ub: *UtilityBase, base: []const u8, reference: []const u8, into: *Location) bool {
     // Its query is nothing to a file, and its escapes are UTF-8's bytes,
-    // which a name on the disk has as Latin-1.
+    // as a name on the disk has them.
     const path_only = reference[0 .. indexOf(reference, '?') orelse reference.len];
     var decoded: [location_most + 1]u8 = undefined;
     const length = ub.DecodeUrl(path_only.ptr, path_only.len, &decoded, decoded.len);
     if (length == utility.URL_BROKEN or length > decoded.len) return false;
-    const latin = ub.Utf8ToLatin1(null, &decoded, length, &decoded, decoded.len);
-    const path = decoded[0..latin];
+    const path = decoded[0..length];
 
     into.web = false;
     if (indexOf(path, ':') != null) return into.add(path);

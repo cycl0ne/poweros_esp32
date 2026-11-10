@@ -404,7 +404,7 @@ test "Sheet: filling, copying and pasting" {
 test "Sheet: CSV read and written" {
     var fixture = try Fixture.init();
     var file = "name,value\r\n\"Smith, J.\",12\n\"say \"\"hi\"\"\",=B2*2\n".*;
-    const read = csv.read(fixture.ub, fixture.sheet, &file);
+    const read = csv.read(fixture.sheet, &file);
     try testing.expectEqual(@as(u8, ','), read.form.separator);
     try testing.expectEqualStrings("Smith, J.", fixture.text("A2"));
     try testing.expectEqualStrings("say \"hi\"", fixture.text("A3"));
@@ -416,15 +416,19 @@ test "Sheet: CSV read and written" {
 
     // Semicolons and decimal commas, read so and written back so.
     var german = "\xEF\xBB\xBFPreis;1,5\nM\xC3\xBCller;=B1*2\n".*;
-    const second = csv.read(fixture.ub, fixture.sheet, &german);
+    const second = csv.read(fixture.sheet, &german);
     try testing.expectEqual(@as(u8, ';'), second.form.separator);
     try testing.expect(second.form.decimal_comma);
     try fixture.expectNumber("B1", 1.5);
     try fixture.expectNumber("B2", 3);
-    try testing.expectEqualStrings("M\xFCller", fixture.text("A2"));
+    try testing.expectEqualStrings("M\xC3\xBCller", fixture.text("A2"));
     const back = csv.write(fixture.sheet, second.form).?;
-    try testing.expectEqualStrings("Preis;1,5\nM\xFCller;=B1*2\n", back);
+    try testing.expectEqualStrings("Preis;1,5\nM\xC3\xBCller;=B1*2\n", back);
     fixture.sheet.sys.FreeVec(@constCast(back.ptr));
+    // A file that is no UTF-8, read as Latin-1.
+    var old = "Name;Ort\nM\xFCller;K\xF6ln\n".*;
+    _ = csv.read(fixture.sheet, &old);
+    try testing.expectEqualStrings("K\xC3\xB6ln", fixture.text("B2"));
     try fixture.deinit();
 }
 

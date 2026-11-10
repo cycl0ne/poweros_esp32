@@ -69,7 +69,7 @@ const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const ShareFile = sharefile.ShareFile;
 
 pub const COMMAND_NAME = "MountShare";
-const VERSION_STRING = "\x00$VER: MountShare 1.3 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: MountShare 1.4 (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "NAME/M,ALL/S,SHARE/K,USER/K,PASSWORD/K,DOMAIN/K,VOLUME/K,PORT/K/N,READONLY/S,ENCRYPT/S,SAVE/S,QUIET/S,DISMOUNT/S,LIST/S,SERVER/K";
@@ -849,11 +849,7 @@ fn listShares(sys: *ExecBase, dl: *DosBase, typed: []const u8, options: *const G
         const share_name = client.names.toDos(share.name, @ptrCast(&shown));
         shown[share_name.len] = 0;
         var comment: [80:0]u8 = @splat(0);
-        const units = @min(share.comment.len / 2, comment.len - 1);
-        for (0..units) |index| {
-            const unit = client.names.unitAt(share.comment, index);
-            comment[index] = if (unit >= 0x20 and unit <= 0xFF) @intCast(unit) else '?';
-        }
+        _ = client.names.shown(share.comment, &comment);
         _ = Printf(dl, MSG_SHARE, .{
             @as([*:0]const u8, @ptrCast(&shown)),
             kindName(share),

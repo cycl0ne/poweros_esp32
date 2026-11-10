@@ -5,9 +5,9 @@
 //! A field that holds the separator, a quote or a line break is put in
 //! quotes, and a quote in it doubled. Reading takes whichever separator
 //! the first line has most of outside quotes - a comma, a semicolon or a
-//! tab - and a file that begins with UTF-8's byte order mark, or is UTF-8
-//! throughout, has its characters turned into the system's Latin-1 ones
-//! by utility.library (a character Latin-1 has not is a `?`).
+//! tab. The text is UTF-8, a byte order mark at its start passed over; a
+//! file that is no UTF-8 is an older spreadsheet's, and read as Latin-1.
+//! A sheet is written in UTF-8.
 //!
 //! A semicolon file is how a spreadsheet writes CSV where the comma is the
 //! decimal point, so a field that reads as a number once its one comma is
@@ -16,9 +16,8 @@
 //! the file is saved the same way.
 
 const sdk = @import("sdk");
-const utility = sdk.utility;
+const utf8 = sdk.utility.utf8;
 const ExecBase = sdk.interface.exec.ExecBase;
-const UtilityBase = sdk.interface.utility.UtilityBase;
 const cells = @import("cells.zig");
 const formula = @import("formula.zig");
 const number = @import("number.zig");
@@ -77,21 +76,12 @@ fn commaNumber(field: []const u8, out: *[64]u8) ?[]const u8 {
 
 /// The CSV in `bytes` read into `sheet` from its first cell on, each field
 /// as typed into its cell; the sheet emptied first and worked out after.
-/// `bytes` is changed where utility.library (`ub`) makes its characters
-/// Latin-1; without it they are taken as they are.
-pub fn read(ub: ?*UtilityBase, sheet: *cells.Sheet, given: []u8) ReadResult {
+pub fn read(sheet: *cells.Sheet, given: []const u8) ReadResult {
     var result = ReadResult{};
     sheet.clearAll();
     var bytes = given;
-    if (ub) |utility_base| {
-        const marked = bytes.len >= 3 and bytes[0] == 0xEF and bytes[1] == 0xBB and bytes[2] == 0xBF;
-        const kind = utility_base.Utf8Kind(bytes.ptr, bytes.len);
-        if (marked or kind == utility.UTF8KIND_LATIN1 or kind == utility.UTF8KIND_WIDE) {
-            // In place; a byte that is no UTF-8 stays the byte it is.
-            var conversion: utility.Utf8Conversion = .{ .flags = utility.UTF8F_LATIN1 };
-            bytes = bytes[0..utility_base.Utf8ToLatin1(&conversion, bytes.ptr, bytes.len, bytes.ptr, bytes.len)];
-        }
-    }
+    if (bytes.len >= 3 and bytes[0] == 0xEF and bytes[1] == 0xBB and bytes[2] == 0xBF) bytes = bytes[3..];
+    const latin = !utf8.valid(bytes);
     const separator = separatorOf(bytes);
     result.form.separator = separator;
 
@@ -107,23 +97,20 @@ pub fn read(ub: ?*UtilityBase, sheet: *cells.Sheet, given: []u8) ReadResult {
             while (at < bytes.len) {
                 if (bytes[at] == '"') {
                     if (at + 1 < bytes.len and bytes[at + 1] == '"') {
-                        if (length < field.len) field[length] = '"';
-                        length += 1;
+                        take(&field, &length, '"', latin);
                         at += 2;
                         continue;
                     }
                     at += 1;
                     break;
                 }
-                if (length < field.len) field[length] = bytes[at];
-                length += 1;
+                take(&field, &length, bytes[at], latin);
                 at += 1;
             }
         }
         while (at < bytes.len and bytes[at] != separator and bytes[at] != '\n') : (at += 1) {
             if (bytes[at] == '\r') continue;
-            if (length < field.len) field[length] = bytes[at];
-            length += 1;
+            take(&field, &length, bytes[at], latin);
         }
         var text: []const u8 = field[0..@min(length, field.len)];
         if (text.len > 0) {
@@ -148,6 +135,21 @@ pub fn read(ub: ?*UtilityBase, sheet: *cells.Sheet, given: []u8) ReadResult {
     sheet.changed = false;
     sheet.recalculate();
     return result;
+}
+
+/// One byte of the file into a field: a Latin-1 file's byte past ASCII
+/// as its two bytes of UTF-8. What does not fit is counted, not kept.
+fn take(field: *[cells.max_text]u8, length: *usize, byte: u8, latin: bool) void {
+    if (latin and byte >= 0x80) {
+        if (length.* + 2 <= field.len) {
+            field[length.*] = 0xC0 | byte >> 6;
+            field[length.* + 1] = 0x80 | (byte & 0x3F);
+        }
+        length.* += 2;
+        return;
+    }
+    if (length.* < field.len) field[length.*] = byte;
+    length.* += 1;
 }
 
 const Out = struct {

@@ -267,8 +267,8 @@ pub const SshLink = struct {
         return -1;
     }
 
-    /// `text` shown after `remote: `, a line each, made Latin-1, its
-    /// control characters as `?`.
+    /// `text` shown after `remote: `, a line each, in UTF-8 as it comes,
+    /// its control characters as `?`.
     fn say(link: *SshLink, text: []const u8) void {
         const git = link.git;
         git.endProgress();
@@ -281,21 +281,13 @@ pub const SshLink = struct {
             while (line.len > 0 and line[line.len - 1] == '\r') line = line[0 .. line.len - 1];
             if (line.len == 0) continue;
             git.put("remote: ");
-            // Latin-1 a piece at a time, two bytes to spare for a
-            // character the last piece ended inside, the empty piece at
-            // the end giving what is held; the control characters as `?`.
-            var conversion = files.serverText();
             var taken: usize = 0;
-            while (true) {
-                const piece = line[taken..@min(taken + 126, line.len)];
-                taken += piece.len;
+            while (taken < line.len) {
                 var clean: [128]u8 = undefined;
-                const length = git.ub.Utf8ToLatin1(&conversion, piece.ptr, piece.len, &clean, clean.len);
-                for (clean[0..length]) |*char| {
-                    if (char.* < ' ' or (char.* >= 0x7F and char.* < 0xA0)) char.* = '?';
-                }
-                git.put(clean[0..length]);
-                if (piece.len == 0) break;
+                const piece = line[taken..@min(taken + clean.len, line.len)];
+                taken += piece.len;
+                for (piece, 0..) |char, at| clean[at] = files.shown(char);
+                git.put(clean[0..piece.len]);
             }
             git.put("\n");
         }

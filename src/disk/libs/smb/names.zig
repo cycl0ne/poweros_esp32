@@ -133,6 +133,16 @@ pub fn standIn(name: []const u8, into: *[name_max]u8) []const u8 {
     return into[0 .. len + ext_len];
 }
 
+/// A server's text (UTF-16LE) - a share's comment - in UTF-8 to be
+/// shown, a NUL after it: as many whole characters as fit, a control or
+/// a broken surrogate `_`.
+pub fn shown(text: []const u8, into: []u8) []const u8 {
+    if (into.len == 0) return into[0..0];
+    const length = written(text, into, 0, into.len - 1, false).?;
+    into[length] = 0;
+    return into[0..length];
+}
+
 /// A name of a share's path (UTF-16LE) in UTF-8, as dos would be given
 /// it, or null when it is no whole UTF-16 or does not fit.
 pub fn textOf(name: []const u8, into: *[name_max]u8) ?[]const u8 {
@@ -383,6 +393,13 @@ test "a name is given in UTF-8, one that is no whole UTF-16 as its stand-in" {
     const hash = dos.fat.exfatNameHash(&units);
     _ = std.fmt.bufPrint(&expected, "a_={X:0>4}.txt", .{hash}) catch unreachable;
     try testing.expectEqualStrings(expected[0..shown_name.len], shown_name);
+}
+
+test "a server's text shown: UTF-8, cut where a character starts, controls as _" {
+    var into: [8]u8 = undefined;
+    try testing.expectEqualStrings("Prüf_x", shown(utf16("Prüf\tx"), &into));
+    try testing.expectEqualStrings("日本", shown(utf16("日本語"), &into));
+    try testing.expectEqual(@as(u8, 0), into[6]);
 }
 
 test "stand-ins: a name too long for dos, cut where a character starts" {

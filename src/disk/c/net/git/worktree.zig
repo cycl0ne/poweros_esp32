@@ -12,7 +12,7 @@
 //! **What each mode becomes**: 100644 a file whose E bit is set (it may
 //! not be run), 100755 a file that may be run, 120000 (a symbolic link)
 //! a file holding the link's target, 160000 (a submodule) an empty
-//! directory. Names are made Latin-1 where they can be.
+//! directory. A name that is no UTF-8 is read as Latin-1.
 //!
 //! A path no dos volume holds - an empty name, `.`, `..`, `.git` in any
 //! case, a name with a `:` in it, one longer than `name_max` - is not
@@ -277,7 +277,7 @@ pub const Work = struct {
     /// The dos path of the tree's `path`, in the work tree: null when it
     /// is too long.
     pub fn localPath(work: *Work, into: *files.Path, path: []const u8) ?[*:0]const u8 {
-        const name = files.localName(work.git.ub, &work.local, path) orelse return null;
+        const name = files.localName(&work.local, path) orelse return null;
         return work.repo.workPathQuiet(into, name);
     }
 

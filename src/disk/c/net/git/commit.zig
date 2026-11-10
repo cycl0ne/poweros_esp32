@@ -81,7 +81,7 @@ pub fn run(git: *Git, argv: []const usize) i32 {
     for (entries) |*entry| {
         if (entry.stage != 0) {
             git.say("", .{});
-            git.putPath(entry.path);
+            git.put(entry.path);
             git.put(" is unmerged - nothing committed\n");
             return dos.RETURN_ERROR;
         }

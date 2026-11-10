@@ -71,7 +71,7 @@ test "links on a page from a disk" {
         .{ "../Readme", "SYS:Tests/Readme" },
         .{ "../../../top", "SYS:top" },
         .{ "/Docs/a%20b.html?q=1", "SYS:Docs/a b.html" },
-        .{ "Gr%C3%BC%C3%9Fe.html", "Gr\xFC\xDFe.html" },
+        .{ "Gr%C3%BC%C3%9Fe.html", "Gr\xC3\xBC\xC3\x9Fe.html" },
         .{ "RAM:other.html", "RAM:other.html" },
         .{ "https://example.com/", "https://example.com/" },
         .{ "mailto:x@y", "nowhere" },
@@ -79,7 +79,7 @@ test "links on a page from a disk" {
         .{ "broken%ZZ.html", "unreadable" },
     };
     for (cases[0..5]) |case| try testing.expectEqualStrings(case[1], try leads(ub, base, case[0], &into));
-    try testing.expectEqualStrings("SYS:Tests/datatypes/Gr\xFC\xDFe.html", try leads(ub, base, cases[5][0], &into));
+    try testing.expectEqualStrings("SYS:Tests/datatypes/Gr\xC3\xBC\xC3\x9Fe.html", try leads(ub, base, cases[5][0], &into));
     for (cases[6..]) |case| try testing.expectEqualStrings(case[1], try leads(ub, base, case[0], &into));
     // From a name relative to the current drawer.
     try testing.expectEqualStrings("b.html", try leads(ub, "a.html", "b.html", &into));
@@ -100,7 +100,7 @@ test "what a page on the web would be called as a file" {
         .{ "https://github.com/a/b/blob/main/README.md", "README.md" },
         .{ "https://host/raw/Notes.markdown?plain=1#top", "Notes.markdown" },
         .{ "https://en.wikipedia.org/wiki/HTML", "HTML" },
-        .{ "http://host/Gr%C3%BC%C3%9Fe.md", "Gr\xFC\xDFe.md" },
+        .{ "http://host/Gr%C3%BC%C3%9Fe.md", "Gr\xC3\xBC\xC3\x9Fe.md" },
         .{ "http://host/drawer/", "" },
         .{ "http://host", "" },
         .{ "http://host?q=/x.md", "" },

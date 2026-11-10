@@ -269,7 +269,7 @@ pub const Adding = struct {
                 continue;
             }
             const local_name = files.span(@ptrCast(&level.fib.file_name));
-            const git_name = files.gitName(adding.git.ub, &adding.name, local_name) orelse continue;
+            const git_name = files.gitName(&adding.name, local_name) orelse continue;
             if (level.git_length == 0 and isDotGit(git_name)) continue;
             if (level.git_length + git_name.len + 2 > files.path_most) continue;
             @memcpy(adding.git_path[level.git_length..][0..git_name.len], git_name);
