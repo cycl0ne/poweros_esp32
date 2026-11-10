@@ -541,8 +541,12 @@ pub const profile: spirv.Profile = .{
         // them for a device of no BFE, BFM or BFI (since 1.202).
         .bit_field_insert,               .bit_field_s_extract,
         .bit_field_u_extract,          .bit_reverse,                    .bit_count,
+        // A compute program's workgroup waiting for all its invocations
+        // (since 1.203).
+                             .control_barrier,
     },
-    .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform },
+    // Workgroup: a compute program's shared memory (since 1.203).
+    .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform, .workgroup },
     .image_dims = &.{ .dim_2d, .dim_3d, .cube },
     // A bias, a level and a constant texel offset, TMUB's and P2's
     // (handle_tex_src, v3d_tex.c:129-170; since 1.180); and a gradient,
@@ -667,6 +671,32 @@ pub const Tag = enum {
     /// before anything after it is (nir_to_vir.c:3857-3861; since 1.169).
     /// It makes no value.
     barrier,
+    /// NIR's load_shared: floats of the workgroup's shared memory at `at`,
+    /// the byte offset nir_lower_explicit_io gives it from the place
+    /// lower_compute laid its variable out at (`sharedLayout`;
+    /// v3dv_pipeline.c:3285-3291), or at the offset the step `a` computes
+    /// where it is no `none`. v3d reads it through the TMU from
+    /// cs_shared_offset, which the program works out at its start
+    /// (ntq_emit_tmu_general, nir_to_vir.c:578-588, :3665-3668; :4967-4992).
+    /// Two loads of one place are two steps: load_shared is no CAN_REORDER
+    /// (nir_intrinsics.py:1399), so nir_opt_cse leaves it be (since 1.203).
+    shared,
+    /// NIR's store_shared: the floats of `a` written at `at`, or at the
+    /// offset `from[0]` computes where it is no `none`, as `shared` reads
+    /// them (:3659-3663). It makes no value.
+    shared_store,
+    /// NIR's shared_atomic and shared_atomic_swap: `atomic` on the word at
+    /// `at`, or at `from[0]`, its operands `a` and `from[1]` as an
+    /// `ssbo_atomic`'s (:3657-3663). Its value is the word as it was.
+    shared_atomic,
+    /// NIR's barrier of a workgroup, which vtn makes of OpControlBarrier
+    /// (vtn_emit_scoped_control_barrier, spirv_to_nir.c:2813-2845): what
+    /// the TMU holds flushed, then a TSY op that blocks the invocations of
+    /// the workgroup - of its supergroup, in fact - at the next thread
+    /// switch until the last has come to it (emit_compute_barrier,
+    /// nir_to_vir.c:3563-3577, :3857-3870; since 1.203). It makes no
+    /// value.
+    control_barrier,
     /// 32-bit integers, or floats made integers or integers floats: NIR's
     /// integer ALU, `at` an `Integer`, each word of `a` (and `b`) one VIR
     /// operation as ntq_emit_alu emits it (nir_to_vir.c:1421-1806; since
@@ -1184,6 +1214,13 @@ pub const Word = union(enum) {
     /// since 1.177).
     spill_offset,
     spill_size_per_thread,
+    /// Where the dispatch's shared memory is: QUNIFORM_SHARED_OFFSET,
+    /// which v3dv writes as the address of the buffer it made the job of
+    /// the program's shared_size times the dispatch's workgroups
+    /// (v3dv_uniforms.c:658-662; cmd_buffer_create_csd_job,
+    /// v3dv_cmd_buffer.c:4434-4445). The program adds its workgroup's
+    /// place in it (nir_to_vir.c:4967-4992; since 1.203).
+    shared_offset,
     /// A size of the view a unit samples, or its levels: Mesa's
     /// QUNIFORM_TEXTURE_WIDTH, _HEIGHT, _DEPTH, _ARRAY_SIZE and _LEVELS,
     /// which v3dv writes from the view's extent, layers and levels
@@ -1251,8 +1288,7 @@ const builtin_count = @typeInfo(Builtin).@"enum".fields.len;
 /// v3d_compute_prog_data, v3d_compiler.h:1069-1076): its workgroup's size,
 /// which the dispatch's configuration is made of, and whether workgroups
 /// may share a supergroup, which a program of no subgroup operation may
-/// (v3d_nir_lower_subgroup_intrinsics, vir.c:1842, :1855). No shared
-/// memory: a Workgroup variable is refused (since 1.194).
+/// (v3d_nir_lower_subgroup_intrinsics, vir.c:1842, :1855).
 pub const ComputeProgram = struct {
     local_size: [3]u16 = .{ 1, 1, 1 },
     can_use_supergroups: bool = true,
@@ -1260,6 +1296,14 @@ pub const ComputeProgram = struct {
     /// prog_data's single_seg, !c->last_thrsw (vir.c:1041), CFG5's
     /// SINGLE_SEG (since 1.195).
     single_seg: bool = false,
+    /// The bytes of shared memory a workgroup has, prog_data's
+    /// shared_size (vir.c:1027), which the dispatch makes a buffer of for
+    /// each of its workgroups; and whether it waits at a barrier,
+    /// has_control_barrier (:1049), which holds a supergroup to half the
+    /// QPUs' threads (v3d_csd_choose_workgroups_per_supergroup,
+    /// v3d_util.c:56-67; since 1.203).
+    shared_size: u32 = 0,
+    has_control_barrier: bool = false,
 };
 
 /// Which of the VPM's three values a vertex program reads, each a row
@@ -1469,6 +1513,18 @@ pub const Work = struct {
     /// is not 0, the variables vtn keeps being those the body names
     /// (spirv_to_nir.c:7533-7551; since 1.168).
     uses_ssbo: bool = false,
+    /// The bytes of shared memory a workgroup has: info.shared_size, the
+    /// Workgroup variables laid out one after another, each at its
+    /// alignment (lower_vars_to_explicit, nir_lower_explicit_io.c:
+    /// 2001-2070; since 1.203).
+    shared_size: u32 = 0,
+    /// The ids an instruction names as a pointer (`namedPointers`): a
+    /// Workgroup variable none names is not laid out (since 1.203).
+    named: std.StaticBitSet(most_ids) = .initEmpty(),
+    /// An OpControlBarrier made a `control_barrier`:
+    /// info.uses_control_barrier (emit_compute_barrier, nir_to_vir.c:3570;
+    /// since 1.203).
+    uses_control_barrier: bool = false,
     /// `array`: how many elements, and the ArrayStride they are apart,
     /// which an OpDecorate may give before the type is declared
     /// (since 1.161).
@@ -1765,7 +1821,7 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
     // reads it once.
     if (work.sample_count > 1) return Error.Samplers;
     for (work.program()) |each| switch (each.tag) {
-        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store => return Error.Storage,
+        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier => return Error.Storage,
         .discard => return Error.Discards,
         .sample_compared => return Error.Samplers,
         // Every one reads a 2D texture at s and t (since 1.179), at the
@@ -1955,6 +2011,8 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
             // The spill buffer's (since 1.177).
             .spill_offset => .spill_offset,
             .spill_size_per_thread => .spill_size_per_thread,
+            // The dispatch's shared memory (since 1.203).
+            .shared_offset => .shared_offset,
             // A size of a unit's view, or its levels (since 1.181).
             .texture_width => .{ .texture_size = .{ .unit = try units.at(data), .field = .width } },
             .texture_height => .{ .texture_size = .{ .unit = try units.at(data), .field = .height } },
@@ -1984,7 +2042,12 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
         .flat_shade_flags = program.flat_shade_flags,
         .noperspective_flags = program.noperspective_flags,
         .vertex = if (work.stage == .vertex) vertexProgram(work, program.single_seg) else .{},
-        .compute = if (work.stage == .gl_compute) .{ .local_size = .{ @intCast(work.local_size[0]), @intCast(work.local_size[1]), @intCast(work.local_size[2]) }, .single_seg = program.single_seg } else .{},
+        .compute = if (work.stage == .gl_compute) .{
+            .local_size = .{ @intCast(work.local_size[0]), @intCast(work.local_size[1]), @intCast(work.local_size[2]) },
+            .single_seg = program.single_seg,
+            .shared_size = work.shared_size,
+            .has_control_barrier = work.uses_control_barrier,
+        } else .{},
     };
 }
 
@@ -2122,6 +2185,7 @@ fn readStage(work: *Work, words: []const u32, stage: spirv.ExecutionModel, key: 
 /// decorate, and every type, constant and variable an instruction names is
 /// declared before it.
 fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
+    try namedPointers(work, words);
     var reader = spirv.Reader.of(words);
     var in_body = false;
     var blocks: u32 = 0;
@@ -2775,6 +2839,42 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.sampler_count += 1;
                     continue;
                 }
+                if (class == .workgroup) {
+                    // A compute program's shared memory (since 1.203):
+                    // a float, an integer, a vector, a matrix, or an array
+                    // or a struct of those, in the layout v3dv's
+                    // shared_type_info gives it (`sharedLayout`), placed
+                    // after the variables before it at its alignment
+                    // (lower_compute, v3dv_pipeline.c:3285-3291;
+                    // lower_vars_to_explicit, nir_lower_explicit_io.c:
+                    // 2042-2065). A pointer to it is a chain's base at its
+                    // place, as a block's member is, and each load, store
+                    // and atomic through one is NIR's load_shared,
+                    // store_shared and shared_atomic. One the body names
+                    // nowhere is not laid out: v3d_optimize_nir's
+                    // nir_remove_dead_variables takes it away first
+                    // (nir_to_vir.c:2253-2257; v3dv_pipeline.c:3407-3409).
+                    if (work.stage != .gl_compute) return Error.Storage;
+                    // No initializer: Vulkan 1.0 has none for Workgroup
+                    // memory, VK_KHR_zero_initialize_workgroup_memory being
+                    // later (nir_zero_initialize_shared_memory, vir.c:
+                    // 817-829).
+                    if (operands.len != 3) return Error.Storage;
+                    const laid = try sharedLayout(work, pointee);
+                    work.thing[id] = .member_pointer;
+                    work.class[id] = @intCast(@intFromEnum(class));
+                    work.points[id] = pointee;
+                    work.chain_base[id] = id;
+                    work.chain_dynamic[id] = none;
+                    work.chain_stride[id] = if (work.thing[pointee] == .matrix) try sharedColumnStride(work, pointee) else none;
+                    work.chain_offset[id] = 0;
+                    if (!work.named.isSet(id)) continue;
+                    const place = std.mem.alignForward(u32, work.shared_size, laid.alignment);
+                    if (place + laid.size > most_shared) return Error.Storage;
+                    work.chain_offset[id] = @intCast(place);
+                    work.shared_size = place + laid.size;
+                    continue;
+                }
                 if (class == .function) {
                     // A variable of the function's own, which Mesa makes
                     // values (nir_lower_vars_to_ssa, nir_to_vir.c:2240):
@@ -3236,7 +3336,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         // An atomic or a barrier is neither either: it
                         // would run where the arm is not taken (since
                         // 1.169).
-                        .atomic_load, .atomic_store, .atomic_exchange, .atomic_compare_exchange, .atomic_compare_exchange_weak, .atomic_i_increment, .atomic_i_decrement, .atomic_i_add, .atomic_i_sub, .atomic_s_min, .atomic_u_min, .atomic_s_max, .atomic_u_max, .atomic_and, .atomic_or, .atomic_xor, .memory_barrier => try selection.keep(work, depth),
+                        .atomic_load, .atomic_store, .atomic_exchange, .atomic_compare_exchange, .atomic_compare_exchange_weak, .atomic_i_increment, .atomic_i_decrement, .atomic_i_add, .atomic_i_sub, .atomic_s_min, .atomic_u_min, .atomic_s_max, .atomic_u_max, .atomic_and, .atomic_or, .atomic_xor, .memory_barrier, .control_barrier => try selection.keep(work, depth),
                         // A store into a variable of the function's own
                         // is a value the merge chooses, a load and a store
                         // nir_lower_vars_to_ssa leaves none of (since
@@ -4149,7 +4249,7 @@ fn loopCost(work: *const Work, from: u16, to: u16) u32 {
                 cost += each.kind.parts();
                 continue;
             },
-            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .discard, .sample, .sample_compared, .output, .viewport, .system => {
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .discard, .sample, .sample_compared, .output, .viewport, .system => {
                 cost += 1;
                 continue;
             },
@@ -4470,7 +4570,8 @@ fn quietOf(work: *const Work, instruction: spirv.Instruction) bool {
     };
 }
 
-/// Whether an OpStore's pointer is into a storage buffer.
+/// Whether an OpStore's pointer is into a storage buffer, or into shared
+/// memory (since 1.203).
 fn storesBuffer(work: *const Work, operands: []const u32) bool {
     if (operands.len < 1) return false;
     const id = idOf(operands[0]) catch return false;
@@ -5536,7 +5637,7 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
             // load_scratch is made of later, is let through by none
             // (nir_opt_peephole_select.c:109-129), nor is a store_deref
             // (since 1.177).
-            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store => return std.math.maxInt(u32),
+            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier => return std.math.maxInt(u32),
             // ineg and iabs are move-like, as fneg and fabs are
             // (nir_opt_peephole_select.c:251-264; since 1.165).
             .integer => switch (@as(Integer, @enumFromInt(each.at))) {
@@ -5861,6 +5962,8 @@ const Order = struct {
             // What writes memory, or orders it, is kept whatever reads it
             // (nir_instr_can_remove, nir_opt_dce.c; since 1.168 and 1.169).
             if (each.tag == .discard or each.tag == .output or each.tag == .ssbo_store or each.tag == .ssbo_atomic or each.tag == .barrier or each.tag == .scratch_store) reached[at] = true;
+            // Shared memory's too (since 1.203).
+            if (each.tag == .shared_store or each.tag == .shared_atomic or each.tag == .control_barrier) reached[at] = true;
             // A kept selection's marks are its nir_if, which no pass but
             // nir_opt_dead_cf takes out (since 1.171).
             if (each.tag == .begin_if or each.tag == .begin_else or each.tag == .end_if) reached[at] = true;
@@ -6711,7 +6814,7 @@ fn oneFloat(work: *const Work, left: Float, right: Float) bool {
 /// component and a construct only name floats.
 fn computes(tag: Tag) bool {
     return switch (tag) {
-        .input, .constant, .push, .component, .construct, .discard, .output, .viewport, .system, .ssbo_store, .ssbo_atomic, .barrier, .begin_if, .begin_else, .end_if, .phi, .scratch, .scratch_indirect, .scratch_store => false,
+        .input, .constant, .push, .component, .construct, .discard, .output, .viewport, .system, .ssbo_store, .ssbo_atomic, .barrier, .begin_if, .begin_else, .end_if, .phi, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier => false,
         else => true,
     };
 }
@@ -6810,9 +6913,11 @@ fn readsOf(each: Step) [4]?u16 {
         // A size's level (since 1.181).
         .texture_size => .{ each.from[0], null, null, null },
         .texture_levels => .{ null, null, null, null },
-        .ssbo_store, .scratch_store => .{ each.a, if (each.from[0] != none) each.from[0] else null, null, null },
-        .ssbo_atomic => .{ each.a, if (each.from[0] != none) each.from[0] else null, if (each.from[1] != none) each.from[1] else null, null },
-        .barrier => .{ null, null, null, null },
+        .ssbo_store, .scratch_store, .shared_store => .{ each.a, if (each.from[0] != none) each.from[0] else null, null, null },
+        .ssbo_atomic, .shared_atomic => .{ each.a, if (each.from[0] != none) each.from[0] else null, if (each.from[1] != none) each.from[1] else null, null },
+        // A load_shared's offset, where it is computed (since 1.203).
+        .shared => .{ if (each.a != none) each.a else null, null, null, null },
+        .barrier, .control_barrier => .{ null, null, null, null },
     };
 }
 
@@ -6853,10 +6958,10 @@ fn renameReads(each: *Step, renamed: *const [most_steps]u16) void {
             each.b = renamed[each.b];
             each.from[0] = renamed[each.from[0]];
         },
-        .ssbo_store, .ssbo_atomic, .scratch_store => {
+        .ssbo_store, .ssbo_atomic, .scratch_store, .shared_store, .shared_atomic => {
             each.a = renamed[each.a];
             if (each.from[0] != none) each.from[0] = renamed[each.from[0]];
-            if (each.tag == .ssbo_atomic and each.from[1] != none) each.from[1] = renamed[each.from[1]];
+            if ((each.tag == .ssbo_atomic or each.tag == .shared_atomic) and each.from[1] != none) each.from[1] = renamed[each.from[1]];
         },
         .sample, .sample_compared => {
             each.a = renamed[each.a];
@@ -6888,7 +6993,7 @@ fn replaceUses(work: *Work, from: u16, to: u16) void {
     if (work.stored == from) work.stored = to;
     for (work.steps[0..work.step_count]) |*user| {
         switch (user.tag) {
-            .input, .constant, .push, .ubo, .ssbo, .barrier, .scratch => {},
+            .input, .constant, .push, .ubo, .ssbo, .barrier, .scratch, .control_barrier => {},
             .construct => for (user.from[0..user.kind.parts()]) |*of| {
                 if (of.* == from) of.* = to;
             },
@@ -6897,10 +7002,10 @@ fn replaceUses(work: *Work, from: u16, to: u16) void {
                 if (user.b == from) user.b = to;
                 if (user.from[0] == from) user.from[0] = to;
             },
-            .ssbo_store, .ssbo_atomic, .scratch_store => {
+            .ssbo_store, .ssbo_atomic, .scratch_store, .shared_store, .shared_atomic => {
                 if (user.a == from) user.a = to;
                 if (user.from[0] == from) user.from[0] = to;
-                if (user.tag == .ssbo_atomic and user.from[1] == from) user.from[1] = to;
+                if ((user.tag == .ssbo_atomic or user.tag == .shared_atomic) and user.from[1] == from) user.from[1] = to;
             },
             .sample, .sample_compared => {
                 if (user.a == from) user.a = to;
@@ -7084,7 +7189,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             const from = try idOf(operands[2]);
             const pointee = try atomicPointee(work, from);
             if (try idOf(operands[0]) != pointee) return Error.Type;
-            const barriers = try atomicBarriers(try uintOf(work, operands[4]));
+            const barriers = try atomicBarriers(try uintOf(work, operands[4]), ownSemantics(work, from));
             if (barriers.before) _ = try put(work, .{ .tag = .barrier, .kind = .f32x1 });
             work.step_of[id] = try blockLoad(work, work.chain_base[from], work.chain_dynamic[from], work.chain_offset[from], .f32x1, work.non_writable[from]);
             if (barriers.after) _ = try put(work, .{ .tag = .barrier, .kind = .f32x1 });
@@ -7093,7 +7198,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (operands.len != 4) return Error.Body;
             const into = try idOf(operands[0]);
             _ = try atomicPointee(work, into);
-            const barriers = try atomicBarriers(try uintOf(work, operands[2]));
+            const barriers = try atomicBarriers(try uintOf(work, operands[2]), ownSemantics(work, into));
             const value = try operand(work, operands[3], .f32x1);
             if (barriers.before) _ = try put(work, .{ .tag = .barrier, .kind = .f32x1 });
             try blockStore(work, work.chain_base[into], work.chain_dynamic[into], work.chain_offset[into], work.non_writable[into], value, .f32x1);
@@ -7106,6 +7211,25 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (operands.len != 2) return Error.Body;
             _ = try uintOf(work, operands[0]);
             if (try memoryBarrier(try uintOf(work, operands[1]))) _ = try put(work, .{ .tag = .barrier, .kind = .f32x1 });
+        },
+        // OpControlBarrier: the barrier vtn_emit_scoped_control_barrier
+        // makes of it (spirv_to_nir.c:4821-4866, :2813-2845), in a compute
+        // program a `control_barrier` (since 1.203). Of no memory
+        // semantics, or none of a storage class, it orders no memory; of
+        // neither memory nor execution wider than the invocation it is
+        // nothing. glslang's old barrier() of no semantics, which vtn
+        // mends (wa_glslang_cs_barrier, :4828-4842), glslc does not write.
+        .control_barrier => {
+            if (operands.len != 3) return Error.Body;
+            const execution = try scopeOf(try uintOf(work, operands[0]));
+            const memory_scope = try scopeOf(try uintOf(work, operands[1]));
+            const memory: Scope = if (try memoryBarrier(try uintOf(work, operands[2]))) memory_scope else .none;
+            if (@intFromEnum(memory) <= @intFromEnum(Scope.invocation) and @intFromEnum(execution) <= @intFromEnum(Scope.invocation)) return;
+            // Another stage's, emit_barrier's TSY op of a subgroup
+            // (nir_to_vir.c:3580-3613), is not ported.
+            if (work.stage != .gl_compute) return Error.Refused;
+            work.uses_control_barrier = true;
+            _ = try put(work, .{ .tag = .control_barrier, .kind = .f32x1 });
         },
         .load => {
             if (operands.len < 3) return Error.Body;
@@ -7483,6 +7607,8 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             // and every member's it goes through (since 1.168).
             var non_writable = work.non_writable[base];
             if (work.thing[base] == .member_pointer) {
+                // A block's member, or a Workgroup variable, which is
+                // its own base (since 1.203).
                 variable = work.chain_base[base];
                 offset = work.chain_offset[base];
                 dynamic = work.chain_dynamic[base];
@@ -7491,6 +7617,9 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             } else if (base == work.push_variable or (work.thing[base] == .variable and work.class[base] == @intFromEnum(spirv.StorageClass.uniform))) {
                 pointee = blockOfVariable(work, base).type_id;
             } else return Error.Storage;
+            // Shared memory, in shared_type_info's layout and not in one
+            // decorations give (since 1.203).
+            const shared = isShared(work, variable);
             for (operands[3..]) |each| {
                 // An index no constant: its step, and the bytes the
                 // elements, columns or floats it counts are apart.
@@ -7513,12 +7642,20 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                         stride = block.member_stride[index];
                         pointee = block.member_type[index];
                     },
+                    .plain_struct => {
+                        // A member of a struct in shared memory, at the
+                        // offset its layout gives it (since 1.203).
+                        if (!shared or computed != none) return Error.Body;
+                        if (index >= work.wide[pointee]) return Error.Body;
+                        adds = try sharedMemberOffset(work, pointee, index);
+                        pointee = work.struct_members[work.points[pointee] + index];
+                    },
                     .array => {
                         // A runtime array's elements are all the draw's
                         // to have bound (since 1.164), and an index
                         // computed is the program's to keep among them.
                         if (!isRuntime(work, pointee) and index >= work.length[pointee]) return Error.Body;
-                        apart = work.array_stride[pointee];
+                        apart = if (shared) (try sharedLayout(work, work.points[pointee])).stride() else work.array_stride[pointee];
                         if (computed != none and apart == none) return Error.Storage;
                         adds = index * apart;
                         pointee = work.points[pointee];
@@ -7538,6 +7675,9 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                     },
                     else => return Error.Body,
                 }
+                // A matrix in shared memory: its columns as far apart as
+                // its layout has them (since 1.203).
+                if (shared and work.thing[pointee] == .matrix) stride = try sharedColumnStride(work, pointee);
                 if (computed == none and dynamic == none) {
                     offset = std.math.add(u32, offset, adds) catch return Error.Storage;
                     continue;
@@ -7571,7 +7711,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             work.chain_stride[id] = stride;
             work.chain_dynamic[id] = dynamic;
             work.non_writable[id] = non_writable;
-            if (variable != work.push_variable and work.ubos[work.points[variable]].storage) work.uses_ssbo = true;
+            if (!shared and variable != work.push_variable and work.ubos[work.points[variable]].storage) work.uses_ssbo = true;
         },
         .composite_extract => {
             if (operands.len < 4) return Error.Body;
@@ -8197,6 +8337,9 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
 /// makes in the same format (v3dv_pipeline.c:418-420; since 1.164).
 fn blockLoad(work: *Work, variable: u16, dynamic: u16, offset: u32, kind: Kind, non_writable: bool) Error!u16 {
     if (offset >= none) return Error.Storage;
+    // A load_shared, at the offset nir_lower_explicit_io computes in the
+    // 32bit_offset format (v3dv_pipeline.c:3290-3291; since 1.203).
+    if (isShared(work, variable)) return put(work, .{ .tag = .shared, .kind = kind, .a = try offsetStep(work, dynamic, offset), .at = if (dynamic == none) offset else 0 });
     if (variable != work.push_variable) {
         const slot = work.points[variable];
         const storage = work.ubos[slot].storage;
@@ -8222,6 +8365,11 @@ fn blockLoad(work: *Work, variable: u16, dynamic: u16, offset: u32, kind: Kind, 
 /// 1.194).
 fn blockStore(work: *Work, variable: u16, dynamic: u16, offset: u32, non_writable: bool, value: u16, kind: Kind) Error!void {
     if (offset >= none or variable == work.push_variable) return Error.Storage;
+    // A store_shared (since 1.203).
+    if (isShared(work, variable)) {
+        _ = try put(work, .{ .tag = .shared_store, .kind = kind, .a = value, .at = if (dynamic == none) offset else 0, .from = .{ try offsetStep(work, dynamic, offset), 0, 0, 0 } });
+        return;
+    }
     const slot = work.points[variable];
     if (!work.ubos[slot].storage or non_writable) return Error.Storage;
     if (work.stage == .vertex) return Error.Storage;
@@ -8262,7 +8410,7 @@ fn atomicOf(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
     if (try idOf(operands[0]) != pointee) return Error.Type;
     _ = try uintOf(work, operands[3]);
     // CompareExchange's Unequal semantics are not read (:4318-4321).
-    const barriers = try atomicBarriers(try uintOf(work, operands[4]));
+    const barriers = try atomicBarriers(try uintOf(work, operands[4]), ownSemantics(work, into));
     const atomic: Atomic = switch (op) {
         .atomic_i_increment, .atomic_i_decrement, .atomic_i_add, .atomic_i_sub => .iadd,
         .atomic_s_min => .imin,
@@ -8293,6 +8441,8 @@ fn atomicOf(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
 /// to (since 1.169).
 fn blockAtomic(work: *Work, variable: u16, dynamic: u16, offset: u32, non_writable: bool, atomic: Atomic, first: u16, second: u16) Error!u16 {
     if (offset >= none or variable == work.push_variable) return Error.Storage;
+    // A shared_atomic or shared_atomic_swap (since 1.203).
+    if (isShared(work, variable)) return put(work, .{ .tag = .shared_atomic, .kind = .f32x1, .a = first, .at = if (dynamic == none) offset else 0, .from = .{ try offsetStep(work, dynamic, offset), second, 0, 0 }, .atomic = atomic });
     const slot = work.points[variable];
     if (!work.ubos[slot].storage or non_writable) return Error.Storage;
     if (work.stage == .vertex) return Error.Storage;
@@ -8323,16 +8473,17 @@ const Semantics = struct {
     const storage: u32 = 0x1fc0;
 };
 
-/// Where an atomic of a storage buffer has a barrier: before it, of its
-/// release, and after it, of its acquire, as vtn_split_barrier_semantics
-/// splits its semantics with the buffer's UniformMemory added
-/// (spirv_to_nir.c:2581-2661, :4447-4477), and vtn_emit_memory_barrier
+/// Where an atomic has a barrier: before it, of its release, and after it,
+/// of its acquire, as vtn_split_barrier_semantics splits its semantics
+/// with its memory's own added, a storage buffer's UniformMemory and
+/// shared memory's WorkgroupMemory (`ownSemantics`; spirv_to_nir.c:
+/// 2581-2661, :4440-4477; since 1.203), and vtn_emit_memory_barrier
 /// makes one of each part that is any (:2847-2862). More than one order
 /// is AcquireRelease (:2604-2613); SequentiallyConsistent is too
 /// (:2635). MakeAvailable and MakeVisible want the VulkanMemoryModel
 /// capability (:2710-2720), which the profile does not take.
-fn atomicBarriers(given: u32) Error!struct { before: bool, after: bool } {
-    const semantics = given | Semantics.uniform_memory;
+fn atomicBarriers(given: u32, own: u32) Error!struct { before: bool, after: bool } {
+    const semantics = given | own;
     if (semantics & (Semantics.make_available | Semantics.make_visible) != 0) return Error.Body;
     var ordered = semantics & Semantics.orders;
     if (@popCount(ordered) > 1) ordered = Semantics.acquire_release;
@@ -8358,12 +8509,155 @@ fn memoryBarrier(semantics: u32) Error!bool {
     return ordered and modes != 0;
 }
 
+/// mesa_scope, narrowest first (shader_enums.h:1653-1662).
+const Scope = enum(u8) { none, invocation, subgroup, shader_call, workgroup, queue_family, device };
+
+/// A SPIR-V scope as vtn_translate_scope makes it a mesa_scope
+/// (spirv_to_nir.c:2765-2797): CrossDevice is no scope
+/// of Vulkan's, QueueFamily wants the VulkanMemoryModel capability and
+/// ShaderCallKHR ray tracing, none of which the profile takes (since
+/// 1.203).
+fn scopeOf(word: u32) Error!Scope {
+    return switch (word) {
+        1 => .device,
+        2 => .workgroup,
+        3 => .subgroup,
+        4 => .invocation,
+        else => Error.Body,
+    };
+}
+
+/// The memory semantics of the storage class an atomic's pointer is of,
+/// which vtn adds to what it is given (vtn_mode_to_memory_semantics,
+/// vtn_variables.c:2668-2687): a storage buffer's UniformMemory, shared
+/// memory's WorkgroupMemory (since 1.203).
+fn ownSemantics(work: *const Work, pointer: u16) u32 {
+    return if (isShared(work, work.chain_base[pointer])) Semantics.workgroup_memory else Semantics.uniform_memory;
+}
+
 /// A constant's 32-bit word, an integer's: a scope or memory semantics
 /// (vtn_constant_uint; since 1.169).
 fn uintOf(work: *const Work, word: u32) Error!u32 {
     const id = try idOf(word);
     if (work.thing[id] != .int_constant) return Error.Body;
     return @bitCast(work.pool[work.points[id]]);
+}
+
+/// The most bytes of shared memory a compute program has: the device's
+/// maxComputeSharedMemorySize (instance/_instance.zig), which a module
+/// may not go past (since 1.203).
+/// The shared memory a workgroup may have: facet's
+/// maxComputeSharedMemorySize (instance/_instance.zig), which
+/// vkCreateComputePipelines refuses a pipeline past, where v3dv's is 32
+/// KiB (V3D_MAX_COMPUTE_SHARED_MEMORY_SIZE, v3d_limits.h:79; since 1.203).
+const most_shared: u32 = 16 * 1024;
+
+/// A type's bytes and alignment in shared memory.
+const Laid = struct {
+    size: u32,
+    alignment: u32,
+
+    /// How far apart an array's elements of it are:
+    /// glsl_get_explicit_type_for_size_align's stride (glsl_types.c:
+    /// 2821-2823).
+    fn stride(laid: Laid) u32 {
+        return std.mem.alignForward(u32, laid.size, laid.alignment);
+    }
+};
+
+/// A Workgroup variable's type laid out as lower_compute lays it out:
+/// nir_lower_vars_to_explicit_types with v3dv's shared_type_info
+/// (v3dv_pipeline.c:3273-3291), through
+/// glsl_get_explicit_type_for_size_align (glsl_types.c:2795-2885). A
+/// float or an integer is 4 bytes at 4; a vector of n is 4n at 4 times n,
+/// a vec3's at 16; an array's stride is its element's size rounded up to
+/// its alignment, and its size the stride times one less than its length
+/// plus the element's; a struct's members follow one another each at its
+/// alignment, the struct at the widest and rounded up to it; a matrix is
+/// its columns each a column's size rounded up to its alignment, at a
+/// column's alignment. A bool, which shared_type_info makes 4 bytes but
+/// a load of which vtn and nir_lower_explicit_io turn into a comparison,
+/// is not ported (since 1.203).
+fn sharedLayout(work: *Work, type_id: u16) Error!Laid {
+    return switch (work.thing[type_id]) {
+        .float, .int => .{ .size = 4, .alignment = 4 },
+        .vector => .{ .size = 4 * @as(u32, work.wide[type_id]), .alignment = 4 * @as(u32, if (work.wide[type_id] == 3) 4 else work.wide[type_id]) },
+        .matrix => .{ .size = @as(u32, work.wide[type_id]) * try sharedColumnStride(work, type_id), .alignment = (try sharedLayout(work, work.points[type_id])).alignment },
+        .array => {
+            if (isRuntime(work, type_id) or work.length[type_id] == 0) return Error.Storage;
+            const element = try sharedLayout(work, work.points[type_id]);
+            const size = std.math.add(u32, std.math.mul(u32, element.stride(), work.length[type_id] - 1) catch return Error.Storage, element.size) catch return Error.Storage;
+            if (size > most_shared) return Error.Storage;
+            return .{ .size = size, .alignment = element.alignment };
+        },
+        .plain_struct => {
+            var size: u32 = 0;
+            var alignment: u32 = 1;
+            for (work.struct_members[work.points[type_id]..][0..work.wide[type_id]]) |member| {
+                const laid = try sharedLayout(work, member);
+                size = std.mem.alignForward(u32, size, laid.alignment) + laid.size;
+                if (size > most_shared) return Error.Storage;
+                alignment = @max(alignment, laid.alignment);
+            }
+            return .{ .size = std.mem.alignForward(u32, size, alignment), .alignment = alignment };
+        },
+        else => Error.Storage,
+    };
+}
+
+/// How far apart a matrix's columns are in shared memory: a column's
+/// size rounded up to its alignment (glsl_types.c:2867-2873; since
+/// 1.203).
+fn sharedColumnStride(work: *Work, matrix: u16) Error!u16 {
+    return @intCast((try sharedLayout(work, work.points[matrix])).stride());
+}
+
+/// Where member `index` of a struct is in shared memory: after the ones
+/// before it, at its alignment (glsl_types.c:2838-2848; since 1.203).
+fn sharedMemberOffset(work: *Work, struct_id: u16, index: u32) Error!u32 {
+    var offset: u32 = 0;
+    for (work.struct_members[work.points[struct_id]..][0 .. index + 1], 0..) |member, k| {
+        const laid = try sharedLayout(work, member);
+        offset = std.mem.alignForward(u32, offset, laid.alignment);
+        if (k == index) return offset;
+        offset += laid.size;
+    }
+    unreachable;
+}
+
+/// Whether `variable`, a chain's base, is a Workgroup variable (since
+/// 1.203).
+fn isShared(work: *const Work, variable: u16) bool {
+    return work.class[variable] == @intFromEnum(spirv.StorageClass.workgroup);
+}
+
+/// The offset step of a load, a store or an atomic of shared memory: none
+/// at a constant offset, and else the offset computed plus the constant,
+/// as a block's (`blockStore`; since 1.203).
+fn offsetStep(work: *Work, dynamic: u16, offset: u32) Error!u16 {
+    if (dynamic == none or offset == 0) return dynamic;
+    return integerOf(work, .iadd, dynamic, try integerSplat(work, .f32x1, @intCast(offset)));
+}
+
+/// Every id an instruction names as a pointer, a pass over the words
+/// before they are read: an access chain's base, a load's, a store's and
+/// an atomic's pointer, the instructions the profile takes a Workgroup
+/// pointer in. A Workgroup variable none of them names is one
+/// nir_remove_dead_variables takes away (remove_dead_vars, a variable of
+/// no deref; v3d_optimize_nir, nir_to_vir.c:2253-2257), which then takes
+/// no shared memory (since 1.203).
+fn namedPointers(work: *Work, words: []const u32) Error!void {
+    var reader = spirv.Reader.of(words);
+    while (reader.next() catch return Error.Refused) |instruction| {
+        const operands = instruction.operands();
+        const at: usize = switch (instruction.op) {
+            .access_chain, .load, .atomic_load, .atomic_exchange, .atomic_compare_exchange, .atomic_compare_exchange_weak, .atomic_i_increment, .atomic_i_decrement, .atomic_i_add, .atomic_i_sub, .atomic_s_min, .atomic_u_min, .atomic_s_max, .atomic_u_max, .atomic_and, .atomic_or, .atomic_xor => 2,
+            .store, .atomic_store => 0,
+            else => continue,
+        };
+        if (operands.len <= at) continue;
+        if (operands[at] < most_ids) work.named.set(operands[at]);
+    }
 }
 
 /// Which steps differ from lane to lane, nir_divergence_analysis's
@@ -8400,6 +8694,9 @@ fn lanes(work: *Work) void {
         // (nir_divergence_analysis.c:994-1010; since 1.169).
         // As does a load_scratch, whatever its offset (:989; since 1.177).
         if (each.tag == .input or each.tag == .ssbo_atomic or each.tag == .scratch or each.tag == .scratch_indirect) work.divergent[at] = true;
+        // A shared atomic's word too (:1006-1009); a load_shared differs
+        // where its offset does (:674-679; since 1.203).
+        if (each.tag == .shared_atomic) work.divergent[at] = true;
         for (readsOf(each)) |field| if (field) |of| {
             if (work.divergent[of]) work.divergent[at] = true;
         };
@@ -10169,7 +10466,7 @@ fn groupIdOf(work: *Work) Error![3]u16 {
 /// How many of the payload's second word's top bits the local index is:
 /// local_invocation_index_bits, of the next power of two of the
 /// workgroup's size and 64 (nir_to_vir.c:4959-4965).
-fn localIndexBits(work: *const Work) u5 {
+pub fn localIndexBits(work: *const Work) u5 {
     const invocations = work.local_size[0] * work.local_size[1] * work.local_size[2];
     return @intCast(std.math.log2_int_ceil(u32, @max(invocations, 64)));
 }
@@ -10638,7 +10935,7 @@ fn settle(work: *Work) Error!void {
             // are already in registers, so neither costs an instruction.
             .input, .component, .construct => {},
             // Refused by `compile` before the plan is laid out.
-            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store => return Error.Storage,
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier => return Error.Storage,
             .compare, .discard => return Error.Discards,
             .sample_compared, .texture_size, .texture_levels => return Error.Samplers,
             .begin_if, .begin_else, .end_if, .phi => return Error.Branches,
@@ -20122,8 +20419,6 @@ test "a compute program says its workgroup's size, of 256 invocations at most an
         // and a second global id.
         &comptime patched(ids, .decorate, 5, 2, @intFromEnum(spirv.BuiltIn.vertex_index)),
         &comptime patched(ids, .decorate, 5, 2, @intFromEnum(spirv.BuiltIn.global_invocation_id)),
-        // The buffer in Workgroup memory, which is not ported.
-        &comptime patched(&patched(&patched(ids, .type_pointer, 2, 1, 4), .variable, 1, 2, 4), .type_pointer, 3, 1, 4),
         // OriginUpperLeft, a fragment program's.
         &comptime patched(ids, .execution_mode, 0, 1, @intFromEnum(spirv.ExecutionMode.origin_upper_left)),
         // Neither LocalSize nor the WorkgroupSize constant.
@@ -20162,4 +20457,282 @@ test "through Mesa's back end, a compute program's atomic is the TMU's: its oper
     try testing.expectEqual(@as(usize, 1), countOf(code, "tmuau"));
     try testing.expectEqual(@as(usize, 1), countOf(code, "ldtmu"));
     try testing.expectEqual(@as(usize, 1), addReads(code, "shr", "rf2"));
+}
+
+/// `words` with `extra`, whole instructions, put in before the `at`th
+/// instruction of `op`, and the id bound raised to `bound` where that is
+/// more: an instruction where glslc does not write one.
+fn withInserted(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32, comptime extra: []const u32, comptime bound: u32) [words.len + extra.len]u32 {
+    comptime {
+        @setEvalBranchQuota(100_000);
+        const start = opStart(words, op, at);
+        var copy = (words[0..start] ++ extra ++ words[start..]).*;
+        if (bound > copy[3]) copy[3] = bound;
+        return copy;
+    }
+}
+
+/// A shared-memory step of a program as a test expects it: its tag,
+/// kind and constant offset, and its offset computed as `shapeOf` prints
+/// it, null where there is none and "*" where it is not looked at.
+const SharedStep = struct { tag: Tag, kind: Kind = .f32x1, at: u32 = 0, shape: ?[]const u8 = null };
+
+fn expectSharedSteps(work: *const Work, expected: []const SharedStep) !void {
+    var found: usize = 0;
+    for (work.program()) |each| {
+        switch (each.tag) {
+            .shared, .shared_store, .shared_atomic, .control_barrier => {},
+            else => continue,
+        }
+        try testing.expect(found < expected.len);
+        const want = expected[found];
+        found += 1;
+        try testing.expectEqual(want.tag, each.tag);
+        if (each.tag == .control_barrier) continue;
+        try testing.expectEqual(want.kind, each.kind);
+        try testing.expectEqual(want.at, each.at);
+        const offset = if (each.tag == .shared) each.a else each.from[0];
+        if (want.shape) |shape| {
+            try testing.expect(offset != none);
+            if (std.mem.eql(u8, shape, "*")) continue;
+            var got = shapeOf(work, offset);
+            try testing.expectEqualStrings(shape, got.text());
+        } else try testing.expectEqual(none, offset);
+    }
+    try testing.expectEqual(expected.len, found);
+}
+
+test "through Mesa's back end, a compute program's shared memory is its workgroup's place in the dispatch's: each variable at its offset through the TMU, and each barrier() the TMU flushed and a TSY op" {
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_compute_shared);
+    try testing.expectEqualSlices(u16, &.{ 8, 2, 1 }, &code.compute.local_size);
+    // total at 0, values at 4 and places at 80, its vec3s 16 apart: 80 +
+    // 3 * 16 + 12 bytes (shared_type_info, v3dv_pipeline.c:3273-3291;
+    // glsl_types.c:2817-2823).
+    try testing.expectEqual(@as(u32, 140), code.compute.shared_size);
+    try testing.expect(code.compute.has_control_barrier);
+    // wg_in_mem first: the payload's second word shifted by 16, under the
+    // 10 bits the local index's 6 of 64 leave, times 140, and the
+    // dispatch's shared memory added (nir_to_vir.c:4967-4992); then the
+    // local index's shift, 32 - 6, and the rest. The vec3 store's and the
+    // atomic's configurations, places' 80 and .y's 84.
+    try expectStream(&.{
+        wordOf(16),                      wordOf(0x3ff),                                        wordOf(140),               .shared_offset,
+        wordOf(26),                      wordOf(0xffff),                                       .{ .work_group_base = 0 }, .{ .work_group_base = 1 },
+        wordOf(80),                      wordOf(0xffff_fffb),                                  wordOf(0xffff_ff87),       wordOf(84),
+        wordOf(@bitCast(@as(f32, 100))), .{ .ssbo = .{ .set = 0, .binding = 0, .reach = 0 } },
+    }, code.stream());
+    // The local index is the payload's top 6 bits
+    // (emit_load_local_invocation_index, :4931-4936).
+    try expectSharedSteps(&work, &.{
+        // total = 0u, at 0: the store of no offset computed.
+        .{ .tag = .shared_store },
+        // values[i], 4 apart from 4.
+        .{ .tag = .shared_store, .shape = "iadd(4, ishl(ushr(system, 26), 2))" },
+        // places[i & 3u], 16 apart from 80.
+        .{ .tag = .shared_store, .kind = .f32x3, .shape = "iadd(80, ishl(iand(ushr(system, 26), 3), 4))" },
+        .{ .tag = .control_barrier },
+        // atomicAdd(total, i + 1u).
+        .{ .tag = .shared_atomic },
+        // values[15u - i].
+        .{ .tag = .shared, .shape = "iadd(4, ishl(isub(15, ushr(system, 26)), 2))" },
+        .{ .tag = .control_barrier },
+        // places[(i + 1u) & 3u].y, 4 into its vec3, and places[i & 3u].x.
+        .{ .tag = .shared, .shape = "iadd(84, ishl(iand(iadd(ushr(system, 26), 1), 3), 4))" },
+        .{ .tag = .shared, .shape = "iadd(80, ishl(iand(ushr(system, 26), 3), 4))" },
+        // total.
+        .{ .tag = .shared },
+    });
+    // Each barrier a BARRIERID into SYNCB (:3563-3577), after the stores
+    // before it were waited for, once there and once at the end.
+    try testing.expectEqual(@as(usize, 2), opsOf(code, "barrierid"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "tmuwt"));
+    // The vec3 store's configuration and the atomic's.
+    try testing.expectEqual(@as(usize, 2), countOf(code, "tmuau"));
+    // wg_in_mem times 140, and the global id's x times 3.
+    try testing.expectEqual(@as(usize, 2), opsOf(code, "umul24"));
+    // The stores before the first barrier waited for before its TSY op,
+    // and a thread switch for each barrier besides the loads' (:3863-3870).
+    try testing.expect(firstOf(code, "tmuwt") < firstOf(code, "barrierid"));
+    try testing.expectEqual(@as(usize, 10), countOf(code, "thrsw"));
+}
+
+/// Where the first instruction that `name` is in is, or the end.
+fn firstOf(code: Code, name: []const u8) usize {
+    for (code.words, 0..) |word, at| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        if (std.mem.indexOf(u8, disasm.disasm(word, &buffer).?, name) != null) return at;
+    }
+    return code.words.len;
+}
+
+test "through Mesa's back end, shared memory laid out as v3dv lays it out: a struct's members each at its alignment, an array's elements its stride apart, a matrix's columns 16 apart" {
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_shared_layout);
+    // pairs' a at 0, b at 16 and c at 32, the struct 48 bytes and its
+    // elements 48 apart; m at 192, its columns 16 apart; count at 240.
+    try testing.expectEqual(@as(u32, 244), code.compute.shared_size);
+    try testing.expect(code.compute.has_control_barrier);
+    try expectSharedSteps(&work, &.{
+        .{ .tag = .shared_store, .shape = "imul(ushr(system, 26), 48)" },
+        .{ .tag = .shared_store, .kind = .f32x3, .shape = "iadd(imul(ushr(system, 26), 48), 16)" },
+        .{ .tag = .shared_store, .kind = .f32x2, .shape = "iadd(imul(ushr(system, 26), 48), 32)" },
+        // m[i % 3u], of an offset longer than a shape is printed.
+        .{ .tag = .shared_store, .kind = .f32x3, .shape = "*" },
+        .{ .tag = .shared_store, .at = 240 },
+        .{ .tag = .control_barrier },
+        // m, a column at a time (vtn_variables.c:763-780).
+        .{ .tag = .shared, .kind = .f32x3, .at = 192 },
+        .{ .tag = .shared, .kind = .f32x3, .at = 208 },
+        .{ .tag = .shared, .kind = .f32x3, .at = 224 },
+        // pairs[o]'s a, b.y, b.z and c.x.
+        .{ .tag = .shared, .shape = "imul(isub(3, ushr(system, 26)), 48)" },
+        .{ .tag = .shared, .shape = "iadd(20, imul(isub(3, ushr(system, 26)), 48))" },
+        .{ .tag = .shared, .shape = "iadd(24, imul(isub(3, ushr(system, 26)), 48))" },
+        .{ .tag = .shared, .shape = "iadd(imul(isub(3, ushr(system, 26)), 48), 32)" },
+        .{ .tag = .shared, .at = 240 },
+    });
+    try testing.expectEqual(@as(usize, 1), opsOf(code, "barrierid"));
+    // The shared memory's 244 bytes a workgroup, its m stored at 192 and
+    // loaded at 192, 208 and 224, count at 240.
+    const stream = code.stream();
+    try testing.expectEqual(@as(u32, 244), @as(u32, @bitCast(stream[2].float)));
+    try testing.expectEqual(Word.shared_offset, stream[3]);
+    var seen: [4]usize = @splat(0);
+    for (stream) |word| if (word == .float) switch (@as(u32, @bitCast(word.float))) {
+        192 => seen[0] += 1,
+        208 => seen[1] += 1,
+        224 => seen[2] += 1,
+        240 => seen[3] += 1,
+        else => {},
+    };
+    try testing.expectEqualSlices(usize, &.{ 1, 1, 1, 2 }, &seen);
+}
+
+test "shared memory's layout: a vec3's 12 bytes at 16, an array's last element unpadded, and a bool, an array of no length and more than 16 KiB refused" {
+    var work: Work = .{};
+    work.thing[1] = .float;
+    work.thing[2] = .vector;
+    work.wide[2] = 3;
+    work.points[2] = 1;
+    try testing.expectEqual(Laid{ .size = 12, .alignment = 16 }, try sharedLayout(&work, 2));
+    work.thing[3] = .array;
+    work.points[3] = 2;
+    work.length[3] = 4;
+    try testing.expectEqual(Laid{ .size = 3 * 16 + 12, .alignment = 16 }, try sharedLayout(&work, 3));
+    // A vec2 at 8; a mat3, three vec3 columns 16 apart.
+    work.thing[4] = .vector;
+    work.wide[4] = 2;
+    work.points[4] = 1;
+    try testing.expectEqual(Laid{ .size = 8, .alignment = 8 }, try sharedLayout(&work, 4));
+    work.thing[5] = .matrix;
+    work.wide[5] = 3;
+    work.points[5] = 2;
+    try testing.expectEqual(Laid{ .size = 48, .alignment = 16 }, try sharedLayout(&work, 5));
+    try testing.expectEqual(@as(u16, 16), try sharedColumnStride(&work, 5));
+    // A bool, which vtn would load as a comparison of its word.
+    work.thing[6] = .boolean;
+    try testing.expectError(Error.Storage, sharedLayout(&work, 6));
+    // A float array: of no length, of 16 KiB, and of a float more.
+    work.thing[7] = .array;
+    work.points[7] = 1;
+    work.length[7] = 0;
+    try testing.expectError(Error.Storage, sharedLayout(&work, 7));
+    work.length[7] = 4096;
+    try testing.expectEqual(Laid{ .size = 16 * 1024, .alignment = 4 }, try sharedLayout(&work, 7));
+    work.length[7] = 4097;
+    try testing.expectError(Error.Storage, sharedLayout(&work, 7));
+    // A struct of a float, a vec3 and a vec2: at 0, 16 and 32, and its 40
+    // bytes rounded up to its alignment, a vec3's (glsl_types.c:2838-2858).
+    work.thing[8] = .plain_struct;
+    work.points[8] = 0;
+    work.wide[8] = 3;
+    work.struct_members[0..3].* = .{ 1, 2, 4 };
+    try testing.expectEqual(Laid{ .size = 48, .alignment = 16 }, try sharedLayout(&work, 8));
+    for ([_]u32{ 0, 16, 32 }, 0..) |offset, index| try testing.expectEqual(offset, try sharedMemberOffset(&work, 8, @intCast(index)));
+}
+
+test "shared memory and OpControlBarrier where they are not ported are refused, a barrier of the invocation alone is nothing, and a Workgroup variable nothing names takes no memory" {
+    const shared = &reference.glslc_compute_shared;
+    var work: Work = .{};
+    // total's initializer, which a module may carry only of
+    // VK_KHR_zero_initialize_workgroup_memory, a later extension.
+    try testing.expectError(Error.Storage, computeThroughMesa(&work, &comptime initialized(shared, 13)));
+    // A Block struct in Workgroup memory, a buffer's type.
+    work = .{};
+    const ids = &reference.glslc_compute_ids;
+    try testing.expectError(Error.Storage, computeThroughMesa(&work, &comptime patched(&patched(&patched(ids, .type_pointer, 2, 1, 4), .variable, 1, 2, 4), .type_pointer, 3, 1, 4)));
+    // A Workgroup variable in a fragment program: its input made one.
+    work = .{};
+    const bools = &reference.glslc_tree_bools;
+    try testing.expectError(Error.Storage, throughMesa(&work, &comptime patched(&patched(bools, .type_pointer, 0, 1, 4), .variable, 0, 2, 4)));
+    // OpControlBarrier in a fragment program, of Device scope and no
+    // memory semantics: emit_barrier's (nir_to_vir.c:3580-3613), not
+    // ported.
+    work = .{};
+    const barrier = [_]u32{ @as(u32, 4) << 16 | @intFromEnum(spirv.Op.control_barrier), 18, 18, 14 };
+    try testing.expectError(Error.Refused, throughMesa(&work, &comptime withInserted(bools, .returns, 0, &barrier, 0)));
+    // The first barrier's execution scope CrossDevice, which no Vulkan
+    // program names.
+    work = .{};
+    try testing.expectError(Error.Body, computeThroughMesa(&work, &comptime patched(shared, .control_barrier, 0, 0, 14)));
+    // Of the invocation, execution and memory: nothing
+    // (spirv_to_nir.c:2831-2832), the second barrier's TSY op alone.
+    work = .{};
+    var code = try computeThroughMesa(&work, &comptime patched(&patched(shared, .control_barrier, 0, 0, 36), .control_barrier, 0, 1, 36));
+    try testing.expectEqual(@as(usize, 1), opsOf(code, "barrierid"));
+    // Of no memory semantics, still the workgroup's: a TSY op each.
+    work = .{};
+    code = try computeThroughMesa(&work, &comptime patched(shared, .control_barrier, 0, 2, 14));
+    try testing.expectEqual(@as(usize, 2), opsOf(code, "barrierid"));
+    // Of the invocation's execution and no memory semantics: no memory
+    // scope either (:2824-2829), so nothing.
+    work = .{};
+    code = try computeThroughMesa(&work, &comptime patched(&patched(shared, .control_barrier, 0, 0, 36), .control_barrier, 0, 2, 14));
+    try testing.expectEqual(@as(usize, 1), opsOf(code, "barrierid"));
+    // values made float[4079]: places at 16336, and the whole 16380
+    // bytes; of 4080, places would end past the 16 KiB facet gives a
+    // workgroup (`most_shared`).
+    work = .{};
+    code = try computeThroughMesa(&work, &comptime patched(shared, .constant, 1, 2, 4079));
+    try testing.expectEqual(@as(u32, 16380), code.compute.shared_size);
+    work = .{};
+    try testing.expectError(Error.Storage, computeThroughMesa(&work, &comptime patched(shared, .constant, 1, 2, 4080)));
+    // A second float[16] in Workgroup memory, which nothing names:
+    // nir_remove_dead_variables' (nir_to_vir.c:2253-2257), of no place.
+    work = .{};
+    const unnamed = [_]u32{ @as(u32, 4) << 16 | @intFromEnum(spirv.Op.variable), 18, 97, 4 };
+    code = try computeThroughMesa(&work, &comptime withInserted(shared, .variable, 3, &unnamed, 98));
+    try testing.expectEqual(@as(u32, 140), code.compute.shared_size);
+    // A uint before total that is stored into and never read: named, at
+    // 0, and total at 4 after it.
+    work = .{};
+    const stored = [_]u32{ @as(u32, 4) << 16 | @intFromEnum(spirv.Op.variable), 12, 97, 4 };
+    const store = [_]u32{ @as(u32, 3) << 16 | @intFromEnum(spirv.Op.store), 97, 14 };
+    code = try computeThroughMesa(&work, &comptime withInserted(&withInserted(shared, .variable, 1, &stored, 98), .store, 0, &store, 0));
+    try testing.expectEqual(@as(u32, 140), code.compute.shared_size);
+    var stores: [2]u32 = undefined;
+    var found: usize = 0;
+    for (work.program()) |each| if (each.tag == .shared_store and found < 2) {
+        stores[found] = each.at;
+        found += 1;
+    };
+    try testing.expectEqualSlices(u32, &.{ 0, 4 }, &stores);
+}
+
+test "through Mesa's back end, a matrix in an array in shared memory: stored and loaded a column at a time, its vec3 columns 16 apart and the matrices 32" {
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_shared_matrices);
+    // Two mat2x3s, each two columns of a vec3's 16 bytes.
+    try testing.expectEqual(@as(u32, 64), code.compute.shared_size);
+    try expectSharedSteps(&work, &.{
+        // turns[i], stored whole: its columns at 0 and 16
+        // (vtn_variables.c:763-780).
+        .{ .tag = .shared_store, .kind = .f32x3, .shape = "ishl(ushr(system, 26), 5)" },
+        .{ .tag = .shared_store, .kind = .f32x3, .shape = "iadd(ishl(ushr(system, 26), 5), 16)" },
+        .{ .tag = .control_barrier },
+        // turns[1u - i], loaded whole.
+        .{ .tag = .shared, .kind = .f32x3, .shape = "ishl(isub(1, ushr(system, 26)), 5)" },
+        .{ .tag = .shared, .kind = .f32x3, .shape = "iadd(ishl(isub(1, ushr(system, 26)), 5), 16)" },
+    });
 }

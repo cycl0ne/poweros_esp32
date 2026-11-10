@@ -203,6 +203,9 @@ const Emit = struct {
     payload_w: Reg = .{},
     payload_w_centroid: Reg = .{},
     payload_z: Reg = .{},
+    /// Where the workgroup's shared memory starts, worked out at the
+    /// program's start (c->cs_shared_offset; since 1.203).
+    cs_shared_offset: Reg = .{},
     outputs: [4]Reg = undefined,
     flush: [max_tmu_queue_size]Pending = undefined,
     flush_count: u32 = 0,
@@ -363,10 +366,10 @@ fn nirToVir(e: *Emit) Error!void {
     }
     if (c.stage == .compute) {
         // The payload's two words, rf3 and rf2 on 7.1 (nir_to_vir.c:
-        // 4953-4954). No shared memory, so no wg_in_mem of it (:4967-4992;
-        // since 1.194).
+        // 4953-4954; since 1.194).
         e.system[@intFromEnum(compile.SystemValue.cs_payload0)] = try c.mul(.mov, .{vir.reg(.reg, 3)});
         e.system[@intFromEnum(compile.SystemValue.cs_payload1)] = try c.mul(.mov, .{vir.reg(.reg, 2)});
+        if (e.work.shared_size != 0) try setupShared(e);
         try setupScratch(e);
         return emitBlock(e);
     }
@@ -397,6 +400,25 @@ fn setupVsInputs(e: *Emit) Error!void {
         e.system[@intFromEnum(which)] = try c.add(.ldvpmv_in, .{try c.uniformUi(vpm_components)});
         vpm_components += 1;
     }
+}
+
+/// Where the workgroup's shared memory starts, cs_shared_offset
+/// (nir_to_vir.c:4967-4992; since 1.203): the dispatch's shared memory
+/// (QUNIFORM_SHARED_OFFSET) plus the workgroup's place among those in
+/// memory times its bytes. The place is the payload's second word's top
+/// half, wg_in_mem, under the local index's bits where the workgroup is
+/// more than one invocation, which the index then takes the top of.
+fn setupShared(e: *Emit) Error!void {
+    const c = e.c;
+    var wg_in_mem = try c.add(.shr, .{ e.system[@intFromEnum(compile.SystemValue.cs_payload1)], try c.uniformUi(16) });
+    const size = e.work.local_size;
+    if (size[0] != 1 or size[1] != 1 or size[2] != 1) {
+        const wg_bits: u5 = 16 - @as(u5, compile.localIndexBits(e.work));
+        const wg_mask: u32 = (@as(u32, 1) << wg_bits) - 1;
+        wg_in_mem = try c.add(.@"and", .{ wg_in_mem, try c.uniformUi(wg_mask) });
+    }
+    const shared_per_wg = try c.uniformUi(e.work.shared_size);
+    e.cs_shared_offset = try c.add(.add, .{ try c.uniform(.shared_offset, 0), try c.umul(wg_in_mem, shared_per_wg) });
 }
 
 /// Where the program keeps variables in scratch: spill_base worked out
@@ -794,8 +816,22 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         // load_scratch and store_scratch, through the TMU from
         // spill_base (:3657-3668; since 1.177).
         .scratch, .scratch_indirect, .scratch_store => return emitTmuGeneral(e, each, at),
+        // load_shared, store_shared, shared_atomic and
+        // shared_atomic_swap, through the TMU from cs_shared_offset
+        // (:3657-3668; since 1.203).
+        .shared, .shared_store, .shared_atomic => return emitTmuGeneral(e, each, at),
         // A barrier: what the TMU holds flushed (:3857-3861; since 1.169).
         .barrier => try flushTmu(e),
+        // A compute program's barrier of execution: the TMU flushed, a
+        // TSY op that blocks the supergroup's invocations until the last
+        // has come to it, and the thread switch it blocks at, with no
+        // lookup outstanding (emit_compute_barrier, :3563-3577,
+        // :3857-3870; since 1.203).
+        .control_barrier => {
+            try flushTmu(e);
+            _ = try c.addDest(.barrierid, vir.magicReg(.syncb), .{});
+            try c.emitThrsw();
+        },
         // A kept selection (since 1.171).
         .begin_if => try beginIf(e, at),
         .begin_else => try beginElse(e),
@@ -1346,7 +1382,7 @@ fn coalescable(e: *const Emit, branch: *const Branch, of: compile.Float, side: u
     const made = switch (each.tag) {
         .add, .mul, .sub, .min, .max, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .set_less, .integer, .round_to_int, .input => true,
         .select => !compile.isBool(e.work, of.step),
-        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_atomic, .scratch, .scratch_indirect => scalar,
+        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_atomic, .scratch, .scratch_indirect, .shared, .shared_atomic => scalar,
         else => false,
     };
     if (!made) return false;
@@ -1783,8 +1819,8 @@ fn writable(e: *const Emit, each: Step) bool {
 /// caches to be cleaned (tmu_dirty_rcl, :532-533).
 fn emitTmuGeneral(e: *Emit, each: Step, at: u16) Error!void {
     const c = e.c;
-    const is_store = each.tag == .ssbo_store or each.tag == .scratch_store;
-    const is_atomic = each.tag == .ssbo_atomic;
+    const is_store = each.tag == .ssbo_store or each.tag == .scratch_store or each.tag == .shared_store;
+    const is_atomic = each.tag == .ssbo_atomic or each.tag == .shared_atomic;
     const tmu_op = if (is_atomic) atomicTmuOp(e, each) else tmu_op_regular;
     // An iadd made an increment or a decrement writes no operand
     // (:507-519).
@@ -1793,8 +1829,8 @@ fn emitTmuGeneral(e: *Emit, each: Step, at: u16) Error!void {
     if (is_store or is_atomic) c.tmu_dirty_rcl = true;
     // The offset's step where it is computed, and else the constant one.
     const offset_src: u16 = switch (each.tag) {
-        .ubo_indirect, .ssbo_indirect, .scratch_indirect => each.a,
-        .ssbo_store, .ssbo_atomic, .scratch_store => each.from[0],
+        .ubo_indirect, .ssbo_indirect, .scratch_indirect, .shared => each.a,
+        .ssbo_store, .ssbo_atomic, .scratch_store, .shared_store, .shared_atomic => each.from[0],
         else => compile.none,
     };
     const dynamic_src = offset_src != compile.none;
@@ -1802,8 +1838,13 @@ fn emitTmuGeneral(e: *Emit, each: Step, at: u16) Error!void {
     // Scratch has no buffer: its base is spill_base, which the program
     // worked out at its start (:578-586; since 1.177).
     const is_scratch = each.tag == .scratch or each.tag == .scratch_indirect or each.tag == .scratch_store;
+    // Shared memory neither: its base is cs_shared_offset, the
+    // workgroup's place in it (:587-588; since 1.203).
+    const is_shared = each.tag == .shared or each.tag == .shared_store or each.tag == .shared_atomic;
     const base_offset = if (is_scratch)
         c.spill_base
+    else if (is_shared)
+        e.cs_shared_offset
     else if (each.tag == .ubo_indirect)
         try c.uniform(.ubo_addr, vir.unitDataCreate(@as(u32, each.b) + 1, 0))
     else
@@ -1890,7 +1931,7 @@ fn flushTmu(e: *Emit) Error!void {
         if (pending.component_mask > 0) {
             const tag = e.work.steps[pending.step].tag;
             const general = switch (tag) {
-                .ubo, .ubo_indirect, .ssbo, .ssbo_indirect, .ssbo_atomic, .scratch, .scratch_indirect => true,
+                .ubo, .ubo_indirect, .ssbo, .ssbo_indirect, .ssbo_atomic, .scratch, .scratch_indirect, .shared, .shared_atomic => true,
                 else => false,
             };
             for (0..4) |j| {

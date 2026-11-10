@@ -6718,4 +6718,35 @@ pub const LIBRARY_VERSION = 1;
 /// one step away. With the cores' function made wrong on purpose it is
 /// 46,565 apart. The other 294 cases are each as they were at 1.201, and
 /// FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 202;
+/// 203: **SPIR-V's Workgroup memory and OpControlBarrier, on the V3D
+/// (docs/facet-vulkan10.md item 60).** NIR's load_shared, store_shared
+/// and shared_atomic, through the TMU from cs_shared_offset
+/// (nir_to_vir.c:587-588, :4967-4992), the variables laid out by v3dv's
+/// shared_type_info (v3dv_pipeline.c:3273-3291; glsl_types.c:2795-2885)
+/// in the module's order, one nothing names taking no place
+/// (nir_remove_dead_variables, nir_to_vir.c:2253-2257); and a control
+/// barrier, vtn_emit_scoped_control_barrier's (spirv_to_nir.c:2813-2845),
+/// the TMU flushed, BARRIERID into SYNCB and a thread switch
+/// (emit_compute_barrier, nir_to_vir.c:3563-3577, :3857-3870). The
+/// stream's new `shared_offset` is the dispatch's shared memory, its
+/// size times its workgroups (v3dv_cmd_buffer.c:4435-4437), carved from
+/// the frame's chunks at 4096; a program with a barrier keeps its
+/// supergroup to half the QPUs' threads (v3d_util.c:56-67). A workgroup
+/// has facet's 16 KiB.
+///
+/// glslc_compute_shared, of 420 words, lays out 140 bytes, a vec3[4] at
+/// 80 16 apart; glslc_shared_layout, of 468, 244, a struct's members at
+/// 0, 16 and 32, a mat3's columns at 192, 208 and 224; and
+/// glslc_shared_matrices, of 288, two mat2x3s in 64. The V3D's tests are
+/// 359, six new. Of 34 mutations, 33 fail them; the other changes what a
+/// kept selection's phi may coalesce with, which no compute program
+/// reaches while kept selections are a fragment program's.
+///
+/// On the CM5 FacetBoth 1.67's "shipped compute: shared memory and
+/// barriers", three groups of three invocations handing their corners
+/// through shared memory across a barrier and counting them with
+/// atomicAdd between two, is 0 of 230400 pixels apart. With the cores'
+/// function made wrong on purpose it is 62,940 apart. The other 295
+/// cases are each as they were at 1.202, and FacetProbe passes its 890
+/// checks.
+pub const LIBRARY_REVISION = 203;

@@ -130,6 +130,9 @@ pub const Player = struct {
     /// 1.195).
     computing: bool = false,
     groups: [3]u32 = .{ 0, 0, 0 },
+    /// The dispatch's shared memory, a workgroup's bytes of it for each of
+    /// its workgroups (since 1.203).
+    shared_address: u32 = 0,
     /// The frame being made.
     frame: Frame = undefined,
     area: Area = undefined,
@@ -498,6 +501,10 @@ const Range = struct {
 
 /// The storage buffers a job keeps to drop from the CPU's caches.
 const most_storage = 32;
+
+/// Where a dispatch's shared memory starts: on a page, as v3dv_bo_alloc
+/// gives it a buffer of its own (since 1.203).
+const shared_alignment = 4096;
 
 /// What the group takes and where it must lie: the hardware wants a group
 /// of sixteen counters on a boundary of 1024 bytes, with the words
@@ -1111,6 +1118,12 @@ fn lost(player: *const Player, sys: *ExecBase, finished: v3d.Engine.Finished, wh
 /// v3d_submit.c:535-562). A buffer the program reads and the dispatch has
 /// not bound leaves it to the function, as a draw leaves its vertex
 /// function to make of one (since 1.164).
+///
+/// A program of shared memory has a buffer of its shared_size for each of
+/// the dispatch's workgroups, as cmd_buffer_create_csd_job makes one
+/// (v3dv_cmd_buffer.c:4434-4445), carved from the chunks with the
+/// uniforms; where there is no memory for it the function runs on the
+/// cores (since 1.203).
 fn dispatch(queue: *Queue, count: [3]u32) void {
     const player = playerOf(queue);
     const sys = queue.device.sys;
@@ -1130,6 +1143,17 @@ fn dispatch(queue: *Queue, count: [3]u32) void {
     player.storage_over = false;
     player.groups = count;
     const program = &made.program;
+    player.shared_address = 0;
+    if (program.shared_size != 0) {
+        const groups = @as(u64, count[0]) * count[1] * count[2];
+        const bytes = std.math.cast(u32, groups * program.shared_size) orelse
+            return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none);
+        const place = carve(queue, bytes, shared_alignment) orelse {
+            exec.kprintf(sys, "v3d: no memory for a dispatch's shared memory: its function runs on the cores\n", .{});
+            return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none);
+        };
+        player.shared_address = place.address;
+    }
     const uniforms = streamOf(queue, made.stream(), &.{}, null, 0, made.spillWords()) orelse {
         exec.kprintf(sys, "v3d: no memory for a dispatch's uniforms: its function runs on the cores\n", .{});
         return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none);
@@ -1146,6 +1170,8 @@ fn dispatch(queue: *Queue, count: [3]u32) void {
         .uniforms = uniforms,
         .version = hardware.version,
         .revision = hardware.revision,
+        .has_tsy_barrier = program.has_control_barrier,
+        .qpus = hardware.qpus,
     }) orelse return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none);
     const space = &hardware.space;
     for (player.chunks[0..player.chunk_count]) |*chunk| {
@@ -1274,6 +1300,9 @@ fn streamOf(queue: *Queue, stream: []const compile.Word, tmus: []const Configura
         // (`driver.checkSpillSize`).
         .spill_offset => spill.address,
         .spill_size_per_thread => spill.size_per_thread,
+        // A compute program's, which `dispatch` carved the memory for
+        // (since 1.203).
+        .shared_offset => player.shared_address,
         // The unit's view, as `tmuConfiguration` measured it (since 1.181).
         .texture_size => |each| if (each.unit < tmus.len) tmus[each.unit].sizes[@intFromEnum(each.field)] else 0,
     };

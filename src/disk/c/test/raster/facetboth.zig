@@ -150,7 +150,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.66 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.67 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -513,6 +513,38 @@ fn shippedVertices(groups: *const shader.Groups) callconv(.c) void {
         into.* = .{
             .p = .{ -0.75 + 0.25 * t + 0.75 * second + 0.375 * third + along[0], -0.625 + 0.25 * t + 1.25 * third + along[1], 0.75 - 0.25 * t, 1 },
             .c = .{ 0.25 * (t + 1), 0.25 * @as(f32, @floatFromInt(corner + 1)), 0.5, 0.5 },
+            .uv = .{ 0, 0 },
+        };
+    }
+}
+
+/// `shipped_shared`'s function, which the cores run and the V3D does not:
+/// `shippedVertices`' triangles, each vertex at the place of the corner after
+/// its own, which the words hand over through shared memory across a
+/// barrier, and its blue the corners' numbers counted, 1 + 2 + 3 sixteenths
+/// (since 1.67). A barrier here is the point between two loops over the
+/// invocations.
+fn shippedShared(groups: *const shader.Groups) callconv(.c) void {
+    const out = groups.resources.storage(Vertex, 0, 0) orelse return;
+    const along = groups.resources.constants([2]f32).*;
+    const corners = groups.sharedAs([2]f32, 3) orelse return;
+    const triangle = groups.group[0];
+    const t: f32 = @floatFromInt(triangle);
+    // Each invocation's corner, up to the first barrier.
+    for (corners, 0..) |*into, corner| {
+        const second: f32 = if (corner == 1) 1 else 0;
+        const third: f32 = if (corner == 2) 1 else 0;
+        into.* = .{ -0.75 + 0.25 * t + 0.75 * second + 0.375 * third, -0.625 + 0.25 * t + 1.25 * third };
+    }
+    // What each adds to the count between the two barriers.
+    var count: u32 = 0;
+    for (0..3) |corner| count += @intCast(corner + 1);
+    for (out[triangle * 3 ..][0..3], 0..) |*into, corner| {
+        const next: usize = if (corner == 2) 0 else corner + 1;
+        const p = corners[next];
+        into.* = .{
+            .p = .{ p[0] + along[0], p[1] + along[1], 0.75 - 0.25 * t, 1 },
+            .c = .{ 0.25 * (t + 1), 0.25 * @as(f32, @floatFromInt(next + 1)), @as(f32, @floatFromInt(count)) / 16, 0.5 },
             .uv = .{ 0, 0 },
         };
     }
@@ -2558,6 +2590,9 @@ const shipped_entries = [_]shader.Entry{
     // A group of three, as the words' local_size_x is (since 1.59).
     shader.computeGroup("shipped vertices", &shippedVertices, .{ 3, 1, 1 }, 0),
     shader.compute("shipped numbers", &shippedNumbers),
+    // A group of three sharing a vec2[3] and a uint, 28 bytes, as the
+    // words' shared memory is (since 1.67).
+    shader.computeGroup("shipped shared", &shippedShared, .{ 3, 1, 1 }, 28),
     // GLSL.std.450's curves (since 1.60).
     shader.fragment("shipped inverse trig", curveFragment(inverseTrigOf), 4),
     shader.fragment("shipped hyperbolic", curveFragment(hyperbolicOf), 4),
@@ -2594,9 +2629,10 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_flat_vertex),          shader.Spirv.of(&shipped_flat_colour),      shader.Spirv.of(&shipped_flat_integer_vertex), shader.Spirv.of(&shipped_flat_integer),
     shader.Spirv.of(&shipped_noperspective_vertex), shader.Spirv.of(&shipped_noperspective),    shader.Spirv.of(&shipped_many_ids),            shader.Spirv.of(&shipped_vertex_index),
     shader.Spirv.of(&shipped_index_place),          shader.Spirv.of(&shipped_point_size),       shader.Spirv.of(&shipped_point_one),           shader.Spirv.of(&shipped_vertices),
-    shader.Spirv.of(&shipped_numbers),              shader.Spirv.of(&shipped_inverse_trig),     shader.Spirv.of(&shipped_hyperbolic),          shader.Spirv.of(&shipped_geometry),
-    shader.Spirv.of(&shipped_bit_finds),            shader.Spirv.of(&shipped_modf_frexp),       shader.Spirv.of(&shipped_packing_bytes),       shader.Spirv.of(&shipped_packing_halves),
-    shader.Spirv.of(&shipped_packing_half),         shader.Spirv.of(&shipped_matrix_inverse),   shader.Spirv.of(&shipped_determinant4),        shader.Spirv.of(&shipped_bits),
+    shader.Spirv.of(&shipped_numbers),              shader.Spirv.of(&shipped_shared),           shader.Spirv.of(&shipped_inverse_trig),        shader.Spirv.of(&shipped_hyperbolic),
+    shader.Spirv.of(&shipped_geometry),             shader.Spirv.of(&shipped_bit_finds),        shader.Spirv.of(&shipped_modf_frexp),          shader.Spirv.of(&shipped_packing_bytes),
+    shader.Spirv.of(&shipped_packing_halves),       shader.Spirv.of(&shipped_packing_half),     shader.Spirv.of(&shipped_matrix_inverse),      shader.Spirv.of(&shipped_determinant4),
+    shader.Spirv.of(&shipped_bits),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -7664,6 +7700,164 @@ const shipped_numbers = [_]u32{
     0x0000001E, 0x000100FD, 0x00010038,
 };
 
+/// glslc's own output, at -O: `shippedShared`, `shippedVertices`' triangles
+/// through a workgroup's shared memory and two barriers, which the V3D runs
+/// through its compute shader dispatcher (since 1.67).
+///
+/// ```glsl
+/// #version 450
+/// // FacetBoth's "shipped shared" (facet 1.203): `shipped vertices`'
+/// // triangles, a group each and a corner an invocation, each corner's place
+/// // handed through shared memory to the invocation before it across a
+/// // barrier, and the corners counted into shared memory by atomicAdd between
+/// // two barriers. Every value but the push constants' is a multiple of 1/16.
+/// layout(local_size_x = 3) in;
+/// layout(std430, set = 0, binding = 0) buffer Computed { float f[]; } computed;
+/// layout(push_constant) uniform Along { vec2 along; } pushed;
+/// shared vec2 corners[3];
+/// shared uint count;
+/// void main() {
+///     uint triangle = gl_WorkGroupID.x;
+///     uint corner = gl_LocalInvocationID.x;
+///     float t = float(triangle);
+///     float second = corner == 1u ? 1.0 : 0.0;
+///     float third = corner == 2u ? 1.0 : 0.0;
+///     corners[corner] = vec2(-0.75 + 0.25 * t + 0.75 * second + 0.375 * third, -0.625 + 0.25 * t + 1.25 * third);
+///     count = 0u;
+///     barrier();
+///     atomicAdd(count, corner + 1u);
+///     uint next = corner == 2u ? 0u : corner + 1u;
+///     vec2 p = corners[next];
+///     barrier();
+///     uint at = gl_GlobalInvocationID.x * 10u;
+///     computed.f[at + 0u] = p.x + pushed.along.x;
+///     computed.f[at + 1u] = p.y + pushed.along.y;
+///     computed.f[at + 2u] = 0.75 - 0.25 * t;
+///     computed.f[at + 3u] = 1.0;
+///     computed.f[at + 4u] = 0.25 * (t + 1.0);
+///     computed.f[at + 5u] = 0.25 * float(next + 1u);
+///     computed.f[at + 6u] = float(count) / 16.0;
+///     computed.f[at + 7u] = 0.5;
+///     computed.f[at + 8u] = 0.0;
+///     computed.f[at + 9u] = 0.0;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=comp shipped_shared.comp -o shipped_shared.spv   # 646 words
+/// spirv-val --target-env vulkan1.0 shipped_shared.spv   # no output, and 0
+/// ```
+const shipped_shared = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x000000B3, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0008000F, 0x00000005,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000B, 0x00000011, 0x0000005A,
+    0x00060010, 0x00000004, 0x00000011, 0x00000003, 0x00000001, 0x00000001,
+    0x00040047, 0x0000000B, 0x0000000B, 0x0000001A, 0x00040047, 0x00000011,
+    0x0000000B, 0x0000001B, 0x00040047, 0x0000005A, 0x0000000B, 0x0000001C,
+    0x00040047, 0x0000005F, 0x00000006, 0x00000004, 0x00030047, 0x00000060,
+    0x00000003, 0x00050048, 0x00000060, 0x00000000, 0x00000023, 0x00000000,
+    0x00040047, 0x00000062, 0x00000021, 0x00000000, 0x00040047, 0x00000062,
+    0x00000022, 0x00000000, 0x00030047, 0x00000069, 0x00000002, 0x00050048,
+    0x00000069, 0x00000000, 0x00000023, 0x00000000, 0x00040047, 0x000000A7,
+    0x0000000B, 0x00000019, 0x00020013, 0x00000002, 0x00030021, 0x00000003,
+    0x00000002, 0x00040015, 0x00000006, 0x00000020, 0x00000000, 0x00040017,
+    0x00000009, 0x00000006, 0x00000003, 0x00040020, 0x0000000A, 0x00000001,
+    0x00000009, 0x0004003B, 0x0000000A, 0x0000000B, 0x00000001, 0x0004002B,
+    0x00000006, 0x0000000C, 0x00000000, 0x00040020, 0x0000000D, 0x00000001,
+    0x00000006, 0x0004003B, 0x0000000A, 0x00000011, 0x00000001, 0x00030016,
+    0x00000014, 0x00000020, 0x0004002B, 0x00000006, 0x0000001B, 0x00000001,
+    0x00020014, 0x0000001C, 0x0004002B, 0x00000014, 0x0000001E, 0x3F800000,
+    0x0004002B, 0x00000014, 0x0000001F, 0x00000000, 0x0004002B, 0x00000006,
+    0x00000023, 0x00000002, 0x00040017, 0x00000026, 0x00000014, 0x00000002,
+    0x0004002B, 0x00000006, 0x00000027, 0x00000003, 0x0004001C, 0x00000028,
+    0x00000026, 0x00000027, 0x00040020, 0x00000029, 0x00000004, 0x00000028,
+    0x0004003B, 0x00000029, 0x0000002A, 0x00000004, 0x0004002B, 0x00000014,
+    0x0000002C, 0xBF400000, 0x0004002B, 0x00000014, 0x0000002D, 0x3E800000,
+    0x0004002B, 0x00000014, 0x00000031, 0x3F400000, 0x0004002B, 0x00000014,
+    0x00000035, 0x3EC00000, 0x0004002B, 0x00000014, 0x00000039, 0xBF200000,
+    0x0004002B, 0x00000014, 0x0000003D, 0x3FA00000, 0x00040020, 0x00000042,
+    0x00000004, 0x00000026, 0x00040020, 0x00000044, 0x00000004, 0x00000006,
+    0x0004003B, 0x00000044, 0x00000045, 0x00000004, 0x0004002B, 0x00000006,
+    0x00000046, 0x00000108, 0x0004003B, 0x0000000A, 0x0000005A, 0x00000001,
+    0x0004002B, 0x00000006, 0x0000005D, 0x0000000A, 0x0003001D, 0x0000005F,
+    0x00000014, 0x0003001E, 0x00000060, 0x0000005F, 0x00040020, 0x00000061,
+    0x00000002, 0x00000060, 0x0004003B, 0x00000061, 0x00000062, 0x00000002,
+    0x00040015, 0x00000063, 0x00000020, 0x00000001, 0x0004002B, 0x00000063,
+    0x00000064, 0x00000000, 0x0003001E, 0x00000069, 0x00000026, 0x00040020,
+    0x0000006A, 0x00000009, 0x00000069, 0x0004003B, 0x0000006A, 0x0000006B,
+    0x00000009, 0x00040020, 0x0000006C, 0x00000009, 0x00000014, 0x00040020,
+    0x00000070, 0x00000002, 0x00000014, 0x0004002B, 0x00000006, 0x00000084,
+    0x00000004, 0x0004002B, 0x00000006, 0x0000008B, 0x00000005, 0x0004002B,
+    0x00000006, 0x00000093, 0x00000006, 0x0004002B, 0x00000006, 0x0000009B,
+    0x00000007, 0x0004002B, 0x00000014, 0x0000009D, 0x3F000000, 0x0004002B,
+    0x00000006, 0x000000A0, 0x00000008, 0x0004002B, 0x00000006, 0x000000A4,
+    0x00000009, 0x0006002C, 0x00000009, 0x000000A7, 0x00000027, 0x0000001B,
+    0x0000001B, 0x0004002B, 0x00000014, 0x000000B1, 0x3D800000, 0x00050036,
+    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005,
+    0x00050041, 0x0000000D, 0x0000000E, 0x0000000B, 0x0000000C, 0x0004003D,
+    0x00000006, 0x0000000F, 0x0000000E, 0x00050041, 0x0000000D, 0x00000012,
+    0x00000011, 0x0000000C, 0x0004003D, 0x00000006, 0x00000013, 0x00000012,
+    0x00040070, 0x00000014, 0x00000018, 0x0000000F, 0x000500AA, 0x0000001C,
+    0x0000001D, 0x00000013, 0x0000001B, 0x000500AA, 0x0000001C, 0x00000024,
+    0x00000013, 0x00000023, 0x00050085, 0x00000014, 0x0000002F, 0x0000002D,
+    0x00000018, 0x00050081, 0x00000014, 0x00000030, 0x0000002C, 0x0000002F,
+    0x000600A9, 0x00000014, 0x00000033, 0x0000001D, 0x00000031, 0x0000001F,
+    0x00050081, 0x00000014, 0x00000034, 0x00000030, 0x00000033, 0x000600A9,
+    0x00000014, 0x00000037, 0x00000024, 0x00000035, 0x0000001F, 0x00050081,
+    0x00000014, 0x00000038, 0x00000034, 0x00000037, 0x00050081, 0x00000014,
+    0x0000003C, 0x00000039, 0x0000002F, 0x000600A9, 0x00000014, 0x0000003F,
+    0x00000024, 0x0000003D, 0x0000001F, 0x00050081, 0x00000014, 0x00000040,
+    0x0000003C, 0x0000003F, 0x00050050, 0x00000026, 0x00000041, 0x00000038,
+    0x00000040, 0x00050041, 0x00000042, 0x00000043, 0x0000002A, 0x00000013,
+    0x0003003E, 0x00000043, 0x00000041, 0x0003003E, 0x00000045, 0x0000000C,
+    0x000400E0, 0x00000023, 0x00000023, 0x00000046, 0x00050080, 0x00000006,
+    0x00000048, 0x00000013, 0x0000001B, 0x000700EA, 0x00000006, 0x00000049,
+    0x00000045, 0x0000001B, 0x0000000C, 0x00000048, 0x000600A9, 0x00000006,
+    0x000000B2, 0x00000024, 0x0000000C, 0x00000048, 0x00050041, 0x00000042,
+    0x00000057, 0x0000002A, 0x000000B2, 0x0004003D, 0x00000026, 0x00000058,
+    0x00000057, 0x000400E0, 0x00000023, 0x00000023, 0x00000046, 0x00050041,
+    0x0000000D, 0x0000005B, 0x0000005A, 0x0000000C, 0x0004003D, 0x00000006,
+    0x0000005C, 0x0000005B, 0x00050084, 0x00000006, 0x0000005E, 0x0000005C,
+    0x0000005D, 0x00050051, 0x00000014, 0x00000068, 0x00000058, 0x00000000,
+    0x00060041, 0x0000006C, 0x0000006D, 0x0000006B, 0x00000064, 0x0000000C,
+    0x0004003D, 0x00000014, 0x0000006E, 0x0000006D, 0x00050081, 0x00000014,
+    0x0000006F, 0x00000068, 0x0000006E, 0x00060041, 0x00000070, 0x00000071,
+    0x00000062, 0x00000064, 0x0000005E, 0x0003003E, 0x00000071, 0x0000006F,
+    0x00050080, 0x00000006, 0x00000073, 0x0000005E, 0x0000001B, 0x00050051,
+    0x00000014, 0x00000075, 0x00000058, 0x00000001, 0x00060041, 0x0000006C,
+    0x00000076, 0x0000006B, 0x00000064, 0x0000001B, 0x0004003D, 0x00000014,
+    0x00000077, 0x00000076, 0x00050081, 0x00000014, 0x00000078, 0x00000075,
+    0x00000077, 0x00060041, 0x00000070, 0x00000079, 0x00000062, 0x00000064,
+    0x00000073, 0x0003003E, 0x00000079, 0x00000078, 0x00050080, 0x00000006,
+    0x0000007B, 0x0000005E, 0x00000023, 0x00050083, 0x00000014, 0x0000007E,
+    0x00000031, 0x0000002F, 0x00060041, 0x00000070, 0x0000007F, 0x00000062,
+    0x00000064, 0x0000007B, 0x0003003E, 0x0000007F, 0x0000007E, 0x00050080,
+    0x00000006, 0x00000081, 0x0000005E, 0x00000027, 0x00060041, 0x00000070,
+    0x00000082, 0x00000062, 0x00000064, 0x00000081, 0x0003003E, 0x00000082,
+    0x0000001E, 0x00050080, 0x00000006, 0x00000085, 0x0000005E, 0x00000084,
+    0x00050081, 0x00000014, 0x00000087, 0x00000018, 0x0000001E, 0x00050085,
+    0x00000014, 0x00000088, 0x0000002D, 0x00000087, 0x00060041, 0x00000070,
+    0x00000089, 0x00000062, 0x00000064, 0x00000085, 0x0003003E, 0x00000089,
+    0x00000088, 0x00050080, 0x00000006, 0x0000008C, 0x0000005E, 0x0000008B,
+    0x00050080, 0x00000006, 0x0000008E, 0x000000B2, 0x0000001B, 0x00040070,
+    0x00000014, 0x0000008F, 0x0000008E, 0x00050085, 0x00000014, 0x00000090,
+    0x0000002D, 0x0000008F, 0x00060041, 0x00000070, 0x00000091, 0x00000062,
+    0x00000064, 0x0000008C, 0x0003003E, 0x00000091, 0x00000090, 0x00050080,
+    0x00000006, 0x00000094, 0x0000005E, 0x00000093, 0x0004003D, 0x00000006,
+    0x00000095, 0x00000045, 0x00040070, 0x00000014, 0x00000096, 0x00000095,
+    0x00050085, 0x00000014, 0x00000098, 0x00000096, 0x000000B1, 0x00060041,
+    0x00000070, 0x00000099, 0x00000062, 0x00000064, 0x00000094, 0x0003003E,
+    0x00000099, 0x00000098, 0x00050080, 0x00000006, 0x0000009C, 0x0000005E,
+    0x0000009B, 0x00060041, 0x00000070, 0x0000009E, 0x00000062, 0x00000064,
+    0x0000009C, 0x0003003E, 0x0000009E, 0x0000009D, 0x00050080, 0x00000006,
+    0x000000A1, 0x0000005E, 0x000000A0, 0x00060041, 0x00000070, 0x000000A2,
+    0x00000062, 0x00000064, 0x000000A1, 0x0003003E, 0x000000A2, 0x0000001F,
+    0x00050080, 0x00000006, 0x000000A5, 0x0000005E, 0x000000A4, 0x00060041,
+    0x00000070, 0x000000A6, 0x00000062, 0x00000064, 0x000000A5, 0x0003003E,
+    0x000000A6, 0x0000001F, 0x000100FD, 0x00010038,
+};
+
 /// glslc's own output, at -O, the V3D's host tests' glslc_inverse_trig: what
 /// `inverseTrigOf` on the cores: Asin and Acos of vec2s, Atan and Atan2,
 /// which the V3D lowers as Mesa does, to approximations of its own
@@ -8784,7 +8978,7 @@ const Side = struct {
     counters_set: ?*facet.DescriptorSet = null,
     compute_layout: ?*facet.PipelineLayout = null,
     /// The cores' functions, then the shipped ones' (since 1.59).
-    compute_pipelines: [4]?*facet.Pipeline = @splat(null),
+    compute_pipelines: [5]?*facet.Pipeline = @splat(null),
     /// The pipelines of the case being drawn.
     made: [8]?*facet.Pipeline = @splat(null),
     made_count: u32 = 0,
@@ -8928,11 +9122,12 @@ const Side = struct {
         fb.UpdateDescriptorSets(device, 2, &buffer_writes, 0, null);
         const compute_push = facet.PushConstantRange{ .stage_flags = facet.SHADER_STAGE_COMPUTE, .size = 8 };
         try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&side.compute_set_layout), .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&compute_push) }, &side.compute_layout), error.Refused);
-        const compute_infos = [4]facet.ComputePipelineCreateInfo{
+        const compute_infos = [5]facet.ComputePipelineCreateInfo{
             .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "vertices" }, .layout = side.compute_layout.? },
             .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "numbers" }, .layout = side.compute_layout.? },
             .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "shipped vertices" }, .layout = side.compute_layout.? },
             .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "shipped numbers" }, .layout = side.compute_layout.? },
+            .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "shipped shared" }, .layout = side.compute_layout.? },
         };
         try expect(fb.CreateComputePipelines(device, null, compute_infos.len, &compute_infos, &side.compute_pipelines), error.Refused);
         try expect(fb.CreateFence(device, &.{}, &side.fence), error.Refused);
@@ -10071,6 +10266,19 @@ const Cases = struct {
         side.draw(0, 9);
         side.end();
     }
+    /// `shippedVertices`' triangles again, moved along another way, each
+    /// corner's place handed through shared memory to the invocation before
+    /// it and the corners counted into it by an atomic: on the V3D its own
+    /// program, of a workgroup's shared memory and TSY barriers (since 1.67).
+    fn shippedShared(side: *Side) Failure!void {
+        side.compute(4, .{ -0.03125, 0.0625 });
+        side.fb.CmdDispatch(side.commands.?, 3, 1, 1);
+        side.begin(.{});
+        try side.use(.{ .blend = true });
+        side.drawComputed();
+        side.draw(0, 9);
+        side.end();
+    }
     /// A draw's numbers written so, how many groups read from a buffer:
     /// what the case before left there cleared first, so a dispatch that
     /// wrote nothing draws nothing (since 1.59).
@@ -11057,6 +11265,7 @@ const cases = [_]Case{
     .{ .name = "compute: writes a draw's numbers", .run = &Cases.computedNumbers },
     .{ .name = "shipped compute: writes vertices", .run = &Cases.shippedVertices },
     .{ .name = "shipped compute: writes a draw's numbers", .run = &Cases.shippedNumbers },
+    .{ .name = "shipped compute: shared memory and barriers", .run = &Cases.shippedShared },
     .{ .name = "patches: triangles, even", .run = Cases.tessellated(.{ .patch_points = 3 }, 0, 3) },
     .{ .name = "patches: triangles, uneven", .run = Cases.tessellated(.{ .patch_points = 3, .control = "uneven" }, 0, 6) },
     .{ .name = "patches: triangles, edges", .run = Cases.tessellated(.{ .patch_points = 3, .control = "uneven", .polygon_mode = .line }, 0, 3) },
