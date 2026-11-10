@@ -2384,6 +2384,24 @@ Results:
 
 Of 22 mutations of the port, 22 fail the tests. On the CM5, FacetBoth's 240 cases are each as they were at 1.177, and its new `shipped trees` has 11 of 230400 pixels apart. The first of them is at 154,70, the edge pixel where 110 cases first differ. FacetProbe is 890 of 890.
 
+**Then a layer of a 2D array, a 3D texture and a cube, sampled by a compiled program**, facet.library 1.179.
+
+- **The images.** The profile takes Dim 3D and Cube beside 2D, and an arrayed 2D image. A sampled image's `SamplerDim` is a nir_tex_instr's sampler_dim and is_array, carried with its unit. A cube of an array needs SampledCubeArray and is refused.
+- **The coordinate.** A sample reads the floats its image names, of a vector that may be wider, as vtn trims it (spirv_to_nir.c:3280-3296).
+- **The cube's direction.** It is normalized before the sample, as nir_normalize_cubemap_coords puts it (v3dv_pipeline.c:406; nir_normalize_cubemap_coords.c:30-55): the fabs of its three floats, the fmax of the first two and then the third (nir_fmax_abs_vec_comp, nir_builtin_builder.h:84-91), the frcp of that, and the direction times it.
+- **The TMU writes.** v3d_tex.c writes T, then R for a 3D texture and a cube (handle_tex_src, :110-120) and I for a layer, as a float the TMU rounds (:122-127), then the comparator's TMUDREF (:155-157). A cube's lookup starts at TMUSCM rather than TMUS (:380-381). v3d's scheduler may reorder all but the S write (can_reorder_tmu_write, qpu_schedule.c:225-235).
+- **The draw.** The texture state is the one the fixed forms of a layer, a cube and a 3D texture read since 1.141. The plan's `compile` refuses every sample but a 2D one, as its programs read s and t alone.
+
+Refused still: a cube of an array; a sample with a bias, a level or an offset. Not ported: (('fabs', ('fneg', a)), ('fabs', a)) (nir_opt_algebraic.py:232), so a direction with a negated float keeps the fneg under the fabs.
+
+Results:
+- glslc_cube's three fabs are `.abs` unpacks of its two fmax, as vir_opt_copy_propagate takes them, then a recip and three fmul. TMUT, TMUR and TMUSCM are each written from an fmul.
+- glslc_volume writes TMUT, TMUR and TMUS; glslc_layers writes the blue times 3.0 to TMUI.
+- glslc_cube_shadow writes TMUDREF before T, and TMUSCM last; glslc_layers_shadow writes TMUT, TMUI, TMUDREF and TMUS.
+- glslc_cube_array is refused.
+
+Of 18 mutations of the port, 18 fail the tests, one of them by not compiling. On the CM5, FacetBoth's 241 cases are each as they were at 1.178. Its six new cases are the layered cases again, through glslc's samples rather than the fixed forms. Each is as far apart as the fixed form's (9, 0, 0, 14, 0 and 0 of 230400 pixels), with the same first pixels. FacetProbe is 890 of 890.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim

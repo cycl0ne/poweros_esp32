@@ -1448,19 +1448,21 @@ fn wrtmuc(c: *Compile, contents: vir.Uniform, data: u32) Error!void {
 }
 
 /// v3d_vir_emit_tex (v3d_tex.c:230), for what the profile samples: a 2D
-/// texture at a coordinate of two floats, with an implicit level of
-/// detail, its texels in 16-bit floats; a `sample_compared` writes the
-/// reference too (since 1.143).
+/// texture, a layer of an array, a 3D texture or a cube (since 1.179), at
+/// the coordinate its `SamplerDim` names, with an implicit level of detail,
+/// its texels in 16-bit floats; a `sample_compared` writes the reference
+/// too (since 1.143).
 fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     const c = e.c;
     const compared = each.tag == .sample_compared;
+    const dim = e.work.samplers[each.at].dim;
     // P0: the words to hand back; P2, the default, regular lookup.
     const return_words = texel_words;
 
-    // get_required_tex_tmu_writes (v3d_tex.c:222): T and S, and the
-    // comparator's TMUDREF. The input FIFO has 16 slots across all
-    // threads.
-    const tmu_writes: u32 = if (compared) 3 else 2;
+    // get_required_tex_tmu_writes (v3d_tex.c:222): S and T, R or I where
+    // the image has a third float, and the comparator's TMUDREF. The
+    // input FIFO has 16 slots across all threads.
+    const tmu_writes: u32 = 2 + @as(u32, @intFromBool(dim != .flat)) + @intFromBool(compared);
     while (tmu_writes > 16 / @as(u32, c.threads)) c.threads /= 2;
 
     // Pipelining it would overflow the TMU's FIFOs: flush what waits.
@@ -1468,9 +1470,16 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     if (tmuFifoOverflow(e, dest_components)) try flushTmu(e);
 
     // handle_tex_src (v3d_tex.c:85): S starts the lookup, so it is kept
-    // for the end, and T is written first.
+    // for the end, and T is written first; then a 3D texture's and a
+    // cube's third float to TMUR (:115-120) and a layer to TMUI
+    // (:122-127), the floats past the image's left unread.
     const s = try getSrc(e, each.a, 0);
     _ = try tmuWrite(c, .tmut, try getSrc(e, each.a, 1));
+    switch (dim) {
+        .flat => {},
+        .volume, .cube => _ = try tmuWrite(c, .tmur, try getSrc(e, each.a, 2)),
+        .layers => _ = try tmuWrite(c, .tmui, try getSrc(e, each.a, 2)),
+    }
     // The comparator after the coordinate, as NIR's sources come
     // (v3d_tex.c:155-157).
     if (compared) _ = try tmuWrite(c, .tmudref, try getSrc(e, each.b, 0));
@@ -1491,7 +1500,8 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     const p1_packed: u32 = if (c.stage != .fragment or e.work.skip_helpers[at]) compile.per_pixel_mask else 0;
     try wrtmuc(c, .tmu_config_p1, p1_packed | @as(u32, each.at) << 24);
 
-    const retiring = try tmuWrite(c, .tmus, s);
+    // A cube's lookup is started at TMUSCM (v3d_tex.c:380-381).
+    const retiring = try tmuWrite(c, if (dim == .cube) .tmuscm else .tmus, s);
     // Mesa's own count, which is the mask of the words rather than how
     // many: the scheduler only holds a lookup back for it.
     retiring.ldtmu_count = return_words;

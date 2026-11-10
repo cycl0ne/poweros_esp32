@@ -392,6 +392,34 @@ pub const Sampler = struct {
     /// OpImageSampleDrefImplicitLod: the draw hands the TMU the bound
     /// sampler's comparison then, and refuses it otherwise (since 1.143).
     compared: bool = false,
+    /// What its image's coordinate names (since 1.179).
+    dim: SamplerDim = .flat,
+};
+
+/// What a sampled image's coordinate names, as a nir_tex_instr's
+/// sampler_dim and is_array have it, and so which of the TMU's registers
+/// a sample writes (handle_tex_src, v3d_tex.c:99-127; since 1.179).
+pub const SamplerDim = enum(u8) {
+    /// GLSL_SAMPLER_DIM_2D: s and t, in TMUS and TMUT.
+    flat,
+    /// GLSL_SAMPLER_DIM_2D arrayed: s and t, and the layer in TMUI as a
+    /// float, which the TMU rounds.
+    layers,
+    /// GLSL_SAMPLER_DIM_3D: s, t and r, r in TMUR.
+    volume,
+    /// GLSL_SAMPLER_DIM_CUBE: a direction, normalized
+    /// (nir_normalize_cubemap_coords, v3dv_pipeline.c:406), its third
+    /// float in TMUR and the lookup started at TMUSCM rather than TMUS
+    /// (v3d_tex.c:380-381). A cube of an array is refused, as
+    /// SampledCubeArray is not in the profile.
+    cube,
+
+    /// glsl_get_sampler_dim_coordinate_components and the layer
+    /// (spirv_to_nir.c:3280-3283): the floats of the coordinate a sample
+    /// reads.
+    pub fn components(dim: SamplerDim) u8 {
+        return if (dim == .flat) 2 else 3;
+    }
 };
 
 /// What this back end takes. It is narrower than `spirv.facet_profile` on
@@ -490,7 +518,7 @@ pub const profile: spirv.Profile = .{
                  .loop_merge,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform },
-    .image_dims = &.{.dim_2d},
+    .image_dims = &.{ .dim_2d, .dim_3d, .cube },
     // The vertex stage since 1.163 (docs/facet-vulkan10.md item 60).
     .stages = &.{ .fragment, .vertex },
     .most_ids = most_ids,
@@ -1182,6 +1210,9 @@ pub const Work = struct {
     /// of it answers. A sampler is not a value a step can hold, so it is
     /// carried beside the steps rather than among them.
     sampler_of: [most_ids]u16 = @splat(none),
+    /// An image type's, and a sampled image type's, `SamplerDim` (since
+    /// 1.179).
+    sampler_dim: [most_ids]SamplerDim = @splat(.flat),
     /// Which step a value id answers.
     step_of: [most_ids]u16 = @splat(none),
     /// `member_pointer`: which float of the member it names, or `whole`
@@ -1486,6 +1517,8 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
         .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store => return Error.Storage,
         .discard => return Error.Discards,
         .sample_compared => return Error.Samplers,
+        // Every one reads a 2D texture at s and t (since 1.179).
+        .sample => if (work.samplers[each.at].dim != .flat) return Error.Samplers,
         // Nor does any compute beyond a sum and a product.
         .sub, .min, .max, .negate, .abs, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2 => return Error.Body,
         .select, .set_less, .sat, .sin, .cos, .sign, .logic, .integer => return Error.Body,
@@ -2169,18 +2202,27 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             .type_image => {
                 // Result, SampledType, Dim, Depth, Arrayed, MS, Sampled,
                 // ImageFormat. `look` has held the dimensionality to the
-                // profile's and Sampled to 1 already; what is left is the
-                // three that say this is the plain 2D texture the TMU is
-                // written for here. An arrayed one wants a layer in TMUI
-                // and a multisampled one is not a texture at all - each is
-                // its own family, and neither is this one. Depth is
+                // profile's and Sampled to 1 already: a 2D image, a 3D
+                // one or a cube (since 1.179), each its `SamplerDim`. An
+                // arrayed 2D one has its layer in TMUI; a cube of an
+                // array needs SampledCubeArray, which `look` refuses, and
+                // a 3D one cannot be arrayed (SPIR-V's OpTypeImage). A
+                // multisampled one is not a texture at all. Depth is
                 // taken whatever it says since 1.143: whether a sample
                 // compares is its opcode's, not the type's, as SPIR-V has
                 // it, and a depth image is read as any texture is.
                 if (operands.len < 8) return Error.Body;
                 const id = try idOf(operands[0]);
                 if (work.thing[try idOf(operands[1])] != .float) return Error.Type;
-                if (operands[3] > 2 or operands[4] != 0 or operands[5] != 0) return Error.Refused;
+                if (operands[3] > 2 or operands[4] > 1 or operands[5] != 0) return Error.Refused;
+                const dim: spirv.Dim = @enumFromInt(operands[2]);
+                const arrayed = operands[4] == 1;
+                work.sampler_dim[id] = switch (dim) {
+                    .dim_2d => if (arrayed) .layers else .flat,
+                    .dim_3d => if (arrayed) return Error.Refused else .volume,
+                    .cube => if (arrayed) return Error.Refused else .cube,
+                    else => return Error.Refused,
+                };
                 work.thing[id] = .image;
             },
             .type_sampled_image => {
@@ -2190,6 +2232,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (work.thing[image] != .image) return Error.Type;
                 work.thing[id] = .sampled_image;
                 work.points[id] = image;
+                work.sampler_dim[id] = work.sampler_dim[image];
             },
             .type_pointer => {
                 if (operands.len < 3) return Error.Body;
@@ -2343,7 +2386,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.thing[id] = .variable;
                     work.class[id] = @intCast(@intFromEnum(class));
                     work.sampler_of[id] = @intCast(work.sampler_count);
-                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id] };
+                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee] };
                     work.sampler_count += 1;
                     continue;
                 }
@@ -7300,7 +7343,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (try kindOf(work, type_id) != .f32x4) return Error.Type;
             const which = work.sampler_of[try idOf(operands[2])];
             if (which == none) return Error.Body;
-            const where = try operand(work, operands[3], .f32x2);
+            const where = try sampledAt(work, operands[3], work.samplers[which].dim);
             const made = try put(work, .{ .tag = .sample, .kind = .f32x4, .a = where, .at = which });
             work.step_of[id] = made;
             if (work.sampled == none) work.sampled = made;
@@ -7316,7 +7359,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (try kindOf(work, type_id) != .f32x1) return Error.Type;
             const which = work.sampler_of[try idOf(operands[2])];
             if (which == none) return Error.Body;
-            const where = try coordinateOf(work, operands[3]);
+            const where = try sampledAt(work, operands[3], work.samplers[which].dim);
             const against = try operand(work, operands[4], .f32x1);
             const made = try put(work, .{ .tag = .sample_compared, .kind = .f32x1, .a = where, .b = against, .at = which });
             work.step_of[id] = made;
@@ -8287,19 +8330,51 @@ fn isIntegerType(work: *const Work, type_id: u16) bool {
 
 /// An operand id as a step of `kind`. A constant becomes a step of its
 /// own the first time it is read, which is one uniform a float.
-/// A shadow sample's coordinate: two floats or more, the TMU given the
-/// first two. SPIR-V lets a coordinate be wider than its image needs, the
-/// floats it does not use after those it does, and glslc's
-/// `texture(sampler2DShadow, vec3(uv, reference))` is one: the reference
-/// is the third float, extracted from it as the Dref (since 1.143).
-fn coordinateOf(work: *Work, word: u32) Error!u16 {
+/// A sample's coordinate: the floats its image's `SamplerDim` names, or
+/// more, the TMU given those. SPIR-V lets a coordinate be wider than its
+/// image needs, the floats it does not use after those it does, and vtn
+/// trims it (spirv_to_nir.c:3294-3296): glslc's
+/// `texture(sampler2DShadow, vec3(uv, reference))` is one, the reference
+/// the third float, extracted from it as the Dref (since 1.143), and a
+/// plain sample's since 1.179. A cube's is normalized
+/// (`normalizedCube`).
+fn sampledAt(work: *Work, word: u32, dim: SamplerDim) Error!u16 {
     const id = try idOf(word);
     const kind = if (work.step_of[id] != none)
         work.steps[work.step_of[id]].kind
     else
         std.enums.fromInt(Kind, work.wide[id]) orelse return Error.Type;
-    if (kind == .f32x1) return Error.Type;
-    return operand(work, word, kind);
+    if (kind.parts() < dim.components()) return Error.Type;
+    const coordinate = try operand(work, word, kind);
+    return if (dim == .cube) normalizedCube(work, coordinate) else coordinate;
+}
+
+/// nir_normalize_cubemap_coords (v3dv_pipeline.c:406;
+/// nir_normalize_cubemap_coords.c:30-55), put before the sample as it
+/// puts its instructions: the direction, the coordinate's first three
+/// floats (nir_trim_vector), times the reciprocal of the largest of
+/// their magnitudes, which nir_fmax_abs_vec_comp finds from the first
+/// (nir_builtin_builder.h:84-91). The TMU finds the face and the place on
+/// it from what is left (since 1.179).
+fn normalizedCube(work: *Work, coordinate: u16) Error!u16 {
+    var direction = coordinate;
+    if (work.steps[coordinate].kind != .f32x3) {
+        var trimmed: Step = .{ .tag = .construct, .kind = .f32x3 };
+        for (0..3) |k| {
+            const of = partOf(work, coordinate, @intCast(k));
+            trimmed.from[k] = of.step;
+            trimmed.part[k] = of.part;
+        }
+        direction = try put(work, trimmed);
+    }
+    const magnitudes = try put(work, .{ .tag = .abs, .kind = .f32x3, .a = direction });
+    var largest = try floatOf(work, .{ .step = magnitudes, .part = 0 });
+    for (1..3) |k| {
+        const next = try floatOf(work, .{ .step = magnitudes, .part = @intCast(k) });
+        largest = try put(work, .{ .tag = .max, .kind = .f32x1, .a = largest, .b = next });
+    }
+    const reciprocal = try put(work, .{ .tag = .recip, .kind = .f32x1, .a = largest });
+    return put(work, .{ .tag = .mul, .kind = .f32x3, .a = direction, .b = reciprocal });
 }
 
 fn operand(work: *Work, word: u32, kind: Kind) Error!u16 {
@@ -10294,6 +10369,188 @@ test "through Mesa's back end, glslc's shadow sample is facet's, to the word: it
     // The plan refuses it, as it refuses facet's own.
     var plan: Work = .{};
     try testing.expectError(Error.Samplers, compile(&plan, &reference.glslc_shadow));
+}
+
+/// A TMU register `code` writes and the register it moves there, as the
+/// disassembler names them: `tmut` and `rf18`.
+const TmuWrite = struct {
+    name: []const u8,
+    source: []const u8,
+};
+
+/// The TMU writes of `code` in the order it makes them, their names in
+/// `names`.
+fn tmuWrites(code: Code, names: *[8][2][8]u8, into: *[8]TmuWrite) []TmuWrite {
+    var buffer: [disasm.most_text]u8 = undefined;
+    var count: usize = 0;
+    for (code.words) |word| {
+        var line = disasm.disasm(word, &buffer).?;
+        while (std.mem.indexOf(u8, line, "mov tmu")) |found| {
+            const start = found + "mov ".len;
+            const comma = std.mem.indexOfScalarPos(u8, line, start, ',').?;
+            var end = comma + 2;
+            while (end < line.len and line[end] != ' ' and line[end] != ';') end += 1;
+            const name = line[start..comma];
+            const source = line[comma + 2 .. end];
+            @memcpy(names[count][0][0..name.len], name);
+            @memcpy(names[count][1][0..source.len], source);
+            into[count] = .{ .name = names[count][0][0..name.len], .source = names[count][1][0..source.len] };
+            count += 1;
+            line = line[end..];
+        }
+    }
+    return into[0..count];
+}
+
+/// That `code` writes the TMU registers `expected` in that order, each
+/// from a register of its own.
+fn expectTmuWrites(code: Code, expected: []const []const u8) !void {
+    var names: [8][2][8]u8 = undefined;
+    var into: [8]TmuWrite = undefined;
+    const writes = tmuWrites(code, &names, &into);
+    try testing.expectEqual(expected.len, writes.len);
+    for (expected, writes, 0..) |want, got, k| {
+        try testing.expectEqualStrings(want, got.name);
+        for (writes[0..k]) |before| try testing.expect(!std.mem.eql(u8, before.source, got.source));
+    }
+}
+
+/// The register `code` moves to the TMU register `name`.
+fn tmuSource(code: Code, name: []const u8, names: *[8][2][8]u8, into: *[8]TmuWrite) ?[]const u8 {
+    for (tmuWrites(code, names, into)) |each| {
+        if (std.mem.eql(u8, each.name, name)) return each.source;
+    }
+    return null;
+}
+
+/// Whether an instruction of `code` writes `register` with `op`: whether
+/// a line holds `op register,`.
+fn writtenWith(code: Code, op: []const u8, register: []const u8) bool {
+    var buffer: [disasm.most_text]u8 = undefined;
+    var wanted: [32]u8 = undefined;
+    const pattern = std.fmt.bufPrint(&wanted, "{s} {s},", .{ op, register }) catch return false;
+    for (code.words) |word| {
+        if (std.mem.indexOf(u8, disasm.disasm(word, &buffer).?, pattern) != null) return true;
+    }
+    return false;
+}
+
+test "a cube is sampled at its direction made as long as its largest magnitude, as nir_normalize_cubemap_coords puts it before the sample: its third float to TMUR, and the lookup started at TMUSCM" {
+    // nir_normalize_cubemap_coords (v3dv_pipeline.c:406;
+    // nir_normalize_cubemap_coords.c:30-55): the fabs of the direction,
+    // nir_fmax_abs_vec_comp's fmax of the first two and then the third,
+    // its frcp, and the direction times it. v3d_tex.c writes T and R
+    // (:110-120) and starts the lookup at TMUSCM (:380-381), last
+    // (since 1.179).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_cube);
+    try testing.expectEqual(SamplerDim.cube, code.sampled()[0].dim);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .abs));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .max));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .recip));
+    const sampled = for (work.program()) |each| {
+        if (each.tag == .sample) break each;
+    } else return error.TestUnexpectedResult;
+    const normalized = work.steps[sampled.a];
+    try testing.expectEqual(Tag.mul, normalized.tag);
+    try testing.expectEqual(Kind.f32x3, normalized.kind);
+    for (0..3) |k| try testing.expect(isInputPart(&work, normalized.a, @intCast(k), @intCast(k)));
+    const reciprocal = work.steps[normalized.b];
+    try testing.expectEqual(Tag.recip, reciprocal.tag);
+    const largest = work.steps[reciprocal.a];
+    try testing.expectEqual(Tag.max, largest.tag);
+    const first_two = work.steps[largest.a];
+    try testing.expectEqual(Tag.max, first_two.tag);
+    const magnitude = partOf(&work, largest.b, 0);
+    try testing.expectEqual(Tag.abs, work.steps[magnitude.step].tag);
+    try testing.expectEqual(@as(u8, 2), magnitude.part);
+    try testing.expectEqual(@as(u8, 0), partOf(&work, first_two.a, 0).part);
+    try testing.expectEqual(@as(u8, 1), partOf(&work, first_two.b, 0).part);
+    // The fabs is no instruction of its own: vir_opt_copy_propagate
+    // takes the fmov's abs unpack into the fmax that reads it.
+    try expectTmuWrites(code, &.{ "tmut", "tmur", "tmuscm" });
+    // Each of the three is a float of the direction times the reciprocal.
+    var names: [8][2][8]u8 = undefined;
+    var into: [8]TmuWrite = undefined;
+    for ([_][]const u8{ "tmut", "tmur", "tmuscm" }) |name| try testing.expect(writtenWith(code, "fmul", tmuSource(code, name, &names, &into).?));
+    var buffer: [disasm.most_text]u8 = undefined;
+    var unpacked: u32 = 0;
+    for (code.words) |word| {
+        const line = disasm.disasm(word, &buffer).?;
+        if (std.mem.indexOf(u8, line, "fmax") != null) unpacked += @intCast(std.mem.count(u8, line, ".abs"));
+        try testing.expect(std.mem.indexOf(u8, line, "fmov") == null);
+    }
+    try testing.expectEqual(@as(u32, 3), unpacked);
+}
+
+test "a 3D texture's third float is written to TMUR and a layer of an array to TMUI, a float the TMU rounds, the lookup started at TMUS" {
+    // handle_tex_src (v3d_tex.c:110-127): non_array_components is three
+    // for a 3D texture, so R, and two for an array, its layer the last
+    // float to I; neither is normalized (since 1.179).
+    var volume: Work = .{};
+    const volume_code = try throughMesa(&volume, &reference.glslc_volume);
+    try testing.expectEqual(SamplerDim.volume, volume_code.sampled()[0].dim);
+    try testing.expectEqual(@as(usize, 0), stepsOf(&volume, .recip));
+    try expectTmuWrites(volume_code, &.{ "tmut", "tmur", "tmus" });
+    var layers: Work = .{};
+    const layers_code = try throughMesa(&layers, &reference.glslc_layers);
+    try testing.expectEqual(SamplerDim.layers, layers_code.sampled()[0].dim);
+    try testing.expectEqual(@as(usize, 0), stepsOf(&layers, .recip));
+    try expectTmuWrites(layers_code, &.{ "tmut", "tmui", "tmus" });
+    var names: [8][2][8]u8 = undefined;
+    var into: [8]TmuWrite = undefined;
+    try testing.expect(writtenWith(layers_code, "fmul", tmuSource(layers_code, "tmui", &names, &into).?));
+    const sampled = for (layers.program()) |each| {
+        if (each.tag == .sample) break each;
+    } else return error.TestUnexpectedResult;
+    // The layer is the blue times 3.0, as it is, with no rounding.
+    const layer = work: {
+        const of = partOf(&layers, sampled.a, 2);
+        break :work layers.steps[of.step];
+    };
+    try testing.expectEqual(Tag.mul, layer.tag);
+    try testing.expect(isInputPart(&layers, layer.a, 0, 2));
+    // The plan reads a 2D texture alone.
+    var plan: Work = .{};
+    try testing.expectError(Error.Samplers, compile(&plan, &reference.glslc_volume));
+}
+
+test "a cube or an array of depths compared takes the floats its image names of a wider coordinate, the cube's direction its first three normalized, and the reference its own" {
+    // vtn trims the coordinate to what the image names
+    // (spirv_to_nir.c:3294-3296): glslc's vec4 of a direction and the
+    // reference is the direction to nir_normalize_cubemap_coords, and
+    // the place and the layer to TMUT and TMUI; the reference, the
+    // Dref, goes to TMUDREF (v3d_tex.c:155-157), which v3d's scheduler
+    // may put before T (can_reorder_tmu_write, qpu_schedule.c:225-235),
+    // S last (since 1.179).
+    var cube: Work = .{};
+    const cube_code = try throughMesa(&cube, &reference.glslc_cube_shadow);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .compared = true, .dim = .cube }, cube_code.sampled()[0]);
+    const compared = for (cube.program()) |each| {
+        if (each.tag == .sample_compared) break each;
+    } else return error.TestUnexpectedResult;
+    const normalized = cube.steps[compared.a];
+    try testing.expectEqual(Tag.mul, normalized.tag);
+    try testing.expectEqual(Kind.f32x3, normalized.kind);
+    for (0..3) |k| try testing.expect(isInputPart(&cube, normalized.a, @intCast(k), @intCast(k)));
+    try testing.expect(isInputPart(&cube, compared.b, 0, 3));
+    var names: [8][2][8]u8 = undefined;
+    var into: [8]TmuWrite = undefined;
+    const writes = tmuWrites(cube_code, &names, &into);
+    try testing.expectEqual(@as(usize, 4), writes.len);
+    try testing.expectEqualStrings("tmuscm", writes[3].name);
+    for ([_][]const u8{ "tmut", "tmur", "tmuscm" }) |name| try testing.expect(writtenWith(cube_code, "fmul", tmuSource(cube_code, name, &names, &into).?));
+    try testing.expect(!writtenWith(cube_code, "fmul", tmuSource(cube_code, "tmudref", &names, &into).?));
+    var layers: Work = .{};
+    const layers_code = try throughMesa(&layers, &reference.glslc_layers_shadow);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .compared = true, .dim = .layers }, layers_code.sampled()[0]);
+    try expectTmuWrites(layers_code, &.{ "tmut", "tmui", "tmudref", "tmus" });
+    try testing.expect(writtenWith(layers_code, "fmul", tmuSource(layers_code, "tmui", &names, &into).?));
+}
+
+test "a cube of an array is refused, which needs SampledCubeArray" {
+    var work: Work = .{};
+    try testing.expectError(Error.Refused, throughMesa(&work, &reference.glslc_cube_array));
 }
 
 test "through Mesa's back end, a texel times the colour reads the texel's halves in its products" {

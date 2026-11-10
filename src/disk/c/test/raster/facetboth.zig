@@ -107,7 +107,11 @@
 //! Mesa does, in the pipeline's spill buffer. The shipped trees (since
 //! 1.43) are an array of two vec2s of the function's own, one float
 //! stored and one read at indexes the colour gives, which the V3D turns
-//! into if-else trees as Mesa does, and those into bcsels.
+//! into if-else trees as Mesa does, and those into bcsels. The shipped
+//! layers, cube and 3D texture (since 1.44) are glslc's samples of each
+//! at a coordinate of three floats, through the sampler bound beside
+//! it, drawn as the fixed forms that read a sampler are; the cores read
+//! them as those forms do.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -122,7 +126,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.43 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.44 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -1166,6 +1170,19 @@ fn treesFragment(fragments: *const shader.Fragments) callconv(.c) void {
     }
 }
 
+/// What `shipped_layers`, `shipped_cube` and `shipped_volume` compute,
+/// for the cores: the texture bound at set 0, binding 0, read through the
+/// sampler beside it at the three floats of varying 0, as the fixed forms
+/// `texture_array_sampled`, `texture_cube_sampled` and
+/// `texture_3d_sampled` read it (since 1.44).
+fn layeredFragment(comptime kind: shader.FixedKind) shader.FragmentFn {
+    return &struct {
+        fn run(fragments: *const shader.Fragments) callconv(.c) void {
+            shader.layeredBy(kind, fragments, fragments.resources.sampled(0, 0, 0), fragments.resources.samplerOf(0, 0, 0));
+        }
+    }.run;
+}
+
 /// What `store_writes` computes, for the cores, and in its order: by each
 /// pixel inside the triangle - a helper pixel writes nothing, as the
 /// V3D's lookup is a pixel's - the written buffer's count made 2 and its
@@ -1361,6 +1378,9 @@ const shipped_entries = [_]shader.Entry{
     Shipped.FourSamples.entry("shipped four samples"),
     shader.fragment("shipped scratch", &scratchFragment, 4),
     shader.fragment("shipped trees", &treesFragment, 4),
+    shader.fragment("shipped layers", layeredFragment(.texture_array_sampled), 3),
+    shader.fragment("shipped cube", layeredFragment(.texture_cube_sampled), 3),
+    shader.fragment("shipped volume", layeredFragment(.texture_3d_sampled), 3),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                .{},                               .{},                                  .{},
@@ -1375,6 +1395,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&store_reads),      shader.Spirv.of(&store_atomics),   shader.Spirv.of(&store_counted),      Shipped.Kept.spirv,
     Shipped.KeptPushed.spirv,           shader.Spirv.of(&for_loop),        shader.Spirv.of(&do_while),           shader.Spirv.of(&float_loop),
     Shipped.TwoTextures.spirv,          shader.Spirv.of(&four_samples),    shader.Spirv.of(&scratch_slots),      shader.Spirv.of(&tree_pair),
+    shader.Spirv.of(&shipped_layers),   shader.Spirv.of(&shipped_cube),    shader.Spirv.of(&shipped_volume),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -2849,6 +2870,126 @@ const tree_pair = [_]u32{
     0x0003003E, 0x00000032, 0x00000040, 0x000100FD, 0x00010038,
 };
 
+/// glslc's own output, at -O, for a layer of a 2D array, the third float the layer, which the V3D writes to TMUI as a float at the three floats of
+/// varying 0, through the sampler bound beside it (since 1.44).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2DArray layers;
+/// layout(location = 0) in vec3 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = texture(layers, at);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag layers.frag -o layers.spv   # 119 words
+/// spirv-val --target-env vulkan1.0 layers.spv         # no output, and 0
+/// ```
+const shipped_layers = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000014, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000011, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000011, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000001,
+    0x00000000, 0x00000001, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040017, 0x0000000F,
+    0x00000006, 0x00000003, 0x00040020, 0x00000010, 0x00000001, 0x0000000F,
+    0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D, 0x0000000F, 0x00000012,
+    0x00000011, 0x00050057, 0x00000007, 0x00000013, 0x0000000E, 0x00000012,
+    0x0003003E, 0x00000009, 0x00000013, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for a cube, at a direction, which the V3D normalizes as nir_normalize_cubemap_coords does (v3dv_pipeline.c:406) and starts at TMUSCM at the three floats of
+/// varying 0, through the sampler bound beside it (since 1.44).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform samplerCube sky;
+/// layout(location = 0) in vec3 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = texture(sky, at);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag cube.frag -o cube.spv   # 119 words
+/// spirv-val --target-env vulkan1.0 cube.spv         # no output, and 0
+/// ```
+const shipped_cube = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000014, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000011, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000011, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000003,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040017, 0x0000000F,
+    0x00000006, 0x00000003, 0x00040020, 0x00000010, 0x00000001, 0x0000000F,
+    0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D, 0x0000000F, 0x00000012,
+    0x00000011, 0x00050057, 0x00000007, 0x00000013, 0x0000000E, 0x00000012,
+    0x0003003E, 0x00000009, 0x00000013, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for a 3D texture, its third float to TMUR at the three floats of
+/// varying 0, through the sampler bound beside it (since 1.44).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler3D volume;
+/// layout(location = 0) in vec3 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = texture(volume, at);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag volume.frag -o volume.spv   # 119 words
+/// spirv-val --target-env vulkan1.0 volume.spv         # no output, and 0
+/// ```
+const shipped_volume = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000014, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000011, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000011, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000002,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040017, 0x0000000F,
+    0x00000006, 0x00000003, 0x00040020, 0x00000010, 0x00000001, 0x0000000F,
+    0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D, 0x0000000F, 0x00000012,
+    0x00000011, 0x00050057, 0x00000007, 0x00000013, 0x0000000E, 0x00000012,
+    0x0003003E, 0x00000009, 0x00000013, 0x000100FD, 0x00010038,
+};
+
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
 /// V3D's host tests hold to compile to the program of glslc's optimized
 /// module, word for word: `c` and `k` in variables of the function's own,
@@ -3156,7 +3297,26 @@ const layered_throughs = [_]Through{
     },
 };
 
-const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs;
+/// The layered throughs again, through glslc's samples of each rather
+/// than the fixed forms: the V3D compiles `shipped_layers`,
+/// `shipped_cube` and `shipped_volume`, and the cores read them as the
+/// forms do (`layeredFragment`, since 1.44).
+const shipped_layered_throughs = shipped: {
+    var made = layered_throughs;
+    for (&made) |*each| {
+        const names: [2][:0]const u8 = switch (each.view) {
+            .array => .{ "shipped layers", "shipped layers" },
+            .cube => .{ "shipped cube", "shipped cube" },
+            .volume => .{ "shipped volume", "shipped volume" },
+            else => unreachable,
+        };
+        each.label = names[0];
+        each.fragment = names[1];
+    }
+    break :shipped made;
+};
+
+const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs ++ shipped_layered_throughs;
 
 /// What the shadow-map cases compare with (`Cases.shadowed`): the
 /// reference less than the depth, and greater (since 1.14).
