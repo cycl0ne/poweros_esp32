@@ -238,6 +238,15 @@ test "Sheet: formulas worked out" {
     try fixture.expectNumber("C5", 1.1);
     try fixture.put("C6", "=UPPER(C1)");
     try fixture.expectText("C6", "2 UNITS");
+    // The text functions count and change characters, not bytes.
+    try fixture.put("E1", "=LEN(\"Grüße 日本\")");
+    try fixture.expectNumber("E1", 8);
+    try fixture.put("E2", "=UPPER(\"grün ä\")");
+    try fixture.expectText("E2", "GRÜN Ä");
+    try fixture.put("E3", "=LOWER(\"ÄΩ\")");
+    try fixture.expectText("E3", "äω");
+    try fixture.put("E4", "=\"Grün\"=\"GRÜN\"");
+    try testing.expectEqual(@as(f64, 1), fixture.value("E4").number);
     try fixture.put("C7", "=SQRT(-1)");
     try fixture.expectError("C7", .num);
     try fixture.put("C8", "=A1=2");
@@ -564,6 +573,10 @@ test "Sheet: the region round a cell, finding, and AutoSum's ranges" {
     try testing.expect(sheet.restyle(.{ .top = 2, .left = 1, .bottom = 2, .right = 1 }, .{ .to = .currency }));
     try testing.expectEqual(@as(u32, 2), sheet.findText("$1.50", 0, 0, false).?.row);
     try testing.expect(sheet.findText("nothing", 0, 0, false) == null);
+    // Finding compares characters, case aside.
+    try testing.expect(cells.holdsText("Straße in Grün", "GRÜN"));
+    try testing.expect(cells.holdsText("ΩMEGA", "ωm"));
+    try testing.expect(!cells.holdsText("Grun", "grün"));
 
     // Above, then left; none.
     try testing.expectEqual(cells.Area{ .top = 2, .left = 1, .bottom = 3, .right = 1 }, sheet.sumRun(4, 1).?);

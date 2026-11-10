@@ -26,6 +26,7 @@
 //! handler's choosing - its node.
 
 const exec = @import("../exec/exec.zig");
+const unicode = @import("../utility/unicode.zig");
 const ExecBase = @import("../../interface/exec.zig").ExecBase;
 
 /// How a watcher wants to hear: a NotifyMessage to `port`; a signal to
@@ -351,27 +352,14 @@ pub fn nodePath(node: anytype, into: []u8) []const u8 {
     return into[end..];
 }
 
-/// Whether two paths are the same, case aside and a trailing `/` aside.
+/// Whether two paths are the same, case aside - by Unicode's folding, as
+/// the file systems compare names - and a trailing `/` aside.
 fn samePath(a: []const u8, b: []const u8) bool {
-    const left = trimmed(a);
-    const right = trimmed(b);
-    if (left.len != right.len) return false;
-    for (left, right) |x, y| {
-        if (lower(x) != lower(y)) return false;
-    }
-    return true;
+    return unicode.equalFolded(trimmed(a), trimmed(b));
 }
 
 fn trimmed(path: []const u8) []const u8 {
     var end = path.len;
     while (end > 0 and path[end - 1] == '/') end -= 1;
     return path[0..end];
-}
-
-/// Lower case for the names a file system compares: ASCII and Latin-1.
-fn lower(char: u8) u8 {
-    return switch (char) {
-        'A'...'Z', 0xC0...0xD6, 0xD8...0xDE => char + 32,
-        else => char,
-    };
 }

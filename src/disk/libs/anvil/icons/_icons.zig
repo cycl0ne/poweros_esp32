@@ -249,7 +249,7 @@ pub fn make(sys: *ExecBase, ib: *IconBase, object: ?*icon.DiskObject, label: []c
     };
     const ic: *Icon = @ptrCast(@alignCast(memory));
     ic.* = .{ .object = object, .picture = shown, .picture_held = held };
-    const length = @min(label.len, label_max);
+    const length = utility.utf8.cut(label, label_max);
     @memcpy(ic.label[0..length], label[0..length]);
     ic.label_len = @intCast(length);
     ic.shown_len = ic.label_len;

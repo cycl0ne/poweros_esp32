@@ -37,22 +37,10 @@ const path = @import("path.zig");
 
 pub const View = anvil_prefs.View;
 
-fn upper(c: u8) u8 {
-    return switch (c) {
-        'a'...'z', 0xE0...0xF6, 0xF8...0xFE => c - 32,
-        else => c,
-    };
-}
-
-/// Whether name `a` sorts before `b`, case aside.
+/// Whether name `a` sorts before `b`, case aside: a character at a time
+/// by Unicode's folding.
 pub fn nameBefore(a: []const u8, b: []const u8) bool {
-    const shorter = @min(a.len, b.len);
-    for (a[0..shorter], b[0..shorter]) |x, y| {
-        const left = upper(x);
-        const right = upper(y);
-        if (left != right) return left < right;
-    }
-    return a.len < b.len;
+    return utility.unicode.compareFolded(a, b) < 0;
 }
 
 fn newer(a: dos.DateStamp, b: dos.DateStamp) i32 {

@@ -11,6 +11,9 @@
 //! - Hex is uppercase without leading zeros; 0 prints as "0".
 //! - With zero fill, a "-" goes before the zeros: %03d of -5 is "-05".
 //! - .limit cuts the text; a NULL %s prints nothing, not even padding.
+//! - A %s's width and .limit count characters of its UTF-8, so a column
+//!   lines up whatever a name is written in and a cut never ends inside
+//!   a character; a byte that is no UTF-8 is one, as text reads it.
 //! - An unknown conversion prints its own character, so %% prints "%".
 //! - The output function gets a final NUL, and RawDoFmt returns the data
 //!   stream past the values it used.
@@ -345,6 +348,22 @@ fn digits(buffer: []u8, value: u64, radix: u8, negative: bool) []const u8 {
     return buffer[index..];
 }
 
+/// How many characters `text`'s UTF-8 holds.
+fn characters(text: []const u8) usize {
+    var count: usize = 0;
+    var at: usize = 0;
+    while (at < text.len) : (count += 1) _ = sdk.utility.utf8.next(text, &at);
+    return count;
+}
+
+/// The bytes `text`'s first `count` characters take.
+fn firstCharacters(text: []const u8, count: usize) usize {
+    var taken: usize = 0;
+    var at: usize = 0;
+    while (at < text.len and taken < count) : (taken += 1) _ = sdk.utility.utf8.next(text, &at);
+    return at;
+}
+
 /// RawDoFmt's work, with no base: `kprintf` formats with it before there
 /// is an ExecBase. Formats `format_string` with the values in `data_stream`
 /// and hands the characters to `put_ch_proc` (with `put_ch_data`), then a
@@ -407,8 +426,10 @@ pub fn format(format_string: [*:0]const u8, data_stream: ?*const anyopaque, put_
                 continue;
             },
         };
-        if (limit != 0 and limit < text.len) text = text[0..limit];
-        const pad = width -| text.len;
+        if (conversion == 's') {
+            if (limit != 0) text = text[0..firstCharacters(text, limit)];
+        } else if (limit != 0 and limit < text.len) text = text[0..limit];
+        const pad = width -| if (conversion == 's') characters(text) else text.len;
         if (left) {
             for (text) |character_out| out.put(character_out);
             out.repeat(' ', pad);
@@ -527,6 +548,11 @@ test "format: conversions, width and fill, odd formats, the stream, a buffer, un
         try testing.expectEqualStrings("[    ab]", f("[%6.2s]", .{"abcd"}));
         try testing.expectEqualStrings("[12]", f("[%1d]", .{@as(u32, 12)})); // too narrow: the whole number
         try testing.expectEqualStrings("[]", f("[%5s]", .{null})); // NULL: no padding either
+        // A string's width and limit count its characters.
+        try testing.expectEqualStrings("[Grüße  ]", f("[%-7s]", .{"Grüße"}));
+        try testing.expectEqualStrings("[  日本]", f("[%4s]", .{"日本"}));
+        try testing.expectEqualStrings("[Grü]", f("[%.3s]", .{"Grüße"}));
+        try testing.expectEqualStrings("[\u{1F600}x ]", f("[%-3.2s]", .{"\u{1F600}xyz"}));
     }
     // %%, unknown conversions, a % at the end.
     {

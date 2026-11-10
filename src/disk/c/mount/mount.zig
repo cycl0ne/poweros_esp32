@@ -52,7 +52,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Mount";
-const VERSION_STRING = "\x00$VER: Mount 1.1 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Mount 1.2 (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DEVICE/M,FROM/K";
@@ -211,22 +211,38 @@ fn lastPart(name: [*:0]const u8) [*:0]const u8 {
     return name + start;
 }
 
+/// An ASCII letter in capitals: the words of a control string.
 fn upper(c: u8) u8 {
-    return switch (c) {
-        'a'...'z', 0xE0...0xF6, 0xF8...0xFE => c - 0x20,
-        else => c,
-    };
+    return if (c >= 'a' and c <= 'z') c - 0x20 else c;
 }
 
-/// The same name, whatever case either is written in (Latin-1, as
-/// utility.library's Stricmp reads it).
-fn sameName(a: [*:0]const u8, b: [*:0]const u8) bool {
-    var i: usize = 0;
-    while (true) : (i += 1) {
-        const x = upper(a[i]);
-        if (x != upper(b[i])) return false;
-        if (x == 0) return true;
+/// A device's name in capitals, a character at a time by Unicode's upper
+/// case, as many whole characters as `into` holds.
+fn capitals(name: [*:0]const u8, into: *[max_token:0]u8) void {
+    const utf8 = sdk.utility.utf8;
+    var length: usize = 0;
+    while (name[length] != 0) length += 1;
+    const text = name[0..length];
+    var out: usize = 0;
+    var at: usize = 0;
+    while (at < text.len) {
+        var bytes: [4]u8 = undefined;
+        const taken = utf8.encode(sdk.utility.unicode.upper(utf8.next(text, &at)), &bytes);
+        if (out + taken > max_token - 1) break;
+        @memcpy(into[out..][0..taken], bytes[0..taken]);
+        out += taken;
     }
+    into[out] = 0;
+}
+
+/// The same name, whatever case either is written in: by Unicode's
+/// folding, as utility.library's Stricmp reads it.
+fn sameName(a: [*:0]const u8, b: [*:0]const u8) bool {
+    var a_length: usize = 0;
+    while (a[a_length] != 0) a_length += 1;
+    var b_length: usize = 0;
+    while (b[b_length] != 0) b_length += 1;
+    return sdk.utility.unicode.equalFolded(a[0..a_length], b[0..b_length]);
 }
 
 /// A copy of the token, for a node to keep.
@@ -317,9 +333,7 @@ fn addNode(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8, entry: *const Entr
     // A device's name is written in capitals on the list, whatever case it
     // was mounted in, so every entry on it reads the same way.
     var upper_name: [max_token:0]u8 = @splat(0);
-    var i: usize = 0;
-    while (name[i] != 0 and i < max_token - 1) : (i += 1) upper_name[i] = upper(name[i]);
-    upper_name[i] = 0;
+    capitals(name, &upper_name);
     const node = dl.MakeDosEntry(&upper_name, dos.DLT_DEVICE) orelse return .memory;
     // As written: dos looks the name at the end of the path up among the
     // segments, and failing that loads the file from the path - a bare
@@ -367,8 +381,7 @@ fn addNode(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8, entry: *const Entr
 /// under it.
 fn unmount(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8, entry: *const Entry) void {
     var upper_name: [max_token:0]u8 = @splat(0);
-    var i: usize = 0;
-    while (name[i] != 0 and i < max_token - 1) : (i += 1) upper_name[i] = upper(name[i]);
+    capitals(name, &upper_name);
     const flags = dos.LDF_DEVICES | dos.LDF_WRITE;
     var waited: u32 = 0;
     while (true) : (waited += 1) {

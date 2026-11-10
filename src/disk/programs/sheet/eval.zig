@@ -19,6 +19,9 @@
 //! scratch block, so a formula's answer is good until the next one is
 //! worked out.
 
+const sdk = @import("sdk");
+const utf8 = sdk.utility.utf8;
+const unicode = sdk.utility.unicode;
 const formula = @import("formula.zig");
 const number = @import("number.zig");
 
@@ -152,10 +155,6 @@ fn upperOf(char: u8) u8 {
     return if (char >= 'a' and char <= 'z') char - 32 else char;
 }
 
-fn lowerOf(char: u8) u8 {
-    return if (char >= 'A' and char <= 'Z') char + 32 else char;
-}
-
 fn sameWord(text: []const u8, word: []const u8) bool {
     if (text.len != word.len) return false;
     for (text, word) |char, wanted| {
@@ -176,14 +175,8 @@ fn compare(left_given: Value, right_given: Value) i32 {
     const right_rank = rankOf(right.kind);
     if (left_rank != right_rank) return if (left_rank < right_rank) -1 else 1;
     if (left.kind == .text) {
-        const shorter = @min(left.text.len, right.text.len);
-        for (left.text[0..shorter], right.text[0..shorter]) |left_char, right_char| {
-            const one = upperOf(left_char);
-            const other = upperOf(right_char);
-            if (one != other) return if (one < other) -1 else 1;
-        }
-        if (left.text.len == right.text.len) return 0;
-        return if (left.text.len < right.text.len) -1 else 1;
+        const order = unicode.compareFolded(left.text, right.text);
+        return if (order < 0) -1 else if (order > 0) 1 else 0;
     }
     if (left.number == right.number) return 0;
     return if (left.number < right.number) -1 else 1;
@@ -423,10 +416,24 @@ fn call(context: anytype, scratch: *Scratch, func: Func, args: []const Value) Va
                 .ok => |text| text,
                 .err => |err| return Value.ofError(err),
             };
-            if (func == .len) return Value.ofNumber(@floatFromInt(text.len));
-            const changed = scratch.room(text.len) orelse return Value.ofError(.value);
-            for (text, changed) |char, *into| into.* = if (func == .upper) upperOf(char) else lowerOf(char);
-            return Value.ofText(changed);
+            if (func == .len) {
+                var characters: usize = 0;
+                var at: usize = 0;
+                while (at < text.len) : (characters += 1) _ = utf8.next(text, &at);
+                return Value.ofNumber(@floatFromInt(characters));
+            }
+            // A character's other case can take a byte more than it does.
+            const changed = scratch.room(text.len * 3 / 2 + 1) orelse return Value.ofError(.value);
+            var length: usize = 0;
+            var at: usize = 0;
+            while (at < text.len) {
+                const char = utf8.next(text, &at);
+                var bytes: [4]u8 = undefined;
+                const taken = utf8.encode(if (func == .upper) unicode.upper(char) else unicode.lower(char), &bytes);
+                @memcpy(changed[length..][0..taken], bytes[0..taken]);
+                length += taken;
+            }
+            return Value.ofText(changed[0..length]);
         },
         else => {},
     }

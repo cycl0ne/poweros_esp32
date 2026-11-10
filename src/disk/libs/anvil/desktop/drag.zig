@@ -317,19 +317,20 @@ fn intoDrawer(d: *Desktop, held: *const Held, into: []const u8, trash: bool) boo
     return any;
 }
 
-/// Whether `inner` is `outer` or inside it: a drawer is not moved into
-/// itself.
+/// Whether `inner` is `outer` or inside it, case aside: a drawer is not
+/// moved into itself.
 fn isWithin(inner: [*:0]const u8, outer: [*:0]const u8) bool {
-    var n: usize = 0;
-    while (outer[n] != 0) : (n += 1) {
-        const a = upper(inner[n]);
-        if (a != upper(outer[n])) return false;
+    const utf8 = utility.utf8;
+    const fold = utility.unicode.fold;
+    const inner_text = textOf(inner);
+    const outer_text = textOf(outer);
+    var at_inner: usize = 0;
+    var at_outer: usize = 0;
+    while (at_outer < outer_text.len) {
+        if (at_inner >= inner_text.len) return false;
+        if (fold(utf8.next(outer_text, &at_outer)) != fold(utf8.next(inner_text, &at_inner))) return false;
     }
-    return inner[n] == 0 or inner[n] == '/';
-}
-
-fn upper(c: u8) u8 {
-    return if (c >= 'a' and c <= 'z') c - 32 else c;
+    return at_inner == inner_text.len or inner_text[at_inner] == '/';
 }
 
 /// A file and its icon renamed into the drawer `into`; false when the

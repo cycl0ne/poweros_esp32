@@ -69,8 +69,8 @@ const workfile = dos.workfile;
 
 pub const SHELL_NAME = "shell";
 const SHELL_VERSION = 1;
-const SHELL_REVISION = 7;
-const BUILD_DATE = "10.11.2026";
+const SHELL_REVISION = 8;
+const BUILD_DATE = "11.11.2026";
 const SHELL_VERSION_STRING =
     "\x00$VER: " ++ SHELL_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ SHELL_VERSION, SHELL_REVISION }) ++
@@ -390,12 +390,16 @@ fn expand(gv: *Global, to: [*]u8, mc: usize) isize {
                 rp += 1;
                 bracend = rp;
             } else {
-                while (q < 32) {
-                    const c = gv.ub.ToUpper(from[rp]);
+                // A name is digits, letters and every character past
+                // U+00A0, taken whole.
+                while (from[rp] != 0) {
+                    const found = sdk.utility.utf8.readZ(@ptrCast(&from[rp]));
+                    const c = gv.ub.ToUpper(found.char);
                     if (!((c >= '0' and c <= '9') or (c >= 'A' and c <= 'Z') or c > 160)) break;
-                    name[q] = from[rp];
-                    q += 1;
-                    rp += 1;
+                    if (q + found.length > 32) break;
+                    @memcpy(name[q..][0..found.length], from[rp..][0..found.length]);
+                    q += found.length;
+                    rp += found.length;
                 }
                 bracend = rp;
             }

@@ -1092,36 +1092,36 @@ pub fn compareValues(a: Value, b: Value) i32 {
     switch (a.kind) {
         .number, .boolean => return if (a.number < b.number) -1 else if (a.number > b.number) 1 else 0,
         .text => {
-            for (a.text[0..@min(a.text.len, b.text.len)], b.text[0..@min(a.text.len, b.text.len)]) |x, y| {
-                const lx = lower(x);
-                const ly = lower(y);
-                if (lx != ly) return if (lx < ly) -1 else 1;
-            }
-            return if (a.text.len < b.text.len) -1 else if (a.text.len > b.text.len) 1 else 0;
+            const order = sdk.utility.unicode.compareFolded(a.text, b.text);
+            return if (order < 0) -1 else if (order > 0) 1 else 0;
         },
         .err => return if (@intFromEnum(a.err) < @intFromEnum(b.err)) -1 else if (@intFromEnum(a.err) > @intFromEnum(b.err)) 1 else 0,
         .empty, .range => return 0,
     }
 }
 
-/// A Latin-1 letter in small, anything else as it is.
-fn lower(char: u8) u8 {
-    return switch (char) {
-        'A'...'Z', 0xC0...0xD6, 0xD8...0xDE => char + 0x20,
-        else => char,
-    };
+/// Whether `text` holds `wanted`, case not counting: compared a
+/// character at a time by Unicode's folding, from each character on.
+pub fn holdsText(text: []const u8, wanted: []const u8) bool {
+    var start: usize = 0;
+    while (true) {
+        if (startsWith(text[start..], wanted)) return true;
+        if (start >= text.len) return false;
+        _ = sdk.utility.utf8.next(text, &start);
+    }
 }
 
-/// Whether `text` holds `wanted`, case not counting.
-pub fn holdsText(text: []const u8, wanted: []const u8) bool {
-    if (wanted.len > text.len) return false;
-    var at: usize = 0;
-    while (at + wanted.len <= text.len) : (at += 1) {
-        for (wanted, text[at..][0..wanted.len]) |w, t| {
-            if (lower(w) != lower(t)) break;
-        } else return true;
+/// Whether `text` starts with `wanted`, case not counting.
+fn startsWith(text: []const u8, wanted: []const u8) bool {
+    const utf8 = sdk.utility.utf8;
+    const fold = sdk.utility.unicode.fold;
+    var at_text: usize = 0;
+    var at_wanted: usize = 0;
+    while (at_wanted < wanted.len) {
+        if (at_text >= text.len) return false;
+        if (fold(utf8.next(wanted, &at_wanted)) != fold(utf8.next(text, &at_text))) return false;
     }
-    return false;
+    return true;
 }
 
 /// `order` put in order by `key`, keeping equal ones as they were: a

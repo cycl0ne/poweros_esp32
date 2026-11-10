@@ -39,8 +39,8 @@
 //! ST_LINKDIR to mark and no circular-link check, since there are no links
 //! yet; and the recursion is capped, since a command runs on the shell's
 //! stack. Files are sorted as utility.library's Stricmp
-//! orders them (Latin-1, case ignored), done here so that Dir opens nothing
-//! but dos.
+//! orders them (by Unicode's folding, case ignored), done here so that Dir
+//! opens nothing but dos.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -51,7 +51,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Dir";
-const VERSION_STRING = "\x00$VER: Dir 1.1 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Dir 1.2 (11.11.2026)\r\n";
 
 const template = "DIR,OPT/K,ALL/S,DIRS/S,FILES/S,INTER/S";
 const arg_dir = 0;
@@ -467,22 +467,16 @@ fn typeOut(run: *Run, here: ?*dos.FileLock, name: [*:0]const u8) void {
     }
 }
 
-/// By name, ignoring case as utility.library's Stricmp does (Latin-1).
+/// By name, ignoring case as utility.library's Stricmp does: by
+/// Unicode's folding.
 fn before(a: *const Entry, b: *const Entry) bool {
-    var i: usize = 0;
-    while (true) : (i += 1) {
-        const x = upper(a.name[i]);
-        const y = upper(b.name[i]);
-        if (x != y) return x < y;
-        if (x == 0) return false;
-    }
+    return sdk.utility.unicode.compareFolded(nameOf(a), nameOf(b)) < 0;
 }
 
-fn upper(c: u8) u8 {
-    return switch (c) {
-        'a'...'z', 0xE0...0xF6, 0xF8...0xFE => c - 0x20,
-        else => c,
-    };
+fn nameOf(entry: *const Entry) []const u8 {
+    var length: usize = 0;
+    while (entry.name[length] != 0) length += 1;
+    return entry.name[0..length];
 }
 
 /// The "$VER:" string every PowerOS module carries, which `Version <file>`

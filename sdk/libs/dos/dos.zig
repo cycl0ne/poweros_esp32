@@ -71,9 +71,8 @@ pub const DateStamp = extern struct {
 /// here rather than from a number of its own, so that the limit is one
 /// thing and not a dozen.
 ///
-/// It is a count of bytes. While names are Latin-1 that is a count of
-/// characters too; once they are UTF-8 a name of 255 bytes holds fewer
-/// than 255 characters.
+/// It is a count of bytes: a name is UTF-8, so a name of 255 bytes holds
+/// fewer than 255 characters once any of them is past ASCII.
 pub const name_max: usize = 255;
 
 /// The longest path: every name of it, the separators between them and

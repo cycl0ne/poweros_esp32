@@ -188,7 +188,7 @@ const max_rows = formula.max_rows;
 const max_cols = formula.max_cols;
 
 pub const COMMAND_NAME = "Sheet";
-const VERSION = "1.8";
+const VERSION = "1.9";
 const VERSION_STRING = "\x00$VER: Sheet " ++ VERSION ++ " (11.11.2026)\r\n";
 /// What the screen's title bar says while the window is the active one.
 const SCREEN_TITLE = "Sheet " ++ VERSION;
@@ -964,13 +964,19 @@ const App = struct {
     fn typeOn(app: *App, code: u32, fresh: bool) void {
         var text: [cells.max_text]u8 = undefined;
         const now = if (fresh) "" else app.entryText();
-        var length = @min(now.len, text.len);
+        const utf8 = sdk.utility.utf8;
+        var length = utf8.cut(now, text.len);
         @memcpy(text[0..length], now[0..length]);
         if (code == 0x08) {
-            length -|= 1;
-        } else if (length < text.len) {
-            text[length] = @intCast(code);
-            length += 1;
+            // The last character goes, all of its bytes.
+            length = utf8.cut(text[0..length], length -| 1);
+        } else {
+            var bytes: [4]u8 = undefined;
+            const taken = utf8.encode(code, &bytes);
+            if (length + taken <= text.len) {
+                @memcpy(text[length..][0..taken], bytes[0..taken]);
+                length += taken;
+            }
         }
         app.putText(text[0..length]);
     }
@@ -1886,7 +1892,8 @@ const App = struct {
         // nothing, and the characters after it go on its end - each comes
         // here, in the order typed, since the line at the top is not given
         // the keyboard for them. Escape lets what was typed go.
-        const character = code >= 0x20 and code <= 0xFF and !(code >= 0x80 and code < 0xA0);
+        const character = code >= 0x20 and code != 0x7F and !(code >= 0x80 and code < 0xA0) and
+            code <= 0x10FFFF and !(code >= 0xD800 and code <= 0xDFFF);
         if (character or code == 0x08) {
             const fresh = !app.typing;
             if (fresh) {

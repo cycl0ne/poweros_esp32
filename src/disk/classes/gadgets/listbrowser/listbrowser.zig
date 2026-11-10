@@ -74,8 +74,8 @@ const Row = lb.Row;
 pub const Library = gadgets.ClassLibrary(.{
     .name = lb.LISTBROWSER_CLASS,
     .version = 1,
-    .revision = 2,
-    .date = "29.10.2026",
+    .revision = 3,
+    .date = "11.11.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -273,21 +273,14 @@ fn isTree(own: *const Data) bool {
 
 // --- sorting ----------------------------------------------------------------
 
-fn lower(c: u8) u8 {
-    if (c >= 'A' and c <= 'Z') return c + ('a' - 'A');
-    if (c >= 0xC0 and c <= 0xDE and c != 0xD7) return c + 0x20;
-    return c;
-}
-
-/// Two texts in any case: below 0, 0 or above.
+/// Two texts in any case, a character at a time by Unicode's folding:
+/// below 0, 0 or above.
 fn compareText(a: [*:0]const u8, b: [*:0]const u8) i32 {
-    var i: usize = 0;
-    while (true) : (i += 1) {
-        const x = lower(a[i]);
-        const y = lower(b[i]);
-        if (x != y) return @as(i32, x) - @as(i32, y);
-        if (x == 0) return 0;
-    }
+    var a_length: usize = 0;
+    while (a[a_length] != 0) a_length += 1;
+    var b_length: usize = 0;
+    while (b[b_length] != 0) b_length += 1;
+    return utility.unicode.compareFolded(a[0..a_length], b[0..b_length]);
 }
 
 /// The number a text starts with, a `-` before it taken; numbers joined

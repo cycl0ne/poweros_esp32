@@ -455,6 +455,12 @@ wrote, a name in a repository, a song's tags - is mostly UTF-8. Latin-1's
 one byte in Latin-1 and two at most in UTF-8; the rest is what a
 conversion decides.
 
+A width or a `.limit` on a `%s` in `RawDoFmt` - and so in `Printf`,
+`kprintf` and the rest that format through it - counts characters, not
+bytes: `%-20s` lines a column of names up whatever their bytes, and a
+`.limit` never ends inside a character. A wide character still takes
+two cells of a console.
+
 | Call | |
 |---|---|
 | `Utf8ToLatin1(conversion, from, from_length, into, into_length)` | UTF-8 as Latin-1: the bytes written |
