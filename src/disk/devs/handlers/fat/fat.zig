@@ -153,7 +153,7 @@ const cache_area = @import("cache.zig");
 
 pub const HANDLER_NAME = "fat-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 15;
+const HANDLER_REVISION = 16;
 const BUILD_DATE = "10.11.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -610,49 +610,17 @@ const renew_tries = 25;
 
 /// The handler process: ACTION_STARTUP (the device from the startup
 /// message, the volume if there is one), then packets for good.
+///
+/// The start is a function of its own, never inlined: what it builds -
+/// both bodies, made in place - would otherwise keep its room on the
+/// stack under every packet served after it.
 pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    const startup = dl.WaitPkt() orelse return;
-    if (startup.getAction() != .startup) {
-        dl.ReplyPkt(startup, dos.DOSFALSE, dos.ERROR_ACTION_NOT_KNOWN);
-        return;
-    }
     const me: *Process = @fieldParentPtr("task", sys.FindTask(null).?);
-    const fssm: ?*const dos.FileSysStartupMsg = @ptrFromInt(@as(usize, @bitCast(startup.args.raw[1])));
-    const node: ?*dos.DosList = @ptrFromInt(@as(usize, @bitCast(startup.args.raw[2])));
-
-    // What a start that fails took is given back before it says so, and
-    // the process ends: dos then unloads the handler's code, and the
-    // device - which the device's own init refused, on a machine without
-    // a slot - has nothing of it left open either.
-    var code: i32 = 0;
-    const st = start(sys, dl, fssm, &code) orelse return dl.ReplyPkt(startup, dos.DOSFALSE, code);
-
-    st.bodies = Bodies.init(&st.media, st.ub, &me.msg_port);
-    // The mountlist's Buffers, when it gives any; before a card is
-    // mounted, so this cannot fail.
-    if (fssm) |startup_msg| if (startup_msg.environ) |env| {
-        if (env.table_size >= dos.filehandler.DE_NUMBUFFERS and env.num_buffers != 0)
-            st.bodies.setBuffers(bounded(env.num_buffers)) catch {};
-    };
-    if (st.watchers.init(sys)) {
-        st.watching = true;
-        const device: []const u8 = if (node) |device_node| std.mem.span(device_node.name) else "";
-        st.bodies.watch(&st.watchers, device);
-    }
-    if (st.records.init(sys, dl)) st.bodies.keepRecords(&st.records);
-    // A card that is not there or not readable is not an error: the
-    // handler stays for the one that will be.
-    st.bodies.mount();
-    // The volume on the list before the startup is answered, so it is
-    // there before anyone asks.
-    st.renew = true;
-    renewSoon(dl, st, &me.msg_port);
-    listenForChanges(sys, st, &me.task);
-    if (node) |device_node| device_node.task = &me.msg_port;
-    dl.ReplyPkt(startup, dos.DOSTRUE, 0);
+    var node: ?*dos.DosList = null;
+    const st = begin(sys, dl, me, &node) orelse return;
 
     // Packets on the process's port; the watchers' replies and the record
     // locks' timers on theirs.
@@ -669,6 +637,55 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     ending(sys, dl, st, node, packets);
 }
 
+/// ACTION_STARTUP taken and answered: the handler's state, the bodies in
+/// it, the card mounted if there is one, the volume on the list. Null
+/// when the start failed, which the packet has then been told; `node` is
+/// the device's node from the packet.
+noinline fn begin(sys: *ExecBase, dl: *DosBase, me: *Process, node: *?*dos.DosList) ?*State {
+    const startup = dl.WaitPkt() orelse return null;
+    if (startup.getAction() != .startup) {
+        dl.ReplyPkt(startup, dos.DOSFALSE, dos.ERROR_ACTION_NOT_KNOWN);
+        return null;
+    }
+    const fssm: ?*const dos.FileSysStartupMsg = @ptrFromInt(@as(usize, @bitCast(startup.args.raw[1])));
+    node.* = @ptrFromInt(@as(usize, @bitCast(startup.args.raw[2])));
+
+    // What a start that fails took is given back before it says so, and
+    // the process ends: dos then unloads the handler's code, and the
+    // device - which the device's own init refused, on a machine without
+    // a slot - has nothing of it left open either.
+    var code: i32 = 0;
+    const st = start(sys, dl, fssm, &code) orelse {
+        dl.ReplyPkt(startup, dos.DOSFALSE, code);
+        return null;
+    };
+
+    st.bodies = Bodies.init(&st.media, st.ub, &me.msg_port);
+    // The mountlist's Buffers, when it gives any; before a card is
+    // mounted, so this cannot fail.
+    if (fssm) |startup_msg| if (startup_msg.environ) |env| {
+        if (env.table_size >= dos.filehandler.DE_NUMBUFFERS and env.num_buffers != 0)
+            st.bodies.setBuffers(bounded(env.num_buffers)) catch {};
+    };
+    if (st.watchers.init(sys)) {
+        st.watching = true;
+        const device: []const u8 = if (node.*) |device_node| std.mem.span(device_node.name) else "";
+        st.bodies.watch(&st.watchers, device);
+    }
+    if (st.records.init(sys, dl)) st.bodies.keepRecords(&st.records);
+    // A card that is not there or not readable is not an error: the
+    // handler stays for the one that will be.
+    st.bodies.mount();
+    // The volume on the list before the startup is answered, so it is
+    // there before anyone asks.
+    st.renew = true;
+    renewSoon(dl, st, &me.msg_port);
+    listenForChanges(sys, st, &me.task);
+    if (node.*) |device_node| device_node.task = &me.msg_port;
+    dl.ReplyPkt(startup, dos.DOSTRUE, 0);
+    return st;
+}
+
 /// The handler's last act, once ACTION_DIE has been taken: the drive off
 /// the device list, what it holds written back, everything it was given
 /// given back, and the packet that asked answered after all of it.
@@ -680,7 +697,7 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
 /// answered where it stands: a packet left lying would leave its program
 /// waiting for good, and a new lock would make a drive that is going busy
 /// again.
-fn ending(sys: *ExecBase, dl: *DosBase, st: *State, node: ?*dos.DosList, port: *MsgPort) void {
+noinline fn ending(sys: *ExecBase, dl: *DosBase, st: *State, node: ?*dos.DosList, port: *MsgPort) void {
     const asking = st.dying;
     const flags = dos.LDF_ALL | dos.LDF_ENTRY | dos.LDF_DELETE | dos.LDF_WRITE;
     while (true) {
@@ -997,7 +1014,7 @@ fn renewVolume(dl: *DosBase, st: *State, port: *MsgPort) void {
 /// again. The name is what says it is the same volume - a card with no
 /// label is named by its serial, so two blank cards are still two names.
 fn addVolume(dl: *DosBase, st: *State, port: *MsgPort) void {
-    var name: [24:0]u8 = @splat(0);
+    var name: [dos.MAX_DEVICE_NAME:0]u8 = @splat(0);
     const label = st.bodies.volumeName();
     for (&st.gone) |*slot| {
         const entry = slot.* orelse continue;
@@ -1008,7 +1025,8 @@ fn addVolume(dl: *DosBase, st: *State, port: *MsgPort) void {
         st.bodies.setVolumeNode(entry);
         return;
     }
-    @memcpy(name[0..label.len], label);
+    const kept = sdk.utility.utf8.cut(label, dos.MAX_DEVICE_NAME);
+    @memcpy(name[0..kept], label[0..kept]);
     const entry = dl.MakeDosEntry(&name, dos.DLT_VOLUME) orelse return;
     entry.misc.volume.disk_type = dos.ID_MSDOS_DISK;
     entry.task = port;

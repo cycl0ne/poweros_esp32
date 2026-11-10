@@ -285,7 +285,7 @@ pub fn FileSystem(comptime Media: type) type {
         parted: ?_fat.Parted = null,
         back: bool = false,
         /// The volume's name, as the device list shows it.
-        name_buf: [fat.exfat_label_max * 2]u8 = @splat(0),
+        name_buf: [fat.exfat_label_max * 3]u8 = @splat(0),
         name_len: usize = 0,
 
         pub fn init(media: *Media, ub: *UtilityBase, port: ?*MsgPort) Fs {
@@ -531,14 +531,11 @@ pub fn FileSystem(comptime Media: type) type {
             return true;
         }
 
-        /// The volume's name: its label, or its serial number as a PC
-        /// shows it. A character of the label dos cannot hold is `_`.
+        /// The volume's name: its label in UTF-8, or its serial number as
+        /// a PC shows it. A surrogate of the label without its pair is `_`.
         fn nameVolume(fs: *Fs, system: *const dir_area.System) void {
             if (system.label_len > 0) {
-                for (system.label[0..system.label_len], 0..) |unit, at| {
-                    fs.name_buf[at] = if (unit <= 0xFF and unit >= 0x20) @intCast(unit) else '_';
-                }
-                fs.name_len = system.label_len;
+                fs.name_len = names.shown(system.label[0..system.label_len], &fs.name_buf, 0, fs.name_buf.len);
                 return;
             }
             const digits = "0123456789ABCDEF";
@@ -561,10 +558,13 @@ pub fn FileSystem(comptime Media: type) type {
         }
 
         /// ACTION_RENAME_DISK: the root directory's label entry, written
-        /// over or made in a free entry, holding up to eleven characters
-        /// as UTF-16. A longer name is refused.
-        fn relabel(fs: *Fs, name: []const u8) Error!void {
-            if (name.len > fat.exfat_label_max or !dos.volumename.valid(name)) return error.InvalidName;
+        /// over or made in a free entry, holding up to eleven UTF-16 units.
+        /// A longer name is refused.
+        fn relabel(fs: *Fs, given: []const u8) Error!void {
+            if (!dos.volumename.valid(given) or !sdk.utility.utf8.readable(given)) return error.InvalidName;
+            var units: [fat.name_max]u16 = undefined;
+            const name = _fat.unitsOf(given, &units);
+            if (name.len > fat.exfat_label_max) return error.InvalidName;
             try fs.changing();
             const root_key = try fs.rootKey();
             const root = root_key.dir();
@@ -1199,7 +1199,7 @@ pub fn FileSystem(comptime Media: type) type {
                 fs.settle(dir_key);
             }
             var units: [fat.name_max]u16 = undefined;
-            const utf16 = names.fromDos(name, &units);
+            const utf16 = _fat.unitsOf(name, &units);
             var set: Set = .{};
             const attr: u16 = if (directory) _fat.ATTR_DIRECTORY else _fat.ATTR_ARCHIVE;
             const moment = fs.now();
@@ -1696,7 +1696,7 @@ pub fn FileSystem(comptime Media: type) type {
             var old: Set = .{};
             if (!try fs.dirs.readSet(from_dir.dir(), key.index, &old)) return error.MediumFailed;
             var units: [fat.name_max]u16 = undefined;
-            const utf16 = names.fromDos(to_name, &units);
+            const utf16 = _fat.unitsOf(to_name, &units);
             var set: Set = .{};
             set.compose(utf16, fs.upcase.hash(utf16), old.attributes(), 0, 0);
             // Everything of the old file entry past its checksum and

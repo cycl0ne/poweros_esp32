@@ -11,6 +11,7 @@
 //! put on the node after the packet is answered, as often as it takes.
 
 const dos = @import("dos.zig");
+const utf8 = @import("../utility/utf8.zig");
 const DosBase = @import("../../interface/dos.zig").DosBase;
 
 /// Whether a name may be a volume's: one to MAX_DEVICE_NAME characters,
@@ -29,9 +30,10 @@ pub const VolumeName = extern struct {
     text: [dos.MAX_DEVICE_NAME + 1:0]u8 = @splat(0),
     pending: u8 = 0,
 
-    /// The new name, to be put on the node at the next `apply`.
+    /// The new name, to be put on the node at the next `apply`, cut where
+    /// a character starts if it is longer than a node's.
     pub fn set(volume_name: *VolumeName, name: []const u8) void {
-        const len = @min(name.len, dos.MAX_DEVICE_NAME);
+        const len = utf8.cut(name, dos.MAX_DEVICE_NAME);
         @memset(&volume_name.text, 0);
         @memcpy(volume_name.text[0..len], name[0..len]);
         volume_name.pending = 1;

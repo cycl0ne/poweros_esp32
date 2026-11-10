@@ -305,6 +305,10 @@ directory's name is at most `dos.name_max` (255) bytes, a whole path
 name as the text it makes (`sdk.utility.utf8.textOf`): UTF-8 as it is,
 a byte that is no UTF-8 as its Latin-1 character - `Gr\xFCn` is kept,
 and listed, as `Grün` in UTF-8 - and gives a name back as it keeps it.
+FAT32 and exFAT keep names in UTF-16, a FAT32 short name in code page
+437, as a PC writes them; a name longer than 255 bytes in UTF-8 is given
+as its short name on FAT32 and on exFAT as a stand-in, cut with `=` and
+four hex digits before its extension, which opens it.
 
 | Name | What it is |
 |---|---|

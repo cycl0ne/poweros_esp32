@@ -210,6 +210,13 @@ pub fn valid(bytes: []const u8) bool {
     return true;
 }
 
+/// Whether `bytes` make text `textOf` takes: any bytes while a byte that is
+/// no UTF-8 reads as its Latin-1 character, else only UTF-8. A file system
+/// that keeps names in another encoding asks this before it reads one.
+pub fn readable(bytes: []const u8) bool {
+    return broken_reads_latin1 or valid(bytes);
+}
+
 /// The text `bytes` make, in UTF-8: what a file system keeps a name it is
 /// given as. Bytes that are UTF-8 are their own text, answered as they
 /// are; others are written out into `into` as `read` reads them while a

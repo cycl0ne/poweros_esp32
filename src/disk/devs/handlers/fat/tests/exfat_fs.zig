@@ -959,7 +959,7 @@ test "the kernel's volume: its files listed and read" {
     try testing.expectEqual(@as(usize, 60), try rig.list(many, &listed, &store));
 }
 
-test "the kernel's names dos cannot hold open through their stand-ins" {
+test "the kernel's names are listed in UTF-8 and open what they name" {
     var rig: Rig = undefined;
     try rig.initKernel();
     defer rig.deinit();
@@ -968,6 +968,7 @@ test "the kernel's names dos cannot hold open through their stand-ins" {
     const count = try rig.list(null, &listed, &store);
     try testing.expectEqual(@as(usize, 12), count);
     var stand_ins: u32 = 0;
+    var past_latin1: u32 = 0;
     for (listed[0..count]) |name| {
         // Every name listed opens the file it came from.
         var z: [_fat.fib_name_max + 1]u8 = undefined;
@@ -977,10 +978,11 @@ test "the kernel's names dos cannot hold open through their stand-ins" {
         try testing.expect(held != null);
         rig.unlock(held);
         if (names.tagOf(name) != null) stand_ins += 1;
+        if (std.mem.eql(u8, name, "日本.txt") or std.mem.eql(u8, name, "€ Rechnung.pdf")) past_latin1 += 1;
     }
-    // 日本.txt and € Rechnung.pdf. The 158-character name is not among
-    // them: dos holds it whole.
-    try testing.expectEqual(@as(u32, 2), stand_ins);
+    // Every one is given whole, the 158-character name too.
+    try testing.expectEqual(@as(u32, 0), stand_ins);
+    try testing.expectEqual(@as(u32, 2), past_latin1);
 }
 
 test "the kernel's volume takes a new file, and its old ones are untouched" {

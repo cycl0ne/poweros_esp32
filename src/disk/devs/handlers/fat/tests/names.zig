@@ -36,6 +36,10 @@ fn utilityUp() !*UtilityBase {
     return ub.iface();
 }
 
+fn utf16(comptime text: []const u8) []const u16 {
+    return comptime std.unicode.utf8ToUtf16LeStringLiteral(text);
+}
+
 fn entryWith(bytes: *const [11]u8, case: u8) [fat.entry_bytes]u8 {
     var entry: [fat.entry_bytes]u8 = @splat(0);
     @memcpy(entry[0..11], bytes);
@@ -51,8 +55,11 @@ test "a short name is spelled out with its dot and its case" {
     try testing.expectEqualStrings("MAKEFILE", shortName(ub, &entryWith("MAKEFILE   ", 0), &into));
     try testing.expectEqualStrings("readme.txt", shortName(ub, &entryWith("README  TXT", case_lower_base | case_lower_ext), &into));
     try testing.expectEqualStrings("readme.TXT", shortName(ub, &entryWith("README  TXT", case_lower_base), &into));
-    // A name that really begins with the erase byte.
-    try testing.expectEqualStrings("\xE5AB", shortName(ub, &entryWith("\x05AB        ", 0), &into));
+    // A name that really begins with the erase byte, which is code page
+    // 437's sigma, as every byte past ASCII is read.
+    try testing.expectEqualStrings("\u{3C3}AB", shortName(ub, &entryWith("\x05AB        ", 0), &into));
+    try testing.expectEqualStrings("M\u{FC}LL.TXT", shortName(ub, &entryWith("M\x81LL    TXT", 0), &into));
+    try testing.expectEqualStrings("\u{2591}\u{2592}\u{2593}", shortName(ub, &entryWith("\xB0\xB1\xB2        ", 0), &into));
 }
 
 test "a name that fits eight and three in one case needs no long name" {
@@ -83,6 +90,7 @@ test "a name that fits eight and three in one case needs no long name" {
 test "what a new name may not be" {
     try validLong("Good name.txt");
     try validLong("caf\xE9");
+    try validLong("caf\u{E9} \u{1F600}");
     try testing.expectError(error.InvalidName, validLong(""));
     try testing.expectError(error.InvalidName, validLong("."));
     try testing.expectError(error.InvalidName, validLong(".."));
@@ -114,6 +122,10 @@ test "the short name made up for a long one" {
     const odd = basisOf(ub, "caf\xE9+tea");
     try testing.expectEqualSlices(u8, "CAF__TEA", odd.base[0..odd.base_len]);
     try testing.expectEqualSlices(u8, "   ", &odd.ext);
+    // One `_` a character, however many bytes it takes.
+    const wide = basisOf(ub, "\u{65E5}\u{672C}.\u{20AC}x");
+    try testing.expectEqualSlices(u8, "__", wide.base[0..wide.base_len]);
+    try testing.expectEqualSlices(u8, "_X ", &wide.ext);
 
     // A short basis keeps all of itself.
     try testing.expectEqualSlices(u8, "AB~1       ", &withTail(basisOf(ub, "ab"), 1));
@@ -132,7 +144,7 @@ test "a long name goes into pieces and comes back" {
 
     // On the medium the last piece comes first.
     var entries: [3][fat.entry_bytes]u8 = undefined;
-    for (0..3) |at| fillPiece(&entries[at], name, 3 - at, checksum);
+    for (0..3) |at| fillPiece(&entries[at], utf16(name), 3 - at, checksum);
     try testing.expect(entries[0][fat.lfn_order] & fat.lfn_last != 0);
     try testing.expect(fat.isLongName(&entries[0]));
 
@@ -150,7 +162,7 @@ test "a long name goes into pieces and comes back" {
     @memcpy(short_entry[0..11], &short);
     try testing.expect(long.completes(&short_entry));
     var into: [fat.name_max]u8 = undefined;
-    try testing.expectEqualStrings(name, long.latin1(&into).?);
+    try testing.expectEqualStrings(name, long.text(&into).?);
 }
 
 test "pieces that do not belong to the entry are not its name" {
@@ -160,8 +172,8 @@ test "pieces that do not belong to the entry are not its name" {
     const short = withTail(basisOf(ub, name), 1);
     const checksum = fat.shortNameChecksum(&short);
     var entries: [2][fat.entry_bytes]u8 = undefined;
-    fillPiece(&entries[0], name, 2, checksum);
-    fillPiece(&entries[1], name, 1, checksum);
+    fillPiece(&entries[0], utf16(name), 2, checksum);
+    fillPiece(&entries[1], utf16(name), 1, checksum);
 
     // Renamed by something that knows nothing of long names: the short
     // name changed, the check no longer holds.
@@ -175,7 +187,7 @@ test "pieces that do not belong to the entry are not its name" {
     long.reset();
     long.take(&entries[0]);
     var third: [fat.entry_bytes]u8 = undefined;
-    fillPiece(&third, "x" ** 39, 1, checksum);
+    fillPiece(&third, utf16("x" ** 39), 1, checksum);
     third[fat.lfn_order] = 3; // out of order
     long.take(&third);
     var short_entry: [fat.entry_bytes]u8 = @splat(0);
@@ -183,18 +195,25 @@ test "pieces that do not belong to the entry are not its name" {
     try testing.expect(!long.completes(&short_entry));
 }
 
-test "a long name with a character past Latin-1 is not given out" {
+test "a long name is given in UTF-8, a pair as one character, a broken one not at all" {
     const ub = try utilityUp();
     defer kexec.deinit();
-    const name = "abc";
+    const name = "a\u{20AC}\u{1F600}c";
     const short = withTail(basisOf(ub, name), 1);
     var entry: [fat.entry_bytes]u8 = undefined;
-    fillPiece(&entry, name, 1, fat.shortNameChecksum(&short));
-    fat.putU16(&entry, fat.lfn_part1_at + 2, 0x20AC); // the euro sign
+    fillPiece(&entry, utf16(name), 1, fat.shortNameChecksum(&short));
     var long: LongName = .{};
     long.take(&entry);
     var into: [fat.name_max]u8 = undefined;
-    try testing.expectEqual(@as(?[]const u8, null), long.latin1(&into));
+    try testing.expectEqualStrings(name, long.text(&into).?);
+    // Too long for where it is to go.
+    try testing.expectEqual(@as(?[]const u8, null), long.text(into[0..8]));
+    // A surrogate without its pair.
+    fat.putU16(&entry, fat.lfn_part1_at + 2, 0xD800);
+    fat.putU16(&entry, fat.lfn_part1_at + 4, 'x');
+    long.reset();
+    long.take(&entry);
+    try testing.expectEqual(@as(?[]const u8, null), long.text(&into));
 }
 
 test "names compare without regard to case, over Latin-1" {

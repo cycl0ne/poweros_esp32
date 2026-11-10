@@ -1,26 +1,26 @@
 // SPDX-License-Identifier: MIT
 //! Names on an exFAT volume, and the names dos is given for them.
 //!
-//! **An exFAT name is UTF-16, up to 255 characters; a dos name is Latin-1,
-//! up to 107** (what a FileInfoBlock holds). A name that fits both - every
-//! character in Latin-1, no longer than 107 - is given to dos as it is.
-//! Any other name is given as a **stand-in**: its Latin-1 characters kept,
-//! every other one made `_`, the part before the extension cut to make
-//! room, and `=` and the stream's name hash in four hex digits put before
-//! the extension - `日本.txt` is `__=4F2A.txt`. The hash is the one the
+//! **An exFAT name is UTF-16, up to 255 units; a dos name is UTF-8, up to
+//! 255 bytes** (what a FileInfoBlock holds). A name whose UTF-8 fits - and
+//! that is whole UTF-16, no surrogate without its pair - is given to dos
+//! as it is. Any other is given as a **stand-in**: its characters in
+//! UTF-8, a broken one `_`, the part before the extension cut where a
+//! character starts to make room, and `=` and the stream's name hash in
+//! four hex digits put before the extension - a name of 251 `日` and
+//! `.txt` is given as 82 of them and `=4F2A.txt`. The hash is the one the
 //! volume already keeps for the name, so the stand-in is the same every
 //! time the directory is listed, and two names in one directory give the
 //! same stand-in only if their hashes are the same as well as every
-//! character dos can see. A stand-in opens the file it came from: a
-//! lookup compares a dos name against each entry's stand-in when the
-//! entry's own name does not fit.
+//! character dos can see. A stand-in opens the file it came from: a lookup compares
+//! a dos name against each entry's stand-in when the entry's own name
+//! does not fit.
 //!
-//! **A name from dos becomes UTF-16 a character at a time**, read as text
-//! is read (sdk.utility.utf8): UTF-8 as its characters, a byte that is no
-//! UTF-8 as its Latin-1 character - Latin-1 is the first 256 characters of
-//! UTF-16 - so a Latin-1 name and the same name in UTF-8 are one. Such a
-//! name is compared against an entry's through the volume's up-case table
-//! (`upcase.zig`), which is what makes two names the same on exFAT.
+//! **A name from dos becomes UTF-16 a character at a time**
+//! (`_fat.unitsOf`), read as text is read, so a Latin-1 name and the same
+//! name in UTF-8 are one. Such a name is compared against an entry's
+//! through the volume's up-case table (`upcase.zig`), which is what makes
+//! two names the same on exFAT.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -28,9 +28,10 @@ const fat = sdk.dos.fat;
 const _fat = @import("../_fat.zig");
 const Upcase = @import("upcase.zig").Upcase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
+const utf8 = sdk.utility.utf8;
 
-/// The longest extension a stand-in keeps, its dot included. A name with
-/// a longer one is cut like any other.
+/// The longest extension a stand-in keeps, its dot included, in units.
+/// A name with a longer one is cut like any other.
 const ext_max: usize = 16;
 /// `tag_mark` and four hex digits.
 const tag_len: usize = 5;
@@ -41,24 +42,40 @@ const tag_mark = '=';
 
 /// Whether a name can be given to dos as it is.
 pub fn fits(name: []const u16) bool {
-    if (name.len == 0 or name.len > _fat.fib_name_max) return false;
-    for (name) |unit| if (unit > 0xFF) return false;
-    return true;
+    var buffer: [_fat.fib_name_max]u8 = undefined;
+    return name.len != 0 and _fat.utf8Of(name, &buffer) != null;
 }
 
 /// The name dos is given for an entry named `name`, whose stream carries
-/// `hash`: the name itself if it fits, else its stand-in.
+/// `hash`: the name itself in UTF-8 if it fits, else its stand-in.
 pub fn toDos(name: []const u16, hash: u16, into: *[_fat.fib_name_max]u8) []const u8 {
-    if (fits(name)) {
-        for (name, 0..) |unit, at| into[at] = @intCast(unit);
-        return into[0..name.len];
+    if (name.len != 0) {
+        if (_fat.utf8Of(name, into)) |text| return text;
     }
     return standIn(name, hash, into);
 }
 
-/// A character as dos sees it in a stand-in.
-fn shown(unit: u16) u8 {
-    return if (unit <= 0xFF) @intCast(unit) else '_';
+/// The characters of `units` in UTF-8 onto `into` from `len`, a broken
+/// one as `_`, as many whole ones as fit before `end`; the new length.
+pub fn shown(units: []const u16, into: []u8, len: usize, end: usize) usize {
+    var at: usize = 0;
+    var written = len;
+    while (at < units.len) {
+        var char: u32 = units[at];
+        at += 1;
+        if (char >= 0xD800 and char <= 0xDBFF and at < units.len and units[at] >= 0xDC00 and units[at] <= 0xDFFF) {
+            char = 0x10000 + ((char - 0xD800) << 10) + (units[at] - 0xDC00);
+            at += 1;
+        } else if (char >= 0xD800 and char <= 0xDFFF) {
+            char = '_';
+        }
+        var bytes: [4]u8 = undefined;
+        const taken = utf8.encode(char, &bytes);
+        if (written + taken > end) break;
+        @memcpy(into[written..][0..taken], bytes[0..taken]);
+        written += taken;
+    }
+    return written;
 }
 
 /// The stand-in for a name: see the file's header.
@@ -74,45 +91,18 @@ pub fn standIn(name: []const u16, hash: u16, into: *[_fat.fib_name_max]u8) []con
             break;
         }
     }
-    const ext = name[ext_start..];
-    const room = _fat.fib_name_max - tag_len - ext.len;
-    const base = name[0..@min(ext_start, room)];
-
-    var len: usize = 0;
-    for (base) |unit| {
-        into[len] = shown(unit);
-        len += 1;
-    }
+    // The extension's bytes first, at the end, to know the room the base
+    // has; at most four bytes a unit, which the buffer holds.
+    var ext_bytes: [ext_max * 4]u8 = undefined;
+    const ext_len = shown(name[ext_start..], &ext_bytes, 0, ext_bytes.len);
+    const room = _fat.fib_name_max - tag_len - ext_len;
+    var len = shown(name[0..ext_start], into, 0, room);
     const digits = "0123456789ABCDEF";
     into[len] = tag_mark;
     for (0..4) |digit| into[len + 1 + digit] = digits[(hash >> @intCast(12 - digit * 4)) & 0xF];
     len += tag_len;
-    for (ext) |unit| {
-        into[len] = shown(unit);
-        len += 1;
-    }
-    return into[0..len];
-}
-
-/// A dos name as UTF-16: its characters, read as text is read, a
-/// character past U+FFFF as its surrogate pair. Never more units than the
-/// name has bytes.
-pub fn fromDos(name: []const u8, into: *[fat.name_max]u16) []const u16 {
-    var at: usize = 0;
-    var len: usize = 0;
-    while (at < name.len and len < into.len) {
-        const char = sdk.utility.utf8.next(name, &at);
-        if (char > 0xFFFF and len + 1 < into.len) {
-            const above = char - 0x10000;
-            into[len] = @intCast(0xD800 + (above >> 10));
-            into[len + 1] = @intCast(0xDC00 + (above & 0x3FF));
-            len += 2;
-        } else {
-            into[len] = if (char > 0xFFFF) 0xFFFD else @intCast(char);
-            len += 1;
-        }
-    }
-    return into[0..len];
+    @memcpy(into[len..][0..ext_len], ext_bytes[0..ext_len]);
+    return into[0 .. len + ext_len];
 }
 
 /// The hash a stand-in carries, if `name` has the shape of one: `=` and
@@ -159,7 +149,7 @@ pub const Wanted = struct {
 
     pub fn init(wanted: *Wanted, name: []const u8, upcase: *const Upcase) void {
         wanted.* = .{ .name = name };
-        const units = fromDos(name, &wanted.units);
+        const units = _fat.unitsOf(name, &wanted.units);
         wanted.len = units.len;
         wanted.hash = upcase.hash(units);
         wanted.tag = tagOf(name);
@@ -190,33 +180,32 @@ fn utf16(comptime text: []const u8) []const u16 {
 
 test "a dos name as UTF-16: UTF-8 and Latin-1 alike, past U+FFFF as a pair" {
     var units: [fat.name_max]u16 = undefined;
-    try testing.expectEqualSlices(u16, utf16("Grün"), fromDos("Gr\xFCn", &units));
-    try testing.expectEqualSlices(u16, utf16("Grün"), fromDos("Grün", &units));
-    try testing.expectEqualSlices(u16, utf16("\u{1F600}.Ω"), fromDos("\u{1F600}.Ω", &units));
+    try testing.expectEqualSlices(u16, utf16("Grün"), _fat.unitsOf("Gr\xFCn", &units));
+    try testing.expectEqualSlices(u16, utf16("Grün"), _fat.unitsOf("Grün", &units));
+    try testing.expectEqualSlices(u16, utf16("\u{1F600}.Ω"), _fat.unitsOf("\u{1F600}.Ω", &units));
 }
 
-test "a name that fits is given as it is" {
+test "a name that fits is given as it is, in UTF-8" {
     var into: [_fat.fib_name_max]u8 = undefined;
-    try testing.expectEqualStrings("Caf\xe9.txt", toDos(utf16("Café.txt"), 0x1234, &into));
+    try testing.expectEqualStrings("Café.txt", toDos(utf16("Café.txt"), 0x1234, &into));
+    try testing.expectEqualStrings("日本.txt", toDos(utf16("日本.txt"), 0x4F2A, &into));
+    try testing.expectEqualStrings("\u{1F600} smile", toDos(utf16("\u{1F600} smile"), 0x0001, &into));
     try testing.expect(fits(utf16("hello.txt")));
 }
 
-test "a name outside Latin-1 is given a stand-in with its hash" {
+test "a name that is no whole UTF-16 is given a stand-in with its hash" {
     var into: [_fat.fib_name_max]u8 = undefined;
-    try testing.expectEqualStrings("__=4F2A.txt", toDos(utf16("日本.txt"), 0x4F2A, &into));
-    try testing.expectEqualStrings("_ Rechnung=91C3.pdf", toDos(utf16("€ Rechnung.pdf"), 0x91C3, &into));
-    // No extension: the tag goes at the end.
-    try testing.expectEqualStrings("___=0007", toDos(utf16("日本語"), 0x0007, &into));
+    // A surrogate without its pair is `_`; the rest as it is.
+    try testing.expect(!fits(&[_]u16{ 'a', 0xD800, 'b' }));
+    try testing.expectEqualStrings("a_b=4F2A", toDos(&[_]u16{ 'a', 0xD800, 'b' }, 0x4F2A, &into));
+    try testing.expectEqualStrings("€_=91C3.pdf", toDos(&[_]u16{ 0x20AC, 0xDC00, '.', 'p', 'd', 'f' }, 0x91C3, &into));
     // A dot at the start is not an extension.
-    try testing.expectEqualStrings("._=00AB", toDos(utf16(".日"), 0x00AB, &into));
+    try testing.expectEqualStrings("._=00AB", toDos(&[_]u16{ '.', 0xDBFF }, 0x00AB, &into));
 }
 
-test "a name too long for dos is cut, its extension and tag kept" {
-    // exFAT holds 255 characters and so does dos, but a name outside
-    // Latin-1 takes more than one byte a character once it is written
-    // out, so the longest names still need cutting.
-    // dos holds as many characters as exFAT does, so a name is only too
-    // long once it needs a stand-in: the tag has to go in somewhere.
+test "a name too long for dos is cut where a character starts, its extension and tag kept" {
+    // exFAT holds 255 units and dos 255 bytes, and a character past ASCII
+    // takes more than one byte in UTF-8, so the longest names need cutting.
     var long: [_fat.fib_name_max]u16 = undefined;
     for (long[0 .. long.len - 5]) |*unit| unit.* = 'L';
     long[long.len - 5] = 0x65E5;
@@ -226,6 +215,14 @@ test "a name too long for dos is cut, its extension and tag kept" {
     try testing.expectEqual(_fat.fib_name_max, given.len);
     try testing.expect(std.mem.endsWith(u8, given, "=7E10.mkv"));
     try testing.expectEqual(@as(u8, 'L'), given[0]);
+    // 255 characters of three bytes each: 82 fit before the tag and the
+    // extension (4 + 5 + 82 * 3 = 255), never part of one.
+    var wide: [_fat.fib_name_max]u16 = @splat(0x65E5);
+    @memcpy(wide[wide.len - 4 ..], utf16(".txt"));
+    const cut = toDos(&wide, 0x4F2A, &into);
+    try testing.expect(utf8.valid(cut));
+    try testing.expectEqual(@as(usize, 82 * 3 + 5 + 4), cut.len);
+    try testing.expect(std.mem.endsWith(u8, cut, "日=4F2A.txt"));
 }
 
 test "the hash in a stand-in is read back" {

@@ -10,17 +10,18 @@
 //! short name made up from it - the "basis" with a `~1` on the end,
 //! counted up until no other entry in the directory has it.
 //!
-//! **What dos is given** is the long name, when there is one and dos can
-//! hold it: it must be one byte a character (Latin-1, which is what this
-//! system's names are) and fit a FileInfoBlock. A long name that does not
-//! is given as its short name instead, which is always Latin-1 and always
-//! short - so every name examine hands out opens the file it came from.
-//! A lookup matches either name.
+//! **What dos is given** is the long name in UTF-8, when there is one and
+//! dos can hold it: whole UTF-16 - no surrogate left without its pair -
+//! and no more than a FileInfoBlock's bytes. A long name that is not is
+//! given as its short name instead, read as code page 437, which a PC
+//! writes it in, and always short - so every name examine hands out opens
+//! the file it came from. A lookup matches either name.
 //!
-//! Every change of case goes through utility.library's ToUpper and
-//! ToLower, so a name is cased here exactly as everywhere else. What both
-//! formats share - comparing two names, what a new name may be, turning
-//! UTF-16 into Latin-1 - is in `_fat.zig`.
+//! A new name is made of what dos gives, read as text is read: the long
+//! name's UTF-16 from its characters, the basis from its characters too,
+//! one `_` for each a short name cannot hold. A short name is only ever
+//! written in ASCII. What both formats share - comparing two names, what
+//! a new name may be, the conversions - is in `_fat.zig`.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -28,40 +29,45 @@ const fat = sdk.dos.fat;
 const _fat = @import("../_fat.zig");
 const Error = _fat.Error;
 const UtilityBase = sdk.interface.utility.UtilityBase;
+const utf8 = sdk.utility.utf8;
 
 /// The two flag bits in an entry's case byte: the base, or the
 /// extension, was all small letters and is stored in capitals.
 pub const case_lower_base: u8 = 0x08;
 pub const case_lower_ext: u8 = 0x10;
 
-/// A short name spelled out: up to eight, a dot, up to three.
-pub const short_max: usize = 12;
+/// A short name spelled out: up to eight, a dot, up to three - in UTF-8,
+/// so up to three bytes each.
+pub const short_max: usize = 12 * 3;
 
 // --- the short name ----------------------------------------------------------
 
-/// The name an entry's eleven bytes spell, with its case flags applied:
-/// the base with its trailing spaces cut, then a dot and the extension if
-/// it has one.
+/// The name an entry's eleven bytes spell, with its case flags applied,
+/// in UTF-8: the base with its trailing spaces cut, then a dot and the
+/// extension if it has one, each byte read as code page 437.
 pub fn shortName(_: *UtilityBase, entry: []const u8, into: *[short_max]u8) []const u8 {
     const case = entry[fat.ent_case];
+    var spelled: [12]u8 = undefined;
     var len: usize = 0;
     for (0..8) |at| {
         var char = entry[at];
         if (at == 0) char = _fat.firstStored(char);
-        into[len] = if (case & case_lower_base != 0) _fat.lower(char) else char;
+        spelled[len] = if (case & case_lower_base != 0) _fat.lower(char) else char;
         len += 1;
     }
-    while (len > 0 and into[len - 1] == ' ') len -= 1;
+    while (len > 0 and spelled[len - 1] == ' ') len -= 1;
     const base_len = len;
     for (8..11) |at| {
         const char = entry[at];
-        into[len + 1 + at - 8] = if (case & case_lower_ext != 0) _fat.lower(char) else char;
+        spelled[len + 1 + at - 8] = if (case & case_lower_ext != 0) _fat.lower(char) else char;
     }
     var ext_len: usize = 3;
     while (ext_len > 0 and entry[8 + ext_len - 1] == ' ') ext_len -= 1;
-    if (ext_len == 0) return into[0..base_len];
-    into[base_len] = '.';
-    return into[0 .. base_len + 1 + ext_len];
+    if (ext_len != 0) {
+        spelled[base_len] = '.';
+        len = base_len + 1 + ext_len;
+    }
+    return _fat.oemText(spelled[0..len], into);
 }
 
 /// A character a short name may have. Letters go in as capitals; the
@@ -119,9 +125,9 @@ pub fn asShort(_: *UtilityBase, name: []const u8) ?Short {
     return short;
 }
 
-/// The short name a long name starts from: capitals, the characters a
-/// short name may not have made `_`, spaces and leading dots dropped, up
-/// to eight before the last dot and three after it.
+/// The short name a long name starts from: capitals, each character a
+/// short name may not have made one `_`, spaces and leading dots dropped,
+/// up to eight before the last dot and three after it.
 pub const Basis = struct {
     base: [8]u8 = @splat(' '),
     base_len: usize = 0,
@@ -143,10 +149,13 @@ pub fn basisOf(_: *UtilityBase, name: []const u8) Basis {
         }
     }
 
-    for (name[start..stem_end]) |char| {
+    const stem = name[0..stem_end];
+    at = start;
+    while (at < stem.len) {
+        const char = utf8.next(stem, &at);
         if (char == ' ' or char == '.') continue;
         if (basis.base_len == 8) break;
-        basis.base[basis.base_len] = if (shortChar(char)) _fat.upper(char) else '_';
+        basis.base[basis.base_len] = shortOf(char);
         basis.base_len += 1;
     }
     if (basis.base_len == 0) {
@@ -154,15 +163,25 @@ pub fn basisOf(_: *UtilityBase, name: []const u8) Basis {
         basis.base_len = 1;
     }
     if (stem_end < name.len) {
+        const ext = name[stem_end + 1 ..];
         var ext_len: usize = 0;
-        for (name[stem_end + 1 ..]) |char| {
+        at = 0;
+        while (at < ext.len) {
+            const char = utf8.next(ext, &at);
             if (char == ' ') continue;
             if (ext_len == 3) break;
-            basis.ext[ext_len] = if (shortChar(char)) _fat.upper(char) else '_';
+            basis.ext[ext_len] = shortOf(char);
             ext_len += 1;
         }
     }
     return basis;
+}
+
+/// A character of a long name as its basis has it: in capitals if a
+/// short name may hold it, else `_`.
+fn shortOf(char: u32) u8 {
+    if (char >= 0x80 or !shortChar(@intCast(char))) return '_';
+    return _fat.upper(@intCast(char));
 }
 
 /// The basis with `~number` on the end of its base, cut to make room.
@@ -191,7 +210,7 @@ pub fn withTail(basis: Basis, number: u32) [fat.ent_name_bytes]u8 {
 
 // --- the long name -----------------------------------------------------------
 
-/// How many pieces a long name of `len` characters takes.
+/// How many pieces a long name of `len` UTF-16 units takes.
 pub fn pieceCount(len: usize) usize {
     return (len + fat.lfn_chars - 1) / fat.lfn_chars;
 }
@@ -203,10 +222,10 @@ fn charAt(index: usize) usize {
     return fat.lfn_part3_at + (index - fat.lfn_part1_len - fat.lfn_part2_len) * 2;
 }
 
-/// Piece `order` (1 is the start of the name) of `name`, into an entry.
-/// The name ends with a 0 in the piece it ends in, and whatever of that
-/// piece is left over is 0xFFFF, as the format asks.
-pub fn fillPiece(entry: []u8, name: []const u8, order: usize, checksum: u8) void {
+/// Piece `order` (1 is the start of the name) of `name`, UTF-16 units,
+/// into an entry. The name ends with a 0 in the piece it ends in, and
+/// whatever of that piece is left over is 0xFFFF, as the format asks.
+pub fn fillPiece(entry: []u8, name: []const u16, order: usize, checksum: u8) void {
     @memset(entry[0..fat.entry_bytes], 0);
     const last = order == pieceCount(name.len);
     entry[fat.lfn_order] = @as(u8, @intCast(order)) | if (last) fat.lfn_last else 0;
@@ -264,8 +283,9 @@ pub const LongName = struct {
             name.checksum == fat.shortNameChecksum(entry[0..fat.ent_name_bytes]);
     }
 
-    /// The name in Latin-1, or null if it has a character that is not.
-    pub fn latin1(name: *const LongName, into: *[fat.name_max]u8) ?[]const u8 {
-        return _fat.latin1Of(name.units[0 .. name.pieces * fat.lfn_chars], into);
+    /// The name in UTF-8, or null if it is not whole UTF-16 or does not
+    /// fit `into`.
+    pub fn text(name: *const LongName, into: []u8) ?[]const u8 {
+        return _fat.utf8Of(name.units[0 .. name.pieces * fat.lfn_chars], into);
     }
 };

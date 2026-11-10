@@ -136,20 +136,35 @@ test "a file is found by its name in any case" {
     try testing.expect(!try rig.find(rig.root, "nothing.txt", &found));
 }
 
-test "a name dos cannot hold is found by its stand-in" {
+test "a name past Latin-1 is found by its UTF-8" {
     var rig: Rig = undefined;
     try rig.init();
     defer rig.deinit();
-    var into: [_fat.fib_name_max]u8 = undefined;
-    const hash = rig.upcase.hash(utf16("日本.txt"));
-    const given = names.standIn(utf16("日本.txt"), hash, &into);
     var found: Found = .{};
-    try testing.expect(try rig.find(rig.root, given, &found));
+    try testing.expect(try rig.find(rig.root, "日本.TXT", &found));
     try testing.expectEqualSlices(u16, utf16("日本.txt"), found.name());
-    // In small letters too, as dos compares.
-    var lower: [_fat.fib_name_max]u8 = undefined;
-    for (given, 0..) |char, at| lower[at] = std.ascii.toLower(char);
-    try testing.expect(try rig.find(rig.root, lower[0..given.len], &found));
+    var into: [_fat.fib_name_max]u8 = undefined;
+    try testing.expectEqualStrings("日本.txt", names.toDos(found.name(), found.hash, &into));
+}
+
+test "a name dos cannot hold is found by its stand-in, in either case" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit();
+    var long: [_fat.fib_name_max]u16 = @splat(0x65E5);
+    @memcpy(long[long.len - 4 ..], utf16(".txt"));
+    const hash = rig.upcase.hash(&long);
+    var into: [_fat.fib_name_max]u8 = undefined;
+    const given = names.standIn(&long, hash, &into);
+    var wanted: names.Wanted = undefined;
+    wanted.init(given, &rig.upcase);
+    try testing.expect(wanted.matches(rig.ub, &rig.upcase, &long, hash));
+    var upper: [_fat.fib_name_max]u8 = undefined;
+    for (given, 0..) |char, at| upper[at] = std.ascii.toUpper(char);
+    wanted.init(upper[0..given.len], &rig.upcase);
+    try testing.expect(wanted.matches(rig.ub, &rig.upcase, &long, hash));
+    // Another hash is another name.
+    try testing.expect(!wanted.matches(rig.ub, &rig.upcase, &long, hash +% 1));
 }
 
 test "a long name is given whole, and found again by it" {

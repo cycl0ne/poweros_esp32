@@ -237,7 +237,7 @@ pub fn FileSystem(comptime Media: type) type {
         parted: ?_fat.Parted = null,
         back: bool = false,
         /// The volume's name, as the device list shows it.
-        name_buf: [fat.ent_name_bytes]u8 = @splat(0),
+        name_buf: [fat.ent_name_bytes * 3]u8 = @splat(0),
         name_len: usize = 0,
 
         pub fn init(media: *Media, ub: *UtilityBase, port: ?*MsgPort) Fs {
@@ -464,7 +464,8 @@ pub fn FileSystem(comptime Media: type) type {
         /// The volume's name: the root directory's label, the boot
         /// sector's if that says something, else its serial number as a
         /// PC shows it - a volume needs a name, and two cards without a
-        /// label should not have the same one.
+        /// label should not have the same one. A label is read as code
+        /// page 437.
         fn nameVolume(fs: *Fs) Error!void {
             var label: [fat.ent_name_bytes]u8 = undefined;
             var text = try fs.dirs.label(&label);
@@ -480,8 +481,7 @@ pub fn FileSystem(comptime Media: type) type {
                 if (!is_unnamed) text = boot;
             }
             if (text.len != 0) {
-                @memcpy(fs.name_buf[0..text.len], text);
-                fs.name_len = text.len;
+                fs.name_len = _fat.oemText(text, &fs.name_buf).len;
                 return;
             }
             const digits = "0123456789ABCDEF";

@@ -62,7 +62,8 @@ pub const Found = struct {
     /// The name dos is given (`names` says which one that is).
     name_buf: [fat.name_max]u8 = undefined,
     name_len: usize = 0,
-    /// The long name in Latin-1, when there is one, for matching.
+    /// The long name in UTF-8, when there is one and dos can hold it, for
+    /// matching.
     long_buf: [fat.name_max]u8 = undefined,
     long_len: usize = 0,
     /// The short name spelled out, for matching.
@@ -200,12 +201,9 @@ pub fn Directory(comptime Media: type) type {
             found.short_len = short.len;
             found.long_len = 0;
             if (long) |pieces| {
-                if (pieces.latin1(&found.long_buf)) |text| found.long_len = text.len;
+                if (pieces.text(found.long_buf[0.._fat.fib_name_max])) |text| found.long_len = text.len;
             }
-            const given = if (found.long_len != 0 and found.long_len <= _fat.fib_name_max)
-                found.long_buf[0..found.long_len]
-            else
-                short;
+            const given = if (found.long_len != 0) found.long_buf[0..found.long_len] else short;
             @memcpy(found.name_buf[0..given.len], given);
             found.name_len = given.len;
         }
@@ -375,9 +373,11 @@ pub fn Directory(comptime Media: type) type {
 
         /// A new entry in directory `first` called `name`, which the caller
         /// has made sure is not taken. Its long name goes before it if it
-        /// needs one. What was made, as a scan would find it.
+        /// needs one, in UTF-16. What was made, as a scan would find it.
         pub fn create(self: *Self, first: u32, name: []const u8, what: Entry, found: *Found) Error!void {
             try _fat.validLong(name);
+            var units_buf: [fat.name_max]u16 = undefined;
+            const units = _fat.unitsOf(name, &units_buf);
             var short: [fat.ent_name_bytes]u8 = undefined;
             var case: u8 = 0;
             var pieces: usize = 0;
@@ -385,7 +385,7 @@ pub fn Directory(comptime Media: type) type {
                 short = fits.bytes;
                 case = fits.case;
             } else {
-                pieces = names.pieceCount(name.len);
+                pieces = names.pieceCount(units.len);
                 const basis = names.basisOf(self.ub, name);
                 var number: u32 = 1;
                 while (true) : (number += 1) {
@@ -402,7 +402,7 @@ pub fn Directory(comptime Media: type) type {
             // The pieces, last one first, then the entry.
             for (0..pieces) |k| {
                 const entry = try self.rawForWrite(&cursor, start + @as(u32, @intCast(k)));
-                names.fillPiece(entry, name, pieces - k, checksum);
+                names.fillPiece(entry, units, pieces - k, checksum);
             }
             const index = start + count - 1;
             const entry = try self.rawForWrite(&cursor, index);
