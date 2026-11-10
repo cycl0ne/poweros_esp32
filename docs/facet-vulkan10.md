@@ -2521,6 +2521,23 @@ Of 20 mutations of the port, 20 fail the tests. Four did only once the ties, the
 
 On the CM5, FacetBoth's 263 cases are each as they were at 1.183. Its new case is glslc's textureGrad of the cube's +z face, the nearest filter magnified and linear minified: 67 of 230400 pixels apart, 52 at worst. The board's cube has one level, so the level only says which of the two filters is read. It is at or below 0 inside the square where the larger of the face's two coordinates is at most 0.25, and above 0 outside it. The two regions agree. The first pixel apart, at 265,150, is where the face's two are about -0.253 and -0.249, on that square's edge, which is some 365 pixels long; the run draws no map of the rest. FacetProbe is 890 of 890.
 
+**Then two samples of one texture at one coordinate are one**, facet.library 1.185.
+
+nir_opt_cse takes tex instructions (instr_can_rewrite, nir_instr_set.c:47-52), and v3d's loop runs it (nir_to_vir.c:2265). glslc -O leaves two such samples two.
+- **The merge.** A sample is now a value the port's nir_opt_cse merges. Its unit, its sources, its lookup (tex, txb, txl or txf) and its texel offset must be those of another sample that dominates it, as nir_instrs_equal's tex compares pack_tex and the sources (:297-327, :695-723).
+- **Arms.** The loop runs nir_opt_cse before nir_opt_peephole_select (:2265, :2269-2279), so a tex an arm repeats of one before the selection is gone from the arm when the arm is counted. A sample, a size or a count of levels read in an arm keeps the selection a branch only where no earlier one is the same, outside the arms of a kept selection; and it counts nothing in the arm's cost. One in an arm of a kept selection, or in the other arm, does not dominate, and is not the same.
+- **Not ported.** Two variables at one binding are two units here until the passes are done, and their samples are not merged. v3dv lowers the derefs to one index before v3d's nir_opt_cse, which would merge them.
+
+Results:
+- One sample each: glslc_sample_twice, _twice_lod, _twice_fetch and _twice_shadow, and _twice_one once the times 1.0 is taken out.
+- Two each of _swapped and _bias_lod, and three of _twice_apart.
+- Flattened: _twice_arm's arm, to four selects of the one sample; both arms of _twice_nested; and the three arms of glslc_tex_arms_dont_flatten, under DontFlatten's limit of 0.
+- Kept: glslc_sample_kept_then_arm, _both_arms, _arm_offset and glslc_tex_arms_kept.
+
+Of 21 mutations of the port, 21 fail the tests. Two first did only once a test had a count of levels and a shadow sample alone in an arm, and one only in a variant that compiles.
+
+On the CM5, FacetBoth's 264 cases are each as they were at 1.184. Its new case is glslc's sample of the texture with the same sample read twice more in an arm, its blue, green, red and alpha times its red: 0 of 230400 pixels apart. FacetProbe is 890 of 890.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim

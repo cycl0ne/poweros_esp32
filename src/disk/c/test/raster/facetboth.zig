@@ -148,7 +148,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.49 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.50 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -983,6 +983,22 @@ const Shipped = struct {
             b.color(b.scale(sum, b.scalar(0.25)));
         }
     });
+    /// What glslc's `shipped_twice` computes: the texture at the
+    /// coordinate, and where the coordinate's first is under a half its
+    /// blue, green, red and alpha each times its red (since 1.50).
+    const Twice = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const uv = b.input(0, .f32x2);
+            const taken = b.sample(0, 0, uv);
+            const left = b.lessThan(b.component(uv, 0), b.scalar(0.5));
+            const first = b.component(taken, 0);
+            const x = b.select(left, b.mul(b.component(taken, 2), first), first);
+            const y = b.select(left, b.mul(b.component(taken, 1), first), b.component(taken, 1));
+            const z = b.select(left, b.mul(first, first), b.component(taken, 2));
+            const w = b.select(left, b.mul(b.component(taken, 3), first), b.component(taken, 3));
+            b.color(b.vector(&.{ x, y, z, w }));
+        }
+    });
     /// The texel one right and two up of where the coordinate falls, a
     /// ConstOffset of (1, -2) the V3D puts in P2's offset fields and the
     /// cores add to the texel (`texture.Point.offset`; since 1.45).
@@ -1674,6 +1690,7 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped grad layers", gradedFragment(false, 2, .{ 0, 0 }), 2),
     shader.fragment("shipped grad offset", gradedFragment(false, 0, .{ 1, -2 }), 2),
     shader.fragment("shipped grad cube", &cubeGradedFragment, 3),
+    Shipped.Twice.entry("shipped twice"),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                    .{},                                       .{},                                    .{},
@@ -1692,7 +1709,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_bias),         Shipped.Offset.spirv,                      shader.Spirv.of(&shipped_size),         shader.Spirv.of(&shipped_size_layers),
     shader.Spirv.of(&shipped_size_volume),  shader.Spirv.of(&shipped_fetch),           shader.Spirv.of(&shipped_fetch_layers), shader.Spirv.of(&shipped_fetch_volume),
     shader.Spirv.of(&shipped_fetch_offset), shader.Spirv.of(&shipped_fetch_dependent), shader.Spirv.of(&shipped_grad),         shader.Spirv.of(&shipped_grad_layers),
-    shader.Spirv.of(&shipped_grad_offset),  shader.Spirv.of(&shipped_grad_cube),
+    shader.Spirv.of(&shipped_grad_offset),  shader.Spirv.of(&shipped_grad_cube),       shader.Spirv.of(&shipped_twice),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -4059,6 +4076,67 @@ const shipped_grad_cube = [_]u32{
     0x0000000F, 0x00000020, 0x0000001A, 0x0000001F, 0x0000001A, 0x00080058,
     0x00000007, 0x00000021, 0x0000000E, 0x00000012, 0x00000004, 0x0000001B,
     0x00000020, 0x0003003E, 0x00000009, 0x00000021, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output, at -O, for a sample of the texture at the two
+/// floats of varying 0, and in the true arm of a selection on the first
+/// the same sample's blue, green, red and alpha times its red, two more
+/// OpImageSampleImplicitLod of the same image and coordinate. The V3D
+/// takes the three for one tex, as nir_opt_cse does, and flattens the
+/// arm, as nir_opt_peephole_select then does (since 1.50).
+///
+/// ```glsl
+/// #version 450
+/// layout(location = 0) in vec2 uv;
+/// layout(location = 0) out vec4 color;
+/// layout(set = 0, binding = 0) uniform sampler2D tex;
+/// void main() {
+///     vec4 c = texture(tex, uv);
+///     if (uv.x < 0.5) c = texture(tex, uv).bgra * texture(tex, uv).r;
+///     color = c;
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag twice.frag -o twice.spv   # 208 words
+/// spirv-val --target-env vulkan1.0 twice.spv             # no output, and 0
+/// ```
+const shipped_twice = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000002B, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000011, 0x00000028, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000D, 0x00000021, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000022, 0x00000000, 0x00040047, 0x00000011,
+    0x0000001E, 0x00000000, 0x00040047, 0x00000028, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00090019, 0x0000000A, 0x00000006, 0x00000001, 0x00000000, 0x00000000,
+    0x00000000, 0x00000001, 0x00000000, 0x0003001B, 0x0000000B, 0x0000000A,
+    0x00040020, 0x0000000C, 0x00000000, 0x0000000B, 0x0004003B, 0x0000000C,
+    0x0000000D, 0x00000000, 0x00040017, 0x0000000F, 0x00000006, 0x00000002,
+    0x00040020, 0x00000010, 0x00000001, 0x0000000F, 0x0004003B, 0x00000010,
+    0x00000011, 0x00000001, 0x00040015, 0x00000014, 0x00000020, 0x00000000,
+    0x0004002B, 0x00000014, 0x00000015, 0x00000000, 0x00040020, 0x00000016,
+    0x00000001, 0x00000006, 0x0004002B, 0x00000006, 0x00000019, 0x3F000000,
+    0x00020014, 0x0000001A, 0x00040020, 0x00000027, 0x00000003, 0x00000007,
+    0x0004003B, 0x00000027, 0x00000028, 0x00000003, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D, 0x0000000F, 0x00000012,
+    0x00000011, 0x00050057, 0x00000007, 0x00000013, 0x0000000E, 0x00000012,
+    0x00050041, 0x00000016, 0x00000017, 0x00000011, 0x00000015, 0x0004003D,
+    0x00000006, 0x00000018, 0x00000017, 0x000500B8, 0x0000001A, 0x0000001B,
+    0x00000018, 0x00000019, 0x000300F7, 0x0000001D, 0x00000000, 0x000400FA,
+    0x0000001B, 0x0000001C, 0x0000001D, 0x000200F8, 0x0000001C, 0x0004003D,
+    0x0000000B, 0x0000001E, 0x0000000D, 0x00050057, 0x00000007, 0x00000020,
+    0x0000001E, 0x00000012, 0x0009004F, 0x00000007, 0x00000021, 0x00000020,
+    0x00000020, 0x00000002, 0x00000001, 0x00000000, 0x00000003, 0x0004003D,
+    0x0000000B, 0x00000022, 0x0000000D, 0x00050057, 0x00000007, 0x00000024,
+    0x00000022, 0x00000012, 0x00050051, 0x00000006, 0x00000025, 0x00000024,
+    0x00000000, 0x0005008E, 0x00000007, 0x00000026, 0x00000021, 0x00000025,
+    0x000200F9, 0x0000001D, 0x000200F8, 0x0000001D, 0x000700F5, 0x00000007,
+    0x0000002A, 0x00000013, 0x00000005, 0x00000026, 0x0000001C, 0x0003003E,
+    0x00000028, 0x0000002A, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output for `Shipped.Branched`'s GLSL without -O, which the
@@ -7095,6 +7173,7 @@ const cases = [_]Case{
     .{ .name = "shipped float loop", .run = Cases.shipped("as it is", "shipped stepped", false, clockwise_at) },
     .{ .name = "shipped two textures", .run = Cases.twoTextures },
     .{ .name = "shipped four samples", .run = Cases.shipped("texture", "shipped four samples", true, quad_at) },
+    .{ .name = "shipped twice", .run = Cases.shipped("texture", "shipped twice", true, quad_at) },
     .{ .name = "shipped scratch", .run = Cases.shipped("as it is", "shipped scratch", false, clockwise_at) },
     .{ .name = "shipped trees", .run = Cases.shipped("as it is", "shipped trees", false, clockwise_at) },
 } ++ throughCases() ++ [_]Case{
