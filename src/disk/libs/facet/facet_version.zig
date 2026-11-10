@@ -6575,4 +6575,34 @@ pub const LIBRARY_VERSION = 1;
 /// function made wrong on purpose it is 46,565 apart. The other 287
 /// cases are each as they were at 1.196, and FacetProbe passes its 890
 /// checks.
-pub const LIBRARY_REVISION = 197;
+/// 198: **GLSL.std.450's Modf, Frexp and Ldexp (docs/facet-vulkan10.md
+/// item 59).** ModfStruct is vtn's (vtn_glsl450.c:546-562): the
+/// fraction and the whole of |x|, each with x's sign bit, the fraction
+/// the signed zero where |x| is infinite. FrexpStruct is nir_frexp_sig
+/// and nir_frexp_exp (vtn_glsl450.c:575-581) as nir_lower_frexp lowers
+/// them (nir_lower_frexp.c:29-159; vir.c:841), its fisfinite feq(x, x)
+/// (nir_opt_algebraic.py:4233). Ldexp is nir_ldexp
+/// (vtn_glsl450.c:408-418), lowered as the V3D has no has_ldexp
+/// (nir_opt_algebraic.py:3255-3327): the exponent held to -254 to 254,
+/// and f multiplied by 2 to its half and by 2 to the rest, each power of
+/// two made of its bits. Both structs are held as a struct value is, and
+/// OpCompositeExtract reads their members.
+///
+/// glslc_modf_frexp, of 352 words, answers for eight colours within
+/// 10^-6 what std.math's trunc, frexp and ldexp answer, among them 0,
+/// whole numbers either side of it, -4 and 4; Ldexp of constants folds,
+/// up to 2 to 128 and held at both ends. The V3D's tests are 341, two
+/// new. Of 26 mutations, 25 fail them; the other takes out the check
+/// that a struct's two members are of one width, which no test hands in
+/// and spirv-val refuses.
+///
+/// On the CM5 FacetBoth 1.62's "shipped modf, frexp and ldexp" is 52 of
+/// 230400 pixels apart, each listed: the 8 at the triangles' edge, and
+/// 44 on a step of the shader that the two devices' interpolations fall
+/// either side of, each the size of its step - a whole number of c.x or
+/// c.y, a seventh of x or y, a power of two of c.z either side of 0, and
+/// the octaves under Frexp's clamp around c.z = 0. With the cores'
+/// function made wrong on purpose it is 46,565 apart. The other 288
+/// cases are each as they were at 1.197, and FacetProbe passes its 890
+/// checks.
+pub const LIBRARY_REVISION = 198;

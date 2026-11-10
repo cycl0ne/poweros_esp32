@@ -7961,9 +7961,13 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
         .ext_inst => {
             // ResultType, Result, Set, Instruction, then its operands.
             if (operands.len < 5) return Error.Body;
-            const kind = try kindOf(work, try idOf(operands[0]));
             const id = try idOf(operands[1]);
             if (work.glsl == none or try idOf(operands[2]) != work.glsl) return Error.Body;
+            // ModfStruct and FrexpStruct answer a struct of two (since
+            // 1.198).
+            if (operands[3] == @intFromEnum(spirv.Glsl.modf_struct) or operands[3] == @intFromEnum(spirv.Glsl.frexp_struct))
+                return glslStructCall(work, operands[3], try idOf(operands[0]), id, operands[4..]);
+            const kind = try kindOf(work, try idOf(operands[0]));
             work.step_of[id] = try glslCall(work, operands[3], kind, operands[4..]);
         },
         .image_sample_implicit_lod, .image_sample_explicit_lod, .image_sample_dref_implicit_lod, .image_sample_dref_explicit_lod, .image_fetch => try readSample(work, instruction.op, operands),
@@ -8544,10 +8548,11 @@ fn multiplied(work: *Work, left: Matrix, right: Matrix) Error!Matrix {
 /// split into an fmul and an fadd as the algebraic rules split it on a
 /// device of no FMA (nir_opt_algebraic.py:420-424), each bcsel and
 /// comparison of a vector one of each float (`lower_to_scalar`,
-/// v3dv_pipeline.c:203). The bit finds are here since 1.197, of uclz.
-/// What is left out - Modf, Frexp, Ldexp, the determinant and the
-/// inverse, the packing and the interpolation - is refused by name,
-/// `Error.Body` (since 1.152).
+/// v3dv_pipeline.c:203). The bit finds are here since 1.197, of uclz,
+/// and Ldexp since 1.198, with ModfStruct and FrexpStruct
+/// (`glslStructCall`). What is left out - Modf and Frexp of a pointer,
+/// the determinant and the inverse, the packing and the interpolation -
+/// is refused by name, `Error.Body` (since 1.152).
 fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) Error!u16 {
     const which = std.enums.fromInt(spirv.Glsl, instruction) orelse return Error.Body;
     switch (which) {
@@ -8562,12 +8567,14 @@ fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) E
         .fma, .cross, .face_forward, .reflect, .refract => {},
         // Since 1.197.
         .find_i_lsb, .find_s_msb, .find_u_msb => {},
+        // Since 1.198.
+        .ldexp => {},
         else => return Error.Body,
     }
     const wanted: usize = switch (which) {
         .f_min, .f_max, .n_min, .n_max, .pow, .distance, .step => 2,
         .s_min, .u_min, .s_max, .u_max => 2,
-        .atan2, .cross, .reflect => 2,
+        .atan2, .cross, .reflect, .ldexp => 2,
         .f_clamp, .n_clamp, .f_mix, .smooth_step, .s_clamp, .u_clamp => 3,
         .fma, .face_forward, .refract => 3,
         else => 1,
@@ -8642,6 +8649,10 @@ fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) E
         .find_i_lsb => findOf(work, try integerOf(work, .iand, x[0], try integerOf(work, .ineg, x[0], null))),
         .find_s_msb => findOf(work, try integerOf(work, .ixor, x[0], try integerOf(work, .ishr, x[0], try integerSplat(work, kind, 31)))),
         .find_u_msb => findOf(work, x[0]),
+        // nir_ldexp of the exponent i2i32 makes nothing of
+        // (vtn_glsl450.c:408-418), lowered as the V3D, of no has_ldexp,
+        // has it (`ldexpOf`).
+        .ldexp => ldexpOf(work, x[0], x[1]),
         .sin => unary(work, .sin, x[0]),
         .cos => unary(work, .cos, x[0]),
         .tan => tan: {
@@ -8716,6 +8727,85 @@ fn glslCall(work: *Work, instruction: u32, kind: Kind, arguments: []const u32) E
         .refract => refractOf(work, x[0], x[1], x[2]),
         else => unreachable,
     };
+}
+
+/// ModfStruct and FrexpStruct (since 1.198): the struct of the two
+/// values each answers, held as a struct value is (`holdAggregate`), for
+/// OpCompositeExtract to read its members. Modf and Frexp, which store
+/// the second through a pointer and which glslc does not make, are
+/// refused with the others left out.
+fn glslStructCall(work: *Work, instruction: u32, type_id: u16, id: u16, arguments: []const u32) Error!void {
+    if (arguments.len != 1) return Error.Body;
+    if (work.thing[type_id] != .plain_struct or work.wide[type_id] != 2) return Error.Type;
+    const members = work.struct_members[work.points[type_id]..][0..2];
+    const kind = try kindOf(work, members[0]);
+    if (try kindOf(work, members[1]) != kind) return Error.Type;
+    const x = try operand(work, arguments[0], kind);
+    const made = if (instruction == @intFromEnum(spirv.Glsl.modf_struct)) try modfOf(work, x) else try frexpOf(work, x);
+    try holdAggregate(work, id, type_id, &made);
+}
+
+/// ModfStruct (vtn_glsl450.c:546-562): x's sign bit alone, the signed
+/// zero; of |x|, the fraction with that sign, or the signed zero where
+/// |x| is infinite, which an integer comparison with infinity tells; and
+/// the whole, its ffloor with that sign. The ffract is lowered
+/// (nir_opt_algebraic.py:546), its ffloor the whole's.
+fn modfOf(work: *Work, x: u16) Error![2]u16 {
+    const kind = work.steps[x].kind;
+    const signed_zero = try integerOf(work, .iand, x, try integerSplat(work, kind, std.math.minInt(i32)));
+    const abs = try unary(work, .abs, x);
+    const infinite = try comparedFloats(work, .int_equal, abs, try immediate(work, std.math.inf(f32)));
+    const floor = try unary(work, .floor, abs);
+    const fraction = try integerOf(work, .ior, signed_zero, try binary(work, .sub, abs, floor));
+    const part = try selectedFloats(work, infinite, signed_zero, fraction);
+    return .{ part, try integerOf(work, .ior, signed_zero, floor) };
+}
+
+/// FrexpStruct: nir_frexp_sig and nir_frexp_exp (vtn_glsl450.c:575-581),
+/// as nir_lower_frexp lowers them at 32 bits (lower_frexp_sig and
+/// lower_frexp_exp, nir_lower_frexp.c:29-159), which v3d runs
+/// (vir.c:841). The significand is x's sign and mantissa under the
+/// exponent of 0.5 to 1, where 0 < |x| and x is finite, else x; its
+/// fisfinite is what the late rules make of one under fast math, feq(x,
+/// x) (nir_opt_algebraic.py:4233). The exponent is |x|'s bits shifted
+/// down 23, and -126 more where x is not 0, the fneu of |x| that of x
+/// (:800).
+fn frexpOf(work: *Work, x: u16) Error![2]u16 {
+    const kind = work.steps[x].kind;
+    const abs_x = try unary(work, .abs, x);
+    const zero = try immediate(work, 0.0);
+    const positive = try comparedFloats(work, .greater, abs_x, zero);
+    const finite = try comparedFloats(work, .equal, x, x);
+    var normal: [4]u16 = @splat(none);
+    for (0..kind.parts()) |k| normal[k] = try put(work, logicOf(.iand, positive[k], finite[k]));
+    const bits = try integerOf(work, .ior, try integerOf(work, .iand, x, try integerSplat(work, kind, @bitCast(@as(u32, 0x807F_FFFF)))), try integerSplat(work, kind, 0x3F00_0000));
+    const significand = try selectedFloats(work, normal, bits, x);
+    const not_zero = try comparedFloats(work, .not_equal, x, zero);
+    const shifted = try integerOf(work, .ushr, abs_x, try integerSplat(work, kind, 23));
+    const bias = try selectedFloats(work, not_zero, try integerSplat(work, kind, -126), try integerSplat(work, kind, 0));
+    return .{ significand, try integerOf(work, .iadd, shifted, bias) };
+}
+
+/// nir_opt_algebraic's ldexp at 32 bits (nir_opt_algebraic.py:3255-3327):
+/// the exponent held to -254 to 254, and `f` times 2 to its half and 2
+/// to the rest, each power made of its bits, (e + 127) << 23 (fexp2i), 0.0
+/// for -127. The two fmuls are exact in Mesa ('!fmul'), which no rule
+/// here tells apart but that of an fmul by 0.0, which only a constant
+/// exponent below -253 makes.
+fn ldexpOf(work: *Work, f: u16, exp: u16) Error!u16 {
+    const kind = work.steps[f].kind;
+    const clamped = try integerOf(work, .imin, try integerOf(work, .imax, exp, try integerSplat(work, kind, -254)), try integerSplat(work, kind, 254));
+    const half = try integerOf(work, .ishr, clamped, try integerSplat(work, kind, 1));
+    const first = try powerOfTwo(work, half);
+    const second = try powerOfTwo(work, try integerOf(work, .isub, clamped, half));
+    return binary(work, .mul, try binary(work, .mul, f, first), second);
+}
+
+/// 2.0 to the integers `e`, made of their bits: fexp2i at 32 bits
+/// (nir_opt_algebraic.py:3255-3273).
+fn powerOfTwo(work: *Work, e: u16) Error!u16 {
+    const kind = work.steps[e].kind;
+    return integerOf(work, .ishl, try integerOf(work, .iadd, e, try integerSplat(work, kind, 127)), try integerSplat(work, kind, 23));
 }
 
 /// 31 - uclz(x), what each bit find is lowered to.
@@ -16124,6 +16214,98 @@ test "FindILsb, FindSMsb and FindUMsb are 31 - uclz of x & -x, of x ^ (x >> 31) 
         const expected = bitFindsOf(color);
         const found = evaluatedOf(&work, work.stored, color, 0);
         try testing.expectEqualSlices(f32, &expected, &found);
+    }
+}
+
+/// What `reference.glslc_modf_frexp` makes of `color`, by GLSL's
+/// definitions: modf's whole the value truncated, frexp std.math's, and
+/// ldexp std.math's.
+fn modfFrexpOf(color: [4]f32) [4]f32 {
+    var c: [4]f32 = undefined;
+    for (&c, color) |*each, v| each.* = v * 8.0 - 4.0;
+    var whole: [4]f32 = undefined;
+    var part: [4]f32 = undefined;
+    var sig: [4]f32 = undefined;
+    var e: [4]i32 = undefined;
+    var by: [4]i32 = undefined;
+    var scaled: [4]f32 = undefined;
+    for (0..4) |k| {
+        whole[k] = @trunc(c[k]);
+        part[k] = c[k] - whole[k];
+        const split = std.math.frexp(c[k]);
+        sig[k] = split.significand;
+        e[k] = split.exponent;
+        by[k] = @as(i32, @intFromFloat(color[k] * 7.0)) - 3;
+        scaled[k] = std.math.ldexp(color[k], by[k]);
+    }
+    const exponent: f32 = @floatFromInt(std.math.clamp(e[2], -4, 3));
+    return .{
+        part[0] * 0.25 + 0.5 + whole[1] * 0.0625,
+        sig[2] * 0.25 + 0.5 + exponent * 0.0625,
+        (scaled[0] + scaled[1]) * 0.0625,
+        std.math.ldexp(scaled[2], -by[2]) * 0.5 + whole[0] * 0.0625 + 0.25,
+    };
+}
+
+/// Colours of `reference.glslc_modf_frexp`: values of 0, of whole
+/// numbers either side of it, of the ends -4 and 4, and between.
+const modf_colors = [_][4]f32{
+    .{ 0.5, 0.5, 0.5, 0.5 },
+    .{ 0.625, 0.375, 1.0, 0.0 },
+    .{ 0.0, 1.0, 0.0, 1.0 },
+    .{ 0.3, 0.7, 0.55, 0.45 },
+    .{ 0.9, 0.1, 0.51, 0.49 },
+    .{ 0.12, 0.88, 0.2, 0.8 },
+    .{ 0.47, 0.53, 0.505, 0.62 },
+    .{ 0.99, 0.01, 0.75, 0.25 },
+};
+
+test "ModfStruct, FrexpStruct and Ldexp are vtn_glsl450.c's, nir_lower_frexp's and nir_opt_algebraic's, their structs read by OpCompositeExtract, and answer as GLSL defines them" {
+    var work: Work = .{};
+    _ = try throughMesa(&work, &reference.glslc_modf_frexp);
+    const counts = [_]usize{ liveOf(&work, .select), liveOf(&work, .compare), liveLogicOf(&work, .iand), liveIntegerOf(&work, .ishl), liveIntegerOf(&work, .iadd), liveIntegerOf(&work, .ushr), liveIntegerOf(&work, .imin), liveIntegerOf(&work, .imax), liveIntegerOf(&work, .ior), liveIntegerOf(&work, .iand), liveIntegerOf(&work, .isub), liveIntegerOf(&work, .ishr) };
+    // A bcsel of each float of Modf's fraction, of Frexp's significand
+    // and of its exponent's bias; a comparison of each float of |x| with
+    // infinity, of 0 < |x|, of x == x and of x != 0, and an iand of each
+    // float's two of those. Ldexp's two powers of two, twice, are an ishl
+    // and an iadd each, the iadd of 127 << 23 (:729); with Frexp's
+    // exponent five iadds. Frexp's ushr; the clamps' imins and imaxs; the
+    // iors of Modf's two and of Frexp's significand, and the iands of the
+    // sign bit and of the mantissa; the isubs of Ldexp's second halves
+    // and of the program's own `- 3`; and the ishrs of the halves.
+    try testing.expectEqualSlices(usize, &.{ 12, 16, 4, 4, 5, 1, 2, 2, 3, 2, 3, 2 }, &counts);
+    // Each power of two's iadd is of 127 << 23, 1.0's bits, after its
+    // shift.
+    const reached = liveMask(&work);
+    var of_one: usize = 0;
+    for (work.program(), 0..) |each, at| {
+        if (!reached[at] or !isIntegerOp(each, .iadd)) continue;
+        if (isConstantStep(&work, each.b) and allWords(&work, each.b, isFloatOne) and isIntegerOp(work.steps[each.a], .ishl)) of_one += 1;
+    }
+    try testing.expectEqual(@as(usize, 4), of_one);
+    for (modf_colors) |color| {
+        const expected = modfFrexpOf(color);
+        const found = evaluatedOf(&work, work.stored, color, 0);
+        for (expected, found) |want, got| try testing.expectApproxEqAbs(want, got, 1e-6);
+    }
+}
+
+test "Ldexp of constants folds to f times 2 to the exponent, held to -254 to 254 and taken in two halves, as nir_opt_algebraic's ldexp is" {
+    var work: Work = .{};
+    const cases = [_]struct { f: f32, e: i32, want: f32 }{
+        .{ .f = 3.0, .e = -2, .want = 0.75 },
+        .{ .f = -1.0, .e = 0, .want = -1.0 },
+        // 2 to 128, which no one power of two of a float makes.
+        .{ .f = 0.75, .e = 128, .want = @floatCast(0.75 * std.math.pow(f64, 2.0, 128.0)) },
+        // Held to -254, whose halves are each 0.0.
+        .{ .f = std.math.ldexp(@as(f32, 1.0), 100), .e = -260, .want = 0.0 },
+        // Held to 254: 2 to 127 twice, infinity.
+        .{ .f = 1.0, .e = 300, .want = std.math.inf(f32) },
+    };
+    for (cases) |each| {
+        const made = try ldexpOf(&work, try immediate(&work, each.f), try integerSplat(&work, .f32x1, each.e));
+        try testing.expectEqual(Tag.constant, work.steps[made].tag);
+        try testing.expectEqual(each.want, @as(f32, @bitCast(work.pool[work.steps[made].at])));
     }
 }
 
