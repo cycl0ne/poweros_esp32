@@ -6691,4 +6691,31 @@ pub const LIBRARY_VERSION = 1;
 /// the triangles' edge. With the cores' function made wrong on purpose
 /// each is 46,565 apart. The other 292 cases are each as they were at
 /// 1.200, and FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 201;
+/// 202: **SPIR-V's OpBitCount, OpBitReverse, OpBitFieldInsert,
+/// OpBitFieldSExtract and OpBitFieldUExtract (docs/facet-vulkan10.md
+/// item 59).** NIR's bit_count (vtn_alu.c:1074-1080), bitfield_reverse
+/// (:330), bitfield_insert, ibitfield_extract and ubitfield_extract
+/// (:327-329), which v3dv has lowered (v3dv_pipeline.c:172-175) for a
+/// device of no BFE, BFM or BFI: the count in parallel and the five
+/// swaps of nir_lower_alu (nir_lower_alu.c:49-112), and the shifts,
+/// masks and guards of nir_opt_algebraic (nir_opt_algebraic.py:
+/// 2932-2946, 2963-2970). Offset and Count are one integer, repeated in
+/// each float of Base; a constant one's guards are folded, as
+/// nir_opt_constant_folding and the bcsel rules (:1933-1934) fold them.
+/// The docs' 1.201 section said this compiler has no CSE; it has had
+/// nir_opt_cse (`Order.cse`) since 1.157, which shares what is built
+/// twice once it is built, the 256 steps counted as steps are made.
+///
+/// glslc_bits, of 460 words and 182 steps, answers for 35 colours within
+/// 10^-6 what GLSL's definitions answer, fields of 0 to 32 bits among
+/// them; the bit operations of constants fold, and a constant Count
+/// leaves no guard. The V3D's tests are 353, three new. Of 16
+/// mutations, all 16 fail them.
+///
+/// On the CM5 FacetBoth 1.66's "shipped bit operations" is 42 of 230400
+/// pixels apart, each listed: the 8 at the triangles' edge, and 34 on a
+/// step of q, where each GPU pixel is exactly the shader's answer for a q
+/// one step away. With the cores' function made wrong on purpose it is
+/// 46,565 apart. The other 294 cases are each as they were at 1.201, and
+/// FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 202;

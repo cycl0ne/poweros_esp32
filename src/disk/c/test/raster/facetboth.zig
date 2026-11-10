@@ -150,7 +150,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.65 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.66 (10.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -2416,6 +2416,53 @@ fn determinant4Of(color: [4]f32) [4]f32 {
     };
 }
 
+/// GLSL's bitfieldExtract of a word, by its definition: the `bits` bits
+/// from `offset` up, 0 of none, the signed with the field's top bit
+/// extended (since 1.66).
+fn fieldOf(value: u32, offset: u32, bits: u32, signed: bool) u32 {
+    if (bits == 0) return 0;
+    const ones = (@as(u64, 1) << @intCast(bits)) - 1;
+    const field: u32 = @intCast((@as(u64, value) >> @intCast(offset)) & ones);
+    if (signed and field >> @intCast(bits - 1) & 1 == 1) return field | @as(u32, @truncate(~ones));
+    return field;
+}
+
+/// GLSL's bitfieldInsert of a word, by its definition (since 1.66).
+fn insertedOf(base: u32, insert: u32, offset: u32, bits: u32) u32 {
+    const mask: u32 = @truncate(((@as(u64, 1) << @intCast(bits)) - 1) << @intCast(offset));
+    return (base & ~mask) | (@as(u32, @truncate(@as(u64, insert) << @intCast(offset))) & mask);
+}
+
+/// What `shipped_bits` makes of `color`, by GLSL's definitions:
+/// @popCount and @bitReverse, and the field's bits worked out in 64
+/// (since 1.66).
+fn bitsOf(color: [4]f32) [4]f32 {
+    var q: [3]u32 = undefined;
+    for (&q, color[0..3]) |*each, v| each.* = @intFromFloat(v * 15.0);
+    const u = (q[0] *% 0x01010101) ^ (q[1] *% 0x00102041) ^ (q[2] << 27) ^ 0x6A09E667;
+    const v = [2]u32{ u, ~u ^ (q[0] << 9) };
+    const count = q[1] * 32 / 15;
+    const offset: u32 = @intCast((@as(i32, @intCast(q[0])) * (32 - @as(i32, @intCast(count)))) >> 4);
+    var e: [2]u32 = undefined;
+    var signed: [2]u32 = undefined;
+    var inserted: [2]u32 = undefined;
+    for (0..2) |k| {
+        e[k] = fieldOf(v[k], offset, count, false);
+        signed[k] = fieldOf(v[k], offset, count, true);
+        inserted[k] = insertedOf(v[k], v[1 - k], offset, count);
+    }
+    const c = @popCount(v[0]) + @popCount(v[1]);
+    const r = @bitReverse(u);
+    const hashes = [3]u32{
+        (r *% 0x9E3779B1) >> 24,
+        ((e[0] ^ signed[1]) *% 0x9E3779B1 +% e[1] *% 0x85EBCA6B) >> 24,
+        (((inserted[0] *% 0x85EBCA6B) ^ inserted[1]) *% 0x9E3779B1) >> 24,
+    };
+    var made: [4]f32 = .{ @as(f32, @floatFromInt(c)) / 64.0, 0, 0, 0 };
+    for (hashes, 1..) |hash, k| made[k] = @as(f32, @floatFromInt(hash)) / 255.0;
+    return made;
+}
+
 /// The entries that ship words, after all the others, and the words of
 /// each in the same order: `shader.Module.spirv` is index for index.
 const shipped_entries = [_]shader.Entry{
@@ -2522,6 +2569,7 @@ const shipped_entries = [_]shader.Entry{
     shader.fragment("shipped half packing", curveFragment(halfPackingOf), 4),
     shader.fragment("shipped matrix inverse", curveFragment(matrixInverseOf), 4),
     shader.fragment("shipped determinant of a mat4", curveFragment(determinant4Of), 4),
+    shader.fragment("shipped bits", curveFragment(bitsOf), 4),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2548,7 +2596,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_index_place),          shader.Spirv.of(&shipped_point_size),       shader.Spirv.of(&shipped_point_one),           shader.Spirv.of(&shipped_vertices),
     shader.Spirv.of(&shipped_numbers),              shader.Spirv.of(&shipped_inverse_trig),     shader.Spirv.of(&shipped_hyperbolic),          shader.Spirv.of(&shipped_geometry),
     shader.Spirv.of(&shipped_bit_finds),            shader.Spirv.of(&shipped_modf_frexp),       shader.Spirv.of(&shipped_packing_bytes),       shader.Spirv.of(&shipped_packing_halves),
-    shader.Spirv.of(&shipped_packing_half),         shader.Spirv.of(&shipped_matrix_inverse),   shader.Spirv.of(&shipped_determinant4),
+    shader.Spirv.of(&shipped_packing_half),         shader.Spirv.of(&shipped_matrix_inverse),   shader.Spirv.of(&shipped_determinant4),        shader.Spirv.of(&shipped_bits),
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -6611,6 +6659,122 @@ const shipped_determinant4 = [_]u32{
     0x0000007A, 0x00070050, 0x00000007, 0x0000007C, 0x0000005E, 0x00000068,
     0x00000076, 0x0000007B, 0x0003003E, 0x0000005A, 0x0000007C, 0x000100FD,
     0x00010038,
+};
+
+/// glslc's own output, at -O, the V3D's host tests' glslc_bits:
+/// what `bitsOf` on the cores: OpBitCount, OpBitReverse and the bit fields
+/// (since 1.66).
+///
+/// ```glsl
+/// #version 450
+/// // facet 1.202: SPIR-V's OpBitCount, OpBitReverse, OpBitFieldInsert,
+/// // OpBitFieldSExtract and OpBitFieldUExtract, as nir_lower_alu and
+/// // nir_opt_algebraic lower them for the V3D, which has no BFE, BFM or BFI:
+/// // the colour made 16 steps a channel, its bits spread over two words, a
+/// // field of 0 to 32 bits at an offset that keeps it in the word, and each
+/// // result's bits hashed into a channel's top 8, so that a wrong bit shows.
+/// layout(location = 0) in vec4 color;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     uvec3 q = uvec3(color.xyz * 15.0);
+///     uint u = (q.x * 0x01010101u) ^ (q.y * 0x00102041u) ^ (q.z << 27) ^ 0x6A09E667u;
+///     uvec2 v = uvec2(u, ~u ^ (q.x << 9));
+///     int count = int(q.y * 32u / 15u);
+///     int offset = (int(q.x) * (32 - count)) >> 4;
+///     uvec2 c = bitCount(v);
+///     uint r = bitfieldReverse(u);
+///     uvec2 e = bitfieldExtract(v, offset, count);
+///     ivec2 s = bitfieldExtract(ivec2(v), offset, count);
+///     uvec2 i = bitfieldInsert(v, v.yx, offset, count);
+///     outColor = vec4(float(c.x + c.y) / 64.0,
+///                     float((r * 0x9E3779B1u) >> 24) / 255.0,
+///                     float(((e.x ^ uint(s.y)) * 0x9E3779B1u + e.y * 0x85EBCA6Bu) >> 24) / 255.0,
+///                     float(((i.x * 0x85EBCA6Bu) ^ i.y) * 0x9E3779B1u >> 24) / 255.0);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag bits.frag -o bits.spv   # 460 words
+/// spirv-val --target-env vulkan1.0 bits.spv   # no output, and 0
+/// ```
+const shipped_bits = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000009F, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000065, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000D, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000065, 0x0000001E, 0x00000000, 0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006, 0x00000020,
+    0x00000000, 0x00040017, 0x00000007, 0x00000006, 0x00000003, 0x00030016,
+    0x0000000A, 0x00000020, 0x00040017, 0x0000000B, 0x0000000A, 0x00000004,
+    0x00040020, 0x0000000C, 0x00000001, 0x0000000B, 0x0004003B, 0x0000000C,
+    0x0000000D, 0x00000001, 0x00040017, 0x0000000E, 0x0000000A, 0x00000003,
+    0x0004002B, 0x0000000A, 0x00000011, 0x41700000, 0x0004002B, 0x00000006,
+    0x00000019, 0x01010101, 0x0004002B, 0x00000006, 0x0000001E, 0x00102041,
+    0x00040015, 0x00000024, 0x00000020, 0x00000001, 0x0004002B, 0x00000024,
+    0x00000025, 0x0000001B, 0x0004002B, 0x00000006, 0x00000028, 0x6A09E667,
+    0x00040017, 0x0000002A, 0x00000006, 0x00000002, 0x0004002B, 0x00000024,
+    0x00000032, 0x00000009, 0x0004002B, 0x00000006, 0x0000003A, 0x00000020,
+    0x0004002B, 0x00000006, 0x0000003C, 0x0000000F, 0x0004002B, 0x00000024,
+    0x00000043, 0x00000020, 0x0004002B, 0x00000024, 0x00000047, 0x00000004,
+    0x00040017, 0x0000004B, 0x00000024, 0x00000002, 0x00040020, 0x00000064,
+    0x00000003, 0x0000000B, 0x0004003B, 0x00000064, 0x00000065, 0x00000003,
+    0x0004002B, 0x00000006, 0x0000006F, 0x9E3779B1, 0x0004002B, 0x00000024,
+    0x00000071, 0x00000018, 0x0004002B, 0x00000006, 0x0000007F, 0x85EBCA6B,
+    0x0004002B, 0x0000000A, 0x0000009D, 0x3C800000, 0x0004002B, 0x0000000A,
+    0x0000009E, 0x3B808081, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000F,
+    0x0000000D, 0x0008004F, 0x0000000E, 0x00000010, 0x0000000F, 0x0000000F,
+    0x00000000, 0x00000001, 0x00000002, 0x0005008E, 0x0000000E, 0x00000012,
+    0x00000010, 0x00000011, 0x0004006D, 0x00000007, 0x00000013, 0x00000012,
+    0x00050051, 0x00000006, 0x00000018, 0x00000013, 0x00000000, 0x00050084,
+    0x00000006, 0x0000001A, 0x00000018, 0x00000019, 0x00050051, 0x00000006,
+    0x0000001D, 0x00000013, 0x00000001, 0x00050084, 0x00000006, 0x0000001F,
+    0x0000001D, 0x0000001E, 0x000500C6, 0x00000006, 0x00000020, 0x0000001A,
+    0x0000001F, 0x00050051, 0x00000006, 0x00000023, 0x00000013, 0x00000002,
+    0x000500C4, 0x00000006, 0x00000026, 0x00000023, 0x00000025, 0x000500C6,
+    0x00000006, 0x00000027, 0x00000020, 0x00000026, 0x000500C6, 0x00000006,
+    0x00000029, 0x00000027, 0x00000028, 0x000400C8, 0x00000006, 0x0000002F,
+    0x00000029, 0x000500C4, 0x00000006, 0x00000033, 0x00000018, 0x00000032,
+    0x000500C6, 0x00000006, 0x00000034, 0x0000002F, 0x00000033, 0x00050050,
+    0x0000002A, 0x00000035, 0x00000029, 0x00000034, 0x00050084, 0x00000006,
+    0x0000003B, 0x0000001D, 0x0000003A, 0x00050086, 0x00000006, 0x0000003D,
+    0x0000003B, 0x0000003C, 0x0004007C, 0x00000024, 0x0000003E, 0x0000003D,
+    0x0004007C, 0x00000024, 0x00000042, 0x00000018, 0x00050082, 0x00000024,
+    0x00000045, 0x00000043, 0x0000003E, 0x00050084, 0x00000024, 0x00000046,
+    0x00000042, 0x00000045, 0x000500C3, 0x00000024, 0x00000048, 0x00000046,
+    0x00000047, 0x000400CD, 0x0000004B, 0x0000004C, 0x00000035, 0x0004007C,
+    0x0000002A, 0x0000004D, 0x0000004C, 0x000400CC, 0x00000006, 0x00000050,
+    0x00000029, 0x000600CB, 0x0000002A, 0x00000055, 0x00000035, 0x00000048,
+    0x0000003E, 0x0004007C, 0x0000004B, 0x00000059, 0x00000035, 0x000600CA,
+    0x0000004B, 0x0000005C, 0x00000059, 0x00000048, 0x0000003E, 0x0007004F,
+    0x0000002A, 0x00000060, 0x00000035, 0x00000035, 0x00000001, 0x00000000,
+    0x000700C9, 0x0000002A, 0x00000063, 0x00000035, 0x00000060, 0x00000048,
+    0x0000003E, 0x00050051, 0x00000006, 0x00000067, 0x0000004D, 0x00000000,
+    0x00050051, 0x00000006, 0x00000069, 0x0000004D, 0x00000001, 0x00050080,
+    0x00000006, 0x0000006A, 0x00000067, 0x00000069, 0x00040070, 0x0000000A,
+    0x0000006B, 0x0000006A, 0x00050085, 0x0000000A, 0x0000006D, 0x0000006B,
+    0x0000009D, 0x00050084, 0x00000006, 0x00000070, 0x00000050, 0x0000006F,
+    0x000500C2, 0x00000006, 0x00000072, 0x00000070, 0x00000071, 0x00040070,
+    0x0000000A, 0x00000073, 0x00000072, 0x00050085, 0x0000000A, 0x00000075,
+    0x00000073, 0x0000009E, 0x00050051, 0x00000006, 0x00000077, 0x00000055,
+    0x00000000, 0x00050051, 0x00000024, 0x00000079, 0x0000005C, 0x00000001,
+    0x0004007C, 0x00000006, 0x0000007A, 0x00000079, 0x000500C6, 0x00000006,
+    0x0000007B, 0x00000077, 0x0000007A, 0x00050084, 0x00000006, 0x0000007C,
+    0x0000007B, 0x0000006F, 0x00050051, 0x00000006, 0x0000007E, 0x00000055,
+    0x00000001, 0x00050084, 0x00000006, 0x00000080, 0x0000007E, 0x0000007F,
+    0x00050080, 0x00000006, 0x00000081, 0x0000007C, 0x00000080, 0x000500C2,
+    0x00000006, 0x00000082, 0x00000081, 0x00000071, 0x00040070, 0x0000000A,
+    0x00000083, 0x00000082, 0x00050085, 0x0000000A, 0x00000084, 0x00000083,
+    0x0000009E, 0x00050051, 0x00000006, 0x00000086, 0x00000063, 0x00000000,
+    0x00050084, 0x00000006, 0x00000087, 0x00000086, 0x0000007F, 0x00050051,
+    0x00000006, 0x00000089, 0x00000063, 0x00000001, 0x000500C6, 0x00000006,
+    0x0000008A, 0x00000087, 0x00000089, 0x00050084, 0x00000006, 0x0000008B,
+    0x0000008A, 0x0000006F, 0x000500C2, 0x00000006, 0x0000008C, 0x0000008B,
+    0x00000071, 0x00040070, 0x0000000A, 0x0000008D, 0x0000008C, 0x00050085,
+    0x0000000A, 0x0000008E, 0x0000008D, 0x0000009E, 0x00070050, 0x0000000B,
+    0x0000008F, 0x0000006D, 0x00000075, 0x00000084, 0x0000008E, 0x0003003E,
+    0x00000065, 0x0000008F, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output, at -O, of the place times a W of 1 + 2 * the blue
@@ -10869,6 +11033,7 @@ const cases = [_]Case{
     .{ .name = "shipped packing of halves", .run = Cases.shipped("as it is", "shipped half packing", false, clockwise_at) },
     .{ .name = "shipped matrix inverse", .run = Cases.shipped("as it is", "shipped matrix inverse", false, clockwise_at) },
     .{ .name = "shipped determinant of a mat4", .run = Cases.shipped("as it is", "shipped determinant of a mat4", false, clockwise_at) },
+    .{ .name = "shipped bit operations", .run = Cases.shipped("as it is", "shipped bits", false, clockwise_at) },
     .{ .name = "shipped flat varying", .run = Cases.shipped("shipped flat vertex", "shipped flat colour", false, clockwise_at) },
     .{ .name = "shipped flat integer", .run = Cases.shipped("shipped flat integer vertex", "shipped flat integer", false, clockwise_at) },
     .{ .name = "shipped noperspective", .run = Cases.shipped("shipped noperspective vertex", "shipped noperspective", false, clockwise_at) },
