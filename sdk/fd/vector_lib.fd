@@ -49,4 +49,6 @@ bool PathBounds(*const vector.Path path, ?*const vector.Matrix matrix, *vector.R
 i32 PushLayer(*vector.Canvas canvas, f32 opacity)
 /// The last layer pushed put down on what is under it.
 void PopLayer(*vector.Canvas canvas)
+/// Segments onto the path in one call: a verb each (SEG_*) and the points they take, in order; VECTORERR_SYNTAX at a verb it does not know or short of points, the path kept up to it.
+i32 AddSegments(*vector.Path path, [*]const u8 verbs, u32 verb_count, [*]const vector.Point points, u32 point_count)
 ##end

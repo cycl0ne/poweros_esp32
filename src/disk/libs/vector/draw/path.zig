@@ -41,6 +41,13 @@ pub const Verb = enum(u8) {
     }
 };
 
+comptime {
+    if (@intFromEnum(Verb.move) != vector.SEG_MOVE or @intFromEnum(Verb.line) != vector.SEG_LINE or
+        @intFromEnum(Verb.quad) != vector.SEG_QUAD or @intFromEnum(Verb.cubic) != vector.SEG_CUBIC or
+        @intFromEnum(Verb.close) != vector.SEG_CLOSE)
+        @compileError("path: the verbs are not the SDK's SEG_ numbers");
+}
+
 pub const Path = struct {
     memory: Memory,
     verbs: List(Verb) = .{},
@@ -103,6 +110,37 @@ pub const Path = struct {
         if (!path.open) return;
         if (!path.add(.close, &.{})) return;
         path.open = false;
+    }
+
+    /// Segments given whole, since 1.2: a verb each - `Verb`'s numbers,
+    /// which are the SDK's `SEG_*` - and the points they take, one verb's
+    /// after another's. `VECTORERR_SYNTAX` at a verb it does not know or
+    /// one the points run out on, the segments before it kept; points
+    /// past the last verb's are not looked at. `VECTORERR_NOMEM` when a
+    /// segment did not fit.
+    pub fn addSegments(path: *Path, verbs: []const u8, points: []const P) i32 {
+        const failed_before = path.failed;
+        // Room for all of it at once, rather than the lists grown as it
+        // comes; without it, each segment is tried as it is.
+        _ = path.verbs.reserve(path.memory, verbs.len);
+        _ = path.points.reserve(path.memory, points.len);
+        var at: usize = 0;
+        for (verbs) |number| {
+            if (number > @intFromEnum(Verb.close)) return vector.VECTORERR_SYNTAX;
+            const verb: Verb = @enumFromInt(number);
+            const n = verb.points();
+            if (points.len - at < n) return vector.VECTORERR_SYNTAX;
+            const p = points[at..][0..n];
+            switch (verb) {
+                .move => path.moveTo(p[0]),
+                .line => path.lineTo(p[0]),
+                .quad => path.quadTo(p[0], p[1]),
+                .cubic => path.cubicTo(p[0], p[1], p[2]),
+                .close => path.close(),
+            }
+            at += n;
+        }
+        return if (path.failed and !failed_before) vector.VECTORERR_NOMEM else vector.VECTOR_OK;
     }
 
     /// The current point: the end of the last segment, or after a close
@@ -181,4 +219,34 @@ test "segments before a move are passed over, and after a close start where it b
     path.clear();
     try testing.expectEqual(@as(usize, 0), path.verbs.len);
     try testing.expect(!path.failed);
+}
+
+test "a path handed over whole: as built a segment at a time, and cut short where it goes wrong" {
+    const whole = Path.create(test_memory).?;
+    defer whole.destroy();
+    const verbs = [_]u8{ vector.SEG_MOVE, vector.SEG_LINE, vector.SEG_QUAD, vector.SEG_CUBIC, vector.SEG_CLOSE, vector.SEG_LINE };
+    const points = [_]P{
+        .{ .x = 1, .y = 2 }, .{ .x = 5, .y = 2 },
+        .{ .x = 6, .y = 4 }, .{ .x = 5, .y = 6 },
+        .{ .x = 4, .y = 7 }, .{ .x = 2, .y = 7 }, .{ .x = 1, .y = 6 },
+        .{ .x = 3, .y = 3 },
+    };
+    try testing.expectEqual(vector.VECTOR_OK, whole.addSegments(&verbs, &points));
+    const one = Path.create(test_memory).?;
+    defer one.destroy();
+    one.moveTo(points[0]);
+    one.lineTo(points[1]);
+    one.quadTo(points[2], points[3]);
+    one.cubicTo(points[4], points[5], points[6]);
+    one.close();
+    one.lineTo(points[7]);
+    try testing.expectEqualSlices(Verb, one.verbs.items(), whole.verbs.items());
+    try testing.expectEqualSlices(P, one.points.items(), whole.points.items());
+    // A cubic curve with two points left, and a verb past the last: the
+    // segments before them kept.
+    whole.clear();
+    try testing.expectEqual(vector.VECTORERR_SYNTAX, whole.addSegments(&.{ vector.SEG_MOVE, vector.SEG_CUBIC }, points[0..3]));
+    try testing.expectEqual(@as(usize, 1), whole.verbs.len);
+    try testing.expectEqual(vector.VECTORERR_SYNTAX, whole.addSegments(&.{ vector.SEG_LINE, 9 }, points[0..3]));
+    try testing.expectEqual(@as(usize, 2), whole.verbs.len);
 }

@@ -34,6 +34,7 @@ const AddPathData = @import("path/addpathdata.zig").AddPathData;
 const PathBounds = @import("path/pathbounds.zig").PathBounds;
 const PushLayer = @import("canvas/pushlayer.zig").PushLayer;
 const PopLayer = @import("canvas/poplayer.zig").PopLayer;
+const AddSegments = @import("path/addsegments.zig").AddSegments;
 
 /// vector.library's interface, as the SDK generates it from
 /// sdk/fd/vector_lib.fd.
@@ -79,6 +80,7 @@ const contract_files = [_][]const u8{
     @embedFile("path/pathbounds.zig"),
     @embedFile("canvas/pushlayer.zig"),
     @embedFile("canvas/poplayer.zig"),
+    @embedFile("path/addsegments.zig"),
 };
 
 fn lvoCreatePath(vb: *VectorBase) callconv(.c) ?*vector.Path {
@@ -141,6 +143,9 @@ fn lvoPushLayer(vb: *VectorBase, canvas: *vector.Canvas, opacity: f32) callconv(
 fn lvoPopLayer(vb: *VectorBase, canvas: *vector.Canvas) callconv(.c) void {
     return PopLayer(vb, canvas);
 }
+fn lvoAddSegments(vb: *VectorBase, path: *vector.Path, verbs: [*]const u8, verb_count: u32, points: [*]const vector.Point, point_count: u32) callconv(.c) i32 {
+    return AddSegments(vb, path, verbs, verb_count, points, point_count);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -167,6 +172,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoPathBounds),
     vec(lvoPushLayer),
     vec(lvoPopLayer),
+    vec(lvoAddSegments),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

@@ -188,7 +188,7 @@ first time something opens it.
 | tls.library | `LIBS:` | TLS 1.3 and 1.2 sessions over a connected socket, the server's certificates checked | [md](autodocs/tls.md) · [doc](autodocs/tls.doc) |
 | truetype.library | `LIBS:` | TrueType outlines into glyphs | [md](autodocs/truetype.md) · [doc](autodocs/truetype.doc) |
 | usb.library | `LIBS:` | USB buses: their devices, descriptors, pipes to endpoints, class drivers | [md](autodocs/usb.md) · [doc](autodocs/usb.doc), [`usb.zig`](../libs/usb/usb.zig), [`descriptors.zig`](../libs/usb/descriptors.zig) |
-| vector.library | `LIBS:` | shapes with smooth edges: paths of lines and curves in a program's own units - SVG's arcs and path data too - filled or stroked onto its pens through a matrix, in colours or gradients, dashed, on layers | [md](autodocs/vector.md) · [doc](autodocs/vector.doc), [`vector.zig`](../libs/vector/vector.zig) |
+| vector.library | `LIBS:` | shapes with smooth edges: paths of lines and curves in a program's own units - SVG's arcs and path data too, or handed over whole - filled or stroked onto its pens through a matrix, in colours or gradients, dashed, on layers | [md](autodocs/vector.md) · [doc](autodocs/vector.doc), [`vector.zig`](../libs/vector/vector.zig) |
 | wpa.library | `LIBS:` | WPA2-Personal for a Wi-Fi driver: a network's key from its passphrase, the station's RSN element, the key handshakes | [md](autodocs/wpa.md) · [doc](autodocs/wpa.doc), [`wpa.zig`](../libs/wpa/wpa.zig) |
 
 ## Devices

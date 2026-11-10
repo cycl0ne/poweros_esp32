@@ -21,6 +21,10 @@
 //! A program that needs these looks for revision 1 or later in the
 //! library it opened.
 //!
+//! Since 1.2 a path can be handed over whole, its segments' verbs in one
+//! array and their points in another (`AddSegments`): one call for a
+//! path a program keeps as data, rather than one a segment.
+//!
 //! Open it with OpenLibrary(VECTORNAME, VECTOR_VERSION); its functions
 //! are in sdk/interface/vector.zig. A path and a canvas are one task's at
 //! a time: the library holds no lock, and two tasks drawing on two
@@ -62,6 +66,16 @@ pub const Rect = extern struct {
 /// (clockwise on the screen) rather than the other.
 pub const ARC_LARGE: u32 = 1;
 pub const ARC_SWEEP: u32 = 2;
+
+/// `AddSegments`' verbs, a byte each, and how many of the points each
+/// takes: a move to its one, a line to its one, a quadratic curve through
+/// its control point to its end, a cubic one through two to its end, and
+/// a close, which takes none. Since 1.2.
+pub const SEG_MOVE: u8 = 0;
+pub const SEG_LINE: u8 = 1;
+pub const SEG_QUAD: u8 = 2;
+pub const SEG_CUBIC: u8 = 3;
+pub const SEG_CLOSE: u8 = 4;
 
 /// An affine transform: x' = a x + c y + e, y' = b x + d y + f. The
 /// default is the identity.

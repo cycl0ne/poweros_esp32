@@ -36,6 +36,7 @@ pub const LVO = struct {
     pub const PathBounds = libraries.lvo(21);
     pub const PushLayer = libraries.lvo(22);
     pub const PopLayer = libraries.lvo(23);
+    pub const AddSegments = libraries.lvo(24);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -61,6 +62,7 @@ pub const Fn = struct {
     pub const PathBounds = *const fn (*VectorBase, *const vector.Path, ?*const vector.Matrix, *vector.Rect) callconv(.c) bool;
     pub const PushLayer = *const fn (*VectorBase, *vector.Canvas, f32) callconv(.c) i32;
     pub const PopLayer = *const fn (*VectorBase, *vector.Canvas) callconv(.c) void;
+    pub const AddSegments = *const fn (*VectorBase, *vector.Path, [*]const u8, u32, [*]const vector.Point, u32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -169,5 +171,10 @@ pub const VectorBase = opaque {
     /// The last layer pushed put down on what is under it.
     pub fn PopLayer(self: *VectorBase, canvas: *vector.Canvas) void {
         return libraries.call(self, LVO.PopLayer, Fn.PopLayer, .{canvas});
+    }
+
+    /// Segments onto the path in one call: a verb each (SEG_*) and the points they take, in order; VECTORERR_SYNTAX at a verb it does not know or short of points, the path kept up to it.
+    pub fn AddSegments(self: *VectorBase, path: *vector.Path, verbs: [*]const u8, verb_count: u32, points: [*]const vector.Point, point_count: u32) i32 {
+        return libraries.call(self, LVO.AddSegments, Fn.AddSegments, .{ path, verbs, verb_count, points, point_count });
     }
 };

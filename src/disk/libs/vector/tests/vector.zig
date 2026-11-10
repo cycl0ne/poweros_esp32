@@ -139,7 +139,7 @@ fn canvasOver(vb: *VectorBase, pens: []Pen, width: u32, height: u32) !*vector.Ca
 test "revision 1: arcs, rectangles, ellipses and path data, measured by their bounds" {
     const rig = try Rig.open();
     const vb = rig.vb;
-    try testing.expectEqual(@as(u16, 1), rig.library.revision);
+    try testing.expect(rig.library.revision >= 1);
     const path = vb.CreatePath() orelse return error.NoPath;
     var box: vector.Rect = undefined;
     try testing.expect(!vb.PathBounds(path, null, &box));
@@ -230,5 +230,60 @@ test "shapes on a layer overlap once at its opacity, and one left pushed goes wi
     vb.DisposePath(a);
     vb.DisposePath(b);
     vb.DisposeCanvas(canvas);
+    try rig.close();
+}
+
+// --- since 1.2 ---------------------------------------------------------------------
+
+test "revision 2: a path handed over whole fills as the same path built a segment at a time" {
+    const rig = try Rig.open();
+    const vb = rig.vb;
+    try testing.expectEqual(@as(u16, 2), rig.library.revision);
+    var whole_pens: [12 * 12]Pen = @splat(0);
+    var one_pens: [12 * 12]Pen = @splat(0);
+    const whole_canvas = try canvasOver(vb, &whole_pens, 12, 12);
+    const one_canvas = try canvasOver(vb, &one_pens, 12, 12);
+    const whole = vb.CreatePath() orelse return error.NoPath;
+    const one = vb.CreatePath() orelse return error.NoPath;
+
+    const verbs = [_]u8{ vector.SEG_MOVE, vector.SEG_LINE, vector.SEG_CUBIC, vector.SEG_QUAD, vector.SEG_CLOSE };
+    const points = [_]vector.Point{
+        .{ .x = 1, .y = 1 },  .{ .x = 10, .y = 1 },
+        .{ .x = 12, .y = 5 }, .{ .x = 8, .y = 11 }, .{ .x = 5, .y = 10 },
+        .{ .x = 0, .y = 9 },  .{ .x = 2, .y = 5 },
+    };
+    try testing.expectEqual(vector.VECTOR_OK, vb.AddSegments(whole, &verbs, verbs.len, &points, points.len));
+    vb.MoveTo(one, 1, 1);
+    vb.LineTo(one, 10, 1);
+    vb.CubicTo(one, 12, 5, 8, 11, 5, 10);
+    vb.QuadTo(one, 0, 9, 2, 5);
+    vb.ClosePath(one);
+    const green = vector.Paint{ .colour = .{ .g = 1 } };
+    try testing.expectEqual(vector.VECTOR_OK, vb.FillPath(whole_canvas, whole, null, &green, vector.RULE_NONZERO));
+    _ = vb.FillPath(one_canvas, one, null, &green, vector.RULE_NONZERO);
+    try testing.expectEqualSlices(Pen, &one_pens, &whole_pens);
+    try testing.expectEqual(@as(Pen, 0xFF00FF00), whole_pens[5 * 12 + 5]);
+
+    // A quadratic curve one point short: what came before it is kept.
+    vb.ClearPath(whole);
+    try testing.expectEqual(vector.VECTORERR_SYNTAX, vb.AddSegments(whole, &verbs, 4, &points, 6));
+    vb.ClearPath(one);
+    vb.MoveTo(one, 1, 1);
+    vb.LineTo(one, 10, 1);
+    vb.CubicTo(one, 12, 5, 8, 11, 5, 10);
+    var box: vector.Rect = undefined;
+    var want: vector.Rect = undefined;
+    try testing.expect(vb.PathBounds(whole, null, &box));
+    try testing.expect(vb.PathBounds(one, null, &want));
+    try testing.expectEqual(want, box);
+    // Nothing at all.
+    vb.ClearPath(whole);
+    try testing.expectEqual(vector.VECTOR_OK, vb.AddSegments(whole, &verbs, 0, &points, 0));
+    try testing.expect(!vb.PathBounds(whole, null, &box));
+
+    vb.DisposePath(whole);
+    vb.DisposePath(one);
+    vb.DisposeCanvas(whole_canvas);
+    vb.DisposeCanvas(one_canvas);
     try rig.close();
 }
