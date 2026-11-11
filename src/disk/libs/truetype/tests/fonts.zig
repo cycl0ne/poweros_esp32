@@ -8,7 +8,9 @@
 //! font's measures, its table directory, the character map character by
 //! character, the variation sequences, the names, every glyph's measures.
 //! Every glyph is read as an outline, and the font is rendered at one
-//! size. A test is skipped when its font is not fetched, and fails by the
+//! size: as an image of its characters, and every glyph by its number,
+//! which for a glyph with a character is the image's glyph byte for byte.
+//! A test is skipped when its font is not fetched, and fails by the
 //! font's name when the file is not the one the values were read from.
 //!
 //! The library reads characters by one of a font's maps. To compare the
@@ -55,6 +57,81 @@ fn expectMap(what: []const u8, want_count: u32, want: []const u8, font: *const _
         count += 1;
     }
     try expectDigest(what, want_count, want, count, &digest);
+}
+
+/// The room a glyph is rendered into, the bytes after a glyph's that are
+/// looked at for a write, and what those hold.
+const glyph_room = 256 * 1024;
+const watched = 16;
+const untouched: u8 = 0xAA;
+
+/// What rendering every glyph of a font found.
+const Rendered = struct {
+    /// Glyphs whose outline has a box of some width and height.
+    drawn: u32 = 0,
+    /// Glyphs that came out with ink.
+    inked: u32 = 0,
+};
+
+/// Every glyph of `outline` rendered by its number for a line `rows`
+/// tall into `pixels`, which hold `untouched` and do so again after: each
+/// is rendered, its advance is the font's scaled to the line, its box is
+/// cut to its ink, a row's bytes hold its pixels and nothing after them,
+/// and no byte past the glyph's is written.
+fn expectGlyphsRendered(tb: *TrueTypeBase, outline: *truetype.Outline, metrics: *const truetype.FontMetrics, rows: u32, pixels: []u8) !Rendered {
+    var found: Rendered = .{};
+    const line: i64 = metrics.ascender - metrics.descender;
+    var measures: truetype.GlyphMetrics = .{};
+    var glyph: u32 = 0;
+    while (glyph < metrics.glyph_count) : (glyph += 1) {
+        var image = truetype.GlyphImage{ .pixels = pixels.ptr, .room = glyph_room, .size = 1, .kind = .mono1 };
+        const answer = tb.RenderGlyph(outline, glyph, rows, &image);
+        const box = image.glyph;
+        const size = image.size;
+        errdefer std.debug.print("glyph {d} at {d} rows answers {d}: {d} by {d} at {d}, {d}, advance {d}, {d} bytes a row, {d} bytes\n", .{
+            glyph, rows, answer, box.width, box.rows, box.left, box.top, box.advance, box.pitch, size,
+        });
+        try testing.expectEqual(truetype.TRUETYPE_OK, answer);
+        try testing.expectEqual(fontimage.Kind.alpha4, image.kind);
+        try testing.expectEqual(@as(u32, 0), box.data);
+        try testing.expectEqual(fontimage.pitchOf(.alpha4, box.width), @as(u32, box.pitch));
+        try testing.expectEqual(@as(u32, box.pitch) * box.rows, size);
+        try testing.expect((box.width == 0) == (box.rows == 0));
+        for (pixels[size..][0..watched]) |byte| try testing.expectEqual(untouched, byte);
+
+        // The advance: the font's, scaled, to the nearest pixel.
+        try testing.expect(tb.GlyphMetrics(outline, glyph, &measures));
+        const apart = @abs(@as(i64, box.advance) * line - @as(i64, measures.advance) * rows);
+        try testing.expect(2 * apart <= line + 2);
+
+        if (measures.x_max > measures.x_min and measures.y_max > measures.y_min) found.drawn += 1;
+        if (box.width == 0) continue;
+        found.inked += 1;
+
+        // Cut to the ink: its first and last row and column each have a
+        // pixel covered. A row of an odd width ends in half a byte of
+        // nothing.
+        var top = false;
+        var bottom = false;
+        var left = false;
+        var right = false;
+        const last_at = (box.width - 1) / 2;
+        const last_shift: u3 = if (box.width & 1 == 1) 4 else 0;
+        for (0..box.rows) |y| {
+            const row = pixels[y * box.pitch ..][0..box.pitch];
+            if (box.width & 1 == 1) try testing.expectEqual(@as(u8, 0), row[last_at] & 0x0F);
+            if (row[0] >> 4 != 0) left = true;
+            if ((row[last_at] >> last_shift) & 0x0F != 0) right = true;
+            for (row) |byte| {
+                if (byte == 0) continue;
+                if (y == 0) top = true;
+                if (y == box.rows - 1) bottom = true;
+            }
+        }
+        try testing.expect(top and bottom and left and right);
+        @memset(pixels[0..size], untouched);
+    }
+    return found;
 }
 
 /// The font `expected` is of, read by the library, is what fontTools
@@ -282,9 +359,58 @@ fn expectFont(expected: *const reference.Font) !void {
                 return error.ReadDiffers;
             }
         }
+        // A glyph with a character, rendered by its number, is the
+        // image's glyph byte for byte.
+        const pixels = try testing.allocator.alloc(u8, glyph_room + watched);
+        defer testing.allocator.free(pixels);
+        @memset(pixels, untouched);
+        var compared: u32 = 0;
+        for (ranges) |range| {
+            code = range.first;
+            while (code <= range.last) : (code += 1) {
+                const in_image = fontimage.find(image, code) orelse continue;
+                var one = truetype.GlyphImage{ .pixels = pixels.ptr, .room = glyph_room };
+                const answer = tb.RenderGlyph(outline, tb.GlyphIndex(outline, code), 16, &one);
+                var by_number = one.glyph;
+                by_number.data = in_image.data;
+                const same = answer == truetype.TRUETYPE_OK and one.kind == image.kind and
+                    std.meta.eql(by_number, in_image.*) and
+                    std.mem.eql(u8, fontimage.pixelsOf(image, in_image)[0..one.size], pixels[0..one.size]);
+                if (!same) {
+                    std.debug.print("U+{X:0>4}: by its number it answers {d} and is not the image's glyph\n", .{ code, answer });
+                    return error.ReadDiffers;
+                }
+                for (pixels[one.size..][0..watched]) |byte| try testing.expectEqual(untouched, byte);
+                @memset(pixels[0..one.size], untouched);
+                compared += 1;
+            }
+        }
+        try testing.expect(compared >= 95);
         sys.FreeVec(image);
+
+        // Every glyph by its number, at the image's height and at a
+        // taller one, where each glyph with an outline has ink.
+        _ = try expectGlyphsRendered(tb, outline, &metrics, 16, pixels);
+        const tall = try expectGlyphsRendered(tb, outline, &metrics, 64, pixels);
+        try testing.expectEqual(tall.drawn, tall.inked);
+        try testing.expect(tall.inked > expected.glyph_count / 2);
+        // One past the last.
+        var past = truetype.GlyphImage{ .pixels = pixels.ptr, .room = glyph_room, .size = 1 };
+        try testing.expectEqual(truetype.TRUETYPEERR_GLYPH, tb.RenderGlyph(outline, expected.glyph_count, 16, &past));
+        try testing.expectEqual(@as(u32, 0), past.size);
+        try testing.expectEqual(fontimage.Glyph{}, past.glyph);
     } else {
         try testing.expect(rendered == null);
+        // A font of pictures has no glyph to render by its number.
+        var byte: [1]u8 = .{untouched};
+        var glyph_number: u32 = 0;
+        while (glyph_number < expected.glyph_count) : (glyph_number += 97) {
+            var none_of = truetype.GlyphImage{ .pixels = &byte, .room = 1, .size = 1 };
+            try testing.expectEqual(truetype.TRUETYPEERR_GLYPH, tb.RenderGlyph(outline, glyph_number, 16, &none_of));
+            try testing.expectEqual(@as(u32, 0), none_of.size);
+            try testing.expectEqual(fontimage.Glyph{}, none_of.glyph);
+        }
+        try testing.expectEqual(untouched, byte[0]);
     }
 
     tb.CloseOutline(outline);

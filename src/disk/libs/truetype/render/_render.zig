@@ -96,6 +96,33 @@ pub fn reachOf(rows: u32) f32 {
     return @floatFromInt(reach);
 }
 
+/// The scale of a line `rows` tall: the font's ascender to its descender
+/// made that many pixels.
+pub fn scaleOf(font: *const Font, rows: u32) Scale {
+    const units: f32 = @floatFromInt(font.ascender - font.descender);
+    return .{
+        .factor = @as(f32, @floatFromInt(rows)) / units,
+        .ascender = @floatFromInt(font.ascender),
+        .reach = reachOf(rows),
+    };
+}
+
+/// A glyph's coverage as a font image keeps it: two pixels a byte, the
+/// left one in the high four bits, each row `pitch` bytes. Every byte of
+/// the glyph's rows at `out` is written.
+pub fn pack(glyph: *const Rendered, out: [*]u8, pitch: u32) void {
+    const pixels = glyph.pixels orelse return;
+    for (0..glyph.rows) |y| {
+        const row = pixels + y * glyph.width;
+        const packed_row = out + y * pitch;
+        var x: u32 = 0;
+        while (x < glyph.width) : (x += 2) {
+            const right: u8 = if (x + 1 < glyph.width) row[x + 1] else 0;
+            packed_row[x / 2] = row[x] << 4 | right;
+        }
+    }
+}
+
 /// `glyph` of `font` rendered at `scale`; null only without memory.
 pub fn renderGlyph(sys: *ExecBase, font: *const Font, glyph: u32, scale: Scale, work: *Work) ?Rendered {
     var out = Rendered{ .advance = @min(roundOf(@as(f32, @floatFromInt(_outline.advanceOf(font, glyph))) * scale.factor), most_advance) };

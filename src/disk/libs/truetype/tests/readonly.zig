@@ -187,6 +187,18 @@ test "truetype: no call writes to an outline, to its font or to the base" {
         try testing.expectEqual(@as(u16, 10), j.width);
         try testing.expectEqual(@as(u16, 14), j.rows);
         try testing.expect(fontimage.find(image, 'K') == null);
+        // The glyph by its number: the image's, and the answers of a
+        // room too short, a glyph the font lacks and a line of no rows.
+        var pixels: [80]u8 = undefined;
+        var by_number = truetype.GlyphImage{ .pixels = &pixels, .room = pixels.len };
+        try testing.expectEqual(truetype.TRUETYPE_OK, tb.RenderGlyph(outline, 10, 20, &by_number));
+        try testing.expectEqual(@as(u32, 70), by_number.size);
+        try testing.expectEqual(fontimage.Glyph{ .width = 10, .rows = 14, .top = j.top, .left = j.left, .advance = j.advance, .pitch = 5 }, by_number.glyph);
+        try testing.expectEqualSlices(u8, fontimage.pixelsOf(image, j)[0..70], pixels[0..70]);
+        by_number.room = 69;
+        try testing.expectEqual(truetype.TRUETYPEERR_ROOM, tb.RenderGlyph(outline, 10, 20, &by_number));
+        try testing.expectEqual(truetype.TRUETYPEERR_GLYPH, tb.RenderGlyph(outline, 12, 20, &by_number));
+        try testing.expectEqual(truetype.TRUETYPEERR_ROWS, tb.RenderGlyph(outline, 10, 0, &by_number));
         sys.FreeVec(image);
         try testing.expect(tb.RenderFontImage(outline, 0, &letters, letters.len) == null);
     }
@@ -215,6 +227,16 @@ test "truetype: no call writes to an outline, to its font or to the base" {
         const c = fontimage.find(image, 'C') orelse return error.NoGlyph;
         try testing.expectEqual(@as(i16, 2), c.left);
         try testing.expectEqual(@as(u16, 10), c.width);
+        // The curve and the composite by their numbers.
+        var pixels: [80]u8 = undefined;
+        for ([_]u32{ 2, 3 }) |number| {
+            const in_image = fontimage.find(image, 'A' + number - 1) orelse return error.NoGlyph;
+            var by_number = truetype.GlyphImage{ .pixels = &pixels, .room = pixels.len };
+            try testing.expectEqual(truetype.TRUETYPE_OK, tb.RenderGlyph(outline, number, 20, &by_number));
+            try testing.expectEqual(in_image.left, by_number.glyph.left);
+            try testing.expectEqual(in_image.top, by_number.glyph.top);
+            try testing.expectEqualSlices(u8, fontimage.pixelsOf(image, in_image)[0..by_number.size], pixels[0..by_number.size]);
+        }
         sys.FreeVec(image);
     }
     drawn.free();
@@ -272,6 +294,20 @@ test "truetype: no call writes to a fetched font or its outline" {
     try testing.expect(fontimage.sound(@ptrCast(large), large.size));
     try testing.expectEqual(small.glyph_count, large.glyph_count);
     try testing.expect(fontimage.find(large, 0xE9) != null);
+    // Every glyph by its number, while both images are held; the one of
+    // a character is the small image's.
+    const pixels = try testing.allocator.alloc(u8, 16 * 1024);
+    defer testing.allocator.free(pixels);
+    glyph = 0;
+    while (glyph < expected.glyph_count) : (glyph += 1) {
+        var by_number = truetype.GlyphImage{ .pixels = pixels.ptr, .room = @intCast(pixels.len) };
+        try testing.expectEqual(truetype.TRUETYPE_OK, tb.RenderGlyph(outline, glyph, 12, &by_number));
+    }
+    const e_acute = fontimage.find(small, 0xE9) orelse return error.NoGlyph;
+    var by_number = truetype.GlyphImage{ .pixels = pixels.ptr, .room = @intCast(pixels.len) };
+    try testing.expectEqual(truetype.TRUETYPE_OK, tb.RenderGlyph(outline, tb.GlyphIndex(outline, 0xE9), 12, &by_number));
+    try testing.expectEqual(@as(u32, e_acute.pitch) * e_acute.rows, by_number.size);
+    try testing.expectEqualSlices(u8, fontimage.pixelsOf(small, e_acute)[0..by_number.size], pixels[0..by_number.size]);
     sys.FreeVec(small);
     sys.FreeVec(large);
     closed.free();

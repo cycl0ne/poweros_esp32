@@ -25,6 +25,7 @@ const Kerning = @import("glyph/kerning.zig").Kerning;
 const GlyphVariant = @import("glyph/glyphvariant.zig").GlyphVariant;
 const FontName = @import("outline/fontname.zig").FontName;
 const FontTable = @import("outline/fonttable.zig").FontTable;
+const RenderGlyph = @import("render/renderglyph.zig").RenderGlyph;
 
 /// truetype.library's interface, as the SDK generates it from
 /// sdk/fd/truetype_lib.fd.
@@ -61,6 +62,7 @@ const contract_files = [_][]const u8{
     @embedFile("glyph/glyphvariant.zig"),
     @embedFile("outline/fontname.zig"),
     @embedFile("outline/fonttable.zig"),
+    @embedFile("render/renderglyph.zig"),
 };
 
 fn lvoOpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32, tags: ?[*]const utility.TagItem) callconv(.c) ?*truetype.Outline {
@@ -96,6 +98,9 @@ fn lvoFontName(tb: *TrueTypeBase, outline: *truetype.Outline, name: u32, buffer:
 fn lvoFontTable(tb: *TrueTypeBase, outline: *truetype.Outline, tag: u32, length: *u32) callconv(.c) ?[*]const u8 {
     return FontTable(tb, outline, tag, length);
 }
+fn lvoRenderGlyph(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, rows: u32, image: *truetype.GlyphImage) callconv(.c) i32 {
+    return RenderGlyph(tb, outline, glyph, rows, image);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -113,6 +118,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGlyphVariant),
     vec(lvoFontName),
     vec(lvoFontTable),
+    vec(lvoRenderGlyph),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

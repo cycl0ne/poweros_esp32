@@ -12,12 +12,14 @@
 //!   ends the test run with a segmentation fault, whose trace names the
 //!   function that read.
 //! - It writes nothing outside the room it was given: the bytes after a
-//!   name's room, and the verbs and points after a glyph's, stay as they
-//!   were.
+//!   name's room, the verbs and points after a glyph's, and the bytes
+//!   after a rendered glyph's pixels stay as they were.
 //! - What it answers is sound. A glyph is one the font has; a table
 //!   handed out lies in the file; a name is whole characters of UTF-8 and
 //!   ended; a glyph's verbs and points are counted right and fit the room
-//!   the font's measures promise; an image rendered is a sound font image.
+//!   the font's measures promise; an image rendered is a sound font
+//!   image; a glyph rendered by its number has a box no further out than
+//!   a glyph reaches, and as many bytes as its box says.
 //! - It ends. A table that sends a reader round in circles would keep the
 //!   test run from ending.
 //! - It leaves nothing allocated: exec has as much memory free after a
@@ -68,6 +70,12 @@ const most_segments = 3 * 0x1_0000;
 
 /// How many bytes, verbs or points after a room are watched for a write.
 const watched = 16;
+
+/// The heights a glyph is rendered at by its number, and the bytes the
+/// largest glyph there is takes at the taller: one that reaches sixteen
+/// lines to every side of where it is drawn.
+const glyph_heights = [_]u32{ 9, 1 };
+const glyph_pixels = 64 * 1024;
 
 /// What a watched byte holds, and a watched point.
 const untouched: u8 = 0xAA;
@@ -250,17 +258,22 @@ const Harness = struct {
     arena: Arena,
     verbs: []u8,
     points: []vector.Point,
+    /// The room a glyph is rendered into by its number: every byte of it
+    /// `untouched` between two calls.
+    pixels: []u8,
     /// A fuzzer's file, before it is placed.
     input: []u8,
     seeds: *[seed_count]Seed,
     /// How many files were handed over, how many fonts the library opened
-    /// of them, how many outlines it read and how many images it
-    /// rendered: what tells a run that met the readers from one whose
-    /// files were all refused at the door.
+    /// of them, how many outlines it read, how many images it rendered
+    /// and how many glyphs with ink by their numbers: what tells a run
+    /// that met the readers from one whose files were all refused at the
+    /// door.
     files: u32 = 0,
     opened: u32 = 0,
     outlines: u32 = 0,
     images: u32 = 0,
+    inked: u32 = 0,
 
     /// Where the room comes from. It is kept for as long as a test runs,
     /// so it is not the testing allocator's, which a fuzzing run checks
@@ -274,18 +287,22 @@ const Harness = struct {
         errdefer allocator.free(verbs);
         const points = try allocator.alloc(vector.Point, most_segments + watched);
         errdefer allocator.free(points);
+        const pixels = try allocator.alloc(u8, glyph_pixels + watched);
+        errdefer allocator.free(pixels);
+        @memset(pixels, untouched);
         const input = try allocator.alloc(u8, most_input);
         errdefer allocator.free(input);
         const seeds = try allocator.create([seed_count]Seed);
         errdefer allocator.destroy(seeds);
         buildSeeds(seeds);
-        return .{ .rig = try Rig.up(), .arena = arena, .verbs = verbs, .points = points, .input = input, .seeds = seeds };
+        return .{ .rig = try Rig.up(), .arena = arena, .verbs = verbs, .points = points, .pixels = pixels, .input = input, .seeds = seeds };
     }
 
     /// Everything given back, and nothing of the library's left behind.
     fn down(harness: *Harness) !void {
         allocator.destroy(harness.seeds);
         allocator.free(harness.input);
+        allocator.free(harness.pixels);
         allocator.free(harness.points);
         allocator.free(harness.verbs);
         harness.arena.free();
@@ -361,10 +378,16 @@ const Harness = struct {
             }
         }
 
+        // Whether the font has outlines at all: its first glyph is
+        // rendered, or the font has none to render.
+        var first = truetype.GlyphImage{ .pixels = harness.pixels.ptr, .room = 0 };
+        const drawable = tb.RenderGlyph(outline, 0, 1, &first) != truetype.TRUETYPEERR_GLYPH;
+
         try harness.readNames(outline);
         try harness.readTables(outline, file, directory);
         for (glyphs[0..known], 0..) |glyph, nth| {
             try harness.readGlyph(outline, &metrics, glyph);
+            try harness.renderGlyph(outline, glyph, glyph < glyph_count and drawable);
             _ = tb.Kerning(outline, glyph, glyphs[(nth + 1) % known]);
         }
         try harness.render(outline, 9);
@@ -515,6 +538,72 @@ const Harness = struct {
             else => return error.NoSuchAnswer,
         }
         return .{ .answer = answer, .verb_count = out.verb_count, .point_count = out.point_count };
+    }
+
+    /// One glyph rendered by its number, at each height into room for
+    /// the largest glyph there is and into less. `has` says whether the
+    /// font has outlines and a glyph of that number: such a glyph is
+    /// rendered whatever its data says, and any other refused. Its box
+    /// lies within a glyph's reach, its bytes are what the box says, the
+    /// same whatever the room, and written only where they fit; no byte
+    /// after them is written.
+    fn renderGlyph(harness: *Harness, outline: *truetype.Outline, glyph: u32, has: bool) !void {
+        const tb = harness.rig.tb;
+        const pixels = harness.pixels;
+        for (glyph_heights) |rows| {
+            var whole = truetype.GlyphImage{ .pixels = pixels.ptr, .room = glyph_pixels, .size = 1, .kind = .mono1 };
+            const answer = tb.RenderGlyph(outline, glyph, rows, &whole);
+            try testing.expectEqual(fontimage.Kind.alpha4, whole.kind);
+            if (!has) {
+                try testing.expectEqual(truetype.TRUETYPEERR_GLYPH, answer);
+                try testing.expectEqual(@as(u32, 0), whole.size);
+                try testing.expectEqual(fontimage.Glyph{}, whole.glyph);
+                for (pixels[0..watched]) |byte| try testing.expectEqual(untouched, byte);
+                continue;
+            }
+            try testing.expectEqual(truetype.TRUETYPE_OK, answer);
+            const box = whole.glyph;
+            const size = whole.size;
+            try testing.expectEqual(@as(u32, 0), box.data);
+            try testing.expectEqual(fontimage.pitchOf(.alpha4, box.width), @as(u32, box.pitch));
+            try testing.expectEqual(@as(u32, box.pitch) * box.rows, size);
+            try testing.expect(size <= glyph_pixels);
+            try testing.expect((box.width == 0) == (box.rows == 0));
+            try testing.expect(box.advance >= 0);
+            // Sixteen lines to every side, and a pixel for the edge.
+            const reach: i32 = @intCast(rows * 16 + 1);
+            try testing.expect(box.left >= -reach and box.left + @as(i32, box.width) <= reach);
+            try testing.expect(box.top >= -reach and box.top + @as(i32, box.rows) <= reach);
+            for (pixels[size..][0..watched]) |byte| try testing.expectEqual(untouched, byte);
+            if (box.width != 0) {
+                harness.inked += 1;
+                // A row of an odd width ends in half a byte of nothing.
+                if (box.width & 1 == 1) {
+                    for (0..box.rows) |y| try testing.expectEqual(@as(u8, 0), pixels[(y + 1) * box.pitch - 1] & 0x0F);
+                }
+            }
+            @memset(pixels[0..size], untouched);
+
+            // Less room: the same glyph, written when it fits.
+            for ([_]u32{ 0, 1, size -| 1 }) |room| {
+                var cut = truetype.GlyphImage{ .pixels = pixels.ptr, .room = room, .size = 1, .kind = .mono1 };
+                const fits = size <= room;
+                try testing.expectEqual(if (fits) truetype.TRUETYPE_OK else truetype.TRUETYPEERR_ROOM, tb.RenderGlyph(outline, glyph, rows, &cut));
+                try testing.expectEqual(size, cut.size);
+                try testing.expectEqual(box, cut.glyph);
+                const written = if (fits) size else 0;
+                for (pixels[written..][0..watched]) |byte| try testing.expectEqual(untouched, byte);
+                @memset(pixels[0..written], untouched);
+            }
+        }
+        // A line of no rows, or too tall, whatever the glyph.
+        for ([_]u32{ 0, 4097, 0xFFFF_FFFF }) |rows| {
+            var none = truetype.GlyphImage{ .pixels = pixels.ptr, .room = glyph_pixels, .size = 1, .kind = .mono1 };
+            try testing.expectEqual(truetype.TRUETYPEERR_ROWS, tb.RenderGlyph(outline, glyph, rows, &none));
+            try testing.expectEqual(@as(u32, 0), none.size);
+            try testing.expectEqual(fontimage.Glyph{}, none.glyph);
+            for (pixels[0..watched]) |byte| try testing.expectEqual(untouched, byte);
+        }
     }
 
     /// A font image of `rows` rows, when the library renders one: sound,
@@ -711,6 +800,7 @@ test "truetype: built fonts with bytes changed and cut short" {
     try testing.expect(harness.opened >= harness.files / 2);
     try testing.expect(harness.outlines >= harness.files);
     try testing.expect(harness.images >= harness.files / 2);
+    try testing.expect(harness.inked >= harness.files);
     try harness.down();
 }
 

@@ -2,7 +2,7 @@
 //! DiskFont: fonts opened through diskfont.library, and what it knows of.
 //! Built against the SDK only.
 //!
-//!   DiskFont NAME,SIZE/N/M,DESIGNED/S,POINTS/S,LIST/S
+//!   DiskFont NAME,SIZE/N/M,DESIGNED/S,POINTS/S,LIST/S,GLYPHS/S
 //!
 //! LIST prints every font AvailFonts finds - in memory, scaled, on the
 //! disk - with its height and where it is.
@@ -12,6 +12,13 @@
 //! drawn or scaled, loaded from a disk or in the ROM, and its kind of
 //! pixels, and how long the open took - and draws a line in each in a window on the default public
 //! screen, until the close gadget or Ctrl-C.
+//!
+//! NAME with GLYPHS opens the family's outline and, for each SIZE or for
+//! 16 rows, renders every glyph of it by its number with truetype.library
+//! (RenderGlyph): it prints how many there are, how many have ink, the
+//! bytes the largest takes and how long all of them took. Then it renders
+//! a font image of that height and compares each glyph in it with the
+//! same glyph by its number, byte for byte. No window is opened.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -19,11 +26,14 @@ const exec = sdk.exec;
 const graphics = sdk.graphics;
 const intuition = sdk.intuition;
 const diskfont = sdk.diskfont;
+const truetype = sdk.truetype;
+const fontimage = graphics.fontimage;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
+const TrueTypeBase = sdk.interface.truetype.TrueTypeBase;
 const wn = intuition.windows;
 const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
@@ -32,15 +42,16 @@ const rdargs = dos.rdargs;
 const timer = sdk.devices.timer;
 
 pub const COMMAND_NAME = "DiskFont";
-const VERSION_STRING = "\x00$VER: DiskFont 1.2 (11.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: DiskFont 1.3 (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "NAME,SIZE/N/M,DESIGNED/S,POINTS/S,LIST/S";
+const template = "NAME,SIZE/N/M,DESIGNED/S,POINTS/S,LIST/S,GLYPHS/S";
 const arg_name = 0;
 const arg_size = 1;
 const arg_designed = 2;
 const arg_points = 3;
 const arg_list = 4;
+const arg_glyphs = 5;
 
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_AVAIL = "%-24s %3d  %s\n";
@@ -48,6 +59,12 @@ const MSG_OPENED = "%s %d: got %d rows, %s, %s, %s, in %u us\n";
 const MSG_NOFONT = "%s %d: none that will do\n";
 const MSG_NOWINDOW = "No window\n";
 const MSG_WAITING = "The close gadget or Ctrl-C closes the window\n";
+const MSG_NOOUTLINE = "%s: no outline of that family\n";
+const MSG_OLDLIBRARY = "%s is older than 1.5\n";
+const MSG_NOMEMORY = "No memory\n";
+const MSG_NOTRENDERED = "%s %d: glyph %u answers %d\n";
+const MSG_GLYPHS = "%s %d: %u glyphs rendered by number, %u with ink, the largest %u bytes, in %u us\n";
+const MSG_SAME = "%s %d: %u of the image's %u glyphs are the same by number\n";
 
 /// The line drawn in each font.
 const sample = "The quick brown fox - 0123456789 - ÄÖÜäöüß";
@@ -80,6 +97,101 @@ fn kindName(kind: graphics.fontimage.Kind) [*:0]const u8 {
 }
 
 /// Every font AvailFonts knows, printed.
+/// The characters a font image is rendered of to compare glyphs with.
+const compared = [_]truetype.CodeRange{ .{ .first = 0x20, .last = 0x7E }, .{ .first = 0xA0, .last = 0x24F } };
+
+/// The room a glyph is rendered into.
+const glyph_room = 256 * 1024;
+
+/// The E-clock in microseconds, 0 without timer.device.
+fn microseconds(timer_req: *timer.TimeRequest, timed: bool) u64 {
+    if (!timed) return 0;
+    const tb: *timer.TimerBase = @ptrCast(timer_req.node.device.?);
+    var clock: timer.EClockVal = .{};
+    const rate = tb.ReadEClock(&clock);
+    if (rate == 0) return 0;
+    return clock.toTicks() * 1_000_000 / rate;
+}
+
+/// Every glyph of `name`'s outline rendered by its number at each size
+/// of `argv`, and each compared with a font image's where it has one.
+fn glyphs(sys: *ExecBase, dl: *DosBase, dfb: *DiskfontBase, name: [*:0]const u8, argv: *const [6]usize) i32 {
+    const tt_lib = sys.OpenLibrary(truetype.TRUETYPENAME, 1) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{truetype.TRUETYPENAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(tt_lib);
+    if (tt_lib.version == 1 and tt_lib.revision < 5) {
+        _ = Printf(dl, MSG_OLDLIBRARY, .{truetype.TRUETYPENAME});
+        return dos.RETURN_FAIL;
+    }
+    const tb: *TrueTypeBase = @ptrCast(tt_lib);
+    const of = dfb.OpenOutlineFont(name, graphics.FS_NORMAL) orelse {
+        _ = Printf(dl, MSG_NOOUTLINE, .{name});
+        return dos.RETURN_WARN;
+    };
+    defer dfb.CloseOutlineFont(of);
+    const outline = of.outline;
+    const pixels: [*]u8 = @ptrCast(sys.AllocVec(glyph_room, exec.MEMF_ANY) orelse {
+        _ = Printf(dl, MSG_NOMEMORY, .{});
+        return dos.RETURN_FAIL;
+    });
+    defer sys.FreeVec(pixels);
+    var timer_req: timer.TimeRequest = .{};
+    const timed = sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &timer_req.node, 0) == 0;
+    defer if (timed) sys.CloseDevice(&timer_req.node);
+    var metrics: truetype.FontMetrics = .{};
+    tb.FontMetrics(outline, &metrics);
+
+    var result: i32 = dos.RETURN_OK;
+    const sizes = rdargs.multi(argv[arg_size]);
+    for (0..@max(sizes.len, 1)) |nth| {
+        const rows: u32 = if (sizes.len == 0) 16 else @intCast(rdargs.multiNumber(argv[arg_size], nth));
+        var inked: u32 = 0;
+        var largest: u32 = 0;
+        const began = microseconds(&timer_req, timed);
+        var glyph: u32 = 0;
+        while (glyph < metrics.glyph_count) : (glyph += 1) {
+            var image = truetype.GlyphImage{ .pixels = pixels, .room = glyph_room };
+            const answer = tb.RenderGlyph(outline, glyph, rows, &image);
+            if (answer != truetype.TRUETYPE_OK) {
+                _ = Printf(dl, MSG_NOTRENDERED, .{ name, rows, glyph, answer });
+                return dos.RETURN_WARN;
+            }
+            if (image.size != 0) inked += 1;
+            largest = @max(largest, image.size);
+        }
+        const took: u32 = @intCast(microseconds(&timer_req, timed) - began);
+        _ = Printf(dl, MSG_GLYPHS, .{ name, rows, metrics.glyph_count, inked, largest, took });
+
+        const image = tb.RenderFontImage(outline, rows, &compared, compared.len) orelse continue;
+        defer sys.FreeVec(image);
+        var in_image: u32 = 0;
+        var same: u32 = 0;
+        for (compared) |range| {
+            var code = range.first;
+            while (code <= range.last) : (code += 1) {
+                const expected = fontimage.find(image, code) orelse continue;
+                in_image += 1;
+                var one = truetype.GlyphImage{ .pixels = pixels, .room = glyph_room };
+                if (tb.RenderGlyph(outline, tb.GlyphIndex(outline, code), rows, &one) != truetype.TRUETYPE_OK) continue;
+                const box = one.glyph;
+                if (box.width != expected.width or box.rows != expected.rows or box.top != expected.top or
+                    box.left != expected.left or box.advance != expected.advance or box.pitch != expected.pitch) continue;
+                const wanted = fontimage.pixelsOf(image, expected);
+                var differs = false;
+                for (0..one.size) |at| {
+                    if (pixels[at] != wanted[at]) differs = true;
+                }
+                if (!differs) same += 1;
+            }
+        }
+        _ = Printf(dl, MSG_SAME, .{ name, rows, same, in_image });
+        if (same != in_image) result = dos.RETURN_WARN;
+    }
+    return result;
+}
+
 fn list(sys: *ExecBase, dl: *DosBase, dfb: *DiskfontBase) void {
     var size: u32 = 1024;
     while (true) {
@@ -111,7 +223,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [5]usize = @splat(0);
+    var argv: [6]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -127,6 +239,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     if (argv[arg_list] != 0) list(sys, dl, dfb);
     const name = rdargs.string(argv[arg_name]) orelse return dos.RETURN_OK;
+    if (argv[arg_glyphs] != 0) return glyphs(sys, dl, dfb, name, &argv);
 
     const gfx_lib = sys.OpenLibrary(graphics.GRAPHICSNAME, graphics.GRAPHICS_VERSION) orelse {
         _ = Printf(dl, MSG_NOLIBRARY, .{graphics.GRAPHICSNAME});

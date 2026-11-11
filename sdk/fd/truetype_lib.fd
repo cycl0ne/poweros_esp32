@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! truetype.library's functions: a TrueType file rendered into font
-//! images, one size at a time, since 1.2 its glyphs as outlines, and
-//! since 1.4 a font of a collection, its names and its tables.
+//! images, one size at a time, since 1.2 its glyphs as outlines, since
+//! 1.4 a font of a collection, its names and its tables, and since 1.5
+//! one glyph rendered by its number.
 //! Open it with OpenLibrary("truetype.library", 1).
 ##include libs/utility/utility as utility
 ##include libs/graphics/graphics as graphics
@@ -50,4 +51,9 @@ u32 FontName(*truetype.Outline outline, u32 name, [*]u8 buffer, u32 room)
 /// its length into `length`; null and 0 when the font has none. They are
 /// the file's own bytes. Since 1.4.
 ?[*]const u8 FontTable(*truetype.Outline outline, u32 tag, *u32 length)
+/// One glyph, by its number, rendered for a line `rows` tall into
+/// `image`'s bytes, with its box and advance as a font image has a
+/// glyph's: TRUETYPE_OK, or TRUETYPEERR_ROOM with the bytes it needs.
+/// Since 1.5.
+i32 RenderGlyph(*truetype.Outline outline, u32 glyph, u32 rows, *truetype.GlyphImage image)
 ##end

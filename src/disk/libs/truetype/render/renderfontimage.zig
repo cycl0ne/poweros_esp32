@@ -109,12 +109,7 @@ pub fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32,
     const glyph_count = have + 1;
     const range_count = runs + 1;
 
-    const units: f32 = @floatFromInt(font.ascender - font.descender);
-    const scale = _render.Scale{
-        .factor = @as(f32, @floatFromInt(rows)) / units,
-        .ascender = @floatFromInt(font.ascender),
-        .reach = _render.reachOf(rows),
-    };
+    const scale = _render.scaleOf(font, rows);
 
     var work = _render.Work.init(sys, font) orelse return null;
     defer work.deinit(sys);
@@ -189,13 +184,7 @@ pub fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32,
             .advance = @intCast(g.advance),
             .pitch = @intCast(pitch),
         };
-        if (g.pixels) |pixels| {
-            const out = block + data_at + at;
-            for (0..g.rows) |y| for (0..g.width) |x| {
-                const value = pixels[y * g.width + x];
-                out[y * pitch + x / 2] |= if (x % 2 == 0) value << 4 else value;
-            };
-        }
+        _render.pack(&g, block + data_at + at, pitch);
         at += pitch * g.rows;
         max_width = @max(max_width, g.width);
         if (i < glyph_count - 1 and g.advance != glyphs[0].advance) proportional = true;

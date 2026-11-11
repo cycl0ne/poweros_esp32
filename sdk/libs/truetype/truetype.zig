@@ -24,6 +24,11 @@
 //! be without outlines of this kind - one of pictures - and still maps,
 //! measures and names.
 //!
+//! Since 1.5 one glyph is rendered by its number (`RenderGlyph`), the
+//! way a font image's glyphs are: what a text shaped into glyphs is drawn
+//! with, since a glyph a font's lookups put in has no character to be
+//! found by.
+//!
 //! Open it with OpenLibrary(TRUETYPENAME, 1); its functions are in
 //! sdk/interface/truetype.zig.
 
@@ -110,14 +115,39 @@ pub const Segments = extern struct {
     point_count: u32 = 0,
 };
 
-/// What `GlyphSegments` answers.
+/// What `GlyphSegments` and `RenderGlyph` answer.
 pub const TRUETYPE_OK: i32 = 0;
-/// The arrays are too short: the counts say how long they must be.
+/// The caller's room is too short: the counts say how long it must be.
 pub const TRUETYPEERR_ROOM: i32 = -1;
-/// No glyph of that number, or its data is damaged.
+/// No glyph of that number, its data is damaged, or - rendered - the
+/// font has no outlines.
 pub const TRUETYPEERR_GLYPH: i32 = -2;
 /// There was not the memory to read it.
 pub const TRUETYPEERR_NOMEM: i32 = -3;
+/// A line of no rows, or of more than 4096. Since 1.5.
+pub const TRUETYPEERR_ROWS: i32 = -4;
+
+// --- a glyph by its number (since 1.5) ------------------------------------------
+
+/// A glyph rendered for a line of some height, as `RenderGlyph` gives
+/// it: its pixels in the caller's bytes, and its box and advance.
+pub const GlyphImage = extern struct {
+    /// Where the pixels go: the rows of the box one after another, each
+    /// `glyph.pitch` bytes.
+    pixels: [*]u8,
+    /// How many bytes `pixels` holds.
+    room: u32,
+    /// How many the glyph took - or, when they did not fit, needs:
+    /// `glyph.pitch` times `glyph.rows`. None for a glyph with no ink.
+    size: u32 = 0,
+    /// What a pixel is: `alpha4`, four bits of coverage, two pixels a
+    /// byte, the left one high.
+    kind: graphics.fontimage.Kind = .alpha4,
+    /// The box, from the point and from the top of the line, and the
+    /// advance, in pixels. `data` is 0: where the pixels are kept is the
+    /// caller's to say.
+    glyph: graphics.fontimage.Glyph = .{},
+};
 
 // --- which font, its names and its tables (since 1.4) ---------------------------
 

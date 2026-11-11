@@ -1,8 +1,9 @@
 # truetype.library
 
 truetype.library's functions: a TrueType file rendered into font
-images, one size at a time, since 1.2 its glyphs as outlines, and
-since 1.4 a font of a collection, its names and its tables.
+images, one size at a time, since 1.2 its glyphs as outlines, since
+1.4 a font of a collection, its names and its tables, and since 1.5
+one glyph rendered by its number.
 Open it with OpenLibrary("truetype.library", 1).
 
 Generated from the source by `./zig build autodoc`.
@@ -20,6 +21,7 @@ Generated from the source by `./zig build autodoc`.
 - [Kerning](#kerning) - How much further apart two glyphs are drawn side by side.
 - [OpenOutline](#openoutline) - A font of a TrueType file, opened for rendering.
 - [RenderFontImage](#renderfontimage) - One size of an outline, as a font image.
+- [RenderGlyph](#renderglyph) - One glyph of an outline, by its number, as a font image has a glyph.
 
 ## CloseOutline
 
@@ -756,4 +758,100 @@ two half-covered columns.
 const latin1 = [_]truetype.CodeRange{ .{ .first = 0x20, .last = 0x7E }, .{ .first = 0xA0, .last = 0xFF } };
 const image = tb.RenderFontImage(outline, 24, &latin1, latin1.len) orelse return;
 defer sys.FreeVec(image);
+```
+
+## RenderGlyph
+
+One glyph of an outline, by its number, as a font image has a glyph.
+
+**SYNOPSIS**
+
+```zig
+fn RenderGlyph(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, rows: u32, image: *truetype.GlyphImage) i32
+```
+
+**SINCE**
+
+1.5. LVO -64.
+
+**INPUTS**
+
+- `outline` - what `OpenOutline` answered.
+- `glyph` - the glyph's number: from `GlyphIndex`, `GlyphVariant`, or
+  a shaped run.
+- `rows` - how tall a line is, 1 to 4096: the font's ascender to its
+  descender is scaled to this.
+- `image` - the caller's bytes for the pixels and how many there are;
+  the rest of it is set.
+
+**RESULT**
+
+- `TRUETYPE_OK` - the glyph is in `image`: its box and advance in
+  `glyph`, `size` bytes of pixels written. A glyph with no ink - a
+  space - has a box of nothing, no bytes, and its advance.
+- `TRUETYPEERR_ROOM` - the pixels did not fit: `size` says how many
+  bytes they take and `glyph` is set, and nothing is written.
+- `TRUETYPEERR_GLYPH` - no glyph of that number, or a font without
+  outlines.
+- `TRUETYPEERR_ROWS` - a height of 0 or more than 4096.
+- `TRUETYPEERR_NOMEM` - no memory to render it in.
+
+With every answer but the first two, `size` is 0 and `glyph` is a
+glyph of nothing.
+
+**BEHAVIOR**
+
+The glyph is rendered as `RenderFontImage` renders the glyphs of a
+font image `rows` tall, and comes out the same byte for byte: its
+outline scaled so that the line is `rows` tall, each pixel given how
+much of it the outline covers, in fifteenths. `image.kind` says what
+the bytes are - `alpha4`, two pixels a byte, the left one in the high
+four bits - and `image.glyph` is a font image's glyph: the box of its
+ink, `left` columns from the point and `top` rows down from the top
+of the line, the bytes from one row to the next, and the advance in
+whole pixels. Its `data` is 0.
+
+A glyph the file is damaged in - its data cut short, its outline
+further than sixteen lines from where it is drawn - is one of no ink,
+with its advance; an advance is 32767 pixels at most.
+
+The outline is only read, and what the call works in is its own: any
+number of tasks render from one outline at once.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`image` and its bytes are the caller's. The call allocates the room
+it renders in and gives it back before it returns.
+
+**NOTES**
+
+An answer of `TRUETYPEERR_ROOM` has cost the rendering: a caller that
+keeps room for the glyphs it mostly draws, and asks again with more
+for the few that are larger, renders those twice.
+
+**BUGS**
+
+No hinting: stems at small sizes may fall between pixels and show as
+two half-covered columns.
+
+**SEE ALSO**
+
+`RenderFontImage`, `GlyphIndex`, `GlyphMetrics`,
+`truetypeshaping.library/ShapeText`
+
+**EXAMPLES**
+
+```zig
+var bytes: [1024]u8 = undefined;
+var image = sdk.truetype.GlyphImage{ .pixels = &bytes, .room = bytes.len };
+if (tb.RenderGlyph(outline, glyph, 24, &image) == sdk.truetype.TRUETYPE_OK) {
+    // image.glyph.width by image.glyph.rows pixels in bytes[0..image.size].
+}
 ```

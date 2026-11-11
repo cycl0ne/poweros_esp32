@@ -588,6 +588,42 @@ has no `GPOS`, a mark left on its letter moves back onto it by its
 advance and is not set by its outline's box. svg.datatype lays its text
 out with this call.
 
+**A glyph by its number** (truetype.library 1.5). A shaped run names
+glyphs, and many of them - a ligature, the form a letter has at the end
+of a word - have no character a font image could list them under.
+`RenderGlyph(outline, glyph, rows, image)` renders one glyph for a line
+`rows` tall into the caller's bytes, the way a font image has a glyph:
+`image.glyph` is its box and advance (a `fontimage.Glyph`: `left` from
+the point, `top` down from the top of the line, `pitch` bytes from one
+row to the next), `image.kind` says what the bytes are (`alpha4`), and
+`image.size` how many of them were written. The glyph comes out byte for
+byte as `RenderFontImage` renders it at that height, so text drawn from
+an image and glyphs drawn by number are one font. `TRUETYPEERR_ROOM`
+says the bytes were too few: `size` and the box are set and nothing is
+written. A glyph with no ink is `TRUETYPE_OK` with no bytes and its
+advance; a font whose glyphs are pictures has none to render
+(`TRUETYPEERR_GLYPH`). A shaped run's advances and offsets are in the
+font's units, and `rows` over the font's ascender less its descender
+makes them pixels of this line.
+
+```zig
+var fm: sdk.truetype.FontMetrics = .{};
+tb.FontMetrics(outline, &fm);
+const line = fm.ascender - fm.descender;
+var bytes: [4096]u8 = undefined;
+var image = sdk.truetype.GlyphImage{ .pixels = &bytes, .room = bytes.len };
+var x: i32 = 0;
+for (glyphs[0..run.count]) |shaped| {
+    if (tb.RenderGlyph(outline, shaped.glyph, 24, &image) == sdk.truetype.TRUETYPE_OK) {
+        const left = @divFloor((x + shaped.x_offset) * 24, line) + image.glyph.left;
+        const top = image.glyph.top - @divFloor(shaped.y_offset * 24, line);
+        // image.glyph.width by image.glyph.rows pixels of coverage in
+        // bytes[0..image.size], drawn at left, top of the line.
+    }
+    x += shaped.advance;
+}
+```
+
 ## The system's fonts
 
 intuition.library holds three fonts, by `SYSFONT_*`:
@@ -686,4 +722,4 @@ if (gb.RemFont(&mine.font)) sys.FreeVec(mine); // true once nobody holds it
 | `C:SetPrefs` | sets the system's fonts, with the rest of its settings, from `ENV:Sys`; `SHOW` prints them |
 | `SYS:Programs/Prefs` | picks the system's fonts and the desktop icons' in a window and writes `font.prefs` |
 | `SYS:Programs/FontView` | fonts and sizes in a window, the one chosen drawn |
-| `C:test/DiskFont`, `C:test/Fonts` | test programs: open sizes and time them; draw a size file |
+| `C:test/DiskFont`, `C:test/Fonts` | test programs: open sizes and time them, or with `GLYPHS` render every glyph of an outline by its number and compare with a font image; draw a size file |
