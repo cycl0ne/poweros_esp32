@@ -3829,7 +3829,8 @@ graphics.library/XorRegionRegion
 	    fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) void
 
    SINCE
-	0.11, UTF-8 since 0.38. LVO -132.
+	0.11, UTF-8 since 0.38, fonts of 32-bit colour since 0.39.
+	LVO -132.
 
    INPUTS
 	- `rp` - the RastPort. Its font, pens, draw mode, style and clip decide
@@ -3861,10 +3862,14 @@ graphics.library/XorRegionRegion
 	because text goes through the same plot as every other primitive.
 
 	A font of coverage lays the pen over what is there by how much of each
-	pixel the letter covers, so its edges are smooth on any paper; a
-	colour font lays each pixel's own colour, and draws the part it marks
-	as the pen in the pen. Both lay the paper first under `DRMD_JAM2`, and
-	under `DRMD_COMPLEMENT` invert where a pixel is half covered or more.
+	pixel the letter covers, so its edges are smooth on any paper. A font
+	of palette entries lays each pixel's own colour, and draws the entry
+	it names as the pen's in the pen. A font of 32-bit colour lays each
+	pixel's colour by how much of the pixel it covers, and nothing of it
+	is the pen's: it looks the same whatever the pens are, and
+	`DRMD_INVERSVID` changes only the paper under it. All three lay the
+	paper first under `DRMD_JAM2`, and under `DRMD_COMPLEMENT` invert
+	where a pixel is half covered or more.
 
 	The styles are drawn rather than stored: **bold** is the glyph over
 	itself one pixel right (or as far as the font says), *italic* leans each row further right as it

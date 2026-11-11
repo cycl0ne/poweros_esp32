@@ -42,7 +42,7 @@ const timer = sdk.devices.timer;
 const TimerBase = timer.TimerBase;
 
 pub const COMMAND_NAME = "Fonts";
-const VERSION_STRING = "\x00$VER: Fonts 1.3 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Fonts 1.4 (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K/N,NOWINDOW/S,TIMES/S,FILE/K";
@@ -251,7 +251,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             return dos.RETURN_FAIL;
         }
         file_added = true;
-        colour_file = image.kind == .indexed8;
+        colour_file = image.kind == .indexed8 or image.kind == .rgba32;
         shown[0].font = gb.OpenFont(&.{ .name = path, .y_size = image.height });
         shown[0].height = image.height;
         var i: usize = 0;

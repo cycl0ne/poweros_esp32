@@ -17,12 +17,12 @@
 //! - **glyphs** - a `Glyph` for each: where its pixels are, the box
 //!   they fill, where the box sits from the point, and how far the
 //!   point moves.
-//! - **palette** - for a colour font only, ARGB entries.
+//! - **palette** - for a font of palette entries only, ARGB entries.
 //! - **data** - the pixels, each glyph's rows one after another.
 //!
 //! A glyph's box is its ink, not its cell: a space has none, an 'x' has
 //! only the rows the x fills, and `top` says how far down the line it
-//! starts. Its pixels are one of three kinds, the same for the whole
+//! starts. Its pixels are one of four kinds, the same for the whole
 //! font:
 //!
 //! | kind | a pixel | 0 |
@@ -30,11 +30,16 @@
 //! | `mono1` | one bit, the leftmost in a byte's highest | no ink |
 //! | `alpha4` | four bits, two to a byte, the left one high; 15 is full ink | no ink |
 //! | `indexed8` | a byte, an entry of the palette | transparent |
+//! | `rgba32` | four bytes: red, green, blue, and how much of the pixel it covers, 255 all of it | a coverage of 0 is transparent |
 //!
-//! In a colour font one palette entry can stand for the pen: `pen_index`
-//! names it, and that entry is drawn in the RastPort's foreground pen
-//! with the entry's own alpha, so a font with a coloured shadow still
-//! takes the caller's text colour for its body.
+//! In a font of palette entries one entry can stand for the pen:
+//! `pen_index` names it, and that entry is drawn in the RastPort's
+//! foreground pen with the entry's own alpha, so a font with a coloured
+//! shadow still takes the caller's text colour for its body. A font of
+//! `rgba32` has no palette and nothing of it is the pen's: every pixel
+//! is the colour it says, which is not multiplied by its coverage - a
+//! picture's pixel as a PNG decodes to, so a glyph that is a picture
+//! goes in as it is.
 //!
 //! Codes are Unicode code points, so a font carries any of them; text is
 //! drawn from UTF-8. A code the font has no glyph for is drawn as its
@@ -66,6 +71,9 @@ pub const Kind = enum(u8) {
     alpha4 = 1,
     /// A byte a pixel: an entry of the palette, 0 transparent.
     indexed8 = 2,
+    /// Four bytes a pixel: red, green, blue, and how much of the pixel
+    /// the colour covers, 0 to 255. The colour is not multiplied by it.
+    rgba32 = 3,
     _,
 };
 
@@ -154,6 +162,7 @@ pub fn pitchOf(kind: Kind, width: u32) u32 {
     return switch (kind) {
         .mono1 => (width + 7) / 8,
         .alpha4 => (width + 1) / 2,
+        .rgba32 => width * 4,
         else => width,
     };
 }
@@ -176,7 +185,7 @@ pub fn glyphsOf(image: *const FontImage) []const Glyph {
     return at[0..image.glyph_count];
 }
 
-/// The palette of `image`, empty for a font that is not colour.
+/// The palette of `image`, empty for a font that has none.
 ///
 /// INPUTS:
 /// - `image` - a block `check` has passed.
@@ -241,9 +250,9 @@ pub fn glyphFor(image: *const FontImage, code: u32) *const Glyph {
 /// without reading outside it.
 ///
 /// Every table and every glyph's pixels are inside the block, the ranges
-/// are sorted and name glyphs that exist, the kind is known, a colour
-/// font has a palette and its pen entry is in it, and the default
-/// character has a glyph.
+/// are sorted and name glyphs that exist, the kind is known, a font of
+/// palette entries has a palette and its pen entry is in it, and the
+/// default character has a glyph.
 ///
 /// INPUTS:
 /// - `block` - the start of the block, four-byte aligned.
@@ -255,7 +264,7 @@ pub fn check(block: [*]const u8, size: u32) bool {
     if (image.header_size < @sizeOf(FontImage) or image.size > size) return false;
     if (image.height == 0 or image.baseline > image.height) return false;
     switch (image.kind) {
-        .mono1, .alpha4 => {},
+        .mono1, .alpha4, .rgba32 => {},
         .indexed8 => {
             if (image.palette_count == 0 or image.palette_count > 256) return false;
             if (image.pen_index != NO_PEN and image.pen_index >= image.palette_count) return false;

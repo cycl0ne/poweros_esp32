@@ -53,8 +53,8 @@ const Base = gadgets.Base;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "font.datatype",
     .version = 1,
-    .revision = 1,
-    .date = "28.10.2026",
+    .revision = 2,
+    .date = "11.11.2026",
     .super = pic.PICTUREDTCLASS,
     .opens = &.{ pic.PICTURE_LIBRARY, sdk.diskfont.DISKFONTNAME, sdk.dos.DOSNAME },
     .Instance = Data,
@@ -151,7 +151,8 @@ fn openSizes(dfb: *DiskfontBase, name: [*:0]const u8, entries: []const fontfile.
     var colour = false;
     for (entries) |*entry| {
         if (entry.outline != 0) outline = true;
-        if (entry.kind == @intFromEnum(graphics.fontimage.Kind.indexed8)) colour = true;
+        if (entry.kind == @intFromEnum(graphics.fontimage.Kind.indexed8) or
+            entry.kind == @intFromEnum(graphics.fontimage.Kind.rgba32)) colour = true;
     }
 
     if (outline) {

@@ -424,6 +424,71 @@ test "NewScaledDiskFont: the caller's, freed with FreeVec" {
     rig.sysLib().FreeVec(double);
 }
 
+/// 4 rows, 32-bit colour: 'r' is red whole, then green covering half.
+const rgba_spec = fontimage.Spec{
+    .height = 4,
+    .baseline = 3,
+    .x_size = 3,
+    .kind = .rgba32,
+    .default_char = 'r',
+    .glyphs = &.{.{ .code = 'r', .advance = 3, .top = 1, .width = 2, .rows = 1, .pixels = &.{
+        0xFF, 0, 0,    0xFF,
+        0,    0, 0xFF, 0x80,
+    } }},
+};
+const rgba_image: [fontimage.imageSize(rgba_spec)]u8 align(4) = fontimage.build(rgba_spec);
+
+test "NewScaledDiskFont: a font of 32-bit colour keeps every pixel's four bytes; a size no image holds is refused" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    const gb = rig.graphicsLib();
+    var colour = graphics.TextFont{ .node = .{ .name = "rgba.font" }, .image = @ptrCast(&rgba_image) };
+
+    const double = rig.dfb.NewScaledDiskFont(&colour, &.{ .name = "", .y_size = 8 }) orelse return error.NoFont;
+    try testing.expectEqual(fontimage.Kind.rgba32, double.image.kind);
+    try testing.expectEqual(@as(u16, 8), double.image.height);
+    try testing.expectEqual(@as(u32, 0), double.image.palette_count);
+    try testing.expectEqual(fontimage.NO_PEN, double.image.pen_index);
+    try testing.expect(fontimage.check(@ptrCast(double.image), double.image.size));
+    try testing.expect(fontimage.sound(@ptrCast(double.image), double.image.size));
+    // Every pixel doubled each way, its colour and its coverage whole.
+    const glyph = fontimage.glyphFor(double.image, 'r');
+    try testing.expectEqual(@as(u16, 4), glyph.width);
+    try testing.expectEqual(@as(u16, 2), glyph.rows);
+    try testing.expectEqual(@as(i16, 2), glyph.top);
+    try testing.expectEqual(@as(i16, 6), glyph.advance);
+    try testing.expectEqual(@as(u16, 16), glyph.pitch);
+    const row = [_]u8{
+        0xFF, 0, 0,    0xFF, 0xFF, 0, 0,    0xFF,
+        0,    0, 0xFF, 0x80, 0,    0, 0xFF, 0x80,
+    };
+    const px = fontimage.pixelsOf(double.image, glyph);
+    try testing.expectEqualSlices(u8, &row, px[0..16]);
+    try testing.expectEqualSlices(u8, &row, px[16..32]);
+    rig.sysLib().FreeVec(double);
+
+    // Three rows from four: the nearest pixel, never a mix of two.
+    const small = rig.dfb.NewScaledDiskFont(&colour, &.{ .name = "", .y_size = 3 }) orelse return error.NoFont;
+    try testing.expect(fontimage.check(@ptrCast(small.image), small.image.size));
+    const small_glyph = fontimage.glyphFor(small.image, 'r');
+    const small_px = fontimage.pixelsOf(small.image, small_glyph);
+    for (0..small_glyph.rows) |y| for (0..small_glyph.width) |x| {
+        const pixel = small_px[y * small_glyph.pitch + x * 4 ..][0..4];
+        const red = std.mem.eql(u8, pixel, &.{ 0xFF, 0, 0, 0xFF });
+        const blue = std.mem.eql(u8, pixel, &.{ 0, 0, 0xFF, 0x80 });
+        try testing.expect(red or blue);
+    };
+    rig.sysLib().FreeVec(small);
+
+    // A row of more than 65535 bytes, and a box wider than 32767
+    // pixels: no font image holds either, and none is made.
+    try testing.expect(rig.dfb.NewScaledDiskFont(&colour, &.{ .name = "", .y_size = 40000 }) == null);
+    const pospaz = gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }).?;
+    defer gb.CloseFont(pospaz);
+    try testing.expect(rig.dfb.NewScaledDiskFont(pospaz, &.{ .name = "", .y_size = 65535 }) == null);
+}
+
 fn outlinesLoaded(rig: *Rig) usize {
     const real: *_base.DiskfontBase = @ptrCast(@alignCast(rig.dfb));
     var n: usize = 0;

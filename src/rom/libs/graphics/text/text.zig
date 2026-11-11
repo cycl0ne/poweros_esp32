@@ -30,7 +30,8 @@ const Piece = drawing.Piece;
 /// fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) void
 /// ```
 ///
-/// SINCE: 0.11, UTF-8 since 0.38. LVO -132.
+/// SINCE: 0.11, UTF-8 since 0.38, fonts of 32-bit colour since 0.39.
+/// LVO -132.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. Its font, pens, draw mode, style and clip decide
@@ -62,10 +63,14 @@ const Piece = drawing.Piece;
 /// because text goes through the same plot as every other primitive.
 ///
 /// A font of coverage lays the pen over what is there by how much of each
-/// pixel the letter covers, so its edges are smooth on any paper; a
-/// colour font lays each pixel's own colour, and draws the part it marks
-/// as the pen in the pen. Both lay the paper first under `DRMD_JAM2`, and
-/// under `DRMD_COMPLEMENT` invert where a pixel is half covered or more.
+/// pixel the letter covers, so its edges are smooth on any paper. A font
+/// of palette entries lays each pixel's own colour, and draws the entry
+/// it names as the pen's in the pen. A font of 32-bit colour lays each
+/// pixel's colour by how much of the pixel it covers, and nothing of it
+/// is the pen's: it looks the same whatever the pens are, and
+/// `DRMD_INVERSVID` changes only the paper under it. All three lay the
+/// paper first under `DRMD_JAM2`, and under `DRMD_COMPLEMENT` invert
+/// where a pixel is half covered or more.
 ///
 /// The styles are drawn rather than stored: **bold** is the glyph over
 /// itself one pixel right (or as far as the font says), *italic* leans each row further right as it
@@ -324,6 +329,17 @@ fn composeGlyph(rp: *RastPort, piece: Piece, look: Look, glyph: *const Glyph, at
         var col: i32 = @max(0, r.min_x - left);
         const end = @min(wide, r.max_x - left);
         while (col < end) : (col += 1) {
+            if (image.kind == .rgba32) {
+                var colour = colourAt(source, glyph.width, col);
+                // Bold is the glyph over itself, moved right: where the
+                // two meet, the one that covers more of the pixel.
+                if (look.smear != 0) {
+                    const behind = colourAt(source, glyph.width, col - look.smear);
+                    if (behind >> 24 > colour >> 24) colour = behind;
+                }
+                layPixel(rp, piece, left + col, y, colour);
+                continue;
+            }
             var value = sample(image.kind, source, glyph.width, col);
             // Bold is the glyph over itself, moved right: the stronger of
             // the two where they meet.
@@ -336,7 +352,16 @@ fn composeGlyph(rp: *RastPort, piece: Piece, look: Look, glyph: *const Glyph, at
     }
 }
 
-/// The pixel at `col` of a glyph's row, 0 outside it.
+/// The pixel at `col` of a row of 32-bit colour, as a pen: its colour
+/// with its coverage as the alpha, transparent outside the row.
+fn colourAt(source: [*]const u8, width: u16, col: i32) graphics.Pen {
+    if (col < 0 or col >= width) return 0;
+    const pixel = source + @as(u32, @intCast(col)) * 4;
+    return graphics.penARGB(pixel[3], pixel[0], pixel[1], pixel[2]);
+}
+
+/// The pixel at `col` of a glyph's row of coverage or palette entries, 0
+/// outside it.
 fn sample(kind: fontimage.Kind, source: [*]const u8, width: u16, col: i32) u8 {
     if (col < 0 or col >= width) return 0;
     const at: u32 = @intCast(col);
@@ -358,6 +383,12 @@ fn inkPixel(rp: *RastPort, piece: Piece, image: *const fontimage.FontImage, x: i
         if (value == image.pen_index) break :blk withAlpha(pen, (pen >> 24) * (entry >> 24) / 255);
         break :blk entry;
     };
+    layPixel(rp, piece, x, y, colour);
+}
+
+/// One pixel of a glyph in `colour`, laid over what is there by the
+/// colour's alpha, or under `DRMD_COMPLEMENT` inverting it.
+fn layPixel(rp: *RastPort, piece: Piece, x: i32, y: i32, colour: graphics.Pen) void {
     // Inverting has no amount: a pixel half covered or more is the
     // letter, and is inverted.
     if (rp.draw_mode & graphics.DRMD_COMPLEMENT != 0) {

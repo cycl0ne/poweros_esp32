@@ -35,7 +35,7 @@ it lies - in the ROM, in a file, or read from one into memory.
 | Range[]          |  first code, last code, first glyph - sorted
 +------------------+  .glyphs
 | Glyph[]          |  data offset, box, top, left, advance, pitch
-+------------------+  .palette (colour fonts only)
++------------------+  .palette (fonts of palette entries only)
 | u32[] ARGB       |
 +------------------+  .data
 | pixels           |  each glyph's rows, one after another
@@ -73,17 +73,24 @@ the line the box starts, `left` how far right of the point (less than
 zero reaches back under the character before), `advance` how far the
 point moves after it.
 
-**A pixel is one of three kinds**, the same for the whole font:
+**A pixel is one of four kinds**, the same for the whole font:
 
 | `kind` | A pixel | 0 means |
 |---|---|---|
 | `mono1` | one bit, the leftmost in a byte's highest | no ink |
 | `alpha4` | four bits, two to a byte, the left one high; 15 is full ink | no ink |
 | `indexed8` | one byte, an entry of the palette | transparent |
+| `rgba32` | four bytes: red, green, blue, and how much of the pixel the colour covers, 0 to 255 | - |
 
-A colour font may name one palette entry `pen_index`: that entry is drawn
-in the RastPort's foreground pen with the entry's own alpha, so a font
-with a coloured shadow still takes the caller's text colour for its body.
+A font of `indexed8` may name one palette entry `pen_index`: that entry is
+drawn in the RastPort's foreground pen with the entry's own alpha, so a
+font with a coloured shadow still takes the caller's text colour for its
+body.
+
+A font of `rgba32` is a picture of each character: every pixel has its
+own colour, laid over what is there by its coverage, and the colour is
+stored as it is, not multiplied by the coverage. It has no palette and
+nothing of it is the pen's.
 
 `fontimage.check(block, size)` says whether a block holds together (every
 table inside it, ranges sorted, the default character there);
@@ -121,12 +128,16 @@ gb.Text(rp, "Hello", 5);
   `DRMD_COMPLEMENT` inverts. A font of coverage lays the pen over what is
   there by how much of each pixel the letter covers, so its edges are
   smooth on any ground; under `DRMD_COMPLEMENT` a pixel half covered or
-  more is inverted.
+  more is inverted. A font of 32-bit colour is drawn in its own colours
+  in every mode: the pens colour only the paper under `DRMD_JAM2`, and
+  `DRMD_INVERSVID` changes which pen that is.
 - **Styles are drawn, not stored.** `FSF_BOLD` draws each glyph again
   `bold_smear` to the right, `FSF_ITALIC` leans the rows, `FSF_UNDERLINED`
   draws a line under the run, `FSF_EXTENDED` sets the letters a pixel
   further apart. Bold widens every advance by one as well, for the glyph
-  drawn again, so a run in either is longer than the plain one. A style the
+  drawn again, so a run in either is longer than the plain one. Where the
+  two drawings of a glyph of 32-bit colour meet, the pixel covering more
+  is the one drawn. A style the
   font was drawn with (its `style`) is not added again - a family's own
   bold face, which diskfont.library answers for `FSF_BOLD` where one is
   installed, is drawn as it is.
@@ -712,7 +723,7 @@ if (gb.RemFont(&mine.font)) sys.FreeVec(mine); // true once nobody holds it
 
 | | |
 |---|---|
-| `tools/fontconv` | on the host: BDF, Amiga font files (colour too) and TrueType files into size files and a contents file; `--alpha N` for coverage from a larger drawing, `--shadow` for a shadowed colour font |
+| `tools/fontconv` | on the host: BDF, Amiga font files (colour too) and TrueType files into size files and a contents file; `--alpha N` for coverage from a larger drawing, `--shadow` for a shadowed colour font, `--rgba` to write a colour font with 32-bit pixels |
 | `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces and Liberation's (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation only onto the 64-bit machines' disks. With them two fonts only the host tests read, which go on no disk: Noto Sans Devanagari and Noto Color Emoji |
 | `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
 | `scripts/shape-reference.py` | on the host: applies the fetched fonts' `GSUB` and `GPOS` lookups to runs of glyphs - every glyph of a font, and sequences its lookups have rules for - with an applier of its own on fontTools' reading of the tables, and writes what comes out, a digest for each script, language and feature list, as the Zig files `truetypeshaping.library`'s host tests compare its shaping with (`src/disk/libs/truetypeshaping/tests/reference/`). `--check` says whether the files are the ones it would write, `--show <font> <case>` prints a case's runs |

@@ -42,7 +42,7 @@ const rdargs = dos.rdargs;
 const timer = sdk.devices.timer;
 
 pub const COMMAND_NAME = "DiskFont";
-const VERSION_STRING = "\x00$VER: DiskFont 1.3 (11.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: DiskFont 1.4 (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "NAME,SIZE/N/M,DESIGNED/S,POINTS/S,LIST/S,GLYPHS/S";
@@ -92,6 +92,7 @@ fn kindName(kind: graphics.fontimage.Kind) [*:0]const u8 {
         .mono1 => "ink",
         .alpha4 => "coverage",
         .indexed8 => "colour",
+        .rgba32 => "full colour",
         else => "?",
     };
 }

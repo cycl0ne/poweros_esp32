@@ -71,13 +71,14 @@ pub const LIBRARY_VERSION = 0;
 /// that measure and fit it read characters, `TextFit` never stops inside
 /// one, and a letter with marks a font lacks is drawn as its base letter;
 /// the ROM fonts gain the punctuation, currency and letters of code page
-/// 1252 past Latin-1. The version stays 0 until there is something to
-/// demand of it.
-pub const LIBRARY_REVISION = 38;
+/// 1252 past Latin-1. 39: a font of 32-bit colour (`rgba32`) is drawn,
+/// each pixel's own colour laid over by its coverage. The version stays
+/// 0 until there is something to demand of it.
+pub const LIBRARY_REVISION = 39;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.
-const BUILD_DATE = "10.11.2026";
+const BUILD_DATE = "11.11.2026";
 
 /// The `$VER:` string, NUL first so that a scan of the image finds it and
 /// `id_string` can start one byte in as a plain C string.

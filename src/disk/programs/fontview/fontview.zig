@@ -41,8 +41,8 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FontView";
-const VERSION = "1.3";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (10.11.2026)\r\n";
+const VERSION = "1.4";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -222,6 +222,7 @@ fn describe(state: *State, font: *graphics.TextFont) void {
         .mono1 => "ink",
         .alpha4 => "smooth",
         .indexed8 => "colour",
+        .rgba32 => "full colour",
         else => "?",
     };
     const spacing: []const u8 = if (image.flags & graphics.FPF_PROPORTIONAL != 0) "proportional" else "fixed width";

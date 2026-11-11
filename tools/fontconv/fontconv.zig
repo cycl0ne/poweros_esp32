@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! fontconv: fonts from the host's formats into the system's.
 //!
-//!   fontconv <out dir> <family> [--alpha N] [--shadow] <source>...
+//!   fontconv <out dir> <family> [--alpha N] [--shadow] [--rgba] <source>...
 //!
 //! Each source is one size of the family: a BDF file, an Amiga size load
 //! file, or an Amiga contents file, which brings every size it lists. Each
@@ -14,7 +14,10 @@
 //! `--alpha N` takes sources drawn N times too large (2 or 4) and makes
 //! fonts of coverage at 1/N their size, each pixel the share of its N by N
 //! square that is ink. `--shadow` makes colour fonts: the letter in the
-//! pen and a translucent shadow one pixel down and right.
+//! pen and a translucent shadow one pixel down and right. `--rgba` writes
+//! a colour font with 32-bit pixels, each its own colour and how much of
+//! the pixel that covers, and no palette; what stood for the pen is drawn
+//! in the colour the palette has there.
 //!
 //! Every character a source has from 32 up is kept, under its Unicode
 //! code point: text is UTF-8, and graphics draws a letter with marks a
@@ -39,13 +42,14 @@ fn fatal(comptime format: []const u8, args: anytype) noreturn {
 const Options = struct {
     alpha: u32 = 0,
     shadow: bool = false,
+    rgba: bool = false,
 };
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len < 4) fatal("usage: fontconv <out dir> <family> [--alpha N] [--shadow] <source>...", .{});
+    if (args.len < 4) fatal("usage: fontconv <out dir> <family> [--alpha N] [--shadow] [--rgba] <source>...", .{});
     const out_dir = args[1];
     const family = args[2];
 
@@ -60,6 +64,8 @@ pub fn main(init: std.process.Init) !void {
             if (options.alpha != 2 and options.alpha != 4) fatal("--alpha {d}: 2 or 4", .{options.alpha});
         } else if (std.mem.eql(u8, args[i], "--shadow")) {
             options.shadow = true;
+        } else if (std.mem.eql(u8, args[i], "--rgba")) {
+            options.rgba = true;
         } else {
             try sources.append(arena, args[i]);
         }
@@ -118,6 +124,10 @@ fn convert(gpa: Allocator, bytes: []const u8, options: Options) !Font {
     if (options.shadow) {
         if (font.kind != .mono1) return error.NotInk;
         font = try font_mod.shadowed(gpa, &font);
+    }
+    if (options.rgba) {
+        if (font.kind != .indexed8) return error.NotColour;
+        font = font_mod.fullColour(&font);
     }
     return font;
 }
@@ -299,6 +309,39 @@ test "a shadow: the letter in the pen, a shadow down and right" {
     try testing.expectEqual(@as(u16, 2), i.width);
     const px = fontimage.pixelsOf(header, i);
     try testing.expectEqualSlices(u8, &.{ 1, 0, 0, 2, 1, 0, 1, 2, 0, 2 }, px[0..10]);
+}
+
+test "32-bit colour: each pixel its palette entry's colour, no palette, nothing of the pen's" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    const font = try bdf.read(gpa, small_bdf);
+    const shadow = try font_mod.shadowed(gpa, &font);
+    const full = font_mod.fullColour(&shadow);
+    try testing.expectEqual(fontimage.Kind.rgba32, full.kind);
+    const image = try font_mod.encode(gpa, &full);
+    try testing.expect(fontimage.check(image.ptr, @intCast(image.len)));
+    const header: *const fontimage.FontImage = @ptrCast(image.ptr);
+    try testing.expectEqual(fontimage.Kind.rgba32, header.kind);
+    try testing.expectEqual(@as(u32, 0), header.palette_count);
+    try testing.expectEqual(@as(u32, 0), header.palette);
+    try testing.expectEqual(fontimage.NO_PEN, header.pen_index);
+    // 'i' as the shadowed font has it: the letter white and whole, its
+    // shadow black at half strength, the rest nothing.
+    const i = fontimage.find(header, 'i').?;
+    try testing.expectEqual(@as(u16, 2), i.width);
+    try testing.expectEqual(@as(u16, 8), i.pitch);
+    const px = fontimage.pixelsOf(header, i);
+    try testing.expectEqualSlices(u8, &.{
+        0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0,
+        0,    0,    0,    0,    0, 0, 0, 0x80,
+        0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0,
+    }, px[0..24]);
+
+    // Only a font of palette entries has colours to write.
+    try testing.expectError(error.NotColour, convert(gpa, small_bdf, .{ .rgba = true }));
+    const made = try convert(gpa, small_bdf, .{ .shadow = true, .rgba = true });
+    try testing.expectEqual(fontimage.Kind.rgba32, made.kind);
 }
 
 test "a family: the contents file lists every size, sorted, and is sound" {

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 //! A font as fontconv holds it between reading and writing, and what is
 //! done to it on the way: cropping, coverage from a larger drawing, a
-//! shadow, and the image it becomes.
+//! shadow, 32-bit colour, and the image it becomes.
 //!
 //! Every pixel here is a byte - 0 or 1 for ink, 0 to 15 for coverage, a
-//! palette index for colour - so reading, cropping and turning one kind
-//! into another never deal in bits. Only `encode` packs them into the
-//! kind's own form.
+//! palette index for colour of either kind - so reading, cropping and
+//! turning one kind into another never deal in bits. Only `encode` packs
+//! them into the kind's own form: for `rgba32` each pixel's palette entry
+//! written out as the pixel's own colour, and no palette in the image.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -118,8 +119,10 @@ pub fn encode(gpa: Allocator, font: *const Font) ![]align(4) u8 {
     }
     const ranges_at: u32 = @sizeOf(fontimage.FontImage);
     const glyphs_at = ranges_at + range_count * @sizeOf(fontimage.Range);
+    // A font of 32-bit colour carries its colours in its pixels.
+    const kept: []const u32 = if (font.kind == .rgba32) &.{} else font.palette;
     const palette_at = glyphs_at + @as(u32, @intCast(font.glyphs.len)) * @sizeOf(fontimage.Glyph);
-    const data_at = palette_at + @as(u32, @intCast(font.palette.len)) * 4;
+    const data_at = palette_at + @as(u32, @intCast(kept.len)) * 4;
     const size = data_at + ((data_size + 3) & ~@as(u32, 3));
 
     const out = try gpa.alignedAlloc(u8, .@"4", size);
@@ -148,11 +151,11 @@ pub fn encode(gpa: Allocator, font: *const Font) ![]align(4) u8 {
             .advance = @intCast(glyph.advance),
             .pitch = @intCast(pitch),
         };
-        pack(font.kind, glyph, out[data_at + data ..][0 .. pitch * glyph.rows], pitch);
+        pack(font, glyph, out[data_at + data ..][0 .. pitch * glyph.rows], pitch);
         data += pitch * glyph.rows;
         max_width = @max(max_width, glyph.width);
     }
-    for (font.palette, 0..) |entry, i| palette[i] = entry;
+    for (kept, 0..) |entry, i| palette[i] = entry;
 
     const header: *fontimage.FontImage = @ptrCast(out.ptr);
     header.* = .{
@@ -170,9 +173,9 @@ pub fn encode(gpa: Allocator, font: *const Font) ![]align(4) u8 {
         .ranges = ranges_at,
         .glyph_count = @intCast(font.glyphs.len),
         .glyphs = glyphs_at,
-        .palette_count = @intCast(font.palette.len),
-        .palette = if (font.palette.len != 0) palette_at else 0,
-        .pen_index = font.pen_index,
+        .palette_count = @intCast(kept.len),
+        .palette = if (kept.len != 0) palette_at else 0,
+        .pen_index = if (font.kind == .rgba32) fontimage.NO_PEN else font.pen_index,
         .data_size = data_size,
         .data = data_at,
     };
@@ -180,17 +183,26 @@ pub fn encode(gpa: Allocator, font: *const Font) ![]align(4) u8 {
     return out;
 }
 
-/// A glyph's pixels into the kind's own form.
-fn pack(kind: fontimage.Kind, glyph: Glyph, out: []u8, pitch: u32) void {
+/// A glyph's pixels into the form of the font's kind.
+fn pack(font: *const Font, glyph: Glyph, out: []u8, pitch: u32) void {
     for (0..glyph.rows) |y| for (0..glyph.width) |x| {
         const value = glyph.pixels[y * glyph.width + x];
         const row = out[y * pitch ..];
-        switch (kind) {
+        switch (font.kind) {
             .mono1 => if (value != 0) {
                 row[x / 8] |= @as(u8, 0x80) >> @intCast(x % 8);
             },
             .alpha4 => row[x / 2] |= if (x % 2 == 0) value << 4 else value & 0x0F,
-            else => row[x] = value,
+            .indexed8 => row[x] = value,
+            .rgba32 => {
+                // Red, green, blue, and how much of the pixel it covers.
+                const entry = if (value < font.palette.len) font.palette[value] else 0;
+                row[x * 4 + 0] = @truncate(entry >> 16);
+                row[x * 4 + 1] = @truncate(entry >> 8);
+                row[x * 4 + 2] = @truncate(entry);
+                row[x * 4 + 3] = @truncate(entry >> 24);
+            },
+            _ => {},
         }
     };
 }
@@ -277,5 +289,20 @@ pub fn shadowed(gpa: Allocator, source: *const Font) !Font {
     font.pen_index = 1;
     // The shadow of the lowest row falls one row below it.
     font.height = source.height + 1;
+    return font;
+}
+
+/// The colour font `source` as one of 32-bit colour: every pixel its
+/// palette entry's colour, and how much of the pixel that covers. The
+/// glyphs are `source`'s own.
+///
+/// An entry that stood for the pen is drawn in the colour the palette
+/// has at it: a font of 32-bit colour has nothing of the pen's.
+///
+/// INPUTS:
+/// - `source` - a font of palette entries, tidy.
+pub fn fullColour(source: *const Font) Font {
+    var font = source.*;
+    font.kind = .rgba32;
     return font;
 }

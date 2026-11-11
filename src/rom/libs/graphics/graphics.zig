@@ -3658,6 +3658,23 @@ const colour_spec = fontimage.Spec{
 };
 const colour_font: [fontimage.imageSize(colour_spec)]u8 align(4) = fontimage.build(colour_spec);
 
+/// 4 rows, 32-bit colour: 'r' is red whole, green covering 0x80 of 0xFF,
+/// blue covering 0x7F, and a colour covering nothing.
+const rgba_spec = fontimage.Spec{
+    .height = 4,
+    .baseline = 3,
+    .x_size = 5,
+    .kind = .rgba32,
+    .default_char = 'r',
+    .glyphs = &.{testGlyph('r', 5, 0, 1, 4, 1, &.{
+        0xFF, 0,    0,    0xFF,
+        0,    0xFF, 0,    0x80,
+        0,    0,    0xFF, 0x7F,
+        0x12, 0x34, 0x56, 0,
+    })},
+};
+const rgba_font: [fontimage.imageSize(rgba_spec)]u8 align(4) = fontimage.build(rgba_spec);
+
 test "font images: built, checked, and refused when they do not hold together" {
     try testing.expect(fontimage.check(&prop_font, prop_font.len));
     try testing.expect(fontimage.check(&alpha_font, alpha_font.len));
@@ -3693,6 +3710,21 @@ test "font images: built, checked, and refused when they do not hold together" {
     const colour_header: *fontimage.FontImage = @ptrCast(&colour);
     colour_header.pen_index = 3;
     try testing.expect(!fontimage.check(&colour, colour.len));
+
+    // 32-bit colour: four bytes a pixel, no palette, nothing of the
+    // pen's; a row shorter than its pixels is refused.
+    try testing.expect(fontimage.check(&rgba_font, rgba_font.len));
+    try testing.expect(fontimage.sound(&rgba_font, rgba_font.len));
+    try testing.expectEqual(@as(u32, 16), fontimage.pitchOf(.rgba32, 4));
+    const rgba_image: *const fontimage.FontImage = @ptrCast(&rgba_font);
+    try testing.expectEqual(@as(u32, 0), rgba_image.palette_count);
+    try testing.expectEqual(fontimage.NO_PEN, rgba_image.pen_index);
+    try testing.expectEqual(@as(u16, 16), fontimage.find(rgba_image, 'r').?.pitch);
+    var narrow: [rgba_font.len]u8 align(4) = rgba_font;
+    const narrow_header: *fontimage.FontImage = @ptrCast(&narrow);
+    const narrow_glyphs: [*]fontimage.Glyph = @ptrCast(@alignCast(@as([*]u8, &narrow) + narrow_header.glyphs));
+    narrow_glyphs[0].pitch = 15;
+    try testing.expect(!fontimage.check(&narrow, narrow.len));
 }
 
 test "text in any shape: proportional, large, coverage and colour" {
@@ -3820,6 +3852,166 @@ test "text in any shape: proportional, large, coverage and colour" {
     base(gb).FreeRastPort(rp);
     try testing.expect(base(gb).RemFont(@ptrCast(&prop)));
     try tearDown(gb);
+}
+
+/// The pixel at (x, y) of a surface of two or four bytes a pixel, read a
+/// byte at a time, the first the lowest.
+fn pixelOf(surface: *const rtg.Surface, x: u32, y: u32) u32 {
+    const bytes = rtg.bitmaps.formatBits(surface.format) / 8;
+    const at = surface.pixels.? + @as(usize, y) * surface.pitch + x * bytes;
+    var value: u32 = 0;
+    for (0..bytes) |i| value |= @as(u32, at[i]) << @intCast(i * 8);
+    return value;
+}
+
+/// Every pixel of a surface set to `pen`.
+fn groundOf(surface: *const rtg.Surface, pen: graphics.Pen) void {
+    const bytes = rtg.bitmaps.formatBits(surface.format) / 8;
+    const value = rastport.packPen(surface.format, pen).?;
+    var at: usize = 0;
+    while (at < surface.size_bytes) : (at += bytes) {
+        for (0..bytes) |i| surface.pixels.?[at + i] = @truncate(value >> @intCast(i * 8));
+    }
+}
+
+/// What `colour` laid over `ground` by its alpha is on a surface of
+/// `format`: over the ground as the surface holds it, which on rgb565 is
+/// the nearest colour of its 65536.
+fn laidOver(format: rtg.bitmaps.PixelFormat, colour: graphics.Pen, ground: graphics.Pen) u32 {
+    const held = rastport.unpackPen(format, rastport.packPen(format, ground).?);
+    return rastport.packPen(format, drawing.over(colour, held)).?;
+}
+
+/// A font of 32-bit colour drawn in every draw mode on a surface of
+/// `format`: each pixel its own colour, laid over by its coverage,
+/// whatever the pens are.
+fn rgbaText(format: rtg.bitmaps.PixelFormat) !void {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [16 * 8 * 4]u8 = @splat(0);
+    const bytes = rtg.bitmaps.formatBits(format) / 8;
+    var surface = sizedSurface(pixels[0 .. 16 * 8 * bytes], format, 16, 8);
+    const black = graphics.penRGB(0, 0, 0);
+    const white = graphics.penRGB(255, 255, 255);
+    const yellow = graphics.penRGB(255, 255, 0);
+    const purple = graphics.penRGB(128, 0, 128);
+    const red = graphics.penARGB(0xFF, 0xFF, 0, 0);
+    const green = graphics.penARGB(0x80, 0, 0xFF, 0);
+    const blue = graphics.penARGB(0x7F, 0, 0, 0xFF);
+    var font = fonts.TextFont{ .node = .{ .name = "rgba.font" }, .image = @ptrCast(&rgba_font) };
+    const tags = [_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
+        .{ .tag = graphics.RPTAG_APen, .data = yellow },
+        .{ .tag = graphics.RPTAG_BPen, .data = purple },
+        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&font) },
+        .{},
+    };
+    const rp = base(gb).CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    const on_black = laidOver(format, black, black);
+
+    // It is measured as any font: its advance.
+    try testing.expectEqual(@as(i32, 10), base(gb).TextLength(rp, "rr", 2));
+
+    // JAM1: the colours over what is there, by how much each covers.
+    // The pen is yellow and nothing of the letter is.
+    groundOf(&surface, black);
+    base(gb).Move(rp, 1, 3);
+    base(gb).Text(rp, "r", 1);
+    try testing.expectEqual(laidOver(format, red, black), pixelOf(&surface, 1, 1));
+    try testing.expectEqual(laidOver(format, green, black), pixelOf(&surface, 2, 1));
+    try testing.expectEqual(laidOver(format, blue, black), pixelOf(&surface, 3, 1));
+    try testing.expectEqual(on_black, pixelOf(&surface, 4, 1));
+    try testing.expectEqual(on_black, pixelOf(&surface, 1, 0));
+    try testing.expectEqual(on_black, pixelOf(&surface, 1, 2));
+    const port: *rastport.RastPort = @ptrCast(@alignCast(rp));
+    try testing.expectEqual(@as(i32, 6), port.cp_x);
+    // Over white the half-covered pixels come out lighter.
+    groundOf(&surface, white);
+    base(gb).Move(rp, 1, 3);
+    base(gb).Text(rp, "r", 1);
+    try testing.expectEqual(laidOver(format, red, white), pixelOf(&surface, 1, 1));
+    try testing.expectEqual(laidOver(format, green, white), pixelOf(&surface, 2, 1));
+    try testing.expectEqual(laidOver(format, blue, white), pixelOf(&surface, 3, 1));
+    try testing.expectEqual(laidOver(format, white, white), pixelOf(&surface, 4, 1));
+    try testing.expect(laidOver(format, green, white) != laidOver(format, green, black));
+
+    // JAM2: the paper under the cell, the colours over the paper.
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM2 }, .{} });
+    groundOf(&surface, black);
+    base(gb).Move(rp, 1, 3);
+    base(gb).Text(rp, "r", 1);
+    const paper = laidOver(format, purple, black);
+    try testing.expectEqual(laidOver(format, red, purple), pixelOf(&surface, 1, 1));
+    try testing.expectEqual(laidOver(format, green, purple), pixelOf(&surface, 2, 1));
+    try testing.expectEqual(laidOver(format, blue, purple), pixelOf(&surface, 3, 1));
+    try testing.expectEqual(paper, pixelOf(&surface, 4, 1));
+    try testing.expectEqual(paper, pixelOf(&surface, 5, 1));
+    try testing.expectEqual(paper, pixelOf(&surface, 1, 0));
+    try testing.expectEqual(paper, pixelOf(&surface, 5, 3));
+    try testing.expectEqual(on_black, pixelOf(&surface, 6, 1));
+    try testing.expectEqual(on_black, pixelOf(&surface, 0, 1));
+    try testing.expectEqual(on_black, pixelOf(&surface, 1, 4));
+
+    // Inverse video swaps the pens, so the paper is the other one, and
+    // the letter keeps its colours.
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM2 | graphics.DRMD_INVERSVID }, .{} });
+    groundOf(&surface, black);
+    base(gb).Move(rp, 1, 3);
+    base(gb).Text(rp, "r", 1);
+    try testing.expectEqual(laidOver(format, red, yellow), pixelOf(&surface, 1, 1));
+    try testing.expectEqual(laidOver(format, green, yellow), pixelOf(&surface, 2, 1));
+    try testing.expectEqual(laidOver(format, blue, yellow), pixelOf(&surface, 3, 1));
+    try testing.expectEqual(laidOver(format, yellow, black), pixelOf(&surface, 4, 1));
+    // With no paper it changes nothing.
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 | graphics.DRMD_INVERSVID }, .{} });
+    groundOf(&surface, black);
+    base(gb).Move(rp, 1, 3);
+    base(gb).Text(rp, "r", 1);
+    try testing.expectEqual(laidOver(format, red, black), pixelOf(&surface, 1, 1));
+    try testing.expectEqual(laidOver(format, green, black), pixelOf(&surface, 2, 1));
+    try testing.expectEqual(on_black, pixelOf(&surface, 4, 1));
+
+    // Complement inverts where the letter covers half a pixel or more,
+    // and drawn twice it is gone.
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_COMPLEMENT }, .{} });
+    groundOf(&surface, black);
+    base(gb).Move(rp, 1, 3);
+    base(gb).Text(rp, "r", 1);
+    try testing.expect(pixelOf(&surface, 1, 1) != on_black);
+    try testing.expectEqual(pixelOf(&surface, 1, 1), pixelOf(&surface, 2, 1));
+    try testing.expectEqual(on_black, pixelOf(&surface, 3, 1));
+    try testing.expectEqual(on_black, pixelOf(&surface, 4, 1));
+    base(gb).Move(rp, 1, 3);
+    base(gb).Text(rp, "r", 1);
+    for (0..8) |y| for (0..16) |x| try testing.expectEqual(on_black, pixelOf(&surface, @intCast(x), @intCast(y)));
+
+    // Bold is the letter over itself one to the right: of two pixels
+    // that meet, the one covering more.
+    base(gb).SetRPAttrs(rp, &.{
+        .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 },
+        .{ .tag = graphics.RPTAG_TextStyle, .data = graphics.FSF_BOLD },
+        .{},
+    });
+    groundOf(&surface, black);
+    base(gb).Move(rp, 1, 3);
+    base(gb).Text(rp, "r", 1);
+    try testing.expectEqual(laidOver(format, red, black), pixelOf(&surface, 1, 1));
+    try testing.expectEqual(laidOver(format, red, black), pixelOf(&surface, 2, 1));
+    try testing.expectEqual(laidOver(format, green, black), pixelOf(&surface, 3, 1));
+    try testing.expectEqual(laidOver(format, blue, black), pixelOf(&surface, 4, 1));
+    try testing.expectEqual(on_black, pixelOf(&surface, 5, 1));
+
+    base(gb).FreeRastPort(rp);
+    try tearDown(gb);
+}
+
+test "text of 32-bit colour on rgb565: each pixel its own colour in every draw mode" {
+    try rgbaText(.rgb565);
+}
+
+test "text of 32-bit colour on bgra32: each pixel its own colour in every draw mode" {
+    try rgbaText(.bgra32);
 }
 
 /// A font for the matching test: `listSpec` at `rows`, drawn in `style`,

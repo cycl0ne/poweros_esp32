@@ -28,16 +28,18 @@ const _font = @import("_font.zig");
 ///
 /// RESULT:
 /// The new font, on no list and open to nobody, or null for a height of
-/// 0 or no memory.
+/// 0, a height at which a glyph's box, row or advance is more than a
+/// font image holds (32767 pixels, 65535 bytes a row), or no memory.
 ///
 /// BEHAVIOR:
 /// Every glyph is scaled by the ratio of the heights, across as much as
 /// down, so a fixed-width font stays fixed-width and letters keep their
 /// shape. Each pixel of the new glyph takes the value of the pixel of the
 /// old one under its middle - nearest, not blended, so ink stays ink,
-/// coverage keeps its steps and a colour font's pixels stay palette
-/// entries. The boxes, the advances, the width and the baseline scale
-/// with them, rounded. Glyphs several characters share are scaled once.
+/// coverage keeps its steps, palette entries stay palette entries and a
+/// pixel of 32-bit colour keeps its colour and coverage. The boxes, the
+/// advances, the width and the baseline scale with them, rounded. Glyphs
+/// several characters share are scaled once.
 ///
 /// The new font has the old one's name, styles and palette, and is not
 /// `FPF_DESIGNED`: it was made, not drawn.
@@ -76,10 +78,14 @@ pub fn NewScaledDiskFont(dfb: *DiskfontBase, font: *TextFont, text_attr: *const 
     const palette = fontimage.paletteOf(from);
 
     // The layout, and each glyph's new box, in a first pass.
-    var data: u32 = 0;
+    var total: u64 = 0;
     for (from_glyphs, 0..) |*glyph, i| {
-        if (sharedWith(from_glyphs, i) == null) data += pitchedSize(from.kind, scale.box(glyph));
+        const box = scale.box(glyph);
+        if (!holds(from.kind, box, scale.of(glyph.advance))) return null;
+        if (sharedWith(from_glyphs, i) == null) total += pitchedSize(from.kind, box);
     }
+    if (total > most_data) return null;
+    const data: u32 = @intCast(total);
     const ranges_at: u32 = @sizeOf(FontImage);
     const glyphs_at = ranges_at + @as(u32, @intCast(ranges.len)) * @sizeOf(fontimage.Range);
     const palette_at = glyphs_at + @as(u32, @intCast(from_glyphs.len)) * @sizeOf(Glyph);
@@ -184,6 +190,21 @@ fn pitchedSize(kind: fontimage.Kind, box: Box) u32 {
     return fontimage.pitchOf(kind, box.width) * box.rows;
 }
 
+/// The most bytes of pixels a scaled font is made with: what is left of
+/// four gigabytes after any tables.
+const most_data = 0xF000_0000;
+
+/// Whether a scaled glyph is one a font image holds: its box, where the
+/// box sits and its advance in sixteen bits with a sign, and the bytes of
+/// a row in sixteen without.
+fn holds(kind: fontimage.Kind, box: Box, advance: i32) bool {
+    const most = 0x7FFF;
+    if (box.width > most or box.rows > most) return false;
+    if (box.left < -most or box.left > most or box.top < -most or box.top > most) return false;
+    if (advance < -most or advance > most) return false;
+    return fontimage.pitchOf(kind, box.width) <= 0xFFFF;
+}
+
 /// The first glyph before `i` whose pixels `i` shares, if any.
 fn sharedWith(glyphs: []const Glyph, i: usize) ?usize {
     const glyph = glyphs[i];
@@ -195,22 +216,28 @@ fn sharedWith(glyphs: []const Glyph, i: usize) ?usize {
     return null;
 }
 
-/// Pixel `x` of a row, as the kind stores it.
-fn get(kind: fontimage.Kind, row: [*]const u8, x: u32) u8 {
+/// Pixel `x` of a row, as the kind stores it: a bit, four bits, a byte,
+/// or the four bytes of a colour, the first lowest.
+fn get(kind: fontimage.Kind, row: [*]const u8, x: u32) u32 {
     return switch (kind) {
         .mono1 => row[x / 8] >> @intCast(7 - x % 8) & 1,
         .alpha4 => if (x % 2 == 0) row[x / 2] >> 4 else row[x / 2] & 0x0F,
+        .rgba32 => @as(u32, row[x * 4]) | @as(u32, row[x * 4 + 1]) << 8 |
+            @as(u32, row[x * 4 + 2]) << 16 | @as(u32, row[x * 4 + 3]) << 24,
         else => row[x],
     };
 }
 
 /// Pixel `x` of a row set, as the kind stores it. The row starts zeroed.
-fn put(kind: fontimage.Kind, row: [*]u8, x: u32, value: u8) void {
+fn put(kind: fontimage.Kind, row: [*]u8, x: u32, value: u32) void {
     switch (kind) {
         .mono1 => if (value != 0) {
             row[x / 8] |= @as(u8, 0x80) >> @intCast(x % 8);
         },
-        .alpha4 => row[x / 2] |= if (x % 2 == 0) value << 4 else value,
-        else => row[x] = value,
+        .alpha4 => row[x / 2] |= @intCast(if (x % 2 == 0) value << 4 else value),
+        .rgba32 => for (0..4) |byte| {
+            row[x * 4 + byte] = @truncate(value >> @intCast(byte * 8));
+        },
+        else => row[x] = @intCast(value),
     }
 }

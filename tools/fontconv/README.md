@@ -5,7 +5,7 @@ image byte for byte (`sdk/libs/graphics/fontimage.zig`) and a family's
 contents file listing its sizes (`sdk/libs/diskfont/fontfile.zig`).
 
 ```
-fontconv <out dir> <family> [--alpha N] [--shadow] <source>...
+fontconv <out dir> <family> [--alpha N] [--shadow] [--rgba] <source>...
 ```
 
 Writes `<out dir>/<family>/<rows>` for each source and
@@ -21,7 +21,10 @@ Writes `<out dir>/<family>/<rows>` for each source and
 `--alpha N` reads sources drawn 2 or 4 times too large and writes fonts
 of coverage (four bits a pixel) at their size divided by N. `--shadow`
 writes a colour font: each letter in the pen, a translucent black
-shadow one pixel down and right.
+shadow one pixel down and right. `--rgba` writes a colour font with
+32-bit pixels - red, green, blue, and how much of the pixel the colour
+covers - and no palette; a pixel that stood for the pen has the colour
+the palette had there, since such a font takes nothing from the pen.
 
 The build runs it on what `scripts/fetch-fonts.sh` fetched and puts
 the result in `SYS:fonts` (`FONTS:`). Its tests run with

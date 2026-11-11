@@ -210,16 +210,18 @@ diskfont.library/OpenOutlineFont
 
    RESULT
 	The new font, on no list and open to nobody, or null for a height of
-	0 or no memory.
+	0, a height at which a glyph's box, row or advance is more than a
+	font image holds (32767 pixels, 65535 bytes a row), or no memory.
 
    BEHAVIOR
 	Every glyph is scaled by the ratio of the heights, across as much as
 	down, so a fixed-width font stays fixed-width and letters keep their
 	shape. Each pixel of the new glyph takes the value of the pixel of the
 	old one under its middle - nearest, not blended, so ink stays ink,
-	coverage keeps its steps and a colour font's pixels stay palette
-	entries. The boxes, the advances, the width and the baseline scale
-	with them, rounded. Glyphs several characters share are scaled once.
+	coverage keeps its steps, palette entries stay palette entries and a
+	pixel of 32-bit colour keeps its colour and coverage. The boxes, the
+	advances, the width and the baseline scale with them, rounded. Glyphs
+	several characters share are scaled once.
 
 	The new font has the old one's name, styles and palette, and is not
 	`FPF_DESIGNED`: it was made, not drawn.

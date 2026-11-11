@@ -9,9 +9,10 @@
 //! it is made is one line of it, however many sizes there are.
 //!
 //! A glyph is drawn straight from the font's image, in whichever of the
-//! three kinds it is: a bit of `mono1` is ink, a pixel of `alpha4` covers
-//! by sixteenths, and one of `indexed8` is its palette entry - the pen's
-//! entry in the ink - at that entry's own alpha.
+//! four kinds it is: a bit of `mono1` is ink, a pixel of `alpha4` covers
+//! by sixteenths, one of `indexed8` is its palette entry - the pen's
+//! entry in the ink - at that entry's own alpha, and one of `rgba32` is
+//! its own colour at its own coverage.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -254,6 +255,11 @@ pub const Band = struct {
                         const own = if (index == image.pen_index) colour else entry & 0xFFFFFF;
                         band.blend(px, py, own, entry >> 24);
                     },
+                    .rgba32 => {
+                        const pixel = line + @as(usize, column) * 4;
+                        const own = @as(u32, pixel[0]) << 16 | @as(u32, pixel[1]) << 8 | pixel[2];
+                        band.blend(px, py, own, pixel[3]);
+                    },
                     _ => return,
                 }
             }
@@ -392,4 +398,33 @@ test "font.datatype: a line is drawn on paper, its glyphs in the ink" {
     // Beside it, paper.
     const beside = (top * width + left + 2) * 3;
     try testing.expectEqualSlices(u8, &.{ 0xFF, 0xFF, 0xFF }, rgb[beside .. beside + 3]);
+}
+
+/// A font of 32-bit colour: 'r' is red whole, then blue covering half.
+const colour_font align(4) = fontimage.build(.{
+    .height = 4,
+    .baseline = 3,
+    .x_size = 3,
+    .kind = .rgba32,
+    .default_char = 'r',
+    .glyphs = &.{.{ .code = 'r', .advance = 3, .top = 1, .width = 2, .rows = 1, .pixels = &.{
+        0xFF, 0, 0,    0xFF,
+        0,    0, 0xFF, 0x80,
+    } }},
+});
+
+test "font.datatype: a glyph of 32-bit colour is drawn in its own colours, by its coverage" {
+    const image: *const FontImage = @ptrCast(@alignCast(&colour_font));
+    var rgb: [4 * 4 * 3]u8 = undefined;
+    const band = Band{ .rgb = &rgb, .width = 4, .height = 4 };
+    band.fill(0xFFFFFF);
+    // The ink is black, and nothing of the letter is.
+    band.text(image, 1, 3, "r", 0x000000);
+    const row = 1 * 4 * 3;
+    try testing.expectEqualSlices(u8, &.{ 0xFF, 0xFF, 0xFF }, rgb[row .. row + 3]);
+    try testing.expectEqualSlices(u8, &.{ 0xFF, 0, 0 }, rgb[row + 3 .. row + 6]);
+    try testing.expectEqualSlices(u8, &.{ 127, 127, 0xFF }, rgb[row + 6 .. row + 9]);
+    try testing.expectEqualSlices(u8, &.{ 0xFF, 0xFF, 0xFF }, rgb[row + 9 .. row + 12]);
+    // The rows above and below are paper.
+    for ([_]usize{ 0, 2, 3 }) |y| for (0..4 * 3) |i| try testing.expectEqual(@as(u8, 0xFF), rgb[y * 12 + i]);
 }

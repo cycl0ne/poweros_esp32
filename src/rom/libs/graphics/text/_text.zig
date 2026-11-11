@@ -37,10 +37,12 @@
 //! the draw modes: `DRMD_JAM1` leaves the paper alone, `DRMD_JAM2` lays
 //! the background pen down behind the letters, and `DRMD_COMPLEMENT`
 //! inverts them into whatever is there. Coverage (`alpha4`) is the pen
-//! laid over what is there by how much of each pixel the letter covers,
-//! and colour (`indexed8`) is each pixel's palette entry laid over, with
-//! the one entry the font names drawn in the pen instead. Both are
-//! composed here, pixel by pixel, after the paper when there is any.
+//! laid over what is there by how much of each pixel the letter covers.
+//! Colour is each pixel's own laid over: a palette entry (`indexed8`),
+//! with the one entry the font names drawn in the pen instead, or four
+//! bytes of red, green, blue and coverage (`rgba32`), of which nothing
+//! is the pen's. All three are composed here, pixel by pixel, after the
+//! paper when there is any.
 //!
 //! The styles are drawn rather than stored: bold is the glyph drawn over
 //! itself the font's `bold_smear` to the right, italic is each row moved
