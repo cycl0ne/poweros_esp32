@@ -31704,3 +31704,339 @@ pub const glslc_collapse_sampled = [_]u32{
     0x00000026, 0x0005008E, 0x00000007, 0x00000034, 0x00000035, 0x00000037,
     0x0003003E, 0x00000031, 0x00000034, 0x000100FD, 0x00010038,
 };
+
+/// glslc -O -fshader-stage=frag: texelFetch of sample 2 of a texture of
+/// four samples a pixel, which v3d_nir_lower_txf_ms makes a fetch of the
+/// texel of the pixel's quad, at TMUSF and of no level (since 1.209).
+/// 157 words.
+///
+/// ```glsl
+/// #version 450
+/// // One sample of a texture of four, fetched at the pixel's place: the V3D
+/// // reads it from the pixel's quad (v3d_nir_lower_txf_ms.c:46-51; facet
+/// // 1.209).
+/// layout(location = 0) in vec4 v;
+/// layout(location = 0) out vec4 o;
+/// layout(set = 0, binding = 0) uniform sampler2DMS t;
+/// void main() {
+///     ivec2 p = ivec2(v.xy * 8.0);
+///     o = texelFetch(t, p, 2);
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 31
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %13 %21
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %13 Location 0
+///                OpDecorate %21 Location 0
+///                OpDecorate %25 Binding 0
+///                OpDecorate %25 DescriptorSet 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeInt 32 1
+///           %7 = OpTypeVector %6 2
+///          %10 = OpTypeFloat 32
+///          %11 = OpTypeVector %10 4
+///          %12 = OpTypePointer Input %11
+///          %13 = OpVariable %12 Input
+///          %14 = OpTypeVector %10 2
+///          %17 = OpConstant %10 8
+///          %20 = OpTypePointer Output %11
+///          %21 = OpVariable %20 Output
+///          %22 = OpTypeImage %10 2D 0 0 1 1 Unknown
+///          %23 = OpTypeSampledImage %22
+///          %24 = OpTypePointer UniformConstant %23
+///          %25 = OpVariable %24 UniformConstant
+///          %28 = OpConstant %6 2
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %15 = OpLoad %11 %13
+///          %16 = OpVectorShuffle %14 %15 %15 0 1
+///          %18 = OpVectorTimesScalar %14 %16 %17
+///          %19 = OpConvertFToS %7 %18
+///          %26 = OpLoad %23 %25
+///          %29 = OpImage %22 %26
+///          %30 = OpImageFetch %11 %29 %19 Sample %28
+///                OpStore %21 %30
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_fetch_sample = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x0000001F, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000015, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000D, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000015, 0x0000001E, 0x00000000, 0x00040047, 0x00000019,
+    0x00000021, 0x00000000, 0x00040047, 0x00000019, 0x00000022, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015,
+    0x00000006, 0x00000020, 0x00000001, 0x00040017, 0x00000007, 0x00000006,
+    0x00000002, 0x00030016, 0x0000000A, 0x00000020, 0x00040017, 0x0000000B,
+    0x0000000A, 0x00000004, 0x00040020, 0x0000000C, 0x00000001, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000001, 0x00040017, 0x0000000E,
+    0x0000000A, 0x00000002, 0x0004002B, 0x0000000A, 0x00000011, 0x41000000,
+    0x00040020, 0x00000014, 0x00000003, 0x0000000B, 0x0004003B, 0x00000014,
+    0x00000015, 0x00000003, 0x00090019, 0x00000016, 0x0000000A, 0x00000001,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000000, 0x0003001B,
+    0x00000017, 0x00000016, 0x00040020, 0x00000018, 0x00000000, 0x00000017,
+    0x0004003B, 0x00000018, 0x00000019, 0x00000000, 0x0004002B, 0x00000006,
+    0x0000001C, 0x00000002, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000F,
+    0x0000000D, 0x0007004F, 0x0000000E, 0x00000010, 0x0000000F, 0x0000000F,
+    0x00000000, 0x00000001, 0x0005008E, 0x0000000E, 0x00000012, 0x00000010,
+    0x00000011, 0x0004006E, 0x00000007, 0x00000013, 0x00000012, 0x0004003D,
+    0x00000017, 0x0000001A, 0x00000019, 0x00040064, 0x00000016, 0x0000001D,
+    0x0000001A, 0x0007005F, 0x0000000B, 0x0000001E, 0x0000001D, 0x00000013,
+    0x00000040, 0x0000001C, 0x0003003E, 0x00000015, 0x0000001E, 0x000100FD,
+    0x00010038,
+};
+
+/// glslc -O -fshader-stage=frag: the four samples of a pixel fetched in a
+/// loop and averaged, nir_opt_loop_unroll's four fetches of a constant
+/// sample (since 1.209). 234 words.
+///
+/// ```glsl
+/// #version 450
+/// // The four samples of a pixel averaged by the program, the sample a loop's
+/// // index: nir_opt_loop_unroll makes four fetches of constant samples.
+/// layout(location = 0) in vec4 v;
+/// layout(location = 0) out vec4 o;
+/// layout(set = 0, binding = 0) uniform sampler2DMS t;
+/// void main() {
+///     ivec2 p = ivec2(v.xy * 8.0);
+///     vec4 sum = vec4(0.0);
+///     for (int s = 0; s < 4; s++) sum += texelFetch(t, p, s);
+///     o = sum * 0.25;
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 57
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %13 %51
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %13 Location 0
+///                OpDecorate %39 Binding 0
+///                OpDecorate %39 DescriptorSet 0
+///                OpDecorate %51 Location 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeInt 32 1
+///           %7 = OpTypeVector %6 2
+///          %10 = OpTypeFloat 32
+///          %11 = OpTypeVector %10 4
+///          %12 = OpTypePointer Input %11
+///          %13 = OpVariable %12 Input
+///          %14 = OpTypeVector %10 2
+///          %17 = OpConstant %10 8
+///          %22 = OpConstant %10 0
+///          %23 = OpConstantComposite %11 %22 %22 %22 %22
+///          %26 = OpConstant %6 0
+///          %33 = OpConstant %6 4
+///          %34 = OpTypeBool
+///          %36 = OpTypeImage %10 2D 0 0 1 1 Unknown
+///          %37 = OpTypeSampledImage %36
+///          %38 = OpTypePointer UniformConstant %37
+///          %39 = OpVariable %38 UniformConstant
+///          %48 = OpConstant %6 1
+///          %50 = OpTypePointer Output %11
+///          %51 = OpVariable %50 Output
+///          %53 = OpConstant %10 0.25
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %15 = OpLoad %11 %13
+///          %16 = OpVectorShuffle %14 %15 %15 0 1
+///          %18 = OpVectorTimesScalar %14 %16 %17
+///          %19 = OpConvertFToS %7 %18
+///                OpBranch %27
+///          %27 = OpLabel
+///          %56 = OpPhi %11 %23 %5 %46 %28
+///          %55 = OpPhi %6 %26 %5 %49 %28
+///          %35 = OpSLessThan %34 %55 %33
+///                OpLoopMerge %29 %28 None
+///                OpBranchConditional %35 %28 %29
+///          %28 = OpLabel
+///          %40 = OpLoad %37 %39
+///          %43 = OpImage %36 %40
+///          %44 = OpImageFetch %11 %43 %19 Sample %55
+///          %46 = OpFAdd %11 %56 %44
+///          %49 = OpIAdd %6 %55 %48
+///                OpBranch %27
+///          %29 = OpLabel
+///          %54 = OpVectorTimesScalar %11 %56 %53
+///                OpStore %51 %54
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_fetch_samples = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000039, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000033, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000D, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000027, 0x00000021, 0x00000000, 0x00040047, 0x00000027,
+    0x00000022, 0x00000000, 0x00040047, 0x00000033, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015,
+    0x00000006, 0x00000020, 0x00000001, 0x00040017, 0x00000007, 0x00000006,
+    0x00000002, 0x00030016, 0x0000000A, 0x00000020, 0x00040017, 0x0000000B,
+    0x0000000A, 0x00000004, 0x00040020, 0x0000000C, 0x00000001, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000001, 0x00040017, 0x0000000E,
+    0x0000000A, 0x00000002, 0x0004002B, 0x0000000A, 0x00000011, 0x41000000,
+    0x0004002B, 0x0000000A, 0x00000016, 0x00000000, 0x0007002C, 0x0000000B,
+    0x00000017, 0x00000016, 0x00000016, 0x00000016, 0x00000016, 0x0004002B,
+    0x00000006, 0x0000001A, 0x00000000, 0x0004002B, 0x00000006, 0x00000021,
+    0x00000004, 0x00020014, 0x00000022, 0x00090019, 0x00000024, 0x0000000A,
+    0x00000001, 0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000000,
+    0x0003001B, 0x00000025, 0x00000024, 0x00040020, 0x00000026, 0x00000000,
+    0x00000025, 0x0004003B, 0x00000026, 0x00000027, 0x00000000, 0x0004002B,
+    0x00000006, 0x00000030, 0x00000001, 0x00040020, 0x00000032, 0x00000003,
+    0x0000000B, 0x0004003B, 0x00000032, 0x00000033, 0x00000003, 0x0004002B,
+    0x0000000A, 0x00000035, 0x3E800000, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B,
+    0x0000000F, 0x0000000D, 0x0007004F, 0x0000000E, 0x00000010, 0x0000000F,
+    0x0000000F, 0x00000000, 0x00000001, 0x0005008E, 0x0000000E, 0x00000012,
+    0x00000010, 0x00000011, 0x0004006E, 0x00000007, 0x00000013, 0x00000012,
+    0x000200F9, 0x0000001B, 0x000200F8, 0x0000001B, 0x000700F5, 0x0000000B,
+    0x00000038, 0x00000017, 0x00000005, 0x0000002E, 0x0000001C, 0x000700F5,
+    0x00000006, 0x00000037, 0x0000001A, 0x00000005, 0x00000031, 0x0000001C,
+    0x000500B1, 0x00000022, 0x00000023, 0x00000037, 0x00000021, 0x000400F6,
+    0x0000001D, 0x0000001C, 0x00000000, 0x000400FA, 0x00000023, 0x0000001C,
+    0x0000001D, 0x000200F8, 0x0000001C, 0x0004003D, 0x00000025, 0x00000028,
+    0x00000027, 0x00040064, 0x00000024, 0x0000002B, 0x00000028, 0x0007005F,
+    0x0000000B, 0x0000002C, 0x0000002B, 0x00000013, 0x00000040, 0x00000037,
+    0x00050081, 0x0000000B, 0x0000002E, 0x00000038, 0x0000002C, 0x00050080,
+    0x00000006, 0x00000031, 0x00000037, 0x00000030, 0x000200F9, 0x0000001B,
+    0x000200F8, 0x0000001D, 0x0005008E, 0x0000000B, 0x00000036, 0x00000038,
+    0x00000035, 0x0003003E, 0x00000033, 0x00000036, 0x000100FD, 0x00010038,
+};
+
+/// glslc -O -fshader-stage=frag: a sample the program computes, of layer
+/// 1 of an array of textures of four samples, the layer in TMUI
+/// (since 1.209). 220 words.
+///
+/// ```glsl
+/// #version 450
+/// // A sample the program computes, and a layer of an array of four-sample
+/// // images.
+/// layout(location = 0) in vec4 v;
+/// layout(location = 0) out vec4 o;
+/// layout(set = 0, binding = 0) uniform sampler2DMSArray t;
+/// void main() {
+///     ivec2 p = ivec2(v.xy * 8.0);
+///     int s = int(v.z * 4.0) & 3;
+///     o = texelFetch(t, ivec3(p, 1), s);
+/// }
+/// ```
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 48
+/// ; Schema: 0
+///                OpCapability Shader
+///           %1 = OpExtInstImport "GLSL.std.450"
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %4 "main" %13 %33
+///                OpExecutionMode %4 OriginUpperLeft
+///                OpDecorate %13 Location 0
+///                OpDecorate %33 Location 0
+///                OpDecorate %37 Binding 0
+///                OpDecorate %37 DescriptorSet 0
+///           %2 = OpTypeVoid
+///           %3 = OpTypeFunction %2
+///           %6 = OpTypeInt 32 1
+///           %7 = OpTypeVector %6 2
+///          %10 = OpTypeFloat 32
+///          %11 = OpTypeVector %10 4
+///          %12 = OpTypePointer Input %11
+///          %13 = OpVariable %12 Input
+///          %14 = OpTypeVector %10 2
+///          %17 = OpConstant %10 8
+///          %22 = OpTypeInt 32 0
+///          %23 = OpConstant %22 2
+///          %24 = OpTypePointer Input %10
+///          %27 = OpConstant %10 4
+///          %30 = OpConstant %6 3
+///          %32 = OpTypePointer Output %11
+///          %33 = OpVariable %32 Output
+///          %34 = OpTypeImage %10 2D 0 1 1 1 Unknown
+///          %35 = OpTypeSampledImage %34
+///          %36 = OpTypePointer UniformConstant %35
+///          %37 = OpVariable %36 UniformConstant
+///          %40 = OpConstant %6 1
+///          %41 = OpTypeVector %6 3
+///           %4 = OpFunction %2 None %3
+///           %5 = OpLabel
+///          %15 = OpLoad %11 %13
+///          %16 = OpVectorShuffle %14 %15 %15 0 1
+///          %18 = OpVectorTimesScalar %14 %16 %17
+///          %19 = OpConvertFToS %7 %18
+///          %25 = OpAccessChain %24 %13 %23
+///          %26 = OpLoad %10 %25
+///          %28 = OpFMul %10 %26 %27
+///          %29 = OpConvertFToS %6 %28
+///          %31 = OpBitwiseAnd %6 %29 %30
+///          %38 = OpLoad %35 %37
+///          %42 = OpCompositeExtract %6 %19 0
+///          %43 = OpCompositeExtract %6 %19 1
+///          %44 = OpCompositeConstruct %41 %42 %43 %40
+///          %46 = OpImage %34 %38
+///          %47 = OpImageFetch %11 %46 %44 Sample %31
+///                OpStore %33 %47
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const glslc_fetch_sample_layers = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000030, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x0000000D, 0x00000021, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000D, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000021, 0x0000001E, 0x00000000, 0x00040047, 0x00000025,
+    0x00000021, 0x00000000, 0x00040047, 0x00000025, 0x00000022, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015,
+    0x00000006, 0x00000020, 0x00000001, 0x00040017, 0x00000007, 0x00000006,
+    0x00000002, 0x00030016, 0x0000000A, 0x00000020, 0x00040017, 0x0000000B,
+    0x0000000A, 0x00000004, 0x00040020, 0x0000000C, 0x00000001, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000001, 0x00040017, 0x0000000E,
+    0x0000000A, 0x00000002, 0x0004002B, 0x0000000A, 0x00000011, 0x41000000,
+    0x00040015, 0x00000016, 0x00000020, 0x00000000, 0x0004002B, 0x00000016,
+    0x00000017, 0x00000002, 0x00040020, 0x00000018, 0x00000001, 0x0000000A,
+    0x0004002B, 0x0000000A, 0x0000001B, 0x40800000, 0x0004002B, 0x00000006,
+    0x0000001E, 0x00000003, 0x00040020, 0x00000020, 0x00000003, 0x0000000B,
+    0x0004003B, 0x00000020, 0x00000021, 0x00000003, 0x00090019, 0x00000022,
+    0x0000000A, 0x00000001, 0x00000000, 0x00000001, 0x00000001, 0x00000001,
+    0x00000000, 0x0003001B, 0x00000023, 0x00000022, 0x00040020, 0x00000024,
+    0x00000000, 0x00000023, 0x0004003B, 0x00000024, 0x00000025, 0x00000000,
+    0x0004002B, 0x00000006, 0x00000028, 0x00000001, 0x00040017, 0x00000029,
+    0x00000006, 0x00000003, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B, 0x0000000F,
+    0x0000000D, 0x0007004F, 0x0000000E, 0x00000010, 0x0000000F, 0x0000000F,
+    0x00000000, 0x00000001, 0x0005008E, 0x0000000E, 0x00000012, 0x00000010,
+    0x00000011, 0x0004006E, 0x00000007, 0x00000013, 0x00000012, 0x00050041,
+    0x00000018, 0x00000019, 0x0000000D, 0x00000017, 0x0004003D, 0x0000000A,
+    0x0000001A, 0x00000019, 0x00050085, 0x0000000A, 0x0000001C, 0x0000001A,
+    0x0000001B, 0x0004006E, 0x00000006, 0x0000001D, 0x0000001C, 0x000500C7,
+    0x00000006, 0x0000001F, 0x0000001D, 0x0000001E, 0x0004003D, 0x00000023,
+    0x00000026, 0x00000025, 0x00050051, 0x00000006, 0x0000002A, 0x00000013,
+    0x00000000, 0x00050051, 0x00000006, 0x0000002B, 0x00000013, 0x00000001,
+    0x00060050, 0x00000029, 0x0000002C, 0x0000002A, 0x0000002B, 0x00000028,
+    0x00040064, 0x00000022, 0x0000002E, 0x00000026, 0x0007005F, 0x0000000B,
+    0x0000002F, 0x0000002E, 0x0000002C, 0x00000040, 0x0000001F, 0x0003003E,
+    0x00000021, 0x0000002F, 0x000100FD, 0x00010038,
+};

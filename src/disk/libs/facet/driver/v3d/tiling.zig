@@ -58,6 +58,10 @@ pub const Layout = struct {
     levels: [most_levels]Level,
     /// All the texture takes: to be bound on `alignment`.
     bytes: u32,
+    /// Of an image of four samples a pixel (`layoutOf`'s `four`), which
+    /// the TMU reads as a texture of twice its width and height (since
+    /// 1.209).
+    four: bool = false,
 };
 
 /// What a texture's memory has to be aligned to.
@@ -108,7 +112,7 @@ fn blockPad(pixel: u32, height: u32) u32 {
 /// 180-183, `uif_top`; since 1.146). Vulkan gives such an image the one
 /// level.
 pub fn layoutOf(pixel: u32, width: u32, height: u32, depth: u32, count: u32, four: bool) Layout {
-    var layout = Layout{ .pixel = pixel, .depth = depth, .count = count, .levels = undefined, .bytes = 0 };
+    var layout = Layout{ .pixel = pixel, .depth = depth, .count = count, .levels = undefined, .bytes = 0, .four = four };
     const micro_w = microtileWidth(pixel);
     const micro_h = microtileHeight(pixel);
     const block_w = 2 * micro_w;
@@ -329,13 +333,19 @@ pub fn writeTextureState(into: []u8, layout: *const Layout, texels: Texels, pick
         .zero => SWIZZLE_ZERO,
         .one => SWIZZLE_ONE,
     };
+    // An image of four is twice as wide and as high to the TMU, a
+    // sample's texel found in the pixel's quad (msaa_scale,
+    // v3dvx_image.c:48, :95-96; since 1.209).
+    const scale: u32 = if (layout.four) 2 else 1;
+    const width = level_0.width * scale;
+    const height = level_0.height * scale;
     // Bits 0 to 63: the address, the distance between arrays' worth, and
     // the width's first 6. That distance starts at bit 33 on this chip, a
     // V3D 7.1.10; on 7.1.2 it starts at 32 (Mesa's v3d_packet.xml).
-    const first: u64 = @as(u64, base_address) | @as(u64, stride / 64) << 33 | @as(u64, level_0.width) << 58;
+    const first: u64 = @as(u64, base_address) | @as(u64, stride / 64) << 33 | @as(u64, width) << 58;
     // Bits 64 to 127.
-    const second: u64 = @as(u64, level_0.width) >> 6 |
-        @as(u64, level_0.height) << (72 - 64) |
+    const second: u64 = @as(u64, width) >> 6 |
+        @as(u64, height) << (72 - 64) |
         @as(u64, depth) << (86 - 64) |
         texture_type << (100 - 64) |
         @as(u64, @intFromBool(strict_uif)) << (107 - 64) |
@@ -696,6 +706,27 @@ test "a view's swizzle over the format's own: a channel the view takes read from
     try std.testing.expectEqual(SWIZZLE_ZERO, second >> (111 - 64) & 7);
     try std.testing.expectEqual(SWIZZLE_RED, second >> (114 - 64) & 7);
     try std.testing.expectEqual(SWIZZLE_RED, second >> (117 - 64) & 7);
+}
+
+test "an image of four is a texture of twice the width and the height to the TMU, its level 0 in UIF" {
+    // msaa_scale (v3dvx_image.c:48, :95-96), over the layout of the
+    // quads (v3dv_image.c:136-140, 180-183; since 1.209): a 20 x 9 image
+    // of four is a 40 x 18 texture, strictly UIF however small, which
+    // the TMU fetches a sample of at (2x + s % 2, 2y + s / 2).
+    const layout = layoutOf(4, 20, 9, 1, 1, true);
+    try std.testing.expect(layout.four);
+    try std.testing.expect(layout.levels[0].kind == .uif or layout.levels[0].kind == .uif_xor);
+    var state: [texture_state_bytes]u8 = undefined;
+    writeTextureState(&state, &layout, .bgra, own_picks, 0x10_0000, 0, 0, 1, 0);
+    const first = std.mem.readInt(u64, state[0..8], .little);
+    const second = std.mem.readInt(u64, state[8..16], .little);
+    try std.testing.expectEqual(@as(u64, 40), (first >> 58 | second << 6) & 0x3FFF);
+    try std.testing.expectEqual(@as(u64, 18), second >> (72 - 64) & 0x3FFF);
+    try std.testing.expectEqual(@as(u64, 1), second >> (107 - 64) & 1);
+    // Of one sample it is the image's own size.
+    writeTextureState(&state, &layoutOf(4, 20, 9, 1, 1, false), .bgra, own_picks, 0x10_0000, 0, 0, 1, 0);
+    try std.testing.expectEqual(@as(u64, 20), (std.mem.readInt(u64, state[0..8], .little) >> 58 | std.mem.readInt(u64, state[8..16], .little) << 6) & 0x3FFF);
+    try std.testing.expectEqual(@as(u64, 9), std.mem.readInt(u64, state[8..16], .little) >> (72 - 64) & 0x3FFF);
 }
 
 test "the states have their fields where the packet file has them" {

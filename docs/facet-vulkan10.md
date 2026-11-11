@@ -153,7 +153,8 @@ magenta item 52 is about now belongs to item 54 alone, item 28's
 remainder is a QPU back end that refuses the operand at pipeline
 creation, item 17's is a vertex program that keeps its varyings in
 registers and so stops at eight, item 22's is a render list played once
-a frame rather than once a layer, item 61's is its step V7, item 48's
+a frame rather than once a layer, item 61's was its step V7, done in
+1.209, item 48's
 is a store and a load that name the UIF layout, and a clear through the
 TLB, and item 42's is a texture state and a render target of the view's
 format.
@@ -3365,16 +3366,49 @@ facet reports 1|4 on both devices, with the standard locations on both since 1.1
 | V4 | **Done in 1.147.** Binning and rendering a 4x frame: a pass whose colour has four samples, its tile at four, its colour stored where its level lies and every load and store of all four samples. GFXH-1918 asks nothing more, the early depth test being off in every frame here. Seen on the board in V5, which first makes an image of four there | v3dvx_cmd_buffer.c:206-209, 396-413, 973-984, 1604-1618, 1854-1882 | 76 | 45 |
 | V5 | **Done in 1.148.** Resolve in the TLB, with S5 as the fallback; 4x turned on for the V3D, closing its three framebuffer rows. The tiles store the colour's average into the resolve's rows before the colour, where every tile they render lies inside the render area or over the framebuffer's edge, and the CPU resolves the area after the frame elsewhere. Against the first plan, aligned to the supertile and not the tile: the renderer renders whole every supertile the area touches, v3dv's as well, so a tile-aligned area alone would let a tile average into the attachment outside it. CmdResolveImage stays on the CPU: `resolve_image_tlb` is not ported. Its sampled colour and depth masks stay at one until V7. `standardSampleLocations` stays true, against v3dv: its compiler's four places are Vulkan's, and FacetBoth 1.16's five cases of four on the board are 22 to 54 pixels of 230400 apart from the cores', each by one sample's worth, where wrong places would part most pixels on an edge | v3dvx_cmd_buffer.c:640-686, 771-795; v3dv_pass.c:663-683; v3dv_cmd_buffer.c:421-446, 957-1005, 1184-1203; nir_to_vir.c:3111-3134 | 110 | 40 |
 | V6 | **Done in 1.149.** Alpha to coverage on the QPU: a compiled program of four samples ANDs its alpha's FTOC with MSF into SETMSF before the tile buffer is written, and writes Z through with early Z off, its early tests not promoted. `compile.Key` carries it beside the words, set only at four samples as v3dv's key is, so a pipeline of one draws without it, which until now was refused. Against the first plan, a fixed form of four that asks for it stays refused and on the cores: its hand-written program does not cover, and a fixed form's varyings are carried in another scaling than a compiled program reads, so it cannot take its words' program instead. FacetBoth 1.17's case on the board is 44 pixels of 230400 more than a sample apart from the cores', which dither which samples the alpha covers | nir_to_vir.c:2056-2065, 2073-2108; vir.c:1011-1013; v3dv_pipeline.c:1321-1324; v3dvx_pipeline.c:453, 459 | 110 | 35 |
-| V7 | Multisampled fetch through the TMU, after item 59 | v3d_nir_lower_txf_ms.c:46-51 | 45 | 25 |
+| V7 | **Done in 1.209.** Multisampled fetch through the TMU: an OpImageFetch of an image of four, with its Sample, is the texel at the sample's place in the pixel's quad, fetched at TMUSF at no level, and the texture state gives the TMU the image's 2W x 2H. The sampled colour and depth masks hold the 4 bit, which closes the V3D's last two rows of this item. Against the first plan, a sampled image of four that is a colour attachment as well stays refused, with one of one, until item 48's V3D half; and an input attachment of four until item 56. See below | v3d_nir_lower_txf_ms.c:35-62; vir.c:1987, 2004; v3d_tex.c:137-153, 375-377; v3dvx_image.c:48, 95-96; v3dv_device.c:1026-1027, 1179-1189 | 45 | 25 |
 | V8 | **Done in 1.150.** No-attachment subpasses at 4x, with item 43's V3D half: where a frame's first draw has a pipeline of four and the frame one, the frame starts again at four, of its size and in the tile four samples of no colour take, its tile lists, tile state and binner's list made again, nothing having been binned. A frame of any attachment has that attachment's count, which its pipelines are held to, so only one of none restarts. FacetBoth 1.18 counts a no-attachment subpass's draws with an occlusion query: 422266 samples on the V3D at four against the cores' 422322, and 105571 against 105583 at one. Found on the way: the binner was started at the last 64 KiB part of its list, not the first, so a frame of that many draws lost its binning mode; it starts at the first, as v3dv starts at its job's first block (v3dv_queue.c:733-737) | `cmd_buffer_restart_job_for_msaa_if_needed`, v3dv_cmd_buffer.c:2655-2735, called at :2906 | 40 | 40 |
 
-Docs add about 75 lines in K7 and 15 in V5. The V3D's sampled depth and stencil rows wait on item 58 and are not among these commits.
+Docs add about 75 lines in K7 and 15 in V5. The V3D's sampled depth and stencil rows waited on item 58 and are not among these commits. Item 58 sampled a depth in 1.142, and V7 closed the depth row in 1.209 with the colour's; the stencil row stays at none, the V3D sampling no stencil.
 
 Three things this item said are corrected:
 
 - **The tile is not halved.** At 4x a part's tile would hold 112.5 KiB against the A76's 64 KiB of L1, as worked out above, and halving `tile_size` would tax every 1x frame. The three extra sample planes go instead in the per-part run-time block that `lay()` already builds for extra colour attachments, so a 1x frame is unchanged. Whether a 4x frame should halve its own tile, as `v3d_choose_tile_size` does on the V3D, is a measurement for after K7.
 - **A pass with a resolve marks every tile dirty.** `finish` draws only dirty tiles, and `begin` marks them dirty only when something is cleared. Without this, a tile loaded with LOAD_OP_LOAD and drawn into by nothing would never be resolved.
 - **The pin is 0 since 1.114.** It said 10 at 1.89; item 17's half (1.90) and item 22's half (1.91) took it to 7, all seven this item's, K7 to 1, the no-attachments mask, and K8 to 0. The verified line above cites creategraphicspipelines.zig:378 and _image.zig:338, which at 1.95 are :414 and :352.
+
+**Then V7, a sample of an image of four fetched through the TMU**, facet.library 1.209. On the V3D, an image of four samples was not sampled until now: its sampled colour and depth masks said one. Mesa takes such a fetch in three steps:
+- spirv_to_nir makes an OpImageFetch of a multisampled image, with its Sample, a txf_ms (spirv_to_nir.c:3072-3076, 3475-3481). It asserts against a Lod on it (:3433-3434), and against an MS image being sampled rather than fetched (:3034, :3054).
+- v3d_nir_lower_txf_ms makes the txf_ms a txf of the texel at the sample's place in the pixel's quad (v3d_nir_lower_txf_ms.c:35-62). x becomes x twice plus the sample's bit 0, and y becomes y twice plus its bit 1. An array's layer stays as it is, and the sampler_dim becomes 2D.
+- That pass runs after nir_lower_tex (vir.c:1987, :2004), so the txf gets no default level (nir_lower_tex.c:1849-1858). The back end writes no TMUB (v3d_tex.c:137-153) and starts the fetch at TMUSF (:375-377).
+
+The parts:
+- **The profile and the image.** The Sample image operand is taken. A 2D image of MS 1, or an array of them, carries `Sampler.multisampled`, through its sampled image to the variable, and any other image of MS 1 is refused.
+- **The fetch.** `sampleTexelOf` makes the quad's texel from the coordinate and the sample: an ishl and an iadd of an iand for x, and the same of the ushr's iand for y. A constant sample folds. The lookup is `Lookup.fetch_sample`, which `fetches()` and not `leveled()`: the back end writes TMUT and starts at TMUSF, with no TMUB and no P1, as for a txf.
+- **The texture state.** `tiling.Layout.four` gives the TMU twice the width and twice the height, as v3dv's image of four does (v3dvx_image.c:48, :95-96). Its level 0 is UIF, as V3 laid it out.
+- **The masks and the image.** The V3D's sampled colour and depth masks say 1|4, as v3dv's do (v3dv_device.c:1026-1027, 1179-1189). An image of four that is sampled is made in quads: a colour that is no attachment, filled by a copy or a clear, and a depth attachment, which the frame of four stores into its quads since 1.147.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
+- **OpImageQuerySize and OpImageQuerySamples**, textureSize and textureSamples of an image of four. The profile takes neither, for any image. v3d answers textureSamples with a uniform (QUNIFORM_TEXTURE_SAMPLES, nir_to_vir.c:976-978), and textureSize through ntq_emit_txs (:980-982). *Facet-wide*.
+- **A ConstOffset on a fetch of four**, refused (Error.Operands). GLSL has no texelFetchOffset of a sampler2DMS, so glslc writes none. *Facet-wide*.
+- **An image of four that is sampled and a colour attachment**, refused as one of one is, until item 48's V3D half. The format query holds the 1 bit wherever it holds the 4, so the two go together. *V3D-only*.
+- **An input attachment of four**, refused until item 56. *V3D-only*.
+
+The two *V3D-only* entries are the V3D port's own gaps, not the hardware's, so the list for the Radeon's has nothing new from them. The first *facet-wide* entry is on it.
+
+Results:
+- **The references**, each compiled with -O:
+  - glslc_fetch_sample, 157 words, texelFetch at sample 2: 15 instructions, the sample's bits folded into a shl and an add each way, one TMUT and the TMUSF, no TMUB.
+  - glslc_fetch_samples, 234 words, the four samples averaged: 33 instructions, four fetches at TMUSF.
+  - glslc_fetch_sample_layers, 220 words, a sampler2DMSArray's layer 1 at a sample the varying gives: 21 instructions, the layer at TMUI.
+- **The tests.** The V3D's tests are 394, three new. Of 16 mutations, all 16 fail them. One, the Lod beside a Sample let through, failed none at first: the test patched the Sample to a Lod, which another check refuses. It fails since a fetch with both was added.
+
+On the CM5, FacetBoth 1.73 has one new case:
+- **"shipped fetch of four samples"** is 4 of 230400 pixels apart, 217 at worst, the first at 331,100.
+  - The far and the near triangle are drawn at four samples into samples 0 and 2 alone, and the glass over them into 1 and 2, so the four samples of a pixel differ wherever a triangle is.
+  - The image is kept by `four_alone`, copied into an image of four that is sampled, and fetched over the textured quad by glslc's `shipped_fetch_four`, at the sample the u coordinate's band gives: 0 to 3, twice across.
+
+With the ushr taken out of the sample's place, samples 1 and 2 are read as 3 and 0, which differ from them only by the glass: 5,018 apart, all of them where the glass is. The other 306 cases are each as they were at 1.208. FacetProbe is 891 of 891: its one new check, "and the largest of four samples a pixel", makes the largest sampled image of four on the V3D, whose format query says four for it now.
 
 Found independently by: features, limits, semantics, entry-points, conformance-path (all 5 strands that looked at it).
 
@@ -4906,6 +4940,9 @@ After the V3D, facet's next device is a Radeon, ported from radv as the V3D is f
 
 **What the compiler takes from v3dv's options, which a Radeon's takes from radv's:**
 - The divergence analysis's options: v3dv's are nir_divergence_multiple_workgroup_per_compute_subgroup alone (v3dv_pipeline.c:217-218), so the workgroup id differs from lane to lane, and with no nir_divergence_vertex the instance id does too. They are built into `lanes()` in compile.zig (1.204).
+
+**SPIR-V the profile refuses that a Vulkan 1.0 shader may hold.** These are facet-wide: the compiler's front end refuses them on every device.
+- OpImageQuerySize and OpImageQuerySamples of an image of four, textureSize and textureSamples of a sampler2DMS (1.209). Both are the ImageQuery capability's, which the profile takes. v3d answers textureSamples with a uniform (nir_to_vir.c:976-978), and textureSize through ntq_emit_txs (:980-982).
 
 ## Deferred by the decision, not out of reach
 

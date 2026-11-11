@@ -1828,9 +1828,9 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
 
     // get_required_tex_tmu_writes (v3d_tex.c:222): S and T, R or I where
     // the image has a third float, the comparator's TMUDREF, and a bias's
-    // or a level's TMUB (since 1.180). The input FIFO has 16 slots across
-    // all threads.
-    const tmu_writes: u32 = 2 + @as(u32, @intFromBool(dim != .flat)) + @intFromBool(compared) + @intFromBool(each.lookup != .implicit);
+    // or a level's TMUB (since 1.180), which a fetch of a sample has not
+    // (since 1.209). The input FIFO has 16 slots across all threads.
+    const tmu_writes: u32 = 2 + @as(u32, @intFromBool(dim != .flat)) + @intFromBool(compared) + @intFromBool(each.lookup.leveled());
     while (tmu_writes > 16 / @as(u32, c.threads)) c.threads /= 2;
 
     // Pipelining it would overflow the TMU's FIFOs: flush what waits.
@@ -1854,7 +1854,7 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // A bias, or a level, after it, as vtn orders the sources
     // (spirv_to_nir.c:3420-3438): each one float to TMUB (v3d_tex.c:
     // 129-150; since 1.180).
-    if (each.lookup != .implicit) _ = try tmuWrite(c, .tmub, try getSrc(e, each.from[0], 0));
+    if (each.lookup.leveled()) _ = try tmuWrite(c, .tmub, try getSrc(e, each.from[0], 0));
 
     // The texture's number in the high bits of the address, for the
     // driver to put the texture's state there (v3d_tex.c:297-301): here
@@ -1877,7 +1877,7 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // which TMUSLOD does for every other image (:135-150; since 1.180).
     const p2_packed = texConfigP2(each.offsets, each.lookup == .lod and dim == .cube);
     const needs_p2 = p2_packed != p2_default;
-    if (each.lookup != .fetch) {
+    if (!each.lookup.fetches()) {
         try wrtmuc(c, .tmu_config_p1, p1_packed | @as(u32, each.at) << 24);
     } else if (c.stage == .fragment and !e.work.skip_helpers[at]) {
         // A fetch needs no sampler, so its P1 is the constant of its own
@@ -1892,9 +1892,10 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     if (needs_p2) try wrtmuc(c, .constant, p2_packed);
 
     // A fetch's lookup is started at TMUSF (v3d_tex.c:375-377; since
-    // 1.182), a cube's at TMUSCM (:378-379), and one at a level the
-    // program gives at TMUSLOD (:380-381).
-    const retiring = try tmuWrite(c, if (each.lookup == .fetch) .tmusf else if (dim == .cube) .tmuscm else if (each.lookup == .lod) .tmuslod else .tmus, s);
+    // 1.182), a sample's too (since 1.209), a cube's at TMUSCM
+    // (:378-379), and one at a level the program gives at TMUSLOD
+    // (:380-381).
+    const retiring = try tmuWrite(c, if (each.lookup.fetches()) .tmusf else if (dim == .cube) .tmuscm else if (each.lookup == .lod) .tmuslod else .tmus, s);
     // Mesa's own count, which is the mask of the words rather than how
     // many: the scheduler only holds a lookup back for it.
     retiring.ldtmu_count = return_words;

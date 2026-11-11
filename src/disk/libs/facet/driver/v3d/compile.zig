@@ -411,6 +411,12 @@ pub const Sampler = struct {
     compared: bool = false,
     /// What its image's coordinate names (since 1.179).
     dim: SamplerDim = .flat,
+    /// An image of MS 1, GLSL_SAMPLER_DIM_MS (spirv_to_nir.c:2431): read
+    /// only by a fetch of one of its samples, which v3d_nir_lower_txf_ms
+    /// makes a fetch of a texel of the pixel's quad, its sampler_dim then
+    /// 2D (v3d_nir_lower_txf_ms.c:46-59). `dim` is that one: flat, or
+    /// layers for an array of them (since 1.209).
+    multisampled: bool = false,
 };
 
 /// What a sampled image's coordinate names, as a nir_tex_instr's
@@ -552,7 +558,9 @@ pub const profile: spirv.Profile = .{
     // (handle_tex_src, v3d_tex.c:129-170; since 1.180); and a gradient,
     // which nir_lower_tex's lower_txd makes a level (vir.c:802; since
     // 1.183). An offset the program computes wants ImageGatherExtended.
-    .image_operands = &.{ .bias, .lod, .grad, .const_offset },
+    // And the sample a fetch of an image of four reads, NIR's ms_index
+    // (spirv_to_nir.c:3475-3481; since 1.209).
+    .image_operands = &.{ .bias, .lod, .grad, .const_offset, .sample },
     // The vertex stage since 1.163 (docs/facet-vulkan10.md item 60).
     .stages = &.{ .fragment, .vertex, .gl_compute },
     .most_ids = most_ids,
@@ -947,11 +955,31 @@ pub const Lookup = enum(u8) {
     /// integer coordinate and level, and no sampler state
     /// (nir_tex_instr_need_sampler, nir.c; since 1.182).
     fetch,
+    /// A sample of an image of four, NIR's txf_ms, which
+    /// v3d_nir_lower_txf_ms makes a txf of the texel the sample is in the
+    /// pixel's quad (v3d_nir_lower_txf_ms.c:46-59) and of no lod source:
+    /// vtn gives a txf_ms none (spirv_to_nir.c:3433-3438), and
+    /// nir_lower_tex, which gives a txf its lod of 0 (nir_lower_tex.c:
+    /// 1849-1858), runs before it (vir.c:1987, :2004). So no TMUB is
+    /// written (handle_tex_src, v3d_tex.c:137-153; since 1.209).
+    fetch_sample,
 
     /// nir_tex_instr_has_implicit_derivative: whether the quad's helper
     /// pixels are needed for the coordinate.
     pub fn derived(lookup: Lookup) bool {
         return lookup == .implicit or lookup == .bias;
+    }
+
+    /// Whether `from[0]` is a bias or a level, a TMUB write (since 1.209,
+    /// when a fetch came to have none).
+    pub fn leveled(lookup: Lookup) bool {
+        return lookup == .bias or lookup == .lod or lookup == .fetch;
+    }
+
+    /// A txf or a txf_ms: no sampler state (nir_tex_instr_need_sampler),
+    /// and the lookup started at TMUSF (v3d_tex.c:375-377).
+    pub fn fetches(lookup: Lookup) bool {
+        return lookup == .fetch or lookup == .fetch_sample;
     }
 };
 
@@ -1482,6 +1510,9 @@ pub const Work = struct {
     /// An image type's, and a sampled image type's, `SamplerDim` (since
     /// 1.179).
     sampler_dim: [most_ids]SamplerDim = @splat(.flat),
+    /// An image type of MS 1, and a sampled image type of one (since
+    /// 1.209).
+    multisampled: std.StaticBitSet(most_ids) = .initEmpty(),
     /// Which step a value id answers.
     step_of: [most_ids]u16 = @splat(none),
     /// `member_pointer`: which float of the member it names, or `whole`
@@ -2115,7 +2146,7 @@ const Units = struct {
         for (work.program()) |each| {
             if (each.tag != .sample and each.tag != .sample_compared) continue;
             // A fetch reads no sampler state: it is the queries' below.
-            if (each.lookup == .fetch) continue;
+            if (each.lookup.fetches()) continue;
             const compared = each.tag == .sample_compared;
             const declared = work.samplers[each.at];
             const unit: u8 = units.find(declared) orelse made: {
@@ -2134,7 +2165,7 @@ const Units = struct {
         // comparison is in (since 1.181); and so does a fetch, whose P1
         // is a constant (v3d_tex.c:350-354; since 1.182).
         for (work.program()) |each| {
-            const fetches = each.tag == .sample and each.lookup == .fetch;
+            const fetches = each.tag == .sample and each.lookup.fetches();
             if (each.tag != .texture_size and each.tag != .texture_levels and !fetches) continue;
             if (units.of_declared[each.at] != no_unit) continue;
             const declared = work.samplers[each.at];
@@ -2686,16 +2717,22 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // arrayed 2D one has its layer in TMUI; a cube of an
                 // array needs SampledCubeArray, which `look` refuses, and
                 // a 3D one cannot be arrayed (SPIR-V's OpTypeImage). A
-                // multisampled one is not a texture at all. Depth is
-                // taken whatever it says since 1.143: whether a sample
-                // compares is its opcode's, not the type's, as SPIR-V has
-                // it, and a depth image is read as any texture is.
+                // multisampled one is a 2D one, of layers or not, vtn's
+                // GLSL_SAMPLER_DIM_MS (spirv_to_nir.c:2431; since 1.209).
+                // Depth is taken whatever it says since 1.143: whether a
+                // sample compares is its opcode's, not the type's, as
+                // SPIR-V has it, and a depth image is read as any texture
+                // is.
                 if (operands.len < 8) return Error.Body;
                 const id = try idOf(operands[0]);
                 if (work.thing[try idOf(operands[1])] != .float) return Error.Type;
-                if (operands[3] > 2 or operands[4] > 1 or operands[5] != 0) return Error.Refused;
+                if (operands[3] > 2 or operands[4] > 1 or operands[5] > 1) return Error.Refused;
                 const dim: spirv.Dim = @enumFromInt(operands[2]);
                 const arrayed = operands[4] == 1;
+                if (operands[5] == 1) {
+                    if (dim != .dim_2d) return Error.Refused;
+                    work.multisampled.set(id);
+                }
                 work.sampler_dim[id] = switch (dim) {
                     .dim_2d => if (arrayed) .layers else .flat,
                     .dim_3d => if (arrayed) return Error.Refused else .volume,
@@ -2712,6 +2749,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 work.thing[id] = .sampled_image;
                 work.points[id] = image;
                 work.sampler_dim[id] = work.sampler_dim[image];
+                work.multisampled.setValue(id, work.multisampled.isSet(image));
             },
             .type_pointer => {
                 if (operands.len < 3) return Error.Body;
@@ -2873,7 +2911,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.thing[id] = .variable;
                     work.class[id] = @intCast(@intFromEnum(class));
                     work.sampler_of[id] = @intCast(work.sampler_count);
-                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee] };
+                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee], .multisampled = work.multisampled.isSet(pointee) };
                     work.sampler_count += 1;
                     continue;
                 }
@@ -7175,8 +7213,8 @@ fn readsOf(each: Step) [4]?u16 {
         .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .output, .round_to_int, .ubo_indirect, .ssbo_indirect, .scratch_indirect => .{ each.a, null, null, null },
         .compare, .set_less, .add, .mul, .sub, .min, .max => .{ each.a, each.b, null, null },
         // A sample's bias or level too (since 1.180).
-        .sample => .{ each.a, null, if (each.lookup != .implicit) each.from[0] else null, null },
-        .sample_compared => .{ each.a, each.b, if (each.lookup != .implicit) each.from[0] else null, null },
+        .sample => .{ each.a, null, if (each.lookup.leveled()) each.from[0] else null, null },
+        .sample_compared => .{ each.a, each.b, if (each.lookup.leveled()) each.from[0] else null, null },
         // A size's level (since 1.181).
         .texture_size => .{ each.from[0], null, null, null },
         .texture_levels => .{ null, null, null, null },
@@ -7238,7 +7276,7 @@ fn renameReads(each: *Step, renamed: *const [most_steps]u16) void {
         .sample, .sample_compared => {
             each.a = renamed[each.a];
             if (each.tag == .sample_compared) each.b = renamed[each.b];
-            if (each.lookup != .implicit) each.from[0] = renamed[each.from[0]];
+            if (each.lookup.leveled()) each.from[0] = renamed[each.from[0]];
         },
         .texture_size => each.from[0] = renamed[each.from[0]],
         .texture_levels => {},
@@ -7282,7 +7320,7 @@ fn replaceUses(work: *Work, from: u16, to: u16) void {
             .sample, .sample_compared => {
                 if (user.a == from) user.a = to;
                 if (user.tag == .sample_compared and user.b == from) user.b = to;
-                if (user.lookup != .implicit and user.from[0] == from) user.from[0] = to;
+                if (user.lookup.leveled() and user.from[0] == from) user.from[0] = to;
             },
             .texture_size => if (user.from[0] == from) {
                 user.from[0] = to;
@@ -10877,6 +10915,16 @@ fn isIntegerType(work: *const Work, type_id: u16) bool {
 /// gives and a fetch here must have. A fetch of a cube is no SPIR-V
 /// (OpImageFetch's Dim), and v3d_tex.c asserts it (:376). Its ConstOffset
 /// goes to P2 as a sample's does (handle_tex_src, :158-170; since 1.182).
+///
+/// A fetch of an image of four has a Sample and no Lod: vtn's txf_ms, the
+/// sample its ms_index (spirv_to_nir.c:3072-3076, :3475-3481), which
+/// v3d_nir_lower_txf_ms makes a txf of the texel of the pixel's quad the
+/// sample is in (`sampleTexelOf`), started at TMUSF with no level (since
+/// 1.209). Such an image is sampled by nothing else (vtn's asserts of the
+/// sampler_dim, :3034, :3054), and a Lod is no txf_ms's (:3433-3434). A
+/// ConstOffset is refused: v3d's lowering leaves it to P2, which would
+/// move the fetch by samples, not by pixels, and GLSL has no
+/// texelFetchOffset of a multisampled sampler that would give one.
 fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
     const compared = op == .image_sample_dref_implicit_lod or op == .image_sample_dref_explicit_lod;
     const fetch = op == .image_fetch;
@@ -10890,6 +10938,9 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
     if (which == none) return Error.Body;
     const dim = work.samplers[which].dim;
     if (fetch and dim == .cube) return Error.Body;
+    const multisampled = work.samplers[which].multisampled;
+    if (multisampled and !fetch) return Error.Body;
+    var ms_index: ?u16 = null;
     var made: Step = .{
         .tag = if (compared) .sample_compared else .sample,
         .kind = if (compared) .f32x1 else .f32x4,
@@ -10906,7 +10957,10 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
         const lod = @intFromEnum(spirv.ImageOperands.lod);
         const grad = @intFromEnum(spirv.ImageOperands.grad);
         const const_offset = @intFromEnum(spirv.ImageOperands.const_offset);
-        if (mask & ~(bias | lod | grad | const_offset) != 0) return Error.Operands;
+        const sample_bit = @intFromEnum(spirv.ImageOperands.sample);
+        if (mask & ~(bias | lod | grad | const_offset | sample_bit) != 0) return Error.Operands;
+        if (multisampled and mask & lod != 0) return Error.Body;
+        if (multisampled and mask & const_offset != 0) return Error.Operands;
         if (mask & (bias | lod) != 0) {
             if (next >= operands.len) return Error.Body;
             // A bias is an implicit level's and a level an explicit
@@ -10930,11 +10984,24 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
             made.offsets = try texelOffsets(work, operands[next], dim);
             next += 1;
         }
+        // The sample of an image of four, and of nothing else (vtn_assert,
+        // spirv_to_nir.c:3475-3476).
+        if (mask & sample_bit != 0) {
+            if (next >= operands.len or !multisampled) return Error.Body;
+            ms_index = try operand(work, operands[next], .f32x1);
+            next += 1;
+        }
         if (next != operands.len) return Error.Body;
     }
+    if (multisampled) {
+        made.a = try sampleTexelOf(work, made.a, ms_index orelse return Error.Body, dim);
+        made.lookup = .fetch_sample;
+    }
     // An explicit level's sample has its Lod or its Grad (since 1.183); a
-    // fetch its Lod (since 1.182).
-    if (explicit and made.lookup != if (fetch) Lookup.fetch else Lookup.lod) return Error.Operands;
+    // fetch its Lod (since 1.182), but of an image of four its Sample
+    // (since 1.209).
+    const wanted: Lookup = if (multisampled) .fetch_sample else if (fetch) .fetch else .lod;
+    if (explicit and made.lookup != wanted) return Error.Operands;
     const at = try put(work, made);
     work.step_of[id] = at;
     if (work.sampled == none) work.sampled = at;
@@ -11070,6 +11137,30 @@ fn texelOffsets(work: *const Work, word: u32, dim: SamplerDim) Error![3]i8 {
 /// the third float, extracted from it as the Dref (since 1.143), and a
 /// plain sample's since 1.179. A cube's is normalized
 /// (`normalizedCube`).
+/// v3d_nir_lower_txf_ms_instr (v3d_nir_lower_txf_ms.c:35-62): the texel
+/// that sample `ms_index` of the pixel at `coordinate` is in an image of
+/// four, which lies as one of twice the width and the height, each
+/// pixel's samples a 2 x 2 quad of it (`tiling.sampleTexel`): x twice
+/// and the sample's low bit, y twice and its second bit, an array's layer
+/// as it is. Put before the fetch, where the pass's cursor is, and in its
+/// order (since 1.209).
+fn sampleTexelOf(work: *Work, coordinate: u16, ms_index: u16, dim: SamplerDim) Error!u16 {
+    const bit = try integerSplat(work, .f32x1, 1);
+    const x = try floatOf(work, partOf(work, coordinate, 0));
+    const across = try integerOf(work, .iadd, try integerOf(work, .ishl, x, bit), try integerOf(work, .iand, ms_index, bit));
+    const y = try floatOf(work, partOf(work, coordinate, 1));
+    const down = try integerOf(work, .iadd, try integerOf(work, .ishl, y, bit), try integerOf(work, .iand, try integerOf(work, .ushr, ms_index, bit), bit));
+    var made: Step = .{ .tag = .construct, .kind = if (dim == .layers) .f32x3 else .f32x2 };
+    made.from[0] = across;
+    made.from[1] = down;
+    if (dim == .layers) {
+        const layer = partOf(work, coordinate, 2);
+        made.from[2] = layer.step;
+        made.part[2] = layer.part;
+    }
+    return put(work, made);
+}
+
 fn sampledAt(work: *Work, word: u32, dim: SamplerDim) Error!u16 {
     const id = try idOf(word);
     const kind = if (work.step_of[id] != none)
@@ -11954,6 +12045,35 @@ fn retyped(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32,
             k += count;
         }
         @compileError("no such instruction to retype");
+    }
+}
+
+/// `words` with the `at`th instruction of `op`, an image instruction of
+/// one image operand, given `mask` for its operands and the one it has
+/// twice: a word longer, and its count with it.
+fn withOperand(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32, comptime mask: u32) [words.len + 1]u32 {
+    comptime {
+        var seen: u32 = 0;
+        var k: usize = 5;
+        while (k < words.len) {
+            const count = words[k] >> 16;
+            if (count == 0) @compileError("a word count of zero");
+            if (words[k] & 0xFFFF == @intFromEnum(op)) {
+                if (seen == at) {
+                    if (count != 7) @compileError("that instruction has not one image operand");
+                    var copy: [words.len + 1]u32 = undefined;
+                    @memcpy(copy[0 .. k + 5], words[0 .. k + 5]);
+                    copy[k] = ((count + 1) << 16) | @intFromEnum(op);
+                    copy[k + 5] = mask;
+                    copy[k + 6] = words[k + 6];
+                    @memcpy(copy[k + 7 ..], words[k + 6 ..]);
+                    return copy;
+                }
+                seen += 1;
+            }
+            k += count;
+        }
+        @compileError("no such instruction to widen");
     }
 }
 
@@ -13746,6 +13866,109 @@ test "a texel of an array's layer is the layer's integer to TMUI, and of a 3D te
     try testing.expectEqual(@as(usize, 1), countOf(volume_code, "mov tmur, 3"));
     try testing.expectEqual(@as(usize, 1), countOf(volume_code, "mov tmub, 0"));
     try testing.expectEqual(@as(usize, 0), countOf(volume_code, "tmui"));
+}
+
+/// glslc_fetch_sample's words with its OpImageFetch's Sample taken out,
+/// mask and all: a fetch of an image of four that names no sample.
+const fetch_of_no_sample = made: {
+    const words = reference.glslc_fetch_sample;
+    const at = std.mem.indexOfScalar(u32, &words, 0x0007005F).?;
+    var cut: [words.len - 2]u32 = undefined;
+    for (0..at) |k| cut[k] = words[k];
+    cut[at] = 0x0005005F;
+    for (1..5) |k| cut[at + k] = words[at + k];
+    for (at + 7..words.len) |k| cut[k - 2] = words[k];
+    break :made cut;
+};
+
+test "a sample of a texture of four is vtn's txf_ms, which v3d_nir_lower_txf_ms makes the texel of the pixel's quad, fetched at TMUSF with no level" {
+    // An image of MS 1 (spirv_to_nir.c:2431) fetched with its Sample, a
+    // txf_ms of that ms_index (:3072-3076, :3475-3481). The pass makes it
+    // a txf at x twice and the sample's low bit, y twice and its second
+    // bit (v3d_nir_lower_txf_ms.c:46-59), of no lod: nir_lower_tex, which
+    // gives a txf one, ran before it (vir.c:1987, :2004). Sample 2 folds
+    // to x << 1 and (y << 1) + 1 (v3d_optimize_nir, vir.c:2077), and no
+    // TMUB is written (v3d_tex.c:137-153; since 1.209).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_fetch_sample);
+    try testing.expect(work.samplers[0].multisampled);
+    try testing.expectEqual(SamplerDim.flat, work.samplers[0].dim);
+    var fetches: usize = 0;
+    for (work.program()) |each| if (each.tag == .sample) {
+        try testing.expectEqual(Lookup.fetch_sample, each.lookup);
+        try testing.expectEqual(none, each.from[0]);
+        try testing.expectEqual(Tag.construct, work.steps[each.a].tag);
+        fetches += 1;
+    };
+    try testing.expectEqual(@as(usize, 1), fetches);
+    try testing.expectEqualSlices(Word, &[_]Word{.{ .texture = 0 }}, code.stream());
+    try testing.expectEqual(@as(usize, 0), countOf(code, "tmub"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmut, "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmusf, "));
+    try testing.expectEqual(@as(usize, 2), opsOf(code, "shl"));
+    try testing.expectEqual(@as(usize, 1), opsOf(code, "add"));
+    try testing.expectEqual(@as(usize, 0), opsOf(code, "and"));
+    try testing.expectEqual(@as(usize, 15), code.words.len);
+    try testing.expect(!Lookup.fetch_sample.derived() and !Lookup.fetch_sample.leveled() and Lookup.fetch_sample.fetches());
+    // The four samples a loop fetches, unrolled: x << 1 and y << 1 made
+    // once, each with 1 added where the sample's bit says (nir_opt_cse).
+    var four: Work = .{};
+    const four_code = try throughMesa(&four, &reference.glslc_fetch_samples);
+    try testing.expectEqual(@as(usize, 4), countOf(four_code, "mov tmusf, "));
+    try testing.expectEqual(@as(usize, 0), countOf(four_code, "tmub"));
+    try testing.expectEqual(@as(usize, 2), countOf(four_code, "shl "));
+    try testing.expectEqual(@as(usize, 8), countOf(four_code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 33), four_code.words.len);
+    // A sample the program computes, of an array's layer: the bits taken
+    // with ANDs and a shift, and the layer to TMUI as it is.
+    var layers: Work = .{};
+    const layers_code = try throughMesa(&layers, &reference.glslc_fetch_sample_layers);
+    try testing.expect(layers.samplers[0].multisampled);
+    try testing.expectEqual(SamplerDim.layers, layers.samplers[0].dim);
+    try testing.expectEqual(@as(usize, 1), countOf(layers_code, "mov tmui, 1"));
+    try testing.expectEqual(@as(usize, 1), countOf(layers_code, "shr "));
+    try testing.expectEqual(@as(usize, 1), countOf(layers_code, "mov tmusf, "));
+    try testing.expectEqual(@as(usize, 0), countOf(layers_code, "tmub"));
+    try testing.expectEqual(@as(usize, 21), layers_code.words.len);
+}
+
+/// glslc_fetch's fetch at a Sample, glslc_fetch_sample's at a Lod and a
+/// ConstOffset where its Sample is, the same fetch made a sample, and its
+/// image made 3D: each a module of one operand changed.
+const sample_of_one = patched(&reference.glslc_fetch, .image_fetch, 0, 4, @intFromEnum(spirv.ImageOperands.sample));
+const sample_at_level = patched(&reference.glslc_fetch_sample, .image_fetch, 0, 4, @intFromEnum(spirv.ImageOperands.lod));
+/// The fetch given a Lod beside its Sample, both the constant 2.
+const sample_and_level = withOperand(&reference.glslc_fetch_sample, .image_fetch, 0, @intFromEnum(spirv.ImageOperands.lod) | @intFromEnum(spirv.ImageOperands.sample));
+const sample_moved = patched(&reference.glslc_fetch_sample, .image_fetch, 0, 4, @intFromEnum(spirv.ImageOperands.const_offset));
+const sample_sampled = reopcoded(&reference.glslc_fetch_sample, .image_fetch, 0, .image_sample_implicit_lod);
+const sample_of_volume = patched(&reference.glslc_fetch_sample, .type_image, 0, 2, @intFromEnum(spirv.Dim.dim_3d));
+
+test "an image of four is fetched with its Sample alone, and a Sample is an image of four's" {
+    // A Sample on a fetch of an image of one, which vtn asserts is a
+    // txf_ms's (spirv_to_nir.c:3475-3476).
+    var single: Work = .{};
+    try testing.expectError(Error.Body, throughMesa(&single, &sample_of_one));
+    // A fetch of an image of four with no Sample, and with a Lod, which
+    // is no txf_ms's (:3433-3434).
+    var bare: Work = .{};
+    try testing.expectError(Error.Body, throughMesa(&bare, &fetch_of_no_sample));
+    var leveled: Work = .{};
+    try testing.expectError(Error.Body, throughMesa(&leveled, &sample_at_level));
+    // A Lod beside the Sample, which vtn asserts against all the same:
+    // without the refusal it would compile, its level dropped.
+    var both: Work = .{};
+    try testing.expectError(Error.Body, throughMesa(&both, &sample_and_level));
+    // A ConstOffset, which v3d's lowering would leave to P2 to move by
+    // samples, not by pixels: refused.
+    var moved: Work = .{};
+    try testing.expectError(Error.Operands, throughMesa(&moved, &sample_moved));
+    // Sampled, not fetched: vtn asserts the sampler_dim is no MS one
+    // (:3034, :3054).
+    var sampled: Work = .{};
+    try testing.expectError(Error.Body, throughMesa(&sampled, &sample_sampled));
+    // And an image of four that is 3D, which is no SPIR-V.
+    var volume: Work = .{};
+    try testing.expectError(Error.Refused, throughMesa(&volume, &sample_of_volume));
 }
 
 test "a texel a constant offset away has P2 after the default P1, both constants, and no sampler state" {

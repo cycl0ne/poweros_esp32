@@ -6928,4 +6928,41 @@ pub const LIBRARY_VERSION = 1;
 /// cases differ. With the iand made an ior it is 22,767 apart. The other
 /// 304 cases are each as they were at 1.207, and FacetProbe passes its
 /// 890 checks.
-pub const LIBRARY_REVISION = 208;
+///
+/// 209: **A sample of an image of four fetched through the TMU (docs/
+/// facet-vulkan10.md item 61's V7).** An image of four samples was not
+/// sampled on the V3D, whose sampled colour and depth masks said one.
+/// spirv_to_nir makes an OpImageFetch of a multisampled image with its
+/// Sample a txf_ms (spirv_to_nir.c:3072-3076, 3475-3481), and v3d lowers
+/// it to a txf of the texel at the sample's place in the pixel's quad: x
+/// twice and the sample's bit 0, y twice and its bit 1, an array's layer
+/// as it is (v3d_nir_lower_txf_ms.c:35-62). That runs after nir_lower_tex
+/// (vir.c:1987, :2004), so the txf is given no level (nir_lower_tex.c:
+/// 1849-1858), and it is started at TMUSF with no TMUB (v3d_tex.c:
+/// 137-153, 375-377). The texture state gives the TMU the image's twice
+/// the width and the height (v3dvx_image.c:48, :95-96). A Lod or a
+/// ConstOffset on such a fetch, and a sample of such an image, are
+/// refused, as vtn asserts against them (spirv_to_nir.c:3433-3434, :3034,
+/// :3054).
+///
+/// The V3D's sampled colour and depth masks hold the 4 bit, as v3dv's
+/// do (v3dv_device.c:1026-1027, 1179-1189), which closes two of its
+/// eight rows. An image of four that is sampled and a colour attachment
+/// stays refused there, as one of one is until item 48, and an input
+/// attachment of four until item 56.
+///
+/// Three references: glslc_fetch_sample, glslc_fetch_samples and
+/// glslc_fetch_sample_layers. The V3D's tests are 394, three new. Of 16
+/// mutations, all 16 fail them, one since a Lod beside the Sample was
+/// added to them.
+///
+/// On the CM5 FacetBoth 1.73's "shipped fetch of four samples", the far
+/// and the near triangle drawn into samples 0 and 2 and the glass into 1
+/// and 2, copied into an image of four that is sampled, and a sample
+/// fetched a band at a time, is 4 of 230400 pixels apart, 217 at worst.
+/// With the ushr taken out of the sample's place, so that samples 1 and
+/// 2 are read as 3 and 0, it is 5,018 apart, where the glass is. The
+/// other 306 cases are each as they were at 1.208, and FacetProbe passes
+/// its 891 checks, one new: the largest sampled image of four made on the
+/// V3D, whose format query says four for it now.
+pub const LIBRARY_REVISION = 209;

@@ -11350,10 +11350,10 @@ test "a device of a layout of its own keeps an image's four samples together, ea
         try testing.expectEqual(want, std.mem.readInt(u32, &bytes, .little));
     };
 
-    // A depth image of four is kept together too. Not sampled until the
-    // V3D fetches a sample through its quad (step V7): a sampled depth is
-    // made at one sample on such a device (since 1.142), and the format
-    // query, asking CreateImage's rules, says one sample for it alone.
+    // A depth image of four is kept together too, and sampled so since
+    // the V3D fetches a sample through its quad (step V7, since 1.209):
+    // the pass stores all four into the level, and the format query,
+    // asking CreateImage's rules, says one sample and four for it.
     const depth_usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
     const depth = try bench.bareImage(.{ .format = .d16_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .samples = 4, .usage = depth_usage }, false);
     const depth_image = _objects.of(Image, depth);
@@ -11364,11 +11364,33 @@ test "a device of a layout of its own keeps an image's four samples together, ea
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .d16_unorm, .@"2d", .optimal, depth_usage, 0, &said));
     try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, said.sample_counts);
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .d16_unorm, .@"2d", .optimal, depth_usage | facet.IMAGE_USAGE_SAMPLED, 0, &said));
-    try testing.expectEqual(facet.SAMPLE_COUNT_1, said.sample_counts);
-    var refused: ?*facet.Image = null;
-    try testing.expect(fb.CreateImage(bench.device, &.{ .format = .d16_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .samples = 4, .usage = depth_usage | facet.IMAGE_USAGE_SAMPLED }, &refused) != .success);
+    try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, said.sample_counts);
+    const sampled_depth, _ = try bench.image(.{ .format = .d16_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .samples = 4, .usage = depth_usage | facet.IMAGE_USAGE_SAMPLED }, false);
+    const sampled_depth_image = _objects.of(Image, sampled_depth);
+    try testing.expect(sampled_depth_image.quads and _image.deviceLaid(sampled_depth_image));
+    try testing.expectEqual(depth_image.bytes, sampled_depth_image.bytes);
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .b8g8r8a8_unorm, .@"2d", .optimal, usage, 0, &said));
     try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, said.sample_counts);
+
+    // A colour of four sampled, which a copy fills: in quads, of a view
+    // whose texture the TMU reads at twice the width and the height
+    // (since 1.209).
+    const sampled_usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled_usage, 0, &said));
+    try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, said.sample_counts);
+    const sampled, _ = try bench.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .samples = 4, .usage = sampled_usage }, false);
+    const sampled_image = _objects.of(Image, sampled);
+    try testing.expect(sampled_image.quads and _image.deviceLaid(sampled_image));
+    try testing.expectEqual(std.mem.alignForward(u64, layout.bytes, tiling.alignment), sampled_image.bytes);
+    // And not one drawn into as well: at one sample such a device makes
+    // none (item 48), and the query keeps the 1 bit wherever it keeps the
+    // 4, so none at four either.
+    const drawn_sampled = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .b8g8r8a8_unorm, .@"2d", .optimal, drawn_sampled, 0, &said));
+    var refused: ?*facet.Image = null;
+    try testing.expect(fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .samples = 4, .usage = drawn_sampled }, &refused) != .success);
+    // Read as an input attachment, which such a device reads none of: no.
+    try testing.expect(fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT }, &refused) != .success);
 }
 
 test "an image drawn into and sampled, and a colour attachment of levels: the format query gives the whole chain of levels an optimal image has on the cores, and a device of a layout of its own refuses both (item 48)" {

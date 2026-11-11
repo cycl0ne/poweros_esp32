@@ -790,8 +790,9 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
             image.bytes = image.layer_bytes * layers;
             image.alignment = memory.alignment;
         };
-        // Of four samples there, laid out as its device keeps them, which
-        // is never sampled (`multisampled`; since 1.146).
+        // Of four samples there, laid out as its device keeps them (since
+        // 1.146), and sampled so (since 1.209): the pass stores every
+        // sample into its quad, where the TMU fetches it.
         if (info.samples > 1) if (physical.ops.texture_memory) |own| return inQuads(image, own(info.format, extent.width, extent.height, 1, 1, info.samples), info.samples);
         return withPlanes(image, info.samples);
     }
@@ -831,14 +832,20 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
     // (`sampledRowFormat`), which the three a pass draws into are, in
     // optimal tiling, on a device that keeps its images in this library's
     // layout: the V3D's are its own (`Ops.texture_memory`), and its half
-    // of item 48 is to come. Not written through as a storage image as
+    // of item 48 is to come. Of four samples there and no attachment, it
+    // is kept as that device keeps an image of four, in quads
+    // (`inQuads`), which a copy or a clear reaches every sample of and
+    // the TMU fetches a sample of (since 1.209); one drawn into as well
+    // waits with item 48, the format query holding the 1 bit wherever it
+    // holds the 4. Not written through as a storage image as
     // well, which `rows_written` is for one level and one layer alone; not
     // transient, as it has memory behind it; and not a 3D image, whose
     // slices no pass of Vulkan 1.0 draws into.
     const attachment = info.usage & (facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT) != 0;
     const sampled_rows = info.usage & facet.IMAGE_USAGE_SAMPLED != 0 and (info.samples != 1 or attachment);
     if (sampled_rows) {
-        if (physical.ops.texture_memory != null or sampledRowFormat(info.format) == null) return null;
+        if (physical.ops.texture_memory != null and (info.samples == 1 or attachment)) return null;
+        if (sampledRowFormat(info.format) == null) return null;
         const not_sampled = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
         if (info.tiling != .optimal or volume or info.usage & not_sampled != 0) return null;
     }
@@ -940,11 +947,11 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
 fn multisampled(physical: *const _instance.PhysicalDevice, info: *const facet.ImageCreateInfo) bool {
     if (info.samples != 4 or !physical.can.multisampling) return false;
     // A device of a layout of its own keeps the four samples together
-    // (`Image.quads`, since 1.146), and fetches none of them yet: v3dv's
-    // compiler reads one through its quad (v3d_nir_lower_txf_ms.c:46-51),
-    // facet's for the V3D after item 59 (docs/facet-vulkan10.md item 61,
-    // step V7).
-    if (physical.ops.texture_memory != null and info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_INPUT_ATTACHMENT) != 0) return false;
+    // (`Image.quads`, since 1.146), and since 1.209 fetches one through
+    // its quad as v3dv's compiler does (v3d_nir_lower_txf_ms.c:46-51;
+    // docs/facet-vulkan10.md item 61, step V7). It reads no input
+    // attachment (`Capabilities.input_attachments`).
+    if (physical.ops.texture_memory != null and info.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0) return false;
     if (info.image_type != .@"2d" or info.tiling != .optimal or info.mip_levels != 1) return false;
     if (info.flags & facet.IMAGE_CREATE_CUBE_COMPATIBLE != 0) return false;
     const taken = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT |

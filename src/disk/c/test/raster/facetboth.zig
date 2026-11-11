@@ -150,7 +150,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.72 (11.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.73 (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -1694,6 +1694,33 @@ fn fetchedFragment(comptime across: f32, comptime level: u32, comptime layer: u3
     }.run;
 }
 
+/// What `shipped_fetch_four` computes, for the cores: the texel of the
+/// image of four samples bound at set 0, binding 0 at the place the two
+/// floats of varying 0 times the picture's 640 x 360 make integers
+/// towards zero, and of that texel the sample the first float times 8
+/// made an integer, its two lowest bits, says - a band of the quad for
+/// each sample, twice across - as texelFetch reads one of a sampler2DMS,
+/// through no sampler (`Texture.sampleOf`; since 1.73).
+fn fourFetchedFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    const given = fragments.resources.sampled(0, 0, 0) orelse return shader.fill(fragments, shader.missing);
+    @setRuntimeSafety(false);
+    var rows = shader.Rows(3).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const row = rows.at(quad);
+        const w = @as(shader.Pixels, @splat(1)) / row[0];
+        const us: [4]f32 = row[1] * w;
+        const vs: [4]f32 = row[2] * w;
+        var colors: [4]u32 = undefined;
+        for (&colors, us, vs) |*color, u, v| {
+            const x: u32 = @bitCast(towardZero(u * 640.0));
+            const y: u32 = @bitCast(towardZero(v * 360.0));
+            const band: u32 = @as(u32, @bitCast(towardZero(u * 8.0))) & 3;
+            color.* = given.sampleOf(band).colorAt(0, 0, x, y);
+        }
+        out.* = colors;
+    }
+}
+
 /// What `shipped_fetch_dependent` computes, for the cores: the texture
 /// bound at set 0, binding 0 sampled through the sampler beside it at the
 /// centre of the texel of level 0 the two floats of varying 0 times 64
@@ -2832,6 +2859,8 @@ const shipped_entries = [_]shader.Entry{
     // A kept selection nir_opt_collapse_if makes one with the one it is in
     // (since 1.72).
     Shipped.CollapsedKept.entry("shipped collapsed kept"),
+    // A sample of an image of four, fetched (since 1.73).
+    shader.fragment("shipped fetch four", &fourFetchedFragment, 2),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2861,7 +2890,66 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_packing_bytes),        shader.Spirv.of(&shipped_packing_halves),   shader.Spirv.of(&shipped_packing_half),        shader.Spirv.of(&shipped_matrix_inverse),
     shader.Spirv.of(&shipped_determinant4),         shader.Spirv.of(&shipped_bits),             shader.Spirv.of(&shipped_vertex_branch),       shader.Spirv.of(&shipped_branches),
     shader.Spirv.of(&shipped_outputs),              shader.Spirv.of(&shipped_vertex_outputs),   Shipped.NestedKept.spirv,                      Shipped.SelectsKept.spirv,
-    Shipped.CollapsedKept.spirv,
+    Shipped.CollapsedKept.spirv,                    shader.Spirv.of(&shipped_fetch_four),
+};
+
+/// glslc's own output, at -O, for a sample of an image of four at the
+/// place the two floats of varying 0 times the picture's size make
+/// integers, which sample the first float times 8 says, its two lowest
+/// bits: OpImageFetch with Sample, which spirv_to_nir makes txf_ms
+/// (spirv_to_nir.c:3072-3076, 3475-3481) and the V3D the texel of the
+/// sample's place in the pixel's quad, x twice and its bit 0 and y twice
+/// and its bit 1, fetched at TMUSF at no level
+/// (v3d_nir_lower_txf_ms.c:35-62; since 1.73).
+///
+/// ```glsl
+/// #version 450
+/// layout(set = 0, binding = 0) uniform sampler2DMS picture;
+/// layout(location = 0) in vec2 at;
+/// layout(location = 0) out vec4 outColor;
+/// void main() {
+///     outColor = texelFetch(picture, ivec2(at * vec2(640.0, 360.0)), int(at.x * 8.0) & 3);
+/// }
+/// ```
+///
+/// ```sh
+/// glslc -O -fshader-stage=frag fetch_four.frag -o fetch_four.spv   # 198 words
+/// spirv-val --target-env vulkan1.0 fetch_four.spv                  # no output, and 0
+/// ```
+const shipped_fetch_four = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000026, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000011, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x00000009, 0x0000001E, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000021, 0x00000000, 0x00040047, 0x0000000D,
+    0x00000022, 0x00000000, 0x00040047, 0x00000011, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B, 0x00000008,
+    0x00000009, 0x00000003, 0x00090019, 0x0000000A, 0x00000006, 0x00000001,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000B, 0x0000000A, 0x00040020, 0x0000000C, 0x00000000, 0x0000000B,
+    0x0004003B, 0x0000000C, 0x0000000D, 0x00000000, 0x00040017, 0x0000000F,
+    0x00000006, 0x00000002, 0x00040020, 0x00000010, 0x00000001, 0x0000000F,
+    0x0004003B, 0x00000010, 0x00000011, 0x00000001, 0x0004002B, 0x00000006,
+    0x00000013, 0x44200000, 0x0004002B, 0x00000006, 0x00000014, 0x43B40000,
+    0x0005002C, 0x0000000F, 0x00000015, 0x00000013, 0x00000014, 0x00040015,
+    0x00000017, 0x00000020, 0x00000001, 0x00040017, 0x00000018, 0x00000017,
+    0x00000002, 0x00040015, 0x0000001A, 0x00000020, 0x00000000, 0x0004002B,
+    0x0000001A, 0x0000001B, 0x00000000, 0x00040020, 0x0000001C, 0x00000001,
+    0x00000006, 0x0004002B, 0x00000006, 0x0000001F, 0x41000000, 0x0004002B,
+    0x00000017, 0x00000022, 0x00000003, 0x00050036, 0x00000002, 0x00000004,
+    0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000B,
+    0x0000000E, 0x0000000D, 0x0004003D, 0x0000000F, 0x00000012, 0x00000011,
+    0x00050085, 0x0000000F, 0x00000016, 0x00000012, 0x00000015, 0x0004006E,
+    0x00000018, 0x00000019, 0x00000016, 0x00050041, 0x0000001C, 0x0000001D,
+    0x00000011, 0x0000001B, 0x0004003D, 0x00000006, 0x0000001E, 0x0000001D,
+    0x00050085, 0x00000006, 0x00000020, 0x0000001E, 0x0000001F, 0x0004006E,
+    0x00000017, 0x00000021, 0x00000020, 0x000500C7, 0x00000017, 0x00000023,
+    0x00000021, 0x00000022, 0x00040064, 0x0000000A, 0x00000024, 0x0000000E,
+    0x0007005F, 0x00000007, 0x00000025, 0x00000024, 0x00000019, 0x00000040,
+    0x00000023, 0x0003003E, 0x00000009, 0x00000025, 0x000100FD, 0x00010038,
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -9736,6 +9824,11 @@ const Side = struct {
     resolving_frame: ?*facet.Framebuffer = null,
     four_alone: ?*facet.RenderPass = null,
     four_alone_frame: ?*facet.Framebuffer = null,
+    /// An image of four samples that is sampled, what `four_alone` keeps
+    /// copied into it, and its set (since 1.73).
+    four_sampled: ?*facet.Image = null,
+    four_sampled_view: ?*facet.ImageView = null,
+    four_sampled_set: ?*facet.DescriptorSet = null,
     /// What a shipped shader that reads the push constants is made with:
     /// no set, and the fragment stage's 20 bytes of them.
     push_layout: ?*facet.PipelineLayout = null,
@@ -9865,7 +9958,7 @@ const Side = struct {
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 9 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 10 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -9984,6 +10077,15 @@ const Side = struct {
         try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &side.four_alone), error.Refused);
         const views = [2]*facet.ImageView{ side.four_view.?, side.four_depth_view.? };
         try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.four_alone.?, .attachment_count = 2, .attachments = &views, .width = side.width, .height = side.height }, &side.four_alone_frame), error.Refused);
+        // Sampled, and given its texels by a copy (since 1.73).
+        try side.image(.{ .format = formats[0], .extent = extent, .samples = 4, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, 0, &side.four_sampled);
+        side.four_sampled_view = try side.view(side.four_sampled.?, formats[0], facet.IMAGE_ASPECT_COLOR, 1);
+        var sets: [1]?*facet.DescriptorSet = undefined;
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&side.sampler_set_layout) }, &sets), error.Refused);
+        side.four_sampled_set = sets[0];
+        const info = facet.DescriptorImageInfo{ .sampler = side.sampler, .image_view = side.four_sampled_view, .image_layout = .shader_read_only_optimal };
+        const write = facet.WriteDescriptorSet{ .dst_set = side.four_sampled_set.?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
     }
 
     /// The shadow map, its pass over the first picture and it, and a set
@@ -10429,6 +10531,8 @@ const Side = struct {
         fb.DestroyRenderPass(device, side.resolving);
         fb.DestroyRenderPass(device, side.four_alone);
         fb.DestroyImageView(device, side.four_view);
+        fb.DestroyImageView(device, side.four_sampled_view);
+        fb.DestroyImage(device, side.four_sampled);
         fb.DestroyImageView(device, side.four_depth_view);
         fb.DestroyImage(device, side.four);
         fb.DestroyImage(device, side.four_depth);
@@ -11904,6 +12008,38 @@ const Cases = struct {
         const region = facet.ImageResolve{ .extent = .{ .width = side.width, .height = side.height, .depth = 1 } };
         fb.CmdResolveImage(side.commands.?, side.four.?, .transfer_src_optimal, side.pictures[0].?, .general, 1, @ptrCast(&region));
     }
+    /// The far and the near triangle at four samples, samples 0 and 2 of
+    /// them written, and the glass over them in samples 1 and 2, kept by
+    /// `four_alone`, copied into the image of four that is sampled, and
+    /// each of its samples fetched by glslc's `shipped_fetch_four` over
+    /// the quad, a band at a time: the four apart wherever the triangles
+    /// are, which the V3D fetches each of at its place in the pixel's
+    /// quad (`compile.Lookup.fetch_sample`; since 1.73).
+    fn fetchedFour(side: *Side) Failure!void {
+        const fb = side.fb;
+        side.beginFour(false, null);
+        try side.use(.{ .pass = side.four_alone.?, .samples = 4, .sample_mask = 0x5, .test_depth = true, .write_depth = true });
+        side.draw(far_at, 3);
+        side.draw(near_at, 3);
+        try side.use(.{ .pass = side.four_alone.?, .samples = 4, .sample_mask = 0x6, .blend = true });
+        side.draw(glass_at, 3);
+        side.end();
+        const color = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_COLOR };
+        const before = [2]facet.ImageMemoryBarrier{
+            .{ .src_access_mask = facet.ACCESS_COLOR_ATTACHMENT_WRITE, .dst_access_mask = facet.ACCESS_TRANSFER_READ, .old_layout = .transfer_src_optimal, .new_layout = .transfer_src_optimal, .image = side.four.?, .subresource_range = color },
+            .{ .dst_access_mask = facet.ACCESS_TRANSFER_WRITE, .old_layout = .undefined, .new_layout = .transfer_dst_optimal, .image = side.four_sampled.?, .subresource_range = color },
+        };
+        fb.CmdPipelineBarrier(side.commands.?, facet.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT, facet.PIPELINE_STAGE_TRANSFER, 0, 0, null, 0, null, before.len, &before);
+        const whole = facet.ImageCopy{ .extent = .{ .width = side.width, .height = side.height } };
+        fb.CmdCopyImage(side.commands.?, side.four.?, .transfer_src_optimal, side.four_sampled.?, .transfer_dst_optimal, 1, @ptrCast(&whole));
+        const filled = facet.ImageMemoryBarrier{ .src_access_mask = facet.ACCESS_TRANSFER_WRITE, .dst_access_mask = facet.ACCESS_SHADER_READ, .old_layout = .transfer_dst_optimal, .new_layout = .shader_read_only_optimal, .image = side.four_sampled.?, .subresource_range = color };
+        fb.CmdPipelineBarrier(side.commands.?, facet.PIPELINE_STAGE_TRANSFER, facet.PIPELINE_STAGE_FRAGMENT_SHADER, 0, 0, null, 0, null, 1, @ptrCast(&filled));
+        side.begin(.{});
+        fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.sampler_layout.?, 0, 1, @ptrCast(&side.four_sampled_set), 0, null);
+        try side.use(.{ .vertex = "texture", .fragment = "shipped fetch four", .layout = side.sampler_layout.? });
+        side.draw(quad_at, 6);
+        side.end();
+    }
     fn onTarget(comptime target: Target) *const fn (side: *Side) Failure!void {
         return &struct {
             fn run(side: *Side) Failure!void {
@@ -12177,6 +12313,8 @@ const cases = [_]Case{
     .{ .name = "four samples, resolved over a part", .run = Cases.resolved(.{ 0.1, 0.15, 0.7, 0.8 }, null) },
     .{ .name = "four samples, two of them written", .run = Cases.resolved(null, 0x5) },
     .{ .name = "four samples, resolved by CmdResolveImage", .run = &Cases.resolvedAfter },
+    // 1.73: each sample of an image of four fetched in a shader.
+    .{ .name = "shipped fetch of four samples", .run = &Cases.fetchedFour },
     .{ .name = "four samples, covered by alpha", .run = &Cases.covered, .slack = 52 },
     // No colour (since 1.18), which the V3D draws since facet 1.150: a
     // shadow map drawn in a pass of it alone, and a depth drawn in a
