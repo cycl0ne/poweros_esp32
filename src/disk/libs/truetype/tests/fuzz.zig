@@ -75,12 +75,12 @@ const untouched_point: vector.Point = .{ .x = -12345.5, .y = 54321.25 };
 
 /// Pages of the host's own with one after them that nothing may read or
 /// write: a file placed here ends where that page begins.
-const Arena = struct {
+pub const Arena = struct {
     memory: []align(std.heap.page_size_min) u8,
     /// Where the closed page begins.
     end: usize,
 
-    fn init() !Arena {
+    pub fn init() !Arena {
         const page = std.heap.pageSize();
         const room = std.mem.alignForward(usize, most_file, page);
         const memory = try std.posix.mmap(null, room + page, .{ .READ = true, .WRITE = true }, .{ .TYPE = .PRIVATE, .ANONYMOUS = true }, -1, 0);
@@ -96,13 +96,13 @@ const Arena = struct {
     }
 
     /// `bytes` copied to where they end at the closed page.
-    fn place(arena: *const Arena, bytes: []const u8) []u8 {
+    pub fn place(arena: *const Arena, bytes: []const u8) []u8 {
         const file = arena.memory[arena.end - bytes.len .. arena.end];
         @memcpy(file, bytes);
         return file;
     }
 
-    fn free(arena: *const Arena) void {
+    pub fn free(arena: *const Arena) void {
         std.posix.munmap(arena.memory);
     }
 };

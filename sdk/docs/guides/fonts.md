@@ -4,6 +4,7 @@ How text gets onto a surface: what a font is, how one is chosen and opened,
 where fonts come from, and what a program has to do to use them. The calls
 themselves are in the reference: [graphics](../autodocs/graphics.md),
 [diskfont](../autodocs/diskfont.md), [truetype](../autodocs/truetype.md),
+[truetypeshaping](../autodocs/truetypeshaping.md),
 [intuition](../autodocs/intuition.md).
 
 - [The font image](#the-font-image)
@@ -472,6 +473,61 @@ what it does not, the program draws itself. The outline is read once and
 shared by everyone who opens it; `CloseOutlineFont` gives it back, and
 it is freed when memory runs low and nobody holds it.
 
+**Shaping** (truetypeshaping.library 1.0). A font says more than which
+glyph a character has: its `GSUB` table replaces glyphs - two letters by
+their ligature, a letter by the form it has beside its neighbours - and
+its `GPOS` table sets them: a pair closer or apart, a mark onto the
+glyph it belongs to, the letters of a joined script so that they meet.
+`ShapeGlyphs(outline, script, direction, language, features, run)`
+applies both to a run of glyphs. The run is an array of `ShapedGlyph`,
+each with its `glyph` and its `cluster` - the place in the text it
+stands for - and comes back with the glyphs it is drawn with, each with
+its `advance` and its `x_offset` and `y_offset` in the font's units, in
+the order they are drawn from left to right. A ligature has the lowest
+cluster of its parts, so a caret or a selection still finds the text a
+glyph stands for.
+
+The script and the language are the font's four-letter names
+(`scriptTag("latn")`, `languageTag("TRK ")`), or the defaults. The
+features are a list ended by a tag of 0: each with its tag, a `value` -
+0 switches it off, a number from 1 picks one of the forms a feature
+offers - and the clusters `first` to `last` it holds for, the whole run
+when they are left alone. The call applies what it is given and nothing
+else: `liga` and `kern` are features like any other. A font without the
+tables, or without the feature, gives the run back with the advances the
+font has for its glyphs.
+
+```zig
+const tts = sdk.truetypeshaping;
+var glyphs: [16]tts.ShapedGlyph = undefined;
+for ("office", 0..) |letter, place| {
+    glyphs[place] = .{ .glyph = tb.GlyphIndex(outline, letter), .cluster = @intCast(place) };
+}
+var run: tts.ShapedRun = .{ .glyphs = &glyphs, .room = glyphs.len, .count = 6 };
+const features = [_]tts.Feature{
+    .{ .tag = tts.featureTag("liga") },
+    .{ .tag = tts.featureTag("kern") },
+    .{},
+};
+if (sb.ShapeGlyphs(outline, tts.scriptTag("latn"), tts.TTS_LEFT_TO_RIGHT, tts.TTS_LANGUAGE_DEFAULT, &features, &run) == tts.TTS_OK) {
+    var x: i32 = 0;
+    for (glyphs[0..run.count]) |shaped| {
+        // Draw shaped.glyph at x + shaped.x_offset, shaped.y_offset.
+        x += shaped.advance;
+    }
+}
+```
+
+`TTSERR_ROOM` says the shaped run has more glyphs than the array holds,
+and `count` how many. What a font can ask for is bounded - a sequence of
+64 glyphs, lookups calling each other 8 deep, a run growing to 64 times
+its length, and each table's work on a run: 65536 pieces a glyph, a
+million for a short run, where a piece is a subtable looked at for a
+glyph, a rule tried, a glyph compared - so that a call's time follows
+the run's length and not what a table's numbers say. Tables that are
+not sound shape to something or to nothing, and are never read past
+their end.
+
 ## The system's fonts
 
 intuition.library holds three fonts, by `SYSFONT_*`:
@@ -563,6 +619,7 @@ if (gb.RemFont(&mine.font)) sys.FreeVec(mine); // true once nobody holds it
 | `tools/fontconv` | on the host: BDF, Amiga font files (colour too) and TrueType files into size files and a contents file; `--alpha N` for coverage from a larger drawing, `--shadow` for a shadowed colour font |
 | `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces and Liberation's (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation only onto the 64-bit machines' disks. With them two fonts only the host tests read, which go on no disk: Noto Sans Devanagari and Noto Color Emoji |
 | `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
+| `scripts/shape-reference.py` | on the host: applies the fetched fonts' `GSUB` and `GPOS` lookups to runs of glyphs - every glyph of a font, and sequences its lookups have rules for - with an applier of its own on fontTools' reading of the tables, and writes what comes out, a digest for each script, language and feature list, as the Zig files `truetypeshaping.library`'s host tests compare its shaping with (`src/disk/libs/truetypeshaping/tests/reference/`). `--check` says whether the files are the ones it would write, `--show <font> <case>` prints a case's runs |
 | `C:ListFonts` | every font by family, size and where it is; `SAMPLE` draws them |
 | `C:FixFonts` | writes every family's contents file again |
 | `C:SetPrefs` | sets the system's fonts, with the rest of its settings, from `ENV:Sys`; `SHOW` prints them |

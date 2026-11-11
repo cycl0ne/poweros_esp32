@@ -126,6 +126,14 @@ test {
     _ = @import("libs/truetype/tests/fonts.zig");
     _ = @import("libs/truetype/tests/readonly.zig");
     _ = @import("libs/truetype/tests/fuzz.zig");
+    _ = @import("libs/truetypeshaping/tests/layout.zig");
+    _ = @import("libs/truetypeshaping/tests/gsub.zig");
+    _ = @import("libs/truetypeshaping/tests/context.zig");
+    _ = @import("libs/truetypeshaping/tests/gpos.zig");
+    _ = @import("libs/truetypeshaping/tests/plan.zig");
+    _ = @import("libs/truetypeshaping/tests/library.zig");
+    _ = @import("libs/truetypeshaping/tests/fonts.zig");
+    _ = @import("libs/truetypeshaping/tests/fuzz.zig");
     _ = @import("libs/vector/tests/vector.zig");
     _ = @import("libs/asl/tests/asl.zig");
     _ = @import("libs/iffparse/tests/iffparse.zig");

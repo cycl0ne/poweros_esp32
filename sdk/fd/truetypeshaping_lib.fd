@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: MIT
+//! truetypeshaping.library's functions: a run of glyphs shaped by a
+//! font's layout tables - replaced, and placed.
+//! Open it with OpenLibrary("truetypeshaping.library", 1).
+##include libs/truetype/truetype as truetype
+##include libs/truetypeshaping/truetypeshaping as truetypeshaping
+##basetype TrueTypeShapingBase
+##name truetypeshaping.library
+##bias 4
+##public
+/// The glyphs of `run` shaped by `outline`'s layout tables: the
+/// `features` (a list ended by a tag of 0) of the `script` and
+/// `language` applied, each glyph given its advance and its offsets, in
+/// the font's units. TTS_OK, or TTSERR_ROOM with the count the run
+/// needs, TTSERR_NOMEM, TTSERR_DIRECTION, TTSERR_FEATURES.
+i32 ShapeGlyphs(*truetype.Outline outline, u32 script, u32 direction, u32 language, ?[*]const truetypeshaping.Feature features, *truetypeshaping.ShapedRun run)
+##end

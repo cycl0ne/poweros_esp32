@@ -65,7 +65,7 @@ echo "fonts in $out/liberation-fonts-ttf-$liberation"
 
 # For the host tests only. The expected values in the libraries' tests/
 # folders name these files' sha256: a new release here means running
-# scripts/font-reference.py again.
+# scripts/font-reference.py and scripts/shape-reference.py again.
 devanagari=2.007
 devanagari_sha256=820c7da45b1e63562cb41c0a8cac5d9a4202312043a3a040ed1325857ef469b1
 emoji=v2026-09-24-unicode18_0 # googlefonts/noto-emoji
