@@ -7,9 +7,9 @@
 //! wildcard turned into a token byte (`P_ANY` 0xF5 to `P_REPEND` 0xFF,
 //! sdk/libs/utility/pattern.zig), NUL-terminated. A token is a byte UTF-8
 //! never holds, so the pattern's structure is found byte by byte and a
-//! literal is never taken for a token. The source is read as text is
-//! read (sdk.utility.utf8), and a byte that is no UTF-8 goes in as the
-//! character it reads as, in UTF-8. The parser keeps
+//! literal is never taken for a token. The source is UTF-8, and a byte
+//! that is no UTF-8 makes it a pattern that does not parse. The parser
+//! keeps
 //! the groups still open on a stack at the far end of the output buffer,
 //! so it needs no memory of its own; a pattern of `len` bytes takes at
 //! most 2*len+2.
@@ -287,11 +287,10 @@ const Parser = struct {
 /// - `src` - the source position.
 ///
 /// RESULT:
-/// `error.BadTemplate` for bytes that are no UTF-8 when such a byte reads
-/// as no character (sdk.utility.utf8).
+/// `error.BadTemplate` for bytes that are no UTF-8.
 fn take(src: *[*]const u8) Error!u32 {
     const found = charAt(src.*);
-    if (found.broken and !utf8.broken_reads_latin1) return error.BadTemplate;
+    if (found.broken) return error.BadTemplate;
     src.* += found.length;
     return found.char;
 }

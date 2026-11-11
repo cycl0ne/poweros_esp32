@@ -264,8 +264,9 @@ test "snapshots: listed only in .snapshots, which the root does not show, and ne
     try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, make(fs, ""));
     try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, make(fs, "a/b"));
     try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, make(fs, "thirty-two bytes is one too many"));
-    try testing.expectEqual(@as(i32, 0), make(fs, "\xe9t\xe9"));
-    try expectFile(fs, ".snapshots/\xe9T\xc9/a", "first");
+    try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, make(fs, "\xe9t\xe9")); // no UTF-8
+    try testing.expectEqual(@as(i32, 0), make(fs, "\xc3\xa9t\xc3\xa9"));
+    try expectFile(fs, ".snapshots/\xc3\xa9T\xc3\x89/a", "first");
     try testing.expectEqual(dos.ERROR_OBJECT_IN_USE, drop(fs, "One"));
     _ = send(fs, .free_lock, .{ kept.res1, 0, 0, 0 });
     try testing.expectEqual(@as(i32, 0), drop(fs, "One"));

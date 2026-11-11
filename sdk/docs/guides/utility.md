@@ -385,9 +385,10 @@ folded code points: `_` (0x5F) before the letters, and what lies past
 ASCII after all of ASCII. Two strings of different lengths in bytes can
 be the same.
 
-A byte that is no UTF-8 is read as its Latin-1 character, so a name
-written in Latin-1 and the same name in UTF-8 are one: `Stricmp` finds
-`M\xFCll` and `Müll` the same.
+A byte that is no UTF-8 is read as U+FFFD, so it is never the letter
+its value is in another encoding: `Stricmp` finds `M\xFCll` and `Müll`
+different. Text in another encoding is made UTF-8 as it comes in (the
+next section, and `fromLatin1`, `fromCp1252`, `fromForeign`).
 
 `Strlcpy` reads all of its source, so a cut copy shows in its answer:
 
@@ -414,8 +415,6 @@ it:
 | `utf8.encode(char, &four)` | a character into at most four bytes: the bytes written |
 | `utf8.lengthOf(char)` | the bytes `encode` writes for it |
 | `utf8.valid(bytes)` | whether the whole is UTF-8 |
-| `utf8.readable(bytes)` | whether a name of these bytes can be kept: UTF-8, or - while a bad byte reads as Latin-1 - any |
-| `utf8.textOf(bytes, into)` | the bytes as a file system keeps a name: UTF-8 as it is, a bad byte as its character's UTF-8 in `into`; null when it cannot be kept or does not fit |
 | `utf8.copyCut(bytes, into)` | as many whole characters as `into` holds, copied: the length |
 | `utf8.fromLatin1(bytes, into)` | Latin-1 as UTF-8, as many whole characters as fit: the length |
 | `utf8.fromForeign(bytes, into)` | text that does not say what it is written in - an ID3v1 tag, an old list - as UTF-8: as it is when the whole is UTF-8, else read as Latin-1; the length |
@@ -426,10 +425,11 @@ var count: usize = 0;
 while (at < name.len) : (count += 1) _ = utility.utf8.next(name, &at);
 ```
 
-A byte that is no UTF-8 - one that starts no character, or a sequence
-broken off - reads as its Latin-1 character, one byte long, with
-`.broken` set: so text written in Latin-1 still reads right. An overlong
-form, a surrogate and a value past U+10FFFF are no UTF-8. `encode`
+Bytes that are no UTF-8 read as U+FFFD (`utf8.replacement`) with
+`.broken` set: a byte that starts no character alone, a sequence broken
+off as one with its lead, after which the byte that broke it is read
+again, so a control after it is never swallowed. An overlong form, a
+surrogate and a value past U+10FFFF are no UTF-8. `encode`
 writes U+FFFD (`utf8.replacement`) for a surrogate or a value past
 `utf8.last`.
 
@@ -636,8 +636,8 @@ UTF-8: `?` takes one character, however many bytes it is, and a class's
 range is a range of code points, so `[α-ω]` takes the Greek small
 letters. The tokens are the bytes 0xF5 to 0xFF, which UTF-8 never holds
 (`utility.isToken(byte)`), so a parsed pattern can be scanned byte by
-byte. A byte of a pattern that is no UTF-8 goes in as its Latin-1
-character, so a Latin-1 pattern matches the UTF-8 name.
+byte. A pattern that is no UTF-8 does not parse (`ERROR_BAD_TEMPLATE`);
+a byte of a string that is no UTF-8 is U+FFFD, which `?` takes.
 
 `ParsePattern` answers 1 for a pattern with wildcards and 0 for a plain
 name - whose tokens are the name, its escapes resolved, for a program to

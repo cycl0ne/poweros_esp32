@@ -14,8 +14,8 @@
 //! at its end, instead of field by field.
 //!
 //! **Text goes out as UTF-16**, read as text is read (sdk.utility.utf8):
-//! UTF-8 as its characters, a byte that is no UTF-8 as its Latin-1
-//! character, one past U+FFFF as its surrogate pair.
+//! UTF-8 as its characters, a byte that is no UTF-8 as U+FFFD, one past
+//! U+FFFF as its surrogate pair.
 
 const sdk = @import("sdk");
 const utf8 = sdk.utility.utf8;
@@ -329,14 +329,14 @@ pub fn unitsOf(char: u32, into: *[2]u16) usize {
 
 const testing = @import("std").testing;
 
-test "text goes out in UTF-16: UTF-8 and Latin-1 alike, past U+FFFF as a pair, capitals by Unicode" {
+test "text goes out in UTF-16: past U+FFFF as a pair, no UTF-8 as U+FFFD, capitals by Unicode" {
     var room: [64]u8 = undefined;
     var writer: Writer = .{ .bytes = &room };
     utf16(&writer, "Gr\xC3\xBCn\xE2\x82\xAC\xF0\x9F\x98\x80");
     try testing.expectEqualSlices(u8, &.{ 'G', 0, 'r', 0, 0xFC, 0, 'n', 0, 0xAC, 0x20, 0x3D, 0xD8, 0x00, 0xDE }, writer.written());
     var latin: Writer = .{ .bytes = &room };
     utf16(&latin, "Gr\xFCn");
-    try testing.expectEqualSlices(u8, &.{ 'G', 0, 'r', 0, 0xFC, 0, 'n', 0 }, latin.written());
+    try testing.expectEqualSlices(u8, &.{ 'G', 0, 'r', 0, 0xFD, 0xFF, 'n', 0 }, latin.written());
     var capitals: Writer = .{ .bytes = &room };
     utf16Upper(&capitals, "j\xC3\xBCrgen\xCF\x89");
     try testing.expectEqualSlices(u8, &.{ 'J', 0, 0xDC, 0, 'R', 0, 'G', 0, 'E', 0, 'N', 0, 0xA9, 0x03 }, capitals.written());

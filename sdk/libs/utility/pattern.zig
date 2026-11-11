@@ -30,9 +30,9 @@ pub fn isToken(byte: u8) bool {
 }
 
 /// The bytes ParsePattern may need for a pattern of `len` bytes: two per
-/// byte at most - a token and the character, or a byte that is no UTF-8
-/// written as the two bytes of its Latin-1 character - then the NUL and a
-/// byte the parser keeps free.
+/// byte at most - a token and the character, or a character folded to
+/// one of more bytes (`Ⱥ`, two, folds to `ⱥ`, three) - then the NUL and
+/// a byte the parser keeps free.
 pub fn parsedSize(len: usize) usize {
     return 2 * len + 2;
 }

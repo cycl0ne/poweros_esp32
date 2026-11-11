@@ -26,8 +26,8 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 ///
 /// BEHAVIOR:
 /// The string is matched a character at a time, not a byte at a time; a
-/// byte of it that is no UTF-8 is the character the system reads it as
-/// (sdk.utility.utf8).
+/// byte of it that is no UTF-8 reads as U+FFFD (sdk.utility.utf8), which
+/// `?` takes as it takes any character.
 ///
 /// Every way the pattern can match is tried, backtracking on a stack of
 /// frames rather than the machine's: 16 on the caller's stack, then chunks

@@ -586,10 +586,6 @@ pub const Search = struct {
     db: *DosBase,
     ap: *AnchorPath,
     code: i32 = 0,
-    /// The pattern is no UTF-8: it was written in Latin-1, which
-    /// ParsePattern turned into UTF-8. A plain level is turned back, so the
-    /// names a search hands out for it are the bytes it was given.
-    typed_latin1: bool = false,
 
     /// Records `code` as the search's error and fails the step.
     ///
@@ -648,8 +644,7 @@ pub fn entryName(node: *AChain) [*:0]const u8 {
 /// Adds a level for `text` (up to a NUL in it) under ap_Last, or as the
 /// first, and makes it ap_Last. A wild level's string is matched with
 /// MatchPatternNoCase, which folds both sides, so it is kept as parsed.
-/// A plain level of a search typed in Latin-1 is narrowed back to Latin-1
-/// (`narrowed`). The first level also gets the lock the search starts
+/// The first level also gets the lock the search starts
 /// in: the path part of its string for a plain level (DDF_Single; its last
 /// name is examined later), else the current directory. On failure the
 /// search's error is set and APF_NOMEMERR too, which makes the next
@@ -673,7 +668,6 @@ pub fn addAnchor(s: *Search, text: []const u8, wild: u8) error{Failed}!*AChain {
     node.* = .{};
     const str = node.string();
     @memcpy(str[0..len], text[0..len]);
-    if (wild == 0 and s.typed_latin1) len = narrowed(str[0..len]);
     str[len] = 0;
     if (len > 0) node.flags = wild;
     if (ap.base != null) {
@@ -698,36 +692,6 @@ pub fn addAnchor(s: *Search, text: []const u8, wild: u8) error{Failed}!*AChain {
         return s.fail(lastError(db, dos.ERROR_OBJECT_NOT_FOUND));
     };
     return node;
-}
-
-/// Narrows a plain level's text in place: every character up to U+00FF
-/// back to its one Latin-1 byte, any other left as its UTF-8. It never
-/// grows, and for a pattern written in Latin-1 gives back the bytes it
-/// was written with. A wild level is never narrowed: a Latin-1 byte from
-/// 0xF5 up would read as a token.
-///
-/// INPUTS:
-/// - `text` - the level's text, UTF-8 as ParsePattern wrote it.
-///
-/// RESULT:
-/// Its length once narrowed.
-fn narrowed(text: []u8) usize {
-    var from: usize = 0;
-    var to: usize = 0;
-    while (from < text.len) {
-        const read = utility.utf8.read(text[from..]);
-        if (read.char <= 0xFF) {
-            text[to] = @intCast(read.char);
-            to += 1;
-        } else {
-            for (text[from..][0..read.length]) |byte| {
-                text[to] = byte;
-                to += 1;
-            }
-        }
-        from += read.length;
-    }
-    return to;
 }
 
 /// A shared lock on `name` in a level's directory, by ACTION_LOCATE_OBJECT
@@ -879,9 +843,6 @@ pub fn findFirst(db: *DosBase, ap: *AnchorPath, pattern: [*:0]const u8) i32 {
     const dos_lib = db.iface();
     var s: Search = .{ .db = db, .ap = ap };
     const text = pattern[0..db.utility_base.Strlen(pattern)];
-    // While a byte that is no UTF-8 reads as Latin-1, a pattern written in
-    // Latin-1 keeps its plain names as written.
-    s.typed_latin1 = utility.utf8.broken_reads_latin1 and !utility.utf8.valid(text);
     const size = (text.len + 1) * 2;
     const block = db.sys_base.AllocVec(size, exec.MEMF_CLEAR) orelse return finish(db, ap, dos.ERROR_NO_FREE_STORE);
     defer db.sys_base.FreeVec(block);

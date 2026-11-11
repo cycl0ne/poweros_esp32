@@ -46,20 +46,16 @@ test "decode: characters of every length, and what is no UTF-8" {
     }
 }
 
-test "utf8.read: what a byte that is no UTF-8 reads as, both ways" {
-    // A character reads as itself either way.
-    try testing.expectEqual(utf8.Read{ .char = 0x20AC, .length = 3 }, utf8.readAs("\xE2\x82\xACx", true));
-    try testing.expectEqual(utf8.Read{ .char = 0x20AC, .length = 3 }, utf8.readAs("\xE2\x82\xACx", false));
-    // Read as Latin-1: each bad byte its own character.
-    try testing.expectEqual(utf8.Read{ .char = 0xFC, .length = 1, .broken = true }, utf8.readAs("\xFCll", true));
-    try testing.expectEqual(utf8.Read{ .char = 0xE2, .length = 1, .broken = true }, utf8.readAs("\xE2\x82x", true));
-    // Read as U+FFFD: a broken sequence is one, and the byte that broke it
-    // is read again.
-    try testing.expectEqual(utf8.Read{ .char = 0xFFFD, .length = 2, .broken = true }, utf8.readAs("\xE2\x82x", false));
-    try testing.expectEqual(utf8.Read{ .char = 0xFFFD, .length = 1, .broken = true }, utf8.readAs("\x80\x80", false));
-    try testing.expectEqual(utf8.Read{ .char = 0xFFFD, .length = 3, .broken = true }, utf8.readAs("\xE0\x80\x80", false));
-    try testing.expectEqual(utf8.Read{ .char = 0xFFFD, .length = 1, .broken = true }, utf8.readAs("\xC3\x1B[", false));
-    try testing.expectEqual(utf8.Read{ .char = 0xFFFD, .length = 1, .broken = true }, utf8.readAs("\xFF", false));
+test "utf8.read: a byte that is no UTF-8 reads as U+FFFD" {
+    try testing.expectEqual(utf8.Read{ .char = 0x20AC, .length = 3 }, utf8.read("\xE2\x82\xACx"));
+    // A byte alone, a Latin-1 letter among them.
+    try testing.expectEqual(utf8.Read{ .char = 0xFFFD, .length = 1, .broken = true }, utf8.read("\xFCll"));
+    // A broken sequence is one, and the byte that broke it is read again.
+    try testing.expectEqual(utf8.Read{ .char = 0xFFFD, .length = 2, .broken = true }, utf8.read("\xE2\x82x"));
+    try testing.expectEqual(utf8.Read{ .char = 0xFFFD, .length = 1, .broken = true }, utf8.read("\x80\x80"));
+    try testing.expectEqual(utf8.Read{ .char = 0xFFFD, .length = 3, .broken = true }, utf8.read("\xE0\x80\x80"));
+    try testing.expectEqual(utf8.Read{ .char = 0xFFFD, .length = 1, .broken = true }, utf8.read("\xC3\x1B["));
+    try testing.expectEqual(utf8.Read{ .char = 0xFFFD, .length = 1, .broken = true }, utf8.read("\xFF"));
     // The end of a string cuts a character short.
     try testing.expectEqual(@as(usize, 1), utf8.readZ("\xC3").length);
     try testing.expectEqual(@as(u32, 0xE4), utf8.readZ("\xC3\xA4").char);
@@ -85,21 +81,11 @@ test "utf8.cut: never inside a character, anywhere in what is no UTF-8" {
     const text = "a\xC3\xA4\xE2\x82\xAC\xF0\x9F\x98\x80"; // a ä € and an emoji
     const kept = [_]usize{ 0, 1, 1, 3, 3, 3, 6, 6, 6, 6, 10, 10 };
     for (kept, 0..) |want, limit| try testing.expectEqual(want, utf8.cut(text, limit));
-    try testing.expectEqual(@as(usize, 1), utf8.cut("a\xB0b", 1)); // Latin-1 °
-    try testing.expectEqual(@as(usize, 1), utf8.cut("\xFC\xA4x", 1)); // ü¤ in Latin-1
+    try testing.expectEqual(@as(usize, 1), utf8.cut("a\xB0b", 1)); // a stray continuation
+    try testing.expectEqual(@as(usize, 1), utf8.cut("\xFC\xA4x", 1)); // a byte that starts nothing
     try testing.expectEqual(@as(usize, 1), utf8.cut("a\xE2\x82", 2)); // right so far
     try testing.expectEqual(@as(usize, 1), utf8.cut("\xE2\x82x", 1)); // broken off
     try testing.expectEqual(@as(usize, 0), utf8.cut("", 0));
-}
-
-test "utf8.textOf: UTF-8 as it is, a byte that is no UTF-8 as its character" {
-    var into: [8]u8 = undefined;
-    const given = "M\xC3\xBCll";
-    try testing.expectEqual(@as([*]const u8, given), utf8.textOf(given, &into).?.ptr);
-    try testing.expectEqualStrings("Gr\xC3\xBCn", utf8.textOf("Gr\xFCn", &into).?);
-    // A byte that is no UTF-8 among characters that are, each read alone.
-    try testing.expectEqualStrings("\xC3\xBC\xC3\xA4", utf8.textOf("\xFC\xC3\xA4", &into).?);
-    try testing.expectEqual(@as(?[]const u8, null), utf8.textOf("\xFC\xFC\xFC\xFC\xFC", &into));
 }
 
 test "utf8.copyCut, fromLatin1, fromForeign: whole characters as fit" {
@@ -130,11 +116,11 @@ test "utf8.readLast: walking back reads what walking forward reads" {
     try testing.expectEqual(utf8.Read{ .char = 0xE4, .length = 2 }, utf8.readLast("a\xC3\xA4"));
     try testing.expectEqual(utf8.Read{ .char = 0x1F600, .length = 4 }, utf8.readLast("x\xF0\x9F\x98\x80"));
     try testing.expectEqual(utf8.Read{ .char = 'x', .length = 1 }, utf8.readLast("\xE2\x82x"));
-    // Bytes that are no character end with one that reads alone, as the
-    // walk forward reads it.
-    try testing.expectEqual(utf8.Read{ .char = 0x82, .length = 1, .broken = true }, utf8.readLast("\xE2\x82"));
-    try testing.expectEqual(utf8.Read{ .char = 0xA4, .length = 1, .broken = true }, utf8.readLast("\xC3\xA4\xA4"));
-    try testing.expectEqual(utf8.Read{ .char = 0xFC, .length = 1, .broken = true }, utf8.readLast("M\xFC"));
+    // Bytes that are no character end with U+FFFD, as the walk forward
+    // reads them: the sequence broken off, or the last byte alone.
+    try testing.expectEqual(utf8.Read{ .char = 0xFFFD, .length = 2, .broken = true }, utf8.readLast("\xE2\x82"));
+    try testing.expectEqual(utf8.Read{ .char = 0xFFFD, .length = 1, .broken = true }, utf8.readLast("\xC3\xA4\xA4"));
+    try testing.expectEqual(utf8.Read{ .char = 0xFFFD, .length = 1, .broken = true }, utf8.readLast("M\xFC"));
     // Forward and back, the same characters.
     const text = "a\xC3\xA4\xE2\x82x\xFC\xF0\x9F\x98\x80\x80";
     var forward: [16]u32 = undefined;

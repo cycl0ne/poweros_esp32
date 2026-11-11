@@ -9,9 +9,9 @@
 //! a lookup reads that bucket only. A directory's items lie together and
 //! in position order, so going through it is a walk along the tree.
 //!
-//! **Names are UTF-8** here, on the medium and in dos. `fromDos` keeps a
-//! name from dos as the text it makes (`utf8.textOf`), which is what a
-//! lookup searches for too.
+//! **Names are UTF-8** here, on the medium and in dos. `fromDos` takes a
+//! name from dos as it is and refuses one that is no UTF-8; a lookup
+//! searches for the same.
 //!
 //! What an entry's name points at is a node's bytes, good until the tree
 //! is next touched.
@@ -112,8 +112,7 @@ pub fn lookupDos(vol: *Volume, dir: u64, dos_name: []const u8) Error!?Entry {
 }
 
 pub fn lookupDosIn(vol: *Volume, tree: *const btree.Tree, dir: u64, dos_name: []const u8) Error!?Entry {
-    var buffer: [posfs.max_name]u8 = undefined;
-    return lookupIn(vol, tree, dir, try fromDos(dos_name, &buffer));
+    return lookupIn(vol, tree, dir, try fromDos(dos_name));
 }
 
 /// A position for a new name: the lowest slot of its bucket that is
@@ -143,10 +142,10 @@ pub fn remove(vol: *Volume, dir: u64, pos: u64) Error!void {
     if (!try btree.remove(vol, &vol.obj, entryKey(dir, pos))) return error.Corrupt;
 }
 
-/// A name from dos as UTF-8, checked: one a new entry may have.
-pub fn fromDos(dos_name: []const u8, into: *[posfs.max_name]u8) Error![]const u8 {
-    if (dos_name.len == 0) return error.BadName;
-    const name = fold.fromDos(dos_name, into) orelse return error.BadName;
+/// A name from dos, checked: one a new entry may have - UTF-8, no
+/// control characters, as `fold.acceptable` says.
+pub fn fromDos(dos_name: []const u8) Error![]const u8 {
+    const name = fold.fromDos(dos_name) orelse return error.BadName;
     if (!fold.acceptable(name)) return error.BadName;
     for (name) |byte| {
         if (byte < 0x20) return error.BadName;

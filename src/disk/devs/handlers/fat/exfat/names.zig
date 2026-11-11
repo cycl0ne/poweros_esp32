@@ -17,8 +17,7 @@
 //! does not fit.
 //!
 //! **A name from dos becomes UTF-16 a character at a time**
-//! (`_fat.unitsOf`), read as text is read, so a Latin-1 name and the same
-//! name in UTF-8 are one. Such a name is compared against an entry's
+//! (`_fat.unitsOf`), read as text is read. Such a name is compared against an entry's
 //! through the volume's up-case table (`upcase.zig`), which is what makes
 //! two names the same on exFAT.
 
@@ -178,9 +177,9 @@ fn utf16(comptime text: []const u8) []const u16 {
     return comptime std.unicode.utf8ToUtf16LeStringLiteral(text);
 }
 
-test "a dos name as UTF-16: UTF-8 and Latin-1 alike, past U+FFFF as a pair" {
+test "a dos name as UTF-16: past U+FFFF as a pair, a byte that is no UTF-8 as U+FFFD" {
     var units: [fat.name_max]u16 = undefined;
-    try testing.expectEqualSlices(u16, utf16("Grün"), _fat.unitsOf("Gr\xFCn", &units));
+    try testing.expectEqualSlices(u16, utf16("Gr\u{FFFD}n"), _fat.unitsOf("Gr\xFCn", &units));
     try testing.expectEqualSlices(u16, utf16("Grün"), _fat.unitsOf("Grün", &units));
     try testing.expectEqualSlices(u16, utf16("\u{1F600}.Ω"), _fat.unitsOf("\u{1F600}.Ω", &units));
 }

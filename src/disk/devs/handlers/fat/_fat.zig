@@ -405,13 +405,13 @@ pub fn endsIn(ub: *UtilityBase, path: []const u8, name: []const u8) bool {
     return same(ub, path[start..end], name);
 }
 
-/// Whether a name may be given to a new entry at all: text (`utf8.readable`),
-/// a length both formats hold, no control characters, none of the
+/// Whether a name may be given to a new entry at all: UTF-8, a length
+/// both formats hold, no control characters, none of the
 /// characters a PC reserves, and not ending in a dot or a space - a PC
 /// drops those, and the file would then have a name nothing here can
 /// find. All of these are ASCII, so the bytes are checked as they are.
 pub fn validLong(name: []const u8) Error!void {
-    if (name.len == 0 or name.len > fat.name_max or !utf8.readable(name)) return error.InvalidName;
+    if (name.len == 0 or name.len > fat.name_max or !utf8.valid(name)) return error.InvalidName;
     // "." and "..": the entries every FAT32 directory but the root starts
     // with, and names nothing may take on either format.
     if (name[0] == '.' and (name.len == 1 or (name.len == 2 and name[1] == '.'))) return error.InvalidName;
@@ -449,8 +449,7 @@ pub fn utf8Of(units: []const u16, into: []u8) ?[]const u8 {
 }
 
 /// A name from dos as UTF-16: its characters as text reads them (UTF-8,
-/// a byte that is no UTF-8 as its Latin-1 character - Latin-1 is the
-/// first 256 characters of UTF-16), a character past U+FFFF as its
+/// a byte that is no UTF-8 as U+FFFD), a character past U+FFFF as its
 /// surrogate pair. Never more units than the name has bytes.
 pub fn unitsOf(name: []const u8, into: *[fat.name_max]u16) []const u16 {
     var at: usize = 0;

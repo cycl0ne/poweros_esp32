@@ -373,7 +373,8 @@ test "the protection bits are kept to, and attributes come back" {
     try testing.expectEqual(dos.ERROR_READ_PROTECTED, readFrom(fs, &fh, &back).res2);
     try testing.expectEqual(dos.DOSTRUE, closeFile(fs, &fh).res1);
     try testing.expectEqual(dos.ERROR_DELETE_PROTECTED, openFile(fs, &fh, .findoutput, "file").res2);
-    try testing.expectEqual(dos.DOSTRUE, prop.set(fs, .set_comment, arg("a note, gr\xfcn")).res1);
+    try testing.expectEqual(dos.ERROR_INVALID_ARGUMENT, prop.set(fs, .set_comment, arg("a note, gr\xfcn")).res2); // no UTF-8
+    try testing.expectEqual(dos.DOSTRUE, prop.set(fs, .set_comment, arg("a note, gr\xc3\xbcn")).res1);
     const long = "x" ** 80;
     try testing.expectEqual(dos.ERROR_COMMENT_TOO_BIG, prop.set(fs, .set_comment, arg(long)).res2);
     var date: dos.DateStamp = .{ .days = 17000, .minute = 600, .tick = 25 };
@@ -391,16 +392,18 @@ test "the protection bits are kept to, and attributes come back" {
     try testing.expectEqual(dos.DOSTRUE, send(&setup.fs, .free_lock, .{ lock.res1, 0, 0, 0 }).res1);
 }
 
-test "names: UTF-8 kept and given back, Latin-1 from dos made UTF-8, folded without case" {
+test "names: UTF-8 kept and given back, one that is no UTF-8 refused, folded without case" {
     var setup: Setup = undefined;
     try setup.init(.sd, 1024 * 1024, 4096);
     defer setup.deinit();
     const fs = &setup.fs;
-    // A name in Latin-1 is kept as its UTF-8, found by either.
-    try writeFile(fs, "B\xe4r", "bear");
+    // A name past ASCII, found in any case; one that is no UTF-8 refused.
+    try writeFile(fs, "B\xc3\xa4r", "bear");
     var back: [8]u8 = undefined;
-    try testing.expectEqualStrings("bear", back[0..try readFile(fs, "B\xc4R", &back)]);
+    try testing.expectEqualStrings("bear", back[0..try readFile(fs, "B\xc3\x84R", &back)]);
     try testing.expectEqualStrings("bear", back[0..try readFile(fs, "b\xc3\xa4r", &back)]);
+    var refused: FileHandle = .{};
+    try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, openFile(fs, &refused, .findoutput, "B\xe4r").res2);
     // UTF-8 from dos taken as it is, and listed as it is.
     try writeFile(fs, "\xe6\x97\xa5\xe6\x9c\xac.txt", "japan");
     const root = send(fs, .locate_object, .{ 0, arg(""), dos.SHARED_LOCK, 0 });
@@ -698,7 +701,8 @@ test "soft links: met in a path, resolved by READ_LINK, acted on themselves" {
         try testing.expectEqual(dos.DOSTRUE, softLink(fs, "abs", "Work:Drawer/file").res1);
         try testing.expectEqual(dos.DOSTRUE, softLink(fs, "top", ":Drawer").res1);
         try testing.expectEqual(dos.DOSTRUE, softLink(fs, "Drawer/Sub/up", "/file").res1);
-        try testing.expectEqual(dos.DOSTRUE, softLink(fs, "lat", "Drawer/\xe9t\xe9").res1);
+        try testing.expectEqual(dos.DOSTRUE, softLink(fs, "lat", "Drawer/\xc3\xa9t\xc3\xa9").res1);
+        try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, softLink(fs, "bad", "Drawer/\xe9t\xe9").res2); // no UTF-8
         try testing.expectEqual(dos.DOSTRUE, softLink(fs, "om", "Drawer/\xce\xa9").res1);
         try testing.expectEqual(dos.ERROR_OBJECT_EXISTS, softLink(fs, "LNK", "elsewhere").res2);
         try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, softLink(fs, "empty", "").res2);
@@ -723,7 +727,7 @@ test "soft links: met in a path, resolved by READ_LINK, acted on themselves" {
         try testing.expectEqualStrings(":Drawer/file", std.mem.sliceTo(&path, 0));
         _ = readLink(fs, "Drawer/Sub/up", &path);
         try testing.expectEqualStrings("Drawer/Sub//file", std.mem.sliceTo(&path, 0));
-        // A target given in Latin-1 is kept, and read back, in UTF-8.
+        // A target past ASCII is kept, and read back, as it is.
         _ = readLink(fs, "lat", &path);
         try testing.expectEqualStrings("Drawer/\xc3\xa9t\xc3\xa9", std.mem.sliceTo(&path, 0));
         var back: [16]u8 = undefined;

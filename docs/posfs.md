@@ -302,8 +302,8 @@ between calls are neither given twice nor stop the walk. A position fits
 32 bits.
 
 **dos's names are UTF-8 too.** A name goes to dos as it is stored, and a
-name from dos is stored as the text it makes (`utf8.textOf`): UTF-8 as
-it is, a byte that is no UTF-8 as its Latin-1 character.
+name from dos is stored as it is given; one that is no UTF-8 is
+refused.
 
 ### File content
 

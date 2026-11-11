@@ -24,8 +24,8 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// 1 if the pattern has wildcards, 0 if it is a plain name (the escapes
 /// resolved), -1 on failure. On failure IoErr is `ERROR_BAD_TEMPLATE` for
 /// a pattern that does not parse - unbalanced groups, a class without its
-/// `]` - or `ERROR_LINE_TOO_LONG` when `dest` is too small, and `dest`
-/// holds an empty pattern.
+/// `]`, bytes that are no UTF-8 - or `ERROR_LINE_TOO_LONG` when `dest`
+/// is too small, and `dest` holds an empty pattern.
 ///
 /// BEHAVIOR:
 /// The syntax:
@@ -44,9 +44,7 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// A character is a character, not a byte: `?` takes one however many
 /// bytes it is, and a class's range `[α-ω]` is a range of code points.
 /// The tokens are bytes UTF-8 never holds (sdk/libs/utility/pattern.zig)
-/// and the pattern's characters are written in UTF-8; a byte of the
-/// source that is no UTF-8 is written as the character the system reads
-/// it as (sdk.utility.utf8).
+/// and the pattern's characters are written in UTF-8 as they are.
 ///
 /// A pattern that parses leaves IoErr as it was.
 ///

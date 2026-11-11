@@ -6,20 +6,16 @@
 //! `decode` is strict - no overlong forms, no surrogates, nothing past
 //! U+10FFFF - and says what it found: a character, a broken byte, or bytes
 //! that end inside a character. `read` is how text is shown and compared:
-//! it always answers a character. A byte that is no UTF-8 reads as the
-//! Latin-1 character of its value while `broken_reads_latin1` is set,
-//! which keeps what is still written in Latin-1 readable; without it a
-//! broken sequence is one U+FFFD and the byte that broke it is read again,
-//! so a control after it is never swallowed. `encode` writes a character
-//! back.
+//! it always answers a character. Bytes that are no UTF-8 read as U+FFFD,
+//! one for each byte that can neither start nor continue a character and
+//! one for a sequence broken off, after which the byte that broke it is
+//! read again, so a control after it is never swallowed. `encode` writes
+//! a character back. Text from elsewhere in another encoding is made
+//! UTF-8 as it comes in (`fromLatin1`, `fromCp1252`, `fromForeign`).
 //!
 //! These are a few lines that run per character inside drawing and
 //! matching loops, where a library call each would cost a jump per
 //! character; whole-text work is utility.library's.
-
-/// Whether a byte that is no UTF-8 reads as its Latin-1 character (true)
-/// or as U+FFFD (false).
-pub const broken_reads_latin1 = true;
 
 /// What stands for a byte that is no UTF-8.
 pub const replacement: u32 = 0xFFFD;
@@ -103,19 +99,12 @@ pub const Read = struct {
 };
 
 /// The character text shows at the start of `bytes` (at least one): the
-/// UTF-8 character there, or for bytes that are no UTF-8 what
-/// `broken_reads_latin1` says.
+/// UTF-8 character there, or U+FFFD for bytes that are no UTF-8 - a byte
+/// that starts no character alone, a sequence broken off with its lead
+/// and the continuation bytes that followed it.
 pub fn read(bytes: []const u8) Read {
-    return readAs(bytes, broken_reads_latin1);
-}
-
-/// `read`, with the reading of broken bytes given: `latin1` reads each as
-/// its Latin-1 character, else a broken sequence - its lead and the
-/// continuation bytes that followed it - is one U+FFFD.
-pub fn readAs(bytes: []const u8, latin1: bool) Read {
     const step = decode(bytes);
     if (step.kind == .char) return .{ .char = step.char, .length = step.length };
-    if (latin1) return .{ .char = bytes[0], .length = 1, .broken = true };
     var length: usize = 1;
     if (bytes[0] >= 0xC0) {
         while (length < bytes.len and length < 4 and bytes[length] & 0xC0 == 0x80) length += 1;
@@ -126,8 +115,8 @@ pub fn readAs(bytes: []const u8, latin1: bool) Read {
 /// The character `bytes` end with (at least one byte), read as `read`
 /// reads it from its start: how text is walked back from its end. The
 /// UTF-8 character ending there, when its bytes are all there and whole;
-/// else the last byte alone, read as a byte that is no UTF-8 - or, while
-/// broken bytes read as U+FFFD, the broken sequence it ends.
+/// else U+FFFD, for the broken sequence the last byte ends or for that
+/// byte alone.
 pub fn readLast(bytes: []const u8) Read {
     var start = bytes.len - 1;
     while (start > 0 and bytes.len - start < 4 and bytes[start] & 0xC0 == 0x80) start -= 1;
@@ -187,8 +176,7 @@ pub fn encode(char: u32, into: *[4]u8) usize {
 /// How many of `bytes` a cut to at most `limit` bytes keeps without ending
 /// inside a character: `limit`, or less when a UTF-8 character starts
 /// before it and ends after it - a whole one, or one right so far where
-/// `bytes` end. Bytes that are no UTF-8 are characters of one byte and
-/// are cut anywhere, so Latin-1 text is cut where it is asked to be.
+/// `bytes` end. Bytes that are no UTF-8 are cut anywhere.
 pub fn cut(bytes: []const u8, limit: usize) usize {
     if (limit >= bytes.len) return bytes.len;
     var start = limit;
@@ -278,32 +266,4 @@ pub fn valid(bytes: []const u8) bool {
         at += step.length;
     }
     return true;
-}
-
-/// Whether `bytes` make text `textOf` takes: any bytes while a byte that is
-/// no UTF-8 reads as its Latin-1 character, else only UTF-8. A file system
-/// that keeps names in another encoding asks this before it reads one.
-pub fn readable(bytes: []const u8) bool {
-    return broken_reads_latin1 or valid(bytes);
-}
-
-/// The text `bytes` make, in UTF-8: what a file system keeps a name it is
-/// given as. Bytes that are UTF-8 are their own text, answered as they
-/// are; others are written out into `into` as `read` reads them while a
-/// byte that is no UTF-8 reads as its Latin-1 character, and refused
-/// (null) once it does not. Null too when what is written out does not
-/// fit `into`.
-pub fn textOf(bytes: []const u8, into: []u8) ?[]const u8 {
-    if (valid(bytes)) return bytes;
-    if (!broken_reads_latin1) return null;
-    var length: usize = 0;
-    var at: usize = 0;
-    while (at < bytes.len) {
-        var one: [4]u8 = undefined;
-        const taken = encode(next(bytes, &at), &one);
-        if (length + taken > into.len) return null;
-        @memcpy(into[length..][0..taken], one[0..taken]);
-        length += taken;
-    }
-    return into[0..length];
 }

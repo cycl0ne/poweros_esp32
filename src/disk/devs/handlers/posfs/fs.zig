@@ -453,12 +453,11 @@ pub const FileSystem = struct {
         return false;
     }
 
-    /// A fresh volume over the medium, its name as dos gives it, kept as
-    /// the text it makes (`fold.fromDos`). A mounted volume stays as it
-    /// is when the options are refused.
+    /// A fresh volume over the medium, its name as dos gives it
+    /// (`fold.fromDos`). A mounted volume stays as it is when the options
+    /// are refused.
     pub fn format(fs: *FileSystem, options: checkpoint.Options) Error!void {
-        var buffer: [posfs.max_name]u8 = undefined;
-        const utf8 = fold.fromDos(options.name, &buffer) orelse return error.BadName;
+        const utf8 = fold.fromDos(options.name) orelse return error.BadName;
         if (utf8.len == 0 or utf8.len > posfs.max_volume_name or !fold.acceptable(utf8)) return error.BadName;
         var given = options;
         given.name = utf8;
@@ -563,8 +562,7 @@ pub const FileSystem = struct {
     pub fn relabel(fs: *FileSystem, name: []const u8) Error!void {
         const vol = &fs.vol;
         if (vol.read_only or vol.failed) return error.ReadOnly;
-        var buffer: [posfs.max_name]u8 = undefined;
-        const utf8 = fold.fromDos(name, &buffer) orelse return error.BadName;
+        const utf8 = fold.fromDos(name) orelse return error.BadName;
         if (utf8.len == 0 or utf8.len > posfs.max_volume_name or !fold.acceptable(utf8)) return error.BadName;
         const table = vol.voltab;
         @memset(&table.name, 0);
@@ -802,11 +800,9 @@ pub const FileSystem = struct {
     fn watchedHere(fs: *FileSystem, request: *const notify.NotifyRequest) bool {
         const named = notify.Watchers.volumeOf(request);
         if (named.len == 0) return true;
-        var buffer: [posfs.max_name]u8 = undefined;
-        const utf8 = fold.fromDos(named, &buffer) orelse return false;
+        const utf8 = fold.fromDos(named) orelse return false;
         if (fold.same(utf8, fs.volumeName())) return true;
-        var device: [posfs.max_name]u8 = undefined;
-        const device_utf8 = fold.fromDos(fs.device_name, &device) orelse return false;
+        const device_utf8 = fold.fromDos(fs.device_name) orelse return false;
         return fold.same(utf8, device_utf8);
     }
 
@@ -829,15 +825,14 @@ pub const FileSystem = struct {
 
     // --- making and deleting ---------------------------------------------------------
 
-    /// Where a new name at `path` goes, the name kept in `buffer`: in a
-    /// directory, free, not one the root keeps, and on a volume that can
+    /// Where a new name at `path` goes: in a directory, free, not one the root keeps, and on a volume that can
     /// be written and has room.
-    fn newName(fs: *FileSystem, dir_arg: isize, path: []const u8, buffer: *[posfs.max_name]u8) Error!Spot {
+    fn newName(fs: *FileSystem, dir_arg: isize, path: []const u8) Error!Spot {
         const vol = &fs.vol;
         const place = try fs.findDir(try fs.objectOf(dir_arg), path);
         if (!place.dir.isDir()) return error.WrongType;
         try place.dir.writable();
-        const name = try dirs.fromDos(place.name, buffer);
+        const name = try dirs.fromDos(place.name);
         if (place.dir.oid == posfs.root_oid and dirs.reservedInRoot(name)) return error.BadName;
         if (try dirs.lookupDos(vol, place.dir.oid, place.name) != null) return error.Exists;
         if (try dirs.lookup(vol, place.dir.oid, name) != null) return error.Exists;
@@ -851,8 +846,7 @@ pub const FileSystem = struct {
     /// A new file, directory or soft link at `path`, its record durable.
     fn make(fs: *FileSystem, dir_arg: isize, path: []const u8, entry_type: i32, target: []const u8) Error!Object {
         const vol = &fs.vol;
-        var buffer: [posfs.max_name]u8 = undefined;
-        const spot = try fs.newName(dir_arg, path, &buffer);
+        const spot = try fs.newName(dir_arg, path);
         const oid = vol.next_oid;
         const head: layout.CreateRecord = .{
             .oid = oid,
@@ -886,8 +880,8 @@ pub const FileSystem = struct {
                 const given: ?[*:0]const u8 = @ptrFromInt(args.dest);
                 const named = span(given orelse return error.BadName);
                 if (named.len == 0) return error.BadName;
-                var stored: [posfs.max_link]u8 = undefined;
-                const target = fold.fromDos(named, &stored) orelse return error.LineTooLong;
+                if (named.len > posfs.max_link) return error.LineTooLong;
+                const target = fold.fromDos(named) orelse return error.BadName;
                 const object = try fs.make(dir_arg, path, dos.ST_SOFTLINK, target);
                 fs.appeared(object, true);
                 fs.changed(object.parent);
@@ -899,8 +893,7 @@ pub const FileSystem = struct {
                 if (lock.object().inRecycled()) return error.WriteProtected;
                 const node = try objects.needInode(vol, lock.oid);
                 if (node.nlink == 0xFFFF_FFFF) return error.InvalidArgument;
-                var buffer: [posfs.max_name]u8 = undefined;
-                const spot = try fs.newName(dir_arg, path, &buffer);
+                const spot = try fs.newName(dir_arg, path);
                 const head: layout.LinkRecord = .{
                     .oid = lock.oid,
                     .parent = spot.dir.oid,
@@ -1037,8 +1030,7 @@ pub const FileSystem = struct {
         if (from.oid == posfs.root_oid) return error.WrongType;
         const place = try fs.findDir(try fs.objectOf(lockValue(args.to_lock)), span(args.to_name orelse return error.BadName));
         if (!place.dir.isDir()) return error.WrongType;
-        var buffer: [posfs.max_name]u8 = undefined;
-        try fs.moveTo(from, place.dir, try dirs.fromDos(place.name, &buffer));
+        try fs.moveTo(from, place.dir, try dirs.fromDos(place.name));
     }
 
     /// A name moved to `name` (UTF-8) in `dir`: a rename, and out of
@@ -1099,7 +1091,6 @@ pub const FileSystem = struct {
         if (vol.read_only or vol.failed) return error.ReadOnly;
         const bits: u32 = @truncate(ptrArg(args.value));
         var head: layout.SetAttrRecord = .{ .oid = object.oid, .time = vol.now() };
-        var text_buffer: [posfs.max_name]u8 = undefined;
         var text: []const u8 = "";
         switch (action) {
             .set_protect => {
@@ -1121,8 +1112,7 @@ pub const FileSystem = struct {
                 const given: ?[*:0]const u8 = @ptrFromInt(ptrArg(args.value));
                 const comment = if (given) |it| span(it) else "";
                 if (comment.len > posfs.max_comment) return error.CommentTooBig;
-                text = fold.fromDos(comment, &text_buffer) orelse return error.CommentTooBig;
-                if (text.len > posfs.max_comment) return error.CommentTooBig;
+                text = fold.fromDos(comment) orelse return error.InvalidArgument;
                 head.comment_len = @intCast(text.len);
             },
         }
@@ -1270,7 +1260,6 @@ pub const FileSystem = struct {
         const object: Object = .{ .oid = entry.oid, .parent = posfs.recycled_oid, .pos = entry.pos, .entry_type = entry.entry_type };
         var old_name: [posfs.max_name]u8 = undefined;
         const from = try recycled.origin(vol, object.oid, &old_name);
-        var buffer: [posfs.max_name]u8 = undefined;
         var name = from.name;
         var dir: Object = undefined;
         if (given.to) |text| {
@@ -1280,7 +1269,7 @@ pub const FileSystem = struct {
                 const there = try fs.child(place.dir, place.name);
                 if (there != null and there.?.isDir()) {
                     dir = there.?;
-                } else name = try dirs.fromDos(place.name, &buffer);
+                } else name = try dirs.fromDos(place.name);
             }
         } else dir = try fs.dirObject(from.parent) orelse return error.DirNotFound;
         try fs.moveTo(object, dir, name);
@@ -1879,8 +1868,7 @@ pub const FileSystem = struct {
     fn makeSnapshot(fs: *FileSystem, args: *const packets.SnapshotArgs) Error!void {
         const given = try takeStruct(packets.SnapshotArgs, args);
         const dos_name = span(given.name orelse return error.BadName);
-        var buffer: [posfs.max_name]u8 = undefined;
-        const name = try dirs.fromDos(dos_name, &buffer);
+        const name = try dirs.fromDos(dos_name);
         if (snapshots.findDos(&fs.vol, dos_name) != null) return error.Exists;
         try snapshots.make(&fs.vol, name);
         fs.changed(snapshots.dir_oid);

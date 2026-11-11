@@ -196,7 +196,7 @@ test "a name: UTF-8 both ways, a pair past U+FFFF, a control a question mark, wh
     try testing.expectEqual(@as(u16, 0xDE00), made.partition_name[7]);
     try testing.expectEqualStrings("Daten \u{1F600} 日本", gpt.nameText(&made, &name));
     gpt.setName(&made, "Gr\xFCn");
-    try testing.expectEqualStrings("Grün", gpt.nameText(&made, &name));
+    try testing.expectEqualStrings("Gr\u{FFFD}n", gpt.nameText(&made, &name));
     gpt.setName(&made, "a name of more than thirty-six characters, cut");
     try testing.expectEqual(@as(usize, gpt.name_units), gpt.nameText(&made, &name).len);
     // A pair that would end past the field is left out whole.

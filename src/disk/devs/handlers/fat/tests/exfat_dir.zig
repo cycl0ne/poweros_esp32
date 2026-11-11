@@ -132,7 +132,8 @@ test "a file is found by its name in any case" {
     var found: Found = .{};
     try testing.expect(try rig.find(rig.root, "HELLO.TXT", &found));
     try testing.expectEqual(@as(u64, 16), found.size);
-    try testing.expect(try rig.find(rig.root, "caf\xc9.TXT", &found));
+    try testing.expect(try rig.find(rig.root, "caf\u{c9}.TXT", &found));
+    try testing.expect(!try rig.find(rig.root, "caf\xc9.TXT", &found)); // no UTF-8
     try testing.expect(!try rig.find(rig.root, "nothing.txt", &found));
 }
 

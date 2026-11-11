@@ -1418,8 +1418,8 @@ utility.library/ZoneOffset
 
    BEHAVIOR
 	The string is matched a character at a time, not a byte at a time; a
-	byte of it that is no UTF-8 is the character the system reads it as
-	(sdk.utility.utf8).
+	byte of it that is no UTF-8 reads as U+FFFD (sdk.utility.utf8), which
+	`?` takes as it takes any character.
 
 	Every way the pattern can match is tried, backtracking on a stack of
 	frames rather than the machine's: 16 on the caller's stack, then chunks
@@ -1792,8 +1792,8 @@ utility.library/ZoneOffset
 	1 if the pattern has wildcards, 0 if it is a plain name (the escapes
 	resolved), -1 on failure. On failure IoErr is `ERROR_BAD_TEMPLATE` for
 	a pattern that does not parse - unbalanced groups, a class without its
-	`]` - or `ERROR_LINE_TOO_LONG` when `dest` is too small, and `dest`
-	holds an empty pattern.
+	`]`, bytes that are no UTF-8 - or `ERROR_LINE_TOO_LONG` when `dest`
+	is too small, and `dest` holds an empty pattern.
 
    BEHAVIOR
 	The syntax:
@@ -1812,9 +1812,7 @@ utility.library/ZoneOffset
 	A character is a character, not a byte: `?` takes one however many
 	bytes it is, and a class's range `[α-ω]` is a range of code points.
 	The tokens are bytes UTF-8 never holds (sdk/libs/utility/pattern.zig)
-	and the pattern's characters are written in UTF-8; a byte of the
-	source that is no UTF-8 is written as the character the system reads
-	it as (sdk.utility.utf8).
+	and the pattern's characters are written in UTF-8 as they are.
 
 	A pattern that parses leaves IoErr as it was.
 
@@ -2451,8 +2449,7 @@ utility.library/ZoneOffset
 	compared by everywhere: `Ä` and `ä` are one, `Σ`, `σ` and `ς` are one,
 	`ß` is itself. The order is that of the folded code points: `_`
 	(0x5F) before the letters, the letters past ASCII after all of it. A
-	byte that is no UTF-8 compares as its Latin-1 character, as
-	`Strnicmp` says.
+	byte that is no UTF-8 compares as U+FFFD, as `Strnicmp` says.
 
    CONTEXT
 	- Waits: no.
@@ -2533,8 +2530,7 @@ utility.library/ZoneOffset
 	How many bytes come before the NUL; 0 for an empty string.
 
    BEHAVIOR
-	A count of bytes, not of characters: every byte but 0 counts one,
-	which in Latin-1 is the same thing.
+	A count of bytes, not of characters: every byte but 0 counts one.
 
    CONTEXT
 	- Waits: no.
@@ -2597,10 +2593,9 @@ utility.library/ZoneOffset
 	Nothing is allocated.
 
    NOTES
-	A byte that is no UTF-8 compares as the character the system reads it
-	as (sdk.utility.utf8): its Latin-1 character, so a Latin-1 `\xE4` and
-	a UTF-8 `ä` are the same. A character `length` cuts in two is read as
-	its bytes are.
+	A byte that is no UTF-8 compares as U+FFFD (sdk.utility.utf8), the
+	way it reads. A character `length` cuts in two is read as its bytes
+	are, as a sequence broken off.
 
    BUGS
 	None known.

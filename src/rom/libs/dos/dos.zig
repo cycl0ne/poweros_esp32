@@ -744,7 +744,7 @@ test "SplitName: part by part, a long part cut, past the end" {
     try testing.expectEqualStrings("ab", std.mem.sliceTo(&part, 0));
     try testing.expectEqual(@as(i32, -1), dl.SplitName(name, '/', &part, 20, part.len));
     try testing.expectEqualStrings("", std.mem.sliceTo(&part, 0));
-    // Cut where a character starts; Latin-1 is cut anywhere.
+    // Cut where a character starts; bytes that are no UTF-8 anywhere.
     try testing.expectEqual(@as(i32, 6), dl.SplitName("a\xC3\xA4\xC3\xB6/x", '/', &part, 0, 3));
     try testing.expectEqualStrings("a", std.mem.sliceTo(&part, 0));
     try testing.expectEqual(@as(i32, 4), dl.SplitName("a\xE4\xF6/x", '/', &part, 0, 3));
@@ -2884,17 +2884,21 @@ test "MatchFirst/MatchNext on a RAM: disk: patterns, levels, plain names, full p
     try testing.expect(a.ap.base == null);
     try testing.expectEqual(dos.ERROR_DEVICE_NOT_MOUNTED, dl.MatchFirst("FOO:#?", &a.ap));
 
-    // A name in Latin-1 and in UTF-8: either finds it, a plain name comes
-    // back as it was written, a wild one as the entry is named - in UTF-8,
-    // which the handler keeps a name given in Latin-1 as.
-    try makeFile(dl, "RAMT:d/M\xFCll", 2);
-    try expectFinds(dl, &a, "RAMT:d/M\xFCll", &.{"RAMT:d/M\xFCll"});
-    try expectFinds(dl, &a, "RAMT:d/M\xDCLL", &.{"RAMT:d/M\xDCLL"});
+    // A name past ASCII, found without case: a plain name comes back as
+    // it was written, a wild one as the entry is named.
+    try makeFile(dl, "RAMT:d/M\xC3\xBCll", 2);
+    try expectFinds(dl, &a, "RAMT:d/M\xC3\x9CLL", &.{"RAMT:d/M\xC3\x9CLL"});
     try expectFinds(dl, &a, "RAMT:d/m\xC3\xBCll", &.{"RAMT:d/m\xC3\xBCll"});
-    try expectFinds(dl, &a, "RAMT:d/#?\xFC#?", &.{"RAMT:d/M\xC3\xBCll"});
     try expectFinds(dl, &a, "RAMT:d/#?\xC3\x9C#?", &.{"RAMT:d/M\xC3\xBCll"});
-    try expectFinds(dl, &a, "RAMT:d/?\xFCll", &.{"RAMT:d/M\xC3\xBCll"});
-    try expectFinds(dl, &a, "RAMT:d/\xFF#?", &.{}); // a token's byte as a character
+    try expectFinds(dl, &a, "RAMT:d/?\xC3\xBCll", &.{"RAMT:d/M\xC3\xBCll"});
+    // A name that is no UTF-8 is refused, and a pattern that is none does
+    // not parse: a Latin-1 letter, a token's byte.
+    try testing.expect(dl.Open("RAMT:d/M\xFCll", dos.MODE_NEWFILE) == null);
+    try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, dl.IoErr());
+    for ([_][*:0]const u8{ "RAMT:d/M\xFCll", "RAMT:d/#?\xFC#?", "RAMT:d/\xFF#?" }) |pattern| {
+        try testing.expectEqual(dos.ERROR_BAD_TEMPLATE, dl.MatchFirst(pattern, &a.ap));
+        try testing.expect(a.ap.base == null);
+    }
     try testing.expect(dl.DeleteFile("RAMT:d/M\xC3\xBCll"));
 
     const d = dl.Lock("RAMT:d", dos.SHARED_LOCK).?;

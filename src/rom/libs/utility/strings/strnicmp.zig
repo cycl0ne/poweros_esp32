@@ -49,10 +49,9 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// Nothing is allocated.
 ///
 /// NOTES:
-/// A byte that is no UTF-8 compares as the character the system reads it
-/// as (sdk.utility.utf8): its Latin-1 character, so a Latin-1 `\xE4` and
-/// a UTF-8 `ä` are the same. A character `length` cuts in two is read as
-/// its bytes are.
+/// A byte that is no UTF-8 compares as U+FFFD (sdk.utility.utf8), the
+/// way it reads. A character `length` cuts in two is read as its bytes
+/// are, as a sequence broken off.
 ///
 /// BUGS:
 /// None known.

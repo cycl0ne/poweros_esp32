@@ -5480,12 +5480,10 @@ has a wildcard. "*" and the name of a handler that isn't a file system
 (NIL:, CON:) give one entry, the name itself. An error other than
 ERROR_BUFFER_OVERFLOW frees the chain.
 
-Names are compared without case, character by character, a byte that
-is no UTF-8 read as its Latin-1 character: a pattern in Latin-1 finds a
-name in UTF-8 and the other way round. A name without wildcards comes
-back in ap_Info and the full path as the pattern wrote it - in Latin-1
-for a pattern written in Latin-1 - a name a wildcard found as the
-handler gives it.
+Names are compared without case, character by character. A pattern
+that is no UTF-8 does not parse (ERROR_BAD_TEMPLATE). A name without
+wildcards comes back in ap_Info and the full path as the pattern wrote
+it, a name a wildcard found as the handler gives it.
 
 **CONTEXT**
 

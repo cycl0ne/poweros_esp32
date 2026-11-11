@@ -13,11 +13,9 @@
 //! its names were hashed with, and a volume's new directories get the
 //! label's. There is one table so far.
 //!
-//! **dos's names are UTF-8 too**, so a stored name goes to dos as it is.
-//! A name from dos is kept as the text it makes (`utf8.textOf`): bytes
-//! that are UTF-8 as they are, a byte that is no UTF-8 as its Latin-1
-//! character while such a byte reads as one, and refused once it does
-//! not.
+//! **dos's names are UTF-8 too**, so a stored name goes to dos as it is,
+//! and a name from dos is kept as it is; one that is no UTF-8 is
+//! refused.
 
 const layout = @import("layout.zig");
 const fold1 = @import("fold1.zig");
@@ -122,11 +120,8 @@ pub fn acceptable(name: []const u8) bool {
     return valid(name);
 }
 
-/// A name from dos as the UTF-8 kept for it (`utf8.textOf`), written
-/// into `into` when it is not UTF-8 already. Null when it is refused or
-/// longer than `into`.
-pub fn fromDos(name: []const u8, into: []u8) ?[]const u8 {
-    const text = utf8.textOf(name, into) orelse return null;
-    if (text.len > into.len) return null;
-    return text;
+/// A name from dos as the UTF-8 kept for it: the name itself; null for
+/// one that is no UTF-8, which is refused.
+pub fn fromDos(name: []const u8) ?[]const u8 {
+    return if (utf8.valid(name)) name else null;
 }

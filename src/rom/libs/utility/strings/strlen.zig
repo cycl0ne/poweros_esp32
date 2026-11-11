@@ -21,8 +21,7 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// How many bytes come before the NUL; 0 for an empty string.
 ///
 /// BEHAVIOR:
-/// A count of bytes, not of characters: every byte but 0 counts one,
-/// which in Latin-1 is the same thing.
+/// A count of bytes, not of characters: every byte but 0 counts one.
 ///
 /// CONTEXT:
 /// - Waits: no.

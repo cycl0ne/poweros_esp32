@@ -298,8 +298,8 @@ pub fn nameText(entry: *const Entry, into: *[name_bytes:0]u8) []const u8 {
 ///
 /// INPUTS:
 /// - `entry` - the entry, changed.
-/// - `text` - the name, in UTF-8; a byte that is no UTF-8 is read as its
-///   Latin-1 character, as text is read (sdk.utility.utf8).
+/// - `text` - the name, in UTF-8; a byte that is no UTF-8 is read as
+///   U+FFFD, as text is read (sdk.utility.utf8).
 pub fn setName(entry: *Entry, text: []const u8) void {
     var units: [name_units]u16 = @splat(0);
     var index: usize = 0;

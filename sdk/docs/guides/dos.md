@@ -302,9 +302,8 @@ Names are UTF-8, compared without regard to case. A file's or
 directory's name is at most `dos.name_max` (255) bytes, a whole path
 `dos.path_max` (1024), and a device, volume or assign name
 `dos.MAX_DEVICE_NAME` (30) characters. Every file system keeps a new
-name as the text it makes (`sdk.utility.utf8.textOf`): UTF-8 as it is,
-a byte that is no UTF-8 as its Latin-1 character - `Gr\xFCn` is kept,
-and listed, as `Grün` in UTF-8 - and gives a name back as it keeps it.
+name as it is given and gives it back so; a name that is no UTF-8 -
+`Gr\xFCn` in Latin-1 - is refused (`ERROR_INVALID_COMPONENT_NAME`).
 FAT32 and exFAT keep names in UTF-16, a FAT32 short name in code page
 437, as a PC writes them; a name longer than 255 bytes in UTF-8 is given
 as its short name on FAT32 and on exFAT as a stand-in, cut with `=` and
@@ -481,15 +480,13 @@ text, `?` one character, `(a|b)`, `~`, `[a-z]`; see the
 [utility guide](utility.md#patterns)), matched without regard to case, one
 directory level after another: `SYS:c/#?`, `RAM:#?/#?.txt`.
 
-A pattern is read a character at a time, a byte that is no UTF-8 as its
-Latin-1 character, so a pattern written in Latin-1 finds a name in UTF-8
-and the other way round. A name without wildcards comes back as the
-pattern wrote it - in Latin-1 for a pattern in Latin-1 - and a name a
-wildcard found as the handler keeps it, in UTF-8. `C:test/Names DIR` makes, finds,
-matches and deletes names past ASCII - a letter past Latin-1, the euro
-sign, Greek, an emoji, an umlaut in UTF-8 and in Latin-1, which is
-listed in UTF-8 - in a directory of its own under DIR, and says which
-steps of each passed; with `KEEP`
+A pattern is read a character at a time, and one that is no UTF-8 does
+not parse (`ERROR_BAD_TEMPLATE`). A name without wildcards comes back as
+the pattern wrote it, and a name a wildcard found as the handler keeps
+it. `C:test/Names DIR` makes, finds, matches and deletes names past
+ASCII - a letter past Latin-1, the euro sign, Greek, an emoji, an
+umlaut - in a directory of its own under DIR, checks that a name in
+Latin-1 is refused, and says which steps of each passed; with `KEEP`
 it leaves them there, to be looked at in a drawer or a listing.
 
 The `AnchorPath` is the search's state, cleared before `MatchFirst`

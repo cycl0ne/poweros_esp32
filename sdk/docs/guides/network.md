@@ -1278,7 +1278,8 @@ next start. Its own page is `SYS:System/Docs/Shares.md`.
   one, the name cut to make room, and `=` with four hex digits of the
   name's hash before the extension. The stand-in opens the file. ReadArgs
   ends an unquoted argument at `=`, so on a command line a stand-in goes
-  in quotes.
+  in quotes. A name from dos that is no UTF-8 is refused before it
+  reaches the server.
 - **Writing**: a file opened to be read is opened again with write access
   at its first write, so a file that is only read never asks for more.
   A new file (`MODE_NEWFILE`) is exclusive, and refused while anything

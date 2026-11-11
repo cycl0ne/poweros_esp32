@@ -17,7 +17,7 @@
 //! to it, `Σ`, `σ` and `ς` are one letter.
 //!
 //! The compares read their bytes as text is read (`utf8.read`), so a
-//! byte that is no UTF-8 compares as the character it reads as.
+//! byte that is no UTF-8 compares as U+FFFD.
 
 const utf8 = @import("utf8.zig");
 const unicode_case = @import("unicode_case.zig");

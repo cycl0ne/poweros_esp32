@@ -110,8 +110,7 @@ pub fn find(vol: *const Volume, name: []const u8) ?usize {
 
 /// Where the snapshot dos names `dos_name` is.
 pub fn findDos(vol: *const Volume, dos_name: []const u8) ?usize {
-    var buffer: [posfs.max_name]u8 = undefined;
-    return find(vol, fold.fromDos(dos_name, &buffer) orelse return null);
+    return find(vol, fold.fromDos(dos_name) orelse return null);
 }
 
 pub fn nameOf(snapshot: *const Snapshot) []const u8 {

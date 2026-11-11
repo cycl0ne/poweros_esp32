@@ -89,8 +89,8 @@ test "a name that fits eight and three in one case needs no long name" {
 
 test "what a new name may not be" {
     try validLong("Good name.txt");
-    try validLong("caf\xE9");
     try validLong("caf\u{E9} \u{1F600}");
+    try testing.expectError(error.InvalidName, validLong("caf\xE9")); // no UTF-8
     try testing.expectError(error.InvalidName, validLong(""));
     try testing.expectError(error.InvalidName, validLong("."));
     try testing.expectError(error.InvalidName, validLong(".."));

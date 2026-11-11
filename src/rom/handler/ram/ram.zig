@@ -70,8 +70,8 @@ const pieces = @import("pieces.zig");
 
 pub const HANDLER_NAME = "ram-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 6;
-const BUILD_DATE = "10.11.2026";
+const HANDLER_REVISION = 7;
+const BUILD_DATE = "11.11.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -206,18 +206,14 @@ fn lockValue(l: ?*FileLock) isize {
     return @bitCast(@intFromPtr(l));
 }
 
-/// The name a new entry is given, as it is kept: the text the name given
-/// makes (`utf8.textOf` - UTF-8 as it is, a byte that is no UTF-8 as its
-/// Latin-1 character while one reads as that), not empty, no control
-/// characters, no ':', and no longer than a name may be.
+/// The name a new entry is given, as it is kept: UTF-8, not empty, no
+/// control characters, no ':', and no longer than a name may be.
 fn newName(given: *const [max_name:0]u8) Error![max_name:0]u8 {
     const name = std.mem.sliceTo(given, 0);
-    if (name.len == 0) return error.InvalidName;
-    var buffer: [max_name]u8 = undefined;
-    const text = sdk.utility.utf8.textOf(name, &buffer) orelse return error.InvalidName;
-    for (text) |c| if (c < 0x20 or c == ':') return error.InvalidName;
+    if (name.len == 0 or !sdk.utility.utf8.valid(name)) return error.InvalidName;
+    for (name) |c| if (c < 0x20 or c == ':') return error.InvalidName;
     var kept: [max_name:0]u8 = @splat(0);
-    @memcpy(kept[0..text.len], text);
+    @memcpy(kept[0..name.len], name);
     return kept;
 }
 

@@ -3037,11 +3037,11 @@ test "fonts: two Pospaz in the ROM, told apart by height" {
     try testing.expectEqual(fontimage.find(eight_image, 'a').?, fontimage.glyphFor(eight_image, 0x1EAD)); // ậ as ạ, then a
     try testing.expectEqual(box, fontimage.glyphFor(eight_image, 0x03B1)); // α: no Greek here
     // UTF-8: a character is one glyph, whatever its bytes; a byte that
-    // is no UTF-8 is its Latin-1 character.
+    // is no UTF-8 is U+FFFD, which this font draws as its box.
     base(gb).SetRPAttrs(rp, &use);
     try testing.expectEqual(@as(i32, 16), base(gb).TextLength(rp, "\xC4\x80\xE2\x82\xAC", 5)); // Ā€
     try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, "\xF0\x9F\x98\x80", 4)); // an emoji, the box
-    try testing.expectEqual(@as(i32, 24), base(gb).TextLength(rp, "M\xFCl", 3)); // Mül in Latin-1
+    try testing.expectEqual(@as(i32, 24), base(gb).TextLength(rp, "M\xFCl", 3)); // Mül in Latin-1: M, the box, l
     // A height that is not there gets the nearest, and a shorter font
     // before a taller one: 12 is 8, 15 is 16.
     for ([_]u16{ 9, 10, 11, 12 }) |rows| {

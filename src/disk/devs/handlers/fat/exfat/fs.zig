@@ -561,7 +561,7 @@ pub fn FileSystem(comptime Media: type) type {
         /// over or made in a free entry, holding up to eleven UTF-16 units.
         /// A longer name is refused.
         fn relabel(fs: *Fs, given: []const u8) Error!void {
-            if (!dos.volumename.valid(given) or !sdk.utility.utf8.readable(given)) return error.InvalidName;
+            if (!dos.volumename.valid(given) or !sdk.utility.utf8.valid(given)) return error.InvalidName;
             var units: [fat.name_max]u16 = undefined;
             const name = _fat.unitsOf(given, &units);
             if (name.len > fat.exfat_label_max) return error.InvalidName;

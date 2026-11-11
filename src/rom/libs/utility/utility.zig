@@ -171,7 +171,7 @@ test "utility.library: made from its ROM tag, opened by name, never expunged" {
     defer kexec.deinit();
     try testing.expectEqual(&ub.lib, kexec.OpenLibrary(kexec.SysBase, LIBRARY_NAME, 1).?);
     try testing.expectEqual(@as(u16, 1), ub.lib.version);
-    try testing.expectEqual(@as(u16, 7), ub.lib.revision);
+    try testing.expectEqual(@as(u16, 8), ub.lib.revision);
     try testing.expect(kexec.OpenLibrary(kexec.SysBase, LIBRARY_NAME, 2) == null);
     kexec.CloseLibrary(kexec.SysBase, &ub.lib);
     _ = kexec.RemLibrary(kexec.SysBase, &ub.lib);
@@ -397,11 +397,8 @@ test "ParsePattern: wildcards or not, the tokens, errors, the buffer, WildStar" 
         // UTF-8 stays UTF-8; Ā is C4 80, whose 80 was once a token.
         .{ .source = "\xc4\x80?", .result = 1, .tokens = "\xc4\x80\xf6" },
         .{ .source = "\xce\xa3\xce\x91\xce\xa3", .result = 0, .tokens = "\xcf\x83\xce\xb1\xcf\x83", .nocase = true }, // ΣΑΣ
-        // A byte that is no UTF-8 goes in as its Latin-1 character.
-        .{ .source = "\xe9t\xe9", .result = 0, .tokens = "\xc3\xa9t\xc3\xa9", .nocase = true },
-        .{ .source = "M\xfcll", .result = 0, .tokens = "M\xc3\xbcll" },
-        .{ .source = "x\x80", .result = 0, .tokens = "x\xc2\x80" },
-        .{ .source = "[\xe4-\xf6]", .result = 1, .tokens = "\xfd\xc3\xa4-\xc3\xb6\xfd" },
+        .{ .source = "\xc3\x89t\xc3\xa9", .result = 0, .tokens = "\xc3\xa9t\xc3\xa9", .nocase = true }, // Été
+        .{ .source = "[\xc3\xa4-\xc3\xb6]", .result = 1, .tokens = "\xfd\xc3\xa4-\xc3\xb6\xfd" },
     };
     for (cases) |c| {
         tp.proc.result2 = 42;
@@ -409,7 +406,9 @@ test "ParsePattern: wildcards or not, the tokens, errors, the buffer, WildStar" 
         try testing.expectEqualSlices(u8, c.tokens, std.mem.sliceTo(&buf, 0));
         try testing.expectEqual(@as(i32, 42), tp.proc.result2); // IoErr left alone
     }
-    for ([_][:0]const u8{ "(a", "a)", "a|b", "#", "#|", "~)", "[ab" }) |bad| {
+    // Bytes that are no UTF-8 make no pattern: a Latin-1 letter, a stray
+    // continuation, a sequence broken off, one at the end.
+    for ([_][:0]const u8{ "(a", "a)", "a|b", "#", "#|", "~)", "[ab", "M\xfcll", "x\x80", "#?\xe2\x82.txt", "[a-\xc3]", "a\xc3" }) |bad| {
         try testing.expectEqual(@as(isize, -1), parsed(ub, bad, &buf, false));
         try testing.expectEqual(sdk.dos.ERROR_BAD_TEMPLATE, tp.proc.result2);
         try testing.expectEqual(@as(u8, 0), buf[0]); // an empty pattern
@@ -418,9 +417,10 @@ test "ParsePattern: wildcards or not, the tokens, errors, the buffer, WildStar" 
     const nest = "~~~a"; // the most tokens per character
     var exact: [sdk.utility.parsedSize(nest.len)]u8 = undefined;
     try testing.expectEqual(@as(isize, 1), parsed(ub, nest, &exact, false));
-    const widened = "~#\xff"; // a Latin-1 byte takes two
+    const widened = "~#\xc8\xba"; // Ⱥ folds to ⱥ, a byte longer
     var room: [sdk.utility.parsedSize(widened.len)]u8 = undefined;
-    try testing.expectEqual(@as(isize, 1), parsed(ub, widened, &room, false));
+    try testing.expectEqual(@as(isize, 1), parsed(ub, widened, &room, true));
+    try testing.expectEqualSlices(u8, "\xfa\xfe\xe2\xb1\xa5\xff\xfb", std.mem.sliceTo(&room, 0));
     try testing.expectEqual(@as(isize, -1), parsed(ub, "abcdef", buf[0..4], false));
     try testing.expectEqual(sdk.dos.ERROR_LINE_TOO_LONG, tp.proc.result2);
     try testing.expectEqual(@as(u8, 0), buf[0]);
@@ -458,7 +458,7 @@ fn expectMatches(ub: *UtilityBase, cases: []const MatchCase) !void {
     }
 }
 
-test "MatchPattern: characters, not bytes; a Latin-1 byte is its character" {
+test "MatchPattern: characters, not bytes; a byte that is no UTF-8 is U+FFFD" {
     const ub = try setUp();
     defer kexec.deinit();
     try expectMatches(ub, &.{
@@ -472,8 +472,13 @@ test "MatchPattern: characters, not bytes; a Latin-1 byte is its character" {
         .{ "#?\xf0\x9f\x98\x80", "x\xf0\x9f\x98\x80", true },
         .{ "#[\xc3\xa4\xc3\xb6]x", "\xc3\xb6\xc3\xa4x", true },
         .{ "~\xc3\xa4", "\xc3\xb6", true },
-        .{ "M\xfcll", "M\xc3\xbcll", true },
-        .{ "M\xc3\xbcll", "M\xfcll", true },
+        // The pattern's refused; the string's is one character, U+FFFD.
+        .{ "M\xfcll", "M\xc3\xbcll", false },
+        .{ "M\xc3\xbcll", "M\xfcll", false },
+        .{ "M?ll", "M\xfcll", true },
+        .{ "M?ll", "M\xe2\x82ll", true },
+        .{ "M??ll", "M\xe2\x82ll", false },
+        .{ "M\xef\xbf\xbdll", "M\xfcll", true },
     });
     try tearDown(ub);
 }
@@ -506,9 +511,9 @@ test "MatchPattern: the syntax, backtracking, NoCase" {
     try testing.expectEqual(@as(isize, 1), parsed(ub, "#?.TXT", &buf, true));
     try testing.expect(call(ub, "MatchPatternNoCase", .{ @as([*:0]const u8, @ptrCast(&buf)), "readme.txt" }));
     try testing.expect(!call(ub, "MatchPattern", .{ @as([*:0]const u8, @ptrCast(&buf)), "README.TXT" }));
-    try testing.expectEqual(@as(isize, 1), parsed(ub, "\xe9#?", &buf, true));
-    try testing.expect(call(ub, "MatchPatternNoCase", .{ @as([*:0]const u8, @ptrCast(&buf)), "\xc9clair" }));
+    try testing.expectEqual(@as(isize, 1), parsed(ub, "\xc3\xa9#?", &buf, true));
     try testing.expect(call(ub, "MatchPatternNoCase", .{ @as([*:0]const u8, @ptrCast(&buf)), "\xc3\x89clair" }));
+    try testing.expect(!call(ub, "MatchPatternNoCase", .{ @as([*:0]const u8, @ptrCast(&buf)), "\xc9clair" }));
     // Both sides fold: ParsePattern's tokens match without case too.
     try testing.expectEqual(@as(isize, 1), parsed(ub, "#?\xce\xa3", &buf, false)); // Σ
     try testing.expect(call(ub, "MatchPatternNoCase", .{ @as([*:0]const u8, @ptrCast(&buf)), "\xce\xbf\xce\xb4\xcf\x8c\xcf\x82" })); // οδός

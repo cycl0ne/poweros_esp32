@@ -1876,7 +1876,7 @@ test "mouse reporting: which events are wanted, and what is said" {
     try testing.expect(!t.mouse_sgr);
 }
 
-test "UTF-8: characters whole across writes, Latin-1 bytes as themselves" {
+test "UTF-8: characters whole across writes, bytes that are no UTF-8 as U+FFFD" {
     var t, const cells = scratch(10, 2);
     defer testing.allocator.free(cells);
     var buf: [40]u8 = undefined;
@@ -1887,17 +1887,17 @@ test "UTF-8: characters whole across writes, Latin-1 bytes as themselves" {
     t.write("\xAC\xCE\xA9");
     try testing.expectEqualStrings("a\xC3\xA4\xE2\x82\xAC\xCE\xA9      ", rowText(&t, 0, &buf));
     try testing.expectEqual(@as(u32, 0x20AC), t.at(2, 0).ch);
-    // A byte that is no UTF-8 reads as its Latin-1 character; a sequence
-    // broken off by an ASCII byte gives its bytes back and the byte after
-    // it is acted on: the CR goes back to the start.
+    // A byte that is no UTF-8 is U+FFFD; a sequence broken off by an
+    // ASCII byte is one, and the byte after it is acted on: the CR goes
+    // back to the start.
     t.write("\r\nM\xFCll\xE2\x82\rX");
-    try testing.expectEqual(@as(u32, 0xFC), t.at(1, 1).ch);
-    try testing.expectEqual(@as(u32, 0xE2), t.at(4, 1).ch);
-    try testing.expectEqual(@as(u32, 0x82), t.at(5, 1).ch);
+    try testing.expectEqual(@as(u32, 0xFFFD), t.at(1, 1).ch);
+    try testing.expectEqual(@as(u32, 0xFFFD), t.at(4, 1).ch);
+    try testing.expectEqual(@as(u32, ' '), t.at(5, 1).ch);
     try testing.expectEqual(@as(u32, 'X'), t.at(0, 1).ch);
     // A sequence broken off by its ESC: the ESC still starts one.
     t.write("\x1b[2;8H\xC3\x1b[1;1Hz");
-    try testing.expectEqual(@as(u32, 0xC3), t.at(7, 1).ch);
+    try testing.expectEqual(@as(u32, 0xFFFD), t.at(7, 1).ch);
     try testing.expectEqual(@as(u32, 'z'), t.at(0, 0).ch);
 }
 

@@ -30,8 +30,7 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// compared by everywhere: `Ä` and `ä` are one, `Σ`, `σ` and `ς` are one,
 /// `ß` is itself. The order is that of the folded code points: `_`
 /// (0x5F) before the letters, the letters past ASCII after all of it. A
-/// byte that is no UTF-8 compares as its Latin-1 character, as
-/// `Strnicmp` says.
+/// byte that is no UTF-8 compares as U+FFFD, as `Strnicmp` says.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -67,15 +66,17 @@ test "Stricmp" {
     const ub = try library.setUp();
     defer kexec.deinit();
     try testing.expectEqual(@as(i32, 0), Stricmp(ub, "Hello", "hELLO"));
-    try testing.expectEqual(@as(i32, 0), Stricmp(ub, "\xC4rger", "\xE4RGER"));
+    try testing.expectEqual(@as(i32, 0), Stricmp(ub, "\xC3\x84rger", "\xC3\xA4RGER")); // Ärger
     try testing.expect(Stricmp(ub, "abc", "abd") < 0);
     try testing.expect(Stricmp(ub, "b", "A") > 0);
     try testing.expect(Stricmp(ub, "a", "ab") < 0);
     try testing.expect(Stricmp(ub, "_", "a") < 0); // folded: '_' < 'a'
-    try testing.expect(Stricmp(ub, "a", "\xE4") < 0); // 'a' < 'ä'
-    // UTF-8 against UTF-8, and against the same letter in Latin-1.
+    try testing.expect(Stricmp(ub, "a", "\xC3\xA4") < 0); // 'a' < 'ä'
     try testing.expectEqual(@as(i32, 0), Stricmp(ub, "M\xC3\xBCll", "M\xC3\x9CLL")); // Müll, MÜLL
-    try testing.expectEqual(@as(i32, 0), Stricmp(ub, "M\xFCll", "m\xC3\x9Cll"));
+    // A byte that is no UTF-8 is U+FFFD: never the letter its Latin-1
+    // value was, past every character below U+FFFD, and itself.
+    try testing.expect(Stricmp(ub, "M\xFCll", "m\xC3\x9Cll") > 0);
+    try testing.expectEqual(@as(i32, 0), Stricmp(ub, "M\xFCll", "m\xE4LL"));
     try testing.expectEqual(@as(i32, 0), Stricmp(ub, "\xCE\x9F\xCE\xB4\xCF\x8C\xCF\x82", "\xCE\xBF\xCE\xB4\xCF\x8C\xCF\x83")); // Οδός, οδόσ
     try testing.expectEqual(@as(i32, 0), Stricmp(ub, "\xE1\xBA\x9E", "\xC3\x9F")); // ẞ, ß
     try testing.expect(Stricmp(ub, "stra\xC3\x9Fe", "strasse") != 0); // no full folding

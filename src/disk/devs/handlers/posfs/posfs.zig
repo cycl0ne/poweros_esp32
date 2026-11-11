@@ -106,7 +106,7 @@ const fs_core = @import("fs.zig");
 
 pub const HANDLER_NAME = posfs.HANDLER_NAME;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 10;
+const HANDLER_REVISION = 11;
 const BUILD_DATE = "11.11.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++

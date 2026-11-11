@@ -138,13 +138,12 @@ test "a name's hash is pinned" {
     try testing.expectEqual(@as(u64, 0x873586_07), fold.position(fold.bucketOf(0x873586F3), 7));
 }
 
-test "a name from dos is kept as UTF-8" {
-    var into: [posfs.max_name]u8 = undefined;
-    // Latin-1 is converted, UTF-8 kept.
-    try testing.expectEqualStrings("Caf\u{e9}", fold.fromDos("Caf\xE9", &into).?);
-    try testing.expectEqualStrings("日本", fold.fromDos("日本", &into).?);
-    // 255 Latin-1 letters past 0x7F are 510 bytes of UTF-8.
-    try testing.expectEqual(@as(?[]const u8, null), fold.fromDos(&([_]u8{0xE9} ** 200), &into));
+test "a name from dos is kept as it is, one that is no UTF-8 refused" {
+    const given = "Caf\u{e9}";
+    try testing.expectEqual(@as([*]const u8, given), fold.fromDos(given).?.ptr);
+    try testing.expectEqualStrings("日本", fold.fromDos("日本").?);
+    try testing.expectEqual(@as(?[]const u8, null), fold.fromDos("Caf\xE9"));
+    try testing.expectEqual(@as(?[]const u8, null), fold.fromDos("\xE6\x97"));
     try testing.expect(fold.acceptable("ok"));
     try testing.expect(!fold.acceptable("a/b"));
     try testing.expect(!fold.acceptable("a:b"));

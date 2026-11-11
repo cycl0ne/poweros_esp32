@@ -6,13 +6,13 @@
 //!
 //! In a directory of its own under DIR (`NamesTest`, removed at the end),
 //! each name of the list - a letter past Latin-1, the euro sign, a Greek
-//! word, an emoji, a German word in UTF-8 and one in Latin-1 - is made as
-//! a file holding its own name, then found by Lock, found again written
-//! in the other case, looked for in an ExNext listing under the name it
-//! is kept as - in UTF-8, the one given in Latin-1 too - matched by a
-//! pattern with `?` for its first character (one entry, that one),
-//! deleted by its name in the other case, and looked for once more, which
-//! must fail. The labels are ASCII, so the
+//! word, an emoji, a German word - is made as a file holding its own
+//! name, then found by Lock, found again written in the other case,
+//! looked for in an ExNext listing, matched by a pattern with `?` for its
+//! first character (one entry, that one), deleted by its name in the
+//! other case, and looked for once more, which must fail. Last, a name
+//! that is no UTF-8 - the German word in Latin-1 - must be refused. The
+//! labels are ASCII, so the
 //! report reads on any console. With KEEP each name is made once more at
 //! the end and the directory left, for a look at how the names show
 //! (`NamesTest` must then be gone before the next run). RETURN_OK when
@@ -28,7 +28,7 @@ const FileLock = dos.FileLock;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Names";
-const VERSION_STRING = "\x00$VER: Names 1.2 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Names 1.3 (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DIR/A,KEEP/S";
@@ -44,17 +44,11 @@ const work_name = "NamesTest";
 /// Room for DIR, the work directory and a name.
 const path_max = 512;
 
-/// A name, the same name in the other case, what to call it, and the
-/// name it is kept as when that is not the name itself.
+/// A name, the same name in the other case, and what to call it.
 const Name = struct {
     label: [*:0]const u8,
     name: [:0]const u8,
     other_case: [:0]const u8,
-    kept_as: ?[:0]const u8 = null,
-
-    fn kept(name: *const Name) [:0]const u8 {
-        return name.kept_as orelse name.name;
-    }
 };
 
 const names = [_]Name{
@@ -62,9 +56,11 @@ const names = [_]Name{
     .{ .label = "euro sign", .name = "\xE2\x82\xAC.txt", .other_case = "\xE2\x82\xAC.TXT" },
     .{ .label = "Greek", .name = "\xCE\xA9\xCE\xBC\xCE\xAD\xCE\xB3\xCE\xB1", .other_case = "\xCF\x89\xCE\x9C\xCE\x88\xCE\x93\xCE\x91" },
     .{ .label = "emoji", .name = "\xF0\x9F\x98\x80smile", .other_case = "\xF0\x9F\x98\x80SMILE" },
-    .{ .label = "UTF-8 umlaut", .name = "M\xC3\xBCll", .other_case = "m\xC3\x9CLL" },
-    .{ .label = "Latin-1 umlaut", .name = "Gr\xFCn", .other_case = "GR\xC3\x9CN", .kept_as = "Gr\xC3\xBCn" },
+    .{ .label = "umlaut", .name = "M\xC3\xBCll", .other_case = "m\xC3\x9CLL" },
 };
+
+/// A name that is no UTF-8, which every file system refuses.
+const refused: Name = .{ .label = "Latin-1 umlaut", .name = "Gr\xFCn", .other_case = "GR\xDCN" };
 
 /// How the steps went.
 const Tally = struct {
@@ -206,12 +202,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         tally.say(name, "found in the other case", found_other != null);
         dl.UnLock(found_other);
 
-        tally.say(name, "listed as it is kept", listed(dl, work_lock, fib, name.kept()));
+        tally.say(name, "listed", listed(dl, work_lock, fib, name.name));
 
         if (!join(dl, path, work, questionFirst(name.name, &pattern))) {
             tally.say(name, "the pattern fits", false);
         } else {
-            tally.say(name, "matched by ? for its first character", matchesOnly(dl, anchor, path, name.kept()));
+            tally.say(name, "matched by ? for its first character", matchesOnly(dl, anchor, path, name.name));
         }
 
         tally.say(name, "deleted in the other case", dl.DeleteFile(other));
@@ -219,6 +215,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         const left = dl.Lock(path, dos.SHARED_LOCK);
         tally.say(name, "gone", left == null);
         dl.UnLock(left);
+    }
+    if (join(dl, path, work, refused.name)) {
+        const file = dl.Open(path, dos.MODE_NEWFILE);
+        if (file) |fh| {
+            _ = dl.Close(fh);
+            _ = dl.DeleteFile(path);
+        }
+        tally.say(&refused, "refused, being no UTF-8", file == null);
     }
 
     dl.UnLock(work_lock);
