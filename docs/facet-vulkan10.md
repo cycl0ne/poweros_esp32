@@ -3235,6 +3235,54 @@ On the CM5, FacetBoth 1.71 has two new cases. Each is an IR twin of a host shape
 
 The 8 are the edge pixels where the plain cases first differ: the first is at 154,70, which the V3D leaves the clear colour. With readAgain and readsWeb taken out of the back end, each case is 19,349 apart: the pixels where the red and the green are both under a half. Those are where the inner arm runs, and where a bcsel that compares its first's result again gets the other answer. The other 301 cases are each as they were at 1.206, and FacetProbe is 890 of 890.
 
+**Then nir_opt_collapse_if of a kept selection**, facet.library 1.208. Until now one shape was refused (Error.Branches): an inner selection kept a branch that is all of the outer's true arm, but for the block before it, where neither has a false arm. glslc_nested_collapse and DeepCostly are that shape. Mesa makes the two one selection:
+- peephole_select_block tries nir_opt_collapse_if at a block first (nir_opt_peephole_select.c:531-533). That is before it flattens the arm or asks whether the arm holds control flow.
+- nir_opt_collapse_if (:413-506) does not ask what the inner arm holds, and moves it whole. It asks only two things:
+  - that the outer merge's phis be the ones it can trivialize (:445-462, :474-486);
+  - that the block before the inner selection be all instructions nir_opt_peephole_select may flatten (block_check_for_allowed_instrs, :464-469).
+- It makes the iand of the two conditions (:492-496) and moves the block and the inner selection before the outer one (:498-502). That leaves the outer one empty: nir_opt_dead_cf takes it out, and nir_opt_peephole_select flattens it where a phi of it is left.
+- v3d's back end then emits one branch, on the iand. The iand is no comparison, so ntq_emit_bool_to_cond tests the bool, with a PUSHZ and IFNA (nir_to_vir.c:1277-1281).
+
+The parts:
+- **The rewrite.** Since 1.159 the collapse put the inner selection's selects on the iand. Now it also puts there the inner selection's phis and, where the inner selection is kept, the branch. `Held.entry` is the inner selection's place in `Work.kept`, so its branch's mark is found. The outer selection is kept no more and is flattened, its phis made bcsels on its own condition.
+- **Where it is refused, as Mesa does.** `Selection.kept_first` records that a selection was kept for what its true arm holds itself, not for a selection in it. Where the two may collapse, that is the block before the inner selection, and block_check_for_allowed_instrs refuses that block, so Mesa does not collapse the two. Neither does facet: glslc_collapse_apart keeps both.
+- **The outer merge's phis.** A kept inner selection brings its floats to the outer merge as phis, where a flattened one brought selects. `innerSelect` and `innerFalse` take either: `innerFalse` is the float that the inner phi or select brings the false way. With the outer phis' test, they are nir_opt_collapse_if's check that the outer phis are trivial (:445-462).
+- **The regions.** A flattened selection gives its arms' regions to the region it is in. A kept selection that the collapse moved out of those arms keeps its own regions, since they name the true arm's region as the one they are in, and that region names the outer one's, so `dominates` follows them out. So a float made in the kept arm does not dominate one made after the merge (nir_opt_cse.c:76), and KeptThenCollapsed's first sum is made again after the merge.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
+- **A collapse of selections nested deeper than two**, kept or flattened, and the other shapes 1.159 refused. *Facet-wide*: Mesa collapses a chain one level at a time, as peephole_select_block meets each merge.
+- **nir_opt_if's opt_if_evaluate_condition_use** (nir_opt_if.c:1016), as at 1.207. *Facet-wide*.
+- **The limits**, as at 1.207: selections nest 8 deep, 8 are kept, and their arms are 33 regions. *Facet-wide*.
+
+Nothing here is the V3D's alone, so the list for the Radeon's has nothing new.
+
+Results:
+- **The references**, each compiled with -O:
+  - glslc_nested_collapse, 216 words: refused until now, 33 instructions. Each bool is a `mov 0` and a `mov.ifa -1`, and the iand is one `and` of the inner and outer bools. There is one branch on the iand, with the sample under the mask.
+  - glslc_collapse_apart, 224 words: the outer arm samples before the inner selection, which is on that sample's red. block_check_for_allowed_instrs refuses the sample, so both selections are kept. The inner mask is NORNZ in the outer's, and the program is 41 instructions.
+  - glslc_collapse_sampled, 263 words: the block before the inner selection makes k = v.z * 2, which the outer merge chooses. The two become one branch on the iand, in 40 instructions:
+    - k's product is made before the branch;
+    - the false way copies v.w into the alpha's register;
+    - k is a bcsel on the outer bool, which tests it with a PUSHZ: nir_opt_peephole_select's flattening of the empty outer selection.
+- **The shapes.** DeepCostly, whose inner arm is over the limit, is one branch on the iand, in 134 instructions. KeptThenCollapsed has a kept selection, then two that collapse. That is two branches, the second on the iand, and the first of its thirteen sums is made again after the merge, in 152 instructions.
+- **The tests.** The V3D's tests are 391, one new. Two changed: DeepCostly and glslc_nested_collapse compile, where they were refused.
+
+  Of 12 mutations, 10 fail them. Two of those failed none at first and fail since KeptThenCollapsed was added:
+  - every region of the arms given to the region the selection is in;
+  - the branch rewritten taken as the first kept.
+
+  The two left change nothing, and the code is now written their way:
+  - `kept_first` set for a selection kept from anywhere in its true arm, not only outside a selection in it;
+  - the regions that name the outer arm's not given that arm's region.
+
+On the CM5, FacetBoth 1.72 has one new case, an IR twin of glslc_collapse_sampled's shape:
+- **"shipped collapsed kept branch"** is 8 of 230400 pixels apart, 211 at worst: the edge pixels where the plain cases first differ, the first at 154,70.
+  - Its outer selection, on the red being under a half, halves the alpha in the block before the inner selection.
+  - The inner selection, on the green, is kept for thirteen sums and sines of the blue. Its arm turns the colour, its red the last sine times the blue.
+  - The two are one branch on the iand, and the alpha a bcsel on the red's comparison.
+
+With the iand made an ior in the back end, so that the branch also runs where the green alone is under a half, it is 22,767 apart. The first of those pixels, at 93,67, has its colour's channels turned. The other 304 cases are each as they were at 1.207, and FacetProbe is 890 of 890.
+
 ### 61. Multisampling: 4 samples a pixel on both devices, with resolve attachments and CmdResolveImage's body **[critical path]**
 
 *rasterisation* &mdash; conformance-blocking, port, **sized 07.11.2026: 21 commits, about 1,590 lines of code, 1,340 of tests and 90 of docs**; **the cores' half done in 1.114**, the V3D's is steps V1 to V8

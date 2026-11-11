@@ -2280,8 +2280,15 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 try keepSelection(work, &inner);
             } else {
                 // Its arms are the block it is in, and their regions are
-                // given back where none was taken since.
-                @memset(work.region[inner.arms_from..inner.arms_to], inner.parent_region);
+                // given back where none was taken since. A selection kept
+                // in them, which nir_opt_collapse_if moved out (since
+                // 1.208), is in that block too, its arms in their own
+                // regions still: those name the true arm's as the region
+                // they are in, which names the one this selection is in,
+                // so `dominates` follows them out there.
+                for (work.region[inner.arms_from..inner.arms_to]) |*region| {
+                    if (region.* == inner.region or region.* == inner.region + 1) region.* = inner.parent_region;
+                }
                 if (work.region_count == inner.region + 1) work.region_count = inner.region - 1;
             }
             // To nir_opt_dead_write_vars the merge of one kept is a block
@@ -2315,6 +2322,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     .emptiness = if (inner.killed or !inner.quiet_yes) .kept else if (inner.constant_yes) .unsure else .empty,
                     .killed = inner.killed,
                     .kept = kept,
+                    .entry = if (kept) work.kept_count - 1 else 0,
                 };
             }
         }
@@ -3140,7 +3148,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         // in NIR, whether NIR's block is empty is not known
                         // here, and the shape is refused as before.
                         const no_else = selection.no == selection.merge or selection.quiet_no;
-                        if (selection.collapses and no_else) {
+                        if (selection.collapses and no_else and !selection.kept_first) {
                             if (selection.held.iand == none) return Error.Branches;
                             selection.collapsed = try collapseOf(work, selection, level, reader);
                         }
@@ -3148,10 +3156,20 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         // the iand, which only the collapse makes.
                         if (selection.held.killed and !selection.collapsed) return Error.Discards;
                         if (selection.collapsed) {
-                            // The inner selection is on the iand now.
+                            // The inner selection is on the iand now: its
+                            // selects, or where it is kept, its phis and
+                            // its branch (since 1.208). The outer one is
+                            // an empty selection nir_opt_dead_cf takes
+                            // out, or flattens where a phi of it is left:
+                            // it is kept no more.
                             const inner = selection.held;
                             for (work.steps[inner.selects_from..inner.selects_to]) |*each| {
                                 if (each.tag == .select and each.a == inner.condition) each.a = inner.iand;
+                                if (each.tag == .phi and each.from[0] == inner.condition) each.from[0] = inner.iand;
+                            }
+                            if (inner.kept) {
+                                work.steps[work.kept[inner.entry].marks[0]].a = inner.iand;
+                                selection.kept = false;
                             }
                         }
                         selection.arms_to = @intCast(work.step_count);
@@ -3239,7 +3257,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (selection.yes == selection.no) return Error.Branches;
                 // nir_opt_collapse_if's iand of this condition and the one
                 // of the selection it is in, where it builds it: after the
-                // block before this selection (:487-490). Made wherever
+                // block before this selection (:492-496). Made wherever
                 // the two may collapse, and read only where they do; a
                 // selection deeper in is not taken (since 1.159).
                 if (depth == 2) {
@@ -4429,6 +4447,13 @@ const Selection = struct {
     /// second; whether the false arm came first in the module; and
     /// whether a variable came to the merge from one way only.
     kept: bool = false,
+    /// Kept for what its true arm held itself, not for a selection in it:
+    /// where the two may collapse, the block before the inner one, which
+    /// nir_opt_collapse_if wants all of instructions nir_opt_peephole_select
+    /// may flatten (block_check_for_allowed_instrs,
+    /// nir_opt_peephole_select.c:464-469; since 1.208). What the arm holds
+    /// after the inner selection is no such block, and no collapse.
+    kept_first: bool = false,
     region: Region = 0,
     parent_region: Region = 0,
     split: u16 = 0,
@@ -4440,6 +4465,7 @@ const Selection = struct {
     /// arm of another too (since 1.207).
     fn keep(selection: *Selection) void {
         selection.kept = true;
+        if (selection.arm == selection.yes) selection.kept_first = true;
         selection.empty = false;
         selection.quiet = false;
         selection.lone = false;
@@ -4507,8 +4533,10 @@ const Held = struct {
     emptiness: Emptiness = .kept,
     killed: bool = false,
     constant_after: bool = false,
-    /// Kept a branch, which no limit flattens (since 1.207).
+    /// Kept a branch, which no limit flattens (since 1.207), and its place
+    /// in `Work.kept` (since 1.208).
     kept: bool = false,
+    entry: u16 = 0,
 };
 
 /// Whether an arm's block is empty in NIR: it holds an instruction, it
@@ -4570,7 +4598,7 @@ fn droppable(work: *Work, outer: *const Selection, level: u32, reader: spirv.Rea
             const yes = work.ends[level][0][local][k];
             const no = work.ends[level][1][local][k];
             if (!innerSelect(work, &outer.held, yes)) continue;
-            if (no.step == none or !sameFloats(partOf(work, work.steps[yes.step].from[0], 0), no)) return false;
+            if (no.step == none or !sameFloats(innerFalse(work, yes), no)) return false;
         }
     }
     var ahead = reader;
@@ -4593,25 +4621,39 @@ fn droppable(work: *Work, outer: *const Selection, level: u32, reader: spirv.Rea
             const yes = partOf(work, by[0], @intCast(k));
             if (!innerSelect(work, &outer.held, yes)) continue;
             if (by[1] == none) return false;
-            if (!sameFloats(partOf(work, work.steps[yes.step].from[0], 0), partOf(work, by[1], @intCast(k)))) return false;
+            if (!sameFloats(innerFalse(work, yes), partOf(work, by[1], @intCast(k)))) return false;
         }
     }
     return true;
 }
 
 /// Whether a float is a select the merge of the selection `inner` names
-/// made.
+/// made, or a phi where that one is kept, on its condition or, once the
+/// two collapsed, on the iand (since 1.208).
 fn innerSelect(work: *const Work, inner: *const Held, of: Float) bool {
-    return of.step != none and of.part == 0 and of.step >= inner.selects_from and of.step < inner.selects_to and work.steps[of.step].tag == .select;
+    if (of.step == none or of.part != 0 or of.step < inner.selects_from or of.step >= inner.selects_to) return false;
+    const each = work.steps[of.step];
+    return switch (each.tag) {
+        .select => true,
+        .phi => each.from[0] == inner.condition or each.from[0] == inner.iand,
+        else => false,
+    };
+}
+
+/// The float an inner select or phi brings the false way.
+fn innerFalse(work: *const Work, of: Float) Float {
+    const each = work.steps[of.step];
+    if (each.tag == .phi) return .{ .step = each.b, .part = each.part[1] };
+    return partOf(work, each.from[0], 0);
 }
 
 /// Whether the outer merge of a collapse takes the float `yes` as it is:
 /// a select of the inner merge whose false float is `no`, which
-/// nir_opt_collapse_if's phi is of both ways (:474-485).
+/// nir_opt_collapse_if's phi is of both ways (:474-486).
 fn dropped(work: *const Work, selection: *const Selection, yes: Float, no: Float) bool {
     if (!selection.collapsed or no.step == none) return false;
     if (!innerSelect(work, &selection.held, yes)) return false;
-    return sameFloats(partOf(work, work.steps[yes.step].from[0], 0), partOf(work, no.step, no.part));
+    return sameFloats(innerFalse(work, yes), partOf(work, no.step, no.part));
 }
 
 fn sameFloats(a: Float, b: Float) bool {
@@ -15608,6 +15650,30 @@ test "through Mesa's back end, glslc's store in an arm on a push constant: a uni
     try expectStream(&[_]Word{ .{ .push = 0 }, .{ .float = @bitCast(@as(u32, 4)) }, .{ .ssbo = .{ .set = 0, .binding = 0, .reach = 4 } }, .{ .float = @bitCast(@as(u32, 0xffffff84)) } }, code.stream());
 }
 
+/// A selection kept for a uniform buffer's float in its arm, then two
+/// that nir_opt_collapse_if makes one, kept for thirteen sums and sines,
+/// the first of the sums made again past the merge (since 1.208).
+const KeptThenCollapsed = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const x = b.component(v, 0);
+        const half = b.scalar(0.5);
+        const first = b.ifHolds(b.lessThan(b.component(v, 2), half));
+        const loaded = b.uniform(0, 0, 0, .f32x1);
+        b.endIf(first);
+        const green = b.merged(first, loaded, x);
+        const outer = b.ifHolds(b.lessThan(b.component(v, 1), half));
+        const inner = b.ifHolds(b.lessThan(x, half));
+        var made = x;
+        inline for (0..13) |_| made = b.sin(b.add(made, half));
+        b.endIf(inner);
+        const chosen = b.merged(inner, made, x);
+        b.endIf(outer);
+        const last = b.merged(outer, chosen, x);
+        b.color(b.vector(&.{ last, green, b.add(x, half), x }));
+    }
+});
+
 /// A selection over the limit in the arm of another: a branch in a
 /// branch.
 const DeepCostly = ir.Fragment(struct {
@@ -15645,14 +15711,30 @@ fn Arms(comptime count: usize) type {
     });
 }
 
-test "a branch in a branch that nir_opt_collapse_if makes one, and a ninth branch, are refused" {
+test "a branch in a branch that nir_opt_collapse_if makes one, and a ninth branch refused" {
     // The inner selection, kept for its cost, is all of the outer's true
-    // arm, and neither has a false arm: nir_opt_collapse_if makes the two
-    // one on the iand of their conditions (nir_opt_peephole_select.c
-    // :412-506), which is not yet (since 1.207; before, no selection in
-    // an arm was kept).
+    // arm but for its comparison, and neither has a false arm: at the
+    // limit of 24 nir_opt_collapse_if makes the two one kept selection on
+    // the iand of the inner condition and the outer's
+    // (nir_opt_peephole_select.c:413-506; since 1.208), its arm still
+    // over the limit.
     var work: Work = .{};
-    try testing.expectError(Error.Branches, throughMesa(&work, DeepCostly.words));
+    const deep = try throughMesa(&work, DeepCostly.words);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 2), countOf(deep, "fcmp"));
+    try testing.expectEqual(@as(usize, 1), countOf(deep, "and rf"));
+    try testing.expectEqual(@as(usize, 134), deep.words.len);
+    // KeptThenCollapsed: the selection the two make is the second kept,
+    // its branch on the iand and the first's on its own comparison; the
+    // sum past the merge is made again, the arm's, in a region of its
+    // own still, dominating it not (nir_opt_cse.c:76).
+    work = .{};
+    const then = try throughMesa(&work, KeptThenCollapsed.words);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 3), countOf(then, "fcmp"));
+    try testing.expectEqual(@as(usize, 14), stepsOf(&work, .add));
+    try testing.expectEqual(@as(usize, 152), then.words.len);
     // Eight are kept, one after another, each its own blocks. Each phi is
     // the next one's false way and read nowhere else past it, so
     // aggressive_coalesce_block merges the webs whole (merge_merge_sets):
@@ -16045,12 +16127,45 @@ test "through Mesa's back end, a sample in an inner arm that nir_opt_cse finds i
     try testing.expectEqual(@as(usize, 38), code.words.len);
 }
 
-test "through Mesa's back end, a selection kept in the arm of one, all of its true arm: nir_opt_collapse_if's shape, refused still" {
-    // nir_opt_collapse_if makes the two one on the iand of their
-    // conditions (nir_opt_peephole_select.c:412-506), the inner arm still
-    // a block kept. That is not yet.
+test "through Mesa's back end, a selection kept in the arm of one, all of its true arm: nir_opt_collapse_if's one kept selection on the iand" {
+    // nir_opt_collapse_if makes the two one on the iand of the inner
+    // condition and the outer's (nir_opt_peephole_select.c:492-496), the
+    // inner arm a block kept, and the outer phis trivial (:474-486): one
+    // branch, the iand of the two bools tested PUSHZ and IFNA
+    // (ntq_emit_bool_to_cond's out:, nir_to_vir.c:1277-1281; since 1.208).
     var work: Work = .{};
-    try testing.expectError(Error.Branches, throughMesa(&work, &reference.glslc_nested_collapse));
+    const code = try throughMesa(&work, &reference.glslc_nested_collapse);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "and rf"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 33), code.words.len);
+}
+
+test "through Mesa's back end, nir_opt_collapse_if of a kept selection: not past a sample before it, and a float of the block before it chosen by a bcsel" {
+    // glslc_collapse_apart: a sample before the inner selection, which
+    // block_check_for_allowed_instrs refuses (nir_opt_peephole_select.c:
+    // 464-468): no collapse, the two kept, the inner on the sample's red
+    // under the outer's mask. Before 1.208 the collapse was taken and the
+    // program refused.
+    var work: Work = .{};
+    const apart = try throughMesa(&work, &reference.glslc_collapse_apart);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 1), countOf(apart, ".nornz"));
+    try testing.expectEqual(@as(usize, 4), countOf(apart, "ldtmu"));
+    try testing.expectEqual(@as(usize, 41), apart.words.len);
+    // glslc_collapse_sampled: the block before the inner selection makes
+    // k, which the outer merge chooses. The collapse moves the block
+    // before the selection on the iand (:498-502), and the empty outer
+    // selection left with k's phi is flattened, a bcsel on the outer
+    // condition past the branch.
+    work = .{};
+    const sampled = try throughMesa(&work, &reference.glslc_collapse_sampled);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), countOf(sampled, "and rf"));
+    try testing.expectEqual(@as(usize, 40), sampled.words.len);
 }
 
 test "through Mesa's back end, seventeen selections one after another, each flattened, each giving its regions back" {
