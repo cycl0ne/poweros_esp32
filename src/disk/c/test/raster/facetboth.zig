@@ -150,7 +150,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.70 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.71 (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -1156,6 +1156,62 @@ const Shipped = struct {
             b.endIf(chosen);
             const reds = b.merged(chosen, yes, no);
             b.color(b.vector(&.{ reds, y, x, b.scalar(1) }));
+        }
+    });
+    /// Two selections the V3D keeps a branch, one in the other's true arm
+    /// (since 1.71): the inner one for thirteen sums and sines of the
+    /// alpha, on the green's own condition, under the outer's mask. Its
+    /// arm scales a vector by three quarters of the green, made before
+    /// both, which the inner false way brings to the red; the vector's
+    /// first float is a quarter of the last sine, which comes to nearly 1
+    /// whatever the alpha, so a product that read the first in place of
+    /// the green's three quarters would be a quarter of what it is. The
+    /// outer arm goes on past the inner merge, halving the alpha.
+    const NestedKept = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const half = b.scalar(0.5);
+            const s = b.mul(y, b.scalar(0.75));
+            const before = b.vector(&.{ s, z, w, x });
+            const passed = b.vector(&.{ y, z, w, b.scalar(1) });
+            const outer = b.ifHolds(b.lessThan(x, half));
+            const inner = b.ifHolds(b.lessThan(y, half));
+            var made = w;
+            inline for (0..13) |_| made = b.sin(b.add(made, half));
+            const scaled = b.scale(b.vector(&.{ b.mul(made, b.scalar(0.25)), z, w, x }), s);
+            b.endIf(inner);
+            const chosen = b.merged(inner, scaled, before);
+            const kept = b.vector(&.{ b.component(chosen, 0), b.component(chosen, 1), b.component(chosen, 2), b.mul(b.component(chosen, 3), half) });
+            b.endIf(outer);
+            b.color(b.merged(outer, kept, passed));
+        }
+    });
+    /// Three bcsels in the arm of a selection the V3D keeps a branch, for
+    /// thirteen sums and sines of the blue, each on the green being under
+    /// a half: the green is what the red's phi brings the other way, so
+    /// the first bcsel writes its register, and the two after it test the
+    /// comparison's bool (since 1.71).
+    const SelectsKept = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const half = b.scalar(0.5);
+            const passed = b.vector(&.{ y, z, w, b.scalar(1) });
+            const chosen = b.ifHolds(b.lessThan(x, half));
+            var made = z;
+            inline for (0..13) |_| made = b.sin(b.add(made, half));
+            const t = b.add(b.mul(made, half), half);
+            const below = b.lessThan(y, half);
+            const picked = b.vector(&.{ b.select(below, t, w), b.select(below, w, z), b.select(below, x, t), b.scalar(1) });
+            b.endIf(chosen);
+            b.color(b.merged(chosen, picked, passed));
         }
     });
     /// What glslc's `for_loop` computes, its loop of four runs written out
@@ -2740,6 +2796,9 @@ const shipped_entries = [_]shader.Entry{
     // Outputs stored in arms, without -O (since 1.70).
     shader.fragment("shipped outputs", &outputsFragment, 4),
     shader.vertex("shipped vertex outputs", &vertexOutputsVertex, 4),
+    // Selections kept in kept arms, and bcsels in a kept arm (since 1.71).
+    Shipped.NestedKept.entry("shipped nested kept"),
+    Shipped.SelectsKept.entry("shipped selects kept"),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2768,7 +2827,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_hyperbolic),           shader.Spirv.of(&shipped_geometry),         shader.Spirv.of(&shipped_bit_finds),           shader.Spirv.of(&shipped_modf_frexp),
     shader.Spirv.of(&shipped_packing_bytes),        shader.Spirv.of(&shipped_packing_halves),   shader.Spirv.of(&shipped_packing_half),        shader.Spirv.of(&shipped_matrix_inverse),
     shader.Spirv.of(&shipped_determinant4),         shader.Spirv.of(&shipped_bits),             shader.Spirv.of(&shipped_vertex_branch),       shader.Spirv.of(&shipped_branches),
-    shader.Spirv.of(&shipped_outputs),              shader.Spirv.of(&shipped_vertex_outputs),
+    shader.Spirv.of(&shipped_outputs),              shader.Spirv.of(&shipped_vertex_outputs),   Shipped.NestedKept.spirv,                      Shipped.SelectsKept.spirv,
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -12022,6 +12081,8 @@ const cases = [_]Case{
     .{ .name = "shipped vertex branches", .run = Cases.numbered("shipped vertex branch") },
     .{ .name = "shipped outputs in arms", .run = Cases.shipped("as it is", "shipped outputs", false, clockwise_at) },
     .{ .name = "shipped vertex outputs in arms", .run = Cases.numbered("shipped vertex outputs") },
+    .{ .name = "shipped nested kept branches", .run = Cases.shipped("as it is", "shipped nested kept", false, clockwise_at) },
+    .{ .name = "shipped bcsels in a kept arm", .run = Cases.shipped("as it is", "shipped selects kept", false, clockwise_at) },
     .{ .name = "patches: triangles, even", .run = Cases.tessellated(.{ .patch_points = 3 }, 0, 3) },
     .{ .name = "patches: triangles, uneven", .run = Cases.tessellated(.{ .patch_points = 3, .control = "uneven" }, 0, 6) },
     .{ .name = "patches: triangles, edges", .run = Cases.tessellated(.{ .patch_points = 3, .control = "uneven", .polygon_mode = .line }, 0, 3) },
