@@ -32,7 +32,7 @@ const Piece = drawing.Piece;
 /// ```
 ///
 /// SINCE: 0.11, UTF-8 since 0.38, fonts of 32-bit colour since 0.39,
-/// fallback fonts since 0.40.
+/// fallback fonts since 0.40, glyphs made when wanted since 0.41.
 /// LVO -132.
 ///
 /// INPUTS:
@@ -40,7 +40,8 @@ const Piece = drawing.Piece;
 ///   the result, and its current point is where the text starts.
 /// - `string` - the text, UTF-8; a byte that is no UTF-8 is drawn as the
 ///   character it reads as (`utility.utf8.read`). A character the font
-///   has no glyph for is drawn from the first of its fallback fonts that
+///   has no glyph for - in its image or made by its hook - is drawn
+///   from the first of its fallback fonts that
 ///   has one (`TextFont.fallback`); when none has, as its base letter -
 ///   `Ā` as `A` - when it is a letter with marks and the font or one of
 ///   its fallbacks has that letter, and otherwise as the font's default
@@ -93,22 +94,36 @@ const Piece = drawing.Piece;
 /// part of a leaning or kerned letter that reaches into a neighbour from
 /// another font is covered by that one's paper.
 ///
+/// **A font may hold more glyphs than its image.** A character the
+/// image has no glyph for is asked of the font's hook (`TextFont.render`,
+/// a font `AddFont` took) the first time it is drawn or measured, here,
+/// on the caller's task; the glyph is kept with the font, and every text
+/// after draws from what was kept. So the first text with a new
+/// character takes the time its glyph takes to make. A glyph the hook
+/// could not make this time - there was no memory - is drawn as a
+/// character the font lacks, and asked for again by the next text.
+///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the RastPort's lock
-///   (`RPTAG_Lock`), if it has one.
+///   (`RPTAG_Lock`), if it has one, and while another task makes a glyph
+///   of the same font.
 /// - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 ///   to the display at the end.
 /// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// Nothing the caller has to free: the string is only read.
+/// Nothing the caller has to free: the string is only read. A glyph
+/// made for the text is the library's, kept with the font.
+///
+/// NOTES:
+/// A font's hook runs on the caller's stack.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `TextLength`, `OpenFont`, `RPTAG_TextStyle`
+/// `TextLength`, `OpenFont`, `AddFont`, `RPTAG_TextStyle`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -141,7 +156,7 @@ pub fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) v
 
     var done: u32 = 0;
     while (done < count) {
-        const run = takeRun(font, rp.text_style, string + done, count - done);
+        const run = takeRun(gb, font, rp.text_style, string + done, count - done);
         const area = graphics.Rect{
             .min_x = pen_x + run.room.min_x,
             .min_y = top,
@@ -191,18 +206,19 @@ const Run = struct {
 /// italics can make overlap.
 ///
 /// INPUTS:
+/// - `gb` - the library.
 /// - `line` - the font the text is in.
 /// - `style` - the RastPort's style.
 /// - `string` - the text, UTF-8.
 /// - `left` - its length in bytes, not 0.
-fn takeRun(line: *const TextFont, style: graphics.FontStyle, string: [*]const u8, left: u32) Run {
+fn takeRun(gb: *GraphicsBase, line: *const TextFont, style: graphics.FontStyle, string: [*]const u8, left: u32) Run {
     const bytes = string[0..left];
     var look = _text.lookOf(line, line, style);
     var room = Measure{};
     var count: usize = 0;
     while (count < bytes.len) {
         var after = count;
-        const found = glyphOf(line, utf8.next(bytes, &after));
+        const found = glyphOf(gb, line, utf8.next(bytes, &after));
         if (found.font != look.font) {
             if (count != 0) break;
             look = _text.lookOf(line, found.font, style);
@@ -234,8 +250,12 @@ fn stencilRun(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, run: Run, a
         const bytes = string[0..run.count];
         var i: usize = 0;
         while (i < bytes.len) {
-            const glyph = glyphOf(look.line, utf8.next(bytes, &i)).glyph;
-            placeGlyph(&strip, look, glyph, at, band, band_rows);
+            const found = glyphOf(gb, look.line, utf8.next(bytes, &i));
+            const glyph = found.glyph;
+            // A glyph that could not be made when the run was taken and
+            // can be now is another font's than the run's: its pixels
+            // are not the run's kind, and it is left out this once.
+            if (found.font == look.font) placeGlyph(&strip, look, glyph, at, band, band_rows);
             at += glyph.advance + look.extra;
         }
         const piece = graphics.Rect{
@@ -255,7 +275,7 @@ fn stencilRun(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, run: Run, a
 /// own, so one above or below the line falls in no band.
 fn placeGlyph(strip: *[strip_rows][strip_bytes]u8, look: Look, glyph: *const Glyph, at: i32, band: i32, band_rows: i32) void {
     if (glyph.width == 0) return;
-    const pixels = fontimage.pixelsOf(look.font.image, glyph);
+    const pixels = _text.pixelsOf(look.font, glyph);
     var row: u32 = 0;
     while (row < glyph.rows) : (row += 1) {
         const line = look.drop + @as(i32, glyph.top) + @as(i32, @intCast(row));
@@ -320,8 +340,10 @@ fn composeRun(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, run: Run, a
         const bytes = string[0..run.count];
         var i: usize = 0;
         while (i < bytes.len) {
-            const glyph = glyphOf(look.line, utf8.next(bytes, &i)).glyph;
-            composeGlyph(rp, piece, look, glyph, at, top);
+            const found = glyphOf(gb, look.line, utf8.next(bytes, &i));
+            const glyph = found.glyph;
+            // As in `stencilRun`: only the run's own font's glyphs.
+            if (found.font == look.font) composeGlyph(rp, piece, look, glyph, at, top);
             at += glyph.advance + look.extra;
         }
         drawing.grow(&bound, r.min_y, &any);
@@ -336,7 +358,7 @@ fn composeRun(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, run: Run, a
 fn composeGlyph(rp: *RastPort, piece: Piece, look: Look, glyph: *const Glyph, at: i32, top: i32) void {
     if (glyph.width == 0) return;
     const image = look.font.image;
-    const pixels = fontimage.pixelsOf(image, glyph);
+    const pixels = _text.pixelsOf(look.font, glyph);
     const r = piece.rect;
     const wide: i32 = @as(i32, glyph.width) + look.smear;
     var row: u32 = 0;

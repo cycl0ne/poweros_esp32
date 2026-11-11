@@ -401,9 +401,15 @@ test "an outline family: any height rendered, listed as scalable, found by NewFo
 /// `style_bits` (1 bold, 2 italic), its contents file made by
 /// NewFontContents.
 fn writeOutlineFamily(rig: *Rig, comptime name: []const u8, style_bits: u8) !void {
+    return writeOutlineFamilyAt(rig, name, style_bits, 'A');
+}
+
+/// The same family with its three glyphs at `first` and the two
+/// characters after it.
+fn writeOutlineFamilyAt(rig: *Rig, comptime name: []const u8, style_bits: u8, first: u16) !void {
     const tt = @import("../../truetype/tests/truetype.zig");
     var out: tt.Out = .{};
-    tt.buildFace(&out, style_bits);
+    tt.buildFaceAt(&out, style_bits, first);
     const made = rig.dosLib().CreateDir("FONTS:" ++ name) orelse return error.NoDir;
     rig.dosLib().UnLock(made);
     try rig.write("FONTS:" ++ name ++ "/" ++ name ++ ".ttf", out.bytes[0..out.len]);
@@ -774,4 +780,124 @@ test "fallback fonts: the list read at each opening; a font in memory keeps its 
     try testing.expectEqualStrings("last.font", nameOf(scaled_rom.fallback.?));
     gb.CloseFont(with_rom);
     gb.CloseFont(scaled);
+}
+
+/// How many pixels `text` lights, drawn in `font` near the left edge of
+/// a surface 48 by 32.
+fn inkIn(rig: *Rig, font: *graphics.TextFont, text: []const u8) !u32 {
+    var pixels: [48 * 32 * 2]u8 = @splat(0);
+    var surface = sdk.rtg.Surface{
+        .pixels = &pixels,
+        .width = 48,
+        .height = 32,
+        .pitch = 96,
+        .size_bytes = pixels.len,
+        .format = .rgb565,
+    };
+    const tags = [_]sdk.utility.TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
+        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(font) },
+        .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 255, 255) },
+        .{},
+    };
+    const gb = rig.graphicsLib();
+    const rp = gb.CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    defer gb.FreeRastPort(rp);
+    gb.Move(rp, 2, font.image.baseline);
+    gb.Text(rp, text.ptr, @intCast(text.len));
+    var lit: u32 = 0;
+    var at: usize = 0;
+    while (at < pixels.len) : (at += 2) {
+        if (pixels[at] != 0 or pixels[at + 1] != 0) lit += 1;
+    }
+    return lit;
+}
+
+test "revision 9: a size made from an outline renders a character past its image when it is first drawn, and holds the outline" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    try testing.expect(rig.dfb.lib().revision >= 9);
+    const truetype_init = @import("../../truetype/truetype_init.zig");
+    const lib = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoTrueType;
+    const truetype_lib: *exec.Library = @ptrCast(@alignCast(lib));
+    defer _ = rig.sysLib().RemLibrary(truetype_lib);
+    // Arrows are no part of what a size is rendered with: U+2190 the
+    // square, U+2191 the curved one, U+2192 the square moved right.
+    try writeOutlineFamilyAt(&rig, "arrows", 0, 0x2190);
+    try writeOutlineFamily(&rig, "tt", 0);
+    const dfb = rig.dfb;
+    const gb = rig.graphicsLib();
+    const left = "\xE2\x86\x90";
+    const down = "\xE2\x86\x93";
+
+    const font = dfb.OpenDiskFont(&.{ .name = "arrows.font", .y_size = 20, .flags = graphics.FPF_DESIGNED }) orelse return error.NoFont;
+    try testing.expectEqual(@as(u16, 20), font.image.height);
+    try testing.expect(fontimage.find(font.image, 0x2190) == null);
+    try testing.expect(font.render != null);
+    try testing.expectEqual(@as(usize, 1), outlinesLoaded(&rig));
+
+    // Measured and drawn all the same: the square, 10 by 14, 12 on. A
+    // character the outline lacks is the font's missing glyph, which has
+    // no ink.
+    try testing.expectEqual(@as(i32, 12), try lengthIn(&rig, font, left));
+    try testing.expectEqual(@as(u32, 140), try inkIn(&rig, font, left));
+    try testing.expectEqual(@as(i32, 24), try lengthIn(&rig, font, left ++ "\xE2\x86\x92"));
+    try testing.expectEqual(@as(u32, 0), try inkIn(&rig, font, down));
+
+    // The hook as graphics asks it for a glyph by its number: one the
+    // outline has, one it does not, and one for which there is no room.
+    const hook = font.render.?;
+    var bytes: [256]u8 = undefined;
+    var request = graphics.GlyphRequest{ .which = 3, .flags = graphics.GLYPHREQ_NUMBER, .pixels = &bytes, .room = bytes.len };
+    try testing.expectEqual(graphics.GLYPH_OK, hook.entry.?(hook, font, &request));
+    try testing.expectEqual(fontimage.Kind.alpha4, request.kind);
+    try testing.expectEqual(@as(i16, 12), request.glyph.advance);
+    try testing.expectEqual(@as(u16, 10), request.glyph.width);
+    try testing.expectEqual(@as(u32, 5 * 14), request.size);
+    request = .{ .which = 4, .flags = graphics.GLYPHREQ_NUMBER, .pixels = &bytes, .room = bytes.len };
+    try testing.expectEqual(graphics.GLYPH_NONE, hook.entry.?(hook, font, &request));
+    request = .{ .which = 1, .flags = graphics.GLYPHREQ_NUMBER, .pixels = &bytes, .room = 8 };
+    try testing.expectEqual(graphics.GLYPH_ROOM, hook.entry.?(hook, font, &request));
+    try testing.expectEqual(@as(u32, 5 * 14), request.size);
+    request = .{ .which = 0x2193, .pixels = &bytes, .room = bytes.len };
+    try testing.expectEqual(graphics.GLYPH_NONE, hook.entry.?(hook, font, &request));
+
+    // A second size renders from the same outline; short of memory with
+    // both open, the sizes stay, the outline with them, and the glyph
+    // made is still the font's.
+    const small = dfb.OpenDiskFont(&.{ .name = "arrows.font", .y_size = 10, .flags = graphics.FPF_DESIGNED }) orelse return error.NoFont;
+    try testing.expectEqual(@as(usize, 1), outlinesLoaded(&rig));
+    try testing.expectEqual(@as(i32, 6), try lengthIn(&rig, small, left));
+    try testing.expect(rig.sysLib().AllocMem(1 << 30, exec.MEMF_ANY) == null);
+    try testing.expectEqual(@as(usize, 2), fontsLoaded(&rig));
+    try testing.expectEqual(@as(usize, 1), outlinesLoaded(&rig));
+    try testing.expectEqual(@as(u32, 140), try inkIn(&rig, font, left));
+
+    // One size closed: it goes, the outline stays for the other. Both
+    // closed: the sizes go, and then the outline nobody holds.
+    gb.CloseFont(small);
+    try testing.expect(rig.sysLib().AllocMem(1 << 30, exec.MEMF_ANY) == null);
+    try testing.expectEqual(@as(usize, 1), fontsLoaded(&rig));
+    try testing.expectEqual(@as(usize, 1), outlinesLoaded(&rig));
+    try testing.expectEqual(@as(u32, 140), try inkIn(&rig, font, left));
+    gb.CloseFont(font);
+    try testing.expect(rig.sysLib().AllocMem(1 << 30, exec.MEMF_ANY) == null);
+    try testing.expectEqual(@as(usize, 0), fontsLoaded(&rig));
+    try testing.expectEqual(@as(usize, 0), outlinesLoaded(&rig));
+
+    // A fallback's hook is asked after the font's own: 'A' is the
+    // font's, the arrow no glyph of its outline, and the fallback
+    // renders it.
+    try rig.writeFallbackFamilies();
+    try rig.writePrefs("FALLBACK=arrows.font\n");
+    const letters = dfb.OpenDiskFont(&.{ .name = "tt.font", .y_size = 20, .flags = graphics.FPF_DESIGNED }) orelse return error.NoFont;
+    try testing.expectEqualStrings("arrows.font", nameOf(letters.fallback orelse return error.NoFallback));
+    try testing.expectEqual(@as(usize, 2), outlinesLoaded(&rig));
+    try testing.expectEqual(@as(i32, 24), try lengthIn(&rig, letters, "A" ++ left));
+    try testing.expectEqual(@as(u32, 280), try inkIn(&rig, letters, "A" ++ left));
+    try testing.expectEqual(@as(u32, 140), try inkIn(&rig, letters, "A" ++ down));
+    gb.CloseFont(letters);
+    // The expunge at the end frees the sizes, what they made and the
+    // outlines; the leak check says whether all of it went.
 }

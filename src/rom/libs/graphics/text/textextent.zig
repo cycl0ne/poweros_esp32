@@ -17,7 +17,8 @@ const _text = @import("_text.zig");
 /// fn TextExtent(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, out: *graphics.TextExtent) void
 /// ```
 ///
-/// SINCE: 0.14, UTF-8 since 0.38, fallback fonts since 0.40. LVO -168.
+/// SINCE: 0.14, UTF-8 since 0.38, fallback fonts since 0.40, glyphs made
+/// when wanted since 0.41. LVO -168.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. Its font and text style decide the answer.
@@ -42,20 +43,24 @@ const _text = @import("_text.zig");
 /// A character drawn from a fallback font is measured as that glyph
 /// across, and not at all up and down: its rows outside the line are not
 /// drawn, so the extent is as tall as the RastPort's font whatever the
-/// text holds.
+/// text holds. A glyph the font's hook makes (`TextFont.render`) is made
+/// here when this is the first call to want it, as `Text` makes it.
 ///
 /// Half-open like every rectangle here, so the height is `max_y - min_y`
 /// and there is no `+ 1` anywhere.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: only for a font that makes glyphs, while another task makes
+///   one of the same font.
 /// - Interrupts: no. It reads the caller's RastPort, which an interrupt does
 ///   not share.
-/// - Locks: none needed.
+/// - Locks: none needed; no spinlock may be held with a font that makes
+///   glyphs.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// Nothing is allocated.
+/// Nothing the caller has to free. A glyph made for the measuring is
+/// the library's, kept with the font.
 ///
 /// BUGS:
 /// None known.
@@ -75,14 +80,14 @@ const _text = @import("_text.zig");
 /// gb.Move(rp, x, y);
 /// gb.Text(rp, msg.ptr, msg.len);
 /// ```
-pub fn TextExtent(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, out: *graphics.TextExtent) void {
+pub fn TextExtent(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, out: *graphics.TextExtent) void {
     rp.last_error = graphics.GERR_OK;
     const font = rp.font orelse {
         out.* = .{};
         rp.last_error = graphics.GERR_NO_FONT;
         return;
     };
-    const room = _text.measure(font, rp.text_style, string, count);
+    const room = _text.measure(gb, font, rp.text_style, string, count);
     const height: i32 = font.image.height;
     const base: i32 = font.image.baseline;
     out.* = .{

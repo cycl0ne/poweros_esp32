@@ -54,6 +54,7 @@ const testing = std.testing;
 const interface = sdk.interface.graphics;
 const rastport = @import("rastport/_rastport.zig");
 const fonts = @import("text/_text.zig");
+const kept_glyphs = @import("text/_kept.zig");
 const drawing = @import("draw/_draw.zig");
 const rom_fonts = @import("fonts/_fonts.zig");
 const regions = @import("region/_region.zig");
@@ -4214,6 +4215,255 @@ test "fallback fonts: a character the font lacks is drawn from the chain, on the
     head.fallback = &links[0];
     links[0].fallback = &head;
     try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, "x", 1));
+
+    base(gb).FreeRastPort(rp);
+    try tearDown(gb);
+}
+
+/// A font's `render` hook for the tests: it counts what it is asked,
+/// and answers each character its own way.
+const GlyphMaker = struct {
+    calls: u32 = 0,
+    /// How often 'l' was asked for: the first time there is no memory.
+    later: u32 = 0,
+    gb: ?*GraphicsBase = null,
+    /// What the hook saw of the store as another task, while it was
+    /// asked for 't'.
+    lock_was_held: bool = false,
+    read_while_making: i32 = 0,
+
+    fn make(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+        const maker: *GlyphMaker = @ptrCast(@alignCast(hook.data.?));
+        const font: *const fonts.TextFont = @ptrCast(@alignCast(object.?));
+        const request: *graphics.GlyphRequest = @ptrCast(@alignCast(message.?));
+        maker.calls += 1;
+        request.kind = .mono1;
+        if (request.flags & graphics.GLYPHREQ_NUMBER != 0) {
+            if (request.which != 7) return graphics.GLYPH_NONE;
+            return ink(request, 9, &.{0x80});
+        }
+        switch (request.which) {
+            'x' => return ink(request, 11, &.{ 0xE0, 0xA0 }),
+            ' ' => {
+                request.glyph = .{ .advance = 4 };
+                return graphics.GLYPH_OK;
+            },
+            'l' => {
+                maker.later += 1;
+                if (maker.later == 1) return graphics.GLYPH_LATER;
+                return ink(request, 6, &.{0x80});
+            },
+            'w' => {
+                // 480 columns by 100 rows: more than a block has left.
+                request.size = 60 * 100;
+                if (request.room < request.size) return graphics.GLYPH_ROOM;
+                @memset(request.pixels[0..request.size], 0);
+                request.pixels[0] = 0x80;
+                request.glyph = .{ .width = 480, .rows = 100, .advance = 7, .pitch = 60 };
+                return graphics.GLYPH_OK;
+            },
+            'k' => {
+                // Coverage for a font of ink.
+                request.kind = .alpha4;
+                return ink(request, 3, &.{0xF0});
+            },
+            'p' => {
+                // Rows shorter than their pixels.
+                _ = ink(request, 3, &.{0xE0});
+                request.glyph.pitch = 0;
+                return graphics.GLYPH_OK;
+            },
+            'z' => {
+                // More rows than bytes written.
+                _ = ink(request, 3, &.{0xE0});
+                request.glyph.rows = 2;
+                return graphics.GLYPH_OK;
+            },
+            't' => {
+                // As another task would find the store just now: its
+                // lock taken, and what is kept there to be read.
+                const gb = maker.gb.?;
+                const store: *kept_glyphs.Store = @ptrCast(@alignCast(font.cache.?));
+                var other: sdk.exec.Task = .{ .node = .{ .name = "other" } };
+                const cpu = kexec.SysBase.cpu();
+                const the_task = cpu.this_task;
+                cpu.this_task = &other;
+                maker.lock_was_held = !gb.sys_base.AttemptSemaphore(&store.lock);
+                maker.read_while_making = fonts.glyphOf(gb, font, 'x').glyph.advance;
+                cpu.this_task = the_task;
+                return ink(request, 2, &.{0x80});
+            },
+            else => return graphics.GLYPH_NONE,
+        }
+    }
+
+    /// A glyph three columns wide, a row for each byte, a row below the
+    /// line's top.
+    fn ink(request: *graphics.GlyphRequest, advance: i16, rows: []const u8) usize {
+        request.size = @intCast(rows.len);
+        if (request.room < rows.len) return graphics.GLYPH_ROOM;
+        @memcpy(request.pixels[0..rows.len], rows);
+        request.glyph = .{ .width = 3, .rows = @intCast(rows.len), .top = 1, .advance = advance, .pitch = 1 };
+        return graphics.GLYPH_OK;
+    }
+};
+
+test "a font's render hook: a glyph the image lacks is made once and kept with the font" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [64 * 32 * 2]u8 = @splat(0);
+    var surface = rtg.Surface{ .pixels = &pixels, .width = 64, .height = 32, .pitch = 128, .size_bytes = pixels.len, .format = .rgb565 };
+    const tags = [_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
+        .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 255, 255) },
+        .{},
+    };
+    const rp = base(gb).CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    var maker = GlyphMaker{ .gb = gb };
+    var hook = sdk.utility.Hook{ .entry = &GlyphMaker.make, .data = &maker };
+    // The 8-row font of ink that makes glyphs, and a taller one behind
+    // it that has 'x', 'e' and 'o' in its image.
+    var tall = fonts.TextFont{ .node = .{ .name = "tall.font" }, .image = @ptrCast(&tall_font) };
+    var line = fonts.TextFont{ .node = .{ .name = "made.font" }, .image = @ptrCast(&list_font), .fallback = &tall, .render = &hook };
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&line) }, .{} });
+
+    // A font that was never added draws from its image, and its
+    // fallback's, alone.
+    try testing.expectEqual(@as(i32, 5), base(gb).TextLength(rp, "x", 1));
+    try testing.expectEqual(@as(u32, 0), maker.calls);
+
+    try testing.expect(base(gb).AddFont(&line));
+    try testing.expect(line.cache != null);
+
+    // Made the first time it is wanted, by the font itself before its
+    // fallback's image is looked in, and never again: measured, fitted
+    // and drawn from what was kept.
+    try testing.expectEqual(@as(i32, 11), base(gb).TextLength(rp, "x", 1));
+    try testing.expectEqual(@as(u32, 1), maker.calls);
+    const first = fonts.glyphOf(gb, &line, 'x');
+    try testing.expectEqual(@as(*const fonts.TextFont, &line), first.font);
+    var room: graphics.TextExtent = .{};
+    base(gb).TextExtent(rp, "xax", 3, &room);
+    try testing.expectEqual(@as(i32, 11 + 8 + 11), room.width);
+    try testing.expectEqual(@as(u32, 2), base(gb).TextFit(rp, "xax", 3, &room, null, graphics.TEXT_FORWARD, 20, 0));
+    // The line's top is row 4: 'a' is its bar on row 6, 'x' three
+    // columns on row 5 and two of them on row 6.
+    base(gb).Move(rp, 2, 10);
+    base(gb).Text(rp, "ax", 2);
+    try testing.expectEqual(@as(u32, 8 + 3 + 2), litCount(&surface));
+    try testing.expect(pixelAt(&surface, 10, 5) != 0 and pixelAt(&surface, 11, 5) != 0 and pixelAt(&surface, 12, 5) != 0);
+    try testing.expect(pixelAt(&surface, 10, 6) != 0 and pixelAt(&surface, 12, 6) != 0);
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 11, 6));
+    try testing.expectEqual(@as(u32, 1), maker.calls);
+    try testing.expectEqual(@as(u32, 1), kept_glyphs.countOf(&line));
+
+    // A glyph without ink is kept as one: its advance and nothing drawn.
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 2, 10);
+    base(gb).Text(rp, " ", 1);
+    try testing.expectEqual(@as(u32, 0), litCount(&surface));
+    try testing.expectEqual(@as(i32, 4), base(gb).TextLength(rp, " ", 1));
+    try testing.expectEqual(@as(u32, 2), maker.calls);
+
+    // A character the font has no glyph for is asked for once, and from
+    // then on found in the fallback - or as the font's own default -
+    // without asking.
+    try testing.expectEqual(@as(i32, 6), base(gb).TextLength(rp, "o", 1)); // tall's
+    try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, "q", 1)); // the '?'
+    try testing.expectEqual(@as(u32, 4), maker.calls);
+    try testing.expectEqual(@as(i32, 6 + 8), base(gb).TextLength(rp, "oq", 2));
+    try testing.expectEqual(@as(u32, 4), maker.calls);
+    try testing.expectEqual(@as(u32, 4), kept_glyphs.countOf(&line));
+    // A letter with a mark: itself, then its base letter, each asked of
+    // the font once before the fallback's image has the letter.
+    try testing.expectEqual(@as(i32, 4), base(gb).TextLength(rp, "\xC3\xA9", 2)); // é as tall's e
+    try testing.expectEqual(@as(u32, 6), maker.calls);
+    try testing.expectEqual(@as(i32, 4), base(gb).TextLength(rp, "\xC3\xA9", 2));
+    try testing.expectEqual(@as(u32, 6), maker.calls);
+
+    // A glyph that could not be made this time is not kept: the text is
+    // drawn without it, and the next one asks again.
+    try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, "l", 1));
+    try testing.expectEqual(@as(u32, 6), kept_glyphs.countOf(&line));
+    try testing.expectEqual(@as(i32, 6), base(gb).TextLength(rp, "l", 1));
+    try testing.expectEqual(@as(i32, 6), base(gb).TextLength(rp, "l", 1));
+    try testing.expectEqual(@as(u32, 8), maker.calls);
+
+    // A glyph larger than the room it was offered is asked for a second
+    // time, with room: rendered into a block of its own size, and what
+    // was kept before it stays where it is.
+    try testing.expectEqual(@as(i32, 7), base(gb).TextLength(rp, "w", 1));
+    try testing.expectEqual(@as(u32, 10), maker.calls);
+    try testing.expectEqual(@as(i32, 7 + 11), base(gb).TextLength(rp, "wx", 2));
+    try testing.expectEqual(@as(u32, 10), maker.calls);
+    try testing.expectEqual(first.glyph, fonts.glyphOf(gb, &line, 'x').glyph);
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 2, 10);
+    base(gb).Text(rp, "w", 1);
+    try testing.expectEqual(@as(u32, 1), litCount(&surface));
+    try testing.expect(pixelAt(&surface, 2, 4) != 0);
+
+    // An answer that cannot be drawn from - another kind than the
+    // image's, rows shorter than their pixels, rows past what was
+    // written - is kept as no glyph.
+    for ("kpz") |*refused| {
+        const before = maker.calls;
+        try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, @ptrCast(refused), 1));
+        try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, @ptrCast(refused), 1));
+        try testing.expectEqual(before + 1, maker.calls);
+    }
+
+    // A glyph by its number in the font is kept apart from the
+    // character of the same value, and one the font has not is null.
+    try testing.expectEqual(@as(i16, 9), fonts.glyphByNumber(gb, &line, 7).?.advance);
+    try testing.expect(fonts.glyphByNumber(gb, &line, 'x') == null);
+    try testing.expectEqual(@as(i16, 11), fonts.glyphOf(gb, &line, 'x').glyph.advance);
+    try testing.expectEqual(@as(i16, 9), fonts.glyphByNumber(gb, &line, 7).?.advance);
+    try testing.expect(fonts.glyphByNumber(gb, &line, 'x') == null);
+    try testing.expect(fonts.glyphByNumber(gb, &line, 0x8000_0007) == null);
+    try testing.expect(fonts.glyphByNumber(gb, &tall, 7) == null); // makes none
+    try testing.expectEqual(@as(u32, 15), maker.calls);
+
+    // While one task makes a glyph the store is its: another that wants
+    // one made waits, and one that wants a glyph already kept reads it
+    // without waiting.
+    try testing.expectEqual(@as(i32, 2), base(gb).TextLength(rp, "t", 1));
+    try testing.expect(maker.lock_was_held);
+    try testing.expectEqual(@as(i32, 11), maker.read_while_making);
+    try testing.expectEqual(@as(u32, 16), maker.calls);
+    const store: *kept_glyphs.Store = @ptrCast(@alignCast(line.cache.?));
+    try testing.expect(gb.sys_base.AttemptSemaphore(&store.lock)); // given back
+    gb.sys_base.ReleaseSemaphore(&store.lock);
+
+    // A font that makes glyphs behind one that makes none: asked when
+    // the font before it has nothing.
+    var head = fonts.TextFont{ .node = .{ .name = "head.font" }, .image = @ptrCast(&tall_font), .fallback = &line };
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&head) }, .{} });
+    try testing.expectEqual(@as(i32, 5), base(gb).TextLength(rp, "x", 1)); // its own
+    try testing.expectEqual(@as(i32, 2), base(gb).TextLength(rp, "t", 1)); // made by line
+    try testing.expectEqual(@as(u32, 16), maker.calls);
+
+    // Off the list, what was kept is given back, and the font draws
+    // from its image alone again. An open font is not taken off.
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&line) }, .{} });
+    const opened = base(gb).OpenFont(&.{ .name = "made.font", .y_size = 8 }).?;
+    try testing.expectEqual(&line, opened);
+    try testing.expect(!base(gb).RemFont(&line));
+    try testing.expectEqual(@as(i32, 11), base(gb).TextLength(rp, "x", 1));
+    base(gb).CloseFont(opened);
+    try testing.expect(base(gb).RemFont(&line));
+    try testing.expect(line.cache == null);
+    try testing.expectEqual(@as(i32, 5), base(gb).TextLength(rp, "x", 1));
+    try testing.expectEqual(@as(u32, 16), maker.calls);
+
+    // Added again it starts with nothing kept.
+    try testing.expect(base(gb).AddFont(&line));
+    try testing.expectEqual(@as(u32, 0), kept_glyphs.countOf(&line));
+    try testing.expectEqual(@as(i32, 11), base(gb).TextLength(rp, "x", 1));
+    try testing.expectEqual(@as(u32, 17), maker.calls);
+    try testing.expect(base(gb).AttemptRemFont(&line));
+    try testing.expect(line.cache == null);
 
     base(gb).FreeRastPort(rp);
     try tearDown(gb);

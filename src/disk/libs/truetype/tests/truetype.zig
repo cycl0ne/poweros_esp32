@@ -98,6 +98,12 @@ pub fn buildFont(out: *Out) void {
 /// The same font saying it is drawn in `style_bits`, its `head` table's
 /// style bits: 1 bold, 2 italic.
 pub fn buildFace(out: *Out, style_bits: u8) void {
+    buildFaceAt(out, style_bits, 'A');
+}
+
+/// The same font with its three glyphs at `first` and the two characters
+/// after it, in place of 'A' to 'C'.
+pub fn buildFaceAt(out: *Out, style_bits: u8, first: u16) void {
     const tags = [_]*const [4]u8{ "cmap", "glyf", "head", "hhea", "hmtx", "kern", "loca", "maxp" };
     out.u32be(0x0001_0000);
     out.u16be(tags.len);
@@ -109,7 +115,8 @@ pub fn buildFace(out: *Out, style_bits: u8) void {
     var starts: [tags.len]u32 = undefined;
     var ends: [tags.len]u32 = undefined;
 
-    // cmap: one Unicode subtable, format 4: 'A'..'C' -> 1..3, and the end.
+    // cmap: one Unicode subtable, format 4: `first` and the two after it
+    // -> 1..3, and the end.
     starts[0] = out.len;
     out.u16be(0);
     out.u16be(1);
@@ -123,12 +130,12 @@ pub fn buildFace(out: *Out, style_bits: u8) void {
     out.u16be(4);
     out.u16be(1);
     out.u16be(0);
-    out.u16be('C'); // end codes
+    out.u16be(first + 2); // end codes
     out.u16be(0xFFFF);
     out.u16be(0);
-    out.u16be('A'); // start codes
+    out.u16be(first); // start codes
     out.u16be(0xFFFF);
-    out.u16be(@bitCast(@as(i16, 1 - 'A'))); // deltas
+    out.u16be(1 -% first); // deltas
     out.u16be(1);
     out.u16be(0); // range offsets
     out.u16be(0);

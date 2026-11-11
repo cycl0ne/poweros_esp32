@@ -19,7 +19,8 @@ const utf8 = sdk.utility.utf8;
 /// fn TextFit(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, out: *graphics.TextExtent, constraining: ?*const graphics.TextExtent, direction: i32, width: i32, height: i32) u32
 /// ```
 ///
-/// SINCE: 0.14, UTF-8 since 0.38, fallback fonts since 0.40. LVO -172.
+/// SINCE: 0.14, UTF-8 since 0.38, fallback fonts since 0.40, glyphs made
+/// when wanted since 0.41. LVO -172.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. Its font and text style decide the answer.
@@ -48,20 +49,25 @@ const utf8 = sdk.utility.utf8;
 /// ink and paper, as `TextExtent` measures it - is no wider than the
 /// room. Backward, what fits is the tail of the string, and `out` is the
 /// extent of that tail. A character drawn from a fallback font takes the
-/// room of that glyph.
+/// room of that glyph. A glyph the font's hook makes (`TextFont.render`)
+/// is made here when this is the first call to want it, as `Text` makes
+/// it.
 ///
 /// This is what a label does when its box is too small for it: ask how
 /// much fits, draw that, and put an ellipsis after it.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: only for a font that makes glyphs, while another task makes
+///   one of the same font.
 /// - Interrupts: no. It reads the caller's RastPort, which an interrupt does
 ///   not share.
-/// - Locks: none needed.
+/// - Locks: none needed; no spinlock may be held with a font that makes
+///   glyphs.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// Nothing is allocated.
+/// Nothing the caller has to free. A glyph made for the measuring is
+/// the library's, kept with the font.
 ///
 /// BUGS:
 /// None known.
@@ -115,7 +121,7 @@ pub fn TextFit(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32
     var fits: u32 = 0;
     while (fits < count) {
         const char = if (backward) utf8.readLast(bytes[0 .. count - fits]) else utf8.read(bytes[fits..]);
-        const found = _text.glyphOf(font, char.char);
+        const found = _text.glyphOf(gb, font, char.char);
         if (found.font != look.font) look = _text.lookOf(font, found.font, rp.text_style);
         const next = if (backward)
             _text.growBack(room, found.glyph, look.extra, look.smear, look.lean)

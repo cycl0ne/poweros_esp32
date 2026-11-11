@@ -112,13 +112,16 @@ fn AddFont(gb: *GraphicsBase, font: *TextFont) bool
 **INPUTS**
 
 - `font` - a font somebody built: `node.name` its name, `image` its
-  glyphs. The name, height and style are what `OpenFont` weighs.
+  glyphs, `fallback` the font with the characters it lacks, `render`
+  the hook that makes the glyphs the image does not hold. The name,
+  height and style are what `OpenFont` weighs.
 
 **RESULT**
 
-False if it is already on the list, or if its image does not hold
+False if it is already on the list, if its image does not hold
 together (`fontimage.check`): a table or a glyph's pixels outside the
-block, ranges out of order, or no default character.
+block, ranges out of order, or no default character - or, for a font
+with a `render` hook, without the memory to keep its glyphs in.
 
 **BEHAVIOR**
 
@@ -126,6 +129,15 @@ This is the way in for fonts that are not in this ROM. Something that
 reads a font out of a file builds a `TextFont` and calls this, and a
 later plain `OpenFont` finds it - which is why `OpenFont` walks a list.
 The count of who has it open starts at 0.
+
+A font with a `render` hook draws more than its image holds (since
+0.41). A character the image has no glyph for is asked of the hook,
+with a `GlyphRequest`, on the task that draws it and the first time
+it is drawn or measured; the glyph the hook writes is kept with the
+font until `RemFont`, and so is the answer that the font has none,
+so each is asked for once. Two tasks that want the same glyph at the
+same moment get one rendering: the second waits for the first. A
+font that was never added draws from its image alone.
 The library itself never reads files, for the same reason rtg.library
 does not read the board file and ramlib exists rather than exec loading
 libraries itself: each layer keeps to what it can do on its own.
@@ -139,13 +151,22 @@ libraries itself: each layer keeps to what it can do on its own.
 
 **OWNERSHIP**
 
-The font, its name and its image stay the caller's. The library only
-holds it on a list, and `RemFont` takes it off again; the caller frees
-it after that, never before.
+The font, its name, its image and its hook stay the caller's. The
+library only holds it on a list, and `RemFont` takes it off again;
+the caller frees it after that, never before. The glyphs the hook
+made are the library's, in memory of the system's, and `RemFont`
+frees them; `TextFont.cache` is the library's to write.
+
+**NOTES**
+
+The hook runs on the stack of whatever task draws the text, and
+under the lock of the font's kept glyphs: it reads no file and waits
+for nothing a drawing task may hold.
 
 **BUGS**
 
-None known.
+The glyphs a font has made stay until the font leaves the list: a
+font that is always open only ever holds more.
 
 **SEE ALSO**
 
@@ -870,7 +891,8 @@ list just now - where `RemFont` would wait for it.
 The one way to take a font off from where waiting is not allowed: a
 low-memory handler runs inside AllocMem, whose caller may hold
 anything, and a font loader freeing the fonts nobody holds there calls
-this, skipping any it cannot have.
+this, skipping any it cannot have. The glyphs the font's `render`
+hook made are freed with it, as by `RemFont` (since 0.41).
 
 **CONTEXT**
 
@@ -4359,6 +4381,11 @@ still open is refused. The count and the list are read and changed
 under the font list's lock, so no `OpenFont` can open it between the
 test and the removal.
 
+The glyphs the font's `render` hook made are freed as it leaves the
+list (since 0.41). A font another one falls back to is drawn from
+without being open, so its builder takes it off only once every font
+that names it is off.
+
 **CONTEXT**
 
 - Waits: yes, while another task holds the font list.
@@ -4368,7 +4395,8 @@ test and the removal.
 
 **OWNERSHIP**
 
-The font is the caller's again, to free.
+The font is the caller's again, to free. The glyphs kept for it were
+the library's and are gone.
 
 **BUGS**
 
@@ -4850,7 +4878,7 @@ fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) void
 **SINCE**
 
 0.11, UTF-8 since 0.38, fonts of 32-bit colour since 0.39,
-fallback fonts since 0.40.
+fallback fonts since 0.40, glyphs made when wanted since 0.41.
 LVO -132.
 
 **INPUTS**
@@ -4859,7 +4887,8 @@ LVO -132.
   the result, and its current point is where the text starts.
 - `string` - the text, UTF-8; a byte that is no UTF-8 is drawn as the
   character it reads as (`utility.utf8.read`). A character the font
-  has no glyph for is drawn from the first of its fallback fonts that
+  has no glyph for - in its image or made by its hook - is drawn
+  from the first of its fallback fonts that
   has one (`TextFont.fallback`); when none has, as its base letter -
   `Ā` as `A` - when it is a letter with marks and the font or one of
   its fallbacks has that letter, and otherwise as the font's default
@@ -4914,10 +4943,20 @@ the paper of the glyphs of one font is laid before their ink, so the
 part of a leaning or kerned letter that reaches into a neighbour from
 another font is covered by that one's paper.
 
+**A font may hold more glyphs than its image.** A character the
+image has no glyph for is asked of the font's hook (`TextFont.render`,
+a font `AddFont` took) the first time it is drawn or measured, here,
+on the caller's task; the glyph is kept with the font, and every text
+after draws from what was kept. So the first text with a new
+character takes the time its glyph takes to make. A glyph the hook
+could not make this time - there was no memory - is drawn as a
+character the font lacks, and asked for again by the next text.
+
 **CONTEXT**
 
 - Waits: yes, while another task holds the RastPort's lock
-  (`RPTAG_Lock`), if it has one.
+  (`RPTAG_Lock`), if it has one, and while another task makes a glyph
+  of the same font.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
 - Locks: the RastPort's own, taken here; no spinlock may be held.
@@ -4925,7 +4964,12 @@ another font is covered by that one's paper.
 
 **OWNERSHIP**
 
-Nothing the caller has to free: the string is only read.
+Nothing the caller has to free: the string is only read. A glyph
+made for the text is the library's, kept with the font.
+
+**NOTES**
+
+A font's hook runs on the caller's stack.
 
 **BUGS**
 
@@ -4933,7 +4977,7 @@ None known.
 
 **SEE ALSO**
 
-`TextLength`, `OpenFont`, `RPTAG_TextStyle`
+`TextLength`, `OpenFont`, `AddFont`, `RPTAG_TextStyle`
 
 **EXAMPLES**
 
@@ -4954,7 +4998,8 @@ fn TextExtent(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, 
 
 **SINCE**
 
-0.14, UTF-8 since 0.38, fallback fonts since 0.40. LVO -168.
+0.14, UTF-8 since 0.38, fallback fonts since 0.40, glyphs made
+when wanted since 0.41. LVO -168.
 
 **INPUTS**
 
@@ -4982,22 +5027,26 @@ the text will go and fills that.
 A character drawn from a fallback font is measured as that glyph
 across, and not at all up and down: its rows outside the line are not
 drawn, so the extent is as tall as the RastPort's font whatever the
-text holds.
+text holds. A glyph the font's hook makes (`TextFont.render`) is made
+here when this is the first call to want it, as `Text` makes it.
 
 Half-open like every rectangle here, so the height is `max_y - min_y`
 and there is no `+ 1` anywhere.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: only for a font that makes glyphs, while another task makes
+  one of the same font.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt does
   not share.
-- Locks: none needed.
+- Locks: none needed; no spinlock may be held with a font that makes
+  glyphs.
 - Process: a Task will do.
 
 **OWNERSHIP**
 
-Nothing is allocated.
+Nothing the caller has to free. A glyph made for the measuring is
+the library's, kept with the font.
 
 **BUGS**
 
@@ -5033,7 +5082,8 @@ fn TextFit(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, ou
 
 **SINCE**
 
-0.14, UTF-8 since 0.38, fallback fonts since 0.40. LVO -172.
+0.14, UTF-8 since 0.38, fallback fonts since 0.40, glyphs made
+when wanted since 0.41. LVO -172.
 
 **INPUTS**
 
@@ -5065,22 +5115,27 @@ from its end back (a byte that is no UTF-8 a character of its own, as
 ink and paper, as `TextExtent` measures it - is no wider than the
 room. Backward, what fits is the tail of the string, and `out` is the
 extent of that tail. A character drawn from a fallback font takes the
-room of that glyph.
+room of that glyph. A glyph the font's hook makes (`TextFont.render`)
+is made here when this is the first call to want it, as `Text` makes
+it.
 
 This is what a label does when its box is too small for it: ask how
 much fits, draw that, and put an ellipsis after it.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: only for a font that makes glyphs, while another task makes
+  one of the same font.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt does
   not share.
-- Locks: none needed.
+- Locks: none needed; no spinlock may be held with a font that makes
+  glyphs.
 - Process: a Task will do.
 
 **OWNERSHIP**
 
-Nothing is allocated.
+Nothing the caller has to free. A glyph made for the measuring is
+the library's, kept with the font.
 
 **BUGS**
 
@@ -5184,7 +5239,8 @@ fn TextLength(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) 
 
 **SINCE**
 
-0.11, UTF-8 since 0.38, fallback fonts since 0.40. LVO -136.
+0.11, UTF-8 since 0.38, fallback fonts since 0.40, glyphs made
+when wanted since 0.41. LVO -136.
 
 **INPUTS**
 
@@ -5208,17 +5264,24 @@ default character's. Ink a kern
 or a lean puts outside that is not counted: `TextExtent` says where
 the ink goes.
 
+A glyph the font's hook makes (`TextFont.render`) is made here, the
+first time a character is measured, as `Text` makes it when it is
+the first to want it: the text is measured as it will be drawn.
+
 **CONTEXT**
 
-- Waits: no.
+- Waits: only for a font that makes glyphs, while another task makes
+  one of the same font.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt does
   not share.
-- Locks: none needed.
+- Locks: none needed; no spinlock may be held with a font that makes
+  glyphs.
 - Process: a Task will do.
 
 **OWNERSHIP**
 
-Nothing is allocated.
+Nothing the caller has to free. A glyph made for the measuring is
+the library's, kept with the font.
 
 **BUGS**
 

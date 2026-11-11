@@ -22,11 +22,25 @@
 //! in the list's order and no font comes back to itself. A font that
 //! another falls back to is kept for as long as that other is: `freeOne`
 //! passes it by.
+//!
+//! **A size made from an outline holds more than its image** (since
+//! 1.9). The image has the characters of `outline_ranges`, rendered as
+//! the size is made. The record keeps the outline open - its TrueType
+//! file in memory, shared by every size made from it - and gives the
+//! TextFont a `render` hook, `makeGlyph`: graphics asks it for a glyph
+//! the image lacks the first time one is drawn or measured, by its
+//! character or by its number in the outline, and keeps what it
+//! renders. The hook runs on the task that draws, so it takes no lock of
+//! the library's and reads no file: the outline it renders from is the
+//! record's for as long as graphics has the font.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const dos = sdk.dos;
 const graphics = sdk.graphics;
+const utility = sdk.utility;
+const diskfont = sdk.diskfont;
+const truetype = sdk.truetype;
 const fontimage = graphics.fontimage;
 const fontfile = sdk.diskfont.fontfile;
 const TextFont = graphics.TextFont;
@@ -40,10 +54,17 @@ const font_prefs = sdk.prefs.font;
 pub const MAXFONTNAME = 32;
 
 /// A font the library made: the TextFont, its link on the library's
-/// list, its name. The image follows the record.
+/// list, the outline it was rendered from, its name. The image follows
+/// the record.
 pub const DiskFont = extern struct {
     font: TextFont,
     link: exec.Node = .{},
+    /// The outline a size was rendered from, held for as long as the
+    /// record is; null for a size read from its file or scaled.
+    outline: ?*diskfont.OutlineFont = null,
+    /// What `font.render` points at when there is an outline: graphics
+    /// calls `makeGlyph` through it.
+    hook: utility.Hook = .{},
     /// The family's name, "spleen.font"; `font.node.name` points here.
     name: [MAXFONTNAME]u8 = @splat(0),
 };
@@ -108,7 +129,7 @@ pub fn addAndOpen(dfb: *DiskfontBase, record: *DiskFont) ?*TextFont {
     record.font.fallback = fallback;
     if (!gb.AddFont(&record.font)) {
         if (fallback) |held| gb.CloseFont(held);
-        dfb.sys_base.FreeVec(record);
+        freeRecord(dfb, record);
         return null;
     }
     dfb.sys_base.AddTail(&dfb.fonts, &record.link);
@@ -119,6 +140,13 @@ pub fn addAndOpen(dfb: *DiskfontBase, record: *DiskFont) ?*TextFont {
     // or one exactly like it that was there first.
     const attr = attrOf(&record.font);
     return gb.OpenFont(&attr);
+}
+
+/// A record on no list, freed, and the outline it held given back. The
+/// caller holds the load lock.
+fn freeRecord(dfb: *DiskfontBase, record: *DiskFont) void {
+    if (record.outline) |held| _outline.close(held);
+    dfb.sys_base.FreeVec(record);
 }
 
 /// The font a record's font falls back to: of the families `font.prefs`
@@ -273,15 +301,17 @@ pub fn loadSize(dfb: *DiskfontBase, dir: ?*dos.FileLock, path: [*:0]const u8, na
     return addAndOpen(dfb, record);
 }
 
-/// What a size made from an outline holds: the characters the font has
-/// of Latin, Greek and Cyrillic - with IPA, the spacing modifiers (`ˆ`
-/// `˜` `ˇ`) and the combining marks, which a letter written apart from
-/// its mark is followed by - general punctuation, currency, the
-/// letterlike symbols (`™`, `№`), box drawing and blocks, and U+FFFD. A
-/// character the font lacks is looked for in the font's fallbacks; one
-/// they lack too is drawn as its base letter if it is a Latin, Greek or
-/// Cyrillic letter, and as the font's missing glyph if not.
-const outline_ranges = [_]sdk.truetype.CodeRange{
+/// What the image of a size made from an outline holds: the characters
+/// the font has of Latin, Greek and Cyrillic - with IPA, the spacing
+/// modifiers (`ˆ` `˜` `ˇ`) and the combining marks, which a letter
+/// written apart from its mark is followed by - general punctuation,
+/// currency, the letterlike symbols (`™`, `№`), box drawing and blocks,
+/// and U+FFFD. Any other character the outline has is rendered when it
+/// is first drawn (`makeGlyph`). A character the outline lacks is looked
+/// for in the font's fallbacks; one they lack too is drawn as its base
+/// letter if it is a Latin, Greek or Cyrillic letter, and as the font's
+/// missing glyph if not.
+const outline_ranges = [_]truetype.CodeRange{
     .{ .first = 0x0020, .last = 0x007E }, // ASCII
     .{ .first = 0x00A0, .last = 0x036F }, // Latin-1, Latin Extended-A and -B, IPA, spacing modifiers, combining marks
     .{ .first = 0x0370, .last = 0x052F }, // Greek, Cyrillic and its supplement
@@ -293,42 +323,99 @@ const outline_ranges = [_]sdk.truetype.CodeRange{
     .{ .first = 0xFFFD, .last = 0xFFFD }, // the replacement character
 };
 
-/// A size made from a family's outline, `rows` tall: the TrueType file
-/// at `path` beside the contents file read, rendered by truetype.library
-/// (opened on first use) with the characters of `outline_ranges`, added
-/// and opened. The caller holds the load lock.
+/// A size made from a family's outline, `rows` tall: the outline taken
+/// from the library's open ones (its TrueType file read and opened by
+/// truetype.library the first time), the characters of `outline_ranges`
+/// rendered into the image, the outline kept with the record for the
+/// glyphs the image lacks, and the font added and opened. The caller
+/// holds the load lock.
 ///
 /// INPUTS:
 /// - `dfb` - the library.
-/// - `dir` - the directory the family's contents file is in.
-/// - `path` - the TrueType file, from there.
+/// - `path` - the family's contents file, as `contentsPath` makes it.
+/// - `contents` - what the file holds.
 /// - `name` - the family's name.
 /// - `rows` - the height wanted.
 ///
 /// RESULT:
-/// The font, open, or null if the file cannot be read or rendered.
-pub fn renderOutline(dfb: *DiskfontBase, dir: ?*dos.FileLock, path: [*:0]const u8, name: [*:0]const u8, rows: u32) ?*TextFont {
+/// The font, open, or null if the outline cannot be read or rendered.
+pub fn renderOutline(dfb: *DiskfontBase, path: *const [256:0]u8, contents: *const Contents, name: [*:0]const u8, rows: u32) ?*TextFont {
     const sys = dfb.sys_base;
-    const tb = trueType(dfb) orelse return null;
-    const data = readWhole(dfb, dir, path, exec.MEMF_ANY) orelse return null;
-    defer sys.FreeVec(data.ptr);
-
-    const outline = tb.OpenOutline(data.ptr, @intCast(data.len), null) orelse return null;
-    defer tb.CloseOutline(outline);
-    const image = tb.RenderFontImage(outline, rows, &outline_ranges, outline_ranges.len) orelse return null;
+    const held = _outline.openIn(dfb, path, contents) orelse return null;
+    // Open: the outline was opened through it.
+    const tb = dfb.truetype_base.?;
+    const image = tb.RenderFontImage(held.outline, rows, &outline_ranges, outline_ranges.len) orelse {
+        _outline.close(held);
+        return null;
+    };
     defer sys.FreeVec(image);
     const image_bytes: [*]const u8 = @ptrCast(image);
-    const record = newRecord(dfb, name, image.size) orelse return null;
+    const record = newRecord(dfb, name, image.size) orelse {
+        _outline.close(held);
+        return null;
+    };
     @memcpy(imageArea(record)[0..image.size], image_bytes[0..image.size]);
     record.font.flags = graphics.FPF_DISKFONT;
+    record.outline = held;
+    record.hook = .{ .entry = &makeGlyph, .data = dfb };
+    // Set before graphics has the font, and never again.
+    record.font.render = &record.hook;
     return addAndOpen(dfb, record);
+}
+
+/// The `render` hook of a size made from an outline: one glyph the
+/// image lacks, rendered at the size's height into the room graphics
+/// gives.
+///
+/// It runs on whichever task draws or measures, under graphics' lock of
+/// the font's kept glyphs, so it waits for nothing: no lock of the
+/// library's, no file. The outline is the record's from before `AddFont`
+/// to after `RemFont`, and truetype.library reads it without changing
+/// it, so any number of sizes render from one outline at once.
+///
+/// INPUTS:
+/// - `hook` - the record's hook; its data is the library.
+/// - `object` - the TextFont, the start of the record.
+/// - `message` - the `GlyphRequest`: a character, or with
+///   `GLYPHREQ_NUMBER` a glyph's number in the outline.
+///
+/// RESULT:
+/// `GLYPH_OK` with the glyph in the request; `GLYPH_NONE` for a
+/// character the outline has no glyph for or a number it does not
+/// have; `GLYPH_ROOM` with the bytes needed when the pixels did not fit;
+/// `GLYPH_LATER` without the memory to render in.
+fn makeGlyph(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const dfb: *DiskfontBase = @ptrCast(@alignCast(hook.data orelse return graphics.GLYPH_NONE));
+    const font: *TextFont = @ptrCast(@alignCast(object orelse return graphics.GLYPH_NONE));
+    const request: *graphics.GlyphRequest = @ptrCast(@alignCast(message orelse return graphics.GLYPH_NONE));
+    const held = recordOf(font).outline orelse return graphics.GLYPH_NONE;
+    const tb = dfb.truetype_base orelse return graphics.GLYPH_NONE;
+
+    var number = request.which;
+    if (request.flags & graphics.GLYPHREQ_NUMBER == 0) {
+        // Glyph 0 is the outline's own missing glyph: the character is
+        // the fallbacks' to draw, not this font's.
+        number = tb.GlyphIndex(held.outline, request.which);
+        if (number == 0) return graphics.GLYPH_NONE;
+    }
+    var image = truetype.GlyphImage{ .pixels = request.pixels, .room = request.room };
+    const answer = tb.RenderGlyph(held.outline, number, font.image.height, &image);
+    request.size = image.size;
+    request.kind = image.kind;
+    request.glyph = image.glyph;
+    return switch (answer) {
+        truetype.TRUETYPE_OK => graphics.GLYPH_OK,
+        truetype.TRUETYPEERR_ROOM => graphics.GLYPH_ROOM,
+        truetype.TRUETYPEERR_NOMEM => graphics.GLYPH_LATER,
+        else => graphics.GLYPH_NONE,
+    };
 }
 
 /// truetype.library, opened the first time it is needed and kept until
 /// expunge; null if it cannot be opened.
 pub fn trueType(dfb: *DiskfontBase) ?*sdk.interface.truetype.TrueTypeBase {
     if (dfb.truetype_base) |tb| return tb;
-    const lib = dfb.sys_base.OpenLibrary(sdk.truetype.TRUETYPENAME, sdk.truetype.TRUETYPE_VERSION) orelse return null;
+    const lib = dfb.sys_base.OpenLibrary(truetype.TRUETYPENAME, truetype.TRUETYPE_VERSION) orelse return null;
     dfb.truetype_base = @ptrCast(lib);
     return dfb.truetype_base;
 }
@@ -445,7 +532,7 @@ pub fn freeOne(dfb: *DiskfontBase) bool {
         if (fallenBackTo(dfb, &record.font)) continue;
         if (!dfb.graphics_base.AttemptRemFont(&record.font)) continue;
         dfb.sys_base.Remove(&record.link);
-        dfb.sys_base.FreeVec(record);
+        freeRecord(dfb, record);
         return true;
     }
     // Then an outline nobody holds (since 1.4).

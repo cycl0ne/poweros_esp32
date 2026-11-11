@@ -75,9 +75,12 @@ pub const LIBRARY_VERSION = 0;
 /// each pixel's own colour laid over by its coverage. 40: a font names a
 /// fallback (`TextFont.fallback`), and a character it has no glyph for
 /// is drawn and measured from the first font of that chain that has
-/// one, on the font's own line. The version stays 0 until there is
-/// something to demand of it.
-pub const LIBRARY_REVISION = 40;
+/// one, on the font's own line. 41: a font makes glyphs as they are
+/// wanted (`TextFont.render`) - a character its image has no glyph for
+/// is asked of the font's hook the first time it is drawn or measured,
+/// and kept with the font until `RemFont`. The version stays 0 until
+/// there is something to demand of it.
+pub const LIBRARY_REVISION = 41;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.

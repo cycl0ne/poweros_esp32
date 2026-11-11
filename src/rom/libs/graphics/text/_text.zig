@@ -25,6 +25,13 @@
 //! `TextExtent` and `TextFit` measure the same glyphs `Text` draws
 //! (`Look`, `lookOf`).
 //!
+//! **A font may make glyphs as they are wanted** (`TextFont.render`): a
+//! character its image has no glyph for is asked of the font's hook the
+//! first time a text wants it, and kept with the font from then on
+//! (`_kept.zig`). The image is looked in first and the hook asked
+//! second, for the font and for each fallback in turn, so a font draws
+//! every character it has before one is taken from a fallback.
+//!
 //! **Each character has its own width.** The point moves by the glyph's
 //! advance, and its ink is drawn `left` columns from the point - less
 //! than zero reaches back under the character before - and `top` rows
@@ -75,6 +82,7 @@ const fontimage = graphics.fontimage;
 pub const FontImage = fontimage.FontImage;
 pub const Glyph = fontimage.Glyph;
 const rom = @import("../fonts/_fonts.zig");
+const kept = @import("_kept.zig");
 
 /// A font: a name on the list and an image. The SDK's, since a font
 /// built outside the library is handed to `AddFont` as one.
@@ -150,6 +158,9 @@ pub fn takeOff(gb: *GraphicsBase, font: *TextFont) bool {
     while (at) |node| : (at = node.next()) {
         if (node == &font.node) {
             gb.sys_base.Remove(&font.node);
+            // Nothing has it open and nothing can open it now: the
+            // glyphs made for it go with it.
+            kept.free(gb, font);
             break;
         }
     }
@@ -171,16 +182,45 @@ pub const Found = struct {
 /// looked for in the font and then in its fallbacks; or the font's
 /// default.
 ///
+/// A glyph a font makes when it is wanted is made here, the first time,
+/// by the font's hook, and a glyph that could not be made this time is
+/// passed over like one the font does not have: asked for twice, a
+/// character may be answered with two glyphs.
+///
 /// INPUTS:
+/// - `gb` - the library.
 /// - `font` - the font the text is in.
 /// - `code` - the character, a code point.
-pub fn glyphOf(font: *const TextFont, code: u32) Found {
-    if (ownGlyph(font, code)) |found| return found;
+pub fn glyphOf(gb: *GraphicsBase, font: *const TextFont, code: u32) Found {
+    if (ownGlyph(gb, font, code)) |found| return found;
     var letter = code;
     while (unicode.base(letter)) |under| : (letter = under) {
-        if (ownGlyph(font, under)) |found| return found;
+        if (ownGlyph(gb, font, under)) |found| return found;
     }
     return .{ .glyph = fontimage.find(font.image, font.image.default_char).?, .font = font };
+}
+
+/// The glyph a font has under a number of its own, made by its hook the
+/// first time it is wanted. Null for a font that makes no glyphs, a
+/// number the font has no glyph for, and a glyph that could not be made
+/// this time.
+///
+/// INPUTS:
+/// - `gb` - the library.
+/// - `font` - the font.
+/// - `number` - the glyph's number in the font, below 0x8000_0000.
+pub fn glyphByNumber(gb: *GraphicsBase, font: *const TextFont, number: u32) ?*const Glyph {
+    if (number & kept.by_number != 0) return null;
+    return kept.glyphFor(gb, font, kept.by_number | number);
+}
+
+/// Where a glyph's first row starts.
+///
+/// INPUTS:
+/// - `font` - the font the glyph is of, as `glyphOf` named it.
+/// - `glyph` - the glyph.
+pub fn pixelsOf(font: *const TextFont, glyph: *const Glyph) [*]const u8 {
+    return kept.pixelsOf(font, glyph);
 }
 
 /// The glyph one of the fonts has for exactly `code`: the font's, or the
@@ -189,16 +229,23 @@ pub fn glyphOf(font: *const TextFont, code: u32) Found {
 /// The fallbacks are walked for at most `FONT_FALLBACKS` fonts, so a
 /// chain that was closed into a ring by mistake ends the search rather
 /// than the task.
-fn ownGlyph(font: *const TextFont, code: u32) ?Found {
-    if (fontimage.find(font.image, code)) |own| return .{ .glyph = own, .font = font };
+fn ownGlyph(gb: *GraphicsBase, font: *const TextFont, code: u32) ?Found {
+    if (glyphIn(gb, font, code)) |own| return .{ .glyph = own, .font = font };
     var at = font.fallback;
     var left: u32 = graphics.FONT_FALLBACKS;
     while (at) |fallback| : (at = fallback.fallback) {
         if (left == 0) break;
         left -= 1;
-        if (fontimage.find(fallback.image, code)) |theirs| return .{ .glyph = theirs, .font = fallback };
+        if (glyphIn(gb, fallback, code)) |theirs| return .{ .glyph = theirs, .font = fallback };
     }
     return null;
+}
+
+/// The glyph one font has for exactly `code`: its image's, or the one
+/// its hook makes.
+fn glyphIn(gb: *GraphicsBase, font: *const TextFont, code: u32) ?*const Glyph {
+    if (fontimage.find(font.image, code)) |held| return held;
+    return kept.glyphFor(gb, font, code);
 }
 
 /// How the glyphs of one font are put on a line: whose they are, whose
@@ -339,17 +386,18 @@ pub fn growBack(m: Measure, glyph: *const Glyph, extra: i32, smear: i32, lean: i
 /// included.
 ///
 /// INPUTS:
+/// - `gb` - the library.
 /// - `font` - the font the text is in.
 /// - `style` - the RastPort's style; what a font already is is left out.
 /// - `string` - the text, UTF-8.
 /// - `count` - its length in bytes.
-pub fn measure(font: *const TextFont, style: graphics.FontStyle, string: [*]const u8, count: u32) Measure {
+pub fn measure(gb: *GraphicsBase, font: *const TextFont, style: graphics.FontStyle, string: [*]const u8, count: u32) Measure {
     var look = lookOf(font, font, style);
     var m = Measure{};
     const bytes = string[0..count];
     var at: usize = 0;
     while (at < bytes.len) {
-        const found = glyphOf(font, utf8.next(bytes, &at));
+        const found = glyphOf(gb, font, utf8.next(bytes, &at));
         if (found.font != look.font) look = lookOf(font, found.font, style);
         m = grow(m, found.glyph, look.extra, look.smear, look.lean);
     }

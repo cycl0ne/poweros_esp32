@@ -338,7 +338,8 @@ fn OpenDiskFont(dfb: *DiskfontBase, text_attr: *const TextAttr) ?*TextFont
 
 **SINCE**
 
-1.0, fallback fonts since 1.8. LVO -20.
+1.0, fallback fonts since 1.8, an outline's glyphs made when
+wanted since 1.9. LVO -20.
 
 **INPUTS**
 
@@ -374,7 +375,10 @@ name as given when it has a ':' - and:
   truetype.library render the outline at that height - at any height,
   and with `FPF_DESIGNED` too, since it is drawn and not scaled. A
   size rendered is in the styles the outline is drawn in, as its entry
-  says.
+  says. Its image holds Latin, Greek, Cyrillic, punctuation, currency,
+  the letterlike symbols and box drawing; any other character the
+  outline has a glyph for is rendered the first time it is drawn or
+  measured, and kept with the size (`TextFont.render`).
 - **Without `FPF_DESIGNED`**, a source is looked for at the height
   asked, then twice it, then half it (when even), in memory first and
   then among the family's sizes, the style asked for or one with
@@ -414,7 +418,10 @@ with: a changed list is seen in fonts made after it.
 The font is the library's; the caller holds it open until
 `CloseFont`. Once nobody holds it, it stays loaded for the next caller
 until memory runs short. A font another one falls back to stays
-loaded for as long as that one, opened by anybody or not.
+loaded for as long as that one, opened by anybody or not. A size
+rendered from an outline keeps the outline open - its TrueType file
+in memory, one for all the sizes made from it - for as long as the
+size is loaded.
 
 **BUGS**
 

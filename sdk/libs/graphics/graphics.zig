@@ -28,6 +28,7 @@ const RtgBitMap = @import("../rtg/bitmaps.zig").RtgBitMap;
 const TagItem = @import("../utility/tagitem.zig").TagItem;
 const GraphicsBase = @import("../../interface/graphics.zig").GraphicsBase;
 const Node = @import("../exec/nodes.zig").Node;
+const Hook = @import("../utility/hooks.zig").Hook;
 
 /// A font's glyphs and measures as one block, the form every font takes.
 pub const fontimage = @import("fontimage.zig");
@@ -183,10 +184,12 @@ pub const GERR_LAST: i32 = GERR_NO_FONT;
 /// Whoever builds a font - diskfont loading one, a scaler, an outline
 /// engine - puts one of these in a record of its own, points `image` at
 /// the glyphs, names it through `node.name`, names in `fallback` the font
-/// that has the characters this one lacks, and hands it to `AddFont`.
-/// The record, the name and the image stay the builder's: graphics only
-/// holds the font on its list and counts who has it open, and the
-/// builder frees it all once `RemFont` has taken it off.
+/// that has the characters this one lacks and in `render` the hook that
+/// makes a glyph the image does not hold, and hands it to `AddFont`.
+/// The record, the name, the image and the hook stay the builder's:
+/// graphics only holds the font on its list, counts who has it open and
+/// keeps the glyphs the hook made, and the builder frees what is its
+/// own once `RemFont` has taken the font off.
 ///
 /// What a caller drawing with a font wants to know about it - how tall it
 /// is and where its baseline sits - is read from the RastPort it is set
@@ -208,13 +211,72 @@ pub const TextFont = extern struct {
     /// `FONT_FALLBACKS` fonts, without a ring. A glyph found there is
     /// drawn on this font's line, the two baselines together, and what
     /// reaches past the line is cut. The builder sets it before `AddFont`
-    /// and never again, and keeps every font of the chain for as long as
-    /// this one is on the list or open. Null for a font with none.
+    /// and never again, and keeps every font of the chain - on the list,
+    /// if it was added: its kept glyphs are freed as it is taken off -
+    /// for as long as this one is on the list or open. Null for a font
+    /// with none.
     fallback: ?*const TextFont = null,
+    /// The hook that makes a glyph the image does not hold, called with
+    /// the font as its object and a `GlyphRequest` as its message, and
+    /// answering one of `GLYPH_OK`, `GLYPH_NONE`, `GLYPH_ROOM` and
+    /// `GLYPH_LATER`. graphics calls it on the task that draws, the first
+    /// time a glyph is wanted, holding the lock of the font's kept
+    /// glyphs: it may not wait for a file, a lock that a drawing task
+    /// could hold, or anything else, and it draws no text. The builder
+    /// sets it before `AddFont` and never again. Null for a font that is
+    /// its image and nothing more. Since graphics.library 0.41.
+    render: ?*Hook = null,
+    /// The glyphs `render` made, kept by graphics from `AddFont` to
+    /// `RemFont`: graphics' own. A builder leaves it null.
+    cache: ?*anyopaque = null,
 };
 
 /// How many fonts after a font's own a character is looked for in.
 pub const FONT_FALLBACKS = 8;
+
+/// What a font's `render` hook is asked for and answers: one glyph of
+/// the font's kind, at the image's height, its pixels written to the
+/// bytes it is handed.
+pub const GlyphRequest = extern struct {
+    /// The character: a code point - or, with `GLYPHREQ_NUMBER` among
+    /// `flags`, a glyph by the number the font's own tables give it.
+    which: u32,
+    /// `GLYPHREQ_NUMBER` or nothing.
+    flags: u32 = 0,
+    /// Where the pixels go: the rows of the glyph's box one after
+    /// another, each `glyph.pitch` bytes.
+    pixels: [*]u8,
+    /// How many bytes `pixels` holds.
+    room: u32,
+    /// For the hook to set: how many bytes the glyph took - or, with
+    /// `GLYPH_ROOM`, needs. None for a glyph with no ink.
+    size: u32 = 0,
+    /// For the hook to set: what a pixel is. A glyph of another kind
+    /// than the font's image is not drawn.
+    kind: fontimage.Kind = .mono1,
+    pad: [3]u8 = .{ 0, 0, 0 },
+    /// For the hook to set: the box, from the point and from the top
+    /// of the line, the advance, and the bytes from row to row. `data`
+    /// is not read.
+    glyph: fontimage.Glyph = .{},
+};
+
+/// `GlyphRequest.flags`: `which` is a glyph's number in the font, not a
+/// code point.
+pub const GLYPHREQ_NUMBER: u32 = 1 << 0;
+
+/// A `render` hook's answer: the glyph is in the request.
+pub const GLYPH_OK: usize = 0;
+/// The font has no such glyph, now or later: graphics remembers that
+/// and does not ask for it again.
+pub const GLYPH_NONE: usize = 1;
+/// The glyph needs more bytes than `room`: `size` says how many, and
+/// graphics asks once more with that much.
+pub const GLYPH_ROOM: usize = 2;
+/// The glyph could not be made this time - there was no memory to work
+/// in: nothing is remembered, and the next text that wants it asks
+/// again.
+pub const GLYPH_LATER: usize = 3;
 
 /// A font as asked for: by name, height and style, and what else the
 /// caller cares about. `OpenFont` answers the nearest font of the name,

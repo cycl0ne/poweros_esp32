@@ -19,7 +19,8 @@ const softStyles = _text.softStyles;
 /// fn TextLength(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) i32
 /// ```
 ///
-/// SINCE: 0.11, UTF-8 since 0.38, fallback fonts since 0.40. LVO -136.
+/// SINCE: 0.11, UTF-8 since 0.38, fallback fonts since 0.40, glyphs made
+/// when wanted since 0.41. LVO -136.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. Its font and text style decide the answer.
@@ -40,15 +41,22 @@ const softStyles = _text.softStyles;
 /// or a lean puts outside that is not counted: `TextExtent` says where
 /// the ink goes.
 ///
+/// A glyph the font's hook makes (`TextFont.render`) is made here, the
+/// first time a character is measured, as `Text` makes it when it is
+/// the first to want it: the text is measured as it will be drawn.
+///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: only for a font that makes glyphs, while another task makes
+///   one of the same font.
 /// - Interrupts: no. It reads the caller's RastPort, which an interrupt does
 ///   not share.
-/// - Locks: none needed.
+/// - Locks: none needed; no spinlock may be held with a font that makes
+///   glyphs.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// Nothing is allocated.
+/// Nothing the caller has to free. A glyph made for the measuring is
+/// the library's, kept with the font.
 ///
 /// BUGS:
 /// None known.
@@ -60,11 +68,11 @@ const softStyles = _text.softStyles;
 /// ```zig
 /// const w = gb.TextLength(rp, label.ptr, label.len);
 /// ```
-pub fn TextLength(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) i32 {
+pub fn TextLength(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) i32 {
     rp.last_error = graphics.GERR_OK;
     const font = rp.font orelse {
         rp.last_error = graphics.GERR_NO_FONT;
         return 0;
     };
-    return _text.measure(font, rp.text_style, string, count).width;
+    return _text.measure(gb, font, rp.text_style, string, count).width;
 }

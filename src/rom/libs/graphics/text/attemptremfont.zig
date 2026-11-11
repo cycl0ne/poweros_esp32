@@ -27,7 +27,8 @@ const TextFont = _text.TextFont;
 /// The one way to take a font off from where waiting is not allowed: a
 /// low-memory handler runs inside AllocMem, whose caller may hold
 /// anything, and a font loader freeing the fonts nobody holds there calls
-/// this, skipping any it cannot have.
+/// this, skipping any it cannot have. The glyphs the font's `render`
+/// hook made are freed with it, as by `RemFont` (since 0.41).
 ///
 /// CONTEXT:
 /// - Waits: no.

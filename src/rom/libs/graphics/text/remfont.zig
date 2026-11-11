@@ -38,6 +38,11 @@ const TextFont = _text.TextFont;
 /// under the font list's lock, so no `OpenFont` can open it between the
 /// test and the removal.
 ///
+/// The glyphs the font's `render` hook made are freed as it leaves the
+/// list (since 0.41). A font another one falls back to is drawn from
+/// without being open, so its builder takes it off only once every font
+/// that names it is off.
+///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the font list.
 /// - Interrupts: no.
@@ -45,7 +50,8 @@ const TextFont = _text.TextFont;
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// The font is the caller's again, to free.
+/// The font is the caller's again, to free. The glyphs kept for it were
+/// the library's and are gone.
 ///
 /// BUGS:
 /// None known.

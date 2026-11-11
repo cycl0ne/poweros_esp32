@@ -8,6 +8,10 @@
 //! file, and the contents file it was found by, which is how it is found
 //! again. One nobody holds stays, for the next to ask, until memory runs
 //! short: the low-memory handler frees it after the fonts nobody holds.
+//!
+//! **A size rendered from an outline holds it** (since 1.9), for as long
+//! as the size is in memory: the glyphs its image lacks are made from
+//! the outline as they are drawn (`font/_font.zig`).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -46,7 +50,6 @@ pub fn open(dfb: *DiskfontBase, name: [*:0]const u8, style: graphics.FontStyle) 
 
 /// One family's outline: held already, or its file read and opened.
 fn openFamily(dfb: *DiskfontBase, name: [*:0]const u8) ?*diskfont.OutlineFont {
-    const sys = dfb.sys_base;
     var path: [256:0]u8 = @splat(0);
     opendiskfont.contentsPath(dfb, name, &path);
     if (find(dfb, &path)) |record| {
@@ -55,7 +58,28 @@ fn openFamily(dfb: *DiskfontBase, name: [*:0]const u8) ?*diskfont.OutlineFont {
     }
     var contents = _font.readContents(dfb, &path);
     defer contents.free(dfb);
-    const entry = opendiskfont.outlineOf(&contents) orelse return null;
+    return openIn(dfb, &path, &contents);
+}
+
+/// The outline of the family whose contents file, at `path`, is
+/// `contents`: held already, or its file read and opened. The caller
+/// holds the load lock, and gives the outline back with `close`.
+///
+/// INPUTS:
+/// - `dfb` - the library.
+/// - `path` - the contents file, as `contentsPath` makes it.
+/// - `contents` - what it holds.
+///
+/// RESULT:
+/// The outline, held once more; null if the family has none, or its
+/// file cannot be read or opened.
+pub fn openIn(dfb: *DiskfontBase, path: *const [256:0]u8, contents: *const _font.Contents) ?*diskfont.OutlineFont {
+    const sys = dfb.sys_base;
+    if (find(dfb, path)) |record| {
+        record.holders += 1;
+        return &record.font;
+    }
+    const entry = opendiskfont.outlineOf(contents) orelse return null;
     const tb = _font.trueType(dfb) orelse return null;
     // The system's, not the task's that opened it first: it is shared.
     const flags = exec.MEMF_ANY | exec.MEMF_SYSTEM;
@@ -74,7 +98,7 @@ fn openFamily(dfb: *DiskfontBase, name: [*:0]const u8) ?*diskfont.OutlineFont {
         .font = .{ .outline = outline, .style = entry.style & opendiskfont.face_styles },
         .holders = 1,
         .file = data.ptr,
-        .key = path,
+        .key = path.*,
     };
     sys.AddTail(&dfb.outlines, &record.link);
     return &record.font;

@@ -16,6 +16,7 @@ themselves are in the reference: [graphics](../autodocs/graphics.md),
 - [diskfont.library](#diskfontlibrary)
 - [Outline fonts](#outline-fonts)
 - [The system's fonts](#the-systems-fonts)
+- [Fallback fonts](#fallback-fonts)
 - [Making a font yourself](#making-a-font-yourself)
 - [Tools](#tools)
 
@@ -127,6 +128,14 @@ gb.Text(rp, "Hello", 5);
   baseline, in the pens and the styles of the text, rows that reach
   past the line cut off. Its advance is its own. See
   [Fallback fonts](#fallback-fonts).
+- **A font may hold more glyphs than its image.** A font with a
+  `render` hook - every size diskfont makes from an outline - is asked
+  for a character its image lacks the first time the character is drawn
+  or measured, and graphics keeps the glyph with the font: the first
+  text with a new character takes the time to render it, every later
+  one finds it. The image is looked in first and the hook asked second,
+  for the font and then for each fallback. See
+  [Glyphs made when wanted](#glyphs-made-when-wanted).
 - **Each character has its own width.** `TextLength` adds the advances up;
   `TextExtent` also says where the ink goes (a kern back makes
   `extent.min_x` negative, bold and italic can carry it past `width`);
@@ -300,11 +309,14 @@ Courier New, under the SIL Open Font License (`FONTS:liberation.licence`)
 code point: Spleen's sizes from 16 rows up have Latin with its
 extensions, Greek, Cyrillic, box drawing, blocks and Braille, close to
 a thousand characters, its 8 and 12 rows a few hundred; the Go faces
-Latin-1 and Latin Extended-A, Greek and Cyrillic, about 600 in what
-diskfont renders; Liberation's nearly three times that. A character a
-font lacks is drawn from its [fallback fonts](#fallback-fonts); where
-they lack it too, a letter with marks is drawn as its base letter and
-anything else as the font's stand-in.
+Latin-1 and Latin Extended-A, Greek and Cyrillic, about 600 characters;
+Liberation's nearly three times that. A size rendered from an outline
+has every character of its TrueType file: most of them in its image
+from the start, the others rendered when they are first drawn (see
+[Outline fonts](#outline-fonts)). A character a font lacks is drawn
+from its [fallback fonts](#fallback-fonts); where they lack it too, a
+letter with marks is drawn as its base letter and anything else as the
+font's stand-in.
 
 **A size file is a FontImage, byte for byte.** It is read with one `Read`
 into one allocation, checked (`check` and `sound`), and drawn from where
@@ -424,6 +436,16 @@ combining marks), Greek,
 Cyrillic, general punctuation, currency, the letterlike symbols, box
 drawing and blocks, and U+FFFD. A size costs a glyph rendered for each of
 those the font has, once; the result is kept like a loaded font.
+
+**Any other character the outline has is rendered when it is first
+drawn** (diskfont.library 1.9): arrows, mathematical signs, another
+script. The size has a `render` hook that has truetype.library render
+the one glyph (`RenderGlyph`) at the size's height, and graphics keeps
+it with the size until the size leaves memory. For that the size keeps
+its outline open: the TrueType file stays in memory, once for all the
+sizes made from it, for as long as one of them is loaded - a few
+hundred KiB for a face of Liberation. A character the outline has no
+glyph for goes on to the fallbacks as before.
 
 **Glyphs as outlines** (truetype.library 1.2): a program that draws text
 itself - at any size, turned, filled with a gradient - takes the glyphs
@@ -745,7 +767,8 @@ What to know:
   then what it fell back to.
 - **Each fallback is a whole font at that height**: a text in three
   sizes with two fallback families has six more fonts in memory, an
-  outline family's rendered with every character diskfont renders.
+  outline family's rendered with every character diskfont renders into
+  a size's image.
 - **A console keeps its cells.** A character from a fallback whose
   advance is not the console font's is drawn in the middle of its cell;
   one that is wider reaches into the cells beside it, so a fallback for
@@ -786,6 +809,75 @@ if (gb.RemFont(&mine.font)) sys.FreeVec(mine); // true once nobody holds it
   the list is busy.
 - `LockFonts`, `NextFont` and `UnlockFonts` walk the list to read what is
   on it.
+
+### Glyphs made when wanted
+
+A font need not hold every glyph in its image (graphics.library 0.41).
+Set `TextFont.render` to a hook before `AddFont`, and graphics calls it
+for a character the image has no glyph for, the first time a text with
+it is drawn or measured - with the font as the hook's object and a
+`GlyphRequest` as its message:
+
+```zig
+/// One glyph the image lacks, written where graphics keeps it.
+fn makeGlyph(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    _ = hook;
+    const mine: *MyFont = @ptrCast(@alignCast(object.?));
+    const request: *sdk.graphics.GlyphRequest = @ptrCast(@alignCast(message.?));
+    if (request.flags & sdk.graphics.GLYPHREQ_NUMBER != 0) return sdk.graphics.GLYPH_NONE;
+    const shape = shapeOf(mine, request.which) orelse return sdk.graphics.GLYPH_NONE;
+    const kind = mine.font.image.kind;
+    const pitch = sdk.graphics.fontimage.pitchOf(kind, shape.width);
+    request.kind = kind;
+    request.size = pitch * shape.rows;
+    request.glyph = .{
+        .width = shape.width,
+        .rows = shape.rows,
+        .top = shape.top,
+        .advance = shape.advance,
+        .pitch = @intCast(pitch),
+    };
+    if (request.size > request.room) return sdk.graphics.GLYPH_ROOM;
+    paint(shape, request.pixels, pitch);
+    return sdk.graphics.GLYPH_OK;
+}
+
+mine.hook = .{ .entry = &makeGlyph };
+mine.font.render = &mine.hook; // before AddFont, and never again
+```
+
+- **The request** names a character (`which` a code point) or, with
+  `GLYPHREQ_NUMBER` in `flags`, a glyph by the font's own number - what
+  a shaped text asks for. A font that has no numbers answers
+  `GLYPH_NONE` to those.
+- **The hook writes the pixels where they stay**: `room` bytes at
+  `pixels`, rows of `glyph.pitch` bytes one after another, of the
+  image's own kind. It sets `size`, `kind` and `glyph` (its `data` is
+  not read) and answers `GLYPH_OK`. A glyph without ink - a blank - has
+  a width or rows of 0 and only its advance.
+- **`GLYPH_ROOM`** with the bytes needed in `size` when they are more
+  than `room`: graphics makes the room and asks a second time.
+  **`GLYPH_NONE`** for a character the font has nothing for: graphics
+  keeps that too and does not ask again, and the character goes to the
+  fallbacks. **`GLYPH_LATER`** when it could not be made this time - no
+  memory: nothing is kept, the text is drawn without the glyph, and the
+  next text asks again.
+- **What comes back is checked**: a glyph of another kind than the
+  image's, with rows shorter than its width needs, or with more rows
+  than bytes written, is kept as no glyph.
+- **The hook runs on the task that draws**, on its stack, while
+  graphics holds the lock of the font's kept glyphs: one glyph is made
+  once, and a second task wanting a glyph made waits for the first. So
+  the hook waits for nothing itself - no file, no lock a drawing task
+  could hold - and draws no text.
+- **The glyphs are graphics' own**, in system memory, kept from
+  `AddFont` until the font leaves the list (`RemFont`, `AttemptRemFont`)
+  and freed there. They only grow in between: a font that is always
+  open holds every glyph it was ever asked for. A font never added to
+  the list has no place to keep them, and draws from its image alone.
+- `TextLength`, `TextExtent` and `TextFit` make glyphs as `Text` does,
+  so with such a font they may wait for another task, and no spinlock
+  may be held around them.
 
 ## Tools
 
