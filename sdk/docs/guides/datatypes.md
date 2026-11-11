@@ -289,9 +289,8 @@ multiplied, as a browser does, where cairo cuts one outline by the
 other first. Text is compared in the Liberation fonts when
 `scripts/fetch-fonts.sh` fetched them; rsvg-convert finds a family's own
 font where the PC has it, draws a list of `x` or `dx` as one value,
-shapes each span on its own - no pair kerned across a span's border -
-and draws a letter and a mark behind it as the one character the font
-has for the two.
+and shapes each span on its own - no pair kerned across a span's
+border.
 `C:test/DTTime
 <file> ...` times how long any file takes to be made into its object,
 and for an animation - a Lottie file's among them - how long each frame
