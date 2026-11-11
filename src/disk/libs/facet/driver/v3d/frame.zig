@@ -159,13 +159,18 @@ pub const Frame = struct {
     }
 };
 
-/// Where a frame of four resolves its colour: rows of one sample a pixel,
-/// of the colour's format, as Vulkan has a resolve attachment
-/// (VUID-VkSubpassDescription-pResolveAttachments-00850).
+/// Where a frame of four resolves its colour: an image of one sample a
+/// pixel, of the colour's format, as Vulkan has a resolve attachment
+/// (VUID-VkSubpassDescription-pResolveAttachments-00850), in rows or,
+/// sampled as well, in a texture's level (since 1.210).
 pub const Resolve = struct {
     image: u32,
-    /// Its rows' bytes.
+    /// Its rows' bytes, or for a UIF level its height in UIF blocks.
     stride: u32,
+    /// How it lies: rows, or a texture's level in its tiling, as v3dv
+    /// stores a resolve into its image's slice
+    /// (v3dvx_cmd_buffer.c:398-406).
+    memory: u64 = cl.MEMORY_RASTER,
 };
 
 /// The supertiles a frame is rendered by: each `width` by `height` tiles,
@@ -349,7 +354,7 @@ pub fn writeTileList(list: *List, frame: *const Frame, load: bool) void {
         cl.store(list, kept.buffer, kept.format, false, kept.image, kept.stride, kept.memory, samples);
     }
     if (frame.color) {
-        if (frame.resolve) |into| cl.store(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, into.image, into.stride, cl.MEMORY_RASTER, .four);
+        if (frame.resolve) |into| cl.store(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, into.image, into.stride, into.memory, .four);
         cl.store(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride, frame.memory, samples);
         list.byte(cl.CLEAR_RENDER_TARGETS);
     } else if (!stores_kept) {
@@ -661,7 +666,7 @@ test "a frame of no colour configures the unused render target, and its tiles mo
     try std.testing.expectEqual(@as(u64, 2), std.mem.readInt(u64, memory[10..18], .little) & 7);
 }
 
-test "a frame of four that resolves stores the average into the resolve's rows before the colour, and only over supertiles inside its area" {
+test "a frame of four that resolves stores the average into the resolve's rows, or a sampled one's level in its tiling, before the colour, and only over supertiles inside its area" {
     var memory: [128]u8 = undefined;
     var list = List{ .at = &memory, .address = 0x1000 };
     var frame = Frame{
@@ -707,6 +712,22 @@ test "a frame of four that resolves stores the average into the resolve's rows b
     try std.testing.expectEqual(@as(u64, 3), color_store.fields >> 10 & 3);
     try std.testing.expectEqual(@as(u32, 0x10_0000), color_store.address);
     try std.testing.expectEqual(cl.CLEAR_RENDER_TARGETS, memory[43]);
+
+    // Into a resolve attachment sampled as well, which lies as a texture
+    // does (since 1.210): the store names its level's tiling and its
+    // height in UIF blocks, as v3dv stores a resolve into its image's
+    // slice (v3dvx_cmd_buffer.c:398-411).
+    var into_level = frame;
+    into_level.resolve = .{ .image = 0x50_0000, .stride = 23, .memory = cl.MEMORY_UIF_XOR };
+    var level_memory: [128]u8 = undefined;
+    var level_list = List{ .at = &level_memory, .address = 0x1000 };
+    writeTileList(&level_list, &into_level, false);
+    const level_store = seen(&level_memory, 17);
+    try std.testing.expectEqual(cl.STORE_RENDER_TARGET_0, level_store.fields & 0xF);
+    try std.testing.expectEqual(cl.MEMORY_UIF_XOR, level_store.fields >> 4 & 7);
+    try std.testing.expectEqual(@as(u64, 1), level_store.fields >> 10 & 3);
+    try std.testing.expectEqual(@as(u64, 23), level_store.fields >> 28 & 0xFFFFF);
+    try std.testing.expectEqual(@as(u32, 0x50_0000), level_store.address);
 
     // 100 by 70 in tiles of 32 is 4 by 3 of them, a supertile each.
     try std.testing.expectEqual(Supertiles{ .width = 1, .height = 1, .across = 4, .down = 3 }, supertilesOf(&frame));
