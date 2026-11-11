@@ -11212,7 +11212,9 @@ test "an image drawn into and sampled at once: kept in rows of levels and layers
 
 /// The cores' driver with a layout of its own for a texture, as the V3D
 /// has (`Ops.texture_memory`): what CreateImage and the format query
-/// refuse on such a device, which is the V3D's half of item 48.
+/// refuse on such a device, a view of another format among it. Until
+/// 1.210 an image drawn into and sampled was too, item 48's V3D half,
+/// which `QuadLayout` makes.
 const OwnLayout = struct {
     const ops = ops: {
         var made = cpu.ops;
@@ -11382,18 +11384,23 @@ test "a device of a layout of its own keeps an image's four samples together, ea
     const sampled_image = _objects.of(Image, sampled);
     try testing.expect(sampled_image.quads and _image.deviceLaid(sampled_image));
     try testing.expectEqual(std.mem.alignForward(u64, layout.bytes, tiling.alignment), sampled_image.bytes);
-    // And not one drawn into as well: at one sample such a device makes
-    // none (item 48), and the query keeps the 1 bit wherever it keeps the
-    // 4, so none at four either.
+    // And one drawn into as well (since 1.210, item 48's V3D half): in
+    // the same quads, which the pass stores all four into and the TMU
+    // fetches a sample of, the query saying both counts as at one sample.
     const drawn_sampled = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .b8g8r8a8_unorm, .@"2d", .optimal, drawn_sampled, 0, &said));
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .b8g8r8a8_unorm, .@"2d", .optimal, drawn_sampled, 0, &said));
+    try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, said.sample_counts);
+    const drawn, _ = try bench.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .samples = 4, .usage = drawn_sampled }, false);
+    const drawn_image = _objects.of(Image, drawn);
+    try testing.expect(drawn_image.quads and _image.deviceLaid(drawn_image));
+    try testing.expectEqual(_image.Kind.rows, drawn_image.kind);
+    try testing.expectEqual(sampled_image.bytes, drawn_image.bytes);
     var refused: ?*facet.Image = null;
-    try testing.expect(fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .samples = 4, .usage = drawn_sampled }, &refused) != .success);
     // Read as an input attachment, which such a device reads none of: no.
     try testing.expect(fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT }, &refused) != .success);
 }
 
-test "an image drawn into and sampled, and a colour attachment of levels: the format query gives the whole chain of levels an optimal image has on the cores, and a device of a layout of its own refuses both (item 48)" {
+test "an image drawn into and sampled, and a colour attachment of levels: the format query gives the whole chain of levels an optimal image has, on the cores and on a device of the V3D's layout alike (item 48)" {
     const both = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;
     const read_back = facet.IMAGE_USAGE_INPUT_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;
     const extent = facet.Extent3D{ .width = 32, .height = 32 };
@@ -11441,22 +11448,137 @@ test "an image drawn into and sampled, and a colour attachment of levels: the fo
         bench.rig.fb.DestroyImage(bench.device, six);
     }
     {
-        var bench = try Bench.on(&OwnLayout.ops);
+        // On a device of the V3D's layout since 1.210 (item 48's V3D
+        // half): drawn into and sampled, of the whole chain, every layer
+        // and both counts, as on the cores, and a colour attachment
+        // alone of the whole chain too, both laid out as the device lays
+        // a texture; until then neither was made, and the attachment
+        // alone said one level. Not read back and sampled: such a device
+        // reads no input attachment (item 56).
+        var bench = try Bench.on(&QuadLayout.ops);
         defer bench.down();
         const fb = bench.rig.fb;
         const physical = bench.physical;
-        // Neither drawn into and sampled, nor read back and sampled; and a
-        // colour attachment of the one level, which is what the V3D's
-        // render target is.
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, both, 0, &said));
+        try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, both, 0, &said));
+        try testing.expectEqual(@as(u32, 14), said.max_mip_levels);
+        try testing.expectEqual(@as(u32, 256), said.max_array_layers);
+        try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, said.sample_counts);
         try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, read_back, 0, &said));
-        try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &said));
-        try testing.expectEqual(@as(u32, 1), said.max_mip_levels);
+        for ([3]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 }) |format| {
+            try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, format, .@"2d", .optimal, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &said));
+            try testing.expectEqual(@as(u32, 14), said.max_mip_levels);
+            try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, format, .@"2d", .optimal, both, 0, &said));
+            try testing.expectEqual(@as(u32, 14), said.max_mip_levels);
+        }
+        // Linear, written through, 3D, or with more levels than halving
+        // gives, as on the cores: no.
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .linear, both, 0, &said));
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, both | facet.IMAGE_USAGE_STORAGE, 0, &said));
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"3d", .optimal, both, 0, &said));
         var none: ?*facet.Image = null;
-        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .usage = both }, &none));
-        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .mip_levels = 2, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &none));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .mip_levels = 7, .usage = both }, &none));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .usage = read_back }, &none));
         try testing.expect(none == null);
+        var six: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .mip_levels = 6, .usage = both }, &six));
+        fb.DestroyImage(bench.device, six);
     }
+}
+
+test "a device of the V3D's layout keeps an image drawn into and sampled as it keeps a texture, each layer one of its own and each level in its tiling, where a copy, a clear and a resolve reach it (item 48's V3D half)" {
+    var bench = try Bench.on(&QuadLayout.ops);
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const _image = @import("../image/_image.zig");
+    const Image = _image.Image;
+    const tiling = QuadLayout.tiling;
+    const transfers = facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const both = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED | transfers;
+    const extent = facet.Extent3D{ .width = 20, .height = 9, .depth = 1 };
+    const made = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = extent, .mip_levels = 3, .array_layers = 2, .usage = both }, false);
+    const image = _objects.of(Image, made);
+    // Rows by its kind, which is what a framebuffer takes, and none of
+    // its memory rows: each layer the device's texture of three levels,
+    // on the device's alignment.
+    try testing.expectEqual(_image.Kind.rows, image.kind);
+    try testing.expect(!image.quads and _image.deviceLaid(image));
+    const layout = tiling.layoutOf(4, 20, 9, 1, 3, false);
+    try testing.expectEqual(std.mem.alignForward(u64, layout.bytes, tiling.alignment), image.layer_bytes);
+    try testing.expectEqual(image.layer_bytes * 2, image.bytes);
+    try testing.expectEqual(@as(u64, tiling.alignment), image.alignment);
+    const at = struct {
+        fn of(how: *const tiling.Layout, made_image: *const Image, level: u32, layer: u32, x: u32, y: u32) usize {
+            return layer * @as(usize, @intCast(made_image.layer_bytes)) + tiling.texelOffset(how, level, x, y);
+        }
+    }.of;
+    const marked = struct {
+        fn of(x: u32, y: u32) u32 {
+            return 0xFF00_0000 | (x * 23 & 0xFF) << 16 | (200 - y * 7) << 8 | (x * 3 + y * 11);
+        }
+    }.of;
+
+    // Level 1 of layer 1, 10 x 4, from a buffer: each texel where the
+    // device keeps it, which is where the TMU reads it and the pass
+    // stores it.
+    const staging, const bytes = try bench.buffer(10 * 4 * 4, facet.BUFFER_USAGE_TRANSFER_SRC | facet.BUFFER_USAGE_TRANSFER_DST);
+    for (0..4) |y| for (0..10) |x| std.mem.writeInt(u32, bytes[(y * 10 + x) * 4 ..][0..4], marked(@intCast(x), @intCast(y)), .little);
+    var commands = try bench.record();
+    const into_level = facet.BufferImageCopy{ .image_subresource = .{ .mip_level = 1, .base_array_layer = 1 }, .image_extent = .{ .width = 10, .height = 4, .depth = 1 } };
+    fb.CmdCopyBufferToImage(commands, staging, made, .transfer_dst_optimal, 1, @ptrCast(&into_level));
+    // Level 2 of layer 0, 5 x 2, cleared.
+    const grey = facet.ClearColorValue{ .float32 = .{ 128.0 / 255.0, 64.0 / 255.0, 32.0 / 255.0, 1 } };
+    fb.CmdClearColorImage(commands, made, .transfer_dst_optimal, &grey, 1, @ptrCast(&facet.ImageSubresourceRange{ .base_mip_level = 2, .level_count = 1, .layer_count = 1 }));
+    try bench.submit();
+    for (0..4) |y| for (0..10) |x| {
+        try testing.expectEqual(marked(@intCast(x), @intCast(y)), std.mem.readInt(u32, image.data.?[at(&layout, image, 1, 1, @intCast(x), @intCast(y))..][0..4], .little));
+    };
+    for (0..2) |y| for (0..5) |x| {
+        try testing.expectEqual(@as(u32, 0xFF80_4020), std.mem.readInt(u32, image.data.?[at(&layout, image, 2, 0, @intCast(x), @intCast(y))..][0..4], .little));
+    };
+    // And back out of it again, as a buffer holds them.
+    @memset(bytes[0 .. 10 * 4 * 4], 0);
+    commands = try bench.record();
+    fb.CmdCopyImageToBuffer(commands, made, .transfer_src_optimal, staging, 1, @ptrCast(&into_level));
+    try bench.submit();
+    for (0..4) |y| for (0..10) |x| try testing.expectEqual(marked(@intCast(x), @intCast(y)), std.mem.readInt(u32, bytes[(y * 10 + x) * 4 ..][0..4], .little));
+
+    // An image of four resolved into level 0 of layer 1: each texel the
+    // average of its quad, where the device keeps level 0.
+    const four = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = extent, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | transfers }, false);
+    const source = _objects.of(Image, four);
+    const sampled_mark = struct {
+        fn of(sample: u32, x: u32, y: u32) u32 {
+            return 0xFF00_0000 | ((sample * 64 + x * 5) & 0xFF) << 16 | (sample * 40 + y * 9) << 8 | (255 - sample * 60 - x);
+        }
+    }.of;
+    for (0..4) |s| {
+        var plane = _image.sampleOf(source, @intCast(s));
+        for (0..9) |y| for (0..20) |x| {
+            var texel: [4]u8 = undefined;
+            std.mem.writeInt(u32, &texel, sampled_mark(@intCast(s), @intCast(x), @intCast(y)), .little);
+            _image.writeTexel(&plane, 0, 0, @intCast(x), @intCast(y), &texel);
+        };
+    }
+    commands = try bench.record();
+    const resolve = facet.ImageResolve{ .dst_subresource = .{ .base_array_layer = 1 }, .extent = extent };
+    fb.CmdResolveImage(commands, four, .transfer_src_optimal, made, .transfer_dst_optimal, 1, @ptrCast(&resolve));
+    try bench.submit();
+    for (0..9) |y| for (0..20) |x| {
+        var words: [4]u32 = undefined;
+        for (&words, 0..) |*word, s| word.* = sampled_mark(@intCast(s), @intCast(x), @intCast(y));
+        try testing.expectEqual(averagedByChannel(words), std.mem.readInt(u32, image.data.?[at(&layout, image, 0, 1, @intCast(x), @intCast(y))..][0..4], .little));
+    };
+
+    // A colour attachment of more than one level alone is laid out the
+    // same way, as v3dv lays out every optimal image; of the one level,
+    // and not sampled, it stays in rows, what the V3D's frames have
+    // always stored into.
+    const levelled = _objects.of(Image, try bench.bareImage(.{ .format = .r5g6b5_unorm_pack16, .extent = extent, .mip_levels = 2, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, false));
+    try testing.expect(_image.deviceLaid(levelled));
+    try testing.expectEqual(std.mem.alignForward(u64, tiling.layoutOf(2, 20, 9, 1, 2, false).bytes, tiling.alignment), levelled.bytes);
+    const plain = _objects.of(Image, try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | transfers }, false));
+    try testing.expect(!_image.deviceLaid(plain));
+    try testing.expectEqual(@as(u64, 128 * 9), plain.bytes);
 }
 
 // --- 1.120: an image view's component swizzle (item 41) ---------------------

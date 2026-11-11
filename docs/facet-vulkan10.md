@@ -154,10 +154,9 @@ remainder is a QPU back end that refuses the operand at pipeline
 creation, item 17's is a vertex program that keeps its varyings in
 registers and so stops at eight, item 22's is a render list played once
 a frame rather than once a layer, item 61's was its step V7, done in
-1.209, item 48's
-is a store and a load that name the UIF layout, and a clear through the
-TLB, and item 42's is a texture state and a render target of the view's
-format.
+1.209, item 48's was a store and a load that name the level's own
+tiling, done in 1.210, and item 42's is a texture state and a render
+target of the view's format.
 
 None of the nine is the hardware's limit. Mesa's v3dv runs Vulkan on this
 same V3D 7.1 with 64 varyings, texel offsets of -8 to 7, 256 framebuffer
@@ -1688,7 +1687,7 @@ So facet's barrier, which records the two stage masks and plays as nothing on bo
 
 ### 48. Accept an image that is both SAMPLED and COLOR_ATTACHMENT
 
-*images / render to texture* &mdash; port, about 420 lines: about 90 on the cores, about 62 on the V3D, about 11 for a V3D clear, and about 257 of tests and docs &mdash; **the cores' half done in 1.119**; the V3D's is v3dv's store and load of the UIF layout and its TLB clear, about 73 lines and a board check
+*images / render to texture* &mdash; port, about 420 lines: about 90 on the cores, about 62 on the V3D, about 11 for a V3D clear, and about 257 of tests and docs &mdash; **the cores' half done in 1.119, the V3D's in 1.210**: v3dv's store and load into the level's own tiling, which were in place for depth since 1.142 and for four samples since 1.147, so the V3D's half came to about 30 lines of code and a board check, and CmdClearColorImage stays the CPU's
 
 An image's layout is settled at CreateImage from its usage — rows for an attachment, blocks of texels for a texture — and shapeFor returns null for SAMPLED or STORAGE together with COLOR_ATTACHMENT, so the ordinary Vulkan render-to-texture image cannot be made. Vulkan requires B8G8R8A8_UNORM and R8G8B8A8_UNORM to carry both COLOR_ATTACHMENT and SAMPLED in optimalTilingFeatures and gives no mechanism to refuse the combination; facet's own format table advertises attachment, sampled and storage in the one optimal mask, so the report and the refusal contradict each other. This cannot be fixed by adding a check: it needs either a layout transition that re-tiles the image in place, or a rasterizer that stores tiles straight into the texture layout. The workaround programs use today — draw into a rows image, CmdCopyImage into a texture image — is a copy a Vulkan program does not make. The single largest omission from the gap list.
 
@@ -1760,6 +1759,37 @@ UIF layout in their Memory Format and Height in UB fields
 the TLB (v3dv_meta_clear.c:70-193), about 73 lines and a board check.
 Until then the V3D answers `error_format_not_supported` to the format
 query and to CreateImage alike, which the probe checks on both devices.
+
+**The V3D's half done in 1.210.** On the V3D an image both
+COLOR_ATTACHMENT and SAMPLED is made now, as is a colour attachment of
+more than one level. Mesa's v3dv does it in three places:
+- **The layout.** Every optimal image is UIF, whatever its usage (v3dv_image.c:481-483).
+- **The frame's store and load.** They go into the slice of the level and the layer the view names, in that slice's own tiling. The Memory Format is the slice's, and Height in UB is its padded height in UIF blocks where it is UIF (`cmd_buffer_render_pass_emit_store`, v3dvx_cmd_buffer.c:364-406, and `_load`, :168-204). A resolve goes into its image's slice the same way (:398-411).
+- **The frame's clear.** On V3D 7.1 a frame that clears a UIF level needs nothing more. The UIF padding goes into CLEAR_COLORS_PART3, which only V3D 4.2 emits (:1110-1148).
+
+The store and the load were in place already. They took a Memory Format and a Height in UB for a sampled depth since 1.142 and for an image of four since 1.147, so the half was much smaller than sized: about 30 lines of code against the 73 sized, CmdClearColorImage left on the CPU. The parts:
+- **The image.** On a device of a layout of its own, a colour attachment that is sampled, or that has more than one level, lies as the device's textures do, each layer one of its own (`_image.shapeFor`, `deviceLaid`). One of four samples, drawn into and sampled, is kept in quads, as one drawn into alone is. The format query asks CreateImage's rules, so it answers the whole chain of levels for a colour attachment there, and both sample counts for one that is sampled too. That closes the V3D's part of item 49's second bullet.
+- **The frame.** `_play.colorPlace` gives the frame the level and the layer its view names, in the level's tiling, with Height in UB from `tiling.blocksDown`. A resolve attachment that is sampled too is resolved into the same way, in the tiles (`frame.Resolve.memory`), or on the CPU after the pass, and what the CPU wrote then goes out before the TMU reads it.
+- **The transfers.** A copy, a blit, a resolve and a copy to or from a buffer already went texel by texel through `_image.readTexel` and `writeTexel`, which find a device-laid texel where the device keeps it. CmdClearColorImage filled a level's span, and for such an image `_transfer.spanOf` gave the rows, which are not there. It gives the device's level now. The new host test found that.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
+- **An image sampled and read as an input attachment at once**, refused on the V3D, which reads no input attachment (item 56). The query answers `error_format_not_supported`: answering the 1 bit alone would break the rule that a sampled image's counts hold `sampledImageColorSampleCounts`. *V3D-only*.
+- **A colour attachment that is sampled and written through as a storage image at once**, refused on both devices, as since 1.119 (`not_sampled` in `_image.shapeFor`). *Facet-wide*.
+- **CmdClearColorImage of such an image** is the CPU's fill of the level where the V3D keeps it, as every V3D clear has been since 1.142, not v3dv's clear through the TLB (v3dv_meta_clear.c:70-193). It gives the same texels. *V3D-only*.
+
+The *facet-wide* entry is on the list for the Radeon's.
+
+Results:
+- **The tests.** The host tests are 3496, one new: a sampled colour attachment of three levels and two layers, over the V3D's layout ops, where a copy from a buffer, a clear, a copy back and a resolve each put the texels. Two changed: the format query's answers on such a device, and the image of four drawn into and sampled. The V3D's frame test has a resolve stored into a UIF level. Of 9 mutations of the library, all 9 fail them, each on the tests' counts.
+
+On the CM5, FacetBoth 1.74 has seven new cases, each an image drawn or resolved into and then sampled, with nothing copied between:
+- **"drawn into and sampled"** and **"drawn into and sampled, r8g8b8a8"** are each 6 of 230400 pixels apart, 214 at worst, the first at 164,106. The clockwise quad and the glass are drawn into level 0 of the image, in a pass that leaves it to be sampled, and the level is sampled over the whole picture.
+- **"drawn into and sampled, r5g6b5"** is 6 apart, 215 at worst, within a slack of 9. The cores dither a 565 write and the V3D does not. Vulkan lets either round to one of the two nearest values, and one 565 step is 8 or 9 in eight bits. With no slack it was 83,154 apart.
+- **"drawn into level 1 and sampled"** is 18 apart, 186 at worst, the first at 163,98: the frame stores into level 1, in that level's own tiling.
+- **"four samples drawn into and fetched"** is 4 apart, 217 at worst, the first at 331,100, as "shipped fetch of four samples" is, which fetches from a copy.
+- **"four samples resolved into an image sampled"** is 31 apart, resolved in the V3D's tiles, and **"four samples resolved over a part into an image sampled"** 24 apart, resolved on the CPU after the pass. Both are 55 at worst, as "four samples, resolved in the pass" and "four samples, resolved over a part", which resolve into an image not sampled, are at 54 and 45 apart. Level 0 is cleared to a green first, so the part's edges show where the resolve stops.
+
+With the frame's Height in UB one UIF block short (`tiling.blocksDown(...) -| 1` in `_play.colorPlace`), all seven fail: 27,107 to 51,430 apart, 217 to 255 at worst. The other 307 cases are each as they were at 1.209. FacetProbe 1.48 is 891 of 891: its check of an attachment that is sampled too now asks that the image be made, as the query says.
 
 ### 49. Reconcile GetPhysicalDeviceFeatures with VkPhysicalDeviceFeatures, and decide what replaces the missing enable step
 
@@ -3391,7 +3421,7 @@ The parts:
 Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
 - **OpImageQuerySize and OpImageQuerySamples**, textureSize and textureSamples of an image of four. The profile takes neither, for any image. v3d answers textureSamples with a uniform (QUNIFORM_TEXTURE_SAMPLES, nir_to_vir.c:976-978), and textureSize through ntq_emit_txs (:980-982). *Facet-wide*.
 - **A ConstOffset on a fetch of four**, refused (Error.Operands). GLSL has no texelFetchOffset of a sampler2DMS, so glslc writes none. *Facet-wide*.
-- **An image of four that is sampled and a colour attachment**, refused as one of one is, until item 48's V3D half. The format query holds the 1 bit wherever it holds the 4, so the two go together. *V3D-only*.
+- **An image of four that is sampled and a colour attachment**, refused as one of one is, until item 48's V3D half. The format query holds the 1 bit wherever it holds the 4, so the two go together. *V3D-only*. Made since 1.210.
 - **An input attachment of four**, refused until item 56. *V3D-only*.
 
 The two *V3D-only* entries are the V3D port's own gaps, not the hardware's, so the list for the Radeon's has nothing new from them. The first *facet-wide* entry is on it.
@@ -4846,7 +4876,9 @@ breaks Vulkan's rules for the query itself:
   image/_image.zig:771-775), and on the V3D every image kept in rows to
   one level (:860-863). The first wants its levels and layers laid out as
   the rows of an image sampled where it is drawn are since 1.119, about 10
-  lines; the second is item 48's V3D half.
+  lines; the second was item 48's V3D half, done in 1.210: an optimal
+  colour attachment of more than one level lies in the V3D's own layout
+  there.
 - **Fewer usage bits are refused where more are taken**, which Vulkan
   forbids: the limits for usage that is a subset of another "must be no
   more strict". An image of a small texel, of r8_unorm, of wide channels
@@ -4940,6 +4972,9 @@ After the V3D, facet's next device is a Radeon, ported from radv as the V3D is f
 
 **What the compiler takes from v3dv's options, which a Radeon's takes from radv's:**
 - The divergence analysis's options: v3dv's are nir_divergence_multiple_workgroup_per_compute_subgroup alone (v3dv_pipeline.c:217-218), so the workgroup id differs from lane to lane, and with no nir_divergence_vertex the instance id does too. They are built into `lanes()` in compile.zig (1.204).
+
+**Images CreateImage refuses that Vulkan lets a program make.** These are facet-wide: both devices refuse them.
+- A colour attachment that is sampled and written through as a storage image at once (1.210, item 48). Each device samples an image it draws into where it lies, but neither writes one through as well.
 
 **SPIR-V the profile refuses that a Vulkan 1.0 shader may hold.** These are facet-wide: the compiler's front end refuses them on every device.
 - OpImageQuerySize and OpImageQuerySamples of an image of four, textureSize and textureSamples of a sampler2DMS (1.209). Both are the ImageQuery capability's, which the profile takes. v3d answers textureSamples with a uniform (nir_to_vir.c:976-978), and textureSize through ntq_emit_txs (:980-982).

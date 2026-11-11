@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.47 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.48 (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -1025,9 +1025,10 @@ fn storageImageChecks(probe: *Probe) void {
         return probe.check(false, "an image drawn into and written through at once");
     probe.check(true, "an image drawn into and written through at once");
     var denied: ?*facet.Image = null;
-    // Sampled as well it is refused on both devices: the cores sample an
-    // image they draw into where it lies only if nothing writes it
-    // through (docs/facet-vulkan10.md item 48), and the V3D does neither.
+    // Sampled as well it is refused on both devices: each samples an image
+    // it draws into where it lies - the cores since 1.119, the V3D since
+    // 1.210 (docs/facet-vulkan10.md item 48) - only if nothing writes it
+    // through.
     probe.check(fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side }, .usage = both_usage | facet.IMAGE_USAGE_SAMPLED }, &denied) != .success, "sampled, drawn into and written through at once refused");
     probe.check(fb.CreateImage(device, &.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = side, .height = side }, .usage = both_usage }, &denied) != .success, "and r8g8b8a8 rows written through refused");
     probe.check(denied == null, "and nothing given back for either");
@@ -2115,15 +2116,16 @@ fn queryChecks(probe: *Probe) void {
     probe.check(limits.min_texel_gather_offset == 0, "and no gather offset");
     probe.check(limits.max_texel_gather_offset == 0, "at either end");
 
-    // 1.119: an attachment that is sampled too is made where the device
-    // keeps it in rows and samples it where it lies - the cores, and not
-    // the V3D yet (docs/facet-vulkan10.md item 48). Whichever the device
-    // is, the query and CreateImage say the same.
+    // 1.119: an attachment that is sampled too is made, and sampled where
+    // the pass drew it - in rows on the cores since 1.119, and since 1.210
+    // on the V3D in its own layout, which its frames store into
+    // (docs/facet-vulkan10.md item 48). The query and CreateImage say so
+    // on both, until 1.210 on the cores alone.
     const drawn_and_sampled = sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT;
     const answered = fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"2d", .optimal, drawn_and_sampled, 0, &shape);
     var drawn: ?*facet.Image = null;
     const drawn_made = fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = drawn_and_sampled }, &drawn);
-    probe.check((answered == .success) == (drawn_made == .success), if (answered == .success) "an attachment that is sampled too made, as the query says" else "an attachment that is sampled too refused, as the query says");
+    probe.check(answered == .success and drawn_made == .success, "an attachment that is sampled too made, as the query says");
     fb.DestroyImage(device, drawn);
 
     // What the query says is what CreateImage does.
@@ -2305,9 +2307,10 @@ fn inputChecks(probe: *Probe) void {
     const plain = probe.image(plain_info, wanted) orelse return probe.check(false, "a picture not made to be read");
 
     // An input attachment is kept in rows, so it is sampled as well only
-    // on a device that samples rows where they lie: the cores since 1.119
-    // and not the V3D yet (docs/facet-vulkan10.md item 48). The query and
-    // CreateImage say the same either way.
+    // on a device that samples rows where they lie and reads input
+    // attachments: the cores since 1.119, and not the V3D, which reads
+    // none yet (docs/facet-vulkan10.md item 56). The query and CreateImage
+    // say the same either way.
     var read_and_sampled: ?*facet.Image = null;
     const both = facet.ImageCreateInfo{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_INPUT_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED };
     var both_shape: facet.ImageFormatProperties = undefined;

@@ -6965,4 +6965,54 @@ pub const LIBRARY_VERSION = 1;
 /// other 306 cases are each as they were at 1.208, and FacetProbe passes
 /// its 891 checks, one new: the largest sampled image of four made on the
 /// V3D, whose format query says four for it now.
-pub const LIBRARY_REVISION = 209;
+///
+/// 210: **An image drawn into and sampled on the V3D (docs/
+/// facet-vulkan10.md item 48's V3D half).** On the V3D an image both
+/// COLOR_ATTACHMENT and SAMPLED was refused, by CreateImage and the
+/// format query alike, as was a colour attachment of more than one
+/// level. v3dv keeps every optimal image in UIF whatever its usage
+/// (v3dv_image.c:481-483), and its frame stores a colour into the slice
+/// of the level and the layer its view names, in that slice's own
+/// tiling: the Memory Format is the slice's, and Height in UB its padded
+/// height in UIF blocks where it is UIF
+/// (`cmd_buffer_render_pass_emit_store` and `_load`,
+/// v3dvx_cmd_buffer.c:364-406, 168-204). A resolve goes into its image's
+/// slice the same way (:398-411). On V3D 7.1 a clear needs no padding
+/// for it: the UIF padding goes into CLEAR_COLORS_PART3, which only V3D
+/// 4.2 emits (:1110-1148).
+///
+/// Such an image, and a colour attachment of levels, lies as the V3D's
+/// textures do, each layer one of its own (`_image.deviceLaid`), and the
+/// frame stores into the level its view names, in the level's tiling,
+/// where the TMU reads it (`_play.colorPlace`); a resolve attachment
+/// sampled as well is resolved into the same way, in the tiles or on the
+/// CPU after the pass. One of four samples, drawn into and sampled, is
+/// kept in quads as one drawn into alone is. A clear of such an image
+/// fills the level where the device keeps it (`_transfer.spanOf`), which
+/// before cleared rows that are not there: the new host test found it.
+/// The format query answers the whole chain of levels for a colour
+/// attachment there, and both sample counts for one sampled as well,
+/// which item 49 named. An image sampled and an input attachment at once
+/// stays refused on the V3D, which reads no input attachment (item 56).
+///
+/// The host tests are 3496, one new and two changed, over the V3D's
+/// layout ops: where a copy, a clear, a read back and a resolve put the
+/// texels of each level of each layer. Of 9 mutations of the library, all
+/// 9 fail them.
+///
+/// On the CM5 FacetBoth 1.74 has seven new cases, each an image drawn or
+/// resolved into and then sampled, with nothing copied between. "drawn
+/// into and sampled" and its r8g8b8a8 twin are 6 of 230400 pixels apart,
+/// 214 at worst; the r5g6b5 one is 6 apart, within a slack of 9, as the
+/// cores dither a 565 write and the V3D does not, and Vulkan lets either
+/// round to one of the two nearest values (83,154 apart with none).
+/// "drawn into level 1 and sampled" is 18 apart, 186 at worst; "four
+/// samples drawn into and fetched" 4 apart, 217 at worst, as the case
+/// that fetches from a copy is. The resolve into an image sampled is 31
+/// apart, in the tiles, and 24 over a part, on the CPU, 55 at worst, as
+/// the resolves into an image not sampled are 54 and 45. With the frame's
+/// Height in UB one UIF block short, all seven fail: 27,107 to 51,430
+/// apart. The other 307 cases are each as they were at 1.209, and
+/// FacetProbe 1.48 passes its 891 checks: the attachment sampled too is
+/// made now, as the query says.
+pub const LIBRARY_REVISION = 210;

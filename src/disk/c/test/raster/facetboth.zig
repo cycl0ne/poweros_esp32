@@ -24,6 +24,9 @@
 //! in depth are C:test/FacetCube's to look at. The cases of four samples
 //! a pixel (since 1.16) draw into an image of four and resolve it into the
 //! first picture, in the pass or by CmdResolveImage after it. The cases of
+//! an image drawn into and sampled (since 1.74) draw into it, or resolve
+//! into it, in one pass and sample it in the next, nothing copied
+//! between. The cases of
 //! no colour (since 1.18) draw a depth alone, then look at it in a pass of
 //! colour: a shadow map sampled, or a subpass after it tested against it;
 //! and the cases of no attachment at all count what they draw with an
@@ -150,7 +153,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.73 (11.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.74 (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -9829,6 +9832,24 @@ const Side = struct {
     four_sampled: ?*facet.Image = null,
     four_sampled_view: ?*facet.ImageView = null,
     four_sampled_set: ?*facet.DescriptorSet = null,
+    /// An image of each format that is drawn into and sampled, of two
+    /// levels, the pass that draws into a level of it and leaves it to be
+    /// sampled, and for each level a view, a framebuffer and a set that
+    /// samples that level alone; an image of four samples drawn into and
+    /// sampled, its pass with `four_depth` and its set; and a pass of four
+    /// that resolves into the first format's level 0 (since 1.74).
+    drawn: [formats.len]?*facet.Image = @splat(null),
+    drawn_passes: [formats.len]?*facet.RenderPass = @splat(null),
+    drawn_views: [formats.len][2]?*facet.ImageView = @splat(@splat(null)),
+    drawn_frames: [formats.len][2]?*facet.Framebuffer = @splat(@splat(null)),
+    drawn_sets: [formats.len][2]?*facet.DescriptorSet = @splat(@splat(null)),
+    four_drawn: ?*facet.Image = null,
+    four_drawn_view: ?*facet.ImageView = null,
+    four_drawn_pass: ?*facet.RenderPass = null,
+    four_drawn_frame: ?*facet.Framebuffer = null,
+    four_drawn_set: ?*facet.DescriptorSet = null,
+    drawn_resolving: ?*facet.RenderPass = null,
+    drawn_resolving_frame: ?*facet.Framebuffer = null,
     /// What a shipped shader that reads the push constants is made with:
     /// no set, and the fragment stage's 20 bytes of them.
     push_layout: ?*facet.PipelineLayout = null,
@@ -9958,7 +9979,7 @@ const Side = struct {
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 10 + layered_count + throughs.len + shadow_ops.len }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 10 + layered_count + throughs.len + shadow_ops.len + formats.len * 2 + 1 }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -10041,6 +10062,7 @@ const Side = struct {
         try side.upPasses();
         try side.upShadow();
         try side.upFour();
+        try side.upDrawn();
     }
 
     /// The image of four samples, its depth, and the two passes over them:
@@ -10086,6 +10108,75 @@ const Side = struct {
         const info = facet.DescriptorImageInfo{ .sampler = side.sampler, .image_view = side.four_sampled_view, .image_layout = .shader_read_only_optimal };
         const write = facet.WriteDescriptorSet{ .dst_set = side.four_sampled_set.?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&info) };
         fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+    }
+
+    /// The images drawn into and sampled at once, their passes,
+    /// framebuffers and sets (`drawn`; since 1.74), after `upFour`, whose
+    /// colour and depth two of the passes draw into.
+    fn upDrawn(side: *Side) Failure!void {
+        const fb = side.fb;
+        const device = side.device.?;
+        const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
+        const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+        for (formats, 0..) |format, f| {
+            try side.image(.{ .format = format, .extent = .{ .width = side.width, .height = side.height }, .mip_levels = 2, .usage = usage }, 0, &side.drawn[f]);
+            const attachment = facet.AttachmentDescription{ .format = format, .load_op = .clear, .store_op = .store, .final_layout = .shader_read_only_optimal };
+            const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color) };
+            try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 1, .attachments = @ptrCast(&attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &side.drawn_passes[f]), error.Refused);
+            for (0..2) |level| {
+                const range = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .base_mip_level = @intCast(level), .level_count = 1 };
+                try expect(fb.CreateImageView(device, &.{ .image = side.drawn[f].?, .format = format, .subresource_range = range }, &side.drawn_views[f][level]), error.Refused);
+                const views = [1]*facet.ImageView{side.drawn_views[f][level].?};
+                const size = side.levelSize(@intCast(level));
+                try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.drawn_passes[f].?, .attachment_count = 1, .attachments = &views, .width = size[0], .height = size[1] }, &side.drawn_frames[f][level]), error.Refused);
+                side.drawn_sets[f][level] = try side.samplerSet(side.drawn_views[f][level].?);
+            }
+        }
+        const extent = facet.Extent3D{ .width = side.width, .height = side.height };
+        try side.image(.{ .format = formats[0], .extent = extent, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED }, 0, &side.four_drawn);
+        side.four_drawn_view = try side.view(side.four_drawn.?, formats[0], facet.IMAGE_ASPECT_COLOR, 1);
+        const depth = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
+        {
+            const attachments = [2]facet.AttachmentDescription{
+                .{ .format = formats[0], .samples = 4, .load_op = .clear, .store_op = .store, .final_layout = .shader_read_only_optimal },
+                .{ .format = .d16_unorm, .samples = 4, .load_op = .clear, .final_layout = .depth_stencil_attachment_optimal },
+            };
+            const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .depth_stencil_attachment = &depth };
+            try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &side.four_drawn_pass), error.Refused);
+            const views = [2]*facet.ImageView{ side.four_drawn_view.?, side.four_depth_view.? };
+            try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.four_drawn_pass.?, .attachment_count = 2, .attachments = &views, .width = side.width, .height = side.height }, &side.four_drawn_frame), error.Refused);
+        }
+        side.four_drawn_set = try side.samplerSet(side.four_drawn_view.?);
+        // Resolving into the first format's level 0, which a clear may
+        // have filled first: what lies outside the render area is kept.
+        const attachments = [3]facet.AttachmentDescription{
+            .{ .format = formats[0], .samples = 4, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal },
+            .{ .format = formats[0], .load_op = .dont_care, .store_op = .store, .initial_layout = .general, .final_layout = .shader_read_only_optimal },
+            .{ .format = .d16_unorm, .samples = 4, .load_op = .clear, .final_layout = .depth_stencil_attachment_optimal },
+        };
+        const resolve = facet.AttachmentReference{ .attachment = 1, .layout = .color_attachment_optimal };
+        const depth_third = facet.AttachmentReference{ .attachment = 2, .layout = .depth_stencil_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .resolve_attachments = @ptrCast(&resolve), .depth_stencil_attachment = &depth_third };
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 3, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &side.drawn_resolving), error.Refused);
+        const views = [3]*facet.ImageView{ side.four_view.?, side.drawn_views[0][0].?, side.four_depth_view.? };
+        try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.drawn_resolving.?, .attachment_count = 3, .attachments = &views, .width = side.width, .height = side.height }, &side.drawn_resolving_frame), error.Refused);
+    }
+
+    /// A set of `sampler_set_layout` that samples `view` through
+    /// `sampler`, its nearest texel.
+    fn samplerSet(side: *Side, sampled_view: *facet.ImageView) Failure!*facet.DescriptorSet {
+        const fb = side.fb;
+        var sets: [1]?*facet.DescriptorSet = undefined;
+        try expect(fb.AllocateDescriptorSets(side.device.?, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&side.sampler_set_layout) }, &sets), error.Refused);
+        const info = facet.DescriptorImageInfo{ .sampler = side.sampler, .image_view = sampled_view, .image_layout = .shader_read_only_optimal };
+        const write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&info) };
+        fb.UpdateDescriptorSets(side.device.?, 1, @ptrCast(&write), 0, null);
+        return sets[0].?;
+    }
+
+    /// The picture's size halved `level` times, as a level's is.
+    fn levelSize(side: *const Side, level: u5) [2]u32 {
+        return .{ @max(side.width >> level, 1), @max(side.height >> level, 1) };
     }
 
     /// The shadow map, its pass over the first picture and it, and a set
@@ -10526,6 +10617,18 @@ const Side = struct {
         fb.DestroyBuffer(device, side.computed);
         fb.DestroyBuffer(device, side.numbers);
         fb.DestroyFence(device, side.fence);
+        fb.DestroyFramebuffer(device, side.drawn_resolving_frame);
+        fb.DestroyRenderPass(device, side.drawn_resolving);
+        fb.DestroyFramebuffer(device, side.four_drawn_frame);
+        fb.DestroyRenderPass(device, side.four_drawn_pass);
+        fb.DestroyImageView(device, side.four_drawn_view);
+        fb.DestroyImage(device, side.four_drawn);
+        for (&side.drawn, &side.drawn_passes, &side.drawn_views, &side.drawn_frames) |drawn_image, pass, views, frames| {
+            for (frames) |frame| fb.DestroyFramebuffer(device, frame);
+            for (views) |each| fb.DestroyImageView(device, each);
+            fb.DestroyRenderPass(device, pass);
+            fb.DestroyImage(device, drawn_image);
+        }
         fb.DestroyFramebuffer(device, side.resolving_frame);
         fb.DestroyFramebuffer(device, side.four_alone_frame);
         fb.DestroyRenderPass(device, side.resolving);
@@ -10774,6 +10877,26 @@ const Side = struct {
     /// The combined image sampler a shipped shader samples through.
     fn sampled(side: *Side) void {
         side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.sampler_layout.?, 0, 1, @ptrCast(&side.sampler_set), 0, null);
+    }
+
+    /// After a pass drew into `image`, which it left to be sampled: the
+    /// barrier that says the sample comes after the colour was written,
+    /// as Vulkan asks, then the picture's pass begun and `set` bound,
+    /// which samples it (since 1.74).
+    fn lookAtDrawn(side: *Side, drawn_into: *facet.Image, set: *facet.DescriptorSet) void {
+        const fb = side.fb;
+        const written = facet.ImageMemoryBarrier{
+            .src_access_mask = facet.ACCESS_COLOR_ATTACHMENT_WRITE,
+            .dst_access_mask = facet.ACCESS_SHADER_READ,
+            .old_layout = .shader_read_only_optimal,
+            .new_layout = .shader_read_only_optimal,
+            .image = drawn_into,
+            .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR },
+        };
+        fb.CmdPipelineBarrier(side.commands.?, facet.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT, facet.PIPELINE_STAGE_FRAGMENT_SHADER, 0, 0, null, 0, null, 1, @ptrCast(&written));
+        side.begin(.{});
+        const sets = [1]*facet.DescriptorSet{set};
+        fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.sampler_layout.?, 0, 1, @ptrCast(&sets), 0, null);
     }
 };
 
@@ -12040,6 +12163,95 @@ const Cases = struct {
         side.draw(quad_at, 6);
         side.end();
     }
+    /// The clockwise quad and the glass over it drawn into level `level`
+    /// of the image of `formats[f]` that is drawn into and sampled, in a
+    /// pass that leaves it to be sampled, then that level sampled over the
+    /// whole picture, its nearest texel: the V3D's frame stores the level
+    /// where its TMU reads it, in the level's own tiling, with nothing
+    /// copied between (docs/facet-vulkan10.md item 48's V3D half; since
+    /// 1.74).
+    fn drawnThenSampled(comptime f: usize, comptime level: u5) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                const fb = side.fb;
+                const commands = side.commands.?;
+                const size = side.levelSize(level);
+                const begun_with = facet.ClearValue{ .color = .{ .float32 = .{ 0.3, 0.12, 0.05, 1 } } };
+                fb.CmdBeginRenderPass(commands, &.{ .render_pass = side.drawn_passes[f].?, .framebuffer = side.drawn_frames[f][level].?, .render_area = .{ .extent = .{ .width = size[0], .height = size[1] } }, .clear_value_count = 1, .clear_values = @ptrCast(&begun_with) }, .@"inline");
+                side.state();
+                side.setViewport(0, 0, @floatFromInt(size[0]), @floatFromInt(size[1]), 0, 1);
+                const level_whole = facet.Rect2D{ .extent = .{ .width = size[0], .height = size[1] } };
+                fb.CmdSetScissor(commands, 0, 1, @ptrCast(&level_whole));
+                try side.use(.{ .pass = side.drawn_passes[f].? });
+                side.draw(clockwise_at, 6);
+                try side.use(.{ .pass = side.drawn_passes[f].?, .blend = true });
+                side.draw(glass_at, 3);
+                side.end();
+                side.lookAtDrawn(side.drawn[f].?, side.drawn_sets[f][level].?);
+                try side.use(.{ .vertex = "texture", .fragment = "shipped texture", .layout = side.sampler_layout.? });
+                side.draw(quad_at, 6);
+                side.end();
+            }
+        }.run;
+    }
+    /// The far and the near triangle at four samples, samples 0 and 2 of
+    /// them written, and the glass over them in samples 1 and 2, drawn into
+    /// the image of four that is sampled as well, then each of its samples
+    /// fetched as `fetchedFour` fetches them from the copy it makes: here
+    /// with no copy, the V3D's frame storing the four where its TMU fetches
+    /// them (since 1.74).
+    fn drawnFourFetched(side: *Side) Failure!void {
+        const fb = side.fb;
+        const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0.3, 0.12, 0.05, 1 } } }, .{ .depth_stencil = .{ .depth = 1 } } };
+        fb.CmdBeginRenderPass(side.commands.?, &.{ .render_pass = side.four_drawn_pass.?, .framebuffer = side.four_drawn_frame.?, .render_area = side.areaOf(null), .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+        side.state();
+        try side.use(.{ .pass = side.four_drawn_pass.?, .samples = 4, .sample_mask = 0x5, .test_depth = true, .write_depth = true });
+        side.draw(far_at, 3);
+        side.draw(near_at, 3);
+        try side.use(.{ .pass = side.four_drawn_pass.?, .samples = 4, .sample_mask = 0x6, .blend = true });
+        side.draw(glass_at, 3);
+        side.end();
+        side.lookAtDrawn(side.four_drawn.?, side.four_drawn_set.?);
+        try side.use(.{ .vertex = "texture", .fragment = "shipped fetch four", .layout = side.sampler_layout.? });
+        side.draw(quad_at, 6);
+        side.end();
+    }
+    /// The first format's image that is drawn into and sampled, its level
+    /// 0 cleared to a green, then the far and the near triangle and the
+    /// glass at four samples resolved into it over `area` - in the V3D's
+    /// tiles over the whole picture, and on its CPU after the pass over a
+    /// part that is not of whole supertiles - and the level sampled over
+    /// the whole picture: the resolve where the area is, the green
+    /// elsewhere (since 1.74).
+    fn resolvedThenSampled(comptime area: ?[4]f32) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                const fb = side.fb;
+                const commands = side.commands.?;
+                const level_0 = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .level_count = 1 };
+                const unfilled = facet.ImageMemoryBarrier{ .dst_access_mask = facet.ACCESS_TRANSFER_WRITE, .old_layout = .undefined, .new_layout = .general, .image = side.drawn[0].?, .subresource_range = level_0 };
+                fb.CmdPipelineBarrier(commands, facet.PIPELINE_STAGE_TOP_OF_PIPE, facet.PIPELINE_STAGE_TRANSFER, 0, 0, null, 0, null, 1, @ptrCast(&unfilled));
+                const level_green = facet.ClearColorValue{ .float32 = .{ 0.1, 0.55, 0.2, 1 } };
+                fb.CmdClearColorImage(commands, side.drawn[0].?, .general, &level_green, 1, @ptrCast(&level_0));
+                const cleared = facet.ImageMemoryBarrier{ .src_access_mask = facet.ACCESS_TRANSFER_WRITE, .dst_access_mask = facet.ACCESS_COLOR_ATTACHMENT_WRITE, .old_layout = .general, .new_layout = .general, .image = side.drawn[0].?, .subresource_range = level_0 };
+                fb.CmdPipelineBarrier(commands, facet.PIPELINE_STAGE_TRANSFER, facet.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT, 0, 0, null, 0, null, 1, @ptrCast(&cleared));
+                const color = facet.ClearValue{ .color = .{ .float32 = .{ 0.3, 0.12, 0.05, 1 } } };
+                const clears = [3]facet.ClearValue{ color, color, .{ .depth_stencil = .{ .depth = 1 } } };
+                fb.CmdBeginRenderPass(commands, &.{ .render_pass = side.drawn_resolving.?, .framebuffer = side.drawn_resolving_frame.?, .render_area = side.areaOf(area), .clear_value_count = 3, .clear_values = &clears }, .@"inline");
+                side.state();
+                try side.use(.{ .pass = side.drawn_resolving.?, .samples = 4, .test_depth = true, .write_depth = true });
+                side.draw(far_at, 3);
+                side.draw(near_at, 3);
+                try side.use(.{ .pass = side.drawn_resolving.?, .samples = 4, .blend = true });
+                side.draw(glass_at, 3);
+                side.end();
+                side.lookAtDrawn(side.drawn[0].?, side.drawn_sets[0][0].?);
+                try side.use(.{ .vertex = "texture", .fragment = "shipped texture", .layout = side.sampler_layout.? });
+                side.draw(quad_at, 6);
+                side.end();
+            }
+        }.run;
+    }
     fn onTarget(comptime target: Target) *const fn (side: *Side) Failure!void {
         return &struct {
             fn run(side: *Side) Failure!void {
@@ -12315,6 +12527,22 @@ const cases = [_]Case{
     .{ .name = "four samples, resolved by CmdResolveImage", .run = &Cases.resolvedAfter },
     // 1.73: each sample of an image of four fetched in a shader.
     .{ .name = "shipped fetch of four samples", .run = &Cases.fetchedFour },
+    // 1.74: an image drawn into, or resolved into, and sampled in the
+    // pass after, with no copy between, which the V3D does since facet
+    // 1.210 (item 48's V3D half).
+    .{ .name = "drawn into and sampled", .run = Cases.drawnThenSampled(0, 0) },
+    .{ .name = "drawn into and sampled, r8g8b8a8", .run = Cases.drawnThenSampled(1, 0) },
+    // The cores dither what they write in 565 and the V3D does not, so
+    // the texture sampled is a step of 565 apart where the cores dithered,
+    // as `compare` lets a picture in 565 be; read into 8888, a step of red
+    // or blue is 8 or 9 of 8 bits. Vulkan has a conversion to UNORM give
+    // either of the two values closest ("Conversion from Floating-Point to
+    // Normalized Fixed-Point").
+    .{ .name = "drawn into and sampled, r5g6b5", .run = Cases.drawnThenSampled(2, 0), .slack = 9 },
+    .{ .name = "drawn into level 1 and sampled", .run = Cases.drawnThenSampled(0, 1) },
+    .{ .name = "four samples drawn into and fetched", .run = &Cases.drawnFourFetched },
+    .{ .name = "four samples resolved into an image sampled", .run = Cases.resolvedThenSampled(null) },
+    .{ .name = "four samples resolved over a part into an image sampled", .run = Cases.resolvedThenSampled(.{ 0.1, 0.15, 0.7, 0.8 }) },
     .{ .name = "four samples, covered by alpha", .run = &Cases.covered, .slack = 52 },
     // No colour (since 1.18), which the V3D draws since facet 1.150: a
     // shadow map drawn in a pass of it alone, and a depth drawn in a

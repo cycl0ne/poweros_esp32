@@ -107,10 +107,14 @@ const _image = @import("_image.zig");
 ///   as a colour attachment has them (since 1.119).
 ///
 /// Images are up to 8192 wide and high. One both SAMPLED and
-/// COLOR_ATTACHMENT, or SAMPLED and INPUT_ATTACHMENT, is made on a device
-/// that keeps its images in this library's layout; the V3D's lie in its
-/// own (`Ops.texture_memory`), and there it is refused, as an image of
-/// levels kept in rows is.
+/// COLOR_ATTACHMENT, or SAMPLED and INPUT_ATTACHMENT, is made in rows on a
+/// device that keeps its images in this library's layout. On one whose
+/// images lie in a layout of its own (`Ops.texture_memory`, the V3D) the
+/// first is made since 1.210, as are a colour attachment's levels, in
+/// that device's layout, each layer a texture of its own that the pass
+/// stores into where the TMU reads it, as v3dv keeps every optimal image
+/// (src/broadcom/vulkan/v3dv_image.c:481-483); the second is refused
+/// there, that device reading no input attachment.
 ///
 /// **An image may have four samples a pixel** on a device that draws them
 /// (`Capabilities.multisampling`, since 1.98): 2D, optimal, one level and
