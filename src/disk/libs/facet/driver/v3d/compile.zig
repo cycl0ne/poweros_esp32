@@ -956,9 +956,14 @@ pub const Lookup = enum(u8) {
 };
 
 /// Where a step is: in no arm of a kept selection, 0, or in one of its
-/// arms, the true one's odd and the false one's the even after it, the
-/// first kept selection's 1 and 2 (since 1.171).
+/// arms, the true one's odd and the false one's the even after it (since
+/// 1.171). A selection's arms are regions in the region it is in, which
+/// may be an arm of another (`Work.region_parent`; since 1.207).
 pub const Region = u8;
+
+/// The most regions a program has at once: two for each selection kept
+/// and each one still being read, and none.
+pub const most_regions = 2 * (most_kept + most_nesting) + 1;
 
 /// A selection kept a branch, as `read` leaves it for the list to lay
 /// out (since 1.171): the steps of its arms, the true arm's first where
@@ -1796,9 +1801,13 @@ pub const Work = struct {
     skip_helpers: [most_steps]bool = @splat(false),
 
     /// Each step's region (`Region`), the one `read` is in, and the
-    /// selections it kept branches (since 1.171).
+    /// selections it kept branches (since 1.171). Each region's parent,
+    /// the region its selection is in, and how many there are; those of a
+    /// selection flattened last are given back (since 1.207).
     region: [most_steps]Region = @splat(0),
     current_region: Region = 0,
+    region_parent: [most_regions]Region = @splat(0),
+    region_count: Region = 0,
     kept: [most_kept]Kept = undefined,
     kept_count: u8 = 0,
 
@@ -2267,10 +2276,14 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             // what is not flattened (since 1.171); the arms of one
             // flattened are in the block it is in.
             const kept = inner.kept or (!inner.collapsed and armCost(work, inner.arms_from, inner.arms_to) > limitOf(inner.control, peephole_limit));
-            if (kept)
-                try keepSelection(work, &inner, depth)
-            else if (depth == 1)
-                @memset(work.region[inner.arms_from..inner.arms_to], 0);
+            if (kept) {
+                try keepSelection(work, &inner);
+            } else {
+                // Its arms are the block it is in, and their regions are
+                // given back where none was taken since.
+                @memset(work.region[inner.arms_from..inner.arms_to], inner.parent_region);
+                if (work.region_count == inner.region + 1) work.region_count = inner.region - 1;
+            }
             // To nir_opt_dead_write_vars the merge of one kept is a block
             // of its own; one flattened is in the block before it, which
             // its arms are in too, and which goes on (since 1.177).
@@ -2288,6 +2301,10 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             if (depth > 0) {
                 const outer = &nest[depth - 1];
                 outer.lone = inner.no == inner.merge or inner.quiet_no;
+                // An arm that holds a selection kept holds control flow,
+                // which nir_opt_peephole_select flattens none of: the
+                // selection it is in is kept too (:538-541; since 1.207).
+                if (kept) outer.kept = true;
                 if (inner.iand != none) outer.held = .{
                     .iand = inner.iand,
                     .condition = inner.condition,
@@ -2297,6 +2314,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     .control = inner.control,
                     .emptiness = if (inner.killed or !inner.quiet_yes) .kept else if (inner.constant_yes) .unsure else .empty,
                     .killed = inner.killed,
+                    .kept = kept,
                 };
             }
         }
@@ -3105,7 +3123,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         if (selection.no != selection.merge and !selection.seen_no) return Error.Branches;
                         // The merge block is where the selection was, and
                         // where an arm read alone ends.
-                        if (depth == 1) work.current_region = 0;
+                        work.current_region = selection.parent_region;
                         if (!selection.seen_yes or !selection.seen_no) selection.split = @intCast(work.step_count);
                         // A way in that is no arm leaves the variables
                         // as they were before the branch.
@@ -3230,10 +3248,15 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         selection.iand = try put(work, logicOf(.iand, condition, outer.condition));
                 }
                 selection.arms_from = @intCast(work.step_count);
-                // A selection in no other may be kept a branch: its arms
-                // are read into regions of their own until it is known
-                // whether it is (since 1.171).
-                if (depth == 1) selection.region = 2 * work.kept_count + 1;
+                // A selection may be kept a branch: its arms are read into
+                // regions of their own until it is known whether it is
+                // (since 1.171), in the region it is in (since 1.207).
+                if (work.region_count + 2 >= most_regions) return Error.Branches;
+                selection.parent_region = work.current_region;
+                selection.region = work.region_count + 1;
+                work.region_parent[selection.region] = work.current_region;
+                work.region_parent[selection.region + 1] = work.current_region;
+                work.region_count += 2;
                 work.before[depth - 1] = work.values;
                 flow = .arms;
             },
@@ -3363,7 +3386,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         // An atomic or a barrier is neither either: it
                         // would run where the arm is not taken (since
                         // 1.169).
-                        .atomic_load, .atomic_store, .atomic_exchange, .atomic_compare_exchange, .atomic_compare_exchange_weak, .atomic_i_increment, .atomic_i_decrement, .atomic_i_add, .atomic_i_sub, .atomic_s_min, .atomic_u_min, .atomic_s_max, .atomic_u_max, .atomic_and, .atomic_or, .atomic_xor, .memory_barrier, .control_barrier => try selection.keep(depth),
+                        .atomic_load, .atomic_store, .atomic_exchange, .atomic_compare_exchange, .atomic_compare_exchange_weak, .atomic_i_increment, .atomic_i_decrement, .atomic_i_add, .atomic_i_sub, .atomic_s_min, .atomic_u_min, .atomic_s_max, .atomic_u_max, .atomic_and, .atomic_or, .atomic_xor, .memory_barrier, .control_barrier => selection.keep(),
                         // A store into a variable of the function's own
                         // is a value the merge chooses, a load and a store
                         // nir_lower_vars_to_ssa leaves none of (since
@@ -3383,7 +3406,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                             // intrinsic block_check_for_allowed_instrs lets
                             // none of through (nir_opt_peephole_select.c:109-129;
                             // scratch since 1.177).
-                            try selection.keep(depth);
+                            selection.keep();
                         } else return Error.Branches,
                         else => {
                             selection.empty = false;
@@ -3396,7 +3419,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     else => return Error.Branches,
                 }
                 try step(work, instruction);
-                if (texture and !takenBefore(work, work.step_of[try idOf(operands[1])])) try selection.keep(depth);
+                if (texture and !takenBefore(work, work.step_of[try idOf(operands[1])])) selection.keep();
             },
         }
     }
@@ -4400,21 +4423,22 @@ const Selection = struct {
     arms_from: u16 = 0,
     arms_to: u16 = 0,
     /// Kept a branch (since 1.171): an arm holds what
-    /// nir_opt_peephole_select flattens nothing of. Its arms' regions,
-    /// the true arm's and the one after it; the first step of the arm
-    /// read second; whether the false arm came first in the module; and
+    /// nir_opt_peephole_select flattens nothing of, or a selection kept
+    /// (since 1.207). Its arms' regions, the true arm's and the one after
+    /// it, and the region it is in; the first step of the arm read
+    /// second; whether the false arm came first in the module; and
     /// whether a variable came to the merge from one way only.
     kept: bool = false,
     region: Region = 0,
+    parent_region: Region = 0,
     split: u16 = 0,
     false_first: bool = false,
     one_way: bool = false,
 
-    /// An arm holds what is not flattened: the selection is kept a branch,
-    /// where it is in no other (since 1.171), in a program of any stage
-    /// (since 1.205).
-    fn keep(selection: *Selection, depth: u32) Error!void {
-        if (depth != 1) return Error.Branches;
+    /// An arm holds what is not flattened: the selection is kept a branch
+    /// (since 1.171), in a program of any stage (since 1.205), and in an
+    /// arm of another too (since 1.207).
+    fn keep(selection: *Selection) void {
         selection.kept = true;
         selection.empty = false;
         selection.quiet = false;
@@ -4438,7 +4462,7 @@ const Selection = struct {
         }
         work.copies = work.copies_before[depth - 1];
         work.unused_count = 0;
-        if (depth == 1) work.current_region = selection.region + @intFromBool(arm != selection.yes);
+        work.current_region = selection.region + @intFromBool(arm != selection.yes);
     }
 
     fn enter(selection: *Selection, arm: u32) void {
@@ -4456,11 +4480,12 @@ const Selection = struct {
 /// the arm is (`dominates`): in no arm of a kept selection, nor of one
 /// still being read, whose arms are each a region of their own until the
 /// merge (since 1.171). The steps of the arm itself are in its region
-/// (since 1.185).
+/// (since 1.185). Those of an arm the arm is in are there too (since
+/// 1.207); one of the arm itself is a tex that kept it already.
 fn takenBefore(work: *const Work, at: u16) bool {
     for (0..at) |k| {
         const earlier: u16 = @intCast(k);
-        if (work.region[earlier] != 0) continue;
+        if (work.region[earlier] == work.region[at] or !dominates(work, earlier, at)) continue;
         if (oneValue(work, .{ .step = earlier, .part = 0 }, .{ .step = at, .part = 0 }, most_value_depth)) return true;
     }
     return false;
@@ -4482,6 +4507,8 @@ const Held = struct {
     emptiness: Emptiness = .kept,
     killed: bool = false,
     constant_after: bool = false,
+    /// Kept a branch, which no limit flattens (since 1.207).
+    kept: bool = false,
 };
 
 /// Whether an arm's block is empty in NIR: it holds an instruction, it
@@ -4528,7 +4555,7 @@ fn collapseOf(work: *Work, outer: *const Selection, level: u32, reader: spirv.Re
                 .unsure => Error.Branches,
             };
         }
-        if (!inner.killed and inner.cost <= limitOf(inner.control, limit)) return false;
+        if (!inner.killed and !inner.kept and inner.cost <= limitOf(inner.control, limit)) return false;
     }
     return false;
 }
@@ -5712,14 +5739,18 @@ fn phiStep(condition: u16, yes: Float, no: Float) Step {
 /// its phis (since 1.171): one an arm of which holds what
 /// nir_opt_peephole_select does not flatten, or whose arms are over its
 /// limit. Its selects are its phis, where it was kept for the limit, and
-/// its marks are put down. Only one in no other selection, of no other
-/// in it, is kept. In a vertex or a compute program as in a fragment
-/// program: ntq_emit_if and the passes before it have nothing of the
-/// stage's (nir_to_vir.c:4355-4573; since 1.205), and 1.204 has the ids
-/// that tell a branch under the execute mask from a uniform one.
-fn keepSelection(work: *Work, selection: *const Selection, depth: u32) Error!void {
-    if (depth != 1) return Error.Branches;
-    if (selection.inner != 0 or selection.collapsed or selection.killed) return Error.Branches;
+/// its marks are put down. In a vertex or a compute program as in a
+/// fragment program: ntq_emit_if and the passes before it have nothing
+/// of the stage's (nir_to_vir.c:4355-4573; since 1.205), and 1.204 has
+/// the ids that tell a branch under the execute mask from a uniform one.
+///
+/// One in an arm of another, which is then kept too, and one with
+/// another in an arm, kept or flattened (since 1.207): ntq_emit_if emits
+/// each arm's list of control flow through ntq_emit_cf_list, an if in it
+/// as any other (:4399, :4409, :4508, :4537), and the outer one's mask
+/// is what the inner one's starts from (:4473-4486).
+fn keepSelection(work: *Work, selection: *const Selection) Error!void {
+    if (selection.collapsed or selection.killed) return Error.Branches;
     if (work.kept_count == most_kept) return Error.Branches;
     if (!selection.kept) {
         if (selection.one_way) return Error.Branches;
@@ -5953,29 +5984,50 @@ const Order = struct {
     /// The steps in the order they were read, but for a kept
     /// selection's: its marks around its arms, and the true arm first,
     /// as vtn builds the nir_if's then_list before its else_list
-    /// whatever the order of the module's blocks (since 1.171).
+    /// whatever the order of the module's blocks (since 1.171). One in an
+    /// arm of another is laid out so in that arm (since 1.207).
     fn start(work: *const Work) Order {
         var list: Order = .{};
         var marked: [most_steps]bool = @splat(false);
         for (work.kept[0..work.kept_count]) |kept| for (kept.marks) |mark| {
             marked[mark] = true;
         };
-        var at: u16 = 0;
-        for (work.kept[0..work.kept_count]) |kept| {
-            while (at < kept.from) : (at += 1) if (!marked[at]) list.append(at);
+        var laid: [most_kept]bool = @splat(false);
+        list.lay(work, &marked, &laid, 0, @intCast(work.step_count));
+        return list;
+    }
+
+    /// The steps from `from` to `to`, and where the arms of kept
+    /// selections begin, the outermost of them, its marks and its arms.
+    /// Its arms are steps of `from` to `to`, and so is any selection in
+    /// one (`read` puts its marks down there).
+    fn lay(list: *Order, work: *const Work, marked: *const [most_steps]bool, laid: *[most_kept]bool, from: u16, to: u16) void {
+        var at = from;
+        while (true) {
+            var outermost: ?usize = null;
+            for (work.kept[0..work.kept_count], 0..) |kept, k| {
+                if (laid[k] or kept.from != at or kept.to > to) continue;
+                if (outermost == null or kept.to > work.kept[outermost.?].to) outermost = k;
+            }
+            const k = outermost orelse {
+                if (at == to) return;
+                if (!marked[at]) list.append(at);
+                at += 1;
+                continue;
+            };
+            laid[k] = true;
+            const kept = work.kept[k];
             const first: [2]u16 = .{ kept.from, kept.split };
             const second: [2]u16 = .{ kept.split, kept.to };
             const yes = if (kept.false_first) second else first;
             const no = if (kept.false_first) first else second;
             list.append(kept.marks[0]);
-            for (yes[0]..yes[1]) |each| list.append(@intCast(each));
+            list.lay(work, marked, laid, yes[0], yes[1]);
             list.append(kept.marks[1]);
-            for (no[0]..no[1]) |each| list.append(@intCast(each));
+            list.lay(work, marked, laid, no[0], no[1]);
             list.append(kept.marks[2]);
             at = kept.to;
         }
-        while (at < work.step_count) : (at += 1) if (!marked[at]) list.append(at);
-        return list;
     }
 
     fn append(list: *Order, at: u16) void {
@@ -7101,9 +7153,14 @@ pub fn readsOfStep(each: Step) [4]?u16 {
 
 /// Whether the step `earlier` is there wherever the later step `at` is:
 /// it is in no arm of a kept selection, or in the arm `at` is in (since
-/// 1.171).
+/// 1.171), or in an arm that one is in (since 1.207).
 fn dominates(work: *const Work, earlier: u16, at: u16) bool {
-    return work.region[earlier] == 0 or work.region[earlier] == work.region[at];
+    var region = work.region[at];
+    while (region != work.region[earlier]) {
+        if (region == 0) return false;
+        region = work.region_parent[region];
+    }
+    return true;
 }
 
 /// What of `each` read `from` reads `to`.
@@ -15588,9 +15645,12 @@ fn Arms(comptime count: usize) type {
     });
 }
 
-test "a branch in a branch, and a ninth branch, are refused" {
-    // Mesa keeps both (nir_opt_peephole_select flattens no arm that holds
-    // control flow); a kept selection here is one at the top level.
+test "a branch in a branch that nir_opt_collapse_if makes one, and a ninth branch, are refused" {
+    // The inner selection, kept for its cost, is all of the outer's true
+    // arm, and neither has a false arm: nir_opt_collapse_if makes the two
+    // one on the iand of their conditions (nir_opt_peephole_select.c
+    // :412-506), which is not yet (since 1.207; before, no selection in
+    // an arm was kept).
     var work: Work = .{};
     try testing.expectError(Error.Branches, throughMesa(&work, DeepCostly.words));
     // Eight are kept, one after another, each its own blocks. Each phi is
@@ -15607,6 +15667,513 @@ test "a branch in a branch, and a ninth branch, are refused" {
     try testing.expectEqual(@as(usize, 8), opsOf(code, "mov.ifa"));
     var nine: Work = .{};
     try testing.expectError(Error.Branches, throughMesa(&nine, Arms(9).words));
+}
+
+/// A kept selection's phi of a float made before it and one of a kept
+/// selection in its arm, which a float made before both brings the other
+/// way: the second float shares the inner phi's register, the first is
+/// copied where the outer false way ends (since 1.207).
+const NestedWebs = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const z = b.mul(b.component(v, 0), b.scalar(2.0));
+        const f = b.mul(b.component(v, 1), b.scalar(3.0));
+        const outer = b.ifHolds(b.lessThan(b.component(v, 2), half));
+        const g = b.uniform(0, 0, 0, .f32x1);
+        const inner = b.ifHolds(b.lessThan(b.component(v, 3), half));
+        const t = b.mul(b.uniform(0, 0, 4, .f32x1), g);
+        b.endIf(inner);
+        const pin = b.merged(inner, t, f);
+        b.endIf(outer);
+        const pout = b.merged(outer, pin, z);
+        const x = b.component(v, 0);
+        b.color(b.vector(&.{ pout, x, x, x }));
+    }
+});
+
+/// One float both false ways bring, the outer's true way a sum of the
+/// inner phi: the inner phi's web, the float in it, merged whole into the
+/// outer phi's (merge_merge_sets; since 1.207).
+const NestedWhole = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const x = b.mul(b.component(v, 0), b.scalar(2.0));
+        const outer = b.ifHolds(b.lessThan(b.component(v, 2), half));
+        const g = b.uniform(0, 0, 0, .f32x1);
+        const inner = b.ifHolds(b.lessThan(b.component(v, 3), half));
+        const t = b.mul(b.uniform(0, 0, 4, .f32x1), g);
+        b.endIf(inner);
+        const pin = b.merged(inner, t, x);
+        const sum = b.add(pin, g);
+        b.endIf(outer);
+        const pout = b.merged(outer, sum, x);
+        const y = b.component(v, 1);
+        b.color(b.vector(&.{ pout, y, y, y }));
+    }
+});
+
+/// A selection flattened in the arm of one kept, its product made again
+/// past the outer merge: the arm's does not dominate it, and both are
+/// made (since 1.207).
+const FlatInKept = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const x = b.component(v, 0);
+        const outer = b.ifHolds(b.lessThan(x, half));
+        const g = b.uniform(0, 0, 0, .f32x1);
+        const inner = b.ifHolds(b.lessThan(b.component(v, 1), half));
+        const s = b.mul(b.component(v, 2), b.scalar(3.0));
+        b.endIf(inner);
+        const pin = b.merged(inner, s, g);
+        b.endIf(outer);
+        const pout = b.merged(outer, pin, x);
+        const later = b.mul(b.component(v, 2), b.scalar(3.0));
+        b.color(b.vector(&.{ pout, later, x, x }));
+    }
+});
+
+/// A kept selection in the arm of one on the same comparison, the outer
+/// arm going on past the inner merge with a uniform product, which the
+/// outer phi copies where its true way ends (since 1.207).
+const SameCondition = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const x = b.component(v, 0);
+        const both = b.lessThan(x, half);
+        const outer = b.ifHolds(both);
+        const g = b.uniform(0, 0, 0, .f32x1);
+        const inner = b.ifHolds(both);
+        const t = b.mul(b.uniform(0, 0, 4, .f32x1), g);
+        b.endIf(inner);
+        const pin = b.merged(inner, t, g);
+        const sum = b.add(pin, x);
+        const twice = b.mul(g, b.scalar(2.0));
+        b.endIf(outer);
+        const pout = b.merged(outer, sum, x);
+        const doubled = b.merged(outer, twice, x);
+        b.color(b.vector(&.{ pout, doubled, x, x }));
+    }
+});
+
+/// Kept selections that are the first thing in each arm of one: the true
+/// arm's on a float and a half being apart, which v3d tests IFNA, the
+/// arm going on past its merge with a product made again past the outer
+/// merge; the false arm's on a comparison made before both too
+/// (since 1.207).
+const NestedAtStart = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const x = b.component(v, 0);
+        const g = b.uniform(0, 0, 0, .f32x1);
+        const apart = b.notEqual(b.component(v, 3), half);
+        const low = b.lessThan(b.component(v, 1), half);
+        const outer = b.ifHolds(b.lessThan(x, half));
+        const first = b.ifHolds(apart);
+        const t = b.mul(b.uniform(0, 0, 4, .f32x1), g);
+        b.endIf(first);
+        const yes = b.merged(first, t, g);
+        const sum = b.add(yes, b.mul(b.component(v, 2), b.scalar(3.0)));
+        b.otherwise(outer);
+        const second = b.ifHolds(low);
+        const u = b.mul(b.uniform(0, 0, 8, .f32x1), g);
+        b.endIf(second);
+        const no = b.merged(second, u, x);
+        b.endIf(outer);
+        const pout = b.merged(outer, sum, no);
+        const later = b.mul(b.component(v, 2), b.scalar(3.0));
+        b.color(b.vector(&.{ pout, later, x, x }));
+    }
+});
+
+/// A uniform float made before two uniform selections, the inner in the
+/// outer's true arm: the true way of the inner's second phi, whose false
+/// way is not uniform, and the false way of the outer's first phi, whose
+/// true way is the inner's first, of two constants (since 1.207).
+const LaterCopyReads = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const g = b.uniform(0, 0, 0, .f32x1);
+        const n = b.mul(g, b.scalar(3.0));
+        const x = b.component(v, 0);
+        const first = b.scalar(1.0);
+        const second = b.scalar(2.0);
+        const outer = b.ifHolds(b.lessThan(g, b.scalar(0.5)));
+        const inner = b.ifHolds(b.lessThan(b.uniform(0, 0, 8, .f32x1), b.scalar(0.25)));
+        b.otherwise(inner);
+        const d = b.mul(b.uniform(0, 0, 4, .f32x1), x);
+        b.endIf(inner);
+        const q = b.merged(inner, first, second);
+        const q2 = b.merged(inner, n, d);
+        b.endIf(outer);
+        const p = b.merged(outer, q, n);
+        const p2 = b.merged(outer, q2, x);
+        b.color(b.vector(&.{ p, p2, x, x }));
+    }
+});
+
+/// A float made before a selection, named four times by a vector its arm
+/// multiplies, and brought by the false way (since 1.207).
+const SplatInArm = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const s = b.mul(b.component(v, 1), b.scalar(3.0));
+        const e = b.vector(&.{ s, b.component(v, 2), b.component(v, 3), b.scalar(1.0) });
+        const at = b.ifHolds(b.lessThan(b.component(v, 0), b.scalar(0.5)));
+        const m = b.mul(b.vector(&.{ s, s, s, s }), b.uniform(0, 0, 0, .f32x4));
+        b.endIf(at);
+        b.color(b.merged(at, m, e));
+    }
+});
+
+/// A float made before a selection that each float of a product in its
+/// arm reads, and that its false way brings (since 1.207).
+const ScaleInArm = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const s = b.mul(b.component(v, 1), b.scalar(3.0));
+        const e = b.vector(&.{ s, b.component(v, 2), b.component(v, 3), b.scalar(1.0) });
+        const at = b.ifHolds(b.lessThan(b.component(v, 0), b.scalar(0.5)));
+        const m = b.scale(b.uniform(0, 0, 0, .f32x4), s);
+        b.endIf(at);
+        const c = b.merged(at, m, e);
+        b.color(c);
+    }
+});
+
+/// Three bcsels in a kept arm on a comparison of a float that the first
+/// one's phi brings the other way (since 1.207).
+const SelectsInArm = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const y = b.component(v, 1);
+        const e = b.vector(&.{ y, b.component(v, 2), b.component(v, 3), b.scalar(1.0) });
+        const at = b.ifHolds(b.lessThan(b.component(v, 0), b.scalar(0.5)));
+        const t = b.uniform(0, 0, 0, .f32x4);
+        const below = b.lessThan(y, b.scalar(0.5));
+        const p = b.select(below, b.component(t, 0), b.component(t, 1));
+        const q = b.select(below, b.component(t, 2), b.component(t, 3));
+        const r = b.select(below, b.component(t, 1), b.component(t, 0));
+        const m = b.vector(&.{ p, q, r, b.scalar(1.0) });
+        b.endIf(at);
+        b.color(b.merged(at, m, e));
+    }
+});
+
+/// The register the colour's first word packs its red from.
+fn redOf(code: Code, out: *[8]u8) []const u8 {
+    return packOperandOf(code, 0, out);
+}
+
+/// The register of the first pack's `which`th operand: 0 red, 1 green.
+fn packOperandOf(code: Code, which: usize, out: *[8]u8) []const u8 {
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        const at = std.mem.indexOf(u8, line, "vfpack tlb, ") orelse continue;
+        var operands = std.mem.tokenizeAny(u8, line[at + "vfpack tlb, ".len ..], ", ");
+        for (0..which) |_| _ = operands.next();
+        const name = operands.next().?;
+        @memcpy(out[0..name.len], name);
+        return out[0..name.len];
+    }
+    unreachable;
+}
+
+/// How many instructions write `register` with `op`, on either side.
+fn writesOf(code: Code, comptime op: []const u8, register: []const u8) usize {
+    var name: [32]u8 = undefined;
+    return countOf(code, std.fmt.bufPrint(&name, op ++ " {s}, ", .{register}) catch unreachable);
+}
+
+/// Whether one of the program's first `first` `op`s reads a register one
+/// before it wrote.
+fn rereadsWritten(code: Code, comptime op: []const u8, first: usize) bool {
+    var written: [16][8]u8 = undefined;
+    var lengths: [16]usize = undefined;
+    var count: usize = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        var sides = std.mem.splitScalar(u8, disasm.disasm(word, &buffer).?, ';');
+        while (sides.next()) |side| {
+            const trimmed = std.mem.trim(u8, side, " ");
+            if (!std.mem.startsWith(u8, trimmed, op ++ " ") or count == first) continue;
+            var operands = std.mem.splitSequence(u8, trimmed[op.len + 1 ..], ", ");
+            const dest = operands.next().?;
+            while (operands.next()) |each| {
+                const name = std.mem.trim(u8, each, " ");
+                for (written[0..count], lengths[0..count]) |*was, length| {
+                    if (std.mem.eql(u8, was[0..length], name)) return true;
+                }
+            }
+            @memcpy(written[count][0..dest.len], dest);
+            lengths[count] = dest.len;
+            count += 1;
+        }
+    }
+    return false;
+}
+
+test "through Mesa's back end, a selection kept in the arm of one kept: its mask the outer's with its condition, and a jump over each arm" {
+    // glslc_nested_kept: a sample in each arm keeps each selection, and
+    // the outer arm goes on past the inner merge. ntq_emit_cf_list meets
+    // the inner nir_if in the outer's then_list (nir_to_vir.c:4809-4818),
+    // in non-uniform control flow (:4562-4573): no fresh execute, but the
+    // outer's with the inner condition NORed in, a MOV of it with NORNZ
+    // (:4482-4492); a bu.allna over each then_list, neither cheap
+    // (:4505-4509); and a bu.alla over the inner else, the copies of the
+    // outer sample's floats into the inner phis' registers (:4535-4542).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_nested_kept);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 8), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.alla "));
+    try testing.expectEqual(@as(usize, 3), countOf(code, "bu."));
+    try testing.expectEqual(@as(usize, 1), countOf(code, ".nornz"));
+    try testing.expectEqual(@as(usize, 4), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 53), code.words.len);
+    // Without -O glslc keeps the variable in memory, which
+    // nir_lower_vars_to_ssa makes the same phis of: the same program.
+    var o0: Work = .{};
+    const unoptimized = try throughMesa(&o0, &reference.glslc_nested_kept_o0);
+    try testing.expectEqualSlices(u64, code.words, unoptimized.words);
+}
+
+test "through Mesa's back end, a selection kept in the false arm of one kept" {
+    // ntq_emit_cf_list of the outer's else_list (nir_to_vir.c:4549):
+    // the inner selection's mask is made from the else's, as from a
+    // then_list's.
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_nested_else);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 8), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.alla "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, ".nornz"));
+    try testing.expectEqual(@as(usize, 54), code.words.len);
+}
+
+test "through Mesa's back end, nested selections on a push constant and on a varying: uniform outside, under the mask inside" {
+    // The first selection is on the push constant, outside of any
+    // non-uniform control flow: ntq_emit_uniform_if, a bu.anynap
+    // (nir_to_vir.c:4562-4573, :4437-4439); the varying's in its arm is
+    // the first non-uniform one, with an execute of its own and its
+    // condition turned (:4470-4483). The second is on the varying, and the
+    // push constant's in its arm is in non-uniform control flow, so under
+    // the mask too, NORNZ (:4486-4487).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_nested_uniform);
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.anynap"));
+    try testing.expectEqual(@as(usize, 3), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.alla "));
+    try testing.expectEqual(@as(usize, 5), countOf(code, "bu."));
+    try testing.expectEqual(@as(usize, 1), countOf(code, ".nornz"));
+    try testing.expectEqual(@as(usize, 8), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 82), code.words.len);
+}
+
+test "through Mesa's back end, a compute program's store in an arm of a selection whose arm stores" {
+    // Each store's address is written under the mask of the arm it is in
+    // (emit_tmu_general_address_write, nir_to_vir.c:491-492), the inner's the
+    // outer's with its condition NORed in.
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_nested_store);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "add.ifa tmua"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, ".nornz"));
+    try testing.expectEqual(@as(usize, 41), code.words.len);
+}
+
+test "through Mesa's back end, a vertex program's nested selections kept, which the coordinate program flattens" {
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const vertex = try vertexThroughMesa(&work, &reference.glslc_nested_vertex, key);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 7), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 2), countOf(vertex, "bu.allna"));
+    try testing.expectEqual(@as(usize, 2), countOf(vertex, "bu.alla "));
+    try testing.expectEqual(@as(usize, 1), countOf(vertex, ".nornz"));
+    try testing.expectEqual(@as(usize, 83), vertex.words.len);
+    // The coordinate program reads neither buffer: both selections' arms
+    // are emptied, and flattened however deep (nir_opt_peephole_select.c
+    // :548-553), the inner one first.
+    work = .{};
+    key.coordinate = true;
+    key.system_values = vertex.vertex.system_values;
+    const coordinate = try vertexThroughMesa(&work, &reference.glslc_nested_vertex, key);
+    try testing.expect(!hasBranch(&work));
+    try testing.expectEqual(@as(usize, 0), countOf(coordinate, "bu."));
+    try testing.expectEqual(@as(usize, 16), coordinate.words.len);
+}
+
+test "through Mesa's back end, a selection kept only for the one kept in its arm" {
+    // The outer arm is cheap but for the inner selection, control flow,
+    // which nir_opt_peephole_select flattens none of
+    // (nir_opt_peephole_select.c:538-541). nir_opt_cse finds the inner
+    // arm's product of v.y and 3.0 made in the outer arm: three products
+    // in all, and the four of the sample with it each read it in a register
+    // none of them writes (nir_liveness.c:247-256).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_nested_only);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .mul));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
+    try testing.expect(!rereadsWritten(code, "fmul.ifa", 4));
+    try testing.expectEqual(@as(usize, 53), code.words.len);
+}
+
+test "through Mesa's back end, a sample in an inner arm that nir_opt_cse finds in the outer: the inner selection flattened" {
+    // The inner arm's sample is the outer's (nir_opt_cse), and what is
+    // left of the arm, four products, is under the limit: four bcsels in
+    // the outer arm. Each tests the comparison's bool again rather than
+    // compare again, the comparison reading v.y in the register of a phi
+    // the first bcsel writes (ntq_get_alu_parent, nir_to_vir.c:1248-1255).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_nested_taken);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "fcmp"));
+    try testing.expectEqual(@as(usize, 38), code.words.len);
+}
+
+test "through Mesa's back end, a selection kept in the arm of one, all of its true arm: nir_opt_collapse_if's shape, refused still" {
+    // nir_opt_collapse_if makes the two one on the iand of their
+    // conditions (nir_opt_peephole_select.c:412-506), the inner arm still
+    // a block kept. That is not yet.
+    var work: Work = .{};
+    try testing.expectError(Error.Branches, throughMesa(&work, &reference.glslc_nested_collapse));
+}
+
+test "through Mesa's back end, seventeen selections one after another, each flattened, each giving its regions back" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_flat_many);
+    try testing.expect(!hasBranch(&work));
+    try testing.expectEqual(@as(usize, 17), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 61), code.words.len);
+}
+
+test "through Mesa's back end, the webs of nested phis: what interferes is copied, the rest shares a register" {
+    var red: [8]u8 = undefined;
+    // NestedWebs: f, the inner false way's float, shares the phis'
+    // register, made into it before the branch; z, the outer false way's,
+    // is live where f is made (nir_defs_interfere, nir_liveness.c:292-312),
+    // so copied where that way ends; t, uniform, is in no web of a phi
+    // that is not (nir_from_ssa.c:426-430), so copied too.
+    var work: Work = .{};
+    const webs = try throughMesa(&work, NestedWebs.words);
+    const into = redOf(webs, &red);
+    try testing.expectEqual(@as(usize, 1), writesOf(webs, "fmul", into));
+    try testing.expectEqual(@as(usize, 2), writesOf(webs, "mov.ifa", into));
+    try testing.expectEqual(@as(usize, 0), countOf(webs, "bu.alla "));
+    try testing.expectEqual(@as(usize, 46), webs.words.len);
+    // NestedWhole: x both false ways bring, in the inner phi's web, merged
+    // whole into the outer's (merge_merge_sets, nir_from_ssa.c:197-223):
+    // made into the register, t copied, the sum made into it, and no
+    // false way copies anything.
+    work = .{};
+    const whole = try throughMesa(&work, NestedWhole.words);
+    const both = redOf(whole, &red);
+    try testing.expectEqual(@as(usize, 1), writesOf(whole, "fmul", both));
+    try testing.expectEqual(@as(usize, 1), writesOf(whole, "mov.ifa", both));
+    try testing.expectEqual(@as(usize, 1), writesOf(whole, "fadd.ifa", both));
+    try testing.expectEqual(@as(usize, 41), whole.words.len);
+    // LaterCopyReads: where the inner true way ends, the second phi's
+    // copy reads n after the first phi's copy is made, each copy an
+    // instruction of its own in the order of the phis (nir_from_ssa.c:
+    // 342-352), so n is live there (search_for_use_after_instr,
+    // nir_liveness.c:247-265). The first phi's web, its copies with it,
+    // is the outer phi's (merge_merge_sets), so n is in no web of it:
+    // made into a register of its own, and copied where the outer false
+    // way ends.
+    work = .{};
+    const later = try throughMesa(&work, LaterCopyReads.words);
+    const outer = redOf(later, &red);
+    try testing.expectEqual(@as(usize, 0), writesOf(later, "fmul", outer));
+    try testing.expectEqual(@as(usize, 3), writesOf(later, "mov", outer));
+    try testing.expectEqual(@as(usize, 45), later.words.len);
+}
+
+test "through Mesa's back end, a selection flattened in a kept arm, and one kept on the same comparison as the one it is in" {
+    // FlatInKept: the inner selection is a bcsel in the outer arm, and the
+    // product past the outer merge is made again, the arm's dominating it
+    // not (nir_opt_cse).
+    var work: Work = .{};
+    const flat = try throughMesa(&work, FlatInKept.words);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .mul));
+    try testing.expectEqual(@as(usize, 31), flat.words.len);
+    // SameCondition: both kept, the inner comparison made again where the
+    // outer's flags are gone. nir_opt_if would take the inner condition
+    // in the outer's arm to be true (opt_if_evaluate_condition_use) and
+    // nir_opt_dead_cf the inner selection out: not yet. The product made
+    // past the inner merge is copied into the green phi's register where
+    // the outer true way ends, and x where its false way does: the inner
+    // selection, on the same comparison, copies nothing for the outer's
+    // phis.
+    work = .{};
+    var green: [8]u8 = undefined;
+    const same = try throughMesa(&work, SameCondition.words);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 2), countOf(same, "fcmp"));
+    try testing.expectEqual(@as(usize, 2), writesOf(same, "mov.ifa", packOperandOf(same, 1, &green)));
+    try testing.expectEqual(@as(usize, 50), same.words.len);
+}
+
+test "through Mesa's back end, kept selections first in each arm of one: ANDZ and NORNZ with the arm's mask" {
+    // NestedAtStart: the true arm's inner selection is on a float and a
+    // half being apart, which v3d tests IFNA and so ANDZ with the arm's
+    // mask; the false arm's on a comparison it tests IFA, so NORNZ
+    // (ntq_emit_nonuniform_if, nir_to_vir.c:4484-4491). The product
+    // the true arm reads past its inner merge is made again past the
+    // outer merge, the arm's not dominating it (nir_opt_cse.c:76).
+    var work: Work = .{};
+    const code = try throughMesa(&work, NestedAtStart.words);
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 1), countOf(code, ".andz"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, ".nornz"));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .mul));
+    try testing.expectEqual(@as(usize, 74), code.words.len);
+}
+
+test "through Mesa's back end, a float an arm's product reads in each of its floats, and a comparison read again: neither from a register the arm wrote" {
+    var red: [8]u8 = undefined;
+    // ScaleInArm: s, made before the selection, is read by each of the
+    // four products of the scale in the arm, which nir_lower_alu_width
+    // makes an instruction a float (nir_lower_alu_width.c:407-432): live
+    // where the first is made (nir_liveness.c:247-256), so in no web with
+    // it, and copied where the false way ends. Before 1.207 the first
+    // product was written over it.
+    var work: Work = .{};
+    const scaled = try throughMesa(&work, ScaleInArm.words);
+    try testing.expect(!rereadsWritten(scaled, "fmul.ifa", 4));
+    try testing.expectEqual(@as(usize, 1), writesOf(scaled, "mov.ifa", redOf(scaled, &red)));
+    try testing.expectEqual(@as(usize, 39), scaled.words.len);
+    // SplatInArm: the same, s named four times by a vector rather than
+    // scaled: each product reads it through the vector it is in.
+    work = .{};
+    const splat = try throughMesa(&work, SplatInArm.words);
+    try testing.expect(!rereadsWritten(splat, "fmul.ifa", 4));
+    try testing.expectEqual(@as(usize, 1), writesOf(splat, "mov.ifa", redOf(splat, &red)));
+    try testing.expectEqual(@as(usize, 39), splat.words.len);
+    // SelectsInArm: v.y shares the red phi's register, which the first
+    // bcsel writes; the two after it test the comparison's bool, not
+    // compare v.y again (ntq_get_alu_parent, nir_to_vir.c:1248-1255).
+    // Before 1.207 each compared again what the first had written.
+    work = .{};
+    const selected = try throughMesa(&work, SelectsInArm.words);
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 2), countOf(selected, "fcmp"));
+    try testing.expectEqual(@as(usize, 33), selected.words.len);
 }
 
 /// A selection kept for its false arm's cost, with the same sine in both
@@ -16046,9 +16613,16 @@ test "a selection is flattened under the limit its SelectionControl sets, and on
     try testing.expectEqual(@as(usize, 2), countOf(branch, "bu."));
     try testing.expectEqual(@as(usize, 45), branch.words.len);
     // The outer selection of glslc_collapse asking not to be: no collapse
-    // past its comparison, and the outer arm, a selection in it, then
-    // refused as a branch: no selection in a kept one is kept.
-    try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_collapse, .selection_merge, 0, 1, dont_flatten)));
+    // past its comparison, the inner selection flattened at 24 into a
+    // bcsel in the outer arm, which is kept (since 1.207; before, an arm
+    // that had held a selection was refused).
+    const outer = try throughMesa(&work, &comptime patched(&reference.glslc_collapse, .selection_merge, 0, 1, dont_flatten));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 1), countOf(outer, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(outer, "bu."));
+    try testing.expectEqual(@as(usize, 30), outer.words.len);
     // A control of neither bit, which vtn fails.
     try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_branch, .selection_merge, 0, 1, 4)));
     // Flatten is the same program where the arms are under 24 anyway.

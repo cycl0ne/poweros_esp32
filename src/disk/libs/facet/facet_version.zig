@@ -6855,4 +6855,47 @@ pub const LIBRARY_VERSION = 1;
 /// triangles' edges. With the cores' functions made wrong on purpose they
 /// are 12,423 and 37,922 apart. The other 299 cases are each as they were
 /// at 1.205, and FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 206;
+///
+/// 207: **Selections kept in the arms of selections kept (docs/
+/// facet-vulkan10.md item 60).** A selection kept a branch had to be at
+/// the top level; one in an arm was refused. ntq_emit_cf_list emits a
+/// nir_if wherever it is (nir_to_vir.c:4809-4818), ntq_emit_if takes the
+/// uniform form only outside non-uniform control flow (:4562-4573), and
+/// ntq_emit_nonuniform_if folds an inner condition into the execute it
+/// finds with NORNZ or ANDZ (:4482-4492). nir_opt_peephole_select
+/// flattens no arm that holds control flow (nir_opt_peephole_select.c:
+/// 538-541), so a selection that holds a kept one is kept. A selection's
+/// arms are regions in the region it is in (`Work.region_parent`), which
+/// `dominates` follows out as nir_opt_cse's dominance (nir_opt_cse.c:76);
+/// a selection flattened gives its regions back. The back end keeps a
+/// stack of branches, and fromSsa is nir_from_ssa's coalescing whole:
+/// each way's end in block order (nir_from_ssa.c:404-443), whole webs
+/// merged (:198-223), every pair of nodes tested (:232-304), with
+/// nir_def_is_live_at's liveness (nir_liveness.c:272-291).
+///
+/// Two fixes to wrong code 1.206 shipped. A scalar each float of a vector
+/// operation reads is live where its first float is made, as
+/// nir_lower_alu_width makes them one at a time (nir_lower_alu_width.c:
+/// 407-432; nir_liveness.c:247-256): a float made before an arm and
+/// scaled by in it shared the product's first float's register, which
+/// the rest then read written over. And a comparison that reads a float
+/// in a web is not emitted again for a bcsel or a branch, the bool tested
+/// instead (ntq_get_alu_parent, nir_to_vir.c:1248-1255): three bcsels in
+/// a kept arm compared a float the first had written under the mask.
+///
+/// Ten references: glslc_nested_kept, glslc_nested_kept_o0,
+/// glslc_nested_else, glslc_nested_uniform, glslc_nested_store,
+/// glslc_nested_vertex, glslc_nested_only, glslc_nested_taken,
+/// glslc_nested_collapse and glslc_flat_many. The V3D's tests are 390,
+/// thirteen new and two changed. Of 32 mutations, 30 fail them; the two
+/// left change nothing.
+///
+/// On the CM5 FacetBoth 1.71's "shipped nested kept branches", a kept
+/// selection in a kept arm whose arm scales by a float made before both,
+/// and "shipped bcsels in a kept arm", three bcsels on a float the red's
+/// phi brings, are each 8 of 230400 pixels apart, the edge pixels where
+/// the plain cases differ. With readAgain and readsWeb taken out of the
+/// back end each is 19,349 apart, the pixels where both comparisons
+/// hold. The other 301 cases are each as they were at 1.206, and
+/// FacetProbe passes its 890 checks.
+pub const LIBRARY_REVISION = 207;

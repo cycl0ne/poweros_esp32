@@ -3170,6 +3170,71 @@ On the CM5, FacetBoth 1.70 has two new cases, each a shader glslc compiled witho
 
 The other 299 cases are each as they were at 1.205, and FacetProbe is 890 of 890.
 
+**Then selections kept in the arms of selections kept**, facet.library 1.207. Until now a selection kept a branch had to be at the top level. `keepSelection` refused one in an arm (Error.Branches), and so did any program whose kept arm held a selection a branch. Mesa has no such rule:
+- ntq_emit_cf_list emits a nir_if wherever it meets one, in an arm too (nir_to_vir.c:4809-4818).
+- ntq_emit_if takes the uniform form only outside non-uniform control flow (:4562-4573).
+- Inside it, ntq_emit_nonuniform_if makes the inner mask from the outer's. It keeps the execute it finds and folds the inner condition into it with a MOV of NORNZ, or ANDZ where the condition is inverted (:4482-4492).
+- nir_opt_peephole_select flattens no arm that holds control flow (nir_opt_peephole_select.c:538-541). So the selection that holds a kept one is kept too.
+
+The parts:
+- **The walk.** A selection's arms are regions in the region it is in (`Work.region_parent`), where until now they were regions of the top level.
+  - `dominates` follows a step's regions out. It is nir_opt_cse's dominance (nir_opt_cse.c:76) on this structured program: a step dominates one in its own region or in a region inside that.
+  - A selection flattened gives its arms' steps to the region it is in, and gives its regions back where they were the last. glslc_flat_many has seventeen selections in a row, and they fit in the 33 regions.
+  - A selection that holds a kept one is kept. Its arm then holds control flow, which no limit flattens.
+- **The order.** The steps are laid outermost first: a kept selection's marks around its arms, each arm laid the same way.
+- **The back end** keeps a stack of the branches it is in, `most_nesting` deep. A branch's phis are those of its condition after its end_if, up to the next mark of the level it is at. The two selections of SameCondition share one comparison, and each keeps its own phis.
+- **The coalescing, nir_from_ssa's as a whole.** Until now it tested a phi against its true way's float only, which was enough while no web met another selection's. NestedWebs shows where it is not: a phi's two floats are made before the outer selection, one each way. The old test would have given z and f one register, but z is live where f is made, and f writes over it.
+  - fromSsa now coalesces each way's end in the order of its blocks (aggressive_coalesce_block and aggressive_coalesce_parallel_copy, nir_from_ssa.c:404-443).
+  - It merges whole webs (merge_merge_sets, :198-223).
+  - It tests every pair of their nodes against each other (merge_sets_interfere, :232-304).
+  - Liveness is nir_def_is_live_at's (nir_liveness.c:272-291). A float is live where a step that may run later reads it. A step in the other arm of a selection whose true arm the float is in may not run later.
+  - A way's copies are each an instruction of its own, in the order of the phis (nir_from_ssa.c:342-352). So a float that a later copy at a way's end reads is live where the copies before it are made. LaterCopyReads shows it: a uniform float the inner selection's second phi takes is not put in the web its first phi's copies joined.
+
+Two fixes to wrong code that 1.206 shipped. Each is shown on the 1.206 compiler:
+- **A float that every float of a vector operation reads.** nir_lower_alu_to_scalar (nir_to_vir.c:2259) makes an instruction of each float, in order (nir_lower_alu_width.c:407-432). So a scalar that a scale reads is live where the scale's first float is made (search_for_use_after_instr, nir_liveness.c:247-256). facet looked for reads at later steps only. A float made before an arm, scaled by in it and brought by the other way, shared the register of the product's first float. The three products after it then read it written over. `readAgain` counts a read at a later float of the same step, and `madeOf` follows a construct to the float it names.
+- **A comparison emitted again where it reads a float in a web.** ntq_emit_bool_to_cond emits a bool's comparison again when the flags no longer hold it. ntq_get_alu_parent will not do that for a comparison that reads a load_reg, because a store_reg since may have written the register (nir_to_vir.c:1248-1255). It tests the bool instead (:1277-1281). facet compared again. In a kept arm, three bcsels on v.y < 0.5, with v.y in the red phi's web, compared v.y twice after the first bcsel had written that register under the mask. `readsWeb` is Mesa's rule.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
+- **nir_opt_collapse_if of a kept selection.** An inner selection kept, all of the outer's true arm, neither with a false arm, is refused (Error.Branches): glslc_nested_collapse, and DeepCostly. Mesa makes the two one selection on the iand of their conditions (nir_opt_peephole_select.c:413-506), which keeps the inner arm a branch. *Facet-wide*, and the next step, 1.208.
+- **nir_opt_if's opt_if_evaluate_condition_use** (nir_opt_if.c:1016, run by v3d's loop at nir_to_vir.c:2300), not ported since 1.171, with opt_if_merge and opt_if_simplification. Since 1.207 there is a program it changes: a selection on the condition of the one it is in is kept a second branch. Mesa takes the condition to be true in that arm, and nir_opt_dead_cf then takes out the inner selection. *Facet-wide*: the program is right, only longer, and no feature gates it.
+- **The limits.** Selections nest 8 deep (`most_nesting`), 8 are kept in a program (`most_kept`), and their arms are 33 regions. *Facet-wide*: Mesa has none of these limits.
+
+Where the port is not Mesa's but the program is the same: the webs are numbered in the order of the begin_ifs, and Mesa's merge sets in the order of the blocks. That changes which register a web gets, not what the program computes.
+
+Nothing here is the V3D's alone, so the list for the Radeon's has nothing new.
+
+Results:
+- **The references**, each compiled with -O but where said:
+  - glslc_nested_kept, 262 words: a sample keeps a selection in the arm of one a sample keeps, and the outer arm goes on past the inner merge. Two bu.allna and one bu.alla, with the inner mask NORNZ, in 53 instructions. glslc_nested_kept_o0, 332 words, is the same shader without -O: the same program to the word.
+  - glslc_nested_else, 256 words: the kept selection is in the outer's false arm. 54 instructions.
+  - glslc_nested_uniform, 411 words: a selection on a varying in one on a push constant, which is uniform (a bu.anynap), with an execute of its own; and one on the push constant in one on a varying, under the mask too (NORNZ). 82 instructions.
+  - glslc_nested_store, 228 words: a compute program's store in an arm of a selection whose arm stores. Both addresses are written under their masks. 41 instructions.
+  - glslc_nested_vertex, 301 words: uniform buffer reads in nested arms on the vertex's number. The vertex program keeps both, in 83 instructions. The coordinate program reads neither and flattens both, in 16 instructions with no branch.
+  - glslc_nested_only, 378 words, without -O: the outer selection is kept only for the kept one in its arm. nir_opt_cse finds the inner arm's v.y * 3.0 made in the outer arm. 53 instructions.
+  - glslc_nested_taken, 255 words: the inner arm's sample is the outer's. What is left of the inner arm is four bcsels, which test the comparison's bool. 38 instructions.
+  - glslc_nested_collapse, 216 words: nir_opt_collapse_if's shape with the inner arm kept, refused until 1.208.
+  - glslc_flat_many, 838 words, without -O: seventeen selections in a row, each flattened. 17 bcsels and no branch.
+- **The shapes**, built in the IR, each described at its test: NestedWebs, NestedWhole, FlatInKept, SameCondition, NestedAtStart (a kept selection first in each arm of one, ANDZ in the one and NORNZ in the other), LaterCopyReads, and for the two fixes ScaleInArm, SplatInArm and SelectsInArm.
+- **The tests.** The V3D's tests are 390, thirteen new. Two changed:
+  - DeepCostly is refused for the collapse, where it was refused for its nesting.
+  - glslc_collapse with DontFlatten on the outer selection is a branch over the inner selection's bcsel, where it was refused.
+
+  Of 32 mutations, 30 fail them. Two of those were written again so they compile. Eight failed none at first, and fail since the shapes were added for them:
+  - NestedAtStart: the selections laid innermost first, a selection laid that is not in the arm, the region past a merge made the top level's, and ANDZ made NORNZ;
+  - SplatInArm: readAgain reading the second operand alone, and madeOf not following a construct;
+  - SameCondition, made longer: a selection's phis taken past the next mark of its level;
+  - LaterCopyReads: a joined web's copies left out of the tests after.
+
+  The two left change nothing:
+  - Two copies at a way's end ordered the other way about. Their phis are one selection's and are both read past it (nir_opt_dce takes a phi nothing reads), so they interfere anyway.
+  - The divergence that a web joined into another brings, dropped. fromSsa joins only webs of the same divergence.
+
+On the CM5, FacetBoth 1.71 has two new cases. Each is an IR twin of a host shape, its arm kept a branch by thirteen sums and sines:
+- **"shipped nested kept branches"** is 8 of 230400 pixels apart, 252 at worst. Its outer selection keeps the inner one in its arm, under the outer's mask. The inner arm scales a vector by three quarters of the green, made before both, which the inner false way brings to the red. The vector's first float is a quarter of the last sine: the sines come to nearly 1 whatever they start from, and the first draft, with a half of it plus a half, hid the fault under 1/255.
+- **"shipped bcsels in a kept arm"** is 8 apart, 240 at worst. Its kept arm has three bcsels on the green being under a half, and the green is what the red's phi brings the other way.
+
+The 8 are the edge pixels where the plain cases first differ: the first is at 154,70, which the V3D leaves the clear colour. With readAgain and readsWeb taken out of the back end, each case is 19,349 apart: the pixels where the red and the green are both under a half. Those are where the inner arm runs, and where a bcsel that compares its first's result again gets the other answer. The other 301 cases are each as they were at 1.206, and FacetProbe is 890 of 890.
+
 ### 61. Multisampling: 4 samples a pixel on both devices, with resolve attachments and CmdResolveImage's body **[critical path]**
 
 *rasterisation* &mdash; conformance-blocking, port, **sized 07.11.2026: 21 commits, about 1,590 lines of code, 1,340 of tests and 90 of docs**; **the cores' half done in 1.114**, the V3D's is steps V1 to V8
