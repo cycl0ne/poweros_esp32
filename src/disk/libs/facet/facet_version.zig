@@ -6898,4 +6898,34 @@ pub const LIBRARY_VERSION = 1;
 /// back end each is 19,349 apart, the pixels where both comparisons
 /// hold. The other 301 cases are each as they were at 1.206, and
 /// FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 207;
+///
+/// 208: **nir_opt_collapse_if of a kept selection (docs/
+/// facet-vulkan10.md item 60).** An inner selection kept a branch, all of
+/// the outer's true arm but for the block before it, neither with a false
+/// arm, was refused. peephole_select_block tries nir_opt_collapse_if
+/// first (nir_opt_peephole_select.c:531-533), which moves the inner arm
+/// whole: it wants the block before it all of instructions that may be
+/// flattened (block_check_for_allowed_instrs, :464-469) and the outer
+/// merge's phis trivial (:445-462, :474-486), makes the iand of the two
+/// conditions (:492-496) and moves the inner selection before the outer
+/// one (:498-502). The inner selection's phis and its branch are put on
+/// the iand, which the back end tests with a PUSHZ (nir_to_vir.c:
+/// 1277-1281); the outer one is kept no more, and is flattened.
+/// `Selection.kept_first` keeps both where the outer was kept for the
+/// block before the inner one, and the kept arm's regions stay its own,
+/// so a float made in it dominates none made past the merge.
+///
+/// Two references: glslc_collapse_apart, a sample before the inner
+/// selection that keeps both, and glslc_collapse_sampled, one branch on
+/// the iand and the block's float a bcsel on the outer condition.
+/// glslc_nested_collapse and DeepCostly compile, where they were refused.
+/// The V3D's tests are 391, one new and two changed. Of 12 mutations, 10
+/// fail them; the two left change nothing.
+///
+/// On the CM5 FacetBoth 1.72's "shipped collapsed kept branch", a kept
+/// selection all of another's true arm but for a block that halves the
+/// alpha, is 8 of 230400 pixels apart, the edge pixels where the plain
+/// cases differ. With the iand made an ior it is 22,767 apart. The other
+/// 304 cases are each as they were at 1.207, and FacetProbe passes its
+/// 890 checks.
+pub const LIBRARY_REVISION = 208;

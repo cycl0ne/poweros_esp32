@@ -150,7 +150,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.71 (11.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.72 (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -1212,6 +1212,36 @@ const Shipped = struct {
             const picked = b.vector(&.{ b.select(below, t, w), b.select(below, w, z), b.select(below, x, t), b.scalar(1) });
             b.endIf(chosen);
             b.color(b.merged(chosen, picked, passed));
+        }
+    });
+    /// A selection the V3D keeps a branch for thirteen sums and sines of
+    /// the blue, all of another's true arm but for the block before it,
+    /// which makes half the alpha: nir_opt_collapse_if makes the two one
+    /// selection on the iand of the green's being under a half and the
+    /// red's (since 1.72), and the alpha's phi is left a bcsel on the
+    /// red's. The arm's red is the last sine times the blue, so a lane
+    /// the branch took on the green's alone would show.
+    const CollapsedKept = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const v = b.input(0, .f32x4);
+            const x = b.component(v, 0);
+            const y = b.component(v, 1);
+            const z = b.component(v, 2);
+            const w = b.component(v, 3);
+            const half = b.scalar(0.5);
+            const passed = b.vector(&.{ x, y, z, w });
+            const outer = b.ifHolds(b.lessThan(x, half));
+            const halved = b.mul(w, half);
+            const inner = b.ifHolds(b.lessThan(y, half));
+            var made = z;
+            inline for (0..13) |_| made = b.sin(b.add(made, half));
+            const turned = b.vector(&.{ b.mul(made, z), x, y, w });
+            b.endIf(inner);
+            const chosen = b.merged(inner, turned, passed);
+            b.endIf(outer);
+            const colour = b.merged(outer, chosen, passed);
+            const alpha = b.merged(outer, halved, w);
+            b.color(b.vector(&.{ b.component(colour, 0), b.component(colour, 1), b.component(colour, 2), alpha }));
         }
     });
     /// What glslc's `for_loop` computes, its loop of four runs written out
@@ -2799,6 +2829,9 @@ const shipped_entries = [_]shader.Entry{
     // Selections kept in kept arms, and bcsels in a kept arm (since 1.71).
     Shipped.NestedKept.entry("shipped nested kept"),
     Shipped.SelectsKept.entry("shipped selects kept"),
+    // A kept selection nir_opt_collapse_if makes one with the one it is in
+    // (since 1.72).
+    Shipped.CollapsedKept.entry("shipped collapsed kept"),
 };
 const shipped_words = [_]shader.Spirv{
     .{},                                            .{},                                        .{},                                           .{},
@@ -2828,6 +2861,7 @@ const shipped_words = [_]shader.Spirv{
     shader.Spirv.of(&shipped_packing_bytes),        shader.Spirv.of(&shipped_packing_halves),   shader.Spirv.of(&shipped_packing_half),        shader.Spirv.of(&shipped_matrix_inverse),
     shader.Spirv.of(&shipped_determinant4),         shader.Spirv.of(&shipped_bits),             shader.Spirv.of(&shipped_vertex_branch),       shader.Spirv.of(&shipped_branches),
     shader.Spirv.of(&shipped_outputs),              shader.Spirv.of(&shipped_vertex_outputs),   Shipped.NestedKept.spirv,                      Shipped.SelectsKept.spirv,
+    Shipped.CollapsedKept.spirv,
 };
 
 /// glslc's own output, at -O, for a discard in an `if` of no `else` all
@@ -12083,6 +12117,7 @@ const cases = [_]Case{
     .{ .name = "shipped vertex outputs in arms", .run = Cases.numbered("shipped vertex outputs") },
     .{ .name = "shipped nested kept branches", .run = Cases.shipped("as it is", "shipped nested kept", false, clockwise_at) },
     .{ .name = "shipped bcsels in a kept arm", .run = Cases.shipped("as it is", "shipped selects kept", false, clockwise_at) },
+    .{ .name = "shipped collapsed kept branch", .run = Cases.shipped("as it is", "shipped collapsed kept", false, clockwise_at) },
     .{ .name = "patches: triangles, even", .run = Cases.tessellated(.{ .patch_points = 3 }, 0, 3) },
     .{ .name = "patches: triangles, uneven", .run = Cases.tessellated(.{ .patch_points = 3, .control = "uneven" }, 0, 6) },
     .{ .name = "patches: triangles, edges", .run = Cases.tessellated(.{ .patch_points = 3, .control = "uneven", .polygon_mode = .line }, 0, 3) },
