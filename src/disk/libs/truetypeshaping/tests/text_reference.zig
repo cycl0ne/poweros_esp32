@@ -11,10 +11,15 @@
 //! the tests need the fonts, and neither Python nor HarfBuzz.
 //!
 //! The texts are chosen among those the two shape by the same rules: of
-//! one script each, without a letter and a mark the font has one
-//! character for, without marks in a font that does not place them, and
-//! without anything a script is rearranged for. What the script's head
-//! says of it holds for a case added.
+//! one script each, without marks in a font that has outlines for them
+//! and no table that places them, and without anything a script is
+//! rearranged for. What the script's head says of it holds for a case
+//! added.
+//!
+//! Besides the fetched fonts there is one made of a rule (`Made`), which
+//! needs no file: a font is said by the characters it lacks, so that a
+//! text is shaped with a font that has a character, its parts, or
+//! neither (`text_made.zig`).
 
 const std = @import("std");
 const fonts = @import("../../truetype/tests/reference.zig");
@@ -52,6 +57,33 @@ pub const Font = struct {
     sha256: []const u8,
     cases: []const Case,
 };
+
+/// One text of a font made of a rule, and what it is shaped to.
+///
+/// The font has no tables. Each character up to U+FFFF has the glyph of
+/// its own number, and no character beyond; a glyph's advance is 400 and
+/// ten times what its number leaves over 37.
+pub const Made = struct {
+    name: []const u8,
+    /// The text, in UTF-8.
+    text: []const u8,
+    /// Whether it is read from right to left.
+    backward: bool = false,
+    /// How many units an em has.
+    em: u32 = 1000,
+    /// The characters it is otherwise with: `.{ character, glyph }`, the
+    /// glyph 0 for one the font lacks.
+    characters: []const [2]u32 = &.{},
+    /// A character and a selector the font has a glyph for:
+    /// `.{ character, selector, glyph }`.
+    variants: []const [3]u32 = &.{},
+    /// The glyphs as they are drawn, each as its number, its cluster, its
+    /// advance and its offsets to the right and upward.
+    glyphs: []const [5]i32,
+};
+
+/// The made font's texts.
+pub const made = @import("text_reference/made.zig").cases;
 
 pub const go_regular = &@import("text_reference/go_regular.zig").font;
 pub const liberation_sans_regular = &@import("text_reference/liberation_sans_regular.zig").font;

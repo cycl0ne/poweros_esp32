@@ -30,7 +30,12 @@
 //!     the language requires; then those of every other feature. A
 //!     lookup of the second go so finds the glyphs the first one left.
 //!   - After `GSUB` the characters a text does not show are taken out,
-//!     unless a lookup made something of them.
+//!     unless a lookup made something of them. The bytes of one fall to
+//!     the glyph drawn before it, which in a run read from right to left
+//!     is the one behind it in the text.
+//!   - A space of a set width that is drawn with the font's space glyph
+//!     gets its width in place of that glyph's advance, unless a lookup
+//!     made a ligature of it.
 //!   - After `GPOS`, where the language has no `kern` feature there, the
 //!     font's `kern` table sets pairs closer or apart: each glyph the
 //!     feature holds for and the next one that is no mark, the left of
@@ -52,11 +57,13 @@ const _match = @import("_match.zig");
 const _lookup = @import("_lookup.zig");
 const _plan = @import("_plan.zig");
 const _gpos = @import("_gpos.zig");
+const _normal = @import("_normal.zig");
 
 /// What a font gives the shaping: its tables, of no length where it has
 /// none, and its glyphs' advances. A text asks it for more: the glyph of
 /// a character, the one of a character with a selector behind it (0
-/// where the font has none for the two), and its `kern` table.
+/// where the font has none for the two), its `kern` table, and how many
+/// units its em has, by which a space the font lacks gets its width.
 pub const Font = struct {
     gdef: Table = Table.none,
     gsub: Table = Table.none,
@@ -68,6 +75,8 @@ pub const Font = struct {
     kerningFn: ?*const fn (context: *anyopaque, left: u32, right: u32) i32 = null,
     glyphFn: ?*const fn (context: *anyopaque, char: u32) u32 = null,
     variantFn: ?*const fn (context: *anyopaque, char: u32, selector: u32) u32 = null,
+    /// How many of the font's units an em has.
+    emFn: ?*const fn (context: *anyopaque) u32 = null,
 };
 
 /// What a call asks for.
@@ -259,9 +268,14 @@ pub fn shape(order: *const Order, buffer: *Buffer) i32 {
     if (order.text) {
         result = stage(&call, font.gsub, .substitute, wanted[early..], false);
         if (result != truetypeshaping.TTS_OK) return result;
-        buffer.removeIgnorables();
+        buffer.removeIgnorables(order.backward);
     }
-    for (buffer.slice()) |*item| item.advance = font.advanceFn(font.context, item.glyph);
+    for (buffer.slice()) |*item| {
+        item.advance = font.advanceFn(font.context, item.glyph);
+        if (item.space != 0 and item.flags & _buffer.ITEM_LIGATED == 0) {
+            item.advance = _normal.spaceAdvance(font, item.space, item.advance);
+        }
+    }
     result = stage(&call, font.gpos, .position, wanted, true);
     if (result != truetypeshaping.TTS_OK) return result;
     if (order.text) {

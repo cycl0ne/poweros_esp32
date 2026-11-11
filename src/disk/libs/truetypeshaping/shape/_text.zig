@@ -12,11 +12,15 @@
 //! text of such characters alone is one stretch of no script, shaped by
 //! what a font lists as `DFLT`.
 //!
-//! Each stretch gets a buffer of its own. A character becomes one glyph,
-//! and a character with a variation selector behind it the glyph the
-//! font has for the two, where it has one; the selector then is part of
-//! that glyph's cluster. A glyph's cluster is the place in the text of
-//! the first byte it came from.
+//! Each stretch is first made the characters the font draws it with
+//! (`_normal.zig`): a character the font lacks taken apart, a
+//! character's marks put in order, and a character and a mark put
+//! together where the font has the two as one. Then it gets a buffer of
+//! its own, a glyph for each of those characters; a character with a
+//! variation selector behind it is the glyph the font has for the two,
+//! where it has one, and the selector then is part of that glyph's
+//! cluster. A glyph's cluster is the place in the text of the first
+//! byte it came from.
 //!
 //! The features are the ones a text is shaped with unless told otherwise
 //! (`defaults`, and two more by the direction), and behind them the
@@ -37,6 +41,7 @@ const _buffer = @import("_buffer.zig");
 const Memory = _buffer.Memory;
 const _shape = @import("_shape.zig");
 const _scripts = @import("_scripts.zig");
+const _normal = @import("_normal.zig");
 
 const featureTag = truetypeshaping.featureTag;
 
@@ -124,33 +129,19 @@ fn merge(text: *const Text, merged: []Feature) usize {
     return count;
 }
 
-/// Fills `buffer` with the glyphs of the characters of `text` from
-/// `start` up to `end`.
-fn fill(text: *const Text, start: usize, end: usize, buffer: *_buffer.Buffer) void {
-    const font = &text.font;
-    const bytes = text.bytes;
-    var at = start;
-    while (at < end) {
-        const read = utf8.read(bytes[at..end]);
-        var item: _buffer.Item = .{
-            .glyph = 0,
-            .cluster = @intCast(at),
+/// Fills `buffer` with the glyphs of the stretch's characters in
+/// `list`. The buffer was made with the room.
+fn fill(list: *const _normal.List, buffer: *_buffer.Buffer) void {
+    for (list.slice()) |entry| {
+        const hidden: u8 = if (entry.hidden) _buffer.ITEM_HIDDEN else 0;
+        buffer.append(.{
+            .glyph = entry.glyph,
+            .cluster = entry.cluster,
             .mask = 0,
-            .class = _scripts.classOf(read.char),
-            .flags = _scripts.flagsOf(read.char),
-        };
-        at += read.length;
-        if (at < end) {
-            const behind = utf8.read(bytes[at..end]);
-            if (_scripts.selects(behind.char)) {
-                if (font.variantFn) |variantFn| item.glyph = variantFn(font.context, read.char, behind.char);
-                if (item.glyph != 0) at += behind.length;
-            }
-        }
-        if (item.glyph == 0) {
-            if (font.glyphFn) |glyphFn| item.glyph = glyphFn(font.context, read.char);
-        }
-        buffer.append(item);
+            .class = _scripts.classOf(entry.char),
+            .flags = _scripts.flagsOf(entry.char) | hidden,
+            .space = entry.space,
+        });
     }
 }
 
@@ -184,9 +175,13 @@ pub fn shapeText(text: *const Text, run: *ShapedRun) i32 {
         const tags = _scripts.tagsOf(stretch.script);
         order.script = tags.first;
         order.other_script = tags.other;
-        var buffer = _buffer.Buffer.init(memory, stretch.chars) orelse return truetypeshaping.TTSERR_NOMEM;
+        var list = _normal.List.init(memory, &text.font, stretch.chars) orelse return truetypeshaping.TTSERR_NOMEM;
+        defer list.deinit();
+        list.fill(text.bytes, start, stretch.end);
+        if (list.failed) return truetypeshaping.TTSERR_NOMEM;
+        var buffer = _buffer.Buffer.init(memory, list.len) orelse return truetypeshaping.TTSERR_NOMEM;
         defer buffer.deinit();
-        fill(text, start, stretch.end, &buffer);
+        fill(&list, &buffer);
         const result = _shape.shape(&order, &buffer);
         if (result != truetypeshaping.TTS_OK) return result;
         for (buffer.slice()) |item| {

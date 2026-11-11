@@ -533,8 +533,17 @@ language, features, run)` takes the text itself, in UTF-8, and does what
 a caller of `ShapeGlyphs` would do by hand. It cuts the text into
 stretches of one script - a space, a digit, a comma and a mark belong to
 the stretch before them - and shapes each by what the font lists for
-that script. Each character becomes its glyph, and a character with a
-variation selector the glyph the font has for the two. The features a
+that script. A stretch is first made the characters the font draws it
+with: a letter and a mark behind it become the one character there is
+for the two where the font has its glyph, a character the font lacks
+becomes its parts where it has those, and the marks on a letter are put
+in the order of their combining classes - so a text draws the same
+however it spells a letter, and a font's lookups find the marks in one
+order. A space of a set width the font lacks (U+2000 to U+200A, U+202F,
+U+205F, U+3000) is its space with the width the character says, and the
+non-breaking hyphen its hyphen (since 1.2). Each character becomes its
+glyph, and a character with a variation selector the glyph the font has
+for the two. The features a
 text is set with are applied without being asked for: `rvrn`, `ccmp`,
 `locl`, `rlig`, `liga`, `clig`, `calt` and `rclt` replace; `kern`,
 `mark`, `mkmk`, `curs`, `dist`, `abvm` and `blwm` place; and where
@@ -574,10 +583,10 @@ to left comes back turned around, its last stretch first: a text of both
 directions is the caller's to cut and to order, and no bracket is
 mirrored. Every script is shaped by the features above: the joined forms
 of Arabic and the syllables of the scripts of India are not made. A
-letter and a mark behind it are not put together into the one character
-a font may have for the two - the mark is set on the letter by the
-font's `GPOS` - and a character the font lacks is the missing glyph.
-svg.datatype lays its text out with this call.
+character the font has no form of is the missing glyph. Where a font
+has no `GPOS`, a mark left on its letter moves back onto it by its
+advance and is not set by its outline's box. svg.datatype lays its text
+out with this call.
 
 ## The system's fonts
 
@@ -671,7 +680,7 @@ if (gb.RemFont(&mine.font)) sys.FreeVec(mine); // true once nobody holds it
 | `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces and Liberation's (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation only onto the 64-bit machines' disks. With them two fonts only the host tests read, which go on no disk: Noto Sans Devanagari and Noto Color Emoji |
 | `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
 | `scripts/shape-reference.py` | on the host: applies the fetched fonts' `GSUB` and `GPOS` lookups to runs of glyphs - every glyph of a font, and sequences its lookups have rules for - with an applier of its own on fontTools' reading of the tables, and writes what comes out, a digest for each script, language and feature list, as the Zig files `truetypeshaping.library`'s host tests compare its shaping with (`src/disk/libs/truetypeshaping/tests/reference/`). `--check` says whether the files are the ones it would write, `--show <font> <case>` prints a case's runs |
-| `scripts/shape-text-reference.py` | on the host: shapes texts in the fetched fonts with libharfbuzz - Latin with its kerning and marks, Greek, Cyrillic, Hebrew read from right to left, Devanagari by its plain features, emoji, features switched for a part of a text - and writes the glyphs, clusters, advances and offsets as the Zig files `truetypeshaping.library`'s host tests compare `ShapeText`'s answers with (`src/disk/libs/truetypeshaping/tests/text_reference/`); `--check` says whether they are up to date |
+| `scripts/shape-text-reference.py` | on the host: shapes texts with libharfbuzz - in the fetched fonts Latin with its kerning and marks, letters and marks spelled apart and together, Greek, Cyrillic, Hebrew read from right to left, Devanagari by its plain features, emoji, features switched for a part of a text; and in a font made of a rule, which is told the characters it lacks, texts whose characters are taken apart, sorted and put together - and writes the glyphs, clusters, advances and offsets as the Zig files `truetypeshaping.library`'s host tests compare `ShapeText`'s answers with (`src/disk/libs/truetypeshaping/tests/text_reference/`); `--check` says whether they are up to date |
 | `C:ListFonts` | every font by family, size and where it is; `SAMPLE` draws them |
 | `C:FixFonts` | writes every family's contents file again |
 | `C:SetPrefs` | sets the system's fonts, with the rest of its settings, from `ENV:Sys`; `SHOW` prints them |

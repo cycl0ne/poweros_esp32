@@ -258,8 +258,10 @@ through and over, and `xml:space`. Since 1.4 the font shapes the text,
 through truetypeshaping.library's `ShapeText`: the characters that
 follow each other in one face, size and letter spacing are shaped as
 one stretch, whatever spans they are in, so a pair is kerned and a
-ligature joined across a span's border, a mark is set on its letter,
-and each glyph is drawn in the style of the span its character is in.
+ligature joined across a span's border, a mark is set on its letter -
+or, with truetypeshaping.library 1.2, the two drawn with the one glyph
+the font has for them - and each glyph is drawn in the style of the
+span its character is in.
 A character with an `x`, `y`, `dx` or `dy` of its own starts a new
 stretch; a `letter-spacing` leaves the ligatures apart and comes once
 behind each character or ligature. Text is read from left to right. A

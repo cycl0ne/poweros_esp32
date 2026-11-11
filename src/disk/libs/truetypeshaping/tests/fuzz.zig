@@ -39,8 +39,9 @@
 //! glyph's number as a character, so that the tables' lookups find their
 //! glyphs - and a text drawn around a run's glyphs from letters of
 //! several scripts, marks, the characters a text does not show,
-//! selectors and bytes that are no UTF-8. A fuzzer's run is shaped as a
-//! text as well, its bytes as they come.
+//! selectors, characters the font lacks and has the parts of, and bytes
+//! that are no UTF-8. A fuzzer's run is shaped as a text as well, its
+//! bytes as they come.
 //!
 //! The closed page is the Linux kernel's, so the tests are skipped on
 //! another host.
@@ -534,13 +535,17 @@ fn tablesOf(placed: [3][]u8) shaping.Tables {
 
 /// What a drawn text is made of besides a run's glyphs: letters of
 /// several scripts and what many share, marks, the characters a text
-/// does not show, selectors, and bytes that are no UTF-8.
+/// does not show, selectors, bytes that are no UTF-8, and characters
+/// with parts - letters with marks, a syllable, a mark of two - with a
+/// space and a hyphen the font lacks.
 const text_parts = [_][]const u8{
     "a",        "f",        "i",        " ",         "1",         ",",
     "\u{3B1}",  "\u{5D0}",  "\u{915}",  "\u{94D}",   "\u{4E2D}",  "\u{1F600}",
     "\u{301}",  "\u{323}",  "\u{AD}",   "\u{200C}",  "\u{200D}",  "\u{34F}",
     "\u{180B}", "\u{FE0F}", "\u{2060}", "\u{E0041}", "\u{E0100}", "\xC3",
-    "\x80",     "\xE2\x82", "\xF0\x9F", "\xFF",
+    "\x80",     "\xE2\x82", "\xF0\x9F", "\xFF",      "\u{E9}",    "\u{1EAD}",
+    "\u{1F82}", "\u{AC01}", "\u{344}",  "\u{958}",   "\u{308}",   "\u{5BC}",
+    "\u{5B8}",  "\u{2003}", "\u{2011}",
 };
 
 /// The most pieces a drawn text has, each of four bytes at most, and the
@@ -549,8 +554,10 @@ const most_pieces = 24;
 const most_text = 3 * most_read;
 
 /// The font a text is shaped with has a glyph for one character with a
-/// selector, and a `kern` table of a few pairs.
+/// selector, and a `kern` table of a few pairs. It lacks some of the
+/// characters with parts, a space and a hyphen.
 const text_variants = [_][3]u32{.{ 'a', 0xFE0F, 300 }};
+const text_lacking = [_][2]u32{ .{ 0x1EAD, 0 }, .{ 0x1F82, 0 }, .{ 0x1F02, 0 }, .{ 0xAC01, 0 }, .{ 0x344, 0 }, .{ 0x2003, 0 }, .{ 0x2011, 0 } };
 const text_kerning = [_][3]i32{ .{ 'a', 'f', -50 }, .{ 'f', 'i', 20 }, .{ 10, 11, 30 }, .{ 17, 18, -40 } };
 
 /// How many texts of runs a round shapes.
@@ -692,6 +699,7 @@ const Harness = struct {
             .language = way.language,
             .backward = way.backward,
             .features = way.features,
+            .glyphs = &text_lacking,
             .variants = &text_variants,
             .kerning = &text_kerning,
             .blocks = blocks,

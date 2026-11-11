@@ -136,6 +136,8 @@ test {
     _ = @import("libs/truetypeshaping/tests/library.zig");
     _ = @import("libs/truetypeshaping/tests/fonts.zig");
     _ = @import("libs/truetypeshaping/tests/text_fonts.zig");
+    _ = @import("libs/truetypeshaping/tests/text_made.zig");
+    _ = @import("libs/truetypeshaping/tests/normal.zig");
     _ = @import("libs/truetypeshaping/tests/fuzz.zig");
     _ = @import("libs/vector/tests/vector.zig");
     _ = @import("libs/asl/tests/asl.zig");

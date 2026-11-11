@@ -76,6 +76,9 @@ pub const Item = struct {
     mark_class: u8 = 0,
     attach_type: u8 = ATTACH_NONE,
     flags: u8 = 0,
+    /// The width a space drawn with the font's space glyph gets
+    /// (`_normal.zig`); 0 for every other glyph.
+    space: u8 = 0,
 
     /// Which part of a ligature it sits on; 0 for a ligature itself.
     pub fn partOn(item: *const Item) u32 {
@@ -208,8 +211,12 @@ pub const Buffer = struct {
     /// Takes out the items a text does not show (`ITEM_IGNORABLE`),
     /// but for those a lookup replaced. Where no neighbour has the
     /// cluster of one taken out, its part of the text falls to the glyph
-    /// before it; at the run's start the glyph behind takes its cluster.
-    pub fn removeIgnorables(buffer: *Buffer) void {
+    /// drawn before it; where it is the first one drawn, the glyph
+    /// drawn behind takes its cluster. `backward` says the run is drawn
+    /// from its last item to its first.
+    pub fn removeIgnorables(buffer: *Buffer, backward: bool) void {
+        if (backward) buffer.reverse();
+        defer if (backward) buffer.reverse();
         const items = buffer.items;
         const count = buffer.len;
         var kept: u32 = 0;

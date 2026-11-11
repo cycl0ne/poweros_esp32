@@ -88,7 +88,8 @@ test "a text is cut by script, a shared character going with the stretch before"
     var run = shapeText(tables, "a \u{3B1}", .{});
     try expectShaped(&run, &.{ 'a' + 0x100, ' ' + 0x100, 0x3B1 + 0x200 }, &.{ 0, 1, 2 });
     // And the one behind the Greek letter is Greek's, as its mark is.
-    run = shapeText(tables, "\u{3B1}\u{301} a", .{});
+    // The font has no glyph for the two as one character.
+    run = shapeText(tables, "\u{3B1}\u{301} a", .{ .glyphs = &.{.{ 0x3AC, 0 }} });
     try expectShaped(&run, &.{ 0x3B1 + 0x200, 0x301, ' ' + 0x200, 'a' + 0x100 }, &.{ 0, 2, 4, 5 });
     // What a text starts with goes with its first stretch.
     run = shapeText(tables, " a", .{});
@@ -163,8 +164,12 @@ test "the characters a text does not show are taken out" {
     run = shapeText(.{}, "\u{AD}\u{200B}", .{});
     try testing.expectEqual(tts.TTS_OK, run.result);
     try testing.expectEqual(@as(u32, 0), run.count);
+    // Read from right to left, the glyph drawn before it is the one
+    // behind it in the text, and has its bytes then.
     run = shapeText(.{}, "a\u{AD}b", .{ .backward = true });
-    try expectShaped(&run, &.{ 'b', 'a' }, &.{ 3, 0 });
+    try expectShaped(&run, &.{ 'b', 'a' }, &.{ 1, 0 });
+    run = shapeText(.{}, "a\u{AD}\u{200B}b\u{200D}", .{ .backward = true });
+    try expectShaped(&run, &.{ 'b', 'a' }, &.{ 1, 0 });
 }
 
 test "one a lookup made something of stays" {
@@ -226,7 +231,8 @@ test "what a lookup looks at before and behind reaches across the non-joiner, no
 }
 
 test "a mark's advance is 0, and without GPOS it moves back by it" {
-    const options: harness.TextOptions = .{ .advances = &.{.{ 0x301, 200 }} };
+    // A font without the "é".
+    const options: harness.TextOptions = .{ .advances = &.{.{ 0x301, 200 }}, .glyphs = &.{.{ 0xE9, 0 }} };
     var run = shapeText(.{}, "e\u{301}x", options);
     try expectShaped(&run, &.{ 'e', 0x301, 'x' }, &.{ 0, 1, 3 });
     try run.expectAdvances(&.{ 1000, 0, 1000 });
@@ -252,7 +258,7 @@ test "a mark's advance is 0, and without GPOS it moves back by it" {
 }
 
 test "what is a mark is GDEF's to say where it sorts the glyphs" {
-    const options: harness.TextOptions = .{ .advances = &.{.{ 0x301, 200 }} };
+    const options: harness.TextOptions = .{ .advances = &.{.{ 0x301, 200 }}, .glyphs = &.{.{ 0xE9, 0 }} };
     // The accent is of no kind, the "x" a mark.
     var sorted: File = .{};
     layout.gdef(&sorted, .{ .kinds = &.{ .{ .glyph = 'e', .class = 1 }, .{ .glyph = 'x', .class = 3 } } });
@@ -263,7 +269,11 @@ test "what is a mark is GDEF's to say where it sorts the glyphs" {
 }
 
 test "the kern table sets pairs as they are drawn" {
-    const options: harness.TextOptions = .{ .kerning = &.{ .{ 'A', 'V', -80 }, .{ 'V', 'A', -50 } } };
+    // A font without the "Á".
+    const options: harness.TextOptions = .{
+        .kerning = &.{ .{ 'A', 'V', -80 }, .{ 'V', 'A', -50 } },
+        .glyphs = &.{.{ 0xC1, 0 }},
+    };
     var run = shapeText(.{}, "AVA", options);
     try testing.expectEqual(tts.TTS_OK, run.result);
     try run.expectAdvances(&.{ 920, 950, 1000 });
@@ -463,6 +473,42 @@ test "a text of more glyphs than there is room for says how many" {
     try testing.expectEqual(@as(u32, 4), run.count);
     run = shapeText(.{}, "abc", .{ .room = 3 });
     try expectShaped(&run, &.{ 'a', 'b', 'c' }, &.{ 0, 1, 2 });
+    // The glyphs are those the font draws the text with: a character
+    // it lacks taken apart is three of them.
+    const lacking: []const [2]u32 = &.{ .{ 0x1EAD, 0 }, .{ 0x1EA1, 0 }, .{ 0xE2, 0 } };
+    run = shapeText(.{}, "\u{1EAD}", .{ .room = 2, .glyphs = lacking });
+    try testing.expectEqual(tts.TTSERR_ROOM, run.result);
+    try testing.expectEqual(@as(u32, 3), run.count);
+}
+
+test "a text taken apart into more characters than it had" {
+    // 16 characters the font lacks, each of them three it has: more
+    // than the room a stretch starts with.
+    const lacking: []const [2]u32 = &.{ .{ 0x1EAD, 0 }, .{ 0x1EA1, 0 }, .{ 0xE2, 0 } };
+    const text = "\u{1EAD}" ** 16;
+    var run = shapeText(.{}, text, .{ .glyphs = lacking });
+    try testing.expectEqual(tts.TTS_OK, run.result);
+    try testing.expectEqual(@as(u32, 48), run.count);
+    for (run.glyphs[0..run.count], 0..) |glyph, index| {
+        const expected: u32 = switch (index % 3) {
+            0 => 'a',
+            1 => 0x323,
+            else => 0x302,
+        };
+        try testing.expectEqual(expected, glyph.glyph);
+        try testing.expectEqual(@as(u32, @intCast(index / 3 * 3)), glyph.cluster);
+    }
+    // And without the memory for it at any block.
+    var blocks: u32 = 0;
+    while (blocks < 64) : (blocks += 1) {
+        run = shapeText(.{}, text, .{ .glyphs = lacking, .blocks = blocks });
+        if (run.result == tts.TTS_OK) break;
+        try testing.expectEqual(tts.TTSERR_NOMEM, run.result);
+        try testing.expectEqual(@as(u32, 0xDEAD), run.count);
+    }
+    // The features, the stretch's characters and the room they grew
+    // to, its buffer and its masks.
+    try testing.expect(blocks > 4 and blocks < 64);
 }
 
 test "without the memory the call says so, and leaves the count" {

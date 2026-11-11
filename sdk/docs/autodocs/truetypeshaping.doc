@@ -170,9 +170,31 @@ truetypeshaping.library/ShapeText
 	before `deva`) under that one first. A text of shared characters
 	alone is shaped by what the font lists as `DFLT`.
 
-	Each character becomes the glyph `GlyphIndex` has for it. Where a
-	variation selector follows and `GlyphVariant` has a glyph for the
-	two, that glyph stands for both.
+	Each stretch is first made the characters the font draws it with. A
+	character with no mark behind it stays as it is where `GlyphIndex`
+	has a glyph for it; where it has none, the character becomes its
+	parts - U+00E9 an `e` and the acute U+0301 - a step at a time, as
+	soon as the font has all of them. A character with marks behind it
+	is taken apart as far as the font has the parts. The marks on a
+	letter are then put in the order of their combining classes, those
+	of one class staying as they were written, and a letter and a mark
+	become the one character there is for the two where the font has a
+	glyph for it: `e` and U+0301 are drawn with the font's U+00E9. A
+	character the font has no form of is glyph 0. The combining grapheme
+	joiner (U+034F) keeps the marks on its two sides apart: they are not
+	sorted across it.
+
+	A space of a set width the font lacks (U+2000 to U+200A, U+202F,
+	U+205F, U+3000, and the no-break space U+00A0) is drawn with the
+	font's space and has its width by the em - U+2003 an em, U+2009 a
+	fifth of one - or by a glyph: U+2007 a digit's width, U+2008 a full
+	stop's, U+202F half the space's. The non-breaking hyphen (U+2011)
+	the font lacks is its hyphen (U+2010).
+
+	Then each character becomes the glyph `GlyphIndex` has for it. Where
+	a variation selector follows and `GlyphVariant` has a glyph for the
+	two, that glyph stands for both, and the character and its marks
+	stay as they were written.
 
 	The features applied, where the font lists them for the script and
 	the language: `rvrn`, `ccmp`, `locl`, `rlig`, `liga`, `clig`, `calt`,
@@ -208,10 +230,14 @@ truetypeshaping.library/ShapeText
 	is one.
 
 	A glyph's cluster is the place in the text of the first byte of its
-	character. A ligature has the lowest of its parts', and the glyphs
-	one glyph became all have its own. The bytes of a character taken out
-	count to the glyph before it, at a stretch's start to the one behind
-	it.
+	character. The parts a character was taken apart into all have its
+	own; a letter and a mark put together have the letter's; a mark
+	sorted before others and the ones it passed have the lowest among
+	them. A ligature has the lowest of its parts', and the glyphs one
+	glyph became all have its own. The bytes of a character taken out
+	count to the glyph drawn before it - in a text read from right to
+	left the one behind it in the text - and for the first glyph drawn
+	to the one drawn next.
 
 	A text read from right to left is answered turned around as a whole:
 	its last stretch first.
@@ -243,11 +269,11 @@ truetypeshaping.library/ShapeText
 	rearranged or told apart by its place in a word: the joined forms of
 	Arabic and the syllables of the scripts of India are not made.
 
-	A character and a mark behind it are not put together into the one
-	character a font may have for the two, and a character the font
-	lacks is not taken apart: it is glyph 0. In a font without `GPOS` a
-	mark is not set by its outline's box; it only moves back by its
-	advance.
+	Only a letter and its marks are put together: two letters that
+	make one character - the single letters of a Hangul syllable - stay
+	two. A run of more than 32 marks on one letter is left in the order
+	it was written. In a font without `GPOS` a mark is not set by its
+	outline's box; it only moves back by its advance.
 
    BUGS
 	None known.

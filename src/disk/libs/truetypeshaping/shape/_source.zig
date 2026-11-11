@@ -32,6 +32,7 @@ pub const Source = struct {
             .kerningFn = kerningOf,
             .glyphFn = glyphOf,
             .variantFn = variantOf,
+            .emFn = emOf,
         };
     }
 };
@@ -67,6 +68,13 @@ fn glyphOf(context: *anyopaque, char: u32) u32 {
 fn variantOf(context: *anyopaque, char: u32, selector: u32) u32 {
     const source: *Source = @ptrCast(@alignCast(context));
     return source.sb.truetype_base.GlyphVariant(source.outline, char, selector);
+}
+
+fn emOf(context: *anyopaque) u32 {
+    const source: *Source = @ptrCast(@alignCast(context));
+    var metrics: truetype.FontMetrics = .{};
+    source.sb.truetype_base.FontMetrics(source.outline, &metrics);
+    return metrics.units_per_em;
 }
 
 /// The font's table of the tag `letters`; of no length when it has none.

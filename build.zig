@@ -1609,6 +1609,9 @@ pub fn build(b: *std.Build) void {
     // Where the fetched fonts are, for the tests that read one; empty
     // when scripts/fetch-fonts.sh has not run, and those tests skip.
     test_options.addOption([]const u8, "fonts_dir", fontsDir(b) orelse "");
+    // And the fetched files of the Unicode Character Database; empty
+    // when scripts/fetch-unicode.sh has not run.
+    test_options.addOption([]const u8, "unicode_dir", unicodeDir(b) orelse "");
     for ([_][]const u8{ "src/tests.zig", "src/rom/devs/timer/timeval.zig" }) |path| {
         const test_mod = b.createModule(.{
             .root_source_file = b.path(path),
@@ -2564,6 +2567,17 @@ fn fontsDir(b: *std.Build) ?[]const u8 {
         std.log.info("no font sources (scripts/fetch-fonts.sh): the disk has no FONTS:", .{});
         return null;
     };
+    dir.close(io);
+    return path;
+}
+
+/// Where scripts/fetch-unicode.sh put the files of the Unicode Character
+/// Database, if it has: those of the version the tables in the tree
+/// are made from.
+fn unicodeDir(b: *std.Build) ?[]const u8 {
+    const io = b.graph.io;
+    const path = b.pathFromRoot("toolchain/unicode/16.0.0");
+    var dir = std.Io.Dir.cwd().openDir(io, path, .{}) catch return null;
     dir.close(io);
     return path;
 }

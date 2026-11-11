@@ -10,6 +10,7 @@
 //!   foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig>
 //!   foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig>
 //!   foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig>
+//!   foldgen normal <UnicodeData.txt> <CompositionExclusions.txt> <out.zig>
 //!
 //! `posfs` writes posfs's case fold table (sdk/libs/dos/posfs/fold1.zig):
 //! simple case folding, the file's C and S lines, one code point to one,
@@ -65,6 +66,22 @@
 //! sides when that is one script, and is `Zyyy` otherwise - the private
 //! use areas are. The version is Scripts.txt's.
 //!
+//! `normal` writes what truetypeshaping.library takes characters apart
+//! and puts them together by
+//! (src/disk/libs/truetypeshaping/shape/_normal_table.zig), three lists
+//! from UnicodeData.txt: where the combining class changes, as `class`'s
+//! table has the classes; each character that is one or two others, by
+//! its canonical decomposition - the mappings with a `<tag>` are left
+//! out; and of those the pairs two characters are put together by,
+//! sorted by the two. A pair is left out of the last list where
+//! CompositionExclusions.txt names its character, or where the
+//! character or the first of its two has a combining class, so that
+//! putting together never changes the order a text's marks are read in.
+//! It stops where the data are not what the code is written for: a
+//! character with a combining class that is no mark, a decomposition of
+//! more than two, or a character that is more than four once every part
+//! is taken apart. The version is CompositionExclusions.txt's.
+//!
 //! A case table is runs: code points one or two apart that all move by the same
 //! amount (A-Z by +32; Ā, Ă, Ą... by +1 every second one), each run packed
 //! into a u64 and found by a binary search - 210 runs for Unicode 16's 1484
@@ -82,7 +99,7 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(1);
 }
 
-const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig> | foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig>";
+const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig> | foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig> | foldgen normal <UnicodeData.txt> <CompositionExclusions.txt> <out.zig>";
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -339,7 +356,148 @@ pub fn main(init: std.process.Init) !void {
         try cwd.writeFile(io, .{ .sub_path = args[4], .data = out.items });
         return;
     }
+    if (mem.eql(u8, args[1], "normal")) {
+        if (args.len != 5) fatal(usage, .{});
+        const data = try cwd.readFileAlloc(io, args[2], arena, limit);
+        const exclusions = try cwd.readFileAlloc(io, args[3], arena, limit);
+        const version = try versionNamed(exclusions, "# CompositionExclusions-", args[3]);
+        const normal = try normalOf(arena, data, exclusions);
+        try out.print(arena,
+            \\// SPDX-License-Identifier: MIT
+            \\//! What characters are taken apart and put together by, from Unicode
+            \\//! {s}: the combining classes and the canonical decompositions of
+            \\//! UnicodeData.txt, and which of them CompositionExclusions.txt keeps
+            \\//! from being put together. Written by tools/foldgen (`foldgen
+            \\//! normal`) from the files scripts/fetch-unicode.sh fetches; never
+            \\//! edited by hand.
+            \\//!
+            \\//! `starts` is where the combining class changes, sorted: each entry
+            \\//! the code point it starts at shifted up by 8, the class in the low
+            \\//! byte, the class good up to the next entry's code point. {d}
+            \\//! entries.
+            \\//!
+            \\//! `parts` is each character that is one or two others, sorted: the
+            \\//! character shifted up by 42, the first of the others by 21, the
+            \\//! second in the low bits, 0 for a character that is one other. Each
+            \\//! entry is one step: a part may be an entry itself. {d} entries.
+            \\//! The syllables of Hangul are not listed: their parts are counted
+            \\//! out.
+            \\//!
+            \\//! `joined` is the entries of `parts` two characters are put together
+            \\//! by, each the entry's place, sorted by the first of the two and
+            \\//! then the second. {d} entries.
+            \\
+            \\/// The Unicode version the table is from.
+            \\pub const unicode_version = "{s}";
+            \\
+            \\
+        , .{ version, normal.starts.len, normal.parts.len, normal.joined.len, version });
+        try writeStarts(arena, &out, "Where the combining class changes: `code << 8 | class`, sorted.", normal.starts);
+        try out.appendSlice(arena, "\n/// The characters that are others: `char << 42 | first << 21 | second`,\n/// sorted.\npub const parts = [_]u64{\n");
+        for (normal.parts, 0..) |part, at| {
+            if (at % 4 == 0) try out.appendSlice(arena, "   ");
+            try out.print(arena, " 0x{X:0>16},", .{part});
+            if (at % 4 == 3 or at + 1 == normal.parts.len) try out.appendSlice(arena, "\n");
+        }
+        try out.appendSlice(arena, "};\n\n/// The places in `parts` of what two characters are put together by,\n/// sorted by the two.\npub const joined = [_]u16{\n");
+        for (normal.joined, 0..) |place, at| {
+            if (at % 12 == 0) try out.appendSlice(arena, "   ");
+            try out.print(arena, " 0x{X:0>4},", .{place});
+            if (at % 12 == 11 or at + 1 == normal.joined.len) try out.appendSlice(arena, "\n");
+        }
+        try out.appendSlice(arena, "};\n");
+        try cwd.writeFile(io, .{ .sub_path = args[4], .data = out.items });
+        return;
+    }
     fatal(usage, .{});
+}
+
+/// What `normal` writes.
+const Normal = struct {
+    starts: []u32,
+    parts: []u64,
+    joined: []u16,
+};
+
+const class_mark: u8 = 8;
+
+/// How many characters `code` is once every part is taken apart.
+fn fullLength(parts: []const u64, code: u32) usize {
+    for (parts) |part| {
+        if (part >> 42 != code) continue;
+        const first: u32 = @intCast((part >> 21) & 0x1F_FFFF);
+        const second: u32 = @intCast(part & 0x1F_FFFF);
+        return fullLength(parts, first) + if (second != 0) fullLength(parts, second) else 0;
+    }
+    return 1;
+}
+
+/// The three lists of `normal`, from UnicodeData.txt in `data` and
+/// CompositionExclusions.txt in `exclusions`.
+fn normalOf(arena: mem.Allocator, data: []const u8, exclusions: []const u8) !Normal {
+    const classes = try classesOf(arena, data);
+    const combining = try arena.alloc(u8, 0x110000);
+    @memset(combining, 0);
+    var parts: std.ArrayList(u64) = .empty;
+    var lines = mem.splitScalar(u8, data, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw, " \t\r");
+        if (line.len == 0) continue;
+        var fields = mem.splitScalar(u8, line, ';');
+        const code = try std.fmt.parseInt(u21, fields.next() orelse continue, 16);
+        _ = fields.next() orelse continue;
+        _ = fields.next() orelse continue;
+        const class = try std.fmt.parseInt(u8, fields.next() orelse continue, 10);
+        _ = fields.next() orelse continue;
+        const mapping = fields.next() orelse continue;
+        if (class != 0) {
+            if (classes[code] != class_mark) fatal("{X} has the combining class {d} and is no mark", .{ code, class });
+            combining[code] = class;
+        }
+        if (mapping.len == 0 or mapping[0] == '<') continue;
+        var others = mem.tokenizeScalar(u8, mapping, ' ');
+        const first = try std.fmt.parseInt(u21, others.next() orelse continue, 16);
+        const second = if (others.next()) |text| try std.fmt.parseInt(u21, text, 16) else 0;
+        if (others.next() != null) fatal("{X} is more than two characters", .{code});
+        if (first == 0) fatal("{X}: a decomposition that does not read", .{code});
+        try parts.append(arena, @as(u64, code) << 42 | @as(u64, first) << 21 | second);
+    }
+    std.mem.sort(u64, parts.items, {}, std.sort.asc(u64));
+    for (parts.items) |part| {
+        const code: u32 = @intCast(part >> 42);
+        const length = fullLength(parts.items, code);
+        if (length > 4) fatal("{X} is {d} characters once taken apart", .{ code, length });
+    }
+
+    const excluded = try arena.alloc(bool, 0x110000);
+    @memset(excluded, false);
+    lines = mem.splitScalar(u8, exclusions, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw[0 .. mem.indexOfScalar(u8, raw, '#') orelse raw.len], " \t\r");
+        if (line.len == 0) continue;
+        excluded[try std.fmt.parseInt(u21, line, 16)] = true;
+    }
+    var joined: std.ArrayList(u16) = .empty;
+    for (parts.items, 0..) |part, place| {
+        const code: u32 = @intCast(part >> 42);
+        const first: u32 = @intCast((part >> 21) & 0x1F_FFFF);
+        if (part & 0x1F_FFFF == 0 or excluded[code] or combining[code] != 0 or combining[first] != 0) continue;
+        try joined.append(arena, std.math.cast(u16, place) orelse fatal("more decompositions than a u16 counts", .{}));
+    }
+    std.mem.sort(u16, joined.items, parts.items, struct {
+        fn lessThan(all: []u64, a: u16, b: u16) bool {
+            return all[a] & 0x3FF_FFFF_FFFF < all[b] & 0x3FF_FFFF_FFFF;
+        }
+    }.lessThan);
+
+    var starts: std.ArrayList(u32) = .empty;
+    var code: usize = 0;
+    while (code < combining.len) {
+        const here = combining[code];
+        try starts.append(arena, @as(u32, @intCast(code)) << 8 | here);
+        while (code < combining.len and combining[code] == here) code += 1;
+    }
+    return .{ .starts = starts.items, .parts = parts.items, .joined = joined.items };
 }
 
 /// The numbers `Class` in the table gives the classes, and the one for

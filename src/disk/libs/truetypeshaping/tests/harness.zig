@@ -20,6 +20,7 @@ const tts = sdk.truetypeshaping;
 const _shape = @import("../shape/_shape.zig");
 const _buffer = @import("../shape/_buffer.zig");
 const _text = @import("../shape/_text.zig");
+const _normal = @import("../shape/_normal.zig");
 
 const testing = std.testing;
 
@@ -172,9 +173,15 @@ pub const TextOptions = struct {
     advance: i32 = 1000,
     /// `.{ glyph, advance }`.
     advances: []const [2]i32 = &.{},
+    /// Each glyph has an advance by its number instead: 400 and ten
+    /// times what the number leaves over 37.
+    varied: bool = false,
     /// Characters whose glyph is not their own number: `.{ character,
-    /// glyph }`.
+    /// glyph }`, the glyph 0 for a character the font lacks. Every
+    /// other character up to U+FFFF has a glyph.
     glyphs: []const [2]u32 = &.{},
+    /// How many units an em has.
+    em: u32 = 1000,
     /// A character and a selector the font has a glyph for:
     /// `.{ character, selector, glyph }`.
     variants: []const [3]u32 = &.{},
@@ -188,6 +195,7 @@ pub const TextOptions = struct {
 
 fn textAdvanceOf(context: *anyopaque, glyph: u32) i32 {
     const options: *const TextOptions = @ptrCast(@alignCast(context));
+    if (options.varied) return @intCast(400 + glyph % 37 * 10);
     for (options.advances) |entry| {
         if (entry[0] == glyph) return entry[1];
     }
@@ -200,6 +208,11 @@ fn textGlyphOf(context: *anyopaque, char: u32) u32 {
         if (entry[0] == char) return entry[1];
     }
     return if (char <= 0xFFFF) char else 0;
+}
+
+fn textEmOf(context: *anyopaque) u32 {
+    const options: *const TextOptions = @ptrCast(@alignCast(context));
+    return options.em;
 }
 
 fn textVariantOf(context: *anyopaque, char: u32, selector: u32) u32 {
@@ -235,6 +248,7 @@ pub fn shapeText(tables: Tables, text: []const u8, options: TextOptions) Run {
             .kerningFn = textKerningOf,
             .glyphFn = textGlyphOf,
             .variantFn = textVariantOf,
+            .emFn = textEmOf,
         },
         .bytes = text,
         .backward = options.backward,
@@ -245,4 +259,46 @@ pub fn shapeText(tables: Tables, text: []const u8, options: TextOptions) Run {
     run.result = _text.shapeText(&request, &shaped);
     run.count = shaped.count;
     return run;
+}
+
+fn glyphUnlessLacking(context: *anyopaque, char: u32) u32 {
+    const lacking: *const []const u32 = @ptrCast(@alignCast(context));
+    var low: usize = 0;
+    var high: usize = lacking.len;
+    while (low < high) {
+        const middle = low + (high - low) / 2;
+        if (lacking.*[middle] == char) return 0;
+        if (lacking.*[middle] < char) low = middle + 1 else high = middle;
+    }
+    return char;
+}
+
+fn noAdvance(context: *anyopaque, glyph: u32) i32 {
+    _ = context;
+    _ = glyph;
+    return 0;
+}
+
+/// The characters a font draws `text` with, the whole of it one
+/// stretch: what its shaping starts from (`_normal.zig`). The font has
+/// a glyph for every character there is but for those of `lacking`,
+/// which is sorted. The characters are written to `found`, as many as
+/// it holds, and their number is answered.
+pub fn charactersOf(text: []const u8, lacking: []const u32, found: []u32) !usize {
+    var lender: Lender = .{ .left = null };
+    var sorted = lacking;
+    const font: _shape.Font = .{ .context = @ptrCast(&sorted), .advanceFn = noAdvance, .glyphFn = glyphUnlessLacking };
+    var chars: u32 = 0;
+    for (text) |byte| {
+        if (byte & 0xC0 != 0x80) chars += 1;
+    }
+    var list = _normal.List.init(.{ .context = &lender, .allocFn = allocate, .freeFn = release }, &font, chars) orelse
+        return error.OutOfMemory;
+    defer list.deinit();
+    list.fill(text, 0, text.len);
+    if (list.failed) return error.OutOfMemory;
+    for (list.slice(), 0..) |entry, index| {
+        if (index < found.len) found[index] = entry.char;
+    }
+    return list.len;
 }
