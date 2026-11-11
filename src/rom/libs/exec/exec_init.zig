@@ -119,7 +119,7 @@ pub const LIBRARY_VERSION = 1;
 /// machine's ready and waiting lists answer no list now. So a signal to a
 /// task waits only for the core that owns it, and a core choosing what to
 /// run next waits for no handler and for no other core's signal.
-pub const LIBRARY_REVISION = 34;
+pub const LIBRARY_REVISION = 35;
 const BUILD_DATE = "11.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

@@ -17,7 +17,7 @@ ABMON_11=nov ABMON_12=dic
 # Yes and no, before and after noon.
 YESSTR=Sí NOSTR=No AM_STR=AM PM_STR=PM
 # The hyphens and the quotes.
-SOFTHYPHEN=- HARDHYPHEN=-
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=« CLOSEQUOTE=»
 # The days near today, and any day after tomorrow.
 YESTERDAYSTR=Ayer TODAYSTR=Hoy TOMORROWSTR=Mañana FUTURESTR=Futuro
 # The order of the letters: Ñ after N.

@@ -6457,7 +6457,8 @@ fill the sign comes before the zeros, so `%03d` of -5 is "-05". A
 `.limit` cuts the text, and a null `%s` prints nothing at all - not even
 padding. A `%s`'s width and `.limit` count characters of its UTF-8, so
 `%-12s` lines up `Grüße` with `Hello` and a cut never ends inside a
-character. A format ending in a lone `%` ends there rather than reading
+character. `%c` takes a code point and writes it in UTF-8 - `€` is three
+bytes - U+FFFD for a value that is none. A format ending in a lone `%` ends there rather than reading
 past the NUL.
 
 **CONTEXT**

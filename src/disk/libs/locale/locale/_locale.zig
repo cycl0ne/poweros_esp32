@@ -16,17 +16,17 @@
 //! - `LOCALE:Languages/<name>.language` for the first language in the
 //!   list that has one: its words by their names (`DAY_1=Sonntag`), and
 //!   the letters it sorts after one of the alphabet's (`AFTER_Z=Å,ÄÆ,ÖØ`,
-//!   a comma between letters that sort apart). English is the library's
-//!   own and has no file.
+//!   a comma between letters that sort apart; any letter of any script,
+//!   64 at most). English is the library's own and has no file.
 //! - the time zone's rule, from the first line of ENV:Sys/timezone.
 //!
 //! Every file is a line of `KEY=value` pairs per line, as utility's
 //! NextSetting reads them - a value with blanks in double quotes - with
 //! `#` or `;` starting a line that is a comment; a key the library does
 //! not know is passed over. A file is UTF-8, a mark at its start allowed,
-//! and its text is converted to the locale's code set by utility.library
-//! as it is kept: a character the code set lacks becomes `?`, and a file
-//! that is not UTF-8 is taken as Latin-1, byte for byte.
+//! and its text is kept as it is; a file that is not UTF-8 is one an
+//! editor wrote in code page 1252, the Western code page of Windows, and
+//! its text is kept as that in UTF-8.
 //!
 //! What a file says is kept in the locale's own text, so the file is
 //! given back as soon as it is read; no lock is held while it is, because
@@ -43,6 +43,8 @@ const UtilityBase = sdk.interface.utility.UtilityBase;
 const DosBase = sdk.interface.dos.DosBase;
 const _base = @import("../locale_base.zig");
 const _chars = @import("../chars/_chars.zig");
+const _compare = @import("../compare/_compare.zig");
+const utf8 = utility.utf8;
 const LocaleBase = _base.LocaleBase;
 const ExtLocale = _base.ExtLocale;
 const Locale = locale.Locale;
@@ -114,7 +116,7 @@ const builtin_locale = Locale{
     .language_name = english,
     .pref_languages = .{ english, null, null, null, null, null, null, null, null, null },
     .flags = 0,
-    .code_set = locale.CODESET_LATIN1,
+    .code_set = locale.CODESET_UTF8,
     .country_code = "US",
     .telephone_code = 1,
     .time_zone = null,
@@ -155,7 +157,7 @@ const builtin_locale = Locale{
 /// the default until another is made one, and is never freed.
 pub fn makeBuiltin(ext: *ExtLocale) void {
     ext.* = .{ .public = builtin_locale, .usage = 1, .builtin = true, .strings = english_words };
-    rank(&letter_weights, &ext.primary);
+    rank(ext);
 }
 
 /// A locale made from the settings file `name`, held once by the caller;
@@ -176,7 +178,7 @@ pub fn make(lb: *LocaleBase, name: [*:0]const u8) ?*ExtLocale {
         .public = lb.builtin.public,
         .usage = 1,
         .strings = lb.builtin.strings,
-        .primary = lb.builtin.primary,
+        .letter_keys = lb.builtin.letter_keys,
     };
     if (!readSettings(lb, ext, name)) {
         sys.FreeVec(memory);
@@ -188,17 +190,18 @@ pub fn make(lb: *LocaleBase, name: [*:0]const u8) ?*ExtLocale {
 // --- the files ---------------------------------------------------------------------------
 
 /// A file read whole for `lb`: its text without a UTF-8 mark, and whether
-/// it is to be taken as Latin-1. The caller gives `whole` back with FreeVec.
+/// it is no UTF-8 and so code page 1252. The caller gives `whole` back
+/// with FreeVec.
 const File = struct {
     whole: []u8,
     text: []u8,
-    latin1: bool,
+    foreign: bool,
 
     fn read(lb: *LocaleBase, path: [*:0]const u8) ?File {
         const whole = prefs.loadWhole(lb.sys_base, lb.dos_base, path) orelse return null;
         var text = whole;
         if (text.len >= 3 and text[0] == 0xEF and text[1] == 0xBB and text[2] == 0xBF) text = text[3..];
-        return .{ .whole = whole, .text = text, .latin1 = !isUtf8(lb, text) };
+        return .{ .whole = whole, .text = text, .foreign = !utf8.valid(text) };
     }
 
     fn free(file: *const File, lb: *LocaleBase) void {
@@ -250,10 +253,10 @@ fn readSettings(lb: *LocaleBase, ext: *ExtLocale, name: [*:0]const u8) bool {
 
     var country_language: ?[]const u8 = null;
     if (country) |country_name| {
-        if (!readCountry(lb, ext, country_name, file.latin1, &country_language)) return false;
+        if (!readCountry(lb, ext, country_name, file.foreign, &country_language)) return false;
     }
     const list = languages orelse country_language orelse english;
-    if (!keepLanguages(lb, ext, list, file.latin1)) return fail(dl, dos.ERROR_OBJECT_TOO_LARGE);
+    if (!keepLanguages(ext, list, file.foreign)) return fail(dl, dos.ERROR_OBJECT_TOO_LARGE);
     if (!pickLanguage(lb, ext)) return false;
     readTimeZone(lb, ext);
     return true;
@@ -261,12 +264,12 @@ fn readSettings(lb: *LocaleBase, ext: *ExtLocale, name: [*:0]const u8) bool {
 
 /// The country `name`'s file read into `ext`. Its LANGUAGE, kept in
 /// `ext`'s text, is answered in `language`.
-fn readCountry(lb: *LocaleBase, ext: *ExtLocale, name: []const u8, latin1: bool, language: *?[]const u8) bool {
+fn readCountry(lb: *LocaleBase, ext: *ExtLocale, name: []const u8, foreign: bool, language: *?[]const u8) bool {
     const dl = lb.dos_base;
     var path: [256]u8 = undefined;
     const file_name = pathOf(&path, locale.countries_dir, name, ".country") orelse
         return fail(dl, dos.ERROR_INVALID_COMPONENT_NAME);
-    ext.public.locale_name = keep(lb, ext, withoutSuffix(name, ".country"), latin1) orelse
+    ext.public.locale_name = keep(ext, withoutSuffix(name, ".country"), foreign) orelse
         return fail(dl, dos.ERROR_OBJECT_TOO_LARGE);
 
     const file = File.read(lb, file_name) orelse return false;
@@ -274,11 +277,11 @@ fn readCountry(lb: *LocaleBase, ext: *ExtLocale, name: []const u8, latin1: bool,
     var settings = Settings.init(lb.utility_base, file.text);
     while (settings.next() catch return fail(dl, dos.ERROR_UNMATCHED_QUOTES)) |pair| {
         if (style.same(pair.key, "LANGUAGE")) {
-            const kept = keep(lb, ext, pair.value, file.latin1) orelse return fail(dl, dos.ERROR_OBJECT_TOO_LARGE);
+            const kept = keep(ext, pair.value, file.foreign) orelse return fail(dl, dos.ERROR_OBJECT_TOO_LARGE);
             language.* = kept[0..length(kept)];
             continue;
         }
-        switch (setCountry(lb, ext, pair.key, pair.value, file.latin1)) {
+        switch (setCountry(ext, pair.key, pair.value, file.foreign)) {
             .taken, .unknown => {},
             .wrong => return fail(dl, dos.ERROR_OBJECT_WRONG_TYPE),
             .full => return fail(dl, dos.ERROR_OBJECT_TOO_LARGE),
@@ -288,7 +291,7 @@ fn readCountry(lb: *LocaleBase, ext: *ExtLocale, name: []const u8, latin1: bool,
 }
 
 /// The list of languages, comma by comma, kept as the locale's preferred.
-fn keepLanguages(lb: *LocaleBase, ext: *ExtLocale, list: []const u8, latin1: bool) bool {
+fn keepLanguages(ext: *ExtLocale, list: []const u8, foreign: bool) bool {
     ext.public.pref_languages = @splat(null);
     var count: usize = 0;
     var start: usize = 0;
@@ -299,7 +302,7 @@ fn keepLanguages(lb: *LocaleBase, ext: *ExtLocale, list: []const u8, latin1: boo
         start = at + 1;
         if (word.len == 0) continue;
         if (count == ext.public.pref_languages.len) break;
-        ext.public.pref_languages[count] = keep(lb, ext, withoutSuffix(word, ".language"), latin1) orelse return false;
+        ext.public.pref_languages[count] = keep(ext, withoutSuffix(word, ".language"), foreign) orelse return false;
         count += 1;
     }
     if (count == 0) ext.public.pref_languages[0] = english;
@@ -317,7 +320,8 @@ fn pickLanguage(lb: *LocaleBase, ext: *ExtLocale) bool {
         if (style.same(name, "ENGLISH")) {
             ext.public.language_name = english;
             ext.strings = lb.builtin.strings;
-            ext.primary = lb.builtin.primary;
+            ext.placed_count = 0;
+            ext.letter_keys = lb.builtin.letter_keys;
             return true;
         }
         var path: [256]u8 = undefined;
@@ -335,26 +339,25 @@ fn pickLanguage(lb: *LocaleBase, ext: *ExtLocale) bool {
 /// A language's words and order of letters read into `ext`.
 fn readLanguage(lb: *LocaleBase, ext: *ExtLocale, file: File) bool {
     const dl = lb.dos_base;
-    var weights = letter_weights;
+    ext.placed_count = 0;
     var settings = Settings.init(lb.utility_base, file.text);
     next_pair: while (settings.next() catch return fail(dl, dos.ERROR_UNMATCHED_QUOTES)) |pair| {
         for (locale.string_names[1..], 1..) |string_name, string_num| {
             if (!style.same(pair.key, string_name)) continue;
-            ext.strings[string_num] = keep(lb, ext, pair.value, file.latin1) orelse return fail(dl, dos.ERROR_OBJECT_TOO_LARGE);
+            ext.strings[string_num] = keep(ext, pair.value, file.foreign) orelse return fail(dl, dos.ERROR_OBJECT_TOO_LARGE);
             continue :next_pair;
         }
         const key = pair.key;
         if (key.len == 7 and style.same(key[0..6], "AFTER_")) {
             const letter = style.upper(key[6]);
             if (letter < 'A' or letter > 'Z') continue;
-            var letters: [64]u8 = undefined;
-            if (pair.value.len > letters.len) return fail(dl, dos.ERROR_OBJECT_WRONG_TYPE);
-            @memcpy(letters[0..pair.value.len], pair.value);
-            const count = if (file.latin1) pair.value.len else toLatin1(lb, letters[0..pair.value.len]);
-            if (!placeAfter(&weights, letter - 'A', letters[0..count])) return fail(dl, dos.ERROR_OBJECT_WRONG_TYPE);
+            var letters: [256]u8 = undefined;
+            if (file.foreign and utf8.cp1252Length(pair.value) > letters.len) return fail(dl, dos.ERROR_OBJECT_WRONG_TYPE);
+            const groups = if (!file.foreign) pair.value else letters[0..utf8.fromCp1252(pair.value, &letters)];
+            if (!placeAfter(ext, letter - 'A', groups)) return fail(dl, dos.ERROR_OBJECT_WRONG_TYPE);
         }
     }
-    rank(&weights, &ext.primary);
+    rank(ext);
     return true;
 }
 
@@ -365,7 +368,7 @@ fn readTimeZone(lb: *LocaleBase, ext: *ExtLocale) void {
     defer file.free(lb);
     const line = trimmed(prefs.firstLine(file.text) orelse return);
     if (dos.timezone.parse(line) == null) return;
-    ext.public.time_zone = keep(lb, ext, line, true);
+    ext.public.time_zone = keep(ext, line, false);
 }
 
 // --- a country's keys ----------------------------------------------------------------------
@@ -444,12 +447,12 @@ const currencies_at = [_]style.Name{
 const Taken = enum { taken, unknown, wrong, full };
 
 /// A country key's value set in `ext`.
-fn setCountry(lb: *LocaleBase, ext: *ExtLocale, key: []const u8, value: []const u8, latin1: bool) Taken {
+fn setCountry(ext: *ExtLocale, key: []const u8, value: []const u8, foreign: bool) Taken {
     inline for (country_keys) |entry| {
         if (style.same(key, entry.key)) {
             const field = &@field(ext.public, entry.field);
             switch (entry.kind) {
-                .text => field.* = keep(lb, ext, value, latin1) orelse return .full,
+                .text => field.* = keep(ext, value, foreign) orelse return .full,
                 .grouping => field.* = keepGrouping(ext, value) orelse return .wrong,
                 .number => field.* = number(value) orelse return .wrong,
                 .digits => {
@@ -502,28 +505,20 @@ fn keepByte(ext: *ExtLocale, byte: u8) bool {
 
 // --- text ---------------------------------------------------------------------------------
 
-/// `bytes` kept in the locale's text, converted to its code set and ended
-/// with a NUL; null when the text is full.
-pub fn keep(lb: *LocaleBase, ext: *ExtLocale, bytes: []const u8, latin1: bool) ?[*:0]const u8 {
-    if (ext.text.len - ext.used < bytes.len + 1) return null;
-    const into = ext.text[ext.used..][0..bytes.len];
-    @memcpy(into, bytes);
-    const count = if (latin1) bytes.len else toLatin1(lb, into);
-    ext.text[ext.used + count] = 0;
+/// `bytes` kept in the locale's text, UTF-8 and ended with a NUL - the
+/// bytes of a `foreign` file, code page 1252, as that in UTF-8; null when
+/// the text is full.
+pub fn keep(ext: *ExtLocale, bytes: []const u8, foreign: bool) ?[*:0]const u8 {
+    const size = if (foreign) utf8.cp1252Length(bytes) else bytes.len;
+    if (ext.text.len - ext.used < size + 1) return null;
+    const into = ext.text[ext.used..][0..size];
+    if (foreign) {
+        _ = utf8.fromCp1252(bytes, into);
+    } else @memcpy(into, bytes);
+    ext.text[ext.used + size] = 0;
     const kept: [*:0]const u8 = @ptrCast(&ext.text[ext.used]);
-    ext.used += @intCast(count + 1);
+    ext.used += @intCast(size + 1);
     return kept;
-}
-
-/// Whether `bytes` are well-formed UTF-8, as utility.library reads it.
-pub fn isUtf8(lb: *LocaleBase, bytes: []const u8) bool {
-    return lb.utility_base.Utf8Kind(bytes.ptr, bytes.len) != utility.UTF8KIND_NONE;
-}
-
-/// UTF-8 turned into Latin-1 where it stands by utility.library, a
-/// character Latin-1 lacks as `?`; how many bytes it is now.
-pub fn toLatin1(lb: *LocaleBase, bytes: []u8) usize {
-    return lb.utility_base.Utf8ToLatin1(null, bytes.ptr, bytes.len, bytes.ptr, bytes.len);
 }
 
 /// The length of a NUL-ended string.
@@ -580,84 +575,49 @@ fn pathOf(into: []u8, dir: []const u8, name: []const u8, suffix: []const u8) ?[*
 
 // --- the order of letters --------------------------------------------------------------------
 
-/// Where a letter's weight starts: below it, every character that is not
-/// a letter, by its code.
-const letters_from: u16 = 256;
-/// The weights a letter may take: itself, and seven after it.
-const slots: u16 = 8;
-/// The bases past z: þ, then µ.
-const thorn: u8 = 26;
-const micro: u8 = 27;
-/// Every weight there is, one past the last.
-const weight_count = letters_from + (micro + 1) * slots;
-
-/// The letter of the alphabet each of À to ß is written on, `-` for ×, `_`
-/// for þ.
-const accented = "aaaaaaaceeeeiiiidnooooo-ouuuuy_s";
-
-/// The letter (0 for a ... 25 for z, then þ and µ) a letter of Latin-1 is
-/// sorted with when its case and accent are left out; null for anything
-/// else.
-fn baseOf(c: u8) ?u8 {
-    if (!_chars.is(c, _chars.alpha)) return null;
-    if (c >= 'A' and c <= 'Z') return c - 'A';
-    if (c >= 'a' and c <= 'z') return c - 'a';
-    if (c == 0xAA) return 'a' - 'a';
-    if (c == 0xBA) return 'o' - 'a';
-    if (c == 0xB5) return micro;
-    if (c == 0xFF) return 'y' - 'a';
-    const letter = accented[(c - 0xC0) & 0x1F];
-    return if (letter == '_') thorn else letter - 'a';
-}
-
-/// Each character's weight in no language's own order: a letter with the
-/// letter it is written on, case and accent left out, anything else by
-/// its code.
-const letter_weights: [256]u16 = blk: {
-    @setEvalBranchQuota(50_000);
-    var table: [256]u16 = undefined;
-    for (0..256) |code| {
-        const c: u8 = @intCast(code);
-        table[code] = if (baseOf(c)) |base| letters_from + @as(u16, base) * slots else c;
-    }
-    break :blk table;
-};
-
-/// The letters `groups` given the weights after `letter`'s (0 for A), in
+/// The letters `groups` given the places after `letter`'s (0 for A), in
 /// both cases: those before the first comma right after it, those before
 /// the next after them, and so on; false for anything that is not a
-/// letter, or more than seven groups.
-fn placeAfter(weights: *[256]u16, letter: u8, groups: []const u8) bool {
-    var slot: u16 = 1;
-    for (groups) |c| {
-        if (c == ',') {
+/// letter, more than seven groups, or more letters than a locale keeps.
+/// A letter placed again takes the later place.
+fn placeAfter(ext: *ExtLocale, letter: u8, groups: []const u8) bool {
+    var slot: u32 = 1;
+    var at: usize = 0;
+    next_letter: while (at < groups.len) {
+        const char = utf8.next(groups, &at);
+        if (char == ',') {
             slot += 1;
-            if (slot >= slots) return false;
+            if (slot >= _base.letter_slots) return false;
             continue;
         }
-        if (c == ' ') continue;
-        if (!_chars.is(c, _chars.alpha)) return false;
-        const weight = letters_from + @as(u16, letter) * slots + slot;
-        weights[c] = weight;
-        weights[_chars.toLower(c)] = weight;
-        weights[_chars.toUpper(c)] = weight;
+        if (char == ' ') continue;
+        if (!_chars.is(char, _chars.alpha)) return false;
+        const placed = _base.Placed{ .char = utility.unicode.fold(char), .place = @as(u32, letter) * _base.letter_slots + slot };
+        for (ext.placed[0..ext.placed_count]) |*known| {
+            if (known.char != placed.char) continue;
+            known.* = placed;
+            continue :next_letter;
+        }
+        if (ext.placed_count == ext.placed.len) return false;
+        ext.placed[ext.placed_count] = placed;
+        ext.placed_count += 1;
     }
     return true;
 }
 
-/// The weights turned into a byte each that keeps their order, from 2 up:
-/// StrConvert's keys are these bytes, 0 ending a key and 1 parting its
-/// halves.
-fn rank(weights: *const [256]u16, into: *[256]u8) void {
-    const words = (weight_count + 31) / 32;
-    var used: [words]u32 = @splat(0);
-    for (weights) |weight| used[weight / 32] |= @as(u32, 1) << @intCast(weight % 32);
-    for (weights, into) |weight, *byte| {
-        var below: u32 = 0;
-        for (used[0 .. weight / 32]) |word| below += @popCount(word);
-        const part = used[weight / 32] & ((@as(u32, 1) << @intCast(weight % 32)) - 1);
-        below += @popCount(part);
-        const key: u32 = 2 + below;
-        byte.* = if (key > 255) 255 else @intCast(key);
+/// The key byte of each place a Latin letter sorts at, in their order
+/// from the compare's first letter byte up: the letters of the alphabet
+/// and þ, and the places the language's letters take. A key byte for
+/// each always fits (`_compare` checks it at compile time).
+fn rank(ext: *ExtLocale) void {
+    var taken: [_base.letter_places]bool = @splat(false);
+    for (0.._base.letter_bases) |letter| taken[letter * _base.letter_slots] = true;
+    for (ext.placed[0..ext.placed_count]) |placed| taken[placed.place] = true;
+    var key: u8 = _compare.letters_first;
+    for (taken, &ext.letter_keys) |is_taken, *byte| {
+        byte.* = 0;
+        if (!is_taken) continue;
+        byte.* = key;
+        key += 1;
     }
 }

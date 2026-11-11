@@ -23,8 +23,7 @@ const LocaleBase = _base.LocaleBase;
 ///   YESTERDAYSTR, TODAYSTR, TOMORROWSTR, FUTURESTR.
 ///
 /// RESULT:
-/// The word, in the locale's code set; null for 0 or a number past
-/// FUTURESTR.
+/// The word, UTF-8; null for 0 or a number past FUTURESTR.
 ///
 /// BEHAVIOR:
 /// The words are the language file's; one it leaves out is English.

@@ -177,22 +177,22 @@ fn ConvToLower(_: *LocaleBase, loc: *const locale.Locale, character: u32) u32
 **INPUTS**
 
 - `loc` - a locale, from OpenLocale.
-- `character` - a character of the locale's code set, by its number.
+- `character` - a character, by its code point.
 
 **RESULT**
 
-The small letter for a capital one; anything else as it is. A to Z and À to Þ but × are
-answered as a to z and à to þ.
-A character past 255 is answered as it is.
+The small letter for a capital one; anything else as it is. `A` is
+answered as `a`, `Ä` as `ä`, `Ω` as `ω`, `Ж` as `ж`.
 
 **BEHAVIOR**
 
-The cases are the code set's: Latin-1's, the same in every language.
+The cases are Unicode's simple ones, a character to a character, the
+same in every language.
 
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: safe; it reads no memory but its argument.
+- Interrupts: safe; it reads a table.
 - Locks: none.
 - Process: a Task will do.
 
@@ -202,8 +202,9 @@ Nothing is allocated.
 
 **NOTES**
 
-The answer fits a byte whenever the character does, so a string can be
-changed in place.
+The answer may take another number of bytes in UTF-8 than the
+character did (`ı` is two, `I` one), so a string changed character by
+character is written anew, not in place.
 
 **BUGS**
 
@@ -216,7 +217,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-const small: u8 = @intCast(lb.ConvToLower(loc, key));
+const small = lb.ConvToLower(loc, message.code); // a VANILLAKEY
 ```
 
 ## ConvToUpper
@@ -236,23 +237,23 @@ fn ConvToUpper(_: *LocaleBase, loc: *const locale.Locale, character: u32) u32
 **INPUTS**
 
 - `loc` - a locale, from OpenLocale.
-- `character` - a character of the locale's code set, by its number.
+- `character` - a character, by its code point.
 
 **RESULT**
 
-The capital letter for a small one; anything else as it is. a to z and à to þ but ÷ are
-answered as A to Z and À to Þ; ß, ÿ and µ have no capital in the
-code set and stay as they are.
-A character past 255 is answered as it is.
+The capital letter for a small one; anything else as it is. `a` is
+answered as `A`, `ä` as `Ä`, `ÿ` as `Ÿ`, `ω` as `Ω`; `ß` has no
+capital of its own and stays as it is.
 
 **BEHAVIOR**
 
-The cases are the code set's: Latin-1's, the same in every language.
+The cases are Unicode's simple ones, a character to a character, the
+same in every language.
 
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: safe; it reads no memory but its argument.
+- Interrupts: safe; it reads a table.
 - Locks: none.
 - Process: a Task will do.
 
@@ -262,8 +263,9 @@ Nothing is allocated.
 
 **NOTES**
 
-The answer fits a byte whenever the character does, so a string can be
-changed in place.
+The answer may take another number of bytes in UTF-8 than the
+character did (`ı` is two, `I` one), so a string changed character by
+character is written anew, not in place.
 
 **BUGS**
 
@@ -276,7 +278,9 @@ None known.
 **EXAMPLES**
 
 ```zig
-for (word) |*c| c.* = @intCast(lb.ConvToUpper(loc, c.*));
+var at: usize = 0;
+var length: usize = 0;
+while (at < word.len) length += utf8.encode(lb.ConvToUpper(loc, utf8.next(word, &at)), capitals[length..][0..4]);
 ```
 
 ## FormatDate
@@ -407,7 +411,8 @@ each value up to the last it names, and each with one size.
 
 `%D` and `%U` write a signed and an unsigned number with the locale's
 group separator between groups of digits (`1.234.567`); `%d` and `%u`
-do not group. `%x` and `%X` write capitals. A width and a limit count
+do not group. `%x` and `%X` write capitals; `%c` writes a code point
+in UTF-8, U+FFFD for one that is none. A width and a limit count
 characters. With zero fill the sign comes before the zeros; a null
 `%s` writes nothing, padding included. Any other character after a
 `%` is written as it is, so `%%` is one `%`.
@@ -469,8 +474,7 @@ fn GetCatalogStr(_: *LocaleBase, catalog: ?*const locale.Catalog, string_num: i3
 
 **RESULT**
 
-The catalog's string of that number, in the locale's code set;
-`default_string` when `catalog` is null or has none of that number.
+The catalog's string of that number, UTF-8; `default_string` when `catalog` is null or has none of that number.
 
 **BEHAVIOR**
 
@@ -531,8 +535,7 @@ fn GetLocaleStr(_: *LocaleBase, loc: *const locale.Locale, string_num: u32) ?[*:
 
 **RESULT**
 
-The word, in the locale's code set; null for 0 or a number past
-FUTURESTR.
+The word, UTF-8; null for 0 or a number past FUTURESTR.
 
 **BEHAVIOR**
 
@@ -585,18 +588,18 @@ fn IsAlNum(_: *LocaleBase, loc: *const locale.Locale, character: u32) bool
 **INPUTS**
 
 - `loc` - a locale, from OpenLocale.
-- `character` - a character of the locale's code set, by its number.
+- `character` - a character, by its code point.
 
 **RESULT**
 
-True for a letter - A to Z, a to z, À to ÿ but × and ÷, and ª, µ, º -
-or a digit, 0 to 9. False for anything past 255.
+True for a letter of any script, of either case or of neither, or a
+decimal digit of any script: what IsAlpha or IsDigit is true for.
 
 **BEHAVIOR**
 
-The classes are the code set's: Latin-1's, the same in every
-language. A language decides the order its letters sort in
-(`StrnCmp`), not which characters are letters.
+The classes are Unicode's, from each character's general category,
+the same in every language. A language decides the order its letters
+sort in (`StrnCmp`), not which characters are letters.
 
 **CONTEXT**
 
@@ -611,8 +614,8 @@ Nothing is allocated.
 
 **NOTES**
 
-A byte from a string is handed over as it is: the code set's
-characters are its bytes.
+A character of a string is its code point, as `sdk.utility.utf8.next`
+reads it; a byte past 127 alone is part of one.
 
 **BUGS**
 
@@ -625,7 +628,8 @@ None known.
 **EXAMPLES**
 
 ```zig
-while (at < name.len and lb.IsAlNum(loc, name[at])) at += 1;
+var after = at;
+while (at < name.len and lb.IsAlNum(loc, utf8.next(name, &after))) at = after;
 ```
 
 ## IsAlpha
@@ -645,17 +649,18 @@ fn IsAlpha(_: *LocaleBase, loc: *const locale.Locale, character: u32) bool
 **INPUTS**
 
 - `loc` - a locale, from OpenLocale.
-- `character` - a character of the locale's code set, by its number.
+- `character` - a character, by its code point.
 
 **RESULT**
 
-True for A to Z, a to z, À to ÿ but × and ÷, and ª, µ and º. False for anything past 255.
+True for a letter of any script - a capital, a small letter, or one of
+neither case: `A`, `ä`, `ª`, `Ω`, `ж`, `あ`, `中`.
 
 **BEHAVIOR**
 
-The classes are the code set's: Latin-1's, the same in every
-language. A language decides the order its letters sort in
-(`StrnCmp`), not which characters are letters.
+The classes are Unicode's, from each character's general category,
+the same in every language. A language decides the order its letters
+sort in (`StrnCmp`), not which characters are letters.
 
 **CONTEXT**
 
@@ -670,8 +675,8 @@ Nothing is allocated.
 
 **NOTES**
 
-A byte from a string is handed over as it is: the code set's
-characters are its bytes.
+A character of a string is its code point, as `sdk.utility.utf8.next`
+reads it; a byte past 127 alone is part of one.
 
 **BUGS**
 
@@ -684,7 +689,8 @@ None known.
 **EXAMPLES**
 
 ```zig
-if (lb.IsAlpha(loc, text[0])) return .word;
+var at: usize = 0;
+if (lb.IsAlpha(loc, utf8.next(text, &at))) return .word;
 ```
 
 ## IsCntrl
@@ -704,17 +710,17 @@ fn IsCntrl(_: *LocaleBase, loc: *const locale.Locale, character: u32) bool
 **INPUTS**
 
 - `loc` - a locale, from OpenLocale.
-- `character` - a character of the locale's code set, by its number.
+- `character` - a character, by its code point.
 
 **RESULT**
 
-True for 0 to 31, 127, and 128 to 159. False for anything past 255.
+True for 0 to 31, 127, and 128 to 159.
 
 **BEHAVIOR**
 
-The classes are the code set's: Latin-1's, the same in every
-language. A language decides the order its letters sort in
-(`StrnCmp`), not which characters are letters.
+The classes are Unicode's, from each character's general category,
+the same in every language. A language decides the order its letters
+sort in (`StrnCmp`), not which characters are letters.
 
 **CONTEXT**
 
@@ -729,8 +735,8 @@ Nothing is allocated.
 
 **NOTES**
 
-A byte from a string is handed over as it is: the code set's
-characters are its bytes.
+A character of a string is its code point, as `sdk.utility.utf8.next`
+reads it; a byte past 127 alone is part of one.
 
 **BUGS**
 
@@ -743,7 +749,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-const shown: u8 = if (lb.IsCntrl(loc, byte)) '.' else byte;
+const shown: u32 = if (lb.IsCntrl(loc, char)) '.' else char;
 ```
 
 ## IsDigit
@@ -763,17 +769,18 @@ fn IsDigit(_: *LocaleBase, loc: *const locale.Locale, character: u32) bool
 **INPUTS**
 
 - `loc` - a locale, from OpenLocale.
-- `character` - a character of the locale's code set, by its number.
+- `character` - a character, by its code point.
 
 **RESULT**
 
-True for 0 to 9. False for anything past 255.
+True for a decimal digit of any script: 0 to 9, and the others' -
+`٣`, `३` - as well.
 
 **BEHAVIOR**
 
-The classes are the code set's: Latin-1's, the same in every
-language. A language decides the order its letters sort in
-(`StrnCmp`), not which characters are letters.
+The classes are Unicode's, from each character's general category,
+the same in every language. A language decides the order its letters
+sort in (`StrnCmp`), not which characters are letters.
 
 **CONTEXT**
 
@@ -788,8 +795,8 @@ Nothing is allocated.
 
 **NOTES**
 
-A byte from a string is handed over as it is: the code set's
-characters are its bytes.
+A character of a string is its code point, as `sdk.utility.utf8.next`
+reads it; a byte past 127 alone is part of one.
 
 **BUGS**
 
@@ -802,7 +809,8 @@ None known.
 **EXAMPLES**
 
 ```zig
-while (at < text.len and lb.IsDigit(loc, text[at])) at += 1;
+var after = at;
+while (at < text.len and lb.IsDigit(loc, utf8.next(text, &after))) at = after;
 ```
 
 ## IsGraph
@@ -822,17 +830,19 @@ fn IsGraph(_: *LocaleBase, loc: *const locale.Locale, character: u32) bool
 **INPUTS**
 
 - `loc` - a locale, from OpenLocale.
-- `character` - a character of the locale's code set, by its number.
+- `character` - a character, by its code point.
 
 **RESULT**
 
-True for 33 to 126 and 161 to 255: a letter, a digit or punctuation. False for anything past 255.
+True for a character that is printed and not blank: a letter, a digit
+or punctuation - every character that is neither a control, a blank
+nor unassigned.
 
 **BEHAVIOR**
 
-The classes are the code set's: Latin-1's, the same in every
-language. A language decides the order its letters sort in
-(`StrnCmp`), not which characters are letters.
+The classes are Unicode's, from each character's general category,
+the same in every language. A language decides the order its letters
+sort in (`StrnCmp`), not which characters are letters.
 
 **CONTEXT**
 
@@ -847,8 +857,8 @@ Nothing is allocated.
 
 **NOTES**
 
-A byte from a string is handed over as it is: the code set's
-characters are its bytes.
+A character of a string is its code point, as `sdk.utility.utf8.next`
+reads it; a byte past 127 alone is part of one.
 
 **BUGS**
 
@@ -881,17 +891,18 @@ fn IsLower(_: *LocaleBase, loc: *const locale.Locale, character: u32) bool
 **INPUTS**
 
 - `loc` - a locale, from OpenLocale.
-- `character` - a character of the locale's code set, by its number.
+- `character` - a character, by its code point.
 
 **RESULT**
 
-True for a to z, ß to ÿ but ÷, and µ. False for anything past 255.
+True for a small letter of any script: `a` to `z`, `ß`, `ÿ`, `µ`,
+`ω`, `ж`.
 
 **BEHAVIOR**
 
-The classes are the code set's: Latin-1's, the same in every
-language. A language decides the order its letters sort in
-(`StrnCmp`), not which characters are letters.
+The classes are Unicode's, from each character's general category,
+the same in every language. A language decides the order its letters
+sort in (`StrnCmp`), not which characters are letters.
 
 **CONTEXT**
 
@@ -906,8 +917,8 @@ Nothing is allocated.
 
 **NOTES**
 
-A byte from a string is handed over as it is: the code set's
-characters are its bytes.
+A character of a string is its code point, as `sdk.utility.utf8.next`
+reads it; a byte past 127 alone is part of one.
 
 **BUGS**
 
@@ -920,7 +931,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-if (lb.IsLower(loc, first)) first = @intCast(lb.ConvToUpper(loc, first));
+if (lb.IsLower(loc, first)) first = lb.ConvToUpper(loc, first);
 ```
 
 ## IsPrint
@@ -940,18 +951,18 @@ fn IsPrint(_: *LocaleBase, loc: *const locale.Locale, character: u32) bool
 **INPUTS**
 
 - `loc` - a locale, from OpenLocale.
-- `character` - a character of the locale's code set, by its number.
+- `character` - a character, by its code point.
 
 **RESULT**
 
-True for what IsGraph is true for, and for the space (32) and the
-space that does not break (160). False for anything past 255.
+True for what IsGraph is true for, and for the spaces - the space
+(32), the one that does not break (160) and the others of Unicode's.
 
 **BEHAVIOR**
 
-The classes are the code set's: Latin-1's, the same in every
-language. A language decides the order its letters sort in
-(`StrnCmp`), not which characters are letters.
+The classes are Unicode's, from each character's general category,
+the same in every language. A language decides the order its letters
+sort in (`StrnCmp`), not which characters are letters.
 
 **CONTEXT**
 
@@ -966,8 +977,8 @@ Nothing is allocated.
 
 **NOTES**
 
-A byte from a string is handed over as it is: the code set's
-characters are its bytes.
+A character of a string is its code point, as `sdk.utility.utf8.next`
+reads it; a byte past 127 alone is part of one.
 
 **BUGS**
 
@@ -980,7 +991,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-const shown: u8 = if (lb.IsPrint(loc, byte)) byte else '.';
+const shown: u32 = if (lb.IsPrint(loc, char)) char else '.';
 ```
 
 ## IsPunct
@@ -1000,19 +1011,21 @@ fn IsPunct(_: *LocaleBase, loc: *const locale.Locale, character: u32) bool
 **INPUTS**
 
 - `loc` - a locale, from OpenLocale.
-- `character` - a character of the locale's code set, by its number.
+- `character` - a character, by its code point.
 
 **RESULT**
 
 True for a character that is printed and neither blank, a letter nor
-a digit: `!` to `/`, `:` to `@`, `[` to `` ` ``, `{` to `~`, ¡ to ¿ but
-ª, µ and º, and × and ÷. False for anything past 255.
+a digit: `!` to `/`, `:` to `@`, `[` to `` ` ``, `{` to `~`, `¡` to `¿`
+but `ª`, `µ` and `º`, `×` and `÷`, and past Latin-1 the marks, the
+numbers like `½`, the symbols - `€`, the emoji - the format characters
+and those for private use.
 
 **BEHAVIOR**
 
-The classes are the code set's: Latin-1's, the same in every
-language. A language decides the order its letters sort in
-(`StrnCmp`), not which characters are letters.
+The classes are Unicode's, from each character's general category,
+the same in every language. A language decides the order its letters
+sort in (`StrnCmp`), not which characters are letters.
 
 **CONTEXT**
 
@@ -1027,8 +1040,8 @@ Nothing is allocated.
 
 **NOTES**
 
-A byte from a string is handed over as it is: the code set's
-characters are its bytes.
+A character of a string is its code point, as `sdk.utility.utf8.next`
+reads it; a byte past 127 alone is part of one.
 
 **BUGS**
 
@@ -1041,7 +1054,8 @@ None known.
 **EXAMPLES**
 
 ```zig
-while (at < text.len and lb.IsPunct(loc, text[at])) at += 1;
+var after = at;
+while (at < text.len and lb.IsPunct(loc, utf8.next(text, &after))) at = after;
 ```
 
 ## IsSpace
@@ -1061,19 +1075,20 @@ fn IsSpace(_: *LocaleBase, loc: *const locale.Locale, character: u32) bool
 **INPUTS**
 
 - `loc` - a locale, from OpenLocale.
-- `character` - a character of the locale's code set, by its number.
+- `character` - a character, by its code point.
 
 **RESULT**
 
 True for the space, for tab, line feed, vertical tab, form feed and
-carriage return (9 to 13), and for the space that does not break
-(160). False for anything past 255.
+carriage return (9 to 13), for the space that does not break (160),
+for Unicode's other spaces, and for its line and paragraph
+separators.
 
 **BEHAVIOR**
 
-The classes are the code set's: Latin-1's, the same in every
-language. A language decides the order its letters sort in
-(`StrnCmp`), not which characters are letters.
+The classes are Unicode's, from each character's general category,
+the same in every language. A language decides the order its letters
+sort in (`StrnCmp`), not which characters are letters.
 
 **CONTEXT**
 
@@ -1088,8 +1103,8 @@ Nothing is allocated.
 
 **NOTES**
 
-A byte from a string is handed over as it is: the code set's
-characters are its bytes.
+A character of a string is its code point, as `sdk.utility.utf8.next`
+reads it; a byte past 127 alone is part of one.
 
 **BUGS**
 
@@ -1102,7 +1117,8 @@ None known.
 **EXAMPLES**
 
 ```zig
-while (at < text.len and lb.IsSpace(loc, text[at])) at += 1;
+var after = at;
+while (at < text.len and lb.IsSpace(loc, utf8.next(text, &after))) at = after;
 ```
 
 ## IsUpper
@@ -1122,17 +1138,18 @@ fn IsUpper(_: *LocaleBase, loc: *const locale.Locale, character: u32) bool
 **INPUTS**
 
 - `loc` - a locale, from OpenLocale.
-- `character` - a character of the locale's code set, by its number.
+- `character` - a character, by its code point.
 
 **RESULT**
 
-True for A to Z, and À to Þ but ×. False for anything past 255.
+True for a capital letter of any script: `A` to `Z`, `À` to `Þ` but
+`×`, `Ω`, `Ж`.
 
 **BEHAVIOR**
 
-The classes are the code set's: Latin-1's, the same in every
-language. A language decides the order its letters sort in
-(`StrnCmp`), not which characters are letters.
+The classes are Unicode's, from each character's general category,
+the same in every language. A language decides the order its letters
+sort in (`StrnCmp`), not which characters are letters.
 
 **CONTEXT**
 
@@ -1147,8 +1164,8 @@ Nothing is allocated.
 
 **NOTES**
 
-A byte from a string is handed over as it is: the code set's
-characters are its bytes.
+A character of a string is its code point, as `sdk.utility.utf8.next`
+reads it; a byte past 127 alone is part of one.
 
 **BUGS**
 
@@ -1181,17 +1198,17 @@ fn IsXDigit(_: *LocaleBase, loc: *const locale.Locale, character: u32) bool
 **INPUTS**
 
 - `loc` - a locale, from OpenLocale.
-- `character` - a character of the locale's code set, by its number.
+- `character` - a character, by its code point.
 
 **RESULT**
 
-True for 0 to 9, A to F and a to f. False for anything past 255.
+True for 0 to 9, A to F and a to f.
 
 **BEHAVIOR**
 
-The classes are the code set's: Latin-1's, the same in every
-language. A language decides the order its letters sort in
-(`StrnCmp`), not which characters are letters.
+The classes are Unicode's, from each character's general category,
+the same in every language. A language decides the order its letters
+sort in (`StrnCmp`), not which characters are letters.
 
 **CONTEXT**
 
@@ -1206,8 +1223,8 @@ Nothing is allocated.
 
 **NOTES**
 
-A byte from a string is handed over as it is: the code set's
-characters are its bytes.
+A character of a string is its code point, as `sdk.utility.utf8.next`
+reads it; a byte past 127 alone is part of one.
 
 **BUGS**
 
@@ -1220,7 +1237,8 @@ None known.
 **EXAMPLES**
 
 ```zig
-while (at < text.len and lb.IsXDigit(loc, text[at])) at += 1;
+var after = at;
+while (at < text.len and lb.IsXDigit(loc, utf8.next(text, &after))) at = after;
 ```
 
 ## OpenCatalogA
@@ -1246,8 +1264,7 @@ fn OpenCatalogA(lb: *LocaleBase, loc: ?*const locale.Locale, name: [*:0]const u8
 - `tag_list` - OC_BuiltInLanguage, the language of the strings built
   into the program (`english` if not given); OC_Version, the version
   the catalog must have (any if 0 or not given); OC_Language, a
-  language to try before the locale's; OC_BuiltInCodeSet, taken and
-  not used. Null for none.
+  language to try before the locale's. Null for none.
 
 **RESULT**
 
@@ -1262,7 +1279,8 @@ tried in turn. The language built in ends the search - its strings
 need no catalog. For any other, a catalog already loaded is taken;
 else `PROGDIR:Catalogs/<language>/<name>` is read, when the caller has
 a program directory, and then `LOCALE:Catalogs/<language>/<name>`.
-The strings are converted to the locale's code set as they are read.
+The strings are UTF-8; one a catalog holds in another code set is
+read as code page 1252 and kept as that in UTF-8.
 
 No requester asks for PROGDIR: or LOCALE: when either is missing.
 
@@ -1344,7 +1362,8 @@ LOCALE:Countries, the first of its LANGUAGES that has a file in
 LOCALE:Languages (English needs none), and the time zone's rule from
 ENV:Sys/timezone. A field no file sets keeps the library's own
 value. A name may be given with its `.country` or `.language` or
-without. Every file is UTF-8 text, converted to the locale's code set.
+without. Every file is UTF-8 text, kept as it is; one that is not is
+read as code page 1252.
 
 A settings file:
 
@@ -1568,7 +1587,7 @@ fn StrConvert(_: *LocaleBase, loc: *const locale.Locale, string: [*:0]const u8, 
 **INPUTS**
 
 - `loc` - a locale, from OpenLocale.
-- `string` - the string, in the locale's code set.
+- `string` - the string, UTF-8.
 - `buffer` - where the key goes.
 - `buffer_size` - its size in bytes, the NUL that ends the key
   counted.
@@ -1584,11 +1603,12 @@ is 0, and nothing is written then.
 
 Two keys compared byte by byte, as unsigned bytes, up to the NUL that
 ends the first, come out as StrnCmp compares their strings with the
-same type. A key is one byte
-per character for SC_ASCII and SC_COLLATE1, two and one more for
-SC_COLLATE2.
+same type. A key is at most twice as long as its string for
+SC_ASCII and SC_COLLATE1 - a byte for each character of ASCII, one or
+four for the others - and three times and one more for SC_COLLATE2.
 
-A key cut short by the buffer still orders by what it holds.
+A key cut short by the buffer still orders by what it holds; it ends
+before a character whose key does not fit whole.
 
 **CONTEXT**
 
@@ -1617,7 +1637,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-var key: [2 * 108 + 2]u8 = undefined;
+var key: [3 * 108 + 2]u8 = undefined;
 _ = lb.StrConvert(loc, name, &key, key.len, locale.SC_COLLATE2);
 ```
 
@@ -1638,7 +1658,7 @@ fn StrnCmp(_: *LocaleBase, loc: *const locale.Locale, string1: [*:0]const u8, st
 **INPUTS**
 
 - `loc` - a locale, from OpenLocale.
-- `string1`, `string2` - the strings, in the locale's code set.
+- `string1`, `string2` - the strings, UTF-8.
 - `length` - the most bytes of each to compare; below 0 for all.
 - `compare_type` - SC_ASCII, SC_COLLATE1 or SC_COLLATE2; any other
   number is taken as SC_ASCII.
@@ -1650,16 +1670,22 @@ order, 1 when `string2` comes first. 0 when `length` is 0.
 
 **BEHAVIOR**
 
-SC_ASCII leaves the case of letters out and compares their capitals
-by their codes, as a file name is compared. SC_COLLATE1 leaves case
-and accent out and orders the letters as the language does: in
-Swedish Å, Ä and Ö come after Z, in Spanish Ñ after N, and anything
-that is not a letter comes before every letter. SC_COLLATE2 orders as
-SC_COLLATE1 and, where that finds the two the same, by the first byte
-they differ in: the order a sorted list is shown in, where `apple`,
-`Apple` and `äpple` stand together and always in the same order.
+The strings are compared character by character. SC_ASCII leaves the
+case of letters out and compares their capitals by their code points,
+as a file name is compared. SC_COLLATE1 leaves case and marks out and
+orders the letters as the language does: in Swedish Å, Ä and Ö come
+after Z, in Spanish Ñ after N; `ł` is an `l` and `č` a `c`. Anything
+that is not a letter comes before every letter, the Latin letters
+before those of other scripts - Greek, Cyrillic, the kana, the
+ideographs - which are in the order of their code points, and a mark
+written on the letter before counts for nothing. SC_COLLATE2 orders
+as SC_COLLATE1 and, where that finds the two the same, by the first
+byte they differ in: the order a sorted list is shown in, where
+`apple`, `Apple` and `äpple` stand together and always in the same
+order.
 
-A string that ends where the other goes on comes first.
+A string that ends where the other goes on comes first. A character
+cut by `length` is compared as what of it is left.
 
 **CONTEXT**
 
@@ -1680,7 +1706,7 @@ byte by byte: the order is the same.
 **BUGS**
 
 A letter is weighed alone: `ß` is an `s` and `æ` an `a`, not two
-letters each.
+letters each. The letters of other scripts have no language's order.
 
 **SEE ALSO**
 

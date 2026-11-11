@@ -356,7 +356,7 @@ pub fn dumpFrame(frame: *const Frame) void {
 }
 
 fn kprintfSink(character: u8, _: ?*anyopaque) callconv(.c) void {
-    exec.kprintf("%c", .{character});
+    exec.kputc(character);
 }
 
 /// The registers of the frame, in the order they are written about.

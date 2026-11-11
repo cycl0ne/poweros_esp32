@@ -214,7 +214,7 @@ pub fn dumpFrame(f: *const Frame) void {
 }
 
 fn kprintfSink(character: u8, _: ?*anyopaque) callconv(.c) void {
-    exec.kprintf("%c", .{character});
+    exec.kputc(character);
 }
 
 /// The frame written a character at a time through `put`, so that

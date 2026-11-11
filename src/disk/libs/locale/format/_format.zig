@@ -6,6 +6,7 @@
 const sdk = @import("sdk");
 const dos = sdk.dos;
 const utility = sdk.utility;
+const utf8 = utility.utf8;
 const locale = sdk.locale;
 const _base = @import("../locale_base.zig");
 const LocaleBase = _base.LocaleBase;
@@ -141,28 +142,21 @@ pub fn hexadecimal(into: []u8, value: u64) []const u8 {
     return into[at..];
 }
 
-/// How many characters `bytes` are in the locale's code set: one a byte
-/// in Latin-1, one a byte that does not go on a character in UTF-8.
-pub fn width(loc: *const locale.Locale, bytes: []const u8) usize {
-    if (loc.code_set != locale.CODESET_UTF8) return bytes.len;
+/// How many characters `bytes` are, as `sdk.utility.utf8.next` reads
+/// them.
+pub fn width(bytes: []const u8) usize {
     var count: usize = 0;
-    for (bytes) |byte| {
-        if (byte & 0xC0 != 0x80) count += 1;
-    }
+    var at: usize = 0;
+    while (at < bytes.len) : (count += 1) _ = utf8.next(bytes, &at);
     return count;
 }
 
-/// The first `count` characters of `bytes` in the locale's code set.
-pub fn cut(loc: *const locale.Locale, bytes: []const u8, count: usize) []const u8 {
-    if (loc.code_set != locale.CODESET_UTF8) return bytes[0..@min(bytes.len, count)];
-    var seen: usize = 0;
-    for (bytes, 0..) |byte, at| {
-        if (byte & 0xC0 != 0x80) {
-            if (seen == count) return bytes[0..at];
-            seen += 1;
-        }
-    }
-    return bytes;
+/// The first `count` characters of `bytes`.
+pub fn cut(bytes: []const u8, count: usize) []const u8 {
+    var taken: usize = 0;
+    var at: usize = 0;
+    while (at < bytes.len and taken < count) : (taken += 1) _ = utf8.next(bytes, &at);
+    return bytes[0..at];
 }
 
 /// The length of a NUL-ended string.

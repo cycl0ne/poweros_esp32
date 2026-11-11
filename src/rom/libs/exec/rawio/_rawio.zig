@@ -14,6 +14,8 @@
 //! - A %s's width and .limit count characters of its UTF-8, so a column
 //!   lines up whatever a name is written in and a cut never ends inside
 //!   a character; a byte that is no UTF-8 is one, as text reads it.
+//! - %c takes a code point and writes it in UTF-8, U+FFFD for a value
+//!   that is none; its width counts it as one character.
 //! - An unknown conversion prints its own character, so %% prints "%".
 //! - The output function gets a final NUL, and RawDoFmt returns the data
 //!   stream past the values it used.
@@ -417,8 +419,9 @@ pub fn format(format_string: [*:0]const u8, data_stream: ?*const anyopaque, put_
             'u', 'U' => digits(&buffer, if (long) next(u64, &data) else next(u32, &data), 10, false),
             'x', 'X' => digits(&buffer, if (long) next(u64, &data) else next(u32, &data), 16, false),
             'c' => char: {
-                buffer[0] = @truncate(if (long) next(u64, &data) else next(u32, &data));
-                break :char buffer[0..1];
+                const code: u64 = if (long) next(u64, &data) else next(u32, &data);
+                const code_point: u32 = if (code > sdk.utility.utf8.last) sdk.utility.utf8.replacement else @intCast(code);
+                break :char buffer[0..sdk.utility.utf8.encode(code_point, buffer[0..4])];
             },
             's' => span(@as(?[*:0]const u8, @ptrFromInt(next(usize, &data))) orelse continue),
             else => {
@@ -426,10 +429,11 @@ pub fn format(format_string: [*:0]const u8, data_stream: ?*const anyopaque, put_
                 continue;
             },
         };
-        if (conversion == 's') {
+        const by_character = conversion == 's' or conversion == 'c';
+        if (by_character) {
             if (limit != 0) text = text[0..firstCharacters(text, limit)];
         } else if (limit != 0 and limit < text.len) text = text[0..limit];
-        const pad = width -| if (conversion == 's') characters(text) else text.len;
+        const pad = width -| if (by_character) characters(text) else text.len;
         if (left) {
             for (text) |character_out| out.put(character_out);
             out.repeat(' ', pad);
@@ -553,6 +557,9 @@ test "format: conversions, width and fill, odd formats, the stream, a buffer, un
         try testing.expectEqualStrings("[  日本]", f("[%4s]", .{"日本"}));
         try testing.expectEqualStrings("[Grü]", f("[%.3s]", .{"Grüße"}));
         try testing.expectEqualStrings("[\u{1F600}x ]", f("[%-3.2s]", .{"\u{1F600}xyz"}));
+        // %c: a code point in UTF-8, one character wide.
+        try testing.expectEqualStrings("[€|ä|\u{1F600}|\u{FFFD}|\u{FFFD}]", f("[%c|%c|%c|%c|%lc]", .{ @as(u32, 0x20AC), @as(u32, 0xE4), @as(u32, 0x1F600), @as(u32, 0xD800), @as(u64, 0x1_0000_0000) }));
+        try testing.expectEqualStrings("[  €|ä  ]", f("[%3c|%-3c]", .{ @as(u32, 0x20AC), @as(u32, 0xE4) }));
     }
     // %%, unknown conversions, a % at the end.
     {

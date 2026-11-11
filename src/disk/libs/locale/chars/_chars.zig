@@ -1,19 +1,31 @@
 // SPDX-License-Identifier: MIT
-//! What each character of the code set is, and its other case.
+//! What each character is, and its other case, by Unicode's tables
+//! (`sdk.utility.unicode`): the same in every language - what a language
+//! decides is the order its letters sort in (compare/).
 //!
-//! The code set is Latin-1, so a table of 256 entries made at compile
-//! time answers every class: a character past 255 is in none of them and
-//! has no other case. The classes are the code set's, the same in every
-//! language; what a language decides is the order its letters sort in
-//! (compare/).
+//! The classes come from a character's general category:
 //!
-//! The letters are A to Z, À to Þ but ×, and their small partners; ß, ÿ
-//! and µ are small letters without a capital in the code set, ª and º
-//! letters of neither case. The blanks are a space, the five from tab to
-//! carriage return, and the space that does not break; the control
-//! characters 0 to 31, 127 and 128 to 159. Every character from 33 to
-//! 126 and from 161 to 255 is printed and not blank, and of those every
-//! one that is neither a letter nor a digit is punctuation.
+//! - the letters are every letter of every script; the capitals (Lu) are
+//!   upper, the small letters (Ll) lower, a letter that is a capital and
+//!   a small one in one (`ǅ`) and those of no case (`ª`, the kana, the
+//!   ideographs) neither;
+//! - the digits are the decimal digits of every script (Nd), the
+//!   hexadecimal ones 0 to 9, A to F and a to f;
+//! - the blanks are the spaces (Zs, the one that does not break among
+//!   them), the line and paragraph separators, and the five from tab to
+//!   carriage return;
+//! - the control characters are 0 to 31, 127 and 128 to 159;
+//! - every character that is neither a control, a blank nor unassigned
+//!   is printed and not blank, and the spaces are printed too;
+//! - of those printed and not blank, every one that is neither a letter
+//!   nor a digit is punctuation: the marks, the numbers like `²`, the
+//!   symbols, the format characters and those for private use with the
+//!   punctuation proper.
+//!
+//! The other case is Unicode's simple one, a character to a character:
+//! `ß` has no capital, `ÿ` has `Ÿ`.
+
+const unicode = @import("sdk").utility.unicode;
 
 pub const cntrl: u16 = 1 << 0;
 pub const space: u16 = 1 << 1;
@@ -26,53 +38,37 @@ pub const punct: u16 = 1 << 7;
 pub const graph: u16 = 1 << 8;
 pub const print: u16 = 1 << 9;
 
-/// Each character's classes.
-pub const classes: [256]u16 = blk: {
-    @setEvalBranchQuota(20_000);
-    var table: [256]u16 = @splat(0);
-    for (0..256) |code| {
-        const c: u8 = @intCast(code);
-        var bits: u16 = 0;
-        if (c < 0x20 or c == 0x7F or (c >= 0x80 and c < 0xA0)) bits |= cntrl;
-        if ((c >= 0x09 and c <= 0x0D) or c == ' ' or c == 0xA0) bits |= space;
-        if (isCapital(c)) bits |= upper | alpha;
-        if (isSmall(c)) bits |= lower | alpha;
-        if (c == 0xAA or c == 0xBA) bits |= alpha;
-        if (c >= '0' and c <= '9') bits |= digit | xdigit;
-        if ((c >= 'A' and c <= 'F') or (c >= 'a' and c <= 'f')) bits |= xdigit;
-        if ((c > 0x20 and c < 0x7F) or c > 0xA0) bits |= graph | print;
-        if (c == ' ' or c == 0xA0) bits |= print;
-        if (bits & graph != 0 and bits & (alpha | digit) == 0) bits |= punct;
-        table[code] = bits;
-    }
-    break :blk table;
-};
-
-fn isCapital(c: u8) bool {
-    return (c >= 'A' and c <= 'Z') or (c >= 0xC0 and c <= 0xDE and c != 0xD7);
-}
-
-fn isSmall(c: u8) bool {
-    return (c >= 'a' and c <= 'z') or (c >= 0xDF and c != 0xF7) or c == 0xB5;
+/// The classes of `character`, a code point.
+pub fn classesOf(character: u32) u16 {
+    var bits: u16 = switch (unicode.class(character)) {
+        .unassigned => 0,
+        .control => cntrl,
+        .upper => upper | alpha | graph | print,
+        .lower => lower | alpha | graph | print,
+        .title, .letter => alpha | graph | print,
+        .digit => digit | graph | print,
+        .space => space | print,
+        .separator => space,
+        .format, .private, .mark, .number, .punctuation, .symbol => punct | graph | print,
+    };
+    if (character >= 0x09 and character <= 0x0D) bits |= space;
+    const hexadecimal = (character >= '0' and character <= '9') or
+        (character >= 'A' and character <= 'F') or (character >= 'a' and character <= 'f');
+    if (hexadecimal) bits |= xdigit;
+    return bits;
 }
 
 /// Whether `character` has any of the classes `bits`.
 pub fn is(character: u32, bits: u16) bool {
-    if (character > 0xFF) return false;
-    return classes[character] & bits != 0;
+    return classesOf(character) & bits != 0;
 }
 
 /// `character` as a small letter, as it is when it has none.
 pub fn toLower(character: u32) u32 {
-    if (character > 0xFF) return character;
-    const c: u8 = @intCast(character);
-    return if (isCapital(c)) c + 0x20 else c;
+    return unicode.lower(character);
 }
 
 /// `character` as a capital letter, as it is when it has none.
 pub fn toUpper(character: u32) u32 {
-    if (character > 0xFF) return character;
-    const c: u8 = @intCast(character);
-    if (c == 0xDF or c == 0xFF or c == 0xB5) return c;
-    return if (isSmall(c)) c - 0x20 else c;
+    return unicode.upper(character);
 }

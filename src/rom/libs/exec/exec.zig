@@ -110,6 +110,9 @@ pub const log_ring = &_log.ring;
 pub const log_mirror = &_log.mirror_wanted;
 pub const setLogMirror = _rawio.setMirror;
 pub const kprintf = _rawio.kprintf;
+/// One byte to the raw port and the log, as kprintf sends each: for an
+/// output function that hands on bytes another formatter wrote.
+pub const kputc = _rawio.putChar;
 pub const klog = _rawio.klog;
 pub const PutChProc = sdk.exec.PutChProc;
 pub const RawIOHardware = _rawio.RawIOHardware;

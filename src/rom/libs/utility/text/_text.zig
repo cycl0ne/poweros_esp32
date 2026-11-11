@@ -172,3 +172,34 @@ test "unicode.width: the cells a character takes" {
     // CJK, kana, Hangul syllables, full-width forms, emoji: two.
     for ([_]u32{ 0x4E00, 0x3042, 0xAC00, 0xFF21, 0x1F600, 0x1F44D, 0x231A, 0x20000, 0x2A6E0 }) |char| try testing.expectEqual(@as(u2, 2), unicode.width(char));
 }
+
+test "unicode.class: what a character is" {
+    const unicode = @import("sdk").utility.unicode;
+    const Expect = struct { char: u32, class: unicode.Class };
+    const expected = [_]Expect{
+        .{ .char = 0, .class = .control },    .{ .char = '\t', .class = .control },
+        .{ .char = 0x7F, .class = .control }, .{ .char = 0x85, .class = .control },
+        .{ .char = ' ', .class = .space },    .{ .char = 0xA0, .class = .space },
+        .{ .char = 0x3000, .class = .space }, .{ .char = 0x2028, .class = .separator },
+        .{ .char = 'A', .class = .upper },    .{ .char = 'z', .class = .lower },
+        .{ .char = 0xC4, .class = .upper },   .{ .char = 0xDF, .class = .lower },
+        .{ .char = 0xD7, .class = .symbol },  .{ .char = 0xAA, .class = .letter },
+        .{ .char = 0x0100, .class = .upper }, .{ .char = 0x0101, .class = .lower }, // Ā ā, by turns
+        .{ .char = 0x0136, .class = .upper }, .{ .char = 0x0137, .class = .lower },
+        .{ .char = 0x0138, .class = .lower },        .{ .char = 0x0139, .class = .upper }, // ĸ, then Ĺ
+        .{ .char = 0x01C5, .class = .title },        .{ .char = 0x03A9, .class = .upper },
+        .{ .char = 0x03C9, .class = .lower },        .{ .char = 0x0416, .class = .upper },
+        .{ .char = 0x3042, .class = .letter },       .{ .char = 0x4E00, .class = .letter },
+        .{ .char = 0x9FFF, .class = .letter },       .{ .char = 0xAC00, .class = .letter },
+        .{ .char = 0x20000, .class = .letter },      .{ .char = '7', .class = .digit },
+        .{ .char = 0x0663, .class = .digit },        .{ .char = 0xB2, .class = .number },
+        .{ .char = 0x216B, .class = .number },       .{ .char = '!', .class = .punctuation },
+        .{ .char = 0x201C, .class = .punctuation },  .{ .char = 0x20AC, .class = .symbol },
+        .{ .char = 0x1F600, .class = .symbol },      .{ .char = 0x0301, .class = .mark },
+        .{ .char = 0xAD, .class = .format },         .{ .char = 0x200D, .class = .format },
+        .{ .char = 0xE000, .class = .private },      .{ .char = 0x10FFFD, .class = .private },
+        .{ .char = 0xD800, .class = .unassigned },   .{ .char = 0x0378, .class = .unassigned },
+        .{ .char = 0x10FFFF, .class = .unassigned }, .{ .char = 0x110000, .class = .unassigned },
+    };
+    for (expected) |each| try testing.expectEqual(each.class, unicode.class(each.char));
+}

@@ -22,7 +22,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 const NAME = "Type";
-const VERSION_STRING = "\x00$VER: Type 1.1 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Type 1.2 (11.11.2026)\r\n";
 
 /// The line buffer, and 16 bytes a row for HEX.
 const out_size = 255;
@@ -47,12 +47,15 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var hex = argv[3] != 0;
     var number = argv[4] != 0;
     if (rdargs.string(argv[2])) |opt| {
-        var i: usize = 0;
-        while (opt[i] != 0) : (i += 1) {
-            switch (opt[i] | 0x20) {
-                'h' => hex = true,
-                'n' => number = true,
-                else => _ = Printf(dl, "Option '%c' ignored\n", .{opt[i]}),
+        var length: usize = 0;
+        while (opt[length] != 0) length += 1;
+        var at: usize = 0;
+        while (at < length) {
+            const option = sdk.utility.utf8.next(opt[0..length], &at);
+            switch (option) {
+                'h', 'H' => hex = true,
+                'n', 'N' => number = true,
+                else => _ = Printf(dl, "Option '%c' ignored\n", .{option}),
             }
         }
     }

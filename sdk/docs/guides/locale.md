@@ -62,7 +62,8 @@ the start allowed, read as `KEY=value` pairs - a value with a blank in
 double quotes, with no escapes - and a line starting with `#` or `;` is a
 comment. A key the library does not know is passed over, and one left
 out keeps the value of the system's own locale. A file that is not UTF-8
-is read as Latin-1.
+is one an editor wrote in code page 1252, the Western code page of
+Windows, and is read as that.
 
 ### A country: `LOCALE:Countries/<name>.country`
 
@@ -169,13 +170,30 @@ packs the values.
 
 ### Characters and order
 
-`IsAlpha`, `IsUpper` and the rest, `ConvToLower` and `ConvToUpper` work
-on the system's code set (below). `StrnCmp(loc, a, b, length, type)`
-compares: `SC_ASCII` byte by byte, case aside; `SC_COLLATE1` by the
-language's order, case and accents aside; `SC_COLLATE2` the same, then
-accents and case deciding between words that are otherwise equal.
-`StrConvert` makes the key that compares as `SC_COLLATE1` or
-`SC_COLLATE2` does, byte by byte, for sorting many words fast.
+`IsAlpha`, `IsUpper` and the rest take a code point and answer by
+Unicode's classes, the same in every language: `IsAlpha` is true for a
+letter of any script, `IsDigit` for a decimal digit of any script,
+`IsPunct` for what is printed and neither blank, a letter nor a digit -
+`€` and the emoji among them. `ConvToLower` and `ConvToUpper` are
+Unicode's simple case, a character to a character (`ÿ` to `Ÿ`; `ß`
+stays). A character of a string is what `sdk.utility.utf8.next` reads.
+
+`StrnCmp(loc, a, b, length, type)` compares two UTF-8 strings character
+by character: `SC_ASCII` by the capitals' code points; `SC_COLLATE1` by
+the language's order, case and marks aside - `ł` is an `l`, `č` a `c`,
+`æ` an `a`, `ß` an `s`, a mark written on the letter before counts for
+nothing, and in Swedish `Å`, `Ä` and `Ö` come after `Z`; `SC_COLLATE2`
+the same, then the first byte that differs deciding between words that
+are otherwise equal. What is no letter comes before every letter, the
+Latin letters before those of other scripts, which follow in the order
+of their code points. `length` counts bytes. `StrConvert` makes the key
+that compares as `StrnCmp` does, byte by byte, for sorting many words
+fast: at most twice the string's bytes for `SC_ASCII` and `SC_COLLATE1`,
+three times and one more for `SC_COLLATE2`.
+
+A language's `AFTER_<letter>=` line names the letters it sorts after one
+of the alphabet's - `AFTER_Z=Å,ÄÆ,ÖØ`, a comma between those that sort
+apart - any letter of any script, both cases at once, 64 at most.
 
 ## A program's texts: catalogs
 
@@ -294,12 +312,12 @@ German translation beside it is built into the disk's
 
 ## The code set
 
-The system's text is Latin-1, one byte a character. The files are
-UTF-8 and are converted as they are read; a character Latin-1 does not
-have becomes `?` - the euro sign `€` and the German quotes `„“` among
-them, until the system's text is UTF-8. A width or a length in
-FormatDate, FormatString and the catalogs' least and most counts
-characters.
+The text is UTF-8, `Locale.code_set` and `Catalog.code_set` are
+`CODESET_UTF8`, and the files are kept as they are read: `€` and the
+German quotes `„“` are what a country or a language file writes. A
+catalog's string that is not UTF-8 is read as code page 1252. A width or
+a limit in FormatString and the catalogs' least and most count
+characters; `%c` takes a code point and writes it in UTF-8.
 
 ## Commands
 

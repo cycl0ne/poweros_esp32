@@ -442,8 +442,14 @@ one draws instead. `unicode.width(char)` is the cells of a console a
 character takes: 0 for a mark written on the character before it or a
 format character, 2 for a wide one - CJK, kana, Hangul, emoji - and 1
 for the rest; the console and its line editor place text by it, and a
-program that lines text up in a console does too. `unicode.version`
-names the Unicode version the tables are made from.
+program that lines text up in a console does too. `unicode.class(char)`
+is what a character is, by its general category: `.upper`, `.lower`,
+`.title` and `.letter` (no case) for the letters, `.digit` for a
+decimal digit of any script, `.number`, `.mark`, `.punctuation`,
+`.symbol`, `.space`, `.separator`, `.control`, `.format`, `.private`,
+and `.unassigned` for what is no character; locale.library's `IsAlpha`
+and the rest are made from it. `unicode.version` names the Unicode
+version the tables are made from.
 
 ## Text between UTF-8 and Latin-1
 
@@ -459,7 +465,8 @@ A width or a `.limit` on a `%s` in `RawDoFmt` - and so in `Printf`,
 `kprintf` and the rest that format through it - counts characters, not
 bytes: `%-20s` lines a column of names up whatever their bytes, and a
 `.limit` never ends inside a character. A wide character still takes
-two cells of a console.
+two cells of a console. `%c` takes a code point and writes it in UTF-8
+- `Printf(dl, "%c", .{@as(u32, 0x20AC)})` writes `€`, three bytes.
 
 | Call | |
 |---|---|

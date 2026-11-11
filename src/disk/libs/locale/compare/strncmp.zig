@@ -18,7 +18,7 @@ const LocaleBase = _base.LocaleBase;
 ///
 /// INPUTS:
 /// - `loc` - a locale, from OpenLocale.
-/// - `string1`, `string2` - the strings, in the locale's code set.
+/// - `string1`, `string2` - the strings, UTF-8.
 /// - `length` - the most bytes of each to compare; below 0 for all.
 /// - `compare_type` - SC_ASCII, SC_COLLATE1 or SC_COLLATE2; any other
 ///   number is taken as SC_ASCII.
@@ -28,16 +28,22 @@ const LocaleBase = _base.LocaleBase;
 /// order, 1 when `string2` comes first. 0 when `length` is 0.
 ///
 /// BEHAVIOR:
-/// SC_ASCII leaves the case of letters out and compares their capitals
-/// by their codes, as a file name is compared. SC_COLLATE1 leaves case
-/// and accent out and orders the letters as the language does: in
-/// Swedish Å, Ä and Ö come after Z, in Spanish Ñ after N, and anything
-/// that is not a letter comes before every letter. SC_COLLATE2 orders as
-/// SC_COLLATE1 and, where that finds the two the same, by the first byte
-/// they differ in: the order a sorted list is shown in, where `apple`,
-/// `Apple` and `äpple` stand together and always in the same order.
+/// The strings are compared character by character. SC_ASCII leaves the
+/// case of letters out and compares their capitals by their code points,
+/// as a file name is compared. SC_COLLATE1 leaves case and marks out and
+/// orders the letters as the language does: in Swedish Å, Ä and Ö come
+/// after Z, in Spanish Ñ after N; `ł` is an `l` and `č` a `c`. Anything
+/// that is not a letter comes before every letter, the Latin letters
+/// before those of other scripts - Greek, Cyrillic, the kana, the
+/// ideographs - which are in the order of their code points, and a mark
+/// written on the letter before counts for nothing. SC_COLLATE2 orders
+/// as SC_COLLATE1 and, where that finds the two the same, by the first
+/// byte they differ in: the order a sorted list is shown in, where
+/// `apple`, `Apple` and `äpple` stand together and always in the same
+/// order.
 ///
-/// A string that ends where the other goes on comes first.
+/// A string that ends where the other goes on comes first. A character
+/// cut by `length` is compared as what of it is left.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -54,7 +60,7 @@ const LocaleBase = _base.LocaleBase;
 ///
 /// BUGS:
 /// A letter is weighed alone: `ß` is an `s` and `æ` an `a`, not two
-/// letters each.
+/// letters each. The letters of other scripts have no language's order.
 ///
 /// SEE ALSO:
 /// `StrConvert`, utility.library `Stricmp`
@@ -67,19 +73,21 @@ pub fn StrnCmp(_: *LocaleBase, loc: *const locale.Locale, string1: [*:0]const u8
     const ext = _base.extOf(loc);
     const order = _compare.orderOf(compare_type);
     const first = if (order == locale.SC_COLLATE2) locale.SC_COLLATE1 else order;
-    var at: usize = 0;
-    while (length < 0 or at < @as(usize, @intCast(length))) : (at += 1) {
-        const one = _compare.weightOf(ext, string1[at], first);
-        const two = _compare.weightOf(ext, string2[at], first);
-        if (one != two) return _compare.sign(one, two);
-        if (one == 0) break;
+    const one = _compare.bounded(string1, length);
+    const two = _compare.bounded(string2, length);
+    var at_one: usize = 0;
+    var at_two: usize = 0;
+    while (true) {
+        const mine = _compare.nextKey(ext, one, &at_one, first);
+        const theirs = _compare.nextKey(ext, two, &at_two, first);
+        if (mine != theirs) return _compare.sign(mine, theirs);
+        if (mine == 0) break;
     }
     if (order != locale.SC_COLLATE2) return 0;
-    // The same by their weights, so as long as each other: the first byte
-    // that differs decides.
-    var again: usize = 0;
-    while (again < at) : (again += 1) {
-        if (string1[again] != string2[again]) return _compare.sign(string1[again], string2[again]);
+    // The same by their keys: the first byte that differs decides, and
+    // the one that ends first comes first.
+    for (one[0..@min(one.len, two.len)], two[0..@min(one.len, two.len)]) |byte_one, byte_two| {
+        if (byte_one != byte_two) return _compare.sign(byte_one, byte_two);
     }
-    return 0;
+    return _compare.sign(@intCast(one.len), @intCast(two.len));
 }

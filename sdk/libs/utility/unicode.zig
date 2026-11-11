@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: MIT
 //! Characters by Unicode's tables: a character's folding, upper case and
 //! lower case, names compared without regard to case, the letter a
-//! letter with marks is written on, and the cells of a console a
-//! character takes.
+//! letter with marks is written on, the cells of a console a character
+//! takes, and what a character is - a letter, a digit, a space, ...
 //!
 //! The case tables are runs of code points that move by the same amount
 //! (`unicode_case.zig`, written by tools/foldgen); a character is looked
 //! up by a binary search over them, ASCII without one. The base letters
 //! (`unicode_base.zig`, the same tool's) are a sorted list searched the
-//! same way, and the widths (`unicode_width.zig`) sorted ranges. Folding
+//! same way, the widths (`unicode_width.zig`) sorted ranges, and the
+//! classes (`unicode_class.zig`) the code points where the class
+//! changes, searched for the last at or before a character. Folding
 //! is simple
 //! case folding - one code point to one, the same whatever language is
 //! set - which is what every name is compared by: `ß` stays `ß`, `ẞ` folds
@@ -21,6 +23,7 @@ const utf8 = @import("utf8.zig");
 const unicode_case = @import("unicode_case.zig");
 const unicode_base = @import("unicode_base.zig");
 const unicode_width = @import("unicode_width.zig");
+const unicode_class = @import("unicode_class.zig");
 
 /// The Unicode version the tables are from.
 pub const version = unicode_case.unicode_version;
@@ -98,6 +101,29 @@ pub fn width(char: u32) u2 {
     if (within(&unicode_width.zero, char)) return 0;
     if (within(&unicode_width.wide, char)) return 2;
     return 1;
+}
+
+/// What a character is, by its general category.
+pub const Class = unicode_class.Class;
+
+/// What `char` is: a capital, a small letter, a digit, a space, ... -
+/// `.unassigned` for a code point that is no character, a surrogate, or
+/// a value past U+10FFFF.
+pub fn class(char: u32) Class {
+    if (char > utf8.last) return .unassigned;
+    const starts = &unicode_class.starts;
+    // The last entry that starts at or before the character; the first
+    // starts at 0.
+    var low: usize = 0;
+    var high: usize = starts.len;
+    while (low < high) {
+        const middle = low + (high - low) / 2;
+        if (starts[middle] >> 8 <= char) low = middle + 1 else high = middle;
+    }
+    const start = starts[low - 1];
+    const number: u8 = @truncate(start);
+    if (number == unicode_class.pairs) return if ((char - (start >> 8)) % 2 == 0) .upper else .lower;
+    return @enumFromInt(number);
 }
 
 /// Whether `char` is in one of `ranges`, sorted pairs of first and last.

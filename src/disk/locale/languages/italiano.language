@@ -17,7 +17,7 @@ ABMON_11=Nov ABMON_12=Dic
 # Yes and no, before and after noon.
 YESSTR=Sì NOSTR=No AM_STR=AM PM_STR=PM
 # The hyphens and the quotes.
-SOFTHYPHEN=- HARDHYPHEN=-
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=« CLOSEQUOTE=»
 # The days near today, and any day after tomorrow.
 YESTERDAYSTR=Ieri TODAYSTR=Oggi TOMORROWSTR=Domani
 FUTURESTR=Futuro

@@ -28,7 +28,7 @@ const DosBase = sdk.interface.dos.DosBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "KeySource";
-const VERSION_STRING = "\x00$VER: KeySource 1.0 (11.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: KeySource 1.1 (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TEXT,RETURN/S,MOUSE/S,X/K/N,Y/K/N,DX/K/N,DY/K/N,CLICK/S,WHEEL/K/N";
@@ -99,10 +99,14 @@ fn typeText(sys: *ExecBase, dl: *DosBase, text: ?[*:0]const u8, press_return: bo
     defer sys.CloseDevice(&io.req);
     var typed: u32 = 0;
     if (text) |t| {
-        var at = t;
-        while (at[0] != 0) : (at += 1) {
-            const key = keyOf(at[0]) orelse {
-                _ = Printf(dl, MSG_SKIPPED, .{ COMMAND_NAME, @as(u32, at[0]) });
+        var length: usize = 0;
+        while (t[length] != 0) length += 1;
+        const characters = t[0..length];
+        var at: usize = 0;
+        while (at < length) {
+            const char = sdk.utility.utf8.next(characters, &at);
+            const key = (if (char < 0x80) keyOf(@intCast(char)) else null) orelse {
+                _ = Printf(dl, MSG_SKIPPED, .{ COMMAND_NAME, char });
                 continue;
             };
             var events: [4]InputEvent = undefined;

@@ -9,11 +9,10 @@
 //! CloseLocale and CloseCatalog. A field that is a string points into the
 //! library's memory and is good until the locale is closed.
 //!
-//! **The text is in the locale's code set** (`Locale.code_set`): Latin-1
-//! while the system shows Latin-1, UTF-8 once it shows UTF-8. The files a
-//! locale is made from - the settings, the countries, the languages, the
-//! catalogs - are written in UTF-8, and the library converts what it reads
-//! to the code set; a character the code set lacks becomes `?`. A
+//! **The text is UTF-8** (`Locale.code_set` and `Catalog.code_set` are
+//! CODESET_UTF8). The files a locale is made from - the settings, the
+//! countries, the languages, the catalogs - are written in UTF-8 and kept
+//! as they are read; one that is not is read as code page 1252. A
 //! character handed to a call is a code point (`u32`), and lengths are
 //! counted in bytes.
 //!
@@ -153,7 +152,7 @@ pub const Locale = extern struct {
     /// loc_Flags: none yet, always 0.
     flags: u32,
     /// loc_CodeSet: the code set of every string here and of every
-    /// catalog opened with this locale (CODESET_*).
+    /// catalog opened with this locale: CODESET_UTF8.
     code_set: u32,
     /// loc_CountryCode: the country's code (ISO 3166, `DE`).
     country_code: [*:0]const u8,
@@ -278,8 +277,6 @@ pub const OC_TagBase: utility.Tag = utility.TAG_USER + 0x90000;
 /// The language of the strings built into the program, `english` unless
 /// given: a catalog in it is never looked for.
 pub const OC_BuiltInLanguage: utility.Tag = OC_TagBase + 1;
-/// The code set of those strings (CODESET_*). Taken and not used yet.
-pub const OC_BuiltInCodeSet: utility.Tag = OC_TagBase + 2;
 /// The version a catalog must have; any when 0 or not given.
 pub const OC_Version: utility.Tag = OC_TagBase + 3;
 /// A language to look in before the locale's own.
@@ -292,8 +289,8 @@ pub const Catalog = extern struct {
     link: exec.Node = .{},
     /// cat_Language: the language the strings are in.
     language: ?[*:0]const u8 = null,
-    /// cat_CodeSet: the code set they are in now (CODESET_*): the
-    /// locale's, whatever the file had.
+    /// cat_CodeSet: the code set they are in now: CODESET_UTF8, whatever
+    /// the file had.
     code_set: u32 = 0,
     /// cat_Version, cat_Revision: from the version string the file
     /// carries.

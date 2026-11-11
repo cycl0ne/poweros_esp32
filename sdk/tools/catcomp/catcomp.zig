@@ -34,14 +34,13 @@
 //! What it checks: every name in a translation is in the descriptor, none
 //! twice; each translation takes the same values, of the same sizes, as
 //! the string built in - by place (`%2$s`) or in order; its version is the
-//! descriptor's; it is UTF-8.
+//! descriptor's; it is UTF-8, and so is every string with its escapes
+//! undone (`\xC3\xA4` is `ä`, `\xE4` alone is refused).
 //!
 //! The module: `catalog_name`, `catalog_version`, `builtin_language`, the
-//! names as `Id`, and `builtin(id)`, each string as it is built in - in
-//! Latin-1, the system's code set, a character it lacks as `?`. The
-//! catalog: an IFF FORM CTLG with FVER, LANG, CSET (106: the strings are
-//! UTF-8, and the library converts them as it reads) and STRS, the strings
-//! sorted by number.
+//! names as `Id`, and `builtin(id)`, each string as it is built in, UTF-8.
+//! The catalog: an IFF FORM CTLG with FVER, LANG, CSET (106: the strings
+//! are UTF-8) and STRS, the strings sorted by number.
 
 const std = @import("std");
 const mem = std.mem;
@@ -192,6 +191,7 @@ pub fn readDescriptor(gpa: mem.Allocator, text: []const u8, problem: *Problem) !
         }
         const string_line = (try lines.next(gpa)) orelse return problem.at(line.number, "a name without its text");
         const string = unescape(gpa, string_line.text) catch return problem.at(string_line.number, "an escape that is none");
+        if (!std.unicode.utf8ValidateSlice(string)) return problem.at(string_line.number, "an escape that makes the text no UTF-8");
         if (!fits(string, least, most)) return problem.at(string_line.number, "a text outside its least and most");
         _ = signature(gpa, string) catch return problem.at(string_line.number, "a value both by place and in order");
         try messages.append(gpa, .{ .name = name, .id = id, .least = least, .most = most, .text = string });
@@ -228,6 +228,7 @@ pub fn readTranslation(gpa: mem.Allocator, text: []const u8, descriptor: *const 
         try seen.append(gpa, message.name);
         const string_line = (try lines.next(gpa)) orelse return problem.at(line.number, "a name without its text");
         const string = unescape(gpa, string_line.text) catch return problem.at(string_line.number, "an escape that is none");
+        if (!std.unicode.utf8ValidateSlice(string)) return problem.at(string_line.number, "an escape that makes the text no UTF-8");
         if (string.len == 0) continue;
         if (!fits(string, message.least, message.most)) return problem.at(string_line.number, "a text outside its least and most");
         const want = signature(gpa, message.text) catch unreachable;
@@ -365,15 +366,6 @@ pub fn signature(gpa: mem.Allocator, format: []const u8) ![]const u8 {
     return sizes.items;
 }
 
-/// UTF-8 as Latin-1, a character it lacks as `?`.
-fn toLatin1(gpa: mem.Allocator, text: []const u8) ![]const u8 {
-    var out: std.ArrayList(u8) = .empty;
-    const view = try std.unicode.Utf8View.init(text);
-    var points = view.iterator();
-    while (points.nextCodepoint()) |point| try out.append(gpa, if (point <= 0xFF) @intCast(point) else '?');
-    return out.items;
-}
-
 pub fn writeModule(gpa: mem.Allocator, descriptor: *const Descriptor, catalog_name: []const u8, source: []const u8) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     try out.appendSlice(gpa, try std.fmt.allocPrint(gpa,
@@ -404,8 +396,10 @@ pub fn writeModule(gpa: mem.Allocator, descriptor: *const Descriptor, catalog_na
     );
     for (descriptor.messages) |message| {
         try out.appendSlice(gpa, try std.fmt.allocPrint(gpa, "        .{s} => \"", .{message.name}));
-        for (try toLatin1(gpa, message.text)) |byte| {
-            if (byte >= 0x20 and byte < 0x7F and byte != '"' and byte != '\\') {
+        // UTF-8 as it is - the descriptor was checked to be - and the
+        // controls and the quote and backslash escaped.
+        for (message.text) |byte| {
+            if (byte >= 0x20 and byte != 0x7F and byte != '"' and byte != '\\') {
                 try out.append(gpa, byte);
             } else {
                 try out.appendSlice(gpa, try std.fmt.allocPrint(gpa, "\\x{x:0>2}", .{byte}));
@@ -501,6 +495,12 @@ test "a descriptor: numbers counted on, lines joined, escapes undone" {
     try testing.expect(mem.indexOf(u8, module, "    MSG_FILES = 2,\n") != null);
     try testing.expect(mem.indexOf(u8, module, ".MSG_HELLO => \"Hello, %s!\\x0a\",") != null);
     try testing.expect(mem.indexOf(u8, module, ".MSG_TAB => \"a\\x09bAA\\x5c\",") != null);
+
+    // UTF-8 kept as it is; an escape that breaks it refused.
+    const umlauts = try readDescriptor(arena.allocator(), "MSG_ONE (1//)\nGrüße, \\xC3\\xA4 €\n", &problem);
+    const written = try writeModule(arena.allocator(), &umlauts, "c/test/locale.catalog", "locale.cd");
+    try testing.expect(mem.indexOf(u8, written, ".MSG_ONE => \"Grüße, ä €\",") != null);
+    try testing.expectError(error.Bad, readDescriptor(arena.allocator(), "MSG_ONE (1//)\nM\\xE4rz\n", &problem));
 }
 
 test "a translation: checked against the descriptor, written as a CTLG file" {

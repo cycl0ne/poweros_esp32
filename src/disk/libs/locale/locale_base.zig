@@ -30,6 +30,25 @@ const UtilityBase = sdk.interface.utility.UtilityBase;
 /// language's 50 words, with room to spare.
 pub const text_size = 4096;
 
+/// The places a letter of the alphabet gives: its own, and seven after
+/// it for the letters a language sorts after it.
+pub const letter_slots = 8;
+/// The letters a Latin letter sorts with: a to z, then þ.
+pub const letter_bases = 27;
+/// Every place a Latin letter can sort at.
+pub const letter_places = letter_bases * letter_slots;
+/// The most letters a language can sort after the alphabet's.
+pub const max_placed = 64;
+
+/// A letter a language sorts after one of the alphabet's (`AFTER_Z=Å`).
+pub const Placed = extern struct {
+    /// The letter, folded.
+    char: u32,
+    /// Its place: the letter it follows (0 for a) times `letter_slots`,
+    /// plus 1 for the first group after it, 2 for the next, ...
+    place: u32,
+};
+
 /// A locale, with what the library keeps behind the public part.
 pub const ExtLocale = extern struct {
     public: locale.Locale,
@@ -40,11 +59,14 @@ pub const ExtLocale = extern struct {
     builtin: bool = false,
     /// The language's words, by their GetLocaleStr number; 0 is unused.
     strings: [locale.MAXSTRMSG][*:0]const u8 = undefined,
-    /// What each Latin-1 character sorts by when case and accents are
-    /// left out (SC_COLLATE1), as a byte from 2 up: anything that is not a
-    /// letter below every letter, in the order of its code, the letters
-    /// in the language's order.
-    primary: [256]u8 = undefined,
+    /// The letters the language sorts after one of the alphabet's, and
+    /// the place each takes; `placed_count` of them.
+    placed: [max_placed]Placed = undefined,
+    placed_count: u32 = 0,
+    /// The key byte of each place a Latin letter sorts at in SC_COLLATE1
+    /// (`letter * letter_slots + slot`, `letter` 0 for a to 26 for þ), in
+    /// the language's order; 0 for a place no letter takes.
+    letter_keys: [letter_places]u8 = undefined,
     /// The strings, filled from the front.
     used: u32 = 0,
     text: [text_size]u8 = undefined,

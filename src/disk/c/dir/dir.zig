@@ -51,7 +51,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Dir";
-const VERSION_STRING = "\x00$VER: Dir 1.2 (11.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Dir 1.3 (11.11.2026)\r\n";
 
 const template = "DIR,OPT/K,ALL/S,DIRS/S,FILES/S,INTER/S";
 const arg_dir = 0;
@@ -142,14 +142,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var inter = argv[arg_inter] != 0;
     // OPT A/D/F/I, the same as the switches.
     if (rdargs.string(argv[arg_opt])) |opt| {
-        var p = opt;
-        while (p[0] != 0) : (p += 1) switch (p[0]) {
+        var length: usize = 0;
+        while (opt[length] != 0) length += 1;
+        var at: usize = 0;
+        while (at < length) switch (sdk.utility.utf8.next(opt[0..length], &at)) {
             'i', 'I' => inter = true,
             'a', 'A' => all = true,
             'd', 'D' => dirs = true,
             'f', 'F' => files = true,
-            else => {
-                _ = Printf(dl, "%c", .{@as(u32, p[0])});
+            else => |other| {
+                _ = Printf(dl, "%c", .{other});
                 _ = dl.PutStr(MSG_OPTION_IGNORED);
             },
         };

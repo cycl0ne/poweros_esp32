@@ -19,7 +19,7 @@ const LocaleBase = _base.LocaleBase;
 ///
 /// INPUTS:
 /// - `loc` - a locale, from OpenLocale.
-/// - `string` - the string, in the locale's code set.
+/// - `string` - the string, UTF-8.
 /// - `buffer` - where the key goes.
 /// - `buffer_size` - its size in bytes, the NUL that ends the key
 ///   counted.
@@ -33,11 +33,12 @@ const LocaleBase = _base.LocaleBase;
 /// BEHAVIOR:
 /// Two keys compared byte by byte, as unsigned bytes, up to the NUL that
 /// ends the first, come out as StrnCmp compares their strings with the
-/// same type. A key is one byte
-/// per character for SC_ASCII and SC_COLLATE1, two and one more for
-/// SC_COLLATE2.
+/// same type. A key is at most twice as long as its string for
+/// SC_ASCII and SC_COLLATE1 - a byte for each character of ASCII, one or
+/// four for the others - and three times and one more for SC_COLLATE2.
 ///
-/// A key cut short by the buffer still orders by what it holds.
+/// A key cut short by the buffer still orders by what it holds; it ends
+/// before a character whose key does not fit whole.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -60,7 +61,7 @@ const LocaleBase = _base.LocaleBase;
 ///
 /// EXAMPLES:
 /// ```zig
-/// var key: [2 * 108 + 2]u8 = undefined;
+/// var key: [3 * 108 + 2]u8 = undefined;
 /// _ = lb.StrConvert(loc, name, &key, key.len, locale.SC_COLLATE2);
 /// ```
 pub fn StrConvert(_: *LocaleBase, loc: *const locale.Locale, string: [*:0]const u8, buffer: [*]u8, buffer_size: u32, compare_type: u32) u32 {
@@ -68,21 +69,29 @@ pub fn StrConvert(_: *LocaleBase, loc: *const locale.Locale, string: [*:0]const 
     const ext = _base.extOf(loc);
     const order = _compare.orderOf(compare_type);
     const first = if (order == locale.SC_COLLATE2) locale.SC_COLLATE1 else order;
+    const text = _compare.bounded(string, -1);
     const room = buffer_size - 1;
     var written: u32 = 0;
     var at: usize = 0;
-    while (string[at] != 0 and written < room) : (at += 1) {
-        buffer[written] = _compare.weightOf(ext, string[at], first);
-        written += 1;
+    var whole = true;
+    while (true) {
+        const key = _compare.nextKey(ext, text, &at, first);
+        if (key == 0) break;
+        var bytes: [4]u8 = undefined;
+        const count = _compare.keyBytes(key, first, &bytes);
+        if (room - written < count) {
+            whole = false;
+            break;
+        }
+        @memcpy(buffer[written..][0..count], bytes[0..count]);
+        written += @intCast(count);
     }
-    if (order == locale.SC_COLLATE2 and written < room) {
+    if (order == locale.SC_COLLATE2 and whole and written < room) {
         buffer[written] = 1;
         written += 1;
-        at = 0;
-        while (string[at] != 0 and written < room) : (at += 1) {
-            buffer[written] = string[at];
-            written += 1;
-        }
+        const count: u32 = @intCast(@min(text.len, room - written));
+        @memcpy(buffer[written..][0..count], text[0..count]);
+        written += count;
     }
     buffer[written] = 0;
     return written;

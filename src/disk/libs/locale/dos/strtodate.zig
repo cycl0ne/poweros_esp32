@@ -18,7 +18,6 @@ const sdk = @import("sdk");
 const dos = sdk.dos;
 const locale = sdk.locale;
 const _base = @import("../locale_base.zig");
-const _chars = @import("../chars/_chars.zig");
 const _dos = @import("_dos.zig");
 const _datetostr = @import("datetostr.zig");
 const LocaleBase = _base.LocaleBase;
@@ -122,9 +121,11 @@ fn nearDay(lb: *LocaleBase, loc: *const locale.Locale, text: [*:0]const u8, flag
 fn same(text: [*:0]const u8, word: ?[*:0]const u8) bool {
     const with = word orelse return false;
     if (with[0] == 0) return false;
-    var at: usize = 0;
-    while (with[at] != 0) : (at += 1) {
-        if (_chars.toLower(text[at]) != _chars.toLower(with[at])) return false;
-    }
-    return text[at] == 0;
+    return sdk.utility.unicode.equalFolded(text[0..lengthOf(text)], with[0..lengthOf(with)]);
+}
+
+fn lengthOf(text: [*:0]const u8) usize {
+    var count: usize = 0;
+    while (text[count] != 0) count += 1;
+    return count;
 }

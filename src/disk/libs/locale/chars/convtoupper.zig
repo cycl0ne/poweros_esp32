@@ -17,20 +17,20 @@ const _chars = @import("_chars.zig");
 ///
 /// INPUTS:
 /// - `loc` - a locale, from OpenLocale.
-/// - `character` - a character of the locale's code set, by its number.
+/// - `character` - a character, by its code point.
 ///
 /// RESULT:
-/// The capital letter for a small one; anything else as it is. a to z and à to þ but ÷ are
-/// answered as A to Z and À to Þ; ß, ÿ and µ have no capital in the
-/// code set and stay as they are.
-/// A character past 255 is answered as it is.
+/// The capital letter for a small one; anything else as it is. `a` is
+/// answered as `A`, `ä` as `Ä`, `ÿ` as `Ÿ`, `ω` as `Ω`; `ß` has no
+/// capital of its own and stays as it is.
 ///
 /// BEHAVIOR:
-/// The cases are the code set's: Latin-1's, the same in every language.
+/// The cases are Unicode's simple ones, a character to a character, the
+/// same in every language.
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: safe; it reads no memory but its argument.
+/// - Interrupts: safe; it reads a table.
 /// - Locks: none.
 /// - Process: a Task will do.
 ///
@@ -38,8 +38,9 @@ const _chars = @import("_chars.zig");
 /// Nothing is allocated.
 ///
 /// NOTES:
-/// The answer fits a byte whenever the character does, so a string can be
-/// changed in place.
+/// The answer may take another number of bytes in UTF-8 than the
+/// character did (`ı` is two, `I` one), so a string changed character by
+/// character is written anew, not in place.
 ///
 /// BUGS:
 /// None known.
@@ -49,7 +50,9 @@ const _chars = @import("_chars.zig");
 ///
 /// EXAMPLES:
 /// ```zig
-/// for (word) |*c| c.* = @intCast(lb.ConvToUpper(loc, c.*));
+/// var at: usize = 0;
+/// var length: usize = 0;
+/// while (at < word.len) length += utf8.encode(lb.ConvToUpper(loc, utf8.next(word, &at)), capitals[length..][0..4]);
 /// ```
 pub fn ConvToUpper(_: *LocaleBase, loc: *const locale.Locale, character: u32) u32 {
     _ = loc;

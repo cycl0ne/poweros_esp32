@@ -160,7 +160,7 @@ test "the library's own locale: English, the dates dos writes, and its words" {
     try testing.expectEqual(@as(?[*:0]const u8, null), loc.pref_languages[1]);
     try testing.expectEqualStrings("%d-%b-%Y", span(loc.short_date_format));
     try testing.expectEqualStrings("%H:%M:%S", span(loc.short_time_format));
-    try testing.expectEqual(locale.CODESET_LATIN1, loc.code_set);
+    try testing.expectEqual(locale.CODESET_UTF8, loc.code_set);
     try testing.expectEqualStrings("Sunday", span(lb.GetLocaleStr(loc, locale.DAY_1)));
     try testing.expectEqualStrings("Dec", span(lb.GetLocaleStr(loc, locale.ABMON_12)));
     try testing.expectEqualStrings("Future", span(lb.GetLocaleStr(loc, locale.FUTURESTR)));
@@ -174,7 +174,7 @@ test "the library's own locale: English, the dates dos writes, and its words" {
     lb.CloseLocale(null);
 }
 
-test "characters: Latin-1's classes and cases, in any locale" {
+test "characters: Unicode's classes and cases, in any locale" {
     var rig: Rig = undefined;
     try rig.init();
     defer rig.deinit() catch unreachable;
@@ -183,22 +183,30 @@ test "characters: Latin-1's classes and cases, in any locale" {
     defer lb.CloseLocale(loc);
 
     try testing.expect(lb.IsAlpha(loc, 'q') and lb.IsAlpha(loc, 0xC4) and lb.IsAlpha(loc, 0xDF) and lb.IsAlpha(loc, 0xAA));
-    try testing.expect(!lb.IsAlpha(loc, 0xD7) and !lb.IsAlpha(loc, '1') and !lb.IsAlpha(loc, 0x100));
+    try testing.expect(lb.IsAlpha(loc, 0x0100) and lb.IsAlpha(loc, 0x03A9) and lb.IsAlpha(loc, 0x3042) and lb.IsAlpha(loc, 0x4E2D));
+    try testing.expect(!lb.IsAlpha(loc, 0xD7) and !lb.IsAlpha(loc, '1') and !lb.IsAlpha(loc, 0x20AC) and !lb.IsAlpha(loc, 0x0301));
     try testing.expect(lb.IsUpper(loc, 0xC4) and !lb.IsUpper(loc, 0xE4) and lb.IsLower(loc, 0xE4) and lb.IsLower(loc, 0xB5));
-    try testing.expect(!lb.IsUpper(loc, 0xAA) and !lb.IsLower(loc, 0xAA));
-    try testing.expect(lb.IsDigit(loc, '7') and !lb.IsDigit(loc, 0xB2) and lb.IsXDigit(loc, 'f') and !lb.IsXDigit(loc, 'g'));
-    try testing.expect(lb.IsAlNum(loc, '0') and lb.IsAlNum(loc, 0xF1) and !lb.IsAlNum(loc, '_'));
+    try testing.expect(lb.IsUpper(loc, 0x0416) and lb.IsLower(loc, 0x0436) and !lb.IsUpper(loc, 0x01C5) and !lb.IsLower(loc, 0x01C5));
+    try testing.expect(!lb.IsUpper(loc, 0xAA) and !lb.IsLower(loc, 0xAA) and !lb.IsUpper(loc, 0x3042));
+    try testing.expect(lb.IsDigit(loc, '7') and lb.IsDigit(loc, 0x0663) and !lb.IsDigit(loc, 0xB2) and lb.IsXDigit(loc, 'f') and !lb.IsXDigit(loc, 'g'));
+    try testing.expect(!lb.IsXDigit(loc, 0x0663) and lb.IsAlNum(loc, '0') and lb.IsAlNum(loc, 0xF1) and !lb.IsAlNum(loc, '_'));
     try testing.expect(lb.IsSpace(loc, ' ') and lb.IsSpace(loc, '\t') and lb.IsSpace(loc, 0xA0) and !lb.IsSpace(loc, 0x85));
+    try testing.expect(lb.IsSpace(loc, 0x3000) and lb.IsSpace(loc, 0x2028) and !lb.IsPrint(loc, 0x2028) and lb.IsPrint(loc, 0x3000));
     try testing.expect(lb.IsCntrl(loc, 0) and lb.IsCntrl(loc, 0x7F) and lb.IsCntrl(loc, 0x9F) and !lb.IsCntrl(loc, 0xA0));
     try testing.expect(lb.IsPrint(loc, ' ') and lb.IsPrint(loc, 0xA0) and !lb.IsGraph(loc, ' ') and !lb.IsGraph(loc, 0xA0));
     try testing.expect(lb.IsGraph(loc, 0xA1) and lb.IsPunct(loc, 0xA1) and lb.IsPunct(loc, 0xD7) and !lb.IsPunct(loc, 0xBA));
     try testing.expect(lb.IsPunct(loc, '!') and lb.IsPunct(loc, '~') and !lb.IsPunct(loc, 'a') and !lb.IsPrint(loc, 0x80));
+    try testing.expect(lb.IsPunct(loc, 0x20AC) and lb.IsPunct(loc, 0x201E) and lb.IsPunct(loc, 0x1F600) and lb.IsGraph(loc, 0x0301));
+    try testing.expect(!lb.IsGraph(loc, 0x0378) and !lb.IsPrint(loc, 0xD800) and !lb.IsPrint(loc, 0x110000));
     try testing.expectEqual(@as(u32, 'a'), lb.ConvToLower(loc, 'A'));
     try testing.expectEqual(@as(u32, 0xE4), lb.ConvToLower(loc, 0xC4));
     try testing.expectEqual(@as(u32, 0xD7), lb.ConvToLower(loc, 0xD7));
+    try testing.expectEqual(@as(u32, 0x03C9), lb.ConvToLower(loc, 0x03A9));
+    try testing.expectEqual(@as(u32, 0x0436), lb.ConvToLower(loc, 0x0416));
     try testing.expectEqual(@as(u32, 0xDE), lb.ConvToUpper(loc, 0xFE));
     try testing.expectEqual(@as(u32, 0xDF), lb.ConvToUpper(loc, 0xDF));
-    try testing.expectEqual(@as(u32, 0xFF), lb.ConvToUpper(loc, 0xFF));
+    try testing.expectEqual(@as(u32, 0x0178), lb.ConvToUpper(loc, 0xFF));
+    try testing.expectEqual(@as(u32, 0x039C), lb.ConvToUpper(loc, 0xB5));
     try testing.expectEqual(@as(u32, 0x263A), lb.ConvToUpper(loc, 0x263A));
 }
 
@@ -206,10 +214,10 @@ test "characters: Latin-1's classes and cases, in any locale" {
 /// keys' byte order the same for every pair.
 fn expectOrder(lb: *LocaleBase, loc: *locale.Locale, compare_type: u32, order: []const [*:0]const u8) !void {
     for (order, 0..) |one, i| {
-        var key_one: [64]u8 = undefined;
+        var key_one: [128]u8 = undefined;
         _ = lb.StrConvert(loc, one, &key_one, key_one.len, compare_type);
         for (order, 0..) |two, j| {
-            var key_two: [64]u8 = undefined;
+            var key_two: [128]u8 = undefined;
             _ = lb.StrConvert(loc, two, &key_two, key_two.len, compare_type);
             const want: i32 = if (i < j) -1 else if (i > j) 1 else 0;
             const got = lb.StrnCmp(loc, one, two, -1, compare_type);
@@ -230,7 +238,7 @@ fn expectOrder(lb: *LocaleBase, loc: *locale.Locale, compare_type: u32, order: [
     }
 }
 
-test "StrnCmp and StrConvert: case left out, accents left out, then case and accent deciding" {
+test "StrnCmp and StrConvert: case left out, marks left out, then case and marks deciding" {
     var rig: Rig = undefined;
     try rig.init();
     defer rig.deinit() catch unreachable;
@@ -245,21 +253,34 @@ test "StrnCmp and StrConvert: case left out, accents left out, then case and acc
     try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "abcX", "abcY", 3, locale.SC_ASCII));
     try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "x", "y", 0, locale.SC_ASCII));
     try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "same", "SAME", -1, 99));
-    // SC_COLLATE1: ä is an a, and a digit or a mark comes before a letter.
-    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "B\xE4r", "bar", -1, locale.SC_COLLATE1));
-    try expectOrder(lb, loc, locale.SC_COLLATE1, &.{ "1", "_x", "a", "b\xE4r", "bas", "z" });
+    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "Straße", "STRASSE", 4, locale.SC_ASCII));
+    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "ärger", "ÄRGER", -1, locale.SC_ASCII));
+    try expectOrder(lb, loc, locale.SC_ASCII, &.{ "a", "B", "c", "_", "Ä", "Ω" });
+    // SC_COLLATE1: ä is an a, ł an l; a digit or a sign comes before a
+    // letter, the Latin letters before the Greek, a mark counts for
+    // nothing.
+    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "Bär", "bar", -1, locale.SC_COLLATE1));
+    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "Łódź", "lodz", -1, locale.SC_COLLATE1));
+    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "cafe\u{301}", "café", -1, locale.SC_COLLATE1));
+    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "Ωμέγα", "ωμεγα", -1, locale.SC_COLLATE1));
+    try expectOrder(lb, loc, locale.SC_COLLATE1, &.{ "1", "_x", "€", "a", "bär", "bas", "čas", "dom", "œuvre", "pod", "z", "þorn", "α", "ω", "ж", "あ" });
     // SC_COLLATE2: the same, then the first byte that differs.
-    try expectOrder(lb, loc, locale.SC_COLLATE2, &.{ "Apple", "apple", "\xE4pple", "applf", "Zebra" });
-    try expectOrder(lb, loc, locale.SC_ASCII, &.{ "a", "B", "c", "_" });
+    try expectOrder(lb, loc, locale.SC_COLLATE2, &.{ "Apple", "apple", "äpple", "applf", "Zebra" });
+    try expectOrder(lb, loc, locale.SC_COLLATE2, &.{ "cafe", "cafe\u{301}", "café", "cafes" });
 
     // A key cut short still ends with a NUL, and says how long it is.
     var short: [4]u8 = undefined;
     try testing.expectEqual(@as(u32, 3), lb.StrConvert(loc, "abcdef", &short, short.len, locale.SC_COLLATE2));
     try testing.expectEqual(@as(u8, 0), short[3]);
     try testing.expectEqual(@as(u32, 0), lb.StrConvert(loc, "abc", &short, 0, locale.SC_ASCII));
+    // A key of four bytes is written whole or not at all.
+    var six: [6]u8 = undefined;
+    try testing.expectEqual(@as(u32, 4), lb.StrConvert(loc, "αβ", &six, six.len, locale.SC_COLLATE1));
+    try testing.expectEqual(@as(u32, 4), lb.StrConvert(loc, "äÖ", &six, six.len, locale.SC_ASCII));
+    try testing.expectEqualStrings("ÄÖ", six[0..4]);
 }
 
-test "OpenLocale from files: the country's formats, the language's words and order, UTF-8 made Latin-1" {
+test "OpenLocale from files: the country's formats, the language's words and order, UTF-8 as it is" {
     var rig: Rig = undefined;
     try rig.init();
     defer rig.deinit() catch unreachable;
@@ -287,28 +308,45 @@ test "OpenLocale from files: the country's formats, the language's words and ord
     try testing.expectEqualStrings(" ", span(loc.group_separator));
     try testing.expectEqualSlices(u8, &.{ 3, 0 }, loc.grouping[0..2]);
     try testing.expectEqual(locale.GROUPING_NONE, loc.frac_grouping[0]);
-    try testing.expectEqualStrings("\xF6re", span(loc.mon_small_cs));
+    try testing.expectEqualStrings("öre", span(loc.mon_small_cs));
     try testing.expectEqual(locale.SP_PREC_ALL, loc.mon_negative_sign_pos);
     try testing.expectEqual(locale.CSP_SUCCEEDS, loc.mon_negative_cs_pos);
     try testing.expectEqual(locale.SS_SPACE, loc.mon_positive_space_sep);
     try testing.expectEqualStrings("CET-1CEST,M3.5.0,M10.5.0/3", span(loc.time_zone));
 
-    // The words: söndag in Latin-1, a quote Latin-1 lacks as ?, English
-    // for what the file leaves out.
-    try testing.expectEqualStrings("s\xF6ndag", span(lb.GetLocaleStr(loc, locale.DAY_1)));
-    try testing.expectEqualStrings("m\xE5ndag", span(lb.GetLocaleStr(loc, locale.DAY_2)));
-    try testing.expectEqualStrings("?", span(lb.GetLocaleStr(loc, locale.OPENQUOTE)));
+    // The words as the file has them, English for what it leaves out.
+    try testing.expectEqualStrings("söndag", span(lb.GetLocaleStr(loc, locale.DAY_1)));
+    try testing.expectEqualStrings("måndag", span(lb.GetLocaleStr(loc, locale.DAY_2)));
+    try testing.expectEqualStrings("”", span(lb.GetLocaleStr(loc, locale.OPENQUOTE)));
     try testing.expectEqualStrings("Saturday", span(lb.GetLocaleStr(loc, locale.DAY_7)));
 
     // Swedish order: Å, then Ä and Æ, then Ö and Ø, all after Z.
-    try expectOrder(lb, loc, locale.SC_COLLATE1, &.{ "a", "o", "z", "\xC5", "\xE4", "\xF6" });
-    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "\xC4", "\xC6", -1, locale.SC_COLLATE1));
-    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "\xF6", "\xD8", -1, locale.SC_COLLATE1));
-    try expectOrder(lb, loc, locale.SC_COLLATE2, &.{ "Zorn", "zorn", "\xC5sa", "\xE5sa", "\xC4ra", "\xE4ra", "\xD6l" });
+    try expectOrder(lb, loc, locale.SC_COLLATE1, &.{ "a", "o", "z", "Å", "ä", "ö", "α" });
+    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "Ä", "Æ", -1, locale.SC_COLLATE1));
+    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "ö", "Ø", -1, locale.SC_COLLATE1));
+    // Å with a mark more is still an Å.
+    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "Ǻ", "å", -1, locale.SC_COLLATE1));
+    try expectOrder(lb, loc, locale.SC_COLLATE2, &.{ "Zorn", "zorn", "Åsa", "åsa", "Ära", "ära", "Öl" });
     // English, beside it, keeps å with a.
     const english = lb.OpenLocale(null).?;
     defer lb.CloseLocale(english);
-    try expectOrder(lb, english, locale.SC_COLLATE1, &.{ "a", "\xC5sa", "o", "z" });
+    try expectOrder(lb, english, locale.SC_COLLATE1, &.{ "a", "Åsa", "o", "z" });
+}
+
+test "OpenLocale: a file that is no UTF-8 read as code page 1252" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    const lb = rig.lb;
+    try rig.write("LOCALE:Countries/sverige.country", sverige_country);
+    try rig.write("LOCALE:Languages/svenska.language", "DAY_1=s\xF6ndag OPENQUOTE=\x84 CLOSEQUOTE=\x93\nAFTER_Z=\xC5,\xC4\xC6,\xD6\xD8\n");
+    try rig.write("LOCALE:sverige.prefs", "COUNTRY=sverige\n");
+    const loc = lb.OpenLocale("LOCALE:sverige.prefs") orelse return error.NoLocale;
+    defer lb.CloseLocale(loc);
+    try testing.expectEqualStrings("söndag", span(lb.GetLocaleStr(loc, locale.DAY_1)));
+    try testing.expectEqualStrings("„", span(lb.GetLocaleStr(loc, locale.OPENQUOTE)));
+    try testing.expectEqualStrings("“", span(lb.GetLocaleStr(loc, locale.CLOSEQUOTE)));
+    try expectOrder(lb, loc, locale.SC_COLLATE1, &.{ "z", "Å", "ä", "ö" });
 }
 
 test "OpenLocale: the settings' languages in order, the first with a file taken, English needing none" {
@@ -431,9 +469,11 @@ test "FormatDate: every conversion, the language's words and the time zone's nam
     const swedish = lb.OpenLocale("LOCALE:sverige.prefs").?;
     defer lb.CloseLocale(swedish);
     // A Sunday in winter time, and a day in summer time.
-    try testing.expectEqualStrings("s\xF6ndag  1 November 2026 CET", formatted(lb, swedish, &text, "%A %e %B %Y %Z", stampOf(2026, 11, 1, 12, 0, 0)));
+    try testing.expectEqualStrings("söndag  1 November 2026 CET", formatted(lb, swedish, &text, "%A %e %B %Y %Z", stampOf(2026, 11, 1, 12, 0, 0)));
     try testing.expectEqualStrings("2026-07-01 CEST", formatted(lb, swedish, &text, "%Y-%m-%d %Z", stampOf(2026, 7, 1, 12, 0, 0)));
     try testing.expectEqualStrings("januari", formatted(lb, swedish, &text, "%B", stampOf(2026, 1, 1, 0, 0, 0)));
+    // Read back character by character, whatever the case.
+    try testing.expectEqual(stampOf(2026, 1, 4, 0, 0, 0), parsed(lb, swedish, "%A %e %B %Y", "SÖNDAG 4 JANUARI 2026").?);
 }
 
 test "ParseDate: what FormatDate writes read back, names and numbers, and what is no date" {
@@ -495,6 +535,9 @@ test "FormatString: RawDoFmt's conversions, values by their place, digits groupe
     // Grouped by threes with the locale's separator; %d does not group.
     try testing.expectEqualStrings("1,234,567|-1,234|999|0|1234567|4,294,967,295", formattedString(lb, loc, &text, "%D|%D|%D|%U|%d|%U", .{ @as(i32, 1234567), @as(i32, -1234), @as(i32, 999), @as(u32, 0), @as(i32, 1234567), @as(u32, 4294967295) }).text);
     try testing.expectEqualStrings("  -1,234", formattedString(lb, loc, &text, "%8D", .{@as(i32, -1234)}).text);
+    // %c writes a code point in UTF-8; widths and limits count characters.
+    try testing.expectEqualStrings("€|ä|\u{1F600}|\u{FFFD}", formattedString(lb, loc, &text, "%c|%c|%c|%c", .{ @as(u32, 0x20AC), @as(u32, 0xE4), @as(u32, 0x1F600), @as(u32, 0xD800) }).text);
+    try testing.expectEqualStrings("  Grü|Ωμ  |   €", formattedString(lb, loc, &text, "%5.3s|%-4s|%4c", .{ "Grüße", "Ωμ", @as(u32, 0x20AC) }).text);
 
     try rig.write("LOCALE:Countries/sverige.country", sverige_country);
     try rig.write("LOCALE:Countries/indien.country", "GROUP=, GROUPING=3,2\n");
@@ -565,11 +608,13 @@ test "OpenCatalogA, GetCatalogStr, CloseCatalog: a language's strings, loaded on
         dl.UnLock(dl.CreateDir(dir) orelse return error.NoDir);
     }
     var file: [512]u8 = undefined;
-    // Out of order, and in UTF-8: read sorted and in Latin-1.
+    // Out of order: read sorted, UTF-8 as it is, a string that is no
+    // UTF-8 as code page 1252.
     try rig.write("LOCALE:Catalogs/deutsch/sys/test.catalog", catalogFile(&file, "$VER: sys/test.catalog 2.3 (29.10.2026)", "deutsch", locale.CODESET_UTF8, &.{
         .{ .id = 7, .text = "Grüße" },
         .{ .id = -100, .text = "Datenträger" },
         .{ .id = 1, .text = "eins" },
+        .{ .id = 3, .text = "5 \x80 f\xFCr \x84alle\x93" },
     }));
     try rig.write("LOCALE:Catalogs/svenska/test.catalog", "FORM\x00\x00\x00\x04ILBM");
 
@@ -581,9 +626,10 @@ test "OpenCatalogA, GetCatalogStr, CloseCatalog: a language's strings, loaded on
     try testing.expectEqualStrings("deutsch", span(catalog.language));
     try testing.expectEqual(@as(u32, 2), catalog.version);
     try testing.expectEqual(@as(u32, 3), catalog.revision);
-    try testing.expectEqual(locale.CODESET_LATIN1, catalog.code_set);
-    try testing.expectEqualStrings("Gr\xfc\xdfe", span(lb.GetCatalogStr(catalog, 7, "Greetings")));
-    try testing.expectEqualStrings("Datentr\xe4ger", span(lb.GetCatalogStr(catalog, -100, "Volume")));
+    try testing.expectEqual(locale.CODESET_UTF8, catalog.code_set);
+    try testing.expectEqualStrings("Grüße", span(lb.GetCatalogStr(catalog, 7, "Greetings")));
+    try testing.expectEqualStrings("Datenträger", span(lb.GetCatalogStr(catalog, -100, "Volume")));
+    try testing.expectEqualStrings("5 € für „alle“", span(lb.GetCatalogStr(catalog, 3, "three")));
     try testing.expectEqualStrings("eins", span(lb.GetCatalogStr(catalog, 1, "one")));
     try testing.expectEqualStrings("two", span(lb.GetCatalogStr(catalog, 2, "two")));
     try testing.expectEqualStrings("none", span(lb.GetCatalogStr(null, 1, "none")));
@@ -870,4 +916,12 @@ test "the countries and languages shipped: each read whole, in a language shippe
         try testing.expect(formatted(lb, loc, &text, loc.short_date_format, date).len < dos.LEN_DATSTRING);
         try testing.expect(formatted(lb, loc, &text, loc.short_time_format, date).len < dos.LEN_DATSTRING);
     }
+    // The euro sign and the German quotes, as the files have them.
+    try rig.write("LOCALE:Countries/deutschland.country", @embedFile("../../../locale/countries/deutschland.country"));
+    try rig.write("LOCALE:shipped.prefs", "COUNTRY=deutschland\n");
+    const german = lb.OpenLocale("LOCALE:shipped.prefs") orelse return error.NoLocale;
+    defer lb.CloseLocale(german);
+    try testing.expectEqualStrings("€", span(german.mon_cs));
+    try testing.expectEqualStrings("„", span(lb.GetLocaleStr(german, locale.OPENQUOTE)));
+    try testing.expectEqualStrings("“", span(lb.GetLocaleStr(german, locale.CLOSEQUOTE)));
 }

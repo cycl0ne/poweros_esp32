@@ -46,7 +46,8 @@ const max_values = 32;
 ///
 /// `%D` and `%U` write a signed and an unsigned number with the locale's
 /// group separator between groups of digits (`1.234.567`); `%d` and `%u`
-/// do not group. `%x` and `%X` write capitals. A width and a limit count
+/// do not group. `%x` and `%X` write capitals; `%c` writes a code point
+/// in UTF-8, U+FFFD for one that is none. A width and a limit count
 /// characters. With zero fill the sign comes before the zeros; a null
 /// `%s` writes nothing, padding included. Any other character after a
 /// `%` is written as it is, so `%%` is one `%`.
@@ -235,8 +236,9 @@ fn writeValue(out: *const Out, spec: *const Spec, from: ?[*]const u8) void {
         },
         'x', 'X' => _format.hexadecimal(buffer[0..32], if (long) load(u64, from) else load(u32, from)),
         'c' => char: {
-            buffer[0] = @truncate(if (long) load(u64, from) else load(u32, from));
-            break :char buffer[0..1];
+            const code: u64 = if (long) load(u64, from) else load(u32, from);
+            const length = sdk.utility.utf8.encode(if (code > 0xFFFF_FFFF) sdk.utility.utf8.replacement else @intCast(code), buffer[0..4]);
+            break :char buffer[0..length];
         },
         's' => string: {
             const pointer: ?[*:0]const u8 = @ptrFromInt(load(usize, from));
@@ -245,8 +247,8 @@ fn writeValue(out: *const Out, spec: *const Spec, from: ?[*]const u8) void {
         },
         else => unreachable,
     };
-    if (spec.limit != 0) text = _format.cut(loc, text, spec.limit);
-    const pad = spec.width -| _format.width(loc, text);
+    if (spec.limit != 0) text = _format.cut(text, spec.limit);
+    const pad = spec.width -| _format.width(text);
     if (spec.left) {
         out.text(text);
         out.repeat(' ', pad);

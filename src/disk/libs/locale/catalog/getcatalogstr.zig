@@ -22,8 +22,7 @@ const LocaleBase = _base.LocaleBase;
 /// - `default_string` - the string built into the program.
 ///
 /// RESULT:
-/// The catalog's string of that number, in the locale's code set;
-/// `default_string` when `catalog` is null or has none of that number.
+/// The catalog's string of that number, UTF-8; `default_string` when `catalog` is null or has none of that number.
 ///
 /// BEHAVIOR:
 /// The strings are sorted by number when the catalog is read, so this is

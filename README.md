@@ -210,7 +210,7 @@ from `LIBS:` when first opened. Every module, with its reference, is in
 |---|---|
 | Kernel | `exec` tasks on every core, ports, memory, libraries and devices; `utility` tag lists, hooks, dates, the zone the clock keeps, UTF-8 strings with Unicode's case and widths, text between UTF-8 and Latin-1, URLs and arrays sorted; `expansion` the board's parts |
 | Files | `dos` processes, files, handlers, the shell's `ReadArgs`, files read whole, trees made and deleted, passwords typed without their echo; `rdb` partitions on any drive; `compression` DEFLATE, zlib and gzip |
-| Languages | `locale` countries' dates, numbers and money, languages' words and order of letters, programs' texts translated in catalogs |
+| Languages | `locale` countries' dates, numbers and money, languages' words and order of letters, characters classed and sorted by Unicode, programs' texts translated in catalogs |
 | Displays | **`rtg`**; `graphics` drawing, text in UTF-8; `layers`; `intuition` screens, windows, gadgets, styles; `keymap` keys into UTF-8; `motion` animations and timers |
 | Sound | **`rta`**; `audiocodec` WAV, MP3, FLAC, Ogg Vorbis |
 | Video | `videocodec` films - their pictures, sound and subtitles; `media` MP4, MOV and Matroska; `videoparse` H.264, H.265, VP9 and AV1 streams read for a decoder |
@@ -257,7 +257,10 @@ Beside them:
 - **Languages:** 21 countries and 9 languages besides English in
   `LOCALE:`, the one chosen on Prefs' Region page with the time zone,
   or in `ENV:Sys/locale.prefs`; dates, dos's
-  error texts and the shell's messages in it - German shipped - and a
+  error texts and the shell's messages in it - German shipped - its
+  money and quotes as the files write them (`€`, `„“`), the characters
+  of every script classed and sorted by Unicode with a language's own
+  letters where it puts them (`Å`, `Ä`, `Ö` after `Z` in Swedish), and a
   program's own texts from its catalog, built from a descriptor and
   checked by `sdk/tools/catcomp`: the desktop's, Notepad's, Sheet's,
   the Player's, Movie's and the Clock's in German

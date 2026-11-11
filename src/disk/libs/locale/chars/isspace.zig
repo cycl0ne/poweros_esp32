@@ -17,17 +17,18 @@ const _chars = @import("_chars.zig");
 ///
 /// INPUTS:
 /// - `loc` - a locale, from OpenLocale.
-/// - `character` - a character of the locale's code set, by its number.
+/// - `character` - a character, by its code point.
 ///
 /// RESULT:
 /// True for the space, for tab, line feed, vertical tab, form feed and
-/// carriage return (9 to 13), and for the space that does not break
-/// (160). False for anything past 255.
+/// carriage return (9 to 13), for the space that does not break (160),
+/// for Unicode's other spaces, and for its line and paragraph
+/// separators.
 ///
 /// BEHAVIOR:
-/// The classes are the code set's: Latin-1's, the same in every
-/// language. A language decides the order its letters sort in
-/// (`StrnCmp`), not which characters are letters.
+/// The classes are Unicode's, from each character's general category,
+/// the same in every language. A language decides the order its letters
+/// sort in (`StrnCmp`), not which characters are letters.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -39,8 +40,8 @@ const _chars = @import("_chars.zig");
 /// Nothing is allocated.
 ///
 /// NOTES:
-/// A byte from a string is handed over as it is: the code set's
-/// characters are its bytes.
+/// A character of a string is its code point, as `sdk.utility.utf8.next`
+/// reads it; a byte past 127 alone is part of one.
 ///
 /// BUGS:
 /// None known.
@@ -50,7 +51,8 @@ const _chars = @import("_chars.zig");
 ///
 /// EXAMPLES:
 /// ```zig
-/// while (at < text.len and lb.IsSpace(loc, text[at])) at += 1;
+/// var after = at;
+/// while (at < text.len and lb.IsSpace(loc, utf8.next(text, &after))) at = after;
 /// ```
 pub fn IsSpace(_: *LocaleBase, loc: *const locale.Locale, character: u32) bool {
     _ = loc;

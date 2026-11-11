@@ -40,7 +40,8 @@ const LocaleBase = _base.LocaleBase;
 /// LOCALE:Languages (English needs none), and the time zone's rule from
 /// ENV:Sys/timezone. A field no file sets keeps the library's own
 /// value. A name may be given with its `.country` or `.language` or
-/// without. Every file is UTF-8 text, converted to the locale's code set.
+/// without. Every file is UTF-8 text, kept as it is; one that is not is
+/// read as code page 1252.
 ///
 /// A settings file:
 ///

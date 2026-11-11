@@ -8,6 +8,7 @@
 //!   foldgen case <CaseFolding.txt> <UnicodeData.txt> <out.zig>
 //!   foldgen base <CaseFolding.txt> <UnicodeData.txt> <out.zig>
 //!   foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig>
+//!   foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig>
 //!
 //! `posfs` writes posfs's case fold table (sdk/libs/dos/posfs/fold1.zig):
 //! simple case folding, the file's C and S lines, one code point to one,
@@ -41,6 +42,16 @@
 //! sorted, a character of no width taken out of the wide ones. The
 //! version is EastAsianWidth.txt's.
 //!
+//! `class` writes what each character is (sdk/libs/utility/unicode_class.zig),
+//! by its general category in UnicodeData.txt, a range's First and Last
+//! lines taken for every code point between: a letter of either case or
+//! neither, a digit, a mark, a number, punctuation, a symbol, a space, a
+//! line or paragraph separator, a control, a format character, one for
+//! private use, or none at all. The table is where the class changes,
+//! each entry a code point and the class from it on - a stretch of
+//! capitals each followed by its small letter (`Ā ā Ă ă ...`) one entry
+//! of its own kind. The version is CaseFolding.txt's, as `case` takes it.
+//!
 //! A case table is runs: code points one or two apart that all move by the same
 //! amount (A-Z by +32; Ā, Ă, Ą... by +1 every second one), each run packed
 //! into a u64 and found by a binary search - 210 runs for Unicode 16's 1484
@@ -58,7 +69,7 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(1);
 }
 
-const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig>";
+const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig> | foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig>";
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -200,7 +211,168 @@ pub fn main(init: std.process.Init) !void {
         try cwd.writeFile(io, .{ .sub_path = args[4], .data = out.items });
         return;
     }
+
+    if (mem.eql(u8, args[1], "class")) {
+        if (args.len != 5) fatal(usage, .{});
+        const folding = try cwd.readFileAlloc(io, args[2], arena, limit);
+        const data = try cwd.readFileAlloc(io, args[3], arena, limit);
+        const version = try versionOf(folding, args[2]);
+        const classes = try classesOf(arena, data);
+        const starts = try startsOf(arena, classes);
+        try out.print(arena,
+            \\// SPDX-License-Identifier: MIT
+            \\//! What each character is, from Unicode {s}: its general category in
+            \\//! UnicodeData.txt, as one of the classes below. Written by
+            \\//! tools/foldgen (`foldgen class`) from the files
+            \\//! scripts/fetch-unicode.sh fetches; never edited by hand.
+            \\//!
+            \\//! `starts` is where the class changes, sorted: each entry the code
+            \\//! point it starts at shifted up by 8, its class in the low byte, the
+            \\//! class good up to the next entry's code point. An entry of class
+            \\//! `pairs` starts a stretch of capitals each followed by its small
+            \\//! letter: from its code point on, every second character a capital,
+            \\//! the ones between small letters. {d} entries.
+            \\
+            \\/// The Unicode version the table is from.
+            \\pub const unicode_version = "{s}";
+            \\
+            \\/// What a character is, by its general category.
+            \\pub const Class = enum(u8) {{
+            \\    /// No character (Cn), or half of a UTF-16 pair (Cs).
+            \\    unassigned = 0,
+            \\    /// A control (Cc): 0 to 31, 127 and 128 to 159.
+            \\    control = 1,
+            \\    /// A format character (Cf): the soft hyphen, the joiners, the marks
+            \\    /// of writing direction.
+            \\    format = 2,
+            \\    /// For private use (Co).
+            \\    private = 3,
+            \\    /// A capital letter (Lu).
+            \\    upper = 4,
+            \\    /// A small letter (Ll).
+            \\    lower = 5,
+            \\    /// A capital followed by a small letter in one character (Lt): `ǅ`.
+            \\    title = 6,
+            \\    /// A letter of neither case (Lm, Lo): `ª`, the kana, the CJK
+            \\    /// ideographs.
+            \\    letter = 7,
+            \\    /// A mark written on the character before (Mn, Mc, Me).
+            \\    mark = 8,
+            \\    /// A decimal digit of any script (Nd).
+            \\    digit = 9,
+            \\    /// Any other number (Nl, No): `²`, `½`, `Ⅻ`.
+            \\    number = 10,
+            \\    /// Punctuation (Pc, Pd, Ps, Pe, Pi, Pf, Po).
+            \\    punctuation = 11,
+            \\    /// A symbol (Sm, Sc, Sk, So): `+`, `€`, `©`, the emoji.
+            \\    symbol = 12,
+            \\    /// A space (Zs), the one that does not break among them.
+            \\    space = 13,
+            \\    /// A line or paragraph separator (Zl, Zp).
+            \\    separator = 14,
+            \\}};
+            \\
+            \\/// The class of an entry that starts capitals and small letters by
+            \\/// turns.
+            \\pub const pairs: u8 = 15;
+            \\
+            \\
+        , .{ version, starts.len, version });
+        try writeStarts(arena, &out, starts);
+        try cwd.writeFile(io, .{ .sub_path = args[4], .data = out.items });
+        return;
+    }
     fatal(usage, .{});
+}
+
+/// The numbers `Class` in the table gives the classes, and the one for
+/// capitals and small letters by turns.
+const class_numbers = [_]struct { category: []const u8, number: u8 }{
+    .{ .category = "Cn", .number = 0 },  .{ .category = "Cs", .number = 0 },
+    .{ .category = "Cc", .number = 1 },  .{ .category = "Cf", .number = 2 },
+    .{ .category = "Co", .number = 3 },  .{ .category = "Lu", .number = 4 },
+    .{ .category = "Ll", .number = 5 },  .{ .category = "Lt", .number = 6 },
+    .{ .category = "Lm", .number = 7 },  .{ .category = "Lo", .number = 7 },
+    .{ .category = "Mn", .number = 8 },  .{ .category = "Mc", .number = 8 },
+    .{ .category = "Me", .number = 8 },  .{ .category = "Nd", .number = 9 },
+    .{ .category = "Nl", .number = 10 }, .{ .category = "No", .number = 10 },
+    .{ .category = "Pc", .number = 11 }, .{ .category = "Pd", .number = 11 },
+    .{ .category = "Ps", .number = 11 }, .{ .category = "Pe", .number = 11 },
+    .{ .category = "Pi", .number = 11 }, .{ .category = "Pf", .number = 11 },
+    .{ .category = "Po", .number = 11 }, .{ .category = "Sm", .number = 12 },
+    .{ .category = "Sc", .number = 12 }, .{ .category = "Sk", .number = 12 },
+    .{ .category = "So", .number = 12 }, .{ .category = "Zs", .number = 13 },
+    .{ .category = "Zl", .number = 14 }, .{ .category = "Zp", .number = 14 },
+};
+const class_upper: u8 = 4;
+const class_lower: u8 = 5;
+const class_pairs: u8 = 15;
+
+fn classNumber(category: []const u8) u8 {
+    for (class_numbers) |entry| {
+        if (mem.eql(u8, entry.category, category)) return entry.number;
+    }
+    fatal("unknown general category {s}", .{category});
+}
+
+/// Every code point's class, a range's First and Last lines filling the
+/// code points between them; 0 for those UnicodeData.txt leaves out.
+fn classesOf(arena: mem.Allocator, data: []const u8) ![]u8 {
+    const classes = try arena.alloc(u8, 0x110000);
+    @memset(classes, 0);
+    var first: ?u21 = null;
+    var lines = mem.splitScalar(u8, data, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw, " \t\r");
+        if (line.len == 0) continue;
+        var fields = mem.splitScalar(u8, line, ';');
+        const code = try std.fmt.parseInt(u21, fields.next() orelse continue, 16);
+        const name = fields.next() orelse continue;
+        const number = classNumber(fields.next() orelse continue);
+        if (mem.endsWith(u8, name, ", First>")) {
+            first = code;
+            continue;
+        }
+        if (mem.endsWith(u8, name, ", Last>")) {
+            const from = first orelse fatal("a Last line without its First: {X}", .{code});
+            @memset(classes[from .. @as(usize, code) + 1], number);
+            first = null;
+            continue;
+        }
+        classes[code] = number;
+    }
+    return classes;
+}
+
+/// Where the class changes, as `code << 8 | class`: a stretch of two
+/// capitals each followed by its small letter or more one `pairs` entry.
+fn startsOf(arena: mem.Allocator, classes: []const u8) ![]u32 {
+    var starts: std.ArrayList(u32) = .empty;
+    var code: usize = 0;
+    while (code < classes.len) {
+        const here = classes[code];
+        if (here == class_upper and code + 3 < classes.len and classes[code + 1] == class_lower and
+            classes[code + 2] == class_upper and classes[code + 3] == class_lower)
+        {
+            try starts.append(arena, @as(u32, @intCast(code)) << 8 | class_pairs);
+            while (code + 1 < classes.len and classes[code] == class_upper and classes[code + 1] == class_lower) code += 2;
+            continue;
+        }
+        try starts.append(arena, @as(u32, @intCast(code)) << 8 | here);
+        while (code < classes.len and classes[code] == here) code += 1;
+    }
+    return starts.items;
+}
+
+/// `starts` as a `u32` array, eight to a line.
+fn writeStarts(arena: mem.Allocator, out: *std.ArrayList(u8), starts: []const u32) !void {
+    try out.appendSlice(arena, "/// Where the class changes: `code << 8 | class`, sorted.\npub const starts = [_]u32{\n");
+    for (starts, 0..) |start, at| {
+        if (at % 8 == 0) try out.appendSlice(arena, "   ");
+        try out.print(arena, " 0x{X:0>8},", .{start});
+        if (at % 8 == 7 or at + 1 == starts.len) try out.appendSlice(arena, "\n");
+    }
+    try out.appendSlice(arena, "};\n");
 }
 
 const Range = struct { first: u21, last: u21 };

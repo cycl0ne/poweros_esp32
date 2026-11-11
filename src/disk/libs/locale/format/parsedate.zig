@@ -4,6 +4,8 @@
 const sdk = @import("sdk");
 const dos = sdk.dos;
 const utility = sdk.utility;
+const utf8 = utility.utf8;
+const unicode = utility.unicode;
 const locale = sdk.locale;
 const _base = @import("../locale_base.zig");
 const _chars = @import("../chars/_chars.zig");
@@ -173,9 +175,10 @@ const Reading = struct {
         while (reading.at < reading.text.len and (reading.text[reading.at] == ' ' or reading.text[reading.at] == '\t')) reading.at += 1;
     }
 
+    /// A byte of the template, a letter of ASCII whatever its case.
     fn literal(reading: *Reading, c: u8) bool {
         if (reading.at >= reading.text.len) return false;
-        if (_chars.toLower(reading.text[reading.at]) != _chars.toLower(c)) return false;
+        if (asciiLower(reading.text[reading.at]) != asciiLower(c)) return false;
         reading.at += 1;
         return true;
     }
@@ -208,19 +211,29 @@ const Reading = struct {
         var string_num = first;
         while (string_num <= last) : (string_num += 1) {
             const text = reading.lb.iface().GetLocaleStr(reading.loc, string_num) orelse continue;
-            const word_length = _format.length(text);
-            if (word_length <= best_length or reading.at + word_length > reading.text.len) continue;
-            const here = reading.text[reading.at..][0..word_length];
-            var same = true;
-            for (here, text[0..word_length]) |one, two| {
-                if (_chars.toLower(one) != _chars.toLower(two)) same = false;
-            }
-            if (!same) continue;
+            const word = text[0.._format.length(text)];
+            if (word.len == 0) continue;
+            const taken = reading.matched(word) orelse continue;
+            if (taken <= best_length) continue;
             best = string_num;
-            best_length = word_length;
+            best_length = taken;
         }
         reading.at += best_length;
         return best;
+    }
+
+    /// How many bytes of the text from `at` on are `word`, character by
+    /// character whatever the case of its letters; null when they are
+    /// not.
+    fn matched(reading: *const Reading, word: []const u8) ?usize {
+        var in_text = reading.at;
+        var in_word: usize = 0;
+        while (in_word < word.len) {
+            if (in_text >= reading.text.len) return null;
+            const one = unicode.fold(utf8.next(reading.text, &in_text));
+            if (one != unicode.fold(utf8.next(word, &in_word))) return null;
+        }
+        return in_text - reading.at;
     }
 
     fn readMonth(reading: *Reading) bool {
@@ -246,7 +259,12 @@ const Reading = struct {
     fn zone(reading: *Reading) bool {
         reading.skipBlanks();
         const start = reading.at;
-        while (reading.at < reading.text.len and _chars.is(reading.text[reading.at], _chars.alpha)) reading.at += 1;
+        var after = reading.at;
+        while (reading.at < reading.text.len and _chars.is(utf8.next(reading.text, &after), _chars.alpha)) reading.at = after;
         return reading.at > start;
     }
 };
+
+fn asciiLower(c: u8) u8 {
+    return if (c >= 'A' and c <= 'Z') c + 32 else c;
+}

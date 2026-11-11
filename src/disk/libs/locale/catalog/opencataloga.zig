@@ -28,8 +28,7 @@ const LocaleBase = _base.LocaleBase;
 /// - `tag_list` - OC_BuiltInLanguage, the language of the strings built
 ///   into the program (`english` if not given); OC_Version, the version
 ///   the catalog must have (any if 0 or not given); OC_Language, a
-///   language to try before the locale's; OC_BuiltInCodeSet, taken and
-///   not used. Null for none.
+///   language to try before the locale's. Null for none.
 ///
 /// RESULT:
 /// The catalog, or null when the strings built in are the ones to use:
@@ -42,7 +41,8 @@ const LocaleBase = _base.LocaleBase;
 /// need no catalog. For any other, a catalog already loaded is taken;
 /// else `PROGDIR:Catalogs/<language>/<name>` is read, when the caller has
 /// a program directory, and then `LOCALE:Catalogs/<language>/<name>`.
-/// The strings are converted to the locale's code set as they are read.
+/// The strings are UTF-8; one a catalog holds in another code set is
+/// read as code page 1252 and kept as that in UTF-8.
 ///
 /// No requester asks for PROGDIR: or LOCALE: when either is missing.
 ///

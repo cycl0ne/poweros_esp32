@@ -216,7 +216,7 @@ pub fn dumpFrame(frame: *const Frame) void {
 }
 
 fn kprintfSink(character: u8, _: ?*anyopaque) callconv(.c) void {
-    exec.kprintf("%c", .{character});
+    exec.kputc(character);
 }
 
 /// The ABI's names of the integer registers.

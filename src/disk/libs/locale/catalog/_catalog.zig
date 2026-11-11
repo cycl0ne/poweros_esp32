@@ -5,13 +5,16 @@
 //! A catalog file is an IFF FORM of type CTLG: FVER, its `$VER:` string
 //! (the version a program may ask for); LANG, the language; CSET, the code
 //! set the strings are in, a big-endian u32 (IANA's number, 106 for UTF-8)
-//! and 28 reserved bytes; STRS, each string as a big-endian id and length -
+//! and 28 reserved bytes, which the strings themselves decide over; STRS,
+//! each string as a big-endian id and length -
 //! its bytes and the NUL after them - then those bytes, padded to a
 //! multiple of four. Any other chunk is passed over.
 //!
 //! A loaded catalog is an ExtCatalog, its entries sorted by id after it,
-//! then their strings in the locale's code set, then its name: one
-//! allocation, freed whole. It stays on the base's list when the last
+//! then their strings, UTF-8, then its name: one allocation, freed whole.
+//! A string that is not UTF-8, whatever CSET says, is one written in
+//! code page 1252, the Western code page of Windows, and is kept as that
+//! in UTF-8. It stays on the base's list when the last
 //! holder gives it back, so the next program to ask has it at once, and
 //! goes when the library is asked to expunge.
 //!
@@ -24,8 +27,8 @@ const dos = sdk.dos;
 const locale = sdk.locale;
 const prefs = sdk.prefs;
 const style = prefs.style;
+const utf8 = sdk.utility.utf8;
 const _base = @import("../locale_base.zig");
-const _locale = @import("../locale/_locale.zig");
 const LocaleBase = _base.LocaleBase;
 const ExtCatalog = _base.ExtCatalog;
 const Entry = _base.Entry;
@@ -79,7 +82,7 @@ pub fn load(lb: *LocaleBase, path: [*:0]const u8, name: []const u8, language: []
     var walk = Strings{ .bytes = parts.strings };
     while (walk.next()) |string| {
         count += 1;
-        text_bytes += string.text.len + 1;
+        text_bytes += textSize(string.text) + 1;
     }
     if (!walk.whole) return null;
 
@@ -97,7 +100,7 @@ pub fn load(lb: *LocaleBase, path: [*:0]const u8, name: []const u8, language: []
     ext.public = .{
         .link = .{ .name = @ptrCast(bytes + name_at) },
         .language = @ptrCast(&ext.language),
-        .code_set = locale.CODESET_LATIN1,
+        .code_set = locale.CODESET_UTF8,
         .version = parts.version,
         .revision = parts.revision,
     };
@@ -105,28 +108,32 @@ pub fn load(lb: *LocaleBase, path: [*:0]const u8, name: []const u8, language: []
     @memcpy(ext.language[0..kept_language.len], kept_language);
     ext.language[kept_language.len] = 0;
 
-    // A string that is not UTF-8 is taken as Latin-1, whatever the file
-    // says.
-    const utf8 = parts.code_set == locale.CODESET_UTF8;
     var index: usize = 0;
     walk = .{ .bytes = parts.strings };
     while (walk.next()) |string| : (index += 1) {
-        const into = bytes[text_at..][0..string.text.len];
-        @memcpy(into, string.text);
-        const kept = if (utf8 and _locale.isUtf8(lb, string.text)) _locale.toLatin1(lb, into) else into.len;
+        const kept = textSize(string.text);
+        const into = bytes[text_at..][0..kept];
+        if (utf8.valid(string.text)) {
+            @memcpy(into, string.text);
+        } else _ = utf8.fromCp1252(string.text, into);
         bytes[text_at + kept] = 0;
         entries[index] = .{ .id = string.id, .text = @ptrCast(bytes + text_at) };
-        text_at += string.text.len + 1;
+        text_at += kept + 1;
     }
     sortById(entries[0..count]);
     return ext;
+}
+
+/// The bytes a catalog's string is kept in: its own when it is UTF-8,
+/// those it takes as code page 1252 in UTF-8 when it is not.
+fn textSize(text: []const u8) usize {
+    return if (utf8.valid(text)) text.len else utf8.cp1252Length(text);
 }
 
 /// The parts of a CTLG form that matter.
 const Form = struct {
     version: u32 = 0,
     revision: u32 = 0,
-    code_set: u32 = 0,
     strings: []const u8 = &.{},
 };
 
@@ -143,7 +150,6 @@ fn readForm(file: []const u8) ?Form {
         if (length > end - start) return null;
         const data = file[start..][0..length];
         if (id == locale.ID_FVER) versionOf(data, &form);
-        if (id == locale.ID_CSET and length >= 4) form.code_set = be32(data[0..4]);
         if (id == locale.ID_STRS) form.strings = data;
         at = start + length + (length & 1);
     }

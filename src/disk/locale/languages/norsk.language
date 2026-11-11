@@ -17,7 +17,7 @@ ABMON_11=Nov ABMON_12=Des
 # Yes and no, before and after noon.
 YESSTR=Ja NOSTR=Nei AM_STR=AM PM_STR=PM
 # The hyphens and the quotes.
-SOFTHYPHEN=- HARDHYPHEN=-
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=« CLOSEQUOTE=»
 # The days near today, and any day after tomorrow.
 YESTERDAYSTR="I går" TODAYSTR="I dag" TOMORROWSTR="I morgen"
 FUTURESTR=Fremtid

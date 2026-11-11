@@ -210,7 +210,7 @@ and `FRead`, and write with `FPutC`, `FPuts`, `FWrite` and `VFPrintf`;
 `dos.stdio` packs a format's values: `Printf(dl, format, .{...})` writes
 to `Output()`, `FPrintf(dl, fh, format, .{...})` to a file. The format is
 RawDoFmt's, checked when the program is compiled: `%d %u %x %c` take
-values of up to 32 bits, `%ld %lu %lx` 64-bit ones, `%zd %zu %zx` one
+values of up to 32 bits - `%c` a code point, written in UTF-8 - `%ld %lu %lx` 64-bit ones, `%zd %zu %zx` one
 as wide as a `usize` - 32 bits on the ESP32s, 64 on RISC-V 64 - and
 `%s` a NUL-terminated string.
 
