@@ -1521,13 +1521,13 @@ test "a device's sample counts follow what it draws, and the three optional mult
     try expectSampleCounts(.{ four, four, four, one, four, one, four, four, one }, &colorless.properties.limits);
 
     // A bit a driver cleared stays clear, with the capability or without:
-    // the V3D's four zeros for the images it does not sample
-    // (driver/v3d/driver.zig), whose describe only the board can run.
+    // the V3D's three zeros for the images it does not sample
+    // (driver/v3d/driver.zig), whose describe only the board can run. It
+    // samples a colour and a depth of four since 1.209 (item 61's V7).
     for ([_]bool{ false, true }) |can| {
         var v3d = record.*;
         v3d.properties.limits = _instance.limits;
         v3d.properties.limits.sampled_image_integer_sample_counts = 0;
-        v3d.properties.limits.sampled_image_depth_sample_counts = 0;
         v3d.properties.limits.sampled_image_stencil_sample_counts = 0;
         v3d.properties.limits.storage_image_sample_counts = 0;
         v3d.can.multisampling = can;
@@ -1536,7 +1536,7 @@ test "a device's sample counts follow what it draws, and the three optional mult
         v3d.can.colorless_subpasses = true;
         _instance.narrowSampleCounts(&v3d);
         const drawn = if (can) four else one;
-        try expectSampleCounts(.{ drawn, drawn, drawn, drawn, drawn, 0, 0, 0, 0 }, &v3d.properties.limits);
+        try expectSampleCounts(.{ drawn, drawn, drawn, drawn, drawn, 0, drawn, 0, 0 }, &v3d.properties.limits);
     }
 
     // Sample rate shading, alpha to one and a variable sample rate are
