@@ -9,6 +9,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const graphics = sdk.graphics;
 const truetype = sdk.truetype;
+const utility = sdk.utility;
 const vec = exec.vec;
 const TrueTypeBase = @import("truetype_base.zig").TrueTypeBase;
 const truetype_init = @import("truetype_init.zig");
@@ -21,6 +22,9 @@ const GlyphMetrics = @import("glyph/glyphmetrics.zig").GlyphMetrics;
 const GlyphSegments = @import("glyph/glyphsegments.zig").GlyphSegments;
 const FontMetrics = @import("outline/fontmetrics.zig").FontMetrics;
 const Kerning = @import("glyph/kerning.zig").Kerning;
+const GlyphVariant = @import("glyph/glyphvariant.zig").GlyphVariant;
+const FontName = @import("outline/fontname.zig").FontName;
+const FontTable = @import("outline/fonttable.zig").FontTable;
 
 /// truetype.library's interface, as the SDK generates it from
 /// sdk/fd/truetype_lib.fd.
@@ -54,10 +58,13 @@ const contract_files = [_][]const u8{
     @embedFile("glyph/glyphsegments.zig"),
     @embedFile("outline/fontmetrics.zig"),
     @embedFile("glyph/kerning.zig"),
+    @embedFile("glyph/glyphvariant.zig"),
+    @embedFile("outline/fontname.zig"),
+    @embedFile("outline/fonttable.zig"),
 };
 
-fn lvoOpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32) callconv(.c) ?*truetype.Outline {
-    return OpenOutline(tb, file, size);
+fn lvoOpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32, tags: ?[*]const utility.TagItem) callconv(.c) ?*truetype.Outline {
+    return OpenOutline(tb, file, size, tags);
 }
 fn lvoRenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32, ranges: [*]const truetype.CodeRange, count: u32) callconv(.c) ?*graphics.fontimage.FontImage {
     return RenderFontImage(tb, outline, rows, ranges, count);
@@ -80,6 +87,15 @@ fn lvoFontMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, metrics: *truet
 fn lvoKerning(tb: *TrueTypeBase, outline: *truetype.Outline, left: u32, right: u32) callconv(.c) i32 {
     return Kerning(tb, outline, left, right);
 }
+fn lvoGlyphVariant(tb: *TrueTypeBase, outline: *truetype.Outline, code: u32, selector: u32) callconv(.c) u32 {
+    return GlyphVariant(tb, outline, code, selector);
+}
+fn lvoFontName(tb: *TrueTypeBase, outline: *truetype.Outline, name: u32, buffer: [*]u8, room: u32) callconv(.c) u32 {
+    return FontName(tb, outline, name, buffer, room);
+}
+fn lvoFontTable(tb: *TrueTypeBase, outline: *truetype.Outline, tag: u32, length: *u32) callconv(.c) ?[*]const u8 {
+    return FontTable(tb, outline, tag, length);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -94,6 +110,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGlyphSegments),
     vec(lvoFontMetrics),
     vec(lvoKerning),
+    vec(lvoGlyphVariant),
+    vec(lvoFontName),
+    vec(lvoFontTable),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

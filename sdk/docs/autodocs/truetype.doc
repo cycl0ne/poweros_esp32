@@ -2,9 +2,12 @@ TABLE OF CONTENTS
 
 truetype.library/CloseOutline
 truetype.library/FontMetrics
+truetype.library/FontName
+truetype.library/FontTable
 truetype.library/GlyphIndex
 truetype.library/GlyphMetrics
 truetype.library/GlyphSegments
+truetype.library/GlyphVariant
 truetype.library/Kerning
 truetype.library/OpenOutline
 truetype.library/RenderFontImage
@@ -95,6 +98,112 @@ truetype.library/RenderFontImage
 	    var fm: sdk.truetype.FontMetrics = .{};
 	    tb.FontMetrics(outline, &fm);
 	    const scale = size / @as(f32, @floatFromInt(fm.units_per_em));
+truetype.library/FontName                            truetype.library/FontName
+
+   NAME
+	FontName -- One of a font's names.
+
+   SYNOPSIS
+	    fn FontName(tb: *TrueTypeBase, outline: *truetype.Outline, name: u32, buffer: [*]u8, room: u32) u32
+
+   SINCE
+	1.4. LVO -56.
+
+   INPUTS
+	- `outline` - what `OpenOutline` answered.
+	- `name` - which name: `TTNAME_FAMILY`, `TTNAME_STYLE`, `TTNAME_FULL`,
+	  `TTNAME_VERSION`, `TTNAME_LICENCE`, or any other number of the
+	  font's `name` table.
+	- `buffer` - where it goes, in UTF-8, NUL-terminated.
+	- `room` - the buffer's size in bytes, the NUL counted; 0 to ask only
+	  how long the name is, and `buffer` is then not written.
+
+   RESULT
+	The bytes the whole name takes in UTF-8, the NUL not counted: `room`
+	or more says the buffer holds only the name's start. 0 when the font
+	has no such name, and the buffer then holds an empty string.
+
+   BEHAVIOR
+	The name is taken in English where the font has it: of the table's
+	records of that number the one in American English, then one in
+	another English, then one of no language (the Unicode platform's),
+	then the first in any other language. A record of no bytes counts as
+	none.
+
+	The name is stored as UTF-16 and written as UTF-8: two surrogates
+	that are a pair become their one character, one without the other
+	U+FFFD, and a NUL within the name is left out. A name longer than the
+	buffer is cut after a whole character.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The buffer is the caller's.
+
+   BUGS
+	A name the font has only in a Macintosh encoding is not read, and a
+	name cannot be asked for in a language of the caller's choice.
+
+   SEE ALSO
+	`OpenOutline`, `FontMetrics`
+
+   EXAMPLES
+	    var family: [64]u8 = undefined;
+	    if (tb.FontName(outline, sdk.truetype.TTNAME_FAMILY, &family, family.len) == 0) return;
+	    const text: [*:0]const u8 = @ptrCast(&family);
+truetype.library/FontTable                          truetype.library/FontTable
+
+   NAME
+	FontTable -- One of a font's tables, as the file has it.
+
+   SYNOPSIS
+	    fn FontTable(tb: *TrueTypeBase, outline: *truetype.Outline, tag: u32, length: *u32) ?[*]const u8
+
+   SINCE
+	1.4. LVO -60.
+
+   INPUTS
+	- `outline` - what `OpenOutline` answered.
+	- `tag` - the table's four letters, as `truetype.tableTag` makes
+	  them: `tableTag("GSUB")`.
+	- `length` - where the table's size in bytes goes.
+
+   RESULT
+	The table's first byte, and its size in `length`. Null, and a size of
+	0, when the font has no table of that tag or the file ends before the
+	table does.
+
+   BEHAVIOR
+	The font's directory is searched for the tag - in a collection, the
+	directory of the font `OpenOutline` was asked for - and the table's
+	place and size are checked against the file. Nothing within the table
+	is: what it says is its reader's to check against `length`. Its
+	numbers are stored with the highest byte first.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The bytes are the file's, which is the caller's: they are there as
+	long as the file is, and are not to be written.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`OpenOutline`, `FontName`
+
+   EXAMPLES
+	    var length: u32 = 0;
+	    const start = tb.FontTable(outline, sdk.truetype.tableTag("GSUB"), &length) orelse return;
+	    const substitutions = start[0..length];
 truetype.library/GlyphIndex                        truetype.library/GlyphIndex
 
    NAME
@@ -104,7 +213,7 @@ truetype.library/RenderFontImage
 	    fn GlyphIndex(tb: *TrueTypeBase, outline: *truetype.Outline, code: u32) u32
 
    SINCE
-	1.2. LVO -32.
+	1.2, every format of character map since 1.4. LVO -32.
 
    INPUTS
 	- `outline` - what `OpenOutline` answered.
@@ -116,9 +225,11 @@ truetype.library/RenderFontImage
 	nothing - when the font has none for it.
 
    BEHAVIOR
-	Looked up in the Unicode character map `OpenOutline` chose: the full
-	one (format 12) where the font has it, else the basic plane's (format
-	4), which has no glyph past U+FFFF.
+	Looked up in the character map `OpenOutline` chose: the font's
+	Unicode one that reaches furthest (formats 12, 13, 10, 4, 6 and 0, in
+	that order; one of the basic plane has no glyph past U+FFFF), or a
+	symbol font's own, whose characters are where the font puts them. A
+	glyph the map names and the font does not have answers 0.
 
    CONTEXT
 	- Waits: no.
@@ -132,10 +243,10 @@ truetype.library/RenderFontImage
    BUGS
 	One character is one glyph: a font's substitutions - ligatures, the
 	forms of a script's letters by where they are in a word - are not
-	made.
+	made. A character map of format 2 or 8 is not read.
 
    SEE ALSO
-	`GlyphSegments`, `GlyphMetrics`, `Kerning`
+	`GlyphVariant`, `GlyphSegments`, `GlyphMetrics`, `Kerning`
 
    EXAMPLES
 	    const glyph = tb.GlyphIndex(outline, 'A');
@@ -246,6 +357,55 @@ truetype.library/RenderFontImage
 	    if (tb.GlyphSegments(outline, glyph, &s) == sdk.truetype.TRUETYPE_OK) {
 	        _ = vb.AddSegments(path, s.verbs, s.verb_count, s.points, s.point_count);
 	    }
+truetype.library/GlyphVariant                    truetype.library/GlyphVariant
+
+   NAME
+	GlyphVariant -- The glyph a character and a variation selector are.
+
+   SYNOPSIS
+	    fn GlyphVariant(tb: *TrueTypeBase, outline: *truetype.Outline, code: u32, selector: u32) u32
+
+   SINCE
+	1.4. LVO -52.
+
+   INPUTS
+	- `outline` - what `OpenOutline` answered.
+	- `code` - the character, a Unicode code point.
+	- `selector` - the variation selector that follows it: U+FE00 to
+	  U+FE0F, U+E0100 to U+E01EF, or U+180B to U+180D.
+
+   RESULT
+	The number of the glyph the two are drawn as; 0 when the font has no
+	such sequence, and the character is then drawn as `GlyphIndex` says,
+	the selector left out.
+
+   BEHAVIOR
+	Looked up in the font's variation sequences (the character map's
+	format 14). A sequence the font has a glyph of its own for answers
+	that glyph: U+FE0F after a symbol its picture in colour, U+FE0E its
+	form as text, a selector after an ideograph one of its registered
+	shapes. A sequence the font lists as drawn the way the character is
+	without a selector answers the character's own glyph.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing changes hands.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`GlyphIndex`, `GlyphMetrics`
+
+   EXAMPLES
+	    // A heart, asked for in colour.
+	    var glyph = tb.GlyphVariant(outline, 0x2764, 0xFE0F);
+	    if (glyph == 0) glyph = tb.GlyphIndex(outline, 0x2764);
 truetype.library/Kerning                              truetype.library/Kerning
 
    NAME
@@ -294,28 +454,44 @@ truetype.library/RenderFontImage
 truetype.library/OpenOutline                      truetype.library/OpenOutline
 
    NAME
-	OpenOutline -- A TrueType file, opened for rendering.
+	OpenOutline -- A font of a TrueType file, opened for rendering.
 
    SYNOPSIS
-	    fn OpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32) ?*truetype.Outline
+	    fn OpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32, tags: ?[*]const utility.TagItem) ?*truetype.Outline
 
    SINCE
-	1.0. LVO -20.
+	1.0, the tags and collections since 1.4. LVO -20.
 
    INPUTS
 	- `file` - the whole file, as read.
 	- `size` - its size in bytes.
+	- `tags` - which font of the file is meant, or null for its first:
+	  - `TTA_FontIndex` (u32) - the font's number in a collection, from 0;
+	    `truetype.fontCount` says how many the file holds. Default 0.
 
    RESULT
-	The outline, or null if the bytes are not a TrueType font this library
-	reads - a table it needs missing or outside the file, no Unicode
-	character map of format 4 or 12 - or there is no memory.
+	The outline, or null if the file has no font of that number, the
+	bytes are not a TrueType font this library reads - a table it needs
+	missing or outside the file, no character map it reads - or there is
+	no memory.
 
    BEHAVIOR
-	The tables are found and checked once, and what rendering needs of
-	them kept: the units per em, the ascender and descender, where the
-	glyph index, the glyphs, the widths and the character map are. The
-	glyphs themselves are read only when a size is rendered.
+	The font's tables are found and checked once, and what the other
+	calls need of them kept: the units per em, the ascender and
+	descender, where the glyph index, the glyphs, the widths, the
+	character map and the variation sequences are. The glyphs themselves
+	are read only when one is asked for.
+
+	Of a font's character maps a Unicode one is read, the one that
+	reaches furthest: formats 12, 13, 10, 4, 6 and 0, in that order. A
+	symbol font, which has none, is read by its own map, with its
+	characters where the font puts them (U+F020 to U+F0FF mostly).
+
+	A font need not have outlines: one whose glyphs are pictures opens,
+	maps, measures and names, and every glyph of it is one of no outline.
+
+	The outline is not written after this call, and no other call keeps
+	anything in it: any number of tasks use one outline at once.
 
    CONTEXT
 	- Waits: no.
@@ -325,19 +501,31 @@ truetype.library/RenderFontImage
 
    OWNERSHIP
 	The outline is the caller's until `CloseOutline`. The file's bytes stay
-	the caller's too, and must be there until then: the outline reads them
-	in place.
+	the caller's too, and must be there, unchanged, until then: the
+	outline reads them in place. The tags are read during the call only.
 
    BUGS
 	Hinting instructions are passed over, and fonts of CFF outlines
-	(OpenType 'OTTO') are not read.
+	(OpenType 'OTTO') are not read. A font whose only character map is in
+	a Macintosh encoding is not opened.
 
    SEE ALSO
-	`RenderFontImage`, `CloseOutline`
+	`RenderFontImage`, `GlyphIndex`, `FontName`, `FontTable`, `CloseOutline`
 
    EXAMPLES
-	    const outline = tb.OpenOutline(file, size) orelse return error.NotTrueType;
+	    const outline = tb.OpenOutline(file, size, null) orelse return error.NotTrueType;
 	    defer tb.CloseOutline(outline);
+
+	    // Every font of a collection.
+	    var index: u32 = 0;
+	    while (index < sdk.truetype.fontCount(file[0..size])) : (index += 1) {
+	        const tags = [_]utility.TagItem{
+	            .{ .tag = sdk.truetype.TTA_FontIndex, .data = index },
+	            .{ .tag = utility.TAG_DONE, .data = 0 },
+	        };
+	        const font = tb.OpenOutline(file, size, &tags) orelse continue;
+	        defer tb.CloseOutline(font);
+	    }
 truetype.library/RenderFontImage              truetype.library/RenderFontImage
 
    NAME
@@ -347,12 +535,12 @@ truetype.library/RenderFontImage
 	    fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32, ranges: [*]const truetype.CodeRange, count: u32) ?*FontImage
 
    SINCE
-	1.0, ranges since 1.3. LVO -24.
+	1.0, ranges since 1.3, the limits since 1.4. LVO -24.
 
    INPUTS
 	- `outline` - what `OpenOutline` answered.
-	- `rows` - how tall a line is: the font's ascender to its descender
-	  is scaled to this.
+	- `rows` - how tall a line is, 1 to 4096: the font's ascender to its
+	  descender is scaled to this.
 	- `ranges` - the characters to render, as code points: `count` ranges,
 	  sorted, none overlapping another.
 	- `count` - how many ranges.
@@ -361,8 +549,9 @@ truetype.library/RenderFontImage
 	A font image of coverage (`alpha4`), sound and ready for `AddFont`:
 	every character of the ranges the font has a glyph for, and the
 	font's missing glyph as the default character, under
-	`fontimage.MISSING`. Null for a height of 0, ranges out of order or
-	past the last code point, or no memory.
+	`fontimage.MISSING`. Null for a height of 0 or more than 4096, a font
+	without outlines, ranges out of order or past the last code point, an
+	image of more than a gigabyte, or no memory.
 
    BEHAVIOR
 	A character the font's character map gives no glyph is left out, so
@@ -376,9 +565,13 @@ truetype.library/RenderFontImage
 	the outline covers, in fifteenths. The advances are rounded to whole
 	pixels. The font is `FPF_DESIGNED` - drawn at its size from the
 	outline, not scaled from another size - and `FPF_PROPORTIONAL` when
-	its advances differ. Its styles are the ones the file says it is drawn
-	in (`truetype.styleOf`): a bold face renders as `FSF_BOLD`, so graphics
+	its advances differ. Its styles are the ones the font says it is drawn
+	in (`FontMetrics`): a bold face renders as `FSF_BOLD`, so graphics
 	draws no bold over it.
+
+	A glyph the file is damaged in - its data cut short, its outline
+	further than sixteen lines from where it is drawn - is rendered as one
+	of no outline, with its advance; an advance is 32767 pixels at most.
 
    CONTEXT
 	- Waits: no.

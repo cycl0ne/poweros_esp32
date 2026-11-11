@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! truetype.library's functions: a TrueType file rendered into font
-//! images, one size at a time, and since 1.2 its glyphs as outlines.
+//! images, one size at a time, since 1.2 its glyphs as outlines, and
+//! since 1.4 a font of a collection, its names and its tables.
 //! Open it with OpenLibrary("truetype.library", 1).
+##include libs/utility/utility as utility
 ##include libs/graphics/graphics as graphics
 ##include libs/truetype/truetype as truetype
 ##basetype TrueTypeBase
@@ -9,13 +11,15 @@
 ##bias 4
 ##public
 /// The font in `size` bytes at `file`, its tables found and checked; null
-/// if it is not a TrueType font this library reads. The bytes must stay
-/// until CloseOutline.
-?*truetype.Outline OpenOutline([*]const u8 file, u32 size)
+/// if it is not a TrueType font this library reads. `tags` say which font
+/// of a collection (TTA_FontIndex); null for the first. The bytes must
+/// stay until CloseOutline. Tags since 1.4.
+?*truetype.Outline OpenOutline([*]const u8 file, u32 size, ?[*]const utility.TagItem tags)
 /// The outline rendered `rows` rows tall as a font image: the characters
 /// it has in the `count` sorted `ranges`, and its missing glyph as the
-/// default; the caller frees it with FreeVec. Null for a height of 0,
-/// ranges out of order, or no memory. Ranges since 1.3.
+/// default; the caller frees it with FreeVec. Null for a height of 0 or
+/// past 4096, a font without outlines, ranges out of order, or no
+/// memory. Ranges since 1.3.
 ?*graphics.fontimage.FontImage RenderFontImage(*truetype.Outline outline, u32 rows, [*]const truetype.CodeRange ranges, u32 count)
 /// What OpenOutline made, given back. Null does nothing.
 void CloseOutline(?*truetype.Outline outline)
@@ -34,4 +38,16 @@ void FontMetrics(*truetype.Outline outline, *truetype.FontMetrics metrics)
 /// How much further apart the font draws `left` and `right` side by
 /// side, in its units: negative for closer. Since 1.2.
 i32 Kerning(*truetype.Outline outline, u32 left, u32 right)
+/// The glyph a character is when the variation selector `selector`
+/// follows it, from the font's variation sequences; 0 when the font has
+/// none for the two. Since 1.4.
+u32 GlyphVariant(*truetype.Outline outline, u32 code, u32 selector)
+/// One of the font's names (TTNAME_FAMILY, ...) as UTF-8 into `buffer`,
+/// NUL-terminated and cut to `room` bytes; the bytes the whole name
+/// takes, 0 when the font has no such name. Since 1.4.
+u32 FontName(*truetype.Outline outline, u32 name, [*]u8 buffer, u32 room)
+/// The bytes of the table `tag` names (four letters, the first highest),
+/// its length into `length`; null and 0 when the font has none. They are
+/// the file's own bytes. Since 1.4.
+?[*]const u8 FontTable(*truetype.Outline outline, u32 tag, *u32 length)
 ##end

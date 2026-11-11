@@ -176,7 +176,7 @@ const Sources = struct {
             const path = std.fmt.allocPrint(gpa, "{s}/Liberation{s}-{s}.ttf", .{ dir, family.file, face }) catch return null;
             const bytes = Io.Dir.cwd().readFileAlloc(s.io, path, gpa, .limited(16 << 20)) catch return null;
             const font = gpa.create(tt.outline.Font) catch return null;
-            if (!tt.outline.open(font, bytes.ptr, @intCast(bytes.len))) return null;
+            if (!tt.outline.open(font, bytes.ptr, @intCast(bytes.len), 0)) return null;
             const opened = gpa.create(diskfont.OutlineFont) catch return null;
             opened.* = .{ .outline = @ptrCast(font), .style = font.style };
             return opened;

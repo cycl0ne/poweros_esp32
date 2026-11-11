@@ -15,10 +15,20 @@
 //! are moved together (`Kerning`). SVG's text is drawn so. A program that
 //! needs these looks for revision 2 or later in the library it opened.
 //!
+//! Since 1.4 a file may be a collection of fonts, and `OpenOutline`'s
+//! tags say which one is meant; a character map of any format is read,
+//! and the variation sequences beside it (`GlyphVariant`); a font says
+//! what it is called (`FontName`); and any of its tables is handed out
+//! as the file has it (`FontTable`), which is what
+//! truetypeshaping.library reads the layout tables through. A font may
+//! be without outlines of this kind - one of pictures - and still maps,
+//! measures and names.
+//!
 //! Open it with OpenLibrary(TRUETYPENAME, 1); its functions are in
 //! sdk/interface/truetype.zig.
 
 const graphics = @import("../graphics/graphics.zig");
+const utility = @import("../utility/utility.zig");
 const vector = @import("../vector/vector.zig");
 
 /// The name to open it by.
@@ -109,20 +119,119 @@ pub const TRUETYPEERR_GLYPH: i32 = -2;
 /// There was not the memory to read it.
 pub const TRUETYPEERR_NOMEM: i32 = -3;
 
+// --- which font, its names and its tables (since 1.4) ---------------------------
+
+/// `OpenOutline`'s tags start here.
+pub const TTA_Dummy = utility.TAG_USER + 0x61200;
+/// (u32) Which font of a collection, counted from 0: `fontCount` says how
+/// many there are. A file of one font has font 0 only. Default 0.
+pub const TTA_FontIndex = TTA_Dummy + 1;
+
+/// Which of a font's names `FontName` answers: the numbers of the `name`
+/// table, of which these are the ones most asked for. Any other number
+/// of the table is answered as well.
+pub const TTNAME_COPYRIGHT: u32 = 0;
+/// The family, as a font requester lists it: "Liberation Sans".
+pub const TTNAME_FAMILY: u32 = 1;
+/// The style within the family: "Bold Italic".
+pub const TTNAME_STYLE: u32 = 2;
+/// A name no other font has.
+pub const TTNAME_UNIQUE: u32 = 3;
+/// Family and style in one: "Liberation Sans Bold Italic".
+pub const TTNAME_FULL: u32 = 4;
+/// The version, as text: "Version 2.1.5".
+pub const TTNAME_VERSION: u32 = 5;
+/// The name a PostScript printer knows it by.
+pub const TTNAME_POSTSCRIPT: u32 = 6;
+/// What the font may be used for, and where that is written in full.
+pub const TTNAME_LICENCE: u32 = 13;
+pub const TTNAME_LICENCE_URL: u32 = 14;
+/// The family and style of a family of more than four styles, where
+/// they differ from `TTNAME_FAMILY` and `TTNAME_STYLE`.
+pub const TTNAME_TYPO_FAMILY: u32 = 16;
+pub const TTNAME_TYPO_STYLE: u32 = 17;
+
+/// A table's four-letter tag as `FontTable` takes it: the first letter
+/// highest.
+///
+/// INPUTS:
+/// - `name` - the four letters, as the font's directory has them: "GSUB",
+///   "OS/2", "cvt ".
+pub fn tableTag(name: *const [4]u8) u32 {
+    return @as(u32, name[0]) << 24 | @as(u32, name[1]) << 16 | @as(u32, name[2]) << 8 | name[3];
+}
+
+/// The four bytes at `at` as a number, the first highest; 0 where `bytes`
+/// end before them.
+fn long(bytes: []const u8, at: usize) u32 {
+    if (at > bytes.len or bytes.len - at < 4) return 0;
+    return @as(u32, bytes[at]) << 24 | @as(u32, bytes[at + 1]) << 16 | @as(u32, bytes[at + 2]) << 8 | bytes[at + 3];
+}
+
 /// Whether `bytes` start as a TrueType file: version 1.0 or 'true'.
 ///
 /// INPUTS:
 /// - `bytes` - the file's first four bytes at least.
 pub fn isTrueType(bytes: []const u8) bool {
     if (bytes.len < 4) return false;
-    const tag = @as(u32, bytes[0]) << 24 | @as(u32, bytes[1]) << 16 | @as(u32, bytes[2]) << 8 | bytes[3];
+    const tag = long(bytes, 0);
     return tag == 0x0001_0000 or tag == 0x7472_7565;
+}
+
+/// How many fonts a file holds: 1 for a TrueType file, what its header
+/// says for a collection ('ttcf'), 0 for anything else. Since 1.4.
+///
+/// A collection's fonts are counted whatever their outlines are;
+/// `OpenOutline` says whether one of them is read.
+///
+/// INPUTS:
+/// - `bytes` - the file's first twelve bytes at least.
+pub fn fontCount(bytes: []const u8) u32 {
+    if (isTrueType(bytes)) return 1;
+    if (bytes.len < 12 or long(bytes, 0) != tableTag("ttcf")) return 0;
+    return long(bytes, 8);
+}
+
+/// Where in a file the table directory of its font `index` starts: 0 for
+/// the one font of a TrueType file, what the header says for a font of a
+/// collection. Null when the file holds no font of that number, the
+/// place is outside the file, or what is there is no TrueType font.
+/// Since 1.4.
+///
+/// A table's place, as a directory gives it, counts from the start of
+/// the file in a collection too.
+///
+/// INPUTS:
+/// - `bytes` - the file, whole.
+/// - `index` - which font, from 0.
+pub fn fontDirectory(bytes: []const u8, index: u32) ?u32 {
+    if (isTrueType(bytes)) return if (index == 0 and bytes.len >= 12) 0 else null;
+    if (index >= fontCount(bytes)) return null;
+    const entry = 12 + @as(usize, index) * 4;
+    if (entry > bytes.len or bytes.len - entry < 4) return null;
+    const directory = long(bytes, entry);
+    if (directory > bytes.len or bytes.len - directory < 12) return null;
+    if (!isTrueType(bytes[directory..])) return null;
+    return directory;
+}
+
+/// The styles `head`'s style bits say a font is drawn in: `FSF_BOLD` for
+/// bit 0, `FSF_ITALIC` for bit 1. Since 1.4.
+///
+/// INPUTS:
+/// - `bits` - the table's `macStyle`.
+pub fn styleOfBits(bits: u32) graphics.FontStyle {
+    var style: graphics.FontStyle = graphics.FS_NORMAL;
+    if (bits & 1 != 0) style |= graphics.FSF_BOLD;
+    if (bits & 2 != 0) style |= graphics.FSF_ITALIC;
+    return style;
 }
 
 /// The styles a TrueType file says it is drawn in: `FSF_BOLD` and
 /// `FSF_ITALIC`, from the style bits of its `head` table - a bold face of
 /// a family says it is bold. None when the file has no `head` table, or
-/// `bytes` end before it.
+/// `bytes` end before it, and none for a collection: its fonts say theirs
+/// through `FontMetrics`, each opened.
 ///
 /// INPUTS:
 /// - `bytes` - the file from its start, through its `head` table at least.
@@ -136,12 +245,8 @@ pub fn styleOf(bytes: []const u8) graphics.FontStyle {
         const head = @as(usize, bytes[record + 8]) << 24 | @as(usize, bytes[record + 9]) << 16 |
             @as(usize, bytes[record + 10]) << 8 | bytes[record + 11];
         // macStyle, at 44 into the table: bit 0 bold, bit 1 italic.
-        if (head + 46 > bytes.len) break;
-        const bits = bytes[head + 45];
-        var style: graphics.FontStyle = graphics.FS_NORMAL;
-        if (bits & 1 != 0) style |= graphics.FSF_BOLD;
-        if (bits & 2 != 0) style |= graphics.FSF_ITALIC;
-        return style;
+        if (head > bytes.len or bytes.len - head < 46) break;
+        return styleOfBits(bytes[head + 45]);
     }
     return graphics.FS_NORMAL;
 }

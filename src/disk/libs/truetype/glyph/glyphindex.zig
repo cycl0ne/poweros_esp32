@@ -14,7 +14,7 @@ const _outline = @import("../outline/_outline.zig");
 /// fn GlyphIndex(tb: *TrueTypeBase, outline: *truetype.Outline, code: u32) u32
 /// ```
 ///
-/// SINCE: 1.2. LVO -32.
+/// SINCE: 1.2, every format of character map since 1.4. LVO -32.
 ///
 /// INPUTS:
 /// - `outline` - what `OpenOutline` answered.
@@ -26,9 +26,11 @@ const _outline = @import("../outline/_outline.zig");
 /// nothing - when the font has none for it.
 ///
 /// BEHAVIOR:
-/// Looked up in the Unicode character map `OpenOutline` chose: the full
-/// one (format 12) where the font has it, else the basic plane's (format
-/// 4), which has no glyph past U+FFFF.
+/// Looked up in the character map `OpenOutline` chose: the font's
+/// Unicode one that reaches furthest (formats 12, 13, 10, 4, 6 and 0, in
+/// that order; one of the basic plane has no glyph past U+FFFF), or a
+/// symbol font's own, whose characters are where the font puts them. A
+/// glyph the map names and the font does not have answers 0.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -42,10 +44,10 @@ const _outline = @import("../outline/_outline.zig");
 /// BUGS:
 /// One character is one glyph: a font's substitutions - ligatures, the
 /// forms of a script's letters by where they are in a word - are not
-/// made.
+/// made. A character map of format 2 or 8 is not read.
 ///
 /// SEE ALSO:
-/// `GlyphSegments`, `GlyphMetrics`, `Kerning`
+/// `GlyphVariant`, `GlyphSegments`, `GlyphMetrics`, `Kerning`
 ///
 /// EXAMPLES:
 /// ```zig

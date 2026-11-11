@@ -379,8 +379,8 @@ the family's directory; `DisposeFontContents` frees it.
 ## Outline fonts
 
 `truetype.library` reads a TrueType file and renders a size of it into a
-FontImage of coverage: `OpenOutline(bytes, size)` checks the file and
-keeps what rendering needs, `RenderFontImage(outline, rows, ranges,
+FontImage of coverage: `OpenOutline(bytes, size, tags)` checks the file
+and keeps what rendering needs, `RenderFontImage(outline, rows, ranges,
 count)` makes a size of the characters it has in the ranges asked for,
 `CloseOutline` gives the outline back. The file's bytes stay
 the caller's until then. The line is the font's ascender to its
@@ -410,6 +410,48 @@ scales them and turns them over; `FontMetrics` the font's units per em,
 ascender, descender, line gap, x and cap height, underline and strikeout
 lines, and the most verbs and points one glyph takes; `Kerning(outline,
 left, right)` what the `kern` table says of a pair.
+
+**The file** (truetype.library 1.4). A file is one font or a collection
+of several (`ttcf`): `truetype.fontCount(bytes)` says how many, and
+`OpenOutline`'s tag `TTA_FontIndex` which of them is opened - the first
+without it. An outline is not written once it is opened, and each call
+keeps what it works with to itself, so any number of tasks use one
+outline at once.
+
+Of a font's character maps a Unicode one is read, the one that reaches
+furthest: formats 12, 13, 10, 4, 6 and 0. A symbol font is read by its
+own map, with its characters where the font puts them (U+F020 to U+F0FF
+mostly). `GlyphVariant(outline, code, selector)` is the glyph a character
+is drawn with when a variation selector follows it (the map's format
+14): the sequence's own glyph, the character's where the font says the
+two look the same, 0 where it has no such sequence - U+FE0F after a
+symbol asks for its picture in colour, U+FE0E for its form as text.
+
+`FontName(outline, name, buffer, room)` writes one of the font's names -
+`TTNAME_FAMILY`, `TTNAME_STYLE`, `TTNAME_FULL`, `TTNAME_VERSION` and the
+others of the `name` table, by number - in UTF-8, in English where the
+font has it, and answers the bytes the whole name takes: `room` or more
+says the buffer holds only its start. `FontTable(outline, tag, &length)`
+hands out a table of the font as it lies in the file, for a reader of
+what the library does not read itself:
+`truetype.tableTag("GSUB")` names it, and the table's place and size are
+checked against the file, nothing within it. A font whose glyphs are
+pictures and not outlines opens too: it maps, measures and names, and
+each of its glyphs is one of no outline.
+
+```zig
+const tags = [_]sdk.utility.TagItem{
+    .{ .tag = sdk.truetype.TTA_FontIndex, .data = 1 },
+    .{ .tag = sdk.utility.TAG_DONE, .data = 0 },
+};
+const outline = tb.OpenOutline(bytes.ptr, size, &tags) orelse return;
+defer tb.CloseOutline(outline);
+var family: [64]u8 = undefined;
+_ = tb.FontName(outline, sdk.truetype.TTNAME_FAMILY, &family, family.len);
+const heart = tb.GlyphVariant(outline, 0x2764, 0xFE0F);
+var length: u32 = 0;
+const gsub = tb.FontTable(outline, sdk.truetype.tableTag("GSUB"), &length);
+```
 
 ```zig
 const of = dfb.OpenOutlineFont("sans.font", sdk.graphics.FSF_BOLD) orelse return;
@@ -519,7 +561,8 @@ if (gb.RemFont(&mine.font)) sys.FreeVec(mine); // true once nobody holds it
 | | |
 |---|---|
 | `tools/fontconv` | on the host: BDF, Amiga font files (colour too) and TrueType files into size files and a contents file; `--alpha N` for coverage from a larger drawing, `--shadow` for a shadowed colour font |
-| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces and Liberation's (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation only onto the 64-bit machines' disks |
+| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces and Liberation's (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation only onto the 64-bit machines' disks. With them two fonts only the host tests read, which go on no disk: Noto Sans Devanagari and Noto Color Emoji |
+| `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
 | `C:ListFonts` | every font by family, size and where it is; `SAMPLE` draws them |
 | `C:FixFonts` | writes every family's contents file again |
 | `C:SetPrefs` | sets the system's fonts, with the rest of its settings, from `ENV:Sys`; `SHOW` prints them |

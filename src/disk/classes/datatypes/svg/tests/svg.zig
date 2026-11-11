@@ -381,11 +381,13 @@ test "a nested svg clips what it draws to its viewport, unless its overflow is v
 }
 
 /// Fonts and pictures for the tests: truetype.library made from its ROM
-/// tag, truetype's test font as "sans.font" - every other family missing
-/// - and a picture's bytes taken as its pens, two by two, A, R, G, B.
+/// tag, with utility.library, which its init opens; truetype's test font
+/// as "sans.font" - every other family missing - and a picture's bytes
+/// taken as its pens, two by two, A, R, G, B.
 const Sources = struct {
     library: *exec.Library,
     tb: *TrueTypeBase,
+    utility_library: *exec.Library = undefined,
     font: truetype_tests.Out = .{},
     face: diskfont.OutlineFont = undefined,
     opened: u32 = 0,
@@ -395,11 +397,13 @@ const Sources = struct {
 
     fn open(s: *Sources) !void {
         const sys = kexec.SysBase.iface();
+        const utility_made = kexec.InitResident(kexec.SysBase, &host.utility.utility_library_tag, null) orelse return error.NoUtility;
+        s.utility_library = @ptrCast(@alignCast(utility_made));
         const made = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoLibrary;
         s.library = @ptrCast(@alignCast(made));
         s.tb = @ptrCast(sys.OpenLibrary(truetype.TRUETYPENAME, 1) orelse return error.NoBase);
         truetype_tests.buildFont(&s.font);
-        s.face = .{ .outline = s.tb.OpenOutline(&s.font.bytes, s.font.len) orelse return error.NotRead, .style = sdk.graphics.FS_NORMAL };
+        s.face = .{ .outline = s.tb.OpenOutline(&s.font.bytes, s.font.len, null) orelse return error.NotRead, .style = sdk.graphics.FS_NORMAL };
     }
 
     fn close(s: *Sources) void {
@@ -407,6 +411,7 @@ const Sources = struct {
         s.tb.CloseOutline(s.face.outline);
         sys.CloseLibrary(s.tb.lib());
         _ = sys.RemLibrary(s.library);
+        host.utility.freeForTests(@ptrCast(@alignCast(s.utility_library)));
     }
 
     fn wasAsked(s: *const Sources, name: []const u8) bool {

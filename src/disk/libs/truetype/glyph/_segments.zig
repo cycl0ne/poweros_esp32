@@ -96,8 +96,7 @@ pub fn glyphSegments(sys: *ExecBase, font: *const Font, glyph: u32, out: *truety
     out.verb_count = 0;
     out.point_count = 0;
     if (glyph >= font.glyph_count) return truetype.TRUETYPEERR_GLYPH;
-    const points = font.max_points + 1;
-    const contours = font.max_contours + 1;
+    const points, const contours = roomOf(font);
     const bytes = points * @sizeOf(Point) + contours * 4 + points;
     const memory = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return truetype.TRUETYPEERR_NOMEM;
     defer sys.FreeVec(memory);
@@ -111,11 +110,18 @@ pub fn glyphSegments(sys: *ExecBase, font: *const Font, glyph: u32, out: *truety
     return write(&c, out);
 }
 
+/// The points and the contours a glyph of `font` is read with: one more
+/// of each than the font says its largest glyph has.
+fn roomOf(font: *const Font) [2]u32 {
+    return .{ font.max_points + 1, font.max_contours + 1 };
+}
+
 /// The most verbs and points a glyph of `font` takes as segments: a move
 /// and a close a contour, and a segment a point of it, of two points at
-/// most.
+/// most - of as many points and contours as a glyph is read with.
 pub fn mostOf(font: *const Font) [2]u32 {
-    return .{ font.max_points + 2 * font.max_contours, 2 * font.max_points + font.max_contours };
+    const points, const contours = roomOf(font);
+    return .{ points + 2 * contours, 2 * points + contours };
 }
 
 // --- tests ---------------------------------------------------------------------

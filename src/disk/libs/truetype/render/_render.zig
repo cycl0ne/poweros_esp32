@@ -10,6 +10,11 @@
 //! nothing to sort and no edge list. A curve is lines enough that none
 //! strays from it by more than a third of a pixel. The coverage is kept in
 //! four bits (0 to 15).
+//!
+//! What a font says is not taken on trust: a glyph whose outline lies
+//! further from its origin than `Scale.reach` is rendered as one of no
+//! outline, so that every number worked with afterwards has a known
+//! size.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -34,23 +39,25 @@ pub const Rendered = struct {
 };
 
 /// The room one rendering works in: the points and contours of the glyph
-/// being read. Made once per size.
+/// being read. Made once per size, by the call that renders, and its
+/// own.
 pub const Work = struct {
     contours: _outline.Contours,
     memory: ?*anyopaque,
 
-    const max_points = 1024;
-    const max_contours = 128;
-
-    pub fn init(sys: *ExecBase) ?Work {
-        const bytes = max_points * @sizeOf(Point) + max_contours * 4 + max_points;
+    /// Room for the largest glyph `font` says it has, and no less than a
+    /// font that does not say is read with.
+    pub fn init(sys: *ExecBase, font: *const Font) ?Work {
+        const points: u32 = @max(font.max_points + 1, _outline.default_points);
+        const contours: u32 = @max(font.max_contours + 1, _outline.default_contours);
+        const bytes = points * @sizeOf(Point) + contours * 4 + points;
         const memory = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return null;
         const base: [*]u8 = @ptrCast(memory);
-        const points: [*]Point = @ptrCast(@alignCast(base));
-        const ends: [*]u32 = @ptrCast(@alignCast(base + max_points * @sizeOf(Point)));
-        const flags = base + max_points * @sizeOf(Point) + max_contours * 4;
+        const point_area: [*]Point = @ptrCast(@alignCast(base));
+        const ends: [*]u32 = @ptrCast(@alignCast(base + points * @sizeOf(Point)));
+        const flags = base + points * @sizeOf(Point) + contours * 4;
         return .{
-            .contours = .{ .points = points[0..max_points], .ends = ends[0..max_contours], .flags = flags[0..max_points] },
+            .contours = .{ .points = point_area[0..points], .ends = ends[0..contours], .flags = flags[0..points] },
             .memory = memory,
         };
     }
@@ -64,18 +71,38 @@ pub const Work = struct {
 pub const Scale = struct {
     factor: f32,
     ascender: f32,
+    /// How far a glyph's outline may lie from its origin and from the top
+    /// of its line, in pixels, any way: `reachOf` the line's height.
+    reach: f32,
 
     fn of(scale: Scale, p: Point) P {
         return .{ .x = p.x * scale.factor, .y = (scale.ascender - p.y) * scale.factor };
     }
 };
 
+/// The tallest line rendered, in pixels.
+pub const most_rows = 4096;
+
+/// The furthest a glyph moves the point, in pixels: what a font image's
+/// glyph has a number for.
+const most_advance = 32767;
+
+/// How far a glyph of a line `rows` tall may reach: sixteen lines, which
+/// is past the widest glyph a font has, and no more than a font image's
+/// glyph has numbers for.
+pub fn reachOf(rows: u32) f32 {
+    const line: u32 = @min(rows, most_rows);
+    const reach: u32 = @min(line * 16, 16000);
+    return @floatFromInt(reach);
+}
+
 /// `glyph` of `font` rendered at `scale`; null only without memory.
 pub fn renderGlyph(sys: *ExecBase, font: *const Font, glyph: u32, scale: Scale, work: *Work) ?Rendered {
-    var out = Rendered{ .advance = roundOf(@as(f32, @floatFromInt(_outline.advanceOf(font, glyph))) * scale.factor) };
+    var out = Rendered{ .advance = @min(roundOf(@as(f32, @floatFromInt(_outline.advanceOf(font, glyph))) * scale.factor), most_advance) };
     const c = &work.contours;
     c.point_count = 0;
     c.end_count = 0;
+    c.part_count = 0;
     const identity = [6]f32{ 1, 0, 0, 1, 0, 0 };
     if (!_outline.contours(font, glyph, c, identity, 0) or c.point_count == 0) return out;
 
@@ -83,8 +110,12 @@ pub fn renderGlyph(sys: *ExecBase, font: *const Font, glyph: u32, scale: Scale, 
     var min_y: f32 = 1e30;
     var max_x: f32 = -1e30;
     var max_y: f32 = -1e30;
+    const reach = scale.reach;
     for (c.points[0..c.point_count]) |p| {
         const q = scale.of(p);
+        // Out of reach, or not a number at all: asked the other way round,
+        // so that neither passes.
+        if (!(q.x >= -reach and q.x <= reach and q.y >= -reach and q.y <= reach)) return out;
         min_x = @min(min_x, q.x);
         min_y = @min(min_y, q.y);
         max_x = @max(max_x, q.x);
@@ -99,7 +130,10 @@ pub fn renderGlyph(sys: *ExecBase, font: *const Font, glyph: u32, scale: Scale, 
     const rows: u32 = @intCast(@max(@as(i32, @intFromFloat(@ceil(max_y - snap))) - top, 1));
     const stride = width + 2;
 
-    const acc_memory = sys.AllocVec(stride * rows * @sizeOf(f32), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
+    // More than the machine has addresses for is no memory.
+    const bytes = @as(u64, stride) * rows * @sizeOf(f32);
+    if (bytes > ~@as(usize, 0)) return null;
+    const acc_memory = sys.AllocVec(@intCast(bytes), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
     defer sys.FreeVec(acc_memory);
     const acc: [*]f32 = @ptrCast(@alignCast(acc_memory));
     var area = Area{ .acc = acc[0 .. stride * rows], .stride = stride, .rows = rows };
@@ -243,12 +277,16 @@ const Area = struct {
         const b = if (p0.y < p1.y) p1 else p0;
         const dxdy = (b.x - a.x) / (b.y - a.y);
         const rows: f32 = @floatFromInt(area.rows);
+        // The columns there are, one to each side: where a line stays
+        // whatever its slope comes to when it is next to level.
+        const edge: f32 = @floatFromInt(area.stride);
         var x = a.x;
         var y_top = a.y;
         if (y_top < 0) {
             x -= y_top * dxdy;
             y_top = 0;
         }
+        x = @min(@max(x, -1), edge);
         const y_bottom = @min(b.y, rows);
         if (y_top >= y_bottom) return;
         var y: usize = @intFromFloat(@floor(y_top));
@@ -257,7 +295,7 @@ const Area = struct {
             const row_start = y * area.stride;
             const yf: f32 = @floatFromInt(y);
             const dy = @min(yf + 1, y_bottom) - @max(yf, y_top);
-            const x_next = x + dxdy * dy;
+            const x_next = @min(@max(x + dxdy * dy, -1), edge);
             const d = dy * dir;
             const x0 = @min(x, x_next);
             const x1 = @max(x, x_next);

@@ -7,9 +7,18 @@
 # Liberation fonts, by Red Hat, under the SIL Open Font Licence 1.1, as
 # TrueType outlines at a pinned release - Sans, Serif and Mono, drawn to
 # the widths of Arial, Times New Roman and Courier New, which is what
-# SVG files most often ask for. Each is checked against its sha256. Nothing of it is committed: it lands in
-# toolchain/fonts, which the build looks for; without it the disk has no
-# fonts beyond the ROM's.
+# SVG files most often ask for.
+#
+# And the fonts only the host tests read, which go on no disk: Noto Sans
+# Devanagari Regular and Noto Color Emoji, by Google, under the SIL Open
+# Font Licence 1.1, at pinned releases - a script whose text is reordered
+# and joined, and a font of colour glyphs with variation sequences and no
+# outlines.
+#
+# Each is checked against its sha256. Nothing of it is committed: it lands
+# in toolchain/fonts, which the build looks for; without it the disk has
+# no fonts beyond the ROM's, and the tests that read a fetched font are
+# skipped.
 set -eu
 
 spleen=2.2.0
@@ -53,3 +62,23 @@ echo "$liberation_sha256  $tarball" | sha256sum -c --quiet
 tar xzf "$tarball"
 rm "$tarball"
 echo "fonts in $out/liberation-fonts-ttf-$liberation"
+
+# For the host tests only. The expected values in the libraries' tests/
+# folders name these files' sha256: a new release here means running
+# scripts/font-reference.py again.
+devanagari=2.007
+devanagari_sha256=820c7da45b1e63562cb41c0a8cac5d9a4202312043a3a040ed1325857ef469b1
+emoji=v2026-09-24-unicode18_0 # googlefonts/noto-emoji
+mkdir -p noto
+archive="NotoSansDevanagari-v$devanagari.zip"
+curl -sSfL -o "$archive" "https://github.com/notofonts/devanagari/releases/download/NotoSansDevanagari-v$devanagari/$archive"
+echo "$devanagari_sha256  $archive" | sha256sum -c --quiet
+unzip -q -o -j "$archive" NotoSansDevanagari/hinted/ttf/NotoSansDevanagari-Regular.ttf -d noto
+rm "$archive"
+curl -sSfL -o noto/NotoColorEmoji.ttf "https://raw.githubusercontent.com/googlefonts/noto-emoji/$emoji/2D/fonts/NotoColorEmoji.ttf"
+cd noto
+sha256sum -c --quiet <<EOF
+4e3c66638958c3e2ab5d37f47a8deb89fffeb7be9985c665a519bbc7ba762313  NotoSansDevanagari-Regular.ttf
+15671215ab769fdc7162a045d56fd7d7e477c51b04e6b3c761d914d8fdd6cc44  NotoColorEmoji.ttf
+EOF
+echo "fonts in $out/noto"

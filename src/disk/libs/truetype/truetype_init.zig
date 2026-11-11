@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: MIT
 //! truetype.library's ROM tag, its init and its Expunge. Open and Close
-//! are exec's standard ones: every opener shares the one base.
+//! are exec's standard ones: every opener shares the one base. The init
+//! opens utility.library for the base, and fails without it; Expunge
+//! closes it.
 
 const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const _base = @import("truetype_base.zig");
 const TrueTypeBase = _base.TrueTypeBase;
 const truetype_lvo = @import("truetype_lvo.zig");
 
 pub const LIBRARY_NAME = sdk.truetype.TRUETYPENAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 3;
-const BUILD_DATE = "10.11.2026";
+pub const LIBRARY_REVISION = 4;
+const BUILD_DATE = "11.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -21,8 +24,9 @@ pub const LIBRARY_VERSION_STRING =
 
 fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Library {
     const tb = _base.trueTypeBase(lib);
+    const utility_base: *UtilityBase = @ptrCast(@alignCast(sys_base.OpenLibrary(sdk.interface.utility.NAME, 0) orelse return null));
     const header = lib.*;
-    tb.* = .{ .lib = header, .sys_base = sys_base, .seg_list = seg_list };
+    tb.* = .{ .lib = header, .sys_base = sys_base, .seg_list = seg_list, .utility_base = utility_base };
     lib.revision = LIBRARY_REVISION;
     return lib;
 }
@@ -35,6 +39,7 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     const tb = _base.trueTypeBase(lib);
     const sys = tb.sys_base;
     const seg_list = tb.seg_list;
+    sys.CloseLibrary(@ptrCast(@alignCast(tb.utility_base)));
     sys.DetachLibrary(lib);
     const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);
     sys.FreeMem(start, @as(usize, lib.neg_size) + lib.pos_size);

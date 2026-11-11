@@ -60,7 +60,7 @@ fn openFamily(dfb: *DiskfontBase, name: [*:0]const u8) ?*diskfont.OutlineFont {
     // The system's, not the task's that opened it first: it is shared.
     const flags = exec.MEMF_ANY | exec.MEMF_SYSTEM;
     const data = _font.readWhole(dfb, contents.dir, @ptrCast(&entry.path), flags) orelse return null;
-    const outline = tb.OpenOutline(data.ptr, @intCast(data.len)) orelse {
+    const outline = tb.OpenOutline(data.ptr, @intCast(data.len), null) orelse {
         sys.FreeVec(data.ptr);
         return null;
     };

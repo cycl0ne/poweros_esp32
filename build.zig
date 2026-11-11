@@ -1603,6 +1603,9 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run the unit tests on the host");
     const test_options = b.addOptions();
     test_options.addOption(u32, "posfs_soak", posfs_soak);
+    // Where the fetched fonts are, for the tests that read one; empty
+    // when scripts/fetch-fonts.sh has not run, and those tests skip.
+    test_options.addOption([]const u8, "fonts_dir", fontsDir(b) orelse "");
     for ([_][]const u8{ "src/tests.zig", "src/rom/devs/timer/timeval.zig" }) |path| {
         const test_mod = b.createModule(.{
             .root_source_file = b.path(path),

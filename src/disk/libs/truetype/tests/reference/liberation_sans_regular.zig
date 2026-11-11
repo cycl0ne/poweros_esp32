@@ -1,0 +1,95 @@
+// SPDX-License-Identifier: MIT
+//! liberation-fonts-ttf-2.1.5/LiberationSans-Regular.ttf
+//! sha256 76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8
+//!
+//! What fontTools reads from that font, as `../reference.zig` says a
+//! font's values are written: what truetype.library's host tests
+//! compare its reading of the same file with. Written by
+//! scripts/font-reference.py and never edited; it is written again when
+//! the font's pin in scripts/fetch-fonts.sh changes.
+
+const reference = @import("../reference.zig");
+
+pub const font: reference.Font = .{
+    .file = "liberation-fonts-ttf-2.1.5/LiberationSans-Regular.ttf",
+    .sha256 = "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+    .size = 410712,
+    .outlines = true,
+    .glyph_count = 2620,
+    .units_per_em = 2048,
+    .ascender = 1854,
+    .descender = -434,
+    .line_gap = 67,
+    .x_height = 1082,
+    .cap_height = 1409,
+    .underline_position = -67,
+    .underline_thickness = 150,
+    .strikeout_position = 530,
+    .strikeout_thickness = 102,
+    .bold = false,
+    .italic = false,
+    .metrics_sha256 = "67eb8efabcf960547fdd54966c5f082c371e9d2eb86cd7c2db3fdefa5acc1780",
+    .tables = &.{
+        .{ .tag = "head", .at = 316, .len = 54 },
+        .{ .tag = "hhea", .at = 372, .len = 36 },
+        .{ .tag = "maxp", .at = 408, .len = 32 },
+        .{ .tag = "OS/2", .at = 440, .len = 96 },
+        .{ .tag = "hmtx", .at = 536, .len = 10480 },
+        .{ .tag = "cmap", .at = 11016, .len = 1574 },
+        .{ .tag = "fpgm", .at = 12592, .len = 1972 },
+        .{ .tag = "prep", .at = 14564, .len = 835 },
+        .{ .tag = "cvt ", .at = 15400, .len = 648 },
+        .{ .tag = "loca", .at = 16048, .len = 10484 },
+        .{ .tag = "glyf", .at = 26532, .len = 269356 },
+        .{ .tag = "kern", .at = 295888, .len = 5466 },
+        .{ .tag = "name", .at = 301356, .len = 2952 },
+        .{ .tag = "post", .at = 304308, .len = 27021 },
+        .{ .tag = "gasp", .at = 331332, .len = 16 },
+        .{ .tag = "GDEF", .at = 331348, .len = 298 },
+        .{ .tag = "GSUB", .at = 331648, .len = 2372 },
+        .{ .tag = "GPOS", .at = 334020, .len = 76664 },
+        .{ .tag = "FFTM", .at = 410684, .len = 28 },
+    },
+    .subtables = &.{
+        .{ .platform = 0, .encoding = 3, .format = 4, .count = 2327, .sha256 = "d898e15d125aad17f363ade5bb72b8a629d09f745b882a6cfa434b4baeec0989" },
+        .{ .platform = 1, .encoding = 0, .format = 6, .count = 227, .sha256 = "34bf6cc8fd7f324b59e4213ada1491d35d96e873d35fe1486f4c3304a59df7d6" },
+        .{ .platform = 3, .encoding = 1, .format = 4, .count = 2327, .sha256 = "d898e15d125aad17f363ade5bb72b8a629d09f745b882a6cfa434b4baeec0989" },
+    },
+    .best_count = 2327,
+    .best_sha256 = "d898e15d125aad17f363ade5bb72b8a629d09f745b882a6cfa434b4baeec0989",
+    .pairs = &.{
+        .{ .code = 0x0020, .glyph = 3 },
+        .{ .code = 0x0114, .glyph = 214 },
+        .{ .code = 0x01E7, .glyph = 425 },
+        .{ .code = 0x02BB, .glyph = 637 },
+        .{ .code = 0x039D, .glyph = 848 },
+        .{ .code = 0x0473, .glyph = 1060 },
+        .{ .code = 0x05BF, .glyph = 1271 },
+        .{ .code = 0x1DAB, .glyph = 1483 },
+        .{ .code = 0x1EB4, .glyph = 1694 },
+        .{ .code = 0x1F9C, .glyph = 1906 },
+        .{ .code = 0x2191, .glyph = 2117 },
+        .{ .code = 0xFFFC, .glyph = 2329 },
+    },
+    .selectors = &.{},
+    .sequence_count = 0,
+    .sequences_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    .sequences = &.{},
+    .names = &.{
+        .{ .id = 0, .text = "Digitized data copyright (c) 2010 Google Corporation. \nCopyright (c) 2012 Red Hat, Inc." },
+        .{ .id = 1, .text = "Liberation Sans" },
+        .{ .id = 2, .text = "Regular" },
+        .{ .id = 3, .text = "Ascender - Liberation Sans" },
+        .{ .id = 4, .text = "Liberation Sans" },
+        .{ .id = 5, .text = "Version 2.1.5" },
+        .{ .id = 6, .text = "LiberationSans" },
+        .{ .id = 7, .text = "Liberation is a trademark of Red Hat, Inc. registered in U.S. Patent and Trademark Office and certain other jurisdictions." },
+        .{ .id = 8, .text = "Ascender Corporation" },
+        .{ .id = 9, .text = "Steve Matteson" },
+        .{ .id = 10, .text = "Based on Arimo, which was designed by Steve Matteson as an innovative, refreshing sans serif design that is metrically compatible with Arial™. Arimo offers improved on-screen readability characteristics and the pan-European WGL character set and solves the needs of developers looking for width-compatible fonts to address document portability across platforms." },
+        .{ .id = 11, .text = "http://www.ascendercorp.com/" },
+        .{ .id = 12, .text = "http://www.ascendercorp.com/typedesigners.html" },
+        .{ .id = 13, .text = "Licensed under the SIL Open Font License, Version 1.1" },
+        .{ .id = 14, .text = "http://scripts.sil.org/OFL" },
+    },
+};

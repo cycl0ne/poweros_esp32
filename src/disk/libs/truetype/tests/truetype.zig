@@ -20,6 +20,45 @@ test {
     _ = @import("../glyph/_segments.zig");
 }
 
+/// Memory lent to exec: a font of many glyphs rendered takes more than
+/// the ROM's test memory has.
+var lent: [32 * 1024 * 1024]u8 align(16) = undefined;
+
+/// The ROM's exec and utility.library up, and truetype.library made from
+/// its ROM tag and opened.
+pub const Rig = struct {
+    sys: *sdk.interface.exec.ExecBase,
+    region: *sdk.exec.MemHeader,
+    ub: *host.utility.UtilityBase,
+    library: *sdk.exec.Library,
+    tb: *TrueTypeBase,
+
+    pub fn up() !Rig {
+        const ub = try host.utility.setUp();
+        const sys = kexec.SysBase.iface();
+        const region = sys.AddMemList(lent.len, sdk.exec.MEMF_ANY, 0, &lent, "lent").?;
+        const made = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoLibrary;
+        return .{
+            .sys = sys,
+            .region = region,
+            .ub = ub,
+            .library = @ptrCast(@alignCast(made)),
+            .tb = @ptrCast(sys.OpenLibrary(truetype.TRUETYPENAME, 1) orelse return error.NoBase),
+        };
+    }
+
+    /// The library closed and expunged, utility.library taken down, and
+    /// nothing of what the test made left behind.
+    pub fn down(rig: *Rig) !void {
+        rig.sys.CloseLibrary(rig.tb.lib());
+        _ = rig.sys.RemLibrary(rig.library);
+        try host.utility.tearDown(rig.ub);
+        try testing.expectEqual(@intFromPtr(rig.region.upper) - @intFromPtr(rig.region.lower), rig.region.free);
+        rig.sys.Remove(&rig.region.node);
+        kexec.deinit();
+    }
+};
+
 /// A file being written, big-endian.
 pub const Out = struct {
     bytes: [2048]u8 = @splat(0),
@@ -215,16 +254,14 @@ pub fn buildFace(out: *Out, style_bits: u8) void {
 }
 
 test "a TrueType file rendered: squares full, a curve smooth, a composite moved, the missing glyph as default" {
-    try kexec.setUp();
-    const sys = kexec.SysBase.iface();
-    const made = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoLibrary;
-    const library: *sdk.exec.Library = @ptrCast(@alignCast(made));
-    const tb: *TrueTypeBase = @ptrCast(sys.OpenLibrary(truetype.TRUETYPENAME, 1) orelse return error.NoBase);
+    var rig = try Rig.up();
+    const sys = rig.sys;
+    const tb = rig.tb;
 
     var out: Out = .{};
     buildFont(&out);
-    try testing.expect(tb.OpenOutline(&out.bytes, 8) == null);
-    const outline = tb.OpenOutline(&out.bytes, out.len) orelse return error.NotRead;
+    try testing.expect(tb.OpenOutline(&out.bytes, 8, null) == null);
+    const outline = tb.OpenOutline(&out.bytes, out.len, null) orelse return error.NotRead;
 
     // Ranges out of order, or past the last code point: refused.
     const backwards = [_]truetype.CodeRange{ .{ .first = 'B', .last = 'C' }, .{ .first = 'A', .last = 'A' } };
@@ -285,10 +322,7 @@ test "a TrueType file rendered: squares full, a curve smooth, a composite moved,
 
     sys.FreeVec(image);
     tb.CloseOutline(outline);
-    sys.CloseLibrary(tb.lib());
-    _ = sys.RemLibrary(library);
-    try kexec.expectNoLeaks();
-    kexec.deinit();
+    try rig.down();
 }
 
 test "a face says what it is: its styles read from the file, and every size rendered in them" {
@@ -302,14 +336,12 @@ test "a face says what it is: its styles read from the file, and every size rend
     try testing.expectEqual(graphics.FS_NORMAL, truetype.styleOf(out.bytes[0..40]));
     try testing.expectEqual(graphics.FS_NORMAL, truetype.styleOf("FONT and more bytes"));
 
-    try kexec.setUp();
-    const sys = kexec.SysBase.iface();
-    const made = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoLibrary;
-    const library: *sdk.exec.Library = @ptrCast(@alignCast(made));
-    const tb: *TrueTypeBase = @ptrCast(sys.OpenLibrary(truetype.TRUETYPENAME, 1) orelse return error.NoBase);
+    var rig = try Rig.up();
+    const sys = rig.sys;
+    const tb = rig.tb;
     out = .{};
     buildFace(&out, 1);
-    const outline = tb.OpenOutline(&out.bytes, out.len) orelse return error.NotRead;
+    const outline = tb.OpenOutline(&out.bytes, out.len, null) orelse return error.NotRead;
     const ascii = [_]truetype.CodeRange{.{ .first = 32, .last = 126 }};
     const image = tb.RenderFontImage(outline, 20, &ascii, ascii.len) orelse return error.NoImage;
     try testing.expectEqual(graphics.FSF_BOLD, image.style);
@@ -318,23 +350,17 @@ test "a face says what it is: its styles read from the file, and every size rend
 
     sys.FreeVec(image);
     tb.CloseOutline(outline);
-    sys.CloseLibrary(tb.lib());
-    _ = sys.RemLibrary(library);
-    try kexec.expectNoLeaks();
-    kexec.deinit();
+    try rig.down();
 }
 
 test "revision 2: glyphs by character, as outlines in the font's units, their measures, the font's, a kerned pair" {
-    try kexec.setUp();
-    const sys = kexec.SysBase.iface();
-    const made = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoLibrary;
-    const library: *sdk.exec.Library = @ptrCast(@alignCast(made));
-    const tb: *TrueTypeBase = @ptrCast(sys.OpenLibrary(truetype.TRUETYPENAME, 1) orelse return error.NoBase);
+    var rig = try Rig.up();
+    const tb = rig.tb;
     try testing.expect(tb.lib().revision >= 2);
 
     var out: Out = .{};
     buildFont(&out);
-    const outline = tb.OpenOutline(&out.bytes, out.len) orelse return error.NotRead;
+    const outline = tb.OpenOutline(&out.bytes, out.len, null) orelse return error.NotRead;
 
     try testing.expectEqual(@as(u32, 1), tb.GlyphIndex(outline, 'A'));
     try testing.expectEqual(@as(u32, 3), tb.GlyphIndex(outline, 'C'));
@@ -348,8 +374,8 @@ test "revision 2: glyphs by character, as outlines in the font's units, their me
     try testing.expectEqual(@as(i32, 800), fm.ascender);
     try testing.expectEqual(@as(i32, -200), fm.descender);
     // No maxp 1.0, OS/2 or post: room as for the default glyph, no lines.
-    try testing.expectEqual(@as(u32, 1024 + 2 * 128), fm.most_verbs);
-    try testing.expectEqual(@as(u32, 2 * 1024 + 128), fm.most_points);
+    try testing.expectEqual(@as(u32, 1025 + 2 * 129), fm.most_verbs);
+    try testing.expectEqual(@as(u32, 2 * 1025 + 129), fm.most_points);
     try testing.expectEqual(@as(i32, 0), fm.x_height);
 
     var gm: truetype.GlyphMetrics = .{};
@@ -394,8 +420,5 @@ test "revision 2: glyphs by character, as outlines in the font's units, their me
     try testing.expectEqual(@as(i32, 0), tb.Kerning(outline, 0x10000, 1));
 
     tb.CloseOutline(outline);
-    sys.CloseLibrary(tb.lib());
-    _ = sys.RemLibrary(library);
-    try kexec.expectNoLeaks();
-    kexec.deinit();
+    try rig.down();
 }

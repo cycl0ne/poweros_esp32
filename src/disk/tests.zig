@@ -122,6 +122,10 @@ test {
     _ = @import("libs/anvil/tests/scene.zig");
     _ = @import("libs/diskfont/tests/diskfont.zig");
     _ = @import("libs/truetype/tests/truetype.zig");
+    _ = @import("libs/truetype/tests/tables.zig");
+    _ = @import("libs/truetype/tests/fonts.zig");
+    _ = @import("libs/truetype/tests/readonly.zig");
+    _ = @import("libs/truetype/tests/fuzz.zig");
     _ = @import("libs/vector/tests/vector.zig");
     _ = @import("libs/asl/tests/asl.zig");
     _ = @import("libs/iffparse/tests/iffparse.zig");

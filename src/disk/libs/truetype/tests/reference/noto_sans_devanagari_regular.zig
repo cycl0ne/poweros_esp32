@@ -1,0 +1,95 @@
+// SPDX-License-Identifier: MIT
+//! noto/NotoSansDevanagari-Regular.ttf
+//! sha256 4e3c66638958c3e2ab5d37f47a8deb89fffeb7be9985c665a519bbc7ba762313
+//!
+//! What fontTools reads from that font, as `../reference.zig` says a
+//! font's values are written: what truetype.library's host tests
+//! compare its reading of the same file with. Written by
+//! scripts/font-reference.py and never edited; it is written again when
+//! the font's pin in scripts/fetch-fonts.sh changes.
+
+const reference = @import("../reference.zig");
+
+pub const font: reference.Font = .{
+    .file = "noto/NotoSansDevanagari-Regular.ttf",
+    .sha256 = "4e3c66638958c3e2ab5d37f47a8deb89fffeb7be9985c665a519bbc7ba762313",
+    .size = 243520,
+    .outlines = true,
+    .glyph_count = 845,
+    .units_per_em = 1000,
+    .ascender = 896,
+    .descender = -408,
+    .line_gap = 0,
+    .x_height = 536,
+    .cap_height = 622,
+    .underline_position = -100,
+    .underline_thickness = 50,
+    .strikeout_position = 322,
+    .strikeout_thickness = 50,
+    .bold = false,
+    .italic = false,
+    .metrics_sha256 = "6bdde49e003a4dd0ca9120aecdc8b719be979cc4585680ad31fa416e08bd3116",
+    .tables = &.{
+        .{ .tag = "GDEF", .at = 284, .len = 482 },
+        .{ .tag = "GPOS", .at = 768, .len = 14220 },
+        .{ .tag = "GSUB", .at = 14988, .len = 62980 },
+        .{ .tag = "OS/2", .at = 77968, .len = 96 },
+        .{ .tag = "cmap", .at = 78064, .len = 1540 },
+        .{ .tag = "glyf", .at = 79604, .len = 136746 },
+        .{ .tag = "head", .at = 216352, .len = 54 },
+        .{ .tag = "hhea", .at = 216408, .len = 36 },
+        .{ .tag = "hmtx", .at = 216444, .len = 3376 },
+        .{ .tag = "loca", .at = 219820, .len = 3384 },
+        .{ .tag = "maxp", .at = 223204, .len = 32 },
+        .{ .tag = "name", .at = 223236, .len = 1438 },
+        .{ .tag = "post", .at = 224676, .len = 15018 },
+        .{ .tag = "gasp", .at = 239696, .len = 8 },
+        .{ .tag = "cvt ", .at = 239704, .len = 50 },
+        .{ .tag = "fpgm", .at = 239756, .len = 3596 },
+        .{ .tag = "prep", .at = 243352, .len = 167 },
+    },
+    .subtables = &.{
+        .{ .platform = 0, .encoding = 3, .format = 4, .count = 271, .sha256 = "c4facebeb1a274b9685b195ea19f6bb613a2e24b9e68dd4b8e1f5c509f0d9934" },
+        .{ .platform = 0, .encoding = 4, .format = 12, .count = 281, .sha256 = "7cf30e0fdee76f8843b1570cac71f887d763131e009d816ad1190bb3f840cb06" },
+        .{ .platform = 3, .encoding = 1, .format = 4, .count = 271, .sha256 = "c4facebeb1a274b9685b195ea19f6bb613a2e24b9e68dd4b8e1f5c509f0d9934" },
+        .{ .platform = 3, .encoding = 10, .format = 12, .count = 281, .sha256 = "7cf30e0fdee76f8843b1570cac71f887d763131e009d816ad1190bb3f840cb06" },
+    },
+    .best_count = 281,
+    .best_sha256 = "7cf30e0fdee76f8843b1570cac71f887d763131e009d816ad1190bb3f840cb06",
+    .pairs = &.{
+        .{ .code = 0x000D, .glyph = 2 },
+        .{ .code = 0x003A, .glyph = 814 },
+        .{ .code = 0x0905, .glyph = 5 },
+        .{ .code = 0x091F, .glyph = 66 },
+        .{ .code = 0x0938, .glyph = 87 },
+        .{ .code = 0x0952, .glyph = 109 },
+        .{ .code = 0x096B, .glyph = 118 },
+        .{ .code = 0x1CD5, .glyph = 135 },
+        .{ .code = 0x1CEE, .glyph = 160 },
+        .{ .code = 0xA830, .glyph = 171 },
+        .{ .code = 0xA8EF, .glyph = 196 },
+        .{ .code = 0x11B09, .glyph = 220 },
+    },
+    .selectors = &.{},
+    .sequence_count = 0,
+    .sequences_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    .sequences = &.{},
+    .names = &.{
+        .{ .id = 0, .text = "Copyright 2022 The Noto Project Authors (https://github.com/notofonts/devanagari)" },
+        .{ .id = 1, .text = "Noto Sans Devanagari" },
+        .{ .id = 2, .text = "Regular" },
+        .{ .id = 3, .text = "2.007;GOOG;NotoSansDevanagari-Regular" },
+        .{ .id = 4, .text = "Noto Sans Devanagari Regular" },
+        .{ .id = 5, .text = "Version 2.007; ttfautohint (v1.8.4.16-eb64)" },
+        .{ .id = 6, .text = "NotoSansDevanagari-Regular" },
+        .{ .id = 7, .text = "Noto is a trademark of Google Inc." },
+        .{ .id = 8, .text = "Monotype Imaging Inc." },
+        .{ .id = 9, .text = "Jelle Bosma - Monotype Design Team" },
+        .{ .id = 10, .text = "Designed by Monotype design team." },
+        .{ .id = 11, .text = "http://www.google.com/get/noto/" },
+        .{ .id = 12, .text = "http://www.monotype.com/studio" },
+        .{ .id = 13, .text = "This Font Software is licensed under the SIL Open Font License, Version 1.1. This license is available with a FAQ at: https://scripts.sil.org/OFL" },
+        .{ .id = 14, .text = "https://scripts.sil.org/OFL" },
+        .{ .id = 256, .text = "Alternate numeral forms" },
+    },
+};

@@ -19,12 +19,12 @@ const _render = @import("_render.zig");
 /// fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32, ranges: [*]const truetype.CodeRange, count: u32) ?*FontImage
 /// ```
 ///
-/// SINCE: 1.0, ranges since 1.3. LVO -24.
+/// SINCE: 1.0, ranges since 1.3, the limits since 1.4. LVO -24.
 ///
 /// INPUTS:
 /// - `outline` - what `OpenOutline` answered.
-/// - `rows` - how tall a line is: the font's ascender to its descender
-///   is scaled to this.
+/// - `rows` - how tall a line is, 1 to 4096: the font's ascender to its
+///   descender is scaled to this.
 /// - `ranges` - the characters to render, as code points: `count` ranges,
 ///   sorted, none overlapping another.
 /// - `count` - how many ranges.
@@ -33,8 +33,9 @@ const _render = @import("_render.zig");
 /// A font image of coverage (`alpha4`), sound and ready for `AddFont`:
 /// every character of the ranges the font has a glyph for, and the
 /// font's missing glyph as the default character, under
-/// `fontimage.MISSING`. Null for a height of 0, ranges out of order or
-/// past the last code point, or no memory.
+/// `fontimage.MISSING`. Null for a height of 0 or more than 4096, a font
+/// without outlines, ranges out of order or past the last code point, an
+/// image of more than a gigabyte, or no memory.
 ///
 /// BEHAVIOR:
 /// A character the font's character map gives no glyph is left out, so
@@ -48,9 +49,13 @@ const _render = @import("_render.zig");
 /// the outline covers, in fifteenths. The advances are rounded to whole
 /// pixels. The font is `FPF_DESIGNED` - drawn at its size from the
 /// outline, not scaled from another size - and `FPF_PROPORTIONAL` when
-/// its advances differ. Its styles are the ones the file says it is drawn
-/// in (`truetype.styleOf`): a bold face renders as `FSF_BOLD`, so graphics
+/// its advances differ. Its styles are the ones the font says it is drawn
+/// in (`FontMetrics`): a bold face renders as `FSF_BOLD`, so graphics
 /// draws no bold over it.
+///
+/// A glyph the file is damaged in - its data cut short, its outline
+/// further than sixteen lines from where it is drawn - is rendered as one
+/// of no outline, with its advance; an advance is 32767 pixels at most.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -78,7 +83,7 @@ const _render = @import("_render.zig");
 pub fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32, ranges: [*]const truetype.CodeRange, count: u32) ?*FontImage {
     const sys = tb.sys_base;
     const font: *const _outline.Font = @ptrCast(@alignCast(outline));
-    if (rows == 0) return null;
+    if (rows == 0 or rows > _render.most_rows or font.glyf.len == 0) return null;
     const asked = ranges[0..count];
 
     // What the font has of the ranges, and in how many runs.
@@ -108,9 +113,10 @@ pub fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32,
     const scale = _render.Scale{
         .factor = @as(f32, @floatFromInt(rows)) / units,
         .ascender = @floatFromInt(font.ascender),
+        .reach = _render.reachOf(rows),
     };
 
-    var work = _render.Work.init(sys) orelse return null;
+    var work = _render.Work.init(sys, font) orelse return null;
     defer work.deinit(sys);
     const glyphs_memory = sys.AllocVec(glyph_count * @sizeOf(_render.Rendered), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
     defer sys.FreeVec(glyphs_memory);
@@ -118,22 +124,24 @@ pub fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32,
     var made: u32 = 0;
     defer for (glyphs[0..made]) |g| if (g.pixels) |p| sys.FreeVec(p);
 
-    var data_size: u32 = 0;
+    var data_bytes: u64 = 0;
     for (asked) |range| {
         var code = range.first;
         while (true) : (code += 1) {
             const glyph = _outline.glyphIndex(font, code);
             if (glyph != 0) {
                 glyphs[made] = _render.renderGlyph(sys, font, glyph, scale, &work) orelse return null;
-                data_size += fontimage.pitchOf(.alpha4, glyphs[made].width) * glyphs[made].rows;
+                data_bytes += @as(u64, fontimage.pitchOf(.alpha4, glyphs[made].width)) * glyphs[made].rows;
                 made += 1;
             }
             if (code == range.last) break;
         }
     }
     glyphs[made] = _render.renderGlyph(sys, font, 0, scale, &work) orelse return null;
-    data_size += fontimage.pitchOf(.alpha4, glyphs[made].width) * glyphs[made].rows;
+    data_bytes += @as(u64, fontimage.pitchOf(.alpha4, glyphs[made].width)) * glyphs[made].rows;
     made += 1;
+    if (data_bytes > most_data) return null;
+    const data_size: u32 = @intCast(data_bytes);
 
     const ranges_at: u32 = @sizeOf(FontImage);
     const glyphs_at = ranges_at + range_count * @sizeOf(fontimage.Range);
@@ -194,11 +202,15 @@ pub fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32,
     }
 
     const zero = glyphs[zero_at orelse 0].advance;
+    // The baseline within the line, whatever the font says its ascender
+    // is.
+    const line: f32 = @floatFromInt(rows);
+    const baseline = @min(@max(@floor(scale.ascender * scale.factor + 0.5), 0), line);
     const header: *FontImage = @ptrCast(block);
     header.* = .{
         .size = size,
         .height = @intCast(rows),
-        .baseline = @intFromFloat(@floor(scale.ascender * scale.factor + 0.5)),
+        .baseline = @intFromFloat(baseline),
         .x_size = @intCast(@max(zero, 1)),
         .max_width = @intCast(max_width),
         .style = font.style,
@@ -215,3 +227,6 @@ pub fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32,
     header.checksum = fontimage.checksumOf(block, size);
     return header;
 }
+
+/// The most an image's glyphs take, in bytes.
+const most_data = 1 << 30;

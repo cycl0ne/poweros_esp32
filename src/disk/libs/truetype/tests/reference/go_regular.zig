@@ -1,0 +1,88 @@
+// SPDX-License-Identifier: MIT
+//! go/Go-Regular.ttf
+//! sha256 197d9f3703b4c00af609178876a8d73e396f64fe438b2c871778566632374be3
+//!
+//! What fontTools reads from that font, as `../reference.zig` says a
+//! font's values are written: what truetype.library's host tests
+//! compare its reading of the same file with. Written by
+//! scripts/font-reference.py and never edited; it is written again when
+//! the font's pin in scripts/fetch-fonts.sh changes.
+
+const reference = @import("../reference.zig");
+
+pub const font: reference.Font = .{
+    .file = "go/Go-Regular.ttf",
+    .sha256 = "197d9f3703b4c00af609178876a8d73e396f64fe438b2c871778566632374be3",
+    .size = 148672,
+    .outlines = true,
+    .glyph_count = 712,
+    .units_per_em = 2048,
+    .ascender = 1935,
+    .descender = -432,
+    .line_gap = 0,
+    .x_height = 1086,
+    .cap_height = 1480,
+    .underline_position = -275,
+    .underline_thickness = 50,
+    .strikeout_position = 512,
+    .strikeout_thickness = 102,
+    .bold = false,
+    .italic = false,
+    .metrics_sha256 = "01990094c41258d54313dcd60398b82d0bc0d116e54ddbf4f4915e9a224a7330",
+    .tables = &.{
+        .{ .tag = "OS/2", .at = 236, .len = 96 },
+        .{ .tag = "cmap", .at = 332, .len = 1342 },
+        .{ .tag = "glyf", .at = 1676, .len = 126326 },
+        .{ .tag = "head", .at = 128004, .len = 54 },
+        .{ .tag = "hhea", .at = 128060, .len = 36 },
+        .{ .tag = "hmtx", .at = 128096, .len = 2846 },
+        .{ .tag = "loca", .at = 130944, .len = 1426 },
+        .{ .tag = "maxp", .at = 132372, .len = 32 },
+        .{ .tag = "name", .at = 132404, .len = 6973 },
+        .{ .tag = "post", .at = 139380, .len = 5296 },
+        .{ .tag = "gasp", .at = 144676, .len = 8 },
+        .{ .tag = "cvt ", .at = 144684, .len = 176 },
+        .{ .tag = "fpgm", .at = 144860, .len = 3596 },
+        .{ .tag = "prep", .at = 148456, .len = 214 },
+    },
+    .subtables = &.{
+        .{ .platform = 0, .encoding = 3, .format = 4, .count = 709, .sha256 = "4ab2c36d04739d6fc891857ca9118243125e4675a7d9273c4b4b588718a11426" },
+        .{ .platform = 1, .encoding = 0, .format = 6, .count = 227, .sha256 = "f8a14ea25bc528c4fa40a4f1c8dc33990eda9758fc37b1dc5b8ceeb6dc224232" },
+        .{ .platform = 3, .encoding = 1, .format = 4, .count = 709, .sha256 = "4ab2c36d04739d6fc891857ca9118243125e4675a7d9273c4b4b588718a11426" },
+    },
+    .best_count = 709,
+    .best_sha256 = "4ab2c36d04739d6fc891857ca9118243125e4675a7d9273c4b4b588718a11426",
+    .pairs = &.{
+        .{ .code = 0x0000, .glyph = 1 },
+        .{ .code = 0x005E, .glyph = 65 },
+        .{ .code = 0x00BF, .glyph = 129 },
+        .{ .code = 0x0100, .glyph = 194 },
+        .{ .code = 0x0140, .glyph = 258 },
+        .{ .code = 0x0192, .glyph = 322 },
+        .{ .code = 0x03A3, .glyph = 387 },
+        .{ .code = 0x0414, .glyph = 451 },
+        .{ .code = 0x0454, .glyph = 515 },
+        .{ .code = 0x2087, .glyph = 580 },
+        .{ .code = 0x2551, .glyph = 644 },
+        .{ .code = 0xFFFD, .glyph = 709 },
+    },
+    .selectors = &.{},
+    .sequence_count = 0,
+    .sequences_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    .sequences = &.{},
+    .names = &.{
+        .{ .id = 0, .text = "Copyright (c) 2016 by Bigelow & Holmes Inc.. All rights reserved." },
+        .{ .id = 1, .text = "Go" },
+        .{ .id = 2, .text = "Regular" },
+        .{ .id = 3, .text = "Bigelow&HolmesInc.: Go Regular: 2016" },
+        .{ .id = 4, .text = "Go Regular" },
+        .{ .id = 5, .text = "Version 2.010; ttfautohint (v1.8.3)" },
+        .{ .id = 6, .text = "GoRegular" },
+        .{ .id = 8, .text = "Bigelow & Holmes Inc." },
+        .{ .id = 9, .text = "Kris Holmes and Charles Bigelow" },
+        .{ .id = 10, .text = "Go is a humanistic sans-serif font for the Go language. Its x-height, stem weight, and distinctive forms of zero, capital O, lowercase l, figure one, and capital I follow the DIN 1450 font legibility standard. Go's WGL character set includes Unicode Latin, Greek and Cyrillic alphabets plus symbols and graphical elements." },
+        .{ .id = 12, .text = "lucidafonts.com" },
+        .{ .id = 13, .text = "Copyright (c) 2016 Bigelow & Holmes Inc.. All rights reserved.\n\nDistribution of this font is governed by the following license. If you do not agree to this license, including the disclaimer, do not distribute or modify this font.\n\nRedistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:\n\n   * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.\n\n   * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.\n\n   * Neither the name of Google Inc. nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.\n\nDISCLAIMER: THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE." },
+        .{ .id = 18, .text = "" },
+    },
+};

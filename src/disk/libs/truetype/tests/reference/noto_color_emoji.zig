@@ -1,0 +1,97 @@
+// SPDX-License-Identifier: MIT
+//! noto/NotoColorEmoji.ttf
+//! sha256 15671215ab769fdc7162a045d56fd7d7e477c51b04e6b3c761d914d8fdd6cc44
+//!
+//! What fontTools reads from that font, as `../reference.zig` says a
+//! font's values are written: what truetype.library's host tests
+//! compare its reading of the same file with. Written by
+//! scripts/font-reference.py and never edited; it is written again when
+//! the font's pin in scripts/fetch-fonts.sh changes.
+
+const reference = @import("../reference.zig");
+
+pub const font: reference.Font = .{
+    .file = "noto/NotoColorEmoji.ttf",
+    .sha256 = "15671215ab769fdc7162a045d56fd7d7e477c51b04e6b3c761d914d8fdd6cc44",
+    .size = 10730124,
+    .outlines = false,
+    .glyph_count = 4046,
+    .units_per_em = 2048,
+    .ascender = 1900,
+    .descender = -500,
+    .line_gap = 0,
+    .x_height = 0,
+    .cap_height = 1900,
+    .underline_position = -1244,
+    .underline_thickness = 131,
+    .strikeout_position = 530,
+    .strikeout_thickness = 102,
+    .bold = false,
+    .italic = false,
+    .metrics_sha256 = "6c9ff4c415136cdcc9b1358ae1840d13ea917c0d6716f2c193f24e44f796f587",
+    .tables = &.{
+        .{ .tag = "head", .at = 220, .len = 54 },
+        .{ .tag = "hhea", .at = 276, .len = 36 },
+        .{ .tag = "maxp", .at = 312, .len = 32 },
+        .{ .tag = "OS/2", .at = 344, .len = 96 },
+        .{ .tag = "hmtx", .at = 440, .len = 11074 },
+        .{ .tag = "cmap", .at = 11516, .len = 2845 },
+        .{ .tag = "name", .at = 14364, .len = 1416 },
+        .{ .tag = "post", .at = 15780, .len = 32 },
+        .{ .tag = "CBDT", .at = 15812, .len = 10636164 },
+        .{ .tag = "CBLC", .at = 10651976, .len = 16132 },
+        .{ .tag = "GSUB", .at = 10668108, .len = 53880 },
+        .{ .tag = "vhea", .at = 10721988, .len = 36 },
+        .{ .tag = "vmtx", .at = 10722024, .len = 8098 },
+    },
+    .subtables = &.{
+        .{ .platform = 0, .encoding = 5, .format = 14, .count = 0, .sha256 = "" },
+        .{ .platform = 3, .encoding = 10, .format = 12, .count = 1510, .sha256 = "e5fb449e1f3f663f3930de66cedfbc0f185f07681bd36c1ead0aa207236e40c3" },
+    },
+    .best_count = 1510,
+    .best_sha256 = "e5fb449e1f3f663f3930de66cedfbc0f185f07681bd36c1ead0aa207236e40c3",
+    .pairs = &.{
+        .{ .code = 0x0000, .glyph = 1 },
+        .{ .code = 0x26F8, .glyph = 138 },
+        .{ .code = 0x1F31D, .glyph = 275 },
+        .{ .code = 0x1F3AD, .glyph = 412 },
+        .{ .code = 0x1F439, .glyph = 549 },
+        .{ .code = 0x1F4C2, .glyph = 686 },
+        .{ .code = 0x1F559, .glyph = 824 },
+        .{ .code = 0x1F64E, .glyph = 961 },
+        .{ .code = 0x1F91B, .glyph = 1098 },
+        .{ .code = 0x1F9A6, .glyph = 1235 },
+        .{ .code = 0x1FAA2, .glyph = 1372 },
+        .{ .code = 0xFE837, .glyph = 1493 },
+    },
+    .selectors = &.{0xFE0F},
+    .sequence_count = 371,
+    .sequences_sha256 = "b7839fe83322ea899f77874760f4d8c2659b5bbba6c8b7aa88e647c21f06f839",
+    .sequences = &.{
+        .{ .selector = 0xFE0F, .code = 0x0023, .glyph = 4 },
+        .{ .selector = 0xFE0F, .code = 0x25FE, .glyph = 58 },
+        .{ .selector = 0xFE0F, .code = 0x269C, .glyph = 111 },
+        .{ .selector = 0xFE0F, .code = 0x2754, .glyph = 164 },
+        .{ .selector = 0xFE0F, .code = 0x1F397, .glyph = 393 },
+        .{ .selector = 0xFE0F, .code = 0x1F4B3, .glyph = 671 },
+        .{ .selector = 0xFE0F, .code = 0x1F576, .glyph = 844 },
+        .{ .selector = 0xFE0F, .code = 0x1F6F3, .glyph = 1060 },
+    },
+    .names = &.{
+        .{ .id = 0, .text = "Copyright 2022 Google Inc." },
+        .{ .id = 1, .text = "Noto Color Emoji" },
+        .{ .id = 2, .text = "Regular" },
+        .{ .id = 3, .text = "Noto Color Emoji" },
+        .{ .id = 4, .text = "Noto Color Emoji" },
+        .{ .id = 5, .text = "Version 2.057;GOOG;noto-emoji:20260911:fc4ca365e7c20e78278ae702aa20434bfe704c8f" },
+        .{ .id = 6, .text = "NotoColorEmoji" },
+        .{ .id = 7, .text = "Noto is a trademark of Google Inc." },
+        .{ .id = 8, .text = "Google, Inc." },
+        .{ .id = 9, .text = "Google, Inc." },
+        .{ .id = 10, .text = "Color emoji font using CBDT glyph data." },
+        .{ .id = 11, .text = "http://www.google.com/get/noto/" },
+        .{ .id = 12, .text = "http://www.google.com/get/noto/" },
+        .{ .id = 13, .text = "This Font Software is licensed under the SIL Open Font License, Version 1.1. This Font Software is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the SIL Open Font License for the specific language, permissions and limitations governing your use of this Font Software." },
+        .{ .id = 14, .text = "http://scripts.sil.org/OFL" },
+    },
+};

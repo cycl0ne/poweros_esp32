@@ -174,7 +174,7 @@ pub fn renderOutline(dfb: *DiskfontBase, dir: ?*dos.FileLock, path: [*:0]const u
     const data = readWhole(dfb, dir, path, exec.MEMF_ANY) orelse return null;
     defer sys.FreeVec(data.ptr);
 
-    const outline = tb.OpenOutline(data.ptr, @intCast(data.len)) orelse return null;
+    const outline = tb.OpenOutline(data.ptr, @intCast(data.len), null) orelse return null;
     defer tb.CloseOutline(outline);
     const image = tb.RenderFontImage(outline, rows, &outline_ranges, outline_ranges.len) orelse return null;
     defer sys.FreeVec(image);
