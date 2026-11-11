@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 //! diskfont.library's base: exec's Library header, the libraries it works
 //! through, the fonts and outlines it has loaded, the lock that loads them
-//! one at a time, and the low-memory handler that frees the ones nobody
-//! holds.
+//! one at a time, the low-memory handler that frees the ones nobody
+//! holds, and the fallback families of the font being opened.
 //! There is one base, shared by every opener.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
+const _font = @import("font/_font.zig");
 
 pub const DiskfontBase = extern struct {
     lib: exec.Library,
@@ -31,6 +32,17 @@ pub const DiskfontBase = extern struct {
     /// truetype.library, opened the first time an outline is rendered or
     /// opened, and kept until expunge.
     truetype_base: ?*sdk.interface.truetype.TrueTypeBase = null,
+    /// The fallback families `font.prefs` names (since 1.8), in its
+    /// order, each NUL-terminated: read by the first font an OpenDiskFont
+    /// makes and good for that call, under the load lock.
+    fallback_names: [sdk.graphics.FONT_FALLBACKS][_font.MAXFONTNAME]u8 = @splat(@splat(0)),
+    /// How many of them there are.
+    fallback_count: u32 = 0,
+    /// Whether this OpenDiskFont has read them.
+    fallbacks_read: bool = false,
+    /// How many fonts are being given their fallbacks, one inside the
+    /// other: a family made as a fallback is given its own.
+    fallback_depth: u8 = 0,
 };
 
 /// The base from exec's Library header.

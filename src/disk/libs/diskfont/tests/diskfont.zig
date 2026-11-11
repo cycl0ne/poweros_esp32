@@ -44,7 +44,28 @@ fn familySpec(comptime rows: u16) fontimage.Spec {
 const size8: [fontimage.imageSize(familySpec(8))]u8 align(4) = fontimage.build(familySpec(8));
 const size16: [fontimage.imageSize(familySpec(16))]u8 align(4) = fontimage.build(familySpec(16));
 
-/// The RAM disk behind FONTS:, answering the test process's packets.
+/// A size of a fallback family: `letter` a bar, '?' the default, each
+/// `advance` across, on a baseline a row above the test family's.
+fn letterSpec(comptime rows: u16, comptime letter: u21, comptime advance: i16) fontimage.Spec {
+    return .{
+        .height = rows,
+        .baseline = rows - 3,
+        .x_size = @intCast(advance),
+        .flags = graphics.FPF_DESIGNED,
+        .default_char = '?',
+        .glyphs = &.{
+            .{ .code = '?', .advance = advance, .width = 8, .rows = 1, .pixels = &.{0xFF} },
+            .{ .code = letter, .advance = advance, .top = 1, .width = 8, .rows = 2, .pixels = &.{ 0xF0, 0x0F } },
+        },
+    };
+}
+/// "more.font" at 8 and 16 rows draws B, "last.font" at 16 rows only C.
+const more8: [fontimage.imageSize(letterSpec(8, 'B', 5))]u8 align(4) = fontimage.build(letterSpec(8, 'B', 5));
+const more16: [fontimage.imageSize(letterSpec(16, 'B', 9))]u8 align(4) = fontimage.build(letterSpec(16, 'B', 9));
+const last16: [fontimage.imageSize(letterSpec(16, 'C', 11))]u8 align(4) = fontimage.build(letterSpec(16, 'C', 11));
+
+/// The RAM disk behind FONTS: and ENV:, answering the test process's
+/// packets.
 const Disk = struct {
     var port: exec.MsgPort = undefined;
     var disk: host.ram.RamDisk = undefined;
@@ -135,6 +156,40 @@ const Rig = struct {
         const fh = rig.dosLib().Open(name, dos.MODE_NEWFILE) orelse return error.NoFile;
         try testing.expectEqual(@as(isize, @intCast(bytes.len)), rig.dosLib().Write(fh, bytes.ptr, @intCast(bytes.len)));
         try testing.expect(rig.dosLib().Close(fh));
+    }
+
+    /// A family of bitmap sizes on FONTS:: each image under its height,
+    /// and the contents file made from the directory.
+    fn writeSizes(rig: *Rig, comptime name: []const u8, comptime heights: []const u16, images: []const []const u8) !void {
+        const made = rig.dosLib().CreateDir("FONTS:" ++ name) orelse return error.NoDir;
+        rig.dosLib().UnLock(made);
+        inline for (heights, 0..) |height, index| {
+            try rig.write("FONTS:" ++ name ++ "/" ++ std.fmt.comptimePrint("{d}", .{height}), images[index]);
+        }
+        const fonts = rig.dosLib().Lock("FONTS:", dos.SHARED_LOCK).?;
+        defer rig.dosLib().UnLock(fonts);
+        const contents = rig.dfb.NewFontContents(fonts, name ++ ".font") orelse return error.NoContents;
+        defer rig.dfb.DisposeFontContents(contents);
+        const block: [*]align(4) u8 = @ptrCast(contents);
+        try rig.write("FONTS:" ++ name ++ ".font", block[0..fontfile.contentsSize(contents.count)]);
+    }
+
+    /// The test family and the two fallback families on FONTS:, and ENV:
+    /// on the same disk with its Sys drawer.
+    fn writeFallbackFamilies(rig: *Rig) !void {
+        try rig.writeFamily();
+        try rig.writeSizes("more", &.{ 8, 16 }, &.{ &more8, &more16 });
+        try rig.writeSizes("last", &.{16}, &.{&last16});
+        const node = rig.dosLib().MakeDosEntry("ENV", dos.DLT_DEVICE).?;
+        node.task = &Disk.port;
+        try testing.expect(rig.dosLib().AddDosEntry(node));
+        const made = rig.dosLib().CreateDir("ENV:Sys") orelse return error.NoDir;
+        rig.dosLib().UnLock(made);
+    }
+
+    /// `line` as the whole of ENV:Sys/font.prefs.
+    fn writePrefs(rig: *Rig, line: []const u8) !void {
+        try rig.write(sdk.prefs.font.ENV_FILE, line);
     }
 
     /// The test family on FONTS:: its two sizes and its contents file.
@@ -542,4 +597,181 @@ test "revision 4: an outline opened by its family, the face for the styles, shar
     try testing.expectEqual(@as(u32, 3), tb.GlyphIndex(plain.outline, 'C'));
     dfb.CloseOutlineFont(plain);
     // The expunge at the end frees the last.
+}
+
+/// How far `text` moves the cursor in `font`.
+fn lengthIn(rig: *Rig, font: *graphics.TextFont, text: []const u8) !i32 {
+    var pixels: [16 * 16 * 2]u8 = @splat(0);
+    var surface = sdk.rtg.Surface{
+        .pixels = &pixels,
+        .width = 16,
+        .height = 16,
+        .pitch = 32,
+        .size_bytes = pixels.len,
+        .format = .rgb565,
+    };
+    const tags = [_]sdk.utility.TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
+        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(font) },
+        .{},
+    };
+    const rp = rig.graphicsLib().CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    defer rig.graphicsLib().FreeRastPort(rp);
+    return rig.graphicsLib().TextLength(rp, text.ptr, @intCast(text.len));
+}
+
+fn nameOf(font: *const graphics.TextFont) []const u8 {
+    return std.mem.span(font.node.name.?);
+}
+
+test "fallback fonts: the families font.prefs names, attached at the font's height in the list's order" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    try rig.writeFallbackFamilies();
+    try rig.writePrefs("DEFAULT=test.font/16 FALLBACK=more.font,last.font\n");
+    const dfb = rig.dfb;
+    const gb = rig.graphicsLib();
+
+    // 16 rows: each family has that size, and the one before it in the
+    // list falls back to it.
+    const sixteen = dfb.OpenDiskFont(&.{ .name = "test.font", .y_size = 16 }) orelse return error.NoFont;
+    const more = sixteen.fallback orelse return error.NoFallback;
+    try testing.expectEqualStrings("more.font", nameOf(more));
+    try testing.expectEqual(@as(u16, 16), more.image.height);
+    const last = more.fallback orelse return error.NoFallback;
+    try testing.expectEqualStrings("last.font", nameOf(last));
+    try testing.expectEqual(@as(u16, 16), last.image.height);
+    try testing.expect(last.fallback == null);
+    try testing.expectEqual(@as(usize, 3), fontsLoaded(&rig));
+    // Nobody has the fallbacks open: the font that names them keeps them.
+    try testing.expectEqual(@as(u32, 1), sixteen.open_count);
+    try testing.expectEqual(@as(u32, 0), more.open_count);
+    try testing.expectEqual(@as(u32, 0), last.open_count);
+    // A is the font's own, B more's, C last's, and D nobody's: the
+    // font's own default.
+    try testing.expectEqual(@as(i32, 8 + 9 + 11 + 8), try lengthIn(&rig, sixteen, "ABCD"));
+
+    // A family of the list opened by its name is the font already made,
+    // and falls back to the families after it only.
+    const by_name = dfb.OpenDiskFont(&.{ .name = "more.font", .y_size = 16 }).?;
+    try testing.expectEqual(@as(*const graphics.TextFont, by_name), more);
+    try testing.expectEqual(@as(i32, 9 + 9 + 11), try lengthIn(&rig, by_name, "ABC"));
+    gb.CloseFont(by_name);
+
+    // 8 rows: the last family has no such size and is scaled to it, so
+    // every font of the chain is as tall as the line.
+    const eight = dfb.OpenDiskFont(&.{ .name = "test.font", .y_size = 8 }).?;
+    const more_eight = eight.fallback orelse return error.NoFallback;
+    try testing.expectEqualStrings("more.font", nameOf(more_eight));
+    try testing.expectEqual(@as(u16, 8), more_eight.image.height);
+    const last_eight = more_eight.fallback orelse return error.NoFallback;
+    try testing.expectEqualStrings("last.font", nameOf(last_eight));
+    try testing.expectEqual(@as(u16, 8), last_eight.image.height);
+    try testing.expectEqual(@as(u8, 0), last_eight.image.flags & graphics.FPF_DESIGNED);
+    try testing.expect(last_eight.fallback == null);
+    try testing.expectEqual(@as(usize, 6), fontsLoaded(&rig));
+    const scaled_c: i32 = fontimage.find(last_eight.image, 'C').?.advance;
+    try testing.expectEqual(@as(i32, 4 + 5) + scaled_c, try lengthIn(&rig, eight, "ABC"));
+
+    // Memory short: the 8 rows nobody holds go, the font first and then
+    // what it fell back to; the fallbacks of the font still open stay,
+    // open counts of 0 and all.
+    gb.CloseFont(eight);
+    try testing.expect(rig.sysLib().AllocMem(1 << 30, exec.MEMF_ANY) == null);
+    try testing.expectEqual(@as(usize, 3), fontsLoaded(&rig));
+    try testing.expectEqual(more, sixteen.fallback.?);
+    try testing.expectEqual(last, more.fallback.?);
+    try testing.expectEqual(@as(i32, 8 + 9 + 11), try lengthIn(&rig, sixteen, "ABC"));
+    // Closed, the whole chain is free to go.
+    gb.CloseFont(sixteen);
+    try testing.expect(rig.sysLib().AllocMem(1 << 30, exec.MEMF_ANY) == null);
+    try testing.expectEqual(@as(usize, 0), fontsLoaded(&rig));
+}
+
+test "fallback fonts: the list read at each opening; a font in memory keeps its chain; what cannot be kept is passed over" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    try rig.writeFallbackFamilies();
+    const dfb = rig.dfb;
+    const gb = rig.graphicsLib();
+    const sys = rig.sysLib();
+
+    // No font.prefs: no font falls back.
+    const eight = dfb.OpenDiskFont(&.{ .name = "test.font", .y_size = 8 }).?;
+    try testing.expect(eight.fallback == null);
+    // A line without the key: the same.
+    try rig.writePrefs("DEFAULT=test.font/8\n");
+    const twelve = dfb.OpenDiskFont(&.{ .name = "test.font", .y_size = 12 }).?;
+    try testing.expect(twelve.fallback == null);
+
+    // The list written: a font made from now on has it, a family there
+    // is not passed over, and the two in memory stay as they were made.
+    try rig.writePrefs("FIXED=test.font/8 FALLBACK=none.font,more.font,last.font\n");
+    const sixteen = dfb.OpenDiskFont(&.{ .name = "test.font", .y_size = 16 }).?;
+    const more = sixteen.fallback orelse return error.NoFallback;
+    try testing.expectEqualStrings("more.font", nameOf(more));
+    try testing.expectEqualStrings("last.font", nameOf(more.fallback.?));
+    try testing.expectEqual(eight, dfb.OpenDiskFont(&.{ .name = "test.font", .y_size = 8 }).?);
+    gb.CloseFont(eight);
+    try testing.expect(eight.fallback == null);
+    try testing.expect(twelve.fallback == null);
+    for ([_]*graphics.TextFont{ eight, twelve, sixteen }) |font| gb.CloseFont(font);
+    try testing.expect(sys.AllocMem(1 << 30, exec.MEMF_ANY) == null);
+    try testing.expectEqual(@as(usize, 0), fontsLoaded(&rig));
+
+    // A font a program added under a listed family's name is not the
+    // library's to keep: passed over, and the family after it attached.
+    var theirs = graphics.TextFont{ .node = .{ .name = "more.font" }, .image = @ptrCast(&more8) };
+    try testing.expect(gb.AddFont(&theirs));
+    try rig.writePrefs("FALLBACK=more.font,last.font\n");
+    const beside = dfb.OpenDiskFont(&.{ .name = "test.font", .y_size = 8 }).?;
+    const after = beside.fallback orelse return error.NoFallback;
+    try testing.expectEqualStrings("last.font", nameOf(after));
+    try testing.expectEqual(@as(u16, 8), after.image.height);
+    try testing.expect(after.fallback == null);
+    try testing.expectEqual(@as(u32, 0), theirs.open_count);
+    gb.CloseFont(beside);
+    try testing.expect(gb.RemFont(&theirs));
+    try testing.expect(sys.AllocMem(1 << 30, exec.MEMF_ANY) == null);
+    try testing.expectEqual(@as(usize, 0), fontsLoaded(&rig));
+
+    // The test family in the list: each family is given those after it,
+    // so no font comes back to itself.
+    try rig.writePrefs("FALLBACK=last.font,test.font,more.font\n");
+    const first = dfb.OpenDiskFont(&.{ .name = "last.font", .y_size = 16 }).?;
+    const second = first.fallback orelse return error.NoFallback;
+    try testing.expectEqualStrings("test.font", nameOf(second));
+    const third = second.fallback orelse return error.NoFallback;
+    try testing.expectEqualStrings("more.font", nameOf(third));
+    try testing.expect(third.fallback == null);
+    try testing.expectEqual(@as(i32, 8 + 9 + 11), try lengthIn(&rig, first, "ABC"));
+    gb.CloseFont(first);
+    try testing.expect(sys.AllocMem(1 << 30, exec.MEMF_ANY) == null);
+    try testing.expectEqual(@as(usize, 0), fontsLoaded(&rig));
+
+    // A font of the ROM's at the height is attached as it is, and the
+    // chain ends with it; at another height it is scaled like any other,
+    // and goes on to the family after it.
+    try rig.writePrefs("FALLBACK=more.font," ++ graphics.POSPAZNAME ++ ",last.font\n");
+    const with_rom = dfb.OpenDiskFont(&.{ .name = "test.font", .y_size = 16 }).?;
+    const before_rom = with_rom.fallback orelse return error.NoFallback;
+    try testing.expectEqualStrings("more.font", nameOf(before_rom));
+    const rom = before_rom.fallback orelse return error.NoFallback;
+    try testing.expectEqualStrings(graphics.POSPAZNAME, nameOf(rom));
+    try testing.expect(rom.flags & graphics.FPF_ROMFONT != 0);
+    try testing.expect(rom.fallback == null);
+    // a is the ROM font's, and C, which only the family after it has,
+    // is the test font's default.
+    const rom_a: i32 = fontimage.find(rom.image, 'a').?.advance;
+    try testing.expectEqual(@as(i32, 8 + 9) + rom_a + 8, try lengthIn(&rig, with_rom, "ABaC"));
+    const scaled = dfb.OpenDiskFont(&.{ .name = "test.font", .y_size = 12 }).?;
+    const scaled_rom = scaled.fallback.?.fallback orelse return error.NoFallback;
+    try testing.expectEqualStrings(graphics.POSPAZNAME, nameOf(scaled_rom));
+    try testing.expectEqual(@as(u16, 12), scaled_rom.image.height);
+    try testing.expectEqual(@as(u8, 0), scaled_rom.flags & graphics.FPF_ROMFONT);
+    try testing.expectEqualStrings("last.font", nameOf(scaled_rom.fallback.?));
+    gb.CloseFont(with_rom);
+    gb.CloseFont(scaled);
 }

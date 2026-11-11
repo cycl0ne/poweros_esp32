@@ -19,6 +19,7 @@ const fontimage = graphics.fontimage;
 const Glyph = _text.Glyph;
 const TextFont = _text.TextFont;
 const Measure = _text.Measure;
+const Look = _text.Look;
 const glyphOf = _text.glyphOf;
 const softStyles = _text.softStyles;
 const Piece = drawing.Piece;
@@ -30,7 +31,8 @@ const Piece = drawing.Piece;
 /// fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) void
 /// ```
 ///
-/// SINCE: 0.11, UTF-8 since 0.38, fonts of 32-bit colour since 0.39.
+/// SINCE: 0.11, UTF-8 since 0.38, fonts of 32-bit colour since 0.39,
+/// fallback fonts since 0.40.
 /// LVO -132.
 ///
 /// INPUTS:
@@ -38,9 +40,11 @@ const Piece = drawing.Piece;
 ///   the result, and its current point is where the text starts.
 /// - `string` - the text, UTF-8; a byte that is no UTF-8 is drawn as the
 ///   character it reads as (`utility.utf8.read`). A character the font
-///   has no glyph for is drawn as its base letter - `Ā` as `A` - when it
-///   is a letter with marks and the font has that letter, and otherwise
-///   as the font's default character.
+///   has no glyph for is drawn from the first of its fallback fonts that
+///   has one (`TextFont.fallback`); when none has, as its base letter -
+///   `Ā` as `A` - when it is a letter with marks and the font or one of
+///   its fallbacks has that letter, and otherwise as the font's default
+///   character.
 /// - `count` - its length in bytes.
 ///
 /// RESULT:
@@ -76,6 +80,18 @@ const Piece = drawing.Piece;
 /// itself one pixel right (or as far as the font says), *italic* leans each row further right as it
 /// goes up, and underlined is a run along the bottom of the whole string.
 /// Bold and extended each widen a character by one.
+///
+/// **A glyph from a fallback font stands on the same line.** Its
+/// baseline is put on the font's, and the rows of it that would reach
+/// above or below the line are left out, so a line is as tall as the
+/// RastPort's font whatever it draws from. It moves the point by its own
+/// advance, is drawn the way its own font's pixels are - ink, coverage
+/// or colour - and gets the styles of the line: the ones set and the
+/// ones the RastPort's font is drawn with, less the ones the fallback is
+/// already drawn with. The underline is the line's. Under `DRMD_JAM2`
+/// the paper of the glyphs of one font is laid before their ink, so the
+/// part of a leaning or kerned letter that reaches into a neighbour from
+/// another font is covered by that one's paper.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the RastPort's lock
@@ -118,13 +134,6 @@ pub fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) v
     defer EndDraw(gb, rp);
 
     const style = rp.text_style & softStyles(font);
-    const look = Look{
-        .font = font,
-        .style = style,
-        .extra = _text.extraAdvance(style),
-        .smear = _text.smearOf(font, style),
-        .lean = _text.leanOf(font, style),
-    };
     const image = font.image;
     const top = rp.cp_y - @as(i32, image.baseline);
     const start_x = rp.cp_x;
@@ -132,17 +141,18 @@ pub fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) v
 
     var done: u32 = 0;
     while (done < count) {
-        const run = takeRun(look, string + done, count - done);
+        const run = takeRun(font, rp.text_style, string + done, count - done);
         const area = graphics.Rect{
             .min_x = pen_x + run.room.min_x,
             .min_y = top,
             .max_x = pen_x + run.room.max_x,
             .max_y = top + @as(i32, image.height),
         };
-        if (image.kind == .mono1) {
-            stencilRun(gb, rp, look, string + done, run, area);
+        // Each run is of one font, drawn the way that font's pixels are.
+        if (run.look.font.image.kind == .mono1) {
+            stencilRun(gb, rp, string + done, run, area);
         } else {
-            composeRun(gb, rp, look, string + done, run, area);
+            composeRun(gb, rp, string + done, run, area);
         }
         pen_x += run.room.width;
         done += run.count;
@@ -160,54 +170,60 @@ pub fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) v
     rp.cp_x = pen_x;
 }
 
-/// How a string is drawn: the font and what the styles make of it.
-const Look = struct {
-    font: *const TextFont,
-    style: graphics.FontStyle,
-    /// What the styles add to each advance.
-    extra: i32,
-    /// How far right bold draws a glyph again.
-    smear: i32,
-    /// How far italic leans the top row.
-    lean: i32,
-};
-
 /// As many characters as are drawn in one go, and the room they take.
 const Run = struct {
     /// Their bytes.
     count: u32,
     room: Measure,
+    /// Whose glyphs they all are, and how those are put on the line.
+    look: Look,
 };
 
-/// The characters from `string` that fit one strip, at least one.
+/// The characters from `string` that fit one strip and are drawn from
+/// one font, at least one.
 ///
 /// A run ends where the next character would take the room past
 /// `strip_bytes * 8` columns, so a long line is drawn in pieces rather
-/// than refused; a join between two pieces costs only that the ink of two
-/// characters either side of it is not ORed together, which only
-/// kerning and italics can make overlap.
-fn takeRun(look: Look, string: [*]const u8, left: u32) Run {
+/// than refused, and where the next character's glyph is of another font
+/// than the first one's - the font of the text or one of its fallbacks.
+/// A join between two pieces costs only that the ink of two characters
+/// either side of it is not ORed together, which only kerning and
+/// italics can make overlap.
+///
+/// INPUTS:
+/// - `line` - the font the text is in.
+/// - `style` - the RastPort's style.
+/// - `string` - the text, UTF-8.
+/// - `left` - its length in bytes, not 0.
+fn takeRun(line: *const TextFont, style: graphics.FontStyle, string: [*]const u8, left: u32) Run {
     const bytes = string[0..left];
+    var look = _text.lookOf(line, line, style);
     var room = Measure{};
     var count: usize = 0;
     while (count < bytes.len) {
         var after = count;
-        const glyph = glyphOf(look.font, utf8.next(bytes, &after));
-        const next = _text.grow(room, glyph, look.extra, look.smear, look.lean);
+        const found = glyphOf(line, utf8.next(bytes, &after));
+        if (found.font != look.font) {
+            if (count != 0) break;
+            look = _text.lookOf(line, found.font, style);
+        }
+        const next = _text.grow(room, found.glyph, look.extra, look.smear, look.lean);
         if (count != 0 and next.max_x - next.min_x > strip_bytes * 8) break;
         room = next;
         count = after;
     }
-    return .{ .count = @intCast(count), .room = room };
+    return .{ .count = @intCast(count), .room = room, .look = look };
 }
 
 /// A run of one-bit glyphs: assembled into a strip a band of rows at a
 /// time, and each band stencilled with `BltTemplate`, which a board's
 /// engine can take.
-fn stencilRun(gb: *GraphicsBase, rp: *RastPort, look: Look, string: [*]const u8, run: Run, area: graphics.Rect) void {
+fn stencilRun(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, run: Run, area: graphics.Rect) void {
     const graphics_lib = gb.iface();
-    const image = look.font.image;
-    const height: i32 = image.height;
+    const look = run.look;
+    // The line's rows, not the glyphs' font's: what a fallback's glyph
+    // has outside them is never put into the strip.
+    const height: i32 = look.line.image.height;
     var band: i32 = 0;
     while (band < height) : (band += strip_rows) {
         const band_rows = @min(strip_rows, height - band);
@@ -218,7 +234,7 @@ fn stencilRun(gb: *GraphicsBase, rp: *RastPort, look: Look, string: [*]const u8,
         const bytes = string[0..run.count];
         var i: usize = 0;
         while (i < bytes.len) {
-            const glyph = glyphOf(look.font, utf8.next(bytes, &i));
+            const glyph = glyphOf(look.line, utf8.next(bytes, &i)).glyph;
             placeGlyph(&strip, look, glyph, at, band, band_rows);
             at += glyph.advance + look.extra;
         }
@@ -235,14 +251,16 @@ fn stencilRun(gb: *GraphicsBase, rp: *RastPort, look: Look, string: [*]const u8,
 /// The rows of `glyph` that fall in the band from `band`, ORed into the
 /// strip with the point at column `at`. An OR, so a lean or a kern that
 /// reaches into the next cell joins what is there instead of erasing it.
+/// A row is counted from the line's top, `look.drop` below the glyph's
+/// own, so one above or below the line falls in no band.
 fn placeGlyph(strip: *[strip_rows][strip_bytes]u8, look: Look, glyph: *const Glyph, at: i32, band: i32, band_rows: i32) void {
     if (glyph.width == 0) return;
     const pixels = fontimage.pixelsOf(look.font.image, glyph);
     var row: u32 = 0;
     while (row < glyph.rows) : (row += 1) {
-        const line = @as(i32, glyph.top) + @as(i32, @intCast(row));
+        const line = look.drop + @as(i32, glyph.top) + @as(i32, @intCast(row));
         if (line < band or line >= band + band_rows) continue;
-        const col = at + glyph.left + _text.slantOf(look.font, look.style, line);
+        const col = at + glyph.left + _text.slantOf(look.line, look.style, line);
         const source = pixels + row * glyph.pitch;
         const dest = &strip[@intCast(line - band)];
         orBits(dest, source, glyph.width, col);
@@ -283,7 +301,8 @@ fn orBits(dest: *[strip_bytes]u8, source: [*]const u8, width: u32, col: i32) voi
 /// A run of coverage or colour glyphs, composed pixel by pixel onto each
 /// piece of the surface the clip leaves: the paper first under JAM2,
 /// then each glyph over it.
-fn composeRun(gb: *GraphicsBase, rp: *RastPort, look: Look, string: [*]const u8, run: Run, area: graphics.Rect) void {
+fn composeRun(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, run: Run, area: graphics.Rect) void {
+    const look = run.look;
     const top = area.min_y;
     const jam2 = rp.draw_mode & graphics.DRMD_JAM2 != 0;
     var it = drawing.visible(rp, area);
@@ -301,7 +320,7 @@ fn composeRun(gb: *GraphicsBase, rp: *RastPort, look: Look, string: [*]const u8,
         const bytes = string[0..run.count];
         var i: usize = 0;
         while (i < bytes.len) {
-            const glyph = glyphOf(look.font, utf8.next(bytes, &i));
+            const glyph = glyphOf(look.line, utf8.next(bytes, &i)).glyph;
             composeGlyph(rp, piece, look, glyph, at, top);
             at += glyph.advance + look.extra;
         }
@@ -312,7 +331,8 @@ fn composeRun(gb: *GraphicsBase, rp: *RastPort, look: Look, string: [*]const u8,
 }
 
 /// One glyph of coverage or colour onto one piece, with the point at `at`
-/// and the line's top at `top`.
+/// and the line's top at `top`. The piece lies inside the line, so the
+/// rows of a fallback's glyph above or below it are not drawn.
 fn composeGlyph(rp: *RastPort, piece: Piece, look: Look, glyph: *const Glyph, at: i32, top: i32) void {
     if (glyph.width == 0) return;
     const image = look.font.image;
@@ -321,10 +341,10 @@ fn composeGlyph(rp: *RastPort, piece: Piece, look: Look, glyph: *const Glyph, at
     const wide: i32 = @as(i32, glyph.width) + look.smear;
     var row: u32 = 0;
     while (row < glyph.rows) : (row += 1) {
-        const line = @as(i32, glyph.top) + @as(i32, @intCast(row));
+        const line = look.drop + @as(i32, glyph.top) + @as(i32, @intCast(row));
         const y = top + line;
         if (y < r.min_y or y >= r.max_y) continue;
-        const left = at + glyph.left + _text.slantOf(look.font, look.style, line);
+        const left = at + glyph.left + _text.slantOf(look.line, look.style, line);
         const source = pixels + row * glyph.pitch;
         var col: i32 = @max(0, r.min_x - left);
         const end = @min(wide, r.max_x - left);

@@ -102,6 +102,34 @@ test "font.prefs and intuition.prefs: a line read and written back" {
     try testing.expect(prefs.font.parse(ub, "CODE=go-mono.font/15 DOCUMENT=go.font/18 ICON=go.font/12", &fonts) == null);
     try testing.expectEqualStrings("go.font/18", fonts.get(.document).?);
     try testing.expectEqualStrings("ICON=go.font/12 DOCUMENT=go.font/18 CODE=go-mono.font/15", out[0..prefs.font.write(&fonts, &out)]);
+    // The fallback families are written last: commas between, no sizes.
+    try testing.expect(prefs.font.parse(ub, "FALLBACK=sans.font,mono.font FIXED=go-mono.font/16", &fonts) == null);
+    try testing.expectEqualStrings("sans.font,mono.font", fonts.fallbacks().?);
+    try testing.expectEqualStrings("FIXED=go-mono.font/16 FALLBACK=sans.font,mono.font", out[0..prefs.font.write(&fonts, &out)]);
+    var families = prefs.font.Families{ .text = fonts.fallbacks().? };
+    try testing.expectEqualStrings("sans.font", families.next().?);
+    try testing.expectEqualStrings("mono.font", families.next().?);
+    try testing.expect(families.next() == null);
+    // Blanks around a family and a comma after the last one are dropped.
+    try testing.expect(prefs.font.parse(ub, "fallback=\" sans.font , mono.font, \"", &fonts) == null);
+    try testing.expectEqualStrings("sans.font,mono.font", fonts.fallbacks().?);
+    try testing.expect(fonts.get(.fixed) == null);
+    // No family at all is no fallbacks.
+    try testing.expect(fonts.setFallbacks(" ") == null);
+    try testing.expect(fonts.fallbacks() == null);
+    try testing.expectEqualStrings("", out[0..prefs.font.write(&fonts, &out)]);
+    // A list that is refused leaves the line as it was: a size, nothing
+    // between two commas, a blank in a name, a family twice, a name too
+    // long, a ninth family.
+    try testing.expect(fonts.setFallbacks("sans.font") == null);
+    const long_name = "a" ** prefs.font.value_len;
+    for ([_][]const u8{ "sans.font/16", "a.font,,b.font", "a font", "a.font,A.FONT", long_name, "1,2,3,4,5,6,7,8,9" }) |wrong| {
+        try testing.expect(fonts.setFallbacks(wrong) != null);
+        try testing.expectEqualStrings("sans.font", fonts.fallbacks().?);
+    }
+    try testing.expect(fonts.setFallbacks("1,2,3,4,5,6,7,8") == null);
+    try testing.expect(prefs.font.parse(ub, "FALLBACK=sans.font/16", &fonts) != null);
+    try testing.expect(prefs.font.parse(ub, "FALLBACKS=sans.font", &fonts) != null);
     try testing.expectEqual(prefs.font.Which.fixed, prefs.font.standIn(.code).?);
     try testing.expectEqual(prefs.font.Which.default, prefs.font.standIn(.document).?);
     try testing.expect(prefs.font.standIn(.screen) == null);

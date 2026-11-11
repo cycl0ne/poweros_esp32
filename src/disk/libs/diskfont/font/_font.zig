@@ -13,6 +13,15 @@
 //! memory, until memory runs short: the library's low-memory handler then
 //! frees one at a time, for as long as the allocation that ran short
 //! needs - and then the outlines nobody holds (`outline/_outline.zig`).
+//!
+//! **A font falls back to the families `font.prefs` names** under
+//! FALLBACK: as a record is made, `fallbackOf` opens those families at
+//! the record's height and sets the first that opens as the TextFont's
+//! `fallback`, before graphics has the font. A family of the list is
+//! given the families after it, so the fonts of one height are one chain
+//! in the list's order and no font comes back to itself. A font that
+//! another falls back to is kept for as long as that other is: `freeOne`
+//! passes it by.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -24,6 +33,8 @@ const TextFont = graphics.TextFont;
 const _base = @import("../diskfont_base.zig");
 const DiskfontBase = _base.DiskfontBase;
 const _outline = @import("../outline/_outline.zig");
+const opendiskfont = @import("opendiskfont.zig");
+const font_prefs = sdk.prefs.font;
 
 /// How long a family's name may be, ".font" and the NUL included.
 pub const MAXFONTNAME = 32;
@@ -91,15 +102,141 @@ pub fn attrOf(font: *const TextFont) graphics.TextAttr {
 /// freed.
 pub fn addAndOpen(dfb: *DiskfontBase, record: *DiskFont) ?*TextFont {
     const gb = dfb.graphics_base;
+    // Set before graphics has the font, and never again: whoever draws
+    // with it reads the chain without a lock.
+    const fallback = fallbackOf(dfb, record);
+    record.font.fallback = fallback;
     if (!gb.AddFont(&record.font)) {
+        if (fallback) |held| gb.CloseFont(held);
         dfb.sys_base.FreeVec(record);
         return null;
     }
     dfb.sys_base.AddTail(&dfb.fonts, &record.link);
+    // The record on the library's list keeps the font it falls back to
+    // from here on, so the open that kept it until now is given back.
+    if (fallback) |held| gb.CloseFont(held);
     // Its own description weighs perfectly against it, so this opens it -
     // or one exactly like it that was there first.
     const attr = attrOf(&record.font);
     return gb.OpenFont(&attr);
+}
+
+/// The font a record's font falls back to: of the families `font.prefs`
+/// names under FALLBACK - those after the record's own family, if it is
+/// one of them - the first that opens at the record's height as a font of
+/// the library's. The caller holds the load lock.
+///
+/// The families are opened from the last to the first, so each is in
+/// memory, with its own fallback set, by the time the one before it is
+/// made and asks for it: making a family as a fallback goes one level
+/// into this function, however many families there are. Only a family
+/// scaled from a size of another height goes further, for that size's
+/// own fallbacks.
+///
+/// A family that opens at another height (a scaler without memory), or
+/// as a font a program added under the same name, is passed over: the
+/// first would not sit on the line, and the second the library could not
+/// keep. A font of the ROM's at the height is taken: graphics keeps it
+/// for good. It falls back to nothing, so the chain ends with it,
+/// whatever the list names after it.
+///
+/// INPUTS:
+/// - `dfb` - the library.
+/// - `record` - the record, its name and image set, on no list yet.
+///
+/// RESULT:
+/// The font, open: the caller closes it once the record is on the
+/// library's list. Null when `font.prefs` names no family, or none of
+/// them opens.
+fn fallbackOf(dfb: *DiskfontBase, record: *const DiskFont) ?*TextFont {
+    const gb = dfb.graphics_base;
+    if (!dfb.fallbacks_read) readFallbacks(dfb);
+    if (dfb.fallback_count == 0) return null;
+    // A family is given the families after it, so the depth ends with
+    // the list; this holds whatever a list turns out to be.
+    if (dfb.fallback_depth >= graphics.FONT_FALLBACKS) return null;
+    dfb.fallback_depth += 1;
+    defer dfb.fallback_depth -= 1;
+
+    const family: [*:0]const u8 = @ptrCast(&record.name);
+    var first: u32 = 0;
+    var index: u32 = 0;
+    while (index < dfb.fallback_count) : (index += 1) {
+        if (dfb.utility_base.Stricmp(family, fallbackName(dfb, index)) == 0) first = index + 1;
+    }
+    const height = record.font.image.height;
+    var next: ?*TextFont = null;
+    index = dfb.fallback_count;
+    while (index > first) {
+        index -= 1;
+        const want = graphics.TextAttr{ .name = fallbackName(dfb, index), .y_size = height };
+        const font = opendiskfont.openFamily(dfb, &want, want.name) orelse continue;
+        if (font.image.height != height or !stays(dfb, font)) {
+            gb.CloseFont(font);
+            continue;
+        }
+        // The family just opened has the one held as its fallback, or
+        // goes its own way: made before the list named it, or the ROM's.
+        if (next) |held| gb.CloseFont(held);
+        next = font;
+    }
+    return next;
+}
+
+/// The name of the fallback family at `index` of the list.
+fn fallbackName(dfb: *DiskfontBase, index: u32) [*:0]const u8 {
+    return @ptrCast(&dfb.fallback_names[index]);
+}
+
+/// Whether a font is in memory for as long as a record that falls back
+/// to it: a record of the library's, which `freeOne` keeps for that
+/// long, or a font of the ROM's.
+fn stays(dfb: *DiskfontBase, font: *const TextFont) bool {
+    if (font.flags & graphics.FPF_ROMFONT != 0) return true;
+    var at = dfb.fonts.first();
+    while (at) |node| : (at = node.next()) {
+        const record: *const DiskFont = @fieldParentPtr("link", node);
+        if (&record.font == font) return true;
+    }
+    return false;
+}
+
+/// Whether a font of the library's is what another of them falls back
+/// to.
+fn fallenBackTo(dfb: *DiskfontBase, font: *const TextFont) bool {
+    var at = dfb.fonts.first();
+    while (at) |node| : (at = node.next()) {
+        const record: *const DiskFont = @fieldParentPtr("link", node);
+        if (record.font.fallback == font) return true;
+    }
+    return false;
+}
+
+/// The fallback families read from `ENV:Sys/font.prefs` into the base:
+/// none when there is no file, its line is not a font line, or it names
+/// none. A family whose name is too long for a record is left out: no
+/// font of the library's has it.
+fn readFallbacks(dfb: *DiskfontBase) void {
+    const sys = dfb.sys_base;
+    dfb.fallbacks_read = true;
+    dfb.fallback_count = 0;
+    const read = sdk.prefs.loadWhole(sys, dfb.dos_base, font_prefs.ENV_FILE) orelse return;
+    defer sys.FreeVec(read.ptr);
+    const words = sdk.prefs.firstLine(read) orelse return;
+    // The line is most of a kilobyte, and this is deep in the stack of
+    // whoever opens a font.
+    const memory = sys.AllocVec(@sizeOf(font_prefs.Line), exec.MEMF_ANY) orelse return;
+    defer sys.FreeVec(memory);
+    const line: *font_prefs.Line = @ptrCast(@alignCast(memory));
+    if (font_prefs.parse(dfb.utility_base, words, line) != null) return;
+    var families = font_prefs.Families{ .text = line.fallbacks() orelse return };
+    while (families.next()) |family| {
+        if (family.len == 0 or family.len >= MAXFONTNAME) continue;
+        const name = &dfb.fallback_names[dfb.fallback_count];
+        @memset(name, 0);
+        @memcpy(name[0..family.len], family);
+        dfb.fallback_count += 1;
+    }
 }
 
 /// A size of a family, read from `path` relative to the directory `dir`,
@@ -137,14 +274,16 @@ pub fn loadSize(dfb: *DiskfontBase, dir: ?*dos.FileLock, path: [*:0]const u8, na
 }
 
 /// What a size made from an outline holds: the characters the font has
-/// of Latin, Greek and Cyrillic - with IPA and the spacing modifiers (`ˆ`
-/// `˜` `ˇ`) - general punctuation, currency, the letterlike symbols
-/// (`™`, `№`), box drawing and blocks, and U+FFFD. A Latin, Greek or
-/// Cyrillic letter the font lacks is then drawn as its base letter, and
-/// anything else as the font's missing glyph.
+/// of Latin, Greek and Cyrillic - with IPA, the spacing modifiers (`ˆ`
+/// `˜` `ˇ`) and the combining marks, which a letter written apart from
+/// its mark is followed by - general punctuation, currency, the
+/// letterlike symbols (`™`, `№`), box drawing and blocks, and U+FFFD. A
+/// character the font lacks is looked for in the font's fallbacks; one
+/// they lack too is drawn as its base letter if it is a Latin, Greek or
+/// Cyrillic letter, and as the font's missing glyph if not.
 const outline_ranges = [_]sdk.truetype.CodeRange{
     .{ .first = 0x0020, .last = 0x007E }, // ASCII
-    .{ .first = 0x00A0, .last = 0x02FF }, // Latin-1, Latin Extended-A and -B, IPA, spacing modifiers
+    .{ .first = 0x00A0, .last = 0x036F }, // Latin-1, Latin Extended-A and -B, IPA, spacing modifiers, combining marks
     .{ .first = 0x0370, .last = 0x052F }, // Greek, Cyrillic and its supplement
     .{ .first = 0x1E00, .last = 0x1FFF }, // Latin Extended Additional, Greek Extended
     .{ .first = 0x2000, .last = 0x206F }, // general punctuation
@@ -302,6 +441,8 @@ pub fn freeOne(dfb: *DiskfontBase) bool {
     var at = dfb.fonts.first();
     while (at) |node| : (at = node.next()) {
         const record: *DiskFont = @fieldParentPtr("link", node);
+        // One that another font draws from stays until that one has gone.
+        if (fallenBackTo(dfb, &record.font)) continue;
         if (!dfb.graphics_base.AttemptRemFont(&record.font)) continue;
         dfb.sys_base.Remove(&record.link);
         dfb.sys_base.FreeVec(record);

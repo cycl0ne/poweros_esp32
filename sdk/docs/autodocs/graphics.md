@@ -4849,7 +4849,8 @@ fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) void
 
 **SINCE**
 
-0.11, UTF-8 since 0.38, fonts of 32-bit colour since 0.39.
+0.11, UTF-8 since 0.38, fonts of 32-bit colour since 0.39,
+fallback fonts since 0.40.
 LVO -132.
 
 **INPUTS**
@@ -4858,9 +4859,11 @@ LVO -132.
   the result, and its current point is where the text starts.
 - `string` - the text, UTF-8; a byte that is no UTF-8 is drawn as the
   character it reads as (`utility.utf8.read`). A character the font
-  has no glyph for is drawn as its base letter - `Ā` as `A` - when it
-  is a letter with marks and the font has that letter, and otherwise
-  as the font's default character.
+  has no glyph for is drawn from the first of its fallback fonts that
+  has one (`TextFont.fallback`); when none has, as its base letter -
+  `Ā` as `A` - when it is a letter with marks and the font or one of
+  its fallbacks has that letter, and otherwise as the font's default
+  character.
 - `count` - its length in bytes.
 
 **RESULT**
@@ -4898,6 +4901,18 @@ The styles are drawn rather than stored: **bold** is the glyph over
 itself one pixel right (or as far as the font says), *italic* leans each row further right as it
 goes up, and underlined is a run along the bottom of the whole string.
 Bold and extended each widen a character by one.
+
+**A glyph from a fallback font stands on the same line.** Its
+baseline is put on the font's, and the rows of it that would reach
+above or below the line are left out, so a line is as tall as the
+RastPort's font whatever it draws from. It moves the point by its own
+advance, is drawn the way its own font's pixels are - ink, coverage
+or colour - and gets the styles of the line: the ones set and the
+ones the RastPort's font is drawn with, less the ones the fallback is
+already drawn with. The underline is the line's. Under `DRMD_JAM2`
+the paper of the glyphs of one font is laid before their ink, so the
+part of a leaning or kerned letter that reaches into a neighbour from
+another font is covered by that one's paper.
 
 **CONTEXT**
 
@@ -4939,7 +4954,7 @@ fn TextExtent(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, 
 
 **SINCE**
 
-0.14, UTF-8 since 0.38. LVO -168.
+0.14, UTF-8 since 0.38, fallback fonts since 0.40. LVO -168.
 
 **INPUTS**
 
@@ -4963,6 +4978,11 @@ column the text touches: a character that kerns back starts it left of
 the point, and bold or italic can carry it past `width`. So a caller
 that wants to clear behind a line of text moves the extent to where
 the text will go and fills that.
+
+A character drawn from a fallback font is measured as that glyph
+across, and not at all up and down: its rows outside the line are not
+drawn, so the extent is as tall as the RastPort's font whatever the
+text holds.
 
 Half-open like every rectangle here, so the height is `max_y - min_y`
 and there is no `+ 1` anywhere.
@@ -5013,7 +5033,7 @@ fn TextFit(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, ou
 
 **SINCE**
 
-0.14, UTF-8 since 0.38. LVO -172.
+0.14, UTF-8 since 0.38, fallback fonts since 0.40. LVO -172.
 
 **INPUTS**
 
@@ -5044,7 +5064,8 @@ from its end back (a byte that is no UTF-8 a character of its own, as
 `Text` draws it), and a character fits while everything up to it -
 ink and paper, as `TextExtent` measures it - is no wider than the
 room. Backward, what fits is the tail of the string, and `out` is the
-extent of that tail.
+extent of that tail. A character drawn from a fallback font takes the
+room of that glyph.
 
 This is what a label does when its box is too small for it: ask how
 much fits, draw that, and put an ellipsis after it.
@@ -5163,7 +5184,7 @@ fn TextLength(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) 
 
 **SINCE**
 
-0.11, UTF-8 since 0.38. LVO -136.
+0.11, UTF-8 since 0.38, fallback fonts since 0.40. LVO -136.
 
 **INPUTS**
 
@@ -5181,7 +5202,8 @@ and the error is `GERR_NO_FONT`.
 
 The characters' advances added up, each as its glyph gives it, so a
 proportional font measures as it draws. A character the font has no
-glyph for counts as the glyph it is drawn as: its base letter's or the
+glyph for counts as the glyph it is drawn as: a fallback font's, with
+that font's advance and the line's styles, its base letter's or the
 default character's. Ink a kern
 or a lean puts outside that is not counted: `TextExtent` says where
 the ink goes.

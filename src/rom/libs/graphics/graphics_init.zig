@@ -72,9 +72,12 @@ pub const LIBRARY_VERSION = 0;
 /// one, and a letter with marks a font lacks is drawn as its base letter;
 /// the ROM fonts gain the punctuation, currency and letters of code page
 /// 1252 past Latin-1. 39: a font of 32-bit colour (`rgba32`) is drawn,
-/// each pixel's own colour laid over by its coverage. The version stays
-/// 0 until there is something to demand of it.
-pub const LIBRARY_REVISION = 39;
+/// each pixel's own colour laid over by its coverage. 40: a font names a
+/// fallback (`TextFont.fallback`), and a character it has no glyph for
+/// is drawn and measured from the first font of that chain that has
+/// one, on the font's own line. The version stays 0 until there is
+/// something to demand of it.
+pub const LIBRARY_REVISION = 40;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.

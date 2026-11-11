@@ -338,7 +338,7 @@ fn OpenDiskFont(dfb: *DiskfontBase, text_attr: *const TextAttr) ?*TextFont
 
 **SINCE**
 
-1.0. LVO -20.
+1.0, fallback fonts since 1.8. LVO -20.
 
 **INPUTS**
 
@@ -389,6 +389,19 @@ A size read from the disk must be a whole font file (checked and
 sound); one that is not is passed over for the next best. Fonts are
 loaded one at a time, whoever asks.
 
+**A font made here is given its fallback fonts** (`TextFont.fallback`):
+the families `ENV:Sys/font.prefs` names under `FALLBACK`, each opened
+at the font's own height as this call opens a family without
+`FPF_DESIGNED` - loaded, rendered or scaled - and chained in the
+order written, so graphics' text calls take a character the font has
+no glyph for from the first of them that has one. A family of the
+list is itself given the families after it. A family that is not
+installed, cannot be had at the height, or is in memory as a font a
+program added, is passed over; a font of the ROM's at the height is
+taken as it is, and ends the chain. The file is read at each call
+that makes a font, and a font in memory keeps the chain it was made
+with: a changed list is seen in fonts made after it.
+
 **CONTEXT**
 
 - Waits: yes: for the disk, and for another task loading.
@@ -400,7 +413,8 @@ loaded one at a time, whoever asks.
 
 The font is the library's; the caller holds it open until
 `CloseFont`. Once nobody holds it, it stays loaded for the next caller
-until memory runs short.
+until memory runs short. A font another one falls back to stays
+loaded for as long as that one, opened by anybody or not.
 
 **BUGS**
 
@@ -409,7 +423,7 @@ None known.
 **SEE ALSO**
 
 `graphics.library/OpenFont`, `graphics.library/WeighTAMatch`,
-`AvailFonts`, `NewScaledDiskFont`
+`graphics.library/Text`, `AvailFonts`, `NewScaledDiskFont`
 
 **EXAMPLES**
 

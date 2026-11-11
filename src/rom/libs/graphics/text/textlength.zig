@@ -19,7 +19,7 @@ const softStyles = _text.softStyles;
 /// fn TextLength(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) i32
 /// ```
 ///
-/// SINCE: 0.11, UTF-8 since 0.38. LVO -136.
+/// SINCE: 0.11, UTF-8 since 0.38, fallback fonts since 0.40. LVO -136.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. Its font and text style decide the answer.
@@ -34,7 +34,8 @@ const softStyles = _text.softStyles;
 /// BEHAVIOR:
 /// The characters' advances added up, each as its glyph gives it, so a
 /// proportional font measures as it draws. A character the font has no
-/// glyph for counts as the glyph it is drawn as: its base letter's or the
+/// glyph for counts as the glyph it is drawn as: a fallback font's, with
+/// that font's advance and the line's styles, its base letter's or the
 /// default character's. Ink a kern
 /// or a lean puts outside that is not counted: `TextExtent` says where
 /// the ink goes.

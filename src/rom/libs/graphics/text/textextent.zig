@@ -17,7 +17,7 @@ const _text = @import("_text.zig");
 /// fn TextExtent(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, out: *graphics.TextExtent) void
 /// ```
 ///
-/// SINCE: 0.14, UTF-8 since 0.38. LVO -168.
+/// SINCE: 0.14, UTF-8 since 0.38, fallback fonts since 0.40. LVO -168.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. Its font and text style decide the answer.
@@ -38,6 +38,11 @@ const _text = @import("_text.zig");
 /// the point, and bold or italic can carry it past `width`. So a caller
 /// that wants to clear behind a line of text moves the extent to where
 /// the text will go and fills that.
+///
+/// A character drawn from a fallback font is measured as that glyph
+/// across, and not at all up and down: its rows outside the line are not
+/// drawn, so the extent is as tall as the RastPort's font whatever the
+/// text holds.
 ///
 /// Half-open like every rectangle here, so the height is `max_y - min_y`
 /// and there is no `+ 1` anywhere.

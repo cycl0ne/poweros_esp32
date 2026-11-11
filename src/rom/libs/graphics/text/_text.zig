@@ -10,9 +10,20 @@
 //! Characters are found through the ranges, so a font may start and stop
 //! anywhere and leave gaps; a code it has no glyph for is drawn as its
 //! base letter, when it is a letter with marks the font has the letter
-//! of, and otherwise as its default character (`fontimage.glyphFor`).
-//! Text arrives as UTF-8, read with the SDK's `utf8`, so a byte that is
-//! no UTF-8 is drawn as the character it reads as; counts are bytes.
+//! of, and otherwise as its default character. Text arrives as UTF-8,
+//! read with the SDK's `utf8`, so a byte that is no UTF-8 is drawn as
+//! the character it reads as; counts are bytes.
+//!
+//! **A font may name a fallback** (`TextFont.fallback`), and that one the
+//! next: a character the font has no glyph of its own for is looked for
+//! in each of them in turn, and so is its base letter, before the
+//! default (`glyphOf`). A glyph from a fallback is drawn on the line of
+//! the font the text is in: the two baselines are put together, the rows
+//! that would reach past the line are cut, and the line's styles are
+//! drawn on it - the ones the fallback is not already drawn with. So a
+//! line is as tall as its font whatever it draws from, and `TextLength`,
+//! `TextExtent` and `TextFit` measure the same glyphs `Text` draws
+//! (`Look`, `lookOf`).
 //!
 //! **Each character has its own width.** The point moves by the glyph's
 //! advance, and its ink is drawn `left` columns from the point - less
@@ -58,6 +69,7 @@ pub const RastPort = rastport.RastPort;
 const drawing = @import("../draw/_draw.zig");
 const blits = @import("../blit/_blit.zig");
 const utf8 = sdk.utility.utf8;
+const unicode = sdk.utility.unicode;
 
 const fontimage = graphics.fontimage;
 pub const FontImage = fontimage.FontImage;
@@ -144,14 +156,93 @@ pub fn takeOff(gb: *GraphicsBase, font: *TextFont) bool {
     return true;
 }
 
-/// The glyph a character is drawn with: its own, its base letter's, or
-/// the font's default.
+/// A glyph and the font it is of.
+pub const Found = struct {
+    glyph: *const Glyph,
+    /// The font the text is in, or the fallback of it the glyph was
+    /// found in.
+    font: *const TextFont,
+};
+
+/// The glyph a character is drawn with, and whose it is: the font's own,
+/// or the first of its fallbacks' that has one; for a letter with marks
+/// that none of them has, its base letter's, the first of the letters it
+/// is written on that one of them has (`Ǻ`, then `Å`, then `A`), each
+/// looked for in the font and then in its fallbacks; or the font's
+/// default.
 ///
 /// INPUTS:
-/// - `font` - the font.
+/// - `font` - the font the text is in.
 /// - `code` - the character, a code point.
-pub fn glyphOf(font: *const TextFont, code: u32) *const Glyph {
-    return fontimage.glyphFor(font.image, code);
+pub fn glyphOf(font: *const TextFont, code: u32) Found {
+    if (ownGlyph(font, code)) |found| return found;
+    var letter = code;
+    while (unicode.base(letter)) |under| : (letter = under) {
+        if (ownGlyph(font, under)) |found| return found;
+    }
+    return .{ .glyph = fontimage.find(font.image, font.image.default_char).?, .font = font };
+}
+
+/// The glyph one of the fonts has for exactly `code`: the font's, or the
+/// first of its fallbacks' that has one. Null when none has.
+///
+/// The fallbacks are walked for at most `FONT_FALLBACKS` fonts, so a
+/// chain that was closed into a ring by mistake ends the search rather
+/// than the task.
+fn ownGlyph(font: *const TextFont, code: u32) ?Found {
+    if (fontimage.find(font.image, code)) |own| return .{ .glyph = own, .font = font };
+    var at = font.fallback;
+    var left: u32 = graphics.FONT_FALLBACKS;
+    while (at) |fallback| : (at = fallback.fallback) {
+        if (left == 0) break;
+        left -= 1;
+        if (fontimage.find(fallback.image, code)) |theirs| return .{ .glyph = theirs, .font = fallback };
+    }
+    return null;
+}
+
+/// How the glyphs of one font are put on a line: whose they are, whose
+/// the line is, and what the styles make of them.
+pub const Look = struct {
+    /// The font the glyphs are of: the text's, or a fallback of it.
+    font: *const TextFont,
+    /// The font the text is in. Its height is the line's, its baseline
+    /// where every glyph stands, and italic leans by its rows.
+    line: *const TextFont,
+    /// The styles drawn on the glyphs: the ones asked for and the ones
+    /// the line's font is drawn with, less the ones `font` already is.
+    style: graphics.FontStyle,
+    /// What the styles add to each advance.
+    extra: i32,
+    /// How far right bold draws a glyph again.
+    smear: i32,
+    /// How far italic leans the line's top row.
+    lean: i32,
+    /// How many rows below the line's top the glyphs' own top is: the
+    /// two baselines apart, less than zero for a font that stands taller
+    /// over its baseline than the line does.
+    drop: i32,
+};
+
+/// How the glyphs of `font` are put on the line of `line`.
+///
+/// INPUTS:
+/// - `line` - the font the text is in.
+/// - `font` - the font the glyphs are of: `line`, or a fallback of it.
+/// - `style` - the RastPort's style.
+pub fn lookOf(line: *const TextFont, font: *const TextFont, style: graphics.FontStyle) Look {
+    // A fallback under a line of a bold face is drawn bold too, unless
+    // it is a bold face itself.
+    const drawn = (style | line.image.style) & softStyles(font);
+    return .{
+        .font = font,
+        .line = line,
+        .style = drawn,
+        .extra = extraAdvance(drawn),
+        .smear = smearOf(font, drawn),
+        .lean = leanOf(line, drawn),
+        .drop = @as(i32, line.image.baseline) - @as(i32, font.image.baseline),
+    };
 }
 
 /// What the styles add to every character's advance: bold and extended
@@ -243,22 +334,25 @@ pub fn growBack(m: Measure, glyph: *const Glyph, extra: i32, smear: i32, lean: i
     };
 }
 
-/// What the `count` bytes of `string` take in `font` with `style`.
+/// What the `count` bytes of `string` take in `font` with `style`, each
+/// character measured as the glyph it is drawn with, a fallback's
+/// included.
 ///
 /// INPUTS:
-/// - `font` - the font.
-/// - `style` - the RastPort's style; what the font already is is left out.
+/// - `font` - the font the text is in.
+/// - `style` - the RastPort's style; what a font already is is left out.
 /// - `string` - the text, UTF-8.
 /// - `count` - its length in bytes.
 pub fn measure(font: *const TextFont, style: graphics.FontStyle, string: [*]const u8, count: u32) Measure {
-    const drawn = style & softStyles(font);
-    const extra = extraAdvance(drawn);
-    const smear = smearOf(font, drawn);
-    const lean = leanOf(font, drawn);
+    var look = lookOf(font, font, style);
     var m = Measure{};
     const bytes = string[0..count];
     var at: usize = 0;
-    while (at < bytes.len) m = grow(m, glyphOf(font, utf8.next(bytes, &at)), extra, smear, lean);
+    while (at < bytes.len) {
+        const found = glyphOf(font, utf8.next(bytes, &at));
+        if (found.font != look.font) look = lookOf(font, found.font, style);
+        m = grow(m, found.glyph, look.extra, look.smear, look.lean);
+    }
     return m;
 }
 

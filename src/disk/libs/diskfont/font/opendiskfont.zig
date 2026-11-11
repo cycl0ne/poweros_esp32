@@ -21,7 +21,7 @@ const Contents = _font.Contents;
 /// fn OpenDiskFont(dfb: *DiskfontBase, text_attr: *const TextAttr) ?*TextFont
 /// ```
 ///
-/// SINCE: 1.0. LVO -20.
+/// SINCE: 1.0, fallback fonts since 1.8. LVO -20.
 ///
 /// INPUTS:
 /// - `text_attr` - the font's name ("spleen.font", or a path to its
@@ -69,6 +69,19 @@ const Contents = _font.Contents;
 /// sound); one that is not is passed over for the next best. Fonts are
 /// loaded one at a time, whoever asks.
 ///
+/// **A font made here is given its fallback fonts** (`TextFont.fallback`):
+/// the families `ENV:Sys/font.prefs` names under `FALLBACK`, each opened
+/// at the font's own height as this call opens a family without
+/// `FPF_DESIGNED` - loaded, rendered or scaled - and chained in the
+/// order written, so graphics' text calls take a character the font has
+/// no glyph for from the first of them that has one. A family of the
+/// list is itself given the families after it. A family that is not
+/// installed, cannot be had at the height, or is in memory as a font a
+/// program added, is passed over; a font of the ROM's at the height is
+/// taken as it is, and ends the chain. The file is read at each call
+/// that makes a font, and a font in memory keeps the chain it was made
+/// with: a changed list is seen in fonts made after it.
+///
 /// CONTEXT:
 /// - Waits: yes: for the disk, and for another task loading.
 /// - Interrupts: no.
@@ -78,14 +91,15 @@ const Contents = _font.Contents;
 /// OWNERSHIP:
 /// The font is the library's; the caller holds it open until
 /// `CloseFont`. Once nobody holds it, it stays loaded for the next caller
-/// until memory runs short.
+/// until memory runs short. A font another one falls back to stays
+/// loaded for as long as that one, opened by anybody or not.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
 /// `graphics.library/OpenFont`, `graphics.library/WeighTAMatch`,
-/// `AvailFonts`, `NewScaledDiskFont`
+/// `graphics.library/Text`, `AvailFonts`, `NewScaledDiskFont`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -107,6 +121,9 @@ pub fn OpenDiskFont(dfb: *DiskfontBase, text_attr: *const TextAttr) ?*TextFont {
 
     sys.ObtainSemaphore(&dfb.load_lock);
     defer sys.ReleaseSemaphore(&dfb.load_lock);
+    // The fallback families are read again by the first font this call
+    // makes: font.prefs may have changed since the last.
+    dfb.fallbacks_read = false;
 
     if (want.style & face_styles != 0) {
         if (gb.OpenFont(&want)) |font| {
@@ -166,7 +183,7 @@ pub fn faceName(name: [*:0]const u8, suffix: []const u8, into: *[256:0]u8) bool 
 /// The nearest font to `want` of the family whose name, as given, is
 /// `name`: from memory, its drawn sizes, its outline, or scaled. The
 /// caller holds the load lock.
-fn openFamily(dfb: *DiskfontBase, want: *const TextAttr, name: [*:0]const u8) ?*TextFont {
+pub fn openFamily(dfb: *DiskfontBase, want: *const TextAttr, name: [*:0]const u8) ?*TextFont {
     const gb = dfb.graphics_base;
 
     var ram = gb.OpenFont(want);

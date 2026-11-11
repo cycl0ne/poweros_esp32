@@ -4014,6 +4014,211 @@ test "text of 32-bit colour on bgra32: each pixel its own colour in every draw m
     try rgbaText(.bgra32);
 }
 
+/// 12 rows, baseline 10, ink: a font taller than the lines it is a
+/// fallback on. 'x' is three columns of all twelve rows, 'e' two pixels
+/// a row above the baseline, 'o' one pixel, and 'b' is here as it is in
+/// `list_font`.
+fn tallSpec(style: graphics.FontStyle) fontimage.Spec {
+    return .{
+        .height = 12,
+        .baseline = 10,
+        .x_size = 5,
+        .style = style,
+        .default_char = '?',
+        .glyphs = &.{
+            testGlyph('?', 5, 0, 0, 1, 1, &.{0x80}),
+            testGlyph('b', 5, 0, 0, 1, 1, &.{0x80}),
+            testGlyph('e', 4, 0, 9, 2, 1, &.{0xC0}),
+            testGlyph('o', 6, 0, 4, 1, 1, &.{0x80}),
+            testGlyph('x', 5, 0, 0, 3, 12, &(@as([12]u8, @splat(0xE0)))),
+        },
+    };
+}
+const tall_font: [fontimage.imageSize(tallSpec(0))]u8 align(4) = fontimage.build(tallSpec(0));
+const tall_font_bold: [fontimage.imageSize(tallSpec(graphics.FSF_BOLD))]u8 align(4) =
+    fontimage.build(tallSpec(graphics.FSF_BOLD));
+const list_font_bold: [fontimage.imageSize(listSpec(graphics.FSF_BOLD))]u8 align(4) =
+    fontimage.build(listSpec(graphics.FSF_BOLD));
+
+/// 4 rows, baseline 3, coverage: 's' two pixels, full and about half.
+const soft_spec = fontimage.Spec{
+    .height = 4,
+    .baseline = 3,
+    .x_size = 3,
+    .kind = .alpha4,
+    .default_char = '?',
+    .glyphs = &.{
+        testGlyph('?', 3, 0, 1, 2, 1, &.{0xFF}),
+        testGlyph('s', 3, 0, 1, 2, 1, &.{0xF7}),
+    },
+};
+const soft_font: [fontimage.imageSize(soft_spec)]u8 align(4) = fontimage.build(soft_spec);
+
+test "fallback fonts: a character the font lacks is drawn from the chain, on the font's own line" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [64 * 32 * 2]u8 = @splat(0);
+    var surface = rtg.Surface{ .pixels = &pixels, .width = 64, .height = 32, .pitch = 128, .size_bytes = pixels.len, .format = .rgb565 };
+    const tags = [_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
+        .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 255, 255) },
+        .{ .tag = graphics.RPTAG_BPen, .data = graphics.penRGB(0, 0, 255) },
+        .{},
+    };
+    const rp = base(gb).CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    // The chain: the 8-row font of the line, then a taller one of ink,
+    // then a smaller one of coverage.
+    var soft = fonts.TextFont{ .node = .{ .name = "soft.font" }, .image = @ptrCast(&soft_font) };
+    var tall = fonts.TextFont{ .node = .{ .name = "tall.font" }, .image = @ptrCast(&tall_font), .fallback = &soft };
+    var line = fonts.TextFont{ .node = .{ .name = "line.font" }, .image = @ptrCast(&list_font), .fallback = &tall };
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&line) }, .{} });
+
+    // Whose glyph: the font's own before a fallback's, the first
+    // fallback's that has one, the base letter's from whichever has
+    // that, and the font's own default when none has anything.
+    try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, "b", 1)); // its own, though tall has one
+    try testing.expectEqual(@as(i32, 5), base(gb).TextLength(rp, "x", 1)); // tall's
+    try testing.expectEqual(@as(i32, 3), base(gb).TextLength(rp, "s", 1)); // soft's, past tall
+    try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, "k", 1)); // the line's '?', not tall's
+    try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, "\xC3\xA1", 2)); // á as the line's a
+    try testing.expectEqual(@as(i32, 4), base(gb).TextLength(rp, "\xC3\xA9", 2)); // é as tall's e
+    try testing.expectEqual(@as(i32, 8 + 5 + 8 + 3), base(gb).TextLength(rp, "axas", 4));
+
+    // Drawn on the line: its top is row 4. 'a' is the line's bar on row
+    // 6; 'x' after it is three columns of the line's eight rows, the four
+    // rows it has above the line left out, and nothing below it.
+    base(gb).Move(rp, 2, 10);
+    base(gb).Text(rp, "ax", 2);
+    try testing.expectEqual(@as(u32, 8 + 3 * 8), litCount(&surface));
+    try testing.expect(pixelAt(&surface, 2, 6) != 0 and pixelAt(&surface, 9, 6) != 0);
+    try testing.expect(pixelAt(&surface, 10, 4) != 0 and pixelAt(&surface, 12, 11) != 0);
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 10, 3));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 10, 12));
+    var at: graphics.Point = .{};
+    base(gb).GetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_Cursor, .data = @intFromPtr(&at) }, .{} });
+    try testing.expectEqual(@as(i32, 2 + 8 + 5), at.x);
+
+    // The two baselines together: tall's 'e' is a row above its
+    // baseline, so a row above the line's, on row 9.
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 2, 10);
+    base(gb).Text(rp, "e", 1);
+    try testing.expectEqual(@as(u32, 2), litCount(&surface));
+    try testing.expect(pixelAt(&surface, 2, 9) != 0 and pixelAt(&surface, 3, 9) != 0);
+
+    // A run of ink and a run of coverage in one string: soft's 's' two
+    // rows above the baseline, whole and then about half.
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 2, 10);
+    base(gb).Text(rp, "xs", 2);
+    try testing.expectEqual(@as(u32, 3 * 8 + 2), litCount(&surface));
+    try testing.expectEqual(@as(u16, 0xFFFF), pixelAt(&surface, 7, 8));
+    try testing.expect(pixelAt(&surface, 8, 8) != 0 and pixelAt(&surface, 8, 8) != 0xFFFF);
+
+    // Measured as drawn, and as tall as the line whatever the text
+    // holds.
+    var room: graphics.TextExtent = .{};
+    base(gb).TextExtent(rp, "ax", 2, &room);
+    try testing.expectEqual(@as(i32, 13), room.width);
+    try testing.expectEqual(graphics.Rect{ .min_x = 0, .min_y = -6, .max_x = 13, .max_y = 2 }, room.extent);
+    const text = "axs";
+    try testing.expectEqual(@as(u32, 2), base(gb).TextFit(rp, text, 3, &room, null, graphics.TEXT_FORWARD, 14, 0));
+    try testing.expectEqual(@as(i32, 13), room.width);
+    try testing.expectEqual(@as(u32, 3), base(gb).TextFit(rp, text, 3, &room, null, graphics.TEXT_FORWARD, 16, 0));
+    try testing.expectEqual(@as(u32, 2), base(gb).TextFit(rp, text[2..].ptr, 3, &room, null, graphics.TEXT_BACKWARD, 9, 0));
+    try testing.expectEqual(@as(i32, 8), room.width);
+
+    // The paper is the line's too: under JAM2 the eight rows under the
+    // thirteen columns, and not a row of what tall has above them.
+    @memset(&pixels, 0);
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM2 }, .{} });
+    base(gb).Move(rp, 2, 10);
+    base(gb).Text(rp, "ax", 2);
+    try testing.expectEqual(@as(u32, 13 * 8), litCount(&surface));
+    try testing.expectEqual(@as(u16, 0x001F), pixelAt(&surface, 13, 4));
+    try testing.expectEqual(@as(u16, 0xFFFF), pixelAt(&surface, 12, 4));
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} });
+
+    // The line's styles on a fallback's glyph. Bold: each a pixel wider,
+    // and 'x' drawn over itself one to the right.
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_TextStyle, .data = graphics.FSF_BOLD }, .{} });
+    try testing.expectEqual(@as(i32, 9 + 6 + 4), base(gb).TextLength(rp, "axs", 3));
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 2, 10);
+    base(gb).Text(rp, "x", 1);
+    try testing.expectEqual(@as(u32, 4 * 8), litCount(&surface));
+    // A fallback that is a bold face is not made bold again.
+    var tall_bold = fonts.TextFont{ .node = .{ .name = "tall.font" }, .image = @ptrCast(&tall_font_bold) };
+    line.fallback = &tall_bold;
+    try testing.expectEqual(@as(i32, 5), base(gb).TextLength(rp, "x", 1));
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 2, 10);
+    base(gb).Text(rp, "x", 1);
+    try testing.expectEqual(@as(u32, 3 * 8), litCount(&surface));
+    // Under a line that is a bold face a plain fallback is made bold,
+    // with no style set at all.
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_TextStyle, .data = graphics.FS_NORMAL }, .{} });
+    var line_bold = fonts.TextFont{ .node = .{ .name = "line.font" }, .image = @ptrCast(&list_font_bold), .fallback = &tall };
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&line_bold) }, .{} });
+    try testing.expectEqual(@as(i32, 8 + 6), base(gb).TextLength(rp, "ax", 2));
+    line_bold.fallback = &tall_bold;
+    try testing.expectEqual(@as(i32, 8 + 5), base(gb).TextLength(rp, "ax", 2));
+
+    // Italic leans by the line's rows: the upper four of its eight one
+    // to the right, whatever rows of its own the glyph has there.
+    line.fallback = &tall;
+    base(gb).SetRPAttrs(rp, &.{
+        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&line) },
+        .{ .tag = graphics.RPTAG_TextStyle, .data = graphics.FSF_ITALIC },
+        .{},
+    });
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 2, 10);
+    base(gb).Text(rp, "x", 1);
+    try testing.expectEqual(@as(u32, 3 * 8), litCount(&surface));
+    try testing.expect(pixelAt(&surface, 2, 4) == 0 and pixelAt(&surface, 5, 4) != 0);
+    try testing.expect(pixelAt(&surface, 2, 11) != 0 and pixelAt(&surface, 5, 11) == 0);
+    base(gb).TextExtent(rp, "x", 1, &room);
+    try testing.expectEqual(@as(i32, 6), room.extent.max_x);
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_TextStyle, .data = graphics.FS_NORMAL }, .{} });
+
+    // A line of coverage with a fallback of ink: the line is four rows
+    // from row 7, and of tall's twelve the four round its baseline are
+    // stencilled.
+    soft.fallback = &tall;
+    tall.fallback = null;
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&soft) }, .{} });
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 2, 10);
+    base(gb).Text(rp, "sx", 2);
+    try testing.expectEqual(@as(u32, 2 + 3 * 4), litCount(&surface));
+    try testing.expect(pixelAt(&surface, 5, 7) != 0 and pixelAt(&surface, 7, 10) != 0);
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 5, 6));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 5, 11));
+    soft.fallback = null;
+
+    // A chain is walked eight fonts deep and no further: the ninth is
+    // never asked, and two fonts that name each other end the search.
+    var links: [graphics.FONT_FALLBACKS + 1]fonts.TextFont = undefined;
+    for (&links, 0..) |*link, i| {
+        link.* = .{ .node = .{ .name = "link.font" }, .image = @ptrCast(&list_font) };
+        if (i + 1 < links.len) link.fallback = &links[i + 1];
+    }
+    links[links.len - 1].image = @ptrCast(&tall_font);
+    var head = fonts.TextFont{ .node = .{ .name = "head.font" }, .image = @ptrCast(&list_font), .fallback = &links[0] };
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&head) }, .{} });
+    try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, "x", 1));
+    head.fallback = &links[1];
+    try testing.expectEqual(@as(i32, 5), base(gb).TextLength(rp, "x", 1));
+    head.fallback = &links[0];
+    links[0].fallback = &head;
+    try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, "x", 1));
+
+    base(gb).FreeRastPort(rp);
+    try tearDown(gb);
+}
+
 /// A font for the matching test: `listSpec` at `rows`, drawn in `style`,
 /// with `flags` in its image.
 fn matchSpec(rows: u16, style: graphics.FontStyle, flags: graphics.FontFlags) fontimage.Spec {

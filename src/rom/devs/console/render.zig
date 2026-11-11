@@ -11,6 +11,13 @@
 //! on its own, in the middle of its two cells; its second cell is drawn
 //! with it, and one left without the first is drawn blank.
 //!
+//! A character the console's font has no glyph of its own for comes from
+//! one of the font's fallback fonts, at that font's advance. Where that
+//! is not a cell's width the character is no part of a run: its cell is
+//! filled with the row's runs, and the character is drawn after them, in
+//! the middle of its cell and without a background of its own, so what a
+//! wider one has past its cell lies over the cells beside it.
+//!
 //! The line-drawing set is drawn rather than written, so it needs nothing
 //! of the font: a horizontal line is a line across the middle of the cell,
 //! a corner is two half lines, and the few every font has - degree,
@@ -204,6 +211,31 @@ fn drawGraphic(gb: *GraphicsBase, l: Layout, x: i32, y: i32, cell: Cell, fg: gra
     gb.Text(l.rp, &bytes, @intCast(utf8.encode(near, &bytes)));
 }
 
+/// Whether a character is one cell wide in the console's font, as a run
+/// takes every one of its characters to be. ASCII is the font's own; a
+/// character past it may be a fallback font's glyph, whose advance is
+/// that font's.
+fn fitsCell(gb: *GraphicsBase, l: Layout, ch: u32) bool {
+    if (ch < 0x80) return true;
+    var bytes: [4]u8 = undefined;
+    const length: u32 = @intCast(utf8.encode(ch, &bytes));
+    return gb.TextLength(l.rp, &bytes, length) == l.cell_width;
+}
+
+/// A character that is not a cell wide (`fitsCell`), in the middle of its
+/// cell and without a background: the caller has filled the cell. A wider
+/// one reaches into the cells beside it by half of what it is wider.
+fn drawOffWidth(gb: *GraphicsBase, l: Layout, x: i32, y: i32, cell: Cell, fg: graphics.Pen, bg: graphics.Pen) void {
+    var bytes: [4]u8 = undefined;
+    const length: u32 = @intCast(utf8.encode(shownChar(cell), &bytes));
+    setPens(gb, l, fg, bg, cell);
+    const over = [_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} };
+    gb.SetRPAttrs(l.rp, &over);
+    const drawn: i32 = @intCast(gb.TextLength(l.rp, &bytes, length));
+    gb.Move(l.rp, l.origin_x + x * l.cell_width + @divTrunc(l.cell_width - drawn, 2), l.origin_y + y * l.cell_height + l.baseline);
+    gb.Text(l.rp, &bytes, length);
+}
+
 /// Whether the cell at `x` is the first of a wide character whose second
 /// cell is still beside it.
 fn isWide(t: *const Term, x: u32, y: u32) bool {
@@ -265,6 +297,7 @@ fn drawHalves(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, t
 /// whole.
 pub fn drawRow(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, to: u32) void {
     var run_text: [512]u8 = undefined;
+    var off_width = false;
     var x = from;
     while (x < to) {
         const first = t.at(x, y).*;
@@ -289,8 +322,16 @@ pub fn drawRow(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, 
             x += 2;
             continue;
         }
+        if (!fitsCell(gb, l, shownChar(first))) {
+            // Its cell now, the character once the runs are down.
+            _, const bg = pensAt(t, x, y, l);
+            fillCells(gb, l, @intCast(x), @intCast(y), 1, bg);
+            off_width = true;
+            x += 1;
+            continue;
+        }
         // As many cells as share their colours and style, up to a wide
-        // character.
+        // character or one that is not a cell wide.
         var n: u32 = 0;
         var length: usize = 0;
         while (x + n < to and length + 4 <= run_text.len) : (n += 1) {
@@ -298,6 +339,7 @@ pub fn drawRow(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, 
             if (c.flags & term.CELL_GRAPHIC != 0 or !sameLook(first, c)) break;
             if (c.ch == term.WIDE_TAIL or isWide(t, x + n, y)) break;
             if (isShownSelected(t, x + n, y) != selected) break;
+            if (!fitsCell(gb, l, shownChar(c))) break;
             length += utf8.encode(shownChar(c), run_text[length..][0..4]);
         }
         const fg, const bg = pensAt(t, x, y, l);
@@ -305,6 +347,14 @@ pub fn drawRow(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, 
         gb.Move(l.rp, l.origin_x + @as(i32, @intCast(x)) * l.cell_width, l.origin_y + @as(i32, @intCast(y)) * l.cell_height + l.baseline);
         gb.Text(l.rp, &run_text, @intCast(length));
         x += n;
+    }
+    x = from;
+    while (off_width and x < to) : (x += 1) {
+        const cell = t.at(x, y).*;
+        if (cell.flags & term.CELL_GRAPHIC != 0 or cell.ch == term.WIDE_TAIL or isWide(t, x, y)) continue;
+        if (fitsCell(gb, l, shownChar(cell))) continue;
+        const fg, const bg = pensAt(t, x, y, l);
+        drawOffWidth(gb, l, @intCast(x), @intCast(y), cell, fg, bg);
     }
     drawHalves(gb, l, t, y, from, to);
 }
@@ -336,6 +386,9 @@ pub fn drawCursor(gb: *GraphicsBase, l: Layout, t: *const Term, look: CursorLook
         drawWide(gb, l, @intCast(x), @intCast(c.y), cell, fg, bg);
     } else if (cell.ch == term.WIDE_TAIL) {
         fillCells(gb, l, @intCast(x), @intCast(c.y), 1, bg);
+    } else if (!fitsCell(gb, l, shownChar(cell))) {
+        fillCells(gb, l, @intCast(x), @intCast(c.y), 1, bg);
+        drawOffWidth(gb, l, @intCast(x), @intCast(c.y), cell, fg, bg);
     } else {
         var bytes: [4]u8 = undefined;
         setPens(gb, l, fg, bg, cell);
@@ -424,4 +477,148 @@ pub fn drawEdges(gb: *GraphicsBase, l: Layout, t: *const Term, width: i32, heigh
     if (used_h < height) {
         gb.RectFill(l.rp, &.{ .min_x = l.origin_x, .min_y = l.origin_y + used_h, .max_x = l.origin_x + width, .max_y = l.origin_y + height });
     }
+}
+
+// --- Host tests --------------------------------------------------------------
+
+const std = @import("std");
+const testing = std.testing;
+const fontimage = graphics.fontimage;
+const kexec = @import("../../libs/exec/exec.zig");
+const kutility = @import("../../libs/utility/utility.zig");
+const krtg = @import("../../libs/rtg/rtg.zig");
+const kgraphics = @import("../../libs/graphics/graphics.zig");
+
+/// A glyph of one row of ink, `width` across, `top` rows under the
+/// line's top.
+fn barGlyph(code: u32, advance: i16, top: i16, width: u16) fontimage.GlyphSpec {
+    const ink: []const u8 = if (width > 8) &.{ 0xFF, 0xF0 } else if (width == 8) &.{0xFF} else &.{0xF0};
+    return .{ .code = code, .advance = advance, .left = 0, .top = top, .width = width, .rows = 1, .pixels = ink };
+}
+
+/// The console's font: 8 rows, every character a cell of 8 across. 'a'
+/// is a bar on its third row.
+const cell_spec = fontimage.Spec{
+    .height = 8,
+    .baseline = 6,
+    .x_size = 8,
+    .default_char = '?',
+    .glyphs = &.{ barGlyph('?', 8, 0, 8), barGlyph('a', 8, 2, 8) },
+};
+const cell_font: [fontimage.imageSize(cell_spec)]u8 align(4) = fontimage.build(cell_spec);
+
+/// Its fallback, of other widths: U+0394 twelve across, a bar on the
+/// sixth row, and U+03B9 four across, one on the fifth.
+const other_spec = fontimage.Spec{
+    .height = 8,
+    .baseline = 6,
+    .x_size = 8,
+    .default_char = '?',
+    .glyphs = &.{ barGlyph('?', 8, 0, 8), barGlyph(0x394, 12, 5, 12), barGlyph(0x3B9, 4, 4, 4) },
+};
+const other_font: [fontimage.imageSize(other_spec)]u8 align(4) = fontimage.build(other_spec);
+
+fn pixelAt(surface: *const sdk.rtg.Surface, x: u32, y: u32) u16 {
+    const at = surface.pixels.? + @as(usize, y) * surface.pitch + x * 2;
+    return @as(u16, at[0]) | @as(u16, at[1]) << 8;
+}
+
+/// How many of a row's pixels from `from` to `to` (not included) are
+/// `colour`.
+fn countIn(surface: *const sdk.rtg.Surface, y: u32, from: u32, to: u32, colour: u16) u32 {
+    var found: u32 = 0;
+    var x = from;
+    while (x < to) : (x += 1) {
+        if (pixelAt(surface, x, y) == colour) found += 1;
+    }
+    return found;
+}
+
+test "a fallback font's character of another width stands in the middle of its cell, over its neighbours" {
+    try kexec.setUp();
+    defer kexec.deinit();
+    _ = kexec.InitResident(kexec.SysBase, &kutility.utility_library_tag, null) orelse return error.NoUtility;
+    _ = kexec.InitResident(kexec.SysBase, &krtg.rtg_library_tag, null) orelse return error.NoRtg;
+    const made = kexec.InitResident(kexec.SysBase, &kgraphics.graphics_library_tag, null) orelse return error.NoGraphics;
+    const gb: *GraphicsBase = @ptrCast(@alignCast(made));
+
+    var pixels: [48 * 8 * 2]u8 = @splat(0);
+    var surface = sdk.rtg.Surface{ .pixels = &pixels, .width = 48, .height = 8, .pitch = 96, .size_bytes = pixels.len, .format = .rgb565 };
+    var other = graphics.TextFont{ .node = .{ .name = "other.font" }, .image = @ptrCast(&other_font) };
+    var cells_font = graphics.TextFont{ .node = .{ .name = "cell.font" }, .image = @ptrCast(&cell_font), .fallback = &other };
+    const tags = [_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
+        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&cells_font) },
+        .{},
+    };
+    const rp = gb.CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    const white: u16 = 0xFFFF;
+    const blue: u16 = 0x001F;
+    const red: u16 = 0xF800;
+    const green: u16 = 0x07E0;
+    const layout = Layout{
+        .rp = rp,
+        .origin_x = 0,
+        .origin_y = 0,
+        .cell_width = 8,
+        .cell_height = 8,
+        .baseline = 6,
+        .fg = graphics.penRGB(255, 255, 255),
+        .bg = graphics.penRGB(0, 0, 255),
+        .shine = graphics.penRGB(255, 0, 0),
+        .fill = graphics.penRGB(0, 255, 0),
+    };
+
+    // Five cells: the font's own letter, the wide one of the fallback,
+    // the font's, the narrow one, the font's.
+    var cells: [5]Cell = undefined;
+    var grid = Term.init(&cells, 5, 1);
+    grid.write("a\xCE\x94a\xCE\xB9a");
+    drawRow(gb, layout, &grid, 0, 0, 5);
+
+    // Every cell has its background, and nothing is drawn past the row.
+    var y: u32 = 0;
+    while (y < 8) : (y += 1) {
+        try testing.expectEqual(@as(u32, 0), countIn(&surface, y, 0, 40, 0));
+        try testing.expectEqual(@as(u32, 8), countIn(&surface, y, 40, 48, 0));
+    }
+    // The font's own letters are where a run puts them: a cell each,
+    // whatever stands between them.
+    try testing.expectEqual(@as(u32, 24), countIn(&surface, 2, 0, 40, white));
+    try testing.expectEqual(@as(u32, 8), countIn(&surface, 2, 0, 8, white));
+    try testing.expectEqual(@as(u32, 8), countIn(&surface, 2, 16, 24, white));
+    try testing.expectEqual(@as(u32, 8), countIn(&surface, 2, 32, 40, white));
+    // The wide one: twelve across in the middle of the second cell, two
+    // of them over each neighbour, whose background is whole around them.
+    try testing.expectEqual(@as(u32, 12), countIn(&surface, 5, 0, 40, white));
+    try testing.expectEqual(@as(u32, 12), countIn(&surface, 5, 6, 18, white));
+    try testing.expectEqual(blue, pixelAt(&surface, 6, 4));
+    try testing.expectEqual(blue, pixelAt(&surface, 17, 6));
+    // The narrow one: four across in the middle of the fourth.
+    try testing.expectEqual(@as(u32, 4), countIn(&surface, 4, 0, 40, white));
+    try testing.expectEqual(@as(u32, 4), countIn(&surface, 4, 26, 30, white));
+
+    // The cursor on the wide one: its cell in the cursor's colours, the
+    // character still in the middle of it and over the cells beside it.
+    grid.x = 1;
+    drawCursor(gb, layout, &grid, .solid);
+    try testing.expectEqual(@as(u32, 8), countIn(&surface, 0, 8, 16, green));
+    try testing.expectEqual(@as(u32, 12), countIn(&surface, 5, 6, 18, red));
+    try testing.expectEqual(@as(u32, 0), countIn(&surface, 5, 0, 40, green));
+    try testing.expectEqual(blue, pixelAt(&surface, 5, 5));
+    try testing.expectEqual(@as(u32, 8), countIn(&surface, 2, 0, 8, white));
+
+    // And taken away again, the row is as it was drawn.
+    drawCursor(gb, layout, &grid, .off);
+    try testing.expectEqual(@as(u32, 12), countIn(&surface, 5, 6, 18, white));
+    try testing.expectEqual(@as(u32, 0), countIn(&surface, 0, 0, 40, green));
+
+    // One cell drawn again on its own - the neighbour of the wide one -
+    // takes back what reached into it, and the row drawn again has it.
+    drawRow(gb, layout, &grid, 0, 2, 3);
+    try testing.expectEqual(@as(u32, 10), countIn(&surface, 5, 0, 40, white));
+    drawRow(gb, layout, &grid, 0, 0, 5);
+    try testing.expectEqual(@as(u32, 12), countIn(&surface, 5, 6, 18, white));
+
+    gb.FreeRastPort(rp);
 }

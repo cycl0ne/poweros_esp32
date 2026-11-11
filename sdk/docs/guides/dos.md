@@ -1282,7 +1282,9 @@ controls are 7-bit: a byte past 0x7F is always part of a character, and
 `ESC [` is the one CSI. A character takes the cells Unicode gives it
 (`utility.unicode.width`): none for a mark written on the one before,
 two for a wide one - a CJK character, an emoji - which never starts in
-a row's last column. Asked `CSI 18 t`, it answers its size as
+a row's last column. A character the console's font lacks is drawn from
+the font's [fallback fonts](fonts.md#fallback-fonts), in the middle of
+its cell where that font's letters are of another width. Asked `CSI 18 t`, it answers its size as
 `CSI 8 ; rows ; columns t` in its input, and `CSI 6 n` with the cursor's
 place; on a console over a device the terminal at the other end
 answers, if it can. A program that wants the size reads the answer in

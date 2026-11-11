@@ -154,8 +154,8 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.26";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (09.11.2026)\r\n";
+const VERSION = "1.27";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -209,6 +209,8 @@ const ID_BEEP_SOUND = 145;
 const ID_TEST = 150;
 /// A font field's ID: this and which.
 const ID_FONT = 152;
+/// The field of the fallback families.
+const ID_FALLBACK = 158;
 /// The equalizer's: the output it shows, Flat, the presets, and a band's
 /// slider (this and the band).
 const ID_EQ_OUTPUT = 160;
@@ -478,6 +480,12 @@ const Editor = struct {
     /// The fonts as the file had them, and whether each was picked anew.
     font_line: font_file.Line = .{},
     font_picked: [font_file.which_names.len]bool = @splat(false),
+    /// The field of the fallback families and its text, and the fonts
+    /// page's line for what is wrong with a list typed.
+    fallback_field: *Object = undefined,
+    fallback_text: [font_file.fallback_len:0]u8 = @splat(0),
+    fonts_status: *Object = undefined,
+    fonts_status_text: [80:0]u8 = @splat(0),
     /// The desktop's settings as the file had them, the ground as the
     /// page has it, and the page's gadgets.
     desktop: anvil_file.Settings = .{},
@@ -956,6 +964,36 @@ const Editor = struct {
             _ = line.set(@enumFromInt(i), text[0..n]);
         }
         return line;
+    }
+
+    fn sayFonts(e: *Editor, text: []const u8) void {
+        const n = @min(text.len, e.fonts_status_text.len);
+        @memcpy(e.fonts_status_text[0..n], text[0..n]);
+        e.fonts_status_text[n] = 0;
+        e.set(page_fonts, e.fonts_status, &.{ .{ .tag = tx.TEXT_Text, .data = @intFromPtr(&e.fonts_status_text) }, .{} });
+    }
+
+    /// The field's text made the fallback families of the fonts' line.
+    fn fallbackText(e: *Editor) void {
+        e.fallback_text = @splat(0);
+        if (e.font_line.fallbacks()) |families| @memcpy(e.fallback_text[0..families.len], families);
+    }
+
+    /// The fallback families typed taken into the fonts' line, and shown
+    /// as the line writes them: false, with the text left as it was typed
+    /// and the page's line saying why, for a list that is none.
+    fn takeFallbacks(e: *Editor) bool {
+        var got: usize = 0;
+        _ = e.ib.GetAttr(gc.STRINGA_TextVal, e.fallback_field, &got);
+        const typed = if (got != 0) trimmed(std_span(@ptrFromInt(got))) else "";
+        if (e.font_line.setFallbacks(typed)) |why| {
+            e.sayFonts(std_span(why));
+            return false;
+        }
+        e.fallbackText();
+        e.set(page_fonts, e.fallback_field, &.{ pair(gc.STRINGA_TextVal, @intFromPtr(&e.fallback_text)), .{} });
+        e.sayFonts("");
+        return true;
     }
 
     /// intuition's settings as the page has them.
@@ -2263,7 +2301,28 @@ noinline fn build(e: *Editor) ?*Object {
     }
     const system_fonts = column(ib, "The system's fonts", &.{ e.fonts[0], e.fonts[1], e.fonts[2], e.fonts[3] }, &.{ "Sc_reen", "_Windows", "Conso_les", "Ic_ons" }) orelse return null;
     const document_fonts = column(ib, "Documents", &.{ e.fonts[4], e.fonts[5] }, &.{ "_Text", "Co_de" }) orelse return null;
-    pages[page_fonts] = column(ib, null, &.{ system_fonts, document_fonts }, &.{}) orelse return null;
+    e.fallbackText();
+    e.fallback_field = ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_FALLBACK),
+        pair(gc.GA_RelVerify, 1),
+        pair(gc.STRINGA_TextVal, @intFromPtr(&e.fallback_text)),
+        pair(gc.STRINGA_MaxChars, e.fallback_text.len - 1),
+        .{},
+    }) orelse return null;
+    const fallback_fonts = column(ib, "Fallback fonts", &.{e.fallback_field}, &.{"_Families"}) orelse return null;
+    const fallback_note = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        pair(tx.TEXT_Markup, 1),
+        pair(tx.TEXT_Wrap, 1),
+        pair(gc.GA_Width, 220),
+        pair(tx.TEXT_Text, @intFromPtr("A character the font of a text has no glyph for is looked for in these families, in this order, commas between: sans.font,mono.font. Fonts opened from now on have them; a font in use keeps its own until the system starts again.")),
+        .{},
+    }) orelse return null;
+    e.fonts_status = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        pair(tx.TEXT_Text, @intFromPtr(&e.fonts_status_text)),
+        pair(tx.TEXT_Clipped, 1),
+        .{},
+    }) orelse return null;
+    pages[page_fonts] = column(ib, null, &.{ system_fonts, document_fonts, fallback_fonts, fallback_note, e.fonts_status }, &.{}) orelse return null;
 
     // The desktop page.
     var ground_text: [20:0]u8 = @splat(0);
@@ -3144,6 +3203,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                                 e.turnTo(page_region);
                                 continue;
                             }
+                            if (!e.takeFallbacks()) {
+                                e.turnTo(page_fonts);
+                                continue;
+                            }
                             const beep = e.beepPrefs();
                             if (beep.sound == sound_file.SOUND_SAMPLE and beep.sample[0] == 0) {
                                 e.saySound("A sound file for the beep: pick one, or another sound");
@@ -3176,6 +3239,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                         ID_CLEAR => e.clearLanguages(),
                         ID_ZONE => e.takeZone(code),
                         ID_ZONE_RULE => _ = e.takeZoneRule(),
+                        ID_FALLBACK => _ = e.takeFallbacks(),
                         else => if (id >= ID_FIELD and id < ID_FIELD + style_file.key_count) {
                             e.takeField(@enumFromInt(id - ID_FIELD));
                         } else if (id >= ID_PEN_CHOICE and id < ID_PEN_CHOICE + style_file.key_count) {

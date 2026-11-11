@@ -10,7 +10,6 @@ const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const rastport = @import("../rastport/_rastport.zig");
 const _text = @import("_text.zig");
 const RastPort = rastport.RastPort;
-const softStyles = _text.softStyles;
 const utf8 = sdk.utility.utf8;
 
 /// How much of a text fits in the room given.
@@ -20,7 +19,7 @@ const utf8 = sdk.utility.utf8;
 /// fn TextFit(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, out: *graphics.TextExtent, constraining: ?*const graphics.TextExtent, direction: i32, width: i32, height: i32) u32
 /// ```
 ///
-/// SINCE: 0.14, UTF-8 since 0.38. LVO -172.
+/// SINCE: 0.14, UTF-8 since 0.38, fallback fonts since 0.40. LVO -172.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. Its font and text style decide the answer.
@@ -48,7 +47,8 @@ const utf8 = sdk.utility.utf8;
 /// `Text` draws it), and a character fits while everything up to it -
 /// ink and paper, as `TextExtent` measures it - is no wider than the
 /// room. Backward, what fits is the tail of the string, and `out` is the
-/// extent of that tail.
+/// extent of that tail. A character drawn from a fallback font takes the
+/// room of that glyph.
 ///
 /// This is what a label does when its box is too small for it: ask how
 /// much fits, draw that, and put an ellipsis after it.
@@ -100,10 +100,9 @@ pub fn TextFit(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32
     // character that fits.
     if (room_h >= 0 and font.image.height > room_h) return 0;
 
-    const style = rp.text_style & softStyles(font);
-    const extra = _text.extraAdvance(style);
-    const smear = _text.smearOf(font, style);
-    const lean = _text.leanOf(font, style);
+    // How the glyphs of the font the last character was drawn from are
+    // put on the line: the RastPort's font until a fallback has one.
+    var look = _text.lookOf(font, font, rp.text_style);
     const backward = direction < 0;
     if (count == 0) {
         graphics_lib.TextExtent(@ptrCast(rp), string, 0, out);
@@ -116,11 +115,12 @@ pub fn TextFit(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32
     var fits: u32 = 0;
     while (fits < count) {
         const char = if (backward) utf8.readLast(bytes[0 .. count - fits]) else utf8.read(bytes[fits..]);
-        const glyph = _text.glyphOf(font, char.char);
+        const found = _text.glyphOf(font, char.char);
+        if (found.font != look.font) look = _text.lookOf(font, found.font, rp.text_style);
         const next = if (backward)
-            _text.growBack(room, glyph, extra, smear, lean)
+            _text.growBack(room, found.glyph, look.extra, look.smear, look.lean)
         else
-            _text.grow(room, glyph, extra, smear, lean);
+            _text.grow(room, found.glyph, look.extra, look.smear, look.lean);
         if (room_w >= 0 and next.max_x - next.min_x > room_w) break;
         room = next;
         fits += @intCast(char.length);

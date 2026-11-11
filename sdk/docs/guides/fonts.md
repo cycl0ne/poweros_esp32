@@ -118,6 +118,15 @@ gb.Text(rp, "Hello", 5);
 - **Text is UTF-8, and its counts are bytes.** `Text(rp, "Grüße", 7)`
   draws five characters. A byte that is no UTF-8 is drawn as the
   character it reads as (`utility.utf8.read`).
+- **A character the font lacks comes from its fallback fonts.** A font
+  may name another (`TextFont.fallback`), and that one the next: a
+  character is the font's own glyph, or the first fallback's that has
+  one, or - a letter with marks none of them has - its base letter's,
+  looked for the same way, and else the font's own default. A glyph from
+  a fallback stands on the line of the RastPort's font: baseline on
+  baseline, in the pens and the styles of the text, rows that reach
+  past the line cut off. Its advance is its own. See
+  [Fallback fonts](#fallback-fonts).
 - **Each character has its own width.** `TextLength` adds the advances up;
   `TextExtent` also says where the ink goes (a kern back makes
   `extent.min_x` negative, bold and italic can carry it past `width`);
@@ -292,8 +301,10 @@ code point: Spleen's sizes from 16 rows up have Latin with its
 extensions, Greek, Cyrillic, box drawing, blocks and Braille, close to
 a thousand characters, its 8 and 12 rows a few hundred; the Go faces
 Latin-1 and Latin Extended-A, Greek and Cyrillic, about 600 in what
-diskfont renders; Liberation's nearly three times that. A letter with marks a
-font lacks is drawn as its base letter, anything else as its stand-in.
+diskfont renders; Liberation's nearly three times that. A character a
+font lacks is drawn from its [fallback fonts](#fallback-fonts); where
+they lack it too, a letter with marks is drawn as its base letter and
+anything else as the font's stand-in.
 
 **A size file is a FontImage, byte for byte.** It is read with one `Read`
 into one allocation, checked (`check` and `sound`), and drawn from where
@@ -399,15 +410,17 @@ the caller's until then. The line is the font's ascender to its
 descender, scaled to `rows`; each glyph's curves are flattened and the
 area of each pixel inside the outline measured, kept in four bits. There
 is no hinting. The image has the characters of the ranges the font has a
-glyph for - one it lacks is left out, so that graphics draws its base
-letter - and the font's missing glyph as its default character, under
+glyph for - one it lacks is left out, so that graphics looks for it in
+the font's fallbacks, and then for its base letter - and the font's
+missing glyph as its default character, under
 `fontimage.MISSING`, and the styles the file says it is drawn
 in - `truetype.styleOf` reads them, bold and italic, from its `head`
 table.
 
 diskfont.library does all of this for a family whose contents file lists
 an outline: a program only asks `OpenDiskFont` for a height. It renders
-what the font has of Latin (with IPA and the spacing modifiers), Greek,
+what the font has of Latin (with IPA, the spacing modifiers and the
+combining marks), Greek,
 Cyrillic, general punctuation, currency, the letterlike symbols, box
 drawing and blocks, and U+FFFD. A size costs a glyph rendered for each of
 those the font has, once; the result is kept like a loaded font.
@@ -686,6 +699,61 @@ Prefs' Fonts page sets all six. `SetPrefs SHOW` prints the three in use; a progr
 `IPREFS_FixedFont`). The boot shell's window opens after `C:SetPrefs`,
 so it is in the fonts the file names.
 
+## Fallback fonts
+
+No font has every character. The line of `font.prefs` may end with the
+families to look in for one a text's font lacks:
+
+```
+SCREEN=go.font/16 DEFAULT=go.font/16 FIXED=go-mono.font/16 FALLBACK=sans.font,spleen.font
+```
+
+`FALLBACK` is family names with commas between and no blanks, at most
+eight (`graphics.FONT_FALLBACKS`), each once, and no sizes: a fallback
+is always as tall as the font it stands in for. Prefs' Fonts page has a
+field for the list.
+
+diskfont.library reads the key from `ENV:Sys/font.prefs` whenever
+`OpenDiskFont` makes a font - loads, renders or scales one - and gives
+the font its chain before anyone can draw with it: each family of the
+list opened at the font's height, as `OpenDiskFont` opens a family asked
+for without `FPF_DESIGNED`, so a bitmap family without that size is
+scaled to it and an outline rendered at it. The chain is in the order
+written. graphics' `Text`, `TextLength`, `TextExtent` and `TextFit` then
+take a character the font has no glyph for from the first font of the
+chain that has one, and draw it on the text's own line (see
+[Drawing text](#drawing-text)): no line grows taller for a fallback, and
+a program measures and draws as it does without one.
+
+What to know:
+
+- **A family of the list falls back to the families after it**, whether
+  it is opened as a fallback or by its own name, so no font comes back
+  to itself. With the list above, a text in `sans.font` looks in
+  `spleen.font`, and one in `spleen.font` in neither.
+- **A font keeps the chain it was made with.** A changed list is seen in
+  fonts made after it; a font in memory - the system's fonts are, from
+  boot - keeps its own until it has left memory, which for those is the
+  next start.
+- **What cannot be had is passed over**: a family that is not
+  installed, one that cannot be made at the height, a font a program
+  added to graphics' list under a listed name. A font of the ROM's
+  (`pospaz.font` at 8 or 16 rows) is taken as it is and ends the chain,
+  so name it last.
+- **A fallback stays in memory as long as the font that names it**, with
+  nobody holding it open; when memory runs short the font goes first and
+  then what it fell back to.
+- **Each fallback is a whole font at that height**: a text in three
+  sizes with two fallback families has six more fonts in memory, an
+  outline family's rendered with every character diskfont renders.
+- **A console keeps its cells.** A character from a fallback whose
+  advance is not the console font's is drawn in the middle of its cell;
+  one that is wider reaches into the cells beside it, so a fallback for
+  `FIXED` is best a fixed-width family of about that font's width.
+- A font a program makes itself (`AddFont`) has no fallback unless the
+  program sets `fallback` before adding it, to a font it keeps open for
+  as long; graphics walks at most eight fonts of a chain.
+
 ## Making a font yourself
 
 A program or library can put a font of its own on graphics' list. Build a
@@ -731,6 +799,6 @@ if (gb.RemFont(&mine.font)) sys.FreeVec(mine); // true once nobody holds it
 | `C:ListFonts` | every font by family, size and where it is; `SAMPLE` draws them |
 | `C:FixFonts` | writes every family's contents file again |
 | `C:SetPrefs` | sets the system's fonts, with the rest of its settings, from `ENV:Sys`; `SHOW` prints them |
-| `SYS:Programs/Prefs` | picks the system's fonts and the desktop icons' in a window and writes `font.prefs` |
+| `SYS:Programs/Prefs` | picks the system's fonts, the desktop icons' and the fallback families in a window and writes `font.prefs` |
 | `SYS:Programs/FontView` | fonts and sizes in a window, the one chosen drawn |
 | `C:test/DiskFont`, `C:test/Fonts` | test programs: open sizes and time them, or with `GLYPHS` render every glyph of an outline by its number and compare with a font image; draw a size file |

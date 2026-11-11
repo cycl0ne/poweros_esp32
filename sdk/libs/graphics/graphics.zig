@@ -182,7 +182,8 @@ pub const GERR_LAST: i32 = GERR_NO_FONT;
 ///
 /// Whoever builds a font - diskfont loading one, a scaler, an outline
 /// engine - puts one of these in a record of its own, points `image` at
-/// the glyphs, names it through `node.name`, and hands it to `AddFont`.
+/// the glyphs, names it through `node.name`, names in `fallback` the font
+/// that has the characters this one lacks, and hands it to `AddFont`.
 /// The record, the name and the image stay the builder's: graphics only
 /// holds the font on its list and counts who has it open, and the
 /// builder frees it all once `RemFont` has taken it off.
@@ -202,7 +203,18 @@ pub const TextFont = extern struct {
     /// Where it came from: `FPF_ROMFONT` or `FPF_DISKFONT`.
     flags: FontFlags = 0,
     pad: [3]u8 = .{ 0, 0, 0 },
+    /// The font a character is looked for in that this one has no glyph
+    /// for, and that font's `fallback` after it: a chain of at most
+    /// `FONT_FALLBACKS` fonts, without a ring. A glyph found there is
+    /// drawn on this font's line, the two baselines together, and what
+    /// reaches past the line is cut. The builder sets it before `AddFont`
+    /// and never again, and keeps every font of the chain for as long as
+    /// this one is on the list or open. Null for a font with none.
+    fallback: ?*const TextFont = null,
 };
+
+/// How many fonts after a font's own a character is looked for in.
+pub const FONT_FALLBACKS = 8;
 
 /// A font as asked for: by name, height and style, and what else the
 /// caller cares about. `OpenFont` answers the nearest font of the name,
