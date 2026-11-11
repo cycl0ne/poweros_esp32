@@ -1,24 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
-//! What the text calls share: the plain characters typesetting's stand
-//! for. UTF-8 is read with the SDK's `utf8`, which every part of the
-//! system decodes with.
+//! The tests of the SDK's `utf8` and `unicode`, which every part of the
+//! system reads text with, run with the text calls.
 
 const std = @import("std");
 const utf8 = @import("sdk").utility.utf8;
-
-/// The plain characters a character of typesetting stands for: "" for a
-/// mark of no width; null for one that is none of them.
-pub fn plain(char: u32) ?[]const u8 {
-    return switch (char) {
-        0x2018, 0x2019, 0x201A, 0x201B, 0x2032 => "'",
-        0x201C, 0x201D, 0x201E, 0x201F, 0x2033 => "\"",
-        0x2010...0x2015, 0x2212 => "-",
-        0x2026 => "...",
-        0x2000...0x200A, 0x202F, 0x205F => " ",
-        0x200B...0x200F, 0xFEFF => "",
-        else => null,
-    };
-}
 
 // --- tests (host: ./zig build test) -----------------------------------------
 

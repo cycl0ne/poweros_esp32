@@ -455,11 +455,13 @@ version the tables are made from.
 
 The system's strings are UTF-8, and graphics.library draws them as such
 (`Text` and the calls that measure it); so does the console, each
-character in the cells `unicode.width` gives it. What comes from elsewhere - a server's words, a file another system
-wrote, a name in a repository, a song's tags - is mostly UTF-8. Latin-1's
-256 characters are Unicode's first 256, so a character up to U+00FF is
-one byte in Latin-1 and two at most in UTF-8; the rest is what a
-conversion decides.
+character in the cells `unicode.width` gives it. What comes from
+elsewhere - a server's words, a file another system wrote, a name in a
+repository - is mostly UTF-8 too; what is Latin-1 - an ID3v1 tag, an
+older file or server - is made UTF-8 as it comes in, and made Latin-1
+again only for what holds nothing else. Latin-1's 256 characters are
+Unicode's first 256, so a character up to U+00FF is one byte in Latin-1
+and two at most in UTF-8; one past it is a `?` in Latin-1.
 
 A width or a `.limit` on a `%s` in `RawDoFmt` - and so in `Printf`,
 `kprintf` and the rest that format through it - counts characters, not
@@ -474,22 +476,16 @@ two cells of a console. `%c` takes a code point and writes it in UTF-8
 | `Latin1ToUtf8(from, from_length, into, into_length)` | Latin-1 as UTF-8: the bytes the whole takes, written or not |
 | `Utf8Kind(bytes, length)` | `UTF8KIND_ASCII`, `UTF8KIND_LATIN1` (UTF-8 whose characters Latin-1 all has), `UTF8KIND_WIDE` (one it has not), or `UTF8KIND_NONE` (no UTF-8 at all) |
 
-A `utility.Utf8Conversion` tells `Utf8ToLatin1` what to do with what
-Latin-1 has not; a null one is the plain conversion, every such
-character a `?`:
-
-| Flag | |
-|---|---|
-| `UTF8F_TYPESET` | typesetting's quotes, dashes, ellipsis and spaces become the plain ones; the marks of no width go |
-| `UTF8F_LATIN1` | a byte that is no UTF-8 is the Latin-1 byte it is: for text that may be either |
-| `UTF8F_REFUSE` | the answer is `UTF8_REFUSED` instead of a `?`: for a name that must come back as it went |
-| `UTF8F_PIECES` | the text comes a piece at a time; a character cut between two pieces is held for the next, and a call with no bytes ends the text |
+`Utf8ToLatin1` writes a `?` for each character Latin-1 has not, and for
+each byte that is no UTF-8. Its `utility.Utf8Conversion` is null for a
+whole text; with `UTF8F_PIECES` the text comes a piece at a time, a
+character cut between two pieces is held for the next, and a call with
+no bytes ends the text.
 
 ```zig
 // A song's title for an ID3v1 tag, which holds Latin-1.
-var typeset: utility.Utf8Conversion = .{ .flags = utility.UTF8F_TYPESET };
-const shown = ub.Utf8ToLatin1(&typeset, tag.ptr, tag.len, &title, title.len - 1);
-title[shown] = 0;
+const written = ub.Utf8ToLatin1(null, title.ptr, title.len, &tag.title, tag.title.len);
+@memset(tag.title[written..], 0);
 
 // A file from another system: UTF-8 when the whole of it is.
 const utf8 = ub.Utf8Kind(text.ptr, text.len) != utility.UTF8KIND_NONE;
@@ -507,15 +503,14 @@ order mark at the start of a text is passed over.
 
 **In place.** Latin-1 is never longer than the UTF-8 it comes from, so
 `into` may be `from` - but for a piece after one that ended inside a
-character, whose held bytes come first, and with `UTF8F_REFUSE`, whose
-refusal finds `into` already written up to there: ask `Utf8Kind` first.
-`Latin1ToUtf8` never works in place: the text grows.
+character, whose held bytes come first. `Latin1ToUtf8` never works in
+place: the text grows.
 
 **A piece at a time**, a server's stream as it comes, keeps one
 conversion with `UTF8F_PIECES` for the whole text, `into` two bytes
 longer than the piece, and ends with a call of no bytes, which gives a
 character the last piece cut as the broken bytes it is. Writing stops
-where `into` is full, before a character that does not fit.
+where `into` is full.
 
 ## URLs
 
@@ -573,19 +568,17 @@ password, a query's value and a path's segment alike:
 | Flag | |
 |---|---|
 | `URLF_SLASH` | `/` stays as it is: for a whole path |
-| `URLF_LATIN1` | the bytes are Latin-1, and a character past ASCII is escaped as its two UTF-8 bytes: words typed on the system, for a server |
 
 Both `DecodeUrl` and `EncodeUrl` answer the whole length and write as
 much as `into` holds, no NUL after it: the whole is there when the
 answer is no more than `into_length`, and an `into_length` of 0 only
-counts. `EncodeUrl` writes whole characters, never part of one's
-escapes. A part never grows as it is decoded, so `DecodeUrl` works in
+counts. `EncodeUrl` never writes part of an escape. A part never grows as it is decoded, so `DecodeUrl` works in
 place; `EncodeUrl` never does.
 
 ```zig
 // Words typed for a search, as a query's value.
 const room = address.len - at;
-const length = ub.EncodeUrl(words.ptr, words.len, address[at..].ptr, room, utility.URLF_LATIN1);
+const length = ub.EncodeUrl(words.ptr, words.len, address[at..].ptr, room, 0);
 if (length > room) return null; // too long
 ```
 

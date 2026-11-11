@@ -38,7 +38,7 @@ Generated from the source by `./zig build autodoc`.
 - [FreeTagItems](#freetagitems) - Gives back an array from `AllocateTagItems` or `CloneTagItems`.
 - [GetTagData](#gettagdata) - Returns the data of the first item with a given tag, or a default.
 - [GetUniqueID](#getuniqueid) - Returns a number no earlier call has returned.
-- [Latin1ToUtf8](#latin1toutf8) - Turns Latin-1, the system's characters, into UTF-8.
+- [Latin1ToUtf8](#latin1toutf8) - Turns Latin-1 - text an older file, tag or server holds - into UTF-8.
 - [MapTags](#maptags) - Renames the tags of a list through a map.
 - [MatchPattern](#matchpattern) - Tells whether a string matches a pattern made by `ParsePattern`.
 - [MatchPatternNoCase](#matchpatternnocase) - Tells whether a string matches a pattern made by `ParsePatternNoCase`, without regard to case.
@@ -74,7 +74,7 @@ Generated from the source by `./zig build autodoc`.
 - [UnpackStructureTags](#unpackstructuretags) - Copies the fields of a structure out to where the items of a tag list point, as a pack table lays them out.
 - [UtcToDate](#utctodate) - Seconds since 1970 in UTC as a DateStamp in the zone the system clock keeps.
 - [Utf8Kind](#utf8kind) - Says whether a text is UTF-8, and whether every character of it is one Latin-1 has.
-- [Utf8ToLatin1](#utf8tolatin1) - Turns UTF-8 into Latin-1, the system's characters: a whole text, or one piece of it after another.
+- [Utf8ToLatin1](#utf8tolatin1) - Turns UTF-8 into Latin-1, for a file, tag or server that holds it: a whole text, or one piece of it after another.
 - [ZoneOffset](#zoneoffset) - The seconds the zone the system clock keeps is east of UTC at a moment.
 
 ## AddNamedObject
@@ -1115,7 +1115,7 @@ Nothing is allocated. Everything given is the caller's.
 
 A part never grows as it is decoded: `into` as long as `from` holds
 it. What the bytes are - UTF-8, mostly - is the caller's to say;
-`Utf8ToLatin1` makes them the system's.
+`Utf8Kind` tells, and `Latin1ToUtf8` makes Latin-1 the system's.
 
 **BUGS**
 
@@ -1123,7 +1123,7 @@ None known.
 
 **SEE ALSO**
 
-`ParseUrl`, `EncodeUrl`, `Utf8ToLatin1`
+`ParseUrl`, `EncodeUrl`, `Utf8Kind`, `Latin1ToUtf8`
 
 **EXAMPLES**
 
@@ -1154,9 +1154,7 @@ fn EncodeUrl(ub: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u
 - `from`, `from_length` - the bytes: a user, a password, a query's
   value, a path.
 - `into`, `into_length` - where the part goes; not `from`.
-- `flags` - URLF_SLASH keeps `/` as it is, for a whole path;
-  URLF_LATIN1 takes the bytes as Latin-1 and encodes each character
-  past ASCII as its UTF-8.
+- `flags` - URLF_SLASH keeps `/` as it is, for a whole path.
 
 **RESULT**
 
@@ -1166,8 +1164,9 @@ The bytes the whole part takes, written or not.
 
 A letter, a digit, `-`, `.`, `_` and `~` stay as they are - what no
 part of a URL needs escaped - and with URLF_SLASH a `/`; every other
-byte is `%` and two upper-case hex digits, a space `%20`. As many
-whole characters are written as `into` holds, no NUL after them: the
+byte is `%` and two upper-case hex digits, a space `%20`, each byte of
+a UTF-8 character its own escape. As many whole escapes are written
+as `into` holds, no NUL after them: the
 whole is there when the answer is no more than `into_length`. A
 length of 0 for `into` only counts.
 
@@ -1184,8 +1183,7 @@ Nothing is allocated. Everything given is the caller's.
 
 **NOTES**
 
-The part grows to three times its bytes at most - six times a Latin-1
-character's with URLF_LATIN1. What is escaped is what a part's own
+The part grows to three times its bytes at most. What is escaped is what a part's own
 separators would take for theirs (`:` and `@` in a user, `&` and `=`
 in a query, `/` in a segment), and more besides, which a server takes
 the same.
@@ -1196,13 +1194,13 @@ None known.
 
 **SEE ALSO**
 
-`DecodeUrl`, `ParseUrl`, `Latin1ToUtf8`
+`DecodeUrl`, `ParseUrl`
 
 **EXAMPLES**
 
 ```zig
 // Words typed for a search, as a query's value.
-const length = ub.EncodeUrl(words.ptr, words.len, address[at..].ptr, address.len - at, utility.URLF_LATIN1);
+const length = ub.EncodeUrl(words.ptr, words.len, address[at..].ptr, address.len - at, 0);
 if (length > address.len - at) return null; // too long
 ```
 
@@ -1687,7 +1685,7 @@ const id = ub.GetUniqueID();
 
 ## Latin1ToUtf8
 
-Turns Latin-1, the system's characters, into UTF-8.
+Turns Latin-1 - text an older file, tag or server holds - into UTF-8.
 
 **SYNOPSIS**
 
@@ -1743,9 +1741,9 @@ None known.
 **EXAMPLES**
 
 ```zig
-// A dos name as a repository keeps it; refused when it is too long.
-const length = ub.Latin1ToUtf8(name.ptr, name.len, &path, path.len);
-if (length > path.len) return null;
+// A title from an ID3v1 tag, which holds Latin-1.
+const length = ub.Latin1ToUtf8(&tag.title, tag.title.len, &title, title.len);
+if (length > title.len) return null;
 ```
 
 ## MapTags
@@ -3961,14 +3959,14 @@ None known.
 **EXAMPLES**
 
 ```zig
-// A file another system wrote: UTF-8 when the whole of it is.
-const kind = ub.Utf8Kind(text.ptr, text.len);
-const flags: u32 = if (kind == utility.UTF8KIND_NONE) ... else 0;
+// A file another system wrote: UTF-8 when the whole of it is, else
+// Latin-1, made UTF-8 before it is used.
+const latin1 = ub.Utf8Kind(text.ptr, text.len) == utility.UTF8KIND_NONE;
 ```
 
 ## Utf8ToLatin1
 
-Turns UTF-8 into Latin-1, the system's characters: a whole text, or one piece of it after another.
+Turns UTF-8 into Latin-1, for a file, tag or server that holds it: a whole text, or one piece of it after another.
 
 **SYNOPSIS**
 
@@ -3982,9 +3980,8 @@ fn Utf8ToLatin1(ub: *UtilityBase, conversion: ?*utility.Utf8Conversion, from: [*
 
 **INPUTS**
 
-- `conversion` - what is done with a character Latin-1 has not
-  (`flags`), and with UTF8F_PIECES a character the last piece ended
-  inside; null for no flags.
+- `conversion` - with UTF8F_PIECES, a character the last piece ended
+  inside; null for a whole text.
 - `from`, `from_length` - the UTF-8. With UTF8F_PIECES a length of 0
   ends the text: what the conversion holds is given as the broken
   bytes it is.
@@ -3993,26 +3990,20 @@ fn Utf8ToLatin1(ub: *UtilityBase, conversion: ?*utility.Utf8Conversion, from: [*
 
 **RESULT**
 
-The bytes written into `into`, no NUL after them; UTF8_REFUSED when
-UTF8F_REFUSE refused.
+The bytes written into `into`, no NUL after them.
 
 **BEHAVIOR**
 
 Each character up to U+00FF is its one Latin-1 byte. One past it is a
-`?`, or with UTF8F_TYPESET the plain characters a quote, a dash, the
-ellipsis or a space of typesetting stands for, nothing for a mark of
-no width. A byte that is no UTF-8 - one that starts no character, or
-a sequence broken off - is a `?` too, or the Latin-1 byte it is with
-UTF8F_LATIN1. UTF8F_REFUSE refuses instead where a `?` would be: the
-answer is UTF8_REFUSED, at the first such character. A byte order mark
-at the text's start is left out.
+`?`, and so is each byte that is no UTF-8 - one that starts no
+character, or one of a sequence broken off. A byte order mark at the
+text's start is left out.
 
 With UTF8F_PIECES, a piece that ends inside a character keeps its
 bytes, and the next call goes on with them; without it the text is
-whole, and such bytes are broken. Writing stops where `into` is full,
-before a character that does not fit: `into` as long as `from` holds
-the whole of a whole text, and two bytes more a piece after one that
-ended inside a character.
+whole, and such bytes are broken. Writing stops where `into` is full:
+`into` as long as `from` holds the whole of a whole text, and two
+bytes more a piece after one that ended inside a character.
 
 **CONTEXT**
 
@@ -4028,8 +4019,9 @@ Nothing is allocated. Everything given is the caller's.
 
 **NOTES**
 
-Latin-1's characters are Unicode's first 256, so U+0080 to U+009F,
-the C1 controls, come through as the bytes 0x80 to 0x9F.
+Latin-1's characters are Unicode's first 256, so U+0080 to U+009F
+come through as the bytes 0x80 to 0x9F. `Utf8Kind` says beforehand
+whether a text loses anything to the conversion.
 
 **BUGS**
 
@@ -4042,14 +4034,12 @@ None known.
 **EXAMPLES**
 
 ```zig
-// A server's line for the console, a piece at a time as it comes.
-var conversion: utility.Utf8Conversion = .{ .flags = utility.UTF8F_PIECES | utility.UTF8F_LATIN1 };
-const shown = ub.Utf8ToLatin1(&conversion, piece.ptr, piece.len, &line, line.len);
-_ = dl.Write(output, &line, @intCast(shown));
+// A song's title for an ID3v1 tag, which holds Latin-1.
+const length = ub.Utf8ToLatin1(null, title.ptr, title.len, &tag.title, tag.title.len);
 
-// A name kept as it is unless every character of it is Latin-1's.
-var refuse: utility.Utf8Conversion = .{ .flags = utility.UTF8F_REFUSE };
-const length = ub.Utf8ToLatin1(&refuse, name.ptr, name.len, &local, local.len);
+// A text for an older server, a piece at a time as it is written.
+var conversion: utility.Utf8Conversion = .{ .flags = utility.UTF8F_PIECES };
+const sent = ub.Utf8ToLatin1(&conversion, piece.ptr, piece.len, &line, line.len);
 ```
 
 ## ZoneOffset

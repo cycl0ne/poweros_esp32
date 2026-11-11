@@ -58,9 +58,6 @@ pub const URLF_BRACKETS: u32 = 1 << 3;
 
 /// EncodeUrl: a `/` kept as it is - a whole path, its segments encoded.
 pub const URLF_SLASH: u32 = 1 << 4;
-/// EncodeUrl: the text is Latin-1, each character past ASCII encoded as
-/// its two bytes of UTF-8.
-pub const URLF_LATIN1: u32 = 1 << 5;
 
 /// What DecodeUrl answers for a `%` that is not followed by two hex
 /// digits.

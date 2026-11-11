@@ -45,13 +45,13 @@ const _url = @import("_url.zig");
 /// NOTES:
 /// A part never grows as it is decoded: `into` as long as `from` holds
 /// it. What the bytes are - UTF-8, mostly - is the caller's to say;
-/// `Utf8ToLatin1` makes them the system's.
+/// `Utf8Kind` tells, and `Latin1ToUtf8` makes Latin-1 the system's.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `ParseUrl`, `EncodeUrl`, `Utf8ToLatin1`
+/// `ParseUrl`, `EncodeUrl`, `Utf8Kind`, `Latin1ToUtf8`
 ///
 /// EXAMPLES:
 /// ```zig

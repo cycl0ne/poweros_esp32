@@ -22,9 +22,7 @@ const _url = @import("_url.zig");
 /// - `from`, `from_length` - the bytes: a user, a password, a query's
 ///   value, a path.
 /// - `into`, `into_length` - where the part goes; not `from`.
-/// - `flags` - URLF_SLASH keeps `/` as it is, for a whole path;
-///   URLF_LATIN1 takes the bytes as Latin-1 and encodes each character
-///   past ASCII as its UTF-8.
+/// - `flags` - URLF_SLASH keeps `/` as it is, for a whole path.
 ///
 /// RESULT:
 /// The bytes the whole part takes, written or not.
@@ -32,8 +30,9 @@ const _url = @import("_url.zig");
 /// BEHAVIOR:
 /// A letter, a digit, `-`, `.`, `_` and `~` stay as they are - what no
 /// part of a URL needs escaped - and with URLF_SLASH a `/`; every other
-/// byte is `%` and two upper-case hex digits, a space `%20`. As many
-/// whole characters are written as `into` holds, no NUL after them: the
+/// byte is `%` and two upper-case hex digits, a space `%20`, each byte of
+/// a UTF-8 character its own escape. As many whole escapes are written
+/// as `into` holds, no NUL after them: the
 /// whole is there when the answer is no more than `into_length`. A
 /// length of 0 for `into` only counts.
 ///
@@ -47,8 +46,7 @@ const _url = @import("_url.zig");
 /// Nothing is allocated. Everything given is the caller's.
 ///
 /// NOTES:
-/// The part grows to three times its bytes at most - six times a Latin-1
-/// character's with URLF_LATIN1. What is escaped is what a part's own
+/// The part grows to three times its bytes at most. What is escaped is what a part's own
 /// separators would take for theirs (`:` and `@` in a user, `&` and `=`
 /// in a query, `/` in a segment), and more besides, which a server takes
 /// the same.
@@ -57,43 +55,31 @@ const _url = @import("_url.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `DecodeUrl`, `ParseUrl`, `Latin1ToUtf8`
+/// `DecodeUrl`, `ParseUrl`
 ///
 /// EXAMPLES:
 /// ```zig
 /// // Words typed for a search, as a query's value.
-/// const length = ub.EncodeUrl(words.ptr, words.len, address[at..].ptr, address.len - at, utility.URLF_LATIN1);
+/// const length = ub.EncodeUrl(words.ptr, words.len, address[at..].ptr, address.len - at, 0);
 /// if (length > address.len - at) return null; // too long
 /// ```
 pub fn EncodeUrl(_: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize, flags: u32) usize {
     var needed: usize = 0;
     var full = false;
-    for (from[0..from_length]) |char| {
-        // The character's bytes: its UTF-8 for Latin-1 past ASCII.
-        var bytes: [2]u8 = .{ char, 0 };
-        var count: usize = 1;
-        if (char >= 0x80 and flags & utility.url.URLF_LATIN1 != 0) {
-            bytes = .{ 0xC0 | char >> 6, 0x80 | (char & 0x3F) };
-            count = 2;
-        }
-        var length: usize = 0;
-        for (bytes[0..count]) |byte| length += if (isKept(byte, flags)) 1 else 3;
-        needed += length;
+    for (from[0..from_length]) |byte| {
+        const kept = isKept(byte, flags);
+        const out = needed;
+        needed += if (kept) 1 else 3;
         if (full or needed > into_length) {
             full = true;
             continue;
         }
-        var out = needed - length;
-        for (bytes[0..count]) |byte| {
-            if (isKept(byte, flags)) {
-                into[out] = byte;
-                out += 1;
-            } else {
-                into[out] = '%';
-                into[out + 1] = _url.hex_digits[byte >> 4];
-                into[out + 2] = _url.hex_digits[byte & 0x0F];
-                out += 3;
-            }
+        if (kept) {
+            into[out] = byte;
+        } else {
+            into[out] = '%';
+            into[out + 1] = _url.hex_digits[byte >> 4];
+            into[out + 2] = _url.hex_digits[byte & 0x0F];
         }
     }
     return needed;
@@ -114,24 +100,18 @@ fn encode(ub: *UtilityBase, from: []const u8, into: []u8, flags: u32) []const u8
     return into[0..EncodeUrl(ub, from.ptr, from.len, into.ptr, into.len, flags)];
 }
 
-test "EncodeUrl: what needs no escape as it is, the rest %XX, Latin-1 as UTF-8, counted" {
+test "EncodeUrl: what needs no escape as it is, the rest %XX, counted" {
     const ub = try library.setUp();
     defer kexec.deinit();
     var into: [64]u8 = undefined;
     try testing.expectEqualStrings("t%40k%3An%20a-b.c_d~e", encode(ub, "t@k:n a-b.c_d~e", &into, 0));
     try testing.expectEqualStrings("%2Fa%2Fb", encode(ub, "/a/b", &into, 0));
     try testing.expectEqualStrings("/a%20b/c", encode(ub, "/a b/c", &into, utility.url.URLF_SLASH));
-    try testing.expectEqualStrings("Bj%C3%B6rk%26co", encode(ub, "Bj\xF6rk&co", &into, utility.url.URLF_LATIN1));
-    // Bytes as they are without URLF_LATIN1.
-    try testing.expectEqualStrings("Bj%F6rk", encode(ub, "Bj\xF6rk", &into, 0));
+    try testing.expectEqualStrings("Bj%C3%B6rk%26co", encode(ub, "Bj\xC3\xB6rk&co", &into, 0));
     // Whole escapes while they fit; the whole length said.
     var small: [4]u8 = @splat('#');
     try testing.expectEqual(@as(usize, 9), EncodeUrl(ub, "a b c", 5, &small, small.len, 0));
     try testing.expectEqualStrings("a%20", &small);
-    // A Latin-1 character's two escapes go together or not at all.
-    var cut: [5]u8 = @splat('#');
-    try testing.expectEqual(@as(usize, 7), EncodeUrl(ub, "a\xF6", 2, &cut, cut.len, utility.url.URLF_LATIN1));
-    try testing.expectEqualStrings("a####", &cut);
     var smaller: [3]u8 = @splat('#');
     try testing.expectEqual(@as(usize, 5), EncodeUrl(ub, "a b", 3, &smaller, smaller.len, 0));
     try testing.expectEqualStrings("a##", &smaller);

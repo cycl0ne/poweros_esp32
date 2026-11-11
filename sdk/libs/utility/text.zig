@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: MIT
-//! Text between UTF-8 and the system's Latin-1: what Utf8ToLatin1 is
-//! told and keeps between the pieces of a text, and what Utf8Kind
-//! answers.
+//! Text between the system's UTF-8 and Latin-1, which older files, tags
+//! and servers hold: what Utf8ToLatin1 is told and keeps between the
+//! pieces of a text, and what Utf8Kind answers.
 //!
-//! The system's names, its fonts and its console are Latin-1; what comes
-//! from elsewhere - a server, a file another system wrote, a name in a
-//! repository - is mostly UTF-8. Latin-1's 256 characters are Unicode's
-//! first 256, so a character up to U+00FF is one byte either way round,
-//! and the rest is what a conversion decides.
+//! Latin-1's 256 characters are Unicode's first 256, so a character up
+//! to U+00FF is one byte in Latin-1 and two at most in UTF-8; one past
+//! it has no place in Latin-1, and is a `?` there.
 
 /// What Utf8ToLatin1 is told, and what it holds between the pieces of
 /// one text. The caller sets `flags` and leaves the rest as it is; with
@@ -24,26 +22,10 @@ pub const Utf8Conversion = extern struct {
     begun: bool = false,
 };
 
-/// A character Latin-1 has not, or bytes that are no UTF-8, refuse the
-/// whole: Utf8ToLatin1 answers UTF8_REFUSED. For a name that must come
-/// back as it went - the caller keeps the bytes as they are instead.
-pub const UTF8F_REFUSE: u32 = 1 << 0;
-/// Typesetting's characters made plain ones: its quotes ' and ", its
-/// dashes and the minus sign -, the ellipsis ..., its spaces a space; the
-/// marks of no width (U+200B to U+200F, U+FEFF) left out.
-pub const UTF8F_TYPESET: u32 = 1 << 1;
-/// A byte that starts no UTF-8 character, or a sequence broken off, taken
-/// as the Latin-1 byte it is - for text that may be either, as an older
-/// server sends it. Without it such a byte is a `?`.
-pub const UTF8F_LATIN1: u32 = 1 << 2;
 /// The text comes a piece at a time: a piece that ends inside a character
 /// keeps its bytes in the conversion for the next, and a call with no
 /// bytes ends the text. Without it each call's bytes are the whole text.
-pub const UTF8F_PIECES: u32 = 1 << 3;
-
-/// What Utf8ToLatin1 answers when UTF8F_REFUSE refused: `into` then holds
-/// nothing of use.
-pub const UTF8_REFUSED: usize = ~@as(usize, 0);
+pub const UTF8F_PIECES: u32 = 1 << 0;
 
 /// What Utf8Kind answers.
 /// Bytes that are no UTF-8: a lead without its continuation, a stray

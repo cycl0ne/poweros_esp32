@@ -171,7 +171,7 @@ test "utility.library: made from its ROM tag, opened by name, never expunged" {
     defer kexec.deinit();
     try testing.expectEqual(&ub.lib, kexec.OpenLibrary(kexec.SysBase, LIBRARY_NAME, 1).?);
     try testing.expectEqual(@as(u16, 1), ub.lib.version);
-    try testing.expectEqual(@as(u16, 8), ub.lib.revision);
+    try testing.expectEqual(@as(u16, 9), ub.lib.revision);
     try testing.expect(kexec.OpenLibrary(kexec.SysBase, LIBRARY_NAME, 2) == null);
     kexec.CloseLibrary(kexec.SysBase, &ub.lib);
     _ = kexec.RemLibrary(kexec.SysBase, &ub.lib);

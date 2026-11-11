@@ -133,9 +133,9 @@ i64 DateToUtc(*const dos.DateStamp date, ?*u32 nanoseconds)
 /// Seconds since 1970, UTC, as a DateStamp in the system's zone.
 void UtcToDate(i64 utc, *dos.DateStamp date)
 // Text: UTF-8 and Latin-1
-/// UTF-8 at `from` into `into` as Latin-1, as `conversion` says - null
-/// for a whole text, `?` for what Latin-1 has not: the bytes written, or
-/// UTF8_REFUSED.
+/// UTF-8 at `from` into `into` as Latin-1, a piece at a time as
+/// `conversion` says - null for a whole text - and `?` for what Latin-1
+/// has not: the bytes written.
 usize Utf8ToLatin1(?*utility.Utf8Conversion conversion, [*]const u8 from, usize from_length, [*]u8 into, usize into_length)
 /// Latin-1 at `from` into `into` as UTF-8: the bytes the whole takes,
 /// written as far as whole characters fit.
@@ -152,7 +152,7 @@ bool ParseUrl([*]const u8 text, usize length, *utility.UrlParts parts, u32 flags
 /// comes to, or URL_BROKEN.
 usize DecodeUrl([*]const u8 from, usize from_length, [*]u8 into, usize into_length)
 /// Bytes as a URL's part, `%XX` for what needs it - URLF_SLASH keeps
-/// `/`, URLF_LATIN1 encodes Latin-1 as UTF-8: the bytes the whole takes.
+/// `/`: the bytes the whole takes.
 usize EncodeUrl([*]const u8 from, usize from_length, [*]u8 into, usize into_length, u32 flags)
 // Sorting
 /// `count` elements of `size` bytes at `array` put in order, in place:

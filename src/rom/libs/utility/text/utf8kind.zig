@@ -56,9 +56,9 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 ///
 /// EXAMPLES:
 /// ```zig
-/// // A file another system wrote: UTF-8 when the whole of it is.
-/// const kind = ub.Utf8Kind(text.ptr, text.len);
-/// const flags: u32 = if (kind == utility.UTF8KIND_NONE) ... else 0;
+/// // A file another system wrote: UTF-8 when the whole of it is, else
+/// // Latin-1, made UTF-8 before it is used.
+/// const latin1 = ub.Utf8Kind(text.ptr, text.len) == utility.UTF8KIND_NONE;
 /// ```
 pub fn Utf8Kind(_: *UtilityBase, bytes: [*]const u8, length: usize) u32 {
     const text = bytes[0..length];

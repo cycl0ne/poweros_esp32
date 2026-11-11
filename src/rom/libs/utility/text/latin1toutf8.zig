@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Latin1ToUtf8: the system's Latin-1 made UTF-8.
+//! Latin1ToUtf8: Latin-1 made UTF-8.
 
 const std = @import("std");
 
 const UtilityBase = @import("../utility.zig").UtilityBase;
 
-/// Turns Latin-1, the system's characters, into UTF-8.
+/// Turns Latin-1 - text an older file, tag or server holds - into UTF-8.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -49,9 +49,9 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 ///
 /// EXAMPLES:
 /// ```zig
-/// // A dos name as a repository keeps it; refused when it is too long.
-/// const length = ub.Latin1ToUtf8(name.ptr, name.len, &path, path.len);
-/// if (length > path.len) return null;
+/// // A title from an ID3v1 tag, which holds Latin-1.
+/// const length = ub.Latin1ToUtf8(&tag.title, tag.title.len, &title, title.len);
+/// if (length > title.len) return null;
 /// ```
 pub fn Latin1ToUtf8(_: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize) usize {
     var needed: usize = 0;

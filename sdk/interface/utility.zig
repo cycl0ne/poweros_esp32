@@ -430,9 +430,9 @@ pub const UtilityBase = opaque {
         return libraries.call(self, LVO.UtcToDate, Fn.UtcToDate, .{ utc, date });
     }
 
-    /// UTF-8 at `from` into `into` as Latin-1, as `conversion` says - null
-    /// for a whole text, `?` for what Latin-1 has not: the bytes written, or
-    /// UTF8_REFUSED.
+    /// UTF-8 at `from` into `into` as Latin-1, a piece at a time as
+    /// `conversion` says - null for a whole text - and `?` for what Latin-1
+    /// has not: the bytes written.
     pub fn Utf8ToLatin1(self: *UtilityBase, conversion: ?*utility.Utf8Conversion, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize) usize {
         return libraries.call(self, LVO.Utf8ToLatin1, Fn.Utf8ToLatin1, .{ conversion, from, from_length, into, into_length });
     }
@@ -463,7 +463,7 @@ pub const UtilityBase = opaque {
     }
 
     /// Bytes as a URL's part, `%XX` for what needs it - URLF_SLASH keeps
-    /// `/`, URLF_LATIN1 encodes Latin-1 as UTF-8: the bytes the whole takes.
+    /// `/`: the bytes the whole takes.
     pub fn EncodeUrl(self: *UtilityBase, from: [*]const u8, from_length: usize, into: [*]u8, into_length: usize, flags: u32) usize {
         return libraries.call(self, LVO.EncodeUrl, Fn.EncodeUrl, .{ from, from_length, into, into_length, flags });
     }
