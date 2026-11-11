@@ -11,7 +11,9 @@
 //! marks - then the lines that reach into the box, each fragment of
 //! them that reaches into it across, code inside a line on its own
 //! ground. A fragment the mark starts or ends inside is drawn in two or
-//! three pieces; everything else is one call a fragment.
+//! three pieces, each where the fragment as a whole has it
+//! (`TextOffsetToX`), so marking moves no letter; everything else is one
+//! call a fragment.
 //!
 //! **Everything is clipped to the box** by the RastPort's clip
 //! rectangle, which narrows a window's own clipping rather than
@@ -151,22 +153,20 @@ fn drawFragment(gb: *GraphicsBase, rp: *graphics.RastPort, it: Drawing) void {
     const end = it.offset + it.length;
     const marked_from = @max(it.mark_from, it.offset);
     const marked_to = @min(it.mark_to, end);
-    var at = it.offset;
-    var x = it.x;
-    if (marked_from < marked_to) {
-        x = drawPart(gb, rp, it, at, marked_from, x, false);
-        at = marked_from;
-        x = drawPart(gb, rp, it, at, marked_to, x, true);
-        at = marked_to;
+    if (marked_from >= marked_to) {
+        drawPart(gb, rp, it, it.offset, end, false);
+        return;
     }
-    _ = drawPart(gb, rp, it, at, end, x, false);
+    drawPart(gb, rp, it, it.offset, marked_from, false);
+    drawPart(gb, rp, it, marked_from, marked_to, true);
+    drawPart(gb, rp, it, marked_to, end, false);
 }
 
-/// A stretch of a fragment drawn from `x`, marked or not. Where the
-/// next stretch starts.
-fn drawPart(gb: *GraphicsBase, rp: *graphics.RastPort, it: Drawing, from: u32, to: u32, x: i32, marked: bool) i32 {
-    if (to <= from) return x;
-    const width = gb.TextLength(rp, it.buffer + from, to - from);
+/// A stretch of a fragment drawn, marked or not, where the fragment
+/// drawn in one piece has it.
+fn drawPart(gb: *GraphicsBase, rp: *graphics.RastPort, it: Drawing, from: u32, to: u32, marked: bool) void {
+    if (to <= from) return;
+    const x = it.x + if (from == it.offset) 0 else gb.TextOffsetToX(rp, it.buffer + it.offset, it.length, from - it.offset);
     const ink = if (marked) it.inks.mark_text else penOf(it.piece.pen, it.inks);
     const tags = [_]TagItem{
         .{ .tag = graphics.RPTAG_APen, .data = ink },
@@ -177,7 +177,6 @@ fn drawPart(gb: *GraphicsBase, rp: *graphics.RastPort, it: Drawing, from: u32, t
     gb.SetRPAttrs(rp, &tags);
     gb.Move(rp, x, it.y);
     gb.Text(rp, it.buffer + from, to - from);
-    return x + width;
 }
 
 /// The ground of code inside a line: a little taller than its letters,

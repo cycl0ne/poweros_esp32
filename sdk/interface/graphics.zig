@@ -102,6 +102,8 @@ pub const LVO = struct {
     pub const DrawRoundBevel = libraries.lvo(84);
     pub const WriteYUVPixelArray = libraries.lvo(85);
     pub const ScaleYUVPixelArray = libraries.lvo(86);
+    pub const TextOffsetToX = libraries.lvo(87);
+    pub const TextXToOffset = libraries.lvo(88);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -190,6 +192,8 @@ pub const Fn = struct {
     pub const DrawRoundBevel = *const fn (*GraphicsBase, *graphics.RastPort, *const graphics.Rect, u32, graphics.Pen, graphics.Pen) callconv(.c) void;
     pub const WriteYUVPixelArray = *const fn (*GraphicsBase, *graphics.RastPort, *const rtg.RtgYuv, i32, i32, *const graphics.Rect) callconv(.c) void;
     pub const ScaleYUVPixelArray = *const fn (*GraphicsBase, *graphics.RastPort, *const rtg.RtgYuv, *const graphics.Rect, *const graphics.Rect) callconv(.c) void;
+    pub const TextOffsetToX = *const fn (*GraphicsBase, *graphics.RastPort, [*]const u8, u32, u32) callconv(.c) i32;
+    pub const TextXToOffset = *const fn (*GraphicsBase, *graphics.RastPort, [*]const u8, u32, i32) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -762,5 +766,19 @@ pub const GraphicsBase = opaque {
     /// RPTAG_Smooth.
     pub fn ScaleYUVPixelArray(self: *GraphicsBase, rp: *graphics.RastPort, picture: *const rtg.RtgYuv, src_area: *const graphics.Rect, dest_area: *const graphics.Rect) void {
         return libraries.call(self, LVO.ScaleYUVPixelArray, Fn.ScaleYUVPixelArray, .{ rp, picture, src_area, dest_area });
+    }
+
+    /// How many pixels right of a text's starting point the place before
+    /// byte `offset` is, in the text as Text draws it - kerned, with its
+    /// ligatures and marks. At `count` or past it: the text's length.
+    pub fn TextOffsetToX(self: *GraphicsBase, rp: *graphics.RastPort, string: [*]const u8, count: u32, offset: u32) i32 {
+        return libraries.call(self, LVO.TextOffsetToX, Fn.TextOffsetToX, .{ rp, string, count, offset });
+    }
+
+    /// The byte before which the place nearest column `x` of a text is, in
+    /// the text as Text draws it: where a character starts, never a mark
+    /// its letter carries, or `count` for the place after the text.
+    pub fn TextXToOffset(self: *GraphicsBase, rp: *graphics.RastPort, string: [*]const u8, count: u32, x: i32) u32 {
+        return libraries.call(self, LVO.TextXToOffset, Fn.TextXToOffset, .{ rp, string, count, x });
     }
 };

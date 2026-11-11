@@ -377,7 +377,11 @@ fetched: what its text says it is stands in its place. `ascii.datatype`
 sets a plain file in `CODE`'s font, one run, no blocks.
 
 Text is UTF-8 inside the object, and a stretch is wrapped, marked and
-copied in whole characters. A plain file that is not UTF-8 from first to
+copied in whole characters. A stretch that is marked stays where it
+was drawn: the marked part of a line is placed where the line as a
+whole has it (`TextOffsetToX`), in a font that kerns its letters too,
+and a press finds the letter under the pointer (`TextXToOffset`). A
+plain file that is not UTF-8 from first to
 last is read as code page 1252, the Western code page of Windows, which
 a text written elsewhere is most often in; an IFF `FTXT` is read in the
 code set its `CSET` chunk names - UTF-8 (106), Latin-1 (4) or code page

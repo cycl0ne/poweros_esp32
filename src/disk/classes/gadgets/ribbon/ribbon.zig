@@ -92,8 +92,8 @@ const LayersBase = sdk.interface.layers.LayersBase;
 pub const Library = gadgets.ClassLibrary(.{
     .name = rb.RIBBON_CLASS,
     .version = 1,
-    .revision = 5,
-    .date = "10.11.2026",
+    .revision = 6,
+    .date = "11.11.2026",
     .super = classusr.GROUPGCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -1187,15 +1187,27 @@ fn drawName(gb: *GraphicsBase, rp: *graphics.RastPort, left: i32, top: i32, text
         gb.Text(rp, text, len);
         return;
     };
+    // One piece of text without the `_`, the letter underlined where
+    // that put it; a name too long for that in two runs.
     var x = left;
-    if (mark > 1) {
+    var letter_width: i32 = 0;
+    const letter_len = gc.markedLength(text, mark);
+    var plain = gc.PlainLabel{};
+    if (gc.plainLabel(text[0..len], mark - 1, &plain)) {
+        gb.Move(rp, left, y);
+        gb.Text(rp, &plain.bytes, plain.len);
+        x += gb.TextOffsetToX(rp, &plain.bytes, plain.len, mark - 1);
+        letter_width = left + gb.TextOffsetToX(rp, &plain.bytes, plain.len, mark - 1 + letter_len) - x;
+    } else {
+        if (mark > 1) {
+            gb.Move(rp, x, y);
+            gb.Text(rp, text, mark - 1);
+            x += gb.TextLength(rp, text, mark - 1);
+        }
+        letter_width = gb.TextLength(rp, text + mark, letter_len);
         gb.Move(rp, x, y);
-        gb.Text(rp, text, mark - 1);
-        x += gb.TextLength(rp, text, mark - 1);
+        gb.Text(rp, text + mark, len - mark);
     }
-    const letter_width = gb.TextLength(rp, text + mark, gc.markedLength(text, mark));
-    gb.Move(rp, x, y);
-    gb.Text(rp, text + mark, len - mark);
     const below: i32 = if (height > baseline + 1) @min(@as(i32, @intCast(height - baseline - 1)), 2) else 1;
     gb.Move(rp, x - 1, y + below);
     gb.Draw(rp, x + letter_width - 2, y + below);
@@ -1203,9 +1215,12 @@ fn drawName(gb: *GraphicsBase, rp: *graphics.RastPort, left: i32, top: i32, text
 
 /// How wide a name is drawn, without its `_`.
 fn drawnWidth(gb: *GraphicsBase, rp: *graphics.RastPort, text: [*:0]const u8) i32 {
-    var width = gb.TextLength(rp, text, support.textLen(text));
-    if (gc.labelMark(text)) |mark| width -= gb.TextLength(rp, text + mark - 1, 1);
-    return width;
+    const len = support.textLen(text);
+    const whole = gb.TextLength(rp, text, len);
+    const mark = gc.labelMark(text) orelse return whole;
+    var plain = gc.PlainLabel{};
+    if (gc.plainLabel(text[0..len], mark - 1, &plain)) return gb.TextLength(rp, &plain.bytes, plain.len);
+    return whole - gb.TextLength(rp, text + mark - 1, 1);
 }
 
 /// The mark at the row's end, in `ink` in the middle of `box`: a triangle

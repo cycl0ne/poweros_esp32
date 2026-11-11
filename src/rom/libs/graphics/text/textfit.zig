@@ -9,6 +9,7 @@ const TagItem = sdk.utility.TagItem;
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const rastport = @import("../rastport/_rastport.zig");
 const _text = @import("_text.zig");
+const shaped = @import("_shaped.zig");
 const RastPort = rastport.RastPort;
 const utf8 = sdk.utility.utf8;
 
@@ -20,7 +21,7 @@ const utf8 = sdk.utility.utf8;
 /// ```
 ///
 /// SINCE: 0.14, UTF-8 since 0.38, fallback fonts since 0.40, glyphs made
-/// when wanted since 0.41. LVO -172.
+/// when wanted since 0.41, text a font shapes since 0.42. LVO -172.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. Its font and text style decide the answer.
@@ -53,6 +54,14 @@ const utf8 = sdk.utility.utf8;
 /// is made here when this is the first call to want it, as `Text` makes
 /// it.
 ///
+/// Of a text its font shapes (`TextFont.shape`) what fits is whole
+/// clusters - a letter is not parted from its marks - and it is the
+/// piece that fits **shaped by itself**, as a `Text` of just those
+/// bytes draws it: a letter that is narrower before its neighbour in
+/// the whole text counts at the width it has as the piece's last. The
+/// text is laid out a part at a time, from the end the piece is taken
+/// from, so a long text of which little fits costs little.
+///
 /// This is what a label does when its box is too small for it: ask how
 /// much fits, draw that, and put an ellipsis after it.
 ///
@@ -60,20 +69,26 @@ const utf8 = sdk.utility.utf8;
 /// - Waits: only for a font that makes glyphs, while another task makes
 ///   one of the same font.
 /// - Interrupts: no. It reads the caller's RastPort, which an interrupt does
-///   not share.
+///   not share, and allocates for a font that shapes its text.
 /// - Locks: none needed; no spinlock may be held with a font that makes
-///   glyphs.
+///   glyphs or shapes its text.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
 /// Nothing the caller has to free. A glyph made for the measuring is
-/// the library's, kept with the font.
+/// the library's, kept with the font. The glyphs a text is shaped into
+/// are allocated and freed within the call.
+///
+/// NOTES:
+/// What is asked is how much of a text can be drawn in a room. Where
+/// in a drawn text a column is - a click turned into a cursor's place -
+/// is `TextXToOffset`'s to answer.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `TextExtent`, `Text`
+/// `TextExtent`, `TextXToOffset`, `Text`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -117,6 +132,21 @@ pub fn TextFit(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32
     // Backward, the string points at the last byte and the walk goes down
     // from the end.
     const bytes = if (backward) (string - (count - 1))[0..count] else string[0..count];
+    // A font that shapes its text: the piece that fits is one that fits
+    // shaped by itself, as it will be drawn.
+    if (shaped.wanted(font)) {
+        var taken = _text.Measure{};
+        if (shaped.fit(gb, font, rp.text_style, bytes, backward, room_w, &taken)) |fits| {
+            const line_height: i32 = font.image.height;
+            const base: i32 = font.image.baseline;
+            out.* = .{
+                .width = taken.width,
+                .height = line_height,
+                .extent = .{ .min_x = taken.min_x, .min_y = -base, .max_x = taken.max_x, .max_y = line_height - base },
+            };
+            return fits;
+        }
+    }
     var room = _text.Measure{};
     var fits: u32 = 0;
     while (fits < count) {

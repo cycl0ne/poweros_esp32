@@ -408,6 +408,17 @@ pub fn widthOf(base: *Base, own: *const Data, piece: *const tdc.Piece, from: u32
     return base.graphics_base.TextLength(rp, buffer + from, length);
 }
 
+/// Which byte of a stretch of a run, counted from the stretch's start,
+/// the place nearest `x` is before, in the font that run is drawn in:
+/// `length` for the place after it.
+pub fn nearestIn(base: *Base, own: *const Data, piece: *const tdc.Piece, from: u32, length: u32, x: i32) u32 {
+    if (length == 0) return 0;
+    const rp = own.measure orelse return 0;
+    const buffer = own.buffer orelse return 0;
+    wearPiece(base.graphics_base, own, rp, piece);
+    return base.graphics_base.TextXToOffset(rp, buffer + from, length, x);
+}
+
 /// How tall a run's font is, and how far down it the letters stand.
 pub const Height = struct { height: i32, baseline: i32 };
 

@@ -39,19 +39,9 @@ pub fn offsetAt(base: *Base, own: *Data, x: i32, y: i32) u32 {
         const piece = &pieces[fragment.piece];
         const into = x - fragment.left - fragment.inset;
         if (into <= 0) return fragment.offset;
-        // The character boundary nearest the place pressed, a whole
-        // character at a time.
-        const text = own.buffer.?[fragment.offset .. fragment.offset + fragment.length];
-        var n: u32 = 0;
-        var before: i32 = 0;
-        while (n < fragment.length) {
-            const after = n + @as(u32, @intCast(sdk.utility.utf8.decode(text[n..]).length));
-            const width = _text.widthOf(base, own, piece, fragment.offset, after);
-            if (width > into) return fragment.offset + if (into - before < width - into) n else after;
-            before = width;
-            n = after;
-        }
-        return fragment.offset + fragment.length;
+        // The place nearest the one pressed, in the fragment as it is
+        // drawn.
+        return fragment.offset + _text.nearestIn(base, own, piece, fragment.offset, fragment.length, into);
     }
     return endOfLine(own, line);
 }

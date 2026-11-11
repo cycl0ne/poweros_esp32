@@ -136,11 +136,28 @@ gb.Text(rp, "Hello", 5);
   one finds it. The image is looked in first and the hook asked second,
   for the font and then for each fallback. See
   [Glyphs made when wanted](#glyphs-made-when-wanted).
+- **A font may shape its text.** A font with a `shape` hook - every
+  size diskfont makes from an outline that has layout tables - is asked
+  for each text which glyphs it is drawn with and where each goes: a
+  pair of letters moved together, a mark set on its letter, several
+  characters drawn as one glyph. `Text`, `TextLength`, `TextExtent` and
+  `TextFit` all go through it, so what is measured is what is drawn -
+  for the text as a whole. A text measured in pieces and added up is
+  not the text drawn in one, and a piece drawn by itself is shaped by
+  itself. See [Text a font shapes](#text-a-font-shapes).
+- **Where a byte of a text is drawn** is `TextOffsetToX`'s to answer,
+  and which byte a column is nearest `TextXToOffset`'s: a cursor, the
+  edges of a selection, an underline under part of a text, a click
+  turned into a place. Both lay the whole text out as `Text` draws it
+  and answer places between clusters - a letter with the marks that
+  follow it is one - so a cursor never stands between a letter and its
+  mark. They work with every font.
 - **Each character has its own width.** `TextLength` adds the advances up;
   `TextExtent` also says where the ink goes (a kern back makes
   `extent.min_x` negative, bold and italic can carry it past `width`);
   `TextFit` says how many bytes fit a width, from the start or from the
-  end - whole characters, never part of one.
+  end - whole characters, never part of one, and of a text its font
+  shapes whole clusters.
 - **The draw mode is the draw mode.** `DRMD_JAM1` puts ink down,
   `DRMD_JAM2` lays the background pen behind each character's cell first,
   `DRMD_COMPLEMENT` inverts. A font of coverage lays the pen over what is
@@ -446,6 +463,21 @@ its outline open: the TrueType file stays in memory, once for all the
 sizes made from it, for as long as one of them is loaded - a few
 hundred KiB for a face of Liberation. A character the outline has no
 glyph for goes on to the fallbacks as before.
+
+**A text is shaped by the outline's layout tables** (diskfont.library
+1.10). A size of an outline that has a `GSUB`, `GPOS` or `kern` table
+has a `shape` hook, which has truetypeshaping.library lay each text out
+(`ShapeText`, in the default language with the features that are on by
+default): Liberation's pairs are kerned and a combining mark sits on
+its letter, where the letter and the mark have no glyph of their own
+together. The advances and offsets are the outline's, scaled to the
+size and rounded a glyph at a time, so a glyph nothing moved keeps the
+advance of its image. A glyph that is the one its character has by
+itself is drawn from the image; any other - a ligature, another form
+of a letter - is rendered by its number when it is first drawn, and
+kept. The library is opened with the first such size and stays open
+with diskfont; on a disk without it, and for an outline without those
+tables (Go, Go Mono), text is drawn a character after the other.
 
 **Glyphs as outlines** (truetype.library 1.2): a program that draws text
 itself - at any size, turned, filled with a gradient - takes the glyphs
@@ -772,7 +804,10 @@ What to know:
 - **A console keeps its cells.** A character from a fallback whose
   advance is not the console font's is drawn in the middle of its cell;
   one that is wider reaches into the cells beside it, so a fallback for
-  `FIXED` is best a fixed-width family of about that font's width.
+  `FIXED` is best a fixed-width family of about that font's width. With
+  a font that shapes its text - the console's or a fallback - a run of
+  cells that would not come out a cell a character is drawn a cell at
+  a time, each character set by itself.
 - A font a program makes itself (`AddFont`) has no fallback unless the
   program sets `fallback` before adding it, to a font it keeps open for
   as long; graphics walks at most eight fonts of a chain.
@@ -878,6 +913,101 @@ mine.font.render = &mine.hook; // before AddFont, and never again
 - `TextLength`, `TextExtent` and `TextFit` make glyphs as `Text` does,
   so with such a font they may wait for another task, and no spinlock
   may be held around them.
+
+### Text a font shapes
+
+A font may say how a whole text is set, not only what each character
+looks like (graphics.library 0.42). Set `TextFont.shape` to a hook
+before `AddFont`, and graphics calls it for every text drawn or
+measured with the font - with the font as the hook's object and a
+`ShapeRequest` as its message:
+
+```zig
+/// The glyphs of one text and where each goes.
+fn shapeText(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    _ = hook;
+    const mine: *MyFont = @ptrCast(@alignCast(object.?));
+    const request: *sdk.graphics.ShapeRequest = @ptrCast(@alignCast(message.?));
+    const text = request.text[0..request.length];
+    var made: u32 = 0;
+    var at: usize = 0;
+    while (at < text.len) {
+        const start = at;
+        const char = sdk.utility.utf8.next(text, &at);
+        if (made < request.room) {
+            request.glyphs[made] = .{
+                .which = char,
+                .cluster = @intCast(start),
+                // A pair this font sets closer: the first gives way.
+                .advance = advanceOf(mine, char) - tighter(mine, char, text[at..]),
+            };
+        }
+        made += 1;
+    }
+    request.count = made;
+    return if (made > request.room) sdk.graphics.SHAPE_ROOM else sdk.graphics.SHAPE_OK;
+}
+
+mine.shaper = .{ .entry = &shapeText };
+mine.font.shape = &mine.shaper; // before AddFont, and never again
+```
+
+- **The answer is the glyphs in the order they are drawn**, left to
+  right, each a `PlacedGlyph`: `which` a character - the glyph the font
+  draws that character with when it stands alone - or, with
+  `GLYPHREQ_NUMBER` in `flags`, a glyph by the font's own number, which
+  the font's `render` hook makes; `advance`, how far the point moves
+  past it, none for a mark set on its letter; `x` and `y`, where it is
+  drawn from the point, right and up; all in pixels at the image's
+  height.
+- **`cluster`** is the byte of the text the glyph came of - of several
+  characters drawn as one glyph, the first. graphics takes a character
+  and the ones without a width that follow it (`utility.unicode.width`)
+  as one cluster, whichever of them a glyph names: a cluster is drawn
+  from one font, fits or does not fit as a whole, and has a place
+  before and after it and none inside - except a cluster of several
+  characters with a width, a ligature, whose width is split evenly
+  among them.
+- **`SHAPE_ROOM`** with the glyphs needed in `count` when they are more
+  than `room`: graphics makes the room and asks a second time.
+  **`SHAPE_LATER`** when the text could not be shaped this time - no
+  memory: it is drawn a character at a time, as a font without the
+  hook draws it.
+- **The hook runs on the task that draws or measures**, on its stack,
+  and several tasks may be in it at once. It keeps what it works with
+  to itself, waits for no file and no lock a drawing task could hold,
+  and draws no text.
+- **A cluster the font lacks goes to the fallbacks.** Each cluster is
+  drawn by the first font of the chain that has a glyph for each of
+  its characters - or, a letter with marks that none has whole, by the
+  first whose hook shapes it without a missing glyph. The clusters one
+  font draws, one after another, are shaped together by that font's
+  hook; a font without a hook places a glyph for each character.
+  Nothing is moved or joined across a change of font.
+- **The styles are drawn as for any text**: bold widens every glyph
+  that has an advance, a glyph without one - a mark - stays on its
+  letter.
+- **Every call lays its text out anew**: `Text`, `TextLength`,
+  `TextExtent`, `TextFit`, `TextOffsetToX` and `TextXToOffset` each ask
+  the hook, and allocate the glyphs for the length of the call. No
+  spinlock may be held around them, and a caller that needs several
+  places in one text asks for each.
+- **A direction** is passed on from the RastPort (`RPTAG_TextDirection`,
+  `TEXTDIR_LEFT_TO_RIGHT` or `TEXTDIR_RIGHT_TO_LEFT`). The glyphs are
+  drawn from the starting point to the right either way.
+
+A program that places things in a text asks for the places and draws
+the text in one:
+
+```zig
+// A line with a cursor before byte `cursor`, and a click turned into one.
+gb.Move(rp, left, baseline);
+gb.Text(rp, line.ptr, @intCast(line.len));
+const x = left + gb.TextOffsetToX(rp, line.ptr, @intCast(line.len), cursor);
+gb.RectFill(rp, &.{ .min_x = x, .min_y = top, .max_x = x + 1, .max_y = bottom });
+
+cursor = gb.TextXToOffset(rp, line.ptr, @intCast(line.len), mouse_x - left);
+```
 
 ## Tools
 

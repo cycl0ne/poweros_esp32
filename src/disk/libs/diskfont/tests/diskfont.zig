@@ -410,9 +410,14 @@ fn writeOutlineFamilyAt(rig: *Rig, comptime name: []const u8, style_bits: u8, fi
     const tt = @import("../../truetype/tests/truetype.zig");
     var out: tt.Out = .{};
     tt.buildFaceAt(&out, style_bits, first);
+    return writeOutlineFile(rig, name, out.bytes[0..out.len]);
+}
+
+/// A family of one TrueType file, `bytes`, and its contents file.
+fn writeOutlineFile(rig: *Rig, comptime name: []const u8, bytes: []const u8) !void {
     const made = rig.dosLib().CreateDir("FONTS:" ++ name) orelse return error.NoDir;
     rig.dosLib().UnLock(made);
-    try rig.write("FONTS:" ++ name ++ "/" ++ name ++ ".ttf", out.bytes[0..out.len]);
+    try rig.write("FONTS:" ++ name ++ "/" ++ name ++ ".ttf", bytes);
     const fonts = rig.dosLib().Lock("FONTS:", dos.SHARED_LOCK).?;
     defer rig.dosLib().UnLock(fonts);
     const contents = rig.dfb.NewFontContents(fonts, name ++ ".font") orelse return error.NoContents;
@@ -835,6 +840,9 @@ test "revision 9: a size made from an outline renders a character past its image
     try testing.expectEqual(@as(u16, 20), font.image.height);
     try testing.expect(fontimage.find(font.image, 0x2190) == null);
     try testing.expect(font.render != null);
+    // Its outline has a `kern` table, but there is no library to shape
+    // by it: a glyph for each character.
+    try testing.expect(font.shape == null);
     try testing.expectEqual(@as(usize, 1), outlinesLoaded(&rig));
 
     // Measured and drawn all the same: the square, 10 by 14, 12 on. A
@@ -900,4 +908,91 @@ test "revision 9: a size made from an outline renders a character past its image
     gb.CloseFont(letters);
     // The expunge at the end frees the sizes, what they made and the
     // outlines; the leak check says whether all of it went.
+}
+
+test "revision 10: a size made from an outline with layout tables shapes its text; one without draws a glyph for each character" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    try testing.expect(rig.dfb.lib().revision >= 10);
+    const truetype_init = @import("../../truetype/truetype_init.zig");
+    const lib = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoTrueType;
+    const truetype_lib: *exec.Library = @ptrCast(@alignCast(lib));
+    defer _ = rig.sysLib().RemLibrary(truetype_lib);
+    const shaping_init = @import("../../truetypeshaping/truetypeshaping_init.zig");
+    const made = kexec.InitResident(kexec.SysBase, &shaping_init.truetypeshaping_library_tag, null) orelse return error.NoShaping;
+    const shaping_lib: *exec.Library = @ptrCast(@alignCast(made));
+    defer _ = rig.sysLib().RemLibrary(shaping_lib);
+    const dfb = rig.dfb;
+    const gb = rig.graphicsLib();
+
+    // 1000 units are the size's rows. Every advance is 600; 'A' before
+    // 'B' is 50 closer, 'B' before 'C' 20 further.
+    try writeOutlineFamily(&rig, "tt", 0);
+    const font = dfb.OpenDiskFont(&.{ .name = "tt.font", .y_size = 20, .flags = graphics.FPF_DESIGNED }) orelse return error.NoFont;
+    try testing.expect(font.shape != null);
+    // At 20 rows 600 units are 12 pixels, 550 are 11, and 620 still 12.
+    try testing.expectEqual(@as(i32, 24), try lengthIn(&rig, font, "BA"));
+    try testing.expectEqual(@as(i32, 23), try lengthIn(&rig, font, "AB"));
+    try testing.expectEqual(@as(i32, 46), try lengthIn(&rig, font, "ABAB"));
+    try testing.expectEqual(@as(i32, 24), try lengthIn(&rig, font, "BC"));
+    // A character the outline lacks is the font's missing glyph, and the
+    // letter before it shaped by itself.
+    try testing.expectEqual(@as(i32, 12) + font.image.x_size, try lengthIn(&rig, font, "AZ"));
+
+    // The places in the text are the kerned ones.
+    var pixels: [16 * 16 * 2]u8 = @splat(0);
+    var surface = sdk.rtg.Surface{ .pixels = &pixels, .width = 16, .height = 16, .pitch = 32, .size_bytes = pixels.len, .format = .rgb565 };
+    const tags = [_]sdk.utility.TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
+        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(font) },
+        .{},
+    };
+    const rp = gb.CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    try testing.expectEqual(@as(i32, 11), gb.TextOffsetToX(rp, "ABA", 3, 1));
+    try testing.expectEqual(@as(i32, 23), gb.TextOffsetToX(rp, "ABA", 3, 2));
+    try testing.expectEqual(@as(u32, 1), gb.TextXToOffset(rp, "ABA", 3, 14));
+    try testing.expectEqual(@as(u32, 2), gb.TextXToOffset(rp, "ABA", 3, 18));
+    gb.FreeRastPort(rp);
+
+    // The hook as graphics asks it: a glyph the shaping left as its
+    // character's is named by the character, the one of a character the
+    // outline lacks by number 0.
+    const hook = font.shape.?;
+    var glyphs: [8]graphics.PlacedGlyph = undefined;
+    var request = graphics.ShapeRequest{ .text = "ABZ", .length = 3, .glyphs = &glyphs, .room = glyphs.len };
+    try testing.expectEqual(graphics.SHAPE_OK, hook.entry.?(hook, font, &request));
+    try testing.expectEqual(@as(u32, 3), request.count);
+    try testing.expectEqual(graphics.PlacedGlyph{ .which = 'A', .cluster = 0, .advance = 11 }, glyphs[0]);
+    try testing.expectEqual(graphics.PlacedGlyph{ .which = 'B', .cluster = 1, .advance = 12 }, glyphs[1]);
+    try testing.expectEqual(graphics.PlacedGlyph{ .which = 0, .flags = graphics.GLYPHREQ_NUMBER, .cluster = 2, .advance = 12 }, glyphs[2]);
+    request = .{ .text = "ABZ", .length = 3, .glyphs = &glyphs, .room = 1 };
+    try testing.expectEqual(graphics.SHAPE_ROOM, hook.entry.?(hook, font, &request));
+    try testing.expectEqual(@as(u32, 3), request.count);
+
+    // Twice the rows: 550 units are 22 pixels, 620 are 25, and a glyph
+    // the shaping left alone moves the point as far as its image says.
+    const tall = dfb.OpenDiskFont(&.{ .name = "tt.font", .y_size = 40, .flags = graphics.FPF_DESIGNED }) orelse return error.NoFont;
+    try testing.expectEqual(@as(i32, 46), try lengthIn(&rig, tall, "AB"));
+    try testing.expectEqual(@as(i32, 49), try lengthIn(&rig, tall, "BC"));
+    try testing.expectEqual(@as(i32, fontimage.find(tall.image, 'C').?.advance), try lengthIn(&rig, tall, "C"));
+    gb.CloseFont(tall);
+    gb.CloseFont(font);
+
+    // An outline with no table to shape by: no hook, a glyph for each
+    // character.
+    const builder = @import("../../truetype/tests/builder.zig");
+    var cmap = builder.Cmap.init(1);
+    cmap.begin(3, 1);
+    cmap.run('A', &.{ 1, 2, 3 });
+    var file: builder.File = .{};
+    _ = builder.font(&file, .{ .cmap = cmap.written(), .glyphs = 4 });
+    try writeOutlineFile(&rig, "plain", file.written());
+    const plain = dfb.OpenDiskFont(&.{ .name = "plain.font", .y_size = 20, .flags = graphics.FPF_DESIGNED }) orelse return error.NoFont;
+    try testing.expect(plain.render != null);
+    try testing.expect(plain.shape == null);
+    try testing.expectEqual(@as(i32, 24), try lengthIn(&rig, plain, "AB"));
+    gb.CloseFont(plain);
+    // The expunge at the end closes both libraries, whose RemLibrary
+    // above then completes; the leak check says whether all of it went.
 }

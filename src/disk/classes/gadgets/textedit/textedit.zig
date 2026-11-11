@@ -25,19 +25,22 @@
 //! goes back there past short lines.
 //!
 //! **The text is UTF-8.** The cursor and the anchor stand where a
-//! character starts: the cursor keys step over a character whole,
-//! Backspace and Delete take one out whole, and a key's character goes in
+//! character starts: the cursor keys step over a letter with its marks,
+//! Delete takes a letter out with its marks and Backspace one character -
+//! the mark last typed and not its letter - and a key's character goes in
 //! as its bytes.
 //!
 //! **Drawing** is always the whole gadget, which intuition does aside and
 //! puts on in one copy (`support.redraw`), so a change never shows half
-//! made. A row is drawn in runs of characters that share a pen, each
-//! placed where the widths put it, so the text, the cursor and the
-//! selection agree to the pixel. Nothing is drawn past the field: a
-//! character that does not fit whole is left out, and a line feed or a
-//! control character takes no room.
+//! made. A row is drawn a piece at a time (text.zig), a piece in runs of
+//! characters that share a pen, each placed where its piece puts it, so
+//! the text, the cursor and the selection agree to the pixel. A mark is
+//! drawn with its letter, in its letter's pen. Nothing is drawn past the
+//! field: a letter that does not fit whole is left out, and a line feed
+//! or a control character takes no room.
 //!
-//! **The cursor** is a block over the character it stands before, in the
+//! **The cursor** is a block over the character it stands before and
+//! that character's marks, in the
 //! fill pen with the character in the fill's text pen, as a console's is,
 //! and shows only while the gadget has the keyboard. That is what shows
 //! the field is active: its frame is never drawn focused. A wrapped row
@@ -60,7 +63,12 @@
 //! **Widths** come from the window's font, a character at a time
 //! (`IntuiTextLength`): the first 256 measured once for each font, the
 //! others as the text has them, the last 64 kept (`Wide`); a tab stops
-//! every eight spaces.
+//! every eight spaces. With a font that shapes its text
+//! (`TextFont.shape`) where a position is in its piece, and the position
+//! at a place, are asked of graphics for the piece as it is drawn
+//! (`TextOffsetToX`, `TextXToOffset`), through a RastPort of the
+//! gadget's own that has the font and draws nowhere; the widths still
+//! break the rows.
 //!
 //! **Highlighting** (`TEXTEDIT_HighlightHook`): before a line's first row
 //! is drawn its bytes are copied out of the gap buffer, the first
@@ -92,6 +100,7 @@ const sr = gadgets.scroller;
 const te = gadgets.textedit;
 const KeymapBase = sdk.interface.keymap.KeymapBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
+const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const utf8 = utility.utf8;
 const Class = classes.Class;
 const Object = classes.Object;
@@ -107,9 +116,13 @@ pub const Library = gadgets.ClassLibrary(.{
     // 1: the wheel, a third press, indent, line numbers. 2: a press
     // follows the one before by place and time (DoubleTap). 3:
     // highlighting (TEXTEDIT_HighlightHook). 4: TEXTEDIT_CanUndo and
-    // TEXTEDIT_CanRedo. 5: the text is UTF-8.
-    .revision = 6,
-    .date = "11.11.2026",
+    // TEXTEDIT_CanRedo. 5: the text is UTF-8. 6: a clip is pasted in
+    // UTF-8 whatever it was copied in. 7: a mark is drawn with its
+    // letter and stepped over with it, and with a font that shapes its
+    // text the cursor, the selection and a press are where the letters
+    // are drawn.
+    .revision = 7,
+    .date = "12.11.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -123,37 +136,88 @@ comptime {
 const text_margin = 3;
 const scroll_size = 16;
 
-/// The cursor's width: a block over the character it stands before, as
-/// wide as that character; before a line feed or a tab, at the end, or
-/// before a character that takes no room, as wide as an `n` - a space is
-/// too thin to read as a block.
-fn cursorWidth(text: *const Text, pos: u32) u32 {
-    const room = cursorRoom(text);
-    if (pos >= text.length()) return room;
-    const char = text.charAt(pos).char;
-    if (char == '\n' or char == '\t') return room;
-    const width = text.layout.widthOf(char);
-    return if (width == 0) room else width;
+/// The width of the character at `pos` with its marks, as its row shows
+/// them; 0 at the text's end, and for a character that is not drawn or
+/// takes no room.
+fn clusterWidth(text: *const Text, pos: u32) u32 {
+    if (pos >= text.length() or !model.isDrawn(text.charAt(pos).char)) return 0;
+    const row = text.rowOf(pos);
+    return text.xInRow(row, text.clusterEnd(pos, text.rowEnd(row))) -| text.xInRow(row, pos);
 }
 
-/// The widths of the characters past U+00FF, measured in the font as
-/// the layout asks for them: the last 64 kept, each with its character in
-/// one word - the character in the low 21 bits, the width above - so a
-/// reader never sees one without the other.
+/// The cursor's width: a block over the character it stands before, as
+/// wide as that character and its marks; before a line feed or a tab, at
+/// the end, or before a character that takes no room, as wide as an `n` -
+/// a space is too thin to read as a block.
+fn cursorWidth(text: *const Text, pos: u32) u32 {
+    const width = clusterWidth(text, pos);
+    return if (width == 0) cursorRoom(text) else width;
+}
+
+/// What the layout asks of the font (`Layout.context`). The widths of
+/// the characters past U+00FF, measured as the layout asks for them: the
+/// last 64 kept, each with its character in one word - the character in
+/// the low 21 bits, the width above - so a reader never sees one without
+/// the other. And for a font that shapes its text a RastPort with that
+/// font, on one pixel of its own: nothing is drawn through it, graphics
+/// is asked the places in a piece with it.
 const Wide = struct {
     ib: ?*IntuitionBase = null,
     font: ?*graphics.TextFont = null,
     kept: [64]u32 = @splat(0),
+    gb: ?*GraphicsBase = null,
+    port: ?*graphics.RastPort = null,
+    pixel: u32 = 0,
+    surface: sdk.rtg.bitmaps.Surface = undefined,
 
     const width_shift = 21;
 
     /// Everything kept forgotten, for the font `font`.
-    fn reset(wide: *Wide, ib: *IntuitionBase, font: *graphics.TextFont) void {
-        wide.ib = ib;
+    fn reset(wide: *Wide, base: *gadgets.Base, font: *graphics.TextFont) void {
+        const gb = base.graphics_base;
+        wide.ib = base.intuition_base;
         wide.font = font;
         wide.kept = @splat(0);
+        wide.close();
+        if (font.shape == null) return;
+        wide.surface = .{
+            .pixels = @ptrCast(&wide.pixel),
+            .width = 1,
+            .height = 1,
+            .pitch = @sizeOf(u32),
+            .size_bytes = @sizeOf(u32),
+            .format = .rgba32,
+        };
+        wide.gb = gb;
+        wide.port = gb.CreateRastPortTagList(&[_]TagItem{
+            .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&wide.surface) },
+            .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(font) },
+            .{},
+        });
+    }
+
+    /// The RastPort let go.
+    fn close(wide: *Wide) void {
+        if (wide.port) |port| wide.gb.?.FreeRastPort(port);
+        wide.port = null;
     }
 };
+
+/// `Layout.place`: where in the piece `bytes`, drawn as one, the place
+/// before its byte `offset` is.
+fn placeShaped(context: ?*anyopaque, bytes: []const u8, offset: u32) u32 {
+    const wide: *Wide = @ptrCast(@alignCast(context.?));
+    const port = wide.port orelse return 0;
+    return @intCast(@max(wide.gb.?.TextOffsetToX(port, bytes.ptr, @intCast(bytes.len), offset), 0));
+}
+
+/// `Layout.nearest`: the byte of the piece `bytes` whose place is nearest
+/// `x`.
+fn nearestShaped(context: ?*anyopaque, bytes: []const u8, x: i32) u32 {
+    const wide: *Wide = @ptrCast(@alignCast(context.?));
+    const port = wide.port orelse return 0;
+    return wide.gb.?.TextXToOffset(port, bytes.ptr, @intCast(bytes.len), x);
+}
 
 /// `Layout.measure`: a character's width in the font, from what is kept
 /// or measured now. 1 while there is no font yet, as the widths table
@@ -357,7 +421,12 @@ fn syncLayout(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*const classusr.
     if (measure.font) |font| {
         if (font != own.font) {
             own.font = font;
-            own.wide.reset(ib, font);
+            own.wide.reset(base, font);
+            // A font that shapes its text places the letters of a piece
+            // itself.
+            const shapes = own.wide.port != null;
+            own.text.layout.place = if (shapes) placeShaped else null;
+            own.text.layout.nearest = if (shapes) nearestShaped else null;
             var one: [4:0]u8 = @splat(0);
             for (&own.text.layout.widths, 0..) |*width, char| {
                 if (char < 0x20 or (char >= 0x7F and char < 0xA0)) {
@@ -414,9 +483,6 @@ fn selection(own: *const Data) struct { from: u32, to: u32 } {
 }
 
 // --- drawing ----------------------------------------------------------------
-
-/// Bytes of a run gathered before they are drawn.
-const run_room = 128;
 
 const Pens = struct {
     text: u32,
@@ -517,9 +583,9 @@ fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, area: 
     // The selection's ground: from where it starts in the row to where it
     // ends, or on to the field's edge when it goes on past the row.
     if (sel.from != sel.to and sel.from <= end and sel.to > start) {
-        const from_x: i64 = if (sel.from <= start) 0 else text.xOf(sel.from);
+        const from_x: i64 = if (sel.from <= start) 0 else text.xInRow(row, sel.from);
         const goes_on = sel.to > end;
-        const to_x: i64 = if (goes_on) view_right else text.xOf(sel.to);
+        const to_x: i64 = if (goes_on) view_right else text.xInRow(row, sel.to);
         const left = @max(from_x, view_left);
         const right = @min(to_x, view_right);
         if (right > left) support.fill(gb, rp, .{
@@ -530,44 +596,37 @@ fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, area: 
         }, pens.fill);
     }
 
-    var run: [run_room]u8 = undefined;
-    var used: usize = 0;
-    var run_left: i64 = 0;
-    var run_pen: u32 = pens.text;
-    var x: u32 = 0;
-    var at = start;
-    while (at < end) {
-        const found = text.charAt(at);
-        const length: u32 = @intCast(found.length);
-        const width = text.widthAt(found.char, x);
-        const selected = at >= sel.from and at < sel.to;
-        const pen = if (selected) pens.fill_text else pens.ofKind(kindAt(labels, at));
-        const shows = found.char != '\t' and width != 0 and @as(i64, x) >= view_left and @as(i64, x) + width <= view_right;
-        if (used != 0 and (!shows or pen != run_pen or used + length > run.len)) {
-            drawRun(gb, rp, run[0..used], area.left + @as(i32, @intCast(run_left - view_left)), baseline, run_pen);
-            used = 0;
+    // The row's pieces, of each what is wholly in the field, in runs of
+    // one pen: a run goes on while the letters are of the pen it began
+    // with, and a mark stays with its letter.
+    var row_pieces = text.pieces(row);
+    while (row_pieces.next()) |piece| {
+        if (@as(i64, piece.x) >= view_right) break;
+        if (!piece.drawn) continue;
+        const shown = text.within(piece, row_pieces.widthOf(), view_left, view_right);
+        if (shown.from == shown.to) continue;
+        var copy: [model.piece_room]u8 = undefined;
+        const bytes = text.bytesOf(piece, &copy);
+        var from = shown.from;
+        while (from < shown.to) {
+            const pen = penAt(own, pens, labels, from);
+            var to = text.clusterEnd(from, shown.to);
+            while (to < shown.to and penAt(own, pens, labels, to) == pen) to = text.clusterEnd(to, shown.to);
+            const run_left: i64 = @as(i64, piece.x) + text.placeIn(piece, from);
+            drawRun(gb, rp, bytes[from - piece.from .. to - piece.from], area.left + @as(i32, @intCast(run_left - view_left)), baseline, pen);
+            from = to;
         }
-        if (shows) {
-            if (used == 0) {
-                run_left = x;
-                run_pen = pen;
-            }
-            text.copyOut(at, at + length, run[used..].ptr);
-            used += length;
-        }
-        x += width;
-        at += length;
-        if (@as(i64, x) > view_right and !own.wrap) break;
     }
-    drawRun(gb, rp, run[0..used], area.left + @as(i32, @intCast(run_left - view_left)), baseline, run_pen);
 
-    // The cursor, while it has the keyboard: a block over the byte it
-    // stands before, that byte drawn on it - the fill pen as ground and the
-    // text in the fill's text pen, and the other way round inside the
-    // selection, where those two are already the ground and the text.
+    // The cursor, while it has the keyboard: a block over the character
+    // it stands before, that character drawn on it with its marks - the
+    // fill pen as ground and the text in the fill's text pen, and the
+    // other way round inside the selection, where those two are already
+    // the ground and the text.
     if (own.active and text.rowOf(own.cursor) == row) {
-        const cursor_x: i64 = @as(i64, text.xOf(own.cursor)) - view_left;
-        const block: i64 = cursorWidth(text, own.cursor);
+        const cursor_x: i64 = @as(i64, text.xInRow(row, own.cursor)) - view_left;
+        const under = clusterWidth(text, own.cursor);
+        const block: i64 = if (under == 0) cursorRoom(text) else under;
         const left = @max(cursor_x, 0);
         const right = @min(cursor_x + block, @as(i64, area.width));
         if (right > left) {
@@ -580,17 +639,22 @@ fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, area: 
             }, if (selected) pens.ground else pens.fill);
             // The character itself, when it is one that is drawn and all
             // of it is in the field.
-            if (own.cursor < text.length() and left == cursor_x and right == cursor_x + block) {
-                const found = text.charAt(own.cursor);
-                if (found.char != '\n' and found.char != '\t' and text.layout.widthOf(found.char) != 0) {
-                    var bytes: [4]u8 = undefined;
-                    const length: u32 = @intCast(found.length);
-                    text.copyOut(own.cursor, own.cursor + length, &bytes);
-                    drawRun(gb, rp, bytes[0..length], area.left + @as(i32, @intCast(cursor_x)), baseline, if (selected) pens.text else pens.fill_text);
-                }
+            const cluster = text.clusterEnd(own.cursor, end) -| own.cursor;
+            var bytes: [64]u8 = undefined;
+            if (under != 0 and cluster <= bytes.len and left == cursor_x and right == cursor_x + block) {
+                text.copyOut(own.cursor, own.cursor + cluster, &bytes);
+                drawRun(gb, rp, bytes[0..cluster], area.left + @as(i32, @intCast(cursor_x)), baseline, if (selected) pens.text else pens.fill_text);
             }
         }
     }
+}
+
+/// The pen of the character at `pos`: the fill's text pen inside the
+/// selection, else its kind's.
+fn penAt(own: *const Data, pens: Pens, labels: ?Labels, pos: u32) u32 {
+    const sel = selection(own);
+    if (pos >= sel.from and pos < sel.to) return pens.fill_text;
+    return pens.ofKind(kindAt(labels, pos));
 }
 
 /// The kind of the byte at `pos`: text past the bytes the hook was asked
@@ -916,10 +980,10 @@ fn moveKey(own: *Data, code: u32, qualifier: u32, page: u32) bool {
     const sel = selection(own);
     switch (code) {
         RAW_LEFT => {
-            if (sel.from != sel.to and !extend) moveTo(own, sel.from, false, false) else if (control) moveTo(own, text.wordBefore(own.cursor), extend, false) else moveTo(own, if (own.cursor > 0) text.charBefore(own.cursor) else 0, extend, false);
+            if (sel.from != sel.to and !extend) moveTo(own, sel.from, false, false) else if (control) moveTo(own, text.wordBefore(own.cursor), extend, false) else moveTo(own, text.clusterBefore(own.cursor, 0), extend, false);
         },
         RAW_RIGHT => {
-            if (sel.from != sel.to and !extend) moveTo(own, sel.to, false, false) else if (control) moveTo(own, text.wordAfter(own.cursor), extend, false) else moveTo(own, text.charAfter(own.cursor), extend, false);
+            if (sel.from != sel.to and !extend) moveTo(own, sel.to, false, false) else if (control) moveTo(own, text.wordAfter(own.cursor), extend, false) else moveTo(own, text.clusterEnd(own.cursor, text.length()), extend, false);
         },
         RAW_UP => if (control) moveTo(own, 0, extend, false) else moveRows(own, false, 1, extend),
         RAW_DOWN => if (control) moveTo(own, text.length(), extend, false) else moveRows(own, true, 1, extend),
@@ -965,7 +1029,7 @@ fn key(base: *gadgets.Base, own: *Data, o: *Object, in: *gc.GpInput, e: *const i
             if (sel.from != sel.to) {
                 did = replace(base, own, sel.from, sel.to, "", false);
             } else if (own.cursor < own.text.length()) {
-                const to = if (e.qualifier & ie.IEQUALIFIER_CONTROL != 0) own.text.wordAfter(own.cursor) else own.text.charAfter(own.cursor);
+                const to = if (e.qualifier & ie.IEQUALIFIER_CONTROL != 0) own.text.wordAfter(own.cursor) else own.text.clusterEnd(own.cursor, own.text.length());
                 did = replace(base, own, own.cursor, to, "", true);
             }
         },
@@ -1234,6 +1298,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             ib.DisposeObject(own.frame);
             if (own.marks) |marks| base.sys_base.FreeVec(marks);
             own.marks = null;
+            own.wide.close();
             if (own.ready) {
                 own.text.deinit();
                 own.history.deinit();

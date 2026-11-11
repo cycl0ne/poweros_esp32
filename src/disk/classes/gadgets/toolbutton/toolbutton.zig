@@ -71,8 +71,8 @@ const LayersBase = sdk.interface.layers.LayersBase;
 pub const Library = gadgets.ClassLibrary(.{
     .name = tb.TOOLBUTTON_CLASS,
     .version = 1,
-    .revision = 3,
-    .date = "29.10.2026",
+    .revision = 4,
+    .date = "11.11.2026",
     .super = classusr.BUTTONGCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -384,15 +384,19 @@ fn greyed(base: *gadgets.Base, picture: *const icon.IconImage) ?[*]u8 {
 
 /// How wide a line of the label is drawn, without its `_`.
 fn drawnWidth(gb: *GraphicsBase, rp: *graphics.RastPort, text: [*:0]const u8, line: Line) i32 {
-    var width = gb.TextLength(rp, text + line.from, line.to - line.from);
-    if (underscoreAt(text)) |mark| if (mark >= line.from and mark < line.to) {
-        width -= gb.TextLength(rp, text + mark, 1);
-    };
-    return width;
+    const whole = gb.TextLength(rp, text + line.from, line.to - line.from);
+    const mark = underscoreAt(text) orelse return whole;
+    if (mark < line.from or mark >= line.to) return whole;
+    // As it is drawn: one piece of text without the `_`.
+    var plain = gc.PlainLabel{};
+    if (gc.plainLabel(text[line.from..line.to], mark - line.from, &plain)) return gb.TextLength(rp, &plain.bytes, plain.len);
+    return whole - gb.TextLength(rp, text + mark, 1);
 }
 
 /// A line of the label with its top at `top`, in `ink`: the `_` that marks
-/// the key not drawn, the letter after it underlined.
+/// the key not drawn, the letter after it underlined. The line is drawn
+/// as one piece of text without the `_`, and the letter underlined where
+/// that put it; one too long for that in runs around the mark.
 fn drawLine(gb: *GraphicsBase, rp: *graphics.RastPort, left: i32, top: i32, text: [*:0]const u8, line: Line, ink: graphics.Pen) void {
     var baseline: u32 = 0;
     var height: u32 = 0;
@@ -416,18 +420,28 @@ fn drawLine(gb: *GraphicsBase, rp: *graphics.RastPort, left: i32, top: i32, text
         return;
     }
     var x = left;
-    if (mark > line.from) {
-        gb.Move(rp, x, y);
-        gb.Text(rp, text + line.from, mark - line.from);
-        x += gb.TextLength(rp, text + line.from, mark - line.from);
-    }
     const letter = text + mark + 1;
-    const letter_width = gb.TextLength(rp, letter, 1);
-    gb.Move(rp, x, y);
-    gb.Text(rp, letter, 1);
-    if (mark + 2 < line.to) {
-        gb.Move(rp, x + letter_width, y);
-        gb.Text(rp, letter + 1, line.to - mark - 2);
+    const letter_len = @min(gc.markedLength(text, mark + 1), line.to - mark - 1);
+    var letter_width: i32 = 0;
+    var plain = gc.PlainLabel{};
+    if (gc.plainLabel(text[line.from..line.to], mark - line.from, &plain)) {
+        gb.Move(rp, left, y);
+        gb.Text(rp, &plain.bytes, plain.len);
+        x += gb.TextOffsetToX(rp, &plain.bytes, plain.len, mark - line.from);
+        letter_width = left + gb.TextOffsetToX(rp, &plain.bytes, plain.len, mark - line.from + letter_len) - x;
+    } else {
+        if (mark > line.from) {
+            gb.Move(rp, x, y);
+            gb.Text(rp, text + line.from, mark - line.from);
+            x += gb.TextLength(rp, text + line.from, mark - line.from);
+        }
+        letter_width = gb.TextLength(rp, letter, letter_len);
+        gb.Move(rp, x, y);
+        gb.Text(rp, letter, letter_len);
+        if (mark + 1 + letter_len < line.to) {
+            gb.Move(rp, x + letter_width, y);
+            gb.Text(rp, letter + letter_len, line.to - mark - 1 - letter_len);
+        }
     }
     // Under the letter, as intuition's own labels have it: a pixel to the
     // left and a pixel short, on the row above the bottom of the cell.

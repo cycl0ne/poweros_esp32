@@ -32,6 +32,14 @@
 //! second, for the font and for each fallback in turn, so a font draws
 //! every character it has before one is taken from a fallback.
 //!
+//! **A font may shape its text** (`TextFont.shape`): which glyphs a
+//! text is drawn with and where each one goes is then the font's hook's
+//! to say - letters moved together, a mark set on its letter, several
+//! characters drawn as one glyph - and the text calls draw and measure
+//! the glyphs it places (`_shaped.zig`). A font with no such hook, and
+//! none among its fallbacks, draws a glyph for each character, one
+//! after the other.
+//!
 //! **Each character has its own width.** The point moves by the glyph's
 //! advance, and its ink is drawn `left` columns from the point - less
 //! than zero reaches back under the character before - and `top` rows
@@ -83,6 +91,7 @@ pub const FontImage = fontimage.FontImage;
 pub const Glyph = fontimage.Glyph;
 const rom = @import("../fonts/_fonts.zig");
 const kept = @import("_kept.zig");
+const shaped = @import("_shaped.zig");
 
 /// A font: a name on the list and an image. The SDK's, since a font
 /// built outside the library is handed to `AddFont` as one.
@@ -243,7 +252,7 @@ fn ownGlyph(gb: *GraphicsBase, font: *const TextFont, code: u32) ?Found {
 
 /// The glyph one font has for exactly `code`: its image's, or the one
 /// its hook makes.
-fn glyphIn(gb: *GraphicsBase, font: *const TextFont, code: u32) ?*const Glyph {
+pub fn glyphIn(gb: *GraphicsBase, font: *const TextFont, code: u32) ?*const Glyph {
     if (fontimage.find(font.image, code)) |held| return held;
     return kept.glyphFor(gb, font, code);
 }
@@ -381,9 +390,9 @@ pub fn growBack(m: Measure, glyph: *const Glyph, extra: i32, smear: i32, lean: i
     };
 }
 
-/// What the `count` bytes of `string` take in `font` with `style`, each
-/// character measured as the glyph it is drawn with, a fallback's
-/// included.
+/// What the `count` bytes of `string` take in `font` with `style`: the
+/// glyphs the font's hook shapes the text into, or each character
+/// measured as the glyph it is drawn with, a fallback's included.
 ///
 /// INPUTS:
 /// - `gb` - the library.
@@ -392,6 +401,12 @@ pub fn growBack(m: Measure, glyph: *const Glyph, extra: i32, smear: i32, lean: i
 /// - `string` - the text, UTF-8.
 /// - `count` - its length in bytes.
 pub fn measure(gb: *GraphicsBase, font: *const TextFont, style: graphics.FontStyle, string: [*]const u8, count: u32) Measure {
+    if (shaped.wanted(font)) {
+        if (shaped.layOut(gb, font, string, count)) |line| {
+            defer shaped.free(gb, line);
+            return shaped.measure(font, style, line.placed);
+        }
+    }
     var look = lookOf(font, font, style);
     var m = Measure{};
     const bytes = string[0..count];

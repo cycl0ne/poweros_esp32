@@ -86,6 +86,8 @@ Generated from the source by `./zig build autodoc`.
 - [TextFit](#textfit) - How much of a text fits in the room given.
 - [TextFitted](#textfitted) - Draws as much of a string as fits in a width, and dots where it had to stop.
 - [TextLength](#textlength) - How wide some text would be, without drawing it.
+- [TextOffsetToX](#textoffsettox) - Where in a drawn text the place before one of its bytes is.
+- [TextXToOffset](#textxtooffset) - Which byte of a drawn text the place nearest a column is before.
 - [UnlockFonts](#unlockfonts) - Lets the font list go again.
 - [WeighTAMatch](#weightamatch) - How well a font matches what is asked for.
 - [WriteLUTPixelArray](#writelutpixelarray) - Puts a rectangle of 8-bit colour numbers down through a table of 256 pens.
@@ -2021,7 +2023,7 @@ fn CreateRastPortTagList(gb: *GraphicsBase, tags: ?[*]const TagItem) ?*RastPort
 
 **SINCE**
 
-0.2. LVO -20.
+0.2, `RPTAG_TextDirection` since 0.42. LVO -20.
 
 **INPUTS**
 
@@ -2036,6 +2038,8 @@ fn CreateRastPortTagList(gb: *GraphicsBase, tags: ?[*]const TagItem) ?*RastPort
     white on black, so that a RastPort nobody configured still draws
     something a person can see.
   - `RPTAG_DrMd` (`DrawMode`) - default `.copy`.
+  - `RPTAG_TextDirection` - how its text reads, default
+    `TEXTDIR_LEFT_TO_RIGHT`.
 
   The first of Surface, BitMap and Board that is present wins; with
   none of them the View is used.
@@ -3390,14 +3394,15 @@ fn GetRPAttrs(gb: *GraphicsBase, rp: *RastPort, tags: ?[*]const TagItem) void
 
 **SINCE**
 
-0.4. LVO -36.
+0.4, `RPTAG_TextDirection` since 0.42. LVO -36.
 
 **INPUTS**
 
 - `rp` - the RastPort to read.
 - `tag_list` - what to read. **Each `ti_Data` is a pointer to where that
   value goes**, not the value:
-  - `RPTAG_APen`, `RPTAG_BPen`, `RPTAG_DrMd`, `RPTAG_Format` - `*u32`
+  - `RPTAG_APen`, `RPTAG_BPen`, `RPTAG_DrMd`, `RPTAG_Format`,
+    `RPTAG_TextDirection` - `*u32`
   - `RPTAG_ClipRect`, `RPTAG_Bounds` - `*Rect`
   - `RPTAG_Surface`, `RPTAG_BitMap` - `*usize`, and `BitMap` is 0 for a
     surface that is plain memory
@@ -4679,7 +4684,7 @@ fn SetRPAttrs(gb: *GraphicsBase, rp: *RastPort, tags: ?[*]const TagItem) void
 
 **SINCE**
 
-0.4. LVO -32.
+0.4, `RPTAG_TextDirection` since 0.42. LVO -32.
 
 **INPUTS**
 
@@ -4688,6 +4693,11 @@ fn SetRPAttrs(gb: *GraphicsBase, rp: *RastPort, tags: ?[*]const TagItem) void
   - `RPTAG_APen`, `RPTAG_BPen` (u32, 0xAARRGGBB)
   - `RPTAG_DrMd` (`DrawMode`)
   - `RPTAG_ClipRect` (`*const Rect`), clamped to the surface
+  - `RPTAG_TextDirection` (`TEXTDIR_LEFT_TO_RIGHT` or
+    `TEXTDIR_RIGHT_TO_LEFT`; any other value is passed over) - how
+    the text drawn through the RastPort reads, which a font that
+    shapes its text is told. Text is drawn from the point to the
+    right either way.
 
   These are the same tags that make a RastPort, so what can be set at
   birth can be changed afterwards and is spelled the same way.
@@ -4878,8 +4888,8 @@ fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) void
 **SINCE**
 
 0.11, UTF-8 since 0.38, fonts of 32-bit colour since 0.39,
-fallback fonts since 0.40, glyphs made when wanted since 0.41.
-LVO -132.
+fallback fonts since 0.40, glyphs made when wanted since 0.41, text
+a font shapes since 0.42. LVO -132.
 
 **INPUTS**
 
@@ -4952,32 +4962,64 @@ character takes the time its glyph takes to make. A glyph the hook
 could not make this time - there was no memory - is drawn as a
 character the font lacks, and asked for again by the next text.
 
+**A font may shape its text.** A font with a shape hook
+(`TextFont.shape`) is handed the text and answers the glyphs it is
+drawn with, in the order drawn, each with its advance and where it
+goes from the point: two letters closer than their advances put them
+(a kerned pair), several characters as one glyph (a ligature), one
+character as several, a mark put on its letter and moving the point
+no further. What is drawn, and where the point ends, is that - not
+the characters' glyphs side by side. `TextLength`, `TextExtent` and
+`TextFit` count the same glyphs, and `TextOffsetToX` says where in
+the text a character's place is.
+
+The text is taken a cluster at a time - a character with the marks
+and other characters without a width behind it - and each cluster
+is drawn whole by one font: the first of the RastPort's font and its
+fallbacks that has every character of it, or else the first whose
+hook has another form of it. Neighbouring clusters of one font are
+shaped together, so nothing is kerned or joined across a change of
+font. A cluster no font draws whole is drawn a character at a time,
+as in a font that does not shape. The bold and extended styles
+widen each glyph that moves the point, and no other. Without memory
+for the glyphs, or when the hook cannot shape this time, this one
+text is drawn a glyph a character.
+
 **CONTEXT**
 
 - Waits: yes, while another task holds the RastPort's lock
   (`RPTAG_Lock`), if it has one, and while another task makes a glyph
   of the same font.
-- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
-  to the display at the end.
+- Interrupts: no. The work is unbounded, it may allocate, and it
+  hands the rows it wrote on to the display at the end.
 - Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
 
 Nothing the caller has to free: the string is only read. A glyph
-made for the text is the library's, kept with the font.
+made for the text is the library's, kept with the font. The glyphs a
+text is shaped into are allocated and freed within the call.
 
 **NOTES**
 
-A font's hook runs on the caller's stack.
+- A font's hooks run on the caller's stack.
+- A text of a font that shapes is drawn in one call where its
+  letters are to stand as they do in the whole: a piece drawn by
+  itself is shaped by itself.
+- `RPTAG_TextDirection` is kept with the RastPort and changes
+  nothing drawn: a text is laid out left to right.
+- A text of more than a megabyte is not shaped.
 
 **BUGS**
 
-None known.
+A mark its font puts above or below the line's rows is cut there, as
+a fallback font's glyph is.
 
 **SEE ALSO**
 
-`TextLength`, `OpenFont`, `AddFont`, `RPTAG_TextStyle`
+`TextLength`, `TextOffsetToX`, `OpenFont`, `AddFont`,
+`RPTAG_TextStyle`
 
 **EXAMPLES**
 
@@ -4999,7 +5041,7 @@ fn TextExtent(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, 
 **SINCE**
 
 0.14, UTF-8 since 0.38, fallback fonts since 0.40, glyphs made
-when wanted since 0.41. LVO -168.
+when wanted since 0.41, text a font shapes since 0.42. LVO -168.
 
 **INPUTS**
 
@@ -5030,6 +5072,10 @@ drawn, so the extent is as tall as the RastPort's font whatever the
 text holds. A glyph the font's hook makes (`TextFont.render`) is made
 here when this is the first call to want it, as `Text` makes it.
 
+A text its font shapes (`TextFont.shape`) is laid out as `Text` lays
+it out and measured as those glyphs, each where the font put it: a
+mark counts across where it stands on its letter.
+
 Half-open like every rectangle here, so the height is `max_y - min_y`
 and there is no `+ 1` anywhere.
 
@@ -5038,15 +5084,16 @@ and there is no `+ 1` anywhere.
 - Waits: only for a font that makes glyphs, while another task makes
   one of the same font.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt does
-  not share.
+  not share, and allocates for a font that shapes its text.
 - Locks: none needed; no spinlock may be held with a font that makes
-  glyphs.
+  glyphs or shapes its text.
 - Process: a Task will do.
 
 **OWNERSHIP**
 
 Nothing the caller has to free. A glyph made for the measuring is
-the library's, kept with the font.
+the library's, kept with the font. The glyphs a text is shaped into
+are allocated and freed within the call.
 
 **BUGS**
 
@@ -5083,7 +5130,7 @@ fn TextFit(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, ou
 **SINCE**
 
 0.14, UTF-8 since 0.38, fallback fonts since 0.40, glyphs made
-when wanted since 0.41. LVO -172.
+when wanted since 0.41, text a font shapes since 0.42. LVO -172.
 
 **INPUTS**
 
@@ -5119,6 +5166,14 @@ room of that glyph. A glyph the font's hook makes (`TextFont.render`)
 is made here when this is the first call to want it, as `Text` makes
 it.
 
+Of a text its font shapes (`TextFont.shape`) what fits is whole
+clusters - a letter is not parted from its marks - and it is the
+piece that fits **shaped by itself**, as a `Text` of just those
+bytes draws it: a letter that is narrower before its neighbour in
+the whole text counts at the width it has as the piece's last. The
+text is laid out a part at a time, from the end the piece is taken
+from, so a long text of which little fits costs little.
+
 This is what a label does when its box is too small for it: ask how
 much fits, draw that, and put an ellipsis after it.
 
@@ -5127,15 +5182,22 @@ much fits, draw that, and put an ellipsis after it.
 - Waits: only for a font that makes glyphs, while another task makes
   one of the same font.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt does
-  not share.
+  not share, and allocates for a font that shapes its text.
 - Locks: none needed; no spinlock may be held with a font that makes
-  glyphs.
+  glyphs or shapes its text.
 - Process: a Task will do.
 
 **OWNERSHIP**
 
 Nothing the caller has to free. A glyph made for the measuring is
-the library's, kept with the font.
+the library's, kept with the font. The glyphs a text is shaped into
+are allocated and freed within the call.
+
+**NOTES**
+
+What is asked is how much of a text can be drawn in a room. Where
+in a drawn text a column is - a click turned into a cursor's place -
+is `TextXToOffset`'s to answer.
 
 **BUGS**
 
@@ -5143,7 +5205,7 @@ None known.
 
 **SEE ALSO**
 
-`TextExtent`, `Text`
+`TextExtent`, `TextXToOffset`, `Text`
 
 **EXAMPLES**
 
@@ -5240,7 +5302,7 @@ fn TextLength(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) 
 **SINCE**
 
 0.11, UTF-8 since 0.38, fallback fonts since 0.40, glyphs made
-when wanted since 0.41. LVO -136.
+when wanted since 0.41, text a font shapes since 0.42. LVO -136.
 
 **INPUTS**
 
@@ -5268,20 +5330,27 @@ A glyph the font's hook makes (`TextFont.render`) is made here, the
 first time a character is measured, as `Text` makes it when it is
 the first to want it: the text is measured as it will be drawn.
 
+A text its font shapes (`TextFont.shape`) is laid out as `Text` lays
+it out, and the answer is the advances of those glyphs: a kerned
+pair is narrower than its two letters measured apart, a mark adds
+nothing. So the lengths of a text's pieces do not add up to the
+length of the text; `TextOffsetToX` says where in it a piece starts.
+
 **CONTEXT**
 
 - Waits: only for a font that makes glyphs, while another task makes
   one of the same font.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt does
-  not share.
+  not share, and allocates for a font that shapes its text.
 - Locks: none needed; no spinlock may be held with a font that makes
-  glyphs.
+  glyphs or shapes its text.
 - Process: a Task will do.
 
 **OWNERSHIP**
 
 Nothing the caller has to free. A glyph made for the measuring is
-the library's, kept with the font.
+the library's, kept with the font. The glyphs a text is shaped into
+are allocated and freed within the call.
 
 **BUGS**
 
@@ -5289,12 +5358,182 @@ None known.
 
 **SEE ALSO**
 
-`TextExtent`, `TextFit`, `Text`
+`TextExtent`, `TextFit`, `TextOffsetToX`, `Text`
 
 **EXAMPLES**
 
 ```zig
 const w = gb.TextLength(rp, label.ptr, label.len);
+```
+
+## TextOffsetToX
+
+Where in a drawn text the place before one of its bytes is.
+
+**SYNOPSIS**
+
+```zig
+fn TextOffsetToX(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8,
+    count: u32, offset: u32) i32
+```
+
+**SINCE**
+
+0.42. LVO -352.
+
+**INPUTS**
+
+- `rp` - the RastPort. Its font and text style decide the answer.
+- `string` - the whole text as `Text` is given it, UTF-8.
+- `count` - its length in bytes.
+- `offset` - the byte the place is before: where a character starts.
+  At `count` or past it, the place after the text.
+
+**RESULT**
+
+How many pixels right of the text's starting point the place is: 0
+before the first character, what `TextLength` answers after the last.
+With no font set the answer is 0 and the error is `GERR_NO_FONT`.
+
+**BEHAVIOR**
+
+The text is laid out as `Text` draws it, the whole of it, and the
+place is taken from that: a kerned pair, a ligature and a letter with
+its marks are where they are drawn, which the lengths of the text's
+pieces added up are not.
+
+A place is between two clusters: a character, and the marks and other
+characters without a width that follow it. An offset inside a cluster
+- before a mark - is the place after the cluster. A cluster of
+several characters with a width, drawn as one glyph or as several
+that do not stand for one character each, has its width split evenly
+among them, so there is a place before each.
+
+In a font that does not shape its text every character is a cluster
+of its own and the place is the advances before it added up.
+
+**CONTEXT**
+
+- Waits: only for a font that makes glyphs, while another task makes
+  one of the same font.
+- Interrupts: no. It reads the caller's RastPort, which an interrupt
+  does not share, and may allocate.
+- Locks: none needed; no spinlock may be held with a font that makes
+  glyphs or shapes its text.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing the caller has to free. For a font that shapes its text the
+laid-out glyphs are allocated and freed within the call.
+
+**NOTES**
+
+- A cursor, a selection's edges and an underline under part of a text
+  are placed with this, and the text is drawn in one `Text` call. A
+  piece drawn by itself at the place answered here is shaped by
+  itself: its first letter is not kerned against the one before.
+- The place is counted from the starting point, the direction
+  `RPTAG_TextDirection` names notwithstanding.
+- Without memory for the glyphs the answer is the one of a font that
+  does not shape.
+
+**BUGS**
+
+The places inside a ligature are an even split of its width, not the
+ones its font may name.
+
+**SEE ALSO**
+
+`TextXToOffset`, `TextLength`, `Text`
+
+**EXAMPLES**
+
+```zig
+// A cursor before byte `cursor` of a line drawn at (left, baseline).
+const x = left + gb.TextOffsetToX(rp, line.ptr, line.len, cursor);
+gb.RectFill(rp, &.{ .min_x = x, .min_y = top, .max_x = x + 1, .max_y = bottom });
+```
+
+## TextXToOffset
+
+Which byte of a drawn text the place nearest a column is before.
+
+**SYNOPSIS**
+
+```zig
+fn TextXToOffset(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8,
+    count: u32, x: i32) u32
+```
+
+**SINCE**
+
+0.42. LVO -356.
+
+**INPUTS**
+
+- `rp` - the RastPort. Its font and text style decide the answer.
+- `string` - the whole text as `Text` is given it, UTF-8.
+- `count` - its length in bytes.
+- `x` - the column, in pixels right of the text's starting point.
+
+**RESULT**
+
+The byte a character starts at, or `count` for the place after the
+text: the one whose place, as `TextOffsetToX` gives it, is nearest
+`x`. Left of the text the answer is 0, right of it `count`. With no
+font set the answer is 0 and the error is `GERR_NO_FONT`.
+
+**BEHAVIOR**
+
+The text is laid out as `Text` draws it, and the places between its
+clusters - a character, and the marks and other characters without a
+width that follow it - are the ones to choose from, with the places
+an even split puts inside a cluster of several characters with a
+width. A column in the left half of what is between two places
+answers the left one, a column in the right half the right one. The
+byte of a mark is not answered: no place is between a letter and its
+mark.
+
+In a font that does not shape its text every character is a cluster
+of its own, a mark too.
+
+**CONTEXT**
+
+- Waits: only for a font that makes glyphs, while another task makes
+  one of the same font.
+- Interrupts: no. It reads the caller's RastPort, which an interrupt
+  does not share, and may allocate.
+- Locks: none needed; no spinlock may be held with a font that makes
+  glyphs or shapes its text.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing the caller has to free. For a font that shapes its text the
+laid-out glyphs are allocated and freed within the call.
+
+**NOTES**
+
+- A click in a line of text is turned into a cursor's place with
+  this: the column is the click's, less where the text starts.
+- Without memory for the glyphs the answer is the one of a font that
+  does not shape.
+
+**BUGS**
+
+The places inside a ligature are an even split of its width, not the
+ones its font may name.
+
+**SEE ALSO**
+
+`TextOffsetToX`, `TextFit`, `Text`
+
+**EXAMPLES**
+
+```zig
+// The cursor goes where the line drawn at `left` was clicked.
+cursor = gb.TextXToOffset(rp, line.ptr, line.len, mouse_x - left);
 ```
 
 ## UnlockFonts

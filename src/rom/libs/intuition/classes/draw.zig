@@ -96,7 +96,8 @@ pub fn pen(gb: *GraphicsBase, rp: *graphics.RastPort, value: Pen) void {
     gb.SetRPAttrs(rp, &put);
 }
 
-fn textLen(s: [*:0]const u8) u32 {
+/// How many bytes `s` holds before its NUL.
+pub fn textLen(s: [*:0]const u8) u32 {
     var n: u32 = 0;
     while (s[n] != 0) n += 1;
     return n;
@@ -106,17 +107,20 @@ fn textLen(s: [*:0]const u8) u32 {
 /// `_` that marks its key.
 pub fn labelWidth(gb: *GraphicsBase, rp: *graphics.RastPort, text: [*:0]const u8) i32 {
     const len = textLen(text);
-    const whole = gb.TextLength(rp, text, len);
-    if (gc.labelMark(text) == null) return whole;
-    return whole - gb.TextLength(rp, "_", 1);
+    const at = gc.labelMark(text) orelse return gb.TextLength(rp, text, len);
+    var plain = gc.PlainLabel{};
+    if (gc.plainLabel(text[0..len], at - 1, &plain)) return gb.TextLength(rp, &plain.bytes, plain.len);
+    return gb.TextLength(rp, text, len) - gb.TextLength(rp, "_", 1);
 }
 
 /// A label drawn with `x` at its left and `y` at its baseline: the `_`
 /// that marks its key left out, and the character it marks underlined.
 ///
-/// The text is drawn in up to three runs - before the mark, the marked
-/// character, and the rest - so that nothing has to be copied to leave
-/// the `_` out, whatever the label's length.
+/// The label is drawn as one piece of text, without its mark, and the
+/// line goes under the marked character where that drawing put it. One
+/// longer than `plain_label_room` is drawn in up to three runs instead -
+/// before the mark, the marked character, and the rest - each shaped by
+/// itself.
 pub fn labelText(gb: *GraphicsBase, rp: *graphics.RastPort, x: i32, y: i32, text: [*:0]const u8) void {
     const len = textLen(text);
     const at = gc.labelMark(text) orelse {
@@ -125,20 +129,29 @@ pub fn labelText(gb: *GraphicsBase, rp: *graphics.RastPort, x: i32, y: i32, text
         return;
     };
     const before = at - 1;
-    var pen_x = x;
-    if (before > 0) {
-        gb.Move(rp, pen_x, y);
-        gb.Text(rp, text, before);
-        pen_x += gb.TextLength(rp, text, before);
-    }
     const marked = text + at;
     const marked_len = gc.markedLength(text, at);
-    const width = gb.TextLength(rp, marked, marked_len);
-    gb.Move(rp, pen_x, y);
-    gb.Text(rp, marked, marked_len);
-    if (len > at + marked_len) {
-        gb.Move(rp, pen_x + width, y);
-        gb.Text(rp, marked + marked_len, len - at - marked_len);
+    var pen_x = x;
+    var width: i32 = 0;
+    var plain = gc.PlainLabel{};
+    if (gc.plainLabel(text[0..len], before, &plain)) {
+        gb.Move(rp, x, y);
+        gb.Text(rp, &plain.bytes, plain.len);
+        pen_x += gb.TextOffsetToX(rp, &plain.bytes, plain.len, before);
+        width = x + gb.TextOffsetToX(rp, &plain.bytes, plain.len, before + marked_len) - pen_x;
+    } else {
+        if (before > 0) {
+            gb.Move(rp, pen_x, y);
+            gb.Text(rp, text, before);
+            pen_x += gb.TextLength(rp, text, before);
+        }
+        width = gb.TextLength(rp, marked, marked_len);
+        gb.Move(rp, pen_x, y);
+        gb.Text(rp, marked, marked_len);
+        if (len > at + marked_len) {
+            gb.Move(rp, pen_x + width, y);
+            gb.Text(rp, marked + marked_len, len - at - marked_len);
+        }
     }
     // The line under the letter, not under the cell it sits in: a
     // character's width is its advance, which carries the gap to the next

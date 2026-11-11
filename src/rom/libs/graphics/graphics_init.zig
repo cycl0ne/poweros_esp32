@@ -78,9 +78,14 @@ pub const LIBRARY_VERSION = 0;
 /// one, on the font's own line. 41: a font makes glyphs as they are
 /// wanted (`TextFont.render`) - a character its image has no glyph for
 /// is asked of the font's hook the first time it is drawn or measured,
-/// and kept with the font until `RemFont`. The version stays 0 until
-/// there is something to demand of it.
-pub const LIBRARY_REVISION = 41;
+/// and kept with the font until `RemFont`. 42: a font shapes its text
+/// (`TextFont.shape`) - `Text` and the calls that measure and fit draw
+/// and count the glyphs the font's hook lays a text out as, kerned,
+/// with its ligatures and marks; `TextOffsetToX` and `TextXToOffset`
+/// say where in such a text a byte's place is; a RastPort keeps a text
+/// direction (`RPTAG_TextDirection`). The version stays 0 until there
+/// is something to demand of it.
+pub const LIBRARY_REVISION = 42;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.

@@ -19,7 +19,7 @@ const setPen = _rastport.setPen;
 /// fn SetRPAttrs(gb: *GraphicsBase, rp: *RastPort, tags: ?[*]const TagItem) void
 /// ```
 ///
-/// SINCE: 0.4. LVO -32.
+/// SINCE: 0.4, `RPTAG_TextDirection` since 0.42. LVO -32.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort to change.
@@ -27,6 +27,11 @@ const setPen = _rastport.setPen;
 ///   - `RPTAG_APen`, `RPTAG_BPen` (u32, 0xAARRGGBB)
 ///   - `RPTAG_DrMd` (`DrawMode`)
 ///   - `RPTAG_ClipRect` (`*const Rect`), clamped to the surface
+///   - `RPTAG_TextDirection` (`TEXTDIR_LEFT_TO_RIGHT` or
+///     `TEXTDIR_RIGHT_TO_LEFT`; any other value is passed over) - how
+///     the text drawn through the RastPort reads, which a font that
+///     shapes its text is told. Text is drawn from the point to the
+///     right either way.
 ///
 ///   These are the same tags that make a RastPort, so what can be set at
 ///   birth can be changed afterwards and is spelled the same way.
@@ -96,6 +101,9 @@ pub fn SetRPAttrs(gb: *GraphicsBase, rp: *RastPort, tags: ?[*]const TagItem) voi
             },
             graphics.RPTAG_Font => rp.font = @ptrFromInt(item.data),
             graphics.RPTAG_TextStyle => rp.text_style = @truncate(item.data),
+            graphics.RPTAG_TextDirection => {
+                if (item.data <= graphics.TEXTDIR_RIGHT_TO_LEFT) rp.text_direction = @intCast(item.data);
+            },
             graphics.RPTAG_LinePattern => {
                 rp.line_pattern = @truncate(item.data);
                 // Begun again, so two lines drawn with the same pattern

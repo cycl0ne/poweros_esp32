@@ -792,7 +792,8 @@ while (true) {
 
 An `_` in a gadget's `GA_Text`, or in the `CHILDA_Label` a layout gives
 it, marks the next character as its key (`GA_Key`): the `_` is not drawn
-and the character is underlined. Any character can be a key - `_Ändern`
+and the character is underlined, where it stands in the label as its
+font sets it. Any character can be a key - `_Ändern`
 answers to ä and Ä alike, as a key matches whatever case it is typed
 in. A window object offers every character
 typed to its layout first. The gadget whose key it is is worked as a
@@ -808,9 +809,14 @@ button then opens the menus. In a field, the cursor keys, Home and End
 move, and with Shift a cursor key goes to the start or the end;
 Shift-Backspace takes out everything before the cursor, Shift-Delete
 everything after it, and Escape puts back what was there. A field's
-text is UTF-8: the cursor steps over a character whole, Backspace and
-Delete take one out whole, and `STRINGA_MaxChars` is the room in bytes,
-so a character goes in only when all its bytes fit.
+text is UTF-8: the cursor steps over a letter with the marks that
+follow it, Delete takes a letter out with its marks and Backspace one
+character - the mark last typed and not its letter - and
+`STRINGA_MaxChars` is the room in bytes, so a character goes in only
+when all its bytes fit. The cursor stands where the letters are drawn,
+and a press puts it at the letter under the pointer, in a font that
+kerns its letters or sets marks on them too (`TextOffsetToX`,
+`TextXToOffset`).
 `ActivateGadget` gives a gadget the keyboard without a press, and only in
 the active window; a window is not always active the moment it opens, so
 a program waits for `WMHI_ACTIVE` as above. A gadget that hands the

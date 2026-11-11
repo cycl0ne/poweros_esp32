@@ -239,8 +239,17 @@ pub const LIBRARY_VERSION = 0;
 /// while a flight has to be followed across the screen.
 /// 87: the mark of an item with subitems is written in UTF-8, as every
 /// text graphics draws.
-pub const LIBRARY_REVISION = 88;
-const BUILD_DATE = "10.11.2026";
+/// 88: a key is a code point - IDCMP_VANILLAKEY carries it, menu
+/// shortcuts and gadget keys are matched by case folding - and a string
+/// gadget's buffer is UTF-8, stepped and edited a character whole.
+/// 89: a string gadget's cursor and the character a press lands on are
+/// where graphics drew the line (TextOffsetToX, TextXToOffset), and a
+/// label with a marked key is measured and drawn as one piece of text
+/// (`gadgetclass.plainLabel`), so a font that shapes its text kerns
+/// across the mark. A string gadget's cursor keys step over a letter
+/// with its marks, and Delete takes them out together.
+pub const LIBRARY_REVISION = 89;
+const BUILD_DATE = "12.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

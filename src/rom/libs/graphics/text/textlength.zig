@@ -20,7 +20,7 @@ const softStyles = _text.softStyles;
 /// ```
 ///
 /// SINCE: 0.11, UTF-8 since 0.38, fallback fonts since 0.40, glyphs made
-/// when wanted since 0.41. LVO -136.
+/// when wanted since 0.41, text a font shapes since 0.42. LVO -136.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. Its font and text style decide the answer.
@@ -45,24 +45,31 @@ const softStyles = _text.softStyles;
 /// first time a character is measured, as `Text` makes it when it is
 /// the first to want it: the text is measured as it will be drawn.
 ///
+/// A text its font shapes (`TextFont.shape`) is laid out as `Text` lays
+/// it out, and the answer is the advances of those glyphs: a kerned
+/// pair is narrower than its two letters measured apart, a mark adds
+/// nothing. So the lengths of a text's pieces do not add up to the
+/// length of the text; `TextOffsetToX` says where in it a piece starts.
+///
 /// CONTEXT:
 /// - Waits: only for a font that makes glyphs, while another task makes
 ///   one of the same font.
 /// - Interrupts: no. It reads the caller's RastPort, which an interrupt does
-///   not share.
+///   not share, and allocates for a font that shapes its text.
 /// - Locks: none needed; no spinlock may be held with a font that makes
-///   glyphs.
+///   glyphs or shapes its text.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
 /// Nothing the caller has to free. A glyph made for the measuring is
-/// the library's, kept with the font.
+/// the library's, kept with the font. The glyphs a text is shaped into
+/// are allocated and freed within the call.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `TextExtent`, `TextFit`, `Text`
+/// `TextExtent`, `TextFit`, `TextOffsetToX`, `Text`
 ///
 /// EXAMPLES:
 /// ```zig

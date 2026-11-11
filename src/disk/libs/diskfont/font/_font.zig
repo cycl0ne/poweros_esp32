@@ -33,6 +33,19 @@
 //! renders. The hook runs on the task that draws, so it takes no lock of
 //! the library's and reads no file: the outline it renders from is the
 //! record's for as long as graphics has the font.
+//!
+//! **A size made from an outline with layout tables shapes its text**
+//! (since 1.10). Where the outline has a `GSUB`, `GPOS` or `kern` table
+//! and truetypeshaping.library opens, the record gives the TextFont a
+//! `shape` hook as well, `shapeText`: graphics hands it each text the
+//! font draws or measures, and it answers the glyphs the library's
+//! `ShapeText` makes of the text, their advances and offsets brought
+//! from the outline's units to the size's pixels by the measure the
+//! image's own advances were rounded with. It runs where `makeGlyph`
+//! runs and under the same terms; the library it calls was opened as
+//! the size was made, under the load lock. An outline without such
+//! tables, and every outline while the library is not to be had, draws
+//! a glyph for each character.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -41,6 +54,8 @@ const graphics = sdk.graphics;
 const utility = sdk.utility;
 const diskfont = sdk.diskfont;
 const truetype = sdk.truetype;
+const truetypeshaping = sdk.truetypeshaping;
+const utf8 = utility.utf8;
 const fontimage = graphics.fontimage;
 const fontfile = sdk.diskfont.fontfile;
 const TextFont = graphics.TextFont;
@@ -65,6 +80,12 @@ pub const DiskFont = extern struct {
     /// What `font.render` points at when there is an outline: graphics
     /// calls `makeGlyph` through it.
     hook: utility.Hook = .{},
+    /// What `font.shape` points at when the outline has layout tables:
+    /// graphics calls `shapeText` through it.
+    shaper: utility.Hook = .{},
+    /// How many of the outline's units the size's rows are: its
+    /// ascender less its descender. Set with `shaper`.
+    span: i32 = 0,
     /// The family's name, "spleen.font"; `font.node.name` points here.
     name: [MAXFONTNAME]u8 = @splat(0),
 };
@@ -327,8 +348,9 @@ const outline_ranges = [_]truetype.CodeRange{
 /// from the library's open ones (its TrueType file read and opened by
 /// truetype.library the first time), the characters of `outline_ranges`
 /// rendered into the image, the outline kept with the record for the
-/// glyphs the image lacks, and the font added and opened. The caller
-/// holds the load lock.
+/// glyphs the image lacks and - where it has layout tables and
+/// truetypeshaping.library opens - for shaping the font's text, and the
+/// font added and opened. The caller holds the load lock.
 ///
 /// INPUTS:
 /// - `dfb` - the library.
@@ -360,7 +382,24 @@ pub fn renderOutline(dfb: *DiskfontBase, path: *const [256:0]u8, contents: *cons
     record.hook = .{ .entry = &makeGlyph, .data = dfb };
     // Set before graphics has the font, and never again.
     record.font.render = &record.hook;
+    if (hasLayout(tb, held.outline) and shaper(dfb) != null) {
+        var metrics = truetype.FontMetrics{};
+        tb.FontMetrics(held.outline, &metrics);
+        record.span = metrics.ascender - metrics.descender;
+        record.shaper = .{ .entry = &shapeText, .data = dfb };
+        if (record.span > 0) record.font.shape = &record.shaper;
+    }
     return addAndOpen(dfb, record);
+}
+
+/// Whether an outline has a table a text is shaped by: glyphs replaced
+/// (`GSUB`), glyphs placed (`GPOS`), or pairs moved together (`kern`).
+fn hasLayout(tb: *sdk.interface.truetype.TrueTypeBase, outline: *truetype.Outline) bool {
+    for ([_]*const [4]u8{ "GSUB", "GPOS", "kern" }) |name| {
+        var length: u32 = 0;
+        if (tb.FontTable(outline, truetype.tableTag(name), &length) != null and length != 0) return true;
+    }
+    return false;
 }
 
 /// The `render` hook of a size made from an outline: one glyph the
@@ -409,6 +448,111 @@ fn makeGlyph(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) cal
         truetype.TRUETYPEERR_NOMEM => graphics.GLYPH_LATER,
         else => graphics.GLYPH_NONE,
     };
+}
+
+comptime {
+    // `shapeText` has the shaper write where its own answer goes.
+    if (@sizeOf(truetypeshaping.ShapedGlyph) > @sizeOf(graphics.PlacedGlyph) or
+        @alignOf(truetypeshaping.ShapedGlyph) > @alignOf(graphics.PlacedGlyph))
+        @compileError("a shaped glyph does not fit in a placed one");
+}
+
+/// The `shape` hook of a size made from an outline with layout tables:
+/// one text as the glyphs truetypeshaping.library's `ShapeText` makes
+/// of it, in the default language with the features that are on by
+/// themselves, placed in pixels at the size's height.
+///
+/// The shaper writes its glyphs into the request's own room - one of
+/// its glyphs is no larger than one of the answer's - and they are
+/// turned into the answer from the last one back, so nothing is
+/// allocated here. An advance is the outline's, with what the shaping
+/// added, times the size's scale and rounded as the image's advances
+/// are: a glyph the shaping left alone moves the point as far as its
+/// image says. A glyph is named by its character where it is the one
+/// the outline has for the character its cluster starts with, so the
+/// image's glyphs are the ones drawn; any other by its number, which
+/// `makeGlyph` renders it by.
+///
+/// It runs on whichever task draws or measures, several at once, and
+/// waits for nothing: no lock of the library's, no file. Both libraries
+/// read the outline without changing it.
+///
+/// INPUTS:
+/// - `hook` - the record's hook; its data is the library.
+/// - `object` - the TextFont, the start of the record.
+/// - `message` - the `ShapeRequest`.
+///
+/// RESULT:
+/// `SHAPE_OK` with the glyphs in the request; `SHAPE_ROOM` with how
+/// many there are when they did not fit; `SHAPE_LATER` without the
+/// memory to shape in.
+fn shapeText(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const dfb: *DiskfontBase = @ptrCast(@alignCast(hook.data orelse return graphics.SHAPE_LATER));
+    const font: *TextFont = @ptrCast(@alignCast(object orelse return graphics.SHAPE_LATER));
+    const request: *graphics.ShapeRequest = @ptrCast(@alignCast(message orelse return graphics.SHAPE_LATER));
+    const record = recordOf(font);
+    const held = record.outline orelse return graphics.SHAPE_LATER;
+    const tb = dfb.truetype_base orelse return graphics.SHAPE_LATER;
+    const shaping = dfb.shaping_base orelse return graphics.SHAPE_LATER;
+
+    var run = truetypeshaping.ShapedRun{ .glyphs = @ptrCast(request.glyphs), .room = request.room };
+    const direction = if (request.direction == graphics.TEXTDIR_RIGHT_TO_LEFT)
+        truetypeshaping.TTS_RIGHT_TO_LEFT
+    else
+        truetypeshaping.TTS_LEFT_TO_RIGHT;
+    const answer = shaping.ShapeText(held.outline, request.text, request.length, direction, truetypeshaping.TTS_LANGUAGE_DEFAULT, null, &run);
+    request.count = 0;
+    if (answer == truetypeshaping.TTSERR_ROOM) {
+        request.count = run.count;
+        return graphics.SHAPE_ROOM;
+    }
+    if (answer != truetypeshaping.TTS_OK or run.count > request.room) return graphics.SHAPE_LATER;
+
+    const scale = @as(f32, @floatFromInt(font.image.height)) / @as(f32, @floatFromInt(record.span));
+    const text = request.text[0..request.length];
+    var left = run.count;
+    while (left != 0) {
+        left -= 1;
+        // Read whole before the answer is written over it.
+        const shaped = run.glyphs[left];
+        var which = shaped.glyph;
+        var flags: u32 = graphics.GLYPHREQ_NUMBER;
+        if (shaped.glyph != 0 and shaped.cluster < text.len) {
+            const code = utf8.read(text[shaped.cluster..]).char;
+            if (tb.GlyphIndex(held.outline, code) == shaped.glyph) {
+                which = code;
+                flags = 0;
+            }
+        }
+        request.glyphs[left] = .{
+            .which = which,
+            .flags = flags,
+            .cluster = shaped.cluster,
+            .advance = pixelsOf(shaped.advance, scale),
+            .x = pixelsOf(shaped.x_offset, scale),
+            .y = pixelsOf(shaped.y_offset, scale),
+        };
+    }
+    request.count = run.count;
+    return graphics.SHAPE_OK;
+}
+
+/// A measure in an outline's units as pixels at `scale`, rounded as
+/// truetype.library rounds a rendered glyph's advance.
+fn pixelsOf(units: i32, scale: f32) i32 {
+    const most: f32 = 32767;
+    const pixels = @floor(@as(f32, @floatFromInt(units)) * scale + 0.5);
+    return @intFromFloat(@max(-most, @min(most, pixels)));
+}
+
+/// truetypeshaping.library, opened the first time a size is made from
+/// an outline with layout tables and kept until expunge; null if it
+/// cannot be opened, which is asked again with the next such size.
+fn shaper(dfb: *DiskfontBase) ?*sdk.interface.truetypeshaping.TrueTypeShapingBase {
+    if (dfb.shaping_base) |shaping| return shaping;
+    const lib = dfb.sys_base.OpenLibrary(truetypeshaping.TRUETYPESHAPINGNAME, truetypeshaping.TRUETYPESHAPING_VERSION) orelse return null;
+    dfb.shaping_base = @ptrCast(lib);
+    return dfb.shaping_base;
 }
 
 /// truetype.library, opened the first time it is needed and kept until

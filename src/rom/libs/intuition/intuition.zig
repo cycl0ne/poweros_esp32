@@ -3784,6 +3784,62 @@ test "a string gadget: a right-aligned cursor stays inside the field" {
     try tearDown(ib);
 }
 
+test "a string gadget: a press puts the cursor on the character the pointer is in" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // Six characters of eight columns each, the first two columns into
+    // the field.
+    const left = 2;
+    const field = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = left },
+        .{ .tag = gc.GA_Top, .data = 2 },
+        .{ .tag = gc.GA_Width, .data = 60 },
+        .{ .tag = gc.GA_Height, .data = 12 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = 16 },
+        .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr("abcdef") },
+        .{},
+    }).?;
+    const w = ib.iface().OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(field) },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+    const text = left + 2;
+
+    // The cell of the `d`, columns 24 to 31 of the text: its first
+    // column, and one in its right half, nearer the place after it.
+    click(ib, text + 24, 6);
+    try testing.expectEqual(@as(usize, 3), getAttr(ib, field, gc.STRINGA_BufferPos));
+    click(ib, text + 30, 6);
+    try testing.expectEqual(@as(usize, 3), getAttr(ib, field, gc.STRINGA_BufferPos));
+    // The last column of the cell before it.
+    click(ib, text + 23, 6);
+    try testing.expectEqual(@as(usize, 2), getAttr(ib, field, gc.STRINGA_BufferPos));
+    // Past the text: after its last character.
+    click(ib, text + 54, 6);
+    try testing.expectEqual(@as(usize, 6), getAttr(ib, field, gc.STRINGA_BufferPos));
+    // Its first column: before the first.
+    click(ib, text, 6);
+    try testing.expectEqual(@as(usize, 0), getAttr(ib, field, gc.STRINGA_BufferPos));
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    ib.iface().CloseWindow(w);
+    try testing.expect(ib.iface().CloseScreen(screen));
+    it.DisposeObject(field);
+    display.down(ib);
+    try tearDown(ib);
+}
+
 /// A gadget's own edit hook: what the default edit put in, made upper case.
 fn upperCase(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     _ = hook;
@@ -4134,6 +4190,28 @@ test "a string gadget: UTF-8 in whole, stepped over and taken out whole, and onl
     const long = [_]TagItem{ .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr("ab€€") }, .{} };
     _ = ib.iface().SetGadgetAttrsTagList(field, @ptrCast(@alignCast(w)), &long);
     try testing.expectEqualStrings("ab€", std.mem.span(buffer));
+
+    // A letter with its mark: the cursor keys step over the two as one,
+    // Delete takes both, Backspace the mark alone.
+    const marked = [_]TagItem{
+        .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr("e\u{301}xa\u{308}") },
+        .{ .tag = gc.STRINGA_BufferPos, .data = 7 },
+        .{},
+    };
+    _ = ib.iface().SetGadgetAttrsTagList(field, @ptrCast(@alignCast(w)), &marked);
+    rawKey(ib, 0x4F);
+    try testing.expectEqual(@as(usize, 4), getAttr(ib, field, gc.STRINGA_BufferPos));
+    rawKey(ib, 0x4F);
+    rawKey(ib, 0x4F);
+    try testing.expectEqual(@as(usize, 0), getAttr(ib, field, gc.STRINGA_BufferPos));
+    rawKey(ib, 0x4E);
+    try testing.expectEqual(@as(usize, 3), getAttr(ib, field, gc.STRINGA_BufferPos));
+    rawKey(ib, 0x46);
+    try testing.expectEqualStrings("e\u{301}a\u{308}", std.mem.span(buffer));
+    rawKey(ib, 0x46);
+    try testing.expectEqualStrings("e\u{301}", std.mem.span(buffer));
+    rawKey(ib, 0x41);
+    try testing.expectEqualStrings("e", std.mem.span(buffer));
 
     const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
     ib.iface().CloseWindow(w);

@@ -9,6 +9,8 @@ const TagItem = sdk.utility.TagItem;
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const rastport = @import("../rastport/_rastport.zig");
 const _text = @import("_text.zig");
+const shaped = @import("_shaped.zig");
+const Placed = shaped.Placed;
 const RastPort = rastport.RastPort;
 const drawing = @import("../draw/_draw.zig");
 const blits = @import("../blit/_blit.zig");
@@ -32,8 +34,8 @@ const Piece = drawing.Piece;
 /// ```
 ///
 /// SINCE: 0.11, UTF-8 since 0.38, fonts of 32-bit colour since 0.39,
-/// fallback fonts since 0.40, glyphs made when wanted since 0.41.
-/// LVO -132.
+/// fallback fonts since 0.40, glyphs made when wanted since 0.41, text
+/// a font shapes since 0.42. LVO -132.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. Its font, pens, draw mode, style and clip decide
@@ -103,27 +105,59 @@ const Piece = drawing.Piece;
 /// could not make this time - there was no memory - is drawn as a
 /// character the font lacks, and asked for again by the next text.
 ///
+/// **A font may shape its text.** A font with a shape hook
+/// (`TextFont.shape`) is handed the text and answers the glyphs it is
+/// drawn with, in the order drawn, each with its advance and where it
+/// goes from the point: two letters closer than their advances put them
+/// (a kerned pair), several characters as one glyph (a ligature), one
+/// character as several, a mark put on its letter and moving the point
+/// no further. What is drawn, and where the point ends, is that - not
+/// the characters' glyphs side by side. `TextLength`, `TextExtent` and
+/// `TextFit` count the same glyphs, and `TextOffsetToX` says where in
+/// the text a character's place is.
+///
+/// The text is taken a cluster at a time - a character with the marks
+/// and other characters without a width behind it - and each cluster
+/// is drawn whole by one font: the first of the RastPort's font and its
+/// fallbacks that has every character of it, or else the first whose
+/// hook has another form of it. Neighbouring clusters of one font are
+/// shaped together, so nothing is kerned or joined across a change of
+/// font. A cluster no font draws whole is drawn a character at a time,
+/// as in a font that does not shape. The bold and extended styles
+/// widen each glyph that moves the point, and no other. Without memory
+/// for the glyphs, or when the hook cannot shape this time, this one
+/// text is drawn a glyph a character.
+///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the RastPort's lock
 ///   (`RPTAG_Lock`), if it has one, and while another task makes a glyph
 ///   of the same font.
-/// - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
-///   to the display at the end.
+/// - Interrupts: no. The work is unbounded, it may allocate, and it
+///   hands the rows it wrote on to the display at the end.
 /// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
 /// Nothing the caller has to free: the string is only read. A glyph
-/// made for the text is the library's, kept with the font.
+/// made for the text is the library's, kept with the font. The glyphs a
+/// text is shaped into are allocated and freed within the call.
 ///
 /// NOTES:
-/// A font's hook runs on the caller's stack.
+/// - A font's hooks run on the caller's stack.
+/// - A text of a font that shapes is drawn in one call where its
+///   letters are to stand as they do in the whole: a piece drawn by
+///   itself is shaped by itself.
+/// - `RPTAG_TextDirection` is kept with the RastPort and changes
+///   nothing drawn: a text is laid out left to right.
+/// - A text of more than a megabyte is not shaped.
 ///
 /// BUGS:
-/// None known.
+/// A mark its font puts above or below the line's rows is cut there, as
+/// a fallback font's glyph is.
 ///
 /// SEE ALSO:
-/// `TextLength`, `OpenFont`, `AddFont`, `RPTAG_TextStyle`
+/// `TextLength`, `TextOffsetToX`, `OpenFont`, `AddFont`,
+/// `RPTAG_TextStyle`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -155,6 +189,32 @@ pub fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) v
     var pen_x = start_x;
 
     var done: u32 = 0;
+    // A font that shapes its text: the glyphs its hook places, in runs
+    // of one font as the characters below.
+    if (shaped.wanted(font)) {
+        if (shaped.layOut(gb, font, string, count)) |line| {
+            defer shaped.free(gb, line);
+            var at: usize = 0;
+            while (at < line.placed.len) {
+                const run = takePlaced(font, rp.text_style, line.placed[at..]);
+                const area = graphics.Rect{
+                    .min_x = pen_x + run.room.min_x,
+                    .min_y = top,
+                    .max_x = pen_x + run.room.max_x,
+                    .max_y = top + @as(i32, image.height),
+                };
+                const glyphs = line.placed[at..][0..run.count];
+                if (run.look.font.image.kind == .mono1) {
+                    stencilPlaced(gb, rp, glyphs, run, area);
+                } else {
+                    composePlaced(gb, rp, glyphs, run, area);
+                }
+                pen_x += run.room.width;
+                at += run.count;
+            }
+            done = count;
+        }
+    }
     while (done < count) {
         const run = takeRun(gb, font, rp.text_style, string + done, count - done);
         const area = graphics.Rect{
@@ -187,7 +247,7 @@ pub fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) v
 
 /// As many characters as are drawn in one go, and the room they take.
 const Run = struct {
-    /// Their bytes.
+    /// Their bytes - or, of a text its font shaped, their glyphs.
     count: u32,
     room: Measure,
     /// Whose glyphs they all are, and how those are put on the line.
@@ -229,6 +289,89 @@ fn takeRun(gb: *GraphicsBase, line: *const TextFont, style: graphics.FontStyle, 
         count = after;
     }
     return .{ .count = @intCast(count), .room = room, .look = look };
+}
+
+/// The placed glyphs from the first of `placed` on that fit one strip
+/// and are of one font, at least one: `takeRun` for a text its font
+/// shaped. A run of one font ends between two clusters, so a mark is
+/// drawn in one piece with its letter, and the paper of one never lies
+/// over the other.
+///
+/// INPUTS:
+/// - `line` - the font the text is in.
+/// - `style` - the RastPort's style.
+/// - `placed` - the glyphs left to draw, not none.
+fn takePlaced(line: *const TextFont, style: graphics.FontStyle, placed: []const Placed) Run {
+    const look = _text.lookOf(line, placed[0].font, style);
+    var room = Measure{};
+    var count: usize = 0;
+    while (count < placed.len) : (count += 1) {
+        const entry = &placed[count];
+        const next = shaped.grow(room, entry, look);
+        if (count != 0) {
+            if (entry.font != look.font) break;
+            if (entry.cluster != placed[count - 1].cluster and next.max_x - next.min_x > strip_bytes * 8) break;
+        }
+        room = next;
+    }
+    return .{ .count = @intCast(count), .room = room, .look = look };
+}
+
+/// `look` for one placed glyph: the glyph raised by its rows.
+fn raised(look: Look, entry: *const Placed) Look {
+    var up = look;
+    up.drop -= entry.y;
+    return up;
+}
+
+/// `stencilRun` for a run of placed glyphs.
+fn stencilPlaced(gb: *GraphicsBase, rp: *RastPort, placed: []const Placed, run: Run, area: graphics.Rect) void {
+    const graphics_lib = gb.iface();
+    const look = run.look;
+    const height: i32 = look.line.image.height;
+    var band: i32 = 0;
+    while (band < height) : (band += strip_rows) {
+        const band_rows = @min(strip_rows, height - band);
+        var strip: [strip_rows][strip_bytes]u8 = @splat(@splat(0));
+        var at: i32 = -run.room.min_x;
+        for (placed) |*entry| {
+            if (entry.glyph) |glyph| placeGlyph(&strip, raised(look, entry), glyph, at + entry.x, band, band_rows);
+            at += shaped.stepOf(entry, look);
+        }
+        const piece = graphics.Rect{
+            .min_x = area.min_x,
+            .min_y = area.min_y + band,
+            .max_x = area.max_x,
+            .max_y = area.min_y + band + band_rows,
+        };
+        graphics_lib.BltTemplate(@ptrCast(rp), @ptrCast(&strip), strip_bytes, 0, 0, &piece);
+    }
+}
+
+/// `composeRun` for a run of placed glyphs.
+fn composePlaced(gb: *GraphicsBase, rp: *RastPort, placed: []const Placed, run: Run, area: graphics.Rect) void {
+    const look = run.look;
+    const top = area.min_y;
+    const jam2 = rp.draw_mode & graphics.DRMD_JAM2 != 0;
+    var it = drawing.visible(rp, area);
+    var bound = graphics.Rect{};
+    var any = false;
+    while (it.next()) |piece| {
+        const r = piece.rect;
+        if (jam2) {
+            const ground = blits.Stencil.of(rp, piece.surface.format).clear.?;
+            var y: i32 = r.min_y;
+            while (y < r.max_y) : (y += 1) ground.run(drawing.address(piece, r.min_x, y), ground.bytes, @intCast(r.width()));
+        }
+        var at: i32 = area.min_x - run.room.min_x;
+        for (placed) |*entry| {
+            if (entry.glyph) |glyph| composeGlyph(rp, piece, raised(look, entry), glyph, at + entry.x, top);
+            at += shaped.stepOf(entry, look);
+        }
+        drawing.grow(&bound, r.min_y, &any);
+        drawing.grow(&bound, r.max_y - 1, &any);
+    }
+    if (any) drawing.handOn(gb, rp, drawing.written(area, bound));
 }
 
 /// A run of one-bit glyphs: assembled into a strip a band of rows at a

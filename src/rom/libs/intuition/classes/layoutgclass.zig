@@ -664,8 +664,14 @@ pub const Labels = struct {
     pub fn width(labels: *const Labels, ib: *IntuitionBase, record: *const Child) i32 {
         const text = record.label orelse return 0;
         const run = intuition.text.plainRun(text, labels.measure.font);
-        // Measured as it is drawn: without the `_` that marks its key.
-        if (gc.labelMark(text) != null) {
+        // Measured as it is drawn: without the `_` that marks its key,
+        // as one piece of text.
+        if (gc.labelMark(text)) |at| {
+            var plain = gc.PlainLabel{};
+            if (gc.plainLabel(text[0..d.textLen(text)], at - 1, &plain)) {
+                const whole = intuition.text.plainRun(&plain.bytes, labels.measure.font);
+                return ib.iface().IntuiTextLength(&whole);
+            }
             const mark = intuition.text.plainRun("_", labels.measure.font);
             return ib.iface().IntuiTextLength(&run) - ib.iface().IntuiTextLength(&mark);
         }

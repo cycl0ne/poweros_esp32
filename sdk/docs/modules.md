@@ -345,6 +345,7 @@ flowchart TB
     m_diskfont_library --> m_dos_library
     m_diskfont_library --> m_graphics_library
     m_diskfont_library --> m_truetype_library
+    m_diskfont_library --> m_truetypeshaping_library
     m_dts_acodec --> m_media_library
     m_ecm_device --> m_dos_library
     m_ecm_device --> m_timer_device

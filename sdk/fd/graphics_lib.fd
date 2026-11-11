@@ -334,4 +334,13 @@ void WriteYUVPixelArray(*graphics.RastPort rp, *const rtg.RtgYuv picture, i32 sr
 /// video frame - the nearest pixel, or between them and averaged under
 /// RPTAG_Smooth.
 void ScaleYUVPixelArray(*graphics.RastPort rp, *const rtg.RtgYuv picture, *const graphics.Rect src_area, *const graphics.Rect dest_area)
+// Places in a text
+/// How many pixels right of a text's starting point the place before
+/// byte `offset` is, in the text as Text draws it - kerned, with its
+/// ligatures and marks. At `count` or past it: the text's length.
+i32 TextOffsetToX(*graphics.RastPort rp, [*]const u8 string, u32 count, u32 offset)
+/// The byte before which the place nearest column `x` of a text is, in
+/// the text as Text draws it: where a character starts, never a mark
+/// its letter carries, or `count` for the place after the text.
+u32 TextXToOffset(*graphics.RastPort rp, [*]const u8 string, u32 count, i32 x)
 ##end

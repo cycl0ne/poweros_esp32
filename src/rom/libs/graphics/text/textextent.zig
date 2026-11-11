@@ -18,7 +18,7 @@ const _text = @import("_text.zig");
 /// ```
 ///
 /// SINCE: 0.14, UTF-8 since 0.38, fallback fonts since 0.40, glyphs made
-/// when wanted since 0.41. LVO -168.
+/// when wanted since 0.41, text a font shapes since 0.42. LVO -168.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. Its font and text style decide the answer.
@@ -46,6 +46,10 @@ const _text = @import("_text.zig");
 /// text holds. A glyph the font's hook makes (`TextFont.render`) is made
 /// here when this is the first call to want it, as `Text` makes it.
 ///
+/// A text its font shapes (`TextFont.shape`) is laid out as `Text` lays
+/// it out and measured as those glyphs, each where the font put it: a
+/// mark counts across where it stands on its letter.
+///
 /// Half-open like every rectangle here, so the height is `max_y - min_y`
 /// and there is no `+ 1` anywhere.
 ///
@@ -53,14 +57,15 @@ const _text = @import("_text.zig");
 /// - Waits: only for a font that makes glyphs, while another task makes
 ///   one of the same font.
 /// - Interrupts: no. It reads the caller's RastPort, which an interrupt does
-///   not share.
+///   not share, and allocates for a font that shapes its text.
 /// - Locks: none needed; no spinlock may be held with a font that makes
-///   glyphs.
+///   glyphs or shapes its text.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
 /// Nothing the caller has to free. A glyph made for the measuring is
-/// the library's, kept with the font.
+/// the library's, kept with the font. The glyphs a text is shaped into
+/// are allocated and freed within the call.
 ///
 /// BUGS:
 /// None known.

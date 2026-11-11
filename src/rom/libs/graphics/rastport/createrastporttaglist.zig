@@ -23,7 +23,7 @@ const surfaceFor = _rastport.surfaceFor;
 /// fn CreateRastPortTagList(gb: *GraphicsBase, tags: ?[*]const TagItem) ?*RastPort
 /// ```
 ///
-/// SINCE: 0.2. LVO -20.
+/// SINCE: 0.2, `RPTAG_TextDirection` since 0.42. LVO -20.
 ///
 /// INPUTS:
 /// - `tag_list` - what to make it on and what state to give it, or null
@@ -37,6 +37,8 @@ const surfaceFor = _rastport.surfaceFor;
 ///     white on black, so that a RastPort nobody configured still draws
 ///     something a person can see.
 ///   - `RPTAG_DrMd` (`DrawMode`) - default `.copy`.
+///   - `RPTAG_TextDirection` - how its text reads, default
+///     `TEXTDIR_LEFT_TO_RIGHT`.
 ///
 ///   The first of Surface, BitMap and Board that is present wins; with
 ///   none of them the View is used.
@@ -178,6 +180,7 @@ pub fn CreateRastPortTagList(gb: *GraphicsBase, tags: ?[*]const TagItem) ?*RastP
         .pattern_step = 0,
         .font = @ptrFromInt(ub.GetTagData(graphics.RPTAG_Font, 0, tags)),
         .text_style = @truncate(ub.GetTagData(graphics.RPTAG_TextStyle, graphics.FS_NORMAL, tags)),
+        .text_direction = if (ub.GetTagData(graphics.RPTAG_TextDirection, graphics.TEXTDIR_LEFT_TO_RIGHT, tags) == graphics.TEXTDIR_RIGHT_TO_LEFT) graphics.TEXTDIR_RIGHT_TO_LEFT else graphics.TEXTDIR_LEFT_TO_RIGHT,
         .area_points = null,
         .area_max = 0,
         .area_count = 0,

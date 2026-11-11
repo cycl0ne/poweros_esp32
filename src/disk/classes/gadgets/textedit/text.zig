@@ -30,6 +30,18 @@
 //! no calls; a character past them is asked of `Layout.measure`, which
 //! the gadget gives and keeps the answers of. The gadget measures what
 //! it draws with the font itself.
+//!
+//! **A row is laid out in pieces** (`pieces`): the text between two tabs
+//! or control characters, `piece_room` bytes of it at the most, and each
+//! tab or control character by itself. A piece is what the gadget draws
+//! in one go. With a font that shapes its text - one that kerns, joins
+//! letters or puts a mark on its letter - the gadget gives `Layout.place`
+//! and `Layout.nearest`, and where a position is in its row (`xOf`,
+//! `xInRow`) and the position at a place (`posAt`) are asked of the font
+//! for the piece as a whole, so they are where the letters are drawn and
+//! not where the widths added up would put them. Rows are broken, and
+//! the widest one is found, by the table's widths either way: a wrapped
+//! row of shaped text may end a few pixels before or after the width.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -56,6 +68,12 @@ pub const Layout = struct {
     /// a `?`'s.
     measure: ?*const fn (context: ?*anyopaque, char: u32) u16 = null,
     context: ?*anyopaque = null,
+    /// With a font that shapes its text: how many pixels into the piece
+    /// `bytes`, drawn as one, the place before its byte `offset` is - the
+    /// piece's width for its length - and the byte of the place nearest
+    /// `x`. Both or neither; without them the widths are added up.
+    place: ?*const fn (context: ?*anyopaque, bytes: []const u8, offset: u32) u32 = null,
+    nearest: ?*const fn (context: ?*anyopaque, bytes: []const u8, x: i32) u32 = null,
     /// Pixels between tab stops: eight spaces.
     tab_stop: u32 = 8,
     wrap_width: u32 = 0,
@@ -65,6 +83,68 @@ pub const Layout = struct {
         if (char < 0x100) return layout.widths[char];
         const measure = layout.measure orelse return layout.widths['?'];
         return measure(layout.context, char);
+    }
+};
+
+/// The most bytes of a piece.
+pub const piece_room = 256;
+/// A piece of this many bytes ends before the next word.
+const piece_full = piece_room - 64;
+
+/// Whether a character is drawn: not a tab or another control character,
+/// which only take room.
+pub fn isDrawn(char: u32) bool {
+    return char >= 0x20 and !(char >= 0x7F and char < 0xA0);
+}
+
+/// A stretch of a row that is laid out and drawn as one.
+pub const Piece = struct {
+    from: u32,
+    to: u32,
+    /// How far into the row it starts.
+    x: u32,
+    /// Text; else one tab or control character.
+    drawn: bool,
+};
+
+/// A row's pieces from its start, each placed after the ones before.
+pub const Pieces = struct {
+    text: *const Text,
+    end: u32,
+    /// The piece `next` gave last; before the first, an empty one at the
+    /// row's start.
+    piece: Piece,
+    /// Its width, once it was asked for.
+    width: ?u32 = 0,
+
+    /// The next piece; null after the last, when `piece` and `widthOf`
+    /// are still the last one's.
+    pub fn next(pieces: *Pieces) ?Piece {
+        const text = pieces.text;
+        const at = pieces.piece.to;
+        if (at >= pieces.end) return null;
+        const x = pieces.piece.x + pieces.widthOf();
+        const first = text.charAt(at);
+        const drawn = isDrawn(first.char);
+        const to = if (drawn) text.pieceEnd(at, pieces.end) else at + @as(u32, @intCast(first.length));
+        pieces.piece = .{ .from = at, .to = to, .x = x, .drawn = drawn };
+        pieces.width = null;
+        return pieces.piece;
+    }
+
+    /// The width of the piece `next` gave last.
+    pub fn widthOf(pieces: *Pieces) u32 {
+        if (pieces.width) |known| return known;
+        const text = pieces.text;
+        const piece = pieces.piece;
+        const width = if (piece.drawn) text.placeIn(piece, piece.to) else text.widthAt(text.charAt(piece.from).char, piece.x);
+        pieces.width = width;
+        return width;
+    }
+
+    /// How far into the row the text given so far reaches.
+    pub fn reach(pieces: *Pieces) u32 {
+        return pieces.piece.x + pieces.widthOf();
     }
 };
 
@@ -373,23 +453,177 @@ pub const Text = struct {
         return text.layout.widthOf(char);
     }
 
-    /// How far into its row `pos` is: the width of the row's text before it.
-    pub fn xOf(text: *const Text, pos: u32) u32 {
-        const row = text.rowOf(pos);
-        var x: u32 = 0;
-        var at = text.rowStart(row);
-        while (at < pos) {
+    /// The pieces of `row`.
+    pub fn pieces(text: *const Text, row: u32) Pieces {
+        const start = text.rowStart(row);
+        return .{ .text = text, .end = text.rowEnd(row), .piece = .{ .from = start, .to = start, .x = 0, .drawn = false } };
+    }
+
+    /// Where the piece of text that starts at `from` ends: before the
+    /// next tab or control character or at `end`; a long one before the
+    /// first word that starts `piece_full` bytes in, and at `piece_room`
+    /// bytes at the latest - there before a letter, not between a letter
+    /// and its marks.
+    fn pieceEnd(text: *const Text, from: u32, end: u32) u32 {
+        var at = from;
+        // The last letter in the piece: where a cut for room goes.
+        var letter = from;
+        var after_space = false;
+        while (at < end) {
             const found = text.charAt(at);
-            x += text.widthAt(found.char, x);
+            if (!isDrawn(found.char)) break;
+            const size: u32 = @intCast(found.length);
+            const starts = unicode.width(found.char) != 0;
+            if (starts and after_space and at - from >= piece_full) break;
+            if (at + size - from > piece_room) return if (starts or letter == from) at else letter;
+            if (starts) letter = at;
+            at += size;
+            after_space = found.char == ' ';
+        }
+        return at;
+    }
+
+    /// A piece's bytes: the text's own where the gap is not in them, else
+    /// copied to `copy`.
+    pub fn bytesOf(text: *const Text, piece: Piece, copy: *[piece_room]u8) []const u8 {
+        if (text.slice(piece.from, piece.to)) |bytes| return bytes;
+        text.copyOut(piece.from, piece.to, copy);
+        return copy[0 .. piece.to - piece.from];
+    }
+
+    /// How far into a piece of text the place before `pos` is; the
+    /// piece's width from its end on.
+    pub fn placeIn(text: *const Text, piece: Piece, pos: u32) u32 {
+        if (pos <= piece.from) return 0;
+        const upto = @min(pos, piece.to);
+        if (text.layout.place) |place| {
+            var copy: [piece_room]u8 = undefined;
+            return place(text.layout.context, text.bytesOf(piece, &copy), upto - piece.from);
+        }
+        var x: u32 = 0;
+        var at = piece.from;
+        while (at < upto) {
+            const found = text.charAt(at);
+            x += text.layout.widthOf(found.char);
             at += @intCast(found.length);
         }
         return x;
+    }
+
+    /// The position in a piece of text whose place is nearest `x`, counted
+    /// from the piece's start: before a character whose left half `x` is
+    /// in, after it from its right half on.
+    pub fn nearIn(text: *const Text, piece: Piece, x: i64) u32 {
+        if (x <= 0) return piece.from;
+        if (text.layout.nearest) |nearest| {
+            var copy: [piece_room]u8 = undefined;
+            const column: i32 = @intCast(@min(x, 0x7FFF_FFFF));
+            return piece.from + @min(nearest(text.layout.context, text.bytesOf(piece, &copy), column), piece.to - piece.from);
+        }
+        var at = piece.from;
+        var left: u32 = 0;
+        while (at < piece.to) {
+            const found = text.charAt(at);
+            const width = text.layout.widthOf(found.char);
+            if (x < @as(i64, left) + width / 2 + (width & 1)) return at;
+            left += width;
+            at += @intCast(found.length);
+        }
+        return piece.to;
+    }
+
+    /// Where the character at `pos` and the marks after it end: `end` at
+    /// the most. A tab, a line feed or another control character has no
+    /// marks.
+    pub fn clusterEnd(text: *const Text, pos: u32, end: u32) u32 {
+        if (pos >= end) return end;
+        const first = text.charAt(pos);
+        var at = pos + @as(u32, @intCast(first.length));
+        if (!isDrawn(first.char)) return @min(at, end);
+        while (at < end) {
+            const found = text.charAt(at);
+            if (unicode.width(found.char) != 0) break;
+            at += @intCast(found.length);
+        }
+        return @min(at, end);
+    }
+
+    /// Where the letter before `pos` starts, its marks stepped over:
+    /// `floor` at the least. Marks after a control character have no
+    /// letter, and the first of them is where they start.
+    pub fn clusterBefore(text: *const Text, pos: u32, floor: u32) u32 {
+        var at = pos;
+        while (at > floor) {
+            const before = text.charBefore(at);
+            const char = text.charAt(before).char;
+            if (!isDrawn(char) and at < pos) break;
+            at = before;
+            if (unicode.width(char) != 0) break;
+        }
+        return @max(at, floor);
+    }
+
+    /// The part of a piece of text, `width` wide, that is wholly between
+    /// `left` and `right` in its row: from the first letter that starts at
+    /// `left` or after it to the last that ends at `right` or before.
+    pub fn within(text: *const Text, piece: Piece, width: u32, left: i64, right: i64) Span {
+        const x: i64 = piece.x;
+        var span = Span{ .from = piece.from, .to = piece.to };
+        if (x >= left and x + width <= right) return span;
+        if (x + width <= left or x >= right) return .{ .from = piece.from, .to = piece.from };
+        if (x < left) {
+            span.from = text.nearIn(piece, left - x);
+            if (text.placeIn(piece, span.from) < left - x) span.from = text.clusterEnd(span.from, piece.to);
+        }
+        if (x + width > right) {
+            span.to = text.nearIn(piece, right - x);
+            if (text.placeIn(piece, span.to) > right - x) span.to = text.clusterBefore(span.to, piece.from);
+        }
+        if (span.to < span.from) span.to = span.from;
+        return span;
+    }
+
+    /// How far into `row` the place before `pos` is; `pos` is in the row
+    /// or at its end.
+    pub fn xInRow(text: *const Text, row: u32, pos: u32) u32 {
+        if (text.layout.place == null) {
+            var x: u32 = 0;
+            var at = text.rowStart(row);
+            while (at < pos) {
+                const found = text.charAt(at);
+                x += text.widthAt(found.char, x);
+                at += @intCast(found.length);
+            }
+            return x;
+        }
+        var row_pieces = text.pieces(row);
+        while (row_pieces.next()) |piece| {
+            if (pos <= piece.from) return piece.x;
+            if (pos < piece.to) return piece.x + text.placeIn(piece, pos);
+        }
+        return row_pieces.reach();
+    }
+
+    /// How far into its row `pos` is: the width of the row's text before it.
+    pub fn xOf(text: *const Text, pos: u32) u32 {
+        return text.xInRow(text.rowOf(pos), pos);
     }
 
     /// The position in `row` nearest `x`: before a character whose left
     /// half `x` is in, after it from its right half on.
     pub fn posAt(text: *const Text, row: u32, x: i64) u32 {
         const end = text.rowEnd(row);
+        if (text.layout.nearest != null) {
+            var row_pieces = text.pieces(row);
+            while (row_pieces.next()) |piece| {
+                const width = row_pieces.widthOf();
+                const left: i64 = piece.x;
+                if (x >= left + width) continue;
+                if (piece.drawn) return text.nearIn(piece, x - left);
+                return if (x < left + width / 2 + (width & 1)) piece.from else piece.to;
+            }
+            return end;
+        }
         var at = text.rowStart(row);
         var left: u32 = 0;
         while (at < end) {
@@ -763,6 +997,131 @@ test "positions and widths: tabs to the next stop, a press nearest a byte's edge
     try testing.expectEqual(@as(u32, 3), text.posAt(0, 6));
     try testing.expectEqual(@as(u32, 4), text.posAt(0, 50));
     try testing.expectEqual(@as(u32, 7), text.posAt(1, 50));
+}
+
+/// A font for the tests that shapes its text: every letter 4 wide, an
+/// `A` before a `V` 2 narrower, and a mark that takes no room and has no
+/// place before it.
+fn shapedPlace(_: ?*anyopaque, bytes: []const u8, offset: u32) u32 {
+    var upto: usize = @min(offset, bytes.len);
+    while (upto < bytes.len and unicode.width(utf8.read(bytes[upto..]).char) == 0) upto += utf8.read(bytes[upto..]).length;
+    var x: u32 = 0;
+    var at: usize = 0;
+    while (at < upto) {
+        const found = utf8.read(bytes[at..]);
+        at += found.length;
+        if (unicode.width(found.char) != 0) x += 4;
+        if (found.char == 'A' and at < bytes.len and bytes[at] == 'V') x -= 2;
+    }
+    return x;
+}
+
+fn shapedNearest(context: ?*anyopaque, bytes: []const u8, x: i32) u32 {
+    var at: usize = 0;
+    while (at < bytes.len) {
+        var next = at + utf8.read(bytes[at..]).length;
+        while (next < bytes.len and unicode.width(utf8.read(bytes[next..]).char) == 0) next += utf8.read(bytes[next..]).length;
+        const here = shapedPlace(context, bytes, @intCast(at));
+        const there = shapedPlace(context, bytes, @intCast(next));
+        if (2 * @as(i64, x) < here + there) return @intCast(at);
+        at = next;
+    }
+    return @intCast(bytes.len);
+}
+
+test "a font that shapes: a position is where its piece is drawn, a press the nearest place" {
+    var text = Text.init(test_memory).?;
+    defer text.deinit();
+    text.layout.place = shapedPlace;
+    text.layout.nearest = shapedNearest;
+    text.layout.tab_stop = 16;
+    try testing.expect(text.setAll("AVA\tAV"));
+    // The first `A` is 2 wide before its `V`; the tab goes from 10 to 16.
+    const places = [_]u32{ 0, 2, 6, 10, 16, 18, 22 };
+    for (places, 0..) |place, pos| try testing.expectEqual(place, text.xOf(@intCast(pos)));
+    try testing.expectEqual(@as(u32, 0), text.posAt(0, -5));
+    try testing.expectEqual(@as(u32, 0), text.posAt(0, 0));
+    try testing.expectEqual(@as(u32, 1), text.posAt(0, 1));
+    try testing.expectEqual(@as(u32, 1), text.posAt(0, 3));
+    try testing.expectEqual(@as(u32, 2), text.posAt(0, 4));
+    // Either half of the tab.
+    try testing.expectEqual(@as(u32, 3), text.posAt(0, 12));
+    try testing.expectEqual(@as(u32, 4), text.posAt(0, 13));
+    try testing.expectEqual(@as(u32, 5), text.posAt(0, 17));
+    try testing.expectEqual(@as(u32, 6), text.posAt(0, 100));
+
+    // A letter and its mark are one place: no press lands between them,
+    // and the cursor on the letter covers both.
+    try testing.expect(text.setAll("e\u{301}x"));
+    try testing.expectEqual(@as(u32, 3), text.clusterEnd(0, text.length()));
+    try testing.expectEqual(@as(u32, 0), text.clusterBefore(3, 0));
+    try testing.expectEqual(@as(u32, 3), text.clusterBefore(4, 0));
+    try testing.expectEqual(@as(u32, 4), text.xOf(3));
+    try testing.expectEqual(@as(u32, 8), text.xOf(4));
+    try testing.expectEqual(@as(u32, 0), text.posAt(0, 1));
+    try testing.expectEqual(@as(u32, 3), text.posAt(0, 3));
+    try testing.expectEqual(@as(u32, 4), text.posAt(0, 7));
+    // A mark at a line's start has no letter: the line feed before it
+    // is stepped over by itself, either way.
+    try testing.expect(text.setAll("a\n\u{301}b"));
+    try testing.expectEqual(@as(u32, 2), text.clusterEnd(1, text.length()));
+    try testing.expectEqual(@as(u32, 2), text.clusterBefore(4, 0));
+    try testing.expectEqual(@as(u32, 1), text.clusterBefore(2, 0));
+}
+
+test "pieces: text between tabs, a long stretch cut before a word or a letter, and what of one is in view" {
+    var text = Text.init(test_memory).?;
+    defer text.deinit();
+    text.layout.place = shapedPlace;
+    text.layout.nearest = shapedNearest;
+    text.layout.tab_stop = 16;
+    var long: [600]u8 = undefined;
+
+    // No space to cut at: `piece_room` bytes each.
+    @memset(&long, 'a');
+    try testing.expect(text.setAll(&long));
+    var solid = text.pieces(0);
+    try testing.expectEqual(Piece{ .from = 0, .to = 256, .x = 0, .drawn = true }, solid.next().?);
+    try testing.expectEqual(Piece{ .from = 256, .to = 512, .x = 1024, .drawn = true }, solid.next().?);
+    try testing.expectEqual(Piece{ .from = 512, .to = 600, .x = 2048, .drawn = true }, solid.next().?);
+    try testing.expectEqual(@as(?Piece, null), solid.next());
+    try testing.expectEqual(@as(u32, 2400), solid.reach());
+    try testing.expectEqual(@as(u32, 2400), text.xOf(600));
+    try testing.expectEqual(@as(u32, 300), text.posAt(0, 1201));
+
+    // Words: cut before the first that starts 192 bytes in.
+    for (&long, 0..) |*byte, index| byte.* = if (index % 5 == 4) ' ' else 'w';
+    try testing.expect(text.setAll(long[0..500]));
+    var words = text.pieces(0);
+    try testing.expectEqual(@as(u32, 195), words.next().?.to);
+    try testing.expectEqual(@as(u32, 390), words.next().?.to);
+    try testing.expectEqual(@as(u32, 500), words.next().?.to);
+
+    // A letter is not parted from its mark where the room ends.
+    @memset(long[0..255], 'a');
+    @memcpy(long[255..258], "e\u{301}");
+    try testing.expect(text.setAll(long[0..258]));
+    var marked = text.pieces(0);
+    try testing.expectEqual(@as(u32, 255), marked.next().?.to);
+    try testing.expectEqual(@as(u32, 258), marked.next().?.to);
+
+    // A tab and a control character are pieces of their own.
+    try testing.expect(text.setAll("ab\tc\x01d"));
+    var mixed = text.pieces(0);
+    try testing.expectEqual(Piece{ .from = 0, .to = 2, .x = 0, .drawn = true }, mixed.next().?);
+    try testing.expectEqual(Piece{ .from = 2, .to = 3, .x = 8, .drawn = false }, mixed.next().?);
+    try testing.expectEqual(Piece{ .from = 3, .to = 4, .x = 16, .drawn = true }, mixed.next().?);
+    try testing.expectEqual(Piece{ .from = 4, .to = 5, .x = 20, .drawn = false }, mixed.next().?);
+
+    // What of a piece is wholly inside a view: letters cut by either
+    // edge are left out.
+    try testing.expect(text.setAll("aaaaaaaa"));
+    var one = text.pieces(0);
+    const piece = one.next().?;
+    try testing.expectEqual(Span{ .from = 0, .to = 8 }, text.within(piece, 32, 0, 32));
+    try testing.expectEqual(Span{ .from = 2, .to = 6 }, text.within(piece, 32, 5, 27));
+    try testing.expectEqual(Span{ .from = 1, .to = 7 }, text.within(piece, 32, 4, 28));
+    try testing.expectEqual(Span{ .from = 0, .to = 0 }, text.within(piece, 32, 40, 50));
 }
 
 test "words, and finding text forwards, backwards, in any case and round the end" {

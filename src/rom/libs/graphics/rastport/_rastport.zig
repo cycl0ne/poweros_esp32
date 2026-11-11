@@ -124,6 +124,9 @@ pub const RastPort = extern struct {
     font: ?*fonts.TextFont,
     /// How letters are drawn on top of the font's own shape.
     text_style: graphics.FontStyle,
+    /// How the text drawn through it reads: `TEXTDIR_LEFT_TO_RIGHT` or
+    /// `TEXTDIR_RIGHT_TO_LEFT`.
+    text_direction: u32,
     /// The batch this RastPort has open (`BeginDraw`), and how deep it
     /// is nested. While one is open the rows written are gathered in the
     /// bitmap rather than handed to the display, and `EndDraw` hands on

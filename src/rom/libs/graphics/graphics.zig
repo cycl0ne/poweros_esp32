@@ -4469,6 +4469,288 @@ test "a font's render hook: a glyph the image lacks is made once and kept with t
     try tearDown(gb);
 }
 
+/// 8 rows, baseline 6, ink: the letters a made-up shaper lays out. Each
+/// is one pixel on row 2 but 'e', two pixels on row 4; '?' is the
+/// default.
+const shape_spec = fontimage.Spec{
+    .height = 8,
+    .baseline = 6,
+    .x_size = 8,
+    .default_char = '?',
+    .glyphs = &.{
+        testGlyph('?', 8, 0, 0, 8, 1, &.{0xFF}),
+        testGlyph('A', 8, 0, 2, 1, 1, &.{0x80}),
+        testGlyph('L', 8, 0, 2, 1, 1, &.{0x80}),
+        testGlyph('V', 8, 0, 2, 1, 1, &.{0x80}),
+        testGlyph('e', 6, 0, 4, 2, 1, &.{0xC0}),
+        testGlyph('f', 5, 0, 2, 1, 1, &.{0x80}),
+        testGlyph('i', 3, 0, 2, 1, 1, &.{0x80}),
+        testGlyph('m', 8, 0, 2, 1, 1, &.{0x80}),
+    },
+};
+const shape_font: [fontimage.imageSize(shape_spec)]u8 align(4) = fontimage.build(shape_spec);
+
+/// A font's two hooks for the shaping test. The shaper: 'A' before 'V'
+/// is two columns narrower; an acute (U+0301) is glyph 20 on the letter
+/// before it, four columns back and two rows up, and 'é' is 'e' and
+/// that glyph; "fi" is glyph 30; 'm' is twelve 'i'; 'L' cannot be
+/// shaped the first time; anything else it does not know is glyph 0.
+/// The maker has glyphs 20 and 30 and no character.
+const Shaper = struct {
+    calls: u32 = 0,
+    later: u32 = 0,
+    /// The direction the last request named.
+    direction: u32 = 99,
+
+    fn shape(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+        _ = object;
+        const shaper: *Shaper = @ptrCast(@alignCast(hook.data.?));
+        const request: *graphics.ShapeRequest = @ptrCast(@alignCast(message.?));
+        shaper.calls += 1;
+        shaper.direction = request.direction;
+        const text = request.text[0..request.length];
+        const by_number = graphics.GLYPHREQ_NUMBER;
+        var made: u32 = 0;
+        var at: usize = 0;
+        while (at < text.len) {
+            const here: u32 = @intCast(at);
+            const code = sdk.utility.utf8.next(text, &at);
+            switch (code) {
+                'A' => put(request, &made, .{ .which = 'A', .cluster = here, .advance = if (at < text.len and text[at] == 'V') 6 else 8 }),
+                'V' => put(request, &made, .{ .which = 'V', .cluster = here, .advance = 8 }),
+                'e' => put(request, &made, .{ .which = 'e', .cluster = here, .advance = 6 }),
+                'i' => put(request, &made, .{ .which = 'i', .cluster = here, .advance = 3 }),
+                // Named by its own byte: the cluster is its letter's all the same.
+                0x301 => put(request, &made, .{ .which = 20, .flags = by_number, .cluster = here, .advance = 0, .x = -4, .y = 2 }),
+                0xE9 => {
+                    put(request, &made, .{ .which = 'e', .cluster = here, .advance = 6 });
+                    put(request, &made, .{ .which = 20, .flags = by_number, .cluster = here, .advance = 0, .x = -4, .y = 2 });
+                },
+                'f' => if (at < text.len and text[at] == 'i') {
+                    at += 1;
+                    put(request, &made, .{ .which = 30, .flags = by_number, .cluster = here, .advance = 7 });
+                } else put(request, &made, .{ .which = 'f', .cluster = here, .advance = 5 }),
+                'm' => for (0..12) |_| put(request, &made, .{ .which = 'i', .cluster = here, .advance = 3 }),
+                'L' => {
+                    shaper.later += 1;
+                    if (shaper.later == 1) return graphics.SHAPE_LATER;
+                    put(request, &made, .{ .which = 'L', .cluster = here, .advance = 8 });
+                },
+                else => put(request, &made, .{ .which = 0, .flags = by_number, .cluster = here, .advance = 8 }),
+            }
+        }
+        request.count = made;
+        return if (made > request.room) graphics.SHAPE_ROOM else graphics.SHAPE_OK;
+    }
+
+    fn put(request: *graphics.ShapeRequest, made: *u32, glyph: graphics.PlacedGlyph) void {
+        if (made.* < request.room) request.glyphs[made.*] = glyph;
+        made.* += 1;
+    }
+
+    fn make(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+        _ = hook;
+        _ = object;
+        const request: *graphics.GlyphRequest = @ptrCast(@alignCast(message.?));
+        request.kind = .mono1;
+        if (request.flags & graphics.GLYPHREQ_NUMBER == 0) return graphics.GLYPH_NONE;
+        // The mark: a pixel on row 3. The ligature: two on row 2.
+        const bits: u8, const width: u16, const top: i16, const advance: i16 = switch (request.which) {
+            20 => .{ 0x80, 1, 3, 4 },
+            30 => .{ 0xC0, 2, 2, 7 },
+            else => return graphics.GLYPH_NONE,
+        };
+        request.size = 1;
+        if (request.room < 1) return graphics.GLYPH_ROOM;
+        request.pixels[0] = bits;
+        request.glyph = .{ .width = width, .rows = 1, .top = top, .advance = advance, .pitch = 1 };
+        return graphics.GLYPH_OK;
+    }
+};
+
+test "a font's shape hook: text is drawn, measured and fitted as the glyphs it lays out" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [64 * 32 * 2]u8 = @splat(0);
+    var surface = rtg.Surface{ .pixels = &pixels, .width = 64, .height = 32, .pitch = 128, .size_bytes = pixels.len, .format = .rgb565 };
+    const tags = [_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
+        .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 255, 255) },
+        .{},
+    };
+    const rp = base(gb).CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    var shaper = Shaper{};
+    var shape_hook = sdk.utility.Hook{ .entry = &Shaper.shape, .data = &shaper };
+    var make_hook = sdk.utility.Hook{ .entry = &Shaper.make, .data = &shaper };
+    var tall = fonts.TextFont{ .node = .{ .name = "tall.font" }, .image = @ptrCast(&tall_font) };
+    var line = fonts.TextFont{ .node = .{ .name = "shaped.font" }, .image = @ptrCast(&shape_font), .fallback = &tall, .render = &make_hook, .shape = &shape_hook };
+    try testing.expect(base(gb).AddFont(&line));
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&line) }, .{} });
+    var point: graphics.Point = .{};
+    const ask_point = [_]TagItem{ .{ .tag = graphics.RPTAG_Cursor, .data = @intFromPtr(&point) }, .{} };
+    var room: graphics.TextExtent = .{};
+
+    // A kerned pair: the advance is the shaper's, not the image's, in
+    // the length, the extent and where the point is left - and one
+    // call lays a text out.
+    try testing.expectEqual(@as(i32, 14), base(gb).TextLength(rp, "AV", 2));
+    try testing.expectEqual(@as(u32, 1), shaper.calls);
+    try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, "A", 1));
+    base(gb).TextExtent(rp, "AV", 2, &room);
+    try testing.expectEqual(@as(i32, 14), room.width);
+    try testing.expectEqual(@as(i32, 0), room.extent.min_x);
+    try testing.expectEqual(@as(i32, 14), room.extent.max_x);
+    // The line's top is row 4: each letter its pixel on row 6.
+    base(gb).Move(rp, 2, 10);
+    base(gb).Text(rp, "AV", 2);
+    base(gb).GetRPAttrs(rp, &ask_point);
+    try testing.expectEqual(@as(i32, 16), point.x);
+    try testing.expectEqual(@as(i32, 10), point.y);
+    try testing.expectEqual(@as(u32, 2), litCount(&surface));
+    try testing.expect(pixelAt(&surface, 2, 6) != 0 and pixelAt(&surface, 8, 6) != 0);
+
+    // A mark on its letter: a glyph by its number, made by the font,
+    // put where the shaper says and moving the point no further. Bold
+    // widens the letter, not the mark.
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 2, 10);
+    base(gb).Text(rp, "e\xCC\x81", 3);
+    base(gb).GetRPAttrs(rp, &ask_point);
+    try testing.expectEqual(@as(i32, 8), point.x);
+    try testing.expectEqual(@as(u32, 3), litCount(&surface));
+    try testing.expect(pixelAt(&surface, 2, 8) != 0 and pixelAt(&surface, 3, 8) != 0);
+    try testing.expect(pixelAt(&surface, 4, 5) != 0);
+    try testing.expectEqual(@as(i32, 6), base(gb).TextLength(rp, "e\xCC\x81", 3));
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_TextStyle, .data = graphics.FSF_BOLD }, .{} });
+    try testing.expectEqual(@as(i32, 7), base(gb).TextLength(rp, "e\xCC\x81", 3));
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_TextStyle, .data = graphics.FS_NORMAL }, .{} });
+
+    // One character the image lacks, shaped into two glyphs the font
+    // has: drawn by this font, as the letter and its mark.
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 2, 10);
+    base(gb).Text(rp, "\xC3\xA9", 2);
+    try testing.expectEqual(@as(u32, 3), litCount(&surface));
+    try testing.expect(pixelAt(&surface, 2, 8) != 0 and pixelAt(&surface, 4, 5) != 0);
+    try testing.expectEqual(@as(i32, 6), base(gb).TextLength(rp, "\xC3\xA9", 2));
+
+    // Two characters as one glyph. A place is before each of them: the
+    // glyph's width split evenly.
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 2, 10);
+    base(gb).Text(rp, "fi", 2);
+    try testing.expectEqual(@as(u32, 2), litCount(&surface));
+    try testing.expect(pixelAt(&surface, 2, 6) != 0 and pixelAt(&surface, 3, 6) != 0);
+    try testing.expectEqual(@as(i32, 13), base(gb).TextLength(rp, "fie", 3));
+    for ([_]i32{ 0, 3, 7, 13, 13 }, [_]u32{ 0, 1, 2, 3, 9 }) |x, offset| {
+        try testing.expectEqual(x, base(gb).TextOffsetToX(rp, "fie", 3, offset));
+    }
+    for ([_]i32{ -5, 1, 2, 4, 5, 9, 10, 100 }, [_]u32{ 0, 0, 1, 1, 2, 2, 3, 3 }) |x, offset| {
+        try testing.expectEqual(offset, base(gb).TextXToOffset(rp, "fie", 3, x));
+    }
+
+    // No place is between a letter and its mark: the place before the
+    // mark is the one after both, and a column never answers its byte.
+    try testing.expectEqual(@as(i32, 6), base(gb).TextOffsetToX(rp, "e\xCC\x81V", 4, 1));
+    try testing.expectEqual(@as(i32, 6), base(gb).TextOffsetToX(rp, "e\xCC\x81V", 4, 3));
+    try testing.expectEqual(@as(i32, 14), base(gb).TextOffsetToX(rp, "e\xCC\x81V", 4, 4));
+    try testing.expectEqual(@as(u32, 0), base(gb).TextXToOffset(rp, "e\xCC\x81V", 4, 2));
+    try testing.expectEqual(@as(u32, 3), base(gb).TextXToOffset(rp, "e\xCC\x81V", 4, 4));
+    try testing.expectEqual(@as(u32, 4), base(gb).TextXToOffset(rp, "e\xCC\x81V", 4, 11));
+
+    // A character of a fallback font is a stretch of its own: the font
+    // shapes what is before it and what is after it apart, and the
+    // fallback's glyph stands on the line's baseline.
+    var calls = shaper.calls;
+    try testing.expectEqual(@as(i32, 8 + 6 + 8), base(gb).TextLength(rp, "AoV", 3));
+    try testing.expectEqual(calls + 2, shaper.calls);
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 2, 10);
+    base(gb).Text(rp, "AoV", 3);
+    try testing.expectEqual(@as(u32, 3), litCount(&surface));
+    try testing.expect(pixelAt(&surface, 2, 6) != 0 and pixelAt(&surface, 10, 4) != 0 and pixelAt(&surface, 16, 6) != 0);
+
+    // A character no font has is the default character, and a letter
+    // with a mark the shaper has no form of is its base letter: neither
+    // is handed to the shaper as part of a text.
+    try testing.expectEqual(@as(i32, 8 + 8 + 8), base(gb).TextLength(rp, "AqV", 3));
+    try testing.expectEqual(@as(i32, 6), base(gb).TextLength(rp, "\xC3\xA8", 2));
+
+    // More glyphs than there was room for: asked once more, with room.
+    calls = shaper.calls;
+    try testing.expectEqual(@as(i32, 12 * 3), base(gb).TextLength(rp, "m", 1));
+    try testing.expectEqual(calls + 2, shaper.calls);
+
+    // A text that cannot be shaped this time is a glyph a character,
+    // and shaped the next time.
+    try testing.expectEqual(@as(i32, 8 + 8 + 8), base(gb).TextLength(rp, "AVL", 3));
+    try testing.expectEqual(@as(i32, 6 + 8 + 8), base(gb).TextLength(rp, "AVL", 3));
+
+    // What fits is what fits shaped by itself: "AVA" is 20 wide inside
+    // the text and 22 alone, where its last letter has no 'V' after it.
+    const pairs = "AVAVAV";
+    try testing.expectEqual(@as(i32, 42), base(gb).TextLength(rp, pairs, 6));
+    try testing.expectEqual(@as(u32, 2), base(gb).TextFit(rp, pairs, 6, &room, null, graphics.TEXT_FORWARD, 20, 0));
+    try testing.expectEqual(@as(i32, 14), room.width);
+    try testing.expectEqual(@as(i32, 8), room.height);
+    try testing.expectEqual(@as(u32, 6), base(gb).TextFit(rp, pairs, 6, &room, null, graphics.TEXT_FORWARD, 100, 0));
+    try testing.expectEqual(@as(i32, 42), room.width);
+    try testing.expectEqual(@as(u32, 0), base(gb).TextFit(rp, pairs, 6, &room, null, graphics.TEXT_FORWARD, 5, 0));
+    try testing.expectEqual(@as(u32, 2), base(gb).TextFit(rp, pairs.ptr + 5, 6, &room, null, graphics.TEXT_BACKWARD, 16, 0));
+    try testing.expectEqual(@as(i32, 14), room.width);
+    try testing.expectEqual(@as(u32, 6), base(gb).TextFit(rp, pairs.ptr + 5, 6, &room, null, graphics.TEXT_BACKWARD, 0, 0));
+
+    // The direction is the RastPort's to keep: left to right until it
+    // is set, only a direction there is taken, and the text is laid out
+    // left to right whichever it is.
+    var direction: u32 = 99;
+    const ask_direction = [_]TagItem{ .{ .tag = graphics.RPTAG_TextDirection, .data = @intFromPtr(&direction) }, .{} };
+    base(gb).GetRPAttrs(rp, &ask_direction);
+    try testing.expectEqual(graphics.TEXTDIR_LEFT_TO_RIGHT, direction);
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_TextDirection, .data = graphics.TEXTDIR_RIGHT_TO_LEFT }, .{} });
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_TextDirection, .data = 7 }, .{} });
+    base(gb).GetRPAttrs(rp, &ask_direction);
+    try testing.expectEqual(graphics.TEXTDIR_RIGHT_TO_LEFT, direction);
+    try testing.expectEqual(@as(i32, 14), base(gb).TextLength(rp, "AV", 2));
+    try testing.expectEqual(graphics.TEXTDIR_LEFT_TO_RIGHT, shaper.direction);
+    const leftward = [_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
+        .{ .tag = graphics.RPTAG_TextDirection, .data = graphics.TEXTDIR_RIGHT_TO_LEFT },
+        .{},
+    };
+    const other = base(gb).CreateRastPortTagList(&leftward) orelse return error.NoRastPort;
+    base(gb).GetRPAttrs(other, &ask_direction);
+    try testing.expectEqual(graphics.TEXTDIR_RIGHT_TO_LEFT, direction);
+
+    // Without a font there is no place, and it says so.
+    var why: i32 = 0;
+    const ask_why = [_]TagItem{ .{ .tag = graphics.RPTAG_LastError, .data = @intFromPtr(&why) }, .{} };
+    try testing.expectEqual(@as(i32, 0), base(gb).TextOffsetToX(other, "AV", 2, 1));
+    base(gb).GetRPAttrs(other, &ask_why);
+    try testing.expectEqual(graphics.GERR_NO_FONT, why);
+    try testing.expectEqual(@as(u32, 0), base(gb).TextXToOffset(other, "AV", 2, 9));
+    base(gb).GetRPAttrs(other, &ask_why);
+    try testing.expectEqual(graphics.GERR_NO_FONT, why);
+
+    // A font that shapes nothing: every character a place of its own,
+    // by its advance, and no shaper is asked.
+    var plain = fonts.TextFont{ .node = .{ .name = "plain.font" }, .image = @ptrCast(&list_font) };
+    base(gb).SetRPAttrs(other, &.{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&plain) }, .{} });
+    calls = shaper.calls;
+    try testing.expectEqual(@as(i32, 16), base(gb).TextOffsetToX(other, "abab", 4, 2));
+    try testing.expectEqual(@as(i32, 32), base(gb).TextOffsetToX(other, "abab", 4, 9));
+    for ([_]i32{ -3, 3, 4, 11, 12, 99 }, [_]u32{ 0, 0, 1, 1, 2, 4 }) |x, offset| {
+        try testing.expectEqual(offset, base(gb).TextXToOffset(other, "abab", 4, x));
+    }
+    try testing.expectEqual(calls, shaper.calls);
+
+    try testing.expect(base(gb).RemFont(&line));
+    base(gb).FreeRastPort(other);
+    base(gb).FreeRastPort(rp);
+    try tearDown(gb);
+}
+
 /// A font for the matching test: `listSpec` at `rows`, drawn in `style`,
 /// with `flags` in its image.
 fn matchSpec(rows: u16, style: graphics.FontStyle, flags: graphics.FontFlags) fontimage.Spec {

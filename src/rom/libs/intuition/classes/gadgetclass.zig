@@ -196,14 +196,19 @@ pub fn labelSize(ib: *IntuitionBase, g: *const Data, rp: ?*graphics.RastPort, fo
     }
     if (g.itext) |run| return .{ .width = it.IntuiTextLength(run), .height = @intCast(height) };
     if (g.text) |text| {
-        // Measured as it is drawn: without the `_` that marks its key.
+        // Measured as it is drawn: without the `_` that marks its key,
+        // as one piece of text.
+        if (rp) |port| return .{ .width = d.labelWidth(gb, port, text), .height = @intCast(height) };
+        var plain = gc.PlainLabel{};
+        const at = gc.labelMark(text);
+        if (at != null and gc.plainLabel(text[0..d.textLen(text)], at.? - 1, &plain)) {
+            const run = intuition.text.plainRun(&plain.bytes, font);
+            return .{ .width = it.IntuiTextLength(&run), .height = @intCast(height) };
+        }
         const run = intuition.text.plainRun(text, font);
         const mark = intuition.text.plainRun("_", font);
-        const whole: i32 = if (rp) |port| gb.TextLength(port, text, textLen(text)) else it.IntuiTextLength(&run);
-        const width = if (gc.labelMark(text) == null)
-            whole
-        else if (rp) |port| whole - gb.TextLength(port, "_", 1) else whole - it.IntuiTextLength(&mark);
-        return .{ .width = width, .height = @intCast(height) };
+        const whole: i32 = it.IntuiTextLength(&run);
+        return .{ .width = if (at == null) whole else whole - it.IntuiTextLength(&mark), .height = @intCast(height) };
     }
     return .{ .width = 0, .height = 0 };
 }
@@ -257,12 +262,6 @@ pub fn fontCell(ib: *IntuitionBase, font: ?*graphics.TextFont) gc.Box {
     var extent = graphics.FontExtent{};
     ib.graphics_base.FontExtent(f, &extent);
     return .{ .width = extent.width, .height = extent.height };
-}
-
-fn textLen(s: [*:0]const u8) u32 {
-    var n: u32 = 0;
-    while (s[n] != 0) n += 1;
-    return n;
 }
 
 /// The label in the middle of the box: a string in the text pen - the

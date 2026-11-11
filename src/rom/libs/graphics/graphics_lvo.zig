@@ -88,6 +88,8 @@ const FillArc = @import("draw/fillarc.zig").FillArc;
 const BltCoverBitMapRastPort = @import("blit/bltcoverbitmaprastport.zig").BltCoverBitMapRastPort;
 const BlurCoverage = @import("bitmap/blurcoverage.zig").BlurCoverage;
 const TextFitted = @import("text/textfitted.zig").TextFitted;
+const TextOffsetToX = @import("text/textoffsettox.zig").TextOffsetToX;
+const TextXToOffset = @import("text/textxtooffset.zig").TextXToOffset;
 const DrawRoundBevel = @import("draw/drawroundbevel.zig").DrawRoundBevel;
 const WriteYUVPixelArray = @import("blit/writeyuvpixelarray.zig").WriteYUVPixelArray;
 const ScaleYUVPixelArray = @import("blit/scaleyuvpixelarray.zig").ScaleYUVPixelArray;
@@ -209,6 +211,8 @@ const contract_files = [_][]const u8{
     @embedFile("blit/bltcoverbitmaprastport.zig"),
     @embedFile("bitmap/blurcoverage.zig"),
     @embedFile("text/textfitted.zig"),
+    @embedFile("text/textoffsettox.zig"),
+    @embedFile("text/textxtooffset.zig"),
     @embedFile("draw/drawroundbevel.zig"),
 };
 
@@ -431,6 +435,12 @@ fn lvoWriteYUVPixelArray(gb: *GraphicsBase, rp: *graphics.RastPort, picture: *co
 fn lvoScaleYUVPixelArray(gb: *GraphicsBase, rp: *graphics.RastPort, picture: *const rtg.RtgYuv, src_area: *const graphics.Rect, dest_area: *const graphics.Rect) callconv(.c) void {
     ScaleYUVPixelArray(gb, @ptrCast(@alignCast(rp)), picture, src_area, dest_area);
 }
+fn lvoTextOffsetToX(gb: *GraphicsBase, rp: *graphics.RastPort, string: [*]const u8, count: u32, offset: u32) callconv(.c) i32 {
+    return TextOffsetToX(gb, @ptrCast(@alignCast(rp)), string, count, offset);
+}
+fn lvoTextXToOffset(gb: *GraphicsBase, rp: *graphics.RastPort, string: [*]const u8, count: u32, x: i32) callconv(.c) u32 {
+    return TextXToOffset(gb, @ptrCast(@alignCast(rp)), string, count, x);
+}
 fn lvoWriteLUTPixelArray(gb: *GraphicsBase, rp: *graphics.RastPort, pixels: [*]const u8, pitch: u32, table: [*]const graphics.Pen, src_x: i32, src_y: i32, area: *const graphics.Rect) callconv(.c) void {
     WriteLUTPixelArray(gb, @ptrCast(@alignCast(rp)), pixels, pitch, table, src_x, src_y, area);
 }
@@ -561,6 +571,9 @@ pub const vectors = [_]*const anyopaque{
     // Pictures in YUV, as a video decoder hands them out
     vec(lvoWriteYUVPixelArray),
     vec(lvoScaleYUVPixelArray),
+    // Places in a text
+    vec(lvoTextOffsetToX),
+    vec(lvoTextXToOffset),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

@@ -18,6 +18,12 @@
 //! the middle of its cell and without a background of its own, so what a
 //! wider one has past its cell lies over the cells beside it.
 //!
+//! A font that shapes its text (`TextFont.shape`) may draw a run another
+//! width than its cells - a pair brought closer, a ligature. Such a run
+//! is measured first, and one that is not a cell a character is drawn a
+//! cell at a time, each character shaped by itself: the cells are the
+//! console's, whatever the font would make of the line.
+//!
 //! The line-drawing set is drawn rather than written, so it needs nothing
 //! of the font: a horizontal line is a line across the middle of the cell,
 //! a corner is two half lines, and the few every font has - degree,
@@ -236,6 +242,20 @@ fn drawOffWidth(gb: *GraphicsBase, l: Layout, x: i32, y: i32, cell: Cell, fg: gr
     gb.Text(l.rp, &bytes, length);
 }
 
+/// Whether the console's font, or one it falls back to, shapes its
+/// text: a run may then come out another width than its cells.
+fn shapesText(gb: *GraphicsBase, l: Layout) bool {
+    var font: ?*const graphics.TextFont = null;
+    gb.GetRPAttrs(l.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&font) }, .{} });
+    var left: u32 = graphics.FONT_FALLBACKS + 1;
+    while (font) |one| : (font = one.fallback) {
+        if (left == 0) break;
+        left -= 1;
+        if (one.shape != null) return true;
+    }
+    return false;
+}
+
 /// Whether the cell at `x` is the first of a wide character whose second
 /// cell is still beside it.
 fn isWide(t: *const Term, x: u32, y: u32) bool {
@@ -298,6 +318,7 @@ fn drawHalves(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, t
 pub fn drawRow(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, to: u32) void {
     var run_text: [512]u8 = undefined;
     var off_width = false;
+    const shapes = shapesText(gb, l);
     var x = from;
     while (x < to) {
         const first = t.at(x, y).*;
@@ -344,8 +365,22 @@ pub fn drawRow(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, 
         }
         const fg, const bg = pensAt(t, x, y, l);
         setPens(gb, l, fg, bg, first);
-        gb.Move(l.rp, l.origin_x + @as(i32, @intCast(x)) * l.cell_width, l.origin_y + @as(i32, @intCast(y)) * l.cell_height + l.baseline);
-        gb.Text(l.rp, &run_text, @intCast(length));
+        const line_y = l.origin_y + @as(i32, @intCast(y)) * l.cell_height + l.baseline;
+        if (shapes and n > 1 and gb.TextLength(l.rp, &run_text, @intCast(length)) != @as(i32, @intCast(n)) * l.cell_width) {
+            // Shaped as one piece the run would leave its cells: a cell
+            // at a time, then.
+            var at: usize = 0;
+            var cell_x = x;
+            while (at < length) : (cell_x += 1) {
+                const size: usize = utf8.read(run_text[at..length]).length;
+                gb.Move(l.rp, l.origin_x + @as(i32, @intCast(cell_x)) * l.cell_width, line_y);
+                gb.Text(l.rp, run_text[at..].ptr, @intCast(size));
+                at += size;
+            }
+        } else {
+            gb.Move(l.rp, l.origin_x + @as(i32, @intCast(x)) * l.cell_width, line_y);
+            gb.Text(l.rp, &run_text, @intCast(length));
+        }
         x += n;
     }
     x = from;
@@ -619,6 +654,67 @@ test "a fallback font's character of another width stands in the middle of its c
     try testing.expectEqual(@as(u32, 10), countIn(&surface, 5, 0, 40, white));
     drawRow(gb, layout, &grid, 0, 0, 5);
     try testing.expectEqual(@as(u32, 12), countIn(&surface, 5, 6, 18, white));
+
+    gb.FreeRastPort(rp);
+}
+
+/// A shaper that brings an `a` two closer to an `a` after it.
+fn tightShape(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    _ = hook;
+    _ = object;
+    const request: *graphics.ShapeRequest = @ptrCast(@alignCast(message.?));
+    const text = request.text[0..request.length];
+    request.count = @intCast(text.len);
+    if (text.len > request.room) return graphics.SHAPE_ROOM;
+    for (text, 0..) |char, at| {
+        const tight = at + 1 < text.len and text[at + 1] == 'a';
+        request.glyphs[at] = .{ .which = char, .cluster = @intCast(at), .advance = if (tight) 6 else 8 };
+    }
+    return graphics.SHAPE_OK;
+}
+
+test "a font that shapes its text: a run that would leave its cells is drawn a cell at a time" {
+    try kexec.setUp();
+    defer kexec.deinit();
+    _ = kexec.InitResident(kexec.SysBase, &kutility.utility_library_tag, null) orelse return error.NoUtility;
+    _ = kexec.InitResident(kexec.SysBase, &krtg.rtg_library_tag, null) orelse return error.NoRtg;
+    const made = kexec.InitResident(kexec.SysBase, &kgraphics.graphics_library_tag, null) orelse return error.NoGraphics;
+    const gb: *GraphicsBase = @ptrCast(@alignCast(made));
+
+    var pixels: [32 * 8 * 2]u8 = @splat(0);
+    var surface = sdk.rtg.Surface{ .pixels = &pixels, .width = 32, .height = 8, .pitch = 64, .size_bytes = pixels.len, .format = .rgb565 };
+    var hook = sdk.utility.Hook{ .entry = &tightShape };
+    var cells_font = graphics.TextFont{ .node = .{ .name = "cell.font" }, .image = @ptrCast(&cell_font), .shape = &hook };
+    const tags = [_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
+        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&cells_font) },
+        .{},
+    };
+    const rp = gb.CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    const white: u16 = 0xFFFF;
+    const layout = Layout{
+        .rp = rp,
+        .origin_x = 0,
+        .origin_y = 0,
+        .cell_width = 8,
+        .cell_height = 8,
+        .baseline = 6,
+        .fg = graphics.penRGB(255, 255, 255),
+        .bg = graphics.penRGB(0, 0, 255),
+        .shine = graphics.penRGB(255, 0, 0),
+        .fill = graphics.penRGB(0, 255, 0),
+    };
+
+    // Three of the letter the shaper brings together: as one piece they
+    // are 20 across, and the row has them a cell each all the same.
+    var cells: [3]Cell = undefined;
+    var grid = Term.init(&cells, 3, 1);
+    grid.write("aaa");
+    try testing.expectEqual(@as(i32, 20), gb.TextLength(rp, "aaa", 3));
+    drawRow(gb, layout, &grid, 0, 0, 3);
+    try testing.expectEqual(@as(u32, 24), countIn(&surface, 2, 0, 32, white));
+    var y: u32 = 0;
+    while (y < 8) : (y += 1) try testing.expectEqual(@as(u32, 8), countIn(&surface, y, 24, 32, 0));
 
     gb.FreeRastPort(rp);
 }

@@ -32,6 +32,10 @@ pub const DiskfontBase = extern struct {
     /// truetype.library, opened the first time an outline is rendered or
     /// opened, and kept until expunge.
     truetype_base: ?*sdk.interface.truetype.TrueTypeBase = null,
+    /// truetypeshaping.library (since 1.10), opened the first time a
+    /// size is made from an outline with layout tables, and kept until
+    /// expunge: the sizes' `shape` hooks call it.
+    shaping_base: ?*sdk.interface.truetypeshaping.TrueTypeShapingBase = null,
     /// The fallback families `font.prefs` names (since 1.8), in its
     /// order, each NUL-terminated: read by the first font an OpenDiskFont
     /// makes and good for that call, under the load lock.

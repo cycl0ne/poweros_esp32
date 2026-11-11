@@ -20,13 +20,14 @@ const boundsOf = _rastport.boundsOf;
 /// fn GetRPAttrs(gb: *GraphicsBase, rp: *RastPort, tags: ?[*]const TagItem) void
 /// ```
 ///
-/// SINCE: 0.4. LVO -36.
+/// SINCE: 0.4, `RPTAG_TextDirection` since 0.42. LVO -36.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort to read.
 /// - `tag_list` - what to read. **Each `ti_Data` is a pointer to where that
 ///   value goes**, not the value:
-///   - `RPTAG_APen`, `RPTAG_BPen`, `RPTAG_DrMd`, `RPTAG_Format` - `*u32`
+///   - `RPTAG_APen`, `RPTAG_BPen`, `RPTAG_DrMd`, `RPTAG_Format`,
+///     `RPTAG_TextDirection` - `*u32`
 ///   - `RPTAG_ClipRect`, `RPTAG_Bounds` - `*Rect`
 ///   - `RPTAG_Surface`, `RPTAG_BitMap` - `*usize`, and `BitMap` is 0 for a
 ///     surface that is plain memory
@@ -94,6 +95,7 @@ pub fn GetRPAttrs(gb: *GraphicsBase, rp: *RastPort, tags: ?[*]const TagItem) voi
             graphics.RPTAG_BitMap => @as(*usize, @ptrFromInt(item.data)).* = @intFromPtr(rp.bitmap),
             graphics.RPTAG_Font => @as(*usize, @ptrFromInt(item.data)).* = @intFromPtr(rp.font),
             graphics.RPTAG_TextStyle => @as(*u32, @ptrFromInt(item.data)).* = rp.text_style,
+            graphics.RPTAG_TextDirection => @as(*u32, @ptrFromInt(item.data)).* = rp.text_direction,
             graphics.RPTAG_FontHeight => @as(*u32, @ptrFromInt(item.data)).* = fonts.metric(rp, graphics.RPTAG_FontHeight),
             graphics.RPTAG_FontBaseline => @as(*u32, @ptrFromInt(item.data)).* = fonts.metric(rp, graphics.RPTAG_FontBaseline),
             graphics.RPTAG_FontWidth => @as(*u32, @ptrFromInt(item.data)).* = fonts.metric(rp, graphics.RPTAG_FontWidth),

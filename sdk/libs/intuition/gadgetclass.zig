@@ -629,6 +629,34 @@ pub fn markedLength(text: [*:0]const u8, at: u32) u32 {
     return @intCast(utf8.readZ(text + at).length);
 }
 
+/// The most bytes of a label `plainLabel` takes.
+pub const plain_label_room = 120;
+
+/// A label, or a line of one, with the `_` that marks its key taken
+/// out. Measured and drawn from here it is one piece of text: the
+/// letters either side of the mark are kerned and joined as in any
+/// other, which pieces drawn one after the other are not, and the
+/// marked character is found in it with graphics' `TextOffsetToX`.
+pub const PlainLabel = struct {
+    /// The text, with a NUL after it.
+    bytes: [plain_label_room:0]u8 = undefined,
+    /// Its length in bytes.
+    len: u32 = 0,
+};
+
+/// `piece` put in `plain` without its byte `underscore`, the `_` (below
+/// `piece.len`): the marked character then starts at `underscore` of
+/// what was put. False, and nothing put, when the piece without the `_`
+/// is longer than `plain_label_room`.
+pub fn plainLabel(piece: []const u8, underscore: u32, plain: *PlainLabel) bool {
+    if (piece.len - 1 > plain_label_room) return false;
+    @memcpy(plain.bytes[0..underscore], piece[0..underscore]);
+    @memcpy(plain.bytes[underscore .. piece.len - 1], piece[underscore + 1 ..]);
+    plain.bytes[piece.len - 1] = 0;
+    plain.len = @intCast(piece.len - 1);
+    return true;
+}
+
 /// The key a label names: the character its `_` marks, case folded, or 0
 /// for none.
 pub fn labelKey(text: ?[*:0]const u8) u32 {

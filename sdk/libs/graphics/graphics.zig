@@ -184,9 +184,10 @@ pub const GERR_LAST: i32 = GERR_NO_FONT;
 /// Whoever builds a font - diskfont loading one, a scaler, an outline
 /// engine - puts one of these in a record of its own, points `image` at
 /// the glyphs, names it through `node.name`, names in `fallback` the font
-/// that has the characters this one lacks and in `render` the hook that
-/// makes a glyph the image does not hold, and hands it to `AddFont`.
-/// The record, the name, the image and the hook stay the builder's:
+/// that has the characters this one lacks, in `render` the hook that
+/// makes a glyph the image does not hold and in `shape` the hook that
+/// says which glyphs a text is drawn with, and hands it to `AddFont`.
+/// The record, the name, the image and the hooks stay the builder's:
 /// graphics only holds the font on its list, counts who has it open and
 /// keeps the glyphs the hook made, and the builder frees what is its
 /// own once `RemFont` has taken the font off.
@@ -226,6 +227,19 @@ pub const TextFont = extern struct {
     /// sets it before `AddFont` and never again. Null for a font that is
     /// its image and nothing more. Since graphics.library 0.41.
     render: ?*Hook = null,
+    /// The hook that shapes a text for this font: which glyphs it is
+    /// drawn with and where each one goes - a pair moved together, a
+    /// mark set on its letter, several characters drawn as one glyph.
+    /// It is called with the font as its object and a `ShapeRequest` as
+    /// its message, and answers one of `SHAPE_OK`, `SHAPE_ROOM` and
+    /// `SHAPE_LATER`. graphics calls it on the task that draws or
+    /// measures, once or more for each text, and several tasks may be
+    /// in it at once: it keeps what it works with to itself, waits for
+    /// no file and no lock a drawing task could hold, and draws no
+    /// text. The builder sets it before `AddFont` and never again. Null
+    /// for a font whose characters each stand alone, one after the
+    /// other. Since graphics.library 0.42.
+    shape: ?*Hook = null,
     /// The glyphs `render` made, kept by graphics from `AddFont` to
     /// `RemFont`: graphics' own. A builder leaves it null.
     cache: ?*anyopaque = null,
@@ -277,6 +291,65 @@ pub const GLYPH_ROOM: usize = 2;
 /// in: nothing is remembered, and the next text that wants it asks
 /// again.
 pub const GLYPH_LATER: usize = 3;
+
+/// What a font's `shape` hook is asked for and answers: the glyphs one
+/// text is drawn with, in the order they are drawn from left to right,
+/// each with where it goes, in pixels at the image's height.
+pub const ShapeRequest = extern struct {
+    /// The text, UTF-8.
+    text: [*]const u8,
+    /// How many bytes.
+    length: u32,
+    /// How the text reads: `TEXTDIR_LEFT_TO_RIGHT` or
+    /// `TEXTDIR_RIGHT_TO_LEFT`.
+    direction: u32 = TEXTDIR_LEFT_TO_RIGHT,
+    /// Where the glyphs go.
+    glyphs: [*]PlacedGlyph,
+    /// How many `glyphs` holds.
+    room: u32,
+    /// For the hook to set: how many glyphs the text has - or, with
+    /// `SHAPE_ROOM`, needs.
+    count: u32 = 0,
+};
+
+/// One glyph of a shaped text.
+pub const PlacedGlyph = extern struct {
+    /// The glyph: the character it is the font's glyph of, a code
+    /// point - or, with `GLYPHREQ_NUMBER` among `flags`, its number in
+    /// the font, which the font's `render` hook makes it by. A
+    /// character is named wherever the glyph is the one the font draws
+    /// that character with when it stands alone, so the glyphs an image
+    /// holds are the ones drawn. Number 0 is the glyph of a character
+    /// the font has no form of.
+    which: u32,
+    /// `GLYPHREQ_NUMBER` or nothing.
+    flags: u32 = 0,
+    /// The byte of the text at which the character it came of starts -
+    /// of several characters that became one glyph, the first. A
+    /// character and the ones without a width that follow it, its
+    /// marks, are one cluster to graphics, whichever of them a glyph
+    /// names. In a text read from left to right it never goes back
+    /// from one glyph to the next.
+    cluster: u32,
+    /// How far the point moves past the glyph, in pixels. None for a
+    /// mark set on its letter.
+    advance: i32,
+    /// Where the glyph is drawn from the point: this many columns to
+    /// the right,
+    x: i32 = 0,
+    /// and this many rows up.
+    y: i32 = 0,
+};
+
+/// A `shape` hook's answer: the glyphs are in the request.
+pub const SHAPE_OK: usize = 0;
+/// The text has more glyphs than `room`: `count` says how many, and
+/// graphics asks once more with that much.
+pub const SHAPE_ROOM: usize = 1;
+/// The text could not be shaped this time - there was no memory to work
+/// in: it is drawn a character at a time, as a font with no hook draws
+/// it.
+pub const SHAPE_LATER: usize = 2;
 
 /// A font as asked for: by name, height and style, and what else the
 /// caller cares about. `OpenFont` answers the nearest font of the name,
@@ -640,6 +713,16 @@ pub const RPTAG_Smooth = RPTAG_Dummy + 25;
 /// holds it already loses nothing: it nests. A call between two RastPorts
 /// takes both without waiting on one while it holds the other.
 pub const RPTAG_Lock = RPTAG_Dummy + 26;
+
+/// `TEXTDIR_` to set, `*u32` to get: how the text drawn through the
+/// RastPort reads. `TEXTDIR_LEFT_TO_RIGHT` is what a RastPort is made
+/// with, and how every text is drawn: `TEXTDIR_RIGHT_TO_LEFT` is kept
+/// and answered, and changes no drawing. Another value is not taken.
+pub const RPTAG_TextDirection = RPTAG_Dummy + 27;
+/// A text that reads from left to right.
+pub const TEXTDIR_LEFT_TO_RIGHT: u32 = 0;
+/// A text that reads from right to left.
+pub const TEXTDIR_RIGHT_TO_LEFT: u32 = 1;
 
 /// What a hook that paints an empty area is told.
 ///

@@ -20,9 +20,17 @@
 //! **The text is UTF-8.** The buffer, its length and the cursor are
 //! counted in bytes - `STRINGA_MaxChars` is the room in bytes - and the
 //! cursor always stands where a character starts: it steps over a
-//! character whole, Backspace and Delete take one out whole, and a
-//! character goes in only when all of its bytes fit. A byte that is no
-//! UTF-8 is a character of its own, as graphics draws it.
+//! letter with its marks, Delete takes a letter out with its marks and
+//! Backspace one character - the mark last typed and not its letter -
+//! and a character goes in only when all of its bytes fit. A byte that
+//! is no UTF-8 is a character of its own, as graphics draws it.
+//!
+//! **The cursor is where the letters are drawn.** The line shown is
+//! drawn in one piece, and the cursor's place and width and the
+//! character a press lands on are asked of graphics for that piece
+//! (`TextOffsetToX`, `TextXToOffset`) - so with a font that shapes its
+//! text a kerned pair is where it was drawn, and the cursor on a letter
+//! covers the letter with its marks.
 //!
 //! `STRINGA_Secret` makes it a password field: an asterisk is drawn for
 //! each character of the text, and where the line scrolls to and what a
@@ -168,9 +176,33 @@ fn charLength(text: [*]const u8, len: u32, at: u32) u32 {
     return @intCast(utf8.read(text[at..len]).length);
 }
 
+/// The bytes the character at `at` of `text` (`len` bytes, `at` before
+/// its end) takes together with the characters without a width that
+/// follow it: a letter with its marks, which is what the cursor covers.
+fn clusterLength(text: [*]const u8, len: u32, at: u32) u32 {
+    var end = at + charLength(text, len, at);
+    while (end < len) {
+        const next = utf8.read(text[end..len]);
+        if (utility.unicode.width(next.char) != 0) break;
+        end += @intCast(next.length);
+    }
+    return end - at;
+}
+
 /// Where the character before `at` (above 0) starts.
 fn charBefore(text: [*]const u8, at: u32) u32 {
     return at - @as(u32, @intCast(utf8.readLast(text[0..at]).length));
+}
+
+/// Where the letter before `at` (above 0) starts, the marks after it
+/// stepped over: the text's start when only marks are before `at`.
+fn clusterBefore(text: [*]const u8, at: u32) u32 {
+    var from = at;
+    while (from > 0) {
+        from = charBefore(text, from);
+        if (utility.unicode.width(utf8.read(text[from..at]).char) != 0) break;
+    }
+    return from;
 }
 
 /// How many characters the first `len` bytes of `text` hold.
@@ -328,11 +360,20 @@ fn workTake(w: *sg.SGWork, at: u32) void {
     w.num_chars -= length;
 }
 
+/// Takes the character at `at` out of the work together with the marks
+/// after it.
+fn workTakeCluster(w: *sg.SGWork, at: u32) void {
+    if (at >= w.num_chars) return;
+    const left = w.num_chars - clusterLength(w.work_buffer, w.num_chars, at);
+    while (w.num_chars > left) workTake(w, at);
+}
+
 /// Intuition's own editing: the global edit hook until `SetEditHook` puts
 /// another. It edits the work for `SGH_KEY` and answers 0 for anything
-/// else. What the keys do: the cursor keys, Home and End move a
-/// character at a time, and a cursor key with Shift goes to the start or
-/// the end; Backspace and Delete take a character out, all its bytes, and
+/// else. What the keys do: the cursor keys move a letter at a time, its
+/// marks with it, and a cursor key with Shift, Home and End go to the
+/// start or the end; Delete takes a letter out with its marks, Backspace
+/// one character, all its bytes, and
 /// with Shift everything before the cursor or after it; a character goes
 /// in, in UTF-8, or over the one at the cursor in replace mode; Return ends the gadget, Tab ends it and
 /// moves on (Shift-Tab back), Escape puts back what was there when it was
@@ -350,8 +391,8 @@ pub fn defaultEdit(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaqu
     switch (e.code) {
         raw_left, raw_right, raw_home, raw_end => {
             w.buffer_pos = switch (e.code) {
-                raw_left => if (shifted or w.buffer_pos == 0) 0 else charBefore(w.work_buffer, w.buffer_pos),
-                raw_right => if (shifted or w.buffer_pos >= w.num_chars) w.num_chars else w.buffer_pos + charLength(w.work_buffer, w.num_chars, w.buffer_pos),
+                raw_left => if (shifted or w.buffer_pos == 0) 0 else clusterBefore(w.work_buffer, w.buffer_pos),
+                raw_right => if (shifted or w.buffer_pos >= w.num_chars) w.num_chars else w.buffer_pos + clusterLength(w.work_buffer, w.num_chars, w.buffer_pos),
                 raw_home => 0,
                 else => w.num_chars,
             };
@@ -364,7 +405,7 @@ pub fn defaultEdit(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaqu
             if (shifted) {
                 w.num_chars = w.buffer_pos;
                 w.work_buffer[w.num_chars] = 0;
-            } else workTake(w, w.buffer_pos);
+            } else workTakeCluster(w, w.buffer_pos);
             w.edit_op = sg.EO_DELFORWARD;
             return 1;
         },
@@ -423,7 +464,7 @@ pub fn defaultEdit(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaqu
         },
         0x7F => {
             if (fixed or w.buffer_pos >= w.num_chars) return 1;
-            workTake(w, w.buffer_pos);
+            workTakeCluster(w, w.buffer_pos);
             w.edit_op = sg.EO_DELFORWARD;
         },
         else => {
@@ -566,12 +607,17 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     }
     // The cursor, while it is being typed into: the cell the next
     // character goes in, the other way round.
+    // Its place and its width are those of the line as it was drawn,
+    // not the lengths of its pieces added up. On a mark - the cursor
+    // steps a character at a time - it is a bar after the letter.
     if (p.active == 0) return;
-    const cursor_x = left + gb.TextLength(rp, text + view.first, view.cursor - view.first);
-    const under = if (past_end) 0 else charLength(text, view.len, view.cursor);
-    const cursor_w: i32 = if (past_end) space_w else gb.TextLength(rp, text + view.cursor, under);
+    const shown_end = view.first + shown;
+    const before = gb.TextOffsetToX(rp, text + view.first, shown, view.cursor - view.first);
+    const cursor_x = left + before;
+    const under = if (past_end or view.cursor >= shown_end) 0 else @min(clusterLength(text, view.len, view.cursor), shown_end - view.cursor);
+    const cursor_w: i32 = if (past_end) space_w else gb.TextOffsetToX(rp, text + view.first, shown, view.cursor - view.first + under) - before;
     d.box(gb, rp, cursor_x, top, @max(cursor_w, 1), @intCast(height), ink);
-    if (!past_end) {
+    if (under > 0 and cursor_w > 0) {
         d.pen(gb, rp, paper);
         gb.Move(rp, cursor_x, top + @as(i32, @intCast(baseline)));
         gb.Text(rp, text + view.cursor, under);
@@ -733,11 +779,11 @@ fn takeTags(ib: *IntuitionBase, p: *Data, tags: ?[*]const TagItem, at_birth: boo
     return changed;
 }
 
-/// The cursor moved to the character a press landed on: as many
-/// characters along from the first shown as fit whole to the left of the
-/// pointer, measured from where the text began when it was last drawn and
-/// in the font it was drawn in. A press past the last character shown
-/// lands on it, or after it when it ends the text.
+/// The cursor moved to the character a press landed on: the one whose
+/// cell the pointer is in, in the piece of the line that was last drawn,
+/// from where it began then and in the font it was drawn in. A press
+/// past the last character shown lands on it, or after it when it ends
+/// the text.
 fn cursorTo(ib: *IntuitionBase, p: *Data, gi: ?*classusr.GadgetInfo, x: i32) void {
     const it = ib.iface();
     const gb = ib.graphics_base;
@@ -749,8 +795,15 @@ fn cursorTo(ib: *IntuitionBase, p: *Data, gi: ?*classusr.GadgetInfo, x: i32) voi
     const click = x - p.text_left;
     var at = view.first;
     if (click > 0 and view.len > view.first) {
-        var te: graphics.TextExtent = undefined;
-        at += gb.TextFit(port, text + view.first, view.len - view.first, &te, null, 1, click, any_height);
+        const rest = view.len - view.first;
+        const drawn = if (p.disp_count > 0) @min(p.disp_count, rest) else rest;
+        // The place nearest the pointer may be the one right of it: the
+        // cursor is the cell the pointer is in, so its left edge.
+        var landed = gb.TextXToOffset(port, text + view.first, drawn, click);
+        while (landed > 0 and gb.TextOffsetToX(port, text + view.first, drawn, landed) > click) {
+            landed = charBefore(text + view.first, landed);
+        }
+        at += landed;
         // Past the last character shown: on it, or after it when it ends
         // the text.
         const shown_end = view.first + p.disp_count;
