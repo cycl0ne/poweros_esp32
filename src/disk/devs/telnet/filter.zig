@@ -1,16 +1,22 @@
 // SPDX-License-Identifier: MIT
-//! The Telnet protocol (RFC 854, 857, 858, 1073) taken off a connection's
+//! The Telnet protocol (RFC 854, 856, 857, 858, 1073) taken off a connection's
 //! bytes as they come, in pieces cut anywhere: what is left is what was
 //! typed. The options it is asked about are answered here too, into the
 //! reply it hands back for the connection.
 //!
-//! **Options.** The unit offers ECHO and SUPPRESS-GO-AHEAD from its side
-//! and asks for SUPPRESS-GO-AHEAD and NAWS - the window's size - from the
-//! client (`offer`), and holds them as on. From then on an answer goes
-//! only where a state changes - a DO for what is on, a WILL agreed to, is
-//! not answered - which is what keeps two ends from answering each other
-//! for ever (RFC 1143). Any other option is refused, once, as it is
-//! asked.
+//! **Options.** The unit offers BINARY, ECHO and SUPPRESS-GO-AHEAD from
+//! its side and asks for BINARY, SUPPRESS-GO-AHEAD and NAWS - the
+//! window's size - from the client (`offer`), and holds them as on. From
+//! then on an answer goes only where a state changes - a DO for what is
+//! on, a WILL agreed to, is not answered - which is what keeps two ends
+//! from answering each other for ever (RFC 1143). Any other option is
+//! refused, once, as it is asked.
+//!
+//! **BINARY** both ways is what lets a byte past 127 through as it is:
+//! the text is UTF-8 both ways, and a client that has not agreed to
+//! binary may take the eighth bit off what it sends or shows. A CR is the
+//! end of a line in either mode, so CR LF and CR NUL are one CR whether
+//! the client sends binary or not.
 //!
 //! **The window's size** comes as a subnegotiation, `IAC SB NAWS` and the
 //! columns and rows in two bytes each (a 255 among them doubled), `IAC
@@ -27,6 +33,7 @@ pub const interrupt: u8 = 244;
 pub const brk: u8 = 243;
 pub const se: u8 = 240;
 
+pub const option_binary: u8 = 0;
 pub const option_echo: u8 = 1;
 pub const option_sga: u8 = 3;
 pub const option_naws: u8 = 31;
@@ -52,10 +59,12 @@ pub const Filter = struct {
     state: State = .data,
     /// The verb of an option being read.
     verb: u8 = 0,
-    /// What this end does (ECHO, SGA), and what the client does (SGA,
-    /// NAWS).
+    /// What this end does (BINARY, ECHO, SGA), and what the client does
+    /// (BINARY, SGA, NAWS).
+    binary: bool = false,
     echo: bool = false,
     sga: bool = false,
+    client_binary: bool = false,
     client_sga: bool = false,
     client_naws: bool = false,
     /// A subnegotiation being read: its option, and its first bytes.
@@ -70,12 +79,16 @@ pub const Filter = struct {
 
     /// The opening offer, and the options held on from now.
     pub fn offer(filter: *Filter, reply: *Reply) void {
+        reply.put(will, option_binary);
         reply.put(will, option_echo);
         reply.put(will, option_sga);
+        reply.put(do, option_binary);
         reply.put(do, option_sga);
         reply.put(do, option_naws);
+        filter.binary = true;
         filter.echo = true;
         filter.sga = true;
+        filter.client_binary = true;
         filter.client_sga = true;
         filter.client_naws = true;
     }
@@ -174,6 +187,10 @@ pub const Filter = struct {
     fn answer(filter: *Filter, verb: u8, option: u8, reply: *Reply) void {
         switch (verb) {
             do => switch (option) {
+                option_binary => if (!filter.binary) {
+                    filter.binary = true;
+                    reply.put(will, option);
+                },
                 option_echo => if (!filter.echo) {
                     filter.echo = true;
                     reply.put(will, option);
@@ -185,6 +202,10 @@ pub const Filter = struct {
                 else => reply.put(wont, option),
             },
             dont => switch (option) {
+                option_binary => if (filter.binary) {
+                    filter.binary = false;
+                    reply.put(wont, option);
+                },
                 option_echo => if (filter.echo) {
                     filter.echo = false;
                     reply.put(wont, option);
@@ -196,6 +217,10 @@ pub const Filter = struct {
                 else => {},
             },
             will => switch (option) {
+                option_binary => if (!filter.client_binary) {
+                    filter.client_binary = true;
+                    reply.put(do, option);
+                },
                 option_sga => if (!filter.client_sga) {
                     filter.client_sga = true;
                     reply.put(do, option);
@@ -207,6 +232,10 @@ pub const Filter = struct {
                 else => reply.put(dont, option),
             },
             wont => switch (option) {
+                option_binary => if (filter.client_binary) {
+                    filter.client_binary = false;
+                    reply.put(dont, option);
+                },
                 option_sga => if (filter.client_sga) {
                     filter.client_sga = false;
                     reply.put(dont, option);
@@ -270,11 +299,11 @@ test "options: the offer, agreement unanswered, changes answered, the rest refus
     var filter: Filter = .{};
     var reply: Reply = .{};
     filter.offer(&reply);
-    try testing.expectEqualSlices(u8, &.{ iac, will, option_echo, iac, will, option_sga, iac, do, option_sga, iac, do, option_naws }, reply.bytes[0..reply.length]);
+    try testing.expectEqualSlices(u8, &.{ iac, will, option_binary, iac, will, option_echo, iac, will, option_sga, iac, do, option_binary, iac, do, option_sga, iac, do, option_naws }, reply.bytes[0..reply.length]);
     reply = .{};
     var out: [16]u8 = undefined;
     // The client agrees: nothing to say.
-    _ = filter.feed(&.{ iac, do, option_echo, iac, do, option_sga, iac, will, option_sga }, &out, &reply);
+    _ = filter.feed(&.{ iac, do, option_binary, iac, do, option_echo, iac, do, option_sga, iac, will, option_binary, iac, will, option_sga }, &out, &reply);
     try testing.expectEqual(@as(usize, 0), reply.length);
     // It will send its window's size, as asked: nothing to say; it asks
     // for the terminal type: refused.
@@ -285,6 +314,21 @@ test "options: the offer, agreement unanswered, changes answered, the rest refus
     _ = filter.feed(&.{ iac, dont, option_echo, iac, dont, option_echo }, &out, &reply);
     try testing.expectEqualSlices(u8, &.{ iac, wont, option_echo }, reply.bytes[0..reply.length]);
     try testing.expect(!filter.echo);
+    // It will not send binary, then does: each change answered once.
+    reply = .{};
+    _ = filter.feed(&.{ iac, wont, option_binary, iac, wont, option_binary, iac, will, option_binary }, &out, &reply);
+    try testing.expectEqualSlices(u8, &.{ iac, dont, option_binary, iac, do, option_binary }, reply.bytes[0..reply.length]);
+    try testing.expect(filter.client_binary);
+}
+
+test "binary: bytes past 127 through as they are, a CR still one" {
+    var filter: Filter = .{};
+    var reply: Reply = .{};
+    filter.offer(&reply);
+    reply = .{};
+    var out: [32]u8 = undefined;
+    const count = filter.feed("Gr\xc3\xbc\xc3\x9fe \xe2\x82\xac\xff\xff\r\n", &out, &reply);
+    try testing.expectEqualStrings("Grüße €\xff\r", out[0..count]);
 }
 
 test "the window's size: NAWS read, cut anywhere, a 255 doubled, again when it changes" {

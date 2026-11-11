@@ -15,8 +15,8 @@
 //! there is one, and then with a password, asked for on the console
 //! without its echo, three tries - asked for only when the server takes
 //! passwords. A banner the server sends is shown before the password is
-//! asked for: as Latin-1, the characters the console has not as `?`, and
-//! without its control characters, so it cannot work the console.
+//! asked for: in UTF-8, without its control characters, so it cannot
+//! work the console.
 //!
 //! Everything that goes wrong is said on the output, after the program's
 //! name; Ctrl-C stops a step that waits.
@@ -30,7 +30,7 @@ const ExecBase = @import("../../interface/exec.zig").ExecBase;
 const DosBase = @import("../../interface/dos.zig").DosBase;
 const SocketBase = @import("../../interface/bsdsocket.zig").SocketBase;
 const CryptoBase = @import("../../interface/crypto.zig").CryptoBase;
-const UtilityBase = @import("../../interface/utility.zig").UtilityBase;
+const utf8 = @import("../../libs/utility/utf8.zig");
 const FileHandle = dos.FileHandle;
 const Printf = dos.stdio.Printf;
 
@@ -64,8 +64,6 @@ pub const Client = struct {
     dl: *DosBase,
     sb: *SocketBase,
     cb: *CryptoBase,
-    /// The banner's UTF-8 made Latin-1.
-    ub: *UtilityBase,
     /// The program's name, in front of every message.
     program: [*:0]const u8,
     /// Where the console's answers come from - the host key's question,
@@ -374,30 +372,35 @@ pub const Client = struct {
         }
     }
 
-    /// The banner the last SSHCMD_LOGIN brought, if any, shown as the
-    /// console can show it: UTF-8 made Latin-1 by utility.library, a
-    /// character Latin-1 has not as `?`, the control characters left out
-    /// but for tabs and line ends.
+    /// The banner the last SSHCMD_LOGIN brought, if any, shown in UTF-8,
+    /// its characters read as `utf8.read` reads them, the controls - C0,
+    /// DEL and U+0080 to U+009F - left out but for tabs and line ends.
     fn showBanner(client: *Client) void {
         const dl = client.dl;
         const banner = &client.login.banner;
         const text = sliceTo(banner);
         if (text.len == 0) return;
         _ = dl.Flush(client.output);
-        // In place: Latin-1 is never longer than the UTF-8 it comes from.
-        const latin_length = client.ub.Utf8ToLatin1(null, text.ptr, text.len, banner, text.len);
         var shown: [256]u8 = undefined;
         var length: usize = 0;
-        var last: u8 = '\n';
-        for (banner[0..latin_length]) |char| {
+        var last: u32 = '\n';
+        var at: usize = 0;
+        while (at < text.len) {
+            const char = utf8.next(text, &at);
             if (char != '\t' and char != '\n' and (char < 0x20 or (char >= 0x7F and char < 0xA0))) continue;
             last = char;
-            shown[length] = char;
-            length += 1;
-            if (length == shown.len) {
+            var bytes: [4]u8 = undefined;
+            const taken = utf8.encode(char, &bytes);
+            if (length + taken > shown.len) {
                 _ = dl.Write(client.output, &shown, @intCast(length));
                 length = 0;
             }
+            @memcpy(shown[length..][0..taken], bytes[0..taken]);
+            length += taken;
+        }
+        if (length == shown.len) {
+            _ = dl.Write(client.output, &shown, @intCast(length));
+            length = 0;
         }
         if (last != '\n') {
             shown[length] = '\n';

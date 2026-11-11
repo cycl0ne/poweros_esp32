@@ -25,7 +25,9 @@
 //! Anything else is IOERR_NOCMD. On opening, the unit offers to echo and
 //! to go without go-ahead (WILL ECHO, WILL SUPPRESS-GO-AHEAD, DO
 //! SUPPRESS-GO-AHEAD), so a client sends each key as it is typed and
-//! shows only what comes back, and asks for the window's size (DO NAWS);
-//! every other option is refused.
+//! shows only what comes back, offers and asks for binary both ways (WILL
+//! BINARY, DO BINARY), so the UTF-8 text goes through with every byte
+//! whole, and asks for the window's size (DO NAWS); every other option
+//! is refused.
 
 pub const TELNETNAME = "telnet.device";

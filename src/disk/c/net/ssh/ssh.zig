@@ -28,6 +28,12 @@
 //! file - goes to the shell or the command as it is, and its end is the
 //! end of their input.
 //!
+//! **The text is UTF-8** both ways, and the session asks the server for
+//! it in the variable `LC_CTYPE=C.UTF-8`, so the programs there read and
+//! write UTF-8 too. A server takes the variable when it lets the client
+//! set it (OpenSSH's `AcceptEnv LC_*`, which many systems have); one that
+//! does not, or has no such locale, keeps its own.
+//!
 //! The return code is the session's exit status, 20 when it gave none, or
 //! when there was no session.
 
@@ -40,7 +46,6 @@ const ssh_keys = sdk.devices.ssh.keys;
 const connect = sdk.devices.ssh.connect;
 const timer = sdk.devices.timer;
 const crypto = sdk.crypto;
-const utility = sdk.utility;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
@@ -50,7 +55,7 @@ const FileHandle = dos.FileHandle;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SSH";
-const VERSION_STRING = "\x00$VER: SSH 1.3 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SSH 1.4 (11.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "HOST,PORT/K/N,USER/K,KEYGEN/S,COMMAND/F";
@@ -63,6 +68,8 @@ const arg_command = 4;
 const KEY_FILE = connect.KEY_FILE;
 const KEY_PUB_FILE = connect.KEY_PUB_FILE;
 const TERMINAL = "xterm-256color";
+/// The variables the session asks for: text in UTF-8.
+const ENVIRONMENT = "LC_CTYPE=C.UTF-8\x00\x00";
 /// How long the console has to say its size, and how often it is asked
 /// again.
 const size_answer_us = 300_000;
@@ -157,11 +164,6 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer sys.CloseLibrary(socket_lib);
     const sb: *SocketBase = @ptrCast(socket_lib);
-    const utility_lib = sys.OpenLibrary(utility.UTILITYNAME, 1) orelse {
-        _ = Printf(dl, MSG_NOLIBRARY, .{ COMMAND_NAME, utility.UTILITYNAME });
-        return dos.RETURN_FAIL;
-    };
-    defer sys.CloseLibrary(utility_lib);
 
     if (argv[arg_keygen] != 0) return keygen(dl, sb, cb);
     const given_host = dos.rdargs.string(argv[arg_host]) orelse {
@@ -189,7 +191,6 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             .dl = dl,
             .sb = sb,
             .cb = cb,
-            .ub = @ptrCast(utility_lib),
             .program = COMMAND_NAME,
             .input = dl.Input().?,
             .output = dl.Output().?,
@@ -245,6 +246,7 @@ fn run(st: *State, command: ?[*:0]const u8) i32 {
         st.session.columns = st.columns;
         st.session.rows = st.rows;
     }
+    @memcpy(st.session.environment[0..ENVIRONMENT.len], ENVIRONMENT);
     switch (client.step(ssh.SSHCMD_SESSION, &st.session, @sizeOf(ssh.SshSession))) {
         0 => {},
         ssh.SSHERR_SESSION => {

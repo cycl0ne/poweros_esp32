@@ -974,8 +974,11 @@ from the peer comes as Ctrl-C, and a closed connection as
 `IOERR_ENDOFSTREAM`. The client's window size, when it tells it (NAWS,
 RFC 1073) - again each time the window changes - is what
 serial.device's `SDCMD_TERMSIZE` answers, so the console lists Tab's
-names as wide as the window. `C:net/ShellServer` is built on it: a shell
-for each connection to port 23.
+names as wide as the window. The unit offers and asks for binary both
+ways (RFC 856): the text is UTF-8, and binary is what keeps a client
+from taking the eighth bit off its bytes; a client that refuses it gets
+the same bytes, and shows what it can of them. `C:net/ShellServer` is
+built on it: a shell for each connection to port 23.
 
 ## SSH: ssh.device
 
@@ -1062,8 +1065,12 @@ SSH claus@10.0.0.5 PORT 2222 list SYS:   ; one command
   goes into the other machine's `~/.ssh/authorized_keys` (or
   `ENVARC:Sys/net/authorized_keys` on a PowerOS one). The user is
   `user@host`, or `USER`, or the variable `USER`. A banner the server
-  shows at the login comes first, as Latin-1 and without its control
-  characters; the password is asked for only when the server takes one.
+  shows at the login comes first, without its control characters; the
+  password is asked for only when the server takes one.
+- **The text is UTF-8** both ways. The session asks for it in the
+  variable `LC_CTYPE=C.UTF-8`, which a server takes when it lets the
+  client set it (OpenSSH's `AcceptEnv LC_*`); a server that does not, or
+  has no such locale, keeps its own.
 - **A shell** runs on a terminal of type xterm-256color the size of the
   console, which the console says when asked and keeps saying as its
   window changes; every key goes to the shell, Ctrl-C too. `~.` at the

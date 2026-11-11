@@ -84,7 +84,6 @@ pub const SshLink = struct {
             .dl = dl,
             .sb = git.sb.?,
             .cb = git.cb,
-            .ub = git.ub,
             .program = context.COMMAND_NAME,
             .input = input,
             .output = output,
