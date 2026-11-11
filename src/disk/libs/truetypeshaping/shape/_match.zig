@@ -15,6 +15,12 @@
 //! (`matchAfter`) likewise. The glyphs of the sequence itself must carry
 //! the lookup's feature; those around it need not.
 //!
+//! A text has characters it does not show by itself: joiners, selectors,
+//! marks of direction. A sequence that names one finds it; one that does
+//! not steps over it (`stepsOver`), so that such a character does not
+//! part two letters a font joins - except the non-joiner, which is there
+//! to part them.
+//!
 //! Parts of a ligature made earlier are matched with care: marks that sit
 //! on different parts of one ligature do not form a sequence together,
 //! and a mark that sits on a ligature forms none with a glyph that does
@@ -105,6 +111,19 @@ pub const Apply = struct {
             },
             else => return false,
         }
+    }
+
+    /// Whether a sequence steps over `item` where it asks for another
+    /// glyph: a character a text does not show, which no lookup has
+    /// replaced. A sequence of glyphs to replace stops at the non-joiner
+    /// and at the hidden ones; what stands `around` it stops at the
+    /// hidden ones alone. Positions stop at none.
+    pub fn stepsOver(apply: *const Apply, item: *const Item, around: bool) bool {
+        if (item.flags & (_buffer.ITEM_IGNORABLE | _buffer.ITEM_SUBSTITUTED) != _buffer.ITEM_IGNORABLE) return false;
+        if (apply.kind == .position) return true;
+        if (item.flags & _buffer.ITEM_HIDDEN != 0) return false;
+        if (item.flags & _buffer.ITEM_NON_JOINER != 0) return around;
+        return true;
     }
 
     /// The next item after `at` the lookup sees; null at the run's end,
@@ -199,11 +218,13 @@ pub fn matchInput(apply: *Apply, at: u32, rest: Sequence, matcher: Matcher, plac
     var index = at;
     places[0] = at;
     for (0..rest.count) |step| {
-        if (!apply.spend()) return null;
-        index = apply.next(index) orelse return null;
-        const item = &items[index];
-        if (item.mask & apply.mask == 0) return null;
-        if (!matcher.matches(item.glyph, rest.get(@intCast(step)))) return null;
+        const item = while (true) {
+            if (!apply.spend()) return null;
+            index = apply.next(index) orelse return null;
+            const found = &items[index];
+            if (found.mask & apply.mask != 0 and matcher.matches(found.glyph, rest.get(@intCast(step)))) break found;
+            if (!apply.stepsOver(found, false)) return null;
+        };
         places[step + 1] = index;
         if (first_ligature != 0 and first_part != 0) {
             // The first sits on a part of a ligature: the others must sit
@@ -240,9 +261,13 @@ pub fn matchBefore(apply: *Apply, at: u32, before: Sequence, matcher: Matcher) b
     if (before.count > context_limit) return false;
     var index = at;
     for (0..before.count) |step| {
-        if (!apply.spend()) return false;
-        index = apply.prev(index) orelse return false;
-        if (!matcher.matches(apply.buffer.items[index].glyph, before.get(@intCast(step)))) return false;
+        while (true) {
+            if (!apply.spend()) return false;
+            index = apply.prev(index) orelse return false;
+            const found = &apply.buffer.items[index];
+            if (matcher.matches(found.glyph, before.get(@intCast(step)))) break;
+            if (!apply.stepsOver(found, true)) return false;
+        }
     }
     return true;
 }
@@ -252,9 +277,13 @@ pub fn matchAfter(apply: *Apply, end: u32, after: Sequence, matcher: Matcher) bo
     if (after.count > context_limit) return false;
     var index = end -% 1;
     for (0..after.count) |step| {
-        if (!apply.spend()) return false;
-        index = apply.next(index) orelse return false;
-        if (!matcher.matches(apply.buffer.items[index].glyph, after.get(@intCast(step)))) return false;
+        while (true) {
+            if (!apply.spend()) return false;
+            index = apply.next(index) orelse return false;
+            const found = &apply.buffer.items[index];
+            if (matcher.matches(found.glyph, after.get(@intCast(step)))) break;
+            if (!apply.stepsOver(found, true)) return false;
+        }
     }
     return true;
 }

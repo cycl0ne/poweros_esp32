@@ -1,17 +1,25 @@
 // SPDX-License-Identifier: MIT
 //! What the tests of built tables shape with: the library's shaping on
-//! the host's memory, a run of glyphs in and the shaped run out.
+//! the host's memory, a run of glyphs or a text in and the shaped run
+//! out.
 //!
-//! `shape` takes tables as bytes, so a test needs no font file around
-//! them. Every block the shaping takes comes from the tests' allocator,
-//! which fails a test that leaves one behind, and a test may say after
-//! how many blocks there is no more memory.
+//! `shape` and `shapeText` take tables as bytes, so a test needs no font
+//! file around them. Every block the shaping takes comes from the tests'
+//! allocator, which fails a test that leaves one behind, and a test may
+//! say after how many blocks there is no more memory.
+//!
+//! A text's font has a glyph for every character up to U+FFFF, of the
+//! character's own number, so a test's tables name the letter "f" as
+//! the glyph 'f'. What else the font has - other glyphs, glyphs for a
+//! character with a selector, a `kern` table's pairs, advances - the
+//! test lists.
 
 const std = @import("std");
 const sdk = @import("sdk");
 const tts = sdk.truetypeshaping;
 const _shape = @import("../shape/_shape.zig");
 const _buffer = @import("../shape/_buffer.zig");
+const _text = @import("../shape/_text.zig");
 
 const testing = std.testing;
 
@@ -129,7 +137,15 @@ pub fn shape(tables: Tables, glyphs: []const u16, options: Options) Run {
         const cluster: u32 = if (options.clusters) |clusters| clusters[index] else @intCast(index);
         buffer.append(.{ .glyph = glyph, .cluster = cluster, .mask = 0 });
     }
-    run.result = _shape.shape(memory, font, options.script, options.language, options.backward, options.features, &buffer);
+    const order: _shape.Order = .{
+        .memory = memory,
+        .font = font,
+        .script = options.script,
+        .language = options.language,
+        .backward = options.backward,
+        .features = options.features,
+    };
+    run.result = _shape.shape(&order, &buffer);
     if (run.result != tts.TTS_OK) return run;
     run.count = buffer.len;
     if (buffer.len > room) {
@@ -145,5 +161,88 @@ pub fn shape(tables: Tables, glyphs: []const u16, options: Options) Run {
             .y_offset = item.y_offset,
         };
     }
+    return run;
+}
+
+pub const TextOptions = struct {
+    language: u32 = tts.TTS_LANGUAGE_DEFAULT,
+    backward: bool = false,
+    features: []const tts.Feature = &.{},
+    /// Every glyph's advance, but for those of `advances`.
+    advance: i32 = 1000,
+    /// `.{ glyph, advance }`.
+    advances: []const [2]i32 = &.{},
+    /// Characters whose glyph is not their own number: `.{ character,
+    /// glyph }`.
+    glyphs: []const [2]u32 = &.{},
+    /// A character and a selector the font has a glyph for:
+    /// `.{ character, selector, glyph }`.
+    variants: []const [3]u32 = &.{},
+    /// The `kern` table's pairs: `.{ left, right, value }`.
+    kerning: []const [3]i32 = &.{},
+    /// How many blocks the shaping gets before there is no more memory.
+    blocks: ?u32 = null,
+    /// How many glyphs the answer has room for.
+    room: u32 = room,
+};
+
+fn textAdvanceOf(context: *anyopaque, glyph: u32) i32 {
+    const options: *const TextOptions = @ptrCast(@alignCast(context));
+    for (options.advances) |entry| {
+        if (entry[0] == glyph) return entry[1];
+    }
+    return options.advance;
+}
+
+fn textGlyphOf(context: *anyopaque, char: u32) u32 {
+    const options: *const TextOptions = @ptrCast(@alignCast(context));
+    for (options.glyphs) |entry| {
+        if (entry[0] == char) return entry[1];
+    }
+    return if (char <= 0xFFFF) char else 0;
+}
+
+fn textVariantOf(context: *anyopaque, char: u32, selector: u32) u32 {
+    const options: *const TextOptions = @ptrCast(@alignCast(context));
+    for (options.variants) |entry| {
+        if (entry[0] == char and entry[1] == selector) return entry[2];
+    }
+    return 0;
+}
+
+fn textKerningOf(context: *anyopaque, left: u32, right: u32) i32 {
+    const options: *const TextOptions = @ptrCast(@alignCast(context));
+    for (options.kerning) |entry| {
+        if (entry[0] == left and entry[1] == right) return entry[2];
+    }
+    return 0;
+}
+
+/// Shapes `text` with `tables`. `count` is what the call left there,
+/// having started at 0xDEAD.
+pub fn shapeText(tables: Tables, text: []const u8, options: TextOptions) Run {
+    var run: Run = .{};
+    var lender: Lender = .{ .left = options.blocks };
+    var font_options = options;
+    const request: _text.Text = .{
+        .memory = .{ .context = &lender, .allocFn = allocate, .freeFn = release },
+        .font = .{
+            .gdef = .{ .bytes = tables.gdef },
+            .gsub = .{ .bytes = tables.gsub },
+            .gpos = .{ .bytes = tables.gpos },
+            .context = &font_options,
+            .advanceFn = textAdvanceOf,
+            .kerningFn = textKerningOf,
+            .glyphFn = textGlyphOf,
+            .variantFn = textVariantOf,
+        },
+        .bytes = text,
+        .backward = options.backward,
+        .language = options.language,
+        .features = options.features,
+    };
+    var shaped: tts.ShapedRun = .{ .glyphs = &run.glyphs, .room = options.room, .count = 0xDEAD };
+    run.result = _text.shapeText(&request, &shaped);
+    run.count = shaped.count;
     return run;
 }

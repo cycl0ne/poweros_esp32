@@ -13,7 +13,8 @@
 //!
 //! Text is drawn in the fonts of --fonts, Liberation's directory, as
 //! the disk's `FONTS:sans`, `serif` and `mono` are made from it - read
-//! by truetype.library's own code - and without it is left out. A
+//! by truetype.library's own code and shaped by
+//! truetypeshaping.library's - and without it is left out. A
 //! picture of a `data:` address is drawn when it is a PNG.
 //!
 //! The two are compared premultiplied - a channel times its coverage -
@@ -41,7 +42,9 @@ const vector = sdk.vector;
 const module = @import("vector");
 const svg = @import("svg");
 const tt = @import("truetype");
+const shaping = @import("shaping");
 const truetype = sdk.truetype;
+const tts = sdk.truetypeshaping;
 const diskfont = sdk.diskfont;
 const graphics = sdk.graphics;
 const document = svg.document;
@@ -126,8 +129,10 @@ const Direct = struct {
 };
 
 /// Fonts and pictures for `svg.draw`, as svg.datatype has them from
-/// diskfont.library, truetype.library and datatypes.library: the faces
-/// of Liberation's files, read by truetype.library's code, and PNGs.
+/// diskfont.library, truetype.library, truetypeshaping.library and
+/// datatypes.library: the faces of Liberation's files, read by
+/// truetype.library's code and shaped by truetypeshaping.library's, and
+/// PNGs.
 const Sources = struct {
     io: Io,
     /// Liberation's directory; null for no text.
@@ -185,8 +190,67 @@ const Sources = struct {
     }
 
     pub fn CloseFace(_: *Sources, _: *diskfont.OutlineFont) void {}
-    pub fn GlyphIndex(_: *Sources, outline: *truetype.Outline, code: u32) u32 {
-        return tt.outline.glyphIndex(fontOf(outline), code);
+
+    /// A block's length is kept in the 16 bytes before it.
+    const block_header = 16;
+
+    fn allocate(_: *anyopaque, bytes: usize) ?[*]u8 {
+        const block = std.heap.page_allocator.alignedAlloc(u8, .@"16", bytes + block_header) catch return null;
+        const length: *usize = @ptrCast(block.ptr);
+        length.* = block.len;
+        return block.ptr + block_header;
+    }
+    fn release(_: *anyopaque, block: [*]u8) void {
+        const start: [*]align(16) u8 = @alignCast(block - block_header);
+        const length: *usize = @ptrCast(start);
+        std.heap.page_allocator.free(start[0..length.*]);
+    }
+    fn fontIn(context: *anyopaque) *const tt.outline.Font {
+        return @ptrCast(@alignCast(context));
+    }
+    fn advanceOf(context: *anyopaque, glyph: u32) i32 {
+        return tt.outline.advanceOf(fontIn(context), glyph);
+    }
+    fn kerningOf(context: *anyopaque, left: u32, right: u32) i32 {
+        return tt.outline.kerningOf(fontIn(context), left, right);
+    }
+    fn glyphOf(context: *anyopaque, char: u32) u32 {
+        return tt.outline.glyphIndex(fontIn(context), char);
+    }
+    fn variantOf(context: *anyopaque, char: u32, selector: u32) u32 {
+        return tt.outline.glyphVariant(fontIn(context), char, selector);
+    }
+    fn tableOf(font: *const tt.outline.Font, comptime letters: *const [4]u8) []const u8 {
+        const table = tt.outline.findTableByTag(font, truetype.tableTag(letters)) orelse return &.{};
+        return (font.data + table.at)[0..table.len];
+    }
+
+    /// A text shaped as truetypeshaping.library's `ShapeText` shapes it,
+    /// with the font's tables and what truetype.library's code reads
+    /// from it.
+    pub fn ShapeText(_: *Sources, outline: *truetype.Outline, text: []const u8, features: ?[*]const tts.Feature, run: *tts.ShapedRun) i32 {
+        const font = fontOf(outline);
+        const context: *anyopaque = @ptrCast(@constCast(font));
+        var feature_count: usize = 0;
+        if (features) |list| {
+            while (list[feature_count].tag != 0) feature_count += 1;
+        }
+        const request: shaping.text.Text = .{
+            .memory = .{ .context = context, .allocFn = allocate, .freeFn = release },
+            .font = .{
+                .gdef = .{ .bytes = tableOf(font, "GDEF") },
+                .gsub = .{ .bytes = tableOf(font, "GSUB") },
+                .gpos = .{ .bytes = tableOf(font, "GPOS") },
+                .context = context,
+                .advanceFn = advanceOf,
+                .kerningFn = kerningOf,
+                .glyphFn = glyphOf,
+                .variantFn = variantOf,
+            },
+            .bytes = text,
+            .features = if (features) |list| list[0..feature_count] else &.{},
+        };
+        return shaping.text.shapeText(&request, run);
     }
     pub fn GlyphMetrics(_: *Sources, outline: *truetype.Outline, glyph: u32, metrics: *truetype.GlyphMetrics) bool {
         const font = fontOf(outline);
@@ -238,9 +302,6 @@ const Sources = struct {
             .most_points = most[1],
             .style = font.style,
         };
-    }
-    pub fn Kerning(_: *Sources, outline: *truetype.Outline, left: u32, right: u32) i32 {
-        return tt.outline.kerningOf(fontOf(outline), left, right);
     }
 
     /// A PNG of a `data:` address, as pens.

@@ -35,6 +35,13 @@
 //! the tests are built for one, and otherwise shapes its corpus, the
 //! built tables with each of their runs.
 //!
+//! ShapeText goes the same way. A round shapes runs as texts too - each
+//! glyph's number as a character, so that the tables' lookups find their
+//! glyphs - and a text drawn around a run's glyphs from letters of
+//! several scripts, marks, the characters a text does not show,
+//! selectors and bytes that are no UTF-8. A fuzzer's run is shaped as a
+//! text as well, its bytes as they come.
+//!
 //! The closed page is the Linux kernel's, so the tests are skipped on
 //! another host.
 
@@ -525,6 +532,74 @@ fn tablesOf(placed: [3][]u8) shaping.Tables {
     return .{ .gdef = placed[0], .gsub = placed[1], .gpos = placed[2] };
 }
 
+/// What a drawn text is made of besides a run's glyphs: letters of
+/// several scripts and what many share, marks, the characters a text
+/// does not show, selectors, and bytes that are no UTF-8.
+const text_parts = [_][]const u8{
+    "a",        "f",        "i",        " ",         "1",         ",",
+    "\u{3B1}",  "\u{5D0}",  "\u{915}",  "\u{94D}",   "\u{4E2D}",  "\u{1F600}",
+    "\u{301}",  "\u{323}",  "\u{AD}",   "\u{200C}",  "\u{200D}",  "\u{34F}",
+    "\u{180B}", "\u{FE0F}", "\u{2060}", "\u{E0041}", "\u{E0100}", "\xC3",
+    "\x80",     "\xE2\x82", "\xF0\x9F", "\xFF",
+};
+
+/// The most pieces a drawn text has, each of four bytes at most, and the
+/// most bytes of a text: a run read from a fuzzer, three bytes a glyph.
+const most_pieces = 24;
+const most_text = 3 * most_read;
+
+/// The font a text is shaped with has a glyph for one character with a
+/// selector, and a `kern` table of a few pairs.
+const text_variants = [_][3]u32{.{ 'a', 0xFE0F, 300 }};
+const text_kerning = [_][3]i32{ .{ 'a', 'f', -50 }, .{ 'f', 'i', 20 }, .{ 10, 11, 30 }, .{ 17, 18, -40 } };
+
+/// How many texts of runs a round shapes.
+const texts_drawn = 4;
+
+/// Writes the character `char` to `bytes` at `at`, as UTF-8 writes one
+/// of that number - one a text may not hold too. Answers its length.
+fn putChar(bytes: []u8, at: usize, char: u16) usize {
+    if (char < 0x80) {
+        bytes[at] = @intCast(char);
+        return 1;
+    }
+    if (char < 0x800) {
+        bytes[at] = @intCast(0xC0 | (char >> 6));
+        bytes[at + 1] = @intCast(0x80 | (char & 0x3F));
+        return 2;
+    }
+    bytes[at] = @intCast(0xE0 | (char >> 12));
+    bytes[at + 1] = @intCast(0x80 | ((char >> 6) & 0x3F));
+    bytes[at + 2] = @intCast(0x80 | (char & 0x3F));
+    return 3;
+}
+
+/// The run `glyphs` as a text: each glyph's number as a character.
+fn textOf(glyphs: []const u16, bytes: *[most_text]u8) []const u8 {
+    var length: usize = 0;
+    for (glyphs) |glyph| {
+        if (length + 3 > bytes.len) break;
+        length += putChar(bytes, length, glyph);
+    }
+    return bytes[0..length];
+}
+
+/// A text drawn piece by piece: a glyph of `glyphs` as a character, or
+/// one of `text_parts`.
+fn drawnText(random: std.Random, glyphs: []const u16, bytes: *[most_text]u8) []const u8 {
+    var length: usize = 0;
+    for (0..random.uintAtMost(usize, most_pieces)) |_| {
+        if (glyphs.len != 0 and random.boolean()) {
+            length += putChar(bytes, length, glyphs[random.uintLessThan(usize, glyphs.len)]);
+            continue;
+        }
+        const part = text_parts[random.uintLessThan(usize, text_parts.len)];
+        @memcpy(bytes[length..][0..part.len], part);
+        length += part.len;
+    }
+    return bytes[0..length];
+}
+
 const Harness = struct {
     /// Where `GDEF`, `GSUB` and `GPOS` are put, each to end at a closed
     /// page of its own.
@@ -541,6 +616,13 @@ const Harness = struct {
     /// was no more memory for.
     grown: u64 = 0,
     starved: u64 = 0,
+    /// The texts shaped, those of them answered shaped, the texts of a
+    /// run that came out with a glyph the run does not have, and those
+    /// there was no more memory for.
+    texts: u64 = 0,
+    texts_shaped: u64 = 0,
+    texts_replaced: u64 = 0,
+    texts_starved: u64 = 0,
 
     fn up() !Harness {
         const targets = try testing.allocator.create([3]Targets);
@@ -602,8 +684,65 @@ const Harness = struct {
         }
     }
 
+    /// One text shaped one way with `tables`, and what holds of every
+    /// answer held against this one. `glyphs` is the run the text is
+    /// made of, null for another text.
+    fn checkText(harness: *Harness, tables: shaping.Tables, text: []const u8, glyphs: ?[]const u16, way: *const Way, blocks: ?u32) !void {
+        const run = shaping.shapeText(tables, text, .{
+            .language = way.language,
+            .backward = way.backward,
+            .features = way.features,
+            .variants = &text_variants,
+            .kerning = &text_kerning,
+            .blocks = blocks,
+        });
+        harness.texts += 1;
+        switch (run.result) {
+            tts.TTS_OK => {
+                try testing.expect(run.count <= shaping.room);
+                var replaced = false;
+                for (run.glyphs[0..run.count]) |glyph| {
+                    try testing.expect(glyph.glyph <= 0xFFFF);
+                    try testing.expect(glyph.cluster < text.len);
+                    const had = glyphs orelse continue;
+                    if (glyph.glyph == 0xFFFD or std.mem.indexOfScalar(u16, had, @intCast(glyph.glyph)) != null) continue;
+                    replaced = true;
+                }
+                harness.texts_shaped += 1;
+                if (replaced) harness.texts_replaced += 1;
+            },
+            tts.TTSERR_ROOM => {
+                // Each stretch of a script grows by itself.
+                try testing.expect(run.count > shaping.room and run.count <= growthOf(1) * text.len);
+            },
+            tts.TTSERR_NOMEM => {
+                try testing.expect(blocks != null);
+                try testing.expectEqual(@as(u32, 0xDEAD), run.count);
+                harness.texts_starved += 1;
+            },
+            else => return error.NoSuchAnswer,
+        }
+    }
+
+    /// Runs of `work` shaped as texts with `tables`, and a text drawn
+    /// around one of them - that once more with memory that runs out
+    /// after a few blocks.
+    fn roundOfTexts(harness: *Harness, random: std.Random, tables: shaping.Tables, work: *const Work) !void {
+        var bytes: [most_text]u8 = undefined;
+        for (0..texts_drawn) |_| {
+            const run = work.runs[random.uintLessThan(usize, work.runs.len)];
+            const way = &work.ways[random.uintLessThan(usize, work.ways.len)];
+            try harness.checkText(tables, textOf(run, &bytes), run, way, null);
+        }
+        const run = work.runs[random.uintLessThan(usize, work.runs.len)];
+        const way = &work.ways[random.uintLessThan(usize, work.ways.len)];
+        const drawn = drawnText(random, run, &bytes);
+        try harness.checkText(tables, drawn, null, way, null);
+        try harness.checkText(tables, drawn, null, way, random.uintLessThan(u32, 6));
+    }
+
     /// The runs of `work` shaped with `tables`, and one of them once
-    /// more with memory that runs out after a few blocks.
+    /// more with memory that runs out after a few blocks; then texts.
     fn round(harness: *Harness, random: std.Random, tables: shaping.Tables, work: *const Work) !void {
         if (work.drawn == 0) {
             for (work.runs) |run| {
@@ -619,6 +758,7 @@ const Harness = struct {
         const run = work.runs[random.uintLessThan(usize, work.runs.len)];
         const way = &work.ways[random.uintLessThan(usize, work.ways.len)];
         try harness.check(tables, run, way, random.uintLessThan(u32, 4));
+        try harness.roundOfTexts(random, tables, work);
     }
 
     /// The tables of `source` - `GDEF`, `GSUB`, `GPOS` - as they are,
@@ -671,7 +811,8 @@ const Harness = struct {
     }
 
     /// Three tables and a run read from a fuzzer: `GDEF`, `GSUB`,
-    /// `GPOS`, and the run's glyphs, two bytes each.
+    /// `GPOS`, and the run's glyphs, two bytes each. The run's bytes are
+    /// shaped as a text too.
     fn one(harness: *Harness, smith: *testing.Smith) anyerror!void {
         var placed: [3][]u8 = undefined;
         for (&placed, &harness.arenas) |*table, *arena| {
@@ -683,6 +824,7 @@ const Harness = struct {
         const count = length / 2;
         for (glyphs[0..count], 0..) |*glyph, nth| glyph.* = std.mem.readInt(u16, harness.input[2 * nth ..][0..2], .big);
         for (&built_ways) |*way| try harness.check(tablesOf(placed), glyphs[0..count], way, null);
+        for (&built_ways) |*way| try harness.checkText(tablesOf(placed), harness.input[0..length], null, way, null);
     }
 };
 
@@ -811,6 +953,10 @@ test "truetypeshaping: built tables with numbers changed and cut short" {
     try testing.expect(harness.shaped >= harness.calls / 2);
     try testing.expect(harness.changed >= harness.shaped / 4);
     try testing.expect(harness.starved != 0);
+    // And so with the texts: a lookup found its glyphs in many.
+    try testing.expect(harness.texts_shaped >= harness.texts / 2);
+    try testing.expect(harness.texts_replaced >= harness.texts / 16);
+    try testing.expect(harness.texts_starved != 0);
 }
 
 test "truetypeshaping: fetched fonts' tables with numbers changed and cut short" {
@@ -836,6 +982,7 @@ test "truetypeshaping: fetched fonts' tables with numbers changed and cut short"
     if (read == 0) return error.SkipZigTest;
     try testing.expect(harness.shaped >= harness.calls / 2);
     try testing.expect(harness.changed >= harness.shaped / 4);
+    try testing.expect(harness.texts_shaped >= harness.texts / 2);
 }
 
 test "truetypeshaping: tables from a fuzzer, and the built tables as they are" {
@@ -871,4 +1018,5 @@ test "truetypeshaping: tables from a fuzzer, and the built tables as they are" {
     // Every run of the corpus came out shaped, each of the four ways.
     try testing.expect(harness.shaped >= built_runs.len * built_ways.len);
     try testing.expect(harness.changed >= harness.shaped / 2);
+    try testing.expect(harness.texts_shaped >= built_runs.len * built_ways.len);
 }

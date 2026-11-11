@@ -13,7 +13,8 @@
 //!     once, shares one bit with all such; every other feature gets a bit
 //!     of its own, of which there are 31. Where two features of one tag
 //!     hold for a glyph, the later one's bit replaces the earlier one's.
-//!   - Each glyph is sorted by `GDEF`.
+//!   - Each glyph is sorted by `GDEF`; where the font does not sort its
+//!     glyphs, a glyph keeps the kind the caller gave it.
 //!   - `GSUB`'s lookups for the features, in the order the table lists
 //!     them.
 //!   - Each glyph's advance, from the font.
@@ -21,6 +22,22 @@
 //!     worked out.
 //!   - A run read from right to left is turned around: the answer is in
 //!     the order it is drawn.
+//!
+//! A run that is a text (`Order.text`) goes through more:
+//!
+//!   - `GSUB` is applied in two goes: first the lookups of `rvrn`, which
+//!     picks the glyphs a variable font draws in their stead, with what
+//!     the language requires; then those of every other feature. A
+//!     lookup of the second go so finds the glyphs the first one left.
+//!   - After `GSUB` the characters a text does not show are taken out,
+//!     unless a lookup made something of them.
+//!   - After `GPOS`, where the language has no `kern` feature there, the
+//!     font's `kern` table sets pairs closer or apart: each glyph the
+//!     feature holds for and the next one that is no mark, the left of
+//!     the two taking the value on its advance.
+//!   - Then a mark's advance is 0. In a font without `GPOS`, read from
+//!     left to right, the mark moves back by what its advance was, onto
+//!     the glyph before it.
 
 const sdk = @import("sdk");
 const truetypeshaping = sdk.truetypeshaping;
@@ -37,14 +54,51 @@ const _plan = @import("_plan.zig");
 const _gpos = @import("_gpos.zig");
 
 /// What a font gives the shaping: its tables, of no length where it has
-/// none, and its glyphs' advances.
+/// none, and its glyphs' advances. A text asks it for more: the glyph of
+/// a character, the one of a character with a selector behind it (0
+/// where the font has none for the two), and its `kern` table.
 pub const Font = struct {
     gdef: Table = Table.none,
     gsub: Table = Table.none,
     gpos: Table = Table.none,
     context: *anyopaque,
     advanceFn: *const fn (context: *anyopaque, glyph: u32) i32,
+    /// What the font's `kern` table has for two glyphs side by side, the
+    /// left one first; null where the call does not ask.
+    kerningFn: ?*const fn (context: *anyopaque, left: u32, right: u32) i32 = null,
+    glyphFn: ?*const fn (context: *anyopaque, char: u32) u32 = null,
+    variantFn: ?*const fn (context: *anyopaque, char: u32, selector: u32) u32 = null,
 };
+
+/// What a call asks for.
+pub const Order = struct {
+    memory: Memory,
+    font: Font,
+    /// The script's tag, and the other one of a script that has two,
+    /// tried where a table does not list the first; 0 for none.
+    script: u32 = 0,
+    other_script: u32 = 0,
+    language: u32 = 0,
+    /// The run is read from right to left.
+    backward: bool = false,
+    features: []const Feature = &.{},
+    /// The run is a text: see the file's head.
+    text: bool = false,
+    /// The run is left in the order it is read, for a caller that turns
+    /// several around as one.
+    unturned: bool = false,
+};
+
+/// What every stage of a call works with.
+const Call = struct {
+    order: *const Order,
+    gdef: *const Gdef,
+    buffer: *Buffer,
+    places: [*]u32,
+};
+
+const variations_tag = truetypeshaping.featureTag("rvrn");
+const kerning_tag = truetypeshaping.featureTag("kern");
 
 /// The bits a call has for features of their own.
 const own_bits = 31;
@@ -97,36 +151,28 @@ fn maskOf(features: []const Feature, wanted: []const _plan.Wanted, cluster: u32)
     return mask;
 }
 
-/// Applies the lookups `table` has for the features to the buffer.
-fn stage(
-    memory: Memory,
-    table: Table,
-    kind: _match.Kind,
-    script: u32,
-    language: u32,
-    wanted: []const _plan.Wanted,
-    gdef: *const Gdef,
-    buffer: *Buffer,
-    places: [*]u32,
-    backward: bool,
-) i32 {
-    const layout = _plan.Layout.init(table, script, language);
+/// Applies the lookups `table` has for the features `wanted` to the
+/// buffer - with `required`, those the language requires before them.
+fn stage(call: *const Call, table: Table, kind: _match.Kind, wanted: []const _plan.Wanted, required: bool) i32 {
+    const order = call.order;
+    const buffer = call.buffer;
+    const layout = _plan.Layout.init(table, order.script, order.other_script, order.language);
     var none: [0]_plan.Entry = .{};
-    const count = layout.collect(wanted, &none);
+    const count = layout.collect(wanted, required, &none);
     if (count == 0) return truetypeshaping.TTS_OK;
-    const block = memory.alloc(@as(usize, count) * @sizeOf(_plan.Entry)) orelse return truetypeshaping.TTSERR_NOMEM;
-    defer memory.free(block);
+    const block = order.memory.alloc(@as(usize, count) * @sizeOf(_plan.Entry)) orelse return truetypeshaping.TTSERR_NOMEM;
+    defer order.memory.free(block);
     const all: [*]_plan.Entry = @ptrCast(@alignCast(block));
     const entries = all[0..count];
-    _ = layout.collect(wanted, entries);
+    _ = layout.collect(wanted, required, entries);
     const kept = _plan.arrange(entries);
     var apply: _match.Apply = .{
         .buffer = buffer,
-        .gdef = gdef,
+        .gdef = call.gdef,
         .kind = kind,
         .lookups = layout.lookups,
-        .backward = backward,
-        .places = places,
+        .backward = order.backward,
+        .places = call.places,
         .work = workFor(buffer.len),
     };
     for (entries[0..kept]) |entry| {
@@ -137,20 +183,60 @@ fn stage(
     return truetypeshaping.TTS_OK;
 }
 
+/// Moves the entries of `rvrn` to the front of `wanted`, the others
+/// keeping their order. Answers how many there are.
+fn variationsFirst(wanted: []_plan.Wanted) usize {
+    var early: usize = 0;
+    for (wanted, 0..) |want, index| {
+        if (want.tag != variations_tag) continue;
+        var place = index;
+        while (place > early) : (place -= 1) wanted[place] = wanted[place - 1];
+        wanted[early] = want;
+        early += 1;
+    }
+    return early;
+}
+
+/// The font's `kern` table applied to a text, where `GPOS` has no `kern`
+/// feature for the language: the pairs are taken as they are drawn, and
+/// the left glyph of a pair takes the value on its advance.
+fn kernByTable(order: *const Order, wanted: []const _plan.Wanted, buffer: *Buffer) void {
+    const kerningFn = order.font.kerningFn orelse return;
+    var mask: u32 = 0;
+    for (wanted) |want| {
+        if (want.tag == kerning_tag and want.value != 0) mask |= want.mask;
+    }
+    if (mask == 0) return;
+    const layout = _plan.Layout.init(order.font.gpos, order.script, order.other_script, order.language);
+    if (layout.has(kerning_tag)) return;
+    const items = buffer.slice();
+    // `drawn` counts the glyphs from the left; the buffer is in the order
+    // read.
+    var drawn: usize = 0;
+    while (drawn < items.len) {
+        const left = &items[if (order.backward) items.len - 1 - drawn else drawn];
+        drawn += 1;
+        if (left.mask & mask == 0) continue;
+        var other = drawn;
+        while (other < items.len) : (other += 1) {
+            const right = &items[if (order.backward) items.len - 1 - other else other];
+            if (right.class == _buffer.CLASS_MARK) continue;
+            if (right.mask & mask == 0) break;
+            left.advance += kerningFn(order.font.context, left.glyph, right.glyph);
+            drawn = other;
+            break;
+        }
+    }
+}
+
 /// Shapes the glyphs in `buffer` - each with its number and its cluster,
-/// in the order they are read - with `font`, for `script` and
-/// `language`, by `features`. `backward` says the run is read from right
-/// to left. Answers `TTS_OK` with the buffer holding the shaped run in
-/// the order it is drawn, or one of the `TTSERR_` numbers.
-pub fn shape(
-    memory: Memory,
-    font: Font,
-    script: u32,
-    language: u32,
-    backward: bool,
-    features: []const Feature,
-    buffer: *Buffer,
-) i32 {
+/// in the order they are read - as `order` says. Answers `TTS_OK` with
+/// the buffer holding the shaped run in the order it is drawn, or one of
+/// the `TTSERR_` numbers.
+pub fn shape(order: *const Order, buffer: *Buffer) i32 {
+    const memory = order.memory;
+    const font = &order.font;
+    const features = order.features;
     const places_size = _match.nesting_limit * _match.context_limit * @sizeOf(u32);
     const block = memory.alloc(places_size + features.len * @sizeOf(_plan.Wanted)) orelse return truetypeshaping.TTSERR_NOMEM;
     defer memory.free(block);
@@ -162,14 +248,32 @@ pub fn shape(
     const gdef = Gdef.init(font.gdef);
     for (buffer.slice()) |*item| {
         item.mask = maskOf(features, wanted, item.cluster);
-        gdef.classify(item, _buffer.CLASS_NONE);
+        gdef.classify(item, item.class);
     }
-    var result = stage(memory, font.gsub, .substitute, script, language, wanted, &gdef, buffer, places, backward);
+    const call: Call = .{ .order = order, .gdef = &gdef, .buffer = buffer, .places = places };
+    // The masks are set: the entries need not stand beside their
+    // features any longer.
+    const early = if (order.text) variationsFirst(wanted) else wanted.len;
+    var result = stage(&call, font.gsub, .substitute, wanted[0..early], true);
     if (result != truetypeshaping.TTS_OK) return result;
+    if (order.text) {
+        result = stage(&call, font.gsub, .substitute, wanted[early..], false);
+        if (result != truetypeshaping.TTS_OK) return result;
+        buffer.removeIgnorables();
+    }
     for (buffer.slice()) |*item| item.advance = font.advanceFn(font.context, item.glyph);
-    result = stage(memory, font.gpos, .position, script, language, wanted, &gdef, buffer, places, backward);
+    result = stage(&call, font.gpos, .position, wanted, true);
     if (result != truetypeshaping.TTS_OK) return result;
-    _gpos.finish(buffer, backward);
-    if (backward) buffer.reverse();
+    if (order.text) {
+        kernByTable(order, wanted, buffer);
+        const hangs_back = !order.backward and font.gpos.empty();
+        for (buffer.slice()) |*item| {
+            if (item.class != _buffer.CLASS_MARK) continue;
+            if (hangs_back) item.x_offset -= item.advance;
+            item.advance = 0;
+        }
+    }
+    _gpos.finish(buffer, order.backward);
+    if (order.backward and !order.unturned) buffer.reverse();
     return truetypeshaping.TTS_OK;
 }

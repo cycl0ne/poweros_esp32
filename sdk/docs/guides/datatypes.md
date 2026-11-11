@@ -254,7 +254,16 @@ serif without one, as browsers have it; sizes, bold and italic - leaned
 or thickened where a family has no such face - `tspan`s with their own
 style and place, `x`, `y`, `dx` and `dy` lists a character each,
 `text-anchor`, kerning, letter and word spacing, underlines, lines
-through and over, and `xml:space`. A `textPath` is not drawn. It draws a
+through and over, and `xml:space`. Since 1.4 the font shapes the text,
+through truetypeshaping.library's `ShapeText`: the characters that
+follow each other in one face, size and letter spacing are shaped as
+one stretch, whatever spans they are in, so a pair is kerned and a
+ligature joined across a span's border, a mark is set on its letter,
+and each glyph is drawn in the style of the span its character is in.
+A character with an `x`, `y`, `dx` or `dy` of its own starts a new
+stretch; a `letter-spacing` leaves the ligatures apart and comes once
+behind each character or ligature. Text is read from left to right. A
+`textPath` is not drawn. It draws a
 filter's blur - `feGaussianBlur` alone, or as Inkscape and Figma write
 one - in its region, through vector.library 1.4's `BlurLayer`; a filter
 of nothing leaves its element out, and one it cannot make - a drop
@@ -264,8 +273,9 @@ its bytes - PNG, JPEG, GIF, BMP, whatever the disk reads, but not another
 SVG - and drawn in its place with its `preserveAspectRatio`, through
 vector.library 1.4's `PAINT_IMAGE`; an `image` of a file or an address
 is not followed. `paint-order` puts a stroke under its fill. Without
-truetype.library 1.2 and diskfont.library 1.4 - the ESP32s' disks - text
-is left out and the rest drawn. Patterns and markers are not drawn. A
+truetype.library 1.2, truetypeshaping.library 1.1 and diskfont.library
+1.4 - the ESP32s' disks - text is left out and the rest drawn. Patterns
+and markers are not drawn. A
 picture too large to keep is drawn smaller, as any is, and one wanted
 at a size (above) is drawn at it.
 `scripts/svg-compare.sh` draws the Tango icons both ways - here and by
@@ -276,7 +286,10 @@ a little fainter than rsvg-convert draws it: the two coverages are
 multiplied, as a browser does, where cairo cuts one outline by the
 other first. Text is compared in the Liberation fonts when
 `scripts/fetch-fonts.sh` fetched them; rsvg-convert finds a family's own
-font where the PC has it, and draws a list of `x` or `dx` as one value.
+font where the PC has it, draws a list of `x` or `dx` as one value,
+shapes each span on its own - no pair kerned across a span's border -
+and draws a letter and a mark behind it as the one character the font
+has for the two.
 `C:test/DTTime
 <file> ...` times how long any file takes to be made into its object,
 and for an animation - a Lottie file's among them - how long each frame

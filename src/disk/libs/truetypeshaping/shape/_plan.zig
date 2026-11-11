@@ -5,12 +5,15 @@
 //! languages; for each language the features it has; for each feature
 //! the lookups that do its work; and the lookups themselves. `Layout`
 //! finds the language's list for a script and a language asked for: the
-//! script itself, or else `DFLT`, `dflt`, `latn`; the language itself, or
-//! else the one tagged `dflt`, or else the script's default.
+//! script itself, or else its other tag where it has two, or else
+//! `DFLT`, `dflt`, `latn`; the language itself, or else the one tagged
+//! `dflt`, or else the script's default.
 //!
 //! `collect` turns the features asked for into the lookups to apply. The
-//! language's required feature comes first and holds for every glyph;
-//! of the others, the language's first feature of each tag asked for.
+//! language's required feature comes first and holds for every glyph -
+//! where the call asks for it: a table applied in two goes has it in
+//! the first - and of the others, the language's first feature of each
+//! tag asked for.
 //! `arrange` puts them in the order the table lists its lookups in -
 //! which is the order they are applied in, whatever the order of the
 //! features - and makes one of a lookup named twice.
@@ -68,10 +71,10 @@ pub const Layout = struct {
     /// The features replaced for this font, if any.
     replaced: Table = Table.none,
 
-    /// What `table` - a `GSUB` or a `GPOS` - has for `script` and
-    /// `language`; nothing for a table of no length or of a version not
-    /// known here.
-    pub fn init(table: Table, script: u32, language: u32) Layout {
+    /// What `table` - a `GSUB` or a `GPOS` - has for `script`, or else
+    /// for `other_script`, and `language`; nothing for a table of no
+    /// length or of a version not known here.
+    pub fn init(table: Table, script: u32, other_script: u32, language: u32) Layout {
         if (table.word(0) != 1) return .{};
         var layout: Layout = .{
             .features = table.partAt(6),
@@ -79,6 +82,7 @@ pub const Layout = struct {
         };
         const scripts = table.partAt(4);
         const chosen = findTagged(scripts, 0, script) orelse
+            findTagged(scripts, 0, other_script) orelse
             findTagged(scripts, 0, tag("DFLT")) orelse
             findTagged(scripts, 0, tag("dflt")) orelse
             findTagged(scripts, 0, tag("latn")) orelse Table.none;
@@ -112,14 +116,21 @@ pub const Layout = struct {
         return null;
     }
 
-    /// The lookups of the features `wanted`, written to `entries` in the
-    /// order found. Answers how many there are - which may be more than
-    /// `entries` holds, and nothing is written past it.
-    pub fn collect(layout: *const Layout, wanted: []const Wanted, entries: []Entry) u32 {
+    /// Whether the language has a feature tagged `wanted`.
+    pub fn has(layout: *const Layout, wanted: u32) bool {
+        return layout.findFeature(wanted) != null;
+    }
+
+    /// The lookups of the features `wanted` - before them, with
+    /// `required`, those of the feature the language requires - written
+    /// to `entries` in the order found. Answers how many there are -
+    /// which may be more than `entries` holds, and nothing is written
+    /// past it.
+    pub fn collect(layout: *const Layout, wanted: []const Wanted, required: bool, entries: []Entry) u32 {
         var count: u32 = 0;
         if (layout.language.empty()) return 0;
-        const required = layout.language.word(2);
-        if (required != no_feature) layout.add(required, whole_run, 1, entries, &count);
+        const needed = layout.language.word(2);
+        if (required and needed != no_feature) layout.add(needed, whole_run, 1, entries, &count);
         for (wanted) |feature_wanted| {
             if (feature_wanted.value == 0) continue;
             const index = layout.findFeature(feature_wanted.tag) orelse continue;

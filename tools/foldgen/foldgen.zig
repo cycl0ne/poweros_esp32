@@ -9,6 +9,7 @@
 //!   foldgen base <CaseFolding.txt> <UnicodeData.txt> <out.zig>
 //!   foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig>
 //!   foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig>
+//!   foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig>
 //!
 //! `posfs` writes posfs's case fold table (sdk/libs/dos/posfs/fold1.zig):
 //! simple case folding, the file's C and S lines, one code point to one,
@@ -52,6 +53,18 @@
 //! capitals each followed by its small letter (`Ā ā Ă ă ...`) one entry
 //! of its own kind. The version is CaseFolding.txt's, as `case` takes it.
 //!
+//! `script` writes the script each character is written in
+//! (src/disk/libs/truetypeshaping/shape/_script_table.zig), which
+//! truetypeshaping.library splits a text by: Scripts.txt's Script
+//! property, each script named by the four letters of ISO 15924 that
+//! PropertyValueAliases.txt's `sc` lines give it. The scripts are
+//! numbered in the order of those letters, behind `Zyyy` (what every
+//! script uses) and `Zinh` (the marks that take their letter's script).
+//! The table is where the script changes, as `class`'s is. A code point
+//! Scripts.txt leaves out has the script of the code points on both its
+//! sides when that is one script, and is `Zyyy` otherwise - the private
+//! use areas are. The version is Scripts.txt's.
+//!
 //! A case table is runs: code points one or two apart that all move by the same
 //! amount (A-Z by +32; Ā, Ă, Ą... by +1 every second one), each run packed
 //! into a u64 and found by a binary search - 210 runs for Unicode 16's 1484
@@ -69,7 +82,7 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(1);
 }
 
-const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig> | foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig>";
+const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig> | foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig>";
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -278,7 +291,51 @@ pub fn main(init: std.process.Init) !void {
             \\
             \\
         , .{ version, starts.len, version });
-        try writeStarts(arena, &out, starts);
+        try writeStarts(arena, &out, "Where the class changes: `code << 8 | class`, sorted.", starts);
+        try cwd.writeFile(io, .{ .sub_path = args[4], .data = out.items });
+        return;
+    }
+
+    if (mem.eql(u8, args[1], "script")) {
+        if (args.len != 5) fatal(usage, .{});
+        const listing = try cwd.readFileAlloc(io, args[2], arena, limit);
+        const aliases = try cwd.readFileAlloc(io, args[3], arena, limit);
+        const version = try versionNamed(listing, "# Scripts-", args[2]);
+        const scripts = try scriptsOf(arena, listing, aliases);
+        try out.print(arena,
+            \\// SPDX-License-Identifier: MIT
+            \\//! The script each character is written in, from Unicode {s}: the
+            \\//! Script property of Scripts.txt, each script named by the four
+            \\//! letters of ISO 15924 that PropertyValueAliases.txt gives it.
+            \\//! Written by tools/foldgen (`foldgen script`) from the files
+            \\//! scripts/fetch-unicode.sh fetches; never edited by hand.
+            \\//!
+            \\//! `starts` is where the script changes, sorted: each entry the code
+            \\//! point it starts at shifted up by 8, the script's number in the low
+            \\//! byte, the script good up to the next entry's code point. A code
+            \\//! point Unicode gives no script has the one of the code points on
+            \\//! both its sides when that is one script - a character a later
+            \\//! version adds to a block is read as its neighbours are - and is
+            \\//! `Zyyy` otherwise, as the private use areas are. {d} entries.
+            \\//!
+            \\//! `codes` is the scripts' four letters, a script's at its number,
+            \\//! {d} of them. The first two are no writing system's: `Zyyy` is what
+            \\//! every script uses (digits, punctuation, spaces), `Zinh` the marks
+            \\//! that take the script of the letter they sit on.
+            \\
+            \\/// The Unicode version the table is from.
+            \\pub const unicode_version = "{s}";
+            \\
+            \\/// The number of what every script uses, and of the marks that take
+            \\/// their letter's script.
+            \\pub const common: u8 = 0;
+            \\pub const inherited: u8 = 1;
+            \\
+            \\
+        , .{ version, scripts.starts.len, scripts.codes.len, version });
+        try writeCodes(arena, &out, scripts.codes);
+        try out.appendSlice(arena, "\n");
+        try writeStarts(arena, &out, "Where the script changes: `code << 8 | number`, sorted.", scripts.starts);
         try cwd.writeFile(io, .{ .sub_path = args[4], .data = out.items });
         return;
     }
@@ -364,13 +421,128 @@ fn startsOf(arena: mem.Allocator, classes: []const u8) ![]u32 {
     return starts.items;
 }
 
-/// `starts` as a `u32` array, eight to a line.
-fn writeStarts(arena: mem.Allocator, out: *std.ArrayList(u8), starts: []const u32) !void {
-    try out.appendSlice(arena, "/// Where the class changes: `code << 8 | class`, sorted.\npub const starts = [_]u32{\n");
+/// `starts` as a `u32` array under the doc comment `doc`, eight to a line.
+fn writeStarts(arena: mem.Allocator, out: *std.ArrayList(u8), doc: []const u8, starts: []const u32) !void {
+    try out.print(arena, "/// {s}\npub const starts = [_]u32{{\n", .{doc});
     for (starts, 0..) |start, at| {
         if (at % 8 == 0) try out.appendSlice(arena, "   ");
         try out.print(arena, " 0x{X:0>8},", .{start});
         if (at % 8 == 7 or at + 1 == starts.len) try out.appendSlice(arena, "\n");
+    }
+    try out.appendSlice(arena, "};\n");
+}
+
+const Scripts = struct {
+    /// The scripts' four letters, a script's at its number.
+    codes: []const [4]u8,
+    /// Where the script changes: `code << 8 | number`.
+    starts: []const u32,
+};
+
+/// The scripts of Scripts.txt, named by the four letters
+/// PropertyValueAliases.txt's `sc` lines give them and numbered in the
+/// order of those letters behind `Zyyy` and `Zinh`; and where the script
+/// changes. A code point Scripts.txt leaves out has the script of the
+/// code points on both its sides when that is one script, `Zyyy`
+/// otherwise.
+fn scriptsOf(arena: mem.Allocator, listing: []const u8, aliases: []const u8) !Scripts {
+    const Alias = struct { code: [4]u8, name: []const u8 };
+    var known: std.ArrayList(Alias) = .empty;
+    var lines = mem.splitScalar(u8, aliases, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw[0 .. mem.indexOfScalar(u8, raw, '#') orelse raw.len], " \t\r");
+        var fields = mem.splitScalar(u8, line, ';');
+        if (!mem.eql(u8, mem.trim(u8, fields.next() orelse continue, " "), "sc")) continue;
+        const code = mem.trim(u8, fields.next() orelse continue, " ");
+        const name = mem.trim(u8, fields.next() orelse continue, " ");
+        if (code.len != 4) fatal("a script named {s}, not by four letters", .{code});
+        try known.append(arena, .{ .code = code[0..4].*, .name = name });
+    }
+
+    // Every code point's script as its place in `known`; `none` for those
+    // Scripts.txt leaves out.
+    const none = 0xFFFF;
+    const places = try arena.alloc(u16, 0x110000);
+    @memset(places, none);
+    const used = try arena.alloc(bool, known.items.len);
+    @memset(used, false);
+    lines = mem.splitScalar(u8, listing, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw[0 .. mem.indexOfScalar(u8, raw, '#') orelse raw.len], " \t\r");
+        if (line.len == 0) continue;
+        var fields = mem.splitScalar(u8, line, ';');
+        const span = mem.trim(u8, fields.next() orelse continue, " ");
+        const name = mem.trim(u8, fields.next() orelse continue, " ");
+        const dots = mem.indexOf(u8, span, "..");
+        const first = try std.fmt.parseInt(u21, span[0 .. dots orelse span.len], 16);
+        const last = if (dots) |at| try std.fmt.parseInt(u21, span[at + 2 ..], 16) else first;
+        const place = for (known.items, 0..) |alias, at| {
+            if (mem.eql(u8, alias.name, name)) break at;
+        } else fatal("Scripts.txt names {s}, which has no four letters", .{name});
+        used[place] = true;
+        @memset(places[first .. @as(usize, last) + 1], @intCast(place));
+    }
+
+    // The numbers: `Zyyy`, `Zinh`, then the others in use by their letters.
+    var codes: std.ArrayList([4]u8) = .empty;
+    try codes.append(arena, "Zyyy".*);
+    try codes.append(arena, "Zinh".*);
+    var others: std.ArrayList([4]u8) = .empty;
+    for (known.items, used) |alias, in_use| {
+        if (!in_use or mem.eql(u8, &alias.code, "Zyyy") or mem.eql(u8, &alias.code, "Zinh")) continue;
+        try others.append(arena, alias.code);
+    }
+    mem.sort([4]u8, others.items, {}, struct {
+        fn lessThan(_: void, a: [4]u8, b: [4]u8) bool {
+            return mem.order(u8, &a, &b) == .lt;
+        }
+    }.lessThan);
+    try codes.appendSlice(arena, others.items);
+    if (codes.items.len > 256) fatal("{d} scripts, more than a byte numbers", .{codes.items.len});
+    const numbers = try arena.alloc(u8, known.items.len);
+    for (known.items, numbers) |alias, *number| {
+        // One not in use keeps 0: no code point reads it.
+        number.* = for (codes.items, 0..) |code, at| {
+            if (mem.eql(u8, &code, &alias.code)) break @intCast(at);
+        } else 0;
+    }
+
+    // The code points left out: a stretch of them between two of one
+    // script takes it, any other is `Zyyy`.
+    const common: u16 = for (known.items, 0..) |alias, at| {
+        if (mem.eql(u8, &alias.code, "Zyyy")) break @intCast(at);
+    } else fatal("no script Zyyy", .{});
+    var code: usize = 0;
+    while (code < places.len) {
+        if (places[code] != none) {
+            code += 1;
+            continue;
+        }
+        var end = code;
+        while (end < places.len and places[end] == none) end += 1;
+        const before = if (code == 0) none else places[code - 1];
+        const after = if (end == places.len) none else places[end];
+        @memset(places[code..end], if (before == after and before != none) before else common);
+        code = end;
+    }
+
+    var starts: std.ArrayList(u32) = .empty;
+    var current: u16 = none;
+    for (places, 0..) |place, at| {
+        if (place == current) continue;
+        try starts.append(arena, @as(u32, @intCast(at)) << 8 | numbers[place]);
+        current = place;
+    }
+    return .{ .codes = codes.items, .starts = starts.items };
+}
+
+/// `codes` as an array of four letters each, eight to a line.
+fn writeCodes(arena: mem.Allocator, out: *std.ArrayList(u8), codes: []const [4]u8) !void {
+    try out.appendSlice(arena, "/// The scripts' four letters, a script's at its number.\npub const codes = [_][4]u8{\n");
+    for (codes, 0..) |*code, at| {
+        if (at % 8 == 0) try out.appendSlice(arena, "   ");
+        try out.print(arena, " \"{s}\".*,", .{code});
+        if (at % 8 == 7 or at + 1 == codes.len) try out.appendSlice(arena, "\n");
     }
     try out.appendSlice(arena, "};\n");
 }

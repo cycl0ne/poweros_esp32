@@ -2,15 +2,13 @@
 //! ShapeGlyphs: a run of glyphs shaped by a font's layout tables.
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const truetype = sdk.truetype;
 const truetypeshaping = sdk.truetypeshaping;
 const _base = @import("../truetypeshaping_base.zig");
 const TrueTypeShapingBase = _base.TrueTypeShapingBase;
-const _tables = @import("_tables.zig");
-const Table = _tables.Table;
 const _buffer = @import("_buffer.zig");
 const _shape = @import("_shape.zig");
+const Source = @import("_source.zig").Source;
 
 /// A run of glyphs shaped by a font's layout tables: the glyphs
 /// replaced, and each given its advance and its offsets.
@@ -110,7 +108,8 @@ const _shape = @import("_shape.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// truetype.library's `OpenOutline`, `GlyphIndex`, `FontTable`
+/// `ShapeText`, truetype.library's `OpenOutline`, `GlyphIndex`,
+/// `FontTable`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -138,14 +137,7 @@ pub fn ShapeGlyphs(sb: *TrueTypeShapingBase, outline: *truetype.Outline, script:
         return truetypeshaping.TTSERR_DIRECTION;
     }
     var source: Source = .{ .sb = sb, .outline = outline };
-    const memory: _buffer.Memory = .{ .context = &source, .allocFn = allocate, .freeFn = release };
-    const font: _shape.Font = .{
-        .gdef = tableOf(&source, "GDEF"),
-        .gsub = tableOf(&source, "GSUB"),
-        .gpos = tableOf(&source, "GPOS"),
-        .context = &source,
-        .advanceFn = advanceOf,
-    };
+    const memory = source.memory();
     var feature_count: usize = 0;
     if (features) |list| {
         while (list[feature_count].tag != 0) feature_count += 1;
@@ -156,7 +148,15 @@ pub fn ShapeGlyphs(sb: *TrueTypeShapingBase, outline: *truetype.Outline, script:
     for (given) |glyph| buffer.append(.{ .glyph = glyph.glyph, .cluster = glyph.cluster, .mask = 0 });
 
     const wanted: []const truetypeshaping.Feature = if (features) |list| list[0..feature_count] else &.{};
-    const result = _shape.shape(memory, font, script, language, direction == truetypeshaping.TTS_RIGHT_TO_LEFT, wanted, &buffer);
+    const order: _shape.Order = .{
+        .memory = memory,
+        .font = source.font(),
+        .script = script,
+        .language = language,
+        .backward = direction == truetypeshaping.TTS_RIGHT_TO_LEFT,
+        .features = wanted,
+    };
+    const result = _shape.shape(&order, &buffer);
     if (result != truetypeshaping.TTS_OK) return result;
     if (buffer.len > run.room) {
         run.count = buffer.len;
@@ -173,35 +173,4 @@ pub fn ShapeGlyphs(sb: *TrueTypeShapingBase, outline: *truetype.Outline, script:
     }
     run.count = buffer.len;
     return truetypeshaping.TTS_OK;
-}
-
-/// What the shaping's callbacks reach the library and the font through.
-const Source = struct {
-    sb: *TrueTypeShapingBase,
-    outline: *truetype.Outline,
-};
-
-fn allocate(context: *anyopaque, bytes: usize) ?[*]u8 {
-    const source: *Source = @ptrCast(@alignCast(context));
-    const block = source.sb.sys_base.AllocVec(bytes, exec.MEMF_ANY) orelse return null;
-    return @ptrCast(block);
-}
-
-fn release(context: *anyopaque, block: [*]u8) void {
-    const source: *Source = @ptrCast(@alignCast(context));
-    source.sb.sys_base.FreeVec(block);
-}
-
-fn advanceOf(context: *anyopaque, glyph: u32) i32 {
-    const source: *Source = @ptrCast(@alignCast(context));
-    var metrics: truetype.GlyphMetrics = .{};
-    _ = source.sb.truetype_base.GlyphMetrics(source.outline, glyph, &metrics);
-    return metrics.advance;
-}
-
-/// The font's table of the tag `letters`; of no length when it has none.
-fn tableOf(source: *Source, comptime letters: *const [4]u8) Table {
-    var length: u32 = 0;
-    const start = source.sb.truetype_base.FontTable(source.outline, truetype.tableTag(letters), &length) orelse return Table.none;
-    return .{ .bytes = start[0..length] };
 }

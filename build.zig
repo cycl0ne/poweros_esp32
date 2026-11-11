@@ -621,6 +621,8 @@ pub fn build(b: *std.Build) void {
     svgcompare_svg.addImport("sdk", sdk);
     const svgcompare_truetype = b.createModule(.{ .root_source_file = disk_dep.path("libs/truetype/outlines.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
     svgcompare_truetype.addImport("sdk", sdk);
+    const svgcompare_shaping = b.createModule(.{ .root_source_file = disk_dep.path("libs/truetypeshaping/shaping.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
+    svgcompare_shaping.addImport("sdk", sdk);
     const svgcompare = b.addExecutable(.{
         .name = "svgcompare",
         .root_module = b.createModule(.{
@@ -633,6 +635,7 @@ pub fn build(b: *std.Build) void {
     svgcompare.root_module.addImport("vector", svgcompare_vector);
     svgcompare.root_module.addImport("svg", svgcompare_svg);
     svgcompare.root_module.addImport("truetype", svgcompare_truetype);
+    svgcompare.root_module.addImport("shaping", svgcompare_shaping);
     const run_svgcompare = b.addRunArtifact(svgcompare);
     // Text in the disk's Liberation fonts, when scripts/fetch-fonts.sh
     // fetched them.

@@ -528,6 +528,57 @@ the run's length and not what a table's numbers say. Tables that are
 not sound shape to something or to nothing, and are never read past
 their end.
 
+**A text** (since 1.1). `ShapeText(outline, text, length, direction,
+language, features, run)` takes the text itself, in UTF-8, and does what
+a caller of `ShapeGlyphs` would do by hand. It cuts the text into
+stretches of one script - a space, a digit, a comma and a mark belong to
+the stretch before them - and shapes each by what the font lists for
+that script. Each character becomes its glyph, and a character with a
+variation selector the glyph the font has for the two. The features a
+text is set with are applied without being asked for: `rvrn`, `ccmp`,
+`locl`, `rlig`, `liga`, `clig`, `calt` and `rclt` replace; `kern`,
+`mark`, `mkmk`, `curs`, `dist`, `abvm` and `blwm` place; and where
+`GPOS` has no kerning the font's `kern` table is asked. The characters
+a text does not show - the soft hyphen, the joiners, the marks of
+direction - are taken out once the glyphs are replaced, and a mark's
+advance becomes 0.
+
+A cluster is the byte of the text a glyph's character starts at, and a
+feature's `first` and `last` count bytes too. `features` lists what is
+wanted besides: a tag with the value 0 leaves one of the usual features
+out - for the whole text, or for the bytes named - and any other tag
+adds its feature. `run` needs its array and `room` only.
+
+```zig
+const text = "Waffle, 1/2";
+var glyphs: [32]tts.ShapedGlyph = undefined;
+var run: tts.ShapedRun = .{ .glyphs = &glyphs, .room = glyphs.len };
+// Without the usual ligatures, with old-style figures for the "1/2".
+const features = [_]tts.Feature{
+    .{ .tag = tts.featureTag("liga"), .value = 0 },
+    .{ .tag = tts.featureTag("onum"), .first = 8, .last = 10 },
+    .{},
+};
+if (sb.ShapeText(outline, text.ptr, text.len, tts.TTS_LEFT_TO_RIGHT, tts.TTS_LANGUAGE_DEFAULT, &features, &run) == tts.TTS_OK) {
+    var x: i32 = 0;
+    for (glyphs[0..run.count]) |shaped| {
+        // Draw shaped.glyph at x + shaped.x_offset, shaped.y_offset;
+        // it stands for the text from byte shaped.cluster on.
+        x += shaped.advance;
+    }
+}
+```
+
+The whole text is read in the one `direction`, and one read from right
+to left comes back turned around, its last stretch first: a text of both
+directions is the caller's to cut and to order, and no bracket is
+mirrored. Every script is shaped by the features above: the joined forms
+of Arabic and the syllables of the scripts of India are not made. A
+letter and a mark behind it are not put together into the one character
+a font may have for the two - the mark is set on the letter by the
+font's `GPOS` - and a character the font lacks is the missing glyph.
+svg.datatype lays its text out with this call.
+
 ## The system's fonts
 
 intuition.library holds three fonts, by `SYSFONT_*`:
@@ -620,6 +671,7 @@ if (gb.RemFont(&mine.font)) sys.FreeVec(mine); // true once nobody holds it
 | `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces and Liberation's (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation only onto the 64-bit machines' disks. With them two fonts only the host tests read, which go on no disk: Noto Sans Devanagari and Noto Color Emoji |
 | `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
 | `scripts/shape-reference.py` | on the host: applies the fetched fonts' `GSUB` and `GPOS` lookups to runs of glyphs - every glyph of a font, and sequences its lookups have rules for - with an applier of its own on fontTools' reading of the tables, and writes what comes out, a digest for each script, language and feature list, as the Zig files `truetypeshaping.library`'s host tests compare its shaping with (`src/disk/libs/truetypeshaping/tests/reference/`). `--check` says whether the files are the ones it would write, `--show <font> <case>` prints a case's runs |
+| `scripts/shape-text-reference.py` | on the host: shapes texts in the fetched fonts with libharfbuzz - Latin with its kerning and marks, Greek, Cyrillic, Hebrew read from right to left, Devanagari by its plain features, emoji, features switched for a part of a text - and writes the glyphs, clusters, advances and offsets as the Zig files `truetypeshaping.library`'s host tests compare `ShapeText`'s answers with (`src/disk/libs/truetypeshaping/tests/text_reference/`); `--check` says whether they are up to date |
 | `C:ListFonts` | every font by family, size and where it is; `SAMPLE` draws them |
 | `C:FixFonts` | writes every family's contents file again |
 | `C:SetPrefs` | sets the system's fonts, with the rest of its settings, from `ENV:Sys`; `SHOW` prints them |

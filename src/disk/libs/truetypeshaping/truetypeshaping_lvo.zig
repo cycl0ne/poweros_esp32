@@ -14,6 +14,7 @@ const TrueTypeShapingBase = @import("truetypeshaping_base.zig").TrueTypeShapingB
 const truetypeshaping_init = @import("truetypeshaping_init.zig");
 
 const ShapeGlyphs = @import("shape/shapeglyphs.zig").ShapeGlyphs;
+const ShapeText = @import("shape/shapetext.zig").ShapeText;
 
 /// truetypeshaping.library's interface, as the SDK generates it from
 /// sdk/fd/truetypeshaping_lib.fd.
@@ -40,10 +41,15 @@ comptime {
 /// The files whose call carries its contract, above `pub fn <Name>`.
 const contract_files = [_][]const u8{
     @embedFile("shape/shapeglyphs.zig"),
+    @embedFile("shape/shapetext.zig"),
 };
 
 fn lvoShapeGlyphs(sb: *TrueTypeShapingBase, outline: *truetype.Outline, script: u32, direction: u32, language: u32, features: ?[*]const truetypeshaping.Feature, run: *truetypeshaping.ShapedRun) callconv(.c) i32 {
     return ShapeGlyphs(sb, outline, script, direction, language, features, run);
+}
+
+fn lvoShapeText(sb: *TrueTypeShapingBase, outline: *truetype.Outline, text: [*]const u8, length: u32, direction: u32, language: u32, features: ?[*]const truetypeshaping.Feature, run: *truetypeshaping.ShapedRun) callconv(.c) i32 {
+    return ShapeText(sb, outline, text, length, direction, language, features, run);
 }
 
 pub const vectors = [_]*const anyopaque{
@@ -52,6 +58,7 @@ pub const vectors = [_]*const anyopaque{
     vec(truetypeshaping_init.expungeVector),
     vec(exec.libExtFunc),
     vec(lvoShapeGlyphs),
+    vec(lvoShapeText),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

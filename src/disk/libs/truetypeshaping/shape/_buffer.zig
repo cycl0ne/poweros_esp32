@@ -44,6 +44,14 @@ pub const ATTACH_CURSIVE: u8 = 2;
 pub const ITEM_SUBSTITUTED: u8 = 0x01;
 pub const ITEM_LIGATED: u8 = 0x02;
 pub const ITEM_MULTIPLIED: u8 = 0x04;
+/// What an item of a text is, besides: a character a text does not show
+/// by itself (`ITEM_IGNORABLE`), and of those the one that keeps two
+/// letters apart, the one that joins them, and the ones no sequence a
+/// lookup asks for steps over.
+pub const ITEM_IGNORABLE: u8 = 0x08;
+pub const ITEM_NON_JOINER: u8 = 0x10;
+pub const ITEM_JOINER: u8 = 0x20;
+pub const ITEM_HIDDEN: u8 = 0x40;
 
 /// One glyph of the run.
 pub const Item = struct {
@@ -193,6 +201,45 @@ pub const Buffer = struct {
             }
             buffer.items[kept] = buffer.items[index];
             kept += 1;
+        }
+        buffer.len = kept;
+    }
+
+    /// Takes out the items a text does not show (`ITEM_IGNORABLE`),
+    /// but for those a lookup replaced. Where no neighbour has the
+    /// cluster of one taken out, its part of the text falls to the glyph
+    /// before it; at the run's start the glyph behind takes its cluster.
+    pub fn removeIgnorables(buffer: *Buffer) void {
+        const items = buffer.items;
+        const count = buffer.len;
+        var kept: u32 = 0;
+        var index: u32 = 0;
+        while (index < count) : (index += 1) {
+            const item = items[index];
+            if (item.flags & (ITEM_IGNORABLE | ITEM_SUBSTITUTED) != ITEM_IGNORABLE) {
+                items[kept] = item;
+                kept += 1;
+                continue;
+            }
+            if (index + 1 < count and items[index + 1].cluster == item.cluster) continue;
+            if (kept > 0) {
+                const before = items[kept - 1].cluster;
+                if (item.cluster >= before) continue;
+                var back = kept;
+                while (back > 0 and items[back - 1].cluster == before) {
+                    back -= 1;
+                    items[back].cluster = item.cluster;
+                }
+                continue;
+            }
+            if (index + 1 < count and items[index + 1].cluster > item.cluster) {
+                // The glyph behind, and those of its cluster, take it.
+                const behind = items[index + 1].cluster;
+                var ahead = index + 1;
+                while (ahead < count and items[ahead].cluster == behind) : (ahead += 1) {
+                    items[ahead].cluster = item.cluster;
+                }
+            }
         }
         buffer.len = kept;
     }

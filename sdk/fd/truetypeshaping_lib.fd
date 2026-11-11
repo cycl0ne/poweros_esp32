@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! truetypeshaping.library's functions: a run of glyphs shaped by a
-//! font's layout tables - replaced, and placed.
+//! truetypeshaping.library's functions: a text, or a run of glyphs,
+//! shaped by a font's layout tables - replaced, and placed.
 //! Open it with OpenLibrary("truetypeshaping.library", 1).
 ##include libs/truetype/truetype as truetype
 ##include libs/truetypeshaping/truetypeshaping as truetypeshaping
@@ -14,4 +14,12 @@
 /// the font's units. TTS_OK, or TTSERR_ROOM with the count the run
 /// needs, TTSERR_NOMEM, TTSERR_DIRECTION, TTSERR_FEATURES.
 i32 ShapeGlyphs(*truetype.Outline outline, u32 script, u32 direction, u32 language, ?[*]const truetypeshaping.Feature features, *truetypeshaping.ShapedRun run)
+/// The `length` bytes of UTF-8 at `text` shaped by `outline`: cut by
+/// script, each character made its glyph, and the features a text is
+/// shaped with applied, changed by `features` (a list ended by a tag of
+/// 0, its places in bytes). The glyphs come in `run`, as they are
+/// drawn, each cluster the place of its first byte. TTS_OK, or
+/// TTSERR_ROOM with the count the run needs, TTSERR_NOMEM,
+/// TTSERR_DIRECTION, TTSERR_FEATURES.
+i32 ShapeText(*truetype.Outline outline, [*]const u8 text, u32 length, u32 direction, u32 language, ?[*]const truetypeshaping.Feature features, *truetypeshaping.ShapedRun run)
 ##end

@@ -15,15 +15,18 @@ const kexec = host.exec;
 const vector_init = @import("../../../../libs/vector/vector_init.zig");
 const truetype_init = @import("../../../../libs/truetype/truetype_init.zig");
 const truetype_tests = @import("../../../../libs/truetype/tests/truetype.zig");
+const shaping_init = @import("../../../../libs/truetypeshaping/truetypeshaping_init.zig");
 const document = @import("../document.zig");
 const drawing = @import("../draw.zig");
 const data = @import("../data.zig");
 const truetype = sdk.truetype;
+const tts = sdk.truetypeshaping;
 const diskfont = sdk.diskfont;
 
 const testing = std.testing;
 const VectorBase = sdk.interface.vector.VectorBase;
 const TrueTypeBase = sdk.interface.truetype.TrueTypeBase;
+const TrueTypeShapingBase = sdk.interface.truetypeshaping.TrueTypeShapingBase;
 
 test {
     _ = @import("../xml.zig");
@@ -380,13 +383,16 @@ test "a nested svg clips what it draws to its viewport, unless its overflow is v
     try rig.close();
 }
 
-/// Fonts and pictures for the tests: truetype.library made from its ROM
-/// tag, with utility.library, which its init opens; truetype's test font
+/// Fonts and pictures for the tests: truetype.library and
+/// truetypeshaping.library made from their ROM tags, with
+/// utility.library, which truetype's init opens; truetype's test font
 /// as "sans.font" - every other family missing - and a picture's bytes
 /// taken as its pens, two by two, A, R, G, B.
 const Sources = struct {
     library: *exec.Library,
     tb: *TrueTypeBase,
+    shaping_library: *exec.Library = undefined,
+    sb: *TrueTypeShapingBase = undefined,
     utility_library: *exec.Library = undefined,
     font: truetype_tests.Out = .{},
     face: diskfont.OutlineFont = undefined,
@@ -402,6 +408,9 @@ const Sources = struct {
         const made = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoLibrary;
         s.library = @ptrCast(@alignCast(made));
         s.tb = @ptrCast(sys.OpenLibrary(truetype.TRUETYPENAME, 1) orelse return error.NoBase);
+        const shaping_made = kexec.InitResident(kexec.SysBase, &shaping_init.truetypeshaping_library_tag, null) orelse return error.NoLibrary;
+        s.shaping_library = @ptrCast(@alignCast(shaping_made));
+        s.sb = @ptrCast(sys.OpenLibrary(tts.TRUETYPESHAPINGNAME, 1) orelse return error.NoBase);
         truetype_tests.buildFont(&s.font);
         s.face = .{ .outline = s.tb.OpenOutline(&s.font.bytes, s.font.len, null) orelse return error.NotRead, .style = sdk.graphics.FS_NORMAL };
     }
@@ -409,6 +418,8 @@ const Sources = struct {
     fn close(s: *Sources) void {
         const sys = kexec.SysBase.iface();
         s.tb.CloseOutline(s.face.outline);
+        sys.CloseLibrary(s.sb.lib());
+        _ = sys.RemLibrary(s.shaping_library);
         sys.CloseLibrary(s.tb.lib());
         _ = sys.RemLibrary(s.library);
         host.utility.freeForTests(@ptrCast(@alignCast(s.utility_library)));
@@ -433,8 +444,8 @@ const Sources = struct {
     pub fn CloseFace(s: *Sources, _: *diskfont.OutlineFont) void {
         s.opened -= 1;
     }
-    pub fn GlyphIndex(s: *Sources, outline: *truetype.Outline, code: u32) u32 {
-        return s.tb.GlyphIndex(outline, code);
+    pub fn ShapeText(s: *Sources, outline: *truetype.Outline, text: []const u8, features: ?[*]const tts.Feature, run: *tts.ShapedRun) i32 {
+        return s.sb.ShapeText(outline, text.ptr, @intCast(text.len), tts.TTS_LEFT_TO_RIGHT, tts.TTS_LANGUAGE_DEFAULT, features, run);
     }
     pub fn GlyphMetrics(s: *Sources, outline: *truetype.Outline, glyph: u32, metrics: *truetype.GlyphMetrics) bool {
         return s.tb.GlyphMetrics(outline, glyph, metrics);
@@ -444,9 +455,6 @@ const Sources = struct {
     }
     pub fn FontMetrics(s: *Sources, outline: *truetype.Outline, metrics: *truetype.FontMetrics) void {
         s.tb.FontMetrics(outline, metrics);
-    }
-    pub fn Kerning(s: *Sources, outline: *truetype.Outline, left: u32, right: u32) i32 {
-        return s.tb.Kerning(outline, left, right);
     }
     pub fn OpenImage(s: *Sources, href: []const u8) ?drawing.Image {
         const text = data.base64Of(href) orelse return null;
@@ -505,6 +513,32 @@ test "text: laid out in its font, kerned, a span moved and coloured, anchored, u
     try testing.expect(sources.wasAsked("serif.font"));
     try testing.expect(!sources.wasAsked("go.font"));
     try testing.expectEqual(@as(u32, 0), sources.opened);
+    sources.close();
+    try rig.close();
+}
+
+test "text: shaped across its spans, each glyph in its span's colour; letter spacing behind each" {
+    const rig = try Rig.open();
+    var sources: Sources = .{ .library = undefined, .tb = undefined };
+    try sources.open();
+    var pens: [40 * 40]Pen = undefined;
+    try rig.drawWith(&sources,
+        \\<svg width="40" height="40">
+        \\  <text x="2" y="15" font-size="10" fill="#f00">A<tspan fill="#00f">B</tspan></text>
+        \\  <text x="2" y="35" font-size="10" fill="#f00" letter-spacing="2">AB</text>
+        \\</svg>
+    , 40, 40, &pens);
+    // 'A' from 2 to 7 in red; 'B' in the span's blue and kerned to the
+    // 'A' before the span: from 7.5, the pixel at 7 half covered.
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[12 * 40 + 4]);
+    try testing.expectEqual(@as(Pen, 0xFF0000FF), pens[12 * 40 + 10]);
+    try testing.expect(alphaOf(pens[12 * 40 + 7]) > 0x60 and alphaOf(pens[12 * 40 + 7]) < 0xA0);
+    try testing.expectEqual(@as(u32, 0xFF), pens[12 * 40 + 7] & 0xFF);
+    // Spaced by 2: 'B' kerned still, from 9.5.
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[32 * 40 + 4]);
+    try testing.expectEqual(@as(Pen, 0), pens[32 * 40 + 8]);
+    try testing.expect(alphaOf(pens[32 * 40 + 9]) > 0x60 and alphaOf(pens[32 * 40 + 9]) < 0xA0);
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[32 * 40 + 11]);
     sources.close();
     try rig.close();
 }

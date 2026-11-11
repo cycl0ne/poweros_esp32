@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! truetypeshaping.library's types and constants.
 //!
-//! truetypeshaping.library turns a run of glyphs into the glyphs a font
-//! draws it with, and where each of them goes. A font says both in its
+//! truetypeshaping.library turns a text into the glyphs a font draws it
+//! with, and where each of them goes. A font says both in its
 //! layout tables: `GSUB`, which replaces glyphs - a ligature for "f" and
 //! "i", the form of a letter that stands at a word's end - `GPOS`, which
 //! moves them - a pair set closer, an accent placed on its letter - and
@@ -12,11 +12,15 @@
 //! shaped with by any number of tasks at once.
 //!
 //! What a font does is sorted into features of four letters each
-//! (`liga`, `kern`, `mark`), listed per script and language. A caller
-//! names the script, the language and the features, and gets the run
-//! back shaped (`ShapeGlyphs`): for each glyph its number, how far it
-//! moves the point along the line, how far from the point it is drawn,
-//! and which part of the text it stands for.
+//! (`liga`, `kern`, `mark`), listed per script and language. There are
+//! two ways in. `ShapeText` takes the text itself, in UTF-8: it finds
+//! the script of each stretch, makes each character its glyph and
+//! applies the features a text is shaped with. `ShapeGlyphs` takes a run
+//! of glyphs with the script, the language and the features named by the
+//! caller, and applies those and no others. Both answer the shaped run:
+//! for each glyph its number, how far it moves the point along the line,
+//! how far from the point it is drawn, and which part of the text it
+//! stands for.
 //!
 //! Open it with OpenLibrary(TRUETYPESHAPINGNAME, 1); its functions are in
 //! sdk/interface/truetypeshaping.zig.
@@ -32,10 +36,12 @@ pub const TRUETYPESHAPING_VERSION = 1;
 pub const ShapedGlyph = extern struct {
     /// The glyph's number in the font.
     glyph: u32 = 0,
-    /// Which part of the text it stands for: a number the caller gives
-    /// each glyph - the place of its character in the text - and the
-    /// shaping carries along. A ligature has the lowest of its parts';
-    /// the glyphs one glyph was replaced by all have its own.
+    /// Which part of the text it stands for. `ShapeText` sets the place
+    /// of the first byte of the glyph's character; to `ShapeGlyphs` it is
+    /// a number the caller gives each glyph - the place of its character
+    /// in the text - and the shaping carries along. A ligature has the
+    /// lowest of its parts'; the glyphs one glyph was replaced by all
+    /// have its own.
     cluster: u32 = 0,
     /// How far it moves the point along the line.
     advance: i32 = 0,

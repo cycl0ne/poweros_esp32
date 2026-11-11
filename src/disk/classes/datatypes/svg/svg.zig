@@ -25,7 +25,9 @@
 //! text is, in the fonts of `FONTS:` - diskfont.library's outlines,
 //! drawn by truetype.library's glyphs - and blurs, and pictures in the
 //! file: an `image` of a `data:` address is made a picture by
-//! datatypes.library from its bytes. Without those libraries, or a
+//! datatypes.library from its bytes. Since 1.4 a text is shaped by its
+//! font, through truetypeshaping.library: kerned, its ligatures joined,
+//! its marks put on their letters. Without those libraries, or a
 //! font, the text or the picture is left out and the rest is drawn. A
 //! picture reads no other file and goes to no address on a network: an
 //! `href` is followed only within the file.
@@ -54,6 +56,7 @@ const pic = datatypes.pictureclass;
 const vector = sdk.vector;
 const compression = sdk.compression;
 const truetype = sdk.truetype;
+const tts = sdk.truetypeshaping;
 const diskfont = sdk.diskfont;
 const dtc = datatypes.datatypesclass;
 const xml = @import("xml.zig");
@@ -65,6 +68,7 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const VectorBase = sdk.interface.vector.VectorBase;
 const CompressionBase = sdk.interface.compression.CompressionBase;
 const TrueTypeBase = sdk.interface.truetype.TrueTypeBase;
+const TrueTypeShapingBase = sdk.interface.truetypeshaping.TrueTypeShapingBase;
 const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 const DataTypesBase = sdk.interface.datatypes.DataTypesBase;
 const Class = classes.Class;
@@ -79,8 +83,8 @@ const Pen = graphics.Pen;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "svg.datatype",
     .version = 1,
-    .revision = 3,
-    .date = "10.11.2026",
+    .revision = 4,
+    .date = "11.11.2026",
     .super = pic.PICTUREDTCLASS,
     .opens = &.{ pic.PICTURE_LIBRARY, vector.VECTORNAME, compression.COMPRESSIONNAME },
     .Instance = Data,
@@ -104,9 +108,10 @@ fn compressionBase(base: *const Base) *CompressionBase {
 /// The vector.library revision the class needs: blurs and pictures are
 /// 1.4's.
 const vector_revision = 4;
-/// The revisions text needs: truetype.library's glyphs, diskfont's
-/// outlines.
+/// The revisions text needs: truetype.library's glyphs,
+/// truetypeshaping.library's `ShapeText`, diskfont's outlines.
 const truetype_revision = 2;
+const shaping_revision = 1;
 const diskfont_revision = 4;
 
 /// How much of a file recognise reads to find its first element.
@@ -221,9 +226,12 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file_bytes: []u8, wanted: Wante
 
 /// Where text's fonts and an `image`'s pictures come from: the libraries
 /// opened for one picture, each null when it is not there or too old.
+/// Text needs its three together: diskfont.library, which gives the
+/// fonts, is opened only beside the other two.
 const Sources = struct {
     base: *Base,
     tb: ?*TrueTypeBase = null,
+    sb: ?*TrueTypeShapingBase = null,
     dfb: ?*DiskfontBase = null,
     dt: ?*DataTypesBase = null,
 
@@ -231,7 +239,8 @@ const Sources = struct {
         const sys = base.sys_base;
         var s = Sources{ .base = base };
         s.tb = @ptrCast(openAt(sys, truetype.TRUETYPENAME, truetype_revision));
-        if (s.tb != null) s.dfb = @ptrCast(openAt(sys, diskfont.DISKFONTNAME, diskfont_revision));
+        if (s.tb != null) s.sb = @ptrCast(openAt(sys, tts.TRUETYPESHAPINGNAME, shaping_revision));
+        if (s.sb != null) s.dfb = @ptrCast(openAt(sys, diskfont.DISKFONTNAME, diskfont_revision));
         s.dt = @ptrCast(sys.OpenLibrary(datatypes.DATATYPESNAME, 0));
         return s;
     }
@@ -239,6 +248,7 @@ const Sources = struct {
     fn close(s: *Sources) void {
         const sys = s.base.sys_base;
         if (s.dfb) |l| sys.CloseLibrary(l.lib());
+        if (s.sb) |l| sys.CloseLibrary(l.lib());
         if (s.tb) |l| sys.CloseLibrary(l.lib());
         if (s.dt) |l| sys.CloseLibrary(l.lib());
     }
@@ -260,8 +270,10 @@ const Sources = struct {
     pub fn CloseFace(s: *Sources, font: *diskfont.OutlineFont) void {
         s.dfb.?.CloseOutlineFont(font);
     }
-    pub fn GlyphIndex(s: *Sources, outline: *truetype.Outline, code: u32) u32 {
-        return s.tb.?.GlyphIndex(outline, code);
+    /// A stretch of text shaped by its font, read from left to right
+    /// in no language of its own.
+    pub fn ShapeText(s: *Sources, outline: *truetype.Outline, text: []const u8, features: ?[*]const tts.Feature, run: *tts.ShapedRun) i32 {
+        return s.sb.?.ShapeText(outline, text.ptr, @intCast(text.len), tts.TTS_LEFT_TO_RIGHT, tts.TTS_LANGUAGE_DEFAULT, features, run);
     }
     pub fn GlyphMetrics(s: *Sources, outline: *truetype.Outline, glyph: u32, metrics: *truetype.GlyphMetrics) bool {
         return s.tb.?.GlyphMetrics(outline, glyph, metrics);
@@ -271,9 +283,6 @@ const Sources = struct {
     }
     pub fn FontMetrics(s: *Sources, outline: *truetype.Outline, metrics: *truetype.FontMetrics) void {
         s.tb.?.FontMetrics(outline, metrics);
-    }
-    pub fn Kerning(s: *Sources, outline: *truetype.Outline, left: u32, right: u32) i32 {
-        return s.tb.?.Kerning(outline, left, right);
     }
 
     /// The picture of a `data:` address: its bytes decoded, made a

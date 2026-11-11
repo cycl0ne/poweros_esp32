@@ -2,11 +2,13 @@
 //! Host tests of truetypeshaping.library as a program reaches it: the
 //! library made from its ROM tag beside truetype.library on the ROM's
 //! exec, a font the test builds with layout tables in it, and ShapeGlyphs
-//! called through the jump table.
+//! and ShapeText called through the jump table.
 //!
-//! What each kind of lookup does is the other files' here; these tests
-//! are about the call: the tables and the advances it takes from the
-//! font, the run it fills, its errors, and the memory it gives back.
+//! What each kind of lookup does, and how a text is cut and shaped, is
+//! the other files' here; these tests are about the calls: the tables,
+//! the advances, the glyphs of characters and the kerning they take from
+//! the font, the run they fill, their errors, and the memory they give
+//! back.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -269,6 +271,215 @@ test "ShapeGlyphs: tables cut short or made of anything end the call" {
         try testing.expectEqual(tts.TTS_OK, result);
         try testing.expect(run.count == 3 or run.count == 4);
         rig.tb.CloseOutline(outline);
+    }
+
+    try rig.down();
+}
+
+/// A `GSUB` whose feature `liga` makes the glyphs 1 and 2 the glyph 3,
+/// and a `GPOS` whose feature `kern` moves a glyph 4 behind a glyph 3
+/// closer by 50: two of the features a text is shaped with unasked.
+const TextTables = struct {
+    joined: File = .{},
+    gsub: File = .{},
+    closer: File = .{},
+    gpos: File = .{},
+
+    fn build(tables: *TextTables) [2]builder.Table {
+        subtables.ligature(&tables.joined, &.{1}, &.{&.{.{ .rest = &.{2}, .glyph = 3 }}});
+        layout.table(&tables.gsub, &.{.{ .tag = "liga", .lookups = &.{0} }}, &.{.{ .kind = 4, .subtables = &.{tables.joined.written()} }});
+        subtables.pairs(&tables.closer, &.{3}, subtables.X_ADVANCE, 0, &.{&.{.{ .second = 4, .values = &.{-50} }}});
+        layout.table(&tables.gpos, &.{.{ .tag = "kern", .lookups = &.{0} }}, &.{.{ .kind = 2, .subtables = &.{tables.closer.written()} }});
+        return .{
+            .{ .tag = "GPOS", .bytes = tables.gpos.written() },
+            .{ .tag = "GSUB", .bytes = tables.gsub.written() },
+        };
+    }
+};
+
+/// A run over `room` with every field set to a value the shaping would
+/// not give - its count too, which ShapeText does not read.
+fn runFor(room: []tts.ShapedGlyph) tts.ShapedRun {
+    for (room) |*glyph| glyph.* = .{ .glyph = 0xEEEE, .cluster = 0xEEEE, .advance = -7, .x_offset = -7, .y_offset = -7 };
+    return .{ .glyphs = room.ptr, .room = @intCast(room.len), .count = 0xDEAD };
+}
+
+/// `text` shaped from left to right with the features a text has.
+fn shapeText(rig: *Rig, outline: *truetype.Outline, text: []const u8, run: *tts.ShapedRun) i32 {
+    return rig.sb.ShapeText(outline, text.ptr, @intCast(text.len), tts.TTS_LEFT_TO_RIGHT, tts.TTS_LANGUAGE_DEFAULT, null, run);
+}
+
+/// `run` is `expected`: each glyph's number, cluster and advance, and no
+/// offsets.
+fn expectShaped(run: *const tts.ShapedRun, expected: []const [3]i32) !void {
+    try testing.expectEqual(expected.len, @as(usize, run.count));
+    for (expected, run.glyphs[0..run.count]) |want, found| {
+        try testing.expectEqual(tts.ShapedGlyph{ .glyph = @intCast(want[0]), .cluster = @intCast(want[1]), .advance = want[2], .x_offset = 0, .y_offset = 0 }, found);
+    }
+}
+
+test "ShapeText: a text's characters as the font's glyphs, shaped by its tables" {
+    var rig = try Rig.up();
+    var tables: TextTables = .{};
+    const more = tables.build();
+    var file: builder.File = .{};
+    fontWith(&file, &more);
+    const outline = rig.tb.OpenOutline(&file.bytes, file.len, null) orelse return error.NotRead;
+
+    var room: [8]tts.ShapedGlyph = undefined;
+    var run = runFor(&room);
+    try testing.expectEqual(tts.TTS_OK, shapeText(&rig, outline, "ABDE", &run));
+    try testing.expectEqual(@as(u32, 8), run.room);
+    try expectShaped(&run, &.{ .{ 3, 0, 550 }, .{ 4, 2, 600 }, .{ 5, 3, 600 } });
+    // What is behind the shaped run is not written.
+    try testing.expectEqual(@as(u32, 0xEEEE), room[3].glyph);
+    try testing.expectEqual(@as(i32, -7), room[3].advance);
+
+    // From the end of the line: the same, turned around.
+    run = runFor(&room);
+    try testing.expectEqual(tts.TTS_OK, rig.sb.ShapeText(outline, "ABDE", 4, tts.TTS_RIGHT_TO_LEFT, tts.TTS_LANGUAGE_DEFAULT, null, &run));
+    try expectShaped(&run, &.{ .{ 5, 3, 600 }, .{ 4, 2, 600 }, .{ 3, 0, 550 } });
+
+    // A soft hyphen is no glyph of the run and the two join across it; a
+    // character the font lacks is glyph 0.
+    run = runFor(&room);
+    try testing.expectEqual(tts.TTS_OK, shapeText(&rig, outline, "A\u{AD}BDxE", &run));
+    try expectShaped(&run, &.{ .{ 3, 0, 550 }, .{ 4, 4, 600 }, .{ 0, 5, 600 }, .{ 5, 6, 600 } });
+
+    // A feature of the text's own switched off, and a language the font
+    // does not list.
+    const apart = [_]tts.Feature{ .{ .tag = tts.featureTag("liga"), .value = 0 }, .{ .tag = 0 } };
+    run = runFor(&room);
+    try testing.expectEqual(tts.TTS_OK, rig.sb.ShapeText(outline, "ABDE", 4, tts.TTS_LEFT_TO_RIGHT, tts.languageTag("TRK "), &apart, &run));
+    try expectShaped(&run, &.{ .{ 1, 0, 600 }, .{ 2, 1, 600 }, .{ 4, 2, 600 }, .{ 5, 3, 600 } });
+
+    // For a part of the text: the bytes 2 to 3.
+    const partly = [_]tts.Feature{ .{ .tag = tts.featureTag("liga"), .value = 0, .first = 2, .last = 3 }, .{ .tag = 0 } };
+    run = runFor(&room);
+    try testing.expectEqual(tts.TTS_OK, rig.sb.ShapeText(outline, "ABABAB", 6, tts.TTS_LEFT_TO_RIGHT, tts.TTS_LANGUAGE_DEFAULT, &partly, &run));
+    try expectShaped(&run, &.{ .{ 3, 0, 600 }, .{ 1, 2, 600 }, .{ 2, 3, 600 }, .{ 3, 4, 600 } });
+
+    rig.tb.CloseOutline(outline);
+    try rig.down();
+}
+
+test "ShapeText: the font's kern table, its variation sequences and a character past U+FFFF" {
+    var rig = try Rig.up();
+    var file: builder.File = .{};
+    builder.whole(&file);
+    const outline = rig.tb.OpenOutline(&file.bytes, file.len, null) orelse return error.NotRead;
+
+    // The font has no `GPOS`: its `kern` table sets 'A' and 'B' closer
+    // by 50 and 'B' and 'C' apart by 20.
+    var room: [8]tts.ShapedGlyph = undefined;
+    var run = runFor(&room);
+    try testing.expectEqual(tts.TTS_OK, shapeText(&rig, outline, "ABCD", &run));
+    try expectShaped(&run, &.{ .{ 1, 0, 550 }, .{ 2, 1, 620 }, .{ 3, 2, 600 }, .{ 4, 3, 600 } });
+
+    // The pairs are the ones drawn: read from right to left "DCBA" is
+    // drawn as the text before, and "ABCD" has none of the table's.
+    run = runFor(&room);
+    try testing.expectEqual(tts.TTS_OK, rig.sb.ShapeText(outline, "DCBA", 4, tts.TTS_RIGHT_TO_LEFT, tts.TTS_LANGUAGE_DEFAULT, null, &run));
+    try expectShaped(&run, &.{ .{ 1, 3, 550 }, .{ 2, 2, 620 }, .{ 3, 1, 600 }, .{ 4, 0, 600 } });
+    run = runFor(&room);
+    try testing.expectEqual(tts.TTS_OK, rig.sb.ShapeText(outline, "ABCD", 4, tts.TTS_RIGHT_TO_LEFT, tts.TTS_LANGUAGE_DEFAULT, null, &run));
+    try expectShaped(&run, &.{ .{ 4, 3, 600 }, .{ 3, 2, 600 }, .{ 2, 1, 600 }, .{ 1, 0, 600 } });
+
+    const unkerned = [_]tts.Feature{ .{ .tag = tts.featureTag("kern"), .value = 0 }, .{ .tag = 0 } };
+    run = runFor(&room);
+    try testing.expectEqual(tts.TTS_OK, rig.sb.ShapeText(outline, "ABCD", 4, tts.TTS_LEFT_TO_RIGHT, tts.TTS_LANGUAGE_DEFAULT, &unkerned, &run));
+    try expectShaped(&run, &.{ .{ 1, 0, 600 }, .{ 2, 1, 600 }, .{ 3, 2, 600 }, .{ 4, 3, 600 } });
+
+    // 'A' with its selector is a glyph of its own, 'B' with it stays 'B',
+    // and behind 'D' the selector is nothing the font knows: it goes.
+    run = runFor(&room);
+    try testing.expectEqual(tts.TTS_OK, shapeText(&rig, outline, "A\u{FE00}B\u{FE00}D\u{FE00}\u{1F600}", &run));
+    try expectShaped(&run, &.{ .{ 5, 0, 600 }, .{ 2, 4, 600 }, .{ 4, 8, 600 }, .{ 11, 12, 600 } });
+
+    rig.tb.CloseOutline(outline);
+    try rig.down();
+}
+
+test "ShapeText: a text that needs more room says how much" {
+    var rig = try Rig.up();
+    var tables: TextTables = .{};
+    const more = tables.build();
+    var file: builder.File = .{};
+    fontWith(&file, &more);
+    const outline = rig.tb.OpenOutline(&file.bytes, file.len, null) orelse return error.NotRead;
+
+    var room: [3]tts.ShapedGlyph = undefined;
+    var run = runFor(&room);
+    run.room = 2;
+    try testing.expectEqual(tts.TTSERR_ROOM, shapeText(&rig, outline, "ABDE", &run));
+    try testing.expectEqual(@as(u32, 3), run.count);
+    try testing.expectEqual(@as(u32, 2), run.room);
+    // Past the room nothing is written.
+    try testing.expectEqual(@as(u32, 0xEEEE), room[2].glyph);
+
+    // With the room it asked for, the text of before shapes.
+    run = runFor(&room);
+    try testing.expectEqual(tts.TTS_OK, shapeText(&rig, outline, "ABDE", &run));
+    try expectShaped(&run, &.{ .{ 3, 0, 550 }, .{ 4, 2, 600 }, .{ 5, 3, 600 } });
+
+    // A text of no bytes is a run of no glyphs, with no room either.
+    run = runFor(room[0..0]);
+    try testing.expectEqual(tts.TTS_OK, shapeText(&rig, outline, "", &run));
+    try testing.expectEqual(@as(u32, 0), run.count);
+
+    rig.tb.CloseOutline(outline);
+    try rig.down();
+}
+
+test "ShapeText: errors of the call" {
+    var rig = try Rig.up();
+    var tables: TextTables = .{};
+    const more = tables.build();
+    var file: builder.File = .{};
+    fontWith(&file, &more);
+    const outline = rig.tb.OpenOutline(&file.bytes, file.len, null) orelse return error.NotRead;
+
+    // A direction that is none: nothing is done.
+    var room: [4]tts.ShapedGlyph = undefined;
+    var run = runFor(&room);
+    try testing.expectEqual(tts.TTSERR_DIRECTION, rig.sb.ShapeText(outline, "AB", 2, 2, tts.TTS_LANGUAGE_DEFAULT, null, &run));
+    try testing.expectEqual(@as(u32, 0xDEAD), run.count);
+    try testing.expectEqual(@as(u32, 0xEEEE), room[0].glyph);
+
+    // More features for parts of the text than a call takes.
+    var features: [33]tts.Feature = undefined;
+    for (features[0..32], 0..) |*feature, index| {
+        feature.* = .{ .tag = tts.featureTag("aaaa") + @as(u32, @intCast(index)), .first = 0, .last = 0 };
+    }
+    features[32] = .{ .tag = 0 };
+    try testing.expectEqual(tts.TTSERR_FEATURES, rig.sb.ShapeText(outline, "AB", 2, tts.TTS_LEFT_TO_RIGHT, tts.TTS_LANGUAGE_DEFAULT, &features, &run));
+    try testing.expectEqual(@as(u32, 0xDEAD), run.count);
+    try testing.expectEqual(@as(u32, 0xEEEE), room[0].glyph);
+
+    rig.tb.CloseOutline(outline);
+    try rig.down();
+}
+
+test "ShapeText: tables cut short end the call" {
+    var rig = try Rig.up();
+    var tables: TextTables = .{};
+    const more = tables.build();
+    var room: [16]tts.ShapedGlyph = undefined;
+
+    // Each of the two tables cut at every length, the font around it whole.
+    for (more, 0..) |whole, which| {
+        var length: usize = 0;
+        while (length < whole.bytes.len) : (length += 1) {
+            var cut = more;
+            cut[which].bytes = whole.bytes[0..length];
+            var file: builder.File = .{};
+            fontWith(&file, &cut);
+            const outline = rig.tb.OpenOutline(&file.bytes, file.len, null) orelse return error.NotRead;
+            var run = runFor(&room);
+            try testing.expectEqual(tts.TTS_OK, shapeText(&rig, outline, "ABDE", &run));
+            try testing.expect(run.count == 3 or run.count == 4);
+            rig.tb.CloseOutline(outline);
+        }
     }
 
     try rig.down();

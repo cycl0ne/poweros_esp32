@@ -42,14 +42,26 @@
 //! not drawn, and no more than `max_uses` are drawn in all.
 //!
 //! **Text** (since 1.3) is drawn in the disk's outline fonts
-//! (`text.zig`): a `text` and its `tspan`s laid out a character at a time
-//! from where `x`, `y`, `dx` and `dy` put them, each glyph's outline from
-//! truetype.library filled and stroked as a shape is, kerned by the
-//! font's pairs, moved by `letter-spacing` and `word-spacing`, and each
-//! piece that starts at a place of its own moved by its `text-anchor`.
-//! The white space is SVG's. A family without a bold or an italic face
-//! is drawn thicker or leaned for it, and `text-decoration` draws its
-//! lines from the font's measures. Not drawn: `textPath`.
+//! (`text.zig`): a `text` and its `tspan`s laid out from where `x`, `y`,
+//! `dx` and `dy` put their characters, each glyph's outline from
+//! truetype.library filled and stroked as a shape is, moved by
+//! `letter-spacing` and `word-spacing`, and each piece that starts at a
+//! place of its own moved by its `text-anchor`. The white space is
+//! SVG's. A family without a bold or an italic face is drawn thicker or
+//! leaned for it, and `text-decoration` draws its lines from the font's
+//! measures. Not drawn: `textPath`.
+//!
+//! Since 1.4 the font shapes the text (truetypeshaping.library's
+//! `ShapeText`): its pairs are kerned, its ligatures joined, a mark is
+//! put on its letter. What is shaped at once is a stretch - characters
+//! one behind the other in one font, at one size and one
+//! `letter-spacing`, whatever spans they are in, up to a character with
+//! a place of its own or `max_stretch` bytes. A glyph that stands for
+//! several characters is drawn as the span of its first one. Letters
+//! set apart by a `letter-spacing` are not joined into the ligatures a
+//! font offers (`liga`, `clig`), and the spacing goes behind a character
+//! and its marks once, however many glyphs they have. A text is read
+//! from left to right.
 //!
 //! **Images** (since 1.3): an `image` whose `href` is a `data:` address
 //! of a picture in base64 (`data.zig`) is drawn in its place as
@@ -88,6 +100,8 @@ const css = @import("css.zig");
 const filter_ = @import("filter.zig");
 const text_ = @import("text.zig");
 const truetype = sdk.truetype;
+const tts = sdk.truetypeshaping;
+const utf8 = sdk.utility.utf8;
 const graphics = sdk.graphics;
 const Document = document.Document;
 const Name = document.Name;
@@ -110,6 +124,11 @@ pub const max_uses = 16384;
 const chunk = 128;
 /// The most characters of one `text` laid out; the rest are not drawn.
 pub const max_glyphs = 1024;
+/// The most bytes of a `text` shaped at once, and the most glyphs they
+/// come back as: a longer stretch is shaped in parts - no pair kerned
+/// across the border of two - and one of more glyphs is not drawn.
+pub const max_stretch = 512;
+pub const max_shaped = 512;
 /// The most `tspan`s of one `text` drawn, and how deep they nest.
 pub const max_runs = 32;
 pub const max_span_depth = 8;
@@ -136,8 +155,8 @@ pub const Without = struct {
         return null;
     }
     pub fn CloseFace(_: *Without, _: *sdk.diskfont.OutlineFont) void {}
-    pub fn GlyphIndex(_: *Without, _: *sdk.truetype.Outline, _: u32) u32 {
-        return 0;
+    pub fn ShapeText(_: *Without, _: *sdk.truetype.Outline, _: []const u8, _: ?[*]const tts.Feature, _: *tts.ShapedRun) i32 {
+        return tts.TTSERR_NOMEM;
     }
     pub fn GlyphMetrics(_: *Without, _: *sdk.truetype.Outline, _: u32, _: *sdk.truetype.GlyphMetrics) bool {
         return false;
@@ -146,9 +165,6 @@ pub const Without = struct {
         return sdk.truetype.TRUETYPEERR_GLYPH;
     }
     pub fn FontMetrics(_: *Without, _: *sdk.truetype.Outline, _: *sdk.truetype.FontMetrics) void {}
-    pub fn Kerning(_: *Without, _: *sdk.truetype.Outline, _: u32, _: u32) i32 {
-        return 0;
-    }
     pub fn OpenImage(_: *Without, _: []const u8) ?Image {
         return null;
     }
@@ -165,9 +181,14 @@ pub const Work = struct {
     verbs: [chunk]u8 = undefined,
     /// The rules of the file's `style` elements, in the order they apply.
     rules: [css.max_rules]css.Rule = undefined,
-    /// A `text` laid out: its characters' glyphs and the spans they are in.
+    /// A `text` laid out: its glyphs and the spans they are in.
     glyphs: [max_glyphs]Glyph = undefined,
     runs: [max_runs]Run = undefined,
+    /// A stretch of a `text` being shaped: its characters in UTF-8, the
+    /// span of each byte, and the glyphs they come back as.
+    stretch: [max_stretch]u8 = undefined,
+    stretch_runs: [max_stretch]u8 = undefined,
+    shaped: [max_shaped]tts.ShapedGlyph = undefined,
     /// The fonts opened, closed when the picture is drawn.
     faces: [max_faces]Face = undefined,
     /// One glyph's outline, as truetype.library gives it and moved.
@@ -175,13 +196,16 @@ pub const Work = struct {
     glyph_points: [glyph_points]vector.Point = undefined,
 };
 
-/// A character laid out: its glyph, the span it is in, where it is on
-/// the line in the text's units, and how far it moves the next.
+/// A glyph laid out: the span it is in, where it stands on the line in
+/// the text's units, how far from there it is drawn - a mark is put on
+/// its letter - and how far it moves the next.
 const Glyph = struct {
     glyph: u32,
     run: u8,
     x: f32,
     y: f32,
+    dx: f32,
+    dy: f32,
     advance: f32,
     /// It starts a piece of text at a place of its own, which its
     /// `text-anchor` moves.
@@ -866,9 +890,10 @@ fn Painter(comptime VB: type, comptime EXT: type) type {
             spaces: text_.Spaces = .{},
             stack: [max_span_depth]Span = undefined,
             depth: u32 = 0,
-            /// The glyph before, for kerning, and its font.
-            last_glyph: u32 = 0,
-            last_face: u8 = no_face,
+            /// How many bytes the stretch being gathered has.
+            stretch: u32 = 0,
+            /// The next glyph starts a piece at a place of its own.
+            starts: bool = true,
         };
 
         /// A span being laid out: its element, its run, and how many of its
@@ -885,6 +910,7 @@ fn Painter(comptime VB: type, comptime EXT: type) type {
             l.stack[0] = .{ .node = node, .run = 0 };
             l.depth = 1;
             p.layChildren(&l, node);
+            p.layStretch(&l);
             p.anchor(&l);
             return l.count;
         }
@@ -924,38 +950,89 @@ fn Painter(comptime VB: type, comptime EXT: type) type {
             }
         }
 
-        /// One character laid out where its span's positions say, after the
-        /// one before.
+        /// One character taken into the stretch being gathered. One that
+        /// its span's positions give a place of its own, or that is of
+        /// another font, size or spacing than the stretch, has the stretch
+        /// laid out first and starts the next.
         fn layOne(p: *P, l: *Layout, code: u21, run_index: u8) void {
             if (l.count == max_glyphs) return;
-            var starts = l.count == 0;
-            if (p.positionOf(l, .x, .x)) |x| {
-                l.x = x;
-                starts = true;
-            }
-            if (p.positionOf(l, .y, .y)) |y| {
-                l.y = y;
-                starts = true;
-            }
-            l.x += p.positionOf(l, .dx, .x) orelse 0;
-            l.y += p.positionOf(l, .dy, .y) orelse 0;
+            const x = p.positionOf(l, .x, .x);
+            const y = p.positionOf(l, .y, .y);
+            const dx = p.positionOf(l, .dx, .x);
+            const dy = p.positionOf(l, .dy, .y);
             for (l.stack[0..l.depth]) |*span| span.chars += 1;
+            const placed = x != null or y != null or dx != null or dy != null;
+            if (placed or !p.joins(l, run_index)) p.layStretch(l);
+            if (x) |at| l.x = at;
+            if (y) |at| l.y = at;
+            if (x != null or y != null) l.starts = true;
+            l.x += dx orelse 0;
+            l.y += dy orelse 0;
+            if (p.work.runs[run_index].face == no_face) return;
+            var bytes: [4]u8 = undefined;
+            const length = utf8.encode(code, &bytes);
+            if (l.stretch + length > max_stretch) p.layStretch(l);
+            @memcpy(p.work.stretch[l.stretch..][0..length], bytes[0..length]);
+            @memset(p.work.stretch_runs[l.stretch..][0..length], run_index);
+            l.stretch += @intCast(length);
+        }
+
+        /// Whether a character of the span `run_index` goes on in the
+        /// stretch being gathered: in its font, at its size and with its
+        /// `letter-spacing`.
+        fn joins(p: *P, l: *const Layout, run_index: u8) bool {
+            if (l.stretch == 0) return true;
+            const first = &p.work.runs[p.work.stretch_runs[0]];
             const run = &p.work.runs[run_index];
-            if (run.face == no_face) return;
-            const outline = p.work.faces[run.face].opened.?.outline;
-            const glyph = p.ext.GlyphIndex(outline, code);
-            if (!starts and l.last_face == run.face) {
-                l.x += @as(f32, @floatFromInt(p.ext.Kerning(outline, l.last_glyph, glyph))) * run.scale;
+            if (first.face != run.face or first.scale != run.scale) return false;
+            return first.style.letter_spacing.resolve(.x, l.viewport) == run.style.letter_spacing.resolve(.x, l.viewport);
+        }
+
+        /// The stretch gathered, shaped by its font and laid out: each
+        /// glyph where the ones before it lead to, in the span of the
+        /// character it stands for.
+        fn layStretch(p: *P, l: *Layout) void {
+            const length = l.stretch;
+            l.stretch = 0;
+            if (length == 0) return;
+            const work = p.work;
+            const first = &work.runs[work.stretch_runs[0]];
+            const spacing = first.style.letter_spacing.resolve(.x, l.viewport);
+            // Letters set apart are not joined into the ligatures a font
+            // offers.
+            const apart = [_]tts.Feature{ .{ .tag = tts.featureTag("liga"), .value = 0 }, .{ .tag = tts.featureTag("clig"), .value = 0 }, .{} };
+            var shaped: tts.ShapedRun = .{ .glyphs = &work.shaped, .room = max_shaped };
+            const outline = work.faces[first.face].opened.?.outline;
+            if (p.ext.ShapeText(outline, work.stretch[0..length], if (spacing != 0) &apart else null, &shaped) != tts.TTS_OK) return;
+            const glyphs = work.shaped[0..shaped.count];
+            for (glyphs, 0..) |glyph, index| {
+                if (l.count == max_glyphs) return;
+                const run_index = work.stretch_runs[glyph.cluster];
+                const advance = @as(f32, @floatFromInt(glyph.advance)) * first.scale;
+                work.glyphs[l.count] = .{
+                    .glyph = glyph.glyph,
+                    .run = run_index,
+                    .x = l.x,
+                    .y = l.y,
+                    // Font units, y up, into the text's.
+                    .dx = @as(f32, @floatFromInt(glyph.x_offset)) * first.scale,
+                    .dy = -@as(f32, @floatFromInt(glyph.y_offset)) * first.scale,
+                    .advance = advance,
+                    .starts = l.starts,
+                };
+                l.count += 1;
+                l.starts = false;
+                l.x += advance;
+                // The spacing goes behind a character and its marks,
+                // whatever glyphs it has: a mark's offsets reach back
+                // over the advances before it.
+                if (index + 1 < glyphs.len) {
+                    const next = glyphs[index + 1];
+                    if (next.cluster == glyph.cluster or next.advance == 0) continue;
+                }
+                l.x += spacing;
+                if (work.stretch[glyph.cluster] == ' ') l.x += work.runs[run_index].style.word_spacing.resolve(.x, l.viewport);
             }
-            var m: truetype.GlyphMetrics = .{};
-            _ = p.ext.GlyphMetrics(outline, glyph, &m);
-            const advance = @as(f32, @floatFromInt(m.advance)) * run.scale;
-            p.work.glyphs[l.count] = .{ .glyph = glyph, .run = run_index, .x = l.x, .y = l.y, .advance = advance, .starts = starts };
-            l.count += 1;
-            l.last_glyph = glyph;
-            l.last_face = run.face;
-            l.x += advance + run.style.letter_spacing.resolve(.x, l.viewport);
-            if (code == ' ') l.x += run.style.word_spacing.resolve(.x, l.viewport);
         }
 
         /// The next character's `x`, `y`, `dx` or `dy`: the innermost span's
@@ -1094,7 +1171,7 @@ fn Painter(comptime VB: type, comptime EXT: type) type {
                 if (p.ext.GlyphSegments(outline, g.glyph, &segments) != truetype.TRUETYPE_OK) continue;
                 // Font units, y up, into the text's: scaled, leaned, turned over.
                 for (work.glyph_points[0..segments.point_count]) |*q| {
-                    q.* = .{ .x = g.x + (q.x + run.lean * q.y) * run.scale, .y = g.y - q.y * run.scale };
+                    q.* = .{ .x = g.x + g.dx + (q.x + run.lean * q.y) * run.scale, .y = g.y + g.dy - q.y * run.scale };
                 }
                 _ = p.vb.AddSegments(p.path, &work.glyph_verbs, segments.verb_count, &work.glyph_points, segments.point_count);
             }
@@ -1158,10 +1235,10 @@ fn Painter(comptime VB: type, comptime EXT: type) type {
                 var gm: truetype.GlyphMetrics = .{};
                 if (!p.ext.GlyphMetrics(p.work.faces[run.face].opened.?.outline, g.glyph, &gm)) continue;
                 if (gm.x_max <= gm.x_min) continue;
-                const left = g.x + @as(f32, @floatFromInt(gm.x_min)) * run.scale;
-                const right = g.x + @as(f32, @floatFromInt(gm.x_max)) * run.scale;
-                const top = g.y - @as(f32, @floatFromInt(gm.y_max)) * run.scale;
-                const bottom = g.y - @as(f32, @floatFromInt(gm.y_min)) * run.scale;
+                const left = g.x + g.dx + @as(f32, @floatFromInt(gm.x_min)) * run.scale;
+                const right = g.x + g.dx + @as(f32, @floatFromInt(gm.x_max)) * run.scale;
+                const top = g.y + g.dy - @as(f32, @floatFromInt(gm.y_max)) * run.scale;
+                const bottom = g.y + g.dy - @as(f32, @floatFromInt(gm.y_min)) * run.scale;
                 all = unite(all, boxThrough(m, .{ .x = left, .y = top, .width = right - left, .height = bottom - top }));
             }
             return all;
