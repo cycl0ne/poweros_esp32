@@ -1103,7 +1103,7 @@ commodities.library/SetTranslate
 	    fn ParseIX(base: *CxBase, description: ?[*:0]const u8, ix: *cx.InputXpression) i32
 
    SINCE
-	1.0. LVO -84.
+	1.0, the class CHARACTER since 1.2. LVO -84.
 
    INPUTS
 	- `description` - the words, or null.
@@ -1119,9 +1119,9 @@ commodities.library/SetTranslate
 
 	  [class] {[-]qualifier} [[-]upstroke] [key or button]
 
-	The class is one of ACTIVEWINDOW, DISKINSERTED, DISKREMOVED, EVENT,
-	INACTIVEWINDOW, NEWPOINTERPOS, NEWPREFS, RAWKEY, RAWMOUSE, TIMER,
-	TOUCH or USB; RAWKEY when none is given. Each qualifier named must be
+	The class is one of ACTIVEWINDOW, CHARACTER, DISKINSERTED,
+	DISKREMOVED, EVENT, INACTIVEWINDOW, NEWPOINTERPOS, NEWPREFS, RAWKEY,
+	RAWMOUSE, TIMER, TOUCH or USB; RAWKEY when none is given. Each qualifier named must be
 	held: LSHIFT, RSHIFT, CAPSLOCK, CONTROL (CTRL), LALT, RALT, LCOMMAND,
 	RCOMMAND, NUMERICPAD, REPEAT, LEFTBUTTON, MIDBUTTON, RBUTTON,
 	RELATIVEMOUSE, with LEFT_SHIFT, NUMPAD and the like for the same;
@@ -1137,6 +1137,9 @@ commodities.library/SetTranslate
 	character. For RAWMOUSE the button: MOUSE_LEFTPRESS,
 	MOUSE_MIDDLEPRESS, MOUSE_RIGHTPRESS, MOUSE_WHEEL; the button's own
 	qualifier, held on its press and not on its release, does not count.
+	For CHARACTER the character itself, which is the event's code as it
+	stands: "character €" is that sign typed by no key, and UPSTROKE
+	says nothing about it.
 	Case does not matter; spaces, tabs, commas and new lines separate
 	words. A description that names no key or button takes any code:
 	"ctrl" is any key with Control held, down or up, "rawmouse -lbutton

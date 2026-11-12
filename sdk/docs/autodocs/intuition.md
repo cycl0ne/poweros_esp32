@@ -7390,9 +7390,10 @@ The hook it replaces - intuition's own the first time.
 
 **BEHAVIOR**
 
-For every key typed into a strgclass gadget, the global hook is called
-with the `SGWork` and `SGH_KEY` (`sghooks.zig`) before the gadget's own
-hook. It *is* the editing: a hook that calls none other decides alone
+For every key typed into a strgclass gadget, and every character
+typed into it by no key (`IECLASS_CHARACTER`: the work's event has a
+code point for its code), the global hook is called with the `SGWork`
+and `SGH_KEY` (`sghooks.zig`) before the gadget's own hook. It *is* the editing: a hook that calls none other decides alone
 what every key does. A hook that means to add to intuition's editing
 rather than replace it calls the hook this answered for the keys it
 leaves alone, with the same object and message, through

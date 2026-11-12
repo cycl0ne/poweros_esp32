@@ -131,6 +131,22 @@ test "ParseIX reads a class, qualifiers, upstroke and a key" {
     try testing.expectEqual(@as(i32, 0), cb.ParseIX("ctrl upstroke", &ix));
     try testing.expectEqual(ie.IECODE_UP_PREFIX, ix.code_mask);
 
+    // A character typed by no key: its code point is the code, whole.
+    try testing.expectEqual(@as(i32, 0), cb.ParseIX("character \u{1F600}", &ix));
+    try testing.expectEqual(ie.IECLASS_CHARACTER, ix.class);
+    try testing.expectEqual(@as(u32, 0x1F600), ix.code);
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), ix.code_mask);
+    const face: ie.InputEvent = .{ .class = ie.IECLASS_CHARACTER, .code = 0x1F600 };
+    const other: ie.InputEvent = .{ .class = ie.IECLASS_CHARACTER, .code = 0x1F601 };
+    try testing.expect(cb.MatchIX(&face, &ix));
+    try testing.expect(!cb.MatchIX(&other, &ix));
+    try testing.expect(!cb.MatchIX(&key(0x1F600, 0), &ix));
+    // Any character, and what is not one.
+    try testing.expectEqual(@as(i32, 0), cb.ParseIX("character", &ix));
+    try testing.expect(cb.MatchIX(&other, &ix));
+    try testing.expectEqual(@as(i32, -1), cb.ParseIX("character ab", &ix));
+    try testing.expectEqual(@as(i32, -1), cb.ParseIX("character \xFF", &ix));
+
     // What makes no sense.
     try testing.expectEqual(@as(i32, -1), cb.ParseIX("ctrl nosuchkey", &ix));
     try testing.expectEqual(@as(i32, -1), cb.ParseIX("f1 f2", &ix));
@@ -207,6 +223,15 @@ test "InvertKeyMap and InvertString turn characters into keys" {
     var buffer: [8]u32 = undefined;
     try testing.expectEqualSlices(u32, &.{ kbd.RAWKEY_A, 0x35, kbd.RAWKEY_RETURN, kbd.RAWKEY_F1 }, codes(&buffer, typed));
     cx.FreeIEvents(sys, typed);
+    // A character no key types is typed by none; what is no text is not.
+    const picture = cx.InvertString(sys, cb, "a\u{1F600}<character \u{20AC}>", null) orelse return error.NoEvents;
+    try testing.expectEqualSlices(u32, &.{ kbd.RAWKEY_A, 0x1F600, 0x20AC }, codes(&buffer, picture));
+    try testing.expectEqual(ie.IECLASS_RAWKEY, picture.class);
+    try testing.expectEqual(ie.IECLASS_CHARACTER, picture.next.?.class);
+    try testing.expectEqual(ie.IECLASS_CHARACTER, picture.next.?.next.?.class);
+    cx.FreeIEvents(sys, picture);
+    try testing.expect(cx.InvertString(sys, cb, "a\xFF", null) == null);
+    try testing.expect(cx.InvertString(sys, cb, "a\u{85}", null) == null);
     try testing.expect(cx.InvertString(sys, cb, "<nosuchkey>", null) == null);
     try testing.expect(cx.InvertString(sys, cb, "a\\q", null) == null);
     try testing.expect(cx.InvertString(sys, cb, "", null) == null);

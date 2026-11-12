@@ -4021,6 +4021,83 @@ test "a string gadget's edit: its own hook, a global one, fixed field, no filter
     try tearDown(ib);
 }
 
+test "a character typed by no key: into the string gadget, or to the window that listens" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    var text = [_]u8{0} ** 16;
+    const field = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 2 },
+        .{ .tag = gc.GA_Top, .data = 2 },
+        .{ .tag = gc.GA_Width, .data = 50 },
+        .{ .tag = gc.GA_Height, .data = 12 },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = text.len },
+        .{ .tag = gc.STRINGA_Buffer, .data = @intFromPtr(&text) },
+        .{},
+    }).?;
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(field) },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_GADGETUP | wn.IDCMP_RAWKEY },
+        .{},
+    }).?;
+    var got: [4]intuition.IntuiMessage = undefined;
+
+    // No gadget has the keyboard and the window hears keys only: nothing.
+    const face: ie.InputEvent = .{ .class = ie.IECLASS_CHARACTER, .code = 0x1F600 };
+    _input.handle(ib, &face);
+    try testing.expectEqual(@as(usize, 0), drainMessages(ib, w, &got));
+
+    // It listens for characters: the code point is the message's code.
+    try testing.expect(it.ModifyIDCMP(w, wn.IDCMP_GADGETUP | wn.IDCMP_VANILLAKEY));
+    _input.handle(ib, &face);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_VANILLAKEY, got[0].class);
+    try testing.expectEqual(@as(u32, 0x1F600), got[0].code);
+    // What is no character of a text is passed by.
+    for ([_]u32{ 0x0D, 0x1B, 0x7F, 0x9B, 0xD800, 0x110000 }) |code| {
+        const none: ie.InputEvent = .{ .class = ie.IECLASS_CHARACTER, .code = code };
+        _input.handle(ib, &none);
+    }
+    try testing.expectEqual(@as(usize, 0), drainMessages(ib, w, &got));
+
+    // The string gadget has the keyboard: the character goes into its
+    // text as UTF-8, and the window is not told.
+    click(ib, 4, 6);
+    rawKey(ib, 0x20); // a
+    _input.handle(ib, &face);
+    try testing.expectEqualStrings("a\xF0\x9F\x98\x80", std.mem.sliceTo(&text, 0));
+    try testing.expectEqual(@as(usize, 0), drainMessages(ib, w, &got));
+    // A code that is a cursor key's number as a key is a letter here:
+    // U+004F is O, and 0x4F the key Cursor Left.
+    const letter: ie.InputEvent = .{ .class = ie.IECLASS_CHARACTER, .code = 'O' };
+    _input.handle(ib, &letter);
+    try testing.expectEqualStrings("a\xF0\x9F\x98\x80O", std.mem.sliceTo(&text, 0));
+    // And what is no character leaves the text and the gadget as they are.
+    const escape: ie.InputEvent = .{ .class = ie.IECLASS_CHARACTER, .code = 0x1B };
+    _input.handle(ib, &escape);
+    rawKey(ib, 0x21); // s
+    try testing.expectEqualStrings("a\xF0\x9F\x98\x80Os", std.mem.sliceTo(&text, 0));
+    rawKey(ib, 0x44); // Return
+    _ = drainMessages(ib, w, &got);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(field);
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "a string gadget: Escape puts back what was there, whoever owns the buffer" {
     const ib = try setUp();
     defer kexec.deinit();

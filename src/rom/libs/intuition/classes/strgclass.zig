@@ -376,6 +376,8 @@ fn workTakeCluster(w: *sg.SGWork, at: u32) void {
 /// moves on (Shift-Tab back), Escape puts back what was there when it was
 /// activated and ends it; Help ends it in `SGM_EXITHELP`. A fixed field
 /// keeps its length: characters only replace, Backspace only moves back.
+/// A character typed by no key (`IECLASS_CHARACTER`) goes in as a key's
+/// does; its event's code is a code point and names no key.
 pub fn defaultEdit(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     _ = hook;
     const w: *sg.SGWork = @ptrCast(@alignCast(object orelse return 0));
@@ -385,7 +387,7 @@ pub fn defaultEdit(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaqu
     const fixed = w.modes & sg.SGM_FIXEDFIELD != 0;
     const shifted = e.qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
     w.edit_op = sg.EO_NOOP;
-    switch (e.code) {
+    if (e.class == ie.IECLASS_RAWKEY) switch (e.code) {
         raw_left, raw_right, raw_home, raw_end => {
             w.buffer_pos = switch (e.code) {
                 raw_left => if (shifted or w.buffer_pos == 0) 0 else clusterBefore(w.work_buffer, w.buffer_pos),
@@ -418,7 +420,7 @@ pub fn defaultEdit(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaqu
             return 1;
         },
         else => {},
-    }
+    };
     const c = w.code;
     if (c == 0) return 1;
     switch (c) {
@@ -892,7 +894,9 @@ fn editKey(ib: *IntuitionBase, cl: *Class, o: *Object, p: *Data, in: *gc.GpInput
     var text: [key_room]u8 = undefined;
     var code: u32 = 0;
     var rest: []const u8 = &.{};
-    if (ib.keymap_base) |kb| {
+    if (ie.character(e)) |typed| {
+        code = typed;
+    } else if (ib.keymap_base) |kb| {
         const count = kb.MapRawKey(e, &text, text.len, p.key_map);
         if (km.character(&text, count)) |char| {
             code = char;
@@ -1115,8 +1119,13 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 tell(ib, cl, o.?, in.gadget_info, 0);
                 return gc.GMR_REUSE;
             }
-            if (e.class != ie.IECLASS_RAWKEY) return gc.GMR_MEACTIVE;
-            if (e.code & ie.IECODE_UP_PREFIX != 0) return gc.GMR_MEACTIVE;
+            // A key going down, or a character typed by no key.
+            if (e.class == ie.IECLASS_CHARACTER) {
+                if (ie.character(e) == null) return gc.GMR_MEACTIVE;
+            } else {
+                if (e.class != ie.IECLASS_RAWKEY) return gc.GMR_MEACTIVE;
+                if (e.code & ie.IECODE_UP_PREFIX != 0) return gc.GMR_MEACTIVE;
+            }
             return editKey(ib, cl, o.?, p, in, e);
         },
         gc.GM_GOINACTIVE => {

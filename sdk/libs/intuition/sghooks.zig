@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! A line of text's editing, as hooks see it.
 //!
-//! Each key typed into a strgclass gadget is edited in two steps before it
+//! Each key typed into a strgclass gadget, and each character typed into
+//! it by no key (`IECLASS_CHARACTER`), is edited in two steps before it
 //! changes anything. The text is copied into a work buffer and described
 //! by an `SGWork`; the **global edit hook** - intuition's own editing, until
 //! `SetEditHook` puts another - makes of the key what it will there; then
@@ -32,10 +33,12 @@ pub const SGWork = extern struct {
     max_chars: u32,
     /// `SGM_` bits.
     modes: u32,
-    /// The key, as it came. Not to be changed.
+    /// The key, as it came - or the character typed by no key, an
+    /// `IECLASS_CHARACTER` event, whose code is a code point: a hook reads
+    /// the class before it takes the code for a key's. Not to be changed.
     event: *const InputEvent,
     /// The character the key makes, its code point, when it makes exactly
-    /// one, else 0.
+    /// one, else 0; the character of an `IECLASS_CHARACTER` event.
     /// When the edit ends the gadget (`SGA_END`), what the program is told
     /// as IDCMP_GADGETUP's code.
     code: u32,

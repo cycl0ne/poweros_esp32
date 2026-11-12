@@ -129,7 +129,7 @@ the words.
 
 - **Class:** `RAWKEY` (when none is given), `RAWMOUSE`, `TOUCH`, `TIMER`,
   `NEWPOINTERPOS`, `ACTIVEWINDOW`, `INACTIVEWINDOW`, `DISKINSERTED`,
-  `DISKREMOVED`, `NEWPREFS`, `EVENT`, `USB`.
+  `DISKREMOVED`, `NEWPREFS`, `EVENT`, `USB`, `CHARACTER`.
 - **Qualifiers** must be held: `LSHIFT`, `RSHIFT`, `CAPSLOCK`,
   `CONTROL` (`CTRL`), `LALT`, `RALT`, `LCOMMAND`, `RCOMMAND`,
   `NUMERICPAD` (`NUMPAD`), `REPEAT`, `LBUTTON`, `MBUTTON`, `RBUTTON`,
@@ -151,6 +151,8 @@ the words.
   `MOUSE_MIDDLEPRESS`, `MOUSE_RIGHTPRESS`, `MOUSE_WHEEL`. The button's
   own qualifier - held on its press, not on its release - does not
   count.
+- **The character**, for `CHARACTER`: the one typed by no key, in
+  UTF-8 - `character €`; `UPSTROKE` says nothing about it.
 
 A description that names no key takes any code: `ctrl` is any key with
 Control held, down or up; `rawmouse -lbutton -mbutton -rbutton` every
@@ -254,7 +256,11 @@ event with the dead key as the key before (`event.x`).
 `cx.InvertString` makes a list from a string in UTF-8 - each character
 by its key, `\n` and `\r` Return, `\t`
 Tab, `\\` a backslash, and `<description>` the event a description
-names, `<alt f>`:
+names, `<alt f>`. A character the keymap has no key for - an emoji, a
+letter of another script - comes as an `IECLASS_CHARACTER` event, a
+character typed by no key, whose code is the code point; the text
+gadgets and a console take it as they take a key's character, and a
+window hears it as `IDCMP_VANILLAKEY`:
 
 ```zig
 const typed = cx.InvertString(sys, cb, "Kind regards,\\n", null) orelse return;
@@ -359,4 +365,5 @@ CxTest                  active   Commodities test - Prints a hotkey, types a str
 ```
 
 `C:test/Input KEY=81` presses F2 down input.device's chain from a shell,
-where no keyboard is at hand.
+where no keyboard is at hand, and `C:test/Input TEXT=...` types a text
+there, each character an `IECLASS_CHARACTER` event.

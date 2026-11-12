@@ -6,7 +6,8 @@
 //! `render.zig` draws them), `CMD_READ` the keys typed into that window,
 //! in the UTF-8 keymap.library gives. `CONU_CHARMAP` keeps the text, so it
 //! puts it back itself when the window is uncovered or sized; `CONU_STANDARD` keeps none and
-//! leaves that to the program. A key typed with right-Amiga held is a
+//! leaves that to the program. A character typed by no key
+//! (`IECLASS_CHARACTER`) is read as its UTF-8. A key typed with right-Amiga held is a
 //! command, never text: right-Amiga-C and -V copy and paste, and any other
 //! is left to intuition, which takes it for a menu shortcut of the
 //! window's - it reaches the console all the same, since intuition
@@ -29,6 +30,7 @@ const graphics = sdk.graphics;
 const intuition = sdk.intuition;
 const con = sdk.console;
 const km = sdk.keymap;
+const utf8 = sdk.utility.utf8;
 const ie = sdk.devices.inputevent;
 const input = sdk.devices.input;
 const wn = intuition.windows;
@@ -46,7 +48,7 @@ const render = @import("render.zig");
 
 pub const DEVICE_NAME = con.CONSOLENAME;
 const DEVICE_VERSION = 0;
-const DEVICE_REVISION = 11;
+const DEVICE_REVISION = 12;
 const BUILD_DATE = "12.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -699,6 +701,12 @@ fn isShiftInsert(bytes: []const u8) bool {
     return true;
 }
 
+/// What an IECLASS_CHARACTER event types: its character in UTF-8, the
+/// count of bytes; 0 for an event that carries none.
+fn characterBytes(e: *const ie.InputEvent, into: *[4]u8) usize {
+    return utf8.encode(ie.character(e) orelse return 0, into);
+}
+
 /// CDInputHandler's work: the events, to the consoles they belong to.
 fn handleEvents(cb: *ConsoleBase, events: ?*ie.InputEvent) void {
     const sys = cb.sys_base;
@@ -733,6 +741,17 @@ fn handleEvents(cb: *ConsoleBase, events: ?*ie.InputEvent) void {
                         else => continue,
                     };
                 }
+                if (n == 0) continue;
+                sys.AcquireLock(&cb.lock);
+                push(u, buf[0..n]);
+                serveReads(u);
+                sys.ReleaseLock(&cb.lock);
+            },
+            // A character typed by no key: its bytes, as a key's.
+            ie.IECLASS_CHARACTER => {
+                const u = activeUnit(cb) orelse continue;
+                var buf: [4]u8 = undefined;
+                const n = characterBytes(e, &buf);
                 if (n == 0) continue;
                 sys.AcquireLock(&cb.lock);
                 push(u, buf[0..n]);
@@ -1477,6 +1496,25 @@ test "a full pointer ring loses the newest move, never the newest event" {
     pushPointer(&cb, &over2);
     try testing.expectEqual(@as(i32, 1000), cb.pointer[pointer_ring - 2].x);
     try testing.expectEqual(@as(i32, 0), cb.pointer[0].x);
+}
+
+test "a character typed by no key is read as its UTF-8" {
+    var bytes: [4]u8 = undefined;
+    const emoji: ie.InputEvent = .{ .class = ie.IECLASS_CHARACTER, .code = 0x1F600 };
+    try testing.expectEqualStrings("\xF0\x9F\x98\x80", bytes[0..characterBytes(&emoji, &bytes)]);
+    const joiner: ie.InputEvent = .{ .class = ie.IECLASS_CHARACTER, .code = 0x200D };
+    try testing.expectEqualStrings("\xE2\x80\x8D", bytes[0..characterBytes(&joiner, &bytes)]);
+    const letter: ie.InputEvent = .{ .class = ie.IECLASS_CHARACTER, .code = 'a' };
+    try testing.expectEqualStrings("a", bytes[0..characterBytes(&letter, &bytes)]);
+
+    // What is no character of a text types nothing: a control code, half
+    // a surrogate pair, a code past the last, a key's event.
+    for ([_]u32{ 0x0D, 0x1B, 0x7F, 0x9B, 0xD800, 0x110000 }) |code| {
+        const none: ie.InputEvent = .{ .class = ie.IECLASS_CHARACTER, .code = code };
+        try testing.expectEqual(@as(usize, 0), characterBytes(&none, &bytes));
+    }
+    const key: ie.InputEvent = .{ .class = ie.IECLASS_RAWKEY, .code = 0x20 };
+    try testing.expectEqual(@as(usize, 0), characterBytes(&key, &bytes));
 }
 
 test "a pointer event carries its qualifier, which is what shift is read from" {

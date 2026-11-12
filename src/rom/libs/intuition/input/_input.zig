@@ -268,12 +268,13 @@ fn handler(events: ?*InputEvent, data: ?*anyopaque) callconv(.c) ?*InputEvent {
 }
 
 /// Whether intuition's task acts on an event of `class` that says nothing
-/// of the pointer: a key, a tick, and the machine's news - a disk in or
-/// out, new preferences, a USB device plugged in or pulled out - which
-/// the windows that listen are told.
+/// of the pointer: a key, a character typed by no key, a tick, and the
+/// machine's news - a disk in or out, new preferences, a USB device
+/// plugged in or pulled out - which the windows that listen are told.
 fn forTask(class: u32) bool {
     return switch (class) {
         ie.IECLASS_RAWKEY,
+        ie.IECLASS_CHARACTER,
         ie.IECLASS_TIMER,
         ie.IECLASS_DISKINSERTED,
         ie.IECLASS_DISKREMOVED,
@@ -796,7 +797,7 @@ pub fn handle(ib: *IntuitionBase, e: *const InputEvent) void {
     // still reaches the window as well.
     if (st.mode == .active) {
         switch (e.class) {
-            ie.IECLASS_NEWPOINTERPOS, ie.IECLASS_RAWKEY, ie.IECLASS_TIMER => {},
+            ie.IECLASS_NEWPOINTERPOS, ie.IECLASS_RAWKEY, ie.IECLASS_CHARACTER, ie.IECLASS_TIMER => {},
             else => return,
         }
         // A press somewhere else takes the gadget's hold away from it. A
@@ -864,6 +865,7 @@ fn handleFree(ib: *IntuitionBase, e: *const InputEvent) void {
             }
         },
         ie.IECLASS_RAWKEY => if (ib.active_window) |w| key(ib, w, e),
+        ie.IECLASS_CHARACTER => if (ib.active_window) |w| typedCharacter(ib, w, e),
         // News about the machine rather than about a window: every
         // window that asked hears it, whichever screen it is on and
         // whether or not it is the active one.
@@ -1175,6 +1177,18 @@ fn key(ib: *IntuitionBase, w: *Window, e: *const InputEvent) void {
         }
     }
     _window.send(ib, w, wn.IDCMP_RAWKEY, e.code);
+}
+
+/// A character typed by no key, to the active window: IDCMP_VANILLAKEY
+/// with its code point when the window listens for that. A window that
+/// hears raw keys only is not told: no key made it. A requester up takes
+/// it from the window as it takes the keys, unless it is a noisy one.
+fn typedCharacter(ib: *IntuitionBase, w: *Window, e: *const InputEvent) void {
+    const typed = ie.character(e) orelse return;
+    if (w.first_request) |req| {
+        if (req.flags & rq.NOISYREQ == 0) return;
+    }
+    if (w.idcmp & wn.IDCMP_VANILLAKEY != 0) _window.send(ib, w, wn.IDCMP_VANILLAKEY, typed);
 }
 
 fn press(ib: *IntuitionBase, e: *const InputEvent) void {
@@ -2062,7 +2076,7 @@ test "the pointer's reach: the front screen's, and no further down than the disp
 }
 
 test "the machine's news goes to intuition's task, as keys and ticks do" {
-    for ([_]u32{ ie.IECLASS_RAWKEY, ie.IECLASS_TIMER, ie.IECLASS_DISKINSERTED, ie.IECLASS_DISKREMOVED, ie.IECLASS_NEWPREFS, ie.IECLASS_USB }) |class| {
+    for ([_]u32{ ie.IECLASS_RAWKEY, ie.IECLASS_CHARACTER, ie.IECLASS_TIMER, ie.IECLASS_DISKINSERTED, ie.IECLASS_DISKREMOVED, ie.IECLASS_NEWPREFS, ie.IECLASS_USB }) |class| {
         try testing.expect(forTask(class));
     }
     // What is of no window's: a handler's own classes pass intuition by.

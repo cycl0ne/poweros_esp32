@@ -4,7 +4,8 @@
 //!
 //! One structure for every kind of input, told apart by `class`: a key is
 //! IECLASS_RAWKEY with the key's code, the mouse IECLASS_RAWMOUSE with its
-//! buttons and movement. `qualifier` says which modifiers were held when it
+//! buttons and movement, a character that no key typed IECLASS_CHARACTER
+//! with its code point. `qualifier` says which modifiers were held when it
 //! happened - shift, control, alt, the command keys, and the mouse buttons -
 //! so an event can be understood on its own, without the ones before it.
 //!
@@ -104,6 +105,16 @@ pub const IECLASS_USB: u32 = 0x17;
 /// IECLASS_USB's `subclass`.
 pub const IESUBCLASS_USB_ATTACHED: u32 = 1;
 pub const IESUBCLASS_USB_DETACHED: u32 = 2;
+/// A character typed by something that is no key - a picker of
+/// characters, an input method: `code` is its code point, U+0020 or
+/// above. A text of several characters is an event for each, written in
+/// their order. intuition gives it to the gadget that has the keyboard,
+/// or tells the active window (`IDCMP_VANILLAKEY`, the code point its
+/// code); console.device gives the active window's reader its UTF-8. What
+/// a key does that is no character - Return, Tab, the cursor keys - stays
+/// a key's: an event whose code is none of a text's characters
+/// (`character`) is passed by.
+pub const IECLASS_CHARACTER: u32 = 0x18;
 
 // --- codes ---------------------------------------------------------------------
 
@@ -151,3 +162,16 @@ pub const IEQUALIFIER_LEFTBUTTON: u32 = 0x4000;
 /// the front screen's pixels: a handler before intuition in the chain
 /// sees the distance, one behind it the place.
 pub const IEQUALIFIER_RELATIVEMOUSE: u32 = 0x8000;
+
+/// The character an IECLASS_CHARACTER event types: its code point, or
+/// null for an event of another class and for a code that is no
+/// character of a text - a control code, half of a surrogate pair, or
+/// past U+10FFFF.
+pub fn character(event: *const InputEvent) ?u32 {
+    if (event.class != IECLASS_CHARACTER) return null;
+    const code = event.code;
+    if (code < 0x20 or (code >= 0x7F and code < 0xA0)) return null;
+    if (code >= 0xD800 and code <= 0xDFFF) return null;
+    if (code > 0x10FFFF) return null;
+    return code;
+}

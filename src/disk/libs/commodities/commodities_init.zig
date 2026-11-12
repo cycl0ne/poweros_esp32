@@ -21,8 +21,10 @@ const commodities_lvo = @import("commodities_lvo.zig");
 
 pub const LIBRARY_NAME = sdk.commodities.COMMODITIESNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 1;
-const BUILD_DATE = "10.11.2026";
+/// 2: a description names the class CHARACTER and the character it is
+/// about.
+pub const LIBRARY_REVISION = 2;
+const BUILD_DATE = "12.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

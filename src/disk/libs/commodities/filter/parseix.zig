@@ -17,7 +17,7 @@ const CxBase = _base.CxBase;
 /// fn ParseIX(base: *CxBase, description: ?[*:0]const u8, ix: *cx.InputXpression) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -84.
+/// SINCE: 1.0, the class CHARACTER since 1.2. LVO -84.
 ///
 /// INPUTS:
 /// - `description` - the words, or null.
@@ -33,9 +33,9 @@ const CxBase = _base.CxBase;
 ///
 ///   [class] {[-]qualifier} [[-]upstroke] [key or button]
 ///
-/// The class is one of ACTIVEWINDOW, DISKINSERTED, DISKREMOVED, EVENT,
-/// INACTIVEWINDOW, NEWPOINTERPOS, NEWPREFS, RAWKEY, RAWMOUSE, TIMER,
-/// TOUCH or USB; RAWKEY when none is given. Each qualifier named must be
+/// The class is one of ACTIVEWINDOW, CHARACTER, DISKINSERTED,
+/// DISKREMOVED, EVENT, INACTIVEWINDOW, NEWPOINTERPOS, NEWPREFS, RAWKEY,
+/// RAWMOUSE, TIMER, TOUCH or USB; RAWKEY when none is given. Each qualifier named must be
 /// held: LSHIFT, RSHIFT, CAPSLOCK, CONTROL (CTRL), LALT, RALT, LCOMMAND,
 /// RCOMMAND, NUMERICPAD, REPEAT, LEFTBUTTON, MIDBUTTON, RBUTTON,
 /// RELATIVEMOUSE, with LEFT_SHIFT, NUMPAD and the like for the same;
@@ -51,6 +51,9 @@ const CxBase = _base.CxBase;
 /// character. For RAWMOUSE the button: MOUSE_LEFTPRESS,
 /// MOUSE_MIDDLEPRESS, MOUSE_RIGHTPRESS, MOUSE_WHEEL; the button's own
 /// qualifier, held on its press and not on its release, does not count.
+/// For CHARACTER the character itself, which is the event's code as it
+/// stands: "character €" is that sign typed by no key, and UPSTROKE
+/// says nothing about it.
 /// Case does not matter; spaces, tabs, commas and new lines separate
 /// words. A description that names no key or button takes any code:
 /// "ctrl" is any key with Control held, down or up, "rawmouse -lbutton
@@ -135,6 +138,12 @@ pub fn ParseIX(base: *CxBase, description: ?[*:0]const u8, ix: *cx.InputXpressio
                 ix.code |= event.code;
                 ix.qualifier |= event.qualifier;
             } else return -1;
+        },
+        ie.IECLASS_CHARACTER => {
+            const typed = utf8.read(word);
+            if (typed.broken or typed.length != word.len) return -1;
+            ix.code = typed.char;
+            ix.code_mask = 0xFFFF_FFFF;
         },
         else => return -1,
     }

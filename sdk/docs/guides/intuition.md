@@ -439,7 +439,7 @@ has closed.
 | `IDCMP_GADGETUP` | a `GA_RelVerify` gadget finished | its termination value; the gadget |
 | `IDCMP_GADGETDOWN` | a `GA_Immediate` gadget pressed | the gadget |
 | `IDCMP_MENUPICK` | the menus used | the first item's menu number |
-| `IDCMP_VANILLAKEY` | a key that makes one character | the character, its code point |
+| `IDCMP_VANILLAKEY` | a key that makes one character, or a character typed by no key | the character, its code point |
 | `IDCMP_RAWKEY` | a key down or up | the raw key |
 | `IDCMP_ACTIVEWINDOW`, `IDCMP_INACTIVEWINDOW` | it became, or stopped being, the active window | |
 | `IDCMP_IDCMPUPDATE` | a gadget told the window what changed | see [Telling the window](#telling-the-window) |
@@ -830,6 +830,20 @@ a program waits for `WMHI_ACTIVE` as above. A gadget that hands the
 program a key it does not take - a textedit.gadget passing on a menu's
 shortcut or Control-C - lets the keyboard go, and the program gives it
 back with `ActivateGadget` once it has done what the key asked.
+
+A character can be typed by no key: a picker of characters, an input
+method or a program writes an `IECLASS_CHARACTER` event to input.device
+(`IND_WRITEEVENT`), its code the code point (U+0020 or above), an event
+for each character of a text, in the text's order. The field with the
+keyboard takes it as it takes a key's character. A string gadget calls
+its edit hooks for it with that event, whose code is then no key's: a
+hook that reads raw keys looks at the event's class first. With no
+field, the active window hears `IDCMP_VANILLAKEY` (`WMHI_VANILLAKEY`)
+when it listens for it; a window that listens for raw keys only is not
+told. A console window's reader gets the character's UTF-8.
+`cx.InvertString` makes such an event for every character the keymap
+has no key for, and `C:test/Input TEXT=...` types a text this way from
+a shell.
 
 On a board with no keyboard, a field with the keyboard - a string
 gadget, or one of a class that sets `GFLG_TYPING` as it makes it - brings

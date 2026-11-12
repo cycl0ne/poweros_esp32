@@ -316,9 +316,10 @@ pub fn HotKey(cx: *CxBase, description: [*:0]const u8, port: *exec.MsgPort, id: 
 /// the default), in the string's order, from the caller's memory: each
 /// character by its key, `\n` and `\r` Return, `\t` Tab, `\\` a
 /// backslash, and `<description>` the event a ParseIX description names
-/// ("<alt f>"). Null for an empty string, when a character has no key or
-/// a description makes no sense, and for no memory. FreeIEvents gives the
-/// list back.
+/// ("<alt f>"). A character the keymap has no key for comes as an
+/// IECLASS_CHARACTER event, typed by no key. Null for an empty string,
+/// for bytes that are no UTF-8, when a description makes no sense, and
+/// for no memory. FreeIEvents gives the list back.
 pub fn InvertString(sys: *ExecBase, cx: *CxBase, string: [*:0]const u8, key_map: ?*const keymap.KeyMap) ?*InputEvent {
     var first: ?*InputEvent = null;
     var last: ?*InputEvent = null;
@@ -357,6 +358,10 @@ pub fn InvertString(sys: *ExecBase, cx: *CxBase, string: [*:0]const u8, key_map:
             else => {
                 const typed = utf8.readZ(string + at);
                 made = cx.InvertKeyMap(typed.char, &event, key_map);
+                if (!made and !typed.broken) {
+                    event = .{ .class = ie.IECLASS_CHARACTER, .code = typed.char };
+                    made = ie.character(&event) != null;
+                }
                 at += typed.length;
             },
         }

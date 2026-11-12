@@ -31,7 +31,8 @@
 //! Delete takes a cluster out and Backspace one character, the one last
 //! typed and not the cluster it belongs to. A key's character goes in as
 //! its bytes, and a key that sends several characters has them all go in
-//! as one edit. A wrapped row is never broken inside a cluster, unless
+//! as one edit; a character typed by no key (`IECLASS_CHARACTER`) goes in
+//! as a key's does. A wrapped row is never broken inside a cluster, unless
 //! the cluster alone is wider than the row.
 //!
 //! **Drawing** is always the whole gadget, which intuition does aside and
@@ -134,7 +135,9 @@ pub const Library = gadgets.ClassLibrary(.{
     // only falls back to one that shapes. 9: the selection's ground and
     // the cursor's block are as wide and as high as their characters'
     // rows, no pixel short, and with text selected the cursor is a bar.
-    .revision = 9,
+    // 10: a character typed by no key (IECLASS_CHARACTER) goes into the
+    // text.
+    .revision = 10,
     .date = "12.11.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
@@ -1119,6 +1122,22 @@ fn key(base: *gadgets.Base, own: *Data, o: *Object, in: *gc.GpInput, e: *const i
     return gc.GMR_MEACTIVE;
 }
 
+/// A character typed by no key while the gadget has the keyboard: into
+/// the text, as a key's goes.
+fn character(base: *gadgets.Base, own: *Data, o: *Object, in: *gc.GpInput, e: *const ie.InputEvent) usize {
+    const char = ie.character(e) orelse return gc.GMR_MEACTIVE;
+    var bytes: [4]u8 = undefined;
+    if (!typeIn(base, own, bytes[0..utf8.encode(char, &bytes)], true)) {
+        if (own.read_only) {
+            if (in.gadget_info) |gi| base.intuition_base.DisplayBeep(gi.screen);
+        }
+        return gc.GMR_MEACTIVE;
+    }
+    showCursor(base, own, o, in.gadget_info);
+    refresh(base, own, o, in.gadget_info);
+    return gc.GMR_MEACTIVE;
+}
+
 /// The keyboard handed back with the event, which goes on to the window.
 fn giveBack(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo) usize {
     own.active = false;
@@ -1501,6 +1520,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const e = in.event orelse return gc.GMR_MEACTIVE;
             switch (e.class) {
                 ie.IECLASS_RAWKEY => return key(base, own, o.?, in, e),
+                ie.IECLASS_CHARACTER => return character(base, own, o.?, in, e),
                 ie.IECLASS_NEWPOINTERPOS => {
                     const b = gc.boxFor(gc.gadget(o.?), in.gadget_info);
                     const parts = partsOf(base, own, o.?, in.gadget_info);

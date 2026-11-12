@@ -237,7 +237,9 @@ Beside them:
   way back from one that does not come up (`C:Update`,
   `SYS:System/Update`, `C:Reboot`).
 - **Devices:** timer, serial, console, input from keyboards, mice and
-  touch, flash, SD card, NVMe, I2C, RS-485, clipboard; USB hosts on the
+  touch - and a character typed by no key, which goes to the text
+  gadgets, the windows and the consoles as a key's does -, flash, SD
+  card, NVMe, I2C, RS-485, clipboard; USB hosts on the
   ESP32s' OTG and on xHCI, there up to SuperSpeed (5 Gbit/s), bulk
   streams and links resting in U1 and U2, a device plugged in or pulled
   out told to the windows that ask, with class drivers for keyboards,

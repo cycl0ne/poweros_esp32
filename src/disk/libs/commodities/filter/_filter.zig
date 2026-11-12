@@ -22,6 +22,7 @@ pub const Keyword = struct { word: []const u8, id: u32 };
 
 pub const classes = [_]Keyword{
     .{ .word = "ACTIVEWINDOW", .id = ie.IECLASS_ACTIVEWINDOW },
+    .{ .word = "CHARACTER", .id = ie.IECLASS_CHARACTER },
     .{ .word = "DISKINSERTED", .id = ie.IECLASS_DISKINSERTED },
     .{ .word = "DISKREMOVED", .id = ie.IECLASS_DISKREMOVED },
     .{ .word = "EVENT", .id = ie.IECLASS_EVENT },

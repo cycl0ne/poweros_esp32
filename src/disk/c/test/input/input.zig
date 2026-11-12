@@ -2,13 +2,16 @@
 //! Input: what goes down input.device's handler chain. Built against the
 //! SDK only.
 //!
-//!   Input TIMER/S,KEY/K/N
+//!   Input TIMER/S,KEY/K/N,TEXT/K
 //!
 //! With nothing asked for it puts a handler on the chain and prints every
 //! event that passes it - keys, fingers, the mouse, the pointer, USB
 //! devices plugged in and pulled out - until Ctrl-C; TIMER
 //! prints the ten-a-second ticks as well. KEY sends one rawkey down the
-//! chain, pressed and let go, through IND_WRITEEVENT, and stops.
+//! chain, pressed and let go, through IND_WRITEEVENT, and stops. TEXT
+//! sends a text down the chain, each of its characters an
+//! IECLASS_CHARACTER event - typed by no key, into whatever has the
+//! keyboard - and stops.
 //!
 //! The handler runs on input.device's task, where nothing may wait, so it
 //! only copies each event into a ring and signals; the printing is done
@@ -22,6 +25,7 @@ const exec = sdk.exec;
 const input = sdk.devices.input;
 const ie = sdk.devices.inputevent;
 const touch = sdk.devices.touch;
+const utf8 = sdk.utility.utf8;
 const InputEvent = ie.InputEvent;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
@@ -29,12 +33,13 @@ const KeymapBase = sdk.interface.keymap.KeymapBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Input";
-const VERSION_STRING = "\x00$VER: Input 1.4 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Input 1.5 (12.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TIMER/S,KEY/K/N";
+const template = "TIMER/S,KEY/K/N,TEXT/K";
 const arg_timer = 0;
 const arg_key = 1;
+const arg_text = 2;
 
 /// Above where a windowing system sits, so it sees everything first.
 const handler_pri = 60;
@@ -49,10 +54,12 @@ const MSG_POINTER = "pointer %4d,%-4d %-14s%s\n";
 const MSG_MOUSE = "mouse   %4d,%-4d %-14s%s\n";
 const MSG_TIMER = "timer  %s\n";
 const MSG_USB = "usb     %-8s bus %u address %u, %04x:%04x\n";
+const MSG_CHARACTER = "char    U+%04x \"%s\"%s\n";
 const MSG_OTHER = "class %02x code %02x%s\n";
 const MSG_LOST = "(%d events lost)\n";
 const MSG_DONE = "%d events\n";
 const MSG_SENT = "Sent rawkey %02x\n";
+const MSG_SENT_TEXT = "Sent %d characters\n";
 
 /// What the handler and the program share. The handler writes `head`, the
 /// program `tail`.
@@ -181,6 +188,11 @@ fn show(dl: *DosBase, kb: ?*KeymapBase, e: *const InputEvent) void {
             const what: [*:0]const u8 = if (e.subclass == ie.IESUBCLASS_USB_DETACHED) "detached" else "attached";
             _ = Printf(dl, MSG_USB, .{ what, e.code >> 8, e.code & 0xFF, @as(u32, @bitCast(e.x)), @as(u32, @bitCast(e.y)) });
         },
+        ie.IECLASS_CHARACTER => {
+            var text: [4:0]u8 = @splat(0);
+            if (ie.character(e)) |typed| _ = utf8.encode(typed, text[0..4]);
+            _ = Printf(dl, MSG_CHARACTER, .{ e.code, @as([*:0]const u8, &text), q });
+        },
         else => _ = Printf(dl, MSG_OTHER, .{ e.class, e.code, q }),
     }
 }
@@ -192,7 +204,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [2]usize = @splat(0);
+    var argv: [3]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -221,6 +233,23 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             _ = sys.DoIO(&io.req);
         }
         _ = Printf(dl, MSG_SENT, .{code});
+        return dos.RETURN_OK;
+    }
+
+    if (argv[arg_text] != 0) {
+        var text: [*:0]const u8 = @ptrFromInt(argv[arg_text]);
+        var sent: u32 = 0;
+        while (text[0] != 0) {
+            const typed = utf8.readZ(text);
+            text += typed.length;
+            var e: InputEvent = .{ .class = ie.IECLASS_CHARACTER, .code = typed.char };
+            io.req.command = input.IND_WRITEEVENT;
+            io.data = &e;
+            io.length = @sizeOf(InputEvent);
+            _ = sys.DoIO(&io.req);
+            sent += 1;
+        }
+        _ = Printf(dl, MSG_SENT_TEXT, .{sent});
         return dos.RETURN_OK;
     }
 

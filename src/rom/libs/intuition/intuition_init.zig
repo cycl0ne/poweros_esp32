@@ -259,7 +259,10 @@ pub const LIBRARY_VERSION = 0;
 /// 93: a disk in or out, new preferences and a USB device plugged in or
 /// pulled out reach intuition's task from the input chain, so the
 /// windows that listen for them are told when it happens.
-pub const LIBRARY_REVISION = 93;
+/// 94: a character typed by no key (IECLASS_CHARACTER) goes to the gadget
+/// that has the keyboard, a string gadget takes it into its text, and a
+/// window that listens for characters is told it (IDCMP_VANILLAKEY).
+pub const LIBRARY_REVISION = 94;
 const BUILD_DATE = "12.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
