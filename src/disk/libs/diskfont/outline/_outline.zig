@@ -15,6 +15,11 @@
 //! outline of its own, and all of them read the one copy of the file:
 //! the bytes are freed with the last record that has them.
 //!
+//! **A collection is a record a font** (since 1.14). An entry says
+//! which font of its file it is, and the families of one collection -
+//! contents files side by side whose entries name the one file - read
+//! the one copy of it too.
+//!
 //! **A size rendered from an outline holds it** (since 1.9), for as long
 //! as the size is in memory: the glyphs its image lacks are made from
 //! the outline as they are drawn (`font/_font.zig`).
@@ -44,7 +49,8 @@ pub const OutlineRecord = extern struct {
     /// asked by name: bit n for the bold and italic bits n. It saves
     /// reading the contents file to find the entry again.
     asked: u32 = 0,
-    /// The entry it was opened from: the file and the place.
+    /// The entry it was opened from: the file, which font of it, and the
+    /// place.
     entry: fontfile.FontContents = .{},
     /// The family's contents file it came from: "FONTS:sans-bold.font".
     key: [256:0]u8 = @splat(0),
@@ -105,7 +111,13 @@ pub fn openEntry(dfb: *DiskfontBase, path: *const [256:0]u8, contents: *const _f
     var at = dfb.outlines.first();
     while (at) |node| : (at = node.next()) {
         const record: *OutlineRecord = @fieldParentPtr("link", node);
-        if (!samePath(&record.key, path) or !sameFile(&record.entry, entry)) continue;
+        if (!sameFile(&record.entry, entry)) continue;
+        if (!samePath(&record.key, path)) {
+            // Another family whose contents file is beside this one: the
+            // same path from there is the same file.
+            if (sameDrawer(&record.key, path)) shared = record;
+            continue;
+        }
         if (samePlace(&record.entry, entry)) {
             record.holders += 1;
             return &record.font;
@@ -124,6 +136,7 @@ pub fn openEntry(dfb: *DiskfontBase, path: *const [256:0]u8, contents: *const _f
     }
     // The values are read at the opening and not kept.
     const tags = [_]utility.TagItem{
+        .{ .tag = truetype.TTA_FontIndex, .data = entry.face },
         .{ .tag = truetype.TTA_Axes, .data = @intFromPtr(&entry.axes) },
         .{ .tag = truetype.TTA_AxisCount, .data = entry.axis_count },
         .{ .tag = utility.TAG_DONE, .data = 0 },
@@ -171,10 +184,11 @@ fn sameFile(a: *const fontfile.FontContents, b: *const fontfile.FontContents) bo
     return true;
 }
 
-/// Whether two entries are at the same place on their file's axes: the
-/// same axes named, in the same order, with the same values.
+/// Whether two entries are the same font of their file at the same
+/// place on its axes: the same axes named, in the same order, with the
+/// same values.
 fn samePlace(a: *const fontfile.FontContents, b: *const fontfile.FontContents) bool {
-    if (a.axis_count != b.axis_count) return false;
+    if (a.face != b.face or a.axis_count != b.axis_count) return false;
     for (a.axes[0..a.axis_count], b.axes[0..b.axis_count]) |x, y| {
         if (x.tag != y.tag) return false;
         if (@as(u32, @bitCast(x.value)) != @as(u32, @bitCast(y.value))) return false;
@@ -189,6 +203,27 @@ fn samePath(a: *const [256:0]u8, b: *const [256:0]u8) bool {
         if (x == 0) return true;
     }
     return true;
+}
+
+/// Whether two contents files are in the same directory: the same path
+/// up to its last part.
+fn sameDrawer(a: *const [256:0]u8, b: *const [256:0]u8) bool {
+    const end = drawerEnd(a);
+    if (end != drawerEnd(b)) return false;
+    for (a[0..end], b[0..end]) |x, y| {
+        if (lower(x) != lower(y)) return false;
+    }
+    return true;
+}
+
+/// How many bytes of a path come before its last part.
+fn drawerEnd(path: *const [256:0]u8) usize {
+    var end: usize = 0;
+    for (path, 0..) |c, i| {
+        if (c == 0) break;
+        if (c == '/' or c == ':') end = i + 1;
+    }
+    return end;
 }
 
 fn lower(c: u8) u8 {

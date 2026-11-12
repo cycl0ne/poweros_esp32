@@ -352,16 +352,30 @@ pub fn styleOfBits(bits: u32) graphics.FontStyle {
 /// The styles a TrueType file says it is drawn in: `FSF_BOLD` and
 /// `FSF_ITALIC`, from the style bits of its `head` table - a bold face of
 /// a family says it is bold. None when the file has no `head` table, or
-/// `bytes` end before it, and none for a collection: its fonts say theirs
-/// through `FontMetrics`, each opened.
+/// `bytes` end before it, and none for a collection: each of its fonts
+/// says its own (`styleOfFont`).
 ///
 /// INPUTS:
 /// - `bytes` - the file from its start, through its `head` table at least.
 pub fn styleOf(bytes: []const u8) graphics.FontStyle {
-    if (bytes.len < 12 or !isTrueType(bytes)) return graphics.FS_NORMAL;
-    const tables = @as(usize, bytes[4]) << 8 | bytes[5];
+    if (!isTrueType(bytes)) return graphics.FS_NORMAL;
+    return styleOfFont(bytes, 0);
+}
+
+/// The styles one font of a file says it is drawn in, as `styleOf`
+/// answers them for a file of one font. None when the file holds no
+/// font of that number.
+///
+/// INPUTS:
+/// - `bytes` - the file from its start, through that font's `head` table
+///   at least.
+/// - `index` - which font, from 0: 0 for a file of one font, any of a
+///   collection's.
+pub fn styleOfFont(bytes: []const u8, index: u32) graphics.FontStyle {
+    const directory: usize = fontDirectory(bytes, index) orelse return graphics.FS_NORMAL;
+    const tables = @as(usize, bytes[directory + 4]) << 8 | bytes[directory + 5];
     for (0..tables) |i| {
-        const record = 12 + 16 * i;
+        const record = directory + 12 + 16 * i;
         if (record + 16 > bytes.len) break;
         if (bytes[record] != 'h' or bytes[record + 1] != 'e' or bytes[record + 2] != 'a' or bytes[record + 3] != 'd') continue;
         const head = @as(usize, bytes[record + 8]) << 24 | @as(usize, bytes[record + 9]) << 16 |

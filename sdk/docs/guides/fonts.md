@@ -320,6 +320,9 @@ FONTS:sans.font          Liberation Sans, and its faces sans-bold, -italic
 FONTS:sans/LiberationSans-Regular.ttf   and -bolditalic; serif and mono the same
 FONTS:devanagari.font    Noto Sans Devanagari, and its bold face devanagari-bold
 FONTS:devanagari/NotoSansDevanagari-Regular.ttf
+FONTS:cjk-jp.font        Noto Sans CJK in Japan's forms: the first font of a collection
+FONTS:cjk-jp/NotoSansCJK-Regular.ttc
+FONTS:cjk-kr.font        another font of that file: a contents file alone
 FONTS:source.font        a variable font: an entry a style, all of one file
 FONTS:source/SourceSans3VF-Upright.ttf
 ```
@@ -334,6 +337,20 @@ the letters and signs of Hindi, Marathi and Nepali with their conjuncts
 and half forms, the Vedic signs, and `₹`. It has no Latin letters, and
 the disk's `font.prefs` names it as a [fallback](#fallback-fonts), so
 a text in any font draws these characters from it.
+
+Noto Sans CJK Regular (`FONTS:cjk.licence`, the same licence) is kana,
+Hangul and the Han characters of Japanese, Chinese and Korean, with
+Latin letters of its own: one file of 19.5 MB, a collection whose fonts
+draw the characters the three languages share in one region's forms
+each. Five of them are families - `cjk-jp` Japan's, `cjk-kr` Korea's,
+`cjk-sc` China's, `cjk-tc` Taiwan's, `cjk-hk` Hong Kong's - and
+`font.prefs` names `cjk-jp.font` as a fallback after Devanagari's. The
+file is larger than what is left of the 32 MiB disk image a 64-bit
+machine starts with in RAM, so the build puts the families on the
+system disks it makes for QEMU's virt machines alone
+(`system-x64.bin`, `system-a64.bin`, `system-rv64.bin`); a machine with
+a disk of its own has them once `cjk-jp/` and the five contents files
+are copied into its `FONTS:`.
 
 **What a font holds is what its source has**, under each character's
 code point: Spleen's sizes from 16 rows up have Latin with its
@@ -358,7 +375,8 @@ it lies; nothing in it is fixed up.
 144-byte `FontContents` per entry: the file's path from `FONTS:`, its
 height, drawn styles, flags, kind of pixels, nominal width, `outline`
 set for an entry that is a TrueType or OpenType file (whose height is
-then 0, and its styles the ones the file says it is drawn in), and the
+then 0, and its styles the ones the file says it is drawn in), `face`
+for which font of a collection that is, from 0, and the
 entry's place on a variable font's axes: `axis_count` and up to
 `MAXFONTAXES` (8) `AxisValue`, an axis' tag and its value. Its
 longwords add up to zero too. `fontfile.sound` checks one, `seal` sets
@@ -382,9 +400,27 @@ slant, italic, optical size) and three of a font's own. Dropping the
 it takes; the host's `tools/fontconv` lists a variable file the same
 way.
 
+**A collection's fonts are families of one file** (diskfont.library
+1.14). A collection is a file of several fonts, and each is a family
+of its own: the file is on the disk once, in the first family's
+directory, and that family's contents file lists it with `face` 0. The
+others are contents files alone, with no directory, whose one entry
+names the file where it is (`cjk-jp/NotoSansCJK-Regular.ttc`) and the
+font by `face`. diskfont.library opens an entry's font of the file
+(truetype.library's `TTA_FontIndex`) and reads the file once for all
+of them: families whose contents files are in one directory and whose
+entries name the same file render from the same bytes, which leave
+memory with the last of their fonts. A collection dropped into a
+directory of `FONTS:` is listed by `NewFontContents`, and so by
+`C:FixFonts`, as its first font; the contents files of the others are
+written on the host, `tools/fontconv <out> <family> --face N --in
+<first family> <file>`.
+
 A size dropped into a family's directory is found only through the
 contents file: `C:FixFonts` writes every family's contents file again
-from what is in its directory.
+from what is in its directory. A contents file with no directory is
+removed, unless it is sound and every file it lists is there - a
+family of another's collection - which is left as it is.
 
 ## diskfont.library
 
@@ -1039,8 +1075,12 @@ families to look in for one a text's font lacks:
 SCREEN=go.font/16 DEFAULT=go.font/16 FIXED=go-mono.font/16 FALLBACK=sans.font,spleen.font
 ```
 
-The line the disk carries ends with `FALLBACK=devanagari.font`. On a
-disk without that family it names nothing, and is passed over.
+The line the disk carries ends with
+`FALLBACK=devanagari.font,cjk-jp.font`: Devanagari, then kana, Hangul
+and Han characters in Japan's forms - `cjk-sc.font`, `cjk-tc.font`,
+`cjk-hk.font` or `cjk-kr.font` in its place draws them in China's,
+Taiwan's, Hong Kong's or Korea's. A family a disk does not have is
+passed over.
 
 `FALLBACK` is family names with commas between and no blanks, at most
 eight (`graphics.FONT_FALLBACKS`), each once, and no sizes: a fallback
@@ -1081,6 +1121,12 @@ What to know:
   sizes with two fallback families has six more fonts in memory, an
   outline family's rendered with every character diskfont renders into
   a size's image.
+- **An outline fallback's file is in memory from the first font on.**
+  An outline is read whole when its family is first opened, and every
+  font made opens its fallbacks: with `cjk-jp.font` on the list the
+  system holds the collection's 19.5 MB from its start - once, for
+  every size and for each of the file's families - and its characters
+  are rendered as they are first drawn.
 - **A fallback is asked for by its name and the height alone**, not in
   the style of the text: a bold or italic text takes the characters it
   lacks from the family as the list names it, `devanagari.font`'s
@@ -1307,13 +1353,13 @@ cursor = gb.TextXToOffset(rp, line.ptr, @intCast(line.len), mouse_x - left);
 
 | | |
 |---|---|
-| `tools/fontconv` | on the host: BDF, bitmap fonts kept as load files (a contents file and one file a size, colour too) and TrueType and OpenType files into size files and a contents file; `--alpha N` for coverage from a larger drawing, `--shadow` for a shadowed colour font, `--rgba` to write a colour font with 32-bit pixels |
-| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces, Liberation's and Noto Sans Devanagari's (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation and Noto Sans Devanagari only onto the 64-bit machines' disks. With them three fonts only the host tests read, which go on no disk: Noto Color Emoji, Noto Sans CJK (a collection) and Source Sans 3, as a font of one weight and as variable fonts |
+| `tools/fontconv` | on the host: BDF, bitmap fonts kept as load files (a contents file and one file a size, colour too) and TrueType and OpenType files into size files and a contents file; `--alpha N` for coverage from a larger drawing, `--shadow` for a shadowed colour font, `--rgba` to write a colour font with 32-bit pixels, `--face N` for a font of a collection and `--in <family>` for the family whose directory holds the file |
+| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces, Liberation's and Noto Sans Devanagari's (TrueType) and Noto Sans CJK (a collection), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation and Noto Sans Devanagari only onto the 64-bit machines' disks, Noto Sans CJK onto the virt machines' system disks. With them two fonts only the host tests read, which go on no disk: Noto Color Emoji and Source Sans 3, as a font of one weight and as variable fonts |
 | `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures, of a variable font the same at places on its axes with every glyph's points there (worked out in the library's order and held against fontTools' instancer, or for a font of cubic curves against fontTools' drawing of it at the place), of a font of cubic curves each glyph's outline and what libfreetype renders of a part of them, and of a font of pictures every picture's measures and pixels (a PNG file's as Pillow reads them) and a part of them scaled to another size - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
 | `scripts/shape-reference.py` | on the host: applies the fetched fonts' `GSUB` and `GPOS` lookups to runs of glyphs - every glyph of a font, and sequences its lookups have rules for - with an applier of its own on fontTools' reading of the tables, and writes what comes out, a digest for each script, language and feature list, as the Zig files `truetypeshaping.library`'s host tests compare its shaping with (`src/disk/libs/truetypeshaping/tests/reference/`). `--check` says whether the files are the ones it would write, `--show <font> <case>` prints a case's runs |
 | `scripts/shape-text-reference.py` | on the host: shapes texts with libharfbuzz - in the fetched fonts Latin with its kerning and marks, letters and marks spelled apart and together, Greek, Cyrillic, Hebrew read from right to left, Devanagari in words and in syllables drawn by lot, emoji, features switched for a part of a text; and in a font made of a rule, which is told the characters it lacks, texts whose characters are taken apart, sorted and put together - and writes the glyphs, clusters, advances and offsets as the Zig files `truetypeshaping.library`'s host tests compare `ShapeText`'s answers with (`src/disk/libs/truetypeshaping/tests/text_reference/`); `--check` says whether they are up to date |
 | `C:ListFonts` | every font by family, size and where it is; `SAMPLE` draws them, a variable font in each of its styles |
-| `C:FixFonts` | writes every family's contents file again |
+| `C:FixFonts` | writes every family's contents file again, and removes one that has neither a directory nor the files it lists |
 | `C:SetPrefs` | sets the system's fonts, with the rest of its settings, from `ENV:Sys`; `SHOW` prints them |
 | `SYS:Programs/Prefs` | picks the system's fonts, the desktop icons' and the fallback families in a window and writes `font.prefs` |
 | `SYS:Programs/FontView` | fonts and sizes in a window, the one chosen drawn |

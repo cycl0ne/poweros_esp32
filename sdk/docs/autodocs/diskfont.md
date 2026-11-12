@@ -208,7 +208,8 @@ fn NewFontContents(dfb: *DiskfontBase, lock: ?*dos.FileLock, name: [*:0]const u8
 **SINCE**
 
 1.0, a file of outlines of up to 64 MiB since 1.12, a
-variable font listed a style since 1.13. LVO -28.
+variable font listed a style since 1.13, a collection as its first
+font since 1.14. LVO -28.
 
 **INPUTS**
 
@@ -230,7 +231,8 @@ checks and its sum is sound - becomes an entry: its path from `lock`
 ("spleen/16"), height, drawn styles, flags, kind and width, as its own
 header says. A TrueType or OpenType file of one font becomes an
 outline entry of the family, of height 0, in the styles the file
-says it is drawn in - bold for a bold face. Anything else there is
+says it is drawn in - bold for a bold face - and a collection is
+listed as its first font. Anything else there is
 passed over, and so is a file that is too large: a size of more than
 4 MiB, a file of outlines of more than 64 MiB or than there is
 memory to read it into. The entries are in order of height. At most
@@ -481,7 +483,7 @@ fn OpenOutlineFont(dfb: *DiskfontBase, name: [*:0]const u8, style: graphics.Font
 **SINCE**
 
 1.4, a variable font at the place of the styles asked since
-1.13. LVO -40.
+1.13, a font of a collection since 1.14. LVO -40.
 
 **INPUTS**
 

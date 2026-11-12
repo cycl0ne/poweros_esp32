@@ -20,7 +20,8 @@ const _font = @import("../font/_font.zig");
 /// ```
 ///
 /// SINCE: 1.0, a file of outlines of up to 64 MiB since 1.12, a
-/// variable font listed a style since 1.13. LVO -28.
+/// variable font listed a style since 1.13, a collection as its first
+/// font since 1.14. LVO -28.
 ///
 /// INPUTS:
 /// - `lock` - the directory the family is in: `FONTS:`, or wherever its
@@ -39,7 +40,8 @@ const _font = @import("../font/_font.zig");
 /// ("spleen/16"), height, drawn styles, flags, kind and width, as its own
 /// header says. A TrueType or OpenType file of one font becomes an
 /// outline entry of the family, of height 0, in the styles the file
-/// says it is drawn in - bold for a bold face. Anything else there is
+/// says it is drawn in - bold for a bold face - and a collection is
+/// listed as its first font. Anything else there is
 /// passed over, and so is a file that is too large: a size of more than
 /// 4 MiB, a file of outlines of more than 64 MiB or than there is
 /// memory to read it into. The entries are in order of height. At most
@@ -170,11 +172,13 @@ fn readEntries(dfb: *DiskfontBase, file: [*:0]const u8, path: []const u8, into: 
     defer dfb.sys_base.FreeVec(memory);
     const block: [*]align(4) u8 = @ptrCast(@alignCast(memory));
     if (dl.Read(fh, block, @intCast(size)) != size) return 0;
-    if (sdk.truetype.isTrueType(block[0..size])) {
-        const style = sdk.truetype.styleOf(block[0..size]);
+    // A collection is listed as its first font: the others are families
+    // of their own, whose contents files name this file and their font.
+    if (sdk.truetype.fontCount(block[0..size]) != 0) {
+        const style = sdk.truetype.styleOfFont(block[0..size], 0);
         const styles = variableStyles(dfb, block, size, path, style, into);
         if (styles != 0) return styles;
-        into[0] = fontfile.outlineEntry(path, style, .{});
+        into[0] = fontfile.outlineEntry(path, style, .{}, 0);
         return 1;
     }
     if (size < @sizeOf(fontimage.FontImage) or size > _font.max_size_file) return 0;

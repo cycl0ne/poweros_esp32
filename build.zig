@@ -822,35 +822,40 @@ pub fn build(b: *std.Build) void {
         if (!liberation) std.log.info("no Liberation fonts (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:sans, serif or mono", .{});
         const devanagari = hasFontFile(b, dir, devanagari_dir ++ "/NotoSansDevanagari-Regular.ttf") and hasFontFile(b, dir, devanagari_dir ++ "/NotoSansDevanagari-Bold.ttf");
         if (!devanagari) std.log.info("no Noto Sans Devanagari, Regular and Bold (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:devanagari", .{});
+        const cjk = hasFontFile(b, dir, devanagari_dir ++ "/" ++ cjk_file) and hasFontFile(b, dir, devanagari_dir ++ "/NotoSansCJK.licence");
+        if (!cjk) std.log.info("no Noto Sans CJK Regular and its licence (scripts/fetch-fonts.sh): the virt machines' system disks have no FONTS:cjk-jp, -kr, -sc, -tc and -hk", .{});
         for (disk_fonts) |family| {
             switch (family.set) {
                 .base => {},
                 .liberation => if (!liberation) continue,
                 .devanagari => if (!devanagari) continue,
+                .cjk => if (!cjk) continue,
             }
             // The 64-bit disks take every family; the ESP32s' the ones
-            // that are not `wide`.
-            const onto = disks.some(family.wide);
+            // that are not `wide`. A `virt` family is on the virt
+            // machines' system disks alone.
+            const onto: FontPlace = .{ .runs = disks.some(family.wide or family.virt).runs, .prefix = if (family.virt) "--gpt-file=" else "" };
             const run = b.addRunArtifact(fontconv);
             const out = run.addOutputDirectoryArg(family.name);
             run.addArg(family.name);
             run.addArgs(family.options);
             for (family.sources) |source| run.addFileArg(.{ .cwd_relative = b.pathJoin(&.{ dir, source }) });
-            onto.addArg(b.fmt("fonts/{s}", .{family.name}));
-            onto.addPrefixedFileArg(b.fmt("fonts/{s}.font=", .{family.name}), out.path(b, b.fmt("{s}.font", .{family.name})));
+            if (family.in == null) onto.drawer(b.fmt("fonts/{s}", .{family.name}));
+            onto.file(b.fmt("fonts/{s}.font", .{family.name}), out.path(b, b.fmt("{s}.font", .{family.name})));
             for (family.sizes) |rows| {
                 const size = b.fmt("{s}/{d}", .{ family.name, rows });
-                onto.addPrefixedFileArg(b.fmt("fonts/{s}=", .{size}), out.path(b, size));
+                onto.file(b.fmt("fonts/{s}", .{size}), out.path(b, size));
             }
             for (family.outlines) |file| {
                 const at = b.fmt("{s}/{s}", .{ family.name, file });
-                onto.addPrefixedFileArg(b.fmt("fonts/{s}=", .{at}), out.path(b, at));
+                onto.file(b.fmt("fonts/{s}", .{at}), out.path(b, at));
             }
         }
         disks.addPrefixedFileArg("fonts/spleen.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "spleen-2.2.0/LICENSE" }) });
         disks.addPrefixedFileArg("fonts/go.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "go/README" }) });
         if (liberation) disks.some(true).addPrefixedFileArg("fonts/liberation.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, liberation_dir ++ "/LICENSE" }) });
         if (devanagari) disks.some(true).addPrefixedFileArg("fonts/devanagari.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoSansDevanagari.licence" }) });
+        if (cjk) disks.some(true).addPrefixedFileArg("--gpt-file=fonts/cjk.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoSansCJK.licence" }) });
     }
     // SYS:Certificates/Roots - Mozilla's roots, which
     // scripts/fetch-certs.sh fetched, as the trust store tools/anchors
@@ -2542,12 +2547,49 @@ const DiskFont = struct {
     wide: bool = false,
     /// Which of the fetched fonts it is made from.
     set: FontSet = .base,
+    /// The family whose directory holds this one's font file, for a
+    /// font of a collection after the first: the family is a contents
+    /// file alone, which names the file there.
+    in: ?[]const u8 = null,
+    /// On the virt machines' system disks alone (mkfs's `--gpt-file`):
+    /// a file the 64-bit machines' disk image in RAM has not the room
+    /// for.
+    virt: bool = false,
+};
+
+/// Where a font family's files go: a disk's ordinary list, or - under
+/// `--gpt-file=` - a virt machine's system disk alone.
+const FontPlace = struct {
+    runs: []const *std.Build.Step.Run,
+    prefix: []const u8,
+
+    fn drawer(place: FontPlace, path: []const u8) void {
+        for (place.runs) |run| run.addArg(run.step.owner.fmt("{s}{s}", .{ place.prefix, path }));
+    }
+
+    fn file(place: FontPlace, path: []const u8, from: std.Build.LazyPath) void {
+        for (place.runs) |run| run.addPrefixedFileArg(run.step.owner.fmt("{s}{s}=", .{ place.prefix, path }), from);
+    }
 };
 
 /// What scripts/fetch-fonts.sh fetches, as far as a tree may have one
 /// part and not another: `base` is what every fetch brought, the others
 /// came later and a tree fetched before them lacks them.
-const FontSet = enum { base, liberation, devanagari };
+const FontSet = enum { base, liberation, devanagari, cjk };
+
+/// Noto Sans CJK Regular as scripts/fetch-fonts.sh names it, in
+/// `devanagari_dir`: one file of ten fonts.
+const cjk_file = "NotoSansCJK-Regular.ttc";
+
+/// The family of the collection's font `face`, which draws the
+/// characters Japanese, Chinese and Korean share in one region's forms.
+/// The first has the file in its directory; the others name it there.
+fn cjkFamily(comptime name: []const u8, comptime face: []const u8) DiskFont {
+    const first = "cjk-jp";
+    const source: []const []const u8 = &.{devanagari_dir ++ "/" ++ cjk_file};
+    if (comptime std.mem.eql(u8, name, first)) return .{ .name = name, .sources = source, .outlines = &.{cjk_file}, .wide = true, .set = .cjk, .virt = true };
+    return .{ .name = name, .options = &.{ "--face", face, "--in", first }, .sources = source, .wide = true, .set = .cjk, .in = first, .virt = true };
+}
 
 /// Where scripts/fetch-fonts.sh puts Noto Sans Devanagari, in
 /// toolchain/fonts.
@@ -2574,8 +2616,12 @@ fn liberationFamily(comptime name: []const u8, comptime file: []const u8) [4]Dis
 /// drawn partly in the pen; the Go faces as outlines, at any size; and on
 /// the 64-bit disks the Liberation fonts as outlines - sans, serif and
 /// mono, each with its bold, italic and bold italic faces - which SVG's
-/// text is drawn in, and Noto Sans Devanagari, regular and bold, which
-/// `font.prefs` names as the font a text falls back to for the script.
+/// text is drawn in, Noto Sans Devanagari, regular and bold, which
+/// `font.prefs` names as the font a text falls back to for the script,
+/// and - on the virt machines' system disks, the file being 19.5 MB
+/// and the disk image in RAM 32 - Noto Sans CJK - Japanese, Chinese and
+/// Korean - as five families of the one file, a region's forms each:
+/// Japan's, Korea's, China's, Taiwan's and Hong Kong's.
 const disk_fonts = liberationFamily("sans", "Sans") ++ liberationFamily("serif", "Serif") ++ liberationFamily("mono", "Mono") ++ [_]DiskFont{
     .{
         .name = "spleen",
@@ -2591,6 +2637,11 @@ const disk_fonts = liberationFamily("sans", "Sans") ++ liberationFamily("serif",
     .{ .name = "go-mono-bold", .sources = &.{"go/Go-Mono-Bold.ttf"}, .outlines = &.{"Go-Mono-Bold.ttf"} },
     .{ .name = "devanagari", .sources = &.{devanagari_dir ++ "/NotoSansDevanagari-Regular.ttf"}, .outlines = &.{"NotoSansDevanagari-Regular.ttf"}, .wide = true, .set = .devanagari },
     .{ .name = "devanagari-bold", .sources = &.{devanagari_dir ++ "/NotoSansDevanagari-Bold.ttf"}, .outlines = &.{"NotoSansDevanagari-Bold.ttf"}, .wide = true, .set = .devanagari },
+    cjkFamily("cjk-jp", "0"),
+    cjkFamily("cjk-kr", "1"),
+    cjkFamily("cjk-sc", "2"),
+    cjkFamily("cjk-tc", "3"),
+    cjkFamily("cjk-hk", "4"),
 };
 
 /// Whether scripts/fetch-fonts.sh has fetched `sub` into the fonts' `dir`.

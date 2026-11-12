@@ -14,7 +14,8 @@
 //! program that needs this looks for revision 4 or later in the library
 //! it opened. Since 1.13 a variable font is a family with an entry for
 //! each style it has, and bold or italic asked of it is the font at
-//! that place on its axes.
+//! that place on its axes. Since 1.14 a contents file's entry names a
+//! font of a collection, and the collection's families share the file.
 
 const graphics = @import("../graphics/graphics.zig");
 const truetype = @import("../truetype/truetype.zig");

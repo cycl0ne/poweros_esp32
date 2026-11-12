@@ -16,6 +16,7 @@ const host = @import("host_rom");
 const kexec = host.exec;
 const diskfont_init = @import("../diskfont_init.zig");
 const _base = @import("../diskfont_base.zig");
+const _outline = @import("../outline/_outline.zig");
 const _font = @import("../font/_font.zig");
 
 const testing = std.testing;
@@ -953,6 +954,113 @@ test "revision 13: a variable font is listed a style, each a place of the one fi
     try testing.expectEqual(@as(u32, 2), tb.FontAxes(plain.outline, &axes, 2));
     try testing.expectEqual(@as(f32, 400), axes[0].value);
     dfb.CloseOutlineFont(plain);
+}
+
+/// A collection of the TrueType files `fonts` in `into`, each whole
+/// after the header, its tables' places counted from the collection's
+/// start. How long it is.
+fn collectionOf(into: []u8, fonts: []const []const u8) usize {
+    @memset(into, 0);
+    @memcpy(into[0..4], "ttcf");
+    std.mem.writeInt(u32, into[4..8], 0x0001_0000, .big);
+    std.mem.writeInt(u32, into[8..12], @intCast(fonts.len), .big);
+    var len: usize = 12 + fonts.len * 4;
+    for (fonts, 0..) |font, index| {
+        std.mem.writeInt(u32, into[12 + index * 4 ..][0..4], @intCast(len), .big);
+        @memcpy(into[len..][0..font.len], font);
+        const tables = std.mem.readInt(u16, font[4..6], .big);
+        for (0..tables) |table| {
+            const place = into[len + 12 + table * 16 + 8 ..][0..4];
+            std.mem.writeInt(u32, place, std.mem.readInt(u32, place, .big) + @as(u32, @intCast(len)), .big);
+        }
+        len += (font.len + 3) & ~@as(usize, 3);
+    }
+    return len;
+}
+
+test "revision 14: a contents entry names a font of a collection, and the collection's families read the one file" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    try testing.expect(rig.dfb.lib().revision >= 14);
+    const tt = @import("../../truetype/tests/truetype.zig");
+    const truetype_init = @import("../../truetype/truetype_init.zig");
+    const lib = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoTrueType;
+    const truetype_lib: *exec.Library = @ptrCast(@alignCast(lib));
+    defer _ = rig.sysLib().RemLibrary(truetype_lib);
+    const dfb = rig.dfb;
+    const gb = rig.graphicsLib();
+
+    // Two fonts in one file: the first has 'A' to 'C', the second, which
+    // says it is bold, 'a' to 'c'.
+    var first: tt.Out = .{};
+    tt.buildFaceAt(&first, 0, 'A');
+    var second: tt.Out = .{};
+    tt.buildFaceAt(&second, 1, 'a');
+    var file: [8192]u8 = undefined;
+    const len = collectionOf(&file, &.{ first.bytes[0..first.len], second.bytes[0..second.len] });
+    try testing.expectEqual(@as(u32, 2), sdk.truetype.fontCount(file[0..len]));
+    try testing.expectEqual(graphics.FS_NORMAL, sdk.truetype.styleOfFont(file[0..len], 0));
+    try testing.expectEqual(graphics.FSF_BOLD, sdk.truetype.styleOfFont(file[0..len], 1));
+    try testing.expectEqual(graphics.FS_NORMAL, sdk.truetype.styleOfFont(file[0..len], 2));
+
+    // The family whose directory holds the file is its first font.
+    const made = rig.dosLib().CreateDir("FONTS:first") orelse return error.NoDir;
+    rig.dosLib().UnLock(made);
+    try rig.write("FONTS:first/all.ttc", file[0..len]);
+    const fonts = rig.dosLib().Lock("FONTS:", dos.SHARED_LOCK).?;
+    const listed = dfb.NewFontContents(fonts, "first.font") orelse return error.NoContents;
+    rig.dosLib().UnLock(fonts);
+    {
+        defer dfb.DisposeFontContents(listed);
+        const entries = fontfile.entriesOf(@ptrCast(listed));
+        try testing.expectEqual(@as(usize, 1), entries.len);
+        try testing.expectEqualStrings("first/all.ttc", std.mem.sliceTo(&entries[0].path, 0));
+        try testing.expectEqual(@as(u8, 1), entries[0].outline);
+        try testing.expectEqual(@as(u8, 0), entries[0].face);
+        try testing.expectEqual(graphics.FS_NORMAL, entries[0].style);
+        const block: [*]const u8 = @ptrCast(listed);
+        try rig.write("FONTS:first.font", block[0..fontfile.contentsSize(1)]);
+    }
+
+    // The second font is a family with a contents file and no directory:
+    // its entry names the file where it is, and which font of it.
+    var contents: [fontfile.contentsSize(1)]u8 align(4) = @splat(0);
+    const header: *fontfile.ContentsHeader = @ptrCast(&contents);
+    header.* = .{ .count = 1 };
+    const entry: *fontfile.FontContents = @ptrCast(@alignCast(contents[@sizeOf(fontfile.ContentsHeader)..]));
+    entry.* = fontfile.outlineEntry("first/all.ttc", graphics.FSF_BOLD, .{}, 1);
+    fontfile.seal(&contents, contents.len);
+    try testing.expect(fontfile.sound(&contents, contents.len));
+    try rig.write("FONTS:second.font", &contents);
+
+    // Each family draws its own font's characters and not the other's.
+    const upper = dfb.OpenDiskFont(&.{ .name = "first.font", .y_size = 20, .flags = graphics.FPF_DESIGNED }) orelse return error.NoFont;
+    const lower = dfb.OpenDiskFont(&.{ .name = "second.font", .y_size = 20, .flags = graphics.FPF_DESIGNED }) orelse return error.NoFont;
+    try testing.expectEqual(graphics.FS_NORMAL, upper.image.style & graphics.FSF_BOLD);
+    try testing.expectEqual(graphics.FSF_BOLD, lower.image.style & graphics.FSF_BOLD);
+    const ink = try inkIn(&rig, upper, "A");
+    try testing.expect(ink != 0);
+    try testing.expectEqual(ink, try inkIn(&rig, lower, "a"));
+    try testing.expectEqual(ink, try inkIn(&rig, upper, "Aa"));
+    try testing.expectEqual(ink, try inkIn(&rig, lower, "aA"));
+
+    // Two outlines, one copy of the file.
+    try testing.expectEqual(@as(usize, 2), outlinesLoaded(&rig));
+    const real: *_base.DiskfontBase = @ptrCast(@alignCast(dfb));
+    const one: *const _outline.OutlineRecord = @fieldParentPtr("link", real.outlines.first().?);
+    const other: *const _outline.OutlineRecord = @fieldParentPtr("link", real.outlines.first().?.next().?);
+    try testing.expect(one.file != null);
+    try testing.expectEqual(one.file, other.file);
+    try testing.expect(one.entry.face != other.entry.face);
+
+    // The first to go leaves the file to the other, which still draws.
+    gb.CloseFont(upper);
+    try testing.expect(rig.sysLib().AllocMem(1 << 30, exec.MEMF_ANY) == null);
+    try testing.expectEqual(ink, try inkIn(&rig, lower, "a"));
+    gb.CloseFont(lower);
+    // The expunge at the end frees the rest; the leak check says whether
+    // the file went once.
 }
 
 /// How far `text` moves the cursor in `font`.

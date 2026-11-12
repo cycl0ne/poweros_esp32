@@ -18,7 +18,7 @@ const _outline = @import("_outline.zig");
 /// ```
 ///
 /// SINCE: 1.4, a variable font at the place of the styles asked since
-/// 1.13. LVO -40.
+/// 1.13, a font of a collection since 1.14. LVO -40.
 ///
 /// INPUTS:
 /// - `name` - the family's name, "sans.font", or a path to its contents

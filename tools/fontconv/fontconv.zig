@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! fontconv: fonts from the host's formats into the system's.
 //!
-//!   fontconv <out dir> <family> [--alpha N] [--shadow] [--rgba] <source>...
+//!   fontconv <out dir> <family> [--alpha N] [--shadow] [--rgba]
+//!            [--face N] [--in <family>] <source>...
 //!
 //! Each source is one size of the family: a BDF file, the load file of
 //! one size of a bitmap font kept as load files, or such a font's
@@ -13,6 +14,13 @@
 //! says it is drawn in. A variable font is listed once for each style it
 //! can be drawn in - regular, bold, italic, bold italic - each entry
 //! naming the one file and its own place on the file's axes.
+//!
+//! A collection is one file of several fonts, each a family of its own.
+//! `--face N` lists font N of the source (from 0; 0 without it), and
+//! `--in <family>` says the source is on the disk already, in that
+//! family's directory: nothing is copied, the entries name the file
+//! there. So the collection's first family is made with neither, the
+//! others with both.
 //!
 //! `--alpha N` takes sources drawn N times too large (2 or 4) and makes
 //! fonts of coverage at 1/N their size, each pixel the share of its N by N
@@ -47,13 +55,18 @@ const Options = struct {
     alpha: u32 = 0,
     shadow: bool = false,
     rgba: bool = false,
+    /// Which font of an outline source is listed.
+    face: u8 = 0,
+    /// The family whose directory holds the outline sources, when it is
+    /// not this one's.
+    in: ?[]const u8 = null,
 };
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len < 4) fatal("usage: fontconv <out dir> <family> [--alpha N] [--shadow] [--rgba] <source>...", .{});
+    if (args.len < 4) fatal("usage: fontconv <out dir> <family> [--alpha N] [--shadow] [--rgba] [--face N] [--in <family>] <source>...", .{});
     const out_dir = args[1];
     const family = args[2];
 
@@ -70,6 +83,14 @@ pub fn main(init: std.process.Init) !void {
             options.shadow = true;
         } else if (std.mem.eql(u8, args[i], "--rgba")) {
             options.rgba = true;
+        } else if (std.mem.eql(u8, args[i], "--face")) {
+            i += 1;
+            if (i == args.len) fatal("--face: which font?", .{});
+            options.face = std.fmt.parseInt(u8, args[i], 10) catch fatal("--face {s}: not a number", .{args[i]});
+        } else if (std.mem.eql(u8, args[i], "--in")) {
+            i += 1;
+            if (i == args.len) fatal("--in: which family?", .{});
+            options.in = args[i];
         } else {
             try sources.append(arena, args[i]);
         }
@@ -82,11 +103,15 @@ pub fn main(init: std.process.Init) !void {
     try cwd.createDirPath(io, family_dir);
     for (sources.items) |source| {
         const bytes = cwd.readFileAlloc(io, source, arena, .unlimited) catch |e| fatal("{s}: {t}", .{ source, e });
-        if (sdk.truetype.isTrueType(bytes)) {
+        const held = sdk.truetype.fontCount(bytes);
+        if (held != 0) {
+            if (options.face >= held) fatal("{s}: no font {d}, it holds {d}", .{ source, options.face, held });
             const name = std.fs.path.basename(source);
-            const path = try std.fs.path.join(arena, &.{ family_dir, name });
-            try cwd.writeFile(io, .{ .sub_path = path, .data = bytes });
-            try listOutline(arena, &outlines, name, bytes);
+            if (options.in == null) {
+                const path = try std.fs.path.join(arena, &.{ family_dir, name });
+                try cwd.writeFile(io, .{ .sub_path = path, .data = bytes });
+            }
+            try listOutline(arena, &outlines, .{ .dir = options.in orelse family, .name = name, .face = options.face }, bytes);
         } else if (loadfont.isContents(bytes)) {
             const dir = std.fs.path.dirname(source) orelse ".";
             for (try loadfont.listed(arena, bytes)) |size| {
@@ -111,27 +136,29 @@ pub fn main(init: std.process.Init) !void {
     try cwd.writeFile(io, .{ .sub_path = contents_path, .data = contents });
 }
 
-/// One outline entry of a family: its font file's name in the family's
-/// directory, the styles it is drawn in, and where on the file's axes -
-/// nowhere but the default for a file without axes, which is in the
-/// styles it says of itself.
-const Outline = struct { name: []const u8, style: sdk.graphics.FontStyle, place: fontfile.Place = .{} };
+/// One outline entry of a family: where its font file is, the styles it
+/// is drawn in, and where on the file's axes - nowhere but the default
+/// for a file without axes, which is in the styles it says of itself.
+const Outline = struct { file: File, style: sdk.graphics.FontStyle, place: fontfile.Place = .{} };
+
+/// A font of a font file on the disk: the family whose directory holds
+/// the file, its name there, and which of its fonts.
+const File = struct { dir: []const u8, name: []const u8, face: u8 = 0 };
 
 /// How many axes of a variable font are read: as many as
 /// truetype.library opens a font with.
 const max_axes = 32;
 
-/// The entries of the font file `bytes`, whose name in the family's
-/// directory is `name`, added to `outlines`: one in the file's own
-/// styles, or for a variable font one for each style it can be drawn
-/// in (`fontfile.variableEntries`), from its axes and the named
-/// instances whose names say a style.
-fn listOutline(gpa: Allocator, outlines: *std.ArrayList(Outline), name: []const u8, bytes: []const u8) !void {
-    const style = sdk.truetype.styleOf(bytes);
+/// The entries of the font `file` of the font file `bytes`, added to
+/// `outlines`: one in the font's own styles, or for a variable font one
+/// for each style it can be drawn in (`fontfile.variableEntries`), from
+/// its axes and the named instances whose names say a style.
+fn listOutline(gpa: Allocator, outlines: *std.ArrayList(Outline), file: File, bytes: []const u8) !void {
+    const style = sdk.truetype.styleOfFont(bytes, file.face);
     const font = try gpa.create(tt.outline.Font);
-    const axis_count: u32 = if (tt.outline.open(font, bytes.ptr, @intCast(bytes.len), 0, null, 0)) font.vary.axis_count else 0;
+    const axis_count: u32 = if (tt.outline.open(font, bytes.ptr, @intCast(bytes.len), file.face, null, 0)) font.vary.axis_count else 0;
     if (axis_count == 0 or axis_count > max_axes) {
-        try outlines.append(gpa, .{ .name = name, .style = style });
+        try outlines.append(gpa, .{ .file = file, .style = style });
         return;
     }
     var axes: [max_axes]sdk.truetype.Axis = undefined;
@@ -154,7 +181,7 @@ fn listOutline(gpa: Allocator, outlines: *std.ArrayList(Outline), name: []const 
     var made: [4]fontfile.FontContents = undefined;
     const count = fontfile.variableEntries("", style, axes[0..axis_count], &named, &made);
     for (made[0..count]) |*entry| {
-        try outlines.append(gpa, .{ .name = name, .style = entry.style, .place = fontfile.placeOfEntry(entry) });
+        try outlines.append(gpa, .{ .file = file, .style = entry.style, .place = fontfile.placeOfEntry(entry) });
     }
 }
 
@@ -181,7 +208,7 @@ fn convert(gpa: Allocator, bytes: []const u8, options: Options) !Font {
 
 /// Each font's image handed to `sink.write` under its height, and the
 /// family's contents file listing them, sorted by height, and after them
-/// the outlines (file names in the family's directory), answered.
+/// the outlines, answered.
 fn writeFamily(gpa: Allocator, family: []const u8, fonts: []Font, outlines: []const Outline, sink: anytype) ![]align(4) u8 {
     std.mem.sort(Font, fonts, {}, struct {
         fn less(_: void, a: Font, b: Font) bool {
@@ -204,9 +231,9 @@ fn writeFamily(gpa: Allocator, family: []const u8, fonts: []Font, outlines: []co
         entries[i] = fontfile.entryFor(path, @ptrCast(image.ptr));
     }
     for (outlines, fonts.len..) |outline, i| {
-        const path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ family, outline.name });
+        const path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ outline.file.dir, outline.file.name });
         if (path.len >= fontfile.MAXFONTPATH) return error.NameTooLong;
-        entries[i] = fontfile.outlineEntry(path, outline.style, outline.place);
+        entries[i] = fontfile.outlineEntry(path, outline.style, outline.place, outline.file.face);
     }
     fontfile.seal(contents.ptr, size);
     return contents;
@@ -405,14 +432,24 @@ test "a family: the contents file lists every size, sorted, and is sound" {
         }
     };
     var sink = Sink{};
-    const contents = try writeFamily(gpa, "small", &fonts, &.{.{ .name = "small.ttf", .style = sdk.graphics.FSF_BOLD }}, &sink);
+    // The family's own outline, and the third font of a collection that
+    // is in another family's directory.
+    const outlines = [_]Outline{
+        .{ .file = .{ .dir = "small", .name = "small.ttf" }, .style = sdk.graphics.FSF_BOLD },
+        .{ .file = .{ .dir = "first", .name = "all.ttc", .face = 2 }, .style = sdk.graphics.FS_NORMAL },
+    };
+    const contents = try writeFamily(gpa, "small", &fonts, &outlines, &sink);
     try testing.expectEqual(@as(u32, 6 + 3), sink.written);
     try testing.expect(fontfile.sound(contents.ptr, @intCast(contents.len)));
     const entries = fontfile.entriesOf(contents.ptr);
-    try testing.expectEqual(@as(usize, 3), entries.len);
+    try testing.expectEqual(@as(usize, 4), entries.len);
     try testing.expectEqual(@as(u8, 1), entries[2].outline);
     try testing.expectEqual(sdk.graphics.FSF_BOLD, entries[2].style);
     try testing.expectEqualStrings("small/small.ttf", fontfile.pathOf(&entries[2]));
+    try testing.expectEqual(@as(u8, 0), entries[2].face);
+    try testing.expectEqual(@as(u8, 1), entries[3].outline);
+    try testing.expectEqualStrings("first/all.ttc", fontfile.pathOf(&entries[3]));
+    try testing.expectEqual(@as(u8, 2), entries[3].face);
     try testing.expectEqualStrings("small/3", fontfile.pathOf(&entries[0]));
     try testing.expectEqualStrings("small/6", fontfile.pathOf(&entries[1]));
     try testing.expectEqual(@intFromEnum(fontimage.Kind.alpha4), entries[0].kind);

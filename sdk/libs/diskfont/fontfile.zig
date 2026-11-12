@@ -15,6 +15,12 @@
 //! file's axes: up to `MAXFONTAXES` axes, each by its tag and a value.
 //! `variableEntries` says which styles a file has and where they are.
 //!
+//! **A collection is a file of several fonts**, each a family of its
+//! own. An outline entry says which font of its file it is (`face`), and
+//! its path may lead into another family's directory: the families of
+//! one collection each have a contents file, and the file is on the
+//! disk once, with the first of them.
+//!
 //! A `ContentsHeader`, then `count` `FontContents`, little-endian and in
 //! 32-bit alignment. The longwords of the whole file add up to zero, the
 //! header's `checksum` making them, so a file that lost a byte is refused
@@ -71,8 +77,12 @@ pub const FontContents = extern struct {
     /// every axis at the file's default, which is all a file without
     /// axes has.
     axis_count: u8 = 0,
+    /// Which font of its file an outline entry is, from 0: a collection
+    /// holds several, a TrueType file the one (truetype.library's
+    /// `TTA_FontIndex`).
+    face: u8 = 0,
     /// Nothing yet; zero.
-    reserved: [4]u8 = @splat(0),
+    reserved: [3]u8 = @splat(0),
     /// The entry's place on a variable font's axes: the first
     /// `axis_count` name an axis by its tag and its value there, in the
     /// form truetype.library's `TTA_Axes` takes. The others are zero.
@@ -150,15 +160,17 @@ pub fn seal(block: [*]u8, size: u32) void {
 /// - `path` - the file, from `FONTS:`; at most `MAXFONTPATH - 1` bytes.
 /// - `style` - the styles the file is drawn in at `place`: what every
 ///   size rendered from the entry is. For a file without axes, what the
-///   file says of itself (`truetype.styleOf`).
+///   font says of itself (`truetype.styleOfFont`).
 /// - `place` - where on the file's axes; `.{}` for its default.
-pub fn outlineEntry(path: []const u8, style: graphics.FontStyle, place: Place) FontContents {
+/// - `face` - which font of the file, from 0; 0 for a file of one font.
+pub fn outlineEntry(path: []const u8, style: graphics.FontStyle, place: Place, face: u8) FontContents {
     var entry = FontContents{
         .style = style,
         .flags = graphics.FPF_DESIGNED,
         .kind = @intFromEnum(graphics.fontimage.Kind.alpha4),
         .outline = 1,
         .axis_count = place.count,
+        .face = face,
     };
     for (place.axes[0..place.count], 0..) |axis, i| entry.axes[i] = axis;
     const len = @min(path.len, MAXFONTPATH - 1);
@@ -320,7 +332,7 @@ pub fn variableEntries(path: []const u8, style: graphics.FontStyle, axes: []cons
     var count: u32 = 0;
     for (places, 0..) |place, add| {
         const at = place orelse continue;
-        into[count] = outlineEntry(path, style | @as(graphics.FontStyle, @intCast(add)), at);
+        into[count] = outlineEntry(path, style | @as(graphics.FontStyle, @intCast(add)), at, 0);
         count += 1;
     }
     return count;

@@ -7,9 +7,12 @@
 //! In every directory FONTS: stands for, each subdirectory is a family:
 //! its contents file `<name>.font` is written anew from the sizes in it
 //! (diskfont.library's NewFontContents), or deleted when it holds none.
-//! A `<name>.font` with no directory beside it is deleted too: it lists
-//! sizes that are gone. A font dropped into a family's directory is found
-//! only once this has run. Ctrl-C stops it between families.
+//! A `<name>.font` with no directory beside it is deleted too when a
+//! file it lists is gone, and kept when every one is there: the families
+//! of a collection - one file of several fonts - have no directory but
+//! the first, and name the file in that one. A font dropped into a
+//! family's directory is found only once this has run. Ctrl-C stops it
+//! between families.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -22,7 +25,7 @@ const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FixFonts";
-const VERSION_STRING = "\x00$VER: FixFonts 1.0 (28.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FixFonts 1.1 (12.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "";
@@ -92,6 +95,30 @@ fn list(dl: *DosBase, dir: *dos.FileLock, into: *Listing) void {
     }
 }
 
+/// The largest contents file read: more entries than NewFontContents
+/// ever lists.
+const max_contents = fontfile.contentsSize(256);
+
+/// Whether the contents file `file` of the current directory is sound
+/// and every file it lists is there.
+fn listsWhatIsThere(sys: *ExecBase, dl: *DosBase, file: [*:0]const u8) bool {
+    const fh = dl.Open(file, dos.MODE_OLDFILE) orelse return false;
+    defer _ = dl.Close(fh);
+    var fib: dos.FileInfoBlock = .{};
+    if (!dl.ExamineFH(fh, &fib) or fib.size < @sizeOf(fontfile.ContentsHeader) or fib.size > max_contents) return false;
+    const size: u32 = @intCast(fib.size);
+    const memory = sys.AllocVec(size, exec.MEMF_ANY) orelse return false;
+    defer sys.FreeVec(memory);
+    const block: [*]align(4) u8 = @ptrCast(@alignCast(memory));
+    if (dl.Read(fh, block, @intCast(size)) != size) return false;
+    if (!fontfile.sound(block, size)) return false;
+    for (fontfile.entriesOf(block)) |*entry| {
+        const lock = dl.Lock(@ptrCast(&entry.path), dos.SHARED_LOCK) orelse return false;
+        dl.UnLock(lock);
+    }
+    return true;
+}
+
 /// The families of one FONTS: directory, fixed. Its result code.
 fn fixDirectory(sys: *ExecBase, dl: *DosBase, dfb: *DiskfontBase, dir: *dos.FileLock) i32 {
     var listing: Listing = .{};
@@ -133,7 +160,7 @@ fn fixDirectory(sys: *ExecBase, dl: *DosBase, dfb: *DiskfontBase, dir: *dos.File
         _ = Printf(dl, MSG_FAMILY, .{ @as([*:0]const u8, &font_name), @as(u32, made.count) });
     }
 
-    // Contents files whose directory is gone.
+    // Contents files whose directory is gone, or never was.
     for (listing.files[0..listing.file_count]) |*file| {
         const stem = stemOf(file).?;
         var found = false;
@@ -149,7 +176,7 @@ fn fixDirectory(sys: *ExecBase, dl: *DosBase, dfb: *DiskfontBase, dir: *dos.File
             }
             if (same) found = true;
         }
-        if (found) continue;
+        if (found or listsWhatIsThere(sys, dl, file)) continue;
         if (dl.DeleteFile(file)) {
             _ = Printf(dl, MSG_STALE, .{@as([*:0]const u8, file)});
         } else {
