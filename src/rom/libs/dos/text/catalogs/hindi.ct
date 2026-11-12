@@ -1,0 +1,378 @@
+## version $VER: sys/dos.catalog 1.0 (12.11.2026)
+## language hindi
+## codeset 106
+; dos.library's strings in Hindi. A draft: it waits for a reader of Hindi
+; to go through it.
+;
+SOFTWARE_FAILURE
+सॉफ़्टवेयर विफलता
+;
+RUN_FAILED
+%s विफल, रिटर्न कोड %ld\n
+;
+USE_COUNT
+%TH उपयोग गिनती\n\n
+;
+NAME
+नाम
+;
+DISABLED
+%TH अक्षम\n
+;
+INTERNAL
+%TH आंतरिक\n
+;
+SYSTEM
+%TH SYSTEM\n
+;
+FAULT
+त्रुटि %3ld
+;
+FAIL_LIMIT
+विफलता सीमा: %ld\n
+;
+BAD_RETURN_CODE
+अमान्य रिटर्न कोड दिया गया
+;
+CURRENT_DIR
+वर्तमान डायरेक्टरी
+;
+NO_RETURN_CODE
+पिछले आदेश ने कोई रिटर्न कोड सेट नहीं किया।
+;
+LAST_CMD_FAILED
+पिछला आदेश विफल हुआ, कारण\x20
+;
+PROCESS_ENDING
+प्रोसेस %N समाप्त हो रहा है
+;
+REQUESTED_SIZE_TOO_SMALL
+माँगा गया आकार बहुत छोटा है
+;
+REQUESTED_SIZE_TOO_LARGE
+माँगा गया आकार बहुत बड़ा है
+;
+CURRENT_STACK_SIZE
+वर्तमान स्टैक आकार %ld बाइट है\n
+;
+NEWSHELL_FAILED
+NewShell विफल
+;
+MISSING_ELSE_OR_ENDIF
+ELSE या ENDIF छूटा है
+;
+MUST_BE_IN_CMD_FILE
+आदेश फ़ाइल में ही होना चाहिए
+;
+MORE_THAN_ONE_DIR
+एक से अधिक डायरेक्टरी मेल खाती हैं
+;
+CANT_SET
+%s सेट नहीं हो सका\n
+;
+BLOCK_CORRUPT_DIR
+ब्लॉक %ld: डायरेक्टरी ख़राब
+;
+BLOCK_CORRUPT_FILE
+ब्लॉक %ld: फ़ाइल ख़राब
+;
+BLOCK_BAD_HEADER
+ब्लॉक %ld: हेडर प्रकार ग़लत
+;
+BLOCK_OUT_OF_RANGE
+ब्लॉक %ld सीमा से बाहर
+;
+BLOCK_USED_TWICE
+ब्लॉक %ld दो बार उपयोग में
+;
+VALIDATION_ERROR
+%b के सत्यापन में त्रुटि
+;
+ON_DISK_BLOCK
+डिस्क ब्लॉक %ld पर
+;
+CHECKSUM_ERROR
+में चेकसम त्रुटि है
+;
+WRITE_ERROR
+में लिखने की त्रुटि है
+;
+READ_ERROR
+में पढ़ने की त्रुटि है
+;
+UNABLE_CREATE_PROC
+प्रोसेस नहीं बन सका\n
+;
+NEW_SHELL_PROCESS
+नया Shell प्रोसेस %ld\n
+;
+CANT_OPEN_FROM_FILE
+FROM फ़ाइल %s खोली नहीं जा सकी।\n
+;
+SUSPEND_REBOOT
+निलंबित करें|पुनरारंभ करें
+;
+RETRY_CANCEL
+पुनः प्रयास करें|रद्द करें
+;
+NO_ROOM_FOR_BITMAP
+बिटमैप के लिए जगह नहीं
+;
+CMD_TOO_LONG
+आदेश बहुत लंबा है
+;
+SHELL_ERROR
+Shell त्रुटि:
+;
+CMDNAME_ERROR
+आदेश के नाम में त्रुटि
+;
+UNKNOWN_COMMAND
+अज्ञात आदेश
+;
+LOAD_ERROR
+लोड नहीं हो सका
+;
+SYNTAX_ERROR
+सिंटैक्स त्रुटि
+;
+REDIRECT_ERROR
+रीडायरेक्शन फ़ाइल नहीं खुल सकी
+;
+ERROR
+त्रुटि\x20
+;
+DISK_CORRUPT
+डिस्क ख़राब - टास्क रोका गया
+;
+PROGRAM_FAILED
+प्रोग्राम विफल (त्रुटि #
+;
+WAIT_FOR_ACTIVITY
+डिस्क का काम पूरा होने तक प्रतीक्षा करें।
+;
+IN_DEVICE
+डिवाइस %s%s में
+;
+IN_UNIT
+यूनिट %ld%s में
+;
+YOU_MUST_REPLACE
+यह वॉल्यूम वापस डालना ज़रूरी है:
+;
+READ_WRITE_ERROR
+में पढ़ने/लिखने की त्रुटि है
+;
+NO_DISK_PRESENT
+कोई डिस्क नहीं है
+;
+NOT_A_DOS_DISK
+DOS डिस्क नहीं है
+;
+ANY_DRIVE
+किसी भी ड्राइव में।
+;
+REPLACE_VOLUME
+कृपया यह वॉल्यूम वापस डालें:
+;
+INSERT_VOLUME
+कृपया यह वॉल्यूम डालें:
+;
+IS_FULL
+भरा हुआ है
+;
+IS_PROTECTED
+लिखने से सुरक्षित है
+;
+IS_NOT_VALIDATED
+सत्यापित नहीं है
+;
+VOLUME
+वॉल्यूम
+;
+ERROR_NO_FREE_STORE
+पर्याप्त मेमोरी नहीं
+;
+ERROR_TASK_TABLE_FULL
+प्रोसेस तालिका भरी है
+;
+ERROR_BAD_TEMPLATE
+ग़लत टेम्पलेट
+;
+ERROR_BAD_NUMBER
+ग़लत संख्या
+;
+ERROR_REQUIRED_ARG_MISSING
+आवश्यक आर्ग्युमेंट नहीं दिया गया
+;
+ERROR_KEY_NEEDS_ARG
+कीवर्ड के बाद मान नहीं है
+;
+ERROR_TOO_MANY_ARGS
+आर्ग्युमेंट की संख्या ग़लत है
+;
+ERROR_UNMATCHED_QUOTES
+उद्धरण चिह्न बेमेल हैं
+;
+ERROR_LINE_TOO_LONG
+आर्ग्युमेंट पंक्ति अमान्य या बहुत लंबी है
+;
+ERROR_FILE_NOT_OBJECT
+फ़ाइल चलाने योग्य नहीं है
+;
+ERROR_INVALID_RESIDENT_LIBRARY
+अमान्य रेज़िडेंट लाइब्रेरी
+;
+ERROR_OBJECT_IN_USE
+ऑब्जेक्ट उपयोग में है
+;
+ERROR_OBJECT_EXISTS
+ऑब्जेक्ट पहले से मौजूद है
+;
+ERROR_DIR_NOT_FOUND
+डायरेक्टरी नहीं मिली
+;
+ERROR_OBJECT_NOT_FOUND
+ऑब्जेक्ट नहीं मिला
+;
+ERROR_BAD_STREAM_NAME
+अमान्य विंडो विवरण
+;
+ERROR_OBJECT_TOO_LARGE
+ऑब्जेक्ट बहुत बड़ा है
+;
+ERROR_ACTION_NOT_KNOWN
+पैकेट अनुरोध का प्रकार अज्ञात है
+;
+ERROR_INVALID_COMPONENT_NAME
+ऑब्जेक्ट का नाम अमान्य है
+;
+ERROR_INVALID_LOCK
+अमान्य ऑब्जेक्ट लॉक
+;
+ERROR_OBJECT_WRONG_TYPE
+ऑब्जेक्ट आवश्यक प्रकार का नहीं है
+;
+ERROR_DISK_NOT_VALIDATED
+डिस्क सत्यापित नहीं है
+;
+ERROR_DISK_WRITE_PROTECTED
+डिस्क लिखने से सुरक्षित है
+;
+ERROR_RENAME_ACROSS_DEVICES
+नाम बदलकर दूसरे डिवाइस पर ले जाने का प्रयास
+;
+ERROR_DIRECTORY_NOT_EMPTY
+डायरेक्टरी खाली नहीं है
+;
+ERROR_TOO_MANY_LEVELS
+बहुत अधिक स्तर
+;
+ERROR_DEVICE_NOT_MOUNTED
+डिवाइस (या वॉल्यूम) माउंट नहीं है
+;
+ERROR_SEEK_ERROR
+सीक विफल
+;
+ERROR_COMMENT_TOO_BIG
+टिप्पणी बहुत लंबी है
+;
+ERROR_DISK_FULL
+डिस्क भरी है
+;
+ERROR_DELETE_PROTECTED
+ऑब्जेक्ट मिटाने से सुरक्षित है
+;
+ERROR_WRITE_PROTECTED
+फ़ाइल लिखने से सुरक्षित है
+;
+ERROR_READ_PROTECTED
+फ़ाइल पढ़ने से सुरक्षित है
+;
+ERROR_NOT_A_DOS_DISK
+मान्य DOS डिस्क नहीं है
+;
+ERROR_NO_DISK
+ड्राइव में कोई डिस्क नहीं है
+;
+ERROR_NO_MORE_ENTRIES
+डायरेक्टरी में और प्रविष्टियाँ नहीं हैं
+;
+ERROR_IS_SOFT_LINK
+ऑब्जेक्ट सॉफ़्ट लिंक है
+;
+ERROR_OBJECT_LINKED
+ऑब्जेक्ट लिंक किया हुआ है
+;
+ERROR_BAD_HUNK
+लोड फ़ाइल का हंक ग़लत है
+;
+ERROR_NOT_IMPLEMENTED
+फ़ंक्शन लागू नहीं किया गया है
+;
+ERROR_RECORD_NOT_LOCKED
+रिकॉर्ड लॉक नहीं है
+;
+ERROR_LOCK_COLLISION
+रिकॉर्ड लॉक में टकराव
+;
+ERROR_LOCK_TIMEOUT
+रिकॉर्ड लॉक का समय समाप्त
+;
+ERROR_UNLOCK_ERROR
+रिकॉर्ड अनलॉक त्रुटि
+;
+ABORT_BUSY
+पूछने की अनुमति नहीं थी
+;
+ABORT_DISK_ERROR
+वॉल्यूम पर पढ़ने या लिखने की त्रुटि
+;
+ERROR_BUFFER_OVERFLOW
+बफ़र ओवरफ़्लो
+;
+ERROR_BREAK
+*** रोका गया
+;
+ERROR_NOT_EXECUTABLE
+फ़ाइल चलाने योग्य नहीं है
+;
+ERROR_INVALID_ARGUMENT
+अमान्य आर्ग्युमेंट
+;
+ERROR_INVALID_DOS_ENTRY
+डिवाइस सूची की प्रविष्टि अमान्य है
+;
+ERROR_NO_INPUT_STREAM
+कोई इनपुट स्ट्रीम नहीं
+;
+ERROR_BUFFER_TOO_SMALL
+बफ़र बहुत छोटा है
+;
+ERROR_NO_PROCESS
+प्रोसेस नहीं है
+;
+ERROR_NO_HANDLER
+कोई हैंडलर नहीं
+;
+ERROR_PACKET_ASYNC
+पैकेट बारी से बाहर आया
+;
+ERROR_ERROR_IN_PACKET
+पैकेट में त्रुटि
+;
+ERROR_NO_CURRENT_DIRECTORY
+कोई वर्तमान डायरेक्टरी नहीं
+;
+ERROR_HANDLER_NOT_LOADED
+हैंडलर लोड नहीं है
+;
+ERROR_HANDLER_START_ERROR
+हैंडलर शुरू नहीं हो सका
+;
+ERROR_BROKEN_PIPE
+पाइप का दूसरा सिरा बंद हो चुका है
+;
+ERROR_BAD_CHECKSUM
+चेकसम त्रुटि: पढ़ा गया डेटा वह नहीं है जो लिखा गया था
+;

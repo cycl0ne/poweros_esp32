@@ -1,0 +1,227 @@
+## version $VER: programs/Sheet.catalog 1.0 (12.11.2026)
+## language hindi
+## codeset 106
+; Sheet's strings in Hindi. A draft: it waits for a reader of Hindi
+; to go through it.
+MSG_MENU_PROJECT
+प्रोजेक्ट
+MSG_MENU_NEW
+नया
+MSG_MENU_OPEN
+खोलें...
+MSG_MENU_SAVE
+सहेजें
+MSG_MENU_SAVE_AS
+इस रूप में सहेजें...
+MSG_MENU_QUIT
+बाहर निकलें
+MSG_MENU_EDIT
+संपादन
+MSG_MENU_UNDO
+पूर्ववत करें
+MSG_MENU_REDO
+फिर से करें
+MSG_MENU_CUT
+काटें
+MSG_MENU_COPY
+कॉपी करें
+MSG_MENU_PASTE
+चिपकाएँ
+MSG_MENU_CLEAR
+साफ़ करें
+MSG_MENU_FILL_DOWN
+नीचे की ओर भरें
+MSG_MENU_FILL_RIGHT
+दाईं ओर भरें
+MSG_MENU_SELECT_ALL
+सभी चुनें
+MSG_MENU_FIND
+खोजें...
+MSG_MENU_FIND_NEXT
+अगला खोजें
+MSG_MENU_SHEET
+शीट
+MSG_MENU_INSERT_ROWS
+पंक्तियाँ डालें
+MSG_MENU_DELETE_ROWS
+पंक्तियाँ मिटाएँ
+MSG_MENU_INSERT_COLUMNS
+कॉलम डालें
+MSG_MENU_DELETE_COLUMNS
+कॉलम मिटाएँ
+MSG_MENU_WIDER
+कॉलम चौड़ा करें
+MSG_MENU_NARROWER
+कॉलम सँकरा करें
+MSG_MENU_SUM
+स्वतः योग
+MSG_MENU_SORT_ASCENDING
+आरोही क्रम में लगाएँ
+MSG_MENU_SORT_DESCENDING
+अवरोही क्रम में लगाएँ
+MSG_MENU_FORMAT
+फ़ॉर्मैट
+MSG_MENU_GENERAL
+सामान्य
+MSG_MENU_NUMBER
+संख्या
+MSG_MENU_PERCENT
+प्रतिशत
+MSG_MENU_CURRENCY
+मुद्रा
+MSG_MENU_DECIMALS_MORE
+अधिक दशमलव स्थान
+MSG_MENU_DECIMALS_LESS
+कम दशमलव स्थान
+MSG_MENU_VIEW
+दृश्य
+MSG_MENU_RIBBON
+रिबन
+MSG_RIBBON_HOME
+होम
+MSG_RIBBON_CLIPBOARD
+क्लिपबोर्ड
+MSG_RIBBON_PASTE_HINT
+जो काटा या कॉपी किया गया था, उसे चिपकाएँ
+MSG_RIBBON_NUMBER_HINT
+संख्याएँ दशमलव स्थानों के साथ, हज़ारों के समूहों में दिखाएँ
+MSG_RIBBON_PERCENT_HINT
+संख्याएँ प्रतिशत के रूप में दिखाएँ
+MSG_RIBBON_CURRENCY_HINT
+संख्याएँ धनराशि के रूप में दिखाएँ
+MSG_RIBBON_DECIMALS_MORE_HINT
+एक दशमलव स्थान अधिक दिखाएँ
+MSG_RIBBON_DECIMALS_LESS_HINT
+एक दशमलव स्थान कम दिखाएँ
+MSG_RIBBON_CELLS
+सेल
+MSG_RIBBON_INSERT
+डालें
+MSG_RIBBON_INSERT_HINT
+जहाँ सेल चुने गए हैं, वहाँ पंक्तियाँ या कॉलम डालें
+MSG_RIBBON_DELETE
+मिटाएँ
+MSG_RIBBON_DELETE_HINT
+चुने हुए सेल की पंक्तियाँ या कॉलम निकालें
+MSG_RIBBON_EDITING
+संपादन
+MSG_RIBBON_SUM_HINT
+ऊपर या बाईं ओर की संख्याएँ जोड़ें
+MSG_RIBBON_SORT
+क्रम में लगाएँ
+MSG_RIBBON_SORT_HINT
+पंक्तियों को मौजूदा सेल के कॉलम के अनुसार क्रम में लगाएँ
+MSG_RIBBON_FIND
+खोजें
+MSG_RIBBON_FIND_HINT
+सेल को उसकी सामग्री से खोजें
+MSG_RIBBON_FILL
+भरें
+MSG_RIBBON_FILL_HINT
+पहली पंक्ति या कॉलम को शेष पर कॉपी करें
+MSG_RIBBON_CLEAR_HINT
+चुने हुए सेल खाली करें
+MSG_ROWS
+पंक्तियाँ
+MSG_COLUMNS
+कॉलम
+MSG_SUM
+योग
+MSG_AVERAGE
+औसत
+MSG_COUNT
+गिनती
+MSG_MIN
+न्यूनतम
+MSG_MAX
+अधिकतम
+MSG_ASCENDING
+आरोही
+MSG_DESCENDING
+अवरोही
+MSG_DOWN
+नीचे की ओर
+MSG_RIGHT
+दाईं ओर
+MSG_PROBLEM_NAME
+ऐसा कोई फ़ंक्शन या नाम नहीं है
+MSG_PROBLEM_ARGUMENTS
+आर्ग्युमेंट की संख्या गलत है
+MSG_PROBLEM_PARENTHESES
+एक कोष्ठक का जोड़ा नहीं है
+MSG_PROBLEM_TOO_LONG
+फ़ॉर्मूला बहुत लंबा है
+MSG_PROBLEM_UNREADABLE
+फ़ॉर्मूला पढ़ा नहीं जा सकता
+MSG_PROBLEM_AT
+%s, वर्ण %u पर
+MSG_NO_MEMORY_KEEP
+यह सब रखने के लिए पर्याप्त मेमोरी नहीं
+MSG_NO_MEMORY_FILE
+पूरी फ़ाइल के लिए पर्याप्त मेमोरी नहीं
+MSG_LEFT_OUT
+पंक्ति 9999 या कॉलम IV के आगे के सेल छोड़ दिए गए
+MSG_NO_MEMORY_COPY
+इतना कॉपी करने के लिए मेमोरी नहीं
+MSG_NO_MEMORY_CLEAR
+सब कुछ साफ़ करने के लिए पर्याप्त मेमोरी नहीं
+MSG_NO_MEMORY_PASTE
+सब कुछ चिपकाने के लिए पर्याप्त मेमोरी नहीं
+MSG_NO_ROOM_COLUMNS
+जगह नहीं: अंतिम कॉलमों में कुछ है
+MSG_NO_ROOM_ROWS
+जगह नहीं: अंतिम पंक्तियों में कुछ है
+MSG_NO_MEMORY_THAT
+इसके लिए पर्याप्त मेमोरी नहीं
+MSG_NO_MEMORY_FORMAT
+सब कुछ फ़ॉर्मैट करने के लिए पर्याप्त मेमोरी नहीं
+MSG_NOTHING_TO_ADD
+जोड़ने के लिए ऊपर या बाईं ओर कोई संख्या नहीं
+MSG_NO_MEMORY_ALL
+इस सब के लिए पर्याप्त मेमोरी नहीं
+MSG_NO_MEMORY_SORT
+सब कुछ क्रम में लगाने के लिए पर्याप्त मेमोरी नहीं
+MSG_NO_MEMORY_FILL
+सब कुछ भरने के लिए पर्याप्त मेमोरी नहीं
+MSG_NOT_FOUND
+यह किसी सेल में नहीं है
+MSG_UNTITLED
+बिना नाम
+MSG_OK
+ठीक है
+MSG_CANNOT_OPEN
+%s को खोला नहीं जा सकता
+MSG_CANNOT_READ
+%s को पढ़ा नहीं जा सकता
+MSG_TOO_BIG
+%s बहुत बड़ा है
+MSG_NO_MEMORY_FOR
+%s के लिए मेमोरी नहीं
+MSG_NO_MEMORY_TO_SAVE
+%s को सहेजने के लिए मेमोरी नहीं
+MSG_CANNOT_WRITE
+%s को लिखा नहीं जा सकता
+MSG_NO_REQUESTER
+%s नहीं मिला
+MSG_CHANGED
+शीट बदल गई है।\nपहले सहेजें?
+MSG_CHANGED_BUTTONS
+सहेजें|न सहेजें|रद्द करें
+MSG_OPEN_TITLE
+शीट खोलें
+MSG_SAVE_AS_TITLE
+शीट को इस रूप में सहेजें
+MSG_FIND_LABEL
+खोजें
+MSG_FIND_NEXT_BUTTON
+अगला
+MSG_FIND_PREVIOUS_BUTTON
+पिछला
+MSG_FIND_CLOSE_BUTTON
+बंद करें
+MSG_NOLIBRARY
+%s नहीं मिला\n
+MSG_NOSCREEN
+कोई डिफ़ॉल्ट स्क्रीन नहीं - कोई डिस्प्ले नहीं\n
+MSG_NOMEMORY
+विंडो के लिए मेमोरी नहीं\n

@@ -268,6 +268,32 @@ test "StrnCmp and StrConvert: case left out, marks left out, then case and marks
     try expectOrder(lb, loc, locale.SC_COLLATE2, &.{ "Apple", "apple", "äpple", "applf", "Zebra" });
     try expectOrder(lb, loc, locale.SC_COLLATE2, &.{ "cafe", "cafe\u{301}", "café", "cafes" });
 
+    // Devanagari: the vowel signs and the virama have keys behind the
+    // consonants', the anusvara, the candrabindu and the visarga theirs
+    // before the vowels; a nukta counts for nothing, and the block
+    // stays between the Cyrillic letters and the kana.
+    try expectOrder(lb, loc, locale.SC_COLLATE1, &.{ "कम", "कल", "का", "किम", "की", "क्य" });
+    try expectOrder(lb, loc, locale.SC_COLLATE1, &.{ "ॐ", "अंक", "अः", "अकड़", "अब", "आम", "इधर", "कंगन", "कई", "कमल", "खग", "ह" });
+    try expectOrder(lb, loc, locale.SC_COLLATE1, &.{ "z", "ж", "अ", "क", "ा", "あ" });
+    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "फ़िल्म", "फिल्म", -1, locale.SC_COLLATE1));
+    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "क\u{0958}", "कक", -1, locale.SC_COLLATE1));
+    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "हँस", "हंस", -1, locale.SC_COLLATE1));
+    try expectOrder(lb, loc, locale.SC_COLLATE2, &.{ "हँस", "हंस", "हम" });
+    // Every letter of the block has a place, so none keeps the key of
+    // its code point, which is some other character's place.
+    for (0x0900..0x0980) |char| {
+        const class = sdk.utility.unicode.class(@intCast(char));
+        if (class != .letter) continue;
+        var letter: [5]u8 = @splat(0);
+        _ = sdk.utility.utf8.encode(@intCast(char), letter[0..4]);
+        var key: [8]u8 = undefined;
+        try testing.expectEqual(@as(u32, 4), lb.StrConvert(loc, @ptrCast(&letter), &key, key.len, locale.SC_COLLATE1));
+        const place = (@as(u32, key[1]) - 2) * 254 * 254 + (@as(u32, key[2]) - 2) * 254 + (@as(u32, key[3]) - 2) - 0x0900;
+        const listed = @import("../compare/_devanagari.zig").places[char - 0x0900];
+        try testing.expect(listed != 0);
+        try testing.expectEqual(@as(u32, if (listed > 2) listed + 1 else listed - 1), place);
+    }
+
     // A key cut short still ends with a NUL, and says how long it is.
     var short: [4]u8 = undefined;
     try testing.expectEqual(@as(u32, 3), lb.StrConvert(loc, "abcdef", &short, short.len, locale.SC_COLLATE2));
@@ -848,6 +874,99 @@ test "DateToStr and StrToDate in the default locale: its words and FORMAT_DEF, d
     try testing.expectEqual(@as(i32, 99), english.stamp.days);
 }
 
+test "Hindi in India, as shipped: the dates' words, digits in a three and then twos, one word for yesterday and tomorrow" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    const lb = rig.lb;
+    try rig.write("LOCALE:Countries/india.country", @embedFile("../../../locale/countries/india.country"));
+    try rig.write("LOCALE:Languages/hindi.language", @embedFile("../../../locale/languages/hindi.language"));
+    try rig.write("LOCALE:india.prefs", "COUNTRY=india\n");
+    const loc = lb.OpenLocale("LOCALE:india.prefs") orelse return error.NoLocale;
+    try testing.expectEqualStrings("hindi", span(loc.language_name));
+    try testing.expectEqualStrings("IN", span(loc.country_code));
+    try testing.expectEqual(@as(u32, 91), loc.telephone_code);
+    try testing.expectEqual(locale.MS_ISO, loc.measuring_system);
+    try testing.expectEqual(locale.CT_7SUN, loc.calendar_type);
+    try testing.expectEqualStrings("₹", span(loc.mon_cs));
+    try testing.expectEqualStrings("INR", span(loc.mon_int_cs));
+    try testing.expectEqualSlices(u8, &.{ 3, 2, 0 }, loc.grouping[0..3]);
+    try testing.expectEqualSlices(u8, &.{ 3, 2, 0 }, loc.mon_grouping[0..3]);
+
+    // A Thursday afternoon, long and short, and read back.
+    var text: [128]u8 = undefined;
+    const date = stampOf(2026, 11, 12, 14, 5, 9);
+    try testing.expectEqualStrings("गुरुवार, 12 नवंबर 2026", formatted(lb, loc, &text, loc.date_format, date));
+    try testing.expectEqualStrings("गुरुवार, 12 नवंबर 2026 2:05:09 अपराह्न", formatted(lb, loc, &text, loc.date_time_format, date));
+    try testing.expectEqualStrings("12/11/2026", formatted(lb, loc, &text, loc.short_date_format, date));
+    try testing.expectEqualStrings("2:05 अपराह्न", formatted(lb, loc, &text, loc.short_time_format, date));
+    try testing.expectEqualStrings("9:30 पूर्वाह्न", formatted(lb, loc, &text, loc.short_time_format, stampOf(2026, 11, 12, 9, 30, 0)));
+    try testing.expectEqualStrings("गुरु 12 नव॰", formatted(lb, loc, &text, "%a %e %b", date));
+    try testing.expectEqual(date.days, parsed(lb, loc, loc.date_format, "गुरुवार, 12 नवंबर 2026").?.days);
+    try testing.expectEqual(date.days, parsed(lb, loc, "%e %b %Y", "12 नव॰ 2026").?.days);
+    try testing.expectEqual(date.minute, parsed(lb, loc, loc.short_time_format, "2:05 अपराह्न").?.minute);
+
+    // A crore, a lakh, a thousand: the last three digits, then twos.
+    try testing.expectEqualStrings("1,23,45,678|1,00,000|-99,999|999", formattedString(lb, loc, &text, "%D|%D|%D|%D", .{ @as(i32, 12345678), @as(i32, 100000), @as(i32, -99999), @as(i32, 999) }).text);
+
+    // The words in the Devanagari block's order, in this locale as in any.
+    try expectOrder(lb, loc, locale.SC_COLLATE1, &.{ "कम", "कल", "का", "किम", "की" });
+    try expectOrder(lb, loc, locale.SC_COLLATE1, &.{ "आज", "कल", "गुरुवार", "रविवार", "शनिवार", "सोमवार" });
+
+    // In front of dos: the strings hold the words whole.
+    lb.CloseLocale(lb.SetDefaultLocale(loc));
+    lb.CloseLocale(loc);
+    const real = rig.real();
+    var day: [dos.LEN_DATSTRING]u8 = undefined;
+    var day_date: [dos.LEN_DATSTRING]u8 = undefined;
+    var time: [dos.LEN_DATSTRING]u8 = undefined;
+    var datetime = dos.DateTime{ .stamp = date, .str_day = @ptrCast(&day), .str_date = @ptrCast(&day_date), .str_time = @ptrCast(&time) };
+    try testing.expect(_datetostr.dateToStr(real, &datetime));
+    try testing.expectEqualStrings("गुरुवार", std.mem.sliceTo(&day, 0));
+    try testing.expectEqualStrings("12-नव॰-2026", std.mem.sliceTo(&day_date, 0));
+    try testing.expectEqualStrings("14:05:09", std.mem.sliceTo(&time, 0));
+    datetime.format = dos.FORMAT_DEF;
+    try testing.expect(_datetostr.dateToStr(real, &datetime));
+    try testing.expectEqualStrings("12/11/2026", std.mem.sliceTo(&day_date, 0));
+    try testing.expectEqualStrings("2:05 अपराह्न", std.mem.sliceTo(&time, 0));
+    // A text longer than its buffer ends with a whole character.
+    var short: [12]u8 = undefined;
+    var cut = locale.BufferHook.init(&short);
+    const hindi = lb.OpenLocale(null).?;
+    lb.FormatDate(hindi, "%A %e", &date, &cut.hook);
+    lb.CloseLocale(hindi);
+    try testing.expectEqualStrings("गुर", cut.text());
+    try testing.expectEqual(@as(u8, 0), short[cut.text().len]);
+    // Today is day 0 without timer.device, the first day there is.
+    // Tomorrow is written with the word yesterday has too, and that
+    // word is read as yesterday.
+    datetime.flags = dos.DTF_SUBST;
+    const words = [_]struct { days: i32, word: []const u8 }{
+        .{ .days = 0, .word = "आज" },
+        .{ .days = 1, .word = "कल" },
+        .{ .days = 2, .word = "भविष्य" },
+    };
+    for (words) |near| {
+        datetime.stamp = .{ .days = near.days };
+        try testing.expect(_datetostr.dateToStr(real, &datetime));
+        try testing.expectEqualStrings(near.word, std.mem.sliceTo(&day_date, 0));
+    }
+    const reads = [_]struct { format: u8 = dos.FORMAT_DOS, flags: u8 = 0, date: [*:0]const u8, days: i32 }{
+        .{ .date = "कल", .days = -1 },
+        .{ .date = "आज", .days = 0 },
+        .{ .date = "गुरुवार", .days = -3 },
+        .{ .flags = dos.DTF_FUTURE, .date = "गुरु", .days = 4 },
+        .{ .date = "12-नव॰-2026", .days = date.days },
+        .{ .date = "12-नवंबर-2026", .days = date.days },
+        .{ .format = dos.FORMAT_DEF, .date = "12/11/2026", .days = date.days },
+    };
+    for (reads) |read| {
+        var into = dos.DateTime{ .format = read.format, .flags = read.flags, .str_date = @constCast(read.date) };
+        try testing.expect(_strtodate.strToDate(real, &into));
+        try testing.expectEqual(read.days, into.stamp.days);
+    }
+}
+
 /// The countries and languages LOCALE: ships with.
 const shipped_countries = [_][]const u8{
     "australia",
@@ -860,6 +979,7 @@ const shipped_countries = [_][]const u8{
     "espana",
     "france",
     "great_britain",
+    "india",
     "italia",
     "nederland",
     "norge",
@@ -877,6 +997,7 @@ const shipped_languages = [_][]const u8{
     "deutsch",
     "espanol",
     "francais",
+    "hindi",
     "italiano",
     "nederlands",
     "norsk",

@@ -69,8 +69,8 @@ const workfile = dos.workfile;
 
 pub const SHELL_NAME = "shell";
 const SHELL_VERSION = 1;
-const SHELL_REVISION = 8;
-const BUILD_DATE = "11.11.2026";
+const SHELL_REVISION = 9;
+const BUILD_DATE = "12.11.2026";
 const SHELL_VERSION_STRING =
     "\x00$VER: " ++ SHELL_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ SHELL_VERSION, SHELL_REVISION }) ++
@@ -275,11 +275,11 @@ pub fn doEnd(sys: *ExecBase, dl: *DosBase) void {
     }
     if (!cli.interactive) return;
     const me: *dos.Process = @fieldParentPtr("task", sys.FindTask(null).?);
-    var text: [48]u8 = undefined;
+    var text: [builtins.fault_text]u8 = undefined;
     const n: usize = @intCast(@max(dl.Fault(-149, null, &text, text.len), 0)); // "Process %N ending"
     const at = std.mem.indexOf(u8, text[0..n], "%N") orelse n;
     const rest = if (at + 2 <= n) text[at + 2 .. n] else "";
-    var line: [64]u8 = undefined;
+    var line: [builtins.fault_text + 16]u8 = undefined;
     const out = std.fmt.bufPrintZ(&line, "{s}{d}{s}\n", .{ text[0..at], me.task_num, rest }) catch return;
     _ = dl.PutStr(out.ptr);
 }
@@ -781,7 +781,7 @@ fn doCommand(gv: *Global, item: i32, name: *[NAMEMAX + 1]u8, failed: *bool) i32 
     if (rc == 0 or gv.res2 < 0) gv.res2 = 0;
     if (rc >= 0 and rc < cli.fail_level) failed.* = false;
     if (failed.* and !cli.interactive) {
-        var text: [64]u8 = undefined;
+        var text: [builtins.fault_text]u8 = undefined;
         if (dl.Fault(STR_FAILED_RETURNCODE, null, &text, text.len) > 0) {
             const stream = exec.fmtStream(.{ @as([:0]const u8, std.mem.span(name_z)), @as(i64, rc) });
             _ = dl.VPrintf(@ptrCast(&text), &stream);

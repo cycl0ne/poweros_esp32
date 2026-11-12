@@ -1,0 +1,249 @@
+## version $VER: programs/Player.catalog 1.0 (12.11.2026)
+## language hindi
+## codeset 106
+; The Player's strings in Hindi. A draft: it waits for a reader of Hindi
+; to go through it.
+MSG_MENU_PROJECT
+प्रोजेक्ट
+MSG_MENU_OPEN
+खोलें...
+MSG_MENU_OPEN_DRAWER
+दराज़ खोलें...
+MSG_MENU_OPEN_URL
+URL खोलें...
+MSG_MENU_SAVE_PLAYLIST
+प्लेलिस्ट सहेजें...
+MSG_MENU_ABOUT
+परिचय
+MSG_MENU_QUIT
+बाहर निकलें
+MSG_MENU_PLAYLIST
+प्लेलिस्ट
+MSG_MENU_ADD
+जोड़ें...
+MSG_MENU_REMOVE
+हटाएँ
+MSG_MENU_CLEAR
+साफ़ करें
+MSG_MENU_SHUFFLE
+शफ़ल
+MSG_MENU_REPEAT
+दोहराएँ
+MSG_MENU_REPEAT_OFF
+बंद
+MSG_MENU_REPEAT_ALL
+सभी
+MSG_MENU_REPEAT_ONE
+एक
+MSG_MENU_PICTURE
+चित्र
+MSG_MENU_PLASMA
+प्लाज़्मा
+MSG_MENU_WAVE
+तरंग
+MSG_MENU_BARS
+पट्टियाँ
+MSG_MENU_SETTINGS
+सेटिंग्स
+MSG_MENU_REMEMBER
+पिछली जगह याद रखें
+MSG_PAGE_PLAYING
+अभी चल रहा है
+MSG_PAGE_RADIO
+रेडियो
+MSG_VIEW_KEPT
+आपके स्टेशन
+MSG_VIEW_FOUND
+मिले हुए
+MSG_NAME
+नाम
+MSG_GENRE
+शैली
+MSG_COUNTRY
+देश
+MSG_COLUMN_TITLE
+शीर्षक
+MSG_COLUMN_ARTIST
+कलाकार
+MSG_COLUMN_TIME
+समय
+MSG_COLUMN_STATION
+स्टेशन
+MSG_COLUMN_ADDRESS
+पता
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+शैलियाँ
+MSG_SHUFFLE_BUTTON
+_शफ़ल
+MSG_SHUFFLE_HINT
+गानों को बेतरतीब क्रम में चलाएँ
+MSG_REPEAT_BUTTON
+_दोहराएँ
+MSG_REPEAT_HINT
+सूची को फिर से चलाएँ, या एक ही गाने को
+MSG_MUTE_BUTTON
+_म्यूट
+MSG_MUTE_HINT
+आवाज़ बंद करें, और फिर चालू करें
+MSG_LENGTH_HINT
+गाने की लंबाई, या उसमें से जो बचा है
+MSG_ADD_BUTTON
+_जोड़ें...
+MSG_REMOVE_BUTTON
+_हटाएँ
+MSG_CLEAR_BUTTON
+_साफ़ करें
+MSG_OUTPUT_LABEL
+_आउटपुट
+MSG_SEARCH_BUTTON
+_ढूँढें
+MSG_KEEP_BUTTON
+_रखें
+MSG_FORGET_BUTTON
+ह_टाएँ
+MSG_FIND_LABEL
+_खोजें
+MSG_BY_LABEL
+_इसमें
+MSG_URL_TITLE
+URL खोलें
+MSG_URL_ADDRESS
+_पता
+MSG_URL_OPEN
+_खोलें
+MSG_URL_CANCEL
+_रद्द करें
+MSG_ASK_PLAY
+कौन से गाने?
+MSG_ASK_ADD
+कौन से गाने जोड़ें?
+MSG_ASK_DRAWER
+कौन सी दराज़?
+MSG_ASK_SAVE
+प्लेलिस्ट इस रूप में सहेजें
+MSG_ABOUT_TITLE
+Player का परिचय
+MSG_ABOUT
+%s\n\nWAV, MP3, FLAC, Ogg Vorbis, AAC और AC-3 फ़ाइलों के गाने,\nएक से अगले में बिना रुके, अपने कवर के साथ,\nनेटवर्क के स्टेशन\nऔर ध्वनि का एक चित्र।
+MSG_OK
+ठीक है
+MSG_NO_SONG
+कोई गाना नहीं
+MSG_TRACK_OF
+ट्रैक %u, %u में से
+MSG_TRACK
+ट्रैक %u
+MSG_COMPOSED_BY
+%s द्वारा रचित
+MSG_CHAPTER
+अध्याय %u, %u में से
+MSG_SOUND
+ध्वनि
+MSG_MONO
+मोनो
+MSG_STEREO
+स्टीरियो
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+गाना %u, %u में से
+MSG_NO_SOUND
+कोई ध्वनि नहीं
+MSG_NO_STREAM_FREE
+कोई स्ट्रीम खाली नहीं
+MSG_LIVE
+लाइव
+MSG_BUFFERING
+बफ़र हो रहा है
+MSG_BUFFERING_PERCENT
+बफ़रिंग %u%%
+MSG_STATION_IDLE
+एक स्टेशन: चलाएँ से इसे सुनें
+MSG_CALLING
+स्टेशन से संपर्क किया जा रहा है
+MSG_NO_MEMORY_STATION
+स्टेशन के लिए मेमोरी नहीं
+MSG_ALL_STREAMS_USED
+सभी ध्वनि स्ट्रीम उपयोग में हैं
+MSG_NO_SOUND_HERE
+इस मशीन में ध्वनि नहीं है
+MSG_NO_AUDIO_STREAM
+audio.device ने स्ट्रीम नहीं खोली
+MSG_KEPT_ALREADY
+पहले से रखा है: %s
+MSG_KEPT
+रखा गया: %s
+MSG_NO_MEMORY_KEEP
+स्टेशन रखने के लिए मेमोरी नहीं
+MSG_NO_MEMORY_SEARCH
+खोज के लिए मेमोरी नहीं
+MSG_SEARCHING
+खोज जारी है
+MSG_ASKING
+%s से पूछा जा रहा है
+MSG_NONE_FOUND
+कोई स्टेशन नहीं मिला
+MSG_ONE_FOUND
+एक स्टेशन मिला
+MSG_COUNT_FOUND
+%u स्टेशन मिले
+MSG_NO_NETWORK
+नेटवर्क नहीं: bsdsocket.library नहीं है
+MSG_NO_HTTP
+http.library नहीं है
+MSG_NO_MEMORY_CONNECTION
+कनेक्शन के लिए मेमोरी नहीं
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info का कोई पता नहीं है
+MSG_SERVICE_NO_ANSWER
+radio-browser.info ने खोज का उत्तर नहीं दिया
+MSG_SERVICE_UNREACHED
+radio-browser.info तक नहीं पहुँचा जा सका
+MSG_SERVICE_NONSENSE
+radio-browser.info के उत्तर का कोई अर्थ नहीं निकलता
+MSG_SEARCH_FAILED
+खोज विफल रही
+MSG_NO_SIGNAL
+स्टेशन के लिए कोई सिग्नल खाली नहीं
+MSG_NO_TIMER
+timer.device नहीं खुला
+MSG_LISTS_ONLY
+स्टेशन की सूचियाँ केवल और सूचियों तक ले जाती हैं
+MSG_STATION_STOPPED
+स्टेशन ने भेजना बंद कर दिया
+MSG_STATION_ANSWERED
+स्टेशन ने उत्तर दिया
+MSG_SENDS_AAC
+स्टेशन AAC भेजता है, जो नहीं चलाया जाता
+MSG_STATION_ENDED
+स्टेशन ने कनेक्शन समाप्त कर दिया
+MSG_SENDS_HLS
+स्टेशन HLS भेजता है, जो नहीं चलाया जाता
+MSG_LIST_EMPTY
+स्टेशन की सूची में कोई स्टेशन नहीं है
+MSG_LIST_TOO_LONG
+स्टेशन की सूची में एक पता बहुत लंबा है
+MSG_NOT_AN_ADDRESS
+यह सुनने योग्य पता नहीं है
+MSG_NONSENSE
+स्टेशन के उत्तर का कोई अर्थ नहीं निकलता
+MSG_NOLIBRARY
+%s: %s नहीं खुल सका\n
+MSG_NOMEMORY
+%s: विंडो के लिए मेमोरी नहीं\n
+MSG_NOBUFFERS
+%s: ध्वनि के लिए मेमोरी नहीं\n
+MSG_NOWINDOW
+%s: कोई विंडो नहीं\n
+MSG_MENU_EQUALIZER
+इक्वलाइज़र
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+स्कोप
+MSG_MENU_METERS
+मीटर
+MSG_MENU_WHOLE_SCREEN
+पूरी स्क्रीन

@@ -254,16 +254,20 @@ Beside them:
   completion in UTF-8 on a console that places each character in the
   cells Unicode gives it, files hashed and checked against a list of digests
   ([dos guide](sdk/docs/guides/dos.md)).
-- **Languages:** 21 countries and 9 languages besides English in
-  `LOCALE:`, the one chosen on Prefs' Region page with the time zone,
-  or in `ENV:Sys/locale.prefs`; dates, dos's
-  error texts and the shell's messages in it - German shipped - its
-  money and quotes as the files write them (`€`, `„“`), the characters
+- **Languages:** 22 countries and 10 languages besides English in
+  `LOCALE:` (India and Hindi on the 64-bit machines' disks, with the
+  Devanagari font), the one chosen on Prefs' Region page with the time
+  zone, or in `ENV:Sys/locale.prefs`; dates, dos's
+  error texts and the shell's messages in it - German shipped, and
+  Hindi as a draft - its
+  money and quotes as the files write them (`€`, `„“`, `₹`), digits
+  grouped as the country groups them (`12,34,567`), the characters
   of every script classed and sorted by Unicode with a language's own
-  letters where it puts them (`Å`, `Ä`, `Ö` after `Z` in Swedish), and a
+  letters where it puts them (`Å`, `Ä`, `Ö` after `Z` in Swedish) and
+  Devanagari in a dictionary's order, and a
   program's own texts from its catalog, built from a descriptor and
   checked by `sdk/tools/catcomp`: the desktop's, Notepad's, Sheet's,
-  the Player's, Movie's and the Clock's in German
+  the Player's, Movie's and the Clock's in German and in Hindi
   ([locale guide](sdk/docs/guides/locale.md)).
 - **Programs:** in `SYS:Programs` MultiView - any file the datatypes
   know, a page's links followed to files and to the web - Notepad,

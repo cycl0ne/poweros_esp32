@@ -1,0 +1,47 @@
+## version $VER: programs/Movie.catalog 1.0 (12.11.2026)
+## language hindi
+## codeset 106
+; Movie's strings in Hindi. A draft: it waits for a reader of Hindi
+; to go through it.
+MSG_MENU_PROJECT
+प्रोजेक्ट
+MSG_MENU_OPEN
+खोलें...
+MSG_MENU_WHOLE_SCREEN
+पूरी स्क्रीन
+MSG_MENU_ABOUT
+परिचय
+MSG_MENU_QUIT
+बाहर निकलें
+MSG_MENU_SOUND
+ध्वनि
+MSG_MENU_NO_SOUND
+कोई नहीं
+MSG_MENU_SUBTITLES
+उपशीर्षक
+MSG_MENU_SUBTITLES_OFF
+बंद
+MSG_MENU_TRACK
+ट्रैक
+MSG_ASK_OPEN
+एक फ़िल्म चलाएँ
+MSG_ABOUT_TITLE
+Movie का परिचय
+MSG_ABOUT
+%s\n\nफ़िल्में चलाता है - MP4, QuickTime की MOV और Matroska की MKV:\nH.264, H.265 और Motion JPEG के चित्र,\nAAC, AC-3, MP3, FLAC और Vorbis की ध्वनि, और उपशीर्षक।
+MSG_OK
+ठीक है
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nनहीं चलाया जा सकता:\n%s
+MSG_VOLUME_HINT
+आवाज़
+MSG_NOLIBRARY
+%s: %s नहीं खुल सका\n
+MSG_NOMEMORY
+%s: पर्याप्त मेमोरी नहीं\n
+MSG_NOWINDOW
+%s: अपनी विंडो नहीं खोल सका\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

@@ -327,7 +327,8 @@ pub const program_catalogs_dir = "PROGDIR:Catalogs";
 // --- output into a buffer ------------------------------------------------------------------
 
 /// A hook for FormatDate and FormatString that writes into a buffer: each
-/// byte while there is room, the NUL that ends the text always.
+/// byte while there is room, the NUL that ends the text always. The text
+/// is UTF-8, and one cut for room ends with a whole character.
 ///
 ///   var into: [64]u8 = undefined;
 ///   var out = locale.BufferHook.init(&into);
@@ -338,6 +339,8 @@ pub const BufferHook = extern struct {
     buffer: [*]u8,
     size: usize,
     length: usize = 0,
+    /// A byte found no room: the text has ended.
+    full: bool = false,
 
     pub fn init(into: []u8) BufferHook {
         return .{ .hook = .{ .entry = &put }, .buffer = into.ptr, .size = into.len };
@@ -354,10 +357,22 @@ pub const BufferHook = extern struct {
         if (out.size == 0) return 0;
         if (byte == 0) {
             out.buffer[out.length] = 0;
+        } else if (out.full) {
+            // What follows the end is dropped.
         } else if (out.length + 1 < out.size) {
             out.buffer[out.length] = byte;
             out.length += 1;
             out.buffer[out.length] = 0;
+        } else {
+            // No room: the text ends here. A byte from inside a
+            // character takes the character's bytes already written
+            // with it.
+            out.full = true;
+            if (byte & 0xC0 == 0x80) {
+                while (out.length > 0 and out.buffer[out.length - 1] & 0xC0 == 0x80) out.length -= 1;
+                if (out.length > 0 and out.buffer[out.length - 1] >= 0xC0) out.length -= 1;
+                out.buffer[out.length] = 0;
+            }
         }
         return 0;
     }

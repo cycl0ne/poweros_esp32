@@ -23,8 +23,18 @@
 //!   folded and without its marks, in the order of its code point: 255,
 //!   then the code point as the second kind's.
 //!
-//! A mark written on the character before and a format character have no
-//! key and are passed over. SC_COLLATE2 compares as SC_COLLATE1 does and,
+//! The Devanagari block, U+0900 to U+097F, stands at its place among
+//! those letters in an order of its own, that of Unicode's collation
+//! table (`_devanagari.zig`): `ॐ`, the vowels, the consonants - one with
+//! a nukta as the one without - and then the vowel signs and the virama,
+//! which are marks with keys, so `कम` and `कल` come before `का`, and a
+//! consonant that a virama joins to the next after the same with any
+//! vowel sign. The anusvara and the candrabindu, one key for the two,
+//! and then the visarga have theirs behind `ॐ` and before the first
+//! vowel, where a dictionary of Hindi has them: `कंगन` before `कई`.
+//!
+//! Any other mark written on the character before and a format character
+//! have no key and are passed over. SC_COLLATE2 compares as SC_COLLATE1 does and,
 //! where that finds the two the same, takes the first byte they differ
 //! in, so `Ab` comes before `ab` and `a` before `ä`; its key is the
 //! SC_COLLATE1 key, a 1, and the string's own bytes.
@@ -38,6 +48,7 @@ const utf8 = sdk.utility.utf8;
 const unicode = sdk.utility.unicode;
 const _base = @import("../locale_base.zig");
 const _chars = @import("../chars/_chars.zig");
+const _devanagari = @import("_devanagari.zig");
 const ExtLocale = _base.ExtLocale;
 
 /// The letter `þ` is: the one after z.
@@ -73,6 +84,17 @@ comptime {
     if (letters_first + _base.letter_bases + _base.max_placed > other_letters) @compileError("the letters' key bytes do not fit");
 }
 
+/// The place of `ॐ` in the Devanagari block's order: the signs' two
+/// places come behind it.
+const om_place: u32 = _devanagari.places[0x0950 - _devanagari.first];
+/// The places of the anusvara with the candrabindu, and of the visarga.
+const sign_places = 2;
+
+comptime {
+    // The block's places are keys of code points inside the block.
+    if (_devanagari.count + sign_places > _devanagari.places.len) @compileError("the Devanagari block's places do not fit the block");
+}
+
 /// The order a compare type names: SC_ASCII for any number that is none.
 pub fn orderOf(compare_type: u32) u32 {
     return if (compare_type == locale.SC_COLLATE1 or compare_type == locale.SC_COLLATE2) compare_type else locale.SC_ASCII;
@@ -105,10 +127,11 @@ pub fn sign(one: u32, other: u32) i32 {
 }
 
 /// The SC_COLLATE1 key of `char` (not the NUL) as a number, the first
-/// byte the highest; null for a mark or a format character, which have
-/// none.
+/// byte the highest; null for a format character and for a mark that is
+/// none of the Devanagari block's with a place, which have none.
 pub fn keyOf(ext: *const ExtLocale, char: u32) ?u32 {
     if (char < 0x100 and latin1_keys[char] != 0) return @as(u32, latin1_keys[char]) << 24;
+    if (devanagariKey(char)) |key| return key;
     switch (unicode.class(char)) {
         .mark, .format => return null,
         .upper, .lower, .title, .letter => {},
@@ -116,6 +139,25 @@ pub fn keyOf(ext: *const ExtLocale, char: u32) ?u32 {
     }
     if (placeOf(ext, char)) |place| return @as(u32, ext.letter_keys[place]) << 24;
     return digits(other_letters, bare(char));
+}
+
+/// The key of a character of the Devanagari block that has a place in
+/// the block's order: an other letter's, of the code point as far into
+/// the block as the place. Null for any other character.
+fn devanagariKey(char: u32) ?u32 {
+    if (char < _devanagari.first or char - _devanagari.first >= _devanagari.places.len) return null;
+    const place: u32 = switch (char) {
+        // The candrabindu, inverted and not, and the anusvara.
+        0x0900, 0x0901, 0x0902 => om_place + 1,
+        // The visarga.
+        0x0903 => om_place + 2,
+        else => listed: {
+            const listed: u32 = _devanagari.places[char - _devanagari.first];
+            if (listed == 0) return null;
+            break :listed if (listed > om_place) listed + sign_places else listed;
+        },
+    };
+    return digits(other_letters, _devanagari.first + place - 1);
 }
 
 /// The bytes of `key`, a key nextKey answered in `order`, into `into`;

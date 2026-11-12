@@ -1,0 +1,356 @@
+## version $VER: sys/anvil.catalog 1.0 (12.11.2026)
+## language hindi
+## codeset 106
+; The desktop's strings in Hindi. A draft: it waits for a reader of Hindi
+; to go through it. Left out, so the English built in is shown: Parent
+; (MSG_RIBBON_PARENT) and Tool types (MSG_INFO_TOOL_TYPES).
+;
+; The menus.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+पृष्ठभूमि
+MSG_MENU_EXECUTE
+आदेश चलाएँ...
+MSG_MENU_REDRAW_ALL
+सब फिर से बनाएँ
+MSG_MENU_UPDATE_ALL
+सब अद्यतन करें
+MSG_MENU_LAST_MESSAGE
+पिछला संदेश
+MSG_MENU_VOLUME
+आवाज़...
+MSG_MENU_ABOUT
+परिचय...
+MSG_MENU_QUIT
+बाहर निकलें...
+MSG_MENU_REBOOT
+पुनः आरंभ करें...
+MSG_MENU_WINDOW
+विंडो
+MSG_MENU_NEW_DRAWER
+नई दराज़
+MSG_MENU_OPEN_PARENT
+ऊपरी दराज़ खोलें
+MSG_MENU_BACK
+पीछे
+MSG_MENU_FORWARD
+आगे
+MSG_MENU_CLOSE
+बंद करें
+MSG_MENU_UPDATE
+अद्यतन करें
+MSG_MENU_SHELL
+Shell
+MSG_MENU_SELECT_CONTENTS
+सामग्री चुनें
+MSG_MENU_CLEAN_UP
+सजाएँ
+MSG_MENU_CLEAN_UP_BY
+इसके अनुसार सजाएँ
+MSG_MENU_BY_NAME
+नाम
+MSG_MENU_BY_DATE
+दिनांक
+MSG_MENU_BY_SIZE
+आकार
+MSG_MENU_SNAP
+ग्रिड पर जमाएँ
+MSG_MENU_ARRANGE
+आकार बदलने पर व्यवस्थित करें
+MSG_MENU_SNAPSHOT
+स्थान याद रखें
+MSG_MENU_SNAPSHOT_WINDOW
+विंडो
+MSG_MENU_SNAPSHOT_ALL
+सभी
+MSG_MENU_SHOW
+दिखाएँ
+MSG_MENU_ONLY_ICONS
+केवल आइकन
+MSG_MENU_ALL_FILES
+सभी फ़ाइलें
+MSG_MENU_VIEW_BY
+इसके अनुसार देखें
+MSG_MENU_BY_ICON
+आइकन
+MSG_MENU_RIBBON
+रिबन
+MSG_MENU_ICONS
+आइकन
+MSG_MENU_OPEN
+खोलें
+MSG_MENU_COPY
+कॉपी करें
+MSG_MENU_RENAME
+नाम बदलें...
+MSG_MENU_INFORMATION
+जानकारी...
+MSG_MENU_UNSNAPSHOT
+स्थान भुला दें
+MSG_MENU_LEAVE_OUT
+बाहर रखें
+MSG_MENU_PUT_AWAY
+वापस रखें
+MSG_MENU_DELETE
+मिटाएँ...
+MSG_MENU_FORMAT
+डिस्क फ़ॉर्मेट करें...
+MSG_MENU_EMPTY_TRASH
+कूड़ेदान खाली करें
+MSG_MENU_TOOLS
+औज़ार
+;
+; A drawer's ribbon.
+MSG_RIBBON_HOME
+होम
+MSG_RIBBON_GO
+जाएँ
+MSG_RIBBON_DRAWER
+दराज़
+MSG_RIBBON_RENAME
+नाम बदलें
+MSG_RIBBON_DELETE
+मिटाएँ
+MSG_RIBBON_INFORMATION
+जानकारी
+MSG_RIBBON_VIEW
+दृश्य
+MSG_RIBBON_ARRANGE
+व्यवस्थित करें
+;
+; A drawer shown as a list.
+MSG_LIST_PROTECTION
+सुरक्षा
+MSG_LIST_DRAWER
+दराज़
+;
+; The screen's title.
+MSG_TITLE_MEMORY
+मेमोरी
+MSG_TITLE_INTERNAL
+आंतरिक
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+खाली
+MSG_TITLE_BATTERY
+बैटरी
+MSG_TITLE_CHARGING
+चार्ज हो रही है
+MSG_TITLE_EXTERNAL_POWER
+बाहरी बिजली
+;
+; A disk's window title.
+MSG_DISK_FULL
+भरा
+MSG_DISK_IN_USE
+उपयोग में
+;
+; What the desktop says in the screen's title.
+MSG_NOTHING_SAID
+अभी तक कुछ नहीं कहा गया
+MSG_NOT_EVERY_FILE
+चुनी गई हर फ़ाइल नहीं ली जा सकी
+MSG_DISK_NOT_RENAMED
+डिस्क का नाम नहीं बदला जा सका
+MSG_NOT_RENAMED
+इसका नाम नहीं बदला जा सका
+MSG_ICON_NOT_WRITTEN
+एक आइकन नहीं लिखा जा सका
+MSG_DISK_NOT_THERE
+डिस्क मौजूद नहीं है
+MSG_DISK_BUSY
+डिस्क उपयोग में है
+MSG_DISK_NOT_FORMATTED
+डिस्क फ़ॉर्मेट नहीं की जा सकी
+MSG_DRAWER_NOT_MADE
+दराज़ नहीं बनाई जा सकी
+MSG_SETTING_NOT_KEPT
+%s को याद नहीं रखा जा सका
+MSG_SETTING_NOT_WRITTEN
+%s को anvil.prefs में नहीं लिखा जा सका
+MSG_DRAWER_ICON_NOT_WRITTEN
+दराज़ का आइकन नहीं लिखा जा सका
+MSG_NO_MEMORY_REBOOT
+पुनः आरंभ के लिए पर्याप्त मेमोरी नहीं
+MSG_NO_MEMORY_ABOUT
+परिचय के लिए पर्याप्त मेमोरी नहीं
+MSG_NO_TOOL
+%s को खोलने के लिए कोई प्रोग्राम नहीं है
+MSG_NOT_STARTED
+%s को शुरू नहीं किया जा सका
+MSG_COMMAND_NOT_STARTED
+आदेश शुरू नहीं किया जा सका
+MSG_SHELL_DRAWER_NOT_FOUND
+Shell की दराज़ नहीं मिली
+MSG_SHELL_NOT_STARTED
+Shell शुरू नहीं किया जा सका
+MSG_TRASH_OWN_DISK
+कूड़ेदान में केवल उसकी अपनी डिस्क की फ़ाइलें जाती हैं
+MSG_NOT_MOVED
+एक फ़ाइल वहाँ नहीं ले जाई जा सकी
+MSG_LEFT_OUT_NOT_KEPT
+डिस्क यह याद नहीं रखेगी कि क्या बाहर रखा गया है
+MSG_NO_MEMORY_WORK
+काम शुरू करने के लिए पर्याप्त मेमोरी नहीं
+;
+; The questions asked, with their buttons.
+MSG_QUIT_RUNNING_ADDED
+डेस्कटॉप से शुरू किए गए प्रोग्राम अभी चल रहे हैं (%lu)।\n\
+वे चलते रहेंगे। प्रोग्रामों द्वारा इसमें जोड़े गए\n\
+विंडो, आइकन और मेनू आइटम (%lu)\n\
+इसके साथ हट जाएँगे।\n\nडेस्कटॉप से बाहर निकलें?
+MSG_QUIT_RUNNING
+डेस्कटॉप से शुरू किए गए प्रोग्राम अभी चल रहे हैं (%lu)।\n\
+वे चलते रहेंगे।\n\nडेस्कटॉप से बाहर निकलें?
+MSG_QUIT_ADDED
+प्रोग्रामों द्वारा डेस्कटॉप में जोड़े गए विंडो, आइकन\n\
+और मेनू आइटम (%lu) इसके साथ हट जाएँगे।\n\n\
+डेस्कटॉप से बाहर निकलें?
+MSG_QUIT_ASK
+डेस्कटॉप से बाहर निकलें?
+MSG_QUIT_BUTTONS
+बाहर निकलें|रद्द करें
+MSG_DELETE_ASK
+चुनी गई चीज़ें (%lu) हमेशा के लिए मिटाएँ?\n\
+दराज़ अपनी सारी सामग्री के साथ मिट जाती है।
+MSG_DELETE_BUTTONS
+मिटाएँ|रद्द करें
+MSG_RENAME_PROMPT
+इसका नया नाम:
+MSG_FORMAT_TITLE
+डिस्क फ़ॉर्मेट करें
+MSG_FORMAT_ASK
+%s को फ़ॉर्मेट करें?\nइस पर मौजूद सब कुछ मिट जाएगा।
+MSG_FORMAT_BUTTONS
+फ़ॉर्मेट करें|रद्द करें
+MSG_NEW_DRAWER_PROMPT
+नई दराज़ का नाम:
+MSG_UNNAMED
+अनाम
+MSG_EXECUTE_TITLE
+आदेश चलाएँ
+MSG_EXECUTE_PROMPT
+चलाने के लिए आदेश:
+MSG_OUTPUT
+आउटपुट
+MSG_REBOOT_TITLE
+पुनः आरंभ करें
+MSG_REBOOT_ASK
+मशीन को फिर से शुरू करें?\nप्रोग्रामों ने जो नहीं सहेजा है, वह खो जाएगा।
+MSG_REBOOT_BUTTONS
+पुनः आरंभ करें|रद्द करें
+MSG_REBOOT_IN_USE
+ये उपयोग में हैं, इसलिए इनमें रखा डेटा शायद लिखा न जाए:\n%s\n\n\
+फिर भी पुनः आरंभ करें?
+MSG_STARTUP_WAIT
+प्रोग्राम '%s'\nअभी तक समाप्त नहीं हुआ है।\nकुछ और प्रतीक्षा करें?
+MSG_STARTUP_BUTTONS
+प्रतीक्षा करें|आगे बढ़ें
+MSG_OK
+_ठीक है
+MSG_CANCEL
+_रद्द करें
+;
+; About.
+MSG_ABOUT_TITLE
+Anvil का परिचय
+MSG_ABOUT_WHAT
+PowerOS का डेस्कटॉप
+MSG_ABOUT_RELEASE
+रिलीज़
+MSG_ABOUT_KERNEL
+कर्नेल
+MSG_ABOUT_BOARD
+बोर्ड
+MSG_ABOUT_PROCESSOR
+प्रोसेसर
+MSG_ABOUT_CORES
+कोर
+MSG_ABOUT_CLOCK
+क्लॉक
+MSG_ABOUT_SCREEN
+स्क्रीन
+MSG_ABOUT_SYSTEM_DISK
+सिस्टम डिस्क
+MSG_ABOUT_UP_FOR
+चालू समय
+MSG_ABOUT_IN_USE
+उपयोग में
+MSG_ABOUT_OF
+/
+MSG_ABOUT_BITS
+बिट प्रति पिक्सेल
+MSG_ABOUT_DAY
+दिन
+MSG_ABOUT_DAYS
+दिन
+;
+; Information.
+MSG_INFO_TITLE
+जानकारी
+MSG_INFO_STATE
+स्थिति
+MSG_INFO_READ_ONLY
+केवल पढ़ने के लिए
+MSG_INFO_VALIDATING
+जाँच हो रही है
+MSG_INFO_READ_WRITE
+पढ़ना और लिखना
+MSG_INFO_UNKNOWN
+अज्ञात
+MSG_INFO_BLOCKS
+ब्लॉक
+MSG_INFO_USED
+उपयोग में
+MSG_INFO_FREE
+खाली
+MSG_INFO_BLOCK_SIZE
+ब्लॉक का आकार
+MSG_INFO_BYTES
+बाइट
+MSG_INFO_BLOCKS_COUNTED
+ब्लॉक
+MSG_INFO_CREATED
+बनाया गया
+MSG_INFO_LAST_CHANGED
+अंतिम बदलाव
+MSG_INFO_SCRIPT
+स्क्रिप्ट
+MSG_INFO_ARCHIVED
+संग्रहीत
+MSG_INFO_READABLE
+पढ़ने योग्य
+MSG_INFO_WRITABLE
+लिखने योग्य
+MSG_INFO_EXECUTABLE
+चलाने योग्य
+MSG_INFO_DELETABLE
+मिटाने योग्य
+MSG_INFO_COMMENT
+टिप्पणी
+MSG_INFO_STACK
+स्टैक
+MSG_INFO_DEFAULT_TOOL
+डिफ़ॉल्ट प्रोग्राम
+MSG_INFO_SAVE
+_सहेजें
+MSG_INFO_NOT_WRITTEN
+आइकन नहीं लिखा जा सका।
+MSG_INFO_OK
+ठीक है
+;
+; The window copying and deleting.
+MSG_WORK_COPYING
+कॉपी हो रही है
+MSG_WORK_DELETING
+मिटाया जा रहा है
+MSG_WORK_STOP
+_रोकें
+MSG_WORK_WAITING
+%lu और प्रतीक्षा में
+MSG_WORK_REPLACE_ASK
+%s पहले से मौजूद है।\nइसे बदलें?
+MSG_WORK_REPLACE_BUTTONS
+बदलें|सभी बदलें|छोड़ें|रोकें

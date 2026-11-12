@@ -7,13 +7,18 @@
 //! here is written and read with its century, as the system's `$VER:`
 //! strings already are. A two-digit year is still read, 78-99 as 1978-1999
 //! and the rest as the 2000s, so a script that types "16-Sep-26" still
-//! means 2026. That makes the longest date string "16-Sep-2026", 11
-//! characters, and LEN_DATSTRING (16) still holds it.
+//! means 2026. That makes the longest date string dos itself writes
+//! "16-Sep-2026", 11 characters.
+//!
+//! LEN_DATSTRING is 48 bytes: the strings are UTF-8 and in the default
+//! locale's words once locale.library stands in front of DateToStr, and a
+//! weekday of eleven characters at three bytes each (`बृहस्पतिवार`) or a
+//! date with such a month between its numbers has to fit.
 
 const DateStamp = @import("dos.zig").DateStamp;
 
 /// The bytes each of a DateTime's three strings needs, the NUL included.
-pub const LEN_DATSTRING: usize = 16;
+pub const LEN_DATSTRING: usize = 48;
 
 // dat_Flags
 /// DTB_SUBST: DateToStr writes "Today", "Monday", ... where it can.

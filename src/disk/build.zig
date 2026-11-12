@@ -26,8 +26,10 @@ pub const Program = struct { disk: []const u8, source: []const u8, name: []const
 
 /// A translation of a program's strings: its place on the disk, in
 /// LOCALE:Catalogs/<language>/, the descriptor and the translation it is
-/// made from, and the catalog's name.
-pub const Catalog = struct { disk: []const u8, descriptor: []const u8, translation: []const u8, name: []const u8 };
+/// made from, and the catalog's name. One that is `wide` goes on the
+/// 64-bit machines' disks only: its language is written in a font only
+/// they have.
+pub const Catalog = struct { disk: []const u8, descriptor: []const u8, translation: []const u8, name: []const u8, wide: bool = false };
 
 /// The programs' translations.
 pub const catalogs = [_]Catalog{
@@ -39,6 +41,14 @@ pub const catalogs = [_]Catalog{
     .{ .disk = "locale/Catalogs/deutsch/System/Clock.catalog", .descriptor = "system/clock/clock.cd", .translation = "system/clock/catalogs/deutsch.ct", .name = "System/Clock.catalog" },
     .{ .disk = "locale/Catalogs/deutsch/sys/anvil.catalog", .descriptor = "libs/anvil/anvil.cd", .translation = "libs/anvil/catalogs/deutsch.ct", .name = "sys/anvil.catalog" },
     .{ .disk = "locale/Catalogs/deutsch/sys/http.catalog", .descriptor = "libs/http/http.cd", .translation = "libs/http/catalogs/deutsch.ct", .name = "sys/http.catalog" },
+    .{ .disk = "locale/Catalogs/hindi/c/test/locale.catalog", .descriptor = "c/test/locale/locale.cd", .translation = "c/test/locale/catalogs/hindi.ct", .name = "c/test/locale.catalog", .wide = true },
+    .{ .disk = "locale/Catalogs/hindi/programs/Notepad.catalog", .descriptor = "programs/notepad/notepad.cd", .translation = "programs/notepad/catalogs/hindi.ct", .name = "programs/Notepad.catalog", .wide = true },
+    .{ .disk = "locale/Catalogs/hindi/programs/Sheet.catalog", .descriptor = "programs/sheet/sheet.cd", .translation = "programs/sheet/catalogs/hindi.ct", .name = "programs/Sheet.catalog", .wide = true },
+    .{ .disk = "locale/Catalogs/hindi/programs/Player.catalog", .descriptor = "programs/player/player.cd", .translation = "programs/player/catalogs/hindi.ct", .name = "programs/Player.catalog", .wide = true },
+    .{ .disk = "locale/Catalogs/hindi/programs/Movie.catalog", .descriptor = "programs/movie/movie.cd", .translation = "programs/movie/catalogs/hindi.ct", .name = "programs/Movie.catalog", .wide = true },
+    .{ .disk = "locale/Catalogs/hindi/System/Clock.catalog", .descriptor = "system/clock/clock.cd", .translation = "system/clock/catalogs/hindi.ct", .name = "System/Clock.catalog", .wide = true },
+    .{ .disk = "locale/Catalogs/hindi/sys/anvil.catalog", .descriptor = "libs/anvil/anvil.cd", .translation = "libs/anvil/catalogs/hindi.ct", .name = "sys/anvil.catalog", .wide = true },
+    .{ .disk = "locale/Catalogs/hindi/sys/http.catalog", .descriptor = "libs/http/http.cd", .translation = "libs/http/catalogs/hindi.ct", .name = "sys/http.catalog", .wide = true },
 };
 
 /// Code compiled into each program that imports it, by name, rather than
@@ -396,6 +406,13 @@ const rv64_only_files = [_][]const u8{
     "tests/datatypes/Paints.json",
 };
 
+/// What is written in Devanagari, which only the 64-bit machines' disks
+/// have a font for (FONTS:devanagari): left off the ESP32s' disks.
+const wide_only_files = [_][]const u8{
+    "locale/Countries/india.country",
+    "locale/Languages/hindi.language",
+};
+
 /// Whether `program` is built for `chip`. The lists name a program by its
 /// name, or by its place on the disk where one program has two.
 pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
@@ -413,12 +430,13 @@ pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
 }
 
 /// Whether `file` goes on `chip`'s disk. The 64-bit machines' have all
-/// of them; the ESP32s' leave out what goes with a program they do not
-/// have, and the ESP32-S3's also what reads a model (`no_3d`).
+/// of them; the ESP32s' leave out what goes with a program or a font
+/// they do not have, and the ESP32-S3's also what reads a model
+/// (`no_3d`).
 pub fn fileFor(file: File, chip: poweros_sdk.Chip) bool {
     const others: []const []const u8 = switch (chip) {
-        .esp32s3 => &(no_3d_files ++ rv64_only_files),
-        .esp32p4 => &rv64_only_files,
+        .esp32s3 => &(no_3d_files ++ rv64_only_files ++ wide_only_files),
+        .esp32p4 => &(rv64_only_files ++ wide_only_files),
         .rv64sbi, .x64uefi, .a64psci => &.{},
     };
     for (others) |path| {
@@ -579,6 +597,7 @@ pub const files = [_]File{
     .{ .disk = "locale/Countries/espana.country", .source = "locale/countries/espana.country" },
     .{ .disk = "locale/Countries/france.country", .source = "locale/countries/france.country" },
     .{ .disk = "locale/Countries/great_britain.country", .source = "locale/countries/great_britain.country" },
+    .{ .disk = "locale/Countries/india.country", .source = "locale/countries/india.country" },
     .{ .disk = "locale/Countries/italia.country", .source = "locale/countries/italia.country" },
     .{ .disk = "locale/Countries/nederland.country", .source = "locale/countries/nederland.country" },
     .{ .disk = "locale/Countries/norge.country", .source = "locale/countries/norge.country" },
@@ -594,6 +613,7 @@ pub const files = [_]File{
     .{ .disk = "locale/Languages/deutsch.language", .source = "locale/languages/deutsch.language" },
     .{ .disk = "locale/Languages/espanol.language", .source = "locale/languages/espanol.language" },
     .{ .disk = "locale/Languages/francais.language", .source = "locale/languages/francais.language" },
+    .{ .disk = "locale/Languages/hindi.language", .source = "locale/languages/hindi.language" },
     .{ .disk = "locale/Languages/italiano.language", .source = "locale/languages/italiano.language" },
     .{ .disk = "locale/Languages/nederlands.language", .source = "locale/languages/nederlands.language" },
     .{ .disk = "locale/Languages/norsk.language", .source = "locale/languages/norsk.language" },

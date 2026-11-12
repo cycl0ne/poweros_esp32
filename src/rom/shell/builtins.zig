@@ -148,9 +148,13 @@ fn putFault(dl: *DosBase, code: i32, header: ?[*:0]const u8) void {
     _ = dl.WriteChars(&line, @intCast(n + 1));
 }
 
+/// The bytes a text of Fault's is given here before its values are put
+/// in: a sentence in a script of three bytes a letter fits.
+pub const fault_text = 160;
+
 /// A text of Fault's with one %ld (a long: RawDoFmt's %ld is 64 bits).
 fn faultNumber(dl: *DosBase, code: i32, value: i64) bool {
-    var text: [64]u8 = undefined;
+    var text: [fault_text]u8 = undefined;
     if (dl.Fault(code, null, &text, text.len) <= 0) return false;
     const stream = exec.fmtStream(.{value});
     _ = dl.VPrintf(@ptrCast(&text), &stream);
@@ -161,11 +165,11 @@ fn faultNumber(dl: *DosBase, code: i32, value: i64) bool {
 /// kept with a `%TH` in them, which is a string in a field 0x11 (17) wide;
 /// RawDoFmt has no such conversion, so it becomes `%-17s` here.
 fn faultName(dl: *DosBase, code: i32, name: [*:0]const u8) void {
-    var text: [64]u8 = undefined;
+    var text: [fault_text]u8 = undefined;
     const n = dl.Fault(code, null, &text, text.len);
     if (n <= 0) return;
     const raw = text[0..@intCast(n)];
-    var line: [80]u8 = undefined;
+    var line: [fault_text + 16]u8 = undefined;
     const at = std.mem.indexOf(u8, raw, "%TH") orelse {
         _ = dl.PutStr(@ptrCast(&text));
         return;
@@ -375,8 +379,8 @@ pub fn cmdWhy(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
     defer dl.FreeArgs(rda);
     const code = if (dl.Cli()) |cli| cli.result2 else 0;
     if (code != 0) {
-        var header: [48]u8 = undefined;
-        _ = dl.Fault(STR_LAST_MSG_FAILED, null, &header, 44);
+        var header: [fault_text]u8 = undefined;
+        _ = dl.Fault(STR_LAST_MSG_FAILED, null, &header, header.len);
         putFault(dl, code, @ptrCast(&header));
     } else {
         putFault(dl, STR_NO_RETURN_CODE, null);
@@ -665,8 +669,8 @@ pub fn cmdResident(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
     }
     // The header and the three fixed lines are texts of Fault's, so the
     // words live in one place.
-    var label_name: [16]u8 = undefined;
-    if (dl.Fault(STR_NAME, null, &label_name, 8) > 0) {
+    var label_name: [48]u8 = undefined;
+    if (dl.Fault(STR_NAME, null, &label_name, label_name.len) > 0) {
         faultName(dl, STR_TH_USE_COUNT, @ptrCast(&label_name));
     }
     var seg = dl.LockSegmentList(true);
@@ -724,7 +728,7 @@ pub fn cmdSet(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
         if (rdargs.string(argv[1])) |value| {
             const n: isize = @intCast(@min(std.mem.len(value), 255));
             if (!dl.SetVar(name, value, n, mode)) {
-                var text: [48]u8 = undefined;
+                var text: [fault_text]u8 = undefined;
                 if (dl.Fault(STR_CANT_SET, null, &text, text.len) > 0) {
                     const stream = exec.fmtStream(.{@as([:0]const u8, std.mem.span(name))});
                     _ = dl.VPrintf(@ptrCast(&text), &stream);

@@ -1,0 +1,41 @@
+## version $VER: System/Clock.catalog 1.0 (12.11.2026)
+## language hindi
+## codeset 106
+; Clock's strings in Hindi. A draft: it waits for a reader of Hindi
+; to go through it.
+MSG_WINDOW_TITLE
+घड़ी
+MSG_MENU_PROJECT
+प्रोजेक्ट
+MSG_MENU_ANALOG
+एनालॉग
+MSG_MENU_DIGITAL
+डिजिटल
+MSG_MENU_ABOUT
+परिचय...
+MSG_MENU_QUIT
+बाहर निकलें
+MSG_MENU_SETTINGS
+सेटिंग्स
+MSG_MENU_SECONDS
+सेकंड
+MSG_MENU_DATE
+दिनांक
+MSG_MENU_24_HOURS
+24 घंटे
+MSG_MENU_SAVE
+सेटिंग्स सहेजें
+MSG_ABOUT_TITLE
+घड़ी का परिचय
+MSG_ABOUT
+%s\n\nसमय, डायल पर या अंकों में।\nविंडो में डबल क्लिक करने से दोनों के बीच बदलाव होता है।
+MSG_OK
+ठीक है
+MSG_NOT_SAVED
+सेटिंग्स\n%s\nमें नहीं सहेजी जा सकीं।
+MSG_NOLIBRARY
+%s: %s नहीं खुल सका\n
+MSG_NOMEMORY
+%s: पर्याप्त मेमोरी नहीं\n
+MSG_NOWINDOW
+%s: अपनी विंडो नहीं खोल सका\n

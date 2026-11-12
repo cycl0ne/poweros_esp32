@@ -1,0 +1,45 @@
+## version $VER: c/test/locale.catalog 1.0 (12.11.2026)
+## language hindi
+## codeset 106
+; C:test/Locale's strings in Hindi. A draft: it waits for a reader of
+; Hindi to go through it.
+MSG_NOLIBRARY
+%s नहीं मिला\n
+MSG_COUNTRY
+देश:          %s (%s)\n
+MSG_LANGUAGE
+भाषा:          %s\n
+MSG_PREFERRED
+पसंदीदा:\x20\x20\x20\x20\x20\x20\x20
+MSG_ZONE
+समय क्षेत्र:    %s\n
+MSG_NOZONE
+समय क्षेत्र:    कोई नहीं\n
+MSG_CATALOG
+कैटलॉग:        %s, संस्करण %lu.%lu\n
+MSG_NOCATALOG
+कैटलॉग:        कोई नहीं, अंतर्निहित टेक्स्ट\n
+MSG_DATETIME
+दिनांक और समय
+MSG_DATE
+दिनांक
+MSG_TIME
+समय
+MSG_SHORTDATETIME
+छोटा
+MSG_SHORTDATE
+छोटा दिनांक
+MSG_SHORTTIME
+छोटा समय
+MSG_FORMAT
+  %-14s %s\n
+MSG_NUMBER
+संख्या:         %D, समूहों के बिना %d\n
+MSG_MONEY
+धनराशि:        %s और %s, %s\n
+MSG_PARSED
+%s यानी %s\n
+MSG_NODATE
+%2$s के अनुसार %1$s कोई दिनांक नहीं है\n
+MSG_SORTED
+क्रम में:\x20\x20\x20\x20\x20\x20

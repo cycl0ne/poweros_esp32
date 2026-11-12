@@ -12,6 +12,7 @@
 //!   foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig>
 //!   foldgen normal <UnicodeData.txt> <CompositionExclusions.txt> <out.zig>
 //!   foldgen cluster <GraphemeBreakProperty.txt> <emoji-data.txt> <DerivedCoreProperties.txt> <out.zig>
+//!   foldgen collate <allkeys.txt> <out.zig>
 //!
 //! `posfs` writes posfs's case fold table (sdk/libs/dos/posfs/fold1.zig):
 //! simple case folding, the file's C and S lines, one code point to one,
@@ -99,6 +100,21 @@
 //! for: a pictograph or a consonant with a break property, a linker
 //! that is no mark. The version is GraphemeBreakProperty.txt's.
 //!
+//! `collate` writes the order locale.library sorts the Devanagari block
+//! in (src/disk/libs/locale/compare/_devanagari.zig), from the Default
+//! Unicode Collation Element Table, allkeys.txt: each character of
+//! U+0900 to U+097F whose first collation element has a primary weight
+//! gets the place of that weight among the block's, from 1, characters
+//! of one weight - a letter and the same letter with a nukta - one
+//! place. A character has none where the weight is 0 (the nukta, the
+//! accents, the candrabindu, the anusvara and the visarga, which the
+//! table tells apart only among what is otherwise the same), where the
+//! element is a variable one (punctuation), and where the weight is a
+//! digit's - one of U+0030 to U+0039 has it too. It stops where a
+//! character's later elements have a primary weight, or where a line
+//! starting in the block is more than one character. The version is
+//! allkeys.txt's.
+//!
 //! A case table is runs: code points one or two apart that all move by the same
 //! amount (A-Z by +32; Ā, Ă, Ą... by +1 every second one), each run packed
 //! into a u64 and found by a binary search - 210 runs for Unicode 16's 1484
@@ -116,7 +132,7 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(1);
 }
 
-const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig> | foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig> | foldgen normal <UnicodeData.txt> <CompositionExclusions.txt> <out.zig> | foldgen cluster <GraphemeBreakProperty.txt> <emoji-data.txt> <DerivedCoreProperties.txt> <out.zig>";
+const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig> | foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig> | foldgen normal <UnicodeData.txt> <CompositionExclusions.txt> <out.zig> | foldgen cluster <GraphemeBreakProperty.txt> <emoji-data.txt> <DerivedCoreProperties.txt> <out.zig> | foldgen collate <allkeys.txt> <out.zig>";
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -409,6 +425,50 @@ pub fn main(init: std.process.Init) !void {
         , .{ version, starts.len, version });
         try writeStarts(arena, &out, "Where the part changes: `code << 8 | part`, sorted.", starts);
         try cwd.writeFile(io, .{ .sub_path = args[5], .data = out.items });
+        return;
+    }
+
+    if (mem.eql(u8, args[1], "collate")) {
+        if (args.len != 4) fatal(usage, .{});
+        const keys = try cwd.readFileAlloc(io, args[2], arena, limit);
+        const version = try versionNamed(keys, "# allkeys-", args[2]);
+        const order = try blockOrder(keys, collate_first, collate_last);
+        try out.print(arena,
+            \\// SPDX-License-Identifier: MIT
+            \\//! The order of the Devanagari block, U+{X:0>4} to U+{X:0>4}, from the
+            \\//! Default Unicode Collation Element Table of Unicode {s}: the place
+            \\//! of each character's primary weight among the block's. Written by
+            \\//! tools/foldgen (`foldgen collate`) from allkeys.txt, and written
+            \\//! again for a new version of Unicode.
+            \\//!
+            \\//! A character without a place is one the table gives no primary
+            \\//! weight - the nukta, the accents, the candrabindu, the anusvara,
+            \\//! the visarga - a digit, or punctuation. A letter and the same
+            \\//! letter with a nukta have one place.
+            \\
+            \\/// The Unicode version the table is from.
+            \\pub const unicode_version = "{s}";
+            \\
+            \\/// The first character of the block.
+            \\pub const first: u32 = 0x{X:0>4};
+            \\
+            \\/// How many places there are.
+            \\pub const count: u8 = {d};
+            \\
+            \\/// The place of each character from `first` on, from 1; 0 for one
+            \\/// that has none.
+            \\pub const places = [_]u8{{
+            \\
+        , .{ collate_first, collate_last, version, version, collate_first, order.count });
+        for (order.places[0 .. collate_last - collate_first + 1], 0..) |place, at| {
+            if (at % 16 == 0) try out.appendSlice(arena, "   ");
+            // Two digits each: entries of one width are what zig fmt
+            // leaves as they are.
+            try out.print(arena, " 0x{X:0>2},", .{place});
+            if (at % 16 == 15) try out.appendSlice(arena, "\n");
+        }
+        try out.appendSlice(arena, "};\n");
+        try cwd.writeFile(io, .{ .sub_path = args[3], .data = out.items });
         return;
     }
 
@@ -721,6 +781,80 @@ const part_syllable_trail: u8 = 15;
 const part_pictographic: u8 = 16;
 const part_consonant: u8 = 17;
 const part_syllables: u8 = 18;
+
+/// The block `collate` writes the order of: Devanagari.
+const collate_first: u21 = 0x0900;
+const collate_last: u21 = 0x097F;
+
+/// What `collate` writes: each character's place, and how many places.
+const BlockOrder = struct { places: [256]u8, count: u8 };
+
+/// A line of allkeys.txt: the characters it is for, the primary weight
+/// of its first element and whether that is a variable one, and whether
+/// a later element has a primary weight too.
+const KeyLine = struct { first: u21, single: bool, primary: u16, variable: bool, more: bool };
+
+/// `raw` as a line of allkeys.txt; null for a comment, a blank line or
+/// an `@` line.
+fn keyLine(raw: []const u8) !?KeyLine {
+    const line = mem.trim(u8, raw[0 .. mem.indexOfScalar(u8, raw, '#') orelse raw.len], " \t\r");
+    if (line.len == 0 or line[0] == '@') return null;
+    const cut = mem.indexOfScalar(u8, line, ';') orelse return null;
+    var chars = mem.tokenizeScalar(u8, line[0..cut], ' ');
+    const first = try std.fmt.parseInt(u21, chars.next() orelse return null, 16);
+    var found: KeyLine = .{ .first = first, .single = chars.next() == null, .primary = 0, .variable = false, .more = false };
+    var elements = mem.tokenizeAny(u8, line[cut + 1 ..], " []");
+    var at: usize = 0;
+    while (elements.next()) |element| : (at += 1) {
+        // `.PPPP.SSSS.TTTT`, or `*PPPP...` for a variable element.
+        if (element.len < 5) fatal("{X}: a collation element {s}", .{ first, element });
+        const primary = try std.fmt.parseInt(u16, element[1..5], 16);
+        if (at == 0) {
+            found.primary = primary;
+            found.variable = element[0] == '*';
+        } else if (primary != 0) found.more = true;
+    }
+    return found;
+}
+
+/// The places of the characters `first` to `last` in allkeys.txt's
+/// order, a block of at most 256.
+fn blockOrder(keys: []const u8, first: u21, last: u21) !BlockOrder {
+    var weights: [256]u16 = @splat(0);
+    var digits: [10]u16 = @splat(0);
+    var lines = mem.splitScalar(u8, keys, '\n');
+    while (lines.next()) |raw| {
+        const line = try keyLine(raw) orelse continue;
+        if (line.single and line.first >= '0' and line.first <= '9') digits[line.first - '0'] = line.primary;
+        if (line.first < first or line.first > last) continue;
+        if (!line.single) fatal("{X} starts a line of several characters", .{line.first});
+        if (line.variable or line.primary == 0) continue;
+        if (line.more) fatal("{X} has two primary weights", .{line.first});
+        weights[line.first - first] = line.primary;
+    }
+    for (digits) |digit| {
+        if (digit == 0) fatal("no weight of a digit", .{});
+        for (&weights) |*weight| {
+            if (weight.* == digit) weight.* = 0;
+        }
+    }
+    var order: BlockOrder = .{ .places = @splat(0), .count = 0 };
+    var below: u16 = 0;
+    while (true) {
+        // The lowest weight above the last one placed.
+        var lowest: u16 = 0;
+        for (weights) |weight| {
+            if (weight > below and (lowest == 0 or weight < lowest)) lowest = weight;
+        }
+        if (lowest == 0) break;
+        order.count += 1;
+        for (weights, &order.places) |weight, *place| {
+            if (weight == lowest) place.* = order.count;
+        }
+        below = lowest;
+    }
+    return order;
+}
 
 /// The lines of a property file: code points, and the fields behind
 /// them.

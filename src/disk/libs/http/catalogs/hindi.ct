@@ -1,0 +1,80 @@
+## version $VER: sys/http.catalog 1.0 (12.11.2026)
+## language hindi
+## codeset 106
+; http.library's words for a request that failed, in Hindi: a clause
+; without its full stop. A draft: it waits for a reader of Hindi to go
+; through it.
+;
+; What each HTTPERR_* means.
+MSG_NOMEM
+मेमोरी उपलब्ध नहीं
+MSG_IO
+कनेक्शन विफल रहा
+MSG_IO_BECAUSE
+कनेक्शन विफल रहा: %s
+MSG_STOPPED
+रोका गया
+MSG_TIMEOUT
+सर्वर ने समय पर उत्तर नहीं दिया
+MSG_URL
+यह http:// या https:// URL नहीं है, या बहुत लंबा है
+MSG_HOST
+होस्ट का कोई पता नहीं है
+MSG_HOST_NAMED
+%s का कोई पता नहीं है
+MSG_TLS
+TLS सत्र विफल रहा
+MSG_TLS_CERTIFICATE
+सर्वर का प्रमाणपत्र विश्वसनीय नहीं है: %s
+MSG_TLS_CLOCK
+घड़ी सेट नहीं है, इसलिए कोई प्रमाणपत्र जाँचा नहीं जा सकता (TimeSync)
+MSG_TLS_ALERT
+सर्वर ने TLS सत्र अस्वीकार कर दिया (अलर्ट %u)
+MSG_TLS_HANDSHAKE
+TLS हैंडशेक विफल रहा
+MSG_PROTOCOL
+उत्तर HTTP नहीं है
+MSG_REDIRECT
+अनुमति से अधिक रीडायरेक्ट, या एक जो कहीं नहीं ले जाता
+MSG_TRUNCATED
+उत्तर पूरा होने से पहले कनेक्शन समाप्त हो गया
+MSG_STATE
+अपनी बारी से बाहर का कॉल, या ऐसा अनुरोध जो किया नहीं जा सकता
+MSG_LIBRARY
+अनुरोध के लिए आवश्यक एक लाइब्रेरी मौजूद नहीं है
+MSG_LIBRARY_NAMED
+%s मौजूद नहीं है
+MSG_DATA
+सर्वर का संपीड़ित उत्तर खोला नहीं जा सकता
+MSG_CLOSED
+सर्वर ने उत्तर दिए बिना कनेक्शन बंद कर दिया
+MSG_UNKNOWN
+अनुरोध विफल रहा (%d)
+;
+; Why a server's certificate is not trusted.
+MSG_VERDICT_MALFORMED
+उसके प्रमाणपत्रों में से एक पढ़ा नहीं जा सकता
+MSG_VERDICT_UNKNOWN_ISSUER
+किसी विश्वसनीय रूट ने उस पर हस्ताक्षर नहीं किए
+MSG_VERDICT_BAD_SIGNATURE
+उसकी शृंखला में एक हस्ताक्षर गलत है
+MSG_VERDICT_UNSUPPORTED
+उस पर ऐसे तरीके से हस्ताक्षर हैं जिसे जाँचा नहीं जा सकता
+MSG_VERDICT_EXPIRED
+उसकी अवधि समाप्त हो चुकी है
+MSG_VERDICT_NOT_YET_VALID
+वह अभी मान्य नहीं है
+MSG_VERDICT_NOT_CA
+उसे ऐसे प्रमाणपत्र ने जारी किया है जिसे जारी करने की अनुमति नहीं है
+MSG_VERDICT_PATH_LENGTH
+उसकी शृंखला उसके CA की अनुमति से अधिक लंबी है
+MSG_VERDICT_NAME_CONSTRAINTS
+उसकी शृंखला के एक CA में नाम संबंधी प्रतिबंध हैं
+MSG_VERDICT_WRONG_USAGE
+वह सर्वर के लिए नहीं है
+MSG_VERDICT_WRONG_NAME
+वह किसी दूसरे होस्ट के लिए है
+MSG_VERDICT_TOO_LONG
+उसकी शृंखला बहुत लंबी है
+MSG_VERDICT_OTHER
+कोई कारण नहीं बताया गया

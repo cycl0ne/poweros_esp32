@@ -50,10 +50,13 @@ Region page does.
 
 The countries there are: australia, belgie, belgique, canada,
 canada_francais, danmark, deutschland, espana, france, great_britain,
-italia, nederland, norge, osterreich, portugal, schweiz, suisse, sverige,
-svizzera, united_kingdom and united_states. The languages: dansk,
-deutsch, espanol, francais, italiano, nederlands, norsk, portugues and
-svenska, and english, which is built in.
+india, italia, nederland, norge, osterreich, portugal, schweiz, suisse,
+sverige, svizzera, united_kingdom and united_states. The languages:
+dansk, deutsch, espanol, francais, hindi, italiano, nederlands, norsk,
+portugues and svenska, and english, which is built in. India and Hindi
+are on the 64-bit machines' disks only, where `FONTS:devanagari` is, the
+font their words are drawn in: `COUNTRY=india` writes
+`गुरुवार, 12 नवंबर 2026`, `2:05 अपराह्न` and `12,34,567`.
 
 ## The files
 
@@ -186,7 +189,15 @@ nothing, and in Swedish `Å`, `Ä` and `Ö` come after `Z`; `SC_COLLATE2`
 the same, then the first byte that differs deciding between words that
 are otherwise equal. What is no letter comes before every letter, the
 Latin letters before those of other scripts, which follow in the order
-of their code points. `length` counts bytes. `StrConvert` makes the key
+of their code points. Devanagari has an order of its own inside its
+block, the one a Hindi dictionary has: `ॐ`, then the signs written on a
+syllable - anusvara and candrabindu as one, then visarga - the vowels,
+the consonants, and the vowel signs with the virama last, so that
+`कंगन` comes before `कई`, `कम` and `कल` before `का`, and `क्य` after
+`की`; a consonant with a nukta is its consonant (`फ़िल्म` is `फिल्म`), and
+the letters added to the block later stand with the ones they belong
+to. `tools/foldgen collate` makes that table from Unicode's collation
+element table. `length` counts bytes. `StrConvert` makes the key
 that compares as `StrnCmp` does, byte by byte, for sorting many words
 fast: at most twice the string's bytes for `SC_ASCII` and `SC_COLLATE1`,
 three times and one more for `SC_COLLATE2`.
@@ -276,7 +287,13 @@ Notepad, Sheet, the Player and Movie have their texts in catalogs,
 German on the disk (`LOCALE:Catalogs/deutsch/programs/<Program>.catalog`),
 and so have the Clock (`LOCALE:Catalogs/deutsch/System/Clock.catalog`)
 and the desktop (`LOCALE:Catalogs/deutsch/sys/anvil.catalog`); their
-descriptors and translations are beside their sources.
+descriptors and translations are beside their sources. The same
+catalogs are there in Hindi (`LOCALE:Catalogs/hindi/`) on the 64-bit
+machines' disks - a `Catalog` that is `.wide = true` in the build goes
+on those only. The Hindi translations are drafts that no reader of
+Hindi has gone through yet, as each one's first lines say. A gadget's
+shortcut in them is a Devanagari letter, which a keyboard reaches with
+a Devanagari keymap.
 
 `OpenCatalogA(loc, name, tags)` looks for `name` in `OC_Language`'s
 language, if given, then in each of the locale's languages in turn, and
@@ -295,12 +312,16 @@ dos.library's calls, and keeps the library in memory from then on:
 
 - `DateToStr` writes its strings in the locale's words
   (`Donnerstag 29-Okt-2026`, and `Heute` with `DTF_SUBST`);
-  `dos.FORMAT_DEF` is the country's short date and time.
+  `dos.FORMAT_DEF` is the country's short date and time. Each string
+  has `dos.LEN_DATSTRING` bytes, 48, which hold a day's name in any
+  of the languages (`गुरुवार` is 21 bytes); a longer text is cut after
+  a whole character.
 - `StrToDate` reads the language's words (`Gestern`, `Do`), and dates in
   the format's order with the month's name in the language or as a
   number, the year in four digits or two; what it does not read is
   handed to dos's own, so a script's `Today` and `29-Oct-2026` still mean
-  what they meant.
+  what they meant. A language with one word for yesterday and tomorrow
+  (Hindi's `कल`) has it read as yesterday.
 - `Fault`, and with it PrintFault and the shell's messages, takes the
   text of a code from `LOCALE:Catalogs/<language>/sys/dos.catalog`, and
   dos's own text where that has none.
@@ -308,7 +329,8 @@ dos.library's calls, and keeps the library in memory from then on:
 dos's texts are described in `src/rom/libs/dos/text/dos.cd`, each by its
 code; a ROM test keeps the descriptor and dos's table the same. The
 German translation beside it is built into the disk's
-`LOCALE:Catalogs/deutsch/sys/dos.catalog`.
+`LOCALE:Catalogs/deutsch/sys/dos.catalog`, the Hindi one into
+`LOCALE:Catalogs/hindi/sys/dos.catalog`.
 
 ## The code set
 

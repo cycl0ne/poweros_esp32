@@ -16,6 +16,7 @@ const dos = sdk.dos;
 const locale = sdk.locale;
 const _base = @import("../locale_base.zig");
 const _dos = @import("_dos.zig");
+const _locale = @import("../locale/_locale.zig");
 const LocaleBase = _base.LocaleBase;
 const DosBase = sdk.interface.dos.DosBase;
 
@@ -94,9 +95,9 @@ fn write(lb: *LocaleBase, loc: *const locale.Locale, into: [*:0]u8, template: [*
     lb.iface().FormatDate(loc, template, stamp, &out.hook);
 }
 
-/// A word into a LEN_DATSTRING buffer, cut to it.
+/// A word into a LEN_DATSTRING buffer, as many whole characters of it
+/// as fit.
 fn put(into: [*:0]u8, text: [*:0]const u8) void {
-    var at: usize = 0;
-    while (text[at] != 0 and at < dos.LEN_DATSTRING - 1) : (at += 1) into[at] = text[at];
-    into[at] = 0;
+    const length = sdk.utility.utf8.copyCut(text[0.._locale.length(text)], into[0 .. dos.LEN_DATSTRING - 1]);
+    into[length] = 0;
 }

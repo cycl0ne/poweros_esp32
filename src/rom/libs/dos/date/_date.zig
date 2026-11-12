@@ -135,16 +135,15 @@ pub fn four(into: []u8, value: u32) void {
     two(into[2..4], value);
 }
 
-/// `text` into a DateTime string buffer: cut to LEN_DATSTRING - 1 bytes
-/// and ended with a NUL.
+/// `text` into a DateTime string buffer: as many whole characters as
+/// LEN_DATSTRING - 1 bytes hold, ended with a NUL.
 ///
 /// INPUTS:
 /// - `into` - a buffer of LEN_DATSTRING bytes.
 /// - `text` - the string to copy.
 pub fn put(into: [*:0]u8, text: []const u8) void {
-    var i: usize = 0;
-    while (i < text.len and i + 1 < dos.LEN_DATSTRING) : (i += 1) into[i] = text[i];
-    into[i] = 0;
+    const length = sdk.utility.utf8.copyCut(text, into[0 .. dos.LEN_DATSTRING - 1]);
+    into[length] = 0;
 }
 
 /// One component read from a date or time string: its value, and where

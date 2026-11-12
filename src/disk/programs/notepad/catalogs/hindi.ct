@@ -1,0 +1,127 @@
+## version $VER: programs/Notepad.catalog 1.0 (12.11.2026)
+## language hindi
+## codeset 106
+; Notepad's strings in Hindi. A draft: it waits for a reader of Hindi
+; to go through it.
+MSG_MENU_PROJECT
+प्रोजेक्ट
+MSG_MENU_NEW
+नया
+MSG_MENU_OPEN
+खोलें...
+MSG_MENU_SAVE
+सहेजें
+MSG_MENU_SAVE_AS
+इस रूप में सहेजें...
+MSG_MENU_QUIT
+बाहर निकलें
+MSG_MENU_EDIT
+संपादन
+MSG_MENU_UNDO
+पूर्ववत करें
+MSG_MENU_REDO
+फिर से करें
+MSG_MENU_CUT
+काटें
+MSG_MENU_COPY
+कॉपी करें
+MSG_MENU_PASTE
+चिपकाएँ
+MSG_MENU_SELECT_ALL
+सभी चुनें
+MSG_MENU_SEARCH
+खोज
+MSG_MENU_FIND
+खोजें...
+MSG_MENU_FIND_NEXT
+अगला खोजें
+MSG_MENU_FIND_PREVIOUS
+पिछला खोजें
+MSG_MENU_REPLACE
+बदलें...
+MSG_MENU_VIEW
+दृश्य
+MSG_MENU_WRAP
+वर्ड रैप
+MSG_MENU_NUMBERS
+पंक्ति संख्याएँ
+MSG_MENU_ZIG
+Zig हाइलाइटिंग
+MSG_MENU_RIBBON
+रिबन
+MSG_RIBBON_HOME
+होम
+MSG_RIBBON_CLIPBOARD
+क्लिपबोर्ड
+MSG_RIBBON_PASTE_HINT
+जो काटा या कॉपी किया गया था, उसे चिपकाएँ
+MSG_RIBBON_EDITING
+संपादन
+MSG_RIBBON_FIND
+खोजें
+MSG_RIBBON_FIND_HINT
+टेक्स्ट खोजें; सूची से अगला या पिछला फिर खोजा जाता है
+MSG_RIBBON_REPLACE
+बदलें
+MSG_RIBBON_REPLACE_HINT
+मिले हुए टेक्स्ट की जगह दूसरा टेक्स्ट रखें
+MSG_RIBBON_SELECT_ALL_HINT
+पूरा टेक्स्ट चुनें
+MSG_RIBBON_LINES
+पंक्तियाँ
+MSG_RIBBON_WRAP_HINT
+विंडो के किनारे से आगे जाने के बजाय अगली पंक्ति में जारी रखें
+MSG_RIBBON_NUMBERS_HINT
+हर पंक्ति के बाईं ओर उसकी संख्या दिखाएँ
+MSG_RIBBON_HIGHLIGHTING
+हाइलाइटिंग
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Zig के कीवर्ड, स्ट्रिंग और टिप्पणियाँ अलग-अलग रंग में दिखाएँ
+MSG_UNTITLED
+बिना नाम
+MSG_OK
+ठीक है
+MSG_CANNOT_OPEN
+%s को खोला नहीं जा सकता
+MSG_CANNOT_READ
+%s को पढ़ा नहीं जा सकता
+MSG_TOO_BIG
+%s बहुत बड़ा है
+MSG_NO_MEMORY_FOR
+%s के लिए मेमोरी नहीं
+MSG_NO_MEMORY_TO_SAVE
+%s को सहेजने के लिए मेमोरी नहीं
+MSG_CANNOT_WRITE
+%s को लिखा नहीं जा सकता
+MSG_NO_REQUESTER
+%s नहीं मिला
+MSG_CHANGED
+टेक्स्ट बदल गया है।\nपहले सहेजें?
+MSG_CHANGED_BUTTONS
+सहेजें|न सहेजें|रद्द करें
+MSG_OPEN_TITLE
+टेक्स्ट खोलें
+MSG_SAVE_AS_TITLE
+टेक्स्ट को इस रूप में सहेजें
+MSG_FIND_TITLE
+खोजें और बदलें
+MSG_FIND_LABEL
+खोजें
+MSG_REPLACE_WITH
+इससे बदलें
+MSG_ANY_CASE
+छोटे-बड़े अक्षर समान
+MSG_FIND_NEXT_BUTTON
+अगला खोजें
+MSG_REPLACE_BUTTON
+बदलें
+MSG_REPLACE_ALL_BUTTON
+सभी बदलें
+MSG_NOLIBRARY
+%s नहीं मिला\n
+MSG_NOSCREEN
+कोई डिफ़ॉल्ट स्क्रीन नहीं - कोई डिस्प्ले नहीं\n
+MSG_NOMEMORY
+विंडो के लिए मेमोरी नहीं\n

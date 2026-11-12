@@ -1,0 +1,25 @@
+# LOCALE:Languages/hindi.language - Hindi: the words locale.library
+# writes and reads dates in. Its letters sort in the Devanagari block's
+# own order, which the library has for every language. A word left out
+# is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=रविवार DAY_2=सोमवार DAY_3=मंगलवार DAY_4=बुधवार
+DAY_5=गुरुवार DAY_6=शुक्रवार DAY_7=शनिवार
+ABDAY_1=रवि ABDAY_2=सोम ABDAY_3=मंगल ABDAY_4=बुध ABDAY_5=गुरु
+ABDAY_6=शुक्र ABDAY_7=शनि
+# The months, then their short names.
+MON_1=जनवरी MON_2=फ़रवरी MON_3=मार्च MON_4=अप्रैल MON_5=मई
+MON_6=जून MON_7=जुलाई MON_8=अगस्त MON_9=सितंबर MON_10=अक्तूबर
+MON_11=नवंबर MON_12=दिसंबर
+ABMON_1=जन॰ ABMON_2=फ़र॰ ABMON_3=मार्च ABMON_4=अप्रैल ABMON_5=मई
+ABMON_6=जून ABMON_7=जुल॰ ABMON_8=अग॰ ABMON_9=सित॰ ABMON_10=अक्तू॰
+ABMON_11=नव॰ ABMON_12=दिस॰
+# Yes and no, before and after noon.
+YESSTR=हाँ NOSTR=नहीं AM_STR=पूर्वाह्न PM_STR=अपराह्न
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=“ CLOSEQUOTE=”
+# The days near today, and any day after tomorrow. Yesterday and
+# tomorrow are one word: written for either, and read as yesterday.
+YESTERDAYSTR=कल TODAYSTR=आज TOMORROWSTR=कल
+FUTURESTR=भविष्य

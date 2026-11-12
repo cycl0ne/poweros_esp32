@@ -16,6 +16,8 @@ for name in UnicodeData.txt CaseFolding.txt EastAsianWidth.txt Scripts.txt Prope
     auxiliary/GraphemeBreakProperty.txt auxiliary/GraphemeBreakTest.txt emoji/emoji-data.txt; do
     curl -sSfL -o "${name##*/}" "https://www.unicode.org/Public/$version/ucd/$name"
 done
+# The collation element table is beside the database, not in it.
+curl -sSfL -o allkeys.txt "https://www.unicode.org/Public/UCA/$version/allkeys.txt"
 sha256sum -c --quiet <<EOF
 ff58e5823bd095166564a006e47d111130813dcf8bf234ef79fa51a870edb48f  UnicodeData.txt
 6f1f9c588eb4a5c718d9e8f93b782685e5c7fec872cf05e8e6878053599e09bb  CaseFolding.txt
@@ -28,5 +30,6 @@ d811971453e7075e1ad56fb1b301eece5aa80757b81f6156e74a1bfb3ae5ceb1  NormalizationT
 c29360bd6f7132811d701d29069541e827eb44bfc4c8fbde8c370d6982689dc1  GraphemeBreakProperty.txt
 ee2b9354d270ac061b29f09662cafea06341d77e704b8cc6bd72aaeeda363cb5  GraphemeBreakTest.txt
 f1365a5173eee18e1f98b240cdc492e84a25f1ce7e0c9d1094eb29c41a22696a  emoji-data.txt
+7b47769f4a95615ada83b6812dea1d2a76d74580b1e4d7af48d383eb902017f0  allkeys.txt
 EOF
 echo "Unicode $version in $out"

@@ -90,6 +90,7 @@ fn chipOf(board: Board) Chip {
 /// say once locale.library stands in front of Fault.
 const rom_catalogs = [_]poweros_userland.Catalog{
     .{ .disk = "locale/Catalogs/deutsch/sys/dos.catalog", .descriptor = "src/rom/libs/dos/text/dos.cd", .translation = "src/rom/libs/dos/text/catalogs/deutsch.ct", .name = "sys/dos.catalog" },
+    .{ .disk = "locale/Catalogs/hindi/sys/dos.catalog", .descriptor = "src/rom/libs/dos/text/dos.cd", .translation = "src/rom/libs/dos/text/catalogs/hindi.ct", .name = "sys/dos.catalog", .wide = true },
 };
 
 /// The directories every disk image has, parents before what is in them.
@@ -185,6 +186,12 @@ const image_dirs = [_][]const u8{
     "locale/Catalogs/deutsch/c/test",
     "locale/Catalogs/deutsch/programs",
     "locale/Catalogs/deutsch/System",
+    "locale/Catalogs/hindi",
+    "locale/Catalogs/hindi/sys",
+    "locale/Catalogs/hindi/c",
+    "locale/Catalogs/hindi/c/test",
+    "locale/Catalogs/hindi/programs",
+    "locale/Catalogs/hindi/System",
 };
 
 /// An icon the build writes onto the image: where it goes, the picture
@@ -351,9 +358,12 @@ const uefi_loader_path = "EFI/BOOT/BOOTX64.EFI";
 
 /// Whether the directory `dir` is made on `chip`'s image. LIBS:facet
 /// holds the drivers of the GPUs facet.library draws with, and the
-/// ESP32-S3's disk has neither it nor the library (`no_3d` there).
+/// ESP32-S3's disk has neither it nor the library (`no_3d` there); the
+/// Hindi catalogs are on the 64-bit machines' disks only, with the font
+/// they are written in.
 fn dirFor(dir: []const u8, chip: Chip) bool {
     if (std.mem.eql(u8, dir, "libs/facet")) return chip != .esp32s3;
+    if (std.mem.startsWith(u8, dir, "locale/Catalogs/hindi")) return chip != .esp32s3 and chip != .esp32p4;
     return true;
 }
 
@@ -767,11 +777,11 @@ pub fn build(b: *std.Build) void {
     }
     // The programs' catalogs, and the ROM modules' own.
     for (poweros_userland.catalogs) |catalog| {
-        disks.addPrefixedFileArg(b.fmt("{s}=", .{catalog.disk}), disk_dep.namedLazyPath(catalog.disk));
+        disks.some(catalog.wide).addPrefixedFileArg(b.fmt("{s}=", .{catalog.disk}), disk_dep.namedLazyPath(catalog.disk));
     }
     for (rom_catalogs) |catalog| {
         const catalog_file = poweros_sdk.addCatalog(b, sdk_dep, b.path(catalog.descriptor), b.path(catalog.translation), catalog.name);
-        disks.addPrefixedFileArg(b.fmt("{s}=", .{catalog.disk}), catalog_file);
+        disks.some(catalog.wide).addPrefixedFileArg(b.fmt("{s}=", .{catalog.disk}), catalog_file);
     }
     // The chips' own versions after the shared ones, which they replace
     // on their images.
