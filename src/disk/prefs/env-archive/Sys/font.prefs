@@ -14,4 +14,4 @@
 # the one below to use it.
 #
 # SCREEN=spleen.font/16 DEFAULT=spleen.font/16 FIXED=spleen.font/16
-SCREEN=go.font/16 DEFAULT=go.font/16 FIXED=go-mono.font/16 DOCUMENT=go.font/18 CODE=go-mono.font/15
+SCREEN=go.font/16 DEFAULT=go.font/16 FIXED=go-mono.font/16 DOCUMENT=go.font/18 CODE=go-mono.font/15 FALLBACK=devanagari.font

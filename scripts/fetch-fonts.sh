@@ -7,14 +7,16 @@
 # Liberation fonts, by Red Hat, under the SIL Open Font Licence 1.1, as
 # TrueType outlines at a pinned release - Sans, Serif and Mono, drawn to
 # the widths of Arial, Times New Roman and Courier New, which is what
-# SVG files most often ask for.
+# SVG files most often ask for; and Noto Sans Devanagari, Regular and
+# Bold, by Google, under the SIL Open Font Licence 1.1, as TrueType
+# outlines at a pinned release - the script Hindi is written in, which
+# the host tests read too: a script whose text is reordered and joined.
 #
-# And the fonts only the host tests read, which go on no disk: Noto Sans
-# Devanagari Regular and Noto Color Emoji, by Google, under the SIL Open
-# Font Licence 1.1, at pinned releases - a script whose text is reordered
-# and joined, and a font of colour glyphs with variation sequences and no
-# outlines; Noto Sans CJK Regular, by Google and Adobe, and Source Sans 3
-# Regular, by Adobe, both under the SIL Open Font Licence 1.1, at pinned
+# And the fonts only the host tests read, which go on no disk: Noto
+# Color Emoji, by Google, under the SIL Open Font Licence 1.1, at a
+# pinned release - a font of colour glyphs with variation sequences and
+# no outlines; Noto Sans CJK Regular, by Google and Adobe, and Source
+# Sans 3 Regular, by Adobe, both under the SIL Open Font Licence 1.1, at pinned
 # releases - a collection of ten fonts over one set of outlines of cubic
 # curves, and a Latin font of such outlines; and Source Sans 3's two
 # variable fonts of the upright face, from the same release - one axis,
@@ -69,9 +71,11 @@ tar xzf "$tarball"
 rm "$tarball"
 echo "fonts in $out/liberation-fonts-ttf-$liberation"
 
-# For the host tests only. The expected values in the libraries' tests/
+# Noto Sans Devanagari for the 64-bit disks and the host tests, the rest
+# for the host tests only. The expected values in the libraries' tests/
 # folders name these files' sha256: a new release here means running
-# scripts/font-reference.py and scripts/shape-reference.py again.
+# scripts/font-reference.py, scripts/shape-reference.py and
+# scripts/shape-text-reference.py again.
 devanagari=2.007
 devanagari_sha256=820c7da45b1e63562cb41c0a8cac5d9a4202312043a3a040ed1325857ef469b1
 emoji=v2026-09-24-unicode18_0 # googlefonts/noto-emoji
@@ -83,13 +87,15 @@ mkdir -p noto
 archive="NotoSansDevanagari-v$devanagari.zip"
 curl -sSfL -o "$archive" "https://github.com/notofonts/devanagari/releases/download/NotoSansDevanagari-v$devanagari/$archive"
 echo "$devanagari_sha256  $archive" | sha256sum -c --quiet
-unzip -q -o -j "$archive" NotoSansDevanagari/hinted/ttf/NotoSansDevanagari-Regular.ttf -d noto
+unzip -q -o -j "$archive" NotoSansDevanagari/hinted/ttf/NotoSansDevanagari-Regular.ttf NotoSansDevanagari/hinted/ttf/NotoSansDevanagari-Bold.ttf -d noto
+unzip -p "$archive" OFL.txt >noto/NotoSansDevanagari.licence
 rm "$archive"
 curl -sSfL -o noto/NotoColorEmoji.ttf "https://raw.githubusercontent.com/googlefonts/noto-emoji/$emoji/2D/fonts/NotoColorEmoji.ttf"
 curl -sSfL -o noto/NotoSansCJK-Regular.ttc "https://raw.githubusercontent.com/notofonts/noto-cjk/$cjk/Sans/OTC/NotoSansCJK-Regular.ttc"
 cd noto
 sha256sum -c --quiet <<EOF
 4e3c66638958c3e2ab5d37f47a8deb89fffeb7be9985c665a519bbc7ba762313  NotoSansDevanagari-Regular.ttf
+6a09c8d797cfc803d32cdc731e809424d74cbaff59f503de34ade421a08e5bc2  NotoSansDevanagari-Bold.ttf
 15671215ab769fdc7162a045d56fd7d7e477c51b04e6b3c761d914d8fdd6cc44  NotoColorEmoji.ttf
 b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a  NotoSansCJK-Regular.ttc
 EOF

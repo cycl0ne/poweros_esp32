@@ -810,8 +810,14 @@ pub fn build(b: *std.Build) void {
         fontconv.root_module.addImport("truetype", fontconv_truetype);
         const liberation = hasFontSources(b, dir, liberation_dir);
         if (!liberation) std.log.info("no Liberation fonts (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:sans, serif or mono", .{});
+        const devanagari = hasFontFile(b, dir, devanagari_dir ++ "/NotoSansDevanagari-Regular.ttf") and hasFontFile(b, dir, devanagari_dir ++ "/NotoSansDevanagari-Bold.ttf");
+        if (!devanagari) std.log.info("no Noto Sans Devanagari, Regular and Bold (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:devanagari", .{});
         for (disk_fonts) |family| {
-            if (family.wide and !liberation) continue;
+            switch (family.set) {
+                .base => {},
+                .liberation => if (!liberation) continue,
+                .devanagari => if (!devanagari) continue,
+            }
             // The 64-bit disks take every family; the ESP32s' the ones
             // that are not `wide`.
             const onto = disks.some(family.wide);
@@ -834,6 +840,7 @@ pub fn build(b: *std.Build) void {
         disks.addPrefixedFileArg("fonts/spleen.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "spleen-2.2.0/LICENSE" }) });
         disks.addPrefixedFileArg("fonts/go.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "go/README" }) });
         if (liberation) disks.some(true).addPrefixedFileArg("fonts/liberation.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, liberation_dir ++ "/LICENSE" }) });
+        if (devanagari) disks.some(true).addPrefixedFileArg("fonts/devanagari.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoSansDevanagari.licence" }) });
     }
     // SYS:Certificates/Roots - Mozilla's roots, which
     // scripts/fetch-certs.sh fetched, as the trust store tools/anchors
@@ -2523,7 +2530,18 @@ const DiskFont = struct {
     outlines: []const []const u8 = &.{},
     /// On the 64-bit disks only: the ESP32s' flash has not the room.
     wide: bool = false,
+    /// Which of the fetched fonts it is made from.
+    set: FontSet = .base,
 };
+
+/// What scripts/fetch-fonts.sh fetches, as far as a tree may have one
+/// part and not another: `base` is what every fetch brought, the others
+/// came later and a tree fetched before them lacks them.
+const FontSet = enum { base, liberation, devanagari };
+
+/// Where scripts/fetch-fonts.sh puts Noto Sans Devanagari, in
+/// toolchain/fonts.
+const devanagari_dir = "noto";
 
 /// Where scripts/fetch-fonts.sh puts the Liberation fonts, in
 /// toolchain/fonts.
@@ -2535,7 +2553,7 @@ fn liberationFamily(comptime name: []const u8, comptime file: []const u8) [4]Dis
     var faces: [4]DiskFont = undefined;
     for (.{ "", "-bold", "-italic", "-bolditalic" }, .{ "Regular", "Bold", "Italic", "BoldItalic" }, 0..) |suffix, style, i| {
         const ttf = "Liberation" ++ file ++ "-" ++ style ++ ".ttf";
-        faces[i] = .{ .name = name ++ suffix, .sources = &.{liberation_dir ++ "/" ++ ttf}, .outlines = &.{ttf}, .wide = true };
+        faces[i] = .{ .name = name ++ suffix, .sources = &.{liberation_dir ++ "/" ++ ttf}, .outlines = &.{ttf}, .wide = true, .set = .liberation };
     }
     return faces;
 }
@@ -2546,7 +2564,8 @@ fn liberationFamily(comptime name: []const u8, comptime file: []const u8) [4]Dis
 /// drawn partly in the pen; the Go faces as outlines, at any size; and on
 /// the 64-bit disks the Liberation fonts as outlines - sans, serif and
 /// mono, each with its bold, italic and bold italic faces - which SVG's
-/// text is drawn in.
+/// text is drawn in, and Noto Sans Devanagari, regular and bold, which
+/// `font.prefs` names as the font a text falls back to for the script.
 const disk_fonts = liberationFamily("sans", "Sans") ++ liberationFamily("serif", "Serif") ++ liberationFamily("mono", "Mono") ++ [_]DiskFont{
     .{
         .name = "spleen",
@@ -2560,6 +2579,8 @@ const disk_fonts = liberationFamily("sans", "Sans") ++ liberationFamily("serif",
     .{ .name = "go-italic", .sources = &.{"go/Go-Italic.ttf"}, .outlines = &.{"Go-Italic.ttf"} },
     .{ .name = "go-mono", .sources = &.{"go/Go-Mono.ttf"}, .outlines = &.{"Go-Mono.ttf"} },
     .{ .name = "go-mono-bold", .sources = &.{"go/Go-Mono-Bold.ttf"}, .outlines = &.{"Go-Mono-Bold.ttf"} },
+    .{ .name = "devanagari", .sources = &.{devanagari_dir ++ "/NotoSansDevanagari-Regular.ttf"}, .outlines = &.{"NotoSansDevanagari-Regular.ttf"}, .wide = true, .set = .devanagari },
+    .{ .name = "devanagari-bold", .sources = &.{devanagari_dir ++ "/NotoSansDevanagari-Bold.ttf"}, .outlines = &.{"NotoSansDevanagari-Bold.ttf"}, .wide = true, .set = .devanagari },
 };
 
 /// Whether scripts/fetch-fonts.sh has fetched `sub` into the fonts' `dir`.
@@ -2567,6 +2588,13 @@ fn hasFontSources(b: *std.Build, dir: []const u8, sub: []const u8) bool {
     const io = b.graph.io;
     var found = std.Io.Dir.cwd().openDir(io, b.pathJoin(&.{ dir, sub }), .{}) catch return false;
     found.close(io);
+    return true;
+}
+
+/// Whether scripts/fetch-fonts.sh has fetched the file `name` into the
+/// fonts' `dir`.
+fn hasFontFile(b: *std.Build, dir: []const u8, name: []const u8) bool {
+    std.Io.Dir.cwd().access(b.graph.io, b.pathJoin(&.{ dir, name }), .{}) catch return false;
     return true;
 }
 

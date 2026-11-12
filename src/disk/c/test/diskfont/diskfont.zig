@@ -2,7 +2,7 @@
 //! DiskFont: fonts opened through diskfont.library, and what it knows of.
 //! Built against the SDK only.
 //!
-//!   DiskFont NAME,SIZE/N/M,DESIGNED/S,POINTS/S,LIST/S,GLYPHS/S,TEXT/K
+//!   DiskFont NAME,SIZE/N/M,DESIGNED/S,POINTS/S,LIST/S,GLYPHS/S,TEXT/K,FIT/S
 //!
 //! LIST prints every font AvailFonts finds - in memory, scaled, on the
 //! disk - with its height and where it is.
@@ -13,7 +13,9 @@
 //! pixels, and how long the open took - and draws a line in each in a window on the default public
 //! screen, until the close gadget or Ctrl-C. The line is TEXT's when it
 //! is given - in UTF-8, as the console types it - and a line of Latin
-//! letters and digits otherwise.
+//! letters and digits otherwise. FIT prints, for each font, how many
+//! bytes of the line TextFit lets into every width from one pixel to
+//! the line's own: a line for each width at which the answer changes.
 //!
 //! NAME with GLYPHS opens the family's outline and, for each SIZE or for
 //! 16 rows, renders every glyph of it by its number with truetype.library
@@ -44,10 +46,10 @@ const rdargs = dos.rdargs;
 const timer = sdk.devices.timer;
 
 pub const COMMAND_NAME = "DiskFont";
-const VERSION_STRING = "\x00$VER: DiskFont 1.5 (12.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: DiskFont 1.6 (12.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "NAME,SIZE/N/M,DESIGNED/S,POINTS/S,LIST/S,GLYPHS/S,TEXT/K";
+const template = "NAME,SIZE/N/M,DESIGNED/S,POINTS/S,LIST/S,GLYPHS/S,TEXT/K,FIT/S";
 const arg_name = 0;
 const arg_size = 1;
 const arg_designed = 2;
@@ -55,6 +57,7 @@ const arg_points = 3;
 const arg_list = 4;
 const arg_glyphs = 5;
 const arg_text = 6;
+const arg_fit = 7;
 
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_AVAIL = "%-24s %3d  %s\n";
@@ -67,6 +70,7 @@ const MSG_OLDLIBRARY = "%s is older than 1.5\n";
 const MSG_NOMEMORY = "No memory\n";
 const MSG_NOTRENDERED = "%s %d: glyph %u answers %d\n";
 const MSG_GLYPHS = "%s %d: %u glyphs rendered by number, %u with ink, the largest %u bytes, in %u us\n";
+const MSG_FIT = "%s %d: %u bytes fit in %d pixels\n";
 const MSG_SAME = "%s %d: %u of the image's %u glyphs are the same by number\n";
 
 /// The line drawn in each font when TEXT names none.
@@ -119,7 +123,7 @@ fn microseconds(timer_req: *timer.TimeRequest, timed: bool) u64 {
 
 /// Every glyph of `name`'s outline rendered by its number at each size
 /// of `argv`, and each compared with a font image's where it has one.
-fn glyphs(sys: *ExecBase, dl: *DosBase, dfb: *DiskfontBase, name: [*:0]const u8, argv: *const [7]usize) i32 {
+fn glyphs(sys: *ExecBase, dl: *DosBase, dfb: *DiskfontBase, name: [*:0]const u8, argv: *const [8]usize) i32 {
     const tt_lib = sys.OpenLibrary(truetype.TRUETYPENAME, 1) orelse {
         _ = Printf(dl, MSG_NOLIBRARY, .{truetype.TRUETYPENAME});
         return dos.RETURN_FAIL;
@@ -227,7 +231,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [7]usize = @splat(0);
+    var argv: [8]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -317,6 +321,18 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         graphics.SetFont(gb, measure, f);
         inner_w = @max(inner_w, gb.TextLength(measure, line.ptr, @intCast(line.len)));
         inner_h += @as(i32, f.image.height) + gap;
+        if (argv[arg_fit] == 0) continue;
+        // Every width up to the line's, and what TextFit lets into it.
+        const whole = gb.TextLength(measure, line.ptr, @intCast(line.len));
+        var fitted: u32 = ~@as(u32, 0);
+        var room: i32 = 1;
+        while (room <= whole) : (room += 1) {
+            var extent: graphics.TextExtent = .{};
+            const bytes = gb.TextFit(measure, line.ptr, @intCast(line.len), &extent, null, 1, room, 0);
+            if (bytes == fitted) continue;
+            fitted = bytes;
+            _ = Printf(dl, MSG_FIT, .{ name, @as(u32, f.image.height), bytes, room });
+        }
     }
     if (inner_w == 0) return dos.RETURN_WARN;
     inner_w += 2 * margin;

@@ -315,6 +315,8 @@ FONTS:go-bold.font       the same family's bold face, a family of its own
 FONTS:go-bold/Go-Bold.ttf
 FONTS:sans.font          Liberation Sans, and its faces sans-bold, -italic
 FONTS:sans/LiberationSans-Regular.ttf   and -bolditalic; serif and mono the same
+FONTS:devanagari.font    Noto Sans Devanagari, and its bold face devanagari-bold
+FONTS:devanagari/NotoSansDevanagari-Regular.ttf
 FONTS:source.font        a variable font: an entry a style, all of one file
 FONTS:source/SourceSans3VF-Upright.ttf
 ```
@@ -323,13 +325,20 @@ The 64-bit machines' disks also carry the Liberation families - `sans`,
 `serif` and `mono`, drawn to the widths of Arial, Times New Roman and
 Courier New, under the SIL Open Font License (`FONTS:liberation.licence`)
 - for the text of SVG pictures, which names those fonts more than any.
+They carry Noto Sans Devanagari too, as the families `devanagari` and
+`devanagari-bold`, under the same licence (`FONTS:devanagari.licence`):
+the letters and signs of Hindi, Marathi and Nepali with their conjuncts
+and half forms, the Vedic signs, and `₹`. It has no Latin letters, and
+the disk's `font.prefs` names it as a [fallback](#fallback-fonts), so
+a text in any font draws these characters from it.
 
 **What a font holds is what its source has**, under each character's
 code point: Spleen's sizes from 16 rows up have Latin with its
 extensions, Greek, Cyrillic, box drawing, blocks and Braille, close to
 a thousand characters, its 8 and 12 rows a few hundred; the Go faces
 Latin-1 and Latin Extended-A, Greek and Cyrillic, about 600 characters;
-Liberation's nearly three times that. A size rendered from an outline
+Liberation's nearly three times that; Noto Sans Devanagari its script
+alone. A size rendered from an outline
 has every character of its font file: most of them in its image
 from the start, the others rendered when they are first drawn (see
 [Outline fonts](#outline-fonts)). A character a font lacks is drawn
@@ -1027,6 +1036,9 @@ families to look in for one a text's font lacks:
 SCREEN=go.font/16 DEFAULT=go.font/16 FIXED=go-mono.font/16 FALLBACK=sans.font,spleen.font
 ```
 
+The line the disk carries ends with `FALLBACK=devanagari.font`. On a
+disk without that family it names nothing, and is passed over.
+
 `FALLBACK` is family names with commas between and no blanks, at most
 eight (`graphics.FONT_FALLBACKS`), each once, and no sizes: a fallback
 is always as tall as the font it stands in for. Prefs' Fonts page has a
@@ -1066,6 +1078,10 @@ What to know:
   sizes with two fallback families has six more fonts in memory, an
   outline family's rendered with every character diskfont renders into
   a size's image.
+- **A fallback is asked for by its name and the height alone**, not in
+  the style of the text: a bold or italic text takes the characters it
+  lacks from the family as the list names it, `devanagari.font`'s
+  upright in a text of `go-bold.font`.
 - **A console keeps its cells.** A character from a fallback whose
   advance is not the console font's is drawn in the middle of its cell;
   one that is wider reaches into the cells beside it, so a fallback for
@@ -1279,7 +1295,7 @@ cursor = gb.TextXToOffset(rp, line.ptr, @intCast(line.len), mouse_x - left);
 | | |
 |---|---|
 | `tools/fontconv` | on the host: BDF, bitmap fonts kept as load files (a contents file and one file a size, colour too) and TrueType and OpenType files into size files and a contents file; `--alpha N` for coverage from a larger drawing, `--shadow` for a shadowed colour font, `--rgba` to write a colour font with 32-bit pixels |
-| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces and Liberation's (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation only onto the 64-bit machines' disks. With them four fonts only the host tests read, which go on no disk: Noto Sans Devanagari, Noto Color Emoji, Noto Sans CJK (a collection) and Source Sans 3, as a font of one weight and as variable fonts |
+| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces, Liberation's and Noto Sans Devanagari's (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation and Noto Sans Devanagari only onto the 64-bit machines' disks. With them three fonts only the host tests read, which go on no disk: Noto Color Emoji, Noto Sans CJK (a collection) and Source Sans 3, as a font of one weight and as variable fonts |
 | `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures, of a variable font the same at places on its axes with every glyph's points there (worked out in the library's order and held against fontTools' instancer, or for a font of cubic curves against fontTools' drawing of it at the place), of a font of cubic curves each glyph's outline and what libfreetype renders of a part of them, and of a font of pictures every picture's measures and pixels (a PNG file's as Pillow reads them) and a part of them scaled to another size - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
 | `scripts/shape-reference.py` | on the host: applies the fetched fonts' `GSUB` and `GPOS` lookups to runs of glyphs - every glyph of a font, and sequences its lookups have rules for - with an applier of its own on fontTools' reading of the tables, and writes what comes out, a digest for each script, language and feature list, as the Zig files `truetypeshaping.library`'s host tests compare its shaping with (`src/disk/libs/truetypeshaping/tests/reference/`). `--check` says whether the files are the ones it would write, `--show <font> <case>` prints a case's runs |
 | `scripts/shape-text-reference.py` | on the host: shapes texts with libharfbuzz - in the fetched fonts Latin with its kerning and marks, letters and marks spelled apart and together, Greek, Cyrillic, Hebrew read from right to left, Devanagari in words and in syllables drawn by lot, emoji, features switched for a part of a text; and in a font made of a rule, which is told the characters it lacks, texts whose characters are taken apart, sorted and put together - and writes the glyphs, clusters, advances and offsets as the Zig files `truetypeshaping.library`'s host tests compare `ShapeText`'s answers with (`src/disk/libs/truetypeshaping/tests/text_reference/`); `--check` says whether they are up to date |
@@ -1288,5 +1304,5 @@ cursor = gb.TextXToOffset(rp, line.ptr, @intCast(line.len), mouse_x - left);
 | `C:SetPrefs` | sets the system's fonts, with the rest of its settings, from `ENV:Sys`; `SHOW` prints them |
 | `SYS:Programs/Prefs` | picks the system's fonts, the desktop icons' and the fallback families in a window and writes `font.prefs` |
 | `SYS:Programs/FontView` | fonts and sizes in a window, the one chosen drawn |
-| `C:test/DiskFont`, `C:test/Fonts` | test programs: open sizes and time them, or with `GLYPHS` render every glyph of an outline by its number and compare with a font image, with `TEXT` draw a line of one's own; draw a size file |
+| `C:test/DiskFont`, `C:test/Fonts` | test programs: open sizes and time them, or with `GLYPHS` render every glyph of an outline by its number and compare with a font image, with `TEXT` draw a line of one's own and with `FIT` print what `TextFit` lets into each width; draw a size file |
 | `C:test/Axes` | test program: `Axes <file>` prints a variable font's axes and, at each place the font names - or the ends and the default of its first axis - its coordinates, x height, cap height and the advance of `n`, and draws a line at each place, `SIZE` rows tall, with `TEXT` one's own; `NOWINDOW` prints only; `SHAPED` lays the line out with truetypeshaping.library at each place, prints each glyph with its advance and offsets and draws the line glyph by glyph - kerned pairs and marks on letters as that place has them |
