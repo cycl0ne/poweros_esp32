@@ -55,7 +55,9 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = sg.SCROLLGROUP_CLASS,
     .version = 1,
-    .date = "07.10.2026",
+    // 1: the corner between the two scrollers is filled whole.
+    .revision = 1,
+    .date = "12.11.2026",
     .super = classusr.GROUPGCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -364,7 +366,7 @@ fn render(base: *gadgets.Base, own: *Data, o: *Object, r: *gc.GpRender) void {
     };
     // The corner the two leave between them.
     if (own.shows_vertical != 0 and own.shows_horizontal != 0) {
-        support.fill(gb, rp, .{ .left = b.left + parts.vertical.left, .top = b.top + parts.horizontal.top, .width = parts.vertical.width - 1, .height = parts.horizontal.height - 1 }, info.draw_info.pens[sc.BACKGROUNDPEN]);
+        support.fill(gb, rp, .{ .left = b.left + parts.vertical.left, .top = b.top + parts.horizontal.top, .width = parts.vertical.width, .height = parts.horizontal.height }, info.draw_info.pens[sc.BACKGROUNDPEN]);
     }
     if (g.flags & gc.GFLG_DISABLED != 0) support.ghost(gb, rp, b, info.block_pen);
 }

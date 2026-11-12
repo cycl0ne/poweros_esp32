@@ -47,7 +47,11 @@
 //! that character's marks, in the
 //! fill pen with the character in the fill's text pen, as a console's is,
 //! and shows only while the gadget has the keyboard. That is what shows
-//! the field is active: its frame is never drawn focused. A wrapped row
+//! the field is active: its frame is never drawn focused. While text is
+//! selected the cursor is a bar two pixels wide in the text pen, at the
+//! end of the selection that moves: the selection's ground is in the
+//! block's pen, and a block at its end would read as one character more
+//! selected than is, or one less. A wrapped row
 //! keeps an `n`'s width free at its end, and the view across reaches that
 //! far past the widest line, so the block after a row's last character
 //! always fits.
@@ -127,8 +131,10 @@ pub const Library = gadgets.ClassLibrary(.{
     // are drawn. 8: the cursor steps by Unicode's clusters, a row is not
     // broken inside one, a key that sends several characters types them
     // all, and the places in a piece are graphics' too when the font
-    // only falls back to one that shapes.
-    .revision = 8,
+    // only falls back to one that shapes. 9: the selection's ground and
+    // the cursor's block are as wide and as high as their characters'
+    // rows, no pixel short, and with text selected the cursor is a bar.
+    .revision = 9,
     .date = "12.11.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
@@ -598,8 +604,8 @@ fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, area: 
         if (right > left) support.fill(gb, rp, .{
             .left = area.left + @as(i32, @intCast(left - view_left)),
             .top = top,
-            .width = @intCast(right - left - 1),
-            .height = own.line_height - 1,
+            .width = @intCast(right - left),
+            .height = own.line_height,
         }, pens.fill);
     }
 
@@ -625,11 +631,24 @@ fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, area: 
         }
     }
 
-    // The cursor, while it has the keyboard: a block over the character
-    // it stands before, that character drawn on it with its marks - the
-    // fill pen as ground and the text in the fill's text pen, and the
-    // other way round inside the selection, where those two are already
-    // the ground and the text.
+    // The cursor, while it has the keyboard. With text selected a bar in
+    // the text pen at the selection's end that moves, over the pixel
+    // either side of the place between two characters: a block there
+    // would read as a character more selected than is, or one less.
+    if (own.active and sel.from != sel.to and text.rowOf(own.cursor) == row) {
+        const span = barSpan(@as(i64, text.xInRow(row, own.cursor)) - view_left, area.width);
+        support.fill(gb, rp, .{
+            .left = area.left + span.left,
+            .top = top,
+            .width = span.width,
+            .height = own.line_height,
+        }, pens.text);
+        return;
+    }
+
+    // Without a selection a block over the character it stands before,
+    // that character drawn on it with its marks: the fill pen as ground
+    // and the text in the fill's text pen.
     if (own.active and text.rowOf(own.cursor) == row) {
         const cursor_x: i64 = @as(i64, text.xInRow(row, own.cursor)) - view_left;
         const under = clusterWidth(text, own.cursor);
@@ -637,23 +656,32 @@ fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, area: 
         const left = @max(cursor_x, 0);
         const right = @min(cursor_x + block, @as(i64, area.width));
         if (right > left) {
-            const selected = own.cursor >= sel.from and own.cursor < sel.to;
             support.fill(gb, rp, .{
                 .left = area.left + @as(i32, @intCast(left)),
                 .top = top,
-                .width = @intCast(right - left - 1),
-                .height = own.line_height - 1,
-            }, if (selected) pens.ground else pens.fill);
+                .width = @intCast(right - left),
+                .height = own.line_height,
+            }, pens.fill);
             // The character itself, when it is one that is drawn and all
             // of it is in the field.
             const cluster = text.clusterEnd(own.cursor, end) -| own.cursor;
             var bytes: [64]u8 = undefined;
             if (under != 0 and cluster <= bytes.len and left == cursor_x and right == cursor_x + block) {
                 text.copyOut(own.cursor, own.cursor + cluster, &bytes);
-                drawRun(gb, rp, bytes[0..cluster], area.left + @as(i32, @intCast(cursor_x)), baseline, if (selected) pens.text else pens.fill_text);
+                drawRun(gb, rp, bytes[0..cluster], area.left + @as(i32, @intCast(cursor_x)), baseline, pens.fill_text);
             }
         }
     }
+}
+
+/// The cursor's bar at `x` from the field's left edge, in a field `width`
+/// wide: the pixel before the place and the one after it, what of the two
+/// is in the field. A width of 0 when neither is.
+fn barSpan(x: i64, width: i32) struct { left: i32, width: i32 } {
+    const left = @max(x - 1, 0);
+    const right = @min(x + 1, @as(i64, width));
+    if (right <= left) return .{ .left = 0, .width = 0 };
+    return .{ .left = @intCast(left), .width = @intCast(right - left) };
 }
 
 /// The pen of the character at `pos`: the fill's text pen inside the
@@ -704,7 +732,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const area = gc.Box{ .left = b.left + parts.area.left, .top = b.top + parts.area.top, .width = parts.area.width, .height = parts.area.height };
     const numbers = gc.Box{ .left = b.left + parts.numbers.left, .top = area.top, .width = parts.numbers.width, .height = area.height };
     const inside = if (own.line_numbers) numbers.left - text_margin else area.left - text_margin;
-    support.fill(gb, rp, .{ .left = inside, .top = area.top, .width = area.left + area.width + text_margin - inside - 1, .height = area.height - 1 }, ground);
+    support.fill(gb, rp, .{ .left = inside, .top = area.top, .width = area.left + area.width + text_margin - inside, .height = area.height }, ground);
 
     const styled = support.pensFor(ib, info.draw_info, g.style, ic.PART_FIELD, sdk.intuition.style.PART_SELECTION);
     var pens = Pens{ .text = styled[sc.TEXTPEN], .ground = ground, .fill = styled[sc.FILLPEN], .fill_text = styled[sc.FILLTEXTPEN], .kinds = undefined };
@@ -745,7 +773,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
         place(base, scroller, b, parts.horizontal);
         _ = ib.SendMessage(scroller, @ptrCast(r));
         // The corner the two leave between them.
-        support.fill(gb, rp, .{ .left = b.left + parts.frame.width, .top = b.top + parts.frame.height, .width = parts.vertical.width - 1, .height = parts.horizontal.height - 1 }, info.draw_info.pens[sc.BACKGROUNDPEN]);
+        support.fill(gb, rp, .{ .left = b.left + parts.frame.width, .top = b.top + parts.frame.height, .width = parts.vertical.width, .height = parts.horizontal.height }, info.draw_info.pens[sc.BACKGROUNDPEN]);
     };
     if (g.flags & gc.GFLG_DISABLED != 0) support.ghost(gb, rp, b, info.block_pen);
 }
