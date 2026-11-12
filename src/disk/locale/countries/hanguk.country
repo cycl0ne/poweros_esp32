@@ -1,0 +1,48 @@
+# LOCALE:Countries/hanguk.country - Korea: how dates, times, numbers and
+# money are written there, which locale.library takes for a locale whose
+# settings name this country. A value with a blank is in quotes; a key
+# left out is the United States' own.
+#
+# The country's ISO code, its telephone code, its measures, the first day
+# of its week, and the language spoken there unless the settings say
+# otherwise.
+CODE=KR
+TELEPHONE=82
+MEASURE=METRIC
+FIRSTDAY=SUNDAY
+LANGUAGE=hangugeo
+# Dates and times, long and short, as FormatDate writes them. The
+# month's name holds its 월, and the word of noon goes before the hour.
+DATETIME="%Y년 %B %-d일 %A %p %Q:%M:%S"
+DATE="%Y년 %B %-d일 %A"
+TIME="%p %Q:%M:%S"
+SHORTDATETIME="%Y. %-m. %-d. %p %Q:%M"
+SHORTDATE="%Y. %-m. %-d."
+SHORTTIME="%p %Q:%M"
+# Numbers: the decimal point, the separator between groups of digits and
+# their sizes from the right (3, or 3,2 for three then twos; NONE).
+DECIMAL=.
+GROUP=,
+FRACGROUP=,
+GROUPING=3
+FRACGROUPING=3
+# Money: the same for amounts, the digits after the point, the currency
+# and where it and the sign go.
+MONDECIMAL=.
+MONGROUP=,
+MONFRACGROUP=,
+MONGROUPING=3
+MONFRACGROUPING=3
+MONFRACDIGITS=0
+MONINTFRACDIGITS=0
+CURRENCY=₩
+SMALLCURRENCY=전
+INTCURRENCY=KRW
+POSITIVESIGN=""
+POSITIVESPACE=NO
+POSITIVESIGNAT=BEFORE
+POSITIVECURRENCYAT=BEFORE
+NEGATIVESIGN=-
+NEGATIVESPACE=NO
+NEGATIVESIGNAT=BEFORE
+NEGATIVECURRENCYAT=BEFORE

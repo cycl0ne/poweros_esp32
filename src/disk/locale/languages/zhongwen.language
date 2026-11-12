@@ -1,0 +1,24 @@
+# LOCALE:Languages/zhongwen.language - Chinese in the simplified
+# characters: the words locale.library writes and reads dates in. Its
+# characters sort by their codes: by radical, then by strokes. A word
+# left out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=星期日 DAY_2=星期一 DAY_3=星期二 DAY_4=星期三
+DAY_5=星期四 DAY_6=星期五 DAY_7=星期六
+ABDAY_1=周日 ABDAY_2=周一 ABDAY_3=周二 ABDAY_4=周三
+ABDAY_5=周四 ABDAY_6=周五 ABDAY_7=周六
+# The months, then their short names. A short name is the month's
+# number and 月, so a date's template writes it with %b and no 月 of its
+# own.
+MON_1=一月 MON_2=二月 MON_3=三月 MON_4=四月 MON_5=五月 MON_6=六月
+MON_7=七月 MON_8=八月 MON_9=九月 MON_10=十月 MON_11=十一月 MON_12=十二月
+ABMON_1=1月 ABMON_2=2月 ABMON_3=3月 ABMON_4=4月 ABMON_5=5月 ABMON_6=6月
+ABMON_7=7月 ABMON_8=8月 ABMON_9=9月 ABMON_10=10月 ABMON_11=11月 ABMON_12=12月
+# Yes and no, before and after noon.
+YESSTR=是 NOSTR=否 AM_STR=上午 PM_STR=下午
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=“ CLOSEQUOTE=”
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=昨天 TODAYSTR=今天 TOMORROWSTR=明天
+FUTURESTR=将来

@@ -481,6 +481,17 @@ test "FormatDate: every conversion, the language's words and the time zone's nam
     // Small numbers: a blank before the day for %e, none for %q and %Q.
     const early = stampOf(2026, 3, 5, 0, 7, 0);
     try testing.expectEqualStrings(" 5|05|0|12|AM|064", formatted(lb, loc, &text, "%e|%d|%q|%I|%p|%j", early));
+    // A `-` before a number's letter: nothing before the number. Before
+    // any other letter it is a character as any.
+    try testing.expectEqualStrings("5|5|3|0|12|7|0|64|26|9|9", formatted(lb, loc, &text, "%-d|%-e|%-m|%-H|%-I|%-M|%-S|%-j|%-y|%-U|%-W", early));
+    try testing.expectEqualStrings("29|10|14|302", formatted(lb, loc, &text, "%-d|%-m|%-H|%-j", date));
+    try testing.expectEqualStrings("-B -", formatted(lb, loc, &text, "%-B %-", early));
+    try testing.expectEqual(early.days, parsed(lb, loc, "%Y/%-m/%-d", "2026/3/5").?.days);
+    try testing.expectEqual(early.days, parsed(lb, loc, "%Y/%-m/%-d", "2026/03/05").?.days);
+    // The word of noon before the hour or after it.
+    try testing.expectEqual(@as(i32, 14 * 60 + 5), parsed(lb, loc, "%p %Q:%M", "PM 2:05").?.minute);
+    try testing.expectEqual(@as(i32, 5), parsed(lb, loc, "%p %Q:%M", "AM 12:05").?.minute);
+    try testing.expectEqual(@as(i32, 14 * 60 + 5), parsed(lb, loc, "%Q:%M %p", "2:05 PM").?.minute);
     // No zone: %Z writes nothing.
     try testing.expectEqualStrings("[]", formatted(lb, loc, &text, "[%Z]", date));
     // A buffer too short keeps what fits, and its NUL.
@@ -967,6 +978,158 @@ test "Hindi in India, as shipped: the dates' words, digits in a three and then t
     }
 }
 
+test "Japanese, Korean and Chinese as shipped: a date with the year first, the month's name holding its sign, the word of noon before the hour" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    const lb = rig.lb;
+    var text: [128]u8 = undefined;
+    // A Thursday afternoon in November, and a Monday morning in January.
+    const date = stampOf(2026, 11, 12, 14, 5, 9);
+    const early = stampOf(2026, 1, 5, 9, 30, 0);
+
+    const Shipped = struct {
+        country: []const u8,
+        language: []const u8,
+        code: []const u8,
+        telephone: u32,
+        calendar: u8,
+        currency: []const u8,
+        international: []const u8,
+        long: []const u8,
+        long_early: []const u8,
+        date_time: []const u8,
+        short: []const u8,
+        short_early: []const u8,
+        short_time: []const u8,
+        short_time_early: []const u8,
+        yes: []const u8,
+        tomorrow: []const u8,
+    };
+    const shipped = [_]Shipped{
+        .{
+            .country = "nihon",
+            .language = "nihongo",
+            .code = "JP",
+            .telephone = 81,
+            .calendar = locale.CT_7SUN,
+            .currency = "¥",
+            .international = "JPY",
+            .long = "2026年11月12日木曜日",
+            .long_early = "2026年1月5日月曜日",
+            .date_time = "2026年11月12日木曜日 14:05:09",
+            .short = "2026/11/12",
+            .short_early = "2026/01/05",
+            .short_time = "14:05",
+            .short_time_early = "9:30",
+            .yes = "はい",
+            .tomorrow = "明日",
+        },
+        .{
+            .country = "hanguk",
+            .language = "hangugeo",
+            .code = "KR",
+            .telephone = 82,
+            .calendar = locale.CT_7SUN,
+            .currency = "₩",
+            .international = "KRW",
+            .long = "2026년 11월 12일 목요일",
+            .long_early = "2026년 1월 5일 월요일",
+            .date_time = "2026년 11월 12일 목요일 오후 2:05:09",
+            .short = "2026. 11. 12.",
+            .short_early = "2026. 1. 5.",
+            .short_time = "오후 2:05",
+            .short_time_early = "오전 9:30",
+            .yes = "예",
+            .tomorrow = "내일",
+        },
+        .{
+            .country = "zhongguo",
+            .language = "zhongwen",
+            .code = "CN",
+            .telephone = 86,
+            .calendar = locale.CT_7MON,
+            .currency = "¥",
+            .international = "CNY",
+            .long = "2026年11月12日星期四",
+            .long_early = "2026年1月5日星期一",
+            .date_time = "2026年11月12日星期四 14:05:09",
+            .short = "2026/11/12",
+            .short_early = "2026/1/5",
+            .short_time = "14:05",
+            .short_time_early = "09:30",
+            .yes = "是",
+            .tomorrow = "明天",
+        },
+        .{
+            .country = "taiwan",
+            .language = "zhongwen-fanti",
+            .code = "TW",
+            .telephone = 886,
+            .calendar = locale.CT_7SUN,
+            .currency = "NT$",
+            .international = "TWD",
+            .long = "2026年11月12日 星期四",
+            .long_early = "2026年1月5日 星期一",
+            .date_time = "2026年11月12日 星期四 下午2:05:09",
+            .short = "2026/11/12",
+            .short_early = "2026/1/5",
+            .short_time = "下午2:05",
+            .short_time_early = "上午9:30",
+            .yes = "是",
+            .tomorrow = "明天",
+        },
+    };
+    inline for (shipped) |one| {
+        const country = "LOCALE:Countries/" ++ one.country ++ ".country";
+        const language = "LOCALE:Languages/" ++ one.language ++ ".language";
+        try rig.write(country, @embedFile("../../../locale/countries/" ++ one.country ++ ".country"));
+        try rig.write(language, @embedFile("../../../locale/languages/" ++ one.language ++ ".language"));
+        defer _ = rig.dosLib().DeleteFile(country);
+        defer _ = rig.dosLib().DeleteFile(language);
+        try rig.write("LOCALE:shipped.prefs", "COUNTRY=" ++ one.country ++ "\n");
+        const loc = lb.OpenLocale("LOCALE:shipped.prefs") orelse return error.NoLocale;
+        defer lb.CloseLocale(loc);
+        try testing.expectEqualStrings(one.language, span(loc.language_name));
+        try testing.expectEqualStrings(one.code, span(loc.country_code));
+        try testing.expectEqual(one.telephone, loc.telephone_code);
+        try testing.expectEqual(locale.MS_ISO, loc.measuring_system);
+        try testing.expectEqual(one.calendar, loc.calendar_type);
+        try testing.expectEqualStrings(one.currency, span(loc.mon_cs));
+        try testing.expectEqualStrings(one.international, span(loc.mon_int_cs));
+        try testing.expectEqualStrings(one.yes, span(lb.GetLocaleStr(loc, locale.YESSTR)));
+        try testing.expectEqualStrings(one.tomorrow, span(lb.GetLocaleStr(loc, locale.TOMORROWSTR)));
+
+        // Written, long and short, on a day of two digits and of one.
+        try testing.expectEqualStrings(one.long, formatted(lb, loc, &text, loc.date_format, date));
+        try testing.expectEqualStrings(one.long_early, formatted(lb, loc, &text, loc.date_format, early));
+        try testing.expectEqualStrings(one.date_time, formatted(lb, loc, &text, loc.date_time_format, date));
+        try testing.expectEqualStrings(one.short, formatted(lb, loc, &text, loc.short_date_format, date));
+        try testing.expectEqualStrings(one.short_early, formatted(lb, loc, &text, loc.short_date_format, early));
+        try testing.expectEqualStrings(one.short_time, formatted(lb, loc, &text, loc.short_time_format, date));
+        try testing.expectEqualStrings(one.short_time_early, formatted(lb, loc, &text, loc.short_time_format, early));
+
+        // And read back: the days, and the minute of the day.
+        var long: [64:0]u8 = undefined;
+        inline for (.{ date, early }) |day| {
+            inline for (.{ "date_format", "short_date_format" }) |field| {
+                const template = @field(loc, field);
+                const written = formatted(lb, loc, &text, template, day);
+                @memcpy(long[0..written.len], written);
+                long[written.len] = 0;
+                try testing.expectEqual(day.days, (parsed(lb, loc, template, &long) orelse return error.NotRead).days);
+            }
+            inline for (.{ "date_time_format", "short_time_format" }) |field| {
+                const template = @field(loc, field);
+                const written = formatted(lb, loc, &text, template, day);
+                @memcpy(long[0..written.len], written);
+                long[written.len] = 0;
+                try testing.expectEqual(day.minute, (parsed(lb, loc, template, &long) orelse return error.NotRead).minute);
+            }
+        }
+    }
+}
+
 /// The countries and languages LOCALE: ships with.
 const shipped_countries = [_][]const u8{
     "australia",
@@ -979,9 +1142,11 @@ const shipped_countries = [_][]const u8{
     "espana",
     "france",
     "great_britain",
+    "hanguk",
     "india",
     "italia",
     "nederland",
+    "nihon",
     "norge",
     "osterreich",
     "portugal",
@@ -989,20 +1154,26 @@ const shipped_countries = [_][]const u8{
     "suisse",
     "sverige",
     "svizzera",
+    "taiwan",
     "united_kingdom",
     "united_states",
+    "zhongguo",
 };
 const shipped_languages = [_][]const u8{
     "dansk",
     "deutsch",
     "espanol",
     "francais",
+    "hangugeo",
     "hindi",
     "italiano",
     "nederlands",
+    "nihongo",
     "norsk",
     "portugues",
     "svenska",
+    "zhongwen",
+    "zhongwen-fanti",
 };
 
 test "the countries and languages shipped: each read whole, in a language shipped, its short forms fitting dos's strings" {

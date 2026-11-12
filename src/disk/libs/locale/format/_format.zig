@@ -116,6 +116,15 @@ fn nameAt(rule: []const u8, at: *usize) []const u8 {
     return rule[start..at.*];
 }
 
+/// Whether a date's conversion writes a number with a zero or a blank
+/// before it, which a `-` in front of its letter takes off.
+pub fn isNumber(conversion: u8) bool {
+    return switch (conversion) {
+        'd', 'e', 'H', 'I', 'j', 'm', 'M', 'S', 'U', 'W', 'y' => true,
+        else => false,
+    };
+}
+
 /// `value` in decimal into the end of `into`, at least `least` digits
 /// with zeros before; what was written.
 pub fn decimal(into: []u8, value: u64, least: usize) []const u8 {

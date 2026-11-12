@@ -56,6 +56,10 @@ const Clock = _format.Clock;
 /// - `%n` `%t` - a line feed and a tab. Any other character after a `%`
 ///   is written as it is, so `%%` is one `%`.
 ///
+/// A `-` between the `%` and a number's letter writes the number as it
+/// is, with no zero and no blank before it (1.5): `%-d` and `%-e` are `1` to
+/// `31`, `%-m` is `1` to `12`, `%Y年%-m月%-d日` is `2026年1月5日`.
+///
 /// CONTEXT:
 /// - Waits: no, but the hook may.
 /// - Interrupts: no; the hook is called through utility.library.
@@ -102,9 +106,13 @@ fn write(lb: *LocaleBase, out: *const Out, template: [*:0]const u8, clock: *cons
             out.put(c);
             continue;
         }
+        // A `-` before a number's letter: the number with nothing before it.
+        const bare = template[at] == '-' and _format.isNumber(template[at + 1]);
+        if (bare) at += 1;
         const conversion = template[at];
         if (conversion == 0) return;
         at += 1;
+        const two: usize = if (bare) 1 else 2;
         var digits: [6]u8 = undefined;
         switch (conversion) {
             'a' => out.string(word(lb, loc, locale.ABDAY_1 + clock.wday)),
@@ -113,30 +121,30 @@ fn write(lb: *LocaleBase, out: *const Out, template: [*:0]const u8, clock: *cons
             'B' => out.string(word(lb, loc, locale.MON_1 + clock.month - 1)),
             'c' => write(lb, out, "%a %b %d %H:%M:%S %Y", clock),
             'C' => write(lb, out, "%a %b %e %T %Z %Y", clock),
-            'd' => out.text(_format.decimal(&digits, clock.mday, 2)),
+            'd' => out.text(_format.decimal(&digits, clock.mday, two)),
             'e' => {
-                if (clock.mday < 10) out.put(' ');
+                if (clock.mday < 10 and !bare) out.put(' ');
                 out.text(_format.decimal(&digits, clock.mday, 1));
             },
             'D', 'x' => write(lb, out, "%m/%d/%y", clock),
-            'H' => out.text(_format.decimal(&digits, clock.hour, 2)),
+            'H' => out.text(_format.decimal(&digits, clock.hour, two)),
             'q' => out.text(_format.decimal(&digits, clock.hour, 1)),
-            'I' => out.text(_format.decimal(&digits, twelve(clock.hour), 2)),
+            'I' => out.text(_format.decimal(&digits, twelve(clock.hour), two)),
             'Q' => out.text(_format.decimal(&digits, twelve(clock.hour), 1)),
-            'j' => out.text(_format.decimal(&digits, clock.yday + 1, 3)),
-            'm' => out.text(_format.decimal(&digits, clock.month, 2)),
-            'M' => out.text(_format.decimal(&digits, clock.min, 2)),
+            'j' => out.text(_format.decimal(&digits, clock.yday + 1, if (bare) 1 else 3)),
+            'm' => out.text(_format.decimal(&digits, clock.month, two)),
+            'M' => out.text(_format.decimal(&digits, clock.min, two)),
             'n' => out.put('\n'),
             'p' => out.string(word(lb, loc, if (clock.hour >= 12) locale.PM_STR else locale.AM_STR)),
             'r' => write(lb, out, "%I:%M:%S %p", clock),
             'R' => write(lb, out, "%H:%M", clock),
-            'S' => out.text(_format.decimal(&digits, clock.sec, 2)),
+            'S' => out.text(_format.decimal(&digits, clock.sec, two)),
             't' => out.put('\t'),
             'T', 'X' => write(lb, out, "%H:%M:%S", clock),
-            'U' => out.text(_format.decimal(&digits, (clock.yday + 7 - clock.wday) / 7, 2)),
+            'U' => out.text(_format.decimal(&digits, (clock.yday + 7 - clock.wday) / 7, two)),
             'w' => out.text(_format.decimal(&digits, clock.wday, 1)),
-            'W' => out.text(_format.decimal(&digits, (clock.yday + 7 - (clock.wday + 6) % 7) / 7, 2)),
-            'y' => out.text(_format.decimal(&digits, clock.year % 100, 2)),
+            'W' => out.text(_format.decimal(&digits, (clock.yday + 7 - (clock.wday + 6) % 7) / 7, two)),
+            'y' => out.text(_format.decimal(&digits, clock.year % 100, two)),
             'Y' => out.text(_format.decimal(&digits, clock.year, 4)),
             'Z' => out.text(_format.zoneName(loc.time_zone, clock.seconds)),
             else => out.put(conversion),

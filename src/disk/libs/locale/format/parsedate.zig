@@ -45,14 +45,17 @@ const LocaleBase = _base.LocaleBase;
 /// - `%b` `%B` `%h` `%m` - a month, by its name, long or short, or its
 ///   number.
 /// - `%d` `%e` - the day of the month, 1 to 31.
-/// - `%H` `%I` `%q` `%Q` - the hour, 0 to 23; `%p` after it the locale's
-///   AM_STR or PM_STR, which makes it an hour of twelve.
+/// - `%H` `%I` `%q` `%Q` - the hour, 0 to 23; `%p` the locale's AM_STR
+///   or PM_STR, before the hour or after it, which makes it an hour of
+///   twelve.
 /// - `%M` `%S` - the minute and the second, 0 to 59.
 /// - `%y` - the year's last two digits, 78 to 99 for 1978 to 1999 and
 ///   below 78 for 2000 to 2077; `%Y` the year, 1978 to 9999.
 /// - `%D` `%x`, `%T` `%X`, `%R`, `%r`, `%c` - their forms in FormatDate.
 /// - `%Z` - a time zone's name, read and not used.
 /// - `%n` `%t` and a blank - any blanks, or none; `%%` a `%`.
+/// - A `-` between the `%` and a number's letter (`%-d`, `%-m`; 1.5) -
+///   read as the letter alone: a number is read with or without a zero.
 ///
 /// Any other character must be in the text where the template has it.
 /// Names and letters are matched whatever their case, the longest name
@@ -99,6 +102,7 @@ pub fn ParseDate(lb: *LocaleBase, loc: *const locale.Locale, date: *dos.DateStam
     if (!reading.match(template)) return false;
     reading.skipBlanks();
     if (reading.at != count) return false;
+    if (reading.after_noon) |after_noon| reading.hour = reading.hour % 12 + if (after_noon) @as(u32, 12) else 0;
     const days = lb.utility_base.DateJoin(&.{
         .year = @intCast(reading.year),
         .month = @intCast(reading.month),
@@ -125,6 +129,8 @@ const Reading = struct {
     hour: u32 = 0,
     min: u32 = 0,
     sec: u32 = 0,
+    /// Which word of noon the text had, wherever it stood; null with none.
+    after_noon: ?bool = null,
 
     /// The text from `at` read by `template`.
     fn match(reading: *Reading, template: [*:0]const u8) bool {
@@ -140,6 +146,7 @@ const Reading = struct {
                 if (!reading.literal(c)) return false;
                 continue;
             }
+            if (template[t] == '-' and _format.isNumber(template[t + 1])) t += 1;
             const conversion = template[t];
             if (conversion == 0) return true;
             t += 1;
@@ -246,7 +253,7 @@ const Reading = struct {
 
     fn noon(reading: *Reading) bool {
         const which = reading.name(locale.AM_STR, locale.PM_STR) orelse return false;
-        reading.hour = reading.hour % 12 + if (which == locale.PM_STR) @as(u32, 12) else 0;
+        reading.after_noon = which == locale.PM_STR;
         return true;
     }
 

@@ -50,13 +50,32 @@ Region page does.
 
 The countries there are: australia, belgie, belgique, canada,
 canada_francais, danmark, deutschland, espana, france, great_britain,
-india, italia, nederland, norge, osterreich, portugal, schweiz, suisse,
-sverige, svizzera, united_kingdom and united_states. The languages:
-dansk, deutsch, espanol, francais, hindi, italiano, nederlands, norsk,
-portugues and svenska, and english, which is built in. India and Hindi
-are on the 64-bit machines' disks only, where `FONTS:devanagari` is, the
-font their words are drawn in: `COUNTRY=india` writes
+hanguk, india, italia, nederland, nihon, norge, osterreich, portugal,
+schweiz, suisse, sverige, svizzera, taiwan, united_kingdom,
+united_states and zhongguo. The languages: dansk, deutsch, espanol,
+francais, hangugeo, hindi, italiano, nederlands, nihongo, norsk,
+portugues, svenska, zhongwen and zhongwen-fanti, and english, which is
+built in. A file is named by the language's own word for itself, in
+ASCII, so that any keyboard types it. India and Hindi are on the
+64-bit machines' disks only, where `FONTS:devanagari` is, the font
+their words are drawn in: `COUNTRY=india` writes
 `गुरुवार, 12 नवंबर 2026`, `2:05 अपराह्न` and `12,34,567`.
+
+Japan (`nihon`, `nihongo`), Korea (`hanguk`, `hangugeo`), China
+(`zhongguo`, `zhongwen`: the simplified characters) and Taiwan
+(`taiwan`, `zhongwen-fanti`: the traditional ones) are on those disks
+too. Their dates begin with the year, and the month's name holds its
+sign, so a template writes it with `%B` or `%b` and no sign of its own:
+
+| `COUNTRY=` | the date | the short date | the short time |
+|---|---|---|---|
+| nihon | `2026年11月12日木曜日` | `2026/11/12` | `14:05` |
+| hanguk | `2026년 11월 12일 목요일` | `2026. 11. 12.` | `오후 2:05` |
+| zhongguo | `2026年11月12日星期四` | `2026/11/12` | `14:05` |
+| taiwan | `2026年11月12日 星期四` | `2026/11/12` | `下午2:05` |
+
+Their words are drawn in a font that has them: the `cjk-` families of
+`FONTS:` ([fonts guide](fonts.md)), where a disk has them.
 
 ## The files
 
@@ -155,12 +174,16 @@ day of the month (`01`, ` 1`), `%m %y %Y`, `%H %q` the hour of 24
 week of the year from Sunday and from Monday, `%Z` the time zone's name
 then (`CET`, `CEST`, from the rule in `ENV:Sys/timezone`), the
 composites `%D %x %T %X %R %r %c %C`, and `%n %t`. Any other character
-after a `%` is written as it is.
+after a `%` is written as it is. A `-` before a number's letter writes
+the number with no zero and no blank before it (locale.library 1.5):
+`%-d` is `5`, `%-m` is `1`, and `%Y年%-m月%-d日` is `2026年1月5日`.
 
 `ParseDate(loc, &stamp, template, &hook)` reads a date by the same
 templates, the names in either case and the longest that fits first, a
-month by its name or its number; `sdk.locale.StringHook` reads a string.
-What the template leaves out is 1 January 1978, 00:00.
+month by its name or its number, a number with or without a zero, and
+the word of noon before the hour or after it (`오후 2:05`, `2:05 PM`);
+`sdk.locale.StringHook` reads a string. What the template leaves out is
+1 January 1978, 00:00.
 
 ### Numbers
 

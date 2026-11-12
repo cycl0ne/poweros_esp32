@@ -257,6 +257,10 @@ locale.library/StrnCmp
 	- `%n` `%t` - a line feed and a tab. Any other character after a `%`
 	  is written as it is, so `%%` is one `%`.
 
+	A `-` between the `%` and a number's letter writes the number as it
+	is, with no zero and no blank before it (1.5): `%-d` and `%-e` are `1` to
+	`31`, `%-m` is `1` to `12`, `%Y年%-m月%-d日` is `2026年1月5日`.
+
    CONTEXT
 	- Waits: no, but the hook may.
 	- Interrupts: no; the hook is called through utility.library.
@@ -1114,14 +1118,17 @@ locale.library/StrnCmp
 	- `%b` `%B` `%h` `%m` - a month, by its name, long or short, or its
 	  number.
 	- `%d` `%e` - the day of the month, 1 to 31.
-	- `%H` `%I` `%q` `%Q` - the hour, 0 to 23; `%p` after it the locale's
-	  AM_STR or PM_STR, which makes it an hour of twelve.
+	- `%H` `%I` `%q` `%Q` - the hour, 0 to 23; `%p` the locale's AM_STR
+	  or PM_STR, before the hour or after it, which makes it an hour of
+	  twelve.
 	- `%M` `%S` - the minute and the second, 0 to 59.
 	- `%y` - the year's last two digits, 78 to 99 for 1978 to 1999 and
 	  below 78 for 2000 to 2077; `%Y` the year, 1978 to 9999.
 	- `%D` `%x`, `%T` `%X`, `%R`, `%r`, `%c` - their forms in FormatDate.
 	- `%Z` - a time zone's name, read and not used.
 	- `%n` `%t` and a blank - any blanks, or none; `%%` a `%`.
+	- A `-` between the `%` and a number's letter (`%-d`, `%-m`; 1.5) -
+	  read as the letter alone: a number is read with or without a zero.
 
 	Any other character must be in the text where the template has it.
 	Names and letters are matched whatever their case, the longest name

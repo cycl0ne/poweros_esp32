@@ -1,0 +1,21 @@
+# LOCALE:Languages/nihongo.language - Japanese: the words locale.library
+# writes and reads dates in. A word left out is the English one; a word
+# with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=日曜日 DAY_2=月曜日 DAY_3=火曜日 DAY_4=水曜日
+DAY_5=木曜日 DAY_6=金曜日 DAY_7=土曜日
+ABDAY_1=日 ABDAY_2=月 ABDAY_3=火 ABDAY_4=水 ABDAY_5=木 ABDAY_6=金 ABDAY_7=土
+# The months, then their short names. A month's name is its number and
+# 月, so a date's template writes it with %B and no 月 of its own.
+MON_1=1月 MON_2=2月 MON_3=3月 MON_4=4月 MON_5=5月 MON_6=6月
+MON_7=7月 MON_8=8月 MON_9=9月 MON_10=10月 MON_11=11月 MON_12=12月
+ABMON_1=1月 ABMON_2=2月 ABMON_3=3月 ABMON_4=4月 ABMON_5=5月 ABMON_6=6月
+ABMON_7=7月 ABMON_8=8月 ABMON_9=9月 ABMON_10=10月 ABMON_11=11月 ABMON_12=12月
+# Yes and no, before and after noon.
+YESSTR=はい NOSTR=いいえ AM_STR=午前 PM_STR=午後
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=「 CLOSEQUOTE=」
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=昨日 TODAYSTR=今日 TOMORROWSTR=明日
+FUTURESTR=未来

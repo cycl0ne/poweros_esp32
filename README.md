@@ -255,10 +255,12 @@ Beside them:
   cells Unicode gives it and keeps the marks written on it in its cell,
   files hashed and checked against a list of digests
   ([dos guide](sdk/docs/guides/dos.md)).
-- **Languages:** 22 countries and 10 languages besides English in
-  `LOCALE:` (India and Hindi on the 64-bit machines' disks, with the
-  Devanagari font), the one chosen on Prefs' Region page with the time
-  zone, or in `ENV:Sys/locale.prefs`; dates, dos's
+- **Languages:** 26 countries and 14 languages besides English in
+  `LOCALE:` (India and Hindi, Japan and Japanese, Korea and Korean,
+  China and Taiwan with Chinese in the simplified and the traditional
+  characters on the 64-bit machines' disks), the one chosen on Prefs'
+  Region page with the time zone, or in `ENV:Sys/locale.prefs`; dates
+  as the country writes them (`2026年11月12日木曜日`), dos's
   error texts and the shell's messages in it - German shipped, and
   Hindi as a draft - its
   money and quotes as the files write them (`€`, `„“`, `₹`), digits

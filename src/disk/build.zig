@@ -406,11 +406,20 @@ const rv64_only_files = [_][]const u8{
     "tests/datatypes/Paints.json",
 };
 
-/// What is written in Devanagari, which only the 64-bit machines' disks
-/// have a font for (FONTS:devanagari): left off the ESP32s' disks.
+/// What is written in Devanagari, kana, Hangul or Han characters, which
+/// only the 64-bit machines' disks have fonts for (FONTS:devanagari,
+/// FONTS:cjk-jp): left off the ESP32s' disks.
 const wide_only_files = [_][]const u8{
+    "locale/Countries/hanguk.country",
     "locale/Countries/india.country",
+    "locale/Countries/nihon.country",
+    "locale/Countries/taiwan.country",
+    "locale/Countries/zhongguo.country",
+    "locale/Languages/hangugeo.language",
     "locale/Languages/hindi.language",
+    "locale/Languages/nihongo.language",
+    "locale/Languages/zhongwen.language",
+    "locale/Languages/zhongwen-fanti.language",
 };
 
 /// Whether `program` is built for `chip`. The lists name a program by its
@@ -597,9 +606,11 @@ pub const files = [_]File{
     .{ .disk = "locale/Countries/espana.country", .source = "locale/countries/espana.country" },
     .{ .disk = "locale/Countries/france.country", .source = "locale/countries/france.country" },
     .{ .disk = "locale/Countries/great_britain.country", .source = "locale/countries/great_britain.country" },
+    .{ .disk = "locale/Countries/hanguk.country", .source = "locale/countries/hanguk.country" },
     .{ .disk = "locale/Countries/india.country", .source = "locale/countries/india.country" },
     .{ .disk = "locale/Countries/italia.country", .source = "locale/countries/italia.country" },
     .{ .disk = "locale/Countries/nederland.country", .source = "locale/countries/nederland.country" },
+    .{ .disk = "locale/Countries/nihon.country", .source = "locale/countries/nihon.country" },
     .{ .disk = "locale/Countries/norge.country", .source = "locale/countries/norge.country" },
     .{ .disk = "locale/Countries/osterreich.country", .source = "locale/countries/osterreich.country" },
     .{ .disk = "locale/Countries/portugal.country", .source = "locale/countries/portugal.country" },
@@ -607,18 +618,24 @@ pub const files = [_]File{
     .{ .disk = "locale/Countries/suisse.country", .source = "locale/countries/suisse.country" },
     .{ .disk = "locale/Countries/sverige.country", .source = "locale/countries/sverige.country" },
     .{ .disk = "locale/Countries/svizzera.country", .source = "locale/countries/svizzera.country" },
+    .{ .disk = "locale/Countries/taiwan.country", .source = "locale/countries/taiwan.country" },
     .{ .disk = "locale/Countries/united_kingdom.country", .source = "locale/countries/united_kingdom.country" },
     .{ .disk = "locale/Countries/united_states.country", .source = "locale/countries/united_states.country" },
+    .{ .disk = "locale/Countries/zhongguo.country", .source = "locale/countries/zhongguo.country" },
     .{ .disk = "locale/Languages/dansk.language", .source = "locale/languages/dansk.language" },
     .{ .disk = "locale/Languages/deutsch.language", .source = "locale/languages/deutsch.language" },
     .{ .disk = "locale/Languages/espanol.language", .source = "locale/languages/espanol.language" },
     .{ .disk = "locale/Languages/francais.language", .source = "locale/languages/francais.language" },
+    .{ .disk = "locale/Languages/hangugeo.language", .source = "locale/languages/hangugeo.language" },
     .{ .disk = "locale/Languages/hindi.language", .source = "locale/languages/hindi.language" },
     .{ .disk = "locale/Languages/italiano.language", .source = "locale/languages/italiano.language" },
     .{ .disk = "locale/Languages/nederlands.language", .source = "locale/languages/nederlands.language" },
+    .{ .disk = "locale/Languages/nihongo.language", .source = "locale/languages/nihongo.language" },
     .{ .disk = "locale/Languages/norsk.language", .source = "locale/languages/norsk.language" },
     .{ .disk = "locale/Languages/portugues.language", .source = "locale/languages/portugues.language" },
     .{ .disk = "locale/Languages/svenska.language", .source = "locale/languages/svenska.language" },
+    .{ .disk = "locale/Languages/zhongwen.language", .source = "locale/languages/zhongwen.language" },
+    .{ .disk = "locale/Languages/zhongwen-fanti.language", .source = "locale/languages/zhongwen-fanti.language" },
     // The looks the preferences editor offers, a style file each.
     .{ .disk = "prefs/presets/styles/Classic.prefs", .source = "prefs/presets/styles/Classic.prefs" },
     .{ .disk = "prefs/presets/styles/Rounded.prefs", .source = "prefs/presets/styles/Rounded.prefs" },

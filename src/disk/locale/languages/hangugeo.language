@@ -1,0 +1,22 @@
+# LOCALE:Languages/hangugeo.language - Korean: the words locale.library
+# writes and reads dates in. Its syllables sort in the order of their
+# codes, which is the dictionary's. A word left out is the English one;
+# a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=일요일 DAY_2=월요일 DAY_3=화요일 DAY_4=수요일
+DAY_5=목요일 DAY_6=금요일 DAY_7=토요일
+ABDAY_1=일 ABDAY_2=월 ABDAY_3=화 ABDAY_4=수 ABDAY_5=목 ABDAY_6=금 ABDAY_7=토
+# The months, then their short names. A month's name is its number and
+# 월, so a date's template writes it with %B and no 월 of its own.
+MON_1=1월 MON_2=2월 MON_3=3월 MON_4=4월 MON_5=5월 MON_6=6월
+MON_7=7월 MON_8=8월 MON_9=9월 MON_10=10월 MON_11=11월 MON_12=12월
+ABMON_1=1월 ABMON_2=2월 ABMON_3=3월 ABMON_4=4월 ABMON_5=5월 ABMON_6=6월
+ABMON_7=7월 ABMON_8=8월 ABMON_9=9월 ABMON_10=10월 ABMON_11=11월 ABMON_12=12월
+# Yes and no, before and after noon.
+YESSTR=예 NOSTR=아니요 AM_STR=오전 PM_STR=오후
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=“ CLOSEQUOTE=”
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=어제 TODAYSTR=오늘 TOMORROWSTR=내일
+FUTURESTR=미래
