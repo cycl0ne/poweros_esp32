@@ -4,12 +4,17 @@
 //!
 //!   Date DAY,DATE,TIME,TO=VER/K
 //!
-//!   Date                       Friday 25-Sep-2026 22:43:11
-//!   Date 25-Sep-2026 22:43     both set, then nothing printed
+//!   Date                       Friday 25.09.2026 22:43:11
+//!   Date 25.09.2026 22:43      both set, then nothing printed
 //!   Date tomorrow              a day on, the time of day kept
 //!   Date 12:00 TO=RAM:now      set, and the new date written to a file
 //!
-//! Each of DAY, DATE and TIME is read as a date - dd-mmm-yyyy, a weekday
+//! The date is written and read in the country's short form
+//! (`dos.FORMAT_DEF`: 25.09.2026 in Germany, 2026/09/25 in Japan), and as
+//! dos's own dd-mmm-yyyy while no locale is set - a form that is read in
+//! every country.
+//!
+//! Each of DAY, DATE and TIME is read as a date - that form, a weekday
 //! (the coming one), today, tomorrow, yesterday - and else as a time,
 //! hh:mm or hh:mm:ss, so they may come in any order; what is not given
 //! stays as it is. Setting prints nothing, unless TO names where the new
@@ -33,7 +38,7 @@ const Printf = dos.stdio.Printf;
 const FPrintf = dos.stdio.FPrintf;
 
 pub const COMMAND_NAME = "Date";
-const VERSION_STRING = "\x00$VER: Date 1.0 (25.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Date 1.1 (12.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DAY,DATE,TIME,TO=VER/K";
@@ -67,7 +72,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     const setting = argv[arg_day] != 0 or argv[arg_date] != 0 or argv[arg_time] != 0;
     if (setting) {
-        var datetime: dos.DateTime = .{ .format = dos.datetime.FORMAT_DOS, .flags = dos.datetime.DTF_FUTURE };
+        var datetime: dos.DateTime = .{ .format = dos.datetime.FORMAT_DEF, .flags = dos.datetime.DTF_FUTURE };
         _ = dl.DateStamp(&datetime.stamp);
         // Each string as a date, and failing that as a time.
         for ([_]usize{ arg_day, arg_date, arg_time }) |slot| {
@@ -100,13 +105,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var date: [dos.datetime.LEN_DATSTRING]u8 = @splat(0);
     var time: [dos.datetime.LEN_DATSTRING]u8 = @splat(0);
     var now: dos.DateTime = .{
-        .format = dos.datetime.FORMAT_DOS,
+        .format = dos.datetime.FORMAT_DEF,
         .str_day = @ptrCast(&day),
         .str_date = @ptrCast(&date),
-        .str_time = @ptrCast(&time),
     };
     _ = dl.DateStamp(&now.stamp);
     if (!dl.DateToStr(&now)) return dos.RETURN_FAIL;
+    // The time in the form that has its seconds, whatever the country's
+    // short time is.
+    var clock: dos.DateTime = .{ .stamp = now.stamp, .format = dos.datetime.FORMAT_DOS, .str_time = @ptrCast(&time) };
+    if (!dl.DateToStr(&clock)) return dos.RETURN_FAIL;
     const values = .{ @as([*:0]const u8, @ptrCast(&day)), @as([*:0]const u8, @ptrCast(&date)), @as([*:0]const u8, @ptrCast(&time)) };
 
     if (to) |name| {

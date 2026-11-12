@@ -109,7 +109,11 @@ Windows, and is read as that.
 | `POSITIVECURRENCYAT`, `NEGATIVECURRENCYAT` | the symbol `BEFORE` or `AFTER` the amount | `AFTER` |
 
 The short date and time are what dos writes with `FORMAT_DEF`, so each
-must fit 15 characters.
+must fit 15 characters. The short date is the one `C:Date` and `C:List`
+write and read - `12.11.2026` in Germany, `2026/11/12` in Japan, a
+weekday or `Heute` for a recent file - with the time in hours, minutes
+and seconds beside it; dos's own `12-Nov-2026` is still read in every
+country, so a script's date means what it meant.
 
 ### A language: `LOCALE:Languages/<name>.language`
 

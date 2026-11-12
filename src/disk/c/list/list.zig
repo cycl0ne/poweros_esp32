@@ -46,8 +46,11 @@
 //! With LFORMAT there are no headers, no totals and no blank lines: the
 //! output is meant to be fed to something.
 //!
-//! - **Dates.** dos.library's DateToStr writes the year with its century
-//!   ("16-Sep-2026").
+//! - **Dates.** A date is written and read in the country's short form
+//!   (`dos.FORMAT_DEF`: "16.09.2026" in Germany, "2026/09/16" in Japan),
+//!   and as dos's own "16-Sep-2026" while no locale is set; SINCE and
+//!   UPTO take both. The time keeps its seconds whatever the country's
+//!   short time is.
 //! - **CompareDates** answers the way round its name reads (negative when
 //!   the first date is the earlier), and SINCE and UPTO compare that way.
 //! - **A `%S` with a width counts.** The count of `%S`s skips the width
@@ -72,7 +75,7 @@ const Printf = dos.stdio.Printf;
 const FPrintf = dos.stdio.FPrintf;
 
 pub const COMMAND_NAME = "List";
-const VERSION_STRING = "\x00$VER: List 1.2 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: List 1.3 (12.11.2026)\r\n";
 
 const template = "DIR/M,P=PAT/K,KEYS/S,DATES/S,NODATES/S,TO/K,SUB/K,SINCE/K," ++
     "UPTO/K,QUICK/S,BLOCK/S,NOHEAD/S,FILES/S,DIRS/S,LFORMAT/K,ALL/S";
@@ -469,7 +472,7 @@ fn buildFormat(run: *Run) void {
             out.write(" %s");
             order.put('a');
             if (!run.nodates) {
-                out.write(" %-9s %s");
+                out.write(" %-10s %s");
                 order.put('d');
                 order.put('t');
             }
@@ -477,7 +480,7 @@ fn buildFormat(run: *Run) void {
             out.write("%s");
             order.put('c');
         } else if (run.dates) {
-            out.write("%-25s %-9s %s");
+            out.write("%-25s %-10s %s");
             order.put('d');
             order.put('t');
         } else {
@@ -538,7 +541,7 @@ fn readUpto(run: *Run) void {
 fn readWhen(run: *Run, text: [*:0]const u8, default_time: [:0]const u8, into: *dos.DateStamp) bool {
     var when: dos.DateTime = .{
         .stamp = run.now,
-        .format = dos.FORMAT_DOS,
+        .format = dos.FORMAT_DEF,
         .flags = dos.DTF_SUBST,
         .str_date = @constCast(text),
         .str_time = @constCast(default_time.ptr),
@@ -551,7 +554,7 @@ fn readWhen(run: *Run, text: [*:0]const u8, default_time: [:0]const u8, into: *d
     // means.
     when = .{
         .stamp = run.now,
-        .format = dos.FORMAT_DOS,
+        .format = dos.FORMAT_DEF,
         .flags = dos.DTF_SUBST,
         .str_date = null,
         .str_time = @constCast(text),
@@ -727,7 +730,7 @@ fn header(run: *Run, ap: *dos.AnchorPath) void {
 
     var when: dos.DateTime = .{
         .stamp = run.now,
-        .format = dos.FORMAT_DOS,
+        .format = dos.FORMAT_DEF,
         .flags = 0,
         .str_day = &run.dow,
         .str_date = &run.date,
@@ -782,7 +785,7 @@ fn printEntry(run: *Run, ap: *dos.AnchorPath, entry_type: i32) void {
 
     var when: dos.DateTime = .{
         .stamp = ap.info.date,
-        .format = dos.FORMAT_DOS,
+        .format = dos.FORMAT_DEF,
         // Without DATES a recent date comes out as "Today" or a weekday,
         // which is what a listing normally shows.
         .flags = if (!run.dates) dos.DTF_SUBST else 0,
@@ -793,6 +796,10 @@ fn printEntry(run: *Run, ap: *dos.AnchorPath, entry_type: i32) void {
     if (!dl.DateToStr(&when)) {
         copyZ(&run.date, MSG_INVALID_DS);
         copyZ(&run.time, MSG_INVALID_DS);
+    } else {
+        // The time once more, in the form that has its seconds.
+        var clock: dos.DateTime = .{ .stamp = ap.info.date, .format = dos.FORMAT_DOS, .str_time = &run.time };
+        _ = dl.DateToStr(&clock);
     }
 
     // The name split at the last '.', for %M and %E.
