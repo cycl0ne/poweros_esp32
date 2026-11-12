@@ -79,7 +79,7 @@ Their words are drawn in a font that has them: the `cjk-` families of
 
 ## The files
 
-Every file in `LOCALE:` and the settings file are UTF-8 text, a mark at
+A country's file, a language's and the settings file are UTF-8 text, a mark at
 the start allowed, read as `KEY=value` pairs - a value with a blank in
 double quotes, with no escapes - and a line starting with `#` or `;` is a
 comment. A key the library does not know is passed over, and one left
@@ -456,6 +456,78 @@ what it is and fails - and keeps its `$VER:` string in `.version`.
 `src/disk/devs/keymaps/inscript/inscript.zig` is the worked example;
 `src/disk/build.zig` lists it among the modules, which puts it into
 `DEVS:Keymaps`.
+
+## Emoji: `LOCALE:Emoji`
+
+What a program needs to offer the emoji to choose from: which there
+are, in which groups and order, and what each is called in the
+languages the disk has. Two kinds of file, UTF-8 text with a line feed
+after each line and a tab between a line's fields.
+
+`LOCALE:Emoji/emoji.list` is every emoji, 1906 in nine groups:
+
+```
+emoji-list 1 9 1906
+@Smileys & Emotion
+😀
+...
+@People & Body
+👋	👋🏻	👋🏼	👋🏽	👋🏾	👋🏿
+```
+
+The first line is the file's kind, the form it is in, and how many
+groups and emoji follow. A line starting with `@` opens a group. An
+emoji that is drawn in the skin tones has the five of them after it,
+the lightest first, each written out whole - a program picks the field
+and needs no rule for where a tone goes in a sequence. Where an emoji
+shows several people, the five are the ones with everyone in the same
+tone; the pairs in two different tones are not in the list. The group
+names are English.
+
+`LOCALE:Emoji/<language>.names` is what the emoji are called in a
+language, the file named as the locale names the language (`deutsch`,
+`english`):
+
+```
+emoji-names 1 1905 deutsch
+😀	grinsendes Gesicht	froh|fröhlich|Gesicht|grinsen|haha|lachen|lol|lustig|Smiley
+...
+🇩🇪	Flagge: Deutschland	Flagge
+```
+
+One line for each emoji of the list that has a name in the language,
+in the list's order: the emoji, its name, and the further words it is
+found by with `|` between them - a field that is missing where there
+are none. An emoji in a skin tone goes by the name of the one without.
+
+`sdk.emoji` (`sdk/libs/emoji/emoji.zig`) reads both from a file held in
+memory, handing out slices of it and allocating nothing:
+
+```zig
+var list = sdk.emoji.List.open(bytes) orelse return; // not a list
+// list.groups and list.emoji: what to make room for.
+while (list.next()) |item| switch (item) {
+    .group => |name| ...,
+    .emoji => |one| ..., // one.text; one.toned(2): in the medium tone
+};
+
+var path: [64]u8 = undefined;
+const file = sdk.emoji.namesPath(&path, "deutsch"); // LOCALE:Emoji/deutsch.names
+var names = sdk.emoji.Names.open(names_bytes) orelse return;
+while (names.next()) |name| {
+    // name.emoji, name.name; name.words() walks the keywords.
+}
+```
+
+A program takes the names of the first of the locale's languages
+(`pref_languages`) that has a file, and `english` after them.
+
+The files are made at build time by `tools/emojigen`, from Unicode's
+`emoji-test.txt` (Emoji 16.0) and the CLDR's annotations (release 46),
+which `scripts/fetch-emoji.sh` fetches; the licence of both is
+`LOCALE:Emoji/unicode.licence`. They are where `FONTS:emoji` is, on the
+system disks of QEMU's virt machines, 1.8 MB in all: the list 37 KB, a
+language's names 76 to 247 KB.
 
 ## Commands
 

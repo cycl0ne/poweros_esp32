@@ -919,6 +919,38 @@ pub fn build(b: *std.Build) void {
         disks.addArg("certificates");
         disks.addPrefixedFileArg("certificates/roots=", store);
     }
+    // LOCALE:Emoji/ - the emoji in their groups and order, and their
+    // names in the disk's languages, which tools/emojigen makes of what
+    // scripts/fetch-emoji.sh fetched - and the licence of that beside
+    // them. Where FONTS:emoji is: on the virt machines' system disks.
+    if (emojiDir(b)) |dir| {
+        const emojigen = b.addExecutable(.{
+            .name = "emojigen",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tools/emojigen/emojigen.zig"),
+                .target = b.graph.host,
+                .optimize = .ReleaseSafe,
+            }),
+        });
+        emojigen.root_module.addImport("sdk", sdk);
+        const run = b.addRunArtifact(emojigen);
+        run.addFileArg(.{ .cwd_relative = b.pathJoin(&.{ dir, "emoji-test.txt" }) });
+        const out = run.addOutputDirectoryArg("emoji");
+        const onto: FontPlace = .{ .runs = disks.some(true).runs, .prefix = "--gpt-file=" };
+        onto.drawer("locale/Emoji");
+        onto.file("locale/Emoji/emoji.list", out.path(b, "emoji.list"));
+        for (emoji_languages) |language| {
+            run.addArg(b.fmt("--language={s}", .{language.name}));
+            for (language.codes) |code| {
+                for ([_][]const u8{ "annotations", "annotationsDerived" }) |kind| {
+                    run.addFileArg(.{ .cwd_relative = b.pathJoin(&.{ dir, kind, b.fmt("{s}.xml", .{code}) }) });
+                }
+            }
+            const file = b.fmt("{s}.names", .{language.name});
+            onto.file(b.fmt("locale/Emoji/{s}", .{file}), out.path(b, file));
+        }
+        onto.file("locale/Emoji/unicode.licence", .{ .cwd_relative = b.pathJoin(&.{ dir, "LICENSE" }) });
+    }
     // DEVS:usb/firmware/aic8800/ - what an AIC8800 Wi-Fi stick's boot ROM
     // is given, as scripts/fetch-aic8800.sh fetched it. On the ESP32-P4's
     // disk alone: the stick needs a high-speed port. Not in DEVS:usb/
@@ -1799,6 +1831,14 @@ pub fn build(b: *std.Build) void {
     fontconv_tests_truetype.addImport("sdk", sdk);
     fontconv_tests.addImport("truetype", fontconv_tests_truetype);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fontconv_tests })).step);
+    // emojigen's own tests: the list and the names it makes, read back
+    // with the SDK's reader.
+    const emojigen_tests = b.createModule(.{
+        .root_source_file = b.path("tools/emojigen/emojigen.zig"),
+        .target = b.graph.host,
+    });
+    emojigen_tests.addImport("sdk", sdk);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = emojigen_tests })).step);
     // svgcompare reads the modules' own code, not their calls: it is
     // compiled here so that a change to that code is seen in it.
     test_step.dependOn(&svgcompare.step);
@@ -2726,6 +2766,44 @@ fn unicodeDir(b: *std.Build) ?[]const u8 {
     dir.close(io);
     return path;
 }
+
+/// Where scripts/fetch-emoji.sh put the emoji list and the annotation
+/// files, if it has.
+fn emojiDir(b: *std.Build) ?[]const u8 {
+    const io = b.graph.io;
+    const path = b.pathFromRoot("toolchain/emoji/16.0");
+    std.Io.Dir.cwd().access(io, b.pathJoin(&.{ path, "emoji-test.txt" }), .{}) catch {
+        std.log.info("no emoji list and names (scripts/fetch-emoji.sh): the virt machines' system disks have no LOCALE:Emoji", .{});
+        return null;
+    };
+    return path;
+}
+
+/// A language the disk has, as the locale names it, and the annotation
+/// files its emoji names are made from: its own last, after the one it
+/// takes what it leaves out from.
+const EmojiLanguage = struct {
+    name: []const u8,
+    codes: []const []const u8,
+};
+
+const emoji_languages = [_]EmojiLanguage{
+    .{ .name = "dansk", .codes = &.{"da"} },
+    .{ .name = "deutsch", .codes = &.{"de"} },
+    .{ .name = "english", .codes = &.{"en"} },
+    .{ .name = "espanol", .codes = &.{"es"} },
+    .{ .name = "francais", .codes = &.{"fr"} },
+    .{ .name = "hangugeo", .codes = &.{"ko"} },
+    .{ .name = "hindi", .codes = &.{"hi"} },
+    .{ .name = "italiano", .codes = &.{"it"} },
+    .{ .name = "nederlands", .codes = &.{"nl"} },
+    .{ .name = "nihongo", .codes = &.{"ja"} },
+    .{ .name = "norsk", .codes = &.{"no"} },
+    .{ .name = "portugues", .codes = &.{ "pt", "pt_PT" } },
+    .{ .name = "svenska", .codes = &.{"sv"} },
+    .{ .name = "zhongwen", .codes = &.{"zh"} },
+    .{ .name = "zhongwen-fanti", .codes = &.{"zh_Hant"} },
+};
 
 /// Where scripts/fetch-icons.sh put the pictures drawn at `size`, if it
 /// has.

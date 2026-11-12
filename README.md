@@ -210,7 +210,7 @@ from `LIBS:` when first opened. Every module, with its reference, is in
 |---|---|
 | Kernel | `exec` tasks on every core, ports, memory, libraries and devices; `utility` tag lists, hooks, dates, the zone the clock keeps, UTF-8 strings with Unicode's case, widths and clusters, text between UTF-8 and Latin-1, URLs and arrays sorted; `expansion` the board's parts |
 | Files | `dos` processes, files, handlers, the shell's `ReadArgs`, files read whole, trees made and deleted, passwords typed without their echo; `rdb` partitions on any drive; `compression` DEFLATE, zlib and gzip |
-| Languages | `locale` countries' dates, numbers and money, languages' words and order of letters, characters classed and sorted by Unicode, programs' texts translated in catalogs |
+| Languages | `locale` countries' dates, numbers and money, languages' words and order of letters, characters classed and sorted by Unicode, programs' texts translated in catalogs, the emoji in their groups with their names in each language (`LOCALE:Emoji`) |
 | Displays | **`rtg`**; `graphics` drawing, text in UTF-8 set as its font shapes it and taken by its clusters - a conjunct, a flag, a joined emoji is never cut -, and where in a drawn text a cursor goes; `layers`; `intuition` screens, windows, gadgets, styles; `keymap` keys into UTF-8 by the ROM's keymaps or one loaded from `DEVS:Keymaps` (`SetMap inscript`: Devanagari by the InScript layout); `motion` animations and timers |
 | Sound | **`rta`**; `audiocodec` WAV, MP3, FLAC, Ogg Vorbis |
 | Video | `videocodec` films - their pictures, sound and subtitles; `media` MP4, MOV and Matroska; `videoparse` H.264, H.265, VP9 and AV1 streams read for a decoder |
@@ -387,6 +387,7 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/fetch-wifi.sh` | the radio's vendor libraries for `DEVS:networks/esp32s3wifi.device` |
 | `scripts/fetch-aic8800.sh` | the AIC8800 USB Wi-Fi stick's firmware, which `DEVS:usb/aic8800.device` loads into it (the ESP32-P4's disk) |
 | `scripts/fetch-fonts.sh` | the fonts in `FONTS:` (Spleen, Go, Liberation and Noto Sans Devanagari on the 64-bit machines' disks, and Noto Sans CJK and Noto Color Emoji on the system disks of QEMU's virt machines), and a font only the host tests read (Source Sans 3) |
+| `scripts/fetch-emoji.sh` | Unicode's list of the emoji and the CLDR's names for them, made into `LOCALE:Emoji` - the emoji in their groups and order, and what each is called in the disk's languages (the system disks of QEMU's virt machines) |
 | `scripts/fetch-certs.sh` | Mozilla's root certificates, made into the trust store `SYS:Certificates/Roots` |
 | `scripts/fetch-cyw43455.sh` | the Compute Module 5's radio firmware, which `DEVS:networks/cyw43455.device` loads into it (the AArch64 disk) |
 | `scripts/fetch-vpu.sh` | the JH7110's video decoder firmware, which `videodec.resource` loads (the RISC-V 64 disk) |
@@ -410,6 +411,7 @@ From a fresh clone to the desktop in a window:
 scripts/build-qemu.sh        # once: QEMU with the display, into toolchain/qemu
 scripts/fetch-icons.sh       # optional: the desktop's icons
 scripts/fetch-fonts.sh       # optional: the fonts
+scripts/fetch-emoji.sh       # optional: the emoji's list and names
 ./zig build qemu-display     # the first run also fetches the Zig toolchain
 ```
 
