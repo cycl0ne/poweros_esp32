@@ -43,7 +43,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Version";
-const VERSION_STRING = "\x00$VER: Version 1.0 (16.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Version 1.1 (12.11.2026)\r\n";
 
 const template = "NAME,VERSION/N,REVISION/N,FILE/S,FULL/S,UNIT/N,INTERNAL/S,RES/S";
 const arg_name = 0;
@@ -260,7 +260,10 @@ fn fromNode(
         const parsed = parseVer(line(id[0..end]));
         if (parsed.name.len != 0) {
             info = parsed;
-            if (parsed.version == 0) {
+            // A string with no numbers leaves them to the node. One that
+            // says 0.<revision> has them: a module not yet at its first
+            // version counts its revisions all the same.
+            if (parsed.version == 0 and parsed.revision == 0) {
                 info.version = version;
                 info.revision = revision;
             }
