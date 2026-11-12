@@ -14,7 +14,7 @@ const _outline = @import("../outline/_outline.zig");
 /// fn GlyphAdvance(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32) i32
 /// ```
 ///
-/// SINCE: 1.8. LVO -80.
+/// SINCE: 1.8, variable fonts of cubic curves since 1.9. LVO -80.
 ///
 /// INPUTS:
 /// - `outline` - what `OpenOutline` answered.
@@ -30,7 +30,9 @@ const _outline = @import("../outline/_outline.zig");
 /// is that instance's: the advance plus what the font's `HVAR` table
 /// says it changes by there, rounded to a whole unit; or, in a font
 /// without that table, the distance between the glyph's two sides as
-/// its deltas in `gvar` move them, rounded.
+/// its deltas in `gvar` move them, rounded. A font of cubic curves
+/// without `HVAR` has nothing that moves its advances: they are the
+/// same at every instance.
 ///
 /// The call reads no outline and takes no memory, which the box of a
 /// glyph away from the default does. It is the one to ask when a line

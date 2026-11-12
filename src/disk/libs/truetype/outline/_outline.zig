@@ -35,8 +35,8 @@
 //! same list of contours, a curve as two control points (`Point.cubic`)
 //! and the point it ends at. Such a font says nothing of its largest
 //! glyph, and a glyph that does not fit the room it is read into says
-//! what it needs (`Contours.short`). A font whose only outlines are a
-//! `CFF2` table's is not opened.
+//! what it needs (`Contours.short`). Since 1.9 a variable font's `CFF2`
+//! table is read the same way, at the font's place on its axes.
 //!
 //! Since 1.7 a font without outlines may have its glyphs as pictures,
 //! bitmaps at one size or several (`_strike.zig`): found here, and read
@@ -99,8 +99,9 @@ pub const Font = struct {
     max_contours: u32,
     /// The `kern` table; of no length when the font has none.
     kern: Table,
-    /// The `CFF ` table (since 1.6), read when the font has no `glyf`;
-    /// its `table` of no length otherwise.
+    /// The `CFF ` table (since 1.6) or the `CFF2` table (since 1.9),
+    /// read when the font has no `glyf`; its `table` of no length
+    /// otherwise.
     cff: _cff.Cff,
     /// The font's pictures (since 1.7), read when it has no outlines;
     /// none otherwise.
@@ -246,13 +247,15 @@ pub fn open(font: *Font, data: [*]const u8, size: u32, index: u32, axes: ?[*]con
     if ((loca == null) != (glyf == null)) return false;
     font.loca = loca orelse .{};
     font.glyf = glyf orelse .{};
-    // Without them, the outlines a `CFF ` table has; one that cannot be
-    // read, or a `CFF2` table alone, is a font not read.
+    // Without them, the outlines a `CFF ` table has, or a `CFF2` table;
+    // one that cannot be read is a font not read.
     font.cff = .{};
     if (glyf == null) {
         if (findTable(font, "CFF ")) |table| {
-            font.cff = _cff.open(font, table) orelse return false;
-        } else if (findTable(font, "CFF2") != null) return false;
+            font.cff = _cff.open(font, table, false) orelse return false;
+        } else if (findTable(font, "CFF2")) |table| {
+            font.cff = _cff.open(font, table, true) orelse return false;
+        }
     }
     // A font without outlines is its pictures, if it has them; one with
     // outlines is drawn from those at every size.
@@ -569,12 +572,13 @@ pub fn hasPictures(font: *const Font) bool {
     return _strike.has(font);
 }
 
-/// Whether the font has outlines at all: `glyf`, or a `CFF ` table.
+/// Whether the font has outlines at all: `glyf`, or a `CFF ` or `CFF2`
+/// table.
 pub fn hasOutlines(font: *const Font) bool {
     return font.glyf.len != 0 or font.cff.table.len != 0;
 }
 
-/// Whether the font's outlines are a `CFF ` table's.
+/// Whether the font's outlines are a `CFF ` or a `CFF2` table's.
 pub fn isCubic(font: *const Font) bool {
     return font.glyf.len == 0 and font.cff.table.len != 0;
 }

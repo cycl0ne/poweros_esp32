@@ -49,7 +49,7 @@ const TrueTypeBase = sdk.interface.truetype.TrueTypeBase;
 // --- the tables -----------------------------------------------------------
 
 /// One axis of a built font.
-const Axis = struct {
+pub const Axis = struct {
     tag: *const [4]u8,
     least: f32,
     middle: f32,
@@ -59,7 +59,7 @@ const Axis = struct {
 };
 
 /// One named instance: its name's number and its value on each axis.
-const Instance = struct {
+pub const Instance = struct {
     name: u16,
     values: []const f32,
 };
@@ -70,7 +70,7 @@ fn fixedOf(value: f32) u32 {
 }
 
 /// An `fvar` table of `axes` and `instances`.
-fn fvar(file: *File, axes: []const Axis, instances: []const Instance) void {
+pub fn fvar(file: *File, axes: []const Axis, instances: []const Instance) void {
     file.word(1);
     file.word(0);
     file.word(16);
@@ -260,7 +260,7 @@ fn placeOf(file: *File, places: u32, index: usize, at: u32, long: bool) void {
 /// One set of rows of a store of deltas: the regions its columns are
 /// for, how many of the columns are wide, and whether wide is a long
 /// word and narrow a word, or a word and a byte.
-const Rows = struct {
+pub const Rows = struct {
     regions: []const u16,
     wide: u16,
     long: bool = false,
@@ -269,7 +269,7 @@ const Rows = struct {
 
 /// A store of deltas for `axes` axes: its regions - where each starts,
 /// counts whole and ends on each axis - and its sets of rows.
-fn store(file: *File, axes: u16, regions: []const []const [3]i16, sets: []const Rows) void {
+pub fn store(file: *File, axes: u16, regions: []const []const [3]i16, sets: []const Rows) void {
     const start = file.len;
     file.word(1);
     file.long(0);
@@ -308,7 +308,7 @@ fn store(file: *File, axes: u16, regions: []const []const [3]i16, sets: []const 
 /// A map from glyphs to a store's items: a set and a row each, kept in
 /// `size` bytes with the row in the low `row_bits` bits; the count a
 /// word, or with `long` a long word.
-const Map = struct {
+pub const Map = struct {
     long: bool = false,
     size: u8 = 1,
     row_bits: u8 = 4,
@@ -316,7 +316,7 @@ const Map = struct {
 };
 
 /// An `HVAR` table of a store and, if given, a map for the advances.
-fn hvar(file: *File, items: []const u8, map: ?Map) void {
+pub fn hvar(file: *File, items: []const u8, map: ?Map) void {
     file.word(1);
     file.word(0);
     file.long(20);
@@ -596,7 +596,7 @@ pub fn sidesFont(file: *File) void {
 }
 
 /// Where the table `tag` of a built font starts in its file.
-fn tableAt(file: *const File, tag: *const [4]u8) u32 {
+pub fn tableAt(file: *const File, tag: *const [4]u8) u32 {
     const tables = std.mem.readInt(u16, file.bytes[4..6], .big);
     for (0..tables) |index| {
         const record = 12 + index * 16;
@@ -616,7 +616,7 @@ fn place(weight: f32, width: f32) [2]truetype.AxisValue {
 }
 
 /// The font of `file` opened at `values`.
-fn openAt(tb: *TrueTypeBase, file: *const File, values: []const truetype.AxisValue) !*truetype.Outline {
+pub fn openAt(tb: *TrueTypeBase, file: *const File, values: []const truetype.AxisValue) !*truetype.Outline {
     const tags = [_]utility.TagItem{
         .{ .tag = truetype.TTA_Axes, .data = @intFromPtr(values.ptr) },
         .{ .tag = truetype.TTA_AxisCount, .data = values.len },

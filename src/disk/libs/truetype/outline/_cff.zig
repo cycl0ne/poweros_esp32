@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! A font's `CFF ` table as the library reads it: the glyphs of a font
-//! whose outlines are lines and cubic curves. Since 1.6.
+//! whose outlines are lines and cubic curves. Since 1.6; a variable
+//! font's `CFF2` table since 1.9.
 //!
 //! The table is a header and four lists one after the other - the names,
 //! the top dictionaries, the strings and the global subroutines - and,
@@ -28,6 +29,25 @@
 //! the point on the curve it ends at. A move ends the contour before it,
 //! and a point moved to that nothing is drawn from is no contour.
 //!
+//! A `CFF2` table is the same made for a variable font. Its header is
+//! followed by the one top dictionary and the global subroutines, with
+//! no names and no strings; a list's count is four bytes; every font
+//! has font dictionaries, and the table saying which a glyph has may be
+//! missing, when all have the first. A program has no width and need
+//! not say where it ends, its stack holds 513 numbers, and of the
+//! operators that work on the stack it has none. In their place it has
+//! two for the deltas: the numbers a program draws with are the default
+//! instance's, and `blend` finds after them a delta for each of the
+//! regions of one of the item variation store's data - the one the
+//! glyph's private dictionary names, or the program itself with
+//! `vsindex` - and makes of each number its value at the font's
+//! coordinates: itself plus its deltas, each times its region's part
+//! (`_variation.zig`). The store is in the table, named by the top
+//! dictionary. At the font's default every part is 0 and the numbers
+//! stay as they are. The sums are made in 64-bit floating point in the
+//! deltas' order, and the number goes back on the stack in the 32 bits
+//! every number there has: the same steps on every machine.
+//!
 //! The table names no largest glyph, so a glyph is read into what room
 //! there is and counted whether it fits or not: one that does not fit
 //! says how much it needs (`Contours.short`), and its caller reads it
@@ -47,6 +67,7 @@
 //! nothing here.
 
 const _outline = @import("_outline.zig");
+const _variation = @import("_variation.zig");
 const Font = _outline.Font;
 const Table = _outline.Table;
 const Contours = _outline.Contours;
@@ -68,10 +89,13 @@ pub const Index = struct {
     base: u32 = 0,
 };
 
-/// What `open` finds of a `CFF ` table. `table` is of no length for a
-/// font without one.
+/// What `open` finds of a `CFF ` or a `CFF2` table. `table` is of no
+/// length for a font without one.
 pub const Cff = struct {
     table: Table = .{},
+    /// Whether the table is a `CFF2` one: its programs blend, every glyph
+    /// looks up its font dictionary, and `store` is read.
+    blends: bool = false,
     /// A program a glyph.
     charstrings: Index = .{},
     global_subrs: Index = .{},
@@ -83,8 +107,12 @@ pub const Cff = struct {
     /// The font dictionaries.
     fonts: Index = .{},
     /// The table saying which font dictionary a glyph has, to the end of
-    /// the `CFF ` table.
+    /// the `CFF ` table; of no length in a `CFF2` table that has none,
+    /// whose glyphs all have the first.
     select: Table = .{},
+    /// A `CFF2` table's item variation store: the regions its programs'
+    /// deltas are for. Of no length in a table without one.
+    store: Table = .{},
 };
 
 /// The most points a glyph has: as many as a glyph of quadratic curves
@@ -95,10 +123,16 @@ pub const most_points = 0xFFFF;
 /// subroutines' among them: four for every point the largest glyph has.
 const most_steps = 1 << 18;
 
-/// The numbers a program's stack holds, and how deep subroutines nest:
-/// the format's own limits.
+/// The numbers a program's stack holds - of a `CFF2` table's, which has
+/// a number's deltas there too, `most_blended` - and how deep
+/// subroutines nest: the format's own limits.
 const most_stack = 48;
+const most_blended = 513;
 const most_calls = 10;
+
+/// The regions whose parts are worked out once a glyph; a program whose
+/// deltas are for more has the others' worked out at each blend.
+const most_parts = 16;
 
 /// How many numbers a program can put aside.
 const most_kept = 32;
@@ -115,20 +149,25 @@ const op_charstring_type = 0x0C06;
 const op_ros = 0x0C1E;
 const op_fd_array = 0x0C24;
 const op_fd_select = 0x0C25;
+// Of a `CFF2` table's dictionaries only.
+const op_vsindex = 22;
+const op_vstore = 24;
 
 // --- lists and dictionaries -----------------------------------------------------
 
 /// The list that starts `at` into `table`; null when it does not lie
-/// within it.
-fn indexAt(font: *const Font, table: Table, at: u32) ?Index {
-    if (at >= table.len or table.len - at < 2) return null;
-    const count: u32 = wordIn(font, table, at);
-    if (count == 0) return .{ .offsets = at + 2 };
-    const off_size: u32 = byteIn(font, table, at + 2);
+/// within it. `wide` for a `CFF2` table's, whose count is four bytes.
+fn indexAt(font: *const Font, table: Table, at: u32, wide: bool) ?Index {
+    const counted: u32 = if (wide) 4 else 2;
+    if (at >= table.len or table.len - at < counted) return null;
+    const count: u32 = if (wide) longIn(font, table, at) else wordIn(font, table, at);
+    if (count == 0) return .{ .offsets = at + counted };
+    const off_size: u32 = byteIn(font, table, at + counted);
     if (off_size < 1 or off_size > 4) return null;
-    const offsets = at + 3;
+    const offsets = at + counted + 1;
+    // One offset more than it has entries, all within the table.
+    if (offsets > table.len or count >= (table.len - offsets) / off_size) return null;
     const bytes = (count + 1) * off_size;
-    if (offsets > table.len or bytes > table.len - offsets) return null;
     return .{ .count = count, .off_size = off_size, .offsets = offsets, .base = offsets + bytes - 1 };
 }
 
@@ -175,7 +214,8 @@ fn dictFind(font: *const Font, dict: Table, wanted: u32, numbers: *[3]i32) bool 
         at += 1;
         var value: i32 = 0;
         switch (first) {
-            0...21 => {
+            // 22 to 24 are operators of a `CFF2` table's dictionaries.
+            0...24 => {
                 var operator = first;
                 if (first == 12) {
                     operator = 0x0C00 | @as(u32, byteIn(font, dict, at));
@@ -220,55 +260,101 @@ fn dictFind(font: *const Font, dict: Table, wanted: u32, numbers: *[3]i32) bool 
     return false;
 }
 
-/// The local subroutines of the private dictionary `size` bytes long
-/// `offset` into the table; a list of no entries when it names none.
-fn localSubrs(font: *const Font, table: Table, size: i32, offset: i32) Index {
-    if (size <= 0 or offset < 0) return .{};
+/// The private dictionary `size` bytes long `offset` into the table;
+/// null when there is none, or it does not lie within the table.
+fn privateAt(table: Table, size: i32, offset: i32) ?Table {
+    if (size <= 0 or offset < 0) return null;
     const start: u32 = @intCast(offset);
     const length: u32 = @intCast(size);
-    if (start > table.len or length > table.len - start) return .{};
-    var numbers: [3]i32 = undefined;
-    if (!dictFind(font, .{ .at = table.at + start, .len = length }, op_subrs, &numbers)) return .{};
-    // Counted from where the private dictionary starts.
-    if (numbers[0] < 0 or @as(u32, @intCast(numbers[0])) > table.len - start) return .{};
-    return indexAt(font, table, start + @as(u32, @intCast(numbers[0]))) orelse .{};
+    if (start > table.len or length > table.len - start) return null;
+    return .{ .at = table.at + start, .len = length };
 }
 
-/// The `CFF ` table read: its lists found and checked. Null for a table
-/// that is not sound, of another version than 1, or whose programs are
-/// not Type 2 charstrings. `font` needs only its bytes set.
-pub fn open(font: *const Font, table: Table) ?Cff {
+/// The local subroutines a private dictionary names; a list of no
+/// entries when it names none.
+fn localSubrs(font: *const Font, table: Table, private: Table, wide: bool) Index {
+    var numbers: [3]i32 = undefined;
+    if (!dictFind(font, private, op_subrs, &numbers)) return .{};
+    // Counted from where the private dictionary starts.
+    const start = private.at - table.at;
+    if (numbers[0] < 0 or @as(u32, @intCast(numbers[0])) > table.len - start) return .{};
+    return indexAt(font, table, start + @as(u32, @intCast(numbers[0])), wide) orelse .{};
+}
+
+/// The `CFF ` table read, or with `blends` the `CFF2` table: its lists
+/// found and checked. Null for a table that is not sound, of another
+/// version than 1 - a `CFF2` table than 2 - or whose programs are not
+/// Type 2 charstrings. `font` needs only its bytes set.
+pub fn open(font: *const Font, table: Table, blends: bool) ?Cff {
+    if (blends) return openBlended(font, table);
     var cff = Cff{ .table = table };
     if (table.len < 4 or byteIn(font, table, 0) != 1) return null;
-    const names = indexAt(font, table, byteIn(font, table, 2)) orelse return null;
-    const tops = indexAt(font, table, endOf(font, table, names) orelse return null) orelse return null;
-    const strings = indexAt(font, table, endOf(font, table, tops) orelse return null) orelse return null;
-    cff.global_subrs = indexAt(font, table, endOf(font, table, strings) orelse return null) orelse return null;
+    const names = indexAt(font, table, byteIn(font, table, 2), false) orelse return null;
+    const tops = indexAt(font, table, endOf(font, table, names) orelse return null, false) orelse return null;
+    const strings = indexAt(font, table, endOf(font, table, tops) orelse return null, false) orelse return null;
+    cff.global_subrs = indexAt(font, table, endOf(font, table, strings) orelse return null, false) orelse return null;
     const top = entryOf(font, table, tops, 0) orelse return null;
 
     var numbers: [3]i32 = undefined;
     if (dictFind(font, top, op_charstring_type, &numbers) and numbers[0] != 2) return null;
     if (!dictFind(font, top, op_charstrings, &numbers) or numbers[0] < 0) return null;
-    cff.charstrings = indexAt(font, table, @intCast(numbers[0])) orelse return null;
+    cff.charstrings = indexAt(font, table, @intCast(numbers[0]), false) orelse return null;
 
     if (dictFind(font, top, op_ros, &numbers)) {
         cff.cid = true;
         if (!dictFind(font, top, op_fd_array, &numbers) or numbers[0] < 0) return null;
-        cff.fonts = indexAt(font, table, @intCast(numbers[0])) orelse return null;
+        cff.fonts = indexAt(font, table, @intCast(numbers[0]), false) orelse return null;
         if (!dictFind(font, top, op_fd_select, &numbers) or numbers[0] < 0) return null;
         const select: u32 = @intCast(numbers[0]);
         if (select >= table.len) return null;
         cff.select = .{ .at = table.at + select, .len = table.len - select };
     } else if (dictFind(font, top, op_private, &numbers)) {
-        cff.local_subrs = localSubrs(font, table, numbers[0], numbers[1]);
+        if (privateAt(table, numbers[0], numbers[1])) |private| cff.local_subrs = localSubrs(font, table, private, false);
     }
     return cff;
 }
 
-/// The font dictionary a glyph of a CID-keyed font belongs to; a number
-/// no list has when the table names none.
+/// The `CFF2` table read. Its header says how long it is itself and how
+/// long the one top dictionary after it; the global subroutines follow
+/// that. The dictionary names the programs and the font dictionaries,
+/// which every such table has, and may name the table that says which
+/// of them a glyph has and the item variation store.
+fn openBlended(font: *const Font, table: Table) ?Cff {
+    var cff = Cff{ .table = table, .blends = true, .cid = true };
+    if (table.len < 5 or byteIn(font, table, 0) != 2) return null;
+    const header: u32 = byteIn(font, table, 2);
+    const top_size: u32 = wordIn(font, table, 3);
+    if (header < 5 or header > table.len or top_size > table.len - header) return null;
+    const top = Table{ .at = table.at + header, .len = top_size };
+    cff.global_subrs = indexAt(font, table, header + top_size, true) orelse return null;
+
+    var numbers: [3]i32 = undefined;
+    if (!dictFind(font, top, op_charstrings, &numbers) or numbers[0] < 0) return null;
+    cff.charstrings = indexAt(font, table, @intCast(numbers[0]), true) orelse return null;
+    if (!dictFind(font, top, op_fd_array, &numbers) or numbers[0] < 0) return null;
+    cff.fonts = indexAt(font, table, @intCast(numbers[0]), true) orelse return null;
+    if (cff.fonts.count == 0) return null;
+    if (dictFind(font, top, op_fd_select, &numbers)) {
+        if (numbers[0] < 0 or @as(u32, @intCast(numbers[0])) >= table.len) return null;
+        const select: u32 = @intCast(numbers[0]);
+        cff.select = .{ .at = table.at + select, .len = table.len - select };
+    }
+    // The store has its length before it.
+    if (dictFind(font, top, op_vstore, &numbers)) {
+        if (numbers[0] < 0 or @as(u32, @intCast(numbers[0])) >= table.len) return null;
+        const store: u32 = @intCast(numbers[0]);
+        const length: u32 = wordIn(font, table, store);
+        if (table.len - store < 2 or length > table.len - store - 2) return null;
+        cff.store = .{ .at = table.at + store + 2, .len = length };
+    }
+    return cff;
+}
+
+/// The font dictionary a glyph of a CID-keyed font, or of a `CFF2`
+/// table, belongs to; a number no list has when the table names none.
 fn selected(font: *const Font, glyph: u32) u32 {
     const select = font.cff.select;
+    if (select.len == 0) return if (font.cff.blends) 0 else ~@as(u32, 0);
     switch (byteIn(font, select, 0)) {
         // A byte a glyph.
         0 => return byteIn(font, select, 1 +| glyph),
@@ -284,18 +370,41 @@ fn selected(font: *const Font, glyph: u32) u32 {
             if (low == 0) return ~@as(u32, 0);
             return byteIn(font, select, 3 + (low - 1) * 3 + 2);
         },
+        // The same with numbers twice as wide, in a `CFF2` table.
+        4 => {
+            if (!font.cff.blends) return ~@as(u32, 0);
+            const count: u32 = @min(longIn(font, select, 1), (select.len -| 9) / 6);
+            var low: u32 = 0;
+            var high: u32 = count;
+            while (low < high) {
+                const mid = low + (high - low) / 2;
+                if (longIn(font, select, 5 + mid * 6) <= glyph) low = mid + 1 else high = mid;
+            }
+            if (low == 0) return ~@as(u32, 0);
+            return wordIn(font, select, 5 + (low - 1) * 6 + 4);
+        },
         else => return ~@as(u32, 0),
     }
 }
 
-/// The local subroutines a glyph's program calls.
-fn localsOf(font: *const Font, glyph: u32) Index {
+/// What a glyph's program has of its private dictionary: the local
+/// subroutines it calls, and which of the store's data its deltas are
+/// for until it says otherwise.
+const Private = struct {
+    locals: Index = .{},
+    data: u32 = 0,
+};
+
+fn privateOf(font: *const Font, glyph: u32) Private {
     const cff = &font.cff;
-    if (!cff.cid) return cff.local_subrs;
+    if (!cff.cid) return .{ .locals = cff.local_subrs };
     const dict = entryOf(font, cff.table, cff.fonts, selected(font, glyph)) orelse return .{};
     var numbers: [3]i32 = undefined;
     if (!dictFind(font, dict, op_private, &numbers)) return .{};
-    return localSubrs(font, cff.table, numbers[0], numbers[1]);
+    const private = privateAt(cff.table, numbers[0], numbers[1]) orelse return .{};
+    var found = Private{ .locals = localSubrs(font, cff.table, private, cff.blends) };
+    if (cff.blends and dictFind(font, private, op_vsindex, &numbers) and numbers[0] >= 0) found.data = @intCast(numbers[0]);
+    return found;
 }
 
 // --- a glyph's program ------------------------------------------------------------
@@ -345,6 +454,32 @@ const Run = struct {
     /// y min, x max, y max.
     box: [4]f32 = .{ far, far, -far, -far },
     own: [4]f32 = .{ far, far, -far, -far },
+    /// Of a `CFF2` table's program: how many regions each number's
+    /// deltas are for, null when the store has no data of the number
+    /// asked; and how much the first of them count at the font's
+    /// coordinates.
+    regions: ?u32 = 0,
+    data: u32 = 0,
+    parts: [most_parts]f64 = @splat(0),
+
+    /// The deltas of the program are for the regions of the store's data
+    /// `data` from here on. A table without a store has no deltas.
+    fn vary(run: *Run, data: u32) void {
+        const font = run.font;
+        const store = font.cff.store;
+        run.data = data;
+        run.regions = 0;
+        if (store.len == 0) return;
+        run.regions = _variation.storeRegions(font, store, data);
+        const count = @min(run.regions orelse 0, most_parts);
+        for (run.parts[0..count], 0..) |*part, index| part.* = _variation.storePart(font, store, data, @intCast(index));
+    }
+
+    /// How much delta `index` of a number's counts.
+    fn partOf(run: *const Run, index: u32) f64 {
+        if (index < most_parts) return run.parts[index];
+        return _variation.storePart(run.font, run.font.cff.store, run.data, index);
+    }
 
     /// The point the program is at added to the contour.
     fn add(run: *Run, on: bool, cubic: bool) void {
@@ -426,12 +561,24 @@ const Run = struct {
         run.add(true, false);
     }
 
+    /// The program of `glyph` run, by the table's kind.
+    fn start(run: *Run, glyph: u32, program: Table) void {
+        const private = privateOf(run.font, glyph);
+        if (run.font.cff.blends) {
+            run.vary(private.data);
+            run.interpret(true, program, private.locals);
+        } else run.interpret(false, program, private.locals);
+    }
+
     /// `program` run to its end, calling `locals` and the font's global
     /// subroutines. `sound` is false afterwards if it was damaged.
-    fn interpret(run: *Run, program: Table, locals: Index) void {
+    /// `blends` for a `CFF2` table's program: its stack is deeper, it
+    /// has the two operators for deltas, and none that work on the stack
+    /// otherwise.
+    fn interpret(run: *Run, comptime blends: bool, program: Table, locals: Index) void {
         const font = run.font;
         const cff = &font.cff;
-        var stack: [most_stack]f32 = undefined;
+        var stack: [if (blends) most_blended else most_stack]f32 = undefined;
         var depth: u32 = 0;
         var aside: [most_kept]f32 = @splat(0);
         var calls: [most_calls]Frame = undefined;
@@ -482,7 +629,7 @@ const Run = struct {
                     value = @as(f32, @floatFromInt(@as(i32, @bitCast(bits)))) / 65536.0;
                     at += 4;
                 }
-                if (depth == most_stack) break;
+                if (depth == stack.len) break;
                 stack[depth] = value;
                 depth += 1;
                 continue;
@@ -609,10 +756,43 @@ const Run = struct {
                     run.finish();
                     return;
                 },
+                // Which of the store's data the deltas are for.
+                15 => {
+                    if (!blends or depth < 1) break;
+                    const data = whole(stack[depth - 1]) orelse break;
+                    if (data < 0) break;
+                    run.vary(@intCast(data));
+                    depth = 0;
+                },
+                // Numbers blended: so many of them, then each one's
+                // deltas, a delta a region, then how many. Each number
+                // becomes itself plus its deltas, each times its
+                // region's part - summed in 64 bits, in their order - and
+                // the deltas are gone.
+                16 => {
+                    if (!blends or depth < 1) break;
+                    const stated = whole(stack[depth - 1]) orelse break;
+                    const regions = run.regions orelse break;
+                    if (stated < 0 or stated > depth - 1) break;
+                    const count: u32 = @intCast(stated);
+                    if (regions != 0 and count > (depth - 1 - count) / regions) break;
+                    const base = depth - 1 - count * (regions + 1);
+                    var number: u32 = 0;
+                    while (number < count) : (number += 1) {
+                        var sum: f64 = 0;
+                        const deltas = stack[base + count + number * regions ..][0..regions];
+                        for (deltas, 0..) |delta, index| sum += @as(f64, delta) * run.partOf(@intCast(index));
+                        stack[base + number] = @floatCast(@as(f64, stack[base + number]) + sum);
+                    }
+                    depth = base + count;
+                },
                 12 => {
                     if (end - at < 1) break;
                     const second = font.data[at];
                     at += 1;
+                    // Of these a `CFF2` table's program has the four
+                    // curves at the end.
+                    if (blends and second < 34) break;
                     switch (second) {
                         // and, or, not: 0 is false.
                         3, 4 => {
@@ -679,7 +859,7 @@ const Run = struct {
                         // number every time, so a glyph is the same glyph
                         // every time.
                         23 => {
-                            if (depth == most_stack) break;
+                            if (depth == stack.len) break;
                             stack[depth] = 1;
                             depth += 1;
                         },
@@ -689,7 +869,7 @@ const Run = struct {
                         },
                         // dup, exch.
                         27 => {
-                            if (depth < 1 or depth == most_stack) break;
+                            if (depth < 1 or depth == stack.len) break;
                             stack[depth] = stack[depth - 1];
                             depth += 1;
                         },
@@ -716,6 +896,7 @@ const Run = struct {
                             depth -= 2;
                             if (size < 0 or size > depth) break;
                             if (size == 0) continue;
+                            if (blends) break;
                             const count: u32 = @intCast(size);
                             const turn: u32 = @intCast(@mod(by, size));
                             var turned: [most_stack]f32 = undefined;
@@ -784,7 +965,7 @@ pub fn contours(font: *const Font, glyph: u32, into: *Contours, m: [6]f32) bool 
     const points = into.point_count;
     const ends = into.end_count;
     var run = Run{ .font = font, .into = into, .m = m, .points = points, .ends = ends };
-    run.interpret(program, localsOf(font, glyph));
+    run.start(glyph, program);
     if (run.sound and run.fits) return true;
     into.point_count = points;
     into.end_count = ends;
@@ -803,7 +984,7 @@ pub fn boxOf(font: *const Font, glyph: u32) [4]i32 {
     const cff = &font.cff;
     const program = entryOf(font, cff.table, cff.charstrings, glyph) orelse return .{ 0, 0, 0, 0 };
     var run = Run{ .font = font, .into = null, .m = .{ 1, 0, 0, 1, 0, 0 } };
-    run.interpret(program, localsOf(font, glyph));
+    run.start(glyph, program);
     if (!run.sound or run.ends == 0) return .{ 0, 0, 0, 0 };
     return .{
         @intFromFloat(@floor(run.box[0])),

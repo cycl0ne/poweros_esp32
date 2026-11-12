@@ -17,7 +17,8 @@ const _render = @import("../render/_render.zig");
 /// ```
 ///
 /// SINCE: 1.2, fonts of cubic curves since 1.6, fonts of pictures since
-/// 1.7, variable fonts since 1.8. LVO -36.
+/// 1.7, variable fonts since 1.8, those of cubic curves since 1.9.
+/// LVO -36.
 ///
 /// INPUTS:
 /// - `outline` - what `OpenOutline` answered.
@@ -57,6 +58,13 @@ const _render = @import("../render/_render.zig");
 /// rounded - to the left of that box. A glyph whose deltas are damaged
 /// has a box of 0s and its advance.
 ///
+/// A glyph of cubic curves of a variable font away from its default
+/// (`CFF2`) has its deltas in its program, so its box is that
+/// instance's as it is at the default: the program is run, and no
+/// memory is taken. Its origin is where its program starts from, at
+/// every instance, and its left side bearing is the left of its box
+/// there, 0 for a glyph of no outline.
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
@@ -87,9 +95,12 @@ pub fn GlyphMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, m
     if (glyph >= font.glyph_count) return false;
     if (_outline.isVaried(font)) return varied(tb, font, glyph, metrics);
     const box = _outline.boxOf(font, glyph);
+    // The table's bearing is the default's: away from it a glyph of
+    // cubic curves, drawn from its origin, has its box's left.
+    const blended = _outline.isCubic(font) and font.vary.varied;
     metrics.* = .{
         .advance = _outline.advanceOf(font, glyph),
-        .left_bearing = _outline.leftBearingOf(font, glyph),
+        .left_bearing = if (blended) box[0] else _outline.leftBearingOf(font, glyph),
         .x_min = box[0],
         .y_min = box[1],
         .x_max = box[2],

@@ -34,7 +34,7 @@ pub const font: reference.Font = .{
     .bold = false,
     .italic = false,
     .metrics_sha256 = "f53fc21f5378f04ae3e8b7166386de4c5cc497aabe72f1c4097b5cf077876519",
-    .outlines_sha256 = "90369cb003a10fbdcb62446ea8734b6027dfbd6bf835b0624c54e6c76ef64d05",
+    .outlines_sha256 = "d47894a81ad913e9fc0978a10cf93d40e3d4302f55a143551b731900529bdab2",
     .shapes = &.{
         .{ .glyph = 6, .verbs = "MLLLLLLLLLLLZ", .points = &.{ .{ 90, 0 }, .{ 478, 0 }, .{ 478, 71 }, .{ 173, 71 }, .{ 173, 309 }, .{ 422, 309 }, .{ 422, 380 }, .{ 173, 380 }, .{ 173, 586 }, .{ 468, 586 }, .{ 468, 656 }, .{ 90, 656 } } },
         .{ .glyph = 1120, .verbs = "MLLLLZ", .points = &.{ .{ 35, 432 }, .{ 90, 432 }, .{ 62, 660 }, .{ -11, 660 }, .{ -16, 651 } } },

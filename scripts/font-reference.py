@@ -27,6 +27,15 @@ line is written: the coordinates and the measures the same, every advance
 the same, every point and every glyph put together of its parts no further
 off than a 32-bit number rounds. A place where they differ stops the script.
 
+A variable font of cubic curves (a CFF2 table) has its deltas in the
+glyphs' programs. Those are run here as the library runs them - each number
+of 32 bits, a number blended by a sum made in 64 - and that goes for the
+font's default too, where a program's numbers need not be whole units. The
+instancer rounds every number of a program, and a glyph's points are each
+given from the one before; so the points are held against fontTools'
+drawing of the font at the same coordinates, which rounds nothing, and the
+advances and the measures against the instancer's font.
+
 The files are committed, and the tests need neither Python nor fontTools. A
 test stops by name when its font's SHA-256 is not the one written here, so
 this runs again when a font's pin in scripts/fetch-fonts.sh changes, and at
@@ -89,6 +98,11 @@ FONTS = [
         "source-sans/SourceSans3VF-Upright.ttf",
         "source_sans_3_vf",
         {"places": [{}, {"wght": 400}, {"wght": 650}, {"wght": 900}, {"wght": 1000}]},
+    ),
+    (
+        "source-sans/SourceSans3VF-Upright.otf",
+        "source_sans_3_vf_otf",
+        {"ink_step": 1, "places": [{}, {"wght": 400}, {"wght": 650}, {"wght": 900}, {"wght": 1000}]},
     ),
     ("noto/NotoSansCJK-Regular.ttc", "noto_sans_cjk_jp_regular", {"index": 0, "ink_step": 61}),
     ("noto/NotoSansCJK-Regular.ttc", "noto_sans_cjk_sc_regular", {"index": 2, "glyph_step": 97, "ink_step": 997}),
@@ -175,12 +189,16 @@ def name_of(font, path, name_id):
     sys.exit("font-reference: %s: name %d has records this script has no rule for" % (path, name_id))
 
 
-def outline_of(path, glyphs, name):
+def outline_of(path, glyphs, name, blended=None):
     """A glyph of cubic curves as fontTools draws it: its verbs, and its points.
 
     A list of (verb, points). A contour of one point - a move nothing is
-    drawn from - is none. The points are whole units: the script stops at
-    a font that has others, for which the digest has no rule.
+    drawn from - is none. A point is a 32-bit number, as the library has
+    it. fontTools adds a program's numbers up in 64 bits, which comes to
+    the same where they are whole units: the script stops at a `CFF `
+    table that has others. A `CFF2` table has, so its points are
+    `blended`'s - the program run in 32 bits - and fontTools' drawing is
+    held against each.
     """
     pen = RecordingPen()
     glyphs[name].draw(pen)
@@ -191,23 +209,37 @@ def outline_of(path, glyphs, name):
         if verb == "closePath" and drawn and drawn[-1][0] == "moveTo":
             drawn.pop()
             continue
-        for x, y in points:
-            if x != int(x) or y != int(y):
-                sys.exit("font-reference: %s: glyph %s has a point between whole units" % (path, name))
-        drawn.append((verb, [(int(x), int(y)) for x, y in points]))
-    return drawn
+        drawn.append((verb, list(points)))
+    if blended is None:
+        for _, points in drawn:
+            for x, y in points:
+                if x != int(x) or y != int(y):
+                    sys.exit("font-reference: %s: glyph %s has a point between whole units" % (path, name))
+        return [(verb, [(single(x), single(y)) for x, y in points]) for verb, points in drawn]
+    run = blended.contours(name)[0]
+    if len(run) != sum(len(points) for _, points in drawn):
+        sys.exit("font-reference: %s: glyph %s has %d points, and others by fontTools" % (path, name, len(run)))
+    placed = iter(run)
+    redrawn = []
+    for verb, points in drawn:
+        mine = [next(placed)[:2] for _ in points]
+        for (x, y), (their_x, their_y) in zip(mine, points):
+            held(path, "a point of %s" % name, max(abs(x - their_x), abs(y - their_y)), POINT_APART)
+        redrawn.append((verb, mine))
+    return redrawn
 
 
 def box_of(drawn):
-    """The box of a drawn glyph's points, control points among them; 0 without one."""
+    """The box of a drawn glyph's points, control points among them,
+    widened to whole units; 0 without one."""
     points = [point for _, points in drawn for point in points]
     if not points:
         return (0, 0, 0, 0)
     return (
-        min(x for x, _ in points),
-        min(y for _, y in points),
-        max(x for x, _ in points),
-        max(y for _, y in points),
+        math.floor(min(x for x, _ in points)),
+        math.floor(min(y for _, y in points)),
+        math.ceil(max(x for x, _ in points)),
+        math.ceil(max(y for _, y in points)),
     )
 
 
@@ -466,8 +498,10 @@ VARIED_POINTS = 12
 MAX_DEPTH = 4
 
 # How far a point, in units, and an advance may be from fontTools'
-# instance of the font: a point by what 32 bits round away, an advance
-# by one, where the instance takes it between two rounded sides.
+# instance of the font: a point by what 32 bits round away - along a
+# glyph of cubic curves too, whose points are each given from the one
+# before - and an advance by one, where the instance takes it between
+# two rounded sides.
 POINT_APART = 1 / 1024
 ADVANCE_APART = 1
 
@@ -760,6 +794,271 @@ class Instance:
         return (advance, x_min - origin, x_min, y_min, x_max, y_max), points, ends
 
 
+def bias_of(count):
+    """What a subroutine's number is counted from, by how many there are."""
+    return 107 if count < 1240 else 1131 if count < 33900 else 32768
+
+
+class Blended:
+    """One font of cubic curves (`CFF2`) at one place on its axes.
+
+    A glyph's program is run the way truetype.library runs it: every
+    number and every point a 32-bit one, a number blended by a sum made
+    in 64 bits, its deltas in their order. The programs are fontTools'
+    reading of them, number by number; an operator the fetched fonts do
+    not use stops the script, which has no rule for it.
+    """
+
+    STACK = 513
+    CALLS = 10
+    FAR = 16777216.0
+    POINTS = 0xFFFF
+
+    def __init__(self, path, font, coords):
+        self.path = path
+        self.metrics = font["hmtx"].metrics
+        self.varied = any(coords)
+        table = font["CFF2"].cff
+        top = table.topDictIndex[0]
+        self.programs = top.CharStrings
+        self.fonts = top.FDArray
+        self.shared = table.GlobalSubrs
+        # How much each region of each of the store's data counts here:
+        # nothing at the default. A table without a store has no deltas.
+        store = getattr(top, "VarStore", None)
+        self.parts = None
+        if store is not None:
+            counted = Store(store.otVarStore, coords).parts
+            self.parts = [[counted[region] if self.varied else 0.0 for region in data.VarRegionIndex] for data in store.otVarStore.VarData]
+        self.advances = None
+        if self.varied and "HVAR" in font:
+            table = font["HVAR"].table
+            self.advances = (Store(table.VarStore, coords), table.AdvWidthMap.mapping if table.AdvWidthMap else None)
+        self.read = {}
+
+    def stop(self, name, what):
+        sys.exit("font-reference: %s: the program of %s has %s, which this script has no rule for" % (self.path, name, what))
+
+    def vary(self, data):
+        """The deltas are for the regions of the store's data `data` from here on."""
+        if self.parts is None:
+            self.regions = []
+        else:
+            self.regions = self.parts[data] if data < len(self.parts) else None
+
+    def add(self, name, on):
+        x = single(single(self.x + single(0.0 * self.y)) + 0.0)
+        y = single(single(single(0.0 * self.x) + self.y) + 0.0)
+        if not (-self.FAR <= x <= self.FAR and -self.FAR <= y <= self.FAR) or len(self.points) == self.POINTS:
+            self.stop(name, "a point too far out, or too many")
+        self.points.append((x, y, on))
+
+    def begin(self, name):
+        self.drawing = True
+        self.first = len(self.points)
+        self.add(name, 1)
+
+    def finish(self):
+        """The contour being drawn ended; one of a single point is none."""
+        if not self.drawing:
+            return
+        self.drawing = False
+        if len(self.points) - self.first < 2:
+            del self.points[self.first :]
+            return
+        self.ends.append(len(self.points))
+
+    def move(self, name, dx, dy):
+        self.finish()
+        self.x = single(self.x + dx)
+        self.y = single(self.y + dy)
+        self.begin(name)
+
+    def line(self, name, dx, dy):
+        if not self.drawing:
+            self.begin(name)
+        self.x = single(self.x + dx)
+        self.y = single(self.y + dy)
+        self.add(name, 1)
+
+    def curve(self, name, dx1, dy1, dx2, dy2, dx3, dy3):
+        if not self.drawing:
+            self.begin(name)
+        for dx, dy, on in ((dx1, dy1, 0), (dx2, dy2, 0), (dx3, dy3, 1)):
+            self.x = single(self.x + dx)
+            self.y = single(self.y + dy)
+            self.add(name, on)
+
+    def count_of(self, name, value):
+        """A number that counts: a whole one."""
+        if value != int(value):
+            self.stop(name, "a count between whole numbers")
+        return int(value)
+
+    def interpret(self, name, program, nesting):
+        """`program` run to its end; false once the glyph is ended."""
+        if program.needsDecompilation():
+            self.stop(name, "a subroutine fontTools has not read")
+        s = self.stack
+        for token in program.program:
+            if isinstance(token, (int, float)):
+                if len(s) == self.STACK:
+                    self.stop(name, "more numbers than a program holds")
+                s.append(single(float(token)))
+                continue
+            depth = len(s)
+            if token in ("callsubr", "callgsubr"):
+                if depth < 1 or nesting == self.CALLS:
+                    self.stop(name, "a call it cannot make")
+                subrs = self.locals if token == "callsubr" else self.shared
+                number = self.count_of(name, s.pop()) + bias_of(len(subrs))
+                if not 0 <= number < len(subrs):
+                    self.stop(name, "a call of a subroutine that is not there")
+                self.interpret(name, subrs[number], nesting + 1)
+                continue
+            if token == "vsindex":
+                if depth < 1 or s[-1] < 0:
+                    self.stop(name, "a vsindex without its number")
+                self.vary(self.count_of(name, s[-1]))
+                del s[:]
+                continue
+            if token == "blend":
+                if depth < 1 or self.regions is None:
+                    self.stop(name, "a blend without its deltas")
+                count = self.count_of(name, s[-1])
+                regions = len(self.regions)
+                if count < 0 or count > depth - 1 or (regions != 0 and count > (depth - 1 - count) // regions):
+                    self.stop(name, "a blend of more numbers than there are")
+                base = depth - 1 - count * (regions + 1)
+                for number in range(count):
+                    total = 0.0
+                    for index, part in enumerate(self.regions):
+                        total += float(s[base + count + number * regions + index]) * part
+                    s[base + number] = single(float(s[base + number]) + total)
+                del s[base + count :]
+                continue
+            if token == "rmoveto" and depth >= 2:
+                self.move(name, s[-2], s[-1])
+            elif token == "hmoveto" and depth >= 1:
+                self.move(name, s[-1], 0.0)
+            elif token == "vmoveto" and depth >= 1:
+                self.move(name, 0.0, s[-1])
+            elif token == "rlineto":
+                for i in range(0, depth - 1, 2):
+                    self.line(name, s[i], s[i + 1])
+            elif token in ("hlineto", "vlineto"):
+                level = token == "hlineto"
+                for by in s:
+                    self.line(name, by if level else 0.0, 0.0 if level else by)
+                    level = not level
+            elif token == "rrcurveto":
+                for i in range(0, depth - 5, 6):
+                    self.curve(name, *s[i : i + 6])
+            elif token == "rcurveline":
+                i = 0
+                while i + 8 <= depth:
+                    self.curve(name, *s[i : i + 6])
+                    i += 6
+                if i + 2 <= depth:
+                    self.line(name, s[i], s[i + 1])
+            elif token == "rlinecurve":
+                i = 0
+                while i + 8 <= depth:
+                    self.line(name, s[i], s[i + 1])
+                    i += 2
+                if i + 6 <= depth:
+                    self.curve(name, *s[i : i + 6])
+            elif token in ("vvcurveto", "hhcurveto"):
+                i = depth % 2
+                across = s[0] if i == 1 else 0.0
+                while i + 4 <= depth:
+                    if token == "vvcurveto":
+                        self.curve(name, across, s[i], s[i + 1], s[i + 2], 0.0, s[i + 3])
+                    else:
+                        self.curve(name, s[i], across, s[i + 1], s[i + 2], s[i + 3], 0.0)
+                    across = 0.0
+                    i += 4
+            elif token in ("vhcurveto", "hvcurveto"):
+                level = token == "hvcurveto"
+                i = 0
+                while i + 4 <= depth:
+                    off = s[i + 4] if depth - i == 5 else 0.0
+                    if level:
+                        self.curve(name, s[i], 0.0, s[i + 1], s[i + 2], off, s[i + 3])
+                    else:
+                        self.curve(name, 0.0, s[i], s[i + 1], s[i + 2], s[i + 3], off)
+                    level = not level
+                    i += 4
+            else:
+                self.stop(name, "%r with %d numbers" % (token, depth))
+            del s[:]
+
+    def contours(self, name):
+        """A glyph's points - x, y, and whether on its curve - and where
+        its contours end."""
+        if name in self.read:
+            return self.read[name]
+        program, selected = self.programs.getItemAndSelector(name)
+        private = self.fonts[selected or 0].Private
+        program.decompile()
+        self.locals = getattr(private, "Subrs", [])
+        self.x = self.y = 0.0
+        self.points, self.ends, self.stack = [], [], []
+        self.drawing, self.first = False, 0
+        self.vary(getattr(private, "vsindex", 0))
+        self.interpret(name, program, 0)
+        self.finish()
+        self.read[name] = (self.points, self.ends)
+        return self.read[name]
+
+    def sides_advance(self, name):
+        """A glyph's advance in a font without `HVAR`: its table's, at
+        every place."""
+        return self.metrics[name][0]
+
+    advance = Instance.advance
+
+    def measures(self, name, glyph_id):
+        """A glyph's advance, left side bearing and box, and its points.
+        Away from the default the bearing is the left of the box."""
+        points, ends = self.contours(name)
+        box = (0, 0, 0, 0)
+        if ends:
+            box = (
+                math.floor(min(point[0] for point in points)),
+                math.floor(min(point[1] for point in points)),
+                math.ceil(max(point[0] for point in points)),
+                math.ceil(max(point[1] for point in points)),
+            )
+        bearing = box[0] if self.varied else self.metrics[name][1]
+        return (self.advance(name, glyph_id), bearing) + box, points, ends
+
+
+def drawn_of(path, glyphs, name):
+    """A glyph of cubic curves as fontTools draws it at a place: its
+    points, each on its curve or off it, and where its contours end. A
+    contour of one point is none."""
+    pen = RecordingPen()
+    glyphs[name].draw(pen)
+    points, ends, first = [], [], 0
+    for verb, at in pen.value:
+        if verb == "moveTo":
+            first = len(points)
+            points.append(at[0] + (1,))
+        elif verb == "lineTo":
+            points.append(at[0] + (1,))
+        elif verb == "curveTo" and len(at) == 3:
+            points.extend((at[0] + (0,), at[1] + (0,), at[2] + (1,)))
+        elif verb == "closePath":
+            if len(points) - first < 2:
+                del points[first:]
+            else:
+                ends.append(len(points))
+        else:
+            sys.exit("font-reference: %s: glyph %s is drawn with %s" % (path, name, verb))
+    return points, ends
+
+
 def place_of(font, asked):
     """Where `asked`, a value by an axis' tag, puts the font: each axis'
     value, cut to its range, and its coordinate in 16384ths."""
@@ -787,8 +1086,9 @@ def instances_of(path, font, resting, places):
         if places:
             sys.exit("font-reference: %s has no axes" % path)
         return [], [], []
-    if "glyf" not in font or "gvar" not in font:
-        sys.exit("font-reference: %s: only a font of glyf outlines is read at an instance" % path)
+    cubic = "CFF2" in font
+    if not cubic and ("glyf" not in font or "gvar" not in font):
+        sys.exit("font-reference: %s: a font is read at an instance by its glyf and gvar tables, or by CFF2" % path)
     fvar = font["fvar"]
     order = font.getGlyphOrder()
     axes = [(axis.axisTag, axis.minValue, axis.defaultValue, axis.maxValue, axis.axisNameID, axis.flags & 1 != 0) for axis in fvar.axes]
@@ -796,7 +1096,7 @@ def instances_of(path, font, resting, places):
     found = []
     for asked in places:
         values, coords = place_of(font, asked)
-        instance = Instance(path, font, coords)
+        instance = Blended(path, font, coords) if cubic else Instance(path, font, coords)
         what = "%s at %r" % (path, asked)
 
         # The place, as fontTools counts it.
@@ -834,6 +1134,13 @@ def instances_of(path, font, resting, places):
             if theirs != measures:
                 sys.exit("font-reference: %s: the measures are %r, and %r by fontTools" % (what, measures, theirs))
 
+        # fontTools' drawing of a font of cubic curves at the coordinates:
+        # its instance of the font has every number of a program rounded,
+        # and a glyph's points are each given from the one before.
+        drawn = None
+        if cubic:
+            drawn = font.getGlyphSet(location={axis.axisTag: coord / 16384.0 for axis, coord in zip(fvar.axes, coords)}, normalized=True)
+
         metrics, sides, simple, composite = [], [], [], []
         shapes = hashlib.sha256()
         for glyph_id, name in enumerate(order):
@@ -845,6 +1152,20 @@ def instances_of(path, font, resting, places):
                 shapes.update(struct.pack("<III", bits(x), bits(y), on))
             for end in ends:
                 shapes.update(struct.pack("<I", end))
+            if cubic:
+                if 0 < len(points) <= VARIED_POINTS:
+                    simple.append((glyph_id, ends, points))
+                their_points, their_ends = drawn_of(path, drawn, name)
+                if len(points) != len(their_points) or ends != their_ends:
+                    sys.exit("font-reference: %s: %s has %d points in %d contours, and %d in %d by fontTools" % (what, name, len(points), len(ends), len(their_points), len(their_ends)))
+                for (x, y, on), (their_x, their_y, their_on) in zip(points, their_points):
+                    if on != their_on:
+                        sys.exit("font-reference: %s: %s has a point on its curve that fontTools has off it" % (what, name))
+                    held(path, "%s, a point of %s" % (what, name), max(abs(x - their_x), abs(y - their_y)), POINT_APART)
+                if static is not None:
+                    their_advance = static["hmtx"].metrics[name][0]
+                    held(path, "%s, the advance of %s" % (what, name), abs(measured[0] - their_advance), ADVANCE_APART)
+                continue
             glyph = font["glyf"][name]
             if 0 < len(points) <= VARIED_POINTS:
                 (composite if glyph.isComposite() else simple).append((glyph_id, ends, points))
@@ -883,7 +1204,7 @@ def instances_of(path, font, resting, places):
                 "metrics_sha256": digest("<iiiiii", metrics),
                 "sides_sha256": digest("<i", sides),
                 "contours_sha256": shapes.hexdigest(),
-                "shapes": spread(simple, SAMPLE_VARIED - SAMPLE_VARIED // 2) + spread(composite, SAMPLE_VARIED // 2),
+                "shapes": spread(simple, SAMPLE_VARIED) if cubic else spread(simple, SAMPLE_VARIED - SAMPLE_VARIED // 2) + spread(composite, SAMPLE_VARIED // 2),
             }
         )
     return axes, named, found
@@ -953,10 +1274,11 @@ def read(path, index=0, glyph_step=1, ink_step=0, scaled_rows=0, scaled_step=0, 
     font = TTFont(full, fontNumber=index, lazy=False)
     head, hhea, post, os2 = font["head"], font["hhea"], font["post"], font["OS/2"]
     outlines = "glyf" in font and font.reader.tables["glyf"].length > 0
-    cubic = not outlines and "CFF " in font
+    cubic = not outlines and ("CFF " in font or "CFF2" in font)
     order = font.getGlyphOrder()
     strikes = None if outlines or cubic else strikes_of(path, font, order)
     glyphs = font.getGlyphSet() if cubic else None
+    blended = Blended(path, font, [0] * len(font["fvar"].axes)) if cubic and "CFF2" in font and "fvar" in font else None
 
     # Each glyph's advance, left side bearing and box, in the glyphs' order:
     # of every glyph, or of every `glyph_step`th. A glyph of cubic curves
@@ -971,14 +1293,14 @@ def read(path, index=0, glyph_step=1, ink_step=0, scaled_rows=0, scaled_step=0, 
         name = order[glyph_id]
         advance, bearing = font["hmtx"].metrics[name]
         if cubic:
-            drawn = outline_of(path, glyphs, name)
+            drawn = outline_of(path, glyphs, name, blended)
             box = box_of(drawn)
             count = sum(len(points) for _, points in drawn)
             outline_hash.update(struct.pack("<II", len(drawn), count))
             for verb, points in drawn:
                 outline_hash.update(struct.pack("<I", VERBS[verb][1]))
                 for x, y in points:
-                    outline_hash.update(struct.pack("<ii", x, y))
+                    outline_hash.update(struct.pack("<II", bits(x), bits(y)))
             if 0 < count <= SHAPE_POINTS:
                 shapes.append((glyph_id, "".join(VERBS[verb][0] for verb, _ in drawn), [point for _, points in drawn for point in points]))
         elif strikes and glyph_id in strikes[1]:
@@ -1240,7 +1562,7 @@ def written(found):
         "shapes",
         [
             '.glyph = %d, .verbs = "%s", .points = &.{%s}'
-            % (glyph, verbs, plain([".{ %d, %d }" % point for point in points]))
+            % (glyph, verbs, plain([".{ %s, %s }" % (number(x), number(y)) for x, y in points]))
             for glyph, verbs, points in found["shapes"]
         ],
     )

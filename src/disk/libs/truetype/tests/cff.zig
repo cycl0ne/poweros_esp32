@@ -77,7 +77,7 @@ const most_points = 1024;
 
 /// `glyph` of `outline` is drawn with `verbs` through `points`, and its
 /// box is the box of those points, widened to whole units.
-fn expectDrawn(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, verbs: []const u8, points: []const [2]f32) !void {
+pub fn expectDrawn(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, verbs: []const u8, points: []const [2]f32) !void {
     var got_verbs: [most_verbs]u8 = undefined;
     var got_points: [most_points]vector.Point = undefined;
     var segments = truetype.Segments{ .verbs = &got_verbs, .points = &got_points, .verb_room = most_verbs, .point_room = most_points };
@@ -539,7 +539,7 @@ test "cubic outlines: the operators that calculate" {
 /// `glyph` of `outline` is damaged: it has no segments and an empty
 /// box, and is rendered as a glyph of no ink - with its advance, of 600
 /// units, all the same.
-fn expectDamaged(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32) !void {
+pub fn expectDamaged(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32) !void {
     errdefer std.debug.print("glyph {d} is not read as damaged\n", .{glyph});
     var verbs: [8]u8 = undefined;
     var points: [8]vector.Point = undefined;
@@ -749,8 +749,7 @@ test "cubic outlines: which tables are read and which are refused" {
     builder.cff(&table, .{ .glyphs = &.{ nothing, line }, .charstring_type = 1 });
     try testing.expect(!opens(tb, "CFF ", table.written(), 2));
 
-    // The same table under the name of the later form: a font with
-    // nothing else to draw from is refused.
+    // The same table under the later form's name is not that form's.
     table = .{};
     builder.cff(&table, .{ .glyphs = &.{ nothing, line } });
     try testing.expect(!opens(tb, "CFF2", table.written(), 2));

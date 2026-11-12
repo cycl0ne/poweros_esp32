@@ -49,7 +49,8 @@
 //! the places its designer named ("Semibold"), `FontCoordinates` where
 //! an outline is as shaping tables count it, and `GlyphAdvance` one
 //! glyph's advance. One outline is one instance; a second face of the
-//! same file is a second outline over the same bytes.
+//! same file is a second outline over the same bytes. Since 1.9 a
+//! variable font of cubic curves (a `CFF2` table) is read the same way.
 //!
 //! Open it with OpenLibrary(TRUETYPENAME, 1); its functions are in
 //! sdk/interface/truetype.zig.

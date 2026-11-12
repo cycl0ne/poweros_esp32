@@ -744,6 +744,129 @@ pub fn cff(file: *File, parts: CffParts) void {
     }
 }
 
+/// One font dictionary of a built `CFF2` table: its private
+/// dictionary's local subroutines, and which of the store's data its
+/// glyphs' deltas are for when it says so.
+pub const Cff2Font = struct {
+    locals: []const []const u8 = &.{},
+    data: ?u16 = null,
+};
+
+/// What a built `CFF2` table is made of.
+pub const Cff2Parts = struct {
+    /// A program a glyph.
+    glyphs: []const []const u8,
+    globals: []const []const u8 = &.{},
+    fonts: []const Cff2Font = &.{.{}},
+    /// Its `FDSelect`, whole; none when empty.
+    select: []const u8 = &.{},
+    /// Its store of deltas, whole; none when empty.
+    store: []const u8 = &.{},
+    /// The length written before the store, when not its own.
+    store_length: ?u16 = null,
+    /// The size of an offset in every list, 1 to 4.
+    off_size: u8 = 2,
+    /// The table's version.
+    major: u8 = 2,
+    /// The header's length; what is past its five bytes is zeroes.
+    header: u8 = 5,
+};
+
+/// A list of a `CFF2` table: as `listOf`, with its count in four bytes.
+fn wideListOf(file: *File, entries: []const []const u8, off_size: u8) void {
+    file.long(@intCast(entries.len));
+    if (entries.len == 0) return;
+    file.byte(off_size);
+    var offset: u32 = 1;
+    listOffset(file, off_size, offset);
+    for (entries) |entry| {
+        offset += @intCast(entry.len);
+        listOffset(file, off_size, offset);
+    }
+    for (entries) |entry| file.text(entry);
+}
+
+/// A `CFF2` table of `parts` written at the end of `file`: the header,
+/// the top dictionary, the global subroutines, the programs,
+/// `FDSelect`, the font dictionaries, each one's private dictionary with
+/// its subroutines, and the store of deltas behind its length.
+pub fn cff2(file: *File, parts: Cff2Parts) void {
+    const table = file.len;
+    file.byte(parts.major);
+    file.byte(0);
+    file.byte(parts.header);
+    file.word(0);
+    if (parts.header > 5) file.skip(parts.header - 5);
+
+    const top = file.len;
+    const programs_at = dictNumber(file);
+    file.byte(17);
+    const fonts_at = dictNumber(file);
+    file.text(&.{ 12, 36 });
+    var select_at: u32 = 0;
+    if (parts.select.len != 0) {
+        select_at = dictNumber(file);
+        file.text(&.{ 12, 37 });
+    }
+    var store_at: u32 = 0;
+    if (parts.store.len != 0) {
+        store_at = dictNumber(file);
+        file.byte(24);
+    }
+    file.setWord(table + 3, @intCast(file.len - top));
+
+    wideListOf(file, parts.globals, parts.off_size);
+    file.setLong(programs_at, file.len - table);
+    wideListOf(file, parts.glyphs, parts.off_size);
+    if (parts.select.len != 0) {
+        file.setLong(select_at, file.len - table);
+        file.text(parts.select);
+    }
+
+    // The font dictionaries, eleven bytes each: a private dictionary's
+    // length and place.
+    file.setLong(fonts_at, file.len - table);
+    file.long(@intCast(parts.fonts.len));
+    var dicts = file.len;
+    if (parts.fonts.len != 0) {
+        file.byte(parts.off_size);
+        for (0..parts.fonts.len + 1) |i| listOffset(file, parts.off_size, @intCast(1 + i * 11));
+        dicts = file.len;
+        for (parts.fonts) |_| {
+            _ = dictNumber(file);
+            _ = dictNumber(file);
+            file.byte(18);
+        }
+    }
+    for (parts.fonts, 0..) |one, i| {
+        const dict = dicts + @as(u32, @intCast(i)) * 11;
+        const start = file.len;
+        file.setLong(dict + 6, start - table);
+        if (one.data) |data| {
+            file.byte(28);
+            file.word(data);
+            file.byte(22);
+        }
+        if (one.locals.len == 0) {
+            file.setLong(dict + 1, file.len - start);
+            continue;
+        }
+        // The subroutines, counted from the dictionary's start: right
+        // after it.
+        const subrs_at = dictNumber(file);
+        file.byte(19);
+        file.setLong(subrs_at, file.len - start);
+        file.setLong(dict + 1, file.len - start);
+        wideListOf(file, one.locals, parts.off_size);
+    }
+
+    if (parts.store.len != 0) {
+        file.setLong(store_at, file.len - table);
+        file.word(parts.store_length orelse @intCast(parts.store.len));
+        file.text(parts.store);
+    }
+}
+
 /// The operators of a glyph's program by name; one of two bytes is 12
 /// and its second.
 const Operator = struct { name: []const u8, code: u16 };
@@ -753,6 +876,7 @@ const operators = [_]Operator{
     .{ .name = "hlineto", .code = 6 },     .{ .name = "vlineto", .code = 7 },
     .{ .name = "rrcurveto", .code = 8 },   .{ .name = "callsubr", .code = 10 },
     .{ .name = "return", .code = 11 },     .{ .name = "endchar", .code = 14 },
+    .{ .name = "vsindex", .code = 15 },    .{ .name = "blend", .code = 16 },
     .{ .name = "hstemhm", .code = 18 },    .{ .name = "hintmask", .code = 19 },
     .{ .name = "cntrmask", .code = 20 },   .{ .name = "rmoveto", .code = 21 },
     .{ .name = "hmoveto", .code = 22 },    .{ .name = "vstemhm", .code = 23 },

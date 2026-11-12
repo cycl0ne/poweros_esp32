@@ -54,6 +54,7 @@ const vector = sdk.vector;
 const builder = @import("builder.zig");
 const reference = @import("reference.zig");
 const built = @import("truetype.zig");
+const blended = @import("cff2.zig");
 const cubic = @import("cff.zig");
 const pictured = @import("strike.zig");
 const varied = @import("variation.zig");
@@ -145,7 +146,7 @@ const Seed = struct {
     }
 };
 
-const seed_count = 16;
+const seed_count = 17;
 
 /// The fonts the tests build: between them every table the library reads
 /// and every form of them it tells apart.
@@ -278,6 +279,13 @@ fn buildSeeds(seeds: *[seed_count]Seed) void {
     next += 1;
     file = .{};
     varied.sidesFont(&file);
+    seeds[next].set(file.written());
+    next += 1;
+
+    // A variable font of cubic curves: blends in programs and
+    // subroutines, two font dictionaries, advances that move.
+    file = .{};
+    blended.standardFont(&file);
     seeds[next].set(file.written());
     next += 1;
 

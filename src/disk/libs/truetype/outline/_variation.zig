@@ -37,6 +37,10 @@
 //!   when the font has it.
 //! - `MVAR` has the deltas of the font's measures in such a store, by a
 //!   tag for each.
+//! - A `CFF2` table has its glyphs' deltas in their programs, after the
+//!   numbers they belong to, and a store of its own that says which
+//!   regions they are for (`storeRegions`, `storePart`; the programs
+//!   are `_cff.zig`'s). Since 1.9.
 //!
 //! The sums are made in 64-bit floating point, the deltas added in the
 //! file's order, and a point's delta is added to it before it is
@@ -408,6 +412,35 @@ pub fn storeDelta(font: *const Font, store: Table, outer: u32, inner: u32) f64 {
         delta += @as(f64, @floatFromInt(value)) * part;
     }
     return delta;
+}
+
+/// How many regions data `outer` of an item variation store has a delta
+/// each for; null for a store that has no such data.
+pub fn storeRegions(font: *const Font, store: Table, outer: u32) ?u32 {
+    if (store.len < 8 or wordIn(font, store, 0) != 1) return null;
+    if (outer >= wordIn(font, store, 6)) return null;
+    const data = partOf(store, longIn(font, store, 8 + outer * 4)) orelse return null;
+    if (data.len < 6) return null;
+    const count: u32 = wordIn(font, data, 4);
+    if (count * 2 > data.len - 6) return null;
+    return count;
+}
+
+/// How much the region counts at the font's coordinates that delta
+/// `index` of a row of the store's data `outer` is for. 0 at the font's
+/// default, for a store that is not for this font's axes, and for a
+/// region its list does not have.
+pub fn storePart(font: *const Font, store: Table, outer: u32, index: u32) f64 {
+    if (!font.vary.varied) return 0;
+    if (store.len < 8 or wordIn(font, store, 0) != 1) return 0;
+    const list = partOf(store, longIn(font, store, 2)) orelse return 0;
+    if (wordIn(font, list, 0) != font.vary.axis_count) return 0;
+    if (outer >= wordIn(font, store, 6)) return 0;
+    const data = partOf(store, longIn(font, store, 8 + outer * 4)) orelse return 0;
+    if (index >= wordIn(font, data, 4)) return 0;
+    const region: u32 = wordIn(font, data, 6 + index * 2);
+    if (region >= wordIn(font, list, 2)) return 0;
+    return regionPart(font, list, region);
 }
 
 /// The delta of a glyph's advance from `HVAR`: the store's item the

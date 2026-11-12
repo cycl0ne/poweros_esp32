@@ -515,8 +515,9 @@ to be asked for again with that room. `RenderGlyph` and
 run - a number missing, an operator the format does not have, a
 subroutine that is not there - is a glyph without ink that keeps its
 advance. The programs' hints and the table's font matrix are passed
-over, and a file with a `CFF2` table alone (a variable font of cubic
-curves) does not open.
+over. A variable font of cubic curves keeps them in a `CFF2` table,
+which is read the same way (truetype.library 1.9, see below); a font
+with both tables is read by its `CFF `.
 
 **Fonts of pictures** (truetype.library 1.7). A font file may have no
 outlines at all and keep each glyph as pictures drawn at one or more
@@ -556,7 +557,8 @@ the library such a font does not open. Not read: pictures in `sbix`, in
 `bloc` and `bdat`, the formats 3 and 4 of a picture, and strikes of
 other bits a pixel than their pair of tables has.
 
-**Variable fonts** (truetype.library 1.8). One file may hold a whole
+**Variable fonts** (truetype.library 1.8, those of cubic curves 1.9).
+One file may hold a whole
 family: its glyphs drawn once, and with them how far each point moves
 along an axis - the weight (`wght`), the width (`wdth`), the slant
 (`slnt`), the optical size (`opsz`), or one the font makes up. An
@@ -596,6 +598,18 @@ its outline: the call to measure a line with. `GlyphMetrics` reads a
 varied glyph's points for its box and takes memory for that while it
 runs.
 
+A variable font of cubic curves (a `CFF2` table) has its deltas in the
+glyphs' programs: a number is followed by one delta for each region of
+the table's store, and becomes itself plus each delta as far as its
+region counts at the outline's place. Such a font opens, lists its axes
+and renders as the other kind does. Its advances change by `HVAR` and,
+in a font without it, stay the same at every instance. A glyph is drawn
+from where its program starts at every instance, so away from the
+default its left side bearing in `GlyphMetrics` is the left of its box
+there; the call runs the program and takes no memory. A program that
+blends numbers the store has no deltas for is a glyph without ink that
+keeps its advance.
+
 ```zig
 // The font at a weight of 650.
 const place = [_]sdk.truetype.AxisValue{.{ .tag = sdk.truetype.tableTag("wght"), .value = 650 }};
@@ -618,9 +632,9 @@ for (axes[0..count]) |axis| {
 `C:test/Axes <file>` lists a font's axes and draws a line at each place
 it names.
 
-Not read: a variable font whose outlines are a `CFF2` table's, an
-`avar` table of version 2, and the `HVAR` table's own deltas for the
-left side. A font of more than 32 axes is opened at its default. The
+Not read: an `avar` table of version 2, the `HVAR` table's own deltas
+for the left side, and the deltas a `CFF2` table has for its hints. A
+font of more than 32 axes is opened at its default. The
 fonts a family lists (`diskfont.library`) are opened at their default
 too: a family does not yet name an instance.
 
@@ -1147,7 +1161,7 @@ cursor = gb.TextXToOffset(rp, line.ptr, @intCast(line.len), mouse_x - left);
 |---|---|
 | `tools/fontconv` | on the host: BDF, Amiga font files (colour too) and TrueType and OpenType files into size files and a contents file; `--alpha N` for coverage from a larger drawing, `--shadow` for a shadowed colour font, `--rgba` to write a colour font with 32-bit pixels |
 | `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces and Liberation's (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation only onto the 64-bit machines' disks. With them four fonts only the host tests read, which go on no disk: Noto Sans Devanagari, Noto Color Emoji, Noto Sans CJK (a collection) and Source Sans 3, as a font of one weight and as variable fonts |
-| `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures, of a variable font the same at places on its axes with every glyph's points there (worked out in the library's order and held against fontTools' instancer), of a font of cubic curves each glyph's outline and what libfreetype renders of a part of them, and of a font of pictures every picture's measures and pixels (a PNG file's as Pillow reads them) and a part of them scaled to another size - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
+| `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures, of a variable font the same at places on its axes with every glyph's points there (worked out in the library's order and held against fontTools' instancer, or for a font of cubic curves against fontTools' drawing of it at the place), of a font of cubic curves each glyph's outline and what libfreetype renders of a part of them, and of a font of pictures every picture's measures and pixels (a PNG file's as Pillow reads them) and a part of them scaled to another size - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
 | `scripts/shape-reference.py` | on the host: applies the fetched fonts' `GSUB` and `GPOS` lookups to runs of glyphs - every glyph of a font, and sequences its lookups have rules for - with an applier of its own on fontTools' reading of the tables, and writes what comes out, a digest for each script, language and feature list, as the Zig files `truetypeshaping.library`'s host tests compare its shaping with (`src/disk/libs/truetypeshaping/tests/reference/`). `--check` says whether the files are the ones it would write, `--show <font> <case>` prints a case's runs |
 | `scripts/shape-text-reference.py` | on the host: shapes texts with libharfbuzz - in the fetched fonts Latin with its kerning and marks, letters and marks spelled apart and together, Greek, Cyrillic, Hebrew read from right to left, Devanagari by its plain features, emoji, features switched for a part of a text; and in a font made of a rule, which is told the characters it lacks, texts whose characters are taken apart, sorted and put together - and writes the glyphs, clusters, advances and offsets as the Zig files `truetypeshaping.library`'s host tests compare `ShapeText`'s answers with (`src/disk/libs/truetypeshaping/tests/text_reference/`); `--check` says whether they are up to date |
 | `C:ListFonts` | every font by family, size and where it is; `SAMPLE` draws them |

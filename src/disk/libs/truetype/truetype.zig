@@ -27,6 +27,13 @@
 //! and scaled to the line in `render/_picture.zig`, into coverage or
 //! into 32-bit colour.
 //!
+//! Since 1.8 a variable font is opened at a place on its axes
+//! (`outline/_variation.zig`): the place becomes a coordinate an axis,
+//! and the tables of deltas are read at those whenever a glyph, an
+//! advance or a measure is asked for. Since 1.9 that holds for a font
+//! of cubic curves too, whose `CFF2` table has the deltas in the
+//! glyphs' programs.
+//!
 //! The jump table is truetype_lvo.zig, the ROM tag, init and expunge
 //! truetype_init.zig, the base truetype_base.zig.
 

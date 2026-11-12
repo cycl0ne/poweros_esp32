@@ -512,7 +512,7 @@ fn GlyphAdvance(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32) i32
 
 **SINCE**
 
-1.8. LVO -80.
+1.8, variable fonts of cubic curves since 1.9. LVO -80.
 
 **INPUTS**
 
@@ -531,7 +531,9 @@ The advance is the font's horizontal metrics' (`hmtx`), the one
 is that instance's: the advance plus what the font's `HVAR` table
 says it changes by there, rounded to a whole unit; or, in a font
 without that table, the distance between the glyph's two sides as
-its deltas in `gvar` move them, rounded.
+its deltas in `gvar` move them, rounded. A font of cubic curves
+without `HVAR` has nothing that moves its advances: they are the
+same at every instance.
 
 The call reads no outline and takes no memory, which the box of a
 glyph away from the default does. It is the one to ask when a line
@@ -636,7 +638,8 @@ fn GlyphMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, metri
 **SINCE**
 
 1.2, fonts of cubic curves since 1.6, fonts of pictures since
-1.7, variable fonts since 1.8. LVO -36.
+1.7, variable fonts since 1.8, those of cubic curves since 1.9.
+LVO -36.
 
 **INPUTS**
 
@@ -678,6 +681,13 @@ advance is `GlyphAdvance`'s. The left side bearing is from the
 glyph's origin there - its left side point as the deltas move it,
 rounded - to the left of that box. A glyph whose deltas are damaged
 has a box of 0s and its advance.
+
+A glyph of cubic curves of a variable font away from its default
+(`CFF2`) has its deltas in its program, so its box is that
+instance's as it is at the default: the program is run, and no
+memory is taken. Its origin is where its program starts from, at
+every instance, and its left side bearing is the left of its box
+there, 0 for a glyph of no outline.
 
 **CONTEXT**
 
@@ -931,8 +941,8 @@ fn OpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32, tags: ?[*]const 
 **SINCE**
 
 1.0, the tags and collections since 1.4, fonts of cubic curves
-since 1.6, fonts of pictures since 1.7, variable fonts since 1.8.
-LVO -20.
+since 1.6, fonts of pictures since 1.7, variable fonts since 1.8,
+those of cubic curves since 1.9. LVO -20.
 
 **INPUTS**
 
@@ -971,13 +981,14 @@ symbol font, which has none, is read by its own map, with its
 characters where the font puts them (U+F020 to U+F0FF mostly).
 
 A font's glyphs are of lines and quadratic curves (`glyf` and
-`loca`), or of lines and cubic curves (`CFF `, in a file that starts
-'OTTO'), a font keyed by character collection among those. A font
-with both is read by `glyf`. Of a `CFF ` table the lists, the
-dictionaries and where they put the glyphs' programs, the subroutines
-and each glyph's font dictionary are checked here, and a table that
-is not sound opens no font; a glyph's program is run when the glyph
-is asked for.
+`loca`), or of lines and cubic curves (`CFF `, or a variable font's
+`CFF2`, in a file that starts 'OTTO'), a font keyed by character
+collection among those. A font with both is read by `glyf`, and one
+with both tables of cubic curves by `CFF `. Of such a table the
+lists, the dictionaries and where they put the glyphs' programs, the
+subroutines, each glyph's font dictionary and a `CFF2` table's store
+of deltas are checked here, and a table that is not sound opens no
+font; a glyph's program is run when the glyph is asked for.
 
 A font need not have outlines. One without them whose glyphs are
 pictures is rendered from those: colour pictures, PNG files in
@@ -1000,9 +1011,13 @@ for one axis the first counts. Each value becomes a coordinate - its
 distance from the default as a part of the range on that side, bent
 by the font's `avar` table, in 14 bits of fraction - and at those
 coordinates the font is read from then on: a `glyf` glyph's points
-with their deltas (`gvar`), the advances with theirs (`HVAR`, or
-`gvar`'s side points in a font without it), and the x height, the
-cap height, the underline and the strikeout with theirs (`MVAR`).
+with their deltas (`gvar`), a `CFF2` glyph's program with the deltas
+that follow its numbers (each number and, for every region of the
+table's store, its delta as far as the region counts at the
+coordinates), the advances with theirs (`HVAR`, or `gvar`'s side
+points in a font without it; a `CFF2` font without `HVAR` has the
+same advances at every instance), and the x height, the cap height,
+the underline and the strikeout with theirs (`MVAR`).
 The ascender, the descender and the line gap are the same at every
 instance. A font opened at its default, and one without axes, reads
 none of these tables. A table of deltas that is not for the font's
@@ -1033,10 +1048,11 @@ outline reads them in place. The tags are read during the call only.
 
 Hinting instructions are passed over, and so are a `CFF ` table's
 hints and its font matrix: its glyphs are taken as drawn in the
-font's units. A font whose outlines are a `CFF2` table's is not
-opened. An `avar` table of version 2, which bends one axis by the
-others, is passed over. A font whose only character map is in a Macintosh encoding
-is not opened.
+font's units. A `CFF2` table's hints are passed over the same way,
+and with them the deltas its private dictionaries have for them. An
+`avar` table of version 2, which bends one axis by the others, is
+passed over. A font whose only character map is in a Macintosh
+encoding is not opened.
 
 Pictures in `sbix`, and in the `bloc` and `bdat` tables, are not
 read, nor are a picture's formats 3 and 4, nor the measures of a

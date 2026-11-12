@@ -38,7 +38,8 @@
 //! with what the script works out from fontTools' reading of the font's
 //! tables. The advance a font without `HVAR` has is compared too: on the
 //! same file with that table's tag changed in its directory, so that
-//! the library takes every advance from the glyph's two side points.
+//! the library takes every advance from the glyph's two side points, or
+//! in a font of cubic curves, which has none, from its table.
 //!
 //! The library reads characters by one of a font's maps. To compare the
 //! others too, the test takes the opened font's state, puts each subtable
@@ -114,12 +115,6 @@ fn verbOf(verb: u8) ?Verb {
         sdk.vector.SEG_CLOSE => .{ .number = 3, .letter = 'Z', .points = 0 },
         else => null,
     };
-}
-
-/// A coordinate of a glyph of cubic curves: a whole number of units.
-fn whole(value: f32) !i32 {
-    if (@round(value) != value) return error.ReadDiffers;
-    return @intFromFloat(value);
 }
 
 /// The coverage of pixel (`x`, `y`) of the line in levels of 15, of a
@@ -666,7 +661,7 @@ fn expectFont(expected: *const reference.Font) !void {
             return error.ReadDiffers;
         }
         if (!expected.cubic) continue;
-        errdefer std.debug.print("glyph {d}: its outline is not of whole units, or has a verb no cubic outline has\n", .{glyph});
+        errdefer std.debug.print("glyph {d}: its outline has a verb no cubic outline has\n", .{glyph});
         drawing.add(segments.verb_count);
         drawing.add(segments.point_count);
         var next: usize = 0;
@@ -674,8 +669,8 @@ fn expectFont(expected: *const reference.Font) !void {
             const kind = verbOf(verb) orelse return error.ReadDiffers;
             drawing.add(kind.number);
             for (points[next..][0..kind.points]) |point| {
-                drawing.addSigned(try whole(point.x));
-                drawing.addSigned(try whole(point.y));
+                drawing.add(@bitCast(point.x));
+                drawing.add(@bitCast(point.y));
             }
             next += kind.points;
         }
@@ -695,8 +690,8 @@ fn expectFont(expected: *const reference.Font) !void {
             try testing.expectEqual(letter, kind.letter);
         }
         for (shape.points, points[0..shape.points.len]) |want, point| {
-            try testing.expectEqual(@as(f32, @floatFromInt(want[0])), point.x);
-            try testing.expectEqual(@as(f32, @floatFromInt(want[1])), point.y);
+            try testing.expectEqual(@as(u32, @bitCast(want[0])), @as(u32, @bitCast(point.x)));
+            try testing.expectEqual(@as(u32, @bitCast(want[1])), @as(u32, @bitCast(point.y)));
         }
     }
     // One past the last.
@@ -859,6 +854,12 @@ test "truetype: source-sans/SourceSans3VF-Upright.ttf as fontTools reads it, at 
     try expectFont(reference.source_sans_3_vf);
 }
 
+test "truetype: source-sans/SourceSans3VF-Upright.otf as fontTools reads it, at its default and away from it" {
+    try testing.expect(reference.source_sans_3_vf_otf.cubic);
+    try testing.expect(reference.source_sans_3_vf_otf.instances.len != 0);
+    try expectFont(reference.source_sans_3_vf_otf);
+}
+
 test "truetype: noto/NotoSansCJK-Regular.ttc, its first font, as fontTools reads it" {
     try expectFont(reference.noto_sans_cjk_jp_regular);
 }
@@ -868,8 +869,9 @@ test "truetype: noto/NotoSansCJK-Regular.ttc, its third font, as fontTools reads
 }
 
 test "truetype: there is a test for every font with values" {
-    // The nine above, each named with its file.
-    try testing.expectEqual(@as(usize, 9), reference.fonts.len);
+    // The ten above, each named with its file.
+    try testing.expectEqual(@as(usize, 10), reference.fonts.len);
+    try testing.expectEqualStrings("source-sans/SourceSans3VF-Upright.otf", reference.source_sans_3_vf_otf.file);
     try testing.expectEqualStrings("source-sans/SourceSans3VF-Upright.ttf", reference.source_sans_3_vf.file);
     try testing.expectEqualStrings("spleen-2.2.0/spleen-8x16.otb", reference.spleen_8x16.file);
     try testing.expectEqualStrings("source-sans/SourceSans3-Regular.otf", reference.source_sans_3_regular.file);

@@ -34,6 +34,15 @@
 //! script, which stops when a point is further from it than 32 bits
 //! round away, or an advance by more than one.
 //!
+//! A variable font of cubic curves has its deltas in the glyphs'
+//! programs, and the script runs those by the library's rule: each
+//! number one of 32 bits, a number blended by itself and its deltas,
+//! each times its region's part at the place, summed in 64 bits in their
+//! order. That goes for the font's default as well, where a program's
+//! numbers need not be whole units. fontTools' drawing of the font at
+//! the same coordinates is held against every point, and its instance of
+//! the font against the advances and the measures.
+//!
 //! A list too long to write out - every character of a map, every glyph's
 //! measures - is written as how many entries it has and the SHA-256 of
 //! them all, each entry its numbers as four bytes, the lowest first. The
@@ -64,18 +73,22 @@
 //!   (0 to 255) of any other.
 //! - The outlines of a font of cubic curves: for each of the same glyphs
 //!   how many verbs and how many points it has, then each verb's number -
-//!   a move 0, a line 1, a curve 2, a close 3 - and its points' x and y.
-//!   A contour of one point is none.
+//!   a move 0, a line 1, a curve 2, a close 3 - and its points' x and y,
+//!   the 32 bits of each as a number. A contour of one point is none.
 //! - The glyphs' measures at an instance: as the glyphs' measures, of
 //!   every glyph. Away from the default the advance is the one `HVAR`
 //!   gives, the box that of the glyph's points where its deltas put
 //!   them, widened to whole units, and the left side bearing the box's
 //!   left less the glyph's left side point where its delta puts it,
 //!   rounded; a glyph of no points has a box of 0 and the bearing of its
-//!   left side point alone.
+//!   left side point alone. A glyph of cubic curves is drawn from where
+//!   its program starts: its bearing there is its box's left, 0 without
+//!   an outline.
 //! - The advances by the side points at an instance: (advance) for every
 //!   glyph - the distance between its two side points as their deltas
 //!   move them, rounded, which is its advance in a font without `HVAR`.
+//!   A font of cubic curves has no side points: its advances without
+//!   `HVAR` are its table's at every place.
 //! - The points at an instance: for every glyph how many points and how
 //!   many contours it has, a composite's parts put together; then each
 //!   point's x and y, the 32 bits of each as a number, and 1 or 0 for a
@@ -138,7 +151,7 @@ pub const Shape = struct {
     verbs: []const u8,
     /// The verbs' points in their order, x and y in the font's units: one
     /// of a move or a line, three of a curve.
-    points: []const [2]i32,
+    points: []const [2]f32,
 };
 
 /// One glyph as libfreetype renders it for a line `picture_rows` tall.
@@ -331,6 +344,7 @@ pub const noto_color_emoji = &@import("reference/noto_color_emoji.zig").font;
 pub const spleen_8x16 = &@import("reference/spleen_8x16.zig").font;
 pub const source_sans_3_regular = &@import("reference/source_sans_3_regular.zig").font;
 pub const source_sans_3_vf = &@import("reference/source_sans_3_vf.zig").font;
+pub const source_sans_3_vf_otf = &@import("reference/source_sans_3_vf_otf.zig").font;
 pub const noto_sans_cjk_jp_regular = &@import("reference/noto_sans_cjk_jp_regular.zig").font;
 pub const noto_sans_cjk_sc_regular = &@import("reference/noto_sans_cjk_sc_regular.zig").font;
 
@@ -343,6 +357,7 @@ pub const fonts = [_]*const Font{
     spleen_8x16,
     source_sans_3_regular,
     source_sans_3_vf,
+    source_sans_3_vf_otf,
     noto_sans_cjk_jp_regular,
     noto_sans_cjk_sc_regular,
 };
