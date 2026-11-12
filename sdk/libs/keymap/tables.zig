@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MPL-2.0
-//! What the ROM's keymaps are written with: a key's entry from its
+// SPDX-License-Identifier: MIT
+//! What a keymap is written with, the ROM's and a file's of
+//! `DEVS:Keymaps` alike (`sdk.keymap.tables`): a key's entry from its
 //! characters, and the data a string key, a dead key and a key changed by
 //! dead keys point at, laid out as keymap.library reads it - a pair of
 //! words per qualifier combination, then what the pairs' offsets reach.
@@ -8,9 +9,8 @@
 //! string - a string key's, the letters a dead key changes - the string is
 //! UTF-8, read into code points when the keymap is compiled.
 
-const sdk = @import("sdk");
-const km = sdk.keymap;
-const utf8 = sdk.utility.utf8;
+const km = @import("keymap.zig");
+const utf8 = @import("../utility/utf8.zig");
 const KeyMapEntry = km.KeyMapEntry;
 
 pub const NOQUAL = km.KC_NOQUAL;
@@ -83,6 +83,27 @@ pub fn string2(comptime plain: []const u8, comptime shifted: []const u8) KeyMapE
     const shifted_chars = points(shifted);
     const words = [_]u32{ plain_chars.len, 4, shifted_chars.len, 4 + plain_chars.len } ++ plain_chars ++ shifted_chars;
     return .{ .data = &words };
+}
+
+/// A string key of four strings, given as code points: plain, shift, alt
+/// and shift+alt - for each how many characters and where they begin,
+/// counted in words from the entry's data, and then the characters.
+pub fn strings(comptime plain: []const u32, comptime shift: []const u32, comptime alt: []const u32, comptime shift_alt: []const u32) KeyMapEntry {
+    const data = comptime made: {
+        const texts = [_][]const u32{ plain, shift, alt, shift_alt };
+        var words: [2 * texts.len + plain.len + shift.len + alt.len + shift_alt.len]u32 = undefined;
+        var at: usize = 2 * texts.len;
+        for (texts, 0..) |text, index| {
+            words[2 * index] = text.len;
+            words[2 * index + 1] = at;
+            for (text) |char| {
+                words[at] = char;
+                at += 1;
+            }
+        }
+        break :made words;
+    };
+    return .{ .data = &data };
 }
 
 /// A string key with one string.

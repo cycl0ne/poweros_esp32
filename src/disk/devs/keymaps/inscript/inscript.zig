@@ -39,7 +39,7 @@ const ExecBase = sdk.interface.exec.ExecBase;
 
 pub const KEYMAP_NAME = "inscript";
 const KEYMAP_VERSION = 1;
-const KEYMAP_VERSION_STRING = "\x00$VER: " ++ KEYMAP_NAME ++ " 1.0 (12.11.2026)\r\n";
+const KEYMAP_VERSION_STRING = "\x00$VER: " ++ KEYMAP_NAME ++ " 1.1 (12.11.2026)\r\n";
 
 /// A character key: InScript's two, the US layout's two. Control finds
 /// the Latin letter among them.
@@ -61,39 +61,11 @@ const lo_types = [64]u8{
     LETTER, LETTER, LETTER, NOP, PAD, PAD, PAD, PAD, // 38
 };
 
-/// Plain, shift, alt, shift+alt.
-fn key(comptime plain: u32, comptime shift: u32, comptime alt: u32, comptime shift_alt: u32) km.KeyMapEntry {
-    return .{ .chars = .{ plain, shift, alt, shift_alt } };
-}
-
+const key = km.tables.chars;
 /// A keypad key: one character whatever is held.
-fn pad(comptime char: u32) km.KeyMapEntry {
-    return key(char, 0, 0, 0);
-}
-
-/// A key whose type is KCF_NOP.
-const none: km.KeyMapEntry = key(0, 0, 0, 0);
-
-/// A string key: for each of plain, shift, alt and shift+alt how many
-/// characters and where they begin, counted in words from the entry's
-/// data, and then the characters.
-fn strings(comptime plain: []const u32, comptime shift: []const u32, comptime alt: []const u32, comptime shift_alt: []const u32) km.KeyMapEntry {
-    const data = comptime made: {
-        const texts = [_][]const u32{ plain, shift, alt, shift_alt };
-        var words: [2 * texts.len + plain.len + shift.len + alt.len + shift_alt.len]u32 = undefined;
-        var at: usize = 2 * texts.len;
-        for (texts, 0..) |text, index| {
-            words[2 * index] = text.len;
-            words[2 * index + 1] = at;
-            for (text) |char| {
-                words[at] = char;
-                at += 1;
-            }
-        }
-        break :made words;
-    };
-    return .{ .data = &data };
-}
+const pad = km.tables.one;
+const none = km.tables.none;
+const strings = km.tables.strings;
 
 const VIRAMA = 0x94D;
 const RA = 0x930;

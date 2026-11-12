@@ -4384,7 +4384,7 @@ test "a string gadget: a syllable is one step, and a key's string goes in whole"
     @memcpy(&types, default.lo_key_map_types[0..km.HI_FIRST]);
     @memcpy(&keys, default.lo_key_map[0..km.HI_FIRST]);
     types[0x10] = km.KCF_STRING;
-    keys[0x10] = comptime @import("../keymap/tables.zig").string1("क्ष");
+    keys[0x10] = comptime sdk.keymap.tables.string1("क्ष");
     var map = default.*;
     map.lo_key_map_types = &types;
     map.lo_key_map = &keys;

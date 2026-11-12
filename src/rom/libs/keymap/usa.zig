@@ -18,7 +18,7 @@
 
 const sdk = @import("sdk");
 const km = sdk.keymap;
-const t = @import("tables.zig");
+const t = sdk.keymap.tables;
 const e = t.chars;
 const one = t.one;
 const none = t.none;

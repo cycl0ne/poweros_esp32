@@ -45,6 +45,9 @@ const exec = @import("../exec/exec.zig");
 const utf8 = @import("../utility/utf8.zig");
 
 /// The name to open it by.
+/// What a keymap's tables are written with.
+pub const tables = @import("tables.zig");
+
 pub const KEYMAPNAME = "keymap.library";
 pub const KEYMAP_VERSION = 0;
 

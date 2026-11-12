@@ -13,7 +13,7 @@
 //! keymap_base.zig. This file holds the names the rest of the kernel
 //! reaches the library by, and the tests of calls working together. The
 //! mapping itself is `map.zig`, the ROM's keymaps `usa.zig` and
-//! `deutsch.zig`, what they are written with `tables.zig`.
+//! `deutsch.zig`, what they are written with `sdk.keymap.tables`.
 
 const std = @import("std");
 const sdk = @import("sdk");

@@ -453,6 +453,10 @@ characters begin, counted in words from the entry's data, then the
 characters as code points) or at a dead key's table. The file exports
 `_program_entry` as every load file does - run as a command it says
 what it is and fails - and keeps its `$VER:` string in `.version`.
+The entries are written with `sdk.keymap.tables`, which the ROM's
+keymaps are written with too: `chars` for a key of four characters,
+`one`, `none`, `strings` and `string1`/`string2` for string keys, and
+the dead keys' forms.
 `src/disk/devs/keymaps/inscript/inscript.zig` is the worked example;
 `src/disk/build.zig` lists it among the modules, which puts it into
 `DEVS:Keymaps`.

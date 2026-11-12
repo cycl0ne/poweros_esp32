@@ -13,7 +13,7 @@
 
 const sdk = @import("sdk");
 const km = sdk.keymap;
-const t = @import("tables.zig");
+const t = sdk.keymap.tables;
 const usa = @import("usa.zig");
 const e = t.chars;
 const one = t.one;
