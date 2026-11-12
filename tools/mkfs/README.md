@@ -4,7 +4,7 @@ Builds a disk image for the log file system, so the board boots with
 programs on `C:` instead of the shell copying them into `RAM:`.
 
 ```
-mkfs [--tree=<dir>] [--manifest=<file>] [--gpt=<file> --gpt-bytes=<bytes> [--gpt-file=<path>[=<file>] ...]] <out.bin> <name> <partition> <sectors> <partition-sectors> <sector-size> <page-size> <rdb-sectors> [<path>[=<file>] ...]
+mkfs [--tree=<dir>] [--manifest=<file>] [--system-file=<path>[=<file>] ...] [--gpt=<file> --gpt-bytes=<bytes> [--gpt-file=<path>[=<file>] ...]] <out.bin> <name> <partition> <sectors> <partition-sectors> <sector-size> <page-size> <rdb-sectors> [<path>[=<file>] ...]
 mkfs --blank --gpt=<file> --gpt-bytes=<bytes> <name> <partition>
 ```
 
@@ -39,6 +39,11 @@ what was written to it takes room on the host; the rest is a hole.
 `--gpt-file` puts a file on that disk alone, after the others - one too
 large for the flash disk - and one with no `=` a drawer; the tree and
 the manifest leave them out.
+
+`--system-file` is a file of the system the image has no room for - a
+large font, the emoji's names: it goes into the tree and the manifest,
+so into a release package made of them, and onto the `--gpt` disk, and
+the image is made without it.
 
 `build.zig` runs it for `zig-out/bin/disk.bin`, merges that into
 `flash.bin` at the disk area's offset for QEMU, and `zig build flash-disk`

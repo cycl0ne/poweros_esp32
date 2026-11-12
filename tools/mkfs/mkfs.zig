@@ -4,6 +4,7 @@
 //! shell copying programs into RAM: at every start.
 //!
 //! usage: mkfs [--tree=<dir>] [--manifest=<file>] [--medium=<file>]
+//!            [--system-file=<path>[=<host-file>] ...]
 //!            [--gpt=<file> --gpt-bytes=<bytes> [--gpt-file=<path>[=<host-file>] ...]]
 //!            <out.bin> <volume> <partition> <sectors> <partition-sectors>
 //!            <sector-size> <page-size> <rdb-sectors>
@@ -69,6 +70,15 @@
 //! `--manifest` lists the image's files, one line each: the CRC-32 of its
 //! bytes in hex, its size, its path. A path given twice is the later
 //! file's, as on the image, and the list is sorted by path.
+//!
+//! **A file of the system that the image has no room for**
+//! (`--system-file`): a large font, the emoji's names. It goes into the
+//! tree and the manifest, so a release package made of them has it and a
+//! machine installed or brought up to date from a package gets it, and
+//! onto the `--gpt` disk; the image, which a machine without a disk of
+//! its own starts from out of RAM, is made without it. As with
+//! `--gpt-file`, one with no `=` is a drawer, and these come after the
+//! ordinary list.
 //!
 //! An image has no clock, so a build from the same inputs gives the same
 //! image: every file is dated 1 Jan 1978.
@@ -332,6 +342,7 @@ pub fn main(init: std.process.Init) !void {
     var gpt_path: ?[]const u8 = null;
     var gpt_bytes: u64 = 0;
     var blank = false;
+    var system_only: std.ArrayList([]const u8) = .empty;
     var gpt_only: std.ArrayList([]const u8) = .empty;
     var kept: std.ArrayList([:0]const u8) = .empty;
     for (all_args, 0..) |arg, index| {
@@ -348,6 +359,8 @@ pub fn main(init: std.process.Init) !void {
         } else if (mem.startsWith(u8, arg, "--gpt-bytes=")) {
             const text = arg["--gpt-bytes=".len..];
             gpt_bytes = std.fmt.parseInt(u64, text, 0) catch fatal("{s}: not a number", .{text});
+        } else if (mem.startsWith(u8, arg, "--system-file=")) {
+            try system_only.append(arena, arg["--system-file=".len..]);
         } else if (mem.startsWith(u8, arg, "--gpt-file=")) {
             try gpt_only.append(arena, arg["--gpt-file=".len..]);
         } else if (mem.eql(u8, arg, "--blank")) {
@@ -380,15 +393,18 @@ pub fn main(init: std.process.Init) !void {
     if (part_sectors < 2 or part_sectors > sectors - rdb_blocks) fatal("{d} sectors: the disk has {d} past its RDB blocks", .{ part_sectors, sectors - rdb_blocks });
     checkDrive(drive);
 
-    // Everything the volume gets, read first; then what the GPT disk
-    // gets besides.
+    // Everything the volume gets, read first; then what the system has
+    // besides, which the tree, the manifest and the GPT disk get; then
+    // what the GPT disk alone gets.
     var entries: std.ArrayList(Entry) = .empty;
     for (args[9..]) |entry| try entries.append(arena, try entryOf(io, cwd, entry, arena));
     const shared = entries.items.len;
+    for (system_only.items) |entry| try entries.append(arena, try entryOf(io, cwd, entry, arena));
+    const system = entries.items.len;
     for (gpt_only.items) |entry| try entries.append(arena, try entryOf(io, cwd, entry, arena));
 
-    if (tree_path) |path| try writeTree(io, cwd, path, entries.items[0..shared]);
-    if (manifest_path) |path| try writeManifest(io, cwd, path, entries.items[0..shared], arena);
+    if (tree_path) |path| try writeTree(io, cwd, path, entries.items[0..system]);
+    if (manifest_path) |path| try writeManifest(io, cwd, path, entries.items[0..system], arena);
 
     const store = try arena.alloc(u8, sectors * sector_size);
     @memset(store, 0xFF);

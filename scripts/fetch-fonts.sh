@@ -75,7 +75,7 @@ rm "$tarball"
 echo "fonts in $out/liberation-fonts-ttf-$liberation"
 
 # Noto Sans Devanagari for the 64-bit disks, Noto Sans CJK and Noto
-# Color Emoji for the virt machines' system disks, all three and the
+# Color Emoji for the 64-bit packages and system disks, all three and the
 # rest for the host tests. The expected values in the libraries' tests/
 # folders name these files' sha256: a new release here means running
 # scripts/font-reference.py, scripts/shape-reference.py and

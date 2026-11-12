@@ -525,9 +525,11 @@ A program takes the names of the first of the locale's languages
 The files are made at build time by `tools/emojigen`, from Unicode's
 `emoji-test.txt` (Emoji 16.0) and the CLDR's annotations (release 46),
 which `scripts/fetch-emoji.sh` fetches; the licence of both is
-`LOCALE:Emoji/unicode.licence`. They are where `FONTS:emoji` is, on the
-system disks of QEMU's virt machines, 1.8 MB in all: the list 37 KB, a
-language's names 76 to 247 KB.
+`LOCALE:Emoji/unicode.licence`. They are where `FONTS:emoji` is: in the
+64-bit machines' release packages, so on a machine installed or
+brought up to date from one, and on the system disks of QEMU's virt
+machines; the disk image a machine starts from out of RAM has not the
+room. 1.8 MB in all: the list 37 KB, a language's names 76 to 247 KB.
 
 `SYS:Commodities/Emoji` is the window to pick one from: the groups as
 tabs, a search through the names and keywords, the ones used last, and

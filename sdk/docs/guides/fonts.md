@@ -361,9 +361,13 @@ with a glyph for each sequence - a family, a skin tone, a flag, a
 keycap. It is the family `emoji`, the last fallback `font.prefs`
 names, so an emoji in a text of any font, a window's title or a file's
 name is drawn from it (see [Fallback fonts](#fallback-fonts) for which
-font an emoji goes to). Like Noto Sans CJK it is on the virt machines'
-system disks alone; a machine with a disk of its own has it once
-`emoji/` and `emoji.font` are copied into its `FONTS:`.
+font an emoji goes to). Like Noto Sans CJK it is in the 64-bit
+machines' release packages - a machine installed or brought up to date
+from one has it (`C:Update`) - and on the virt machines' system disks.
+The disk image a machine starts from out of RAM, 32 MiB, has not the
+room for either: a machine started from a stick, or installed from
+the running image, is without them until it is updated from a
+package.
 
 **What a font holds is what its source has**, under each character's
 code point: Spleen's sizes from 16 rows up have Latin with its
@@ -1404,7 +1408,7 @@ cursor = gb.TextXToOffset(rp, line.ptr, @intCast(line.len), mouse_x - left);
 | | |
 |---|---|
 | `tools/fontconv` | on the host: BDF, bitmap fonts kept as load files (a contents file and one file a size, colour too) and TrueType and OpenType files into size files and a contents file; `--alpha N` for coverage from a larger drawing, `--shadow` for a shadowed colour font, `--rgba` to write a colour font with 32-bit pixels, `--face N` for a font of a collection and `--in <family>` for the family whose directory holds the file |
-| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces, Liberation's and Noto Sans Devanagari's (TrueType) and Noto Sans CJK (a collection), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation and Noto Sans Devanagari only onto the 64-bit machines' disks, Noto Sans CJK and Noto Color Emoji (a font of colour pictures, which the host tests read too) onto the virt machines' system disks. With them a font only the host tests read, which goes on no disk: Source Sans 3, as a font of one weight and as variable fonts |
+| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces, Liberation's and Noto Sans Devanagari's (TrueType) and Noto Sans CJK (a collection), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation and Noto Sans Devanagari only onto the 64-bit machines' disks, Noto Sans CJK and Noto Color Emoji (a font of colour pictures, which the host tests read too) into the 64-bit machines' release packages and onto the virt machines' system disks, not into the disk image in RAM. With them a font only the host tests read, which goes on no disk: Source Sans 3, as a font of one weight and as variable fonts |
 | `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures, of a variable font the same at places on its axes with every glyph's points there (worked out in the library's order and held against fontTools' instancer, or for a font of cubic curves against fontTools' drawing of it at the place), of a font of cubic curves each glyph's outline and what libfreetype renders of a part of them, and of a font of pictures every picture's measures and pixels (a PNG file's as Pillow reads them) and a part of them scaled to another size - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
 | `scripts/shape-reference.py` | on the host: applies the fetched fonts' `GSUB` and `GPOS` lookups to runs of glyphs - every glyph of a font, and sequences its lookups have rules for - with an applier of its own on fontTools' reading of the tables, and writes what comes out, a digest for each script, language and feature list, as the Zig files `truetypeshaping.library`'s host tests compare its shaping with (`src/disk/libs/truetypeshaping/tests/reference/`). `--check` says whether the files are the ones it would write, `--show <font> <case>` prints a case's runs |
 | `scripts/shape-text-reference.py` | on the host: shapes texts with libharfbuzz - in the fetched fonts Latin with its kerning and marks, letters and marks spelled apart and together, Greek, Cyrillic, Hebrew read from right to left, Devanagari in words and in syllables drawn by lot, emoji, features switched for a part of a text; and in a font made of a rule, which is told the characters it lacks, texts whose characters are taken apart, sorted and put together - and writes the glyphs, clusters, advances and offsets as the Zig files `truetypeshaping.library`'s host tests compare `ShapeText`'s answers with (`src/disk/libs/truetypeshaping/tests/text_reference/`); `--check` says whether they are up to date |
