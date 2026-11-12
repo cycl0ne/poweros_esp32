@@ -223,6 +223,19 @@ pub fn glyphByNumber(gb: *GraphicsBase, font: *const TextFont, number: u32) ?*co
     return kept.glyphFor(gb, font, kept.by_number | number);
 }
 
+/// Whether `glyph` is drawn in its own colours and none of the pen's: a
+/// picture. A glyph is of its font image's kind, so the image answers;
+/// it is asked glyph by glyph, of the glyph a text is drawn with, and
+/// never of a font as a whole.
+///
+/// INPUTS:
+/// - `font` - the font the glyph is of.
+/// - `glyph` - the glyph.
+pub fn ownColours(font: *const TextFont, glyph: *const Glyph) bool {
+    _ = glyph;
+    return font.image.kind == .rgba32;
+}
+
 /// Where a glyph's first row starts.
 ///
 /// INPUTS:

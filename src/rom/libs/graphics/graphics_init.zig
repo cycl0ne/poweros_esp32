@@ -86,9 +86,13 @@ pub const LIBRARY_VERSION = 0;
 /// direction (`RPTAG_TextDirection`). 43: a shaped text is taken by
 /// Unicode's clusters - a conjunct with its vowel sign, a flag, joined
 /// pictographs are one each, drawn by one font, never cut by `TextFit`
-/// and with no place inside. The version stays 0 until there is
-/// something to demand of it.
-pub const LIBRARY_REVISION = 43;
+/// and with no place inside. 44: in a shaped text an emoji is drawn by
+/// the first font of the chain that draws it in the form it asks for:
+/// with glyphs in their own colours where it is a picture by default
+/// or U+FE0F asks for one, in the pen where it is text by default or
+/// U+FE0E asks for that. The version stays 0 until there is something
+/// to demand of it.
+pub const LIBRARY_REVISION = 44;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.

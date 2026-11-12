@@ -4780,6 +4780,192 @@ test "a font's shape hook: text is drawn, measured and fitted as the glyphs it l
     try tearDown(gb);
 }
 
+/// 8 rows, baseline 6, ink: the text forms of the presentation test,
+/// one pixel on row 2 each - '1', the watch (U+231A) and the heart
+/// (U+2764); '?' is the default.
+const text_form_spec = fontimage.Spec{
+    .height = 8,
+    .baseline = 6,
+    .x_size = 8,
+    .default_char = '?',
+    .glyphs = &.{
+        testGlyph('1', 8, 0, 2, 1, 1, &.{0x80}),
+        testGlyph('?', 8, 0, 0, 8, 1, &.{0xFF}),
+        testGlyph(0x231A, 8, 0, 2, 1, 1, &.{0x80}),
+        testGlyph(0x2764, 8, 0, 2, 1, 1, &.{0x80}),
+    },
+};
+const text_form_font: [fontimage.imageSize(text_form_spec)]u8 align(4) = fontimage.build(text_form_spec);
+
+/// The same in 32-bit colour, one red pixel on row 2 each, and the face
+/// (U+1F600) the other font lacks; '1' is the default.
+const picture_form_spec = fontimage.Spec{
+    .height = 8,
+    .baseline = 6,
+    .x_size = 8,
+    .kind = .rgba32,
+    .default_char = '1',
+    .glyphs = &.{
+        testGlyph('1', 8, 0, 2, 1, 1, &.{ 0xFF, 0, 0, 0xFF }),
+        testGlyph(0x231A, 8, 0, 2, 1, 1, &.{ 0xFF, 0, 0, 0xFF }),
+        testGlyph(0x2764, 8, 0, 2, 1, 1, &.{ 0xFF, 0, 0, 0xFF }),
+        testGlyph(0x1F600, 8, 0, 2, 1, 1, &.{ 0xFF, 0, 0, 0xFF }),
+    },
+};
+const picture_form_font: [fontimage.imageSize(picture_form_spec)]u8 align(4) = fontimage.build(picture_form_spec);
+
+/// The two hooks of the presentation test's fonts. The shaper: a
+/// selector (U+FE0E, U+FE0F) is no glyph; a font of colour draws a
+/// keycap - '1', U+FE0F, U+20E3 - as its glyph 40; a character the
+/// font's image holds is its glyph, eight columns on; any other is
+/// glyph 0. The maker has glyph 40, a red pixel on row 2.
+const Presenter = struct {
+    fn shape(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+        _ = hook;
+        const font: *const fonts.TextFont = @ptrCast(@alignCast(object.?));
+        const request: *graphics.ShapeRequest = @ptrCast(@alignCast(message.?));
+        const text = request.text[0..request.length];
+        var made: u32 = 0;
+        var at: usize = 0;
+        while (at < text.len) {
+            const here: u32 = @intCast(at);
+            const code = sdk.utility.utf8.next(text, &at);
+            if (code == 0xFE0E or code == 0xFE0F) continue;
+            const keycap = "\xEF\xB8\x8F\xE2\x83\xA3";
+            if (code == '1' and font.image.kind == .rgba32 and std.mem.startsWith(u8, text[at..], keycap)) {
+                at += keycap.len;
+                Shaper.put(request, &made, .{ .which = 40, .flags = graphics.GLYPHREQ_NUMBER, .cluster = here, .advance = 8 });
+            } else if (fontimage.find(font.image, code) != null) {
+                Shaper.put(request, &made, .{ .which = code, .cluster = here, .advance = 8 });
+            } else {
+                Shaper.put(request, &made, .{ .which = 0, .flags = graphics.GLYPHREQ_NUMBER, .cluster = here, .advance = 8 });
+            }
+        }
+        request.count = made;
+        return if (made > request.room) graphics.SHAPE_ROOM else graphics.SHAPE_OK;
+    }
+
+    fn make(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+        _ = hook;
+        _ = object;
+        const request: *graphics.GlyphRequest = @ptrCast(@alignCast(message.?));
+        if (request.flags & graphics.GLYPHREQ_NUMBER == 0 or request.which != 40) return graphics.GLYPH_NONE;
+        request.kind = .rgba32;
+        request.size = 4;
+        if (request.room < 4) return graphics.GLYPH_ROOM;
+        @memcpy(request.pixels[0..4], &[_]u8{ 0xFF, 0, 0, 0xFF });
+        request.glyph = .{ .width = 1, .rows = 1, .top = 2, .advance = 8, .pitch = 4 };
+        return graphics.GLYPH_OK;
+    }
+};
+
+test "revision 44: an emoji is drawn by the font that has the form it asks for, a picture or text" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [64 * 8 * 2]u8 = @splat(0);
+    var surface = rtg.Surface{ .pixels = &pixels, .width = 64, .height = 8, .pitch = 128, .size_bytes = pixels.len, .format = .rgb565 };
+    const tags = [_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
+        .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 255, 255) },
+        .{},
+    };
+    const rp = base(gb).CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    var shape_hook = sdk.utility.Hook{ .entry = &Presenter.shape };
+    var make_hook = sdk.utility.Hook{ .entry = &Presenter.make };
+    const pen: u16 = 0xFFFF;
+    const red: u16 = 0xF800;
+    const heart = "\xE2\x9D\xA4";
+    const watch = "\xE2\x8C\x9A";
+    const face = "\xF0\x9F\x98\x80";
+    const as_text = "\xEF\xB8\x8E";
+    const as_picture = "\xEF\xB8\x8F";
+    const Case = struct { text: []const u8, first: u16, width: i32 = 8 };
+    const draw = struct {
+        fn all(g: *GraphicsBase, port: *graphics.RastPort, to: *rtg.Surface, bytes: []u8, cases: []const Case) !void {
+            for (cases) |case| {
+                @memset(bytes, 0);
+                base(g).Move(port, 0, 6);
+                base(g).Text(port, case.text.ptr, @intCast(case.text.len));
+                try testing.expectEqual(case.first, pixelAt(to, 0, 2));
+                try testing.expectEqual(case.width, base(g).TextLength(port, case.text.ptr, @intCast(case.text.len)));
+            }
+        }
+    };
+
+    // A text font with a colour font behind it.
+    var picture = fonts.TextFont{ .node = .{ .name = "picture.font" }, .image = @ptrCast(&picture_form_font), .render = &make_hook, .shape = &shape_hook };
+    var line = fonts.TextFont{ .node = .{ .name = "text.font" }, .image = @ptrCast(&text_form_font), .fallback = &picture, .shape = &shape_hook };
+    try testing.expect(base(gb).AddFont(&picture));
+    try testing.expect(base(gb).AddFont(&line));
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&line) }, .{} });
+    try draw.all(gb, rp, &surface, &pixels, &.{
+        // Text by default, and a picture when asked for.
+        .{ .text = heart, .first = pen },
+        .{ .text = heart ++ as_picture, .first = red },
+        .{ .text = heart ++ as_text, .first = pen },
+        // A picture by default, though the text font has it, and text
+        // when asked for.
+        .{ .text = watch, .first = red },
+        .{ .text = watch ++ as_picture, .first = red },
+        .{ .text = watch ++ as_text, .first = pen },
+        // A digit is a digit, and with the keycap's two marks the one
+        // glyph the colour font makes of the three.
+        .{ .text = "1", .first = pen },
+        .{ .text = "1" ++ as_picture ++ "\xE2\x83\xA3", .first = red },
+        // What only one font has is that font's.
+        .{ .text = face, .first = red },
+        .{ .text = "1" ++ face, .first = pen, .width = 16 },
+    });
+    // Two clusters of the one character, each in its font.
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 0, 6);
+    base(gb).Text(rp, heart ++ heart ++ as_picture, 9);
+    try testing.expectEqual(pen, pixelAt(&surface, 0, 2));
+    try testing.expectEqual(red, pixelAt(&surface, 8, 2));
+    try testing.expectEqual(@as(u32, 2), litCount(&surface));
+    try testing.expect(base(gb).RemFont(&line));
+    try testing.expect(base(gb).RemFont(&picture));
+
+    // The other way round: the form decides, not the order.
+    var behind = fonts.TextFont{ .node = .{ .name = "text.font" }, .image = @ptrCast(&text_form_font), .shape = &shape_hook };
+    var front = fonts.TextFont{ .node = .{ .name = "picture.font" }, .image = @ptrCast(&picture_form_font), .fallback = &behind, .render = &make_hook, .shape = &shape_hook };
+    try testing.expect(base(gb).AddFont(&behind));
+    try testing.expect(base(gb).AddFont(&front));
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&front) }, .{} });
+    try draw.all(gb, rp, &surface, &pixels, &.{
+        .{ .text = heart, .first = pen },
+        .{ .text = heart ++ as_picture, .first = red },
+        .{ .text = watch, .first = red },
+        .{ .text = watch ++ as_text, .first = pen },
+        // No emoji: the chain's order.
+        .{ .text = "1", .first = red },
+    });
+    try testing.expect(base(gb).RemFont(&front));
+    try testing.expect(base(gb).RemFont(&behind));
+
+    // A form no font of the chain has: the font that has the cluster.
+    var alone = fonts.TextFont{ .node = .{ .name = "text.font" }, .image = @ptrCast(&text_form_font), .shape = &shape_hook };
+    try testing.expect(base(gb).AddFont(&alone));
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&alone) }, .{} });
+    try draw.all(gb, rp, &surface, &pixels, &.{
+        .{ .text = heart ++ as_picture, .first = pen },
+        .{ .text = watch, .first = pen },
+    });
+    try testing.expect(base(gb).RemFont(&alone));
+    var only = fonts.TextFont{ .node = .{ .name = "picture.font" }, .image = @ptrCast(&picture_form_font), .render = &make_hook, .shape = &shape_hook };
+    try testing.expect(base(gb).AddFont(&only));
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&only) }, .{} });
+    try draw.all(gb, rp, &surface, &pixels, &.{
+        .{ .text = heart, .first = red },
+        .{ .text = heart ++ as_text, .first = red },
+    });
+    try testing.expect(base(gb).RemFont(&only));
+
+    base(gb).FreeRastPort(rp);
+    try tearDown(gb);
+}
+
 /// A font for the matching test: `listSpec` at `rows`, drawn in `style`,
 /// with `flags` in its image.
 fn matchSpec(rows: u16, style: graphics.FontStyle, flags: graphics.FontFlags) fontimage.Spec {

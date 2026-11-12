@@ -323,6 +323,8 @@ FONTS:devanagari/NotoSansDevanagari-Regular.ttf
 FONTS:cjk-jp.font        Noto Sans CJK in Japan's forms: the first font of a collection
 FONTS:cjk-jp/NotoSansCJK-Regular.ttc
 FONTS:cjk-kr.font        another font of that file: a contents file alone
+FONTS:emoji.font         Noto Color Emoji: glyphs that are pictures in their own colours
+FONTS:emoji/NotoColorEmoji.ttf
 FONTS:source.font        a variable font: an entry a style, all of one file
 FONTS:source/SourceSans3VF-Upright.ttf
 ```
@@ -351,6 +353,17 @@ system disks it makes for QEMU's virt machines alone
 (`system-x64.bin`, `system-a64.bin`, `system-rv64.bin`); a machine with
 a disk of its own has them once `cjk-jp/` and the five contents files
 are copied into its `FONTS:`.
+
+Noto Color Emoji (`FONTS:emoji.licence`, the same licence) is the
+emoji as pictures in their own colours: one file of 10.7 MB, 4046
+glyphs of 136 by 128 pixels, scaled to the height a text is drawn in,
+with a glyph for each sequence - a family, a skin tone, a flag, a
+keycap. It is the family `emoji`, the last fallback `font.prefs`
+names, so an emoji in a text of any font, a window's title or a file's
+name is drawn from it (see [Fallback fonts](#fallback-fonts) for which
+font an emoji goes to). Like Noto Sans CJK it is on the virt machines'
+system disks alone; a machine with a disk of its own has it once
+`emoji/` and `emoji.font` are copied into its `FONTS:`.
 
 **What a font holds is what its source has**, under each character's
 code point: Spleen's sizes from 16 rows up have Latin with its
@@ -1076,11 +1089,12 @@ SCREEN=go.font/16 DEFAULT=go.font/16 FIXED=go-mono.font/16 FALLBACK=sans.font,sp
 ```
 
 The line the disk carries ends with
-`FALLBACK=devanagari.font,cjk-jp.font`: Devanagari, then kana, Hangul
-and Han characters in Japan's forms - `cjk-sc.font`, `cjk-tc.font`,
-`cjk-hk.font` or `cjk-kr.font` in its place draws them in China's,
-Taiwan's, Hong Kong's or Korea's. A family a disk does not have is
-passed over.
+`FALLBACK=devanagari.font,cjk-jp.font,emoji.font`: Devanagari, then
+kana, Hangul and Han characters in Japan's forms - `cjk-sc.font`,
+`cjk-tc.font`, `cjk-hk.font` or `cjk-kr.font` in its place draws them
+in China's, Taiwan's, Hong Kong's or Korea's - and last the emoji as
+pictures in their own colours. A family a disk does not have is passed
+over.
 
 `FALLBACK` is family names with commas between and no blanks, at most
 eight (`graphics.FONT_FALLBACKS`), each once, and no sizes: a fallback
@@ -1105,6 +1119,11 @@ What to know:
   it is opened as a fallback or by its own name, so no font comes back
   to itself. With the list above, a text in `sans.font` looks in
   `spleen.font`, and one in `spleen.font` in neither.
+- **An emoji goes by its form before the order** (graphics.library
+  0.44): a picture to the first font of the chain that draws it in its
+  own colours, text to the first that draws it in the pen, wherever in
+  the list the fonts stand - see
+  [Text a font shapes](#text-a-font-shapes).
 - **A font keeps the chain it was made with.** A changed list is seen in
   fonts made after it; a font in memory - the system's fonts are, from
   boot - keeps its own until it has left memory, which for those is the
@@ -1125,8 +1144,10 @@ What to know:
   An outline is read whole when its family is first opened, and every
   font made opens its fallbacks: with `cjk-jp.font` on the list the
   system holds the collection's 19.5 MB from its start - once, for
-  every size and for each of the file's families - and its characters
-  are rendered as they are first drawn.
+  every size and for each of the file's families - and with
+  `emoji.font` Noto Color Emoji's 10.7 MB. Their characters are
+  rendered as they are first drawn, an emoji's picture unpacked and
+  scaled once for a size and kept with it.
 - **A fallback is asked for by its name and the height alone**, not in
   the style of the text: a bold or italic text takes the characters it
   lacks from the family as the list names it, `devanagari.font`'s
@@ -1319,6 +1340,20 @@ mine.font.shape = &mine.shaper; // before AddFont, and never again
   font draws, one after another, are shaped together by that font's
   hook; a font without a hook places a glyph for each character.
   Nothing is moved or joined across a change of font.
+- **An emoji is drawn in the form it asks for** (graphics.library
+  0.44). A cluster that starts with an emoji is a picture - the
+  character is one by default (`😀`), U+FE0F follows it (`❤️`), it is
+  a keycap, a flag, or has a skin tone - or text: a character that is
+  text by default (`❤`, `☀`), or one U+FE0E follows. A picture goes to
+  the first font of the chain, the text's own included, that draws the
+  cluster with a glyph in its own colours, and text to the first that
+  draws it in the pen alone. What decides is the glyphs a font draws
+  the cluster with, each asked by itself, and not what kind of font it
+  is. An emoji no font draws in its form goes by the chain's order
+  like any other cluster: where no text font has `❤`, the colour
+  font's picture is drawn for it. This holds in a text one of the
+  chain's fonts shapes; where none has a hook, each character is the
+  first font's that has it.
 - **The styles are drawn as for any text**: bold widens every glyph
   that has an advance, a glyph without one - a mark - stays on its
   letter.
@@ -1354,7 +1389,7 @@ cursor = gb.TextXToOffset(rp, line.ptr, @intCast(line.len), mouse_x - left);
 | | |
 |---|---|
 | `tools/fontconv` | on the host: BDF, bitmap fonts kept as load files (a contents file and one file a size, colour too) and TrueType and OpenType files into size files and a contents file; `--alpha N` for coverage from a larger drawing, `--shadow` for a shadowed colour font, `--rgba` to write a colour font with 32-bit pixels, `--face N` for a font of a collection and `--in <family>` for the family whose directory holds the file |
-| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces, Liberation's and Noto Sans Devanagari's (TrueType) and Noto Sans CJK (a collection), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation and Noto Sans Devanagari only onto the 64-bit machines' disks, Noto Sans CJK onto the virt machines' system disks. With them two fonts only the host tests read, which go on no disk: Noto Color Emoji and Source Sans 3, as a font of one weight and as variable fonts |
+| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces, Liberation's and Noto Sans Devanagari's (TrueType) and Noto Sans CJK (a collection), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation and Noto Sans Devanagari only onto the 64-bit machines' disks, Noto Sans CJK and Noto Color Emoji (a font of colour pictures, which the host tests read too) onto the virt machines' system disks. With them a font only the host tests read, which goes on no disk: Source Sans 3, as a font of one weight and as variable fonts |
 | `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures, of a variable font the same at places on its axes with every glyph's points there (worked out in the library's order and held against fontTools' instancer, or for a font of cubic curves against fontTools' drawing of it at the place), of a font of cubic curves each glyph's outline and what libfreetype renders of a part of them, and of a font of pictures every picture's measures and pixels (a PNG file's as Pillow reads them) and a part of them scaled to another size - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
 | `scripts/shape-reference.py` | on the host: applies the fetched fonts' `GSUB` and `GPOS` lookups to runs of glyphs - every glyph of a font, and sequences its lookups have rules for - with an applier of its own on fontTools' reading of the tables, and writes what comes out, a digest for each script, language and feature list, as the Zig files `truetypeshaping.library`'s host tests compare its shaping with (`src/disk/libs/truetypeshaping/tests/reference/`). `--check` says whether the files are the ones it would write, `--show <font> <case>` prints a case's runs |
 | `scripts/shape-text-reference.py` | on the host: shapes texts with libharfbuzz - in the fetched fonts Latin with its kerning and marks, letters and marks spelled apart and together, Greek, Cyrillic, Hebrew read from right to left, Devanagari in words and in syllables drawn by lot, emoji, features switched for a part of a text; and in a font made of a rule, which is told the characters it lacks, texts whose characters are taken apart, sorted and put together - and writes the glyphs, clusters, advances and offsets as the Zig files `truetypeshaping.library`'s host tests compare `ShapeText`'s answers with (`src/disk/libs/truetypeshaping/tests/text_reference/`); `--check` says whether they are up to date |

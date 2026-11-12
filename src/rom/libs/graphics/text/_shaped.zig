@@ -16,9 +16,18 @@
 //! a cluster, a glyph is of the cluster its first character is in, and
 //! no text is cut inside one.
 //!
-//! **A font for each cluster.** The first font of the chain that has a
-//! glyph for each of the cluster's characters draws it. Where none has,
-//! and the cluster is one a shaper may have another form of - a letter
+//! **A font for each cluster.** An emoji is drawn by the first font of
+//! the chain that draws it in the form it asks for (`formOf`): as a
+//! picture, with glyphs in their own colours, where it is one by
+//! default or U+FE0F asks for it; in the pen where it is text by
+//! default or U+FE0E asks for that. So `❤` is the text font's and
+//! `❤️` the colour font's, whichever comes first in the chain. What
+//! decides is the glyphs a font draws the cluster with, asked one by
+//! one (`_text.ownColours`), not what kind of font it is. An emoji no
+//! font draws in its form, and every other cluster, goes by the
+//! chain's order: the first font of the chain that has a glyph for each
+//! of the cluster's characters draws it. Where none has, and the
+//! cluster is one a shaper may have another form of - a letter
 //! with marks, in one character or several, a space of a set width, a
 //! character that is not shown - it is the first font whose hook shapes
 //! the cluster by itself without the glyph of a character it lacks. A
@@ -271,11 +280,83 @@ fn boundaryUpTo(bytes: []const u8, at: usize) usize {
     return unicode.clusterStart(bytes, at);
 }
 
+/// What a cluster asks of the glyphs it is drawn with.
+const Form = enum {
+    /// Nothing.
+    any,
+    /// Their own colours: an emoji drawn as a picture.
+    picture,
+    /// The pen: an emoji in its text form.
+    text,
+};
+
+/// The form `cluster` asks for. A cluster of one byte asks for none: a
+/// digit or `#` by itself is text in any font.
+fn formOf(cluster: []const u8) Form {
+    if (cluster.len < 2) return .any;
+    if (unicode.pictured(cluster)) return .picture;
+    return if (unicode.emoji(utf8.read(cluster).char) == .none) .any else .text;
+}
+
+/// How one font draws a cluster by itself.
+const Drawn = enum {
+    /// Not whole: it lacks a glyph.
+    no,
+    /// Every glyph in the pen.
+    plain,
+    /// A glyph of it in its own colours.
+    coloured,
+};
+
+/// How `font` draws the emoji `cluster` by itself: the glyphs its hook
+/// shapes it into, or with no hook a glyph for each character. A font
+/// without a glyph for the first character has no form of it.
+fn drawnBy(gb: *GraphicsBase, font: *const TextFont, cluster: []const u8, scratch: []PlacedGlyph) Drawn {
+    if (_text.glyphIn(gb, font, utf8.read(cluster).char) == null) return .no;
+    var coloured = false;
+    if (font.shape) |hook| {
+        var request = graphics.ShapeRequest{
+            .text = cluster.ptr,
+            .length = @intCast(cluster.len),
+            .glyphs = scratch.ptr,
+            .room = @intCast(scratch.len),
+        };
+        if (gb.utility_base.CallHookPkt(hook, @constCast(font), &request) != graphics.SHAPE_OK) return .no;
+        if (request.count > scratch.len) return .no;
+        for (scratch[0..request.count]) |*from| {
+            const by_number = from.flags & graphics.GLYPHREQ_NUMBER != 0;
+            if (by_number and from.which == 0) return .no;
+            // One that could not be made this time says nothing.
+            const glyph = (if (by_number) _text.glyphByNumber(gb, font, from.which) else _text.glyphIn(gb, font, from.which)) orelse continue;
+            if (_text.ownColours(font, glyph)) coloured = true;
+        }
+    } else {
+        var at: usize = 0;
+        while (at < cluster.len) {
+            const glyph = _text.glyphIn(gb, font, utf8.next(cluster, &at)) orelse return .no;
+            if (_text.ownColours(font, glyph)) coloured = true;
+        }
+    }
+    return if (coloured) .coloured else .plain;
+}
+
 /// The font that draws one cluster, or null for a cluster none of the
 /// chain draws whole.
 fn fontFor(gb: *GraphicsBase, line: *const TextFont, cluster: []const u8, scratch: []PlacedGlyph) ?*const TextFont {
     var at: ?*const TextFont = line;
     var left: u32 = graphics.FONT_FALLBACKS + 1;
+    // An emoji: the first font that draws it in the form it asks for.
+    const form = formOf(cluster);
+    if (form != .any) {
+        const wanted_way: Drawn = if (form == .picture) .coloured else .plain;
+        while (at) |one| : (at = one.fallback) {
+            if (left == 0) break;
+            left -= 1;
+            if (drawnBy(gb, one, cluster, scratch) == wanted_way) return one;
+        }
+        at = line;
+        left = graphics.FONT_FALLBACKS + 1;
+    }
     while (at) |one| : (at = one.fallback) {
         if (left == 0) break;
         left -= 1;

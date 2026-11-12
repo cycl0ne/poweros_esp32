@@ -215,7 +215,10 @@ pub const TextFont = extern struct {
     /// and never again, and keeps every font of the chain - on the list,
     /// if it was added: its kept glyphs are freed as it is taken off -
     /// for as long as this one is on the list or open. Null for a font
-    /// with none.
+    /// with none. In a text that is shaped an emoji goes to the first
+    /// font of the chain that draws it in the form it asks for - in its
+    /// own colours as a picture, in the pen as text - before the order
+    /// counts (since graphics.library 0.44).
     fallback: ?*const TextFont = null,
     /// The hook that makes a glyph the image does not hold, called with
     /// the font as its object and a `GlyphRequest` as its message, and

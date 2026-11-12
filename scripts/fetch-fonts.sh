@@ -15,16 +15,16 @@
 # Font Licence 1.1, at a pinned release - Japanese, Chinese and Korean
 # in one file, a collection of ten fonts over one set of outlines of
 # cubic curves, each font a region's forms of the characters, which the
-# host tests read too.
+# host tests read too; and Noto Color Emoji, by Google, under the SIL
+# Open Font Licence 1.1, at a pinned release - the emoji as colour
+# pictures, a glyph for each sequence, which the host tests read too.
 #
-# And the fonts only the host tests read, which go on no disk: Noto
-# Color Emoji, by Google, under the SIL Open Font Licence 1.1, at a
-# pinned release - a font of colour glyphs with variation sequences and
-# no outlines; Source Sans 3 Regular, by Adobe, under the SIL Open Font
-# Licence 1.1, at a pinned release - a Latin font of outlines of cubic
-# curves; and Source Sans 3's two variable fonts of the upright face,
-# from the same release - one axis, the weight, over outlines of
-# quadratic curves in the one and of cubic curves in the other.
+# And the fonts only the host tests read, which go on no disk: Source
+# Sans 3 Regular, by Adobe, under the SIL Open Font Licence 1.1, at a
+# pinned release - a Latin font of outlines of cubic curves; and Source
+# Sans 3's two variable fonts of the upright face, from the same
+# release - one axis, the weight, over outlines of quadratic curves in
+# the one and of cubic curves in the other.
 #
 # Each is checked against its sha256. Nothing of it is committed: it lands
 # in toolchain/fonts, which the build looks for; without it the disk has
@@ -74,8 +74,9 @@ tar xzf "$tarball"
 rm "$tarball"
 echo "fonts in $out/liberation-fonts-ttf-$liberation"
 
-# Noto Sans Devanagari for the 64-bit disks and the host tests, the rest
-# for the host tests only. The expected values in the libraries' tests/
+# Noto Sans Devanagari for the 64-bit disks, Noto Sans CJK and Noto
+# Color Emoji for the virt machines' system disks, all three and the
+# rest for the host tests. The expected values in the libraries' tests/
 # folders name these files' sha256: a new release here means running
 # scripts/font-reference.py, scripts/shape-reference.py and
 # scripts/shape-text-reference.py again.
@@ -94,6 +95,7 @@ unzip -q -o -j "$archive" NotoSansDevanagari/hinted/ttf/NotoSansDevanagari-Regul
 unzip -p "$archive" OFL.txt >noto/NotoSansDevanagari.licence
 rm "$archive"
 curl -sSfL -o noto/NotoColorEmoji.ttf "https://raw.githubusercontent.com/googlefonts/noto-emoji/$emoji/2D/fonts/NotoColorEmoji.ttf"
+curl -sSfL -o noto/NotoColorEmoji.licence "https://raw.githubusercontent.com/googlefonts/noto-emoji/$emoji/LICENSE"
 curl -sSfL -o noto/NotoSansCJK-Regular.ttc "https://raw.githubusercontent.com/notofonts/noto-cjk/$cjk/Sans/OTC/NotoSansCJK-Regular.ttc"
 curl -sSfL -o noto/NotoSansCJK.licence "https://raw.githubusercontent.com/notofonts/noto-cjk/$cjk/LICENSE"
 cd noto
@@ -101,6 +103,7 @@ sha256sum -c --quiet <<EOF
 4e3c66638958c3e2ab5d37f47a8deb89fffeb7be9985c665a519bbc7ba762313  NotoSansDevanagari-Regular.ttf
 6a09c8d797cfc803d32cdc731e809424d74cbaff59f503de34ade421a08e5bc2  NotoSansDevanagari-Bold.ttf
 15671215ab769fdc7162a045d56fd7d7e477c51b04e6b3c761d914d8fdd6cc44  NotoColorEmoji.ttf
+500bb1ccf43df7bbb522112f9133a52b16e1c35e809632f5d8609b179152de5b  NotoColorEmoji.licence
 b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a  NotoSansCJK-Regular.ttc
 6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2  NotoSansCJK.licence
 EOF

@@ -858,12 +858,15 @@ pub fn build(b: *std.Build) void {
         if (!devanagari) std.log.info("no Noto Sans Devanagari, Regular and Bold (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:devanagari", .{});
         const cjk = hasFontFile(b, dir, devanagari_dir ++ "/" ++ cjk_file) and hasFontFile(b, dir, devanagari_dir ++ "/NotoSansCJK.licence");
         if (!cjk) std.log.info("no Noto Sans CJK Regular and its licence (scripts/fetch-fonts.sh): the virt machines' system disks have no FONTS:cjk-jp, -kr, -sc, -tc and -hk", .{});
+        const emoji = hasFontFile(b, dir, devanagari_dir ++ "/" ++ emoji_file) and hasFontFile(b, dir, devanagari_dir ++ "/NotoColorEmoji.licence");
+        if (!emoji) std.log.info("no Noto Color Emoji and its licence (scripts/fetch-fonts.sh): the virt machines' system disks have no FONTS:emoji", .{});
         for (disk_fonts) |family| {
             switch (family.set) {
                 .base => {},
                 .liberation => if (!liberation) continue,
                 .devanagari => if (!devanagari) continue,
                 .cjk => if (!cjk) continue,
+                .emoji => if (!emoji) continue,
             }
             // The 64-bit disks take every family; the ESP32s' the ones
             // that are not `wide`. A `virt` family is on the virt
@@ -890,6 +893,7 @@ pub fn build(b: *std.Build) void {
         if (liberation) disks.some(true).addPrefixedFileArg("fonts/liberation.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, liberation_dir ++ "/LICENSE" }) });
         if (devanagari) disks.some(true).addPrefixedFileArg("fonts/devanagari.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoSansDevanagari.licence" }) });
         if (cjk) disks.some(true).addPrefixedFileArg("--gpt-file=fonts/cjk.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoSansCJK.licence" }) });
+        if (emoji) disks.some(true).addPrefixedFileArg("--gpt-file=fonts/emoji.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoColorEmoji.licence" }) });
     }
     // SYS:Certificates/Roots - Mozilla's roots, which
     // scripts/fetch-certs.sh fetched, as the trust store tools/anchors
@@ -2609,7 +2613,7 @@ const FontPlace = struct {
 /// What scripts/fetch-fonts.sh fetches, as far as a tree may have one
 /// part and not another: `base` is what every fetch brought, the others
 /// came later and a tree fetched before them lacks them.
-const FontSet = enum { base, liberation, devanagari, cjk };
+const FontSet = enum { base, liberation, devanagari, cjk, emoji };
 
 /// Noto Sans CJK Regular as scripts/fetch-fonts.sh names it, in
 /// `devanagari_dir`: one file of ten fonts.
@@ -2624,6 +2628,10 @@ fn cjkFamily(comptime name: []const u8, comptime face: []const u8) DiskFont {
     if (comptime std.mem.eql(u8, name, first)) return .{ .name = name, .sources = source, .outlines = &.{cjk_file}, .wide = true, .set = .cjk, .virt = true };
     return .{ .name = name, .options = &.{ "--face", face, "--in", first }, .sources = source, .wide = true, .set = .cjk, .in = first, .virt = true };
 }
+
+/// Noto Color Emoji as scripts/fetch-fonts.sh names it, in
+/// `devanagari_dir`.
+const emoji_file = "NotoColorEmoji.ttf";
 
 /// Where scripts/fetch-fonts.sh puts Noto Sans Devanagari, in
 /// toolchain/fonts.
@@ -2655,7 +2663,9 @@ fn liberationFamily(comptime name: []const u8, comptime file: []const u8) [4]Dis
 /// and - on the virt machines' system disks, the file being 19.5 MB
 /// and the disk image in RAM 32 - Noto Sans CJK - Japanese, Chinese and
 /// Korean - as five families of the one file, a region's forms each:
-/// Japan's, Korea's, China's, Taiwan's and Hong Kong's.
+/// Japan's, Korea's, China's, Taiwan's and Hong Kong's - and Noto Color
+/// Emoji, 10.7 MB of glyphs in their own colours, which `font.prefs`
+/// names last among the fonts a text falls back to.
 const disk_fonts = liberationFamily("sans", "Sans") ++ liberationFamily("serif", "Serif") ++ liberationFamily("mono", "Mono") ++ [_]DiskFont{
     .{
         .name = "spleen",
@@ -2676,6 +2686,7 @@ const disk_fonts = liberationFamily("sans", "Sans") ++ liberationFamily("serif",
     cjkFamily("cjk-sc", "2"),
     cjkFamily("cjk-tc", "3"),
     cjkFamily("cjk-hk", "4"),
+    .{ .name = "emoji", .sources = &.{devanagari_dir ++ "/" ++ emoji_file}, .outlines = &.{emoji_file}, .wide = true, .set = .emoji, .virt = true },
 };
 
 /// Whether scripts/fetch-fonts.sh has fetched `sub` into the fonts' `dir`.
