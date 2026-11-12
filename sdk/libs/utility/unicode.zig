@@ -2,8 +2,9 @@
 //! Characters by Unicode's tables: a character's folding, upper case and
 //! lower case, names compared without regard to case, the letter a
 //! letter with marks is written on, the cells of a console a character
-//! takes, what a character is - a letter, a digit, a space, ... - and
-//! the clusters a text is made of.
+//! takes, what a character is - a letter, a digit, a space, ... - the
+//! clusters a text is made of, and which of them are emoji drawn as
+//! pictures.
 //!
 //! The case tables are runs of code points that move by the same amount
 //! (`unicode_case.zig`, written by tools/foldgen); a character is looked
@@ -30,6 +31,15 @@
 //! cluster starts at whatever stands before, and forward from there.
 //! Nothing is drawn, moved over or cut inside a cluster.
 //!
+//! An emoji is drawn as text or as a picture. Which, each has by
+//! default (`unicode_emoji.zig`, the code points where that changes):
+//! a heart and a digit are text, a face is a picture. U+FE0F behind
+//! one asks for its picture and U+FE0E for its text, where Unicode has
+//! the character with a selector; a skin tone behind a character that
+//! takes one makes a picture of it. `emoji` is what one character is,
+//! `pictured` what a cluster is drawn as - asked by whoever chooses the
+//! font a cluster is drawn in, and the cells it takes in a console.
+//!
 //! The compares and the clusters read their bytes as text is read (`utf8.read`), so a
 //! byte that is no UTF-8 compares as U+FFFD.
 
@@ -39,6 +49,7 @@ const unicode_base = @import("unicode_base.zig");
 const unicode_width = @import("unicode_width.zig");
 const unicode_class = @import("unicode_class.zig");
 const unicode_cluster = @import("unicode_cluster.zig");
+const unicode_emoji = @import("unicode_emoji.zig");
 
 /// The Unicode version the tables are from.
 pub const version = unicode_case.unicode_version;
@@ -163,6 +174,70 @@ pub fn part(char: u32) Part {
     const number: u8 = @truncate(start);
     if (number == unicode_cluster.syllables) return if ((char - (start >> 8)) % 28 == 0) .syllable else .syllable_trail;
     return @enumFromInt(number);
+}
+
+/// How a character stands to the emoji.
+pub const Emoji = unicode_emoji.Emoji;
+
+/// The selector that asks for an emoji's text form.
+pub const text_selector = 0xFE0E;
+/// The selector that asks for an emoji's picture.
+pub const picture_selector = 0xFE0F;
+
+/// The low byte of `char`'s entry in the emoji table: its kind, and
+/// `unicode_emoji.selected` beside it.
+fn emojiEntry(char: u32) u8 {
+    if (char > utf8.last) return 0;
+    const starts = &unicode_emoji.starts;
+    // The last entry that starts at or before the character; the first
+    // starts at 0.
+    var low: usize = 0;
+    var high: usize = starts.len;
+    while (low < high) {
+        const middle = low + (high - low) / 2;
+        if (starts[middle] >> 8 <= char) low = middle + 1 else high = middle;
+    }
+    return @truncate(starts[low - 1]);
+}
+
+/// How `char` stands to the emoji: none of them, one drawn as text or
+/// as a picture, one of either that takes a skin tone, a skin tone -
+/// `.none` for a value past U+10FFFF.
+pub fn emoji(char: u32) Emoji {
+    return @enumFromInt(emojiEntry(char) & ~@as(u8, unicode_emoji.selected));
+}
+
+/// Whether a selector may stand behind `char`: U+FE0E to have its text
+/// form, U+FE0F its picture. Behind any other character a selector
+/// changes nothing.
+pub fn selectable(char: u32) bool {
+    return emojiEntry(char) & unicode_emoji.selected != 0;
+}
+
+/// Whether `cluster` - one cluster, as `clusterEnd` cuts them - is an
+/// emoji drawn as a picture: its first character one by default (a
+/// face, a flag's regional indicator, a skin tone), one a skin tone
+/// stands behind, or one U+FE0F asks the picture of (`❤️`, the digit of
+/// a keycap); and none U+FE0E asks the text of. A cluster whose first
+/// character is no emoji is never one.
+pub fn pictured(cluster: []const u8) bool {
+    if (cluster.len == 0) return false;
+    const first = utf8.read(cluster);
+    const entry = emojiEntry(first.char);
+    const kind: Emoji = @enumFromInt(entry & ~@as(u8, unicode_emoji.selected));
+    if (kind == .none) return false;
+    if (first.length < cluster.len) {
+        const next = utf8.read(cluster[first.length..]).char;
+        if (entry & unicode_emoji.selected != 0) {
+            if (next == picture_selector) return true;
+            if (next == text_selector) return false;
+        }
+        if ((kind == .toned_text or kind == .toned_picture) and emoji(next) == .tone) return true;
+    }
+    return switch (kind) {
+        .none, .text, .toned_text => false,
+        .picture, .toned_picture, .tone => true,
+    };
 }
 
 /// Whether two characters next to each other are in one cluster: never,

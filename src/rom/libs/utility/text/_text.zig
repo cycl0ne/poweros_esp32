@@ -243,6 +243,84 @@ test "unicode.clusterEnd, clusterStart: letters with their marks, conjuncts, fla
     try expectClusters("a\xFFb\xE0\xA4", &.{ 1, 1, 1, 2 });
 }
 
+test "unicode.emoji, selectable: text and pictures by default, the ones a skin tone or a selector stands behind" {
+    const unicode = @import("sdk").utility.unicode;
+    const Emoji = unicode.Emoji;
+    const expected = [_]struct { char: u32, emoji: Emoji, selectable: bool }{
+        .{ .char = 'a', .emoji = .none, .selectable = false },
+        .{ .char = '1', .emoji = .text, .selectable = true },
+        .{ .char = '#', .emoji = .text, .selectable = true },
+        .{ .char = 0x00A9, .emoji = .text, .selectable = true },
+        .{ .char = 0x2764, .emoji = .text, .selectable = true },
+        .{ .char = 0x261D, .emoji = .toned_text, .selectable = true },
+        // A watch has both forms, a grinning face only its picture.
+        .{ .char = 0x231A, .emoji = .picture, .selectable = true },
+        .{ .char = 0x1F600, .emoji = .picture, .selectable = false },
+        .{ .char = 0x1F44D, .emoji = .toned_picture, .selectable = true },
+        .{ .char = 0x1F44B, .emoji = .toned_picture, .selectable = false },
+        .{ .char = 0x1F3FB, .emoji = .tone, .selectable = false },
+        .{ .char = 0x1F3FF, .emoji = .tone, .selectable = false },
+        .{ .char = 0x1F1E9, .emoji = .picture, .selectable = false },
+        // The parts of a sequence that are no emoji themselves.
+        .{ .char = 0x200D, .emoji = .none, .selectable = false },
+        .{ .char = 0xFE0F, .emoji = .none, .selectable = false },
+        .{ .char = 0x20E3, .emoji = .none, .selectable = false },
+        .{ .char = 0x0915, .emoji = .none, .selectable = false },
+        .{ .char = 0x10FFFF, .emoji = .none, .selectable = false },
+        .{ .char = 0x110000, .emoji = .none, .selectable = false },
+    };
+    for (expected) |each| {
+        try testing.expectEqual(each.emoji, unicode.emoji(each.char));
+        try testing.expectEqual(each.selectable, unicode.selectable(each.char));
+    }
+}
+
+test "unicode.pictured: every kind of emoji sequence is one cluster, drawn as its selector, its skin tone or its default says" {
+    const unicode = @import("sdk").utility.unicode;
+    const sequences = [_]struct { text: []const u8, pictured: bool }{
+        // A family: man, joiner, woman, joiner, girl.
+        .{ .text = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}", .pictured = true },
+        // A thumb with a skin tone, and one without.
+        .{ .text = "\u{1F44D}\u{1F3FD}", .pictured = true },
+        .{ .text = "\u{1F44D}", .pictured = true },
+        // A flag, and half of one.
+        .{ .text = "\u{1F1E9}\u{1F1EA}", .pictured = true },
+        .{ .text = "\u{1F1E9}", .pictured = true },
+        // A keycap, and its digit alone or with the mark only.
+        .{ .text = "1\u{FE0F}\u{20E3}", .pictured = true },
+        .{ .text = "1", .pictured = false },
+        .{ .text = "1\u{20E3}", .pictured = false },
+        // A heart: text, its picture asked for, its text asked for.
+        .{ .text = "\u{2764}", .pictured = false },
+        .{ .text = "\u{2764}\u{FE0F}", .pictured = true },
+        .{ .text = "\u{2764}\u{FE0E}", .pictured = false },
+        // A heart on fire: the selector, then a joiner and a flame.
+        .{ .text = "\u{2764}\u{FE0F}\u{200D}\u{1F525}", .pictured = true },
+        // A watch is a picture until its text is asked for; a grinning
+        // face has no text form, so the selector changes nothing.
+        .{ .text = "\u{231A}", .pictured = true },
+        .{ .text = "\u{231A}\u{FE0E}", .pictured = false },
+        .{ .text = "\u{1F600}", .pictured = true },
+        .{ .text = "\u{1F600}\u{FE0E}", .pictured = true },
+        // A pointing hand is text, and a picture with a skin tone.
+        .{ .text = "\u{261D}", .pictured = false },
+        .{ .text = "\u{261D}\u{1F3FD}", .pictured = true },
+        // A skin tone by itself.
+        .{ .text = "\u{1F3FD}", .pictured = true },
+        // No emoji: a letter, a letter with a selector, a syllable.
+        .{ .text = "a", .pictured = false },
+        .{ .text = "a\u{FE0F}", .pictured = false },
+        .{ .text = "क्षि", .pictured = false },
+    };
+    for (sequences) |sequence| {
+        try testing.expectEqual(sequence.text.len, unicode.clusterEnd(sequence.text, 0));
+        try testing.expectEqual(sequence.pictured, unicode.pictured(sequence.text));
+    }
+    try testing.expect(!unicode.pictured(""));
+    // In a text they are a cluster each, with the letters between.
+    try expectClusters("a\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}1\u{FE0F}\u{20E3}\u{1F1E9}\u{1F1EA}\u{2764}\u{FE0F}b", &.{ 1, 18, 7, 8, 6, 1 });
+}
+
 test "unicode.clusterEnd, clusterStart: every line of Unicode's GraphemeBreakTest.txt" {
     const test_options = @import("test_options");
     if (test_options.unicode_dir.len == 0) return error.SkipZigTest;

@@ -12,6 +12,7 @@
 //!   foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig>
 //!   foldgen normal <UnicodeData.txt> <CompositionExclusions.txt> <out.zig>
 //!   foldgen cluster <GraphemeBreakProperty.txt> <emoji-data.txt> <DerivedCoreProperties.txt> <out.zig>
+//!   foldgen emoji <emoji-data.txt> <emoji-variation-sequences.txt> <out.zig>
 //!   foldgen collate <allkeys.txt> <out.zig>
 //!   foldgen kana <allkeys.txt> <out.zig>
 //!
@@ -101,6 +102,20 @@
 //! for: a pictograph or a consonant with a break property, a linker
 //! that is no mark. The version is GraphemeBreakProperty.txt's.
 //!
+//! `emoji` writes how each character stands to the emoji
+//! (sdk/libs/utility/unicode_emoji.zig), which `unicode.emoji` answers:
+//! none of them, one drawn as text until a selector asks for its
+//! picture (emoji-data.txt's Emoji without Emoji_Presentation), one
+//! drawn as a picture (Emoji_Presentation), either of the two that
+//! takes a skin tone behind it (Emoji_Modifier_Base), or a skin tone
+//! (Emoji_Modifier) - and whether a selector may stand behind it, which
+//! is so for the characters emoji-variation-sequences.txt lists. The
+//! table is where either changes, as `class`'s is. It stops where a
+//! skin tone, or a character that takes one, is no emoji, where a
+//! character with a selector is none, and where an emoji drawn as text
+//! takes no selector, which would leave its picture unreachable. The
+//! version is the emoji version the first file says it is used with.
+//!
 //! `collate` writes the order locale.library sorts the Devanagari block
 //! in (src/disk/libs/locale/compare/_devanagari.zig), from the Default
 //! Unicode Collation Element Table, allkeys.txt: each character of
@@ -141,7 +156,7 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(1);
 }
 
-const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig> | foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig> | foldgen normal <UnicodeData.txt> <CompositionExclusions.txt> <out.zig> | foldgen cluster <GraphemeBreakProperty.txt> <emoji-data.txt> <DerivedCoreProperties.txt> <out.zig> | foldgen collate|kana <allkeys.txt> <out.zig>";
+const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig> | foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig> | foldgen normal <UnicodeData.txt> <CompositionExclusions.txt> <out.zig> | foldgen cluster <GraphemeBreakProperty.txt> <emoji-data.txt> <DerivedCoreProperties.txt> <out.zig> | foldgen emoji <emoji-data.txt> <emoji-variation-sequences.txt> <out.zig> | foldgen collate|kana <allkeys.txt> <out.zig>";
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -434,6 +449,62 @@ pub fn main(init: std.process.Init) !void {
         , .{ version, starts.len, version });
         try writeStarts(arena, &out, "Where the part changes: `code << 8 | part`, sorted.", starts);
         try cwd.writeFile(io, .{ .sub_path = args[5], .data = out.items });
+        return;
+    }
+
+    if (mem.eql(u8, args[1], "emoji")) {
+        if (args.len != 5) fatal(usage, .{});
+        const emoji = try cwd.readFileAlloc(io, args[2], arena, limit);
+        const selectors = try cwd.readFileAlloc(io, args[3], arena, limit);
+        const named = try versionNamed(emoji, "# Used with Emoji Version ", args[2]);
+        const version = named[0 .. mem.indexOfScalar(u8, named, ' ') orelse named.len];
+        const kinds = try emojiKinds(arena, emoji, selectors);
+        const starts = try kindStarts(arena, kinds);
+        try out.print(arena,
+            \\// SPDX-License-Identifier: MIT
+            \\//! How each character stands to the emoji, from emoji-data.txt as it
+            \\//! is used with Emoji {s}: its Emoji, Emoji_Presentation,
+            \\//! Emoji_Modifier_Base and Emoji_Modifier, and from
+            \\//! emoji-variation-sequences.txt whether a selector may stand behind
+            \\//! it. Written by tools/foldgen (`foldgen emoji`) from the files
+            \\//! scripts/fetch-unicode.sh fetches; never edited by hand.
+            \\//!
+            \\//! `starts` is where the kind changes, sorted: each entry the code
+            \\//! point it starts at shifted up by 8, in the low byte its kind and,
+            \\//! added to it, `selected` for a character a selector may stand
+            \\//! behind; both good up to the next entry's code point. {d} entries.
+            \\
+            \\/// The emoji version the table is from.
+            \\pub const emoji_version = "{s}";
+            \\
+            \\/// How a character stands to the emoji.
+            \\pub const Emoji = enum(u8) {{
+            \\    /// No emoji.
+            \\    none = 0,
+            \\    /// An emoji drawn as text - a heart, a digit, which a keycap is
+            \\    /// made of - until U+FE0F behind it asks for its picture.
+            \\    text = 1,
+            \\    /// An emoji drawn as a picture, until U+FE0E behind it asks for
+            \\    /// its text form.
+            \\    picture = 2,
+            \\    /// As `text`, and a skin tone may stand behind it.
+            \\    toned_text = 3,
+            \\    /// As `picture`, and a skin tone may stand behind it.
+            \\    toned_picture = 4,
+            \\    /// A skin tone: by itself a picture, behind a character that
+            \\    /// takes one a part of that one's.
+            \\    tone = 5,
+            \\}};
+            \\
+            \\/// In an entry's low byte beside the kind: U+FE0E, which asks for the
+            \\/// text, or U+FE0F, which asks for the picture, may stand behind the
+            \\/// character. Behind any other a selector changes nothing.
+            \\pub const selected = 0x{X};
+            \\
+            \\
+        , .{ version, starts.len, version, emoji_selected });
+        try writeStarts(arena, &out, "Where the kind or `selected` changes: `code << 8 | kind | selected`, sorted.", starts);
+        try cwd.writeFile(io, .{ .sub_path = args[4], .data = out.items });
         return;
     }
 
@@ -1009,6 +1080,76 @@ fn clusterParts(arena: mem.Allocator, breaks: []const u8, emoji: []const u8, der
         }
     }
     return parts;
+}
+
+const emoji_none = 0;
+const emoji_text = 1;
+const emoji_picture = 2;
+const emoji_toned_text = 3;
+const emoji_toned_picture = 4;
+const emoji_tone = 5;
+/// Beside a kind: a selector may stand behind the character.
+const emoji_selected = 0x80;
+
+/// Every code point's standing to the emoji: 0 for one emoji-data.txt
+/// does not list as Emoji, `emoji_selected` added for one
+/// emoji-variation-sequences.txt has with a selector behind it.
+fn emojiKinds(arena: mem.Allocator, emoji: []const u8, selectors: []const u8) ![]u8 {
+    const kinds = try arena.alloc(u8, 0x110000);
+    @memset(kinds, emoji_none);
+    // The file lists a property at a time, Emoji first; the others are
+    // read over it in the order they change a kind, whatever order the
+    // file has them in.
+    for ([_][]const u8{ "Emoji", "Emoji_Presentation", "Emoji_Modifier_Base", "Emoji_Modifier" }) |property| {
+        var listing: Listing = .of(emoji);
+        while (try listing.next()) |line| {
+            if (!mem.eql(u8, line.fields[0], property)) continue;
+            for (kinds[line.first .. @as(usize, line.last) + 1], line.first..) |*kind, code| {
+                if (mem.eql(u8, property, "Emoji")) {
+                    kind.* = emoji_text;
+                    continue;
+                }
+                if (kind.* == emoji_none) fatal("{X} has {s} and is no emoji", .{ code, property });
+                if (mem.eql(u8, property, "Emoji_Presentation")) {
+                    kind.* = emoji_picture;
+                } else if (mem.eql(u8, property, "Emoji_Modifier_Base")) {
+                    kind.* = if (kind.* == emoji_picture) emoji_toned_picture else emoji_toned_text;
+                } else {
+                    if (kind.* != emoji_picture) fatal("the skin tone {X} is no picture or takes a skin tone", .{code});
+                    kind.* = emoji_tone;
+                }
+            }
+        }
+    }
+    // "0023 FE0F  ; emoji style; # ...": the character and its selector.
+    var lines = mem.splitScalar(u8, selectors, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw[0 .. mem.indexOfScalar(u8, raw, '#') orelse raw.len], " \t\r");
+        if (line.len == 0) continue;
+        var chars = mem.tokenizeScalar(u8, line[0 .. mem.indexOfScalar(u8, line, ';') orelse line.len], ' ');
+        const code = try std.fmt.parseInt(u21, chars.next() orelse continue, 16);
+        const selector = try std.fmt.parseInt(u21, chars.next() orelse fatal("{X} is listed with no selector", .{code}), 16);
+        if (selector != 0xFE0E and selector != 0xFE0F) fatal("{X} is listed with {X}, which is no selector", .{ code, selector });
+        const kind = kinds[code] & ~@as(u8, emoji_selected);
+        if (kind == emoji_none or kind == emoji_tone) fatal("{X} takes a selector and is no emoji, or is a skin tone", .{code});
+        kinds[code] = kind | emoji_selected;
+    }
+    for (kinds, 0..) |kind, code| {
+        if (kind == emoji_text or kind == emoji_toned_text) fatal("{X} is drawn as text and takes no selector", .{code});
+    }
+    return kinds;
+}
+
+/// Where the kind changes, as `code << 8 | kind`.
+fn kindStarts(arena: mem.Allocator, kinds: []const u8) ![]u32 {
+    var starts: std.ArrayList(u32) = .empty;
+    var code: usize = 0;
+    while (code < kinds.len) {
+        const here = kinds[code];
+        try starts.append(arena, @as(u32, @intCast(code)) << 8 | here);
+        while (code < kinds.len and kinds[code] == here) code += 1;
+    }
+    return starts.items;
 }
 
 /// Where the part changes, as `code << 8 | part`: the Hangul syllables,

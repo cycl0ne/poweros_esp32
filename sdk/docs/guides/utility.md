@@ -478,6 +478,28 @@ graphics.library draws, measures and fits a text by the same clusters
 is in one (`.consonant`, `.linker`, `.regional`, ...), which the two
 calls decide by.
 
+An emoji is a cluster too - a face, a flag of two regional indicators,
+a thumb with its skin tone, a family of three joined by U+200D, a
+keycap of a digit, U+FE0F and U+20E3 - and is drawn either as text or
+as a picture in its own colours. Each has one of the two by default: a
+face is a picture, a heart, a digit and `©` are text. U+FE0F behind a
+character asks for its picture (`❤️`), U+FE0E for its text, and a skin
+tone behind a character that takes one makes a picture of it.
+`unicode.pictured(cluster)` answers which it is for one cluster:
+
+```zig
+// Whether the cluster at `at` is drawn as a picture.
+const end = utility.unicode.clusterEnd(text, at);
+const picture = utility.unicode.pictured(text[at..end]);
+```
+
+`unicode.emoji(char)` is what one character is by itself - `.none`,
+`.text`, `.picture`, `.toned_text` and `.toned_picture` for the ones a
+skin tone may stand behind, `.tone` for the five skin tones - and
+`unicode.selectable(char)` whether a selector behind it is heeded: a
+watch has a text form and a picture, a grinning face only the picture,
+so U+FE0E behind it changes nothing.
+
 ## Text between UTF-8 and Latin-1
 
 The system's strings are UTF-8, and graphics.library draws them as such
