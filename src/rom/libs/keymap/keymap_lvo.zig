@@ -18,6 +18,7 @@ const MapRawKey = @import("maprawkey.zig").MapRawKey;
 const MapANSI = @import("mapansi.zig").MapANSI;
 const FindKeyMap = @import("findkeymap.zig").FindKeyMap;
 const KeyMapName = @import("keymapname.zig").KeyMapName;
+const NextKeyMap = @import("nextkeymap.zig").NextKeyMap;
 
 /// keymap.library's interface, as the SDK generates it from
 /// sdk/fd/keymap_lib.fd.
@@ -49,6 +50,7 @@ const contract_files = [_][]const u8{
     @embedFile("mapansi.zig"),
     @embedFile("findkeymap.zig"),
     @embedFile("keymapname.zig"),
+    @embedFile("nextkeymap.zig"),
 };
 
 fn lvoSetKeyMapDefault(kb: *KeymapBase, key_map: *km.KeyMap) callconv(.c) void {
@@ -69,6 +71,9 @@ fn lvoFindKeyMap(kb: *KeymapBase, name: [*:0]const u8) callconv(.c) ?*km.KeyMap 
 fn lvoKeyMapName(kb: *KeymapBase, key_map: ?*const km.KeyMap) callconv(.c) ?[*:0]const u8 {
     return KeyMapName(kb, key_map);
 }
+fn lvoNextKeyMap(kb: *KeymapBase, after: ?*const km.KeyMap) callconv(.c) ?*km.KeyMap {
+    return NextKeyMap(kb, after);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -83,6 +88,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoMapANSI),
     vec(lvoFindKeyMap),
     vec(lvoKeyMapName),
+    vec(lvoNextKeyMap),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

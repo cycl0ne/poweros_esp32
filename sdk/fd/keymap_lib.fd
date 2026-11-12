@@ -28,4 +28,7 @@ i32 MapANSI([*]const u8 string, i32 count, [*]keymap.KeyPair buffer, i32 length,
 /// What `key_map` is called (null: the default), or null when it is not
 /// one of the library's.
 ?[*:0]const u8 KeyMapName(?*const keymap.KeyMap key_map)
+/// The keymap behind `after` on the library's list (null: the first) -
+/// the ROM's, then those loaded from files - or null behind the last.
+?*keymap.KeyMap NextKeyMap(?*const keymap.KeyMap after)
 ##end

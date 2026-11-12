@@ -63,6 +63,7 @@ const MapANSI = @import("mapansi.zig").MapANSI;
 const findkeymap = @import("findkeymap.zig");
 const FindKeyMap = findkeymap.FindKeyMap;
 const KeyMapName = @import("keymapname.zig").KeyMapName;
+const NextKeyMap = @import("nextkeymap.zig").NextKeyMap;
 
 fn setUp() !*KeymapBase {
     try kexec.setUp();
@@ -223,6 +224,15 @@ test "a keymap from a file: its own character keys, the ROM's other keys, its na
     // One a program made is on no list.
     var own = map.*;
     try testing.expect(KeyMapName(kb, &own) == null);
+    // The list walked: the ROM's two, then the file's, and no more; one
+    // that is not on it has none behind it.
+    const first = NextKeyMap(kb, null).?;
+    try testing.expectEqualStrings("deutsch", std.mem.span(KeyMapName(kb, first).?));
+    const second = NextKeyMap(kb, first).?;
+    try testing.expectEqualStrings("usa", std.mem.span(KeyMapName(kb, second).?));
+    try testing.expectEqual(map, NextKeyMap(kb, second).?);
+    try testing.expect(NextKeyMap(kb, map) == null);
+    try testing.expect(NextKeyMap(kb, &own) == null);
     // A path is no keymap's name.
     try testing.expect(FindKeyMap(kb, "DEVS:Keymaps/file") == null);
 

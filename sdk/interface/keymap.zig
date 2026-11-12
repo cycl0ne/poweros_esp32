@@ -20,6 +20,7 @@ pub const LVO = struct {
     pub const MapANSI = libraries.lvo(7);
     pub const FindKeyMap = libraries.lvo(8);
     pub const KeyMapName = libraries.lvo(9);
+    pub const NextKeyMap = libraries.lvo(10);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -31,6 +32,7 @@ pub const Fn = struct {
     pub const MapANSI = *const fn (*KeymapBase, [*]const u8, i32, [*]keymap.KeyPair, i32, ?*const keymap.KeyMap) callconv(.c) i32;
     pub const FindKeyMap = *const fn (*KeymapBase, [*:0]const u8) callconv(.c) ?*keymap.KeyMap;
     pub const KeyMapName = *const fn (*KeymapBase, ?*const keymap.KeyMap) callconv(.c) ?[*:0]const u8;
+    pub const NextKeyMap = *const fn (*KeymapBase, ?*const keymap.KeyMap) callconv(.c) ?*keymap.KeyMap;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -78,5 +80,11 @@ pub const KeymapBase = opaque {
     /// one of the library's.
     pub fn KeyMapName(self: *KeymapBase, key_map: ?*const keymap.KeyMap) ?[*:0]const u8 {
         return libraries.call(self, LVO.KeyMapName, Fn.KeyMapName, .{key_map});
+    }
+
+    /// The keymap behind `after` on the library's list (null: the first) -
+    /// the ROM's, then those loaded from files - or null behind the last.
+    pub fn NextKeyMap(self: *KeymapBase, after: ?*const keymap.KeyMap) ?*keymap.KeyMap {
+        return libraries.call(self, LVO.NextKeyMap, Fn.NextKeyMap, .{after});
     }
 };
