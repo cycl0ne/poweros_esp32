@@ -16,8 +16,10 @@ const deutsch = @import("deutsch.zig");
 pub const LIBRARY_NAME = km.KEYMAPNAME;
 pub const LIBRARY_VERSION = 0;
 /// 1: MapRawKey, MapANSI, the default, FindKeyMap; "usa" and "deutsch".
-pub const LIBRARY_REVISION = 2;
-const BUILD_DATE = "10.11.2026";
+/// 3: a keymap from a file of DEVS:Keymaps, the list under a lock,
+/// KeyMapName.
+pub const LIBRARY_REVISION = 3;
+const BUILD_DATE = "12.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -46,6 +48,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     lib.revision = LIBRARY_REVISION;
     kb.sys_base = sys_base;
     kb.maps.init(.unknown);
+    sys_base.InitLock(&kb.maps_lock, "keymaps", exec.LOCKORDER_DRIVER, 0);
     kb.rom = .{
         .{ .node = .{ .name = "deutsch" }, .key_map = deutsch.key_map },
         .{ .node = .{ .name = "usa" }, .key_map = usa.key_map },

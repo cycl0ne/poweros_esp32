@@ -325,8 +325,8 @@ characters (`zhongwen/`) on the 64-bit machines' disks - a `Catalog`
 that is `.wide = true` in the build goes on those only. These
 translations are drafts that no reader of the language has gone
 through yet, as each one's first lines say. A gadget's shortcut in the
-Hindi ones is a Devanagari letter, which a keyboard reaches with a
-Devanagari keymap. In the Japanese, Korean and Chinese ones it is the
+Hindi ones is a Devanagari letter, which a keyboard reaches with the
+`inscript` keymap ([Keymaps](#keymaps)). In the Japanese, Korean and Chinese ones it is the
 English text's letter in parentheses behind the label (`保存(_S)`,
 `열기(_O)...`): a keymap types none of these scripts' characters, and
 the key stays the one the English label has.
@@ -378,10 +378,90 @@ catalog's string that is not UTF-8 is read as code page 1252. A width or
 a limit in FormatString and the catalogs' least and most count
 characters; `%c` takes a code point and writes it in UTF-8.
 
+## Keymaps
+
+A keymap is the tables that make a key into characters:
+keymap.library's `MapRawKey` reads them, and the one it reads when a
+caller names none is the default, which `C:SetMap <name>` sets for the
+whole machine: every window types by it from the next key on, and so
+does every console, the shell the command was typed in among them (a
+console a program gave a keymap of its own with `CD_SETKEYMAP` keeps
+that one). `deutsch` and `usa` are in the ROM. Any other is a file
+of `DEVS:Keymaps` with the keymap's name, which `FindKeyMap` loads the
+first time a process asks for it and keeps; `KeyMapName` says what a
+keymap is called. A name is taken as it is written: `SetMap USA` finds
+no keymap.
+
+`DEVS:Keymaps/inscript` types Devanagari by the InScript layout:
+
+| Held | A key types | The digits |
+|---|---|---|
+| nothing | the vowel signs, the consonants said without breath (`k` is क) | the ASCII digit |
+| shift | the vowels, the consonants said with breath (`K` is ख) | InScript's signs; on 3 to 8 a conjunct (`7` is क्ष) |
+| alt | what the key types on the US layout (`k`) | the Devanagari digit (१) |
+| shift and alt | the US layout with shift (`K`) | the US layout's sign (`!`) |
+
+`d` is the virama, which joins two consonants: `k` `d` `m` is क्म.
+Comma, full stop and hyphen are themselves, with shift ष, the danda `।`
+and the visarga. The Latin letters are on alt because the keymap is
+the whole machine's: a command's name, a path and the line that goes
+back - `SetMap usa`, each key with alt - are typed while it is set.
+Control with a letter key makes the Latin letter's control character,
+and Caps Lock changes nothing. A menu's shortcut is the character its
+key types with what else is held, so a Latin letter's shortcut - an
+English text's, and the two keys that send a screen to the back and
+bring the desktop's to the front - takes alt as well while the keymap
+is set, and a Devanagari letter's is typed as it is.
+
+### A keymap's file
+
+The file is a program's load file that holds a ROM tag of the type
+`.keymap`, named as the keymap and as the file, whose `init` points at
+a `sdk.keymap.KeyMapFile`: the four tables of the character keys
+(rawkeys 0x00 to 0x3F) and, if the keymap has its own, the four of the
+keys from 0x40 up - space, return, the cursor and function keys. Left
+null, those are the tables the ROM's keymaps share.
+
+```zig
+const km = sdk.keymap;
+
+const lo_types = [64]u8{ km.KC_VANILLA, ... };
+const lo_map = [64]km.KeyMapEntry{ .{ .chars = .{ 0x94A, 0x912, '`', '~' } }, ... };
+const lo_capsable = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 0 };
+const lo_repeatable = [8]u8{ 0xFF, 0xBF, 0xFF, 0xEF, 0xFF, 0xEF, 0xFF, 0xF7 };
+
+pub const file: km.KeyMapFile = .{
+    .lo_key_map_types = &lo_types,
+    .lo_key_map = &lo_map,
+    .lo_capsable = &lo_capsable,
+    .lo_repeatable = &lo_repeatable,
+};
+
+export const tag: exec.Resident linksection(".resident") = .{
+    .match_tag = &tag,
+    .type = .keymap,
+    .name = "inscript",
+    .id_string = "inscript 1.0 (12.11.2026)\r\n",
+    .init = &file,
+};
+```
+
+A key's type byte says which of shift, alt and control choose among
+its characters and whether its entry is four characters or points at
+strings (`KCF_STRING`: for each choice a length and where the
+characters begin, counted in words from the entry's data, then the
+characters as code points) or at a dead key's table. The file exports
+`_program_entry` as every load file does - run as a command it says
+what it is and fails - and keeps its `$VER:` string in `.version`.
+`src/disk/devs/keymaps/inscript/inscript.zig` is the worked example;
+`src/disk/build.zig` lists it among the modules, which puts it into
+`DEVS:Keymaps`.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
+| `C:SetMap [<keymap>]` | makes the keymap of that name the machine's - `deutsch`, `usa` or a file of `DEVS:Keymaps` such as `inscript` -, or says which it is |
 | `C:SetPrefs` | makes the locale `ENV:Sys/locale.prefs` describes the default, with the rest of the system's settings; `SHOW` prints the country and language |
 | `C:test/Locale [DATE <date>] [WORDS <words>...]` | prints the default locale - its country, languages, time zone and catalog, now in each of its formats, a number and its money - in the words of its own catalog; reads DATE by the short date and sorts WORDS in the language's order |
 

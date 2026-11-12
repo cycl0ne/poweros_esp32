@@ -46,7 +46,7 @@ const render = @import("render.zig");
 
 pub const DEVICE_NAME = con.CONSOLENAME;
 const DEVICE_VERSION = 0;
-const DEVICE_REVISION = 9;
+const DEVICE_REVISION = 10;
 const BUILD_DATE = "12.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -122,8 +122,13 @@ const Unit = struct {
     focus: u8 = 0,
     /// Where a character sits in its cell.
     baseline: i32 = 0,
-    /// The unit's own keymap, as CD_SETKEYMAP leaves it.
+    /// The unit's own keymap, once CD_SETKEYMAP has given it one. Until
+    /// then its keys are the default keymap's, whichever that is when a
+    /// key comes: a keymap chosen for the system is every console's at
+    /// once, the ones already open among them.
     key_map: km.KeyMap,
+    /// CD_SETKEYMAP gave the unit a keymap of its own.
+    own_key_map: u8 = 0,
     /// What the window's program has typed, waiting to be read.
     ring: [ring_size]u8 = @splat(0),
     head: u32 = 0,
@@ -406,7 +411,8 @@ fn unitOfWindow(cb: *ConsoleBase, window: ?*anyopaque) ?*Unit {
 /// A key's characters, in UTF-8 as the keymap gives them, with the cursor
 /// keys in their application form when the terminal asked for it.
 fn keyBytes(cb: *ConsoleBase, u: *Unit, e: *const ie.InputEvent, buf: []u8) usize {
-    const n = cb.keymap_base.MapRawKey(e, buf.ptr, @intCast(buf.len), &u.key_map);
+    const map: ?*const km.KeyMap = if (u.own_key_map != 0) &u.key_map else null;
+    const n = cb.keymap_base.MapRawKey(e, buf.ptr, @intCast(buf.len), map);
     if (n <= 0) return 0;
     const len: usize = @intCast(n);
     if (u.grid.app_cursor and len == 3 and buf[0] == 0x1B and buf[1] == '[') {
@@ -1143,7 +1149,8 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
                 io.err = exec.IOERR_BADLENGTH;
             } else {
                 const into: *km.KeyMap = @ptrCast(@alignCast(std_io.data.?));
-                into.* = if (unit != null and io.command == con.CD_ASKKEYMAP) unit.?.key_map else cb.keymap_base.AskKeyMapDefault().*;
+                const own = unit != null and io.command == con.CD_ASKKEYMAP and unit.?.own_key_map != 0;
+                into.* = if (own) unit.?.key_map else cb.keymap_base.AskKeyMapDefault().*;
                 std_io.actual = @sizeOf(km.KeyMap);
             }
         },
@@ -1152,6 +1159,7 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
                 io.err = exec.IOERR_BADLENGTH;
             } else if (unit) |u| {
                 u.key_map = @as(*const km.KeyMap, @ptrCast(@alignCast(std_io.data.?))).*;
+                u.own_key_map = 1;
             }
         },
         con.CD_SETDEFAULTKEYMAP => {

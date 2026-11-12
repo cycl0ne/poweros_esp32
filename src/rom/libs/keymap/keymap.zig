@@ -53,13 +53,16 @@ test {
     _ = @import("maprawkey.zig");
     _ = @import("mapansi.zig");
     _ = @import("findkeymap.zig");
+    _ = @import("keymapname.zig");
 }
 
 const SetKeyMapDefault = @import("setkeymapdefault.zig").SetKeyMapDefault;
 const AskKeyMapDefault = @import("askkeymapdefault.zig").AskKeyMapDefault;
 const MapRawKey = @import("maprawkey.zig").MapRawKey;
 const MapANSI = @import("mapansi.zig").MapANSI;
-const FindKeyMap = @import("findkeymap.zig").FindKeyMap;
+const findkeymap = @import("findkeymap.zig");
+const FindKeyMap = findkeymap.FindKeyMap;
+const KeyMapName = @import("keymapname.zig").KeyMapName;
 
 fn setUp() !*KeymapBase {
     try kexec.setUp();
@@ -184,6 +187,47 @@ test "deutsch, the default: y and z, the umlauts, AltGr, the dead keys" {
     try testing.expectEqualStrings("y", mapped(kb, key(0x15, 0, &.{}), null, &buf));
     SetKeyMapDefault(kb, FindKeyMap(kb, "deutsch").?);
     try testing.expect(FindKeyMap(kb, "klingon") == null);
+    try tearDown(kb);
+}
+
+test "a keymap from a file: its own character keys, the ROM's other keys, its name" {
+    const kb = try setUp();
+    defer kexec.deinit();
+    const S = ie.IEQUALIFIER_LSHIFT;
+    var buf: [8]u8 = undefined;
+
+    const types = [_]u8{km.KCF_SHIFT} ++ [_]u8{km.KCF_NOP} ** 63;
+    const entries = [_]km.KeyMapEntry{.{ .chars = .{ 0x915, 0x916, 0, 0 } }} ++ [_]km.KeyMapEntry{.{ .chars = .{ 0, 0, 0, 0 } }} ** 63;
+    const capsable = [_]u8{0} ** 8;
+    const repeatable = [_]u8{0xFF} ** 8;
+    const file: km.KeyMapFile = .{ .lo_key_map_types = &types, .lo_key_map = &entries, .lo_capsable = &capsable, .lo_repeatable = &repeatable };
+
+    // Not there, and the test's task is no process: no file is looked for.
+    try testing.expect(FindKeyMap(kb, "file") == null);
+    const made = findkeymap.adopt(kb, "file", &file, null).?;
+    const map = FindKeyMap(kb, "file").?;
+    try testing.expectEqual(&made.node.key_map, map);
+    try testing.expectEqualStrings("क", mapped(kb, key(0x00, 0, &.{}), map, &buf));
+    try testing.expectEqualStrings("ख", mapped(kb, key(0x00, S, &.{}), map, &buf));
+    try testing.expectEqualStrings("", mapped(kb, key(0x01, 0, &.{}), map, &buf));
+    // The keys it left out are the ROM's: return, cursor up.
+    try testing.expectEqualStrings("\r", mapped(kb, key(0x44, 0, &.{}), map, &buf));
+    try testing.expectEqualStrings("\x1b[A", mapped(kb, key(0x4C, 0, &.{}), map, &buf));
+    // A second of the name is the first.
+    try testing.expectEqual(made, findkeymap.adopt(kb, "file", &file, null).?);
+
+    try testing.expectEqualStrings("file", std.mem.span(KeyMapName(kb, map).?));
+    try testing.expectEqualStrings("deutsch", std.mem.span(KeyMapName(kb, null).?));
+    SetKeyMapDefault(kb, map);
+    try testing.expectEqualStrings("file", std.mem.span(KeyMapName(kb, null).?));
+    // One a program made is on no list.
+    var own = map.*;
+    try testing.expect(KeyMapName(kb, &own) == null);
+    // A path is no keymap's name.
+    try testing.expect(FindKeyMap(kb, "DEVS:Keymaps/file") == null);
+
+    kexec.Remove(kexec.SysBase, &made.node.node);
+    kexec.FreeVec(kexec.SysBase, made);
     try tearDown(kb);
 }
 

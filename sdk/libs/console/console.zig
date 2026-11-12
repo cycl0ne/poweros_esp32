@@ -38,9 +38,12 @@ pub const CONFLAG_DEFAULT: u32 = 0;
 /// Do not draw the text again when the window is sized; the program will.
 pub const CONFLAG_NODRAW_ON_NEWSIZE: u32 = 1;
 
-/// The unit's keymap, into `io_Data` (a `KeyMap`).
+/// The unit's keymap, into `io_Data` (a `KeyMap`): the default one's
+/// until CD_SETKEYMAP has given the unit its own.
 pub const CD_ASKKEYMAP: u16 = devices.CMD_NONSTD + 0;
-/// `io_Data` a `KeyMap` the unit is to use from now on.
+/// `io_Data` a `KeyMap` the unit is to use from now on, whatever the
+/// default becomes. A unit never given one types by the default keymap,
+/// and follows it when another is made the default.
 pub const CD_SETKEYMAP: u16 = devices.CMD_NONSTD + 1;
 /// keymap.library's default keymap, into `io_Data`.
 pub const CD_ASKDEFAULTKEYMAP: u16 = devices.CMD_NONSTD + 2;

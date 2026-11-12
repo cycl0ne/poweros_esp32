@@ -21,7 +21,11 @@ i32 MapRawKey(*const ie.InputEvent event, [*]u8 buffer, i32 length, ?*const keym
 /// for `length` pairs): how many pairs, 0 when a character cannot be made
 /// with this keymap, -1 when they did not fit.
 i32 MapANSI([*]const u8 string, i32 count, [*]keymap.KeyPair buffer, i32 length, ?*const keymap.KeyMap key_map)
-/// The KeyMap of that name on the library's list - "usa", "deutsch" - or
+/// The KeyMap of that name - "usa", "deutsch", or one in a file of
+/// DEVS:Keymaps, loaded when a process asks for it the first time - or
 /// null.
 ?*keymap.KeyMap FindKeyMap([*:0]const u8 name)
+/// What `key_map` is called (null: the default), or null when it is not
+/// one of the library's.
+?[*:0]const u8 KeyMapName(?*const keymap.KeyMap key_map)
 ##end

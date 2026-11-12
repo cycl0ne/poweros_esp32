@@ -19,6 +19,7 @@ pub const LVO = struct {
     pub const MapRawKey = libraries.lvo(6);
     pub const MapANSI = libraries.lvo(7);
     pub const FindKeyMap = libraries.lvo(8);
+    pub const KeyMapName = libraries.lvo(9);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -29,6 +30,7 @@ pub const Fn = struct {
     pub const MapRawKey = *const fn (*KeymapBase, *const ie.InputEvent, [*]u8, i32, ?*const keymap.KeyMap) callconv(.c) i32;
     pub const MapANSI = *const fn (*KeymapBase, [*]const u8, i32, [*]keymap.KeyPair, i32, ?*const keymap.KeyMap) callconv(.c) i32;
     pub const FindKeyMap = *const fn (*KeymapBase, [*:0]const u8) callconv(.c) ?*keymap.KeyMap;
+    pub const KeyMapName = *const fn (*KeymapBase, ?*const keymap.KeyMap) callconv(.c) ?[*:0]const u8;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -65,9 +67,16 @@ pub const KeymapBase = opaque {
         return libraries.call(self, LVO.MapANSI, Fn.MapANSI, .{ string, count, buffer, length, key_map });
     }
 
-    /// The KeyMap of that name on the library's list - "usa", "deutsch" - or
+    /// The KeyMap of that name - "usa", "deutsch", or one in a file of
+    /// DEVS:Keymaps, loaded when a process asks for it the first time - or
     /// null.
     pub fn FindKeyMap(self: *KeymapBase, name: [*:0]const u8) ?*keymap.KeyMap {
         return libraries.call(self, LVO.FindKeyMap, Fn.FindKeyMap, .{name});
+    }
+
+    /// What `key_map` is called (null: the default), or null when it is not
+    /// one of the library's.
+    pub fn KeyMapName(self: *KeymapBase, key_map: ?*const keymap.KeyMap) ?[*:0]const u8 {
+        return libraries.call(self, LVO.KeyMapName, Fn.KeyMapName, .{key_map});
     }
 };

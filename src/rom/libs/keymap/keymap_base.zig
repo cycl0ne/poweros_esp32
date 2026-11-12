@@ -9,12 +9,14 @@ const ExecBase = sdk.interface.exec.ExecBase;
 
 /// The base: the list of keymaps, and which is the default. The ROM's two
 /// nodes are in it, since a node is changed by being on a list and a ROM
-/// image is read only.
+/// image is read only; a keymap from a file is added behind them.
 pub const KeymapBase = extern struct {
     lib: exec.Library,
     sys_base: *ExecBase,
     /// KeyMapNodes, found by name.
     maps: exec.List,
+    /// Held while `maps` is read or added to. Nothing leaves the list.
+    maps_lock: exec.Lock,
     /// What every call given no keymap uses.
     default: *km.KeyMap,
     /// "deutsch" and "usa".

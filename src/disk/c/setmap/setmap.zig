@@ -3,9 +3,11 @@
 //!
 //!   SetMap KEYMAP
 //!
-//! With a name - "deutsch", "usa" - makes that keymap.library's default,
-//! which every key made into a character from then on goes through. With
-//! none, says which it is.
+//! With a name - "deutsch" and "usa" are the ROM's, any other is a file
+//! of `DEVS:Keymaps`, "inscript" for one - makes that keymap.library's
+//! default, which every key made into a character from then on goes
+//! through. With none, says which it is. The name is the keymap's as it
+//! is written: `SetMap USA` finds none.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -17,18 +19,17 @@ const KeymapBase = sdk.interface.keymap.KeymapBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SetMap";
-const VERSION_STRING = "\x00$VER: SetMap 1.0 (20.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SetMap 1.1 (12.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "KEYMAP";
 const arg_keymap = 0;
 
 const MSG_NOLIBRARY = "No %s\n";
-const MSG_NOTFOUND = "Keymap %s not found - there are deutsch and usa\n";
+const MSG_NOTFOUND = "Keymap %s not found - there are deutsch, usa and the files of " ++ km.KEYMAP_DRAWER[0 .. km.KEYMAP_DRAWER.len - 1] ++ "\n";
 const MSG_CURRENT = "Keymap %s\n";
-
-/// The ROM's keymaps, to name the default.
-const names = [_][*:0]const u8{ "deutsch", "usa" };
+/// The default when it is on no list: one a program made and set.
+const NAME_OWN = "(a program's own)";
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
@@ -52,14 +53,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const kb: *KeymapBase = @ptrCast(lib);
 
     if (argv[arg_keymap] == 0) {
-        const now = kb.AskKeyMapDefault();
-        for (names) |name| {
-            if (kb.FindKeyMap(name) == now) {
-                _ = Printf(dl, MSG_CURRENT, .{name});
-                return dos.RETURN_OK;
-            }
-        }
-        _ = Printf(dl, MSG_CURRENT, .{@as([*:0]const u8, "(not one of the ROM's)")});
+        const now: [*:0]const u8 = kb.KeyMapName(null) orelse NAME_OWN;
+        _ = Printf(dl, MSG_CURRENT, .{now});
         return dos.RETURN_OK;
     }
     const name: [*:0]const u8 = @ptrFromInt(argv[arg_keymap]);

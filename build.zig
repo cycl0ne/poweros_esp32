@@ -138,6 +138,9 @@ const image_dirs = [_][]const u8{
     // time a device they serve is used. What a device is, for Mount to
     // read, is DEVS:MountList.
     "devs/handlers",
+    // DEVS:Keymaps - the keymaps that are not in the ROM, a file each,
+    // which keymap.library loads when one is asked for by name.
+    "devs/keymaps",
     // SYS:Programs - programs with windows, off the command path, and
     // in Docs what each of them is.
     "programs",

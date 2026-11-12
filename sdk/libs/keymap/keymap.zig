@@ -32,6 +32,12 @@
 //! A capsable key is taken as shifted while Caps Lock is on; a key that is
 //! not repeatable sends nothing when input.device repeats it.
 //!
+//! The library has "usa" and "deutsch" in the ROM. Any other keymap is a
+//! file, `DEVS:Keymaps/<name>`: a load file that holds a ROM tag of the
+//! type `NodeType.keymap` and the keymap's name, whose rt_Init is a
+//! `KeyMapFile`. `FindKeyMap` loads it the first time the name is asked
+//! for, and it stays.
+//!
 //! The characters are code points, a word each; `MapRawKey` gives them in
 //! UTF-8, and `character` says which one a key made when it made one.
 
@@ -68,6 +74,28 @@ pub const KeyMap = extern struct {
 pub const KeyMapNode = extern struct {
     node: exec.Node = .{},
     key_map: KeyMap,
+};
+
+/// Where a keymap that is not in the ROM is: a file of the keymap's name
+/// in this drawer.
+pub const KEYMAP_DRAWER = "DEVS:Keymaps/";
+/// The longest name a keymap has, without the NUL.
+pub const KEYMAP_NAME_MAX = 31;
+
+/// A keymap in a file: what its ROM tag (`NodeType.keymap`, named as the
+/// keymap is) has as rt_Init. The four tables of the character keys are
+/// its own. Those of the other keys - space, return, the cursor and
+/// function keys, the keypad's - it has only when it changes them: left
+/// null, keymap.library gives it the ones its own keymaps share.
+pub const KeyMapFile = extern struct {
+    lo_key_map_types: [*]const u8,
+    lo_key_map: [*]const KeyMapEntry,
+    lo_capsable: [*]const u8,
+    lo_repeatable: [*]const u8,
+    hi_key_map_types: ?[*]const u8 = null,
+    hi_key_map: ?[*]const KeyMapEntry = null,
+    hi_capsable: ?[*]const u8 = null,
+    hi_repeatable: ?[*]const u8 = null,
 };
 
 /// The first rawkey of the high tables.

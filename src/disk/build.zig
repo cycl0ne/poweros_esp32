@@ -356,6 +356,7 @@ const modules = [_]Program{
     .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler" },
     .{ .disk = "devs/handlers/posfs-handler", .source = "devs/handlers/posfs/posfs.zig", .name = "posfs-handler" },
     .{ .disk = "devs/handlers/smb-handler", .source = "devs/handlers/smb/smb.zig", .name = "smb-handler", .imports = &.{"smbclient"} },
+    .{ .disk = "devs/keymaps/inscript", .source = "devs/keymaps/inscript/inscript.zig", .name = "inscript" },
 };
 
 /// Drivers of the ESP32-S3's own hardware, built for it alone: RS-485 on

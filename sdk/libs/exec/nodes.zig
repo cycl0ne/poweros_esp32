@@ -48,6 +48,11 @@ pub const NodeType = enum(u8) {
     /// A sound driver's ROM tag: like a display driver's, it registers
     /// itself - with rta.library - and exec never puts it on a list.
     rta_driver = 25,
+    /// A keymap's ROM tag, in a file of `DEVS:Keymaps`: its rt_Init is a
+    /// KeyMapFile (sdk/libs/keymap/keymap.zig), its name the keymap's.
+    /// No start flags - a keymap is tables, there is nothing to start -
+    /// and keymap.library finds the tag in the file it loads.
+    keymap = 26,
     _,
 };
 

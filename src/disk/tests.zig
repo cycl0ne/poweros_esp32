@@ -164,6 +164,7 @@ test {
     _ = @import("c/net/git/ignore.zig");
     _ = @import("c/net/timesync/tests/zone.zig");
     _ = @import("c/net/shellserver/tests/sftp.zig");
+    _ = @import("devs/keymaps/inscript/tests/inscript.zig");
     _ = @import("devs/handlers/fat/_fat.zig");
     _ = @import("devs/handlers/fat/testmedia.zig");
     _ = @import("devs/handlers/fat/cache.zig");

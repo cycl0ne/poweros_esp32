@@ -8,7 +8,8 @@ Generated from the source by `./zig build autodoc`.
 ## Index
 
 - [AskKeyMapDefault](#askkeymapdefault) - The default keymap.
-- [FindKeyMap](#findkeymap) - A keymap on the library's list, by name.
+- [FindKeyMap](#findkeymap) - A keymap by name: one on the library's list, or one in a file.
+- [KeyMapName](#keymapname) - What a keymap of the library's is called.
 - [MapANSI](#mapansi) - The keys that make a string.
 - [MapRawKey](#maprawkey) - The characters a key event makes.
 - [SetKeyMapDefault](#setkeymapdefault) - Makes a keymap the default.
@@ -64,7 +65,7 @@ const now = kb.AskKeyMapDefault();
 
 ## FindKeyMap
 
-A keymap on the library's list, by name.
+A keymap by name: one on the library's list, or one in a file.
 
 **SYNOPSIS**
 
@@ -78,7 +79,8 @@ fn FindKeyMap(kb: *KeymapBase, name: [*:0]const u8) ?*keymap.KeyMap
 
 **INPUTS**
 
-- `name` - "deutsch", "usa".
+- `name` - "deutsch", "usa", or a file's in `DEVS:Keymaps`
+  ("inscript"), at most KEYMAP_NAME_MAX bytes.
 
 **RESULT**
 
@@ -86,13 +88,21 @@ The keymap, or null when there is none of that name.
 
 **BEHAVIOR**
 
-The names are compared exactly.
+The names are compared exactly. A name the list has not is looked for
+as the file `DEVS:Keymaps/<name>` (0.3): a load file
+with a ROM tag of the type `NodeType.keymap` and that name, whose
+rt_Init is a `KeyMapFile`. The file is loaded once and its keymap is
+on the list from then on; the tables of the keys from 0x40 up that the
+file leaves null are the ROM's keymaps' own. A file with no such tag
+is unloaded again.
 
 **CONTEXT**
 
-- Waits: no. - Interrupts: no. - Locks: none needed: the list is made
-  at init, from the ROM's keymaps, and never changes.
-- Process: a Task will do.
+- Waits: for the file system, when the name is not on the list.
+- Interrupts: no. - Locks: the list's, taken and released here; it is
+  not held while the file is read.
+- Process: a file is read for a process only. A Task finds what is on
+  the list.
 
 **OWNERSHIP**
 
@@ -100,7 +110,8 @@ The library's; it stays.
 
 **NOTES**
 
-What SetKeyMapDefault is given.
+What SetKeyMapDefault is given. dos.library's error of a file not
+found is left in the caller's IoErr.
 
 **BUGS**
 
@@ -108,12 +119,66 @@ None known.
 
 **SEE ALSO**
 
-`SetKeyMapDefault`
+`SetKeyMapDefault`, `KeyMapName`
 
 **EXAMPLES**
 
 ```zig
 const german = kb.FindKeyMap("deutsch");
+```
+
+## KeyMapName
+
+What a keymap of the library's is called.
+
+**SYNOPSIS**
+
+```zig
+fn KeyMapName(kb: *KeymapBase, key_map: ?*const keymap.KeyMap) ?[*:0]const u8
+```
+
+**SINCE**
+
+0.3. LVO -40.
+
+**INPUTS**
+
+- `key_map` - a keymap; null: the default.
+
+**RESULT**
+
+The name FindKeyMap finds it by, or null when the keymap is not on
+the library's list - one a program made and set as the default.
+
+**BEHAVIOR**
+
+The list is walked for the node that holds `key_map`.
+
+**CONTEXT**
+
+- Waits: no. - Interrupts: no. - Locks: the list's, taken and released
+  here. - Process: a Task will do.
+
+**OWNERSHIP**
+
+The library's; it stays, as the keymap does.
+
+**NOTES**
+
+How a program says which keymap is in use: `C:SetMap` without a name.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FindKeyMap`, `AskKeyMapDefault`
+
+**EXAMPLES**
+
+```zig
+const name = kb.KeyMapName(null) orelse "(a program's own)";
 ```
 
 ## MapANSI
