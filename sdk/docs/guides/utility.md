@@ -451,6 +451,33 @@ and `.unassigned` for what is no character; locale.library's `IsAlpha`
 and the rest are made from it. `unicode.version` names the Unicode
 version the tables are made from.
 
+A text is made of clusters, each what a reader takes for one character:
+a letter with the marks written on it, a carriage return with its line
+feed, a Hangul syllable written as its parts, the consonants a virama
+joins with their vowel sign (`क्षि` is one), the two regional indicators
+of a flag, the pictographs a joiner makes one picture. They are
+Unicode's extended grapheme clusters. `unicode.clusterEnd(text, start)`
+is where the cluster that starts at `start` ends, and
+`unicode.clusterStart(text, at)` where the one starts that the byte at
+`at` is in:
+
+```zig
+// The clusters of a text, counted: what a cursor steps over.
+var count: usize = 0;
+var at: usize = 0;
+while (at < text.len) : (at = utility.unicode.clusterEnd(text, at)) count += 1;
+
+// The text without its last cluster: what Delete at the end leaves.
+const shorter = text[0..utility.unicode.clusterStart(text, text.len - 1)];
+```
+
+A program that moves a cursor through a text, deletes before it, or
+cuts a text to a length does it by these, never by characters or bytes:
+graphics.library draws, measures and fits a text by the same clusters
+(`TextFit`, `TextXToOffset`). `unicode.part(char)` is what a character
+is in one (`.consonant`, `.linker`, `.regional`, ...), which the two
+calls decide by.
+
 ## Text between UTF-8 and Latin-1
 
 The system's strings are UTF-8, and graphics.library draws them as such

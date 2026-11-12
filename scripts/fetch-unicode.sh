@@ -12,8 +12,9 @@ out="$root/toolchain/unicode/$version"
 mkdir -p "$out"
 cd "$out"
 for name in UnicodeData.txt CaseFolding.txt EastAsianWidth.txt Scripts.txt PropertyValueAliases.txt \
-    CompositionExclusions.txt NormalizationTest.txt; do
-    curl -sSfL -o "$name" "https://www.unicode.org/Public/$version/ucd/$name"
+    CompositionExclusions.txt NormalizationTest.txt DerivedCoreProperties.txt \
+    auxiliary/GraphemeBreakProperty.txt auxiliary/GraphemeBreakTest.txt emoji/emoji-data.txt; do
+    curl -sSfL -o "${name##*/}" "https://www.unicode.org/Public/$version/ucd/$name"
 done
 sha256sum -c --quiet <<EOF
 ff58e5823bd095166564a006e47d111130813dcf8bf234ef79fa51a870edb48f  UnicodeData.txt
@@ -23,5 +24,9 @@ ff58e5823bd095166564a006e47d111130813dcf8bf234ef79fa51a870edb48f  UnicodeData.tx
 440fd3e5460b9bfe31da67b6f923992e1989d31fe2ed91e091c4b8f8e2620bf9  PropertyValueAliases.txt
 89e83cf9cc8bef6c1f8bf77e42cf6f0341dfa42e66261f4dbe9b492e7a23c8ee  CompositionExclusions.txt
 d811971453e7075e1ad56fb1b301eece5aa80757b81f6156e74a1bfb3ae5ceb1  NormalizationTest.txt
+39d35161f2954497f69e08bdb9e701493f476a3d30222de20028feda36c1dabd  DerivedCoreProperties.txt
+c29360bd6f7132811d701d29069541e827eb44bfc4c8fbde8c370d6982689dc1  GraphemeBreakProperty.txt
+ee2b9354d270ac061b29f09662cafea06341d77e704b8cc6bd72aaeeda363cb5  GraphemeBreakTest.txt
+f1365a5173eee18e1f98b240cdc492e84a25f1ce7e0c9d1094eb29c41a22696a  emoji-data.txt
 EOF
 echo "Unicode $version in $out"

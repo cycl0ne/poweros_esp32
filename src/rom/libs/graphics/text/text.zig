@@ -116,9 +116,11 @@ const Piece = drawing.Piece;
 /// `TextFit` count the same glyphs, and `TextOffsetToX` says where in
 /// the text a character's place is.
 ///
-/// The text is taken a cluster at a time - a character with the marks
-/// and other characters without a width behind it - and each cluster
-/// is drawn whole by one font: the first of the RastPort's font and its
+/// The text is taken a cluster at a time - what a reader takes for one
+/// character: a letter with its marks, consonants a virama joins and
+/// their vowel sign, the two characters of a flag, pictographs a joiner
+/// makes one (`utility.unicode.clusterEnd`) - and each cluster is drawn
+/// whole by one font: the first of the RastPort's font and its
 /// fallbacks that has every character of it, or else the first whose
 /// hook has another form of it. Neighbouring clusters of one font are
 /// shaped together, so nothing is kerned or joined across a change of

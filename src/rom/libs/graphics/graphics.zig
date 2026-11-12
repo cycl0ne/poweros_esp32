@@ -4494,8 +4494,10 @@ const shape_font: [fontimage.imageSize(shape_spec)]u8 align(4) = fontimage.build
 /// is two columns narrower; an acute (U+0301) is glyph 20 on the letter
 /// before it, four columns back and two rows up, and 'é' is 'e' and
 /// that glyph; "fi" is glyph 30; 'm' is twelve 'i'; 'L' cannot be
-/// shaped the first time; anything else it does not know is glyph 0.
-/// The maker has glyphs 20 and 30 and no character.
+/// shaped the first time; the consonants U+0915 and U+0937 are five
+/// columns each, the virama U+094D two, the non-joiner none; anything
+/// else it does not know is glyph 0. The maker has glyphs 20 and 30,
+/// and of characters those four.
 const Shaper = struct {
     calls: u32 = 0,
     later: u32 = 0,
@@ -4531,6 +4533,9 @@ const Shaper = struct {
                     put(request, &made, .{ .which = 30, .flags = by_number, .cluster = here, .advance = 7 });
                 } else put(request, &made, .{ .which = 'f', .cluster = here, .advance = 5 }),
                 'm' => for (0..12) |_| put(request, &made, .{ .which = 'i', .cluster = here, .advance = 3 }),
+                0x915, 0x937 => put(request, &made, .{ .which = code, .cluster = here, .advance = 5 }),
+                0x94D => put(request, &made, .{ .which = code, .cluster = here, .advance = 2 }),
+                0x200C => put(request, &made, .{ .which = code, .cluster = here, .advance = 0 }),
                 'L' => {
                     shaper.later += 1;
                     if (shaper.later == 1) return graphics.SHAPE_LATER;
@@ -4553,11 +4558,17 @@ const Shaper = struct {
         _ = object;
         const request: *graphics.GlyphRequest = @ptrCast(@alignCast(message.?));
         request.kind = .mono1;
-        if (request.flags & graphics.GLYPHREQ_NUMBER == 0) return graphics.GLYPH_NONE;
-        // The mark: a pixel on row 3. The ligature: two on row 2.
-        const bits: u8, const width: u16, const top: i16, const advance: i16 = switch (request.which) {
+        // The mark: a pixel on row 3. The ligature: two on row 2. The
+        // characters: a pixel on row 2.
+        const by_number = request.flags & graphics.GLYPHREQ_NUMBER != 0;
+        const bits: u8, const width: u16, const top: i16, const advance: i16 = if (by_number) switch (request.which) {
             20 => .{ 0x80, 1, 3, 4 },
             30 => .{ 0xC0, 2, 2, 7 },
+            else => return graphics.GLYPH_NONE,
+        } else switch (request.which) {
+            0x915, 0x937 => .{ 0x80, 1, 2, 5 },
+            0x94D => .{ 0x80, 1, 2, 2 },
+            0x200C => .{ 0x80, 1, 2, 0 },
             else => return graphics.GLYPH_NONE,
         };
         request.size = 1;
@@ -4658,6 +4669,24 @@ test "a font's shape hook: text is drawn, measured and fitted as the glyphs it l
     try testing.expectEqual(@as(u32, 0), base(gb).TextXToOffset(rp, "e\xCC\x81V", 4, 2));
     try testing.expectEqual(@as(u32, 3), base(gb).TextXToOffset(rp, "e\xCC\x81V", 4, 4));
     try testing.expectEqual(@as(u32, 4), base(gb).TextXToOffset(rp, "e\xCC\x81V", 4, 11));
+
+    // Two consonants a virama joins are one cluster, whichever byte a
+    // glyph of it names: no place is inside it, no column answers a
+    // byte of it but its first, and it fits whole or not at all.
+    const conjunct = "\u{0915}\u{094D}\u{0937}e";
+    try testing.expectEqual(@as(i32, 18), base(gb).TextLength(rp, conjunct, 10));
+    for ([_]u32{ 3, 6, 9 }) |offset| try testing.expectEqual(@as(i32, 12), base(gb).TextOffsetToX(rp, conjunct, 10, offset));
+    for ([_]i32{ 0, 5 }) |x| try testing.expectEqual(@as(u32, 0), base(gb).TextXToOffset(rp, conjunct, 10, x));
+    for ([_]i32{ 6, 14 }) |x| try testing.expectEqual(@as(u32, 9), base(gb).TextXToOffset(rp, conjunct, 10, x));
+    try testing.expectEqual(@as(u32, 10), base(gb).TextXToOffset(rp, conjunct, 10, 15));
+    try testing.expectEqual(@as(u32, 0), base(gb).TextFit(rp, conjunct, 10, &room, null, graphics.TEXT_FORWARD, 11, 0));
+    try testing.expectEqual(@as(u32, 9), base(gb).TextFit(rp, conjunct, 10, &room, null, graphics.TEXT_FORWARD, 17, 0));
+    try testing.expectEqual(@as(i32, 12), room.width);
+    try testing.expectEqual(@as(u32, 1), base(gb).TextFit(rp, conjunct.ptr + 9, 10, &room, null, graphics.TEXT_BACKWARD, 17, 0));
+    try testing.expectEqual(@as(u32, 10), base(gb).TextFit(rp, conjunct.ptr + 9, 10, &room, null, graphics.TEXT_BACKWARD, 18, 0));
+    // A virama with a non-joiner behind it joins nothing: two clusters.
+    const parted = "\u{0915}\u{094D}\u{200C}\u{0937}";
+    try testing.expectEqual(@as(u32, 9), base(gb).TextFit(rp, parted, 12, &room, null, graphics.TEXT_FORWARD, 11, 0));
 
     // A character of a fallback font is a stretch of its own: the font
     // shapes what is before it and what is after it apart, and the

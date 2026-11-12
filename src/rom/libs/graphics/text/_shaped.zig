@@ -9,9 +9,12 @@
 //! one of its fallbacks has such a hook (`wanted`), and the way of a
 //! glyph for each character otherwise.
 //!
-//! **Clusters.** The text is cut where a character stands by itself: a
-//! character and the ones after it that have no width - marks, joiners -
-//! are one cluster, and one font draws it.
+//! **Clusters.** The text is cut into its clusters, what a reader takes
+//! for one character each (`unicode.clusterEnd`): a letter with its
+//! marks, consonants a virama joins with their vowel sign, the two
+//! characters of a flag, pictographs a joiner makes one. One font draws
+//! a cluster, a glyph is of the cluster its first character is in, and
+//! no text is cut inside one.
 //!
 //! **A font for each cluster.** The first font of the chain that has a
 //! glyph for each of the cluster's characters draws it. Where none has,
@@ -38,9 +41,9 @@
 //!
 //! **Places in a text** (`xOf`, `offsetAt`). A cluster's width is the
 //! advances of its glyphs, and the place between two clusters is where
-//! the first one ends. A cluster of several characters that have a
-//! width - a ligature - is divided evenly among them; a character with
-//! no width has the place behind its letter.
+//! the first one ends. What several clusters are drawn as together - a
+//! ligature - is divided evenly among them. A byte inside a cluster has
+//! the place behind it.
 //!
 //! **What fits** (`fit`). A piece cut from a text is shaped without
 //! what came after it, so it may be a little wider by itself than it
@@ -168,7 +171,7 @@ const Filled = union(enum) {
 fn fill(gb: *GraphicsBase, line: *const TextFont, bytes: []const u8, placed: []Placed, scratch: []PlacedGlyph) Filled {
     var made: u32 = 0;
     var start: usize = 0;
-    var end = clusterEnd(bytes, 0);
+    var end = unicode.clusterEnd(bytes, 0);
     var font = fontFor(gb, line, bytes[0..end], scratch);
     while (start < bytes.len) {
         // The stretch grows for as long as the next cluster is the same
@@ -176,7 +179,7 @@ fn fill(gb: *GraphicsBase, line: *const TextFont, bytes: []const u8, placed: []P
         var next_end = end;
         var next_font: ?*const TextFont = null;
         while (end < bytes.len) {
-            next_end = clusterEnd(bytes, end);
+            next_end = unicode.clusterEnd(bytes, end);
             next_font = fontFor(gb, line, bytes[end..next_end], scratch);
             if (next_font != font) break;
             end = next_end;
@@ -229,10 +232,14 @@ fn fill(gb: *GraphicsBase, line: *const TextFont, bytes: []const u8, placed: []P
         } else {
             var at: usize = 0;
             var cluster: usize = 0;
+            var cluster_end: usize = 0;
             while (at < stretch.len) {
                 const here = at;
                 const code = utf8.next(stretch, &at);
-                if (here == 0 or unicode.width(code) != 0) cluster = here;
+                if (here >= cluster_end) {
+                    cluster = here;
+                    cluster_end = unicode.clusterEnd(stretch, here);
+                }
                 if (made == placed.len) return .{ .room = made + @as(u32, @intCast(stretch.len - here)) + rest + 8 };
                 var entry = Placed{ .glyph = null, .font = line, .cluster = @intCast(start + cluster), .advance = 0, .x = 0, .y = 0 };
                 if (font) |one| {
@@ -255,50 +262,20 @@ fn fill(gb: *GraphicsBase, line: *const TextFont, bytes: []const u8, placed: []P
     return .{ .done = made };
 }
 
-/// Where the cluster that starts at `start` ends: behind its character
-/// and the ones after it that have no width.
-fn clusterEnd(bytes: []const u8, start: usize) usize {
-    var at = start;
-    if (at < bytes.len) _ = utf8.next(bytes, &at);
-    while (at < bytes.len) {
-        var after = at;
-        if (unicode.width(utf8.next(bytes, &after)) != 0) break;
-        at = after;
-    }
-    return at;
-}
-
-/// Where the last cluster of `bytes` starts.
+/// Where the last cluster of `bytes`, which is not empty, starts.
 fn lastCluster(bytes: []const u8) usize {
-    var end = bytes.len;
-    while (end != 0) {
-        const last = utf8.readLast(bytes[0..end]);
-        end -= last.length;
-        if (unicode.width(last.char) != 0) break;
-    }
-    return end;
+    return unicode.clusterStart(bytes, bytes.len - 1);
 }
 
 /// The first place at or behind `at` where a cluster starts.
 fn boundaryFrom(bytes: []const u8, at: usize) usize {
-    var place = at;
-    while (place < bytes.len and bytes[place] & 0xC0 == 0x80) place += 1;
-    while (place < bytes.len) {
-        var after = place;
-        if (unicode.width(utf8.next(bytes, &after)) != 0) break;
-        place = after;
-    }
-    return place;
+    const start = unicode.clusterStart(bytes, at);
+    return if (start == at) at else unicode.clusterEnd(bytes, start);
 }
 
 /// The last place at or before `at` where a cluster starts.
 fn boundaryUpTo(bytes: []const u8, at: usize) usize {
-    var place = at;
-    while (place != 0 and place < bytes.len and bytes[place] & 0xC0 == 0x80) place -= 1;
-    while (place != 0 and place < bytes.len and unicode.width(utf8.read(bytes[place..]).char) == 0) {
-        place -= utf8.readLast(bytes[0..place]).length;
-    }
-    return place;
+    return unicode.clusterStart(bytes, at);
 }
 
 /// The font that draws one cluster, or null for a cluster none of the
@@ -444,32 +421,24 @@ const Clusters = struct {
     }
 };
 
-/// How many of a cluster's characters before byte `limit` start a part
-/// of its width: its first, and each one after it that has a width.
-fn partsBefore(cluster: []const u8, limit: usize) u32 {
+/// How many of the clusters in `text` - what some glyphs are drawn
+/// for together - start before byte `limit`.
+fn partsBefore(text: []const u8, limit: usize) u32 {
     var parts: u32 = 0;
     var at: usize = 0;
-    while (at < cluster.len and at < limit) {
-        const here = at;
-        const code = utf8.next(cluster, &at);
-        if (here == 0 or unicode.width(code) != 0) parts += 1;
-    }
+    while (at < text.len and at < limit) : (at = unicode.clusterEnd(text, at)) parts += 1;
     return parts;
 }
 
-/// The byte in a cluster at which its part `which` starts.
-fn partStart(cluster: []const u8, which: u32) u32 {
+/// The byte in `text` at which its cluster `which` starts.
+fn partStart(text: []const u8, which: u32) u32 {
     var parts: u32 = 0;
     var at: usize = 0;
-    while (at < cluster.len) {
-        const here = at;
-        const code = utf8.next(cluster, &at);
-        if (here == 0 or unicode.width(code) != 0) {
-            if (parts == which) return @intCast(here);
-            parts += 1;
-        }
+    while (at < text.len) : (at = unicode.clusterEnd(text, at)) {
+        if (parts == which) return @intCast(at);
+        parts += 1;
     }
-    return @intCast(cluster.len);
+    return @intCast(text.len);
 }
 
 /// How far from the text's start the place before byte `offset` is, in
@@ -498,8 +467,7 @@ pub fn xOf(line: *const TextFont, style: graphics.FontStyle, placed: []const Pla
 }
 
 /// The byte whose place is nearest column `x` from the text's start:
-/// one a cluster starts at, one inside a cluster of several characters
-/// with a width, or the text's length.
+/// one a cluster starts at, or the text's length.
 ///
 /// INPUTS:
 /// - as `xOf`, with `x` for the offset.
@@ -563,7 +531,7 @@ pub fn fit(gb: *GraphicsBase, line: *const TextFont, style: graphics.FontStyle, 
                 room.* = taken;
                 break;
             }
-            fits = if (backward) fits - @as(u32, @intCast(clusterEnd(part, 0))) else @intCast(lastCluster(part));
+            fits = if (backward) fits - @as(u32, @intCast(unicode.clusterEnd(part, 0))) else @intCast(lastCluster(part));
         }
         return fits;
     }

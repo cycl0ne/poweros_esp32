@@ -34,13 +34,13 @@ const utf8 = sdk.utility.utf8;
 ///
 /// BEHAVIOR:
 /// The text is laid out as `Text` draws it, and the places between its
-/// clusters - a character, and the marks and other characters without a
-/// width that follow it - are the ones to choose from, with the places
-/// an even split puts inside a cluster of several characters with a
-/// width. A column in the left half of what is between two places
-/// answers the left one, a column in the right half the right one. The
-/// byte of a mark is not answered: no place is between a letter and its
-/// mark.
+/// clusters - a letter with its marks, consonants a virama joins and
+/// their vowel sign, pictographs a joiner makes one - are the ones to
+/// choose from, with the places an even split puts between clusters
+/// that are drawn as one glyph. A column in the left half of what is
+/// between two places answers the left one, a column in the right half
+/// the right one. A byte inside a cluster is not answered: no place is
+/// between a letter and its mark, or inside a conjunct.
 ///
 /// In a font that does not shape its text every character is a cluster
 /// of its own, a mark too.

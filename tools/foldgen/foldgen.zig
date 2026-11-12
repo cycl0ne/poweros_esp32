@@ -11,6 +11,7 @@
 //!   foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig>
 //!   foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig>
 //!   foldgen normal <UnicodeData.txt> <CompositionExclusions.txt> <out.zig>
+//!   foldgen cluster <GraphemeBreakProperty.txt> <emoji-data.txt> <DerivedCoreProperties.txt> <out.zig>
 //!
 //! `posfs` writes posfs's case fold table (sdk/libs/dos/posfs/fold1.zig):
 //! simple case folding, the file's C and S lines, one code point to one,
@@ -82,6 +83,22 @@
 //! more than two, or a character that is more than four once every part
 //! is taken apart. The version is CompositionExclusions.txt's.
 //!
+//! `cluster` writes what each character is to the clusters of a text
+//! (sdk/libs/utility/unicode_cluster.zig), which `unicode.clusterEnd`
+//! cuts a text by - a letter with its marks, a syllable of Hangul, a
+//! conjunct, an emoji of several characters. A character has one part:
+//! its Grapheme_Cluster_Break in GraphemeBreakProperty.txt; a character
+//! with none that emoji-data.txt lists as Extended_Pictographic is a
+//! pictograph; and DerivedCoreProperties.txt's Indic_Conjunct_Break
+//! makes a character with none a consonant, a mark the linker of a
+//! conjunct, or a mark that may stand inside one - which nearly every
+//! mark may. The table is where
+//! the part changes, as `class`'s is, the Hangul syllables - one of a
+//! lead and a vowel, then 27 with a trail - an entry of their own kind.
+//! It stops where the three files are not what the rules are written
+//! for: a pictograph or a consonant with a break property, a linker
+//! that is no mark. The version is GraphemeBreakProperty.txt's.
+//!
 //! A case table is runs: code points one or two apart that all move by the same
 //! amount (A-Z by +32; Ā, Ă, Ą... by +1 every second one), each run packed
 //! into a u64 and found by a binary search - 210 runs for Unicode 16's 1484
@@ -99,7 +116,7 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(1);
 }
 
-const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig> | foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig> | foldgen normal <UnicodeData.txt> <CompositionExclusions.txt> <out.zig>";
+const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig> | foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig> | foldgen normal <UnicodeData.txt> <CompositionExclusions.txt> <out.zig> | foldgen cluster <GraphemeBreakProperty.txt> <emoji-data.txt> <DerivedCoreProperties.txt> <out.zig>";
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -310,6 +327,88 @@ pub fn main(init: std.process.Init) !void {
         , .{ version, starts.len, version });
         try writeStarts(arena, &out, "Where the class changes: `code << 8 | class`, sorted.", starts);
         try cwd.writeFile(io, .{ .sub_path = args[4], .data = out.items });
+        return;
+    }
+
+    if (mem.eql(u8, args[1], "cluster")) {
+        if (args.len != 6) fatal(usage, .{});
+        const breaks = try cwd.readFileAlloc(io, args[2], arena, limit);
+        const emoji = try cwd.readFileAlloc(io, args[3], arena, limit);
+        const derived = try cwd.readFileAlloc(io, args[4], arena, limit);
+        const version = try versionNamed(breaks, "# GraphemeBreakProperty-", args[2]);
+        const parts = try clusterParts(arena, breaks, emoji, derived);
+        const starts = try partStarts(arena, parts);
+        try out.print(arena,
+            \\// SPDX-License-Identifier: MIT
+            \\//! What each character is to the clusters of a text, from Unicode
+            \\//! {s}: its Grapheme_Cluster_Break, with the pictographs of
+            \\//! emoji-data.txt and the consonants, linkers and marks of
+            \\//! DerivedCoreProperties.txt's Indic_Conjunct_Break as parts of their
+            \\//! own. Written by tools/foldgen (`foldgen cluster`) from the files
+            \\//! scripts/fetch-unicode.sh fetches; never edited by hand.
+            \\//!
+            \\//! `starts` is where the part changes, sorted: each entry the code
+            \\//! point it starts at shifted up by 8, its part in the low byte, the
+            \\//! part good up to the next entry's code point. An entry of part
+            \\//! `syllables` starts the Hangul syllables: from its code point on,
+            \\//! every 28th character a syllable of a lead and a vowel, the 27
+            \\//! behind each with a trail as well. {d} entries.
+            \\
+            \\/// The Unicode version the table is from.
+            \\pub const unicode_version = "{s}";
+            \\
+            \\/// What a character is in a cluster.
+            \\pub const Part = enum(u8) {{
+            \\    /// A character that starts a cluster and takes what joins it.
+            \\    other = 0,
+            \\    /// The carriage return, one cluster with a line feed behind it.
+            \\    cr = 1,
+            \\    /// The line feed.
+            \\    lf = 2,
+            \\    /// A control, a separator of lines or paragraphs, a format
+            \\    /// character that joins nothing: a cluster by itself.
+            \\    control = 3,
+            \\    /// A character that goes on the cluster before and may not
+            \\    /// stand inside a conjunct: the zero width non-joiner.
+            \\    extend = 4,
+            \\    /// A mark on the character before, and whatever else goes on
+            \\    /// a cluster - a variation selector, an emoji's skin tone, a
+            \\    /// tag. A conjunct may hold it: a nukta.
+            \\    conjunct_extend = 5,
+            \\    /// The mark that joins two consonants to a conjunct: a virama.
+            \\    linker = 6,
+            \\    /// The zero width joiner.
+            \\    joiner = 7,
+            \\    /// A regional indicator: two of them are a flag.
+            \\    regional = 8,
+            \\    /// A sign that goes before the character behind it.
+            \\    prepend = 9,
+            \\    /// A mark that takes room of its own behind its letter: a
+            \\    /// vowel sign.
+            \\    spacing = 10,
+            \\    /// A Hangul lead.
+            \\    lead = 11,
+            \\    /// A Hangul vowel.
+            \\    vowel = 12,
+            \\    /// A Hangul trail.
+            \\    trail = 13,
+            \\    /// A Hangul syllable of a lead and a vowel.
+            \\    syllable = 14,
+            \\    /// A Hangul syllable of a lead, a vowel and a trail.
+            \\    syllable_trail = 15,
+            \\    /// A pictograph: an emoji, or a place kept for one.
+            \\    pictographic = 16,
+            \\    /// A consonant that a linker joins to the next.
+            \\    consonant = 17,
+            \\}};
+            \\
+            \\/// The part of the entry that starts the Hangul syllables.
+            \\pub const syllables: u8 = 18;
+            \\
+            \\
+        , .{ version, starts.len, version });
+        try writeStarts(arena, &out, "Where the part changes: `code << 8 | part`, sorted.", starts);
+        try cwd.writeFile(io, .{ .sub_path = args[5], .data = out.items });
         return;
     }
 
@@ -603,6 +702,123 @@ const Scripts = struct {
 /// changes. A code point Scripts.txt leaves out has the script of the
 /// code points on both its sides when that is one script, `Zyyy`
 /// otherwise.
+const part_numbers = [_]struct { name: []const u8, number: u8 }{
+    .{ .name = "CR", .number = 1 },                    .{ .name = "LF", .number = 2 },
+    .{ .name = "Control", .number = 3 },               .{ .name = "Extend", .number = part_extend },
+    .{ .name = "ZWJ", .number = part_joiner },         .{ .name = "Regional_Indicator", .number = 8 },
+    .{ .name = "Prepend", .number = 9 },               .{ .name = "SpacingMark", .number = 10 },
+    .{ .name = "L", .number = 11 },                    .{ .name = "V", .number = 12 },
+    .{ .name = "T", .number = 13 },                    .{ .name = "LV", .number = part_syllable },
+    .{ .name = "LVT", .number = part_syllable_trail },
+};
+const part_other: u8 = 0;
+const part_extend: u8 = 4;
+const part_conjunct_extend: u8 = 5;
+const part_linker: u8 = 6;
+const part_joiner: u8 = 7;
+const part_syllable: u8 = 14;
+const part_syllable_trail: u8 = 15;
+const part_pictographic: u8 = 16;
+const part_consonant: u8 = 17;
+const part_syllables: u8 = 18;
+
+/// The lines of a property file: code points, and the fields behind
+/// them.
+const Listing = struct {
+    lines: mem.SplitIterator(u8, .scalar),
+
+    const Line = struct { first: u21, last: u21, fields: [2][]const u8 };
+
+    fn of(text: []const u8) Listing {
+        return .{ .lines = mem.splitScalar(u8, text, '\n') };
+    }
+
+    fn next(self: *Listing) !?Line {
+        while (self.lines.next()) |raw| {
+            const line = mem.trim(u8, raw[0 .. mem.indexOfScalar(u8, raw, '#') orelse raw.len], " \t\r");
+            if (line.len == 0) continue;
+            var fields = mem.splitScalar(u8, line, ';');
+            const span = mem.trim(u8, fields.next() orelse continue, " ");
+            const dots = mem.indexOf(u8, span, "..");
+            var found: Line = .{
+                .first = try std.fmt.parseInt(u21, span[0 .. dots orelse span.len], 16),
+                .last = undefined,
+                .fields = .{ "", "" },
+            };
+            found.last = if (dots) |at| try std.fmt.parseInt(u21, span[at + 2 ..], 16) else found.first;
+            for (&found.fields) |*field| field.* = mem.trim(u8, fields.next() orelse break, " ");
+            return found;
+        }
+        return null;
+    }
+};
+
+/// Every code point's part in a cluster: 0 for one none of the three
+/// files names.
+fn clusterParts(arena: mem.Allocator, breaks: []const u8, emoji: []const u8, derived: []const u8) ![]u8 {
+    const parts = try arena.alloc(u8, 0x110000);
+    @memset(parts, part_other);
+    var listing: Listing = .of(breaks);
+    while (try listing.next()) |line| {
+        const number = for (part_numbers) |known| {
+            if (mem.eql(u8, known.name, line.fields[0])) break known.number;
+        } else fatal("unknown Grapheme_Cluster_Break {s}", .{line.fields[0]});
+        @memset(parts[line.first .. @as(usize, line.last) + 1], number);
+    }
+    listing = .of(emoji);
+    while (try listing.next()) |line| {
+        if (!mem.eql(u8, line.fields[0], "Extended_Pictographic")) continue;
+        for (parts[line.first .. @as(usize, line.last) + 1], line.first..) |*part, code| {
+            if (part.* != part_other) fatal("the pictograph {X} has a break property", .{code});
+            part.* = part_pictographic;
+        }
+    }
+    listing = .of(derived);
+    while (try listing.next()) |line| {
+        if (!mem.eql(u8, line.fields[0], "InCB")) continue;
+        const kind = line.fields[1];
+        for (parts[line.first .. @as(usize, line.last) + 1], line.first..) |*part, code| {
+            if (mem.eql(u8, kind, "Consonant")) {
+                if (part.* != part_other) fatal("the consonant {X} has a break property", .{code});
+                part.* = part_consonant;
+            } else if (mem.eql(u8, kind, "Linker")) {
+                if (part.* != part_extend) fatal("the linker {X} is no mark", .{code});
+                part.* = part_linker;
+            } else if (mem.eql(u8, kind, "Extend")) {
+                if (part.* == part_joiner) continue;
+                if (part.* != part_extend) fatal("{X} may stand inside a conjunct and is no mark", .{code});
+                part.* = part_conjunct_extend;
+            } else fatal("unknown Indic_Conjunct_Break {s}", .{kind});
+        }
+    }
+    return parts;
+}
+
+/// Where the part changes, as `code << 8 | part`: the Hangul syllables,
+/// one of a lead and a vowel and then 27 with a trail, over and over,
+/// one `syllables` entry.
+fn partStarts(arena: mem.Allocator, parts: []const u8) ![]u32 {
+    var starts: std.ArrayList(u32) = .empty;
+    var code: usize = 0;
+    while (code < parts.len) {
+        const here = parts[code];
+        if (here == part_syllable) {
+            try starts.append(arena, @as(u32, @intCast(code)) << 8 | part_syllables);
+            while (code < parts.len and parts[code] == part_syllable) {
+                for (parts[code + 1 ..][0..27], code + 1..) |part, behind| {
+                    if (part != part_syllable_trail) fatal("the Hangul syllable {X} has no trail", .{behind});
+                }
+                code += 28;
+            }
+            continue;
+        }
+        if (here == part_syllable_trail) fatal("the Hangul syllable {X} follows none without a trail", .{code});
+        try starts.append(arena, @as(u32, @intCast(code)) << 8 | here);
+        while (code < parts.len and parts[code] == here) code += 1;
+    }
+    return starts.items;
+}
+
 fn scriptsOf(arena: mem.Allocator, listing: []const u8, aliases: []const u8) !Scripts {
     const Alias = struct { code: [4]u8, name: []const u8 };
     var known: std.ArrayList(Alias) = .empty;

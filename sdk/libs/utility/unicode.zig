@@ -2,7 +2,8 @@
 //! Characters by Unicode's tables: a character's folding, upper case and
 //! lower case, names compared without regard to case, the letter a
 //! letter with marks is written on, the cells of a console a character
-//! takes, and what a character is - a letter, a digit, a space, ...
+//! takes, what a character is - a letter, a digit, a space, ... - and
+//! the clusters a text is made of.
 //!
 //! The case tables are runs of code points that move by the same amount
 //! (`unicode_case.zig`, written by tools/foldgen); a character is looked
@@ -16,7 +17,20 @@
 //! set - which is what every name is compared by: `ß` stays `ß`, `ẞ` folds
 //! to it, `Σ`, `σ` and `ς` are one letter.
 //!
-//! The compares read their bytes as text is read (`utf8.read`), so a
+//! A cluster is what a reader takes for one character: a letter with
+//! its marks, a carriage return with its line feed, a syllable of
+//! Hangul written as its parts, consonants a virama joins with their
+//! vowel sign, two regional indicators that are a flag, pictographs a
+//! joiner makes one. Where one ends is Unicode's rule for extended
+//! grapheme clusters, decided between two characters by what each is
+//! (`unicode_cluster.zig`, the code points where that changes) - and for
+//! a consonant, a pictograph and a regional indicator also by what the
+//! cluster holds before them. `clusterEnd` goes forward from a
+//! cluster's start; `clusterStart` goes back from any byte to a place a
+//! cluster starts at whatever stands before, and forward from there.
+//! Nothing is drawn, moved over or cut inside a cluster.
+//!
+//! The compares and the clusters read their bytes as text is read (`utf8.read`), so a
 //! byte that is no UTF-8 compares as U+FFFD.
 
 const utf8 = @import("utf8.zig");
@@ -24,6 +38,7 @@ const unicode_case = @import("unicode_case.zig");
 const unicode_base = @import("unicode_base.zig");
 const unicode_width = @import("unicode_width.zig");
 const unicode_class = @import("unicode_class.zig");
+const unicode_cluster = @import("unicode_cluster.zig");
 
 /// The Unicode version the tables are from.
 pub const version = unicode_case.unicode_version;
@@ -124,6 +139,149 @@ pub fn class(char: u32) Class {
     const number: u8 = @truncate(start);
     if (number == unicode_class.pairs) return if ((char - (start >> 8)) % 2 == 0) .upper else .lower;
     return @enumFromInt(number);
+}
+
+/// What a character is in a cluster.
+pub const Part = unicode_cluster.Part;
+
+/// What `char` is in a cluster: a mark, a consonant a virama joins, a
+/// pictograph, ... - `.other` for a character that only starts one, and
+/// for a value past U+10FFFF.
+pub fn part(char: u32) Part {
+    if (char >= 0x20 and char < 0x7F) return .other;
+    if (char > utf8.last) return .other;
+    const starts = &unicode_cluster.starts;
+    // The last entry that starts at or before the character; the first
+    // starts at 0.
+    var low: usize = 0;
+    var high: usize = starts.len;
+    while (low < high) {
+        const middle = low + (high - low) / 2;
+        if (starts[middle] >> 8 <= char) low = middle + 1 else high = middle;
+    }
+    const start = starts[low - 1];
+    const number: u8 = @truncate(start);
+    if (number == unicode_cluster.syllables) return if ((char - (start >> 8)) % 28 == 0) .syllable else .syllable_trail;
+    return @enumFromInt(number);
+}
+
+/// Whether two characters next to each other are in one cluster: never,
+/// always, or as what the cluster holds before them says.
+const Link = enum { never, always, asked };
+
+/// How a character that is `after` stands to the one before it.
+fn link(before: Part, after: Part) Link {
+    if (before == .cr) return if (after == .lf) .always else .never;
+    if (before == .lf or before == .control) return .never;
+    switch (after) {
+        .cr, .lf, .control => return .never,
+        .extend, .conjunct_extend, .linker, .joiner, .spacing => return .always,
+        else => {},
+    }
+    if (before == .prepend) return .always;
+    const joined = switch (after) {
+        .lead, .syllable, .syllable_trail => before == .lead,
+        .vowel => before == .lead or before == .vowel or before == .syllable,
+        .trail => before == .vowel or before == .trail or before == .syllable or before == .syllable_trail,
+        // A consonant joins one a linker stands behind, a pictograph one
+        // a joiner stands behind, a regional indicator the one before
+        // that is not a flag's second already.
+        .consonant => return if (before == .linker or before == .conjunct_extend or before == .joiner) .asked else .never,
+        .pictographic => return if (before == .joiner) .asked else .never,
+        .regional => return if (before == .regional) .asked else .never,
+        else => false,
+    };
+    return if (joined) .always else .never;
+}
+
+/// What a cluster holds so far, for the characters `link` asks about.
+const Held = struct {
+    /// A consonant with nothing but marks behind it, and whether a
+    /// linker is among them.
+    conjunct: enum { none, consonant, linked } = .none,
+    /// A pictograph with nothing but marks behind it.
+    pictograph: bool = false,
+    /// The last character is a joiner behind such a pictograph.
+    joined: bool = false,
+    /// The regional indicators the cluster ends with.
+    regionals: u32 = 0,
+
+    fn take(self: *Held, what: Part) void {
+        self.conjunct = switch (what) {
+            .consonant => .consonant,
+            .linker => if (self.conjunct == .none) .none else .linked,
+            .conjunct_extend, .joiner => self.conjunct,
+            else => .none,
+        };
+        self.joined = what == .joiner and self.pictograph;
+        self.pictograph = switch (what) {
+            .pictographic => true,
+            .extend, .conjunct_extend, .linker => self.pictograph,
+            else => false,
+        };
+        self.regionals = if (what == .regional) self.regionals + 1 else 0;
+    }
+
+    fn joins(self: Held, after: Part) bool {
+        return switch (after) {
+            .consonant => self.conjunct == .linked,
+            .pictographic => self.joined,
+            else => self.regionals % 2 == 1,
+        };
+    }
+};
+
+/// Where the cluster that starts at `start` ends: the offset behind its
+/// last byte, `text.len` for the last cluster and for a `start` at or
+/// past the end. `start` is a cluster's start - 0, or what this or
+/// `clusterStart` answered.
+pub fn clusterEnd(text: []const u8, start: usize) usize {
+    if (start >= text.len) return text.len;
+    const first = utf8.read(text[start..]);
+    var held: Held = .{};
+    var before = part(first.char);
+    held.take(before);
+    var end = start + first.length;
+    while (end < text.len) {
+        const next = utf8.read(text[end..]);
+        const after = part(next.char);
+        const joined = switch (link(before, after)) {
+            .never => false,
+            .always => true,
+            .asked => held.joins(after),
+        };
+        if (!joined) break;
+        held.take(after);
+        before = after;
+        end += next.length;
+    }
+    return end;
+}
+
+/// Where the cluster starts that the byte at `at` is in: `at` itself
+/// when a cluster starts there, `text.len` for an `at` at or past the
+/// end.
+pub fn clusterStart(text: []const u8, at: usize) usize {
+    if (at >= text.len) return text.len;
+    // The character the byte is in.
+    var start = at;
+    while (start > 0 and at - start < 3 and text[start] & 0xC0 == 0x80) start -= 1;
+    if (start + utf8.read(text[start..]).length <= at) start = at;
+    // Back to where a cluster starts whatever stands before it.
+    var after = part(utf8.read(text[start..]).char);
+    while (start > 0) {
+        const last = utf8.readLast(text[0..start]);
+        const before = part(last.char);
+        if (link(before, after) == .never) break;
+        start -= last.length;
+        after = before;
+    }
+    // And forward to the cluster with the byte.
+    while (true) {
+        const end = clusterEnd(text, start);
+        if (end > at) return start;
+        start = end;
+    }
 }
 
 /// Whether `char` is in one of `ranges`, sorted pairs of first and last.

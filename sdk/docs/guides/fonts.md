@@ -150,8 +150,11 @@ gb.Text(rp, "Hello", 5);
   edges of a selection, an underline under part of a text, a click
   turned into a place. Both lay the whole text out as `Text` draws it
   and answer places between clusters - a letter with the marks that
-  follow it is one - so a cursor never stands between a letter and its
-  mark. They work with every font.
+  follow it is one, as are the consonants a virama joins with their
+  vowel sign, a flag's two characters and the pictographs a joiner
+  makes one (`utility.unicode.clusterEnd` cuts a text into them) - so
+  a cursor never stands between a letter and its mark or inside a
+  conjunct. They work with every font.
 - **Each character has its own width.** `TextLength` adds the advances up;
   `TextExtent` also says where the ink goes (a kern back makes
   `extent.min_x` negative, bold and italic can carry it past `width`);
@@ -1242,13 +1245,14 @@ mine.font.shape = &mine.shaper; // before AddFont, and never again
   drawn from the point, right and up; all in pixels at the image's
   height.
 - **`cluster`** is the byte of the text the glyph came of - of several
-  characters drawn as one glyph, the first. graphics takes a character
-  and the ones without a width that follow it (`utility.unicode.width`)
-  as one cluster, whichever of them a glyph names: a cluster is drawn
-  from one font, fits or does not fit as a whole, and has a place
-  before and after it and none inside - except a cluster of several
-  characters with a width, a ligature, whose width is split evenly
-  among them.
+  characters drawn as one glyph, the first. graphics cuts the text
+  into its own clusters (`utility.unicode.clusterEnd`: a letter with
+  its marks, a conjunct with its vowel sign, a flag, pictographs a
+  joiner makes one) and takes a glyph for the cluster the byte it
+  names lies in: a cluster is drawn from one font, fits or does not
+  fit as a whole, and has a place before and after it and none inside.
+  Glyphs that name one byte for several clusters - a ligature - have
+  their width split evenly among those.
 - **`SHAPE_ROOM`** with the glyphs needed in `count` when they are more
   than `room`: graphics makes the room and asks a second time.
   **`SHAPE_LATER`** when the text could not be shaped this time - no

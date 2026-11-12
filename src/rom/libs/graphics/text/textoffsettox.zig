@@ -38,12 +38,13 @@ const utf8 = sdk.utility.utf8;
 /// its marks are where they are drawn, which the lengths of the text's
 /// pieces added up are not.
 ///
-/// A place is between two clusters: a character, and the marks and other
-/// characters without a width that follow it. An offset inside a cluster
-/// - before a mark - is the place after the cluster. A cluster of
-/// several characters with a width, drawn as one glyph or as several
-/// that do not stand for one character each, has its width split evenly
-/// among them, so there is a place before each.
+/// A place is between two clusters, as `Text` takes a text by them: a
+/// letter with its marks, consonants a virama joins and their vowel
+/// sign, pictographs a joiner makes one. An offset inside a cluster -
+/// before a mark, before the second consonant of a conjunct - is the
+/// place after the cluster. Clusters drawn as one glyph, or as several
+/// that do not stand for one each - a ligature - have the width split
+/// evenly among them, so there is a place before each.
 ///
 /// In a font that does not shape its text every character is a cluster
 /// of its own and the place is the advances before it added up.

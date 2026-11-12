@@ -174,3 +174,114 @@ test "unicode.class: what a character is" {
     };
     for (expected) |each| try testing.expectEqual(each.class, unicode.class(each.char));
 }
+
+/// The clusters of `text` going forward, each checked from every one
+/// of its bytes going back, against the `lengths` of the clusters.
+fn expectClusters(text: []const u8, lengths: []const usize) !void {
+    const unicode = @import("sdk").utility.unicode;
+    var start: usize = 0;
+    for (lengths) |length| {
+        try testing.expectEqual(start + length, unicode.clusterEnd(text, start));
+        for (start..start + length) |at| try testing.expectEqual(start, unicode.clusterStart(text, at));
+        start += length;
+    }
+    try testing.expectEqual(text.len, start);
+    try testing.expectEqual(text.len, unicode.clusterEnd(text, text.len));
+    try testing.expectEqual(text.len, unicode.clusterStart(text, text.len));
+}
+
+test "unicode.part: what a character is in a cluster" {
+    const unicode = @import("sdk").utility.unicode;
+    const expected = [_]struct { char: u32, part: unicode.Part }{
+        .{ .char = 'a', .part = .other },              .{ .char = '\r', .part = .cr },
+        .{ .char = '\n', .part = .lf },                .{ .char = 0x07, .part = .control },
+        .{ .char = 0x0301, .part = .conjunct_extend }, .{ .char = 0x200C, .part = .extend },
+        .{ .char = 0x200D, .part = .joiner },          .{ .char = 0x0915, .part = .consonant },
+        .{ .char = 0x093C, .part = .conjunct_extend }, .{ .char = 0x093F, .part = .spacing },
+        .{ .char = 0x094D, .part = .linker },          .{ .char = 0x0600, .part = .prepend },
+        .{ .char = 0x1100, .part = .lead },            .{ .char = 0x1161, .part = .vowel },
+        .{ .char = 0x11A8, .part = .trail },           .{ .char = 0xAC00, .part = .syllable },
+        .{ .char = 0xAC01, .part = .syllable_trail },  .{ .char = 0xAC1B, .part = .syllable_trail },
+        .{ .char = 0xAC1C, .part = .syllable },        .{ .char = 0xD7A3, .part = .syllable_trail },
+        .{ .char = 0xD7A4, .part = .other },           .{ .char = 0x1F1E9, .part = .regional },
+        .{ .char = 0x1F600, .part = .pictographic },   .{ .char = 0x1F3FB, .part = .conjunct_extend },
+        .{ .char = 0x00A9, .part = .pictographic },    .{ .char = 0x110000, .part = .other },
+    };
+    for (expected) |each| try testing.expectEqual(each.part, unicode.part(each.char));
+}
+
+test "unicode.clusterEnd, clusterStart: letters with their marks, conjuncts, flags, joined pictographs" {
+    try expectClusters("", &.{});
+    try expectClusters("Go", &.{ 1, 1 });
+    // A letter and a mark on it; a line's end of two characters.
+    try expectClusters("e\u{0301}a", &.{ 3, 1 });
+    try expectClusters("a\r\nb\n\r", &.{ 1, 2, 1, 1, 1 });
+    // kshatriya and hindi: a virama joins its consonants, and the vowel
+    // sign stays with them.
+    try expectClusters("क्षत्रिय", &.{ 9, 12, 3 });
+    try expectClusters("हिन्दी", &.{ 6, 12 });
+    try expectClusters("मुँह", &.{ 9, 3 });
+    // A nukta inside a conjunct, and a joiner; a non-joiner behind the
+    // virama parts the two, as a virama with no consonant behind it
+    // ends its cluster.
+    try expectClusters("फ़्ल", &.{12});
+    try expectClusters("क्\u{200D}ष", &.{12});
+    try expectClusters("क्\u{200C}ष", &.{ 9, 3 });
+    try expectClusters("क् a", &.{ 6, 1, 1 });
+    // Hangul written as its parts, and a syllable with a trail behind.
+    try expectClusters("\u{1100}\u{1161}\u{11A8}\u{1100}", &.{ 9, 3 });
+    try expectClusters("\u{AC00}\u{11A8}\u{AC01}\u{11A8}\u{1161}", &.{ 6, 6, 3 });
+    // Regional indicators by twos, whatever number of them.
+    try expectClusters("\u{1F1E9}\u{1F1EA}\u{1F1EE}\u{1F1F3}\u{1F1EB}", &.{ 8, 8, 4 });
+    try expectClusters("a\u{1F1E9}\u{1F1EA}\u{1F1EE}", &.{ 1, 8, 4 });
+    // A family of three, a skin tone, a picture asked for by a selector;
+    // a joiner behind a letter joins no pictograph.
+    try expectClusters("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}!", &.{ 18, 1 });
+    try expectClusters("\u{1F44B}\u{1F3FD}\u{2764}\u{FE0F}", &.{ 8, 6 });
+    try expectClusters("a\u{200D}\u{1F600}", &.{ 4, 4 });
+    // Bytes that are no UTF-8 are a character each.
+    try expectClusters("a\xFFb\xE0\xA4", &.{ 1, 1, 1, 2 });
+}
+
+test "unicode.clusterEnd, clusterStart: every line of Unicode's GraphemeBreakTest.txt" {
+    const test_options = @import("test_options");
+    if (test_options.unicode_dir.len == 0) return error.SkipZigTest;
+    var path_buffer: [1024]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buffer, "{s}/GraphemeBreakTest.txt", .{test_options.unicode_dir});
+    const listing = std.Io.Dir.cwd().readFileAlloc(testing.io, path, testing.allocator, .limited(4 << 20)) catch |err| switch (err) {
+        error.FileNotFound => return error.SkipZigTest,
+        else => return err,
+    };
+    defer testing.allocator.free(listing);
+
+    var checked: usize = 0;
+    var lines = std.mem.splitScalar(u8, listing, '\n');
+    while (lines.next()) |raw| {
+        // "÷ 0020 × 0308 ÷ 0020 ÷": a cluster ends at each ÷.
+        const line = std.mem.trim(u8, raw[0 .. std.mem.indexOfScalar(u8, raw, '#') orelse raw.len], " \t\r");
+        if (line.len == 0) continue;
+        var text: [128]u8 = undefined;
+        var length: usize = 0;
+        var lengths: [32]usize = undefined;
+        var clusters: usize = 0;
+        var start: usize = 0;
+        var words = std.mem.tokenizeAny(u8, line, " \t");
+        while (words.next()) |word| {
+            if (std.mem.eql(u8, word, "×")) continue;
+            if (std.mem.eql(u8, word, "÷")) {
+                if (length == start) continue;
+                lengths[clusters] = length - start;
+                clusters += 1;
+                start = length;
+                continue;
+            }
+            length += utf8.encode(try std.fmt.parseInt(u21, word, 16), text[length..][0..4]);
+        }
+        expectClusters(text[0..length], lengths[0..clusters]) catch |err| {
+            std.debug.print("GraphemeBreakTest.txt: {s}\n", .{line});
+            return err;
+        };
+        checked += 1;
+    }
+    try testing.expectEqual(@as(usize, 1093), checked);
+}

@@ -4973,9 +4973,11 @@ the characters' glyphs side by side. `TextLength`, `TextExtent` and
 `TextFit` count the same glyphs, and `TextOffsetToX` says where in
 the text a character's place is.
 
-The text is taken a cluster at a time - a character with the marks
-and other characters without a width behind it - and each cluster
-is drawn whole by one font: the first of the RastPort's font and its
+The text is taken a cluster at a time - what a reader takes for one
+character: a letter with its marks, consonants a virama joins and
+their vowel sign, the two characters of a flag, pictographs a joiner
+makes one (`utility.unicode.clusterEnd`) - and each cluster is drawn
+whole by one font: the first of the RastPort's font and its
 fallbacks that has every character of it, or else the first whose
 hook has another form of it. Neighbouring clusters of one font are
 shaped together, so nothing is kerned or joined across a change of
@@ -5167,8 +5169,9 @@ is made here when this is the first call to want it, as `Text` makes
 it.
 
 Of a text its font shapes (`TextFont.shape`) what fits is whole
-clusters - a letter is not parted from its marks - and it is the
-piece that fits **shaped by itself**, as a `Text` of just those
+clusters - a letter is not parted from its marks, a conjunct not
+cut at its virama, a flag not between its two characters - and it
+is the piece that fits **shaped by itself**, as a `Text` of just those
 bytes draws it: a letter that is narrower before its neighbour in
 the whole text counts at the width it has as the piece's last. The
 text is laid out a part at a time, from the end the piece is taken
@@ -5402,12 +5405,13 @@ place is taken from that: a kerned pair, a ligature and a letter with
 its marks are where they are drawn, which the lengths of the text's
 pieces added up are not.
 
-A place is between two clusters: a character, and the marks and other
-characters without a width that follow it. An offset inside a cluster
-- before a mark - is the place after the cluster. A cluster of
-several characters with a width, drawn as one glyph or as several
-that do not stand for one character each, has its width split evenly
-among them, so there is a place before each.
+A place is between two clusters, as `Text` takes a text by them: a
+letter with its marks, consonants a virama joins and their vowel
+sign, pictographs a joiner makes one. An offset inside a cluster -
+before a mark, before the second consonant of a conjunct - is the
+place after the cluster. Clusters drawn as one glyph, or as several
+that do not stand for one each - a ligature - have the width split
+evenly among them, so there is a place before each.
 
 In a font that does not shape its text every character is a cluster
 of its own and the place is the advances before it added up.
@@ -5487,13 +5491,13 @@ font set the answer is 0 and the error is `GERR_NO_FONT`.
 **BEHAVIOR**
 
 The text is laid out as `Text` draws it, and the places between its
-clusters - a character, and the marks and other characters without a
-width that follow it - are the ones to choose from, with the places
-an even split puts inside a cluster of several characters with a
-width. A column in the left half of what is between two places
-answers the left one, a column in the right half the right one. The
-byte of a mark is not answered: no place is between a letter and its
-mark.
+clusters - a letter with its marks, consonants a virama joins and
+their vowel sign, pictographs a joiner makes one - are the ones to
+choose from, with the places an even split puts between clusters
+that are drawn as one glyph. A column in the left half of what is
+between two places answers the left one, a column in the right half
+the right one. A byte inside a cluster is not answered: no place is
+between a letter and its mark, or inside a conjunct.
 
 In a font that does not shape its text every character is a cluster
 of its own, a mark too.

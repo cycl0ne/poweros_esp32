@@ -83,13 +83,16 @@ pub const LIBRARY_VERSION = 0;
 /// and count the glyphs the font's hook lays a text out as, kerned,
 /// with its ligatures and marks; `TextOffsetToX` and `TextXToOffset`
 /// say where in such a text a byte's place is; a RastPort keeps a text
-/// direction (`RPTAG_TextDirection`). The version stays 0 until there
-/// is something to demand of it.
-pub const LIBRARY_REVISION = 42;
+/// direction (`RPTAG_TextDirection`). 43: a shaped text is taken by
+/// Unicode's clusters - a conjunct with its vowel sign, a flag, joined
+/// pictographs are one each, drawn by one font, never cut by `TextFit`
+/// and with no place inside. The version stays 0 until there is
+/// something to demand of it.
+pub const LIBRARY_REVISION = 43;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.
-const BUILD_DATE = "11.11.2026";
+const BUILD_DATE = "12.11.2026";
 
 /// The `$VER:` string, NUL first so that a scan of the image finds it and
 /// `id_string` can start one byte in as a plain C string.

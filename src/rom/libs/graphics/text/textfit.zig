@@ -55,8 +55,9 @@ const utf8 = sdk.utility.utf8;
 /// it.
 ///
 /// Of a text its font shapes (`TextFont.shape`) what fits is whole
-/// clusters - a letter is not parted from its marks - and it is the
-/// piece that fits **shaped by itself**, as a `Text` of just those
+/// clusters - a letter is not parted from its marks, a conjunct not
+/// cut at its virama, a flag not between its two characters - and it
+/// is the piece that fits **shaped by itself**, as a `Text` of just those
 /// bytes draws it: a letter that is narrower before its neighbour in
 /// the whole text counts at the width it has as the piece's last. The
 /// text is laid out a part at a time, from the end the piece is taken
