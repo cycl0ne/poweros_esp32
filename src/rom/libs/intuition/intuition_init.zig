@@ -256,7 +256,10 @@ pub const LIBRARY_VERSION = 0;
 /// 92: a mouse's distance and a tablet's place go on down the input
 /// chain as the pointer position they made, in the front screen's
 /// pixels, so a console's text is selected with any pointer.
-pub const LIBRARY_REVISION = 92;
+/// 93: a disk in or out, new preferences and a USB device plugged in or
+/// pulled out reach intuition's task from the input chain, so the
+/// windows that listen for them are told when it happens.
+pub const LIBRARY_REVISION = 93;
 const BUILD_DATE = "12.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

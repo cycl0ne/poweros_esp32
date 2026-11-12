@@ -259,13 +259,29 @@ fn handler(events: ?*InputEvent, data: ?*anyopaque) callconv(.c) ?*InputEvent {
                 st.mouse_y = ev.y;
                 pointer.moved(ib, ev.x, ev.y);
             },
-            ie.IECLASS_RAWKEY, ie.IECLASS_TIMER => {},
-            else => continue,
+            else => if (!forTask(ev.class)) continue,
         }
         if (push(st, ev)) any = true;
     }
     if (any) ib.sys_base.Signal(&st.task, st.mask);
     return events;
+}
+
+/// Whether intuition's task acts on an event of `class` that says nothing
+/// of the pointer: a key, a tick, and the machine's news - a disk in or
+/// out, new preferences, a USB device plugged in or pulled out - which
+/// the windows that listen are told.
+fn forTask(class: u32) bool {
+    return switch (class) {
+        ie.IECLASS_RAWKEY,
+        ie.IECLASS_TIMER,
+        ie.IECLASS_DISKINSERTED,
+        ie.IECLASS_DISKREMOVED,
+        ie.IECLASS_NEWPREFS,
+        ie.IECLASS_USB,
+        => true,
+        else => false,
+    };
 }
 
 /// `ev` becomes the pointer position `at` it made, in its place in the
@@ -2043,6 +2059,16 @@ test "the pointer's reach: the front screen's, and no further down than the disp
     // Pulled down, the bar held at a tablet place stays where it is put.
     const at = tabletAcross(0x8000, reachOf(500, 1920, 1080, 1080).bottom);
     try testing.expectEqual(at, tabletAcross(0x8000, reachOf(0, 1920, 1080, 1080).bottom));
+}
+
+test "the machine's news goes to intuition's task, as keys and ticks do" {
+    for ([_]u32{ ie.IECLASS_RAWKEY, ie.IECLASS_TIMER, ie.IECLASS_DISKINSERTED, ie.IECLASS_DISKREMOVED, ie.IECLASS_NEWPREFS, ie.IECLASS_USB }) |class| {
+        try testing.expect(forTask(class));
+    }
+    // What is of no window's: a handler's own classes pass intuition by.
+    for ([_]u32{ ie.IECLASS_NULL, ie.IECLASS_TOUCH, ie.IECLASS_EVENT }) |class| {
+        try testing.expect(!forTask(class));
+    }
 }
 
 test "an event that becomes the position it made keeps its place in the list" {
