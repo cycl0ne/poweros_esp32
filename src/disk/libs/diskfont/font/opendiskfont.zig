@@ -22,7 +22,8 @@ const Contents = _font.Contents;
 /// ```
 ///
 /// SINCE: 1.0, fallback fonts since 1.8, an outline's glyphs made when
-/// wanted since 1.9. LVO -20.
+/// wanted since 1.9, a variable font's own bold and italic since 1.13.
+/// LVO -20.
 ///
 /// INPUTS:
 /// - `text_attr` - the font's name ("spleen.font", or a path to its
@@ -54,9 +55,15 @@ const Contents = _font.Contents;
 ///   then a size
 ///   of the outline already in memory at that height, and otherwise has
 ///   truetype.library render the outline at that height - at any height,
-///   and with `FPF_DESIGNED` too, since it is drawn and not scaled. A
-///   size rendered is in the styles the outline is drawn in, as its entry
-///   says. Its image holds Latin, Greek, Cyrillic, punctuation, currency,
+///   and with `FPF_DESIGNED` too, since it is drawn and not scaled. Of
+///   several outline entries - a variable font is listed once for each
+///   style it has, each a place on its axes, and a directory may hold a
+///   file a style - the one nearest the bold and italic asked is taken:
+///   one drawn in no style that was not asked, then the one drawn in the
+///   most of what was. A size rendered is in the styles its entry says,
+///   so the soft styles draw only what the entry lacks: bold asked of a
+///   variable font is the font at its bold weight, not the regular one
+///   thickened. Its image holds Latin, Greek, Cyrillic, punctuation, currency,
 ///   the letterlike symbols and box drawing; any other character the
 ///   outline has a glyph for is rendered the first time it is drawn or
 ///   measured, and kept with the size (`TextFont.render`).
@@ -99,8 +106,8 @@ const Contents = _font.Contents;
 /// until memory runs short. A font another one falls back to stays
 /// loaded for as long as that one, opened by anybody or not. A size
 /// rendered from an outline keeps the outline open - its font file
-/// in memory, one for all the sizes made from it - for as long as the
-/// size is loaded.
+/// in memory, one for all the sizes made from it and for every style
+/// of a variable font - for as long as the size is loaded.
 ///
 /// BUGS:
 /// None known.
@@ -206,8 +213,9 @@ pub fn openFamily(dfb: *DiskfontBase, want: *const TextAttr, name: [*:0]const u8
     // A family with an outline: a size drawn at exactly this height and
     // style as drawn; a size of the outline in memory at this height,
     // which rendering again would only make twice; any other made from
-    // the outline at this height.
-    if (outlineOf(&contents)) |outline| {
+    // the outline at this height. Of several outlines, the one nearest
+    // the style asked.
+    if (outlineOf(&contents, want.style)) |outline| {
         if (openExactOnDisk(dfb, want, &contents)) |font| {
             if (ram) |held| gb.CloseFont(held);
             return font;
@@ -215,7 +223,7 @@ pub fn openFamily(dfb: *DiskfontBase, want: *const TextAttr, name: [*:0]const u8
         if (ram) |held| {
             if (held.image.height == want.y_size and held.image.style & drawn_styles == outline.style & drawn_styles) return held;
         }
-        if (_font.renderOutline(dfb, &path, &contents, want.name, want.y_size)) |font| {
+        if (_font.renderOutline(dfb, &path, &contents, outline, want.name, want.y_size)) |font| {
             if (ram) |held| gb.CloseFont(held);
             return font;
         }
@@ -291,12 +299,26 @@ fn openExact(dfb: *DiskfontBase, want: *const TextAttr, contents: *Contents, sca
     return null;
 }
 
-/// The family's outline entry, if it has one.
-pub fn outlineOf(contents: *const Contents) ?*const fontfile.FontContents {
+/// The family's outline entry nearest the bold and italic of `style`,
+/// if it has one: an entry drawn in no style that is not asked before
+/// one that is, then the one drawn in the most of what is asked, so
+/// that the soft styles only ever add. Of two alike, the first.
+pub fn outlineOf(contents: *const Contents, style: graphics.FontStyle) ?*const fontfile.FontContents {
+    const asked = style & face_styles;
+    var best: ?*const fontfile.FontContents = null;
+    var best_extra: u32 = 0;
+    var best_drawn: u32 = 0;
     for (contents.entries()) |*entry| {
-        if (entry.outline != 0) return entry;
+        if (entry.outline == 0) continue;
+        const has = entry.style & face_styles;
+        const extra: u32 = @popCount(has & ~asked);
+        const drawn: u32 = @popCount(has & asked);
+        if (best != null and (extra > best_extra or (extra == best_extra and drawn <= best_drawn))) continue;
+        best = entry;
+        best_extra = extra;
+        best_drawn = drawn;
     }
-    return null;
+    return best;
 }
 
 /// A size on the disk at exactly `want`'s height and drawn styles.

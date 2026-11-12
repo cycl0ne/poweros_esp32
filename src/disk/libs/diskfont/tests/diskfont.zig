@@ -716,6 +716,245 @@ test "revision 4: an outline opened by its family, the face for the styles, shar
     // The expunge at the end frees the last.
 }
 
+/// An axis as `FontAxes` gives it.
+fn axisAt(comptime tag: *const [4]u8, minimum: f32, default: f32, maximum: f32) sdk.truetype.Axis {
+    return .{ .tag = sdk.truetype.tableTag(tag), .minimum = minimum, .default = default, .maximum = maximum, .value = default, .name = 0, .hidden = false };
+}
+
+/// Where an entry is on the axis `tag`; null if it does not name it.
+fn entryAt(entry: *const fontfile.FontContents, comptime tag: *const [4]u8) ?f32 {
+    for (entry.axes[0..entry.axis_count]) |axis| {
+        if (axis.tag == sdk.truetype.tableTag(tag)) return axis.value;
+    }
+    return null;
+}
+
+test "a variable font's styles: by the names of its instances, else by what its axes mean; what they cannot give is left out" {
+    const bold = graphics.FSF_BOLD;
+    const italic = graphics.FSF_ITALIC;
+
+    // An instance's name is a style whatever its case and spacing.
+    try testing.expectEqual(@as(?graphics.FontStyle, graphics.FS_NORMAL), fontfile.styleOfName("Regular"));
+    try testing.expectEqual(@as(?graphics.FontStyle, bold), fontfile.styleOfName("BOLD"));
+    try testing.expectEqual(@as(?graphics.FontStyle, italic), fontfile.styleOfName("italic"));
+    try testing.expectEqual(@as(?graphics.FontStyle, bold | italic), fontfile.styleOfName("Bold Italic"));
+    try testing.expectEqual(@as(?graphics.FontStyle, bold | italic), fontfile.styleOfName("BoldItalic"));
+    for ([_][]const u8{ "", "Light", "Bol", "Bolder", "Semibold Italic", "Italic Bold" }) |other| {
+        try testing.expectEqual(@as(?graphics.FontStyle, null), fontfile.styleOfName(other));
+    }
+
+    const none: [4]?fontfile.Place = @splat(null);
+    var made: [4]fontfile.FontContents = undefined;
+
+    // A weight axis whose default is the lightest: regular is 400, bold
+    // 700, and there is no italic.
+    {
+        const axes = [_]sdk.truetype.Axis{axisAt("wght", 200, 200, 900)};
+        try testing.expectEqual(@as(u32, 2), fontfile.variableEntries("v/v.ttf", graphics.FS_NORMAL, &axes, &none, &made));
+        try testing.expectEqual(graphics.FS_NORMAL, made[0].style);
+        try testing.expectEqual(@as(?f32, 400), entryAt(&made[0], "wght"));
+        try testing.expectEqual(bold, made[1].style);
+        try testing.expectEqual(@as(?f32, 700), entryAt(&made[1], "wght"));
+        for (made[0..2]) |*entry| {
+            try testing.expectEqualStrings("v/v.ttf", fontfile.pathOf(entry));
+            try testing.expectEqual(@as(u8, 1), entry.outline);
+            try testing.expectEqual(@as(u16, 0), entry.y_size);
+        }
+    }
+    // Regular at the default names no axis; bold held to the range; a
+    // slant leans to its far end, and bold italic is both.
+    {
+        const axes = [_]sdk.truetype.Axis{ axisAt("wght", 300, 400, 600), axisAt("slnt", -10, 0, 0) };
+        try testing.expectEqual(@as(u32, 4), fontfile.variableEntries("v/v.ttf", graphics.FS_NORMAL, &axes, &none, &made));
+        try testing.expectEqual(@as(u8, 0), made[0].axis_count);
+        try testing.expectEqual(bold, made[1].style);
+        try testing.expectEqual(@as(?f32, 600), entryAt(&made[1], "wght"));
+        try testing.expectEqual(italic, made[2].style);
+        try testing.expectEqual(@as(?f32, null), entryAt(&made[2], "wght"));
+        try testing.expectEqual(@as(?f32, -10), entryAt(&made[2], "slnt"));
+        try testing.expectEqual(bold | italic, made[3].style);
+        try testing.expectEqual(@as(?f32, 600), entryAt(&made[3], "wght"));
+        try testing.expectEqual(@as(?f32, -10), entryAt(&made[3], "slnt"));
+    }
+    // `ital` is taken before `slnt`.
+    {
+        const axes = [_]sdk.truetype.Axis{ axisAt("slnt", -10, 0, 0), axisAt("ital", 0, 0, 1) };
+        try testing.expectEqual(@as(u32, 2), fontfile.variableEntries("v/v.ttf", graphics.FS_NORMAL, &axes, &none, &made));
+        try testing.expectEqual(italic, made[1].style);
+        try testing.expectEqual(@as(?f32, 1), entryAt(&made[1], "ital"));
+        try testing.expectEqual(@as(?f32, null), entryAt(&made[1], "slnt"));
+    }
+    // Axes that are neither weight nor lean, and a weight that goes no
+    // bolder than regular: the one entry, the rest for the soft styles.
+    {
+        const axes = [_]sdk.truetype.Axis{ axisAt("wdth", 50, 100, 200), axisAt("wght", 100, 400, 400) };
+        try testing.expectEqual(@as(u32, 1), fontfile.variableEntries("v/v.ttf", graphics.FS_NORMAL, &axes, &none, &made));
+        try testing.expectEqual(@as(u8, 0), made[0].axis_count);
+    }
+    // A file that says it is italic: its own style and that with bold.
+    {
+        const axes = [_]sdk.truetype.Axis{axisAt("wght", 200, 200, 900)};
+        try testing.expectEqual(@as(u32, 2), fontfile.variableEntries("v/v.ttf", italic, &axes, &none, &made));
+        try testing.expectEqual(italic, made[0].style);
+        try testing.expectEqual(@as(?f32, 400), entryAt(&made[0], "wght"));
+        try testing.expectEqual(bold | italic, made[1].style);
+        try testing.expectEqual(@as(?f32, 700), entryAt(&made[1], "wght"));
+    }
+    // A file that says it is bold stays where it is, and has no bolder.
+    {
+        const axes = [_]sdk.truetype.Axis{axisAt("wght", 200, 700, 900)};
+        try testing.expectEqual(@as(u32, 1), fontfile.variableEntries("v/v.ttf", bold, &axes, &none, &made));
+        try testing.expectEqual(bold, made[0].style);
+        try testing.expectEqual(@as(u8, 0), made[0].axis_count);
+    }
+    // A named place is taken before the axes' meaning, and bold italic
+    // builds on the regular one where the file names none of its own.
+    {
+        const axes = [_]sdk.truetype.Axis{ axisAt("wght", 100, 100, 900), axisAt("slnt", -12, 0, 0) };
+        var named = none;
+        named[0] = fontfile.placeOf(&axes, &.{ .{ .tag = sdk.truetype.tableTag("wght"), .value = 350 }, .{ .tag = sdk.truetype.tableTag("slnt"), .value = 0 } });
+        named[bold] = fontfile.placeOf(&axes, &.{.{ .tag = sdk.truetype.tableTag("wght"), .value = 2000 }});
+        try testing.expectEqual(@as(u32, 4), fontfile.variableEntries("v/v.ttf", graphics.FS_NORMAL, &axes, &named, &made));
+        try testing.expectEqual(@as(?f32, 350), entryAt(&made[0], "wght"));
+        try testing.expectEqual(@as(u8, 1), made[0].axis_count);
+        try testing.expectEqual(@as(?f32, 900), entryAt(&made[1], "wght"));
+        try testing.expectEqual(@as(?f32, 350), entryAt(&made[2], "wght"));
+        try testing.expectEqual(@as(?f32, -12), entryAt(&made[2], "slnt"));
+        try testing.expectEqual(@as(?f32, 900), entryAt(&made[3], "wght"));
+        try testing.expectEqual(@as(?f32, -12), entryAt(&made[3], "slnt"));
+    }
+    // An instance away from the default on more axes than an entry
+    // holds is no place; one more axis than that at its default is.
+    {
+        const letters = [_]*const [4]u8{ "AAAA", "BBBB", "CCCC", "DDDD", "EEEE", "FFFF", "GGGG", "HHHH", "IIII" };
+        var axes: [letters.len]sdk.truetype.Axis = undefined;
+        var values: [letters.len]sdk.truetype.AxisValue = undefined;
+        inline for (letters, 0..) |tag, index| {
+            axes[index] = axisAt(tag, 0, 0, 10);
+            values[index] = .{ .tag = sdk.truetype.tableTag(tag), .value = 5 };
+        }
+        try testing.expectEqual(@as(?fontfile.Place, null), fontfile.placeOf(&axes, &values));
+        values[letters.len - 1].value = 0;
+        const place = fontfile.placeOf(&axes, &values).?;
+        try testing.expectEqual(@as(u8, fontfile.MAXFONTAXES), place.count);
+    }
+}
+
+test "revision 13: a variable font is listed a style, each a place of the one file, opened and drawn by the style asked" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    try testing.expect(rig.dfb.lib().revision >= 13);
+    const builder = @import("../../truetype/tests/builder.zig");
+    const variation = @import("../../truetype/tests/variation.zig");
+    const truetype_init = @import("../../truetype/truetype_init.zig");
+    const lib = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoTrueType;
+    const truetype_lib: *exec.Library = @ptrCast(@alignCast(lib));
+    defer _ = rig.sysLib().RemLibrary(truetype_lib);
+    const dfb = rig.dfb;
+    const gb = rig.graphicsLib();
+    const tb: *sdk.interface.truetype.TrueTypeBase = @ptrCast(rig.sysLib().OpenLibrary(sdk.truetype.TRUETYPENAME, 1).?);
+    defer rig.sysLib().CloseLibrary(tb.lib());
+
+    // Weight from its lightest, which is the default, and a slant. The
+    // file names a regular and two bolds; nothing italic.
+    const english = 0x0409;
+    var file: builder.File = .{};
+    variation.namedFont(&file, &.{
+        .{ .tag = "wght", .least = 100, .middle = 100, .most = 900, .name = 256 },
+        .{ .tag = "slnt", .least = -12, .middle = 0, .most = 0, .name = 257 },
+    }, &.{
+        .{ .name = 258, .values = &.{ 300, 0 } },
+        .{ .name = 259, .values = &.{ 400, 0 } },
+        .{ .name = 260, .values = &.{ 900, 0 } },
+        .{ .name = 261, .values = &.{ 800, 0 } },
+    }, &.{
+        .{ .platform = 3, .encoding = 1, .language = english, .id = 258, .stored = builder.utf16("Light") },
+        .{ .platform = 3, .encoding = 1, .language = english, .id = 259, .stored = builder.utf16("Regular") },
+        .{ .platform = 3, .encoding = 1, .language = english, .id = 260, .stored = builder.utf16("Bold") },
+        .{ .platform = 3, .encoding = 1, .language = english, .id = 261, .stored = builder.utf16("bold") },
+    });
+    try writeOutlineFile(&rig, "vary", file.written());
+
+    // Four entries of the one file: the styles the file names at their
+    // instances - the first of a name - and the italic ones by the
+    // slant's far end.
+    const weight = std.mem.readInt(u32, "wght", .big);
+    const slant = std.mem.readInt(u32, "slnt", .big);
+    const fonts = rig.dosLib().Lock("FONTS:", dos.SHARED_LOCK).?;
+    const listed = dfb.NewFontContents(fonts, "vary.font") orelse return error.NoContents;
+    rig.dosLib().UnLock(fonts);
+    {
+        defer dfb.DisposeFontContents(listed);
+        const entries = fontfile.entriesOf(@ptrCast(listed));
+        try testing.expectEqual(@as(usize, 4), entries.len);
+        const weights = [4]f32{ 400, 900, 400, 900 };
+        for (entries, 0..) |*entry, style| {
+            try testing.expectEqualStrings("vary/vary.ttf", std.mem.sliceTo(&entry.path, 0));
+            try testing.expectEqual(@as(u8, 1), entry.outline);
+            try testing.expectEqual(@as(u16, 0), entry.y_size);
+            try testing.expectEqual(@as(graphics.FontStyle, @intCast(style)), entry.style);
+            const italic = style & graphics.FSF_ITALIC != 0;
+            try testing.expectEqual(@as(u8, if (italic) 2 else 1), entry.axis_count);
+            try testing.expectEqual(weight, entry.axes[0].tag);
+            try testing.expectEqual(weights[style], entry.axes[0].value);
+            if (italic) {
+                try testing.expectEqual(slant, entry.axes[1].tag);
+                try testing.expectEqual(@as(f32, -12), entry.axes[1].value);
+            }
+        }
+    }
+
+    // A size: the bold one is drawn from the bold place - its 'A' is
+    // wider, as the glyph grows with the weight - and says it is bold,
+    // so graphics does not thicken it again. Each holds its outline.
+    // (24 rows: the rig's memory is short of two taller ones.)
+    const regular = dfb.OpenDiskFont(&.{ .name = "vary.font", .y_size = 24, .flags = graphics.FPF_DESIGNED }) orelse return error.NoFont;
+    const heavy = dfb.OpenDiskFont(&.{ .name = "vary.font", .y_size = 24, .style = graphics.FSF_BOLD, .flags = graphics.FPF_DESIGNED }) orelse return error.NoFont;
+    try testing.expect(regular != heavy);
+    try testing.expectEqual(graphics.FS_NORMAL, regular.image.style & fontfile.listed_styles);
+    try testing.expectEqual(graphics.FSF_BOLD, heavy.image.style & fontfile.listed_styles);
+    try testing.expect(fontimage.sound(@ptrCast(heavy.image), heavy.image.size));
+    try testing.expect(fontimage.find(heavy.image, 'A').?.width > fontimage.find(regular.image, 'A').?.width);
+    try testing.expect(try lengthIn(&rig, heavy, "A") > try lengthIn(&rig, regular, "A"));
+    try testing.expectEqual(@as(usize, 2), outlinesLoaded(&rig));
+
+    // Each style asked is an outline of its own, at its place - the one
+    // its size holds - and asked again it is the same one.
+    var axes: [2]sdk.truetype.Axis = undefined;
+    const plain = dfb.OpenOutlineFont("vary.font", graphics.FS_NORMAL) orelse return error.NoOutline;
+    try testing.expectEqual(graphics.FS_NORMAL, plain.style);
+    try testing.expectEqual(@as(u32, 2), tb.FontAxes(plain.outline, &axes, 2));
+    try testing.expectEqual(@as(f32, 400), axes[0].value);
+    try testing.expectEqual(@as(f32, 0), axes[1].value);
+    const bold = dfb.OpenOutlineFont("vary.font", graphics.FSF_BOLD) orelse return error.NoOutline;
+    try testing.expect(bold != plain);
+    try testing.expectEqual(graphics.FSF_BOLD, bold.style);
+    try testing.expectEqual(@as(u32, 2), tb.FontAxes(bold.outline, &axes, 2));
+    try testing.expectEqual(@as(f32, 900), axes[0].value);
+    const both = dfb.OpenOutlineFont("FONTS:vary.font", graphics.FSF_BOLD | graphics.FSF_ITALIC | graphics.FSF_UNDERLINED) orelse return error.NoOutline;
+    try testing.expectEqual(graphics.FSF_BOLD | graphics.FSF_ITALIC, both.style);
+    try testing.expectEqual(@as(u32, 2), tb.FontAxes(both.outline, &axes, 2));
+    try testing.expectEqual(@as(f32, 900), axes[0].value);
+    try testing.expectEqual(@as(f32, -12), axes[1].value);
+    try testing.expectEqual(bold, dfb.OpenOutlineFont("VARY.font", graphics.FSF_BOLD).?);
+    dfb.CloseOutlineFont(bold);
+    try testing.expectEqual(@as(usize, 3), outlinesLoaded(&rig));
+    gb.CloseFont(heavy);
+    gb.CloseFont(regular);
+
+    // Short of memory, what nobody holds goes; the file's bytes stay
+    // for the outline still open, and go with it.
+    dfb.CloseOutlineFont(both);
+    dfb.CloseOutlineFont(bold);
+    try testing.expect(rig.sysLib().AllocMem(1 << 30, exec.MEMF_ANY) == null);
+    try testing.expectEqual(@as(usize, 1), outlinesLoaded(&rig));
+    try testing.expectEqual(@as(u32, 1), tb.GlyphIndex(plain.outline, 'A'));
+    try testing.expectEqual(@as(u32, 2), tb.FontAxes(plain.outline, &axes, 2));
+    try testing.expectEqual(@as(f32, 400), axes[0].value);
+    dfb.CloseOutlineFont(plain);
+}
+
 /// How far `text` moves the cursor in `font`.
 fn lengthIn(rig: *Rig, font: *graphics.TextFont, text: []const u8) !i32 {
     var pixels: [16 * 16 * 2]u8 = @splat(0);

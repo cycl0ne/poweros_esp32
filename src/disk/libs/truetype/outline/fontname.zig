@@ -75,7 +75,13 @@ const Table = _outline.Table;
 /// ```
 pub fn FontName(tb: *TrueTypeBase, outline: *truetype.Outline, name: u32, buffer: [*]u8, room: u32) u32 {
     _ = tb;
-    const font: *const Font = @ptrCast(@alignCast(outline));
+    return nameOf(@ptrCast(@alignCast(outline)), name, buffer, room);
+}
+
+/// The font's name `name` as UTF-8 into `buffer` of `room` bytes, and
+/// the bytes the whole of it takes: what `FontName` answers, for a
+/// caller that has the font itself - a tool on the host.
+pub fn nameOf(font: *const Font, name: u32, buffer: [*]u8, room: u32) u32 {
     if (room != 0) buffer[0] = 0;
     const text = nameText(font, name) orelse return 0;
     return written(font, text, buffer, room);

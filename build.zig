@@ -803,6 +803,11 @@ pub fn build(b: *std.Build) void {
             }),
         });
         fontconv.root_module.addImport("sdk", sdk);
+        // truetype.library's reading of a font file: a variable font's
+        // axes and named instances, for the styles it is listed in.
+        const fontconv_truetype = b.createModule(.{ .root_source_file = disk_dep.path("libs/truetype/outlines.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
+        fontconv_truetype.addImport("sdk", sdk);
+        fontconv.root_module.addImport("truetype", fontconv_truetype);
         const liberation = hasFontSources(b, dir, liberation_dir);
         if (!liberation) std.log.info("no Liberation fonts (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:sans, serif or mono", .{});
         for (disk_fonts) |family| {
@@ -1730,6 +1735,9 @@ pub fn build(b: *std.Build) void {
         .target = b.graph.host,
     });
     fontconv_tests.addImport("sdk", sdk);
+    const fontconv_tests_truetype = b.createModule(.{ .root_source_file = disk_dep.path("libs/truetype/outlines.zig"), .target = b.graph.host });
+    fontconv_tests_truetype.addImport("sdk", sdk);
+    fontconv_tests.addImport("truetype", fontconv_tests_truetype);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fontconv_tests })).step);
     // svgcompare reads the modules' own code, not their calls: it is
     // compiled here so that a change to that code is seen in it.

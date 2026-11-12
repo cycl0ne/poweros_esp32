@@ -37,7 +37,8 @@ diskfont.library/OpenOutlineFont
 	one in memory, `OpenDiskFont` for one on a disk - and where it was:
 	`AFF_MEMORY`, `AFF_MEMORY | AFF_SCALED`, `AFF_DISK`, or
 	`AFF_DISK | AFF_SCALABLE` with a height of 0 for an outline, which
-	comes at any height. A font loaded
+	comes at any height - one entry for each style the family lists an
+	outline in, as a variable font does. A font loaded
 	from a disk is listed under both, once for each place. A disk entry
 	says what its contents file says; whether the size file itself is
 	sound is only known when it is opened. Every directory of a `FONTS:`
@@ -151,7 +152,8 @@ diskfont.library/OpenOutlineFont
 	    fn NewFontContents(dfb: *DiskfontBase, lock: ?*dos.FileLock, name: [*:0]const u8) ?*fontfile.ContentsHeader
 
    SINCE
-	1.0, a file of outlines of up to 64 MiB since 1.12. LVO -28.
+	1.0, a file of outlines of up to 64 MiB since 1.12, a
+	variable font listed a style since 1.13. LVO -28.
 
    INPUTS
 	- `lock` - the directory the family is in: `FONTS:`, or wherever its
@@ -168,13 +170,28 @@ diskfont.library/OpenOutlineFont
 	Every file in the family's directory that is a whole font - its image
 	checks and its sum is sound - becomes an entry: its path from `lock`
 	("spleen/16"), height, drawn styles, flags, kind and width, as its own
-	header says. A TrueType or OpenType file of one font becomes the
-	family's outline entry, of height 0, in the styles the file says it
-	is drawn in - bold for a bold face. Anything else there is passed
-	over, and so is a file that is too large: a size of more than 4 MiB,
-	a file of outlines of more than 64 MiB or than there is memory to
-	read it into. The entries are in order of height. At most 64 sizes
-	are listed.
+	header says. A TrueType or OpenType file of one font becomes an
+	outline entry of the family, of height 0, in the styles the file
+	says it is drawn in - bold for a bold face. Anything else there is
+	passed over, and so is a file that is too large: a size of more than
+	4 MiB, a file of outlines of more than 64 MiB or than there is
+	memory to read it into. The entries are in order of height. At most
+	64 entries are listed.
+
+	**A variable font becomes an entry for each style it has**: the
+	file's own, then with bold, with italic and with both, all naming
+	the one file, each with its place on the file's axes - the axes
+	away from their default, at most `fontfile.MAXFONTAXES` of them. A
+	style is at the place of the instance the file names for it
+	("Regular", "Bold", "Italic", "Bold Italic"; the first of a name).
+	Where the file names none, the place is made from what the axes
+	mean: regular is `wght` at 400, bold `wght` at 700, italic `ital`
+	at 1 or, without that axis, `slnt` at the end of its range away
+	from 0, each held to the axis' range; a style the axes cannot give
+	is left out and drawn by the soft styles (`fontfile.variableEntries`).
+	A variable font of more than 32 axes, or one truetype.library does
+	not open, is listed once, at its default. truetype.library is opened
+	for the first variable font found.
 
    CONTEXT
 	- Waits: yes, for the disk.
@@ -259,7 +276,8 @@ diskfont.library/OpenOutlineFont
 
    SINCE
 	1.0, fallback fonts since 1.8, an outline's glyphs made when
-	wanted since 1.9. LVO -20.
+	wanted since 1.9, a variable font's own bold and italic since 1.13.
+	LVO -20.
 
    INPUTS
 	- `text_attr` - the font's name ("spleen.font", or a path to its
@@ -291,9 +309,15 @@ diskfont.library/OpenOutlineFont
 	  then a size
 	  of the outline already in memory at that height, and otherwise has
 	  truetype.library render the outline at that height - at any height,
-	  and with `FPF_DESIGNED` too, since it is drawn and not scaled. A
-	  size rendered is in the styles the outline is drawn in, as its entry
-	  says. Its image holds Latin, Greek, Cyrillic, punctuation, currency,
+	  and with `FPF_DESIGNED` too, since it is drawn and not scaled. Of
+	  several outline entries - a variable font is listed once for each
+	  style it has, each a place on its axes, and a directory may hold a
+	  file a style - the one nearest the bold and italic asked is taken:
+	  one drawn in no style that was not asked, then the one drawn in the
+	  most of what was. A size rendered is in the styles its entry says,
+	  so the soft styles draw only what the entry lacks: bold asked of a
+	  variable font is the font at its bold weight, not the regular one
+	  thickened. Its image holds Latin, Greek, Cyrillic, punctuation, currency,
 	  the letterlike symbols and box drawing; any other character the
 	  outline has a glyph for is rendered the first time it is drawn or
 	  measured, and kept with the size (`TextFont.render`).
@@ -336,8 +360,8 @@ diskfont.library/OpenOutlineFont
 	until memory runs short. A font another one falls back to stays
 	loaded for as long as that one, opened by anybody or not. A size
 	rendered from an outline keeps the outline open - its font file
-	in memory, one for all the sizes made from it - for as long as the
-	size is loaded.
+	in memory, one for all the sizes made from it and for every style
+	of a variable font - for as long as the size is loaded.
 
    BUGS
 	None known.
@@ -359,7 +383,8 @@ diskfont.library/OpenOutlineFont
 	    fn OpenOutlineFont(dfb: *DiskfontBase, name: [*:0]const u8, style: graphics.FontStyle) ?*diskfont.OutlineFont
 
    SINCE
-	1.4. LVO -40.
+	1.4, a variable font at the place of the styles asked since
+	1.13. LVO -40.
 
    INPUTS
 	- `name` - the family's name, "sans.font", or a path to its contents
@@ -382,10 +407,20 @@ diskfont.library/OpenOutlineFont
 	face is drawn in, so a program can draw the rest - lean it for an
 	italic the family has no face of.
 
+	**Of several outlines the family lists, the one nearest the styles
+	asked**: an entry drawn in no style that was not asked, then the one
+	drawn in the most of what was. A variable font is listed once for
+	each style it has, every entry a place on its axes
+	(`NewFontContents`), and the outline is opened at the entry's place:
+	its bold is the font at its bold weight, with the measures and the
+	glyphs of that weight.
+
 	The face's font file is read whole and opened once: everyone who
 	asks for it is given the same, until the last has closed it. It then
-	stays, for the next to ask, until memory runs short. truetype.library
-	is opened the first time an outline is.
+	stays, for the next to ask, until memory runs short. The places of a
+	variable font are an outline each, and all of them read the one copy
+	of the file. truetype.library is opened the first time an outline
+	is.
 
    CONTEXT
 	- Waits: yes: for the disk, and for another task loading a font.

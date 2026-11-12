@@ -11,11 +11,12 @@
 //!   spleen.font           8 12 16 24 32   disk
 //!   spleen.font          20 48            scaled
 //!
-//! NAME may be a pattern: `ListFonts go#?`. A size loaded from the disk is listed under the disk only; a family
-//! with an outline is listed once more as "any size". SAMPLE draws an
-//! outline family at 24 rows. NAME shows
-//! one family. SAMPLE draws a line in each size listed, in a window on the
-//! default public screen, until the close gadget or Ctrl-C.
+//! NAME shows one family, and may be a pattern: `ListFonts go#?`. A size
+//! loaded from the disk is listed under the disk only; a family with an
+//! outline is listed once more as "any size". SAMPLE draws a line in each
+//! size listed, in a window on the default public screen, until the close
+//! gadget or Ctrl-C: an outline family at 24 rows, and one listed in
+//! several styles - a variable font - a line in each of them.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -36,7 +37,7 @@ const RastPort = graphics.RastPort;
 const rdargs = dos.rdargs;
 
 pub const COMMAND_NAME = "ListFonts";
-const VERSION_STRING = "\x00$VER: ListFonts 1.1 (11.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ListFonts 1.2 (12.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "NAME,SAMPLE/S";
@@ -60,6 +61,8 @@ const where_names = [_][*:0]const u8{ "ROM", "disk", "any size, outline", "memor
 const Font = struct {
     name: [*:0]const u8,
     y_size: u16,
+    /// The styles the entry is drawn in: what SAMPLE opens it by.
+    style: graphics.FontStyle,
     where: Where,
 };
 
@@ -125,10 +128,10 @@ fn drawSamples(sys: *ExecBase, dl: *DosBase, dfb: *DiskfontBase, fonts: []const 
     var inner_h: i32 = 8;
     for (fonts[0..count], 0..) |font, i| {
         // A drawn size as drawn; a scaled one scaled again; an outline at
-        // a size to show it by.
+        // a size to show it by, in the styles its entry is listed in.
         const flags: graphics.FontFlags = if (font.where == .scaled) 0 else graphics.FPF_DESIGNED;
         const rows: u16 = if (font.where == .scalable) 24 else font.y_size;
-        opened[i] = dfb.OpenDiskFont(&.{ .name = font.name, .y_size = rows, .flags = flags });
+        opened[i] = dfb.OpenDiskFont(&.{ .name = font.name, .y_size = rows, .style = font.style, .flags = flags });
         const f = opened[i] orelse continue;
         graphics.SetFont(gb, measure, f);
         inner_w = @max(inner_w, gb.TextLength(measure, sample, sample.len));
@@ -233,7 +236,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     for (diskfont.availEntries(header)) |*entry| {
         if (count == max_fonts) break;
         if (only) |parsed| if (!ub.MatchPatternNoCase(parsed, entry.attr.name)) continue;
-        all[count] = .{ .name = entry.attr.name, .y_size = entry.attr.y_size, .where = whereOf(entry) };
+        all[count] = .{ .name = entry.attr.name, .y_size = entry.attr.y_size, .style = entry.attr.style, .where = whereOf(entry) };
         count += 1;
     }
     // Sorted, a size at a time into place.

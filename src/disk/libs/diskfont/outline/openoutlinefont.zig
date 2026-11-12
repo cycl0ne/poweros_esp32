@@ -17,7 +17,8 @@ const _outline = @import("_outline.zig");
 /// fn OpenOutlineFont(dfb: *DiskfontBase, name: [*:0]const u8, style: graphics.FontStyle) ?*diskfont.OutlineFont
 /// ```
 ///
-/// SINCE: 1.4. LVO -40.
+/// SINCE: 1.4, a variable font at the place of the styles asked since
+/// 1.13. LVO -40.
 ///
 /// INPUTS:
 /// - `name` - the family's name, "sans.font", or a path to its contents
@@ -40,10 +41,20 @@ const _outline = @import("_outline.zig");
 /// face is drawn in, so a program can draw the rest - lean it for an
 /// italic the family has no face of.
 ///
+/// **Of several outlines the family lists, the one nearest the styles
+/// asked**: an entry drawn in no style that was not asked, then the one
+/// drawn in the most of what was. A variable font is listed once for
+/// each style it has, every entry a place on its axes
+/// (`NewFontContents`), and the outline is opened at the entry's place:
+/// its bold is the font at its bold weight, with the measures and the
+/// glyphs of that weight.
+///
 /// The face's font file is read whole and opened once: everyone who
 /// asks for it is given the same, until the last has closed it. It then
-/// stays, for the next to ask, until memory runs short. truetype.library
-/// is opened the first time an outline is.
+/// stays, for the next to ask, until memory runs short. The places of a
+/// variable font are an outline each, and all of them read the one copy
+/// of the file. truetype.library is opened the first time an outline
+/// is.
 ///
 /// CONTEXT:
 /// - Waits: yes: for the disk, and for another task loading a font.

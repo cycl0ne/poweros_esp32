@@ -10,7 +10,9 @@
 //! file is the family's outline: copied to
 //! `<out dir>/<family>/<its name>` and listed
 //! as the entry diskfont renders any height from, in the styles the file
-//! says it is drawn in.
+//! says it is drawn in. A variable font is listed once for each style it
+//! can be drawn in - regular, bold, italic, bold italic - each entry
+//! naming the one file and its own place on the file's axes.
 //!
 //! `--alpha N` takes sources drawn N times too large (2 or 4) and makes
 //! fonts of coverage at 1/N their size, each pixel the share of its N by N
@@ -31,6 +33,7 @@ const fontfile = sdk.diskfont.fontfile;
 const font_mod = @import("font.zig");
 const bdf = @import("bdf.zig");
 const loadfont = @import("loadfont.zig");
+const tt = @import("truetype");
 const Font = font_mod.Font;
 const Allocator = std.mem.Allocator;
 
@@ -83,7 +86,7 @@ pub fn main(init: std.process.Init) !void {
             const name = std.fs.path.basename(source);
             const path = try std.fs.path.join(arena, &.{ family_dir, name });
             try cwd.writeFile(io, .{ .sub_path = path, .data = bytes });
-            try outlines.append(arena, .{ .name = name, .style = sdk.truetype.styleOf(bytes) });
+            try listOutline(arena, &outlines, name, bytes);
         } else if (loadfont.isContents(bytes)) {
             const dir = std.fs.path.dirname(source) orelse ".";
             for (try loadfont.listed(arena, bytes)) |size| {
@@ -108,9 +111,52 @@ pub fn main(init: std.process.Init) !void {
     try cwd.writeFile(io, .{ .sub_path = contents_path, .data = contents });
 }
 
-/// A family's outline: its font file's name in the family's
-/// directory, and the styles the file says it is drawn in.
-const Outline = struct { name: []const u8, style: sdk.graphics.FontStyle };
+/// One outline entry of a family: its font file's name in the family's
+/// directory, the styles it is drawn in, and where on the file's axes -
+/// nowhere but the default for a file without axes, which is in the
+/// styles it says of itself.
+const Outline = struct { name: []const u8, style: sdk.graphics.FontStyle, place: fontfile.Place = .{} };
+
+/// How many axes of a variable font are read: as many as
+/// truetype.library opens a font with.
+const max_axes = 32;
+
+/// The entries of the font file `bytes`, whose name in the family's
+/// directory is `name`, added to `outlines`: one in the file's own
+/// styles, or for a variable font one for each style it can be drawn
+/// in (`fontfile.variableEntries`), from its axes and the named
+/// instances whose names say a style.
+fn listOutline(gpa: Allocator, outlines: *std.ArrayList(Outline), name: []const u8, bytes: []const u8) !void {
+    const style = sdk.truetype.styleOf(bytes);
+    const font = try gpa.create(tt.outline.Font);
+    const axis_count: u32 = if (tt.outline.open(font, bytes.ptr, @intCast(bytes.len), 0, null, 0)) font.vary.axis_count else 0;
+    if (axis_count == 0 or axis_count > max_axes) {
+        try outlines.append(gpa, .{ .name = name, .style = style });
+        return;
+    }
+    var axes: [max_axes]sdk.truetype.Axis = undefined;
+    for (axes[0..axis_count], 0..) |*axis, index| axis.* = tt.variation.axisOf(font, @intCast(index));
+
+    // The first instance named for a style is that style's place.
+    var named: [4]?fontfile.Place = @splat(null);
+    var values: [max_axes]sdk.truetype.AxisValue = undefined;
+    var number: u32 = 0;
+    while (true) : (number += 1) {
+        const instance = tt.variation.instanceOf(font, number, &values, values.len);
+        if (instance == 0) break;
+        var text: [32]u8 = @splat(0);
+        const len = tt.names.nameOf(font, instance, &text, text.len);
+        if (len == 0 or len >= text.len) continue;
+        const said = fontfile.styleOfName(text[0..len]) orelse continue;
+        if (named[said] != null) continue;
+        named[said] = fontfile.placeOf(axes[0..axis_count], values[0..axis_count]);
+    }
+    var made: [4]fontfile.FontContents = undefined;
+    const count = fontfile.variableEntries("", style, axes[0..axis_count], &named, &made);
+    for (made[0..count]) |*entry| {
+        try outlines.append(gpa, .{ .name = name, .style = entry.style, .place = fontfile.placeOfEntry(entry) });
+    }
+}
 
 /// One size from its file's bytes, with the options applied.
 fn convert(gpa: Allocator, bytes: []const u8, options: Options) !Font {
@@ -160,7 +206,7 @@ fn writeFamily(gpa: Allocator, family: []const u8, fonts: []Font, outlines: []co
     for (outlines, fonts.len..) |outline, i| {
         const path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ family, outline.name });
         if (path.len >= fontfile.MAXFONTPATH) return error.NameTooLong;
-        entries[i] = fontfile.outlineEntry(path, outline.style);
+        entries[i] = fontfile.outlineEntry(path, outline.style, outline.place);
     }
     fontfile.seal(contents.ptr, size);
     return contents;

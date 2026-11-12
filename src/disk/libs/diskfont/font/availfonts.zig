@@ -39,7 +39,8 @@ const _font = @import("_font.zig");
 /// one in memory, `OpenDiskFont` for one on a disk - and where it was:
 /// `AFF_MEMORY`, `AFF_MEMORY | AFF_SCALED`, `AFF_DISK`, or
 /// `AFF_DISK | AFF_SCALABLE` with a height of 0 for an outline, which
-/// comes at any height. A font loaded
+/// comes at any height - one entry for each style the family lists an
+/// outline in, as a variable font does. A font loaded
 /// from a disk is listed under both, once for each place. A disk entry
 /// says what its contents file says; whether the size file itself is
 /// sound is only known when it is opened. Every directory of a `FONTS:`

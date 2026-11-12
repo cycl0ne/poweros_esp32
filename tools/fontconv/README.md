@@ -18,7 +18,13 @@ Writes `<out dir>/<family>/<rows>` for each source and
   colour fonts included, which become palette fonts with the pen's
   colour marked;
 - such a font's **contents file** (`<family>.font`) - every size it
-  lists, read from beside it.
+  lists, read from beside it;
+- a **TrueType or OpenType file** - the family's outline, copied into
+  the family's directory and listed as the entry any height is
+  rendered from, in the styles the file says it is drawn in. A
+  variable font is listed once for each style it has - regular, bold,
+  italic, bold italic - each entry naming the one file and its place
+  on the file's axes, as `NewFontContents` lists it on the machine.
 
 `--alpha N` reads sources drawn 2 or 4 times too large and writes fonts
 of coverage (four bits a pixel) at their size divided by N. `--shadow`

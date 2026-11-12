@@ -315,6 +315,8 @@ FONTS:go-bold.font       the same family's bold face, a family of its own
 FONTS:go-bold/Go-Bold.ttf
 FONTS:sans.font          Liberation Sans, and its faces sans-bold, -italic
 FONTS:sans/LiberationSans-Regular.ttf   and -bolditalic; serif and mono the same
+FONTS:source.font        a variable font: an entry a style, all of one file
+FONTS:source/SourceSans3VF-Upright.ttf
 ```
 
 The 64-bit machines' disks also carry the Liberation families - `sans`,
@@ -340,13 +342,33 @@ into one allocation, checked (`check` and `sound`), and drawn from where
 it lies; nothing in it is fixed up.
 
 **A contents file** (`sdk/libs/diskfont/fontfile.zig`) is a
-`ContentsHeader` - magic `PFCT`, version, count, checksum - and one
-80-byte `FontContents` per size: the file's path from `FONTS:`, its
-height, drawn styles, flags, kind of pixels, nominal width, and `outline`
+`ContentsHeader` - magic `PFCT`, version 2, count, checksum - and one
+144-byte `FontContents` per entry: the file's path from `FONTS:`, its
+height, drawn styles, flags, kind of pixels, nominal width, `outline`
 set for an entry that is a TrueType or OpenType file (whose height is
-then 0, and its styles the ones the file says it is drawn in). Its
+then 0, and its styles the ones the file says it is drawn in), and the
+entry's place on a variable font's axes: `axis_count` and up to
+`MAXFONTAXES` (8) `AxisValue`, an axis' tag and its value. Its
 longwords add up to zero too. `fontfile.sound` checks one, `seal` sets
-its checksum, `entryFor` and `outlineEntry` make entries.
+its checksum, `entryFor` and `outlineEntry` make entries. A contents
+file of another version is refused: `C:FixFonts` writes it again.
+
+**A variable font is a family with an entry a style.** Its one file is
+listed up to four times - regular, bold, italic, bold italic - each
+entry with the place on the axes where the font is that style, so
+`OpenDiskFont` asked for bold renders the font at its bold weight and
+does not thicken the regular one. A style is where the file's own
+named instance of that name is ("Regular", "Bold", "Italic", "Bold
+Italic"); where the file names none, `fontfile.variableEntries` makes
+the place from what the axes mean - regular `wght` 400, bold `wght`
+700, italic `ital` 1 or the far end of `slnt`, each held to the axis'
+range - and a style the axes cannot give has no entry and is drawn by
+the soft styles. An entry names the axes away from their default, at
+most eight: the five every font means the same by (weight, width,
+slant, italic, optical size) and three of a font's own. Dropping the
+`.ttf` into a directory of `FONTS:` and running `C:FixFonts` is all
+it takes; the host's `tools/fontconv` lists a variable file the same
+way.
 
 A size dropped into a family's directory is found only through the
 contents file: `C:FixFonts` writes every family's contents file again
@@ -378,8 +400,11 @@ name as given when it holds a `:` - and:
 - for a family with an outline, loads a size drawn at exactly that height
   and style if there is one, then takes a size of the outline already in
   memory at that height, and otherwise renders the outline at that
-  height - in the styles the font file says it is drawn in, so a bold
-  face renders as bold;
+  height - in the styles its entry says it is drawn in, so a bold
+  face renders as bold. Of several outline entries (a variable font's
+  styles, since 1.13) the one nearest the bold and italic asked is
+  rendered: one drawn in no style that was not asked, then the one
+  drawn in the most of what was;
 - without `FPF_DESIGNED`, looks for a source at the height asked, then at
   twice it, then at half it, in memory first and then on the disk,
   letting go of underline, then bold, then italic if none is found, and
@@ -416,7 +441,8 @@ while (true) {
 
 Each entry is the TextAttr that opens the font and where it is:
 `AFF_MEMORY`, `AFF_MEMORY | AFF_SCALED`, `AFF_DISK`, or
-`AFF_DISK | AFF_SCALABLE` with a height of 0 for an outline.
+`AFF_DISK | AFF_SCALABLE` with a height of 0 for an outline - one entry
+for each style a variable font is listed in.
 
 **`NewScaledDiskFont(font, textAttr)`** makes a new size from any font:
 every glyph scaled by the ratio of the heights, across and down alike,
@@ -426,7 +452,9 @@ caller's, one allocation freed with `FreeVec(font)` (after `RemFont` if
 it was added).
 
 **`NewFontContents(lock, "name.font")`** makes a contents file's image from
-the family's directory; `DisposeFontContents` frees it.
+the family's directory; `DisposeFontContents` frees it. A variable font
+there is read with truetype.library - its axes and named instances -
+and listed an entry a style (since 1.13).
 
 ## Outline fonts
 
@@ -597,6 +625,10 @@ Semibold and Bold. An axis the list does not name is at its default, a
 value outside the axis' range is cut to it, and without the tags the
 font is opened at its default. Two outlines of one file at two places
 are two fonts; the file's bytes are shared, and neither is written.
+diskfont.library does this for a family: a variable font in `FONTS:` is
+listed with the place of each of its styles (see
+[Fonts on the disk](#fonts-on-the-disk)), and `OpenDiskFont` and
+`OpenOutlineFont` open it at the place of the styles asked.
 
 `FontAxes(outline, axes, room)` answers how many axes the font has and
 writes each one's tag, least, default and largest value, the value the
@@ -1232,7 +1264,7 @@ cursor = gb.TextXToOffset(rp, line.ptr, @intCast(line.len), mouse_x - left);
 | `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures, of a variable font the same at places on its axes with every glyph's points there (worked out in the library's order and held against fontTools' instancer, or for a font of cubic curves against fontTools' drawing of it at the place), of a font of cubic curves each glyph's outline and what libfreetype renders of a part of them, and of a font of pictures every picture's measures and pixels (a PNG file's as Pillow reads them) and a part of them scaled to another size - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
 | `scripts/shape-reference.py` | on the host: applies the fetched fonts' `GSUB` and `GPOS` lookups to runs of glyphs - every glyph of a font, and sequences its lookups have rules for - with an applier of its own on fontTools' reading of the tables, and writes what comes out, a digest for each script, language and feature list, as the Zig files `truetypeshaping.library`'s host tests compare its shaping with (`src/disk/libs/truetypeshaping/tests/reference/`). `--check` says whether the files are the ones it would write, `--show <font> <case>` prints a case's runs |
 | `scripts/shape-text-reference.py` | on the host: shapes texts with libharfbuzz - in the fetched fonts Latin with its kerning and marks, letters and marks spelled apart and together, Greek, Cyrillic, Hebrew read from right to left, Devanagari by its plain features, emoji, features switched for a part of a text; and in a font made of a rule, which is told the characters it lacks, texts whose characters are taken apart, sorted and put together - and writes the glyphs, clusters, advances and offsets as the Zig files `truetypeshaping.library`'s host tests compare `ShapeText`'s answers with (`src/disk/libs/truetypeshaping/tests/text_reference/`); `--check` says whether they are up to date |
-| `C:ListFonts` | every font by family, size and where it is; `SAMPLE` draws them |
+| `C:ListFonts` | every font by family, size and where it is; `SAMPLE` draws them, a variable font in each of its styles |
 | `C:FixFonts` | writes every family's contents file again |
 | `C:SetPrefs` | sets the system's fonts, with the rest of its settings, from `ENV:Sys`; `SHOW` prints them |
 | `SYS:Programs/Prefs` | picks the system's fonts, the desktop icons' and the fallback families in a window and writes `font.prefs` |

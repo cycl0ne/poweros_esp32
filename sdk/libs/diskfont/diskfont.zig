@@ -12,7 +12,9 @@
 //! (`OpenOutlineFont`): its font file read, for a program that draws
 //! its glyphs at any size and angle with truetype.library's calls. A
 //! program that needs this looks for revision 4 or later in the library
-//! it opened.
+//! it opened. Since 1.13 a variable font is a family with an entry for
+//! each style it has, and bold or italic asked of it is the font at
+//! that place on its axes.
 
 const graphics = @import("../graphics/graphics.zig");
 const truetype = @import("../truetype/truetype.zig");
@@ -66,14 +68,15 @@ pub fn availEntries(header: *const AvailFontsHeader) []const AvailFonts {
 }
 
 /// A family's outline, opened by `OpenOutlineFont` (since 1.4): the face
-/// of the styles asked, its font file read and opened. The library's,
-/// shared by everyone who opened it, until `CloseOutlineFont`.
+/// of the styles asked - or a variable font at the place of those
+/// styles - its font file read and opened. The library's, shared by
+/// everyone who opened it, until `CloseOutlineFont`.
 pub const OutlineFont = extern struct {
     /// For truetype.library's calls: `GlyphIndex`, `GlyphSegments`,
     /// `FontMetrics` and the rest. Not to be closed by the caller.
     outline: *truetype.Outline,
     /// The styles the face is drawn in, `FSF_BOLD` and `FSF_ITALIC`: what
-    /// was asked and the family has a face for. What it is not drawn in
+    /// was asked and the family has a face or an entry for. What it is not drawn in
     /// a program draws itself, if it will - leaning it for italic.
     style: graphics.FontStyle,
 };

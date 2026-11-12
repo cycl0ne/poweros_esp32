@@ -344,10 +344,11 @@ const outline_ranges = [_]truetype.CodeRange{
     .{ .first = 0xFFFD, .last = 0xFFFD }, // the replacement character
 };
 
-/// A size made from a family's outline, `rows` tall: the outline taken
-/// from the library's open ones (its font file read and opened by
-/// truetype.library the first time), the characters of `outline_ranges`
-/// rendered into the image, the outline kept with the record for the
+/// A size made from one of a family's outlines, `rows` tall: the outline
+/// taken from the library's open ones (its font file read and opened by
+/// truetype.library, at the entry's place on its axes, the first time),
+/// the characters of `outline_ranges` rendered into the image, which is
+/// in the styles the entry says, the outline kept with the record for the
 /// glyphs the image lacks and - where it has layout tables and
 /// truetypeshaping.library opens - for shaping the font's text, and the
 /// font added and opened. The caller holds the load lock.
@@ -356,14 +357,15 @@ const outline_ranges = [_]truetype.CodeRange{
 /// - `dfb` - the library.
 /// - `path` - the family's contents file, as `contentsPath` makes it.
 /// - `contents` - what the file holds.
+/// - `entry` - which of its outline entries.
 /// - `name` - the family's name.
 /// - `rows` - the height wanted.
 ///
 /// RESULT:
 /// The font, open, or null if the outline cannot be read or rendered.
-pub fn renderOutline(dfb: *DiskfontBase, path: *const [256:0]u8, contents: *const Contents, name: [*:0]const u8, rows: u32) ?*TextFont {
+pub fn renderOutline(dfb: *DiskfontBase, path: *const [256:0]u8, contents: *const Contents, entry: *const fontfile.FontContents, name: [*:0]const u8, rows: u32) ?*TextFont {
     const sys = dfb.sys_base;
-    const held = _outline.openIn(dfb, path, contents) orelse return null;
+    const held = _outline.openEntry(dfb, path, contents, entry) orelse return null;
     // Open: the outline was opened through it.
     const tb = dfb.truetype_base.?;
     const image = tb.RenderFontImage(held.outline, rows, &outline_ranges, outline_ranges.len) orelse {
@@ -377,6 +379,14 @@ pub fn renderOutline(dfb: *DiskfontBase, path: *const [256:0]u8, contents: *cons
         return null;
     };
     @memcpy(imageArea(record)[0..image.size], image_bytes[0..image.size]);
+    // The image says what the file says of itself; a place on a
+    // variable font's axes is bold or italic by its entry.
+    const drawn: *fontimage.FontImage = @ptrCast(@alignCast(imageArea(record)));
+    const styled = (drawn.style & ~opendiskfont.face_styles) | held.style;
+    if (drawn.style != styled) {
+        drawn.style = styled;
+        drawn.checksum = fontimage.checksumOf(imageArea(record), image.size);
+    }
     record.font.flags = graphics.FPF_DISKFONT;
     record.outline = held;
     record.hook = .{ .entry = &makeGlyph, .data = dfb };

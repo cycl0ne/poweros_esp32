@@ -504,6 +504,8 @@ const Make = struct {
     instances: []const Instance = &standard_instances,
     peaks: []const []const i16 = &standard_peaks,
     deltas: []const Varied = &standard,
+    /// The records of its `name` table; none, and it has no table.
+    names: []const builder.NameRecord = &.{},
 };
 
 /// A variable font of six glyphs - 'A' to 'E' are glyphs 1 to 5 - with
@@ -586,6 +588,13 @@ fn fontOf(file: *File, make: Make) void {
         count += 3;
     }
 
+    var named: File = .{};
+    if (make.names.len != 0) {
+        builder.names(&named, make.names);
+        more[count] = .{ .tag = "name", .bytes = named.written() };
+        count += 1;
+    }
+
     _ = builder.font(file, .{ .cmap = cmap.written(), .glyphs = 6, .composite = true, .more = more[0..count] });
 }
 
@@ -605,6 +614,12 @@ pub fn sidesFont(file: *File) void {
 /// it as its glyphs 1 to 5, and no measures.
 pub fn letteredFont(file: *File, first: u16) void {
     fontOf(file, .{ .first = first });
+}
+
+/// The plain variable font with axes, named instances and names of the
+/// caller's: two axes, the first the one the glyphs' deltas grow with.
+pub fn namedFont(file: *File, axes: []const Axis, instances: []const Instance, names: []const builder.NameRecord) void {
+    fontOf(file, .{ .axes = axes, .instances = instances, .names = names });
 }
 
 /// Where the table `tag` of a built font starts in its file.
