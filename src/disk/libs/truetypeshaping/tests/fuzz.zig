@@ -62,14 +62,17 @@ const File = layout.File;
 const X_PLACEMENT = subtables.X_PLACEMENT;
 const Y_PLACEMENT = subtables.Y_PLACEMENT;
 const X_ADVANCE = subtables.X_ADVANCE;
+const X_PLACEMENT_DEVICE: u16 = 0x0010;
+const X_ADVANCE_DEVICE: u16 = 0x0040;
 
-/// One way of shaping a run: a script, a language, features and a
-/// direction.
+/// One way of shaping a run: a script, a language, features, a
+/// direction, and the font's place on its axes.
 const Way = struct {
     script: u32 = tts.TTS_SCRIPT_DEFAULT,
     language: u32 = tts.TTS_LANGUAGE_DEFAULT,
     features: []const tts.Feature,
     backward: bool = false,
+    coords: []const i16 = &.{},
 };
 
 /// What a font's tables are shaped with.
@@ -86,12 +89,15 @@ const more_tag = tts.featureTag("more");
 
 /// The ways the built tables are shaped: their feature `test` in both
 /// directions, a second feature on a part of the run under a script of
-/// its own, and a language's required feature alone.
+/// its own, a language's required feature alone, and the feature `test`
+/// at two places of the font's axis.
 const built_ways = [_]Way{
     .{ .features = &.{.{ .tag = test_tag }} },
     .{ .features = &.{.{ .tag = test_tag }}, .backward = true },
     .{ .script = tts.scriptTag("latn"), .features = &.{ .{ .tag = test_tag }, .{ .tag = more_tag, .first = 1, .last = 3 } } },
     .{ .language = tts.languageTag("TST "), .features = &.{}, .backward = true },
+    .{ .features = &.{.{ .tag = test_tag }}, .coords = &.{8192} },
+    .{ .features = &.{.{ .tag = test_tag }}, .backward = true, .coords = &.{-16384} },
 };
 
 /// The runs the built tables are shaped with: between them a sequence
@@ -110,6 +116,7 @@ const built_runs = [_][]const u16{
     &.{ 5, 50, 51, 6, 50, 52, 40, 50 },
     &.{ 72, 73, 9, 74, 75, 8, 76 },
     &.{ 18, 50, 19, 51, 18, 0, 65535 },
+    &.{ 79, 80, 81, 82, 83, 5, 50, 70, 71 },
 };
 
 const built_work: Work = .{ .runs = &built_runs, .ways = &built_ways };
@@ -125,7 +132,7 @@ const nested_position = 14;
 const most_parts = 20;
 
 const mark_anchors = [_]subtables.Mark{
-    .{ .class = 0, .anchor = .{ .x = 100, .y = 0 } },
+    .{ .class = 0, .anchor = .{ .x = 100, .y = 0, .vary_x = 2 } },
     .{ .class = 1, .anchor = .{ .x = 200, .y = -50 } },
 };
 
@@ -133,7 +140,11 @@ const mark_anchors = [_]subtables.Mark{
 /// base glyphs, 40 and 41 ligatures, 50 to 52 marks of two attachment
 /// classes and three mark sets; the substitutions work on the glyphs
 /// below 40, the positionings on the marks and on the glyphs from 60.
+/// The font has one axis, and a store of deltas of four items for it:
+/// halfway up the axis they add 50, 4, -1 and 25, at its lower end the
+/// first one takes 40 off.
 const Built = struct {
+    store: File = .{},
     gdef: File = .{},
     gsub: File = .{},
     gpos: File = .{},
@@ -141,6 +152,9 @@ const Built = struct {
     fn make(built: *Built) !void {
         const parts = try testing.allocator.alloc(File, most_parts);
         defer testing.allocator.free(parts);
+        layout.store(&built.store, 1, &.{ &.{.{ 0, 16384, 16384 }}, &.{.{ -16384, -16384, 0 }} }, &.{
+            .{ .regions = &.{ 0, 1 }, .wide = 2, .rows = &.{ &.{ 100, -40 }, &.{ 7, 0 }, &.{ -3, 0 }, &.{ 50, 0 } } },
+        });
         layout.gdef(&built.gdef, .{
             .kinds = &.{
                 .{ .glyph = 5, .class = 1 },  .{ .glyph = 6, .class = 1 },  .{ .glyph = 7, .class = 1 },
@@ -151,6 +165,7 @@ const Built = struct {
             },
             .mark_classes = &.{ .{ .glyph = 50, .class = 1 }, .{ .glyph = 51, .class = 2 }, .{ .glyph = 52, .class = 2 } },
             .mark_sets = &.{ &.{50}, &.{ 51, 52 }, &.{ 50, 51, 52 } },
+            .store = built.store.written(),
         });
         substitutions(&built.gsub, parts);
         positions(&built.gpos, parts);
@@ -259,11 +274,11 @@ const Built = struct {
             &.{ &.{ 0, 0, 0 }, &.{ 0, -40, -60 } },
         );
         subtables.cursive(&parts[4], &.{ 70, 71 }, &.{
-            .{ .exit = .{ .x = 600, .y = 200 } },
-            .{ .entry = .{ .x = 50, .y = 0 }, .exit = .{ .x = 500, .y = 100 } },
+            .{ .exit = .{ .x = 600, .y = 200, .vary_x = 0 } },
+            .{ .entry = .{ .x = 50, .y = 0, .vary_y = 1 }, .exit = .{ .x = 500, .y = 100 } },
         });
         subtables.markToBase(&parts[5], &.{ 50, 51 }, &mark_anchors, &.{ 5, 6 }, 2, &.{
-            &.{ .{ .x = 300, .y = 700 }, .{ .x = 250, .y = -100 } },
+            &.{ .{ .x = 300, .y = 700, .vary_x = 0, .vary_y = 1 }, .{ .x = 250, .y = -100 } },
             &.{ .{ .x = 310, .y = 710 }, null },
         });
         subtables.markToLigature(&parts[6], &.{50}, mark_anchors[0..1], &.{40}, 1, &.{&.{
@@ -285,8 +300,27 @@ const Built = struct {
         });
         subtables.pairs(&parts[14], &.{19}, X_ADVANCE, 0, &.{&.{.{ .second = 18, .values = &.{-10} }}});
         subtables.positionAll(&parts[15], &.{ 73, 74, 75 }, X_PLACEMENT, &.{33});
+        // Numbers with a device each, which names an item of the store:
+        // a single record's, a pair's by glyphs and one's by classes.
+        subtables.positionAll(&parts[16], &.{79}, X_PLACEMENT | X_ADVANCE | X_PLACEMENT_DEVICE | X_ADVANCE_DEVICE, &.{ 10, -30, 0, 0 });
+        subtables.deviceAt(&parts[16], 10, 0, 0);
+        subtables.deviceAt(&parts[16], 12, 0, 2);
+        subtables.pairs(&parts[17], &.{80}, X_ADVANCE | X_ADVANCE_DEVICE, 0, &.{&.{.{ .second = 81, .values = &.{ -50, 0 } }}});
+        const set: u32 = @intCast(wordAt(parts[17].written(), 10));
+        subtables.deviceAt(&parts[17], set + 6, set, 3);
+        subtables.pairClasses(
+            &parts[18],
+            &.{82},
+            X_ADVANCE | X_ADVANCE_DEVICE,
+            0,
+            &.{.{ .glyph = 82, .class = 1 }},
+            &.{.{ .glyph = 83, .class = 1 }},
+            2,
+            &.{ &.{ 0, 0, 0, 0 }, &.{ 0, 0, -50, 0 } },
+        );
+        subtables.deviceAt(&parts[18], 16 + 3 * 4 + 2, 0, 3);
         layout.tableVaried(file, &scripts, &.{
-            .{ .tag = "test", .lookups = &.{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 } },
+            .{ .tag = "test", .lookups = &.{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 17 } },
             .{ .tag = "more", .lookups = &.{0} },
         }, &.{
             .{ .kind = 1, .subtables = &.{parts[0].written()} },
@@ -307,6 +341,9 @@ const Built = struct {
             .{ .kind = 3, .flags = 0x0001, .subtables = &.{parts[13].written()} },
             .{ .kind = 2, .flags = 0x0100, .subtables = &.{parts[14].written()} },
             .{ .kind = 1, .subtables = &.{parts[15].written()} },
+            .{ .kind = 1, .subtables = &.{parts[16].written()} },
+            .{ .kind = 2, .subtables = &.{parts[17].written()} },
+            .{ .kind = 2, .subtables = &.{parts[18].written()} },
         }, &variations);
     }
 };
@@ -371,6 +408,20 @@ test "truetypeshaping: every lookup of the tables built for changing applies" {
     try shaping.shape(tables, &.{ 19, 51, 18 }, .{}).expectAdvances(&.{ 990, 1000, 1000 });
     try shaping.shape(tables, &.{ 19, 50, 18 }, .{}).expectAdvances(&.{ 1000, 1000, 1000 });
 
+    // The numbers a device varies: at the default, and where the font
+    // is on its axis.
+    try shaping.shape(tables, &.{79}, .{}).expectAdvances(&.{970});
+    try shaping.shape(tables, &.{79}, .{}).expectOffsets(&.{.{ 10, 0 }});
+    try shaping.shape(tables, &.{79}, .{ .coords = built_ways[4].coords }).expectAdvances(&.{969});
+    try shaping.shape(tables, &.{79}, .{ .coords = built_ways[4].coords }).expectOffsets(&.{.{ 60, 0 }});
+    try shaping.shape(tables, &.{79}, .{ .coords = built_ways[5].coords }).expectOffsets(&.{.{ -30, 0 }});
+    try shaping.shape(tables, &.{ 80, 81 }, .{}).expectAdvances(&.{ 950, 1000 });
+    try shaping.shape(tables, &.{ 80, 81 }, .{ .coords = built_ways[4].coords }).expectAdvances(&.{ 975, 1000 });
+    try shaping.shape(tables, &.{ 82, 83 }, .{}).expectAdvances(&.{ 950, 1000 });
+    try shaping.shape(tables, &.{ 82, 83 }, .{ .coords = built_ways[4].coords }).expectAdvances(&.{ 975, 1000 });
+    try shaping.shape(tables, &.{ 5, 50 }, .{ .coords = built_ways[4].coords }).expectOffsets(&.{ .{ 0, 0 }, .{ -749, 704 } });
+    try shaping.shape(tables, &.{ 5, 50 }, .{ .coords = built_ways[5].coords }).expectOffsets(&.{ .{ 0, 0 }, .{ -840, 700 } });
+
     // The other ways: the second feature on a part of the run, its
     // lookups the ones that replace its own; and the feature a language
     // requires, asked for or not.
@@ -418,6 +469,18 @@ const Targets = struct {
         for ([_]usize{ 4, 6, 8, 10, 12 }) |place| {
             const start = wordAt(table, place);
             if (start != 0) targets.add(table, start, head);
+        }
+        // The store of deltas, where the table has one: its header, its
+        // regions, and each of its lists.
+        if (wordAt(table, 2) < 3 or table.len < 18) return;
+        const store: usize = std.mem.readInt(u32, table[14..18], .big);
+        if (store == 0 or store > table.len or table.len - store < 8) return;
+        targets.add(table, store, head);
+        targets.add(table, store + std.mem.readInt(u32, table[store + 2 ..][0..4], .big), head);
+        for (0..wordAt(table, store + 6)) |nth| {
+            const place = store + 8 + 4 * nth;
+            if (place > table.len or table.len - place < 4) break;
+            targets.add(table, store + std.mem.readInt(u32, table[place..][0..4], .big), head);
         }
     }
 
@@ -661,6 +724,7 @@ const Harness = struct {
             .language = way.language,
             .backward = way.backward,
             .features = way.features,
+            .coords = way.coords,
             .blocks = blocks,
         });
         harness.calls += 1;
@@ -702,6 +766,7 @@ const Harness = struct {
             .glyphs = &text_lacking,
             .variants = &text_variants,
             .kerning = &text_kerning,
+            .coords = way.coords,
             .blocks = blocks,
         });
         harness.texts += 1;

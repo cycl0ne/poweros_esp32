@@ -23,6 +23,13 @@
 //!   - A run read from right to left is turned around: the answer is in
 //!     the order it is drawn.
 //!
+//! A variable font is shaped at the place on its axes the caller says
+//! with the font's coordinates (`Font.coords`): the features a table
+//! replaces under conditions on the axes are the ones for that place,
+//! and the kernings and anchors `GPOS` varies are what they are there
+//! (`_variation.zig`). The advances are the caller's to give for the
+//! place.
+//!
 //! A run that is a text (`Order.text`) goes through more:
 //!
 //!   - `GSUB` is applied in two goes: first the lookups of `rvrn`, which
@@ -60,14 +67,19 @@ const _gpos = @import("_gpos.zig");
 const _normal = @import("_normal.zig");
 
 /// What a font gives the shaping: its tables, of no length where it has
-/// none, and its glyphs' advances. A text asks it for more: the glyph of
-/// a character, the one of a character with a selector behind it (0
-/// where the font has none for the two), its `kern` table, and how many
-/// units its em has, by which a space the font lacks gets its width.
+/// none, its place on its axes, and its glyphs' advances there. A text
+/// asks it for more: the glyph of a character, the one of a character
+/// with a selector behind it (0 where the font has none for the two),
+/// its `kern` table, and how many units its em has, by which a space
+/// the font lacks gets its width.
 pub const Font = struct {
     gdef: Table = Table.none,
     gsub: Table = Table.none,
     gpos: Table = Table.none,
+    /// A variable font's place: a coordinate an axis, in 14 bits of
+    /// fraction, -16384 to 16384. Empty for a font at its default, and
+    /// for one that has no axes.
+    coords: []const i16 = &.{},
     context: *anyopaque,
     advanceFn: *const fn (context: *anyopaque, glyph: u32) i32,
     /// What the font's `kern` table has for two glyphs side by side, the
@@ -165,7 +177,7 @@ fn maskOf(features: []const Feature, wanted: []const _plan.Wanted, cluster: u32)
 fn stage(call: *const Call, table: Table, kind: _match.Kind, wanted: []const _plan.Wanted, required: bool) i32 {
     const order = call.order;
     const buffer = call.buffer;
-    const layout = _plan.Layout.init(table, order.script, order.other_script, order.language);
+    const layout = _plan.Layout.init(table, order.script, order.other_script, order.language, order.font.coords);
     var none: [0]_plan.Entry = .{};
     const count = layout.collect(wanted, required, &none);
     if (count == 0) return truetypeshaping.TTS_OK;
@@ -182,6 +194,7 @@ fn stage(call: *const Call, table: Table, kind: _match.Kind, wanted: []const _pl
         .lookups = layout.lookups,
         .backward = order.backward,
         .places = call.places,
+        .place = .{ .coords = order.font.coords, .store = call.gdef.store },
         .work = workFor(buffer.len),
     };
     for (entries[0..kept]) |entry| {
@@ -216,7 +229,7 @@ fn kernByTable(order: *const Order, wanted: []const _plan.Wanted, buffer: *Buffe
         if (want.tag == kerning_tag and want.value != 0) mask |= want.mask;
     }
     if (mask == 0) return;
-    const layout = _plan.Layout.init(order.font.gpos, order.script, order.other_script, order.language);
+    const layout = _plan.Layout.init(order.font.gpos, order.script, order.other_script, order.language, order.font.coords);
     if (layout.has(kerning_tag)) return;
     const items = buffer.slice();
     // `drawn` counts the glyphs from the left; the buffer is in the order
@@ -231,7 +244,7 @@ fn kernByTable(order: *const Order, wanted: []const _plan.Wanted, buffer: *Buffe
             const right = &items[if (order.backward) items.len - 1 - other else other];
             if (right.class == _buffer.CLASS_MARK) continue;
             if (right.mask & mask == 0) break;
-            left.advance += kerningFn(order.font.context, left.glyph, right.glyph);
+            left.advance +|= kerningFn(order.font.context, left.glyph, right.glyph);
             drawn = other;
             break;
         }
@@ -283,7 +296,7 @@ pub fn shape(order: *const Order, buffer: *Buffer) i32 {
         const hangs_back = !order.backward and font.gpos.empty();
         for (buffer.slice()) |*item| {
             if (item.class != _buffer.CLASS_MARK) continue;
-            if (hangs_back) item.x_offset -= item.advance;
+            if (hangs_back) item.x_offset -|= item.advance;
             item.advance = 0;
         }
     }

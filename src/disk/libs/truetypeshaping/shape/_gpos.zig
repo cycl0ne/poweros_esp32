@@ -16,9 +16,16 @@
 //! glyph's own, and the advances that lie between the two on the line,
 //! so that it is drawn from its own place on the line as every glyph is.
 //!
-//! Measures are the font's units. A record's or an anchor's device and
-//! variation tables are not read: they adjust for one size in pixels, or
-//! for a place in a variable font's design space.
+//! Measures are the font's units. A record's number and an anchor's may
+//! each name a device table. One kind of it names an item of the font's
+//! store of deltas: in a variable font away from its default, what the
+//! item adds at the font's place is added to the number, each delta
+//! rounded by itself (`_variation.zig`). The other kinds adjust a number
+//! for one size in pixels, and are not read. A record's advance down the
+//! page and its device are stepped over.
+//!
+//! A place and an advance are added to without end by a font that is
+//! made to: each sum stays at the largest number it can hold.
 
 const _tables = @import("_tables.zig");
 const Table = _tables.Table;
@@ -39,6 +46,11 @@ const MARK_TO_MARK = 6;
 const VALUE_X_PLACEMENT: u32 = 0x0001;
 const VALUE_Y_PLACEMENT: u32 = 0x0002;
 const VALUE_X_ADVANCE: u32 = 0x0004;
+const VALUE_Y_ADVANCE: u32 = 0x0008;
+const VALUE_X_PLACEMENT_DEVICE: u32 = 0x0010;
+const VALUE_Y_PLACEMENT_DEVICE: u32 = 0x0020;
+const VALUE_X_ADVANCE_DEVICE: u32 = 0x0040;
+const VALUE_DEVICES: u32 = 0x00F0;
 
 /// The subtable `table` of kind `kind` applied at `at`.
 pub fn position(apply: *Apply, kind: u32, table: Table, at: u32) ?u32 {
@@ -58,20 +70,36 @@ fn valueSize(format: u32) u32 {
     return @as(u32, @popCount(format & 0xFF)) * 2;
 }
 
-/// Changes `item` by the value record at `at`. The advance down the page
-/// is not for a line that runs across it.
-fn applyValue(item: *Item, table: Table, at: u32, format: u32) void {
-    var place = at;
+/// Changes `item` by the value record at `at` of `table`, which is the
+/// table its device tables are found from. The record has its numbers
+/// first and then a device table's place for each. The advance down the
+/// page is not for a line that runs across it.
+fn applyValue(apply: *Apply, item: *Item, table: Table, at: u32, format: u32) void {
+    var part = at;
     if (format & VALUE_X_PLACEMENT != 0) {
-        item.x_offset += table.signed(place);
-        place += 2;
+        item.x_offset +|= table.signed(part);
+        part += 2;
     }
     if (format & VALUE_Y_PLACEMENT != 0) {
-        item.y_offset += table.signed(place);
-        place += 2;
+        item.y_offset +|= table.signed(part);
+        part += 2;
     }
     if (format & VALUE_X_ADVANCE != 0) {
-        item.advance += table.signed(place);
+        item.advance +|= table.signed(part);
+        part += 2;
+    }
+    if (format & VALUE_Y_ADVANCE != 0) part += 2;
+    if (format & VALUE_DEVICES == 0 or apply.place.coords.len == 0) return;
+    if (format & VALUE_X_PLACEMENT_DEVICE != 0) {
+        item.x_offset +|= apply.deltaOf(table.partAt(part));
+        part += 2;
+    }
+    if (format & VALUE_Y_PLACEMENT_DEVICE != 0) {
+        item.y_offset +|= apply.deltaOf(table.partAt(part));
+        part += 2;
+    }
+    if (format & VALUE_X_ADVANCE_DEVICE != 0) {
+        item.advance +|= apply.deltaOf(table.partAt(part));
     }
 }
 
@@ -96,10 +124,10 @@ fn single(apply: *Apply, table: Table, at: u32) ?u32 {
     const index = _tables.coverage(table.partAt(2), item.glyph) orelse return null;
     const format = table.word(4);
     switch (table.word(0)) {
-        1 => applyValue(item, table, 6, format),
+        1 => applyValue(apply, item, table, 6, format),
         2 => {
             if (index >= table.word(6)) return null;
-            applyValue(item, table, 8 + index * valueSize(format), format);
+            applyValue(apply, item, table, 8 + index * valueSize(format), format);
         },
         else => return null,
     }
@@ -150,8 +178,8 @@ fn pair(apply: *Apply, table: Table, at: u32) ?u32 {
         },
         else => return null,
     }
-    applyValue(first, values, values_at, first_format);
-    applyValue(second, values, values_at + first_size, second_format);
+    applyValue(apply, first, values, values_at, first_format);
+    applyValue(apply, second, values, values_at + first_size, second_format);
     // A second glyph that was moved is done with; one that was not may be
     // the first of the next pair.
     return if (second_format != 0) second_at + 1 else second_at;
@@ -160,11 +188,18 @@ fn pair(apply: *Apply, table: Table, at: u32) ?u32 {
 /// An anchor's place in its glyph. A table of no length is the origin.
 const Anchor = struct { x: i32 = 0, y: i32 = 0 };
 
-fn anchor(table: Table) Anchor {
-    return switch (table.word(0)) {
+/// The anchor `table` holds. One of the third kind has a device table
+/// for each of its two numbers.
+fn anchor(apply: *Apply, table: Table) Anchor {
+    var point: Anchor = switch (table.word(0)) {
         1, 2, 3 => .{ .x = table.signed(2), .y = table.signed(4) },
-        else => .{},
+        else => return .{},
     };
+    if (table.word(0) == 3 and apply.place.coords.len != 0) {
+        point.x += apply.deltaOf(table.partAt(6));
+        point.y += apply.deltaOf(table.partAt(8));
+    }
+    return point;
 }
 
 /// Where the row `row` of a table of anchors starts, each row an offset
@@ -186,8 +221,8 @@ fn attach(apply: *Apply, at: u32, to: u32, marks: Table, mark_index: u32, anchor
     if (class >= classes) return null;
     const target = anchors.partAt(row + class * 2);
     if (target.empty()) return null;
-    const on = anchor(target);
-    const own = anchor(marks.partAt(record + 2));
+    const on = anchor(apply, target);
+    const own = anchor(apply, marks.partAt(record + 2));
     const item = &apply.buffer.items[at];
     item.x_offset = on.x - own.x;
     item.y_offset = on.y - own.y;
@@ -306,21 +341,21 @@ fn cursive(apply: *Apply, table: Table, at: u32) ?u32 {
     if (earlier_index >= records) return null;
     const exit_table = table.partAt(6 + earlier_index * 4 + 2);
     if (exit_table.empty()) return null;
-    const entry = anchor(entry_table);
-    const exit = anchor(exit_table);
+    const entry = anchor(apply, entry_table);
+    const exit = anchor(apply, exit_table);
     const earlier = &items[earlier_at];
     const current = &items[at];
 
     if (apply.backward) {
-        const shift = exit.x + earlier.x_offset;
-        earlier.advance -= shift;
-        earlier.x_offset -= shift;
-        current.advance = entry.x + current.x_offset;
+        const shift = exit.x +| earlier.x_offset;
+        earlier.advance -|= shift;
+        earlier.x_offset -|= shift;
+        current.advance = entry.x +| current.x_offset;
     } else {
-        earlier.advance = exit.x + earlier.x_offset;
-        const shift = entry.x + current.x_offset;
-        current.advance -= shift;
-        current.x_offset -= shift;
+        earlier.advance = exit.x +| earlier.x_offset;
+        const shift = entry.x +| current.x_offset;
+        current.advance -|= shift;
+        current.x_offset -|= shift;
     }
 
     var child = earlier_at;
@@ -329,7 +364,7 @@ fn cursive(apply: *Apply, table: Table, at: u32) ?u32 {
     if (apply.flags & _match.LOOKUP_RIGHT_TO_LEFT == 0) {
         child = at;
         parent = earlier_at;
-        y_offset = -y_offset;
+        y_offset = 0 -| y_offset;
     }
     // A child that followed another glyph already: that chain is turned
     // around, so all of it now follows the new parent.
@@ -363,7 +398,7 @@ fn turnChain(buffer: *Buffer, start: u32, new_parent: u32) void {
         const next_chain = items[next].attach_chain;
         const next_kind = items[next].attach_type;
         const next_offset = items[next].y_offset;
-        items[next].y_offset = -y_offset;
+        items[next].y_offset = 0 -| y_offset;
         items[next].attach_chain = -chain;
         items[next].attach_type = kind;
         if (next_chain == 0 or next_kind != _buffer.ATTACH_CURSIVE) return;
@@ -414,15 +449,15 @@ pub fn finish(buffer: *Buffer, backward: bool) void {
 fn settle(items: []Item, child: u32, parent: u32, backward: bool) void {
     const item = &items[child];
     if (item.attach_type == _buffer.ATTACH_CURSIVE) {
-        item.y_offset += items[parent].y_offset;
+        item.y_offset +|= items[parent].y_offset;
         return;
     }
-    item.x_offset += items[parent].x_offset;
-    item.y_offset += items[parent].y_offset;
+    item.x_offset +|= items[parent].x_offset;
+    item.y_offset +|= items[parent].y_offset;
     if (parent >= child) return;
     if (backward) {
-        for (items[parent + 1 .. child + 1]) |between| item.x_offset += between.advance;
+        for (items[parent + 1 .. child + 1]) |between| item.x_offset +|= between.advance;
     } else {
-        for (items[parent..child]) |between| item.x_offset -= between.advance;
+        for (items[parent..child]) |between| item.x_offset -|= between.advance;
     }
 }

@@ -5,8 +5,10 @@
 //! components; the marks into classes of their own, by where they attach;
 //! and, from its version 1.2 on, lists sets of marks by number. A lookup's
 //! flags leave glyphs out by these: every mark, every mark but one class,
-//! every mark outside one set. A font without the table, or one of a
-//! version this does not know, has glyphs of no kind and no sets.
+//! every mark outside one set. From its version 1.3 on it holds the
+//! store of deltas a variable font's layout tables vary their numbers
+//! by (`_variation.zig`). A font without the table, or one of a version
+//! this does not know, has glyphs of no kind, no sets and no store.
 
 const _tables = @import("_tables.zig");
 const Table = _tables.Table;
@@ -17,6 +19,8 @@ pub const Gdef = struct {
     classes: Table = Table.none,
     mark_classes: Table = Table.none,
     mark_sets: Table = Table.none,
+    /// The store of deltas for the layout tables' numbers.
+    store: Table = Table.none,
 
     /// What `table` holds; nothing for a table of no length.
     pub fn init(table: Table) Gdef {
@@ -29,6 +33,7 @@ pub const Gdef = struct {
             const sets = table.partAt(12);
             if (sets.word(0) == 1) gdef.mark_sets = sets;
         }
+        if (table.word(2) >= 3) gdef.store = table.partAtLong(14);
         return gdef;
     }
 

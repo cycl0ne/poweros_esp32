@@ -752,6 +752,18 @@ the run's length and not what a table's numbers say. Tables that are
 not sound shape to something or to nothing, and are never read past
 their end.
 
+A variable font opened at an instance (`TTA_Axes`) is shaped there
+(since 1.3): each glyph has that instance's advance, a kerning and the
+point a mark is attached at are the default's plus what the font's
+store of deltas (in `GDEF`) adds at that place, and where a font
+replaces a feature's lookups under conditions on its axes - another
+form of a letter from some weight on - the instance decides. The
+library asks truetype.library for the place (`FontCoordinates`) and for
+the advances (`GlyphAdvance`), so a caller names the instance once, to
+`OpenOutline`. Not read: vertical advances, and the adjustments a font
+makes for single sizes in pixels. `C:test/Axes <file> SHAPED` prints
+and draws a line shaped at each place a font names.
+
 **A text** (since 1.1). `ShapeText(outline, text, length, direction,
 language, features, run)` takes the text itself, in UTF-8, and does what
 a caller of `ShapeGlyphs` would do by hand. It cuts the text into
@@ -1170,4 +1182,4 @@ cursor = gb.TextXToOffset(rp, line.ptr, @intCast(line.len), mouse_x - left);
 | `SYS:Programs/Prefs` | picks the system's fonts, the desktop icons' and the fallback families in a window and writes `font.prefs` |
 | `SYS:Programs/FontView` | fonts and sizes in a window, the one chosen drawn |
 | `C:test/DiskFont`, `C:test/Fonts` | test programs: open sizes and time them, or with `GLYPHS` render every glyph of an outline by its number and compare with a font image, with `TEXT` draw a line of one's own; draw a size file |
-| `C:test/Axes` | test program: `Axes <file>` prints a variable font's axes and, at each place the font names - or the ends and the default of its first axis - its coordinates, x height, cap height and the advance of `n`, and draws a line at each place, `SIZE` rows tall, with `TEXT` one's own; `NOWINDOW` prints only |
+| `C:test/Axes` | test program: `Axes <file>` prints a variable font's axes and, at each place the font names - or the ends and the default of its first axis - its coordinates, x height, cap height and the advance of `n`, and draws a line at each place, `SIZE` rows tall, with `TEXT` one's own; `NOWINDOW` prints only; `SHAPED` lays the line out with truetypeshaping.library at each place, prints each glyph with its advance and offsets and draws the line glyph by glyph - kerned pairs and marks on letters as that place has them |

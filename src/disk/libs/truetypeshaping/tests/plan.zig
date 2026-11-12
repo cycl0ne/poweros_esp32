@@ -171,10 +171,15 @@ fn varied(file: *File, ten: *File, twenty: *File, variations: []const layout.Var
 }
 
 fn variedTo(variations: []const layout.Variation) !u32 {
+    return variedAt(variations, &.{});
+}
+
+/// The same for a font at the place `coords` on its axes.
+fn variedAt(variations: []const layout.Variation, coords: []const i16) !u32 {
     var file: File = .{};
     var ten: File = .{};
     var twenty: File = .{};
-    const run = shape(.{ .gsub = varied(&file, &ten, &twenty, variations) }, &.{5}, .{});
+    const run = shape(.{ .gsub = varied(&file, &ten, &twenty, variations) }, &.{5}, .{ .coords = coords });
     try testing.expectEqual(tts.TTS_OK, run.result);
     return run.glyphs[0].glyph;
 }
@@ -195,6 +200,43 @@ test "features replaced under conditions: judged for the font with no axis set" 
     try testing.expectEqual(@as(u32, 25), try variedTo(&.{.{ .conditions = &.{}, .replaced = &replaced }}));
     // A condition of a form not known does not hold.
     try testing.expectEqual(@as(u32, 15), try variedTo(&.{.{ .conditions = &.{.{ .format = 2, .low = 0, .high = 0 }}, .replaced = &replaced }}));
+}
+
+test "features replaced under conditions: judged at the font's place on its axes" {
+    const replaced = [_]layout.Replaced{.{ .feature = 0, .lookups = &.{1} }};
+    const place = [_]i16{ 8192, -4096 };
+    // The first axis's coordinate within the range, the ends included,
+    // and outside it.
+    try testing.expectEqual(@as(u32, 25), try variedAt(&.{.{ .conditions = &.{.{ .low = 4096, .high = 16384 }}, .replaced = &replaced }}, &place));
+    try testing.expectEqual(@as(u32, 25), try variedAt(&.{.{ .conditions = &.{.{ .low = 8192, .high = 16384 }}, .replaced = &replaced }}, &place));
+    try testing.expectEqual(@as(u32, 25), try variedAt(&.{.{ .conditions = &.{.{ .low = 0, .high = 8192 }}, .replaced = &replaced }}, &place));
+    try testing.expectEqual(@as(u32, 15), try variedAt(&.{.{ .conditions = &.{.{ .low = 8193, .high = 16384 }}, .replaced = &replaced }}, &place));
+    try testing.expectEqual(@as(u32, 15), try variedAt(&.{.{ .conditions = &.{.{ .low = -8192, .high = 8191 }}, .replaced = &replaced }}, &place));
+    // The second axis's.
+    try testing.expectEqual(@as(u32, 25), try variedAt(&.{.{ .conditions = &.{.{ .axis = 1, .low = -4096, .high = -4096 }}, .replaced = &replaced }}, &place));
+    try testing.expectEqual(@as(u32, 15), try variedAt(&.{.{ .conditions = &.{.{ .axis = 1, .low = 0, .high = 16384 }}, .replaced = &replaced }}, &place));
+    // A condition for each: both have to hold.
+    try testing.expectEqual(@as(u32, 25), try variedAt(&.{.{
+        .conditions = &.{ .{ .low = 4096, .high = 16384 }, .{ .axis = 1, .low = -16384, .high = -1 } },
+        .replaced = &replaced,
+    }}, &place));
+    try testing.expectEqual(@as(u32, 15), try variedAt(&.{.{
+        .conditions = &.{ .{ .low = 4096, .high = 16384 }, .{ .axis = 1, .low = 1, .high = 16384 } },
+        .replaced = &replaced,
+    }}, &place));
+    // An axis the font does not have is at its default.
+    try testing.expectEqual(@as(u32, 25), try variedAt(&.{.{ .conditions = &.{.{ .axis = 2, .low = -1, .high = 1 }}, .replaced = &replaced }}, &place));
+    try testing.expectEqual(@as(u32, 15), try variedAt(&.{.{ .conditions = &.{.{ .axis = 2, .low = 1, .high = 16384 }}, .replaced = &replaced }}, &place));
+    try testing.expectEqual(@as(u32, 25), try variedAt(&.{.{ .conditions = &.{.{ .axis = 0xFFFF, .low = 0, .high = 0 }}, .replaced = &replaced }}, &place));
+    // The first record that holds there, which is another one than at
+    // the default.
+    const neither = [_]layout.Replaced{.{ .feature = 0, .lookups = &.{} }};
+    const records = [_]layout.Variation{
+        .{ .conditions = &.{.{ .low = -100, .high = 100 }}, .replaced = &neither },
+        .{ .conditions = &.{.{ .low = 8000, .high = 9000 }}, .replaced = &replaced },
+    };
+    try testing.expectEqual(@as(u32, 25), try variedAt(&records, &place));
+    try testing.expectEqual(@as(u32, 5), try variedAt(&records, &.{}));
 }
 
 test "features replaced under conditions: the first record that holds" {

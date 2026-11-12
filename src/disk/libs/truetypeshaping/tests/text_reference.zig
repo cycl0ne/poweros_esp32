@@ -5,8 +5,8 @@
 //! fonts themselves read for a test.
 //!
 //! The script hands each text to HarfBuzz, with the font and what the
-//! case says of direction, language and features, and writes down the
-//! glyphs that come out. A test shapes the same texts with ShapeText and
+//! case says of direction, language and features - and, for a variable
+//! font, of the instance - and writes down the glyphs that come out. A test shapes the same texts with ShapeText and
 //! compares glyph by glyph (`text_fonts.zig`). The files are committed:
 //! the tests need the fonts, and neither Python nor HarfBuzz.
 //!
@@ -34,6 +34,14 @@ pub const Feature = struct {
     last: u32 = 0xFFFF_FFFF,
 };
 
+/// Where on one of its axes a variable font is, in the axis's own
+/// measure: 700 on the axis `wght`.
+pub const Axis = struct {
+    /// Its tag, four characters.
+    tag: []const u8,
+    value: f32,
+};
+
 /// One text and what it is shaped to.
 pub const Case = struct {
     name: []const u8,
@@ -43,6 +51,9 @@ pub const Case = struct {
     backward: bool = false,
     /// The language's tag, four characters, or empty for the default.
     language: []const u8 = "",
+    /// The instance of a variable font the text is shaped at: each axis
+    /// that is not at its default.
+    axes: []const Axis = &.{},
     features: []const Feature = &.{},
     /// The glyphs as they are drawn, each as its number, its cluster, its
     /// advance and its offsets to the right and upward.
@@ -89,6 +100,8 @@ pub const go_regular = &@import("text_reference/go_regular.zig").font;
 pub const liberation_sans_regular = &@import("text_reference/liberation_sans_regular.zig").font;
 pub const noto_sans_devanagari_regular = &@import("text_reference/noto_sans_devanagari_regular.zig").font;
 pub const noto_color_emoji = &@import("text_reference/noto_color_emoji.zig").font;
+pub const source_sans_3_vf = &@import("text_reference/source_sans_3_vf.zig").font;
+pub const source_sans_3_vf_otf = &@import("text_reference/source_sans_3_vf_otf.zig").font;
 
 /// Every font there are texts for.
 pub const all = [_]*const Font{
@@ -96,6 +109,8 @@ pub const all = [_]*const Font{
     liberation_sans_regular,
     noto_sans_devanagari_regular,
     noto_color_emoji,
+    source_sans_3_vf,
+    source_sans_3_vf_otf,
 };
 
 /// A fetched font's bytes, for the caller to free with the testing

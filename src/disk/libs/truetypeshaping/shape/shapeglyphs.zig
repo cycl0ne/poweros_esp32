@@ -18,7 +18,7 @@ const Source = @import("_source.zig").Source;
 /// fn ShapeGlyphs(sb: *TrueTypeShapingBase, outline: *truetype.Outline, script: u32, direction: u32, language: u32, features: ?[*]const truetypeshaping.Feature, run: *truetypeshaping.ShapedRun) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -20.
+/// SINCE: 1.0, a variable font at its instance since 1.3. LVO -20.
 ///
 /// INPUTS:
 /// - `outline` - what truetype.library's `OpenOutline` answered.
@@ -68,6 +68,19 @@ const Source = @import("_source.zig").Source;
 /// between it and its glyph, so each glyph is drawn at the point the
 /// advances before it lead to, plus its offsets.
 ///
+/// A variable font opened away from its default (`OpenOutline`'s
+/// `TTA_Axes`) is shaped at that instance. A glyph's advance is
+/// `GlyphAdvance`'s there. A number of `GPOS` that names an item of
+/// `GDEF`'s store of deltas - what a single glyph or a pair is moved
+/// by, a point a mark or a joined glyph is attached at - takes what the
+/// item adds at the instance, rounded to a whole unit, a half upward.
+/// At the default the store is not read.
+///
+/// Where a table replaces features under conditions on the axes, the
+/// first set of conditions that holds at the font's instance says which
+/// lookups a feature has: a condition is a stretch of one axis, its
+/// ends included, and an axis the font does not have is at 0.
+///
 /// A ligature has the lowest cluster of its parts, and the glyphs one
 /// glyph became all have its own. A run read from right to left is
 /// answered turned around.
@@ -85,6 +98,10 @@ const Source = @import("_source.zig").Source;
 /// call answers `TTS_OK` with what was done up to there. Fonts made for
 /// use stay far below it.
 ///
+/// An advance and an offset are sums, and a font can add to one as
+/// often as its work lasts: each stays at the largest number 32 bits
+/// hold, either way, and goes no further.
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
@@ -101,8 +118,14 @@ const Source = @import("_source.zig").Source;
 /// say. A mark keeps the advance the font gives it.
 ///
 /// Without a `GDEF` that sorts the glyphs, none is a mark or a ligature
-/// to a lookup's flags. Vertical advances and the adjustments a font
-/// makes for single sizes or for its variation axes are not read.
+/// to a lookup's flags. Vertical advances, with what they are varied
+/// by, and the adjustments a font makes for single sizes in pixels are
+/// not read.
+///
+/// An item of the store adds nothing where the store is not for the
+/// font's number of axes, where it has no such item, and where its row
+/// does not lie within the table. What an item adds is held to what a
+/// 16-bit number holds.
 ///
 /// BUGS:
 /// None known.

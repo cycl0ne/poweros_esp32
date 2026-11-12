@@ -19,10 +19,11 @@
 //! features - and makes one of a lookup named twice.
 //!
 //! A table of version 1.1 may replace features under conditions on a
-//! variable font's axes. The conditions are judged for the font as it is
-//! without any axis set, which is how its outlines are read. No more
-//! than `condition_limit` of them are looked at: past that, no feature
-//! is replaced.
+//! variable font's axes. The conditions are judged at the font's place
+//! on its axes, a coordinate an axis; an axis the place does not say is
+//! at 0, where a font at its default has all of them. No more than
+//! `condition_limit` of them are looked at: past that, no feature is
+//! replaced.
 
 const _tables = @import("_tables.zig");
 const Table = _tables.Table;
@@ -72,9 +73,10 @@ pub const Layout = struct {
     replaced: Table = Table.none,
 
     /// What `table` - a `GSUB` or a `GPOS` - has for `script`, or else
-    /// for `other_script`, and `language`; nothing for a table of no
-    /// length or of a version not known here.
-    pub fn init(table: Table, script: u32, other_script: u32, language: u32) Layout {
+    /// for `other_script`, and `language`, for a font at the place
+    /// `coords` on its axes; nothing for a table of no length or of a
+    /// version not known here.
+    pub fn init(table: Table, script: u32, other_script: u32, language: u32, coords: []const i16) Layout {
         if (table.word(0) != 1) return .{};
         var layout: Layout = .{
             .features = table.partAt(6),
@@ -90,7 +92,7 @@ pub const Layout = struct {
             layout.language = findTagged(chosen, 2, language) orelse
                 findTagged(chosen, 2, tag("dflt")) orelse chosen.partAt(0);
         }
-        if (table.word(2) >= 1) layout.replaced = replacedFeatures(table.partAtLong(10));
+        if (table.word(2) >= 1) layout.replaced = replacedFeatures(table.partAtLong(10), coords);
         return layout;
     }
 
@@ -169,8 +171,8 @@ fn findTagged(list: Table, at: u32, wanted: u32) ?Table {
 }
 
 /// The replaced features of the first of `variations`' records whose
-/// conditions all hold for the font with no axis set.
-fn replacedFeatures(variations: Table) Table {
+/// conditions all hold for a font at the place `coords`.
+fn replacedFeatures(variations: Table, coords: []const i16) Table {
     if (variations.word(0) != 1 or variations.bytes.len < 8) return Table.none;
     const room: u32 = @intCast((variations.bytes.len - 8) / 8);
     const said = variations.long(4);
@@ -178,24 +180,27 @@ fn replacedFeatures(variations: Table) Table {
     for (0..if (said < room) said else room) |entry| {
         if (left == 0) break;
         const record = 8 + @as(u32, @intCast(entry)) * 8;
-        if (!conditionsHold(variations.partAtLong(record), &left)) continue;
+        if (!conditionsHold(variations.partAtLong(record), coords, &left)) continue;
         const replaced = variations.partAtLong(record + 4);
         return if (replaced.word(0) == 1) replaced else Table.none;
     }
     return Table.none;
 }
 
-/// Whether each condition of the set holds: an axis's value, which is 0
-/// here, within a range. A set of no length has none, and holds. `left`
-/// is how many conditions may still be looked at; a set that needs more
-/// does not hold.
-fn conditionsHold(set: Table, left: *u32) bool {
+/// Whether each condition of the set holds: an axis's coordinate - the
+/// one `coords` has for it, 0 for an axis past them - within a range,
+/// its ends included. A condition of another kind does not hold. A set
+/// of no length has none, and holds. `left` is how many conditions may
+/// still be looked at; a set that needs more does not hold.
+fn conditionsHold(set: Table, coords: []const i16, left: *u32) bool {
     for (0..set.count(0, 2, 4)) |entry| {
         if (left.* == 0) return false;
         left.* -= 1;
         const condition = set.partAtLong(2 + @as(u32, @intCast(entry)) * 4);
         if (condition.word(0) != 1) return false;
-        if (condition.signed(4) > 0 or condition.signed(6) < 0) return false;
+        const axis = condition.word(2);
+        const coord: i32 = if (axis < coords.len) coords[axis] else 0;
+        if (condition.signed(4) > coord or condition.signed(6) < coord) return false;
     }
     return true;
 }

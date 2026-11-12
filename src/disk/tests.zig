@@ -135,6 +135,7 @@ test {
     _ = @import("libs/truetypeshaping/tests/gsub.zig");
     _ = @import("libs/truetypeshaping/tests/context.zig");
     _ = @import("libs/truetypeshaping/tests/gpos.zig");
+    _ = @import("libs/truetypeshaping/tests/variation.zig");
     _ = @import("libs/truetypeshaping/tests/plan.zig");
     _ = @import("libs/truetypeshaping/tests/scripts.zig");
     _ = @import("libs/truetypeshaping/tests/text.zig");

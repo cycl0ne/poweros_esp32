@@ -371,13 +371,40 @@ pub fn pairClasses(
     layout.classes(file, second_classes);
 }
 
-/// An anchor: a point of a glyph.
-pub const Point = struct { x: i16, y: i16 };
+/// An anchor: a point of a glyph. With `vary_x` or `vary_y` it is one
+/// whose number is varied by that item of the first list of the font's
+/// store of deltas.
+pub const Point = struct { x: i16, y: i16, vary_x: ?u16 = null, vary_y: ?u16 = null };
+
+/// A device table that names the item `item` of the list `list` of the
+/// font's store of deltas.
+pub fn device(file: *File, list: u16, item: u16) void {
+    file.word(list);
+    file.word(item);
+    file.word(0x8000);
+}
+
+/// Writes a device table for the item `item` of the store's first list
+/// at the end of `file`, and its distance from `base` at `where`.
+pub fn deviceAt(file: *File, where: u32, base: u32, item: u16) void {
+    file.setWord(where, @intCast(file.len - base));
+    device(file, 0, item);
+}
 
 fn anchor(file: *File, point: Point) void {
-    file.word(1);
+    if (point.vary_x == null and point.vary_y == null) {
+        file.word(1);
+        file.signed(point.x);
+        file.signed(point.y);
+        return;
+    }
+    file.word(3);
     file.signed(point.x);
     file.signed(point.y);
+    file.word(if (point.vary_x != null) 10 else 0);
+    file.word(if (point.vary_y == null) 0 else if (point.vary_x != null) 16 else 10);
+    if (point.vary_x) |item| device(file, 0, item);
+    if (point.vary_y) |item| device(file, 0, item);
 }
 
 /// Where a glyph is joined to the one before it and to the one after;

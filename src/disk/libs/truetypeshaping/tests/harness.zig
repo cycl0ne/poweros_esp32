@@ -38,6 +38,9 @@ pub const Options = struct {
     language: u32 = tts.TTS_LANGUAGE_DEFAULT,
     backward: bool = false,
     features: []const tts.Feature = &test_feature,
+    /// A variable font's place: a coordinate an axis. None at its
+    /// default.
+    coords: []const i16 = &.{},
     /// Every glyph's advance.
     advance: i32 = 1000,
     /// The glyphs' clusters; their places in the run when null.
@@ -126,6 +129,7 @@ pub fn shape(tables: Tables, glyphs: []const u16, options: Options) Run {
         .gdef = .{ .bytes = tables.gdef },
         .gsub = .{ .bytes = tables.gsub },
         .gpos = .{ .bytes = tables.gpos },
+        .coords = options.coords,
         .context = &advance,
         .advanceFn = advanceOf,
     };
@@ -182,6 +186,9 @@ pub const TextOptions = struct {
     glyphs: []const [2]u32 = &.{},
     /// How many units an em has.
     em: u32 = 1000,
+    /// A variable font's place: a coordinate an axis. Empty at the
+    /// default.
+    coords: []const i16 = &.{},
     /// A character and a selector the font has a glyph for:
     /// `.{ character, selector, glyph }`.
     variants: []const [3]u32 = &.{},
@@ -243,6 +250,7 @@ pub fn shapeText(tables: Tables, text: []const u8, options: TextOptions) Run {
             .gdef = .{ .bytes = tables.gdef },
             .gsub = .{ .bytes = tables.gsub },
             .gpos = .{ .bytes = tables.gpos },
+            .coords = options.coords,
             .context = &font_options,
             .advanceFn = textAdvanceOf,
             .kerningFn = textKerningOf,

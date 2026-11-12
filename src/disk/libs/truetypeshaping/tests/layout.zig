@@ -69,23 +69,28 @@ pub fn here(file: *File, where: u32, base: u32) void {
 }
 
 /// What a `GDEF` says: each glyph's kind (1 base, 2 ligature, 3 mark),
-/// the marks' classes, and sets of marks.
+/// the marks' classes, sets of marks, and the store of deltas a variable
+/// font's layout tables vary their numbers by, written whole elsewhere.
 pub const Kinds = struct {
     kinds: []const InClass = &.{},
     mark_classes: []const InClass = &.{},
     mark_sets: []const []const u16 = &.{},
+    store: []const u8 = &.{},
 };
 
 pub fn gdef(file: *File, parts: Kinds) void {
     const base = file.len;
+    const stored = parts.store.len != 0;
     file.word(1);
-    file.word(if (parts.mark_sets.len != 0) 2 else 0);
+    file.word(if (stored) 3 else if (parts.mark_sets.len != 0) 2 else 0);
     const kinds_at = open(file);
     file.word(0);
     file.word(0);
     const mark_classes_at = open(file);
     var sets_at: u32 = 0;
-    if (parts.mark_sets.len != 0) sets_at = open(file);
+    if (parts.mark_sets.len != 0 or stored) sets_at = open(file);
+    const store_at = file.len;
+    if (stored) file.long(0);
     here(file, kinds_at, base);
     classes(file, parts.kinds);
     if (parts.mark_classes.len != 0) {
@@ -102,6 +107,59 @@ pub fn gdef(file: *File, parts: Kinds) void {
         for (parts.mark_sets, 0..) |set, index| {
             file.setLong(offsets + @as(u32, @intCast(index)) * 4, file.len - sets);
             coverage(file, set);
+        }
+    }
+    if (stored) {
+        file.setLong(store_at, file.len - base);
+        for (parts.store) |byte| file.byte(byte);
+    }
+}
+
+/// A region: for each axis where it starts to count, its peak, and
+/// where it has stopped counting.
+pub const Region = []const [3]i16;
+
+/// A list of a store: the regions its rows have a delta for, how many
+/// of a row's deltas are wide - with `long_words`, 32 bits wide and the
+/// others 16, else 16 and 8 - and the rows.
+pub const StoreList = struct {
+    regions: []const u16,
+    wide: u16,
+    long_words: bool = false,
+    rows: []const []const i32,
+};
+
+/// A store of deltas on `axes` axes, as `Kinds.store` takes it.
+pub fn store(file: *File, axes: u16, regions: []const Region, lists: []const StoreList) void {
+    const base = file.len;
+    file.word(1);
+    const regions_at = file.len;
+    file.long(0);
+    file.word(@intCast(lists.len));
+    const offsets = file.len;
+    file.skip(@intCast(lists.len * 4));
+    file.setLong(regions_at, file.len - base);
+    file.word(axes);
+    file.word(@intCast(regions.len));
+    for (regions) |region| {
+        for (region) |axis| {
+            for (axis) |number| file.signed(number);
+        }
+    }
+    for (lists, 0..) |list, index| {
+        file.setLong(offsets + @as(u32, @intCast(index)) * 4, file.len - base);
+        file.word(@intCast(list.rows.len));
+        file.word(list.wide | (if (list.long_words) @as(u16, 0x8000) else 0));
+        file.word(@intCast(list.regions.len));
+        for (list.regions) |region| file.word(region);
+        for (list.rows) |row| {
+            for (row, 0..) |value, place| {
+                if (place < list.wide) {
+                    if (list.long_words) file.long(@bitCast(value)) else file.signed(@intCast(value));
+                } else {
+                    if (list.long_words) file.signed(@intCast(value)) else file.byte(@bitCast(@as(i8, @intCast(value))));
+                }
+            }
         }
     }
 }

@@ -5,7 +5,8 @@
 //! There is a test for each font `text_reference.zig` has texts for. It
 //! reads the file, opens it with truetype.library, and shapes each of the
 //! font's texts with ShapeText through the jump table, with the case's
-//! direction, language and features. Each glyph that comes out is
+//! direction, language and features - a text of a variable font's
+//! instance with the font opened there. Each glyph that comes out is
 //! compared with the one written down: its number, its cluster, its
 //! advance and its offsets. A test is skipped when its font is not
 //! fetched, and fails by the font's name when the file is not the one
@@ -24,9 +25,11 @@ const Rig = @import("library.zig").Rig;
 
 const testing = std.testing;
 
-/// The room a text is shaped in, and the most features a case names.
+/// The room a text is shaped in, and the most features and axes a case
+/// names.
 const room = 256;
 const most_features = 16;
+const most_axes = 4;
 
 /// A tag of four characters as a number, 0 for an empty one.
 fn tagOf(text: []const u8) u32 {
@@ -81,7 +84,22 @@ fn expectFont(expected: *const reference.Font) !void {
     const outline = rig.tb.OpenOutline(bytes.ptr, @intCast(bytes.len), null) orelse return error.NotRead;
     var differing: u32 = 0;
     for (expected.cases) |*case| {
-        if (!try sameAsWritten(&rig, outline, case)) differing += 1;
+        if (case.axes.len == 0) {
+            if (!try sameAsWritten(&rig, outline, case)) differing += 1;
+            continue;
+        }
+        // The font opened at the case's instance.
+        if (case.axes.len > most_axes) return error.CaseNotRead;
+        var asked: [most_axes]truetype.AxisValue = undefined;
+        for (case.axes, 0..) |axis, index| asked[index] = .{ .tag = tagOf(axis.tag), .value = axis.value };
+        const tags = [_]sdk.utility.TagItem{
+            .{ .tag = truetype.TTA_Axes, .data = @intFromPtr(&asked) },
+            .{ .tag = truetype.TTA_AxisCount, .data = case.axes.len },
+            .{},
+        };
+        const instance = rig.tb.OpenOutline(bytes.ptr, @intCast(bytes.len), &tags) orelse return error.NotRead;
+        if (!try sameAsWritten(&rig, instance, case)) differing += 1;
+        rig.tb.CloseOutline(instance);
     }
     rig.tb.CloseOutline(outline);
     try rig.down();
@@ -104,11 +122,21 @@ test "truetypeshaping: texts in noto/NotoColorEmoji.ttf" {
     try expectFont(reference.noto_color_emoji);
 }
 
+test "truetypeshaping: texts in source-sans/SourceSans3VF-Upright.ttf, at its default and at other weights" {
+    try expectFont(reference.source_sans_3_vf);
+}
+
+test "truetypeshaping: texts in source-sans/SourceSans3VF-Upright.otf, at its default and at other weights" {
+    try expectFont(reference.source_sans_3_vf_otf);
+}
+
 test "truetypeshaping: there is a test for every font with texts" {
-    // The four above, each named with its file.
-    try testing.expectEqual(@as(usize, 4), reference.all.len);
+    // The six above, each named with its file.
+    try testing.expectEqual(@as(usize, 6), reference.all.len);
     try testing.expectEqualStrings("go/Go-Regular.ttf", reference.go_regular.file);
     try testing.expectEqualStrings("liberation-fonts-ttf-2.1.5/LiberationSans-Regular.ttf", reference.liberation_sans_regular.file);
     try testing.expectEqualStrings("noto/NotoSansDevanagari-Regular.ttf", reference.noto_sans_devanagari_regular.file);
     try testing.expectEqualStrings("noto/NotoColorEmoji.ttf", reference.noto_color_emoji.file);
+    try testing.expectEqualStrings("source-sans/SourceSans3VF-Upright.ttf", reference.source_sans_3_vf.file);
+    try testing.expectEqualStrings("source-sans/SourceSans3VF-Upright.otf", reference.source_sans_3_vf_otf.file);
 }

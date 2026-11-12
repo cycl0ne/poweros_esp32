@@ -23,6 +23,10 @@ cluster for each character (HarfBuzz's cluster level 1), and the characters
 a text does not show taken out. HarfBuzz gets the script and the direction
 said; ShapeText finds the script itself, so a text here is of one script.
 
+A variable font is shaped at its default and at other places on its axes. A
+case names its place (`axes`); HarfBuzz is given it as the font's
+variations, and the test opens the font there.
+
 Where the two shape by different rules a text shows nothing, and the cases
 keep away from it:
 
@@ -83,6 +87,10 @@ class HbFeature(ctypes.Structure):
     _fields_ = [("tag", ctypes.c_uint32), ("value", ctypes.c_uint32), ("start", ctypes.c_uint), ("end", ctypes.c_uint)]
 
 
+class HbVariation(ctypes.Structure):
+    _fields_ = [("tag", ctypes.c_uint32), ("value", ctypes.c_float)]
+
+
 class HbInfo(ctypes.Structure):
     _fields_ = [
         ("codepoint", ctypes.c_uint32),
@@ -140,6 +148,7 @@ def library():
         "hb_face_get_upem": (ctypes.c_uint, [pointer]),
         "hb_font_create": (pointer, [pointer]),
         "hb_font_set_scale": (None, [pointer, ctypes.c_int, ctypes.c_int]),
+        "hb_font_set_variations": (None, [pointer, ctypes.POINTER(HbVariation), ctypes.c_uint]),
         "hb_buffer_create": (pointer, []),
         "hb_buffer_destroy": (None, [pointer]),
         "hb_buffer_add_utf8": (None, [pointer, ctypes.c_char_p, ctypes.c_int, ctypes.c_uint, ctypes.c_int]),
@@ -172,14 +181,16 @@ class Case:
     `listed`, the text goes to HarfBuzz as one of no script and `listed` is
     the tag the font lists its script under. `language` is the language's
     OpenType tag. `features` are (tag, value, first byte, last byte), the
-    last two left out for the whole text.
+    last two left out for the whole text. `axes` are (tag, value) for each
+    axis of a variable font that is not at its default: the instance the
+    text is shaped at.
 
     A text names a character outside ASCII by its number in braces, in
     hex: "q{301}" is a q and an acute accent behind it. A text given as
     bytes is taken as it stands, for one that is no UTF-8.
     """
 
-    def __init__(self, name, text, script, backward=False, listed="", language="", features=()):
+    def __init__(self, name, text, script, backward=False, listed="", language="", features=(), axes=()):
         self.name = name
         if isinstance(text, bytes):
             self.data = text
@@ -190,6 +201,7 @@ class Case:
         self.listed = listed
         self.language = language
         self.features = [tuple(feature) + (0, WHOLE) if len(feature) == 2 else tuple(feature) for feature in features]
+        self.axes = list(axes)
 
 
 class Font:
@@ -211,6 +223,11 @@ class Font:
         """The text of `case` shaped: (glyph, cluster, advance, right, up)
         for each glyph, as they are drawn."""
         hb = self.hb
+        axes = getattr(case, "axes", ())
+        variations = (HbVariation * max(len(axes), 1))()
+        for place, (tag, value) in enumerate(axes):
+            variations[place] = HbVariation(tag_of(tag), value)
+        hb.hb_font_set_variations(self.font, variations, len(axes))
         buffer = hb.hb_buffer_create()
         hb.hb_buffer_add_utf8(buffer, case.data, len(case.data), 0, len(case.data))
         hb.hb_buffer_set_direction(buffer, RIGHT_TO_LEFT if case.backward else LEFT_TO_RIGHT)
@@ -332,10 +349,31 @@ def emoji(name, text, **more):
     return Case(name, text, "Zyyy", **more)
 
 
+def weights(name, text, **more):
+    """A text for each weight of WEIGHTS, the default's first."""
+    cases = [Case(name, text, "Latn", **more)]
+    for weight in WEIGHTS:
+        cases.append(Case("%s, at the weight %d" % (name, weight), text, "Latn", axes=[("wght", weight)], **more))
+    return cases
+
+
 FAMILY = "{1F468}{200D}{1F469}{200D}{1F467}"
 KERNED = "AVATAR Wave, To Type. LT Yo"
 MARKED = "q{301} j{301} x{323} q{308}{304}"
 CONJUNCTS = "{915}{94D}{937} {930}{941} {926}{94D}{927}{940}{902}"
+
+# The weights a variable font's texts are shaped at besides its default.
+WEIGHTS = [300, 400, 550, 700, 900]
+
+# What the two files of the variable font - one of quadratic curves, one
+# of cubic ones - are shaped with: the same texts, as their layout tables
+# are the same.
+VARIABLE = (
+    weights("pairs set closer", KERNED)
+    + weights("marks on letters", MARKED)
+    + weights("a mark on a mark", "q{308}{301} x{323}{331} {3B1}{301}")
+    + weights("kerning switched off", KERNED, features=[("kern", 0)])
+)
 
 # The fonts read, each as its path under toolchain/fonts, the name of the file
 # written for it, and its texts. text_reference.zig lists the same files.
@@ -437,6 +475,8 @@ FONTS = [
             ),
         ],
     ),
+    ("source-sans/SourceSans3VF-Upright.ttf", "source_sans_3_vf", VARIABLE),
+    ("source-sans/SourceSans3VF-Upright.otf", "source_sans_3_vf_otf", VARIABLE),
 ]
 
 
@@ -675,6 +715,8 @@ def written(hb, file, cases):
             lines.append("            .backward = true,")
         if case.language:
             lines.append('            .language = "%s",' % case.language)
+        if case.axes:
+            lines.append("            .axes = %s," % zig_list('.{ .tag = "%s", .value = %d }' % axis for axis in case.axes))
         if case.features:
             lines.append("            .features = &.{")
             for tag, value, first, last in case.features:

@@ -32,6 +32,7 @@ const _buffer = @import("_buffer.zig");
 const Buffer = _buffer.Buffer;
 const Item = _buffer.Item;
 const Gdef = @import("_gdef.zig").Gdef;
+const Place = @import("_variation.zig").Place;
 
 /// A lookup's flags.
 pub const LOOKUP_RIGHT_TO_LEFT: u32 = 0x0001;
@@ -63,6 +64,9 @@ pub const Apply = struct {
     /// `nesting_limit` times `context_limit` places, for the sequences
     /// matched at each depth.
     places: [*]u32,
+    /// A variable font's place on its axes, by which a number of the
+    /// table is varied. Nothing for a font at its default.
+    place: Place = .{},
     /// How much more work the table may do on the run: see `spend`.
     work: u32,
     /// The lookup being applied: its flags, its set of marks, the
@@ -85,6 +89,12 @@ pub const Apply = struct {
         if (apply.work == 0) return false;
         apply.work -= 1;
         return true;
+    }
+
+    /// What the device table `device` adds to its number at the font's
+    /// place, a region of its row a piece of work.
+    pub fn deltaOf(apply: *Apply, device: Table) i32 {
+        return apply.place.delta(device, &apply.work);
     }
 
     /// Takes off what a stretch of `glyphs` glyphs costs that is moved or

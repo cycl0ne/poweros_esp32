@@ -3,6 +3,13 @@
 //! memory, and truetype.library for the font's tables, its glyphs and
 //! their measures. `Source` is the context every callback of `Memory`
 //! and `Font` gets.
+//!
+//! A variable font is shaped where its outline was opened: the place is
+//! asked of truetype.library, a coordinate an axis, and kept here for
+//! the call. A font at its default, one without axes, and one of more
+//! axes than there is room for here - which truetype.library reads at
+//! its default - are shaped with no place. The advances are the ones of
+//! the outline's place whatever it is.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -12,9 +19,15 @@ const Table = @import("_tables.zig").Table;
 const _buffer = @import("_buffer.zig");
 const _shape = @import("_shape.zig");
 
+/// How many axes a font's place is kept for: as many as truetype.library
+/// reads a font away from its default with.
+const axis_room = 32;
+
 pub const Source = struct {
     sb: *TrueTypeShapingBase,
     outline: *truetype.Outline,
+    /// The outline's place on its axes: filled in by `font`.
+    coords: [axis_room]i16 = undefined,
 
     /// The memory a call shapes with.
     pub fn memory(source: *Source) _buffer.Memory {
@@ -27,6 +40,7 @@ pub const Source = struct {
             .gdef = tableOf(source, "GDEF"),
             .gsub = tableOf(source, "GSUB"),
             .gpos = tableOf(source, "GPOS"),
+            .coords = placeOf(source),
             .context = source,
             .advanceFn = advanceOf,
             .kerningFn = kerningOf,
@@ -48,11 +62,21 @@ fn release(context: *anyopaque, block: [*]u8) void {
     source.sb.sys_base.FreeVec(block);
 }
 
+/// The outline's place on its axes, in `source`; of no length for a
+/// font at its default.
+fn placeOf(source: *Source) []const i16 {
+    const axes = source.sb.truetype_base.FontCoordinates(source.outline, &source.coords, axis_room);
+    if (axes == 0 or axes > axis_room) return &.{};
+    const coords = source.coords[0..axes];
+    for (coords) |coord| {
+        if (coord != 0) return coords;
+    }
+    return &.{};
+}
+
 fn advanceOf(context: *anyopaque, glyph: u32) i32 {
     const source: *Source = @ptrCast(@alignCast(context));
-    var metrics: truetype.GlyphMetrics = .{};
-    _ = source.sb.truetype_base.GlyphMetrics(source.outline, glyph, &metrics);
-    return metrics.advance;
+    return source.sb.truetype_base.GlyphAdvance(source.outline, glyph);
 }
 
 fn kerningOf(context: *anyopaque, left: u32, right: u32) i32 {

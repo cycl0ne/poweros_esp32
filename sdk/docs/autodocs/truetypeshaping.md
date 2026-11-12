@@ -23,7 +23,7 @@ fn ShapeGlyphs(sb: *TrueTypeShapingBase, outline: *truetype.Outline, script: u32
 
 **SINCE**
 
-1.0. LVO -20.
+1.0, a variable font at its instance since 1.3. LVO -20.
 
 **INPUTS**
 
@@ -76,6 +76,19 @@ are set to meet. A mark's offsets reach back over the advances
 between it and its glyph, so each glyph is drawn at the point the
 advances before it lead to, plus its offsets.
 
+A variable font opened away from its default (`OpenOutline`'s
+`TTA_Axes`) is shaped at that instance. A glyph's advance is
+`GlyphAdvance`'s there. A number of `GPOS` that names an item of
+`GDEF`'s store of deltas - what a single glyph or a pair is moved
+by, a point a mark or a joined glyph is attached at - takes what the
+item adds at the instance, rounded to a whole unit, a half upward.
+At the default the store is not read.
+
+Where a table replaces features under conditions on the axes, the
+first set of conditions that holds at the font's instance says which
+lookups a feature has: a condition is a stretch of one axis, its
+ends included, and an axis the font does not have is at 0.
+
 A ligature has the lowest cluster of its parts, and the glyphs one
 glyph became all have its own. A run read from right to left is
 answered turned around.
@@ -92,6 +105,10 @@ table has 65536 of them for each glyph of the run, a million for a
 short one. A table that has spent them does no more to the run: the
 call answers `TTS_OK` with what was done up to there. Fonts made for
 use stay far below it.
+
+An advance and an offset are sums, and a font can add to one as
+often as its work lasts: each stays at the largest number 32 bits
+hold, either way, and goes no further.
 
 **CONTEXT**
 
@@ -112,8 +129,14 @@ a script needs, and in what order its marks go, is the caller's to
 say. A mark keeps the advance the font gives it.
 
 Without a `GDEF` that sorts the glyphs, none is a mark or a ligature
-to a lookup's flags. Vertical advances and the adjustments a font
-makes for single sizes or for its variation axes are not read.
+to a lookup's flags. Vertical advances, with what they are varied
+by, and the adjustments a font makes for single sizes in pixels are
+not read.
+
+An item of the store adds nothing where the store is not for the
+font's number of axes, where it has no such item, and where its row
+does not lie within the table. What an item adds is held to what a
+16-bit number holds.
 
 **BUGS**
 
@@ -159,7 +182,7 @@ fn ShapeText(sb: *TrueTypeShapingBase, outline: *truetype.Outline, text: [*]cons
 
 **SINCE**
 
-1.1. LVO -24.
+1.1, a variable font at its instance since 1.3. LVO -24.
 
 **INPUTS**
 
@@ -255,6 +278,12 @@ becomes 0. In a font without `GPOS`, in a text read from left to
 right, the mark moves back by what its advance was, onto the glyph
 before it.
 
+A variable font opened away from its default is shaped at that
+instance, as `ShapeGlyphs` says: its advances, the numbers of
+`GPOS` and the features replaced under conditions are the
+instance's. The `kern` table has no deltas, and its values are the
+same at every instance.
+
 What is a mark is `GDEF`'s to say. Where a font does not sort its
 glyphs, the glyph of a mark character that has no width of its own
 is one.
@@ -276,7 +305,8 @@ The bounds are `ShapeGlyphs`'s: sequences of 64 glyphs, lookups 8
 deep, a stretch growing to 64 times its length or to 16384 glyphs,
 and for each table 65536 pieces of work a glyph, a million for a
 short stretch. A table that has spent them does no more, and the
-call answers `TTS_OK` with what was done up to there.
+call answers `TTS_OK` with what was done up to there. An advance
+and an offset stay at the largest number 32 bits hold.
 
 **CONTEXT**
 

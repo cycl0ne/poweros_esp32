@@ -2,7 +2,7 @@
 //! Axes: a variable font's axes and the places it names on them, printed
 //! and drawn. Built against the SDK only.
 //!
-//!   Axes FILE/A,SIZE/K/N,TEXT/K,NOWINDOW/S
+//!   Axes FILE/A,SIZE/K/N,TEXT/K,NOWINDOW/S,SHAPED/S
 //!
 //! FILE is a TrueType or OpenType file, read whole and opened with
 //! truetype.library. It prints each axis - its tag, its name, its range
@@ -19,6 +19,16 @@
 //! screen: the place's name and TEXT, or a line of Latin letters and
 //! digits. The window stays until the close gadget or Ctrl-C; NOWINDOW
 //! prints and stops there.
+//!
+//! With SHAPED the text is laid out by the font's tables at each place
+//! (truetypeshaping.library's `ShapeText`): pairs kerned and marks set
+//! on their letters as that place has them. Each place's run is printed
+//! - how many glyphs and how wide, then each glyph with the byte of the
+//! text it stands for, its advance and its offsets, in the font's units
+//! - and the line is drawn glyph by glyph (`RenderGlyph`) behind the
+//! place's name, each glyph at the point the advances before it lead to
+//! plus its offsets. TEXT is UTF-8; without it the line is one of
+//! kerned pairs and of marks on letters.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -26,12 +36,14 @@ const exec = sdk.exec;
 const graphics = sdk.graphics;
 const intuition = sdk.intuition;
 const truetype = sdk.truetype;
+const truetypeshaping = sdk.truetypeshaping;
 const fontimage = graphics.fontimage;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const TrueTypeBase = sdk.interface.truetype.TrueTypeBase;
+const TrueTypeShapingBase = sdk.interface.truetypeshaping.TrueTypeShapingBase;
 const wn = intuition.windows;
 const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
@@ -39,14 +51,15 @@ const RastPort = graphics.RastPort;
 const rdargs = dos.rdargs;
 
 pub const COMMAND_NAME = "Axes";
-const VERSION_STRING = "\x00$VER: Axes 1.0 (12.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Axes 1.1 (12.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "FILE/A,SIZE/K/N,TEXT/K,NOWINDOW/S";
+const template = "FILE/A,SIZE/K/N,TEXT/K,NOWINDOW/S,SHAPED/S";
 const arg_file = 0;
 const arg_size = 1;
 const arg_text = 2;
 const arg_nowindow = 3;
+const arg_shaped = 4;
 
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_OLDLIBRARY = "%s is older than 1.8\n";
@@ -58,6 +71,10 @@ const MSG_PLACE = "%-20s at";
 const MSG_COORDINATE = " %d";
 const MSG_MEASURES = ": x height %d, cap height %d, n %d wide\n";
 const MSG_NOTOPENED = "%s: not opened there\n";
+const MSG_OLDSHAPING = "%s is older than 1.3\n";
+const MSG_NOTSHAPED = "  not shaped\n";
+const MSG_SHAPED = "  %u glyphs, %d wide\n";
+const MSG_GLYPH = "    glyph %u, byte %u: advance %d, offset %d %d\n";
 const MSG_NOMEMORY = "No memory\n";
 const MSG_NOSCREEN = "No screen\n";
 const MSG_NOWINDOW = "No window\n";
@@ -66,12 +83,22 @@ const MSG_WAITING = "The close gadget or Ctrl-C closes the window\n";
 /// The line drawn at each place when TEXT names none.
 const sample = "Hamburgefonstiv 0123456789 ÄÖÜäöüß";
 
+/// The line shaped at each place when TEXT names none: pairs a font
+/// sets closer, and marks on letters that have no glyph with the mark.
+const shaped_sample = "AVATAR Wave, To Type. LT Yo q\u{301} j\u{301} x\u{323} q\u{308}\u{304}";
+
 /// The characters rendered of each place.
 const rendered = [_]truetype.CodeRange{ .{ .first = 0x20, .last = 0x7E }, .{ .first = 0xA0, .last = 0x24F } };
 
 /// At most this many axes are read, and this many places shown.
 const max_axes = 8;
 const max_places = 9;
+
+/// A shaped line has at most this many glyphs, a glyph's coverage this
+/// many bytes, and its pixels as they are laid over the window these.
+const max_glyphs = 256;
+const coverage_room = 32 * 1024;
+const colour_room = 8 * coverage_room;
 
 const default_rows = 32;
 const margin = 8;
@@ -86,6 +113,78 @@ const Place = struct {
     text_font: graphics.TextFont = undefined,
     added: bool = false,
     font: ?*graphics.TextFont = null,
+    /// With SHAPED: the font opened there, and how wide its shaped line
+    /// is and how tall a line, in the font's units.
+    outline: ?*truetype.Outline = null,
+    run_units: i32 = 0,
+    line_units: i32 = 0,
+};
+
+/// What SHAPED works in: a line's glyphs, one glyph's coverage, and its
+/// pixels.
+const Work = struct {
+    glyphs: [max_glyphs]truetypeshaping.ShapedGlyph,
+    coverage: [coverage_room]u8,
+    colour: [colour_room]u8,
+};
+
+/// Where a shaped line is drawn, and what with.
+const Drawing = struct {
+    tb: *TrueTypeBase,
+    gb: *GraphicsBase,
+    rp: *RastPort,
+    outline: *truetype.Outline,
+    rows: u32,
+    line_units: i32,
+    work: *Work,
+
+    /// A length in the font's units as pixels of the line, to the
+    /// nearest.
+    fn toPixels(drawing: *const Drawing, units: i64) i32 {
+        const line: i64 = drawing.line_units;
+        if (line <= 0) return 0;
+        return @intCast(@divFloor(units * drawing.rows * 2 + line, line * 2));
+    }
+
+    /// Draws the run in white from (x0, y0), the line's left and top:
+    /// each glyph rendered by its number and laid over what is there by
+    /// its coverage. A glyph whose picture `work` has no room for is
+    /// left out.
+    fn draw(drawing: *const Drawing, run: []const truetypeshaping.ShapedGlyph, x0: i32, y0: i32) void {
+        const work = drawing.work;
+        var pen_units: i64 = 0;
+        for (run) |shaped| {
+            const at_units = pen_units + shaped.x_offset;
+            pen_units += shaped.advance;
+            var image = truetype.GlyphImage{ .pixels = &work.coverage, .room = coverage_room };
+            if (drawing.tb.RenderGlyph(drawing.outline, shaped.glyph, drawing.rows, &image) != truetype.TRUETYPE_OK) continue;
+            if (image.size == 0) continue;
+            const box = image.glyph;
+            const width: usize = box.width;
+            var source: [*]const u8 = &work.coverage;
+            var pitch: u32 = box.pitch;
+            switch (image.kind) {
+                .alpha4 => {
+                    if (width * box.rows * 4 > colour_room) continue;
+                    for (0..box.rows) |row| {
+                        for (0..width) |column| {
+                            const pair = work.coverage[row * box.pitch + column / 2];
+                            const covered: u8 = if (column & 1 == 0) pair >> 4 else pair & 0xF;
+                            work.colour[(row * width + column) * 4 ..][0..4].* = .{ 255, 255, 255, covered * 17 };
+                        }
+                    }
+                    source = &work.colour;
+                    pitch = box.width * 4;
+                },
+                .rgba32 => {},
+                else => continue,
+            }
+            const x = x0 + drawing.toPixels(at_units) + box.left;
+            const y = y0 - drawing.toPixels(shaped.y_offset) + box.top;
+            const area = graphics.Rect{ .min_x = x, .min_y = y, .max_x = x + box.width, .max_y = y + box.rows };
+            drawing.gb.BlendPixelArray(drawing.rp, source, pitch, @intFromEnum(sdk.rtg.bitmaps.PixelFormat.rgba32), 0, 0, &area);
+        }
+    }
 };
 
 /// A value in hundredths, as the three arguments `%s%d.%02d` takes.
@@ -133,7 +232,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [4]usize = @splat(0);
+    var argv: [5]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -169,6 +268,39 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer sys.CloseLibrary(gfx_lib);
     const gb: *GraphicsBase = @ptrCast(gfx_lib);
+
+    // The line: TEXT's, up to its NUL, or the sample.
+    var text: []const u8 = if (argv[arg_shaped] != 0) shaped_sample else sample;
+    if (rdargs.string(argv[arg_text])) |given| {
+        var given_len: usize = 0;
+        while (given[given_len] != 0) given_len += 1;
+        text = given[0..given_len];
+    }
+
+    // SHAPED: the library that lays the line out, and room to work in.
+    var shaper: ?*TrueTypeShapingBase = null;
+    var shaper_lib: ?@TypeOf(tt_lib) = null;
+    var work: ?*Work = null;
+    defer {
+        if (work) |room| sys.FreeVec(room);
+        if (shaper_lib) |opened| sys.CloseLibrary(opened);
+    }
+    if (argv[arg_shaped] != 0) {
+        const shaping_lib = sys.OpenLibrary(truetypeshaping.TRUETYPESHAPINGNAME, truetypeshaping.TRUETYPESHAPING_VERSION) orelse {
+            _ = Printf(dl, MSG_NOLIBRARY, .{truetypeshaping.TRUETYPESHAPINGNAME});
+            return dos.RETURN_FAIL;
+        };
+        shaper_lib = shaping_lib;
+        shaper = @ptrCast(shaping_lib);
+        if (shaping_lib.version == 1 and shaping_lib.revision < 3) {
+            _ = Printf(dl, MSG_OLDSHAPING, .{truetypeshaping.TRUETYPESHAPINGNAME});
+            return dos.RETURN_FAIL;
+        }
+        work = @ptrCast(@alignCast(sys.AllocVec(@sizeOf(Work), exec.MEMF_ANY) orelse {
+            _ = Printf(dl, MSG_NOMEMORY, .{});
+            return dos.RETURN_FAIL;
+        }));
+    }
 
     var places: [max_places]Place = @splat(.{});
     var count: usize = 0;
@@ -240,6 +372,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         if (place.font) |font| gb.CloseFont(font);
         if (place.added) _ = gb.RemFont(&place.text_font);
         if (place.image) |image| sys.FreeVec(image);
+        if (place.outline) |outline| tb.CloseOutline(outline);
     };
 
     // The font at each place: what it measures there, and a size of it.
@@ -255,7 +388,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             _ = Printf(dl, MSG_NOTOPENED, .{label});
             continue;
         };
-        defer tb.CloseOutline(outline);
+        // SHAPED draws from the outline; without it it is closed here.
+        if (shaper != null) place.outline = outline;
+        defer if (shaper == null) tb.CloseOutline(outline);
         var coordinates: [max_axes]i16 = @splat(0);
         _ = tb.FontCoordinates(outline, &coordinates, max_axes);
         var measures: truetype.FontMetrics = .{};
@@ -263,6 +398,22 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = Printf(dl, MSG_PLACE, .{label});
         for (coordinates[0..axis_count]) |coordinate| _ = Printf(dl, MSG_COORDINATE, .{@as(i32, coordinate)});
         _ = Printf(dl, MSG_MEASURES, .{ measures.x_height, measures.cap_height, tb.GlyphAdvance(outline, tb.GlyphIndex(outline, 'n')) });
+        if (shaper) |sb| {
+            const room = work.?;
+            var run: truetypeshaping.ShapedRun = .{ .glyphs = &room.glyphs, .room = max_glyphs };
+            if (sb.ShapeText(outline, text.ptr, @intCast(text.len), truetypeshaping.TTS_LEFT_TO_RIGHT, truetypeshaping.TTS_LANGUAGE_DEFAULT, null, &run) != truetypeshaping.TTS_OK) {
+                _ = Printf(dl, MSG_NOTSHAPED, .{});
+            } else {
+                var run_units: i32 = 0;
+                for (room.glyphs[0..run.count]) |shaped| run_units +|= shaped.advance;
+                place.run_units = run_units;
+                place.line_units = measures.ascender - measures.descender;
+                _ = Printf(dl, MSG_SHAPED, .{ run.count, run_units });
+                for (room.glyphs[0..run.count]) |shaped| {
+                    _ = Printf(dl, MSG_GLYPH, .{ shaped.glyph, shaped.cluster, shaped.advance, shaped.x_offset, shaped.y_offset });
+                }
+            }
+        }
         if (!draw) continue;
 
         const image = tb.RenderFontImage(outline, rows, &rendered, rendered.len) orelse {
@@ -291,18 +442,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer ib.UnlockPubScreen(null, screen);
 
-    // The line: TEXT's, up to its NUL, or the sample.
-    var text: []const u8 = sample;
-    if (rdargs.string(argv[arg_text])) |given| {
-        var given_len: usize = 0;
-        while (given[given_len] != 0) given_len += 1;
-        text = given[0..given_len];
-    }
-
-    // Each place's line: its name, then the text. A RastPort of its own
+    // Each place's line: its name, then the text - with SHAPED the name
+    // only, and the shaped line behind it. A RastPort of its own
     // measures them before the window is open.
     var lines: [max_places][200]u8 = undefined;
     var line_lens: [max_places]usize = @splat(0);
+    var label_widths: [max_places]i32 = @splat(0);
     const measure = gb.CreateRastPortTagList(null) orelse return dos.RETURN_FAIL;
     defer gb.FreeRastPort(measure);
     var inner_w: i32 = 0;
@@ -313,9 +458,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         while (place.label[label_len] != 0) label_len += 1;
         var at = append(&lines[i], 0, place.label[0..label_len]);
         at = append(&lines[i], at, "  ");
-        line_lens[i] = append(&lines[i], at, text);
+        line_lens[i] = if (shaper == null) append(&lines[i], at, text) else at;
         graphics.SetFont(gb, measure, font);
-        inner_w = @max(inner_w, gb.TextLength(measure, &lines[i], @intCast(line_lens[i])));
+        label_widths[i] = gb.TextLength(measure, &lines[i], @intCast(line_lens[i]));
+        var line_w = label_widths[i];
+        if (place.line_units > 0) {
+            line_w += @intCast(@divFloor(@as(i64, place.run_units) * rows, place.line_units) + 1);
+        }
+        inner_w = @max(inner_w, line_w);
         inner_h += @as(i32, font.image.height) + gap;
     }
     if (inner_w == 0) return dos.RETURN_WARN;
@@ -351,7 +501,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const shown_h: i32 = @intCast(wattr(ib, w, wn.WA_InnerHeight));
 
     set(gb, rp, graphics.RPTAG_APen, graphics.penRGB(0, 0, 0));
-    gb.RectFill(rp, &.{ .min_x = left, .min_y = top, .max_x = left + shown_w - 1, .max_y = top + shown_h - 1 });
+    gb.RectFill(rp, &.{ .min_x = left, .min_y = top, .max_x = left + shown_w, .max_y = top + shown_h });
     set(gb, rp, graphics.RPTAG_DrMd, graphics.DRMD_JAM1);
     set(gb, rp, graphics.RPTAG_APen, graphics.penRGB(255, 255, 255));
 
@@ -361,6 +511,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         graphics.SetFont(gb, rp, font);
         gb.Move(rp, left + margin, y + @as(i32, font.image.baseline));
         gb.Text(rp, &lines[i], @intCast(line_lens[i]));
+        if (shaper) |sb| shaped_line: {
+            // Shaped again, as it was to be printed: one line's glyphs
+            // are kept at a time.
+            const room = work.?;
+            const outline = place.outline orelse break :shaped_line;
+            var run: truetypeshaping.ShapedRun = .{ .glyphs = &room.glyphs, .room = max_glyphs };
+            if (sb.ShapeText(outline, text.ptr, @intCast(text.len), truetypeshaping.TTS_LEFT_TO_RIGHT, truetypeshaping.TTS_LANGUAGE_DEFAULT, null, &run) != truetypeshaping.TTS_OK) break :shaped_line;
+            const drawing = Drawing{ .tb = tb, .gb = gb, .rp = rp, .outline = outline, .rows = rows, .line_units = place.line_units, .work = room };
+            drawing.draw(room.glyphs[0..run.count], left + margin + label_widths[i], y);
+        }
         y += @as(i32, font.image.height) + gap;
     }
 
