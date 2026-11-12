@@ -1,0 +1,45 @@
+## version $VER: c/test/locale.catalog 1.0 (12.11.2026)
+## language hangugeo
+## codeset 106
+; C:test/Locale's strings in Korean. A draft: it waits for a reader of
+; Korean to go through it.
+MSG_NOLIBRARY
+%s 없음\n
+MSG_COUNTRY
+국가:        %s (%s)\n
+MSG_LANGUAGE
+언어:        %s\n
+MSG_PREFERRED
+선호:\x20\x20\x20\x20\x20\x20\x20
+MSG_ZONE
+시간대:      %s\n
+MSG_NOZONE
+시간대:      없음\n
+MSG_CATALOG
+카탈로그:    %s, 버전 %lu.%lu\n
+MSG_NOCATALOG
+카탈로그:    없음, 내장 문자열 사용\n
+MSG_DATETIME
+날짜와 시간
+MSG_DATE
+날짜
+MSG_TIME
+시간
+MSG_SHORTDATETIME
+짧은 형식
+MSG_SHORTDATE
+짧은 날짜
+MSG_SHORTTIME
+짧은 시간
+MSG_FORMAT
+  %-14s %s\n
+MSG_NUMBER
+숫자:        %D, 자릿수 구분 없이 %d\n
+MSG_MONEY
+통화:        %s 및 %s, %s\n
+MSG_PARSED
+%s: %s\n
+MSG_NODATE
+%s: %s 형식의 날짜가 아님\n
+MSG_SORTED
+정렬 순서:\x20\x20

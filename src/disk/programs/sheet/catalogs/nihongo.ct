@@ -1,0 +1,227 @@
+## version $VER: programs/Sheet.catalog 1.0 (12.11.2026)
+## language nihongo
+## codeset 106
+; Sheet's strings in Japanese. A draft: it waits for a reader of
+; Japanese to go through it.
+MSG_MENU_PROJECT
+プロジェクト
+MSG_MENU_NEW
+新規
+MSG_MENU_OPEN
+開く...
+MSG_MENU_SAVE
+保存
+MSG_MENU_SAVE_AS
+名前を付けて保存...
+MSG_MENU_QUIT
+終了
+MSG_MENU_EDIT
+編集
+MSG_MENU_UNDO
+元に戻す
+MSG_MENU_REDO
+やり直す
+MSG_MENU_CUT
+切り取り
+MSG_MENU_COPY
+コピー
+MSG_MENU_PASTE
+貼り付け
+MSG_MENU_CLEAR
+クリア
+MSG_MENU_FILL_DOWN
+下方向へフィル
+MSG_MENU_FILL_RIGHT
+右方向へフィル
+MSG_MENU_SELECT_ALL
+すべて選択
+MSG_MENU_FIND
+検索...
+MSG_MENU_FIND_NEXT
+次を検索
+MSG_MENU_SHEET
+シート
+MSG_MENU_INSERT_ROWS
+行を挿入
+MSG_MENU_DELETE_ROWS
+行を削除
+MSG_MENU_INSERT_COLUMNS
+列を挿入
+MSG_MENU_DELETE_COLUMNS
+列を削除
+MSG_MENU_WIDER
+列を広げる
+MSG_MENU_NARROWER
+列を狭める
+MSG_MENU_SUM
+自動合計
+MSG_MENU_SORT_ASCENDING
+昇順で並べ替え
+MSG_MENU_SORT_DESCENDING
+降順で並べ替え
+MSG_MENU_FORMAT
+書式
+MSG_MENU_GENERAL
+標準
+MSG_MENU_NUMBER
+数値
+MSG_MENU_PERCENT
+パーセント
+MSG_MENU_CURRENCY
+通貨
+MSG_MENU_DECIMALS_MORE
+小数点以下の桁数を増やす
+MSG_MENU_DECIMALS_LESS
+小数点以下の桁数を減らす
+MSG_MENU_VIEW
+表示
+MSG_MENU_RIBBON
+リボン
+MSG_RIBBON_HOME
+ホーム
+MSG_RIBBON_CLIPBOARD
+クリップボード
+MSG_RIBBON_PASTE_HINT
+切り取りまたはコピーした内容を貼り付けます
+MSG_RIBBON_NUMBER_HINT
+数値を小数点付き、3 桁区切りで表示します
+MSG_RIBBON_PERCENT_HINT
+数値をパーセントで表示します
+MSG_RIBBON_CURRENCY_HINT
+数値を金額として表示します
+MSG_RIBBON_DECIMALS_MORE_HINT
+小数点以下を 1 桁多く表示します
+MSG_RIBBON_DECIMALS_LESS_HINT
+小数点以下を 1 桁少なく表示します
+MSG_RIBBON_CELLS
+セル
+MSG_RIBBON_INSERT
+挿入
+MSG_RIBBON_INSERT_HINT
+選択したセルの位置に行または列を挿入します
+MSG_RIBBON_DELETE
+削除
+MSG_RIBBON_DELETE_HINT
+選択したセルの行または列を削除します
+MSG_RIBBON_EDITING
+編集
+MSG_RIBBON_SUM_HINT
+上または左の数値を合計します
+MSG_RIBBON_SORT
+並べ替え
+MSG_RIBBON_SORT_HINT
+現在のセルの列を基準に行を並べ替えます
+MSG_RIBBON_FIND
+検索
+MSG_RIBBON_FIND_HINT
+内容からセルを検索します
+MSG_RIBBON_FILL
+フィル
+MSG_RIBBON_FILL_HINT
+最初の行または列を残りにコピーします
+MSG_RIBBON_CLEAR_HINT
+選択したセルを空にします
+MSG_ROWS
+行
+MSG_COLUMNS
+列
+MSG_SUM
+合計
+MSG_AVERAGE
+平均
+MSG_COUNT
+個数
+MSG_MIN
+最小
+MSG_MAX
+最大
+MSG_ASCENDING
+昇順
+MSG_DESCENDING
+降順
+MSG_DOWN
+下方向
+MSG_RIGHT
+右方向
+MSG_PROBLEM_NAME
+そのような関数または名前はありません
+MSG_PROBLEM_ARGUMENTS
+引数の数が正しくありません
+MSG_PROBLEM_PARENTHESES
+かっこが対応していません
+MSG_PROBLEM_TOO_LONG
+数式が長すぎます
+MSG_PROBLEM_UNREADABLE
+数式を読み取れません
+MSG_PROBLEM_AT
+%s (%u 文字目)
+MSG_NO_MEMORY_KEEP
+すべてを保持するメモリが足りません
+MSG_NO_MEMORY_FILE
+ファイル全体を読み込むメモリが足りません
+MSG_LEFT_OUT
+9999 行目または IV 列より先のセルは省かれました
+MSG_NO_MEMORY_COPY
+それだけの量をコピーするメモリがありません
+MSG_NO_MEMORY_CLEAR
+すべてをクリアするメモリが足りません
+MSG_NO_MEMORY_PASTE
+すべてを貼り付けるメモリが足りません
+MSG_NO_ROOM_COLUMNS
+空きがありません: 最後の列にデータがあります
+MSG_NO_ROOM_ROWS
+空きがありません: 最後の行にデータがあります
+MSG_NO_MEMORY_THAT
+その操作のためのメモリが足りません
+MSG_NO_MEMORY_FORMAT
+すべてに書式を設定するメモリが足りません
+MSG_NOTHING_TO_ADD
+上にも左にも合計する数値がありません
+MSG_NO_MEMORY_ALL
+そのすべてを処理するメモリが足りません
+MSG_NO_MEMORY_SORT
+すべてを並べ替えるメモリが足りません
+MSG_NO_MEMORY_FILL
+すべてをフィルするメモリが足りません
+MSG_NOT_FOUND
+その内容を持つセルはありません
+MSG_UNTITLED
+名称未設定
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+%s を開けません
+MSG_CANNOT_READ
+%s を読み込めません
+MSG_TOO_BIG
+%s は大きすぎます
+MSG_NO_MEMORY_FOR
+%s 用のメモリがありません
+MSG_NO_MEMORY_TO_SAVE
+%s を保存するメモリがありません
+MSG_CANNOT_WRITE
+%s に書き込めません
+MSG_NO_REQUESTER
+%s がありません
+MSG_CHANGED
+シートが変更されています。\n先に保存しますか？
+MSG_CHANGED_BUTTONS
+保存|保存しない|キャンセル
+MSG_OPEN_TITLE
+シートを開く
+MSG_SAVE_AS_TITLE
+名前を付けてシートを保存
+MSG_FIND_LABEL
+検索
+MSG_FIND_NEXT_BUTTON
+次へ
+MSG_FIND_PREVIOUS_BUTTON
+前へ
+MSG_FIND_CLOSE_BUTTON
+閉じる
+MSG_NOLIBRARY
+%s がありません\n
+MSG_NOSCREEN
+デフォルトの画面がありません - ディスプレイなし\n
+MSG_NOMEMORY
+ウィンドウ用のメモリがありません\n

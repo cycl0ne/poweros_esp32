@@ -1,0 +1,41 @@
+## version $VER: System/Clock.catalog 1.0 (12.11.2026)
+## language hangugeo
+## codeset 106
+; Clock's strings in Korean. A draft: it waits for a reader of Korean
+; to go through it.
+MSG_WINDOW_TITLE
+시계
+MSG_MENU_PROJECT
+프로젝트
+MSG_MENU_ANALOG
+아날로그
+MSG_MENU_DIGITAL
+디지털
+MSG_MENU_ABOUT
+프로그램 정보...
+MSG_MENU_QUIT
+종료
+MSG_MENU_SETTINGS
+설정
+MSG_MENU_SECONDS
+초
+MSG_MENU_DATE
+날짜
+MSG_MENU_24_HOURS
+24시간
+MSG_MENU_SAVE
+설정 저장
+MSG_ABOUT_TITLE
+Clock 정보
+MSG_ABOUT
+%s\n\n시간을 문자판이나 숫자로 보여 줍니다.\n창을 두 번 클릭하면 서로 바뀝니다.
+MSG_OK
+확인
+MSG_NOT_SAVED
+설정을 다음 파일에 저장할 수 없습니다:\n%s
+MSG_NOLIBRARY
+%s: %s을(를) 열 수 없음\n
+MSG_NOMEMORY
+%s: 메모리 부족\n
+MSG_NOWINDOW
+%s: 창을 열 수 없음\n

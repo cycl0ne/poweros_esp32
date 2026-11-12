@@ -1,0 +1,45 @@
+## version $VER: c/test/locale.catalog 1.0 (12.11.2026)
+## language nihongo
+## codeset 106
+; C:test/Locale's strings in Japanese. A draft: it waits for a reader
+; of Japanese to go through it.
+MSG_NOLIBRARY
+%s がありません\n
+MSG_COUNTRY
+国:             %s (%s)\n
+MSG_LANGUAGE
+言語:           %s\n
+MSG_PREFERRED
+優先言語:\x20\x20\x20\x20\x20\x20
+MSG_ZONE
+タイムゾーン:   %s\n
+MSG_NOZONE
+タイムゾーン:   なし\n
+MSG_CATALOG
+カタログ:       %s, バージョン %lu.%lu\n
+MSG_NOCATALOG
+カタログ:       なし、組み込みの文字列\n
+MSG_DATETIME
+日付と時刻
+MSG_DATE
+日付
+MSG_TIME
+時刻
+MSG_SHORTDATETIME
+短い形式
+MSG_SHORTDATE
+短い日付
+MSG_SHORTTIME
+短い時刻
+MSG_FORMAT
+  %-14s %s\n
+MSG_NUMBER
+数値:           %D, 区切りなしでは %d\n
+MSG_MONEY
+金額:           %s と %s, %s\n
+MSG_PARSED
+%s は %s\n
+MSG_NODATE
+%s は %s の形式の日付ではありません\n
+MSG_SORTED
+並び順:\x20\x20\x20\x20\x20\x20\x20\x20

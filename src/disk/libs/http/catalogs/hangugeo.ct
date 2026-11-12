@@ -1,0 +1,80 @@
+## version $VER: sys/http.catalog 1.0 (12.11.2026)
+## language hangugeo
+## codeset 106
+; http.library's words for a request that failed, in Korean: a clause
+; without its full stop. A draft: it waits for a reader of Korean to go
+; through it.
+;
+; What each HTTPERR_* means.
+MSG_NOMEM
+메모리 부족
+MSG_IO
+연결 실패
+MSG_IO_BECAUSE
+연결 실패: %s
+MSG_STOPPED
+중지됨
+MSG_TIMEOUT
+서버가 제시간에 응답하지 않음
+MSG_URL
+http:// 또는 https:// URL이 아니거나 너무 긴 URL
+MSG_HOST
+호스트에 주소가 없음
+MSG_HOST_NAMED
+%s에 주소가 없음
+MSG_TLS
+TLS 세션 실패
+MSG_TLS_CERTIFICATE
+서버의 인증서를 신뢰할 수 없음: %s
+MSG_TLS_CLOCK
+시계가 맞춰져 있지 않아 인증서를 확인할 수 없음 (TimeSync)
+MSG_TLS_ALERT
+서버가 TLS 세션을 거부함 (경고 %u)
+MSG_TLS_HANDSHAKE
+TLS 핸드셰이크 실패
+MSG_PROTOCOL
+응답이 HTTP가 아님
+MSG_REDIRECT
+허용된 횟수를 넘는 리디렉션이거나 갈 곳이 없는 리디렉션
+MSG_TRUNCATED
+응답이 끝나기 전에 연결이 끊김
+MSG_STATE
+차례에 맞지 않는 호출이거나 할 수 없는 요청
+MSG_LIBRARY
+요청에 필요한 라이브러리가 없음
+MSG_LIBRARY_NAMED
+%s 없음
+MSG_DATA
+서버의 압축된 응답을 풀 수 없음
+MSG_CLOSED
+서버가 응답 없이 연결을 닫음
+MSG_UNKNOWN
+요청 실패 (%d)
+;
+; Why a server's certificate is not trusted.
+MSG_VERDICT_MALFORMED
+인증서 중 하나를 읽을 수 없음
+MSG_VERDICT_UNKNOWN_ISSUER
+신뢰할 수 있는 루트가 서명하지 않음
+MSG_VERDICT_BAD_SIGNATURE
+체인의 서명 하나가 올바르지 않음
+MSG_VERDICT_UNSUPPORTED
+확인할 수 없는 방식으로 서명됨
+MSG_VERDICT_EXPIRED
+만료됨
+MSG_VERDICT_NOT_YET_VALID
+아직 유효하지 않음
+MSG_VERDICT_NOT_CA
+발급 권한이 없는 인증서가 발급함
+MSG_VERDICT_PATH_LENGTH
+체인이 CA가 허용하는 길이를 넘음
+MSG_VERDICT_NAME_CONSTRAINTS
+체인의 CA 하나에 이름 제약이 있음
+MSG_VERDICT_WRONG_USAGE
+서버용이 아님
+MSG_VERDICT_WRONG_NAME
+다른 호스트용임
+MSG_VERDICT_TOO_LONG
+너무 긴 체인
+MSG_VERDICT_OTHER
+이유가 제시되지 않음

@@ -1,0 +1,45 @@
+## version $VER: c/test/locale.catalog 1.0 (12.11.2026)
+## language zhongwen
+## codeset 106
+; C:test/Locale's strings in Chinese, simplified. A draft: it waits for a
+; reader of Chinese to go through it.
+MSG_NOLIBRARY
+找不到 %s\n
+MSG_COUNTRY
+国家:        %s (%s)\n
+MSG_LANGUAGE
+语言:        %s\n
+MSG_PREFERRED
+首选:\x20\x20\x20\x20\x20\x20\x20
+MSG_ZONE
+时区:        %s\n
+MSG_NOZONE
+时区:        无\n
+MSG_CATALOG
+消息目录:    %s，版本 %lu.%lu\n
+MSG_NOCATALOG
+消息目录:    无，使用内置的字符串\n
+MSG_DATETIME
+日期和时间
+MSG_DATE
+日期
+MSG_TIME
+时间
+MSG_SHORTDATETIME
+短格式
+MSG_SHORTDATE
+短日期
+MSG_SHORTTIME
+短时间
+MSG_FORMAT
+  %-14s %s\n
+MSG_NUMBER
+数字:        %D，不分组为 %d\n
+MSG_MONEY
+货币:        %s 和 %s，%s\n
+MSG_PARSED
+%s 即 %s\n
+MSG_NODATE
+%s 不是符合 %s 的日期\n
+MSG_SORTED
+排序:\x20\x20\x20\x20\x20\x20\x20

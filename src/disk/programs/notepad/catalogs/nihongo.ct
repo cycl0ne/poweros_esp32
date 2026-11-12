@@ -1,0 +1,127 @@
+## version $VER: programs/Notepad.catalog 1.0 (12.11.2026)
+## language nihongo
+## codeset 106
+; Notepad's strings in Japanese. A draft: it waits for a reader of
+; Japanese to go through it.
+MSG_MENU_PROJECT
+プロジェクト
+MSG_MENU_NEW
+新規
+MSG_MENU_OPEN
+開く...
+MSG_MENU_SAVE
+保存
+MSG_MENU_SAVE_AS
+名前を付けて保存...
+MSG_MENU_QUIT
+終了
+MSG_MENU_EDIT
+編集
+MSG_MENU_UNDO
+元に戻す
+MSG_MENU_REDO
+やり直す
+MSG_MENU_CUT
+切り取り
+MSG_MENU_COPY
+コピー
+MSG_MENU_PASTE
+貼り付け
+MSG_MENU_SELECT_ALL
+すべて選択
+MSG_MENU_SEARCH
+検索
+MSG_MENU_FIND
+検索...
+MSG_MENU_FIND_NEXT
+次を検索
+MSG_MENU_FIND_PREVIOUS
+前を検索
+MSG_MENU_REPLACE
+置換...
+MSG_MENU_VIEW
+表示
+MSG_MENU_WRAP
+右端で折り返す
+MSG_MENU_NUMBERS
+行番号
+MSG_MENU_ZIG
+Zig の強調表示
+MSG_MENU_RIBBON
+リボン
+MSG_RIBBON_HOME
+ホーム
+MSG_RIBBON_CLIPBOARD
+クリップボード
+MSG_RIBBON_PASTE_HINT
+切り取りまたはコピーした内容を貼り付けます
+MSG_RIBBON_EDITING
+編集
+MSG_RIBBON_FIND
+検索
+MSG_RIBBON_FIND_HINT
+文字列を検索します (リストから次または前を再検索)
+MSG_RIBBON_REPLACE
+置換
+MSG_RIBBON_REPLACE_HINT
+見つかった文字列を別の文字列に置き換えます
+MSG_RIBBON_SELECT_ALL_HINT
+テキスト全体を選択します
+MSG_RIBBON_LINES
+行
+MSG_RIBBON_WRAP_HINT
+ウィンドウの端を越えずに次の行へ折り返します
+MSG_RIBBON_NUMBERS_HINT
+各行の左に行番号を表示します
+MSG_RIBBON_HIGHLIGHTING
+強調表示
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Zig のキーワード、文字列、コメントを色分けして表示します
+MSG_UNTITLED
+名称未設定
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+%s を開けません
+MSG_CANNOT_READ
+%s を読み込めません
+MSG_TOO_BIG
+%s は大きすぎます
+MSG_NO_MEMORY_FOR
+%s 用のメモリがありません
+MSG_NO_MEMORY_TO_SAVE
+%s を保存するメモリがありません
+MSG_CANNOT_WRITE
+%s に書き込めません
+MSG_NO_REQUESTER
+%s がありません
+MSG_CHANGED
+テキストが変更されています。\n先に保存しますか？
+MSG_CHANGED_BUTTONS
+保存|保存しない|キャンセル
+MSG_OPEN_TITLE
+テキストを開く
+MSG_SAVE_AS_TITLE
+名前を付けてテキストを保存
+MSG_FIND_TITLE
+検索と置換
+MSG_FIND_LABEL
+検索
+MSG_REPLACE_WITH
+置換後の文字列
+MSG_ANY_CASE
+大文字と小文字を区別しない
+MSG_FIND_NEXT_BUTTON
+次を検索
+MSG_REPLACE_BUTTON
+置換
+MSG_REPLACE_ALL_BUTTON
+すべて置換
+MSG_NOLIBRARY
+%s がありません\n
+MSG_NOSCREEN
+デフォルトの画面がありません - ディスプレイなし\n
+MSG_NOMEMORY
+ウィンドウ用のメモリがありません\n

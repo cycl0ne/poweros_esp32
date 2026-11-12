@@ -1,0 +1,378 @@
+## version $VER: sys/dos.catalog 1.0 (12.11.2026)
+## language hangugeo
+## codeset 106
+; dos.library's strings in Korean. A draft: it waits for a reader of
+; Korean to go through it.
+;
+SOFTWARE_FAILURE
+소프트웨어 오류
+;
+RUN_FAILED
+%s 실패, 반환 코드 %ld\n
+;
+USE_COUNT
+%TH 사용 횟수\n\n
+;
+NAME
+이름
+;
+DISABLED
+%TH 사용 안 함\n
+;
+INTERNAL
+%TH 내부\n
+;
+SYSTEM
+%TH SYSTEM\n
+;
+FAULT
+오류 %3ld
+;
+FAIL_LIMIT
+실패 한도: %ld\n
+;
+BAD_RETURN_CODE
+잘못된 반환 코드 지정
+;
+CURRENT_DIR
+현재 디렉터리
+;
+NO_RETURN_CODE
+마지막 명령이 반환 코드를 설정하지 않음
+;
+LAST_CMD_FAILED
+마지막 명령의 실패 원인
+;
+PROCESS_ENDING
+프로세스 %N 종료 중
+;
+REQUESTED_SIZE_TOO_SMALL
+요청한 크기가 너무 작음
+;
+REQUESTED_SIZE_TOO_LARGE
+요청한 크기가 너무 큼
+;
+CURRENT_STACK_SIZE
+현재 스택 크기는 %ld바이트입니다\n
+;
+NEWSHELL_FAILED
+NewShell 실패
+;
+MISSING_ELSE_OR_ENDIF
+ELSE 또는 ENDIF 없음
+;
+MUST_BE_IN_CMD_FILE
+명령 파일 안에서만 쓸 수 있음
+;
+MORE_THAN_ONE_DIR
+일치하는 디렉터리가 둘 이상임
+;
+CANT_SET
+%s을(를) 설정할 수 없음\n
+;
+BLOCK_CORRUPT_DIR
+블록 %ld: 손상된 디렉터리
+;
+BLOCK_CORRUPT_FILE
+블록 %ld: 손상된 파일
+;
+BLOCK_BAD_HEADER
+블록 %ld: 잘못된 헤더 유형
+;
+BLOCK_OUT_OF_RANGE
+블록 %ld: 범위를 벗어남
+;
+BLOCK_USED_TWICE
+블록 %ld: 두 번 사용됨
+;
+VALIDATION_ERROR
+%b 검사 중 오류
+;
+ON_DISK_BLOCK
+디스크 블록 %ld에서
+;
+CHECKSUM_ERROR
+체크섬 오류가 있습니다
+;
+WRITE_ERROR
+쓰기 오류가 있습니다
+;
+READ_ERROR
+읽기 오류가 있습니다
+;
+UNABLE_CREATE_PROC
+프로세스를 만들 수 없음\n
+;
+NEW_SHELL_PROCESS
+새 Shell 프로세스 %ld\n
+;
+CANT_OPEN_FROM_FILE
+FROM 파일 %s을(를) 열 수 없음\n
+;
+SUSPEND_REBOOT
+일시 중지|다시 시작
+;
+RETRY_CANCEL
+다시 시도|취소
+;
+NO_ROOM_FOR_BITMAP
+비트맵을 넣을 공간 없음
+;
+CMD_TOO_LONG
+너무 긴 명령
+;
+SHELL_ERROR
+Shell 오류:
+;
+CMDNAME_ERROR
+명령 이름에 오류가 있음
+;
+UNKNOWN_COMMAND
+알 수 없는 명령
+;
+LOAD_ERROR
+불러올 수 없음
+;
+SYNTAX_ERROR
+구문 오류
+;
+REDIRECT_ERROR
+리디렉션 파일을 열 수 없음
+;
+ERROR
+오류\x20
+;
+DISK_CORRUPT
+디스크 손상 - 작업 중지됨
+;
+PROGRAM_FAILED
+프로그램 실패 (오류 #
+;
+WAIT_FOR_ACTIVITY
+디스크 작업이 끝날 때까지 기다리십시오.
+;
+IN_DEVICE
+장치 %s%s에서
+;
+IN_UNIT
+유닛 %ld%s에서
+;
+YOU_MUST_REPLACE
+다음 볼륨을 반드시 다시 넣어야 합니다:
+;
+READ_WRITE_ERROR
+읽기/쓰기 오류가 있습니다
+;
+NO_DISK_PRESENT
+디스크 없음
+;
+NOT_A_DOS_DISK
+DOS 디스크가 아님
+;
+ANY_DRIVE
+아무 드라이브에나
+;
+REPLACE_VOLUME
+다음 볼륨을 다시 넣어 주십시오:
+;
+INSERT_VOLUME
+다음 볼륨을 넣어 주십시오:
+;
+IS_FULL
+가득 찼습니다
+;
+IS_PROTECTED
+쓰기 금지되어 있습니다
+;
+IS_NOT_VALIDATED
+검사되지 않았습니다
+;
+VOLUME
+볼륨
+;
+ERROR_NO_FREE_STORE
+사용 가능한 메모리 부족
+;
+ERROR_TASK_TABLE_FULL
+프로세스 테이블이 가득 참
+;
+ERROR_BAD_TEMPLATE
+잘못된 템플릿
+;
+ERROR_BAD_NUMBER
+잘못된 숫자
+;
+ERROR_REQUIRED_ARG_MISSING
+필수 인수 없음
+;
+ERROR_KEY_NEEDS_ARG
+키워드 뒤에 값이 없음
+;
+ERROR_TOO_MANY_ARGS
+인수 개수가 맞지 않음
+;
+ERROR_UNMATCHED_QUOTES
+따옴표의 짝이 맞지 않음
+;
+ERROR_LINE_TOO_LONG
+잘못되었거나 너무 긴 인수 줄
+;
+ERROR_FILE_NOT_OBJECT
+실행할 수 있는 파일이 아님
+;
+ERROR_INVALID_RESIDENT_LIBRARY
+잘못된 상주 라이브러리
+;
+ERROR_OBJECT_IN_USE
+개체가 사용 중임
+;
+ERROR_OBJECT_EXISTS
+개체가 이미 있음
+;
+ERROR_DIR_NOT_FOUND
+디렉터리를 찾을 수 없음
+;
+ERROR_OBJECT_NOT_FOUND
+개체를 찾을 수 없음
+;
+ERROR_BAD_STREAM_NAME
+잘못된 창 설명
+;
+ERROR_OBJECT_TOO_LARGE
+개체가 너무 큼
+;
+ERROR_ACTION_NOT_KNOWN
+알 수 없는 패킷 요청 유형
+;
+ERROR_INVALID_COMPONENT_NAME
+잘못된 개체 이름
+;
+ERROR_INVALID_LOCK
+잘못된 개체 잠금
+;
+ERROR_OBJECT_WRONG_TYPE
+개체가 필요한 유형이 아님
+;
+ERROR_DISK_NOT_VALIDATED
+디스크가 검사되지 않음
+;
+ERROR_DISK_WRITE_PROTECTED
+디스크가 쓰기 금지됨
+;
+ERROR_RENAME_ACROSS_DEVICES
+다른 장치로 이름 바꾸기를 시도함
+;
+ERROR_DIRECTORY_NOT_EMPTY
+디렉터리가 비어 있지 않음
+;
+ERROR_TOO_MANY_LEVELS
+단계가 너무 많음
+;
+ERROR_DEVICE_NOT_MOUNTED
+장치(또는 볼륨)가 마운트되지 않음
+;
+ERROR_SEEK_ERROR
+탐색 실패
+;
+ERROR_COMMENT_TOO_BIG
+너무 긴 주석
+;
+ERROR_DISK_FULL
+디스크가 가득 참
+;
+ERROR_DELETE_PROTECTED
+개체가 삭제 금지됨
+;
+ERROR_WRITE_PROTECTED
+파일이 쓰기 금지됨
+;
+ERROR_READ_PROTECTED
+파일이 읽기 금지됨
+;
+ERROR_NOT_A_DOS_DISK
+올바른 DOS 디스크가 아님
+;
+ERROR_NO_DISK
+드라이브에 디스크 없음
+;
+ERROR_NO_MORE_ENTRIES
+디렉터리에 항목이 더 없음
+;
+ERROR_IS_SOFT_LINK
+개체가 소프트 링크임
+;
+ERROR_OBJECT_LINKED
+개체가 링크되어 있음
+;
+ERROR_BAD_HUNK
+잘못된 로드 파일 헝크
+;
+ERROR_NOT_IMPLEMENTED
+구현되지 않은 기능
+;
+ERROR_RECORD_NOT_LOCKED
+레코드가 잠겨 있지 않음
+;
+ERROR_LOCK_COLLISION
+레코드 잠금 충돌
+;
+ERROR_LOCK_TIMEOUT
+레코드 잠금 시간 초과
+;
+ERROR_UNLOCK_ERROR
+레코드 잠금 해제 오류
+;
+ABORT_BUSY
+호출자에게 묻지 않도록 되어 있음
+;
+ABORT_DISK_ERROR
+볼륨에서 읽기 또는 쓰기 오류
+;
+ERROR_BUFFER_OVERFLOW
+버퍼 오버플로
+;
+ERROR_BREAK
+***중단
+;
+ERROR_NOT_EXECUTABLE
+실행할 수 없는 파일
+;
+ERROR_INVALID_ARGUMENT
+잘못된 인수
+;
+ERROR_INVALID_DOS_ENTRY
+잘못된 장치 목록 항목
+;
+ERROR_NO_INPUT_STREAM
+입력 스트림 없음
+;
+ERROR_BUFFER_TOO_SMALL
+버퍼가 너무 작음
+;
+ERROR_NO_PROCESS
+프로세스가 아님
+;
+ERROR_NO_HANDLER
+핸들러 없음
+;
+ERROR_PACKET_ASYNC
+차례에 맞지 않는 패킷
+;
+ERROR_ERROR_IN_PACKET
+패킷에 오류가 있음
+;
+ERROR_NO_CURRENT_DIRECTORY
+현재 디렉터리 없음
+;
+ERROR_HANDLER_NOT_LOADED
+핸들러가 로드되지 않음
+;
+ERROR_HANDLER_START_ERROR
+핸들러를 시작하지 못함
+;
+ERROR_BROKEN_PIPE
+파이프의 반대쪽 끝이 닫힘
+;
+ERROR_BAD_CHECKSUM
+체크섬 오류: 읽은 데이터가 기록한 데이터와 다름
+;

@@ -1,0 +1,355 @@
+## version $VER: sys/anvil.catalog 1.0 (12.11.2026)
+## language hangugeo
+## codeset 106
+; The desktop's strings in Korean. A draft: it waits for a reader of
+; Korean to go through it. Left out, so the English built in is shown:
+; Parent (MSG_RIBBON_PARENT) and Tool types (MSG_INFO_TOOL_TYPES).
+;
+; The menus.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+배경
+MSG_MENU_EXECUTE
+명령 실행...
+MSG_MENU_REDRAW_ALL
+모두 다시 그리기
+MSG_MENU_UPDATE_ALL
+모두 새로 고침
+MSG_MENU_LAST_MESSAGE
+마지막 메시지
+MSG_MENU_VOLUME
+음량...
+MSG_MENU_ABOUT
+프로그램 정보...
+MSG_MENU_QUIT
+종료...
+MSG_MENU_REBOOT
+다시 시작...
+MSG_MENU_WINDOW
+창
+MSG_MENU_NEW_DRAWER
+새 서랍
+MSG_MENU_OPEN_PARENT
+상위 서랍 열기
+MSG_MENU_BACK
+뒤로
+MSG_MENU_FORWARD
+앞으로
+MSG_MENU_CLOSE
+닫기
+MSG_MENU_UPDATE
+새로 고침
+MSG_MENU_SHELL
+Shell
+MSG_MENU_SELECT_CONTENTS
+내용 선택
+MSG_MENU_CLEAN_UP
+정리
+MSG_MENU_CLEAN_UP_BY
+정리 기준
+MSG_MENU_BY_NAME
+이름
+MSG_MENU_BY_DATE
+날짜
+MSG_MENU_BY_SIZE
+크기
+MSG_MENU_SNAP
+격자에 맞춤
+MSG_MENU_ARRANGE
+크기 변경 시 정렬
+MSG_MENU_SNAPSHOT
+위치 기억
+MSG_MENU_SNAPSHOT_WINDOW
+창
+MSG_MENU_SNAPSHOT_ALL
+모두
+MSG_MENU_SHOW
+표시
+MSG_MENU_ONLY_ICONS
+아이콘만
+MSG_MENU_ALL_FILES
+모든 파일
+MSG_MENU_VIEW_BY
+보기 방식
+MSG_MENU_BY_ICON
+아이콘
+MSG_MENU_RIBBON
+리본
+MSG_MENU_ICONS
+아이콘
+MSG_MENU_OPEN
+열기
+MSG_MENU_COPY
+복사
+MSG_MENU_RENAME
+이름 바꾸기...
+MSG_MENU_INFORMATION
+정보...
+MSG_MENU_UNSNAPSHOT
+위치 기억 해제
+MSG_MENU_LEAVE_OUT
+꺼내 두기
+MSG_MENU_PUT_AWAY
+도로 넣기
+MSG_MENU_DELETE
+삭제...
+MSG_MENU_FORMAT
+디스크 포맷...
+MSG_MENU_EMPTY_TRASH
+휴지통 비우기
+MSG_MENU_TOOLS
+도구
+;
+; A drawer's ribbon.
+MSG_RIBBON_HOME
+홈
+MSG_RIBBON_GO
+이동
+MSG_RIBBON_DRAWER
+서랍
+MSG_RIBBON_RENAME
+이름 바꾸기
+MSG_RIBBON_DELETE
+삭제
+MSG_RIBBON_INFORMATION
+정보
+MSG_RIBBON_VIEW
+보기
+MSG_RIBBON_ARRANGE
+정렬
+;
+; A drawer shown as a list.
+MSG_LIST_PROTECTION
+보호
+MSG_LIST_DRAWER
+서랍
+;
+; The screen's title.
+MSG_TITLE_MEMORY
+메모리
+MSG_TITLE_INTERNAL
+내부
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+남음
+MSG_TITLE_BATTERY
+배터리
+MSG_TITLE_CHARGING
+충전 중
+MSG_TITLE_EXTERNAL_POWER
+외부 전원
+;
+; A disk's window title.
+MSG_DISK_FULL
+참
+MSG_DISK_IN_USE
+사용 중
+;
+; What the desktop says in the screen's title.
+MSG_NOTHING_SAID
+아직 메시지가 없습니다
+MSG_NOT_EVERY_FILE
+선택한 파일 중 일부를 가져올 수 없습니다
+MSG_DISK_NOT_RENAMED
+디스크 이름을 바꿀 수 없습니다
+MSG_NOT_RENAMED
+이름을 바꿀 수 없습니다
+MSG_ICON_NOT_WRITTEN
+아이콘을 저장할 수 없습니다
+MSG_DISK_NOT_THERE
+디스크가 없습니다
+MSG_DISK_BUSY
+디스크가 사용 중입니다
+MSG_DISK_NOT_FORMATTED
+디스크를 포맷할 수 없습니다
+MSG_DRAWER_NOT_MADE
+서랍을 만들 수 없습니다
+MSG_SETTING_NOT_KEPT
+%s 설정을 유지할 수 없습니다
+MSG_SETTING_NOT_WRITTEN
+%s 설정을 anvil.prefs에 쓸 수 없습니다
+MSG_DRAWER_ICON_NOT_WRITTEN
+서랍의 아이콘을 저장할 수 없습니다
+MSG_NO_MEMORY_REBOOT
+다시 시작할 메모리 부족
+MSG_NO_MEMORY_ABOUT
+프로그램 정보를 표시할 메모리 부족
+MSG_NO_TOOL
+%s을(를) 열 도구가 없습니다
+MSG_NOT_STARTED
+%s을(를) 시작할 수 없습니다
+MSG_COMMAND_NOT_STARTED
+명령을 시작할 수 없습니다
+MSG_SHELL_DRAWER_NOT_FOUND
+Shell의 서랍을 찾을 수 없습니다
+MSG_SHELL_NOT_STARTED
+Shell을 시작할 수 없습니다
+MSG_TRASH_OWN_DISK
+휴지통에는 같은 디스크의 파일만 넣을 수 있습니다
+MSG_NOT_MOVED
+파일을 그곳으로 옮길 수 없습니다
+MSG_LEFT_OUT_NOT_KEPT
+이 디스크는 꺼내 둔 항목을 기억하지 못합니다
+MSG_NO_MEMORY_WORK
+작업을 시작할 메모리 부족
+;
+; The questions asked, with their buttons.
+MSG_QUIT_RUNNING_ADDED
+데스크톱에서 시작한 프로그램이 아직 실행 중입니다(%lu).\n\
+이 프로그램들은 계속 실행됩니다. 프로그램이\n\
+데스크톱에 추가한 창, 아이콘, 메뉴 항목(%lu)은\n\
+데스크톱과 함께 사라집니다.\n\n데스크톱을 종료하시겠습니까?
+MSG_QUIT_RUNNING
+데스크톱에서 시작한 프로그램이 아직 실행 중입니다(%lu).\n\
+이 프로그램들은 계속 실행됩니다.\n\n데스크톱을 종료하시겠습니까?
+MSG_QUIT_ADDED
+프로그램이 데스크톱에 추가한 창, 아이콘, 메뉴 항목(%lu)은\n\
+데스크톱과 함께 사라집니다.\n\n데스크톱을 종료하시겠습니까?
+MSG_QUIT_ASK
+데스크톱을 종료하시겠습니까?
+MSG_QUIT_BUTTONS
+종료|취소
+MSG_DELETE_ASK
+선택한 항목(%lu)을 완전히 삭제하시겠습니까?\n\
+서랍은 그 안의 모든 내용과 함께 삭제됩니다.
+MSG_DELETE_BUTTONS
+삭제|취소
+MSG_RENAME_PROMPT
+새 이름:
+MSG_FORMAT_TITLE
+디스크 포맷
+MSG_FORMAT_ASK
+%s을(를) 포맷하시겠습니까?\n디스크의 모든 내용이 사라집니다.
+MSG_FORMAT_BUTTONS
+포맷|취소
+MSG_NEW_DRAWER_PROMPT
+새 서랍의 이름:
+MSG_UNNAMED
+이름 없음
+MSG_EXECUTE_TITLE
+명령 실행
+MSG_EXECUTE_PROMPT
+실행할 명령:
+MSG_OUTPUT
+출력
+MSG_REBOOT_TITLE
+다시 시작
+MSG_REBOOT_ASK
+컴퓨터를 다시 시작하시겠습니까?\n프로그램에서 저장하지 않은 내용은 사라집니다.
+MSG_REBOOT_BUTTONS
+다시 시작|취소
+MSG_REBOOT_IN_USE
+다음은 사용 중이어서 내용이 모두 기록되지 않을 수 있습니다:\n%s\n\n\
+그래도 다시 시작하시겠습니까?
+MSG_STARTUP_WAIT
+프로그램 '%s'이(가)\n아직 끝나지 않았습니다.\n더 기다리시겠습니까?
+MSG_STARTUP_BUTTONS
+기다리기|계속
+MSG_OK
+확인(_O)
+MSG_CANCEL
+취소(_C)
+;
+; About.
+MSG_ABOUT_TITLE
+Anvil 정보
+MSG_ABOUT_WHAT
+PowerOS 데스크톱
+MSG_ABOUT_RELEASE
+릴리스
+MSG_ABOUT_KERNEL
+커널
+MSG_ABOUT_BOARD
+보드
+MSG_ABOUT_PROCESSOR
+프로세서
+MSG_ABOUT_CORES
+코어
+MSG_ABOUT_CLOCK
+클럭
+MSG_ABOUT_SCREEN
+화면
+MSG_ABOUT_SYSTEM_DISK
+시스템 디스크
+MSG_ABOUT_UP_FOR
+가동 시간
+MSG_ABOUT_IN_USE
+사용 중
+MSG_ABOUT_OF
+/
+MSG_ABOUT_BITS
+비트/픽셀
+MSG_ABOUT_DAY
+일
+MSG_ABOUT_DAYS
+일
+;
+; Information.
+MSG_INFO_TITLE
+정보
+MSG_INFO_STATE
+상태
+MSG_INFO_READ_ONLY
+읽기 전용
+MSG_INFO_VALIDATING
+검사 중
+MSG_INFO_READ_WRITE
+읽기/쓰기
+MSG_INFO_UNKNOWN
+알 수 없음
+MSG_INFO_BLOCKS
+블록
+MSG_INFO_USED
+사용
+MSG_INFO_FREE
+여유
+MSG_INFO_BLOCK_SIZE
+블록 크기
+MSG_INFO_BYTES
+바이트
+MSG_INFO_BLOCKS_COUNTED
+블록
+MSG_INFO_CREATED
+만든 날짜
+MSG_INFO_LAST_CHANGED
+수정한 날짜
+MSG_INFO_SCRIPT
+스크립트
+MSG_INFO_ARCHIVED
+보관됨
+MSG_INFO_READABLE
+읽기 가능
+MSG_INFO_WRITABLE
+쓰기 가능
+MSG_INFO_EXECUTABLE
+실행 가능
+MSG_INFO_DELETABLE
+삭제 가능
+MSG_INFO_COMMENT
+주석
+MSG_INFO_STACK
+스택
+MSG_INFO_DEFAULT_TOOL
+기본 도구
+MSG_INFO_SAVE
+저장(_S)
+MSG_INFO_NOT_WRITTEN
+아이콘을 저장할 수 없습니다.
+MSG_INFO_OK
+확인
+;
+; The window copying and deleting.
+MSG_WORK_COPYING
+복사 중
+MSG_WORK_DELETING
+삭제 중
+MSG_WORK_STOP
+중지(_S)
+MSG_WORK_WAITING
+%lu개 더 대기 중
+MSG_WORK_REPLACE_ASK
+%s이(가) 이미 있습니다.\n바꾸시겠습니까?
+MSG_WORK_REPLACE_BUTTONS
+바꾸기|모두 바꾸기|건너뛰기|중지

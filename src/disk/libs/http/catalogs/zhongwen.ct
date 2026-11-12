@@ -1,0 +1,80 @@
+## version $VER: sys/http.catalog 1.0 (12.11.2026)
+## language zhongwen
+## codeset 106
+; http.library's words for a request that failed, in Chinese, simplified:
+; a clause without its full stop. A draft: it waits for a reader of
+; Chinese to go through it.
+;
+; What each HTTPERR_* means.
+MSG_NOMEM
+内存不足
+MSG_IO
+连接失败
+MSG_IO_BECAUSE
+连接失败: %s
+MSG_STOPPED
+已停止
+MSG_TIMEOUT
+服务器未及时应答
+MSG_URL
+不是 http:// 或 https:// 的 URL，或者 URL 太长
+MSG_HOST
+主机没有地址
+MSG_HOST_NAMED
+%s 没有地址
+MSG_TLS
+TLS 会话失败
+MSG_TLS_CERTIFICATE
+服务器的证书不受信任: %s
+MSG_TLS_CLOCK
+时钟尚未设置，无法检查证书 (TimeSync)
+MSG_TLS_ALERT
+服务器拒绝了 TLS 会话 (警报 %u)
+MSG_TLS_HANDSHAKE
+TLS 握手失败
+MSG_PROTOCOL
+应答不是 HTTP
+MSG_REDIRECT
+重定向次数超出允许范围，或重定向没有去处
+MSG_TRUNCATED
+应答尚未结束，连接就已断开
+MSG_STATE
+调用次序不对，或请求无法发出
+MSG_LIBRARY
+缺少请求所需的库
+MSG_LIBRARY_NAMED
+%s 不存在
+MSG_DATA
+服务器的压缩应答无法解压
+MSG_CLOSED
+服务器未应答就关闭了连接
+MSG_UNKNOWN
+请求失败 (%d)
+;
+; Why a server's certificate is not trusted.
+MSG_VERDICT_MALFORMED
+其中一个证书无法读取
+MSG_VERDICT_UNKNOWN_ISSUER
+没有受信任的根证书为它签名
+MSG_VERDICT_BAD_SIGNATURE
+证书链中有一个签名不正确
+MSG_VERDICT_UNSUPPORTED
+它的签名方式无法检查
+MSG_VERDICT_EXPIRED
+它已过期
+MSG_VERDICT_NOT_YET_VALID
+它尚未生效
+MSG_VERDICT_NOT_CA
+签发它的证书无权签发证书
+MSG_VERDICT_PATH_LENGTH
+证书链的长度超出了其 CA 的允许范围
+MSG_VERDICT_NAME_CONSTRAINTS
+证书链中有一个 CA 带有名称约束
+MSG_VERDICT_WRONG_USAGE
+它不是用于服务器的证书
+MSG_VERDICT_WRONG_NAME
+它是为另一台主机签发的
+MSG_VERDICT_TOO_LONG
+证书链太长
+MSG_VERDICT_OTHER
+未说明原因

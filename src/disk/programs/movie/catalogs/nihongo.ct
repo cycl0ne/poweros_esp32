@@ -1,0 +1,47 @@
+## version $VER: programs/Movie.catalog 1.0 (12.11.2026)
+## language nihongo
+## codeset 106
+; Movie's strings in Japanese. A draft: it waits for a reader of
+; Japanese to go through it.
+MSG_MENU_PROJECT
+プロジェクト
+MSG_MENU_OPEN
+開く...
+MSG_MENU_WHOLE_SCREEN
+全画面
+MSG_MENU_ABOUT
+Movie について
+MSG_MENU_QUIT
+終了
+MSG_MENU_SOUND
+音声
+MSG_MENU_NO_SOUND
+なし
+MSG_MENU_SUBTITLES
+字幕
+MSG_MENU_SUBTITLES_OFF
+オフ
+MSG_MENU_TRACK
+トラック
+MSG_ASK_OPEN
+動画を再生
+MSG_ABOUT_TITLE
+Movie について
+MSG_ABOUT
+%s\n\n動画を再生します - MP4、QuickTime の MOV、Matroska の MKV:\nH.264、H.265、Motion JPEG の映像、\nAAC、AC-3、MP3、FLAC、Vorbis の音声、および字幕。
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nを再生できません:\n%s
+MSG_VOLUME_HINT
+音量
+MSG_NOLIBRARY
+%s: %s を開けません\n
+MSG_NOMEMORY
+%s: メモリが足りません\n
+MSG_NOWINDOW
+%s: ウィンドウを開けません\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

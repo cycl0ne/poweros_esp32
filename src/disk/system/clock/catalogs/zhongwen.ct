@@ -1,0 +1,41 @@
+## version $VER: System/Clock.catalog 1.0 (12.11.2026)
+## language zhongwen
+## codeset 106
+; Clock's strings in Chinese, simplified. A draft: it waits for a reader of
+; Chinese to go through it.
+MSG_WINDOW_TITLE
+时钟
+MSG_MENU_PROJECT
+项目
+MSG_MENU_ANALOG
+指针式
+MSG_MENU_DIGITAL
+数字式
+MSG_MENU_ABOUT
+关于...
+MSG_MENU_QUIT
+退出
+MSG_MENU_SETTINGS
+设置
+MSG_MENU_SECONDS
+秒
+MSG_MENU_DATE
+日期
+MSG_MENU_24_HOURS
+24 小时制
+MSG_MENU_SAVE
+保存设置
+MSG_ABOUT_TITLE
+关于 Clock
+MSG_ABOUT
+%s\n\n以表盘或数字显示时间。\n在窗口中双击可在两者之间切换。
+MSG_OK
+确定
+MSG_NOT_SAVED
+设置无法保存到\n%s。
+MSG_NOLIBRARY
+%s: 无法打开 %s\n
+MSG_NOMEMORY
+%s: 内存不足\n
+MSG_NOWINDOW
+%s: 无法打开窗口\n

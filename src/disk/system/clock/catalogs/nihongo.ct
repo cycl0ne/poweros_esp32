@@ -1,0 +1,41 @@
+## version $VER: System/Clock.catalog 1.0 (12.11.2026)
+## language nihongo
+## codeset 106
+; Clock's strings in Japanese. A draft: it waits for a reader of
+; Japanese to go through it.
+MSG_WINDOW_TITLE
+時計
+MSG_MENU_PROJECT
+プロジェクト
+MSG_MENU_ANALOG
+アナログ
+MSG_MENU_DIGITAL
+デジタル
+MSG_MENU_ABOUT
+Clock について...
+MSG_MENU_QUIT
+終了
+MSG_MENU_SETTINGS
+設定
+MSG_MENU_SECONDS
+秒
+MSG_MENU_DATE
+日付
+MSG_MENU_24_HOURS
+24 時間表示
+MSG_MENU_SAVE
+設定を保存
+MSG_ABOUT_TITLE
+Clock について
+MSG_ABOUT
+%s\n\n時刻を文字盤または数字で表示します。\nウィンドウ内をダブルクリックすると表示が切り替わります。
+MSG_OK
+OK
+MSG_NOT_SAVED
+設定を\n%s\nに保存できませんでした。
+MSG_NOLIBRARY
+%s: %s を開けません\n
+MSG_NOMEMORY
+%s: メモリが足りません\n
+MSG_NOWINDOW
+%s: ウィンドウを開けません\n

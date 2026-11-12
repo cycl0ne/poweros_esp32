@@ -1,0 +1,127 @@
+## version $VER: programs/Notepad.catalog 1.0 (12.11.2026)
+## language zhongwen
+## codeset 106
+; Notepad's strings in Chinese, simplified. A draft: it waits for a reader
+; of Chinese to go through it.
+MSG_MENU_PROJECT
+项目
+MSG_MENU_NEW
+新建
+MSG_MENU_OPEN
+打开...
+MSG_MENU_SAVE
+保存
+MSG_MENU_SAVE_AS
+另存为...
+MSG_MENU_QUIT
+退出
+MSG_MENU_EDIT
+编辑
+MSG_MENU_UNDO
+撤销
+MSG_MENU_REDO
+重做
+MSG_MENU_CUT
+剪切
+MSG_MENU_COPY
+复制
+MSG_MENU_PASTE
+粘贴
+MSG_MENU_SELECT_ALL
+全选
+MSG_MENU_SEARCH
+搜索
+MSG_MENU_FIND
+查找...
+MSG_MENU_FIND_NEXT
+查找下一个
+MSG_MENU_FIND_PREVIOUS
+查找上一个
+MSG_MENU_REPLACE
+替换...
+MSG_MENU_VIEW
+视图
+MSG_MENU_WRAP
+自动换行
+MSG_MENU_NUMBERS
+行号
+MSG_MENU_ZIG
+Zig 高亮
+MSG_MENU_RIBBON
+功能区
+MSG_RIBBON_HOME
+主页
+MSG_RIBBON_CLIPBOARD
+剪贴板
+MSG_RIBBON_PASTE_HINT
+插入已剪切或复制的内容
+MSG_RIBBON_EDITING
+编辑
+MSG_RIBBON_FIND
+查找
+MSG_RIBBON_FIND_HINT
+查找文本；列表可再次查找下一个或上一个
+MSG_RIBBON_REPLACE
+替换
+MSG_RIBBON_REPLACE_HINT
+用另一段文本替换找到的文本
+MSG_RIBBON_SELECT_ALL_HINT
+选择全部文本
+MSG_RIBBON_LINES
+行
+MSG_RIBBON_WRAP_HINT
+在下一行继续，而不是超出窗口边缘
+MSG_RIBBON_NUMBERS_HINT
+在左侧为每一行编号
+MSG_RIBBON_HIGHLIGHTING
+高亮
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+用不同的颜色显示 Zig 的关键字、字符串和注释
+MSG_UNTITLED
+未命名
+MSG_OK
+确定
+MSG_CANNOT_OPEN
+无法打开 %s
+MSG_CANNOT_READ
+无法读取 %s
+MSG_TOO_BIG
+%s 太大
+MSG_NO_MEMORY_FOR
+内存不足，无法载入 %s
+MSG_NO_MEMORY_TO_SAVE
+内存不足，无法保存 %s
+MSG_CANNOT_WRITE
+无法写入 %s
+MSG_NO_REQUESTER
+找不到 %s
+MSG_CHANGED
+文本已更改。\n要先保存吗？
+MSG_CHANGED_BUTTONS
+保存|不保存|取消
+MSG_OPEN_TITLE
+打开文本
+MSG_SAVE_AS_TITLE
+文本另存为
+MSG_FIND_TITLE
+查找和替换
+MSG_FIND_LABEL
+查找
+MSG_REPLACE_WITH
+替换为
+MSG_ANY_CASE
+不区分大小写
+MSG_FIND_NEXT_BUTTON
+查找下一个
+MSG_REPLACE_BUTTON
+替换
+MSG_REPLACE_ALL_BUTTON
+全部替换
+MSG_NOLIBRARY
+找不到 %s\n
+MSG_NOSCREEN
+没有默认屏幕 - 没有显示\n
+MSG_NOMEMORY
+内存不足，无法打开窗口\n

@@ -1,0 +1,80 @@
+## version $VER: sys/http.catalog 1.0 (12.11.2026)
+## language nihongo
+## codeset 106
+; http.library's words for a request that failed, in Japanese: a clause
+; without its full stop. A draft: it waits for a reader of Japanese to
+; go through it.
+;
+; What each HTTPERR_* means.
+MSG_NOMEM
+メモリがありません
+MSG_IO
+接続に失敗しました
+MSG_IO_BECAUSE
+接続に失敗しました: %s
+MSG_STOPPED
+中止されました
+MSG_TIMEOUT
+サーバーが時間内に応答しませんでした
+MSG_URL
+http:// または https:// の URL ではないか、長すぎます
+MSG_HOST
+ホストにアドレスがありません
+MSG_HOST_NAMED
+%s にアドレスがありません
+MSG_TLS
+TLS セッションに失敗しました
+MSG_TLS_CERTIFICATE
+サーバーの証明書を信頼できません: %s
+MSG_TLS_CLOCK
+時計が設定されていないため、証明書を検証できません (TimeSync)
+MSG_TLS_ALERT
+サーバーが TLS セッションを拒否しました (アラート %u)
+MSG_TLS_HANDSHAKE
+TLS ハンドシェイクに失敗しました
+MSG_PROTOCOL
+応答が HTTP ではありません
+MSG_REDIRECT
+リダイレクトが許可された回数を超えたか、行き先がありません
+MSG_TRUNCATED
+応答が終わる前に接続が切れました
+MSG_STATE
+順序の違う呼び出しか、実行できない要求です
+MSG_LIBRARY
+要求に必要なライブラリがありません
+MSG_LIBRARY_NAMED
+%s がありません
+MSG_DATA
+サーバーの圧縮された応答を展開できません
+MSG_CLOSED
+サーバーが応答せずに接続を閉じました
+MSG_UNKNOWN
+要求に失敗しました (%d)
+;
+; Why a server's certificate is not trusted.
+MSG_VERDICT_MALFORMED
+証明書の 1 つを読み取れません
+MSG_VERDICT_UNKNOWN_ISSUER
+信頼されたルートによる署名がありません
+MSG_VERDICT_BAD_SIGNATURE
+チェーン内の署名が正しくありません
+MSG_VERDICT_UNSUPPORTED
+検証できない方式で署名されています
+MSG_VERDICT_EXPIRED
+有効期限が切れています
+MSG_VERDICT_NOT_YET_VALID
+まだ有効ではありません
+MSG_VERDICT_NOT_CA
+発行する権限のない証明書によって発行されています
+MSG_VERDICT_PATH_LENGTH
+チェーンが CA の許可する長さを超えています
+MSG_VERDICT_NAME_CONSTRAINTS
+チェーン内の CA に名前制約があります
+MSG_VERDICT_WRONG_USAGE
+サーバー用の証明書ではありません
+MSG_VERDICT_WRONG_NAME
+別のホスト用の証明書です
+MSG_VERDICT_TOO_LONG
+チェーンが長すぎます
+MSG_VERDICT_OTHER
+理由は示されていません

@@ -1,0 +1,249 @@
+## version $VER: programs/Player.catalog 1.0 (12.11.2026)
+## language hangugeo
+## codeset 106
+; The Player's strings in Korean. A draft: it waits for a reader of
+; Korean to go through it.
+MSG_MENU_PROJECT
+프로젝트
+MSG_MENU_OPEN
+열기...
+MSG_MENU_OPEN_DRAWER
+서랍 열기...
+MSG_MENU_OPEN_URL
+URL 열기...
+MSG_MENU_SAVE_PLAYLIST
+재생 목록 저장...
+MSG_MENU_ABOUT
+프로그램 정보
+MSG_MENU_QUIT
+종료
+MSG_MENU_PLAYLIST
+재생 목록
+MSG_MENU_ADD
+추가...
+MSG_MENU_REMOVE
+제거
+MSG_MENU_CLEAR
+비우기
+MSG_MENU_SHUFFLE
+임의 재생
+MSG_MENU_REPEAT
+반복
+MSG_MENU_REPEAT_OFF
+끔
+MSG_MENU_REPEAT_ALL
+전체
+MSG_MENU_REPEAT_ONE
+한 곡
+MSG_MENU_PICTURE
+시각 효과
+MSG_MENU_PLASMA
+플라스마
+MSG_MENU_WAVE
+파형
+MSG_MENU_BARS
+막대
+MSG_MENU_SETTINGS
+설정
+MSG_MENU_REMEMBER
+마지막 위치 기억
+MSG_PAGE_PLAYING
+지금 재생 중
+MSG_PAGE_RADIO
+라디오
+MSG_VIEW_KEPT
+내 방송국
+MSG_VIEW_FOUND
+찾은 방송국
+MSG_NAME
+이름
+MSG_GENRE
+장르
+MSG_COUNTRY
+국가
+MSG_COLUMN_TITLE
+제목
+MSG_COLUMN_ARTIST
+아티스트
+MSG_COLUMN_TIME
+시간
+MSG_COLUMN_STATION
+방송국
+MSG_COLUMN_ADDRESS
+주소
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+장르
+MSG_SHUFFLE_BUTTON
+임의 재생(_S)
+MSG_SHUFFLE_HINT
+곡을 임의의 순서로 재생합니다
+MSG_REPEAT_BUTTON
+반복(_R)
+MSG_REPEAT_HINT
+목록 전체 또는 한 곡을 다시 재생합니다
+MSG_MUTE_BUTTON
+음소거(_M)
+MSG_MUTE_HINT
+소리를 끄고, 다시 켭니다
+MSG_LENGTH_HINT
+곡의 길이 또는 남은 시간
+MSG_ADD_BUTTON
+추가(_A)...
+MSG_REMOVE_BUTTON
+제거(_E)
+MSG_CLEAR_BUTTON
+비우기(_L)
+MSG_OUTPUT_LABEL
+출력(_O)
+MSG_SEARCH_BUTTON
+검색(_H)
+MSG_KEEP_BUTTON
+보관(_K)
+MSG_FORGET_BUTTON
+제거(_V)
+MSG_FIND_LABEL
+찾기(_F)
+MSG_BY_LABEL
+기준(_I)
+MSG_URL_TITLE
+URL 열기
+MSG_URL_ADDRESS
+주소(_D)
+MSG_URL_OPEN
+열기(_O)
+MSG_URL_CANCEL
+취소(_C)
+MSG_ASK_PLAY
+재생할 곡 선택
+MSG_ASK_ADD
+추가할 곡 선택
+MSG_ASK_DRAWER
+서랍 선택
+MSG_ASK_SAVE
+다른 이름으로 재생 목록 저장
+MSG_ABOUT_TITLE
+Player 정보
+MSG_ABOUT
+%s\n\nWAV, MP3, FLAC, Ogg Vorbis, AAC, AC-3 파일의 곡을\n끊김 없이 이어서, 커버와 함께 재생하고,\n네트워크의 방송국을 들려주며\n소리를 그림으로 보여 줍니다.
+MSG_OK
+확인
+MSG_NO_SONG
+곡 없음
+MSG_TRACK_OF
+트랙 %u / %u
+MSG_TRACK
+트랙 %u
+MSG_COMPOSED_BY
+작곡: %s
+MSG_CHAPTER
+챕터 %u / %u
+MSG_SOUND
+소리
+MSG_MONO
+모노
+MSG_STEREO
+스테레오
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+곡 %u / %u
+MSG_NO_SOUND
+소리 없음
+MSG_NO_STREAM_FREE
+빈 스트림 없음
+MSG_LIVE
+라이브
+MSG_BUFFERING
+버퍼링 중
+MSG_BUFFERING_PERCENT
+버퍼링 %u%%
+MSG_STATION_IDLE
+방송국: 재생을 누르면 들을 수 있습니다
+MSG_CALLING
+방송국에 연결하는 중
+MSG_NO_MEMORY_STATION
+방송국에 필요한 메모리 부족
+MSG_ALL_STREAMS_USED
+모든 소리 스트림이 사용 중입니다
+MSG_NO_SOUND_HERE
+이 컴퓨터에는 소리 장치가 없습니다
+MSG_NO_AUDIO_STREAM
+audio.device가 스트림을 열지 못했습니다
+MSG_KEPT_ALREADY
+이미 보관됨: %s
+MSG_KEPT
+보관됨: %s
+MSG_NO_MEMORY_KEEP
+방송국을 보관할 메모리 부족
+MSG_NO_MEMORY_SEARCH
+검색에 필요한 메모리 부족
+MSG_SEARCHING
+검색 중
+MSG_ASKING
+%s에 요청 중
+MSG_NONE_FOUND
+방송국을 찾지 못했습니다
+MSG_ONE_FOUND
+방송국 1개를 찾았습니다
+MSG_COUNT_FOUND
+방송국 %u개를 찾았습니다
+MSG_NO_NETWORK
+네트워크 없음: bsdsocket.library가 없습니다
+MSG_NO_HTTP
+http.library가 없습니다
+MSG_NO_MEMORY_CONNECTION
+연결에 필요한 메모리 부족
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info에 주소가 없습니다
+MSG_SERVICE_NO_ANSWER
+radio-browser.info가 검색에 응답하지 않았습니다
+MSG_SERVICE_UNREACHED
+radio-browser.info에 연결할 수 없습니다
+MSG_SERVICE_NONSENSE
+radio-browser.info의 응답을 이해할 수 없습니다
+MSG_SEARCH_FAILED
+검색에 실패했습니다
+MSG_NO_SIGNAL
+방송국에 쓸 빈 시그널이 없습니다
+MSG_NO_TIMER
+timer.device를 열지 못했습니다
+MSG_LISTS_ONLY
+방송국의 목록이 다른 목록으로만 이어집니다
+MSG_STATION_STOPPED
+방송국이 전송을 멈췄습니다
+MSG_STATION_ANSWERED
+방송국이 응답했습니다
+MSG_SENDS_AAC
+방송국이 보내는 AAC는 재생할 수 없습니다
+MSG_STATION_ENDED
+방송국이 연결을 끊었습니다
+MSG_SENDS_HLS
+방송국이 보내는 HLS는 재생할 수 없습니다
+MSG_LIST_EMPTY
+방송국의 목록에 방송국이 없습니다
+MSG_LIST_TOO_LONG
+방송국의 목록에 너무 긴 주소가 있습니다
+MSG_NOT_AN_ADDRESS
+들을 수 있는 주소가 아닙니다
+MSG_NONSENSE
+방송국의 응답을 이해할 수 없습니다
+MSG_NOLIBRARY
+%s: %s을(를) 열 수 없음\n
+MSG_NOMEMORY
+%s: 창을 열 메모리 부족\n
+MSG_NOBUFFERS
+%s: 소리에 쓸 메모리 부족\n
+MSG_NOWINDOW
+%s: 창 없음\n
+MSG_MENU_EQUALIZER
+이퀄라이저
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+스코프
+MSG_MENU_METERS
+레벨 미터
+MSG_MENU_WHOLE_SCREEN
+전체 화면

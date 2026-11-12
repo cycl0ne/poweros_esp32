@@ -1,0 +1,249 @@
+## version $VER: programs/Player.catalog 1.0 (12.11.2026)
+## language nihongo
+## codeset 106
+; The Player's strings in Japanese. A draft: it waits for a reader of
+; Japanese to go through it.
+MSG_MENU_PROJECT
+プロジェクト
+MSG_MENU_OPEN
+開く...
+MSG_MENU_OPEN_DRAWER
+引き出しを開く...
+MSG_MENU_OPEN_URL
+URL を開く...
+MSG_MENU_SAVE_PLAYLIST
+プレイリストを保存...
+MSG_MENU_ABOUT
+Player について
+MSG_MENU_QUIT
+終了
+MSG_MENU_PLAYLIST
+プレイリスト
+MSG_MENU_ADD
+追加...
+MSG_MENU_REMOVE
+削除
+MSG_MENU_CLEAR
+クリア
+MSG_MENU_SHUFFLE
+シャッフル
+MSG_MENU_REPEAT
+リピート
+MSG_MENU_REPEAT_OFF
+オフ
+MSG_MENU_REPEAT_ALL
+全曲
+MSG_MENU_REPEAT_ONE
+1 曲
+MSG_MENU_PICTURE
+映像
+MSG_MENU_PLASMA
+プラズマ
+MSG_MENU_WAVE
+波形
+MSG_MENU_BARS
+バー
+MSG_MENU_SETTINGS
+設定
+MSG_MENU_REMEMBER
+再生位置を記憶
+MSG_PAGE_PLAYING
+再生中
+MSG_PAGE_RADIO
+ラジオ
+MSG_VIEW_KEPT
+保存した放送局
+MSG_VIEW_FOUND
+検索結果
+MSG_NAME
+名前
+MSG_GENRE
+ジャンル
+MSG_COUNTRY
+国
+MSG_COLUMN_TITLE
+タイトル
+MSG_COLUMN_ARTIST
+アーティスト
+MSG_COLUMN_TIME
+時間
+MSG_COLUMN_STATION
+放送局
+MSG_COLUMN_ADDRESS
+アドレス
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+ジャンル
+MSG_SHUFFLE_BUTTON
+シャッフル(_S)
+MSG_SHUFFLE_HINT
+曲をランダムな順序で再生します
+MSG_REPEAT_BUTTON
+リピート(_R)
+MSG_REPEAT_HINT
+リストまたは 1 曲を繰り返し再生します
+MSG_MUTE_BUTTON
+ミュート(_M)
+MSG_MUTE_HINT
+音を消します (もう一度押すと戻ります)
+MSG_LENGTH_HINT
+曲の長さ、または残り時間
+MSG_ADD_BUTTON
+追加(_A)...
+MSG_REMOVE_BUTTON
+削除(_E)
+MSG_CLEAR_BUTTON
+クリア(_L)
+MSG_OUTPUT_LABEL
+出力(_O)
+MSG_SEARCH_BUTTON
+探す(_H)
+MSG_KEEP_BUTTON
+保存(_K)
+MSG_FORGET_BUTTON
+削除(_V)
+MSG_FIND_LABEL
+検索(_F)
+MSG_BY_LABEL
+対象(_I)
+MSG_URL_TITLE
+URL を開く
+MSG_URL_ADDRESS
+アドレス(_D)
+MSG_URL_OPEN
+開く(_O)
+MSG_URL_CANCEL
+キャンセル(_C)
+MSG_ASK_PLAY
+再生する曲を選択
+MSG_ASK_ADD
+追加する曲を選択
+MSG_ASK_DRAWER
+引き出しを選択
+MSG_ASK_SAVE
+名前を付けてプレイリストを保存
+MSG_ABOUT_TITLE
+Player について
+MSG_ABOUT
+%s\n\nWAV、MP3、FLAC、Ogg Vorbis、AAC、AC-3 ファイルの曲を\n切れ目なく、カバー画像とともに再生します。\nネットワークの放送局と\n音の映像も楽しめます。
+MSG_OK
+OK
+MSG_NO_SONG
+曲なし
+MSG_TRACK_OF
+トラック %u / %u
+MSG_TRACK
+トラック %u
+MSG_COMPOSED_BY
+作曲: %s
+MSG_CHAPTER
+チャプター %u / %u
+MSG_SOUND
+音声
+MSG_MONO
+モノラル
+MSG_STEREO
+ステレオ
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+曲 %u / %u
+MSG_NO_SOUND
+音声なし
+MSG_NO_STREAM_FREE
+空きストリームなし
+MSG_LIVE
+ライブ
+MSG_BUFFERING
+バッファ中
+MSG_BUFFERING_PERCENT
+バッファ中 %u%%
+MSG_STATION_IDLE
+放送局: 再生すると聴けます
+MSG_CALLING
+放送局に接続中
+MSG_NO_MEMORY_STATION
+放送局用のメモリがありません
+MSG_ALL_STREAMS_USED
+すべての音声ストリームが使用中です
+MSG_NO_SOUND_HERE
+このマシンには音声出力がありません
+MSG_NO_AUDIO_STREAM
+audio.device がストリームを開けませんでした
+MSG_KEPT_ALREADY
+保存済みです: %s
+MSG_KEPT
+保存しました: %s
+MSG_NO_MEMORY_KEEP
+放送局を保存するメモリがありません
+MSG_NO_MEMORY_SEARCH
+検索用のメモリがありません
+MSG_SEARCHING
+検索中
+MSG_ASKING
+%s に問い合わせ中
+MSG_NONE_FOUND
+放送局が見つかりません
+MSG_ONE_FOUND
+放送局が 1 件見つかりました
+MSG_COUNT_FOUND
+放送局が %u 件見つかりました
+MSG_NO_NETWORK
+ネットワークなし: bsdsocket.library がありません
+MSG_NO_HTTP
+http.library がありません
+MSG_NO_MEMORY_CONNECTION
+接続用のメモリがありません
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info にアドレスがありません
+MSG_SERVICE_NO_ANSWER
+radio-browser.info が検索に応答しませんでした
+MSG_SERVICE_UNREACHED
+radio-browser.info に接続できませんでした
+MSG_SERVICE_NONSENSE
+radio-browser.info の応答を解釈できません
+MSG_SEARCH_FAILED
+検索に失敗しました
+MSG_NO_SIGNAL
+放送局用の空きシグナルがありません
+MSG_NO_TIMER
+timer.device を開けませんでした
+MSG_LISTS_ONLY
+放送局のリストが別のリストを指すだけです
+MSG_STATION_STOPPED
+放送局が送信を止めました
+MSG_STATION_ANSWERED
+放送局が応答しました
+MSG_SENDS_AAC
+放送局は AAC を送信していますが、再生できません
+MSG_STATION_ENDED
+放送局が接続を終了しました
+MSG_SENDS_HLS
+放送局は HLS を送信していますが、再生できません
+MSG_LIST_EMPTY
+放送局のリストに放送局がありません
+MSG_LIST_TOO_LONG
+放送局のリストにあるアドレスが長すぎます
+MSG_NOT_AN_ADDRESS
+これは聴取できるアドレスではありません
+MSG_NONSENSE
+放送局の応答を解釈できません
+MSG_NOLIBRARY
+%s: %s を開けません\n
+MSG_NOMEMORY
+%s: ウィンドウ用のメモリがありません\n
+MSG_NOBUFFERS
+%s: 音声用のメモリがありません\n
+MSG_NOWINDOW
+%s: ウィンドウがありません\n
+MSG_MENU_EQUALIZER
+イコライザー
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+スコープ
+MSG_MENU_METERS
+メーター
+MSG_MENU_WHOLE_SCREEN
+全画面

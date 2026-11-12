@@ -1,0 +1,47 @@
+## version $VER: programs/Movie.catalog 1.0 (12.11.2026)
+## language hangugeo
+## codeset 106
+; Movie's strings in Korean. A draft: it waits for a reader of Korean
+; to go through it.
+MSG_MENU_PROJECT
+프로젝트
+MSG_MENU_OPEN
+열기...
+MSG_MENU_WHOLE_SCREEN
+전체 화면
+MSG_MENU_ABOUT
+프로그램 정보
+MSG_MENU_QUIT
+종료
+MSG_MENU_SOUND
+소리
+MSG_MENU_NO_SOUND
+없음
+MSG_MENU_SUBTITLES
+자막
+MSG_MENU_SUBTITLES_OFF
+끔
+MSG_MENU_TRACK
+트랙
+MSG_ASK_OPEN
+영화 재생
+MSG_ABOUT_TITLE
+Movie 정보
+MSG_ABOUT
+%s\n\n영화를 재생합니다 - MP4, QuickTime의 MOV, Matroska의 MKV:\nH.264, H.265, Motion JPEG 영상,\nAAC, AC-3, MP3, FLAC, Vorbis 소리, 그리고 자막.
+MSG_OK
+확인
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\n재생할 수 없습니다:\n%s
+MSG_VOLUME_HINT
+음량
+MSG_NOLIBRARY
+%s: %s을(를) 열 수 없음\n
+MSG_NOMEMORY
+%s: 메모리 부족\n
+MSG_NOWINDOW
+%s: 창을 열 수 없음\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

@@ -1,0 +1,227 @@
+## version $VER: programs/Sheet.catalog 1.0 (12.11.2026)
+## language hangugeo
+## codeset 106
+; Sheet's strings in Korean. A draft: it waits for a reader of Korean
+; to go through it.
+MSG_MENU_PROJECT
+프로젝트
+MSG_MENU_NEW
+새로 만들기
+MSG_MENU_OPEN
+열기...
+MSG_MENU_SAVE
+저장
+MSG_MENU_SAVE_AS
+다른 이름으로 저장...
+MSG_MENU_QUIT
+종료
+MSG_MENU_EDIT
+편집
+MSG_MENU_UNDO
+실행 취소
+MSG_MENU_REDO
+다시 실행
+MSG_MENU_CUT
+잘라내기
+MSG_MENU_COPY
+복사
+MSG_MENU_PASTE
+붙여넣기
+MSG_MENU_CLEAR
+지우기
+MSG_MENU_FILL_DOWN
+아래로 채우기
+MSG_MENU_FILL_RIGHT
+오른쪽으로 채우기
+MSG_MENU_SELECT_ALL
+모두 선택
+MSG_MENU_FIND
+찾기...
+MSG_MENU_FIND_NEXT
+다음 찾기
+MSG_MENU_SHEET
+시트
+MSG_MENU_INSERT_ROWS
+행 삽입
+MSG_MENU_DELETE_ROWS
+행 삭제
+MSG_MENU_INSERT_COLUMNS
+열 삽입
+MSG_MENU_DELETE_COLUMNS
+열 삭제
+MSG_MENU_WIDER
+열 넓히기
+MSG_MENU_NARROWER
+열 좁히기
+MSG_MENU_SUM
+자동 합계
+MSG_MENU_SORT_ASCENDING
+오름차순 정렬
+MSG_MENU_SORT_DESCENDING
+내림차순 정렬
+MSG_MENU_FORMAT
+서식
+MSG_MENU_GENERAL
+일반
+MSG_MENU_NUMBER
+숫자
+MSG_MENU_PERCENT
+백분율
+MSG_MENU_CURRENCY
+통화
+MSG_MENU_DECIMALS_MORE
+소수 자릿수 늘리기
+MSG_MENU_DECIMALS_LESS
+소수 자릿수 줄이기
+MSG_MENU_VIEW
+보기
+MSG_MENU_RIBBON
+리본
+MSG_RIBBON_HOME
+홈
+MSG_RIBBON_CLIPBOARD
+클립보드
+MSG_RIBBON_PASTE_HINT
+잘라내거나 복사한 내용을 붙여 넣습니다
+MSG_RIBBON_NUMBER_HINT
+숫자를 소수 자리와 천 단위 구분으로 표시합니다
+MSG_RIBBON_PERCENT_HINT
+숫자를 백분율로 표시합니다
+MSG_RIBBON_CURRENCY_HINT
+숫자를 금액으로 표시합니다
+MSG_RIBBON_DECIMALS_MORE_HINT
+소수 자리를 하나 더 표시합니다
+MSG_RIBBON_DECIMALS_LESS_HINT
+소수 자리를 하나 덜 표시합니다
+MSG_RIBBON_CELLS
+셀
+MSG_RIBBON_INSERT
+삽입
+MSG_RIBBON_INSERT_HINT
+선택한 셀 위치에 행이나 열을 넣습니다
+MSG_RIBBON_DELETE
+삭제
+MSG_RIBBON_DELETE_HINT
+선택한 셀의 행이나 열을 없앱니다
+MSG_RIBBON_EDITING
+편집
+MSG_RIBBON_SUM_HINT
+위쪽이나 왼쪽의 숫자를 더합니다
+MSG_RIBBON_SORT
+정렬
+MSG_RIBBON_SORT_HINT
+현재 셀의 열을 기준으로 행을 정렬합니다
+MSG_RIBBON_FIND
+찾기
+MSG_RIBBON_FIND_HINT
+셀을 그 내용으로 찾습니다
+MSG_RIBBON_FILL
+채우기
+MSG_RIBBON_FILL_HINT
+첫 행이나 열을 나머지에 복사합니다
+MSG_RIBBON_CLEAR_HINT
+선택한 셀을 비웁니다
+MSG_ROWS
+행
+MSG_COLUMNS
+열
+MSG_SUM
+합계
+MSG_AVERAGE
+평균
+MSG_COUNT
+개수
+MSG_MIN
+최소
+MSG_MAX
+최대
+MSG_ASCENDING
+오름차순
+MSG_DESCENDING
+내림차순
+MSG_DOWN
+아래로
+MSG_RIGHT
+오른쪽으로
+MSG_PROBLEM_NAME
+그런 함수나 이름이 없습니다
+MSG_PROBLEM_ARGUMENTS
+인수 개수가 맞지 않습니다
+MSG_PROBLEM_PARENTHESES
+괄호의 짝이 맞지 않습니다
+MSG_PROBLEM_TOO_LONG
+수식이 너무 깁니다
+MSG_PROBLEM_UNREADABLE
+수식을 읽을 수 없습니다
+MSG_PROBLEM_AT
+%s, %u번째 문자
+MSG_NO_MEMORY_KEEP
+전부 담기에는 메모리가 부족합니다
+MSG_NO_MEMORY_FILE
+파일 전체를 담기에는 메모리가 부족합니다
+MSG_LEFT_OUT
+9999행이나 IV열을 넘는 셀은 제외되었습니다
+MSG_NO_MEMORY_COPY
+그만큼 복사하기에는 메모리가 부족합니다
+MSG_NO_MEMORY_CLEAR
+전부 지우기에는 메모리가 부족합니다
+MSG_NO_MEMORY_PASTE
+전부 붙여 넣기에는 메모리가 부족합니다
+MSG_NO_ROOM_COLUMNS
+공간 없음: 마지막 열들에 내용이 있습니다
+MSG_NO_ROOM_ROWS
+공간 없음: 마지막 행들에 내용이 있습니다
+MSG_NO_MEMORY_THAT
+이 작업에 필요한 메모리가 부족합니다
+MSG_NO_MEMORY_FORMAT
+전부 서식을 지정하기에는 메모리가 부족합니다
+MSG_NOTHING_TO_ADD
+위쪽이나 왼쪽에 더할 숫자가 없습니다
+MSG_NO_MEMORY_ALL
+전부 처리하기에는 메모리가 부족합니다
+MSG_NO_MEMORY_SORT
+전부 정렬하기에는 메모리가 부족합니다
+MSG_NO_MEMORY_FILL
+전부 채우기에는 메모리가 부족합니다
+MSG_NOT_FOUND
+그 내용이 들어 있는 셀이 없습니다
+MSG_UNTITLED
+제목 없음
+MSG_OK
+확인
+MSG_CANNOT_OPEN
+%s을(를) 열 수 없습니다
+MSG_CANNOT_READ
+%s을(를) 읽을 수 없습니다
+MSG_TOO_BIG
+%s이(가) 너무 큽니다
+MSG_NO_MEMORY_FOR
+%s에 필요한 메모리가 부족합니다
+MSG_NO_MEMORY_TO_SAVE
+%s을(를) 저장할 메모리가 부족합니다
+MSG_CANNOT_WRITE
+%s에 쓸 수 없습니다
+MSG_NO_REQUESTER
+%s 없음
+MSG_CHANGED
+시트가 변경되었습니다.\n먼저 저장하시겠습니까?
+MSG_CHANGED_BUTTONS
+저장|저장 안 함|취소
+MSG_OPEN_TITLE
+시트 열기
+MSG_SAVE_AS_TITLE
+다른 이름으로 시트 저장
+MSG_FIND_LABEL
+찾기
+MSG_FIND_NEXT_BUTTON
+다음
+MSG_FIND_PREVIOUS_BUTTON
+이전
+MSG_FIND_CLOSE_BUTTON
+닫기
+MSG_NOLIBRARY
+%s 없음\n
+MSG_NOSCREEN
+기본 화면 없음 - 디스플레이 없음\n
+MSG_NOMEMORY
+창을 열 메모리 부족\n

@@ -319,12 +319,17 @@ German on the disk (`LOCALE:Catalogs/deutsch/programs/<Program>.catalog`),
 and so have the Clock (`LOCALE:Catalogs/deutsch/System/Clock.catalog`)
 and the desktop (`LOCALE:Catalogs/deutsch/sys/anvil.catalog`); their
 descriptors and translations are beside their sources. The same
-catalogs are there in Hindi (`LOCALE:Catalogs/hindi/`) on the 64-bit
-machines' disks - a `Catalog` that is `.wide = true` in the build goes
-on those only. The Hindi translations are drafts that no reader of
-Hindi has gone through yet, as each one's first lines say. A gadget's
-shortcut in them is a Devanagari letter, which a keyboard reaches with
-a Devanagari keymap.
+catalogs are there in Hindi (`LOCALE:Catalogs/hindi/`), Japanese
+(`nihongo/`), Korean (`hangugeo/`) and Chinese in the simplified
+characters (`zhongwen/`) on the 64-bit machines' disks - a `Catalog`
+that is `.wide = true` in the build goes on those only. These
+translations are drafts that no reader of the language has gone
+through yet, as each one's first lines say. A gadget's shortcut in the
+Hindi ones is a Devanagari letter, which a keyboard reaches with a
+Devanagari keymap. In the Japanese, Korean and Chinese ones it is the
+English text's letter in parentheses behind the label (`保存(_S)`,
+`열기(_O)...`): a keymap types none of these scripts' characters, and
+the key stays the one the English label has.
 
 `OpenCatalogA(loc, name, tags)` looks for `name` in `OC_Language`'s
 language, if given, then in each of the locale's languages in turn, and
@@ -360,8 +365,9 @@ dos.library's calls, and keeps the library in memory from then on:
 dos's texts are described in `src/rom/libs/dos/text/dos.cd`, each by its
 code; a ROM test keeps the descriptor and dos's table the same. The
 German translation beside it is built into the disk's
-`LOCALE:Catalogs/deutsch/sys/dos.catalog`, the Hindi one into
-`LOCALE:Catalogs/hindi/sys/dos.catalog`.
+`LOCALE:Catalogs/deutsch/sys/dos.catalog`, the Hindi, Japanese, Korean
+and Chinese ones into their languages' drawers
+(`LOCALE:Catalogs/hindi/sys/dos.catalog`).
 
 ## The code set
 

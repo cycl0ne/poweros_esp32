@@ -1,0 +1,249 @@
+## version $VER: programs/Player.catalog 1.0 (12.11.2026)
+## language zhongwen
+## codeset 106
+; The Player's strings in Chinese, simplified. A draft: it waits for a
+; reader of Chinese to go through it.
+MSG_MENU_PROJECT
+项目
+MSG_MENU_OPEN
+打开...
+MSG_MENU_OPEN_DRAWER
+打开抽屉...
+MSG_MENU_OPEN_URL
+打开 URL...
+MSG_MENU_SAVE_PLAYLIST
+保存播放列表...
+MSG_MENU_ABOUT
+关于
+MSG_MENU_QUIT
+退出
+MSG_MENU_PLAYLIST
+播放列表
+MSG_MENU_ADD
+添加...
+MSG_MENU_REMOVE
+移除
+MSG_MENU_CLEAR
+清空
+MSG_MENU_SHUFFLE
+随机播放
+MSG_MENU_REPEAT
+重复播放
+MSG_MENU_REPEAT_OFF
+关
+MSG_MENU_REPEAT_ALL
+全部
+MSG_MENU_REPEAT_ONE
+单曲
+MSG_MENU_PICTURE
+画面
+MSG_MENU_PLASMA
+等离子
+MSG_MENU_WAVE
+波形
+MSG_MENU_BARS
+频谱柱
+MSG_MENU_SETTINGS
+设置
+MSG_MENU_REMEMBER
+记住上次的位置
+MSG_PAGE_PLAYING
+正在播放
+MSG_PAGE_RADIO
+电台
+MSG_VIEW_KEPT
+我的电台
+MSG_VIEW_FOUND
+搜索结果
+MSG_NAME
+名称
+MSG_GENRE
+流派
+MSG_COUNTRY
+国家
+MSG_COLUMN_TITLE
+标题
+MSG_COLUMN_ARTIST
+艺术家
+MSG_COLUMN_TIME
+时长
+MSG_COLUMN_STATION
+电台
+MSG_COLUMN_ADDRESS
+地址
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+流派
+MSG_SHUFFLE_BUTTON
+随机(_S)
+MSG_SHUFFLE_HINT
+按随机顺序播放歌曲
+MSG_REPEAT_BUTTON
+重复(_R)
+MSG_REPEAT_HINT
+重复播放整个列表，或只重复一首歌曲
+MSG_MUTE_BUTTON
+静音(_M)
+MSG_MUTE_HINT
+关闭声音，再按一次恢复
+MSG_LENGTH_HINT
+歌曲的长度，或剩余的时间
+MSG_ADD_BUTTON
+添加(_A)...
+MSG_REMOVE_BUTTON
+移除(_E)
+MSG_CLEAR_BUTTON
+清空(_L)
+MSG_OUTPUT_LABEL
+输出(_O)
+MSG_SEARCH_BUTTON
+搜索(_H)
+MSG_KEEP_BUTTON
+收藏(_K)
+MSG_FORGET_BUTTON
+移除(_V)
+MSG_FIND_LABEL
+查找(_F)
+MSG_BY_LABEL
+依据(_I)
+MSG_URL_TITLE
+打开 URL
+MSG_URL_ADDRESS
+地址(_D)
+MSG_URL_OPEN
+打开(_O)
+MSG_URL_CANCEL
+取消(_C)
+MSG_ASK_PLAY
+播放哪些歌曲？
+MSG_ASK_ADD
+添加哪些歌曲？
+MSG_ASK_DRAWER
+哪个抽屉？
+MSG_ASK_SAVE
+播放列表另存为
+MSG_ABOUT_TITLE
+关于 Player
+MSG_ABOUT
+%s\n\nWAV、MP3、FLAC、Ogg Vorbis、AAC 和 AC-3 文件中的歌曲，\n一首接一首无缝播放，并显示封面，\n还有来自网络的电台\n和声音的画面。
+MSG_OK
+确定
+MSG_NO_SONG
+没有歌曲
+MSG_TRACK_OF
+第 %u 轨，共 %u 轨
+MSG_TRACK
+第 %u 轨
+MSG_COMPOSED_BY
+作曲: %s
+MSG_CHAPTER
+第 %u 章，共 %u 章
+MSG_SOUND
+声音
+MSG_MONO
+单声道
+MSG_STEREO
+立体声
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+第 %u 首，共 %u 首
+MSG_NO_SOUND
+没有声音
+MSG_NO_STREAM_FREE
+没有空闲的流
+MSG_LIVE
+直播
+MSG_BUFFERING
+正在缓冲
+MSG_BUFFERING_PERCENT
+正在缓冲 %u%%
+MSG_STATION_IDLE
+电台：按播放即可收听
+MSG_CALLING
+正在连接电台
+MSG_NO_MEMORY_STATION
+内存不足，无法收听电台
+MSG_ALL_STREAMS_USED
+所有声音流都在使用中
+MSG_NO_SOUND_HERE
+这台机器没有声音
+MSG_NO_AUDIO_STREAM
+audio.device 无法打开流
+MSG_KEPT_ALREADY
+已经收藏过: %s
+MSG_KEPT
+已收藏: %s
+MSG_NO_MEMORY_KEEP
+内存不足，无法收藏电台
+MSG_NO_MEMORY_SEARCH
+内存不足，无法搜索
+MSG_SEARCHING
+正在搜索
+MSG_ASKING
+正在查询 %s
+MSG_NONE_FOUND
+没有找到电台
+MSG_ONE_FOUND
+找到 1 个电台
+MSG_COUNT_FOUND
+找到 %u 个电台
+MSG_NO_NETWORK
+没有网络：缺少 bsdsocket.library
+MSG_NO_HTTP
+缺少 http.library
+MSG_NO_MEMORY_CONNECTION
+内存不足，无法建立连接
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info 没有地址
+MSG_SERVICE_NO_ANSWER
+radio-browser.info 没有应答搜索请求
+MSG_SERVICE_UNREACHED
+无法连接到 radio-browser.info
+MSG_SERVICE_NONSENSE
+radio-browser.info 的应答无法理解
+MSG_SEARCH_FAILED
+搜索失败
+MSG_NO_SIGNAL
+没有空闲的信号可供电台使用
+MSG_NO_TIMER
+timer.device 无法打开
+MSG_LISTS_ONLY
+电台的列表只指向更多的列表
+MSG_STATION_STOPPED
+电台已停止发送
+MSG_STATION_ANSWERED
+电台的应答
+MSG_SENDS_AAC
+电台发送的是 AAC，无法播放
+MSG_STATION_ENDED
+电台断开了连接
+MSG_SENDS_HLS
+电台发送的是 HLS，无法播放
+MSG_LIST_EMPTY
+电台的列表中没有电台
+MSG_LIST_TOO_LONG
+电台的列表中有一个地址太长
+MSG_NOT_AN_ADDRESS
+这不是可以收听的地址
+MSG_NONSENSE
+电台的应答无法理解
+MSG_NOLIBRARY
+%s: 无法打开 %s\n
+MSG_NOMEMORY
+%s: 内存不足，无法打开窗口\n
+MSG_NOBUFFERS
+%s: 内存不足，无法播放声音\n
+MSG_NOWINDOW
+%s: 没有窗口\n
+MSG_MENU_EQUALIZER
+均衡器
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+示波器
+MSG_MENU_METERS
+电平表
+MSG_MENU_WHOLE_SCREEN
+全屏

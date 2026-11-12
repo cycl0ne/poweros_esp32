@@ -91,6 +91,9 @@ fn chipOf(board: Board) Chip {
 const rom_catalogs = [_]poweros_userland.Catalog{
     .{ .disk = "locale/Catalogs/deutsch/sys/dos.catalog", .descriptor = "src/rom/libs/dos/text/dos.cd", .translation = "src/rom/libs/dos/text/catalogs/deutsch.ct", .name = "sys/dos.catalog" },
     .{ .disk = "locale/Catalogs/hindi/sys/dos.catalog", .descriptor = "src/rom/libs/dos/text/dos.cd", .translation = "src/rom/libs/dos/text/catalogs/hindi.ct", .name = "sys/dos.catalog", .wide = true },
+    .{ .disk = "locale/Catalogs/nihongo/sys/dos.catalog", .descriptor = "src/rom/libs/dos/text/dos.cd", .translation = "src/rom/libs/dos/text/catalogs/nihongo.ct", .name = "sys/dos.catalog", .wide = true },
+    .{ .disk = "locale/Catalogs/hangugeo/sys/dos.catalog", .descriptor = "src/rom/libs/dos/text/dos.cd", .translation = "src/rom/libs/dos/text/catalogs/hangugeo.ct", .name = "sys/dos.catalog", .wide = true },
+    .{ .disk = "locale/Catalogs/zhongwen/sys/dos.catalog", .descriptor = "src/rom/libs/dos/text/dos.cd", .translation = "src/rom/libs/dos/text/catalogs/zhongwen.ct", .name = "sys/dos.catalog", .wide = true },
 };
 
 /// The directories every disk image has, parents before what is in them.
@@ -192,6 +195,24 @@ const image_dirs = [_][]const u8{
     "locale/Catalogs/hindi/c/test",
     "locale/Catalogs/hindi/programs",
     "locale/Catalogs/hindi/System",
+    "locale/Catalogs/nihongo",
+    "locale/Catalogs/nihongo/sys",
+    "locale/Catalogs/nihongo/c",
+    "locale/Catalogs/nihongo/c/test",
+    "locale/Catalogs/nihongo/programs",
+    "locale/Catalogs/nihongo/System",
+    "locale/Catalogs/hangugeo",
+    "locale/Catalogs/hangugeo/sys",
+    "locale/Catalogs/hangugeo/c",
+    "locale/Catalogs/hangugeo/c/test",
+    "locale/Catalogs/hangugeo/programs",
+    "locale/Catalogs/hangugeo/System",
+    "locale/Catalogs/zhongwen",
+    "locale/Catalogs/zhongwen/sys",
+    "locale/Catalogs/zhongwen/c",
+    "locale/Catalogs/zhongwen/c/test",
+    "locale/Catalogs/zhongwen/programs",
+    "locale/Catalogs/zhongwen/System",
 };
 
 /// An icon the build writes onto the image: where it goes, the picture
@@ -359,13 +380,23 @@ const uefi_loader_path = "EFI/BOOT/BOOTX64.EFI";
 /// Whether the directory `dir` is made on `chip`'s image. LIBS:facet
 /// holds the drivers of the GPUs facet.library draws with, and the
 /// ESP32-S3's disk has neither it nor the library (`no_3d` there); the
-/// Hindi catalogs are on the 64-bit machines' disks only, with the font
-/// they are written in.
+/// catalogs of `wide_languages` are on the 64-bit machines' disks only,
+/// with the fonts they are written in.
 fn dirFor(dir: []const u8, chip: Chip) bool {
     if (std.mem.eql(u8, dir, "libs/facet")) return chip != .esp32s3;
-    if (std.mem.startsWith(u8, dir, "locale/Catalogs/hindi")) return chip != .esp32s3 and chip != .esp32p4;
+    const catalogs = "locale/Catalogs/";
+    if (std.mem.startsWith(u8, dir, catalogs)) {
+        const language = std.mem.sliceTo(dir[catalogs.len..], '/');
+        for (wide_languages) |wide| {
+            if (std.mem.eql(u8, language, wide)) return chip != .esp32s3 and chip != .esp32p4;
+        }
+    }
     return true;
 }
+
+/// The languages whose script needs a font the ESP32s' flash has no room
+/// for.
+const wide_languages = [_][]const u8{ "hindi", "nihongo", "hangugeo", "zhongwen" };
 
 /// The size the desktop shows icons at on a board's screen - an eighth of
 /// its height, at most 48 (the screens are in src/boards/<board>/

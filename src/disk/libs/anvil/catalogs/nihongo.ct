@@ -1,0 +1,356 @@
+## version $VER: sys/anvil.catalog 1.0 (12.11.2026)
+## language nihongo
+## codeset 106
+; The desktop's strings in Japanese. A draft: it waits for a reader of
+; Japanese to go through it. Left out, so the English built in is shown:
+; Parent (MSG_RIBBON_PARENT) and Tool types (MSG_INFO_TOOL_TYPES).
+;
+; The menus.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+バックドロップ
+MSG_MENU_EXECUTE
+コマンドを実行...
+MSG_MENU_REDRAW_ALL
+すべて再描画
+MSG_MENU_UPDATE_ALL
+すべて更新
+MSG_MENU_LAST_MESSAGE
+最後のメッセージ
+MSG_MENU_VOLUME
+音量...
+MSG_MENU_ABOUT
+Anvil について...
+MSG_MENU_QUIT
+終了...
+MSG_MENU_REBOOT
+再起動...
+MSG_MENU_WINDOW
+ウィンドウ
+MSG_MENU_NEW_DRAWER
+新しい引き出し
+MSG_MENU_OPEN_PARENT
+親を開く
+MSG_MENU_BACK
+戻る
+MSG_MENU_FORWARD
+進む
+MSG_MENU_CLOSE
+閉じる
+MSG_MENU_UPDATE
+更新
+MSG_MENU_SHELL
+Shell
+MSG_MENU_SELECT_CONTENTS
+内容を選択
+MSG_MENU_CLEAN_UP
+整頓
+MSG_MENU_CLEAN_UP_BY
+次の順に整頓
+MSG_MENU_BY_NAME
+名前
+MSG_MENU_BY_DATE
+日付
+MSG_MENU_BY_SIZE
+サイズ
+MSG_MENU_SNAP
+グリッドに合わせる
+MSG_MENU_ARRANGE
+サイズ変更時に整列
+MSG_MENU_SNAPSHOT
+位置を記憶
+MSG_MENU_SNAPSHOT_WINDOW
+ウィンドウ
+MSG_MENU_SNAPSHOT_ALL
+すべて
+MSG_MENU_SHOW
+表示対象
+MSG_MENU_ONLY_ICONS
+アイコンのみ
+MSG_MENU_ALL_FILES
+すべてのファイル
+MSG_MENU_VIEW_BY
+表示方法
+MSG_MENU_BY_ICON
+アイコン
+MSG_MENU_RIBBON
+リボン
+MSG_MENU_ICONS
+アイコン
+MSG_MENU_OPEN
+開く
+MSG_MENU_COPY
+コピー
+MSG_MENU_RENAME
+名前を変更...
+MSG_MENU_INFORMATION
+情報...
+MSG_MENU_UNSNAPSHOT
+位置の記憶を解除
+MSG_MENU_LEAVE_OUT
+出しておく
+MSG_MENU_PUT_AWAY
+しまう
+MSG_MENU_DELETE
+削除...
+MSG_MENU_FORMAT
+ディスクをフォーマット...
+MSG_MENU_EMPTY_TRASH
+ごみ箱を空にする
+MSG_MENU_TOOLS
+ツール
+;
+; A drawer's ribbon.
+MSG_RIBBON_HOME
+ホーム
+MSG_RIBBON_GO
+移動
+MSG_RIBBON_DRAWER
+引き出し
+MSG_RIBBON_RENAME
+名前を変更
+MSG_RIBBON_DELETE
+削除
+MSG_RIBBON_INFORMATION
+情報
+MSG_RIBBON_VIEW
+表示
+MSG_RIBBON_ARRANGE
+整列
+;
+; A drawer shown as a list.
+MSG_LIST_PROTECTION
+保護
+MSG_LIST_DRAWER
+引き出し
+;
+; The screen's title.
+MSG_TITLE_MEMORY
+メモリ
+MSG_TITLE_INTERNAL
+内蔵
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+空き
+MSG_TITLE_BATTERY
+バッテリー
+MSG_TITLE_CHARGING
+充電中
+MSG_TITLE_EXTERNAL_POWER
+外部電源
+;
+; A disk's window title.
+MSG_DISK_FULL
+使用済み
+MSG_DISK_IN_USE
+使用中
+;
+; What the desktop says in the screen's title.
+MSG_NOTHING_SAID
+まだメッセージはありません
+MSG_NOT_EVERY_FILE
+選択したファイルの一部を受け取れませんでした
+MSG_DISK_NOT_RENAMED
+ディスクの名前を変更できませんでした
+MSG_NOT_RENAMED
+名前を変更できませんでした
+MSG_ICON_NOT_WRITTEN
+アイコンを書き込めませんでした
+MSG_DISK_NOT_THERE
+ディスクがありません
+MSG_DISK_BUSY
+ディスクは使用中です
+MSG_DISK_NOT_FORMATTED
+ディスクをフォーマットできませんでした
+MSG_DRAWER_NOT_MADE
+引き出しを作成できませんでした
+MSG_SETTING_NOT_KEPT
+%s を保存できませんでした
+MSG_SETTING_NOT_WRITTEN
+%s を anvil.prefs に書き込めませんでした
+MSG_DRAWER_ICON_NOT_WRITTEN
+引き出しのアイコンを書き込めませんでした
+MSG_NO_MEMORY_REBOOT
+再起動するためのメモリがありません
+MSG_NO_MEMORY_ABOUT
+「Anvil について」を表示するメモリがありません
+MSG_NO_TOOL
+%s を開くツールがありません
+MSG_NOT_STARTED
+%s を起動できませんでした
+MSG_COMMAND_NOT_STARTED
+コマンドを起動できませんでした
+MSG_SHELL_DRAWER_NOT_FOUND
+Shell の引き出しが見つかりませんでした
+MSG_SHELL_NOT_STARTED
+Shell を起動できませんでした
+MSG_TRASH_OWN_DISK
+ごみ箱に入れられるのは、そのごみ箱と同じディスクのファイルだけです
+MSG_NOT_MOVED
+ファイルをそこへ移動できませんでした
+MSG_LEFT_OUT_NOT_KEPT
+このディスクは出しておいたものを記憶できません
+MSG_NO_MEMORY_WORK
+作業を始めるメモリがありません
+;
+; The questions asked, with their buttons.
+MSG_QUIT_RUNNING_ADDED
+デスクトップから起動したプログラムがまだ動いています (%lu)。\n\
+それらは動き続けます。プログラムがデスクトップに追加した\n\
+ウィンドウ、アイコン、メニュー項目 (%lu) は\n\
+デスクトップとともに消えます。\n\nデスクトップを終了しますか？
+MSG_QUIT_RUNNING
+デスクトップから起動したプログラムがまだ動いています (%lu)。\n\
+それらは動き続けます。\n\nデスクトップを終了しますか？
+MSG_QUIT_ADDED
+プログラムがデスクトップに追加したウィンドウ、アイコン、\n\
+メニュー項目 (%lu) はデスクトップとともに消えます。\n\n\
+デスクトップを終了しますか？
+MSG_QUIT_ASK
+デスクトップを終了しますか？
+MSG_QUIT_BUTTONS
+終了|キャンセル
+MSG_DELETE_ASK
+選択したもの (%lu) を完全に削除しますか？\n\
+引き出しは中身ごと削除されます。
+MSG_DELETE_BUTTONS
+削除|キャンセル
+MSG_RENAME_PROMPT
+新しい名前:
+MSG_FORMAT_TITLE
+ディスクをフォーマット
+MSG_FORMAT_ASK
+%s をフォーマットしますか？\nディスクの内容はすべて失われます。
+MSG_FORMAT_BUTTONS
+フォーマット|キャンセル
+MSG_NEW_DRAWER_PROMPT
+新しい引き出しの名前:
+MSG_UNNAMED
+名称未設定
+MSG_EXECUTE_TITLE
+コマンドを実行
+MSG_EXECUTE_PROMPT
+実行するコマンド:
+MSG_OUTPUT
+出力
+MSG_REBOOT_TITLE
+再起動
+MSG_REBOOT_ASK
+マシンを再起動しますか？\nプログラムが保存していない内容は失われます。
+MSG_REBOOT_BUTTONS
+再起動|キャンセル
+MSG_REBOOT_IN_USE
+次のものが使用中のため、内容が書き込まれない可能性があります:\n%s\n\n\
+それでも再起動しますか？
+MSG_STARTUP_WAIT
+プログラム「%s」は\nまだ終了していません。\nもう少し待ちますか？
+MSG_STARTUP_BUTTONS
+待つ|続行
+MSG_OK
+_OK
+MSG_CANCEL
+キャンセル(_C)
+;
+; About.
+MSG_ABOUT_TITLE
+Anvil について
+MSG_ABOUT_WHAT
+PowerOS のデスクトップ
+MSG_ABOUT_RELEASE
+リリース
+MSG_ABOUT_KERNEL
+カーネル
+MSG_ABOUT_BOARD
+ボード
+MSG_ABOUT_PROCESSOR
+プロセッサ
+MSG_ABOUT_CORES
+コア
+MSG_ABOUT_CLOCK
+クロック
+MSG_ABOUT_SCREEN
+画面
+MSG_ABOUT_SYSTEM_DISK
+システムディスク
+MSG_ABOUT_UP_FOR
+稼働時間
+MSG_ABOUT_IN_USE
+使用中
+MSG_ABOUT_OF
+/
+MSG_ABOUT_BITS
+ビット/ピクセル
+MSG_ABOUT_DAY
+日
+MSG_ABOUT_DAYS
+日
+;
+; Information.
+MSG_INFO_TITLE
+情報
+MSG_INFO_STATE
+状態
+MSG_INFO_READ_ONLY
+読み取り専用
+MSG_INFO_VALIDATING
+検証中
+MSG_INFO_READ_WRITE
+読み書き可能
+MSG_INFO_UNKNOWN
+不明
+MSG_INFO_BLOCKS
+ブロック
+MSG_INFO_USED
+使用
+MSG_INFO_FREE
+空き
+MSG_INFO_BLOCK_SIZE
+ブロックサイズ
+MSG_INFO_BYTES
+バイト
+MSG_INFO_BLOCKS_COUNTED
+ブロック
+MSG_INFO_CREATED
+作成日時
+MSG_INFO_LAST_CHANGED
+最終変更
+MSG_INFO_SCRIPT
+スクリプト
+MSG_INFO_ARCHIVED
+アーカイブ済み
+MSG_INFO_READABLE
+読み取り可
+MSG_INFO_WRITABLE
+書き込み可
+MSG_INFO_EXECUTABLE
+実行可
+MSG_INFO_DELETABLE
+削除可
+MSG_INFO_COMMENT
+コメント
+MSG_INFO_STACK
+スタック
+MSG_INFO_DEFAULT_TOOL
+デフォルトツール
+MSG_INFO_SAVE
+保存(_S)
+MSG_INFO_NOT_WRITTEN
+アイコンを書き込めませんでした。
+MSG_INFO_OK
+OK
+;
+; The window copying and deleting.
+MSG_WORK_COPYING
+コピー中
+MSG_WORK_DELETING
+削除中
+MSG_WORK_STOP
+中止(_S)
+MSG_WORK_WAITING
+あと %lu 件待機中
+MSG_WORK_REPLACE_ASK
+%s はすでに存在します。\n置き換えますか？
+MSG_WORK_REPLACE_BUTTONS
+置き換え|すべて置き換え|スキップ|中止
