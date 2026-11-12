@@ -32,6 +32,7 @@ const builder = @import("builder.zig");
 const reference = @import("reference.zig");
 const built = @import("truetype.zig");
 const cubic = @import("cff.zig");
+const pictured = @import("strike.zig");
 const _outline = @import("../outline/_outline.zig");
 const LibraryBase = @import("../truetype_base.zig").TrueTypeBase;
 
@@ -80,12 +81,19 @@ const Closed = struct {
     outline: *truetype.Outline,
 
     fn of(bytes: []const u8) !Closed {
+        return with(bytes, null);
+    }
+
+    /// The same of a font whose pictures are unpacked by `packer`,
+    /// compression.library opened: OpenOutline notes it in the outline.
+    fn with(bytes: []const u8, packer: ?*sdk.exec.Library) !Closed {
         const file = try Pages.holding(bytes);
         errdefer file.free();
         const state = try Pages.holding(&.{});
         errdefer state.free();
         const font: *_outline.Font = @ptrCast(@alignCast(state.memory.ptr));
         if (!_outline.open(font, file.memory.ptr, @intCast(bytes.len), 0)) return error.NotRead;
+        if (packer) |cb| font.compression = @ptrCast(@alignCast(cb));
         try file.close();
         try state.close();
         return .{ .file = file, .state = state, .outline = @ptrCast(font) };
@@ -310,6 +318,64 @@ test "truetype: no call writes to a font of cubic outlines or its outline" {
     try rig.down();
 }
 
+test "truetype: no call writes to a font of pictures or its outline" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var rig = try Rig.up();
+    const sys = rig.sys;
+    const tb = rig.tb;
+    var before: [@sizeOf(LibraryBase)]u8 = undefined;
+    @memcpy(&before, baseOf(&rig));
+
+    // Pictures of coverage in two strikes, some put together of other
+    // glyphs; and pictures of colour, PNG files, one of them damaged.
+    var coverage: builder.File = .{};
+    pictured.formsFont(&coverage);
+    var colour: builder.File = .{};
+    pictured.colourFont(&colour);
+    const packer = sys.OpenLibrary(sdk.compression.COMPRESSIONNAME, 1) orelse return error.NoCompression;
+    const fonts = [_]Closed{ try Closed.of(coverage.written()), try Closed.with(colour.written(), packer) };
+    const kinds = [_]fontimage.Kind{ .alpha4, .rgba32 };
+    const letters = [_]truetype.CodeRange{.{ .first = 'A', .last = 'G' }};
+    var verbs: [16]u8 = undefined;
+    var points: [16]vector.Point = undefined;
+    var measures: truetype.GlyphMetrics = .{};
+    var pixels: [256]u8 = undefined;
+    // Twice over: what one use left behind, the next would meet.
+    for (0..2) |_| {
+        for (fonts, kinds) |closed, kind| {
+            const outline = closed.outline;
+            const image = tb.RenderFontImage(outline, 20, &letters, letters.len) orelse return error.NoImage;
+            try testing.expect(fontimage.sound(@ptrCast(image), image.size));
+            try testing.expectEqual(kind, image.kind);
+            var glyph: u32 = 1;
+            while (glyph <= 7) : (glyph += 1) {
+                try testing.expectEqual(glyph, tb.GlyphIndex(outline, 'A' + glyph - 1));
+                // A picture is no outline: no verb, no point.
+                var segments = truetype.Segments{ .verbs = &verbs, .points = &points, .verb_room = verbs.len, .point_room = points.len };
+                try testing.expectEqual(truetype.TRUETYPE_OK, tb.GlyphSegments(outline, glyph, &segments));
+                try testing.expectEqual(@as(u32, 0), segments.verb_count);
+                try testing.expect(tb.GlyphMetrics(outline, glyph, &measures));
+                try testing.expectEqual(@as(i32, 600), measures.advance);
+                // Its glyph by number is the image's, at its size and
+                // scaled.
+                var by_number = truetype.GlyphImage{ .pixels = &pixels, .room = pixels.len };
+                try testing.expectEqual(truetype.TRUETYPE_OK, tb.RenderGlyph(outline, glyph, 20, &by_number));
+                try testing.expectEqual(kind, by_number.kind);
+                const in_image = fontimage.find(image, 'A' + glyph - 1) orelse return error.NoGlyph;
+                try testing.expectEqual(@as(u32, in_image.pitch) * in_image.rows, by_number.size);
+                try testing.expectEqualSlices(u8, fontimage.pixelsOf(image, in_image)[0..by_number.size], pixels[0..by_number.size]);
+                try testing.expectEqual(truetype.TRUETYPE_OK, tb.RenderGlyph(outline, glyph, 7, &by_number));
+            }
+            sys.FreeVec(image);
+        }
+    }
+    for (fonts) |closed| closed.free();
+    sys.CloseLibrary(packer);
+
+    try testing.expectEqualSlices(u8, &before, baseOf(&rig));
+    try rig.down();
+}
+
 /// Every call made on the fetched font `expected` is of, which is held
 /// in memory that may only be read.
 fn expectFetchedUntouched(expected: *const reference.Font) !void {
@@ -388,4 +454,8 @@ test "truetype: no call writes to a fetched font or its outline" {
 
 test "truetype: no call writes to a fetched font of cubic outlines or its outline" {
     try expectFetchedUntouched(reference.source_sans_3_regular);
+}
+
+test "truetype: no call writes to a fetched font of pictures or its outline" {
+    try expectFetchedUntouched(reference.spleen_8x16);
 }

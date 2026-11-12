@@ -16,6 +16,13 @@
 //! the ascender to the descender and put where the library puts it, the
 //! point at a pixel's left edge and the ascender at a row's top.
 //!
+//! A font whose glyphs are pictures has them as fontTools finds them in
+//! the font's strikes, a PNG file's pixels as Pillow reads them. How one
+//! looks at another size is worked out by the script from the rule: the
+//! picture scaled by the line's em over the strike's, its baseline on a
+//! whole row, and each pixel the mean of the picture over that pixel's
+//! area.
+//!
 //! A list too long to write out - every character of a map, every glyph's
 //! measures - is written as how many entries it has and the SHA-256 of
 //! them all, each entry its numbers as four bytes, the lowest first. The
@@ -33,8 +40,17 @@
 //! - The glyphs' measures: (advance, left side bearing, x min, y min,
 //!   x max, y max) for every glyph, by its number - or for every
 //!   `glyph_step`th, from glyph 0; a glyph of no outline has a box of 0,
-//!   and one of cubic curves the box of its points, the control points
-//!   among them.
+//!   one of cubic curves the box of its points, the control points among
+//!   them, and one that is a picture the box of its largest picture, in
+//!   units, widened to whole ones.
+//! - The pictures' measures: (glyph, the strike's pixels an em across and
+//!   down, its bits a pixel, the picture's width and rows, its left edge
+//!   from the point and its top above the baseline) for every glyph with
+//!   a picture, by its number: of its largest picture.
+//! - The pictures' pixels: for each of the same glyphs its number, as
+//!   four bytes, and then its pixels row by row from the top - red,
+//!   green, blue and coverage of a picture of colour, a byte of coverage
+//!   (0 to 255) of any other.
 //! - The outlines of a font of cubic curves: for each of the same glyphs
 //!   how many verbs and how many points it has, then each verb's number -
 //!   a move 0, a line 1, a curve 2, a close 3 - and its points' x and y.
@@ -112,6 +128,20 @@ pub const Picture = struct {
     rows: []const []const u8,
 };
 
+/// One glyph that is a picture, scaled to a line `scaled_rows` tall.
+pub const Scaled = struct {
+    glyph: u32,
+    /// Where its box is: pixels right of the point, and rows below the
+    /// line's top.
+    left: i32,
+    top: i32,
+    width: u32,
+    /// The box row by row from the top: of a picture of coverage a hex
+    /// digit a pixel, its coverage in fifteenths; of one of colour eight
+    /// a pixel, its red, green, blue and coverage.
+    rows: []const []const u8,
+};
+
 /// One font, as fontTools reads it.
 pub const Font = struct {
     /// The file, under the directory the fonts are fetched into, and what
@@ -124,7 +154,8 @@ pub const Font = struct {
     index: u32,
     font_count: u32,
     directory: u32,
-    /// Whether it has `glyf` and `loca`: glyphs of lines and curves.
+    /// Whether it has `glyf` and `loca` with glyphs in them: glyphs of
+    /// lines and curves.
     outlines: bool,
     /// Whether it has `CFF ` instead: glyphs of lines and cubic curves.
     cubic: bool,
@@ -163,6 +194,23 @@ pub const Font = struct {
     /// A few glyphs pixel by pixel, for a line `picture_rows` tall.
     picture_rows: u32,
     pictures: []const Picture,
+    /// Whether its glyphs are pictures - it has neither kind of outline,
+    /// and strikes - and whether those are of colour.
+    strikes: bool,
+    strike_colour: bool,
+    /// How many glyphs have a picture, and their measures and their
+    /// pixels, hashed.
+    strike_count: u32,
+    strike_measures_sha256: []const u8,
+    strike_pixels_sha256: []const u8,
+    /// The pictures scaled to a line `scaled_rows` tall: the sum of the
+    /// coverage of all pixels - each 0 to 255 of a picture of colour, 0
+    /// to 15 of any other - of glyph 0, `scaled_step`, twice that and so
+    /// on, 0 for a glyph without a picture; and a few pixel by pixel.
+    scaled_rows: u32,
+    scaled_step: u32,
+    scaled_inks: []const u32,
+    scaled: []const Scaled,
     /// The table directory, in the file's order.
     tables: []const Entry,
     /// The character map's subtables, in the table's order.
@@ -186,6 +234,7 @@ pub const go_regular = &@import("reference/go_regular.zig").font;
 pub const liberation_sans_regular = &@import("reference/liberation_sans_regular.zig").font;
 pub const noto_sans_devanagari_regular = &@import("reference/noto_sans_devanagari_regular.zig").font;
 pub const noto_color_emoji = &@import("reference/noto_color_emoji.zig").font;
+pub const spleen_8x16 = &@import("reference/spleen_8x16.zig").font;
 pub const source_sans_3_regular = &@import("reference/source_sans_3_regular.zig").font;
 pub const noto_sans_cjk_jp_regular = &@import("reference/noto_sans_cjk_jp_regular.zig").font;
 pub const noto_sans_cjk_sc_regular = &@import("reference/noto_sans_cjk_sc_regular.zig").font;
@@ -196,6 +245,7 @@ pub const fonts = [_]*const Font{
     liberation_sans_regular,
     noto_sans_devanagari_regular,
     noto_color_emoji,
+    spleen_8x16,
     source_sans_3_regular,
     noto_sans_cjk_jp_regular,
     noto_sans_cjk_sc_regular,
@@ -215,6 +265,11 @@ pub const Digest = struct {
     /// The same of a signed one.
     pub fn addSigned(digest: *Digest, value: i32) void {
         digest.add(@bitCast(value));
+    }
+
+    /// Bytes as they are.
+    pub fn addBytes(digest: *Digest, bytes: []const u8) void {
+        digest.sha.update(bytes);
     }
 
     /// The digest of what was added, in hex as the files have it.

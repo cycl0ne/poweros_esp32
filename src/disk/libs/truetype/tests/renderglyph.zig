@@ -188,6 +188,9 @@ test "RenderGlyph: memory that runs out at any of its blocks is said, and none i
     var rig = try built.Rig.up();
     const sys = rig.sys;
     const tb = rig.tb;
+    // A library nobody has open goes when memory runs out, and its
+    // memory would count as given back.
+    rig.withoutPacker();
 
     var out: built.Out = .{};
     built.buildFont(&out);

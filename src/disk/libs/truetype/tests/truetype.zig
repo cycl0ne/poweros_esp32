@@ -11,6 +11,7 @@ const truetype = sdk.truetype;
 const host = @import("host_rom");
 const kexec = host.exec;
 const truetype_init = @import("../truetype_init.zig");
+const compression_init = @import("../../compression/compression_init.zig");
 
 const testing = std.testing;
 const TrueTypeBase = sdk.interface.truetype.TrueTypeBase;
@@ -24,12 +25,15 @@ test {
 /// the ROM's test memory has.
 var lent: [32 * 1024 * 1024]u8 align(16) = undefined;
 
-/// The ROM's exec and utility.library up, and truetype.library made from
+/// The ROM's exec and utility.library up, compression.library made, which
+/// a font of PNG pictures is opened with, and truetype.library made from
 /// its ROM tag and opened.
 pub const Rig = struct {
     sys: *sdk.interface.exec.ExecBase,
     region: *sdk.exec.MemHeader,
     ub: *host.utility.UtilityBase,
+    /// compression.library, or null once a test has taken it away.
+    packer: ?*sdk.exec.Library,
     library: *sdk.exec.Library,
     tb: *TrueTypeBase,
 
@@ -37,14 +41,23 @@ pub const Rig = struct {
         const ub = try host.utility.setUp();
         const sys = kexec.SysBase.iface();
         const region = sys.AddMemList(lent.len, sdk.exec.MEMF_ANY, 0, &lent, "lent").?;
+        const packer = kexec.InitResident(kexec.SysBase, &compression_init.compression_library_tag, null) orelse return error.NoCompression;
         const made = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoLibrary;
         return .{
             .sys = sys,
             .region = region,
             .ub = ub,
+            .packer = @ptrCast(@alignCast(packer)),
             .library = @ptrCast(@alignCast(made)),
             .tb = @ptrCast(sys.OpenLibrary(truetype.TRUETYPENAME, 1) orelse return error.NoBase),
         };
+    }
+
+    /// compression.library taken away: a font that needs it does not
+    /// open from here on.
+    pub fn withoutPacker(rig: *Rig) void {
+        if (rig.packer) |packer| _ = rig.sys.RemLibrary(packer);
+        rig.packer = null;
     }
 
     /// The library closed and expunged, utility.library taken down, and
@@ -52,6 +65,7 @@ pub const Rig = struct {
     pub fn down(rig: *Rig) !void {
         rig.sys.CloseLibrary(rig.tb.lib());
         _ = rig.sys.RemLibrary(rig.library);
+        rig.withoutPacker();
         try host.utility.tearDown(rig.ub);
         try testing.expectEqual(@intFromPtr(rig.region.upper) - @intFromPtr(rig.region.lower), rig.region.free);
         rig.sys.Remove(&rig.region.node);

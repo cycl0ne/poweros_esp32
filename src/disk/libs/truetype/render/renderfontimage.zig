@@ -20,7 +20,7 @@ const _render = @import("_render.zig");
 /// ```
 ///
 /// SINCE: 1.0, ranges since 1.3, the limits since 1.4, fonts of cubic
-/// curves since 1.6. LVO -24.
+/// curves since 1.6, fonts of pictures since 1.7. LVO -24.
 ///
 /// INPUTS:
 /// - `outline` - what `OpenOutline` answered.
@@ -31,12 +31,13 @@ const _render = @import("_render.zig");
 /// - `count` - how many ranges.
 ///
 /// RESULT:
-/// A font image of coverage (`alpha4`), sound and ready for `AddFont`:
-/// every character of the ranges the font has a glyph for, and the
-/// font's missing glyph as the default character, under
-/// `fontimage.MISSING`. Null for a height of 0 or more than 4096, a font
-/// without outlines, ranges out of order or past the last code point, an
-/// image of more than a gigabyte, or no memory.
+/// A font image of coverage (`alpha4`), or of colour (`rgba32`) for a
+/// font of colour pictures, sound and ready for `AddFont`: every
+/// character of the ranges the font has a glyph for, and the font's
+/// missing glyph as the default character, under `fontimage.MISSING`.
+/// Null for a height of 0 or more than 4096, a font with neither
+/// outlines nor pictures, ranges out of order or past the last code
+/// point, an image of more than a gigabyte, or no memory.
 ///
 /// BEHAVIOR:
 /// A character the font's character map gives no glyph is left out, so
@@ -46,11 +47,13 @@ const _render = @import("_render.zig");
 ///
 /// Every glyph is its outline scaled so that the line is `rows` tall and
 /// the baseline sits the ascender's share of it down, the curves -
-/// quadratic or cubic - made lines within a third of a pixel, and each pixel given how much of it
-/// the outline covers, in fifteenths. The advances are rounded to whole
-/// pixels. The font is `FPF_DESIGNED` - drawn at its size from the
-/// outline, not scaled from another size - and `FPF_PROPORTIONAL` when
-/// its advances differ. Its styles are the ones the font says it is drawn
+/// quadratic or cubic - made lines within a third of a pixel, and each
+/// pixel given how much of it the outline covers, in fifteenths. A glyph
+/// of a font whose glyphs are pictures is its picture scaled to the
+/// line, as `RenderGlyph` says: at a strike's own size, pixel for pixel.
+/// The advances are rounded to whole pixels. The font is `FPF_DESIGNED`
+/// - drawn at its size from the font's file, not scaled from another
+/// image - and `FPF_PROPORTIONAL` when its advances differ. Its styles are the ones the font says it is drawn
 /// in (`FontMetrics`): a bold face renders as `FSF_BOLD`, so graphics
 /// draws no bold over it.
 ///
@@ -73,8 +76,11 @@ const _render = @import("_render.zig");
 /// No hinting: stems at small sizes may fall between pixels and show as
 /// two half-covered columns.
 ///
+/// The pictures of a font that has outlines too are not drawn, at any
+/// size.
+///
 /// SEE ALSO:
-/// `OpenOutline`, `graphics.library/AddFont`, `diskfont.library/OpenDiskFont`
+/// `OpenOutline`, `RenderGlyph`, `graphics.library/AddFont`, `diskfont.library/OpenDiskFont`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -85,7 +91,9 @@ const _render = @import("_render.zig");
 pub fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32, ranges: [*]const truetype.CodeRange, count: u32) ?*FontImage {
     const sys = tb.sys_base;
     const font: *const _outline.Font = @ptrCast(@alignCast(outline));
-    if (rows == 0 or rows > _render.most_rows or !_outline.hasOutlines(font)) return null;
+    if (rows == 0 or rows > _render.most_rows) return null;
+    if (!_outline.hasOutlines(font) and !_outline.hasPictures(font)) return null;
+    const kind = _render.kindOf(font);
     const asked = ranges[0..count];
 
     // What the font has of the ranges, and in how many runs.
@@ -128,14 +136,14 @@ pub fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32,
             const glyph = _outline.glyphIndex(font, code);
             if (glyph != 0) {
                 glyphs[made] = _render.renderGlyph(sys, font, glyph, scale, &work) orelse return null;
-                data_bytes += @as(u64, fontimage.pitchOf(.alpha4, glyphs[made].width)) * glyphs[made].rows;
+                data_bytes += @as(u64, fontimage.pitchOf(kind, glyphs[made].width)) * glyphs[made].rows;
                 made += 1;
             }
             if (code == range.last) break;
         }
     }
     glyphs[made] = _render.renderGlyph(sys, font, 0, scale, &work) orelse return null;
-    data_bytes += @as(u64, fontimage.pitchOf(.alpha4, glyphs[made].width)) * glyphs[made].rows;
+    data_bytes += @as(u64, fontimage.pitchOf(kind, glyphs[made].width)) * glyphs[made].rows;
     made += 1;
     if (data_bytes > most_data) return null;
     const data_size: u32 = @intCast(data_bytes);
@@ -176,7 +184,7 @@ pub fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32,
     var max_width: u32 = 0;
     var proportional = false;
     for (glyphs[0..glyph_count], 0..) |g, i| {
-        const pitch = fontimage.pitchOf(.alpha4, g.width);
+        const pitch = fontimage.pitchOf(kind, g.width);
         table[i] = .{
             .data = at,
             .width = @intCast(g.width),
@@ -186,7 +194,7 @@ pub fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32,
             .advance = @intCast(g.advance),
             .pitch = @intCast(pitch),
         };
-        _render.pack(&g, block + data_at + at, pitch);
+        _render.pack(kind, &g, block + data_at + at, pitch);
         at += pitch * g.rows;
         max_width = @max(max_width, g.width);
         if (i < glyph_count - 1 and g.advance != glyphs[0].advance) proportional = true;
@@ -206,7 +214,7 @@ pub fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32,
         .max_width = @intCast(max_width),
         .style = font.style,
         .flags = graphics.FPF_DESIGNED | if (proportional) graphics.FPF_PROPORTIONAL else 0,
-        .kind = .alpha4,
+        .kind = kind,
         .default_char = fontimage.MISSING,
         .range_count = range_count,
         .ranges = ranges_at,

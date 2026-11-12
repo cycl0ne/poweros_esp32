@@ -10,6 +10,16 @@
 //! Every glyph is read as an outline, and the font is rendered at one
 //! size: as an image of its characters, and every glyph by its number,
 //! which for a glyph with a character is the image's glyph byte for byte.
+//!
+//! A font whose glyphs are pictures is compared further: each picture's
+//! measures and its pixels at full size - read with the library's own
+//! reader (`_picture.read`), as rendering a glyph reads it - with what
+//! fontTools and Pillow find, and glyphs rendered at another size with
+//! the mean over each pixel's area the script works out: the coverage of
+//! many glyphs summed, and a few pixel by pixel. The library adds an area
+//! up in 32 bits and the script in 64: `scaled_apart` says how far apart
+//! a rounded value may be.
+//!
 //! A test is skipped when its font is not fetched, and fails by the
 //! font's name when the file is not the one the values were read from.
 //!
@@ -33,6 +43,8 @@ const fontimage = graphics.fontimage;
 const truetype = sdk.truetype;
 const reference = @import("reference.zig");
 const _outline = @import("../outline/_outline.zig");
+const _strike = @import("../outline/_strike.zig");
+const _picture = @import("../render/_picture.zig");
 const Rig = @import("truetype.zig").Rig;
 
 const testing = std.testing;
@@ -74,6 +86,10 @@ fn expectMap(what: []const u8, want_count: u32, want: []const u8, font: *const _
 const ink_apart = 20;
 const ink_least = 2;
 const pixel_apart = 1;
+
+/// How far a value of a scaled picture's pixel may be from the script's:
+/// one, where the two round a half differently.
+const scaled_apart = 1;
 
 /// A verb of a cubic outline: its number in a hashed outline, its letter
 /// in one written out, and how many points it has.
@@ -121,10 +137,11 @@ const Rendered = struct {
 
 /// Every glyph of `outline` rendered by its number for a line `rows`
 /// tall into `pixels`, which hold `untouched` and do so again after: each
-/// is rendered, its advance is the font's scaled to the line, its box is
-/// cut to its ink, a row's bytes hold its pixels and nothing after them,
-/// and no byte past the glyph's is written.
-fn expectGlyphsRendered(tb: *TrueTypeBase, outline: *truetype.Outline, metrics: *const truetype.FontMetrics, rows: u32, pixels: []u8) !Rendered {
+/// is rendered, its pixels of `kind`, its advance is the font's scaled to
+/// the line, a row's bytes hold its pixels and nothing after them, and no
+/// byte past the glyph's is written. A glyph of an outline has its box
+/// cut to its ink; one that is a picture (`pictured`) has the picture's.
+fn expectGlyphsRendered(tb: *TrueTypeBase, outline: *truetype.Outline, metrics: *const truetype.FontMetrics, rows: u32, pixels: []u8, kind: fontimage.Kind, pictured: bool) !Rendered {
     var found: Rendered = .{};
     const line: i64 = metrics.ascender - metrics.descender;
     var measures: truetype.GlyphMetrics = .{};
@@ -138,9 +155,9 @@ fn expectGlyphsRendered(tb: *TrueTypeBase, outline: *truetype.Outline, metrics: 
             glyph, rows, answer, box.width, box.rows, box.left, box.top, box.advance, box.pitch, size,
         });
         try testing.expectEqual(truetype.TRUETYPE_OK, answer);
-        try testing.expectEqual(fontimage.Kind.alpha4, image.kind);
+        try testing.expectEqual(kind, image.kind);
         try testing.expectEqual(@as(u32, 0), box.data);
-        try testing.expectEqual(fontimage.pitchOf(.alpha4, box.width), @as(u32, box.pitch));
+        try testing.expectEqual(fontimage.pitchOf(kind, box.width), @as(u32, box.pitch));
         try testing.expectEqual(@as(u32, box.pitch) * box.rows, size);
         try testing.expect((box.width == 0) == (box.rows == 0));
         for (pixels[size..][0..watched]) |byte| try testing.expectEqual(untouched, byte);
@@ -153,6 +170,10 @@ fn expectGlyphsRendered(tb: *TrueTypeBase, outline: *truetype.Outline, metrics: 
         if (measures.x_max > measures.x_min and measures.y_max > measures.y_min) found.drawn += 1;
         if (box.width == 0) continue;
         found.inked += 1;
+        if (pictured) {
+            @memset(pixels[0..size], untouched);
+            continue;
+        }
 
         // Cut to the ink: its first and last row and column each have a
         // pixel covered. A row of an odd width ends in half a byte of
@@ -180,6 +201,95 @@ fn expectGlyphsRendered(tb: *TrueTypeBase, outline: *truetype.Outline, metrics: 
     return found;
 }
 
+/// The pictures of a font of them are what the script found: each one's
+/// measures and its pixels at full size, and rendered for a line
+/// `scaled_rows` tall the coverage of every `scaled_step`th glyph summed
+/// and a few glyphs pixel by pixel, in their box.
+fn expectPictures(rig: *Rig, outline: *truetype.Outline, expected: *const reference.Font, pixels: []u8) !void {
+    const tb = rig.tb;
+    const font: *const _outline.Font = @ptrCast(@alignCast(outline));
+    const each: u32 = if (expected.strike_colour) 4 else 1;
+
+    var measured: reference.Digest = .{};
+    var shown: reference.Digest = .{};
+    var found: u32 = 0;
+    var glyph: u32 = 0;
+    while (glyph < expected.glyph_count) : (glyph += 1) {
+        const picture = _strike.pictureOf(font, glyph, null) orelse continue;
+        found += 1;
+        measured.add(glyph);
+        measured.add(picture.strike.ppem_x);
+        measured.add(picture.strike.ppem_y);
+        measured.add(picture.strike.depth);
+        measured.add(picture.metrics.width);
+        measured.add(picture.metrics.rows);
+        measured.addSigned(picture.metrics.left);
+        measured.addSigned(picture.metrics.top);
+        const canvas = _picture.read(rig.sys, font, &picture) catch |failure| {
+            std.debug.print("glyph {d}: its picture is not read: {s}\n", .{ glyph, @errorName(failure) });
+            return error.ReadDiffers;
+        };
+        defer rig.sys.FreeVec(canvas.ptr);
+        try testing.expectEqual(picture.metrics.width * picture.metrics.rows * each, canvas.len);
+        shown.add(glyph);
+        shown.addBytes(canvas);
+    }
+    try expectDigest("the pictures' measures", expected.strike_count, expected.strike_measures_sha256, found, &measured);
+    try expectDigest("the pictures' pixels", expected.strike_count, expected.strike_pixels_sha256, found, &shown);
+
+    // Scaled: the coverage of all a glyph's pixels summed, each no
+    // further off than a rounding.
+    for (expected.scaled_inks, 0..) |theirs, i| {
+        const number: u32 = @intCast(i * expected.scaled_step);
+        var one = truetype.GlyphImage{ .pixels = pixels.ptr, .room = glyph_room };
+        try testing.expectEqual(truetype.TRUETYPE_OK, tb.RenderGlyph(outline, number, expected.scaled_rows, &one));
+        var ours: u32 = 0;
+        if (expected.strike_colour) {
+            var at: usize = 3;
+            while (at < one.size) : (at += 4) ours += pixels[at];
+        } else {
+            for (pixels[0..one.size]) |byte| ours += (byte >> 4) + (byte & 0x0F);
+        }
+        @memset(pixels[0..one.size], untouched);
+        const apart = @max(ours, theirs) - @min(ours, theirs);
+        if (apart <= scaled_apart * @as(u32, one.glyph.width) * one.glyph.rows / 16) continue;
+        std.debug.print("glyph {d} at {d} rows: coverage {d}, the area's {d}\n", .{ number, expected.scaled_rows, ours, theirs });
+        return error.ReadDiffers;
+    }
+    // A few pixel by pixel.
+    for (expected.scaled) |want| {
+        var one = truetype.GlyphImage{ .pixels = pixels.ptr, .room = glyph_room };
+        try testing.expectEqual(truetype.TRUETYPE_OK, tb.RenderGlyph(outline, want.glyph, expected.scaled_rows, &one));
+        const box = one.glyph;
+        errdefer std.debug.print("glyph {d} at {d} rows: {d} by {d} at {d}, {d}\n", .{ want.glyph, expected.scaled_rows, box.width, box.rows, box.left, box.top });
+        try testing.expectEqual(want.left, @as(i32, box.left));
+        try testing.expectEqual(want.top, @as(i32, box.top));
+        try testing.expectEqual(want.width, @as(u32, box.width));
+        try testing.expectEqual(want.rows.len, @as(usize, box.rows));
+        for (want.rows, 0..) |row, y| {
+            const line = pixels[y * box.pitch ..][0..box.pitch];
+            for (0..want.width) |x| {
+                if (expected.strike_colour) {
+                    for (0..4) |channel| {
+                        const theirs: i32 = try std.fmt.parseInt(u8, row[x * 8 + channel * 2 ..][0..2], 16);
+                        const ours: i32 = line[x * 4 + channel];
+                        if (@abs(ours - theirs) <= scaled_apart) continue;
+                        std.debug.print("pixel {d}, {d}: channel {d} is {d}, the area's {d}\n", .{ x, y, channel, ours, theirs });
+                        return error.ReadDiffers;
+                    }
+                } else {
+                    const theirs: i32 = try std.fmt.charToDigit(row[x], 16);
+                    const ours: i32 = if (x & 1 == 0) line[x / 2] >> 4 else line[x / 2] & 0x0F;
+                    if (@abs(ours - theirs) <= scaled_apart) continue;
+                    std.debug.print("pixel {d}, {d} is {d}, the area's {d}\n", .{ x, y, ours, theirs });
+                    return error.ReadDiffers;
+                }
+            }
+        }
+        @memset(pixels[0..one.size], untouched);
+    }
+}
+
 /// The font `expected` is of, read by the library, is what fontTools
 /// reads.
 fn expectFont(expected: *const reference.Font) !void {
@@ -199,6 +309,7 @@ fn expectFont(expected: *const reference.Font) !void {
     const which = [_]sdk.utility.TagItem{ .{ .tag = truetype.TTA_FontIndex, .data = expected.index }, .{} };
     const outline = tb.OpenOutline(bytes.ptr, size, &which) orelse return error.NotRead;
     const curves = expected.outlines or expected.cubic;
+    const pixel_kind: fontimage.Kind = if (expected.strike_colour) .rgba32 else .alpha4;
 
     // The font's measures.
     var metrics: truetype.FontMetrics = .{};
@@ -376,7 +487,7 @@ fn expectFont(expected: *const reference.Font) !void {
             if (verb == sdk.vector.SEG_CLOSE) closes += 1;
         }
         const drawn = measures.x_max > measures.x_min and measures.y_max > measures.y_min;
-        if (result != truetype.TRUETYPE_OK or moves != closes or (drawn and moves == 0) or (!curves and moves != 0)) {
+        if (result != truetype.TRUETYPE_OK or moves != closes or (curves and drawn and moves == 0) or (!curves and moves != 0)) {
             std.debug.print("glyph {d}: its outline answers {d}, {d} contours begun and {d} closed\n", .{ glyph, result, moves, closes });
             return error.ReadDiffers;
         }
@@ -421,7 +532,7 @@ fn expectFont(expected: *const reference.Font) !void {
     try testing.expectEqual(truetype.TRUETYPEERR_GLYPH, tb.GlyphSegments(outline, expected.glyph_count, &none));
 
     // Rendered: an image of the characters the font has a glyph for, and
-    // none of a font without outlines.
+    // none of a font with neither outlines nor pictures.
     const ranges = [_]truetype.CodeRange{
         .{ .first = 0x20, .last = 0x7E },
         .{ .first = 0xA0, .last = 0x17F },
@@ -430,11 +541,12 @@ fn expectFont(expected: *const reference.Font) !void {
         .{ .first = 0x1F600, .last = 0x1F64F },
     };
     const rendered = tb.RenderFontImage(outline, 16, &ranges, ranges.len);
-    if (curves) {
+    if (curves or expected.strikes) {
         const image = rendered orelse return error.NoImage;
         const block: [*]const u8 = @ptrCast(image);
         try testing.expect(fontimage.check(block, image.size));
         try testing.expect(fontimage.sound(block, image.size));
+        try testing.expectEqual(pixel_kind, image.kind);
         try testing.expectEqual(@as(u16, 16), image.height);
         try testing.expectEqual(style, image.style);
         for (ranges) |range| {
@@ -476,9 +588,10 @@ fn expectFont(expected: *const reference.Font) !void {
         sys.FreeVec(image);
 
         // Every glyph by its number, at the image's height and at a
-        // taller one, where each glyph with an outline has ink.
-        _ = try expectGlyphsRendered(tb, outline, &metrics, 16, pixels);
-        const tall = try expectGlyphsRendered(tb, outline, &metrics, 64, pixels);
+        // taller one, where each glyph with an outline or a picture has
+        // ink.
+        _ = try expectGlyphsRendered(tb, outline, &metrics, 16, pixels, pixel_kind, expected.strikes);
+        const tall = try expectGlyphsRendered(tb, outline, &metrics, 64, pixels, pixel_kind, expected.strikes);
         try testing.expectEqual(tall.drawn, tall.inked);
         try testing.expect(tall.inked > expected.glyph_count / 2);
 
@@ -522,9 +635,11 @@ fn expectFont(expected: *const reference.Font) !void {
         try testing.expectEqual(truetype.TRUETYPEERR_GLYPH, tb.RenderGlyph(outline, expected.glyph_count, 16, &past));
         try testing.expectEqual(@as(u32, 0), past.size);
         try testing.expectEqual(fontimage.Glyph{}, past.glyph);
+
+        if (expected.strikes) try expectPictures(&rig, outline, expected, pixels);
     } else {
         try testing.expect(rendered == null);
-        // A font of pictures has no glyph to render by its number.
+        // A font of neither has no glyph to render by its number.
         var byte: [1]u8 = .{untouched};
         var glyph_number: u32 = 0;
         while (glyph_number < expected.glyph_count) : (glyph_number += 97) {
@@ -556,6 +671,10 @@ test "truetype: noto/NotoColorEmoji.ttf as fontTools reads it" {
     try expectFont(reference.noto_color_emoji);
 }
 
+test "truetype: spleen-2.2.0/spleen-8x16.otb as fontTools reads it" {
+    try expectFont(reference.spleen_8x16);
+}
+
 test "truetype: source-sans/SourceSans3-Regular.otf as fontTools reads it" {
     try expectFont(reference.source_sans_3_regular);
 }
@@ -569,8 +688,9 @@ test "truetype: noto/NotoSansCJK-Regular.ttc, its third font, as fontTools reads
 }
 
 test "truetype: there is a test for every font with values" {
-    // The seven above, each named with its file.
-    try testing.expectEqual(@as(usize, 7), reference.fonts.len);
+    // The eight above, each named with its file.
+    try testing.expectEqual(@as(usize, 8), reference.fonts.len);
+    try testing.expectEqualStrings("spleen-2.2.0/spleen-8x16.otb", reference.spleen_8x16.file);
     try testing.expectEqualStrings("source-sans/SourceSans3-Regular.otf", reference.source_sans_3_regular.file);
     try testing.expectEqualStrings("noto/NotoSansCJK-Regular.ttc", reference.noto_sans_cjk_jp_regular.file);
     try testing.expectEqual(@as(u32, 0), reference.noto_sans_cjk_jp_regular.index);

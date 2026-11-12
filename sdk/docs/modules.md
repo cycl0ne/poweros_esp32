@@ -433,6 +433,7 @@ flowchart TB
     m_tls_library -.-> m_bsdsocket_library
     m_tls_library --> m_crypto_library
     m_tls_library --> m_dos_library
+    m_truetype_library --> m_compression_library
     m_truetypeshaping_library --> m_truetype_library
     m_uac_device --> m_rta_library
     m_uac_device --> m_usb_library

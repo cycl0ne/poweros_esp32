@@ -9,6 +9,7 @@ const _base = @import("../truetype_base.zig");
 const TrueTypeBase = _base.TrueTypeBase;
 const _outline = @import("../outline/_outline.zig");
 const _render = @import("_render.zig");
+const _picture = @import("_picture.zig");
 
 /// One glyph of an outline, by its number, as a font image has a glyph.
 ///
@@ -17,7 +18,8 @@ const _render = @import("_render.zig");
 /// fn RenderGlyph(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, rows: u32, image: *truetype.GlyphImage) i32
 /// ```
 ///
-/// SINCE: 1.5, fonts of cubic curves since 1.6. LVO -64.
+/// SINCE: 1.5, fonts of cubic curves since 1.6, fonts of pictures since
+/// 1.7. LVO -64.
 ///
 /// INPUTS:
 /// - `outline` - what `OpenOutline` answered.
@@ -34,13 +36,13 @@ const _render = @import("_render.zig");
 ///   space - has a box of nothing, no bytes, and its advance.
 /// - `TRUETYPEERR_ROOM` - the pixels did not fit: `size` says how many
 ///   bytes they take and `glyph` is set, and nothing is written.
-/// - `TRUETYPEERR_GLYPH` - no glyph of that number, or a font without
-///   outlines.
+/// - `TRUETYPEERR_GLYPH` - no glyph of that number, or a font with
+///   neither outlines nor pictures.
 /// - `TRUETYPEERR_ROWS` - a height of 0 or more than 4096.
 /// - `TRUETYPEERR_NOMEM` - no memory to render it in.
 ///
 /// With every answer but the first two, `size` is 0 and `glyph` is a
-/// glyph of nothing.
+/// glyph of nothing. `kind` is set with every answer.
 ///
 /// BEHAVIOR:
 /// The glyph is rendered as `RenderFontImage` renders the glyphs of a
@@ -48,10 +50,26 @@ const _render = @import("_render.zig");
 /// outline scaled so that the line is `rows` tall, each pixel given how
 /// much of it the outline covers, in fifteenths. `image.kind` says what
 /// the bytes are - `alpha4`, two pixels a byte, the left one in the high
-/// four bits - and `image.glyph` is a font image's glyph: the box of its
-/// ink, `left` columns from the point and `top` rows down from the top
-/// of the line, the bytes from one row to the next, and the advance in
-/// whole pixels. Its `data` is 0.
+/// four bits, or `rgba32` for a font of colour pictures, a pixel's red,
+/// green, blue and coverage a byte each - and `image.glyph` is a font
+/// image's glyph: the box of its ink, `left` columns from the point and
+/// `top` rows down from the top of the line, the bytes from one row to
+/// the next, and the advance in whole pixels. Its `data` is 0.
+///
+/// A font without outlines whose glyphs are pictures (`CBLC` and `CBDT`,
+/// or `EBLC` and `EBDT`) is rendered from them. Of the strikes that have
+/// a picture of the glyph the one is taken whose em is the fewest pixels
+/// no smaller than the line's, or the largest when all are smaller. The
+/// picture is scaled by the line's em over the strike's, its baseline on
+/// a whole row, and each pixel of the glyph is the mean of the picture
+/// over that pixel's area, colour weighted by coverage: at the strike's
+/// own size the picture comes out pixel for pixel. The glyph's box is
+/// the scaled picture's, not cut to its ink, so the bytes a glyph takes
+/// follow from its measures, and `TRUETYPEERR_ROOM` is answered without
+/// the picture being read. A picture that cannot be read - its data too
+/// short, a PNG file that is damaged or not the size its measures say,
+/// parts nested more than four deep - is its box with nothing in it. A
+/// glyph no strike has a picture of is one of no ink, with its advance.
 ///
 /// A glyph the file is damaged in - its data cut short, a program of
 /// cubic curves that cannot be run, its outline further than sixteen
@@ -75,13 +93,19 @@ const _render = @import("_render.zig");
 /// it renders in and gives it back before it returns.
 ///
 /// NOTES:
-/// An answer of `TRUETYPEERR_ROOM` has cost the rendering: a caller that
-/// keeps room for the glyphs it mostly draws, and asks again with more
-/// for the few that are larger, renders those twice.
+/// An answer of `TRUETYPEERR_ROOM` has cost an outline's rendering: a
+/// caller that keeps room for the glyphs it mostly draws, and asks again
+/// with more for the few that are larger, renders those twice.
+///
+/// A picture is not sharpened: one drawn larger than its strike is its
+/// pixels spread over their areas.
 ///
 /// BUGS:
 /// No hinting: stems at small sizes may fall between pixels and show as
 /// two half-covered columns.
+///
+/// The pictures of a font that has outlines too are not drawn, at any
+/// size.
 ///
 /// SEE ALSO:
 /// `RenderFontImage`, `GlyphIndex`, `GlyphMetrics`,
@@ -98,19 +122,42 @@ const _render = @import("_render.zig");
 pub fn RenderGlyph(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, rows: u32, image: *truetype.GlyphImage) i32 {
     const sys = tb.sys_base;
     const font: *const _outline.Font = @ptrCast(@alignCast(outline));
+    const kind = _render.kindOf(font);
     image.size = 0;
-    image.kind = .alpha4;
+    image.kind = kind;
     image.glyph = .{};
     if (rows == 0 or rows > _render.most_rows) return truetype.TRUETYPEERR_ROWS;
-    if (glyph >= font.glyph_count or !_outline.hasOutlines(font)) return truetype.TRUETYPEERR_GLYPH;
+    if (glyph >= font.glyph_count) return truetype.TRUETYPEERR_GLYPH;
+    if (!_outline.hasOutlines(font) and !_outline.hasPictures(font)) return truetype.TRUETYPEERR_GLYPH;
+    const scale = _render.scaleOf(font, rows);
+
+    // A picture's box is known before it is read: one that does not fit
+    // is answered without reading it.
+    if (_outline.hasPictures(font)) {
+        if (_picture.boxOf(font, glyph, scale)) |placed| {
+            const pitch = fontimage.pitchOf(kind, placed.width);
+            if (@as(u64, pitch) * placed.rows > image.room) {
+                image.glyph = .{
+                    .width = @intCast(placed.width),
+                    .rows = @intCast(placed.rows),
+                    .top = @intCast(placed.top),
+                    .left = @intCast(placed.left),
+                    .advance = @intCast(_render.advanceOf(font, glyph, scale)),
+                    .pitch = @intCast(pitch),
+                };
+                image.size = pitch * placed.rows;
+                return truetype.TRUETYPEERR_ROOM;
+            }
+        }
+    }
 
     var work = _render.Work.init(sys, font) orelse return truetype.TRUETYPEERR_NOMEM;
     defer work.deinit(sys);
-    const rendered = _render.renderGlyph(sys, font, glyph, _render.scaleOf(font, rows), &work) orelse
+    const rendered = _render.renderGlyph(sys, font, glyph, scale, &work) orelse
         return truetype.TRUETYPEERR_NOMEM;
     defer if (rendered.pixels) |pixels| sys.FreeVec(pixels);
 
-    const pitch = fontimage.pitchOf(.alpha4, rendered.width);
+    const pitch = fontimage.pitchOf(kind, rendered.width);
     image.glyph = .{
         .width = @intCast(rendered.width),
         .rows = @intCast(rendered.rows),
@@ -121,6 +168,6 @@ pub fn RenderGlyph(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, ro
     };
     image.size = pitch * rendered.rows;
     if (image.size > image.room) return truetype.TRUETYPEERR_ROOM;
-    _render.pack(&rendered, image.pixels, pitch);
+    _render.pack(kind, &rendered, image.pixels, pitch);
     return truetype.TRUETYPE_OK;
 }

@@ -14,7 +14,8 @@ const _outline = @import("../outline/_outline.zig");
 /// fn GlyphMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, metrics: *truetype.GlyphMetrics) bool
 /// ```
 ///
-/// SINCE: 1.2, fonts of cubic curves since 1.6. LVO -36.
+/// SINCE: 1.2, fonts of cubic curves since 1.6, fonts of pictures since
+/// 1.7. LVO -36.
 ///
 /// INPUTS:
 /// - `outline` - what `OpenOutline` answered.
@@ -35,6 +36,12 @@ const _outline = @import("../outline/_outline.zig");
 /// and the box is the one of its points, the curves' control points
 /// among them, widened to whole units. A glyph whose program is damaged
 /// has a box of 0s and its advance.
+///
+/// A glyph that is a picture has the box of its largest picture: the
+/// picture's measures in its strike's pixels, brought to the font's
+/// units by the strike's pixels an em and widened to whole units. Its
+/// advance and left side bearing are the font's horizontal metrics, as
+/// any glyph's. A glyph no strike has a picture of has a box of 0s.
 ///
 /// CONTEXT:
 /// - Waits: no.

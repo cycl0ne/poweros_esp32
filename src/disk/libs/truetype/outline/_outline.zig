@@ -37,9 +37,15 @@
 //! glyph, and a glyph that does not fit the room it is read into says
 //! what it needs (`Contours.short`). A font whose only outlines are a
 //! `CFF2` table's is not opened.
+//!
+//! Since 1.7 a font without outlines may have its glyphs as pictures,
+//! bitmaps at one size or several (`_strike.zig`): found here, and read
+//! and scaled when a glyph is rendered (`render/_picture.zig`).
 
 const sdk = @import("sdk");
 const _cff = @import("_cff.zig");
+const _strike = @import("_strike.zig");
+const CompressionBase = sdk.interface.compression.CompressionBase;
 
 /// A font file, opened: where its tables are and the measures rendering
 /// needs. What `OpenOutline` answers, behind `truetype.Outline`.
@@ -88,6 +94,13 @@ pub const Font = struct {
     /// The `CFF ` table (since 1.6), read when the font has no `glyf`;
     /// its `table` of no length otherwise.
     cff: _cff.Cff,
+    /// The font's pictures (since 1.7), read when it has no outlines;
+    /// none otherwise.
+    strikes: _strike.Strikes,
+    /// compression.library, which unpacks a picture that is a PNG file:
+    /// opened with the outline of such a font and closed with it, null
+    /// for every other.
+    compression: ?*CompressionBase,
 };
 
 /// What a glyph is read with when `maxp` does not say how large one is.
@@ -226,6 +239,10 @@ pub fn open(font: *Font, data: [*]const u8, size: u32, index: u32) bool {
             font.cff = _cff.open(font, table) orelse return false;
         } else if (findTable(font, "CFF2") != null) return false;
     }
+    // A font without outlines is its pictures, if it has them; one with
+    // outlines is drawn from those at every size.
+    font.compression = null;
+    font.strikes = if (hasOutlines(font)) .{} else _strike.open(font);
     if (head.len < 54 or hhea.len < 36 or maxp.len < 6) return false;
     font.units_per_em = wordIn(font, head, 18);
     font.loca_long = signedIn(font, head, 50) != 0;
@@ -502,6 +519,12 @@ pub fn leftBearingOf(font: *const Font, glyph: u32) i32 {
     return signedIn(font, font.hmtx, font.hmetric_count * 4 + (glyph - font.hmetric_count) * 2);
 }
 
+/// Whether the font's glyphs are pictures: a font without outlines that
+/// has them as bitmaps.
+pub fn hasPictures(font: *const Font) bool {
+    return _strike.has(font);
+}
+
 /// Whether the font has outlines at all: `glyf`, or a `CFF ` table.
 pub fn hasOutlines(font: *const Font) bool {
     return font.glyf.len != 0 or font.cff.table.len != 0;
@@ -517,6 +540,7 @@ pub fn isCubic(font: *const Font) bool {
 /// glyph, which has none, the box of its points.
 pub fn boxOf(font: *const Font, glyph: u32) [4]i32 {
     if (isCubic(font)) return _cff.boxOf(font, glyph);
+    if (hasPictures(font)) return _strike.boxOf(font, glyph);
     const data = glyphData(font, glyph) orelse return .{ 0, 0, 0, 0 };
     if (data.len < 10) return .{ 0, 0, 0, 0 };
     return .{ signedIn(font, data, 2), signedIn(font, data, 4), signedIn(font, data, 6), signedIn(font, data, 8) };

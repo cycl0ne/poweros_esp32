@@ -3,8 +3,9 @@
 truetype.library's functions: a TrueType file rendered into font
 images, one size at a time, since 1.2 its glyphs as outlines, since
 1.4 a font of a collection, its names and its tables, since 1.5 one
-glyph rendered by its number, and since 1.6 an OpenType file whose
-glyphs are of cubic curves (a CFF table's).
+glyph rendered by its number, since 1.6 an OpenType file whose
+glyphs are of cubic curves (a CFF table's), and since 1.7 a font
+whose glyphs are pictures, of coverage or of colour.
 Open it with OpenLibrary("truetype.library", 1).
 
 Generated from the source by `./zig build autodoc`.
@@ -48,7 +49,8 @@ Nothing.
 
 **BEHAVIOR**
 
-The outline's memory goes back; null does nothing. The font images
+The outline's memory goes back, and compression.library is closed
+if the font was opened with it; null does nothing. The font images
 rendered from it stay: each is a whole font of its own.
 
 **CONTEXT**
@@ -350,7 +352,8 @@ fn GlyphMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, metri
 
 **SINCE**
 
-1.2, fonts of cubic curves since 1.6. LVO -36.
+1.2, fonts of cubic curves since 1.6, fonts of pictures since
+1.7. LVO -36.
 
 **INPUTS**
 
@@ -374,6 +377,12 @@ A glyph of cubic curves has no box in its data: its program is run
 and the box is the one of its points, the curves' control points
 among them, widened to whole units. A glyph whose program is damaged
 has a box of 0s and its advance.
+
+A glyph that is a picture has the box of its largest picture: the
+picture's measures in its strike's pixels, brought to the font's
+units by the strike's pixels an em and widened to whole units. Its
+advance and left side bearing are the font's horizontal metrics, as
+any glyph's. A glyph no strike has a picture of has a box of 0s.
 
 **CONTEXT**
 
@@ -622,7 +631,7 @@ fn OpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32, tags: ?[*]const 
 **SINCE**
 
 1.0, the tags and collections since 1.4, fonts of cubic curves
-since 1.6. LVO -20.
+since 1.6, fonts of pictures since 1.7. LVO -20.
 
 **INPUTS**
 
@@ -636,8 +645,9 @@ since 1.6. LVO -20.
 
 The outline, or null if the file has no font of that number, the
 bytes are not a font this library reads - a table it needs missing,
-outside the file or not sound, no character map it reads - or there
-is no memory.
+outside the file or not sound, no character map it reads - there is
+no memory, or the font's pictures are PNG files and
+compression.library does not open.
 
 **BEHAVIOR**
 
@@ -661,18 +671,31 @@ and each glyph's font dictionary are checked here, and a table that
 is not sound opens no font; a glyph's program is run when the glyph
 is asked for.
 
-A font need not have outlines: one whose glyphs are pictures opens,
-maps, measures and names, and every glyph of it is one of no outline.
+A font need not have outlines. One without them whose glyphs are
+pictures is rendered from those: colour pictures, PNG files in
+strikes of 32 bits a pixel (`CBLC` and `CBDT`, a picture's formats
+17, 18 and 19), or pictures of coverage in strikes of 1, 2, 4 or 8
+bits a pixel (`EBLC` and `EBDT`, formats 1, 2, 5, 6, 7, 8 and 9). A
+font with both pairs of tables is read by the colour one; the first
+64 strikes of a list are read, and a list of another version than 2
+or 3 is none. For a font of colour pictures compression.library is
+opened, which unpacks them, and held until `CloseOutline`. Such a
+font maps, measures and names as any other, and every glyph of it is
+one of no outline (`GlyphSegments`). A font with outlines is drawn
+from them at every size, and its pictures are not read.
 
 The outline is not written after this call, and no other call keeps
 anything in it: any number of tasks use one outline at once.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: for a font of colour pictures, while compression.library is
+  loaded, if it is not in memory yet; otherwise no.
 - Interrupts: no.
 - Locks: none needed.
-- Process: a Task will do.
+- Process: a Task will do, but for a font of colour pictures while
+  compression.library is still on the disk: loading it takes a
+  Process.
 
 **OWNERSHIP**
 
@@ -687,6 +710,10 @@ hints and its font matrix: its glyphs are taken as drawn in the
 font's units. A font whose outlines are a `CFF2` table's is not
 opened. A font whose only character map is in a Macintosh encoding
 is not opened.
+
+Pictures in `sbix`, and in the `bloc` and `bdat` tables, are not
+read, nor are a picture's formats 3 and 4, nor the measures of a
+line set downwards.
 
 **SEE ALSO**
 
@@ -723,7 +750,7 @@ fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32, ran
 **SINCE**
 
 1.0, ranges since 1.3, the limits since 1.4, fonts of cubic
-curves since 1.6. LVO -24.
+curves since 1.6, fonts of pictures since 1.7. LVO -24.
 
 **INPUTS**
 
@@ -736,12 +763,13 @@ curves since 1.6. LVO -24.
 
 **RESULT**
 
-A font image of coverage (`alpha4`), sound and ready for `AddFont`:
-every character of the ranges the font has a glyph for, and the
-font's missing glyph as the default character, under
-`fontimage.MISSING`. Null for a height of 0 or more than 4096, a font
-without outlines, ranges out of order or past the last code point, an
-image of more than a gigabyte, or no memory.
+A font image of coverage (`alpha4`), or of colour (`rgba32`) for a
+font of colour pictures, sound and ready for `AddFont`: every
+character of the ranges the font has a glyph for, and the font's
+missing glyph as the default character, under `fontimage.MISSING`.
+Null for a height of 0 or more than 4096, a font with neither
+outlines nor pictures, ranges out of order or past the last code
+point, an image of more than a gigabyte, or no memory.
 
 **BEHAVIOR**
 
@@ -752,11 +780,13 @@ ranges are the runs of characters it has.
 
 Every glyph is its outline scaled so that the line is `rows` tall and
 the baseline sits the ascender's share of it down, the curves -
-quadratic or cubic - made lines within a third of a pixel, and each pixel given how much of it
-the outline covers, in fifteenths. The advances are rounded to whole
-pixels. The font is `FPF_DESIGNED` - drawn at its size from the
-outline, not scaled from another size - and `FPF_PROPORTIONAL` when
-its advances differ. Its styles are the ones the font says it is drawn
+quadratic or cubic - made lines within a third of a pixel, and each
+pixel given how much of it the outline covers, in fifteenths. A glyph
+of a font whose glyphs are pictures is its picture scaled to the
+line, as `RenderGlyph` says: at a strike's own size, pixel for pixel.
+The advances are rounded to whole pixels. The font is `FPF_DESIGNED`
+- drawn at its size from the font's file, not scaled from another
+image - and `FPF_PROPORTIONAL` when its advances differ. Its styles are the ones the font says it is drawn
 in (`FontMetrics`): a bold face renders as `FSF_BOLD`, so graphics
 draws no bold over it.
 
@@ -782,9 +812,12 @@ The image is the caller's, one allocation, freed with `FreeVec`.
 No hinting: stems at small sizes may fall between pixels and show as
 two half-covered columns.
 
+The pictures of a font that has outlines too are not drawn, at any
+size.
+
 **SEE ALSO**
 
-`OpenOutline`, `graphics.library/AddFont`, `diskfont.library/OpenDiskFont`
+`OpenOutline`, `RenderGlyph`, `graphics.library/AddFont`, `diskfont.library/OpenDiskFont`
 
 **EXAMPLES**
 
@@ -806,7 +839,8 @@ fn RenderGlyph(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, rows: 
 
 **SINCE**
 
-1.5, fonts of cubic curves since 1.6. LVO -64.
+1.5, fonts of cubic curves since 1.6, fonts of pictures since
+1.7. LVO -64.
 
 **INPUTS**
 
@@ -825,13 +859,13 @@ fn RenderGlyph(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, rows: 
   space - has a box of nothing, no bytes, and its advance.
 - `TRUETYPEERR_ROOM` - the pixels did not fit: `size` says how many
   bytes they take and `glyph` is set, and nothing is written.
-- `TRUETYPEERR_GLYPH` - no glyph of that number, or a font without
-  outlines.
+- `TRUETYPEERR_GLYPH` - no glyph of that number, or a font with
+  neither outlines nor pictures.
 - `TRUETYPEERR_ROWS` - a height of 0 or more than 4096.
 - `TRUETYPEERR_NOMEM` - no memory to render it in.
 
 With every answer but the first two, `size` is 0 and `glyph` is a
-glyph of nothing.
+glyph of nothing. `kind` is set with every answer.
 
 **BEHAVIOR**
 
@@ -840,10 +874,26 @@ font image `rows` tall, and comes out the same byte for byte: its
 outline scaled so that the line is `rows` tall, each pixel given how
 much of it the outline covers, in fifteenths. `image.kind` says what
 the bytes are - `alpha4`, two pixels a byte, the left one in the high
-four bits - and `image.glyph` is a font image's glyph: the box of its
-ink, `left` columns from the point and `top` rows down from the top
-of the line, the bytes from one row to the next, and the advance in
-whole pixels. Its `data` is 0.
+four bits, or `rgba32` for a font of colour pictures, a pixel's red,
+green, blue and coverage a byte each - and `image.glyph` is a font
+image's glyph: the box of its ink, `left` columns from the point and
+`top` rows down from the top of the line, the bytes from one row to
+the next, and the advance in whole pixels. Its `data` is 0.
+
+A font without outlines whose glyphs are pictures (`CBLC` and `CBDT`,
+or `EBLC` and `EBDT`) is rendered from them. Of the strikes that have
+a picture of the glyph the one is taken whose em is the fewest pixels
+no smaller than the line's, or the largest when all are smaller. The
+picture is scaled by the line's em over the strike's, its baseline on
+a whole row, and each pixel of the glyph is the mean of the picture
+over that pixel's area, colour weighted by coverage: at the strike's
+own size the picture comes out pixel for pixel. The glyph's box is
+the scaled picture's, not cut to its ink, so the bytes a glyph takes
+follow from its measures, and `TRUETYPEERR_ROOM` is answered without
+the picture being read. A picture that cannot be read - its data too
+short, a PNG file that is damaged or not the size its measures say,
+parts nested more than four deep - is its box with nothing in it. A
+glyph no strike has a picture of is one of no ink, with its advance.
 
 A glyph the file is damaged in - its data cut short, a program of
 cubic curves that cannot be run, its outline further than sixteen
@@ -870,14 +920,20 @@ it renders in and gives it back before it returns.
 
 **NOTES**
 
-An answer of `TRUETYPEERR_ROOM` has cost the rendering: a caller that
-keeps room for the glyphs it mostly draws, and asks again with more
-for the few that are larger, renders those twice.
+An answer of `TRUETYPEERR_ROOM` has cost an outline's rendering: a
+caller that keeps room for the glyphs it mostly draws, and asks again
+with more for the few that are larger, renders those twice.
+
+A picture is not sharpened: one drawn larger than its strike is its
+pixels spread over their areas.
 
 **BUGS**
 
 No hinting: stems at small sizes may fall between pixels and show as
 two half-covered columns.
+
+The pictures of a font that has outlines too are not drawn, at any
+size.
 
 **SEE ALSO**
 

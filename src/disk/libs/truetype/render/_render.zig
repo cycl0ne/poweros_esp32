@@ -15,9 +15,15 @@
 //! further from its origin than `Scale.reach` is rendered as one of no
 //! outline, so that every number worked with afterwards has a known
 //! size.
+//!
+//! A font without outlines whose glyphs are pictures is rendered by
+//! `_picture.zig`: `renderGlyph` hands such a glyph over, and `kindOf`
+//! says what its pixels are.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
+const fontimage = sdk.graphics.fontimage;
+const _picture = @import("_picture.zig");
 const _outline = @import("../outline/_outline.zig");
 const Font = _outline.Font;
 const Point = _outline.Point;
@@ -27,8 +33,9 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const P = struct { x: f32, y: f32 };
 
 /// A glyph as it came out: its box from the point and the top of the
-/// line, its advance, and its coverage, a byte a pixel (0 to 15), which
-/// the caller frees.
+/// line, its advance, and its pixels, which the caller frees: coverage,
+/// a byte a pixel (0 to 15), or for a font of colour pictures four bytes
+/// a pixel (red, green, blue, coverage).
 pub const Rendered = struct {
     left: i32 = 0,
     top: i32 = 0,
@@ -48,6 +55,8 @@ pub const Work = struct {
     /// Room for the largest glyph `font` says it has, and no less than a
     /// font that does not say is read with.
     pub fn init(sys: *ExecBase, font: *const Font) ?Work {
+        // A font of pictures reads no contours.
+        if (!_outline.hasOutlines(font)) return of(sys, 1, 1);
         const points: u32 = @max(font.max_points + 1, _outline.default_points);
         const contours: u32 = @max(font.max_contours + 1, _outline.default_contours);
         return of(sys, points, contours);
@@ -85,6 +94,8 @@ pub const Work = struct {
 pub const Scale = struct {
     factor: f32,
     ascender: f32,
+    /// The line's height in pixels.
+    rows: u32,
     /// How far a glyph's outline may lie from its origin and from the top
     /// of its line, in pixels, any way: `reachOf` the line's height.
     reach: f32,
@@ -117,15 +128,29 @@ pub fn scaleOf(font: *const Font, rows: u32) Scale {
     return .{
         .factor = @as(f32, @floatFromInt(rows)) / units,
         .ascender = @floatFromInt(font.ascender),
+        .rows = rows,
         .reach = reachOf(rows),
     };
 }
 
-/// A glyph's coverage as a font image keeps it: two pixels a byte, the
-/// left one in the high four bits, each row `pitch` bytes. Every byte of
-/// the glyph's rows at `out` is written.
-pub fn pack(glyph: *const Rendered, out: [*]u8, pitch: u32) void {
+/// What the pixels of the font's glyphs are: colour for a font of colour
+/// pictures, coverage for every other.
+pub fn kindOf(font: *const Font) fontimage.Kind {
+    return if (font.strikes.count != 0 and font.strikes.colour) .rgba32 else .alpha4;
+}
+
+/// A glyph's pixels as a font image of `kind` keeps them, each row
+/// `pitch` bytes: coverage two pixels a byte, the left one in the high
+/// four bits; colour as it is. Every byte of the glyph's rows at `out`
+/// is written.
+pub fn pack(kind: fontimage.Kind, glyph: *const Rendered, out: [*]u8, pitch: u32) void {
     const pixels = glyph.pixels orelse return;
+    if (kind == .rgba32) {
+        for (0..glyph.rows) |y| {
+            @memcpy(out[y * pitch ..][0 .. glyph.width * 4], pixels[y * glyph.width * 4 ..][0 .. glyph.width * 4]);
+        }
+        return;
+    }
     for (0..glyph.rows) |y| {
         const row = pixels + y * glyph.width;
         const packed_row = out + y * pitch;
@@ -137,9 +162,15 @@ pub fn pack(glyph: *const Rendered, out: [*]u8, pitch: u32) void {
     }
 }
 
+/// How far `glyph` moves the point at `scale`, in whole pixels.
+pub fn advanceOf(font: *const Font, glyph: u32, scale: Scale) i32 {
+    return @min(roundOf(@as(f32, @floatFromInt(_outline.advanceOf(font, glyph))) * scale.factor), most_advance);
+}
+
 /// `glyph` of `font` rendered at `scale`; null only without memory.
 pub fn renderGlyph(sys: *ExecBase, font: *const Font, glyph: u32, scale: Scale, work: *Work) ?Rendered {
-    var out = Rendered{ .advance = @min(roundOf(@as(f32, @floatFromInt(_outline.advanceOf(font, glyph))) * scale.factor), most_advance) };
+    var out = Rendered{ .advance = advanceOf(font, glyph, scale) };
+    if (_outline.hasPictures(font)) return _picture.render(sys, font, glyph, scale, out);
     const c = &work.contours;
     c.point_count = 0;
     c.end_count = 0;

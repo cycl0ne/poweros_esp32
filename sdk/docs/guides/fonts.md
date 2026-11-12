@@ -431,7 +431,8 @@ the family's directory; `DisposeFontContents` frees it.
 ## Outline fonts
 
 `truetype.library` reads a TrueType or OpenType file and renders a size
-of it into a FontImage of coverage: `OpenOutline(bytes, size, tags)` checks the file
+of it into a FontImage of coverage - of colour, for a font of colour
+pictures: `OpenOutline(bytes, size, tags)` checks the file
 and keeps what rendering needs, `RenderFontImage(outline, rows, ranges,
 count)` makes a size of the characters it has in the ranges asked for,
 `CloseOutline` gives the outline back. The file's bytes stay
@@ -513,6 +514,44 @@ advance. The programs' hints and the table's font matrix are passed
 over, and a file with a `CFF2` table alone (a variable font of cubic
 curves) does not open.
 
+**Fonts of pictures** (truetype.library 1.7). A font file may have no
+outlines at all and keep each glyph as pictures drawn at one or more
+sizes, its strikes: a bitmap font in an OpenType file (`.otb`: the
+tables `EBLC` and `EBDT`, pictures of 1, 2, 4 or 8 bits a pixel), or an
+emoji font (`CBLC` and `CBDT`: PNG files in strikes of 32 bits a
+pixel). Such a font opens, maps, measures and renders like any other,
+and a family's outline may be one. A font of coverage pictures renders
+into `alpha4`, as an outline does; a font of colour pictures into
+`rgba32`, each pixel its own red, green, blue and coverage - `image.kind`
+of a `RenderGlyph` and the FontImage's `kind` say which, and graphics
+draws either. A font with both pairs of tables is read by the colour
+one, and a font that has outlines is drawn from those at every size:
+its pictures are not read.
+
+For a line of some height, the strike is taken whose em is the fewest
+pixels no smaller than the line's em, among those that have a picture
+of the glyph - the largest, when all are smaller. The picture is then
+scaled by the line's em over the strike's, with its baseline on a whole
+row: each pixel of the glyph is the mean of the picture over that
+pixel's area, colour weighted by its coverage. At a strike's own size a
+picture comes out pixel for pixel, so a bitmap font is as sharp as it
+was drawn; smaller it is averaged, larger its pixels are spread, and
+nothing is sharpened. A glyph's box is its scaled picture's, not cut to
+its ink, so the bytes it takes follow from its measures alone:
+`RenderGlyph` answers `TRUETYPEERR_ROOM` without reading the picture. A
+picture that cannot be read - data cut short, a damaged PNG file, one
+not the size its measures say - is its box with nothing in it, and a
+glyph no strike has a picture of is one without ink that keeps its
+advance. `GlyphMetrics` gives such a glyph the box of its largest
+picture, in the font's units; the advance is the `hmtx` table's, as
+any glyph's. `GlyphSegments` gives no verbs.
+
+`OpenOutline` opens `compression.library` for a font of colour pictures
+- it unpacks the PNG files - and holds it until `CloseOutline`; without
+the library such a font does not open. Not read: pictures in `sbix`, in
+`bloc` and `bdat`, the formats 3 and 4 of a picture, and strikes of
+other bits a pixel than their pair of tables has.
+
 **The file** (truetype.library 1.4). A file is one font or a collection
 of several (`ttcf`): `truetype.fontCount(bytes)` says how many, and
 `OpenOutline`'s tag `TTA_FontIndex` which of them is opened - the first
@@ -537,9 +576,7 @@ says the buffer holds only its start. `FontTable(outline, tag, &length)`
 hands out a table of the font as it lies in the file, for a reader of
 what the library does not read itself:
 `truetype.tableTag("GSUB")` names it, and the table's place and size are
-checked against the file, nothing within it. A font whose glyphs are
-pictures and not outlines opens too: it maps, measures and names, and
-each of its glyphs is one of no outline.
+checked against the file, nothing within it.
 
 ```zig
 const tags = [_]sdk.utility.TagItem{
@@ -696,13 +733,13 @@ of a word - have no character a font image could list them under.
 `rows` tall into the caller's bytes, the way a font image has a glyph:
 `image.glyph` is its box and advance (a `fontimage.Glyph`: `left` from
 the point, `top` down from the top of the line, `pitch` bytes from one
-row to the next), `image.kind` says what the bytes are (`alpha4`), and
-`image.size` how many of them were written. The glyph comes out byte for
+row to the next), `image.kind` says what the bytes are (`alpha4`, or
+`rgba32` of a font of colour pictures), and `image.size` how many of them were written. The glyph comes out byte for
 byte as `RenderFontImage` renders it at that height, so text drawn from
 an image and glyphs drawn by number are one font. `TRUETYPEERR_ROOM`
 says the bytes were too few: `size` and the box are set and nothing is
 written. A glyph with no ink is `TRUETYPE_OK` with no bytes and its
-advance; a font whose glyphs are pictures has none to render
+advance; a font with neither outlines nor pictures has none to render
 (`TRUETYPEERR_GLYPH`). A shaped run's advances and offsets are in the
 font's units, and `rows` over the font's ascender less its descender
 makes them pixels of this line.
@@ -1038,7 +1075,7 @@ cursor = gb.TextXToOffset(rp, line.ptr, @intCast(line.len), mouse_x - left);
 |---|---|
 | `tools/fontconv` | on the host: BDF, Amiga font files (colour too) and TrueType and OpenType files into size files and a contents file; `--alpha N` for coverage from a larger drawing, `--shadow` for a shadowed colour font, `--rgba` to write a colour font with 32-bit pixels |
 | `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces and Liberation's (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation only onto the 64-bit machines' disks. With them four fonts only the host tests read, which go on no disk: Noto Sans Devanagari, Noto Color Emoji, Noto Sans CJK (a collection) and Source Sans 3 |
-| `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures, and of a font of cubic curves each glyph's outline and what libfreetype renders of a part of them - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
+| `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures, of a font of cubic curves each glyph's outline and what libfreetype renders of a part of them, and of a font of pictures every picture's measures and pixels (a PNG file's as Pillow reads them) and a part of them scaled to another size - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
 | `scripts/shape-reference.py` | on the host: applies the fetched fonts' `GSUB` and `GPOS` lookups to runs of glyphs - every glyph of a font, and sequences its lookups have rules for - with an applier of its own on fontTools' reading of the tables, and writes what comes out, a digest for each script, language and feature list, as the Zig files `truetypeshaping.library`'s host tests compare its shaping with (`src/disk/libs/truetypeshaping/tests/reference/`). `--check` says whether the files are the ones it would write, `--show <font> <case>` prints a case's runs |
 | `scripts/shape-text-reference.py` | on the host: shapes texts with libharfbuzz - in the fetched fonts Latin with its kerning and marks, letters and marks spelled apart and together, Greek, Cyrillic, Hebrew read from right to left, Devanagari by its plain features, emoji, features switched for a part of a text; and in a font made of a rule, which is told the characters it lacks, texts whose characters are taken apart, sorted and put together - and writes the glyphs, clusters, advances and offsets as the Zig files `truetypeshaping.library`'s host tests compare `ShapeText`'s answers with (`src/disk/libs/truetypeshaping/tests/text_reference/`); `--check` says whether they are up to date |
 | `C:ListFonts` | every font by family, size and where it is; `SAMPLE` draws them |

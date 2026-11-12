@@ -2,8 +2,9 @@
 //! truetype.library's functions: a TrueType file rendered into font
 //! images, one size at a time, since 1.2 its glyphs as outlines, since
 //! 1.4 a font of a collection, its names and its tables, since 1.5 one
-//! glyph rendered by its number, and since 1.6 an OpenType file whose
-//! glyphs are of cubic curves (a CFF table's).
+//! glyph rendered by its number, since 1.6 an OpenType file whose
+//! glyphs are of cubic curves (a CFF table's), and since 1.7 a font
+//! whose glyphs are pictures, of coverage or of colour.
 //! Open it with OpenLibrary("truetype.library", 1).
 ##include libs/utility/utility as utility
 ##include libs/graphics/graphics as graphics
@@ -20,8 +21,8 @@
 /// The outline rendered `rows` rows tall as a font image: the characters
 /// it has in the `count` sorted `ranges`, and its missing glyph as the
 /// default; the caller frees it with FreeVec. Null for a height of 0 or
-/// past 4096, a font without outlines, ranges out of order, or no
-/// memory. Ranges since 1.3.
+/// past 4096, a font with neither outlines nor pictures, ranges out of
+/// order, or no memory. Ranges since 1.3.
 ?*graphics.fontimage.FontImage RenderFontImage(*truetype.Outline outline, u32 rows, [*]const truetype.CodeRange ranges, u32 count)
 /// What OpenOutline made, given back. Null does nothing.
 void CloseOutline(?*truetype.Outline outline)
@@ -55,6 +56,6 @@ u32 FontName(*truetype.Outline outline, u32 name, [*]u8 buffer, u32 room)
 /// One glyph, by its number, rendered for a line `rows` tall into
 /// `image`'s bytes, with its box and advance as a font image has a
 /// glyph's: TRUETYPE_OK, or TRUETYPEERR_ROOM with the bytes it needs.
-/// Since 1.5.
+/// `image.kind` says what a pixel is. Since 1.5.
 i32 RenderGlyph(*truetype.Outline outline, u32 glyph, u32 rows, *truetype.GlyphImage image)
 ##end

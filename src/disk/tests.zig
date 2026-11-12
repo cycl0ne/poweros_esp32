@@ -127,6 +127,7 @@ test {
     _ = @import("libs/truetype/tests/readonly.zig");
     _ = @import("libs/truetype/tests/renderglyph.zig");
     _ = @import("libs/truetype/tests/cff.zig");
+    _ = @import("libs/truetype/tests/strike.zig");
     _ = @import("libs/truetype/tests/fuzz.zig");
     _ = @import("libs/truetypeshaping/tests/layout.zig");
     _ = @import("libs/truetypeshaping/tests/gsub.zig");

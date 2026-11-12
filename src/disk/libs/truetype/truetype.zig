@@ -20,6 +20,13 @@
 //! curves (`outline/_cff.zig`): each glyph a program that draws it, run
 //! when the glyph is asked for, into the same contours the rest reads.
 //!
+//! Since 1.7 a font without outlines is rendered from its pictures: the
+//! strikes are found and a glyph's picture located and measured in
+//! `outline/_strike.zig`, and the picture read - packed rows, parts that
+//! are other glyphs, or a PNG file unpacked through compression.library -
+//! and scaled to the line in `render/_picture.zig`, into coverage or
+//! into 32-bit colour.
+//!
 //! The jump table is truetype_lvo.zig, the ROM tag, init and expunge
 //! truetype_init.zig, the base truetype_base.zig.
 

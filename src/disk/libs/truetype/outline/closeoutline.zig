@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const truetype = sdk.truetype;
 const _base = @import("../truetype_base.zig");
 const TrueTypeBase = _base.TrueTypeBase;
+const _outline = @import("_outline.zig");
 
 /// What OpenOutline made, given back.
 ///
@@ -22,7 +23,8 @@ const TrueTypeBase = _base.TrueTypeBase;
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// The outline's memory goes back; null does nothing. The font images
+/// The outline's memory goes back, and compression.library is closed
+/// if the font was opened with it; null does nothing. The font images
 /// rendered from it stay: each is a whole font of its own.
 ///
 /// CONTEXT:
@@ -45,5 +47,7 @@ const TrueTypeBase = _base.TrueTypeBase;
 /// tb.CloseOutline(outline);
 /// ```
 pub fn CloseOutline(tb: *TrueTypeBase, outline: ?*truetype.Outline) void {
-    tb.sys_base.FreeVec(outline);
+    const font: *_outline.Font = @ptrCast(@alignCast(outline orelse return));
+    if (font.compression) |cb| tb.sys_base.CloseLibrary(cb.lib());
+    tb.sys_base.FreeVec(font);
 }

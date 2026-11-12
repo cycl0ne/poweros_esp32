@@ -4,7 +4,8 @@
 //! truetype.library reads a TrueType font file and renders any size of it
 //! into a font image (`graphics.fontimage`): each glyph's outline scaled
 //! to the height asked, and its coverage of every pixel measured, in four
-//! bits. The image is then a font like any other - diskfont.library puts
+//! bits - or, of a font whose glyphs are pictures, each picture scaled to
+//! it. The image is then a font like any other - diskfont.library puts
 //! it on graphics' list and frees it when nobody holds it.
 //!
 //! Since 1.2 a font is read for drawing at any size and angle as well:
@@ -21,8 +22,7 @@
 //! what it is called (`FontName`); and any of its tables is handed out
 //! as the file has it (`FontTable`), which is what
 //! truetypeshaping.library reads the layout tables through. A font may
-//! be without outlines of this kind - one of pictures - and still maps,
-//! measures and names.
+//! be without outlines and still maps, measures and names.
 //!
 //! Since 1.5 one glyph is rendered by its number (`RenderGlyph`), the
 //! way a font image's glyphs are: what a text shaped into glyphs is drawn
@@ -33,6 +33,13 @@
 //! one font or many under one set of glyphs: such a file starts 'OTTO'.
 //! It renders, maps and measures as any other, and `GlyphSegments` gives
 //! its curves as `SEG_CUBIC`. Its hints are passed over.
+//!
+//! Since 1.7 a font without outlines whose glyphs are pictures is
+//! rendered from them: pictures of coverage (`EBLC` and `EBDT`) into an
+//! image of coverage, colour pictures (`CBLC` and `CBDT`, PNG files) into
+//! one of colour (`rgba32`), which is what an emoji font is. Of a font's
+//! sizes of pictures the nearest above the line's is taken and scaled to
+//! it. A font of colour pictures is opened with compression.library.
 //!
 //! Open it with OpenLibrary(TRUETYPENAME, 1); its functions are in
 //! sdk/interface/truetype.zig.
@@ -129,7 +136,7 @@ pub const TRUETYPE_OK: i32 = 0;
 /// The caller's room is too short: the counts say how long it must be.
 pub const TRUETYPEERR_ROOM: i32 = -1;
 /// No glyph of that number, its data is damaged, or - rendered - the
-/// font has no outlines.
+/// font has neither outlines nor pictures.
 pub const TRUETYPEERR_GLYPH: i32 = -2;
 /// There was not the memory to read it.
 pub const TRUETYPEERR_NOMEM: i32 = -3;
@@ -150,7 +157,8 @@ pub const GlyphImage = extern struct {
     /// `glyph.pitch` times `glyph.rows`. None for a glyph with no ink.
     size: u32 = 0,
     /// What a pixel is: `alpha4`, four bits of coverage, two pixels a
-    /// byte, the left one high.
+    /// byte, the left one high; or, of a font of colour pictures,
+    /// `rgba32`, a byte each of red, green, blue and coverage.
     kind: graphics.fontimage.Kind = .alpha4,
     /// The box, from the point and from the top of the line, and the
     /// advance, in pixels. `data` is 0: where the pixels are kept is the

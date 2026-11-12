@@ -19,8 +19,10 @@
 //!   ended; a glyph's verbs and points are counted right and fit the room
 //!   the font's measures promise, or for a glyph of cubic curves the room
 //!   it says it takes; an image rendered is a sound font
-//!   image; a glyph rendered by its number has a box no further out than
-//!   a glyph reaches, and as many bytes as its box says.
+//!   image; a glyph rendered by its number is of the font's kind of
+//!   pixels - coverage, or colour for a font of colour pictures - has a
+//!   box no further out than a glyph reaches, and as many bytes as its
+//!   box says, the same whatever room it was given.
 //! - It ends. A table that sends a reader round in circles would keep the
 //!   test run from ending.
 //! - It leaves nothing allocated: exec has as much memory free after a
@@ -53,6 +55,7 @@ const builder = @import("builder.zig");
 const reference = @import("reference.zig");
 const built = @import("truetype.zig");
 const cubic = @import("cff.zig");
+const pictured = @import("strike.zig");
 
 const testing = std.testing;
 const linux = std.os.linux;
@@ -75,9 +78,9 @@ const watched = 16;
 
 /// The heights a glyph is rendered at by its number, and the bytes the
 /// largest glyph there is takes at the taller: one that reaches sixteen
-/// lines to every side of where it is drawn.
+/// lines to every side of where it is drawn, four bytes a pixel.
 const glyph_heights = [_]u32{ 9, 1 };
-const glyph_pixels = 64 * 1024;
+const glyph_pixels = 512 * 1024;
 
 /// What a watched byte holds, and a watched point.
 const untouched: u8 = 0xAA;
@@ -141,7 +144,7 @@ const Seed = struct {
     }
 };
 
-const seed_count = 11;
+const seed_count = 14;
 
 /// The fonts the tests build: between them every table the library reads
 /// and every form of them it tells apart.
@@ -243,6 +246,26 @@ fn buildSeeds(seeds: *[seed_count]Seed) void {
         .select = &.{ 3, 0, 3, 0, 0, 0, 0, 2, 1, 0, 4, 2, 0, 6 },
         .off_size = 3,
     }, false);
+    seeds[next].set(file.written());
+    next += 1;
+
+    // Pictures of coverage, their strike listing them in each of its
+    // ways.
+    file = .{};
+    pictured.waysFont(&file);
+    seeds[next].set(file.written());
+    next += 1;
+
+    // Two strikes, of 1 bit a pixel and of 4: pictures of packed rows,
+    // and ones put together of other glyphs.
+    file = .{};
+    pictured.formsFont(&file);
+    seeds[next].set(file.written());
+    next += 1;
+
+    // Pictures of colour: PNG files under each of their forms.
+    file = .{};
+    pictured.colourFont(&file);
     seeds[next].set(file.written());
     next += 1;
 
@@ -424,10 +447,13 @@ const Harness = struct {
             }
         }
 
-        // Whether the font has outlines at all: its first glyph is
-        // rendered, or the font has none to render.
-        var first = truetype.GlyphImage{ .pixels = harness.pixels.ptr, .room = 0 };
+        // Whether the font has outlines or pictures at all: its first
+        // glyph is rendered, or the font has none to render. Either way
+        // the call says what its pixels would be.
+        var first = truetype.GlyphImage{ .pixels = harness.pixels.ptr, .room = 0, .kind = .mono1 };
         const drawable = tb.RenderGlyph(outline, 0, 1, &first) != truetype.TRUETYPEERR_GLYPH;
+        const kind = first.kind;
+        try testing.expect(kind == .alpha4 or kind == .rgba32);
 
         // Whether its outlines are of cubic curves: such a font does not
         // say how large its glyphs are.
@@ -438,7 +464,7 @@ const Harness = struct {
         try harness.readTables(outline, file, directory);
         for (glyphs[0..known], 0..) |glyph, nth| {
             try harness.readGlyph(outline, &metrics, glyph, curved);
-            try harness.renderGlyph(outline, glyph, glyph < glyph_count and drawable);
+            try harness.renderGlyph(outline, glyph, glyph < glyph_count and drawable, kind);
             _ = tb.Kerning(outline, glyph, glyphs[(nth + 1) % known]);
         }
         try harness.render(outline, 9);
@@ -608,18 +634,19 @@ const Harness = struct {
 
     /// One glyph rendered by its number, at each height into room for
     /// the largest glyph there is and into less. `has` says whether the
-    /// font has outlines and a glyph of that number: such a glyph is
-    /// rendered whatever its data says, and any other refused. Its box
-    /// lies within a glyph's reach, its bytes are what the box says, the
-    /// same whatever the room, and written only where they fit; no byte
-    /// after them is written.
-    fn renderGlyph(harness: *Harness, outline: *truetype.Outline, glyph: u32, has: bool) !void {
+    /// font has outlines or pictures and a glyph of that number: such a
+    /// glyph is rendered whatever its data says, and any other refused.
+    /// Its pixels are of the font's `kind`, its box lies within a glyph's
+    /// reach, its bytes are what the box says, the same whatever the
+    /// room, and written only where they fit; no byte after them is
+    /// written.
+    fn renderGlyph(harness: *Harness, outline: *truetype.Outline, glyph: u32, has: bool, kind: fontimage.Kind) !void {
         const tb = harness.rig.tb;
         const pixels = harness.pixels;
         for (glyph_heights) |rows| {
             var whole = truetype.GlyphImage{ .pixels = pixels.ptr, .room = glyph_pixels, .size = 1, .kind = .mono1 };
             const answer = tb.RenderGlyph(outline, glyph, rows, &whole);
-            try testing.expectEqual(fontimage.Kind.alpha4, whole.kind);
+            try testing.expectEqual(kind, whole.kind);
             if (!has) {
                 try testing.expectEqual(truetype.TRUETYPEERR_GLYPH, answer);
                 try testing.expectEqual(@as(u32, 0), whole.size);
@@ -631,7 +658,7 @@ const Harness = struct {
             const box = whole.glyph;
             const size = whole.size;
             try testing.expectEqual(@as(u32, 0), box.data);
-            try testing.expectEqual(fontimage.pitchOf(.alpha4, box.width), @as(u32, box.pitch));
+            try testing.expectEqual(fontimage.pitchOf(kind, box.width), @as(u32, box.pitch));
             try testing.expectEqual(@as(u32, box.pitch) * box.rows, size);
             try testing.expect(size <= glyph_pixels);
             try testing.expect((box.width == 0) == (box.rows == 0));
@@ -644,7 +671,7 @@ const Harness = struct {
             if (box.width != 0) {
                 harness.inked += 1;
                 // A row of an odd width ends in half a byte of nothing.
-                if (box.width & 1 == 1) {
+                if (kind == .alpha4 and box.width & 1 == 1) {
                     for (0..box.rows) |y| try testing.expectEqual(@as(u8, 0), pixels[(y + 1) * box.pitch - 1] & 0x0F);
                 }
             }
@@ -738,7 +765,7 @@ const Targets = struct {
     };
 
     /// The tables the library reads.
-    const read = [_]*const [4]u8{ "cmap", "CFF ", "glyf", "head", "hhea", "hmtx", "kern", "loca", "maxp", "name", "OS/2", "post" };
+    const read = [_]*const [4]u8{ "CBDT", "CBLC", "cmap", "CFF ", "EBDT", "EBLC", "glyf", "head", "hhea", "hmtx", "kern", "loca", "maxp", "name", "OS/2", "post" };
 
     /// The targets of `source`, a sound font or collection.
     fn of(source: []const u8) Targets {
