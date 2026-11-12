@@ -23,7 +23,7 @@ const IconBase = sdk.interface.icon.IconBase;
 const rdargs = dos.rdargs;
 
 pub const COMMAND_NAME = "Shell";
-const VERSION_STRING = "\x00$VER: Shell 1.0 (09.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Shell 1.1 (12.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "WINDOW/K,FROM/K";
@@ -70,23 +70,23 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     else
         dl.Open(default_from, dos.MODE_OLDFILE);
 
-    // In SYS:, for the shell to inherit; this process's own put back.
+    // SYS: is handed over as the shell's own directory, so the shell is
+    // named after it and not after the directory this command was run
+    // in. The lock is the shell's from then on, and comes back only when
+    // no shell was started.
     const home = dl.Lock("SYS:", dos.SHARED_LOCK);
-    const old = if (home) |lock| dl.CurrentDir(lock) else null;
-    defer if (home) |lock| {
-        _ = dl.CurrentDir(old);
-        dl.UnLock(lock);
-    };
     const tags = [_]utility.TagItem{
         .{ .tag = dos.SYS_Window, .data = @intFromPtr(window) },
         .{ .tag = dos.SYS_Asynch, .data = 1 },
         .{ .tag = dos.SYS_UserShell, .data = 1 },
         .{ .tag = dos.SYS_ScriptFile, .data = @intFromPtr(script) },
+        .{ .tag = if (home != null) dos.NP_CurrentDir else utility.TAG_IGNORE, .data = @intFromPtr(home) },
         .{},
     };
     if (dl.SystemTagList(null, &tags) < 0) {
         const code = dl.IoErr();
         if (script) |file| _ = dl.Close(file);
+        if (home) |lock| dl.UnLock(lock);
         _ = dl.PrintFault(code, COMMAND_NAME);
         return dos.RETURN_ERROR;
     }
