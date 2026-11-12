@@ -33,7 +33,9 @@
 //!   - the one dates, numbers and dos's messages are written in from then
 //!   on - and the language preferred left in the global variable
 //!   Language. A country or a language that cannot be read is reported,
-//!   and the locale stays as it was.
+//!   and the locale stays as it was. Its KEYMAP is made the keyboard's
+//!   keymap (keymap.library's default); a name no keymap has is reported
+//!   and the keymap stays.
 //!
 //! A file that is not there changes nothing of its own. Every screen and
 //! window takes the pens, the style and the title bars' gadgets at once,
@@ -85,6 +87,9 @@ const sound_file = prefs.sound;
 const audio_file = prefs.audio;
 const audiocontrol = sdk.devices.audiocontrol;
 const locale = sdk.locale;
+const locale_file = prefs.locale;
+const keymap = sdk.keymap;
+const KeymapBase = sdk.interface.keymap.KeymapBase;
 const datatypes = sdk.datatypes;
 const dtc = datatypes.datatypesclass;
 const sdt = datatypes.soundclass;
@@ -102,7 +107,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SetPrefs";
-const VERSION_STRING = "\x00$VER: SetPrefs 1.12 (29.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SetPrefs 1.13 (12.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/K,RESET/S,SHOW/S";
@@ -129,6 +134,8 @@ const MSG_OUTPUT_EQ = "%-12s %s %u%%, EQ %s\n";
 const MSG_PREFERRED = "%-12s %s\n";
 const MSG_PREFERRED_GONE = "%-12s %s, not there\n";
 const MSG_LOCALE = "%-12s %s, %s\n";
+const MSG_KEYMAP = "%-12s %s\n";
+const MSG_NOKEYMAP = "%s: no keymap %s - there are deutsch, usa and the files of DEVS:Keymaps\n";
 
 /// The most of a beep's sound file read, in seconds.
 const max_sample_seconds = 4;
@@ -378,13 +385,41 @@ fn readAudio(l: Libs, dir: [*:0]const u8, _: *Gathered) i32 {
 }
 
 /// locale.prefs: the locale it describes made the default, and its
-/// language left in the global variable Language. Without the file, or
-/// without locale.library, the locale stays as it is.
+/// language left in the global variable Language; and the keymap it
+/// names made the keyboard's. Without the file, both stay as they are;
+/// without locale.library, the locale does.
 fn readLocale(l: Libs, dir: [*:0]const u8, _: *Gathered) i32 {
     var path: [128:0]u8 = undefined;
     const from = pathOf(&path, dir, "locale.prefs");
     const there = l.dl.Lock(from, dos.ACCESS_READ) orelse return dos.RETURN_OK;
     l.dl.UnLock(there);
+    const keys = readKeymap(l, from);
+    const made = makeLocale(l, from);
+    return @max(keys, made);
+}
+
+/// The keymap locale.prefs names made keymap.library's default. A file
+/// that names none leaves the keymap as it is; a name no keymap has is
+/// reported.
+fn readKeymap(l: Libs, from: [*:0]const u8) i32 {
+    var text: [locale_file.header.len + 512]u8 = undefined;
+    const read = prefs.load(l.dl, from, &text) orelse return dos.RETURN_OK;
+    var settings: locale_file.Settings = .{};
+    if (locale_file.parse(l.ub, read, &settings) != null) return dos.RETURN_OK;
+    if (settings.keymapName().len == 0) return dos.RETURN_OK;
+    const library = l.sys.OpenLibrary(keymap.KEYMAPNAME, keymap.KEYMAP_VERSION) orelse return dos.RETURN_OK;
+    defer l.sys.CloseLibrary(library);
+    const kb: *KeymapBase = @ptrCast(library);
+    const map = kb.FindKeyMap(&settings.keymap) orelse {
+        _ = Printf(l.dl, MSG_NOKEYMAP, .{ from, @as([*:0]const u8, &settings.keymap) });
+        return dos.RETURN_WARN;
+    };
+    kb.SetKeyMapDefault(map);
+    return dos.RETURN_OK;
+}
+
+/// The locale `from` describes made the default.
+fn makeLocale(l: Libs, from: [*:0]const u8) i32 {
     const library = l.sys.OpenLibrary(locale.LOCALENAME, 1) orelse return dos.RETURN_OK;
     defer l.sys.CloseLibrary(library);
     const lb: *LocaleBase = @ptrCast(library);
@@ -401,6 +436,11 @@ fn readLocale(l: Libs, dir: [*:0]const u8, _: *Gathered) i32 {
 /// The default locale's country and language, when there is
 /// locale.library.
 fn showLocale(l: Libs) void {
+    if (l.sys.OpenLibrary(keymap.KEYMAPNAME, keymap.KEYMAP_VERSION)) |keys| {
+        defer l.sys.CloseLibrary(keys);
+        const kb: *KeymapBase = @ptrCast(keys);
+        if (kb.KeyMapName(null)) |name| _ = Printf(l.dl, MSG_KEYMAP, .{ @as([*:0]const u8, "KEYMAP"), name });
+    }
     const library = l.sys.OpenLibrary(locale.LOCALENAME, 1) orelse return;
     defer l.sys.CloseLibrary(library);
     const lb: *LocaleBase = @ptrCast(library);

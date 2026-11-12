@@ -5,9 +5,11 @@
 # LOCALE:Languages and the catalogs in LOCALE:Catalogs/<language>, in
 # quotes when there are several. Without LANGUAGES the country's own
 # language is used; without either, or without a line, English and the
-# United States' formats. Prefs' Region page writes the line; to write
-# it by hand, take the # off one below.
+# United States' formats. KEYMAP names the keymap the keyboard types
+# by - deutsch, usa or a file of DEVS:Keymaps; without it the one the
+# machine starts with stays. Prefs' Region page writes the line; to
+# write it by hand, take the # off one below.
 #
 # COUNTRY=deutschland
 # COUNTRY=schweiz LANGUAGES="deutsch, francais, english"
-# COUNTRY=united_kingdom
+# COUNTRY=united_kingdom KEYMAP=usa

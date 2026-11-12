@@ -46,7 +46,9 @@
 //! - **Region**: the country - its dates, numbers and money - the
 //!   languages wanted, the preferred first, picked from those in
 //!   LOCALE:Languages and English, and the time zone, by the places that
-//!   keep it (`sdk.dos.timezone.places`) or as a POSIX TZ rule typed; and
+//!   keep it (`sdk.dos.timezone.places`) or as a POSIX TZ rule typed; the
+//!   keymap the keyboard types by, from keymap.library's and the files
+//!   of DEVS:Keymaps, kept with the country in locale.prefs; and
 //!   a date, a time, a number and an amount of money as the page has them,
 //!   from a locale made of its settings.
 //! - **Sound**: the output preferred - played through whenever it is
@@ -112,6 +114,8 @@ const update_file = prefs.update;
 const locale_file = prefs.locale;
 const timezone = dos.timezone;
 const locale = sdk.locale;
+const keymap = sdk.keymap;
+const KeymapBase = sdk.interface.keymap.KeymapBase;
 const LocaleBase = sdk.interface.locale.LocaleBase;
 const sound_file = prefs.sound;
 const audio_file = prefs.audio;
@@ -154,8 +158,8 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.27";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.11.2026)\r\n";
+const VERSION = "1.28";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (12.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -223,6 +227,7 @@ const ID_LANGUAGE = 181;
 const ID_CLEAR = 182;
 const ID_ZONE = 183;
 const ID_ZONE_RULE = 184;
+const ID_KEYMAP = 185;
 
 const band_count = audio.AUDIO_EQ_BANDS;
 
@@ -392,6 +397,11 @@ const ListEntry = struct {
 /// The most countries and languages the region page lists.
 const max_countries = 48;
 const max_languages = 24;
+/// The most keymaps its chooser lists, and what stands before them: no
+/// keymap named, so the one in use stays - the machine's own after a
+/// start, or one `C:SetMap` set.
+const max_keymaps = 32;
+const keymap_none = "None kept: stays as it is";
 /// The zone's chooser: the places that keep one, and a rule of one's own.
 const zone_labels = labels: {
     var made: [timezone.places.len + 1:null]?[*:0]const u8 = undefined;
@@ -570,6 +580,13 @@ const Editor = struct {
     /// date, a time, a number and money as they look, and locale.library,
     /// when there is one, to make them.
     region: locale_file.Settings = .{},
+    /// The keymaps to choose from, by name: keymap.library's, then the
+    /// files of DEVS:Keymaps nobody has loaded. `keymap_labels[0]` is
+    /// for none named.
+    keymap_names: [max_keymaps][locale_file.name_len:0]u8 = @splat(@splat(0)),
+    keymap_labels: [max_keymaps + 1:null]?[*:0]const u8 = @splat(null),
+    keymap_count: usize = 0,
+    keymap_chooser: *Object = undefined,
     countries: exec.List = .{},
     country_nodes: [max_countries]ListEntry = @splat(.{}),
     country_count: usize = 0,
@@ -1485,6 +1502,65 @@ const Editor = struct {
             if (sameWord(&entry.name, &e.region.country) and name.len != 0) return @intCast(i);
         }
         return lv.LISTVIEW_NONE;
+    }
+
+    /// One more keymap on the chooser's list, unless it is there or the
+    /// list is full.
+    fn addKeymap(e: *Editor, name: []const u8) void {
+        if (name.len == 0 or name.len > locale_file.name_len or e.keymap_count == max_keymaps) return;
+        for (e.keymap_names[0..e.keymap_count]) |*have| {
+            if (sameText(std_span(have), name)) return;
+        }
+        const into = &e.keymap_names[e.keymap_count];
+        @memcpy(into[0..name.len], name);
+        e.keymap_count += 1;
+        e.keymap_labels[e.keymap_count] = into;
+    }
+
+    /// The keymaps there are: the ones keymap.library has on its list,
+    /// the files of DEVS:Keymaps, and the one the settings name, should
+    /// it be neither.
+    fn readKeymaps(e: *Editor) void {
+        e.keymap_labels[0] = keymap_none;
+        if (e.sys.OpenLibrary(keymap.KEYMAPNAME, keymap.KEYMAP_VERSION)) |library| {
+            defer e.sys.CloseLibrary(library);
+            const kb: *KeymapBase = @ptrCast(library);
+            var map = kb.NextKeyMap(null);
+            while (map) |one| : (map = kb.NextKeyMap(one)) {
+                if (kb.KeyMapName(one)) |name| e.addKeymap(std_span(name));
+            }
+        }
+        const dl = e.dl;
+        if (dl.Lock(keymap.KEYMAP_DRAWER, dos.SHARED_LOCK)) |lock| {
+            defer dl.UnLock(lock);
+            var fib: dos.FileInfoBlock = .{};
+            if (dl.Examine(lock, &fib)) {
+                while (dl.ExNext(lock, &fib)) {
+                    if (dos.isDirectory(fib.dir_entry_type)) continue;
+                    const name = std_span(@ptrCast(&fib.file_name));
+                    // An icon beside a keymap is no keymap.
+                    if (name.len > 5 and sameText(name[name.len - 5 ..], ".info")) continue;
+                    e.addKeymap(name);
+                }
+            }
+        }
+        e.addKeymap(e.region.keymapName());
+    }
+
+    /// The settings' keymap's place in the chooser: 0 for none named.
+    fn keymapChoice(e: *const Editor) usize {
+        const name = e.region.keymapName();
+        if (name.len == 0) return 0;
+        for (e.keymap_names[0..e.keymap_count], 0..) |*have, i| {
+            if (sameText(std_span(have), name)) return i + 1;
+        }
+        return 0;
+    }
+
+    fn takeKeymap(e: *Editor, choice: usize) void {
+        if (choice > e.keymap_count) return;
+        _ = e.region.setKeymap(if (choice == 0) "" else std_span(&e.keymap_names[choice - 1]));
+        e.sayRegion("");
     }
 
     fn takeCountry(e: *Editor, index: usize) void {
@@ -2800,7 +2876,14 @@ noinline fn buildRegion(e: *Editor) ?*Object {
         pair(gc.STRINGA_MaxChars, e.zone_rule.len - 1),
         .{},
     }) orelse return null;
-    const zone_group = column(ib, "Time zone", &.{ e.zone_chooser, e.zone_field }, &.{ "_Zone", "_Rule" }) orelse return null;
+    e.keymap_chooser = ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_KEYMAP),
+        pair(gc.GA_RelVerify, 1),
+        pair(ch.CHOOSER_Labels, @intFromPtr(&e.keymap_labels)),
+        pair(ch.CHOOSER_Active, e.keymapChoice()),
+        .{},
+    }) orelse return null;
+    const zone_group = column(ib, "Time zone and keyboard", &.{ e.zone_chooser, e.zone_field, e.keymap_chooser }, &.{ "_Zone", "_Rule", "_Keymap" }) orelse return null;
     for (&e.samples, 0..) |*sample, i| {
         sample.* = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
             pair(tx.TEXT_Text, @intFromPtr(&e.sample_texts[i])),
@@ -3130,6 +3213,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             if (rule.len < e.zone_rule.len) @memcpy(e.zone_rule[0..rule.len], rule);
         }
     }
+    e.readKeymaps();
     e.country_count = e.readNames(locale.countries_dir, ".COUNTRY", null, &e.country_nodes, &e.countries);
     e.language_count = e.readNames(locale.languages_dir, ".LANGUAGE", "english", &e.language_nodes, &e.languages);
     const locale_lib = sys.OpenLibrary(locale.LOCALENAME, 1);
@@ -3239,6 +3323,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                         ID_CLEAR => e.clearLanguages(),
                         ID_ZONE => e.takeZone(code),
                         ID_ZONE_RULE => _ = e.takeZoneRule(),
+                        ID_KEYMAP => e.takeKeymap(code),
                         ID_FALLBACK => _ = e.takeFallbacks(),
                         else => if (id >= ID_FIELD and id < ID_FIELD + style_file.key_count) {
                             e.takeField(@enumFromInt(id - ID_FIELD));

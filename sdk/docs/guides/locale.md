@@ -19,8 +19,9 @@ a program's catalogs, and what dos does with the default.
 Prefs' Region page sets it: the country from those in
 `LOCALE:Countries`, the languages from those in `LOCALE:Languages` and
 English, each one picked going on the preferred list after the ones on
-it, and the time zone; a date, a time, a number and an amount of money
-show how the settings look before they are saved. Save and Use write the
+it, the time zone, and the keymap the keyboard types by; a date, a
+time, a number and an amount of money show how the settings look
+before they are saved. Save and Use write the
 file and hand it over as described below. By hand:
 
 One line names the country and, when they are not the country's own,
@@ -29,7 +30,15 @@ the languages wanted, the preferred first:
 ```
 COUNTRY=deutschland
 COUNTRY=schweiz LANGUAGES="francais, deutsch, english"
+COUNTRY=india KEYMAP=inscript
 ```
+
+`KEYMAP` names the keymap - `deutsch`, `usa` or a file of
+`DEVS:Keymaps` ([Keymaps](#keymaps)) - which `C:SetPrefs` makes the
+keyboard's with the locale, so it is the one typed by after every
+start. A line without it leaves the keymap as it is: the machine's own
+after a start, or one `C:SetMap` set since. A name no keymap has is
+reported and changes nothing.
 
 `C:SetPrefs` reads it at boot, after `S:Startup-Sequence` has assigned
 `LOCALE:` to `SYS:locale`, makes the locale it describes the default, and
@@ -38,7 +47,7 @@ the file, or with no line in it, the system stays in its own locale:
 English, with the United States' numbers and money and dos's own forms
 of the date (`29-Oct-2026`, `14:05:09`). To change it while running,
 write the file and run `SetPrefs`, as the Region page does; `SetPrefs SHOW` prints it as
-`LOCALE deutschland, deutsch`. A program opened the default before the
+`LOCALE deutschland, deutsch`, with `KEYMAP deutsch` before it. A program opened the default before the
 change keeps the one it has until it closes it.
 
 LANGUAGES holds ten languages at most, each in quotes with the rest when
@@ -404,8 +413,12 @@ console a program gave a keymap of its own with `CD_SETKEYMAP` keeps
 that one). `deutsch` and `usa` are in the ROM. Any other is a file
 of `DEVS:Keymaps` with the keymap's name, which `FindKeyMap` loads the
 first time a process asks for it and keeps; `KeyMapName` says what a
-keymap is called. A name is taken as it is written: `SetMap USA` finds
-no keymap.
+keymap is called, and `NextKeyMap` walks the ones the library has, the
+ROM's first. A name is taken as it is written: `SetMap USA` finds
+no keymap. `SetMap` sets it until the next start; the one kept over a
+start is `KEYMAP` in `ENV:Sys/locale.prefs`, which Prefs' Region page
+chooses from the library's keymaps and the files of `DEVS:Keymaps`
+([above](#setting-the-default-envsyslocaleprefs)).
 
 `DEVS:Keymaps/inscript` types Devanagari by the InScript layout:
 

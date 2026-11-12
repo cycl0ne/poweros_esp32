@@ -56,7 +56,10 @@ The settings are on ten pages, under tabs:
   ones there, Clear empties it, and with none the country's own is used
   - texts are shown in the first of them a program has them in; and the
   time zone, picked by the places that keep it or typed as a POSIX TZ
-  rule (`CET-1CEST,M3.5.0,M10.5.0/3`), a rule that is none refused.
+  rule (`CET-1CEST,M3.5.0,M10.5.0/3`), a rule that is none refused;
+  and the keymap the keyboard types by, from the ones keymap.library
+  has and the files of DEVS:Keymaps - or none kept, and the keymap
+  stays as it is.
   Under them a date, a time, a number and an amount of money as the
   page's settings write them.
 - **Sound:** the outputs and their volumes on the left - which one is
@@ -95,8 +98,8 @@ field, and OK and Cancel. Until it is closed the editor takes no input.
 ## Keeping the settings
 
 - **Save** keeps the settings for good: they are written to ENV:Sys and
-  ENVARC:Sys - the time zone to Sys/timezone, the country and the
-  languages to Sys/locale.prefs.
+  ENVARC:Sys - the time zone to Sys/timezone, the country, the
+  languages and the keymap to Sys/locale.prefs.
 - **Use** keeps them until the machine starts again: they are written to
   ENV:Sys alone.
 - **Cancel** leaves everything as it was; the volumes, the equalizers

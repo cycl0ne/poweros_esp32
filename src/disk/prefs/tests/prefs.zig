@@ -591,6 +591,20 @@ test "locale.prefs: every line read, the languages in order, written back" {
     try testing.expect(settings.setCountry(""));
     try testing.expectEqual(@as(usize, 0), prefs.locale.write(&settings, &text));
 
+    // The keymap: a name of its own on the line, kept when the line
+    // leaves it out, written last, and alone when nothing else is set.
+    try testing.expect(prefs.locale.parse(ub, "COUNTRY=india KEYMAP=inscript", &settings) == null);
+    try testing.expectEqualStrings("inscript", settings.keymapName());
+    try testing.expectEqualStrings("COUNTRY=india KEYMAP=inscript", text[0..prefs.locale.write(&settings, &text)]);
+    try testing.expect(prefs.locale.parse(ub, "COUNTRY=deutschland", &settings) == null);
+    try testing.expectEqualStrings("inscript", settings.keymapName());
+    try testing.expect(settings.setCountry(""));
+    try testing.expectEqualStrings("KEYMAP=inscript", text[0..prefs.locale.write(&settings, &text)]);
+    try testing.expect(settings.setKeymap(""));
+    try testing.expectEqual(@as(usize, 0), prefs.locale.write(&settings, &text));
+    try testing.expect(!settings.setKeymap("a name of more than thirty-one bytes"));
+    try testing.expect(prefs.locale.parse(ub, "KEYMAP=a_name_of_more_than_thirty-one_bytes", &settings) != null);
+
     // The header's examples read as the library reads them; a quote not
     // closed is told.
     var again: prefs.locale.Settings = .{};

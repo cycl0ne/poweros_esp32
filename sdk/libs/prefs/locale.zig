@@ -35,6 +35,22 @@ pub const Settings = struct {
     country: [name_len:0]u8 = @splat(0),
     languages: [max_languages][name_len:0]u8 = @splat(@splat(0)),
     language_count: usize = 0,
+    /// The keymap's name; empty for the one the machine starts with.
+    keymap: [name_len:0]u8 = @splat(0),
+
+    /// The keymap's name; empty for none.
+    pub fn keymapName(settings: *const Settings) []const u8 {
+        return span(&settings.keymap);
+    }
+
+    /// The keymap named `name`, empty for none; false, with nothing
+    /// changed, for a name too long.
+    pub fn setKeymap(settings: *Settings, name: []const u8) bool {
+        if (name.len > name_len) return false;
+        settings.keymap = @splat(0);
+        @memcpy(settings.keymap[0..name.len], name);
+        return true;
+    }
 
     /// The country's name; empty for none.
     pub fn countryName(settings: *const Settings) []const u8 {
@@ -88,6 +104,8 @@ pub fn parse(ub: *UtilityBase, text: []const u8, settings: *Settings) ?[*:0]cons
         while (pairs.next() catch return prefs.Pairs.quote_not_closed) |pair| {
             if (style.same(pair.key, "COUNTRY")) {
                 if (!settings.setCountry(pair.value)) return "COUNTRY names a file in LOCALE:Countries";
+            } else if (style.same(pair.key, "KEYMAP")) {
+                if (!settings.setKeymap(pair.value)) return "KEYMAP names a keymap: deutsch, usa or a file of DEVS:Keymaps";
             } else if (style.same(pair.key, "LANGUAGES")) {
                 settings.clearLanguages();
                 var start: usize = 0;
@@ -133,6 +151,12 @@ pub fn write(settings: *const Settings, into: []u8) usize {
         }
         if (quoted) put(into, &n, "\"");
     }
+    const keys = settings.keymapName();
+    if (keys.len != 0) {
+        if (n != 0) put(into, &n, " ");
+        put(into, &n, "KEYMAP=");
+        put(into, &n, keys);
+    }
     return n;
 }
 
@@ -145,12 +169,14 @@ pub const header =
     \\# LOCALE:Languages and the catalogs in LOCALE:Catalogs/<language>, in
     \\# quotes when there are several. Without LANGUAGES the country's own
     \\# language is used; without either, or without a line, English and the
-    \\# United States' formats. Prefs' Region page writes the line; to write
-    \\# it by hand, take the # off one below.
+    \\# United States' formats. KEYMAP names the keymap the keyboard types
+    \\# by - deutsch, usa or a file of DEVS:Keymaps; without it the one the
+    \\# machine starts with stays. Prefs' Region page writes the line; to
+    \\# write it by hand, take the # off one below.
     \\#
     \\# COUNTRY=deutschland
     \\# COUNTRY=schweiz LANGUAGES="deutsch, francais, english"
-    \\# COUNTRY=united_kingdom
+    \\# COUNTRY=united_kingdom KEYMAP=usa
     \\
 ;
 
