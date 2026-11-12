@@ -537,6 +537,19 @@ pub fn forget(ib: *IntuitionBase, w: *Window) void {
     }
 }
 
+/// A window stopped being the active one: a gadget of it that has the
+/// input is told it has lost it. The keys go to the active window from
+/// here on, and a gadget that kept them would have them typed into a
+/// window that is not the one in front of the user. Under the screen
+/// semaphore.
+pub fn windowInactive(ib: *IntuitionBase, w: *Window) void {
+    const st = stateOf(ib);
+    if (st.mode != .active or st.window != w) return;
+    abort(ib);
+    st.window = null;
+    st.mode = .none;
+}
+
 /// A gadget is being taken out of its window: if it has the input, it is
 /// told it has lost it. Under the screen semaphore.
 pub fn forgetGadget(ib: *IntuitionBase, o: *Object) void {

@@ -3280,6 +3280,73 @@ test "windows: with no buffer, a window is what its backfill paints, wherever it
     try tearDown(ib);
 }
 
+test "input: a window that stops being the active one takes the keys from its field" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 80, 80, .rgb565);
+
+    var buffer: [16]u8 = @splat(0);
+    const field = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 4 },
+        .{ .tag = gc.GA_Top, .data = 14 },
+        .{ .tag = gc.GA_Width, .data = 40 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.STRINGA_Buffer, .data = @intFromPtr(&buffer) },
+        .{ .tag = gc.STRINGA_MaxChars, .data = buffer.len },
+        .{},
+    }).?;
+    const typing = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 60 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(field) },
+        .{},
+    }).?;
+    try testing.expect(it.ActivateGadget(field, typing, null));
+    rawKey(ib, 0x20); // 'a'
+    try testing.expectEqual(@as(u8, 'a'), buffer[0]);
+
+    // Another window opens as the active one, with no press anywhere: the
+    // field has lost the keys, and the next one is the new window's.
+    const other = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 44 },
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_RAWKEY },
+        .{},
+    }).?;
+    try testing.expect(ib.active_window == @as(*_window.Window, @ptrCast(@alignCast(other))));
+    try testing.expect(ib.input.active == null);
+    rawKey(ib, 0x35); // 'b'
+    try testing.expectEqual(@as(u8, 0), buffer[1]);
+    const told = it.GetIMsg(other).?;
+    try testing.expectEqual(wn.IDCMP_RAWKEY, told.class);
+    try testing.expectEqual(@as(u32, 0x35), told.code);
+    it.ReplyIMsg(told);
+    while (it.GetIMsg(other)) |more| it.ReplyIMsg(more);
+
+    // The first window made the active one again: its field waits to be
+    // chosen, as a window's does that was pressed back to the front.
+    it.ActivateWindow(typing);
+    try testing.expect(ib.active_window == @as(*_window.Window, @ptrCast(@alignCast(typing))));
+    try testing.expect(ib.input.active == null);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, typing, wn.WA_Screen));
+    it.CloseWindow(other);
+    it.CloseWindow(typing);
+    it.DisposeObject(field);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "input: a window that never takes the activation is pressed beside a field being typed into" {
     const ib = try setUp();
     defer kexec.deinit();

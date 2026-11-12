@@ -1323,13 +1323,15 @@ pub fn hideLayers(ib: *IntuitionBase, w: *Window, hide: bool) void {
     _ = if (hide) lb.HideLayer(w.layer) else lb.ShowLayer(w.layer);
 }
 
-/// A window that stops being the active one: its popup goes, its border
-/// is drawn the way an inactive window's is, and it is told. The caller
-/// has already taken the activation off it (`ib.active_window`).
+/// A window that stops being the active one: its popup goes, a gadget of
+/// it that has the input loses it, its border is drawn the way an
+/// inactive window's is, and it is told. The caller has already taken the
+/// activation off it (`ib.active_window`).
 pub fn deactivate(ib: *IntuitionBase, o: *Window) void {
     const requests = @import("../requester/_requester.zig");
     // A popup goes when its window stops being the active one.
     if (requests.popupOf(o)) |popup| _ = requests.take(ib, o, popup, true, sdk.intuition.gadgetclass.POPDOWN_DISMISSED);
+    @import("../input/_input.zig").windowInactive(ib, o);
     o.flags &= ~WF_ACTIVE;
     drawBorder(ib, o);
     send(ib, o, wn.IDCMP_INACTIVEWINDOW, 0);

@@ -251,7 +251,7 @@ pub const LIBRARY_VERSION = 0;
 /// 90: a string gadget steps and deletes by Unicode's clusters - a
 /// syllable of joined consonants is one - and a key that sends several
 /// characters types them all, the edit hooks called for each.
-pub const LIBRARY_REVISION = 90;
+pub const LIBRARY_REVISION = 91;
 const BUILD_DATE = "12.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
