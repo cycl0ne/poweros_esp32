@@ -1053,13 +1053,14 @@ pub fn build(b: *std.Build) void {
             if (extra.only) |only| {
                 if (only.contains(chip)) {
                     run.addPrefixedFileArg(b.fmt("{s}=", .{extra.path}), host);
-                } else if (extra.virt and virt) {
-                    run.addPrefixedFileArg(b.fmt("--gpt-file={s}=", .{extra.path}), host);
+                } else if (extra.system and virt) {
+                    run.addPrefixedFileArg(b.fmt("--system-file={s}=", .{extra.path}), host);
                 }
             } else run.addPrefixedFileArg(b.fmt("{s}=", .{extra.path}), host);
         }
     }
-    // -Dgames: `games/` on the virt machines' system disks alone, its
+    // -Dgames: `games/` in the 64-bit disks' trees and on their system
+    // disks, not in the image in RAM (mkfs's `--system-file`), its
     // drawers too, a program on its own chip's; and the drawer's icon,
     // since the volume's window shows only what has one.
     const games_icon: ?std.Build.LazyPath = if (games.len == 0) null else if (icons) |dir| icon: {
@@ -1077,10 +1078,10 @@ pub fn build(b: *std.Build) void {
                 if (only != chip) continue;
             }
             if (game.host) |host| {
-                run.addPrefixedFileArg(b.fmt("--gpt-file={s}=", .{game.path}), b.path(host));
-            } else run.addArg(b.fmt("--gpt-file={s}", .{game.path}));
+                run.addPrefixedFileArg(b.fmt("--system-file={s}=", .{game.path}), b.path(host));
+            } else run.addArg(b.fmt("--system-file={s}", .{game.path}));
         }
-        if (games_icon) |icon| run.addPrefixedFileArg(b.fmt("--gpt-file={s}=", .{games_drawer_icon.path}), icon);
+        if (games_icon) |icon| run.addPrefixedFileArg(b.fmt("--system-file={s}=", .{games_drawer_icon.path}), icon);
     }
     b.getInstallStep().dependOn(&b.addInstallBinFile(disk_bin, "disk.bin").step);
     b.getInstallStep().dependOn(&b.addInstallBinFile(p4_disk_bin, "disk-esp32p4.bin").step);
@@ -2045,9 +2046,10 @@ const Extra = struct {
     host: []const u8,
     /// The chips whose disk images it goes on; null for every image.
     only: ?std.EnumSet(Chip) = null,
-    /// `virt:`: on the virt machines' system disks as well, and on
-    /// nothing else of their chips.
-    virt: bool = false,
+    /// `system:`: a file of the 64-bit machines' system that their disk
+    /// image in RAM has no room for - in their trees, manifests and
+    /// packages and on the system disks (mkfs's `--system-file`).
+    system: bool = false,
     /// The directories above `path` that the image does not have yet,
     /// outermost first. Only the first file that needs one names it.
     dirs: []const []const u8,
@@ -2061,12 +2063,14 @@ const Extra = struct {
 /// tree knowing anything about it.
 ///
 /// A file goes on every chip's image unless the entry starts with the
-/// images it is for and a colon: chips by `Chip`'s names, and `virt` for
-/// the virt machines' system disks alone (`system-rv64.bin`,
-/// `system-a64.bin`, mkfs's `--gpt-file`).
+/// images it is for and a colon: chips by `Chip`'s names, and `system`
+/// for the 64-bit machines' systems without their disk image in RAM
+/// (mkfs's `--system-file`): the trees and manifests a release package
+/// is made of, and the system disks.
 /// `-Dextra=rv64sbi:c/tool=<file>` puts a program on the RISC-V 64 disks
-/// only; `-Dextra=virt:Music/song.mp3=<file>` a song on the SSDs QEMU
-/// starts from, which have room where the boards' flash disks have none.
+/// only; `-Dextra=system:Music/song.mp3=<file>` a song on every 64-bit
+/// machine's disk, which has room where the image in RAM and the
+/// boards' flash disks have none.
 ///
 /// The directories a path needs are made for it, and the ones the image
 /// already has are left alone. They are made on every image, whichever
@@ -2076,7 +2080,7 @@ fn extraFiles(b: *std.Build, made: *std.ArrayList([]const u8)) []const Extra {
     const given = b.option(
         []const []const u8,
         "extra",
-        "A file from outside this tree on the disk image: [<chip>|virt,...:]<path on the disk>=<file on the host>, given once per file",
+        "A file from outside this tree on the disk image: [<chip>|system,...:]<path on the disk>=<file on the host>, given once per file",
     ) orelse return &.{};
 
     var extras: std.ArrayList(Extra) = .empty;
@@ -2085,18 +2089,18 @@ fn extraFiles(b: *std.Build, made: *std.ArrayList([]const u8)) []const Extra {
             std.debug.panic("-Dextra={s}: no '=' between the path on the disk and the file on the host", .{entry});
         // The chips it is for, before a colon in what comes before the '='.
         var only: ?std.EnumSet(Chip) = null;
-        var virt = false;
+        var system = false;
         var start: usize = 0;
         if (std.mem.indexOfScalar(u8, entry[0..split], ':')) |colon| {
             var chips = std.EnumSet(Chip).initEmpty();
             var names = std.mem.splitScalar(u8, entry[0..colon], ',');
             while (names.next()) |name| {
-                if (std.mem.eql(u8, name, "virt")) {
-                    virt = true;
+                if (std.mem.eql(u8, name, "system")) {
+                    system = true;
                     continue;
                 }
                 const chip = std.meta.stringToEnum(Chip, name) orelse
-                    std.debug.panic("-Dextra={s}: no image '{s}' - virt, or a chip: {s}", .{ entry, name, chipNames(b) });
+                    std.debug.panic("-Dextra={s}: no image '{s}' - system, or a chip: {s}", .{ entry, name, chipNames(b) });
                 chips.insert(chip);
             }
             only = chips;
@@ -2105,13 +2109,13 @@ fn extraFiles(b: *std.Build, made: *std.ArrayList([]const u8)) []const Extra {
         const path = std.mem.trim(u8, entry[start..split], "/");
         const host = entry[split + 1 ..];
         if (path.len == 0 or host.len == 0)
-            std.debug.panic("-Dextra={s}: it is [<chip>|virt,...:]<path on the disk>=<file on the host>", .{entry});
+            std.debug.panic("-Dextra={s}: it is [<chip>|system,...:]<path on the disk>=<file on the host>", .{entry});
 
         extras.append(b.allocator, .{
             .path = path,
             .host = host,
             .only = only,
-            .virt = virt,
+            .system = system,
             .dirs = dirsFor(b, made, path, false),
         }) catch @panic("OOM");
     }
@@ -2961,24 +2965,24 @@ const Tree = struct {
 };
 
 /// `games/` in the root of the tree, with -Dgames: what is in it goes in
-/// the `Games` drawer of the virt machines' system disks
+/// the `Games` drawer of the 64-bit machines' systems - their trees,
+/// manifests and release packages, and the system disks
 /// (`system-rv64.bin`, `system-a64.bin`, `system-x64.bin`) - games and
-/// their data, too
-/// large for the boards' flash disks, on the SSDs that have room for
-/// them. A program is built once per chip, so `<name>.<chip>.seg` goes
+/// their data, too large for the disk image in RAM and the boards'
+/// flash disks, on the disks that have room for them. A program is built once per chip, so `<name>.<chip>.seg` goes
 /// on that chip's disk alone, as `<name>`:
 /// `games/Millennium/Millennium.a64psci.seg` is
 /// `SYS:Games/Millennium/Millennium` on the AArch64 machine's. Another
 /// `.seg` loses the suffix on all of them, and any other file keeps its
 /// name.
-/// The drawers are made on those disks alone (mkfs's `--gpt-file` with
+/// The drawers are made there alone (mkfs's `--system-file` with
 /// no file), outermost first, and `Games` gets its icon there
 /// (`games_drawer_icon`): the volume's window shows only what has one.
 ///
 /// A name beginning with a dot is left behind, and so is the `README.md`
 /// in the root of `games/`.
 fn gamesTree(b: *std.Build, made: *std.ArrayList([]const u8)) []const Game {
-    const wanted = b.option(bool, "games", "Put what games/ holds in the Games drawer of the virt machines' system disks: <name>.<chip>.seg on that chip's as <name>") orelse false;
+    const wanted = b.option(bool, "games", "Put what games/ holds in the Games drawer of the 64-bit machines' packages and system disks: <name>.<chip>.seg on that chip's as <name>") orelse false;
     if (!wanted) return &.{};
     const io = b.graph.io;
     var root = b.build_root.handle.openDir(io, games_tree, .{ .iterate = true }) catch
