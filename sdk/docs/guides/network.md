@@ -1073,7 +1073,8 @@ SSH claus@10.0.0.5 PORT 2222 list SYS:   ; one command
   has no such locale, keeps its own.
 - **A shell** runs on a terminal of type xterm-256color the size of the
   console, which the console says when asked and keeps saying as its
-  window changes; every key goes to the shell, Ctrl-C too. `~.` at the
+  window changes; every key goes to the shell, Ctrl-C too, and Return
+  as one carriage return, whatever the console gives for it. `~.` at the
   start of a line ends the connection.
 - **A command** runs without a terminal: lines typed go to it, Ctrl-\
   ends its input, Ctrl-C the connection; input from a file goes to it as

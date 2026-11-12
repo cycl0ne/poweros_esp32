@@ -21,8 +21,9 @@
 //! terminal of type xterm-256color whose size it tells the server - the
 //! console says it when asked (`CSI 18 t`), and is asked again every two
 //! seconds; 80 by 24 when it never answers. Every key goes to the shell,
-//! Ctrl-C too, and Backspace as DEL, as an xterm's does; `~.` at the start
-//! of a line ends the connection, `~~` there sends one `~`. With COMMAND
+//! Ctrl-C too, Backspace as DEL and Return as a carriage return alone, as
+//! an xterm's are; `~.` at the start of a line ends the connection, `~~`
+//! there sends one `~`. With COMMAND
 //! the command runs without a terminal: lines typed go to it, Ctrl-\ ends
 //! its input and Ctrl-C the connection. Input that is not a console - a
 //! file - goes to the shell or the command as it is, and its end is the
@@ -55,7 +56,7 @@ const FileHandle = dos.FileHandle;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SSH";
-const VERSION_STRING = "\x00$VER: SSH 1.4 (11.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SSH 1.5 (12.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "HOST,PORT/K/N,USER/K,KEYGEN/S,COMMAND/F";
@@ -127,6 +128,8 @@ const State = struct {
     line_start: bool = true,
     tilde: bool = false,
     quit_typed: bool = false,
+    /// The last byte from the console was a carriage return.
+    after_return: bool = false,
     clock: timer.TimeRequest = .{},
     clock_open: bool = false,
 
@@ -441,7 +444,8 @@ fn startClock(st: *State) void {
 
 /// What came from the console, into what goes to the session: the
 /// console's answers about its size taken out (and the size told), and
-/// on a terminal Backspace as DEL and the `~` escapes.
+/// on a terminal Backspace as DEL, Return as its carriage return alone,
+/// and the `~` escapes.
 fn filterInput(st: *State, bytes: []const u8) void {
     var at: usize = 0;
     while (at < bytes.len) {
@@ -463,6 +467,11 @@ fn filterInput(st: *State, bytes: []const u8) void {
             push(st, byte);
             continue;
         }
+        // A console window gives Return as CR LF. The far terminal makes
+        // its new line of the CR, and the LF would be a second one.
+        const after_return = st.after_return;
+        st.after_return = byte == '\r';
+        if (after_return and byte == '\n') continue;
         if (st.tilde) {
             st.tilde = false;
             if (byte == '.') {
