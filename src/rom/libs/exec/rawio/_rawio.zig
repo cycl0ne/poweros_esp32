@@ -11,11 +11,15 @@
 //! - Hex is uppercase without leading zeros; 0 prints as "0".
 //! - With zero fill, a "-" goes before the zeros: %03d of -5 is "-05".
 //! - .limit cuts the text; a NULL %s prints nothing, not even padding.
-//! - A %s's width and .limit count characters of its UTF-8, so a column
-//!   lines up whatever a name is written in and a cut never ends inside
-//!   a character; a byte that is no UTF-8 is one, as text reads it.
+//! - A %s's width and .limit count the cells its UTF-8 takes on a
+//!   console - two for a wide character, none for a mark on the
+//!   character before it - so a column lines up whatever a name is
+//!   written in. A cut never ends inside a character, takes a
+//!   character's marks with it, and leaves out a wide character that
+//!   only half fits; a byte that is no UTF-8 is one cell, as text reads
+//!   it.
 //! - %c takes a code point and writes it in UTF-8, U+FFFD for a value
-//!   that is none; its width counts it as one character.
+//!   that is none; its width counts the cells it takes.
 //! - An unknown conversion prints its own character, so %% prints "%".
 //! - The output function gets a final NUL, and RawDoFmt returns the data
 //!   stream past the values it used.
@@ -350,19 +354,26 @@ fn digits(buffer: []u8, value: u64, radix: u8, negative: bool) []const u8 {
     return buffer[index..];
 }
 
-/// How many characters `text`'s UTF-8 holds.
-fn characters(text: []const u8) usize {
+/// How many cells of a console `text`'s UTF-8 takes.
+fn cells(text: []const u8) usize {
     var count: usize = 0;
     var at: usize = 0;
-    while (at < text.len) : (count += 1) _ = sdk.utility.utf8.next(text, &at);
+    while (at < text.len) count += sdk.utility.unicode.width(sdk.utility.utf8.next(text, &at));
     return count;
 }
 
-/// The bytes `text`'s first `count` characters take.
-fn firstCharacters(text: []const u8, count: usize) usize {
+/// The bytes of `text` that fit `count` cells: whole characters, each
+/// with the marks written on it, and no wide one that only half fits.
+fn firstCells(text: []const u8, count: usize) usize {
     var taken: usize = 0;
     var at: usize = 0;
-    while (at < text.len and taken < count) : (taken += 1) _ = sdk.utility.utf8.next(text, &at);
+    while (at < text.len) {
+        var after = at;
+        const wide = sdk.utility.unicode.width(sdk.utility.utf8.next(text, &after));
+        if (taken + wide > count) break;
+        taken += wide;
+        at = after;
+    }
     return at;
 }
 
@@ -431,9 +442,9 @@ pub fn format(format_string: [*:0]const u8, data_stream: ?*const anyopaque, put_
         };
         const by_character = conversion == 's' or conversion == 'c';
         if (by_character) {
-            if (limit != 0) text = text[0..firstCharacters(text, limit)];
+            if (limit != 0) text = text[0..firstCells(text, limit)];
         } else if (limit != 0 and limit < text.len) text = text[0..limit];
-        const pad = width -| if (by_character) characters(text) else text.len;
+        const pad = width -| if (by_character) cells(text) else text.len;
         if (left) {
             for (text) |character_out| out.put(character_out);
             out.repeat(' ', pad);
@@ -552,12 +563,20 @@ test "format: conversions, width and fill, odd formats, the stream, a buffer, un
         try testing.expectEqualStrings("[    ab]", f("[%6.2s]", .{"abcd"}));
         try testing.expectEqualStrings("[12]", f("[%1d]", .{@as(u32, 12)})); // too narrow: the whole number
         try testing.expectEqualStrings("[]", f("[%5s]", .{null})); // NULL: no padding either
-        // A string's width and limit count its characters.
+        // A string's width and limit count the cells it takes.
         try testing.expectEqualStrings("[Grüße  ]", f("[%-7s]", .{"Grüße"}));
-        try testing.expectEqualStrings("[  日本]", f("[%4s]", .{"日本"}));
+        try testing.expectEqualStrings("[  日本]", f("[%6s]", .{"日本"}));
+        try testing.expectEqualStrings("[日本.txt  ]", f("[%-10s]", .{"日本.txt"}));
         try testing.expectEqualStrings("[Grü]", f("[%.3s]", .{"Grüße"}));
-        try testing.expectEqualStrings("[\u{1F600}x ]", f("[%-3.2s]", .{"\u{1F600}xyz"}));
-        // %c: a code point in UTF-8, one character wide.
+        // A wide character that only half fits is left out.
+        try testing.expectEqualStrings("[\u{1F600}x  ]", f("[%-5.3s]", .{"\u{1F600}xyz"}));
+        try testing.expectEqualStrings("[日 ]", f("[%-3.3s]", .{"日本"}));
+        // A mark takes no cell and goes with its character: मुँह is two
+        // cells, e with an acute one.
+        try testing.expectEqualStrings("[मुँह  ]", f("[%-4s]", .{"मुँह"}));
+        try testing.expectEqualStrings("[e\u{301}]", f("[%.1s]", .{"e\u{301}x"}));
+        try testing.expectEqualStrings("[ 日]", f("[%3c]", .{@as(u32, 0x65E5)}));
+        // %c: a code point in UTF-8, as wide as its cells.
         try testing.expectEqualStrings("[€|ä|\u{1F600}|\u{FFFD}|\u{FFFD}]", f("[%c|%c|%c|%c|%lc]", .{ @as(u32, 0x20AC), @as(u32, 0xE4), @as(u32, 0x1F600), @as(u32, 0xD800), @as(u64, 0x1_0000_0000) }));
         try testing.expectEqualStrings("[  €|ä  ]", f("[%3c|%-3c]", .{ @as(u32, 0x20AC), @as(u32, 0xE4) }));
     }

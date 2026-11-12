@@ -42,9 +42,11 @@ const PutChProc = sdk.exec.PutChProc;
 /// Hex is upper case with no leading zeros, and 0 prints as "0". With zero
 /// fill the sign comes before the zeros, so `%03d` of -5 is "-05". A
 /// `.limit` cuts the text, and a null `%s` prints nothing at all - not even
-/// padding. A `%s`'s width and `.limit` count characters of its UTF-8, so
-/// `%-12s` lines up `Grüße` with `Hello` and a cut never ends inside a
-/// character. `%c` takes a code point and writes it in UTF-8 - `€` is three
+/// padding. A `%s`'s width and `.limit` count the cells its UTF-8 takes on
+/// a console - two for a wide character, none for a mark written on the
+/// character before - so `%-12s` lines up `Grüße`, `日本` and `Hello`; a
+/// cut never ends inside a character and leaves out a wide one that only
+/// half fits. `%c` takes a code point and writes it in UTF-8 - `€` is three
 /// bytes - U+FFFD for a value that is none. A format ending in a lone `%` ends there rather than reading
 /// past the NUL.
 ///

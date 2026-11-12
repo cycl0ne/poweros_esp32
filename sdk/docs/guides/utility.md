@@ -513,10 +513,13 @@ Unicode's first 256, so a character up to U+00FF is one byte in Latin-1
 and two at most in UTF-8; one past it is a `?` in Latin-1.
 
 A width or a `.limit` on a `%s` in `RawDoFmt` - and so in `Printf`,
-`kprintf` and the rest that format through it - counts characters, not
-bytes: `%-20s` lines a column of names up whatever their bytes, and a
-`.limit` never ends inside a character. A wide character still takes
-two cells of a console. `%c` takes a code point and writes it in UTF-8
+`kprintf` and the rest that format through it - counts the cells the
+text takes on a console, not its bytes or characters: two for a wide
+character (CJK, kana, an emoji), none for a mark written on the
+character before it (`unicode.width`). `%-20s` lines a column of names
+up whatever they are written in; a `.limit` never ends inside a
+character, keeps a character's marks with it, and leaves out a wide
+character that only half fits. `%c` takes a code point and writes it in UTF-8
 - `Printf(dl, "%c", .{@as(u32, 0x20AC)})` writes `€`, three bytes.
 
 | Call | |
