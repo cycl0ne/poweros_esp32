@@ -6,10 +6,12 @@
 //!
 //! A variable font is shaped where its outline was opened: the place is
 //! asked of truetype.library, a coordinate an axis, and kept here for
-//! the call. A font at its default, one without axes, and one of more
-//! axes than there is room for here - which truetype.library reads at
-//! its default - are shaped with no place. The advances are the ones of
-//! the outline's place whatever it is.
+//! the call, for the conditions a table replaces features under. A font
+//! at its default, one without axes, and one of more axes than there is
+//! room for here - which truetype.library reads at its default - are
+//! shaped with no place. The advances are the ones of the outline's
+//! place whatever it is, and what an item of a store of deltas adds
+//! there is truetype.library's to say (`VariationDelta`).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -47,6 +49,7 @@ pub const Source = struct {
             .glyphFn = glyphOf,
             .variantFn = variantOf,
             .emFn = emOf,
+            .deltaFn = deltaOf,
         };
     }
 };
@@ -99,6 +102,11 @@ fn emOf(context: *anyopaque) u32 {
     var metrics: truetype.FontMetrics = .{};
     source.sb.truetype_base.FontMetrics(source.outline, &metrics);
     return metrics.units_per_em;
+}
+
+fn deltaOf(context: *anyopaque, store: []const u8, item: u32, regions: *u32) i32 {
+    const source: *Source = @ptrCast(@alignCast(context));
+    return source.sb.truetype_base.VariationDelta(source.outline, store.ptr, @intCast(store.len), item, regions);
 }
 
 /// The font's table of the tag `letters`; of no length when it has none.

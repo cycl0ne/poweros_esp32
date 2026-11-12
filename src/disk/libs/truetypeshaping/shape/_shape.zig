@@ -28,7 +28,8 @@
 //! replaces under conditions on the axes are the ones for that place,
 //! and the kernings and anchors `GPOS` varies are what they are there
 //! (`_variation.zig`). The advances are the caller's to give for the
-//! place.
+//! place, and so is what an item of `GDEF`'s store of deltas adds there
+//! (`Font.deltaFn`): the store is read by the font, not here.
 //!
 //! A run that is a text (`Order.text`) goes through more:
 //!
@@ -65,13 +66,14 @@ const _lookup = @import("_lookup.zig");
 const _plan = @import("_plan.zig");
 const _gpos = @import("_gpos.zig");
 const _normal = @import("_normal.zig");
+const _variation = @import("_variation.zig");
 
 /// What a font gives the shaping: its tables, of no length where it has
-/// none, its place on its axes, and its glyphs' advances there. A text
-/// asks it for more: the glyph of a character, the one of a character
-/// with a selector behind it (0 where the font has none for the two),
-/// its `kern` table, and how many units its em has, by which a space
-/// the font lacks gets its width.
+/// none, its place on its axes, its glyphs' advances there and what its
+/// store of deltas adds there. A text asks it for more: the glyph of a
+/// character, the one of a character with a selector behind it (0 where
+/// the font has none for the two), its `kern` table, and how many units
+/// its em has, by which a space the font lacks gets its width.
 pub const Font = struct {
     gdef: Table = Table.none,
     gsub: Table = Table.none,
@@ -89,6 +91,9 @@ pub const Font = struct {
     variantFn: ?*const fn (context: *anyopaque, char: u32, selector: u32) u32 = null,
     /// How many of the font's units an em has.
     emFn: ?*const fn (context: *anyopaque) u32 = null,
+    /// What an item of a store of deltas adds at the font's place; null
+    /// for a font whose numbers are not varied.
+    deltaFn: ?_variation.DeltaFn = null,
 };
 
 /// What a call asks for.
@@ -194,7 +199,12 @@ fn stage(call: *const Call, table: Table, kind: _match.Kind, wanted: []const _pl
         .lookups = layout.lookups,
         .backward = order.backward,
         .places = call.places,
-        .place = .{ .coords = order.font.coords, .store = call.gdef.store },
+        .place = .{
+            .varied = order.font.coords.len != 0,
+            .store = call.gdef.store,
+            .context = order.font.context,
+            .deltaFn = order.font.deltaFn,
+        },
         .work = workFor(buffer.len),
     };
     for (entries[0..kept]) |entry| {

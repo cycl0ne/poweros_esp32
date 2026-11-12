@@ -28,6 +28,10 @@
 //! - The measures `MVAR` moves, and the ones it does not.
 //! - What is read at the default: a font of more than 32 axes, deltas
 //!   for another number of axes; and deltas that end early.
+//! - `VariationDelta`: an item of a store that is no table of the font,
+//!   at the outline's place, rounded once; how much of the row was read;
+//!   and the stores it adds nothing from - at the default, for a font
+//!   without axes, for another number of axes, cut short.
 //!
 //! `standardFont` and `sidesFont` are also the variable fonts the tests
 //! of changed bytes (`fuzz.zig`) and of fonts closed to writes
@@ -1423,6 +1427,216 @@ test "variable: a glyph is rendered as its instance draws it" {
     try testing.expectEqual(Glyph{ .width = 140, .rows = 74, .top = 6, .left = 0, .advance = 90, .pitch = 70 }, shown.glyph);
     for ([_]u32{ 0, 37, 73 }) |y| {
         for (0..140) |x| try testing.expectEqual(@as(u8, if (x < 60 or x >= 80) 15 else 0), shown.inked(@intCast(x), y));
+    }
+    tb.CloseOutline(outline);
+
+    try rig.down();
+}
+
+/// The regions of a store beside the font: more weight, more width, less
+/// weight, and past half of both.
+const item_regions = advance_regions;
+
+/// Its rows. The first set's are a word and two bytes; the second's a
+/// long word and a word; the third names a region the store does not
+/// have; the fourth's deltas are as large as a long word holds.
+const item_sets = [_]Rows{
+    .{ .regions = &.{ 0, 1, 2 }, .wide = 1, .rows = &.{
+        &.{ 51, 20, -30 },
+        &.{ -51, 0, 0 },
+        &.{ 300, -100, 5 },
+    } },
+    .{ .regions = &.{ 0, 3 }, .wide = 1, .long = true, .rows = &.{
+        &.{ 100000, 7 },
+        &.{ -2, 0 },
+    } },
+    .{ .regions = &.{ 0, 9 }, .wide = 0, .rows = &.{
+        &.{ 40, 7 },
+    } },
+    .{ .regions = &.{ 0, 1 }, .wide = 2, .long = true, .rows = &.{
+        &.{ 2147483647, 2147483647 },
+        &.{ -2147483648, -2147483648 },
+    } },
+};
+
+/// The store of `item_sets` for `axes` axes, built into `items`.
+fn itemStore(items: *File, axes: u16) []const u8 {
+    store(items, axes, &item_regions, &item_sets);
+    return items.bytes[0..items.len];
+}
+
+/// What the item adds at the outline's place, and that the call says
+/// `read` deltas were read.
+fn expectItem(tb: *TrueTypeBase, outline: *truetype.Outline, bytes: []const u8, outer: u16, inner: u16, delta: i32, read: u32) !void {
+    var regions: u32 = 77;
+    const item = truetype.variationItem(outer, inner);
+    try testing.expectEqual(delta, tb.VariationDelta(outline, bytes.ptr, @intCast(bytes.len), item, &regions));
+    try testing.expectEqual(read, regions);
+    // The count is the caller's to leave out.
+    try testing.expectEqual(delta, tb.VariationDelta(outline, bytes.ptr, @intCast(bytes.len), item, null));
+}
+
+test "variable: an item of a store beside the font is read at the outline's place and rounded once" {
+    var rig = try Rig.up();
+    const tb = rig.tb;
+
+    try testing.expectEqual(@as(u32, 0), truetype.variationItem(0, 0));
+    try testing.expectEqual(@as(u32, 0x0001_0002), truetype.variationItem(1, 2));
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), truetype.variationItem(0xFFFF, 0xFFFF));
+
+    var file: File = .{};
+    fontOf(&file, .{});
+    var items: File = .{};
+    const bytes = itemStore(&items, 2);
+
+    const Case = struct { outer: u16, inner: u16, delta: i32, read: u32 };
+    const Place = struct { weight: f32, width: f32 = 100, cases: []const Case };
+    for ([_]Place{
+        // All of more weight.
+        .{ .weight = 900, .cases = &.{
+            .{ .outer = 0, .inner = 0, .delta = 51, .read = 3 },
+            .{ .outer = 0, .inner = 1, .delta = -51, .read = 3 },
+            .{ .outer = 0, .inner = 2, .delta = 300, .read = 3 },
+            .{ .outer = 1, .inner = 0, .delta = 100000, .read = 2 },
+            .{ .outer = 1, .inner = 1, .delta = -2, .read = 2 },
+        } },
+        // Half of it: a half goes upward, on either side of 0.
+        .{ .weight = 650, .cases = &.{
+            .{ .outer = 0, .inner = 0, .delta = 26, .read = 3 },
+            .{ .outer = 0, .inner = 1, .delta = -25, .read = 3 },
+            .{ .outer = 0, .inner = 2, .delta = 150, .read = 3 },
+            .{ .outer = 1, .inner = 1, .delta = -1, .read = 2 },
+        } },
+        // Half of less weight.
+        .{ .weight = 250, .cases = &.{
+            .{ .outer = 0, .inner = 0, .delta = -15, .read = 3 },
+            .{ .outer = 0, .inner = 1, .delta = 0, .read = 3 },
+            .{ .outer = 0, .inner = 2, .delta = 3, .read = 3 },
+            .{ .outer = 1, .inner = 0, .delta = 0, .read = 2 },
+        } },
+        // Both axes at their ends: every region of more counts in full.
+        .{
+            .weight = 900,
+            .width = 200,
+            .cases = &.{
+                .{ .outer = 0, .inner = 0, .delta = 71, .read = 3 },
+                .{ .outer = 0, .inner = 2, .delta = 200, .read = 3 },
+                .{ .outer = 1, .inner = 0, .delta = 100007, .read = 2 },
+                // A delta for a region the store does not have is left out.
+                .{ .outer = 2, .inner = 0, .delta = 40, .read = 2 },
+                // The sum is held to 30 bits either way.
+                .{ .outer = 3, .inner = 0, .delta = 1073741824, .read = 2 },
+                .{ .outer = 3, .inner = 1, .delta = -1073741824, .read = 2 },
+            },
+        },
+        // Three quarters of both: the parts are summed before they are
+        // rounded - 38.25 and 15 - and the region past half of both
+        // counts a quarter.
+        .{ .weight = 775, .width = 175, .cases = &.{
+            .{ .outer = 0, .inner = 0, .delta = 53, .read = 3 },
+            .{ .outer = 1, .inner = 0, .delta = 75002, .read = 2 },
+        } },
+    }) |at| {
+        const outline = try openAt(tb, &file, &place(at.weight, at.width));
+        for (at.cases) |case| try expectItem(tb, outline, bytes, case.outer, case.inner, case.delta, case.read);
+        // An item the store does not have: a set past its sets, a row
+        // past the set's rows.
+        try expectItem(tb, outline, bytes, 4, 0, 0, 0);
+        try expectItem(tb, outline, bytes, 0xFFFF, 0xFFFF, 0, 0);
+        try expectItem(tb, outline, bytes, 0, 3, 0, 0);
+        try expectItem(tb, outline, bytes, 1, 2, 0, 0);
+        tb.CloseOutline(outline);
+    }
+
+    try rig.down();
+}
+
+test "variable: a store adds nothing at the default, to a font without axes, for other axes, or cut short" {
+    var rig = try Rig.up();
+    const tb = rig.tb;
+
+    var file: File = .{};
+    fontOf(&file, .{});
+    var items: File = .{};
+    const bytes = itemStore(&items, 2);
+
+    // At the default no row is read.
+    var outline = tb.OpenOutline(&file.bytes, file.len, null) orelse return error.NoOutline;
+    try expectItem(tb, outline, bytes, 0, 0, 0, 0);
+    try expectItem(tb, outline, bytes, 1, 0, 0, 0);
+    tb.CloseOutline(outline);
+    outline = try openAt(tb, &file, &place(400, 100));
+    try expectItem(tb, outline, bytes, 0, 0, 0, 0);
+    tb.CloseOutline(outline);
+
+    // A font that is not a variable one.
+    var plain: File = .{};
+    builder.whole(&plain);
+    outline = try openAt(tb, &plain, &place(900, 200));
+    try expectItem(tb, outline, bytes, 0, 0, 0, 0);
+    tb.CloseOutline(outline);
+
+    // A font of more axes than are read is at its default.
+    var wide: File = .{};
+    fontOf(&wide, .{ .axes = &many_axes, .instances = &.{}, .delta_axes = 33, .peaks = &.{}, .deltas = &.{ .{}, .{}, .{}, .{}, .{}, .{} } });
+    var most: [33]truetype.AxisValue = undefined;
+    for (&most, many_axes) |*value, axis| value.* = .{ .tag = truetype.tableTag(axis.tag), .value = 900 };
+    outline = try openAt(tb, &wide, &most);
+    try expectItem(tb, outline, bytes, 0, 0, 0, 0);
+    tb.CloseOutline(outline);
+
+    outline = try openAt(tb, &file, &place(900, 200));
+    try expectItem(tb, outline, bytes, 0, 0, 71, 3);
+
+    // A store for another number of axes than the font has.
+    for ([_]u16{ 0, 1, 3 }) |axes| {
+        var other: File = .{};
+        const others = itemStore(&other, axes);
+        try expectItem(tb, outline, others, 0, 0, 0, 0);
+        try expectItem(tb, outline, others, 1, 0, 0, 0);
+    }
+
+    // Another version, and a store that says its regions are at 0.
+    var changed: File = .{};
+    var damaged = @constCast(itemStore(&changed, 2));
+    damaged[1] = 2;
+    try expectItem(tb, outline, damaged, 0, 0, 0, 0);
+    damaged[1] = 1;
+    try expectItem(tb, outline, damaged, 0, 0, 71, 3);
+    const regions_at = std.mem.readInt(u32, damaged[2..6], .big);
+    std.mem.writeInt(u32, damaged[2..6], 0, .big);
+    try expectItem(tb, outline, damaged, 0, 0, 0, 0);
+    std.mem.writeInt(u32, damaged[2..6], @intCast(damaged.len), .big);
+    try expectItem(tb, outline, damaged, 0, 0, 0, 0);
+    std.mem.writeInt(u32, damaged[2..6], regions_at, .big);
+    // A set that is said to be at 0, or past the end.
+    const set_at = std.mem.readInt(u32, damaged[8..12], .big);
+    std.mem.writeInt(u32, damaged[8..12], 0, .big);
+    try expectItem(tb, outline, damaged, 0, 0, 0, 0);
+    try expectItem(tb, outline, damaged, 1, 0, 100007, 2);
+    std.mem.writeInt(u32, damaged[8..12], 0xFFFF_FFF0, .big);
+    try expectItem(tb, outline, damaged, 0, 0, 0, 0);
+    std.mem.writeInt(u32, damaged[8..12], set_at, .big);
+    try expectItem(tb, outline, damaged, 0, 0, 71, 3);
+
+    // Cut short: the item is read once its row lies within the bytes,
+    // and never a byte past them. The first set's rows are 4 bytes each
+    // behind its 12 of heading.
+    const row_end = set_at + 12 + 4;
+    for (0..bytes.len + 1) |size| {
+        var regions: u32 = 77;
+        const delta = tb.VariationDelta(outline, bytes.ptr, @intCast(size), truetype.variationItem(0, 0), &regions);
+        if (size < row_end) {
+            try testing.expectEqual(@as(i32, 0), delta);
+            try testing.expectEqual(@as(u32, 0), regions);
+        } else {
+            try testing.expectEqual(@as(i32, 71), delta);
+            try testing.expectEqual(@as(u32, 3), regions);
+        }
+        // The last set's last row needs every byte.
+        const last = tb.VariationDelta(outline, bytes.ptr, @intCast(size), truetype.variationItem(3, 1), &regions);
+        try testing.expectEqual(@as(i32, if (size == bytes.len) -1073741824 else 0), last);
+        try testing.expectEqual(@as(u32, if (size == bytes.len) 2 else 0), regions);
     }
     tb.CloseOutline(outline);
 

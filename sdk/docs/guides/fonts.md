@@ -625,6 +625,31 @@ its outline: the call to measure a line with. `GlyphMetrics` reads a
 varied glyph's points for its box and takes memory for that while it
 runs.
 
+Other tables of a variable font keep their numbers for the default and
+name, beside a number, an item of a store of deltas: the data it is in
+and its row there. `VariationDelta(outline, store, size, item, regions)`
+(since 1.11) answers what such an item adds at the outline's place, in
+the font's units and rounded once, a half upward - by the rule and the
+code the advances and the measures are varied with, so a number is the
+same wherever it is asked for. The store is any bytes, read within
+`size` and nowhere else: the call is for the tables `FontTable` hands
+out and the library does not read itself, `GDEF`'s store before all,
+which a font's kerning and anchors name their items in.
+`variationItem(data, row)` puts an item's two numbers together, and
+`regions`, when it is not null, gets how many deltas the row has - what
+the call read. At the default, for an item the store lacks and for a
+store that is for another number of axes the answer is 0.
+
+```zig
+// What GDEF's store adds for item 3 of its first data.
+var length: u32 = 0;
+const gdef = tb.FontTable(outline, sdk.truetype.tableTag("GDEF"), &length) orelse return;
+if (length < 18) return;
+const at = @as(u32, gdef[14]) << 24 | @as(u32, gdef[15]) << 16 | @as(u32, gdef[16]) << 8 | gdef[17];
+if (at == 0 or at >= length) return;
+const more = tb.VariationDelta(outline, gdef + at, length - at, sdk.truetype.variationItem(0, 3), null);
+```
+
 A variable font of cubic curves (a `CFF2` table) has its deltas in the
 glyphs' programs: a number is followed by one delta for each region of
 the table's store, and becomes itself plus each delta as far as its
@@ -785,9 +810,12 @@ point a mark is attached at are the default's plus what the font's
 store of deltas (in `GDEF`) adds at that place, and where a font
 replaces a feature's lookups under conditions on its axes - another
 form of a letter from some weight on - the instance decides. The
-library asks truetype.library for the place (`FontCoordinates`) and for
-the advances (`GlyphAdvance`), so a caller names the instance once, to
-`OpenOutline`. Not read: vertical advances, and the adjustments a font
+library asks truetype.library for the place (`FontCoordinates`), for
+the advances (`GlyphAdvance`) and, since 1.4, for what an item of the
+store adds (`VariationDelta`; the library does not open without
+truetype.library 1.11). So a caller names the instance once, to
+`OpenOutline`, and a kerning is varied by the code an advance is. Not
+read: vertical advances, and the adjustments a font
 makes for single sizes in pixels. `C:test/Axes <file> SHAPED` prints
 and draws a line shaped at each place a font names.
 

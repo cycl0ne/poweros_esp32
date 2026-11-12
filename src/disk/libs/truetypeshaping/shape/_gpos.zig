@@ -89,7 +89,7 @@ fn applyValue(apply: *Apply, item: *Item, table: Table, at: u32, format: u32) vo
         part += 2;
     }
     if (format & VALUE_Y_ADVANCE != 0) part += 2;
-    if (format & VALUE_DEVICES == 0 or apply.place.coords.len == 0) return;
+    if (format & VALUE_DEVICES == 0 or !apply.place.varied) return;
     if (format & VALUE_X_PLACEMENT_DEVICE != 0) {
         item.x_offset +|= apply.deltaOf(table.partAt(part));
         part += 2;
@@ -195,7 +195,7 @@ fn anchor(apply: *Apply, table: Table) Anchor {
         1, 2, 3 => .{ .x = table.signed(2), .y = table.signed(4) },
         else => return .{},
     };
-    if (table.word(0) == 3 and apply.place.coords.len != 0) {
+    if (table.word(0) == 3 and apply.place.varied) {
         point.x += apply.deltaOf(table.partAt(6));
         point.y += apply.deltaOf(table.partAt(8));
     }

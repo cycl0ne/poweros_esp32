@@ -58,6 +58,12 @@
 //! columns and the advances are as the outline has them. `TTA_Plain`
 //! opens an outline that is rendered scaled and no more.
 //!
+//! Since 1.11 `VariationDelta` answers what an item of a store of
+//! deltas adds at an outline's place: the number a layout table's
+//! kerning or anchor is varied by, read from the bytes `FontTable`
+//! hands out, by the rule the library varies its own advances and
+//! measures by.
+//!
 //! Open it with OpenLibrary(TRUETYPENAME, 1); its functions are in
 //! sdk/interface/truetype.zig.
 
@@ -265,6 +271,15 @@ pub const TTNAME_TYPO_STYLE: u32 = 17;
 ///   "OS/2", "cvt ".
 pub fn tableTag(name: *const [4]u8) u32 {
     return @as(u32, name[0]) << 24 | @as(u32, name[1]) << 16 | @as(u32, name[2]) << 8 | name[3];
+}
+
+/// An item of a store of deltas as `VariationDelta` takes it. Since 1.11.
+///
+/// INPUTS:
+/// - `outer` - the number of the store's data the item is in.
+/// - `inner` - the number of its row there.
+pub fn variationItem(outer: u16, inner: u16) u32 {
+    return @as(u32, outer) << 16 | inner;
 }
 
 /// The four bytes at `at` as a number, the first highest; 0 where `bytes`

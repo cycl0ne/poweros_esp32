@@ -30,6 +30,7 @@ const FontAxes = @import("outline/fontaxes.zig").FontAxes;
 const FontInstance = @import("outline/fontinstance.zig").FontInstance;
 const FontCoordinates = @import("outline/fontcoordinates.zig").FontCoordinates;
 const GlyphAdvance = @import("glyph/glyphadvance.zig").GlyphAdvance;
+const VariationDelta = @import("outline/variationdelta.zig").VariationDelta;
 
 /// truetype.library's interface, as the SDK generates it from
 /// sdk/fd/truetype_lib.fd.
@@ -71,6 +72,7 @@ const contract_files = [_][]const u8{
     @embedFile("outline/fontinstance.zig"),
     @embedFile("outline/fontcoordinates.zig"),
     @embedFile("glyph/glyphadvance.zig"),
+    @embedFile("outline/variationdelta.zig"),
 };
 
 fn lvoOpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32, tags: ?[*]const utility.TagItem) callconv(.c) ?*truetype.Outline {
@@ -121,6 +123,9 @@ fn lvoFontCoordinates(tb: *TrueTypeBase, outline: *truetype.Outline, coords: ?[*
 fn lvoGlyphAdvance(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32) callconv(.c) i32 {
     return GlyphAdvance(tb, outline, glyph);
 }
+fn lvoVariationDelta(tb: *TrueTypeBase, outline: *truetype.Outline, store: [*]const u8, size: u32, item: u32, regions: ?*u32) callconv(.c) i32 {
+    return VariationDelta(tb, outline, store, size, item, regions);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -143,6 +148,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoFontInstance),
     vec(lvoFontCoordinates),
     vec(lvoGlyphAdvance),
+    vec(lvoVariationDelta),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

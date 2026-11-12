@@ -40,6 +40,11 @@
 //! size and not two rows half covered. A font's own hinting program is
 //! not run.
 //!
+//! Since 1.11 the reader of a store of deltas reads any store's bytes
+//! at an outline's place (`outline/variationdelta.zig`), not the font's
+//! own tables' alone: a layout table's numbers are varied by the code
+//! an advance is varied by.
+//!
 //! The jump table is truetype_lvo.zig, the ROM tag, init and expunge
 //! truetype_init.zig, the base truetype_base.zig.
 

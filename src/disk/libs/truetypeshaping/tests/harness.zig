@@ -8,6 +8,10 @@
 //! allocator, which fails a test that leaves one behind, and a test may
 //! say after how many blocks there is no more memory.
 //!
+//! A font at a place on its axes has its store of deltas read by
+//! truetype.library's reader of one (`deltaAt`), the code an outline
+//! answers `VariationDelta` with, at the coordinates the test names.
+//!
 //! A text's font has a glyph for every character up to U+FFFF, of the
 //! character's own number, so a test's tables name the letter "f" as
 //! the glyph 'f'. What else the font has - other glyphs, glyphs for a
@@ -21,6 +25,7 @@ const _shape = @import("../shape/_shape.zig");
 const _buffer = @import("../shape/_buffer.zig");
 const _text = @import("../shape/_text.zig");
 const _normal = @import("../shape/_normal.zig");
+const variation = @import("../../truetype/outline/_variation.zig");
 
 const testing = std.testing;
 
@@ -112,10 +117,29 @@ fn release(context: *anyopaque, block: [*]u8) void {
     testing.allocator.free(start[0..length.*]);
 }
 
+/// The font `shape` shapes with: every glyph's advance, and its place.
+const Face = struct {
+    advance: i32,
+    coords: []const i16,
+};
+
 fn advanceOf(context: *anyopaque, glyph: u32) i32 {
     _ = glyph;
-    const advance: *const i32 = @ptrCast(@alignCast(context));
-    return advance.*;
+    const face: *const Face = @ptrCast(@alignCast(context));
+    return face.advance;
+}
+
+fn faceDeltaOf(context: *anyopaque, store: []const u8, item: u32, regions: *u32) i32 {
+    const face: *const Face = @ptrCast(@alignCast(context));
+    return variation.wholeDelta(store, face.coords, item, regions);
+}
+
+/// A font's reader of a store of deltas for a test that asks one by
+/// itself: `context` is the place, a `[]const i16` of a coordinate an
+/// axis.
+pub fn deltaAt(context: *anyopaque, store: []const u8, item: u32, regions: *u32) i32 {
+    const coords: *const []const i16 = @ptrCast(@alignCast(context));
+    return variation.wholeDelta(store, coords.*, item, regions);
 }
 
 /// Shapes `glyphs` with `tables`. A shaped run of more glyphs than the
@@ -123,15 +147,16 @@ fn advanceOf(context: *anyopaque, glyph: u32) i32 {
 pub fn shape(tables: Tables, glyphs: []const u16, options: Options) Run {
     var run: Run = .{};
     var lender: Lender = .{ .left = options.blocks };
-    var advance = options.advance;
+    var face: Face = .{ .advance = options.advance, .coords = options.coords };
     const memory: _buffer.Memory = .{ .context = &lender, .allocFn = allocate, .freeFn = release };
     const font: _shape.Font = .{
         .gdef = .{ .bytes = tables.gdef },
         .gsub = .{ .bytes = tables.gsub },
         .gpos = .{ .bytes = tables.gpos },
         .coords = options.coords,
-        .context = &advance,
+        .context = &face,
         .advanceFn = advanceOf,
+        .deltaFn = faceDeltaOf,
     };
     var buffer = _buffer.Buffer.init(memory, @intCast(glyphs.len)) orelse {
         run.result = tts.TTSERR_NOMEM;
@@ -230,6 +255,11 @@ fn textVariantOf(context: *anyopaque, char: u32, selector: u32) u32 {
     return 0;
 }
 
+fn textDeltaOf(context: *anyopaque, store: []const u8, item: u32, regions: *u32) i32 {
+    const options: *const TextOptions = @ptrCast(@alignCast(context));
+    return variation.wholeDelta(store, options.coords, item, regions);
+}
+
 fn textKerningOf(context: *anyopaque, left: u32, right: u32) i32 {
     const options: *const TextOptions = @ptrCast(@alignCast(context));
     for (options.kerning) |entry| {
@@ -257,6 +287,7 @@ pub fn shapeText(tables: Tables, text: []const u8, options: TextOptions) Run {
             .glyphFn = textGlyphOf,
             .variantFn = textVariantOf,
             .emFn = textEmOf,
+            .deltaFn = textDeltaOf,
         },
         .bytes = text,
         .backward = options.backward,

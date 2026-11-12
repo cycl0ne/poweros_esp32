@@ -4,8 +4,9 @@
 //! 1.4 a font of a collection, its names and its tables, since 1.5 one
 //! glyph rendered by its number, since 1.6 an OpenType file whose
 //! glyphs are of cubic curves (a CFF table's), since 1.7 a font
-//! whose glyphs are pictures, of coverage or of colour, and since 1.8
-//! a variable font at a place on its axes.
+//! whose glyphs are pictures, of coverage or of colour, since 1.8 a
+//! variable font at a place on its axes, since 1.10 a size's heights
+//! on whole rows, and since 1.11 what a store of deltas adds there.
 //! Open it with OpenLibrary("truetype.library", 1).
 ##include libs/utility/utility as utility
 ##include libs/graphics/graphics as graphics
@@ -17,8 +18,10 @@
 /// The font in `size` bytes at `file`, its tables found and checked; null
 /// if it is not a font this library reads. `tags` say which font
 /// of a collection (TTA_FontIndex) and where on a variable font's axes
-/// (TTA_Axes, TTA_AxisCount); null for the first, at its default. The
-/// bytes must stay until CloseOutline. Tags since 1.4, axes since 1.8.
+/// (TTA_Axes, TTA_AxisCount); null for the first, at its default.
+/// TTA_Plain opens it to be rendered scaled, no height moved to a row.
+/// The bytes must stay until CloseOutline. Tags since 1.4, axes since
+/// 1.8, TTA_Plain since 1.10.
 ?*truetype.Outline OpenOutline([*]const u8 file, u32 size, ?[*]const utility.TagItem tags)
 /// The outline rendered `rows` rows tall as a font image: the characters
 /// it has in the `count` sorted `ranges`, and its missing glyph as the
@@ -76,4 +79,10 @@ u32 FontCoordinates(*truetype.Outline outline, ?[*]i16 coords, u32 room)
 /// A glyph's advance in the font's units, at the outline's place on
 /// the axes; 0 for a number past the font's glyphs. Since 1.8.
 i32 GlyphAdvance(*truetype.Outline outline, u32 glyph)
+/// What the item `item` of the item variation store in `size` bytes at
+/// `store` adds at the outline's place on the axes, in the font's
+/// units, rounded: its data's number in the high 16 bits, its row's in
+/// the low. 0 at the default. The number of the row's deltas goes into
+/// `regions` when it is not null. Since 1.11.
+i32 VariationDelta(*truetype.Outline outline, [*]const u8 store, u32 size, u32 item, ?*u32 regions)
 ##end

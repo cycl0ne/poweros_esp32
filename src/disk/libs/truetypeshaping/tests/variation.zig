@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! Host tests of a variable font's place: what an item of a store of
 //! deltas adds there, and the positionings that take it - a value
-//! record's devices, an anchor's - on tables built here. Every glyph's
-//! advance is 1000 before the lookups run.
+//! record's devices, an anchor's - on tables built here. The stores are
+//! read by truetype.library's reader, as a font's outline reads them.
+//! Every glyph's advance is 1000 before the lookups run.
 
 const std = @import("std");
 const layout = @import("layout.zig");
@@ -32,8 +33,13 @@ fn deltaAt(bytes: []const u8, coords: []const i16, list: u16, item: u16) i32 {
     var named: File = .{};
     subtables.device(&named, list, item);
     var work: u32 = 1000;
-    const place: Place = .{ .coords = coords, .store = .{ .bytes = bytes } };
-    return place.delta(.{ .bytes = named.written() }, &work);
+    var at = coords;
+    return placeAt(&at, bytes).delta(.{ .bytes = named.written() }, &work);
+}
+
+/// The place `coords` of a font whose store of deltas is `bytes`.
+fn placeAt(coords: *[]const i16, bytes: []const u8) Place {
+    return .{ .varied = coords.len != 0, .store = .{ .bytes = bytes }, .context = @ptrCast(coords), .deltaFn = harness.deltaAt };
 }
 
 const full = 16384;
@@ -170,7 +176,8 @@ test "a store's delta: a store or a device table that is damaged adds nothing" {
     other.setWord(list + 2, 1);
 
     // A device table for one size in pixels, and one cut short.
-    const place: Place = .{ .coords = &.{full}, .store = .{ .bytes = other.written() } };
+    var at_full: []const i16 = &.{full};
+    const place = placeAt(&at_full, other.written());
     var work: u32 = 1000;
     var sized: File = .{};
     sized.word(0);
@@ -191,7 +198,8 @@ test "a store's delta: a region of a row is a piece of the table's work" {
     store(&file, 1, &.{&.{above}}, &.{.{ .regions = &.{ 0, 0, 0 }, .wide = 0, .rows = &.{&.{ 1, 2, 3 }} }});
     var named: File = .{};
     subtables.device(&named, 0, 0);
-    const place: Place = .{ .coords = &.{full}, .store = .{ .bytes = file.written() } };
+    var at_full: []const i16 = &.{full};
+    const place = placeAt(&at_full, file.written());
     var work: u32 = 5;
     try testing.expectEqual(@as(i32, 6), place.delta(.{ .bytes = named.written() }, &work));
     try testing.expectEqual(@as(u32, 2), work);
@@ -200,7 +208,8 @@ test "a store's delta: a region of a row is a piece of the table's work" {
     try testing.expectEqual(@as(u32, 0), work);
     // A font at its default spends none.
     work = 5;
-    const default: Place = .{ .store = .{ .bytes = file.written() } };
+    var nowhere: []const i16 = &.{};
+    const default = placeAt(&nowhere, file.written());
     try testing.expectEqual(@as(i32, 0), default.delta(.{ .bytes = named.written() }, &work));
     try testing.expectEqual(@as(u32, 5), work);
 }

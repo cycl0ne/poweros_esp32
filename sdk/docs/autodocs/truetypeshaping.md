@@ -81,8 +81,9 @@ A variable font opened away from its default (`OpenOutline`'s
 `GlyphAdvance`'s there. A number of `GPOS` that names an item of
 `GDEF`'s store of deltas - what a single glyph or a pair is moved
 by, a point a mark or a joined glyph is attached at - takes what the
-item adds at the instance, rounded to a whole unit, a half upward.
-At the default the store is not read.
+item adds at the instance, rounded to a whole unit, a half upward:
+truetype.library's `VariationDelta` reads it (since 1.4), the reader
+its advances are varied by. At the default the store is not read.
 
 Where a table replaces features under conditions on the axes, the
 first set of conditions that holds at the font's instance says which

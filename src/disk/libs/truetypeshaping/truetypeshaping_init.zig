@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 //! truetypeshaping.library's ROM tag, its init and its Expunge. Open and
 //! Close are exec's standard ones: every opener shares the one base. The
-//! init opens truetype.library for the base - revision 8 of it, the
-//! first that says where on its axes a variable font is and what a
-//! glyph's advance is there - and fails without it; Expunge closes it.
+//! init opens truetype.library for the base - revision 11 of it, the
+//! first that says what an item of a store of deltas adds where a
+//! variable font is on its axes - and fails without it; Expunge closes
+//! it.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -16,16 +17,16 @@ const truetypeshaping_lvo = @import("truetypeshaping_lvo.zig");
 
 pub const LIBRARY_NAME = sdk.truetypeshaping.TRUETYPESHAPINGNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 3;
+pub const LIBRARY_REVISION = 4;
 const BUILD_DATE = "12.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
-/// The revision of truetype.library 1 that has `FontCoordinates` and
-/// `GlyphAdvance`.
-const place_revision = 8;
+/// The revision of truetype.library 1 that has `VariationDelta`, and
+/// with it `FontCoordinates` and `GlyphAdvance`.
+const place_revision = 11;
 
 fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Library {
     const sb = _base.trueTypeShapingBase(lib);

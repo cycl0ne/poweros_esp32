@@ -42,6 +42,14 @@
 //!   regions they are for (`storeRegions`, `storePart`; the programs
 //!   are `_cff.zig`'s). Since 1.9.
 //!
+//! An item variation store is read by one reader, over its bytes and
+//! the coordinates of a place (`deltaIn`): within the bytes and nowhere
+//! else, a count cut to what they hold, an offset of 0 naming nothing.
+//! `HVAR`'s and `MVAR`'s stores are read through it at the font's place
+//! (`storeDelta`), and since 1.11 `VariationDelta` reads any store's
+//! bytes with it, rounded once (`wholeDelta`) - the stores of tables the
+//! library hands out and does not read, `GDEF`'s for the shaper.
+//!
 //! The sums are made in 64-bit floating point, the deltas added in the
 //! file's order, and a point's delta is added to it before it is
 //! rounded to the 32 bits a point is kept in: the same steps on every
@@ -359,59 +367,125 @@ fn groupPart(font: *const Font, peak: Table, bounds: ?[2]Table) f64 {
     return part;
 }
 
+/// The bytes of `table`, a part of the font's file.
+fn bytesOf(font: *const Font, table: Table) []const u8 {
+    return font.data[table.at..][0..table.len];
+}
+
+/// Where the font is on its axes: a coordinate an axis. None for a font
+/// of more axes than are kept, which is at its default.
+pub fn placeOf(font: *const Font) []const i16 {
+    if (font.vary.axis_count > max_axes) return &.{};
+    return font.vary.coords[0..font.vary.axis_count];
+}
+
+/// The two bytes `at` into `bytes`, 0 where they end before them.
+fn wordOf(bytes: []const u8, at: u32) u16 {
+    if (at >= bytes.len or bytes.len - at < 2) return 0;
+    return @as(u16, bytes[at]) << 8 | bytes[at + 1];
+}
+
+/// The same, signed.
+fn signedOf(bytes: []const u8, at: u32) i16 {
+    return @bitCast(wordOf(bytes, at));
+}
+
+/// The four bytes `at` into `bytes`, 0 where they end before them.
+fn longOf(bytes: []const u8, at: u32) u32 {
+    if (at >= bytes.len or bytes.len - at < 4) return 0;
+    return @as(u32, bytes[at]) << 24 | @as(u32, bytes[at + 1]) << 16 | @as(u32, bytes[at + 2]) << 8 | bytes[at + 3];
+}
+
+/// What of `bytes` starts `offset` into them, to their end; null for an
+/// offset of 0, which says there is none, and one not within them.
+fn tailOf(bytes: []const u8, offset: u32) ?[]const u8 {
+    if (offset == 0 or offset >= bytes.len) return null;
+    return bytes[offset..];
+}
+
+/// How many regions of `axes` axes each the region list `list` has: the
+/// count it says, cut to the ones that lie within it.
+fn regionCount(list: []const u8, axes: u32) u32 {
+    const said: u32 = wordOf(list, 2);
+    if (axes == 0 or list.len < 4) return 0;
+    const held = (list.len - 4) / (axes * 6);
+    return if (held < said) @intCast(held) else said;
+}
+
 /// How much region `region` of an item variation store's region list
-/// counts at the font's coordinates. The list is for this font's axes.
-fn regionPart(font: *const Font, list: Table, region: u32) f64 {
+/// counts at the coordinates `coords`. The list is for that many axes.
+fn regionPart(list: []const u8, coords: []const i16, region: u32) f64 {
     var part: f64 = 1;
-    const axes = font.vary.axis_count;
-    var axis: u32 = 0;
-    while (axis < axes) : (axis += 1) {
-        const at = 4 + (region * axes + axis) * 6;
-        part *= factor(font.vary.coords[axis], signedIn(font, list, at), signedIn(font, list, at + 2), signedIn(font, list, at + 4));
+    const axes: u32 = @intCast(coords.len);
+    for (coords, 0..) |coord, axis| {
+        const at = 4 + (region * axes + @as(u32, @intCast(axis))) * 6;
+        part *= factor(coord, signedOf(list, at), signedOf(list, at + 2), signedOf(list, at + 4));
         if (part == 0) return 0;
     }
     return part;
 }
 
-/// The delta of an item variation store's item at the font's
-/// coordinates: row `inner` of its data `outer`, each of the row's
-/// deltas times its region's part, summed. 0 for an item the store does
-/// not have, and for a store that is not for this font's axes.
-pub fn storeDelta(font: *const Font, store: Table, outer: u32, inner: u32) f64 {
-    if (store.len < 8 or wordIn(font, store, 0) != 1) return 0;
-    const list = partOf(store, longIn(font, store, 2)) orelse return 0;
-    if (wordIn(font, list, 0) != font.vary.axis_count) return 0;
-    const region_count: u32 = wordIn(font, list, 2);
-    if (outer >= wordIn(font, store, 6)) return 0;
-    const data = partOf(store, longIn(font, store, 8 + outer * 4)) orelse return 0;
-    if (inner >= wordIn(font, data, 0)) return 0;
+/// The delta of an item of the item variation store `store` at the
+/// coordinates `coords`, one an axis: row `inner` of its data `outer`,
+/// each of the row's deltas times its region's part, summed in the
+/// order they are stored. 0 for an item the store does not have, for a
+/// store that is not for that many axes, and for no coordinates; a
+/// delta for a region the list does not hold adds nothing. `regions`,
+/// where there is one, gets how many deltas the row read has - 0 when
+/// none was read.
+///
+/// The one reader of such a store: the font's own tables' (`HVAR`,
+/// `MVAR`) and, through `VariationDelta`, a caller's.
+pub fn deltaIn(store: []const u8, coords: []const i16, outer: u32, inner: u32, regions: ?*u32) f64 {
+    if (regions) |into| into.* = 0;
+    if (coords.len == 0) return 0;
+    if (store.len < 8 or wordOf(store, 0) != 1) return 0;
+    const list = tailOf(store, longOf(store, 2)) orelse return 0;
+    if (wordOf(list, 0) != coords.len) return 0;
+    const region_count = regionCount(list, @intCast(coords.len));
+    if (outer >= wordOf(store, 6) or outer >= (store.len - 8) / 4) return 0;
+    const data = tailOf(store, longOf(store, 8 + outer * 4)) orelse return 0;
+    if (inner >= wordOf(data, 0)) return 0;
     // A row: the first deltas wide, the rest narrow; words and bytes, or
     // with the high bit long words and words.
-    const widths: u32 = wordIn(font, data, 2);
+    const widths: u32 = wordOf(data, 2);
     const wide_count = widths & 0x7FFF;
     const wide: u32 = if (widths & 0x8000 != 0) 4 else 2;
-    const index_count: u32 = wordIn(font, data, 4);
+    const index_count: u32 = wordOf(data, 4);
     if (wide_count > index_count) return 0;
     const row_size = wide_count * wide + (index_count - wide_count) * (wide / 2);
     var at = (6 + index_count * 2) +| inner *| row_size;
     if (at > data.len or data.len - at < row_size) return 0;
+    if (regions) |into| into.* = index_count;
     var delta: f64 = 0;
     var index: u32 = 0;
     while (index < index_count) : (index += 1) {
         const size = if (index < wide_count) wide else wide / 2;
         const value: i32 = switch (size) {
-            4 => @bitCast(longIn(font, data, at)),
-            2 => signedIn(font, data, at),
-            else => @as(i8, @bitCast(byteIn(font, data, at))),
+            4 => @bitCast(longOf(data, at)),
+            2 => signedOf(data, at),
+            else => @as(i8, @bitCast(data[at])),
         };
         at += size;
-        const region: u32 = wordIn(font, data, 6 + index * 2);
+        const region: u32 = wordOf(data, 6 + index * 2);
         if (region >= region_count) continue;
-        const part = regionPart(font, list, region);
+        const part = regionPart(list, coords, region);
         if (part == 0) continue;
         delta += @as(f64, @floatFromInt(value)) * part;
     }
     return delta;
+}
+
+/// The same for the item `item` - its data in the high 16 bits, its row
+/// in the low - rounded to a whole unit, a half upward.
+pub fn wholeDelta(store: []const u8, coords: []const i16, item: u32, regions: ?*u32) i32 {
+    return rounded(deltaIn(store, coords, item >> 16, item & 0xFFFF, regions));
+}
+
+/// The delta of an item of the font's own store `store` at the font's
+/// coordinates, not rounded.
+pub fn storeDelta(font: *const Font, store: Table, outer: u32, inner: u32) f64 {
+    return deltaIn(bytesOf(font, store), placeOf(font), outer, inner, null);
 }
 
 /// How many regions data `outer` of an item variation store has a delta
@@ -439,8 +513,9 @@ pub fn storePart(font: *const Font, store: Table, outer: u32, index: u32) f64 {
     const data = partOf(store, longIn(font, store, 8 + outer * 4)) orelse return 0;
     if (index >= wordIn(font, data, 4)) return 0;
     const region: u32 = wordIn(font, data, 6 + index * 2);
-    if (region >= wordIn(font, list, 2)) return 0;
-    return regionPart(font, list, region);
+    const coords = placeOf(font);
+    if (region >= regionCount(bytesOf(font, list), @intCast(coords.len))) return 0;
+    return regionPart(bytesOf(font, list), coords, region);
 }
 
 /// The delta of a glyph's advance from `HVAR`: the store's item the
