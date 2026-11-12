@@ -16,7 +16,10 @@
 # outlines; Noto Sans CJK Regular, by Google and Adobe, and Source Sans 3
 # Regular, by Adobe, both under the SIL Open Font Licence 1.1, at pinned
 # releases - a collection of ten fonts over one set of outlines of cubic
-# curves, and a Latin font of such outlines.
+# curves, and a Latin font of such outlines; and Source Sans 3's two
+# variable fonts of the upright face, from the same release - one axis,
+# the weight, over outlines of quadratic curves in the one and of cubic
+# curves in the other.
 #
 # Each is checked against its sha256. Nothing of it is committed: it lands
 # in toolchain/fonts, which the build looks for; without it the disk has
@@ -75,6 +78,7 @@ emoji=v2026-09-24-unicode18_0 # googlefonts/noto-emoji
 cjk=Sans2.004 # notofonts/noto-cjk
 source_sans=3.052R
 source_sans_sha256=a4ebbdea20b08ccbd7bf3665a9462454eefdd01d9a6307129d3b3d4672981074
+source_sans_vf_sha256=d8e2ac355e06e6a0f0e0a0b1ac0c2451afa707584d7bb9d6b11ef9e4b749904c
 mkdir -p noto
 archive="NotoSansDevanagari-v$devanagari.zip"
 curl -sSfL -o "$archive" "https://github.com/notofonts/devanagari/releases/download/NotoSansDevanagari-v$devanagari/$archive"
@@ -98,8 +102,17 @@ curl -sSfL -o "$archive" "https://github.com/adobe-fonts/source-sans/releases/do
 echo "$source_sans_sha256  $archive" | sha256sum -c --quiet
 unzip -q -o -j "$archive" OTF/SourceSans3-Regular.otf -d source-sans
 rm "$archive"
+# The same family as one file of every weight, in quadratic curves and
+# in cubic ones.
+archive="VF-source-sans-$source_sans.zip"
+curl -sSfL -o "$archive" "https://github.com/adobe-fonts/source-sans/releases/download/$source_sans/$archive"
+echo "$source_sans_vf_sha256  $archive" | sha256sum -c --quiet
+unzip -q -o -j "$archive" VF/SourceSans3VF-Upright.ttf VF/SourceSans3VF-Upright.otf -d source-sans
+rm "$archive"
 cd source-sans
 sha256sum -c --quiet <<EOF
 08df266400933d3178d081a45f94a08814c3e55b4b7dd2e0ff69cb1329f13ab6  SourceSans3-Regular.otf
+1147db9a3f0edd4956068de77930148acce2742dd76d57f7239b2b1c687ac63f  SourceSans3VF-Upright.ttf
+3d0dfd6a3a644ab3d462a737923ffac41fb0ae007ce9ba83c24e6bfa76aa56c7  SourceSans3VF-Upright.otf
 EOF
 echo "fonts in $out/source-sans"

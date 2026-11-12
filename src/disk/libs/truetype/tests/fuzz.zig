@@ -56,6 +56,7 @@ const reference = @import("reference.zig");
 const built = @import("truetype.zig");
 const cubic = @import("cff.zig");
 const pictured = @import("strike.zig");
+const varied = @import("variation.zig");
 
 const testing = std.testing;
 const linux = std.os.linux;
@@ -144,7 +145,7 @@ const Seed = struct {
     }
 };
 
-const seed_count = 14;
+const seed_count = 16;
 
 /// The fonts the tests build: between them every table the library reads
 /// and every form of them it tells apart.
@@ -269,6 +270,17 @@ fn buildSeeds(seeds: *[seed_count]Seed) void {
     seeds[next].set(file.written());
     next += 1;
 
+    // Variable fonts: bent axes, advances by a map and measures that
+    // move; and advances by the glyphs' sides.
+    file = .{};
+    varied.standardFont(&file);
+    seeds[next].set(file.written());
+    next += 1;
+    file = .{};
+    varied.sidesFont(&file);
+    seeds[next].set(file.written());
+    next += 1;
+
     std.debug.assert(next == seed_count);
 }
 
@@ -343,6 +355,8 @@ const Harness = struct {
     outlines: u32 = 0,
     images: u32 = 0,
     inked: u32 = 0,
+    /// How many fonts were opened away from their default.
+    placed: u32 = 0,
 
     /// Where the room comes from. It is kept for as long as a test runs,
     /// so it is not the testing allocator's, which a fuzzing run checks
@@ -414,8 +428,29 @@ const Harness = struct {
         }
         // Without a number it is the first font.
         const plain = tb.OpenOutline(file.ptr, size, null);
+        var axes: [axis_room]truetype.Axis = undefined;
+        const axis_count = if (plain) |outline| @min(tb.FontAxes(outline, &axes, axes.len), axes.len) else 0;
         tb.CloseOutline(plain);
         try testing.expectEqual(first_opened, plain != null);
+
+        // A variable font at the ends of its axes and between them, as
+        // far as its file says where they are.
+        for ([_]f32{ 1.0, 0.0, 0.625 }) |along| {
+            if (axis_count == 0) break;
+            var values: [axis_room]truetype.AxisValue = undefined;
+            for (values[0..axis_count], axes[0..axis_count]) |*value, axis| {
+                value.* = .{ .tag = axis.tag, .value = axis.minimum + (axis.maximum - axis.minimum) * along };
+            }
+            const list = [_]utility.TagItem{
+                .{ .tag = truetype.TTA_Axes, .data = @intFromPtr(&values) },
+                .{ .tag = truetype.TTA_AxisCount, .data = axis_count },
+                .{ .tag = utility.TAG_DONE, .data = 0 },
+            };
+            const outline = tb.OpenOutline(file.ptr, size, &list) orelse return error.NotOpenedAtAPlace;
+            defer tb.CloseOutline(outline);
+            harness.placed += 1;
+            try harness.use(outline, file, truetype.fontDirectory(file, 0) orelse return error.OpenedWithoutDirectory);
+        }
         try testing.expectEqual(free, sys.AvailMem(sdk.exec.MEMF_ANY));
     }
 
@@ -461,6 +496,7 @@ const Harness = struct {
         const curved = tb.FontTable(outline, 0x676C_7966, &length) == null and tb.FontTable(outline, 0x4346_4620, &length) != null;
 
         try harness.readNames(outline);
+        try harness.readAxes(outline);
         try harness.readTables(outline, file, directory);
         for (glyphs[0..known], 0..) |glyph, nth| {
             try harness.readGlyph(outline, &metrics, glyph, curved);
@@ -469,6 +505,46 @@ const Harness = struct {
         }
         try harness.render(outline, 9);
         try harness.render(outline, 1);
+    }
+
+    /// The axes, the coordinates and the named instances into each
+    /// room: counted the same whatever the room, a coordinate within its
+    /// range, and nothing written after the room.
+    fn readAxes(harness: *Harness, outline: *truetype.Outline) !void {
+        const tb = harness.rig.tb;
+        const axis_rooms = [_]u32{ 0, 1, 2, 33, axis_room - 4 };
+        const count = tb.FontAxes(outline, null, 0);
+        try testing.expect(count <= 0xFFFF);
+
+        const marked = truetype.Axis{ .tag = 0xAAAA_AAAA, .minimum = 1, .default = 2, .maximum = 3, .value = 4, .name = 5, .hidden = true };
+        var axes: [axis_room]truetype.Axis = undefined;
+        for (axis_rooms) |room| {
+            axes = @splat(marked);
+            try testing.expectEqual(count, tb.FontAxes(outline, &axes, room));
+            for (axes[@min(room, count)..]) |axis| try testing.expectEqual(marked, axis);
+        }
+
+        var coords: [axis_room]i16 = undefined;
+        try testing.expectEqual(count, tb.FontCoordinates(outline, null, 9));
+        for (axis_rooms) |room| {
+            coords = @splat(0x5555);
+            try testing.expectEqual(count, tb.FontCoordinates(outline, &coords, room));
+            for (coords[0..@min(room, count)]) |coord| try testing.expect(coord >= -16384 and coord <= 16384);
+            for (coords[@min(room, count)..]) |coord| try testing.expectEqual(@as(i16, 0x5555), coord);
+        }
+
+        const marked_value = truetype.AxisValue{ .tag = 0xAAAA_AAAA, .value = 7 };
+        var values: [axis_room]truetype.AxisValue = undefined;
+        for ([_]u32{ 0, 1, 2, 3, 7, 0xFFFF, 0xFFFF_FFFF }) |number| {
+            const name = tb.FontInstance(outline, number, null, 9);
+            if (count == 0) try testing.expectEqual(@as(u32, 0), name);
+            for (axis_rooms) |room| {
+                values = @splat(marked_value);
+                try testing.expectEqual(name, tb.FontInstance(outline, number, &values, room));
+                const written = if (name == 0) 0 else @min(room, count);
+                for (values[written..]) |value| try testing.expectEqual(marked_value, value);
+            }
+        }
     }
 
     /// Each name into each room: ended within it, whole characters, and
@@ -535,6 +611,10 @@ const Harness = struct {
         var measures: truetype.GlyphMetrics = .{ .advance = 1, .left_bearing = 1, .x_min = 1, .y_min = 1, .x_max = 1, .y_max = 1 };
         try testing.expectEqual(has, tb.GlyphMetrics(outline, glyph, &measures));
         if (!has) try testing.expectEqual(truetype.GlyphMetrics{}, measures);
+        // Its advance alone is the same, and never less than nothing.
+        const advance = tb.GlyphAdvance(outline, glyph);
+        try testing.expect(advance >= 0);
+        try testing.expectEqual(measures.advance, advance);
 
         // The room the font's measures promise is enough for any glyph;
         // one of cubic curves may take more, says how much, and is read
@@ -880,6 +960,9 @@ fn cutOf(random: std.Random, targets: *const Targets, length: usize) usize {
     return @min(cut, length - 1);
 }
 
+/// How many axes of a font are asked for, and set.
+const axis_room = 40;
+
 /// How many times each built font is changed, and each fetched one.
 const built_rounds = 5000;
 const fetched_rounds = 3000;
@@ -894,6 +977,8 @@ test "truetype: built fonts with bytes changed and cut short" {
     try testing.expect(harness.outlines >= harness.files);
     try testing.expect(harness.images >= harness.files / 2);
     try testing.expect(harness.inked >= harness.files);
+    // And the variable ones were read away from their default.
+    try testing.expect(harness.placed >= built_rounds);
     try harness.down();
 }
 

@@ -7,7 +7,9 @@
 //! font into another (`_outline.open`, as OpenOutline does into the
 //! memory it allocates), then takes the right to write away from all of
 //! them. Every call that takes an outline is made through the jump table
-//! on that page, twice over, and its answers checked. A call that wrote
+//! on that page, twice over, and its answers checked - a variable font's
+//! at a place away from its default, where each glyph is read with its
+//! deltas. A call that wrote
 //! to the outline or the font would not fail a check: the host ends the
 //! test run at the write with a segmentation fault, whose trace names the
 //! function that wrote. The base is compared byte by byte with what it
@@ -33,6 +35,7 @@ const reference = @import("reference.zig");
 const built = @import("truetype.zig");
 const cubic = @import("cff.zig");
 const pictured = @import("strike.zig");
+const varied = @import("variation.zig");
 const _outline = @import("../outline/_outline.zig");
 const LibraryBase = @import("../truetype_base.zig").TrueTypeBase;
 
@@ -87,12 +90,22 @@ const Closed = struct {
     /// The same of a font whose pictures are unpacked by `packer`,
     /// compression.library opened: OpenOutline notes it in the outline.
     fn with(bytes: []const u8, packer: ?*sdk.exec.Library) !Closed {
+        return placed(bytes, packer, &.{});
+    }
+
+    /// The same of a variable font at `values` on its axes.
+    fn at(bytes: []const u8, values: []const truetype.AxisValue) !Closed {
+        return placed(bytes, null, values);
+    }
+
+    fn placed(bytes: []const u8, packer: ?*sdk.exec.Library, values: []const truetype.AxisValue) !Closed {
         const file = try Pages.holding(bytes);
         errdefer file.free();
         const state = try Pages.holding(&.{});
         errdefer state.free();
         const font: *_outline.Font = @ptrCast(@alignCast(state.memory.ptr));
-        if (!_outline.open(font, file.memory.ptr, @intCast(bytes.len), 0)) return error.NotRead;
+        const axes: ?[*]const truetype.AxisValue = if (values.len == 0) null else values.ptr;
+        if (!_outline.open(font, file.memory.ptr, @intCast(bytes.len), 0, axes, @intCast(values.len))) return error.NotRead;
         if (packer) |cb| font.compression = @ptrCast(@alignCast(cb));
         try file.close();
         try state.close();
@@ -313,6 +326,84 @@ test "truetype: no call writes to a font of cubic outlines or its outline" {
         sys.FreeVec(image);
     }
     closed.free();
+
+    try testing.expectEqualSlices(u8, &before, baseOf(&rig));
+    try rig.down();
+}
+
+test "truetype: no call writes to a variable font or its outline away from its default" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var rig = try Rig.up();
+    const sys = rig.sys;
+    const tb = rig.tb;
+    var before: [@sizeOf(LibraryBase)]u8 = undefined;
+    @memcpy(&before, baseOf(&rig));
+
+    // Half way up both axes of a font whose axes are bent, whose
+    // advances are its table's and whose measures move; and of one whose
+    // advances are its glyphs' sides'.
+    const values = [_]truetype.AxisValue{
+        .{ .tag = truetype.tableTag("wght"), .value = 650 },
+        .{ .tag = truetype.tableTag("wdth"), .value = 150 },
+    };
+    var bent: builder.File = .{};
+    varied.standardFont(&bent);
+    var sides: builder.File = .{};
+    varied.sidesFont(&sides);
+    const fonts = [_]Closed{ try Closed.at(bent.written(), &values), try Closed.at(sides.written(), &values) };
+    const Expected = struct { coords: [2]i16, right: f32, top: f32, advance: i32, x_height: i32 };
+    const expected = [_]Expected{
+        .{ .coords = .{ 4096, 12288 }, .right = 525, .top = 710, .advance = 25600, .x_height = 485 },
+        .{ .coords = .{ 8192, 8192 }, .right = 550, .top = 720, .advance = 625, .x_height = 0 },
+    };
+    const letters = [_]truetype.CodeRange{.{ .first = 'A', .last = 'E' }};
+    var verbs: [16]u8 = undefined;
+    var points: [16]vector.Point = undefined;
+    var metrics: truetype.FontMetrics = .{};
+    var glyph: truetype.GlyphMetrics = .{};
+    var axes: [2]truetype.Axis = undefined;
+    var coords: [2]i16 = undefined;
+    var named: [2]truetype.AxisValue = undefined;
+    // Twice over: what one use left behind, the next would meet.
+    for (0..2) |_| {
+        for (fonts, expected) |closed, want| {
+            const outline = closed.outline;
+            tb.FontMetrics(outline, &metrics);
+            try testing.expectEqual(want.x_height, metrics.x_height);
+            try testing.expectEqual(@as(u32, 2), tb.FontAxes(outline, &axes, 2));
+            try testing.expectEqual(@as(f32, 650), axes[0].value);
+            try testing.expectEqual(@as(f32, 150), axes[1].value);
+            try testing.expectEqual(@as(u32, 2), tb.FontCoordinates(outline, &coords, 2));
+            try testing.expectEqual(want.coords, coords);
+            try testing.expectEqual(@as(u32, 259), tb.FontInstance(outline, 1, &named, 2));
+            try testing.expectEqual(@as(f32, 700), named[0].value);
+            try testing.expectEqual(want.advance, tb.GlyphAdvance(outline, 1));
+            var segments = truetype.Segments{ .verbs = &verbs, .points = &points, .verb_room = verbs.len, .point_room = points.len };
+            try testing.expectEqual(truetype.TRUETYPE_OK, tb.GlyphSegments(outline, 1, &segments));
+            try testing.expectEqual(vector.Point{ .x = want.right, .y = want.top }, points[2]);
+            // The glyph put together of that one twice.
+            try testing.expectEqual(truetype.TRUETYPE_OK, tb.GlyphSegments(outline, 5, &segments));
+            try testing.expectEqual(@as(u32, 8), segments.point_count);
+            try testing.expectEqual(want.top, points[6].y);
+            try testing.expect(tb.GlyphMetrics(outline, 1, &glyph));
+            try testing.expectEqual(truetype.GlyphMetrics{
+                .advance = want.advance,
+                .x_max = @intFromFloat(want.right),
+                .y_max = @intFromFloat(want.top),
+            }, glyph);
+            var pixels: [8192]u8 = undefined;
+            var by_number = truetype.GlyphImage{ .pixels = &pixels, .room = pixels.len };
+            try testing.expectEqual(truetype.TRUETYPE_OK, tb.RenderGlyph(outline, 5, 50, &by_number));
+            try testing.expect(by_number.glyph.width != 0);
+            const image = tb.RenderFontImage(outline, 20, &letters, letters.len) orelse return error.NoImage;
+            try testing.expect(fontimage.sound(@ptrCast(image), image.size));
+            // 20 rows are a fiftieth of the font's units.
+            const a = fontimage.find(image, 'A') orelse return error.NoGlyph;
+            try testing.expectEqual(@as(u16, @intFromFloat(@ceil(want.right / 50.0))), a.width);
+            sys.FreeVec(image);
+        }
+    }
+    for (fonts) |closed| closed.free();
 
     try testing.expectEqualSlices(u8, &before, baseOf(&rig));
     try rig.down();

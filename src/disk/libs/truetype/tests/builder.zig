@@ -108,6 +108,9 @@ pub const Parts = struct {
     /// square's four points in one contour - or only counts the glyphs,
     /// version 0.5, as a font of cubic curves has it.
     largest: bool = true,
+    /// Whether the last glyph is put together of glyph 1 twice, the
+    /// second 600 units to the right of the first.
+    composite: bool = false,
 };
 
 /// The measures every built font has.
@@ -165,7 +168,17 @@ pub fn font(file: *File, parts: Parts) u32 {
         // The most points and contours of a glyph: the square's.
         file.word(4);
         file.word(1);
-        file.skip(22);
+        if (parts.composite) {
+            // And of one put together: its points and contours, its
+            // parts, and how deep parts lie in parts.
+            file.word(8);
+            file.word(2);
+            file.skip(14);
+            file.word(2);
+            file.word(1);
+        } else {
+            file.skip(22);
+        }
     } else {
         file.long(0x0000_5000);
         file.word(parts.glyphs);
@@ -180,7 +193,7 @@ pub fn font(file: *File, parts: Parts) u32 {
         places[0] = 0;
         for (1..parts.glyphs) |glyph| {
             places[glyph] = file.len - glyf;
-            square(file);
+            if (parts.composite and glyph == parts.glyphs - 1) pair(file) else square(file);
         }
         places[parts.glyphs] = file.len - glyf;
         end(file, record);
@@ -226,6 +239,26 @@ fn square(file: *File) void {
     for (0..4) |_| file.byte(1);
     for ([_]i16{ 0, 0, 500, 0 }) |dx| file.signed(dx);
     for ([_]i16{ 0, 700, 0, -700 }) |dy| file.signed(dy);
+    file.pad();
+}
+
+/// One glyph put together of glyph 1 twice: at its own place, and 600
+/// units to the right.
+fn pair(file: *File) void {
+    file.signed(-1);
+    file.signed(0);
+    file.signed(0);
+    file.signed(1100);
+    file.signed(700);
+    // Offsets as words, in the font's units; the first has one after it.
+    file.word(0x0023);
+    file.word(1);
+    file.signed(0);
+    file.signed(0);
+    file.word(0x0003);
+    file.word(1);
+    file.signed(600);
+    file.signed(0);
     file.pad();
 }
 

@@ -18,6 +18,7 @@ const vector = sdk.vector;
 const truetype = sdk.truetype;
 const exec = sdk.exec;
 const _outline = @import("../outline/_outline.zig");
+const _variation = @import("../outline/_variation.zig");
 const Font = _outline.Font;
 const Point = _outline.Point;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -111,7 +112,11 @@ pub fn glyphSegments(sys: *ExecBase, font: *const Font, glyph: u32, out: *truety
     // it says how much, and is read once more into that.
     var again = false;
     while (true) {
-        const bytes = points * @sizeOf(Point) + contours * 4 + points;
+        // A font whose glyphs are varied reads their deltas in room
+        // after the glyph's own.
+        const plain = points * @sizeOf(Point) + contours * 4 + points;
+        const varied = _outline.isVaried(font);
+        const bytes = plain + (if (varied) _variation.Scratch.bytes(points) else 0);
         const memory = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return truetype.TRUETYPEERR_NOMEM;
         defer sys.FreeVec(memory);
         const base: [*]u8 = @ptrCast(memory);
@@ -119,6 +124,7 @@ pub fn glyphSegments(sys: *ExecBase, font: *const Font, glyph: u32, out: *truety
         const ends: [*]u32 = @ptrCast(@alignCast(base + points * @sizeOf(Point)));
         const flags = base + points * @sizeOf(Point) + contours * 4;
         var c = _outline.Contours{ .points = point_area[0..points], .ends = ends[0..contours], .flags = flags[0..points] };
+        if (varied) c.vary = _variation.Scratch.within(base + plain, points);
         const identity = [6]f32{ 1, 0, 0, 1, 0, 0 };
         if (_outline.contours(font, glyph, &c, identity, 0)) return write(&c, out);
         if (!c.short or again) return truetype.TRUETYPEERR_GLYPH;

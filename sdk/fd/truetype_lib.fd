@@ -3,8 +3,9 @@
 //! images, one size at a time, since 1.2 its glyphs as outlines, since
 //! 1.4 a font of a collection, its names and its tables, since 1.5 one
 //! glyph rendered by its number, since 1.6 an OpenType file whose
-//! glyphs are of cubic curves (a CFF table's), and since 1.7 a font
-//! whose glyphs are pictures, of coverage or of colour.
+//! glyphs are of cubic curves (a CFF table's), since 1.7 a font
+//! whose glyphs are pictures, of coverage or of colour, and since 1.8
+//! a variable font at a place on its axes.
 //! Open it with OpenLibrary("truetype.library", 1).
 ##include libs/utility/utility as utility
 ##include libs/graphics/graphics as graphics
@@ -15,8 +16,9 @@
 ##public
 /// The font in `size` bytes at `file`, its tables found and checked; null
 /// if it is not a font this library reads. `tags` say which font
-/// of a collection (TTA_FontIndex); null for the first. The bytes must
-/// stay until CloseOutline. Tags since 1.4.
+/// of a collection (TTA_FontIndex) and where on a variable font's axes
+/// (TTA_Axes, TTA_AxisCount); null for the first, at its default. The
+/// bytes must stay until CloseOutline. Tags since 1.4, axes since 1.8.
 ?*truetype.Outline OpenOutline([*]const u8 file, u32 size, ?[*]const utility.TagItem tags)
 /// The outline rendered `rows` rows tall as a font image: the characters
 /// it has in the `count` sorted `ranges`, and its missing glyph as the
@@ -58,4 +60,20 @@ u32 FontName(*truetype.Outline outline, u32 name, [*]u8 buffer, u32 room)
 /// glyph's: TRUETYPE_OK, or TRUETYPEERR_ROOM with the bytes it needs.
 /// `image.kind` says what a pixel is. Since 1.5.
 i32 RenderGlyph(*truetype.Outline outline, u32 glyph, u32 rows, *truetype.GlyphImage image)
+/// How many axes a variable font has, 0 for any other; up to `room` of
+/// them go into `axes`, each with its range and the value this outline
+/// was opened at. Since 1.8.
+u32 FontAxes(*truetype.Outline outline, ?[*]truetype.Axis axes, u32 room)
+/// The font's named instance `number`, counted from 0: its name as the
+/// number FontName takes, and its value on each axis into `values`, up
+/// to `room` of them, as TTA_Axes takes them. 0 when the font has no
+/// instance of that number. Since 1.8.
+u32 FontInstance(*truetype.Outline outline, u32 number, ?[*]truetype.AxisValue values, u32 room)
+/// Where the outline was opened on each axis as shaping tables count
+/// it: -16384 to 16384 for -1 to 1, the axis' default 0. Up to `room`
+/// go into `coords`; answers the font's axis count. Since 1.8.
+u32 FontCoordinates(*truetype.Outline outline, ?[*]i16 coords, u32 room)
+/// A glyph's advance in the font's units, at the outline's place on
+/// the axes; 0 for a number past the font's glyphs. Since 1.8.
+i32 GlyphAdvance(*truetype.Outline outline, u32 glyph)
 ##end

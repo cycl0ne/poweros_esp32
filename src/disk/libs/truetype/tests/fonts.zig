@@ -30,6 +30,16 @@
 //! measure the same area and round it differently, the library to 16
 //! levels: `ink_apart` and `pixel_apart` say how far apart they may be.
 //!
+//! A variable font is compared further, at each place on its axes it
+//! has values for: its axes and the places it names, where the place
+//! is, the measures there, and of every glyph its measures, its advance
+//! and its points - read with the library's own reader
+//! (`_outline.contours`), as rendering a glyph reads them - bit for bit
+//! with what the script works out from fontTools' reading of the font's
+//! tables. The advance a font without `HVAR` has is compared too: on the
+//! same file with that table's tag changed in its directory, so that
+//! the library takes every advance from the glyph's two side points.
+//!
 //! The library reads characters by one of a font's maps. To compare the
 //! others too, the test takes the opened font's state, puts each subtable
 //! in the place of the one picked, and asks the library's own reader
@@ -45,6 +55,7 @@ const reference = @import("reference.zig");
 const _outline = @import("../outline/_outline.zig");
 const _strike = @import("../outline/_strike.zig");
 const _picture = @import("../render/_picture.zig");
+const _render = @import("../render/_render.zig");
 const Rig = @import("truetype.zig").Rig;
 
 const testing = std.testing;
@@ -292,6 +303,169 @@ fn expectPictures(rig: *Rig, outline: *truetype.Outline, expected: *const refere
 
 /// The font `expected` is of, read by the library, is what fontTools
 /// reads.
+/// The most axes a font with values has.
+const axis_room = 8;
+
+/// A variable font opened at a place: the tags `OpenOutline` takes for
+/// it, built from what was asked.
+fn openAt(tb: *TrueTypeBase, bytes: []const u8, expected: *const reference.Font, instance: *const reference.Instance) !*truetype.Outline {
+    var asked: [axis_room]truetype.AxisValue = undefined;
+    try testing.expect(instance.asked.len <= asked.len);
+    for (instance.asked, 0..) |one, i| asked[i] = .{ .tag = truetype.tableTag(one.tag), .value = one.value };
+    const tags = [_]sdk.utility.TagItem{
+        .{ .tag = truetype.TTA_FontIndex, .data = expected.index },
+        .{ .tag = truetype.TTA_Axes, .data = @intFromPtr(&asked) },
+        .{ .tag = truetype.TTA_AxisCount, .data = instance.asked.len },
+        .{},
+    };
+    return tb.OpenOutline(bytes.ptr, @intCast(bytes.len), &tags) orelse error.NotRead;
+}
+
+/// A variable font at each place it has values for.
+fn expectInstances(rig: *Rig, bytes: []const u8, expected: *const reference.Font) !void {
+    const tb = rig.tb;
+    const sys = rig.sys;
+    const identity = [6]f32{ 1, 0, 0, 1, 0, 0 };
+    try testing.expect(expected.axes.len <= axis_room);
+
+    // The same file as a font without `HVAR`: the table's tag changed in
+    // the directory, so that no reader finds it.
+    const sided = try testing.allocator.dupe(u8, bytes);
+    defer testing.allocator.free(sided);
+    var hidden_tables: u32 = 0;
+    for (0..expected.tables.len) |i| {
+        const record = sided[expected.directory + 12 + i * 16 ..][0..4];
+        if (!std.mem.eql(u8, record, "HVAR")) continue;
+        record.* = "hvar".*;
+        hidden_tables += 1;
+    }
+    try testing.expectEqual(@as(u32, 1), hidden_tables);
+
+    for (expected.instances) |*instance| {
+        const outline = try openAt(tb, bytes, expected, instance);
+        const font: *const _outline.Font = @ptrCast(@alignCast(outline));
+        var what_buffer: [96]u8 = undefined;
+
+        // The axes, with the value the outline is at on each, and the
+        // coordinates.
+        var axes: [axis_room]truetype.Axis = undefined;
+        try testing.expectEqual(@as(u32, @intCast(expected.axes.len)), tb.FontAxes(outline, &axes, axis_room));
+        try testing.expectEqual(expected.axes.len, instance.values.len);
+        for (expected.axes, instance.values, axes[0..expected.axes.len]) |axis, value, found| {
+            try testing.expectEqual(truetype.Axis{
+                .tag = truetype.tableTag(axis.tag),
+                .minimum = axis.minimum,
+                .default = axis.default,
+                .maximum = axis.maximum,
+                .value = value,
+                .name = axis.name,
+                .hidden = axis.hidden,
+            }, found);
+        }
+        var coords: [axis_room]i16 = undefined;
+        try testing.expectEqual(@as(u32, @intCast(expected.axes.len)), tb.FontCoordinates(outline, &coords, axis_room));
+        try testing.expectEqualSlices(i16, instance.coords, coords[0..expected.axes.len]);
+
+        // The places the font names: the same from every outline of it.
+        var values: [axis_room]truetype.AxisValue = undefined;
+        for (expected.named, 0..) |named, number| {
+            try testing.expectEqual(named.name, tb.FontInstance(outline, @intCast(number), &values, axis_room));
+            for (expected.axes, named.values, values[0..expected.axes.len]) |axis, value, found| {
+                try testing.expectEqual(truetype.AxisValue{ .tag = truetype.tableTag(axis.tag), .value = value }, found);
+            }
+        }
+        try testing.expectEqual(@as(u32, 0), tb.FontInstance(outline, @intCast(expected.named.len), &values, axis_room));
+
+        // The measures: those that vary, and those that do not.
+        var metrics: truetype.FontMetrics = .{};
+        tb.FontMetrics(outline, &metrics);
+        try testing.expectEqual(expected.glyph_count, metrics.glyph_count);
+        try testing.expectEqual(expected.units_per_em, metrics.units_per_em);
+        try testing.expectEqual(expected.ascender, metrics.ascender);
+        try testing.expectEqual(expected.descender, metrics.descender);
+        try testing.expectEqual(expected.line_gap, metrics.line_gap);
+        try testing.expectEqual(instance.x_height, metrics.x_height);
+        try testing.expectEqual(instance.cap_height, metrics.cap_height);
+        try testing.expectEqual(instance.underline_position, metrics.underline_position);
+        try testing.expectEqual(instance.underline_thickness, metrics.underline_thickness);
+        try testing.expectEqual(instance.strikeout_position, metrics.strikeout_position);
+        try testing.expectEqual(instance.strikeout_thickness, metrics.strikeout_thickness);
+
+        // The few glyphs written out, point by point.
+        var work = _render.Work.init(sys, font) orelse return error.NoMemory;
+        const c = &work.contours;
+        for (instance.shapes) |shape| {
+            c.point_count = 0;
+            c.end_count = 0;
+            c.part_count = 0;
+            if (!_outline.contours(font, shape.glyph, c, identity, 0)) return error.GlyphNotRead;
+            var same = c.point_count == shape.points.len and c.end_count == shape.ends.len;
+            if (same) {
+                for (shape.points, c.points[0..c.point_count]) |want, point| {
+                    if (@as(u32, @bitCast(want.x)) != @as(u32, @bitCast(point.x)) or @as(u32, @bitCast(want.y)) != @as(u32, @bitCast(point.y)) or want.on != point.on) same = false;
+                }
+                if (!std.mem.eql(u32, shape.ends, c.ends[0..c.end_count])) same = false;
+            }
+            if (same) continue;
+            std.debug.print("glyph {d} at coordinate {d} has {d} points in {d} contours:\n", .{ shape.glyph, instance.coords[0], c.point_count, c.end_count });
+            for (c.points[0..c.point_count], 0..) |point, i| {
+                const want: reference.Placed = if (i < shape.points.len) shape.points[i] else .{ .x = 0, .y = 0, .on = false };
+                std.debug.print("  {d}: {d} {d} {}, for {d} {d} {}\n", .{ i, point.x, point.y, point.on, want.x, want.y, want.on });
+            }
+            return error.ReadDiffers;
+        }
+
+        // Every glyph: its measures, and its points.
+        var measured: reference.Digest = .{};
+        var shapes: reference.Digest = .{};
+        var glyph: u32 = 0;
+        while (glyph < expected.glyph_count) : (glyph += 1) {
+            var one: truetype.GlyphMetrics = .{};
+            try testing.expect(tb.GlyphMetrics(outline, glyph, &one));
+            try testing.expectEqual(one.advance, tb.GlyphAdvance(outline, glyph));
+            measured.addSigned(one.advance);
+            measured.addSigned(one.left_bearing);
+            measured.addSigned(one.x_min);
+            measured.addSigned(one.y_min);
+            measured.addSigned(one.x_max);
+            measured.addSigned(one.y_max);
+            c.point_count = 0;
+            c.end_count = 0;
+            c.part_count = 0;
+            if (!_outline.contours(font, glyph, c, identity, 0)) return error.GlyphNotRead;
+            shapes.add(c.point_count);
+            shapes.add(c.end_count);
+            for (c.points[0..c.point_count]) |point| {
+                shapes.add(@bitCast(point.x));
+                shapes.add(@bitCast(point.y));
+                shapes.add(@intFromBool(point.on));
+            }
+            for (c.ends[0..c.end_count]) |end| shapes.add(end);
+        }
+        work.deinit(sys);
+        var what = try std.fmt.bufPrint(&what_buffer, "the glyphs' measures at coordinate {d}", .{instance.coords[0]});
+        try expectDigest(what, 0, instance.metrics_sha256, 0, &measured);
+        what = try std.fmt.bufPrint(&what_buffer, "the glyphs' points at coordinate {d}", .{instance.coords[0]});
+        try expectDigest(what, 0, instance.contours_sha256, 0, &shapes);
+        tb.CloseOutline(outline);
+
+        // The advances a font without `HVAR` has there.
+        const without = try openAt(tb, sided, expected, instance);
+        var advances: reference.Digest = .{};
+        glyph = 0;
+        while (glyph < expected.glyph_count) : (glyph += 1) {
+            const advance = tb.GlyphAdvance(without, glyph);
+            var one: truetype.GlyphMetrics = .{};
+            try testing.expect(tb.GlyphMetrics(without, glyph, &one));
+            try testing.expectEqual(advance, one.advance);
+            advances.addSigned(advance);
+        }
+        what = try std.fmt.bufPrint(&what_buffer, "the advances by the side points at coordinate {d}", .{instance.coords[0]});
+        try expectDigest(what, 0, instance.sides_sha256, 0, &advances);
+        tb.CloseOutline(without);
+    }
+}
+
 fn expectFont(expected: *const reference.Font) !void {
     const bytes = try reference.read(expected);
     defer testing.allocator.free(bytes);
@@ -652,6 +826,7 @@ fn expectFont(expected: *const reference.Font) !void {
     }
 
     tb.CloseOutline(outline);
+    if (expected.instances.len != 0) try expectInstances(&rig, bytes, expected);
     try rig.down();
 }
 
@@ -679,6 +854,11 @@ test "truetype: source-sans/SourceSans3-Regular.otf as fontTools reads it" {
     try expectFont(reference.source_sans_3_regular);
 }
 
+test "truetype: source-sans/SourceSans3VF-Upright.ttf as fontTools reads it, at its default and away from it" {
+    try testing.expect(reference.source_sans_3_vf.instances.len != 0);
+    try expectFont(reference.source_sans_3_vf);
+}
+
 test "truetype: noto/NotoSansCJK-Regular.ttc, its first font, as fontTools reads it" {
     try expectFont(reference.noto_sans_cjk_jp_regular);
 }
@@ -688,8 +868,9 @@ test "truetype: noto/NotoSansCJK-Regular.ttc, its third font, as fontTools reads
 }
 
 test "truetype: there is a test for every font with values" {
-    // The eight above, each named with its file.
-    try testing.expectEqual(@as(usize, 8), reference.fonts.len);
+    // The nine above, each named with its file.
+    try testing.expectEqual(@as(usize, 9), reference.fonts.len);
+    try testing.expectEqualStrings("source-sans/SourceSans3VF-Upright.ttf", reference.source_sans_3_vf.file);
     try testing.expectEqualStrings("spleen-2.2.0/spleen-8x16.otb", reference.spleen_8x16.file);
     try testing.expectEqualStrings("source-sans/SourceSans3-Regular.otf", reference.source_sans_3_regular.file);
     try testing.expectEqualStrings("noto/NotoSansCJK-Regular.ttc", reference.noto_sans_cjk_jp_regular.file);

@@ -556,6 +556,74 @@ the library such a font does not open. Not read: pictures in `sbix`, in
 `bloc` and `bdat`, the formats 3 and 4 of a picture, and strikes of
 other bits a pixel than their pair of tables has.
 
+**Variable fonts** (truetype.library 1.8). One file may hold a whole
+family: its glyphs drawn once, and with them how far each point moves
+along an axis - the weight (`wght`), the width (`wdth`), the slant
+(`slnt`), the optical size (`opsz`), or one the font makes up. An
+outline is such a font at one place on its axes, its instance, and
+reads from then on as a font of that face: `OpenOutline`'s tags
+`TTA_Axes` and `TTA_AxisCount` hand it a list of `AxisValue` - an axis'
+tag and a value in the axis' own units, 650 for a weight between
+Semibold and Bold. An axis the list does not name is at its default, a
+value outside the axis' range is cut to it, and without the tags the
+font is opened at its default. Two outlines of one file at two places
+are two fonts; the file's bytes are shared, and neither is written.
+
+`FontAxes(outline, axes, room)` answers how many axes the font has and
+writes each one's tag, least, default and largest value, the value the
+outline is at, the number of its name for `FontName`, and whether the
+font would rather not have it shown to the user. `FontInstance(outline,
+number, values, room)` lists the places the font's designer named -
+Light, Regular, Black - by the number of the name and the values in the
+form `TTA_Axes` takes, counted from 0 until the answer is 0.
+`FontCoordinates(outline, coordinates, room)` gives the place as the
+font's tables count it: an axis' distance from its default as a part of
+the range on that side, bent by the font's `avar` table, in 14 bits of
+fraction - what truetypeshaping.library takes for a font's positioning
+at an instance.
+
+At an instance a glyph's points are where the font's deltas put them
+(`gvar`), a point no delta names moved along with its neighbours on the
+contour; they are kept as fractions of a unit and not rounded, so that
+a size rendered of them is the outline's and not that of a font
+rounded first. The advances change by the font's `HVAR` table, or in a
+font without it by the two side points of each glyph; the x height,
+the cap height, the underline and the strikeout by `MVAR`. The
+ascender, the descender and the line gap stay as they are, so that a
+line of mixed weights keeps its height. `GlyphAdvance(outline, glyph)`
+is a glyph's advance alone, at the outline's instance, read without
+its outline: the call to measure a line with. `GlyphMetrics` reads a
+varied glyph's points for its box and takes memory for that while it
+runs.
+
+```zig
+// The font at a weight of 650.
+const place = [_]sdk.truetype.AxisValue{.{ .tag = sdk.truetype.tableTag("wght"), .value = 650 }};
+const tags = [_]sdk.utility.TagItem{
+    .{ .tag = sdk.truetype.TTA_Axes, .data = @intFromPtr(&place) },
+    .{ .tag = sdk.truetype.TTA_AxisCount, .data = place.len },
+    .{},
+};
+const outline = tb.OpenOutline(bytes.ptr, size, &tags) orelse return;
+defer tb.CloseOutline(outline);
+
+// Its axes, and where the outline is on each.
+var axes: [8]sdk.truetype.Axis = undefined;
+const count = @min(tb.FontAxes(outline, &axes, axes.len), axes.len);
+for (axes[0..count]) |axis| {
+    // axis.tag, axis.minimum <= axis.value <= axis.maximum
+}
+```
+
+`C:test/Axes <file>` lists a font's axes and draws a line at each place
+it names.
+
+Not read: a variable font whose outlines are a `CFF2` table's, an
+`avar` table of version 2, and the `HVAR` table's own deltas for the
+left side. A font of more than 32 axes is opened at its default. The
+fonts a family lists (`diskfont.library`) are opened at their default
+too: a family does not yet name an instance.
+
 **The file** (truetype.library 1.4). A file is one font or a collection
 of several (`ttcf`): `truetype.fontCount(bytes)` says how many, and
 `OpenOutline`'s tag `TTA_FontIndex` which of them is opened - the first
@@ -1078,8 +1146,8 @@ cursor = gb.TextXToOffset(rp, line.ptr, @intCast(line.len), mouse_x - left);
 | | |
 |---|---|
 | `tools/fontconv` | on the host: BDF, Amiga font files (colour too) and TrueType and OpenType files into size files and a contents file; `--alpha N` for coverage from a larger drawing, `--shadow` for a shadowed colour font, `--rgba` to write a colour font with 32-bit pixels |
-| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces and Liberation's (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation only onto the 64-bit machines' disks. With them four fonts only the host tests read, which go on no disk: Noto Sans Devanagari, Noto Color Emoji, Noto Sans CJK (a collection) and Source Sans 3 |
-| `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures, of a font of cubic curves each glyph's outline and what libfreetype renders of a part of them, and of a font of pictures every picture's measures and pixels (a PNG file's as Pillow reads them) and a part of them scaled to another size - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
+| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces and Liberation's (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation only onto the 64-bit machines' disks. With them four fonts only the host tests read, which go on no disk: Noto Sans Devanagari, Noto Color Emoji, Noto Sans CJK (a collection) and Source Sans 3, as a font of one weight and as variable fonts |
+| `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures, of a variable font the same at places on its axes with every glyph's points there (worked out in the library's order and held against fontTools' instancer), of a font of cubic curves each glyph's outline and what libfreetype renders of a part of them, and of a font of pictures every picture's measures and pixels (a PNG file's as Pillow reads them) and a part of them scaled to another size - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
 | `scripts/shape-reference.py` | on the host: applies the fetched fonts' `GSUB` and `GPOS` lookups to runs of glyphs - every glyph of a font, and sequences its lookups have rules for - with an applier of its own on fontTools' reading of the tables, and writes what comes out, a digest for each script, language and feature list, as the Zig files `truetypeshaping.library`'s host tests compare its shaping with (`src/disk/libs/truetypeshaping/tests/reference/`). `--check` says whether the files are the ones it would write, `--show <font> <case>` prints a case's runs |
 | `scripts/shape-text-reference.py` | on the host: shapes texts with libharfbuzz - in the fetched fonts Latin with its kerning and marks, letters and marks spelled apart and together, Greek, Cyrillic, Hebrew read from right to left, Devanagari by its plain features, emoji, features switched for a part of a text; and in a font made of a rule, which is told the characters it lacks, texts whose characters are taken apart, sorted and put together - and writes the glyphs, clusters, advances and offsets as the Zig files `truetypeshaping.library`'s host tests compare `ShapeText`'s answers with (`src/disk/libs/truetypeshaping/tests/text_reference/`); `--check` says whether they are up to date |
 | `C:ListFonts` | every font by family, size and where it is; `SAMPLE` draws them |
@@ -1088,3 +1156,4 @@ cursor = gb.TextXToOffset(rp, line.ptr, @intCast(line.len), mouse_x - left);
 | `SYS:Programs/Prefs` | picks the system's fonts, the desktop icons' and the fallback families in a window and writes `font.prefs` |
 | `SYS:Programs/FontView` | fonts and sizes in a window, the one chosen drawn |
 | `C:test/DiskFont`, `C:test/Fonts` | test programs: open sizes and time them, or with `GLYPHS` render every glyph of an outline by its number and compare with a font image, with `TEXT` draw a line of one's own; draw a size file |
+| `C:test/Axes` | test program: `Axes <file>` prints a variable font's axes and, at each place the font names - or the ends and the default of its first axis - its coordinates, x height, cap height and the advance of `n`, and draws a line at each place, `SIZE` rows tall, with `TEXT` one's own; `NOWINDOW` prints only |

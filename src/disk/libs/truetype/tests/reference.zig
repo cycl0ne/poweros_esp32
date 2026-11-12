@@ -23,6 +23,17 @@
 //! whole row, and each pixel the mean of the picture over that pixel's
 //! area.
 //!
+//! A variable font is read at some places on its axes as well. What it
+//! is there the script works out from what fontTools reads of its
+//! tables - the axes and their bends, each glyph's groups of deltas, the
+//! stores - by the library's rule: a group's part at the place, the
+//! parts' sums in the file's order, a point no group names moved as the
+//! named ones beside it on its contour are, and nothing rounded before a
+//! point is placed; then every step of placing it a number of 32 bits.
+//! fontTools' own instance of the font is held against each value by the
+//! script, which stops when a point is further from it than 32 bits
+//! round away, or an advance by more than one.
+//!
 //! A list too long to write out - every character of a map, every glyph's
 //! measures - is written as how many entries it has and the SHA-256 of
 //! them all, each entry its numbers as four bytes, the lowest first. The
@@ -55,6 +66,21 @@
 //!   how many verbs and how many points it has, then each verb's number -
 //!   a move 0, a line 1, a curve 2, a close 3 - and its points' x and y.
 //!   A contour of one point is none.
+//! - The glyphs' measures at an instance: as the glyphs' measures, of
+//!   every glyph. Away from the default the advance is the one `HVAR`
+//!   gives, the box that of the glyph's points where its deltas put
+//!   them, widened to whole units, and the left side bearing the box's
+//!   left less the glyph's left side point where its delta puts it,
+//!   rounded; a glyph of no points has a box of 0 and the bearing of its
+//!   left side point alone.
+//! - The advances by the side points at an instance: (advance) for every
+//!   glyph - the distance between its two side points as their deltas
+//!   move them, rounded, which is its advance in a font without `HVAR`.
+//! - The points at an instance: for every glyph how many points and how
+//!   many contours it has, a composite's parts put together; then each
+//!   point's x and y, the 32 bits of each as a number, and 1 or 0 for a
+//!   point on the curve or off it; then the index after each contour's
+//!   last point.
 
 const std = @import("std");
 const test_options = @import("test_options");
@@ -140,6 +166,69 @@ pub const Scaled = struct {
     /// digit a pixel, its coverage in fifteenths; of one of colour eight
     /// a pixel, its red, green, blue and coverage.
     rows: []const []const u8,
+};
+
+/// One axis of a variable font: its tag, its range and default in its
+/// own units, its name's number, and whether the font would have it
+/// left out of a list.
+pub const Axis = struct {
+    tag: *const [4]u8,
+    minimum: f32,
+    default: f32,
+    maximum: f32,
+    name: u32,
+    hidden: bool,
+};
+
+/// A place on its axes a variable font names: the name's number, and the
+/// value on each axis, in the axes' order.
+pub const Named = struct {
+    name: u32,
+    values: []const f32,
+};
+
+/// A value asked for on the axis of that tag.
+pub const Asked = struct {
+    tag: *const [4]u8,
+    value: f32,
+};
+
+/// A point of a glyph at an instance, in the font's units.
+pub const Placed = struct {
+    x: f32,
+    y: f32,
+    on: bool,
+};
+
+/// One glyph at an instance written out: its points, and the index
+/// after each contour's last.
+pub const Varied = struct {
+    glyph: u32,
+    ends: []const u32,
+    points: []const Placed,
+};
+
+/// A variable font at one place on its axes.
+pub const Instance = struct {
+    /// What the font is opened with: none for its default.
+    asked: []const Asked,
+    /// Where that puts it: each axis' value, cut to its range, and its
+    /// coordinate in 16384ths, in the axes' order.
+    values: []const f32,
+    coords: []const i16,
+    /// The measures that vary, there.
+    x_height: i32,
+    cap_height: i32,
+    underline_position: i32,
+    underline_thickness: i32,
+    strikeout_position: i32,
+    strikeout_thickness: i32,
+    /// Every glyph's measures, its advance by its side points, and its
+    /// points, hashed; and a few glyphs' points.
+    metrics_sha256: []const u8,
+    sides_sha256: []const u8,
+    contours_sha256: []const u8,
+    shapes: []const Varied,
 };
 
 /// One font, as fontTools reads it.
@@ -228,6 +317,11 @@ pub const Font = struct {
     sequences: []const Sequence,
     /// Every name the `name` table has a record of, by its number.
     names: []const Name,
+    /// Of a variable font: its axes, the places it names, and what it is
+    /// at the places it was read at.
+    axes: []const Axis = &.{},
+    named: []const Named = &.{},
+    instances: []const Instance = &.{},
 };
 
 pub const go_regular = &@import("reference/go_regular.zig").font;
@@ -236,6 +330,7 @@ pub const noto_sans_devanagari_regular = &@import("reference/noto_sans_devanagar
 pub const noto_color_emoji = &@import("reference/noto_color_emoji.zig").font;
 pub const spleen_8x16 = &@import("reference/spleen_8x16.zig").font;
 pub const source_sans_3_regular = &@import("reference/source_sans_3_regular.zig").font;
+pub const source_sans_3_vf = &@import("reference/source_sans_3_vf.zig").font;
 pub const noto_sans_cjk_jp_regular = &@import("reference/noto_sans_cjk_jp_regular.zig").font;
 pub const noto_sans_cjk_sc_regular = &@import("reference/noto_sans_cjk_sc_regular.zig").font;
 
@@ -247,6 +342,7 @@ pub const fonts = [_]*const Font{
     noto_color_emoji,
     spleen_8x16,
     source_sans_3_regular,
+    source_sans_3_vf,
     noto_sans_cjk_jp_regular,
     noto_sans_cjk_sc_regular,
 };

@@ -41,10 +41,18 @@
 //! Since 1.7 a font without outlines may have its glyphs as pictures,
 //! bitmaps at one size or several (`_strike.zig`): found here, and read
 //! and scaled when a glyph is rendered (`render/_picture.zig`).
+//!
+//! Since 1.8 a font may be a variable one, opened at a place on its axes
+//! (`_variation.zig`). At any place but the default a `glyf` glyph's
+//! points are read with their deltas added, a composite's parts are
+//! placed with theirs, and a glyph's advance and the font's measures are
+//! that instance's. The points keep the fractions the deltas give them.
+//! Reading a glyph's deltas takes room of its own (`Contours.vary`).
 
 const sdk = @import("sdk");
 const _cff = @import("_cff.zig");
 const _strike = @import("_strike.zig");
+const _variation = @import("_variation.zig");
 const CompressionBase = sdk.interface.compression.CompressionBase;
 
 /// A font file, opened: where its tables are and the measures rendering
@@ -101,6 +109,9 @@ pub const Font = struct {
     /// opened with the outline of such a font and closed with it, null
     /// for every other.
     compression: ?*CompressionBase,
+    /// Where on its axes the font was opened (since 1.8); every
+    /// coordinate 0 for a font without axes.
+    vary: _variation.Variation,
 };
 
 /// What a glyph is read with when `maxp` does not say how large one is.
@@ -140,6 +151,9 @@ pub const Contours = struct {
     short: bool = false,
     needed_points: u32 = 0,
     needed_ends: u32 = 0,
+    /// Room for a glyph's deltas: what a font whose glyphs are varied
+    /// (`isVaried`) is read with, and no glyph of it without.
+    vary: ?_variation.Scratch = null,
 };
 
 /// The two bytes at `at` in the file, 0 where it ends before them.
@@ -213,9 +227,10 @@ pub fn findTableByTag(font: *const Font, tag: u32) ?Table {
     return null;
 }
 
-/// The tables of the file's font `index` read and checked; false if the
-/// file has no font of that number or it lacks a table it needs.
-pub fn open(font: *Font, data: [*]const u8, size: u32, index: u32) bool {
+/// The tables of the file's font `index` read and checked, at the place
+/// on its axes the `axis_count` values at `axes` name; false if the file
+/// has no font of that number or it lacks a table it needs.
+pub fn open(font: *Font, data: [*]const u8, size: u32, index: u32, axes: ?[*]const sdk.truetype.AxisValue, axis_count: u32) bool {
     font.* = undefined;
     font.data = data;
     font.size = size;
@@ -253,6 +268,7 @@ pub fn open(font: *Font, data: [*]const u8, size: u32, index: u32) bool {
     font.style = sdk.truetype.styleOfBits(wordIn(font, head, 44));
     font.line_gap = signedIn(font, hhea, 8);
     readMeasures(font, maxp);
+    _variation.open(font, axes, axis_count);
     font.kern = findTable(font, "kern") orelse .{};
     if (font.units_per_em == 0 or font.hmetric_count == 0 or font.ascender <= font.descender) return false;
     return pickCmap(font, cmap);
@@ -506,10 +522,38 @@ fn keepsGlyph(font: *const Font, map: Table, offset: u32, code: u32) bool {
     return false;
 }
 
-/// How far a glyph moves the point, in units.
+/// How far a glyph moves the point, in units, at the font's instance.
 pub fn advanceOf(font: *const Font, glyph: u32) i32 {
     const index = @min(glyph, font.hmetric_count - 1);
-    return wordIn(font, font.hmtx, index * 4);
+    const plain: i32 = wordIn(font, font.hmtx, index * 4);
+    if (!font.vary.varied) return plain;
+    return _variation.advanceOf(font, glyph, plain);
+}
+
+/// Whether the font's glyphs are read with deltas: a font of `glyf`
+/// outlines, away from its default instance, that has them.
+pub fn isVaried(font: *const Font) bool {
+    return font.vary.gvar.len != 0;
+}
+
+/// What a glyph's side points are counted from: how many points come
+/// before them - a simple glyph's own, a composite's parts - and the x
+/// of its left side, its box's left less its left side bearing.
+pub const Sides = struct {
+    points: u32,
+    left: i32,
+};
+
+pub fn sidesOf(font: *const Font, glyph: u32) Sides {
+    const bearing = leftBearingOf(font, glyph);
+    const data = glyphData(font, glyph) orelse return .{ .points = 0, .left = -bearing };
+    if (data.len < 10) return .{ .points = 0, .left = -bearing };
+    const left = signedIn(font, data, 2) - bearing;
+    const count = signedIn(font, data, 0);
+    if (count < 0) return .{ .points = partsOf(font, data) orelse 0, .left = left };
+    if (count == 0) return .{ .points = 0, .left = left };
+    const contour_count: u32 = @intCast(count);
+    return .{ .points = @as(u32, wordIn(font, data, 10 + (contour_count - 1) * 2)) + 1, .left = left };
 }
 
 /// From a glyph's origin to the left of its box, in units.
@@ -622,12 +666,12 @@ pub fn contours(font: *const Font, glyph: u32, into: *Contours, m: [6]f32, depth
     if (isCubic(font)) return _cff.contours(font, glyph, into, m);
     const data = glyphData(font, glyph) orelse return true;
     const count = signedIn(font, data, 0);
-    if (count >= 0) return simple(font, data, @intCast(count), into, m);
+    if (count >= 0) return simple(font, glyph, data, @intCast(count), into, m);
     if (depth >= max_depth) return false;
-    return composite(font, data, into, m, depth);
+    return composite(font, glyph, data, into, m, depth);
 }
 
-fn simple(font: *const Font, data: Table, contour_count: u32, into: *Contours, m: [6]f32) bool {
+fn simple(font: *const Font, glyph: u32, data: Table, contour_count: u32, into: *Contours, m: [6]f32) bool {
     if (contour_count == 0) return true;
     const ends_at: u32 = 10;
     if (data.len < ends_at + contour_count * 2 + 2) return false;
@@ -704,6 +748,16 @@ fn simple(font: *const Font, data: Table, contour_count: u32, into: *Contours, m
         }
         points[p].y = @floatFromInt(y);
     }
+    // At an instance each point moves by its delta, before the glyph is
+    // placed.
+    if (isVaried(font)) {
+        const scratch = if (into.vary) |*room| room else return false;
+        if (!_variation.glyphDeltas(font, glyph, scratch, points, into.ends[into.end_count..][0..contour_count], base, point_count)) return false;
+        for (points, scratch.sums[0..point_count]) |*p, sum| {
+            p.x = @floatCast(@as(f64, p.x) + sum[0]);
+            p.y = @floatCast(@as(f64, p.y) + sum[1]);
+        }
+    }
     for (points) |*p| {
         const px = p.x;
         const py = p.y;
@@ -715,10 +769,48 @@ fn simple(font: *const Font, data: Table, contour_count: u32, into: *Contours, m
     return true;
 }
 
-fn composite(font: *const Font, data: Table, into: *Contours, m: [6]f32, depth: u32) bool {
+/// How many parts a composite glyph's data names; null when the data
+/// ends within one.
+fn partsOf(font: *const Font, data: Table) ?u32 {
+    var parts: u32 = 0;
     var at: u32 = 10;
     const limit = data.len;
     while (at < limit and limit - at >= 4) {
+        const flags = wordIn(font, data, at);
+        at += 4;
+        const offsets: u32 = if (flags & 1 != 0) 4 else 2;
+        const scales: u32 = if (flags & 8 != 0) 2 else if (flags & 0x40 != 0) 4 else if (flags & 0x80 != 0) 8 else 0;
+        if (limit - at < offsets + scales) return null;
+        at += offsets + scales;
+        parts += 1;
+        if (flags & 0x20 == 0) break;
+    }
+    return parts;
+}
+
+fn composite(font: *const Font, glyph: u32, data: Table, into: *Contours, m: [6]f32, depth: u32) bool {
+    // At an instance each part's offset moves by a delta. They are kept
+    // aside while the parts are read, which read deltas of their own in
+    // the same room, and given up when this glyph is done.
+    var moved: []const [2]f64 = &.{};
+    const mark = if (into.vary) |room| room.offset_count else 0;
+    defer if (into.vary) |*room| {
+        room.offset_count = mark;
+    };
+    if (isVaried(font)) {
+        const scratch = if (into.vary) |*room| room else return false;
+        const parts = partsOf(font, data) orelse return false;
+        if (parts > scratch.offsets.len - scratch.offset_count) return false;
+        if (!_variation.glyphDeltas(font, glyph, scratch, &.{}, &.{}, 0, parts)) return false;
+        const kept = scratch.offsets[scratch.offset_count..][0..parts];
+        @memcpy(kept, scratch.sums[0..parts]);
+        scratch.offset_count += parts;
+        moved = kept;
+    }
+    var number: u32 = 0;
+    var at: u32 = 10;
+    const limit = data.len;
+    while (at < limit and limit - at >= 4) : (number += 1) {
         if (into.part_count >= max_parts) return false;
         into.part_count += 1;
         const flags = wordIn(font, data, at);
@@ -745,6 +837,9 @@ fn composite(font: *const Font, data: Table, into: *Contours, m: [6]f32, depth: 
         if (flags & 2 == 0) {
             dx = 0;
             dy = 0;
+        } else if (number < moved.len) {
+            dx = @floatCast(@as(f64, dx) + moved[number][0]);
+            dy = @floatCast(@as(f64, dy) + moved[number][1]);
         }
         var a: f32 = 1;
         var b: f32 = 0;

@@ -16,6 +16,17 @@ what each value is and how the long ones are counted and hashed; the same
 rule is applied here and there, so a digest that differs is a reading that
 differs.
 
+A variable font is read further, at the places on its axes named with it
+below: where each place is, the measures there, and every glyph's measures,
+advance and points. fontTools' instancer makes a font of each place, but
+writes whole units; the library keeps a point where its deltas put it, to
+the last bit of a 32-bit number. So the points are worked out here from the
+font's tables as fontTools reads them, step for step in the library's
+order, and what comes of it is held against the instancer's font before a
+line is written: the coordinates and the measures the same, every advance
+the same, every point and every glyph put together of its parts no further
+off than a 32-bit number rounds. A place where they differ stops the script.
+
 The files are committed, and the tests need neither Python nor fontTools. A
 test stops by name when its font's SHA-256 is not the one written here, so
 this runs again when a font's pin in scripts/fetch-fonts.sh changes, and at
@@ -38,8 +49,11 @@ import struct
 import sys
 
 try:
+    from fontTools.misc.fixedTools import floatToFixed
     from fontTools.pens.recordingPen import RecordingPen
     from fontTools.ttLib import TTFont
+    from fontTools.varLib import instancer
+    from fontTools.varLib.models import normalizeValue, piecewiseLinearMap
 except ImportError:
     sys.exit("font-reference: fontTools is not installed (python-fonttools)")
 try:
@@ -61,7 +75,9 @@ OUT_DIR = os.path.join(ROOT, "src", "disk", "libs", "truetype", "tests", "refere
 # the same glyphs in full (glyph_step), and every which glyph libfreetype
 # renders (ink_step); of a font of pictures the height of the line its
 # pictures are scaled to (scaled_rows) and every which glyph's scaled
-# picture is added up (scaled_step). reference.zig lists the same files.
+# picture is added up (scaled_step); of a variable font the places on its
+# axes it is read at, each a value by an axis' tag (places).
+# reference.zig lists the same files.
 FONTS = [
     ("go/Go-Regular.ttf", "go_regular", {}),
     ("liberation-fonts-ttf-2.1.5/LiberationSans-Regular.ttf", "liberation_sans_regular", {}),
@@ -69,6 +85,11 @@ FONTS = [
     ("noto/NotoColorEmoji.ttf", "noto_color_emoji", {"scaled_rows": 20, "scaled_step": 53}),
     ("spleen-2.2.0/spleen-8x16.otb", "spleen_8x16", {"scaled_rows": 24, "scaled_step": 7}),
     ("source-sans/SourceSans3-Regular.otf", "source_sans_3_regular", {"ink_step": 1}),
+    (
+        "source-sans/SourceSans3VF-Upright.ttf",
+        "source_sans_3_vf",
+        {"places": [{}, {"wght": 400}, {"wght": 650}, {"wght": 900}, {"wght": 1000}]},
+    ),
     ("noto/NotoSansCJK-Regular.ttc", "noto_sans_cjk_jp_regular", {"index": 0, "ink_step": 61}),
     ("noto/NotoSansCJK-Regular.ttc", "noto_sans_cjk_sc_regular", {"index": 2, "glyph_step": 97, "ink_step": 997}),
 ]
@@ -420,7 +441,499 @@ def scaled_of(colour, picture, place):
     return lines
 
 
-def read(path, index=0, glyph_step=1, ink_step=0, scaled_rows=0, scaled_step=0):
+# --- a variable font's instances ------------------------------------------------
+#
+# What a font is at a place on its axes is worked out here from what
+# fontTools reads of its tables - the axes, the bends, each glyph's
+# groups of deltas, the stores - by the rule reference.zig writes down,
+# which is the library's: the sums are taken in the file's order and
+# nothing is rounded before a point is placed. fontTools' own
+# instancer rounds each point to a whole unit, so its font is not what
+# is written; every value is held against it all the same, and the
+# script stops when one is further from it than that rounding goes.
+
+# The measures `MVAR` moves, in the order they are written, and each
+# one's tag in that table.
+MEASURES = ("x_height", "cap_height", "underline_position", "underline_thickness", "strikeout_position", "strikeout_thickness")
+MEASURE_TAGS = {"xhgt": 0, "cpht": 1, "undo": 2, "unds": 3, "stro": 4, "strs": 5}
+
+# How many varied glyphs are written out beside their digest, and the
+# most points one of those has.
+SAMPLE_VARIED = 4
+VARIED_POINTS = 12
+
+# The most parts within parts a glyph is followed through.
+MAX_DEPTH = 4
+
+# How far a point, in units, and an advance may be from fontTools'
+# instance of the font: a point by what 32 bits round away, an advance
+# by one, where the instance takes it between two rounded sides.
+POINT_APART = 1 / 1024
+ADVANCE_APART = 1
+
+
+def single(value):
+    """`value` as a number of 32 bits keeps it."""
+    return struct.unpack("<f", struct.pack("<f", value))[0]
+
+
+def bits(value):
+    """The 32 bits of a number that `single` gave."""
+    return struct.unpack("<I", struct.pack("<f", value))[0]
+
+
+def whole(value):
+    """The whole number nearest, a half upward."""
+    return math.floor(value + 0.5)
+
+
+def normalized(value, lower, middle, upper):
+    """A value's distance from the default as a part of the range on its side."""
+    if value == middle or lower == upper:
+        return 0.0
+    if (value < middle and lower != middle) or (value > middle and upper == middle):
+        return (value - middle) / (middle - lower)
+    return (value - middle) / (upper - middle)
+
+
+def bent(pairs, value):
+    """`value` as an `avar` segment's pairs bend it: straight lines between
+    them, and the distance kept outside them."""
+    if not pairs:
+        return value
+    exact = below = above = None
+    least = most = pairs[0]
+    for start, to in pairs:
+        if start == value:
+            exact = to
+        if start <= least[0]:
+            least = (start, to)
+        if start >= most[0]:
+            most = (start, to)
+        if start < value and (below is None or start >= below[0]):
+            below = (start, to)
+        if start > value and (above is None or start <= above[0]):
+            above = (start, to)
+    if exact is not None:
+        return exact
+    if value < least[0]:
+        return value + least[1] - least[0]
+    if value > most[0]:
+        return value + most[1] - most[0]
+    if below is None or above is None:
+        return value
+    return below[1] + (above[1] - below[1]) * (value - below[0]) / (above[0] - below[0])
+
+
+def factor(value, lower, peak, upper):
+    """How much of a region counts at `value` on one axis, all in 16384ths."""
+    if peak == 0 or lower > peak or peak > upper or (lower < 0 and upper > 0) or value == peak:
+        return 1.0
+    if value <= lower or upper <= value:
+        return 0.0
+    if value < peak:
+        return float(value - lower) / float(peak - lower)
+    return float(value - upper) / float(peak - upper)
+
+
+def part_of(coords, region):
+    """How much of a region counts at `coords`: `region` a (lower, peak,
+    upper) for each axis, in the axes' order."""
+    part = 1.0
+    for value, (lower, peak, upper) in zip(coords, region):
+        part *= factor(value, lower, peak, upper)
+        if part == 0:
+            return 0.0
+    return part
+
+
+def fourteen(value):
+    return int(round(value * 16384))
+
+
+class Store:
+    """An item variation store's deltas at one place."""
+
+    def __init__(self, store, coords):
+        self.store = store
+        self.parts = [
+            part_of(coords, [(fourteen(axis.StartCoord), fourteen(axis.PeakCoord), fourteen(axis.EndCoord)) for axis in region.VarRegionAxis])
+            for region in store.VarRegionList.Region
+        ]
+
+    def delta(self, index):
+        data = self.store.VarData[index >> 16]
+        delta = 0.0
+        for value, region in zip(data.Item[index & 0xFFFF], data.VarRegionIndex):
+            if self.parts[region] != 0:
+                delta += float(value) * self.parts[region]
+        return delta
+
+
+def between(place, one, one_delta, other, other_delta):
+    """The delta of a coordinate no group names, from the named points
+    beside it."""
+    low, high, low_delta, high_delta = float(one), float(other), float(one_delta), float(other_delta)
+    if low == high:
+        return low_delta if low_delta == high_delta else 0.0
+    if low > high:
+        low, high, low_delta, high_delta = high, low, high_delta, low_delta
+    slope = (high_delta - low_delta) / (high - low)
+    here = float(place)
+    if here <= low:
+        return low_delta
+    if here >= high:
+        return high_delta
+    return low_delta + (here - low) * slope
+
+
+class Instance:
+    """One font at one place on its axes."""
+
+    def __init__(self, path, font, coords):
+        self.path = path
+        self.font = font
+        self.glyf = font["glyf"]
+        self.metrics = font["hmtx"].metrics
+        self.coords = coords
+        self.varied = any(coords)
+        self.tags = [axis.axisTag for axis in font["fvar"].axes]
+        self.variations = font["gvar"].variations if self.varied else {}
+        self.sums = {}
+        self.advances = None
+        if self.varied and "HVAR" in font:
+            table = font["HVAR"].table
+            self.advances = (Store(table.VarStore, coords), table.AdvWidthMap.mapping if table.AdvWidthMap else None)
+
+    def deltas(self, name):
+        """The sums of a glyph's deltas: one for each point or part, and
+        four after them."""
+        if name in self.sums:
+            return self.sums[name]
+        glyph = self.glyf[name]
+        if glyph.isComposite():
+            count, places, ends = len(glyph.components), [], []
+        elif glyph.numberOfContours > 0:
+            places = list(glyph.coordinates)
+            count, ends = len(places), [end + 1 for end in glyph.endPtsOfContours]
+        else:
+            count, places, ends = 0, [], []
+        total = count + 4
+        sums = [[0.0, 0.0] for _ in range(total)]
+        for group in self.variations.get(name, []):
+            region = []
+            for tag in self.tags:
+                lower, peak, upper = group.axes.get(tag, (0.0, 0.0, 0.0))
+                region.append((fourteen(lower), fourteen(peak), fourteen(upper)))
+            part = part_of(self.coords, region)
+            if part == 0:
+                continue
+            moved = list(group.coordinates)[:total]
+            moved += [None] * (total - len(moved))
+            start = 0
+            for end in ends:
+                self.follow(sums, moved, places, start, end, part)
+                start = end
+            for index in range(start, total):
+                if moved[index] is not None:
+                    sums[index][0] += part * float(moved[index][0])
+                    sums[index][1] += part * float(moved[index][1])
+        self.sums[name] = sums
+        return sums
+
+    @staticmethod
+    def follow(sums, moved, places, start, end, part):
+        """One contour: a named point's delta added, and for each one not
+        named the delta it has from the named ones round the contour."""
+        named = [index for index in range(start, end) if moved[index] is not None]
+        if not named:
+            return
+        before = named[-1]
+        index = start
+        while index < end:
+            if moved[index] is not None:
+                sums[index][0] += part * float(moved[index][0])
+                sums[index][1] += part * float(moved[index][1])
+                before = index
+                index += 1
+                continue
+            after = index + 1
+            while after < end and moved[after] is None:
+                after += 1
+            beside = after if after < end else named[0]
+            for free in range(index, after):
+                for axis in (0, 1):
+                    sums[free][axis] += part * between(
+                        places[free][axis], places[before][axis], moved[before][axis], places[beside][axis], moved[beside][axis]
+                    )
+            index = after
+
+    def contours(self, name, m, depth, points, ends):
+        """A glyph's points added to `points` as (x, y, on) and its
+        contours' ends to `ends`, placed by `m`: every step of it a
+        number of 32 bits, as the library takes it."""
+        glyph = self.glyf[name]
+        if glyph.isComposite():
+            if depth >= MAX_DEPTH:
+                sys.exit("font-reference: %s: %s has parts more than %d deep" % (self.path, name, MAX_DEPTH))
+            sums = self.deltas(name)
+            for number, part in enumerate(glyph.components):
+                dx = dy = 0.0
+                # fontTools keeps an offset as x and y, and two points to
+                # be laid on each other as firstPt and secondPt.
+                if hasattr(part, "x"):
+                    dx = single(float(part.x) + sums[number][0])
+                    dy = single(float(part.y) + sums[number][1])
+                a, b, c, d = 1.0, 0.0, 0.0, 1.0
+                if hasattr(part, "transform"):
+                    (a, b), (c, d) = ((single(value) for value in row) for row in part.transform)
+                own = (
+                    single(single(m[0] * a) + single(m[2] * b)),
+                    single(single(m[1] * a) + single(m[3] * b)),
+                    single(single(m[0] * c) + single(m[2] * d)),
+                    single(single(m[1] * c) + single(m[3] * d)),
+                    single(single(single(m[0] * dx) + single(m[2] * dy)) + m[4]),
+                    single(single(single(m[1] * dx) + single(m[3] * dy)) + m[5]),
+                )
+                self.contours(part.glyphName, own, depth + 1, points, ends)
+            return
+        if glyph.numberOfContours <= 0:
+            return
+        sums = self.deltas(name)
+        base = len(points)
+        for (x, y), flag, (sum_x, sum_y) in zip(glyph.coordinates, glyph.flags, sums):
+            px = single(float(x) + sum_x)
+            py = single(float(y) + sum_y)
+            points.append(
+                (
+                    single(single(single(m[0] * px) + single(m[2] * py)) + m[4]),
+                    single(single(single(m[1] * px) + single(m[3] * py)) + m[5]),
+                    flag & 1,
+                )
+            )
+        ends.extend(base + end + 1 for end in glyph.endPtsOfContours)
+
+    def left_of(self, name):
+        """The x of a glyph's left side as the file has it."""
+        return getattr(self.glyf[name], "xMin", 0) - self.metrics[name][1]
+
+    def sides_advance(self, name):
+        """A glyph's advance by its two side points."""
+        stated = self.metrics[name][0]
+        if not self.varied:
+            return stated
+        glyph = self.glyf[name]
+        count = len(glyph.components) if glyph.isComposite() else len(glyph.coordinates) if glyph.numberOfContours > 0 else 0
+        sums = self.deltas(name)
+        left = float(self.left_of(name)) + sums[count][0]
+        right = float(self.left_of(name) + stated) + sums[count + 1][0]
+        return max(0, whole(right - left))
+
+    def advance(self, name, glyph_id):
+        """A glyph's advance: by `HVAR` where the font has it."""
+        stated = self.metrics[name][0]
+        if not self.varied:
+            return stated
+        if self.advances is None:
+            return self.sides_advance(name)
+        store, mapping = self.advances
+        return max(0, stated + whole(store.delta(mapping[name] if mapping else glyph_id)))
+
+    def measures(self, name, glyph_id):
+        """A glyph's advance, left side bearing and box, and its points."""
+        points, ends = [], []
+        self.contours(name, (1.0, 0.0, 0.0, 1.0, 0.0, 0.0), 0, points, ends)
+        advance = self.advance(name, glyph_id)
+        if not self.varied:
+            glyph = self.glyf[name]
+            box = (glyph.xMin, glyph.yMin, glyph.xMax, glyph.yMax) if glyph.numberOfContours else (0, 0, 0, 0)
+            return (advance, self.metrics[name][1]) + box, points, ends
+        glyph = self.glyf[name]
+        count = len(glyph.components) if glyph.isComposite() else len(glyph.coordinates) if glyph.numberOfContours > 0 else 0
+        origin = whole(float(self.left_of(name)) + self.deltas(name)[count][0])
+        if not points:
+            return (advance, -origin, 0, 0, 0, 0), points, ends
+        x_min = math.floor(min(point[0] for point in points))
+        y_min = math.floor(min(point[1] for point in points))
+        x_max = math.ceil(max(point[0] for point in points))
+        y_max = math.ceil(max(point[1] for point in points))
+        return (advance, x_min - origin, x_min, y_min, x_max, y_max), points, ends
+
+
+def place_of(font, asked):
+    """Where `asked`, a value by an axis' tag, puts the font: each axis'
+    value, cut to its range, and its coordinate in 16384ths."""
+    values, coords = [], []
+    bends = font["avar"].segments if "avar" in font else {}
+    for axis in font["fvar"].axes:
+        value = min(max(float(asked.get(axis.axisTag, axis.defaultValue)), axis.minValue), axis.maxValue)
+        pairs = list(bends.get(axis.axisTag, {}).items())
+        coord = whole(bent(pairs, normalized(value, axis.minValue, axis.defaultValue, axis.maxValue)) * 16384.0)
+        values.append(value)
+        coords.append(max(-16384, min(16384, coord)))
+    return values, coords
+
+
+def held(path, what, apart, most):
+    """Stops when fontTools' instancer is further off than its rounding goes."""
+    if apart > most:
+        sys.exit("font-reference: %s: %s is %r from fontTools' instance of the font, more than %r" % (path, what, apart, most))
+
+
+def instances_of(path, font, resting, places):
+    """A variable font's axes, the instances it names, and what it is at
+    each of `places`; `resting` its measures as its tables have them."""
+    if "fvar" not in font:
+        if places:
+            sys.exit("font-reference: %s has no axes" % path)
+        return [], [], []
+    if "glyf" not in font or "gvar" not in font:
+        sys.exit("font-reference: %s: only a font of glyf outlines is read at an instance" % path)
+    fvar = font["fvar"]
+    order = font.getGlyphOrder()
+    axes = [(axis.axisTag, axis.minValue, axis.defaultValue, axis.maxValue, axis.axisNameID, axis.flags & 1 != 0) for axis in fvar.axes]
+    named = [(one.subfamilyNameID, [one.coordinates[axis.axisTag] for axis in fvar.axes]) for one in fvar.instances]
+    found = []
+    for asked in places:
+        values, coords = place_of(font, asked)
+        instance = Instance(path, font, coords)
+        what = "%s at %r" % (path, asked)
+
+        # The place, as fontTools counts it.
+        for axis, value, coord in zip(fvar.axes, values, coords):
+            theirs = normalizeValue(value, (axis.minValue, axis.defaultValue, axis.maxValue))
+            if "avar" in font:
+                theirs = piecewiseLinearMap(theirs, font["avar"].segments[axis.axisTag])
+            if floatToFixed(theirs, 14) != coord:
+                sys.exit("font-reference: %s: axis %s is at %d, and at %d by fontTools" % (what, axis.axisTag, coord, floatToFixed(theirs, 14)))
+
+        # The measures `MVAR` moves.
+        measures = [resting[name] for name in MEASURES]
+        if instance.varied and "MVAR" in font:
+            table = font["MVAR"].table
+            store = Store(table.VarStore, coords)
+            for record in table.ValueRecord:
+                if record.ValueTag in MEASURE_TAGS:
+                    measures[MEASURE_TAGS[record.ValueTag]] += whole(store.delta(record.VarIdx))
+
+        # fontTools' font of the same place: its points are not rounded
+        # until it is written.
+        static = None
+        if instance.varied:
+            static = instancer.instantiateVariableFont(
+                TTFont(os.path.join(FONTS_DIR, path), lazy=False), {axis.axisTag: value for axis, value in zip(fvar.axes, values)}
+            )
+            theirs = [
+                static["OS/2"].sxHeight,
+                static["OS/2"].sCapHeight,
+                static["post"].underlinePosition,
+                static["post"].underlineThickness,
+                static["OS/2"].yStrikeoutPosition,
+                static["OS/2"].yStrikeoutSize,
+            ]
+            if theirs != measures:
+                sys.exit("font-reference: %s: the measures are %r, and %r by fontTools" % (what, measures, theirs))
+
+        metrics, sides, simple, composite = [], [], [], []
+        shapes = hashlib.sha256()
+        for glyph_id, name in enumerate(order):
+            measured, points, ends = instance.measures(name, glyph_id)
+            metrics.append(measured)
+            sides.append((instance.sides_advance(name),))
+            shapes.update(struct.pack("<II", len(points), len(ends)))
+            for x, y, on in points:
+                shapes.update(struct.pack("<III", bits(x), bits(y), on))
+            for end in ends:
+                shapes.update(struct.pack("<I", end))
+            glyph = font["glyf"][name]
+            if 0 < len(points) <= VARIED_POINTS:
+                (composite if glyph.isComposite() else simple).append((glyph_id, ends, points))
+            if glyph.isComposite():
+                # The glyph as fontTools puts it together of its parts.
+                table = (font if static is None else static)["glyf"]
+                joined = table[name].getCoordinates(table)[0]
+                if len(points) != len(joined):
+                    sys.exit("font-reference: %s: %s has %d points, and %d by fontTools" % (what, name, len(points), len(joined)))
+                for (x, y, _), (their_x, their_y) in zip(points, joined):
+                    held(path, "%s, a point of %s put together" % (what, name), abs(x - their_x), POINT_APART)
+                    held(path, "%s, a point of %s put together" % (what, name), abs(y - their_y), POINT_APART)
+            if static is None:
+                continue
+            theirs = static["glyf"][name]
+            if glyph.isComposite():
+                sums = instance.deltas(name)
+                for number, (part, other) in enumerate(zip(glyph.components, theirs.components)):
+                    if hasattr(part, "x"):
+                        held(path, "%s, part %d of %s" % (what, number, name), abs(part.x + sums[number][0] - other.x), POINT_APART)
+                        held(path, "%s, part %d of %s" % (what, number, name), abs(part.y + sums[number][1] - other.y), POINT_APART)
+            elif glyph.numberOfContours > 0:
+                if len(points) != len(theirs.coordinates):
+                    sys.exit("font-reference: %s: %s has %d points, and %d by fontTools" % (what, name, len(points), len(theirs.coordinates)))
+                for (x, y, _), (their_x, their_y) in zip(points, theirs.coordinates):
+                    held(path, "%s, a point of %s" % (what, name), max(abs(x - their_x), abs(y - their_y)), POINT_APART)
+            their_advance = static["hmtx"].metrics[name][0]
+            held(path, "%s, the advance of %s" % (what, name), abs(measured[0] - their_advance), ADVANCE_APART)
+            held(path, "%s, the advance of %s by its sides" % (what, name), abs(sides[-1][0] - their_advance), ADVANCE_APART)
+        found.append(
+            {
+                "asked": sorted(asked.items()),
+                "values": values,
+                "coords": coords,
+                "measures": measures,
+                "metrics_sha256": digest("<iiiiii", metrics),
+                "sides_sha256": digest("<i", sides),
+                "contours_sha256": shapes.hexdigest(),
+                "shapes": spread(simple, SAMPLE_VARIED - SAMPLE_VARIED // 2) + spread(composite, SAMPLE_VARIED // 2),
+            }
+        )
+    return axes, named, found
+
+
+def number(value):
+    """A number as Zig reads it back to the same 32 bits."""
+    return "%d" % value if value == int(value) and (value != 0 or math.copysign(1, value) > 0) else repr(value)
+
+
+def placed_lines(lines, found):
+    """The fields of a variable font: its axes, the instances it names,
+    and what it is at each place read."""
+    listed(
+        lines,
+        "axes",
+        [
+            ".tag = %s, .minimum = %s, .default = %s, .maximum = %s, .name = %d, .hidden = %s"
+            % (quoted(tag), number(lower), number(middle), number(upper), name, flag(hidden))
+            for tag, lower, middle, upper, name, hidden in found["axes"]
+        ],
+    )
+    listed(lines, "named", [".name = %d, .values = &.{%s}" % (name, plain([number(value) for value in values])) for name, values in found["named"]])
+    lines.append("    .instances = &.{")
+    for instance in found["instances"]:
+        lines.append("        .{")
+        asked = [".{ .tag = %s, .value = %s }" % (quoted(tag), number(value)) for tag, value in instance["asked"]]
+        lines.append("            .asked = &.{%s}," % plain(asked))
+        lines.append("            .values = &.{%s}," % plain([number(value) for value in instance["values"]]))
+        lines.append("            .coords = &.{%s}," % plain(["%d" % coord for coord in instance["coords"]]))
+        for name, value in zip(MEASURES, instance["measures"]):
+            lines.append("            .%s = %d," % (name, value))
+        lines.append('            .metrics_sha256 = "%s",' % instance["metrics_sha256"])
+        lines.append('            .sides_sha256 = "%s",' % instance["sides_sha256"])
+        lines.append('            .contours_sha256 = "%s",' % instance["contours_sha256"])
+        lines.append("            .shapes = &.{")
+        for glyph, ends, points in instance["shapes"]:
+            lines.append("                .{")
+            lines.append("                    .glyph = %d," % glyph)
+            lines.append("                    .ends = &.{%s}," % plain(["%d" % end for end in ends]))
+            lines.append("                    .points = &.{")
+            lines.extend("                        .{ .x = %s, .y = %s, .on = %s }," % (number(x), number(y), flag(on)) for x, y, on in points)
+            lines.append("                    },")
+            lines.append("                },")
+        lines.append("            },")
+        lines.append("        },")
+    lines.append("    },")
+
+
+def read(path, index=0, glyph_step=1, ink_step=0, scaled_rows=0, scaled_step=0, places=()):
     """Everything written of one font, as a dictionary."""
     full = os.path.join(FONTS_DIR, path)
     if not os.path.exists(full):
@@ -568,7 +1081,7 @@ def read(path, index=0, glyph_step=1, ink_step=0, scaled_rows=0, scaled_step=0):
     names = [(i, name_of(font, path, i)) for i in sorted({r.nameID for r in font["name"].names})]
     tables = [(str(tag), entry.offset, entry.length) for tag, entry in font.reader.tables.items()]
 
-    return {
+    found = {
         "file": path,
         "sha256": hashlib.sha256(data).hexdigest(),
         "size": len(data),
@@ -619,6 +1132,8 @@ def read(path, index=0, glyph_step=1, ink_step=0, scaled_rows=0, scaled_step=0):
         "sequences": spread(sequences, SAMPLE_SEQUENCES),
         "names": names,
     }
+    found["axes"], found["named"], found["instances"] = instances_of(path, font, found, places)
+    return found
 
 
 def listed(lines, name, rows):
@@ -764,6 +1279,8 @@ def written(found):
         [".selector = 0x%04X, .code = 0x%04X, .glyph = %d" % sequence for sequence in found["sequences"]],
     )
     listed(lines, "names", [".id = %d, .text = %s" % (name_id, quoted(text)) for name_id, text in found["names"]])
+    if found["axes"]:
+        placed_lines(lines, found)
     lines.append("};")
     return "\n".join(lines) + "\n"
 

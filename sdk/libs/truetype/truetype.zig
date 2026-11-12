@@ -41,6 +41,16 @@
 //! sizes of pictures the nearest above the line's is taken and scaled to
 //! it. A font of colour pictures is opened with compression.library.
 //!
+//! Since 1.8 a variable font - one file that draws a range of faces
+//! along its axes, a weight from light to black - is opened at a place
+//! on them (`TTA_Axes`) and reads as a font of that face: its glyphs'
+//! outlines, their advances and the font's measures are that
+//! instance's. `FontAxes` says which axes a font has, `FontInstance`
+//! the places its designer named ("Semibold"), `FontCoordinates` where
+//! an outline is as shaping tables count it, and `GlyphAdvance` one
+//! glyph's advance. One outline is one instance; a second face of the
+//! same file is a second outline over the same bytes.
+//!
 //! Open it with OpenLibrary(TRUETYPENAME, 1); its functions are in
 //! sdk/interface/truetype.zig.
 
@@ -173,6 +183,42 @@ pub const TTA_Dummy = utility.TAG_USER + 0x61200;
 /// (u32) Which font of a collection, counted from 0: `fontCount` says how
 /// many there are. A file of one font has font 0 only. Default 0.
 pub const TTA_FontIndex = TTA_Dummy + 1;
+/// ([*]const AxisValue) Where on a variable font's axes the outline is
+/// opened: `TTA_AxisCount` values, each an axis by its tag and a value
+/// in the axis' own units. An axis not named is at its default; a value
+/// outside an axis' range is cut to it; a tag the font has no axis of
+/// is passed over, and of two values for one axis the first counts.
+/// Default: every axis at its default. Since 1.8.
+pub const TTA_Axes = TTA_Dummy + 2;
+/// (u32) How many values `TTA_Axes` points at. Default 0. Since 1.8.
+pub const TTA_AxisCount = TTA_Dummy + 3;
+
+/// A place on one axis of a variable font: the axis by its tag
+/// (`tableTag("wght")`) and a value in the axis' own units - a weight of
+/// 650, a width of 87.5 percent. What `TTA_Axes` points at and
+/// `FontInstance` fills. Since 1.8.
+pub const AxisValue = extern struct {
+    tag: u32,
+    value: f32,
+};
+
+/// One axis of a variable font, as `FontAxes` gives it. Since 1.8.
+pub const Axis = extern struct {
+    /// The axis' four letters: `wght`, `wdth`, `opsz`, `ital`, `slnt`,
+    /// or a font's own in capitals.
+    tag: u32,
+    /// The range of its values, and the one a font opened without
+    /// `TTA_Axes` is at.
+    minimum: f32,
+    default: f32,
+    maximum: f32,
+    /// Where this outline was opened on it.
+    value: f32,
+    /// The axis' name ("Weight"), as the number `FontName` takes.
+    name: u32,
+    /// The font asks that the axis is not offered to a user.
+    hidden: bool,
+};
 
 /// Which of a font's names `FontName` answers: the numbers of the `name`
 /// table, of which these are the ones most asked for. Any other number

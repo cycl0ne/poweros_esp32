@@ -25,6 +25,7 @@ const exec = sdk.exec;
 const fontimage = sdk.graphics.fontimage;
 const _picture = @import("_picture.zig");
 const _outline = @import("../outline/_outline.zig");
+const _variation = @import("../outline/_variation.zig");
 const Font = _outline.Font;
 const Point = _outline.Point;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -56,22 +57,29 @@ pub const Work = struct {
     /// font that does not say is read with.
     pub fn init(sys: *ExecBase, font: *const Font) ?Work {
         // A font of pictures reads no contours.
-        if (!_outline.hasOutlines(font)) return of(sys, 1, 1);
+        if (!_outline.hasOutlines(font)) return of(sys, 1, 1, false);
         const points: u32 = @max(font.max_points + 1, _outline.default_points);
         const contours: u32 = @max(font.max_contours + 1, _outline.default_contours);
-        return of(sys, points, contours);
+        return of(sys, points, contours, _outline.isVaried(font));
     }
 
-    /// Room for `points` points and `contours` contours.
-    fn of(sys: *ExecBase, points: u32, contours: u32) ?Work {
-        const bytes = points * @sizeOf(Point) + contours * 4 + points;
+    /// Room for `points` points and `contours` contours, and for a font
+    /// whose glyphs are `varied` the room their deltas are read in.
+    fn of(sys: *ExecBase, points: u32, contours: u32, varied: bool) ?Work {
+        const plain = points * @sizeOf(Point) + contours * 4 + points;
+        const bytes = plain + (if (varied) _variation.Scratch.bytes(points) else 0);
         const memory = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return null;
         const base: [*]u8 = @ptrCast(memory);
         const point_area: [*]Point = @ptrCast(@alignCast(base));
         const ends: [*]u32 = @ptrCast(@alignCast(base + points * @sizeOf(Point)));
         const flags = base + points * @sizeOf(Point) + contours * 4;
         return .{
-            .contours = .{ .points = point_area[0..points], .ends = ends[0..contours], .flags = flags[0..points] },
+            .contours = .{
+                .points = point_area[0..points],
+                .ends = ends[0..contours],
+                .flags = flags[0..points],
+                .vary = if (varied) _variation.Scratch.within(base + plain, points) else null,
+            },
             .memory = memory,
         };
     }
@@ -79,7 +87,7 @@ pub const Work = struct {
     /// The room made as large as a glyph that did not fit says it needs;
     /// false without memory, the room then as it was.
     fn grow(work: *Work, sys: *ExecBase) bool {
-        const larger = of(sys, work.contours.needed_points + 1, work.contours.needed_ends + 1) orelse return false;
+        const larger = of(sys, work.contours.needed_points + 1, work.contours.needed_ends + 1, work.contours.vary != null) orelse return false;
         sys.FreeVec(work.memory);
         work.* = larger;
         return true;

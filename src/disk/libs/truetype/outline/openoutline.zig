@@ -18,14 +18,22 @@ const _outline = @import("_outline.zig");
 /// ```
 ///
 /// SINCE: 1.0, the tags and collections since 1.4, fonts of cubic curves
-/// since 1.6, fonts of pictures since 1.7. LVO -20.
+/// since 1.6, fonts of pictures since 1.7, variable fonts since 1.8.
+/// LVO -20.
 ///
 /// INPUTS:
 /// - `file` - the whole file, as read.
 /// - `size` - its size in bytes.
-/// - `tags` - which font of the file is meant, or null for its first:
+/// - `tags` - which font of the file is meant and at which place on
+///   its axes, or null for its first at its default:
 ///   - `TTA_FontIndex` (u32) - the font's number in a collection, from 0;
 ///     `truetype.fontCount` says how many the file holds. Default 0.
+///   - `TTA_Axes` ([*]const truetype.AxisValue) - where on a variable
+///     font's axes: an axis by its tag and a value in the axis' own
+///     units, as `FontAxes` gives its range. Default: every axis at
+///     its default.
+///   - `TTA_AxisCount` (u32) - how many values `TTA_Axes` points at.
+///     Default 0.
 ///
 /// RESULT:
 /// The outline, or null if the file has no font of that number, the
@@ -68,6 +76,24 @@ const _outline = @import("_outline.zig");
 /// one of no outline (`GlyphSegments`). A font with outlines is drawn
 /// from them at every size, and its pictures are not read.
 ///
+/// A variable font (`fvar`) is opened at one place on its axes, its
+/// instance, and reads as a font of that face. An axis `TTA_Axes` does
+/// not name is at its default, a value outside an axis' range is cut to
+/// it, a tag the font has no axis of is passed over, and of two values
+/// for one axis the first counts. Each value becomes a coordinate - its
+/// distance from the default as a part of the range on that side, bent
+/// by the font's `avar` table, in 14 bits of fraction - and at those
+/// coordinates the font is read from then on: a `glyf` glyph's points
+/// with their deltas (`gvar`), the advances with theirs (`HVAR`, or
+/// `gvar`'s side points in a font without it), and the x height, the
+/// cap height, the underline and the strikeout with theirs (`MVAR`).
+/// The ascender, the descender and the line gap are the same at every
+/// instance. A font opened at its default, and one without axes, reads
+/// none of these tables. A table of deltas that is not for the font's
+/// number of axes is passed over, and the font read as at its default
+/// in what that table holds. A font of more than 32 axes is opened at
+/// its default whatever the tags say.
+///
 /// The outline is not written after this call, and no other call keeps
 /// anything in it: any number of tasks use one outline at once.
 ///
@@ -89,7 +115,8 @@ const _outline = @import("_outline.zig");
 /// Hinting instructions are passed over, and so are a `CFF ` table's
 /// hints and its font matrix: its glyphs are taken as drawn in the
 /// font's units. A font whose outlines are a `CFF2` table's is not
-/// opened. A font whose only character map is in a Macintosh encoding
+/// opened. An `avar` table of version 2, which bends one axis by the
+/// others, is passed over. A font whose only character map is in a Macintosh encoding
 /// is not opened.
 ///
 /// Pictures in `sbix`, and in the `bloc` and `bdat` tables, are not
@@ -97,7 +124,8 @@ const _outline = @import("_outline.zig");
 /// line set downwards.
 ///
 /// SEE ALSO:
-/// `RenderFontImage`, `GlyphIndex`, `FontName`, `FontTable`, `CloseOutline`
+/// `RenderFontImage`, `GlyphIndex`, `FontName`, `FontTable`, `FontAxes`,
+/// `FontInstance`, `CloseOutline`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -114,6 +142,16 @@ const _outline = @import("_outline.zig");
 ///     const font = tb.OpenOutline(file, size, &tags) orelse continue;
 ///     defer tb.CloseOutline(font);
 /// }
+///
+/// // A variable font at a weight of 650.
+/// const place = [_]sdk.truetype.AxisValue{.{ .tag = sdk.truetype.tableTag("wght"), .value = 650 }};
+/// const at = [_]utility.TagItem{
+///     .{ .tag = sdk.truetype.TTA_Axes, .data = @intFromPtr(&place) },
+///     .{ .tag = sdk.truetype.TTA_AxisCount, .data = place.len },
+///     .{ .tag = utility.TAG_DONE, .data = 0 },
+/// };
+/// const heavy = tb.OpenOutline(file, size, &at) orelse return error.NotTrueType;
+/// defer tb.CloseOutline(heavy);
 /// ```
 pub fn OpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32, tags: ?[*]const utility.TagItem) ?*truetype.Outline {
     const asked = tb.utility_base.GetTagData(truetype.TTA_FontIndex, 0, tags);
@@ -121,7 +159,12 @@ pub fn OpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32, tags: ?[*]co
     const index: u32 = if (asked > 0xFFFF_FFFF) 0xFFFF_FFFF else @intCast(asked);
     const memory = tb.sys_base.AllocVec(@sizeOf(_outline.Font), exec.MEMF_ANY) orelse return null;
     const font: *_outline.Font = @ptrCast(@alignCast(memory));
-    if (!_outline.open(font, file, size, index)) {
+    // Where on its axes: the values are read here and not kept. With
+    // none stated the address is not looked at, whatever it is.
+    const stated = tb.utility_base.GetTagData(truetype.TTA_AxisCount, 0, tags);
+    const axes: ?[*]const truetype.AxisValue = if (stated == 0) null else @ptrFromInt(tb.utility_base.GetTagData(truetype.TTA_Axes, 0, tags));
+    const axis_count: u32 = if (axes == null) 0 else if (stated > 0xFFFF) 0xFFFF else @intCast(stated);
+    if (!_outline.open(font, file, size, index, axes, axis_count)) {
         tb.sys_base.FreeVec(memory);
         return null;
     }

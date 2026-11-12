@@ -26,6 +26,10 @@ const GlyphVariant = @import("glyph/glyphvariant.zig").GlyphVariant;
 const FontName = @import("outline/fontname.zig").FontName;
 const FontTable = @import("outline/fonttable.zig").FontTable;
 const RenderGlyph = @import("render/renderglyph.zig").RenderGlyph;
+const FontAxes = @import("outline/fontaxes.zig").FontAxes;
+const FontInstance = @import("outline/fontinstance.zig").FontInstance;
+const FontCoordinates = @import("outline/fontcoordinates.zig").FontCoordinates;
+const GlyphAdvance = @import("glyph/glyphadvance.zig").GlyphAdvance;
 
 /// truetype.library's interface, as the SDK generates it from
 /// sdk/fd/truetype_lib.fd.
@@ -63,6 +67,10 @@ const contract_files = [_][]const u8{
     @embedFile("outline/fontname.zig"),
     @embedFile("outline/fonttable.zig"),
     @embedFile("render/renderglyph.zig"),
+    @embedFile("outline/fontaxes.zig"),
+    @embedFile("outline/fontinstance.zig"),
+    @embedFile("outline/fontcoordinates.zig"),
+    @embedFile("glyph/glyphadvance.zig"),
 };
 
 fn lvoOpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32, tags: ?[*]const utility.TagItem) callconv(.c) ?*truetype.Outline {
@@ -101,6 +109,18 @@ fn lvoFontTable(tb: *TrueTypeBase, outline: *truetype.Outline, tag: u32, length:
 fn lvoRenderGlyph(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, rows: u32, image: *truetype.GlyphImage) callconv(.c) i32 {
     return RenderGlyph(tb, outline, glyph, rows, image);
 }
+fn lvoFontAxes(tb: *TrueTypeBase, outline: *truetype.Outline, axes: ?[*]truetype.Axis, room: u32) callconv(.c) u32 {
+    return FontAxes(tb, outline, axes, room);
+}
+fn lvoFontInstance(tb: *TrueTypeBase, outline: *truetype.Outline, number: u32, values: ?[*]truetype.AxisValue, room: u32) callconv(.c) u32 {
+    return FontInstance(tb, outline, number, values, room);
+}
+fn lvoFontCoordinates(tb: *TrueTypeBase, outline: *truetype.Outline, coords: ?[*]i16, room: u32) callconv(.c) u32 {
+    return FontCoordinates(tb, outline, coords, room);
+}
+fn lvoGlyphAdvance(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32) callconv(.c) i32 {
+    return GlyphAdvance(tb, outline, glyph);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -119,6 +139,10 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoFontName),
     vec(lvoFontTable),
     vec(lvoRenderGlyph),
+    vec(lvoFontAxes),
+    vec(lvoFontInstance),
+    vec(lvoFontCoordinates),
+    vec(lvoGlyphAdvance),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

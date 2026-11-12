@@ -4,8 +4,9 @@ truetype.library's functions: a TrueType file rendered into font
 images, one size at a time, since 1.2 its glyphs as outlines, since
 1.4 a font of a collection, its names and its tables, since 1.5 one
 glyph rendered by its number, since 1.6 an OpenType file whose
-glyphs are of cubic curves (a CFF table's), and since 1.7 a font
-whose glyphs are pictures, of coverage or of colour.
+glyphs are of cubic curves (a CFF table's), since 1.7 a font
+whose glyphs are pictures, of coverage or of colour, and since 1.8
+a variable font at a place on its axes.
 Open it with OpenLibrary("truetype.library", 1).
 
 Generated from the source by `./zig build autodoc`.
@@ -13,9 +14,13 @@ Generated from the source by `./zig build autodoc`.
 ## Index
 
 - [CloseOutline](#closeoutline) - What OpenOutline made, given back.
+- [FontAxes](#fontaxes) - The axes a variable font has.
+- [FontCoordinates](#fontcoordinates) - Where an outline is on its font's axes, as the font's tables count it.
+- [FontInstance](#fontinstance) - One of the places on its axes a variable font names.
 - [FontMetrics](#fontmetrics) - A font's measures.
 - [FontName](#fontname) - One of a font's names.
 - [FontTable](#fonttable) - One of a font's tables, as the file has it.
+- [GlyphAdvance](#glyphadvance) - How far a glyph moves the point.
 - [GlyphIndex](#glyphindex) - The glyph a character is.
 - [GlyphMetrics](#glyphmetrics) - A glyph's advance, left side bearing and box.
 - [GlyphSegments](#glyphsegments) - A glyph's outline as lines and curves.
@@ -76,6 +81,221 @@ None known.
 
 ```zig
 tb.CloseOutline(outline);
+```
+
+## FontAxes
+
+The axes a variable font has.
+
+**SYNOPSIS**
+
+```zig
+fn FontAxes(tb: *TrueTypeBase, outline: *truetype.Outline, axes: ?[*]truetype.Axis, room: u32) u32
+```
+
+**SINCE**
+
+1.8. LVO -68.
+
+**INPUTS**
+
+- `outline` - what `OpenOutline` answered.
+- `axes` - where they go; null to ask only how many there are.
+- `room` - how many `axes` has room for.
+
+**RESULT**
+
+How many axes the font has, whatever `room` is; 0 for a font that is
+not a variable one.
+
+**BEHAVIOR**
+
+The axes are the font's `fvar` table's, in its order, which is the
+order every other table counts them in. Each is given with its tag,
+the range of its values in its own units, the value a font opened
+without `TTA_Axes` is at, and the value this outline was opened at:
+the one asked for, cut to the range. The first `room` of them are
+written; a caller with less room than the answer asks again with
+more.
+
+An axis' name is a number of the font's `name` table, for
+`FontName`. An axis marked `hidden` is one the font asks not to be
+offered for choosing; it is set as any other.
+
+A font of more than 32 axes is read at its default instance: its
+axes are listed, each with its default as its value.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`axes` is the caller's.
+
+**SEE ALSO**
+
+`OpenOutline`, `FontInstance`, `FontCoordinates`, `FontName`
+
+**EXAMPLES**
+
+```zig
+var axes: [8]sdk.truetype.Axis = undefined;
+const count = tb.FontAxes(outline, &axes, axes.len);
+for (axes[0..@min(count, axes.len)]) |axis| {
+    if (axis.tag == sdk.truetype.tableTag("wght")) heaviest = axis.maximum;
+}
+```
+
+## FontCoordinates
+
+Where an outline is on its font's axes, as the font's tables count it.
+
+**SYNOPSIS**
+
+```zig
+fn FontCoordinates(tb: *TrueTypeBase, outline: *truetype.Outline, coords: ?[*]i16, room: u32) u32
+```
+
+**SINCE**
+
+1.8. LVO -76.
+
+**INPUTS**
+
+- `outline` - what `OpenOutline` answered.
+- `coords` - where they go; null to ask only how many there are.
+- `room` - how many `coords` has room for.
+
+**RESULT**
+
+How many axes the font has, whatever `room` is; 0 for a font that is
+not a variable one.
+
+**BEHAVIOR**
+
+A font's tables do not speak of an axis in its own units but in
+coordinates: -1 at the axis' least value, 0 at its default, 1 at
+its most, kept as a number of 14 bits of fraction, -16384 to 16384.
+A coordinate is the value's distance from the default as a part of
+the range on that side, bent as the font's `avar` table says for
+the axis, and rounded. The first `room` of them are written, in the
+axes' order.
+
+These are what a table of the font that varies is read with: the
+positions and the choice of features a shaper takes from `GPOS`,
+`GSUB` and `GDEF`, got through `FontTable`. The outlines, advances
+and measures this library gives are already at them.
+
+Every coordinate is 0 for an outline at its font's default, and for
+a font of more than 32 axes, which is read at its default.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`coords` is the caller's.
+
+**SEE ALSO**
+
+`FontAxes`, `OpenOutline`, `FontTable`
+
+**EXAMPLES**
+
+```zig
+var coords: [32]i16 = undefined;
+const axes = tb.FontCoordinates(outline, &coords, coords.len);
+const at_default = for (coords[0..@min(axes, coords.len)]) |coord| {
+    if (coord != 0) break false;
+} else true;
+```
+
+## FontInstance
+
+One of the places on its axes a variable font names.
+
+**SYNOPSIS**
+
+```zig
+fn FontInstance(tb: *TrueTypeBase, outline: *truetype.Outline, number: u32, values: ?[*]truetype.AxisValue, room: u32) u32
+```
+
+**SINCE**
+
+1.8. LVO -72.
+
+**INPUTS**
+
+- `outline` - what `OpenOutline` answered.
+- `number` - which instance, counted from 0.
+- `values` - where its value on each axis goes; null for its name
+  only.
+- `room` - how many `values` has room for.
+
+**RESULT**
+
+The instance's name - "Semibold" - as the number `FontName` takes; 0
+when the font has no instance of that number, and nothing is written
+then.
+
+**BEHAVIOR**
+
+A variable font's designer names some places on its axes, the faces
+the family would have as separate files: Light, Regular, Bold. They
+are the `fvar` table's instances, in its order. The values are
+written an axis each, in the axes' order, with the axis' tag: the
+first `room` of them, of as many as `FontAxes` answers. They are in
+the form `TTA_Axes` takes, so the instance is opened by handing them
+to `OpenOutline`.
+
+Which instance an outline was opened at does not matter: every
+outline of a font answers the same.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`values` is the caller's.
+
+**NOTES**
+
+The numbers have no gap: a caller lists a font's instances by
+counting up from 0 until the answer is 0. A name number is never 0
+for an instance, 0 being the font's copyright; a file that says so
+all the same has its instances end there.
+
+**SEE ALSO**
+
+`FontAxes`, `OpenOutline`, `FontName`
+
+**EXAMPLES**
+
+```zig
+// Every instance the font names, opened in turn.
+var values: [8]sdk.truetype.AxisValue = undefined;
+var number: u32 = 0;
+while (tb.FontInstance(outline, number, &values, values.len) != 0) : (number += 1) {
+    const tags = [_]utility.TagItem{
+        .{ .tag = sdk.truetype.TTA_Axes, .data = @intFromPtr(&values) },
+        .{ .tag = sdk.truetype.TTA_AxisCount, .data = @min(tb.FontAxes(outline, null, 0), values.len) },
+        .{ .tag = utility.TAG_DONE, .data = 0 },
+    };
+    const face = tb.OpenOutline(file, size, &tags) orelse continue;
+    defer tb.CloseOutline(face);
+}
 ```
 
 ## FontMetrics
@@ -280,6 +500,69 @@ const start = tb.FontTable(outline, sdk.truetype.tableTag("GSUB"), &length) orel
 const substitutions = start[0..length];
 ```
 
+## GlyphAdvance
+
+How far a glyph moves the point.
+
+**SYNOPSIS**
+
+```zig
+fn GlyphAdvance(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32) i32
+```
+
+**SINCE**
+
+1.8. LVO -80.
+
+**INPUTS**
+
+- `outline` - what `OpenOutline` answered.
+- `glyph` - the glyph's number, from `GlyphIndex`.
+
+**RESULT**
+
+The glyph's advance in the font's units, never less than 0; 0 for a
+number past the font's glyphs.
+
+**BEHAVIOR**
+
+The advance is the font's horizontal metrics' (`hmtx`), the one
+`GlyphMetrics` gives. For a variable font away from its default it
+is that instance's: the advance plus what the font's `HVAR` table
+says it changes by there, rounded to a whole unit; or, in a font
+without that table, the distance between the glyph's two sides as
+its deltas in `gvar` move them, rounded.
+
+The call reads no outline and takes no memory, which the box of a
+glyph away from the default does. It is the one to ask when a line
+of text is measured.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**BUGS**
+
+No vertical advance: text set down the page is not read.
+
+**SEE ALSO**
+
+`GlyphMetrics`, `GlyphIndex`, `Kerning`
+
+**EXAMPLES**
+
+```zig
+var width: i32 = 0;
+for (text) |code| width += tb.GlyphAdvance(outline, tb.GlyphIndex(outline, code));
+```
+
 ## GlyphIndex
 
 The glyph a character is.
@@ -353,7 +636,7 @@ fn GlyphMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, metri
 **SINCE**
 
 1.2, fonts of cubic curves since 1.6, fonts of pictures since
-1.7. LVO -36.
+1.7, variable fonts since 1.8. LVO -36.
 
 **INPUTS**
 
@@ -364,7 +647,9 @@ fn GlyphMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, metri
 **RESULT**
 
 True, and `metrics` filled in, in the font's units, y up; false - and
-`metrics` all 0 - for a number past the font's glyphs.
+`metrics` all 0 - for a number past the font's glyphs, and for a
+glyph of a variable font away from its default when there is not the
+memory to read it.
 
 **BEHAVIOR**
 
@@ -384,6 +669,16 @@ units by the strike's pixels an em and widened to whole units. Its
 advance and left side bearing are the font's horizontal metrics, as
 any glyph's. A glyph no strike has a picture of has a box of 0s.
 
+A `glyf` glyph of a variable font away from its default has the
+measures of that instance. The box its data gives is the default's,
+so the glyph is read with its deltas, in memory taken and given back
+within the call, and the box is the one of its points there, the
+curves' control points among them, widened to whole units. The
+advance is `GlyphAdvance`'s. The left side bearing is from the
+glyph's origin there - its left side point as the deltas move it,
+rounded - to the left of that box. A glyph whose deltas are damaged
+has a box of 0s and its advance.
+
 **CONTEXT**
 
 - Waits: no.
@@ -395,13 +690,18 @@ any glyph's. A glyph no strike has a picture of has a box of 0s.
 
 `metrics` is the caller's.
 
+**NOTES**
+
+A caller that wants the advance only asks `GlyphAdvance`, which
+takes no memory at any instance.
+
 **BUGS**
 
 No vertical metrics: text set down the page is not read.
 
 **SEE ALSO**
 
-`GlyphIndex`, `FontMetrics`, `GlyphSegments`
+`GlyphIndex`, `GlyphAdvance`, `FontMetrics`, `GlyphSegments`
 
 **EXAMPLES**
 
@@ -631,15 +931,23 @@ fn OpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32, tags: ?[*]const 
 **SINCE**
 
 1.0, the tags and collections since 1.4, fonts of cubic curves
-since 1.6, fonts of pictures since 1.7. LVO -20.
+since 1.6, fonts of pictures since 1.7, variable fonts since 1.8.
+LVO -20.
 
 **INPUTS**
 
 - `file` - the whole file, as read.
 - `size` - its size in bytes.
-- `tags` - which font of the file is meant, or null for its first:
+- `tags` - which font of the file is meant and at which place on
+  its axes, or null for its first at its default:
   - `TTA_FontIndex` (u32) - the font's number in a collection, from 0;
     `truetype.fontCount` says how many the file holds. Default 0.
+  - `TTA_Axes` ([*]const truetype.AxisValue) - where on a variable
+    font's axes: an axis by its tag and a value in the axis' own
+    units, as `FontAxes` gives its range. Default: every axis at
+    its default.
+  - `TTA_AxisCount` (u32) - how many values `TTA_Axes` points at.
+    Default 0.
 
 **RESULT**
 
@@ -684,6 +992,24 @@ font maps, measures and names as any other, and every glyph of it is
 one of no outline (`GlyphSegments`). A font with outlines is drawn
 from them at every size, and its pictures are not read.
 
+A variable font (`fvar`) is opened at one place on its axes, its
+instance, and reads as a font of that face. An axis `TTA_Axes` does
+not name is at its default, a value outside an axis' range is cut to
+it, a tag the font has no axis of is passed over, and of two values
+for one axis the first counts. Each value becomes a coordinate - its
+distance from the default as a part of the range on that side, bent
+by the font's `avar` table, in 14 bits of fraction - and at those
+coordinates the font is read from then on: a `glyf` glyph's points
+with their deltas (`gvar`), the advances with theirs (`HVAR`, or
+`gvar`'s side points in a font without it), and the x height, the
+cap height, the underline and the strikeout with theirs (`MVAR`).
+The ascender, the descender and the line gap are the same at every
+instance. A font opened at its default, and one without axes, reads
+none of these tables. A table of deltas that is not for the font's
+number of axes is passed over, and the font read as at its default
+in what that table holds. A font of more than 32 axes is opened at
+its default whatever the tags say.
+
 The outline is not written after this call, and no other call keeps
 anything in it: any number of tasks use one outline at once.
 
@@ -708,7 +1034,8 @@ outline reads them in place. The tags are read during the call only.
 Hinting instructions are passed over, and so are a `CFF ` table's
 hints and its font matrix: its glyphs are taken as drawn in the
 font's units. A font whose outlines are a `CFF2` table's is not
-opened. A font whose only character map is in a Macintosh encoding
+opened. An `avar` table of version 2, which bends one axis by the
+others, is passed over. A font whose only character map is in a Macintosh encoding
 is not opened.
 
 Pictures in `sbix`, and in the `bloc` and `bdat` tables, are not
@@ -717,7 +1044,8 @@ line set downwards.
 
 **SEE ALSO**
 
-`RenderFontImage`, `GlyphIndex`, `FontName`, `FontTable`, `CloseOutline`
+`RenderFontImage`, `GlyphIndex`, `FontName`, `FontTable`, `FontAxes`,
+`FontInstance`, `CloseOutline`
 
 **EXAMPLES**
 
@@ -735,6 +1063,16 @@ while (index < sdk.truetype.fontCount(file[0..size])) : (index += 1) {
     const font = tb.OpenOutline(file, size, &tags) orelse continue;
     defer tb.CloseOutline(font);
 }
+
+// A variable font at a weight of 650.
+const place = [_]sdk.truetype.AxisValue{.{ .tag = sdk.truetype.tableTag("wght"), .value = 650 }};
+const at = [_]utility.TagItem{
+    .{ .tag = sdk.truetype.TTA_Axes, .data = @intFromPtr(&place) },
+    .{ .tag = sdk.truetype.TTA_AxisCount, .data = place.len },
+    .{ .tag = utility.TAG_DONE, .data = 0 },
+};
+const heavy = tb.OpenOutline(file, size, &at) orelse return error.NotTrueType;
+defer tb.CloseOutline(heavy);
 ```
 
 ## RenderFontImage
