@@ -34,6 +34,14 @@
 //! and CMD_WRITE of a string, which is why the handler above them is one
 //! piece of code.
 //!
+//! What a window's console has ready together - an answer it gives, a snip
+//! pasted - goes in as one (`feed`), and a READ that waits is answered
+//! after the last of it (`settle`): a raw reader gets an answer whole, not
+//! the part of it that had come when it asked. `burst_max` bytes at most
+//! go in between two looks at the packets. The machine's port goes in a
+//! byte at a time, each answered at once, so nothing is taken from it past
+//! the byte that ends the wait.
+//!
 //! Packets:
 //! - FINDINPUT, FINDOUTPUT, FINDUPDATE: an interactive handle. With AUTO
 //!   the terminal itself waits for the first READ, WRITE, WAIT_CHAR or
@@ -124,8 +132,8 @@ pub const window = @import("window.zig");
 pub const HANDLER_NAME = "con-handler";
 const HANDLER_VERSION = 1;
 /// 1: Tab completes names.
-const HANDLER_REVISION = 7;
-const BUILD_DATE = "10.11.2026";
+const HANDLER_REVISION = 8;
+const BUILD_DATE = "12.11.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -133,6 +141,10 @@ const HANDLER_VERSION_STRING =
 
 /// READs and WAIT_CHARs that can wait at once.
 const max_reads = 16;
+/// How many bytes a device has ready go in before the packets are looked
+/// at again: far more than an answer, and a longer snip goes in over
+/// several rounds with the packets served between them.
+const burst_max = 256;
 /// WRITEs that can wait at once while the output is held. A writer waits
 /// for its answer, so this is one per program writing here.
 const max_held = 8;
@@ -464,6 +476,14 @@ pub fn Handler(comptime Io: type) type {
 
         /// A byte from the terminal.
         pub fn input(h: *Self, c: u8) void {
+            h.feed(c);
+            h.settle();
+        }
+
+        /// A byte from the terminal that more may follow at once: edited,
+        /// echoed and its break signalled, while the READs and WAIT_CHARs
+        /// wait for `settle`.
+        pub fn feed(h: *Self, c: u8) void {
             h.ed.key(c);
             h.ed.flush();
             const bits = h.ed.breaks;
@@ -475,6 +495,11 @@ pub fn Handler(comptime Io: type) type {
                     if (w != target) h.io.signal(w, bits);
                 }
             }
+        }
+
+        /// What `feed` left undone: the READs and WAIT_CHARs answered with
+        /// all that went in.
+        pub fn settle(h: *Self) void {
             h.serve();
             // The key may have been the one that lets held output go.
             h.writeHeld();
@@ -978,17 +1003,29 @@ pub fn conHandler(sb: *ExecBase) callconv(.c) void {
         for (&st.io.units) |*u| {
             if (!u.open or !u.listening or sb.CheckIO(&u.read.io_ser.req) == null) continue;
             any = true;
-            const err = sb.WaitIO(&u.read.io_ser.req);
-            u.listening = false;
-            if (err == exec.IOERR_ENDOFSTREAM) {
-                u.ended = true;
-                h.terminalEnded();
-                continue;
+            // A read sent to a device that has the next byte already is
+            // done when it comes back, so this goes round for as long as
+            // the device has more.
+            var fed: usize = 0;
+            var ended = false;
+            while (u.listening and sb.CheckIO(&u.read.io_ser.req) != null) {
+                const err = sb.WaitIO(&u.read.io_ser.req);
+                u.listening = false;
+                if (err == exec.IOERR_ENDOFSTREAM) {
+                    u.ended = true;
+                    ended = true;
+                    break;
+                }
+                const got = err == 0 and u.read.io_ser.actual == 1;
+                const c = u.byte;
+                st.io.readNext(u);
+                if (!got) break;
+                h.feed(c);
+                fed += 1;
+                if (st.io.shared or fed == burst_max) break;
             }
-            const got = err == 0 and u.read.io_ser.actual == 1;
-            const c = u.byte;
-            st.io.readNext(u);
-            if (got) h.input(c);
+            if (fed != 0) h.settle();
+            if (ended) h.terminalEnded();
         }
         for (0..max_waits) |slot| {
             if (!st.io.timer_busy[slot] or sb.CheckIO(&st.io.timers[slot].node) == null) continue;
@@ -1623,6 +1660,36 @@ test "the handler: WAIT_CHAR, SCREEN_MODE, breaks, CHANGE_SIGNAL, DISK_INFO, the
 }
 
 const Answer = struct { res1: isize, res2: i32 };
+
+test "what goes in together reaches a waiting raw READ whole" {
+    var io: TestIo = .{};
+    var h = Handler(TestIo).init(&io, true); // RAW:
+    var fh: dos.FileHandle = .{};
+    var find = DosPacket.init(.findinput, .{ .find = .{ .fh = &fh, .lock = null, .name = "RAW:" } });
+    h.packet(&find);
+    const answer = "\x1b[8;23;109t";
+
+    // A byte at a time, each answered: the READ has the first one only.
+    var buffer: [32]u8 = undefined;
+    var read = DosPacket.init(.read, .{ .io = .{ .fh = &fh, .buffer = &buffer, .length = buffer.len } });
+    read.res1 = 99;
+    h.packet(&read);
+    try testing.expectEqual(@as(isize, 99), read.res1); // waits
+    for (answer) |c| h.input(c);
+    try testing.expectEqual(@as(isize, 1), read.res1);
+    read.res1 = 99;
+    h.packet(&read);
+    try testing.expectEqualStrings(answer[1..], buffer[0..@intCast(read.res1)]);
+
+    // Fed together and then settled: all of it in the one READ.
+    read.res1 = 99;
+    h.packet(&read);
+    try testing.expectEqual(@as(isize, 99), read.res1);
+    for (answer) |c| h.feed(c);
+    try testing.expectEqual(@as(isize, 99), read.res1); // still waiting
+    h.settle();
+    try testing.expectEqualStrings(answer, buffer[0..@intCast(read.res1)]);
+}
 
 test {
     _ = window;

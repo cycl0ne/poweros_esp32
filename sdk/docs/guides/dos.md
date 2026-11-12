@@ -1305,7 +1305,10 @@ Asked `CSI 18 t`, it answers its size as
 place; on a console over a device the terminal at the other end
 answers, if it can. A program that wants the size reads the answer in
 raw mode, with WaitForChar giving up after a moment - which is how
-`C:net/SSH` sizes its terminal.
+`C:net/SSH` sizes its terminal. A window's answer reaches a waiting raw
+Read in one piece, as a snip pasted into it does (con-handler 1.8); from
+a device the bytes come as they arrive, and a reader there puts the
+answer together.
 
 ```zig
 const in = dl.Input() orelse return dos.RETURN_FAIL;
