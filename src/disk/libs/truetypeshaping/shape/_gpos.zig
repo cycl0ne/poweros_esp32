@@ -11,10 +11,14 @@
 //! A value record changes a glyph's place and advance by fixed amounts.
 //! An attachment is not finished when its lookup is applied: the mark is
 //! given the distance between its anchor and the anchor of the glyph it
-//! sits on, and a note of which glyph that is. Once every lookup has run
+//! sits on, and a note of which glyph that is. Across the line, the
+//! mark takes in at once how far its glyph stands off the line as the
+//! lookup finds it (`crossOffset`): what moves the glyph up or down
+//! afterwards does not move the mark. Once every lookup has run
 //! (`finish`), the notes are followed: a mark's offset takes in its
-//! glyph's own, and the advances that lie between the two on the line,
-//! so that it is drawn from its own place on the line as every glyph is.
+//! glyph's own along the line, and the advances that lie between the
+//! two, so that it is drawn from its own place on the line as every
+//! glyph is.
 //!
 //! Measures are the font's units. A record's number and an anchor's may
 //! each name a device table. One kind of it names an item of the font's
@@ -223,12 +227,30 @@ fn attach(apply: *Apply, at: u32, to: u32, marks: Table, mark_index: u32, anchor
     if (target.empty()) return null;
     const on = anchor(apply, target);
     const own = anchor(apply, marks.partAt(record + 2));
-    const item = &apply.buffer.items[at];
+    const items = apply.buffer.slice();
+    const item = &items[at];
     item.x_offset = on.x - own.x;
-    item.y_offset = on.y - own.y;
+    item.y_offset = (on.y - own.y) +| crossOffset(items, to);
     item.attach_type = _buffer.ATTACH_MARK;
     item.attach_chain = @as(i32, @intCast(to)) - @as(i32, @intCast(at));
     return at + 1;
+}
+
+/// How far the glyph at `at` stands off the line now: its own offset,
+/// and those of the glyphs it hangs on by its exit and their entries.
+fn crossOffset(items: []const Item, at: u32) i32 {
+    var node = at;
+    var offset = items[node].y_offset;
+    var steps: usize = 1;
+    while (steps < items.len and items[node].attach_type == _buffer.ATTACH_CURSIVE) : (steps += 1) {
+        const step = items[node].attach_chain;
+        if (step == 0) break;
+        const target = @as(i64, node) + step;
+        if (target < 0 or target >= items.len) break;
+        node = @intCast(target);
+        offset +|= items[node].y_offset;
+    }
+    return offset;
 }
 
 /// Whether the glyph at `at` may carry a mark: of the glyphs one glyph
@@ -412,10 +434,11 @@ fn turnChain(buffer: *Buffer, start: u32, new_parent: u32) void {
 /// How long a chain of attachments is followed.
 const chain_limit = 64;
 
-/// Once every lookup has run: each attached glyph's offset takes in the
-/// offset of the glyph it is attached to, and a mark's the advances
-/// between the two as well. `backward` says the run is read from right
-/// to left, where a mark is drawn before its glyph.
+/// Once every lookup has run: a glyph attached by its exit takes in how
+/// far the glyph it hangs on stands off the line, a mark its glyph's
+/// offset along the line and the advances between the two. `backward`
+/// says the run is read from right to left, where a mark is drawn
+/// before its glyph.
 pub fn finish(buffer: *Buffer, backward: bool) void {
     const items = buffer.slice();
     for (0..items.len) |start| {
@@ -453,7 +476,6 @@ fn settle(items: []Item, child: u32, parent: u32, backward: bool) void {
         return;
     }
     item.x_offset +|= items[parent].x_offset;
-    item.y_offset +|= items[parent].y_offset;
     if (parent >= child) return;
     if (backward) {
         for (items[parent + 1 .. child + 1]) |between| item.x_offset +|= between.advance;

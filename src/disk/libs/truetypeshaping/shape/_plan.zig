@@ -18,6 +18,14 @@
 //! which is the order they are applied in, whatever the order of the
 //! features - and makes one of a lookup named twice.
 //!
+//! A script's model (`_indic.zig`) says more of a feature, and its
+//! lookups carry it: the go through `GSUB` they belong to
+//! (`Wanted.go`), the forms whose items they hold for besides the
+//! feature's bit, whether their sequences stay within a syllable, and
+//! whether the joiners are the model's to deal with. `wouldReplace`
+//! answers what the model asks of the font: whether a feature has a
+//! rule for a few glyphs standing by themselves (`_would.zig`).
+//!
 //! A table of version 1.1 may replace features under conditions on a
 //! variable font's axes. The conditions are judged at the font's place
 //! on its axes, a coordinate an axis; an axis the place does not say is
@@ -27,6 +35,7 @@
 
 const _tables = @import("_tables.zig");
 const Table = _tables.Table;
+const _would = @import("_would.zig");
 
 fn tag(comptime letters: *const [4]u8) u32 {
     return (@as(u32, letters[0]) << 24) | (@as(u32, letters[1]) << 16) | (@as(u32, letters[2]) << 8) | letters[3];
@@ -42,6 +51,16 @@ pub const Wanted = struct {
     tag: u32,
     mask: u32,
     value: u32,
+    /// The forms of a script's model it holds for besides
+    /// (`Item.forms`).
+    forms: u8 = 0,
+    /// Which of the model's goes through `GSUB` its lookups are
+    /// applied in.
+    go: u8 = 0,
+    /// Its lookups' sequences stay within a syllable.
+    per_syllable: bool = false,
+    /// The joiners are the model's to deal with (`Apply.by_hand`).
+    by_hand: bool = false,
 };
 
 /// A lookup to apply: its number in the table's list, the bits of the
@@ -53,6 +72,9 @@ pub const Entry = struct {
     /// Its place among the lookups collected, which keeps the order of
     /// two entries for one lookup.
     order: u32,
+    forms: u8 = 0,
+    per_syllable: bool = false,
+    by_hand: bool = false,
 };
 
 const no_feature = 0xFFFF;
@@ -71,6 +93,9 @@ pub const Layout = struct {
     language: Table = Table.none,
     /// The features replaced for this font, if any.
     replaced: Table = Table.none,
+    /// The tag of the script the table is read for; 0 where it has none
+    /// of those tried.
+    script: u32 = 0,
 
     /// What `table` - a `GSUB` or a `GPOS` - has for `script`, or else
     /// for `other_script`, and `language`, for a font at the place
@@ -83,11 +108,12 @@ pub const Layout = struct {
             .lookups = table.partAt(8),
         };
         const scripts = table.partAt(4);
-        const chosen = findTagged(scripts, 0, script) orelse
-            findTagged(scripts, 0, other_script) orelse
-            findTagged(scripts, 0, tag("DFLT")) orelse
-            findTagged(scripts, 0, tag("dflt")) orelse
-            findTagged(scripts, 0, tag("latn")) orelse Table.none;
+        var chosen = Table.none;
+        for ([_]u32{ script, other_script, tag("DFLT"), tag("dflt"), tag("latn") }) |tried| {
+            chosen = findTagged(scripts, 0, tried) orelse continue;
+            layout.script = tried;
+            break;
+        }
         if (!chosen.empty()) {
             layout.language = findTagged(chosen, 2, language) orelse
                 findTagged(chosen, 2, tag("dflt")) orelse chosen.partAt(0);
@@ -136,9 +162,29 @@ pub const Layout = struct {
         for (wanted) |feature_wanted| {
             if (feature_wanted.value == 0) continue;
             const index = layout.findFeature(feature_wanted.tag) orelse continue;
+            const first = count;
             layout.add(index, feature_wanted.mask, feature_wanted.value, entries, &count);
+            var added = first;
+            while (added < count and added < entries.len) : (added += 1) {
+                entries[added].forms = feature_wanted.forms;
+                entries[added].per_syllable = feature_wanted.per_syllable;
+                entries[added].by_hand = feature_wanted.by_hand;
+            }
         }
         return count;
+    }
+
+    /// Whether a lookup of the feature `wanted` has a rule for exactly
+    /// `glyphs` (`_would.zig`).
+    pub fn wouldReplace(layout: *const Layout, wanted: u32, glyphs: []const u32, alone: bool) bool {
+        const table = layout.feature(layout.findFeature(wanted) orelse return false);
+        const listed = layout.lookups.count(0, 2, 2);
+        for (0..table.count(2, 4, 2)) |entry| {
+            const lookup = table.word(4 + @as(u32, @intCast(entry)) * 2);
+            if (lookup >= listed) continue;
+            if (_would.wouldReplace(layout.lookups, lookup, glyphs, alone)) return true;
+        }
+        return false;
     }
 
     fn add(layout: *const Layout, index: u32, mask: u32, value: u32, entries: []Entry, count: *u32) void {
@@ -210,8 +256,10 @@ fn before(left: Entry, right: Entry) bool {
 }
 
 /// Sorts `entries` by lookup, keeping the order of those for one lookup,
-/// and makes one entry of those for one lookup with one value. Answers
-/// how many are left.
+/// and makes one entry of those for one lookup with one value: it holds
+/// for all they hold for, leaves the joiners to the model where one of
+/// them does, and stays in a syllable where the first does. Answers how
+/// many are left.
 pub fn arrange(entries: []Entry) u32 {
     // A heap sort: the largest to the end, one after the other.
     var start = entries.len / 2;
@@ -231,6 +279,8 @@ pub fn arrange(entries: []Entry) u32 {
     for (entries) |entry| {
         if (kept > 0 and entries[kept - 1].lookup == entry.lookup and entries[kept - 1].value == entry.value) {
             entries[kept - 1].mask |= entry.mask;
+            entries[kept - 1].forms |= entry.forms;
+            if (entry.by_hand) entries[kept - 1].by_hand = true;
             continue;
         }
         entries[kept] = entry;

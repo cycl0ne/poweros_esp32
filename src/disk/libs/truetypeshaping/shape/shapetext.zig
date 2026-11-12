@@ -18,7 +18,8 @@ const Source = @import("_source.zig").Source;
 /// fn ShapeText(sb: *TrueTypeShapingBase, outline: *truetype.Outline, text: [*]const u8, length: u32, direction: u32, language: u32, features: ?[*]const truetypeshaping.Feature, run: *truetypeshaping.ShapedRun) i32
 /// ```
 ///
-/// SINCE: 1.1, a variable font at its instance since 1.3. LVO -24.
+/// SINCE: 1.1, a variable font at its instance since 1.3, Devanagari
+/// by its syllables since 1.5. LVO -24.
 ///
 /// INPUTS:
 /// - `outline` - what truetype.library's `OpenOutline` answered.
@@ -102,6 +103,43 @@ const Source = @import("_source.zig").Source;
 /// them; and Mongolian's variation selectors (U+180B to U+180D, U+180F)
 /// and the tag characters (U+E0020 to U+E007F) end both.
 ///
+/// A stretch of Devanagari is shaped by its syllables. A syllable is
+/// a consonant or a vowel letter with what is written on it: the
+/// consonants a halant (U+094D) joins to it, a nukta, vowel signs, the
+/// signs from U+0900 to U+0903, the accents. In each the base is found
+/// - the last consonant the font has no form of below or behind
+/// another - and the glyphs are put in the order the font's rules are
+/// written for. Then the forms are asked for, a go through `GSUB`
+/// each, in this order: `nukt`, `akhn`, `rphf`, `rkrf`, `pref`, `blwf`,
+/// `abvf`, `half`, `pstf`, `vatu`, `cjct`. `rphf` holds for a ra with
+/// a halant that starts the syllable, `half` for the consonants before
+/// the base, `blwf`, `abvf` and `pstf` for those behind it, `pref` for
+/// one behind it that is drawn before it, the others for every glyph;
+/// in these goes a sequence stays within its syllable. After them the
+/// vowel sign written to the left of its consonants (U+093F), the ra
+/// that became a reph and a form drawn before the base go to where
+/// they are drawn, and the rest is applied in one go: `init` for such
+/// a vowel sign at the start of a word, `pres`, `abvs`, `blws`, `psts`,
+/// `haln`, and the features of any text but `liga`.
+///
+/// Between a halant and the next consonant, the joiner (U+200D) asks
+/// for the half form and the non-joiner (U+200C) for the consonant
+/// with its halant. One of the forms' features switched off for the
+/// whole text takes its part of the syllable with it: without `rphf`
+/// a ra at the start stays a consonant. In such a stretch a character
+/// is taken apart also where the font has a glyph for it, but for
+/// U+0931, so that a letter with a nukta is shaped the same written as
+/// one character or as two; a mark keeps its advance and is not moved
+/// back.
+///
+/// Whether a consonant has a form below or behind the base is asked of
+/// the font: whether `blwf`, `vatu`, `pstf` or `pref` have a rule for
+/// it and the halant. A font that lists the script under the older tag
+/// `deva` has its rules written for the halant behind the consonant:
+/// for it the halant behind the base is moved behind the last
+/// consonant. A font whose `GSUB` lists `DFLT` or `latn` and not the
+/// script shapes the stretch as any other text.
+///
 /// Then each glyph gets the advance the font gives it, and `GPOS`
 /// moves it. Where `GPOS` has no `kern` feature for the language, the
 /// font's `kern` table is asked through `Kerning` for each glyph and
@@ -158,9 +196,13 @@ const Source = @import("_source.zig").Source;
 /// apart, so no pair is kerned and no sequence found across the border
 /// of two scripts.
 ///
-/// Every script is shaped by the features above and nothing is
-/// rearranged or told apart by its place in a word: the joined forms of
-/// Arabic and the syllables of the scripts of India are not made.
+/// Devanagari is the one script shaped by its syllables. Every other
+/// one is shaped by the features above and nothing is rearranged or
+/// told apart by its place in a word: the joined forms of Arabic and
+/// the syllables of the other scripts of India are not made. A
+/// syllable that is not whole - a vowel sign with no consonant - is
+/// drawn as it is written: no dotted circle stands in for the missing
+/// letter. The script's tag `dev3` is not read.
 ///
 /// Only a letter and its marks are put together: two letters that
 /// make one character - the single letters of a Hangul syllable - stay

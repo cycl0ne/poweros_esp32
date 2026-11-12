@@ -11,7 +11,9 @@
 //!
 //! Besides its number, its cluster and its place, an item carries what
 //! the lookups ask about each other's work: the kind of glyph it is, the
-//! ligature it is a part of or sits on, and what it is attached to.
+//! ligature it is a part of or sits on, and what it is attached to. In
+//! a script shaped by syllables it carries its syllable, what it is in
+//! it, and the forms the script's model asks of it (`_syllable.zig`).
 
 /// Where a call's scratch memory comes from.
 pub const Memory = struct {
@@ -52,6 +54,9 @@ pub const ITEM_IGNORABLE: u8 = 0x08;
 pub const ITEM_NON_JOINER: u8 = 0x10;
 pub const ITEM_JOINER: u8 = 0x20;
 pub const ITEM_HIDDEN: u8 = 0x40;
+/// A letter, a mark or a format character, or no character at all: what
+/// a word goes on over.
+pub const ITEM_LETTER: u8 = 0x80;
 
 /// One glyph of the run.
 pub const Item = struct {
@@ -79,6 +84,17 @@ pub const Item = struct {
     /// The width a space drawn with the font's space glyph gets
     /// (`_normal.zig`); 0 for every other glyph.
     space: u8 = 0,
+    /// The syllable it is in, in a script shaped by syllables: the
+    /// syllable's number in the upper four bits, its kind in the lower
+    /// (`_syllable.zig`); 0 in any other script.
+    syllable: u8 = 0,
+    /// What it is in its syllable, and where it stands in it
+    /// (`_syllable.zig`).
+    category: u8 = 0,
+    position: u8 = 0,
+    /// The forms a script's model asks of it, a bit each
+    /// (`_syllable.zig`): features that hold for it besides `mask`'s.
+    forms: u8 = 0,
 
     /// Which part of a ligature it sits on; 0 for a ligature itself.
     pub fn partOn(item: *const Item) u32 {

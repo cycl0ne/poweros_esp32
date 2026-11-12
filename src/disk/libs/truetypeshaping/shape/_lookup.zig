@@ -137,7 +137,9 @@ pub fn run(apply: *Apply, index: u32, mask: u32, value: u32) void {
             at -= 1;
             if (!apply.spend()) return;
             const item = &buffer.items[at];
-            if (item.mask & mask == 0 or apply.skips(item)) continue;
+            if (item.mask & mask == 0 and item.forms & apply.forms == 0) continue;
+            if (apply.skips(item)) continue;
+            apply.startAt(item);
             _ = applyAt(apply, lookup, at);
         }
         return;
@@ -146,8 +148,9 @@ pub fn run(apply: *Apply, index: u32, mask: u32, value: u32) void {
     while (at < buffer.len and !buffer.failed) {
         if (!apply.spend()) return;
         const item = &buffer.items[at];
-        if (item.mask & mask != 0 and !apply.skips(item)) {
+        if ((item.mask & mask != 0 or item.forms & apply.forms != 0) and !apply.skips(item)) {
             const length = buffer.len;
+            apply.startAt(item);
             if (applyAt(apply, lookup, at)) |next| {
                 // The place it names, as long as that gets the run on:
                 // further along, or the same place in a shorter run.

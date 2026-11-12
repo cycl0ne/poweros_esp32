@@ -21,6 +21,13 @@
 //! part two letters a font joins - except the non-joiner, which is there
 //! to part them.
 //!
+//! A script's model has a lookup stay within one syllable
+//! (`Apply.per_syllable`): no glyph of another is part of its sequence
+//! or stands for what is before or behind it. Where the joiners are the
+//! model's to deal with (`Apply.by_hand`), a sequence of glyphs to
+//! replace stops at the joiner too, and what stands around one stops at
+//! the non-joiner.
+//!
 //! Parts of a ligature made earlier are matched with care: marks that sit
 //! on different parts of one ligature do not form a sequence together,
 //! and a mark that sits on a ligature forms none with a glyph that does
@@ -78,6 +85,35 @@ pub const Apply = struct {
     depth: u32 = 0,
     /// Whether the lookup goes through the run from its end.
     reversing: bool = false,
+    /// The forms the lookup holds for besides `mask`'s features
+    /// (`Item.forms`).
+    forms: u8 = 0,
+    /// Whether the lookup's sequences stay within one syllable, and the
+    /// syllable of the item it is applied at; 0 for none.
+    per_syllable: bool = false,
+    syllable: u8 = 0,
+    /// Whether the joiners are the script's model's to deal with: a
+    /// sequence of glyphs to replace stops at the joiner too, and what
+    /// stands around one stops at the non-joiner.
+    by_hand: bool = false,
+
+    /// Whether the lookup holds for `item`: one of its features does,
+    /// and the item is in the syllable the lookup stays in.
+    pub fn holds(apply: *const Apply, item: *const Item) bool {
+        if (item.mask & apply.mask == 0 and item.forms & apply.forms == 0) return false;
+        return apply.inSyllable(item);
+    }
+
+    /// Whether `item` is in the syllable the lookup stays in.
+    pub fn inSyllable(apply: *const Apply, item: *const Item) bool {
+        return apply.syllable == 0 or item.syllable == apply.syllable;
+    }
+
+    /// Before the lookup is applied at `item`: the syllable its
+    /// sequences stay in is that item's.
+    pub fn startAt(apply: *Apply, item: *const Item) void {
+        apply.syllable = if (apply.per_syllable and apply.kind == .substitute) item.syllable else 0;
+    }
 
     /// Takes one piece of work off what the table has left for the run.
     /// A piece is a glyph a lookup comes by, a subtable looked at for
@@ -127,12 +163,15 @@ pub const Apply = struct {
     /// glyph: a character a text does not show, which no lookup has
     /// replaced. A sequence of glyphs to replace stops at the non-joiner
     /// and at the hidden ones; what stands `around` it stops at the
-    /// hidden ones alone. Positions stop at none.
+    /// hidden ones alone. With the joiners dealt with `by_hand`, the
+    /// sequence to replace stops at the joiner as well, and what stands
+    /// around it at the non-joiner. Positions stop at none.
     pub fn stepsOver(apply: *const Apply, item: *const Item, around: bool) bool {
         if (item.flags & (_buffer.ITEM_IGNORABLE | _buffer.ITEM_SUBSTITUTED) != _buffer.ITEM_IGNORABLE) return false;
         if (apply.kind == .position) return true;
         if (item.flags & _buffer.ITEM_HIDDEN != 0) return false;
-        if (item.flags & _buffer.ITEM_NON_JOINER != 0) return around;
+        if (item.flags & _buffer.ITEM_NON_JOINER != 0) return around and !apply.by_hand;
+        if (item.flags & _buffer.ITEM_JOINER != 0) return around or !apply.by_hand;
         return true;
     }
 
@@ -232,7 +271,7 @@ pub fn matchInput(apply: *Apply, at: u32, rest: Sequence, matcher: Matcher, plac
             if (!apply.spend()) return null;
             index = apply.next(index) orelse return null;
             const found = &items[index];
-            if (found.mask & apply.mask != 0 and matcher.matches(found.glyph, rest.get(@intCast(step)))) break found;
+            if (apply.holds(found) and matcher.matches(found.glyph, rest.get(@intCast(step)))) break found;
             if (!apply.stepsOver(found, false)) return null;
         };
         places[step + 1] = index;
@@ -275,7 +314,7 @@ pub fn matchBefore(apply: *Apply, at: u32, before: Sequence, matcher: Matcher) b
             if (!apply.spend()) return false;
             index = apply.prev(index) orelse return false;
             const found = &apply.buffer.items[index];
-            if (matcher.matches(found.glyph, before.get(@intCast(step)))) break;
+            if (apply.inSyllable(found) and matcher.matches(found.glyph, before.get(@intCast(step)))) break;
             if (!apply.stepsOver(found, true)) return false;
         }
     }
@@ -291,7 +330,7 @@ pub fn matchAfter(apply: *Apply, end: u32, after: Sequence, matcher: Matcher) bo
             if (!apply.spend()) return false;
             index = apply.next(index) orelse return false;
             const found = &apply.buffer.items[index];
-            if (matcher.matches(found.glyph, after.get(@intCast(step)))) break;
+            if (apply.inSyllable(found) and matcher.matches(found.glyph, after.get(@intCast(step)))) break;
             if (!apply.stepsOver(found, true)) return false;
         }
     }

@@ -719,13 +719,14 @@ class PairPosition:
 
 def attach(items, at, to, mark, anchors):
     """Puts the mark at `at` on the glyph at `to`: its anchor on the anchor
-    the glyph has for the mark's class."""
+    the glyph has for the mark's class, as far off the line as the glyph
+    stands now."""
     number, own = mark
     if number >= len(anchors) or anchors[number] is None:
         return None
     item = items[at]
     item.x_offset = anchors[number][0] - own[0]
-    item.y_offset = anchors[number][1] - own[1]
+    item.y_offset = anchors[number][1] - own[1] + items[to].y_offset
     item.attach_chain = to - at
     return at + 1
 
@@ -806,10 +807,10 @@ class MarkToMark:
 
 
 def settle(items, child, parent, backward):
-    """Adds to a mark's offsets what lies between it and what it sits on."""
+    """Adds to a mark's offset along the line what lies between it and what
+    it sits on."""
     item = items[child]
     item.x_offset += items[parent].x_offset
-    item.y_offset += items[parent].y_offset
     if parent >= child:
         return
     if backward:

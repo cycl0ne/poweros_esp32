@@ -51,6 +51,12 @@
 //!   - Then a mark's advance is 0. In a font without `GPOS`, read from
 //!     left to right, the mark moves back by what its advance was, onto
 //!     the glyph before it.
+//!
+//! A text of a script with a model (`Order.model`, `_indic.zig`) is
+//! shaped by its syllables: `GSUB` is applied in the model's goes
+//! (`substituteByModel`), with the syllables numbered, arranged and
+//! finished between them, and its marks keep the advances the font
+//! gives them and stay where they are.
 
 const sdk = @import("sdk");
 const truetypeshaping = sdk.truetypeshaping;
@@ -67,6 +73,8 @@ const _plan = @import("_plan.zig");
 const _gpos = @import("_gpos.zig");
 const _normal = @import("_normal.zig");
 const _variation = @import("_variation.zig");
+const _indic = @import("_indic.zig");
+const _syllable = @import("_syllable.zig");
 
 /// What a font gives the shaping: its tables, of no length where it has
 /// none, its place on its axes, its glyphs' advances there and what its
@@ -113,6 +121,13 @@ pub const Order = struct {
     /// The run is left in the order it is read, for a caller that turns
     /// several around as one.
     unturned: bool = false,
+    /// The run is a text of a script with a model (`_indic.zig`): its
+    /// items say what their characters are, and the first `own` of the
+    /// features are the model's.
+    model: bool = false,
+    own: u32 = 0,
+    /// The text before the run ends in the middle of a word.
+    after_letter: bool = false,
 };
 
 /// What every stage of a call works with.
@@ -208,6 +223,9 @@ fn stage(call: *const Call, table: Table, kind: _match.Kind, wanted: []const _pl
         .work = workFor(buffer.len),
     };
     for (entries[0..kept]) |entry| {
+        apply.forms = entry.forms;
+        apply.per_syllable = entry.per_syllable and kind == .substitute;
+        apply.by_hand = entry.by_hand;
         _lookup.run(&apply, entry.lookup, entry.mask, entry.value);
         if (buffer.failed) return truetypeshaping.TTSERR_NOMEM;
         if (apply.work == 0) break;
@@ -261,6 +279,37 @@ fn kernByTable(order: *const Order, wanted: []const _plan.Wanted, buffer: *Buffe
     }
 }
 
+/// The substitutions of a run a script's model shapes: the goes through
+/// `GSUB` in the model's order, with its work on the syllables between
+/// them. `wanted` comes back in the order of the goes.
+fn substituteByModel(call: *const Call, wanted: []_plan.Wanted) i32 {
+    const order = call.order;
+    const font = &order.font;
+    const buffer = call.buffer;
+    const layout = _plan.Layout.init(font.gsub, order.script, order.other_script, order.language, font.coords);
+    const virama = if (font.glyphFn) |glyphFn| glyphFn(font.context, _indic.halant) else 0;
+    const model = _indic.Model.init(&layout, order.features, wanted, virama);
+    _indic.inGoes(wanted);
+    var first: usize = 0;
+    var go: u8 = 0;
+    while (go < _indic.go_count) : (go += 1) {
+        switch (go) {
+            _indic.GO_LANGUAGE => _syllable.number(buffer.slice()),
+            _indic.GO_FORMS => if (!model.arrange(buffer)) return truetypeshaping.TTSERR_NOMEM,
+            _indic.GO_REST => model.finish(buffer, order.after_letter),
+            else => {},
+        }
+        var last = first;
+        while (last < wanted.len and wanted[last].go == go) last += 1;
+        if (last > first or go == 0) {
+            const result = stage(call, font.gsub, .substitute, wanted[first..last], go == 0);
+            if (result != truetypeshaping.TTS_OK) return result;
+        }
+        first = last;
+    }
+    return truetypeshaping.TTS_OK;
+}
+
 /// Shapes the glyphs in `buffer` - each with its number and its cluster,
 /// in the order they are read - as `order` says. Answers `TTS_OK` with
 /// the buffer holding the shaped run in the order it is drawn, or one of
@@ -276,6 +325,7 @@ pub fn shape(order: *const Order, buffer: *Buffer) i32 {
     const wanted_block: [*]_plan.Wanted = @ptrCast(@alignCast(block + places_size));
     const wanted = wanted_block[0..features.len];
     if (!assignBits(features, wanted)) return truetypeshaping.TTSERR_FEATURES;
+    if (order.model) _indic.plan(wanted, order.own);
 
     const gdef = Gdef.init(font.gdef);
     for (buffer.slice()) |*item| {
@@ -285,13 +335,20 @@ pub fn shape(order: *const Order, buffer: *Buffer) i32 {
     const call: Call = .{ .order = order, .gdef = &gdef, .buffer = buffer, .places = places };
     // The masks are set: the entries need not stand beside their
     // features any longer.
-    const early = if (order.text) variationsFirst(wanted) else wanted.len;
-    var result = stage(&call, font.gsub, .substitute, wanted[0..early], true);
-    if (result != truetypeshaping.TTS_OK) return result;
-    if (order.text) {
-        result = stage(&call, font.gsub, .substitute, wanted[early..], false);
+    var result: i32 = truetypeshaping.TTS_OK;
+    if (order.model) {
+        result = substituteByModel(&call, wanted);
         if (result != truetypeshaping.TTS_OK) return result;
         buffer.removeIgnorables(order.backward);
+    } else {
+        const early = if (order.text) variationsFirst(wanted) else wanted.len;
+        result = stage(&call, font.gsub, .substitute, wanted[0..early], true);
+        if (result != truetypeshaping.TTS_OK) return result;
+        if (order.text) {
+            result = stage(&call, font.gsub, .substitute, wanted[early..], false);
+            if (result != truetypeshaping.TTS_OK) return result;
+            buffer.removeIgnorables(order.backward);
+        }
     }
     for (buffer.slice()) |*item| {
         item.advance = font.advanceFn(font.context, item.glyph);
@@ -305,7 +362,8 @@ pub fn shape(order: *const Order, buffer: *Buffer) i32 {
         kernByTable(order, wanted, buffer);
         const hangs_back = !order.backward and font.gpos.empty();
         for (buffer.slice()) |*item| {
-            if (item.class != _buffer.CLASS_MARK) continue;
+            // A model's marks keep the advances the font gives them.
+            if (order.model or item.class != _buffer.CLASS_MARK) continue;
             if (hangs_back) item.x_offset -|= item.advance;
             item.advance = 0;
         }

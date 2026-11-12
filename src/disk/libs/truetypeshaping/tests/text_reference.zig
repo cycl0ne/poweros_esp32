@@ -12,9 +12,11 @@
 //!
 //! The texts are chosen among those the two shape by the same rules: of
 //! one script each, without marks in a font that has outlines for them
-//! and no table that places them, and without anything a script is
-//! rearranged for. What the script's head says of it holds for a case
-//! added.
+//! and no table that places them, and without anything a script other
+//! than Devanagari is rearranged for. Devanagari's texts are words,
+//! and syllables drawn by lot from the script's characters, a part of
+//! them with features switched. What the script's head says of it
+//! holds for a case added.
 //!
 //! Besides the fetched fonts there is one made of a rule (`Made`), which
 //! needs no file: a font is said by the characters it lacks, so that a

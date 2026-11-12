@@ -875,6 +875,23 @@ a text does not show - the soft hyphen, the joiners, the marks of
 direction - are taken out once the glyphs are replaced, and a mark's
 advance becomes 0.
 
+Devanagari is shaped by its syllables (since 1.5). A syllable is a
+consonant or a vowel letter with what is written on it: the consonants
+a halant joins to it, a nukta, vowel signs, the signs above. In each
+the base is found - the last consonant the font has no form of below or
+behind another - and the forms are asked for in the order a font's
+rules are written for: `nukt`, `akhn`, `rphf`, `rkrf`, `pref`, `blwf`,
+`abvf`, `half`, `pstf`, `vatu`, `cjct`, each within its syllable, the
+half forms for the consonants before the base, the reph for a ra with a
+halant at the start. Then the vowel sign written to the left of its
+consonants and the reph go to where they are drawn, and `init`, `pres`,
+`abvs`, `blws`, `psts` and `haln` are applied with the features of any
+text, but for `liga`. A joiner (U+200D) behind a halant asks for the
+half form, a non-joiner (U+200C) for the consonant with its halant. A
+letter with a nukta draws the same written as one character or as two.
+A font that lists the script under the older tag `deva` is given the
+halant behind the consonants, as its rules expect it.
+
 A cluster is the byte of the text a glyph's character starts at, and a
 feature's `first` and `last` count bytes too. `features` lists what is
 wanted besides: a tag with the value 0 leaves one of the usual features
@@ -904,8 +921,10 @@ if (sb.ShapeText(outline, text.ptr, text.len, tts.TTS_LEFT_TO_RIGHT, tts.TTS_LAN
 The whole text is read in the one `direction`, and one read from right
 to left comes back turned around, its last stretch first: a text of both
 directions is the caller's to cut and to order, and no bracket is
-mirrored. Every script is shaped by the features above: the joined forms
-of Arabic and the syllables of the scripts of India are not made. A
+mirrored. Every script but Devanagari is shaped by the features above:
+the joined forms of Arabic and the syllables of the other scripts of
+India are not made. A syllable that is not whole is drawn as written,
+with no dotted circle for the letter it lacks. A
 character the font has no form of is the missing glyph. Where a font
 has no `GPOS`, a mark left on its letter moves back onto it by its
 advance and is not set by its outline's box. svg.datatype lays its text
@@ -1263,7 +1282,7 @@ cursor = gb.TextXToOffset(rp, line.ptr, @intCast(line.len), mouse_x - left);
 | `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces and Liberation's (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation only onto the 64-bit machines' disks. With them four fonts only the host tests read, which go on no disk: Noto Sans Devanagari, Noto Color Emoji, Noto Sans CJK (a collection) and Source Sans 3, as a font of one weight and as variable fonts |
 | `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures, of a variable font the same at places on its axes with every glyph's points there (worked out in the library's order and held against fontTools' instancer, or for a font of cubic curves against fontTools' drawing of it at the place), of a font of cubic curves each glyph's outline and what libfreetype renders of a part of them, and of a font of pictures every picture's measures and pixels (a PNG file's as Pillow reads them) and a part of them scaled to another size - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
 | `scripts/shape-reference.py` | on the host: applies the fetched fonts' `GSUB` and `GPOS` lookups to runs of glyphs - every glyph of a font, and sequences its lookups have rules for - with an applier of its own on fontTools' reading of the tables, and writes what comes out, a digest for each script, language and feature list, as the Zig files `truetypeshaping.library`'s host tests compare its shaping with (`src/disk/libs/truetypeshaping/tests/reference/`). `--check` says whether the files are the ones it would write, `--show <font> <case>` prints a case's runs |
-| `scripts/shape-text-reference.py` | on the host: shapes texts with libharfbuzz - in the fetched fonts Latin with its kerning and marks, letters and marks spelled apart and together, Greek, Cyrillic, Hebrew read from right to left, Devanagari by its plain features, emoji, features switched for a part of a text; and in a font made of a rule, which is told the characters it lacks, texts whose characters are taken apart, sorted and put together - and writes the glyphs, clusters, advances and offsets as the Zig files `truetypeshaping.library`'s host tests compare `ShapeText`'s answers with (`src/disk/libs/truetypeshaping/tests/text_reference/`); `--check` says whether they are up to date |
+| `scripts/shape-text-reference.py` | on the host: shapes texts with libharfbuzz - in the fetched fonts Latin with its kerning and marks, letters and marks spelled apart and together, Greek, Cyrillic, Hebrew read from right to left, Devanagari in words and in syllables drawn by lot, emoji, features switched for a part of a text; and in a font made of a rule, which is told the characters it lacks, texts whose characters are taken apart, sorted and put together - and writes the glyphs, clusters, advances and offsets as the Zig files `truetypeshaping.library`'s host tests compare `ShapeText`'s answers with (`src/disk/libs/truetypeshaping/tests/text_reference/`); `--check` says whether they are up to date |
 | `C:ListFonts` | every font by family, size and where it is; `SAMPLE` draws them, a variable font in each of its styles |
 | `C:FixFonts` | writes every family's contents file again |
 | `C:SetPrefs` | sets the system's fonts, with the rest of its settings, from `ENV:Sys`; `SHOW` prints them |

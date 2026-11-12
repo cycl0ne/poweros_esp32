@@ -44,10 +44,15 @@ keep away from it:
     given to HarfBuzz as Thaana, a script that is written that way and has
     no model of its own.
   - For some scripts HarfBuzz has a model of the script: syllables put in
-    order, forms picked by the place in a word. Such a text is given to it
-    as one of no script, with the tag the font lists the script under said
-    in the language ("x-hbscdev2"), which is how HarfBuzz is told to shape
-    it by its features alone - as ShapeText shapes it.
+    order, forms picked by the place in a word. ShapeText has the model of
+    Devanagari. The made font's texts are therefore given to HarfBuzz as
+    Latin whatever they are written in - but those with a Devanagari
+    character, which are given as Devanagari and read from left to right.
+  - With `half` asked for the whole of a Devanagari text, HarfBuzz
+    switches every feature that holds for the whole text off on a
+    consonant before a non-joiner. No text here asks for it.
+  - Where a syllable is broken - a vowel sign with no consonant to stand
+    on - HarfBuzz can put a dotted circle under it. It is told not to.
   - Of a character whose bytes are cut short, or one UTF-8 forbids,
     HarfBuzz makes a U+FFFD for each byte and ShapeText one for them all.
     The bytes here that are no UTF-8 stand alone.
@@ -177,9 +182,8 @@ def library():
 class Case:
     """One text and how it is shaped.
 
-    `script` is the script HarfBuzz is told, as ISO 15924 writes it. With
-    `listed`, the text goes to HarfBuzz as one of no script and `listed` is
-    the tag the font lists its script under. `language` is the language's
+    `script` is the script HarfBuzz is told, as ISO 15924 writes it.
+    `language` is the language's
     OpenType tag. `features` are (tag, value, first byte, last byte), the
     last two left out for the whole text. `axes` are (tag, value) for each
     axis of a variable font that is not at its default: the instance the
@@ -190,7 +194,7 @@ class Case:
     bytes is taken as it stands, for one that is no UTF-8.
     """
 
-    def __init__(self, name, text, script, backward=False, listed="", language="", features=(), axes=()):
+    def __init__(self, name, text, script, backward=False, language="", features=(), axes=()):
         self.name = name
         if isinstance(text, bytes):
             self.data = text
@@ -198,7 +202,6 @@ class Case:
             self.data = re.sub(r"\{([0-9A-F]+)\}", lambda found: chr(int(found.group(1), 16)), text).encode("utf-8")
         self.script = script
         self.backward = backward
-        self.listed = listed
         self.language = language
         self.features = [tuple(feature) + (0, WHOLE) if len(feature) == 2 else tuple(feature) for feature in features]
         self.axes = list(axes)
@@ -231,14 +234,10 @@ class Font:
         buffer = hb.hb_buffer_create()
         hb.hb_buffer_add_utf8(buffer, case.data, len(case.data), 0, len(case.data))
         hb.hb_buffer_set_direction(buffer, RIGHT_TO_LEFT if case.backward else LEFT_TO_RIGHT)
-        hb.hb_buffer_set_script(buffer, tag_of("Zyyy" if case.listed else case.script))
-        private = ""
-        if case.listed:
-            private += "-hbsc" + case.listed.strip()
+        hb.hb_buffer_set_script(buffer, tag_of(case.script))
         if case.language:
-            private += "-hbot" + case.language.strip()
-        if private:
-            hb.hb_buffer_set_language(buffer, hb.hb_language_from_string(("x" + private).encode("ascii"), -1))
+            private = "x-hbot" + case.language.strip()
+            hb.hb_buffer_set_language(buffer, hb.hb_language_from_string(private.encode("ascii"), -1))
         hb.hb_buffer_set_cluster_level(buffer, MONOTONE_CHARACTERS)
         hb.hb_buffer_set_flags(buffer, REMOVE_DEFAULT_IGNORABLES | DO_NOT_INSERT_DOTTED_CIRCLE)
         features = (HbFeature * max(len(case.features), 1))()
@@ -275,15 +274,16 @@ class MadeCase(Case):
     number leaves over 37; `em` units are an em. It has no tables.
 
     HarfBuzz is told a script it has no model for, whatever the text's is:
-    Latin, and Thaana for a text read from right to left.
+    Latin, and Thaana for a text read from right to left. `script` names
+    another: the one ShapeText has a model for too.
 
     `drawn` says the lists are longer than the text needs: of them, only
     what HarfBuzz asked for, the text's own characters and those a space
     is made of are written down.
     """
 
-    def __init__(self, name, text, lacking=(), having=(), variants=(), em=1000, backward=False, drawn=False):
-        super().__init__(name, text, "Thaa" if backward else "Latn", backward=backward)
+    def __init__(self, name, text, lacking=(), having=(), variants=(), em=1000, backward=False, drawn=False, script=""):
+        super().__init__(name, text, script or ("Thaa" if backward else "Latn"), backward=backward)
         self.lacking = frozenset(lacking)
         self.having = frozenset(having)
         self.variants = {(char, selector): glyph for char, selector, glyph in variants}
@@ -340,9 +340,88 @@ class MadeFont:
     shape = Font.shape
 
 
+class Lot:
+    """Numbers as if drawn by lot, the same ones each time."""
+
+    def __init__(self, seed):
+        self.state = seed
+
+    def below(self, limit):
+        self.state = (self.state * 6364136223846793005 + 1442695040888963407) & 0xFFFFFFFFFFFFFFFF
+        return (self.state >> 33) % limit
+
+    def one(self, items):
+        return items[self.below(len(items))]
+
+
 def deva(name, text, **more):
-    """A Devanagari text for the font that lists the script as `dev2`."""
-    return Case(name, text, "Deva", listed="dev2", **more)
+    """A Devanagari text."""
+    return Case(name, text, "Deva", **more)
+
+
+# What the Devanagari texts drawn by lot are made of, and how many times
+# in 103 each kind is taken: consonants, the halant, the dot below, vowel
+# signs, the signs above and behind a syllable, accents, vowels, the
+# joiners, what is of no script, and the letters with a dot that are one
+# character.
+SYLLABLE_PARTS = [
+    (40, [0x915, 0x916, 0x917, 0x924, 0x926, 0x928, 0x92E, 0x92F, 0x930, 0x930, 0x930, 0x932, 0x935, 0x937, 0x938, 0x939]
+        + [0x91C, 0x91F, 0x921, 0x92B, 0x936, 0x92A, 0x91E, 0x919, 0x931]),
+    (24, [0x94D]),
+    (5, [0x93C]),
+    (14, [0x93E, 0x93F, 0x940, 0x941, 0x942, 0x943, 0x947, 0x948, 0x94B, 0x94C, 0x945, 0x949, 0x94E, 0x94F, 0x93A, 0x93B]
+        + [0x955, 0x956, 0x957, 0x962, 0x944]),
+    (5, [0x902, 0x901, 0x903, 0x900]),
+    (2, [0x951, 0x952, 0x953, 0x954]),
+    (4, [0x905, 0x906, 0x907, 0x908, 0x909, 0x90F, 0x90B, 0x950, 0x93D]),
+    (4, [0x200D, 0x200C]),
+    (2, [0x20, 0x967, 0x2D, 0x25CC, 0xA0]),
+    (3, [0x958, 0x95B, 0x95C, 0x95E, 0x95F, 0x929, 0x934]),
+]
+
+# What a text drawn by lot is asked for besides what the script asks:
+# features of the model switched off, for the whole text and for a part,
+# and others switched on.
+SYLLABLE_FEATURES = [
+    [("rphf", 0)],
+    [("half", 0)],
+    [("half", 0, 0, 8)],
+    [("half", 0, 6, 40)],
+    [("half", 1, 3, 11)],
+    [("blwf", 0)],
+    [("akhn", 0)],
+    [("cjct", 0, 0, 5)],
+    [("nukt", 0)],
+    [("vatu", 0)],
+    [("rkrf", 0)],
+    [("pres", 0)],
+    [("abvs", 0, 3, 11)],
+    [("blws", 0)],
+    [("psts", 0)],
+    [("haln", 0)],
+    [("liga", 1)],
+    [("kern", 0)],
+    [("dist", 0)],
+    [("abvm", 0)],
+    [("blwm", 0, 0, 5)],
+    [("rphf", 1, 0, 5)],
+    [("rphf", 0), ("half", 0), ("blwf", 0)],
+    [("akhn", 0), ("pres", 0), ("psts", 0)],
+]
+
+SYLLABLES_DRAWN = 400
+
+
+def syllables(number):
+    """The Devanagari text of that number, by lot: parts of syllables in
+    any order, one text in five with features asked for."""
+    lot = Lot(0x915 + number)
+    pools = []
+    for share, pool in SYLLABLE_PARTS:
+        pools.extend([pool] * share)
+    chars = [lot.one(lot.one(pools)) for _ in range(lot.one([1, 2, 3, 4, 5, 6, 8, 10, 12]))]
+    features = lot.one(SYLLABLE_FEATURES) if lot.below(5) == 0 else ()
+    return deva("syllables drawn %d" % number, "".join(chr(char) for char in chars).encode("utf-8"), features=features)
 
 
 def emoji(name, text, **more):
@@ -453,7 +532,30 @@ FONTS = [
             ),
             deva("the forms of Marathi", "{932}{936}{91D} {915}{941}", language="MAR "),
             deva("distances switched off", CONJUNCTS, features=[("dist", 0)]),
-        ],
+            deva("hindi: a vowel sign before its consonant, a half form", "{939}{93F}{928}{94D}{926}{940}"),
+            deva("kshatriya: a conjunct, a ra below", "{915}{94D}{937}{924}{94D}{930}{93F}{92F}"),
+            deva("shriman: a ra behind the base", "{936}{94D}{930}{940}{92E}{93E}{928}"),
+            deva("prem: a ra behind the base and a sign above", "{92A}{94D}{930}{947}{92E}"),
+            deva("arth: a ra before the base", "{905}{930}{94D}{925}"),
+            deva("krishna: a vowel sign below, a conjunct", "{915}{943}{937}{94D}{923}"),
+            deva("munh: two signs on a letter", "{92E}{941}{901}{939}"),
+            deva("film, its first letter one character", "{95E}{93F}{932}{94D}{92E}"),
+            deva("film, its first letter with its dot", "{92B}{93C}{93F}{932}{94D}{92E}"),
+            deva(
+                "words of several syllables",
+                "{938}{94D}{935}{924}{902}{924}{94D}{930}{924}{93E} {938}{902}{938}{94D}{915}{943}{924}{93F}"
+                " {935}{93F}{926}{94D}{92F}{93E}{930}{94D}{925}{940}",
+            ),
+            deva("a ra before the base switched off", "{905}{930}{94D}{925}", features=[("rphf", 0)]),
+            deva(
+                "half forms switched off for the first word",
+                "{939}{93F}{928}{94D}{926}{940} {939}{93F}{928}{94D}{926}{940}",
+                features=[("half", 0, 0, 17)],
+            ),
+            deva("a ra and the joiners", "{930}{94D}{200D}{915} {930}{200D}{94D}{915} {930}{94D}{200C}{915}"),
+            deva("syllables that are not whole", "{93F}{915} {94D}{915} {930}{94D} {915}{94D}"),
+        ]
+        + [syllables(number) for number in range(SYLLABLES_DRAWN)],
     ),
     (
         "noto/NotoColorEmoji.ttf",
@@ -541,7 +643,7 @@ MADE = [
     MadeCase("Tibetan vowel signs taken apart", "{F40}{F73}{F42}{F75}{F81}", lacking=[0xF73, 0xF75]),
     MadeCase("Thai marks put in order", "{E01}{E48}{E38} {E02}{E3A}{E49}"),
     MadeCase("Lanna marks put in order", "{1A20}{1A75}{1A60} {1A21}{1A7F}{1A60}"),
-    MadeCase("a Devanagari letter and its dot", "{915}{93C}{928}{93C}{958}{929}", lacking=[0x958]),
+    MadeCase("a Devanagari letter and its dot", "{915}{93C}{928}{93C}{958}{929}", lacking=[0x958], script="Deva"),
     MadeCase("a Telugu vowel sign of two", "{C15}{C46}{C56}{C15}{C48}", lacking=[]),
     MadeCase("the same where the font lacks it", "{C15}{C46}{C56}{C15}{C48}", lacking=[0xC48]),
     MadeCase("Katakana with a sound mark", "{30AB}{3099}{30CF}{309A}{30AC}", lacking=[0x30D1]),
@@ -611,20 +713,6 @@ DRAWN = 150
 MADE_STEM = "made"
 
 
-class Lot:
-    """Numbers as if drawn by lot, the same ones each time."""
-
-    def __init__(self, seed):
-        self.state = seed
-
-    def below(self, limit):
-        self.state = (self.state * 6364136223846793005 + 1442695040888963407) & 0xFFFFFFFFFFFFFFFF
-        return (self.state >> 33) % limit
-
-    def one(self, items):
-        return items[self.below(len(items))]
-
-
 def drawn(number):
     """The made font's text of that number, and its font, by lot."""
     lot = Lot(number)
@@ -651,15 +739,21 @@ def drawn(number):
     chars = [lot.one(lot.one(pools)) for _ in range(lot.one([1, 2, 3, 4, 6, 9, 14]))]
     if lot.below(100) < 4:
         chars = [lot.one(letters)] + [lot.one(marks) for _ in range(lot.one([31, 32, 33, 40]))] + chars
+    em = lot.one([1000, 2048, 1024, 990])
+    backward = lot.below(100) < 15
+    # A text ShapeText takes as Devanagari: one with a character of that
+    # script, which the signs every script of India shares are not.
+    devanagari = any(0x900 <= char <= 0x97F and char not in (0x951, 0x952, 0x964, 0x965) for char in chars)
     return MadeCase(
         "drawn %d" % number,
         "".join(chr(char) for char in chars).encode("utf-8"),
         lacking=lacking,
         having=having,
         variants=variants,
-        em=lot.one([1000, 2048, 1024, 990]),
-        backward=lot.below(100) < 15,
+        em=em,
+        backward=backward and not devanagari,
         drawn=True,
+        script="Deva" if devanagari else "",
     )
 
 
@@ -727,9 +821,13 @@ def written(hb, file, cases):
                     fields.append(".first = %d, .last = %d" % (first, last))
                 lines.append("                .{ %s }," % ", ".join(fields))
             lines.append("            },")
-        lines.append("            .glyphs = &.{")
-        lines.extend("                .{ %d, %d, %d, %d, %d }," % glyph for glyph in font.shape(case))
-        lines.append("            },")
+        shaped = font.shape(case)
+        if shaped:
+            lines.append("            .glyphs = &.{")
+            lines.extend("                .{ %d, %d, %d, %d, %d }," % glyph for glyph in shaped)
+            lines.append("            },")
+        else:
+            lines.append("            .glyphs = &.{},")
         lines.append("        },")
     lines.append("    },")
     lines.append("};")

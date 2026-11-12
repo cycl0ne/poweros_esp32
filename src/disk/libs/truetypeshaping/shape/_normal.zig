@@ -49,6 +49,10 @@
 //! A stretch in which no character has a mark behind it is done after
 //! round 1: what a character was taken apart into stays in the table's
 //! order.
+//!
+//! A stretch of a script with a model of its own (`List.model`) reads
+//! each character by its parts: one is taken apart also where the font
+//! has a glyph for it, and nothing is put together with a mark.
 
 const sdk = @import("sdk");
 const utf8 = sdk.utility.utf8;
@@ -255,6 +259,9 @@ pub const Entry = struct {
     space: u8 = space_none,
 };
 
+/// The ra with a dot below, which a model keeps whole.
+const whole_ra = 0x0931;
+
 pub const List = struct {
     memory: Memory,
     font: *const Font,
@@ -265,6 +272,13 @@ pub const List = struct {
     failed: bool = false,
     /// No character had a mark behind it.
     simple: bool = true,
+    /// The stretch is of a script with a model of its own, which reads
+    /// each character by its parts: a character is taken apart where the
+    /// font has its parts, also one the font has a glyph for; the ra
+    /// with a dot below (U+0931) stays whole, because its parts would
+    /// make a reph the character does not; and nothing is put together
+    /// with a mark.
+    model: bool = false,
 
     /// A list for a stretch of `chars` characters, with none in it yet.
     /// Null without the memory.
@@ -327,6 +341,7 @@ pub const List = struct {
     /// many were added; 0, and nothing added, where the font has no
     /// form of its parts.
     fn apart(list: *List, shortest: bool, char: u32, cluster: u32) u32 {
+        if (list.model and char == whole_ra) return 0;
         const parts = partsOf(char) orelse return 0;
         var second: u32 = 0;
         if (parts.second != 0) {
@@ -472,7 +487,7 @@ pub const List = struct {
         while (at < entries.len) : (at += 1) {
             const entry = entries[at];
             if (entry.mark and (starter == kept - 1 or entries[kept - 1].order < entry.order)) {
-                const joined = joinedOf(entries[starter].char, entry.char);
+                const joined = if (list.model and entries[starter].mark) 0 else joinedOf(entries[starter].char, entry.char);
                 const glyph = if (joined != 0) list.glyphOf(joined) else 0;
                 if (glyph != 0) {
                     // The one character stands for all it was made of
@@ -519,7 +534,7 @@ pub const List = struct {
                 cluster_end += behind.length;
             }
             if (cluster_end == at + read.length) {
-                list.current(read.char, @intCast(at), true);
+                list.current(read.char, @intCast(at), !list.model);
             } else if (selector) {
                 list.simple = false;
                 list.selected(bytes, at, cluster_end);
