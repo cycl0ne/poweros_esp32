@@ -1154,7 +1154,8 @@ What to know:
   upright in a text of `go-bold.font`.
 - **A console keeps its cells.** A character from a fallback whose
   advance is not the console font's is drawn in the middle of its cell;
-  one that is wider reaches into the cells beside it, so a fallback for
+  one that is wider reaches into the cells beside it - in a row's first
+  and last cell only into the one beside it -, so a fallback for
   `FIXED` is best a fixed-width family of about that font's width. With
   a font that shapes its text - the console's or a fallback - a run of
   cells that would not come out a cell a character is drawn a cell at
@@ -1163,6 +1164,20 @@ What to know:
   stand where the font's mark tables put them; in a font that does not
   shape its text they are drawn behind the character, and a mark none
   of the fonts has is drawn as the default character.
+- **An emoji in a console is its characters, each in its own cells**
+  (console.device 0.11). A picture by default takes two cells and is
+  drawn in its colours in the middle of them; the joiner, a selector
+  and a keycap's mark take none and stay in the cell of the character
+  before them, so a copy gives back every byte. A family of three is
+  its three people over six cells, a thumb with a skin tone the thumb
+  and the tone over four, a flag its two letters, a cell each. A
+  character one cell wide that U+FE0F asks the picture of - a keycap's
+  digit, `☀️` - is drawn in its text form, since a cell has no room
+  for the picture: the digit from the console's font, `☀` from the
+  first font of the chain that draws it in the pen. Where no such font
+  has the character (`❤`) the picture is drawn for it and reaches
+  into the cells beside it. A flag's two letters are a picture each,
+  two cells wide in its one cell, so they lie over one another.
 - A font a program makes itself (`AddFont`) has no fallback unless the
   program sets `fallback` before adding it, to a font it keeps open for
   as long; graphics walks at most eight fonts of a chain.

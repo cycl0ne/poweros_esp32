@@ -26,7 +26,13 @@
 //! **A character of no width takes no cell**: it goes with the character
 //! in the cell before the cursor, when the two are one cluster by
 //! Unicode's rules (`unicode.clusterEnd`) - an accent, a vowel sign
-//! written above or below, a virama, a joiner. A cell keeps `cell_marks`
+//! written above or below, a virama, a joiner, the selector that asks
+//! for an emoji as a picture or as text, a keycap's mark. So an emoji
+//! made of several characters is each of them in its own cells, with
+//! what joins them kept: a family of three is its three people over six
+//! cells, a thumb with a skin tone the thumb and the tone over four, a
+//! flag its two letters over two, a keycap its digit in one. A cell
+//! keeps `cell_marks`
 //! of them (`Cell.marks`), in the order they came; one more is dropped,
 //! and so is one with no character to go with - at a row's start, behind
 //! an empty cell, or a format character, which is in no cluster. They
@@ -2086,6 +2092,43 @@ test "UTF-8: a cell keeps two marks, of its character's cluster, and gives them 
     t.resize(wider, 9, 4);
     try testing.expectEqual(@as(u32, 0x915), t.at(0, 1).ch);
     try testing.expectEqual([2]u32{ 0x93C, 0x941 }, t.at(0, 1).marks);
+}
+
+test "UTF-8: an emoji of several characters keeps its cells, and what joins them comes back" {
+    var t, const cells = scratch(12, 1);
+    defer testing.allocator.free(cells);
+    var buf: [80]u8 = undefined;
+
+    const Case = struct { text: []const u8, cells: u32 };
+    const cases = [_]Case{
+        // A family: man, joiner, woman, joiner, girl.
+        .{ .text = "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7", .cells = 6 },
+        // A thumb and a skin tone.
+        .{ .text = "\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD", .cells = 4 },
+        // A flag: two regional indicators.
+        .{ .text = "\xF0\x9F\x87\xA9\xF0\x9F\x87\xAA", .cells = 2 },
+        // A keycap: 1, U+FE0F, U+20E3.
+        .{ .text = "1\xEF\xB8\x8F\xE2\x83\xA3", .cells = 1 },
+        // A heart as a picture, and as text.
+        .{ .text = "\xE2\x9D\xA4\xEF\xB8\x8F", .cells = 1 },
+        .{ .text = "\xE2\x9D\xA4\xEF\xB8\x8E", .cells = 1 },
+        // A flag of one colour, the selector, a joiner and a rainbow.
+        .{ .text = "\xF0\x9F\x8F\xB3\xEF\xB8\x8F\xE2\x80\x8D\xF0\x9F\x8C\x88", .cells = 3 },
+    };
+    for (cases) |case| {
+        t.write("\x1b[2J\x1b[1;1H");
+        t.write(case.text);
+        try testing.expectEqual(case.cells, t.x);
+        t.select(0, case.cells);
+        try testing.expectEqualStrings(case.text, buf[0..t.selectionText(&buf)]);
+    }
+
+    // The joiner is the man's, the selector and the key the digit's.
+    t.write("\x1b[2J\x1b[1;1H\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9");
+    try testing.expectEqual([2]u32{ 0x200D, 0 }, t.at(0, 0).marks);
+    try testing.expectEqual(@as(u32, 0x1F469), t.at(2, 0).ch);
+    t.write("\x1b[2J\x1b[1;1H1\xEF\xB8\x8F\xE2\x83\xA3");
+    try testing.expectEqual([2]u32{ 0xFE0F, 0x20E3 }, t.at(0, 0).marks);
 }
 
 test "UTF-8: a resize keeps a wide character on one row" {

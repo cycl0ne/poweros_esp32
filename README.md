@@ -252,7 +252,9 @@ Beside them:
   [network guide](sdk/docs/guides/network.md#git-cnetgit)); scripts,
   output and errors redirected apart, line editing and file name
   completion in UTF-8 on a console that places each character in the
-  cells Unicode gives it and keeps the marks written on it in its cell,
+  cells Unicode gives it and keeps the marks written on it in its cell
+  - an emoji in colour in its two cells, what joins several kept for
+  a copy -,
   files hashed and checked against a list of digests
   ([dos guide](sdk/docs/guides/dos.md)).
 - **Languages:** 26 countries and 14 languages besides English in

@@ -16,13 +16,22 @@
 //! is not a cell's width the character is no part of a run: its cell is
 //! filled with the row's runs, and the character is drawn after them, in
 //! the middle of its cell and without a background of its own, so what a
-//! wider one has past its cell lies over the cells beside it.
+//! wider one has past its cell lies over the cells beside it. In a row's
+//! first and last cell it is moved to stay inside the row: what lies
+//! beside the cells is not the console's to draw on.
 //!
 //! A cell that keeps marks (`Cell.marks`) is no part of a run either: its
 //! character and the marks go to `Text` as one piece, after the runs and
 //! in the middle of the cell, so the marks land where the font's shaping
 //! puts them on that character. A font that does not shape draws them as
 //! it draws any character, behind the one they belong to.
+//!
+//! A cell one wide has no room for an emoji's picture. Where its marks
+//! ask for one (U+FE0F) the character is drawn in its text form
+//! (`narrowText`): U+FE0E goes to `Text` in the selector's place and a
+//! keycap's mark (U+20E3) not at all, so `1` with both is drawn as the
+//! digit. The cell keeps the marks it was written with, and a wide
+//! character's cell goes to `Text` as it is.
 //!
 //! A font that shapes its text (`TextFont.shape`) may draw a run another
 //! width than its cells - a pair brought closer, a ligature. Such a run
@@ -40,6 +49,7 @@ const graphics = sdk.graphics;
 const TagItem = sdk.utility.TagItem;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const utf8 = sdk.utility.utf8;
+const unicode = sdk.utility.unicode;
 const term = @import("term.zig");
 const Cell = term.Cell;
 const Term = term.Term;
@@ -240,15 +250,22 @@ fn fitsCell(gb: *GraphicsBase, l: Layout, cell: Cell) bool {
 /// A cell that is no part of a run (`fitsCell`) - its character is not a
 /// cell wide, or it keeps marks - in the middle of the cell and without a
 /// background: the caller has filled the cell. A wider one reaches into
-/// the cells beside it by half of what it is wider.
-fn drawOffWidth(gb: *GraphicsBase, l: Layout, x: i32, y: i32, cell: Cell, fg: graphics.Pen, bg: graphics.Pen) void {
+/// the cells beside it by half of what it is wider, and stays inside
+/// the row of `cols` cells: at the row's start it stands at the first
+/// cell's left edge and at its end at the last one's right, so nothing
+/// is drawn on what lies beside the cells, which no scroll moves and
+/// no cell's background takes away again.
+fn drawOffWidth(gb: *GraphicsBase, l: Layout, x: i32, y: i32, cell: Cell, fg: graphics.Pen, bg: graphics.Pen, cols: u32) void {
     var bytes: [term.cell_text]u8 = undefined;
-    const length = shownText(cell, &bytes);
+    const length = narrowText(cell, &bytes);
     setPens(gb, l, fg, bg, cell);
     const over = [_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} };
     gb.SetRPAttrs(l.rp, &over);
     const drawn: i32 = @intCast(gb.TextLength(l.rp, &bytes, length));
-    gb.Move(l.rp, l.origin_x + x * l.cell_width + @divTrunc(l.cell_width - drawn, 2), l.origin_y + y * l.cell_height + l.baseline);
+    const middle = l.origin_x + x * l.cell_width + @divTrunc(l.cell_width - drawn, 2);
+    const row_end = l.origin_x + @as(i32, @intCast(cols)) * l.cell_width;
+    const left = @max(@min(middle, row_end - drawn), l.origin_x);
+    gb.Move(l.rp, left, l.origin_y + y * l.cell_height + l.baseline);
     gb.Text(l.rp, &bytes, length);
 }
 
@@ -282,6 +299,30 @@ fn shownText(cell: Cell, into: *[term.cell_text]u8) u32 {
     }
     return @intCast(cell.text(into));
 }
+
+/// What a cell one wide is written as: `shownText`, but for a cell whose
+/// marks ask for an emoji's picture (U+FE0F), which one cell has no room
+/// for. Such a cell is written in its character's text form: U+FE0E in
+/// the selector's place, and without a keycap's mark (U+20E3), which
+/// with that selector makes the picture of a key. How many bytes.
+fn narrowText(cell: Cell, into: *[term.cell_text]u8) u32 {
+    var picture = false;
+    for (cell.marks) |mark| {
+        if (mark == unicode.picture_selector) picture = true;
+    }
+    if (!picture or cell.ch < 0x20) return shownText(cell, into);
+    var length: usize = utf8.encode(cell.ch, into[0..4]);
+    for (cell.marks) |mark| {
+        if (mark == 0) break;
+        if (mark == keycap_mark) continue;
+        const written = if (mark == unicode.picture_selector) unicode.text_selector else mark;
+        length += utf8.encode(written, into[length..][0..4]);
+    }
+    return @intCast(length);
+}
+
+/// U+20E3, the key drawn around the character before it.
+const keycap_mark: u32 = 0x20E3;
 
 /// A wide character over its two cells, from the cell at `x`: both cells'
 /// background, and the character in the middle of them.
@@ -404,7 +445,7 @@ pub fn drawRow(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, 
         if (cell.flags & term.CELL_GRAPHIC != 0 or cell.ch == term.WIDE_TAIL or isWide(t, x, y)) continue;
         if (fitsCell(gb, l, cell)) continue;
         const fg, const bg = pensAt(t, x, y, l);
-        drawOffWidth(gb, l, @intCast(x), @intCast(y), cell, fg, bg);
+        drawOffWidth(gb, l, @intCast(x), @intCast(y), cell, fg, bg, t.cols);
     }
     drawHalves(gb, l, t, y, from, to);
 }
@@ -438,7 +479,7 @@ pub fn drawCursor(gb: *GraphicsBase, l: Layout, t: *const Term, look: CursorLook
         fillCells(gb, l, @intCast(x), @intCast(c.y), 1, bg);
     } else if (!fitsCell(gb, l, cell)) {
         fillCells(gb, l, @intCast(x), @intCast(c.y), 1, bg);
-        drawOffWidth(gb, l, @intCast(x), @intCast(c.y), cell, fg, bg);
+        drawOffWidth(gb, l, @intCast(x), @intCast(c.y), cell, fg, bg, t.cols);
     } else {
         var bytes: [4]u8 = undefined;
         setPens(gb, l, fg, bg, cell);
@@ -670,6 +711,26 @@ test "a fallback font's character of another width stands in the middle of its c
     drawRow(gb, layout, &grid, 0, 0, 5);
     try testing.expectEqual(@as(u32, 12), countIn(&surface, 5, 6, 18, white));
 
+    // A row that starts and ends with the wide one, a cell in from the
+    // surface's edge: each stays inside the row, the first from its
+    // cell's left edge, the last up to its cell's right.
+    @memset(&pixels, 0);
+    var inset = layout;
+    inset.origin_x = 8;
+    var ends: [3]Cell = undefined;
+    var short = Term.init(&ends, 3, 1);
+    short.write("\xCE\x94a\xCE\x94");
+    drawRow(gb, inset, &short, 0, 0, 3);
+    try testing.expectEqual(@as(u32, 0), countIn(&surface, 5, 0, 8, white));
+    try testing.expectEqual(@as(u32, 12), countIn(&surface, 5, 8, 20, white));
+    try testing.expectEqual(@as(u32, 12), countIn(&surface, 5, 20, 32, white));
+    try testing.expectEqual(@as(u32, 0), countIn(&surface, 5, 32, 48, white));
+    y = 0;
+    while (y < 8) : (y += 1) {
+        try testing.expectEqual(@as(u32, 8), countIn(&surface, y, 0, 8, 0));
+        try testing.expectEqual(@as(u32, 16), countIn(&surface, y, 32, 48, 0));
+    }
+
     gb.FreeRastPort(rp);
 }
 
@@ -768,6 +829,106 @@ fn markShape(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque)
     }
     request.count = count;
     return if (count > request.room) graphics.SHAPE_ROOM else graphics.SHAPE_OK;
+}
+
+/// The console's font with the parts of a keycap and a wide character:
+/// '1' a bar on its third row, U+20E3 four across on the fifth, which
+/// moves the point nowhere, and U+1F600 twelve across on the third row
+/// of two cells. The default character is a bar on the top row.
+const keycap_spec = fontimage.Spec{
+    .height = 8,
+    .baseline = 6,
+    .x_size = 8,
+    .default_char = '?',
+    .glyphs = &.{ barGlyph('1', 8, 2, 8), barGlyph('?', 8, 0, 8), barGlyph(0x20E3, 0, 4, 4), barGlyph(0x1F600, 16, 2, 12) },
+};
+const keycap_font: [fontimage.imageSize(keycap_spec)]u8 align(4) = fontimage.build(keycap_spec);
+
+/// A shaper that draws U+FE0F as the default character, so that a text
+/// it is in shows, leaves U+FE0E out and gives every other character its
+/// own glyph.
+fn selectorShape(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    _ = hook;
+    _ = object;
+    const request: *graphics.ShapeRequest = @ptrCast(@alignCast(message.?));
+    const text = request.text[0..request.length];
+    var count: u32 = 0;
+    var at: usize = 0;
+    while (at < text.len) {
+        const found = utf8.read(text[at..]);
+        const here = at;
+        at += found.length;
+        if (found.char == unicode.text_selector) continue;
+        const which: u32 = if (found.char == unicode.picture_selector) '?' else found.char;
+        if (count < request.room) request.glyphs[count] = .{
+            .which = which,
+            .cluster = @intCast(here),
+            .advance = switch (which) {
+                keycap_mark => 0,
+                0x1F600 => 16,
+                else => 8,
+            },
+        };
+        count += 1;
+    }
+    request.count = count;
+    return if (count > request.room) graphics.SHAPE_ROOM else graphics.SHAPE_OK;
+}
+
+test "a cell one wide draws its character's text form: no picture's selector, no keycap's mark" {
+    try kexec.setUp();
+    defer kexec.deinit();
+    _ = kexec.InitResident(kexec.SysBase, &kutility.utility_library_tag, null) orelse return error.NoUtility;
+    _ = kexec.InitResident(kexec.SysBase, &krtg.rtg_library_tag, null) orelse return error.NoRtg;
+    const made = kexec.InitResident(kexec.SysBase, &kgraphics.graphics_library_tag, null) orelse return error.NoGraphics;
+    const gb: *GraphicsBase = @ptrCast(@alignCast(made));
+
+    var pixels: [40 * 8 * 2]u8 = @splat(0);
+    var surface = sdk.rtg.Surface{ .pixels = &pixels, .width = 40, .height = 8, .pitch = 80, .size_bytes = pixels.len, .format = .rgb565 };
+    var hook = sdk.utility.Hook{ .entry = &selectorShape };
+    var cells_font = graphics.TextFont{ .node = .{ .name = "cell.font" }, .image = @ptrCast(&keycap_font), .shape = &hook };
+    const tags = [_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
+        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&cells_font) },
+        .{},
+    };
+    const rp = gb.CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    const white: u16 = 0xFFFF;
+    const layout = Layout{
+        .rp = rp,
+        .origin_x = 0,
+        .origin_y = 0,
+        .cell_width = 8,
+        .cell_height = 8,
+        .baseline = 6,
+        .fg = graphics.penRGB(255, 255, 255),
+        .bg = graphics.penRGB(0, 0, 255),
+        .shine = graphics.penRGB(255, 0, 0),
+        .fill = graphics.penRGB(0, 255, 0),
+    };
+
+    // A keycap, which is one cell, and a wide character with the
+    // selector, which is two: both keep what they were written with.
+    // The row ends with them, so what the selector is drawn as stays
+    // on the surface behind it.
+    var cells: [3]Cell = undefined;
+    var grid = Term.init(&cells, 3, 1);
+    grid.write("1\xEF\xB8\x8F\xE2\x83\xA3\xF0\x9F\x98\x80\xEF\xB8\x8F");
+    try testing.expectEqual(@as(u32, 0x1F600), grid.at(1, 0).ch);
+    try testing.expectEqual(term.WIDE_TAIL, grid.at(2, 0).ch);
+    try testing.expectEqual([2]u32{ unicode.picture_selector, keycap_mark }, grid.at(0, 0).marks);
+    try testing.expectEqual([2]u32{ unicode.picture_selector, 0 }, grid.at(1, 0).marks);
+    drawRow(gb, layout, &grid, 0, 0, 3);
+
+    // The one cell has the digit and nothing of the selector or the key.
+    try testing.expectEqual(@as(u32, 8), countIn(&surface, 2, 0, 8, white));
+    try testing.expectEqual(@as(u32, 0), countIn(&surface, 0, 0, 8, white));
+    try testing.expectEqual(@as(u32, 0), countIn(&surface, 4, 0, 8, white));
+    // The wide character went to Text with its selector.
+    try testing.expectEqual(@as(u32, 12), countIn(&surface, 2, 8, 24, white));
+    try testing.expectEqual(@as(u32, 8), countIn(&surface, 0, 8, 40, white));
+
+    gb.FreeRastPort(rp);
 }
 
 test "a cell's marks are drawn with its character, where the font's shaping puts them" {
