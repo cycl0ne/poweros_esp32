@@ -69,7 +69,7 @@ const workfile = dos.workfile;
 
 pub const SHELL_NAME = "shell";
 const SHELL_VERSION = 1;
-const SHELL_REVISION = 9;
+const SHELL_REVISION = 10;
 const BUILD_DATE = "12.11.2026";
 const SHELL_VERSION_STRING =
     "\x00$VER: " ++ SHELL_NAME ++ " " ++

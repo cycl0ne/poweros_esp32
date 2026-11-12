@@ -307,7 +307,10 @@ pub fn cmdEcho(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
     var argv: [5]usize = undefined;
     const rda = getArgs(dl, "/M,NOLINE/S,FIRST/K/N,LEN/K/N,TO/K", &argv) orelse return dos.RETURN_ERROR;
     defer dl.FreeArgs(rda);
-    const fh = if (rdargs.string(argv[4])) |to| (dl.Open(to, dos.MODE_NEWFILE) orelse return dos.RETURN_ERROR) else dl.Output();
+    const fh = if (rdargs.string(argv[4])) |to| (dl.Open(to, dos.MODE_NEWFILE) orelse {
+        _ = dl.PrintFault(dl.IoErr(), to);
+        return dos.RETURN_ERROR;
+    }) else dl.Output();
     defer if (argv[4] != 0) {
         _ = dl.Close(fh);
     };
