@@ -39,6 +39,7 @@ test {
     _ = @import("install/tests/update.zig");
     _ = @import("install/tests/autoboot.zig");
     _ = @import("emoji/tests/emoji.zig");
+    _ = @import("commodities/emoji/tests/picker.zig");
     _ = @import("devs/sdcard/sdspi.zig");
     _ = @import("devs/networks/tests/api.zig");
     _ = @import("devs/networks/tests/cyw43455.zig");

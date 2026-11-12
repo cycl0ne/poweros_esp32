@@ -287,7 +287,9 @@ Beside them:
   makes each active or inactive, shows or hides its window, or ends it,
   and the commodities
   themselves - Blanker, a screen that darkens when nothing happens;
-  FKey, functions on freely chosen keys; AutoPoint, the window under the
+  FKey, functions on freely chosen keys; Emoji, a window to pick an
+  emoji from - by group, by name in the locale's language, or from the
+  ones used last - typed into the window being worked in; AutoPoint, the window under the
   pointer activated; ClickToFront, a double click that brings a window
   up; MouseBlanker, the pointer out of the way while typing; NoCapsLock;
   and NumericPad, a keypad on a keyboard that has none

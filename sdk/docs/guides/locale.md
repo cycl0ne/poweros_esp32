@@ -529,6 +529,11 @@ which `scripts/fetch-emoji.sh` fetches; the licence of both is
 system disks of QEMU's virt machines, 1.8 MB in all: the list 37 KB, a
 language's names 76 to 247 KB.
 
+`SYS:Commodities/Emoji` is the window to pick one from: the groups as
+tabs, a search through the names and keywords, the ones used last, and
+the skin tone. What is picked is typed into the window that was being
+worked in ([commodities guide](commodities.md)).
+
 ## Commands
 
 | Command | What it does |

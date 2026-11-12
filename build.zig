@@ -345,6 +345,7 @@ const disk_icons = [_]DiskIcon{
     // picture - the name under it says which is which.
     .{ .path = "Commodities/Exchange.info", .picture = "preferences-desktop-keyboard-shortcuts", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=CX_PRIORITY=0", "TYPE=CX_POPKEY=ctrl alt home", "TYPE=CX_POPUP=YES" } },
     .{ .path = "Commodities/Blanker.info", .picture = "preferences-desktop", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=SECONDS=60", "TYPE=CYCLECOLORS=YES", "TYPE=ANIMATION=YES", "TYPE=CX_PRIORITY=0", "TYPE=CX_POPKEY=ctrl alt b", "TYPE=CX_POPUP=YES" } },
+    .{ .path = "Commodities/Emoji.info", .picture = "input-keyboard", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=CX_PRIORITY=0", "TYPE=CX_POPKEY=ctrl alt e", "TYPE=CX_POPUP=YES" } },
     .{ .path = "Commodities/FKey.info", .picture = "preferences-desktop-keyboard-shortcuts", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=CX_PRIORITY=0", "TYPE=CX_POPKEY=ctrl alt k", "TYPE=CX_POPUP=YES" } },
     .{ .path = "Commodities/AutoPoint.info", .picture = "preferences-system", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=CX_PRIORITY=0" } },
     .{ .path = "Commodities/ClickToFront.info", .picture = "preferences-system", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=CX_PRIORITY=0" } },
@@ -356,6 +357,7 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "Commodities/Docs/AutoPoint.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "Commodities/Docs/Blanker.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "Commodities/Docs/ClickToFront.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "Commodities/Docs/Emoji.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "Commodities/Docs/FKey.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "Commodities/Docs/MouseBlanker.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "Commodities/Docs/NoCapsLock.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },

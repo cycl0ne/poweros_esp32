@@ -189,6 +189,7 @@ const window_programs = [_]Program{
     .{ .disk = "Commodities/AutoPoint", .source = "commodities/autopoint/autopoint.zig", .name = "autopoint", .imports = &.{"commodity"} },
     .{ .disk = "Commodities/ClickToFront", .source = "commodities/clicktofront/clicktofront.zig", .name = "clicktofront", .imports = &.{"commodity"} },
     .{ .disk = "Commodities/Blanker", .source = "commodities/blanker/blanker.zig", .name = "blanker", .imports = &.{"commodity"} },
+    .{ .disk = "Commodities/Emoji", .source = "commodities/emoji/emoji.zig", .name = "emoji", .imports = &.{"commodity"} },
     .{ .disk = "Commodities/FKey", .source = "commodities/fkey/fkey.zig", .name = "fkey", .imports = &.{"commodity"} },
 };
 
@@ -736,6 +737,7 @@ pub const files = [_]File{
     .{ .disk = "Commodities/Docs/AutoPoint.md", .source = "commodities/autopoint/README.md" },
     .{ .disk = "Commodities/Docs/ClickToFront.md", .source = "commodities/clicktofront/README.md" },
     .{ .disk = "Commodities/Docs/Blanker.md", .source = "commodities/blanker/README.md" },
+    .{ .disk = "Commodities/Docs/Emoji.md", .source = "commodities/emoji/README.md" },
     .{ .disk = "Commodities/Docs/FKey.md", .source = "commodities/fkey/README.md" },
 };
 
