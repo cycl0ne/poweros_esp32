@@ -19,7 +19,7 @@
 //!   `þ` after `z` - and the letters a language sorts after one of the
 //!   alphabet's in their own places (`AFTER_Z=Å,ÄÆ,ÖØ`): a byte each, in
 //!   the language's order;
-//! - every other letter - Greek, Cyrillic, the kana, the ideographs -
+//! - every other letter - Greek, Cyrillic, Hangul, the ideographs -
 //!   folded and without its marks, in the order of its code point: 255,
 //!   then the code point as the second kind's.
 //!
@@ -32,6 +32,16 @@
 //! vowel sign. The anusvara and the candrabindu, one key for the two,
 //! and then the visarga have theirs behind `ॐ` and before the first
 //! vowel, where a dictionary of Hindi has them: `कंगन` before `कई`.
+//!
+//! The kana - hiragana and katakana, U+3040 to U+30FF, and the halfwidth
+//! katakana, U+FF66 to U+FF9F - stand where hiragana does among those
+//! letters, in the order of the same table (`_kana.zig`): by their
+//! sounds, `あ` to `ん`, the hiragana, the katakana and the halfwidth
+//! katakana of one sound as one letter, and a small letter and a voiced
+//! one as their letter - `かさ`, `ガス`, `きあ`. The marks that voice a
+//! halfwidth letter have no key, as the ones written on a letter have
+//! none. The iteration marks and the long vowel's mark `ー` have places
+//! before `あ`, so `キー` comes before `きあ`.
 //!
 //! Any other mark written on the character before and a format character
 //! have no key and are passed over. SC_COLLATE2 compares as SC_COLLATE1 does and,
@@ -49,6 +59,7 @@ const unicode = sdk.utility.unicode;
 const _base = @import("../locale_base.zig");
 const _chars = @import("../chars/_chars.zig");
 const _devanagari = @import("_devanagari.zig");
+const _kana = @import("_kana.zig");
 const ExtLocale = _base.ExtLocale;
 
 /// The letter `þ` is: the one after z.
@@ -93,6 +104,7 @@ const sign_places = 2;
 comptime {
     // The block's places are keys of code points inside the block.
     if (_devanagari.count + sign_places > _devanagari.places.len) @compileError("the Devanagari block's places do not fit the block");
+    if (_kana.count > _kana.places.len) @compileError("the kana's places do not fit their block");
 }
 
 /// The order a compare type names: SC_ASCII for any number that is none.
@@ -132,6 +144,10 @@ pub fn sign(one: u32, other: u32) i32 {
 pub fn keyOf(ext: *const ExtLocale, char: u32) ?u32 {
     if (char < 0x100 and latin1_keys[char] != 0) return @as(u32, latin1_keys[char]) << 24;
     if (devanagariKey(char)) |key| return key;
+    if (kanaKey(char)) |key| return key;
+    // The marks that voice a halfwidth katakana: letters by their class,
+    // marks by what they do.
+    if (char == 0xFF9E or char == 0xFF9F) return null;
     switch (unicode.class(char)) {
         .mark, .format => return null,
         .upper, .lower, .title, .letter => {},
@@ -158,6 +174,20 @@ fn devanagariKey(char: u32) ?u32 {
         },
     };
     return digits(other_letters, _devanagari.first + place - 1);
+}
+
+/// The key of a kana that has a place in the kana's order: an other
+/// letter's, of the code point as far into hiragana as the place. Null
+/// for any other character.
+fn kanaKey(char: u32) ?u32 {
+    const place: u32 = if (char >= _kana.first and char - _kana.first < _kana.places.len)
+        _kana.places[char - _kana.first]
+    else if (char >= _kana.half_first and char - _kana.half_first < _kana.half_places.len)
+        _kana.half_places[char - _kana.half_first]
+    else
+        return null;
+    if (place == 0) return null;
+    return digits(other_letters, _kana.first + place - 1);
 }
 
 /// The bytes of `key`, a key nextKey answered in `order`, into `into`;

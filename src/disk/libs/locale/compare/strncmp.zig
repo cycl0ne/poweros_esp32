@@ -34,9 +34,13 @@ const LocaleBase = _base.LocaleBase;
 /// orders the letters as the language does: in Swedish Å, Ä and Ö come
 /// after Z, in Spanish Ñ after N; `ł` is an `l` and `č` a `c`. Anything
 /// that is not a letter comes before every letter, the Latin letters
-/// before those of other scripts - Greek, Cyrillic, the kana, the
+/// before those of other scripts - Greek, Cyrillic, Hangul, the
 /// ideographs - which are in the order of their code points, and a mark
-/// written on the letter before counts for nothing. SC_COLLATE2 orders
+/// written on the letter before counts for nothing. Devanagari is in a
+/// Hindi dictionary's order. The kana are in the order of their sounds
+/// (1.6), `あ` to `ん`: the hiragana, the katakana and the halfwidth
+/// katakana of one sound are one letter, and so are a small letter and
+/// a voiced one with theirs - `かさ`, `ガス`, `きあ`. SC_COLLATE2 orders
 /// as SC_COLLATE1 and, where that finds the two the same, by the first
 /// byte they differ in: the order a sorted list is shown in, where
 /// `apple`, `Apple` and `äpple` stand together and always in the same

@@ -219,8 +219,16 @@ the consonants, and the vowel signs with the virama last, so that
 `कंगन` comes before `कई`, `कम` and `कल` before `का`, and `क्य` after
 `की`; a consonant with a nukta is its consonant (`फ़िल्म` is `फिल्म`), and
 the letters added to the block later stand with the ones they belong
-to. `tools/foldgen collate` makes that table from Unicode's collation
-element table. `length` counts bytes. `StrConvert` makes the key
+to. The kana are in the order of their sounds, `あ` to `ん`: the
+hiragana, the katakana and the halfwidth katakana of one sound are one
+letter, and so are a small letter and a voiced one with theirs, so
+`かさ`, `ガス` and `きあ` follow each other and `カタカナ` is `かたかな`;
+the long vowel's mark `ー` and the iteration marks come before `あ`
+(`キー` before `きあ`). Hangul and the Han characters are in the order
+of their code points, which is a Korean dictionary's for the one and
+radicals and strokes for the other (locale.library 1.6).
+`tools/foldgen collate` and `tools/foldgen kana` make the two tables
+from Unicode's collation element table. `length` counts bytes. `StrConvert` makes the key
 that compares as `StrnCmp` does, byte by byte, for sorting many words
 fast: at most twice the string's bytes for `SC_ASCII` and `SC_COLLATE1`,
 three times and one more for `SC_COLLATE2`.

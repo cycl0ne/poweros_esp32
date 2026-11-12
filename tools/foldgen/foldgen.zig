@@ -13,6 +13,7 @@
 //!   foldgen normal <UnicodeData.txt> <CompositionExclusions.txt> <out.zig>
 //!   foldgen cluster <GraphemeBreakProperty.txt> <emoji-data.txt> <DerivedCoreProperties.txt> <out.zig>
 //!   foldgen collate <allkeys.txt> <out.zig>
+//!   foldgen kana <allkeys.txt> <out.zig>
 //!
 //! `posfs` writes posfs's case fold table (sdk/libs/dos/posfs/fold1.zig):
 //! simple case folding, the file's C and S lines, one code point to one,
@@ -115,6 +116,14 @@
 //! starting in the block is more than one character. The version is
 //! allkeys.txt's.
 //!
+//! `kana` writes the order locale.library sorts the kana in
+//! (src/disk/libs/locale/compare/_kana.zig), from the same table and in
+//! the same way, for U+3040 to U+30FF - hiragana and katakana - and
+//! U+FF66 to U+FF9F, the halfwidth katakana, as one set of places: the
+//! hiragana, the katakana and the halfwidth katakana of one sound have
+//! one weight, the small letter and the voiced one their letter's. A
+//! character of two letters (`ゟ`, `ヿ`) has its first letter's place.
+//!
 //! A case table is runs: code points one or two apart that all move by the same
 //! amount (A-Z by +32; Ā, Ă, Ą... by +1 every second one), each run packed
 //! into a u64 and found by a binary search - 210 runs for Unicode 16's 1484
@@ -132,7 +141,7 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(1);
 }
 
-const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig> | foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig> | foldgen normal <UnicodeData.txt> <CompositionExclusions.txt> <out.zig> | foldgen cluster <GraphemeBreakProperty.txt> <emoji-data.txt> <DerivedCoreProperties.txt> <out.zig> | foldgen collate <allkeys.txt> <out.zig>";
+const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig> | foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig> | foldgen normal <UnicodeData.txt> <CompositionExclusions.txt> <out.zig> | foldgen cluster <GraphemeBreakProperty.txt> <emoji-data.txt> <DerivedCoreProperties.txt> <out.zig> | foldgen collate|kana <allkeys.txt> <out.zig>";
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -432,7 +441,7 @@ pub fn main(init: std.process.Init) !void {
         if (args.len != 4) fatal(usage, .{});
         const keys = try cwd.readFileAlloc(io, args[2], arena, limit);
         const version = try versionNamed(keys, "# allkeys-", args[2]);
-        const order = try blockOrder(keys, collate_first, collate_last);
+        const order = try blockOrder(keys, &.{.{ .first = collate_first, .last = collate_last }}, false);
         try out.print(arena,
             \\// SPDX-License-Identifier: MIT
             \\//! The order of the Devanagari block, U+{X:0>4} to U+{X:0>4}, from the
@@ -460,14 +469,58 @@ pub fn main(init: std.process.Init) !void {
             \\pub const places = [_]u8{{
             \\
         , .{ collate_first, collate_last, version, version, collate_first, order.count });
-        for (order.places[0 .. collate_last - collate_first + 1], 0..) |place, at| {
-            if (at % 16 == 0) try out.appendSlice(arena, "   ");
-            // Two digits each: entries of one width are what zig fmt
-            // leaves as they are.
-            try out.print(arena, " 0x{X:0>2},", .{place});
-            if (at % 16 == 15) try out.appendSlice(arena, "\n");
-        }
-        try out.appendSlice(arena, "};\n");
+        try writePlaces(arena, &out, order.places[0 .. collate_last - collate_first + 1]);
+        try cwd.writeFile(io, .{ .sub_path = args[3], .data = out.items });
+        return;
+    }
+
+    if (mem.eql(u8, args[1], "kana")) {
+        if (args.len != 4) fatal(usage, .{});
+        const keys = try cwd.readFileAlloc(io, args[2], arena, limit);
+        const version = try versionNamed(keys, "# allkeys-", args[2]);
+        const order = try blockOrder(keys, &kana_ranges, true);
+        try out.print(arena,
+            \\// SPDX-License-Identifier: MIT
+            \\//! The order of the kana - hiragana and katakana, U+{X:0>4} to
+            \\//! U+{X:0>4}, and the halfwidth katakana, U+{X:0>4} to U+{X:0>4} -
+            \\//! from the Default Unicode Collation Element Table of Unicode
+            \\//! {s}: the place of each character's primary weight among
+            \\//! theirs. Written by tools/foldgen (`foldgen kana`) from
+            \\//! allkeys.txt, and written again for a new version of Unicode.
+            \\//!
+            \\//! The hiragana, the katakana and the halfwidth katakana of one
+            \\//! sound have one place, and so have a small letter and a voiced
+            \\//! one with their letter; a character of two letters has its
+            \\//! first one's. A character without a place is one the table
+            \\//! gives no primary weight - the voiced marks - or punctuation.
+            \\
+            \\/// The Unicode version the table is from.
+            \\pub const unicode_version = "{s}";
+            \\
+            \\/// The first character of hiragana and katakana.
+            \\pub const first: u32 = 0x{X:0>4};
+            \\
+            \\/// The first character of the halfwidth katakana.
+            \\pub const half_first: u32 = 0x{X:0>4};
+            \\
+            \\/// How many places there are.
+            \\pub const count: u8 = {d};
+            \\
+            \\/// The place of each character from `first` on, from 1; 0 for one
+            \\/// that has none.
+            \\pub const places = [_]u8{{
+            \\
+        , .{ kana_ranges[0].first, kana_ranges[0].last, kana_ranges[1].first, kana_ranges[1].last, version, version, kana_ranges[0].first, kana_ranges[1].first, order.count });
+        const full = kana_ranges[0].last - kana_ranges[0].first + 1;
+        const half = kana_ranges[1].last - kana_ranges[1].first + 1;
+        try writePlaces(arena, &out, order.places[0..full]);
+        try out.appendSlice(arena,
+            \\
+            \\/// The place of each character from `half_first` on, as `places`.
+            \\pub const half_places = [_]u8{
+            \\
+        );
+        try writePlaces(arena, &out, order.places[full .. full + half]);
         try cwd.writeFile(io, .{ .sub_path = args[3], .data = out.items });
         return;
     }
@@ -786,8 +839,36 @@ const part_syllables: u8 = 18;
 const collate_first: u21 = 0x0900;
 const collate_last: u21 = 0x097F;
 
-/// What `collate` writes: each character's place, and how many places.
+/// The runs `kana` writes the order of: hiragana and katakana, and the
+/// halfwidth katakana.
+const kana_ranges = [_]Range{ .{ .first = 0x3040, .last = 0x30FF }, .{ .first = 0xFF66, .last = 0xFF9F } };
+
+/// What `collate` and `kana` write: each character's place, the runs'
+/// characters one after the other, and how many places.
 const BlockOrder = struct { places: [256]u8, count: u8 };
+
+/// Where `char` is among the characters of `ranges`, one run after the
+/// other; null for one in none of them.
+fn slotOf(ranges: []const Range, char: u21) ?usize {
+    var before: usize = 0;
+    for (ranges) |range| {
+        if (char >= range.first and char <= range.last) return before + (char - range.first);
+        before += range.last - range.first + 1;
+    }
+    return null;
+}
+
+/// The places as a table's lines, sixteen to a line, and its end.
+fn writePlaces(arena: mem.Allocator, out: *std.ArrayList(u8), places: []const u8) !void {
+    for (places, 0..) |place, at| {
+        if (at % 16 == 0) try out.appendSlice(arena, "   ");
+        // Two digits each: entries of one width are what zig fmt
+        // leaves as they are.
+        try out.print(arena, " 0x{X:0>2},", .{place});
+        if (at % 16 == 15 or at == places.len - 1) try out.appendSlice(arena, "\n");
+    }
+    try out.appendSlice(arena, "};\n");
+}
 
 /// A line of allkeys.txt: the characters it is for, the primary weight
 /// of its first element and whether that is a variable one, and whether
@@ -817,20 +898,22 @@ fn keyLine(raw: []const u8) !?KeyLine {
     return found;
 }
 
-/// The places of the characters `first` to `last` in allkeys.txt's
-/// order, a block of at most 256.
-fn blockOrder(keys: []const u8, first: u21, last: u21) !BlockOrder {
+/// The places of the characters of `ranges` in allkeys.txt's order, at
+/// most 256 of them. With `digraphs`, a character whose later elements
+/// have a primary weight too has its first one's place; without, there
+/// must be none.
+fn blockOrder(keys: []const u8, ranges: []const Range, digraphs: bool) !BlockOrder {
     var weights: [256]u16 = @splat(0);
     var digits: [10]u16 = @splat(0);
     var lines = mem.splitScalar(u8, keys, '\n');
     while (lines.next()) |raw| {
         const line = try keyLine(raw) orelse continue;
         if (line.single and line.first >= '0' and line.first <= '9') digits[line.first - '0'] = line.primary;
-        if (line.first < first or line.first > last) continue;
+        const slot = slotOf(ranges, line.first) orelse continue;
         if (!line.single) fatal("{X} starts a line of several characters", .{line.first});
         if (line.variable or line.primary == 0) continue;
-        if (line.more) fatal("{X} has two primary weights", .{line.first});
-        weights[line.first - first] = line.primary;
+        if (line.more and !digraphs) fatal("{X} has two primary weights", .{line.first});
+        weights[slot] = line.primary;
     }
     for (digits) |digit| {
         if (digit == 0) fatal("no weight of a digit", .{});

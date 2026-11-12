@@ -267,7 +267,8 @@ Beside them:
   grouped as the country groups them (`12,34,567`), the characters
   of every script classed and sorted by Unicode with a language's own
   letters where it puts them (`Å`, `Ä`, `Ö` after `Z` in Swedish) and
-  Devanagari in a dictionary's order, and a
+  Devanagari in a dictionary's order and the kana by their sounds,
+  and a
   program's own texts from its catalog, built from a descriptor and
   checked by `sdk/tools/catcomp`: the desktop's, Notepad's, Sheet's,
   the Player's, Movie's and the Clock's in German and in Hindi

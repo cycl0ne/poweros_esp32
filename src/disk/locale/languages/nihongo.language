@@ -1,6 +1,8 @@
 # LOCALE:Languages/nihongo.language - Japanese: the words locale.library
-# writes and reads dates in. A word left out is the English one; a word
-# with a blank is in quotes.
+# writes and reads dates in. Its kana sort by their sounds, hiragana
+# and katakana of one sound together, and its kanji by their codes,
+# which the library does for every language. A word left out is the
+# English one; a word with a blank is in quotes.
 #
 # The days, then their short names.
 DAY_1=日曜日 DAY_2=月曜日 DAY_3=火曜日 DAY_4=水曜日

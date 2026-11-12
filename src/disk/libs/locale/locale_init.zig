@@ -25,7 +25,7 @@ const _catalog = @import("catalog/_catalog.zig");
 
 pub const LIBRARY_NAME = sdk.locale.LOCALENAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 5;
+pub const LIBRARY_REVISION = 6;
 const BUILD_DATE = "12.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

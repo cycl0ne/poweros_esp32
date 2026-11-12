@@ -279,6 +279,18 @@ test "StrnCmp and StrConvert: case left out, marks left out, then case and marks
     try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "क\u{0958}", "कक", -1, locale.SC_COLLATE1));
     try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "हँस", "हंस", -1, locale.SC_COLLATE1));
     try expectOrder(lb, loc, locale.SC_COLLATE2, &.{ "हँस", "हंस", "हम" });
+    // The kana: by their sounds, hiragana, katakana and the halfwidth
+    // katakana of one sound as one letter, a small letter and a voiced
+    // one as their letter; the long vowel's mark before every kana.
+    // Hangul and the ideographs follow them, by their code points.
+    try expectOrder(lb, loc, locale.SC_COLLATE1, &.{ "あい", "アキ", "いぬ", "かさ", "ガス", "キー", "きあ", "サクラ", "すし", "ワニ", "を", "ん" });
+    try expectOrder(lb, loc, locale.SC_COLLATE1, &.{ "ж", "ा", "ー", "あ", "ン", "一", "丁", "가", "각", "나", "다" });
+    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "カタカナ", "かたかな", -1, locale.SC_COLLATE1));
+    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "ｶﾞｽ", "ガス", -1, locale.SC_COLLATE1));
+    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "か\u{3099}", "が", -1, locale.SC_COLLATE1));
+    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "っ", "つ", -1, locale.SC_COLLATE1));
+    try testing.expectEqual(@as(i32, 0), lb.StrnCmp(loc, "ヿ", "コ", -1, locale.SC_COLLATE1));
+    try expectOrder(lb, loc, locale.SC_COLLATE2, &.{ "かな", "がな", "カナ", "かに" });
     // Every letter of the block has a place, so none keeps the key of
     // its code point, which is some other character's place.
     for (0x0900..0x0980) |char| {
