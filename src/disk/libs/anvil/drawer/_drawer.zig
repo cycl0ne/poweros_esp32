@@ -615,7 +615,7 @@ fn addEntry(d: *Desktop, dr: *Drawer, name: []const u8, data: *const dos.ExAllDa
         .protection = data.prot,
     };
     if (dr.view != .icon) {
-        textview.insert(d.sys, &dr.icons, ic, dr.view, dr.reversed);
+        textview.insert(d.sys, &d.order, &dr.icons, ic, dr.view, dr.reversed);
         return;
     }
     ic.measure(d.gb, dr.rp, &d.drawer_look);
@@ -1087,7 +1087,10 @@ pub fn sortBy(d: *Desktop, dr: *Drawer, view: View) void {
         dr.view = view;
         dr.reversed = false;
     }
-    textview.sort(d.sys, &dr.icons, dr.view, dr.reversed);
+    // The order asked for anew: a change of the language since the last
+    // sort shows with this one.
+    d.reorder();
+    textview.sort(d.sys, &d.order, &dr.icons, dr.view, dr.reversed);
     d.showChecks(dr.view, dr.show_all);
     drawStrip(d, dr);
     drawInside(d, dr);

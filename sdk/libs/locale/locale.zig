@@ -41,6 +41,9 @@ const DosBase = @import("../../interface/dos.zig").DosBase;
 /// The library's name, for OpenLibrary.
 pub const LOCALENAME = "locale.library";
 
+/// The order a list of names is shown in (`order.zig`).
+pub const Order = @import("order.zig").Order;
+
 // --- GetLocaleStr ------------------------------------------------------------------
 
 /// The weekdays, Sunday first.

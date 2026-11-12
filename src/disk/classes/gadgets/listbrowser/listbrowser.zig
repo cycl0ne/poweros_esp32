@@ -74,8 +74,8 @@ const Row = lb.Row;
 pub const Library = gadgets.ClassLibrary(.{
     .name = lb.LISTBROWSER_CLASS,
     .version = 1,
-    .revision = 3,
-    .date = "11.11.2026",
+    .revision = 4,
+    .date = "12.11.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -273,15 +273,9 @@ fn isTree(own: *const Data) bool {
 
 // --- sorting ----------------------------------------------------------------
 
-/// Two texts in any case, a character at a time by Unicode's folding:
-/// below 0, 0 or above.
-fn compareText(a: [*:0]const u8, b: [*:0]const u8) i32 {
-    var a_length: usize = 0;
-    while (a[a_length] != 0) a_length += 1;
-    var b_length: usize = 0;
-    while (b[b_length] != 0) b_length += 1;
-    return utility.unicode.compareFolded(a[0..a_length], b[0..b_length]);
-}
+/// The order rows are sorted in: the locale's order of letters, and
+/// without locale.library a character at a time by Unicode's folding.
+const Order = sdk.locale.Order;
 
 /// The number a text starts with, a `-` before it taken; numbers joined
 /// by `:` read as one, each part sixty of the one after it - a length,
@@ -306,25 +300,25 @@ fn numberOf(text: [*:0]const u8) i64 {
 }
 
 /// Whether `a` comes before `b` in the order sorted by.
-fn before(own: *const Data, a: *Row, b: *Row) bool {
+fn before(own: *const Data, order: *const Order, a: *Row, b: *Row) bool {
     const column = own.sort_column;
     const x = a.cells[column] orelse "";
     const y = b.cells[column] orelse "";
     const numeric = own.columns.?[column].flags & lb.COLUMN_NUMBER != 0;
-    var order: i32 = 0;
+    var found: i32 = 0;
     if (numeric) {
         const m = numberOf(x);
         const n = numberOf(y);
-        order = if (m < n) -1 else if (m > n) 1 else 0;
+        found = if (m < n) -1 else if (m > n) 1 else 0;
     }
-    if (order == 0) order = compareText(x, y);
-    return if (own.reverse != 0) order > 0 else order < 0;
+    if (found == 0) found = order.compareZ(x, y);
+    return if (own.reverse != 0) found > 0 else found < 0;
 }
 
 /// The rows of one level in order, each with its branch: the branches
 /// first, each in its place, then the level's rows by insertion. `scratch`
 /// and `starts` are as long as `items`.
-fn sortLevel(own: *const Data, items: []*Row, scratch: []*Row, starts: []u32) void {
+fn sortLevel(own: *const Data, order: *const Order, items: []*Row, scratch: []*Row, starts: []u32) void {
     if (items.len < 2) return;
     var groups: usize = 0;
     var i: usize = 0;
@@ -332,7 +326,7 @@ fn sortLevel(own: *const Data, items: []*Row, scratch: []*Row, starts: []u32) vo
         const start = i;
         i += 1;
         while (i < items.len and items[i].depth > items[start].depth) i += 1;
-        if (i - start > 2) sortLevel(own, items[start + 1 .. i], scratch[start + 1 .. i], starts[start + 1 .. i]);
+        if (i - start > 2) sortLevel(own, order, items[start + 1 .. i], scratch[start + 1 .. i], starts[start + 1 .. i]);
         // Written once the branch is sorted: the branch's own starts lie
         // after this one, never on it.
         starts[groups] = @intCast(start);
@@ -342,7 +336,7 @@ fn sortLevel(own: *const Data, items: []*Row, scratch: []*Row, starts: []u32) vo
     while (g < groups) : (g += 1) {
         const moving = starts[g];
         var at = g;
-        while (at > 0 and before(own, items[moving], items[starts[at - 1]])) : (at -= 1) starts[at] = starts[at - 1];
+        while (at > 0 and before(own, order, items[moving], items[starts[at - 1]])) : (at -= 1) starts[at] = starts[at - 1];
         starts[at] = moving;
     }
     var out: usize = 0;
@@ -379,7 +373,10 @@ fn sortRows(base: *gadgets.Base, own: *const Data) void {
         items[n] = each;
         n += 1;
     }
-    sortLevel(own, items[0..count], scratch[0..count], starts[0..count]);
+    // The locale's order as it is now, for this sort.
+    var order = Order.open(sys);
+    defer order.close(sys);
+    sortLevel(own, &order, items[0..count], scratch[0..count], starts[0..count]);
     const kind = list.type;
     list.init(kind);
     for (items[0..count]) |row| sys.AddTail(list, &row.node);

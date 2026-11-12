@@ -237,6 +237,17 @@ that compares as `StrnCmp` does, byte by byte, for sorting many words
 fast: at most twice the string's bytes for `SC_ASCII` and `SC_COLLATE1`,
 three times and one more for `SC_COLLATE2`.
 
+A program that only wants its names in the reader's order takes
+`sdk.locale.Order`: `Order.open(sys)` opens locale.library and the
+default locale, `compare(a, b)` and `compareZ(a, b)` answer which of two
+texts comes first by `SC_COLLATE2`, and `close(sys)` gives both back.
+Without the library, or without a default locale, the same calls order
+by Unicode's folding, so the program needs no second path. It is what
+`C:Dir`, the desktop's list view, listbrowser.gadget's sorted column
+and Sheet's Sort list by; each opens it for the sort, so a change of
+the language shows with the next one. A line's completion in a console
+keeps the order of the code points: it is the ROM's and asks no locale.
+
 A language's `AFTER_<letter>=` line names the letters it sorts after one
 of the alphabet's - `AFTER_Z=Å,ÄÆ,ÖØ`, a comma between those that sort
 apart - any letter of any script, both cases at once, 64 at most.

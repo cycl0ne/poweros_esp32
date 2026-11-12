@@ -37,10 +37,14 @@ const path = @import("path.zig");
 
 pub const View = anvil_prefs.View;
 
-/// Whether name `a` sorts before `b`, case aside: a character at a time
-/// by Unicode's folding.
-pub fn nameBefore(a: []const u8, b: []const u8) bool {
-    return utility.unicode.compareFolded(a, b) < 0;
+/// The order names are shown in: the locale's, where there is one.
+pub const Order = sdk.locale.Order;
+
+/// Whether name `a` sorts before `b` in `order`: the language's order of
+/// letters, or without a locale a character at a time by Unicode's
+/// folding.
+pub fn nameBefore(order: *const Order, a: []const u8, b: []const u8) bool {
+    return order.compare(a, b) < 0;
 }
 
 fn newer(a: dos.DateStamp, b: dos.DateStamp) i32 {
@@ -52,33 +56,33 @@ fn newer(a: dos.DateStamp, b: dos.DateStamp) i32 {
 
 /// Whether `a` comes before `b` in `view`'s order, turned over when
 /// `reversed`: drawers before files either way.
-pub fn before(a: *const Icon, b: *const Icon, view: View, reversed: bool) bool {
+pub fn before(order: *const Order, a: *const Icon, b: *const Icon, view: View, reversed: bool) bool {
     const a_drawer = a.entry.isDrawer();
     const b_drawer = b.entry.isDrawer();
     if (a_drawer != b_drawer) return a_drawer;
-    return if (reversed) inOrder(b, a, view) else inOrder(a, b, view);
+    return if (reversed) inOrder(order, b, a, view) else inOrder(order, a, b, view);
 }
 
 /// Whether `a` comes before `b` in `view`'s first order, drawers aside.
-fn inOrder(a: *const Icon, b: *const Icon, view: View) bool {
+fn inOrder(order: *const Order, a: *const Icon, b: *const Icon, view: View) bool {
     switch (view) {
         .date => {
-            const order = newer(a.entry.date, b.entry.date);
-            if (order != 0) return order > 0;
+            const later = newer(a.entry.date, b.entry.date);
+            if (later != 0) return later > 0;
         },
         .size => if (a.entry.size != b.entry.size) return a.entry.size > b.entry.size,
         .icon, .name => {},
     }
-    return nameBefore(a.name(), b.name());
+    return nameBefore(order, a.name(), b.name());
 }
 
 /// `ic` put on `list` before the first row it comes before.
-pub fn insert(sys: *ExecBase, list: *exec.List, ic: *Icon, view: View, reversed: bool) void {
+pub fn insert(sys: *ExecBase, order: *const Order, list: *exec.List, ic: *Icon, view: View, reversed: bool) void {
     var pred: ?*exec.Node = null;
     var it = list.iterator();
     while (it.next()) |node| {
         const other: *Icon = @alignCast(@fieldParentPtr("node", node));
-        if (before(ic, other, view, reversed)) break;
+        if (before(order, ic, other, view, reversed)) break;
         pred = node;
     }
     sys.Insert(list, &ic.node, pred);
@@ -92,7 +96,7 @@ fn iconOf(node: *exec.Node) *Icon {
 /// where they are: a merge sort of the list's own nodes, chained through
 /// `succ` while they are off it, so it asks for no memory. Run `i` holds
 /// 2^i rows in order, of rows taken off before those of every lower run.
-pub fn sort(sys: *ExecBase, list: *exec.List, view: View, reversed: bool) void {
+pub fn sort(sys: *ExecBase, order: *const Order, list: *exec.List, view: View, reversed: bool) void {
     var runs: [64]?*exec.Node = @splat(null);
     var used: usize = 0;
     while (sys.RemHead(list)) |node| {
@@ -100,7 +104,7 @@ pub fn sort(sys: *ExecBase, list: *exec.List, view: View, reversed: bool) void {
         var carry = node;
         var i: usize = 0;
         while (runs[i]) |earlier| : (i += 1) {
-            carry = merge(earlier, carry, view, reversed);
+            carry = merge(order, earlier, carry, view, reversed);
             runs[i] = null;
         }
         runs[i] = carry;
@@ -109,7 +113,7 @@ pub fn sort(sys: *ExecBase, list: *exec.List, view: View, reversed: bool) void {
     var whole: ?*exec.Node = null;
     for (runs[0..used]) |held| {
         const run = held orelse continue;
-        whole = if (whole) |later| merge(run, later, view, reversed) else run;
+        whole = if (whole) |later| merge(order, run, later, view, reversed) else run;
     }
     var at = whole;
     while (at) |node| {
@@ -120,13 +124,13 @@ pub fn sort(sys: *ExecBase, list: *exec.List, view: View, reversed: bool) void {
 
 /// Two chains in order made one, `first`'s row taken where neither comes
 /// before the other.
-fn merge(first: *exec.Node, second: *exec.Node, view: View, reversed: bool) *exec.Node {
+fn merge(order: *const Order, first: *exec.Node, second: *exec.Node, view: View, reversed: bool) *exec.Node {
     var a: ?*exec.Node = first;
     var b: ?*exec.Node = second;
     var head: ?*exec.Node = null;
     var tail: ?*exec.Node = null;
     while (a != null and b != null) {
-        const from_b = before(iconOf(b.?), iconOf(a.?), view, reversed);
+        const from_b = before(order, iconOf(b.?), iconOf(a.?), view, reversed);
         const taken = if (from_b) b.? else a.?;
         if (from_b) b = taken.succ else a = taken.succ;
         if (tail) |last| last.succ = taken else head = taken;

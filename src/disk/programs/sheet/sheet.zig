@@ -188,7 +188,7 @@ const max_rows = formula.max_rows;
 const max_cols = formula.max_cols;
 
 pub const COMMAND_NAME = "Sheet";
-const VERSION = "1.11";
+const VERSION = "1.12";
 const VERSION_STRING = "\x00$VER: Sheet " ++ VERSION ++ " (12.11.2026)\r\n";
 /// What the screen's title bar says while the window is the active one.
 const SCREEN_TITLE = "Sheet " ++ VERSION;

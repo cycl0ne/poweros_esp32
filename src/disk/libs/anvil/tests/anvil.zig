@@ -175,9 +175,9 @@ test "a disk's title: how full, free and used, in K, then M, G, T and P past 9,9
 }
 
 test "rows: names in order case aside, the protection as hsparwed" {
-    try testing.expect(textview.nameBefore("apple", "Banana"));
-    try testing.expect(!textview.nameBefore("Banana", "apple"));
-    try testing.expect(textview.nameBefore("Note", "notes"));
+    try testing.expect(textview.nameBefore(&.{}, "apple", "Banana"));
+    try testing.expect(!textview.nameBefore(&.{}, "Banana", "apple"));
+    try testing.expect(textview.nameBefore(&.{}, "Note", "notes"));
     var bits: [8]u8 = undefined;
     textview.protectionText(&bits, 0);
     try testing.expectEqualStrings("----rwed", &bits);
@@ -224,25 +224,25 @@ test "rows: sorted where they are by name, date or size, and turned over - drawe
         sys.AddTail(&list, &row.node);
     }
     var text: [64]u8 = undefined;
-    textview.sort(sys, &list, .name, false);
+    textview.sort(sys, &.{}, &list, .name, false);
     try testing.expectEqualStrings("Apps Zeta alpha beta delta gamma", rowNames(&list, &text));
-    textview.sort(sys, &list, .name, true);
+    textview.sort(sys, &.{}, &list, .name, true);
     try testing.expectEqualStrings("Zeta Apps gamma delta beta alpha", rowNames(&list, &text));
-    textview.sort(sys, &list, .date, false);
+    textview.sort(sys, &.{}, &list, .date, false);
     try testing.expectEqualStrings("Apps Zeta delta alpha beta gamma", rowNames(&list, &text));
-    textview.sort(sys, &list, .date, true);
+    textview.sort(sys, &.{}, &list, .date, true);
     try testing.expectEqualStrings("Zeta Apps gamma beta alpha delta", rowNames(&list, &text));
     // Drawers are all the same size: by name, then turned over with the rest.
-    textview.sort(sys, &list, .size, false);
+    textview.sort(sys, &.{}, &list, .size, false);
     try testing.expectEqualStrings("Apps Zeta beta gamma alpha delta", rowNames(&list, &text));
-    textview.sort(sys, &list, .size, true);
+    textview.sort(sys, &.{}, &list, .size, true);
     try testing.expectEqualStrings("Zeta Apps delta alpha gamma beta", rowNames(&list, &text));
     // A row read later goes where the order puts it.
     var late: icons.Icon = .{};
     @memcpy(late.label[0..3], "eta");
     late.label_len = 3;
     late.entry = .{ .size = 75 };
-    textview.insert(sys, &list, &late, .size, true);
+    textview.insert(sys, &.{}, &list, &late, .size, true);
     try testing.expectEqualStrings("Zeta Apps delta eta alpha gamma beta", rowNames(&list, &text));
     while (sys.RemHead(&list)) |_| {}
 }

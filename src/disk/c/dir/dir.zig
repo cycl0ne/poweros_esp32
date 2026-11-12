@@ -51,7 +51,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Dir";
-const VERSION_STRING = "\x00$VER: Dir 1.3 (11.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Dir 1.4 (12.11.2026)\r\n";
 
 const template = "DIR,OPT/K,ALL/S,DIRS/S,FILES/S,INTER/S";
 const arg_dir = 0;
@@ -120,6 +120,8 @@ const Run = struct {
     enter: bool = false,
     quit: bool = false,
     failed: bool = false,
+    /// The order the names are listed in.
+    order: sdk.locale.Order = .{},
 };
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
@@ -174,7 +176,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .dirs = dirs,
         .files = files,
         .inter = inter,
+        .order = sdk.locale.Order.open(sys),
     };
+    defer run.order.close(sys);
 
     // MatchFirst will not take a null name; "" is the current directory.
     const where = rdargs.string(argv[arg_dir]) orelse "";
@@ -316,7 +320,7 @@ fn collect(run: *Run, head: *?*Entry) bool {
 
     var at = head;
     while (at.*) |there| {
-        if (before(entry, there)) break;
+        if (before(run, entry, there)) break;
         at = &there.next;
     }
     entry.next = at.*;
@@ -469,10 +473,10 @@ fn typeOut(run: *Run, here: ?*dos.FileLock, name: [*:0]const u8) void {
     }
 }
 
-/// By name, ignoring case as utility.library's Stricmp does: by
-/// Unicode's folding.
-fn before(a: *const Entry, b: *const Entry) bool {
-    return sdk.utility.unicode.compareFolded(nameOf(a), nameOf(b)) < 0;
+/// By name in the locale's order of letters, and without locale.library
+/// by Unicode's folding, as utility.library's Stricmp compares.
+fn before(run: *const Run, a: *const Entry, b: *const Entry) bool {
+    return run.order.compare(nameOf(a), nameOf(b)) < 0;
 }
 
 fn nameOf(entry: *const Entry) []const u8 {

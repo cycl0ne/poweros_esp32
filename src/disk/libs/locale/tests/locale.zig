@@ -318,6 +318,41 @@ test "StrnCmp and StrConvert: case left out, marks left out, then case and marks
     try testing.expectEqualStrings("ÄÖ", six[0..4]);
 }
 
+test "Order: names in the locale's order, and by folding without the library" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    const sys = rig.sysLib();
+
+    var order = locale.Order.open(sys);
+    defer order.close(sys);
+    try testing.expect(order.lb != null);
+    // A marked letter beside its base, not behind z; case decides last.
+    try testing.expect(order.compare("äpfel", "Zebra") < 0);
+    try testing.expect(order.compare("Apple", "apple") < 0);
+    try testing.expect(order.compareZ("bär", "bas") < 0);
+    try testing.expectEqual(@as(i32, 0), order.compare("same", "same"));
+    // Texts given by their lengths need no NUL after them.
+    const text = "applesXX";
+    try testing.expect(order.compare(text[0..5], text[0..6]) < 0);
+    try testing.expect(order.compare(text[0..6], text[0..5]) > 0);
+    // Texts too long for the locale's compare: by what fits, then by
+    // folding.
+    var long_one: [300]u8 = @splat('a');
+    var long_two: [300]u8 = @splat('a');
+    long_one[299] = 'b';
+    long_two[299] = 'c';
+    try testing.expect(order.compare(&long_one, &long_two) < 0);
+    long_two[10] = 'B';
+    try testing.expect(order.compare(&long_one, &long_two) < 0);
+
+    // No library: the folded code points, where ä is behind z.
+    const folded: locale.Order = .{};
+    try testing.expect(folded.compare("äpfel", "Zebra") > 0);
+    try testing.expect(folded.compare("apple", "Banana") < 0);
+    try testing.expect(folded.compareZ("Note", "notes") < 0);
+}
+
 test "OpenLocale from files: the country's formats, the language's words and order, UTF-8 as it is" {
     var rig: Rig = undefined;
     try rig.init();

@@ -947,7 +947,10 @@ pub const Sheet = struct {
         const order = memory[0..rows];
         const spare = memory[rows .. rows * 2];
         for (order, 0..) |*slot, i| slot.* = @intCast(i);
-        const by_key = SortKey{ .sheet = sheet, .top = area.top, .col = by, .descending = descending };
+        // Texts in the locale's order of letters, as it is now.
+        var names = sdk.locale.Order.open(sys);
+        defer names.close(sys);
+        const by_key = SortKey{ .sheet = sheet, .top = area.top, .col = by, .descending = descending, .names = &names };
         mergeSort(order, spare, by_key);
         var moves = false;
         for (order, 0..) |from, to| {
@@ -1038,6 +1041,8 @@ const SortKey = struct {
     top: u32,
     col: u32,
     descending: bool,
+    /// The order texts are put in.
+    names: *const sdk.locale.Order,
 
     /// Whether row `a` goes after row `b`, the rows counted from `top`.
     fn after(key: SortKey, a: u32, b: u32) bool {
@@ -1046,7 +1051,7 @@ const SortKey = struct {
         const empty_first = first.kind == .empty;
         const empty_second = second.kind == .empty;
         if (empty_first or empty_second) return empty_first and !empty_second;
-        const order = compareValues(first, second);
+        const order = compareValues(key.names, first, second);
         return if (key.descending) order < 0 else order > 0;
     }
 };
@@ -1084,15 +1089,16 @@ fn rankOf(value: Value) u8 {
     };
 }
 
-/// -1, 0 or 1 as `a` sorts before, with or after `b`.
-pub fn compareValues(a: Value, b: Value) i32 {
+/// -1, 0 or 1 as `a` sorts before, with or after `b`, texts in `names`'
+/// order.
+pub fn compareValues(names: *const sdk.locale.Order, a: Value, b: Value) i32 {
     const rank_a = rankOf(a);
     const rank_b = rankOf(b);
     if (rank_a != rank_b) return if (rank_a < rank_b) -1 else 1;
     switch (a.kind) {
         .number, .boolean => return if (a.number < b.number) -1 else if (a.number > b.number) 1 else 0,
         .text => {
-            const order = sdk.utility.unicode.compareFolded(a.text, b.text);
+            const order = names.compare(a.text, b.text);
             return if (order < 0) -1 else if (order > 0) 1 else 0;
         },
         .err => return if (@intFromEnum(a.err) < @intFromEnum(b.err)) -1 else if (@intFromEnum(a.err) > @intFromEnum(b.err)) 1 else 0,

@@ -358,7 +358,8 @@ pub fn cleanUpBy(d: *Desktop, where: ?*Drawer, sub: u32) void {
     // The desktop's ground is the hook's to read: held while its list is
     // taken apart and put together again.
     if (where == null) d.change();
-    while (d.sys.RemHead(list)) |node| textview.insert(d.sys, &sorted, @alignCast(@fieldParentPtr("node", node)), view, false);
+    d.reorder();
+    while (d.sys.RemHead(list)) |node| textview.insert(d.sys, &d.order, &sorted, @alignCast(@fieldParentPtr("node", node)), view, false);
     while (d.sys.RemHead(&sorted)) |node| d.sys.AddTail(list, node);
     if (where == null) d.changed();
     cleanUp(d, where);

@@ -135,6 +135,9 @@ pub const Desktop = struct {
     /// Its words, in the language the user prefers; the ones built in
     /// until it is up, and without locale.library.
     text: Text,
+    /// The order names are listed in: the locale's as it was when a list
+    /// was last sorted (`reorder`), Unicode's folding without one.
+    order: sdk.locale.Order = .{},
     /// The disks' icons placed anew (`ANVA_CleanUp`).
     clean_up: bool = false,
 
@@ -259,11 +262,18 @@ pub const Desktop = struct {
 
     // --- coming up -------------------------------------------------------
 
+    /// The names' order taken from the default locale as it is now.
+    pub fn reorder(d: *Desktop) void {
+        d.order.close(d.sys);
+        d.order = sdk.locale.Order.open(d.sys);
+    }
+
     /// Everything the desktop needs, in order; 0, or the dos error that
     /// stopped it (whatever came before it is still held, for `tearDown`).
     fn setUp(d: *Desktop) i32 {
         const sys = d.sys;
         d.text = Text.open(sys);
+        d.order = sdk.locale.Order.open(sys);
         d.volumes.init(.unknown);
         d.drawers.init(.unknown);
         d.read_signal = sys.AllocSignal(-1);
@@ -1155,6 +1165,7 @@ pub const Desktop = struct {
         if (d.screen) |screen| d.ib.UnlockPubScreen(null, screen);
         // Its words last: the menus and the windows showed them.
         d.text.close();
+        d.order.close(d.sys);
         // Whatever is still on a port was sent to the desktop: replied.
         for ([_]?*exec.MsgPort{ d.notify_port, d.windows_port }) |held| {
             const port = held orelse continue;
