@@ -128,6 +128,14 @@ gb.Text(rp, "Hello", 5);
   baseline, in the pens and the styles of the text, rows that reach
   past the line cut off. Its advance is its own. See
   [Fallback fonts](#fallback-fonts).
+- **A letter and a mark written as two characters are drawn as the
+  one they make**, where no font's layout tables shape them: `e` and
+  U+0301 are the font's `é` - before a fallback that has the two is
+  asked - and in a font without `é` its `e`, where the mark by itself
+  would be the default character (`utility.unicode.compose`, Unicode's
+  canonical pairs of the BMP, a letter with two marks made a mark at a
+  time). The text keeps its bytes: a place inside such a letter is
+  behind it, and `TextFit` cuts before or after it.
 - **A font may hold more glyphs than its image.** A font with a
   `render` hook - every size diskfont makes from an outline - is asked
   for a character its image lacks the first time the character is drawn

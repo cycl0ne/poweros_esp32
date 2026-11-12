@@ -90,9 +90,12 @@ pub const LIBRARY_VERSION = 0;
 /// the first font of the chain that draws it in the form it asks for:
 /// with glyphs in their own colours where it is a picture by default
 /// or U+FE0F asks for one, in the pen where it is text by default or
-/// U+FE0E asks for that. The version stays 0 until there is something
-/// to demand of it.
-pub const LIBRARY_REVISION = 44;
+/// U+FE0E asks for that. 45: a letter and a mark written as two characters
+/// are drawn as the one character they make, where no font shapes them:
+/// `e` and U+0301 as the font's `é`, or as its `e`, not with the default
+/// character. The version stays 0 until there is something to demand of
+/// it.
+pub const LIBRARY_REVISION = 45;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.

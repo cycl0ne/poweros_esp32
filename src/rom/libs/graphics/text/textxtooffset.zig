@@ -96,7 +96,7 @@ pub fn TextXToOffset(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, coun
     var at: usize = 0;
     while (at < bytes.len) {
         const here = at;
-        const found = _text.glyphOf(gb, font, utf8.next(bytes, &at));
+        const found = _text.glyphOf(gb, font, _text.nextChar(gb, font, bytes, &at));
         if (found.font != look.font) look = _text.lookOf(font, found.font, rp.text_style);
         const step = found.glyph.advance + look.extra;
         if (2 * x < 2 * pen + step) return @intCast(here);

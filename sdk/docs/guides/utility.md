@@ -438,7 +438,9 @@ writes U+FFFD (`utf8.replacement`) for a surrogate or a value past
 `unicode.compareFolded(a, b)` and `unicode.equalFolded(a, b)` over two
 slices, what `Strnicmp` answers. `unicode.base(char)` is the letter a
 letter with marks is written on (`A` for `Ā`), what a font that lacks
-one draws instead. `unicode.width(char)` is the cells of a console a
+one draws instead. `unicode.compose(first, second)` is the one character
+two are put together as (`é` for `e` and U+0301), null for two that make
+none. `unicode.width(char)` is the cells of a console a
 character takes: 0 for a mark written on the character before it or a
 format character, 2 for a wide one - CJK, kana, Hangul, emoji - and 1
 for the rest; the console and its line editor place text by it, and a

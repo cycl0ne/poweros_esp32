@@ -280,7 +280,7 @@ fn takeRun(gb: *GraphicsBase, line: *const TextFont, style: graphics.FontStyle, 
     var count: usize = 0;
     while (count < bytes.len) {
         var after = count;
-        const found = glyphOf(gb, line, utf8.next(bytes, &after));
+        const found = glyphOf(gb, line, _text.nextChar(gb, line, bytes, &after));
         if (found.font != look.font) {
             if (count != 0) break;
             look = _text.lookOf(line, found.font, style);
@@ -395,7 +395,7 @@ fn stencilRun(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, run: Run, a
         const bytes = string[0..run.count];
         var i: usize = 0;
         while (i < bytes.len) {
-            const found = glyphOf(gb, look.line, utf8.next(bytes, &i));
+            const found = glyphOf(gb, look.line, _text.nextChar(gb, look.line, bytes, &i));
             const glyph = found.glyph;
             // A glyph that could not be made when the run was taken and
             // can be now is another font's than the run's: its pixels
@@ -485,7 +485,7 @@ fn composeRun(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, run: Run, a
         const bytes = string[0..run.count];
         var i: usize = 0;
         while (i < bytes.len) {
-            const found = glyphOf(gb, look.line, utf8.next(bytes, &i));
+            const found = glyphOf(gb, look.line, _text.nextChar(gb, look.line, bytes, &i));
             const glyph = found.glyph;
             // As in `stencilRun`: only the run's own font's glyphs.
             if (found.font == look.font) composeGlyph(rp, piece, look, glyph, at, top);

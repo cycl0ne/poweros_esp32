@@ -11,6 +11,7 @@
 //!   foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig>
 //!   foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig>
 //!   foldgen normal <UnicodeData.txt> <CompositionExclusions.txt> <out.zig>
+//!   foldgen compose <UnicodeData.txt> <CompositionExclusions.txt> <out.zig>
 //!   foldgen cluster <GraphemeBreakProperty.txt> <emoji-data.txt> <DerivedCoreProperties.txt> <out.zig>
 //!   foldgen emoji <emoji-data.txt> <emoji-variation-sequences.txt> <out.zig>
 //!   foldgen collate <allkeys.txt> <out.zig>
@@ -86,6 +87,14 @@
 //! more than two, or a character that is more than four once every part
 //! is taken apart. The version is CompositionExclusions.txt's.
 //!
+//! `compose` writes the pairs graphics.library puts together when no
+//! font draws them apart (sdk/libs/utility/unicode_compose.zig), which
+//! `unicode.compose` answers: `normal`'s last list, cut to the pairs
+//! whose two characters and the one they make are all in the BMP - a
+//! letter and a mark as the letter with the mark, a kana and its voicing
+//! mark. Two columns, sorted by the pair. The version is
+//! CompositionExclusions.txt's.
+//!
 //! `cluster` writes what each character is to the clusters of a text
 //! (sdk/libs/utility/unicode_cluster.zig), which `unicode.clusterEnd`
 //! cuts a text by - a letter with its marks, a syllable of Hangul, a
@@ -156,7 +165,7 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(1);
 }
 
-const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig> | foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig> | foldgen normal <UnicodeData.txt> <CompositionExclusions.txt> <out.zig> | foldgen cluster <GraphemeBreakProperty.txt> <emoji-data.txt> <DerivedCoreProperties.txt> <out.zig> | foldgen emoji <emoji-data.txt> <emoji-variation-sequences.txt> <out.zig> | foldgen collate|kana <allkeys.txt> <out.zig>";
+const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig> | foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig> | foldgen normal|compose <UnicodeData.txt> <CompositionExclusions.txt> <out.zig> | foldgen cluster <GraphemeBreakProperty.txt> <emoji-data.txt> <DerivedCoreProperties.txt> <out.zig> | foldgen emoji <emoji-data.txt> <emoji-variation-sequences.txt> <out.zig> | foldgen collate|kana <allkeys.txt> <out.zig>";
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -687,6 +696,57 @@ pub fn main(init: std.process.Init) !void {
             if (at % 12 == 0) try out.appendSlice(arena, "   ");
             try out.print(arena, " 0x{X:0>4},", .{place});
             if (at % 12 == 11 or at + 1 == normal.joined.len) try out.appendSlice(arena, "\n");
+        }
+        try out.appendSlice(arena, "};\n");
+        try cwd.writeFile(io, .{ .sub_path = args[4], .data = out.items });
+        return;
+    }
+    if (mem.eql(u8, args[1], "compose")) {
+        if (args.len != 5) fatal(usage, .{});
+        const data = try cwd.readFileAlloc(io, args[2], arena, limit);
+        const exclusions = try cwd.readFileAlloc(io, args[3], arena, limit);
+        const version = try versionNamed(exclusions, "# CompositionExclusions-", args[3]);
+        const normal = try normalOf(arena, data, exclusions);
+        // `joined` is sorted by the two already; the ones past the BMP
+        // are passed over.
+        var pairs: std.ArrayList(u32) = .empty;
+        var wholes: std.ArrayList(u16) = .empty;
+        for (normal.joined) |place| {
+            const part = normal.parts[place];
+            const whole = std.math.cast(u16, part >> 42) orelse continue;
+            const first = std.math.cast(u16, (part >> 21) & 0x1F_FFFF) orelse continue;
+            const second = std.math.cast(u16, part & 0x1F_FFFF) orelse continue;
+            try pairs.append(arena, @as(u32, first) << 16 | second);
+            try wholes.append(arena, whole);
+        }
+        try out.print(arena,
+            \\// SPDX-License-Identifier: MIT
+            \\//! The characters two others are put together as, from Unicode
+            \\//! {s}: the canonical decompositions of UnicodeData.txt into two
+            \\//! characters that CompositionExclusions.txt does not keep from being
+            \\//! put together, where the two and the one they make are in the BMP.
+            \\//! Written by tools/foldgen (`foldgen compose`) from the files
+            \\//! scripts/fetch-unicode.sh fetches; never edited by hand.
+            \\//!
+            \\//! {d} pairs, sorted; `wholes[i]` is what `pairs[i]` makes.
+            \\
+            \\/// The Unicode version the table is from.
+            \\pub const unicode_version = "{s}";
+            \\
+            \\/// The pairs, `first << 16 | second`, sorted.
+            \\pub const pairs = [_]u32{{
+            \\
+        , .{ version, pairs.items.len, version });
+        for (pairs.items, 0..) |pair, at| {
+            if (at % 8 == 0) try out.appendSlice(arena, "   ");
+            try out.print(arena, " 0x{X:0>8},", .{pair});
+            if (at % 8 == 7 or at + 1 == pairs.items.len) try out.appendSlice(arena, "\n");
+        }
+        try out.appendSlice(arena, "};\n\n/// What each pair makes.\npub const wholes = [_]u16{\n");
+        for (wholes.items, 0..) |whole, at| {
+            if (at % 12 == 0) try out.appendSlice(arena, "   ");
+            try out.print(arena, " 0x{X:0>4},", .{whole});
+            if (at % 12 == 11 or at + 1 == wholes.items.len) try out.appendSlice(arena, "\n");
         }
         try out.appendSlice(arena, "};\n");
         try cwd.writeFile(io, .{ .sub_path = args[4], .data = out.items });

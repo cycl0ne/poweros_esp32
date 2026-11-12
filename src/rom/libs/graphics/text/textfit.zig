@@ -151,7 +151,11 @@ pub fn TextFit(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32
     var room = _text.Measure{};
     var fits: u32 = 0;
     while (fits < count) {
-        const char = if (backward) utf8.readLast(bytes[0 .. count - fits]) else utf8.read(bytes[fits..]);
+        const char: utf8.Read = if (backward) _text.lastChar(gb, font, bytes[0 .. count - fits]) else forward: {
+            var past: usize = fits;
+            const read = _text.nextChar(gb, font, bytes, &past);
+            break :forward .{ .char = read, .length = past - fits };
+        };
         const found = _text.glyphOf(gb, font, char.char);
         if (found.font != look.font) look = _text.lookOf(font, found.font, rp.text_style);
         const next = if (backward)

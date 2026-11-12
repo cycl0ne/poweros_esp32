@@ -3043,6 +3043,33 @@ test "fonts: two Pospaz in the ROM, told apart by height" {
     try testing.expectEqual(@as(i32, 16), base(gb).TextLength(rp, "\xC4\x80\xE2\x82\xAC", 5)); // Ā€
     try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, "\xF0\x9F\x98\x80", 4)); // an emoji, the box
     try testing.expectEqual(@as(i32, 24), base(gb).TextLength(rp, "M\xFCl", 3)); // Mül in Latin-1: M, the box, l
+    // A letter and a mark that make one character are that character:
+    // the font's own é, and for an Ā it lacks its A - one glyph each,
+    // where the mark by itself would be the box. A letter with two
+    // marks is made a mark at a time; two that make nothing stay two.
+    const unicode = sdk.utility.unicode;
+    try testing.expectEqual(@as(?u32, 0xE9), unicode.compose('e', 0x301));
+    try testing.expectEqual(@as(?u32, 0x1EBF), unicode.compose(unicode.compose('e', 0x302).?, 0x301));
+    try testing.expectEqual(@as(?u32, 0x304C), unicode.compose(0x304B, 0x3099)); // か and its voicing mark
+    try testing.expectEqual(@as(?u32, null), unicode.compose('e', 'x'));
+    try testing.expectEqual(@as(?u32, null), unicode.compose('x', 0x301));
+    try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, "e\u{301}", 3));
+    try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, "A\u{304}", 3));
+    try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, "e\u{302}\u{301}", 5));
+    try testing.expectEqual(@as(i32, 16), base(gb).TextLength(rp, "x\u{301}", 3)); // no such letter: x and the box
+    // What fits is whole letters, from either end; a place inside one
+    // is behind it.
+    var fitted: graphics.TextExtent = .{};
+    try testing.expectEqual(@as(u32, 1), base(gb).TextFit(rp, "ae\u{301}", 4, &fitted, null, graphics.TEXT_FORWARD, 8, 0));
+    try testing.expectEqual(@as(u32, 4), base(gb).TextFit(rp, "ae\u{301}", 4, &fitted, null, graphics.TEXT_FORWARD, 16, 0));
+    // Backward the string is given by its last byte.
+    const marked_last: [*]const u8 = "ae\u{301}";
+    const marked_first: [*]const u8 = "e\u{301}a";
+    try testing.expectEqual(@as(u32, 3), base(gb).TextFit(rp, marked_last + 3, 4, &fitted, null, graphics.TEXT_BACKWARD, 8, 0));
+    try testing.expectEqual(@as(u32, 1), base(gb).TextFit(rp, marked_first + 3, 4, &fitted, null, graphics.TEXT_BACKWARD, 8, 0));
+    try testing.expectEqual(@as(u32, 4), base(gb).TextFit(rp, marked_first + 3, 4, &fitted, null, graphics.TEXT_BACKWARD, 16, 0));
+    try testing.expectEqual(@as(i32, 8), base(gb).TextOffsetToX(rp, "e\u{301}a", 4, 3));
+    try testing.expectEqual(@as(u32, 3), base(gb).TextXToOffset(rp, "e\u{301}a", 4, 9));
     // A height that is not there gets the nearest, and a shorter font
     // before a taller one: 12 is 8, 15 is 16.
     for ([_]u16{ 9, 10, 11, 12 }) |rows| {

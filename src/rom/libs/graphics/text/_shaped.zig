@@ -32,7 +32,10 @@
 //! character that is not shown - it is the first font whose hook shapes
 //! the cluster by itself without the glyph of a character it lacks. A
 //! cluster no font draws is drawn a character at a time as `glyphOf`
-//! finds them: by the base letter, or with the default character.
+//! finds them - by the base letter, or with the default character -
+//! a letter and a mark that make one character as that one
+//! (`_text.nextChar`): `e` and U+0301 as the `é` a font without layout
+//! tables has.
 //!
 //! **Stretches.** The clusters one font draws, one after another, are
 //! shaped together in one call of its hook, so what the font does
@@ -237,7 +240,10 @@ fn fill(gb: *GraphicsBase, line: *const TextFont, bytes: []const u8, placed: []P
             var cluster_end: usize = 0;
             while (at < stretch.len) {
                 const here = at;
-                const code = utf8.next(stretch, &at);
+                // Two characters that make one are that one where the
+                // font has it, as the font was chosen by; what no font
+                // draws is put together as the other way draws a text.
+                const code = if (font) |one| _text.nextIn(gb, one, stretch, &at) else _text.nextChar(gb, line, stretch, &at);
                 if (here >= cluster_end) {
                     cluster = here;
                     cluster_end = unicode.clusterEnd(stretch, here);
@@ -374,11 +380,13 @@ fn fontFor(gb: *GraphicsBase, line: *const TextFont, cluster: []const u8, scratc
 }
 
 /// Whether `font` has a glyph for each character of the cluster: its
-/// image's, or one its hook makes.
+/// image's, or one its hook makes. A letter and a mark that make one
+/// character are that one where the font has it (`_text.nextIn`), so a
+/// font with `é` draws `e` and U+0301 before a fallback that has the two.
 fn hasEach(gb: *GraphicsBase, font: *const TextFont, cluster: []const u8) bool {
     var at: usize = 0;
     while (at < cluster.len) {
-        if (_text.glyphIn(gb, font, utf8.next(cluster, &at)) == null) return false;
+        if (_text.glyphIn(gb, font, _text.nextIn(gb, font, cluster, &at)) == null) return false;
     }
     return true;
 }

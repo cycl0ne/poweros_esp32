@@ -46,6 +46,7 @@
 const utf8 = @import("utf8.zig");
 const unicode_case = @import("unicode_case.zig");
 const unicode_base = @import("unicode_base.zig");
+const unicode_compose = @import("unicode_compose.zig");
 const unicode_width = @import("unicode_width.zig");
 const unicode_class = @import("unicode_class.zig");
 const unicode_cluster = @import("unicode_cluster.zig");
@@ -92,6 +93,31 @@ pub fn upper(char: u32) u32 {
 pub fn lower(char: u32) u32 {
     if (char < 0x80) return if (char >= 'A' and char <= 'Z') char + 32 else char;
     return mapped(&unicode_case.lower, char);
+}
+
+/// The one character `first` and `second` are put together as - `é` for
+/// `e` and U+0301, `が` for `か` and U+3099 - or null for two that make
+/// none. The pairs are Unicode's canonical ones of the BMP; a letter
+/// with two marks is made a mark at a time, the answer asked again with
+/// the next.
+pub fn compose(first: u32, second: u32) ?u32 {
+    // No pair's second character is below the combining marks.
+    if (second < 0x300 or first > 0xFFFF or second > 0xFFFF) return null;
+    const pair = first << 16 | second;
+    const pairs = &unicode_compose.pairs;
+    var low: usize = 0;
+    var high: usize = pairs.len;
+    while (low < high) {
+        const middle = low + (high - low) / 2;
+        if (pairs[middle] < pair) {
+            low = middle + 1;
+        } else if (pairs[middle] > pair) {
+            high = middle;
+        } else {
+            return unicode_compose.wholes[middle];
+        }
+    }
+    return null;
 }
 
 /// The letter `char` is written on with marks - `A` for `Ā`, `α` for

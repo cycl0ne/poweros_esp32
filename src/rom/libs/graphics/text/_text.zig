@@ -10,7 +10,10 @@
 //! Characters are found through the ranges, so a font may start and stop
 //! anywhere and leave gaps; a code it has no glyph for is drawn as its
 //! base letter, when it is a letter with marks the font has the letter
-//! of, and otherwise as its default character. Text arrives as UTF-8,
+//! of, and otherwise as its default character. A letter and a mark
+//! written as two characters are drawn as the one character they make
+//! (`nextChar`, `unicode.compose`), where the font has that one or lacks
+//! the mark: `e` and U+0301 as `é`, and as `e` in a font without `é`. Text arrives as UTF-8,
 //! read with the SDK's `utf8`, so a byte that is no UTF-8 is drawn as
 //! the character it reads as; counts are bytes.
 //!
@@ -207,6 +210,76 @@ pub fn glyphOf(gb: *GraphicsBase, font: *const TextFont, code: u32) Found {
         if (ownGlyph(gb, font, under)) |found| return found;
     }
     return .{ .glyph = fontimage.find(font.image, font.image.default_char).?, .font = font };
+}
+
+/// The character at `at` in `bytes`, `at` moved past it - and past each
+/// character behind it that the two are put together with into one
+/// (`unicode.compose`): a letter and its mark as the letter with the
+/// mark. They are put together where the font or a fallback has a glyph
+/// for the one they make, or has none for the second - it is then drawn
+/// by its base letter instead of with the default character; a font
+/// that has the mark and not the whole draws the two.
+///
+/// INPUTS:
+/// - `gb` - the library.
+/// - `font` - the font the text is in.
+/// - `bytes` - the text, UTF-8.
+/// - `at` - where to read, moved past what was read.
+pub fn nextChar(gb: *GraphicsBase, font: *const TextFont, bytes: []const u8, at: *usize) u32 {
+    var char = utf8.next(bytes, at);
+    while (at.* < bytes.len) {
+        var after = at.*;
+        const second = utf8.next(bytes, &after);
+        const whole = unicode.compose(char, second) orelse break;
+        if (ownGlyph(gb, font, whole) == null and ownGlyph(gb, font, second) != null) break;
+        char = whole;
+        at.* = after;
+    }
+    return char;
+}
+
+/// The same for one font by itself: two characters are put together
+/// only where this font has a glyph for the one they make.
+///
+/// INPUTS:
+/// - `gb` - the library.
+/// - `font` - the font asked, without its fallbacks.
+/// - `bytes` - the text, UTF-8.
+/// - `at` - where to read, moved past what was read.
+pub fn nextIn(gb: *GraphicsBase, font: *const TextFont, bytes: []const u8, at: *usize) u32 {
+    var char = utf8.next(bytes, at);
+    while (at.* < bytes.len) {
+        var after = at.*;
+        const whole = unicode.compose(char, utf8.next(bytes, &after)) orelse break;
+        if (glyphIn(gb, font, whole) == null) break;
+        char = whole;
+        at.* = after;
+    }
+    return char;
+}
+
+/// The character `bytes` end with as `nextChar` reads it, and the bytes
+/// it takes: a letter and the marks put together with it are one.
+///
+/// INPUTS:
+/// - `gb` - the library.
+/// - `font` - the font the text is in.
+/// - `bytes` - the text, UTF-8, not empty.
+pub fn lastChar(gb: *GraphicsBase, font: *const TextFont, bytes: []const u8) utf8.Read {
+    const last = utf8.readLast(bytes);
+    if (last.char < 0x300) return last;
+    // Back over the marks to the character they are written on, and
+    // from there forward: the whole is the end only when it reaches it.
+    var start = bytes.len - last.length;
+    var marks: u32 = 0;
+    while (start > 0 and marks < 4) : (marks += 1) {
+        const before = utf8.readLast(bytes[0..start]);
+        start -= before.length;
+        if (unicode.width(before.char) != 0) break;
+    }
+    var at = start;
+    const char = nextChar(gb, font, bytes, &at);
+    return if (at == bytes.len) .{ .char = char, .length = bytes.len - start } else last;
 }
 
 /// The glyph a font has under a number of its own, made by its hook the
@@ -425,7 +498,7 @@ pub fn measure(gb: *GraphicsBase, font: *const TextFont, style: graphics.FontSty
     const bytes = string[0..count];
     var at: usize = 0;
     while (at < bytes.len) {
-        const found = glyphOf(gb, font, utf8.next(bytes, &at));
+        const found = glyphOf(gb, font, nextChar(gb, font, bytes, &at));
         if (found.font != look.font) look = lookOf(font, found.font, style);
         m = grow(m, found.glyph, look.extra, look.smear, look.lean);
     }
