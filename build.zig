@@ -1731,6 +1731,9 @@ pub fn build(b: *std.Build) void {
     });
     fontconv_tests.addImport("sdk", sdk);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fontconv_tests })).step);
+    // svgcompare reads the modules' own code, not their calls: it is
+    // compiled here so that a change to that code is seen in it.
+    test_step.dependOn(&svgcompare.step);
     // Board facts are src/boards/'s and nothing a module imports: a
     // module asks expansion.library for its part (tools/boardcheck.zig).
     const boardcheck = b.addExecutable(.{

@@ -181,7 +181,7 @@ const Sources = struct {
             const path = std.fmt.allocPrint(gpa, "{s}/Liberation{s}-{s}.ttf", .{ dir, family.file, face }) catch return null;
             const bytes = Io.Dir.cwd().readFileAlloc(s.io, path, gpa, .limited(16 << 20)) catch return null;
             const font = gpa.create(tt.outline.Font) catch return null;
-            if (!tt.outline.open(font, bytes.ptr, @intCast(bytes.len), 0)) return null;
+            if (!tt.outline.open(font, bytes.ptr, @intCast(bytes.len), 0, null, 0)) return null;
             const opened = gpa.create(diskfont.OutlineFont) catch return null;
             opened.* = .{ .outline = @ptrCast(font), .style = font.style };
             return opened;
@@ -302,6 +302,14 @@ const Sources = struct {
             .most_points = most[1],
             .style = font.style,
         };
+    }
+
+    /// Room for a glyph the drawing's work block is too short for.
+    pub fn AllocRoom(_: *Sources, bytes: usize) ?svg.Room {
+        return std.heap.page_allocator.alignedAlloc(u8, .of(vector.Point), bytes) catch null;
+    }
+    pub fn FreeRoom(_: *Sources, room: svg.Room) void {
+        std.heap.page_allocator.free(room);
     }
 
     /// A PNG of a `data:` address, as pens.

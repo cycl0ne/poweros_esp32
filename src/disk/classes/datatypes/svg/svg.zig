@@ -27,8 +27,9 @@
 //! file: an `image` of a `data:` address is made a picture by
 //! datatypes.library from its bytes. Since 1.4 a text is shaped by its
 //! font, through truetypeshaping.library: kerned, its ligatures joined,
-//! its marks put on their letters. Without those libraries, or a
-//! font, the text or the picture is left out and the rest is drawn. A
+//! its marks put on their letters, and since 1.5 a glyph of any number
+//! of points is drawn. Without those libraries, or a font, the text or
+//! the picture is left out and the rest is drawn. A
 //! picture reads no other file and goes to no address on a network: an
 //! `href` is followed only within the file.
 //!
@@ -83,8 +84,8 @@ const Pen = graphics.Pen;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "svg.datatype",
     .version = 1,
-    .revision = 4,
-    .date = "11.11.2026",
+    .revision = 5,
+    .date = "12.11.2026",
     .super = pic.PICTUREDTCLASS,
     .opens = &.{ pic.PICTURE_LIBRARY, vector.VECTORNAME, compression.COMPRESSIONNAME },
     .Instance = Data,
@@ -283,6 +284,16 @@ const Sources = struct {
     }
     pub fn FontMetrics(s: *Sources, outline: *truetype.Outline, metrics: *truetype.FontMetrics) void {
         s.tb.?.FontMetrics(outline, metrics);
+    }
+    /// Memory for a glyph the work block is too short for; null when
+    /// there is none.
+    pub fn AllocRoom(s: *Sources, bytes: usize) ?draw.Room {
+        const memory = s.base.sys_base.AllocVec(@max(bytes, 1), exec.MEMF_ANY) orelse return null;
+        const room: [*]align(@alignOf(vector.Point)) u8 = @ptrCast(@alignCast(memory));
+        return room[0..bytes];
+    }
+    pub fn FreeRoom(s: *Sources, room: draw.Room) void {
+        s.base.sys_base.FreeVec(room.ptr);
     }
 
     /// The picture of a `data:` address: its bytes decoded, made a

@@ -63,6 +63,13 @@
 //! and its marks once, however many glyphs they have. A text is read
 //! from left to right.
 //!
+//! A glyph's outline is read into the work block. Since 1.5 one of
+//! more verbs or points than the block holds (`glyph_verbs`,
+//! `glyph_points`) is read into room of its own: `ext` allocates it
+//! for that glyph, as long as the outline says it has to be, and gets
+//! it back once the glyph is in the path. Without the room the glyph
+//! is left out and the rest of the text drawn.
+//!
 //! **Images** (since 1.3): an `image` whose `href` is a `data:` address
 //! of a picture in base64 (`data.zig`) is drawn in its place as
 //! `preserveAspectRatio` says, through vector.library's image paint,
@@ -86,8 +93,9 @@
 //! `vb` is anything with vector.library's calls by their names: the
 //! library itself on the machine, its module straight on the host.
 //! `ext` is what the picture reads besides: fonts by their families and
-//! their glyphs, and the pictures of `data:` addresses (`Without` has
-//! neither).
+//! their glyphs, the pictures of `data:` addresses, and the memory for
+//! a glyph the work block is too short for (`Without` has none of
+//! them).
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -134,9 +142,16 @@ pub const max_runs = 32;
 pub const max_span_depth = 8;
 /// The most fonts one picture draws in.
 pub const max_faces = 8;
-/// The most verbs and points of one glyph's outline.
+/// The verbs and points of one glyph's outline the work block holds; a
+/// glyph of more is read into room of its own.
 pub const glyph_verbs = 1024;
 pub const glyph_points = 2048;
+/// The most bytes of room asked for one glyph: what a 32-bit machine
+/// can give in one piece.
+const most_room = 0x7FFF_FFFF;
+/// Room for a glyph the work block is too short for, as `ext.AllocRoom`
+/// gives it and `ext.FreeRoom` takes it back.
+pub const Room = []align(@alignOf(vector.Point)) u8;
 
 /// A picture an `image` draws, as `ext.OpenImage` gives it: its pens,
 /// 0xAARRGGBB and not premultiplied, and whatever its giver needs back
@@ -169,6 +184,10 @@ pub const Without = struct {
         return null;
     }
     pub fn CloseImage(_: *Without, _: Image) void {}
+    pub fn AllocRoom(_: *Without, _: usize) ?Room {
+        return null;
+    }
+    pub fn FreeRoom(_: *Without, _: Room) void {}
 };
 
 /// What drawing needs besides the document, in one block of the
@@ -191,7 +210,8 @@ pub const Work = struct {
     shaped: [max_shaped]tts.ShapedGlyph = undefined,
     /// The fonts opened, closed when the picture is drawn.
     faces: [max_faces]Face = undefined,
-    /// One glyph's outline, as truetype.library gives it and moved.
+    /// One glyph's outline, as truetype.library gives it and moved; one
+    /// that does not fit has room of its own.
     glyph_verbs: [glyph_verbs]u8 = undefined,
     glyph_points: [glyph_points]vector.Point = undefined,
 };
@@ -1168,12 +1188,28 @@ fn Painter(comptime VB: type, comptime EXT: type) type {
             p.vb.ClearPath(p.path);
             for (glyphs) |g| {
                 var segments = truetype.Segments{ .verbs = &work.glyph_verbs, .points = &work.glyph_points, .verb_room = glyph_verbs, .point_room = glyph_points };
-                if (p.ext.GlyphSegments(outline, g.glyph, &segments) != truetype.TRUETYPE_OK) continue;
+                var result = p.ext.GlyphSegments(outline, g.glyph, &segments);
+                var own_room: ?Room = null;
+                defer if (own_room) |room| p.ext.FreeRoom(room);
+                if (result == truetype.TRUETYPEERR_ROOM) {
+                    // More than the block holds: room for this glyph
+                    // alone, its points first and its verbs behind them.
+                    const verb_count = segments.verb_count;
+                    const point_count = segments.point_count;
+                    const points_bytes = @as(u64, point_count) * @sizeOf(vector.Point);
+                    // More than one allocation can be.
+                    if (points_bytes + verb_count > most_room) continue;
+                    const room = p.ext.AllocRoom(@intCast(points_bytes + verb_count)) orelse continue;
+                    own_room = room;
+                    segments = .{ .verbs = room.ptr + @as(usize, @intCast(points_bytes)), .points = @ptrCast(room.ptr), .verb_room = verb_count, .point_room = point_count };
+                    result = p.ext.GlyphSegments(outline, g.glyph, &segments);
+                }
+                if (result != truetype.TRUETYPE_OK) continue;
                 // Font units, y up, into the text's: scaled, leaned, turned over.
-                for (work.glyph_points[0..segments.point_count]) |*q| {
+                for (segments.points[0..segments.point_count]) |*q| {
                     q.* = .{ .x = g.x + g.dx + (q.x + run.lean * q.y) * run.scale, .y = g.y + g.dy - q.y * run.scale };
                 }
-                _ = p.vb.AddSegments(p.path, &work.glyph_verbs, segments.verb_count, &work.glyph_points, segments.point_count);
+                _ = p.vb.AddSegments(p.path, segments.verbs, segments.verb_count, segments.points, segments.point_count);
             }
             p.paintRun(run, matrix, true, viewport);
             const after = style.decoration & decoration_through;

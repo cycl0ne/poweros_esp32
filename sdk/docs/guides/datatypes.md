@@ -265,7 +265,10 @@ span its character is in.
 A character with an `x`, `y`, `dx` or `dy` of its own starts a new
 stretch; a `letter-spacing` leaves the ligatures apart and comes once
 behind each character or ligature. Text is read from left to right. A
-`textPath` is not drawn. It draws a
+`textPath` is not drawn. Since 1.5 a glyph's outline may be of any
+length: one of more than the picture's work memory holds (1024 verbs,
+2048 points) is read into memory of its own while it is drawn, and is
+left out only when there is none. It draws a
 filter's blur - `feGaussianBlur` alone, or as Inkscape and Figma write
 one - in its region, through vector.library 1.4's `BlurLayer`; a filter
 of nothing leaves its element out, and one it cannot make - a drop

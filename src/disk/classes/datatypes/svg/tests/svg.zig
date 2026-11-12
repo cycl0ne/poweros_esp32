@@ -400,6 +400,13 @@ const Sources = struct {
     asked: [8][32]u8 = undefined,
     asked_count: u32 = 0,
     pens: [4]Pen = undefined,
+    /// For a glyph the work block is too short for: `tight` says every
+    /// outline is one, `no_room` that there is no memory for it; how
+    /// often room was given, and how much of it is still out.
+    tight: bool = false,
+    no_room: bool = false,
+    rooms: u32 = 0,
+    rooms_out: u32 = 0,
 
     fn open(s: *Sources) !void {
         const sys = kexec.SysBase.iface();
@@ -451,7 +458,28 @@ const Sources = struct {
         return s.tb.GlyphMetrics(outline, glyph, metrics);
     }
     pub fn GlyphSegments(s: *Sources, outline: *truetype.Outline, glyph: u32, segments: *truetype.Segments) i32 {
+        if (s.tight and segments.verb_room == drawing.glyph_verbs and segments.point_room == drawing.glyph_points) {
+            // The work block, taken as too short for any outline: the
+            // library is asked with no room, and says what it needs.
+            var none = truetype.Segments{ .verbs = segments.verbs, .points = segments.points, .verb_room = 0, .point_room = 0 };
+            const result = s.tb.GlyphSegments(outline, glyph, &none);
+            segments.verb_count = none.verb_count;
+            segments.point_count = none.point_count;
+            return result;
+        }
         return s.tb.GlyphSegments(outline, glyph, segments);
+    }
+    pub fn AllocRoom(s: *Sources, bytes: usize) ?drawing.Room {
+        if (s.no_room) return null;
+        const memory = kexec.SysBase.iface().AllocVec(bytes, exec.MEMF_ANY) orelse return null;
+        s.rooms += 1;
+        s.rooms_out += 1;
+        const room: [*]align(@alignOf(vector.Point)) u8 = @ptrCast(@alignCast(memory));
+        return room[0..bytes];
+    }
+    pub fn FreeRoom(s: *Sources, room: drawing.Room) void {
+        s.rooms_out -= 1;
+        kexec.SysBase.iface().FreeVec(room.ptr);
     }
     pub fn FontMetrics(s: *Sources, outline: *truetype.Outline, metrics: *truetype.FontMetrics) void {
         s.tb.FontMetrics(outline, metrics);
@@ -512,6 +540,40 @@ test "text: laid out in its font, kerned, a span moved and coloured, anchored, u
     // family is in: both drawn in sans.
     try testing.expect(sources.wasAsked("serif.font"));
     try testing.expect(!sources.wasAsked("go.font"));
+    try testing.expectEqual(@as(u32, 0), sources.opened);
+    sources.close();
+    try rig.close();
+}
+
+test "text: a glyph the work block is too short for is read into room of its own, and left out without it" {
+    const rig = try Rig.open();
+    var sources: Sources = .{ .library = undefined, .tb = undefined };
+    try sources.open();
+    const picture =
+        \\<svg width="40" height="40">
+        \\  <rect x="30" y="30" width="10" height="10" fill="#0f0"/>
+        \\  <text x="2" y="15" font-size="10" fill="#f00" stroke="#00f" stroke-width="0.5">AB<tspan dx="1" fill="#00f">C</tspan> A</text>
+        \\</svg>
+    ;
+    var fits: [40 * 40]Pen = undefined;
+    try rig.drawWith(&sources, picture, 40, 40, &fits);
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), fits[12 * 40 + 4]);
+    try testing.expectEqual(@as(u32, 0), sources.rooms);
+    // Every outline too long for the block: the same picture, each of
+    // the four glyphs with an outline in room of its own, the space in
+    // none, and all of it given back.
+    sources.tight = true;
+    var pens: [40 * 40]Pen = undefined;
+    try rig.drawWith(&sources, picture, 40, 40, &pens);
+    try testing.expectEqualSlices(Pen, &fits, &pens);
+    try testing.expectEqual(@as(u32, 4), sources.rooms);
+    try testing.expectEqual(@as(u32, 0), sources.rooms_out);
+    // No memory for it: the glyphs are left out, the rest is drawn.
+    sources.no_room = true;
+    try rig.drawWith(&sources, picture, 40, 40, &pens);
+    try testing.expectEqual(@as(Pen, 0xFF00FF00), pens[35 * 40 + 35]);
+    for (pens[0 .. 30 * 40]) |pen| try testing.expectEqual(@as(Pen, 0), pen);
+    try testing.expectEqual(@as(u32, 4), sources.rooms);
     try testing.expectEqual(@as(u32, 0), sources.opened);
     sources.close();
     try rig.close();
