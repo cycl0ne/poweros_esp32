@@ -124,5 +124,23 @@ pub fn character(bytes: []const u8, count: i32) ?u32 {
     return step.char;
 }
 
+/// The text a key made, from what `MapRawKey` wrote into `bytes` and the
+/// count it answered: the bytes when they are characters to type, one
+/// or several - a key of a script whose letters join may send a whole
+/// syllable - and null when the key made nothing, did not fit, or made
+/// anything that holds a control character (`CSI A`, Return).
+pub fn typed(bytes: []const u8, count: i32) ?[]const u8 {
+    if (count <= 0) return null;
+    const made = bytes[0..@intCast(count)];
+    var at: usize = 0;
+    while (at < made.len) {
+        const step = utf8.decode(made[at..]);
+        if (step.kind != .char) return null;
+        if (step.char < 0x20 or (step.char >= 0x7F and step.char < 0xA0)) return null;
+        at += step.length;
+    }
+    return made;
+}
+
 /// The KeyMapBase, for the functions.
 pub const KeymapBase = @import("../../interface/keymap.zig").KeymapBase;

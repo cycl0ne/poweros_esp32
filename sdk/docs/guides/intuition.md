@@ -809,11 +809,18 @@ button then opens the menus. In a field, the cursor keys, Home and End
 move, and with Shift a cursor key goes to the start or the end;
 Shift-Backspace takes out everything before the cursor, Shift-Delete
 everything after it, and Escape puts back what was there. A field's
-text is UTF-8: the cursor steps over a letter with the marks that
-follow it, Delete takes a letter out with its marks and Backspace one
-character - the mark last typed and not its letter - and
-`STRINGA_MaxChars` is the room in bytes, so a character goes in only
-when all its bytes fit. The cursor stands where the letters are drawn,
+text is UTF-8: the cursor steps over a cluster - a letter with the
+marks that follow it, a syllable whose consonants a virama joins, a
+sequence a joiner holds together - Delete takes a cluster out and
+Backspace one character, the one last typed and not the cluster it is
+in, and `STRINGA_MaxChars` is the room in bytes, so a character goes
+in only when all its bytes fit. A key that sends several characters -
+a keymap's key for a whole syllable - has each of them go in as if it
+were typed, the edit hooks called for each, and all of them or none:
+when one is refused, the field stays as it was. `keymap.typed` tells a
+key's text from an escape sequence, as `keymap.character` tells a
+single character. The same holds in a textedit.gadget, which also
+never breaks a wrapped row inside a cluster. The cursor stands where the letters are drawn,
 and a press puts it at the letter under the pointer, in a font that
 kerns its letters or sets marks on them too (`TextOffsetToX`,
 `TextXToOffset`).

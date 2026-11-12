@@ -243,6 +243,21 @@ pub const TextFont = extern struct {
     /// The glyphs `render` made, kept by graphics from `AddFont` to
     /// `RemFont`: graphics' own. A builder leaves it null.
     cache: ?*anyopaque = null,
+
+    /// Whether a text in this font may be shaped: the font, or one it
+    /// falls back to, has a `shape` hook. Such a text is as wide as
+    /// graphics lays it out (`TextLength`, `TextOffsetToX`), not as its
+    /// characters measured one by one.
+    pub fn shapes(font: *const TextFont) bool {
+        var at: ?*const TextFont = font;
+        var left: u32 = FONT_FALLBACKS + 1;
+        while (at) |one| : (at = one.fallback) {
+            if (left == 0) break;
+            left -= 1;
+            if (one.shape != null) return true;
+        }
+        return false;
+    }
 };
 
 /// How many fonts after a font's own a character is looked for in.

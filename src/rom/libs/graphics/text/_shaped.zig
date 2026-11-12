@@ -101,14 +101,7 @@ const first_take = 64;
 /// Whether a text in `font` is laid out here: the font or one of its
 /// fallbacks has a `shape` hook.
 pub fn wanted(font: *const TextFont) bool {
-    var at: ?*const TextFont = font;
-    var left: u32 = graphics.FONT_FALLBACKS + 1;
-    while (at) |one| : (at = one.fallback) {
-        if (left == 0) break;
-        left -= 1;
-        if (one.shape != null) return true;
-    }
-    return false;
+    return font.shapes();
 }
 
 /// The glyphs the `count` bytes of `string` are drawn with in `font`.

@@ -25,10 +25,14 @@
 //! goes back there past short lines.
 //!
 //! **The text is UTF-8.** The cursor and the anchor stand where a
-//! character starts: the cursor keys step over a letter with its marks,
-//! Delete takes a letter out with its marks and Backspace one character -
-//! the mark last typed and not its letter - and a key's character goes in
-//! as its bytes.
+//! character starts: the cursor keys step over a cluster
+//! (`utility.unicode.clusterEnd`) - a letter with its marks, a syllable
+//! whose consonants a virama joins, a sequence a joiner holds together -
+//! Delete takes a cluster out and Backspace one character, the one last
+//! typed and not the cluster it belongs to. A key's character goes in as
+//! its bytes, and a key that sends several characters has them all go in
+//! as one edit. A wrapped row is never broken inside a cluster, unless
+//! the cluster alone is wider than the row.
 //!
 //! **Drawing** is always the whole gadget, which intuition does aside and
 //! puts on in one copy (`support.redraw`), so a change never shows half
@@ -63,12 +67,12 @@
 //! **Widths** come from the window's font, a character at a time
 //! (`IntuiTextLength`): the first 256 measured once for each font, the
 //! others as the text has them, the last 64 kept (`Wide`); a tab stops
-//! every eight spaces. With a font that shapes its text
-//! (`TextFont.shape`) where a position is in its piece, and the position
-//! at a place, are asked of graphics for the piece as it is drawn
-//! (`TextOffsetToX`, `TextXToOffset`), through a RastPort of the
-//! gadget's own that has the font and draws nowhere; the widths still
-//! break the rows.
+//! every eight spaces. With a font that shapes its text, or falls back
+//! to one that does (`TextFont.shapes`), where a position is in its
+//! piece, and the position at a place, are asked of graphics for the
+//! piece as it is drawn (`TextOffsetToX`, `TextXToOffset`), through a
+//! RastPort of the gadget's own that has the font and draws nowhere;
+//! the widths still break the rows.
 //!
 //! **Highlighting** (`TEXTEDIT_HighlightHook`): before a line's first row
 //! is drawn its bytes are copied out of the gap buffer, the first
@@ -120,8 +124,11 @@ pub const Library = gadgets.ClassLibrary(.{
     // UTF-8 whatever it was copied in. 7: a mark is drawn with its
     // letter and stepped over with it, and with a font that shapes its
     // text the cursor, the selection and a press are where the letters
-    // are drawn.
-    .revision = 7,
+    // are drawn. 8: the cursor steps by Unicode's clusters, a row is not
+    // broken inside one, a key that sends several characters types them
+    // all, and the places in a piece are graphics' too when the font
+    // only falls back to one that shapes.
+    .revision = 8,
     .date = "12.11.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
@@ -179,7 +186,7 @@ const Wide = struct {
         wide.font = font;
         wide.kept = @splat(0);
         wide.close();
-        if (font.shape == null) return;
+        if (!font.shapes()) return;
         wide.surface = .{
             .pixels = @ptrCast(&wide.pixel),
             .width = 1,
@@ -422,8 +429,8 @@ fn syncLayout(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*const classusr.
         if (font != own.font) {
             own.font = font;
             own.wide.reset(base, font);
-            // A font that shapes its text places the letters of a piece
-            // itself.
+            // A font that shapes its text, or falls back to one that
+            // does, places the letters of a piece itself.
             const shapes = own.wide.port != null;
             own.text.layout.place = if (shapes) placeShaped else null;
             own.text.layout.nearest = if (shapes) nearestShaped else null;
@@ -1016,7 +1023,7 @@ fn key(base: *gadgets.Base, own: *Data, o: *Object, in: *gc.GpInput, e: *const i
     }
     const sel = selection(own);
     var did = false;
-    switch (e.code) {
+    key: switch (e.code) {
         RAW_BACKSPACE => {
             if (sel.from != sel.to) {
                 did = replace(base, own, sel.from, sel.to, "", false);
@@ -1041,8 +1048,16 @@ fn key(base: *gadgets.Base, own: *Data, o: *Object, in: *gc.GpInput, e: *const i
         },
         else => {
             const kb: *KeymapBase = @ptrCast(base.opened[1] orelse return gc.GMR_MEACTIVE);
-            var mapped: [8]u8 = undefined;
-            var char = sdk.keymap.character(&mapped, kb.MapRawKey(e, &mapped, mapped.len, null)) orelse return gc.GMR_MEACTIVE;
+            var mapped: [32]u8 = undefined;
+            const count = kb.MapRawKey(e, &mapped, mapped.len, null);
+            var char = sdk.keymap.character(&mapped, count) orelse {
+                // A key that sends several characters - a syllable of a
+                // script whose letters join: all of them, as one edit.
+                const string = sdk.keymap.typed(&mapped, count) orelse return gc.GMR_MEACTIVE;
+                if (e.qualifier & ie.IEQUALIFIER_CONTROL != 0) return gc.GMR_MEACTIVE;
+                did = typeIn(base, own, string, true);
+                break :key;
+            };
             if (e.qualifier & ie.IEQUALIFIER_CONTROL != 0) {
                 // Control with a letter, whatever the keymap made of it.
                 if ((char | 0x20) >= 'a' and (char | 0x20) <= 'z') char = (char | 0x20) - 'a' + 1;

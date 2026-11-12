@@ -90,6 +90,9 @@ pub const Layout = struct {
 pub const piece_room = 256;
 /// A piece of this many bytes ends before the next word.
 const piece_full = piece_room - 64;
+/// The bytes a cluster is looked for in, from where it starts or back
+/// from where it ends: one that is longer is taken in parts.
+const cluster_room = 64;
 
 /// Whether a character is drawn: not a tab or another control character,
 /// which only take room.
@@ -462,18 +465,21 @@ pub const Text = struct {
     /// Where the piece of text that starts at `from` ends: before the
     /// next tab or control character or at `end`; a long one before the
     /// first word that starts `piece_full` bytes in, and at `piece_room`
-    /// bytes at the latest - there before a letter, not between a letter
-    /// and its marks.
+    /// bytes at the latest - there where a cluster starts, not between a
+    /// letter and its marks or inside a syllable.
     fn pieceEnd(text: *const Text, from: u32, end: u32) u32 {
         var at = from;
-        // The last letter in the piece: where a cut for room goes.
+        // The last cluster's start in the piece: where a cut for room
+        // goes.
         var letter = from;
+        var cluster_end = from;
         var after_space = false;
         while (at < end) {
             const found = text.charAt(at);
             if (!isDrawn(found.char)) break;
             const size: u32 = @intCast(found.length);
-            const starts = unicode.width(found.char) != 0;
+            const starts = at >= cluster_end;
+            if (starts) cluster_end = text.clusterEnd(at, end);
             if (starts and after_space and at - from >= piece_full) break;
             if (at + size - from > piece_room) return if (starts or letter == from) at else letter;
             if (starts) letter = at;
@@ -532,35 +538,52 @@ pub const Text = struct {
         return piece.to;
     }
 
-    /// Where the character at `pos` and the marks after it end: `end` at
-    /// the most. A tab, a line feed or another control character has no
-    /// marks.
+    /// The text from `from` up to `to`: its own bytes where the gap is
+    /// not among them, else `copy`'s, which they fit in.
+    fn stretch(text: *const Text, from: u32, to: u32, copy: []u8) []const u8 {
+        if (text.slice(from, to)) |own| return own;
+        text.copyOut(from, to, copy.ptr);
+        return copy[0 .. to - from];
+    }
+
+    /// Where the cluster that starts at `pos` ends: the character there
+    /// with what Unicode keeps with it (`unicode.clusterEnd`) - its
+    /// marks, the consonants a virama joins to it, what a joiner holds
+    /// together - `end` at the most. A tab, a line feed or another
+    /// control character is one by itself.
     pub fn clusterEnd(text: *const Text, pos: u32, end: u32) u32 {
         if (pos >= end) return end;
         const first = text.charAt(pos);
-        var at = pos + @as(u32, @intCast(first.length));
-        if (!isDrawn(first.char)) return @min(at, end);
-        while (at < end) {
-            const found = text.charAt(at);
-            if (unicode.width(found.char) != 0) break;
-            at += @intCast(found.length);
-        }
-        return @min(at, end);
+        const next = pos + @as(u32, @intCast(first.length));
+        if (!isDrawn(first.char) or next >= end) return @min(next, end);
+        // Nothing joins two characters of ASCII.
+        if (first.char < 0x80 and text.byteAt(next) < 0x80) return next;
+        var upto = @min(end, pos + cluster_room);
+        if (upto < end) upto = text.charStartOf(upto);
+        var copy: [cluster_room]u8 = undefined;
+        return pos + @as(u32, @intCast(unicode.clusterEnd(text.stretch(pos, upto, &copy), 0)));
     }
 
-    /// Where the letter before `pos` starts, its marks stepped over:
-    /// `floor` at the least. Marks after a control character have no
-    /// letter, and the first of them is where they start.
+    /// Where the cluster before `pos` starts, the one the character
+    /// before `pos` is in: `floor` at the least. A control character is
+    /// one by itself, and marks after one have no letter: the first of
+    /// them is where they start.
     pub fn clusterBefore(text: *const Text, pos: u32, floor: u32) u32 {
-        var at = pos;
-        while (at > floor) {
-            const before = text.charBefore(at);
-            const char = text.charAt(before).char;
-            if (!isDrawn(char) and at < pos) break;
-            at = before;
-            if (unicode.width(char) != 0) break;
+        if (pos <= floor) return floor;
+        const before = text.charBefore(pos);
+        if (before <= floor) return floor;
+        const last = text.charAt(before).char;
+        if (!isDrawn(last)) return before;
+        // Nothing joins two characters of ASCII.
+        if (last < 0x80 and text.byteAt(before - 1) < 0x80) return before;
+        var from = floor;
+        if (pos - floor > cluster_room) {
+            from = text.charStartOf(pos - cluster_room);
+            if (from < pos - cluster_room) from = text.charAfter(from);
         }
-        return @max(at, floor);
+        var copy: [cluster_room]u8 = undefined;
+        const bytes = text.stretch(from, pos, &copy);
+        return from + @as(u32, @intCast(unicode.clusterStart(bytes, bytes.len - 1)));
     }
 
     /// The part of a piece of text, `width` wide, that is wholly between
@@ -624,12 +647,15 @@ pub const Text = struct {
             }
             return end;
         }
-        var at = text.rowStart(row);
+        const start = text.rowStart(row);
+        var at = start;
         var left: u32 = 0;
         while (at < end) {
             const found = text.charAt(at);
             const width = text.widthAt(found.char, left);
-            if (x < @as(i64, left) + width / 2 + (width & 1)) return at;
+            // Where the cluster starts that the character is in: never
+            // inside a syllable.
+            if (x < @as(i64, left) + width / 2 + (width & 1)) return text.clusterBefore(at + @as(u32, @intCast(found.length)), start);
             left += width;
             at += @intCast(found.length);
         }
@@ -645,19 +671,29 @@ pub const Text = struct {
         var row_start = start;
         var x: u32 = 0;
         var after_space: u32 = start;
+        // The cluster `at` is in: a row is not broken inside one.
+        var cluster_start = start;
+        var cluster_end = start;
         var at = start;
         while (at < end) {
+            if (at >= cluster_end) {
+                cluster_start = at;
+                cluster_end = text.clusterEnd(at, end);
+            }
             const found = text.charAt(at);
             const step = text.widthAt(found.char, x);
             if (x + step > width and at > row_start) {
-                // Broken after the last space in the row, or where it
-                // stops fitting.
-                const next = if (after_space > row_start) after_space else at;
+                // Broken after the last space in the row, or before the
+                // cluster that stops fitting - inside it only when it is
+                // all the row holds.
+                const uncut = if (cluster_start > row_start) cluster_start else at;
+                const next = if (after_space > row_start) after_space else uncut;
                 if (!into.append(text.memory, next)) return false;
                 row_start = next;
                 after_space = next;
                 x = 0;
                 at = next;
+                cluster_end = next;
                 continue;
             }
             x += step;
@@ -1179,6 +1215,85 @@ test "UTF-8: characters stepped over whole, measured, wrapped, words and finding
     var buffer: [64]u8 = undefined;
     try testing.expectEqualStrings("Grüße", rowText(&text, 0, &buffer));
     try testing.expectEqualStrings(" €5", rowText(&text, 1, &buffer));
+}
+
+test "clusters: a syllable and a joined sequence are one step, one piece and never broken across rows" {
+    var text = Text.init(test_memory).?;
+    defer text.deinit();
+    // क्ष is three characters of three bytes, one cluster; ति is two.
+    try testing.expect(text.setAll("aक्षति b"));
+    try testing.expectEqual(@as(u32, 1), text.clusterEnd(0, text.length()));
+    try testing.expectEqual(@as(u32, 10), text.clusterEnd(1, text.length()));
+    try testing.expectEqual(@as(u32, 16), text.clusterEnd(10, text.length()));
+    try testing.expectEqual(@as(u32, 17), text.clusterEnd(16, text.length()));
+    try testing.expectEqual(@as(u32, 10), text.clusterBefore(16, 0));
+    try testing.expectEqual(@as(u32, 1), text.clusterBefore(10, 0));
+    try testing.expectEqual(@as(u32, 0), text.clusterBefore(1, 0));
+    try testing.expectEqual(@as(u32, 17), text.clusterBefore(18, 0));
+    // Never past the bounds asked for, and what is between them is
+    // taken by itself: a consonant behind a virama that joins nothing.
+    try testing.expectEqual(@as(u32, 7), text.clusterEnd(1, 7));
+    try testing.expectEqual(@as(u32, 7), text.clusterBefore(10, 4));
+    try testing.expectEqual(@as(u32, 4), text.clusterBefore(7, 4));
+
+    // The same with the gap inside the syllable: an edit there and one
+    // taken back leaves it.
+    try testing.expect(text.insert(4, "x"));
+    text.remove(4, 5);
+    try testing.expectEqual(@as(u32, 10), text.clusterEnd(1, text.length()));
+    try testing.expectEqual(@as(u32, 1), text.clusterBefore(10, 0));
+
+    // A line feed and a tab are steps of their own, marks behind one too.
+    try testing.expect(text.setAll("a\n\u{301}\u{302}b\tc"));
+    try testing.expectEqual(@as(u32, 2), text.clusterEnd(1, text.length()));
+    try testing.expectEqual(@as(u32, 6), text.clusterEnd(2, text.length()));
+    try testing.expectEqual(@as(u32, 2), text.clusterBefore(6, 0));
+    try testing.expectEqual(@as(u32, 1), text.clusterBefore(2, 0));
+    try testing.expectEqual(@as(u32, 7), text.clusterBefore(8, 0));
+
+    // Two people a joiner holds together, and a flag: one step each.
+    try testing.expect(text.setAll("\u{1F468}\u{200D}\u{1F469}\u{1F1E9}\u{1F1EA}!"));
+    try testing.expectEqual(@as(u32, 11), text.clusterEnd(0, text.length()));
+    try testing.expectEqual(@as(u32, 19), text.clusterEnd(11, text.length()));
+    try testing.expectEqual(@as(u32, 11), text.clusterBefore(19, 0));
+    try testing.expectEqual(@as(u32, 0), text.clusterBefore(11, 0));
+
+    // Rows: every character one wide, three to a row. The syllable's
+    // three characters stay in one row, where a letter at a time would
+    // have put the first of them beside the a.
+    try testing.expect(text.setAll("abक्षक्षc"));
+    text.layout.wrap_width = 3;
+    text.layout.measure = &struct {
+        fn one(_: ?*anyopaque, _: u32) u16 {
+            return 1;
+        }
+    }.one;
+    try testing.expect(text.relayout());
+    var buffer: [64]u8 = undefined;
+    try testing.expectEqualStrings("ab", rowText(&text, 0, &buffer));
+    try testing.expectEqualStrings("क्ष", rowText(&text, 1, &buffer));
+    try testing.expectEqualStrings("क्ष", rowText(&text, 2, &buffer));
+    try testing.expectEqualStrings("c", rowText(&text, 3, &buffer));
+    // A press on the syllable's second consonant is a press on the
+    // syllable: the cursor goes before it.
+    try testing.expectEqual(@as(u32, 2), text.posAt(1, 2));
+    try testing.expectEqual(@as(u32, 11), text.posAt(1, 3));
+    // A cluster wider than the row is broken where it stops fitting.
+    text.layout.wrap_width = 2;
+    try testing.expect(text.relayout());
+    try testing.expectEqualStrings("ab", rowText(&text, 0, &buffer));
+    try testing.expectEqualStrings("क्", rowText(&text, 1, &buffer));
+
+    // Pieces: 254 bytes and then syllables of nine - the cut for room
+    // goes before the syllable that does not fit whole, not into it.
+    text.layout.wrap_width = 0;
+    var long: [300]u8 = undefined;
+    @memset(long[0..250], 'a');
+    var at: usize = 250;
+    while (at + 9 <= long.len) : (at += 9) @memcpy(long[at..][0..9], "क्ष");
+    try testing.expect(text.setAll(long[0..at]));
+    var row = text.pieces(0);
+    try testing.expectEqual(@as(u32, 250), row.next().?.to);
 }
 
 test "a line for a third press, and the indentation Return carries on" {

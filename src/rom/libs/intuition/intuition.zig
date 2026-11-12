@@ -4121,6 +4121,100 @@ test "a string gadget: typed into, moved about - Shift to the ends - finished an
     try tearDown(ib);
 }
 
+test "a string gadget: a syllable is one step, and a key's string goes in whole" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const km = sdk.keymap;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // The default keymap with one key changed: Q sends a syllable, three
+    // characters of three bytes each.
+    const default = ib.keymap_base.?.AskKeyMapDefault();
+    var types: [km.HI_FIRST]u8 = undefined;
+    var keys: [km.HI_FIRST]km.KeyMapEntry = undefined;
+    @memcpy(&types, default.lo_key_map_types[0..km.HI_FIRST]);
+    @memcpy(&keys, default.lo_key_map[0..km.HI_FIRST]);
+    types[0x10] = km.KCF_STRING;
+    keys[0x10] = comptime @import("../keymap/tables.zig").string1("क्ष");
+    var map = default.*;
+    map.lo_key_map_types = &types;
+    map.lo_key_map = &keys;
+
+    const field = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 4 },
+        .{ .tag = gc.GA_Top, .data = 4 },
+        .{ .tag = gc.GA_Width, .data = 50 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = 24 },
+        .{ .tag = gc.STRINGA_AltKeyMap, .data = @intFromPtr(&map) },
+        .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr("a") },
+        .{},
+    }).?;
+    const w = ib.iface().OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 28 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(field) },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+    const buffer: [*:0]const u8 = @ptrFromInt(getAttr(ib, field, gc.STRINGA_Buffer));
+    pointerEvent(ib, sdk.devices.inputevent.IECODE_LBUTTON, 40, 12 + 8);
+    pointerEvent(ib, sdk.devices.inputevent.IECODE_LBUTTON | sdk.devices.inputevent.IECODE_UP_PREFIX, 40, 12 + 8);
+
+    // The key's three characters go in, and the cursor is behind them.
+    rawKey(ib, 0x10);
+    try testing.expectEqualStrings("aक्ष", std.mem.span(buffer));
+    try testing.expectEqual(@as(usize, 10), getAttr(ib, field, gc.STRINGA_BufferPos));
+    rawKey(ib, 0x33); // c
+    try testing.expectEqualStrings("aक्षc", std.mem.span(buffer));
+
+    // Left over the c, then over the syllable in one step; Right back.
+    rawKey(ib, 0x4F);
+    rawKey(ib, 0x4F);
+    try testing.expectEqual(@as(usize, 1), getAttr(ib, field, gc.STRINGA_BufferPos));
+    rawKey(ib, 0x4E);
+    try testing.expectEqual(@as(usize, 10), getAttr(ib, field, gc.STRINGA_BufferPos));
+
+    // Backspace takes the character last typed: the syllable's second
+    // consonant, then the sign that joined it, then the first.
+    rawKey(ib, 0x41);
+    try testing.expectEqualStrings("aक्c", std.mem.span(buffer));
+    rawKey(ib, 0x41);
+    try testing.expectEqualStrings("aकc", std.mem.span(buffer));
+
+    // Delete takes a syllable whole.
+    rawKey(ib, 0x10);
+    try testing.expectEqualStrings("aकक्षc", std.mem.span(buffer));
+    rawKey(ib, 0x4F);
+    try testing.expectEqual(@as(usize, 4), getAttr(ib, field, gc.STRINGA_BufferPos));
+    rawKey(ib, 0x46);
+    try testing.expectEqualStrings("aकc", std.mem.span(buffer));
+
+    // A string goes in whole or not at all: the 24 bytes hold the NUL,
+    // 14 are taken, and the next syllable has room for two characters.
+    rawKey(ib, 0x10);
+    try testing.expectEqualStrings("aकक्षc", std.mem.span(buffer));
+    rawKey(ib, 0x33);
+    rawKey(ib, 0x33);
+    rawKey(ib, 0x33);
+    try testing.expectEqualStrings("aकक्षcccc", std.mem.span(buffer));
+    rawKey(ib, 0x10);
+    try testing.expectEqualStrings("aकक्षcccc", std.mem.span(buffer));
+    try testing.expectEqual(@as(usize, 16), getAttr(ib, field, gc.STRINGA_BufferPos));
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    ib.iface().CloseWindow(w);
+    try testing.expect(ib.iface().CloseScreen(screen));
+    it.DisposeObject(field);
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "a string gadget: UTF-8 in whole, stepped over and taken out whole, and only when it fits" {
     const ib = try setUp();
     defer kexec.deinit();

@@ -257,13 +257,8 @@ fn drawOffWidth(gb: *GraphicsBase, l: Layout, x: i32, y: i32, cell: Cell, fg: gr
 fn shapesText(gb: *GraphicsBase, l: Layout) bool {
     var font: ?*const graphics.TextFont = null;
     gb.GetRPAttrs(l.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&font) }, .{} });
-    var left: u32 = graphics.FONT_FALLBACKS + 1;
-    while (font) |one| : (font = one.fallback) {
-        if (left == 0) break;
-        left -= 1;
-        if (one.shape != null) return true;
-    }
-    return false;
+    const one = font orelse return false;
+    return one.shapes();
 }
 
 /// Whether the cell at `x` is the first of a wide character whose second

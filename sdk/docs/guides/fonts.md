@@ -1281,6 +1281,11 @@ mine.font.shape = &mine.shaper; // before AddFont, and never again
   the hook, and allocate the glyphs for the length of the call. No
   spinlock may be held around them, and a caller that needs several
   places in one text asks for each.
+- **A font that falls back to one that shapes is shaped too**, for the
+  characters the fallback draws. `TextFont.shapes()` says whether a
+  font's text may be: the font or one of its fallbacks has the hook. A
+  program that adds up the widths of single characters asks it, and
+  takes the places from graphics when it answers yes.
 - **A direction** is passed on from the RastPort (`RPTAG_TextDirection`,
   `TEXTDIR_LEFT_TO_RIGHT` or `TEXTDIR_RIGHT_TO_LEFT`). The glyphs are
   drawn from the starting point to the right either way.

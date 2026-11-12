@@ -20,10 +20,14 @@
 //! **The text is UTF-8.** The buffer, its length and the cursor are
 //! counted in bytes - `STRINGA_MaxChars` is the room in bytes - and the
 //! cursor always stands where a character starts: it steps over a
-//! letter with its marks, Delete takes a letter out with its marks and
-//! Backspace one character - the mark last typed and not its letter -
-//! and a character goes in only when all of its bytes fit. A byte that
-//! is no UTF-8 is a character of its own, as graphics draws it.
+//! cluster (`utility.unicode.clusterEnd`) - a letter with its marks, a
+//! syllable whose consonants a virama joins, a sequence a joiner holds
+//! together - Delete takes a cluster out and Backspace one character,
+//! the one last typed and not the cluster it belongs to, and a
+//! character goes in only when all of its bytes fit. A key that sends
+//! several characters has them go in one after the other, each as if
+//! it were typed, and all of them or none. A byte that is no UTF-8 is
+//! a character of its own, as graphics draws it.
 //!
 //! **The cursor is where the letters are drawn.** The line shown is
 //! drawn in one piece, and the cursor's place and width and the
@@ -176,17 +180,11 @@ fn charLength(text: [*]const u8, len: u32, at: u32) u32 {
     return @intCast(utf8.read(text[at..len]).length);
 }
 
-/// The bytes the character at `at` of `text` (`len` bytes, `at` before
-/// its end) takes together with the characters without a width that
-/// follow it: a letter with its marks, which is what the cursor covers.
+/// The bytes the cluster at `at` of `text` (`len` bytes, `at` before
+/// its end) takes: the character there with what Unicode keeps with it,
+/// which is what the cursor covers.
 fn clusterLength(text: [*]const u8, len: u32, at: u32) u32 {
-    var end = at + charLength(text, len, at);
-    while (end < len) {
-        const next = utf8.read(text[end..len]);
-        if (utility.unicode.width(next.char) != 0) break;
-        end += @intCast(next.length);
-    }
-    return end - at;
+    return @intCast(utility.unicode.clusterEnd(text[0..len], at) - at);
 }
 
 /// Where the character before `at` (above 0) starts.
@@ -194,15 +192,10 @@ fn charBefore(text: [*]const u8, at: u32) u32 {
     return at - @as(u32, @intCast(utf8.readLast(text[0..at]).length));
 }
 
-/// Where the letter before `at` (above 0) starts, the marks after it
-/// stepped over: the text's start when only marks are before `at`.
+/// Where the cluster before `at` (above 0) starts: the one the last
+/// byte before `at` is in.
 fn clusterBefore(text: [*]const u8, at: u32) u32 {
-    var from = at;
-    while (from > 0) {
-        from = charBefore(text, from);
-        if (utility.unicode.width(utf8.read(text[from..at]).char) != 0) break;
-    }
-    return from;
+    return @intCast(utility.unicode.clusterStart(text[0..at], at - 1));
 }
 
 /// How many characters the first `len` bytes of `text` hold.
@@ -309,6 +302,10 @@ fn scrollTo(gb: *GraphicsBase, rp: *graphics.RastPort, view: *Shown, room: i32, 
 // --- the default edit ------------------------------------------------------------
 
 /// Raw keys the edit reads as they are: they make no one character.
+/// The bytes a key may make: a syllable of four consonants joined, with
+/// room to spare.
+const key_room = 32;
+
 const raw_left = 0x4F;
 const raw_right = 0x4E;
 const raw_home = 0x70;
@@ -370,10 +367,10 @@ fn workTakeCluster(w: *sg.SGWork, at: u32) void {
 
 /// Intuition's own editing: the global edit hook until `SetEditHook` puts
 /// another. It edits the work for `SGH_KEY` and answers 0 for anything
-/// else. What the keys do: the cursor keys move a letter at a time, its
-/// marks with it, and a cursor key with Shift, Home and End go to the
-/// start or the end; Delete takes a letter out with its marks, Backspace
-/// one character, all its bytes, and
+/// else. What the keys do: the cursor keys move a cluster at a time - a
+/// letter with its marks, a syllable of joined consonants - and a cursor
+/// key with Shift, Home and End go to the start or the end; Delete takes
+/// a cluster out, Backspace one character, all its bytes, and
 /// with Shift everything before the cursor or after it; a character goes
 /// in, in UTF-8, or over the one at the cursor in replace mode; Return ends the gadget, Tab ends it and
 /// moves on (Shift-Tab back), Escape puts back what was there when it was
@@ -886,18 +883,38 @@ fn textShown(ib: *IntuitionBase, p: *Data) ?[*]const u8 {
 }
 
 /// A key edited: the global hook and then the gadget's own on the work,
-/// and what they asked for done.
+/// and what they asked for done. A key that made several characters has
+/// the hooks see each of them in turn, as a key of its own on the same
+/// work, until one of them ends the gadget or throws the work away; and
+/// when one of the characters is refused - no room, not a digit - none
+/// of them goes in, so that no syllable is left cut.
 fn editKey(ib: *IntuitionBase, cl: *Class, o: *Object, p: *Data, in: *gc.GpInput, e: *const ie.InputEvent) usize {
+    var text: [key_room]u8 = undefined;
     var code: u32 = 0;
+    var rest: []const u8 = &.{};
     if (ib.keymap_base) |kb| {
-        var text: [16]u8 = undefined;
-        code = km.character(&text, kb.MapRawKey(e, &text, text.len, p.key_map)) orelse 0;
+        const count = kb.MapRawKey(e, &text, text.len, p.key_map);
+        if (km.character(&text, count)) |char| {
+            code = char;
+        } else if (km.typed(&text, count)) |string| {
+            const first = utf8.read(string);
+            code = first.char;
+            rest = string[first.length..];
+        }
     }
+    const several = rest.len != 0;
     var w = startWork(o, p, e, code, in.gadget_info) orelse return gc.GMR_MEACTIVE;
     var command: u32 = sg.SGH_KEY;
     const ub = ib.utility_base;
-    _ = ub.CallHookPkt(ib.edit_hook, &w, &command);
-    if (p.edit_hook) |hook| _ = ub.CallHookPkt(hook, &w, &command);
+    while (true) {
+        _ = ub.CallHookPkt(ib.edit_hook, &w, &command);
+        if (p.edit_hook) |hook| _ = ub.CallHookPkt(hook, &w, &command);
+        if (rest.len == 0 or w.actions & sg.SGA_END != 0 or w.actions & sg.SGA_USE == 0) break;
+        const next = utf8.read(rest);
+        w.code = next.char;
+        rest = rest[next.length..];
+    }
+    if (several and w.actions & sg.SGA_BEEP != 0) w.actions &= ~@as(u32, sg.SGA_USE);
 
     const changed = useWork(p, &w);
     if (w.actions & sg.SGA_BEEP != 0) {
