@@ -174,6 +174,7 @@ pub const LVO = struct {
     pub const CreateDirs = libraries.lvo(157);
     pub const DeleteTree = libraries.lvo(158);
     pub const ReadPassword = libraries.lvo(159);
+    pub const FindSegResident = libraries.lvo(160);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -335,6 +336,7 @@ pub const Fn = struct {
     pub const CreateDirs = *const fn (*DosBase, [*:0]const u8, bool) callconv(.c) bool;
     pub const DeleteTree = *const fn (*DosBase, [*:0]const u8, u32, ?*utility.Hook) callconv(.c) bool;
     pub const ReadPassword = *const fn (*DosBase, ?*dos.FileHandle, [*]u8, usize) callconv(.c) isize;
+    pub const FindSegResident = *const fn (*DosBase, ?*dos.SegList, ?*const exec.Resident, exec.NodeType) callconv(.c) ?*const exec.Resident;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1313,5 +1315,12 @@ pub const DosBase = opaque {
     /// when the input ended.
     pub fn ReadPassword(self: *DosBase, file: ?*dos.FileHandle, buffer: [*]u8, size: usize) isize {
         return libraries.call(self, LVO.ReadPassword, Fn.ReadPassword, .{ file, buffer, size });
+    }
+
+    /// The ROM tag of type `kind` (.unknown: any) in a loaded file's
+    /// segments, the first or the one behind `after`: null when there is no
+    /// further one.
+    pub fn FindSegResident(self: *DosBase, seg_list: ?*dos.SegList, after: ?*const exec.Resident, kind: exec.NodeType) ?*const exec.Resident {
+        return libraries.call(self, LVO.FindSegResident, Fn.FindSegResident, .{ seg_list, after, kind });
     }
 };

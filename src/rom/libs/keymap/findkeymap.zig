@@ -121,7 +121,7 @@ fn load(kb: *KeymapBase, name: [*:0]const u8) ?*keymap.KeyMap {
     defer sys.CloseLibrary(dos_library);
     const dos_lib: *DosBase = @ptrCast(@alignCast(dos_library));
     const seg_list = dos_lib.LoadSeg(@ptrCast(&path)) orelse return null;
-    const file = fileIn(seg_list, name) orelse {
+    const file = fileIn(dos_lib, seg_list, name) orelse {
         dos_lib.UnLoadSeg(seg_list);
         return null;
     };
@@ -135,22 +135,12 @@ fn load(kb: *KeymapBase, name: [*:0]const u8) ?*keymap.KeyMap {
     return &made.node.key_map;
 }
 
-/// The keymap of the tag named `name` in a loaded file. A tag is laid out
-/// by the compiler on its own alignment, so the scan steps by that.
-fn fileIn(seg_list: *dos.SegList, name: [*:0]const u8) ?*const keymap.KeyMapFile {
-    var seg: ?*dos.SegList = seg_list;
-    while (seg) |part| : (seg = part.next) {
-        const bytes = part.data orelse continue;
-        const step = @alignOf(exec.Resident);
-        var at: usize = 0;
-        while (at + @sizeOf(exec.Resident) <= part.mem_size) : (at += step) {
-            const tag: *const exec.Resident = @ptrCast(@alignCast(bytes + at));
-            if (tag.match_word != exec.RTC_MATCHWORD) continue;
-            if (tag.match_tag != tag) continue;
-            if (tag.type != .keymap) continue;
-            if (!sameName(tag.name, name)) continue;
-            return @ptrCast(@alignCast(tag.init orelse continue));
-        }
+/// The keymap of the tag named `name` in a loaded file.
+fn fileIn(dos_lib: *DosBase, seg_list: *dos.SegList, name: [*:0]const u8) ?*const keymap.KeyMapFile {
+    var tag = dos_lib.FindSegResident(seg_list, null, .keymap);
+    while (tag) |found| : (tag = dos_lib.FindSegResident(seg_list, found, .keymap)) {
+        if (!sameName(found.name, name)) continue;
+        return @ptrCast(@alignCast(found.init orelse continue));
     }
     return null;
 }

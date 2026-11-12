@@ -365,10 +365,11 @@ fn storedHandler(db: *DosBase, stored: *dos.FileSysEntry) ?exec.TaskFn {
     defer sys.FreeVec(image);
     const name: [*:0]const u8 = if (stored.name[0] != 0) &stored.name else "file system";
     const seg_list = loadImage(db, image[0..stored.image_size], name) orelse return null;
-    const tag = handlerTag(seg_list) orelse {
+    const found = db.iface().FindSegResident(seg_list, null, .handler) orelse {
         db.iface().UnLoadSeg(seg_list);
         return null;
     };
+    const tag: *const exec.ResidentHandler = @ptrCast(@alignCast(found));
     stored.seg_list = seg_list;
     stored.entry = tag.handler;
     return tag.handler;
@@ -468,7 +469,8 @@ fn loadHandler(db: *DosBase, h: *dos.DosListHandler, name: [*:0]const u8) ?exec.
         path[at] = 0;
         break :blk dos_lib.LoadSeg(@ptrCast(&path)) orelse return null;
     };
-    const tag = handlerTag(seg_list) orelse {
+    // The handler's ROM tag in the file, which carries its entry.
+    const found = dos_lib.FindSegResident(seg_list, null, .handler) orelse {
         dos_lib.UnLoadSeg(seg_list);
         _ = dos_lib.SetIoErr(dos.ERROR_OBJECT_WRONG_TYPE);
         return null;
@@ -478,33 +480,13 @@ fn loadHandler(db: *DosBase, h: *dos.DosListHandler, name: [*:0]const u8) ?exec.
     const first = h.seg_list == null;
     if (first) {
         h.seg_list = seg_list;
+        const tag: *const exec.ResidentHandler = @ptrCast(@alignCast(found));
         h.entry = tag.handler;
     }
     const entry = h.entry;
     sys.ReleaseLock(&db.code_lock);
     if (!first) dos_lib.UnLoadSeg(seg_list);
     return entry;
-}
-
-/// The handler's ROM tag in a loaded file: the match word and the
-/// self-pointer the boot scan looks for, of a tag that says handler, over
-/// every segment. A tag is laid out by the compiler on its own alignment,
-/// so the scan steps by that.
-fn handlerTag(seg_list: *dos.SegList) ?*const exec.ResidentHandler {
-    var seg: ?*dos.SegList = seg_list;
-    while (seg) |part| : (seg = part.next) {
-        const bytes = part.data orelse continue;
-        const step = @alignOf(exec.ResidentHandler);
-        var at: usize = 0;
-        while (at + @sizeOf(exec.ResidentHandler) <= part.mem_size) : (at += step) {
-            const tag: *const exec.ResidentHandler = @ptrCast(@alignCast(bytes + at));
-            if (tag.resident.match_word != exec.RTC_MATCHWORD) continue;
-            if (tag.resident.match_tag != &tag.resident) continue;
-            if (tag.resident.type != .handler) continue;
-            return tag;
-        }
-    }
-    return null;
 }
 
 /// The body of GetDeviceProc with an old DevProc: a non-binding

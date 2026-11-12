@@ -552,4 +552,9 @@ bool DeleteTree([*:0]const u8 name, u32 flags, ?*utility.Hook hook)
 /// length, or -1 with the buffer wiped - IoErr ERROR_BREAK for Ctrl-C, 0
 /// when the input ended.
 isize ReadPassword(?*dos.FileHandle file, [*]u8 buffer, usize size)
+// Modules in files
+/// The ROM tag of type `kind` (.unknown: any) in a loaded file's
+/// segments, the first or the one behind `after`: null when there is no
+/// further one.
+?*const exec.Resident FindSegResident(?*dos.SegList seg_list, ?*const exec.Resident after, exec.NodeType kind)
 ##end

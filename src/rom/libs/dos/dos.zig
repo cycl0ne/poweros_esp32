@@ -4800,6 +4800,50 @@ test "ErrorReport: nothing to ask on, nothing to ask about, and a process that w
     try testing.expect(dos_lib.Fault(dos.ABORT_BUSY, null, @ptrCast(&text), text.len) > 0);
 }
 
+test "FindSegResident: each tag of a file's segments in turn, by its type" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+
+    var first: [256]u8 align(@alignOf(exec.Resident)) = @splat(0);
+    var second: [256]u8 align(@alignOf(exec.Resident)) = @splat(0);
+    const step = @alignOf(exec.Resident);
+    // Somewhere in the middle, as a linker would put them.
+    const library: *exec.Resident = @ptrCast(@alignCast(&first[8 * step]));
+    library.* = .{ .match_tag = library, .version = 2, .type = .library, .name = "hello.library" };
+    const device: *exec.Resident = @ptrCast(@alignCast(&second[4 * step]));
+    device.* = .{ .match_tag = device, .version = 1, .type = .device, .name = "test.device" };
+    const keys: *exec.Resident = @ptrCast(@alignCast(&second[4 * step + 2 * @sizeOf(exec.Resident)]));
+    keys.* = .{ .match_tag = keys, .version = 1, .type = .keymap, .name = "keys" };
+    var tail = dos.SegList{ .mem_size = second.len, .data = &second };
+    var head = dos.SegList{ .mem_size = first.len, .data = &first, .next = &tail };
+    const none: ?*const exec.Resident = null;
+
+    // Any type: the three in the segments' order, and then no more.
+    try testing.expectEqual(@as(?*const exec.Resident, library), dl.FindSegResident(&head, null, .unknown));
+    try testing.expectEqual(@as(?*const exec.Resident, device), dl.FindSegResident(&head, library, .unknown));
+    try testing.expectEqual(@as(?*const exec.Resident, keys), dl.FindSegResident(&head, device, .unknown));
+    try testing.expectEqual(none, dl.FindSegResident(&head, keys, .unknown));
+    // One type: only that one, wherever it is, and none of another.
+    try testing.expectEqual(@as(?*const exec.Resident, keys), dl.FindSegResident(&head, null, .keymap));
+    try testing.expectEqual(@as(?*const exec.Resident, device), dl.FindSegResident(&head, null, .device));
+    try testing.expectEqual(none, dl.FindSegResident(&head, device, .device));
+    try testing.expectEqual(none, dl.FindSegResident(&head, null, .handler));
+    // No segments, and a segment without bytes.
+    try testing.expectEqual(none, dl.FindSegResident(null, null, .unknown));
+    var empty = dos.SegList{};
+    try testing.expectEqual(none, dl.FindSegResident(&empty, null, .unknown));
+
+    // A tag that does not point at itself is a coincidence in the bytes,
+    // and so is one without the match word.
+    library.match_tag = @ptrCast(@alignCast(&first[0]));
+    try testing.expectEqual(@as(?*const exec.Resident, device), dl.FindSegResident(&head, null, .unknown));
+    library.match_tag = library;
+    library.match_word = 0;
+    try testing.expectEqual(@as(?*const exec.Resident, device), dl.FindSegResident(&head, null, .unknown));
+    try tearDown(db);
+}
+
 test "LoadSeg, UnLoadSeg: segments relocated, the entry, a file that isn't one" {
     const db = try setUp();
     defer kexec.deinit();

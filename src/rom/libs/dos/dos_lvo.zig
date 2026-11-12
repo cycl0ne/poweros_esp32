@@ -160,6 +160,7 @@ const SystemTagList = @import("program/systemtaglist.zig").SystemTagList;
 const Execute = @import("program/execute.zig").Execute;
 const LoadSeg = @import("program/loadseg.zig").LoadSeg;
 const UnLoadSeg = @import("program/unloadseg.zig").UnLoadSeg;
+const FindSegResident = @import("program/findsegresident.zig").FindSegResident;
 const ErrorReport = @import("error/errorreport.zig").ErrorReport;
 const StartNotify = @import("notify/startnotify.zig").StartNotify;
 const EndNotify = @import("notify/endnotify.zig").EndNotify;
@@ -370,6 +371,7 @@ const contract_files = [_][]const u8{
     @embedFile("lock/createdirs.zig"),
     @embedFile("lock/deletetree.zig"),
     @embedFile("file/readpassword.zig"),
+    @embedFile("program/findsegresident.zig"),
 };
 
 fn lvoDoPkt(db: *DosBase, port: *MsgPort, action: i32, arg1: isize, arg2: isize, arg3: isize, arg4: isize, arg5: isize) callconv(.c) isize {
@@ -768,6 +770,10 @@ fn lvoExecute(db: *DosBase, command: [*:0]const u8, input: ?*FileHandle, output:
 fn lvoLoadSeg(db: *DosBase, name: [*:0]const u8) callconv(.c) ?*dos.SegList {
     return LoadSeg(db, name);
 }
+fn lvoFindSegResident(db: *DosBase, seg_list: ?*dos.SegList, after: ?*const exec.Resident, kind: exec.NodeType) callconv(.c) ?*const exec.Resident {
+    return FindSegResident(db, seg_list, after, kind);
+}
+
 fn lvoUnLoadSeg(db: *DosBase, seg_list: ?*dos.SegList) callconv(.c) void {
     UnLoadSeg(db, seg_list);
 }
@@ -1008,6 +1014,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCreateDirs),
     vec(lvoDeleteTree),
     vec(lvoReadPassword),
+    vec(lvoFindSegResident),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -1015,7 +1022,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the ROM's slots, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 160), vectors.len);
+    try testing.expectEqual(@as(usize, 161), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

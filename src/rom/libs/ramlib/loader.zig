@@ -25,6 +25,7 @@
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const dos = sdk.dos;
+const DosBase = sdk.interface.dos.DosBase;
 const ramlib = @import("ramlib.zig");
 const RamLibBase = ramlib.RamLibBase;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -153,7 +154,7 @@ fn make(rlb: *RamLibBase, name: [*:0]const u8, tail: [*:0]const u8, kind: u32, v
     }
 
     const seg_list = find(rlb, name, kind, own_process) orelse return false;
-    const tag = scan(seg_list, tail, version, kind) orelse {
+    const tag = scan(rlb.dos_base, seg_list, tail, version, kind) orelse {
         // A file that is not a module, or not the one that was asked for.
         rlb.dos_base.UnLoadSeg(seg_list);
         return false;
@@ -224,31 +225,22 @@ fn join(into: []u8, where: []const u8, name: [*:0]const u8) ?[*:0]const u8 {
     return @ptrCast(into.ptr);
 }
 
-/// The ROM tag in what was loaded: the same match word and self-pointer the
-/// boot scan looks for, over every segment of the file. A tag is data, so
-/// it is read where the data is; the vectors it points at were relocated
-/// against the instruction bus and are ready to call.
-fn scan(seg_list: *dos.SegList, name: [*:0]const u8, version: u32, kind: u32) ?*const exec.Resident {
-    var seg: ?*dos.SegList = seg_list;
-    while (seg) |s| : (seg = s.next) {
-        const bytes = s.data orelse continue;
-        var at: usize = 0;
-        // A tag is laid out by a compiler, so it sits on its own type's
-        // alignment; the scan steps by that rather than by a byte, which
-        // is both faster and the only way the pointer below is allowed to
-        // be made at all.
-        const step = @alignOf(exec.Resident);
-        while (at + @sizeOf(exec.Resident) <= s.mem_size) : (at += step) {
-            const tag: *const exec.Resident = @ptrCast(@alignCast(bytes + at));
-            if (tag.match_word != exec.RTC_MATCHWORD) continue;
-            if (tag.match_tag != tag) continue;
-            if (tag.version < version) continue;
-            if (!sameName(tag.name, name)) continue;
-            if (!wantedKind(tag, kind)) continue;
-            return tag;
-        }
+/// The module's ROM tag in what was loaded: the first of the file's tags
+/// that is the one asked for. A tag is data, so it is read where the data
+/// is; the vectors it points at were relocated against the instruction
+/// bus and are ready to call.
+fn scan(dl: *DosBase, seg_list: *dos.SegList, name: [*:0]const u8, version: u32, kind: u32) ?*const exec.Resident {
+    var tag = dl.FindSegResident(seg_list, null, .unknown);
+    while (tag) |found| : (tag = dl.FindSegResident(seg_list, found, .unknown)) {
+        if (askedFor(found, name, version, kind)) return found;
     }
     return null;
+}
+
+/// Whether `tag` is the module asked for: new enough, of that name and
+/// of that kind.
+fn askedFor(tag: *const exec.Resident, name: [*:0]const u8, version: u32, kind: u32) bool {
+    return tag.version >= version and sameName(tag.name, name) and wantedKind(tag, kind);
 }
 
 /// A file may hold a module of another name - it is only a file - and
@@ -365,42 +357,25 @@ fn keep(rlb: *RamLibBase, name: [*:0]const u8, seg_list: *dos.SegList, kind: u32
 
 // --- tests (host: ./zig build test) -----------------------------------------
 //
-// What can be checked without a machine: the scan that finds a module in
-// what was loaded, and the path it looks under. Everything else here is
+// What can be checked without a machine: which tag of a loaded file is
+// the module asked for, and the path it looks under. Everything else here is
 // LoadSeg and InitResident, which have to be asked of a real disk.
 
 const std = @import("std");
 const testing = std.testing;
 
-test "the scan finds a module, and refuses one that was not asked for" {
-    var buffer: [256]u8 align(@alignOf(exec.Resident)) = @splat(0);
-    // Somewhere in the middle, as a linker would put it.
-    const tag: *exec.Resident = @ptrCast(@alignCast(&buffer[8 * @alignOf(exec.Resident)]));
-    tag.* = .{
-        .match_tag = tag,
-        .version = 2,
-        .type = .library,
-        .name = "hello.library",
-    };
-    var seg = dos.SegList{ .mem_size = buffer.len, .data = &buffer };
-
+test "a tag is the module asked for by its name, its version and its kind" {
+    const tag: exec.Resident = .{ .match_tag = undefined, .version = 2, .type = .library, .name = "hello.library" };
     const library = ramlib.KIND_LIBRARY;
-    try testing.expectEqual(@as(?*const exec.Resident, tag), scan(&seg, "hello.library", 0, library));
+    try testing.expect(askedFor(&tag, "hello.library", 0, library));
     // The name is a name, whatever case it is asked in.
-    try testing.expectEqual(@as(?*const exec.Resident, tag), scan(&seg, "HELLO.library", 2, library));
+    try testing.expect(askedFor(&tag, "HELLO.library", 2, library));
     // Older than what was asked for is not what was asked for.
-    try testing.expect(scan(&seg, "hello.library", 3, library) == null);
+    try testing.expect(!askedFor(&tag, "hello.library", 3, library));
     // A file may hold another module; that is not this one.
-    try testing.expect(scan(&seg, "other.library", 0, library) == null);
+    try testing.expect(!askedFor(&tag, "other.library", 0, library));
     // Nor is a library what an OpenDevice asked for.
-    try testing.expect(scan(&seg, "hello.library", 0, ramlib.KIND_DEVICE) == null);
-
-    // A tag that does not point at itself is a coincidence in the bytes.
-    tag.match_tag = @ptrCast(@alignCast(&buffer[0]));
-    try testing.expect(scan(&seg, "hello.library", 0, library) == null);
-    tag.match_tag = tag;
-    tag.match_word = 0;
-    try testing.expect(scan(&seg, "hello.library", 0, library) == null);
+    try testing.expect(!askedFor(&tag, "hello.library", 0, ramlib.KIND_DEVICE));
 }
 
 test "a module is called by the tail of its name" {
@@ -409,19 +384,6 @@ test "a module is called by the tail of its name" {
     try testing.expectEqualStrings("x.gadget", std.mem.span(tailName("RAM:x.gadget")));
     try testing.expectEqualStrings("hello.library", std.mem.span(tailName("hello.library")));
     try testing.expectEqualStrings("", std.mem.span(tailName("LIBS:")));
-}
-
-test "the scan walks every segment of the file" {
-    var first: [64]u8 align(@alignOf(exec.Resident)) = @splat(0);
-    var second: [128]u8 align(@alignOf(exec.Resident)) = @splat(0);
-    const tag: *exec.Resident = @ptrCast(@alignCast(&second[4 * @alignOf(exec.Resident)]));
-    tag.* = .{ .match_tag = tag, .version = 1, .type = .device, .name = "test.device" };
-
-    var tail = dos.SegList{ .mem_size = second.len, .data = &second };
-    var head = dos.SegList{ .mem_size = first.len, .data = &first, .next = &tail };
-    try testing.expectEqual(@as(?*const exec.Resident, tag), scan(&head, "test.device", 0, ramlib.KIND_DEVICE));
-    // A device's file opened as a library: no library in it.
-    try testing.expect(scan(&head, "test.device", 0, ramlib.KIND_LIBRARY) == null);
 }
 
 test "a device's name asked for as a library leaves the device's segments alone" {
