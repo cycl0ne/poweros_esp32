@@ -251,7 +251,12 @@ pub const LIBRARY_VERSION = 0;
 /// 90: a string gadget steps and deletes by Unicode's clusters - a
 /// syllable of joined consonants is one - and a key that sends several
 /// characters types them all, the edit hooks called for each.
-pub const LIBRARY_REVISION = 91;
+/// 91: a window that stops being the active one takes the keys from its
+/// gadget.
+/// 92: a mouse's distance and a tablet's place go on down the input
+/// chain as the pointer position they made, in the front screen's
+/// pixels, so a console's text is selected with any pointer.
+pub const LIBRARY_REVISION = 92;
 const BUILD_DATE = "12.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

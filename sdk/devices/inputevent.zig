@@ -145,4 +145,9 @@ pub const IEQUALIFIER_REPEAT: u32 = 0x0200;
 pub const IEQUALIFIER_MIDBUTTON: u32 = 0x1000;
 pub const IEQUALIFIER_RBUTTON: u32 = 0x2000;
 pub const IEQUALIFIER_LEFTBUTTON: u32 = 0x4000;
+/// An IECLASS_RAWMOUSE event's `x` and `y` are how far the mouse went,
+/// not where it is. intuition adds the distance to where the pointer was
+/// and passes the event on as the IECLASS_NEWPOINTERPOS that makes, in
+/// the front screen's pixels: a handler before intuition in the chain
+/// sees the distance, one behind it the place.
 pub const IEQUALIFIER_RELATIVEMOUSE: u32 = 0x8000;

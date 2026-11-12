@@ -1085,8 +1085,18 @@ A tablet - a USB one, QEMU's `usb-tablet` - says where it is across a
 surface of its own: its raw mouse events and the `IECLASS_NEWPOINTERPOS`
 after each carry `IESUBCLASS_TABLET`, `x` and `y` from 0 to
 `IETABLET_MAX`. intuition puts the pointer as far across the front
-screen, and what it passes on - to windows, to gadgets - is in that
-screen's pixels like any other pointer event.
+screen, and what it passes on - to windows, to gadgets, to the input
+handlers behind it - is in that screen's pixels like any other pointer
+event.
+
+A mouse that says only how far it went - every USB mouse - sends raw
+mouse events marked `IEQUALIFIER_RELATIVEMOUSE` and no pointer event.
+intuition adds the distance to where the pointer was, and the event goes
+on down the chain as the `IECLASS_NEWPOINTERPOS` that made, button and
+qualifiers kept. So an input handler behind intuition - console.device's,
+which selects text with the pointer - reads one kind of event for every
+pointer there is, and a handler that wants the distance itself stands
+before intuition (a priority above 50).
 
 A finger's pointer events say they are one: input.device marks the
 `IECLASS_NEWPOINTERPOS` it makes for the pointer finger with

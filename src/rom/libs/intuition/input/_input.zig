@@ -216,7 +216,11 @@ fn stateOf(ib: *IntuitionBase) *State {
 // --- the handler and the task -------------------------------------------------------
 
 /// On input.device's task: the events intuition wants copied into the ring,
-/// the task told, the list passed on as it came.
+/// the task told, and the list passed on - as it came but for the
+/// pointer's moves that were no place on a screen: a mouse's distance and
+/// a tablet's place go on as the IECLASS_NEWPOINTERPOS they made, in the
+/// front screen's pixels, so whoever is behind intuition in the chain
+/// reads every pointer the same way.
 fn handler(events: ?*InputEvent, data: ?*anyopaque) callconv(.c) ?*InputEvent {
     const ib: *IntuitionBase = @ptrCast(@alignCast(data.?));
     const st = stateOf(ib);
@@ -229,14 +233,15 @@ fn handler(events: ?*InputEvent, data: ?*anyopaque) callconv(.c) ?*InputEvent {
             // as it is. A mouse that says only how far it went has no
             // pointer event after it: the distance is added to where it
             // put the pointer last, and that place is the pointer's, as
-            // any position is.
+            // any position is - the event becomes it, for the handlers
+            // behind this one.
             ie.IECLASS_RAWMOUSE => {
                 pointer.mouseSeen(ib);
                 if (ev.code != ie.IECODE_WHEEL) {
                     if (ev.qualifier & ie.IEQUALIFIER_RELATIVEMOUSE == 0) continue;
-                    var at = relativeMove(ib, st, ev);
-                    pointer.moved(ib, at.x, at.y);
-                    if (push(st, &at)) any = true;
+                    placed(ev, relativeMove(ib, st, ev));
+                    pointer.moved(ib, ev.x, ev.y);
+                    if (push(st, ev)) any = true;
                     continue;
                 }
             },
@@ -245,9 +250,9 @@ fn handler(events: ?*InputEvent, data: ?*anyopaque) callconv(.c) ?*InputEvent {
             // front screen first, and passed on in its pixels.
             ie.IECLASS_NEWPOINTERPOS => {
                 if (ev.subclass == ie.IESUBCLASS_TABLET) {
-                    var at = tabletMove(ib, st, ev);
-                    pointer.moved(ib, at.x, at.y);
-                    if (push(st, &at)) any = true;
+                    placed(ev, tabletMove(ib, st, ev));
+                    pointer.moved(ib, ev.x, ev.y);
+                    if (push(st, ev)) any = true;
                     continue;
                 }
                 st.mouse_x = ev.x;
@@ -261,6 +266,14 @@ fn handler(events: ?*InputEvent, data: ?*anyopaque) callconv(.c) ?*InputEvent {
     }
     if (any) ib.sys_base.Signal(&st.task, st.mask);
     return events;
+}
+
+/// `ev` becomes the pointer position `at` it made, in its place in the
+/// list.
+fn placed(ev: *InputEvent, at: InputEvent) void {
+    const next = ev.next;
+    ev.* = at;
+    ev.next = next;
 }
 
 /// The rightmost and lowest pixel the pointer reaches: the front
@@ -2030,6 +2043,18 @@ test "the pointer's reach: the front screen's, and no further down than the disp
     // Pulled down, the bar held at a tablet place stays where it is put.
     const at = tabletAcross(0x8000, reachOf(500, 1920, 1080, 1080).bottom);
     try testing.expectEqual(at, tabletAcross(0x8000, reachOf(0, 1920, 1080, 1080).bottom));
+}
+
+test "an event that becomes the position it made keeps its place in the list" {
+    var last = InputEvent{ .class = ie.IECLASS_TIMER };
+    var move = InputEvent{ .next = &last, .class = ie.IECLASS_RAWMOUSE, .qualifier = ie.IEQUALIFIER_RELATIVEMOUSE | ie.IEQUALIFIER_LSHIFT, .x = 3, .y = -2 };
+    placed(&move, .{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_LBUTTON, .qualifier = ie.IEQUALIFIER_LSHIFT, .x = 103, .y = 48 });
+    try testing.expectEqual(ie.IECLASS_NEWPOINTERPOS, move.class);
+    try testing.expectEqual(ie.IECODE_LBUTTON, move.code);
+    try testing.expectEqual(ie.IEQUALIFIER_LSHIFT, move.qualifier);
+    try testing.expectEqual(@as(i32, 103), move.x);
+    try testing.expectEqual(@as(i32, 48), move.y);
+    try testing.expectEqual(@as(?*InputEvent, &last), move.next);
 }
 
 test "a tablet's place: as far across the screen as across the tablet" {
