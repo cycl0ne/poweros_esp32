@@ -565,8 +565,9 @@ pub fn trueType(dfb: *DiskfontBase) ?*sdk.interface.truetype.TrueTypeBase {
 }
 
 /// The file at `path` relative to `dir`, read whole into memory of
-/// `flags`, which the caller frees with FreeVec; null if it cannot be read
-/// or is larger than a size file may be.
+/// `flags`, which the caller frees with FreeVec; null if it cannot be
+/// read, is larger than a file of outlines may be, or there is no memory
+/// for it.
 pub fn readWhole(dfb: *DiskfontBase, dir: ?*dos.FileLock, path: [*:0]const u8, flags: u32) ?[]u8 {
     const sys = dfb.sys_base;
     const dl = dfb.dos_base;
@@ -576,7 +577,7 @@ pub fn readWhole(dfb: *DiskfontBase, dir: ?*dos.FileLock, path: [*:0]const u8, f
     const file = fh orelse return null;
     defer _ = dl.Close(file);
     var fib: dos.FileInfoBlock = .{};
-    if (!dl.ExamineFH(file, &fib) or fib.size > max_size_file) return null;
+    if (!dl.ExamineFH(file, &fib) or fib.size > max_outline_file) return null;
     const size: u32 = @intCast(fib.size);
     const bytes = sys.AllocVec(@max(size, 4), flags) orelse return null;
     const data: [*]u8 = @ptrCast(bytes);
@@ -589,7 +590,15 @@ pub fn readWhole(dfb: *DiskfontBase, dir: ?*dos.FileLock, path: [*:0]const u8, f
 
 /// The largest size file read: a font of hundreds of large glyphs in
 /// colour is still far below it.
-const max_size_file = 4 * 1024 * 1024;
+pub const max_size_file = 4 * 1024 * 1024;
+
+/// The largest file of outlines read. It is read whole and stays in
+/// memory for as long as a size of it is open, so what a machine can
+/// open is a matter of its memory, and a file that does not fit there is
+/// one that cannot be read. This only keeps a length within what is a
+/// font: a font of every emoji as colour pictures has some 11 MiB, one
+/// of every Chinese, Japanese and Korean character some 20.
+pub const max_outline_file = 64 * 1024 * 1024;
 
 /// A family's contents file, read whole, and the directory it is in.
 pub const Contents = struct {

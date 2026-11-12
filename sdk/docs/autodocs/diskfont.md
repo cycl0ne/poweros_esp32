@@ -206,7 +206,7 @@ fn NewFontContents(dfb: *DiskfontBase, lock: ?*dos.FileLock, name: [*:0]const u8
 
 **SINCE**
 
-1.0. LVO -28.
+1.0, a file of outlines of up to 64 MiB since 1.12. LVO -28.
 
 **INPUTS**
 
@@ -229,8 +229,10 @@ checks and its sum is sound - becomes an entry: its path from `lock`
 header says. A TrueType or OpenType file of one font becomes the
 family's outline entry, of height 0, in the styles the file says it
 is drawn in - bold for a bold face. Anything else there is passed
-over. The entries are in order of height. At most 64 sizes are
-listed.
+over, and so is a file that is too large: a size of more than 4 MiB,
+a file of outlines of more than 64 MiB or than there is memory to
+read it into. The entries are in order of height. At most 64 sizes
+are listed.
 
 **CONTEXT**
 

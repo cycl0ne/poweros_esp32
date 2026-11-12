@@ -462,7 +462,11 @@ the one glyph (`RenderGlyph`) at the size's height, and graphics keeps
 it with the size until the size leaves memory. For that the size keeps
 its outline open: the font file stays in memory, once for all the
 sizes made from it, for as long as one of them is loaded - a few
-hundred KiB for a face of Liberation. A character the outline has no
+hundred KiB for a face of Liberation, some 11 MiB for a font of every
+emoji as colour pictures. A family's font file may have up to 64 MiB
+(diskfont.library 1.12; 4 MiB before): it is read whole, so what a
+machine opens is a matter of its memory, and `NewFontContents` passes
+over a file there is no memory to read. A character the outline has no
 glyph for goes on to the fallbacks as before.
 
 **A text is shaped by the outline's layout tables** (diskfont.library
@@ -1083,4 +1087,4 @@ cursor = gb.TextXToOffset(rp, line.ptr, @intCast(line.len), mouse_x - left);
 | `C:SetPrefs` | sets the system's fonts, with the rest of its settings, from `ENV:Sys`; `SHOW` prints them |
 | `SYS:Programs/Prefs` | picks the system's fonts, the desktop icons' and the fallback families in a window and writes `font.prefs` |
 | `SYS:Programs/FontView` | fonts and sizes in a window, the one chosen drawn |
-| `C:test/DiskFont`, `C:test/Fonts` | test programs: open sizes and time them, or with `GLYPHS` render every glyph of an outline by its number and compare with a font image; draw a size file |
+| `C:test/DiskFont`, `C:test/Fonts` | test programs: open sizes and time them, or with `GLYPHS` render every glyph of an outline by its number and compare with a font image, with `TEXT` draw a line of one's own; draw a size file |

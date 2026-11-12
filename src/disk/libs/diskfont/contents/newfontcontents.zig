@@ -18,7 +18,7 @@ const _font = @import("../font/_font.zig");
 /// fn NewFontContents(dfb: *DiskfontBase, lock: ?*dos.FileLock, name: [*:0]const u8) ?*fontfile.ContentsHeader
 /// ```
 ///
-/// SINCE: 1.0. LVO -28.
+/// SINCE: 1.0, a file of outlines of up to 64 MiB since 1.12. LVO -28.
 ///
 /// INPUTS:
 /// - `lock` - the directory the family is in: `FONTS:`, or wherever its
@@ -38,8 +38,10 @@ const _font = @import("../font/_font.zig");
 /// header says. A TrueType or OpenType file of one font becomes the
 /// family's outline entry, of height 0, in the styles the file says it
 /// is drawn in - bold for a bold face. Anything else there is passed
-/// over. The entries are in order of height. At most 64 sizes are
-/// listed.
+/// over, and so is a file that is too large: a size of more than 4 MiB,
+/// a file of outlines of more than 64 MiB or than there is memory to
+/// read it into. The entries are in order of height. At most 64 sizes
+/// are listed.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the disk.
@@ -124,20 +126,21 @@ const max_sizes = 64;
 /// the styles it says it is drawn in; a size file is listed as its image
 /// header says, if the file is a whole font. The file is read whole - a
 /// size file's sum covers every byte - into memory that goes again at
-/// once.
+/// once. A file larger than its kind is read at (`_font.max_outline_file`,
+/// `_font.max_size_file`), or than there is memory for, is passed over.
 fn readEntry(dfb: *DiskfontBase, file: [*:0]const u8, path: []const u8) ?fontfile.FontContents {
     const dl = dfb.dos_base;
     const fh = dl.Open(file, dos.MODE_OLDFILE) orelse return null;
     defer _ = dl.Close(fh);
     var fib: dos.FileInfoBlock = .{};
-    if (!dl.ExamineFH(fh, &fib) or fib.size < 4 or fib.size > 4 * 1024 * 1024) return null;
+    if (!dl.ExamineFH(fh, &fib) or fib.size < 4 or fib.size > _font.max_outline_file) return null;
     const size: u32 = @intCast(fib.size);
     const memory = dfb.sys_base.AllocVec(size, exec.MEMF_ANY) orelse return null;
     defer dfb.sys_base.FreeVec(memory);
     const block: [*]align(4) u8 = @ptrCast(@alignCast(memory));
     if (dl.Read(fh, block, @intCast(size)) != size) return null;
     if (sdk.truetype.isTrueType(block[0..size])) return fontfile.outlineEntry(path, sdk.truetype.styleOf(block[0..size]));
-    if (size < @sizeOf(fontimage.FontImage)) return null;
+    if (size < @sizeOf(fontimage.FontImage) or size > _font.max_size_file) return null;
     if (!fontimage.check(block, size) or !fontimage.sound(block, size)) return null;
     return fontfile.entryFor(path, @ptrCast(block));
 }

@@ -64,6 +64,10 @@ const more8: [fontimage.imageSize(letterSpec(8, 'B', 5))]u8 align(4) = fontimage
 const more16: [fontimage.imageSize(letterSpec(16, 'B', 9))]u8 align(4) = fontimage.build(letterSpec(16, 'B', 9));
 const last16: [fontimage.imageSize(letterSpec(16, 'C', 11))]u8 align(4) = fontimage.build(letterSpec(16, 'C', 11));
 
+/// What `Rig.lend` hands exec: room for a font file past 4 MiB on the
+/// disk, read whole, and for the disk growing the file as it is written.
+var lent: [24 * 1024 * 1024]u8 align(16) = undefined;
+
 /// The RAM disk behind FONTS: and ENV:, answering the test process's
 /// packets.
 const Disk = struct {
@@ -88,6 +92,15 @@ const Rig = struct {
     saved: ?*kexec.Task = null,
     dfb: *DiskfontBase = undefined,
     library: *exec.Library = undefined,
+    /// The memory lent to exec, if a test asked for it.
+    region: ?*exec.MemHeader = null,
+
+    /// Memory for a test of a large file: the disk's copy of it and the
+    /// one diskfont.library reads come out of this, being the region
+    /// MEMF_ANY tries first. Given back, whole, by `deinit`.
+    fn lend(rig: *Rig) !void {
+        rig.region = rig.sysLib().AddMemList(lent.len, exec.MEMF_ANY, 0, &lent, "lent") orelse return error.NoRegion;
+    }
 
     fn init(rig: *Rig) !void {
         rig.* = .{ .db = try host.dos.testSetUp(), .gb = undefined };
@@ -148,6 +161,10 @@ const Rig = struct {
         kexec.Remove(kexec.SysBase, &rb.lib.node);
         kexec.freeLibraryMemory(kexec.SysBase, &rb.lib);
         try host.dos.testTearDown(rig.db);
+        if (rig.region) |region| {
+            try testing.expectEqual(@intFromPtr(region.upper) - @intFromPtr(region.lower), region.free);
+            rig.sysLib().Remove(&region.node);
+        }
         kexec.deinit();
     }
 
@@ -434,6 +451,55 @@ test "an outline family of cubic curves: found by NewFontContents, a size render
     try testing.expectEqual(@as(u16, 20), font.image.height);
     try testing.expectEqual(fontimage.Kind.alpha4, font.image.kind);
     try testing.expectEqual(@as(u16, 10), fontimage.find(font.image, 'A').?.width);
+    gb.CloseFont(font);
+}
+
+test "revision 12: a family whose outline is a font of colour pictures in a file past 4 MiB: found by NewFontContents, a size rendered in colour" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    try rig.lend();
+    const builder = @import("../../truetype/tests/builder.zig");
+    const pictured = @import("../../truetype/tests/strike.zig");
+    const truetype_init = @import("../../truetype/truetype_init.zig");
+    const compression_init = @import("../../compression/compression_init.zig");
+    const lib = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoTrueType;
+    const truetype_lib: *exec.Library = @ptrCast(@alignCast(lib));
+    defer _ = rig.sysLib().RemLibrary(truetype_lib);
+    const packer = kexec.InitResident(kexec.SysBase, &compression_init.compression_library_tag, null) orelse return error.NoCompression;
+    const compression_lib: *exec.Library = @ptrCast(@alignCast(packer));
+    defer _ = rig.sysLib().RemLibrary(compression_lib);
+
+    // 'A' is a picture of two pixels by two on the baseline, in a strike
+    // of 20 pixels an em; the file goes on past its tables, as one of
+    // thousands of pictures does past 4 MiB.
+    var file: builder.File = .{};
+    pictured.colourFont(&file);
+    const long = try testing.allocator.alloc(u8, 4 * 1024 * 1024 + 1);
+    defer testing.allocator.free(long);
+    @memset(long, 0);
+    @memcpy(long[0..file.len], file.bytes[0..file.len]);
+    const made = rig.dosLib().CreateDir("FONTS:emoji") orelse return error.NoDir;
+    rig.dosLib().UnLock(made);
+    try rig.write("FONTS:emoji/emoji.ttf", long);
+    const fonts = rig.dosLib().Lock("FONTS:", dos.SHARED_LOCK).?;
+    defer rig.dosLib().UnLock(fonts);
+    const contents = rig.dfb.NewFontContents(fonts, "emoji.font") orelse return error.NoContents;
+    const block: [*]align(4) u8 = @ptrCast(contents);
+    const entries = fontfile.entriesOf(block);
+    try testing.expectEqual(@as(usize, 1), entries.len);
+    try testing.expectEqual(@as(u8, 1), entries[0].outline);
+    try testing.expectEqualStrings("emoji/emoji.ttf", fontfile.pathOf(&entries[0]));
+    try rig.write("FONTS:emoji.font", block[0..fontfile.contentsSize(contents.count)]);
+    rig.dfb.DisposeFontContents(contents);
+
+    // 20 rows of colour: the picture at its strike's own size, pixel for
+    // pixel.
+    const gb = rig.graphicsLib();
+    const font = rig.dfb.OpenDiskFont(&.{ .name = "emoji.font", .y_size = 20, .flags = graphics.FPF_DESIGNED }) orelse return error.NoFont;
+    try testing.expectEqual(@as(u16, 20), font.image.height);
+    try testing.expectEqual(fontimage.Kind.rgba32, font.image.kind);
+    try testing.expectEqual(@as(u16, 2), fontimage.find(font.image, 'A').?.width);
     gb.CloseFont(font);
 }
 
