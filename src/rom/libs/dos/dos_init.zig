@@ -24,8 +24,8 @@ const segment = @import("program/_program.zig");
 /// What the library is on exec's list as, and its version.
 pub const LIBRARY_NAME = sdk.dos.DOSNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 19;
-const BUILD_DATE = "09.11.2026";
+pub const LIBRARY_REVISION = 25;
+const BUILD_DATE = "12.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -265,8 +265,27 @@ fn init(seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*anyopaque {
     takeBootDisks(@fieldParentPtr("lib", lib), sys_base);
     sdk.exec.kprintf(sys_base, "%s %d.%d: starting the after-DOS residents\n", .{ lib.name(), lib.version, lib.revision });
     _ = sys_base.InitCode(exec.RTF_AFTERDOS, 0);
-    startBootShell(@fieldParentPtr("lib", lib), sys_base);
+    if (startupHeld(sys_base)) {
+        sdk.exec.kprintf(sys_base, "dos.library: held with Ctrl-D, so %s is not run and no shell is started: s3> is the shell (newshell starts one, reboot tryboot the other boot partition)\n", .{boot_script});
+    } else startBootShell(@fieldParentPtr("lib", lib), sys_base);
     return lib;
+}
+
+/// Whether the machine's first shell is held: a Ctrl-D for the task this
+/// init runs in, exec's, which raises it for a Ctrl-D or a Ctrl-C waiting
+/// on its console at cold start (exec_init's `heldOnConsole`) - sent over
+/// and over from the other end while the machine is switched on.
+/// AmigaDOS's Ctrl-D stops a script; this one is never begun. The signal
+/// is taken, so that nothing after reads it as a break.
+///
+/// It is the way in where S:Startup-Sequence cannot run: a disk whose
+/// programs were built for another kernel - the system half of an update
+/// written, and the start on its own kernel never come - stops the machine
+/// in the first program the script runs, every time it is started. Held,
+/// nothing from the disk has run, and the kernel shell's `reboot tryboot`
+/// starts the kernel the disk belongs to.
+fn startupHeld(sys_base: *ExecBase) bool {
+    return sys_base.SetSignal(0, exec.SIGBREAKF_CTRL_D) & exec.SIGBREAKF_CTRL_D != 0;
 }
 
 /// The ROM tag: a cold-start library, the last one at cold start, whose

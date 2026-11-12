@@ -59,6 +59,14 @@ pub const value_words = buffer_bytes / 4 - 6;
 /// The public semaphore everyone who asks holds.
 pub const lock_name = "videocore.mailbox";
 
+/// The tag that sets the flags for the next start (Linux's
+/// RPI_FIRMWARE_SET_REBOOT_FLAGS), and its one flag: the bootloader starts
+/// from the partition `autoboot.txt`'s `[tryboot]` names, this once.
+/// C:Reboot TRYBOOT sends it, and so does the kernel shell's
+/// `reboot tryboot`.
+pub const TAG_SET_REBOOT_FLAGS: u32 = 0x0003_8064;
+pub const REBOOT_TRYBOOT: u32 = 1 << 0;
+
 /// How long the firmware is given to answer.
 const answer_us: u64 = 100_000;
 

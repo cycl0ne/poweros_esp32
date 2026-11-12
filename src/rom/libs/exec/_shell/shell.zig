@@ -503,16 +503,23 @@ fn countSoftInt(data: ?*anyopaque) callconv(.c) void {
 /// A fact from the board's system tag list, through expansion.library;
 /// `default` if the library or the fact is not there.
 pub fn boardFact(shell: *Shell, tag: u32, default: usize) usize {
-    return fact(shell, null, tag, default);
+    return fact(shell, null, st.CHIP_ANY, tag, default);
 }
 
 /// A fact of the board's first part of `kind`; `default` if there is no
 /// such part or it does not say.
 pub fn partFact(shell: *Shell, kind: u32, tag: u32, default: usize) usize {
-    return fact(shell, kind, tag, default);
+    return fact(shell, kind, st.CHIP_ANY, tag, default);
 }
 
-fn fact(shell: *Shell, kind: ?u32, tag: u32, default: usize) usize {
+/// A fact of the board's first part of `kind` that is `chip`: what a
+/// command that speaks one chip's registers asks, so that another chip of
+/// the same kind is not taken for it.
+pub fn chipFact(shell: *Shell, kind: u32, chip: u32, tag: u32, default: usize) usize {
+    return fact(shell, kind, chip, tag, default);
+}
+
+fn fact(shell: *Shell, kind: ?u32, chip: u32, tag: u32, default: usize) usize {
     const sys = shell.base.iface();
     const utility_lib = sys.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return default;
     defer sys.CloseLibrary(utility_lib);
@@ -521,7 +528,7 @@ fn fact(shell: *Shell, kind: ?u32, tag: u32, default: usize) usize {
     defer sys.CloseLibrary(expansion_lib);
     const eb: *sdk.interface.expansion.ExpansionBase = @ptrCast(expansion_lib);
     const list = if (kind) |k|
-        (eb.FindBoardPart(null, k, st.CHIP_ANY) orelse return default).tags
+        (eb.FindBoardPart(null, k, chip) orelse return default).tags
     else
         eb.SystemTags();
     return ub.GetTagData(tag, default, list);
