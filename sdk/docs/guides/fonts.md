@@ -1091,7 +1091,11 @@ What to know:
   `FIXED` is best a fixed-width family of about that font's width. With
   a font that shapes its text - the console's or a fallback - a run of
   cells that would not come out a cell a character is drawn a cell at
-  a time, each character set by itself.
+  a time, each character set by itself. A cell that keeps marks is
+  drawn the same way, its character and the marks as one text, so they
+  stand where the font's mark tables put them; in a font that does not
+  shape its text they are drawn behind the character, and a mark none
+  of the fonts has is drawn as the default character.
 - A font a program makes itself (`AddFont`) has no fallback unless the
   program sets `fallback` before adding it, to a font it keeps open for
   as long; graphics walks at most eight fonts of a chain.

@@ -1284,7 +1284,23 @@ controls are 7-bit: a byte past 0x7F is always part of a character, and
 two for a wide one - a CJK character, an emoji - which never starts in
 a row's last column. A character the console's font lacks is drawn from
 the font's [fallback fonts](fonts.md#fallback-fonts), in the middle of
-its cell where that font's letters are of another width. Asked `CSI 18 t`, it answers its size as
+its cell where that font's letters are of another width.
+
+A character of no width - an accent, a vowel sign above or below its
+letter, a virama, a joiner - is kept in the cell of the character
+before the cursor, when the two are one cluster
+(`utility.unicode.clusterEnd`). A cell keeps two of them and drops a
+third; one with nothing to go with, at a row's start or behind an empty
+cell, is dropped, and so is a format character such as U+200B. The
+marks are drawn with their character, where the font's shaping sets
+them, and they are the cell's: they move, scroll and go with it, and a
+selection copies the character with its marks, the bytes that were
+written. The cells stay the characters' own: `मुँह` is two cells, `म`
+with its two signs and `ह`; a vowel sign that has a width stands in the
+cell behind its consonant, `कि` as `क` and `ि`, and no conjunct is
+formed across cells, `क्ष` being `क्` and `ष`.
+
+Asked `CSI 18 t`, it answers its size as
 `CSI 8 ; rows ; columns t` in its input, and `CSI 6 n` with the cursor's
 place; on a console over a device the terminal at the other end
 answers, if it can. A program that wants the size reads the answer in

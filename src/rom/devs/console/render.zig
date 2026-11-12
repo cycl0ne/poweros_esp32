@@ -18,6 +18,12 @@
 //! the middle of its cell and without a background of its own, so what a
 //! wider one has past its cell lies over the cells beside it.
 //!
+//! A cell that keeps marks (`Cell.marks`) is no part of a run either: its
+//! character and the marks go to `Text` as one piece, after the runs and
+//! in the middle of the cell, so the marks land where the font's shaping
+//! puts them on that character. A font that does not shape draws them as
+//! it draws any character, behind the one they belong to.
+//!
 //! A font that shapes its text (`TextFont.shape`) may draw a run another
 //! width than its cells - a pair brought closer, a ligature. Such a run
 //! is measured first, and one that is not a cell a character is drawn a
@@ -217,23 +223,27 @@ fn drawGraphic(gb: *GraphicsBase, l: Layout, x: i32, y: i32, cell: Cell, fg: gra
     gb.Text(l.rp, &bytes, @intCast(utf8.encode(near, &bytes)));
 }
 
-/// Whether a character is one cell wide in the console's font, as a run
-/// takes every one of its characters to be. ASCII is the font's own; a
+/// Whether a cell can be part of a run: it keeps no marks, and its
+/// character is one cell wide in the console's font, as a run takes
+/// every one of its characters to be. ASCII is the font's own; a
 /// character past it may be a fallback font's glyph, whose advance is
 /// that font's.
-fn fitsCell(gb: *GraphicsBase, l: Layout, ch: u32) bool {
+fn fitsCell(gb: *GraphicsBase, l: Layout, cell: Cell) bool {
+    if (cell.marks[0] != 0) return false;
+    const ch = shownChar(cell);
     if (ch < 0x80) return true;
     var bytes: [4]u8 = undefined;
     const length: u32 = @intCast(utf8.encode(ch, &bytes));
     return gb.TextLength(l.rp, &bytes, length) == l.cell_width;
 }
 
-/// A character that is not a cell wide (`fitsCell`), in the middle of its
-/// cell and without a background: the caller has filled the cell. A wider
-/// one reaches into the cells beside it by half of what it is wider.
+/// A cell that is no part of a run (`fitsCell`) - its character is not a
+/// cell wide, or it keeps marks - in the middle of the cell and without a
+/// background: the caller has filled the cell. A wider one reaches into
+/// the cells beside it by half of what it is wider.
 fn drawOffWidth(gb: *GraphicsBase, l: Layout, x: i32, y: i32, cell: Cell, fg: graphics.Pen, bg: graphics.Pen) void {
-    var bytes: [4]u8 = undefined;
-    const length: u32 = @intCast(utf8.encode(shownChar(cell), &bytes));
+    var bytes: [term.cell_text]u8 = undefined;
+    const length = shownText(cell, &bytes);
     setPens(gb, l, fg, bg, cell);
     const over = [_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} };
     gb.SetRPAttrs(l.rp, &over);
@@ -268,12 +278,22 @@ fn shownChar(cell: Cell) u32 {
     return if (cell.ch < 0x20) ' ' else cell.ch;
 }
 
+/// What a cell is written as, by itself: its character (`shownChar`) and
+/// the marks it keeps, in UTF-8. How many bytes.
+fn shownText(cell: Cell, into: *[term.cell_text]u8) u32 {
+    if (cell.ch < 0x20) {
+        into[0] = ' ';
+        return 1;
+    }
+    return @intCast(cell.text(into));
+}
+
 /// A wide character over its two cells, from the cell at `x`: both cells'
 /// background, and the character in the middle of them.
 fn drawWide(gb: *GraphicsBase, l: Layout, x: i32, y: i32, cell: Cell, fg: graphics.Pen, bg: graphics.Pen) void {
     fillCells(gb, l, x, y, 2, bg);
-    var bytes: [4]u8 = undefined;
-    const length: u32 = @intCast(utf8.encode(shownChar(cell), &bytes));
+    var bytes: [term.cell_text]u8 = undefined;
+    const length = shownText(cell, &bytes);
     setPens(gb, l, fg, bg, cell);
     const drawn: i32 = @intCast(gb.TextLength(l.rp, &bytes, length));
     const left = l.origin_x + x * l.cell_width + @divTrunc(@max(2 * l.cell_width - drawn, 0), 2);
@@ -343,7 +363,7 @@ pub fn drawRow(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, 
             x += 2;
             continue;
         }
-        if (!fitsCell(gb, l, shownChar(first))) {
+        if (!fitsCell(gb, l, first)) {
             // Its cell now, the character once the runs are down.
             _, const bg = pensAt(t, x, y, l);
             fillCells(gb, l, @intCast(x), @intCast(y), 1, bg);
@@ -352,7 +372,7 @@ pub fn drawRow(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, 
             continue;
         }
         // As many cells as share their colours and style, up to a wide
-        // character or one that is not a cell wide.
+        // character, one that is not a cell wide or one with marks.
         var n: u32 = 0;
         var length: usize = 0;
         while (x + n < to and length + 4 <= run_text.len) : (n += 1) {
@@ -360,7 +380,7 @@ pub fn drawRow(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, 
             if (c.flags & term.CELL_GRAPHIC != 0 or !sameLook(first, c)) break;
             if (c.ch == term.WIDE_TAIL or isWide(t, x + n, y)) break;
             if (isShownSelected(t, x + n, y) != selected) break;
-            if (!fitsCell(gb, l, shownChar(c))) break;
+            if (!fitsCell(gb, l, c)) break;
             length += utf8.encode(shownChar(c), run_text[length..][0..4]);
         }
         const fg, const bg = pensAt(t, x, y, l);
@@ -387,7 +407,7 @@ pub fn drawRow(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, 
     while (off_width and x < to) : (x += 1) {
         const cell = t.at(x, y).*;
         if (cell.flags & term.CELL_GRAPHIC != 0 or cell.ch == term.WIDE_TAIL or isWide(t, x, y)) continue;
-        if (fitsCell(gb, l, shownChar(cell))) continue;
+        if (fitsCell(gb, l, cell)) continue;
         const fg, const bg = pensAt(t, x, y, l);
         drawOffWidth(gb, l, @intCast(x), @intCast(y), cell, fg, bg);
     }
@@ -421,7 +441,7 @@ pub fn drawCursor(gb: *GraphicsBase, l: Layout, t: *const Term, look: CursorLook
         drawWide(gb, l, @intCast(x), @intCast(c.y), cell, fg, bg);
     } else if (cell.ch == term.WIDE_TAIL) {
         fillCells(gb, l, @intCast(x), @intCast(c.y), 1, bg);
-    } else if (!fitsCell(gb, l, shownChar(cell))) {
+    } else if (!fitsCell(gb, l, cell)) {
         fillCells(gb, l, @intCast(x), @intCast(c.y), 1, bg);
         drawOffWidth(gb, l, @intCast(x), @intCast(c.y), cell, fg, bg);
     } else {
@@ -715,6 +735,101 @@ test "a font that shapes its text: a run that would leave its cells is drawn a c
     try testing.expectEqual(@as(u32, 24), countIn(&surface, 2, 0, 32, white));
     var y: u32 = 0;
     while (y < 8) : (y += 1) try testing.expectEqual(@as(u32, 8), countIn(&surface, y, 24, 32, 0));
+
+    gb.FreeRastPort(rp);
+}
+
+/// The console's font with a mark beside its letter: U+0301, four
+/// across on the line's top row, which moves the point nowhere.
+const marked_spec = fontimage.Spec{
+    .height = 8,
+    .baseline = 6,
+    .x_size = 8,
+    .default_char = '?',
+    .glyphs = &.{ barGlyph('?', 8, 0, 8), barGlyph('a', 8, 2, 8), barGlyph(0x301, 0, 0, 4) },
+};
+const marked_font: [fontimage.imageSize(marked_spec)]u8 align(4) = fontimage.build(marked_spec);
+
+/// A shaper that sets U+0301 over the middle of the letter before it.
+fn markShape(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    _ = hook;
+    _ = object;
+    const request: *graphics.ShapeRequest = @ptrCast(@alignCast(message.?));
+    const text = request.text[0..request.length];
+    var count: u32 = 0;
+    var at: usize = 0;
+    var letter_at: usize = 0;
+    while (at < text.len) : (count += 1) {
+        const found = utf8.read(text[at..]);
+        const mark = found.char == 0x301;
+        if (!mark) letter_at = at;
+        if (count < request.room) request.glyphs[count] = .{
+            .which = found.char,
+            .cluster = @intCast(letter_at),
+            .advance = if (mark) 0 else 8,
+            .x = if (mark) -6 else 0,
+        };
+        at += found.length;
+    }
+    request.count = count;
+    return if (count > request.room) graphics.SHAPE_ROOM else graphics.SHAPE_OK;
+}
+
+test "a cell's marks are drawn with its character, where the font's shaping puts them" {
+    try kexec.setUp();
+    defer kexec.deinit();
+    _ = kexec.InitResident(kexec.SysBase, &kutility.utility_library_tag, null) orelse return error.NoUtility;
+    _ = kexec.InitResident(kexec.SysBase, &krtg.rtg_library_tag, null) orelse return error.NoRtg;
+    const made = kexec.InitResident(kexec.SysBase, &kgraphics.graphics_library_tag, null) orelse return error.NoGraphics;
+    const gb: *GraphicsBase = @ptrCast(@alignCast(made));
+
+    var pixels: [32 * 8 * 2]u8 = @splat(0);
+    var surface = sdk.rtg.Surface{ .pixels = &pixels, .width = 32, .height = 8, .pitch = 64, .size_bytes = pixels.len, .format = .rgb565 };
+    var hook = sdk.utility.Hook{ .entry = &markShape };
+    var cells_font = graphics.TextFont{ .node = .{ .name = "cell.font" }, .image = @ptrCast(&marked_font), .shape = &hook };
+    const tags = [_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
+        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&cells_font) },
+        .{},
+    };
+    const rp = gb.CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    const white: u16 = 0xFFFF;
+    const blue: u16 = 0x001F;
+    const red: u16 = 0xF800;
+    const green: u16 = 0x07E0;
+    const layout = Layout{
+        .rp = rp,
+        .origin_x = 0,
+        .origin_y = 0,
+        .cell_width = 8,
+        .cell_height = 8,
+        .baseline = 6,
+        .fg = graphics.penRGB(255, 255, 255),
+        .bg = graphics.penRGB(0, 0, 255),
+        .shine = graphics.penRGB(255, 0, 0),
+        .fill = graphics.penRGB(0, 255, 0),
+    };
+
+    // Three letters, the second with the mark: three cells.
+    var cells: [4]Cell = undefined;
+    var grid = Term.init(&cells, 4, 1);
+    grid.write("aa\xCC\x81a");
+    try testing.expectEqual(@as(u32, 3), grid.cursor().x);
+    drawRow(gb, layout, &grid, 0, 0, 4);
+
+    // Each letter in its cell, and the mark over the middle of the
+    // second and nowhere else.
+    try testing.expectEqual(@as(u32, 24), countIn(&surface, 2, 0, 24, white));
+    try testing.expectEqual(@as(u32, 4), countIn(&surface, 0, 10, 14, white));
+    try testing.expectEqual(@as(u32, 4), countIn(&surface, 0, 0, 32, white));
+    try testing.expectEqual(@as(u32, 28), countIn(&surface, 0, 0, 32, blue));
+
+    // Under the cursor the cell is complemented, marks and all.
+    grid.write("\x1b[1;2H");
+    drawCursor(gb, layout, &grid, .solid);
+    try testing.expectEqual(@as(u32, 8), countIn(&surface, 2, 8, 16, red));
+    try testing.expectEqual(@as(u32, 4), countIn(&surface, 0, 10, 14, red));
+    try testing.expectEqual(@as(u32, 4), countIn(&surface, 0, 8, 16, green));
 
     gb.FreeRastPort(rp);
 }

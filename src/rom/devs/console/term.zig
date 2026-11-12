@@ -18,11 +18,22 @@
 //! no UTF-8 read as `utf8.read` reads them. U+0080 to U+009F are
 //! characters with no glyph.
 //!
-//! **A character takes the cells Unicode says** (`unicode.width`): a mark
-//! of no width takes none and is not kept, a wide one - CJK, kana, an
-//! emoji - takes two, the second holding `WIDE_TAIL`. Writing over half
-//! of a wide character blanks its other half. A wide character that
-//! would start in the last column goes on the next row.
+//! **A character takes the cells Unicode says** (`unicode.width`): a wide
+//! one - CJK, kana, an emoji - takes two, the second holding `WIDE_TAIL`.
+//! Writing over half of a wide character blanks its other half. A wide
+//! character that would start in the last column goes on the next row.
+//!
+//! **A character of no width takes no cell**: it goes with the character
+//! in the cell before the cursor, when the two are one cluster by
+//! Unicode's rules (`unicode.clusterEnd`) - an accent, a vowel sign
+//! written above or below, a virama, a joiner. A cell keeps `cell_marks`
+//! of them (`Cell.marks`), in the order they came; one more is dropped,
+//! and so is one with no character to go with - at a row's start, behind
+//! an empty cell, or a format character, which is in no cluster. They
+//! are the cell's: moved, erased, selected and copied with it. A
+//! character with a width is a cell of its own whatever it joins in
+//! writing, so a vowel sign that has one stands in the cell behind its
+//! consonant.
 //!
 //! The line-drawing set (`ESC ( 0`) is the one place a byte is not its
 //! character: those cells are marked `CELL_GRAPHIC` and the renderer
@@ -59,6 +70,12 @@ pub const CELL_FAINT: u8 = 1 << 7;
 /// What the second cell of a wide character holds: no character has it.
 pub const WIDE_TAIL: u32 = 0x11_0001;
 
+/// How many characters of no width a cell keeps with its own.
+pub const cell_marks = 2;
+
+/// The bytes a cell's character and its marks take in UTF-8, at most.
+pub const cell_text = 4 * (1 + cell_marks);
+
 pub const Cell = extern struct {
     /// The character, a code point; `WIDE_TAIL` in a wide one's second
     /// cell.
@@ -70,6 +87,21 @@ pub const Cell = extern struct {
     written: bool = false,
     fg: u16 = COLOR_DEFAULT,
     bg: u16 = COLOR_DEFAULT,
+    /// The characters of no width written on this one, in the order they
+    /// came, the first free place 0.
+    marks: [cell_marks]u32 = @splat(0),
+
+    /// The cell's character and its marks in UTF-8, into `into`: how many
+    /// bytes. The text is one cluster, since only a mark that joins the
+    /// character's is kept.
+    pub fn text(cell: Cell, into: *[cell_text]u8) usize {
+        var length: usize = utf8.encode(cell.ch, into[0..4]);
+        for (cell.marks) |mark| {
+            if (mark == 0) break;
+            length += utf8.encode(mark, into[length..][0..4]);
+        }
+        return length;
+    }
 };
 
 /// How much of a cell a selection covers. `half` is the empty cell just
@@ -269,7 +301,7 @@ pub const Term = struct {
             var x: u32 = 0;
             while (x < t.cols) : (x += 1) {
                 const c = t.at(x, y);
-                if (c.ch != 0 and c.ch != ' ') return y;
+                if ((c.ch != 0 and c.ch != ' ') or c.marks[0] != 0) return y;
                 if (c.bg != COLOR_DEFAULT or c.flags & CELL_REVERSE != 0) return y;
             }
         }
@@ -298,7 +330,7 @@ pub const Term = struct {
             // The blanks a line ends in are not part of it.
             while (len > 0) {
                 const c = t.cells[y * t.cols + len - 1];
-                if (c.ch != 0 and c.ch != ' ') break;
+                if ((c.ch != 0 and c.ch != ' ') or c.marks[0] != 0) break;
                 if (c.bg != COLOR_DEFAULT or c.flags & CELL_REVERSE != 0) break;
                 len -= 1;
             }
@@ -544,9 +576,10 @@ pub const Term = struct {
 
     /// The selected text, into `buf`, in UTF-8: of each row, the written
     /// cells in the span - an empty cell between two of them as a space,
-    /// a wide character once - and a newline where the span takes in a
-    /// row's end, except after a row that runs on into the next. How many
-    /// bytes; a character that does not fit is left out whole.
+    /// a wide character once, a character's marks behind it - and a
+    /// newline where the span takes in a row's end, except after a row
+    /// that runs on into the next. How many bytes; a cell whose character
+    /// and marks do not all fit is left out whole.
     pub fn selectionText(t: *const Term, buf: []u8) usize {
         if (t.sel_start == t.sel_end) return 0;
         var n: usize = 0;
@@ -562,9 +595,11 @@ pub const Term = struct {
             while (x < end) : (x += 1) {
                 const c = t.at(x, y);
                 if (c.written and c.ch == WIDE_TAIL) continue;
-                const char: u32 = if (c.written) c.ch else ' ';
-                var bytes: [4]u8 = undefined;
-                const length = utf8.encode(char, &bytes);
+                var bytes: [cell_text]u8 = undefined;
+                const length = if (c.written) c.text(&bytes) else blk: {
+                    bytes[0] = ' ';
+                    break :blk 1;
+                };
                 if (n + length > buf.len) return n;
                 @memcpy(buf[n..][0..length], bytes[0..length]);
                 n += length;
@@ -769,7 +804,7 @@ pub const Term = struct {
     /// A character into the cells it takes, at the cursor.
     fn put(t: *Term, char: u32) void {
         const takes: u32 = unicode.width(char);
-        if (takes == 0) return;
+        if (takes == 0) return t.putMark(char);
         if (t.wrap_pending and t.autowrap) t.wrapRow();
         if (t.x >= t.cols or t.y >= t.rows) return;
         if (takes == 2 and t.x + 1 >= t.cols) {
@@ -814,6 +849,34 @@ pub const Term = struct {
         }
     }
 
+    /// A character of no width: onto the character in the cell before the
+    /// cursor, if that is a written one whose cluster takes it in and it
+    /// has a place free. The cursor stays.
+    fn putMark(t: *Term, char: u32) void {
+        if (t.y >= t.rows or t.x >= t.cols) return;
+        if (t.x == 0 and !t.wrap_pending) return;
+        var x = if (t.wrap_pending) t.x else t.x - 1;
+        // A wide character's second cell stands for the character.
+        if (t.at(x, t.y).ch == WIDE_TAIL) {
+            if (x == 0) return;
+            x -= 1;
+        }
+        const cell = t.at(x, t.y);
+        if (!cell.written or cell.ch < 0x20 or cell.ch == WIDE_TAIL or cell.flags & CELL_GRAPHIC != 0) return;
+        var free: usize = 0;
+        while (free < cell_marks and cell.marks[free] != 0) free += 1;
+        if (free == cell_marks) return;
+        var bytes: [cell_text + 4]u8 = undefined;
+        var length = cell.text(bytes[0..cell_text]);
+        length += utf8.encode(char, bytes[length..][0..4]);
+        if (unicode.clusterEnd(bytes[0..length], 0) != length) return;
+        // What is selected is the text that was there.
+        const here = t.y * t.cols + x;
+        if (here >= t.sel_start and here < t.sel_end) t.clearSelection();
+        cell.marks[free] = char;
+        t.markDirty(t.y);
+    }
+
     /// The row filled up and there is more: it is one line with the row the
     /// text goes on in.
     fn wrapRow(t: *Term) void {
@@ -825,9 +888,13 @@ pub const Term = struct {
 
     /// Before `cells_n` cells from `x` on row `y` are written over: a wide
     /// character only half of which is written over is blanked whole, so
-    /// no half of one is left beside something else.
+    /// no half of one is left beside something else. Its marks go with
+    /// it.
     fn unsplit(t: *Term, x: u32, cells_n: u32, y: u32) void {
-        if (x > 0 and t.at(x, y).ch == WIDE_TAIL) t.at(x - 1, y).ch = ' ';
+        if (x > 0 and t.at(x, y).ch == WIDE_TAIL) {
+            t.at(x - 1, y).ch = ' ';
+            t.at(x - 1, y).marks = @splat(0);
+        }
         const after = x + cells_n;
         if (after < t.cols and t.at(after, y).ch == WIDE_TAIL) t.at(after, y).ch = ' ';
     }
@@ -1131,7 +1198,12 @@ pub const Term = struct {
         const last = t.at(from, t.y).*;
         if (last.ch == WIDE_TAIL) return;
         var i: u32 = 0;
-        while (i < n) : (i += 1) t.put(last.ch);
+        while (i < n) : (i += 1) {
+            t.put(last.ch);
+            for (last.marks) |mark| {
+                if (mark != 0) t.put(mark);
+            }
+        }
     }
 
     fn setRegion(t: *Term) void {
@@ -1339,14 +1411,15 @@ fn scratch(cols: u32, rows: u32) struct { Term, []Cell } {
     return .{ Term.init(cells, cols, rows), cells };
 }
 
-/// A row as text, spaces and all, in UTF-8; a wide character once.
+/// A row as text, spaces and all, in UTF-8; a wide character once, a
+/// character's marks behind it.
 fn rowText(t: *const Term, y: u32, buf: []u8) []const u8 {
     var n: usize = 0;
     for (0..t.cols) |x| {
-        const char = t.at(@intCast(x), y).ch;
-        if (char == WIDE_TAIL) continue;
-        var bytes: [4]u8 = undefined;
-        const length = utf8.encode(char, &bytes);
+        const cell = t.at(@intCast(x), y).*;
+        if (cell.ch == WIDE_TAIL) continue;
+        var bytes: [cell_text]u8 = undefined;
+        const length = cell.text(&bytes);
         @memcpy(buf[n..][0..length], bytes[0..length]);
         n += length;
     }
@@ -1901,23 +1974,26 @@ test "UTF-8: characters whole across writes, bytes that are no UTF-8 as U+FFFD" 
     try testing.expectEqual(@as(u32, 'z'), t.at(0, 0).ch);
 }
 
-test "UTF-8: wide characters take two cells, marks none" {
+test "UTF-8: wide characters take two cells, marks none: they stay with their character" {
     var t, const cells = scratch(6, 3);
     defer testing.allocator.free(cells);
     var buf: [40]u8 = undefined;
 
-    // An emoji, then a letter and a combining acute that takes no cell.
+    // An emoji, then a letter and a combining acute that takes no cell
+    // and is kept in the letter's.
     t.write("\xF0\x9F\x98\x80e\xCC\x81x");
     try testing.expectEqual(@as(u32, 0x1F600), t.at(0, 0).ch);
     try testing.expectEqual(WIDE_TAIL, t.at(1, 0).ch);
     try testing.expectEqual(@as(u32, 'e'), t.at(2, 0).ch);
     try testing.expectEqual(@as(u32, 'x'), t.at(3, 0).ch);
     try testing.expectEqual(@as(u32, 4), t.x);
-    try testing.expectEqualStrings("\xF0\x9F\x98\x80ex  ", rowText(&t, 0, &buf));
+    try testing.expectEqual(@as(u32, 0x301), t.at(2, 0).marks[0]);
+    try testing.expectEqual(@as(u32, 0), t.at(2, 0).marks[1]);
+    try testing.expectEqualStrings("\xF0\x9F\x98\x80e\xCC\x81x  ", rowText(&t, 0, &buf));
 
     // Writing over either half blanks the other.
     t.write("\x1b[1;2Hy");
-    try testing.expectEqualStrings(" yex  ", rowText(&t, 0, &buf));
+    try testing.expectEqualStrings(" ye\xCC\x81x  ", rowText(&t, 0, &buf));
     t.write("\x1b[1;3H\xE6\x97\xA5");
     try testing.expectEqualStrings(" y\xE6\x97\xA5  ", rowText(&t, 0, &buf));
     t.write("\x1b[1;3Hq");
@@ -1934,6 +2010,82 @@ test "UTF-8: wide characters take two cells, marks none" {
     // Selected, a wide character is copied once.
     t.select(2 * 6, 2 * 6 + 2);
     try testing.expectEqualStrings("\xE6\x97\xA5", buf[0..t.selectionText(&buf)]);
+}
+
+test "UTF-8: a cell keeps two marks, of its character's cluster, and gives them back" {
+    var t, const cells = scratch(6, 4);
+    defer testing.allocator.free(cells);
+    var buf: [80]u8 = undefined;
+
+    // Two signs on one consonant, then a consonant: two cells.
+    t.write("मुँह");
+    try testing.expectEqual(@as(u32, 0x92E), t.at(0, 0).ch);
+    try testing.expectEqual([2]u32{ 0x941, 0x901 }, t.at(0, 0).marks);
+    try testing.expectEqual(@as(u32, 0x939), t.at(1, 0).ch);
+    try testing.expectEqual([2]u32{ 0, 0 }, t.at(1, 0).marks);
+    try testing.expectEqual(@as(u32, 2), t.x);
+    try testing.expectEqualStrings("मुँह    ", rowText(&t, 0, &buf));
+
+    // A third mark is dropped; a vowel sign with a width is a cell of
+    // its own, and so is the consonant behind a virama.
+    t.write("\x1b[2;1Hक़ुँकिक्ष");
+    try testing.expectEqual([2]u32{ 0x93C, 0x941 }, t.at(0, 1).marks);
+    try testing.expectEqual(@as(u32, 0x915), t.at(1, 1).ch);
+    try testing.expectEqual(@as(u32, 0x93F), t.at(2, 1).ch);
+    try testing.expectEqual(@as(u32, 0x915), t.at(3, 1).ch);
+    try testing.expectEqual([2]u32{ 0x94D, 0 }, t.at(3, 1).marks);
+    try testing.expectEqual(@as(u32, 0x937), t.at(4, 1).ch);
+    try testing.expectEqual(@as(u32, 5), t.x);
+
+    // Nothing to go with: at a row's start, behind an empty cell. A
+    // format character is in no cluster.
+    t.write("\x1b[3;1H\xCC\x81");
+    try testing.expectEqual([2]u32{ 0, 0 }, t.at(0, 2).marks);
+    try testing.expect(!t.at(0, 2).written);
+    t.write("\x1b[3;3H\xCC\x81a\xE2\x80\x8B");
+    try testing.expectEqual([2]u32{ 0, 0 }, t.at(1, 2).marks);
+    try testing.expectEqual([2]u32{ 0, 0 }, t.at(2, 2).marks);
+
+    // In the last column the mark goes on the character there, and the
+    // next character still wraps. A wide character's are in its first
+    // cell.
+    t.write("\x1b[3;6He\xCC\x81");
+    try testing.expectEqual(@as(u32, 0x301), t.at(5, 2).marks[0]);
+    t.write("\xE2\x9D\xA4\xEF\xB8\x8F");
+    try testing.expectEqual(@as(u32, 3), t.y);
+    try testing.expectEqual(@as(u32, 0x2764), t.at(0, 3).ch);
+    try testing.expectEqual(@as(u32, 0xFE0F), t.at(0, 3).marks[0]);
+
+    // A selection is of cells, so a character comes with its marks: the
+    // bytes that were written, and a cell that does not fit left out
+    // whole.
+    t.select(0, 2);
+    try testing.expectEqualStrings("मुँह", buf[0..t.selectionText(&buf)]);
+    try testing.expectEqualStrings("", buf[0..t.selectionText(buf[0..8])]);
+    try testing.expectEqualStrings("मुँ", buf[0..t.selectionText(buf[0..11])]);
+
+    // A mark written into the selection ends it, as a character does.
+    t.write("\x1b[1;3H\xE0\xA4\x82");
+    try testing.expectEqual([2]u32{ 0x902, 0 }, t.at(1, 0).marks);
+    try testing.expect(!t.isSelected(0, 0));
+
+    // The marks are the cell's: moved with it, repeated with it, gone
+    // when it is written over or erased.
+    t.write("\x1b[1;1H\x1b[2@");
+    try testing.expectEqualStrings("  मुँहं  ", rowText(&t, 0, &buf));
+    t.write("\x1b[1;5H\x1b[1b");
+    try testing.expectEqual([2]u32{ 0x902, 0 }, t.at(4, 0).marks);
+    t.write("\x1b[1;3Hx");
+    try testing.expectEqual([2]u32{ 0, 0 }, t.at(2, 0).marks);
+    t.write("\x1b[2K");
+    try testing.expectEqual([2]u32{ 0, 0 }, t.at(3, 0).marks);
+
+    // And kept by a resize.
+    const wider = try testing.allocator.alloc(Cell, 9 * 4);
+    defer testing.allocator.free(wider);
+    t.resize(wider, 9, 4);
+    try testing.expectEqual(@as(u32, 0x915), t.at(0, 1).ch);
+    try testing.expectEqual([2]u32{ 0x93C, 0x941 }, t.at(0, 1).marks);
 }
 
 test "UTF-8: a resize keeps a wide character on one row" {
