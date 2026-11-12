@@ -942,7 +942,7 @@ fn OpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32, tags: ?[*]const 
 
 1.0, the tags and collections since 1.4, fonts of cubic curves
 since 1.6, fonts of pictures since 1.7, variable fonts since 1.8,
-those of cubic curves since 1.9. LVO -20.
+those of cubic curves since 1.9, `TTA_Plain` since 1.10. LVO -20.
 
 **INPUTS**
 
@@ -958,6 +958,8 @@ those of cubic curves since 1.9. LVO -20.
     its default.
   - `TTA_AxisCount` (u32) - how many values `TTA_Axes` points at.
     Default 0.
+  - `TTA_Plain` (bool) - render the outline as it is drawn, no
+    height fitted to the rows. Default false.
 
 **RESULT**
 
@@ -1024,6 +1026,17 @@ none of these tables. A table of deltas that is not for the font's
 number of axes is passed over, and the font read as at its default
 in what that table holds. A font of more than 32 axes is opened at
 its default whatever the tags say.
+
+Three heights are kept for rendering, which fits them to the rows of
+a size (`RenderFontImage`): the baseline, the x height and the cap
+height. A font that does not say one of the two heights - an `OS/2`
+table before version 2, or none - has the top of its `x` or of its
+`H` taken for it, and a font without that letter has no such height
+fitted. A variable font of quadratic curves opened away from its
+default takes no letter's top: only what the font says is fitted.
+`FontMetrics` answers what the font says, whatever is fitted. With
+`TTA_Plain` nothing is fitted, and what is rendered is the outline
+scaled and no more.
 
 The outline is not written after this call, and no other call keeps
 anything in it: any number of tasks use one outline at once.
@@ -1104,7 +1117,8 @@ fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32, ran
 **SINCE**
 
 1.0, ranges since 1.3, the limits since 1.4, fonts of cubic
-curves since 1.6, fonts of pictures since 1.7. LVO -24.
+curves since 1.6, fonts of pictures since 1.7, heights fitted to the
+rows since 1.10. LVO -24.
 
 **INPUTS**
 
@@ -1132,12 +1146,30 @@ that graphics draws it as its base letter where the image has that
 (`Ā` as `A`) and as the missing glyph otherwise; the image's own
 ranges are the runs of characters it has.
 
-Every glyph is its outline scaled so that the line is `rows` tall and
-the baseline sits the ascender's share of it down, the curves -
-quadratic or cubic - made lines within a third of a pixel, and each
-pixel given how much of it the outline covers, in fifteenths. A glyph
-of a font whose glyphs are pictures is its picture scaled to the
-line, as `RenderGlyph` says: at a strike's own size, pixel for pixel.
+Every glyph is its outline scaled so that the line is `rows` tall,
+the curves - quadratic or cubic - made lines within a third of a
+pixel, and each pixel given how much of it the outline covers, in
+fifteenths.
+
+Three heights of the font are fitted to the rows, so that the feet
+and heads of a line of text are whole rows and not rows half
+covered. The baseline is on the edge of the row nearest to the
+ascender's share of the line - the row the image names as its
+baseline. The x height is the nearest whole number of rows above it,
+one at least, and the cap height the nearest whole number that is
+above the x height's. A point between two of these heights keeps its
+share of the way from one to the other; one below the baseline or
+above the cap height keeps its distance from it. So a glyph is moved
+up or down by half a row at most, and nothing moves sideways: the
+columns and the advances are those of the outline scaled. A height
+the font has not (`OpenOutline`) is not fitted. An outline opened
+with `TTA_Plain` is scaled and no more: its baseline is where the
+ascender's share of the line falls, and the image names the row
+nearest to it.
+
+A glyph of a font whose glyphs are pictures is its picture scaled to
+the line, as `RenderGlyph` says: at a strike's own size, pixel for
+pixel.
 The advances are rounded to whole pixels. The font is `FPF_DESIGNED`
 - drawn at its size from the font's file, not scaled from another
 image - and `FPF_PROPORTIONAL` when its advances differ. Its styles are the ones the font says it is drawn
@@ -1163,8 +1195,10 @@ The image is the caller's, one allocation, freed with `FreeVec`.
 
 **BUGS**
 
-No hinting: stems at small sizes may fall between pixels and show as
-two half-covered columns.
+Only heights are fitted, and only those three: an upright stem at a
+small size may fall between two columns and show as both half
+covered, and a flat stroke at another height - the bar of an `e` -
+between two rows. A font's own hinting program is not run.
 
 The pictures of a font that has outlines too are not drawn, at any
 size.
@@ -1194,7 +1228,7 @@ fn RenderGlyph(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, rows: 
 **SINCE**
 
 1.5, fonts of cubic curves since 1.6, fonts of pictures since
-1.7. LVO -64.
+1.7, heights fitted to the rows since 1.10. LVO -64.
 
 **INPUTS**
 
@@ -1225,8 +1259,10 @@ glyph of nothing. `kind` is set with every answer.
 
 The glyph is rendered as `RenderFontImage` renders the glyphs of a
 font image `rows` tall, and comes out the same byte for byte: its
-outline scaled so that the line is `rows` tall, each pixel given how
-much of it the outline covers, in fifteenths. `image.kind` says what
+outline scaled so that the line is `rows` tall, the font's baseline,
+x height and cap height fitted to the rows unless the outline was
+opened with `TTA_Plain`, each pixel given how much of it the outline
+covers, in fifteenths. `image.kind` says what
 the bytes are - `alpha4`, two pixels a byte, the left one in the high
 four bits, or `rgba32` for a font of colour pictures, a pixel's red,
 green, blue and coverage a byte each - and `image.glyph` is a font
@@ -1283,8 +1319,10 @@ pixels spread over their areas.
 
 **BUGS**
 
-No hinting: stems at small sizes may fall between pixels and show as
-two half-covered columns.
+Only heights are fitted, and only those three: an upright stem at a
+small size may fall between two columns and show as both half
+covered, and a flat stroke at another height - the bar of an `e` -
+between two rows. A font's own hinting program is not run.
 
 The pictures of a font that has outlines too are not drawn, at any
 size.

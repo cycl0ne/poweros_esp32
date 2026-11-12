@@ -29,6 +29,8 @@
 //! the ink of many glyphs, and a few pixel by pixel. The two renderers
 //! measure the same area and round it differently, the library to 16
 //! levels: `ink_apart` and `pixel_apart` say how far apart they may be.
+//! The font is opened plain for it: libfreetype renders the outline as
+//! it is drawn, no height fitted to the rows (`fitted.zig` tests those).
 //!
 //! A variable font is compared further, at each place on its axes it
 //! has values for: its axes and the places it names, where the place
@@ -475,7 +477,11 @@ fn expectFont(expected: *const reference.Font) !void {
     try testing.expectEqual(expected.font_count, truetype.fontCount(bytes));
     try testing.expectEqual(@as(?u32, expected.directory), truetype.fontDirectory(bytes, expected.index));
     try testing.expectEqual(@as(?u32, null), truetype.fontDirectory(bytes, expected.font_count));
-    const which = [_]sdk.utility.TagItem{ .{ .tag = truetype.TTA_FontIndex, .data = expected.index }, .{} };
+    const which = [_]sdk.utility.TagItem{
+        .{ .tag = truetype.TTA_FontIndex, .data = expected.index },
+        .{ .tag = truetype.TTA_Plain, .data = 1 },
+        .{},
+    };
     const outline = tb.OpenOutline(bytes.ptr, size, &which) orelse return error.NotRead;
     const curves = expected.outlines or expected.cubic;
     const pixel_kind: fontimage.Kind = if (expected.strike_colour) .rgba32 else .alpha4;

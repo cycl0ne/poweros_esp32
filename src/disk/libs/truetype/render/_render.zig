@@ -11,6 +11,16 @@
 //! lines enough that none strays from it by more than a third of a
 //! pixel. The coverage is kept in four bits (0 to 15).
 //!
+//! Three heights of a font are fitted to the rows (`Scale`): the
+//! baseline, the top of its small letters and the top of its capitals
+//! each lie on a row's edge, so that the feet and heads of a line of
+//! text are whole rows and not rows half covered. Between two of them a
+//! point keeps its share of the way, and below the baseline and above
+//! the capitals it keeps its distance: a glyph is moved by half a row at
+//! most, and only up or down - no column and no advance changes. An
+//! outline opened plain is scaled as it is drawn, the baseline wherever
+//! the ascender's share of the line falls.
+//!
 //! What a font says is not taken on trust: a glyph whose outline lies
 //! further from its origin than `Scale.reach` is rendered as one of no
 //! outline, so that every number worked with afterwards has a known
@@ -98,10 +108,21 @@ pub const Work = struct {
     }
 };
 
-/// Units to pixels, and where the top of the line is in units.
+/// A height of a font that lies on a row's edge: so many units above the
+/// baseline are so many whole rows above it.
+const Fitted = struct { units: f32 = 0, rows: f32 = 0 };
+
+/// Units to pixels, and where the rows of the line are in units.
 pub const Scale = struct {
     factor: f32,
     ascender: f32,
+    /// How many rows below the top of the line the baseline is: a whole
+    /// number, but for an outline opened plain.
+    baseline: f32,
+    /// The heights fitted to the rows, the lower first: none for an
+    /// outline opened plain, and for a font that says neither.
+    fitted: [2]Fitted = .{ .{}, .{} },
+    fitted_count: u32 = 0,
     /// The line's height in pixels.
     rows: u32,
     /// How far a glyph's outline may lie from its origin and from the top
@@ -109,7 +130,20 @@ pub const Scale = struct {
     reach: f32,
 
     fn of(scale: Scale, p: Point) P {
-        return .{ .x = p.x * scale.factor, .y = (scale.ascender - p.y) * scale.factor };
+        return .{ .x = p.x * scale.factor, .y = scale.baseline - scale.above(p.y) };
+    }
+
+    /// How many rows above the baseline the height `units` is: below the
+    /// baseline and above the last fitted height by the scale, up to a
+    /// fitted height and between two of them by its share of the way.
+    fn above(scale: Scale, units: f32) f32 {
+        if (!(units > 0)) return units * scale.factor;
+        var from = Fitted{};
+        for (scale.fitted[0..scale.fitted_count]) |to| {
+            if (units <= to.units) return from.rows + (units - from.units) * (to.rows - from.rows) / (to.units - from.units);
+            from = to;
+        }
+        return from.rows + (units - from.units) * scale.factor;
     }
 };
 
@@ -130,15 +164,32 @@ pub fn reachOf(rows: u32) f32 {
 }
 
 /// The scale of a line `rows` tall: the font's ascender to its descender
-/// made that many pixels.
+/// made that many pixels, and - unless the outline was opened plain -
+/// the baseline, the small letters' height and the capitals' each on a
+/// row's edge: the nearest one, a height at least a row above the one
+/// below it.
 pub fn scaleOf(font: *const Font, rows: u32) Scale {
     const units: f32 = @floatFromInt(font.ascender - font.descender);
-    return .{
-        .factor = @as(f32, @floatFromInt(rows)) / units,
-        .ascender = @floatFromInt(font.ascender),
+    const factor = @as(f32, @floatFromInt(rows)) / units;
+    const ascender: f32 = @floatFromInt(font.ascender);
+    var scale = Scale{
+        .factor = factor,
+        .ascender = ascender,
+        .baseline = ascender * factor,
         .rows = rows,
         .reach = reachOf(rows),
     };
+    if (font.plain) return scale;
+    scale.baseline = @floor(scale.baseline + 0.5);
+    var below = Fitted{};
+    for ([2]i32{ font.fit_x_height, font.fit_cap_height }) |height| {
+        const height_units: f32 = @floatFromInt(height);
+        if (height_units <= below.units) continue;
+        below = .{ .units = height_units, .rows = @max(@floor(height_units * factor + 0.5), below.rows + 1) };
+        scale.fitted[scale.fitted_count] = below;
+        scale.fitted_count += 1;
+    }
+    return scale;
 }
 
 /// What the pixels of the font's glyphs are: colour for a font of colour

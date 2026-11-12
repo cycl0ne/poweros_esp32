@@ -19,7 +19,7 @@ const _picture = @import("_picture.zig");
 /// ```
 ///
 /// SINCE: 1.5, fonts of cubic curves since 1.6, fonts of pictures since
-/// 1.7. LVO -64.
+/// 1.7, heights fitted to the rows since 1.10. LVO -64.
 ///
 /// INPUTS:
 /// - `outline` - what `OpenOutline` answered.
@@ -47,8 +47,10 @@ const _picture = @import("_picture.zig");
 /// BEHAVIOR:
 /// The glyph is rendered as `RenderFontImage` renders the glyphs of a
 /// font image `rows` tall, and comes out the same byte for byte: its
-/// outline scaled so that the line is `rows` tall, each pixel given how
-/// much of it the outline covers, in fifteenths. `image.kind` says what
+/// outline scaled so that the line is `rows` tall, the font's baseline,
+/// x height and cap height fitted to the rows unless the outline was
+/// opened with `TTA_Plain`, each pixel given how much of it the outline
+/// covers, in fifteenths. `image.kind` says what
 /// the bytes are - `alpha4`, two pixels a byte, the left one in the high
 /// four bits, or `rgba32` for a font of colour pictures, a pixel's red,
 /// green, blue and coverage a byte each - and `image.glyph` is a font
@@ -101,8 +103,10 @@ const _picture = @import("_picture.zig");
 /// pixels spread over their areas.
 ///
 /// BUGS:
-/// No hinting: stems at small sizes may fall between pixels and show as
-/// two half-covered columns.
+/// Only heights are fitted, and only those three: an upright stem at a
+/// small size may fall between two columns and show as both half
+/// covered, and a flat stroke at another height - the bar of an `e` -
+/// between two rows. A font's own hinting program is not run.
 ///
 /// The pictures of a font that has outlines too are not drawn, at any
 /// size.

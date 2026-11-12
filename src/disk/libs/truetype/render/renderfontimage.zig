@@ -20,7 +20,8 @@ const _render = @import("_render.zig");
 /// ```
 ///
 /// SINCE: 1.0, ranges since 1.3, the limits since 1.4, fonts of cubic
-/// curves since 1.6, fonts of pictures since 1.7. LVO -24.
+/// curves since 1.6, fonts of pictures since 1.7, heights fitted to the
+/// rows since 1.10. LVO -24.
 ///
 /// INPUTS:
 /// - `outline` - what `OpenOutline` answered.
@@ -45,12 +46,30 @@ const _render = @import("_render.zig");
 /// (`Ā` as `A`) and as the missing glyph otherwise; the image's own
 /// ranges are the runs of characters it has.
 ///
-/// Every glyph is its outline scaled so that the line is `rows` tall and
-/// the baseline sits the ascender's share of it down, the curves -
-/// quadratic or cubic - made lines within a third of a pixel, and each
-/// pixel given how much of it the outline covers, in fifteenths. A glyph
-/// of a font whose glyphs are pictures is its picture scaled to the
-/// line, as `RenderGlyph` says: at a strike's own size, pixel for pixel.
+/// Every glyph is its outline scaled so that the line is `rows` tall,
+/// the curves - quadratic or cubic - made lines within a third of a
+/// pixel, and each pixel given how much of it the outline covers, in
+/// fifteenths.
+///
+/// Three heights of the font are fitted to the rows, so that the feet
+/// and heads of a line of text are whole rows and not rows half
+/// covered. The baseline is on the edge of the row nearest to the
+/// ascender's share of the line - the row the image names as its
+/// baseline. The x height is the nearest whole number of rows above it,
+/// one at least, and the cap height the nearest whole number that is
+/// above the x height's. A point between two of these heights keeps its
+/// share of the way from one to the other; one below the baseline or
+/// above the cap height keeps its distance from it. So a glyph is moved
+/// up or down by half a row at most, and nothing moves sideways: the
+/// columns and the advances are those of the outline scaled. A height
+/// the font has not (`OpenOutline`) is not fitted. An outline opened
+/// with `TTA_Plain` is scaled and no more: its baseline is where the
+/// ascender's share of the line falls, and the image names the row
+/// nearest to it.
+///
+/// A glyph of a font whose glyphs are pictures is its picture scaled to
+/// the line, as `RenderGlyph` says: at a strike's own size, pixel for
+/// pixel.
 /// The advances are rounded to whole pixels. The font is `FPF_DESIGNED`
 /// - drawn at its size from the font's file, not scaled from another
 /// image - and `FPF_PROPORTIONAL` when its advances differ. Its styles are the ones the font says it is drawn
@@ -73,8 +92,10 @@ const _render = @import("_render.zig");
 /// The image is the caller's, one allocation, freed with `FreeVec`.
 ///
 /// BUGS:
-/// No hinting: stems at small sizes may fall between pixels and show as
-/// two half-covered columns.
+/// Only heights are fitted, and only those three: an upright stem at a
+/// small size may fall between two columns and show as both half
+/// covered, and a flat stroke at another height - the bar of an `e` -
+/// between two rows. A font's own hinting program is not run.
 ///
 /// The pictures of a font that has outlines too are not drawn, at any
 /// size.

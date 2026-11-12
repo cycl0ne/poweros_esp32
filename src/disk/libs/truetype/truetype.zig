@@ -8,8 +8,7 @@
 //! kept in an outline the caller holds. A size is then rendered at a time
 //! (`render/`): each glyph's contours read from the file, its curves
 //! flattened into lines, and the lines' coverage of every pixel summed,
-//! kept in four bits. No hinting: at the panels' 165 DPI and more the
-//! coverage alone draws a clean letter.
+//! kept in four bits.
 //!
 //! Since 1.2 the glyphs are given as outlines too (`glyph/`): a
 //! character's glyph, its contours as the segments vector.library takes,
@@ -33,6 +32,13 @@
 //! advance or a measure is asked for. Since 1.9 that holds for a font
 //! of cubic curves too, whose `CFF2` table has the deltas in the
 //! glyphs' programs.
+//!
+//! Since 1.10 three heights of a line are fitted to its rows
+//! (`render/_render.zig`'s scale): the baseline, the x height and the
+//! cap height each lie on a row's edge, so that the foot of a line and
+//! the tops of its small and capital letters are whole rows at every
+//! size and not two rows half covered. A font's own hinting program is
+//! not run.
 //!
 //! The jump table is truetype_lvo.zig, the ROM tag, init and expunge
 //! truetype_init.zig, the base truetype_base.zig.

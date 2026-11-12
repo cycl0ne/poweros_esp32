@@ -89,6 +89,14 @@ pub const Font = struct {
     line_gap: i32,
     x_height: i32,
     cap_height: i32,
+    /// The heights rendering fits to the rows (since 1.10): `x_height`
+    /// and `cap_height`, or for a font that does not give one the top of
+    /// its `x` and of its `H`; 0 for a height the font has neither of.
+    fit_x_height: i32,
+    fit_cap_height: i32,
+    /// Whether the outline is rendered as it is drawn, no height fitted
+    /// to the rows (`TTA_Plain`, since 1.10).
+    plain: bool,
     underline_position: i32,
     underline_thickness: i32,
     strikeout_position: i32,
@@ -274,7 +282,26 @@ pub fn open(font: *Font, data: [*]const u8, size: u32, index: u32, axes: ?[*]con
     _variation.open(font, axes, axis_count);
     font.kern = findTable(font, "kern") orelse .{};
     if (font.units_per_em == 0 or font.hmetric_count == 0 or font.ascender <= font.descender) return false;
-    return pickCmap(font, cmap);
+    font.plain = false;
+    font.fit_x_height = 0;
+    font.fit_cap_height = 0;
+    if (!pickCmap(font, cmap)) return false;
+    font.fit_x_height = fitHeight(font, font.x_height, 'x');
+    font.fit_cap_height = fitHeight(font, font.cap_height, 'H');
+    return true;
+}
+
+/// A height rendering fits to the rows: `given`, what the font says it
+/// is, or for a font that says nothing the top of the box of `letter`,
+/// whose top is flat. 0 for a font that has neither, and for one whose
+/// glyphs have deltas where it is opened: a glyph's box is the
+/// default's there.
+fn fitHeight(font: *const Font, given: i32, letter: u32) i32 {
+    if (given > 0) return given;
+    if (!hasOutlines(font) or isVaried(font)) return 0;
+    const glyph = glyphIndex(font, letter);
+    if (glyph == 0) return 0;
+    return @max(boxOf(font, glyph)[3], 0);
 }
 
 /// The measures `OS/2` and `post` give, and how large `maxp` says a glyph

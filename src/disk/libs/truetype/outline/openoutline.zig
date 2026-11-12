@@ -19,7 +19,7 @@ const _outline = @import("_outline.zig");
 ///
 /// SINCE: 1.0, the tags and collections since 1.4, fonts of cubic curves
 /// since 1.6, fonts of pictures since 1.7, variable fonts since 1.8,
-/// those of cubic curves since 1.9. LVO -20.
+/// those of cubic curves since 1.9, `TTA_Plain` since 1.10. LVO -20.
 ///
 /// INPUTS:
 /// - `file` - the whole file, as read.
@@ -34,6 +34,8 @@ const _outline = @import("_outline.zig");
 ///     its default.
 ///   - `TTA_AxisCount` (u32) - how many values `TTA_Axes` points at.
 ///     Default 0.
+///   - `TTA_Plain` (bool) - render the outline as it is drawn, no
+///     height fitted to the rows. Default false.
 ///
 /// RESULT:
 /// The outline, or null if the file has no font of that number, the
@@ -98,6 +100,17 @@ const _outline = @import("_outline.zig");
 /// number of axes is passed over, and the font read as at its default
 /// in what that table holds. A font of more than 32 axes is opened at
 /// its default whatever the tags say.
+///
+/// Three heights are kept for rendering, which fits them to the rows of
+/// a size (`RenderFontImage`): the baseline, the x height and the cap
+/// height. A font that does not say one of the two heights - an `OS/2`
+/// table before version 2, or none - has the top of its `x` or of its
+/// `H` taken for it, and a font without that letter has no such height
+/// fitted. A variable font of quadratic curves opened away from its
+/// default takes no letter's top: only what the font says is fitted.
+/// `FontMetrics` answers what the font says, whatever is fitted. With
+/// `TTA_Plain` nothing is fitted, and what is rendered is the outline
+/// scaled and no more.
 ///
 /// The outline is not written after this call, and no other call keeps
 /// anything in it: any number of tasks use one outline at once.
@@ -174,6 +187,7 @@ pub fn OpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32, tags: ?[*]co
         tb.sys_base.FreeVec(memory);
         return null;
     }
+    font.plain = tb.utility_base.GetTagData(truetype.TTA_Plain, 0, tags) != 0;
     // Pictures that are PNG files are unpacked by compression.library:
     // opened here, where a file may be read, and never while a glyph is
     // rendered.

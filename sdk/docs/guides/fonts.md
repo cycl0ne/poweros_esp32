@@ -438,14 +438,41 @@ count)` makes a size of the characters it has in the ranges asked for,
 `CloseOutline` gives the outline back. The file's bytes stay
 the caller's until then. The line is the font's ascender to its
 descender, scaled to `rows`; each glyph's curves are flattened and the
-area of each pixel inside the outline measured, kept in four bits. There
-is no hinting. The image has the characters of the ranges the font has a
+area of each pixel inside the outline measured, kept in four bits. The
+image has the characters of the ranges the font has a
 glyph for - one it lacks is left out, so that graphics looks for it in
 the font's fallbacks, and then for its base letter - and the font's
 missing glyph as its default character, under
 `fontimage.MISSING`, and the styles the file says it is drawn
 in - `truetype.styleOf` reads them, bold and italic, from its `head`
 table.
+
+**Heights on whole rows** (truetype.library 1.10). Scaled to a size, a
+letter's foot and top fall anywhere within a row, and an edge that
+crosses a row shows as two rows half covered - a line of text looks
+soft, and softer at one size than at the next. So three heights are
+fitted to the rows of the size: the baseline lies on the row the image's
+`baseline` names, the x height a whole number of rows above it and the
+cap height a whole number above that, each the nearest to where the
+scale puts it, the x height one row at least and the cap height one
+more. A point between two of them keeps its share of the way from one
+to the other; below the baseline and above the cap height it keeps its
+distance. An `H` is then whole rows from its top to its foot at 9 rows
+as at 40, and so is the flat of an `x`. Only heights move: the columns
+and every advance are the outline's own, so a text is as wide as before
+and a shaped run's positions hold.
+
+The heights are the font's (`FontMetrics`' `x_height` and `cap_height`);
+a font that says none has the top of its `x` and of its `H` taken, and
+one without those letters, or a variable font away from its default
+that says none, has its baseline on a row and no more. A font of
+pictures has no heights to fit. Three heights are all that is fitted:
+an upright stem may still fall between two columns, and a flat stroke
+at another height - the bar of an `e` - between two rows; a font's own
+hinting program is not run. `TTA_Plain` at `OpenOutline` opens an
+outline that is rendered scaled and no more, for a program that holds
+the rendering against the outline itself; `GlyphSegments` always gives
+the outline as it is drawn.
 
 diskfont.library does all of this for a family whose contents file lists
 an outline: a program only asks `OpenDiskFont` for a height. It renders
@@ -833,7 +860,8 @@ of a word - have no character a font image could list them under.
 the point, `top` down from the top of the line, `pitch` bytes from one
 row to the next), `image.kind` says what the bytes are (`alpha4`, or
 `rgba32` of a font of colour pictures), and `image.size` how many of them were written. The glyph comes out byte for
-byte as `RenderFontImage` renders it at that height, so text drawn from
+byte as `RenderFontImage` renders it at that height, its heights on the
+same rows, so text drawn from
 an image and glyphs drawn by number are one font. `TRUETYPEERR_ROOM`
 says the bytes were too few: `size` and the box are set and nothing is
 written. A glyph with no ink is `TRUETYPE_OK` with no bytes and its

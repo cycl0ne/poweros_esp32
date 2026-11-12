@@ -52,6 +52,12 @@
 //! same file is a second outline over the same bytes. Since 1.9 a
 //! variable font of cubic curves (a `CFF2` table) is read the same way.
 //!
+//! Since 1.10 a size is rendered with three heights on whole rows: the
+//! baseline, the x height and the cap height, so that a line of text
+//! stands on one row and its small and capital letters end on one. The
+//! columns and the advances are as the outline has them. `TTA_Plain`
+//! opens an outline that is rendered scaled and no more.
+//!
 //! Open it with OpenLibrary(TRUETYPENAME, 1); its functions are in
 //! sdk/interface/truetype.zig.
 
@@ -193,6 +199,12 @@ pub const TTA_FontIndex = TTA_Dummy + 1;
 pub const TTA_Axes = TTA_Dummy + 2;
 /// (u32) How many values `TTA_Axes` points at. Default 0. Since 1.8.
 pub const TTA_AxisCount = TTA_Dummy + 3;
+/// (bool) The outline is rendered as it is drawn: no height of the font
+/// is fitted to the rows, and the baseline lies where the ascender's
+/// share of the line falls, between two rows as a rule. For a caller
+/// that holds the pixels against the outline itself. Default false.
+/// Since 1.10.
+pub const TTA_Plain = TTA_Dummy + 4;
 
 /// A place on one axis of a variable font: the axis by its tag
 /// (`tableTag("wght")`) and a value in the axis' own units - a weight of

@@ -492,6 +492,8 @@ const Make = struct {
     measures: bool = false,
     /// How many axes `gvar` says it is for.
     delta_axes: u16 = 2,
+    /// The character of glyph 1; the four after it are glyphs 2 to 5.
+    first: u16 = 'A',
     /// Whether `gvar` places its glyphs by long words.
     long: bool = true,
     axes: []const Axis = &standard_axes,
@@ -506,7 +508,7 @@ fn fontOf(file: *File, make: Make) void {
     var cmap = builder.Cmap.init(1);
     cmap.begin(3, 1);
     cmap.segments(&.{
-        .{ .first = 'A', .last = 'E', .delta = @bitCast(@as(i16, 1 - 'A')) },
+        .{ .first = make.first, .last = make.first + 4, .delta = @bitCast(@as(i16, 1) - @as(i16, @intCast(make.first))) },
         .{ .first = 0xFFFF, .last = 0xFFFF, .delta = 1 },
     });
 
@@ -593,6 +595,12 @@ pub fn standardFont(file: *File) void {
 /// placed by words.
 pub fn sidesFont(file: *File) void {
     fontOf(file, .{ .long = false });
+}
+
+/// The plain variable font with `first` and the four characters after
+/// it as its glyphs 1 to 5, and no measures.
+pub fn letteredFont(file: *File, first: u16) void {
+    fontOf(file, .{ .first = first });
 }
 
 /// Where the table `tag` of a built font starts in its file.
