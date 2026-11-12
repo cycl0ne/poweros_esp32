@@ -115,6 +115,7 @@ Generated from the source by `./zig build autodoc`.
 - [ReportMouse](#reportmouse) - Turns the reports of the pointer's moves to a window on or off.
 - [Request](#request) - Puts a requester up in a window.
 - [ResetMenuStrip](#resetmenustrip) - Gives a window back a strip it already had.
+- [ReturnActivation](#returnactivation) - Gives the keyboard back to the window `window` took it from.
 - [ScreenDepth](#screendepth) - Moves a screen to the front of its display or to the back.
 - [ScreenPositionTagList](#screenpositiontaglist) - Puts a screen at a place on its display, or moves it by an amount.
 - [ScreenToBack](#screentoback) - Puts a screen behind the others on its display.
@@ -6741,6 +6742,93 @@ keeps panels of the old size. Use `SetMenuStrip` for that.
 ib.ClearMenuStrip(window);
 save_item.flags &= ~ITEMENABLED;
 _ = ib.ResetMenuStrip(window, &project_menu);
+```
+
+## ReturnActivation
+
+Gives the keyboard back to the window `window` took it from.
+
+**SYNOPSIS**
+
+```zig
+fn ReturnActivation(ib: *IntuitionBase, window: *Window) bool
+```
+
+**SINCE**
+
+0.95. LVO -560.
+
+**INPUTS**
+
+- `window` - the window that took the keyboard: one of the caller's.
+
+**RESULT**
+
+True when the window `window` took the keyboard from is the active
+one. False, with nothing changed, when no window was active as
+`window` last became it, when that window has closed since, and when
+it cannot be made active - it is hidden, or never takes the
+activation.
+
+**BEHAVIOR**
+
+The window that was the active one when `window` last became it is
+made the active one, as `ActivateWindow` makes it. If a gadget of it
+had the input at that time - a string being typed into - and is still
+in the window, that gadget is given the input again, as
+`ActivateGadget` gives it: typing goes on where it was.
+
+That is what a window does that is worked in for a moment on behalf of
+another: one a character is picked from, which is then typed
+(`AddIEvents`) into the text its user was writing. A press on such a
+window has made it the active one by the time its program hears of the
+press, and has taken the input from the gadget that had it; this call
+undoes both.
+
+It goes by `window`, not by which window is active now, so it does the
+same when a third window has become the active one meanwhile. The
+gadget is given the input only when the activation moves: when the
+window to go back to is the active one already, its input is left as
+it is.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore, and the layers' locks.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+- A gadget takes the input back only if `ActivateGadget` would give it
+  to it: one disabled since, or in a requester that is no longer the
+  one in front, is passed by, and the window is active without it.
+- A window made active any other way - a press on it, `ActivateWindow`
+  - leaves its gadgets as they are: the gadget that had the input waits
+  to be chosen.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ActivateWindow`, `ActivateGadget`, `FindWindowNumber`
+
+**EXAMPLES**
+
+```zig
+// A character picked in `window`: typed where its user was writing.
+if (ib.ReturnActivation(window)) {
+    var typed = ie.InputEvent{ .class = ie.IECLASS_CHARACTER, .code = 0x1F600 };
+    cb.AddIEvents(&typed);
+} else {
+    ib.DisplayBeep(null);
+}
 ```
 
 ## ScreenDepth

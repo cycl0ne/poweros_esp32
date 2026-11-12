@@ -262,7 +262,10 @@ pub const LIBRARY_VERSION = 0;
 /// 94: a character typed by no key (IECLASS_CHARACTER) goes to the gadget
 /// that has the keyboard, a string gadget takes it into its text, and a
 /// window that listens for characters is told it (IDCMP_VANILLAKEY).
-pub const LIBRARY_REVISION = 94;
+/// 95: ReturnActivation - a window that borrowed the keyboard gives it
+/// back to the window it took it from, and to the gadget of that one
+/// that had the input.
+pub const LIBRARY_REVISION = 95;
 const BUILD_DATE = "12.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

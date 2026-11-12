@@ -162,6 +162,7 @@ pub const LVO = struct {
     pub const HideWindow = libraries.lvo(136);
     pub const ShowWindow = libraries.lvo(137);
     pub const HideControl = libraries.lvo(138);
+    pub const ReturnActivation = libraries.lvo(139);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -302,6 +303,7 @@ pub const Fn = struct {
     pub const HideWindow = *const fn (*IntuitionBase, *intuition.Window) callconv(.c) void;
     pub const ShowWindow = *const fn (*IntuitionBase, *intuition.Window) callconv(.c) void;
     pub const HideControl = *const fn (*IntuitionBase, *intuition.Window, bool) callconv(.c) bool;
+    pub const ReturnActivation = *const fn (*IntuitionBase, *intuition.Window) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1144,5 +1146,14 @@ pub const IntuitionBase = opaque {
     /// window of the screen already takes them.
     pub fn HideControl(self: *IntuitionBase, window: *intuition.Window, on: bool) bool {
         return libraries.call(self, LVO.HideControl, Fn.HideControl, .{ window, on });
+    }
+
+    /// A window that took the keyboard for a while gives it back: the window
+    /// that was the active one when `window` last became it is active again,
+    /// and the gadget of it that had the input then has it again. False, and
+    /// nothing changed, when there was no such window, it has closed, or it
+    /// cannot be made active.
+    pub fn ReturnActivation(self: *IntuitionBase, window: *intuition.Window) bool {
+        return libraries.call(self, LVO.ReturnActivation, Fn.ReturnActivation, .{window});
     }
 };

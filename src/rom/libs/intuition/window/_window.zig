@@ -139,6 +139,13 @@ pub const Window = extern struct {
     /// can ask whether the window is still open (`FindWindowNumber`)
     /// where a pointer might by then be another window's.
     number: u32 = 0,
+    /// The number of the window that was the active one when this one
+    /// last became it, 0 when none was, and the gadget of this one that
+    /// had the input when it last stopped being the active one, null when
+    /// none had or the gadget has left the window since: what
+    /// `ReturnActivation` goes by.
+    activated_from: u32 = 0,
+    input_left: ?*Object = null,
     /// Its help group: every window with the same number shares gadget
     /// help (`WA_HelpGroup`).
     help_group: u32 = 0,
@@ -1349,6 +1356,7 @@ pub fn activate(ib: *IntuitionBase, w: *Window) void {
     ib.active_window = w;
     ib.activations +%= 1;
     w.activated = ib.activations;
+    w.activated_from = if (old) |o| o.number else 0;
     // Only the screen with the active window shows anything but its own
     // title: one the active window leaves goes back to its default, and the
     // new one shows what its window asked for.

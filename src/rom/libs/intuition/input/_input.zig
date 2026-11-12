@@ -574,7 +574,11 @@ pub fn forget(ib: *IntuitionBase, w: *Window) void {
 /// semaphore.
 pub fn windowInactive(ib: *IntuitionBase, w: *Window) void {
     const st = stateOf(ib);
+    w.input_left = null;
     if (st.mode != .active or st.window != w) return;
+    // Kept for a window that only borrows the keyboard and gives it back
+    // (`ReturnActivation`): the gadget itself, where a group has it.
+    if (st.active) |o| w.input_left = _gadget.innermost(ib, o);
     abort(ib);
     st.window = null;
     st.mode = .none;
@@ -584,7 +588,11 @@ pub fn windowInactive(ib: *IntuitionBase, w: *Window) void {
 /// told it has lost it. Under the screen semaphore.
 pub fn forgetGadget(ib: *IntuitionBase, o: *Object) void {
     const st = stateOf(ib);
-    gadgetclass.gadgetOf(ib, o).flags &= ~gadgetclass.GFLG_REFRESH;
+    const g = gadgetclass.gadgetOf(ib, o);
+    g.flags &= ~gadgetclass.GFLG_REFRESH;
+    if (g.window) |w| {
+        if (w.input_left == o) w.input_left = null;
+    }
     if (st.side == o) {
         st.side = null;
         st.side_window = null;
@@ -809,10 +817,18 @@ pub fn handle(ib: *IntuitionBase, e: *const InputEvent) void {
             const panel = if (on_screen) |s| overPanel(ib, s, st.x, st.y) else false;
             const here = if (on_screen) |s| windowAt(ib, s, st.x, st.y) else null;
             if (!panel and here != st.window) {
+                const from = st.window;
+                const left = if (st.active) |o| _gadget.innermost(ib, o) else null;
                 abort(ib);
                 st.window = null;
                 st.mode = .none;
                 handleFree(ib, e);
+                // The press made another window the active one: the
+                // gadget is the one this window was left with, as if the
+                // window had gone inactive under it.
+                if (from) |w| {
+                    if (ib.active_window != w) w.input_left = left;
+                }
                 return;
             }
         }

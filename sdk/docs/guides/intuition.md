@@ -364,6 +364,15 @@ if (ib.WindowUnderPointer()) |under| {
   (`.process`), and its CLI names the command it runs
   (`cli_CommandName`) - how the dock finds the icon to stand for a
   window in its taskbar. It is 0 for a window opened as the system's.
+- `ReturnActivation(window)` is for a window that takes the keyboard
+  only to hand something on - a picker of characters, a palette: it
+  makes the window active again that was the active one when `window`
+  last became it, and gives the gadget of that window that had the
+  input - a string being typed into - its input back, the cursor where
+  it was. What the program then puts into the input stream is typed
+  there. False when that window has closed since, or there was none.
+  `ActivateWindow` alone leaves the gadget unchosen, as a press on the
+  window's bar does.
 - `HideWindow` puts a window away without closing it: nothing of it is
   on the display and nothing of the input reaches it, while it stays
   open with its number, its port, its menus and its pixels, and

@@ -2234,6 +2234,108 @@ test "pixels: a screen's format, read from it and from a window on it" {
     try tearDown(ib);
 }
 
+test "ReturnActivation: a borrowed keyboard goes back, to the gadget that had it" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 80, 80, .rgb565);
+
+    var buffer: [16]u8 = @splat(0);
+    const field = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 4 },
+        .{ .tag = gc.GA_Top, .data = 14 },
+        .{ .tag = gc.GA_Width, .data = 40 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.STRINGA_Buffer, .data = @intFromPtr(&buffer) },
+        .{ .tag = gc.STRINGA_MaxChars, .data = buffer.len },
+        .{},
+    }).?;
+    const typing = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 60 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(field) },
+        .{},
+    }).?;
+    const typing_window: *_window.Window = @ptrCast(@alignCast(typing));
+    // Nothing was active before the first window: nowhere to go back to.
+    try testing.expect(!it.ReturnActivation(typing));
+    try testing.expect(it.ActivateGadget(field, typing, null));
+    rawKey(ib, 0x20); // 'a'
+    try testing.expectEqual(@as(u8, 'a'), buffer[0]);
+
+    // A second window takes the keyboard: the field has lost the keys.
+    const other_tags = [_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 44 },
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    };
+    const other = it.OpenWindowTagList(&other_tags).?;
+    try testing.expect(ib.input.active == null);
+    rawKey(ib, 0x35); // 'b', the second window's
+    try testing.expectEqual(@as(u8, 0), buffer[1]);
+    while (it.GetIMsg(other)) |told| it.ReplyIMsg(told);
+
+    // Given back: the first window is the active one, and its field
+    // takes the next key where the last one stopped.
+    try testing.expect(it.ReturnActivation(other));
+    try testing.expect(ib.active_window == typing_window);
+    try testing.expect(ib.input.active == field);
+    rawKey(ib, 0x33); // 'c'
+    try testing.expectEqualStrings("ac", std.mem.sliceTo(&buffer, 0));
+
+    // The same again, with the window to go back to active already: true,
+    // and its input left as it is.
+    try testing.expect(it.ReturnActivation(other));
+    try testing.expect(ib.input.active == field);
+
+    // A press on the second window takes the keyboard from the field as
+    // well, and it goes back the same way.
+    click(ib, 10, 58);
+    try testing.expect(ib.active_window != typing_window);
+    try testing.expect(ib.input.active == null);
+    try testing.expect(typing_window.input_left == field);
+    try testing.expect(it.ReturnActivation(other));
+    try testing.expect(ib.input.active == field);
+    rawKey(ib, 0x22); // 'd'
+    try testing.expectEqualStrings("acd", std.mem.sliceTo(&buffer, 0));
+    while (it.GetIMsg(other)) |told| it.ReplyIMsg(told);
+
+    // The field taken out of its window while the second has the
+    // keyboard: the window is active again, with nothing to type into.
+    it.ActivateWindow(other);
+    try testing.expect(typing_window.input_left == field);
+    _ = it.RemoveGList(typing, field, 1);
+    try testing.expect(typing_window.input_left == null);
+    try testing.expect(it.ReturnActivation(other));
+    try testing.expect(ib.active_window == typing_window);
+    try testing.expect(ib.input.active == null);
+
+    // A third window opened from the first: the second still goes back
+    // to the first, and none goes back to a window that has closed.
+    const third = it.OpenWindowTagList(&other_tags).?;
+    try testing.expect(it.ReturnActivation(other));
+    try testing.expect(ib.active_window == typing_window);
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, typing, wn.WA_Screen));
+    it.CloseWindow(typing);
+    try testing.expect(!it.ReturnActivation(other));
+    try testing.expect(!it.ReturnActivation(third));
+
+    it.CloseWindow(third);
+    it.CloseWindow(other);
+    it.DisposeObject(field);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "windows: a number each, never given again, found while the window is open" {
     const ib = try setUp();
     defer kexec.deinit();

@@ -452,4 +452,10 @@ void ShowWindow(*intuition.Window window)
 /// window closing brings every hidden window back. False when another
 /// window of the screen already takes them.
 bool HideControl(*intuition.Window window, bool on)
+/// A window that took the keyboard for a while gives it back: the window
+/// that was the active one when `window` last became it is active again,
+/// and the gadget of it that had the input then has it again. False, and
+/// nothing changed, when there was no such window, it has closed, or it
+/// cannot be made active.
+bool ReturnActivation(*intuition.Window window)
 ##end

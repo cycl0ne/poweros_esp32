@@ -158,6 +158,7 @@ const HidePointer = @import("input/hidepointer.zig").HidePointer;
 const HideWindow = @import("window/hidewindow.zig").HideWindow;
 const ShowWindow = @import("window/showwindow.zig").ShowWindow;
 const HideControl = @import("window/hidecontrol.zig").HideControl;
+const ReturnActivation = @import("window/returnactivation.zig").ReturnActivation;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -293,6 +294,7 @@ const contract_files = [_][]const u8{
     @embedFile("window/hidewindow.zig"),
     @embedFile("window/showwindow.zig"),
     @embedFile("window/hidecontrol.zig"),
+    @embedFile("window/returnactivation.zig"),
 };
 
 fn lvoMakeClass(ib: *IntuitionBase, class_id: ?[*:0]const u8, super_id: ?[*:0]const u8, super_class: ?*Class, inst_size: u32) callconv(.c) ?*Class {
@@ -700,6 +702,9 @@ fn lvoShowWindow(ib: *IntuitionBase, window: *intuition.Window) callconv(.c) voi
 fn lvoHideControl(ib: *IntuitionBase, window: *intuition.Window, on: bool) callconv(.c) bool {
     return HideControl(ib, @ptrCast(@alignCast(window)), on);
 }
+fn lvoReturnActivation(ib: *IntuitionBase, window: *intuition.Window) callconv(.c) bool {
+    return ReturnActivation(ib, @ptrCast(@alignCast(window)));
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -842,6 +847,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoHideWindow),
     vec(lvoShowWindow),
     vec(lvoHideControl),
+    vec(lvoReturnActivation),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
